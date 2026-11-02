@@ -1,0 +1,2 @@
+#!/bin/sh
+exec $HOME/.local/opt/toolchains/powerpc-440fp--glibc--stable-2026.08-1/bin/powerpc-linux-ranlib "$@"

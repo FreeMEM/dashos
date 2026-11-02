@@ -1,0 +1,3 @@
+#!/bin/sh
+# Bootlin activa por defecto SSP y PIE; el ROM PPC de Emu68 es freestanding y no los admite.
+exec $HOME/.local/opt/toolchains/powerpc-440fp--glibc--stable-2026.08-1/bin/powerpc-linux-g++ -fno-stack-protector -fno-pie -fno-pic -no-pie "$@"
