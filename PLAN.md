@@ -14,8 +14,8 @@ Los juegos y demos que tocan el chipset directamente no son objetivo. Petunia ta
 
 Estas decisiones son del usuario, del 2026-11-03.
 
-- **Placas.** El objetivo principal es la Raspberry Pi 5, y después la Pi 4. Más adelante, otras placas como las
-  Orange Pi. QEMU es solo para desarrollar.
+- **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
+  adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
 - **Sistema moderno.** Tiene protección de memoria y usa todos los núcleos de la CPU.
 - **Kernel propio.** No hay Linux debajo.
 - **AArch64 big-endian.** Los programas 68k leen y escriben a mano las estructuras del sistema. Por eso el sistema
@@ -83,6 +83,10 @@ de DashOS, en ficheros propios, lleva la licencia que se elija.
 - En QEMU arranca, pero se queda esperando a los núcleos 1, 2 y 3. Los despierta con el método de la Raspberry Pi,
   que escribe una dirección en una tabla de memoria fija. QEMU `virt` usa otro método, PSCI. Tampoco saca nada por
   el puerto serie. No se siguió depurando, por lo que dice el punto siguiente.
+- Para Raspberry Pi (`raspi64`) compila con el mismo parche, y **arranca en QEMU `raspi4b` en big-endian**. Despierta
+  los cuatro núcleos, encuentra el controlador de interrupciones (GICv2) y pide la pantalla al firmware. El registro
+  está en `docs/arranque-emu68-qemu-raspi4b.log`. Se para al preparar las cachés del JIT, seguramente porque no tiene
+  ROM que cargar; no se investigó.
 - **Emu68 no tiene soporte para la Pi 5.** No aparece el chip BCM2712 en su código.
 - Su arranque está hecho para un único programa que ocupa toda la máquina. No tiene procesos ni protección de memoria.
 
@@ -142,19 +146,20 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
 
 1. **Separar el JIT de Emu68.** Compilarlo como biblioteca para Linux AArch64 big-endian y ejecutar código 68k suelto
    con `qemu-aarch64_be`. Medir cuánto depende de un estado global y de su arranque.
-2. **Kernel mínimo en QEMU `virt`.** Arranque propio en big-endian, MMU, varios núcleos con PSCI, temporizador,
-   interrupciones y puerto serie. Procesos con memoria protegida.
+2. **Kernel mínimo en QEMU `raspi4b`.** Arranque propio en big-endian, MMU, los cuatro núcleos, temporizador,
+   interrupciones, puerto serie y pantalla. Procesos con memoria protegida. El arranque de Emu68 para la Pi sirve de
+   referencia.
 3. **La caja Amiga.** Un proceso con exec dentro: tareas, señales, mensajes, memoria y bibliotecas. Primero con
    código nativo, después con una tarea 68k que lo llame a través del JIT.
 4. **Backend ARM de dashc.** En paralelo con las fases 2 y 3. Hasta que esté, el código puede empezar en C.
 5. **Bibliotecas.** dos, graphics, layers e intuition, una a una, cada una con sus pruebas del oráculo.
-6. **Hardware real.** La Pi 5 primero, porque es el objetivo principal. Lo básico (CPU, memoria, puerto serie de
-   depuración y temporizador) está en el chip BCM2712. USB, red y GPIO van por el chip RP1, que cuelga de PCIe: eso
-   es lo más costoso. La Pi 4 después.
+6. **Hardware real.** La Pi 4 primero. Su CPU (Cortex-A72) admite big-endian: Emu68 funciona así en ella a diario.
+   Lo más costoso es el USB, que va por el chip VL805 conectado por PCIe. Después la Pi 5: lo básico está en el chip
+   BCM2712, y USB, red y GPIO van por el chip RP1, también por PCIe. QEMU no emula la Pi 5.
 
 ## Preguntas abiertas
 
-- Comprobar en una Pi 5 real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
+- Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
   `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
 - Si los programas nativos nuevos usan la API Amiga dentro de la caja, una API moderna fuera, o las dos.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.

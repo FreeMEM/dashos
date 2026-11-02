@@ -1,0 +1,54 @@
+[2J[BOOT] Booting Emu68 runtime/AArch64 BigEndian
+[BOOT] Machine: Raspberry Pi 4 Model B
+[BOOT] Boot address is 0xffffff80000800a0
+[BOOT] Build ID: 57090371caeb6eb8e0601d82b9285c71f5317d0b
+[BOOT] ARM stack top at 0xffffff8000080000
+[BOOT] Bootstrap ends at 0xffffff8000890000
+[BOOT] Kernel args (0x0000000008000000)
+[BOOT] Disassembler set up
+[BOOT] VC4 framebuffer memory: 0x0000000036e00000-0x0000000037dfffff (16 MiB)
+[BOOT] Unicam framebuffer memory: 0x0000000036a00000-0x0000000036bfffff (2 MiB)
+[BOOT] System memory: 0x0000000000000000-0x00000000347fffff (840 MiB)
+[BOOT] Local memory pools:
+[BOOT]    SYS:        0xffffff8000890000 - 0xffffff8001ffffff (size: 24000 KiB)
+[BOOT]    JIT (m68k): 0xffffffe000000000 - 0xffffffe003ffffff (size: 65536 KiB)
+[BOOT] Moving kernel from 0x0000000000000000 to 0x0000000034800000
+[BOOT] Top of RAM (32bit): 34800000
+[BOOT] Kernel moved, MMU tables updated
+[BOOT] MMU tables at 0x0000000034c6a000 and 0x0000000034c69000
+[BOOT] TLB invalidated
+[BOOT] Calling init function @ 0xffffff80001ad180
+[BOOT] Calling init function @ 0xffffff80001ad2a0
+[BOOT] Found GICv2
+[BOOT]   Distributor @ 0x00000000f5841000
+[BOOT]   CPU area @ 0x00000000f5842000
+[BOOT] Found Legacy INTC @ 0x00000000f5800000
+[GIC] gic_local_init()
+[GIC] Distributor enabled, Version 0000043b
+[GIC] CPU local enabled, Version 0002043b
+[BOOT] Waking up CPU 1
+[BOOT] Boot address set to 0x0000000034880420, stack at 0xffffff80008dca40
+[BOOT] Started CPU1
+[BOOT] Waking up CPU 2
+[BOOT] Boot address set to 0x0000000034880420, stack at 0xffffff80008eca50
+[BOOT] Started CPU2
+[BOOT] Waking up CPU 3
+[BOOT] Boot address set to 0x0000000034880420, stack at 0xffffff80008fca60
+[BOOT] Started CPU3
+[BOOT] VBAR set to 0xffffff80001ad800
+[BOOT] Timer frequency: 62500 kHz
+[BOOT] PMCR=41023005
+[BOOT] Platform post init
+[BOOT] ARM Clock at 700 MHz
+[BOOT] CORE Clock at 350 MHz
+[BOOT] VC4 memory: 0x000000003c000000-0x000000003fffffff
+[BOOT] Display size is 640x480
+[BOOT] Framebuffer @ 3c100000
+[BOOT] Logo start coordinate: 228x174, size: 183x132
+[CACHE] Cache setup. Cache sizeof=22016
+[CACHE] Way count: 8, Set count: 128
+[CACHE] ICache @ 0xffffff80008fca70, DCache @ 0xffffff8000902080
+[ICache] Initializing caches
+[ICache] Setting up LRU
+[ICache] Setting up ICache
+[ICache] ICache array at 0xffffff8000475c38

@@ -11,3 +11,9 @@ Compilar Emu68 para QEMU `virt`:
     cmake -G Ninja -S third_party/Emu68 -B build/emu68-virt -DTARGET=virt \
         -DCMAKE_TOOLCHAIN_FILE=$PWD/toolchains/aarch64be.cmake
     PATH=$PWD/toolchains/bin:$PATH ninja -C build/emu68-virt
+
+Para Raspberry Pi, `-DTARGET=raspi64` y `-B build/emu68-rpi`. Arrancar en QEMU:
+
+    zcat build/emu68-rpi/Emu68.img.gz > build/emu68-rpi/Emu68.img
+    qemu-system-aarch64 -M raspi4b -kernel build/emu68-rpi/Emu68.img \
+        -dtb build/emu68-rpi/firmware/bcm2711-rpi-4-b.dtb -display none -serial stdio -serial null

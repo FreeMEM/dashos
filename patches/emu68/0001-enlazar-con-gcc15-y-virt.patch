@@ -1,0 +1,38 @@
+diff --git a/src/support.c b/src/support.c
+index 99fb7de..78a500a 100644
+--- a/src/support.c
++++ b/src/support.c
+@@ -1166,3 +1166,16 @@ void EMIT_LoadImmediate(struct TranslatorContext *ctx, uint8_t rd, uint32_t imme
+         );
+     }
+ }
++
++/*
++    DashOS: capstone (Mapping.c) llama a printf en sus mensajes de error.
++    Con GCC 15 esas llamadas quedan sin resolver al enlazar.
++*/
++int printf(const char * restrict format, ...)
++{
++    va_list v;
++    va_start(v, format);
++    vkprintf(format, v);
++    va_end(v);
++    return 0;
++}
+diff --git a/src/virt/support_virt.c b/src/virt/support_virt.c
+index 8228e06..e8174d2 100644
+--- a/src/virt/support_virt.c
++++ b/src/virt/support_virt.c
+@@ -96,3 +96,12 @@ void setup_serial()
+     }
+ */
+ }
++
++/*
++    DashOS: la máquina virt no tiene framebuffer. start.c y PPC_ExecutionLoop.cpp
++    los declaran extern, y en raspi los define start_rpi64.c.
++*/
++uint16_t *framebuffer = 0;
++uint32_t pitch = 0;
++uint32_t fb_width = 0;
++uint32_t fb_height = 0;
