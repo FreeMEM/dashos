@@ -86,6 +86,11 @@ algunas llamadas también en `x1`. Un resultado negativo es un error (ver la tab
 
 Las direcciones que se pasan son del propio proceso. Los tamaños van en bytes.
 
+El kernel copia lo que lee o escribe en la memoria del proceso con accesos sin privilegio (`LDTRB`/`STTRB`, C31). La
+MMU los comprueba con los permisos de EL0. Así, el kernel no puede leer por el proceso lo que el proceso no puede leer,
+ni escribir donde él no puede escribir, como su código. Si una dirección no está proyectada o no tiene permiso, la
+llamada devuelve `E_ARGUMENTO` y el kernel sigue.
+
 | n | Llamada | Argumentos | Devuelve |
 |---|---|---|---|
 | 1 | `escribir` | `x0` texto, `x1` longitud (se corta a 4096) | Bytes escritos |
@@ -113,8 +118,9 @@ Las direcciones que se pasan son del propio proceso. Los tamaños van en bytes.
 - **5, `canal_leer`.**
   - Si la cola está vacía, se bloquea hasta que llegue un mensaje o se cierre el otro extremo.
   - Las llaves recibidas toman números nuevos en la tabla de quien lee.
-  - **Si el mensaje no cabe en el búfer o en la tabla de llaves, devuelve `E_TAMANO` y el mensaje se pierde.**
-    Es provisional.
+  - Si el mensaje no cabe en el búfer o en la tabla de llaves, devuelve `E_TAMANO`. Si no se puede escribir donde
+    dice el proceso, devuelve `E_ARGUMENTO`. En los dos casos el mensaje vuelve al principio de la cola, con sus
+    llaves.
 - **3, 4 y 5, tablas de llaves.** Son tablas de números de 32 bits, en el orden de bytes del proceso.
 - **6, `cerrar`.** Quita la llave de la tabla. Si es un extremo de canal, lo cierra: quien esté leyendo al otro lado
   se despierta con `E_CERRADO` cuando la cola queda vacía.
@@ -192,12 +198,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 
 ## Limitaciones conocidas
 
-- **Un puntero no proyectado tumba el kernel.** El kernel comprueba que las direcciones que recibe estén en el
-  espacio de usuario, pero no que estén proyectadas. Si un programa pasa un puntero a una zona vacía a `escribir`,
-  `canal_escribir` o `canal_leer`, el fallo salta dentro del kernel y lo para con un pánico. Hay que copiar con
-  recuperación de fallos, como la lectura de sondeo de C23. Es lo primero que hay que arreglar.
 - Proyectar encima de algo ya proyectado no vacía la TLB.
-- `canal_leer` pierde el mensaje si no cabe en el búfer o en la tabla de llaves.
 - Al morir un proceso, sus extremos de canal no se cierran. Quien espera al otro lado no se entera.
 - Un proceso tiene un solo hilo, y no hay llamadas para crear hilos ni procesos, ni para esperar a que acaben.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el

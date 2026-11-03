@@ -36,6 +36,47 @@ const E_CERRADO: u64 = -4i64 as u64;
 const E_TAMANO: u64 = -5i64 as u64;
 const E_TIPO: u64 = -6i64 as u64;
 
+unsafe extern "C" {
+    fn desde_usuario(destino: *mut u8, origen: u64, n: usize) -> u64;
+    fn hacia_usuario(destino: u64, origen: *const u8, n: usize) -> u64;
+    static copia_inicio: u8;
+    static copia_fin: u8;
+    fn copia_fallo();
+}
+
+/// Si `elr` es un acceso de las copias de `copia.s`, a dónde hay que volver para que la copia devuelva error (C31).
+pub fn fallo_de_copia(elr: u64) -> Option<u64> {
+    let (inicio, fin) = unsafe { (&copia_inicio as *const u8 as u64, &copia_fin as *const u8 as u64) };
+    (inicio..fin).contains(&elr).then(|| copia_fallo as *const () as u64)
+}
+
+/// Copia `n` bytes de la memoria del proceso actual. `None` si el tramo no es del usuario o no se puede leer con
+/// los permisos del proceso (C31). El kernel nunca toca la memoria de un proceso de otra forma.
+fn leer_usuario(p: u64, n: usize) -> Option<Vec<u8>> {
+    tramo(p, n as u64)?;
+    let mut v = alloc::vec![0u8; n];
+    (unsafe { desde_usuario(v.as_mut_ptr(), p, n) } == 0).then_some(v)
+}
+
+/// Copia `datos` a la memoria del proceso actual, con sus permisos. Falso si no se puede (C31).
+fn escribir_usuario(p: u64, datos: &[u8]) -> bool {
+    tramo(p, datos.len() as u64).is_some() && unsafe { hacia_usuario(p, datos.as_ptr(), datos.len()) } == 0
+}
+
+/// Una tabla de números de llave en el orden de bytes del proceso (C30).
+fn llaves_a_bytes(numeros: &[u32], big_endian: bool) -> Vec<u8> {
+    numeros.iter().flat_map(|&n| if big_endian { n.to_be_bytes() } else { n.to_le_bytes() }).collect()
+}
+
+fn llaves_de_bytes(b: &[u8], big_endian: bool) -> Vec<u32> {
+    b.chunks_exact(4)
+        .map(|c| {
+            let c = [c[0], c[1], c[2], c[3]];
+            if big_endian { u32::from_be_bytes(c) } else { u32::from_le_bytes(c) }
+        })
+        .collect()
+}
+
 /// Comprueba que un tramo de memoria es del usuario.
 fn tramo(p: u64, n: u64) -> Option<(u64, usize)> {
     match p.checked_add(n) {
@@ -73,8 +114,8 @@ pub fn atender(marco: &mut Marco) {
 }
 
 fn escribir_consola(p: u64, n: u64) -> u64 {
-    let Some((p, n)) = tramo(p, n.min(4096)) else { return E_ARGUMENTO };
-    let texto = unsafe { core::slice::from_raw_parts(p as *const u8, n) };
+    let n = n.min(4096);
+    let Some(texto) = leer_usuario(p, n as usize) else { return E_ARGUMENTO };
     // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto.
     for trozo in texto.utf8_chunks() {
         kprint!("{}", trozo.valid());
@@ -100,23 +141,17 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     if largo as usize > MAX_DATOS || n_llaves as usize > MAX_LLAVES {
         return E_TAMANO;
     }
-    let (Some((datos, largo)), Some((llaves, n_llaves))) = (tramo(datos, largo), tramo(llaves, 4 * n_llaves)) else {
+    let (Some(datos), Some(tabla)) = (leer_usuario(datos, largo as usize), leer_usuario(llaves, 4 * n_llaves as usize))
+    else {
         return E_ARGUMENTO;
     };
-    let n_llaves = n_llaves / 4;
     let Some(destino) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     if destino.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
     let Objeto::Extremo(canal, lado) = destino.objeto else { return E_TIPO };
     // Las llaves que viajan salen de la tabla de quien manda. Hacen falta derechos de transferir.
-    // Las tablas de números de llave van en el orden de bytes del proceso (C30).
-    let numeros: Vec<u32> = (0..n_llaves)
-        .map(|i| {
-            let v = unsafe { ((llaves as *const u32).add(i)).read_unaligned() };
-            if proc_.big_endian { v } else { v.swap_bytes() }
-        })
-        .collect();
+    let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
     let mut viajan = Vec::new();
     {
         let mut t = proc_.llaves.tomar();
@@ -131,7 +166,7 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
             viajan.push(t.quitar(n).unwrap());
         }
     }
-    let m = Mensaje { datos: unsafe { core::slice::from_raw_parts(datos as *const u8, largo) }.to_vec(), llaves: viajan };
+    let m = Mensaje { datos, llaves: viajan };
     match canal.escribir(lado, m) {
         Ok(()) => 0,
         Err(_) => E_CERRADO,
@@ -140,9 +175,10 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
 
 fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_llaves: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    let (Some((buf, cap)), Some((llaves, cap_llaves))) = (tramo(buf, cap), tramo(llaves, 4 * cap_llaves)) else {
+    let Some(bytes_llaves) = cap_llaves.checked_mul(4) else { return E_ARGUMENTO };
+    if tramo(buf, cap).is_none() || tramo(llaves, bytes_llaves).is_none() {
         return E_ARGUMENTO;
-    };
+    }
     let Some(origen) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     if origen.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
@@ -152,19 +188,26 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         Ok(m) => m,
         Err(_) => return E_CERRADO,
     };
-    if m.datos.len() > cap || m.llaves.len() > cap_llaves / 4 {
-        return E_TAMANO; // el mensaje se pierde: provisional
+    // Si no cabe o no se puede escribir donde dice el proceso, el mensaje vuelve a la cola, intacto (C31).
+    if m.datos.len() as u64 > cap || m.llaves.len() as u64 > cap_llaves {
+        canal.devolver(lado, m);
+        return E_TAMANO;
     }
-    unsafe { core::ptr::copy_nonoverlapping(m.datos.as_ptr(), buf as *mut u8, m.datos.len()) };
+    if !escribir_usuario(buf, &m.datos) {
+        canal.devolver(lado, m);
+        return E_ARGUMENTO;
+    }
     let largo = m.datos.len() as u64;
-    let n_llaves = m.llaves.len() as u64;
+    let Mensaje { datos, llaves: recibidas } = m;
     let mut t = proc_.llaves.tomar();
-    for (i, l) in m.llaves.into_iter().enumerate() {
-        let n = t.instalar(l);
-        let n = if proc_.big_endian { n } else { n.swap_bytes() };
-        unsafe { ((llaves as *mut u32).add(i)).write_unaligned(n) };
+    let numeros: Vec<u32> = recibidas.into_iter().map(|l| t.instalar(l)).collect();
+    if !escribir_usuario(llaves, &llaves_a_bytes(&numeros, proc_.big_endian)) {
+        let devueltas = numeros.iter().filter_map(|&n| t.quitar(n)).collect();
+        drop(t);
+        canal.devolver(lado, Mensaje { datos, llaves: devueltas });
+        return E_ARGUMENTO;
     }
-    marco.x[1] = n_llaves;
+    marco.x[1] = numeros.len() as u64;
     largo
 }
 

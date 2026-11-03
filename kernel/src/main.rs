@@ -35,6 +35,7 @@ use core::panic::PanicInfo;
 core::arch::global_asm!(include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("usuario.s"));
+core::arch::global_asm!(include_str!("copia.s"));
 
 fn nivel_excepcion() -> u64 {
     let el: u64;
@@ -86,6 +87,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_bo();
     prueba_fpu();
     prueba_pie();
+    prueba_malo();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -1044,6 +1046,23 @@ fn prueba_pie() {
     let altas = bases.iter().all(|&b| b >= 1 << 32 && b % 0x10000 == 0);
     kprintln!("  dos cargas: bases distintas {}, por encima de 4 GB {}", if bases[0] != bases[1] { "sí" } else { "no" }, if altas { "sí" } else { "no" });
     kprintln!("C29: cargador de PIE {}", if bases[0] != bases[1] && altas { "bien" } else { "MAL" });
+}
+
+/// C31: un programa hostil (`usuario/src/bin/malo.rs`) pasa punteros malos a las llamadas. El kernel tiene que
+/// devolverle errores y seguir vivo; si no, la prueba no llega a escribir su línea.
+static MALO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/malo");
+
+fn prueba_malo() {
+    use core::sync::atomic::Ordering;
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    if !lanzar_elf(MALO, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 200 {
+        reloj::esperar_interrupcion();
+    }
+    kprintln!("C31: el kernel sobrevive a los punteros malos");
 }
 
 #[panic_handler]

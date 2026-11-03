@@ -34,6 +34,11 @@ name = "fpu_b"
 path = "src/bin/fpu_b.rs"
 test = false
 
+[[bin]]
+name = "malo"
+path = "src/bin/malo.rs"
+test = false
+
 [profile.release]
 panic = "abort"
 opt-level = "s"

@@ -93,3 +93,6 @@ sale con código 29
 sale con código 29
   dos cargas: bases distintas sí, por encima de 4 GB sí
 C29: cargador de PIE bien
+  [malo] punteros malos rechazados y el mensaje entregado entero después
+sale con código 31
+C31: el kernel sobrevive a los punteros malos

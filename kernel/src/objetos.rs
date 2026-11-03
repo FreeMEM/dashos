@@ -129,6 +129,11 @@ impl Canal {
         }
     }
 
+    /// Devuelve al principio de la cola de `lado` un mensaje que se leyó pero no se pudo entregar (C31).
+    pub fn devolver(&self, lado: usize, m: Mensaje) {
+        self.lados[lado].tomar().cola.push_front(m);
+    }
+
     pub fn cerrar(&self, lado: usize) {
         self.lados[lado].tomar().cerrado = true;
         let despertar = self.lados[1 - lado].tomar().esperando.take();

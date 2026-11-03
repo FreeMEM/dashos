@@ -97,6 +97,8 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C31 **Copias seguras de la memoria de usuario** (03/11 por la tarde): ningún puntero de un programa tumba el
+  kernel.
 - [x] C30 **Orden de bytes por proceso** (03/11 por la tarde, decisión del usuario): lo nativo en little-endian, la
   caja en big-endian.
 - [x] C29 **Cargador de PIE** (03/11 por la tarde, a petición de Dash): `ET_DYN` con base y pila al azar por
@@ -538,6 +540,22 @@ Pruebas:
 - Los controladores de serie y SD funcionan en little-endian.
 
 BIEN tres de tres.
+
+### 2026-11-03 tarde — C31 (copias seguras de la memoria de usuario)
+
+Salió al escribir `docs/referencia/kernel.md`. El kernel leía y escribía la memoria de los procesos con punteros
+directos, y un puntero a una zona vacía lo tumbaba con un pánico.
+
+Ahora toda copia pasa por `copia.s`:
+
+- `desde_usuario` y `hacia_usuario` acceden con `LDTRB`/`STTRB`, que la MMU comprueba con los permisos de EL0.
+- Si un acceso falla, `excepciones.rs` lleva la ejecución a `copia_fallo` y la llamada devuelve `E_ARGUMENTO`.
+
+`canal_leer` ya no pierde mensajes: si no cabe o no se puede entregar, el mensaje vuelve a la cola con sus llaves.
+También se arregla un desbordamiento al multiplicar la capacidad de llaves por 4.
+
+Prueba: `malo.rs` pasa punteros a memoria vacía, al kernel, a su propio código y tramos que dan la vuelta, en once
+pasos. Recibe errores, y después recibe el mensaje entero, con una llave que funciona. BIEN.
 
 ## Resumen de la noche
 
