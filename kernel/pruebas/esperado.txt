@@ -1,6 +1,7 @@
 DashOS 0.0.1
 Nivel de excepción: EL1
 Árbol de dispositivos en 0x
+MMU: encendida (SCTLR=
 Orden de bytes: big-endian
 C2: esqueleto en marcha
 Excepción: BRK #0x2a en 0x
@@ -15,4 +16,5 @@ C3: de vuelta de la excepción
   DMA de scb: bus 0x0 -> CPU 0x0, 16384 MB
 C4: árbol de dispositivos leído
 Memoria física: 
+  escrito y leído por el mapa directo en 0xffffff80
 C5: zonas bien, devolución bien

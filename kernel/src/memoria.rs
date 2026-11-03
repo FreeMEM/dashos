@@ -93,7 +93,12 @@ impl Paginas {
         }
         // Lo que no se toca: la página de espera de los núcleos y el resguardo del firmware, el kernel y el árbol.
         self.marcar_tramo(0, 0x80000, true);
-        let (ki, kf) = unsafe { (&__kernel_inicio as *const u8 as u64, &__kernel_fin as *const u8 as u64) };
+        let (ki, kf) = unsafe {
+            (
+                crate::mmu::fisica(&__kernel_inicio as *const u8 as usize) as u64,
+                crate::mmu::fisica(&__kernel_fin as *const u8 as usize) as u64,
+            )
+        };
         self.marcar_tramo(ki, kf - ki, true);
         self.marcar_tramo(dtb_dir as u64, d.tamano() as u64, true);
         let mut i = 0;

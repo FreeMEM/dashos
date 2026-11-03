@@ -64,7 +64,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C4 **Árbol de dispositivos.** Leer el DTB que deja el firmware en `x0`: memoria, puerto serie, GIC, temporizador
   y `dma-ranges` (S3). Prueba: imprime el mapa.
 - [x] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
-- [ ] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
+- [x] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
 - [ ] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
 - [ ] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
 - [ ] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
@@ -157,4 +157,17 @@ nodo PCIe no se encuentra aún) y `Normal`; se reparte desde arriba. Reserva de 
 QEMU: 960 MB, 958 libres; la prueba pide una página de cada zona y 64 KB seguidos alineados, comprueba los límites y
 lo devuelve. BIEN. No se ve la separación de zonas porque QEMU solo describe 960 MB. Búsqueda lineal: lenta con
 mucha memoria, a mejorar.
+
+### 2026-11-03 02:3x — C6 (MMU)
+
+El kernel se enlaza en la mitad alta (`KERNEL_VA = 0xFFFFFF8000000000`, 39 bits) y se carga en `0x80000`.
+`arranque.s` monta, antes de entrar en Rust, una tabla de nivel 1 que sirve a la vez para `TTBR0` (identidad) y
+`TTBR1` (mapa directo de la memoria física): tres bloques de 1 GB de memoria normal y una tabla de nivel 2 para el
+cuarto GB, con bloques de 2 MB normales hasta `0xFC000000` y de dispositivo desde ahí. Las tablas se escriben en
+big-endian (la MMU las lee con el orden de EL1). MAIR con dispositivo, normal con caché y normal sin caché; TCR con 4
+KB, IPS de 44 bits. Enciende MMU y cachés y salta a la mitad alta. En Rust, `mmu::virt()` y `mmu::fisica()`; serie y
+árbol por el mapa directo. Fuera `+strict-align` (ya no avisa Rust). Prueba: MMU encendida, `kmain` en
+`0xffffff80...`, y una página del reparto escrita y leída por el mapa directo. Todo lo anterior sigue BIEN.
+Pendiente: quitar la identidad de `TTBR0` cuando lleguen los procesos (C11), y mapear la RAM por encima de 4 GB
+en las Pi de 8 GB.
 

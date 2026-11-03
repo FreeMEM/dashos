@@ -6,5 +6,5 @@ build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
 [target.aarch64_be-unknown-none-softfloat]
-# strict-align: hasta encender la MMU (C6) toda la memoria es de tipo dispositivo y no admite accesos desalineados.
-rustflags = ["-C", "link-arg=-Tenlace.ld", "-C", "target-feature=+strict-align", "-C", "force-frame-pointers=yes"]
+# La MMU se enciende en arranque.s antes de entrar en Rust, así que no hace falta strict-align (C6).
+rustflags = ["-C", "link-arg=-Tenlace.ld", "-C", "force-frame-pointers=yes"]

@@ -6,6 +6,7 @@
 mod dtb;
 mod excepciones;
 mod memoria;
+mod mmu;
 mod mmio;
 mod serie;
 
@@ -26,6 +27,8 @@ extern "C" fn kmain(dtb: usize) -> ! {
     kprintln!("DashOS {}", env!("CARGO_PKG_VERSION"));
     kprintln!("Nivel de excepción: EL{}", nivel_excepcion());
     kprintln!("Árbol de dispositivos en {:#x}", dtb);
+    let (sctlr, tcr, _) = mmu::estado();
+    kprintln!("MMU: {} (SCTLR={:#x}, TCR={:#x}); kmain en {:#x}", if sctlr & 1 != 0 { "encendida" } else { "apagada" }, sctlr, tcr, kmain as usize);
     let x: u32 = 0x1122_3344;
     let primero = unsafe { *(&x as *const u32 as *const u8) };
     kprintln!("Orden de bytes: {}", if primero == 0x11 { "big-endian" } else { "little-endian" });
@@ -46,7 +49,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
 
 /// C4: lo que el kernel necesita del árbol de dispositivos.
 fn mapa_dispositivos(direccion: usize) {
-    let Some(d) = (unsafe { dtb::Dtb::desde(direccion) }) else {
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else {
         kprintln!("Árbol de dispositivos: no válido en {:#x}", direccion);
         return;
     };
@@ -87,7 +90,7 @@ fn mapa_dispositivos(direccion: usize) {
 /// C5: reparto de páginas por zonas.
 fn prueba_memoria(direccion: usize) {
     use memoria::{paginas, Zona, PAGINA};
-    let Some(d) = (unsafe { dtb::Dtb::desde(direccion) }) else { return };
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
     let p = paginas();
     p.iniciar(&d, direccion);
     let antes = p.libres();
@@ -96,6 +99,12 @@ fn prueba_memoria(direccion: usize) {
     let d3 = p.pagina(Zona::Dma3G).unwrap_or(u64::MAX);
     let bloque = p.reservar(Zona::Dma1G, 16, 16).unwrap_or(u64::MAX);
     kprintln!("  página normal {:#x}, DMA 1 GB {:#x}, DMA 3 GB {:#x}, 64 KB seguidos {:#x}", normal, d1, d3, bloque);
+    // La página se ve a través del mapa directo de la mitad alta.
+    let v = mmu::virt(normal as usize) as *mut u64;
+    unsafe {
+        v.write_volatile(0x0123_4567_89ab_cdef);
+        kprintln!("  escrito y leído por el mapa directo en {:#x}: {:#x}", v as usize, v.read_volatile());
+    }
     let bien = d1 < (1 << 30) && d3 < (3 << 30) && bloque % (16 * PAGINA) == 0 && bloque < (1 << 30);
     p.liberar(normal, 1);
     p.liberar(d1, 1);

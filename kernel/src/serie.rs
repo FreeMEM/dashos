@@ -4,7 +4,7 @@ use crate::mmio::RegLe32;
 use core::fmt;
 
 /// Dirección del PL011 con los periféricos en modo bajo. En C4 se leerá del árbol de dispositivos.
-const BASE: usize = 0xFE20_1000;
+const BASE: usize = crate::mmu::virt(0xFE20_1000);
 
 const DR: RegLe32 = RegLe32::new(BASE + 0x00);
 const FR: RegLe32 = RegLe32::new(BASE + 0x18);
@@ -45,8 +45,7 @@ impl fmt::Write for Serie {
     }
 }
 
-/// Sin cerrojo por ahora: solo corre el núcleo 0 y la MMU está apagada (los exclusivos no van en memoria de
-/// dispositivo). El cerrojo llega con C9.
+/// Sin cerrojo por ahora: solo corre el núcleo 0. El cerrojo llega con C9.
 pub fn imprimir(args: fmt::Arguments) {
     let _ = fmt::Write::write_fmt(&mut Serie, args);
 }
