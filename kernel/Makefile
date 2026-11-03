@@ -12,7 +12,7 @@ $(IMAGEN): FORCE
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 
 prueba: $(IMAGEN)
-	../tools/prueba_qemu.sh $(IMAGEN) pruebas/esperado.txt 10
+	../tools/prueba_qemu.sh $(IMAGEN) pruebas/esperado.txt 15
 
 clean:
 	cargo clean

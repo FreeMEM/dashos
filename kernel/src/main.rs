@@ -793,6 +793,67 @@ fn prueba_usb() {
     let bien = u.poner_direccion(1).is_ok() && u.descriptor(1).map(|e| e.producto == d.producto).unwrap_or(false);
     kprintln!("  dirección 1 asignada y descriptor releído: {}", if bien { "sí" } else { "no" });
     kprintln!("C22: primer dispositivo USB enumerado {}", if bien && d.clase == 9 { "bien (un hub)" } else if bien { "bien" } else { "MAL" });
+    if !bien || d.clase != 9 {
+        return;
+    }
+    // Segunda vuelta: lo que hay detrás del hub, y leer el teclado.
+    let mut hids = [None; 4];
+    if let Err(e) = u.enumerar_hub(1, 2, &mut hids) {
+        kprintln!("C22: error al enumerar el hub: {:?}", e);
+        return;
+    }
+    let teclados = hids.iter().flatten().filter(|h| h.teclado).count();
+    let ratones = hids.iter().flatten().filter(|h| !h.teclado).count();
+    kprintln!("  HID de arranque: {} teclado y {} ratón", teclados, ratones);
+    let Some(mut tec) = hids.iter().flatten().find(|h| h.teclado).map(|h| h.entrada) else { return };
+    // Esperar una tecla hasta 6 segundos (la prueba se las manda a QEMU por su monitor).
+    let fin = reloj::ahora() + 6 * reloj::frecuencia();
+    while reloj::ahora() < fin {
+        match u.leer_interrupcion(&mut tec) {
+            Ok(Some(informe)) if informe.len() >= 3 && informe[2] != 0 => {
+                let codigo = informe[2];
+                // Uso HID 0x04 a 0x1D: letras de la a a la z (HID Usage Tables, página 7).
+                let letra = if (4..=0x1d).contains(&codigo) { (b'a' + codigo - 4) as char } else { '?' };
+                kprintln!("  tecla recibida: uso {:#04x} ({})", codigo, letra);
+                kprintln!("C22: teclado USB bien");
+                if let Some(mut raton) = hids.iter().flatten().find(|h| !h.teclado).map(|h| h.entrada) {
+                    prueba_raton(&u, &mut raton);
+                }
+                return;
+            }
+            Ok(_) => esperar_ms(8),
+            Err(e) => {
+                kprintln!("C22: error al leer el teclado: {:?}", e);
+                return;
+            }
+        }
+    }
+    kprintln!("C22: el teclado no mandó ninguna tecla");
+}
+
+/// Informe de arranque del ratón (HID 1.11, apéndice B.2): botones, X e Y con signo.
+fn prueba_raton(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
+    let fin = reloj::ahora() + 3 * reloj::frecuencia();
+    while reloj::ahora() < fin {
+        match u.leer_interrupcion(raton) {
+            Ok(Some(i)) if i.len() >= 3 && (i[1] != 0 || i[2] != 0) => {
+                kprintln!("  ratón: botones {:#x}, movimiento ({}, {})", i[0], i[1] as i8, i[2] as i8);
+                kprintln!("C22: ratón USB bien");
+                return;
+            }
+            Ok(_) => esperar_ms(8),
+            Err(e) => {
+                kprintln!("C22: error al leer el ratón: {:?}", e);
+                return;
+            }
+        }
+    }
+    kprintln!("C22: el ratón no se movió");
+}
+
+fn esperar_ms(ms: u64) {
+    let fin = reloj::ahora() + ms * reloj::frecuencia() / 1000;
+    while reloj::ahora() < fin {}
 }
 
 #[panic_handler]

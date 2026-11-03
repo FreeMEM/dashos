@@ -96,7 +96,7 @@ del kernel sobre la que irán esos controladores.
   dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
-- [~] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
 - [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
   de la GPU, cachés y lanzamiento de trabajos, solo con `docs/spec/hw/v3d.md`. Compilado; en QEMU solo la
   codificación.
@@ -414,3 +414,17 @@ falta una llave de memoria DMA que dé direcciones de bus a un proceso. `tools/p
 activo a velocidad completa, el primer dispositivo es el hub (clase 9, `0409:55aa`, paquetes de 8 bytes), toma la
 dirección 1 y se relee su descriptor. BIEN a la primera, tres de tres. Siguiente vuelta: configurar el hub, enumerar
 sus puertos y leer el teclado y el ratón (informes HID de arranque).
+
+### 2026-11-03 08:1x — C22, segunda vuelta (hub, teclado y ratón)
+
+`kernel/src/usb.rs`: configuración del hub y de sus puertos (alimentación, estado, reinicio y borrado de los avisos
+de cambio, según la especificación USB 2.0, 11.24), dirección para cada dispositivo, lectura del descriptor de
+configuración y búsqueda de interfaces HID de arranque (clase 3, subclase 1; protocolo 1 teclado, 2 ratón). Pone el
+protocolo de arranque y lee el punto de interrupción de entrada alternando DATA0 y DATA1; un NAK es "nada nuevo". El
+tamaño de paquete del punto 0 se guarda por dirección. `tools/prueba_qemu.sh` abre el monitor de QEMU en un socket y
+manda cada medio segundo una "a" y un movimiento del ratón; `make prueba` da ahora 15 segundos. Prueba: detrás del
+hub salen dos dispositivos (direcciones 2 y 3), uno es teclado y otro ratón; llega la tecla "a" (uso `0x04`) y el
+movimiento (10, 5). BIEN, tres de tres. Pendiente: sacar el controlador del kernel (falta la llave de memoria DMA),
+interrupciones en vez de consulta, dispositivos de baja velocidad detrás de un hub (transacciones partidas) y el
+EMMC2 y el VL805 (xHCI) de la Pi 4 real: allí los puertos USB de la placa van por el xHCI del PCIe, no por el DWC2,
+que solo está en el conector USB-C.

@@ -65,3 +65,8 @@ C24: V3D, lado del kernel bien
   dispositivo en la dirección 0: clase 9, 0409:55aa, paquetes de 8 bytes, 1 configuración
   dirección 1 asignada y descriptor releído: sí
 C22: primer dispositivo USB enumerado bien (un hub)
+  HID de arranque: 1 teclado y 1 ratón
+  tecla recibida: uso 0x04 (a)
+C22: teclado USB bien
+  ratón: botones 0x0, movimiento (
+C22: ratón USB bien

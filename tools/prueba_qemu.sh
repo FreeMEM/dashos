@@ -39,9 +39,30 @@ open(sys.argv[1], "wb").write(img)
 fi
 
 SALIDA=$(mktemp)
+# Entrada para el teclado y el ratón USB (C22): por el monitor de QEMU, una "a" y un movimiento del ratón cada
+# medio segundo desde el segundo 2.
+MONITOR=$SALIDA.mon
+python3 -I - "$MONITOR" "$SEGUNDOS" <<'PY' >/dev/null 2>&1 &
+import socket, sys, time
+ruta, total = sys.argv[1], float(sys.argv[2])
+inicio = time.time()
+time.sleep(2)
+while time.time() - inicio < total:
+    try:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(ruta)
+        s.sendall(b"sendkey a\nmouse_move 10 5\n")
+        s.close()
+    except OSError:
+        pass
+    time.sleep(0.5)
+PY
+TECLAS=$!
 timeout "$SEGUNDOS" qemu-system-aarch64 -M raspi4b -kernel "$IMAGEN" -dtb "$DTB" \
     -display none -serial file:"$SALIDA" -serial null \
-    -drive file="$SD",if=sd,format=raw -device usb-kbd -device usb-mouse ${QEMU_EXTRA:-} >/dev/null 2>&1
+    -drive file="$SD",if=sd,format=raw -device usb-kbd -device usb-mouse \
+    -monitor unix:"$MONITOR",server,nowait ${QEMU_EXTRA:-} >/dev/null 2>&1
+kill "$TECLAS" 2>/dev/null
 tr -d '\r' < "$SALIDA" > "$SALIDA.txt"
 
 FALLO=0
@@ -71,5 +92,6 @@ else
     echo "--- salida del puerto serie ---"
     cat "$SALIDA.txt"
 fi
-rm -f "$SALIDA" "$SALIDA.txt"
+[ -n "${GUARDAR:-}" ] && cp "$SALIDA.txt" "$GUARDAR"
+rm -f "$SALIDA" "$SALIDA.txt" "$MONITOR"
 exit $FALLO

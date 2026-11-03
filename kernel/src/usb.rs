@@ -47,6 +47,7 @@ const HCINT_PARADO: u32 = 1 << 1;
 const HCINT_STALL: u32 = 1 << 3;
 const HCINT_NAK: u32 = 1 << 4;
 
+const PID_DATA0: u32 = 0;
 const PID_DATA1: u32 = 2;
 const PID_SETUP: u32 = 3;
 
@@ -60,12 +61,30 @@ pub enum Error {
     Plazo,
     Stall,
     Transferencia(u32),
+    Nak,
+}
+
+/// Un punto de interrupción de entrada (el teclado o el ratón).
+#[derive(Debug, Clone, Copy)]
+pub struct PuntoInterrupcion {
+    pub direccion: u32,
+    pub punto: u32,
+    pub mps: u32,
+    dato1: bool,
+}
+
+/// Un dispositivo HID de arranque encontrado (USB HID 1.11, apéndice B).
+#[derive(Debug, Clone, Copy)]
+pub struct Hid {
+    pub teclado: bool,
+    pub entrada: PuntoInterrupcion,
 }
 
 pub struct Dwc2 {
     base: usize,
     bufer: u64, // página física para el DMA
-    pub tamano_ep0: u32,
+    /// Tamaño de paquete del punto 0 de cada dirección.
+    mps: [u32; 16],
 }
 
 fn esperar_us(us: u64) {
@@ -111,7 +130,7 @@ impl Dwc2 {
             return Err(Error::NoHay);
         }
         let bufer = paginas().pagina(Zona::Dma1G).ok_or(Error::NoHay)?;
-        let u = Self { base, bufer, tamano_ep0: 8 };
+        let u = Self { base, bufer, mps: [8; 16] };
         // Reinicio del núcleo: esperar a que el bus interno esté libre, pedirlo y esperar a que acabe.
         u.esperar(|s| s.r(GRSTCTL).leer() & GRSTCTL_AHB_LIBRE != 0, 100_000)?;
         u.r(GRSTCTL).escribir(GRSTCTL_REINICIO);
@@ -159,40 +178,67 @@ impl Dwc2 {
         self.r(GSNPSID).leer()
     }
 
-    /// Una transacción en el canal 0. Devuelve los bytes transferidos.
+    /// Una transacción en el canal 0 hacia el punto 0 de `direccion`. Repite mientras el dispositivo diga NAK.
     fn transaccion(&self, direccion: u32, entrada: bool, pid: u32, datos: usize, largo: u32) -> Result<u32, Error> {
-        let va = mmu::virt(self.bufer as usize) + datos;
-        let paquetes = if largo == 0 { 1 } else { largo.div_ceil(self.tamano_ep0) };
         for _ in 0..1000 {
-            cache(va, largo.max(1) as usize, entrada);
-            self.r(HCINT).escribir(0xffff_ffff);
-            self.r(HCINTMSK).escribir(0x7ff);
-            self.r(HCTSIZ).escribir((pid << 29) | (paquetes << 19) | largo);
-            self.r(HCDMA).escribir((self.bufer + datos as u64 + BUS_RAM) as u32);
-            let lenta = if self.velocidad() == 2 { 1 << 17 } else { 0 };
-            self.r(HCCHAR).escribir(
-                HCCHAR_HABILITAR | (1 << 20) | (direccion << 22) | lenta | if entrada { HCCHAR_ENTRADA } else { 0 }
-                    | self.tamano_ep0,
-            );
-            self.esperar(|s| s.r(HCINT).leer() & PARADO_O_HECHO != 0, 100_000)?;
-            let int = self.r(HCINT).leer();
-            if int & HCINT_STALL != 0 {
-                return Err(Error::Stall);
+            match self.transaccion_en(direccion, 0, 0, self.mps[direccion as usize & 15], entrada, pid, datos, largo) {
+                Err(Error::Nak) => esperar_us(1000),
+                r => return r,
             }
-            if int & HCINT_NAK != 0 && int & HCINT_HECHO == 0 {
-                esperar_us(1000);
-                continue; // el dispositivo aún no tiene los datos: repetir
-            }
-            if int & HCINT_HECHO == 0 {
-                return Err(Error::Transferencia(int));
-            }
-            if entrada {
-                cache(va, largo.max(1) as usize, true);
-            }
-            let resto = self.r(HCTSIZ).leer() & 0x7ffff;
-            return Ok(largo - resto);
         }
         Err(Error::Plazo)
+    }
+
+    /// Una transacción en el canal 0: `tipo` 0 control, 3 interrupción. Un NAK vuelve como `Error::Nak`.
+    #[allow(clippy::too_many_arguments)]
+    fn transaccion_en(&self, direccion: u32, punto: u32, tipo: u32, mps: u32, entrada: bool, pid: u32, datos: usize, largo: u32) -> Result<u32, Error> {
+        let va = mmu::virt(self.bufer as usize) + datos;
+        let paquetes = if largo == 0 { 1 } else { largo.div_ceil(mps) };
+        cache(va, largo.max(1) as usize, entrada);
+        self.r(HCINT).escribir(0xffff_ffff);
+        self.r(HCINTMSK).escribir(0x7ff);
+        self.r(HCTSIZ).escribir((pid << 29) | (paquetes << 19) | largo);
+        self.r(HCDMA).escribir((self.bufer + datos as u64 + BUS_RAM) as u32);
+        let lenta = if self.velocidad() == 2 { 1 << 17 } else { 0 };
+        self.r(HCCHAR).escribir(
+            HCCHAR_HABILITAR | (1 << 20) | (direccion << 22) | (tipo << 18) | lenta | (punto << 11)
+                | if entrada { HCCHAR_ENTRADA } else { 0 } | mps,
+        );
+        self.esperar(|s| s.r(HCINT).leer() & PARADO_O_HECHO != 0, 100_000)?;
+        let int = self.r(HCINT).leer();
+        if int & HCINT_STALL != 0 {
+            return Err(Error::Stall);
+        }
+        if int & HCINT_NAK != 0 && int & HCINT_HECHO == 0 {
+            return Err(Error::Nak);
+        }
+        if int & HCINT_HECHO == 0 {
+            return Err(Error::Transferencia(int));
+        }
+        if entrada {
+            cache(va, largo.max(1) as usize, true);
+        }
+        let resto = self.r(HCTSIZ).leer() & 0x7ffff;
+        Ok(largo - resto)
+    }
+
+    /// Lee un informe de un punto de interrupción de entrada. `None` si no hay nada nuevo (NAK).
+    pub fn leer_interrupcion(&self, p: &mut PuntoInterrupcion) -> Result<Option<&[u8]>, Error> {
+        let pid = if p.dato1 { PID_DATA1 } else { PID_DATA0 };
+        match self.transaccion_en(p.direccion, p.punto, 3, p.mps, true, pid, 512, p.mps) {
+            Err(Error::Nak) => Ok(None),
+            Err(e) => Err(e),
+            Ok(n) => {
+                p.dato1 = !p.dato1;
+                let va = mmu::virt(self.bufer as usize) as *const u8;
+                Ok(Some(unsafe { core::slice::from_raw_parts(va.add(512), n as usize) }))
+            }
+        }
+    }
+
+    /// Petición de control sin datos.
+    pub fn orden(&self, direccion: u32, setup: [u8; 8]) -> Result<(), Error> {
+        self.control(direccion, setup, 0).map(|_| ())
     }
 
     /// Transferencia de control (USB 2.0, 8.5.3): SETUP, datos de entrada si `largo` > 0, y estado.
@@ -218,7 +264,7 @@ impl Dwc2 {
         if d.len() < 8 || d[1] != 1 {
             return Err(Error::Transferencia(0));
         }
-        self.tamano_ep0 = d[7] as u32;
+        self.mps[direccion as usize & 15] = d[7] as u32;
         let d = self.control(direccion, pedir(18), 18)?;
         if d.len() < 18 {
             return Err(Error::Transferencia(1));
@@ -233,7 +279,8 @@ impl Dwc2 {
     }
 
     /// SET_ADDRESS.
-    pub fn poner_direccion(&self, nueva: u32) -> Result<(), Error> {
+    pub fn poner_direccion(&mut self, nueva: u32) -> Result<(), Error> {
+        self.mps[nueva as usize & 15] = self.mps[0];
         self.control(0, [0, 5, nueva as u8, 0, 0, 0, 0, 0], 0)?;
         esperar_us(2000); // 2 ms para que el dispositivo cambie (USB 2.0, 9.2.6.3)
         Ok(())
@@ -241,3 +288,104 @@ impl Dwc2 {
 }
 
 const PARADO_O_HECHO: u32 = HCINT_PARADO | HCINT_HECHO;
+
+// Peticiones de hub (USB 2.0, 11.24.2).
+const PUERTO_ALIMENTACION: u8 = 8;
+const PUERTO_REINICIO: u8 = 4;
+const C_PUERTO_CONEXION: u8 = 16;
+const C_PUERTO_REINICIO: u8 = 20;
+
+impl Dwc2 {
+    fn estado_puerto(&self, hub: u32, puerto: u8) -> Result<u16, Error> {
+        let d = self.control(hub, [0xA3, 0, 0, 0, puerto, 0, 4, 0], 4)?;
+        Ok(if d.len() >= 2 { u16::from_le_bytes([d[0], d[1]]) } else { 0 })
+    }
+
+    /// Configura el hub de `hub`, enciende sus puertos y enumera lo que haya detrás. A cada dispositivo le da una
+    /// dirección a partir de `siguiente` y busca teclados y ratones de arranque.
+    pub fn enumerar_hub(&mut self, hub: u32, mut siguiente: u32, encontrados: &mut [Option<Hid>; 4]) -> Result<u32, Error> {
+        self.orden(hub, [0x00, 9, 1, 0, 0, 0, 0, 0])?; // SET_CONFIGURATION 1
+        let d = self.control(hub, [0xA0, 6, 0, 0x29, 0, 0, 9, 0], 9)?; // descriptor de hub
+        let puertos = if d.len() > 2 { d[2] } else { 0 };
+        let espera = if d.len() > 5 { d[5] as u64 * 2 } else { 100 };
+        for p in 1..=puertos {
+            self.orden(hub, [0x23, 3, PUERTO_ALIMENTACION, 0, p, 0, 0, 0])?;
+        }
+        esperar_us(espera.max(20) * 1000);
+        for p in 1..=puertos {
+            if self.estado_puerto(hub, p)? & 1 == 0 {
+                continue; // nada conectado
+            }
+            self.orden(hub, [0x23, 3, PUERTO_REINICIO, 0, p, 0, 0, 0])?;
+            esperar_us(50_000);
+            self.esperar_puerto(hub, p)?;
+            self.orden(hub, [0x23, 1, C_PUERTO_REINICIO, 0, p, 0, 0, 0])?;
+            self.orden(hub, [0x23, 1, C_PUERTO_CONEXION, 0, p, 0, 0, 0])?;
+            esperar_us(10_000);
+            let desc = self.descriptor(0)?;
+            let dir = siguiente;
+            siguiente += 1;
+            self.poner_direccion(dir)?;
+            crate::kprintln!("  puerto {} del hub: clase {}, {:04x}:{:04x}, dirección {}", p, desc.clase, desc.fabricante, desc.producto, dir);
+            if let Some(h) = self.configurar_hid(dir)? {
+                if let Some(hueco) = encontrados.iter_mut().find(|x| x.is_none()) {
+                    *hueco = Some(h);
+                }
+            }
+        }
+        Ok(siguiente)
+    }
+
+    fn esperar_puerto(&self, hub: u32, p: u8) -> Result<(), Error> {
+        for _ in 0..50 {
+            let e = self.estado_puerto(hub, p)?;
+            if e & (1 << 4) == 0 && e & (1 << 1) != 0 {
+                return Ok(()); // reinicio acabado y puerto activo
+            }
+            esperar_us(5000);
+        }
+        Err(Error::Plazo)
+    }
+
+    /// Lee la configuración; si es un HID de arranque, lo configura y devuelve su punto de entrada.
+    fn configurar_hid(&mut self, dir: u32) -> Result<Option<Hid>, Error> {
+        let cab = self.control(dir, [0x80, 6, 0, 2, 0, 0, 9, 0], 9)?;
+        let total = if cab.len() >= 4 { u16::from_le_bytes([cab[2], cab[3]]).min(256) } else { 9 };
+        let valor = if cab.len() >= 6 { cab[5] } else { 1 };
+        let mut copia = [0u8; 256];
+        let n = {
+            let d = self.control(dir, [0x80, 6, 0, 2, 0, 0, total as u8, (total >> 8) as u8], total as u32)?;
+            copia[..d.len()].copy_from_slice(d);
+            d.len()
+        };
+        let mut i = 0;
+        let mut interfaz: Option<(u8, bool)> = None;
+        let mut hallado = None;
+        while i + 1 < n && copia[i] != 0 {
+            let largo = copia[i] as usize;
+            match copia[i + 1] {
+                4 if i + 8 < n => {
+                    // Interfaz: clase 3 (HID), subclase 1 (arranque), protocolo 1 teclado o 2 ratón.
+                    let (clase, sub, proto) = (copia[i + 5], copia[i + 6], copia[i + 7]);
+                    interfaz = if clase == 3 && sub == 1 && (proto == 1 || proto == 2) { Some((copia[i + 2], proto == 1)) } else { None };
+                }
+                5 if i + 6 < n => {
+                    // Punto: de entrada (bit 7) y de interrupción (tipo 3).
+                    if let Some((ifz, teclado)) = interfaz {
+                        if copia[i + 2] & 0x80 != 0 && copia[i + 3] & 3 == 3 && hallado.is_none() {
+                            let mps = u16::from_le_bytes([copia[i + 4], copia[i + 5]]) as u32 & 0x7ff;
+                            hallado = Some((ifz, Hid { teclado, entrada: PuntoInterrupcion { direccion: dir, punto: (copia[i + 2] & 0xf) as u32, mps, dato1: false } }));
+                        }
+                    }
+                }
+                _ => {}
+            }
+            i += largo.max(2);
+        }
+        self.orden(dir, [0x00, 9, valor, 0, 0, 0, 0, 0])?; // SET_CONFIGURATION
+        let Some((ifz, hid)) = hallado else { return Ok(None) };
+        self.orden(dir, [0x21, 0x0B, 0, 0, ifz, 0, 0, 0])?; // SET_PROTOCOL: arranque
+        let _ = self.orden(dir, [0x21, 0x0A, 0, 0, ifz, 0, 0, 0]); // SET_IDLE 0: puede no admitirse
+        Ok(Some(hid))
+    }
+}
