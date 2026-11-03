@@ -87,9 +87,9 @@ del kernel sobre la que irán esos controladores.
   (`drivers/gpu/drm/vc4/vc4_hvs.c`, `vc4_plane.c`, `vc4_crtc.c`, `vc4_regs.h`).
 - [x] V2 **Pixel valves y HDMI de la BCM2711**: modos, relojes, PHY, las dos salidas, interrupción de sincronía
   vertical, audio por HDMI (`vc4_hdmi.c`, `vc4_hdmi_phy.c`, `vc4_hdmi_regs.h`, `vc4_crtc.c`).
-- [~] V3 **V3D, lado del kernel**: memoria de la GPU y su MMU, envío de trabajos (binner, render, TFU, CSD),
+- [x] V3 **V3D, lado del kernel**: memoria de la GPU y su MMU, envío de trabajos (binner, render, TFU, CSD),
   interrupciones, reinicio y relojes (`drivers/gpu/drm/v3d/`).
-- [ ] V4 **Mesa v3d y v3dv frente al kernel**: qué llamadas de DRM usa Mesa con v3d y vc4, qué estructuras se pasan y
+- [~] V4 **Mesa v3d y v3dv frente al kernel**: qué llamadas de DRM usa Mesa con v3d y vc4, qué estructuras se pasan y
   qué habría que ofrecer en DashOS para portar Mesa sin cambiar su controlador (`src/gallium/drivers/v3d`,
   `src/broadcom/vulkan`, `include/drm-uapi/v3d_drm.h`). Mesa es MIT, pero se sigue el mismo método.
 
@@ -238,4 +238,10 @@ cerrar. Prueba: un servidor en el núcleo 2 y un cliente en el 3, unidos por un 
 manda uno de sus extremos dentro del mensaje; el servidor responde por ese extremo. Llegan "ping" y "pong" y los dos
 salen. Tres ejecuciones, BIEN, a la primera. Pendiente: un aviso entre núcleos (IPI) para que el despertar no espere
 al siguiente tic del otro núcleo, que hoy tarda hasta 10 ms; recortar derechos al pasar una llave.
+
+### 2026-11-03 02:5x — V3 (V3D, lado del kernel), del analista
+
+`docs/spec/hw/v3d.md`: direcciones, encendido por el buzón, identificación, MMU de la GPU, los cinco tipos de
+trabajo (binner, render, TFU, CSD, limpieza de cachés), interrupciones, reinicio, contadores y orden de bytes, con
+cita de Linux. Revisado por encima que no lleva código. V4 (lo que Mesa pide al kernel) lanzada.
 
