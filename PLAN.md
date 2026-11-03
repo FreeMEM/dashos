@@ -34,6 +34,9 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Controladores** (usuario, 2026-11-03; `docs/diseño/S12-controladores.md`): lo no documentado se hace en sala
   limpia (una sesión lee Linux y escribe la especificación, otra escribe el controlador); se acepta el firmware
   cerrado del Wi-Fi; la Pi 4 se compra al terminar la fase Base en QEMU.
+- **Dash en los dos sistemas** (usuario, 2026-11-03): el mismo programa Dash compila para AmigaOS 3.x (hunks 68k)
+  y para DashOS (ELF AArch64 big-endian). Cada builtin necesita su versión para DashOS; es trabajo de las sesiones
+  de Dash.
 - **Cada proceso tiene su PID** (usuario, 2026-11-03), un número que lo identifica, como en Linux. Saber el PID no da
   poder sobre el proceso: para matarlo hay que ser su dueño o administrador, como en Linux.
 - **Usuarios, grupos, propietarios y permisos como en Linux** (usuario, 2026-11-03). Ficheros y procesos tienen dueño

@@ -124,7 +124,6 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea viene y qué opción se sigue mientras.
 
-- (S11) ¿El mismo programa Dash compila para AmigaOS 3.x y para DashOS? Mientras: sí (trabajo de las sesiones de Dash).
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
@@ -318,4 +317,8 @@ versión nativa sobre rustls queda para después.
 API nativa "Amiga moderna" con POSIX al lado; kit con el modelo de MUI, y además ReAction y GadTools (en la caja y
 como caras del motor nativo) y GTK y Qt (en la caja Linux ya, en nativo más adelante). Añadido a `S11-api.md`. Las
 tres de S12, sí. Todo pasa a `PLAN.md`. Sigue abierta la de S11 sobre el mismo programa Dash en los dos sistemas.
+
+### 2026-11-03 — Decisión del usuario sobre Dash
+
+El mismo programa Dash compila para DashOS (AArch64 big-endian) y para AmigaOS 3.x (68k). Pasa a `PLAN.md`.
 
