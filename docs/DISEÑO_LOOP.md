@@ -85,7 +85,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
   bibliotecas nativas desde el JIT, recursos con dueño para matar tareas 68k sueltas (`S2-planificador.md`), ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
   DOS sobre el sistema de archivos, y qué programas 68k quedan fuera.
-- [ ] S4b **Organización a lo Amiga.** Petición del usuario (2026-11-03): volúmenes, cajones, asignaciones, `SYS:`,
+- [x] S4b **Organización a lo Amiga.** Petición del usuario (2026-11-03): volúmenes, cajones, asignaciones, `SYS:`,
   `C:`, `S:`, `L:`, `LIBS:`, `DEVS:`, `FONTS:`, `LOCALE:`, `ENV:` y `ENVARC:`, Prefs, `DEVS:Monitors`, dispositivos,
   catálogos e iconos, igual que en AmigaOS. Cómo conviven con usuarios y permisos de Linux (dónde vive lo de cada
   usuario), con los programas nativos, los 68k y los de Linux (que esperan `/usr`, `/etc`, `/home`), y con los
@@ -133,6 +133,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   dentro, DashOS por fuera.
 - (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? Mientras: sí.
 - (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? Mientras: sí.
+- (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? Mientras: `Paquetes:`.
+- (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? Mientras: sí.
+- (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -205,4 +208,12 @@ una caja usa un núcleo a la vez con un testigo (corrige S2: repartir una caja e
 Amiga como ventanas del escritorio; dos.library sobre el sistema de archivos; varias cajas; módulos del Kickstart del
 usuario como atajo; Amiberry empaquetado para lo que toca el chipset. Las bibliotecas de la caja necesitan punteros
 de 32 bits: razón de fondo para escribirlas en Dash.
+
+### 2026-11-03 — S4b (organización a lo Amiga)
+
+`docs/diseño/S4b-organizacion.md`. La idea central: las asignaciones del Amiga con la semántica de Plan 9, por
+proceso. Cada asignación de sistema es una multiasignación en tres capas (usuario, paquetes, sistema), así que
+`ENVARC:` o `LIBS:` son distintos por usuario sin que los programas lo noten. `SYS:` de solo lectura; los paquetes
+declaran sus asignaciones en vez de editar `S:User-Startup`. `DEVS:Monitors` con un fichero por salida HDMI.
+Catálogos en UTF-8, con Latin-1 para la caja. Vista POSIX para Linux con `/Volumes`, como macOS.
 
