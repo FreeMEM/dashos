@@ -110,7 +110,13 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     }
     let Objeto::Extremo(canal, lado) = destino.objeto else { return E_TIPO };
     // Las llaves que viajan salen de la tabla de quien manda. Hacen falta derechos de transferir.
-    let numeros: Vec<u32> = (0..n_llaves).map(|i| unsafe { ((llaves as *const u32).add(i)).read() }).collect();
+    // Las tablas de números de llave van en el orden de bytes del proceso (C30).
+    let numeros: Vec<u32> = (0..n_llaves)
+        .map(|i| {
+            let v = unsafe { ((llaves as *const u32).add(i)).read_unaligned() };
+            if proc_.big_endian { v } else { v.swap_bytes() }
+        })
+        .collect();
     let mut viajan = Vec::new();
     {
         let mut t = proc_.llaves.tomar();
@@ -155,7 +161,8 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
     let mut t = proc_.llaves.tomar();
     for (i, l) in m.llaves.into_iter().enumerate() {
         let n = t.instalar(l);
-        unsafe { ((llaves as *mut u32).add(i)).write(n) };
+        let n = if proc_.big_endian { n } else { n.swap_bytes() };
+        unsafe { ((llaves as *mut u32).add(i)).write_unaligned(n) };
     }
     marco.x[1] = n_llaves;
     largo

@@ -113,6 +113,20 @@ const FPEN_ATRAPAR: u64 = 0b01 << 20;
 const FPEN_LIBRE: u64 = 0b11 << 20;
 static FP_CAMBIOS: AtomicU64 = AtomicU64::new(0);
 
+/// SCTLR_EL1.E0E: orden de bytes de los datos en EL0. Cada proceso tiene el suyo (C30); el kernel sigue en
+/// big-endian (EE) y las instrucciones son siempre little-endian.
+const SCTLR_E0E: u64 = 1 << 24;
+
+fn orden_el0(big_endian: bool) {
+    let mut v: u64;
+    unsafe { core::arch::asm!("mrs {}, sctlr_el1", out(reg) v) };
+    let nuevo = if big_endian { v | SCTLR_E0E } else { v & !SCTLR_E0E };
+    if nuevo != v {
+        v = nuevo;
+        unsafe { core::arch::asm!("msr sctlr_el1, {}", "isb", in(reg) v) };
+    }
+}
+
 fn fpen(v: u64) {
     unsafe { core::arch::asm!("msr cpacr_el1, {}", "isb", in(reg) v) };
 }
@@ -362,6 +376,9 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
             (*siguiente).estado = Estado::Corriendo;
             if (*siguiente).ttbr0 != 0 {
                 crate::espacio::activar((*siguiente).ttbr0);
+            }
+            if (*siguiente).proceso != 0 {
+                orden_el0((*((*siguiente).proceso as *const crate::objetos::Proceso)).big_endian);
             }
         }
         nucleo.actual = siguiente;

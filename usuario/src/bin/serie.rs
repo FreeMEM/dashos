@@ -60,7 +60,7 @@ fn principal() -> u64 {
     if n != 4 {
         return 3;
     }
-    let intid = u32::from_be_bytes(bufer);
+    let intid = u32::from_le_bytes(bufer); // lo que escribe el kernel va en little-endian (C30)
     println!("  [serie] interrupción {} recibida como mensaje (MIS={:#x})", intid, mis);
     if mis & INT_TX != 0 { 7 } else { 4 }
 }

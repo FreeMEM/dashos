@@ -1,8 +1,8 @@
 # DashOS: guía para agentes
 
-DashOS es un sistema operativo propio para la Raspberry Pi. Implementa la API de AmigaOS 3.1 en AArch64 big-endian y
-ejecuta los programas 68k con un JIT, al estilo de Petunia. La primera placa es la Pi 4; se desarrolla en QEMU
-`raspi4b`.
+DashOS es un sistema operativo propio para la Raspberry Pi. Implementa la API de AmigaOS 3.1 en AArch64 y ejecuta
+los programas 68k con un JIT, al estilo de Petunia. Lo nativo es little-endian; la caja Amiga (el JIT y sus
+bibliotecas) es big-endian, como el 68k. La primera placa es la Pi 4; se desarrolla en QEMU `raspi4b`.
 
 Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y las fases.
 

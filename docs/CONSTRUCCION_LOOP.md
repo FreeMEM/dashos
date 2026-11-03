@@ -97,6 +97,8 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C30 **Orden de bytes por proceso** (03/11 por la tarde, decisión del usuario): lo nativo en little-endian, la
+  caja en big-endian.
 - [x] C29 **Cargador de PIE** (03/11 por la tarde, a petición de Dash): `ET_DYN` con base y pila al azar por
   encima de 4 GB.
 - [x] C28 **FPU por hilo** (03/11 por la tarde, a petición de Dash): registros de FP/SIMD por hilo, de forma perezosa.
@@ -515,6 +517,27 @@ cargador no aplica reubicaciones: lo hace el programa, como se acordó con Dash.
 (`azar.rs`: contador más splitmix64, no criptográfico). En la Pi habrá que sembrarlo con el RNG200. Prueba: un PIE
 mínimo en ensamblador (`usuario/asm/pie.s`, enlazado con el ld de Bootlin) se carga dos veces. Cae en bases
 distintas, y su código y su pila quedan por encima de 4 GB. BIEN tres de tres.
+
+### 2026-11-03 tarde — C30 (orden de bytes por proceso)
+
+El usuario decidió: lo nativo de DashOS es little-endian, y solo la caja Amiga es big-endian. Resuelve también la
+pregunta de Mesa, que va tal cual. Cambios:
+
+- Cada `Proceso` lleva su orden de bytes. El planificador pone `SCTLR_EL1.E0E` al cambiar a un hilo de otro proceso.
+  El kernel sigue en big-endian (EE).
+- `elf.rs` lee ELF de los dos órdenes (`EI_DATA`), y el proceso toma el de su ELF.
+- Las tablas de llaves que leen y escriben `canal_escribir` y `canal_leer` van en el orden del proceso. Los
+  mensajes que escribe el kernel (el número de interrupción de C20) van en little-endian.
+- `usuario/` compila por defecto para `aarch64-unknown-none-softfloat`. `hola` y `fpu_b` también se compilan en
+  big-endian. El PIE de C29 pasa a little-endian (`as -EL`, `ld -EL`).
+
+Pruebas:
+
+- `hola` corre en los dos órdenes. El primer byte de 0x11223344 es 0x44 en little-endian y 0x11 en big-endian.
+- En C28, `fpu_a` (little-endian) y `fpu_b` (big-endian) se turnan en el mismo núcleo sin romperse.
+- Los controladores de serie y SD funcionan en little-endian.
+
+BIEN tres de tres.
 
 ## Resumen de la noche
 

@@ -1,5 +1,8 @@
 # S1. Arquitectura del kernel
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 Hay que decidir qué hace el kernel y qué se queda fuera. Esa decisión marca todo lo demás: cómo se escriben los

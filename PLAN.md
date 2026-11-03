@@ -41,7 +41,7 @@ Estas decisiones son del usuario, del 2026-11-03.
   limpia (una sesión lee Linux y escribe la especificación, otra escribe el controlador); se acepta el firmware
   cerrado del Wi-Fi; la Pi 4 se compra al terminar la fase Base en QEMU.
 - **Dash en los dos sistemas** (usuario, 2026-11-03): el mismo programa Dash compila para AmigaOS 3.x (hunks 68k)
-  y para DashOS (ELF AArch64 big-endian). Cada builtin necesita su versión para DashOS; es trabajo de las sesiones
+  y para DashOS (ELF AArch64: little-endian lo nativo, big-endian las bibliotecas de la caja). Cada builtin necesita su versión para DashOS; es trabajo de las sesiones
   de Dash.
 - **Cada proceso tiene su PID** (usuario, 2026-11-03), un número que lo identifica, como en Linux. Saber el PID no da
   poder sobre el proceso: para matarlo hay que ser su dueño o administrador, como en Linux.
@@ -53,8 +53,12 @@ Estas decisiones son del usuario, del 2026-11-03.
   monitores en `DEVS:Monitors`, dispositivos, catálogos de idioma, iconos y Workbench. Se hace igual que en AmigaOS.
 - **Kernel propio.** No hay Linux debajo. Es un micronúcleo pragmático con capacidades (usuario, 2026-11-03;
   `docs/diseño/S1-kernel.md`).
-- **AArch64 big-endian.** Los programas 68k leen y escriben a mano las estructuras del sistema. Por eso el sistema
-  nativo guarda sus datos en el mismo orden de bytes que el 68k.
+- **Little-endian lo nativo, big-endian solo la caja Amiga** (usuario, 2026-11-03 por la tarde; antes era todo
+  big-endian). Los programas 68k leen y escriben a mano las estructuras del sistema, así que la caja (el JIT y sus
+  bibliotecas nativas) guarda sus datos en el orden del 68k. Todo lo demás (aplicaciones, controladores, escritorio,
+  Mesa) es little-endian, como el resto del mundo ARM: hay CPU que no admiten big-endian en EL0 (las de Apple) y el
+  software de ARM da por hecho little-endian. El kernel elige el orden de cada proceso al cambiar de hilo
+  (`SCTLR_EL1.E0E`, C30). El propio kernel sigue de momento en big-endian; no lo ve ningún programa.
 - **Punteros de 32 bits en las estructuras compartidas.** Todo lo que ve un programa 68k vive en los primeros 4 GB.
 - **Emu68 como base del JIT.** El arranque y el kernel son propios. Se explica en la sección de Emu68.
 - **Lenguajes.** El kernel, en Rust. El JIT, en C: es el de Emu68 y no se reescribe. Las bibliotecas Amiga, las
@@ -207,7 +211,7 @@ traducciones viejas. En hardware real no pasa, porque el JIT limpia las cachés.
 
 Dash vive en `~/Projects/FreeMEMLang`. Hoy dashc genera hunks 68k. DashOS le pide tres cosas:
 
-1. **Un backend AArch64 big-endian con punteros de 32 bits.** GCC apenas lo soporta: su modo ILP32 está abandonado.
+1. **Un backend AArch64 en los dos órdenes, con punteros de 32 bits en las estructuras del Amiga.** GCC apenas lo soporta: su modo ILP32 está abandonado.
    Con dashc no se depende de eso.
 2. **Un modo sin sistema debajo.** Hoy el runtime de Dash pide la memoria a exec. En DashOS, exec es lo que se escribe.
 3. **Puentes 68k a nativo generados.** Se generan a partir de los ficheros `.fd` y `.sfd`. Cada puente pasa los
@@ -256,14 +260,11 @@ resumido, en `docs/diseño/RESUMEN.md`.
 
 ## Preguntas abiertas
 
-- **Mesa y el orden de bytes** (salió de V4, `docs/spec/hw/mesa-v3d.md`, sección 10). Los controladores v3d y v3dv de
-  Mesa escriben palabras nativas para la GPU, que es little-endian. En un proceso big-endian darían datos al revés.
-  Opciones: A) los programas que usan la GPU corren como procesos little-endian (la CPU lo permite, como en la caja
-  Linux) y Mesa no se toca; B) portar Mesa a big-endian, grande y con los datos de la aplicación como problema; C) un
-  servidor de GPU little-endian con Mesa, y las aplicaciones big-endian le hablan por un protocolo, como VirGL en las
-  máquinas virtuales. El analista recomienda A. Decide el usuario.
-- Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
-  `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
+- ~~Mesa y el orden de bytes~~ (V4, `docs/spec/hw/mesa-v3d.md`, sección 10). Resuelta el 2026-11-03 por la tarde: lo
+  nativo es little-endian, así que Mesa va tal cual (era la opción A).
+- Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en EL0 para la caja Amiga
+  (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja no podría correr ahí; el resto del sistema sí.
+  Lo mismo para cualquier otra placa ARM.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas

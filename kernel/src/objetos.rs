@@ -169,6 +169,9 @@ impl TablaLlaves {
 /// Un proceso: su espacio de direcciones y su tabla de llaves.
 pub struct Proceso {
     pub ttbr0: u64,
+    /// Orden de bytes de sus datos en EL0 (SCTLR_EL1.E0E). Lo nativo de DashOS es little-endian; la caja Amiga y
+    /// sus bibliotecas, big-endian como el 68k (decisión del usuario, 03/11/2026).
+    pub big_endian: bool,
     pub espacio: Cerrojo<crate::espacio::Espacio>,
     pub llaves: Cerrojo<TablaLlaves>,
 }

@@ -1,5 +1,8 @@
 # S15. Hoja de ruta
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 Las tareas S0 a S14 dicen cómo es DashOS. Falta decir en qué orden se construye, con hitos que se puedan enseñar, y

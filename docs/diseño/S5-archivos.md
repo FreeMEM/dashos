@@ -1,5 +1,8 @@
 # S5. Sistema de archivos
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 El encargo pide un sistema de archivos rápido y seguro. Además, las tareas anteriores le piden cosas concretas:

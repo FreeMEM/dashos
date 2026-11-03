@@ -1,6 +1,7 @@
 //! Cargador de ELF para los programas de usuario (C19).
 //!
-//! ELF de 64 bits big-endian para AArch64. Cada segmento cargable va a páginas nuevas del proceso, con permisos según
+//! ELF de 64 bits para AArch64, little-endian (lo nativo de DashOS) o big-endian (la caja Amiga); el proceso corre
+//! en el orden de su ELF (C30). Cada segmento cargable va a páginas nuevas del proceso, con permisos según
 //! sus banderas. Dos clases:
 //!
 //! - `ET_EXEC`: enlazado en direcciones fijas, por debajo de 2 GB.
@@ -16,14 +17,23 @@
 use crate::espacio::{Espacio, Permiso};
 use crate::memoria::PAGINA;
 
-fn u16_(d: &[u8], o: usize) -> u16 {
-    u16::from_be_bytes([d[o], d[o + 1]])
-}
-fn u32_(d: &[u8], o: usize) -> u32 {
-    u32::from_be_bytes(d[o..o + 4].try_into().unwrap())
-}
-fn u64_(d: &[u8], o: usize) -> u64 {
-    u64::from_be_bytes(d[o..o + 8].try_into().unwrap())
+/// Lee los campos del ELF en su orden de bytes (`EI_DATA`): 1 little-endian, 2 big-endian (C30).
+#[derive(Clone, Copy)]
+struct Orden(bool);
+
+impl Orden {
+    fn u16_(self, d: &[u8], o: usize) -> u16 {
+        let b = [d[o], d[o + 1]];
+        if self.0 { u16::from_be_bytes(b) } else { u16::from_le_bytes(b) }
+    }
+    fn u32_(self, d: &[u8], o: usize) -> u32 {
+        let b = d[o..o + 4].try_into().unwrap();
+        if self.0 { u32::from_be_bytes(b) } else { u32::from_le_bytes(b) }
+    }
+    fn u64_(self, d: &[u8], o: usize) -> u64 {
+        let b = d[o..o + 8].try_into().unwrap();
+        if self.0 { u64::from_be_bytes(b) } else { u64::from_le_bytes(b) }
+    }
 }
 
 const PT_LOAD: u32 = 1;
@@ -49,6 +59,8 @@ pub struct Cargado {
     /// Valor inicial de SP.
     pub pila: u64,
     pub tamano_pila: u64,
+    /// El orden de bytes del ELF, que será el del proceso (C30).
+    pub big_endian: bool,
 }
 
 #[derive(Debug)]
@@ -71,9 +83,14 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
     if d.len() < 64 || &d[0..4] != b"\x7fELF" {
         return Err(Error::NoEsElf);
     }
-    // Clase 64 bits, datos big-endian, ejecutable o PIE, AArch64.
+    // Clase 64 bits, ejecutable o PIE, AArch64, en cualquiera de los dos órdenes de bytes.
+    if d[4] != 2 || (d[5] != 1 && d[5] != 2) {
+        return Err(Error::NoEsNuestro);
+    }
+    let orden = Orden(d[5] == 2);
+    let (u16_, u32_, u64_) = (|d, o| orden.u16_(d, o), |d, o| orden.u32_(d, o), |d, o| orden.u64_(d, o));
     let tipo = u16_(d, 16);
-    if d[4] != 2 || d[5] != 2 || (tipo != ET_EXEC && tipo != ET_DYN) || u16_(d, 18) != 183 {
+    if (tipo != ET_EXEC && tipo != ET_DYN) || u16_(d, 18) != 183 {
         return Err(Error::NoEsNuestro);
     }
     let pie = tipo == ET_DYN;
@@ -141,7 +158,7 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
         e.pagina_nueva(p, Permiso::Datos);
         p += PAGINA;
     }
-    Ok(Cargado { base, entrada, pila: tope, tamano_pila })
+    Ok(Cargado { base, entrada, pila: tope, tamano_pila, big_endian: orden.0 })
 }
 
 fn limpiar_para_ejecutar(k: usize) {

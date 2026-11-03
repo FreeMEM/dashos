@@ -8,8 +8,8 @@ dice "decidido" lo decidió el usuario; lo demás es la recomendación, pendient
 
 Un sistema operativo propio para la Raspberry Pi 4 (después la Pi 5 y otras placas), moderno por dentro y Amiga por
 fuera. Ejecuta los programas 68k de AmigaOS 3.x sin emular un Amiga entero, como Petunia en AmigaOS 4, y aprovecha
-el software de Linux en una máquina virtual. El kernel es big-endian, en Rust, y las aplicaciones se escriben en
-Dash.
+el software de Linux en una máquina virtual. El kernel está en Rust y las aplicaciones se escriben en Dash. Lo
+nativo es little-endian; solo la caja Amiga es big-endian (decidido el 03/11 por la tarde: ver `PLAN.md`).
 
 ## Principios (S0)
 
@@ -89,7 +89,7 @@ escritorio, como ChromeOS y WSL2; y la capa de llamadas de Linux solo más adela
 - **API nativa con los conceptos del Amiga, de 64 bits y sobre capacidades, con POSIX al lado** (decidido).
 - **Motor de interfaz con el modelo de MUI, y caras de ReAction y GadTools; GTK y Qt en la caja Linux** (decidido).
 - **El mismo programa Dash compila para DashOS y para AmigaOS 68k** (decidido).
-- ELF big-endian; las `.library` nativas se abren por nombre y versión. Al kernel solo por una biblioteca.
+- ELF little-endian, o big-endian para las bibliotecas de la caja; las `.library` nativas se abren por nombre y versión. Al kernel solo por una biblioteca.
 
 ## Hardware (S12, S13, S14)
 

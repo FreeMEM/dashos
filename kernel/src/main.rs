@@ -313,6 +313,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
+        big_endian: true,
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
     });
@@ -579,7 +580,9 @@ fn prueba_recoger() {
 }
 
 /// C19: un programa de usuario escrito en Rust (`usuario/src/bin/hola.rs`), cargado desde su ELF.
-static HOLA: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/hola");
+static HOLA: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola");
+/// El mismo programa en big-endian, como un programa de la caja Amiga (C30).
+static HOLA_BE: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/hola");
 
 struct ArranqueElf {
     proceso: usize,
@@ -617,6 +620,7 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
     }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
+        big_endian: cargado.big_endian,
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
     });
@@ -640,11 +644,17 @@ fn prueba_rust() {
     }
     esperar_tics(20);
     kprintln!("C19: programa en Rust lanzado");
+    // C30: el mismo programa en big-endian, como uno de la caja Amiga. Ve el primer byte de 0x11223344 como 0x11.
+    if !lanzar_elf(HOLA_BE, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    esperar_tics(20);
+    kprintln!("C30: el mismo programa en big-endian lanzado");
 }
 
 /// C20: un controlador fuera del kernel (`usuario/src/bin/serie.rs`). Recibe la llave de los registros del PL011
 /// y la de su interrupción; escribe por su cuenta y espera la interrupción como mensaje.
-static SERIE: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/serie");
+static SERIE: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/serie");
 
 fn prueba_controlador(direccion: usize) {
     let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
@@ -677,7 +687,7 @@ fn prueba_controlador(direccion: usize) {
 
 /// C21: controlador de la tarjeta SD fuera del kernel (`usuario/src/bin/sd.rs`). Recibe los registros del EMMC2
 /// (la tarjeta en la Pi 4) y los del SDHCI clásico (la tarjeta en QEMU).
-static SD: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/sd");
+static SD: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sd");
 
 fn prueba_sd(direccion: usize) {
     let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
@@ -991,7 +1001,8 @@ fn prueba_bo() {
 
 /// C28: registros de FP/SIMD por hilo. Dos procesos en el mismo núcleo llenan los 32 registros con patrones distintos
 /// y comprueban que el otro no se los pisa (`usuario/src/fpu_comun.rs`). Salen con 28 si todo va bien.
-static FPU_A: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/fpu_a");
+static FPU_A: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/fpu_a");
+/// B va en big-endian (C30): así los dos procesos se turnan en el mismo núcleo con órdenes de bytes distintos.
 static FPU_B: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/fpu_b");
 
 fn prueba_fpu() {

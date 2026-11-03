@@ -44,11 +44,18 @@ C15: pantalla del firmware bien
 C16: doble búfer y daños bien
 C17: avisos entre núcleos bien
 C18: recogida bien
+  hola desde Rust en EL0 (DashOS, little-endian)
+  la suma de 1 a 100 es 5050
+  memoria propia proyectada (0); primer byte de 0x11223344: 0x44
+  40 KB en la pila: suma 5222400
+sale con código 5
+C19: programa en Rust lanzado
   hola desde Rust en EL0 (DashOS, big-endian)
   la suma de 1 a 100 es 5050
   memoria propia proyectada (0); primer byte de 0x11223344: 0x11
   40 KB en la pila: suma 5222400
-C19: programa en Rust lanzado
+sale con código 5
+C30: el mismo programa en big-endian lanzado
   [serie] escrito por un controlador en EL0, sin pasar por el kernel
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7

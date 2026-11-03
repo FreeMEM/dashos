@@ -10,8 +10,9 @@ all: $(IMAGEN)
 
 $(IMAGEN): FORCE
 	cd ../usuario && cargo build --release
-	$(BOOTLIN)/aarch64_be-linux-as -o $(PIE).o ../usuario/asm/pie.s
-	$(BOOTLIN)/aarch64_be-linux-ld -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
+	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
+	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
+	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
 	cargo build $(if $(filter release,$(PERFIL)),--release,)
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 

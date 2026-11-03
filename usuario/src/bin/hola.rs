@@ -1,4 +1,5 @@
-//! C19: el primer programa de DashOS escrito en Rust.
+//! C19: el primer programa de DashOS escrito en Rust. Se compila en los dos órdenes de bytes (C30): little-endian, lo
+//! nativo, y big-endian, como un programa de la caja Amiga. Cada uno ve los bytes de una palabra en su orden.
 
 #![no_std]
 #![no_main]
@@ -8,7 +9,8 @@ use dashos::println;
 dashos::programa!(principal);
 
 fn principal() -> u64 {
-    println!("  hola desde Rust en EL0 (DashOS, big-endian)");
+    let orden = if cfg!(target_endian = "big") { "big-endian" } else { "little-endian" };
+    println!("  hola desde Rust en EL0 (DashOS, {})", orden);
     let suma: u64 = (1..=100u64).sum();
     println!("  la suma de 1 a 100 es {}", suma);
     // Un objeto de memoria propio, proyectado y usado.
@@ -25,5 +27,6 @@ fn principal() -> u64 {
     }
     let total: u64 = core::hint::black_box(&grande).iter().map(|&b| b as u64).sum();
     println!("  40 KB en la pila: suma {}", total);
-    if suma == 5050 && primero == 0x11 && total == 5_222_400 { 5 } else { 1 }
+    let esperado = if cfg!(target_endian = "big") { 0x11 } else { 0x44 };
+    if suma == 5050 && primero == esperado && total == 5_222_400 { 5 } else { 1 }
 }

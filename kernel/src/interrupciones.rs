@@ -136,7 +136,8 @@ fn entregar(intid: u32) {
     let Some(o) = objeto else { return };
     let destino = o.destino.tomar().clone();
     if let Some((canal, lado)) = destino {
-        let m = Mensaje { datos: intid.to_be_bytes().to_vec(), llaves: Vec::new() };
+        // Los mensajes que escribe el kernel van en little-endian, el orden nativo de DashOS (C30).
+        let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new() };
         let _ = canal.escribir(lado, m);
     }
 }

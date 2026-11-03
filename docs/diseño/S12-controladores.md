@@ -1,5 +1,8 @@
 # S12. Controladores de la Pi 4
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 Hay que decir qué controladores necesita DashOS en la Pi 4, en qué orden, de dónde sale la información para

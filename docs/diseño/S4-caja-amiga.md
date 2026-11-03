@@ -1,5 +1,8 @@
 # S4. La caja Amiga
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 La caja Amiga es donde viven los programas 68k. Es un proceso de DashOS (S1) con su propio exec. Por dentro tiene que

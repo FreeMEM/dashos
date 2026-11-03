@@ -1,5 +1,8 @@
 # S13. Red
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 DashOS necesita una pila TCP/IP, cortafuegos, resolución de nombres, TLS y Wi-Fi. Y tres clases de programas tienen

@@ -1,5 +1,8 @@
 # S14. Arranque, servicios y actualizaciones
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 Hay que llevar la Pi 4 del encendido al escritorio en el menor tiempo posible (meta de S0: del kernel al escritorio

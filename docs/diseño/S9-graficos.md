@@ -1,5 +1,8 @@
 # S9. Gráficos
 
+> **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
+> big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
+
 ## El problema
 
 DashOS tiene que pintar el escritorio en una o dos pantallas, con fluidez aunque el sistema esté cargado (meta de
