@@ -6,6 +6,9 @@ use core::sync::atomic::{AtomicUsize, Ordering};
 
 static DIST: AtomicUsize = AtomicUsize::new(0);
 static CPU: AtomicUsize = AtomicUsize::new(0);
+/// Para leer, cambiar y escribir los registros que comparten varias interrupciones (prioridad y destino) desde
+/// varios núcleos sin pisarse (auditoría, bajos).
+static RMW: crate::cerrojo::CerrojoIrq<()> = crate::cerrojo::CerrojoIrq::new(());
 
 fn d(off: usize) -> RegLe32 {
     RegLe32::new(DIST.load(Ordering::Relaxed) + off)
@@ -56,6 +59,7 @@ pub fn habilitar(intid: u32, prioridad: u8) {
     // IPRIORITYR: un byte por interrupción; en un registro little-endian, el byte n es el de la interrupción 4k+n.
     let r = d(GICD_IPRIORITYR + (i & !3));
     let desp = (i & 3) * 8;
+    let _g = RMW.tomar();
     r.escribir((r.leer() & !(0xff << desp)) | ((prioridad as u32) << desp));
     d(GICD_ISENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
 }
@@ -71,6 +75,7 @@ pub fn dirigir(intid: u32, nucleo: u32) {
     let i = intid as usize;
     let r = d(GICD_ITARGETSR + (i & !3));
     let desp = (i & 3) * 8;
+    let _g = RMW.tomar();
     r.escribir((r.leer() & !(0xff << desp)) | ((1u32 << nucleo) << desp));
 }
 

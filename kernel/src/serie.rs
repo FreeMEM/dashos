@@ -26,8 +26,17 @@ pub fn iniciar() {
     CR.escribir((1 << 0) | (1 << 8) | (1 << 9)); // UART, TX y RX
 }
 
+/// Espera a que haya hueco, pero no para siempre: el controlador serie de EL0 comparte este PL011 y podría apagarlo.
+/// Entonces el byte se pierde y el kernel sigue (auditoría, hallazgo 9). A 115200 baudios un byte tarda unos 87 µs;
+/// el límite da para varios.
 pub fn escribir_byte(b: u8) {
-    while FR.leer() & FR_TXFF != 0 {}
+    let mut vueltas = 0u32;
+    while FR.leer() & FR_TXFF != 0 {
+        vueltas += 1;
+        if vueltas > 200_000 {
+            return;
+        }
+    }
     DR.escribir(b as u32);
 }
 
@@ -45,8 +54,9 @@ impl fmt::Write for Serie {
     }
 }
 
-/// Un cerrojo para que las líneas de varios núcleos no se mezclen (C9). No se imprime desde interrupciones.
-static CERROJO: crate::cerrojo::Cerrojo<()> = crate::cerrojo::Cerrojo::new(());
+/// Un cerrojo para que las líneas de varios núcleos no se mezclen (C9). Enmascara las IRQ: así se puede imprimir desde
+/// una interrupción sin colgar el núcleo cuando el hilo interrumpido estaba imprimiendo (auditoría, bajos).
+static CERROJO: crate::cerrojo::CerrojoIrq<()> = crate::cerrojo::CerrojoIrq::new(());
 
 pub fn imprimir(args: fmt::Arguments) {
     let _g = CERROJO.tomar();

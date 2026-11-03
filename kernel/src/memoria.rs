@@ -16,6 +16,8 @@ pub const RESERVA: usize = 8192;
 /// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa.
 const MAX_PAGINAS: usize = (8u64 << 30) as usize / PAGINA as usize;
 const PALABRAS: usize = MAX_PAGINAS / 64;
+/// Lo que cubre el mapa lineal del kernel: 4 GB.
+const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Zona {
@@ -84,7 +86,11 @@ impl Paginas {
             self.pista = PALABRAS - 1;
         }
         let primera = (dir / PAGINA) as usize;
-        let ultima = (((dir + tam + PAGINA - 1) / PAGINA) as usize).min(MAX_PAGINAS);
+        // Solo se reparte lo que ve el mapa lineal del kernel (4 GB, arranque.s). En una Pi de 8 GB, lo de arriba se
+        // queda sin usar hasta que el mapa del kernel se haga por páginas (S16, fase 2); antes se repartía y el kernel
+        // caía al tocarlo (auditoría, bajos).
+        let tope = if ocupada { MAX_PAGINAS } else { MAPA_LINEAL };
+        let ultima = (((dir + tam + PAGINA - 1) / PAGINA) as usize).min(tope);
         for p in primera..ultima {
             if ocupada || p < MAX_PAGINAS {
                 self.marcar(p, ocupada);
@@ -98,8 +104,9 @@ impl Paginas {
             let mut i = 0;
             while let Some((dir, tam)) = d.reg(&m, i) {
                 self.marcar_tramo(dir, tam, false);
-                self.total += (tam / PAGINA) as usize;
-                self.max_pagina = self.max_pagina.max(((dir + tam) / PAGINA) as usize);
+                let fin = (((dir + tam) / PAGINA) as usize).min(MAPA_LINEAL);
+                self.total += fin.saturating_sub((dir / PAGINA) as usize);
+                self.max_pagina = self.max_pagina.max(fin);
                 i += 1;
             }
         }

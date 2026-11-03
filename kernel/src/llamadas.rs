@@ -134,13 +134,22 @@ pub fn atender(marco: &mut Marco) {
 fn escribir_consola(p: u64, n: u64) -> u64 {
     let n = n.min(4096);
     let Some(texto) = leer_usuario(p, n as usize) else { return E_ARGUMENTO };
-    // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto.
+    // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto. Los
+    // caracteres de control, salvo el salto de línea y el tabulador, también: así un proceso no manda secuencias
+    // de escape al terminal (auditoría, bajos).
+    let mut limpio = alloc::string::String::new();
+    if limpio.try_reserve(texto.len()).is_err() {
+        return E_MEMORIA;
+    }
     for trozo in texto.utf8_chunks() {
-        kprint!("{}", trozo.valid());
+        for c in trozo.valid().chars() {
+            limpio.push(if c.is_control() && c != '\n' && c != '\t' { '?' } else { c });
+        }
         for _ in trozo.invalid() {
-            kprint!("?");
+            limpio.push('?');
         }
     }
+    kprint!("{}", limpio);
     n as u64
 }
 
@@ -349,7 +358,8 @@ fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
     };
     let (Some(irq), Some(canal)) = (irq, canal) else { return E_LLAVE };
     let (Objeto::Interrupcion(i), Objeto::Extremo(c, lado)) = (irq.objeto, canal.objeto) else { return E_TIPO };
-    if canal.derechos & objetos::ESCRIBIR == 0 {
+    // Controlar una interrupción pide el derecho de escribir en su llave, y que lleguen al canal, el de escribir en él.
+    if canal.derechos & objetos::ESCRIBIR == 0 || irq.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
     i.asociar(c, lado);
@@ -360,6 +370,9 @@ fn interrupcion_terminar(h: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Interrupcion(i) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
     i.terminar();
     0
 }

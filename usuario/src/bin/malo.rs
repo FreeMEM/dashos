@@ -158,6 +158,8 @@ fn principal() -> u64 {
     }
     x0(6, [a as u64, 0, 0, 0, 0]);
     x0(6, [b as u64, 0, 0, 0, 0]);
+    // 25: una secuencia de escape no llega al terminal: sale "?" en lugar del ESC.
+    dashos::escribir("  [malo] escape: \x1b[31m\n");
     println!("  [malo] memoria agotada en {} trozos de 64 MB y tabla llena en {} canales, sin pánico", n, canales);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31

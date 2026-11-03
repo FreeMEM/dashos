@@ -117,7 +117,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 ### Detalles
 
 - **1, `escribir`.** Va a la consola del sistema, que hoy es el puerto serie. El texto se interpreta como UTF-8, y
-  cada byte que no lo sea sale como `?`. Es provisional: la consola será un servicio.
+  cada byte que no lo sea sale como `?`. Los caracteres de control también, salvo el salto de línea y el tabulador.
+  Es provisional: la consola será un servicio.
 - **4, `canal_escribir`.**
   - Hasta 256 bytes de datos y 8 llaves por mensaje.
   - Las llaves enviadas salen de la tabla de quien escribe y entran en la de quien lee, con los mismos derechos.
@@ -154,6 +155,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Cuando llega la interrupción, el kernel la enmascara y escribe en el canal un mensaje de 4 bytes con su número,
     **siempre en little-endian**.
 - **11, `interrupcion_terminar`.** La vuelve a habilitar cuando el controlador ya ha atendido el aparato.
+- **10 y 11.** Las dos piden el derecho de escribir en la llave de la interrupción.
 
 ### Errores
 

@@ -662,6 +662,21 @@ kernel por páginas (fase 2).
 cierra el primero. Sin el arreglo, el kernel cae con una excepción en EL1; con él, sigue. C14 falló una vez de
 cuatro, como antes.
 
+### 2026-11-03 tarde — C32, sexta vuelta (hallazgo 9 y bajos)
+
+- **Hallazgo 9.** `escribir_byte` deja de esperar sin límite a que el PL011 tenga hueco: si el controlador de EL0 lo
+  apaga, los mensajes del kernel se pierden y el kernel sigue. La consola de registro propia es de la fase 4.
+- **Consola.** El cerrojo de la serie enmascara las IRQ, así que imprimir desde una interrupción ya no cuelga el
+  núcleo. `escribir` cambia por "?" los caracteres de control salvo salto de línea y tabulador, y saca el texto de
+  una vez.
+- **Interrupciones.** `interrupcion_asociar` e `interrupcion_terminar` piden el derecho de escribir en la llave de la
+  interrupción.
+- **GIC.** Leer, cambiar y escribir la prioridad y el destino va con cerrojo.
+- **8 GB.** Solo se reparte memoria por debajo de 4 GB, lo que ve el mapa lineal.
+
+**Pruebas.** `malo`, paso 25: una secuencia de escape sale como "?[31m". Lo demás no tiene prueba en QEMU: la placa
+de QEMU tiene menos de 4 GB y la serie no se apaga.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al
