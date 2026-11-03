@@ -581,28 +581,28 @@ static HOLA: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-non
 struct ArranqueElf {
     proceso: usize,
     entrada: u64,
+    pila: u64,
 }
 
 extern "C" fn arrancar_elf(a: usize) {
     let a = unsafe { alloc::boxed::Box::from_raw(a as *mut ArranqueElf) };
     let p = unsafe { &*(a.proceso as *const objetos::Proceso) };
     planificador::asignar_espacio(p.ttbr0);
-    unsafe { entrar_el0(a.entrada, VA_PILA + memoria::PAGINA) };
+    unsafe { entrar_el0(a.entrada, a.pila) };
 }
 
 /// Carga un ELF de usuario en un proceso nuevo, con estas llaves (serán la 1, la 2...), y lo arranca.
 fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> bool {
-    use espacio::{Espacio, Permiso};
+    use espacio::Espacio;
     let mut e = Espacio::nuevo();
-    let entrada = match elf::cargar(&mut e, binario) {
+    let cargado = match elf::cargar(&mut e, binario) {
         Ok(x) => x,
         Err(err) => {
             kprintln!("  no se pudo cargar el ELF: {:?}", err);
             return false;
         }
     };
-    e.pagina_nueva(VA_PILA, Permiso::Datos);
-    kprintln!("  ELF de {} bytes cargado, entrada {:#x}", binario.len(), entrada);
+    kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
     let mut tabla = objetos::TablaLlaves::default();
     for l in llaves {
         tabla.instalar(l);
@@ -613,7 +613,7 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
         llaves: cerrojo::Cerrojo::new(tabla),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
-    let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada }));
+    let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada: cargado.entrada, pila: cargado.pila }));
     planificador::crear_en(arrancar_elf, arranque as usize, nucleo, ptr);
     true
 }

@@ -459,3 +459,12 @@ El usuario confirmó el backend AArch64 de Dash. Va en la rama `aarch64` de Free
 `docs/AARCH64_LOOP.md`, por fases de A1 a A7. Preguntó qué ELF queremos. Respuesta: estático, ET_EXEC big-endian,
 en 0x400000, sin relocaciones. Segmentos alineados a 4 KB y sin compartir página. Pila de una página bajo 0x800000.
 Funciones de plataforma sobre las llamadas provisionales 1, 2, 7 y 8, como única capa que conozca sus números.
+
+### 2026-11-03 08:2x — Pila de los programas ELF (petición de Dash)
+
+La sesión de Dash pidió más pila: 16 KB para un programa Dash, 32 KB con MUI y 64 KB con TLS. `kernel/src/elf.rs`
+lee ahora el `p_memsz` del `PT_GNU_STACK` (con lld, `-z stack-size=N`). Sin él da 64 KB, y como mucho 8 MB. La pila
+va justo debajo de 2 GB (`0x80000000`), porque Dash quiere toda la memoria de un programa por debajo de 2 GB.
+Ningún segmento puede pasar de 2 GB menos 8 MB. Prueba: `hola` usa 40 KB de pila, que antes fallaban; `sd` pide 128
+KB con `-zstack-size=131072` (en `usuario/build.rs`) y los recibe. BIEN dos de tres. La tercera falló otra vez en
+C14, con el analista de V5 cargando la máquina.

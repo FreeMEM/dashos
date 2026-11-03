@@ -47,11 +47,13 @@ C18: recogida bien
   hola desde Rust en EL0 (DashOS, big-endian)
   la suma de 1 a 100 es 5050
   memoria propia proyectada (0); primer byte de 0x11223344: 0x11
+  40 KB en la pila: suma 5222400
 C19: programa en Rust lanzado
   [serie] escrito por un controlador en EL0, sin pasar por el kernel
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7
 C20: controlador fuera del kernel lanzado
+pila de 128 KB
   [sd] sector 0: "DashOS: primer sector de la tarjeta SD", firma 0x55aa
   [sd] sector 1: "segundo sector: bien"
 sale con código 9
