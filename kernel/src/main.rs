@@ -43,6 +43,7 @@ mod usb;
 mod interrupciones;
 mod llamadas;
 mod objetos;
+mod procesos;
 mod reloj;
 mod serie;
 // Las pruebas tocan el hardware a mano; no van en la imagen normal.

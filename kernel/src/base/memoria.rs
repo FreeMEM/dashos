@@ -333,6 +333,49 @@ impl Memoria {
         self.paginas.len()
     }
 
+    /// Llena `buf` con el contenido desde el byte `desde`. Falso si se sale del objeto (C39).
+    pub fn leer(&self, desde: usize, buf: &mut [u8]) -> bool {
+        self.copiar(desde, buf.len(), |pagina, en_buf, n| buf[en_buf..en_buf + n].copy_from_slice(&pagina[..n]))
+    }
+
+    /// Escribe `datos` desde el byte `desde`. Falso si se sale del objeto.
+    pub fn escribir(&self, desde: usize, datos: &[u8]) -> bool {
+        self.copiar_mut(desde, datos.len(), |pagina, en_datos, n| pagina[..n].copy_from_slice(&datos[en_datos..en_datos + n]))
+    }
+
+    fn tramos(&self, desde: usize, largo: usize, mut f: impl FnMut(u64, usize, usize, usize)) -> bool {
+        let pag = PAGINA as usize;
+        match desde.checked_add(largo) {
+            Some(fin) if fin <= self.paginas.len() * pag => {}
+            _ => return false,
+        }
+        let mut hecho = 0;
+        while hecho < largo {
+            let pos = desde + hecho;
+            let dentro = pos % pag;
+            let n = (pag - dentro).min(largo - hecho);
+            f(self.paginas[pos / pag], dentro, hecho, n);
+            hecho += n;
+        }
+        true
+    }
+
+    fn copiar(&self, desde: usize, largo: usize, mut f: impl FnMut(&[u8], usize, usize)) -> bool {
+        self.tramos(desde, largo, |fisica, dentro, hecho, n| {
+            // Las páginas son del objeto y el mapa lineal las ve; el proceso puede estar escribiéndolas a la vez, así
+            // que se copian como bytes sin más garantía que la de cualquier memoria compartida.
+            let p = unsafe { core::slice::from_raw_parts((crate::mmu::virt(fisica as usize) + dentro) as *const u8, n) };
+            f(p, hecho, n);
+        })
+    }
+
+    fn copiar_mut(&self, desde: usize, largo: usize, mut f: impl FnMut(&mut [u8], usize, usize)) -> bool {
+        self.tramos(desde, largo, |fisica, dentro, hecho, n| {
+            let p = unsafe { core::slice::from_raw_parts_mut((crate::mmu::virt(fisica as usize) + dentro) as *mut u8, n) };
+            f(p, hecho, n);
+        })
+    }
+
     pub(super) fn fisicas(&self) -> &[u64] {
         &self.paginas
     }

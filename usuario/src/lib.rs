@@ -79,6 +79,22 @@ pub fn interrupcion_terminar(llave: u32) -> i64 {
     llamada(11, [llave as u64, 0, 0, 0, 0]).0 as i64
 }
 
+/// Lanza un proceso con el ELF que hay en el objeto de memoria `memoria` (sus primeros `tamano` bytes). `llaves` pasan
+/// a ser sus llaves 1, 2... Devuelve la llave del proceso o un error negativo (C39).
+pub fn proceso_crear(memoria: u32, tamano: usize, llaves: &[u32]) -> i64 {
+    llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, 0]).0 as i64
+}
+
+pub fn proceso_matar(proceso: u32) -> i64 {
+    llamada(13, [proceso as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// Espera a que acabe: (clase, código). Clase 0 salió con ese código, 1 lo mataron, 2 murió por un fallo.
+pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
+    let (a, b) = llamada(14, [proceso as u64, 0, 0, 0, 0]);
+    (a as i64, b)
+}
+
 /// Escritura con formato a la consola, por trozos.
 pub struct Consola;
 

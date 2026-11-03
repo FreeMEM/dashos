@@ -46,6 +46,12 @@ impl<T> Cerrojo<T> {
 }
 
 /// La guarda no se puede pasar a otro hilo: repone las IRQ del núcleo donde se tomó.
+impl<T: Default> Default for Cerrojo<T> {
+    fn default() -> Self {
+        Self::new(T::default())
+    }
+}
+
 pub struct Guarda<'a, T> {
     cerrojo: &'a Cerrojo<T>,
     daif: u64,

@@ -16,6 +16,9 @@
 //! | 9 | registros_proyectar(llave, dirección): los registros de un aparato, como memoria de dispositivo |
 //! | 10 | interrupcion_asociar(llave de interrupción, llave de canal): llegará como mensaje a ese canal |
 //! | 11 | interrupcion_terminar(llave): ya atendida; se vuelve a habilitar |
+//! | 12 | proceso_crear(llave de memoria con el ELF, tamaño, llaves, n_llaves) -> llave de proceso |
+//! | 13 | proceso_matar(llave de proceso) |
+//! | 14 | proceso_esperar(llave de proceso) -> (clase, código): 0 salió con código, 1 lo mataron, 2 un fallo |
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -102,7 +105,7 @@ pub fn atender(marco: &mut Marco) {
                 kprintln!("  [hilo {}] sale con código {}", planificador::actual_id(), a[0]);
             }
             SALIDAS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
-            planificador::terminar_actual();
+            planificador::terminar_actual(objetos::Fin::Salida(a[0]));
         }
         3 => canal_crear(marco),
         // Solo con las pruebas (C34, C36): 1 si el kernel ve la dirección de usuario fuera de una copia. Tiene que
@@ -117,6 +120,9 @@ pub fn atender(marco: &mut Marco) {
         9 => registros_proyectar(a[0] as u32, a[1]),
         10 => interrupcion_asociar(a[0] as u32, a[1] as u32),
         11 => interrupcion_terminar(a[0] as u32),
+        12 => proceso_crear(a[0] as u32, a[1], a[2], a[3]),
+        13 => proceso_matar(a[0] as u32),
+        14 => proceso_esperar(marco, a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -349,4 +355,117 @@ fn interrupcion_terminar(h: u32) -> u64 {
     }
     i.terminar();
     0
+}
+
+/// Saca de la tabla del proceso las llaves de `numeros`, todas con derecho de transferir y sin repetir. Si alguna no
+/// vale, no saca ninguna.
+fn sacar_llaves(proc_: &objetos::Proceso, numeros: &[u32]) -> Result<Vec<objetos::Llave>, u64> {
+    let mut t = proc_.llaves.tomar();
+    for (i, &n) in numeros.iter().enumerate() {
+        if numeros[..i].contains(&n) {
+            return Err(E_ARGUMENTO);
+        }
+        match t.ver(n) {
+            Some(l) if l.derechos & objetos::TRANSFERIR != 0 => {}
+            Some(_) => return Err(E_DERECHOS),
+            None => return Err(E_LLAVE),
+        }
+    }
+    Ok(numeros.iter().filter_map(|&n| t.quitar(n)).collect())
+}
+
+fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if n_llaves as usize > MAX_LLAVES {
+        return E_TAMANO;
+    }
+    let Some(tabla) = leer_usuario(llaves, 4 * n_llaves as usize) else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    if tamano == 0 || tamano > (m.paginas() as u64) * crate::memoria::PAGINA {
+        return E_TAMANO;
+    }
+    // La llave del proceso nuevo tiene que caber antes de lanzarlo.
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let mut binario = Vec::new();
+    if binario.try_reserve_exact(tamano as usize).is_err() {
+        return E_MEMORIA;
+    }
+    binario.resize(tamano as usize, 0);
+    if !m.leer(0, &mut binario) {
+        return E_TAMANO;
+    }
+    let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
+    let viajan = match sacar_llaves(&proc_, &numeros) {
+        Ok(v) => v,
+        Err(e) => return e,
+    };
+    match crate::procesos::lanzar(&binario, viajan, None) {
+        Ok((control, _)) => {
+            let llave = objetos::Llave { objeto: Objeto::Proceso(control.clone()), derechos: objetos::TODOS };
+            match proc_.llaves.tomar().instalar(llave) {
+                Ok(n) => n as u64,
+                Err(_) => {
+                    // No cabía la llave (otro hilo llenó la tabla): sin llave nadie lo controlaría, así que muere.
+                    planificador::matar_proceso(&control);
+                    E_LIMITE
+                }
+            }
+        }
+        Err((error, devueltas)) => {
+            let mut t = proc_.llaves.tomar();
+            for (&n, l) in numeros.iter().zip(devueltas) {
+                t.reponer(n, l);
+            }
+            match error {
+                crate::procesos::Error::SinMemoria => E_MEMORIA,
+                crate::procesos::Error::Elf(_) => E_ARGUMENTO,
+            }
+        }
+    }
+}
+
+fn proceso_matar(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    planificador::matar_proceso(&c);
+    0
+}
+
+fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let yo = planificador::yo();
+    loop {
+        let mut e = c.estado.tomar();
+        // Si lo despertaron para matarlo, nadie lo quitó de la lista: se quita él.
+        e.esperando.retain(|&x| x != yo);
+        if let Some(fin) = e.fin {
+            let (clase, codigo) = fin.valores();
+            marco.poner_x1(codigo);
+            return clase;
+        }
+        if planificador::debe_morir() {
+            return E_CERRADO;
+        }
+        if e.esperando.try_reserve(1).is_err() {
+            return E_MEMORIA;
+        }
+        e.esperando.push(yo);
+        // Las IRQ están enmascaradas en toda llamada: se puede bloquear soltando el cerrojo.
+        planificador::bloquear_soltando(e);
+    }
 }

@@ -1,0 +1,101 @@
+//! C39: crea, mata y espera procesos. Llave 1: un objeto de memoria con el ELF de `hijo`; llave 2: un canal por el que
+//! llega su tamaño (8 bytes). Sale con 39 si todo va bien, o con el número del paso que falló.
+
+#![no_std]
+#![no_main]
+
+use dashos::{llamada, println};
+
+dashos::programa!(principal);
+
+const E_ARGUMENTO: i64 = -1;
+const E_LLAVE: i64 = -2;
+const E_TAMANO: i64 = -5;
+const E_TIPO: i64 = -6;
+
+fn hijo(tamano: usize, orden: &[u8]) -> (i64, u32) {
+    let (a, b) = dashos::canal_crear();
+    if !orden.is_empty() && dashos::canal_escribir(a, orden, &[]) != 0 {
+        return (-100, a);
+    }
+    (dashos::proceso_crear(1, tamano, &[b]), a)
+}
+
+fn esperar_ms(ms: u64) {
+    let (t, f): (u64, u64);
+    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
+    let fin = t + f * ms / 1000;
+    loop {
+        let a: u64;
+        unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) a) };
+        if a >= fin {
+            return;
+        }
+    }
+}
+
+fn principal() -> u64 {
+    let mut buf = [0u8; 8];
+    let mut llaves = [0u32; 1];
+    if dashos::canal_leer(2, &mut buf, &mut llaves).0 != 8 {
+        return 1;
+    }
+    let tamano = u64::from_le_bytes(buf) as usize;
+    // 2: un hijo que sale con 7.
+    let (p, _) = hijo(tamano, &[1, 7]);
+    if p <= 0 {
+        return 2;
+    }
+    if dashos::proceso_esperar(p as u32) != (0, 7) {
+        return 3;
+    }
+    // 4: esperar otra vez a uno que ya acabó da lo mismo, al momento.
+    if dashos::proceso_esperar(p as u32) != (0, 7) {
+        return 4;
+    }
+    // 5: uno que gira en EL0 (en otro núcleo): matarlo y esperarlo.
+    let (p, _) = hijo(tamano, &[2]);
+    if p <= 0 {
+        return 5;
+    }
+    esperar_ms(30);
+    if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
+        return 6;
+    }
+    // 7: uno bloqueado leyendo un canal vacío: matarlo y esperarlo.
+    let (p, _) = hijo(tamano, &[]);
+    if p <= 0 {
+        return 7;
+    }
+    esperar_ms(30);
+    if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
+        return 8;
+    }
+    // 9: uno que falla.
+    let (p, _) = hijo(tamano, &[3]);
+    if p <= 0 || dashos::proceso_esperar(p as u32).0 != 2 {
+        return 9;
+    }
+    // 10-13: lo hostil. Un ELF que no es ELF (los 8 bytes del tamaño en un objeto nuevo), un tamaño mayor que el
+    // objeto, una llave que no es de memoria y una llave de proceso que no existe.
+    let basura = dashos::memoria_crear(4096);
+    if dashos::proceso_crear(basura, 64, &[]) != E_ARGUMENTO {
+        return 10;
+    }
+    if dashos::proceso_crear(1, 1 << 30, &[]) != E_TAMANO {
+        return 11;
+    }
+    if dashos::proceso_crear(2, 64, &[]) != E_TIPO {
+        return 12;
+    }
+    if llamada(13, [999, 0, 0, 0, 0]).0 as i64 != E_LLAVE {
+        return 13;
+    }
+    // 14: matarse a sí mismo no: no tiene su propia llave. Matar a un hijo dos veces y esperar sigue valiendo.
+    let (p, _) = hijo(tamano, &[]);
+    if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
+        return 14;
+    }
+    println!("  [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados");
+    39
+}

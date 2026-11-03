@@ -8,7 +8,7 @@
 // Los programas de usuario en ensamblador de C11 a C18.
 core::arch::global_asm!(include_str!("usuario.s"));
 
-use crate::{buzon, cerrojo, compositor, dtb, elf, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
+use crate::{buzon, cerrojo, compositor, dtb, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
     mapa, memoria, mmu, monton, objetos, planificador, reloj, usb, v3d};
 
 /// Todas las pruebas, con el sistema ya en marcha. `nucleos` es cuántos núcleos más arrancaron.
@@ -44,6 +44,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_repartos();
     prueba_asid();
     prueba_el0();
+    prueba_padre();
     prueba_desborde();
 }
 
@@ -248,6 +249,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
         canales: Default::default(),
+        control: Default::default(),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     unsafe { planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr) };
@@ -518,53 +520,27 @@ static HOLA: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-s
 /// El mismo programa en big-endian, como un programa de la caja Amiga (C30).
 static HOLA_BE: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/hola");
 
-struct ArranqueElf {
-    proceso: usize,
-    entrada: u64,
-    pila: u64,
-}
-
-extern "C" fn arrancar_elf(a: usize) {
-    let a = unsafe { alloc::boxed::Box::from_raw(a as *mut ArranqueElf) };
-    let p = unsafe { &*(a.proceso as *const objetos::Proceso) };
-    unsafe { planificador::bajar_a_el0(p.ttbr0, a.entrada, a.pila) };
-}
-
 /// Carga un ELF de usuario en un proceso nuevo, con estas llaves (serán la 1, la 2...), y lo arranca.
 fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> bool {
-    use espacio::Espacio;
-    let Some(mut e) = Espacio::nuevo() else {
-        kprintln!("  no se pudo crear el espacio: sin ASID o sin memoria");
-        return false;
-    };
-    let cargado = match elf::cargar(&mut e, binario) {
-        Ok(x) => x,
-        Err(err) => {
-            kprintln!("  no se pudo cargar el ELF: {:?}", err);
-            return false;
+    lanzar_elf_control(binario, llaves, nucleo).is_some()
+}
+
+fn lanzar_elf_control(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> Option<alloc::sync::Arc<objetos::Control>> {
+    match crate::procesos::lanzar(binario, llaves, Some(nucleo)) {
+        Ok((control, cargado)) => {
+            if cargado.base != 0 {
+                kprintln!("  PIE de {} bytes cargado en {:#x}, pila de {} KB en {:#x}", binario.len(), cargado.base, cargado.tamano_pila / 1024, cargado.pila);
+                PIE_ULTIMO.store(cargado.base, core::sync::atomic::Ordering::Relaxed);
+            } else {
+                kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
+            }
+            Some(control)
         }
-    };
-    if cargado.base != 0 {
-        kprintln!("  PIE de {} bytes cargado en {:#x}, pila de {} KB en {:#x}", binario.len(), cargado.base, cargado.tamano_pila / 1024, cargado.pila);
-        PIE_ULTIMO.store(cargado.base, core::sync::atomic::Ordering::Relaxed);
-    } else {
-        kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
+        Err((e, _)) => {
+            kprintln!("  no se pudo lanzar el ELF: {:?}", e);
+            None
+        }
     }
-    let mut tabla = objetos::TablaLlaves::default();
-    for l in llaves {
-        let _ = tabla.instalar(l);
-    }
-    let p = alloc::sync::Arc::new(objetos::Proceso {
-        ttbr0: e.ttbr0(),
-        big_endian: cargado.big_endian,
-        espacio: cerrojo::Cerrojo::new(e),
-        llaves: cerrojo::Cerrojo::new(tabla),
-        canales: Default::default(),
-    });
-    let ptr = alloc::sync::Arc::into_raw(p) as usize;
-    let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada: cargado.entrada, pila: cargado.pila }));
-    unsafe { planificador::crear_en(arrancar_elf, arranque as usize, nucleo, ptr) };
-    true
 }
 
 fn esperar_tics(n: u64) {
@@ -1161,6 +1137,35 @@ fn prueba_dma() {
     kprintln!("  árbol de dispositivos copiado a {:#x}", arbol);
     let bien = en_copia && !alias && monton >= GB && pila_f >= GB && usuario >= GB && dma < GB && arbol >= GB;
     kprintln!("C38: el kernel y los procesos, fuera del alcance del DMA: {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C39: un proceso (`padre`) crea, mata y espera a otros (`hijo`). El ELF del hijo le llega en un objeto de memoria.
+/// Al acabar, la memoria vuelve a como estaba: los hijos matados también se liberan.
+static PADRE: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/padre");
+static HIJO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hijo");
+
+fn prueba_padre() {
+    use core::sync::atomic::Ordering;
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+    let Some(m) = memoria::Memoria::nueva(HIJO.len()) else { return };
+    m.escribir(0, HIJO);
+    let m = objetos::Llave { objeto: objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), derechos: objetos::TODOS };
+    let (a, b) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&a);
+    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new() });
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let Some(control) = lanzar_elf_control(PADRE, alloc::vec![m, b], 2) else { return };
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 1000 {
+        reloj::esperar_interrupcion();
+    }
+    let fin = control.estado.tomar().fin;
+    drop((a, c, control));
+    esperar_tics(20);
+    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
+    kprintln!("  el padre acabó: {:?}; páginas libres antes {}, después {}", fin, libres, despues);
+    let bien = fin == Some(objetos::Fin::Salida(39)) && despues >= libres;
+    kprintln!("C39: crear, matar y esperar procesos desde un proceso {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel

@@ -37,6 +37,48 @@ pub enum Objeto {
     Registros { fisica: u64, tamano: u64 },
     /// Una interrupción de aparato (C20): llega como mensaje a un canal.
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
+    /// Un proceso visto desde fuera (C39): con escribir se mata, con leer se espera a que acabe.
+    Proceso(Arc<Control>),
+}
+
+/// Cómo acabó un proceso (C39).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Fin {
+    /// Llamó a `salir` con este código.
+    Salida(u64),
+    /// Lo mató alguien con su llave.
+    Matado,
+    /// Murió por un fallo (una excepción en EL0).
+    Fallo,
+}
+
+impl Fin {
+    /// Para `proceso_esperar`: (clase, código). Clase 0 salida, 1 matado, 2 fallo.
+    pub fn valores(self) -> (u64, u64) {
+        match self {
+            Fin::Salida(c) => (0, c),
+            Fin::Matado => (1, 0),
+            Fin::Fallo => (2, 0),
+        }
+    }
+}
+
+/// Lo que se sabe de un proceso desde fuera (C39). La llave de proceso apunta aquí y no al proceso, así que tenerla
+/// no mantiene viva su memoria: el proceso se libera al salir su último hilo, haya llaves o no.
+#[derive(Default)]
+pub struct Control {
+    pub estado: Cerrojo<EstadoProceso>,
+}
+
+#[derive(Default)]
+pub struct EstadoProceso {
+    /// Sus hilos vivos. Cada hilo se quita de aquí al morir (`planificador::terminar_actual`), con el cerrojo
+    /// tomado; mientras alguien lo tiene, ningún hilo de la lista puede liberarse.
+    pub hilos: Vec<HiloRef>,
+    /// Cómo acabó, cuando ya no le quedan hilos.
+    pub fin: Option<Fin>,
+    /// Hilos bloqueados en `proceso_esperar`.
+    pub esperando: Vec<HiloRef>,
 }
 
 /// Un objeto de memoria: está en `base`, que es quien toca las páginas (C37).
@@ -179,15 +221,24 @@ impl Canal {
     }
 
     fn leer_enmascarado(&self, lado: usize) -> Result<Mensaje, Error> {
+        let yo = planificador::yo();
         loop {
             let mut l = self.lados.tomar();
+            // Si lo despertaron para matarlo (C39), nadie le quitó el sitio: se quita él, para que el canal no guarde
+            // un hilo que va a morir.
+            if l[lado].esperando == Some(yo) {
+                l[lado].esperando = None;
+            }
+            if planificador::debe_morir() {
+                return Err(Error::Cerrado);
+            }
             if let Some(m) = l[lado].cola.pop_front() {
                 return Ok(m);
             }
             if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
-            l[lado].esperando = Some(planificador::yo());
+            l[lado].esperando = Some(yo);
             // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
             planificador::bloquear_soltando(l);
         }
@@ -237,6 +288,11 @@ impl TablaLlaves {
         Ok((self.llaves.len() - 1) as u32)
     }
 
+    /// Reserva memoria para `n` llaves más, para que `instalar` no tenga que pedirla. Falso si no hay.
+    pub fn reservar(&mut self, n: usize) -> bool {
+        self.llaves.try_reserve(n).is_ok()
+    }
+
     /// Cuántas llaves caben todavía sin pasar de `MAX_TABLA`.
     pub fn huecos(&self) -> usize {
         let libres = self.llaves.iter().skip(1).filter(|x| x.is_none()).count();
@@ -269,6 +325,8 @@ pub struct Proceso {
     pub llaves: Cerrojo<TablaLlaves>,
     /// Cuántos canales suyos siguen vivos (`MAX_CANALES`).
     pub canales: Arc<AtomicUsize>,
+    /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.
+    pub control: Arc<Control>,
 }
 
 /// El proceso del hilo actual, si lo hay.

@@ -113,6 +113,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
 | 11 | `interrupcion_terminar` | `x0` llave de interrupción | 0 |
+| 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas | Llave de proceso |
+| 13 | `proceso_matar` | `x0` llave de proceso | 0 |
+| 14 | `proceso_esperar` | `x0` llave de proceso | `x0` clase, `x1` código |
 
 ### Detalles
 
@@ -156,6 +159,22 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     **siempre en little-endian**.
 - **11, `interrupcion_terminar`.** La vuelve a habilitar cuando el controlador ya ha atendido el aparato.
 - **10 y 11.** Las dos piden el derecho de escribir en la llave de la interrupción.
+- **12, `proceso_crear`** (C39).
+  - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
+    crear: después se puede cambiar o soltar el objeto.
+  - Las llaves de la tabla (hasta 8, con derecho de transferir y sin repetir) salen de la tabla de quien crea y son
+    las llaves 1, 2... del proceso nuevo. Si no se puede crear, vuelven a sus números.
+  - El kernel elige el núcleo. La llave de proceso tiene todos los derechos.
+  - Errores: `E_ARGUMENTO` si el ELF no vale, `E_TAMANO` si el tamaño es 0 o mayor que el objeto, `E_MEMORIA`,
+    `E_LIMITE` si no cabe la llave nueva.
+- **13, `proceso_matar`.** Pide el derecho de escribir. Vale para un proceso que corre, que espera o que ya acabó.
+  Cada hilo muere en su siguiente vuelta a EL0 o al despertar si estaba bloqueado; la llamada no espera a eso.
+- **14, `proceso_esperar`.** Pide el derecho de leer. Se bloquea hasta que acabe el último hilo del proceso.
+  - Clase 0: salió con `salir`, y `x1` es el código.
+  - Clase 1: lo mataron.
+  - Clase 2: murió por un fallo.
+  - Si ya había acabado, contesta al momento, todas las veces que se pregunte.
+  - La llave de proceso no mantiene viva la memoria del proceso: se libera cuando acaba.
 
 ### Errores
 
@@ -217,6 +236,7 @@ Tipos de objeto:
 | Memoria | `memoria_crear` | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
+| Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 
 ## Biblioteca de usuario en Rust
 
@@ -250,7 +270,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Un programa puede escribir en la consola líneas que imitan mensajes del kernel. Las pruebas de QEMU se fían de esas
   líneas; las pruebas salen de la imagen en la fase 2.
 - Al morir un proceso, sus extremos de canal no se cierran. Quien espera al otro lado no se entera.
-- Un proceso tiene un solo hilo, y no hay llamadas para crear hilos ni procesos, ni para esperar a que acaben.
+- Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).
 - La consola de `escribir` es el puerto serie del kernel.

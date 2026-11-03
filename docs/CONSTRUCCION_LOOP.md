@@ -71,7 +71,7 @@ del kernel sobre la que irán esos controladores.
 
 ### Fase 3 de S16 (encargo vigente)
 
-- [ ] C39 **Crear, matar y esperar procesos desde un proceso.** Un objeto proceso con su llave: `proceso_crear` a
+- [x] C39 **Crear, matar y esperar procesos desde un proceso.** Un objeto proceso con su llave: `proceso_crear` a
   partir de un ELF en un objeto de memoria y una lista de llaves que se le pasan; `proceso_matar`; esperar a que
   acabe (por un canal o una llave que se cierra). Matar siempre funciona (S2): un hilo bloqueado también muere, y
   nadie se queda con un `HiloRef` suelto (auditoría de la fase 2).
@@ -919,6 +919,38 @@ imagen normal arranca sin trasladar y C38 da "MAL", como debe: ahí no hay prote
 - La gráfica (VideoCore) lo ve todo, pero es el firmware que arranca la placa.
 - La copia vieja de la imagen sigue ocupando unos 2 MB del primer GB.
 - En una Pi de 1 GB no hay protección.
+
+### 2026-11-03 tarde, bucle — C39 (crear, matar y esperar procesos)
+
+- **Llamadas nuevas.**
+  - 12 `proceso_crear`: el ELF va en un objeto de memoria y las llaves pasan como en un mensaje.
+  - 13 `proceso_matar`.
+  - 14 `proceso_esperar`: devuelve la clase (salida, matado o fallo) y el código.
+- **Llave de proceso.** Apunta a un `Control` (sus hilos, cómo acabó, quién espera), no al proceso. Así, tenerla no
+  mantiene viva la memoria del proceso.
+- **`procesos::lanzar`** carga y arranca, lo usen la llamada o las pruebas. `planificador::crear_proceso` apunta el
+  hilo en la lista de su proceso antes de que pueda correr.
+- **Matar siempre funciona** (S2).
+  - Se marca cada hilo con el cerrojo de su núcleo y se despierta a los bloqueados. A los que corren en otro núcleo
+    se les avisa con la SGI del planificador.
+  - Cada hilo muere al volver a EL0 (`excepciones.rs`, `bajar_a_el0`) o al despertar dentro del kernel.
+    `Canal::leer` y `proceso_esperar` lo miran.
+  - Un hilo marcado no se bloquea: el planificador lo mira con el mismo cerrojo, así que no hay hueco.
+- **`HiloRef`.** Quien guarda uno lo quita al despertar si nadie lo hizo (canal y espera), y la lista de hilos de un
+  proceso se cambia con su cerrojo tomado. Cierra lo que dejó abierto la auditoría de la fase 2.
+
+**Prueba.** `padre` crea hijos (`hijo`) que:
+- salen con un código;
+- giran en EL0 en otro núcleo, y los mata;
+- se quedan bloqueados en un canal, y los mata;
+- fallan.
+
+Los espera a todos. Además:
+- intenta pasar un ELF que no lo es, un tamaño mayor que el objeto, una llave de otro tipo y una que no existe;
+- mata dos veces al mismo hijo.
+
+Al acabar, las páginas libres vuelven a las de antes. Sin la comprobación al volver a EL0, el hijo que gira no muere
+y la prueba se cuelga.
 
 ## Resumen de la noche
 

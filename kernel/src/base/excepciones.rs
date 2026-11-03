@@ -75,6 +75,10 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
     // Vuelve a EL0 (SPSR.M = EL0t): el espacio del hilo que vuelve, que puede no ser el que entró si hubo cambio de
     // hilo por el camino; cada hilo vuelve por su propio marco.
     if marco.spsr & 0xf == 0 {
+        // Lo han matado (C39): muere aquí, antes de volver.
+        if crate::planificador::debe_morir() {
+            crate::planificador::terminar_actual(crate::objetos::Fin::Matado);
+        }
         crate::espacio::activar(crate::planificador::ttbr0_actual());
     }
 }
@@ -128,7 +132,7 @@ fn tratar(marco: &mut Marco, tipo: u64) {
     // (auditoría, hallazgo 11). Uno en EL1 sería del kernel y acaba en pánico, abajo.
     if tipo == 11 || (tipo == 7 && en_ventana_serror(marco.elr) && crate::planificador::proceso_actual() != 0) {
         kprintln!("Proceso: SError (ESR {:#x}) en {:#x}; se termina", marco.esr, marco.elr);
-        crate::planificador::terminar_actual();
+        crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
     }
 
     // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema. Desde AArch32 (12 a 15) no
@@ -138,7 +142,7 @@ fn tratar(marco: &mut Marco, tipo: u64) {
             "Proceso: excepción de clase {:#x} en {:#x} (FAR {:#x}); se termina",
             clase, marco.elr, marco.far
         );
-        crate::planificador::terminar_actual();
+        crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
     }
 
     // Fallo al copiar desde o hacia la memoria de un proceso (C31): la copia devuelve error, el kernel sigue.

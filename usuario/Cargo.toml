@@ -64,3 +64,13 @@ test = false
 name = "trampas"
 path = "src/bin/trampas.rs"
 test = false
+
+[[bin]]
+name = "hijo"
+path = "src/bin/hijo.rs"
+test = false
+
+[[bin]]
+name = "padre"
+path = "src/bin/padre.rs"
+test = false
