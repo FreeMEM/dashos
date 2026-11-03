@@ -9,6 +9,10 @@ name = "dashos-kernel"
 test = false
 bench = false
 
+[features]
+# Las pruebas del arranque y lo que solo usan ellas (C36). `make prueba` las pone; `make` no.
+pruebas = []
+
 [profile.dev]
 panic = "abort"
 opt-level = 1

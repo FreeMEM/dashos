@@ -48,7 +48,8 @@ pub struct Hilo {
     proceso: usize,
     /// Clase de plazo (C14), en cuentas del temporizador.
     plazo: Option<Plazo>,
-    pila: Option<crate::mapa::Pila>,
+    /// Se suelta con el hilo (y con ella su ranura y sus páginas).
+    _pila: Option<crate::mapa::Pila>,
     /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
     fp: Option<Box<EstadoFp>>,
     /// Su TPIDR_EL0, el puntero de TLS que EL0 puede leer y escribir: se guarda y se repone en cada cambio para que
@@ -146,7 +147,7 @@ pub fn iniciar_nucleo() {
         ttbr0: 0,
         proceso: 0,
         plazo: None,
-        pila: None,
+        _pila: None,
         fp: None,
         tpidr: 0,
     }));
@@ -210,7 +211,7 @@ pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usi
         ttbr0: 0,
         proceso,
         plazo: None,
-        pila: Some(pila),
+        _pila: Some(pila),
         fp: None,
         tpidr: 0,
     }));

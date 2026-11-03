@@ -31,7 +31,9 @@ las pruebas no valen como oráculo.
 - `PLAN.md`: el plan.
 - `docs/CONSTRUCCION_LOOP.md`: el bucle de construcción (tareas C y V, bitácora).
 - `docs/spec/hw/`: especificaciones del hardware sin manual (vídeo, GPU), escritas por analistas.
-- `kernel/`: el kernel en Rust. `make -C kernel prueba` lo compila (con `usuario/`) y lo prueba en QEMU `raspi4b`.
+- `kernel/`: el kernel en Rust. `make -C kernel` saca la imagen normal, sin pruebas; `make -C kernel arranque` la
+  arranca en QEMU. `make -C kernel prueba` saca la imagen con las pruebas del arranque (`kernel/src/pruebas.rs`,
+  opción `pruebas`) y los programas de `usuario/`, y la prueba en QEMU `raspi4b`.
 - `usuario/`: biblioteca `dashos` y programas de usuario en Rust.
 - `docs/referencia/kernel.md`: lo que un programa ve del kernel. Llamadas, llaves, formato del ELF, mapa de memoria
   y limitaciones. Quien cambie una llamada o el cargador la pone al día en el mismo commit.

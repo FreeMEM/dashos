@@ -37,7 +37,7 @@ del kernel sobre la que irán esos controladores.
    tarea se marca `[x]` y se apunta en la bitácora.
 4. **Tarea `C`.** Código en `kernel/` (Rust) o donde diga la tarea. Cada tarea deja una prueba automática en QEMU:
    `tools/prueba_qemu.sh <imagen> <fichero de salidas esperadas>`, que arranca `raspi4b` con tiempo límite y comprueba
-   las líneas del puerto serie.
+   las líneas del puerto serie. Desde C36, las pruebas van en `kernel/src/pruebas.rs` (`make -C kernel prueba`).
 5. **Verificar.** Todas las pruebas anteriores siguen pasando. Si algo se rompe y no se arregla en la vuelta, se
    revierte.
 6. **Cerrar.** `[x]`, entrada en la bitácora (qué se hizo, qué se comprobó, qué no), commit local `<tarea>: <resumen>`.
@@ -102,7 +102,7 @@ del kernel sobre la que irán esos controladores.
   identidad después del arranque, PAN por software (TTBR0 vacío mientras el kernel no copia de usuario).
 - [x] C35 **El kernel no se expulsa** (fase 2, E): hilos del kernel con las IRQ enmascaradas salvo en puntos fijos,
   trabajo acotado por llamada (poner a cero por tandas, `escribir` corto).
-- [ ] C36 **Pruebas fuera de la imagen** (fase 2): las pruebas del arranque solo con una opción de compilación; las
+- [x] C36 **Pruebas fuera de la imagen** (fase 2): las pruebas del arranque solo con una opción de compilación; las
   que se pueda, como programas de usuario.
 - [ ] C37 **Todo el `unsafe` en una caja** (fase 2, B): caja `base` y `forbid(unsafe_code)` en el resto.
 - [x] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
@@ -771,6 +771,25 @@ Fase 2 de S16, decisión E.
 
 **Pruebas.** `malo` come la memoria a trozos de 4 MB (230 trozos hasta `E_MEMORIA`) y el paso 28 comprueba que 8 MB
 dan `E_TAMANO`. Para el hallazgo 10 no hay prueba que lo provoque: la ventana es de suerte.
+
+### 2026-11-03 tarde — C36 (pruebas fuera de la imagen)
+
+Fase 2 de S16.
+
+- `kmain` solo pone el sistema en marcha: memoria, mapa del kernel, GIC y reloj, núcleos, repartidor de
+  interrupciones. Sin pruebas, se queda en "DashOS en marcha con 4 núcleos. Todavía no hay programa de inicio."
+- Las pruebas del arranque pasan a `kernel/src/pruebas.rs`, con la opción de Cargo `pruebas`. También quedan fuera de
+  la imagen normal lo que solo usan ellas: los controladores que aún viven en el kernel (buzón, compositor, HVS, V3D,
+  GPU, USB), los programas de `usuario.s` y la llamada 99.
+- `make` saca la imagen normal (356 KB; con pruebas, 1,3 MB). `make arranque` la arranca en QEMU con
+  `pruebas/arranque.txt`. `make prueba` saca y prueba `kernel8-pruebas.img`.
+- Sin programa de inicio, lo de los procesos (ELF, espacios, llaves) solo lo usan las pruebas: en la imagen normal
+  se permite el código muerto hasta que lo haya.
+- N6 (un programa puede imitar líneas del kernel) queda solo en la imagen de pruebas, que es donde se juzga por la
+  consola.
+
+Las dos pruebas pasan. Las pruebas que pueden ser programas de usuario siguen en el kernel: pasarlas pide crear
+procesos desde un proceso (fase 3).
 
 ## Resumen de la noche
 

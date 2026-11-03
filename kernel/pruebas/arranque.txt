@@ -1,0 +1,6 @@
+# La imagen normal, sin pruebas (C36): arranca los cuatro núcleos y se queda en marcha.
+DashOS 0.0.1
+Orden de bytes: little-endian
+Memoria física: 
+  núcleo 1 en marcha
+DashOS en marcha con 4 núcleos. Todavía no hay programa de inicio.

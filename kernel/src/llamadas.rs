@@ -133,8 +133,9 @@ pub fn atender(marco: &mut Marco) {
             planificador::terminar_actual();
         }
         3 => canal_crear(marco),
-        // Solo para la prueba de C34 (sale de la imagen con las pruebas, C36): 1 si el kernel ve la dirección de
-        // usuario fuera de una copia. Tiene que dar 0.
+        // Solo con las pruebas (C34, C36): 1 si el kernel ve la dirección de usuario fuera de una copia. Tiene que
+        // dar 0. En la imagen normal no existe.
+        #[cfg(feature = "pruebas")]
         99 => crate::mapa::traducir(a[0] as usize).0 as u64,
         4 => canal_escribir(a[0] as u32, a[1], a[2], a[3], a[4]),
         5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4]),

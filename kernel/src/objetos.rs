@@ -151,7 +151,16 @@ impl Canal {
 
     /// Un canal creado por un proceso: cuenta para su límite de `MAX_CANALES`. `None` si ya está en el límite.
     pub fn nuevo_de(cuenta: &Arc<AtomicUsize>) -> Option<(Llave, Llave)> {
-        cuenta.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < MAX_CANALES).then_some(n + 1)).ok()?;
+        let mut n = cuenta.load(Ordering::Relaxed);
+        loop {
+            if n >= MAX_CANALES {
+                return None;
+            }
+            match cuenta.compare_exchange_weak(n, n + 1, Ordering::Relaxed, Ordering::Relaxed) {
+                Ok(_) => break,
+                Err(visto) => n = visto,
+            }
+        }
         Some(Self::con_cuenta(Some(cuenta.clone())))
     }
 
