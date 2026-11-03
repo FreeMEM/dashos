@@ -71,3 +71,5 @@ C22: teclado USB bien
   ratón: botones 0x0, movimiento (
 C22: ratón USB bien
 C25: el ratón USB mueve la ventana bien
+  VA 0x1000, 0x2000, 0x5000; tabla bien; hueco reutilizado sí; tramos juntados sí; memoria devuelta sí
+C26: búferes de la GPU bien

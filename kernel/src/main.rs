@@ -15,6 +15,7 @@ mod espacio;
 mod gic;
 mod hvs;
 mod v3d;
+mod gpu;
 mod usb;
 mod interrupciones;
 mod llamadas;
@@ -81,6 +82,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_hvs();
     prueba_v3d();
     prueba_usb();
+    prueba_bo();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -767,6 +769,12 @@ fn prueba_v3d() {
             let i = g.identidad;
             kprintln!("  V3D {}.{}: {} núcleo, {} slices, {} QPU, {} TMU; VA {} bits, PA {} bits", i.version / 10, i.version % 10, i.nucleos, i.slices, i.qpus, i.tmus, i.va_bits, i.pa_bits);
             kprintln!("  tabla de la MMU en {:#x}; eventos pendientes {:x?}", g.mmu.tabla, g.eventos());
+            // Con hardware, los búferes de C26 irían sobre esta tabla.
+            let mut bos = gpu::Gpu::con_hardware(g);
+            if let Ok((h, va)) = bos.crear(4096) {
+                kprintln!("  BO de prueba en la VA {:#x} de la GPU", va);
+                let _ = bos.liberar(h);
+            }
         }
     }
     kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
@@ -883,6 +891,41 @@ fn raton_mueve_ventana(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
 fn esperar_ms(ms: u64) {
     let fin = reloj::ahora() + ms * reloj::frecuencia() / 1000;
     while reloj::ahora() < fin {}
+}
+
+/// C26: búferes de la GPU con su VA, sobre la tabla de la MMU de la GPU.
+fn prueba_bo() {
+    let libres = memoria::paginas().libres();
+    let mut g = match gpu::Gpu::sin_hardware() {
+        Ok(g) => g,
+        Err(e) => {
+            kprintln!("C26: sin memoria para la tabla: {:?}", e);
+            return;
+        }
+    };
+    let a = g.crear(4096).unwrap();
+    let b = g.crear(10_000).unwrap(); // tres páginas
+    let c = g.crear(4096).unwrap();
+    let vas = [a.1, b.1, c.1];
+    let bien_va = vas.iter().all(|&v| v != 0 && v % 4096 == 0) && a.1 + 4096 == b.1 && b.1 + 3 * 4096 == c.1;
+    // Cada página del BO está en la tabla, en orden, y llega a cero.
+    let bo = g.bo(b.0).unwrap();
+    let bien_tabla = bo.paginas.iter().enumerate().all(|(i, &p)| g.tabla().ver(b.1 + i as u32 * 4096) == v3d::entrada(p))
+        && bo.paginas.iter().all(|&p| unsafe { *(mmu::virt(p as usize) as *const u64) } == 0);
+    // Liberar el del medio deja un hueco que se reutiliza; al final todo vuelve.
+    g.liberar(b.0).unwrap();
+    let hueco = g.tramos_libres() == 2 && g.tabla().ver(b.1) == 0;
+    let d = g.crear(8192).unwrap();
+    let reutiliza = d.1 == b.1 && g.va(d.0) == Some(d.1);
+    for h in [a.0, c.0, d.0] {
+        g.liberar(h).unwrap();
+    }
+    let junta = g.tramos_libres() == 1 && g.liberar(a.0) == Err(gpu::Error::Manija);
+    drop(g);
+    let devuelta = memoria::paginas().libres() == libres;
+    kprintln!("  VA {:#x}, {:#x}, {:#x}; tabla {}; hueco reutilizado {}; tramos juntados {}; memoria devuelta {}", a.1, b.1, c.1,
+        if bien_tabla { "bien" } else { "MAL" }, if hueco && reutiliza { "sí" } else { "no" }, if junta { "sí" } else { "no" }, if devuelta { "sí" } else { "no" });
+    kprintln!("C26: búferes de la GPU {}", if bien_va && bien_tabla && hueco && reutiliza && junta && devuelta { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

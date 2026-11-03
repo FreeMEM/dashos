@@ -97,6 +97,9 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C26 **Búferes de la GPU** (añadida a las 08:16): crear, VA, liberar, sobre la tabla de la MMU de la GPU.
+- [~] V5 **Listas de control mínimas de la V3D** (añadida a las 08:16, agente analista): borrar baldosas y guardarlas
+  en memoria sin Mesa, para el primer trabajo de la GPU en la Pi 4. Salida: `docs/spec/hw/v3d-listas.md`.
 - [x] C25 **El ratón USB mueve la ventana del compositor** (añadida a las 08:14). Con captura.
 - [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
   de la GPU, cachés y lanzamiento de trabajos, solo con `docs/spec/hw/v3d.md`. Compilado; en QEMU solo la
@@ -437,3 +440,15 @@ durante 3 segundos, recortada a la pantalla, repintando solo los daños. `tools/
 `CAPTURA=fichero.ppm` y guarda la pantalla por el monitor de QEMU 1,5 segundos antes del final. Prueba: 6 informes,
 la ventana pasa de (40, 40) a (100, 70) y los píxeles comprobados coinciden. BIEN, tres de tres. Captura:
 `docs/capturas/c25-raton-usb.png`. Es la primera vez que algo de entrada mueve algo en pantalla.
+
+### 2026-11-03 08:1x — C26 (búferes de la GPU) y V5 lanzada
+
+`kernel/src/gpu.rs`: lo que Mesa llama BO (`mesa-v3d.md`, 4.3 a 4.6 y 6.2). Crear da una manija y una VA de la GPU
+que nunca es 0, múltiplo de 4 KB y fija; las páginas llegan a cero, no tienen que ser contiguas y se ponen en la
+tabla de la MMU de la GPU (vaciando su caché si hay hardware). Liberar quita las entradas y devuelve páginas y VA;
+los tramos libres de VA se juntan. Sin hardware usa una tabla suelta para poder probar. Prueba: tres BO en `0x1000`,
+`0x2000` (tres páginas) y `0x5000`; la tabla apunta a cada página en orden; liberar el del medio deja un hueco que
+el siguiente reutiliza; al final queda un solo tramo libre, la manija liberada se rechaza y la memoria vuelve
+entera. BIEN. Una de ocho vueltas de la tanda completa falló en C14 (desviación de más de 1 ms): la máquina estaba
+cargada (el analista de V5 trabajando a la vez) y QEMU sigue el reloj real. No es de C26; si se repite sin carga,
+mirar. V5 lanzada: especificación de las listas de control mínimas de la V3D, leyendo Mesa (MIT).
