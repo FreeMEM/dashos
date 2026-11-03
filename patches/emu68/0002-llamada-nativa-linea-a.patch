@@ -1,0 +1,90 @@
+diff --git a/src/M68k_SR.c b/src/M68k_SR.c
+index 2a9a5a2..6b6ec5c 100644
+--- a/src/M68k_SR.c
++++ b/src/M68k_SR.c
+@@ -830,7 +830,12 @@ int M68K_GetINSNLength(uint16_t *insn_stream)
+             length = M68K_GetLine9Length(insn_stream);
+             break;
+         case 0xa000:
++#ifdef DASHOS_NATIVE_CALLS
++            /* DashOS: $A0FF lleva detrás el número de función nativa (ver EMIT_lineA) */
++            length = (opcode == 0xa0ff) ? 2 : 1;
++#else
+             length = 1;
++#endif
+             break;
+         case 0xb000:
+             length = M68K_GetLineBLength(insn_stream);
+diff --git a/src/M68k_Translator.c b/src/M68k_Translator.c
+index d26df9d..363687e 100644
+--- a/src/M68k_Translator.c
++++ b/src/M68k_Translator.c
+@@ -102,10 +102,68 @@ void EMIT_ResetOffsetPC(struct TranslatorContext *)
+     _pc_rel = 0;
+ }
+ 
++#ifdef DASHOS_NATIVE_CALLS
++/*
++    DashOS: llamada a una función nativa desde el código 68k.
++
++    La tabla de saltos de una biblioteca nativa lleva, en cada entrada de 6 bytes:
++        $A0FF  <número de función, 16 bits>  RTS
++    El JIT convierte las dos primeras palabras en una llamada a
++        void dashos_native_call(uint64_t *regs, uint32_t index)
++    con regs apuntando a una copia de x0..x30 en la pila: los registros del 68k están en sus
++    registros ARM fijos (D0-D7 en x19-x26, A0-A4 en x13-x17, A5 en x27, A6 en x28, A7 en x29),
++    así que la función los lee y los cambia ahí. Al volver se recargan todos. El RTS que sigue
++    lo traduce el JIT como cualquier otro.
++*/
++void dashos_native_call(uint64_t *regs, uint32_t index);
++
++static void EMIT_DashOSNativeCall(struct TranslatorContext *ctx, uint16_t index)
++{
++    union {
++        uint64_t u64;
++        uint16_t u16[4];
++    } u;
++
++    u.u64 = (uintptr_t)dashos_native_call;
++
++    EMIT(ctx, stp64_preindex(31, 0, 1, -256));
++    for (int i=2; i < 30; i += 2)
++        EMIT(ctx, stp64(31, i, i+1, i*8));
++    EMIT(ctx, str64_offset(31, 30, 240));
++
++    EMIT(ctx,
++        add64_immed(0, 31, 0),                  /* x0 = sp: la copia de los registros */
++        mov_immed_u16(1, index, 0),             /* w1 = número de función */
++        mov64_immed_u16(2, u.u16[3], 0),
++        movk64_immed_u16(2, u.u16[2], 1),
++        movk64_immed_u16(2, u.u16[1], 2),
++        movk64_immed_u16(2, u.u16[0], 3),
++        blr(2)
++    );
++
++    for (int i=2; i < 30; i += 2)
++        EMIT(ctx, ldp64(31, i, i+1, i*8));
++    EMIT(ctx,
++        ldr64_offset(31, 30, 240),
++        ldp64_postindex(31, 0, 1, 256)
++    );
++}
++#endif
++
+ uint32_t EMIT_lineA(struct TranslatorContext *ctx)
+ {
+     uint16_t opcode = cache_read_16(ICACHE, (uintptr_t)ctx->tc_M68kCodePtr++);
+ 
++#ifdef DASHOS_NATIVE_CALLS
++    if (opcode == 0xa0ff)
++    {
++        uint16_t index = cache_read_16(ICACHE, (uintptr_t)ctx->tc_M68kCodePtr++);
++        EMIT_DashOSNativeCall(ctx, index);
++        EMIT_AdvancePC(ctx, 4);
++        return 1;
++    }
++#endif
++
+     EMIT_FlushPC(ctx);
+     if (debug)
+         EMIT_InjectDebugString(ctx, "[JIT] LINE A exception (opcode %04x) at %08x not implemented\n", opcode, ctx->tc_M68kCodePtr - 1);

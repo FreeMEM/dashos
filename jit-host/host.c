@@ -109,6 +109,33 @@ void M68K_PrintContext(struct M68KState *m68k)
 
 void MainLoop(void);
 
+/* --- Llamadas nativas desde el 68k (C1) --- */
+
+/* Registros del 68k en la copia de x0..x30 que deja el JIT (ver EMIT_lineA en Emu68). */
+#define R_D(n) (19 + (n))
+static uint32_t lee(uint64_t *regs, int r) { return (uint32_t)regs[r]; }
+static void pon(uint64_t *regs, int r, uint32_t v) { regs[r] = v; }
+
+static int llamadas_nativas;
+
+void dashos_native_call(uint64_t *regs, uint32_t index)
+{
+    llamadas_nativas++;
+    switch (index)
+    {
+        case 1: /* D0 = D0 * 2, y avisa */
+            kprintf("[NATIVO] función 1 llamada con D0=%d\n", lee(regs, R_D(0)));
+            pon(regs, R_D(0), lee(regs, R_D(0)) * 2);
+            break;
+        case 2: /* D0 = D0 + D1 */
+            kprintf("[NATIVO] función 2 llamada con D0=%d D1=%d\n", lee(regs, R_D(0)), lee(regs, R_D(1)));
+            pon(regs, R_D(0), lee(regs, R_D(0)) + lee(regs, R_D(1)));
+            break;
+        default:
+            kprintf("[NATIVO] función %d desconocida\n", index);
+    }
+}
+
 /* --- Memoria --- */
 
 /* La memoria del 68k empieza aquí. Las direcciones 68k son direcciones reales del proceso. */
@@ -138,6 +165,42 @@ static const uint16_t prueba[] = {
     0x2080,                         /*        move.l  d0,(a0)         */
     0x4e75,                         /*        rts                     */
 };
+
+/* Programa 68k de C1: llama dos veces a una "biblioteca" nativa. */
+#define LIB_BASE 0x00110100UL
+static const uint16_t prueba_nativa[] = {
+    0x2c7c, 0x0011, 0x0100,         /*        movea.l #LIB_BASE,a6    */
+    0x7005,                         /*        moveq   #5,d0           */
+    0x4eae, 0xfffa,                 /*        jsr     -6(a6)  ; 1     */
+    0x2200,                         /*        move.l  d0,d1   ; 10    */
+    0x7007,                         /*        moveq   #7,d0           */
+    0x4eae, 0xfff4,                 /*        jsr     -12(a6) ; 2     */
+    0x41f9, 0x0018, 0x0004,         /*        lea     $180004,a0      */
+    0x2080,                         /*        move.l  d0,(a0) ; 17    */
+    0x4e75,                         /*        rts                     */
+};
+
+static void prepara(struct M68KState *m68k, uint32_t pc)
+{
+    for (int i = 0; i < 8; i++) { m68k->D[i].u32 = 0; m68k->A[i].u32 = 0; }
+    for (int fp = 0; fp < 8; fp++) m68k->FP[fp].u64 = 0x7fffffffffffffffULL;
+    uint32_t sp = (uint32_t)(0x00100000UL + 0x00100000UL - 4096);
+    m68k->ISP.u32 = sp - 4;
+    *(uint32_t *)(uintptr_t)(sp - 4) = 0;
+    m68k->PC = pc;
+    m68k->SR = SR_S | SR_IPL;
+}
+
+static void ejecuta(struct M68KState *m68k)
+{
+    __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
+    __asm__ volatile("mov " CTX_POINTER_ASM ", %0" ::"r"(m68k));
+    __asm__ volatile("bl MainLoop" ::: "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10",
+                     "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22",
+                     "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30", "v0", "v1", "v2", "v3", "v4",
+                     "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17",
+                     "v18", "v27", "v28", "v29", "v30", "v31", "memory", "cc");
+}
 
 void host_main(void)
 {
@@ -205,6 +268,26 @@ void host_main(void)
     kprintf("[HOST] Memoria en $180000: %08x, esperado %08x: %s\n", leido, esperado,
             (leido == esperado && m68k.D[0].u32 == esperado) ? "BIEN" : "MAL");
     kprintf("[HOST] Instrucciones 68k ejecutadas (aprox.): %d\n", (int)m68k.INSN_COUNT);
+    int fallos = (leido == esperado && m68k.D[0].u32 == esperado) ? 0 : 1;
+
+    /* C1: la biblioteca nativa. Tabla de saltos: $A0FF <n> RTS en LIB_BASE-6*n. */
+    uint16_t *lib = (uint16_t *)LIB_BASE;
+    for (int n = 1; n <= 2; n++) {
+        uint16_t *e = lib - 3 * n;
+        e[0] = 0xa0ff; e[1] = (uint16_t)n; e[2] = 0x4e75;
+    }
+    uint16_t *codigo2 = (uint16_t *)(M68K_RAM + 0x8000);
+    for (size_t i = 0; i < sizeof(prueba_nativa) / sizeof(prueba_nativa[0]); i++) codigo2[i] = prueba_nativa[i];
+    prepara(&m68k, (uint32_t)(uintptr_t)codigo2);
+    m68k.CACR = 0x80008000;
+    kprintf("[HOST] Prueba C1: llamadas nativas desde el 68k\n");
     flush_out();
-    sys6(SYS_exit_group, (leido == esperado) ? 0 : 1, 0, 0, 0, 0, 0);
+    ejecuta(&m68k);
+    uint32_t r2 = *(volatile uint32_t *)(M68K_RESULT + 4);
+    kprintf("[HOST] Llamadas nativas: %d; resultado en $180004: %d (esperado 17); D0=%d: %s\n",
+            llamadas_nativas, r2, m68k.D[0].u32,
+            (llamadas_nativas == 2 && r2 == 17 && m68k.D[0].u32 == 17) ? "BIEN" : "MAL");
+    if (!(llamadas_nativas == 2 && r2 == 17)) fallos++;
+    flush_out();
+    sys6(SYS_exit_group, fallos, 0, 0, 0, 0, 0);
 }

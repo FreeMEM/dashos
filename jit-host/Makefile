@@ -18,7 +18,7 @@ M68K_SAVED := -fcall-saved-x4 -fcall-saved-x5 -fcall-saved-x6 -fcall-saved-x7 -f
 COMMON  := -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
-	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 \
+	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
 	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -Iinclude $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error
