@@ -5,8 +5,7 @@
 
 #![no_std]
 #![no_main]
-// Sin pruebas, nadie crea procesos todavía: falta el programa de inicio. Hasta entonces, el cargador de ELF, los
-// espacios y el resto de lo de los procesos solo lo usan las pruebas, y sin ellas sale como código muerto.
+// Parte de lo que solo usan las pruebas (o lo que usarán los servicios) sale como código muerto en la imagen normal.
 #![cfg_attr(not(feature = "pruebas"), allow(dead_code))]
 // Todo el código inseguro va en `base` (C37, S16 B). El resto del kernel no puede tener `unsafe`: lo que necesite
 // del hardware lo pide a `base` por una interfaz segura. Revisar la seguridad del kernel es revisar `base`.
@@ -41,6 +40,7 @@ mod gpu;
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
 mod usb;
+mod inicio;
 mod interrupciones;
 mod llamadas;
 mod objetos;
@@ -92,7 +92,12 @@ pub fn kmain(dtb: usize) -> ! {
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(dtb, n);
 
-    kprintln!("DashOS en marcha con {} núcleos. Todavía no hay programa de inicio.", n + 1);
+    kprintln!("DashOS en marcha con {} núcleos.", n + 1);
+    // La imagen normal pasa el sistema al programa de inicio (C47). La de pruebas no: ahí mandan las pruebas.
+    #[cfg(not(feature = "pruebas"))]
+    if !inicio::lanzar() {
+        kprintln!("sin programa de inicio: el sistema se queda parado");
+    }
     planificador::ocioso();
 }
 

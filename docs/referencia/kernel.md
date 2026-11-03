@@ -88,6 +88,19 @@ otro hilo del mismo núcleo usa la FPU (C28). No hay SVE.
 Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. La clase de plazos de
 S2 existe, pero hoy solo la usa el kernel. Un proceso corre en el núcleo donde se creó y no cambia de núcleo.
 
+### El programa de inicio
+
+En la imagen normal, el kernel lanza un solo proceso, `inicio` (C47), en el grupo raíz. Le da las llaves de arranque,
+las únicas que da el kernel:
+
+- La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
+  los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
+- Después, el permiso DMA y, para cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la
+  VideoCore), sus registros y su interrupción.
+
+`inicio` lanza cada servicio en su grupo y se queda esperando. Ningún otro proceso recibe nada del kernel: todo lo
+que tenga le llega desde `inicio`.
+
 ## Llamadas al sistema
 
 Se entra con `svc #0`. El número va en `x8` y los argumentos en `x0`–`x4`. El resultado vuelve en `x0`, y en

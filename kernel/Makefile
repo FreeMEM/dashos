@@ -14,7 +14,7 @@ CARGO_PERFIL := $(if $(filter release,$(PERFIL)),--release,)
 
 all: $(IMAGEN)
 
-$(IMAGEN): FORCE
+$(IMAGEN): usuario FORCE
 	cargo build $(CARGO_PERFIL)
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 

@@ -94,3 +94,8 @@ test = false
 name = "dma"
 path = "src/bin/dma.rs"
 test = false
+
+[[bin]]
+name = "inicio"
+path = "src/bin/inicio.rs"
+test = false

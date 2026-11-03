@@ -1,6 +1,14 @@
-# La imagen normal, sin pruebas (C36): arranca los cuatro núcleos y se queda en marcha.
+# La imagen normal, sin pruebas: arranca los cuatro núcleos y pasa el sistema al programa de inicio (C47).
 DashOS 0.0.1
 Orden de bytes: little-endian
 Memoria física: 
   núcleo 1 en marcha
-DashOS en marcha con 4 núcleos. Todavía no hay programa de inicio.
+DashOS en marcha con 4 núcleos.
+  [inicio] en marcha, con
+  [inicio]   llave 2: permiso DMA de dma
+  [inicio]   llave 3: registros de serie
+  [inicio]   llave 4: interrupción de serie
+  [inicio] hola lanzado en su grupo
+  hola desde Rust en EL0 (DashOS, little-endian)
+  [inicio] hola acabó: clase 0, código 5
+  [inicio] todo lanzado; se queda esperando

@@ -82,7 +82,7 @@ del kernel sobre la que irán esos controladores.
   revocar una llave de memoria deshaga sus proyecciones en todos los espacios (lo que dejó abierto C41).
 - [x] C46 **Memoria DMA** (S16, D). Un objeto de memoria del primer GB con su dirección de bus, que solo puede crear
   quien tenga una llave de permiso DMA que da el kernel. Así los búferes de DMA salen de objetos con dueño y cobrados.
-- [ ] C47 **Programa de inicio.** La imagen normal lanza `inicio` (un ELF dentro de la imagen) en el grupo raíz, con
+- [x] C47 **Programa de inicio.** La imagen normal lanza `inicio` (un ELF dentro de la imagen) en el grupo raíz, con
   las llaves de arranque: registros e interrupciones de cada aparato del árbol, permiso DMA. `inicio` lanza los
   servicios, cada uno en su grupo. `make arranque` lo comprueba.
 - [ ] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
@@ -1168,6 +1168,22 @@ Si revocar no quita las proyecciones, el hijo no muere y la prueba falla.
 **Prueba** (`dma`, en un grupo de 16 MB): 64 KB con dirección de bus en la ventana de la SD; se proyecta y se lee lo
 escrito; sin permiso da `E_TIPO`; con más de 4 MB, `E_TAMANO`. Si se acepta cualquier llave como permiso, falla en el
 paso 4. Que el aparato lea de verdad ese búfer solo se verá con el USB fuera del kernel (C49) y en la Pi.
+
+### 2026-11-03 noche, bucle — C47 (programa de inicio)
+
+- **`kernel/src/inicio.rs`.** En la imagen normal, `kmain` lanza `inicio` en el grupo raíz, en el núcleo 1. Le da:
+  - la llave 1, un paquete de arranque en un objeto de memoria de solo lectura;
+  - el permiso DMA de la ventana de la SD;
+  - registros e interrupción de la serie, la SD (EMMC2) y el USB (DWC2), y los registros del buzón.
+
+  El paquete dice qué es cada llave y trae los ELF de los servicios. La imagen de pruebas no lanza `inicio`.
+- **`usuario/src/bin/inicio.rs`.** Lee el paquete, lista sus llaves, lanza cada servicio en un grupo de 16 MB desde
+  una copia en un objeto propio y se queda esperando para siempre. De momento el único "servicio" es `hola`, que acaba;
+  los de verdad llegan con C48 (consola) y C49 (USB).
+- `make` compila ahora `usuario/` también para la imagen normal.
+
+**Prueba** (`make arranque`, `pruebas/arranque.txt`): `inicio` arranca, ve el permiso DMA y la serie, lanza `hola` en
+su grupo, `hola` sale con 5 e `inicio` se queda esperando.
 
 ## Resumen de la noche
 
