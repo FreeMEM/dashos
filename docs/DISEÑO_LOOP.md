@@ -85,11 +85,17 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [ ] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
   bibliotecas nativas desde el JIT, recursos con dueño para matar tareas 68k sueltas (`S2-planificador.md`), ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
   DOS sobre el sistema de archivos, y qué programas 68k quedan fuera.
+- [ ] S4b **Organización a lo Amiga.** Petición del usuario (2026-11-03): volúmenes, cajones, asignaciones, `SYS:`,
+  `C:`, `S:`, `L:`, `LIBS:`, `DEVS:`, `FONTS:`, `LOCALE:`, `ENV:` y `ENVARC:`, Prefs, `DEVS:Monitors`, dispositivos,
+  catálogos e iconos, igual que en AmigaOS. Cómo conviven con usuarios y permisos de Linux (dónde vive lo de cada
+  usuario), con los programas nativos, los 68k y los de Linux (que esperan `/usr`, `/etc`, `/home`), y con los
+  paquetes (S8).
 - [ ] S5 **Sistema de archivos.** Rápido y seguro: copia al escribir, sumas de comprobación, instantáneas, cifrado y
   compresión. Diseñar uno propio, adaptar uno existente o empezar con uno sencillo. Qué otros sistemas lee y escribe:
   FAT32 para el arranque, FFS y PFS del Amiga, ext4.
-- [ ] S6 **Seguridad.** Permisos por aplicación, aislamiento, firmas de paquetes, arranque verificado (lo que
-  permite la Pi 4) y cuentas de usuario.
+- [ ] S6 **Seguridad.** Usuarios, grupos, propietarios y permisos como en Linux (decisión del usuario), PID por
+  proceso, y cómo se traducen a capacidades del kernel. Permisos por aplicación, aislamiento, firmas de paquetes y
+  arranque verificado (lo que permite la Pi 4).
 - [ ] S7 **Software de Linux.** Cómo ejecutar programas de Linux. Opciones a estudiar: una capa de llamadas al
   sistema de Linux (como hacen FreeBSD y el primer WSL), una máquina virtual con Linux y sus ventanas en el
   escritorio (como ChromeOS y WSLg), o portar programas. Ojo: los programas Linux de ARM son little-endian. AArch64
@@ -123,7 +129,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
-- (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
 - (S3) ¿Sin intercambio a disco por defecto, solo memoria comprimida (LZ4)? Mientras: sí.
 - (S3) ¿Sin prometer de más memoria (falla al pedir, no hay OOM killer)? Mientras: sí, con margen en la capa Linux.
 - (S3) ¿Enforcer integrado en la caja, siempre activo? Mientras: sí, con avisos a un registro.
@@ -179,4 +184,10 @@ con LZ4, sin intercambio a disco y sin prometer de más. Comprobado del registro
 de 4 y 64 KB (no de 16), y que la A72 no tiene PAN, PAC, BTI ni MTE. Comprobado del árbol de dispositivos: la SD y
 el DMA clásico solo alcanzan el primer GB, y el USB los primeros 3 GB; el kernel necesita zonas. Idea nueva: un
 Enforcer integrado en la caja Amiga.
+
+### 2026-11-03 — Requisitos del usuario: PID, permisos de Linux y organización de AmigaOS
+
+Cada proceso con su PID. Usuarios, grupos, propietarios y permisos como en Linux (contesta la pregunta de S0 sobre
+varias cuentas: sí). Y toda la organización de AmigaOS igual: cajones, asignaciones, Prefs, `DEVS:Monitors`,
+`LOCALE:`, dispositivos. Pasa a `PLAN.md`; tarea nueva S4b para la organización, y S6 ampliada.
 

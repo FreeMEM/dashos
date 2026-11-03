@@ -23,6 +23,14 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Matar siempre funciona** (usuario, 2026-11-03). Cualquier proceso se puede matar, y las señales de terminar se
   cumplen siempre, no como en AmigaOS. Dentro de la caja, exec apunta el dueño de cada recurso para poder matar una
   tarea 68k suelta.
+- **Cada proceso tiene su PID** (usuario, 2026-11-03), un número que lo identifica, como en Linux. Saber el PID no da
+  poder sobre el proceso: para matarlo hay que ser su dueño o administrador, como en Linux.
+- **Usuarios, grupos, propietarios y permisos como en Linux** (usuario, 2026-11-03). Ficheros y procesos tienen dueño
+  y grupo, y permisos de lectura, escritura y ejecución. Por debajo, el kernel sigue usando capacidades (S1): los
+  permisos de Linux deciden qué capacidades recibe cada proceso.
+- **La organización del sistema es la de AmigaOS** (usuario, 2026-11-03): volúmenes y cajones (drawers),
+  asignaciones (assigns), `C:`, `S:`, `L:`, `LIBS:`, `DEVS:`, `FONTS:`, `LOCALE:`, `ENV:` y `ENVARC:`, Prefs,
+  monitores en `DEVS:Monitors`, dispositivos, catálogos de idioma, iconos y Workbench. Se hace igual que en AmigaOS.
 - **Kernel propio.** No hay Linux debajo. Es un micronúcleo pragmático con capacidades (usuario, 2026-11-03;
   `docs/diseño/S1-kernel.md`).
 - **AArch64 big-endian.** Los programas 68k leen y escriben a mano las estructuras del sistema. Por eso el sistema
