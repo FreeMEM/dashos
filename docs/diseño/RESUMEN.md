@@ -76,7 +76,9 @@ escritorio, como ChromeOS y WSL2; y la capa de llamadas de Linux solo más adela
 
 - Por fases: pantalla del firmware, después controlador propio del HVS y HDMI, y la GPU V3D con Mesa al final.
 - El compositor habla Wayland sobre canales de DashOS.
-- Escritorios virtuales como "pantallas" del Amiga; mosaico a lo niri y mango, y ventanas flotantes; Workbench;
+- **Escritorio tan moderno como DMS, nativo y sin Quickshell; mosaico y flotantes a la vez, arrastrando**
+  (decidido). La pantalla de bloqueo es del compositor.
+- Escritorios virtuales como "pantallas" del Amiga; mosaico a lo niri y mango; Workbench;
   barra con los menús al botón derecho; lanzador; Commodities; ARexx.
 - **Aspecto de Material Design** (decidido), con colores del fondo de pantalla, y un tema "Amiga clásico".
 

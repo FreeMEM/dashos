@@ -153,7 +153,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   sí.
 - (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? Mientras: sí.
 - (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? Mientras: sí.
-- (S10) ¿Disposición por defecto: Workbench flotante y el resto en mosaico con desplazamiento? Mientras: sí.
 - (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? Mientras: sí.
 - (S13) ¿smoltcp como pila de red, mejorándola si hace falta? Mientras: sí.
 - (S13) ¿DNS cifrado de serie o como opción? Mientras: como opción.
@@ -342,4 +341,11 @@ vigilancia. Del Amiga: `S:Startup-Sequence` para la caja, `WBStartup` y un menú
 `docs/diseño/S15-hoja-de-ruta.md`: nueve hitos que se pueden enseñar, de la llamada nativa desde el 68k (H1) a la
 caja Linux (H9). DashOS 0.1 son H1 a H8; la Pi 4 se compra al terminar H3. Tres líneas en paralelo: sistema, Dash y
 análisis. `docs/diseño/RESUMEN.md` recoge el sistema entero. No quedan tareas: el bucle se para.
+
+### 2026-11-03 — Después del fin: escritorio sin Quickshell y mosaico natural
+
+Petición del usuario: escritorio al nivel de DMS sin Quickshell, y mosaico y flotantes a la vez con naturalidad.
+Añadido a `S10-escritorio.md`: arrastrar saca y devuelve ventanas del mosaico, encaje en los bordes, cada ventana
+nace donde le toca y se recuerda; escritorio nativo con el motor de S11; la pantalla de bloqueo en el compositor.
+Pasa a `PLAN.md`.
 

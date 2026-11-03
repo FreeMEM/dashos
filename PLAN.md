@@ -33,6 +33,9 @@ Estas decisiones son del usuario, del 2026-11-03.
   más adelante.
 - **Aspecto: Material Design** (usuario, 2026-11-03). El kit sigue el modelo de Magic User Interface y se dibuja
   con Material 3, con colores sacados del fondo de pantalla. Tema "Amiga clásico" como opción.
+- **Escritorio** (usuario, 2026-11-03; `docs/diseño/S10-escritorio.md`): tan moderno como DMS, pero nativo, sin
+  Quickshell; la pantalla de bloqueo la lleva el compositor. Mosaico y ventanas flotantes a la vez, de forma natural:
+  arrastrar saca una ventana del mosaico y la devuelve.
 - **Controladores** (usuario, 2026-11-03; `docs/diseño/S12-controladores.md`): lo no documentado se hace en sala
   limpia (una sesión lee Linux y escribe la especificación, otra escribe el controlador); se acepta el firmware
   cerrado del Wi-Fi; la Pi 4 se compra al terminar la fase Base en QEMU.

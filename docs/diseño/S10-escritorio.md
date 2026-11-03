@@ -43,6 +43,22 @@ Amiga izquierda + M. **En DashOS, los escritorios virtuales son "pantallas"**, c
 - Una pantalla Amiga propia (`OpenScreen` de un programa 68k, S4) es una pantalla más de esta lista.
 - Al desconectar un monitor, sus pantallas pasan a otro y vuelven al reconectarlo, como en niri.
 
+### Mosaico y flotantes a la vez, de forma natural
+
+Petición del usuario (2026-11-03): que se puedan usar mosaicos y ventanas flotantes, pero de forma natural. En niri y
+mango, flotar es un modo aparte: una tecla cambia la ventana de capa. La propuesta es que no haga falta pensar en
+modos:
+
+- **Arrastrar saca una ventana del mosaico.** Si coges una ventana por su barra y la sueltas lejos de la tira, se
+  queda flotando donde la sueltas. Si la arrastras de vuelta a la tira, se coloca en la columna que marca una guía.
+- **Los bordes ayudan.** Llevar una ventana flotante al borde de la pantalla la encaja a media pantalla o a un
+  cuarto, como en GNOME o Windows.
+- **Cada ventana nace donde le toca.** Los diálogos, las ventanas pequeñas y las de tamaño fijo nacen flotando; las
+  normales, en el mosaico. Cada pantalla dice si las nuevas llegan al mosaico o flotando; la pantalla de Workbench,
+  flotando.
+- **Se recuerda.** Si una aplicación se dejó flotando, la próxima vez vuelve a flotar en el mismo sitio.
+- **El teclado también vale**: una tecla manda la ventana al mosaico o la saca, para quien no use el ratón.
+
 ### Cada pantalla elige su disposición
 
 - **Flotante**: como el Workbench clásico.
@@ -89,6 +105,23 @@ pantalla, lanzar programas. Así se automatiza con guiones, igual que con el IPC
 - Cada monitor, su escala y sus pantallas (S9).
 - Mover una ventana a otro monitor con el teclado o arrastrando.
 - La barra en cada monitor.
+
+### Tan moderno como DMS, sin Quickshell
+
+Petición del usuario (2026-11-03): el escritorio tiene que estar al nivel de DMS, pero sin Quickshell.
+
+- **Lo que hay que igualar de DMS**: la barra con sus módulos, el centro de control (red, Bluetooth, sonido, brillo),
+  el centro de notificaciones, el lanzador, el historial del portapapeles, los avisos en pantalla de volumen y
+  brillo, el menú de apagado, la pantalla de bloqueo, los controles de música, el calendario, los indicadores del
+  sistema y los colores sacados del fondo de pantalla.
+- **Sin Quickshell**: el escritorio se escribe con el motor de interfaz nativo de DashOS (S11), en código compilado
+  (Dash o Rust), sin QML ni un intérprete de JavaScript. Se pinta con el aspecto de Material 3.
+- **Por qué importa**: en shiva, DMS sobre Quickshell se ha caído al recuperar la pantalla tras apagarla de noche, y
+  hay que recompilarlo cada vez que se actualiza Qt (memoria de esta máquina). Un escritorio nativo no depende de
+  otra pila que cambie por debajo.
+- **La pantalla de bloqueo no es del escritorio, es del compositor.** Si el escritorio se cae, la pantalla sigue
+  bloqueada y sigue aceptando la contraseña. En shiva pasó justo lo contrario: con el escritorio caído, la pantalla de
+  bloqueo se quedó sin entrada. Así no puede pasar.
 
 ### Quién hace qué
 
