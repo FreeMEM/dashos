@@ -105,6 +105,17 @@ de Linux con GTK o Qt, como Firefox.
   - En **nativo**, GTK y Qt se pueden portar más adelante sobre relibc y Wayland, porque los dos ya hablan Wayland.
     Son grandes, así que van después de la primera versión.
 
+### Material Design, el estilo de Google
+
+Pregunta del usuario (2026-11-03) sobre "el MUI de Google, el de Android". Ojo con el nombre: MUI del Amiga (Magic
+User Interface) y MUI de la web (una biblioteca de React que sigue Material Design) no tienen nada que ver.
+
+- **Material Design como tema**: el motor de interfaz nativo puede llevar un tema Material 3, al lado del tema
+  Amiga moderno. DMS, la barra que el usuario usa a diario, ya sigue Material 3. Los controles son los mismos; cambia
+  cómo se dibujan.
+- **Programas de Android**: se podrían ejecutar dentro de la caja Linux con Waydroid, que mete Android en un
+  contenedor de Linux. No se ha comprobado en la Pi 4 ni en una máquina virtual. Queda como idea, no como plan.
+
 ### Dash, el mismo programa en dos sistemas
 
 Esta es la consecuencia más importante. **Un programa en Dash debería compilar para AmigaOS 3.x (hunks 68k) y para
