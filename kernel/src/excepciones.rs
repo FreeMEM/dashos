@@ -61,6 +61,12 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
         return;
     }
 
+    // FP o SIMD desde EL0 con la FPU atrapada (C28): se le da la FPU con sus registros y se repite la instrucción.
+    if tipo == 8 && clase == 0x07 {
+        crate::planificador::fp_atrapado();
+        return;
+    }
+
     // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema.
     if tipo == 8 {
         kprintln!(

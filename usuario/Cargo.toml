@@ -24,6 +24,16 @@ name = "sd"
 path = "src/bin/sd.rs"
 test = false
 
+[[bin]]
+name = "fpu_a"
+path = "src/bin/fpu_a.rs"
+test = false
+
+[[bin]]
+name = "fpu_b"
+path = "src/bin/fpu_b.rs"
+test = false
+
 [profile.release]
 panic = "abort"
 opt-level = "s"

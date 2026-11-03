@@ -25,6 +25,8 @@ use alloc::vec::Vec;
 const LIMITE_USUARIO: u64 = 1 << 39;
 
 /// Si es falso, las salidas con código 0 no se escriben (para la prueba de C18, que crea muchos procesos).
+/// Cuántos hilos de usuario han salido con `salir` (para que las pruebas sepan cuándo han acabado).
+pub static SALIDAS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 pub static SALIDAS_VISIBLES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
 
 const E_ARGUMENTO: u64 = -1i64 as u64;
@@ -50,6 +52,7 @@ pub fn atender(marco: &mut Marco) {
             if a[0] != 0 || SALIDAS_VISIBLES.load(core::sync::atomic::Ordering::Relaxed) {
                 kprintln!("  [hilo {}] sale con código {}", planificador::actual_id(), a[0]);
             }
+            SALIDAS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
             planificador::terminar_actual();
         }
         3 => canal_crear(marco),

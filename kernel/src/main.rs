@@ -83,6 +83,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_v3d();
     prueba_usb();
     prueba_bo();
+    prueba_fpu();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -979,6 +980,28 @@ fn prueba_bo() {
     kprintln!("  VA {:#x}, {:#x}, {:#x}; tabla {}; hueco reutilizado {}; tramos juntados {}; memoria devuelta {}", a.1, b.1, c.1,
         if bien_tabla { "bien" } else { "MAL" }, if hueco && reutiliza { "sí" } else { "no" }, if junta { "sí" } else { "no" }, if devuelta { "sí" } else { "no" });
     kprintln!("C26: búferes de la GPU {}", if bien_va && bien_tabla && hueco && reutiliza && junta && devuelta { "bien" } else { "MAL" });
+}
+
+/// C28: registros de FP/SIMD por hilo. Dos procesos en el mismo núcleo llenan los 32 registros con patrones distintos
+/// y comprueban que el otro no se los pisa (`usuario/src/fpu_comun.rs`). Salen con 28 si todo va bien.
+static FPU_A: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/fpu_a");
+static FPU_B: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/fpu_b");
+
+fn prueba_fpu() {
+    use core::sync::atomic::Ordering;
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let cambios = planificador::fp_cambios();
+    if !lanzar_elf(FPU_A, alloc::vec::Vec::new(), 2) || !lanzar_elf(FPU_B, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 1000 {
+        reloj::esperar_interrupcion();
+    }
+    let n = planificador::fp_cambios() - cambios;
+    kprintln!("  la FPU cambió de dueño {} veces en {} tics", n, reloj::tics() - inicio);
+    kprintln!("C28: FPU por hilo {}", if n >= 4 { "bien" } else { "MAL (pocos cambios: los procesos no se turnaron)" });
 }
 
 #[panic_handler]

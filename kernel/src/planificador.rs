@@ -50,6 +50,16 @@ pub struct Hilo {
     /// Clase de plazo (C14), en cuentas del temporizador.
     plazo: Option<Plazo>,
     _pila: Option<Box<[u8]>>,
+    /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
+    fp: Option<Box<EstadoFp>>,
+}
+
+/// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
+#[repr(C, align(16))]
+struct EstadoFp {
+    q: [u128; 32],
+    fpcr: u64,
+    fpsr: u64,
 }
 
 #[derive(Clone, Copy)]
@@ -79,6 +89,9 @@ struct Nucleo {
     /// Hilos muertos de este núcleo, para liberar desde otro hilo del mismo núcleo (C18).
     muertos: Vec<*mut Hilo>,
     desde: u64, // cuándo empezó a correr el actual
+    /// El hilo cuyos registros de FP están ahora en la FPU de este núcleo (C28), o nulo. Los hilos no cambian de
+    /// núcleo, así que basta con un dueño por núcleo: si solo un hilo usa la FPU, no se guarda nada nunca.
+    fp_dueno: *mut Hilo,
 }
 
 unsafe impl Send for Nucleo {}
@@ -91,6 +104,17 @@ static CAMBIOS: AtomicU64 = AtomicU64::new(0);
 unsafe extern "C" {
     fn cambiar_contexto(viejo: *mut Contexto, nuevo: *const Contexto);
     fn hilo_entrada();
+    fn fp_guardar(p: *mut EstadoFp);
+    fn fp_cargar(p: *const EstadoFp);
+}
+
+/// CPACR_EL1.FPEN (C28): 0b01 atrapa los accesos de EL0 a la FPU (EL1 no la usa, pero puede guardarla); 0b11 los deja.
+const FPEN_ATRAPAR: u64 = 0b01 << 20;
+const FPEN_LIBRE: u64 = 0b11 << 20;
+static FP_CAMBIOS: AtomicU64 = AtomicU64::new(0);
+
+fn fpen(v: u64) {
+    unsafe { core::arch::asm!("msr cpacr_el1, {}", "isb", in(reg) v) };
 }
 
 /// Convierte el hilo que está corriendo en el ocioso de este núcleo y prepara su cola.
@@ -107,8 +131,10 @@ pub fn iniciar_nucleo() {
         proceso: 0,
         plazo: None,
         _pila: None,
+        fp: None,
     }));
-    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora() });
+    fpen(FPEN_ATRAPAR);
+    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
 }
 
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
@@ -140,6 +166,7 @@ pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usi
         proceso,
         plazo: None,
         _pila: Some(pila),
+        fp: None,
     }));
     nc.listos.push(h);
     id
@@ -338,6 +365,8 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
             }
         }
         nucleo.actual = siguiente;
+        // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
+        fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
         // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
@@ -427,6 +456,10 @@ pub fn terminar_actual() -> ! {
     let n = nucleos::numero() as usize;
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
         unsafe { (*nucleo.actual).estado = Estado::Muerto };
+        // Sus registros de FP ya no le importan a nadie, y el hilo se liberará: deja de ser el dueño.
+        if nucleo.fp_dueno == nucleo.actual {
+            nucleo.fp_dueno = core::ptr::null_mut();
+        }
     }
     planificar();
     unreachable!("un hilo muerto ha vuelto a correr");
@@ -479,4 +512,32 @@ pub fn ocioso() -> ! {
 
 pub fn cambios() -> u64 {
     CAMBIOS.load(Ordering::Relaxed)
+}
+
+/// El hilo actual ha usado la FPU desde EL0 sin ser su dueño (C28): se guardan los registros del dueño anterior, se
+/// cargan los suyos (a cero la primera vez) y la FPU queda libre para él.
+pub fn fp_atrapado() {
+    let n = nucleos::numero() as usize;
+    let mut g = NUCLEOS[n].tomar();
+    let Some(nucleo) = g.as_mut() else { return };
+    let actual = nucleo.actual;
+    if nucleo.fp_dueno != actual {
+        unsafe {
+            let viejo = nucleo.fp_dueno;
+            if !viejo.is_null() {
+                let e = (*viejo).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
+                fp_guardar(&mut **e);
+            }
+            let e = (*actual).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
+            fp_cargar(&**e);
+        }
+        nucleo.fp_dueno = actual;
+        FP_CAMBIOS.fetch_add(1, Ordering::Relaxed);
+    }
+    fpen(FPEN_LIBRE);
+}
+
+/// Cuántas veces ha cambiado de dueño la FPU de algún núcleo.
+pub fn fp_cambios() -> u64 {
+    FP_CAMBIOS.load(Ordering::Relaxed)
 }
