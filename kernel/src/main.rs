@@ -12,6 +12,7 @@ mod gic;
 mod memoria;
 mod mmu;
 mod nucleos;
+mod planificador;
 mod monton;
 mod reloj;
 mod mmio;
@@ -20,6 +21,7 @@ mod serie;
 use core::panic::PanicInfo;
 
 core::arch::global_asm!(include_str!("arranque.s"));
+core::arch::global_asm!(include_str!("contexto.s"));
 
 fn nivel_excepcion() -> u64 {
     let el: u64;
@@ -54,6 +56,8 @@ extern "C" fn kmain(dtb: usize) -> ! {
 
     let n = nucleos::despertar();
     kprintln!("C9: {} núcleos más en marcha: {}", n, if n == 3 { "bien" } else { "MAL" });
+
+    prueba_hilos();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -164,6 +168,7 @@ fn prueba_reloj(direccion: usize) {
     let (Some((dist, _)), Some((cpu, _))) = (d.reg_cpu(&g, 0), d.reg_cpu(&g, 1)) else { return };
     let ppi = d.propiedad(&t, "interrupts").map(|(datos, _)| d.celda(datos, 4)).unwrap_or(14);
     gic::iniciar(dist, cpu);
+    planificador::iniciar_nucleo();
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();
     let inicio = reloj::ahora();
@@ -173,6 +178,39 @@ fn prueba_reloj(direccion: usize) {
     let ms = (reloj::ahora() - inicio) * 1000 / reloj::frecuencia();
     kprintln!("  frecuencia del temporizador {} Hz; 10 tics en {} ms", reloj::frecuencia(), ms);
     kprintln!("C8: interrupciones {}", if (80..=130).contains(&ms) { "bien" } else { "MAL" });
+}
+
+/// C10: tres hilos que compiten por el núcleo 1, más uno que acaba solo.
+static CONTADORES: [core::sync::atomic::AtomicU64; 3] =
+    [core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0)];
+static TERMINADO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn contar(i: usize) {
+    loop {
+        CONTADORES[i].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    }
+}
+
+extern "C" fn acabar(_: usize) {
+    TERMINADO.store(true, core::sync::atomic::Ordering::Release);
+}
+
+fn prueba_hilos() {
+    use core::sync::atomic::Ordering;
+    for i in 0..3 {
+        planificador::crear(contar, i, 1);
+    }
+    planificador::crear(acabar, 0, 2);
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 30 {
+        reloj::esperar_interrupcion();
+    }
+    let c: [u64; 3] = core::array::from_fn(|i| CONTADORES[i].load(Ordering::Relaxed));
+    let (min, max) = (*c.iter().min().unwrap(), *c.iter().max().unwrap());
+    let cambios = planificador::cambios();
+    kprintln!("  en 300 ms: contadores {:?}, {} cambios de hilo, hilo corto terminado: {}", c, cambios, TERMINADO.load(Ordering::Acquire));
+    let bien = min > 0 && min * 2 > max && cambios >= 20 && TERMINADO.load(Ordering::Acquire);
+    kprintln!("C10: hilos {}", if bien { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

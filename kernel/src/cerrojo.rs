@@ -56,3 +56,60 @@ impl<T> Drop for Guarda<'_, T> {
         self.cerrojo.tomado.store(false, Ordering::Release);
     }
 }
+
+/// Enmascara las IRQ y devuelve el estado anterior de DAIF.
+#[inline]
+pub fn enmascarar_irq() -> u64 {
+    let daif: u64;
+    unsafe { core::arch::asm!("mrs {}, daif", "msr daifset, #2", out(reg) daif) };
+    daif
+}
+
+#[inline]
+pub fn restaurar_irq(daif: u64) {
+    unsafe { core::arch::asm!("msr daif, {}", in(reg) daif) };
+}
+
+/// Cerrojo que además enmascara las interrupciones del núcleo mientras se tiene. Para datos que también toca una
+/// interrupción (el planificador): sin esto, una interrupción que pide el cerrojo en el mismo núcleo que lo tiene
+/// se quedaría esperando para siempre.
+pub struct CerrojoIrq<T> {
+    interior: Cerrojo<T>,
+}
+
+impl<T> CerrojoIrq<T> {
+    pub const fn new(dato: T) -> Self {
+        Self { interior: Cerrojo::new(dato) }
+    }
+
+    pub fn tomar(&self) -> GuardaIrq<'_, T> {
+        let daif = enmascarar_irq();
+        GuardaIrq { guarda: core::mem::ManuallyDrop::new(self.interior.tomar()), daif }
+    }
+}
+
+pub struct GuardaIrq<'a, T> {
+    guarda: core::mem::ManuallyDrop<Guarda<'a, T>>,
+    daif: u64,
+}
+
+impl<T> Deref for GuardaIrq<'_, T> {
+    type Target = T;
+    fn deref(&self) -> &T {
+        &self.guarda
+    }
+}
+
+impl<T> DerefMut for GuardaIrq<'_, T> {
+    fn deref_mut(&mut self) -> &mut T {
+        &mut self.guarda
+    }
+}
+
+impl<T> Drop for GuardaIrq<'_, T> {
+    fn drop(&mut self) {
+        unsafe { core::mem::ManuallyDrop::drop(&mut self.guarda) };
+        restaurar_irq(self.daif);
+    }
+}
+

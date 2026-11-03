@@ -37,10 +37,15 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
     if tipo & 3 == 1 {
         let intid = crate::gic::reconocer();
         if intid != crate::gic::FALSA {
-            if !crate::reloj::interrupcion(intid) {
+            let es_reloj = crate::reloj::interrupcion(intid);
+            if !es_reloj {
                 kprintln!("IRQ {} sin dueño", intid);
             }
+            // Terminar antes de cambiar de hilo: si no, la interrupción seguiría activa hasta volver a este hilo.
             crate::gic::terminar(intid);
+            if es_reloj {
+                crate::planificador::tic();
+            }
         }
         return;
     }

@@ -43,9 +43,9 @@ pub fn despertar() -> u32 {
 extern "C" fn kmain_secundario(nucleo: u64) -> ! {
     excepciones::iniciar();
     gic::iniciar_cpu();
+    crate::planificador::iniciar_nucleo();
+    crate::reloj::iniciar_nucleo();
     kprintln!("  núcleo {} en marcha (MPIDR {})", nucleo, numero());
     EN_MARCHA.fetch_add(1, Ordering::Release);
-    loop {
-        unsafe { core::arch::asm!("wfe") };
-    }
+    crate::planificador::ocioso();
 }

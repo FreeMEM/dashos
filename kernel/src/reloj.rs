@@ -36,6 +36,12 @@ pub fn iniciar(ppi: u32, hz: u64) {
     programar(periodo);
 }
 
+/// La parte de cada núcleo: el temporizador y su PPI son privados de cada núcleo.
+pub fn iniciar_nucleo() {
+    gic::habilitar(INTID.load(Ordering::Relaxed), 0x80);
+    programar(PERIODO.load(Ordering::Relaxed));
+}
+
 pub fn tics() -> u64 {
     TICS.load(Ordering::Relaxed)
 }
@@ -45,7 +51,9 @@ pub fn interrupcion(intid: u32) -> bool {
     if intid != INTID.load(Ordering::Relaxed) {
         return false;
     }
-    TICS.fetch_add(1, Ordering::Relaxed);
+    if crate::nucleos::numero() == 0 {
+        TICS.fetch_add(1, Ordering::Relaxed);
+    }
     programar(PERIODO.load(Ordering::Relaxed));
     true
 }

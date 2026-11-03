@@ -69,7 +69,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
 - [x] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
   se presenta.
-- [ ] C10 **Hilos y planificador.** Cambio de contexto, una cola por núcleo, clase justa sencilla (S2). Prueba: hilos
+- [x] C10 **Hilos y planificador.** Cambio de contexto, una cola por núcleo, clase justa sencilla (S2). Prueba: hilos
   que se turnan.
 - [ ] C11 **Procesos en EL0.** Espacio de direcciones propio con ASID, llamada al sistema por `svc`. Prueba: un
   proceso de usuario escribe por una llamada.
@@ -201,4 +201,15 @@ se presentan con su MPIDR. BIEN a la primera.
 `docs/spec/hw/hdmi.md`: pixel valves, las dos salidas HDMI con sus bloques, relojes por el buzón, secuencia de
 encendido de un modo, HPD y EDID, 4K, sincronía vertical y audio, con cita de Linux. Revisado por encima que no lleva
 código. V3 (V3D, lado del kernel) lanzada.
+
+### 2026-11-03 02:4x — C10 (hilos y planificador)
+
+`kernel/src/contexto.s`: `cambiar_contexto` guarda y carga x19-x30 y la pila; `hilo_entrada` arranca un hilo nuevo.
+`kernel/src/planificador.rs`: una cola por núcleo, clase justa por tiempo virtual (tiempo × 1024 / peso), un hilo
+ocioso por núcleo (el de su arranque), el tic del reloj reparte, `ceder()` y fin de hilo. `cerrojo.rs` gana
+`CerrojoIrq`, que enmascara las interrupciones mientras se tiene (si no, el tic que pide el cerrojo de la cola en el
+mismo núcleo se bloquea). La interrupción del reloj se termina en el GIC antes de cambiar de hilo. Cada núcleo pone
+su temporizador. Prueba: tres hilos que cuentan en el núcleo 1 durante 300 ms quedan parejos (4,99 M, 5,56 M y
+5,50 M), 30 cambios de hilo, y un hilo corto en el núcleo 2 termina. Cuatro ejecuciones seguidas, BIEN. Pendiente:
+liberar los hilos muertos, migración y robo de trabajo entre núcleos.
 
