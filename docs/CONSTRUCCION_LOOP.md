@@ -452,3 +452,10 @@ el siguiente reutiliza; al final queda un solo tramo libre, la manija liberada s
 entera. BIEN. Una de ocho vueltas de la tanda completa falló en C14 (desviación de más de 1 ms): la máquina estaba
 cargada (el analista de V5 trabajando a la vez) y QEMU sigue el reloj real. No es de C26; si se repite sin carga,
 mirar. V5 lanzada: especificación de las listas de control mínimas de la V3D, leyendo Mesa (MIT).
+
+### 2026-11-03 08:2x — Mensaje de la sesión de Dash
+
+El usuario confirmó el backend AArch64 de Dash. Va en la rama `aarch64` de FreeMEMLang, con el plan en
+`docs/AARCH64_LOOP.md`, por fases de A1 a A7. Preguntó qué ELF queremos. Respuesta: estático, ET_EXEC big-endian,
+en 0x400000, sin relocaciones. Segmentos alineados a 4 KB y sin compartir página. Pila de una página bajo 0x800000.
+Funciones de plataforma sobre las llamadas provisionales 1, 2, 7 y 8, como única capa que conozca sus números.
