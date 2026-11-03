@@ -85,7 +85,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C47 **Programa de inicio.** La imagen normal lanza `inicio` (un ELF dentro de la imagen) en el grupo raíz, con
   las llaves de arranque: registros e interrupciones de cada aparato del árbol, permiso DMA. `inicio` lanza los
   servicios, cada uno en su grupo. `make arranque` lo comprueba.
-- [ ] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
+- [x] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
   la consola arranca y escribe su registro en un anillo que la consola vacía; `escribir` va también al anillo. Solo el
   pánico escribe directo. Cierra N2/N6 de las auditorías.
 - [ ] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
@@ -1184,6 +1184,32 @@ paso 4. Que el aparato lea de verdad ese búfer solo se verá con el USB fuera d
 
 **Prueba** (`make arranque`, `pruebas/arranque.txt`): `inicio` arranca, ve el permiso DMA y la serie, lanza `hola` en
 su grupo, `hola` sale con 5 e `inicio` se queda esperando.
+
+### 2026-11-03 noche, bucle — C48 (consola como servicio)
+
+- **Registro del sistema** (`registro.rs`).
+  - `kprint` y `escribir` van a un anillo de 64 KB. Si se llena, lo nuevo se pierde y se cuenta.
+  - Hasta que la consola lo toma, el kernel escribe también directo al PL011.
+  - La llamada 23, `registro_leer`, saca del anillo; pide la llave `Registro`, que solo da el kernel a `inicio`. La
+    primera vez, el kernel escribe su última línea directa ("registro: la consola pasa a un proceso…"), descarta lo
+    que ya había salido y deja la serie.
+  - El pánico escribe siempre directo.
+  - Los lectores dormidos se despiertan en el tic o en `escribir`, nunca desde `kprint`, que puede ir con el cerrojo
+    del planificador tomado.
+- **`consola`** (servicio). Lo lanza `inicio` con el registro y los registros del PL011, y saca el anillo por la
+  serie. `inicio` reparte ahora llaves a cada servicio según una máscara del paquete de arranque. Las llaves de
+  arranque llevan derecho de transferir.
+- **N6.** Cada línea de un programa empieza por "│ ". `prueba_qemu.sh` exige que los veredictos ("C32: …") empiecen
+  la línea, así que un programa ya no puede falsearlos.
+- **Cierra N2 y el hallazgo 9.** Con la consola en marcha, el kernel no espera nunca a la serie.
+
+**Prueba** (`make arranque`):
+- la consola toma el registro;
+- lo que escriben `inicio` y `hola` sale con "│ " y una sola vez (el kernel ya no lo escribe por su lado);
+- la línea del kernel "sale con código 5" sale por la consola.
+
+`make prueba` sigue pasando: la imagen de pruebas no lanza `inicio`, así que el kernel escribe directo y las líneas de
+los programas también llevan "│ ".
 
 ## Resumen de la noche
 

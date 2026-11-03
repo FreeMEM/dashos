@@ -136,11 +136,14 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
 | 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
+| 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
 
 ### Detalles
 
-- **1, `escribir`.** Va a la consola del sistema, que hoy es el puerto serie. El texto se interpreta como UTF-8, y
+- **1, `escribir`, y la consola** (C48). Lo escrito va al registro del sistema, un anillo de 64 KB del kernel, y de
+  ahí a la consola. Cada línea de un programa empieza por "│ ", así que nunca se confunde con una del kernel. Si el
+  anillo está lleno, lo nuevo se pierde. Antes: va a la consola del sistema, que hoy es el puerto serie. El texto se interpreta como UTF-8, y
   cada byte que no lo sea sale como `?`. Los caracteres de control también, salvo el salto de línea y el tabulador.
   Es provisional: la consola será un servicio.
 - **4, `canal_escribir`.**
@@ -218,6 +221,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos
   los procesos (C45); las hechas con la llave original siguen.
+- **23, `registro_leer`** (C48). Para la consola: pide la llave del registro, que solo da el kernel a `inicio`. Saca
+  hasta 4096 bytes del registro, esperando si no hay nada. La primera vez, el kernel deja el puerto serie: desde ahí
+  solo escribe en el registro, salvo el pánico, que va directo.
 - **22, `memoria_dma`** (C46). Pide una llave de permiso DMA con derecho de escribir; solo la da el kernel, a los
   controladores que la necesitan. Da un objeto de memoria de hasta 4 MB de páginas seguidas de la zona del permiso
   (el primer GB, el que alcanza el DMA), a cero, cobrado al cupo, y en `x1` la dirección de bus de su primera página,
@@ -305,6 +311,7 @@ Tipos de objeto:
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
+| Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 
 ## Biblioteca de usuario en Rust
@@ -335,9 +342,6 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
   ahí; los del grupo raíz (los que lanza el kernel) no tienen cupo.
 - Una llave de registros da páginas enteras de 4 KB. La del controlador serie incluye, en la misma página, las UART 2
   a 5 de la BCM2711; son del mismo controlador.
-- Un programa puede escribir en la consola líneas que imitan mensajes del kernel. Las pruebas de QEMU se fían de esas
-  líneas; las pruebas salen de la imagen en la fase 2.
 - Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).
-- La consola de `escribir` es el puerto serie del kernel.

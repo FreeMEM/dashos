@@ -104,7 +104,12 @@ while IFS= read -r ESPERADO; do
             fi
             continue;;
     esac
-    N=$(tail -n +"$DESDE" "$SALIDA.txt" | grep -nF -m1 -- "$ESPERADO" | cut -d: -f1)
+    # Las líneas del kernel que dan el resultado de una prueba ("C32: ...") tienen que empezar la línea: un programa
+    # no puede imitarlas, porque las suyas empiezan por "│ " (C48).
+    case "$ESPERADO" in
+        C[0-9]*:*) N=$(tail -n +"$DESDE" "$SALIDA.txt" | awk -v e="$ESPERADO" 'index($0, e) == 1 { print NR; exit }') ;;
+        *) N=$(tail -n +"$DESDE" "$SALIDA.txt" | grep -nF -m1 -- "$ESPERADO" | cut -d: -f1) ;;
+    esac
     if [ -z "$N" ]; then
         echo "FALTA: $ESPERADO"
         FALLO=1

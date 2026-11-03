@@ -107,6 +107,8 @@ fn tratar(marco: &mut Marco, tipo: u64) {
             }
             // Terminar antes de cambiar de hilo: si no, la interrupción seguiría activa hasta volver a este hilo.
             crate::gic::terminar(iar);
+            // Lectores del registro dormidos con algo nuevo (C48): aquí, sin el cerrojo del planificador.
+            crate::registro::avisar();
             if planificar {
                 crate::planificador::tic();
             }

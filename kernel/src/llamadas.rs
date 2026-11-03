@@ -27,6 +27,7 @@
 //! | 20 | grupo_uso(llave de grupo) -> (límite, usado) |
 //! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
 //! | 22 | memoria_dma(permiso DMA, tamaño) -> (llave de memoria, dirección de bus) |
+//! | 23 | registro_leer(llave del registro, búfer, capacidad) -> bytes: para la consola |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -141,6 +142,7 @@ pub fn atender(marco: &mut Marco) {
         20 => grupo_uso(marco, a[0] as u32),
         21 => memoria_quitar(a[0]),
         22 => memoria_dma(marco, a[0] as u32, a[1]),
+        23 => registro_leer(a[0] as u32, a[1], a[2]),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -157,19 +159,32 @@ fn escribir_consola(p: u64, n: u64) -> u64 {
     // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto. Los
     // caracteres de control, salvo el salto de línea y el tabulador, también: así un proceso no manda secuencias
     // de escape al terminal (auditoría, bajos).
+    //
+    // Cada línea de un programa empieza por "│ " (C48): así no puede hacerse pasar por una línea del kernel (N6).
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let mut limpio = alloc::string::String::new();
-    if limpio.try_reserve(texto.len()).is_err() {
+    if limpio.try_reserve(texto.len() * 2 + 4).is_err() {
         return E_MEMORIA;
     }
+    let mut a_media = proc_.a_media_linea.load(core::sync::atomic::Ordering::Relaxed);
     for trozo in texto.utf8_chunks() {
         for c in trozo.valid().chars() {
+            if !a_media {
+                limpio.push_str("│ ");
+                a_media = true;
+            }
             limpio.push(if c.is_control() && c != '\n' && c != '\t' { '?' } else { c });
+            if c == '\n' {
+                a_media = false;
+            }
         }
         for _ in trozo.invalid() {
             limpio.push('?');
         }
     }
+    proc_.a_media_linea.store(a_media, core::sync::atomic::Ordering::Relaxed);
     kprint!("{}", limpio);
+    crate::registro::avisar();
     n as u64
 }
 
@@ -646,4 +661,29 @@ fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
         }
         Err(_) => E_LIMITE,
     }
+}
+
+/// Saca del registro del sistema (C48), esperando si no hay nada. Pide la llave del registro con derecho de leer. La
+/// primera vez, el kernel deja el puerto serie a quien llama.
+fn registro_leer(h: u32, buf: u64, cap: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Registro = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let cap = cap.min(4096) as usize;
+    if cap == 0 || tramo(buf, cap as u64).is_none() {
+        return E_ARGUMENTO;
+    }
+    let mut v = Vec::new();
+    if v.try_reserve_exact(cap).is_err() {
+        return E_MEMORIA;
+    }
+    v.resize(cap, 0);
+    let Some(n) = crate::registro::sacar(&mut v) else { return E_CERRADO };
+    if !escribir_usuario(buf, &v[..n]) {
+        return E_ARGUMENTO;
+    }
+    n as u64
 }

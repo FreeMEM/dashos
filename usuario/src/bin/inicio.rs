@@ -29,12 +29,14 @@ fn principal() -> u64 {
     let mut p = PAQUETE;
     let n = u32_en(p) as usize;
     p += 4;
+    let aparatos = p;
     println!("  [inicio] en marcha, con {} llaves de aparatos:", n);
     for _ in 0..n {
         let tipo = match u32_en(p + 16) {
             1 => "registros",
             2 => "interrupción",
             3 => "permiso DMA",
+            4 => "registro",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -47,6 +49,16 @@ fn principal() -> u64 {
     for i in 0..programas {
         let cab = cabeceras + 24 * i;
         let tamano = u32_en(cab) as usize;
+        let mascara = u32_en(cab + 4);
+        // Las llaves de los aparatos que le tocan, en orden; pasan a ser la 1, la 2... del servicio.
+        let mut suyas = [0u32; 8];
+        let mut k = 0;
+        for a in 0..n.min(32) {
+            if mascara & (1 << a) != 0 && k < suyas.len() {
+                suyas[k] = u32_en(aparatos + 24 * a + 20);
+                k += 1;
+            }
+        }
         datos = (datos + 7) & !7;
         let m = memoria_crear(tamano);
         let destino = COPIA + i * (8 << 20);
@@ -57,15 +69,17 @@ fn principal() -> u64 {
         unsafe { core::ptr::copy_nonoverlapping(datos as *const u8, destino as *mut u8, tamano) };
         datos += tamano;
         let g = grupo_crear(16 << 20);
-        let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &[]) } else { g };
+        let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
             println!("  [inicio] {}: no se pudo lanzar ({})", nombre(cab + 8), proceso);
             continue;
         }
-        println!("  [inicio] {} lanzado en su grupo", nombre(cab + 8));
-        // Por ahora los servicios de prueba acaban; los de verdad (consola, USB) no.
-        let (clase, codigo) = proceso_esperar(proceso as u32);
-        println!("  [inicio] {} acabó: clase {}, código {}", nombre(cab + 8), clase, codigo);
+        println!("  [inicio] {} lanzado en su grupo, con {} llaves", nombre(cab + 8), k);
+        // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera.
+        if k == 0 {
+            let (clase, codigo) = proceso_esperar(proceso as u32);
+            println!("  [inicio] {} acabó: clase {}, código {}", nombre(cab + 8), clase, codigo);
+        }
     }
     println!("  [inicio] todo lanzado; se queda esperando");
     let (a, _b) = dashos::canal_crear();

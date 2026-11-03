@@ -72,9 +72,27 @@ impl fmt::Write for Serie {
 /// una interrupción sin colgar el núcleo cuando el hilo interrumpido estaba imprimiendo (auditoría, bajos).
 static CERROJO: crate::cerrojo::CerrojoIrq<()> = crate::cerrojo::CerrojoIrq::new(());
 
+/// Escribe en el registro (C48) y, mientras la consola no lo haya tomado, también directo al PL011.
 pub fn imprimir(args: fmt::Arguments) {
     let _g = CERROJO.tomar();
+    let _ = fmt::Write::write_fmt(&mut AlRegistro, args);
+    if crate::registro::directo() {
+        let _ = fmt::Write::write_fmt(&mut Serie, args);
+    }
+}
+
+/// Directo al PL011, aunque la consola haya tomado el registro: para el pánico, que puede ser lo último que se vea.
+pub fn imprimir_directo(args: fmt::Arguments) {
     let _ = fmt::Write::write_fmt(&mut Serie, args);
+}
+
+struct AlRegistro;
+
+impl fmt::Write for AlRegistro {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        crate::registro::poner(s.as_bytes());
+        Ok(())
+    }
 }
 
 #[macro_export]

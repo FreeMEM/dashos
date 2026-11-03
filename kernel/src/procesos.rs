@@ -51,6 +51,7 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         espacio: Cerrojo::new(e),
         llaves: Cerrojo::new(tabla),
         cupo,
+        a_media_linea: Default::default(),
         _cargo: cargo,
         control: control.clone(),
     });

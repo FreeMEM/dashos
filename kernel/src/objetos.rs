@@ -37,6 +37,8 @@ pub enum Objeto {
     /// Permiso para crear memoria DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de
     /// bus. Solo lo da el kernel, a los controladores que lo necesitan.
     PermisoDma { zona: crate::memoria::Zona, desplazamiento_bus: u64 },
+    /// El registro del sistema (C48): con leer se saca, y quien lo saca es la consola. Solo lo da el kernel.
+    Registro,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
@@ -507,6 +509,8 @@ pub struct Proceso {
     pub llaves: Cerrojo<TablaLlaves>,
     /// Su grupo (C42): a él se cobra lo que crea.
     pub cupo: Arc<crate::cupo::Cupo>,
+    /// Lo último que escribió no acabó en salto de línea (C48): lo siguiente no lleva la marca de principio de línea.
+    pub a_media_linea: core::sync::atomic::AtomicBool,
     /// Lo que cuesta el proceso en sí (`COSTE_PROCESO`).
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.

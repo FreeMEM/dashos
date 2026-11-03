@@ -99,3 +99,8 @@ test = false
 name = "inicio"
 path = "src/bin/inicio.rs"
 test = false
+
+[[bin]]
+name = "consola"
+path = "src/bin/consola.rs"
+test = false

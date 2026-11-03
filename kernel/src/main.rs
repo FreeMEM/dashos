@@ -40,11 +40,13 @@ mod gpu;
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
 mod usb;
+#[cfg(not(feature = "pruebas"))]
 mod inicio;
 mod interrupciones;
 mod llamadas;
 mod objetos;
 mod procesos;
+mod registro;
 mod reloj;
 mod serie;
 // Las pruebas tocan el hardware a mano; no van en la imagen normal.
@@ -103,6 +105,6 @@ pub fn kmain(dtb: usize) -> ! {
 
 #[panic_handler]
 fn panico(info: &PanicInfo) -> ! {
-    kprintln!("PÁNICO: {}", info);
+    serie::imprimir_directo(format_args!("PÁNICO: {}\n", info));
     base::cpu::parar()
 }

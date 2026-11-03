@@ -1,14 +1,18 @@
-# La imagen normal, sin pruebas: arranca los cuatro núcleos y pasa el sistema al programa de inicio (C47).
+# La imagen normal, sin pruebas: arranca los cuatro núcleos y pasa el sistema al programa de inicio (C47), que lanza
+# la consola (C48). Desde que la consola toma el registro, todo sale por ella; las líneas de los programas llevan "│ ".
 DashOS 0.0.1
 Orden de bytes: little-endian
 Memoria física: 
   núcleo 1 en marcha
 DashOS en marcha con 4 núcleos.
-  [inicio] en marcha, con
-  [inicio]   llave 2: permiso DMA de dma
-  [inicio]   llave 3: registros de serie
-  [inicio]   llave 4: interrupción de serie
-  [inicio] hola lanzado en su grupo
-  hola desde Rust en EL0 (DashOS, little-endian)
-  [inicio] hola acabó: clase 0, código 5
-  [inicio] todo lanzado; se queda esperando
+│   [inicio] en marcha, con
+│   [inicio]   llave 2: permiso DMA de dma
+│   [inicio]   llave 3: registro de registro
+│   [inicio]   llave 4: registros de serie
+│   [inicio] consola lanzado en su grupo, con 2 llaves
+~registro: la consola pasa a un proceso; el kernel deja el puerto serie
+│   [inicio] hola lanzado en su grupo, con 0 llaves
+│   hola desde Rust en EL0 (DashOS, little-endian)
+sale con código 5
+│   [inicio] hola acabó: clase 0, código 5
+│   [inicio] todo lanzado; se queda esperando
