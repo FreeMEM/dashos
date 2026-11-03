@@ -73,7 +73,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 ## Tareas
 
-- [ ] S0 **Principios y metas.** En qué será DashOS mejor que Linux, con números medibles. En qué no compite. Qué
+- [x] S0 **Principios y metas.** En qué será DashOS mejor que Linux, con números medibles. En qué no compite. Qué
   hardware cubre y cuál no.
 - [ ] S1 **Arquitectura del kernel.** Micronúcleo, monolítico o híbrido. Capacidades (como seL4) o permisos
   clásicos. Comunicación entre procesos. Controladores dentro o fuera del kernel. Qué se aprovecha del ecosistema
@@ -120,9 +120,23 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 
 - (De `PLAN.md`) Si las aplicaciones nativas nuevas usan la API Amiga dentro de la caja, una API moderna fuera, o
   las dos. Mientras: las dos, la moderna como principal.
+- (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
+  por debajo de 128 MB. Mientras: esas.
+- (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
+- (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
+- (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
 
 ### 2026-11-03 — Plan
 
 Bucle creado por encargo del usuario. Dieciséis tareas, de S0 a S15.
+
+### 2026-11-03 — S0 (principios y metas)
+
+`docs/diseño/S0-principios.md`: ocho principios ordenados (el primero, que el sistema responda siempre) y nueve
+metas con número y forma de medirlas. Lo más útil que salió: el firmware de la Pi 4 se come unos 3,5 s antes del
+kernel, así que la meta propia es "del kernel al escritorio en menos de 1 s". Y la latencia de entrada de Linux con
+Wayland ya es buena (diferencias de menos de 1 ms entre compositores): DashOS debe no perder ahí y ganar con el
+sistema cargado. Cuatro preguntas para el usuario.
+
