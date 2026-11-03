@@ -75,7 +75,7 @@ del kernel sobre la que irán esos controladores.
   partir de un ELF en un objeto de memoria y una lista de llaves que se le pasan; `proceso_matar`; esperar a que
   acabe (por un canal o una llave que se cierra). Matar siempre funciona (S2): un hilo bloqueado también muere, y
   nadie se queda con un `HiloRef` suelto (auditoría de la fase 2).
-- [ ] C40 **Al morir un proceso, sus extremos se cierran** y el otro lado se entera (`E_CERRADO`). Sin ciclos: no se
+- [x] C40 **Al morir un proceso, sus extremos se cierran** y el otro lado se entera (`E_CERRADO`). Sin ciclos: no se
   puede mandar un extremo por su propio canal ni por su pareja, ni una llave de interrupción al canal al que está
   asociada (hallazgo 15).
 - [ ] C41 **Llaves completas** (S16, G): duplicar una llave con menos derechos; identidad del que escribe (una marca
@@ -951,6 +951,26 @@ Los espera a todos. Además:
 
 Al acabar, las páginas libres vuelven a las de antes. Sin la comprobación al volver a EL0, el hijo que gira no muere
 y la prueba se cuelga.
+
+### 2026-11-03 tarde, bucle — C40 (lados que se cierran solos, sin ciclos)
+
+- **`Punta`.** Un extremo de canal es un objeto propio que tienen las llaves. Al soltarse el último `Arc`, ese lado se
+  cierra: el otro se entera, y los mensajes que esperaban a ese lado se sueltan. Da igual por qué se suelte:
+  `cerrar`, la muerte del proceso (se suelta su tabla de llaves) o un mensaje que nadie leerá.
+- **Soltar sin recursión.** `soltar` lleva una lista: cada punta o canal que se queda sin dueños se cierra o se vacía
+  dentro del mismo bucle. Sustituye al `Drop` de C32 y cubre también las puntas.
+- **Sin ciclos.** `canal_escribir` rechaza con `E_ARGUMENTO` un extremo del mismo canal y una interrupción que avisa a
+  ese canal. Los ciclos de varios canales siguen siendo posibles; los acotan los límites (y los cupos de C42).
+
+**Prueba** (`padre`, pasos 15 a 21):
+- el padre lee un canal cuyo otro lado tiene un hijo que sale, y recibe `E_CERRADO`; lo mismo matando al hijo;
+- mandar la pareja o el propio lado da `E_ARGUMENTO`;
+- un lado que va dentro de un mensaje que nadie leerá se cierra.
+
+Sin el cierre al soltar la punta, `malo` y `padre` fallan.
+
+**Pruebas lentas.** Con la máquina a carga 27, la batería no cabía en 15 s (falló C32 "dos núcleos" por tiempo) y C14
+falló dos veces. Con 25 s pasó tres de tres: `make prueba` usa ahora 25 s.
 
 ## Resumen de la noche
 

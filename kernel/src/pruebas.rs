@@ -431,7 +431,7 @@ static IDAS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(
 
 pub fn extremo(l: &objetos::Llave) -> (alloc::sync::Arc<objetos::Canal>, usize) {
     match &l.objeto {
-        objetos::Objeto::Extremo(c, lado) => (c.clone(), *lado),
+        objetos::Objeto::Extremo(p) => (p.canal().clone(), p.lado()),
         _ => unreachable!(),
     }
 }

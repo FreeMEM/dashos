@@ -29,8 +29,8 @@ pub const MAX_CANALES: usize = 512;
 
 #[derive(Clone)]
 pub enum Objeto {
-    /// Un extremo de un canal: (canal, lado 0 o 1).
-    Extremo(Arc<Canal>, usize),
+    /// Un extremo de un canal. Cuando se suelta su última llave, ese lado se cierra (C40).
+    Extremo(Arc<Punta>),
     /// Un objeto de memoria (C13, S3): páginas físicas que se pueden proyectar en varios procesos.
     Memoria(Arc<Memoria>),
     /// Registros de un aparato (C20): un tramo físico de periféricos que se puede proyectar en un proceso.
@@ -60,6 +60,15 @@ impl Fin {
             Fin::Matado => (1, 0),
             Fin::Fallo => (2, 0),
         }
+    }
+}
+
+/// ¿Mandar `l` por `canal` haría un ciclo? Un lado del mismo canal, o una interrupción que avisa a ese canal.
+pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
+    match &l.objeto {
+        Objeto::Extremo(p) => Arc::ptr_eq(p.canal(), canal),
+        Objeto::Interrupcion(i) => i.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
+        _ => false,
     }
 }
 
@@ -125,35 +134,79 @@ pub enum Error {
 /// más mensajes dentro. Hecho por recursión, una cadena de unas decenas de canales desbordaba la pila del kernel
 /// (auditoría, hallazgo 3). Aquí se hace con una lista: cada canal que se queda sin dueños se vacía en ella, y lo
 /// que hay dentro se suelta en el mismo bucle.
+/// Un lado de un canal, como objeto (C40). Lo tienen las llaves de ese lado. Al soltarse el último `Arc`, sea porque
+/// se cerró la llave, porque murió el proceso que la tenía o porque se perdió dentro de un mensaje, el lado se cierra:
+/// el otro lado se entera (`E_CERRADO`) y los mensajes que esperaban a este lado, que ya nadie leerá, se sueltan.
+pub struct Punta {
+    /// Siempre `Some` salvo dentro de `soltar`, que lo saca para cerrar sin recursión.
+    canal: Option<Arc<Canal>>,
+    lado: usize,
+}
+
+impl Punta {
+    pub fn canal(&self) -> &Arc<Canal> {
+        self.canal.as_ref().expect("punta sin canal fuera de soltar")
+    }
+
+    pub fn lado(&self) -> usize {
+        self.lado
+    }
+}
+
+impl Drop for Punta {
+    fn drop(&mut self) {
+        if let Some(c) = self.canal.take() {
+            let mut pendientes = Vec::new();
+            cerrar_lado(c, self.lado, &mut pendientes);
+            soltar(pendientes);
+        }
+    }
+}
+
+/// Cierra un lado y, si era el último dueño del canal, lo vacía. Lo que sale va a `pendientes`.
+fn cerrar_lado(c: Arc<Canal>, lado: usize, pendientes: &mut Vec<Mensaje>) {
+    pendientes.extend(c.cerrar_y_vaciar(lado));
+    if let Ok(mut canal) = Arc::try_unwrap(c) {
+        pendientes.extend(canal.vaciar());
+    }
+}
+
+/// Suelta mensajes. Sus llaves pueden ser de lados de otros canales con más mensajes dentro, y así en cadena: por
+/// recursión, una cadena larga desbordaba la pila del kernel (auditoría, hallazgo 3). Aquí va con una lista: cada lado
+/// que se queda sin dueños se cierra y lo que contenía pasa a la lista.
+fn soltar(mut pendientes: Vec<Mensaje>) {
+    while let Some(m) = pendientes.pop() {
+        for l in m.llaves {
+            match l.objeto {
+                Objeto::Extremo(p) => {
+                    if let Ok(mut p) = Arc::try_unwrap(p) {
+                        if let Some(c) = p.canal.take() {
+                            cerrar_lado(c, p.lado, &mut pendientes);
+                        }
+                    }
+                }
+                Objeto::Interrupcion(i) => {
+                    if let Ok(mut i) = Arc::try_unwrap(i) {
+                        if let Some(c) = i.quitar_destino() {
+                            if let Ok(mut canal) = Arc::try_unwrap(c) {
+                                pendientes.extend(canal.vaciar());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
 impl Drop for Canal {
     fn drop(&mut self) {
         if let Some(c) = &self.cuenta {
             c.fetch_sub(1, Ordering::Relaxed);
         }
-        let mut mensajes: Vec<Mensaje> = Vec::new();
-        for lado in self.lados.get_mut().iter_mut() {
-            mensajes.extend(lado.cola.drain(..));
-        }
-        while let Some(m) = mensajes.pop() {
-            for l in m.llaves {
-                let canal = match l.objeto {
-                    Objeto::Extremo(c, _) => Some(c),
-                    Objeto::Interrupcion(i) => match Arc::try_unwrap(i) {
-                        Ok(mut i) => i.quitar_destino(),
-                        Err(_) => None,
-                    },
-                    _ => None,
-                };
-                // Si era el último dueño, sus mensajes pasan a la lista y el canal se suelta ya vacío.
-                if let Some(c) = canal {
-                    if let Ok(mut c) = Arc::try_unwrap(c) {
-                        for lado in c.lados.get_mut().iter_mut() {
-                            mensajes.extend(lado.cola.drain(..));
-                        }
-                    }
-                }
-            }
-        }
+        let mensajes = self.vaciar();
+        soltar(mensajes);
     }
 }
 
@@ -181,8 +234,8 @@ impl Canal {
     fn con_cuenta(cuenta: Option<Arc<AtomicUsize>>) -> (Llave, Llave) {
         let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]), cuenta });
         (
-            Llave { objeto: Objeto::Extremo(c.clone(), 0), derechos: TODOS },
-            Llave { objeto: Objeto::Extremo(c, 1), derechos: TODOS },
+            Llave { objeto: Objeto::Extremo(Arc::new(Punta { canal: Some(c.clone()), lado: 0 })), derechos: TODOS },
+            Llave { objeto: Objeto::Extremo(Arc::new(Punta { canal: Some(c), lado: 1 })), derechos: TODOS },
         )
     }
 
@@ -249,15 +302,27 @@ impl Canal {
         self.lados.tomar()[lado].cola.push_front(m);
     }
 
-    pub fn cerrar(&self, lado: usize) {
-        let despertar = {
+    /// Cierra el lado `lado`: el otro se entera, y los mensajes que esperaban a este lado se devuelven para soltarlos
+    /// fuera del cerrojo.
+    fn cerrar_y_vaciar(&self, lado: usize) -> Vec<Mensaje> {
+        let (despertar, cola) = {
             let mut l = self.lados.tomar();
             l[lado].cerrado = true;
-            l[1 - lado].esperando.take()
+            (l[1 - lado].esperando.take(), core::mem::take(&mut l[lado].cola))
         };
         if let Some(h) = despertar {
             h.despertar();
         }
+        cola.into()
+    }
+
+    /// Saca todos los mensajes de las dos colas (cuando ya nadie más tiene el canal).
+    fn vaciar(&mut self) -> Vec<Mensaje> {
+        let mut v = Vec::new();
+        for lado in self.lados.get_mut().iter_mut() {
+            v.extend(lado.cola.drain(..));
+        }
+        v
     }
 }
 

@@ -12,6 +12,7 @@ const E_ARGUMENTO: i64 = -1;
 const E_LLAVE: i64 = -2;
 const E_TAMANO: i64 = -5;
 const E_TIPO: i64 = -6;
+const E_CERRADO: i64 = -4;
 
 fn hijo(tamano: usize, orden: &[u8]) -> (i64, u32) {
     let (a, b) = dashos::canal_crear();
@@ -96,6 +97,38 @@ fn principal() -> u64 {
     if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
         return 14;
     }
+    // C40. 15: el hijo tiene el otro lado de un canal; al salir, el lado se cierra y el padre, que lee, se entera.
+    let (p, a) = hijo(tamano, &[1, 5]);
+    if p <= 0 || dashos::canal_leer(a, &mut buf, &mut llaves).0 != E_CERRADO {
+        return 15;
+    }
+    if dashos::canal_escribir(a, b"x", &[]) != E_CERRADO || dashos::proceso_esperar(p as u32) != (0, 5) {
+        return 16;
+    }
+    // 17: lo mismo matándolo mientras está bloqueado leyendo.
+    let (p, a) = hijo(tamano, &[]);
+    esperar_ms(20);
+    if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
+        return 17;
+    }
+    if dashos::canal_escribir(a, b"x", &[]) != E_CERRADO {
+        return 18;
+    }
+    // 19-20: sin ciclos. Ni la pareja ni el propio lado por su canal.
+    let (x, y) = dashos::canal_crear();
+    if dashos::canal_escribir(x, b"c", &[y]) != E_ARGUMENTO || dashos::canal_escribir(x, b"c", &[x]) != E_ARGUMENTO {
+        return 19;
+    }
+    // 21: un lado que se pierde dentro de un mensaje que nadie leerá. Se manda z0 por x hacia y, y se cierra y: el
+    // mensaje se suelta, z0 con él, y quien lea en z1 se entera.
+    let (z0, z1) = dashos::canal_crear();
+    if dashos::canal_escribir(x, b"z", &[z0]) != 0 || llamada(6, [y as u64, 0, 0, 0, 0]).0 != 0 {
+        return 20;
+    }
+    if dashos::canal_leer(z1, &mut buf, &mut llaves).0 != E_CERRADO {
+        return 21;
+    }
     println!("  [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados");
+    println!("  [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados");
     39
 }

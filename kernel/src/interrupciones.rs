@@ -70,6 +70,11 @@ impl Interrupcion {
 }
 
 impl Interrupcion {
+    /// El canal al que avisa, si lo hay.
+    pub fn destino(&self) -> Option<Arc<Canal>> {
+        self.destino.tomar().as_ref().map(|(c, _)| c.clone())
+    }
+
     /// Saca el canal de destino de un objeto que ya no comparte nadie, para soltarlo sin recursión (`objetos.rs`).
     pub fn quitar_destino(&mut self) -> Option<Arc<Canal>> {
         self.destino.get_mut().take().map(|(c, _)| c)

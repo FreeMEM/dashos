@@ -125,7 +125,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **4, `canal_escribir`.**
   - Hasta 256 bytes de datos y 8 llaves por mensaje.
   - Las llaves enviadas salen de la tabla de quien escribe y entran en la de quien lee, con los mismos derechos.
-  - Cada llave enviada necesita el derecho de transferir. Un extremo no puede enviarse por sí mismo.
+  - Cada llave enviada necesita el derecho de transferir.
+  - Sin ciclos (C40): no se puede mandar un extremo de este mismo canal (ni el propio ni su pareja), ni una llave de
+    interrupción que avise a este canal. Da `E_ARGUMENTO`.
   - La llave por la que se escribe necesita el derecho de escribir.
   - Nunca bloquea: el mensaje se queda en la cola del otro extremo.
   - Una misma llave dos veces en la tabla devuelve `E_ARGUMENTO`, y no se manda nada.
@@ -137,8 +139,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     dice el proceso, devuelve `E_ARGUMENTO`. En los dos casos el mensaje vuelve al principio de la cola, con sus
     llaves.
 - **3, 4 y 5, tablas de llaves.** Son tablas de números de 32 bits, en el orden de bytes del proceso.
-- **6, `cerrar`.** Quita la llave de la tabla. Si es un extremo de canal, lo cierra: quien esté leyendo al otro lado
-  se despierta con `E_CERRADO` cuando la cola queda vacía.
+- **6, `cerrar`.** Quita la llave de la tabla. Si era la última llave de un extremo de canal, ese lado se cierra:
+  quien esté leyendo al otro lado se despierta con `E_CERRADO` cuando la cola queda vacía, y los mensajes que
+  esperaban al lado cerrado se sueltan con sus llaves.
+- **Al morir un proceso** (C40) se sueltan todas sus llaves, como si las cerrara una a una: sus extremos de canal se
+  cierran y el otro lado se entera. Lo mismo pasa con un extremo que va dentro de un mensaje que ya nadie leerá.
 - **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos. Los últimos
   32 MB libres son del kernel: al llegar ahí devuelve `E_MEMORIA`.
 - **8, `memoria_proyectar`.**
@@ -269,7 +274,6 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
   a 5 de la BCM2711; son del mismo controlador.
 - Un programa puede escribir en la consola líneas que imitan mensajes del kernel. Las pruebas de QEMU se fían de esas
   líneas; las pruebas salen de la imagen en la fase 2.
-- Al morir un proceso, sus extremos de canal no se cierran. Quien espera al otro lado no se entera.
 - Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).

@@ -185,7 +185,8 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     if destino.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
-    let Objeto::Extremo(canal, lado) = destino.objeto else { return E_TIPO };
+    let Objeto::Extremo(punta) = destino.objeto else { return E_TIPO };
+    let (canal, lado) = (punta.canal().clone(), punta.lado());
     // Las llaves que viajan salen de la tabla de quien manda. Hacen falta derechos de transferir.
     let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
     let mut viajan = Vec::new();
@@ -197,7 +198,10 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
                 return E_ARGUMENTO;
             }
             match t.ver(n) {
-                Some(l) if l.derechos & objetos::TRANSFERIR != 0 && n != h => {}
+                // Sin ciclos (C40, hallazgo 15): ni un lado de este mismo canal, ni una interrupción que avisa a este
+                // canal. Dentro de su propia cola no se soltarían nunca.
+                Some(l) if objetos::forma_ciclo(&l, &canal) => return E_ARGUMENTO,
+                Some(l) if l.derechos & objetos::TRANSFERIR != 0 => {}
                 Some(_) => return E_DERECHOS,
                 None => return E_LLAVE,
             }
@@ -235,7 +239,8 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
     if origen.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
-    let Objeto::Extremo(canal, lado) = origen.objeto else { return E_TIPO };
+    let Objeto::Extremo(punta) = origen.objeto else { return E_TIPO };
+    let (canal, lado) = (punta.canal().clone(), punta.lado());
     let m = match canal.leer(lado) {
         Ok(m) => m,
         Err(_) => return E_CERRADO,
@@ -280,10 +285,9 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
 
 fn cerrar(h: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    // Soltar la llave basta: si era la última de un lado de canal, el lado se cierra (C40).
     let Some(l) = proc_.llaves.tomar().quitar(h) else { return E_LLAVE };
-    if let Objeto::Extremo(canal, lado) = l.objeto {
-        canal.cerrar(lado);
-    }
+    drop(l);
     0
 }
 
@@ -337,7 +341,8 @@ fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
         (t.ver(h), t.ver(hc))
     };
     let (Some(irq), Some(canal)) = (irq, canal) else { return E_LLAVE };
-    let (Objeto::Interrupcion(i), Objeto::Extremo(c, lado)) = (irq.objeto, canal.objeto) else { return E_TIPO };
+    let (Objeto::Interrupcion(i), Objeto::Extremo(p)) = (irq.objeto, canal.objeto) else { return E_TIPO };
+    let (c, lado) = (p.canal().clone(), p.lado());
     // Controlar una interrupción pide el derecho de escribir en su llave, y que lleguen al canal, el de escribir en él.
     if canal.derechos & objetos::ESCRIBIR == 0 || irq.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
