@@ -183,7 +183,10 @@ fn registros_el0() {
 
 
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
-pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
+///
+/// # Seguridad
+/// `proceso` es 0 o un puntero de `Arc::<Proceso>::into_raw` cuya referencia pasa al hilo, que la suelta al morir.
+pub unsafe fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
     // Pila con guarda (C34). Hoy solo crea hilos el kernel; sin pilas libres no puede seguir.
     let pila = crate::mapa::pila_nueva().expect("sin pilas del kernel");
     let tope = pila.tope();
@@ -240,7 +243,7 @@ pub fn crear_plazo(f: extern "C" fn(usize), arg: usize, nucleo: usize, capacidad
             return None;
         }
         drop(g);
-        crear_en(f, arg, nucleo, 0)
+        unsafe { crear_en(f, arg, nucleo, 0) }
     };
     let mut g = NUCLEOS[nucleo].tomar();
     let nc = g.as_mut()?;
@@ -274,7 +277,7 @@ pub fn esperar_periodo() {
 }
 
 pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
-    crear_en(f, arg, nucleo, 0)
+    unsafe { crear_en(f, arg, nucleo, 0) }
 }
 
 /// Elige el siguiente hilo de este núcleo y cambia a él. Hay que llamarlo con las interrupciones enmascaradas.
@@ -461,7 +464,7 @@ pub static AVISAR_NUCLEOS: core::sync::atomic::AtomicBool = core::sync::atomic::
 
 /// Despierta un hilo bloqueado: vuelve a la cola de su núcleo. Si es otro núcleo, se le avisa para que no espere a
 /// su siguiente tic (C17).
-pub fn despertar(h: *mut Hilo) {
+pub(super) fn despertar(h: *mut Hilo) {
     let n = unsafe { (*h).nucleo };
     despertar_en(h, n);
     if n != nucleos::numero() as usize && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
@@ -483,8 +486,41 @@ fn despertar_en(h: *mut Hilo, n: usize) {
     }
 }
 
+/// Un hilo, para despertarlo más tarde (C37). Solo lo da `yo()`: un hilo vivo. Quien lo guarda tiene que soltarlo
+/// antes de que el hilo muera; hoy un hilo bloqueado no puede morir (un hilo por proceso y sin matar procesos), y la
+/// fase 3 de S16 lo cerrará al matar procesos.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct HiloRef(*mut Hilo);
+unsafe impl Send for HiloRef {}
+unsafe impl Sync for HiloRef {}
+
+/// El hilo actual, para que otro lo despierte.
+pub fn yo() -> HiloRef {
+    HiloRef(actual())
+}
+
+impl HiloRef {
+    pub fn despertar(self) {
+        if !self.0.is_null() {
+            despertar(self.0);
+        }
+    }
+}
+
+/// El proceso del hilo actual. Mientras corre, el hilo tiene su referencia; aquí se da otra.
+pub fn proceso_actual_arc() -> Option<alloc::sync::Arc<crate::objetos::Proceso>> {
+    let p = proceso_actual() as *const crate::objetos::Proceso;
+    if p.is_null() {
+        return None;
+    }
+    unsafe {
+        alloc::sync::Arc::increment_strong_count(p);
+        Some(alloc::sync::Arc::from_raw(p))
+    }
+}
+
 /// El hilo que corre en este núcleo.
-pub fn actual() -> *mut Hilo {
+pub(super) fn actual() -> *mut Hilo {
     let n = nucleos::numero() as usize;
     NUCLEOS[n].tomar().as_ref().map(|nc| nc.actual).unwrap_or(core::ptr::null_mut())
 }
@@ -549,7 +585,10 @@ pub fn ttbr0_actual() -> u64 {
 }
 
 /// Asocia el hilo actual a un espacio de direcciones y lo activa (para bajar a EL0 justo después).
-pub fn asignar_espacio(ttbr0: u64) {
+///
+/// # Seguridad
+/// `ttbr0` tiene que ser el de un espacio vivo del proceso de este hilo (`Espacio::ttbr0`).
+pub unsafe fn asignar_espacio(ttbr0: u64) {
     let n = nucleos::numero() as usize;
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
         unsafe { (*nucleo.actual).ttbr0 = ttbr0 };

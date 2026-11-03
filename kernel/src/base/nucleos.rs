@@ -36,7 +36,13 @@ pub fn despertar() -> u32 {
     while EN_MARCHA.load(Ordering::Acquire) < 3 && crate::reloj::ahora() - inicio < limite {
         core::hint::spin_loop();
     }
-    EN_MARCHA.load(Ordering::Acquire)
+    let n = EN_MARCHA.load(Ordering::Acquire);
+    if n == 3 {
+        // Los cuatro núcleos ya usan el mapa del kernel: fuera las tablas del arranque (C34). Si alguno no ha
+        // llegado, se quedan: lo necesitaría para arrancar.
+        crate::mapa::olvidar_arranque();
+    }
+    n
 }
 
 #[unsafe(no_mangle)]

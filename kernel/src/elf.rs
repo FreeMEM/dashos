@@ -181,16 +181,10 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
         let fin = (va + memsz).div_ceil(PAGINA) * PAGINA;
         let mut p = inicio;
         while p < fin {
-            let k = e.pagina_nueva(p, permiso)?;
-            // Copiar la parte del fichero que cae en esta página (el resto queda a cero).
+            // La parte del fichero que cae en esta página; el resto queda a cero.
             let (desde, hasta) = (p.max(va), (p + PAGINA).min(va + filesz));
-            if desde < hasta {
-                let origen = &d[(off + desde - va) as usize..(off + hasta - va) as usize];
-                unsafe { core::ptr::copy_nonoverlapping(origen.as_ptr(), k.add((desde - p) as usize), origen.len()) };
-            }
-            if banderas & 1 != 0 {
-                limpiar_para_ejecutar(k as usize);
-            }
+            let origen = if desde < hasta { &d[(off + desde - va) as usize..(off + hasta - va) as usize] } else { &[] };
+            e.pagina_nueva(p, permiso, origen, (desde - p) as usize)?;
             p += PAGINA;
         }
     }
@@ -200,17 +194,9 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
     let tope = if pie { al_azar(PILA_ZONA.0 + PILA_MAXIMA, PILA_ZONA.1, ALINEACION) } else { PILA_TOPE };
     let mut p = tope - tamano_pila;
     while p < tope {
-        e.pagina_nueva(p, Permiso::Datos)?;
+        e.pagina_nueva(p, Permiso::Datos, &[], 0)?;
         p += PAGINA;
     }
     Ok(Cargado { base, entrada, pila: tope, tamano_pila, big_endian: orden.0 })
 }
 
-fn limpiar_para_ejecutar(k: usize) {
-    let mut a = k;
-    while a < k + PAGINA as usize {
-        unsafe { core::arch::asm!("dc cvau, {}", in(reg) a) };
-        a += 64;
-    }
-    unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
-}

@@ -12,10 +12,10 @@
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje};
-use crate::planificador::{self, Hilo};
+use crate::planificador::{self, HiloRef};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicPtr, AtomicU64, Ordering};
+use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255.
 pub const PRIMERA: u32 = 32;
@@ -26,7 +26,7 @@ const PALABRAS: usize = 4;
 static ASOCIADAS: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
 /// Las que han llegado y esperan al repartidor.
 static PENDIENTES: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
-static REPARTIDOR: AtomicPtr<Hilo> = AtomicPtr::new(core::ptr::null_mut());
+static REPARTIDOR: crate::cerrojo::Cerrojo<Option<HiloRef>> = crate::cerrojo::Cerrojo::new(None);
 static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new());
 
 /// El objeto de una interrupción. Mientras haya una llave, es de ese proceso; al perderse la última, se
@@ -100,20 +100,20 @@ pub fn atender(intid: u32) -> bool {
     }
     crate::gic::deshabilitar(intid);
     PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
-    let h = REPARTIDOR.load(Ordering::SeqCst);
-    if !h.is_null() {
-        planificador::despertar(h);
+    let h = *REPARTIDOR.tomar();
+    if let Some(h) = h {
+        h.despertar();
     }
     true
 }
 
 /// Arranca el repartidor en el núcleo 0.
 pub fn iniciar() {
-    planificador::crear_en(repartidor, 0, 0, 0);
+    planificador::crear(repartidor, 0, 0);
 }
 
 extern "C" fn repartidor(_: usize) {
-    REPARTIDOR.store(planificador::actual(), Ordering::SeqCst);
+    *REPARTIDOR.tomar() = Some(planificador::yo());
     loop {
         // Mirar y bloquearse sin que entre una interrupción en medio (todas llegan a este núcleo).
         let estado = crate::cerrojo::enmascarar_irq();

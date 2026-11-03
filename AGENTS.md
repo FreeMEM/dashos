@@ -17,6 +17,10 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
 5. **Cada función de la API llega con su prueba del oráculo.** El mismo binario 68k se ejecuta en FS-UAE con el
    Kickstart real y en DashOS, y las salidas tienen que coincidir.
 
+6. **`unsafe` solo en `kernel/src/base/`.** El resto del kernel tiene `deny(unsafe_code)`. Lo que necesite del
+   hardware se pide a `base` con una interfaz segura; una función pública de `base` que no sea segura con cualquier
+   argumento es `unsafe fn`. Las únicas excepciones son las pruebas y los controladores que solo van con ellas.
+
 ## Oráculo
 
 ```bash

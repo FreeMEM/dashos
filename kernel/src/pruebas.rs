@@ -5,6 +5,9 @@
 
 #![allow(dead_code)]
 
+// Los programas de usuario en ensamblador de C11 a C18.
+core::arch::global_asm!(include_str!("usuario.s"));
+
 use crate::{buzon, cerrojo, compositor, dtb, elf, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
     mapa, memoria, mmu, monton, objetos, planificador, reloj, usb, v3d};
 
@@ -45,7 +48,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
 
 /// C4: lo que el kernel necesita del árbol de dispositivos.
 fn mapa_dispositivos(direccion: usize) {
-    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else {
+    let Some(d) = dtb::Dtb::desde() else {
         kprintln!("Árbol de dispositivos: no válido en {:#x}", direccion);
         return;
     };
@@ -100,10 +103,10 @@ fn prueba_memoria() {
         kprintln!("  escrito y leído por el mapa directo en {:#x}: {:#x}", v as usize, v.read_volatile());
     }
     let bien = d1 < (1 << 30) && d3 < (3 << 30) && bloque % (16 * PAGINA) == 0 && bloque < (1 << 30);
-    p.liberar(normal, 1);
-    p.liberar(d1, 1);
-    p.liberar(d3, 1);
-    p.liberar(bloque, 16);
+    unsafe { p.liberar(normal, 1) };
+    unsafe { p.liberar(d1, 1) };
+    unsafe { p.liberar(d3, 1) };
+    unsafe { p.liberar(bloque, 16) };
     let vuelta = p.libres() == antes;
     kprintln!("C5: zonas {}, devolución {}", if bien { "bien" } else { "MAL" }, if vuelta { "bien" } else { "MAL" });
 }
@@ -206,7 +209,7 @@ const VA_PILA: u64 = 0x7f_f000;
 
 extern "C" fn arrancar_proceso(p: usize) {
     let p = unsafe { &*(p as *const objetos::Proceso) };
-    planificador::asignar_espacio(p.ttbr0);
+    unsafe { planificador::asignar_espacio(p.ttbr0) };
     unsafe { entrar_el0(VA_CODIGO, VA_PILA + memoria::PAGINA) };
 }
 
@@ -227,24 +230,12 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     use espacio::{Espacio, Permiso};
     // Solo para las pruebas del arranque, que salen del kernel en la fase 2 de S16.
     let mut e = Espacio::nuevo().expect("prueba: sin espacio");
-    let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo).expect("prueba: sin memoria");
-    let largo = fin as usize - ini as usize;
-    unsafe {
-        core::ptr::copy_nonoverlapping(ini, codigo, largo);
-        // Que el código nuevo llegue a la caché de instrucciones de todos los núcleos.
-        let mut a = codigo as usize;
-        while a < codigo as usize + largo {
-            core::arch::asm!("dc cvau, {}", in(reg) a);
-            a += 64;
-        }
-        core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb");
-    }
-    let datos = e.pagina_nueva(VA_DATOS, Permiso::Datos).expect("prueba: sin memoria");
-    unsafe {
-        *datos = mensaje.len() as u8;
-        core::ptr::copy_nonoverlapping(mensaje.as_ptr(), datos.add(1), mensaje.len());
-    }
-    e.pagina_nueva(VA_PILA, Permiso::Datos).expect("prueba: sin memoria");
+    let codigo = unsafe { core::slice::from_raw_parts(ini, fin as usize - ini as usize) };
+    e.pagina_nueva(VA_CODIGO, Permiso::Codigo, codigo, 0).expect("prueba: sin memoria");
+    let mut datos = alloc::vec![mensaje.len() as u8];
+    datos.extend_from_slice(mensaje.as_bytes());
+    e.pagina_nueva(VA_DATOS, Permiso::Datos, &datos, 0).expect("prueba: sin memoria");
+    e.pagina_nueva(VA_PILA, Permiso::Datos, &[], 0).expect("prueba: sin memoria");
     let mut tabla = objetos::TablaLlaves::default();
     if let Some(l) = llave {
         let _ = tabla.instalar(l); // será la llave 1
@@ -260,7 +251,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         canales: Default::default(),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
-    planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr);
+    unsafe { planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr) };
 }
 
 fn prueba_procesos() {
@@ -304,8 +295,8 @@ fn prueba_procesos() {
 
 /// C15: el buzón de la VideoCore y la pantalla del firmware. Pinta un degradado con un tablero en homenaje a la
 /// Boing Ball y lo comprueba leyendo la memoria de la pantalla.
-fn prueba_pantalla(direccion: usize) {
-    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+fn prueba_pantalla(_dtb: usize) {
+    let Some(d) = dtb::Dtb::desde() else { return };
     let Some(n) = d.compatible("brcm,bcm2835-mbox") else {
         kprintln!("C15: no hay buzón en el árbol");
         return;
@@ -537,7 +528,7 @@ struct ArranqueElf {
 extern "C" fn arrancar_elf(a: usize) {
     let a = unsafe { alloc::boxed::Box::from_raw(a as *mut ArranqueElf) };
     let p = unsafe { &*(a.proceso as *const objetos::Proceso) };
-    planificador::asignar_espacio(p.ttbr0);
+    unsafe { planificador::asignar_espacio(p.ttbr0) };
     unsafe { entrar_el0(a.entrada, a.pila) };
 }
 
@@ -574,7 +565,7 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada: cargado.entrada, pila: cargado.pila }));
-    planificador::crear_en(arrancar_elf, arranque as usize, nucleo, ptr);
+    unsafe { planificador::crear_en(arrancar_elf, arranque as usize, nucleo, ptr) };
     true
 }
 
@@ -604,8 +595,8 @@ fn prueba_rust() {
 /// y la de su interrupción; escribe por su cuenta y espera la interrupción como mensaje.
 static SERIE: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/serie");
 
-fn prueba_controlador(direccion: usize) {
-    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+fn prueba_controlador(_dtb: usize) {
+    let Some(d) = dtb::Dtb::desde() else { return };
     let Some(n) = d.compatible("arm,pl011") else {
         kprintln!("C20: no hay PL011 en el árbol");
         return;
@@ -637,8 +628,8 @@ fn prueba_controlador(direccion: usize) {
 /// (la tarjeta en la Pi 4) y los del SDHCI clásico (la tarjeta en QEMU).
 static SD: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sd");
 
-fn prueba_sd(direccion: usize) {
-    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+fn prueba_sd(_dtb: usize) {
+    let Some(d) = dtb::Dtb::desde() else { return };
     let mut llaves = alloc::vec::Vec::new();
     for c in ["brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci"] {
         if let Some((fisica, tamano)) = d.compatible(c).and_then(|n| d.reg_cpu(&n, 0)) {

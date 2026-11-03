@@ -111,5 +111,5 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
-PÁNICO: panicked at src/excepciones.rs
+PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

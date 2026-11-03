@@ -104,7 +104,7 @@ del kernel sobre la que irán esos controladores.
   trabajo acotado por llamada (poner a cero por tandas, `escribir` corto).
 - [x] C36 **Pruebas fuera de la imagen** (fase 2): las pruebas del arranque solo con una opción de compilación; las
   que se pueda, como programas de usuario.
-- [ ] C37 **Todo el `unsafe` en una caja** (fase 2, B): caja `base` y `forbid(unsafe_code)` en el resto.
+- [x] C37 **Todo el `unsafe` en una caja** (fase 2, B): caja `base` y `forbid(unsafe_code)` en el resto.
 - [x] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
   vuelta por hallazgo de `docs/seguridad/auditoria-2026-11-03.md`, cada uno con su paso hostil en `malo`: 6 (llave
   repetida), 1 (cerrojo de páginas), 2 (ASID), 7 (cerrojos del canal), 3 (destrucción en bucle y guardas), 8 (sin
@@ -790,6 +790,37 @@ Fase 2 de S16.
 
 Las dos pruebas pasan. Las pruebas que pueden ser programas de usuario siguen en el kernel: pasarlas pide crear
 procesos desde un proceso (fase 3).
+
+### 2026-11-03 tarde — C37 (todo el `unsafe` en `base`)
+
+Fase 2 de S16, decisión B.
+
+**Forma.** Un módulo `kernel/src/base/`, no una caja de Cargo aparte. La raíz del kernel tiene `deny(unsafe_code)` y
+solo `base` lo permite, además de las pruebas y los controladores que solo van con ellas (buzón, compositor, HVS,
+V3D, GPU y USB; salen del kernel en la fase 4). La comprobación es la misma que con una caja, sin partir el proyecto
+de Cargo.
+
+**Qué hay en `base`** (unas 2100 líneas, 122 usos de `unsafe`): arranque, vectores, cambio de contexto y copias en
+ensamblador; registros del sistema (`cpu.rs`); cerrojos; registros de periféricos; memoria física y montón; mapa del
+kernel y pilas; espacios de los procesos; planificador; excepciones; núcleos; copias de usuario.
+
+**Interfaces seguras nuevas**, para que el resto no necesite `unsafe`:
+
+- `base::usuario::{leer, escribir}`: las copias de C31, con el PAN de C34 dentro.
+- `arbol_de_dispositivos()`: el FDT como `&[u8]`, guardado al entrar; `dtb.rs` lee con límites.
+- `Espacio::pagina_nueva(va, permiso, contenido, desplazamiento)`: rellena la página y, si es código, limpia la caché.
+- `Espacio::proyectar_memoria` y `proyectar_dispositivo`: ya no se puede proyectar una dirección física suelta. Los
+  registros solo pueden ser de la ventana de periféricos.
+- `Memoria` (objeto de memoria) vive en `base` y devuelve sus páginas al soltarse.
+- `HiloRef` para guardar un hilo y despertarlo; `proceso_actual()` da un `Arc`.
+- `RegLe32::new` solo acepta direcciones de la ventana de periféricos.
+- Pasan a `unsafe fn`: `Paginas::liberar`, `crear_en` (con proceso) y `asignar_espacio`. `olvidar_arranque` lo llama
+  `nucleos::despertar` cuando han llegado los cuatro núcleos.
+
+**Queda por revisar** con la auditoría de cierre: que cada función pública de `base` sea segura de verdad con
+cualquier argumento. `HiloRef` depende de que un hilo bloqueado no muera; se cierra al matar procesos (fase 3).
+
+Las pruebas y el arranque normal pasan.
 
 ## Resumen de la noche
 

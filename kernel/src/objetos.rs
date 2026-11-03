@@ -5,7 +5,7 @@
 //! quien recibe, con los mismos derechos o menos, nunca más.
 
 use crate::cerrojo::Cerrojo;
-use crate::planificador::{self, Hilo};
+use crate::planificador::{self, HiloRef};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -39,35 +39,8 @@ pub enum Objeto {
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
 }
 
-/// Un objeto de memoria. Sus páginas se devuelven cuando no queda ni una llave ni una proyección (C18): cada
-/// espacio que lo proyecta guarda un `Arc`.
-pub struct Memoria {
-    pub paginas: Vec<u64>,
-}
-
-impl Drop for Memoria {
-    fn drop(&mut self) {
-        for &p in &self.paginas {
-            crate::memoria::paginas().liberar(p, 1);
-        }
-    }
-}
-
-impl Memoria {
-    /// Páginas nuevas, a cero. `None` si no hay memoria fuera de la reserva del kernel; entonces las páginas que ya
-    /// se habían tomado vuelven al repartidor (al soltar el objeto a medias).
-    pub fn nueva(tamano: usize) -> Option<Self> {
-        let n = tamano.div_ceil(crate::memoria::PAGINA as usize);
-        let mut m = Self { paginas: Vec::new() };
-        m.paginas.try_reserve_exact(n).ok()?;
-        for _ in 0..n {
-            let p = crate::memoria::paginas().pagina_usuario()?;
-            unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, crate::memoria::PAGINA as usize) };
-            m.paginas.push(p);
-        }
-        Some(m)
-    }
-}
+/// Un objeto de memoria: está en `base`, que es quien toca las páginas (C37).
+pub use crate::memoria::Memoria;
 
 #[derive(Clone)]
 pub struct Llave {
@@ -85,11 +58,10 @@ struct Lado {
     /// Mensajes que esperan a que este lado los lea.
     cola: VecDeque<Mensaje>,
     /// Hilo bloqueado leyendo en este lado.
-    esperando: Option<*mut Hilo>,
+    esperando: Option<HiloRef>,
     cerrado: bool,
 }
 
-unsafe impl Send for Lado {}
 
 /// Un canal entre dos lados. Un solo cerrojo para los dos: así no hay orden de cerrojos que respetar y dos lectores
 /// en los dos extremos no se esperan el uno al otro (auditoría, hallazgo 7).
@@ -191,7 +163,7 @@ impl Canal {
             otro.esperando.take()
         };
         if let Some(h) = despertar {
-            planificador::despertar(h);
+            h.despertar();
         }
         Ok(())
     }
@@ -215,7 +187,7 @@ impl Canal {
             if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
-            l[lado].esperando = Some(planificador::actual());
+            l[lado].esperando = Some(planificador::yo());
             // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
             planificador::bloquear(move || drop(l));
         }
@@ -233,7 +205,7 @@ impl Canal {
             l[1 - lado].esperando.take()
         };
         if let Some(h) = despertar {
-            planificador::despertar(h);
+            h.despertar();
         }
     }
 }
@@ -300,7 +272,6 @@ pub struct Proceso {
 }
 
 /// El proceso del hilo actual, si lo hay.
-pub fn proceso_actual<'a>() -> Option<&'a Proceso> {
-    let p = planificador::proceso_actual();
-    if p == 0 { None } else { Some(unsafe { &*(p as *const Proceso) }) }
+pub fn proceso_actual() -> Option<Arc<Proceso>> {
+    planificador::proceso_actual_arc()
 }

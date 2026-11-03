@@ -207,8 +207,8 @@ impl Mmu {
 
 impl Drop for Mmu {
     fn drop(&mut self) {
-        paginas().liberar(self.tabla, PAGINAS_TABLA);
-        paginas().liberar(self.relleno, 1);
+        unsafe { paginas().liberar(self.tabla, PAGINAS_TABLA) };
+        unsafe { paginas().liberar(self.relleno, 1) };
     }
 }
 

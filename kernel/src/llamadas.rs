@@ -44,28 +44,13 @@ const E_LIMITE: u64 = -8i64 as u64;
 /// la consola como servicio).
 const MAX_MEMORIA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
-/// Proyecciones por proceso, hasta los cupos de S16 (F).
-const MAX_PROYECCIONES: usize = 1024;
 
 fn error_espacio(e: crate::espacio::Error) -> u64 {
     match e {
         crate::espacio::Error::SinMemoria => E_MEMORIA,
+        crate::espacio::Error::Limite => E_LIMITE,
         crate::espacio::Error::Ocupada | crate::espacio::Error::Direccion => E_ARGUMENTO,
     }
-}
-
-unsafe extern "C" {
-    fn desde_usuario(destino: *mut u8, origen: u64, n: usize) -> u64;
-    fn hacia_usuario(destino: u64, origen: *const u8, n: usize) -> u64;
-    static copia_inicio: u8;
-    static copia_fin: u8;
-    fn copia_fallo();
-}
-
-/// Si `elr` es un acceso de las copias de `copia.s`, a dónde hay que volver para que la copia devuelva error (C31).
-pub fn fallo_de_copia(elr: u64) -> Option<u64> {
-    let (inicio, fin) = unsafe { (&copia_inicio as *const u8 as u64, &copia_fin as *const u8 as u64) };
-    (inicio..fin).contains(&elr).then(|| copia_fallo as *const () as u64)
 }
 
 /// Copia `n` bytes de la memoria del proceso actual. `None` si el tramo no es del usuario o no se puede leer con
@@ -75,25 +60,12 @@ fn leer_usuario(p: u64, n: usize) -> Option<Vec<u8>> {
     let mut v = Vec::new();
     v.try_reserve_exact(n).ok()?;
     v.resize(n, 0);
-    (con_espacio(|| unsafe { desde_usuario(v.as_mut_ptr(), p, n) }) == 0).then_some(v)
-}
-
-/// Pone la mitad baja del proceso solo mientras dura una copia (PAN por software, C34). El resto del tiempo el kernel
-/// tiene TTBR0 vacío, así que un fallo que siga un puntero de usuario sin pasar por aquí no encuentra nada.
-fn con_espacio(copia: impl FnOnce() -> u64) -> u64 {
-    let ttbr0 = planificador::ttbr0_actual();
-    if ttbr0 == 0 {
-        return 1;
-    }
-    crate::espacio::activar(ttbr0);
-    let r = copia();
-    crate::espacio::activar_vacio();
-    r
+    crate::base::usuario::leer(p, &mut v).then_some(v)
 }
 
 /// Copia `datos` a la memoria del proceso actual, con sus permisos. Falso si no se puede (C31).
 fn escribir_usuario(p: u64, datos: &[u8]) -> bool {
-    tramo(p, datos.len() as u64).is_some() && con_espacio(|| unsafe { hacia_usuario(p, datos.as_ptr(), datos.len()) }) == 0
+    tramo(p, datos.len() as u64).is_some() && crate::base::usuario::escribir(p, datos)
 }
 
 /// Una tabla de números de llave en el orden de bytes del proceso (C30).
@@ -326,7 +298,6 @@ fn memoria_crear(tamano: u64) -> u64 {
 }
 
 fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
-    use crate::espacio::Permiso;
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
@@ -334,44 +305,23 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     if escribir && l.derechos & objetos::ESCRIBIR == 0 || l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
-    let pagina = crate::memoria::PAGINA;
-    let mut e = proc_.espacio.tomar();
-    if e.proyectados.len() >= MAX_PROYECCIONES {
-        return E_LIMITE;
+    match proc_.espacio.tomar().proyectar_memoria(va, &m, escribir) {
+        Ok(()) => 0,
+        Err(err) => error_espacio(err),
     }
-    if e.proyectados.try_reserve(1).is_err() {
-        return E_MEMORIA;
-    }
-    // Primero se comprueba todo el tramo y se crean sus tablas; después proyectar ya no puede fallar.
-    if let Err(err) = e.preparar(va, m.paginas.len() as u64) {
-        return error_espacio(err);
-    }
-    for (i, &p) in m.paginas.iter().enumerate() {
-        let _ = e.proyectar(va + i as u64 * pagina, p, if escribir { Permiso::Datos } else { Permiso::SoloLectura });
-    }
-    e.proyectados.push(m.clone());
-    0
 }
 
 fn registros_proyectar(h: u32, va: u64) -> u64 {
-    use crate::espacio::Permiso;
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Registros { fisica, tamano } = l.objeto else { return E_TIPO };
     if l.derechos & (objetos::LEER | objetos::ESCRIBIR) != objetos::LEER | objetos::ESCRIBIR {
         return E_DERECHOS;
     }
-    let pagina = crate::memoria::PAGINA;
-    let mut e = proc_.espacio.tomar();
-    if let Err(err) = e.preparar(va, tamano.div_ceil(pagina)) {
-        return error_espacio(err);
+    match proc_.espacio.tomar().proyectar_dispositivo(va, fisica, tamano) {
+        Ok(()) => 0,
+        Err(err) => error_espacio(err),
     }
-    let mut i = 0;
-    while i < tamano {
-        let _ = e.proyectar(va + i, fisica + i, Permiso::Dispositivo);
-        i += pagina;
-    }
-    0
 }
 
 fn interrupcion_asociar(h: u32, hc: u32) -> u64 {

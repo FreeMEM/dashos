@@ -67,7 +67,7 @@ pub struct Espacio {
     tablas: alloc::vec::Vec<u64>,
     propias: alloc::vec::Vec<u64>,
     /// Objetos de memoria proyectados: el espacio los mantiene vivos mientras exista (C18).
-    pub proyectados: alloc::vec::Vec<alloc::sync::Arc<crate::objetos::Memoria>>,
+    proyectados: alloc::vec::Vec<alloc::sync::Arc<super::memoria::Memoria>>,
 }
 
 impl Drop for Espacio {
@@ -77,9 +77,9 @@ impl Drop for Espacio {
         asid_devolver(self.asid);
         let mut p = paginas();
         for &t in self.tablas.iter().chain(self.propias.iter()) {
-            p.liberar(t, 1);
+            unsafe { p.liberar(t, 1) };
         }
-        p.liberar(self.l1, 1);
+        unsafe { p.liberar(self.l1, 1) };
     }
 }
 
@@ -90,10 +90,17 @@ pub enum Error {
     SinMemoria,
     /// Ya hay algo proyectado en esa dirección. No se pisa nunca (antes se pisaba sin vaciar la TLB).
     Ocupada,
+    /// Demasiadas proyecciones de objetos de memoria (`MAX_PROYECCIONES`).
+    Limite,
     /// La dirección no es del usuario o cae en los primeros 64 KB, que no se proyectan nunca: un puntero nulo del
     /// kernel no debe encontrar datos del usuario (auditoría, hallazgos bajos).
     Direccion,
 }
+
+/// Proyecciones de objetos de memoria por proceso, hasta los cupos de S16 (F).
+const MAX_PROYECCIONES: usize = 1024;
+/// Inicio de la ventana de periféricos de la Pi 4.
+const PERIFERICOS: u64 = 0xFC00_0000;
 
 /// Por debajo de esto no se proyecta nada.
 pub const VA_MINIMA: u64 = 0x1_0000;
@@ -176,7 +183,7 @@ impl Espacio {
 
     /// Comprueba que se pueden proyectar `n` páginas desde `va`: dirección válida, nada proyectado ya y las tablas
     /// creadas. Después, `proyectar` en ese tramo no falla.
-    pub fn preparar(&mut self, va: u64, n: u64) -> Result<(), Error> {
+    fn preparar(&mut self, va: u64, n: u64) -> Result<(), Error> {
         let fin = va.checked_add(n.checked_mul(PAGINA).ok_or(Error::Direccion)?).ok_or(Error::Direccion)?;
         if va % PAGINA != 0 || va < VA_MINIMA || fin > VA_LIMITE {
             return Err(Error::Direccion);
@@ -197,7 +204,7 @@ impl Espacio {
     }
 
     /// Proyecta la página física `fisica` en la dirección virtual `va` del proceso, que tiene que estar libre.
-    pub fn proyectar(&mut self, va: u64, fisica: u64, permiso: Permiso) -> Result<(), Error> {
+    fn proyectar(&mut self, va: u64, fisica: u64, permiso: Permiso) -> Result<(), Error> {
         let e = self.hoja_o_crear(va)?;
         if unsafe { e.read_volatile() } & VALIDO != 0 {
             return Err(Error::Ocupada);
@@ -216,23 +223,71 @@ impl Espacio {
         Ok(())
     }
 
-    /// Reserva una página nueva, la proyecta y devuelve su dirección en el kernel para rellenarla.
-    pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso) -> Result<*mut u8, Error> {
+    /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
+    /// Primero comprueba el tramo entero y crea sus tablas, así que o se proyecta todo o nada. El espacio guarda el
+    /// objeto mientras exista (C18).
+    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool) -> Result<(), Error> {
+        if self.proyectados.len() >= MAX_PROYECCIONES {
+            return Err(Error::Limite);
+        }
+        self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+        self.preparar(va, m.paginas() as u64)?;
+        let permiso = if escribir { Permiso::Datos } else { Permiso::SoloLectura };
+        for (i, &p) in m.fisicas().iter().enumerate() {
+            let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
+        }
+        self.proyectados.push(m.clone());
+        Ok(())
+    }
+
+    /// Proyecta registros de aparatos (C20) como memoria de dispositivo, nunca ejecutable. Solo direcciones de la
+    /// ventana de periféricos: nunca memoria normal, aunque alguien le pase una.
+    pub fn proyectar_dispositivo(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
+        let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
+        if fisica < PERIFERICOS || fin > 1 << 32 || fisica % PAGINA != 0 {
+            return Err(Error::Direccion);
+        }
+        self.preparar(va, tamano.div_ceil(PAGINA))?;
+        let mut i = 0;
+        while i < tamano {
+            let _ = self.proyectar(va + i, fisica + i, Permiso::Dispositivo);
+            i += PAGINA;
+        }
+        Ok(())
+    }
+
+    /// Reserva una página nueva para el proceso y la proyecta en `va`. Va a cero, con `contenido` copiado a partir de
+    /// `desplazamiento` (lo que no quepa en la página se descarta). Si es código, se lleva a la caché de
+    /// instrucciones de todos los núcleos.
+    pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
+        let k = mmu::virt(p as usize);
+        // La página es nuestra (recién sacada del repartidor) y la mitad alta la ve entera por el mapa lineal.
+        let pagina = unsafe { core::slice::from_raw_parts_mut(k as *mut u8, PAGINA as usize) };
+        pagina.fill(0);
+        let desde = desplazamiento.min(pagina.len());
+        let n = contenido.len().min(pagina.len() - desde);
+        pagina[desde..desde + n].copy_from_slice(&contenido[..n]);
+        if matches!(permiso, Permiso::Codigo) {
+            let mut a = k;
+            while a < k + PAGINA as usize {
+                unsafe { core::arch::asm!("dc cvau, {}", in(reg) a) };
+                a += 64;
+            }
+            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+        }
         if let Err(e) = self.proyectar(va, p, permiso) {
-            paginas().liberar(p, 1);
+            unsafe { paginas().liberar(p, 1) };
             return Err(e);
         }
         self.propias.push(p);
-        let k = mmu::virt(p as usize) as *mut u8;
-        unsafe { core::ptr::write_bytes(k, 0, PAGINA as usize) };
-        Ok(k)
+        Ok(())
     }
 }
 
 /// Activa un espacio en este núcleo.
-pub fn activar(ttbr0: u64) {
+pub(in crate::base) fn activar(ttbr0: u64) {
     unsafe { core::arch::asm!("msr ttbr0_el1, {}", "isb", in(reg) ttbr0) };
 }
 
@@ -242,6 +297,6 @@ pub fn vacia_fisica() -> u64 {
 }
 
 /// Deja este núcleo sin mitad baja: la tabla vacía, con ASID 0.
-pub fn activar_vacio() {
+pub(in crate::base) fn activar_vacio() {
     activar(mmu::fisica(&VACIA as *const TablaVacia as usize) as u64);
 }

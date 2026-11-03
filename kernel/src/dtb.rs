@@ -14,7 +14,7 @@ const MAX_PROF: usize = 16;
 
 #[derive(Clone, Copy)]
 pub struct Dtb {
-    base: usize,
+    bytes: &'static [u8],
     estructura: usize,
     cadenas: usize,
     tamano: usize,
@@ -50,31 +50,30 @@ fn alinear4(x: usize) -> usize {
 }
 
 impl Dtb {
-    /// # Seguridad
-    /// `direccion` tiene que apuntar a un FDT válido y accesible.
-    pub unsafe fn desde(direccion: usize) -> Option<Self> {
-        let d = Self { base: direccion, estructura: 0, cadenas: 0, tamano: 0 };
+    /// El árbol que dejó el firmware (la dirección de x0 al arrancar).
+    pub fn desde() -> Option<Self> {
+        let bytes = crate::base::arbol_de_dispositivos()?;
+        let d = Self { bytes, estructura: 0, cadenas: 0, tamano: 0 };
         if d.u32(0) != MAGIA {
             return None;
         }
-        Some(Self {
-            base: direccion,
-            tamano: d.u32(4) as usize,
-            estructura: d.u32(8) as usize,
-            cadenas: d.u32(12) as usize,
-        })
+        Some(Self { bytes, tamano: bytes.len(), estructura: d.u32(8) as usize, cadenas: d.u32(12) as usize })
     }
 
     pub fn tamano(&self) -> usize {
         self.tamano
     }
 
+    // Fuera del árbol se lee 0: un árbol mal formado da respuestas raras, no accesos fuera.
     fn u8(&self, off: usize) -> u8 {
-        unsafe { core::ptr::read_volatile((self.base + off) as *const u8) }
+        self.bytes.get(off).copied().unwrap_or(0)
     }
 
     fn u32(&self, off: usize) -> u32 {
-        u32::from_be(unsafe { core::ptr::read_volatile((self.base + off) as *const u32) })
+        match self.bytes.get(off..off.saturating_add(4)) {
+            Some(b) => u32::from_be_bytes([b[0], b[1], b[2], b[3]]),
+            None => 0,
+        }
     }
 
     /// Longitud de la cadena terminada en cero que empieza en `off`.

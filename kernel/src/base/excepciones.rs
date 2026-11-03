@@ -125,7 +125,7 @@ fn tratar(marco: &mut Marco, tipo: u64) {
 
     // Fallo al copiar desde o hacia la memoria de un proceso (C31): la copia devuelve error, el kernel sigue.
     if tipo == 4 && clase == 0x25 {
-        if let Some(fallo) = crate::llamadas::fallo_de_copia(marco.elr) {
+        if let Some(fallo) = super::usuario::fallo_de_copia(marco.elr) {
             marco.elr = fallo;
             return;
         }

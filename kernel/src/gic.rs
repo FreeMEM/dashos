@@ -94,6 +94,6 @@ pub const SGI_PLANIFICAR: u32 = 1;
 
 /// Manda una interrupción por software (SGI) a un núcleo.
 pub fn avisar(nucleo: u32, sgi: u32) {
-    unsafe { core::arch::asm!("dsb ishst") };
+    crate::base::cpu::barrera_escrituras();
     d(GICD_SGIR).escribir(((1 << nucleo) << 16) | (sgi & 0xf));
 }

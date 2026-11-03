@@ -186,7 +186,7 @@ pub fn pila_nueva() -> Option<Pila> {
     for i in 0..pila.paginas.len() {
         let Some(p) = paginas().pagina(Zona::Normal) else {
             for &q in &pila.paginas[..i] {
-                paginas().liberar(q, 1);
+                unsafe { paginas().liberar(q, 1) };
             }
             return None;
         };
@@ -213,7 +213,7 @@ impl Drop for Pila {
         }
         unsafe { core::arch::asm!("dsb ish", "isb") };
         for &p in &self.paginas {
-            paginas().liberar(p, 1);
+            unsafe { paginas().liberar(p, 1) };
         }
         ocupadas[self.ranura / 64] &= !(1 << (self.ranura % 64));
     }
@@ -230,7 +230,7 @@ pub fn activar() {
 
 /// Con los cuatro núcleos ya en el mapa nuevo, borra las tablas del arranque: la proyección identidad deja de existir
 /// (auditoría, hallazgo 13).
-pub fn olvidar_arranque() {
+pub(super) fn olvidar_arranque() {
     unsafe {
         let l1 = &__tabla_l1 as *const u8 as *mut u8;
         let l2 = &__tabla_l2_g3 as *const u8 as *mut u8;

@@ -74,7 +74,7 @@ unsafe impl GlobalAlloc for Asignador {
             m.libres[c] = p as usize;
         } else {
             let n = l.size().div_ceil(PAGINA as usize);
-            paginas().liberar(mmu::fisica(p as usize) as u64, n);
+            unsafe { paginas().liberar(mmu::fisica(p as usize) as u64, n) };
         }
     }
 }

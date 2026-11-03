@@ -223,23 +223,71 @@ impl Paginas {
         }
     }
 
-    /// Una página para un proceso: su memoria, su imagen, su pila o sus tablas. Nunca toca las últimas `RESERVA`
-    /// páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la memoria recibe
-    /// un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
+    /// Una página para un proceso, a cero: su memoria, su imagen, su pila o sus tablas. Nunca toca las últimas
+    /// `RESERVA` páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la
+    /// memoria recibe un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
     pub fn pagina_usuario(&mut self) -> Option<u64> {
         if self.libres <= RESERVA {
             return None;
         }
-        self.pagina(Zona::Normal)
+        let p = self.pagina(Zona::Normal)?;
+        // Recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
+        unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
+        Some(p)
     }
 
-    pub fn liberar(&mut self, dir: u64, n: usize) {
+    /// Devuelve `n` páginas desde `dir` al repartidor.
+    ///
+    /// # Seguridad
+    /// Las páginas tienen que haber salido de este repartidor y no usarlas nadie más: ni el kernel ni ninguna tabla
+    /// de páginas. Si no, se volverán a dar estando en uso.
+    pub unsafe fn liberar(&mut self, dir: u64, n: usize) {
         let primera = (dir / PAGINA) as usize;
         for p in primera..primera + n {
             self.marcar(p, false);
         }
         if n > 0 {
             self.pista = self.pista.max((primera + n - 1) / 64);
+        }
+    }
+}
+
+/// Un objeto de memoria (C13): páginas del proceso, a cero, que se pueden proyectar en varios espacios. Las páginas
+/// vuelven al repartidor cuando se suelta el último `Arc`: la llave del proceso o la proyección de algún espacio
+/// (C18). Es la única forma que tiene el resto del kernel de dar memoria a un proceso (C37).
+pub struct Memoria {
+    paginas: alloc::vec::Vec<u64>,
+}
+
+impl Memoria {
+    /// `tamano` bytes, redondeado a páginas. `None` si no hay memoria fuera de la reserva del kernel; entonces las
+    /// páginas que ya se habían tomado vuelven al repartidor.
+    pub fn nueva(tamano: usize) -> Option<Self> {
+        let n = tamano.div_ceil(PAGINA as usize);
+        let mut m = Self { paginas: alloc::vec::Vec::new() };
+        m.paginas.try_reserve_exact(n).ok()?;
+        for _ in 0..n {
+            m.paginas.push(paginas().pagina_usuario()?);
+        }
+        Some(m)
+    }
+
+    /// Cuántas páginas tiene.
+    pub fn paginas(&self) -> usize {
+        self.paginas.len()
+    }
+
+    pub(super) fn fisicas(&self) -> &[u64] {
+        &self.paginas
+    }
+}
+
+impl Drop for Memoria {
+    fn drop(&mut self) {
+        let mut p = paginas();
+        for &f in &self.paginas {
+            // Son nuestras, y ya no las proyecta nadie: cada espacio que las proyecta guarda un Arc.
+            unsafe { p.liberar(f, 1) };
         }
     }
 }

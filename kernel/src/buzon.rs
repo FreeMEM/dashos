@@ -70,7 +70,7 @@ pub fn propiedades(palabras: &mut [u32]) -> Option<()> {
             *p = u32::from_le(buf.add(i).read_volatile());
         }
     }
-    paginas().liberar(fis, 1);
+    unsafe { paginas().liberar(fis, 1) };
     if palabras[1] == 0x8000_0000 { Some(()) } else { None }
 }
 

@@ -10,7 +10,10 @@ use core::ptr::{read_volatile, write_volatile};
 pub struct RegLe32(usize);
 
 impl RegLe32 {
+    /// Solo direcciones de la ventana de periféricos (desde `0xFC00_0000`, vista en la mitad alta): con cualquier otra
+    /// para (en tiempo de compilación si es una constante). Así un registro nunca es memoria normal del kernel.
     pub const fn new(direccion: usize) -> Self {
+        assert!(direccion >= crate::mmu::virt(0xFC00_0000) && direccion <= crate::mmu::virt(0xFFFF_FFFC) && direccion % 4 == 0);
         Self(direccion)
     }
 

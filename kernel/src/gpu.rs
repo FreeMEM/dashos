@@ -105,7 +105,7 @@ impl Gpu {
                 }
                 None => {
                     for &p in &pags {
-                        paginas().liberar(p, 1);
+                        unsafe { paginas().liberar(p, 1) };
                     }
                     return Err(Error::SinMemoria);
                 }
@@ -113,7 +113,7 @@ impl Gpu {
         }
         let Some(va) = self.reservar_va(n * PAGINA) else {
             for &p in &pags {
-                paginas().liberar(p, 1);
+                unsafe { paginas().liberar(p, 1) };
             }
             return Err(Error::SinVa);
         };
@@ -152,7 +152,7 @@ impl Gpu {
         self.tabla().quitar(bo.va, n);
         self.vaciar();
         for &p in &bo.paginas {
-            paginas().liberar(p, 1);
+            unsafe { paginas().liberar(p, 1) };
         }
         self.devolver_va(bo.va as u64, n as u64 * PAGINA);
         Ok(())
