@@ -97,6 +97,7 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C25 **El ratón USB mueve la ventana del compositor** (añadida a las 08:14). Con captura.
 - [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
   de la GPU, cachés y lanzamiento de trabajos, solo con `docs/spec/hw/v3d.md`. Compilado; en QEMU solo la
   codificación.
@@ -426,5 +427,13 @@ manda cada medio segundo una "a" y un movimiento del ratón; `make prueba` da ah
 hub salen dos dispositivos (direcciones 2 y 3), uno es teclado y otro ratón; llega la tecla "a" (uso `0x04`) y el
 movimiento (10, 5). BIEN, tres de tres. Pendiente: sacar el controlador del kernel (falta la llave de memoria DMA),
 interrupciones en vez de consulta, dispositivos de baja velocidad detrás de un hub (transacciones partidas) y el
-EMMC2 y el VL805 (xHCI) de la Pi 4 real: allí los puertos USB de la placa van por el xHCI del PCIe, no por el DWC2,
+VL805 (xHCI) de la Pi 4 real: allí los puertos USB de la placa van por el xHCI del PCIe, no por el DWC2,
 que solo está en el conector USB-C.
+
+### 2026-11-03 08:1x — C25 (el ratón USB mueve la ventana)
+
+Tras leer el teclado y el ratón (C22), un compositor nuevo (el de C16) mueve su ventana con los informes del ratón
+durante 3 segundos, recortada a la pantalla, repintando solo los daños. `tools/prueba_qemu.sh` acepta
+`CAPTURA=fichero.ppm` y guarda la pantalla por el monitor de QEMU 1,5 segundos antes del final. Prueba: 6 informes,
+la ventana pasa de (40, 40) a (100, 70) y los píxeles comprobados coinciden. BIEN, tres de tres. Captura:
+`docs/capturas/c25-raton-usb.png`. Es la primera vez que algo de entrada mueve algo en pantalla.

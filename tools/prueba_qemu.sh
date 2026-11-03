@@ -40,14 +40,25 @@ fi
 
 SALIDA=$(mktemp)
 # Entrada para el teclado y el ratón USB (C22): por el monitor de QEMU, una "a" y un movimiento del ratón cada
-# medio segundo desde el segundo 2.
+# medio segundo desde el segundo 2. Con CAPTURA=fichero.ppm, guarda la pantalla 1,5 segundos antes del final.
 MONITOR=$SALIDA.mon
-python3 -I - "$MONITOR" "$SEGUNDOS" <<'PY' >/dev/null 2>&1 &
+python3 -I - "$MONITOR" "$SEGUNDOS" "${CAPTURA:-}" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
-ruta, total = sys.argv[1], float(sys.argv[2])
+ruta, total, captura = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 inicio = time.time()
 time.sleep(2)
+capturada = False
 while time.time() - inicio < total:
+    if captura and not capturada and time.time() - inicio > total - 1.5:
+        capturada = True
+        try:
+            s = socket.socket(socket.AF_UNIX)
+            s.connect(ruta)
+            s.sendall(("screendump " + captura + "\n").encode())
+            time.sleep(0.3)
+            s.close()
+        except OSError:
+            pass
     try:
         s = socket.socket(socket.AF_UNIX)
         s.connect(ruta)

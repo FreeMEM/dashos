@@ -70,3 +70,4 @@ C22: primer dispositivo USB enumerado bien (un hub)
 C22: teclado USB bien
   ratón: botones 0x0, movimiento (
 C22: ratón USB bien
+C25: el ratón USB mueve la ventana bien

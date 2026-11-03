@@ -839,6 +839,7 @@ fn prueba_raton(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
             Ok(Some(i)) if i.len() >= 3 && (i[1] != 0 || i[2] != 0) => {
                 kprintln!("  ratón: botones {:#x}, movimiento ({}, {})", i[0], i[1] as i8, i[2] as i8);
                 kprintln!("C22: ratón USB bien");
+                raton_mueve_ventana(u, raton);
                 return;
             }
             Ok(_) => esperar_ms(8),
@@ -849,6 +850,34 @@ fn prueba_raton(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
         }
     }
     kprintln!("C22: el ratón no se movió");
+}
+
+/// C25: el ratón USB mueve la ventana del compositor durante 3 segundos.
+fn raton_mueve_ventana(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
+    let Some(mut c) = compositor::Compositor::nuevo(640, 480) else { return };
+    let (mut x, mut y) = (40i32, 40i32);
+    c.mover(x as u32, y as u32, true);
+    c.mover(x as u32, y as u32, true);
+    let (w, h) = (c.ventana.w as i32, c.ventana.h as i32);
+    let mut movimientos = 0;
+    let fin = reloj::ahora() + 3 * reloj::frecuencia();
+    while reloj::ahora() < fin {
+        match u.leer_interrupcion(raton) {
+            Ok(Some(i)) if i.len() >= 3 => {
+                x = (x + i[1] as i8 as i32).clamp(0, 640 - w);
+                y = (y + i[2] as i8 as i32).clamp(0, 480 - h);
+                c.mover(x as u32, y as u32, false);
+                movimientos += 1;
+            }
+            Ok(_) => esperar_ms(8),
+            Err(_) => break,
+        }
+    }
+    let v = c.ventana;
+    let puntos = [(v.x + 1, v.y + 1), (v.x + 50, v.y + 10), (40, 40), (639, 479)];
+    let bien = movimientos > 0 && (x, y) != (40, 40) && puntos.iter().all(|&(px, py)| c.leer(px, py) == c.esperado(px, py));
+    kprintln!("  {} informes del ratón; la ventana pasó de (40, 40) a ({}, {})", movimientos, x, y);
+    kprintln!("C25: el ratón USB mueve la ventana {}", if bien { "bien" } else { "MAL" });
 }
 
 fn esperar_ms(ms: u64) {
