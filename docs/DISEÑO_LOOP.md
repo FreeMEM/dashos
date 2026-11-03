@@ -93,7 +93,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S5 **Sistema de archivos.** Rápido y seguro: copia al escribir, sumas de comprobación, instantáneas, cifrado y
   compresión. Diseñar uno propio, adaptar uno existente o empezar con uno sencillo. Qué otros sistemas lee y escribe:
   FAT32 para el arranque, FFS y PFS del Amiga, ext4.
-- [ ] S6 **Seguridad.** Usuarios, grupos, propietarios y permisos como en Linux (decisión del usuario), PID por
+- [x] S6 **Seguridad.** Usuarios, grupos, propietarios y permisos como en Linux (decisión del usuario), PID por
   proceso, y cómo se traducen a capacidades del kernel. Permisos por aplicación, aislamiento, firmas de paquetes y
   arranque verificado (lo que permite la Pi 4).
 - [ ] S7 **Software de Linux.** Cómo ejecutar programas de Linux. Opciones a estudiar: una capa de llamadas al
@@ -139,6 +139,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S5) ¿Partir de RedoxFS o diseñar uno propio? Mientras: RedoxFS, con rama propia.
 - (S5) ¿Cajón de cada usuario cifrado de serie con su contraseña (Adiantum en la Pi 4)? Mientras: sí.
 - (S5) ¿Instantáneas automáticas del cajón del usuario cada hora? Mientras: sí.
+- (S6) ¿Sin superusuario: administradores que confirman con contraseña, y `SYS:` intocable salvo actualizaciones?
+  Mientras: sí.
+- (S6) ¿Permisos por aplicación preguntados en el primer uso? Mientras: sí.
+- (S6) ¿Arranque verificado de la Pi 4 solo como opción documentada (es irreversible)? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -227,4 +231,12 @@ comprobación, cifrado, MIT) y añadirle instantáneas, compresión, búsqueda s
 el disco en little-endian. Hallazgo: la Pi 4 no tiene AES por hardware; el cifrado tiene que ser Adiantum (ChaCha).
 FAT32 obligatorio para el arranque; FFS, SFS y PFS3 para discos Amiga; ext4 de lectura con `ext4-view`. Pendiente
 de comprobar: el orden de bytes del formato de RedoxFS.
+
+### 2026-11-03 — S6 (seguridad)
+
+`docs/diseño/S6-seguridad.md`. Dos capas: quién (usuarios, grupos y permisos de Linux, decisión del usuario) y qué
+programa (permisos por aplicación, como Android y macOS). Las dos van sobre capacidades: cada canal lleva la
+identidad de quien lo abrió. Sin superusuario: administradores que confirman cada acción. El selector de ficheros
+entrega una llave para el fichero elegido y nada más. Paquetes firmados con Ed25519. Comprobado: el arranque
+verificado de la Pi 4 es irreversible (OTP) y solo completo en B1/C0; se recomienda como opción, no de serie.
 
