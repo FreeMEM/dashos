@@ -11,6 +11,8 @@ use crate::dtb::Dtb;
 use crate::kprintln;
 
 pub const PAGINA: u64 = 4096;
+/// Páginas libres que solo puede usar el kernel: 32 MB.
+pub const RESERVA: usize = 8192;
 /// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa.
 const MAX_PAGINAS: usize = (8u64 << 30) as usize / PAGINA as usize;
 const PALABRAS: usize = MAX_PAGINAS / 64;
@@ -32,6 +34,9 @@ pub struct Paginas {
     max_pagina: usize,
     limite_1g: usize,
     limite_3g: usize,
+    /// Pista para las páginas sueltas: toda palabra del mapa por encima de esta está llena. Así pedir una página no
+    /// recorre el mapa entero cuando la memoria alta está ocupada (antes, llenar la memoria era cuadrático).
+    pista: usize,
 }
 
 /// Una sola instancia para los cuatro núcleos, tras un cerrojo que enmascara las IRQ: así nadie se queda con el
@@ -43,6 +48,7 @@ static PAGINAS: CerrojoIrq<Paginas> = CerrojoIrq::new(Paginas {
     max_pagina: 0,
     limite_1g: 0,
     limite_3g: 0,
+    pista: PALABRAS - 1,
 });
 
 /// El repartidor, con su cerrojo tomado hasta que se suelte la guarda. Un `paginas().x()` lo suelta al acabar la
@@ -74,6 +80,9 @@ impl Paginas {
     }
 
     fn marcar_tramo(&mut self, dir: u64, tam: u64, ocupada: bool) {
+        if !ocupada {
+            self.pista = PALABRAS - 1;
+        }
         let primera = (dir / PAGINA) as usize;
         let ultima = (((dir + tam + PAGINA - 1) / PAGINA) as usize).min(MAX_PAGINAS);
         for p in primera..ultima {
@@ -168,13 +177,62 @@ impl Paginas {
     }
 
     pub fn pagina(&mut self, zona: Zona) -> Option<u64> {
-        self.reservar(zona, 1, 1)
+        let tope = match zona {
+            Zona::Dma1G => self.limite_1g,
+            Zona::Dma3G => self.limite_3g,
+            Zona::Normal => self.max_pagina,
+        }
+        .min(self.max_pagina);
+        if tope == 0 {
+            return None;
+        }
+        // Palabra a palabra desde arriba, saltando las llenas, sin pasar de la pista.
+        let palabra_tope = (tope - 1) / 64;
+        let inicio = palabra_tope.min(self.pista);
+        // En la zona normal, las palabras por encima del tope son de memoria que no existe y constan llenas: la
+        // pista se puede bajar hasta donde se encuentre la página.
+        let desde_pista = zona == Zona::Normal;
+        let mut w = inicio;
+        loop {
+            // En la palabra del tope, solo los bits por debajo del tope.
+            let mascara = if w == palabra_tope { u64::MAX >> (63 - (tope - 1) % 64) } else { u64::MAX };
+            let libres = !self.ocupada[w] & mascara;
+            if libres != 0 {
+                let p = w * 64 + (63 - libres.leading_zeros() as usize);
+                self.marcar(p, true);
+                // Todo lo que hay entre la pista y w estaba lleno.
+                if desde_pista {
+                    self.pista = w;
+                }
+                return Some(p as u64 * PAGINA);
+            }
+            if w == 0 {
+                if desde_pista {
+                    self.pista = 0;
+                }
+                return None;
+            }
+            w -= 1;
+        }
+    }
+
+    /// Una página para un proceso: su memoria, su imagen, su pila o sus tablas. Nunca toca las últimas `RESERVA`
+    /// páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la memoria recibe
+    /// un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
+    pub fn pagina_usuario(&mut self) -> Option<u64> {
+        if self.libres <= RESERVA {
+            return None;
+        }
+        self.pagina(Zona::Normal)
     }
 
     pub fn liberar(&mut self, dir: u64, n: usize) {
         let primera = (dir / PAGINA) as usize;
         for p in primera..primera + n {
             self.marcar(p, false);
+        }
+        if n > 0 {
+            self.pista = self.pista.max((primera + n - 1) / 64);
         }
     }
 }

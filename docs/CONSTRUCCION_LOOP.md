@@ -623,6 +623,33 @@ sigue pendiente (fase 2).
 - `trampas` (nuevo): tres copias intentan apagar el temporizador físico, leer el contador de ciclos y saltar al código
   del kernel. Las tres mueren (clases 0x18, 0x18 y 0x20) y el kernel sigue. Sin UXN, la tercera falla.
 
+### 2026-11-03 tarde — C32, cuarta vuelta (hallazgo 8, ELF y bajos)
+
+**Hallazgo 8.**
+
+- Los últimos 32 MB libres son del kernel: la memoria de los procesos (objetos, imagen, pila y tablas de páginas) sale
+  de `pagina_usuario`, que no los toca. Quien se come la memoria recibe `E_MEMORIA` (−7).
+- Límites por proceso: 1024 llaves, 16 mensajes por lado de canal y 1024 proyecciones. Al pasarse, `E_LIMITE` (−8).
+- `Espacio::nuevo`, `proyectar` y `pagina_nueva` devuelven error en vez de `expect`. Las reservas del montón que
+  dependen de un proceso usan `try_reserve`.
+- `Memoria::nueva` devuelve sus páginas si falla a medias.
+- Queda: el montón del kernel sin memoria sigue acabando en pánico. Con un proceso solo no se llega; con muchos, sí.
+  Lo cierran los cupos (fase 3).
+
+**Proyecciones.** `memoria_proyectar` y `registros_proyectar` comprueban el tramo entero antes de tocar nada: nada
+proyectado ya, nada en los primeros 64 KB y las tablas creadas. Ya no se pisa una entrada sin vaciar la TLB.
+
+**ELF.** Cabeceras con tamaño 56, como mucho 64 y dentro del fichero. Sumas comprobadas. Se rechazan los segmentos
+W+X, los que se solapan y una entrada fuera de un segmento ejecutable.
+
+**Repartidor.** Encontrado con la prueba: con la memoria alta llena, cada página nueva recorría el mapa desde arriba,
+y llenar la memoria era cuadrático (un objeto de 64 MB tardaba segundos). Ahora hay una pista: toda palabra del mapa
+por encima está llena.
+
+**Pruebas.** `malo` suma los pasos 17 a 23: proyectar en 0 y encima de algo, la cola llena, comerse la memoria (acaba
+en `E_MEMORIA` tras 14 trozos de 64 MB y se recupera al soltarla) y llenar la tabla de llaves (509 canales). Cuatro
+pasadas seguidas en verde. C18 falló una vez antes de la pista y no se ha repetido; no sé por qué falló.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al

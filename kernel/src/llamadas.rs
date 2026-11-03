@@ -35,6 +35,19 @@ const E_DERECHOS: u64 = -3i64 as u64;
 const E_CERRADO: u64 = -4i64 as u64;
 const E_TAMANO: u64 = -5i64 as u64;
 const E_TIPO: u64 = -6i64 as u64;
+/// No queda memoria para el proceso (la última parte es del kernel).
+const E_MEMORIA: u64 = -7i64 as u64;
+/// Un límite por proceso o por canal: tabla de llaves llena, cola llena o demasiadas proyecciones.
+const E_LIMITE: u64 = -8i64 as u64;
+/// Proyecciones por proceso, hasta los cupos de S16 (F).
+const MAX_PROYECCIONES: usize = 1024;
+
+fn error_espacio(e: crate::espacio::Error) -> u64 {
+    match e {
+        crate::espacio::Error::SinMemoria => E_MEMORIA,
+        crate::espacio::Error::Ocupada | crate::espacio::Error::Direccion => E_ARGUMENTO,
+    }
+}
 
 unsafe extern "C" {
     fn desde_usuario(destino: *mut u8, origen: u64, n: usize) -> u64;
@@ -54,7 +67,9 @@ pub fn fallo_de_copia(elr: u64) -> Option<u64> {
 /// los permisos del proceso (C31). El kernel nunca toca la memoria de un proceso de otra forma.
 fn leer_usuario(p: u64, n: usize) -> Option<Vec<u8>> {
     tramo(p, n as u64)?;
-    let mut v = alloc::vec![0u8; n];
+    let mut v = Vec::new();
+    v.try_reserve_exact(n).ok()?;
+    v.resize(n, 0);
     (unsafe { desde_usuario(v.as_mut_ptr(), p, n) } == 0).then_some(v)
 }
 
@@ -131,10 +146,17 @@ fn escribir_consola(p: u64, n: u64) -> u64 {
 
 fn canal_crear(marco: &mut Marco) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    let (l0, l1) = Canal::nuevo();
     let mut t = proc_.llaves.tomar();
-    let h0 = t.instalar(l0);
-    let h1 = t.instalar(l1);
+    if t.huecos() < 2 {
+        return E_LIMITE;
+    }
+    let (l0, l1) = Canal::nuevo();
+    // Con hueco para las dos, instalar solo falla sin memoria para la tabla; lo que llegó a entrar se quita.
+    let Ok(h0) = t.instalar(l0) else { return E_MEMORIA };
+    let Ok(h1) = t.instalar(l1) else {
+        t.quitar(h0);
+        return E_MEMORIA;
+    };
     marco.x[1] = h1 as u64;
     h0 as u64
 }
@@ -177,13 +199,17 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     let m = Mensaje { datos, llaves: viajan };
     match canal.escribir(lado, m) {
         Ok(()) => 0,
-        Err(m) => {
-            // El otro lado está cerrado: las llaves vuelven a sus huecos.
+        Err((error, m)) => {
+            // No se pudo mandar: las llaves vuelven a sus huecos.
             let mut t = proc_.llaves.tomar();
             for (&n, l) in numeros.iter().zip(m.llaves) {
                 t.reponer(n, l);
             }
-            E_CERRADO
+            match error {
+                objetos::Error::Cerrado => E_CERRADO,
+                objetos::Error::Llena => E_LIMITE,
+                objetos::Error::SinMemoria => E_MEMORIA,
+            }
         }
     }
 }
@@ -213,15 +239,30 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return E_ARGUMENTO;
     }
     let largo = m.datos.len() as u64;
-    let Mensaje { datos, llaves: recibidas } = m;
     let mut t = proc_.llaves.tomar();
-    let numeros: Vec<u32> = recibidas.into_iter().map(|l| t.instalar(l)).collect();
-    if !escribir_usuario(llaves, &llaves_a_bytes(&numeros, proc_.big_endian)) {
-        let devueltas = numeros.iter().filter_map(|&n| t.quitar(n)).collect();
+    if t.huecos() < m.llaves.len() {
+        drop(t);
+        canal.devolver(lado, m);
+        return E_LIMITE;
+    }
+    let Mensaje { datos, llaves: recibidas } = m;
+    let mut numeros = Vec::new();
+    let mut sobrantes = Vec::new();
+    for l in recibidas {
+        match t.instalar(l) {
+            Ok(n) => numeros.push(n),
+            Err(l) => sobrantes.push(l),
+        }
+    }
+    if !sobrantes.is_empty() || !escribir_usuario(llaves, &llaves_a_bytes(&numeros, proc_.big_endian)) {
+        let error = if sobrantes.is_empty() { E_ARGUMENTO } else { E_MEMORIA };
+        let mut devueltas: Vec<_> = numeros.iter().filter_map(|&n| t.quitar(n)).collect();
+        devueltas.extend(sobrantes);
         drop(t);
         canal.devolver(lado, Mensaje { datos, llaves: devueltas });
-        return E_ARGUMENTO;
+        return error;
     }
+
     marco.x[1] = numeros.len() as u64;
     largo
 }
@@ -240,9 +281,15 @@ fn memoria_crear(tamano: u64) -> u64 {
     if tamano == 0 || tamano > (64 << 20) {
         return E_TAMANO;
     }
-    let Some(m) = objetos::Memoria::nueva(tamano as usize) else { return E_TAMANO };
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let Some(m) = objetos::Memoria::nueva(tamano as usize) else { return E_MEMORIA };
     let llave = objetos::Llave { objeto: Objeto::Memoria(alloc::sync::Arc::new(m)), derechos: objetos::TODOS };
-    proc_.llaves.tomar().instalar(llave) as u64
+    match proc_.llaves.tomar().instalar(llave) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
 }
 
 fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
@@ -255,12 +302,19 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         return E_DERECHOS;
     }
     let pagina = crate::memoria::PAGINA;
-    if va % pagina != 0 || tramo(va, m.paginas.len() as u64 * pagina).is_none() {
-        return E_ARGUMENTO;
-    }
     let mut e = proc_.espacio.tomar();
+    if e.proyectados.len() >= MAX_PROYECCIONES {
+        return E_LIMITE;
+    }
+    if e.proyectados.try_reserve(1).is_err() {
+        return E_MEMORIA;
+    }
+    // Primero se comprueba todo el tramo y se crean sus tablas; después proyectar ya no puede fallar.
+    if let Err(err) = e.preparar(va, m.paginas.len() as u64) {
+        return error_espacio(err);
+    }
     for (i, &p) in m.paginas.iter().enumerate() {
-        e.proyectar(va + i as u64 * pagina, p, if escribir { Permiso::Datos } else { Permiso::SoloLectura });
+        let _ = e.proyectar(va + i as u64 * pagina, p, if escribir { Permiso::Datos } else { Permiso::SoloLectura });
     }
     e.proyectados.push(m.clone());
     0
@@ -275,13 +329,13 @@ fn registros_proyectar(h: u32, va: u64) -> u64 {
         return E_DERECHOS;
     }
     let pagina = crate::memoria::PAGINA;
-    if va % pagina != 0 || tramo(va, tamano).is_none() {
-        return E_ARGUMENTO;
-    }
     let mut e = proc_.espacio.tomar();
+    if let Err(err) = e.preparar(va, tamano.div_ceil(pagina)) {
+        return error_espacio(err);
+    }
     let mut i = 0;
     while i < tamano {
-        e.proyectar(va + i, fisica + i, Permiso::Dispositivo);
+        let _ = e.proyectar(va + i, fisica + i, Permiso::Dispositivo);
         i += pagina;
     }
     0

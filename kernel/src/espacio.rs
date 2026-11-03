@@ -4,7 +4,7 @@
 //! tablas son de 4 KB y tres niveles (39 bits). Se escriben en big-endian, como las del arranque.
 
 use crate::cerrojo::CerrojoIrq;
-use crate::memoria::{paginas, Zona, PAGINA};
+use crate::memoria::{paginas, PAGINA};
 use crate::mmu;
 
 /// ASID de 16 bits (TCR.AS = 1). Un mapa con uno ocupado por bit. El 0 es de la tabla vacía y nunca se da. Un ASID
@@ -83,25 +83,53 @@ impl Drop for Espacio {
     }
 }
 
-fn tabla_nueva() -> u64 {
-    let p = paginas().pagina(Zona::Normal).expect("sin memoria para tablas");
+/// Lo que puede fallar al proyectar.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Error {
+    /// No queda memoria para el proceso (fuera de la reserva del kernel) o para sus tablas.
+    SinMemoria,
+    /// Ya hay algo proyectado en esa dirección. No se pisa nunca (antes se pisaba sin vaciar la TLB).
+    Ocupada,
+    /// La dirección no es del usuario o cae en los primeros 64 KB, que no se proyectan nunca: un puntero nulo del
+    /// kernel no debe encontrar datos del usuario (auditoría, hallazgos bajos).
+    Direccion,
+}
+
+/// Por debajo de esto no se proyecta nada.
+pub const VA_MINIMA: u64 = 0x1_0000;
+/// Fin de la mitad baja: 39 bits.
+pub const VA_LIMITE: u64 = 1 << 39;
+
+/// Una tabla nueva, a cero. Es memoria del proceso: no entra en la reserva del kernel.
+fn tabla_nueva() -> Result<u64, Error> {
+    let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
     unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-    p
+    Ok(p)
 }
 
 fn entrada(tabla: u64, i: usize) -> *mut u64 {
     (mmu::virt(tabla as usize) + i * 8) as *mut u64
 }
 
+fn indices(va: u64) -> [usize; 3] {
+    [((va >> 30) & 0x1ff) as usize, ((va >> 21) & 0x1ff) as usize, ((va >> 12) & 0x1ff) as usize]
+}
+
 impl Espacio {
-    pub fn nuevo() -> Self {
-        Self {
-            l1: tabla_nueva(),
-            asid: asid_nuevo().expect("sin ASID libres"),
+    /// Un espacio vacío. `None` si no quedan ASID o memoria.
+    pub fn nuevo() -> Option<Self> {
+        let asid = asid_nuevo()?;
+        let Ok(l1) = tabla_nueva() else {
+            asid_devolver(asid);
+            return None;
+        };
+        Some(Self {
+            l1,
+            asid,
             tablas: alloc::vec::Vec::new(),
             propias: alloc::vec::Vec::new(),
             proyectados: alloc::vec::Vec::new(),
-        }
+        })
     }
 
     /// Valor de TTBR0_EL1 para este espacio.
@@ -109,21 +137,70 @@ impl Espacio {
         self.l1 | (self.asid << 48)
     }
 
-    /// Proyecta la página física `fisica` en la dirección virtual `va` del proceso.
-    pub fn proyectar(&mut self, va: u64, fisica: u64, permiso: Permiso) {
-        let indices = [((va >> 30) & 0x1ff) as usize, ((va >> 21) & 0x1ff) as usize, ((va >> 12) & 0x1ff) as usize];
+    /// La entrada de nivel 3 de `va`, si ya existen sus tablas.
+    fn hoja(&self, va: u64) -> Option<*mut u64> {
+        let ix = indices(va);
         let mut tabla = self.l1;
-        for &i in &indices[..2] {
+        for &i in &ix[..2] {
+            let v = unsafe { entrada(tabla, i).read_volatile() };
+            if v & VALIDO != VALIDO {
+                return None;
+            }
+            tabla = v & DIRECCION;
+        }
+        Some(entrada(tabla, ix[2]))
+    }
+
+    /// La entrada de nivel 3 de `va`, creando las tablas que falten.
+    fn hoja_o_crear(&mut self, va: u64) -> Result<*mut u64, Error> {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return Err(Error::Direccion);
+        }
+        let ix = indices(va);
+        let mut tabla = self.l1;
+        for &i in &ix[..2] {
             let e = entrada(tabla, i);
             let v = unsafe { e.read_volatile() };
             tabla = if v & VALIDO == VALIDO {
                 v & DIRECCION
             } else {
-                let nueva = tabla_nueva();
+                self.tablas.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+                let nueva = tabla_nueva()?;
                 self.tablas.push(nueva);
                 unsafe { e.write_volatile(nueva | VALIDO) };
                 nueva
             };
+        }
+        Ok(entrada(tabla, ix[2]))
+    }
+
+    /// Comprueba que se pueden proyectar `n` páginas desde `va`: dirección válida, nada proyectado ya y las tablas
+    /// creadas. Después, `proyectar` en ese tramo no falla.
+    pub fn preparar(&mut self, va: u64, n: u64) -> Result<(), Error> {
+        let fin = va.checked_add(n.checked_mul(PAGINA).ok_or(Error::Direccion)?).ok_or(Error::Direccion)?;
+        if va % PAGINA != 0 || va < VA_MINIMA || fin > VA_LIMITE {
+            return Err(Error::Direccion);
+        }
+        let mut p = va;
+        while p < fin {
+            if self.hoja(p).is_some_and(|e| unsafe { e.read_volatile() } & VALIDO != 0) {
+                return Err(Error::Ocupada);
+            }
+            p += PAGINA;
+        }
+        let mut p = va;
+        while p < fin {
+            self.hoja_o_crear(p)?;
+            p += PAGINA;
+        }
+        Ok(())
+    }
+
+    /// Proyecta la página física `fisica` en la dirección virtual `va` del proceso, que tiene que estar libre.
+    pub fn proyectar(&mut self, va: u64, fisica: u64, permiso: Permiso) -> Result<(), Error> {
+        let e = self.hoja_o_crear(va)?;
+        if unsafe { e.read_volatile() } & VALIDO != 0 {
+            return Err(Error::Ocupada);
         }
         let atributos = VALIDO | AF | NG | AP_EL0 | PXN
             | match permiso {
@@ -133,19 +210,24 @@ impl Espacio {
                 Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
             };
         unsafe {
-            entrada(tabla, indices[2]).write_volatile((fisica & DIRECCION) | atributos);
+            e.write_volatile((fisica & DIRECCION) | atributos);
             core::arch::asm!("dsb ishst", "isb");
         }
+        Ok(())
     }
 
     /// Reserva una página nueva, la proyecta y devuelve su dirección en el kernel para rellenarla.
-    pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso) -> *mut u8 {
-        let p = paginas().pagina(Zona::Normal).expect("sin memoria");
+    pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso) -> Result<*mut u8, Error> {
+        self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+        let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
+        if let Err(e) = self.proyectar(va, p, permiso) {
+            paginas().liberar(p, 1);
+            return Err(e);
+        }
+        self.propias.push(p);
         let k = mmu::virt(p as usize) as *mut u8;
         unsafe { core::ptr::write_bytes(k, 0, PAGINA as usize) };
-        self.proyectar(va, p, permiso);
-        self.propias.push(p);
-        k
+        Ok(k)
     }
 }
 

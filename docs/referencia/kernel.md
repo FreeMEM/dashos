@@ -38,7 +38,13 @@ Hay dos tipos de ejecutable:
 Reglas comunes:
 
 - Se cargan los `PT_LOAD`. Si un segmento tiene `X`, es código (lectura y ejecución). Si tiene `W`, son datos
-  (lectura y escritura, sin ejecución). Si no, es de solo lectura. Dos segmentos no deben compartir página.
+  (lectura y escritura, sin ejecución). Si no, es de solo lectura.
+- Se rechaza el ELF si:
+  - un segmento tiene `W` y `X` a la vez;
+  - dos segmentos comparten página;
+  - algo cae en los primeros 64 KB;
+  - la entrada no está en un segmento con `X`;
+  - `e_phentsize` no es 56 o hay más de 64 cabeceras de programa.
 - Si hay `PT_INTERP`, el ELF se rechaza. No hay enlazador dinámico.
 - **El kernel no aplica reubicaciones.** Un PIE aplica sus `R_AARCH64_RELATIVE` al arrancar, y tienen que caer en un
   segmento escribible. Su base la saca de su propio contador de programa (`adr`/`adrp`).
@@ -49,7 +55,7 @@ Reglas comunes:
 
 ### Mapa de direcciones de un proceso
 
-El espacio de usuario va de 0 a 512 GB (`1 << 39`). Hoy está así:
+El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca. Hoy está así:
 
 | Tramo | Uso |
 |---|---|
@@ -129,10 +135,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **3, 4 y 5, tablas de llaves.** Son tablas de números de 32 bits, en el orden de bytes del proceso.
 - **6, `cerrar`.** Quita la llave de la tabla. Si es un extremo de canal, lo cierra: quien esté leyendo al otro lado
   se despierta con `E_CERRADO` cuando la cola queda vacía.
-- **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos.
+- **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos. Los últimos
+  32 MB libres son del kernel: al llegar ahí devuelve `E_MEMORIA`.
 - **8, `memoria_proyectar`.**
-  - Proyecta el objeto entero a partir de la dirección. Si ya había algo proyectado ahí, se pisa la entrada de la
-    tabla sin vaciar la TLB: el proceso puede seguir viendo lo de antes un rato. No proyectéis encima de algo.
+  - Proyecta el objeto entero a partir de la dirección. Si alguna página del tramo ya tiene algo, no proyecta nada y
+    devuelve `E_ARGUMENTO`.
   - Permiso 3 es lectura y escritura, y nunca se ejecuta.
   - El mismo objeto proyectado en dos procesos es memoria compartida.
   - Sus páginas vuelven al sistema cuando no queda ninguna llave ni ninguna proyección.
@@ -156,8 +163,24 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −2 | `E_LLAVE` | La llave no existe en la tabla |
 | −3 | `E_DERECHOS` | Falta un derecho: leer, escribir o transferir |
 | −4 | `E_CERRADO` | El otro extremo del canal está cerrado |
-| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0, más de 64 MB, o sin memoria |
+| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0 o más de 64 MB |
 | −6 | `E_TIPO` | La llave es de otro tipo de objeto |
+| −7 | `E_MEMORIA` | No queda memoria para procesos |
+| −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
+
+### Límites
+
+Son provisionales, hasta que haya cupos por grupo de procesos (S16, F).
+
+| Qué | Límite |
+|---|---|
+| Llaves en la tabla de un proceso | 1024 |
+| Mensajes esperando en un lado de un canal | 16 |
+| Proyecciones de objetos de memoria por proceso | 1024 |
+| Memoria libre que solo usa el kernel | 32 MB |
+
+Con la cola llena, `canal_escribir` devuelve `E_LIMITE` y las llaves vuelven a sus números. Una interrupción que
+llega con la cola llena se pierde.
 
 Un número de llamada desconocido devuelve `E_ARGUMENTO` y se avisa en la consola.
 
@@ -211,7 +234,9 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 
 ## Limitaciones conocidas
 
-- Proyectar encima de algo ya proyectado no vacía la TLB.
+- No hay llamada para quitar una proyección.
+- Si el montón del kernel se queda sin memoria, el kernel cae. Los límites y la reserva de 32 MB lo evitan para un
+  proceso solo, no para muchos a la vez.
 - Al morir un proceso, sus extremos de canal no se cierran. Quien espera al otro lado no se entera.
 - Un proceso tiene un solo hilo, y no hay llamadas para crear hilos ni procesos, ni para esperar a que acaben.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el

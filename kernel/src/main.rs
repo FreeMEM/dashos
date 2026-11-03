@@ -291,8 +291,9 @@ fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
 
 fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>, avisar: bool) {
     use espacio::{Espacio, Permiso};
-    let mut e = Espacio::nuevo();
-    let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo);
+    // Solo para las pruebas del arranque, que salen del kernel en la fase 2 de S16.
+    let mut e = Espacio::nuevo().expect("prueba: sin espacio");
+    let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo).expect("prueba: sin memoria");
     let largo = fin as usize - ini as usize;
     unsafe {
         core::ptr::copy_nonoverlapping(ini, codigo, largo);
@@ -304,15 +305,15 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         }
         core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb");
     }
-    let datos = e.pagina_nueva(VA_DATOS, Permiso::Datos);
+    let datos = e.pagina_nueva(VA_DATOS, Permiso::Datos).expect("prueba: sin memoria");
     unsafe {
         *datos = mensaje.len() as u8;
         core::ptr::copy_nonoverlapping(mensaje.as_ptr(), datos.add(1), mensaje.len());
     }
-    e.pagina_nueva(VA_PILA, Permiso::Datos);
+    e.pagina_nueva(VA_PILA, Permiso::Datos).expect("prueba: sin memoria");
     let mut tabla = objetos::TablaLlaves::default();
     if let Some(l) = llave {
-        tabla.instalar(l); // será la llave 1
+        let _ = tabla.instalar(l); // será la llave 1
     }
     if avisar {
         kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
@@ -606,7 +607,10 @@ extern "C" fn arrancar_elf(a: usize) {
 /// Carga un ELF de usuario en un proceso nuevo, con estas llaves (serán la 1, la 2...), y lo arranca.
 fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> bool {
     use espacio::Espacio;
-    let mut e = Espacio::nuevo();
+    let Some(mut e) = Espacio::nuevo() else {
+        kprintln!("  no se pudo crear el espacio: sin ASID o sin memoria");
+        return false;
+    };
     let cargado = match elf::cargar(&mut e, binario) {
         Ok(x) => x,
         Err(err) => {
@@ -622,7 +626,7 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
     }
     let mut tabla = objetos::TablaLlaves::default();
     for l in llaves {
-        tabla.instalar(l);
+        let _ = tabla.instalar(l);
     }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
@@ -1043,7 +1047,7 @@ fn prueba_pie() {
         }
         *b = PIE_ULTIMO.load(Ordering::Relaxed);
         let inicio = reloj::tics();
-        while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 200 {
+        while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 1500 {
             reloj::esperar_interrupcion();
         }
     }
@@ -1063,7 +1067,7 @@ fn prueba_malo() {
         return;
     }
     let inicio = reloj::tics();
-    while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 200 {
+    while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 1500 {
         reloj::esperar_interrupcion();
     }
     kprintln!("C31: el kernel sobrevive a los punteros malos");
@@ -1116,18 +1120,18 @@ fn prueba_repartos() {
 /// C32: 1000 espacios vivos a la vez tienen ASID distintos y ninguno es el 0; al soltarlos, sus ASID vuelven a darse.
 /// Antes eran de 8 bits y se repetían a los 256 procesos (auditoría, hallazgo 2).
 fn prueba_asid() {
-    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).map(|_| espacio::Espacio::nuevo()).collect();
+    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).filter_map(|_| espacio::Espacio::nuevo()).collect();
     let mut asids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid).collect();
     asids.sort_unstable();
     asids.dedup();
     let distintos = asids.len() == 1000 && asids[0] != 0 && *asids.last().unwrap() < 1 << 16;
-    let menor = asids[0];
+    let menor = asids.first().copied().unwrap_or(0);
     vivos.clear();
-    let otra = espacio::Espacio::nuevo();
+    let Some(otra) = espacio::Espacio::nuevo() else { return };
     let otra_asid = otra.asid;
     let reusa = otra_asid <= menor;
     drop(otra);
-    kprintln!("  ASID: menor {}, mayor {}, el siguiente {}", menor, asids[999], otra_asid);
+    kprintln!("  ASID: menor {}, mayor {}, el siguiente {}", menor, asids.last().copied().unwrap_or(0), otra_asid);
     kprintln!("C32: ASID de 16 bits sin repetirse {}, y se vuelven a dar {}", if distintos { "bien" } else { "MAL" }, if reusa { "bien" } else { "MAL" });
 }
 

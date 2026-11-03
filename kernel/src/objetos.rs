@@ -17,6 +17,10 @@ pub const TODOS: u32 = LEER | ESCRIBIR | TRANSFERIR;
 
 pub const MAX_DATOS: usize = 256;
 pub const MAX_LLAVES: usize = 8;
+/// Límites por proceso y por canal, para que un proceso no se coma la memoria del kernel (auditoría, hallazgo 8).
+/// Son provisionales: los cupos por grupo de procesos (S16, F) los sustituyen.
+pub const MAX_TABLA: usize = 1024;
+pub const MAX_COLA: usize = 16;
 
 #[derive(Clone)]
 pub enum Objeto {
@@ -45,15 +49,18 @@ impl Drop for Memoria {
 }
 
 impl Memoria {
+    /// Páginas nuevas, a cero. `None` si no hay memoria fuera de la reserva del kernel; entonces las páginas que ya
+    /// se habían tomado vuelven al repartidor (al soltar el objeto a medias).
     pub fn nueva(tamano: usize) -> Option<Self> {
         let n = tamano.div_ceil(crate::memoria::PAGINA as usize);
-        let mut paginas = Vec::with_capacity(n);
+        let mut m = Self { paginas: Vec::new() };
+        m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
-            let p = crate::memoria::paginas().pagina(crate::memoria::Zona::Normal)?;
+            let p = crate::memoria::paginas().pagina_usuario()?;
             unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, crate::memoria::PAGINA as usize) };
-            paginas.push(p);
+            m.paginas.push(p);
         }
-        Some(Self { paginas })
+        Some(m)
     }
 }
 
@@ -88,6 +95,9 @@ pub struct Canal {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     Cerrado,
+    /// La cola del otro lado tiene ya `MAX_COLA` mensajes.
+    Llena,
+    SinMemoria,
 }
 
 impl Canal {
@@ -99,14 +109,20 @@ impl Canal {
         )
     }
 
-    /// Manda desde el lado `lado`: el mensaje va a la cola del otro. Si el otro está cerrado, devuelve el mensaje
-    /// para que quien manda recupere sus llaves.
-    pub fn escribir(&self, lado: usize, m: Mensaje) -> Result<(), Mensaje> {
+    /// Manda desde el lado `lado`: el mensaje va a la cola del otro. Si no puede (cerrado, cola llena o sin
+    /// memoria), devuelve el mensaje para que quien manda recupere sus llaves.
+    pub fn escribir(&self, lado: usize, m: Mensaje) -> Result<(), (Error, Mensaje)> {
         let despertar = {
             let mut l = self.lados.tomar();
             let otro = &mut l[1 - lado];
             if otro.cerrado {
-                return Err(m);
+                return Err((Error::Cerrado, m));
+            }
+            if otro.cola.len() >= MAX_COLA {
+                return Err((Error::Llena, m));
+            }
+            if otro.cola.try_reserve(1).is_err() {
+                return Err((Error::SinMemoria, m));
             }
             otro.cola.push_back(m);
             otro.esperando.take()
@@ -157,16 +173,30 @@ pub struct TablaLlaves {
 }
 
 impl TablaLlaves {
-    pub fn instalar(&mut self, l: Llave) -> u32 {
+    /// Pone la llave en el primer hueco libre y devuelve su número. Si la tabla está llena (`MAX_TABLA`) o no hay
+    /// memoria para crecer, devuelve la llave.
+    pub fn instalar(&mut self, l: Llave) -> Result<u32, Llave> {
         if self.llaves.is_empty() {
+            if self.llaves.try_reserve(1).is_err() {
+                return Err(l);
+            }
             self.llaves.push(None);
         }
         if let Some(i) = self.llaves.iter().skip(1).position(|x| x.is_none()) {
             self.llaves[i + 1] = Some(l);
-            return (i + 1) as u32;
+            return Ok((i + 1) as u32);
+        }
+        if self.llaves.len() > MAX_TABLA || self.llaves.try_reserve(1).is_err() {
+            return Err(l);
         }
         self.llaves.push(Some(l));
-        (self.llaves.len() - 1) as u32
+        Ok((self.llaves.len() - 1) as u32)
+    }
+
+    /// Cuántas llaves caben todavía sin pasar de `MAX_TABLA`.
+    pub fn huecos(&self) -> usize {
+        let libres = self.llaves.iter().skip(1).filter(|x| x.is_none()).count();
+        libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
     }
 
     pub fn ver(&self, h: u32) -> Option<Llave> {

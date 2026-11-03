@@ -67,10 +67,32 @@ pub struct Cargado {
 pub enum Error {
     NoEsElf,
     NoEsNuestro,
+    /// Cabeceras de programa fuera del fichero, de tamaño raro o demasiadas.
+    Cabeceras,
+    /// Un segmento fuera del fichero o de su zona, o que se solapa con otro.
     Segmento,
+    /// Un segmento que se puede escribir y ejecutar a la vez: DashOS no lo carga (W^X).
+    EscrituraYEjecucion,
+    /// La entrada no cae en un segmento ejecutable.
+    Entrada,
     /// Pide un enlazador dinámico (`PT_INTERP`): DashOS no tiene.
     Interprete,
+    SinMemoria,
 }
+
+impl From<crate::espacio::Error> for Error {
+    fn from(e: crate::espacio::Error) -> Self {
+        match e {
+            crate::espacio::Error::SinMemoria => Error::SinMemoria,
+            // Ocupada: dos segmentos en la misma página. Dirección: en los primeros 64 KB o fuera del usuario.
+            _ => Error::Segmento,
+        }
+    }
+}
+
+/// Más cabeceras de programa que esto no tienen sentido en un programa de DashOS.
+const MAX_CABECERAS: usize = 64;
+const TAMANO_CABECERA: usize = 56;
 
 /// Un número al azar alineado en [desde, hasta).
 fn al_azar(desde: u64, hasta: u64, alineacion: u64) -> u64 {
@@ -94,8 +116,17 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
         return Err(Error::NoEsNuestro);
     }
     let pie = tipo == ET_DYN;
-    let (phoff, phentsize, phnum) = (u64_(d, 32) as usize, u16_(d, 54) as usize, u16_(d, 56) as usize);
-    let cabeceras = || (0..phnum).map(move |i| phoff + i * phentsize).filter(|&ph| ph + 56 <= d.len());
+    // Las cabeceras de programa, todas dentro del fichero; sin cuentas que den la vuelta.
+    let (phoff, phentsize, phnum) = (u64_(d, 32), u16_(d, 54) as usize, u16_(d, 56) as usize);
+    if phentsize != TAMANO_CABECERA || phnum > MAX_CABECERAS {
+        return Err(Error::Cabeceras);
+    }
+    let phoff = usize::try_from(phoff).map_err(|_| Error::Cabeceras)?;
+    match phoff.checked_add(phnum * TAMANO_CABECERA) {
+        Some(fin) if fin <= d.len() => {}
+        _ => return Err(Error::Cabeceras),
+    }
+    let cabeceras = || (0..phnum).map(move |i| phoff + i * TAMANO_CABECERA);
     // Lo que ocupa la imagen, para elegir la base de un PIE.
     let mut fin_imagen = 0u64;
     for ph in cabeceras() {
@@ -114,7 +145,8 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
     } else {
         (0, PILA_TOPE - PILA_MAXIMA)
     };
-    let entrada = base + u64_(d, 24);
+    let entrada = base.checked_add(u64_(d, 24)).ok_or(Error::Entrada)?;
+    let mut entrada_valida = false;
     let mut tamano_pila = PILA_POR_DEFECTO;
     for ph in cabeceras() {
         if u32_(d, ph) == PT_GNU_STACK && u64_(d, ph + 40) != 0 {
@@ -124,9 +156,19 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
             continue;
         }
         let banderas = u32_(d, ph + 4);
-        let (off, va, filesz, memsz) = (u64_(d, ph + 8), base + u64_(d, ph + 16), u64_(d, ph + 32), u64_(d, ph + 40));
-        if off.checked_add(filesz).is_none_or(|f| f > d.len() as u64) || filesz > memsz || va + memsz > limite {
+        let (off, filesz, memsz) = (u64_(d, ph + 8), u64_(d, ph + 32), u64_(d, ph + 40));
+        let va = base.checked_add(u64_(d, ph + 16)).ok_or(Error::Segmento)?;
+        if off.checked_add(filesz).is_none_or(|f| f > d.len() as u64)
+            || filesz > memsz
+            || va.checked_add(memsz).is_none_or(|f| f > limite)
+        {
             return Err(Error::Segmento);
+        }
+        if banderas & 3 == 3 {
+            return Err(Error::EscrituraYEjecucion);
+        }
+        if banderas & 1 != 0 && (va..va + memsz).contains(&entrada) {
+            entrada_valida = true;
         }
         let permiso = if banderas & 1 != 0 {
             Permiso::Codigo
@@ -139,7 +181,7 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
         let fin = (va + memsz).div_ceil(PAGINA) * PAGINA;
         let mut p = inicio;
         while p < fin {
-            let k = e.pagina_nueva(p, permiso);
+            let k = e.pagina_nueva(p, permiso)?;
             // Copiar la parte del fichero que cae en esta página (el resto queda a cero).
             let (desde, hasta) = (p.max(va), (p + PAGINA).min(va + filesz));
             if desde < hasta {
@@ -152,10 +194,13 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
             p += PAGINA;
         }
     }
+    if !entrada_valida {
+        return Err(Error::Entrada);
+    }
     let tope = if pie { al_azar(PILA_ZONA.0 + PILA_MAXIMA, PILA_ZONA.1, ALINEACION) } else { PILA_TOPE };
     let mut p = tope - tamano_pila;
     while p < tope {
-        e.pagina_nueva(p, Permiso::Datos);
+        e.pagina_nueva(p, Permiso::Datos)?;
         p += PAGINA;
     }
     Ok(Cargado { base, entrada, pila: tope, tamano_pila, big_endian: orden.0 })

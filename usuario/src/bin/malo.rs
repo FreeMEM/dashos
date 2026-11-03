@@ -13,6 +13,8 @@ dashos::programa!(principal);
 const E_ARGUMENTO: i64 = -1;
 const E_CERRADO: i64 = -4;
 const E_TAMANO: i64 = -5;
+const E_MEMORIA: i64 = -7;
+const E_LIMITE: i64 = -8;
 const VACIA: u64 = 0x10_0000_0000; // 64 GB: nada proyectado
 const KERNEL: u64 = 0xffff_0000_0000_0000;
 
@@ -88,6 +90,60 @@ fn principal() -> u64 {
     if dashos::memoria_proyectar(m3, 0x20_0002_0000, true) != 0 {
         return 16;
     }
+    // 17-18: proyectar en la dirección 0 y encima de algo ya proyectado (la página de m3, paso 16).
+    if dashos::memoria_proyectar(m2, 0, true) != E_ARGUMENTO {
+        return 17;
+    }
+    if dashos::memoria_proyectar(m2, 0x20_0002_0000, true) != E_ARGUMENTO {
+        return 18;
+    }
+    // 19: la cola de un canal tiene límite (hallazgo 8): el mensaje 17 sin leer da E_LIMITE.
+    let (c, d) = dashos::canal_crear();
+    for _ in 0..16 {
+        if dashos::canal_escribir(c, b"lleno", &[]) != 0 {
+            return 19;
+        }
+    }
+    if dashos::canal_escribir(c, b"lleno", &[]) != E_LIMITE {
+        return 20;
+    }
+    let _ = d;
+    // 21-22: comerse la memoria a trozos de 64 MB. Tiene que acabar en E_MEMORIA, no en pánico; y al soltarla,
+    // se puede volver a pedir.
+    let mut trozos = [0u32; 64];
+    let mut n = 0;
+    let fin = loop {
+        let k = x0(7, [64 << 20, 0, 0, 0, 0]);
+        if k < 0 || n == trozos.len() {
+            break k;
+        }
+        trozos[n] = k as u32;
+        n += 1;
+    };
+    if fin != E_MEMORIA {
+        return 21;
+    }
+    for &k in &trozos[..n] {
+        x0(6, [k as u64, 0, 0, 0, 0]);
+    }
+    let k = x0(7, [64 << 20, 0, 0, 0, 0]);
+    if k < 0 {
+        return 22;
+    }
+    x0(6, [k as u64, 0, 0, 0, 0]);
+    // 23: llenar la tabla de llaves con canales: acaba en E_LIMITE, no en pánico.
+    let mut canales = 0;
+    let fin = loop {
+        let r = x0(3, [0; 5]);
+        if r < 0 || canales > 2000 {
+            break r;
+        }
+        canales += 1;
+    };
+    if fin != E_LIMITE {
+        return 23;
+    }
+    println!("  [malo] memoria agotada en {} trozos de 64 MB y tabla llena en {} canales, sin pánico", n, canales);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31
 }
