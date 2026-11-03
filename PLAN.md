@@ -27,6 +27,7 @@ Estas decisiones son del usuario, del 2026-11-03.
   arranque, tabla de excepciones y cambio de contexto. Python para las herramientas.
 - **Dash como lenguaje del sistema que ve el usuario.** Las bibliotecas nativas se escriben en Dash. Para eso dashc
   necesita un backend nuevo. Dash no entra en el kernel.
+- **Licencia MPL-2.0** para el código propio de DashOS, la misma de Emu68 (usuario, 2026-11-03). Texto en `LICENSE`.
 - **La API se reimplementa, no se copia.** AROS sirve de referencia, y la ingeniería inversa del Kickstart 3.1 cubre
   lo que no está documentado.
 
@@ -195,7 +196,6 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
   `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
 - Si los programas nativos nuevos usan la API Amiga dentro de la caja, una API moderna fuera, o las dos.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
-- La licencia del código propio.
 - Si exec, dentro de la caja, empieza en C mientras llega el backend ARM de Dash, o se espera.
 - Cómo se dibuja la pantalla: framebuffer de la Pi con un graphics propio, o algo más parecido a RTG.
 
