@@ -1,0 +1,18 @@
+[package]
+name = "dashos-kernel"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+
+[[bin]]
+name = "dashos-kernel"
+test = false
+bench = false
+
+[profile.dev]
+panic = "abort"
+opt-level = 1
+
+[profile.release]
+panic = "abort"
+debug = true

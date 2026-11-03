@@ -1,0 +1,5 @@
+DashOS 0.0.1
+Nivel de excepción: EL1
+Árbol de dispositivos en 0x
+Orden de bytes: big-endian
+C2: esqueleto en marcha
