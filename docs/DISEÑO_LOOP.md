@@ -129,9 +129,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
-- (S3) ¿Sin intercambio a disco por defecto, solo memoria comprimida (LZ4)? Mientras: sí.
-- (S3) ¿Sin prometer de más memoria (falla al pedir, no hay OOM killer)? Mientras: sí, con margen en la capa Linux.
-- (S3) ¿Enforcer integrado en la caja, siempre activo? Mientras: sí, con avisos a un registro.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -190,4 +187,8 @@ Enforcer integrado en la caja Amiga.
 Cada proceso con su PID. Usuarios, grupos, propietarios y permisos como en Linux (contesta la pregunta de S0 sobre
 varias cuentas: sí). Y toda la organización de AmigaOS igual: cajones, asignaciones, Prefs, `DEVS:Monitors`,
 `LOCALE:`, dispositivos. Pasa a `PLAN.md`; tarea nueva S4b para la organización, y S6 ampliada.
+
+### 2026-11-03 — Decisiones del usuario sobre S3
+
+Aceptadas las tres recomendaciones: sin intercambio a disco, sin prometer de más y Enforcer siempre activo.
 

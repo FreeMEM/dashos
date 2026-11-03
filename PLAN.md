@@ -23,6 +23,9 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Matar siempre funciona** (usuario, 2026-11-03). Cualquier proceso se puede matar, y las señales de terminar se
   cumplen siempre, no como en AmigaOS. Dentro de la caja, exec apunta el dueño de cada recurso para poder matar una
   tarea 68k suelta.
+- **Memoria** (usuario, 2026-11-03; `docs/diseño/S3-memoria.md`): sin intercambio a disco por defecto, solo memoria
+  comprimida con LZ4; sin prometer de más (la petición falla al momento, no hay OOM killer); Enforcer integrado en
+  la caja Amiga, siempre activo y con avisos a un registro.
 - **Cada proceso tiene su PID** (usuario, 2026-11-03), un número que lo identifica, como en Linux. Saber el PID no da
   poder sobre el proceso: para matarlo hay que ser su dueño o administrador, como en Linux.
 - **Usuarios, grupos, propietarios y permisos como en Linux** (usuario, 2026-11-03). Ficheros y procesos tienen dueño
