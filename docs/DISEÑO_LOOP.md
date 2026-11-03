@@ -114,7 +114,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   compartidas y cómo encaja Dash.
 - [x] S12 **Controladores de la Pi 4.** Lista y orden: serie, temporizador, interrupciones, tarjeta SD, USB (VL805
   por PCIe), red GENET, Wi-Fi y Bluetooth, audio, HDMI. Cuáles se escriben, cuáles se adaptan y con qué licencia.
-- [ ] S13 **Red.** Pila TCP/IP, cortafuegos, DNS, TLS, y `bsdsocket.library` para los programas Amiga.
+- [x] S13 **Red.** Pila TCP/IP, cortafuegos, DNS, TLS, y `bsdsocket.library` para los programas Amiga.
 - [ ] S14 **Arranque, servicios y actualizaciones.** Del firmware de la Pi al escritorio. Gestor de servicios.
   Actualizaciones A/B o por instantáneas, y volver atrás si algo falla.
 - [ ] S15 **Hoja de ruta.** Todo lo anterior ordenado en fases con hitos que se puedan enseñar. Qué hace falta para
@@ -163,6 +163,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S12) ¿Lo no documentado (HVS, HDMI, V3D, Wi-Fi): una sesión lee Linux y escribe una especificación, otra escribe
   el controlador sin verlo? Mientras: sí.
 - (S12) ¿Aceptar el firmware cerrado del Wi-Fi de Infineon? Mientras: sí.
+- (S13) ¿smoltcp como pila de red, mejorándola si hace falta? Mientras: sí.
+- (S13) ¿DNS cifrado de serie o como opción? Mientras: como opción.
+- (S13) ¿`amissl.library` nativa sobre rustls después de la primera versión? Mientras: sí.
 
 ## Bitácora
 
@@ -308,4 +311,12 @@ firmware, SD, USB DWC2, GPIO y DMA, pero no PCIe con el VL805, GENET, HVS y HDMI
 Las fases Kernel y Base caben enteras en QEMU; la Pi 4 hace falta a partir de la fase Placa. El VL805 de las placas
 nuevas pierde su firmware y la VideoCore lo recarga con la etiqueta `0x00030058`. Fuentes permitidas: hoja de datos,
 normas, FreeBSD y NetBSD, Emu68 y los tutoriales de Rust; Linux solo para entender, con sala limpia.
+
+### 2026-11-03 — S13 (red)
+
+`docs/diseño/S13-red.md`. smoltcp como pila (comprobado: v0.14.0 tiene CUBIC y Reno y escalado de ventana; le faltan
+SACK y marcas de tiempo). La red es big-endian, así que DashOS no da la vuelta a las cabeceras. TLS con rustls y
+ChaCha20 primero en la Pi 4, como hacen Go y Firefox sin AES. Cortafuegos cerrado a la entrada. `bsdsocket.library`
+nativa en la caja, para que Tachyon e Inferencia tengan red sin pila del Amiga; AmiSSL 68k sigue en el JIT y una
+versión nativa sobre rustls queda para después.
 
