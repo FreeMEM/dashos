@@ -85,6 +85,26 @@ documentación pública de MUI.
 
 Licencia: MUI es de sus autores. Reimplementar su modelo desde la documentación pública es lo que hizo Zune.
 
+### ReAction, GadTools, GTK y Qt
+
+Petición del usuario (2026-11-03): que funcionen todos los programas, también los que usan ReAction o GadTools, y los
+de Linux con GTK o Qt, como Firefox.
+
+- **En la caja Amiga**:
+  - **GadTools** es parte de AmigaOS 3.1, así que la caja la trae en nativo, como intuition o graphics (S4).
+  - **ReAction** (las clases BOOPSI de `window.class`, `layout.gadget` y compañía) llega con AmigaOS 3.2. Si el
+    usuario tiene las clases 68k instaladas en `SYS:Classes`, corren en el JIT desde el primer día. Después se
+    reimplementan en nativo, con el mismo método de sala limpia.
+  - **MUI 68k**, el del usuario, igual que ReAction: en el JIT primero, y clases nativas más adelante.
+- **En programas nativos**: un solo motor de interfaz, con el modelo de MUI, y tres caras encima: la de MUI (la
+  principal), la de ReAction y la de GadTools. Dash ya tiene builtins de las tres, así que un programa Dash con
+  GadTools o ReAction también compila para DashOS sin cambios.
+- **GTK y Qt**:
+  - En la **caja Linux** ya vienen con la distribución. Firefox, LibreOffice o GIMP corren allí con sus kits, y sus
+    ventanas salen en el escritorio por Wayland (S7, S9). No hay que hacer nada más.
+  - En **nativo**, GTK y Qt se pueden portar más adelante sobre relibc y Wayland, porque los dos ya hablan Wayland.
+    Son grandes, así que van después de la primera versión.
+
 ### Dash, el mismo programa en dos sistemas
 
 Esta es la consecuencia más importante. **Un programa en Dash debería compilar para AmigaOS 3.x (hunks 68k) y para
@@ -107,10 +127,10 @@ Linux (shiva). Más adelante, compilar dentro de DashOS.
 
 ## Lo que queda abierto
 
-1. ¿API nativa "Amiga moderna" (conceptos del Amiga sobre capacidades), más POSIX para portar? Recomendado: sí.
-   Cierra la pregunta que estaba en `PLAN.md`.
-2. ¿Kit de interfaz nativo con el modelo de MUI, para que `.dashui` valga en los dos sistemas? Recomendado: sí.
-3. ¿Objetivo de Dash: el mismo programa compila para AmigaOS 3.x y para DashOS? Recomendado: sí. Es trabajo de las
+Decidido por el usuario el 2026-11-03: API nativa "Amiga moderna" con POSIX al lado, y kit con el modelo de MUI, más
+ReAction, GadTools, GTK y Qt.
+
+1. ¿Objetivo de Dash: el mismo programa compila para AmigaOS 3.x y para DashOS? Recomendado: sí. Es trabajo de las
    sesiones de Dash.
 
 ## Cómo encaja

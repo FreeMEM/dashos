@@ -124,9 +124,6 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea viene y qué opción se sigue mientras.
 
-- (De `PLAN.md` y S11) ¿API nativa "Amiga moderna" (conceptos del Amiga sobre capacidades) más POSIX para portar,
-  y la API Amiga de 32 bits solo en la caja? Mientras: sí.
-- (S11) ¿Kit de interfaz nativo con el modelo de MUI, para que `.dashui` valga en los dos sistemas? Mientras: sí.
 - (S11) ¿El mismo programa Dash compila para AmigaOS 3.x y para DashOS? Mientras: sí (trabajo de las sesiones de Dash).
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
@@ -159,10 +156,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? Mientras: sí.
 - (S10) ¿Disposición por defecto: Workbench flotante y el resto en mosaico con desplazamiento? Mientras: sí.
 - (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? Mientras: sí.
-- (S12, sustituye a la de S0) ¿Comprar la Pi 4 al terminar la fase Base en QEMU, y no antes? Mientras: sí.
-- (S12) ¿Lo no documentado (HVS, HDMI, V3D, Wi-Fi): una sesión lee Linux y escribe una especificación, otra escribe
-  el controlador sin verlo? Mientras: sí.
-- (S12) ¿Aceptar el firmware cerrado del Wi-Fi de Infineon? Mientras: sí.
 - (S13) ¿smoltcp como pila de red, mejorándola si hace falta? Mientras: sí.
 - (S13) ¿DNS cifrado de serie o como opción? Mientras: como opción.
 - (S13) ¿`amissl.library` nativa sobre rustls después de la primera versión? Mientras: sí.
@@ -319,4 +312,10 @@ SACK y marcas de tiempo). La red es big-endian, así que DashOS no da la vuelta 
 ChaCha20 primero en la Pi 4, como hacen Go y Firefox sin AES. Cortafuegos cerrado a la entrada. `bsdsocket.library`
 nativa en la caja, para que Tachyon e Inferencia tengan red sin pila del Amiga; AmiSSL 68k sigue en el JIT y una
 versión nativa sobre rustls queda para después.
+
+### 2026-11-03 — Decisiones del usuario sobre S11 y S12
+
+API nativa "Amiga moderna" con POSIX al lado; kit con el modelo de MUI, y además ReAction y GadTools (en la caja y
+como caras del motor nativo) y GTK y Qt (en la caja Linux ya, en nativo más adelante). Añadido a `S11-api.md`. Las
+tres de S12, sí. Todo pasa a `PLAN.md`. Sigue abierta la de S11 sobre el mismo programa Dash en los dos sistemas.
 

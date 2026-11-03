@@ -26,6 +26,14 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Memoria** (usuario, 2026-11-03; `docs/diseño/S3-memoria.md`): sin intercambio a disco por defecto, solo memoria
   comprimida con LZ4; sin prometer de más (la petición falla al momento, no hay OOM killer); Enforcer integrado en
   la caja Amiga, siempre activo y con avisos a un registro.
+- **API nativa** (usuario, 2026-11-03; `docs/diseño/S11-api.md`): conceptos del Amiga sobre capacidades, de 64
+  bits, con POSIX al lado. La API Amiga de 32 bits solo vive en la caja.
+- **Kits de interfaz** (usuario, 2026-11-03): un motor nativo con el modelo de MUI, y las caras de ReAction y
+  GadTools encima, para que funcionen todos los programas. GTK y Qt en la caja Linux desde el principio, y en nativo
+  más adelante.
+- **Controladores** (usuario, 2026-11-03; `docs/diseño/S12-controladores.md`): lo no documentado se hace en sala
+  limpia (una sesión lee Linux y escribe la especificación, otra escribe el controlador); se acepta el firmware
+  cerrado del Wi-Fi; la Pi 4 se compra al terminar la fase Base en QEMU.
 - **Cada proceso tiene su PID** (usuario, 2026-11-03), un número que lo identifica, como en Linux. Saber el PID no da
   poder sobre el proceso: para matarlo hay que ser su dueño o administrador, como en Linux.
 - **Usuarios, grupos, propietarios y permisos como en Linux** (usuario, 2026-11-03). Ficheros y procesos tienen dueño
@@ -72,8 +80,8 @@ Así un programa 68k que falla tira la caja, pero no el sistema. Al principio la
 puede repartir sus tareas entre varios núcleos con un cerrojo grande, como hizo Linux en sus primeras versiones con
 varios procesadores.
 
-Falta una decisión del usuario: si los programas nativos nuevos de DashOS usan la API Amiga dentro de la caja, una API
-moderna fuera de ella, o las dos.
+Decidido por el usuario (2026-11-03): los programas nativos usan una API moderna con conceptos del Amiga, fuera de la
+caja (S11).
 
 ## Las piezas
 
@@ -212,7 +220,6 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
 
 - Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
   `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
-- Si los programas nativos nuevos usan la API Amiga dentro de la caja, una API moderna fuera, o las dos.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 - Si exec, dentro de la caja, empieza en C mientras llega el backend ARM de Dash, o se espera.
 - Cómo se dibuja la pantalla: framebuffer de la Pi con un graphics propio, o algo más parecido a RTG.
