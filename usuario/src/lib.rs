@@ -55,6 +55,21 @@ pub fn memoria_proyectar(llave: u32, direccion: usize, escribir: bool) -> i64 {
     llamada(8, [llave as u64, direccion as u64, if escribir { 3 } else { 1 }, 0, 0]).0 as i64
 }
 
+/// Proyecta los registros de un aparato (llave de registros) en `direccion` (C20).
+pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
+    llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64
+}
+
+/// La interrupción de `llave` llegará como mensaje (su número, 4 bytes) al otro lado de `canal`.
+pub fn interrupcion_asociar(llave: u32, canal: u32) -> i64 {
+    llamada(10, [llave as u64, canal as u64, 0, 0, 0]).0 as i64
+}
+
+/// Interrupción atendida: el kernel la vuelve a habilitar.
+pub fn interrupcion_terminar(llave: u32) -> i64 {
+    llamada(11, [llave as u64, 0, 0, 0, 0]).0 as i64
+}
+
 /// Escritura con formato a la consola, por trozos.
 pub struct Consola;
 

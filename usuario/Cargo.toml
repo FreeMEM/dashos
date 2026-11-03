@@ -14,6 +14,11 @@ name = "hola"
 path = "src/bin/hola.rs"
 test = false
 
+[[bin]]
+name = "serie"
+path = "src/bin/serie.rs"
+test = false
+
 [profile.release]
 panic = "abort"
 opt-level = "s"

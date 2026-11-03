@@ -13,6 +13,7 @@ mod elf;
 mod excepciones;
 mod espacio;
 mod gic;
+mod interrupciones;
 mod llamadas;
 mod memoria;
 mod mmu;
@@ -71,6 +72,8 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_avisos();
     prueba_recoger();
     prueba_rust();
+    interrupciones::iniciar();
+    prueba_controlador(dtb);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -578,32 +581,81 @@ extern "C" fn arrancar_elf(a: usize) {
     unsafe { entrar_el0(a.entrada, VA_PILA + memoria::PAGINA) };
 }
 
-fn prueba_rust() {
+/// Carga un ELF de usuario en un proceso nuevo, con estas llaves (serán la 1, la 2...), y lo arranca.
+fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> bool {
     use espacio::{Espacio, Permiso};
-    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
     let mut e = Espacio::nuevo();
-    let entrada = match elf::cargar(&mut e, HOLA) {
+    let entrada = match elf::cargar(&mut e, binario) {
         Ok(x) => x,
         Err(err) => {
-            kprintln!("C19: no se pudo cargar el ELF: {:?}", err);
-            return;
+            kprintln!("  no se pudo cargar el ELF: {:?}", err);
+            return false;
         }
     };
     e.pagina_nueva(VA_PILA, Permiso::Datos);
-    kprintln!("  ELF de {} bytes cargado, entrada {:#x}", HOLA.len(), entrada);
+    kprintln!("  ELF de {} bytes cargado, entrada {:#x}", binario.len(), entrada);
+    let mut tabla = objetos::TablaLlaves::default();
+    for l in llaves {
+        tabla.instalar(l);
+    }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
         espacio: cerrojo::Cerrojo::new(e),
-        llaves: cerrojo::Cerrojo::new(objetos::TablaLlaves::default()),
+        llaves: cerrojo::Cerrojo::new(tabla),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada }));
-    planificador::crear_en(arrancar_elf, arranque as usize, 2, ptr);
+    planificador::crear_en(arrancar_elf, arranque as usize, nucleo, ptr);
+    true
+}
+
+fn esperar_tics(n: u64) {
     let inicio = reloj::tics();
-    while reloj::tics() < inicio + 20 {
+    while reloj::tics() < inicio + n {
         reloj::esperar_interrupcion();
     }
+}
+
+fn prueba_rust() {
+    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    if !lanzar_elf(HOLA, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    esperar_tics(20);
     kprintln!("C19: programa en Rust lanzado");
+}
+
+/// C20: un controlador fuera del kernel (`usuario/src/bin/serie.rs`). Recibe la llave de los registros del PL011
+/// y la de su interrupción; escribe por su cuenta y espera la interrupción como mensaje.
+static SERIE: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/serie");
+
+fn prueba_controlador(direccion: usize) {
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+    let Some(n) = d.compatible("arm,pl011") else {
+        kprintln!("C20: no hay PL011 en el árbol");
+        return;
+    };
+    let (Some((fisica, tamano)), Some((datos, _))) = (d.reg_cpu(&n, 0), d.propiedad(&n, "interrupts")) else {
+        kprintln!("C20: al PL011 le faltan reg o interrupts");
+        return;
+    };
+    // interrupts = <tipo número flags>; tipo 0 es SPI, que en el GIC empiezan en la 32.
+    let intid = if d.celda(datos, 0) == 0 { 32 + d.celda(datos, 1) } else { 16 + d.celda(datos, 1) };
+    kprintln!("  PL011 en {:#x} ({} bytes), interrupción {}", fisica, tamano, intid);
+    let Some(irq) = interrupciones::Interrupcion::nueva(intid) else {
+        kprintln!("C20: interrupción {} no disponible", intid);
+        return;
+    };
+    let tamano = tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA;
+    let llaves = alloc::vec![
+        objetos::Llave { objeto: objetos::Objeto::Registros { fisica, tamano }, derechos: objetos::LEER | objetos::ESCRIBIR },
+        objetos::Llave { objeto: objetos::Objeto::Interrupcion(irq), derechos: objetos::LEER | objetos::ESCRIBIR },
+    ];
+    if !lanzar_elf(SERIE, llaves, 1) {
+        return;
+    }
+    esperar_tics(30);
+    kprintln!("C20: controlador fuera del kernel lanzado");
 }
 
 #[panic_handler]

@@ -13,6 +13,9 @@
 //! | 6 | cerrar(llave) |
 //! | 7 | memoria_crear(tamaño) -> llave |
 //! | 8 | memoria_proyectar(llave, dirección, permisos): 1 leer, 2 escribir |
+//! | 9 | registros_proyectar(llave, dirección): los registros de un aparato, como memoria de dispositivo |
+//! | 10 | interrupcion_asociar(llave de interrupción, llave de canal): llegará como mensaje a ese canal |
+//! | 11 | interrupcion_terminar(llave): ya atendida; se vuelve a habilitar |
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -55,6 +58,9 @@ pub fn atender(marco: &mut Marco) {
         6 => cerrar(a[0] as u32),
         7 => memoria_crear(a[0]),
         8 => memoria_proyectar(a[0] as u32, a[1], a[2]),
+        9 => registros_proyectar(a[0] as u32, a[1]),
+        10 => interrupcion_asociar(a[0] as u32, a[1] as u32),
+        11 => interrupcion_terminar(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -183,5 +189,49 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         e.proyectar(va + i as u64 * pagina, p, if escribir { Permiso::Datos } else { Permiso::SoloLectura });
     }
     e.proyectados.push(m.clone());
+    0
+}
+
+fn registros_proyectar(h: u32, va: u64) -> u64 {
+    use crate::espacio::Permiso;
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Registros { fisica, tamano } = l.objeto else { return E_TIPO };
+    if l.derechos & (objetos::LEER | objetos::ESCRIBIR) != objetos::LEER | objetos::ESCRIBIR {
+        return E_DERECHOS;
+    }
+    let pagina = crate::memoria::PAGINA;
+    if va % pagina != 0 || tramo(va, tamano).is_none() {
+        return E_ARGUMENTO;
+    }
+    let mut e = proc_.espacio.tomar();
+    let mut i = 0;
+    while i < tamano {
+        e.proyectar(va + i, fisica + i, Permiso::Dispositivo);
+        i += pagina;
+    }
+    0
+}
+
+fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (irq, canal) = {
+        let t = proc_.llaves.tomar();
+        (t.ver(h), t.ver(hc))
+    };
+    let (Some(irq), Some(canal)) = (irq, canal) else { return E_LLAVE };
+    let (Objeto::Interrupcion(i), Objeto::Extremo(c, lado)) = (irq.objeto, canal.objeto) else { return E_TIPO };
+    if canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    i.asociar(c, lado);
+    0
+}
+
+fn interrupcion_terminar(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Interrupcion(i) = l.objeto else { return E_TIPO };
+    i.terminar();
     0
 }

@@ -92,7 +92,7 @@ del kernel sobre la que irán esos controladores.
   terminar el último hilo de un proceso. Prueba: crear y terminar muchos procesos sin que baje la memoria libre.
 - [x] C19 **Programas de usuario en Rust.** Un crate `usuario/` (no_std, big-endian, envoltorios de las llamadas) y
   un cargador de ELF en el kernel. Las pruebas pasan a programas en Rust.
-- [ ] C20 **Controladores fuera del kernel.** Llave de registros (proyectar un periférico como memoria de
+- [x] C20 **Controladores fuera del kernel.** Llave de registros (proyectar un periférico como memoria de
   dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
   la serie.
 - [ ] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
@@ -346,3 +346,16 @@ código. El Makefile del kernel compila `usuario/` antes y el kernel incluye el 
 formato, suma de 1 a 100 (5050), crea un objeto de memoria, lo proyecta, comprueba que es big-endian y sale con 5.
 BIEN, a la primera. Las pruebas de C11 a C13 siguen con los programas en ensamblador; pasarlas a Rust queda pendiente.
 
+
+### 2026-11-03 08:0x — C20 (controladores fuera del kernel)
+
+Dos llaves nuevas. La de registros (`Objeto::Registros`) proyecta un tramo de periféricos en el proceso como memoria
+de dispositivo (`Permiso::Dispositivo`, índice 0 de MAIR, sin ejecutar). La de interrupción
+(`kernel/src/interrupciones.rs`) se asocia a un canal: al llegar, el kernel la enmascara en el GIC, la apunta como
+pendiente y despierta al repartidor, un hilo del kernel en el núcleo 0 que manda el mensaje (en la interrupción no se
+puede reservar memoria). El controlador la devuelve con `interrupcion_terminar`. Las interrupciones de aparatos van
+todas al núcleo 0 (`gic::dirigir`). Al perder la última llave, la interrupción se enmascara y queda libre. Llamadas
+9, 10 y 11. Prueba: `usuario/src/bin/serie.rs` recibe los registros del PL011 y su interrupción (153, leída del árbol
+de dispositivos), escribe una línea en el puerto sin pasar por el kernel, pide la interrupción de envío, la recibe
+como mensaje, la atiende y sale con 7. BIEN, tres de tres. Pendiente: quién reparte estas llaves (el kernel las da a
+mano en la prueba; en S1 es el gestor de dispositivos) y repartir las interrupciones entre núcleos.

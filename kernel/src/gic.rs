@@ -18,6 +18,7 @@ const GICD_CTLR: usize = 0x000;
 const GICD_ISENABLER: usize = 0x100;
 const GICD_ICENABLER: usize = 0x180;
 const GICD_IPRIORITYR: usize = 0x400;
+const GICD_ITARGETSR: usize = 0x800;
 const GICD_SGIR: usize = 0xF00;
 const GICC_CTLR: usize = 0x000;
 const GICC_PMR: usize = 0x004;
@@ -57,6 +58,20 @@ pub fn habilitar(intid: u32, prioridad: u8) {
     let desp = (i & 3) * 8;
     r.escribir((r.leer() & !(0xff << desp)) | ((prioridad as u32) << desp));
     d(GICD_ISENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
+}
+
+/// Enmascara una interrupción en el distribuidor (C20).
+pub fn deshabilitar(intid: u32) {
+    let i = intid as usize;
+    d(GICD_ICENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
+}
+
+/// Dirige una interrupción de aparato (SPI) a un núcleo. Las SPI no llegan a ninguno hasta que se dirigen (C20).
+pub fn dirigir(intid: u32, nucleo: u32) {
+    let i = intid as usize;
+    let r = d(GICD_ITARGETSR + (i & !3));
+    let desp = (i & 3) * 8;
+    r.escribir((r.leer() & !(0xff << desp)) | ((1u32 << nucleo) << desp));
 }
 
 /// Reconoce la interrupción pendiente. Devuelve el valor entero de IAR: el número va en los bits 9:0 y, en las

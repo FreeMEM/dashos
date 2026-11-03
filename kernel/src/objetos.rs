@@ -24,6 +24,10 @@ pub enum Objeto {
     Extremo(Arc<Canal>, usize),
     /// Un objeto de memoria (C13, S3): páginas físicas que se pueden proyectar en varios procesos.
     Memoria(Arc<Memoria>),
+    /// Registros de un aparato (C20): un tramo físico de periféricos que se puede proyectar en un proceso.
+    Registros { fisica: u64, tamano: u64 },
+    /// Una interrupción de aparato (C20): llega como mensaje a un canal.
+    Interrupcion(Arc<crate::interrupciones::Interrupcion>),
 }
 
 /// Un objeto de memoria. Sus páginas se devuelven cuando no queda ni una llave ni una proyección (C18): cada

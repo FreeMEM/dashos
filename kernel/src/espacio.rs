@@ -14,6 +14,7 @@ const AF: u64 = 1 << 10;
 const NG: u64 = 1 << 11; // no global: va con el ASID
 const SH_INTERNO: u64 = 3 << 8;
 const ATTR_NORMAL: u64 = 1 << 2;
+const ATTR_DISPOSITIVO: u64 = 0 << 2; // MAIR índice 0: nGnRnE
 const AP_EL0: u64 = 1 << 6; // EL0 puede acceder
 const AP_SOLO_LECTURA: u64 = 1 << 7;
 const PXN: u64 = 1 << 53;
@@ -28,6 +29,8 @@ pub enum Permiso {
     Datos,
     /// Datos que solo se leen.
     SoloLectura,
+    /// Registros de un aparato (C20): memoria de dispositivo, sin caché ni reordenación; nunca se ejecuta.
+    Dispositivo,
 }
 
 pub struct Espacio {
@@ -94,11 +97,12 @@ impl Espacio {
                 nueva
             };
         }
-        let atributos = VALIDO | AF | NG | SH_INTERNO | ATTR_NORMAL | AP_EL0 | PXN
+        let atributos = VALIDO | AF | NG | AP_EL0 | PXN
             | match permiso {
-                Permiso::Codigo => AP_SOLO_LECTURA,
-                Permiso::Datos => UXN,
-                Permiso::SoloLectura => UXN | AP_SOLO_LECTURA,
+                Permiso::Codigo => SH_INTERNO | ATTR_NORMAL | AP_SOLO_LECTURA,
+                Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
+                Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
+                Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
             };
         unsafe {
             entrada(tabla, indices[2]).write_volatile((fisica & DIRECCION) | atributos);

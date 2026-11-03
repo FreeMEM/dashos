@@ -39,7 +39,10 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
         let intid = iar & 0x3ff;
         if intid != crate::gic::FALSA {
             // Software (otro núcleo pide que se replanifique, C17) o el reloj: los dos acaban en el planificador.
-            let planificar = intid == crate::gic::SGI_PLANIFICAR || crate::reloj::interrupcion(intid);
+            // Las de aparatos con dueño fuera del kernel van al repartidor (C20), y también se replanifica.
+            let planificar = intid == crate::gic::SGI_PLANIFICAR
+                || crate::reloj::interrupcion(intid)
+                || crate::interrupciones::atender(intid);
             if !planificar {
                 kprintln!("IRQ {} sin dueño", intid);
             }
