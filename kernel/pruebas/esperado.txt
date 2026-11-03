@@ -102,3 +102,9 @@ C32: los dos extremos de un canal a la vez, en dos núcleos: bien
   6 de 6 procesos acabados
 C32: reparto de páginas desde varios núcleos bien
 C32: ASID de 16 bits sin repetirse bien, y se vuelven a dar bien
+sale con código 32
+sale con código 32
+Proceso: excepción de clase 0x18
+Proceso: excepción de clase 0x18
+Proceso: excepción de clase 0x20 en 0xffffff8000080000
+C32: registros de EL0 bien

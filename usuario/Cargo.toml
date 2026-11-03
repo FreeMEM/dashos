@@ -54,3 +54,13 @@ test = false
 name = "repartos"
 path = "src/bin/repartos.rs"
 test = false
+
+[[bin]]
+name = "tls"
+path = "src/bin/tls.rs"
+test = false
+
+[[bin]]
+name = "trampas"
+path = "src/bin/trampas.rs"
+test = false

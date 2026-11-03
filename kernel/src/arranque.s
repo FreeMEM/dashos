@@ -93,7 +93,8 @@ en_el1:
     subs    x3, x3, #1
     b.ne    5b
 
-    ldr     x4, =0x705                  // bloque normal: válido, AttrIndx 1, compartible interno, AF
+    ldr     x4, =0x0040000000000705     // bloque normal: válido, AttrIndx 1, compartible interno, AF, UXN (EL0 nunca
+                                        // ejecuta por aquí; auditoría, hallazgo 12)
     str     x4, [x0, #0]
     orr     x5, x4, #(1 << 30)
     str     x5, [x0, #8]

@@ -52,6 +52,9 @@ pub struct Hilo {
     _pila: Option<Box<[u8]>>,
     /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
     fp: Option<Box<EstadoFp>>,
+    /// Su TPIDR_EL0, el puntero de TLS que EL0 puede leer y escribir: se guarda y se repone en cada cambio para que
+    /// un proceso no vea ni cambie el de otro (auditoría, hallazgo 5).
+    tpidr: u64,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
@@ -146,13 +149,36 @@ pub fn iniciar_nucleo() {
         plazo: None,
         _pila: None,
         fp: None,
+        tpidr: 0,
     }));
     fpen(FPEN_ATRAPAR);
+    registros_el0();
     // Fuera la proyección identidad del arranque, también de la TLB: sus bloques son globales y, si se quedaran,
     // valdrían para cualquier ASID.
     crate::espacio::activar_vacio();
     unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
+}
+
+/// Lo que EL0 puede tocar de los registros del sistema, a un valor conocido: en la Pi dependen del firmware
+/// (auditoría, hallazgo 16).
+/// - CNTKCTL_EL1: EL0 solo lee el contador virtual (EL0VCTEN). Ni el físico ni los temporizadores: si no, un proceso
+///   apagaría el tic de su núcleo.
+/// - PMUSERENR_EL0 = 0: los contadores de rendimiento no son para EL0.
+/// - MDSCR_EL1 = 0: sin depuración ni pasos sueltos.
+/// - TPIDRRO_EL0 = 0 (EL0 lo lee y no lo escribe) y TPIDR_EL0 = 0.
+fn registros_el0() {
+    unsafe {
+        core::arch::asm!(
+            "msr cntkctl_el1, {c}",
+            "msr pmuserenr_el0, xzr",
+            "msr mdscr_el1, xzr",
+            "msr tpidrro_el0, xzr",
+            "msr tpidr_el0, xzr",
+            "isb",
+            c = in(reg) 0b10u64,
+        )
+    };
 }
 
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
@@ -185,6 +211,7 @@ pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usi
         plazo: None,
         _pila: Some(pila),
         fp: None,
+        tpidr: 0,
     }));
     nc.listos.push(h);
     id
@@ -395,7 +422,13 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
         // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
-    unsafe { cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto) };
+    unsafe {
+        let tpidr: u64;
+        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
+        (*viejo).tpidr = tpidr;
+        core::arch::asm!("msr tpidr_el0, {}", in(reg) (*nuevo).tpidr);
+        cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto)
+    };
 }
 
 fn planificar() {

@@ -67,8 +67,23 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
         return;
     }
 
-    // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema.
-    if tipo == 8 {
+    // FIQ: DashOS no las usa y van enmascaradas en EL0 y en EL1. Si llega una, se avisa y se sigue.
+    if tipo & 3 == 2 {
+        kprintln!("FIQ inesperada desde {}; se ignora", ORIGENES[((tipo >> 2) & 3) as usize]);
+        return;
+    }
+
+    // SError: un error asíncrono, normalmente de un aparato. En EL1 van enmascarados (PSTATE.A), así que uno que
+    // provoque un proceso queda pendiente hasta volver a EL0 y se toma allí: se termina el proceso, no el sistema
+    // (auditoría, hallazgo 11). Uno en EL1 sería del kernel y acaba en pánico, abajo.
+    if tipo == 11 {
+        kprintln!("Proceso: SError (ESR {:#x}) en {:#x}; se termina", marco.esr, marco.elr);
+        crate::planificador::terminar_actual();
+    }
+
+    // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema. Desde AArch32 (12 a 15) no
+    // debería llegar nada, porque DashOS nunca baja a AArch32.
+    if tipo >= 8 {
         kprintln!(
             "Proceso: excepción de clase {:#x} en {:#x} (FAR {:#x}); se termina",
             clase, marco.elr, marco.far

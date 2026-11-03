@@ -201,6 +201,14 @@ Los objetivos de compilación son dos:
 
 Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aarch64` de FreeMEMLang.
 
+### Registros que ve un proceso
+
+- `TPIDR_EL0` es de cada hilo: empieza a 0 y el kernel lo guarda y lo repone. `TPIDRRO_EL0` vale 0.
+- Puede leer el contador virtual (`CNTVCT_EL0`) y su frecuencia. El temporizador físico, los demás temporizadores y
+  los contadores de rendimiento terminan el proceso.
+- Saltar a una dirección del kernel termina el proceso.
+- Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
+
 ## Limitaciones conocidas
 
 - Proyectar encima de algo ya proyectado no vacía la TLB.

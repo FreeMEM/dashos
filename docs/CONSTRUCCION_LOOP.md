@@ -603,6 +603,26 @@ tabla vacía. Las pilas del kernel de los muertos se liberan también al entrar 
 - `prueba_asid`: 1000 espacios vivos tienen ASID distintos, y al soltarlos el siguiente reutiliza el más bajo.
 - C14 falló una vez de tres con la máquina cargada, como antes de este cambio.
 
+### 2026-11-03 tarde — C32, tercera vuelta (hallazgos 5, 11, 12 y 16)
+
+**Hallazgo 5.** TPIDR_EL0 se guarda en el hilo y se repone en cada cambio. TPIDRRO_EL0 queda a 0.
+
+**Hallazgo 16.** Al arrancar cada núcleo: `CNTKCTL_EL1` solo deja a EL0 leer el contador virtual;
+`PMUSERENR_EL0` y `MDSCR_EL1` a 0.
+
+**Hallazgo 11.** Las FIQ van enmascaradas en EL0 (SPSR.F) y, si llega una, se avisa y se sigue. Un SError desde EL0
+termina el proceso. En EL1 los SError están enmascarados, así que el que provoca un proceso se toma al volver a EL0.
+Uno en EL1 sigue acabando en pánico. No se ha podido probar: QEMU no genera SError en `raspi4b`.
+
+**Hallazgo 12.** Los bloques del mapa lineal llevan UXN: EL0 no ejecuta nada por la mitad alta. El W^X del kernel
+sigue pendiente (fase 2).
+
+**Pruebas.**
+
+- `tls` (nuevo): dos copias en el mismo núcleo ponen su TPIDR_EL0 y comprueban durante 300 ms que nadie se lo toca.
+- `trampas` (nuevo): tres copias intentan apagar el temporizador físico, leer el contador de ciclos y saltar al código
+  del kernel. Las tres mueren (clases 0x18, 0x18 y 0x20) y el kernel sigue. Sin UXN, la tercera falla.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al

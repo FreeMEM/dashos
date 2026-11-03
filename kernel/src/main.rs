@@ -91,6 +91,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_tenis();
     prueba_repartos();
     prueba_asid();
+    prueba_el0();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -1128,6 +1129,35 @@ fn prueba_asid() {
     drop(otra);
     kprintln!("  ASID: menor {}, mayor {}, el siguiente {}", menor, asids[999], otra_asid);
     kprintln!("C32: ASID de 16 bits sin repetirse {}, y se vuelven a dar {}", if distintos { "bien" } else { "MAL" }, if reusa { "bien" } else { "MAL" });
+}
+
+/// C32: registros de EL0. Dos copias de `tls` en el mismo núcleo no se ven ni se cambian TPIDR_EL0 (hallazgo 5), y
+/// `trampas` muere al tocar el temporizador físico, los contadores de rendimiento o el código del kernel (hallazgos
+/// 12 y 16).
+static TLS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tls");
+static TRAMPAS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/trampas");
+
+fn prueba_el0() {
+    use core::sync::atomic::Ordering;
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    if !lanzar_elf(TLS, alloc::vec::Vec::new(), 2) || !lanzar_elf(TLS, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 300 {
+        reloj::esperar_interrupcion();
+    }
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    for n in 1..=3u8 {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![n], llaves: alloc::vec::Vec::new() });
+        lanzar_elf(TRAMPAS, alloc::vec![b], 2);
+        esperar_tics(20);
+    }
+    let vivas = llamadas::SALIDAS.load(Ordering::Relaxed) - salidas;
+    kprintln!("C32: registros de EL0 {}", if vivas == 0 { "bien" } else { "MAL (alguna trampa salió viva)" });
 }
 
 #[panic_handler]
