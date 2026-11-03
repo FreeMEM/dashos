@@ -124,7 +124,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
 - (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
-- (S1) ¿Micronúcleo con capacidades? Mientras: sí, con el `unsafe` en una sola caja de Rust.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora

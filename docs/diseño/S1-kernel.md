@@ -75,9 +75,78 @@ Un micronúcleo con algunas piezas dentro por rendimiento, como el macOS actual 
 - Gana: flexibilidad.
 - Cuesta: con el tiempo todo acaba dentro, y se pierden las ventajas de B.
 
+### E. Exokernel, como Aegis y XOK del MIT
+
+El kernel solo reparte el hardware de forma segura: páginas de memoria, bloques de disco, tiempo de CPU. No ofrece
+ficheros, ni procesos con forma, ni red. Cada aplicación lleva enlazada una biblioteca que monta esas cosas a su
+gusto (una "library OS").
+
+- Gana: cada aplicación hace las cosas a su manera y sin capas de por medio. En los experimentos del MIT, algunos
+  servidores web iban varias veces más rápido.
+- Cuesta: compartir es difícil. Si cada programa lleva su propio sistema de archivos, ponerlos de acuerdo sobre el
+  mismo disco es un problema. Nunca salió del laboratorio para un escritorio.
+
+### F. Un solo espacio de direcciones, protegido por el lenguaje, como Singularity o Theseus
+
+No hay cambio de tabla de páginas entre procesos. Todo vive en el mismo espacio, como en el Amiga. La protección no
+la da la MMU, sino el lenguaje: el compilador de Rust (Theseus) o de C# (Singularity de Microsoft) garantiza que un
+programa no toca la memoria de otro.
+
+- Gana: comunicar procesos cuesta lo mismo que una llamada de función. Es lo más parecido al Amiga en espíritu.
+- Cuesta: solo protege al código escrito en ese lenguaje seguro. El código 68k del JIT, los programas en C y los
+  programas de Linux no pasan por ese compilador. Para ellos hace falta la MMU igualmente. DashOS tiene que ejecutar
+  justo esa clase de código, así que esta opción no le sirve como base. Sí sirve como idea dentro de la caja Amiga,
+  que ya es un espacio compartido (S4).
+
+### G. Multikernel, como Barrelfish
+
+Un kernel por núcleo de CPU, y los kernels se hablan con mensajes, como si la máquina fuera una red pequeña.
+
+- Gana: escala muy bien en máquinas de decenas o cientos de núcleos.
+- Cuesta: con los cuatro núcleos de la Pi 4 no aporta nada, y complica todo.
+
+### H. Unikernel, como MirageOS o Unikraft
+
+Una sola aplicación compilada junto con el trozo de kernel que necesita.
+
+- Gana: arranque en milisegundos, tamaño mínimo. Útil para servicios en la nube.
+- Cuesta: no hay varios programas a la vez. No sirve para un escritorio.
+
+### Las opciones lado a lado
+
+| | Rendimiento | Un fallo de controlador | Aislar aplicaciones | Tamaño del kernel | Encaje con DashOS |
+|---|---|---|---|---|---|
+| A. Monolítico | el mejor | tira el sistema | se añade aparte | enorme | malo |
+| B. Micronúcleo | muy bueno si los mensajes son rápidos | se reinicia el controlador | viene con las capacidades | pequeño | el mejor |
+| C. Framekernel | el mejor | tira el sistema | se añade aparte | mediano | bueno |
+| D. Híbrido | bueno | depende de dónde esté | se añade aparte | mediano, y crece | regular |
+| E. Exokernel | el mejor para cada aplicación | depende | difícil de compartir | mínimo | malo |
+| F. Un solo espacio | el mejor | depende del lenguaje | solo para código seguro | pequeño | no sirve como base |
+| G. Multikernel | escala a muchos núcleos | se reinicia | viene con el diseño | pequeño por núcleo | sobra para 4 núcleos |
+| H. Unikernel | el mejor | tira la aplicación | no hay varias | mínimo | no sirve |
+
+### Micronúcleo puro o pragmático
+
+Dentro de B hay dos escuelas:
+
+- **Puro, como seL4.** El kernel ni siquiera decide cómo se reparte la memoria: lo hace un proceso. Es lo más pequeño
+  y lo que se ha podido demostrar correcto con matemáticas. A cambio, todo cuesta más de montar.
+- **Pragmático, como QNX o Zircon.** El kernel gestiona la memoria y el planificador con sus políticas dentro. Es
+  algo más grande, pero mucho más sencillo de usar.
+
+Para DashOS conviene el pragmático. No se busca una demostración formal, sino un sistema de escritorio que se pueda
+terminar.
+
+### Cuánto cuestan de verdad los mensajes
+
+El miedo al micronúcleo viene de Mach, en los años 90, cuyos mensajes eran lentos. Los de la familia L4, a la que
+pertenece seL4, cuestan del orden de cientos de ciclos según sus propias publicaciones. A 1,5 GHz son décimas de
+microsegundo. Leer un fichero en DashOS serían dos saltos: de la aplicación al sistema de archivos, y de este al
+controlador del disco. Lo caro es mover datos, y eso va por memoria compartida, sin copiar.
+
 ## Recomendación
 
-**B, un micronúcleo con capacidades.** Con dos ideas tomadas de C.
+**B, un micronúcleo pragmático con capacidades.** Con dos ideas tomadas de C. El usuario dio el visto bueno al micronúcleo el 2026-11-03.
 
 Razones:
 

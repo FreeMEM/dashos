@@ -17,7 +17,8 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
   adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
 - **Sistema moderno.** Tiene protección de memoria y usa todos los núcleos de la CPU.
-- **Kernel propio.** No hay Linux debajo.
+- **Kernel propio.** No hay Linux debajo. Es un micronúcleo pragmático con capacidades (usuario, 2026-11-03;
+  `docs/diseño/S1-kernel.md`).
 - **AArch64 big-endian.** Los programas 68k leen y escriben a mano las estructuras del sistema. Por eso el sistema
   nativo guarda sus datos en el mismo orden de bytes que el 68k.
 - **Punteros de 32 bits en las estructuras compartidas.** Todo lo que ve un programa 68k vive en los primeros 4 GB.
@@ -78,7 +79,7 @@ Nuestro exec nativo es el sistema, y Emu68 es el motor que ejecuta las tareas 68
 3. **Sin chipset.** Se quita PiStorm y todo acceso a los chips del Amiga.
 
 La MPL obliga por fichero. Lo que se cambie dentro de los ficheros de Emu68 sigue siendo MPL y se publica. El código
-de DashOS, en ficheros propios, lleva la licencia que se elija.
+de DashOS, en ficheros propios, lleva también MPL-2.0 (decisión del usuario, 2026-11-03).
 
 #### Lo que dio la primera prueba (2026-11-03)
 
