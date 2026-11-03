@@ -101,7 +101,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   escritorio (como ChromeOS y WSLg), o portar programas. Ojo: los programas Linux de ARM son little-endian. AArch64
   permite que cada proceso de usuario tenga su orden de bytes (`SCTLR_EL1.E0E`): comprobar que la Pi 4 lo admite y
   qué cuesta.
-- [ ] S8 **Paquetes y Hangar.** Un gestor de paquetes como pacman: formato, repositorios, firmas, dependencias,
+- [x] S8 **Paquetes y Hangar.** Un gestor de paquetes como pacman: formato, repositorios, firmas, dependencias,
   actualizaciones atómicas con instantáneas del sistema de archivos, y deltas. Tres clases de paquete: nativos de
   DashOS, programas Amiga y programas de Linux. Hangar como tienda y catálogo por encima, con programas de pago.
 - [ ] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
@@ -147,6 +147,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   hace falta? Mientras: sí.
 - (S7) ¿Distribución de la caja Linux: Arch Linux ARM o Debian? Mientras: Arch Linux ARM.
 - (S7) ¿Caja Linux solo desde 4 GB de RAM? Mientras: sí.
+- (S8) ¿Nombre de la orden de paquetes? Mientras: `Paq`.
+- (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? Mientras: sí.
+- (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? Mientras: sí (se decide
+  en el proyecto Hangar).
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -251,4 +255,12 @@ tener procesos little-endian (prueba ampliada en `pruebas/rust-be/`). Recomendac
 biblioteca POSIX nativa; una caja Linux en máquina virtual, como Crostini y WSL2, con las ventanas reenviadas al
 compositor; y la capa de llamadas al sistema (con Asterinas de referencia) solo más adelante. Lección de WSL1: una
 capa de traducción nunca está completa. Consecuencia para S9: el compositor tiene que aceptar ventanas de Wayland.
+
+### 2026-11-03 — S8 (paquetes y Hangar)
+
+`docs/diseño/S8-paquetes.md`. Dos niveles como Fedora Silverblue: `SYS:` como imagen firmada que entra al reiniciar,
+y paquetes por encima en `Paquetes:` o `Home:`, con cada transacción en una instantánea. Un gestor, `Paq`, con una
+orden que lo pone todo al día, como `pacman -Syu`. Tres mundos: nativos y Amiga con `Paq` (los Amiga con su
+`Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es la tienda y `Paq` el motor; el
+cliente de Hangar para el Amiga funcionaría en la caja desde el primer día. Hangar solo se leyó, no se tocó.
 
