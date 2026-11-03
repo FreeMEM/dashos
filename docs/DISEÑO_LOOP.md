@@ -349,3 +349,9 @@ Añadido a `S10-escritorio.md`: arrastrar saca y devuelve ventanas del mosaico, 
 nace donde le toca y se recuerda; escritorio nativo con el motor de S11; la pantalla de bloqueo en el compositor.
 Pasa a `PLAN.md`.
 
+### 2026-11-03 — Personalización del escritorio
+
+Petición del usuario: personalización tan moderna como el resto. Añadido a `S10-escritorio.md`: colores del fondo,
+fondos de vídeo, barra editable, temas como paquetes en Hangar, módulos de terceros en Dash con capacidades justas, y
+Prefs con Usar, Guardar y Cancelar. Pasa a `PLAN.md` y al resumen.
+

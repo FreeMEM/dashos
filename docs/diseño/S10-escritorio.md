@@ -123,6 +123,44 @@ Petición del usuario (2026-11-03): el escritorio tiene que estar al nivel de DM
   bloqueada y sigue aceptando la contraseña. En shiva pasó justo lo contrario: con el escritorio caído, la pantalla de
   bloqueo se quedó sin entrada. Así no puede pasar.
 
+### Personalizar el escritorio
+
+Petición del usuario (2026-11-03): un sistema de personalización tan moderno como el resto.
+
+**Qué se puede cambiar**
+
+- **Colores**: sacados del fondo de pantalla (Material You), o un acento elegido a mano. Claro, oscuro, o cambio
+  automático según la hora.
+- **Fondo de pantalla**: imagen, pase de imágenes, color o degradado, y vídeo. El usuario usa fondos de vídeo a diario
+  (mpvpaper en shiva). En la Pi 4, el vídeo de fondo usa el decodificador por hardware cuando lo haya (fase B de S9);
+  si no, cuesta CPU, y el sistema lo avisa.
+- **Fondo distinto por monitor y por pantalla virtual.**
+- **Ventanas**: radio de las esquinas, grosor y color del borde, separación entre ventanas del mosaico, sombras y
+  transparencia. El desenfoque detrás de las ventanas, solo con la GPU (fase C de S9), porque por CPU es caro.
+- **Barra**: qué módulos lleva y en qué orden, arrastrándolos; arriba o abajo; en todos los monitores o en uno.
+- **Módulos en el escritorio**: reloj, tiempo, sistema, música, notas.
+- **Tipografía, iconos y punteros**, con temas que se instalan como paquetes.
+- **Animaciones**: velocidad, o ninguna.
+- **Atajos de teclado, esquinas activas y gestos del panel táctil**, con un editor.
+
+**Cómo se cambia: Prefs al estilo Amiga**
+
+- Editores en `SYS:Prefs`: `Apariencia`, `Fondo`, `Barra`, `Ventanas`, `Teclado`, `Escritorio`.
+- Con los tres botones del Amiga: **Usar** (se aplica ahora y dura hasta reiniciar, en `ENV:`), **Guardar** (se
+  aplica y se guarda, en `ENVARC:`) y **Cancelar**.
+- Todo se ve al momento, sin reiniciar nada.
+- Para quien prefiera escribir: los mismos ajustes en ficheros de texto en `ENVARC:`, que se vuelven a leer solos al
+  guardarlos, como la configuración de niri.
+- Por ARexx, para cambiar el tema o el fondo con un guion.
+
+**Temas y módulos para compartir**
+
+- **Un tema es un paquete**: colores, fondo, iconos, punteros, fuentes y ajustes de ventanas. Se instala con `Paq` y
+  se puede publicar en Hangar (S8).
+- **Exportar el escritorio propio** como tema, en un paso.
+- **Módulos de la barra hechos por otros**, como los complementos de DMS. Se escriben en Dash, se compilan, y cada uno
+  corre con las capacidades justas (S6): un módulo del tiempo puede usar la red, pero no leer tus ficheros.
+
 ### Quién hace qué
 
 Como DMS con niri: **el compositor y el escritorio son procesos distintos.**
