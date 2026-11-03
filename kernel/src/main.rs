@@ -3,10 +3,14 @@
 #![no_std]
 #![no_main]
 
+extern crate alloc;
+
+mod cerrojo;
 mod dtb;
 mod excepciones;
 mod memoria;
 mod mmu;
+mod monton;
 mod mmio;
 mod serie;
 
@@ -28,7 +32,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     kprintln!("Nivel de excepción: EL{}", nivel_excepcion());
     kprintln!("Árbol de dispositivos en {:#x}", dtb);
     let (sctlr, tcr, _) = mmu::estado();
-    kprintln!("MMU: {} (SCTLR={:#x}, TCR={:#x}); kmain en {:#x}", if sctlr & 1 != 0 { "encendida" } else { "apagada" }, sctlr, tcr, kmain as usize);
+    kprintln!("MMU: {} (SCTLR={:#x}, TCR={:#x}); kmain en {:#x}", if sctlr & 1 != 0 { "encendida" } else { "apagada" }, sctlr, tcr, kmain as *const () as usize);
     let x: u32 = 0x1122_3344;
     let primero = unsafe { *(&x as *const u32 as *const u8) };
     kprintln!("Orden de bytes: {}", if primero == 0x11 { "big-endian" } else { "little-endian" });
@@ -42,6 +46,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     kprintln!("C4: árbol de dispositivos leído");
 
     prueba_memoria(dtb);
+    prueba_monton();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -112,6 +117,34 @@ fn prueba_memoria(direccion: usize) {
     p.liberar(bloque, 16);
     let vuelta = p.libres() == antes;
     kprintln!("C5: zonas {}, devolución {}", if bien { "bien" } else { "MAL" }, if vuelta { "bien" } else { "MAL" });
+}
+
+/// C7: el montón del kernel.
+fn prueba_monton() {
+    use alloc::boxed::Box;
+    use alloc::collections::BTreeMap;
+    use alloc::string::String;
+    use alloc::vec::Vec;
+    use core::fmt::Write;
+
+    let libres = memoria::paginas().libres();
+    let mut v: Vec<u64> = Vec::new();
+    for i in 0..10_000u64 {
+        v.push(i);
+    }
+    let suma: u64 = v.iter().sum();
+    let mut texto = String::new();
+    let _ = write!(texto, "suma {} con {} elementos", suma, v.len());
+    let caja = Box::new([7u8; 100]);
+    let mut mapa = BTreeMap::new();
+    for i in 0..500u32 {
+        mapa.insert(i * 7 % 501, i);
+    }
+    kprintln!("  {}; caja {}; mapa {} claves, primera {:?}", texto, caja[99], mapa.len(), mapa.iter().next());
+    drop(v);
+    drop(mapa);
+    let devueltas = memoria::paginas().libres() + monton::paginas_pequenas() >= libres;
+    kprintln!("C7: montón {}", if suma == 49_995_000 && devueltas { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

@@ -97,6 +97,7 @@ impl Dtb {
     }
 
     /// Copia una cadena del árbol a `buf` y la devuelve como `&str`.
+    #[allow(dead_code)]
     pub fn cadena<'a>(&self, off: usize, buf: &'a mut [u8]) -> &'a str {
         let n = self.largo_cadena(off).min(buf.len());
         for (i, b) in buf.iter_mut().enumerate().take(n) {

@@ -18,3 +18,5 @@ C4: árbol de dispositivos leído
 Memoria física: 
   escrito y leído por el mapa directo en 0xffffff80
 C5: zonas bien, devolución bien
+  suma 49995000 con 10000 elementos; caja 7; mapa 500 claves
+C7: montón bien

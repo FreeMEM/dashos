@@ -65,7 +65,7 @@ del kernel sobre la que irán esos controladores.
   y `dma-ranges` (S3). Prueba: imprime el mapa.
 - [x] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
 - [x] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
-- [ ] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
+- [x] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
 - [ ] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
 - [ ] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
   se presenta.
@@ -170,4 +170,12 @@ KB, IPS de 44 bits. Enciende MMU y cachés y salta a la mitad alta. En Rust, `mm
 `0xffffff80...`, y una página del reparto escrita y leída por el mapa directo. Todo lo anterior sigue BIEN.
 Pendiente: quitar la identidad de `TTBR0` cuando lleguen los procesos (C11), y mapear la RAM por encima de 4 GB
 en las Pi de 8 GB.
+
+### 2026-11-03 02:3x — C7 (montón del kernel)
+
+`kernel/src/cerrojo.rs`: cerrojo de espera activa con atómicos (ya valen con la MMU encendida; aún no desactiva
+interrupciones). `kernel/src/monton.rs`: `#[global_allocator]` con ocho clases de 16 a 2048 bytes, cada una con su
+lista de bloques libres troceando páginas del reparto, y páginas seguidas para lo mayor, que se devuelven al
+liberar. Prueba: un `Vec` de 10.000 números (suma correcta), `String` con formato, `Box` y un `BTreeMap` de 500
+claves; al liberar no se pierden páginas. BIEN. Quitados dos avisos del compilador.
 
