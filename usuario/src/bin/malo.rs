@@ -1,6 +1,7 @@
 //! C31: un programa hostil. Pasa al kernel punteros a memoria vacía, a su propio código (solo lectura) y fuera del
 //! espacio de usuario, y comprueba que recibe errores en vez de tumbar el kernel; y que un mensaje que no se puede
-//! entregar se queda en la cola, con sus llaves. Sale con 31 si todo va bien, o con el número del paso que falló.
+//! entregar se queda en la cola, con sus llaves. Desde C32 también prueba los hallazgos de la auditoría del 03/11
+//! (`docs/seguridad/`), un paso por cada uno. Sale con 31 si todo va bien, o con el número del paso que falló.
 
 #![no_std]
 #![no_main]
@@ -10,6 +11,7 @@ use dashos::{llamada, println};
 dashos::programa!(principal);
 
 const E_ARGUMENTO: i64 = -1;
+const E_CERRADO: i64 = -4;
 const E_TAMANO: i64 = -5;
 const VACIA: u64 = 0x10_0000_0000; // 64 GB: nada proyectado
 const KERNEL: u64 = 0xffff_0000_0000_0000;
@@ -67,6 +69,25 @@ fn principal() -> u64 {
     if dashos::memoria_proyectar(llaves[0], 0x20_0000_0000, true) != 0 {
         return 11;
     }
-    println!("  [malo] punteros malos rechazados y el mensaje entregado entero después");
+    // 12: la misma llave dos veces en un mensaje (hallazgo 6): error, no pánico, y la llave sigue siendo suya.
+    let m2 = dashos::memoria_crear(4096);
+    if dashos::canal_escribir(a, b"x", &[m2, m2]) != E_ARGUMENTO {
+        return 12;
+    }
+    if dashos::memoria_proyectar(m2, 0x20_0001_0000, true) != 0 {
+        return 13;
+    }
+    // 14: mandar una llave a un canal cerrado: E_CERRADO, y la llave vuelve a su número.
+    let m3 = dashos::memoria_crear(4096);
+    if x0(6, [b as u64, 0, 0, 0, 0]) != 0 {
+        return 14;
+    }
+    if dashos::canal_escribir(a, b"x", &[m3]) != E_CERRADO {
+        return 15;
+    }
+    if dashos::memoria_proyectar(m3, 0x20_0002_0000, true) != 0 {
+        return 16;
+    }
+    println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31
 }

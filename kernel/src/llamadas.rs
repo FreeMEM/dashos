@@ -155,7 +155,11 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     let mut viajan = Vec::new();
     {
         let mut t = proc_.llaves.tomar();
-        for &n in &numeros {
+        for (i, &n) in numeros.iter().enumerate() {
+            // Una llave repetida en la tabla es un error, no un pánico (auditoría, hallazgo 6).
+            if numeros[..i].contains(&n) {
+                return E_ARGUMENTO;
+            }
             match t.ver(n) {
                 Some(l) if l.derechos & objetos::TRANSFERIR != 0 && n != h => {}
                 Some(_) => return E_DERECHOS,
@@ -163,13 +167,21 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
             }
         }
         for &n in &numeros {
-            viajan.push(t.quitar(n).unwrap());
+            let Some(l) = t.quitar(n) else { unreachable!() };
+            viajan.push(l);
         }
     }
     let m = Mensaje { datos, llaves: viajan };
     match canal.escribir(lado, m) {
         Ok(()) => 0,
-        Err(_) => E_CERRADO,
+        Err(m) => {
+            // El otro lado está cerrado: las llaves vuelven a sus huecos.
+            let mut t = proc_.llaves.tomar();
+            for (&n, l) in numeros.iter().zip(m.llaves) {
+                t.reponer(n, l);
+            }
+            E_CERRADO
+        }
     }
 }
 

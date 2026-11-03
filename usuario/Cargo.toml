@@ -44,3 +44,8 @@ panic = "abort"
 opt-level = "s"
 [profile.dev]
 panic = "abort"
+
+[[bin]]
+name = "tenis"
+path = "src/bin/tenis.rs"
+test = false

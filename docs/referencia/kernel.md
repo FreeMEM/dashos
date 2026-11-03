@@ -115,6 +115,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Cada llave enviada necesita el derecho de transferir. Un extremo no puede enviarse por sí mismo.
   - La llave por la que se escribe necesita el derecho de escribir.
   - Nunca bloquea: el mensaje se queda en la cola del otro extremo.
+  - Una misma llave dos veces en la tabla devuelve `E_ARGUMENTO`, y no se manda nada.
+  - Si el otro extremo está cerrado, devuelve `E_CERRADO` y las llaves vuelven a sus números de antes.
 - **5, `canal_leer`.**
   - Si la cola está vacía, se bloquea hasta que llegue un mensaje o se cierre el otro extremo.
   - Las llaves recibidas toman números nuevos en la tabla de quien lee.

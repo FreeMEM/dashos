@@ -561,6 +561,20 @@ También se arregla un desbordamiento al multiplicar la capacidad de llaves por 
 Prueba: `malo.rs` pasa punteros a memoria vacía, al kernel, a su propio código y tramos que dan la vuelta, en once
 pasos. Recibe errores, y después recibe el mensaje entero, con una llave que funciona. BIEN.
 
+### 2026-11-03 tarde — C32, primera vuelta (hallazgos 6 y 7)
+
+**Hallazgo 6.** `canal_escribir` rechaza con `E_ARGUMENTO` una tabla con la misma llave dos veces; antes, el segundo
+`quitar().unwrap()` tumbaba el kernel. De paso, si el otro extremo está cerrado, las llaves vuelven a sus números;
+antes se perdían.
+
+**Hallazgo 7.** El canal tiene un solo cerrojo para los dos lados. Ya no hay orden de cerrojos que respetar.
+`Canal::escribir` devuelve el mensaje si el otro lado está cerrado.
+
+**Pruebas.** `malo` suma los pasos 12 a 16: llave repetida, y llave mandada a un canal cerrado que sigue sirviendo
+después. `tenis` (nuevo): dos procesos en los núcleos 2 y 3 mandan y leen 20 000 veces por los dos extremos del mismo
+canal. Pasa. Con el canal viejo también pasa: la ventana del cuelgue es de pocas instrucciones y QEMU no la ha
+pillado. La prueba sirve de regresión, no demuestra que el cuelgue existía.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al

@@ -79,8 +79,10 @@ struct Lado {
 
 unsafe impl Send for Lado {}
 
+/// Un canal entre dos lados. Un solo cerrojo para los dos: así no hay orden de cerrojos que respetar y dos lectores
+/// en los dos extremos no se esperan el uno al otro (auditoría, hallazgo 7).
 pub struct Canal {
-    lados: [Cerrojo<Lado>; 2],
+    lados: Cerrojo<[Lado; 2]>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -90,19 +92,21 @@ pub enum Error {
 
 impl Canal {
     pub fn nuevo() -> (Llave, Llave) {
-        let c = Arc::new(Canal { lados: [Cerrojo::new(Lado::default()), Cerrojo::new(Lado::default())] });
+        let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]) });
         (
             Llave { objeto: Objeto::Extremo(c.clone(), 0), derechos: TODOS },
             Llave { objeto: Objeto::Extremo(c, 1), derechos: TODOS },
         )
     }
 
-    /// Manda desde el lado `lado`: el mensaje va a la cola del otro.
-    pub fn escribir(&self, lado: usize, m: Mensaje) -> Result<(), Error> {
+    /// Manda desde el lado `lado`: el mensaje va a la cola del otro. Si el otro está cerrado, devuelve el mensaje
+    /// para que quien manda recupere sus llaves.
+    pub fn escribir(&self, lado: usize, m: Mensaje) -> Result<(), Mensaje> {
         let despertar = {
-            let mut otro = self.lados[1 - lado].tomar();
+            let mut l = self.lados.tomar();
+            let otro = &mut l[1 - lado];
             if otro.cerrado {
-                return Err(Error::Cerrado);
+                return Err(m);
             }
             otro.cola.push_back(m);
             otro.esperando.take()
@@ -116,27 +120,30 @@ impl Canal {
     /// Lee en el lado `lado`, esperando si no hay nada.
     pub fn leer(&self, lado: usize) -> Result<Mensaje, Error> {
         loop {
-            let mut yo = self.lados[lado].tomar();
-            if let Some(m) = yo.cola.pop_front() {
+            let mut l = self.lados.tomar();
+            if let Some(m) = l[lado].cola.pop_front() {
                 return Ok(m);
             }
-            if self.lados[1 - lado].tomar().cerrado {
+            if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
-            yo.esperando = Some(planificador::actual());
-            // El cerrojo del lado se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
-            planificador::bloquear(move || drop(yo));
+            l[lado].esperando = Some(planificador::actual());
+            // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
+            planificador::bloquear(move || drop(l));
         }
     }
 
     /// Devuelve al principio de la cola de `lado` un mensaje que se leyó pero no se pudo entregar (C31).
     pub fn devolver(&self, lado: usize, m: Mensaje) {
-        self.lados[lado].tomar().cola.push_front(m);
+        self.lados.tomar()[lado].cola.push_front(m);
     }
 
     pub fn cerrar(&self, lado: usize) {
-        self.lados[lado].tomar().cerrado = true;
-        let despertar = self.lados[1 - lado].tomar().esperando.take();
+        let despertar = {
+            let mut l = self.lados.tomar();
+            l[lado].cerrado = true;
+            l[1 - lado].esperando.take()
+        };
         if let Some(h) = despertar {
             planificador::despertar(h);
         }
@@ -168,6 +175,13 @@ impl TablaLlaves {
 
     pub fn quitar(&mut self, h: u32) -> Option<Llave> {
         self.llaves.get_mut(h as usize).and_then(|x| x.take())
+    }
+
+    /// Vuelve a poner una llave en el hueco `h`, que tiene que estar vacío (se quitó en la misma llamada).
+    pub fn reponer(&mut self, h: u32, l: Llave) {
+        if let Some(x @ None) = self.llaves.get_mut(h as usize) {
+            *x = Some(l);
+        }
     }
 }
 

@@ -88,6 +88,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_fpu();
     prueba_pie();
     prueba_malo();
+    prueba_tenis();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -1063,6 +1064,25 @@ fn prueba_malo() {
         reloj::esperar_interrupcion();
     }
     kprintln!("C31: el kernel sobrevive a los punteros malos");
+}
+
+/// C32: dos procesos (`usuario/src/bin/tenis.rs`) en los núcleos 2 y 3 mandan y leen 20 000 veces por los dos
+/// extremos del mismo canal. Con un cerrojo por lado se colgaban los dos núcleos (auditoría, hallazgo 7).
+static TENIS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tenis");
+
+fn prueba_tenis() {
+    use core::sync::atomic::Ordering;
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let (a, b) = objetos::Canal::nuevo();
+    if !lanzar_elf(TENIS, alloc::vec![a], 2) || !lanzar_elf(TENIS, alloc::vec![b], 3) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 1500 {
+        reloj::esperar_interrupcion();
+    }
+    let bien = llamadas::SALIDAS.load(Ordering::Relaxed) >= salidas + 2;
+    kprintln!("C32: los dos extremos de un canal a la vez, en dos núcleos: {}", if bien { "bien" } else { "MAL (colgados)" });
 }
 
 #[panic_handler]
