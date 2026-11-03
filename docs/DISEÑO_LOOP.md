@@ -90,7 +90,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   catálogos e iconos, igual que en AmigaOS. Cómo conviven con usuarios y permisos de Linux (dónde vive lo de cada
   usuario), con los programas nativos, los 68k y los de Linux (que esperan `/usr`, `/etc`, `/home`), y con los
   paquetes (S8).
-- [ ] S5 **Sistema de archivos.** Rápido y seguro: copia al escribir, sumas de comprobación, instantáneas, cifrado y
+- [x] S5 **Sistema de archivos.** Rápido y seguro: copia al escribir, sumas de comprobación, instantáneas, cifrado y
   compresión. Diseñar uno propio, adaptar uno existente o empezar con uno sencillo. Qué otros sistemas lee y escribe:
   FAT32 para el arranque, FFS y PFS del Amiga, ext4.
 - [ ] S6 **Seguridad.** Usuarios, grupos, propietarios y permisos como en Linux (decisión del usuario), PID por
@@ -136,6 +136,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? Mientras: `Paquetes:`.
 - (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? Mientras: sí.
 - (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? Mientras: sí.
+- (S5) ¿Partir de RedoxFS o diseñar uno propio? Mientras: RedoxFS, con rama propia.
+- (S5) ¿Cajón de cada usuario cifrado de serie con su contraseña (Adiantum en la Pi 4)? Mientras: sí.
+- (S5) ¿Instantáneas automáticas del cajón del usuario cada hora? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -216,4 +219,12 @@ proceso. Cada asignación de sistema es una multiasignación en tres capas (usua
 `ENVARC:` o `LIBS:` son distintos por usuario sin que los programas lo noten. `SYS:` de solo lectura; los paquetes
 declaran sus asignaciones en vez de editar `S:User-Startup`. `DEVS:Monitors` con un fichero por salida HDMI.
 Catálogos en UTF-8, con Latin-1 para la caja. Vista POSIX para Linux con `/Volumes`, como macOS.
+
+### 2026-11-03 — S5 (sistema de archivos)
+
+`docs/diseño/S5-archivos.md`. Recomendación: partir de RedoxFS (Rust, micronúcleo, copia al escribir, sumas de
+comprobación, cifrado, MIT) y añadirle instantáneas, compresión, búsqueda sin mayúsculas y atributos del Amiga, con
+el disco en little-endian. Hallazgo: la Pi 4 no tiene AES por hardware; el cifrado tiene que ser Adiantum (ChaCha).
+FAT32 obligatorio para el arranque; FFS, SFS y PFS3 para discos Amiga; ext4 de lectura con `ext4-view`. Pendiente
+de comprobar: el orden de bytes del formato de RedoxFS.
 
