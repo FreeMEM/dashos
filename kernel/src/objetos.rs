@@ -189,6 +189,15 @@ impl Canal {
 
     /// Lee en el lado `lado`, esperando si no hay nada.
     pub fn leer(&self, lado: usize) -> Result<Mensaje, Error> {
+        // Con las IRQ enmascaradas desde antes de tomar el cerrojo: se suelta dentro del planificador al bloquearse,
+        // y ahí no deben abrirse (cerrojo.rs).
+        let estado = crate::cerrojo::enmascarar_irq();
+        let r = self.leer_enmascarado(lado);
+        crate::cerrojo::restaurar_irq(estado);
+        r
+    }
+
+    fn leer_enmascarado(&self, lado: usize) -> Result<Mensaje, Error> {
         loop {
             let mut l = self.lados.tomar();
             if let Some(m) = l[lado].cola.pop_front() {

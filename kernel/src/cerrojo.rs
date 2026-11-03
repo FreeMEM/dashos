@@ -1,7 +1,13 @@
-//! Cerrojo de espera activa.
+//! Cerrojo de espera activa que enmascara las IRQ del núcleo mientras se tiene (C35, S16 E).
 //!
-//! Funciona desde C6: con la MMU encendida la memoria es normal y admite las instrucciones exclusivas. Todavía no
-//! desactiva las interrupciones; cuando haya interrupciones que lo usen (C8) habrá que hacerlo.
+//! Regla del kernel: nadie se queda con un cerrojo y es expulsado. Por eso todo cerrojo enmascara las IRQ al tomarlo
+//! y repone el estado de antes al soltarlo. Antes había cerrojos que no lo hacían, y un hilo del kernel expulsado con
+//! uno tomado colgaba a quien lo pidiera después en su núcleo (auditoría, hallazgo 10).
+//!
+//! Dos condiciones para quien lo usa:
+//! - soltar los cerrojos en orden inverso al de tomarlos (cada guarda repone lo que vio al tomarlo);
+//! - bloquearse con un cerrojo tomado (`planificador::bloquear` con la guarda en `soltar`) solo con las IRQ ya
+//!   enmascaradas desde antes de tomarlo, para que soltarlo dentro del planificador no las abra.
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
@@ -26,6 +32,7 @@ impl<T> Cerrojo<T> {
     }
 
     pub fn tomar(&self) -> Guarda<'_, T> {
+        let daif = enmascarar_irq();
         while self
             .tomado
             .compare_exchange_weak(false, true, Ordering::Acquire, Ordering::Relaxed)
@@ -35,12 +42,13 @@ impl<T> Cerrojo<T> {
                 core::hint::spin_loop();
             }
         }
-        Guarda { cerrojo: self }
+        Guarda { cerrojo: self, daif }
     }
 }
 
 pub struct Guarda<'a, T> {
     cerrojo: &'a Cerrojo<T>,
+    daif: u64,
 }
 
 impl<T> Deref for Guarda<'_, T> {
@@ -59,6 +67,7 @@ impl<T> DerefMut for Guarda<'_, T> {
 impl<T> Drop for Guarda<'_, T> {
     fn drop(&mut self) {
         self.cerrojo.tomado.store(false, Ordering::Release);
+        restaurar_irq(self.daif);
     }
 }
 
@@ -75,46 +84,6 @@ pub fn restaurar_irq(daif: u64) {
     unsafe { core::arch::asm!("msr daif, {}", in(reg) daif) };
 }
 
-/// Cerrojo que además enmascara las interrupciones del núcleo mientras se tiene. Para datos que también toca una
-/// interrupción (el planificador): sin esto, una interrupción que pide el cerrojo en el mismo núcleo que lo tiene
-/// se quedaría esperando para siempre.
-pub struct CerrojoIrq<T> {
-    interior: Cerrojo<T>,
-}
-
-impl<T> CerrojoIrq<T> {
-    pub const fn new(dato: T) -> Self {
-        Self { interior: Cerrojo::new(dato) }
-    }
-
-    pub fn tomar(&self) -> GuardaIrq<'_, T> {
-        let daif = enmascarar_irq();
-        GuardaIrq { guarda: core::mem::ManuallyDrop::new(self.interior.tomar()), daif }
-    }
-}
-
-pub struct GuardaIrq<'a, T> {
-    guarda: core::mem::ManuallyDrop<Guarda<'a, T>>,
-    daif: u64,
-}
-
-impl<T> Deref for GuardaIrq<'_, T> {
-    type Target = T;
-    fn deref(&self) -> &T {
-        &self.guarda
-    }
-}
-
-impl<T> DerefMut for GuardaIrq<'_, T> {
-    fn deref_mut(&mut self) -> &mut T {
-        &mut self.guarda
-    }
-}
-
-impl<T> Drop for GuardaIrq<'_, T> {
-    fn drop(&mut self) {
-        unsafe { core::mem::ManuallyDrop::drop(&mut self.guarda) };
-        restaurar_irq(self.daif);
-    }
-}
-
+/// Nombre de antes de C35, cuando había cerrojos que no enmascaraban. Hoy son lo mismo.
+pub type CerrojoIrq<T> = Cerrojo<T>;
+pub type GuardaIrq<'a, T> = Guarda<'a, T>;

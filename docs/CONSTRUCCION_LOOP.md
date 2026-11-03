@@ -100,7 +100,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C33 **Kernel en little-endian** (fase 2 de S16, A).
 - [x] C34 **Mapa del kernel por páginas** (fase 2): W^X en el kernel, pilas con página de guarda, sin proyección
   identidad después del arranque, PAN por software (TTBR0 vacío mientras el kernel no copia de usuario).
-- [ ] C35 **El kernel no se expulsa** (fase 2, E): hilos del kernel con las IRQ enmascaradas salvo en puntos fijos,
+- [x] C35 **El kernel no se expulsa** (fase 2, E): hilos del kernel con las IRQ enmascaradas salvo en puntos fijos,
   trabajo acotado por llamada (poner a cero por tandas, `escribir` corto).
 - [ ] C36 **Pruebas fuera de la imagen** (fase 2): las pruebas del arranque solo con una opción de compilación; las
   que se pueda, como programas de usuario.
@@ -753,6 +753,24 @@ volver a EL0 y durante `desde_usuario`/`hacia_usuario`. `malo`, paso 27, pregunt
 kernel ve su memoria fuera de una copia: tiene que ser que no. Sin este cambio, el paso falla.
 
 La llamada 99 es solo para esta prueba; sale con las pruebas en C36.
+
+### 2026-11-03 tarde — C35 (el kernel no se expulsa con un cerrojo tomado)
+
+Fase 2 de S16, decisión E.
+
+- **Cerrojos.** Todos enmascaran las IRQ mientras se tienen y reponen el estado de antes al soltarlos; `CerrojoIrq`
+  queda como otro nombre del mismo. Así ningún hilo, tampoco uno del kernel, puede ser expulsado con un cerrojo
+  tomado: se cierra el hallazgo 10 (el canal y el destino de las interrupciones eran los que quedaban). Reglas en
+  `cerrojo.rs`: soltar en orden inverso, y bloquearse con un cerrojo solo con las IRQ ya enmascaradas.
+  `Canal::leer` lo hace.
+- **Topes de trabajo.** `memoria_crear` pide como mucho 4 MB (antes 64): ponerlos a cero cabe en menos de un
+  milisegundo en la Pi 4. `escribir` toma como mucho 256 bytes y devuelve cuántos; la biblioteca repite con el
+  resto. Los dos cambian lo que ve un programa: avisada la sesión de Dash.
+- Lo que queda del trabajo acotado: soltar un proceso grande (sus páginas y canales) se hace de una vez, al morir.
+  Hoy los límites lo acotan (memoria del proceso y 512 canales); trocearlo va con los cupos (fase 3).
+
+**Pruebas.** `malo` come la memoria a trozos de 4 MB (230 trozos hasta `E_MEMORIA`) y el paso 28 comprueba que 8 MB
+dan `E_TAMANO`. Para el hallazgo 10 no hay prueba que lo provoque: la ventana es de suerte.
 
 ## Resumen de la noche
 

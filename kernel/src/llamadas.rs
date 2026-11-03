@@ -39,6 +39,11 @@ const E_TIPO: u64 = -6i64 as u64;
 const E_MEMORIA: u64 = -7i64 as u64;
 /// Un límite por proceso o por canal: tabla de llaves llena, cola llena o demasiadas proyecciones.
 const E_LIMITE: u64 = -8i64 as u64;
+/// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
+/// lleva menos de un milisegundo en la Pi 4; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
+/// la consola como servicio).
+const MAX_MEMORIA: u64 = 4 << 20;
+const MAX_ESCRIBIR: u64 = 256;
 /// Proyecciones por proceso, hasta los cupos de S16 (F).
 const MAX_PROYECCIONES: usize = 1024;
 
@@ -148,7 +153,9 @@ pub fn atender(marco: &mut Marco) {
 }
 
 fn escribir_consola(p: u64, n: u64) -> u64 {
-    let n = n.min(4096);
+    // Como mucho MAX_ESCRIBIR bytes por llamada (C35, trabajo acotado): la serie va byte a byte con las IRQ
+    // enmascaradas. Devuelve cuántos ha tomado; la biblioteca repite con el resto.
+    let n = n.min(MAX_ESCRIBIR);
     let Some(texto) = leer_usuario(p, n as usize) else { return E_ARGUMENTO };
     // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto. Los
     // caracteres de control, salvo el salto de línea y el tabulador, también: así un proceso no manda secuencias
@@ -303,7 +310,7 @@ fn cerrar(h: u32) -> u64 {
 
 fn memoria_crear(tamano: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    if tamano == 0 || tamano > (64 << 20) {
+    if tamano == 0 || tamano > MAX_MEMORIA {
         return E_TAMANO;
     }
     if proc_.llaves.tomar().huecos() == 0 {

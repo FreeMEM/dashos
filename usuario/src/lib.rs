@@ -23,8 +23,16 @@ pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
 }
 
 /// Escribe en la consola del sistema (provisional).
+/// El kernel toma como mucho 256 bytes por llamada y dice cuántos tomó (C35): se repite con el resto.
 pub fn escribir(texto: &str) {
-    llamada(1, [texto.as_ptr() as u64, texto.len() as u64, 0, 0, 0]);
+    let mut resto = texto.as_bytes();
+    while !resto.is_empty() {
+        let n = llamada(1, [resto.as_ptr() as u64, resto.len() as u64, 0, 0, 0]).0 as i64;
+        if n <= 0 {
+            return;
+        }
+        resto = &resto[(n as usize).min(resto.len())..];
+    }
 }
 
 pub fn salir(codigo: u64) -> ! {

@@ -108,12 +108,12 @@ fn principal() -> u64 {
         return 20;
     }
     let _ = d;
-    // 21-22: comerse la memoria a trozos de 64 MB. Tiene que acabar en E_MEMORIA, no en pánico; y al soltarla,
-    // se puede volver a pedir.
-    let mut trozos = [0u32; 64];
+    // 21-22: comerse la memoria a trozos de 4 MB, el tope por llamada desde C35. Tiene que acabar en E_MEMORIA, no
+    // en pánico; y al soltarla, se puede volver a pedir. 28: más de 4 MB de una vez da E_TAMANO.
+    let mut trozos = [0u32; 900];
     let mut n = 0;
     let fin = loop {
-        let k = x0(7, [64 << 20, 0, 0, 0, 0]);
+        let k = x0(7, [4 << 20, 0, 0, 0, 0]);
         if k < 0 || n == trozos.len() {
             break k;
         }
@@ -126,7 +126,10 @@ fn principal() -> u64 {
     for &k in &trozos[..n] {
         x0(6, [k as u64, 0, 0, 0, 0]);
     }
-    let k = x0(7, [64 << 20, 0, 0, 0, 0]);
+    if x0(7, [8 << 20, 0, 0, 0, 0]) != E_TAMANO {
+        return 28;
+    }
+    let k = x0(7, [4 << 20, 0, 0, 0, 0]);
     if k < 0 {
         return 22;
     }
@@ -176,7 +179,7 @@ fn principal() -> u64 {
     }
     // 25: una secuencia de escape no llega al terminal: sale "?" en lugar del ESC.
     dashos::escribir("  [malo] escape: \x1b[31m\n");
-    println!("  [malo] memoria agotada en {} trozos de 64 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);
+    println!("  [malo] memoria agotada en {} trozos de 4 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31
 }
