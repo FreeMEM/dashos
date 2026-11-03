@@ -78,7 +78,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S1 **Arquitectura del kernel.** Micronúcleo, monolítico o híbrido. Capacidades (como seL4) o permisos
   clásicos. Comunicación entre procesos. Controladores dentro o fuera del kernel. Qué se aprovecha del ecosistema
   Rust para kernels.
-- [~] S2 **Núcleos y planificador.** Reparto entre los cuatro núcleos de la Pi 4, prioridades, tiempo real suave
+- [x] S2 **Núcleos y planificador.** Reparto entre los cuatro núcleos de la Pi 4, prioridades, tiempo real suave
   para audio y escritorio, ahorro de energía.
 - [ ] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
   memoria comprimida en vez de intercambio, y cómo se reparte con poca RAM (la Pi 4 tiene de 1 a 8 GB).
@@ -124,6 +124,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
 - (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
+- (S2) ¿Las tareas Amiga mantienen la prioridad estricta de exec dentro de la caja? Mientras: sí; solo se congela
+  la caja.
+- (S2) ¿Perfil de energía por defecto "responder" o "ahorrar"? Mientras: responder.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -148,4 +151,17 @@ prueba (`docs/diseño/pruebas/rust-be/`): Rust nightly compila para `aarch64_be-
 QEMU `raspi4b` en big-endian; la CPU declara `BigEnd = 1`, así que admite programas de usuario little-endian (bueno
 para S7). Hallazgo: cada acceso a un periférico hay que darle la vuelta, y muchas bibliotecas de Rust para
 controladores dan por hecho little-endian. Rust nightly instalado en shiva (`rustup toolchain install nightly`).
+
+### 2026-11-03 — S1 ampliada
+
+A petición del usuario, S1 compara ocho formas de kernel (añadidos exokernel, un solo espacio de direcciones,
+multikernel y unikernel) con una tabla, y separa micronúcleo puro de pragmático. El usuario aprueba el micronúcleo
+y la licencia MPL-2.0 (`LICENSE`); los dos pasan a `PLAN.md`.
+
+### 2026-11-03 — S2 (núcleos y planificador)
+
+`docs/diseño/S2-planificador.md`: dos clases como Fuchsia, plazos con presupuesto para compositor, entrada y audio,
+y reparto justo con pesos para el resto. Los servidores trabajan con el presupuesto del cliente (servidores pasivos
+de seL4 MCS). Una cola por núcleo con robo de trabajo. La caja Amiga es un grupo de la clase justa con la prioridad
+estricta de exec por dentro. Frecuencia por el buzón de la VideoCore, con las etiquetas que ya usa Emu68.
 
