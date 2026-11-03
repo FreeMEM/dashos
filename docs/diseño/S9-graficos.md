@@ -57,6 +57,12 @@ La Pi 4 tiene tres piezas de vídeo:
 3. **Fase C**: la GPU, con Mesa portado y un servicio de kernel para v3d. Los dos servicios comparten búferes como
    en Linux.
 
+### 3D en la caja Amiga
+
+Algunos programas 68k usan Warp3D o MiniGL para dibujar en 3D con las tarjetas de la época. Con la fase C, la caja
+puede tener versiones nativas de esas bibliotecas que traduzcan a OpenGL ES sobre la V3D. Es trabajo para después de
+la primera versión.
+
 ### El compositor
 
 - **Es un proceso con presupuesto de la clase de plazo** (S2): tiene su tiempo reservado en cada cuadro.
