@@ -31,6 +31,17 @@ Tres reglas para ordenar:
 La línea de análisis puede empezar ya, porque no depende de nada: lee el Kickstart y escribe especificaciones con sus
 pruebas del oráculo. Cuando el sistema llegue a cada biblioteca, la especificación ya estará escrita.
 
+## Cambio de prioridad del usuario (2026-11-03)
+
+"Hay que meterle caña al controlador de vídeo y hacer funcionar la gráfica 3D." El vídeo propio (HVS y HDMI) y la
+GPU V3D suben de prioridad:
+
+- Las especificaciones de HVS, HDMI, V3D y lo que Mesa pide al kernel se escriben ya, en la línea de análisis
+  (`docs/CONSTRUCCION_LOOP.md`, tareas V1 a V4).
+- Los controladores se escriben en cuanto el kernel tenga procesos, canales y memoria compartida (H2) y haya una Pi 4
+  real, porque QEMU no emula ese hardware. Pasan por delante de la caja Amiga (H4 y H5).
+- Consecuencia: **la Pi 4 hace falta antes**, al terminar H2 y no H3.
+
 ## Los hitos
 
 ### H1. Llamada nativa desde el 68k (en `jit-host/`)

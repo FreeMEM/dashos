@@ -92,6 +92,45 @@ varios procesadores.
 Decidido por el usuario (2026-11-03): los programas nativos usan una API moderna con conceptos del Amiga, fuera de la
 caja (S11).
 
+## Recomendaciones aceptadas en bloque (usuario, 2026-11-03)
+
+El usuario dijo "vale todo" a las preguntas que dejó el bucle de diseño. Cada línea es la pregunta y, en negrita,
+lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/diseño/`.
+
+- (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo por debajo de 128 MB. **esas.**
+- (S0) ¿La Pi 3 entra como placa soportada? **no; solo como placa de pruebas si sale barato.**
+- (S4) ¿Adornos de ventana Amiga por dentro y borde de DashOS por fuera, o todo Amiga? **Amiga por dentro, DashOS por fuera.**
+- (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? **sí.**
+- (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? **sí.**
+- (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? **`Paquetes:`.**
+- (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? **sí.**
+- (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? **sí.**
+- (S5) ¿Partir de RedoxFS o diseñar uno propio? **RedoxFS, con rama propia.**
+- (S5) ¿Cajón de cada usuario cifrado de serie con su contraseña (Adiantum en la Pi 4)? **sí.**
+- (S5) ¿Instantáneas automáticas del cajón del usuario cada hora? **sí.**
+- (S6) ¿Sin superusuario: administradores que confirman con contraseña, y `SYS:` intocable salvo actualizaciones? **sí.**
+- (S6) ¿Permisos por aplicación preguntados en el primer uso? **sí.**
+- (S6) ¿Arranque verificado de la Pi 4 solo como opción documentada (es irreversible)? **sí.**
+- (S7) ¿Orden: biblioteca POSIX nativa (relibc), después caja Linux en máquina virtual, y capa de llamadas solo si hace falta? **sí.**
+- (S7) ¿Distribución de la caja Linux: Arch Linux ARM o Debian? **Arch Linux ARM.**
+- (S7) ¿Caja Linux solo desde 4 GB de RAM? **sí.**
+- (S8) ¿Nombre de la orden de paquetes? **`Paq`.**
+- (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? **sí.**
+- (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? **sí (se decide en el proyecto Hangar).**
+- (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? **sí.**
+- (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? **sí.**
+- (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? **sí.**
+- (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? **sí.**
+- (S13) ¿smoltcp como pila de red, mejorándola si hace falta? **sí.**
+- (S13) ¿DNS cifrado de serie o como opción? **como opción.**
+- (S13) ¿`amissl.library` nativa sobre rustls después de la primera versión? **sí.**
+- (S14) ¿A/B del firmware para kernel e imagen de arranque, y `SYS:` por instantáneas, probados juntos con `tryboot`? **sí.**
+- (S14) ¿Menú de arranque temprano a lo Amiga, y con qué tecla? **sí, barra espaciadora o los dos botones.**
+- (S14) ¿Pantalla de entrada siempre (el cajón va cifrado)? **sí.**
+- (S15) ¿Este orden, con la primera versión en H8 y la caja Linux en la 0.2? **sí.**
+- (S15) ¿Arrancar ya la línea de análisis de la sala limpia, empezando por exec? **sí, empezando por exec y por el vídeo y la GPU.**
+- (S15) ¿Avisar ya a las sesiones de Dash del backend ARM? **sí, avisar ya.**
+
 ## Las piezas
 
 ### Emu68

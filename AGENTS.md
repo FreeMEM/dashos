@@ -29,6 +29,9 @@ las pruebas no valen como oráculo.
 ## Estructura
 
 - `PLAN.md`: el plan.
+- `docs/CONSTRUCCION_LOOP.md`: el bucle de construcción (tareas C y V, bitácora).
+- `docs/spec/hw/`: especificaciones del hardware sin manual (vídeo, GPU), escritas por analistas.
+- `kernel/`: el kernel en Rust.
 - `docs/DISEÑO_LOOP.md`: el bucle de diseño (tareas S0 a S15 y bitácora). Sus documentos van en `docs/diseño/`.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con

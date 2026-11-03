@@ -122,48 +122,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 ## Decisiones pendientes
 
-Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea viene y qué opción se sigue mientras.
-
-- (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
-  por debajo de 128 MB. Mientras: esas.
-- (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
-- (S4) ¿Adornos de ventana Amiga por dentro y borde de DashOS por fuera, o todo Amiga? Mientras: Amiga por
-  dentro, DashOS por fuera.
-- (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? Mientras: sí.
-- (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? Mientras: sí.
-- (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? Mientras: `Paquetes:`.
-- (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? Mientras: sí.
-- (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? Mientras: sí.
-- (S5) ¿Partir de RedoxFS o diseñar uno propio? Mientras: RedoxFS, con rama propia.
-- (S5) ¿Cajón de cada usuario cifrado de serie con su contraseña (Adiantum en la Pi 4)? Mientras: sí.
-- (S5) ¿Instantáneas automáticas del cajón del usuario cada hora? Mientras: sí.
-- (S6) ¿Sin superusuario: administradores que confirman con contraseña, y `SYS:` intocable salvo actualizaciones?
-  Mientras: sí.
-- (S6) ¿Permisos por aplicación preguntados en el primer uso? Mientras: sí.
-- (S6) ¿Arranque verificado de la Pi 4 solo como opción documentada (es irreversible)? Mientras: sí.
-- (S7) ¿Orden: biblioteca POSIX nativa (relibc), después caja Linux en máquina virtual, y capa de llamadas solo si
-  hace falta? Mientras: sí.
-- (S7) ¿Distribución de la caja Linux: Arch Linux ARM o Debian? Mientras: Arch Linux ARM.
-- (S7) ¿Caja Linux solo desde 4 GB de RAM? Mientras: sí.
-- (S8) ¿Nombre de la orden de paquetes? Mientras: `Paq`.
-- (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? Mientras: sí.
-- (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? Mientras: sí (se decide
-  en el proyecto Hangar).
-- (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? Mientras:
-  sí.
-- (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? Mientras: sí.
-- (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? Mientras: sí.
-- (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? Mientras: sí.
-- (S13) ¿smoltcp como pila de red, mejorándola si hace falta? Mientras: sí.
-- (S13) ¿DNS cifrado de serie o como opción? Mientras: como opción.
-- (S13) ¿`amissl.library` nativa sobre rustls después de la primera versión? Mientras: sí.
-- (S14) ¿A/B del firmware para kernel e imagen de arranque, y `SYS:` por instantáneas, probados juntos con
-  `tryboot`? Mientras: sí.
-- (S14) ¿Menú de arranque temprano a lo Amiga, y con qué tecla? Mientras: sí, barra espaciadora o los dos botones.
-- (S14) ¿Pantalla de entrada siempre (el cajón va cifrado)? Mientras: sí.
-- (S15) ¿Este orden, con la primera versión en H8 y la caja Linux en la 0.2? Mientras: sí.
-- (S15) ¿Arrancar ya la línea de análisis de la sala limpia, empezando por exec? Mientras: sí, cuando el usuario lo diga.
-- (S15) ¿Avisar ya a las sesiones de Dash del backend ARM? Mientras: no se ha avisado.
+Ninguna. El usuario aceptó todas las recomendaciones el 2026-11-03; están en `PLAN.md`.
 
 ## Bitácora
 
