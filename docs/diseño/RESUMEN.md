@@ -108,3 +108,10 @@ Amiga → H5 caja con ventanas → H6 la placa real → H7 Dash nativo y escrito
 **DashOS 0.1**. Después, H9 la caja Linux (0.2), la GPU, el Wi-Fi y la Pi 5.
 
 Tres líneas en paralelo: sistema, Dash y análisis de la sala limpia.
+
+## Un kernel muy seguro (S16)
+
+Pausa del 03/11 por la tarde, tras una auditoría del kernel (`docs/seguridad/`). Hay ocho propiedades que debe cumplir.
+Siete cambios de arquitectura esperan decisión: kernel en little-endian, `unsafe` en una sola caja, sacar del kernel el
+USB, la GPU y los compositores, DMA de confianza en la Pi 4, kernel no expulsable, cupos y capacidades completas. El
+trabajo va en seis fases; la primera arregla los fallos que un programa hostil puede explotar hoy.

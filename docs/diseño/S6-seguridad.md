@@ -131,8 +131,8 @@ cambiar el kernel; pero un programa malicioso no puede cambiar el sistema.
 - Registro de seguridad: inicios de sesión, confirmaciones de administrador, permisos concedidos y avisos del
   Enforcer (S3).
 
-La A72 de la Pi 4 no tiene las defensas por hardware de CPUs más nuevas, como PAN, PAC, BTI o MTE (S3). En la Pi 5
-habrá que activar las que tenga.
+La A72 de la Pi 4 no tiene las defensas por hardware de CPUs más nuevas, como PAN, PAC, BTI o MTE (S3). La A76 de la
+Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su lugar está en S16.
 
 ## Lo que queda abierto
 
