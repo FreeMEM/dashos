@@ -115,7 +115,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S12 **Controladores de la Pi 4.** Lista y orden: serie, temporizador, interrupciones, tarjeta SD, USB (VL805
   por PCIe), red GENET, Wi-Fi y Bluetooth, audio, HDMI. Cuáles se escriben, cuáles se adaptan y con qué licencia.
 - [x] S13 **Red.** Pila TCP/IP, cortafuegos, DNS, TLS, y `bsdsocket.library` para los programas Amiga.
-- [ ] S14 **Arranque, servicios y actualizaciones.** Del firmware de la Pi al escritorio. Gestor de servicios.
+- [x] S14 **Arranque, servicios y actualizaciones.** Del firmware de la Pi al escritorio. Gestor de servicios.
   Actualizaciones A/B o por instantáneas, y volver atrás si algo falla.
 - [ ] S15 **Hoja de ruta.** Todo lo anterior ordenado en fases con hitos que se puedan enseñar. Qué hace falta para
   la primera versión que arranca en una Pi 4 real.
@@ -158,6 +158,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S13) ¿smoltcp como pila de red, mejorándola si hace falta? Mientras: sí.
 - (S13) ¿DNS cifrado de serie o como opción? Mientras: como opción.
 - (S13) ¿`amissl.library` nativa sobre rustls después de la primera versión? Mientras: sí.
+- (S14) ¿A/B del firmware para kernel e imagen de arranque, y `SYS:` por instantáneas, probados juntos con
+  `tryboot`? Mientras: sí.
+- (S14) ¿Menú de arranque temprano a lo Amiga, y con qué tecla? Mientras: sí, barra espaciadora o los dos botones.
+- (S14) ¿Pantalla de entrada siempre (el cajón va cifrado)? Mientras: sí.
 
 ## Bitácora
 
@@ -321,4 +325,12 @@ tres de S12, sí. Todo pasa a `PLAN.md`. Sigue abierta la de S11 sobre el mismo 
 ### 2026-11-03 — Decisión del usuario sobre Dash
 
 El mismo programa Dash compila para DashOS (AArch64 big-endian) y para AmigaOS 3.x (68k). Pasa a `PLAN.md`.
+
+### 2026-11-03 — S14 (arranque, servicios y actualizaciones)
+
+`docs/diseño/S14-arranque.md`. Comprobado en la documentación de Raspberry Pi: el firmware tiene A/B con
+`autoboot.txt`, `tryboot_a_b=1` y `reboot "0 tryboot"`, que vuelve solo a la partición buena si la nueva falla;
+Ubuntu le suma el vigilante. Tarjeta con partición de arranque, ranuras A y B (kernel e imagen de arranque) y la del
+sistema con instantáneas; kernel y `SYS:` se prueban juntos. Gestor de servicios declarativo, en paralelo y con
+vigilancia. Del Amiga: `S:Startup-Sequence` para la caja, `WBStartup` y un menú de arranque temprano.
 
