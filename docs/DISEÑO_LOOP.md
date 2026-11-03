@@ -82,7 +82,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   para audio y escritorio, ahorro de energía.
 - [x] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
   memoria comprimida en vez de intercambio, y cómo se reparte con poca RAM (la Pi 4 tiene de 1 a 8 GB).
-- [ ] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
+- [x] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
   bibliotecas nativas desde el JIT, recursos con dueño para matar tareas 68k sueltas (`S2-planificador.md`), ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
   DOS sobre el sistema de archivos, y qué programas 68k quedan fuera.
 - [ ] S4b **Organización a lo Amiga.** Petición del usuario (2026-11-03): volúmenes, cajones, asignaciones, `SYS:`,
@@ -129,6 +129,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
+- (S4) ¿Adornos de ventana Amiga por dentro y borde de DashOS por fuera, o todo Amiga? Mientras: Amiga por
+  dentro, DashOS por fuera.
+- (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? Mientras: sí.
+- (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -191,4 +195,14 @@ varias cuentas: sí). Y toda la organización de AmigaOS igual: cajones, asignac
 ### 2026-11-03 — Decisiones del usuario sobre S3
 
 Aceptadas las tres recomendaciones: sin intercambio a disco, sin prometer de más y Enforcer siempre activo.
+
+### 2026-11-03 — S4 (la caja Amiga)
+
+`docs/diseño/S4-caja-amiga.md`. Comprobado: Emu68 no tiene llamada a código nativo, y la línea A del 68k se traduce
+en una sola función (`EMIT_lineA`), el sitio natural para añadirla. MorphOS hace lo mismo: interfaz 68k en sus
+bibliotecas nativas y emulación solo si alguien parchea la tabla. Recomendación: línea A en la tabla de saltos;
+una caja usa un núcleo a la vez con un testigo (corrige S2: repartir una caja entre núcleos no es seguro); ventanas
+Amiga como ventanas del escritorio; dos.library sobre el sistema de archivos; varias cajas; módulos del Kickstart del
+usuario como atajo; Amiberry empaquetado para lo que toca el chipset. Las bibliotecas de la caja necesitan punteros
+de 32 bits: razón de fondo para escribirlas en Dash.
 

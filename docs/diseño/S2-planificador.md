@@ -91,8 +91,8 @@ servidor corre con el presupuesto y la prioridad de la aplicación. Se consiguen
 - Dentro de la caja se respeta la prioridad estricta de exec, porque hay programas que dependen de ella.
 - La caja entera es, para el kernel, un grupo de la clase justa. Si una tarea 68k se queda en un bucle con prioridad
   alta, se bloquea la caja, pero no el escritorio ni el resto del sistema.
-- Al principio la caja usa un núcleo. Más adelante podría repartir tareas entre núcleos con su cerrojo grande de
-  `Forbid()` (S4).
+- La caja usa un núcleo a la vez, con un testigo. Repartir una caja entre núcleos no es seguro con programas Amiga
+  normales: ver S4.
 
 ### Energía y temperatura
 
