@@ -5,3 +5,12 @@ Orden de bytes: big-endian
 C2: esqueleto en marcha
 Excepción: BRK #0x2a en 0x
 C3: de vuelta de la excepción
+Árbol de dispositivos: 
+  memoria: 0x0, 
+  serie PL011: 0xfe201000
+  GIC-400: distribuidor 0xff841000, CPU 0xff842000
+  temporizador: PPI físico no seguro 14
+  DMA de soc: bus 0xc0000000 -> CPU 0x0, 1024 MB
+  DMA de emmc2bus: bus 0xc0000000 -> CPU 0x0, 1024 MB
+  DMA de scb: bus 0x0 -> CPU 0x0, 16384 MB
+C4: árbol de dispositivos leído

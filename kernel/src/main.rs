@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 
+mod dtb;
 mod excepciones;
 mod mmio;
 mod serie;
@@ -32,8 +33,51 @@ extern "C" fn kmain(dtb: usize) -> ! {
     excepciones::iniciar();
     unsafe { core::arch::asm!("brk #0x2a") };
     kprintln!("C3: de vuelta de la excepción");
+
+    mapa_dispositivos(dtb);
+    kprintln!("C4: árbol de dispositivos leído");
     loop {
         unsafe { core::arch::asm!("wfe") };
+    }
+}
+
+/// C4: lo que el kernel necesita del árbol de dispositivos.
+fn mapa_dispositivos(direccion: usize) {
+    let Some(d) = (unsafe { dtb::Dtb::desde(direccion) }) else {
+        kprintln!("Árbol de dispositivos: no válido en {:#x}", direccion);
+        return;
+    };
+    kprintln!("Árbol de dispositivos: {} bytes", d.tamano());
+    if let Some(m) = d.por_nombre("memory") {
+        let mut i = 0;
+        while let Some((dir, tam)) = d.reg(&m, i) {
+            kprintln!("  memoria: {:#x}, {} MB", dir, tam >> 20);
+            i += 1;
+        }
+    }
+    if let Some(n) = d.compatible("arm,pl011") {
+        if let Some((dir, _)) = d.reg_cpu(&n, 0) {
+            kprintln!("  serie PL011: {:#x}", dir);
+        }
+    }
+    if let Some(n) = d.compatible("arm,gic-400") {
+        if let (Some((dist, _)), Some((cpu, _))) = (d.reg_cpu(&n, 0), d.reg_cpu(&n, 1)) {
+            kprintln!("  GIC-400: distribuidor {:#x}, CPU {:#x}", dist, cpu);
+        }
+    }
+    if let Some(n) = d.compatible("arm,armv8-timer") {
+        if let Some((datos, _)) = d.propiedad(&n, "interrupts") {
+            kprintln!("  temporizador: PPI físico no seguro {}", d.celda(datos, 4));
+        }
+    }
+    for prefijo in ["soc", "emmc2bus", "scb", "pcie"] {
+        if let Some(n) = d.por_nombre(prefijo) {
+            let mut i = 0;
+            while let Some((bus, cpu, tam)) = d.ventana_dma(&n, i) {
+                kprintln!("  DMA de {}: bus {:#x} -> CPU {:#x}, {} MB", prefijo, bus, cpu, tam >> 20);
+                i += 1;
+            }
+        }
     }
 }
 

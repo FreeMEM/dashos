@@ -61,7 +61,7 @@ del kernel sobre la que irán esos controladores.
   por núcleo), tipo de registro de periférico little-endian, PL011, `kprint!`, `tools/prueba_qemu.sh` y la primera
   prueba.
 - [x] C3 **Excepciones.** Tabla de vectores de EL1, volcado de registros y pánico legible. Prueba: un `brk` provocado.
-- [ ] C4 **Árbol de dispositivos.** Leer el DTB que deja el firmware en `x0`: memoria, puerto serie, GIC, temporizador
+- [x] C4 **Árbol de dispositivos.** Leer el DTB que deja el firmware en `x0`: memoria, puerto serie, GIC, temporizador
   y `dma-ranges` (S3). Prueba: imprime el mapa.
 - [ ] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
 - [ ] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
@@ -131,4 +131,13 @@ quitará; con la MMU (C6) se puede retirar. Sin cerrojo en la serie hasta C9.
 que guarda el resto, ELR, SPSR, ESR y FAR en un marco de 288 bytes y llama a `excepcion()` en Rust
 (`excepciones.rs`). Un BRK desde EL1 se avisa y se sigue; lo demás vuelca registros y entra en pánico. Prueba: un
 `brk #0x2a` provocado y vuelta. BIEN. No probado aún: el volcado de un fallo de verdad.
+
+### 2026-11-03 02:3x — C4 (árbol de dispositivos)
+
+`kernel/src/dtb.rs`: lector de FDT sin memoria dinámica (el formato es big-endian, como DashOS). Busca por
+`compatible` o por nombre, lee `reg` con las celdas del padre, traduce direcciones subiendo por los `ranges` y
+decodifica `dma-ranges`. En QEMU `raspi4b`: memoria desde 0, 960 MB (QEMU solo describe el primer tramo); PL011 en
+`0xfe201000`; GIC-400 en `0xff841000` y `0xff842000`; temporizador físico no seguro en el PPI 14; DMA del `soc` y de
+`emmc2bus` en el primer GB, y `scb` en los 16 GB. Coincide con S3. Pendiente: el nodo `pcie` no sale por nombre
+(está dentro de `scb`); se mirará al hacer el PCIe en la placa.
 
