@@ -19,6 +19,9 @@
 //! | 12 | proceso_crear(llave de memoria con el ELF, tamaño, llaves, n_llaves) -> llave de proceso |
 //! | 13 | proceso_matar(llave de proceso) |
 //! | 14 | proceso_esperar(llave de proceso) -> (clase, código): 0 salió con código, 1 lo mataron, 2 un fallo |
+//! | 15 | llave_duplicar(llave, derechos, marca) -> llave nueva, con esos derechos o menos y la marca si no tenía |
+//! | 16 | llave_revocable(llave) -> (llave revocable, revocador) |
+//! | 17 | revocar(revocador) |
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -123,6 +126,9 @@ pub fn atender(marco: &mut Marco) {
         12 => proceso_crear(a[0] as u32, a[1], a[2], a[3]),
         13 => proceso_matar(a[0] as u32),
         14 => proceso_esperar(marco, a[0] as u32),
+        15 => llave_duplicar(a[0] as u32, a[1], a[2]),
+        16 => llave_revocable(marco, a[0] as u32),
+        17 => revocar(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -211,7 +217,7 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
             viajan.push(l);
         }
     }
-    let m = Mensaje { datos, llaves: viajan };
+    let m = Mensaje { datos, llaves: viajan, marca: destino.marca };
     match canal.escribir(lado, m) {
         Ok(()) => 0,
         Err((error, m)) => {
@@ -261,7 +267,7 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         canal.devolver(lado, m);
         return E_LIMITE;
     }
-    let Mensaje { datos, llaves: recibidas } = m;
+    let Mensaje { datos, llaves: recibidas, marca } = m;
     let mut numeros = Vec::new();
     let mut sobrantes = Vec::new();
     for l in recibidas {
@@ -275,11 +281,12 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         let mut devueltas: Vec<_> = numeros.iter().filter_map(|&n| t.quitar(n)).collect();
         devueltas.extend(sobrantes);
         drop(t);
-        canal.devolver(lado, Mensaje { datos, llaves: devueltas });
+        canal.devolver(lado, Mensaje { datos, llaves: devueltas, marca });
         return error;
     }
 
     marco.poner_x1(numeros.len() as u64);
+    marco.poner_x2(marca);
     largo
 }
 
@@ -300,7 +307,7 @@ fn memoria_crear(tamano: u64) -> u64 {
         return E_LIMITE;
     }
     let Some(m) = objetos::Memoria::nueva(tamano as usize) else { return E_MEMORIA };
-    let llave = objetos::Llave { objeto: Objeto::Memoria(alloc::sync::Arc::new(m)), derechos: objetos::TODOS };
+    let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,
@@ -412,7 +419,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64) -> u64 {
     };
     match crate::procesos::lanzar(&binario, viajan, None) {
         Ok((control, _)) => {
-            let llave = objetos::Llave { objeto: Objeto::Proceso(control.clone()), derechos: objetos::TODOS };
+            let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             match proc_.llaves.tomar().instalar(llave) {
                 Ok(n) => n as u64,
                 Err(_) => {
@@ -473,4 +480,57 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
         // Las IRQ están enmascaradas en toda llamada: se puede bloquear soltando el cerrojo.
         planificador::bloquear_soltando(e);
     }
+}
+
+/// Una copia de la llave `h` con los derechos `derechos` que ya tenga (nunca más) y, si no tenía marca, la marca
+/// `marca` (C41). Con marca 0 se queda la que tenga. Una llave marcada no se puede volver a marcar con otra: así quien
+/// la recibe no puede hacerse pasar por otro. La copia es del mismo objeto: un lado de canal sigue abierto mientras
+/// quede una.
+fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let mut t = proc_.llaves.tomar();
+    // La llave sin resolver: si es revocable, la copia también lo es.
+    let Some(l) = t.ver_crudo(h) else { return E_LLAVE };
+    if t.ver(h).is_none() {
+        return E_LLAVE; // revocada
+    }
+    if marca != 0 && l.marca != 0 && marca != l.marca {
+        return E_DERECHOS;
+    }
+    let nueva = objetos::Llave { objeto: l.objeto, derechos: l.derechos & derechos as u32, marca: if marca != 0 { marca } else { l.marca } };
+    match t.instalar(nueva) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
+}
+
+/// Una copia revocable de la llave `h` y la llave que la revoca (C41). Quien da la copia se queda el revocador; al
+/// usarlo, la copia y todas las que se hagan de ella dejan de valer, estén donde estén.
+fn llave_revocable(marco: &mut Marco, h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let mut t = proc_.llaves.tomar();
+    if t.huecos() < 2 || !t.reservar(2) {
+        return E_LIMITE;
+    }
+    let Some(l) = t.ver_crudo(h) else { return E_LLAVE };
+    if t.ver(h).is_none() {
+        return E_LLAVE;
+    }
+    let r = alloc::sync::Arc::new(objetos::Revocable::nuevo(l.objeto));
+    let copia = objetos::Llave { objeto: Objeto::Revocable(r.clone()), derechos: l.derechos, marca: l.marca };
+    let revocador = objetos::Llave::nueva(Objeto::Revocador(r), objetos::TODOS);
+    let (Ok(a), Ok(b)) = (t.instalar(copia), t.instalar(revocador)) else { return E_MEMORIA };
+    marco.poner_x1(b as u64);
+    a as u64
+}
+
+fn revocar(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Revocador(r) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    r.revocar();
+    0
 }

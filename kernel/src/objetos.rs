@@ -39,6 +39,28 @@ pub enum Objeto {
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un proceso visto desde fuera (C39): con escribir se mata, con leer se espera a que acabe.
     Proceso(Arc<Control>),
+    /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
+    Revocable(Arc<Revocable>),
+    /// La llave con la que se revoca: vacía el intermediario, y todas las llaves que pasan por él dejan de valer.
+    Revocador(Arc<Revocable>),
+}
+
+/// El intermediario de las llaves revocables (C41).
+pub struct Revocable {
+    objeto: Cerrojo<Option<Objeto>>,
+}
+
+impl Revocable {
+    pub fn nuevo(objeto: Objeto) -> Self {
+        Self { objeto: Cerrojo::new(Some(objeto)) }
+    }
+
+    /// Revoca: suelta el objeto (fuera del cerrojo). Si era lo último que lo tenía, se libera; un lado de canal se
+    /// cierra.
+    pub fn revocar(&self) {
+        let objeto = self.objeto.tomar().take();
+        drop(objeto);
+    }
 }
 
 /// Cómo acabó un proceso (C39).
@@ -97,11 +119,22 @@ pub use crate::memoria::Memoria;
 pub struct Llave {
     pub objeto: Objeto,
     pub derechos: u32,
+    /// La identidad que lleva (C41): la pone quien la duplica, una sola vez, y llega con cada mensaje que se escribe
+    /// por ella. 0 es sin marca. Así un servidor sabe quién le habla sin fiarse de lo que diga el mensaje.
+    pub marca: u64,
+}
+
+impl Llave {
+    pub fn nueva(objeto: Objeto, derechos: u32) -> Self {
+        Self { objeto, derechos, marca: 0 }
+    }
 }
 
 pub struct Mensaje {
     pub datos: Vec<u8>,
     pub llaves: Vec<Llave>,
+    /// La marca de la llave por la que se escribió (C41); 0 si no tenía o lo escribió el kernel.
+    pub marca: u64,
 }
 
 #[derive(Default)]
@@ -176,8 +209,17 @@ fn cerrar_lado(c: Arc<Canal>, lado: usize, pendientes: &mut Vec<Mensaje>) {
 /// que se queda sin dueños se cierra y lo que contenía pasa a la lista.
 fn soltar(mut pendientes: Vec<Mensaje>) {
     while let Some(m) = pendientes.pop() {
-        for l in m.llaves {
-            match l.objeto {
+        let mut objetos: Vec<Objeto> = m.llaves.into_iter().map(|l| l.objeto).collect();
+        while let Some(objeto) = objetos.pop() {
+            match objeto {
+                Objeto::Revocable(r) => {
+                    // Si nadie más tiene el intermediario, lo de dentro se suelta en este mismo bucle.
+                    if let Ok(mut r) = Arc::try_unwrap(r) {
+                        if let Some(o) = r.objeto.get_mut().take() {
+                            objetos.push(o);
+                        }
+                    }
+                }
                 Objeto::Extremo(p) => {
                     if let Ok(mut p) = Arc::try_unwrap(p) {
                         if let Some(c) = p.canal.take() {
@@ -234,8 +276,8 @@ impl Canal {
     fn con_cuenta(cuenta: Option<Arc<AtomicUsize>>) -> (Llave, Llave) {
         let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]), cuenta });
         (
-            Llave { objeto: Objeto::Extremo(Arc::new(Punta { canal: Some(c.clone()), lado: 0 })), derechos: TODOS },
-            Llave { objeto: Objeto::Extremo(Arc::new(Punta { canal: Some(c), lado: 1 })), derechos: TODOS },
+            Llave::nueva(Objeto::Extremo(Arc::new(Punta { canal: Some(c.clone()), lado: 0 })), TODOS),
+            Llave::nueva(Objeto::Extremo(Arc::new(Punta { canal: Some(c), lado: 1 })), TODOS),
         )
     }
 
@@ -364,7 +406,18 @@ impl TablaLlaves {
         libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
     }
 
+    /// La llave `h` lista para usarse: si es revocable, con el objeto de detrás (y `None` si está revocada).
     pub fn ver(&self, h: u32) -> Option<Llave> {
+        let mut l = self.ver_crudo(h)?;
+        while let Objeto::Revocable(r) = &l.objeto {
+            let dentro = r.objeto.tomar().clone()?;
+            l.objeto = dentro;
+        }
+        Some(l)
+    }
+
+    /// La llave `h` tal cual, con su intermediario si es revocable (para duplicarla o hacerla revocable otra vez).
+    pub fn ver_crudo(&self, h: u32) -> Option<Llave> {
         self.llaves.get(h as usize).and_then(|x| x.clone())
     }
 

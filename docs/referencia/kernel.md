@@ -116,6 +116,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas | Llave de proceso |
 | 13 | `proceso_matar` | `x0` llave de proceso | 0 |
 | 14 | `proceso_esperar` | `x0` llave de proceso | `x0` clase, `x1` código |
+| 15 | `llave_duplicar` | `x0` llave, `x1` derechos, `x2` marca | Llave nueva |
+| 16 | `llave_revocable` | `x0` llave | `x0` copia revocable, `x1` revocador |
+| 17 | `revocar` | `x0` revocador | 0 |
 
 ### Detalles
 
@@ -164,6 +167,15 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     **siempre en little-endian**.
 - **11, `interrupcion_terminar`.** La vuelve a habilitar cuando el controlador ya ha atendido el aparato.
 - **10 y 11.** Las dos piden el derecho de escribir en la llave de la interrupción.
+- **5, `canal_leer`, la marca** (C41). En `x2` devuelve la marca de la llave por la que se escribió el mensaje, o 0.
+- **15, `llave_duplicar`** (C41). Una copia del mismo objeto con los derechos pedidos que ya tenga la llave, nunca
+  más. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
+  otra una llave ya marcada da `E_DERECHOS`. Un lado de canal sigue abierto mientras quede alguna copia.
+- **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
+  que se hagan de la revocable también pasan por él.
+- **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
+  dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
+  cierra. Lo que ya estaba proyectado sigue proyectado.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -242,6 +254,7 @@ Tipos de objeto:
 | Registros | Solo el kernel | Controladores fuera del kernel |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
+| Revocador | `llave_revocable` | Revocar la copia (escribir) |
 
 ## Biblioteca de usuario en Rust
 

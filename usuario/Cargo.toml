@@ -74,3 +74,8 @@ test = false
 name = "padre"
 path = "src/bin/padre.rs"
 test = false
+
+[[bin]]
+name = "llaves"
+path = "src/bin/llaves.rs"
+test = false

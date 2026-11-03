@@ -95,6 +95,40 @@ pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
     (a as i64, b)
 }
 
+/// Como `canal_leer`, y además la marca de la llave por la que se escribió el mensaje (C41): (bytes, llaves, marca).
+pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i64, usize, u64) {
+    let (n, k, m): (u64, u64, u64);
+    unsafe {
+        core::arch::asm!("svc #0",
+            in("x8") 5u64,
+            inlateout("x0") llave as u64 => n,
+            inlateout("x1") bufer.as_mut_ptr() as u64 => k,
+            inlateout("x2") bufer.len() as u64 => m,
+            in("x3") llaves.as_mut_ptr() as u64, in("x4") llaves.len() as u64,
+            options(nostack));
+    }
+    (n as i64, k as usize, m)
+}
+
+pub const LEER: u64 = 1;
+pub const ESCRIBIR: u64 = 2;
+pub const TRANSFERIR: u64 = 4;
+
+/// Una copia de la llave con esos derechos o menos, y con `marca` si no tenía (0: la que tenga). C41.
+pub fn llave_duplicar(llave: u32, derechos: u64, marca: u64) -> i64 {
+    llamada(15, [llave as u64, derechos, marca, 0, 0]).0 as i64
+}
+
+/// Una copia revocable de la llave y su revocador: (copia, revocador), o un error negativo en la copia. C41.
+pub fn llave_revocable(llave: u32) -> (i64, u32) {
+    let (a, b) = llamada(16, [llave as u64, 0, 0, 0, 0]);
+    (a as i64, b as u32)
+}
+
+pub fn revocar(revocador: u32) -> i64 {
+    llamada(17, [revocador as u64, 0, 0, 0, 0]).0 as i64
+}
+
 /// Escritura con formato a la consola, por trozos.
 pub struct Consola;
 

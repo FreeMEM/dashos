@@ -31,6 +31,11 @@ impl Marco {
     pub fn poner_x1(&mut self, v: u64) {
         self.x[1] = v;
     }
+
+    /// Un tercer resultado, para `canal_leer` (la marca del que escribió, C41).
+    pub fn poner_x2(&mut self, v: u64) {
+        self.x[2] = v;
+    }
 }
 
 unsafe extern "C" {

@@ -78,7 +78,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C40 **Al morir un proceso, sus extremos se cierran** y el otro lado se entera (`E_CERRADO`). Sin ciclos: no se
   puede mandar un extremo por su propio canal ni por su pareja, ni una llave de interrupción al canal al que está
   asociada (hallazgo 15).
-- [ ] C41 **Llaves completas** (S16, G): duplicar una llave con menos derechos; identidad del que escribe (una marca
+- [x] C41 **Llaves completas** (S16, G): duplicar una llave con menos derechos; identidad del que escribe (una marca
   en cada extremo, que pone quien lo crea, y que el lector recibe con el mensaje); revocar (quien dio una llave puede
   retirarla de todas sus copias).
 - [ ] C42 **Cupos por grupo** (S16, F): cada proceso pertenece a un grupo con un presupuesto de memoria del kernel
@@ -971,6 +971,27 @@ Sin el cierre al soltar la punta, `malo` y `padre` fallan.
 
 **Pruebas lentas.** Con la máquina a carga 27, la batería no cabía en 15 s (falló C32 "dos núcleos" por tiempo) y C14
 falló dos veces. Con 25 s pasó tres de tres: `make prueba` usa ahora 25 s.
+
+### 2026-11-03 tarde, bucle — C41 (llaves completas)
+
+- **Duplicar** (15): una copia con los derechos pedidos que ya tenga, nunca más. Puede llevar una marca si la llave no
+  tenía; una marcada no se vuelve a marcar con otra.
+- **Marca.** Va en cada mensaje que se escribe por esa llave, y `canal_leer` la devuelve en `x2`. Es la identidad del
+  que escribe: el servidor da a cada cliente una copia marcada, y el cliente no puede cambiarla.
+- **Revocar** (16, 17): una copia revocable pasa por un intermediario (`Revocable`). El revocador lo vacía y suelta el
+  objeto. `TablaLlaves::ver` resuelve el intermediario, así que todas las llamadas ven el objeto de detrás, o
+  `E_LLAVE` si está revocada. `soltar` sabe vaciar intermediarios sin recursión.
+- **Queda.** Revocar no deshace lo ya proyectado de un objeto de memoria. Para eso haría falta quitar proyecciones,
+  que aún no existe.
+
+**Prueba** (`llaves`, 14 pasos):
+- una copia solo de escritura no lee, y pedir más derechos no los da;
+- la marca llega con el mensaje y no se cambia;
+- tras revocar, la copia y sus copias dan `E_LLAVE` y el original sigue valiendo;
+- un lado sigue abierto mientras quede una copia;
+- revocar la última cierra el lado.
+
+Sin la regla de no volver a marcar, falla en el paso 6.
 
 ## Resumen de la noche
 

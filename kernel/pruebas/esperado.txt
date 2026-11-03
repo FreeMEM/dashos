@@ -115,5 +115,7 @@ C32: registros de EL0 bien
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
 C39: crear, matar y esperar procesos desde un proceso bien
+  [llaves] copias con menos derechos, marcas que no se cambian y revocación
+C41: llaves completas bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

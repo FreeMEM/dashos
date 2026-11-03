@@ -45,6 +45,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_asid();
     prueba_el0();
     prueba_padre();
+    prueba_llaves();
     prueba_desborde();
 }
 
@@ -457,7 +458,7 @@ extern "C" fn pelota(vueltas: usize) {
     };
     let t = reloj::ahora();
     for _ in 0..vueltas {
-        let _ = ida.0.escribir(ida.1, objetos::Mensaje { datos: alloc::vec![1], llaves: alloc::vec::Vec::new() });
+        let _ = ida.0.escribir(ida.1, objetos::Mensaje { datos: alloc::vec![1], llaves: alloc::vec::Vec::new(), marca: 0 });
         let _ = vuelta.0.leer(vuelta.1);
     }
     IDAS.store((reloj::ahora() - t) * 1_000_000 / reloj::frecuencia() / vueltas as u64 + 1, Ordering::Release);
@@ -588,8 +589,8 @@ fn prueba_controlador(_dtb: usize) {
     };
     let tamano = tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA;
     let llaves = alloc::vec![
-        objetos::Llave { objeto: objetos::Objeto::Registros { fisica, tamano }, derechos: objetos::LEER | objetos::ESCRIBIR },
-        objetos::Llave { objeto: objetos::Objeto::Interrupcion(irq), derechos: objetos::LEER | objetos::ESCRIBIR },
+        objetos::Llave::nueva(objetos::Objeto::Registros { fisica, tamano }, objetos::LEER | objetos::ESCRIBIR),
+        objetos::Llave::nueva(objetos::Objeto::Interrupcion(irq), objetos::LEER | objetos::ESCRIBIR),
     ];
     if !lanzar_elf(SERIE, llaves, 1) {
         return;
@@ -609,10 +610,7 @@ fn prueba_sd(_dtb: usize) {
         if let Some((fisica, tamano)) = d.compatible(c).and_then(|n| d.reg_cpu(&n, 0)) {
             kprintln!("  {} en {:#x}", c, fisica);
             let tamano = tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA;
-            llaves.push(objetos::Llave {
-                objeto: objetos::Objeto::Registros { fisica, tamano },
-                derechos: objetos::LEER | objetos::ESCRIBIR,
-            });
+            llaves.push(objetos::Llave::nueva(objetos::Objeto::Registros { fisica, tamano }, objetos::LEER | objetos::ESCRIBIR));
         }
     }
     if !lanzar_elf(SD, llaves, 3) {
@@ -1060,7 +1058,7 @@ fn prueba_el0() {
     for n in 1..=3u8 {
         let (a, b) = objetos::Canal::nuevo();
         let (c, lado) = extremo(&a);
-        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![n], llaves: alloc::vec::Vec::new() });
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![n], llaves: alloc::vec::Vec::new(), marca: 0 });
         lanzar_elf(TRAMPAS, alloc::vec![b], 2);
         esperar_tics(20);
     }
@@ -1149,10 +1147,10 @@ fn prueba_padre() {
     let libres = memoria::paginas().libres() + monton::paginas_pequenas();
     let Some(m) = memoria::Memoria::nueva(HIJO.len()) else { return };
     m.escribir(0, HIJO);
-    let m = objetos::Llave { objeto: objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), derechos: objetos::TODOS };
+    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     let (a, b) = objetos::Canal::nuevo();
     let (c, lado) = extremo(&a);
-    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new() });
+    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
     llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
     let Some(control) = lanzar_elf_control(PADRE, alloc::vec![m, b], 2) else { return };
     let inicio = reloj::tics();
@@ -1166,6 +1164,19 @@ fn prueba_padre() {
     kprintln!("  el padre acabó: {:?}; páginas libres antes {}, después {}", fin, libres, despues);
     let bien = fin == Some(objetos::Fin::Salida(39)) && despues >= libres;
     kprintln!("C39: crear, matar y esperar procesos desde un proceso {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C41: llaves completas (`usuario/src/bin/llaves.rs`).
+static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
+
+fn prueba_llaves() {
+    let Some(control) = lanzar_elf_control(LLAVES, alloc::vec::Vec::new(), 2) else { return };
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 300 {
+        reloj::esperar_interrupcion();
+    }
+    let fin = control.estado.tomar().fin;
+    kprintln!("C41: llaves completas {}", if fin == Some(objetos::Fin::Salida(41)) { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel
