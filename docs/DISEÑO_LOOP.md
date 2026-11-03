@@ -104,7 +104,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S8 **Paquetes y Hangar.** Un gestor de paquetes como pacman: formato, repositorios, firmas, dependencias,
   actualizaciones atómicas con instantáneas del sistema de archivos, y deltas. Tres clases de paquete: nativos de
   DashOS, programas Amiga y programas de Linux. Hangar como tienda y catálogo por encima, con programas de pago.
-- [ ] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
+- [x] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
   sincronía vertical, escalado para pantallas de mucha densidad.
 - [ ] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
   monitores, lanzador, notificaciones, bandeja. El aire del Amiga hecho moderno. Referencias que el usuario usa a
@@ -151,6 +151,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? Mientras: sí.
 - (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? Mientras: sí (se decide
   en el proyecto Hangar).
+- (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? Mientras:
+  sí.
+- (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -263,4 +266,12 @@ y paquetes por encima en `Paquetes:` o `Home:`, con cada transacción en una ins
 orden que lo pone todo al día, como `pacman -Syu`. Tres mundos: nativos y Amiga con `Paq` (los Amiga con su
 `Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es la tienda y `Paq` el motor; el
 cliente de Hangar para el Amiga funcionaría en la caja desde el primer día. Hangar solo se leyó, no se tocó.
+
+### 2026-11-03 — S9 (gráficos)
+
+`docs/diseño/S9-graficos.md`. Por fases: pantalla del firmware y compuesto por CPU con daños; después controlador
+propio del HVS y HDMI (sincronía vertical, dos salidas, planos para cursor y vídeo); la GPU V3D con Mesa al final.
+Wayland como protocolo propio del compositor, sobre canales de DashOS: los kits de interfaz se portan sin reescribir,
+y la caja Linux y la caja Amiga son clientes Wayland. Medido con la API de GitHub: v3d son unos 200 KB de C en Linux
+y vc4 unos 770 KB. No hay manual público de la V3D.
 
