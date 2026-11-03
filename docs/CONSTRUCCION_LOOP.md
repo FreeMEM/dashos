@@ -492,3 +492,57 @@ vacío, como Mesa) está en §7 de la especificación.
 C14 falla ahora en dos de cada tres vueltas: carga media de la máquina de 15 (otra sesión compilando). La desviación
 sube a 1-2,3 ms con un límite de 1 ms. Las demás pruebas pasan. Es ruido de QEMU con el reloj real, no de C27; con la
 máquina en calma pasaba siempre.
+
+## Resumen de la noche
+
+Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al
+iniciar sesión. Se cierra media hora antes de las 09:00: todo estaba terminado y guardado, y con la máquina muy
+cargada las pruebas de tiempo daban ruido.
+
+**Hecho y probado en QEMU `raspi4b`** (`make -C kernel prueba` lo comprueba todo):
+
+- C1: llamada nativa desde el código 68k al sistema, en el JIT de Emu68.
+- C2 a C9: kernel en Rust big-endian. Excepciones, árbol de dispositivos, memoria física, MMU, montón, temporizador
+  con GIC y los cuatro núcleos.
+- C10 a C14: hilos y planificador justo, procesos en EL0 con su propio espacio, llaves y canales, memoria compartida
+  y clase de plazo.
+- C15 a C17: pantalla del firmware, compositor con doble búfer y daños, y avisos entre núcleos (de 10 ms a 19 µs).
+- C18 y C19: recogida de procesos muertos sin perder memoria, y programas de usuario en Rust cargados desde ELF.
+- C20 y C21: controladores fuera del kernel (puerto serie con su interrupción como mensaje, y tarjeta SD).
+- C22 y C25: USB con hub, teclado y ratón, y el ratón moviendo una ventana en pantalla
+  (`docs/capturas/c25-raton-usb.png`).
+- C26: búferes de la GPU.
+
+**Escrito según especificación, sin probar en hardware** (QEMU no emula estos chips):
+
+- C23: compositor de vídeo HVS.
+- C24: lado del kernel de la GPU V3D.
+- C27: primer trabajo de la GPU, que borra 64 × 64 píxeles y comprueba la memoria. Con la Pi 4 se ejecuta solo al
+  arrancar.
+
+En QEMU se comprueba la codificación contra los ejemplos de las especificaciones, byte a byte.
+
+**Especificaciones de los analistas** (`docs/spec/hw/`):
+
+- `hvs.md`: compositor de vídeo.
+- `hdmi.md`: pixel valves y HDMI.
+- `v3d.md`: GPU, lado del kernel.
+- `mesa-v3d.md`: lo que Mesa pide al kernel.
+- `v3d-listas.md`: listas de control mínimas.
+
+**Con la sesión de Dash.** El backend AArch64 está en marcha en la rama `aarch64` de FreeMEMLang. Formato de ELF
+acordado: estático en 0x400000. Pila de 64 KB o la que pida el ELF. El usuario eligió punteros de 64 bits.
+
+**Pendiente o a vigilar:**
+
+- **C14 con la máquina cargada.** Falla a veces con carga alta (media de 15): la desviación pasa de 1 ms porque QEMU
+  sigue el reloj real. En calma pasaba siempre.
+- **Pruebas en la Pi 4.** HVS, V3D, EMMC2 y USB de la placa necesitan la Pi. Los puertos USB-A van por el VL805, que
+  es xHCI por PCIe, no por el DWC2.
+- **Orden de bytes de Mesa.** Pregunta abierta en `PLAN.md`, sin decidir: A, procesos little-endian para la GPU; B,
+  portar Mesa a big-endian; C, un servidor de la GPU en little-endian.
+- **Pasos siguientes del kernel:**
+  - Llave de memoria DMA, para sacar del kernel el USB.
+  - Interrupciones de la GPU por el repartidor de C20.
+  - Más de una baldosa en las listas de borrado.
+  - Cerrar los canales de un proceso que muere.
