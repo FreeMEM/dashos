@@ -95,11 +95,6 @@ sale con código 29
 sale con código 29
   dos cargas: bases distintas sí, por encima de 4 GB sí
 C29: cargador de PIE bien
-  [malo] escape: ?[31m
-  [malo] memoria agotada en
-  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada
-sale con código 31
-C31: el kernel sobrevive a los punteros malos
 sale con código 32
 sale con código 32
 C32: los dos extremos de un canal a la vez, en dos núcleos: bien
@@ -115,8 +110,14 @@ C32: registros de EL0 bien
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
 C39: crear, matar y esperar procesos desde un proceso bien
+  [malo] escape: ?[31m
+  [malo] memoria agotada en
+  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada
+  [lanzador] malo: clase 0, código 31
   [llaves] copias con menos derechos, marcas que no se cambian y revocación
-C41: llaves completas bien
+  [lanzador] llaves: clase 0, código 41
+  [lanzador] 2 pruebas lanzadas desde un proceso, cada una en su grupo
+C43: pruebas de usuario lanzadas por un proceso bien
   [grupos] cupo agotado en
 C42: cupos por grupo bien
 PÁNICO: panicked at src/base/excepciones.rs

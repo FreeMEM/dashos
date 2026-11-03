@@ -39,13 +39,12 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_bo();
     prueba_fpu();
     prueba_pie();
-    prueba_malo();
     prueba_tenis();
     prueba_repartos();
     prueba_asid();
     prueba_el0();
     prueba_padre();
-    prueba_llaves();
+    prueba_lanzador();
     prueba_grupos();
     prueba_desborde();
 }
@@ -965,24 +964,8 @@ fn prueba_pie() {
     kprintln!("C29: cargador de PIE {}", if bases[0] != bases[1] && altas { "bien" } else { "MAL" });
 }
 
-/// C31: un programa hostil (`usuario/src/bin/malo.rs`) pasa punteros malos a las llamadas. El kernel tiene que
-/// devolverle errores y seguir vivo; si no, la prueba no llega a escribir su línea.
+/// C31 y siguientes: un programa hostil (`usuario/src/bin/malo.rs`). Desde C43 lo lanza `lanzador`, en su grupo.
 static MALO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/malo");
-
-fn prueba_malo() {
-    use core::sync::atomic::Ordering;
-    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
-    // Un programa hostil corre en un grupo con cupo (C42), como cualquier programa que no es de fiar: 64 MB.
-    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(64 << 20) else { return };
-    if lanzar_elf_en(MALO, alloc::vec::Vec::new(), 2, grupo).is_none() {
-        return;
-    }
-    let inicio = reloj::tics();
-    while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 1500 {
-        reloj::esperar_interrupcion();
-    }
-    kprintln!("C31: el kernel sobrevive a los punteros malos");
-}
 
 /// C32: dos procesos (`usuario/src/bin/tenis.rs`) en los núcleos 2 y 3 mandan y leen 20 000 veces por los dos
 /// extremos del mismo canal. Con un cerrojo por lado se colgaban los dos núcleos (auditoría, hallazgo 7).
@@ -1178,14 +1161,37 @@ fn prueba_padre() {
 /// C41: llaves completas (`usuario/src/bin/llaves.rs`).
 static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
 
-fn prueba_llaves() {
-    let Some(control) = lanzar_elf_control(LLAVES, alloc::vec::Vec::new(), 2) else { return };
+/// C43: las pruebas que son programas sueltos las lanza un proceso (`usuario/src/bin/lanzador.rs`), cada una en su
+/// grupo de 64 MB, y comprueba sus códigos de salida. El kernel solo le da el paquete con los ELF.
+static LANZADOR: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/lanzador");
+
+fn prueba_lanzador() {
+    let pruebas: [(&str, u32, &[u8]); 2] = [("malo", 31, MALO), ("llaves", 41, LLAVES)];
+    let mut paquete = alloc::vec::Vec::new();
+    paquete.extend_from_slice(&(pruebas.len() as u32).to_le_bytes());
+    for (nombre, codigo, elf) in pruebas {
+        paquete.extend_from_slice(&codigo.to_le_bytes());
+        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        let mut n = [0u8; 16];
+        n[..nombre.len()].copy_from_slice(nombre.as_bytes());
+        paquete.extend_from_slice(&n);
+    }
+    for (_, _, elf) in pruebas {
+        while paquete.len() % 8 != 0 {
+            paquete.push(0);
+        }
+        paquete.extend_from_slice(elf);
+    }
+    let Some(m) = memoria::Memoria::nueva(paquete.len(), &crate::cupo::Cupo::raiz()) else { return };
+    m.escribir(0, &paquete);
+    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
+    let Some(control) = lanzar_elf_control(LANZADOR, alloc::vec![m], 2) else { return };
     let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 300 {
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 2500 {
         reloj::esperar_interrupcion();
     }
     let fin = control.estado.tomar().fin;
-    kprintln!("C41: llaves completas {}", if fin == Some(objetos::Fin::Salida(41)) { "bien" } else { "MAL" });
+    kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if fin == Some(objetos::Fin::Salida(43)) { "bien" } else { "MAL" });
 }
 
 /// C42: cupos por grupo (`usuario/src/bin/grupos.rs`), con los hijos de C39.

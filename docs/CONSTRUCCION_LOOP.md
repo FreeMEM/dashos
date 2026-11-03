@@ -1022,6 +1022,22 @@ Sin la regla de no volver a marcar, falla en el paso 6.
 
 Sin devolver lo cobrado, falla en el paso 5. Matar un subgrupo dentro de otro no está probado.
 
+### 2026-11-03 tarde, bucle — C43, primera parte (pruebas lanzadas por un proceso)
+
+**`lanzador`** recibe en un objeto de memoria un paquete de ELF con su código esperado. Para cada uno:
+- lo copia a un objeto propio;
+- crea un grupo de 64 MB;
+- lo lanza ahí;
+- lo espera y comprueba su código de salida.
+
+`malo` y `llaves` salen del kernel y los lanza él. Ejercita C39 a C42 desde EL0.
+
+Las demás pruebas siguen en el kernel. Unas necesitan llaves que solo da el kernel (registros, interrupciones, el ELF
+de `hijo`); otras miden cosas del kernel por dentro (memoria libre, ASID, mapa). Pasarlas pide un servicio que dé
+esas llaves, que es el programa de inicio (fase 4).
+
+Lanzada la auditoría de cierre de la fase 3.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al
