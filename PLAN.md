@@ -208,26 +208,14 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
 
 ## Fases
 
-1. **Separar el JIT de Emu68.** Hecho el 2026-11-03 en `jit-host/`. Lo siguiente es que el código 68k llame a una
-   función nativa a través de una tabla de saltos de biblioteca.
-2. **Kernel mínimo en Rust, en QEMU `raspi4b`.** Arranque propio en big-endian, MMU, los cuatro núcleos, temporizador,
-   interrupciones, puerto serie y pantalla. Procesos con memoria protegida. El arranque de Emu68 para la Pi sirve de
-   referencia.
-3. **La caja Amiga.** Un proceso con exec dentro: tareas, señales, mensajes, memoria y bibliotecas. Primero con
-   código nativo, después con una tarea 68k que lo llame a través del JIT.
-4. **Backend ARM de dashc.** En paralelo con las fases 2 y 3. Hasta que esté, el código puede empezar en C.
-5. **Bibliotecas.** dos, graphics, layers e intuition, una a una, cada una con sus pruebas del oráculo.
-6. **Hardware real.** La Pi 4 primero. Su CPU (Cortex-A72) admite big-endian: Emu68 funciona así en ella a diario.
-   Lo más costoso es el USB, que va por el chip VL805 conectado por PCIe. Después la Pi 5: lo básico está en el chip
-   BCM2712, y USB, red y GPIO van por el chip RP1, también por PCIe. QEMU no emula la Pi 5.
+La hoja de ruta está en `docs/diseño/S15-hoja-de-ruta.md`: hitos H1 a H9, con DashOS 0.1 en H8. El diseño entero,
+resumido, en `docs/diseño/RESUMEN.md`.
 
 ## Preguntas abiertas
 
 - Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
   `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
-- Si exec, dentro de la caja, empieza en C mientras llega el backend ARM de Dash, o se espera.
-- Cómo se dibuja la pantalla: framebuffer de la Pi con un graphics propio, o algo más parecido a RTG.
 
 ## Herramientas
 

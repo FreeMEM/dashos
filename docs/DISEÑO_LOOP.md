@@ -117,7 +117,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S13 **Red.** Pila TCP/IP, cortafuegos, DNS, TLS, y `bsdsocket.library` para los programas Amiga.
 - [x] S14 **Arranque, servicios y actualizaciones.** Del firmware de la Pi al escritorio. Gestor de servicios.
   Actualizaciones A/B o por instantáneas, y volver atrás si algo falla.
-- [ ] S15 **Hoja de ruta.** Todo lo anterior ordenado en fases con hitos que se puedan enseñar. Qué hace falta para
+- [x] S15 **Hoja de ruta.** Todo lo anterior ordenado en fases con hitos que se puedan enseñar. Qué hace falta para
   la primera versión que arranca en una Pi 4 real.
 
 ## Decisiones pendientes
@@ -162,6 +162,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   `tryboot`? Mientras: sí.
 - (S14) ¿Menú de arranque temprano a lo Amiga, y con qué tecla? Mientras: sí, barra espaciadora o los dos botones.
 - (S14) ¿Pantalla de entrada siempre (el cajón va cifrado)? Mientras: sí.
+- (S15) ¿Este orden, con la primera versión en H8 y la caja Linux en la 0.2? Mientras: sí.
+- (S15) ¿Arrancar ya la línea de análisis de la sala limpia, empezando por exec? Mientras: sí, cuando el usuario lo diga.
+- (S15) ¿Avisar ya a las sesiones de Dash del backend ARM? Mientras: no se ha avisado.
 
 ## Bitácora
 
@@ -333,4 +336,10 @@ El mismo programa Dash compila para DashOS (AArch64 big-endian) y para AmigaOS 3
 Ubuntu le suma el vigilante. Tarjeta con partición de arranque, ranuras A y B (kernel e imagen de arranque) y la del
 sistema con instantáneas; kernel y `SYS:` se prueban juntos. Gestor de servicios declarativo, en paralelo y con
 vigilancia. Del Amiga: `S:Startup-Sequence` para la caja, `WBStartup` y un menú de arranque temprano.
+
+### 2026-11-03 — S15 (hoja de ruta) y fin del bucle
+
+`docs/diseño/S15-hoja-de-ruta.md`: nueve hitos que se pueden enseñar, de la llamada nativa desde el 68k (H1) a la
+caja Linux (H9). DashOS 0.1 son H1 a H8; la Pi 4 se compra al terminar H3. Tres líneas en paralelo: sistema, Dash y
+análisis. `docs/diseño/RESUMEN.md` recoge el sistema entero. No quedan tareas: el bucle se para.
 
