@@ -68,6 +68,22 @@ extern "C" fn inicio() -> ! {
     texto(", BigEndEL0 (bits 19:16) = ");
     hex((mmfr0 >> 16) & 0xf);
     texto("\n");
+    // S7: ¿se puede poner little-endian solo para EL0 (SCTLR_EL1.E0E, bit 24)?
+    let antes: u64;
+    let despues: u64;
+    unsafe {
+        core::arch::asm!("mrs {}, sctlr_el1", out(reg) antes);
+        core::arch::asm!("msr sctlr_el1, {}", "isb", in(reg) antes | (1 << 24));
+        core::arch::asm!("mrs {}, sctlr_el1", out(reg) despues);
+        core::arch::asm!("msr sctlr_el1, {}", "isb", in(reg) despues & !(1 << 24));
+    }
+    texto("SCTLR_EL1.E0E: antes ");
+    hex((antes >> 24) & 1);
+    texto(", tras ponerlo a 1 se lee ");
+    hex((despues >> 24) & 1);
+    texto(" (EE, bit 25 = ");
+    hex((despues >> 25) & 1);
+    texto(")\n");
     loop { unsafe { core::arch::asm!("wfe") } }
 }
 

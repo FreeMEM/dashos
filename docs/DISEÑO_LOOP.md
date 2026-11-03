@@ -96,7 +96,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S6 **Seguridad.** Usuarios, grupos, propietarios y permisos como en Linux (decisión del usuario), PID por
   proceso, y cómo se traducen a capacidades del kernel. Permisos por aplicación, aislamiento, firmas de paquetes y
   arranque verificado (lo que permite la Pi 4).
-- [ ] S7 **Software de Linux.** Cómo ejecutar programas de Linux. Opciones a estudiar: una capa de llamadas al
+- [x] S7 **Software de Linux.** Cómo ejecutar programas de Linux. Opciones a estudiar: una capa de llamadas al
   sistema de Linux (como hacen FreeBSD y el primer WSL), una máquina virtual con Linux y sus ventanas en el
   escritorio (como ChromeOS y WSLg), o portar programas. Ojo: los programas Linux de ARM son little-endian. AArch64
   permite que cada proceso de usuario tenga su orden de bytes (`SCTLR_EL1.E0E`): comprobar que la Pi 4 lo admite y
@@ -143,6 +143,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   Mientras: sí.
 - (S6) ¿Permisos por aplicación preguntados en el primer uso? Mientras: sí.
 - (S6) ¿Arranque verificado de la Pi 4 solo como opción documentada (es irreversible)? Mientras: sí.
+- (S7) ¿Orden: biblioteca POSIX nativa (relibc), después caja Linux en máquina virtual, y capa de llamadas solo si
+  hace falta? Mientras: sí.
+- (S7) ¿Distribución de la caja Linux: Arch Linux ARM o Debian? Mientras: Arch Linux ARM.
+- (S7) ¿Caja Linux solo desde 4 GB de RAM? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -239,4 +243,12 @@ programa (permisos por aplicación, como Android y macOS). Las dos van sobre cap
 identidad de quien lo abrió. Sin superusuario: administradores que confirman cada acción. El selector de ficheros
 entrega una llave para el fichero elegido y nada más. Paquetes firmados con Ed25519. Comprobado: el arranque
 verificado de la Pi 4 es irreversible (OTP) y solo completo en B1/C0; se recomienda como opción, no de serie.
+
+### 2026-11-03 — S7 (software de Linux)
+
+`docs/diseño/S7-linux.md`. Comprobado en QEMU: `SCTLR_EL1.E0E` se puede activar, así que un kernel big-endian puede
+tener procesos little-endian (prueba ampliada en `pruebas/rust-be/`). Recomendación en tres pasos: relibc como
+biblioteca POSIX nativa; una caja Linux en máquina virtual, como Crostini y WSL2, con las ventanas reenviadas al
+compositor; y la capa de llamadas al sistema (con Asterinas de referencia) solo más adelante. Lección de WSL1: una
+capa de traducción nunca está completa. Consecuencia para S9: el compositor tiene que aceptar ventanas de Wayland.
 
