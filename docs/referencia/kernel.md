@@ -113,12 +113,15 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
 | 11 | `interrupcion_terminar` | `x0` llave de interrupción | 0 |
-| 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas | Llave de proceso |
+| 12 | `proceso_crear` | `x0` llave de memoria con el ELF, `x1` tamaño del ELF, `x2` tabla de llaves, `x3` cuántas, `x4` llave de grupo o 0 | Llave de proceso |
 | 13 | `proceso_matar` | `x0` llave de proceso | 0 |
 | 14 | `proceso_esperar` | `x0` llave de proceso | `x0` clase, `x1` código |
 | 15 | `llave_duplicar` | `x0` llave, `x1` derechos, `x2` marca | Llave nueva |
 | 16 | `llave_revocable` | `x0` llave | `x0` copia revocable, `x1` revocador |
 | 17 | `revocar` | `x0` revocador | 0 |
+| 18 | `grupo_crear` | `x0` presupuesto en bytes | Llave de grupo |
+| 19 | `grupo_matar` | `x0` llave de grupo | 0 |
+| 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
 
 ### Detalles
 
@@ -173,6 +176,20 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   otra una llave ya marcada da `E_DERECHOS`. Un lado de canal sigue abierto mientras quede alguna copia.
 - **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
   que se hagan de la revocable también pasan por él.
+- **Grupos y cupos** (C42). Cada proceso es de un grupo con un presupuesto en bytes. Todo lo que crea se cobra ahí:
+  - un objeto de memoria, por sus páginas;
+  - su espacio, por sus tablas y sus páginas de imagen y pila;
+  - cada proceso, 64 KB fijos (hilo, pila del kernel y tabla de llaves);
+  - cada canal, unos 26 KB fijos (sus dos colas llenas).
+
+  Al agotarse, la llamada da `E_MEMORIA`. Lo cobrado vuelve al grupo cuando se suelta el objeto, aunque lo tenga otro
+  proceso. Los procesos que lanza el kernel son del grupo raíz, sin límite.
+- **18, `grupo_crear`.** Un subgrupo del propio con ese presupuesto, que sale del propio: si no cabe, `E_MEMORIA`. Se
+  devuelve al propio cuando ya no queda nada cobrado al subgrupo.
+- **12 con `x4`.** Con una llave de grupo con derecho de escribir, el proceso nuevo es de ese grupo; con 0, del de
+  quien lo crea.
+- **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos.
+- **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
 - **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Lo que ya estaba proyectado sigue proyectado.
@@ -213,12 +230,11 @@ Una llamada corre entera sin que el kernel se interrumpa, así que cada una tien
 
 ### Límites
 
-Son provisionales, hasta que haya cupos por grupo de procesos (S16, F).
+Son límites de forma, aparte del cupo de cada grupo.
 
 | Qué | Límite |
 |---|---|
 | Llaves en la tabla de un proceso | 1024 |
-| Canales vivos creados por un proceso, estén en su tabla o dentro de mensajes | 512 |
 | Mensajes esperando en un lado de un canal | 16 |
 | Proyecciones de objetos de memoria por proceso | 1024 |
 | Memoria libre que solo usa el kernel | 32 MB |
@@ -255,6 +271,7 @@ Tipos de objeto:
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
+| Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 
 ## Biblioteca de usuario en Rust
 
@@ -281,8 +298,8 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 ## Limitaciones conocidas
 
 - No hay llamada para quitar una proyección.
-- Si el montón del kernel se queda sin memoria, el kernel cae. Con los límites, un proceso solo no pasa de unos 7 MB
-  del montón y no llega. Varios procesos a la vez sí pueden llegar, hasta los cupos de la fase 3 de S16.
+- Si el montón del kernel se queda sin memoria, el kernel cae. Un proceso en un grupo con cupo no puede llevarlo
+  ahí; los del grupo raíz (los que lanza el kernel) no tienen cupo.
 - Una llave de registros da páginas enteras de 4 KB. La del controlador serie incluye, en la misma página, las UART 2
   a 5 de la BCM2711; son del mismo controlador.
 - Un programa puede escribir en la consola líneas que imitan mensajes del kernel. Las pruebas de QEMU se fían de esas

@@ -81,7 +81,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C41 **Llaves completas** (S16, G): duplicar una llave con menos derechos; identidad del que escribe (una marca
   en cada extremo, que pone quien lo crea, y que el lector recibe con el mensaje); revocar (quien dio una llave puede
   retirarla de todas sus copias).
-- [ ] C42 **Cupos por grupo** (S16, F): cada proceso pertenece a un grupo con un presupuesto de memoria del kernel
+- [x] C42 **Cupos por grupo** (S16, F): cada proceso pertenece a un grupo con un presupuesto de memoria del kernel
   que le da quien lo crea. Todo lo que crea se cobra ahí (páginas, tablas, llaves, mensajes en cola, canales). Al
   agotarse, `E_MEMORIA`. Matar el grupo libera todo. Sustituye a los límites provisionales de C32.
 - [ ] C43 **Cierre de la fase 3**: las pruebas del arranque que puedan ser programas de usuario pasan a serlo, con un
@@ -992,6 +992,35 @@ falló dos veces. Con 25 s pasó tres de tres: `make prueba` usa ahora 25 s.
 - revocar la última cierra el lado.
 
 Sin la regla de no volver a marcar, falla en el paso 6.
+
+### 2026-11-03 tarde, bucle — C42 (cupos por grupo)
+
+- **`cupo.rs`.**
+  - `Cupo` es un presupuesto en bytes y `Cargo` lo cobrado, que se devuelve al soltarse.
+  - Pagan:
+    - un objeto de memoria, por sus páginas;
+    - un espacio, por sus tablas y páginas propias;
+    - cada proceso, 64 KB fijos;
+    - cada canal, unos 26 KB fijos, que cubren sus colas llenas.
+  - Un subgrupo saca su presupuesto del padre, y lo devuelve al soltarse cuando no queda nada cobrado a él.
+- **Matar un grupo.** Mata a sus miembros y a los de sus subgrupos, con una lista y sin recursión.
+- **Llamadas nuevas.** 18 `grupo_crear`, 19 `grupo_matar` y 20 `grupo_uso`. `proceso_crear` admite en `x4` una llave de
+  grupo.
+- **Límites.** El cupo sustituye al límite de 512 canales de C32. Siguen los de forma: 1024 llaves, 16 mensajes por
+  lado y 1024 proyecciones. El grupo raíz, el de lo que lanza el kernel, no tiene límite; ahí protege la reserva de
+  32 MB.
+- **`malo`.** Ahora corre en un grupo de 64 MB, como cualquier programa que no es de fiar. Agota el cupo en 15 trozos
+  de 4 MB, y la cadena de canales para en `E_MEMORIA` a los 2513.
+
+**Prueba** (`grupos`, en un grupo de 32 MB):
+- un hijo en un subgrupo de 1 MB se come la memoria y le dan 13 trozos de 64 KB;
+- al acabar, el subgrupo vuelve a 0;
+- dentro de 1 MB no cabe un subgrupo de 2 MB;
+- matar un grupo mata a sus dos procesos;
+- el grupo propio no se toca;
+- al final, el grupo de la prueba queda a 0.
+
+Sin devolver lo cobrado, falla en el paso 5. Matar un subgrupo dentro de otro no está probado.
 
 ## Resumen de la noche
 

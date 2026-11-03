@@ -46,6 +46,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_el0();
     prueba_padre();
     prueba_llaves();
+    prueba_grupos();
     prueba_desborde();
 }
 
@@ -230,7 +231,7 @@ fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
 fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>, avisar: bool) {
     use espacio::{Espacio, Permiso};
     // Solo para las pruebas del arranque, que salen del kernel en la fase 2 de S16.
-    let mut e = Espacio::nuevo().expect("prueba: sin espacio");
+    let mut e = Espacio::nuevo(crate::cupo::Cupo::raiz()).expect("prueba: sin espacio");
     let codigo = unsafe { core::slice::from_raw_parts(ini, fin as usize - ini as usize) };
     e.pagina_nueva(VA_CODIGO, Permiso::Codigo, codigo, 0).expect("prueba: sin memoria");
     let mut datos = alloc::vec![mensaje.len() as u8];
@@ -249,7 +250,8 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         big_endian: true,
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
-        canales: Default::default(),
+        cupo: crate::cupo::Cupo::raiz(),
+        _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
         control: Default::default(),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
@@ -527,7 +529,12 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
 }
 
 fn lanzar_elf_control(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> Option<alloc::sync::Arc<objetos::Control>> {
-    match crate::procesos::lanzar(binario, llaves, Some(nucleo)) {
+    lanzar_elf_en(binario, llaves, nucleo, crate::cupo::Cupo::raiz())
+}
+
+/// Como `lanzar_elf_control`, en un grupo dado (C42).
+fn lanzar_elf_en(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize, cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<alloc::sync::Arc<objetos::Control>> {
+    match crate::procesos::lanzar(binario, llaves, Some(nucleo), cupo) {
         Ok((control, cargado)) => {
             if cargado.base != 0 {
                 kprintln!("  PIE de {} bytes cargado en {:#x}, pila de {} KB en {:#x}", binario.len(), cargado.base, cargado.tamano_pila / 1024, cargado.pila);
@@ -965,7 +972,9 @@ static MALO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-s
 fn prueba_malo() {
     use core::sync::atomic::Ordering;
     let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
-    if !lanzar_elf(MALO, alloc::vec::Vec::new(), 2) {
+    // Un programa hostil corre en un grupo con cupo (C42), como cualquier programa que no es de fiar: 64 MB.
+    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(64 << 20) else { return };
+    if lanzar_elf_en(MALO, alloc::vec::Vec::new(), 2, grupo).is_none() {
         return;
     }
     let inicio = reloj::tics();
@@ -1022,14 +1031,14 @@ fn prueba_repartos() {
 /// C32: 1000 espacios vivos a la vez tienen ASID distintos y ninguno es el 0; al soltarlos, sus ASID vuelven a darse.
 /// Antes eran de 8 bits y se repetían a los 256 procesos (auditoría, hallazgo 2).
 fn prueba_asid() {
-    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).filter_map(|_| espacio::Espacio::nuevo()).collect();
+    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).filter_map(|_| espacio::Espacio::nuevo(crate::cupo::Cupo::raiz())).collect();
     let mut asids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid()).collect();
     asids.sort_unstable();
     asids.dedup();
     let distintos = asids.len() == 1000 && asids[0] != 0 && *asids.last().unwrap() < 1 << 16;
     let menor = asids.first().copied().unwrap_or(0);
     vivos.clear();
-    let Some(otra) = espacio::Espacio::nuevo() else { return };
+    let Some(otra) = espacio::Espacio::nuevo(crate::cupo::Cupo::raiz()) else { return };
     let otra_asid = otra.asid();
     let reusa = otra_asid <= menor;
     drop(otra);
@@ -1145,7 +1154,7 @@ static HIJO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-s
 fn prueba_padre() {
     use core::sync::atomic::Ordering;
     let libres = memoria::paginas().libres() + monton::paginas_pequenas();
-    let Some(m) = memoria::Memoria::nueva(HIJO.len()) else { return };
+    let Some(m) = memoria::Memoria::nueva(HIJO.len(), &crate::cupo::Cupo::raiz()) else { return };
     m.escribir(0, HIJO);
     let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     let (a, b) = objetos::Canal::nuevo();
@@ -1177,6 +1186,31 @@ fn prueba_llaves() {
     }
     let fin = control.estado.tomar().fin;
     kprintln!("C41: llaves completas {}", if fin == Some(objetos::Fin::Salida(41)) { "bien" } else { "MAL" });
+}
+
+/// C42: cupos por grupo (`usuario/src/bin/grupos.rs`), con los hijos de C39.
+static GRUPOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/grupos");
+
+fn prueba_grupos() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(m) = memoria::Memoria::nueva(HIJO.len(), &raiz) else { return };
+    m.escribir(0, HIJO);
+    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
+    let (a, b) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&a);
+    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
+    let Some(grupo) = raiz.hijo(32 << 20) else { return };
+    let Some(control) = lanzar_elf_en(GRUPOS, alloc::vec![m, b], 2, grupo.clone()) else { return };
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 1000 {
+        reloj::esperar_interrupcion();
+    }
+    let fin = control.estado.tomar().fin;
+    drop((a, c, control));
+    esperar_tics(10);
+    let (_, usado) = grupo.uso();
+    kprintln!("  grupos acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
+    kprintln!("C42: cupos por grupo {}", if fin == Some(objetos::Fin::Salida(42)) && usado == 0 { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel

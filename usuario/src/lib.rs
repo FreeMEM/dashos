@@ -82,7 +82,27 @@ pub fn interrupcion_terminar(llave: u32) -> i64 {
 /// Lanza un proceso con el ELF que hay en el objeto de memoria `memoria` (sus primeros `tamano` bytes). `llaves` pasan
 /// a ser sus llaves 1, 2... Devuelve la llave del proceso o un error negativo (C39).
 pub fn proceso_crear(memoria: u32, tamano: usize, llaves: &[u32]) -> i64 {
-    llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, 0]).0 as i64
+    proceso_crear_en(0, memoria, tamano, llaves)
+}
+
+/// Como `proceso_crear`, en el grupo de la llave `grupo` (0: el propio). C42.
+pub fn proceso_crear_en(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32]) -> i64 {
+    llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, grupo as u64]).0 as i64
+}
+
+/// Un subgrupo del propio con `presupuesto` bytes (C42).
+pub fn grupo_crear(presupuesto: u64) -> i64 {
+    llamada(18, [presupuesto, 0, 0, 0, 0]).0 as i64
+}
+
+pub fn grupo_matar(grupo: u32) -> i64 {
+    llamada(19, [grupo as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// (límite, usado) en bytes, o un error negativo en el límite.
+pub fn grupo_uso(grupo: u32) -> (i64, u64) {
+    let (a, b) = llamada(20, [grupo as u64, 0, 0, 0, 0]);
+    (a as i64, b)
 }
 
 pub fn proceso_matar(proceso: u32) -> i64 {

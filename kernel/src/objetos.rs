@@ -9,7 +9,6 @@ use crate::planificador::{self, HiloRef};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const LEER: u32 = 1 << 0;
 pub const ESCRIBIR: u32 = 1 << 1;
@@ -22,10 +21,6 @@ pub const MAX_LLAVES: usize = 8;
 /// Son provisionales: los cupos por grupo de procesos (S16, F) los sustituyen.
 pub const MAX_TABLA: usize = 1024;
 pub const MAX_COLA: usize = 16;
-/// Canales vivos creados por un proceso, estén donde estén: en su tabla o dentro de mensajes de otros canales. Sin
-/// esto, meter canales llenos dentro de otros canales gastaba el montón del kernel sin límite (auditoría de cierre de
-/// la fase 1, N1). Con 512 canales de 16 mensajes por lado, un proceso no pasa de unos 7 MB del montón.
-pub const MAX_CANALES: usize = 512;
 
 #[derive(Clone)]
 pub enum Objeto {
@@ -39,6 +34,8 @@ pub enum Objeto {
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un proceso visto desde fuera (C39): con escribir se mata, con leer se espera a que acabe.
     Proceso(Arc<Control>),
+    /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
+    Grupo(Arc<crate::cupo::Cupo>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
     Revocable(Arc<Revocable>),
     /// La llave con la que se revoca: vacía el intermediario, y todas las llaves que pasan por él dejan de valer.
@@ -151,8 +148,8 @@ struct Lado {
 /// en los dos extremos no se esperan el uno al otro (auditoría, hallazgo 7).
 pub struct Canal {
     lados: Cerrojo<[Lado; 2]>,
-    /// La cuenta de canales del proceso que lo creó; se descuenta al soltarlo.
-    cuenta: Option<Arc<AtomicUsize>>,
+    /// Lo cobrado al grupo del proceso que lo creó (C42); se devuelve al soltarlo.
+    _cargo: Option<crate::cupo::Cargo>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -244,37 +241,24 @@ fn soltar(mut pendientes: Vec<Mensaje>) {
 
 impl Drop for Canal {
     fn drop(&mut self) {
-        if let Some(c) = &self.cuenta {
-            c.fetch_sub(1, Ordering::Relaxed);
-        }
         let mensajes = self.vaciar();
         soltar(mensajes);
     }
 }
 
 impl Canal {
-    /// Un canal del kernel, que no cuenta para ningún proceso.
+    /// Un canal del kernel, que no se cobra a ningún grupo.
     pub fn nuevo() -> (Llave, Llave) {
-        Self::con_cuenta(None)
+        Self::con_cargo(None)
     }
 
-    /// Un canal creado por un proceso: cuenta para su límite de `MAX_CANALES`. `None` si ya está en el límite.
-    pub fn nuevo_de(cuenta: &Arc<AtomicUsize>) -> Option<(Llave, Llave)> {
-        let mut n = cuenta.load(Ordering::Relaxed);
-        loop {
-            if n >= MAX_CANALES {
-                return None;
-            }
-            match cuenta.compare_exchange_weak(n, n + 1, Ordering::Relaxed, Ordering::Relaxed) {
-                Ok(_) => break,
-                Err(visto) => n = visto,
-            }
-        }
-        Some(Self::con_cuenta(Some(cuenta.clone())))
+    /// Un canal creado por un proceso: se cobra `COSTE_CANAL` a su grupo (C42). `None` si no cabe.
+    pub fn nuevo_de(cupo: &Arc<crate::cupo::Cupo>) -> Option<(Llave, Llave)> {
+        Some(Self::con_cargo(Some(cupo.cobrar(crate::cupo::COSTE_CANAL)?)))
     }
 
-    fn con_cuenta(cuenta: Option<Arc<AtomicUsize>>) -> (Llave, Llave) {
-        let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]), cuenta });
+    fn con_cargo(cargo: Option<crate::cupo::Cargo>) -> (Llave, Llave) {
+        let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]), _cargo: cargo });
         (
             Llave::nueva(Objeto::Extremo(Arc::new(Punta { canal: Some(c.clone()), lado: 0 })), TODOS),
             Llave::nueva(Objeto::Extremo(Arc::new(Punta { canal: Some(c), lado: 1 })), TODOS),
@@ -441,8 +425,10 @@ pub struct Proceso {
     pub big_endian: bool,
     pub espacio: Cerrojo<crate::espacio::Espacio>,
     pub llaves: Cerrojo<TablaLlaves>,
-    /// Cuántos canales suyos siguen vivos (`MAX_CANALES`).
-    pub canales: Arc<AtomicUsize>,
+    /// Su grupo (C42): a él se cobra lo que crea.
+    pub cupo: Arc<crate::cupo::Cupo>,
+    /// Lo que cuesta el proceso en sí (`COSTE_PROCESO`).
+    pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.
     pub control: Arc<Control>,
 }

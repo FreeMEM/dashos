@@ -19,6 +19,7 @@ mod base;
 pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, planificador};
 
 mod azar;
+mod cupo;
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
 mod buzon;

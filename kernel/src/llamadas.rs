@@ -22,6 +22,11 @@
 //! | 15 | llave_duplicar(llave, derechos, marca) -> llave nueva, con esos derechos o menos y la marca si no tenía |
 //! | 16 | llave_revocable(llave) -> (llave revocable, revocador) |
 //! | 17 | revocar(revocador) |
+//! | 18 | grupo_crear(presupuesto en bytes) -> llave de grupo: un subgrupo del propio |
+//! | 19 | grupo_matar(llave de grupo) |
+//! | 20 | grupo_uso(llave de grupo) -> (límite, usado) |
+//!
+//! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
@@ -123,12 +128,15 @@ pub fn atender(marco: &mut Marco) {
         9 => registros_proyectar(a[0] as u32, a[1]),
         10 => interrupcion_asociar(a[0] as u32, a[1] as u32),
         11 => interrupcion_terminar(a[0] as u32),
-        12 => proceso_crear(a[0] as u32, a[1], a[2], a[3]),
+        12 => proceso_crear(a[0] as u32, a[1], a[2], a[3], a[4] as u32),
         13 => proceso_matar(a[0] as u32),
         14 => proceso_esperar(marco, a[0] as u32),
         15 => llave_duplicar(a[0] as u32, a[1], a[2]),
         16 => llave_revocable(marco, a[0] as u32),
         17 => revocar(a[0] as u32),
+        18 => grupo_crear(a[0]),
+        19 => grupo_matar(a[0] as u32),
+        20 => grupo_uso(marco, a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -167,7 +175,7 @@ fn canal_crear(marco: &mut Marco) -> u64 {
     if t.huecos() < 2 {
         return E_LIMITE;
     }
-    let Some((l0, l1)) = Canal::nuevo_de(&proc_.canales) else { return E_LIMITE };
+    let Some((l0, l1)) = Canal::nuevo_de(&proc_.cupo) else { return E_MEMORIA };
     // Con hueco para las dos, instalar solo falla sin memoria para la tabla; lo que llegó a entrar se quita.
     let Ok(h0) = t.instalar(l0) else { return E_MEMORIA };
     let Ok(h1) = t.instalar(l1) else {
@@ -306,7 +314,7 @@ fn memoria_crear(tamano: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(m) = objetos::Memoria::nueva(tamano as usize) else { return E_MEMORIA };
+    let Some(m) = objetos::Memoria::nueva(tamano as usize, &proc_.cupo) else { return E_MEMORIA };
     let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
@@ -386,8 +394,19 @@ fn sacar_llaves(proc_: &objetos::Proceso, numeros: &[u32]) -> Result<Vec<objetos
     Ok(numeros.iter().filter_map(|&n| t.quitar(n)).collect())
 }
 
-fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64) -> u64 {
+fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    // El grupo del proceso nuevo: el propio, o el de una llave de grupo con derecho de escribir (C42).
+    let cupo = if grupo == 0 {
+        proc_.cupo.clone()
+    } else {
+        let Some(g) = proc_.llaves.tomar().ver(grupo) else { return E_LLAVE };
+        let Objeto::Grupo(c) = g.objeto else { return E_TIPO };
+        if g.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+        c
+    };
     if n_llaves as usize > MAX_LLAVES {
         return E_TAMANO;
     }
@@ -417,7 +436,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64) -> u64 {
         Ok(v) => v,
         Err(e) => return e,
     };
-    match crate::procesos::lanzar(&binario, viajan, None) {
+    match crate::procesos::lanzar(&binario, viajan, None, cupo) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             match proc_.llaves.tomar().instalar(llave) {
@@ -533,4 +552,40 @@ fn revocar(h: u32) -> u64 {
     }
     r.revocar();
     0
+}
+
+/// Un subgrupo del grupo propio con `presupuesto` bytes, que salen del propio (C42).
+fn grupo_crear(presupuesto: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let Some(g) = proc_.cupo.hijo(presupuesto) else { return E_MEMORIA };
+    match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Grupo(g), objetos::TODOS)) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
+}
+
+fn grupo_matar(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    g.matar();
+    0
+}
+
+fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let (limite, usado) = g.uso();
+    marco.poner_x1(usado);
+    limite
 }

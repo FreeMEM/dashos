@@ -1,6 +1,7 @@
 //! Lanzar procesos desde un ELF (C39). Lo usan la llamada `proceso_crear` y las pruebas.
 
 use crate::cerrojo::Cerrojo;
+use crate::cupo::{Cupo, COSTE_PROCESO};
 use crate::elf;
 use crate::espacio::Espacio;
 use crate::objetos::{Control, Llave, Proceso, TablaLlaves};
@@ -21,13 +22,19 @@ pub enum Error {
 static SIGUIENTE: AtomicUsize = AtomicUsize::new(0);
 
 /// Un proceso nuevo desde `binario`, con `llaves` como sus llaves 1, 2... Si no se puede, devuelve las llaves.
-pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
-    let Some(mut e) = Espacio::nuevo() else { return Err((Error::SinMemoria, llaves)) };
+/// Todo se cobra al grupo `cupo` (C42), y el proceso queda apuntado en él.
+pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: Arc<Cupo>) -> Result<(Arc<Control>, elf::Cargado), (Error, Vec<Llave>)> {
+    let Some(cargo) = cupo.cobrar(COSTE_PROCESO) else { return Err((Error::SinMemoria, llaves)) };
+    let Some(mut e) = Espacio::nuevo(cupo.clone()) else { return Err((Error::SinMemoria, llaves)) };
     let cargado = match elf::cargar(&mut e, binario) {
         Ok(c) => c,
         Err(elf::Error::SinMemoria) => return Err((Error::SinMemoria, llaves)),
         Err(x) => return Err((Error::Elf(x), llaves)),
     };
+    let control = Arc::new(Control::default());
+    if !cupo.apuntar(&control) {
+        return Err((Error::SinMemoria, llaves));
+    }
     let mut tabla = TablaLlaves::default();
     if !tabla.reservar(llaves.len() + 1) {
         return Err((Error::SinMemoria, llaves));
@@ -36,13 +43,13 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>) -> Resu
         // Con sitio reservado y la tabla vacía, no falla.
         let _ = tabla.instalar(l);
     }
-    let control = Arc::new(Control::default());
     let p = Arc::new(Proceso {
         ttbr0: e.ttbr0(),
         big_endian: cargado.big_endian,
         espacio: Cerrojo::new(e),
         llaves: Cerrojo::new(tabla),
-        canales: Default::default(),
+        cupo,
+        _cargo: cargo,
         control: control.clone(),
     });
     let n = nucleo.unwrap_or_else(|| 1 + SIGUIENTE.fetch_add(1, Ordering::Relaxed) % 3);

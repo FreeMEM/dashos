@@ -151,8 +151,8 @@ fn principal() -> u64 {
     for k in 1..=1100u64 {
         x0(6, [k, 0, 0, 0, 0]);
     }
-    // Desde N1 (cierre de la fase 1), los canales vivos de un proceso tienen límite aunque no estén en su tabla: la
-    // cadena para en E_LIMITE, hacia los 500.
+    // Los canales vivos de un proceso cuentan aunque no estén en su tabla: desde C42 se cobran a su grupo, y la cadena
+    // para en E_MEMORIA cuando se acaba el cupo (antes, en E_LIMITE a los 512).
     let (mut a, mut b) = dashos::canal_crear();
     let mut largo = 1;
     let fin = loop {
@@ -167,7 +167,7 @@ fn principal() -> u64 {
         (a, b) = (c, d);
         largo += 1;
     };
-    if fin != E_LIMITE {
+    if fin != E_MEMORIA {
         return 26;
     }
     x0(6, [a as u64, 0, 0, 0, 0]);

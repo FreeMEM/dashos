@@ -313,14 +313,17 @@ impl Paginas {
 /// (C18). Es la única forma que tiene el resto del kernel de dar memoria a un proceso (C37).
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
+    /// Lo cobrado a su grupo (C42); se devuelve al soltarse.
+    _cargo: crate::cupo::Cargo,
 }
 
 impl Memoria {
     /// `tamano` bytes, redondeado a páginas. `None` si no hay memoria fuera de la reserva del kernel; entonces las
     /// páginas que ya se habían tomado vuelven al repartidor.
-    pub fn nueva(tamano: usize) -> Option<Self> {
+    pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
-        let mut m = Self { paginas: alloc::vec::Vec::new() };
+        let cargo = cupo.cobrar(n as u64 * PAGINA)?;
+        let mut m = Self { paginas: alloc::vec::Vec::new(), _cargo: cargo };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(paginas().pagina_usuario()?);

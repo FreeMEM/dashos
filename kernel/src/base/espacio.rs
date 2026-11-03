@@ -68,6 +68,9 @@ pub struct Espacio {
     propias: alloc::vec::Vec<u64>,
     /// Objetos de memoria proyectados: el espacio los mantiene vivos mientras exista (C18).
     proyectados: alloc::vec::Vec<alloc::sync::Arc<super::memoria::Memoria>>,
+    /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
+    cupo: alloc::sync::Arc<crate::cupo::Cupo>,
+    cobrado: u64,
 }
 
 impl Drop for Espacio {
@@ -80,6 +83,7 @@ impl Drop for Espacio {
             unsafe { p.liberar(t, 1) };
         }
         unsafe { p.liberar(self.l1, 1) };
+        self.cupo.devolver(self.cobrado);
     }
 }
 
@@ -124,10 +128,17 @@ fn indices(va: u64) -> [usize; 3] {
 
 impl Espacio {
     /// Un espacio vacío. `None` si no quedan ASID o memoria.
-    pub fn nuevo() -> Option<Self> {
-        let asid = asid_nuevo()?;
+    pub fn nuevo(cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        if !cupo.cobrar_suelto(PAGINA) {
+            return None;
+        }
+        let Some(asid) = asid_nuevo() else {
+            cupo.devolver(PAGINA);
+            return None;
+        };
         let Ok(l1) = tabla_nueva() else {
             asid_devolver(asid);
+            cupo.devolver(PAGINA);
             return None;
         };
         Some(Self {
@@ -136,7 +147,23 @@ impl Espacio {
             tablas: alloc::vec::Vec::new(),
             propias: alloc::vec::Vec::new(),
             proyectados: alloc::vec::Vec::new(),
+            cupo,
+            cobrado: PAGINA,
         })
+    }
+
+    /// Cobra una página al grupo (C42).
+    fn cobrar(&mut self) -> Result<(), Error> {
+        if !self.cupo.cobrar_suelto(PAGINA) {
+            return Err(Error::SinMemoria);
+        }
+        self.cobrado += PAGINA;
+        Ok(())
+    }
+
+    fn descobrar(&mut self) {
+        self.cupo.devolver(PAGINA);
+        self.cobrado -= PAGINA;
     }
 
     pub fn asid(&self) -> u64 {
@@ -176,7 +203,11 @@ impl Espacio {
                 v & DIRECCION
             } else {
                 self.tablas.try_reserve(1).map_err(|_| Error::SinMemoria)?;
-                let nueva = tabla_nueva()?;
+                self.cobrar()?;
+                let Ok(nueva) = tabla_nueva() else {
+                    self.descobrar();
+                    return Err(Error::SinMemoria);
+                };
                 self.tablas.push(nueva);
                 unsafe { e.write_volatile(nueva | VALIDO) };
                 nueva
@@ -265,7 +296,11 @@ impl Espacio {
     /// instrucciones de todos los núcleos.
     pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
-        let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
+        self.cobrar()?;
+        let Some(p) = paginas().pagina_usuario() else {
+            self.descobrar();
+            return Err(Error::SinMemoria);
+        };
         let k = mmu::virt(p as usize);
         // La página es nuestra (recién sacada del repartidor) y la mitad alta la ve entera por el mapa lineal.
         let pagina = unsafe { core::slice::from_raw_parts_mut(k as *mut u8, PAGINA as usize) };
@@ -283,6 +318,7 @@ impl Espacio {
         }
         if let Err(e) = self.proyectar(va, p, permiso) {
             unsafe { paginas().liberar(p, 1) };
+            self.descobrar();
             return Err(e);
         }
         self.propias.push(p);
