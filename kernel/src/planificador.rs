@@ -116,8 +116,8 @@ const FPEN_ATRAPAR: u64 = 0b01 << 20;
 const FPEN_LIBRE: u64 = 0b11 << 20;
 static FP_CAMBIOS: AtomicU64 = AtomicU64::new(0);
 
-/// SCTLR_EL1.E0E: orden de bytes de los datos en EL0. Cada proceso tiene el suyo (C30); el kernel sigue en
-/// big-endian (EE) y las instrucciones son siempre little-endian.
+/// SCTLR_EL1.E0E: orden de bytes de los datos en EL0. Cada proceso tiene el suyo (C30); el kernel es little-endian
+/// desde C33 (EE a 0) y las instrucciones son siempre little-endian.
 const SCTLR_E0E: u64 = 1 << 24;
 
 fn orden_el0(big_endian: bool) {

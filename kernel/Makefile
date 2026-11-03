@@ -3,7 +3,7 @@ BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
 PERFIL  ?= release
-ELF     := target/aarch64_be-unknown-none-softfloat/$(PERFIL)/dashos-kernel
+ELF     := target/aarch64-unknown-none-softfloat/$(PERFIL)/dashos-kernel
 IMAGEN  := target/kernel8.img
 
 all: $(IMAGEN)

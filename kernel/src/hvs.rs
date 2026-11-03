@@ -48,8 +48,8 @@ pub const PALABRAS_PLANO: usize = 8;
 /// Formatos de píxel que DashOS da al HVS.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Formato {
-    /// Palabra nativa de DashOS `0xAARRGGBB` en big-endian: en memoria A, R, G, B. Código 7 con `ORDER` 1 (BGRA)
-    /// según §6.4. Deducido, sin probar: es el punto 2 de lo que no está claro.
+    /// Palabra nativa del kernel `0xAARRGGBB`. En little-endian (desde C33) queda en memoria B, G, R, A, como
+    /// `XRGB8888`: código 7, `ORDER` 2. En big-endian sería A, R, G, B: `ORDER` 1 según §6.4, deducido y sin probar.
     Argb8888Nativo,
     /// `XRGB8888` de DRM (en memoria B, G, R, X): código 7, `ORDER` 2 (§6.3). El del ejemplo de §5.10.
     Xrgb8888Drm,
@@ -58,7 +58,7 @@ pub enum Formato {
 impl Formato {
     fn codigo_y_orden(self) -> (u32, u32) {
         match self {
-            Formato::Argb8888Nativo => (7, 1),
+            Formato::Argb8888Nativo => (7, if cfg!(target_endian = "big") { 1 } else { 2 }),
             Formato::Xrgb8888Drm => (7, 2),
         }
     }

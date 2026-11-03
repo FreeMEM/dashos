@@ -1,7 +1,7 @@
 //! Espacios de direcciones de los procesos (C11, S3).
 //!
 //! La mitad baja (TTBR0) es de cada proceso, con su ASID: al cambiar de proceso no hace falta vaciar la TLB. Las
-//! tablas son de 4 KB y tres niveles (39 bits). Se escriben en big-endian, como las del arranque.
+//! tablas son de 4 KB y tres niveles (39 bits). Se escriben en el orden del kernel (little-endian desde C33), como las del arranque.
 
 use crate::cerrojo::CerrojoIrq;
 use crate::memoria::{paginas, PAGINA};

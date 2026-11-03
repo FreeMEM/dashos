@@ -58,7 +58,7 @@ Estas decisiones son del usuario, del 2026-11-03.
   bibliotecas nativas) guarda sus datos en el orden del 68k. Todo lo demás (aplicaciones, controladores, escritorio,
   Mesa) es little-endian, como el resto del mundo ARM: hay CPU que no admiten big-endian en EL0 (las de Apple) y el
   software de ARM da por hecho little-endian. El kernel elige el orden de cada proceso al cambiar de hilo
-  (`SCTLR_EL1.E0E`, C30). El propio kernel sigue de momento en big-endian; no lo ve ningún programa.
+  (`SCTLR_EL1.E0E`, C30). El propio kernel es little-endian desde C33 (S16, A).
 - **Punteros de 32 bits en las estructuras compartidas.** Todo lo que ve un programa 68k vive en los primeros 4 GB.
 - **Emu68 como base del JIT.** El arranque y el kernel son propios. Se explica en la sección de Emu68.
 - **Lenguajes.** El kernel, en Rust. El JIT, en C: es el de Emu68 y no se reescribe. Las bibliotecas Amiga, las

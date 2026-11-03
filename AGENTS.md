@@ -45,5 +45,5 @@ las pruebas no valen como oráculo.
 
 ## Lenguajes
 
-El kernel, en Rust (objetivo `aarch64_be-unknown-none-softfloat`, con nightly). El JIT, en C. Las bibliotecas Amiga
+El kernel, en Rust (objetivo `aarch64-unknown-none-softfloat`, little-endian desde C33, con nightly). El JIT, en C. Las bibliotecas Amiga
 y las aplicaciones, en Dash. Ensamblador solo en el arranque, las excepciones y el cambio de contexto.

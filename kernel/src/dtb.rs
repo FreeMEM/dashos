@@ -1,6 +1,6 @@
 //! Lectura del árbol de dispositivos (FDT) que deja el firmware en x0.
 //!
-//! El formato FDT es big-endian, como DashOS, así que los números se leen tal cual. Sin memoria dinámica: cada
+//! El formato FDT es big-endian; el kernel es little-endian desde C33, así que los números se leen con `from_be`. Sin memoria dinámica: cada
 //! consulta recorre el árbol entero, que es pequeño.
 
 const MAGIA: u32 = 0xd00d_feed;
@@ -74,7 +74,7 @@ impl Dtb {
     }
 
     fn u32(&self, off: usize) -> u32 {
-        unsafe { core::ptr::read_volatile((self.base + off) as *const u32) }
+        u32::from_be(unsafe { core::ptr::read_volatile((self.base + off) as *const u32) })
     }
 
     /// Longitud de la cadena terminada en cero que empieza en `off`.

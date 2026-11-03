@@ -97,6 +97,14 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C33 **Kernel en little-endian** (fase 2 de S16, A).
+- [ ] C34 **Mapa del kernel por páginas** (fase 2): W^X en el kernel, pilas con página de guarda, sin proyección
+  identidad después del arranque, PAN por software (TTBR0 vacío mientras el kernel no copia de usuario).
+- [ ] C35 **El kernel no se expulsa** (fase 2, E): hilos del kernel con las IRQ enmascaradas salvo en puntos fijos,
+  trabajo acotado por llamada (poner a cero por tandas, `escribir` corto).
+- [ ] C36 **Pruebas fuera de la imagen** (fase 2): las pruebas del arranque solo con una opción de compilación; las
+  que se pueda, como programas de usuario.
+- [ ] C37 **Todo el `unsafe` en una caja** (fase 2, B): caja `base` y `forbid(unsafe_code)` en el resto.
 - [x] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
   vuelta por hallazgo de `docs/seguridad/auditoria-2026-11-03.md`, cada uno con su paso hostil en `malo`: 6 (llave
   repetida), 1 (cerrojo de páginas), 2 (ASID), 7 (cerrojos del canal), 3 (destrucción en bucle y guardas), 8 (sin
@@ -705,6 +713,22 @@ sigue. Tres pasadas en verde.
 
 **Fase 1 cerrada.** Pendiente para las siguientes, según S16: fase 2 (kernel LE, `unsafe` en una caja, pruebas fuera,
 no expulsión, mapa del kernel por páginas con guardas y W^X, quitar la proyección identidad).
+
+### 2026-11-03 tarde — C33 (kernel en little-endian)
+
+Fase 2 de S16, decisión A. El kernel compila para `aarch64-unknown-none-softfloat` (nivel 2) y arranca con EE a 0.
+
+- `arranque.s`: EE y E0E a 0 en EL2 y EL1.
+- `dtb.rs`: el FDT es big-endian, así que ahora se lee con `from_be`.
+- `hvs.rs`: el formato nativo `0xAARRGGBB` queda en memoria como `XRGB8888` (ORDER 2).
+- Los periféricos, el buzón, la V3D y el compositor ya usaban `to_le`/`from_le` y no cambian.
+- Los procesos siguen en su orden con E0E: las pruebas de C19/C30 (LE y BE), C28 (dos órdenes en el mismo núcleo)
+  y las de C32 pasan igual.
+
+**C18.** Fallaba a veces porque solo contaba las páginas libres, no las que se queda el montón; ahora cuenta las dos,
+como `repartos`. Es la causa del fallo de C18 que no sabía explicar en C32.
+
+**C14** falló 2 de 5 veces con la máquina a carga 18: mide el reloj real y QEMU no corre a tiempo. No es del cambio.
 
 ## Resumen de la noche
 

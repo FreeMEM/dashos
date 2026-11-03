@@ -576,11 +576,13 @@ fn prueba_recoger() {
     };
     llamadas::SALIDAS_VISIBLES.store(false, core::sync::atomic::Ordering::Relaxed);
     tanda(60); // calentar: el montón se queda páginas para sus clases de tamaño
-    let antes = memoria::paginas().libres();
+    // Las páginas que se queda el montón para sus clases de tamaño cuentan como devueltas: siguen siendo del kernel.
+    let libres = || memoria::paginas().libres() + monton::paginas_pequenas();
+    let antes = libres();
     tanda(50);
-    let medio = memoria::paginas().libres();
+    let medio = libres();
     tanda(50);
-    let despues = memoria::paginas().libres();
+    let despues = libres();
     kprintln!("  dos tandas de 50 procesos: páginas libres {}, {} y {}", antes, medio, despues);
     // Sin recogida, cada proceso dejaría unas 10 páginas (tablas, código, datos, pila, pila del kernel).
     let perdidas = antes.saturating_sub(despues);
@@ -739,7 +741,8 @@ fn prueba_hvs() {
     let escritorio = Plano { formato: Formato::Argb8888Nativo, ..ejemplo };
     let cursor = Plano { x: 100, y: 200, ancho: 64, alto: 64, fisica: 0x2000_0000, paso: 256, formato: Formato::Argb8888Nativo, alfa: Alfa::PorPixelPremultiplicado };
     let n2 = hvs::codificar_lista(&[escritorio, cursor], &mut p);
-    let bien_dos = n2 == Ok(17) && p[0] == 0x4800_B807 && p[8] == 0x4800_B807 && p[9] == (200 << 16 | 100)
+    // En little-endian (C33), el formato nativo es el mismo que XRGB8888: ORDER 2, la palabra 0 del ejemplo.
+    let bien_dos = n2 == Ok(17) && p[0] == 0x4800_D807 && p[8] == 0x4800_D807 && p[9] == (200 << 16 | 100)
         && p[10] == 0x2000_FFF0 && p[11] == 0x0040_0040 && p[13] == 0xE000_0000 && p[16] == 0x8000_0000;
     let fuera = Plano { fisica: 0x4000_0000, ..cursor }.codificar(&mut p) == Err(hvs::Error::FueraDelPrimerGb);
     kprintln!("  escritorio y cursor: {} palabras; fuera del primer GB se rechaza: {}", n2.unwrap_or(0), if fuera { "sí" } else { "no" });

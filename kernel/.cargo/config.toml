@@ -1,10 +1,10 @@
 [build]
-target = "aarch64_be-unknown-none-softfloat"
+target = "aarch64-unknown-none-softfloat"
 
 [unstable]
 build-std = ["core", "alloc", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
 
-[target.aarch64_be-unknown-none-softfloat]
+[target.aarch64-unknown-none-softfloat]
 # La MMU se enciende en arranque.s antes de entrar en Rust, así que no hace falta strict-align (C6).
 rustflags = ["-C", "link-arg=-Tenlace.ld", "-C", "force-frame-pointers=yes"]

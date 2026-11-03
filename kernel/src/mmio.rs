@@ -1,7 +1,7 @@
 //! Registros de periférico.
 //!
-//! Los periféricos de la Pi son little-endian y la CPU de DashOS es big-endian (S1). Todo acceso a un
-//! registro pasa por aquí, que da la vuelta a los bytes. Nunca se lee un registro con un puntero suelto.
+//! Los periféricos de la Pi son little-endian, como el kernel desde C33. Todo acceso a un registro pasa por aquí
+//! (`from_le`/`to_le` no cuestan nada en little-endian). Nunca se lee un registro con un puntero suelto.
 
 use core::ptr::{read_volatile, write_volatile};
 

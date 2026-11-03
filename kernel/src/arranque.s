@@ -4,18 +4,18 @@
 // dirección del árbol de dispositivos en x0. Solo entra el núcleo 0. Los demás esperan en la tabla de espera del
 // firmware hasta que el núcleo 0 les da una dirección: entonces saltan a _secundario, también en EL2 (C9).
 //
-// Ojo: hasta poner el bit EE no se puede leer ningún dato de la imagen (las constantes con "ldr =" están en
-// big-endian). Antes de eso solo se usan mrs, msr y mov.
+// El kernel es little-endian desde C33 (S16, A), como el firmware: EE y E0E quedan a 0. El orden de los datos de
+// cada proceso lo pone el planificador con E0E (C30).
 
-// Deja el núcleo en EL1, en big-endian, y salta a \destino. Vale tanto si el firmware entra en EL2 como en EL1.
+// Deja el núcleo en EL1, en little-endian, y salta a \destino. Vale tanto si el firmware entra en EL2 como en EL1.
 .macro A_EL1 destino
     mrs     x2, CurrentEL
     lsr     x2, x2, #2
     cmp     x2, #2
     b.ne    9f
 
-    mrs     x2, sctlr_el2               // big-endian en EL2
-    orr     x2, x2, #(1 << 25)
+    mrs     x2, sctlr_el2               // little-endian en EL2
+    bic     x2, x2, #(1 << 25)
     msr     sctlr_el2, x2
     isb
 
@@ -26,7 +26,7 @@
     msr     cnthctl_el2, x2
     msr     cntvoff_el2, xzr
 
-    ldr     x2, =0x33D00800             // SCTLR_EL1: bits RES1, EE (25) y E0E (24); MMU y cachés apagadas
+    ldr     x2, =0x30D00800             // SCTLR_EL1: bits RES1, little-endian; MMU y cachés apagadas
     msr     sctlr_el1, x2
 
     mov     x2, #0x3c5                  // SPSR_EL2: EL1h con D, A, I y F enmascaradas
@@ -35,8 +35,8 @@
     msr     elr_el2, x2
     eret
 
-9:  mrs     x2, sctlr_el1               // el firmware ya nos dejó en EL1: big-endian aquí
-    orr     x2, x2, #(3 << 24)
+9:  mrs     x2, sctlr_el1               // el firmware ya nos dejó en EL1: little-endian aquí
+    bic     x2, x2, #(3 << 24)
     msr     sctlr_el1, x2
     isb
     b       \destino
@@ -84,7 +84,7 @@ en_el1:
     // encender la MMU) y para TTBR1 (la misma memoria a partir de KERNEL_VA). Con 39 bits de dirección virtual,
     // cada entrada de nivel 1 es 1 GB: los tres primeros GB son memoria normal; el cuarto va a una tabla de
     // nivel 2 con bloques de 2 MB, porque los periféricos (0xFC000000 en adelante) son memoria de dispositivo.
-    // Las tablas se escriben en big-endian: la MMU las lee con el orden de bytes de EL1 (SCTLR_EL1.EE).
+    // Las tablas se escriben en el orden de EL1 (little-endian), que es como las lee la MMU (SCTLR_EL1.EE).
     adrp    x0, __tabla_l1              // direcciones físicas (adrp es relativo al PC)
     adrp    x1, __tabla_l2_g3
     mov     x2, x0                      // poner a cero las dos tablas (8 KB seguidos)
