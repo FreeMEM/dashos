@@ -85,9 +85,9 @@ del kernel sobre la que irán esos controladores.
 
 - [x] V1 **HVS**: lista de visualización, planos, formatos, escalado, FIFOs y su reparto entre salidas en la BCM2711
   (`drivers/gpu/drm/vc4/vc4_hvs.c`, `vc4_plane.c`, `vc4_crtc.c`, `vc4_regs.h`).
-- [~] V2 **Pixel valves y HDMI de la BCM2711**: modos, relojes, PHY, las dos salidas, interrupción de sincronía
+- [x] V2 **Pixel valves y HDMI de la BCM2711**: modos, relojes, PHY, las dos salidas, interrupción de sincronía
   vertical, audio por HDMI (`vc4_hdmi.c`, `vc4_hdmi_phy.c`, `vc4_hdmi_regs.h`, `vc4_crtc.c`).
-- [ ] V3 **V3D, lado del kernel**: memoria de la GPU y su MMU, envío de trabajos (binner, render, TFU, CSD),
+- [~] V3 **V3D, lado del kernel**: memoria de la GPU y su MMU, envío de trabajos (binner, render, TFU, CSD),
   interrupciones, reinicio y relojes (`drivers/gpu/drm/v3d/`).
 - [ ] V4 **Mesa v3d y v3dv frente al kernel**: qué llamadas de DRM usa Mesa con v3d y vc4, qué estructuras se pasan y
   qué habría que ofrecer en DashOS para portar Mesa sin cambiar su controlador (`src/gallium/drivers/v3d`,
@@ -195,4 +195,10 @@ núcleo. `kernel/src/nucleos.rs`: escribe la dirección física de `_secundario`
 `0xf0`) en little-endian, porque esos núcleos aún no han cambiado de orden de bytes; la saca de la caché y avisa con
 `sev`. Cada núcleo pone sus vectores, su interfaz del GIC y se presenta. La serie ya tiene cerrojo. Prueba: los tres
 se presentan con su MPIDR. BIEN a la primera.
+
+### 2026-11-03 02:4x — V2 (pixel valves y HDMI), del analista
+
+`docs/spec/hw/hdmi.md`: pixel valves, las dos salidas HDMI con sus bloques, relojes por el buzón, secuencia de
+encendido de un modo, HPD y EDID, 4K, sincronía vertical y audio, con cita de Linux. Revisado por encima que no lleva
+código. V3 (V3D, lado del kernel) lanzada.
 
