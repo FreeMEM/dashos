@@ -90,13 +90,18 @@ pub struct Pantalla {
     pub tamano: u32,
 }
 
-/// Pide una pantalla de `ancho` × `alto` a 32 bits por píxel.
+/// Pide una pantalla de `ancho` × `alto` a 32 bits por píxel, con `buferes` pantallas virtuales una debajo de otra
+/// (2 para el doble búfer, C16).
 pub fn pantalla(ancho: u32, alto: u32) -> Option<Pantalla> {
+    pantalla_con(ancho, alto, 1)
+}
+
+pub fn pantalla_con(ancho: u32, alto: u32, buferes: u32) -> Option<Pantalla> {
     #[rustfmt::skip]
     let mut m = [
         0, 0,
         0x0004_8003, 8, 0, ancho, alto,     // tamaño físico
-        0x0004_8004, 8, 0, ancho, alto,     // tamaño virtual
+        0x0004_8004, 8, 0, ancho, alto * buferes, // tamaño virtual
         0x0004_8005, 4, 0, 32,              // bits por píxel
         0x0004_8006, 4, 0, 0,               // orden de bytes B, G, R: el píxel 0x00RRGGBB en little-endian
         0x0004_0001, 8, 0, 4096, 0,         // reservar la memoria
@@ -112,3 +117,11 @@ pub fn pantalla(ancho: u32, alto: u32) -> Option<Pantalla> {
     }
     Some(Pantalla { ancho: m[3 + 2], alto: m[3 + 3], paso: m[28], fisica: (bus & 0x3fff_ffff) as u64, tamano: m[24] })
 }
+
+/// Muestra la parte de la pantalla virtual que empieza en la fila `y` (cambio de búfer, C16).
+pub fn desplazar(y: u32) -> Option<()> {
+    let mut m = [7 * 4, 0, 0x0004_8009, 8, 0, 0, y, 0];
+    m[0] = m.len() as u32 * 4;
+    propiedades(&mut m)
+}
+

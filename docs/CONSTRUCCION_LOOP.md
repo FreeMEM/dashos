@@ -83,7 +83,7 @@ del kernel sobre la que irán esos controladores.
 
 ### Segunda tanda (añadida a las 03:0x, al acabar C15)
 
-- [ ] C16 **Doble búfer y compositor mínimo por CPU.** Pantalla virtual del doble de alto y cambio de mitad con el
+- [x] C16 **Doble búfer y compositor mínimo por CPU.** Pantalla virtual del doble de alto y cambio de mitad con el
   desplazamiento virtual del firmware (etiqueta `0x48009`), un compositor provisional en el kernel que mueve una
   ventana (rectángulo) repintando solo lo que cambia, y captura de QEMU. Es la fase A de S9.
 - [ ] C17 **Avisos entre núcleos.** Interrupciones por software del GIC (SGI) para despertar un hilo de otro núcleo
@@ -294,4 +294,15 @@ rojo y blanco (homenaje a la Boing Ball), y se comprueba leyendo la memoria. Cap
 mensaje, y el orden de colores "RGB" del firmware deja el rojo en el byte bajo; se pide el orden B, G, R para que
 el píxel sea `0x00RRGGBB`. Aviso para la placa: la pantalla está en memoria con caché; aquí se limpia a mano, pero lo
 correcto es proyectarla sin caché o con escritura combinada. Segunda tanda de tareas añadida (C16 a C23).
+
+### 2026-11-03 03:0x — C16 (doble búfer y compositor por daños)
+
+`buzon.rs`: pantalla virtual de varios búferes y `desplazar(y)` (etiqueta `0x48009`). `kernel/src/compositor.rs`:
+compositor provisional en el kernel con dos búferes; pinta en el oculto y cambia de mitad; repinta solo los daños de
+este cuadro y del anterior (cada búfer se vio hace dos cuadros); limpia la caché de lo pintado. Una ventana sencilla
+(borde, barra de título y cuerpo) sobre el fondo de C15. Prueba: 60 cuadros moviendo la ventana. En QEMU, repintar
+todo cuesta 2.526 µs por cuadro (307.200 píxeles) y solo los daños 297 µs (30.593 píxeles), unas 8,5 veces menos. Se
+comprueban seis píxeles del búfer visible (la ventana en su sitio final, sin rastro en el inicial). Captura en
+`docs/capturas/c16-compositor.png`. BIEN. Los tiempos son de QEMU, no de la placa. Sin sincronía vertical: el
+firmware no la da; llegará con el controlador propio del HVS (fase B).
 

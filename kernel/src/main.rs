@@ -7,6 +7,7 @@ extern crate alloc;
 
 mod buzon;
 mod cerrojo;
+mod compositor;
 mod dtb;
 mod excepciones;
 mod espacio;
@@ -65,6 +66,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_hilos();
     prueba_procesos();
     prueba_pantalla(dtb);
+    prueba_compositor();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -425,6 +427,35 @@ fn prueba_plazo() {
         n, us, despues > antes, rechazado);
     let bien = n >= 25 && us < 1000 && despues > antes && rechazado;
     kprintln!("C14: clase de plazo {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C16: doble búfer y compositor por daños. 60 cuadros moviendo una ventana repintando solo los daños, y otros 60
+/// repintando todo, para comparar.
+fn prueba_compositor() {
+    let Some(mut c) = compositor::Compositor::nuevo(640, 480) else {
+        kprintln!("C16: sin pantalla");
+        return;
+    };
+    let medir = |c: &mut compositor::Compositor, todo: bool| {
+        let pintados = c.pixeles_pintados;
+        let t = reloj::ahora();
+        for i in 0..60u32 {
+            c.mover(40 + i * 5, 40 + i * 3, todo);
+        }
+        let us = (reloj::ahora() - t) * 1_000_000 / reloj::frecuencia() / 60;
+        (us, (c.pixeles_pintados - pintados) / 60)
+    };
+    let (us_todo, px_todo) = medir(&mut c, true);
+    c.mover(40, 40, true);
+    c.mover(40, 40, true);
+    let (us_danos, px_danos) = medir(&mut c, false);
+    kprintln!("  por cuadro: repintando todo {} µs ({} píxeles); solo daños {} µs ({} píxeles)", us_todo, px_todo, us_danos, px_danos);
+    // Comprobar el búfer visible: la ventana en su sitio final y sin rastro en su sitio inicial.
+    let v = c.ventana;
+    let puntos = [(v.x + 1, v.y + 1), (v.x + 50, v.y + 10), (v.x + 100, v.y + 100), (45, 45), (240, 100), (639, 479)];
+    let bien_px = puntos.iter().all(|&(x, y)| c.leer(x, y) == c.esperado(x, y));
+    let bien = bien_px && px_danos * 4 < px_todo;
+    kprintln!("C16: doble búfer y daños {}", if bien { "bien" } else { "MAL" });
 }
 
 #[panic_handler]
