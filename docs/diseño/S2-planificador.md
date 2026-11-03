@@ -135,3 +135,57 @@ servidor corre con el presupuesto y la prioridad de la aplicación. Se consiguen
 
 Lo que no se comprobó: el coste real de cambiar de hilo en una A72, y la etiqueta del buzón para leer la temperatura.
 Los 3 ms del compositor son un ejemplo, no una medida.
+
+## Matar procesos y señales que se cumplen
+
+Petición del usuario (2026-11-03): poder matar cualquier proceso, y que las señales se cumplan siempre. En AmigaOS no
+pasa: Ctrl-C solo pone una señal (`SIGBREAKF_CTRL_C`), y el programa la atiende si quiere. Un programa colgado o en
+un bucle no se puede parar sin reiniciar.
+
+### Por qué en AmigaOS no se puede
+
+- **exec no sabe de quién es cada cosa.** La memoria, las ventanas, los ficheros abiertos y los puertos no tienen
+  dueño apuntado. Si se quita una tarea a la fuerza, todo eso se queda perdido o, peor, otro programa lo sigue usando.
+- **Todo está en la misma memoria.** Una tarea puede tener a medias una estructura que comparten otras, o estar dentro
+  de `Forbid()`. Matarla ahí deja el sistema bloqueado.
+- **Las señales son una petición.** El sistema no tiene forma de obligar.
+
+### Programas nativos de DashOS: matar siempre funciona
+
+El micronúcleo (S1) lo resuelve de raíz:
+
+- **Todo lo que tiene un proceso es un objeto del kernel con dueño**: memoria, hilos, canales, ventanas (a través de
+  su canal con el compositor) y ficheros (a través de su canal con el sistema de archivos). Al matar el proceso, el
+  kernel lo cierra todo. Los servidores ven que el canal se ha cerrado y liberan lo suyo.
+- **Matar es una capacidad.** Quien tiene la llave de un proceso con el derecho "terminar" lo puede matar. El kernel
+  no le pregunta al proceso. Para el kernel, un hilo en un bucle es igual de fácil de parar que uno dormido.
+- **Dos pasos, como en macOS o systemd.**
+  1. Petición de cierre: el proceso recibe un aviso y tiene unos segundos para guardar y salir. Es lo que hace el
+     botón de cerrar o Ctrl-C.
+  2. Cierre forzoso: si no sale a tiempo, el kernel lo mata. No se puede ignorar ni bloquear.
+- **El escritorio detecta los cuelgues.** El compositor manda un "¿sigues ahí?" a cada ventana, como el `ping` de
+  Wayland. Si no contesta en unos segundos, la ventana se oscurece y ofrece "forzar salida".
+- **Un gestor de tareas** lista procesos, consumo de CPU y memoria, y permite los dos pasos. Es una aplicación más,
+  con la capacidad de terminar procesos del usuario.
+
+### Dentro de la caja Amiga: el exec de DashOS lleva la cuenta
+
+Aquí DashOS puede hacerlo mejor que AmigaOS, porque el exec de la caja es nuestro:
+
+- **Cada recurso se apunta con su tarea dueña**: `AllocMem` y `AllocVec`, ventanas y pantallas, `Lock` y ficheros
+  abiertos, bibliotecas y dispositivos abiertos, puertos, semáforos y señales reservadas.
+- **Cada tarea 68k es un hilo del kernel.** La caja puede detener una tarea en cualquier momento, aunque esté en un
+  bucle sin llamar al sistema.
+- **Matar una tarea Amiga** sigue este orden:
+  1. Se manda `SIGBREAKF_CTRL_C`, como en el Amiga, y se esperan unos segundos.
+  2. Si no sale, se detiene su hilo.
+  3. Si tenía `Forbid()`, `Disable()` o semáforos, se sueltan.
+  4. Se cierran sus ventanas, ficheros, bibliotecas y puertos.
+  5. La memoria se libera si nadie más la está usando. Una tarea pudo pasar un mensaje con un puntero a su memoria;
+     esa memoria se queda viva hasta que el mensaje vuelve, o se marca como perdida.
+- **Si aun así la caja queda tocada**, se mata la caja entera. Eso siempre es seguro, porque para el kernel la caja
+  es un proceso como cualquier otro.
+- **Programas de confianza dudosa en su propia caja.** Se puede lanzar un programa 68k en una caja aparte. Si falla,
+  solo cae él.
+
+El detalle de cómo lleva exec la cuenta va en S4.

@@ -80,10 +80,10 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   Rust para kernels.
 - [x] S2 **Núcleos y planificador.** Reparto entre los cuatro núcleos de la Pi 4, prioridades, tiempo real suave
   para audio y escritorio, ahorro de energía.
-- [ ] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
+- [~] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
   memoria comprimida en vez de intercambio, y cómo se reparte con poca RAM (la Pi 4 tiene de 1 a 8 GB).
 - [ ] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
-  bibliotecas nativas desde el JIT, ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
+  bibliotecas nativas desde el JIT, recursos con dueño para matar tareas 68k sueltas (`S2-planificador.md`), ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
   DOS sobre el sistema de archivos, y qué programas 68k quedan fuera.
 - [ ] S5 **Sistema de archivos.** Rápido y seguro: copia al escribir, sumas de comprobación, instantáneas, cifrado y
   compresión. Diseñar uno propio, adaptar uno existente o empezar con uno sencillo. Qué otros sistemas lee y escribe:
@@ -124,9 +124,6 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
 - (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
-- (S2) ¿Las tareas Amiga mantienen la prioridad estricta de exec dentro de la caja? Mientras: sí; solo se congela
-  la caja.
-- (S2) ¿Perfil de energía por defecto "responder" o "ahorrar"? Mientras: responder.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -164,4 +161,11 @@ y la licencia MPL-2.0 (`LICENSE`); los dos pasan a `PLAN.md`.
 y reparto justo con pesos para el resto. Los servidores trabajan con el presupuesto del cliente (servidores pasivos
 de seL4 MCS). Una cola por núcleo con robo de trabajo. La caja Amiga es un grupo de la clase justa con la prioridad
 estricta de exec por dentro. Frecuencia por el buzón de la VideoCore, con las etiquetas que ya usa Emu68.
+
+### 2026-11-03 — Decisiones del usuario sobre S1 y S2
+
+Micronúcleo confirmado. Dentro de la caja, prioridad estricta de exec. Energía: responder. Requisito nuevo: matar
+cualquier proceso y que las señales de terminar se cumplan siempre. Añadida la sección "Matar procesos" a
+`S2-planificador.md`: en nativo lo da el micronúcleo (todo recurso es un objeto con dueño); en la caja, el exec de
+DashOS apunta el dueño de cada recurso, cosa que AmigaOS no hace.
 

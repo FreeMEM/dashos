@@ -17,6 +17,12 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
   adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
 - **Sistema moderno.** Tiene protección de memoria y usa todos los núcleos de la CPU.
+- **Planificador** (usuario, 2026-11-03; `docs/diseño/S2-planificador.md`): clase de plazos para compositor, entrada
+  y audio, y clase justa para el resto. Dentro de la caja Amiga, prioridad estricta como en exec. Perfil de energía
+  por defecto: responder.
+- **Matar siempre funciona** (usuario, 2026-11-03). Cualquier proceso se puede matar, y las señales de terminar se
+  cumplen siempre, no como en AmigaOS. Dentro de la caja, exec apunta el dueño de cada recurso para poder matar una
+  tarea 68k suelta.
 - **Kernel propio.** No hay Linux debajo. Es un micronúcleo pragmático con capacidades (usuario, 2026-11-03;
   `docs/diseño/S1-kernel.md`).
 - **AArch64 big-endian.** Los programas 68k leen y escriben a mano las estructuras del sistema. Por eso el sistema
