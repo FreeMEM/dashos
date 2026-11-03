@@ -12,7 +12,7 @@ pub struct Marco {
     pub spsr: u64,
     pub esr: u64,
     pub far: u64,
-    _relleno: u64,
+    pub sp_el0: u64,
 }
 
 const TIPOS: [&str; 4] = ["síncrona", "IRQ", "FIQ", "SError"];
@@ -48,6 +48,21 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
             }
         }
         return;
+    }
+
+    // Llamada al sistema desde EL0 (SVC de 64 bits).
+    if tipo == 8 && clase == 0x15 {
+        crate::llamadas::atender(marco);
+        return;
+    }
+
+    // Cualquier otro fallo de un proceso: se avisa y se termina el proceso, no el sistema.
+    if tipo == 8 {
+        kprintln!(
+            "Proceso: excepción de clase {:#x} en {:#x} (FAR {:#x}); se termina",
+            clase, marco.elr, marco.far
+        );
+        crate::planificador::terminar_actual();
     }
 
     // BRK desde EL1: se usa para las pruebas. Se avisa y se sigue con la instrucción siguiente.

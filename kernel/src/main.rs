@@ -8,7 +8,9 @@ extern crate alloc;
 mod cerrojo;
 mod dtb;
 mod excepciones;
+mod espacio;
 mod gic;
+mod llamadas;
 mod memoria;
 mod mmu;
 mod nucleos;
@@ -22,6 +24,7 @@ use core::panic::PanicInfo;
 
 core::arch::global_asm!(include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
+core::arch::global_asm!(include_str!("usuario.s"));
 
 fn nivel_excepcion() -> u64 {
     let el: u64;
@@ -58,6 +61,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     kprintln!("C9: {} núcleos más en marcha: {}", n, if n == 3 { "bien" } else { "MAL" });
 
     prueba_hilos();
+    prueba_procesos();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -211,6 +215,73 @@ fn prueba_hilos() {
     kprintln!("  en 300 ms: contadores {:?}, {} cambios de hilo, hilo corto terminado: {}", c, cambios, TERMINADO.load(Ordering::Acquire));
     let bien = min > 0 && min * 2 > max && cambios >= 20 && TERMINADO.load(Ordering::Acquire);
     kprintln!("C10: hilos {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C11: dos procesos en EL0, cada uno con su espacio y su ASID, con el mismo programa en las mismas direcciones.
+struct Proceso {
+    ttbr0: u64,
+}
+
+unsafe extern "C" {
+    static usuario_inicio: u8;
+    static usuario_fin: u8;
+    static usuario_malo_inicio: u8;
+    static usuario_malo_fin: u8;
+    fn entrar_el0(pc: u64, sp: u64) -> !;
+}
+
+const VA_CODIGO: u64 = 0x40_0000;
+const VA_DATOS: u64 = 0x50_0000;
+const VA_PILA: u64 = 0x7f_f000;
+
+extern "C" fn arrancar_proceso(p: usize) {
+    let p = unsafe { &*(p as *const Proceso) };
+    planificador::asignar_espacio(p.ttbr0);
+    unsafe { entrar_el0(VA_CODIGO, VA_PILA + memoria::PAGINA) };
+}
+
+fn crear_proceso(mensaje: &str, nucleo: usize) {
+    let (ini, fin) = unsafe { (&usuario_inicio as *const u8, &usuario_fin as *const u8) };
+    crear_proceso_con(ini, fin, mensaje, nucleo);
+}
+
+fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize) {
+    use espacio::{Espacio, Permiso};
+    let mut e = Espacio::nuevo();
+    let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo);
+    let largo = fin as usize - ini as usize;
+    unsafe {
+        core::ptr::copy_nonoverlapping(ini, codigo, largo);
+        // Que el código nuevo llegue a la caché de instrucciones de todos los núcleos.
+        let mut a = codigo as usize;
+        while a < codigo as usize + largo {
+            core::arch::asm!("dc cvau, {}", in(reg) a);
+            a += 64;
+        }
+        core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb");
+    }
+    let datos = e.pagina_nueva(VA_DATOS, Permiso::Datos);
+    unsafe {
+        *datos = mensaje.len() as u8;
+        core::ptr::copy_nonoverlapping(mensaje.as_ptr(), datos.add(1), mensaje.len());
+    }
+    e.pagina_nueva(VA_PILA, Permiso::Datos);
+    let p = alloc::boxed::Box::new(Proceso { ttbr0: e.ttbr0() });
+    kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
+    core::mem::forget(e);
+    planificador::crear(arrancar_proceso, alloc::boxed::Box::into_raw(p) as usize, nucleo);
+}
+
+fn prueba_procesos() {
+    crear_proceso("  hola desde EL0, proceso A\n", 2);
+    crear_proceso("  hola desde EL0, proceso B\n", 3);
+    let (ini, fin) = unsafe { (&usuario_malo_inicio as *const u8, &usuario_malo_fin as *const u8) };
+    crear_proceso_con(ini, fin, "", 1);
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 20 {
+        reloj::esperar_interrupcion();
+    }
+    kprintln!("C11: procesos lanzados");
 }
 
 #[panic_handler]

@@ -38,6 +38,8 @@ pub struct Hilo {
     estado: Estado,
     peso: u64,
     virtual_: u64,
+    /// TTBR0 del proceso al que pertenece (0 = hilo del kernel, sin espacio propio).
+    ttbr0: u64,
     _pila: Option<Box<[u8]>>,
 }
 
@@ -69,6 +71,7 @@ pub fn iniciar_nucleo() {
         estado: Estado::Corriendo,
         peso: 1,
         virtual_: u64::MAX,
+        ttbr0: 0,
         _pila: None,
     }));
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), desde: reloj::ahora() });
@@ -98,6 +101,7 @@ pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
         estado: Estado::Listo,
         peso: PESO_NORMAL,
         virtual_: minimo,
+        ttbr0: 0,
         _pila: Some(pila),
     }));
     nucleo.listos.push(h);
@@ -153,6 +157,11 @@ fn planificar() {
             }
             (*siguiente).estado = Estado::Corriendo;
         }
+        unsafe {
+            if (*siguiente).ttbr0 != 0 {
+                crate::espacio::activar((*siguiente).ttbr0);
+            }
+        }
         nucleo.actual = siguiente;
         nucleo.desde = ahora;
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
@@ -183,6 +192,11 @@ extern "C" fn hilo_estreno() {
 
 #[unsafe(no_mangle)]
 extern "C" fn hilo_fin() -> ! {
+    terminar_actual();
+}
+
+/// Termina el hilo que corre en este núcleo. Vale desde un hilo o desde una excepción suya.
+pub fn terminar_actual() -> ! {
     crate::cerrojo::enmascarar_irq();
     let n = nucleos::numero() as usize;
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
@@ -190,6 +204,21 @@ extern "C" fn hilo_fin() -> ! {
     }
     planificar();
     unreachable!("un hilo muerto ha vuelto a correr");
+}
+
+/// El identificador del hilo que corre en este núcleo.
+pub fn actual_id() -> u64 {
+    let n = nucleos::numero() as usize;
+    NUCLEOS[n].tomar().as_ref().map(|nc| unsafe { (*nc.actual).id }).unwrap_or(0)
+}
+
+/// Asocia el hilo actual a un espacio de direcciones y lo activa.
+pub fn asignar_espacio(ttbr0: u64) {
+    let n = nucleos::numero() as usize;
+    if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
+        unsafe { (*nucleo.actual).ttbr0 = ttbr0 };
+    }
+    crate::espacio::activar(ttbr0);
 }
 
 /// El hilo ocioso: espera interrupciones para siempre.

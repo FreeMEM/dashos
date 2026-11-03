@@ -4,7 +4,8 @@
 #   tools/prueba_qemu.sh <imagen> <fichero de esperados> [segundos]
 #
 # Cada línea del fichero de esperados tiene que aparecer en la salida, en ese orden (como texto, no como
-# expresión regular). Las líneas que empiezan por "#" se ignoran. Sale con 0 si todo aparece.
+# expresión regular). Las que empiezan por "~" pueden aparecer en cualquier sitio (para lo que corre en paralelo en
+# varios núcleos). Las que empiezan por "#" se ignoran. Sale con 0 si todo aparece.
 set -u
 IMAGEN=$1
 ESPERADOS=$2
@@ -31,6 +32,13 @@ DESDE=1
 while IFS= read -r ESPERADO; do
     [ -z "$ESPERADO" ] && continue
     case "$ESPERADO" in \#*) continue;; esac
+    case "$ESPERADO" in
+        \~*)
+            if ! grep -qF -- "${ESPERADO#\~}" "$SALIDA.txt"; then
+                echo "FALTA: ${ESPERADO#\~}"; FALLO=1; break
+            fi
+            continue;;
+    esac
     N=$(tail -n +"$DESDE" "$SALIDA.txt" | grep -nF -m1 -- "$ESPERADO" | cut -d: -f1)
     if [ -z "$N" ]; then
         echo "FALTA: $ESPERADO"

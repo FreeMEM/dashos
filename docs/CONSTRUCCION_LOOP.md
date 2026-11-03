@@ -71,7 +71,7 @@ del kernel sobre la que irán esos controladores.
   se presenta.
 - [x] C10 **Hilos y planificador.** Cambio de contexto, una cola por núcleo, clase justa sencilla (S2). Prueba: hilos
   que se turnan.
-- [ ] C11 **Procesos en EL0.** Espacio de direcciones propio con ASID, llamada al sistema por `svc`. Prueba: un
+- [x] C11 **Procesos en EL0.** Espacio de direcciones propio con ASID, llamada al sistema por `svc`. Prueba: un
   proceso de usuario escribe por una llamada.
 - [ ] C12 **Capacidades y canales.** Tabla de llaves por proceso, canales con mensajes cortos y paso de llaves (S1).
   Prueba: dos procesos se pasan mensajes.
@@ -212,4 +212,17 @@ mismo núcleo se bloquea). La interrupción del reloj se termina en el GIC antes
 su temporizador. Prueba: tres hilos que cuentan en el núcleo 1 durante 300 ms quedan parejos (4,99 M, 5,56 M y
 5,50 M), 30 cambios de hilo, y un hilo corto en el núcleo 2 termina. Cuatro ejecuciones seguidas, BIEN. Pendiente:
 liberar los hilos muertos, migración y robo de trabajo entre núcleos.
+
+### 2026-11-03 02:5x — C11 (procesos en EL0)
+
+`kernel/src/espacio.rs`: espacio de direcciones por proceso (tablas de tres niveles de 4 KB en big-endian, páginas
+no globales con su ASID, permisos de código y de datos con PXN y UXN). `contexto.s` gana `entrar_el0`, que baja a
+EL0 con los registros limpios. Los vectores guardan y reponen `SP_EL0` en el marco. El planificador cambia `TTBR0`
+al cambiar a un hilo con espacio. `kernel/src/llamadas.rs`: llamadas provisionales por `svc` (escribir y salir),
+con comprobación de que el texto está en la mitad del usuario. Un fallo de un proceso lo termina a él, no al
+sistema. `kernel/src/usuario.s`: dos programas de prueba. Prueba: dos procesos con el mismo programa en las mismas
+direcciones (`0x400000`) y distinto mensaje, en los núcleos 2 y 3, escriben cada uno el suyo y salen con 42; un
+tercero que escribe en la memoria del kernel muere con un fallo de datos (clase 0x24) y el sistema sigue. Tres
+ejecuciones, BIEN. `tools/prueba_qemu.sh` admite líneas con `~` que pueden salir en cualquier orden.
+Pendiente: liberar el espacio y las páginas al morir el proceso; las llamadas de verdad irán por capacidades (C12).
 

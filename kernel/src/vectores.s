@@ -2,6 +2,8 @@
 //
 // Cada entrada guarda x0 y x1, pone el tipo en x1 y salta a "comun", que guarda el resto en un marco en la pila
 // (struct Marco en excepciones.rs), llama a excepcion() en Rust y vuelve con eret.
+//
+// Desde EL0 la excepción llega con la pila del kernel del hilo (SP_EL1), que es la que tenía al bajar a EL0.
 
     .section .text.vectores, "ax"
 
@@ -59,6 +61,8 @@ comun:
     mrs     x2, esr_el1
     mrs     x3, far_el1
     stp     x2, x3, [sp, #264]
+    mrs     x2, sp_el0                  // pila de usuario: cada hilo tiene la suya (C11)
+    str     x2, [sp, #280]
 
     mov     x0, sp                  // excepcion(&mut Marco, tipo)
     bl      excepcion
@@ -66,6 +70,8 @@ comun:
     ldp     x2, x3, [sp, #248]
     msr     elr_el1, x2
     msr     spsr_el1, x3
+    ldr     x2, [sp, #280]
+    msr     sp_el0, x2
     ldp     x2, x3, [sp, #16]
     ldp     x4, x5, [sp, #32]
     ldp     x6, x7, [sp, #48]

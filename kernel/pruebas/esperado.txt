@@ -24,3 +24,10 @@ C7: montón bien
 C8: interrupciones bien
 C9: 3 núcleos más en marcha: bien
 C10: hilos bien
+  proceso con ASID 1 en el núcleo 2
+  proceso con ASID 2 en el núcleo 3
+  proceso con ASID 3 en el núcleo 1
+~  hola desde EL0, proceso A
+~  hola desde EL0, proceso B
+~Proceso: excepción de clase 0x24 en 0x40000c (FAR 0xffffff8000080000); se termina
+C11: procesos lanzados
