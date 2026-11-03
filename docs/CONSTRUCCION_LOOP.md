@@ -90,7 +90,7 @@ del kernel sobre la que irán esos controladores.
   sin esperar a su tic. Prueba: medir el tiempo de ida y vuelta de un mensaje entre núcleos antes y después.
 - [x] C18 **Recoger lo que dejan los muertos.** Liberar pila e hilo al terminar, y espacio, páginas y llaves al
   terminar el último hilo de un proceso. Prueba: crear y terminar muchos procesos sin que baje la memoria libre.
-- [ ] C19 **Programas de usuario en Rust.** Un crate `usuario/` (no_std, big-endian, envoltorios de las llamadas) y
+- [x] C19 **Programas de usuario en Rust.** Un crate `usuario/` (no_std, big-endian, envoltorios de las llamadas) y
   un cargador de ELF en el kernel. Las pruebas pasan a programas en Rust.
 - [ ] C20 **Controladores fuera del kernel.** Llave de registros (proyectar un periférico como memoria de
   dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
@@ -335,4 +335,14 @@ se libera mientras alguien lo tenga proyectado. Prueba: tras calentar el montón
 procesos creados y terminados dejan las páginas libres exactamente igual (245.401). BIEN. Sin la recogida, cada
 proceso dejaría unas 10 páginas. Pendiente: cerrar los canales de un proceso que muere, para que su otro extremo lo
 note.
+
+### 2026-11-03 07:5x — C19 (programas de usuario en Rust)
+
+`usuario/`: crate `dashos` (no_std, `aarch64_be-unknown-none-softfloat`, enlazado en `0x400000`) con las llamadas
+provisionales envueltas (escribir, salir, canales, memoria), `println!` y la macro `programa!` (entrada y pánico).
+Primer programa: `usuario/src/bin/hola.rs`. `kernel/src/elf.rs`: cargador de ELF de 64 bits big-endian para AArch64,
+segmentos `PT_LOAD` a páginas nuevas con permisos según sus banderas y limpieza de la caché de instrucciones para el
+código. El Makefile del kernel compila `usuario/` antes y el kernel incluye el ELF. Prueba: el programa escribe con
+formato, suma de 1 a 100 (5050), crea un objeto de memoria, lo proyecta, comprueba que es big-endian y sale con 5.
+BIEN, a la primera. Las pruebas de C11 a C13 siguen con los programas en ensamblador; pasarlas a Rust queda pendiente.
 

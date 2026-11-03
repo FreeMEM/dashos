@@ -1,0 +1,21 @@
+[package]
+name = "dashos-usuario"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+
+[lib]
+name = "dashos"
+path = "src/lib.rs"
+test = false
+
+[[bin]]
+name = "hola"
+path = "src/bin/hola.rs"
+test = false
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+[profile.dev]
+panic = "abort"

@@ -7,6 +7,7 @@ IMAGEN  := target/kernel8.img
 all: $(IMAGEN)
 
 $(IMAGEN): FORCE
+	cd ../usuario && cargo build --release
 	cargo build $(if $(filter release,$(PERFIL)),--release,)
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 

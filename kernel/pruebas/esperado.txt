@@ -44,3 +44,7 @@ C15: pantalla del firmware bien
 C16: doble búfer y daños bien
 C17: avisos entre núcleos bien
 C18: recogida bien
+  hola desde Rust en EL0 (DashOS, big-endian)
+  la suma de 1 a 100 es 5050
+  memoria propia proyectada (0); primer byte de 0x11223344: 0x11
+C19: programa en Rust lanzado

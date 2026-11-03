@@ -31,7 +31,8 @@ las pruebas no valen como oráculo.
 - `PLAN.md`: el plan.
 - `docs/CONSTRUCCION_LOOP.md`: el bucle de construcción (tareas C y V, bitácora).
 - `docs/spec/hw/`: especificaciones del hardware sin manual (vídeo, GPU), escritas por analistas.
-- `kernel/`: el kernel en Rust.
+- `kernel/`: el kernel en Rust. `make -C kernel prueba` lo compila (con `usuario/`) y lo prueba en QEMU `raspi4b`.
+- `usuario/`: biblioteca `dashos` y programas de usuario en Rust.
 - `docs/DISEÑO_LOOP.md`: el bucle de diseño (tareas S0 a S15 y bitácora). Sus documentos van en `docs/diseño/`.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con

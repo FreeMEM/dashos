@@ -9,6 +9,7 @@ mod buzon;
 mod cerrojo;
 mod compositor;
 mod dtb;
+mod elf;
 mod excepciones;
 mod espacio;
 mod gic;
@@ -69,6 +70,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_compositor();
     prueba_avisos();
     prueba_recoger();
+    prueba_rust();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -559,6 +561,49 @@ fn prueba_recoger() {
     // Sin recogida, cada proceso dejaría unas 10 páginas (tablas, código, datos, pila, pila del kernel).
     let perdidas = antes.saturating_sub(despues);
     kprintln!("C18: recogida {} ({} páginas de diferencia en 100 procesos)", if perdidas <= 4 { "bien" } else { "MAL" }, perdidas);
+}
+
+/// C19: un programa de usuario escrito en Rust (`usuario/src/bin/hola.rs`), cargado desde su ELF.
+static HOLA: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/hola");
+
+struct ArranqueElf {
+    proceso: usize,
+    entrada: u64,
+}
+
+extern "C" fn arrancar_elf(a: usize) {
+    let a = unsafe { alloc::boxed::Box::from_raw(a as *mut ArranqueElf) };
+    let p = unsafe { &*(a.proceso as *const objetos::Proceso) };
+    planificador::asignar_espacio(p.ttbr0);
+    unsafe { entrar_el0(a.entrada, VA_PILA + memoria::PAGINA) };
+}
+
+fn prueba_rust() {
+    use espacio::{Espacio, Permiso};
+    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    let mut e = Espacio::nuevo();
+    let entrada = match elf::cargar(&mut e, HOLA) {
+        Ok(x) => x,
+        Err(err) => {
+            kprintln!("C19: no se pudo cargar el ELF: {:?}", err);
+            return;
+        }
+    };
+    e.pagina_nueva(VA_PILA, Permiso::Datos);
+    kprintln!("  ELF de {} bytes cargado, entrada {:#x}", HOLA.len(), entrada);
+    let p = alloc::sync::Arc::new(objetos::Proceso {
+        ttbr0: e.ttbr0(),
+        espacio: cerrojo::Cerrojo::new(e),
+        llaves: cerrojo::Cerrojo::new(objetos::TablaLlaves::default()),
+    });
+    let ptr = alloc::sync::Arc::into_raw(p) as usize;
+    let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada }));
+    planificador::crear_en(arrancar_elf, arranque as usize, 2, ptr);
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 20 {
+        reloj::esperar_interrupcion();
+    }
+    kprintln!("C19: programa en Rust lanzado");
 }
 
 #[panic_handler]
