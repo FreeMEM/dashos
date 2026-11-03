@@ -75,15 +75,11 @@ C23: listas del HVS bien
   listas de borrado del ejemplo: RCL 106 bytes, genérica 17 bytes, iguales al volcado: sí
 C27: listas de borrado de la V3D bien
 C24: V3D, lado del kernel bien
-  dispositivo en la dirección 0: clase 9, 0409:55aa, paquetes de 8 bytes, 1 configuración
-  dirección 1 asignada y descriptor releído: sí
-C22: primer dispositivo USB enumerado bien (un hub)
-  HID de arranque: 1 teclado y 1 ratón
-  tecla recibida: uso 0x04 (a)
-C22: teclado USB bien
-  ratón: botones 0x0, movimiento (
-C22: ratón USB bien
-C25: el ratón USB mueve la ventana bien
+  [usb] DWC2 0x4f54294a en marcha
+  [usb] HID de arranque: 1 teclado y 1 ratón
+~  [usb] tecla: uso 0x04 (a)
+~  [usb] ratón: botones 0x0, movimiento (
+C49: controlador USB fuera del kernel lanzado
   VA 0x1000, 0x2000, 0x5000; tabla bien; hueco reutilizado sí; tramos juntados sí; memoria devuelta sí
 C26: búferes de la GPU bien
 sale con código 28

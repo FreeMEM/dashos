@@ -9,7 +9,7 @@
 core::arch::global_asm!(include_str!("usuario.s"));
 
 use crate::{buzon, cerrojo, compositor, dtb, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
-    mapa, memoria, mmu, monton, objetos, planificador, reloj, usb, v3d};
+    mapa, memoria, mmu, monton, objetos, planificador, reloj, v3d};
 
 /// Todas las pruebas, con el sistema ya en marcha. `nucleos` es cuántos núcleos más arrancaron.
 pub fn ejecutar(dtb: usize, nucleos: u32) {
@@ -735,112 +735,28 @@ fn prueba_v3d() {
     kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
 }
 
-/// C22, primera vuelta: arrancar el DWC2 y enumerar el primer dispositivo (en QEMU, un hub).
+/// C49 (antes C22 y C25, dentro del kernel): el controlador USB es un proceso (`usuario/src/bin/usb.rs`). Recibe el
+/// permiso DMA y los registros del DWC2, enumera el hub de QEMU y escribe lo que mandan el teclado y el ratón (la
+/// prueba de QEMU los mueve por el monitor).
+static USB: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb");
+
 fn prueba_usb() {
-    let mut u = match usb::Dwc2::iniciar() {
-        Ok(u) => u,
-        Err(e) => {
-            kprintln!("C22: el USB no arranca: {:?}", e);
-            return;
-        }
-    };
-    kprintln!("  DWC2 {:#x}, puerto activo a velocidad {}", u.identificador(), ["alta", "completa", "baja", "?"][u.velocidad() as usize]);
-    let d = match u.descriptor(0) {
-        Ok(d) => d,
-        Err(e) => {
-            kprintln!("C22: no se pudo leer el descriptor: {:?}", e);
-            return;
-        }
-    };
-    kprintln!("  dispositivo en la dirección 0: clase {}, {:04x}:{:04x}, paquetes de {} bytes, {} configuración", d.clase, d.fabricante, d.producto, d.tamano_ep0, d.configuraciones);
-    let bien = u.poner_direccion(1).is_ok() && u.descriptor(1).map(|e| e.producto == d.producto).unwrap_or(false);
-    kprintln!("  dirección 1 asignada y descriptor releído: {}", if bien { "sí" } else { "no" });
-    kprintln!("C22: primer dispositivo USB enumerado {}", if bien && d.clase == 9 { "bien (un hub)" } else if bien { "bien" } else { "MAL" });
-    if !bien || d.clase != 9 {
+    let Some(d) = dtb::Dtb::desde() else { return };
+    let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) else { return };
+    let Some((fisica, tamano)) = d.compatible("brcm,bcm2708-usb").and_then(|n| d.reg_cpu(&n, 0)) else {
+        kprintln!("C49: no hay DWC2 en el árbol");
         return;
-    }
-    // Segunda vuelta: lo que hay detrás del hub, y leer el teclado.
-    let mut hids = [None; 4];
-    if let Err(e) = u.enumerar_hub(1, 2, &mut hids) {
-        kprintln!("C22: error al enumerar el hub: {:?}", e);
-        return;
-    }
-    let teclados = hids.iter().flatten().filter(|h| h.teclado).count();
-    let ratones = hids.iter().flatten().filter(|h| !h.teclado).count();
-    kprintln!("  HID de arranque: {} teclado y {} ratón", teclados, ratones);
-    let Some(mut tec) = hids.iter().flatten().find(|h| h.teclado).map(|h| h.entrada) else { return };
-    // Esperar una tecla hasta 6 segundos (la prueba se las manda a QEMU por su monitor).
-    let fin = reloj::ahora() + 6 * reloj::frecuencia();
-    while reloj::ahora() < fin {
-        match u.leer_interrupcion(&mut tec) {
-            Ok(Some(informe)) if informe.len() >= 3 && informe[2] != 0 => {
-                let codigo = informe[2];
-                // Uso HID 0x04 a 0x1D: letras de la a a la z (HID Usage Tables, página 7).
-                let letra = if (4..=0x1d).contains(&codigo) { (b'a' + codigo - 4) as char } else { '?' };
-                kprintln!("  tecla recibida: uso {:#04x} ({})", codigo, letra);
-                kprintln!("C22: teclado USB bien");
-                if let Some(mut raton) = hids.iter().flatten().find(|h| !h.teclado).map(|h| h.entrada) {
-                    prueba_raton(&u, &mut raton);
-                }
-                return;
-            }
-            Ok(_) => esperar_ms(8),
-            Err(e) => {
-                kprintln!("C22: error al leer el teclado: {:?}", e);
-                return;
-            }
-        }
-    }
-    kprintln!("C22: el teclado no mandó ninguna tecla");
-}
-
-/// Informe de arranque del ratón (HID 1.11, apéndice B.2): botones, X e Y con signo.
-fn prueba_raton(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
-    let fin = reloj::ahora() + 3 * reloj::frecuencia();
-    while reloj::ahora() < fin {
-        match u.leer_interrupcion(raton) {
-            Ok(Some(i)) if i.len() >= 3 && (i[1] != 0 || i[2] != 0) => {
-                kprintln!("  ratón: botones {:#x}, movimiento ({}, {})", i[0], i[1] as i8, i[2] as i8);
-                kprintln!("C22: ratón USB bien");
-                raton_mueve_ventana(u, raton);
-                return;
-            }
-            Ok(_) => esperar_ms(8),
-            Err(e) => {
-                kprintln!("C22: error al leer el ratón: {:?}", e);
-                return;
-            }
-        }
-    }
-    kprintln!("C22: el ratón no se movió");
-}
-
-/// C25: el ratón USB mueve la ventana del compositor durante 3 segundos.
-fn raton_mueve_ventana(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
-    let Some(mut c) = compositor::Compositor::nuevo(640, 480) else { return };
-    let (mut x, mut y) = (40i32, 40i32);
-    c.mover(x as u32, y as u32, true);
-    c.mover(x as u32, y as u32, true);
-    let (w, h) = (c.ventana.w as i32, c.ventana.h as i32);
-    let mut movimientos = 0;
-    let fin = reloj::ahora() + 3 * reloj::frecuencia();
-    while reloj::ahora() < fin {
-        match u.leer_interrupcion(raton) {
-            Ok(Some(i)) if i.len() >= 3 => {
-                x = (x + i[1] as i8 as i32).clamp(0, 640 - w);
-                y = (y + i[2] as i8 as i32).clamp(0, 480 - h);
-                c.mover(x as u32, y as u32, false);
-                movimientos += 1;
-            }
-            Ok(_) => esperar_ms(8),
-            Err(_) => break,
-        }
-    }
-    let v = c.ventana;
-    let puntos = [(v.x + 1, v.y + 1), (v.x + 50, v.y + 10), (40, 40), (639, 479)];
-    let bien = movimientos > 0 && (x, y) != (40, 40) && puntos.iter().all(|&(px, py)| c.leer(px, py) == c.esperado(px, py));
-    kprintln!("  {} informes del ratón; la ventana pasó de (40, 40) a ({}, {})", movimientos, x, y);
-    kprintln!("C25: el ratón USB mueve la ventana {}", if bien { "bien" } else { "MAL" });
+    };
+    let llaves = alloc::vec![
+        objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::Registros { fisica, tamano: tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA }, objetos::TODOS),
+    ];
+    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };
+    let Some(control) = lanzar_elf_en(USB, llaves, 1, grupo) else { return };
+    // El monitor manda una "a" y un movimiento cada medio segundo; con tres segundos sobra.
+    esperar_tics(300);
+    crate::planificador::matar_proceso(&control);
+    kprintln!("C49: controlador USB fuera del kernel lanzado");
 }
 
 fn esperar_ms(ms: u64) {

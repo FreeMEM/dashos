@@ -104,3 +104,8 @@ test = false
 name = "consola"
 path = "src/bin/consola.rs"
 test = false
+
+[[bin]]
+name = "usb"
+path = "src/bin/usb.rs"
+test = false

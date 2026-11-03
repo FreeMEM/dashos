@@ -88,7 +88,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
   la consola arranca y escribe su registro en un anillo que la consola vacía; `escribir` va también al anillo. Solo el
   pánico escribe directo. Cierra N2/N6 de las auditorías.
-- [ ] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
+- [~] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
   canales.
 - [ ] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
   HVS y la V3D como procesos (sin probar en QEMU). El buzón de la VideoCore, como servicio.
@@ -1210,6 +1210,34 @@ su grupo, `hola` sale con 5 e `inicio` se queda esperando.
 
 `make prueba` sigue pasando: la imagen de pruebas no lanza `inicio`, así que el kernel escribe directo y las líneas de
 los programas también llevan "│ ".
+
+### 2026-11-03 noche, bucle — C49, primera parte (USB fuera del kernel)
+
+- **El controlador DWC2 es un proceso** (`usuario/src/bin/usb.rs`), portado de `kernel/src/usb.rs`, que se borra.
+  - Recibe el permiso DMA y los registros del DWC2.
+  - Su búfer de DMA es memoria DMA de C46, sin caché, así que ya no limpia cachés a mano.
+  - Enumera el hub de QEMU, encuentra el teclado y el ratón de arranque y escribe lo que mandan.
+- **Pruebas.** C22 y C25 (dentro del kernel) se sustituyen por C49 en la imagen de pruebas: el proceso arranca,
+  enumera, y aparecen la "a" y los movimientos del ratón que manda el monitor de QEMU. Pasa.
+
+**Falta en C49:**
+- que `inicio` lance `usb` en la imagen normal (añadirlo a `PROGRAMAS` en `kernel/src/inicio.rs`, con "dma" y los
+  registros de "usb", y la línea en `pruebas/arranque.txt`);
+- que mande los eventos por un canal en vez de solo escribirlos (para el compositor de C50);
+- que use la interrupción del DWC2 en vez de consultar sin parar: hoy gasta CPU girando.
+
+## Pausa (2026-11-03, 20:5x)
+
+El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:
+
+1. Leer este fichero desde "Encargo vigente: fase 4 de S16" y la última entrada de la bitácora (C49).
+2. Terminar C49 (lo que falta, arriba).
+3. Seguir con C50 (compositor y GPU fuera del kernel; el buzón como servicio) y C51 (cierre de la fase 4: ventana
+   del PCIe, pruebas que quedan en el kernel a `inicio`, auditoría independiente).
+4. El bucle se relanza con `/loop` y el mismo encargo.
+
+Estado al parar: fases 1 a 3 de S16 cerradas con sus auditorías; de la fase 4, hechas C45 a C48 y media C49.
+`make -C kernel prueba` y `make -C kernel arranque` pasan. Todo en commits locales, sin push.
 
 ## Resumen de la noche
 

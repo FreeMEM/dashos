@@ -37,9 +37,6 @@ mod v3d;
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
 mod gpu;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod usb;
 #[cfg(not(feature = "pruebas"))]
 mod inicio;
 mod interrupciones;

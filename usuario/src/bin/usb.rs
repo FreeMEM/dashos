@@ -1,15 +1,15 @@
-//! USB: controlador DWC2 de la Pi 4 en modo anfitrión (C22, primera vuelta).
+//! El controlador USB (C49): el DWC2 de la Pi 4 en modo anfitrión, fuera del kernel. Antes iba dentro (C22); el
+//! protocolo es el mismo (USB 2.0 y HID 1.11), por consulta.
 //!
-//! Primera forma, dentro del kernel y por consulta, para tener algo que funcione: arranca el núcleo, enciende y
-//! reinicia el puerto, y hace transferencias de control por el canal 0 con DMA (QEMU solo emula el modo DMA). El
-//! protocolo (paquete SETUP, descriptores, peticiones estándar) es el de la especificación USB 2.0. Cuando haya
-//! llaves de memoria DMA (direcciones de bus para un proceso), irá fuera del kernel como el de la SD (C21).
+//! Llaves: la 1, el permiso DMA; la 2, los registros del DWC2. El búfer de DMA es memoria DMA (C46): una página del
+//! primer GB, con su dirección de bus, que se ve sin caché. Enumera el hub de QEMU, busca teclados y ratones de
+//! arranque y escribe lo que mandan.
 
-use crate::memoria::{paginas, Zona};
-use crate::mmio::RegLe32;
-use crate::{mmu, reloj};
+#![no_std]
+#![no_main]
+#![allow(dead_code)]
 
-const FISICA: usize = 0xFE98_0000;
+dashos::programa!(principal);
 
 // Registros globales.
 const GAHBCFG: usize = 0x008;
@@ -51,8 +51,6 @@ const PID_DATA0: u32 = 0;
 const PID_DATA1: u32 = 2;
 const PID_SETUP: u32 = 3;
 
-/// La memoria del primer GB se ve desde los aparatos en `0xC0000000` más la física.
-const BUS_RAM: u64 = 0xC000_0000;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
@@ -82,29 +80,40 @@ pub struct Hid {
 
 pub struct Dwc2 {
     base: usize,
-    bufer: u64, // página física para el DMA
+    /// El búfer de DMA (C46): dónde lo vemos y su dirección de bus. Va sin caché, así que no hay que limpiar nada.
+    bufer: usize,
+    bus: u64,
     /// Tamaño de paquete del punto 0 de cada dirección.
     mps: [u32; 16],
 }
 
-fn esperar_us(us: u64) {
-    let fin = reloj::ahora() + us * reloj::frecuencia() / 1_000_000;
-    while reloj::ahora() < fin {}
+fn ahora() -> u64 {
+    let t: u64;
+    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) t) };
+    t
 }
 
-fn cache(va: usize, n: usize, invalidar: bool) {
-    let mut p = va & !63;
-    while p < va + n {
-        unsafe {
-            if invalidar {
-                core::arch::asm!("dc civac, {}", in(reg) p)
-            } else {
-                core::arch::asm!("dc cvac, {}", in(reg) p)
-            }
-        };
-        p += 64;
+fn frecuencia() -> u64 {
+    let f: u64;
+    unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) f) };
+    f
+}
+
+fn esperar_us(us: u64) {
+    let fin = ahora() + us * frecuencia() / 1_000_000;
+    while ahora() < fin {}
+}
+
+#[derive(Clone, Copy)]
+struct RegLe32(usize);
+
+impl RegLe32 {
+    fn leer(self) -> u32 {
+        u32::from_le(unsafe { core::ptr::read_volatile(self.0 as *const u32) })
     }
-    unsafe { core::arch::asm!("dsb sy") };
+    fn escribir(self, v: u32) {
+        unsafe { core::ptr::write_volatile(self.0 as *mut u32, v.to_le()) }
+    }
 }
 
 /// Descriptor de dispositivo (USB 2.0, 9.6.1), con los campos que se usan.
@@ -119,18 +128,17 @@ pub struct Descriptor {
 
 impl Dwc2 {
     fn r(&self, off: usize) -> RegLe32 {
-        RegLe32::new(self.base + off)
+        RegLe32(self.base + off)
     }
 
-    /// Arranca el controlador en modo anfitrión y reinicia el puerto.
-    pub fn iniciar() -> Result<Self, Error> {
-        let base = mmu::virt(FISICA);
-        let id = RegLe32::new(base + GSNPSID).sondear().ok_or(Error::NoHay)?;
+    /// Arranca el controlador en modo anfitrión y reinicia el puerto. `base` es donde están proyectados sus
+    /// registros; `bufer` y `bus`, el búfer de DMA.
+    pub fn iniciar(base: usize, bufer: usize, bus: u64) -> Result<Self, Error> {
+        let id = RegLe32(base + GSNPSID).leer();
         if id & 0xffff_f000 != 0x4f54_2000 && id & 0xffff_f000 != 0x4f54_3000 {
             return Err(Error::NoHay);
         }
-        let bufer = paginas().pagina(Zona::Dma1G).ok_or(Error::NoHay)?;
-        let u = Self { base, bufer, mps: [8; 16] };
+        let u = Self { base, bufer, bus, mps: [8; 16] };
         // Reinicio del núcleo: esperar a que el bus interno esté libre, pedirlo y esperar a que acabe.
         u.esperar(|s| s.r(GRSTCTL).leer() & GRSTCTL_AHB_LIBRE != 0, 100_000)?;
         u.r(GRSTCTL).escribir(GRSTCTL_REINICIO);
@@ -160,8 +168,8 @@ impl Dwc2 {
     }
 
     fn esperar(&self, cond: impl Fn(&Self) -> bool, us: u64) -> Result<(), Error> {
-        let fin = reloj::ahora() + us * reloj::frecuencia() / 1_000_000;
-        while reloj::ahora() < fin {
+        let fin = ahora() + us * frecuencia() / 1_000_000;
+        while ahora() < fin {
             if cond(self) {
                 return Ok(());
             }
@@ -192,13 +200,11 @@ impl Dwc2 {
     /// Una transacción en el canal 0: `tipo` 0 control, 3 interrupción. Un NAK vuelve como `Error::Nak`.
     #[allow(clippy::too_many_arguments)]
     fn transaccion_en(&self, direccion: u32, punto: u32, tipo: u32, mps: u32, entrada: bool, pid: u32, datos: usize, largo: u32) -> Result<u32, Error> {
-        let va = mmu::virt(self.bufer as usize) + datos;
         let paquetes = if largo == 0 { 1 } else { largo.div_ceil(mps) };
-        cache(va, largo.max(1) as usize, entrada);
         self.r(HCINT).escribir(0xffff_ffff);
         self.r(HCINTMSK).escribir(0x7ff);
         self.r(HCTSIZ).escribir((pid << 29) | (paquetes << 19) | largo);
-        self.r(HCDMA).escribir((self.bufer + datos as u64 + BUS_RAM) as u32);
+        self.r(HCDMA).escribir((self.bus + datos as u64) as u32);
         let lenta = if self.velocidad() == 2 { 1 << 17 } else { 0 };
         self.r(HCCHAR).escribir(
             HCCHAR_HABILITAR | (1 << 20) | (direccion << 22) | (tipo << 18) | lenta | (punto << 11)
@@ -215,9 +221,6 @@ impl Dwc2 {
         if int & HCINT_HECHO == 0 {
             return Err(Error::Transferencia(int));
         }
-        if entrada {
-            cache(va, largo.max(1) as usize, true);
-        }
         let resto = self.r(HCTSIZ).leer() & 0x7ffff;
         Ok(largo - resto)
     }
@@ -230,7 +233,7 @@ impl Dwc2 {
             Err(e) => Err(e),
             Ok(n) => {
                 p.dato1 = !p.dato1;
-                let va = mmu::virt(self.bufer as usize) as *const u8;
+                let va = self.bufer as *const u8;
                 Ok(Some(unsafe { core::slice::from_raw_parts(va.add(512), n as usize) }))
             }
         }
@@ -243,7 +246,7 @@ impl Dwc2 {
 
     /// Transferencia de control (USB 2.0, 8.5.3): SETUP, datos de entrada si `largo` > 0, y estado.
     pub fn control(&self, direccion: u32, setup: [u8; 8], largo: u32) -> Result<&[u8], Error> {
-        let va = mmu::virt(self.bufer as usize) as *mut u8;
+        let va = self.bufer as *mut u8;
         unsafe { core::ptr::copy_nonoverlapping(setup.as_ptr(), va, 8) };
         self.transaccion(direccion, false, PID_SETUP, 0, 8)?;
         let mut leidos = 0;
@@ -326,7 +329,7 @@ impl Dwc2 {
             let dir = siguiente;
             siguiente += 1;
             self.poner_direccion(dir)?;
-            crate::kprintln!("  puerto {} del hub: clase {}, {:04x}:{:04x}, dirección {}", p, desc.clase, desc.fabricante, desc.producto, dir);
+            dashos::println!("  [usb] puerto {} del hub: clase {}, {:04x}:{:04x}, dirección {}", p, desc.clase, desc.fabricante, desc.producto, dir);
             if let Some(h) = self.configurar_hid(dir)? {
                 if let Some(hueco) = encontrados.iter_mut().find(|x| x.is_none()) {
                     *hueco = Some(h);
@@ -387,5 +390,58 @@ impl Dwc2 {
         self.orden(dir, [0x21, 0x0B, 0, 0, ifz, 0, 0, 0])?; // SET_PROTOCOL: arranque
         let _ = self.orden(dir, [0x21, 0x0A, 0, 0, ifz, 0, 0, 0]); // SET_IDLE 0: puede no admitirse
         Ok(Some(hid))
+    }
+}
+
+const VA_REGISTROS: usize = 0x0090_0000;
+const VA_BUFER: usize = 0x30_0000_0000;
+
+fn principal() -> u64 {
+    if dashos::registros_proyectar(2, VA_REGISTROS) != 0 {
+        dashos::println!("  [usb] sin registros");
+        return 1;
+    }
+    let (m, bus) = dashos::memoria_dma(1, 4096);
+    if m <= 0 || dashos::memoria_proyectar(m as u32, VA_BUFER, true) != 0 {
+        dashos::println!("  [usb] sin memoria DMA");
+        return 2;
+    }
+    let mut u = match Dwc2::iniciar(VA_REGISTROS, VA_BUFER, bus) {
+        Ok(u) => u,
+        Err(e) => {
+            dashos::println!("  [usb] no arranca: {:?}", e);
+            return 3;
+        }
+    };
+    dashos::println!("  [usb] DWC2 {:#x} en marcha; búfer DMA en el bus {:#x}", u.identificador(), bus);
+    if u.descriptor(0).is_err() || u.poner_direccion(1).is_err() {
+        dashos::println!("  [usb] no se pudo enumerar el primer dispositivo");
+        return 4;
+    }
+    let mut hids: [Option<Hid>; 4] = [None; 4];
+    if let Err(e) = u.enumerar_hub(1, 2, &mut hids) {
+        dashos::println!("  [usb] error al enumerar el hub: {:?}", e);
+        return 5;
+    }
+    let teclados = hids.iter().flatten().filter(|h| h.teclado).count();
+    let ratones = hids.iter().flatten().filter(|h| !h.teclado).count();
+    dashos::println!("  [usb] HID de arranque: {} teclado y {} ratón", teclados, ratones);
+    // Por consulta: cada pocos milisegundos se pregunta a cada uno.
+    loop {
+        for h in hids.iter_mut().flatten() {
+            let teclado = h.teclado;
+            match u.leer_interrupcion(&mut h.entrada) {
+                Ok(Some(i)) if teclado && i.len() >= 3 && i[2] != 0 => {
+                    let c = i[2];
+                    let letra = if (4..=29).contains(&c) { (b'a' + c - 4) as char } else { '?' };
+                    dashos::println!("  [usb] tecla: uso {:#04x} ({})", c, letra);
+                }
+                Ok(Some(i)) if !teclado && i.len() >= 3 => {
+                    dashos::println!("  [usb] ratón: botones {:#x}, movimiento ({}, {})", i[0], i[1] as i8, i[2] as i8);
+                }
+                _ => {}
+            }
+        }
+        esperar_us(8000);
     }
 }
