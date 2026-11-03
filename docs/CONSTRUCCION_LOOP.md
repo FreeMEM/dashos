@@ -1,23 +1,30 @@
 # Bucle de construcción de DashOS
 
-## Encargo vigente: fase 3 de S16
+## Encargo vigente: fase 4 de S16
 
-Del usuario, el 2026-11-03 a las 18:5x, tras cerrar las fases 1 y 2 y C38: "sigue pero actívate en loop". El bucle
-hace la fase 3 de `docs/diseño/S16-kernel-seguro.md` (tareas C39 a C43) y la cierra con su auditoría. Las decisiones
-de diseño de la fase están aprobadas (S16, "Decisiones"); lo que no esté decidido allí y cambie lo que ve un
-programa se apunta en la bitácora con el porqué.
+Del usuario, el 2026-11-03 a las 20:1x, tras cerrar la fase 3: "cierra lo que ha quedado abierto y empieza la fase
+4". El bucle hace la fase 4 de `docs/diseño/S16-kernel-seguro.md` (tareas C45 a C51) y la cierra con su auditoría.
+Las decisiones de la fase están aprobadas (S16, "Decisiones", C y D). Lo que no esté decidido allí y cambie lo que ve
+un programa se apunta en la bitácora con el porqué.
 
-Reglas propias de este encargo, que sustituyen a las de abajo donde choquen:
+Reglas propias de este encargo (las mismas que en la fase 3), que sustituyen a las de abajo donde choquen:
 
-- **Fin.** Cuando C39 a C43 estén `[x]` y la auditoría de cierre de la fase 3 esté hecha y sus fallos críticos,
-  altos y medios arreglados; o con el uso por encima del 90 %. Entonces: "Resumen de la fase 3" al final de este
+- **Fin.** Cuando C45 a C51 estén `[x]` y la auditoría de cierre de la fase 4 esté hecha y sus fallos críticos,
+  altos y medios arreglados; o con el uso por encima del 90 %. Entonces: "Resumen de la fase 4" al final de este
   fichero, un PushNotification con el resultado y parar el bucle.
 - **Sin hora límite.** La regla 1 solo mira el uso.
 - **Avisos.** El usuario está despierto, pero no se le avisa salvo bloqueo de verdad o al acabar.
 - **Lo que ve un programa.** Si una tarea cambia una llamada, se pone al día `docs/referencia/kernel.md` en el mismo
-  commit y se avisa a la sesión de Dash (`freememlang`, con SendMessage) de qué cambia.
-- **Cada tarea**, con su paso hostil en `malo` o un programa de prueba propio, y comprobando que la prueba falla sin
-  el arreglo cuando se pueda.
+  commit y se avisa a la sesión de Dash (`freememlang`, con SendMessage) de qué cambia. La llamada 1 (`escribir`) la
+  usa Dash: puede cambiar por dentro, pero no lo que ve un programa.
+- **Cada tarea**, con su prueba (hostil cuando toque) y comprobando que falla sin el arreglo cuando se pueda.
+- **Lo que solo se ve en la Pi 4** (PCIe, HVS, V3D) se deja escrito y marcado "sin probar", sin inventar
+  comprobaciones.
+
+## Encargo de la fase 3 (cumplido)
+
+Del usuario, el 2026-11-03 a las 18:5x: "sigue pero actívate en loop". Fase 3 de S16, tareas C39 a C43. Cerrada a las
+20:0x; ver "Resumen de la fase 3".
 
 ## Encargo de la noche (cumplido)
 
@@ -69,7 +76,26 @@ del kernel sobre la que irán esos controladores.
 
 ## Tareas
 
-### Fase 3 de S16 (encargo vigente)
+### Fase 4 de S16 (encargo vigente)
+
+- [ ] C45 **Quitar proyecciones.** Una llamada para quitar lo proyectado en un tramo, con su TLB vaciada. Y que
+  revocar una llave de memoria deshaga sus proyecciones en todos los espacios (lo que dejó abierto C41).
+- [ ] C46 **Memoria DMA** (S16, D). Un objeto de memoria del primer GB con su dirección de bus, que solo puede crear
+  quien tenga una llave de permiso DMA que da el kernel. Así los búferes de DMA salen de objetos con dueño y cobrados.
+- [ ] C47 **Programa de inicio.** La imagen normal lanza `inicio` (un ELF dentro de la imagen) en el grupo raíz, con
+  las llaves de arranque: registros e interrupciones de cada aparato del árbol, permiso DMA. `inicio` lanza los
+  servicios, cada uno en su grupo. `make arranque` lo comprueba.
+- [ ] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
+  la consola arranca y escribe su registro en un anillo que la consola vacía; `escribir` va también al anillo. Solo el
+  pánico escribe directo. Cierra N2/N6 de las auditorías.
+- [ ] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
+  canales.
+- [ ] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
+  HVS y la V3D como procesos (sin probar en QEMU). El buzón de la VideoCore, como servicio.
+- [ ] C51 **Cierre de la fase 4**: la ventana de entrada del PCIe (sin probar, Pi 4), las pruebas que quedan en el
+  kernel pasan a `inicio` donde se pueda, y auditoría independiente de cierre con sus fallos arreglados.
+
+### Fase 3 de S16 (cumplida)
 
 - [x] C39 **Crear, matar y esperar procesos desde un proceso.** Un objeto proceso con su llave: `proceso_crear` a
   partir de un ELF en un objeto de memoria y una lista de llaves que se le pasan; `proceso_matar`; esperar a que
