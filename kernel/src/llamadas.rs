@@ -72,7 +72,13 @@ pub fn atender(marco: &mut Marco) {
 fn escribir_consola(p: u64, n: u64) -> u64 {
     let Some((p, n)) = tramo(p, n.min(4096)) else { return E_ARGUMENTO };
     let texto = unsafe { core::slice::from_raw_parts(p as *const u8, n) };
-    kprint!("{}", core::str::from_utf8(texto).unwrap_or("?"));
+    // El texto nativo de DashOS es UTF-8 (S4b). Un byte que no lo sea sale como "?", sin perder el resto.
+    for trozo in texto.utf8_chunks() {
+        kprint!("{}", trozo.valid());
+        for _ in trozo.invalid() {
+            kprint!("?");
+        }
+    }
     n as u64
 }
 
