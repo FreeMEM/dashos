@@ -1,6 +1,25 @@
 # Bucle de construcción de DashOS
 
-## Encargo
+## Encargo vigente: fase 3 de S16
+
+Del usuario, el 2026-11-03 a las 18:5x, tras cerrar las fases 1 y 2 y C38: "sigue pero actívate en loop". El bucle
+hace la fase 3 de `docs/diseño/S16-kernel-seguro.md` (tareas C39 a C43) y la cierra con su auditoría. Las decisiones
+de diseño de la fase están aprobadas (S16, "Decisiones"); lo que no esté decidido allí y cambie lo que ve un
+programa se apunta en la bitácora con el porqué.
+
+Reglas propias de este encargo, que sustituyen a las de abajo donde choquen:
+
+- **Fin.** Cuando C39 a C43 estén `[x]` y la auditoría de cierre de la fase 3 esté hecha y sus fallos críticos,
+  altos y medios arreglados; o con el uso por encima del 90 %. Entonces: "Resumen de la fase 3" al final de este
+  fichero, un PushNotification con el resultado y parar el bucle.
+- **Sin hora límite.** La regla 1 solo mira el uso.
+- **Avisos.** El usuario está despierto, pero no se le avisa salvo bloqueo de verdad o al acabar.
+- **Lo que ve un programa.** Si una tarea cambia una llamada, se pone al día `docs/referencia/kernel.md` en el mismo
+  commit y se avisa a la sesión de Dash (`freememlang`, con SendMessage) de qué cambia.
+- **Cada tarea**, con su paso hostil en `malo` o un programa de prueba propio, y comprobando que la prueba falla sin
+  el arreglo cuando se pueda.
+
+## Encargo de la noche (cumplido)
 
 Encargo del usuario, del 2026-11-03 a las 2 de la madrugada:
 
@@ -49,6 +68,24 @@ del kernel sobre la que irán esos controladores.
     "Resumen de la noche" al final de este fichero, manda un PushNotification con el resultado y para el bucle.
 
 ## Tareas
+
+### Fase 3 de S16 (encargo vigente)
+
+- [ ] C39 **Crear, matar y esperar procesos desde un proceso.** Un objeto proceso con su llave: `proceso_crear` a
+  partir de un ELF en un objeto de memoria y una lista de llaves que se le pasan; `proceso_matar`; esperar a que
+  acabe (por un canal o una llave que se cierra). Matar siempre funciona (S2): un hilo bloqueado también muere, y
+  nadie se queda con un `HiloRef` suelto (auditoría de la fase 2).
+- [ ] C40 **Al morir un proceso, sus extremos se cierran** y el otro lado se entera (`E_CERRADO`). Sin ciclos: no se
+  puede mandar un extremo por su propio canal ni por su pareja, ni una llave de interrupción al canal al que está
+  asociada (hallazgo 15).
+- [ ] C41 **Llaves completas** (S16, G): duplicar una llave con menos derechos; identidad del que escribe (una marca
+  en cada extremo, que pone quien lo crea, y que el lector recibe con el mensaje); revocar (quien dio una llave puede
+  retirarla de todas sus copias).
+- [ ] C42 **Cupos por grupo** (S16, F): cada proceso pertenece a un grupo con un presupuesto de memoria del kernel
+  que le da quien lo crea. Todo lo que crea se cobra ahí (páginas, tablas, llaves, mensajes en cola, canales). Al
+  agotarse, `E_MEMORIA`. Matar el grupo libera todo. Sustituye a los límites provisionales de C32.
+- [ ] C43 **Cierre de la fase 3**: las pruebas del arranque que puedan ser programas de usuario pasan a serlo, con un
+  proceso que lanza a otros; y auditoría independiente de cierre, con sus fallos arreglados.
 
 ### Construcción
 
