@@ -31,6 +31,8 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         Err(elf::Error::SinMemoria) => return Err((Error::SinMemoria, llaves)),
         Err(x) => return Err((Error::Elf(x), llaves)),
     };
+    // La pila del kernel del hilo, antes de tocar las llaves: sin ella no se puede seguir (M4).
+    let Some(pila) = crate::mapa::pila_nueva() else { return Err((Error::SinMemoria, llaves)) };
     let control = Arc::new(Control::default());
     if !cupo.apuntar(&control) {
         return Err((Error::SinMemoria, llaves));
@@ -53,6 +55,6 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         control: control.clone(),
     });
     let n = nucleo.unwrap_or_else(|| 1 + SIGUIENTE.fetch_add(1, Ordering::Relaxed) % 3);
-    planificador::crear_proceso(p, cargado.entrada, cargado.pila, n);
+    planificador::crear_proceso(p, cargado.entrada, cargado.pila, n, pila);
     Ok((control, cargado))
 }

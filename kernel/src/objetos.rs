@@ -5,7 +5,7 @@
 //! quien recibe, con los mismos derechos o menos, nunca más.
 
 use crate::cerrojo::Cerrojo;
-use crate::planificador::{self, HiloRef};
+use crate::planificador::{self, ColaEspera, HiloRef};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
@@ -18,7 +18,7 @@ pub const TODOS: u32 = LEER | ESCRIBIR | TRANSFERIR;
 pub const MAX_DATOS: usize = 256;
 pub const MAX_LLAVES: usize = 8;
 /// Límites por proceso y por canal, para que un proceso no se coma la memoria del kernel (auditoría, hallazgo 8).
-/// Son provisionales: los cupos por grupo de procesos (S16, F) los sustituyen.
+/// Son límites de forma; lo que cuesta cada cosa se cobra además al cupo del grupo (C42).
 pub const MAX_TABLA: usize = 1024;
 pub const MAX_COLA: usize = 16;
 
@@ -45,11 +45,27 @@ pub enum Objeto {
 /// El intermediario de las llaves revocables (C41).
 pub struct Revocable {
     objeto: Cerrojo<Option<Objeto>>,
+    /// Cuántos intermediarios hay por debajo, contando este: como mucho `MAX_REVOCABLES` (C43, auditoría C1).
+    profundidad: u32,
+    _cargo: crate::cupo::Cargo,
 }
 
+/// Intermediarios dentro de intermediarios, como mucho. Soltar una cadena va por recursión, y `ver` la recorre.
+pub const MAX_REVOCABLES: u32 = 4;
+
 impl Revocable {
-    pub fn nuevo(objeto: Objeto) -> Self {
-        Self { objeto: Cerrojo::new(Some(objeto)) }
+    /// Un intermediario para `objeto`, cobrado a `cupo`. `None` si ya hay `MAX_REVOCABLES` por debajo (contando los
+    /// revocadores: un revocador también lleva su intermediario) o si no cabe en el cupo.
+    pub fn nuevo(objeto: Objeto, cupo: &Arc<crate::cupo::Cupo>) -> Option<Self> {
+        let debajo = match &objeto {
+            Objeto::Revocable(r) | Objeto::Revocador(r) => r.profundidad,
+            _ => 0,
+        };
+        if debajo + 1 > MAX_REVOCABLES {
+            return None;
+        }
+        let cargo = cupo.cobrar(crate::cupo::COSTE_REVOCABLE)?;
+        Some(Self { objeto: Cerrojo::new(Some(objeto)), profundidad: debajo + 1, _cargo: cargo })
     }
 
     /// Revoca: suelta el objeto (fuera del cerrojo). Si era lo último que lo tenía, se libera; un lado de canal se
@@ -87,6 +103,8 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
     match &l.objeto {
         Objeto::Extremo(p) => Arc::ptr_eq(p.canal(), canal),
         Objeto::Interrupcion(i) => i.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
+        // Un revocador lleva dentro su objeto: si es un lado de este canal, también es un ciclo (auditoría, M1).
+        Objeto::Revocador(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
         _ => false,
     }
 }
@@ -106,7 +124,9 @@ pub struct EstadoProceso {
     /// Cómo acabó, cuando ya no le quedan hilos.
     pub fin: Option<Fin>,
     /// Hilos bloqueados en `proceso_esperar`.
-    pub esperando: Vec<HiloRef>,
+    pub esperando: ColaEspera,
+    /// Lo han matado (C43, M2): los hilos que se apunten después nacen marcados.
+    pub matado: bool,
 }
 
 /// Un objeto de memoria: está en `base`, que es quien toca las páginas (C37).
@@ -139,7 +159,7 @@ struct Lado {
     /// Mensajes que esperan a que este lado los lea.
     cola: VecDeque<Mensaje>,
     /// Hilo bloqueado leyendo en este lado.
-    esperando: Option<HiloRef>,
+    esperando: ColaEspera,
     cerrado: bool,
 }
 
@@ -209,7 +229,7 @@ fn soltar(mut pendientes: Vec<Mensaje>) {
         let mut objetos: Vec<Objeto> = m.llaves.into_iter().map(|l| l.objeto).collect();
         while let Some(objeto) = objetos.pop() {
             match objeto {
-                Objeto::Revocable(r) => {
+                Objeto::Revocable(r) | Objeto::Revocador(r) => {
                     // Si nadie más tiene el intermediario, lo de dentro se suelta en este mismo bucle.
                     if let Ok(mut r) = Arc::try_unwrap(r) {
                         if let Some(o) = r.objeto.get_mut().take() {
@@ -268,7 +288,7 @@ impl Canal {
     /// Manda desde el lado `lado`: el mensaje va a la cola del otro. Si no puede (cerrado, cola llena o sin
     /// memoria), devuelve el mensaje para que quien manda recupere sus llaves.
     pub fn escribir(&self, lado: usize, m: Mensaje) -> Result<(), (Error, Mensaje)> {
-        let despertar = {
+        {
             let mut l = self.lados.tomar();
             let otro = &mut l[1 - lado];
             if otro.cerrado {
@@ -281,11 +301,9 @@ impl Canal {
                 return Err((Error::SinMemoria, m));
             }
             otro.cola.push_back(m);
-            otro.esperando.take()
+            // Con el cerrojo tomado: los que esperan siguen vivos mientras lo tengamos (auditoría de la fase 3, A2).
+            otro.esperando.despertar_todos();
         };
-        if let Some(h) = despertar {
-            h.despertar();
-        }
         Ok(())
     }
 
@@ -300,14 +318,11 @@ impl Canal {
     }
 
     fn leer_enmascarado(&self, lado: usize) -> Result<Mensaje, Error> {
-        let yo = planificador::yo();
         loop {
             let mut l = self.lados.tomar();
-            // Si lo despertaron para matarlo (C39), nadie le quitó el sitio: se quita él, para que el canal no guarde
+            // Si lo despertaron para matarlo (C39), nadie lo quitó de la cola: se quita él, para que el canal no guarde
             // un hilo que va a morir.
-            if l[lado].esperando == Some(yo) {
-                l[lado].esperando = None;
-            }
+            l[lado].esperando.quitarme();
             if planificador::debe_morir() {
                 return Err(Error::Cerrado);
             }
@@ -317,7 +332,9 @@ impl Canal {
             if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
-            l[lado].esperando = Some(yo);
+            if !l[lado].esperando.apuntarme() {
+                return Err(Error::SinMemoria);
+            }
             // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
             planificador::bloquear_soltando(l);
         }
@@ -331,15 +348,10 @@ impl Canal {
     /// Cierra el lado `lado`: el otro se entera, y los mensajes que esperaban a este lado se devuelven para soltarlos
     /// fuera del cerrojo.
     fn cerrar_y_vaciar(&self, lado: usize) -> Vec<Mensaje> {
-        let (despertar, cola) = {
-            let mut l = self.lados.tomar();
-            l[lado].cerrado = true;
-            (l[1 - lado].esperando.take(), core::mem::take(&mut l[lado].cola))
-        };
-        if let Some(h) = despertar {
-            h.despertar();
-        }
-        cola.into()
+        let mut l = self.lados.tomar();
+        l[lado].cerrado = true;
+        l[1 - lado].esperando.despertar_todos();
+        core::mem::take(&mut l[lado].cola).into()
     }
 
     /// Saca todos los mensajes de las dos colas (cuando ya nadie más tiene el canal).

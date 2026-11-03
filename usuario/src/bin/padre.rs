@@ -128,6 +128,23 @@ fn principal() -> u64 {
     if dashos::canal_leer(z1, &mut buf, &mut llaves).0 != E_CERRADO {
         return 21;
     }
+    // 22-23: dos hijos leen el mismo lado (con una copia de la llave); llegan dos mensajes y despiertan los dos
+    // (auditoría de la fase 3, M3: antes uno se quedaba colgado).
+    let (a, b) = dashos::canal_crear();
+    let b2 = dashos::llave_duplicar(b, dashos::LEER | dashos::TRANSFERIR, 0);
+    let p1 = dashos::proceso_crear(1, tamano, &[b]);
+    let p2 = dashos::proceso_crear(1, tamano, &[b2 as u32]);
+    if b2 <= 0 || p1 <= 0 || p2 <= 0 {
+        return 22;
+    }
+    esperar_ms(30);
+    if dashos::canal_escribir(a, &[1, 3], &[]) != 0 || dashos::canal_escribir(a, &[1, 4], &[]) != 0 {
+        return 23;
+    }
+    let (c1, c2) = (dashos::proceso_esperar(p1 as u32), dashos::proceso_esperar(p2 as u32));
+    if c1.0 != 0 || c2.0 != 0 || c1.1 + c2.1 != 7 {
+        return 24;
+    }
     println!("  [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados");
     println!("  [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados");
     39

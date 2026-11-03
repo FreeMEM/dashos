@@ -205,13 +205,13 @@ trasladar:
     stp     x12, x13, [x7], #16
     cmp     x6, x8
     b.lo    6b
-    mov     x7, x3                      // el código copiado, a la caché de instrucciones
-    add     x8, x3, x5
-7:  dc      cvau, x7
+    mov     x7, x3                      // la copia, hasta la RAM (punto de coherencia): los núcleos 1 a 3 la leen
+    add     x8, x3, x5                  // con las cachés apagadas (auditoría de la fase 3, M5); y de ahí a la de
+7:  dc      cvac, x7                    // instrucciones
     add     x7, x7, #64
     cmp     x7, x8
     b.lo    7b
-    dsb     ish
+    dsb     sy
     ic      iallu
     dsb     nsh
     isb

@@ -258,6 +258,9 @@ El `unsafe` está en un módulo, `kernel/src/base/`, con `deny(unsafe_code)` en 
 - Recortar, revocar, identidad del emisor, sin ciclos, y cerrar al morir (G).
 - Crear y matar procesos desde un proceso.
 
+Hecha el 2026-11-03 como C39 a C43 y cerrada con su auditoría (`docs/seguridad/auditoria-2026-11-03-fase3.md`).
+Queda de ella liberar los ciclos de varios canales.
+
 **Fase 4. Sacar lo que sobra.**
 
 - Memoria DMA (D).

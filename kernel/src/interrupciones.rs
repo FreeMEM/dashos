@@ -12,7 +12,7 @@
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje};
-use crate::planificador::{self, HiloRef};
+use crate::planificador::{self, ColaEspera};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
@@ -26,7 +26,8 @@ const PALABRAS: usize = 4;
 static ASOCIADAS: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
 /// Las que han llegado y esperan al repartidor.
 static PENDIENTES: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
-static REPARTIDOR: crate::cerrojo::Cerrojo<Option<HiloRef>> = crate::cerrojo::Cerrojo::new(None);
+/// Donde espera el repartidor a que llegue una interrupción.
+static REPARTIDOR: crate::cerrojo::Cerrojo<ColaEspera> = crate::cerrojo::Cerrojo::new(ColaEspera::nueva());
 static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new());
 
 /// El objeto de una interrupción. Mientras haya una llave, es de ese proceso; al perderse la última, se
@@ -105,10 +106,7 @@ pub fn atender(intid: u32) -> bool {
     }
     crate::gic::deshabilitar(intid);
     PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
-    let h = *REPARTIDOR.tomar();
-    if let Some(h) = h {
-        h.despertar();
-    }
+    REPARTIDOR.tomar().despertar_todos();
     true
 }
 
@@ -118,7 +116,6 @@ pub fn iniciar() {
 }
 
 extern "C" fn repartidor(_: usize) {
-    *REPARTIDOR.tomar() = Some(planificador::yo());
     loop {
         // Mirar y bloquearse sin que entre una interrupción en medio (todas llegan a este núcleo).
         let estado = crate::cerrojo::enmascarar_irq();
@@ -127,7 +124,10 @@ extern "C" fn repartidor(_: usize) {
             llegadas[i] = p.swap(0, Ordering::SeqCst);
         }
         if llegadas.iter().all(|&x| x == 0) {
-            planificador::bloquear();
+            // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde.
+            let mut cola = REPARTIDOR.tomar();
+            cola.apuntarme();
+            planificador::bloquear_soltando(cola);
             crate::cerrojo::restaurar_irq(estado);
             continue;
         }

@@ -439,10 +439,12 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
     match crate::procesos::lanzar(&binario, viajan, None, cupo) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
-            match proc_.llaves.tomar().instalar(llave) {
+            let instalada = proc_.llaves.tomar().instalar(llave);
+            match instalada {
                 Ok(n) => n as u64,
                 Err(_) => {
-                    // No cabía la llave (otro hilo llenó la tabla): sin llave nadie lo controlaría, así que muere.
+                    // No cabía la llave (otro hilo llenó la tabla): sin llave nadie lo controlaría, así que muere. Sin
+                    // el cerrojo de la tabla tomado (auditoría de la fase 3, B5).
                     planificador::matar_proceso(&control);
                     E_LIMITE
                 }
@@ -479,11 +481,10 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
     if l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
-    let yo = planificador::yo();
     loop {
         let mut e = c.estado.tomar();
-        // Si lo despertaron para matarlo, nadie lo quitó de la lista: se quita él.
-        e.esperando.retain(|&x| x != yo);
+        // Si lo despertaron para matarlo, nadie lo quitó de la cola: se quita él.
+        e.esperando.quitarme();
         if let Some(fin) = e.fin {
             let (clase, codigo) = fin.valores();
             marco.poner_x1(codigo);
@@ -492,10 +493,9 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
         if planificador::debe_morir() {
             return E_CERRADO;
         }
-        if e.esperando.try_reserve(1).is_err() {
+        if !e.esperando.apuntarme() {
             return E_MEMORIA;
         }
-        e.esperando.push(yo);
         // Las IRQ están enmascaradas en toda llamada: se puede bloquear soltando el cerrojo.
         planificador::bloquear_soltando(e);
     }
@@ -507,10 +507,16 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
 /// quede una.
 fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    // Declarada antes que la guarda de la tabla, para soltarse después de ella (B5).
+    let resuelta;
     let mut t = proc_.llaves.tomar();
     // La llave sin resolver: si es revocable, la copia también lo es.
     let Some(l) = t.ver_crudo(h) else { return E_LLAVE };
-    if t.ver(h).is_none() {
+    // La copia resuelta se suelta después del cerrojo de la tabla: si alguien revoca a la vez, podría ser lo último
+    // de un lado de canal, y cerrarlo no debe pasar con la tabla tomada.
+    resuelta = t.ver(h);
+    if resuelta.is_none() {
+        drop(t);
         return E_LLAVE; // revocada
     }
     if marca != 0 && l.marca != 0 && marca != l.marca {
@@ -527,15 +533,20 @@ fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
 /// usarlo, la copia y todas las que se hagan de ella dejan de valer, estén donde estén.
 fn llave_revocable(marco: &mut Marco, h: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    // Declarada antes que la guarda de la tabla, para soltarse después de ella (B5).
+    let resuelta;
     let mut t = proc_.llaves.tomar();
     if t.huecos() < 2 || !t.reservar(2) {
         return E_LIMITE;
     }
     let Some(l) = t.ver_crudo(h) else { return E_LLAVE };
-    if t.ver(h).is_none() {
+    resuelta = t.ver(h);
+    if resuelta.is_none() {
+        drop(t);
         return E_LLAVE;
     }
-    let r = alloc::sync::Arc::new(objetos::Revocable::nuevo(l.objeto));
+    let Some(r) = objetos::Revocable::nuevo(l.objeto, &proc_.cupo) else { return E_LIMITE };
+    let r = alloc::sync::Arc::new(r);
     let copia = objetos::Llave { objeto: Objeto::Revocable(r.clone()), derechos: l.derechos, marca: l.marca };
     let revocador = objetos::Llave::nueva(Objeto::Revocador(r), objetos::TODOS);
     let (Ok(a), Ok(b)) = (t.instalar(copia), t.instalar(revocador)) else { return E_MEMORIA };

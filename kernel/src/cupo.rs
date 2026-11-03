@@ -20,11 +20,20 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Lo que cuesta un proceso además de su espacio: el hilo, su pila del kernel (16 KB) y la tabla de llaves llena.
 pub const COSTE_PROCESO: u64 = 64 * 1024;
+/// Lo que cuesta un grupo en sí (C43).
+pub const COSTE_GRUPO: u64 = 512;
+/// Lo que cuesta un intermediario de llave revocable (C43).
+pub const COSTE_REVOCABLE: u64 = 256;
+/// Grupos dentro de grupos, como mucho: soltar una cadena va por recursión (auditoría de la fase 3, A1).
+pub const MAX_PROFUNDIDAD: u32 = 8;
 /// Lo que cuesta un canal: sus dos colas llenas, con llaves en cada mensaje.
 pub const COSTE_CANAL: u64 = 2 * MAX_COLA as u64 * (MAX_DATOS as u64 + 64 * MAX_LLAVES as u64 + 64);
 
 pub struct Cupo {
     limite: u64,
+    profundidad: u32,
+    /// Lo han matado (M2): no admite procesos ni subgrupos nuevos.
+    muerto: core::sync::atomic::AtomicBool,
     usado: AtomicU64,
     /// Lo que este grupo tiene cobrado a su padre: su presupuesto.
     _del_padre: Option<Cargo>,
@@ -47,20 +56,36 @@ impl Drop for Cargo {
 static RAIZ: Cerrojo<Option<Arc<Cupo>>> = Cerrojo::new(None);
 
 impl Cupo {
-    fn con(limite: u64, del_padre: Option<Cargo>) -> Self {
-        Self { limite, usado: AtomicU64::new(0), _del_padre: del_padre, miembros: Cerrojo::default(), hijos: Cerrojo::default() }
+    fn con(limite: u64, profundidad: u32, del_padre: Option<Cargo>) -> Self {
+        Self {
+            limite,
+            profundidad,
+            muerto: core::sync::atomic::AtomicBool::new(false),
+            usado: AtomicU64::new(0),
+            _del_padre: del_padre,
+            miembros: Cerrojo::default(),
+            hijos: Cerrojo::default(),
+        }
     }
 
-    /// El grupo raíz, sin límite.
+    /// El grupo raíz. Su límite es la memoria libre para procesos al crearlo, menos la reserva del kernel: así la
+    /// suma de todos los presupuestos no pasa de la memoria que hay (auditoría de la fase 3, M4).
     pub fn raiz() -> Arc<Cupo> {
-        RAIZ.tomar().get_or_insert_with(|| Arc::new(Cupo::con(u64::MAX, None))).clone()
+        RAIZ.tomar().get_or_insert_with(|| Arc::new(Cupo::con(crate::memoria::paginas().bytes_para_procesos(), 0, None))).clone()
     }
 
-    /// Un subgrupo con `limite` bytes, sacados de este. `None` si no caben.
+    /// Un subgrupo con `limite` bytes, sacados de este (más `COSTE_GRUPO`). `None` si no caben, si este grupo está
+    /// muerto o si ya hay `MAX_PROFUNDIDAD` niveles.
     pub fn hijo(self: &Arc<Self>, limite: u64) -> Option<Arc<Cupo>> {
-        let cargo = self.cobrar(limite)?;
-        let h = Arc::new(Cupo::con(limite, Some(cargo)));
+        if self.profundidad + 1 >= MAX_PROFUNDIDAD {
+            return None;
+        }
+        let cargo = self.cobrar(limite.checked_add(COSTE_GRUPO)?)?;
+        let h = Arc::new(Cupo::con(limite, self.profundidad + 1, Some(cargo)));
         let mut hijos = self.hijos.tomar();
+        if self.muerto.load(Ordering::Acquire) {
+            return None;
+        }
         hijos.retain(|w| w.strong_count() > 0);
         hijos.try_reserve(1).ok()?;
         hijos.push(Arc::downgrade(&h));
@@ -96,6 +121,10 @@ impl Cupo {
     /// Apunta un proceso como miembro del grupo, para poder matarlo con él.
     pub fn apuntar(&self, c: &Arc<Control>) -> bool {
         let mut m = self.miembros.tomar();
+        // Con el cerrojo de miembros, el mismo que toma `matar`: o lo ve muerto aquí, o `matar` ve al proceso.
+        if self.muerto.load(Ordering::Acquire) {
+            return false;
+        }
         m.retain(|w| w.strong_count() > 0);
         if m.try_reserve(1).is_err() {
             return false;
@@ -108,11 +137,17 @@ impl Cupo {
     pub fn matar(self: &Arc<Self>) {
         let mut grupos = alloc::vec![self.clone()];
         while let Some(g) = grupos.pop() {
-            let procesos: Vec<Arc<Control>> = g.miembros.tomar().iter().filter_map(|w| w.upgrade()).collect();
+            let procesos: Vec<Arc<Control>> = {
+                let m = g.miembros.tomar();
+                g.muerto.store(true, Ordering::Release);
+                m.iter().filter_map(|w| w.upgrade()).collect()
+            };
             for c in procesos {
                 crate::planificador::matar_proceso(&c);
             }
-            grupos.extend(g.hijos.tomar().iter().filter_map(|w| w.upgrade()));
+            let hijos = g.hijos.tomar();
+            g.muerto.store(true, Ordering::Release);
+            grupos.extend(hijos.iter().filter_map(|w| w.upgrade()));
         }
     }
 }

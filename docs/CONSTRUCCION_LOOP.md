@@ -84,7 +84,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C42 **Cupos por grupo** (S16, F): cada proceso pertenece a un grupo con un presupuesto de memoria del kernel
   que le da quien lo crea. Todo lo que crea se cobra ahí (páginas, tablas, llaves, mensajes en cola, canales). Al
   agotarse, `E_MEMORIA`. Matar el grupo libera todo. Sustituye a los límites provisionales de C32.
-- [ ] C43 **Cierre de la fase 3**: las pruebas del arranque que puedan ser programas de usuario pasan a serlo, con un
+- [x] C43 **Cierre de la fase 3**: las pruebas del arranque que puedan ser programas de usuario pasan a serlo, con un
   proceso que lanza a otros; y auditoría independiente de cierre, con sus fallos arreglados.
 
 ### Construcción
@@ -1037,6 +1037,60 @@ de `hijo`); otras miden cosas del kernel por dentro (memoria libre, ASID, mapa).
 esas llaves, que es el programa de inicio (fase 4).
 
 Lanzada la auditoría de cierre de la fase 3.
+
+### 2026-11-03 tarde, bucle — C43, segunda parte (auditoría de cierre de la fase 3)
+
+Auditoría independiente: `docs/seguridad/auditoria-2026-11-03-fase3.md`. Un fallo crítico, dos altos y cinco medios.
+Arreglados:
+
+- **C1** (crítica). Una cadena de revocables tumbaba el kernel al soltarse, por recursión. Ahora caben como mucho 4
+  intermediarios uno dentro de otro, contando los de los revocadores, y cada uno cuesta 256 bytes del cupo. `soltar`
+  vacía también revocadores. Prueba: `llaves`, pasos 15 y 16. Sin el tope, el kernel cae por desbordamiento de pila.
+- **A1.** Lo mismo con grupos anidados. Ahora hay como mucho 7 niveles bajo el raíz, y cada grupo cuesta 512 bytes.
+  Prueba en `pruebas.rs`.
+- **A2.** Se podía despertar a un hilo ya liberado. Ahora hay una `ColaEspera` en `base`, que solo se toca con el
+  cerrojo de lo que se espera y despierta con él tomado. `HiloRef` ya no se puede despertar fuera de `base`. No hay
+  prueba: es una carrera.
+- **M1.** Un revocador colaba un ciclo. `forma_ciclo` mira ahora dentro de los revocadores. Prueba: `llaves`, paso
+  17. **No arreglado:** los ciclos de varios canales siguen sin liberarse nunca, tampoco al matar el grupo. Lo acota
+  el cupo de cada grupo, pero su presupuesto no vuelve al padre. Para liberarlos haría falta que el grupo cerrara sus
+  canales al morir, o comprobar la alcanzabilidad al mandar un extremo. Queda para la fase 4.
+- **M2.** Matar un grupo no alcanzaba a un proceso a medio crear. Ahora el grupo y el proceso llevan una marca de
+  "matado", que se mira con el mismo cerrojo al apuntar. Sin prueba: es una carrera.
+- **M3.** Con dos lectores en un lado, uno se colgaba. Ahora la cola de espera admite varios. Prueba: `padre`, pasos
+  22 a 24. Con un solo hilo en espera, se cuelga.
+- **M4.** Crear un proceso podía caer en pánico sin pilas. La pila se pide antes de tocar las llaves. Además, el grupo
+  raíz tiene ahora como límite la memoria libre menos la reserva, así que la suma de presupuestos no pasa de la
+  memoria que hay.
+- **M5.** Los núcleos 1 a 3 podían arrancar de una copia del kernel aún en la caché. `trasladar` limpia ahora hasta el
+  punto de coherencia (`dc cvac`). No se puede probar en QEMU.
+- **Bajos.** B5: soltar copias de llaves y matar sin el cerrojo de la tabla. B6: la marca 0, explicada en la
+  referencia. B7: comentarios desfasados. Quedan: B4 (memoria del kernel que no se cobra, acotada por las 1024
+  llaves) y los demás bajos del informe.
+
+**Fase 3 cerrada.**
+
+## Resumen de la fase 3
+
+Del 2026-11-03, de 18:5x a 20:xx, en bucle (C39 a C43), más C38 justo antes.
+
+- **C38.** El kernel y la memoria de los procesos, fuera del alcance del DMA de la SD y de la placa. La imagen se
+  traslada por encima del primer GB al arrancar.
+- **C39.** Un proceso crea, mata y espera a otros. Matar siempre funciona: corriendo, bloqueado o en otro núcleo.
+- **C40.** Los lados de canal se cierran al soltar su última llave, también al morir el proceso. Sin ciclos directos.
+- **C41.** Llaves completas: copias con menos derechos, marca del que escribe y revocación.
+- **C42.** Cupos por grupo de procesos; matar un grupo mata a todos.
+- **C43.** Un proceso lanza las pruebas sueltas, cada una en su grupo. Auditoría de cierre con sus fallos arreglados.
+
+Pendiente para la fase 4 (S16):
+- liberar los ciclos de varios canales;
+- quitar proyecciones (para que revocar las deshaga);
+- el programa de inicio y pasarle las pruebas que quedan en el kernel;
+- la consola como servicio;
+- sacar el USB, la GPU y el compositor;
+- cerrar la ventana del PCIe.
+
+Todas las pruebas pasan. C14 sigue fallando a veces con la máquina cargada.
 
 ## Resumen de la noche
 

@@ -171,11 +171,16 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **11, `interrupcion_terminar`.** La vuelve a habilitar cuando el controlador ya ha atendido el aparato.
 - **10 y 11.** Las dos piden el derecho de escribir en la llave de la interrupción.
 - **5, `canal_leer`, la marca** (C41). En `x2` devuelve la marca de la llave por la que se escribió el mensaje, o 0.
+- **La marca 0** es "sin marca" y también la de lo que escribe el kernel (las interrupciones). Quien recibe una llave
+  sin marca puede marcarla como quiera: un servidor que quiera saber quién le escribe solo debe dar llaves marcadas.
+- **Varios lectores.** Con copias de una llave, varios hilos pueden leer el mismo lado: cada mensaje lo recibe uno, y
+  al cerrarse el otro lado se despiertan todos.
 - **15, `llave_duplicar`** (C41). Una copia del mismo objeto con los derechos pedidos que ya tenga la llave, nunca
   más. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
   otra una llave ya marcada da `E_DERECHOS`. Un lado de canal sigue abierto mientras quede alguna copia.
 - **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
-  que se hagan de la revocable también pasan por él.
+  que se hagan de la revocable también pasan por él. Cada intermediario cuesta 256 bytes del cupo. Como mucho hay 4
+  intermediarios uno dentro de otro, contando los de los revocadores; el quinto da `E_LIMITE`.
 - **Grupos y cupos** (C42). Cada proceso es de un grupo con un presupuesto en bytes. Todo lo que crea se cobra ahí:
   - un objeto de memoria, por sus páginas;
   - su espacio, por sus tablas y sus páginas de imagen y pila;
@@ -183,9 +188,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - cada canal, unos 26 KB fijos (sus dos colas llenas).
 
   Al agotarse, la llamada da `E_MEMORIA`. Lo cobrado vuelve al grupo cuando se suelta el objeto, aunque lo tenga otro
-  proceso. Los procesos que lanza el kernel son del grupo raíz, sin límite.
-- **18, `grupo_crear`.** Un subgrupo del propio con ese presupuesto, que sale del propio: si no cabe, `E_MEMORIA`. Se
-  devuelve al propio cuando ya no queda nada cobrado al subgrupo.
+  proceso. Los procesos que lanza el kernel son del grupo raíz, cuyo límite es la memoria libre para procesos al
+  arrancar, menos la reserva del kernel.
+- **18, `grupo_crear`.** Un subgrupo del propio con ese presupuesto, más 512 bytes del grupo en sí, que salen del
+  propio: si no cabe, `E_MEMORIA`. Se devuelve al propio cuando ya no queda nada cobrado al subgrupo. Como mucho hay 7
+  niveles bajo el raíz. Un grupo matado no admite procesos ni subgrupos nuevos.
 - **12 con `x4`.** Con una llave de grupo con derecho de escribir, el proceso nuevo es de ese grupo; con 0, del de
   quien lo crea.
 - **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos.

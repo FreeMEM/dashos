@@ -198,8 +198,13 @@ pub unsafe fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proce
 
 /// Como `crear_en`, y además apunta el hilo en la lista de hilos de `registrar` antes de que pueda correr (C39).
 unsafe fn crear_hilo(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>) -> u64 {
-    // Pila con guarda (C34). Hoy solo crea hilos el kernel; sin pilas libres no puede seguir.
+    // Pila con guarda (C34). Los hilos del kernel los crea el arranque, que sin pilas no puede seguir; los de los
+    // procesos traen la suya (`crear_proceso`).
     let pila = crate::mapa::pila_nueva().expect("sin pilas del kernel");
+    unsafe { crear_hilo_con(f, arg, nucleo, proceso, registrar, pila) }
+}
+
+unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila) -> u64 {
     let tope = pila.tope();
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
     let mut contexto = Contexto::default();
@@ -231,8 +236,17 @@ unsafe fn crear_hilo(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso
         matar: false,
     }));
     nc.listos.push(h);
+    drop(cola);
     if let Some(c) = registrar {
-        c.estado.tomar().hilos.push(HiloRef(h));
+        let mut e = c.estado.tomar();
+        // Si ya lo mataron mientras se creaba (M2), el hilo nace marcado: morirá antes de bajar a EL0.
+        if e.matado {
+            let cola = NUCLEOS[nucleo].tomar();
+            if cola.is_some() {
+                unsafe { (*h).matar = true };
+            }
+        }
+        e.hilos.push(HiloRef(h));
     }
     id
 }
@@ -515,23 +529,47 @@ fn despertar_en(h: *mut Hilo, n: usize) {
     }
 }
 
-/// Un hilo, para despertarlo más tarde (C37). Solo lo da `yo()`: un hilo vivo. Quien lo guarda tiene que soltarlo
-/// antes de que el hilo muera; hoy un hilo bloqueado no puede morir (un hilo por proceso y sin matar procesos), y la
-/// fase 3 de S16 lo cerrará al matar procesos.
+/// Un hilo apuntado en una lista de `base` (C37): la de hilos de un proceso o una `ColaEspera`. Fuera de `base` no se
+/// puede despertar ni mirar.
 #[derive(Clone, Copy, PartialEq, Eq)]
 pub struct HiloRef(*mut Hilo);
 unsafe impl Send for HiloRef {}
 unsafe impl Sync for HiloRef {}
 
-/// El hilo actual, para que otro lo despierte.
-pub fn yo() -> HiloRef {
-    HiloRef(actual())
+/// Hilos que esperan algo: un mensaje en un lado de canal, el fin de un proceso, una interrupción (C43). Va siempre
+/// dentro del cerrojo de lo que se espera, y solo se toca con él. Un hilo está en la cola mientras espera: lo saca
+/// quien lo despierta, con el cerrojo tomado, o él mismo al volver si lo despertaron por otra cosa (para matarlo).
+/// Como para morir tiene que volver y pasar antes por ese cerrojo, todo hilo de la cola está vivo (auditoría de la
+/// fase 3, A2). Admite varios hilos: con llaves duplicadas, varios pueden leer el mismo lado (M3).
+#[derive(Default)]
+pub struct ColaEspera {
+    hilos: Vec<HiloRef>,
 }
 
-impl HiloRef {
-    pub fn despertar(self) {
-        if !self.0.is_null() {
-            despertar(self.0);
+impl ColaEspera {
+    pub const fn nueva() -> Self {
+        Self { hilos: Vec::new() }
+    }
+
+    /// Apunta al hilo actual. Falso si no hay memoria.
+    pub fn apuntarme(&mut self) -> bool {
+        if self.hilos.try_reserve(1).is_err() {
+            return false;
+        }
+        self.hilos.push(HiloRef(actual()));
+        true
+    }
+
+    /// Quita al hilo actual, si sigue apuntado.
+    pub fn quitarme(&mut self) {
+        let yo = HiloRef(actual());
+        self.hilos.retain(|&h| h != yo);
+    }
+
+    /// Despierta a todos y vacía la cola. Con el cerrojo de lo que se espera tomado (por eso pide `&mut`).
+    pub fn despertar_todos(&mut self) {
+        for h in self.hilos.drain(..) {
+            despertar(h.0);
         }
     }
 }
@@ -594,19 +632,15 @@ pub fn terminar_actual(fin: crate::objetos::Fin) -> ! {
         let p = unsafe { alloc::sync::Arc::from_raw(proceso as *const crate::objetos::Proceso) };
         // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: se apunta cómo y se despierta a
         // quien esperaba.
-        let yo = yo();
-        let esperando = {
+        let yo = HiloRef(actual());
+        {
             let mut e = p.control.estado.tomar();
             e.hilos.retain(|&h| h != yo);
             if e.hilos.is_empty() && e.fin.is_none() {
                 e.fin = Some(fin);
-                core::mem::take(&mut e.esperando)
-            } else {
-                alloc::vec::Vec::new()
+                // Con el cerrojo tomado: los que esperan siguen vivos mientras lo tengamos (A2).
+                e.esperando.despertar_todos();
             }
-        };
-        for h in esperando {
-            h.despertar();
         }
         drop(p);
     }
@@ -670,12 +704,14 @@ extern "C" fn arrancar_proceso(a: usize) {
 
 /// Arranca el primer hilo de un proceso en `nucleo`: bajará a EL0 en `entrada` con la pila `pila` (C39). El hilo se
 /// queda con `p` y se apunta en su lista de hilos antes de poder correr.
-pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize) -> u64 {
+/// `pila_kernel` es la pila del kernel del hilo, que se pide antes (`mapa::pila_nueva`) para que esto no pueda
+/// fallar por falta de pilas cuando ya se han dado las llaves (M4).
+pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> u64 {
     let control = p.control.clone();
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     let a = Box::into_raw(Box::new(Arranque { entrada, pila })) as usize;
     // `ptr` es un Arc::into_raw cuya referencia pasa al hilo, como pide crear_hilo.
-    unsafe { crear_hilo(arrancar_proceso, a, nucleo % MAX_NUCLEOS, ptr, Some(&control)) }
+    unsafe { crear_hilo_con(arrancar_proceso, a, nucleo % MAX_NUCLEOS, ptr, Some(&control), pila_kernel) }
 }
 
 /// ¿Han matado al hilo actual?
@@ -688,7 +724,9 @@ pub fn debe_morir() -> bool {
 /// Cada uno muere en su siguiente vuelta a EL0 o al despertar (C39). Con el cerrojo de la lista tomado ningún hilo
 /// suyo puede liberarse mientras tanto.
 pub fn matar_proceso(c: &crate::objetos::Control) {
-    let estado = c.estado.tomar();
+    let mut estado = c.estado.tomar();
+    // Para los hilos que se estén creando ahora (M2): nacerán marcados.
+    estado.matado = true;
     for h in &estado.hilos {
         let n = unsafe { (*h.0).nucleo };
         let despertar_lo = {

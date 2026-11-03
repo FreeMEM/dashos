@@ -184,6 +184,11 @@ impl Paginas {
         );
     }
 
+    /// Bytes libres para procesos: los de la zona normal menos la reserva del kernel (para el grupo raíz, C43).
+    pub fn bytes_para_procesos(&self) -> u64 {
+        (self.libres - self.libres_bajo).saturating_sub(RESERVA) as u64 * PAGINA
+    }
+
     /// Si hay zona normal por encima del primer GB (C38).
     pub fn hay_zona_alta(&self) -> bool {
         self.piso > 0

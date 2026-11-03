@@ -12,6 +12,8 @@ dashos::programa!(principal);
 const E_LLAVE: i64 = -2;
 const E_DERECHOS: i64 = -3;
 const E_CERRADO: i64 = -4;
+const E_ARGUMENTO: i64 = -1;
+const E_LIMITE: i64 = -8;
 
 fn cerrar(k: u32) {
     llamada(6, [k as u64, 0, 0, 0, 0]);
@@ -83,6 +85,42 @@ fn principal() -> u64 {
     cerrar(g);
     if rg <= 0 || revocar(revg) != 0 || canal_leer(h, &mut buf, &mut ll).0 != E_CERRADO {
         return 14;
+    }
+    // 15: una cadena de revocables tiene fondo (auditoría de la fase 3, C1): a la quinta, E_LIMITE. Lo mismo con
+    // revocadores de revocadores.
+    let m = dashos::memoria_crear(4096);
+    let mut h = m;
+    let mut hechas = 0;
+    let fin = loop {
+        let (c, rev) = llave_revocable(h);
+        if c < 0 {
+            break c;
+        }
+        cerrar(rev);
+        h = c as u32;
+        hechas += 1;
+    };
+    if fin != E_LIMITE || hechas != 4 {
+        return 15;
+    }
+    let (_, mut rev) = llave_revocable(m);
+    let mut hechas = 1;
+    loop {
+        let (c, r) = llave_revocable(rev);
+        if c < 0 {
+            if c != E_LIMITE || hechas != 4 {
+                return 16;
+            }
+            break;
+        }
+        rev = r;
+        hechas += 1;
+    }
+    // 17: un revocador cuyo objeto es un lado del mismo canal también es un ciclo (M1).
+    let (x, y) = canal_crear();
+    let (_, revy) = llave_revocable(y);
+    if canal_escribir(x, b"c", &[revy]) != E_ARGUMENTO {
+        return 17;
     }
     println!("  [llaves] copias con menos derechos, marcas que no se cambian y revocación");
     41

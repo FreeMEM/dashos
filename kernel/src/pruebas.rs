@@ -1205,6 +1205,16 @@ fn prueba_grupos() {
     let (a, b) = objetos::Canal::nuevo();
     let (c, lado) = extremo(&a);
     let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
+    // Grupos dentro de grupos tienen fondo (auditoría de la fase 3, A1).
+    let mut cadena = alloc::vec![raiz.clone()];
+    let mut limite = 1u64 << 20;
+    while let Some(h) = cadena.last().unwrap().hijo(limite) {
+        cadena.push(h);
+        limite -= crate::cupo::COSTE_GRUPO; // cada nivel cabe en su padre
+    }
+    let niveles = cadena.len() - 1;
+    drop(cadena);
+    kprintln!("  subgrupos uno dentro de otro: {} niveles como mucho", niveles);
     let Some(grupo) = raiz.hijo(32 << 20) else { return };
     let Some(control) = lanzar_elf_en(GRUPOS, alloc::vec![m, b], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
@@ -1216,7 +1226,8 @@ fn prueba_grupos() {
     esperar_tics(10);
     let (_, usado) = grupo.uso();
     kprintln!("  grupos acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
-    kprintln!("C42: cupos por grupo {}", if fin == Some(objetos::Fin::Salida(42)) && usado == 0 { "bien" } else { "MAL" });
+    let bien = fin == Some(objetos::Fin::Salida(42)) && usado == 0 && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
+    kprintln!("C42: cupos por grupo {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel
