@@ -100,6 +100,10 @@ impl Paginas {
 
     /// Prepara el reparto con la memoria que describe el árbol, menos lo reservado.
     pub fn iniciar(&mut self, d: &Dtb, dtb_dir: usize) {
+        // Solo una vez: otra marcaría libre la memoria que ya está en uso.
+        if self.total != 0 {
+            return;
+        }
         if let Some(m) = d.por_nombre("memory") {
             let mut i = 0;
             while let Some((dir, tam)) = d.reg(&m, i) {
@@ -167,19 +171,28 @@ impl Paginas {
         }
         .min(self.max_pagina);
         let alineacion = alineacion.max(1);
-        // Desde arriba hacia abajo, saltando por alineación.
+        if n == 0 {
+            return None;
+        }
+        // En la zona normal, por encima de la pista todo está lleno: se empieza ahí.
+        let tope = if zona == Zona::Normal { tope.min((self.pista + 1) * 64) } else { tope };
+        // Desde arriba hacia abajo. Si un candidato tiene una página ocupada, el siguiente empieza por debajo de ella:
+        // cada página se mira pocas veces (antes, una vez por cada candidato que la tocaba; auditoría, M2).
         let mut inicio = (tope.saturating_sub(n) / alineacion) * alineacion;
         loop {
-            if (inicio..inicio + n).all(|p| self.ocupada[p / 64] & (1 << (p % 64)) == 0) {
-                for p in inicio..inicio + n {
-                    self.marcar(p, true);
+            match (inicio..inicio + n).rev().find(|&p| self.ocupada[p / 64] & (1 << (p % 64)) != 0) {
+                None => {
+                    for p in inicio..inicio + n {
+                        self.marcar(p, true);
+                    }
+                    return Some(inicio as u64 * PAGINA);
                 }
-                return Some(inicio as u64 * PAGINA);
+                Some(ocupada) => {
+                    // El bloque tiene que acabar antes de `ocupada`.
+                    let Some(nuevo) = ocupada.checked_sub(n) else { return None };
+                    inicio = (nuevo / alineacion) * alineacion;
+                }
             }
-            if inicio < alineacion {
-                return None;
-            }
-            inicio -= alineacion;
         }
     }
 

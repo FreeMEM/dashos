@@ -200,7 +200,6 @@ unsafe extern "C" {
     static consumidor_fin: u8;
     static usuario_nada_inicio: u8;
     static usuario_nada_fin: u8;
-    fn entrar_el0(pc: u64, sp: u64) -> !;
 }
 
 const VA_CODIGO: u64 = 0x40_0000;
@@ -209,8 +208,7 @@ const VA_PILA: u64 = 0x7f_f000;
 
 extern "C" fn arrancar_proceso(p: usize) {
     let p = unsafe { &*(p as *const objetos::Proceso) };
-    unsafe { planificador::asignar_espacio(p.ttbr0) };
-    unsafe { entrar_el0(VA_CODIGO, VA_PILA + memoria::PAGINA) };
+    unsafe { planificador::bajar_a_el0(p.ttbr0, VA_CODIGO, VA_PILA + memoria::PAGINA) };
 }
 
 fn crear_proceso(mensaje: &str, nucleo: usize) {
@@ -241,7 +239,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         let _ = tabla.instalar(l); // será la llave 1
     }
     if avisar {
-        kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
+        kprintln!("  proceso con ASID {} en el núcleo {}", e.asid(), nucleo);
     }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
@@ -528,8 +526,7 @@ struct ArranqueElf {
 extern "C" fn arrancar_elf(a: usize) {
     let a = unsafe { alloc::boxed::Box::from_raw(a as *mut ArranqueElf) };
     let p = unsafe { &*(a.proceso as *const objetos::Proceso) };
-    unsafe { planificador::asignar_espacio(p.ttbr0) };
-    unsafe { entrar_el0(a.entrada, a.pila) };
+    unsafe { planificador::bajar_a_el0(p.ttbr0, a.entrada, a.pila) };
 }
 
 /// Carga un ELF de usuario en un proceso nuevo, con estas llaves (serán la 1, la 2...), y lo arranca.
@@ -1051,14 +1048,14 @@ fn prueba_repartos() {
 /// Antes eran de 8 bits y se repetían a los 256 procesos (auditoría, hallazgo 2).
 fn prueba_asid() {
     let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).filter_map(|_| espacio::Espacio::nuevo()).collect();
-    let mut asids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid).collect();
+    let mut asids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid()).collect();
     asids.sort_unstable();
     asids.dedup();
     let distintos = asids.len() == 1000 && asids[0] != 0 && *asids.last().unwrap() < 1 << 16;
     let menor = asids.first().copied().unwrap_or(0);
     vivos.clear();
     let Some(otra) = espacio::Espacio::nuevo() else { return };
-    let otra_asid = otra.asid;
+    let otra_asid = otra.asid();
     let reusa = otra_asid <= menor;
     drop(otra);
     kprintln!("  ASID: menor {}, mayor {}, el siguiente {}", menor, asids.last().copied().unwrap_or(0), otra_asid);

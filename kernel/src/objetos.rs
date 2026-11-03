@@ -189,7 +189,7 @@ impl Canal {
             }
             l[lado].esperando = Some(planificador::yo());
             // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
-            planificador::bloquear(move || drop(l));
+            planificador::bloquear_soltando(l);
         }
     }
 

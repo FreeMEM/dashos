@@ -6,13 +6,31 @@ core::arch::global_asm!(include_str!("vectores.s"));
 
 /// Lo que guarda vectores.s en la pila. Mismo orden y tamaño (288 bytes).
 #[repr(C)]
+/// Fuera de `base` solo se leen los registros y se escriben x0 y x1 (el resultado de una llamada): cambiar ELR o SPSR
+/// haría volver a donde se quisiera, también a EL1 (auditoría de cierre de la fase 2).
 pub struct Marco {
-    pub x: [u64; 31],
-    pub elr: u64,
-    pub spsr: u64,
-    pub esr: u64,
-    pub far: u64,
-    pub sp_el0: u64,
+    pub(in crate::base) x: [u64; 31],
+    pub(in crate::base) elr: u64,
+    pub(in crate::base) spsr: u64,
+    pub(in crate::base) esr: u64,
+    pub(in crate::base) far: u64,
+    pub(in crate::base) sp_el0: u64,
+}
+
+impl Marco {
+    /// x0 a x30 tal como los dejó el proceso.
+    pub fn x(&self) -> [u64; 31] {
+        self.x
+    }
+
+    /// El resultado de una llamada al sistema: x0 y, si hace falta, x1.
+    pub fn poner_x0(&mut self, v: u64) {
+        self.x[0] = v;
+    }
+
+    pub fn poner_x1(&mut self, v: u64) {
+        self.x[1] = v;
+    }
 }
 
 unsafe extern "C" {

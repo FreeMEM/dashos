@@ -104,6 +104,10 @@ static L1: AtomicU64 = AtomicU64::new(0);
 
 /// Hace el mapa. Una vez, en el núcleo 0, con el repartidor de páginas ya en marcha.
 pub fn construir() {
+    // Solo una vez: otra soltaría tablas y pilas que siguen en uso.
+    if L1.load(Ordering::Acquire) != 0 {
+        return;
+    }
     let fin_fino = unsafe { fis(&__pilas_fin) }.div_ceil(MB2) * MB2;
     let l1 = tabla_nueva();
     for g in 0..4u64 {

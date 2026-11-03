@@ -6,8 +6,7 @@
 //!
 //! Dos condiciones para quien lo usa:
 //! - soltar los cerrojos en orden inverso al de tomarlos (cada guarda repone lo que vio al tomarlo);
-//! - bloquearse con un cerrojo tomado (`planificador::bloquear` con la guarda en `soltar`) solo con las IRQ ya
-//!   enmascaradas desde antes de tomarlo, para que soltarlo dentro del planificador no las abra.
+//! - para bloquearse con un cerrojo tomado, `planificador::bloquear_soltando`, que lo suelta sin abrir las IRQ.
 
 use core::cell::UnsafeCell;
 use core::ops::{Deref, DerefMut};
@@ -42,13 +41,26 @@ impl<T> Cerrojo<T> {
                 core::hint::spin_loop();
             }
         }
-        Guarda { cerrojo: self, daif }
+        Guarda { cerrojo: self, daif, _no_send: core::marker::PhantomData }
     }
 }
 
+/// La guarda no se puede pasar a otro hilo: repone las IRQ del núcleo donde se tomó.
 pub struct Guarda<'a, T> {
     cerrojo: &'a Cerrojo<T>,
     daif: u64,
+    _no_send: core::marker::PhantomData<*const ()>,
+}
+
+unsafe impl<T: Sync> Sync for Guarda<'_, T> {}
+
+impl<T> Guarda<'_, T> {
+    /// Suelta el cerrojo sin reponer las IRQ: quedan enmascaradas. Para soltarlo dentro del planificador
+    /// (`planificador::bloquear_soltando`).
+    pub fn soltar_sin_irq(self) {
+        self.cerrojo.tomado.store(false, Ordering::Release);
+        core::mem::forget(self);
+    }
 }
 
 impl<T> Deref for Guarda<'_, T> {

@@ -62,7 +62,7 @@ pub enum Permiso {
 
 pub struct Espacio {
     l1: u64, // dirección física
-    pub asid: u64,
+    asid: u64,
     /// Páginas de tablas (niveles 2 y 3) y páginas propias del proceso: se devuelven al liberar el espacio (C18).
     tablas: alloc::vec::Vec<u64>,
     propias: alloc::vec::Vec<u64>,
@@ -137,6 +137,10 @@ impl Espacio {
             propias: alloc::vec::Vec::new(),
             proyectados: alloc::vec::Vec::new(),
         })
+    }
+
+    pub fn asid(&self) -> u64 {
+        self.asid
     }
 
     /// Valor de TTBR0_EL1 para este espacio.

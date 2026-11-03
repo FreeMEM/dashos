@@ -122,7 +122,7 @@ extern "C" fn repartidor(_: usize) {
             llegadas[i] = p.swap(0, Ordering::SeqCst);
         }
         if llegadas.iter().all(|&x| x == 0) {
-            planificador::bloquear(|| {});
+            planificador::bloquear();
             crate::cerrojo::restaurar_irq(estado);
             continue;
         }

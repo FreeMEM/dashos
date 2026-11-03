@@ -94,7 +94,7 @@ pub fn atender(marco: &mut Marco) {
     // Las pilas de los hilos muertos de este núcleo se liberan también aquí, no solo desde el hilo ocioso, que en un
     // núcleo siempre ocupado no corre nunca.
     planificador::recoger();
-    let a = marco.x;
+    let a = marco.x();
     let r = match a[8] {
         1 => escribir_consola(a[0], a[1]),
         2 => {
@@ -122,7 +122,7 @@ pub fn atender(marco: &mut Marco) {
             E_ARGUMENTO
         }
     };
-    marco.x[0] = r;
+    marco.poner_x0(r);
 }
 
 fn escribir_consola(p: u64, n: u64) -> u64 {
@@ -162,7 +162,7 @@ fn canal_crear(marco: &mut Marco) -> u64 {
         t.quitar(h0);
         return E_MEMORIA;
     };
-    marco.x[1] = h1 as u64;
+    marco.poner_x1(h1 as u64);
     h0 as u64
 }
 
@@ -268,7 +268,7 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return error;
     }
 
-    marco.x[1] = numeros.len() as u64;
+    marco.poner_x1(numeros.len() as u64);
     largo
 }
 

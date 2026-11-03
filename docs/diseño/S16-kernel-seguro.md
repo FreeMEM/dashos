@@ -245,6 +245,9 @@ que queda de ella está en la bitácora de `docs/CONSTRUCCION_LOOP.md`.
 - Regla de no expulsión (E).
 - Mapa del kernel por secciones, PAN por software y quitar la proyección identidad.
 
+Hecha el 2026-11-03 como C33 a C37 y cerrada con su auditoría (`docs/seguridad/auditoria-2026-11-03-fase2.md`).
+El `unsafe` está en un módulo, `kernel/src/base/`, con `deny(unsafe_code)` en el resto, en vez de en una caja aparte.
+
 **Fase 3. Capacidades y cupos.**
 
 - Cupos por grupo (F).

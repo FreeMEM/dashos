@@ -137,6 +137,9 @@ fn fpen(v: u64) {
 /// Convierte el hilo que está corriendo en el ocioso de este núcleo y prepara su cola.
 pub fn iniciar_nucleo() {
     let n = nucleos::numero() as usize;
+    if NUCLEOS[n].tomar().is_some() {
+        return; // ya está: una segunda vez soltaría el hilo que corre
+    }
     let ocioso = Box::into_raw(Box::new(Hilo {
         id: 0,
         contexto: Contexto::default(),
@@ -285,6 +288,14 @@ pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
 /// cerrojo del núcleo tomado y el hilo ya marcado: ahí se suelta el cerrojo de lo que se espera (C12), sin que
 /// nadie pueda despertarlo antes de que conste como bloqueado.
 fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
+    // Con las IRQ enmascaradas pase lo que pase fuera: entre soltar el cerrojo del núcleo y cambiar de contexto no
+    // puede entrar un tic, o dos hilos acabarían en la misma pila (auditoría de cierre de la fase 2).
+    let estado = crate::cerrojo::enmascarar_irq();
+    planificar_enmascarado(bloquear, soltar);
+    crate::cerrojo::restaurar_irq(estado);
+}
+
+fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
     let n = nucleos::numero() as usize;
     let (viejo, nuevo) = {
         let mut g = NUCLEOS[n].tomar();
@@ -439,7 +450,7 @@ fn planificar() {
 }
 
 /// Lo llama el tic del reloj, desde la interrupción.
-pub fn tic() {
+pub(in crate::base) fn tic() {
     planificar();
 }
 
@@ -451,12 +462,16 @@ pub fn ceder() {
     crate::cerrojo::restaurar_irq(estado);
 }
 
-/// Bloquea el hilo actual hasta que alguien lo despierte. `soltar` suelta el cerrojo de lo que se espera; se
-/// llama cuando el hilo ya consta como bloqueado.
-pub fn bloquear(soltar: impl FnOnce()) {
-    let estado = crate::cerrojo::enmascarar_irq();
-    planificar_con(true, soltar);
-    crate::cerrojo::restaurar_irq(estado);
+/// Bloquea el hilo actual hasta que alguien lo despierte.
+pub fn bloquear() {
+    planificar_con(true, || {});
+}
+
+/// Bloquea el hilo actual y suelta `guarda` cuando ya consta como bloqueado: así quien lo vaya a despertar no puede
+/// hacerlo antes (C12). Al soltarla no se reponen las IRQ (seguirían abiertas dentro del planificador); al volver,
+/// quedan como al llamar, es decir, enmascaradas por la guarda.
+pub fn bloquear_soltando<T>(guarda: crate::cerrojo::Guarda<'_, T>) {
+    planificar_con(true, move || guarda.soltar_sin_irq());
 }
 
 /// Si es falso, no se avisa a otro núcleo al despertar uno de sus hilos (para medir, C17).
@@ -546,6 +561,9 @@ extern "C" fn hilo_fin() -> ! {
 pub fn terminar_actual() -> ! {
     crate::cerrojo::enmascarar_irq();
     let n = nucleos::numero() as usize;
+    if NUCLEOS[n].tomar().as_ref().is_some_and(|nc| nc.actual == nc.ocioso) {
+        panic!("el hilo ocioso del núcleo {} no puede terminar", n);
+    }
     // El hilo suelta aquí mismo su proceso, sin esperar al hilo ocioso: en un núcleo siempre ocupado el ocioso no
     // corre nunca y los procesos muertos se quedarían con su memoria. Si era el último hilo, el proceso se libera
     // ahora, con su espacio, sus páginas y sus llaves. Antes, la mitad baja pasa a la tabla vacía.
@@ -584,16 +602,23 @@ pub fn ttbr0_actual() -> u64 {
     if h.is_null() { 0 } else { unsafe { (*h).ttbr0 } }
 }
 
-/// Asocia el hilo actual a un espacio de direcciones y lo activa (para bajar a EL0 justo después).
+/// Baja el hilo actual a EL0 en `pc` con la pila `sp`, en el espacio `ttbr0`. Enmascara las IRQ antes de poner el
+/// espacio: si un tic entrara entre medias, el cambio de hilo dejaría la mitad baja vacía y el proceso bajaría sin
+/// su memoria (auditoría de cierre de la fase 2, M1). `entrar_el0` sigue con ellas enmascaradas hasta el `eret`.
 ///
 /// # Seguridad
 /// `ttbr0` tiene que ser el de un espacio vivo del proceso de este hilo (`Espacio::ttbr0`).
-pub unsafe fn asignar_espacio(ttbr0: u64) {
+pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
+    unsafe extern "C" {
+        fn entrar_el0(pc: u64, sp: u64) -> !;
+    }
+    crate::cerrojo::enmascarar_irq();
     let n = nucleos::numero() as usize;
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
         unsafe { (*nucleo.actual).ttbr0 = ttbr0 };
     }
     crate::espacio::activar(ttbr0);
+    unsafe { entrar_el0(pc, sp) }
 }
 
 /// Libera los hilos muertos de este núcleo: su pila, el propio hilo y su referencia al proceso. Si era el último

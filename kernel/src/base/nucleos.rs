@@ -22,6 +22,11 @@ pub fn numero() -> u32 {
 
 /// Despierta los núcleos 1 a 3 y espera a que se presenten. Devuelve cuántos lo hicieron.
 pub fn despertar() -> u32 {
+    // Solo una vez: los núcleos ya despiertos no vuelven a la tabla de espera.
+    static HECHO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+    if HECHO.swap(true, Ordering::AcqRel) {
+        return EN_MARCHA.load(Ordering::Acquire);
+    }
     let entrada = mmu::fisica(unsafe { &_secundario as *const u8 as usize }) as u64;
     for n in 1..4u64 {
         let ranura = mmu::virt(0xd8 + 8 * n as usize) as *mut u64;

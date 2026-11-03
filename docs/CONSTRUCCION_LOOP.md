@@ -822,6 +822,31 @@ cualquier argumento. `HiloRef` depende de que un hilo bloqueado no muera; se cie
 
 Las pruebas y el arranque normal pasan.
 
+### 2026-11-03 tarde — Cierre de la fase 2 (auditoría nueva)
+
+Auditoría independiente: `docs/seguridad/auditoria-2026-11-03-fase2.md`. Sin críticos ni altos. Arreglado:
+
+- **M1.** Entre `asignar_espacio` y `entrar_el0` podía entrar un tic, y el proceso bajaba a EL0 con la mitad baja
+  vacía. Ahora `planificador::bajar_a_el0` enmascara las IRQ antes de poner el espacio.
+- **M2.** `Paginas::reservar` miraba cada página una vez por candidato. Ahora empieza en la pista y salta por debajo de
+  la primera página ocupada.
+- **Funciones de `base` que no eran sanas con cualquier argumento:**
+  - `Marco` ya no deja tocar ELR ni SPSR fuera de `base`: solo leer los registros y poner x0 y x1.
+  - `planificar_con` enmascara las IRQ él mismo.
+  - `tic` es interno.
+  - `bloquear(soltar)` pasa a `bloquear()` y `bloquear_soltando(guarda)`, que suelta sin abrir las IRQ.
+  - `Espacio::asid` es privado.
+  - `mapa::construir`, `Paginas::iniciar`, `nucleos::despertar` e `iniciar_nucleo` no hacen nada la segunda vez.
+  - `terminar_actual` desde el hilo ocioso es un pánico claro.
+  - `Guarda` no se puede pasar a otro hilo.
+
+Quedan, por decisión o para la fase 3: la ventana de periféricos incluye el DMA (decisión D); `HiloRef` depende de
+que un hilo bloqueado no muera (se cierra al matar procesos); `crear` hace pánico sin pilas libres (solo lo llama el
+kernel).
+
+**Fase 2 cerrada.** Siguiente, según S16: fase 3 (cupos por grupo, capacidades completas, crear y matar procesos
+desde un proceso).
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al
