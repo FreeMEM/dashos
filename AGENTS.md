@@ -1,7 +1,8 @@
 # DashOS: guía para agentes
 
 DashOS es un sistema operativo propio para la Raspberry Pi. Implementa la API de AmigaOS 3.1 en AArch64 big-endian y
-ejecuta los programas 68k con un JIT, al estilo de Petunia.
+ejecuta los programas 68k con un JIT, al estilo de Petunia. La primera placa es la Pi 4; se desarrolla en QEMU
+`raspi4b`.
 
 Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y las fases.
 
@@ -29,3 +30,13 @@ las pruebas no valen como oráculo.
 
 - `PLAN.md`: el plan.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
+- `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con
+  `qemu-aarch64_be`.
+- `toolchains/`: ficheros de CMake y envoltorios para las toolchains de Bootlin. `toolchains/LEEME.md` explica cómo
+  compilar Emu68.
+- `patches/emu68/`: parches sobre Emu68 (MPL). `third_party/Emu68` es un clon que no va en git.
+
+## Lenguajes
+
+El kernel, en Rust (objetivo `aarch64_be-unknown-none-softfloat`, con nightly). El JIT, en C. Las bibliotecas Amiga
+y las aplicaciones, en Dash. Ensamblador solo en el arranque, las excepciones y el cambio de contexto.

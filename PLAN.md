@@ -22,8 +22,11 @@ Estas decisiones son del usuario, del 2026-11-03.
   nativo guarda sus datos en el mismo orden de bytes que el 68k.
 - **Punteros de 32 bits en las estructuras compartidas.** Todo lo que ve un programa 68k vive en los primeros 4 GB.
 - **Emu68 como base del JIT.** El arranque y el kernel son propios. Se explica en la sección de Emu68.
-- **Dash como lenguaje del sistema.** Las bibliotecas nativas se escriben en Dash. Para eso dashc necesita un backend
-  nuevo.
+- **Lenguajes.** El kernel, en Rust. El JIT, en C: es el de Emu68 y no se reescribe. Las bibliotecas Amiga, las
+  aplicaciones y las pruebas del oráculo, en Dash. Ensamblador AArch64 solo donde no hay otro remedio: entrada del
+  arranque, tabla de excepciones y cambio de contexto. Python para las herramientas.
+- **Dash como lenguaje del sistema que ve el usuario.** Las bibliotecas nativas se escriben en Dash. Para eso dashc
+  necesita un backend nuevo. Dash no entra en el kernel.
 - **La API se reimplementa, no se copia.** AROS sirve de referencia, y la ingeniería inversa del Kickstart 3.1 cubre
   lo que no está documentado.
 
@@ -93,8 +96,37 @@ de DashOS, en ficheros propios, lleva la licencia que se elija.
 Conclusión: el arranque, la MMU, los núcleos y los controladores son de DashOS. De Emu68 se aprovecha el JIT: los
 ficheros `M68k_*.c`, `RegisterAllocator64.c` y lo que necesiten.
 
-El JIT se puede probar sin máquina virtual. Se compila como biblioteca para Linux AArch64 big-endian y se ejecuta en
-shiva con `qemu-aarch64_be`, que ya está instalado. Así se mide cuánto depende el JIT del resto de Emu68.
+#### El JIT separado (2026-11-03)
+
+`jit-host/` compila solo el traductor de Emu68 como programa de Linux AArch64 big-endian, sin libc, y lo ejecuta en
+shiva con `qemu-aarch64_be` (`make -C jit-host run`). Ejecuta un programa 68k que suma de 1 a 100.000 y lo comprueba.
+Funciona: unas 300.000 instrucciones 68k traducidas, con el resultado correcto.
+
+Lo que el JIT necesita de fuera es poco, y nada es del hardware de la Pi:
+
+- Salida de texto: `kprintf` y `vkprintf`.
+- Variables globales: `__m68k_state`, `debug_not_implemented` y `dcache_mask_bits`.
+- Guardar y cargar el estado 68k en los registros ARM: `M68K_LoadContext` y `M68K_SaveContext`. Están copiados en
+  `jit-host/emu68_context.c`, que sigue siendo MPL.
+- El desensamblador, que se deja vacío.
+- Dos montones de memoria con TLSF: uno general y otro para el código traducido.
+- La memoria del código traducido, proyectada dos veces: se escribe en una dirección y se ejecuta en la misma con el
+  bit 36 puesto. En el kernel serán dos entradas de MMU.
+
+Lo que esto dice para DashOS:
+
+- **El estado de una tarea 68k son los registros ARM.** Los registros del 68k viven fijos en x13-x29 y en v19-v26.
+  Cambiar de tarea 68k es guardar y cargar registros, como con cualquier hilo. No hay un estado global escondido.
+- **La caché de traducciones sí es global.** Todas las tareas de la caja la comparten, y con varios núcleos necesitará
+  cerrojos.
+- **Las direcciones 68k son direcciones reales del proceso.** La caja tiene que poner su memoria en los primeros 4 GB.
+- **Emu68 da por hecho que la dirección 0 es memoria válida.** `M68K_InitializeCache` escribe a través de
+  `__m68k_state` antes de que `M68K_StartEmu` le dé valor. En el banco de pruebas se le da valor antes.
+- **`MainLoop` vuelve cuando el PC del 68k llega a 0.** Así termina el programa de prueba, con un `rts`.
+
+Falta por probar: llamar a una función nativa desde el código 68k, varias tareas, excepciones y la FPU. Ojo: QEMU de
+usuario no ve que se reescribe código a través de la otra dirección. Si el JIT reutiliza memoria, QEMU puede ejecutar
+traducciones viejas. En hardware real no pasa, porque el JIT limpia las cachés.
 
 ### Dash
 
@@ -144,9 +176,9 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
 
 ## Fases
 
-1. **Separar el JIT de Emu68.** Compilarlo como biblioteca para Linux AArch64 big-endian y ejecutar código 68k suelto
-   con `qemu-aarch64_be`. Medir cuánto depende de un estado global y de su arranque.
-2. **Kernel mínimo en QEMU `raspi4b`.** Arranque propio en big-endian, MMU, los cuatro núcleos, temporizador,
+1. **Separar el JIT de Emu68.** Hecho el 2026-11-03 en `jit-host/`. Lo siguiente es que el código 68k llame a una
+   función nativa a través de una tabla de saltos de biblioteca.
+2. **Kernel mínimo en Rust, en QEMU `raspi4b`.** Arranque propio en big-endian, MMU, los cuatro núcleos, temporizador,
    interrupciones, puerto serie y pantalla. Procesos con memoria protegida. El arranque de Emu68 para la Pi sirve de
    referencia.
 3. **La caja Amiga.** Un proceso con exec dentro: tareas, señales, mensajes, memoria y bibliotecas. Primero con
@@ -164,7 +196,7 @@ El mismo binario 68k sirve para las dos máquinas. Así cada biblioteca llega co
 - Si los programas nativos nuevos usan la API Amiga dentro de la caja, una API moderna fuera, o las dos.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 - La licencia del código propio.
-- Si exec empieza en C mientras llega el backend ARM de Dash, o se espera.
+- Si exec, dentro de la caja, empieza en C mientras llega el backend ARM de Dash, o se espera.
 - Cómo se dibuja la pantalla: framebuffer de la Pi con un graphics propio, o algo más parecido a RTG.
 
 ## Herramientas
