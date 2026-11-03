@@ -15,6 +15,17 @@ pub struct Marco {
     pub sp_el0: u64,
 }
 
+unsafe extern "C" {
+    fn recoger_serror();
+    static serror_inicio: u8;
+    static serror_fin: u8;
+}
+
+fn en_ventana_serror(elr: u64) -> bool {
+    let (i, f) = unsafe { (&serror_inicio as *const u8 as u64, &serror_fin as *const u8 as u64) };
+    (i..=f).contains(&elr)
+}
+
 const TIPOS: [&str; 4] = ["síncrona", "IRQ", "FIQ", "SError"];
 const ORIGENES: [&str; 4] = ["EL1 con SP_EL0", "EL1", "EL0 (AArch64)", "EL0 (AArch32)"];
 
@@ -30,6 +41,9 @@ pub fn iniciar() {
 
 #[unsafe(no_mangle)]
 extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
+    if tipo >= 8 {
+        unsafe { recoger_serror() };
+    }
     let clase = (marco.esr >> 26) & 0x3f;
     let iss = marco.esr & 0x1ff_ffff;
 
@@ -76,7 +90,7 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
     // SError: un error asíncrono, normalmente de un aparato. En EL1 van enmascarados (PSTATE.A), así que uno que
     // provoque un proceso queda pendiente hasta volver a EL0 y se toma allí: se termina el proceso, no el sistema
     // (auditoría, hallazgo 11). Uno en EL1 sería del kernel y acaba en pánico, abajo.
-    if tipo == 11 {
+    if tipo == 11 || (tipo == 7 && en_ventana_serror(marco.elr) && crate::planificador::proceso_actual() != 0) {
         kprintln!("Proceso: SError (ESR {:#x}) en {:#x}; se termina", marco.esr, marco.elr);
         crate::planificador::terminar_actual();
     }

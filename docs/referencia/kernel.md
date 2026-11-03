@@ -177,6 +177,7 @@ Son provisionales, hasta que haya cupos por grupo de procesos (S16, F).
 | Qué | Límite |
 |---|---|
 | Llaves en la tabla de un proceso | 1024 |
+| Canales vivos creados por un proceso, estén en su tabla o dentro de mensajes | 512 |
 | Mensajes esperando en un lado de un canal | 16 |
 | Proyecciones de objetos de memoria por proceso | 1024 |
 | Memoria libre que solo usa el kernel | 32 MB |
@@ -237,8 +238,12 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 ## Limitaciones conocidas
 
 - No hay llamada para quitar una proyección.
-- Si el montón del kernel se queda sin memoria, el kernel cae. Los límites y la reserva de 32 MB lo evitan para un
-  proceso solo, no para muchos a la vez.
+- Si el montón del kernel se queda sin memoria, el kernel cae. Con los límites, un proceso solo no pasa de unos 7 MB
+  del montón y no llega. Varios procesos a la vez sí pueden llegar, hasta los cupos de la fase 3 de S16.
+- Una llave de registros da páginas enteras de 4 KB. La del controlador serie incluye, en la misma página, las UART 2
+  a 5 de la BCM2711; son del mismo controlador.
+- Un programa puede escribir en la consola líneas que imitan mensajes del kernel. Las pruebas de QEMU se fían de esas
+  líneas; las pruebas salen de la imagen en la fase 2.
 - Al morir un proceso, sus extremos de canal no se cierran. Quien espera al otro lado no se entera.
 - Un proceso tiene un solo hilo, y no hay llamadas para crear hilos ni procesos, ni para esperar a que acaben.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el

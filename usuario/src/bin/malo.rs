@@ -143,24 +143,35 @@ fn principal() -> u64 {
     if fin != E_LIMITE {
         return 23;
     }
-    // 24: una cadena de 3000 canales, cada uno con los dos extremos del siguiente en su cola (hallazgo 3). Al cerrar
+    // 24: una cadena de canales, cada uno con los dos extremos del siguiente en su cola (hallazgo 3). Al cerrar
     // el primero se suelta toda; por recursión desbordaba la pila del kernel. Primero se vacía la tabla del paso 23.
     for k in 1..=1100u64 {
         x0(6, [k, 0, 0, 0, 0]);
     }
+    // Desde N1 (cierre de la fase 1), los canales vivos de un proceso tienen límite aunque no estén en su tabla: la
+    // cadena para en E_LIMITE, hacia los 500.
     let (mut a, mut b) = dashos::canal_crear();
-    for _ in 0..3000 {
-        let (c, d) = dashos::canal_crear();
+    let mut largo = 1;
+    let fin = loop {
+        let r = dashos::llamada(3, [0; 5]);
+        if (r.0 as i64) < 0 || largo > 5000 {
+            break r.0 as i64;
+        }
+        let (c, d) = (r.0 as u32, r.1 as u32);
         if dashos::canal_escribir(c, b"cadena", &[a, b]) != 0 {
             return 24;
         }
         (a, b) = (c, d);
+        largo += 1;
+    };
+    if fin != E_LIMITE {
+        return 26;
     }
     x0(6, [a as u64, 0, 0, 0, 0]);
     x0(6, [b as u64, 0, 0, 0, 0]);
     // 25: una secuencia de escape no llega al terminal: sale "?" en lugar del ESC.
     dashos::escribir("  [malo] escape: \x1b[31m\n");
-    println!("  [malo] memoria agotada en {} trozos de 64 MB y tabla llena en {} canales, sin pánico", n, canales);
+    println!("  [malo] memoria agotada en {} trozos de 64 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31
 }

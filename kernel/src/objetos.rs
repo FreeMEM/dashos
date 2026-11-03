@@ -9,6 +9,7 @@ use crate::planificador::{self, Hilo};
 use alloc::collections::VecDeque;
 use alloc::sync::Arc;
 use alloc::vec::Vec;
+use core::sync::atomic::{AtomicUsize, Ordering};
 
 pub const LEER: u32 = 1 << 0;
 pub const ESCRIBIR: u32 = 1 << 1;
@@ -21,6 +22,10 @@ pub const MAX_LLAVES: usize = 8;
 /// Son provisionales: los cupos por grupo de procesos (S16, F) los sustituyen.
 pub const MAX_TABLA: usize = 1024;
 pub const MAX_COLA: usize = 16;
+/// Canales vivos creados por un proceso, estén donde estén: en su tabla o dentro de mensajes de otros canales. Sin
+/// esto, meter canales llenos dentro de otros canales gastaba el montón del kernel sin límite (auditoría de cierre de
+/// la fase 1, N1). Con 512 canales de 16 mensajes por lado, un proceso no pasa de unos 7 MB del montón.
+pub const MAX_CANALES: usize = 512;
 
 #[derive(Clone)]
 pub enum Objeto {
@@ -90,6 +95,8 @@ unsafe impl Send for Lado {}
 /// en los dos extremos no se esperan el uno al otro (auditoría, hallazgo 7).
 pub struct Canal {
     lados: Cerrojo<[Lado; 2]>,
+    /// La cuenta de canales del proceso que lo creó; se descuenta al soltarlo.
+    cuenta: Option<Arc<AtomicUsize>>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -106,6 +113,9 @@ pub enum Error {
 /// que hay dentro se suelta en el mismo bucle.
 impl Drop for Canal {
     fn drop(&mut self) {
+        if let Some(c) = &self.cuenta {
+            c.fetch_sub(1, Ordering::Relaxed);
+        }
         let mut mensajes: Vec<Mensaje> = Vec::new();
         for lado in self.lados.get_mut().iter_mut() {
             mensajes.extend(lado.cola.drain(..));
@@ -134,8 +144,19 @@ impl Drop for Canal {
 }
 
 impl Canal {
+    /// Un canal del kernel, que no cuenta para ningún proceso.
     pub fn nuevo() -> (Llave, Llave) {
-        let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]) });
+        Self::con_cuenta(None)
+    }
+
+    /// Un canal creado por un proceso: cuenta para su límite de `MAX_CANALES`. `None` si ya está en el límite.
+    pub fn nuevo_de(cuenta: &Arc<AtomicUsize>) -> Option<(Llave, Llave)> {
+        cuenta.fetch_update(Ordering::Relaxed, Ordering::Relaxed, |n| (n < MAX_CANALES).then_some(n + 1)).ok()?;
+        Some(Self::con_cuenta(Some(cuenta.clone())))
+    }
+
+    fn con_cuenta(cuenta: Option<Arc<AtomicUsize>>) -> (Llave, Llave) {
+        let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]), cuenta });
         (
             Llave { objeto: Objeto::Extremo(c.clone(), 0), derechos: TODOS },
             Llave { objeto: Objeto::Extremo(c, 1), derechos: TODOS },
@@ -256,6 +277,8 @@ pub struct Proceso {
     pub big_endian: bool,
     pub espacio: Cerrojo<crate::espacio::Espacio>,
     pub llaves: Cerrojo<TablaLlaves>,
+    /// Cuántos canales suyos siguen vivos (`MAX_CANALES`).
+    pub canales: Arc<AtomicUsize>,
 }
 
 /// El proceso del hilo actual, si lo hay.

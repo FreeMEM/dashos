@@ -36,3 +36,16 @@ copia_fin:
 copia_fallo:
     mov     x0, #1
     ret
+
+// recoger_serror(): abre un instante los SError para que se tome aquí, en EL1, el que haya dejado pendiente el hilo
+// que acaba de entrar desde EL0. Así se le cobra a él y no al siguiente proceso que baje a EL0 en este núcleo
+// (auditoría de cierre de la fase 1, N3). excepciones.rs reconoce un SError con ELR en [serror_inicio, serror_fin).
+    .globl  recoger_serror, serror_inicio, serror_fin
+recoger_serror:
+    dsb     sy
+serror_inicio:
+    msr     daifclr, #4
+    isb
+    msr     daifset, #4
+serror_fin:
+    ret

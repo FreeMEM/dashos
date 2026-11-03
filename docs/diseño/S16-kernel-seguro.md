@@ -234,6 +234,9 @@ Cada fase se cierra con sus pruebas hostiles y con una auditoría nueva.
 
 No necesita decisiones nuevas.
 
+Hecha el 2026-11-03 como C32 y cerrada con su auditoría (`docs/seguridad/auditoria-2026-11-03-fase1.md`). Lo
+que queda de ella está en la bitácora de `docs/CONSTRUCCION_LOOP.md`.
+
 **Fase 2. La base.**
 
 - Kernel en little-endian (A).

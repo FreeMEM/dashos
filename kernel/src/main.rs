@@ -323,6 +323,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         big_endian: true,
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
+        canales: Default::default(),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr);
@@ -633,6 +634,7 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
         big_endian: cargado.big_endian,
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
+        canales: Default::default(),
     });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     let arranque = alloc::boxed::Box::into_raw(alloc::boxed::Box::new(ArranqueElf { proceso: ptr, entrada: cargado.entrada, pila: cargado.pila }));

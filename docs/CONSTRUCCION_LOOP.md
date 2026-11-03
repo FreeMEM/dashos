@@ -97,7 +97,7 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
-- [ ] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
+- [x] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
   vuelta por hallazgo de `docs/seguridad/auditoria-2026-11-03.md`, cada uno con su paso hostil en `malo`: 6 (llave
   repetida), 1 (cerrojo de páginas), 2 (ASID), 7 (cerrojos del canal), 3 (destrucción en bucle y guardas), 8 (sin
   memoria), 11 (SError y FIQ), 5 y 16 (registros de EL0), 12 (TTBR1 sin ejecución para EL0), ELF y bajos.
@@ -676,6 +676,35 @@ cuatro, como antes.
 
 **Pruebas.** `malo`, paso 25: una secuencia de escape sale como "?[31m". Lo demás no tiene prueba en QEMU: la placa
 de QEMU tiene menos de 4 GB y la serie no se apaga.
+
+### 2026-11-03 tarde — C32, cierre de la fase 1 (auditoría nueva)
+
+Auditoría independiente sobre el código tras C32: `docs/seguridad/auditoria-2026-11-03-fase1.md`. Sin críticos. Dos
+altos nuevos y dos menores, arreglados aquí:
+
+- **N1.** Un proceso podía gastar todo el montón metiendo canales llenos dentro de otros canales: los límites no
+  contaban los canales fuera de su tabla. Ahora cada proceso tiene una cuenta de canales vivos creados por él, que
+  se descuenta al soltar el canal: como mucho 512. Mi frase de la cuarta vuelta ("con un proceso solo no se llega")
+  era falsa entonces; ahora un proceso no pasa de unos 7 MB del montón.
+- **N2.** El plazo de la consola era por byte: un texto de 4096 bytes con el PL011 apagado podía tener un núcleo
+  minutos con las IRQ enmascaradas. Ahora, tras el primer plazo agotado, la consola se da por muerta y se tiran los
+  bytes hasta que vuelva a tener hueco.
+- **N3.** Un SError pendiente se tomaba al bajar a EL0 el siguiente proceso del núcleo, y se le cobraba a él. Ahora,
+  al entrar desde EL0, `recoger_serror` (copia.s) abre un instante los SError y el pendiente se le cobra al que
+  acaba de entrar. Sin probar: QEMU no genera SError.
+- **N4.** Una IRQ dentro de `entrar_el0` pisaba ELR y SPSR, y el hilo se quedaba dando vueltas en EL1. Venía de C11.
+  Ahora enmascara las IRQ al empezar.
+
+Quedan anotados y no se arreglan en la fase 1: N5 (la página del PL011 incluye las UART 2 a 5, del mismo
+controlador), N6 (un programa puede imitar líneas del kernel en la consola; las pruebas salen de la imagen en la
+fase 2) y N7 (supuestos de un hilo por proceso, para la fase 3).
+
+**Prueba.** El paso 24 de `malo` ya no hace 3000 canales: hace la cadena hasta `E_LIMITE`, que llega a los 512. Sin
+el `Drop` iterativo, esa cadena desborda la pila del kernel y la marca del fondo lo detecta (pánico claro); con él,
+sigue. Tres pasadas en verde.
+
+**Fase 1 cerrada.** Pendiente para las siguientes, según S16: fase 2 (kernel LE, `unsafe` en una caja, pruebas fuera,
+no expulsión, mapa del kernel por páginas con guardas y W^X, quitar la proyección identidad).
 
 ## Resumen de la noche
 

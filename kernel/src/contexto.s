@@ -42,6 +42,7 @@ hilo_entrada:
 // La pila del kernel del hilo (SP_EL1) se queda como está: ahí llegarán sus excepciones.
     .globl  entrar_el0
 entrar_el0:
+    msr     daifset, #3                 // sin IRQ hasta el eret: una IRQ aquí pisaría ELR y SPSR (auditoría, N4)
     msr     elr_el1, x0
     msr     sp_el0, x1
     mov     x2, #(1 << 6)               // EL0t con FIQ enmascaradas: DashOS no las usa (auditoría, hallazgo 11)

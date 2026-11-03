@@ -159,7 +159,7 @@ fn canal_crear(marco: &mut Marco) -> u64 {
     if t.huecos() < 2 {
         return E_LIMITE;
     }
-    let (l0, l1) = Canal::nuevo();
+    let Some((l0, l1)) = Canal::nuevo_de(&proc_.canales) else { return E_LIMITE };
     // Con hueco para las dos, instalar solo falla sin memoria para la tabla; lo que llegó a entrar se quita.
     let Ok(h0) = t.instalar(l0) else { return E_MEMORIA };
     let Ok(h1) = t.instalar(l1) else {

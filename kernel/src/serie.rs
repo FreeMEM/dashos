@@ -2,6 +2,7 @@
 
 use crate::mmio::RegLe32;
 use core::fmt;
+use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Dirección del PL011 con los periféricos en modo bajo. En C4 se leerá del árbol de dispositivos.
 const BASE: usize = crate::mmu::virt(0xFE20_1000);
@@ -29,16 +30,29 @@ pub fn iniciar() {
 /// Espera a que haya hueco, pero no para siempre: el controlador serie de EL0 comparte este PL011 y podría apagarlo.
 /// Entonces el byte se pierde y el kernel sigue (auditoría, hallazgo 9). A 115200 baudios un byte tarda unos 87 µs;
 /// el límite da para varios.
+///
+/// El plazo es para la consola, no para cada byte: tras agotarlo una vez, la consola se da por muerta y los bytes se
+/// tiran sin esperar hasta que vuelva a tener hueco. Si no, un texto largo esperaba el plazo en cada byte, minutos con
+/// las IRQ enmascaradas (auditoría de cierre de la fase 1, N2).
 pub fn escribir_byte(b: u8) {
+    if MUERTA.load(Ordering::Relaxed) {
+        if FR.leer() & FR_TXFF != 0 {
+            return;
+        }
+        MUERTA.store(false, Ordering::Relaxed);
+    }
     let mut vueltas = 0u32;
     while FR.leer() & FR_TXFF != 0 {
         vueltas += 1;
         if vueltas > 200_000 {
+            MUERTA.store(true, Ordering::Relaxed);
             return;
         }
     }
     DR.escribir(b as u32);
 }
+
+static MUERTA: AtomicBool = AtomicBool::new(false);
 
 pub struct Serie;
 
