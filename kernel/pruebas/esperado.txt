@@ -35,3 +35,6 @@ C11: procesos lanzados
   pong: respuesta del servidor
 ~sale con código 7
 C12: canales lanzados
+  memoria compartida: escrito por el productor
+  memoria compartida: cambiado por el consumidor
+C13: memoria compartida lanzada

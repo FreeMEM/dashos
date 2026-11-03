@@ -228,6 +228,10 @@ unsafe extern "C" {
     static servidor_fin: u8;
     static cliente_inicio: u8;
     static cliente_fin: u8;
+    static productor_inicio: u8;
+    static productor_fin: u8;
+    static consumidor_inicio: u8;
+    static consumidor_fin: u8;
     fn entrar_el0(pc: u64, sp: u64) -> !;
 }
 
@@ -271,9 +275,12 @@ fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     if let Some(l) = llave {
         tabla.instalar(l); // será la llave 1
     }
-    let p = alloc::sync::Arc::new(objetos::Proceso { ttbr0: e.ttbr0(), llaves: cerrojo::Cerrojo::new(tabla) });
     kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
-    core::mem::forget(e);
+    let p = alloc::sync::Arc::new(objetos::Proceso {
+        ttbr0: e.ttbr0(),
+        espacio: cerrojo::Cerrojo::new(e),
+        llaves: cerrojo::Cerrojo::new(tabla),
+    });
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr);
 }
@@ -301,6 +308,18 @@ fn prueba_procesos() {
         reloj::esperar_interrupcion();
     }
     kprintln!("C12: canales lanzados");
+
+    // C13: memoria compartida entre dos procesos, en direcciones distintas de cada uno.
+    let (a, b) = objetos::Canal::nuevo();
+    let (pi, pf) = unsafe { (&productor_inicio as *const u8, &productor_fin as *const u8) };
+    let (ci, cf) = unsafe { (&consumidor_inicio as *const u8, &consumidor_fin as *const u8) };
+    crear_proceso_con(pi, pf, "  memoria compartida: escrito por el productor\n", 2, Some(a));
+    crear_proceso_con(ci, cf, "  memoria compartida: cambiado por el consumidor\n", 3, Some(b));
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 20 {
+        reloj::esperar_interrupcion();
+    }
+    kprintln!("C13: memoria compartida lanzada");
 }
 
 #[panic_handler]

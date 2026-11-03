@@ -75,7 +75,7 @@ del kernel sobre la que irán esos controladores.
   proceso de usuario escribe por una llamada.
 - [x] C12 **Capacidades y canales.** Tabla de llaves por proceso, canales con mensajes cortos y paso de llaves (S1).
   Prueba: dos procesos se pasan mensajes.
-- [ ] C13 **Objetos de memoria.** Crear, proyectar y compartir (S3). Prueba: dos procesos comparten una página.
+- [x] C13 **Objetos de memoria.** Crear, proyectar y compartir (S3). Prueba: dos procesos comparten una página.
 - [ ] C14 **Clase de plazo.** Presupuesto y periodo (S2). Prueba: un hilo de plazo cumple con los cuatro núcleos
   cargados.
 - [ ] C15 **Buzón de la VideoCore y pantalla del firmware.** Controlador del buzón y la pantalla (fase A de S9) como
@@ -244,4 +244,14 @@ al siguiente tic del otro núcleo, que hoy tarda hasta 10 ms; recortar derechos 
 `docs/spec/hw/v3d.md`: direcciones, encendido por el buzón, identificación, MMU de la GPU, los cinco tipos de
 trabajo (binner, render, TFU, CSD, limpieza de cachés), interrupciones, reinicio, contadores y orden de bytes, con
 cita de Linux. Revisado por encima que no lleva código. V4 (lo que Mesa pide al kernel) lanzada.
+
+### 2026-11-03 02:5x — C13 (objetos de memoria)
+
+`objetos.rs` gana `Objeto::Memoria` (páginas físicas que se pueden proyectar en varios procesos), y el proceso
+guarda su `Espacio`. Llamadas nuevas: `memoria_crear(tamaño)` y `memoria_proyectar(llave, dirección, permisos)`,
+que comprueba los derechos de la llave (solo lectura si no tiene el de escribir). Prueba: un productor crea una
+página, la proyecta en `0x600000`, escribe su texto y manda la llave al consumidor por un canal; el consumidor la
+proyecta en `0x700000`, lee el texto del productor, escribe el suyo y avisa; el productor lee entonces el texto del
+consumidor en su propia dirección. Tres ejecuciones, BIEN, a la primera. Pendiente: devolver las páginas cuando no
+quede ninguna llave ni proyección; quitar proyecciones.
 

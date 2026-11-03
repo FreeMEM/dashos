@@ -26,6 +26,8 @@ pub enum Permiso {
     Codigo,
     /// Datos y pila: se leen y escriben en EL0, no se ejecutan.
     Datos,
+    /// Datos que solo se leen.
+    SoloLectura,
 }
 
 pub struct Espacio {
@@ -72,10 +74,11 @@ impl Espacio {
             | match permiso {
                 Permiso::Codigo => AP_SOLO_LECTURA,
                 Permiso::Datos => UXN,
+                Permiso::SoloLectura => UXN | AP_SOLO_LECTURA,
             };
         unsafe {
             entrada(tabla, indices[2]).write_volatile((fisica & DIRECCION) | atributos);
-            core::arch::asm!("dsb ishst");
+            core::arch::asm!("dsb ishst", "isb");
         }
     }
 

@@ -94,3 +94,94 @@ cliente_inicio:
     svc     #0
 4:  b       4b
 cliente_fin:
+
+// C13: productor. Crea un objeto de memoria, lo proyecta en 0x600000, copia su texto dentro, manda la llave por la
+// llave 1, espera la respuesta y escribe lo que haya entonces en la memoria compartida.
+    .globl productor_inicio, productor_fin
+productor_inicio:
+    movz    x19, #0x50, lsl #16
+    mov     x0, #4096                   // memoria_crear(4096)
+    mov     x8, #7
+    svc     #0
+    mov     x20, x0
+    mov     x0, x20                     // memoria_proyectar(m, 0x600000, leer y escribir)
+    movz    x1, #0x60, lsl #16
+    mov     x2, #3
+    mov     x8, #8
+    svc     #0
+    movz    x21, #0x60, lsl #16         // copiar longitud y texto
+    ldrb    w2, [x19]
+    add     x2, x2, #1
+    mov     x3, #0
+5:  ldrb    w4, [x19, x3]
+    strb    w4, [x21, x3]
+    add     x3, x3, #1
+    cmp     x3, x2
+    b.ne    5b
+    str     w20, [x19, #0x200]          // canal_escribir(1, -, 0, [m], 1)
+    mov     x0, #1
+    add     x1, x19, #1
+    mov     x2, #0
+    add     x3, x19, #0x200
+    mov     x4, #1
+    mov     x8, #4
+    svc     #0
+    mov     x0, #1                      // canal_leer(1, búfer, 64, llaves, 4): esperar
+    add     x1, x19, #0x100
+    mov     x2, #64
+    add     x3, x19, #0x280
+    mov     x4, #4
+    mov     x8, #5
+    svc     #0
+    ldrb    w1, [x21]                   // escribir lo que hay ahora en la memoria compartida
+    add     x0, x21, #1
+    mov     x8, #1
+    svc     #0
+    mov     x0, #3
+    mov     x8, #2
+    svc     #0
+6:  b       6b
+productor_fin:
+
+// C13: consumidor. Recibe la llave de memoria, la proyecta en otra dirección (0x700000), escribe lo que lee, pone
+// su propio texto y avisa al productor.
+    .globl consumidor_inicio, consumidor_fin
+consumidor_inicio:
+    movz    x19, #0x50, lsl #16
+    mov     x0, #1                      // canal_leer(1, búfer, 64, llaves, 4)
+    add     x1, x19, #0x100
+    mov     x2, #64
+    add     x3, x19, #0x280
+    mov     x4, #4
+    mov     x8, #5
+    svc     #0
+    ldr     w0, [x19, #0x280]           // memoria_proyectar(llave recibida, 0x700000, leer y escribir)
+    movz    x1, #0x70, lsl #16
+    mov     x2, #3
+    mov     x8, #8
+    svc     #0
+    movz    x21, #0x70, lsl #16
+    ldrb    w1, [x21]                   // escribir lo que dejó el productor
+    add     x0, x21, #1
+    mov     x8, #1
+    svc     #0
+    ldrb    w2, [x19]                   // poner su propio texto
+    add     x2, x2, #1
+    mov     x3, #0
+7:  ldrb    w4, [x19, x3]
+    strb    w4, [x21, x3]
+    add     x3, x3, #1
+    cmp     x3, x2
+    b.ne    7b
+    mov     x0, #1                      // canal_escribir(1, -, 0, -, 0): avisar
+    add     x1, x19, #1
+    mov     x2, #0
+    mov     x3, xzr
+    mov     x4, xzr
+    mov     x8, #4
+    svc     #0
+    mov     x0, #4
+    mov     x8, #2
+    svc     #0
+8:  b       8b
+consumidor_fin:

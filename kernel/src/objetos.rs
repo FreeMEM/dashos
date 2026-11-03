@@ -22,6 +22,26 @@ pub const MAX_LLAVES: usize = 8;
 pub enum Objeto {
     /// Un extremo de un canal: (canal, lado 0 o 1).
     Extremo(Arc<Canal>, usize),
+    /// Un objeto de memoria (C13, S3): páginas físicas que se pueden proyectar en varios procesos.
+    Memoria(Arc<Memoria>),
+}
+
+/// Un objeto de memoria. Por ahora sus páginas no se devuelven nunca (pendiente: contar proyecciones).
+pub struct Memoria {
+    pub paginas: Vec<u64>,
+}
+
+impl Memoria {
+    pub fn nueva(tamano: usize) -> Option<Self> {
+        let n = tamano.div_ceil(crate::memoria::PAGINA as usize);
+        let mut paginas = Vec::with_capacity(n);
+        for _ in 0..n {
+            let p = crate::memoria::paginas().pagina(crate::memoria::Zona::Normal)?;
+            unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, crate::memoria::PAGINA as usize) };
+            paginas.push(p);
+        }
+        Some(Self { paginas })
+    }
 }
 
 #[derive(Clone)]
@@ -136,6 +156,7 @@ impl TablaLlaves {
 /// Un proceso: su espacio de direcciones y su tabla de llaves.
 pub struct Proceso {
     pub ttbr0: u64,
+    pub espacio: Cerrojo<crate::espacio::Espacio>,
     pub llaves: Cerrojo<TablaLlaves>,
 }
 
