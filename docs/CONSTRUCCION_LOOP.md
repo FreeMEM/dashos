@@ -63,7 +63,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C3 **Excepciones.** Tabla de vectores de EL1, volcado de registros y pánico legible. Prueba: un `brk` provocado.
 - [x] C4 **Árbol de dispositivos.** Leer el DTB que deja el firmware en `x0`: memoria, puerto serie, GIC, temporizador
   y `dma-ranges` (S3). Prueba: imprime el mapa.
-- [ ] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
+- [x] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
 - [ ] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
 - [ ] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
 - [ ] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
@@ -147,4 +147,14 @@ decodifica `dma-ranges`. En QEMU `raspi4b`: memoria desde 0, 960 MB (QEMU solo d
 registros con sus campos, memoria de listas, la entrada de plano palabra a palabra, canales y FIFOs, secuencias y
 casos raros, con la cita de Linux de cada dato. Revisado por encima que no lleva código. V2 (pixel valves y HDMI)
 lanzada.
+
+### 2026-11-03 02:3x — C5 (memoria física)
+
+`kernel/src/memoria.rs`: mapa de bits de páginas de 4 KB para hasta 8 GB (256 KB en `.bss`). Marca libre lo que
+dice `memory` y ocupa lo reservado: los primeros 512 KB (espera de núcleos y resguardo del firmware), el kernel, el
+árbol, `/memreserve/` y los nodos `no-map`. Zonas `Dma1G` (límite sacado de `emmc2bus`), `Dma3G` (3 GB fijo: el
+nodo PCIe no se encuentra aún) y `Normal`; se reparte desde arriba. Reserva de páginas seguidas con alineación. En
+QEMU: 960 MB, 958 libres; la prueba pide una página de cada zona y 64 KB seguidos alineados, comprueba los límites y
+lo devuelve. BIEN. No se ve la separación de zonas porque QEMU solo describe 960 MB. Búsqueda lineal: lenta con
+mucha memoria, a mejorar.
 

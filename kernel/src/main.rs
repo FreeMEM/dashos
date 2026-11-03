@@ -5,6 +5,7 @@
 
 mod dtb;
 mod excepciones;
+mod memoria;
 mod mmio;
 mod serie;
 
@@ -36,6 +37,8 @@ extern "C" fn kmain(dtb: usize) -> ! {
 
     mapa_dispositivos(dtb);
     kprintln!("C4: árbol de dispositivos leído");
+
+    prueba_memoria(dtb);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -79,6 +82,27 @@ fn mapa_dispositivos(direccion: usize) {
             }
         }
     }
+}
+
+/// C5: reparto de páginas por zonas.
+fn prueba_memoria(direccion: usize) {
+    use memoria::{paginas, Zona, PAGINA};
+    let Some(d) = (unsafe { dtb::Dtb::desde(direccion) }) else { return };
+    let p = paginas();
+    p.iniciar(&d, direccion);
+    let antes = p.libres();
+    let normal = p.pagina(Zona::Normal).unwrap_or(0);
+    let d1 = p.pagina(Zona::Dma1G).unwrap_or(u64::MAX);
+    let d3 = p.pagina(Zona::Dma3G).unwrap_or(u64::MAX);
+    let bloque = p.reservar(Zona::Dma1G, 16, 16).unwrap_or(u64::MAX);
+    kprintln!("  página normal {:#x}, DMA 1 GB {:#x}, DMA 3 GB {:#x}, 64 KB seguidos {:#x}", normal, d1, d3, bloque);
+    let bien = d1 < (1 << 30) && d3 < (3 << 30) && bloque % (16 * PAGINA) == 0 && bloque < (1 << 30);
+    p.liberar(normal, 1);
+    p.liberar(d1, 1);
+    p.liberar(d3, 1);
+    p.liberar(bloque, 16);
+    let vuelta = p.libres() == antes;
+    kprintln!("C5: zonas {}, devolución {}", if bien { "bien" } else { "MAL" }, if vuelta { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

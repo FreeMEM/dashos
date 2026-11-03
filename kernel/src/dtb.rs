@@ -301,6 +301,22 @@ impl Dtb {
         Some((bus, self.traducir(nodo, cpu), tam))
     }
 
+    /// Entrada `i` del mapa de memoria reservada de la cabecera (`/memreserve/`): (dirección, tamaño).
+    pub fn reserva(&self, i: usize) -> Option<(u64, u64)> {
+        let mapa = self.u32(16) as usize + 16 * i;
+        let dir = ((self.u32(mapa) as u64) << 32) | self.u32(mapa + 4) as u64;
+        let tam = ((self.u32(mapa + 8) as u64) << 32) | self.u32(mapa + 12) as u64;
+        if dir == 0 && tam == 0 { None } else { Some((dir, tam)) }
+    }
+
+    /// Llama a `f` con cada nodo del árbol.
+    pub fn cada_nodo(&self, mut f: impl FnMut(&Nodo)) {
+        self.recorrer(|_, n, _| {
+            f(n);
+            false
+        });
+    }
+
     /// Celdas `i` de una propiedad cualquiera, como u32.
     pub fn celda(&self, datos: usize, i: usize) -> u32 {
         self.u32(datos + 4 * i)

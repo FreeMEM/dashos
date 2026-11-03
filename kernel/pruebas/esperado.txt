@@ -14,3 +14,5 @@ C3: de vuelta de la excepción
   DMA de emmc2bus: bus 0xc0000000 -> CPU 0x0, 1024 MB
   DMA de scb: bus 0x0 -> CPU 0x0, 16384 MB
 C4: árbol de dispositivos leído
+Memoria física: 
+C5: zonas bien, devolución bien
