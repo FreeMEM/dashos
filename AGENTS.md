@@ -29,6 +29,7 @@ las pruebas no valen como oráculo.
 ## Estructura
 
 - `PLAN.md`: el plan.
+- `docs/DISEÑO_LOOP.md`: el bucle de diseño (tareas S0 a S15 y bitácora). Sus documentos van en `docs/diseño/`.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con
   `qemu-aarch64_be`.
