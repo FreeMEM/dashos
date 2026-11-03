@@ -97,6 +97,9 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [ ] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
+  de la GPU, cachés y lanzamiento de trabajos, solo con `docs/spec/hw/v3d.md`. Compilado; en QEMU solo la
+  codificación.
 - [x] C23 **HVS según la especificación**, compilado pero sin probar: falta la Pi 4. Solo con `docs/spec/hw/hvs.md`.
 
 ### Análisis de vídeo y GPU (agente analista)
@@ -386,3 +389,16 @@ recoge y devuelve "no está". Prueba en QEMU: la lista del ejemplo de §5.10 sal
 de escritorio más cursor da 17 palabras con los valores calculados a mano; el controlador ve que no hay HVS. BIEN,
 tres de tres. Sin probar en hardware: falta la Pi 4. La prueba de la Pi pondrá un cursor translúcido de 64 × 64
 encima de la pantalla del firmware; si los colores salen cambiados, el `ORDER` nativo es el sospechoso.
+
+### 2026-11-03 08:0x — C24 (V3D, lado del kernel)
+
+`kernel/src/v3d.rs`, escrito solo con `docs/spec/hw/v3d.md`. Encendido del dominio (cprman, reinicio del bloque PM y
+puente ASB, con la contraseña `0x5A`), reloj del firmware al máximo, identificación (versión, slices, QPU, TMU,
+anchuras de dirección y los siete registros que pide Mesa), estado fijo del núcleo, MMU de la GPU (tabla de 4 MB
+contiguos con entradas en little-endian, página de relleno, vaciado de caché y TLB), interrupciones con las máscaras
+de Linux, invalidación de cachés y lanzamiento de binning y render. Detecta la GPU sondeando el identificador del
+puente ("brdg"), así no cae en QEMU. Prueba en QEMU: la entrada de la tabla queda `45 23 01 30` en memoria para la
+física `0x12345000`; `MMU_CTL` y las dos máscaras rehechas con los bits dan los valores de la especificación; una
+tabla de 4 MB real mapea y quita dos páginas y devuelve la memoria. BIEN, tres de tres. Sin probar en hardware. Falta
+para ver un triángulo: las listas de control, que escribe Mesa (o una RCL mínima a mano que borre una baldosa y la
+guarde: con `mesa-v3d.md` se puede intentar), y la decisión del orden de bytes de Mesa (pregunta abierta del plan).

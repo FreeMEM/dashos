@@ -59,3 +59,6 @@ C21: controlador de la tarjeta SD lanzado
   lista del ejemplo de la especificación: igual palabra a palabra
   escritorio y cursor: 17 palabras; fuera del primer GB se rechaza: sí
 C23: listas del HVS bien
+  entrada de la tabla en memoria: [45, 23, 01, 30]; registros como la especificación: sí
+  tabla de 4 MB: mapear y quitar bien; memoria devuelta: sí
+C24: V3D, lado del kernel bien

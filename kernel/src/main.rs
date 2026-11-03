@@ -14,6 +14,7 @@ mod excepciones;
 mod espacio;
 mod gic;
 mod hvs;
+mod v3d;
 mod interrupciones;
 mod llamadas;
 mod memoria;
@@ -77,6 +78,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_hvs();
+    prueba_v3d();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -732,6 +734,40 @@ fn prueba_hvs() {
         }
     }
     kprintln!("C23: listas del HVS {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C24: lado del kernel de la V3D según `docs/spec/hw/v3d.md`. En QEMU solo la codificación; el resto en la Pi 4.
+fn prueba_v3d() {
+    // §5.2: una página física en 0x12345000 da la entrada 0x30012345, guardada en little-endian.
+    let e = v3d::entrada(0x1234_5000);
+    let bytes = e.to_ne_bytes();
+    let bien_pte = bytes == [0x45, 0x23, 0x01, 0x30];
+    // §5.4, §9.2, §9.3: los valores que da la especificación, rehechos con los bits.
+    let bien_reg = v3d::MMU_CTL_ARRANQUE == 0x060D_0C01 && v3d::MASCARA_NUCLEO == 0xA7 && v3d::MASCARA_HUB == 0x3A;
+    kprintln!("  entrada de la tabla en memoria: {:02x?}; registros como la especificación: {}", bytes, if bien_reg { "sí" } else { "no" });
+    // La tabla de verdad (4 MB): mapear dos páginas, leerlas, quitarlas y devolver la memoria.
+    let libres = memoria::paginas().libres();
+    let bien_mmu = match v3d::Mmu::nueva() {
+        Err(_) => false,
+        Ok(t) => {
+            t.mapear(0x10000, &[0x1234_5000, 0x1234_6000]);
+            let puestas = t.ver(0x10000) == v3d::entrada(0x1234_5000) && t.ver(0x11000) == v3d::entrada(0x1234_6000) && t.ver(0x12000) == 0;
+            t.quitar(0x10000, 2);
+            puestas && t.ver(0x10000) == 0
+        }
+    };
+    let devuelta = memoria::paginas().libres() == libres;
+    kprintln!("  tabla de 4 MB: mapear y quitar {}; memoria devuelta: {}", if bien_mmu { "bien" } else { "MAL" }, if devuelta { "sí" } else { "no" });
+    match v3d::V3d::iniciar() {
+        Err(v3d::Error::NoHayGpu) => kprintln!("  sin V3D (QEMU no la emula): la parte del hardware no se prueba"),
+        Err(e) => kprintln!("  la V3D no arranca: {:?}", e),
+        Ok(g) => {
+            let i = g.identidad;
+            kprintln!("  V3D {}.{}: {} núcleo, {} slices, {} QPU, {} TMU; VA {} bits, PA {} bits", i.version / 10, i.version % 10, i.nucleos, i.slices, i.qpus, i.tmus, i.va_bits, i.pa_bits);
+            kprintln!("  tabla de la MMU en {:#x}; eventos pendientes {:x?}", g.mmu.tabla, g.eventos());
+        }
+    }
+    kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
 }
 
 #[panic_handler]
