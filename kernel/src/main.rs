@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+mod buzon;
 mod cerrojo;
 mod dtb;
 mod excepciones;
@@ -63,6 +64,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
 
     prueba_hilos();
     prueba_procesos();
+    prueba_pantalla(dtb);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -322,6 +324,56 @@ fn prueba_procesos() {
     kprintln!("C13: memoria compartida lanzada");
 
     prueba_plazo();
+}
+
+/// C15: el buzón de la VideoCore y la pantalla del firmware. Pinta un degradado con un tablero en homenaje a la
+/// Boing Ball y lo comprueba leyendo la memoria de la pantalla.
+fn prueba_pantalla(direccion: usize) {
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+    let Some(n) = d.compatible("brcm,bcm2835-mbox") else {
+        kprintln!("C15: no hay buzón en el árbol");
+        return;
+    };
+    let Some((base, _)) = d.reg_cpu(&n, 0) else { return };
+    buzon::iniciar(base);
+    match buzon::reloj(3) {
+        Some(hz) => kprintln!("  reloj de la CPU según el firmware: {} MHz", hz / 1_000_000),
+        None => kprintln!("  el firmware no da el reloj de la CPU"),
+    }
+    let Some(p) = buzon::pantalla(640, 480) else {
+        kprintln!("C15: el firmware no da pantalla");
+        return;
+    };
+    kprintln!("  pantalla {}x{}, paso {} bytes, en {:#x} ({} KB)", p.ancho, p.alto, p.paso, p.fisica, p.tamano / 1024);
+    let fb = mmu::virt(p.fisica as usize);
+    let pixel = |x: u32, y: u32| -> u32 {
+        // Tablero rojo y blanco de 8x8 casillas en el centro; alrededor, degradado del azul al violeta.
+        let (cx, cy) = (p.ancho / 2, p.alto / 2);
+        if x + 120 >= cx && x < cx + 120 && y + 120 >= cy && y < cy + 120 {
+            let (i, j) = ((x + 120 - cx) / 30, (y + 120 - cy) / 30);
+            if (i + j) % 2 == 0 { 0x00e0_2020 } else { 0x00f0_f0f0 }
+        } else {
+            let r = 40 + y * 100 / p.alto;
+            let b = 120 + y * 100 / p.alto;
+            (r << 16) | (40 << 8) | b
+        }
+    };
+    for y in 0..p.alto {
+        for x in 0..p.ancho {
+            // La memoria de la pantalla es little-endian, como la VideoCore.
+            unsafe { ((fb + (y * p.paso + x * 4) as usize) as *mut u32).write_volatile(pixel(x, y).to_le()) };
+        }
+    }
+    let mut a = fb;
+    while a < fb + (p.paso * p.alto) as usize {
+        unsafe { core::arch::asm!("dc cvac, {}", in(reg) a) };
+        a += 64;
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+    let muestra = |x: u32, y: u32| u32::from_le(unsafe { ((fb + (y * p.paso + x * 4) as usize) as *const u32).read_volatile() });
+    let bien = muestra(p.ancho / 2 - 119, p.alto / 2 - 119) == pixel(p.ancho / 2 - 119, p.alto / 2 - 119)
+        && muestra(5, p.alto - 1) == pixel(5, p.alto - 1);
+    kprintln!("C15: pantalla del firmware {}", if bien { "bien" } else { "MAL" });
 }
 
 // C14: un hilo de plazo (2 ms cada 10 ms) en el núcleo 1, que ya tiene tres hilos justos ocupados (C10).

@@ -78,8 +78,26 @@ del kernel sobre la que irán esos controladores.
 - [x] C13 **Objetos de memoria.** Crear, proyectar y compartir (S3). Prueba: dos procesos comparten una página.
 - [x] C14 **Clase de plazo.** Presupuesto y periodo (S2). Prueba: un hilo de plazo cumple con los cuatro núcleos
   cargados.
-- [ ] C15 **Buzón de la VideoCore y pantalla del firmware.** Controlador del buzón y la pantalla (fase A de S9) como
+- [x] C15 **Buzón de la VideoCore y pantalla del firmware.** Controlador del buzón y la pantalla (fase A de S9) como
   base del vídeo. Prueba: pinta un degradado y lo comprueba leyendo la memoria de la pantalla.
+
+### Segunda tanda (añadida a las 03:0x, al acabar C15)
+
+- [ ] C16 **Doble búfer y compositor mínimo por CPU.** Pantalla virtual del doble de alto y cambio de mitad con el
+  desplazamiento virtual del firmware (etiqueta `0x48009`), un compositor provisional en el kernel que mueve una
+  ventana (rectángulo) repintando solo lo que cambia, y captura de QEMU. Es la fase A de S9.
+- [ ] C17 **Avisos entre núcleos.** Interrupciones por software del GIC (SGI) para despertar un hilo de otro núcleo
+  sin esperar a su tic. Prueba: medir el tiempo de ida y vuelta de un mensaje entre núcleos antes y después.
+- [ ] C18 **Recoger lo que dejan los muertos.** Liberar pila e hilo al terminar, y espacio, páginas y llaves al
+  terminar el último hilo de un proceso. Prueba: crear y terminar muchos procesos sin que baje la memoria libre.
+- [ ] C19 **Programas de usuario en Rust.** Un crate `usuario/` (no_std, big-endian, envoltorios de las llamadas) y
+  un cargador de ELF en el kernel. Las pruebas pasan a programas en Rust.
+- [ ] C20 **Controladores fuera del kernel.** Llave de registros (proyectar un periférico como memoria de
+  dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
+  la serie.
+- [ ] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
+- [ ] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [ ] C23 **HVS según la especificación**, compilado pero sin probar: falta la Pi 4. Solo con `docs/spec/hw/hvs.md`.
 
 ### Análisis de vídeo y GPU (agente analista)
 
@@ -265,4 +283,15 @@ de plazo). `reloj::tics()` se calcula con la hora. `crear_plazo` rechaza lo que 
 hilo de 2 ms cada 10 ms en el núcleo 1, que ya tiene tres hilos justos ocupados: 31 activaciones en 300 ms, con una
 desviación máxima del periodo de 44 a 346 µs según la ejecución (QEMU); los hilos justos siguen avanzando; pedir un
 70 % más se rechaza. BIEN. Es la base de la meta de S0 de un escritorio fluido con carga; falta medirlo en la placa.
+
+### 2026-11-03 03:0x — C15 (buzón de la VideoCore y pantalla del firmware)
+
+`kernel/src/buzon.rs`: buzón (canal de propiedades) con el mensaje en little-endian, en una página del primer GB,
+limpiando la caché antes y después, y la dirección en el bus de la VideoCore (`0xC0000000`). Lee el reloj de la CPU
+(700 MHz en QEMU) y pide una pantalla de 640x480 a 32 bits. Se pinta un degradado del azul al violeta con un tablero
+rojo y blanco (homenaje a la Boing Ball), y se comprueba leyendo la memoria. Captura de QEMU con `screendump` en
+`docs/capturas/c15-pantalla-firmware.png`. Dos tropiezos: el paso de línea estaba en la palabra equivocada del
+mensaje, y el orden de colores "RGB" del firmware deja el rojo en el byte bajo; se pide el orden B, G, R para que
+el píxel sea `0x00RRGGBB`. Aviso para la placa: la pantalla está en memoria con caché; aquí se limpia a mano, pero lo
+correcto es proyectarla sin caché o con escritura combinada. Segunda tanda de tareas añadida (C16 a C23).
 

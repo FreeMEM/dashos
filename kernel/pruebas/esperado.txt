@@ -39,3 +39,5 @@ C12: canales lanzados
   memoria compartida: cambiado por el consumidor
 C13: memoria compartida lanzada
 C14: clase de plazo bien
+  pantalla 640x480, paso 2560 bytes
+C15: pantalla del firmware bien
