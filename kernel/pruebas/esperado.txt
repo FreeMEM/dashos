@@ -119,6 +119,7 @@ C39: crear, matar y esperar procesos desde un proceso bien
   [lanzador] 2 pruebas lanzadas desde un proceso, cada una en su grupo
 C43: pruebas de usuario lanzadas por un proceso bien
   [grupos] cupo agotado en
+  [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
 C42: cupos por grupo bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

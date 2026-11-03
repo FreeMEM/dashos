@@ -29,7 +29,7 @@ $(PRUEBAS): usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS)
 
 prueba: $(PRUEBAS)
-	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 25
+	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 40
 
 arranque: $(IMAGEN)
 	../tools/prueba_qemu.sh $(IMAGEN) pruebas/arranque.txt 5

@@ -195,7 +195,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   niveles bajo el raíz. Un grupo matado no admite procesos ni subgrupos nuevos.
 - **12 con `x4`.** Con una llave de grupo con derecho de escribir, el proceso nuevo es de ese grupo; con 0, del de
   quien lo crea.
-- **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos.
+- **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos, y cierra
+  los dos lados de todos los canales que crearon (C44), aunque tengan llaves en otros grupos: quien los use después
+  recibe `E_CERRADO`. Así se suelta todo lo que el grupo dejó, también los ciclos entre canales.
 - **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
 - **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se

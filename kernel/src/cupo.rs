@@ -39,6 +39,9 @@ pub struct Cupo {
     _del_padre: Option<Cargo>,
     miembros: Cerrojo<Vec<Weak<Control>>>,
     hijos: Cerrojo<Vec<Weak<Cupo>>>,
+    /// Los canales que han creado sus procesos (C44): al matar el grupo se cierran, y con ellos los ciclos que
+    /// hubiera entre canales, que si no no se soltarían nunca.
+    canales: Cerrojo<Vec<Weak<crate::objetos::Canal>>>,
 }
 
 /// Lo cobrado a un cupo. Se devuelve al soltarse.
@@ -65,6 +68,7 @@ impl Cupo {
             _del_padre: del_padre,
             miembros: Cerrojo::default(),
             hijos: Cerrojo::default(),
+            canales: Cerrojo::default(),
         }
     }
 
@@ -133,7 +137,24 @@ impl Cupo {
         true
     }
 
-    /// Mata a todos los procesos del grupo y de sus subgrupos, sin recursión.
+    /// Apunta un canal creado en el grupo. Falso si el grupo está muerto o no hay memoria.
+    pub fn apuntar_canal(&self, c: &Arc<crate::objetos::Canal>) -> bool {
+        let mut v = self.canales.tomar();
+        if self.muerto.load(Ordering::Acquire) {
+            return false;
+        }
+        // Se limpia de vez en cuando, no en cada canal: si no, crear canales sería cuadrático.
+        if v.len() == v.capacity() {
+            v.retain(|w| w.strong_count() > 0);
+        }
+        if v.try_reserve(1).is_err() {
+            return false;
+        }
+        v.push(Arc::downgrade(c));
+        true
+    }
+
+    /// Mata a todos los procesos del grupo y de sus subgrupos, sin recursión, y cierra sus canales.
     pub fn matar(self: &Arc<Self>) {
         let mut grupos = alloc::vec![self.clone()];
         while let Some(g) = grupos.pop() {
@@ -148,6 +169,15 @@ impl Cupo {
             let hijos = g.hijos.tomar();
             g.muerto.store(true, Ordering::Release);
             grupos.extend(hijos.iter().filter_map(|w| w.upgrade()));
+            drop(hijos);
+            // Sus canales, cerrados del todo: lo que hubiera en las colas se suelta, y con ello cualquier ciclo.
+            let canales: Vec<Arc<crate::objetos::Canal>> = {
+                let v = g.canales.tomar();
+                v.iter().filter_map(|w| w.upgrade()).collect()
+            };
+            for c in canales {
+                c.cerrar_del_todo();
+            }
         }
     }
 }

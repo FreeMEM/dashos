@@ -274,7 +274,21 @@ impl Canal {
 
     /// Un canal creado por un proceso: se cobra `COSTE_CANAL` a su grupo (C42). `None` si no cabe.
     pub fn nuevo_de(cupo: &Arc<crate::cupo::Cupo>) -> Option<(Llave, Llave)> {
-        Some(Self::con_cargo(Some(cupo.cobrar(crate::cupo::COSTE_CANAL)?)))
+        let (a, b) = Self::con_cargo(Some(cupo.cobrar(crate::cupo::COSTE_CANAL)?));
+        // El grupo lo apunta para cerrarlo si lo matan (C44): así se deshacen los ciclos de varios canales.
+        let Objeto::Extremo(p) = &a.objeto else { unreachable!() };
+        if !cupo.apuntar_canal(p.canal()) {
+            return None;
+        }
+        Some((a, b))
+    }
+
+    /// Cierra los dos lados y suelta todo lo que haya en las colas, aunque sigan vivas sus llaves (C44, al matar el
+    /// grupo que lo creó). Quien lea o escriba después recibe `E_CERRADO`.
+    pub fn cerrar_del_todo(&self) {
+        let mut pendientes = self.cerrar_y_vaciar(0);
+        pendientes.extend(self.cerrar_y_vaciar(1));
+        soltar(pendientes);
     }
 
     fn con_cargo(cargo: Option<crate::cupo::Cargo>) -> (Llave, Llave) {

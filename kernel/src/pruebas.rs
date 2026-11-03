@@ -1198,6 +1198,7 @@ fn prueba_lanzador() {
 static GRUPOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/grupos");
 
 fn prueba_grupos() {
+    // C44 añade estrés: más tiempo.
     let raiz = crate::cupo::Cupo::raiz();
     let Some(m) = memoria::Memoria::nueva(HIJO.len(), &raiz) else { return };
     m.escribir(0, HIJO);
@@ -1215,10 +1216,10 @@ fn prueba_grupos() {
     let niveles = cadena.len() - 1;
     drop(cadena);
     kprintln!("  subgrupos uno dentro de otro: {} niveles como mucho", niveles);
-    let Some(grupo) = raiz.hijo(32 << 20) else { return };
+    let Some(grupo) = raiz.hijo(64 << 20) else { return };
     let Some(control) = lanzar_elf_en(GRUPOS, alloc::vec![m, b], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 1000 {
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 2500 {
         reloj::esperar_interrupcion();
     }
     let fin = control.estado.tomar().fin;

@@ -1092,6 +1092,25 @@ Pendiente para la fase 4 (S16):
 
 Todas las pruebas pasan. C14 sigue fallando a veces con la máquina cargada.
 
+### 2026-11-03 noche — C44 (lo que quedó abierto en la fase 3)
+
+Pedido por el usuario: "cierra lo que ha quedado abierto y empieza la fase 4".
+
+- **Ciclos de varios canales** (M1 de la auditoría de la fase 3). Cada grupo apunta los canales que crean sus
+  procesos. `grupo_matar` cierra los dos lados de cada uno y suelta sus colas, así que los ciclos se deshacen y el
+  presupuesto vuelve. Con el mismo cerrojo y la marca de "muerto", un canal que se crea durante la matanza o se ve o
+  se rechaza. Prueba: `grupos`, pasos 11 a 13 (un hijo deja un ciclo y sale; el grupo sigue con 1 MB cobrado; al
+  matarlo, vuelve a 0). Sin cerrar los canales, falla en el paso 13. Sigue igual: un ciclo en un grupo que no se mata
+  queda cobrado a ese grupo.
+- **Estrés de A2** (`grupos`, paso 14). Diez veces: seis hijos esperan a un proceso X y se matan a la vez los que
+  esperan y X. No cae. No he comprobado que la prueba pille la versión vieja: la cola de espera de C43 no se puede
+  quitar sin rehacer medio planificador.
+- **Estrés de M2** (paso 18). Un hijo crea hijos sin parar y se mata su grupo: tiene que volver a 0. Pasa, pero
+  también pasa sin el arreglo (dos de dos): la ventana de la carrera es tan pequeña que QEMU no la pilla. La prueba
+  queda como regresión, no como demostración.
+- **M5** (la copia del kernel aún en la caché) solo se puede ver en la Pi 4 real.
+- `make prueba` da ahora 40 s: la batería ha crecido.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al
