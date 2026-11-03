@@ -123,6 +123,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
 | 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
+| 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
 
 ### Detalles
 
@@ -204,6 +205,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos
   los procesos (C45); las hechas con la llave original siguen.
+- **22, `memoria_dma`** (C46). Pide una llave de permiso DMA con derecho de escribir; solo la da el kernel, a los
+  controladores que la necesitan. Da un objeto de memoria de hasta 4 MB de páginas seguidas de la zona del permiso
+  (el primer GB, el que alcanza el DMA), a cero, cobrado al cupo, y en `x1` la dirección de bus de su primera página,
+  la que hay que dar al aparato. Al proyectarlo para escribir, va sin caché: el aparato y el proceso ven lo mismo sin
+  limpiar cachés. Con otra llave, `E_TIPO`; con más de 4 MB, `E_TAMANO`.
 - **21, `memoria_quitar`** (C45). Quita la proyección de un objeto de memoria que empieza en esa dirección: el tramo
   entero que se proyectó. Desde ese momento, leer o escribir ahí es un fallo. Si no empieza ninguna ahí,
   `E_ARGUMENTO`. Los registros de aparatos no se quitan así.
@@ -285,6 +291,7 @@ Tipos de objeto:
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
+| Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 
 ## Biblioteca de usuario en Rust

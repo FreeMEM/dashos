@@ -42,6 +42,7 @@ const NG: u64 = 1 << 11; // no global: va con el ASID
 const SH_INTERNO: u64 = 3 << 8;
 const ATTR_NORMAL: u64 = 1 << 2;
 const ATTR_DISPOSITIVO: u64 = 0 << 2; // MAIR índice 0: nGnRnE
+const ATTR_SIN_CACHE: u64 = 2 << 2; // MAIR índice 2: normal sin caché
 const AP_EL0: u64 = 1 << 6; // EL0 puede acceder
 const AP_SOLO_LECTURA: u64 = 1 << 7;
 const PXN: u64 = 1 << 53;
@@ -58,6 +59,9 @@ pub enum Permiso {
     SoloLectura,
     /// Registros de un aparato (C20): memoria de dispositivo, sin caché ni reordenación; nunca se ejecuta.
     Dispositivo,
+    /// Búferes de DMA (C46): memoria normal sin caché, para que el aparato y el proceso vean lo mismo sin limpiar
+    /// cachés (en la Pi 4 el DMA no es coherente con ellas). Se lee y escribe; nunca se ejecuta.
+    DatosSinCache,
 }
 
 pub struct Espacio {
@@ -251,6 +255,7 @@ impl Espacio {
                 Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
                 Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
                 Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
+                Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
             };
         unsafe {
             e.write_volatile((fisica & DIRECCION) | atributos);
@@ -268,7 +273,11 @@ impl Espacio {
         }
         self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.preparar(va, m.paginas() as u64)?;
-        let permiso = if escribir { Permiso::Datos } else { Permiso::SoloLectura };
+        let permiso = match (escribir, m.bus().is_some()) {
+            (true, true) => Permiso::DatosSinCache,
+            (true, false) => Permiso::Datos,
+            (false, _) => Permiso::SoloLectura,
+        };
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }

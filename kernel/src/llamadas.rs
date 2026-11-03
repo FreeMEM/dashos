@@ -26,6 +26,7 @@
 //! | 19 | grupo_matar(llave de grupo) |
 //! | 20 | grupo_uso(llave de grupo) -> (límite, usado) |
 //! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
+//! | 22 | memoria_dma(permiso DMA, tamaño) -> (llave de memoria, dirección de bus) |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -139,6 +140,7 @@ pub fn atender(marco: &mut Marco) {
         19 => grupo_matar(a[0] as u32),
         20 => grupo_uso(marco, a[0] as u32),
         21 => memoria_quitar(a[0]),
+        22 => memoria_dma(marco, a[0] as u32, a[1]),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -618,4 +620,30 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     let (limite, usado) = g.uso();
     marco.poner_x1(usado);
     limite
+}
+
+/// Memoria para DMA (C46), con una llave de permiso DMA con derecho de escribir: hasta 4 MB seguidos de la zona del
+/// permiso, a cero y sin caché al proyectarla. Devuelve la llave del objeto y, en x1, su dirección de bus.
+fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::PermisoDma { zona, desplazamiento_bus } = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    if tamano == 0 || tamano > MAX_MEMORIA {
+        return E_TAMANO;
+    }
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let Some(m) = objetos::Memoria::nueva_dma(tamano as usize, zona, desplazamiento_bus, &proc_.cupo) else { return E_MEMORIA };
+    let bus = m.bus().unwrap_or(0);
+    match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS)) {
+        Ok(n) => {
+            marco.poner_x1(bus);
+            n as u64
+        }
+        Err(_) => E_LIMITE,
+    }
 }

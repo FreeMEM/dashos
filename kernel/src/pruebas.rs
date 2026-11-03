@@ -46,6 +46,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_padre();
     prueba_lanzador();
     prueba_grupos();
+    prueba_dma_proceso();
     prueba_desborde();
 }
 
@@ -1229,6 +1230,27 @@ fn prueba_grupos() {
     kprintln!("  grupos acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
     let bien = fin == Some(objetos::Fin::Salida(42)) && usado == 0 && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
     kprintln!("C42: cupos por grupo {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C46: memoria DMA desde un proceso con permiso (`usuario/src/bin/dma.rs`). El desplazamiento de bus sale de la
+/// ventana de la SD en el árbol de dispositivos.
+static DMA: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/dma");
+
+fn prueba_dma_proceso() {
+    let Some(d) = dtb::Dtb::desde() else { return };
+    let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) else { return };
+    let permiso = objetos::Llave::nueva(
+        objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) },
+        objetos::LEER | objetos::ESCRIBIR,
+    );
+    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };
+    let Some(control) = lanzar_elf_en(DMA, alloc::vec![permiso], 2, grupo) else { return };
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 300 {
+        reloj::esperar_interrupcion();
+    }
+    let fin = control.estado.tomar().fin;
+    kprintln!("C46: memoria DMA con permiso {}", if fin == Some(objetos::Fin::Salida(46)) { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel

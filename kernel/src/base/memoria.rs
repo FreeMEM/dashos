@@ -318,6 +318,8 @@ impl Paginas {
 /// (C18). Es la única forma que tiene el resto del kernel de dar memoria a un proceso (C37).
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
+    /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
+    bus: Option<u64>,
     /// Lo cobrado a su grupo (C42); se devuelve al soltarse.
     _cargo: crate::cupo::Cargo,
 }
@@ -328,12 +330,44 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), _cargo: cargo };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, _cargo: cargo };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(paginas().pagina_usuario()?);
         }
         Some(m)
+    }
+
+    /// Memoria para DMA (C46): `tamano` bytes seguidos de la `zona`, a cero y fuera de la caché, cuya dirección de bus
+    /// es la física más `desplazamiento_bus`. `None` si no caben en el cupo o no hay un tramo seguido libre.
+    pub fn nueva_dma(tamano: usize, zona: Zona, desplazamiento_bus: u64, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        let n = tamano.div_ceil(PAGINA as usize);
+        if n == 0 {
+            return None;
+        }
+        let cargo = cupo.cobrar(n as u64 * PAGINA)?;
+        let mut paginas = alloc::vec::Vec::new();
+        paginas.try_reserve_exact(n).ok()?;
+        let base = self::paginas().reservar(zona, n, 1)?;
+        let k = crate::mmu::virt(base as usize);
+        // Recién sacadas y seguidas: a cero, y fuera de la caché, para que no quede nada sucio que el aparato no vea
+        // o que pise lo que escriba él.
+        unsafe { core::ptr::write_bytes(k as *mut u8, 0, n * PAGINA as usize) };
+        let mut a = k;
+        while a < k + n * PAGINA as usize {
+            unsafe { core::arch::asm!("dc civac, {}", in(reg) a) };
+            a += 64;
+        }
+        unsafe { core::arch::asm!("dsb sy") };
+        for i in 0..n as u64 {
+            paginas.push(base + i * PAGINA);
+        }
+        Some(Self { paginas, bus: Some(base + desplazamiento_bus), _cargo: cargo })
+    }
+
+    /// La dirección de bus si es memoria DMA.
+    pub fn bus(&self) -> Option<u64> {
+        self.bus
     }
 
     /// Cuántas páginas tiene.

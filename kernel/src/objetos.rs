@@ -34,6 +34,9 @@ pub enum Objeto {
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un proceso visto desde fuera (C39): con escribir se mata, con leer se espera a que acabe.
     Proceso(Arc<Control>),
+    /// Permiso para crear memoria DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de
+    /// bus. Solo lo da el kernel, a los controladores que lo necesitan.
+    PermisoDma { zona: crate::memoria::Zona, desplazamiento_bus: u64 },
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.

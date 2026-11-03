@@ -122,5 +122,7 @@ C43: pruebas de usuario lanzadas por un proceso bien
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
 C42: cupos por grupo bien
+  [dma] 64 KB seguidos con dirección de bus 0x
+C46: memoria DMA con permiso bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

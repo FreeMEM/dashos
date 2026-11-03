@@ -80,7 +80,7 @@ del kernel sobre la que irán esos controladores.
 
 - [x] C45 **Quitar proyecciones.** Una llamada para quitar lo proyectado en un tramo, con su TLB vaciada. Y que
   revocar una llave de memoria deshaga sus proyecciones en todos los espacios (lo que dejó abierto C41).
-- [ ] C46 **Memoria DMA** (S16, D). Un objeto de memoria del primer GB con su dirección de bus, que solo puede crear
+- [x] C46 **Memoria DMA** (S16, D). Un objeto de memoria del primer GB con su dirección de bus, que solo puede crear
   quien tenga una llave de permiso DMA que da el kernel. Así los búferes de DMA salen de objetos con dueño y cobrados.
 - [ ] C47 **Programa de inicio.** La imagen normal lanza `inicio` (un ELF dentro de la imagen) en el grupo raíz, con
   las llaves de arranque: registros e interrupciones de cada aparato del árbol, permiso DMA. `inicio` lanza los
@@ -1154,6 +1154,20 @@ Pedido por el usuario: "cierra lo que ha quedado abierto y empieza la fase 4".
 - la proyección del padre, hecha con la llave original, sigue.
 
 Si revocar no quita las proyecciones, el hijo no muere y la prueba falla.
+
+### 2026-11-03 noche, bucle — C46 (memoria DMA)
+
+- **Permiso DMA.** Un objeto `PermisoDma { zona, desplazamiento_bus }`. Solo lo crea el kernel, con la ventana del
+  árbol de dispositivos (en la Pi 4, la SD: bus `0xC000_0000` → física 0).
+- **Llamada 22, `memoria_dma(permiso, tamaño)`.** Hasta 4 MB de páginas seguidas de esa zona, a cero, limpiadas de la
+  caché y cobradas al cupo. Devuelve la llave y la dirección de bus.
+- **Sin caché.** Al proyectar para escribir, la memoria DMA va como normal sin caché (MAIR índice 2), porque el DMA de
+  la Pi 4 no es coherente con las cachés. La memoria normal de los procesos sigue sin salir nunca del primer GB (C38):
+  el primer GB solo se reparte así, con permiso.
+
+**Prueba** (`dma`, en un grupo de 16 MB): 64 KB con dirección de bus en la ventana de la SD; se proyecta y se lee lo
+escrito; sin permiso da `E_TIPO`; con más de 4 MB, `E_TAMANO`. Si se acepta cualquier llave como permiso, falla en el
+paso 4. Que el aparato lea de verdad ese búfer solo se verá con el USB fuera del kernel (C49) y en la Pi.
 
 ## Resumen de la noche
 

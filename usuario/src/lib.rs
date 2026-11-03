@@ -64,6 +64,12 @@ pub fn memoria_proyectar(llave: u32, direccion: usize, escribir: bool) -> i64 {
     llamada(8, [llave as u64, direccion as u64, if escribir { 3 } else { 1 }, 0, 0]).0 as i64
 }
 
+/// Memoria DMA (C46) con la llave de permiso `permiso`: (llave de memoria, dirección de bus), o un error negativo.
+pub fn memoria_dma(permiso: u32, tamano: usize) -> (i64, u64) {
+    let (a, b) = llamada(22, [permiso as u64, tamano as u64, 0, 0, 0]);
+    (a as i64, b)
+}
+
 /// Quita la proyección de un objeto de memoria que empieza en `direccion` (C45).
 pub fn memoria_quitar(direccion: usize) -> i64 {
     llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64
