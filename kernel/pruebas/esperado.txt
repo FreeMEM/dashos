@@ -107,6 +107,7 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
+  [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
 C39: crear, matar y esperar procesos desde un proceso bien

@@ -145,6 +145,48 @@ fn principal() -> u64 {
     if c1.0 != 0 || c2.0 != 0 || c1.1 + c2.1 != 7 {
         return 24;
     }
+    // C45. 25-26: quitar una proyección: se puede volver a proyectar ahí, quitarla otra vez da E_ARGUMENTO, y un hijo
+    // que lee lo quitado muere por fallo.
+    let va = 0x30_0000_0000usize;
+    let m = dashos::memoria_crear(4096);
+    if dashos::memoria_proyectar(m, va, true) != 0 || dashos::memoria_quitar(va) != 0 || dashos::memoria_proyectar(m, va, true) != 0 {
+        return 25;
+    }
+    if dashos::memoria_quitar(va) != 0 || dashos::memoria_quitar(va) != E_ARGUMENTO {
+        return 26;
+    }
+    let (p, _) = hijo(tamano, &[9]);
+    if p <= 0 || dashos::proceso_esperar(p as u32).0 != 2 {
+        return 27;
+    }
+    // 28-29: revocar deshace las proyecciones hechas con la copia revocable. El hijo proyecta la copia, escribe 1 y lee
+    // sin parar; el padre ve el 1 por su propia proyección y revoca: el hijo muere por fallo.
+    let m = dashos::memoria_crear(4096);
+    let (rm, rev) = dashos::llave_revocable(m);
+    if rm <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
+        return 28;
+    }
+    let (a, b) = dashos::canal_crear();
+    if dashos::canal_escribir(a, &[10], &[]) != 0 {
+        return 28;
+    }
+    let p = dashos::proceso_crear(1, tamano, &[b, rm as u32]);
+    let mut visto = false;
+    for _ in 0..200 {
+        esperar_ms(5);
+        if unsafe { core::ptr::read_volatile(va as *const u64) } == 1 {
+            visto = true;
+            break;
+        }
+    }
+    if p <= 0 || !visto || dashos::revocar(rev) != 0 || dashos::proceso_esperar(p as u32).0 != 2 {
+        return 29;
+    }
+    // La propia proyección, hecha con la llave original, sigue.
+    if unsafe { core::ptr::read_volatile(va as *const u64) } != 1 {
+        return 30;
+    }
+    println!("  [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable");
     println!("  [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados");
     println!("  [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados");
     39

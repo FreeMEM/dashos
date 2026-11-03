@@ -78,7 +78,7 @@ del kernel sobre la que irán esos controladores.
 
 ### Fase 4 de S16 (encargo vigente)
 
-- [ ] C45 **Quitar proyecciones.** Una llamada para quitar lo proyectado en un tramo, con su TLB vaciada. Y que
+- [x] C45 **Quitar proyecciones.** Una llamada para quitar lo proyectado en un tramo, con su TLB vaciada. Y que
   revocar una llave de memoria deshaga sus proyecciones en todos los espacios (lo que dejó abierto C41).
 - [ ] C46 **Memoria DMA** (S16, D). Un objeto de memoria del primer GB con su dirección de bus, que solo puede crear
   quien tenga una llave de permiso DMA que da el kernel. Así los búferes de DMA salen de objetos con dueño y cobrados.
@@ -1136,6 +1136,24 @@ Pedido por el usuario: "cierra lo que ha quedado abierto y empieza la fase 4".
   queda como regresión, no como demostración.
 - **M5** (la copia del kernel aún en la caché) solo se puede ver en la Pi 4 real.
 - `make prueba` da ahora 40 s: la batería ha crecido.
+
+### 2026-11-03 noche, bucle — C45 (quitar proyecciones)
+
+- **Llamada 21, `memoria_quitar(va)`.** Quita la proyección que empieza en `va`: borra sus entradas y hace `tlbi vae1is`
+  con el ASID del espacio, página a página. El espacio guarda ahora cada proyección con su dirección.
+- **Revocar deshace las proyecciones.** Cada `Revocable` apunta las proyecciones hechas a través de él (proceso y
+  dirección). Al revocar memoria se quitan, comprobando que siga siendo el mismo objeto.
+- **Carrera entre proyectar y revocar.** `memoria_proyectar` apunta la proyección antes de hacerla y mira después si
+  la revocaron: o la ve quien revoca, o la quita él.
+- Como mucho, 1024 proyecciones apuntadas por intermediario.
+
+**Prueba** (`padre`, pasos 25 a 30):
+- quitar deja volver a proyectar, y quitar dos veces da `E_ARGUMENTO`;
+- un hijo que lee lo quitado muere por fallo;
+- un hijo lee sin parar memoria proyectada con una copia revocable; el padre revoca y el hijo muere por fallo;
+- la proyección del padre, hecha con la llave original, sigue.
+
+Si revocar no quita las proyecciones, el hijo no muere y la prueba falla.
 
 ## Resumen de la noche
 

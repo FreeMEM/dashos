@@ -66,8 +66,9 @@ pub struct Espacio {
     /// Páginas de tablas (niveles 2 y 3) y páginas propias del proceso: se devuelven al liberar el espacio (C18).
     tablas: alloc::vec::Vec<u64>,
     propias: alloc::vec::Vec<u64>,
-    /// Objetos de memoria proyectados: el espacio los mantiene vivos mientras exista (C18).
-    proyectados: alloc::vec::Vec<alloc::sync::Arc<super::memoria::Memoria>>,
+    /// Objetos de memoria proyectados, con la dirección donde empiezan: el espacio los mantiene vivos mientras estén
+    /// proyectados (C18, C45).
+    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>)>,
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
@@ -271,8 +272,35 @@ impl Espacio {
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }
-        self.proyectados.push(m.clone());
+        self.proyectados.push((va, m.clone()));
         Ok(())
+    }
+
+    /// Quita la proyección que empieza en `va` (C45): borra sus entradas y vacía la TLB de este ASID para cada página,
+    /// en todos los núcleos. Si se da `m`, solo si es ese objeto (para revocar sin tocar otra proyección que haya
+    /// ocupado el sitio). Falso si no había.
+    pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>) -> bool {
+        let Some(i) = self
+            .proyectados
+            .iter()
+            .position(|(v, o)| *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)))
+        else {
+            return false;
+        };
+        let (_, objeto) = self.proyectados.swap_remove(i);
+        for k in 0..objeto.paginas() as u64 {
+            let p = va + k * PAGINA;
+            if let Some(e) = self.hoja(p) {
+                unsafe {
+                    e.write_volatile(0);
+                    core::arch::asm!("dsb ishst", "tlbi vae1is, {}", in(reg) (self.asid << 48) | (p >> 12));
+                }
+            }
+        }
+        unsafe { core::arch::asm!("dsb ish", "isb") };
+        // El objeto se suelta aquí, ya sin entradas que lo vean.
+        drop(objeto);
+        true
     }
 
     /// Proyecta registros de aparatos (C20) como memoria de dispositivo, nunca ejecutable. Solo direcciones de la

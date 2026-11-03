@@ -25,6 +25,7 @@
 //! | 18 | grupo_crear(presupuesto en bytes) -> llave de grupo: un subgrupo del propio |
 //! | 19 | grupo_matar(llave de grupo) |
 //! | 20 | grupo_uso(llave de grupo) -> (límite, usado) |
+//! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -137,6 +138,7 @@ pub fn atender(marco: &mut Marco) {
         18 => grupo_crear(a[0]),
         19 => grupo_matar(a[0] as u32),
         20 => grupo_uso(marco, a[0] as u32),
+        21 => memoria_quitar(a[0]),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -324,16 +326,33 @@ fn memoria_crear(tamano: u64) -> u64 {
 
 fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Some((l, por)) = proc_.llaves.tomar().ver_con_intermediarios(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     let escribir = permisos & 2 != 0;
     if escribir && l.derechos & objetos::ESCRIBIR == 0 || l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
-    match proc_.espacio.tomar().proyectar_memoria(va, &m, escribir) {
-        Ok(()) => 0,
-        Err(err) => error_espacio(err),
+    // Si la llave es revocable, la proyección se apunta en sus intermediarios antes de hacerla, y después se mira si
+    // la revocaron entre medias: así o la ve quien revoca, o la quitamos aquí (C45).
+    for r in &por {
+        if !r.apuntar_proyeccion(&proc_, va) {
+            return E_LIMITE;
+        }
     }
+    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir) {
+        return error_espacio(err);
+    }
+    if por.iter().any(|r| r.revocado()) {
+        proc_.espacio.tomar().quitar_proyeccion(va, Some(&m));
+        return E_LLAVE;
+    }
+    0
+}
+
+/// Quita la proyección de un objeto de memoria que empieza en `va` (C45).
+fn memoria_quitar(va: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if proc_.espacio.tomar().quitar_proyeccion(va, None) { 0 } else { E_ARGUMENTO }
 }
 
 fn registros_proyectar(h: u32, va: u64) -> u64 {

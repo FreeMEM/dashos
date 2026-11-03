@@ -6,7 +6,10 @@
 //! 5: intenta un subgrupo de 2 MB y sale con 0 si le dicen E_MEMORIA (C42);
 //! 6: deja un ciclo de dos canales, cada uno con un lado del otro en su cola, y sale con 0 (C44);
 //! 7: espera al proceso de su llave 2 y sale con la clase de su fin (C44);
-//! 8, T (8 bytes): crea sin parar hijos que giran, con el ELF de su llave 2 (de T bytes), hasta que no le dejan (C44).
+//! 8, T (8 bytes): crea sin parar hijos que giran, con el ELF de su llave 2 (de T bytes), hasta que no le dejan (C44);
+//! 9: proyecta memoria, la quita y la lee: tiene que morir por fallo (C45);
+//! 10: proyecta la memoria de su llave 2, escribe 1 al principio y la lee sin parar: muere por fallo cuando la
+//! revocan (C45).
 //! Si no le llega nada, se queda bloqueado leyendo (para matarlo bloqueado).
 
 #![no_std]
@@ -48,6 +51,24 @@ fn principal() -> u64 {
             0
         }
         7 => dashos::proceso_esperar(2).0 as u64,
+        9 => {
+            let va = 0x30_0000_0000usize;
+            let m = dashos::memoria_crear(4096);
+            if dashos::memoria_proyectar(m, va, true) != 0 || dashos::memoria_quitar(va) != 0 {
+                return 253;
+            }
+            unsafe { core::ptr::read_volatile(va as *const u64) }
+        }
+        10 => {
+            let va = 0x30_0000_0000usize;
+            if dashos::memoria_proyectar(2, va, true) != 0 {
+                return 254;
+            }
+            unsafe { core::ptr::write_volatile(va as *mut u64, 1) };
+            loop {
+                unsafe { core::ptr::read_volatile((va + 8) as *const u64) };
+            }
+        }
         8 => {
             let tamano = u64::from_le_bytes([buf[1], buf[2], buf[3], buf[4], buf[5], buf[6], buf[7], buf[8]]) as usize;
             loop {

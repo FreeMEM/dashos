@@ -45,6 +45,8 @@ pub enum Objeto {
 /// El intermediario de las llaves revocables (C41).
 pub struct Revocable {
     objeto: Cerrojo<Option<Objeto>>,
+    /// Proyecciones de memoria hechas a través de este intermediario (C45): al revocar se quitan.
+    proyecciones: Cerrojo<Vec<(alloc::sync::Weak<Proceso>, u64)>>,
     /// Cuántos intermediarios hay por debajo, contando este: como mucho `MAX_REVOCABLES` (C43, auditoría C1).
     profundidad: u32,
     _cargo: crate::cupo::Cargo,
@@ -65,14 +67,50 @@ impl Revocable {
             return None;
         }
         let cargo = cupo.cobrar(crate::cupo::COSTE_REVOCABLE)?;
-        Some(Self { objeto: Cerrojo::new(Some(objeto)), profundidad: debajo + 1, _cargo: cargo })
+        Some(Self { objeto: Cerrojo::new(Some(objeto)), proyecciones: Cerrojo::default(), profundidad: debajo + 1, _cargo: cargo })
     }
 
     /// Revoca: suelta el objeto (fuera del cerrojo). Si era lo último que lo tenía, se libera; un lado de canal se
-    /// cierra.
+    /// cierra. Si es memoria, se quitan las proyecciones que se hicieron a través de este intermediario (C45).
     pub fn revocar(&self) {
         let objeto = self.objeto.tomar().take();
+        if let Some(m) = objeto.as_ref().and_then(memoria_de) {
+            let proyecciones = core::mem::take(&mut *self.proyecciones.tomar());
+            for (p, va) in proyecciones {
+                if let Some(p) = p.upgrade() {
+                    p.espacio.tomar().quitar_proyeccion(va, Some(&m));
+                }
+            }
+        }
         drop(objeto);
+    }
+
+    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe.
+    pub fn apuntar_proyeccion(&self, p: &Arc<Proceso>, va: u64) -> bool {
+        let mut v = self.proyecciones.tomar();
+        v.retain(|(w, _)| w.strong_count() > 0);
+        if v.len() >= MAX_PROYECCIONES_REVOCABLE || v.try_reserve(1).is_err() {
+            return false;
+        }
+        v.push((Arc::downgrade(p), va));
+        true
+    }
+
+    /// ¿Ya está revocado?
+    pub fn revocado(&self) -> bool {
+        self.objeto.tomar().is_none()
+    }
+}
+
+/// Proyecciones apuntadas en un intermediario, como mucho.
+const MAX_PROYECCIONES_REVOCABLE: usize = 1024;
+
+/// El objeto de memoria detrás de `o`, atravesando intermediarios.
+fn memoria_de(o: &Objeto) -> Option<Arc<Memoria>> {
+    match o {
+        Objeto::Memoria(m) => Some(m.clone()),
+        Objeto::Revocable(r) => r.objeto.tomar().as_ref().and_then(memoria_de),
+        _ => None,
     }
 }
 
@@ -424,6 +462,19 @@ impl TablaLlaves {
             l.objeto = dentro;
         }
         Some(l)
+    }
+
+    /// Como `ver`, y además los intermediarios por los que pasa (C45), de fuera a dentro.
+    pub fn ver_con_intermediarios(&self, h: u32) -> Option<(Llave, Vec<Arc<Revocable>>)> {
+        let mut l = self.ver_crudo(h)?;
+        let mut por = Vec::new();
+        while let Objeto::Revocable(r) = &l.objeto {
+            let r = r.clone();
+            let dentro = r.objeto.tomar().clone()?;
+            por.push(r);
+            l.objeto = dentro;
+        }
+        Some((l, por))
     }
 
     /// La llave `h` tal cual, con su intermediario si es revocable (para duplicarla o hacerla revocable otra vez).

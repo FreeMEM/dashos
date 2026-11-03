@@ -64,6 +64,11 @@ pub fn memoria_proyectar(llave: u32, direccion: usize, escribir: bool) -> i64 {
     llamada(8, [llave as u64, direccion as u64, if escribir { 3 } else { 1 }, 0, 0]).0 as i64
 }
 
+/// Quita la proyección de un objeto de memoria que empieza en `direccion` (C45).
+pub fn memoria_quitar(direccion: usize) -> i64 {
+    llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64
+}
+
 /// Proyecta los registros de un aparato (llave de registros) en `direccion` (C20).
 pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
     llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64

@@ -122,6 +122,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 18 | `grupo_crear` | `x0` presupuesto en bytes | Llave de grupo |
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
 | 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
+| 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 
 ### Detalles
 
@@ -201,7 +202,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
 - **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
-  cierra. Lo que ya estaba proyectado sigue proyectado.
+  cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos
+  los procesos (C45); las hechas con la llave original siguen.
+- **21, `memoria_quitar`** (C45). Quita la proyección de un objeto de memoria que empieza en esa dirección: el tramo
+  entero que se proyectó. Desde ese momento, leer o escribir ahí es un fallo. Si no empieza ninguna ahí,
+  `E_ARGUMENTO`. Los registros de aparatos no se quitan así.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -306,7 +311,6 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 
 ## Limitaciones conocidas
 
-- No hay llamada para quitar una proyección.
 - Si el montón del kernel se queda sin memoria, el kernel cae. Un proceso en un grupo con cupo no puede llevarlo
   ahí; los del grupo raíz (los que lanza el kernel) no tienen cupo.
 - Una llave de registros da páginas enteras de 4 KB. La del controlador serie incluye, en la misma página, las UART 2
