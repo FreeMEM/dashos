@@ -13,6 +13,7 @@ mod elf;
 mod excepciones;
 mod espacio;
 mod gic;
+mod hvs;
 mod interrupciones;
 mod llamadas;
 mod memoria;
@@ -75,6 +76,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     interrupciones::iniciar();
     prueba_controlador(dtb);
     prueba_sd(dtb);
+    prueba_hvs();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -681,6 +683,55 @@ fn prueba_sd(direccion: usize) {
     }
     esperar_tics(50);
     kprintln!("C21: controlador de la tarjeta SD lanzado");
+}
+
+/// C23: controlador del HVS según `docs/spec/hw/hvs.md`. En QEMU solo se comprueba la codificación de las listas;
+/// la parte del hardware se ejecuta si hay un HVS encendido (en la Pi 4).
+fn prueba_hvs() {
+    use hvs::{Alfa, Formato, Plano};
+    // El ejemplo de §5.10: 1920 × 1080 en XRGB8888 de DRM, en (0, 0), paso 7680, búfer en 0x10000000.
+    let ejemplo = Plano { x: 0, y: 0, ancho: 1920, alto: 1080, fisica: 0x1000_0000, paso: 7680, formato: Formato::Xrgb8888Drm, alfa: Alfa::Fijo(0xfff) };
+    let esperado = [0x4800_D807u32, 0, 0x4000_FFF0, 0x0438_0780, 0xC0C0_C0C0, 0xD000_0000, 0xC0C0_C0C0, 0x0000_1E00, 0x8000_0000];
+    let mut p = [0u32; 32];
+    let n = hvs::codificar_lista(&[ejemplo], &mut p);
+    let bien_ejemplo = n == Ok(9) && p[..9] == esperado;
+    kprintln!("  lista del ejemplo de la especificación: {}", if bien_ejemplo { "igual palabra a palabra" } else { "DISTINTA" });
+    if !bien_ejemplo {
+        kprintln!("  {:08x?}", &p[..9]);
+    }
+    // Escritorio nativo de DashOS y un cursor con alfa por píxel encima.
+    let escritorio = Plano { formato: Formato::Argb8888Nativo, ..ejemplo };
+    let cursor = Plano { x: 100, y: 200, ancho: 64, alto: 64, fisica: 0x2000_0000, paso: 256, formato: Formato::Argb8888Nativo, alfa: Alfa::PorPixelPremultiplicado };
+    let n2 = hvs::codificar_lista(&[escritorio, cursor], &mut p);
+    let bien_dos = n2 == Ok(17) && p[0] == 0x4800_B807 && p[8] == 0x4800_B807 && p[9] == (200 << 16 | 100)
+        && p[10] == 0x2000_FFF0 && p[11] == 0x0040_0040 && p[13] == 0xE000_0000 && p[16] == 0x8000_0000;
+    let fuera = Plano { fisica: 0x4000_0000, ..cursor }.codificar(&mut p) == Err(hvs::Error::FueraDelPrimerGb);
+    kprintln!("  escritorio y cursor: {} palabras; fuera del primer GB se rechaza: {}", n2.unwrap_or(0), if fuera { "sí" } else { "no" });
+    let bien = bien_ejemplo && bien_dos && fuera;
+    match hvs::Hvs::detectar() {
+        None => kprintln!("  sin HVS encendido (QEMU no lo emula): la parte del hardware no se prueba"),
+        Some(mut h) => {
+            kprintln!("  HVS encendido: canal {} de {}x{}, lista activa {}, línea {}", h.canal, h.ancho, h.alto, h.lista_activa(), h.linea());
+            match buzon::pantalla(h.ancho, h.alto) {
+                None => kprintln!("  sin pantalla del firmware"),
+                Some(pt) => {
+                    let fondo = Plano { x: 0, y: 0, ancho: pt.ancho, alto: pt.alto, fisica: pt.fisica, paso: pt.paso, formato: Formato::Argb8888Nativo, alfa: Alfa::Fijo(0xfff) };
+                    // Cursor: un cuadrado de 64 × 64, blanco con alfa a medias (premultiplicado), en la zona DMA.
+                    let c = memoria::paginas().reservar(memoria::Zona::Dma1G, 4, 1).unwrap_or(0);
+                    let px = mmu::virt(c as usize) as *mut u32;
+                    for i in 0..64 * 64 {
+                        unsafe { px.add(i).write_volatile(0x8080_8080) };
+                    }
+                    let cursor = Plano { x: 100, y: 100, fisica: c, ..cursor };
+                    match h.instalar(&[fondo, cursor]) {
+                        Ok(i) => kprintln!("  lista {} instalada; el hardware la usa: {}", i, if h.esperar(i, 10_000_000) { "sí" } else { "no" }),
+                        Err(e) => kprintln!("  no se pudo instalar la lista: {:?}", e),
+                    }
+                }
+            }
+        }
+    }
+    kprintln!("C23: listas del HVS {}", if bien { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

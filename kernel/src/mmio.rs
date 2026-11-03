@@ -24,3 +24,34 @@ impl RegLe32 {
         unsafe { write_volatile(self.0 as *mut u32, valor.to_le()) }
     }
 }
+
+// Lectura de sondeo (C23): lee un registro que puede no existir. Si el bus da un fallo síncrono, la excepción ve que
+// viene de `sondeo_instruccion`, pone x0 a todo unos y salta la instrucción.
+core::arch::global_asm!(
+    ".globl sondeo_leer32",
+    "sondeo_leer32:",
+    "    mov x1, x0",
+    "    mov x0, #0",
+    ".globl sondeo_instruccion",
+    "sondeo_instruccion:",
+    "    ldr w0, [x1]",
+    "    ret",
+);
+
+unsafe extern "C" {
+    fn sondeo_leer32(direccion: usize) -> u64;
+    static sondeo_instruccion: u8;
+}
+
+/// Dirección de la instrucción que puede fallar, para la excepción.
+pub fn instruccion_de_sondeo() -> u64 {
+    unsafe { &sondeo_instruccion as *const u8 as u64 }
+}
+
+impl RegLe32 {
+    /// Lee el registro sin caerse si el aparato no está (QEMU no emula todos). `None` si el bus da error.
+    pub fn sondear(self) -> Option<u32> {
+        let v = unsafe { sondeo_leer32(self.0) };
+        if v > u32::MAX as u64 { None } else { Some(u32::from_le(v as u32)) }
+    }
+}

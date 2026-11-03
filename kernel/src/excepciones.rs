@@ -70,6 +70,13 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
         crate::planificador::terminar_actual();
     }
 
+    // Fallo de bus en una lectura de sondeo (C23): el aparato no está. Se devuelve todo unos y se sigue.
+    if tipo == 4 && clase == 0x25 && marco.elr == crate::mmio::instruccion_de_sondeo() {
+        marco.x[0] = u64::MAX;
+        marco.elr += 4;
+        return;
+    }
+
     // BRK desde EL1: se usa para las pruebas. Se avisa y se sigue con la instrucción siguiente.
     if tipo == 4 && clase == 0x3c {
         kprintln!("Excepción: BRK #{:#x} en {:#x}; se sigue", iss & 0xffff, marco.elr);

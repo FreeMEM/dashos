@@ -97,7 +97,7 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [ ] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
-- [ ] C23 **HVS según la especificación**, compilado pero sin probar: falta la Pi 4. Solo con `docs/spec/hw/hvs.md`.
+- [x] C23 **HVS según la especificación**, compilado pero sin probar: falta la Pi 4. Solo con `docs/spec/hw/hvs.md`.
 
 ### Análisis de vídeo y GPU (agente analista)
 
@@ -367,7 +367,22 @@ las especificaciones simplificadas públicas de la SD Association. El kernel le 
 (donde va la tarjeta en la Pi 4) y del SDHCI clásico (donde la pone QEMU `raspi4b`); usa el que tenga tarjeta.
 Arranque de la tarjeta (CMD0, CMD8, ACMD41, CMD2, CMD3, CMD7), sectores de capacidad estándar y alta, registros
 siempre de 32 bits. `tools/prueba_qemu.sh` crea `build/sd/prueba.img` (64 MB, texto en el sector 0, firma 0x55AA,
-otro texto en el sector 1) y la conecta. Prueba: lee y escribe los dos sectores y sale con 9. BIEN a la primera.
+otro texto en el sector 1) y la conecta. Prueba: lee los dos sectores, muestra su texto y sale con 9. BIEN a la primera.
 Con las pruebas nuevas la tanda entera pasa de 4 segundos: una de trece vueltas falló por los 6 segundos de margen
 del script; ahora `make prueba` da 10, y cinco de cinco bien. Sin probar: el EMMC2 de verdad (su reloj y su
 alimentación los pone el firmware; puede que haga falta algo más) y tarjetas de alta capacidad.
+
+### 2026-11-03 08:0x — C23 (HVS según la especificación)
+
+`kernel/src/hvs.rs`, escrito solo con `docs/spec/hw/hvs.md`. Codifica planos RGB sin escalado (8 palabras: `CTL0`,
+`POS0`, `CTL2`, `POS2`, contexto, puntero, contexto, paso) y listas terminadas en `END`. Dos formatos: el
+`XRGB8888` de DRM (código 7, `ORDER` 2) y el nativo de DashOS `0xAARRGGBB` en big-endian (código 7, `ORDER` 1, la
+deducción de §6.4 sin probar). Alfa fijo o por píxel premultiplicado. Rechaza búferes fuera del primer GB. En el
+hardware: busca el canal que dejó encendido el firmware y cambia solo su lista, con doble zona en la memoria de
+listas (palabras 32 en adelante; las 0 a 31 son del firmware), relleno de fondo, limpieza de caché de los píxeles y
+espera a `DISPLACTx`. El modo de vídeo (PV y HDMI) sigue siendo el del firmware. Nueva lectura de sondeo
+(`RegLe32::sondear`): en QEMU la ventana del HVS no existe y leerla daba un fallo de bus; ahora la excepción lo
+recoge y devuelve "no está". Prueba en QEMU: la lista del ejemplo de §5.10 sale igual palabra a palabra; una lista
+de escritorio más cursor da 17 palabras con los valores calculados a mano; el controlador ve que no hay HVS. BIEN,
+tres de tres. Sin probar en hardware: falta la Pi 4. La prueba de la Pi pondrá un cursor translúcido de 64 × 64
+encima de la pantalla del firmware; si los colores salen cambiados, el `ORDER` nativo es el sospechoso.

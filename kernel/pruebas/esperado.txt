@@ -56,3 +56,6 @@ C20: controlador fuera del kernel lanzado
   [sd] sector 1: "segundo sector: bien"
 sale con código 9
 C21: controlador de la tarjeta SD lanzado
+  lista del ejemplo de la especificación: igual palabra a palabra
+  escritorio y cursor: 17 palabras; fuera del primer GB se rechaza: sí
+C23: listas del HVS bien
