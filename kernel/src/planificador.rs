@@ -365,9 +365,20 @@ pub fn bloquear(soltar: impl FnOnce()) {
     crate::cerrojo::restaurar_irq(estado);
 }
 
-/// Despierta un hilo bloqueado: vuelve a la cola de su núcleo.
+/// Si es falso, no se avisa a otro núcleo al despertar uno de sus hilos (para medir, C17).
+pub static AVISAR_NUCLEOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+/// Despierta un hilo bloqueado: vuelve a la cola de su núcleo. Si es otro núcleo, se le avisa para que no espere a
+/// su siguiente tic (C17).
 pub fn despertar(h: *mut Hilo) {
     let n = unsafe { (*h).nucleo };
+    despertar_en(h, n);
+    if n != nucleos::numero() as usize && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+        crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+    }
+}
+
+fn despertar_en(h: *mut Hilo, n: usize) {
     let mut g = NUCLEOS[n].tomar();
     if let Some(nc) = g.as_mut() {
         unsafe {

@@ -86,7 +86,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C16 **Doble búfer y compositor mínimo por CPU.** Pantalla virtual del doble de alto y cambio de mitad con el
   desplazamiento virtual del firmware (etiqueta `0x48009`), un compositor provisional en el kernel que mueve una
   ventana (rectángulo) repintando solo lo que cambia, y captura de QEMU. Es la fase A de S9.
-- [ ] C17 **Avisos entre núcleos.** Interrupciones por software del GIC (SGI) para despertar un hilo de otro núcleo
+- [x] C17 **Avisos entre núcleos.** Interrupciones por software del GIC (SGI) para despertar un hilo de otro núcleo
   sin esperar a su tic. Prueba: medir el tiempo de ida y vuelta de un mensaje entre núcleos antes y después.
 - [ ] C18 **Recoger lo que dejan los muertos.** Liberar pila e hilo al terminar, y espacio, páginas y llaves al
   terminar el último hilo de un proceso. Prueba: crear y terminar muchos procesos sin que baje la memoria libre.
@@ -305,4 +305,12 @@ todo cuesta 2.526 µs por cuadro (307.200 píxeles) y solo los daños 297 µs (3
 comprueban seis píxeles del búfer visible (la ventana en su sitio final, sin rastro en el inicial). Captura en
 `docs/capturas/c16-compositor.png`. BIEN. Los tiempos son de QEMU, no de la placa. Sin sincronía vertical: el
 firmware no la da; llegará con el controlador propio del HVS (fase B).
+
+### 2026-11-03 03:1x — C17 (avisos entre núcleos)
+
+`gic.rs`: `avisar(núcleo, sgi)` por `GICD_SGIR`; `reconocer` devuelve el IAR entero y `terminar` lo devuelve tal
+cual (en las SGI lleva el núcleo que la mandó). `despertar` avisa al núcleo del hilo si es otro (SGI 1), y la
+interrupción acaba en el planificador. Prueba: un hilo en el núcleo 2 y un eco en el 3 se pasan un mensaje por
+canales del kernel. Ida y vuelta: sin avisos 10.057 y 10.080 µs (esperaban al tic de 10 ms del otro núcleo); con
+avisos 14 y 18 µs. Unas 600 veces menos. BIEN.
 

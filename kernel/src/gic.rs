@@ -18,6 +18,7 @@ const GICD_CTLR: usize = 0x000;
 const GICD_ISENABLER: usize = 0x100;
 const GICD_ICENABLER: usize = 0x180;
 const GICD_IPRIORITYR: usize = 0x400;
+const GICD_SGIR: usize = 0xF00;
 const GICC_CTLR: usize = 0x000;
 const GICC_PMR: usize = 0x004;
 const GICC_BPR: usize = 0x008;
@@ -42,6 +43,7 @@ pub fn iniciar(dist_fisica: u64, cpu_fisica: u64) {
 
 /// La parte de cada núcleo (las interrupciones privadas y la interfaz de CPU son por núcleo).
 pub fn iniciar_cpu() {
+    habilitar(SGI_PLANIFICAR, 0x80);
     c(GICC_PMR).escribir(0xf0);
     c(GICC_BPR).escribir(0);
     c(GICC_CTLR).escribir(1);
@@ -57,11 +59,21 @@ pub fn habilitar(intid: u32, prioridad: u8) {
     d(GICD_ISENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
 }
 
-/// Reconoce la interrupción pendiente y devuelve su número.
+/// Reconoce la interrupción pendiente. Devuelve el valor entero de IAR: el número va en los bits 9:0 y, en las
+/// interrupciones por software, el núcleo que la mandó en los 12:10. Hay que devolverlo entero a `terminar`.
 pub fn reconocer() -> u32 {
-    c(GICC_IAR).leer() & 0x3ff
+    c(GICC_IAR).leer()
 }
 
-pub fn terminar(intid: u32) {
-    c(GICC_EOIR).escribir(intid);
+pub fn terminar(iar: u32) {
+    c(GICC_EOIR).escribir(iar);
+}
+
+/// Interrupción por software que pide a un núcleo que vuelva a planificar (C17).
+pub const SGI_PLANIFICAR: u32 = 1;
+
+/// Manda una interrupción por software (SGI) a un núcleo.
+pub fn avisar(nucleo: u32, sgi: u32) {
+    unsafe { core::arch::asm!("dsb ishst") };
+    d(GICD_SGIR).escribir(((1 << nucleo) << 16) | (sgi & 0xf));
 }

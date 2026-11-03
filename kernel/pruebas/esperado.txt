@@ -42,3 +42,4 @@ C14: clase de plazo bien
   pantalla 640x480, paso 2560 bytes
 C15: pantalla del firmware bien
 C16: doble búfer y daños bien
+C17: avisos entre núcleos bien

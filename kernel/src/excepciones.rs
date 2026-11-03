@@ -35,15 +35,17 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
 
     // IRQ: al GIC, y de ahí a quien corresponda.
     if tipo & 3 == 1 {
-        let intid = crate::gic::reconocer();
+        let iar = crate::gic::reconocer();
+        let intid = iar & 0x3ff;
         if intid != crate::gic::FALSA {
-            let es_reloj = crate::reloj::interrupcion(intid);
-            if !es_reloj {
+            // Software (otro núcleo pide que se replanifique, C17) o el reloj: los dos acaban en el planificador.
+            let planificar = intid == crate::gic::SGI_PLANIFICAR || crate::reloj::interrupcion(intid);
+            if !planificar {
                 kprintln!("IRQ {} sin dueño", intid);
             }
             // Terminar antes de cambiar de hilo: si no, la interrupción seguiría activa hasta volver a este hilo.
-            crate::gic::terminar(intid);
-            if es_reloj {
+            crate::gic::terminar(iar);
+            if planificar {
                 crate::planificador::tic();
             }
         }

@@ -67,6 +67,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_procesos();
     prueba_pantalla(dtb);
     prueba_compositor();
+    prueba_avisos();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -456,6 +457,70 @@ fn prueba_compositor() {
     let bien_px = puntos.iter().all(|&(x, y)| c.leer(x, y) == c.esperado(x, y));
     let bien = bien_px && px_danos * 4 < px_todo;
     kprintln!("C16: doble búfer y daños {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C17: ida y vuelta de un mensaje entre los núcleos 2 y 3 por canales del kernel, sin y con avisos entre núcleos.
+static CANALES_C17: cerrojo::Cerrojo<Option<(objetos::Llave, objetos::Llave, objetos::Llave, objetos::Llave)>> =
+    cerrojo::Cerrojo::new(None);
+static IDAS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn extremo(l: &objetos::Llave) -> (alloc::sync::Arc<objetos::Canal>, usize) {
+    match &l.objeto {
+        objetos::Objeto::Extremo(c, lado) => (c.clone(), *lado),
+        _ => unreachable!(),
+    }
+}
+
+extern "C" fn eco(_: usize) {
+    let (ida, vuelta) = {
+        let g = CANALES_C17.tomar();
+        let (_, b, c, _) = g.as_ref().unwrap();
+        (extremo(b), extremo(c))
+    };
+    loop {
+        let Ok(m) = ida.0.leer(ida.1) else { return };
+        let _ = vuelta.0.escribir(vuelta.1, m);
+    }
+}
+
+extern "C" fn pelota(vueltas: usize) {
+    use core::sync::atomic::Ordering;
+    let (ida, vuelta) = {
+        let g = CANALES_C17.tomar();
+        let (a, _, _, d) = g.as_ref().unwrap();
+        (extremo(a), extremo(d))
+    };
+    let t = reloj::ahora();
+    for _ in 0..vueltas {
+        let _ = ida.0.escribir(ida.1, objetos::Mensaje { datos: alloc::vec![1], llaves: alloc::vec::Vec::new() });
+        let _ = vuelta.0.leer(vuelta.1);
+    }
+    IDAS.store((reloj::ahora() - t) * 1_000_000 / reloj::frecuencia() / vueltas as u64 + 1, Ordering::Release);
+}
+
+fn medir_ida_y_vuelta(vueltas: usize) -> u64 {
+    use core::sync::atomic::Ordering;
+    IDAS.store(0, Ordering::Relaxed);
+    planificador::crear(pelota, vueltas, 2);
+    let inicio = reloj::tics();
+    while IDAS.load(Ordering::Acquire) == 0 && reloj::tics() < inicio + 300 {
+        reloj::esperar_interrupcion();
+    }
+    IDAS.load(Ordering::Acquire).saturating_sub(1)
+}
+
+fn prueba_avisos() {
+    use core::sync::atomic::Ordering;
+    let (a, b) = objetos::Canal::nuevo();
+    let (c, d) = objetos::Canal::nuevo();
+    *CANALES_C17.tomar() = Some((a, b, c, d));
+    planificador::crear(eco, 0, 3);
+    planificador::AVISAR_NUCLEOS.store(false, Ordering::Relaxed);
+    let sin = medir_ida_y_vuelta(20);
+    planificador::AVISAR_NUCLEOS.store(true, Ordering::Relaxed);
+    let con = medir_ida_y_vuelta(200);
+    kprintln!("  ida y vuelta entre los núcleos 2 y 3: sin avisos {} µs, con avisos {} µs", sin, con);
+    kprintln!("C17: avisos entre núcleos {}", if con > 0 && con * 10 < sin { "bien" } else { "MAL" });
 }
 
 #[panic_handler]
