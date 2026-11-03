@@ -107,7 +107,7 @@ del kernel sobre la que irán esos controladores.
   vertical, audio por HDMI (`vc4_hdmi.c`, `vc4_hdmi_phy.c`, `vc4_hdmi_regs.h`, `vc4_crtc.c`).
 - [x] V3 **V3D, lado del kernel**: memoria de la GPU y su MMU, envío de trabajos (binner, render, TFU, CSD),
   interrupciones, reinicio y relojes (`drivers/gpu/drm/v3d/`).
-- [~] V4 **Mesa v3d y v3dv frente al kernel**: qué llamadas de DRM usa Mesa con v3d y vc4, qué estructuras se pasan y
+- [x] V4 **Mesa v3d y v3dv frente al kernel**: qué llamadas de DRM usa Mesa con v3d y vc4, qué estructuras se pasan y
   qué habría que ofrecer en DashOS para portar Mesa sin cambiar su controlador (`src/gallium/drivers/v3d`,
   `src/broadcom/vulkan`, `include/drm-uapi/v3d_drm.h`). Mesa es MIT, pero se sigue el mismo método.
 
@@ -313,4 +313,10 @@ cual (en las SGI lleva el núcleo que la mandó). `despertar` avisa al núcleo d
 interrupción acaba en el planificador. Prueba: un hilo en el núcleo 2 y un eco en el 3 se pasan un mensaje por
 canales del kernel. Ida y vuelta: sin avisos 10.057 y 10.080 µs (esperaban al tic de 10 ms del otro núcleo); con
 avisos 14 y 18 µs. Unas 600 veces menos. BIEN.
+
+### 2026-11-03 03:1x — V4 (lo que Mesa pide al kernel), del analista
+
+`docs/spec/hw/mesa-v3d.md`: llamadas de DRM que usan v3d y v3dv, búferes y su paso a la pantalla, sincronización,
+lo que Mesa supone del sistema (incluido el orden de bytes) y una propuesta de interfaz por fases para DashOS.
+Revisado por encima que no lleva código. Con esto la línea de análisis de vídeo y GPU (V1 a V4) está completa.
 

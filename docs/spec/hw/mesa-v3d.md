@@ -66,7 +66,7 @@ Todas las vías de Mesa empiezan enumerando dispositivos con libdrm:
 
 | Quién | Cómo busca | Fuente |
 |---|---|---|
-| EGL, lista de dispositivos | `drmGetDevices2`; solo guarda los que tienen nodo de render | [`egl/main/egldevice.c`, `_eglRefreshDeviceList` y `_eglAddDRMDevice`] |
+| EGL, lista de dispositivos | `drmGetDevices2`; solo guarda los que tienen nodo de render | [`egl/main/egldevice.c`, `_eglDeviceRefreshList` y `_eglAddDRMDevice`] |
 | EGL sin ventanas ("surfaceless") | Recorre esa lista y abre el nodo de render | [`platform_surfaceless.c`, `surfaceless_probe_device`] |
 | EGL en Wayland | Recibe un `dev_t` del compositor y busca su nodo de render con `drmGetDeviceFromDevId` | [`platform_wayland.c`, `dri2_wl_init_display_dev`; `loader.c`, `loader_get_render_node`] |
 | kmsro (GBM sobre vc4) | `drmGetDevices2`; abre los nodos de render de bus `PLATFORM` cuyo nombre esté en una lista (incluye `"v3d"`) | [`loader.c`, `loader_open_render_node_platform_devices`; `pipe_loader_drm.c`, `pipe_loader_get_compatible_render_capable_device_fds`] |
@@ -720,7 +720,7 @@ Comprobado en comentarios de la cabecera y de Mesa:
    no tiene nodo de render. [`platform_wayland.c`, `dri2_wl_init_display_dev`]
 3. Aquí no hay kmsro: el controlador v3d reserva los búferes **en v3d**, sin pasar por vc4. Si el compositor marca un
    grupo de formatos como "para escanear" (`SCANOUT`), el búfer sale lineal, pero sigue siendo un BO de v3d.
-   [`platform_wayland.c`, `dri2_wl_add_..._from_feedback`; `v3d_resource.c`]
+   [`platform_wayland.c`, `create_dri_image_from_dmabuf_feedback`; `dri2.c`, uso de `__DRI_IMAGE_USE_SCANOUT`; `v3d_resource.c`]
 4. Para presentar: exporta el BO como dma-buf y crea un `wl_buffer` con `zwp_linux_buffer_params_v1`: por cada plano,
    descriptor, desplazamiento, paso y modificador en dos mitades de 32 bits. Luego `create_immed` con ancho, alto y
    formato de DRM. Con la versión 5 añade el `dev_t` con `set_sampling_device`. [`platform_wayland.c`,
