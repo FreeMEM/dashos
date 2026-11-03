@@ -106,7 +106,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   DashOS, programas Amiga y programas de Linux. Hangar como tienda y catálogo por encima, con programas de pago.
 - [x] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
   sincronía vertical, escalado para pantallas de mucha densidad.
-- [ ] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
+- [x] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
   monitores, lanzador, notificaciones, bandeja. El aire del Amiga hecho moderno. Referencias que el usuario usa a
   diario: niri, mango, DMS.
 - [ ] S11 **Interfaz de programación.** La API nativa de DashOS para aplicaciones nuevas, frente a la API Amiga de
@@ -154,6 +154,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? Mientras:
   sí.
 - (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? Mientras: sí.
+- (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? Mientras: sí.
+- (S10) ¿Disposición por defecto: Workbench flotante y el resto en mosaico con desplazamiento? Mientras: sí.
+- (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? Mientras: sí.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -274,4 +277,12 @@ propio del HVS y HDMI (sincronía vertical, dos salidas, planos para cursor y v�
 Wayland como protocolo propio del compositor, sobre canales de DashOS: los kits de interfaz se portan sin reescribir,
 y la caja Linux y la caja Amiga son clientes Wayland. Medido con la API de GitHub: v3d son unos 200 KB de C en Linux
 y vc4 unos 770 KB. No hay manual público de la V3D.
+
+### 2026-11-03 — S10 (escritorio)
+
+`docs/diseño/S10-escritorio.md`. Los escritorios virtuales son "pantallas" del Amiga, por monitor y dinámicas como en
+niri, con el gesto de arrastrar hacia abajo. Cada pantalla elige disposición: flotante, mosaico con desplazamiento
+(niri) o las de mango; cualquier ventana puede flotar. Workbench con iconos y cajones, barra de pantalla con los
+menús del programa al botón derecho y la bandeja de DMS a la derecha, lanzador por teclado, Commodities y puerto
+ARexx. Compositor y escritorio son procesos separados, como niri y DMS.
 
