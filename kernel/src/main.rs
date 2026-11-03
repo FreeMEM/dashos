@@ -3,6 +3,7 @@
 #![no_std]
 #![no_main]
 
+mod excepciones;
 mod mmio;
 mod serie;
 
@@ -27,6 +28,10 @@ extern "C" fn kmain(dtb: usize) -> ! {
     let primero = unsafe { *(&x as *const u32 as *const u8) };
     kprintln!("Orden de bytes: {}", if primero == 0x11 { "big-endian" } else { "little-endian" });
     kprintln!("C2: esqueleto en marcha");
+
+    excepciones::iniciar();
+    unsafe { core::arch::asm!("brk #0x2a") };
+    kprintln!("C3: de vuelta de la excepción");
     loop {
         unsafe { core::arch::asm!("wfe") };
     }

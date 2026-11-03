@@ -60,7 +60,7 @@ del kernel sobre la que irán esos controladores.
   `aarch64_be-unknown-none-softfloat`, guion de enlace, entrada en ensamblador (big-endian en EL2, bajar a EL1, pila
   por núcleo), tipo de registro de periférico little-endian, PL011, `kprint!`, `tools/prueba_qemu.sh` y la primera
   prueba.
-- [ ] C3 **Excepciones.** Tabla de vectores de EL1, volcado de registros y pánico legible. Prueba: un `brk` provocado.
+- [x] C3 **Excepciones.** Tabla de vectores de EL1, volcado de registros y pánico legible. Prueba: un `brk` provocado.
 - [ ] C4 **Árbol de dispositivos.** Leer el DTB que deja el firmware en `x0`: memoria, puerto serie, GIC, temporizador
   y `dma-ranges` (S3). Prueba: imprime el mapa.
 - [ ] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
@@ -124,4 +124,11 @@ entra ya en EL1. `src/mmio.rs` con `RegLe32` (da la vuelta a los bytes). `src/se
 dispositivos del firmware oficial a `build/firmware/` (no va en git: es GPL). `make -C kernel prueba`: BIEN.
 Aviso: `+strict-align` hace falta mientras la MMU esté apagada (memoria de dispositivo), pero Rust avisa de que lo
 quitará; con la MMU (C6) se puede retirar. Sin cerrojo en la serie hasta C9.
+
+### 2026-11-03 02:2x — C3 (excepciones)
+
+`kernel/src/vectores.s`: tabla de 16 entradas alineada a 2 KB; cada entrada guarda x0 y x1 y salta a un tramo común
+que guarda el resto, ELR, SPSR, ESR y FAR en un marco de 288 bytes y llama a `excepcion()` en Rust
+(`excepciones.rs`). Un BRK desde EL1 se avisa y se sigue; lo demás vuelca registros y entra en pánico. Prueba: un
+`brk #0x2a` provocado y vuelta. BIEN. No probado aún: el volcado de un fallo de verdad.
 
