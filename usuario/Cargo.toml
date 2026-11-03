@@ -19,6 +19,11 @@ name = "serie"
 path = "src/bin/serie.rs"
 test = false
 
+[[bin]]
+name = "sd"
+path = "src/bin/sd.rs"
+test = false
+
 [profile.release]
 panic = "abort"
 opt-level = "s"

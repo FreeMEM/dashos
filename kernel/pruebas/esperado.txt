@@ -52,3 +52,7 @@ C19: programa en Rust lanzado
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7
 C20: controlador fuera del kernel lanzado
+  [sd] sector 0: "DashOS: primer sector de la tarjeta SD", firma 0x55aa
+  [sd] sector 1: "segundo sector: bien"
+sale con código 9
+C21: controlador de la tarjeta SD lanzado

@@ -95,7 +95,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C20 **Controladores fuera del kernel.** Llave de registros (proyectar un periférico como memoria de
   dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
   la serie.
-- [ ] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
+- [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [ ] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
 - [ ] C23 **HVS según la especificación**, compilado pero sin probar: falta la Pi 4. Solo con `docs/spec/hw/hvs.md`.
 
@@ -359,3 +359,15 @@ todas al núcleo 0 (`gic::dirigir`). Al perder la última llave, la interrupció
 de dispositivos), escribe una línea en el puerto sin pasar por el kernel, pide la interrupción de envío, la recibe
 como mensaje, la atiende y sale con 7. BIEN, tres de tres. Pendiente: quién reparte estas llaves (el kernel las da a
 mano en la prueba; en S1 es el gestor de dispositivos) y repartir las interrupciones entre núcleos.
+
+### 2026-11-03 08:1x — C21 (tarjeta SD)
+
+`usuario/src/bin/sd.rs`: controlador SDHCI fuera del kernel, por consulta (sin interrupciones ni DMA), escrito con
+las especificaciones simplificadas públicas de la SD Association. El kernel le da las llaves de registros del EMMC2
+(donde va la tarjeta en la Pi 4) y del SDHCI clásico (donde la pone QEMU `raspi4b`); usa el que tenga tarjeta.
+Arranque de la tarjeta (CMD0, CMD8, ACMD41, CMD2, CMD3, CMD7), sectores de capacidad estándar y alta, registros
+siempre de 32 bits. `tools/prueba_qemu.sh` crea `build/sd/prueba.img` (64 MB, texto en el sector 0, firma 0x55AA,
+otro texto en el sector 1) y la conecta. Prueba: lee y escribe los dos sectores y sale con 9. BIEN a la primera.
+Con las pruebas nuevas la tanda entera pasa de 4 segundos: una de trece vueltas falló por los 6 segundos de margen
+del script; ahora `make prueba` da 10, y cinco de cinco bien. Sin probar: el EMMC2 de verdad (su reloj y su
+alimentación los pone el firmware; puede que haga falta algo más) y tarjetas de alta capacidad.

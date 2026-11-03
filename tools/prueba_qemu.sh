@@ -22,9 +22,26 @@ if [ ! -f "$DTB" ]; then
         echo "no se pudo bajar el árbol de dispositivos"; exit 2; }
 fi
 
+# Tarjeta SD de prueba (C21): 64 MB con un texto en el sector 0, la firma 0x55AA y otro texto en el sector 1.
+SD=$RAIZ/build/sd/prueba.img
+if [ ! -f "$SD" ]; then
+    mkdir -p "$(dirname "$SD")"
+    python3 -I -c '
+import sys
+img = bytearray(64 * 1024 * 1024)
+a = b"DashOS: primer sector de la tarjeta SD"
+b = b"segundo sector: bien"
+img[0:len(a)] = a
+img[510:512] = b"\x55\xaa"
+img[512:512 + len(b)] = b
+open(sys.argv[1], "wb").write(img)
+' "$SD"
+fi
+
 SALIDA=$(mktemp)
 timeout "$SEGUNDOS" qemu-system-aarch64 -M raspi4b -kernel "$IMAGEN" -dtb "$DTB" \
-    -display none -serial file:"$SALIDA" -serial null ${QEMU_EXTRA:-} >/dev/null 2>&1
+    -display none -serial file:"$SALIDA" -serial null \
+    -drive file="$SD",if=sd,format=raw ${QEMU_EXTRA:-} >/dev/null 2>&1
 tr -d '\r' < "$SALIDA" > "$SALIDA.txt"
 
 FALLO=0

@@ -74,6 +74,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_rust();
     interrupciones::iniciar();
     prueba_controlador(dtb);
+    prueba_sd(dtb);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -656,6 +657,30 @@ fn prueba_controlador(direccion: usize) {
     }
     esperar_tics(30);
     kprintln!("C20: controlador fuera del kernel lanzado");
+}
+
+/// C21: controlador de la tarjeta SD fuera del kernel (`usuario/src/bin/sd.rs`). Recibe los registros del EMMC2
+/// (la tarjeta en la Pi 4) y los del SDHCI clásico (la tarjeta en QEMU).
+static SD: &[u8] = include_bytes!("../../usuario/target/aarch64_be-unknown-none-softfloat/release/sd");
+
+fn prueba_sd(direccion: usize) {
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+    let mut llaves = alloc::vec::Vec::new();
+    for c in ["brcm,bcm2711-emmc2", "brcm,bcm2835-sdhci"] {
+        if let Some((fisica, tamano)) = d.compatible(c).and_then(|n| d.reg_cpu(&n, 0)) {
+            kprintln!("  {} en {:#x}", c, fisica);
+            let tamano = tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA;
+            llaves.push(objetos::Llave {
+                objeto: objetos::Objeto::Registros { fisica, tamano },
+                derechos: objetos::LEER | objetos::ESCRIBIR,
+            });
+        }
+    }
+    if !lanzar_elf(SD, llaves, 3) {
+        return;
+    }
+    esperar_tics(50);
+    kprintln!("C21: controlador de la tarjeta SD lanzado");
 }
 
 #[panic_handler]
