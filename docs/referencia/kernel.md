@@ -14,6 +14,9 @@ la biblioteca de usuario `usuario/src/lib.rs`.
 Un proceso tiene su espacio de direcciones, su tabla de llaves y su orden de bytes. Hoy cada proceso tiene un solo
 hilo. Lo arranca el kernel desde un ELF.
 
+Cada espacio tiene un ASID de 16 bits propio mientras vive; dos procesos vivos nunca lo comparten. Cuando sale el
+último hilo, el proceso se libera en ese momento: su memoria, sus tablas y sus llaves.
+
 ### Formato del ejecutable
 
 ELF64 para AArch64 (`e_machine` 183), en cualquiera de los dos órdenes de bytes:

@@ -86,6 +86,9 @@ fn tramo(p: u64, n: u64) -> Option<(u64, usize)> {
 }
 
 pub fn atender(marco: &mut Marco) {
+    // Las pilas de los hilos muertos de este núcleo se liberan también aquí, no solo desde el hilo ocioso, que en un
+    // núcleo siempre ocupado no corre nunca.
+    planificador::recoger();
     let a = marco.x;
     let r = match a[8] {
         1 => escribir_consola(a[0], a[1]),

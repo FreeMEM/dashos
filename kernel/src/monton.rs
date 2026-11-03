@@ -6,7 +6,7 @@
 //!
 //! Todo se ve por el mapa directo de la mitad alta (C6).
 
-use crate::cerrojo::Cerrojo;
+use crate::cerrojo::CerrojoIrq;
 use crate::memoria::{paginas, Zona, PAGINA};
 use crate::mmu;
 use core::alloc::{GlobalAlloc, Layout};
@@ -21,7 +21,9 @@ struct Monton {
     paginas_pequenas: usize,
 }
 
-static MONTON: Cerrojo<Monton> = Cerrojo::new(Monton { libres: [0; CLASES], paginas_pequenas: 0 });
+/// Enmascara las IRQ: un hilo del kernel expulsado con el cerrojo tomado colgaría a quien lo pida después en su
+/// núcleo (auditoría, hallazgo 10).
+static MONTON: CerrojoIrq<Monton> = CerrojoIrq::new(Monton { libres: [0; CLASES], paginas_pequenas: 0 });
 
 fn clase(tam: usize) -> usize {
     let t = tam.max(MINIMO).next_power_of_two();

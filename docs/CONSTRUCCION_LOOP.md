@@ -575,6 +575,34 @@ después. `tenis` (nuevo): dos procesos en los núcleos 2 y 3 mandan y leen 20 0
 canal. Pasa. Con el canal viejo también pasa: la ventana del cuelgue es de pocas instrucciones y QEMU no la ha
 pillado. La prueba sirve de regresión, no demuestra que el cuelgue existía.
 
+### 2026-11-03 tarde — C32, segunda vuelta (hallazgos 1, 2 y 13, y la recogida)
+
+**Hallazgo 1.** El repartidor de páginas está tras un `CerrojoIrq`, y el montón también. Los dos enmascaran las IRQ
+mientras se tienen, así que el tic no puede expulsar a quien los tiene (parte del hallazgo 10). Orden: montón antes
+que páginas. `paginas()` devuelve una guarda.
+
+**Hallazgo 2.** `TCR.AS = 1`: ASID de 16 bits. Se reparten desde un mapa de bits, el 0 nunca. Un ASID vuelve al mapa
+solo después del `tlbi aside1is` del espacio que lo tenía. Si se acaban, `Espacio::nuevo` cae en `expect`; eso entra
+con el hallazgo 8.
+
+**Hallazgo 13.** TTBR0 apunta a una tabla vacía (ASID 0) al arrancar cada núcleo, al cambiar a un hilo del kernel y
+cuando muere un proceso. Al arrancar cada núcleo se vacía la TLB: los bloques de la proyección identidad eran globales
+y valían para cualquier ASID. La proyección sigue en `__tabla_l1` para los núcleos que arrancan; quitarla es de la
+fase 2.
+
+**Recogida.** Encontrado al escribir la prueba: el hilo ocioso es el único que recogía a los muertos. En un núcleo
+siempre ocupado (el 1, por el hilo de plazo de C14) no corre nunca, y cada proceso muerto se quedaba con unas 26
+páginas para siempre. Ahora el hilo que muere suelta su proceso en `terminar_actual`, con la mitad baja ya en la
+tabla vacía. Las pilas del kernel de los muertos se liberan también al entrar en cada llamada.
+
+**Pruebas.**
+
+- `repartos` (nuevo): seis procesos en los núcleos 1 a 3 crean y cierran 300 objetos de 64 KB cada uno. La cuenta de
+  páginas libres más las del montón tiene que quedar igual. Quitando el cerrojo a propósito, fallan esta y C18 (se
+  pierden unas 200 páginas); con el cerrojo pasan.
+- `prueba_asid`: 1000 espacios vivos tienen ASID distintos, y al soltarlos el siguiente reutiliza el más bajo.
+- C14 falló una vez de tres con la máquina cargada, como antes de este cambio.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al

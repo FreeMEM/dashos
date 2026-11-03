@@ -47,7 +47,7 @@
     adrp    x0, __tabla_l1
     ldr     x2, =0x44FF00               // MAIR: 0 dispositivo nGnRnE, 1 normal con caché, 2 normal sin caché
     msr     mair_el1, x2
-    ldr     x2, =0x4B5193519            // TCR: T0SZ=T1SZ=25, 4 KB, caché y compartible interno, IPS 44 bits
+    ldr     x2, =0x14B5193519           // TCR: T0SZ=T1SZ=25, 4 KB, caché y compartible interno, IPS 44 bits, ASID de 16 bits (AS)
     msr     tcr_el1, x2
     msr     ttbr0_el1, x0
     msr     ttbr1_el1, x0

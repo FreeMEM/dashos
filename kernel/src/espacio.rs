@@ -3,11 +3,38 @@
 //! La mitad baja (TTBR0) es de cada proceso, con su ASID: al cambiar de proceso no hace falta vaciar la TLB. Las
 //! tablas son de 4 KB y tres niveles (39 bits). Se escriben en big-endian, como las del arranque.
 
+use crate::cerrojo::CerrojoIrq;
 use crate::memoria::{paginas, Zona, PAGINA};
 use crate::mmu;
-use core::sync::atomic::{AtomicU64, Ordering};
 
-static SIGUIENTE_ASID: AtomicU64 = AtomicU64::new(1);
+/// ASID de 16 bits (TCR.AS = 1). Un mapa con uno ocupado por bit. El 0 es de la tabla vacía y nunca se da. Un ASID
+/// solo vuelve al mapa después de vaciar sus entradas de la TLB en todos los núcleos (`Drop`), así que dos espacios
+/// vivos nunca comparten ASID y uno nuevo nunca hereda traducciones de otro (auditoría, hallazgo 2).
+const ASIDS: usize = 1 << 16;
+static ASID_OCUPADO: CerrojoIrq<[u64; ASIDS / 64]> = CerrojoIrq::new({
+    let mut m = [0u64; ASIDS / 64];
+    m[0] = 1;
+    m
+});
+
+fn asid_nuevo() -> Option<u64> {
+    let mut m = ASID_OCUPADO.tomar();
+    let (i, palabra) = m.iter().enumerate().find(|(_, w)| **w != u64::MAX)?;
+    let b = palabra.trailing_ones() as usize;
+    m[i] |= 1 << b;
+    Some((i * 64 + b) as u64)
+}
+
+fn asid_devolver(asid: u64) {
+    let a = asid as usize;
+    ASID_OCUPADO.tomar()[a / 64] &= !(1 << (a % 64));
+}
+
+/// Tabla de nivel 1 sin nada: TTBR0 cuando no corre ningún proceso, para que el núcleo no siga apuntando a las
+/// tablas de uno muerto ni a la proyección identidad del arranque (auditoría, hallazgo 13).
+#[repr(C, align(4096))]
+struct TablaVacia([u64; 512]);
+static VACIA: TablaVacia = TablaVacia([0; 512]);
 
 const VALIDO: u64 = 0b11; // tabla o página
 const AF: u64 = 1 << 10;
@@ -45,9 +72,10 @@ pub struct Espacio {
 
 impl Drop for Espacio {
     fn drop(&mut self) {
-        // Que ningún núcleo conserve traducciones de este ASID.
+        // Que ningún núcleo conserve traducciones de este ASID; solo entonces se puede volver a dar.
         unsafe { core::arch::asm!("dsb ishst", "tlbi aside1is, {}", "dsb ish", "isb", in(reg) self.asid << 48) };
-        let p = paginas();
+        asid_devolver(self.asid);
+        let mut p = paginas();
         for &t in self.tablas.iter().chain(self.propias.iter()) {
             p.liberar(t, 1);
         }
@@ -69,7 +97,7 @@ impl Espacio {
     pub fn nuevo() -> Self {
         Self {
             l1: tabla_nueva(),
-            asid: SIGUIENTE_ASID.fetch_add(1, Ordering::Relaxed) & 0xffff,
+            asid: asid_nuevo().expect("sin ASID libres"),
             tablas: alloc::vec::Vec::new(),
             propias: alloc::vec::Vec::new(),
             proyectados: alloc::vec::Vec::new(),
@@ -124,4 +152,9 @@ impl Espacio {
 /// Activa un espacio en este núcleo.
 pub fn activar(ttbr0: u64) {
     unsafe { core::arch::asm!("msr ttbr0_el1, {}", "isb", in(reg) ttbr0) };
+}
+
+/// Deja este núcleo sin mitad baja: la tabla vacía, con ASID 0.
+pub fn activar_vacio() {
+    activar(mmu::fisica(&VACIA as *const TablaVacia as usize) as u64);
 }

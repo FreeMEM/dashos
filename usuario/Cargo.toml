@@ -49,3 +49,8 @@ panic = "abort"
 name = "tenis"
 path = "src/bin/tenis.rs"
 test = false
+
+[[bin]]
+name = "repartos"
+path = "src/bin/repartos.rs"
+test = false

@@ -148,6 +148,10 @@ pub fn iniciar_nucleo() {
         fp: None,
     }));
     fpen(FPEN_ATRAPAR);
+    // Fuera la proyección identidad del arranque, también de la TLB: sus bloques son globales y, si se quedaran,
+    // valdrían para cualquier ASID.
+    crate::espacio::activar_vacio();
+    unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
 }
 
@@ -376,6 +380,8 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
             (*siguiente).estado = Estado::Corriendo;
             if (*siguiente).ttbr0 != 0 {
                 crate::espacio::activar((*siguiente).ttbr0);
+            } else {
+                crate::espacio::activar_vacio();
             }
             if (*siguiente).proceso != 0 {
                 orden_el0((*((*siguiente).proceso as *const crate::objetos::Proceso)).big_endian);
@@ -471,6 +477,21 @@ extern "C" fn hilo_fin() -> ! {
 pub fn terminar_actual() -> ! {
     crate::cerrojo::enmascarar_irq();
     let n = nucleos::numero() as usize;
+    // El hilo suelta aquí mismo su proceso, sin esperar al hilo ocioso: en un núcleo siempre ocupado el ocioso no
+    // corre nunca y los procesos muertos se quedarían con su memoria. Si era el último hilo, el proceso se libera
+    // ahora, con su espacio, sus páginas y sus llaves. Antes, la mitad baja pasa a la tabla vacía.
+    let proceso = match NUCLEOS[n].tomar().as_mut() {
+        Some(nucleo) => unsafe {
+            let h = nucleo.actual;
+            (*h).ttbr0 = 0;
+            core::mem::replace(&mut (*h).proceso, 0)
+        },
+        None => 0,
+    };
+    if proceso != 0 {
+        crate::espacio::activar_vacio();
+        unsafe { drop(alloc::sync::Arc::from_raw(proceso as *const crate::objetos::Proceso)) };
+    }
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
         unsafe { (*nucleo.actual).estado = Estado::Muerto };
         // Sus registros de FP ya no le importan a nadie, y el hilo se liberará: deja de ser el dueño.

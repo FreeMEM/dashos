@@ -95,7 +95,8 @@ impl Gpu {
         let n = (tamano as u64).div_ceil(PAGINA);
         let mut pags = Vec::with_capacity(n as usize);
         for _ in 0..n {
-            match paginas().pagina(Zona::Normal) {
+            let pagina = paginas().pagina(Zona::Normal);
+            match pagina {
                 Some(p) => {
                     let va = crate::mmu::virt(p as usize);
                     unsafe { core::ptr::write_bytes(va as *mut u8, 0, PAGINA as usize) };

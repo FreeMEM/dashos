@@ -89,6 +89,8 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_pie();
     prueba_malo();
     prueba_tenis();
+    prueba_repartos();
+    prueba_asid();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -138,7 +140,7 @@ fn mapa_dispositivos(direccion: usize) {
 fn prueba_memoria(direccion: usize) {
     use memoria::{paginas, Zona, PAGINA};
     let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
-    let p = paginas();
+    let mut p = paginas();
     p.iniciar(&d, direccion);
     let antes = p.libres();
     let normal = p.pagina(Zona::Normal).unwrap_or(0);
@@ -1083,6 +1085,49 @@ fn prueba_tenis() {
     }
     let bien = llamadas::SALIDAS.load(Ordering::Relaxed) >= salidas + 2;
     kprintln!("C32: los dos extremos de un canal a la vez, en dos núcleos: {}", if bien { "bien" } else { "MAL (colgados)" });
+}
+
+/// C32: seis procesos en los núcleos 1 a 3 crean y cierran objetos de memoria a la vez. Al acabar, la cuenta de
+/// páginas libres tiene que volver a la de antes (auditoría, hallazgo 1).
+static REPARTOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/repartos");
+
+fn prueba_repartos() {
+    use core::sync::atomic::Ordering;
+    llamadas::SALIDAS_VISIBLES.store(false, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+    let mut lanzados = 0;
+    for n in [1, 2, 3, 1, 2, 3] {
+        lanzados += lanzar_elf(REPARTOS, alloc::vec::Vec::new(), n) as u64;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + lanzados && reloj::tics() < inicio + 1500 {
+        reloj::esperar_interrupcion();
+    }
+    esperar_tics(20); // que el hilo ocioso recoja los procesos muertos
+    let acabados = llamadas::SALIDAS.load(Ordering::Relaxed) - salidas;
+    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    kprintln!("  {} de 6 procesos acabados; páginas libres antes {}, después {}", acabados, libres, despues);
+    kprintln!("C32: reparto de páginas desde varios núcleos {}", if acabados == 6 && despues == libres { "bien" } else { "MAL" });
+}
+
+/// C32: 1000 espacios vivos a la vez tienen ASID distintos y ninguno es el 0; al soltarlos, sus ASID vuelven a darse.
+/// Antes eran de 8 bits y se repetían a los 256 procesos (auditoría, hallazgo 2).
+fn prueba_asid() {
+    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).map(|_| espacio::Espacio::nuevo()).collect();
+    let mut asids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid).collect();
+    asids.sort_unstable();
+    asids.dedup();
+    let distintos = asids.len() == 1000 && asids[0] != 0 && *asids.last().unwrap() < 1 << 16;
+    let menor = asids[0];
+    vivos.clear();
+    let otra = espacio::Espacio::nuevo();
+    let otra_asid = otra.asid;
+    let reusa = otra_asid <= menor;
+    drop(otra);
+    kprintln!("  ASID: menor {}, mayor {}, el siguiente {}", menor, asids[999], otra_asid);
+    kprintln!("C32: ASID de 16 bits sin repetirse {}, y se vuelven a dar {}", if distintos { "bien" } else { "MAL" }, if reusa { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

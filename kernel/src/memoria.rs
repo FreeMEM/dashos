@@ -6,6 +6,7 @@
 //!
 //! Lo normal se reparte desde arriba, para dejar libre la memoria baja que solo esos periféricos pueden usar.
 
+use crate::cerrojo::{CerrojoIrq, GuardaIrq};
 use crate::dtb::Dtb;
 use crate::kprintln;
 
@@ -33,19 +34,21 @@ pub struct Paginas {
     limite_3g: usize,
 }
 
-/// Una sola instancia, solo desde el núcleo 0 hasta que haya cerrojos (C9).
-static mut PAGINAS: Paginas = Paginas {
+/// Una sola instancia para los cuatro núcleos, tras un cerrojo que enmascara las IRQ: así nadie se queda con el
+/// cerrojo expulsado por el tic (auditoría, hallazgos 1 y 10). Orden: el del montón antes que este.
+static PAGINAS: CerrojoIrq<Paginas> = CerrojoIrq::new(Paginas {
     ocupada: [u64::MAX; PALABRAS],
     total: 0,
     libres: 0,
     max_pagina: 0,
     limite_1g: 0,
     limite_3g: 0,
-};
+});
 
-#[allow(static_mut_refs)]
-pub fn paginas() -> &'static mut Paginas {
-    unsafe { &mut PAGINAS }
+/// El repartidor, con su cerrojo tomado hasta que se suelte la guarda. Un `paginas().x()` lo suelta al acabar la
+/// sentencia; no lo tengáis tomado mientras se pide memoria al montón.
+pub fn paginas() -> GuardaIrq<'static, Paginas> {
+    PAGINAS.tomar()
 }
 
 unsafe extern "C" {
