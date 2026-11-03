@@ -5,6 +5,7 @@
 
 extern crate alloc;
 
+mod azar;
 mod buzon;
 mod cerrojo;
 mod compositor;
@@ -84,6 +85,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_usb();
     prueba_bo();
     prueba_fpu();
+    prueba_pie();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -603,7 +605,12 @@ fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: u
             return false;
         }
     };
-    kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
+    if cargado.base != 0 {
+        kprintln!("  PIE de {} bytes cargado en {:#x}, pila de {} KB en {:#x}", binario.len(), cargado.base, cargado.tamano_pila / 1024, cargado.pila);
+        PIE_ULTIMO.store(cargado.base, core::sync::atomic::Ordering::Relaxed);
+    } else {
+        kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
+    }
     let mut tabla = objetos::TablaLlaves::default();
     for l in llaves {
         tabla.instalar(l);
@@ -1002,6 +1009,30 @@ fn prueba_fpu() {
     let n = planificador::fp_cambios() - cambios;
     kprintln!("  la FPU cambió de dueño {} veces en {} tics", n, reloj::tics() - inicio);
     kprintln!("C28: FPU por hilo {}", if n >= 4 { "bien" } else { "MAL (pocos cambios: los procesos no se turnaron)" });
+}
+
+/// C29: un PIE (`usuario/asm/pie.s`) cargado dos veces. Cada carga cae en una base al azar por encima de 4 GB, y el
+/// programa comprueba que su código y su pila están ahí (sale con 29).
+static PIE: &[u8] = include_bytes!("../../usuario/target/pie");
+static PIE_ULTIMO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn prueba_pie() {
+    use core::sync::atomic::Ordering;
+    let mut bases = [0u64; 2];
+    for b in bases.iter_mut() {
+        let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+        if !lanzar_elf(PIE, alloc::vec::Vec::new(), 2) {
+            return;
+        }
+        *b = PIE_ULTIMO.load(Ordering::Relaxed);
+        let inicio = reloj::tics();
+        while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 200 {
+            reloj::esperar_interrupcion();
+        }
+    }
+    let altas = bases.iter().all(|&b| b >= 1 << 32 && b % 0x10000 == 0);
+    kprintln!("  dos cargas: bases distintas {}, por encima de 4 GB {}", if bases[0] != bases[1] { "sí" } else { "no" }, if altas { "sí" } else { "no" });
+    kprintln!("C29: cargador de PIE {}", if bases[0] != bases[1] && altas { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

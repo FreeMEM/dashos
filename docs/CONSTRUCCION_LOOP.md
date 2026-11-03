@@ -97,6 +97,9 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C29 **Cargador de PIE** (03/11 por la tarde, a petición de Dash): `ET_DYN` con base y pila al azar por
+  encima de 4 GB.
+- [x] C28 **FPU por hilo** (03/11 por la tarde, a petición de Dash): registros de FP/SIMD por hilo, de forma perezosa.
 - [x] C27 **Listas de borrado de la V3D** (añadida a las 08:27): construir la RCL de V5 y, en la Pi, el primer
   trabajo de la GPU.
 - [x] C26 **Búferes de la GPU** (añadida a las 08:16): crear, VA, liberar, sobre la tabla de la MMU de la GPU.
@@ -492,6 +495,26 @@ vacío, como Mesa) está en §7 de la especificación.
 C14 falla ahora en dos de cada tres vueltas: carga media de la máquina de 15 (otra sesión compilando). La desviación
 sube a 1-2,3 ms con un límite de 1 ms. Las demás pruebas pasan. Es ruido de QEMU con el reloj real, no de C27; con la
 máquina en calma pasaba siempre.
+
+### 2026-11-03 tarde — C28 y C29, a petición de la sesión de Dash
+
+Fuera del bucle de la noche. El usuario pidió a la sesión de Dash "lo más recomendado", y esta pidió dos cosas del
+kernel.
+
+**C28, FPU por hilo.** Cada núcleo tiene un dueño de la FPU. A los demás hilos se les atrapa el acceso desde EL0
+(`CPACR_EL1.FPEN=01`). Al primer acceso se guardan los registros del dueño (q0-q31, FPCR y FPSR, en
+`contexto.s`), se cargan los del hilo (a cero la primera vez) y se cambia de dueño. Si solo un hilo usa la FPU, no se
+guarda nada. Funciona porque los hilos no cambian de núcleo. Prueba: `fpu_a` y `fpu_b` en el mismo núcleo llenan
+q0-q31 con patrones distintos, giran para que el reloj los turne y comprueban los registros 40 veces. También suman
+1,5 + 2,25 con `fadd`. Hubo 16 cambios de dueño en 17 tics. BIEN tres de cuatro. La cuarta falló en C14, con una
+carga media de 12.
+
+**C29, cargador de PIE.** `elf.rs` acepta `ET_DYN` sin `PT_INTERP`. Pone la imagen al azar entre 128 y 256 GB y la
+pila entre 256 y 384 GB, con alineación de 64 KB. Así los primeros 4 GB quedan libres para la caja (S3). El
+cargador no aplica reubicaciones: lo hace el programa, como se acordó con Dash. El azar es provisional
+(`azar.rs`: contador más splitmix64, no criptográfico). En la Pi habrá que sembrarlo con el RNG200. Prueba: un PIE
+mínimo en ensamblador (`usuario/asm/pie.s`, enlazado con el ld de Bootlin) se carga dos veces. Cae en bases
+distintas, y su código y su pila quedan por encima de 4 GB. BIEN tres de tres.
 
 ## Resumen de la noche
 

@@ -80,3 +80,9 @@ C26: búferes de la GPU bien
 sale con código 28
 sale con código 28
 C28: FPU por hilo bien
+  [pie] hola desde un PIE por encima de 4 GB
+sale con código 29
+  [pie] hola desde un PIE por encima de 4 GB
+sale con código 29
+  dos cargas: bases distintas sí, por encima de 4 GB sí
+C29: cargador de PIE bien
