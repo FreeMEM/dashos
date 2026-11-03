@@ -75,7 +75,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 - [x] S0 **Principios y metas.** En qué será DashOS mejor que Linux, con números medibles. En qué no compite. Qué
   hardware cubre y cuál no.
-- [ ] S1 **Arquitectura del kernel.** Micronúcleo, monolítico o híbrido. Capacidades (como seL4) o permisos
+- [x] S1 **Arquitectura del kernel.** Micronúcleo, monolítico o híbrido. Capacidades (como seL4) o permisos
   clásicos. Comunicación entre procesos. Controladores dentro o fuera del kernel. Qué se aprovecha del ecosistema
   Rust para kernels.
 - [ ] S2 **Núcleos y planificador.** Reparto entre los cuatro núcleos de la Pi 4, prioridades, tiempo real suave
@@ -124,6 +124,8 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
 - (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
+- (S1) ¿Micronúcleo con capacidades? Mientras: sí, con el `unsafe` en una sola caja de Rust.
+- (S1) ¿Licencia del kernel: MPL-2.0, MIT o GPL? Mientras: MPL-2.0, para poder aprovechar Emu68 y Asterinas.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -139,4 +141,13 @@ metas con número y forma de medirlas. Lo más útil que salió: el firmware de 
 kernel, así que la meta propia es "del kernel al escritorio en menos de 1 s". Y la latencia de entrada de Linux con
 Wayland ya es buena (diferencias de menos de 1 ms entre compositores): DashOS debe no perder ahí y ganar con el
 sistema cargado. Cuatro preguntas para el usuario.
+
+### 2026-11-03 — S1 (arquitectura del kernel)
+
+`docs/diseño/S1-kernel.md`: recomendación de micronúcleo con capacidades, como seL4, QNX o Fuchsia, con dos ideas
+del framekernel de Asterinas (el `unsafe` en una sola caja; su capa de Linux como referencia). Comprobado con una
+prueba (`docs/diseño/pruebas/rust-be/`): Rust nightly compila para `aarch64_be-unknown-none-softfloat` y arranca en
+QEMU `raspi4b` en big-endian; la CPU declara `BigEnd = 1`, así que admite programas de usuario little-endian (bueno
+para S7). Hallazgo: cada acceso a un periférico hay que darle la vuelta, y muchas bibliotecas de Rust para
+controladores dan por hecho little-endian. Rust nightly instalado en shiva (`rustup toolchain install nightly`).
 
