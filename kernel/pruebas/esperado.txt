@@ -43,3 +43,4 @@ C14: clase de plazo bien
 C15: pantalla del firmware bien
 C16: doble búfer y daños bien
 C17: avisos entre núcleos bien
+C18: recogida bien

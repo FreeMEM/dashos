@@ -76,6 +76,8 @@ struct Nucleo {
     actual: *mut Hilo,
     ocioso: *mut Hilo,
     listos: Vec<*mut Hilo>,
+    /// Hilos muertos de este núcleo, para liberar desde otro hilo del mismo núcleo (C18).
+    muertos: Vec<*mut Hilo>,
     desde: u64, // cuándo empezó a correr el actual
 }
 
@@ -106,7 +108,7 @@ pub fn iniciar_nucleo() {
         plazo: None,
         _pila: None,
     }));
-    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), desde: reloj::ahora() });
+    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora() });
 }
 
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
@@ -325,6 +327,10 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
                 if actual != nucleo.ocioso {
                     nucleo.listos.push(actual);
                 }
+            } else if (*actual).estado == Estado::Muerto {
+                // Su contexto se guarda todavía en el cambio de abajo; se libera más tarde, desde otro hilo de este
+                // mismo núcleo, que no puede correr hasta que el cambio termine.
+                nucleo.muertos.push(actual);
             }
             (*siguiente).estado = Estado::Corriendo;
             if (*siguiente).ttbr0 != 0 {
@@ -441,10 +447,32 @@ pub fn asignar_espacio(ttbr0: u64) {
     crate::espacio::activar(ttbr0);
 }
 
-/// El hilo ocioso: espera interrupciones para siempre.
+/// Libera los hilos muertos de este núcleo: su pila, el propio hilo y su referencia al proceso. Si era el último
+/// hilo del proceso, el proceso se libera con su espacio, sus páginas y sus llaves (C18). Se llama desde un hilo (no
+/// desde una interrupción) porque toca el montón.
+pub fn recoger() {
+    let muertos = {
+        let n = nucleos::numero() as usize;
+        let mut g = NUCLEOS[n].tomar();
+        match g.as_mut() {
+            Some(nc) => core::mem::take(&mut nc.muertos),
+            None => return,
+        }
+    };
+    for h in muertos {
+        let hilo = unsafe { Box::from_raw(h) };
+        if hilo.proceso != 0 {
+            unsafe { drop(alloc::sync::Arc::from_raw(hilo.proceso as *const crate::objetos::Proceso)) };
+        }
+        drop(hilo);
+    }
+}
+
+/// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones.
 pub fn ocioso() -> ! {
     reloj::habilitar_irq();
     loop {
+        recoger();
         reloj::esperar_interrupcion();
     }
 }

@@ -68,6 +68,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_pantalla(dtb);
     prueba_compositor();
     prueba_avisos();
+    prueba_recoger();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -237,6 +238,8 @@ unsafe extern "C" {
     static productor_fin: u8;
     static consumidor_inicio: u8;
     static consumidor_fin: u8;
+    static usuario_nada_inicio: u8;
+    static usuario_nada_fin: u8;
     fn entrar_el0(pc: u64, sp: u64) -> !;
 }
 
@@ -255,7 +258,15 @@ fn crear_proceso(mensaje: &str, nucleo: usize) {
     crear_proceso_con(ini, fin, mensaje, nucleo, None);
 }
 
+fn crear_proceso_silencioso(ini: *const u8, fin: *const u8, nucleo: usize) {
+    crear_proceso_opc(ini, fin, "", nucleo, None, false);
+}
+
 fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>) {
+    crear_proceso_opc(ini, fin, mensaje, nucleo, llave, true);
+}
+
+fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>, avisar: bool) {
     use espacio::{Espacio, Permiso};
     let mut e = Espacio::nuevo();
     let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo);
@@ -280,7 +291,9 @@ fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     if let Some(l) = llave {
         tabla.instalar(l); // será la llave 1
     }
-    kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
+    if avisar {
+        kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
+    }
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
         espacio: cerrojo::Cerrojo::new(e),
@@ -521,6 +534,31 @@ fn prueba_avisos() {
     let con = medir_ida_y_vuelta(200);
     kprintln!("  ida y vuelta entre los núcleos 2 y 3: sin avisos {} µs, con avisos {} µs", sin, con);
     kprintln!("C17: avisos entre núcleos {}", if con > 0 && con * 10 < sin { "bien" } else { "MAL" });
+}
+
+/// C18: crear y terminar procesos muchas veces sin que se pierda memoria.
+fn prueba_recoger() {
+    let (ini, fin) = unsafe { (&usuario_nada_inicio as *const u8, &usuario_nada_fin as *const u8) };
+    let tanda = |n: usize| {
+        for _ in 0..n {
+            crear_proceso_silencioso(ini, fin, 2);
+        }
+        let inicio = reloj::tics();
+        while reloj::tics() < inicio + 30 {
+            reloj::esperar_interrupcion();
+        }
+    };
+    llamadas::SALIDAS_VISIBLES.store(false, core::sync::atomic::Ordering::Relaxed);
+    tanda(60); // calentar: el montón se queda páginas para sus clases de tamaño
+    let antes = memoria::paginas().libres();
+    tanda(50);
+    let medio = memoria::paginas().libres();
+    tanda(50);
+    let despues = memoria::paginas().libres();
+    kprintln!("  dos tandas de 50 procesos: páginas libres {}, {} y {}", antes, medio, despues);
+    // Sin recogida, cada proceso dejaría unas 10 páginas (tablas, código, datos, pila, pila del kernel).
+    let perdidas = antes.saturating_sub(despues);
+    kprintln!("C18: recogida {} ({} páginas de diferencia en 100 procesos)", if perdidas <= 4 { "bien" } else { "MAL" }, perdidas);
 }
 
 #[panic_handler]

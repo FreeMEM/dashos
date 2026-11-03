@@ -88,7 +88,7 @@ del kernel sobre la que irán esos controladores.
   ventana (rectángulo) repintando solo lo que cambia, y captura de QEMU. Es la fase A de S9.
 - [x] C17 **Avisos entre núcleos.** Interrupciones por software del GIC (SGI) para despertar un hilo de otro núcleo
   sin esperar a su tic. Prueba: medir el tiempo de ida y vuelta de un mensaje entre núcleos antes y después.
-- [ ] C18 **Recoger lo que dejan los muertos.** Liberar pila e hilo al terminar, y espacio, páginas y llaves al
+- [x] C18 **Recoger lo que dejan los muertos.** Liberar pila e hilo al terminar, y espacio, páginas y llaves al
   terminar el último hilo de un proceso. Prueba: crear y terminar muchos procesos sin que baje la memoria libre.
 - [ ] C19 **Programas de usuario en Rust.** Un crate `usuario/` (no_std, big-endian, envoltorios de las llamadas) y
   un cargador de ELF en el kernel. Las pruebas pasan a programas en Rust.
@@ -321,4 +321,18 @@ lo que Mesa supone del sistema (incluido el orden de bytes) y una propuesta de i
 Revisado por encima que no lleva código. Con esto la línea de análisis de vídeo y GPU (V1 a V4) está completa.
 Hallazgo importante de V4: v3d y v3dv no tienen nada sobre el orden de bytes y escriben palabras nativas para la
 GPU; compilarían en big-endian pero darían datos al revés. Opciones para DashOS en `PLAN.md`, "Preguntas abiertas".
+
+### 2026-11-03 07:5x — C18 (recoger lo que dejan los muertos)
+
+La sesión estuvo parada de 03:10 a 07:47 por un problema de inicio de sesión; el bucle siguió al volver.
+
+El hilo muerto pasa a una lista de su núcleo al cambiar de hilo, y lo libera más tarde otro hilo del mismo núcleo
+(el ocioso, en su vuelta), porque su contexto todavía se guarda en el cambio. Al liberar un hilo se suelta su
+referencia al proceso; al soltar la última, el proceso cae con su tabla de llaves y su espacio. `Espacio` tiene
+`Drop`: invalida su ASID en todos los núcleos (`tlbi aside1is`) y devuelve tablas, páginas propias y el nivel 1. Un
+objeto de memoria tiene `Drop` que devuelve sus páginas, y cada espacio que lo proyecta guarda un `Arc`, así que no
+se libera mientras alguien lo tenga proyectado. Prueba: tras calentar el montón con 60 procesos, dos tandas de 50
+procesos creados y terminados dejan las páginas libres exactamente igual (245.401). BIEN. Sin la recogida, cada
+proceso dejaría unas 10 páginas. Pendiente: cerrar los canales de un proceso que muere, para que su otro extremo lo
+note.
 

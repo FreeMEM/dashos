@@ -26,9 +26,18 @@ pub enum Objeto {
     Memoria(Arc<Memoria>),
 }
 
-/// Un objeto de memoria. Por ahora sus páginas no se devuelven nunca (pendiente: contar proyecciones).
+/// Un objeto de memoria. Sus páginas se devuelven cuando no queda ni una llave ni una proyección (C18): cada
+/// espacio que lo proyecta guarda un `Arc`.
 pub struct Memoria {
     pub paginas: Vec<u64>,
+}
+
+impl Drop for Memoria {
+    fn drop(&mut self) {
+        for &p in &self.paginas {
+            crate::memoria::paginas().liberar(p, 1);
+        }
+    }
 }
 
 impl Memoria {

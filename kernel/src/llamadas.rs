@@ -21,6 +21,9 @@ use alloc::vec::Vec;
 
 const LIMITE_USUARIO: u64 = 1 << 39;
 
+/// Si es falso, las salidas con código 0 no se escriben (para la prueba de C18, que crea muchos procesos).
+pub static SALIDAS_VISIBLES: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
 const E_ARGUMENTO: u64 = -1i64 as u64;
 const E_LLAVE: u64 = -2i64 as u64;
 const E_DERECHOS: u64 = -3i64 as u64;
@@ -41,7 +44,9 @@ pub fn atender(marco: &mut Marco) {
     let r = match a[8] {
         1 => escribir_consola(a[0], a[1]),
         2 => {
-            kprintln!("  [hilo {}] sale con código {}", planificador::actual_id(), a[0]);
+            if a[0] != 0 || SALIDAS_VISIBLES.load(core::sync::atomic::Ordering::Relaxed) {
+                kprintln!("  [hilo {}] sale con código {}", planificador::actual_id(), a[0]);
+            }
             planificador::terminar_actual();
         }
         3 => canal_crear(marco),
@@ -177,5 +182,6 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     for (i, &p) in m.paginas.iter().enumerate() {
         e.proyectar(va + i as u64 * pagina, p, if escribir { Permiso::Datos } else { Permiso::SoloLectura });
     }
+    e.proyectados.push(m.clone());
     0
 }

@@ -185,3 +185,12 @@ consumidor_inicio:
     svc     #0
 8:  b       8b
 consumidor_fin:
+
+// C18: un programa que solo sale.
+    .globl usuario_nada_inicio, usuario_nada_fin
+usuario_nada_inicio:
+    mov     x0, #0
+    mov     x8, #2
+    svc     #0
+9:  b       9b
+usuario_nada_fin:

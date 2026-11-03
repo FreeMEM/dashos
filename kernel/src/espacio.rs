@@ -33,6 +33,23 @@ pub enum Permiso {
 pub struct Espacio {
     l1: u64, // dirección física
     pub asid: u64,
+    /// Páginas de tablas (niveles 2 y 3) y páginas propias del proceso: se devuelven al liberar el espacio (C18).
+    tablas: alloc::vec::Vec<u64>,
+    propias: alloc::vec::Vec<u64>,
+    /// Objetos de memoria proyectados: el espacio los mantiene vivos mientras exista (C18).
+    pub proyectados: alloc::vec::Vec<alloc::sync::Arc<crate::objetos::Memoria>>,
+}
+
+impl Drop for Espacio {
+    fn drop(&mut self) {
+        // Que ningún núcleo conserve traducciones de este ASID.
+        unsafe { core::arch::asm!("dsb ishst", "tlbi aside1is, {}", "dsb ish", "isb", in(reg) self.asid << 48) };
+        let p = paginas();
+        for &t in self.tablas.iter().chain(self.propias.iter()) {
+            p.liberar(t, 1);
+        }
+        p.liberar(self.l1, 1);
+    }
 }
 
 fn tabla_nueva() -> u64 {
@@ -47,7 +64,13 @@ fn entrada(tabla: u64, i: usize) -> *mut u64 {
 
 impl Espacio {
     pub fn nuevo() -> Self {
-        Self { l1: tabla_nueva(), asid: SIGUIENTE_ASID.fetch_add(1, Ordering::Relaxed) & 0xffff }
+        Self {
+            l1: tabla_nueva(),
+            asid: SIGUIENTE_ASID.fetch_add(1, Ordering::Relaxed) & 0xffff,
+            tablas: alloc::vec::Vec::new(),
+            propias: alloc::vec::Vec::new(),
+            proyectados: alloc::vec::Vec::new(),
+        }
     }
 
     /// Valor de TTBR0_EL1 para este espacio.
@@ -66,6 +89,7 @@ impl Espacio {
                 v & DIRECCION
             } else {
                 let nueva = tabla_nueva();
+                self.tablas.push(nueva);
                 unsafe { e.write_volatile(nueva | VALIDO) };
                 nueva
             };
@@ -88,6 +112,7 @@ impl Espacio {
         let k = mmu::virt(p as usize) as *mut u8;
         unsafe { core::ptr::write_bytes(k, 0, PAGINA as usize) };
         self.proyectar(va, p, permiso);
+        self.propias.push(p);
         k
     }
 }
