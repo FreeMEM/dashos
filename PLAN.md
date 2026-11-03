@@ -256,6 +256,12 @@ resumido, en `docs/diseño/RESUMEN.md`.
 
 ## Preguntas abiertas
 
+- **Mesa y el orden de bytes** (salió de V4, `docs/spec/hw/mesa-v3d.md`, sección 10). Los controladores v3d y v3dv de
+  Mesa escriben palabras nativas para la GPU, que es little-endian. En un proceso big-endian darían datos al revés.
+  Opciones: A) los programas que usan la GPU corren como procesos little-endian (la CPU lo permite, como en la caja
+  Linux) y Mesa no se toca; B) portar Mesa a big-endian, grande y con los datos de la aplicación como problema; C) un
+  servidor de GPU little-endian con Mesa, y las aplicaciones big-endian le hablan por un protocolo, como VirGL en las
+  máquinas virtuales. El analista recomienda A. Decide el usuario.
 - Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en el kernel. Lo dice el registro
   `ID_AA64MMFR0_EL1`, campo `BigEnd`. Si no lo admite, todo el diseño cambia.
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
