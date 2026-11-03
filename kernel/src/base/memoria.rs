@@ -39,6 +39,12 @@ pub struct Paginas {
     /// Pista para las páginas sueltas: toda palabra del mapa por encima de esta está llena. Así pedir una página no
     /// recorre el mapa entero cuando la memoria alta está ocupada (antes, llenar la memoria era cuadrático).
     pista: usize,
+    /// Primera página de la zona normal (C38). Por debajo, el primer GB, que alcanzan la SD y el DMA de la placa: solo
+    /// para búferes de DMA. Así un aparato con DMA, o su controlador, no llega al kernel ni a la memoria de los demás
+    /// procesos. Es 0 en una placa sin memoria por encima del primer GB.
+    piso: usize,
+    /// Páginas libres por debajo del piso.
+    libres_bajo: usize,
 }
 
 /// Una sola instancia para los cuatro núcleos, tras un cerrojo que enmascara las IRQ: así nadie se queda con el
@@ -51,6 +57,8 @@ static PAGINAS: CerrojoIrq<Paginas> = CerrojoIrq::new(Paginas {
     limite_1g: 0,
     limite_3g: 0,
     pista: PALABRAS - 1,
+    piso: 0,
+    libres_bajo: 0,
 });
 
 /// El repartidor, con su cerrojo tomado hasta que se suelte la guarda. Un `paginas().x()` lo suelta al acabar la
@@ -68,15 +76,18 @@ impl Paginas {
     fn marcar(&mut self, pagina: usize, ocupada: bool) {
         let (p, b) = (pagina / 64, pagina % 64);
         let antes = self.ocupada[p] & (1 << b) != 0;
+        let bajo = pagina < self.piso;
         if ocupada {
             self.ocupada[p] |= 1 << b;
             if !antes {
                 self.libres -= 1;
+                self.libres_bajo -= bajo as usize;
             }
         } else {
             self.ocupada[p] &= !(1 << b);
             if antes {
                 self.libres += 1;
+                self.libres_bajo += bajo as usize;
             }
         }
     }
@@ -104,16 +115,18 @@ impl Paginas {
         if self.total != 0 {
             return;
         }
-        if let Some(m) = d.por_nombre("memory") {
+        // Todos los nodos de memoria, por su `device_type`: la Pi da uno con varios tramos; las pruebas en QEMU añaden
+        // otro (prueba_qemu.sh).
+        d.cada_tipo("memory", |m| {
             let mut i = 0;
-            while let Some((dir, tam)) = d.reg(&m, i) {
+            while let Some((dir, tam)) = d.reg(m, i) {
                 self.marcar_tramo(dir, tam, false);
                 let fin = (((dir + tam) / PAGINA) as usize).min(MAPA_LINEAL);
                 self.total += fin.saturating_sub((dir / PAGINA) as usize);
                 self.max_pagina = self.max_pagina.max(fin);
                 i += 1;
             }
-        }
+        });
         // Lo que no se toca: la página de espera de los núcleos y el resguardo del firmware, el kernel y el árbol.
         self.marcar_tramo(0, 0x80000, true);
         let (ki, kf) = unsafe {
@@ -149,6 +162,19 @@ impl Paginas {
             }
         }
         self.limite_3g = (3u64 << 30) as usize / PAGINA as usize;
+        // El piso de la zona normal: el primer GB queda para DMA si por encima hay al menos 64 MB libres.
+        let piso = self.limite_1g.div_ceil(64) * 64;
+        let encima = (piso..self.max_pagina).filter(|&p| self.ocupada[p / 64] & (1 << (p % 64)) == 0).count();
+        if encima >= 16384 {
+            self.piso = piso;
+            self.libres_bajo = self.libres - encima;
+        }
+        kprintln!(
+            "  zona normal desde {} MB ({} MB); el primer GB, {}",
+            self.piso as u64 * PAGINA >> 20,
+            (self.libres - self.libres_bajo) as u64 * PAGINA >> 20,
+            if self.piso > 0 { "solo para DMA" } else { "compartido: no hay memoria por encima" }
+        );
         kprintln!(
             "Memoria física: {} MB en total, {} MB libres; zonas DMA hasta {} MB y {} MB",
             self.total as u64 * PAGINA >> 20,
@@ -156,6 +182,11 @@ impl Paginas {
             self.limite_1g as u64 * PAGINA >> 20,
             self.limite_3g as u64 * PAGINA >> 20
         );
+    }
+
+    /// Si hay zona normal por encima del primer GB (C38).
+    pub fn hay_zona_alta(&self) -> bool {
+        self.piso > 0
     }
 
     pub fn libres(&self) -> usize {
@@ -174,11 +205,15 @@ impl Paginas {
         if n == 0 {
             return None;
         }
+        let piso = if zona == Zona::Normal { self.piso } else { 0 };
         // En la zona normal, por encima de la pista todo está lleno: se empieza ahí.
         let tope = if zona == Zona::Normal { tope.min((self.pista + 1) * 64) } else { tope };
         // Desde arriba hacia abajo. Si un candidato tiene una página ocupada, el siguiente empieza por debajo de ella:
         // cada página se mira pocas veces (antes, una vez por cada candidato que la tocaba; auditoría, M2).
         let mut inicio = (tope.saturating_sub(n) / alineacion) * alineacion;
+        if inicio < piso {
+            return None;
+        }
         loop {
             match (inicio..inicio + n).rev().find(|&p| self.ocupada[p / 64] & (1 << (p % 64)) != 0) {
                 None => {
@@ -191,6 +226,9 @@ impl Paginas {
                     // El bloque tiene que acabar antes de `ocupada`.
                     let Some(nuevo) = ocupada.checked_sub(n) else { return None };
                     inicio = (nuevo / alineacion) * alineacion;
+                    if inicio < piso {
+                        return None;
+                    }
                 }
             }
         }
@@ -212,6 +250,11 @@ impl Paginas {
         // En la zona normal, las palabras por encima del tope son de memoria que no existe y constan llenas: la
         // pista se puede bajar hasta donde se encuentre la página.
         let desde_pista = zona == Zona::Normal;
+        // La zona normal no baja del piso (C38); las de DMA empiezan en 0.
+        let palabra_piso = if zona == Zona::Normal { self.piso / 64 } else { 0 };
+        if inicio < palabra_piso {
+            return None;
+        }
         let mut w = inicio;
         loop {
             // En la palabra del tope, solo los bits por debajo del tope.
@@ -226,9 +269,9 @@ impl Paginas {
                 }
                 return Some(p as u64 * PAGINA);
             }
-            if w == 0 {
+            if w == palabra_piso {
                 if desde_pista {
-                    self.pista = 0;
+                    self.pista = palabra_piso;
                 }
                 return None;
             }
@@ -240,7 +283,7 @@ impl Paginas {
     /// `RESERVA` páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la
     /// memoria recibe un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
     pub fn pagina_usuario(&mut self) -> Option<u64> {
-        if self.libres <= RESERVA {
+        if self.libres - self.libres_bajo <= RESERVA {
             return None;
         }
         let p = self.pagina(Zona::Normal)?;

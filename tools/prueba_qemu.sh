@@ -22,6 +22,22 @@ if [ ! -f "$DTB" ]; then
         echo "no se pudo bajar el árbol de dispositivos"; exit 2; }
 fi
 
+# QEMU solo pone en el árbol los primeros 960 MB, aunque raspi4b tiene RAM también entre 1 GB y 0x7E00_0000 (lo
+# dice "info mtree"). La Pi de verdad los da todos (el firmware rellena "memory"). Para probar lo que va por encima
+# del primer GB (C38), una copia del árbol con un nodo de memoria más: 0x4000_0000 a 0x7C00_0000. No se llama
+# "memory@...": QEMU borra esos nodos y pone el suyo. El kernel busca la memoria por device_type.
+DTB_ORIGINAL=$DTB
+DTB=$FIRMWARE/bcm2711-rpi-4-b-qemu.dtb
+# Con MEMORIA_ALTA=no se usa el árbol tal cual: como una Pi de 1 GB, sin nada por encima del primer GB.
+if [ "${MEMORIA_ALTA:-si}" = no ]; then
+    DTB=$DTB_ORIGINAL
+elif [ ! -f "$DTB" ] || [ "$DTB_ORIGINAL" -nt "$DTB" ] || [ "$0" -nt "$DTB" ]; then
+    cp "$DTB_ORIGINAL" "$DTB"
+    fdtput -c "$DTB" /ram-alta@40000000
+    fdtput -ts "$DTB" /ram-alta@40000000 device_type memory
+    fdtput -tx "$DTB" /ram-alta@40000000 reg 0 0x40000000 0x3c000000
+fi
+
 # Tarjeta SD de prueba (C21): 64 MB con un texto en el sector 0, la firma 0x55AA y otro texto en el sector 1.
 SD=$RAIZ/build/sd/prueba.img
 if [ ! -f "$SD" ]; then

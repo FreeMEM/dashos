@@ -70,6 +70,7 @@ pub fn kmain(dtb: usize) -> ! {
     memoria::paginas().iniciar(&d, dtb);
     mapa::construir();
     mapa::activar();
+    base::copiar_arbol();
 
     let (Some(g), Some(t)) = (d.compatible("arm,gic-400"), d.compatible("arm,armv8-timer")) else {
         panic!("falta el GIC o el temporizador en el árbol de dispositivos");

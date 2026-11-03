@@ -44,10 +44,11 @@ unsafe extern "C" {
     static __tabla_l1: u8;
     static __tabla_l2_g3: u8;
     fn cambiar_ttbr1(nueva: u64, vacia: u64, arranque: u64);
+    fn trasladar(nueva: u64, vacia: u64, arranque: u64, destino: u64, origen: u64, tamano: u64);
 }
 
-fn fis(s: &u8) -> u64 {
-    mmu::fisica(s as *const u8 as usize) as u64
+fn va(s: &u8) -> usize {
+    s as *const u8 as usize
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -69,16 +70,15 @@ fn atributos(t: Tipo) -> u64 {
     }
 }
 
-/// Qué es la página física `p` de la zona fina (la imagen del kernel y lo que la rodea).
-fn tipo_pagina(p: u64) -> Tipo {
-    let (inicio, texto, rodata, pilas, pilas_fin) = unsafe {
-        (fis(&__kernel_inicio), fis(&__texto_fin), fis(&__rodata_fin), fis(&__pilas_inicio), fis(&__pilas_fin))
-    };
-    if (inicio..texto).contains(&p) {
+/// Qué es la página de la imagen del kernel que se ve en `v`.
+fn tipo_imagen(v: usize) -> Tipo {
+    let (texto, rodata, pilas, pilas_fin) =
+        unsafe { (va(&__texto_fin), va(&__rodata_fin), va(&__pilas_inicio), va(&__pilas_fin)) };
+    if v < texto {
         Tipo::Texto
-    } else if (texto..rodata).contains(&p) {
+    } else if v < rodata {
         Tipo::SoloLectura
-    } else if (pilas..pilas_fin).contains(&p) && (p - pilas) % RANURA < RANURA - PILA as u64 {
+    } else if (pilas..pilas_fin).contains(&v) && ((v - pilas) as u64) % RANURA < RANURA - PILA as u64 {
         Tipo::Guarda
     } else {
         Tipo::Datos
@@ -102,17 +102,42 @@ fn leer(tabla: u64, i: usize) -> u64 {
 /// Tabla de nivel 1 del mapa del kernel (física), o 0 si aún no se ha hecho.
 static L1: AtomicU64 = AtomicU64::new(0);
 
+/// Física de la copia de la imagen por encima del primer GB (C38), o 0 si no se traslada.
+static DESTINO: AtomicU64 = AtomicU64::new(0);
+static TRASLADADA: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+/// Para los núcleos 1 a 3, que cambian de mapa en arranque.s antes de usar la pila: la tabla nueva y la vacía.
+#[unsafe(no_mangle)]
+static MAPA_L1_SECUNDARIOS: AtomicU64 = AtomicU64::new(0);
+#[unsafe(no_mangle)]
+static MAPA_VACIA_SECUNDARIOS: AtomicU64 = AtomicU64::new(0);
+
 /// Hace el mapa. Una vez, en el núcleo 0, con el repartidor de páginas ya en marcha.
+///
+/// Desde C38, si la placa tiene memoria por encima del primer GB, la imagen del kernel se traslada allí: el firmware
+/// la carga en 0x80000, al alcance del DMA de la SD y de la placa, y un aparato podría reescribir el código del
+/// kernel. Las direcciones virtuales de la imagen no cambian: el mapa nuevo las lleva a la copia. La copia no se ve
+/// por el mapa lineal (no hay otro alias suyo que se pueda escribir), y la vieja ya no se ve por ningún sitio.
 pub fn construir() {
     // Solo una vez: otra soltaría tablas y pilas que siguen en uso.
     if L1.load(Ordering::Acquire) != 0 {
         return;
     }
-    let fin_fino = unsafe { fis(&__pilas_fin) }.div_ceil(MB2) * MB2;
+    let (ini, fin) = mmu::imagen_va();
+    let tamano = (fin - ini) as u64;
+    let bajo = (ini - mmu::KERNEL_VA) as u64; // dónde la cargó el firmware
+    let reservado = tamano.div_ceil(MB2) * MB2;
+    let destino = if paginas().hay_zona_alta() {
+        paginas().reservar(Zona::Normal, (reservado / PAGINA) as usize, (MB2 / PAGINA) as usize).unwrap_or(0)
+    } else {
+        0
+    };
+    let fin_fino = (bajo + tamano).div_ceil(MB2) * MB2;
+    let hueco = |b: u64| destino != 0 && (destino..destino + reservado).contains(&b);
     let l1 = tabla_nueva();
     for g in 0..4u64 {
         let base = g * GB;
-        if base + GB <= PERIFERICOS && base >= fin_fino {
+        let especial = base < fin_fino || base + GB > PERIFERICOS || (destino != 0 && destino < base + GB && destino + reservado > base);
+        if !especial {
             poner(l1, g as usize, base | BLOQUE | atributos(Tipo::Datos));
             continue;
         }
@@ -122,14 +147,21 @@ pub fn construir() {
             let b = base + i * MB2;
             if b >= PERIFERICOS {
                 poner(l2, i as usize, b | BLOQUE | atributos(Tipo::Dispositivo));
+            } else if hueco(b) {
+                // La copia de la imagen: sin alias en el mapa lineal.
             } else if b < fin_fino {
                 let l3 = tabla_nueva();
                 poner(l2, i as usize, l3 | TABLA);
                 for j in 0..512u64 {
-                    let p = b + j * PAGINA;
-                    let t = tipo_pagina(p);
-                    if t != Tipo::Guarda {
-                        poner(l3, j as usize, p | TABLA | atributos(t));
+                    let o = b + j * PAGINA;
+                    if (bajo..bajo + tamano).contains(&o) {
+                        let t = tipo_imagen(mmu::KERNEL_VA + o as usize);
+                        let f = if destino != 0 { destino + (o - bajo) } else { o };
+                        if t != Tipo::Guarda {
+                            poner(l3, j as usize, f | TABLA | atributos(t));
+                        }
+                    } else {
+                        poner(l3, j as usize, o | TABLA | atributos(Tipo::Datos));
                     }
                 }
             } else {
@@ -142,7 +174,15 @@ pub fn construir() {
     poner(l1, INDICE_PILAS, l2 | TABLA);
     L2_PILAS.store(l2, Ordering::Release);
     unsafe { core::arch::asm!("dsb ish", "isb") };
+    DESTINO.store(destino, Ordering::Release);
+    MAPA_VACIA_SECUNDARIOS.store(crate::espacio::vacia_fisica(), Ordering::Release);
+    MAPA_L1_SECUNDARIOS.store(l1, Ordering::Release);
     L1.store(l1, Ordering::Release);
+}
+
+/// Física de la copia de la imagen (C38), o 0 si sigue donde la cargó el firmware.
+pub fn imagen_fisica() -> u64 {
+    if TRASLADADA.load(Ordering::Acquire) { DESTINO.load(Ordering::Acquire) } else { 0 }
 }
 
 const INDICE_PILAS: usize = 256;
@@ -223,13 +263,30 @@ impl Drop for Pila {
     }
 }
 
-/// Pasa este núcleo al mapa del kernel.
+/// Pasa este núcleo al mapa del kernel. La primera vez, en el núcleo 0, traslada además la imagen (C38).
 pub fn activar() {
     let l1 = L1.load(Ordering::Acquire);
     if l1 == 0 {
         return;
     }
-    unsafe { cambiar_ttbr1(l1, crate::espacio::vacia_fisica(), fis(&__tabla_l1)) };
+    let ttbr1: u64;
+    unsafe { core::arch::asm!("mrs {}, ttbr1_el1", out(reg) ttbr1) };
+    if ttbr1 & DIRECCION == l1 {
+        return; // ya está (los núcleos 1 a 3 cambian en arranque.s)
+    }
+    let vacia = crate::espacio::vacia_fisica();
+    let arranque = mmu::fisica(unsafe { va(&__tabla_l1) }) as u64;
+    let destino = DESTINO.load(Ordering::Acquire);
+    if destino != 0 && !TRASLADADA.load(Ordering::Acquire) {
+        let (ini, fin) = mmu::imagen_va();
+        // Copia la imagen y cambia de mapa sin tocar la memoria entre medias: lo que había en la pila y en las
+        // variables del kernel en ese momento es lo que hay en la copia.
+        unsafe { trasladar(l1, vacia, arranque, destino, (ini - mmu::KERNEL_VA) as u64, (fin - ini) as u64) };
+        mmu::imagen_trasladada(destino as usize);
+        TRASLADADA.store(true, Ordering::Release);
+    } else {
+        unsafe { cambiar_ttbr1(l1, vacia, arranque) };
+    }
 }
 
 /// Con los cuatro núcleos ya en el mapa nuevo, borra las tablas del arranque: la proyección identidad deja de existir
@@ -250,7 +307,7 @@ pub fn entrada(va: usize) -> Option<u64> {
     if l1 == 0 || va < mmu::KERNEL_VA {
         return None;
     }
-    let f = mmu::fisica(va) as u64;
+    let f = (va - mmu::KERNEL_VA) as u64; // índices de las tablas: la dirección virtual, no la física
     let e1 = leer(l1, ((f >> 30) & 0x1ff) as usize);
     if e1 & 3 != TABLA {
         return (e1 & 1 != 0).then_some(e1);
@@ -271,4 +328,11 @@ pub fn traducir(va: usize) -> (bool, bool) {
             v = in(reg) va, r = out(reg) r, w = out(reg) w);
     }
     (r & 1 == 0, w & 1 == 0)
+}
+
+/// La dirección física que da la MMU para leer en `va`, o `None` si no se puede leer.
+pub fn traducir_fisica(va: usize) -> Option<u64> {
+    let r: u64;
+    unsafe { core::arch::asm!("at s1e1r, {v}", "isb", "mrs {r}, par_el1", v = in(reg) va, r = out(reg) r) };
+    (r & 1 == 0).then_some((r & 0x0000_ffff_ffff_f000) | (va as u64 & 0xfff))
 }

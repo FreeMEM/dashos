@@ -175,6 +175,62 @@ cambiar_ttbr1:
     msr     daif, x9
     ret
 
+// trasladar(x0 = tabla nueva, x1 = tabla vacía, x2 = __tabla_l1, x3 = destino, x4 = origen, x5 = tamaño; todas
+// físicas): como cambiar_ttbr1, pero con TTBR1 vacío copia la imagen del kernel de origen a destino y la lleva a la
+// caché de instrucciones antes de poner la tabla nueva, que ve la imagen en el destino (C38). Entre medias no toca la
+// memoria salvo para la copia, así que la copia es una foto exacta: pila, variables y todo.
+    .globl  trasladar
+trasladar:
+    mrs     x9, daif
+    msr     daifset, #0xf
+    mrs     x10, ttbr0_el1
+    msr     ttbr0_el1, x2
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    ldr     x11, =0xFFFFFF8000000000    // KERNEL_VA
+    adr     x12, 5f
+    sub     x12, x12, x11
+    br      x12                         // a la proyección identidad
+5:  msr     ttbr1_el1, x1
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    mov     x6, x4                      // copiar, de 16 en 16 bytes
+    mov     x7, x3
+    add     x8, x4, x5
+6:  ldp     x12, x13, [x6], #16
+    stp     x12, x13, [x7], #16
+    cmp     x6, x8
+    b.lo    6b
+    mov     x7, x3                      // el código copiado, a la caché de instrucciones
+    add     x8, x3, x5
+7:  dc      cvau, x7
+    add     x7, x7, #64
+    cmp     x7, x8
+    b.lo    7b
+    dsb     ish
+    ic      iallu
+    dsb     nsh
+    isb
+    msr     ttbr1_el1, x0
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    adr     x12, 8f
+    add     x12, x12, x11
+    br      x12                         // a la mitad alta: ya es la copia
+8:  msr     ttbr0_el1, x10
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    msr     daif, x9
+    ret
+
 // --- Núcleos 1 a 3 ---
 // Entran aquí desde la tabla de espera del firmware, en EL2, little-endian y sin MMU (C9).
     .globl _secundario
@@ -185,7 +241,16 @@ _secundario:
 sec_el1:
     MMU     sec_alto
 sec_alto:
-    ldr     x1, =__pilas_fin            // pila: una ranura de 32 KB por núcleo, hacia abajo desde el final
+    // Al mapa del kernel antes de usar la pila (C38): con la imagen trasladada, la pila de este núcleo está en la
+    // copia, y lo que se pusiera antes en la pila vieja se perdería al cambiar.
+    ldr     x3, =MAPA_L1_SECUNDARIOS
+    ldr     x0, [x3]
+    cbz     x0, 1f
+    ldr     x3, =MAPA_VACIA_SECUNDARIOS
+    ldr     x1, [x3]
+    mrs     x2, ttbr0_el1
+    bl      cambiar_ttbr1
+1:  ldr     x1, =__pilas_fin            // pila: una ranura de 32 KB por núcleo, hacia abajo desde el final
     lsl     x2, x19, #15
     sub     x1, x1, x2
     mov     sp, x1

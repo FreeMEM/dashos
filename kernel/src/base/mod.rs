@@ -31,11 +31,54 @@ extern "C" fn kmain(dtb: usize) -> ! {
 }
 
 static ARBOL: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static COPIA_ARBOL: spin_once::Una<&'static [u8]> = spin_once::Una::new();
+
+/// Copia el árbol de dispositivos al montón (C38). El firmware lo deja en el primer GB, al alcance del DMA; la copia
+/// está por encima, con el resto del kernel. Desde aquí, `arbol_de_dispositivos` da la copia.
+pub fn copiar_arbol() {
+    if let Some(original) = arbol_de_dispositivos() {
+        let copia: &'static [u8] = alloc::boxed::Box::leak(original.to_vec().into_boxed_slice());
+        COPIA_ARBOL.poner(copia);
+    }
+}
+
+/// Un valor que se pone una vez y luego solo se lee.
+mod spin_once {
+    use core::sync::atomic::{AtomicU8, Ordering};
+
+    pub struct Una<T> {
+        estado: AtomicU8, // 0 vacío, 1 poniéndose, 2 puesto
+        valor: core::cell::UnsafeCell<Option<T>>,
+    }
+
+    unsafe impl<T: Sync + Send> Sync for Una<T> {}
+
+    impl<T: Copy> Una<T> {
+        pub const fn new() -> Self {
+            Self { estado: AtomicU8::new(0), valor: core::cell::UnsafeCell::new(None) }
+        }
+
+        /// La primera vez lo pone; las demás no hacen nada.
+        pub fn poner(&self, v: T) {
+            if self.estado.compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire).is_ok() {
+                unsafe { *self.valor.get() = Some(v) };
+                self.estado.store(2, Ordering::Release);
+            }
+        }
+
+        pub fn get(&self) -> Option<T> {
+            if self.estado.load(Ordering::Acquire) == 2 { unsafe { *self.valor.get() } } else { None }
+        }
+    }
+}
 
 /// El árbol de dispositivos que dejó el firmware, como bytes. `None` si no empieza por la marca del FDT o dice medir
 /// más de 2 MB. El firmware lo deja en memoria normal, que el kernel ve por el mapa lineal y que el repartidor de
 /// páginas reserva (`memoria.rs`): nadie más lo escribe.
 pub fn arbol_de_dispositivos() -> Option<&'static [u8]> {
+    if let Some(copia) = COPIA_ARBOL.get() {
+        return Some(copia);
+    }
     let fisica = ARBOL.load(core::sync::atomic::Ordering::Relaxed);
     if fisica >= 0xFC00_0000 || fisica % 8 != 0 {
         return None;

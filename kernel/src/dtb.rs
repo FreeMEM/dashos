@@ -310,6 +310,19 @@ impl Dtb {
     }
 
     /// Llama a `f` con cada nodo del árbol.
+    /// Cada nodo con `device_type` igual a `tipo` (por ejemplo, "memory").
+    pub fn cada_tipo(&self, tipo: &str, mut f: impl FnMut(&Nodo)) {
+        self.recorrer(|d, n, _| {
+            if let Some((datos, largo)) = d.propiedad(n, "device_type") {
+                let t = tipo.as_bytes();
+                if largo == t.len() + 1 && t.iter().enumerate().all(|(i, c)| d.u8(datos + i) == *c) {
+                    f(n);
+                }
+            }
+            false
+        });
+    }
+
     pub fn cada_nodo(&self, mut f: impl FnMut(&Nodo)) {
         self.recorrer(|_, n, _| {
             f(n);

@@ -23,6 +23,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_reloj();
     kprintln!("C9: {} núcleos más en marcha: {}", nucleos, if nucleos == 3 { "bien" } else { "MAL" });
     prueba_mapa();
+    prueba_dma();
     prueba_hilos();
     prueba_procesos();
     prueba_pantalla(dtb);
@@ -1131,6 +1132,35 @@ fn prueba_mapa() {
     }
     drop(pila);
     kprintln!("C34: mapa del kernel con W^X y guardas {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y
+/// de la placa (el primer GB): la imagen del kernel está en su copia, y el montón, las pilas y la memoria de los
+/// procesos salen de arriba. El primer GB queda para los búferes de DMA. La copia no tiene alias en el mapa lineal.
+fn prueba_dma() {
+    const GB: u64 = 1 << 30;
+    let imagen = mapa::imagen_fisica();
+    let (ini, _) = mmu::imagen_va();
+    let codigo = mapa::traducir_fisica(crate::kmain as *const () as usize);
+    let en_copia = imagen >= GB && codigo == Some(imagen + (crate::kmain as *const () as usize - ini) as u64);
+    let alias = mapa::traducir(mmu::virt(imagen as usize)).0;
+    let caja = alloc::boxed::Box::new([0u8; 4096]);
+    let monton = mapa::traducir_fisica(caja.as_ptr() as usize).unwrap_or(0);
+    let pila = mapa::pila_nueva();
+    let pila_f = pila.as_ref().and_then(|p| mapa::traducir_fisica(p.tope() - 8)).unwrap_or(0);
+    drop(pila);
+    let usuario = memoria::paginas().pagina_usuario().unwrap_or(0);
+    let dma = memoria::paginas().pagina(memoria::Zona::Dma1G).unwrap_or(u64::MAX);
+    unsafe {
+        memoria::paginas().liberar(usuario, 1);
+        memoria::paginas().liberar(dma, 1);
+    }
+    kprintln!("  imagen en {:#x}; código en {:#x}; alias lineal de la copia: {}", imagen, codigo.unwrap_or(0), if alias { "sí" } else { "no" });
+    kprintln!("  montón {:#x}, pila {:#x}, página de proceso {:#x}, página DMA {:#x}", monton, pila_f, usuario, dma);
+    let arbol = crate::base::arbol_de_dispositivos().and_then(|a| mapa::traducir_fisica(a.as_ptr() as usize)).unwrap_or(0);
+    kprintln!("  árbol de dispositivos copiado a {:#x}", arbol);
+    let bien = en_copia && !alias && monton >= GB && pila_f >= GB && usuario >= GB && dma < GB && arbol >= GB;
+    kprintln!("C38: el kernel y los procesos, fuera del alcance del DMA: {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel

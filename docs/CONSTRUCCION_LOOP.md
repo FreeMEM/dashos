@@ -97,6 +97,8 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C38 **Fuera del alcance del DMA** (decisión D, adelantada a petición del usuario): el kernel y la memoria de
+  los procesos por encima del primer GB; el primer GB, solo para búferes de DMA.
 - [x] C33 **Kernel en little-endian** (fase 2 de S16, A).
 - [x] C34 **Mapa del kernel por páginas** (fase 2): W^X en el kernel, pilas con página de guarda, sin proyección
   identidad después del arranque, PAN por software (TTBR0 vacío mientras el kernel no copia de usuario).
@@ -846,6 +848,40 @@ kernel).
 
 **Fase 2 cerrada.** Siguiente, según S16: fase 3 (cupos por grupo, capacidades completas, crear y matar procesos
 desde un proceso).
+
+### 2026-11-03 tarde — C38 (el kernel y los procesos, fuera del alcance del DMA)
+
+El usuario preguntó si el DMA sin IOMMU era un fallo de seguridad. Sí: un controlador con DMA (SD, USB, gráfica)
+puede escribir en cualquier memoria que alcance su aparato. Aprobó reducirlo ("haz lo que más recomiendes"). En la Pi
+4, la SD y el DMA de la placa solo llegan al primer GB (ventanas `dma-ranges` del árbol). Así que:
+
+- **Zonas.** Si hay al menos 64 MB por encima del primer GB, la zona normal empieza en 1 GB. El montón, las tablas,
+  las pilas y la memoria de los procesos salen de ahí. El primer GB queda para los búferes de DMA. La memoria se busca
+  por `device_type = "memory"` en todos los nodos.
+- **La imagen del kernel**, que el firmware carga en 0x80000, se copia arriba y el mapa nuevo lleva sus direcciones
+  virtuales a la copia. `trasladar` (arranque.s) copia y cambia de mapa a la vez, con TTBR1 vacío y sin tocar la
+  memoria entre medias, así que la copia es una foto exacta: pila y variables incluidas. La copia no tiene alias en
+  el mapa lineal. `mmu::fisica` traduce las direcciones de la imagen a la copia.
+- **Núcleos 1 a 3.** Arrancan desde la copia y cambian al mapa nuevo en `sec_alto`, antes de usar la pila.
+- **Árbol de dispositivos.** Se copia al montón al arrancar.
+- **QEMU.** Solo pone 960 MB en el árbol, aunque `raspi4b` tiene RAM hasta 0x7E00_0000. `prueba_qemu.sh` usa una
+  copia del árbol con un nodo `ram-alta@40000000`: QEMU borra los nodos llamados "memory". `MEMORIA_ALTA=no` usa el
+  árbol tal cual.
+
+**Pruebas.** C38 comprueba con la instrucción AT que estén por encima de 1 GB:
+- el código del kernel, en la copia;
+- el montón, una pila, una página de proceso y el árbol.
+
+Y que una página DMA esté por debajo y que la copia no tenga alias. Con `MEMORIA_ALTA=no` (como una Pi de 1 GB), la
+imagen normal arranca sin trasladar y C38 da "MAL", como debe: ahí no hay protección.
+
+**Qué queda.**
+- El USB 3 va por PCIe, que llega a toda la memoria. Falta cerrar su ventana de entrada al primer GB (fase 4, sin
+  comprobar que se pueda).
+- Los motores DMA de 40 bits llegan a todo: no se dan a ningún controlador.
+- La gráfica (VideoCore) lo ve todo, pero es el firmware que arranca la placa.
+- La copia vieja de la imagen sigue ocupando unos 2 MB del primer GB.
+- En una Pi de 1 GB no hay protección.
 
 ## Resumen de la noche
 
