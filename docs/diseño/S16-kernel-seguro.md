@@ -267,15 +267,17 @@ No necesita decisiones nuevas.
 - Arranque verificado como opción (S6).
 - Repetir las pruebas hostiles en la Pi 4.
 
-## Lo que queda abierto
+## Decisiones
 
-1. ¿Kernel también en little-endian (A)? Recomendado: sí.
-2. ¿Todo el `unsafe` en una caja y el resto con `forbid(unsafe_code)` (B)? Recomendado: sí.
-3. ¿Sacar del kernel el USB, la GPU, los compositores, la consola y las pruebas (C)? Recomendado: sí.
-4. ¿Controladores con DMA como pieza de confianza en la Pi 4, firmados y en `SYS:` (D)? Recomendado: sí.
-5. ¿Kernel que no se expulsa nunca, con trabajo acotado por llamada (E)? Recomendado: sí.
-6. ¿Cupos por grupo de procesos (F) y capacidades completas (G)? Recomendado: sí.
-7. ¿Este orden de fases, con la fase 1 ya? Recomendado: sí.
+El usuario aprobó las siete el 2026-11-03 ("aprobados"):
+
+1. El kernel pasa también a little-endian (A).
+2. Todo el `unsafe` va en una caja; el resto, con `forbid(unsafe_code)` (B).
+3. El USB, la GPU, los compositores, la consola y las pruebas salen del kernel (C).
+4. En la Pi 4, los controladores con DMA son pieza de confianza, firmados y en `SYS:` (D).
+5. El kernel no se expulsa nunca y cada llamada tiene trabajo acotado (E).
+6. Cupos por grupo de procesos (F) y capacidades completas (G).
+7. Este orden de fases, empezando ya por la fase 1.
 
 ## Cómo encaja
 

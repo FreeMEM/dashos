@@ -97,6 +97,10 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [ ] C32 **Fase 1 de S16: que ningún programa tumbe ni lea el kernel** (03/11, aprobado por el usuario). Una
+  vuelta por hallazgo de `docs/seguridad/auditoria-2026-11-03.md`, cada uno con su paso hostil en `malo`: 6 (llave
+  repetida), 1 (cerrojo de páginas), 2 (ASID), 7 (cerrojos del canal), 3 (destrucción en bucle y guardas), 8 (sin
+  memoria), 11 (SError y FIQ), 5 y 16 (registros de EL0), 12 (TTBR1 sin ejecución para EL0), ELF y bajos.
 - [x] C31 **Copias seguras de la memoria de usuario** (03/11 por la tarde): ningún puntero de un programa tumba el
   kernel.
 - [x] C30 **Orden de bytes por proceso** (03/11 por la tarde, decisión del usuario): lo nativo en little-endian, la
