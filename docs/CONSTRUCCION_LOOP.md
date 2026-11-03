@@ -96,7 +96,7 @@ del kernel sobre la que irán esos controladores.
   dispositivo en un proceso) y llave de interrupción (llega como mensaje). Prueba: un proceso que maneja el buzón o
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
-- [ ] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [~] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
 - [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
   de la GPU, cachés y lanzamiento de trabajos, solo con `docs/spec/hw/v3d.md`. Compilado; en QEMU solo la
   codificación.
@@ -402,3 +402,15 @@ física `0x12345000`; `MMU_CTL` y las dos máscaras rehechas con los bits dan lo
 tabla de 4 MB real mapea y quita dos páginas y devuelve la memoria. BIEN, tres de tres. Sin probar en hardware. Falta
 para ver un triángulo: las listas de control, que escribe Mesa (o una RCL mínima a mano que borre una baldosa y la
 guarde: con `mesa-v3d.md` se puede intentar), y la decisión del orden de bytes de Mesa (pregunta abierta del plan).
+
+### 2026-11-03 08:0x — C22, primera vuelta (USB: el primer dispositivo)
+
+`kernel/src/usb.rs`: DWC2 en modo anfitrión, por consulta y con DMA (QEMU solo emula ese modo). Reinicio del núcleo,
+modo anfitrión forzado, alimentación y reinicio del puerto (con cuidado de no escribir 1 en los bits que se borran
+así, que apagarían el puerto) y transferencias de control por el canal 0 (SETUP, datos, estado; repite si el
+dispositivo responde NAK). Protocolo según la especificación USB 2.0. Va en el kernel de momento: para sacarlo hace
+falta una llave de memoria DMA que dé direcciones de bus a un proceso. `tools/prueba_qemu.sh` conecta `usb-kbd` y
+`usb-mouse`; QEMU los pone detrás de un hub propio. Prueba: el controlador arranca (`0x4f54294a`), el puerto queda
+activo a velocidad completa, el primer dispositivo es el hub (clase 9, `0409:55aa`, paquetes de 8 bytes), toma la
+dirección 1 y se relee su descriptor. BIEN a la primera, tres de tres. Siguiente vuelta: configurar el hub, enumerar
+sus puertos y leer el teclado y el ratón (informes HID de arranque).

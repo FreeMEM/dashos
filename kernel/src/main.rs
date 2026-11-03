@@ -15,6 +15,7 @@ mod espacio;
 mod gic;
 mod hvs;
 mod v3d;
+mod usb;
 mod interrupciones;
 mod llamadas;
 mod memoria;
@@ -79,6 +80,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_sd(dtb);
     prueba_hvs();
     prueba_v3d();
+    prueba_usb();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -768,6 +770,29 @@ fn prueba_v3d() {
         }
     }
     kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
+}
+
+/// C22, primera vuelta: arrancar el DWC2 y enumerar el primer dispositivo (en QEMU, un hub).
+fn prueba_usb() {
+    let mut u = match usb::Dwc2::iniciar() {
+        Ok(u) => u,
+        Err(e) => {
+            kprintln!("C22: el USB no arranca: {:?}", e);
+            return;
+        }
+    };
+    kprintln!("  DWC2 {:#x}, puerto activo a velocidad {}", u.identificador(), ["alta", "completa", "baja", "?"][u.velocidad() as usize]);
+    let d = match u.descriptor(0) {
+        Ok(d) => d,
+        Err(e) => {
+            kprintln!("C22: no se pudo leer el descriptor: {:?}", e);
+            return;
+        }
+    };
+    kprintln!("  dispositivo en la dirección 0: clase {}, {:04x}:{:04x}, paquetes de {} bytes, {} configuración", d.clase, d.fabricante, d.producto, d.tamano_ep0, d.configuraciones);
+    let bien = u.poner_direccion(1).is_ok() && u.descriptor(1).map(|e| e.producto == d.producto).unwrap_or(false);
+    kprintln!("  dirección 1 asignada y descriptor releído: {}", if bien { "sí" } else { "no" });
+    kprintln!("C22: primer dispositivo USB enumerado {}", if bien && d.clase == 9 { "bien (un hub)" } else if bien { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

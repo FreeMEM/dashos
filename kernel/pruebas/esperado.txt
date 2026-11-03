@@ -62,3 +62,6 @@ C23: listas del HVS bien
   entrada de la tabla en memoria: [45, 23, 01, 30]; registros como la especificación: sí
   tabla de 4 MB: mapear y quitar bien; memoria devuelta: sí
 C24: V3D, lado del kernel bien
+  dispositivo en la dirección 0: clase 9, 0409:55aa, paquetes de 8 bytes, 1 configuración
+  dirección 1 asignada y descriptor releído: sí
+C22: primer dispositivo USB enumerado bien (un hub)

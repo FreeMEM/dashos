@@ -41,7 +41,7 @@ fi
 SALIDA=$(mktemp)
 timeout "$SEGUNDOS" qemu-system-aarch64 -M raspi4b -kernel "$IMAGEN" -dtb "$DTB" \
     -display none -serial file:"$SALIDA" -serial null \
-    -drive file="$SD",if=sd,format=raw ${QEMU_EXTRA:-} >/dev/null 2>&1
+    -drive file="$SD",if=sd,format=raw -device usb-kbd -device usb-mouse ${QEMU_EXTRA:-} >/dev/null 2>&1
 tr -d '\r' < "$SALIDA" > "$SALIDA.txt"
 
 FALLO=0
