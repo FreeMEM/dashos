@@ -80,7 +80,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   Rust para kernels.
 - [x] S2 **Núcleos y planificador.** Reparto entre los cuatro núcleos de la Pi 4, prioridades, tiempo real suave
   para audio y escritorio, ahorro de energía.
-- [~] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
+- [x] S3 **Memoria.** Espacios de direcciones, protección, memoria compartida, el hueco de 4 GB para la caja Amiga,
   memoria comprimida en vez de intercambio, y cómo se reparte con poca RAM (la Pi 4 tiene de 1 a 8 GB).
 - [ ] S4 **La caja Amiga.** exec dentro de la caja, `Forbid()` y `Disable()`, varias cajas a la vez, llamadas a
   bibliotecas nativas desde el JIT, recursos con dueño para matar tareas 68k sueltas (`S2-planificador.md`), ventanas Amiga como ventanas del escritorio (la idea de Newbench), volúmenes
@@ -124,6 +124,9 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
 - (S0) ¿Una persona por máquina, o varias cuentas? Mientras: una persona, con cuentas separadas para servicios.
+- (S3) ¿Sin intercambio a disco por defecto, solo memoria comprimida (LZ4)? Mientras: sí.
+- (S3) ¿Sin prometer de más memoria (falla al pedir, no hay OOM killer)? Mientras: sí, con margen en la capa Linux.
+- (S3) ¿Enforcer integrado en la caja, siempre activo? Mientras: sí, con avisos a un registro.
 - (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
 
 ## Bitácora
@@ -168,4 +171,12 @@ Micronúcleo confirmado. Dentro de la caja, prioridad estricta de exec. Energía
 cualquier proceso y que las señales de terminar se cumplan siempre. Añadida la sección "Matar procesos" a
 `S2-planificador.md`: en nativo lo da el micronúcleo (todo recurso es un objeto con dueño); en la caja, el exec de
 DashOS apunta el dueño de cada recurso, cosa que AmigaOS no hace.
+
+### 2026-11-03 — S3 (memoria)
+
+`docs/diseño/S3-memoria.md`: objetos de memoria con capacidad al estilo Fuchsia, páginas de 4 KB, memoria comprimida
+con LZ4, sin intercambio a disco y sin prometer de más. Comprobado del registro de la CPU: ASID de 16 bits, páginas
+de 4 y 64 KB (no de 16), y que la A72 no tiene PAN, PAC, BTI ni MTE. Comprobado del árbol de dispositivos: la SD y
+el DMA clásico solo alcanzan el primer GB, y el USB los primeros 3 GB; el kernel necesita zonas. Idea nueva: un
+Enforcer integrado en la caja Amiga.
 
