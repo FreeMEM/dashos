@@ -31,3 +31,7 @@ C10: hilos bien
 ~  hola desde EL0, proceso B
 ~Proceso: excepción de clase 0x24 en 0x40000c (FAR 0xffffff8000080000); se termina
 C11: procesos lanzados
+  ping: mensaje del cliente con una llave
+  pong: respuesta del servidor
+~sale con código 7
+C12: canales lanzados

@@ -4,6 +4,7 @@
 //! - Clase justa: cada hilo acumula tiempo virtual (tiempo real × 1024 / peso) y corre el listo con menos.
 //! - El tic del reloj (100 Hz) reparte: en cada tic se elige otra vez.
 //! - Cada núcleo tiene un hilo ocioso (el de su arranque), que solo corre si no hay nada más.
+//! - Un hilo se puede bloquear (esperando un mensaje, C12) y otro lo despierta.
 //!
 //! La clase de plazo (S2) llega en C14.
 
@@ -29,6 +30,7 @@ pub struct Contexto {
 enum Estado {
     Listo,
     Corriendo,
+    Bloqueado,
     Muerto,
 }
 
@@ -38,8 +40,11 @@ pub struct Hilo {
     estado: Estado,
     peso: u64,
     virtual_: u64,
+    nucleo: usize,
     /// TTBR0 del proceso al que pertenece (0 = hilo del kernel, sin espacio propio).
     ttbr0: u64,
+    /// El proceso (C12): puntero de `Arc<Proceso>::into_raw`, 0 si es del kernel.
+    proceso: usize,
     _pila: Option<Box<[u8]>>,
 }
 
@@ -71,14 +76,16 @@ pub fn iniciar_nucleo() {
         estado: Estado::Corriendo,
         peso: 1,
         virtual_: u64::MAX,
+        nucleo: n,
         ttbr0: 0,
+        proceso: 0,
         _pila: None,
     }));
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), desde: reloj::ahora() });
 }
 
-/// Crea un hilo del kernel en el núcleo dado, que ejecuta `f(arg)`.
-pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
+/// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
+pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
     let pila = alloc::vec![0u8; PILA].into_boxed_slice();
     let tope = (pila.as_ptr() as usize + PILA) & !15;
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
@@ -88,41 +95,57 @@ pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
     contexto.x19_x30[11] = hilo_entrada as *const () as usize as u64; // x30
     contexto.sp = tope as u64;
     let mut cola = NUCLEOS[nucleo].tomar();
-    let nucleo = cola.as_mut().expect("núcleo sin planificador");
-    let minimo = nucleo
+    let nc = cola.as_mut().expect("núcleo sin planificador");
+    let minimo = nc
         .listos
         .iter()
         .map(|h| unsafe { (**h).virtual_ })
         .min()
-        .unwrap_or_else(|| unsafe { if (*nucleo.actual).id == 0 { 0 } else { (*nucleo.actual).virtual_ } });
+        .unwrap_or_else(|| unsafe { if (*nc.actual).id == 0 { 0 } else { (*nc.actual).virtual_ } });
     let h = Box::into_raw(Box::new(Hilo {
         id,
         contexto,
         estado: Estado::Listo,
         peso: PESO_NORMAL,
         virtual_: minimo,
+        nucleo,
         ttbr0: 0,
+        proceso,
         _pila: Some(pila),
     }));
-    nucleo.listos.push(h);
+    nc.listos.push(h);
     id
 }
 
+pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
+    crear_en(f, arg, nucleo, 0)
+}
+
 /// Elige el siguiente hilo de este núcleo y cambia a él. Hay que llamarlo con las interrupciones enmascaradas.
-fn planificar() {
+/// Si `bloquear` es verdad, el hilo actual queda bloqueado (y no vuelve a la cola). `soltar` se ejecuta con el
+/// cerrojo del núcleo tomado y el hilo ya marcado: ahí se suelta el cerrojo de lo que se espera (C12), sin que
+/// nadie pueda despertarlo antes de que conste como bloqueado.
+fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
     let n = nucleos::numero() as usize;
     let (viejo, nuevo) = {
         let mut g = NUCLEOS[n].tomar();
-        let Some(nucleo) = g.as_mut() else { return };
+        let Some(nucleo) = g.as_mut() else {
+            soltar();
+            return;
+        };
         let ahora = reloj::ahora();
         let actual = nucleo.actual;
         unsafe {
+            if bloquear {
+                (*actual).estado = Estado::Bloqueado;
+            }
             // Cobrar el tiempo al hilo que corría.
             if (*actual).id != 0 {
                 let gastado = ahora.saturating_sub(nucleo.desde);
                 (*actual).virtual_ = (*actual).virtual_.saturating_add(gastado * PESO_NORMAL / (*actual).peso);
             }
         }
+        soltar();
         // El listo con menos tiempo virtual.
         let mejor = nucleo
             .listos
@@ -141,7 +164,7 @@ fn planificar() {
                 nucleo.listos.swap_remove(i)
             }
             None => {
-                if sigue_actual || actual == nucleo.ocioso {
+                if sigue_actual || (actual == nucleo.ocioso && unsafe { (*actual).estado == Estado::Corriendo }) {
                     nucleo.desde = ahora;
                     return;
                 }
@@ -156,8 +179,6 @@ fn planificar() {
                 }
             }
             (*siguiente).estado = Estado::Corriendo;
-        }
-        unsafe {
             if (*siguiente).ttbr0 != 0 {
                 crate::espacio::activar((*siguiente).ttbr0);
             }
@@ -166,9 +187,16 @@ fn planificar() {
         nucleo.desde = ahora;
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
-        // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver.
+        // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
+        // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
-    unsafe { cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto) };
+    if viejo != nuevo {
+        unsafe { cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto) };
+    }
+}
+
+fn planificar() {
+    planificar_con(false, || {});
 }
 
 /// Lo llama el tic del reloj, desde la interrupción.
@@ -182,6 +210,42 @@ pub fn ceder() {
     let estado = crate::cerrojo::enmascarar_irq();
     planificar();
     crate::cerrojo::restaurar_irq(estado);
+}
+
+/// Bloquea el hilo actual hasta que alguien lo despierte. `soltar` suelta el cerrojo de lo que se espera; se
+/// llama cuando el hilo ya consta como bloqueado.
+pub fn bloquear(soltar: impl FnOnce()) {
+    let estado = crate::cerrojo::enmascarar_irq();
+    planificar_con(true, soltar);
+    crate::cerrojo::restaurar_irq(estado);
+}
+
+/// Despierta un hilo bloqueado: vuelve a la cola de su núcleo.
+pub fn despertar(h: *mut Hilo) {
+    let n = unsafe { (*h).nucleo };
+    let mut g = NUCLEOS[n].tomar();
+    if let Some(nc) = g.as_mut() {
+        unsafe {
+            if (*h).estado == Estado::Bloqueado {
+                (*h).estado = Estado::Listo;
+                let minimo = nc.listos.iter().map(|x| (**x).virtual_).min().unwrap_or((*h).virtual_);
+                (*h).virtual_ = (*h).virtual_.max(minimo);
+                nc.listos.push(h);
+            }
+        }
+    }
+}
+
+/// El hilo que corre en este núcleo.
+pub fn actual() -> *mut Hilo {
+    let n = nucleos::numero() as usize;
+    NUCLEOS[n].tomar().as_ref().map(|nc| nc.actual).unwrap_or(core::ptr::null_mut())
+}
+
+/// El proceso del hilo actual (puntero de `Arc<Proceso>`), o 0.
+pub fn proceso_actual() -> usize {
+    let h = actual();
+    if h.is_null() { 0 } else { unsafe { (*h).proceso } }
 }
 
 #[unsafe(no_mangle)]
@@ -208,8 +272,8 @@ pub fn terminar_actual() -> ! {
 
 /// El identificador del hilo que corre en este núcleo.
 pub fn actual_id() -> u64 {
-    let n = nucleos::numero() as usize;
-    NUCLEOS[n].tomar().as_ref().map(|nc| unsafe { (*nc.actual).id }).unwrap_or(0)
+    let h = actual();
+    if h.is_null() { 0 } else { unsafe { (*h).id } }
 }
 
 /// Asocia el hilo actual a un espacio de direcciones y lo activa.

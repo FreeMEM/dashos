@@ -14,6 +14,7 @@ mod llamadas;
 mod memoria;
 mod mmu;
 mod nucleos;
+mod objetos;
 mod planificador;
 mod monton;
 mod reloj;
@@ -217,16 +218,16 @@ fn prueba_hilos() {
     kprintln!("C10: hilos {}", if bien { "bien" } else { "MAL" });
 }
 
-/// C11: dos procesos en EL0, cada uno con su espacio y su ASID, con el mismo programa en las mismas direcciones.
-struct Proceso {
-    ttbr0: u64,
-}
-
+// C11: dos procesos en EL0, cada uno con su espacio y su ASID, con el mismo programa en las mismas direcciones.
 unsafe extern "C" {
     static usuario_inicio: u8;
     static usuario_fin: u8;
     static usuario_malo_inicio: u8;
     static usuario_malo_fin: u8;
+    static servidor_inicio: u8;
+    static servidor_fin: u8;
+    static cliente_inicio: u8;
+    static cliente_fin: u8;
     fn entrar_el0(pc: u64, sp: u64) -> !;
 }
 
@@ -235,17 +236,17 @@ const VA_DATOS: u64 = 0x50_0000;
 const VA_PILA: u64 = 0x7f_f000;
 
 extern "C" fn arrancar_proceso(p: usize) {
-    let p = unsafe { &*(p as *const Proceso) };
+    let p = unsafe { &*(p as *const objetos::Proceso) };
     planificador::asignar_espacio(p.ttbr0);
     unsafe { entrar_el0(VA_CODIGO, VA_PILA + memoria::PAGINA) };
 }
 
 fn crear_proceso(mensaje: &str, nucleo: usize) {
     let (ini, fin) = unsafe { (&usuario_inicio as *const u8, &usuario_fin as *const u8) };
-    crear_proceso_con(ini, fin, mensaje, nucleo);
+    crear_proceso_con(ini, fin, mensaje, nucleo, None);
 }
 
-fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize) {
+fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>) {
     use espacio::{Espacio, Permiso};
     let mut e = Espacio::nuevo();
     let codigo = e.pagina_nueva(VA_CODIGO, Permiso::Codigo);
@@ -266,22 +267,40 @@ fn crear_proceso_con(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         core::ptr::copy_nonoverlapping(mensaje.as_ptr(), datos.add(1), mensaje.len());
     }
     e.pagina_nueva(VA_PILA, Permiso::Datos);
-    let p = alloc::boxed::Box::new(Proceso { ttbr0: e.ttbr0() });
+    let mut tabla = objetos::TablaLlaves::default();
+    if let Some(l) = llave {
+        tabla.instalar(l); // será la llave 1
+    }
+    let p = alloc::sync::Arc::new(objetos::Proceso { ttbr0: e.ttbr0(), llaves: cerrojo::Cerrojo::new(tabla) });
     kprintln!("  proceso con ASID {} en el núcleo {}", e.asid, nucleo);
     core::mem::forget(e);
-    planificador::crear(arrancar_proceso, alloc::boxed::Box::into_raw(p) as usize, nucleo);
+    let ptr = alloc::sync::Arc::into_raw(p) as usize;
+    planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr);
 }
 
 fn prueba_procesos() {
     crear_proceso("  hola desde EL0, proceso A\n", 2);
     crear_proceso("  hola desde EL0, proceso B\n", 3);
     let (ini, fin) = unsafe { (&usuario_malo_inicio as *const u8, &usuario_malo_fin as *const u8) };
-    crear_proceso_con(ini, fin, "", 1);
+    crear_proceso_con(ini, fin, "", 1, None);
     let inicio = reloj::tics();
     while reloj::tics() < inicio + 20 {
         reloj::esperar_interrupcion();
     }
     kprintln!("C11: procesos lanzados");
+
+    // C12: un servidor y un cliente unidos por un canal; el cliente le manda un extremo de otro canal para la
+    // respuesta.
+    let (a, b) = objetos::Canal::nuevo();
+    let (si, sf) = unsafe { (&servidor_inicio as *const u8, &servidor_fin as *const u8) };
+    let (ci, cf) = unsafe { (&cliente_inicio as *const u8, &cliente_fin as *const u8) };
+    crear_proceso_con(si, sf, "  pong: respuesta del servidor\n", 2, Some(a));
+    crear_proceso_con(ci, cf, "  ping: mensaje del cliente con una llave\n", 3, Some(b));
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 20 {
+        reloj::esperar_interrupcion();
+    }
+    kprintln!("C12: canales lanzados");
 }
 
 #[panic_handler]

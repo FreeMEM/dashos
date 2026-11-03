@@ -73,7 +73,7 @@ del kernel sobre la que irán esos controladores.
   que se turnan.
 - [x] C11 **Procesos en EL0.** Espacio de direcciones propio con ASID, llamada al sistema por `svc`. Prueba: un
   proceso de usuario escribe por una llamada.
-- [ ] C12 **Capacidades y canales.** Tabla de llaves por proceso, canales con mensajes cortos y paso de llaves (S1).
+- [x] C12 **Capacidades y canales.** Tabla de llaves por proceso, canales con mensajes cortos y paso de llaves (S1).
   Prueba: dos procesos se pasan mensajes.
 - [ ] C13 **Objetos de memoria.** Crear, proyectar y compartir (S3). Prueba: dos procesos comparten una página.
 - [ ] C14 **Clase de plazo.** Presupuesto y periodo (S2). Prueba: un hilo de plazo cumple con los cuatro núcleos
@@ -225,4 +225,17 @@ direcciones (`0x400000`) y distinto mensaje, en los núcleos 2 y 3, escriben cad
 tercero que escribe en la memoria del kernel muere con un fallo de datos (clase 0x24) y el sistema sigue. Tres
 ejecuciones, BIEN. `tools/prueba_qemu.sh` admite líneas con `~` que pueden salir en cualquier orden.
 Pendiente: liberar el espacio y las páginas al morir el proceso; las llamadas de verdad irán por capacidades (C12).
+
+### 2026-11-03 02:5x — C12 (capacidades y canales)
+
+`kernel/src/objetos.rs`: objetos del kernel con llaves (derechos de leer, escribir y transferir), tabla de llaves por
+proceso (la 0 no existe), canales con dos lados, mensajes de hasta 256 bytes y 8 llaves. Leer en un lado vacío
+bloquea el hilo; escribir lo despierta. El planificador gana `bloquear(soltar)` y `despertar(hilo)`: el cerrojo del
+lado se suelta con el hilo ya marcado como bloqueado, así que no se pierde ningún despertar; como los hilos no cambian
+de núcleo, nadie lo pone a correr antes de guardar su contexto. `kernel/src/llamadas.rs`: canal_crear,
+canal_escribir (las llaves que viajan salen de la tabla de quien manda), canal_leer (entran en la de quien recibe) y
+cerrar. Prueba: un servidor en el núcleo 2 y un cliente en el 3, unidos por un canal; el cliente crea otro canal y
+manda uno de sus extremos dentro del mensaje; el servidor responde por ese extremo. Llegan "ping" y "pong" y los dos
+salen. Tres ejecuciones, BIEN, a la primera. Pendiente: un aviso entre núcleos (IPI) para que el despertar no espere
+al siguiente tic del otro núcleo, que hoy tarda hasta 10 ms; recortar derechos al pasar una llave.
 
