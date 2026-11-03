@@ -109,7 +109,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
   monitores, lanzador, notificaciones, bandeja. El aire del Amiga hecho moderno. Referencias que el usuario usa a
   diario: niri, mango, DMS.
-- [ ] S11 **Interfaz de programación.** La API nativa de DashOS para aplicaciones nuevas, frente a la API Amiga de
+- [x] S11 **Interfaz de programación.** La API nativa de DashOS para aplicaciones nuevas, frente a la API Amiga de
   la caja (decisión pendiente en `PLAN.md`). Juego de controles para la interfaz, formato de ejecutables, bibliotecas
   compartidas y cómo encaja Dash.
 - [ ] S12 **Controladores de la Pi 4.** Lista y orden: serie, temporizador, interrupciones, tarjeta SD, USB (VL805
@@ -124,8 +124,10 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 
 Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea viene y qué opción se sigue mientras.
 
-- (De `PLAN.md`) Si las aplicaciones nativas nuevas usan la API Amiga dentro de la caja, una API moderna fuera, o
-  las dos. Mientras: las dos, la moderna como principal.
+- (De `PLAN.md` y S11) ¿API nativa "Amiga moderna" (conceptos del Amiga sobre capacidades) más POSIX para portar,
+  y la API Amiga de 32 bits solo en la caja? Mientras: sí.
+- (S11) ¿Kit de interfaz nativo con el modelo de MUI, para que `.dashui` valga en los dos sistemas? Mientras: sí.
+- (S11) ¿El mismo programa Dash compila para AmigaOS 3.x y para DashOS? Mientras: sí (trabajo de las sesiones de Dash).
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo
   por debajo de 128 MB. Mientras: esas.
 - (S0) ¿La Pi 3 entra como placa soportada? Mientras: no; solo como placa de pruebas si sale barato.
@@ -285,4 +287,13 @@ niri, con el gesto de arrastrar hacia abajo. Cada pantalla elige disposición: f
 (niri) o las de mango; cualquier ventana puede flotar. Workbench con iconos y cajones, barra de pantalla con los
 menús del programa al botón derecho y la bandeja de DMS a la derecha, lanzador por teclado, Commodities y puerto
 ARexx. Compositor y escritorio son procesos separados, como niri y DMS.
+
+### 2026-11-03 — S11 (interfaz de programación)
+
+`docs/diseño/S11-api.md`. API nativa "Amiga moderna": bibliotecas por nombre y versión, puertos sobre canales,
+rutas y asignaciones, catálogos, IFF, DataTypes, ARexx e iconos, pero de 64 bits, con capacidades y sin memoria
+compartida por defecto; POSIX con relibc para portar. Al kernel solo por una biblioteca, como el vDSO de Fuchsia; sin
+el paso de interfaces de AmigaOS 4. ELF big-endian, y las `.library` nativas son ELF con versión. Kit de interfaz con
+el modelo de MUI (como Zune), para que `.dashui` valga en los dos sistemas. Consecuencia: un programa Dash debería
+compilar para AmigaOS 3.x y para DashOS sin cambios.
 
