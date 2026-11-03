@@ -140,11 +140,9 @@ Linux (shiva). Más adelante, compilar dentro de DashOS.
 
 ## Lo que queda abierto
 
-Decidido por el usuario el 2026-11-03: API nativa "Amiga moderna" con POSIX al lado, y kit con el modelo de MUI, más
-ReAction, GadTools, GTK y Qt.
-
-1. ¿Objetivo de Dash: el mismo programa compila para AmigaOS 3.x y para DashOS? Recomendado: sí. Es trabajo de las
-   sesiones de Dash.
+Nada. Decidido por el usuario el 2026-11-03: API nativa "Amiga moderna" con POSIX al lado; kit con el modelo de MUI,
+más ReAction, GadTools, GTK y Qt, con aspecto de Material Design; y el mismo programa Dash compila para AmigaOS 3.x
+(68k) y para DashOS (AArch64 big-endian).
 
 ## Cómo encaja
 
