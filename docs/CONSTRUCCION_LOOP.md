@@ -67,7 +67,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
 - [x] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
 - [x] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
-- [ ] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
+- [x] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
   se presenta.
 - [ ] C10 **Hilos y planificador.** Cambio de contexto, una cola por núcleo, clase justa sencilla (S2). Prueba: hilos
   que se turnan.
@@ -186,4 +186,13 @@ reconocer y terminar. `kernel/src/reloj.rs`: temporizador físico de EL1 con el 
 100 Hz que se vuelve a programar en la interrupción. Las IRQ de EL1 van del vector al GIC y al reloj. Prueba: 10 tics
 con `wfi` miden 100 ms con la frecuencia de 62,5 MHz que da QEMU. BIEN a la primera. No probado en la placa: si el
 firmware real deja el GIC en el grupo 1 no seguro, `GICD_CTLR = 1` también vale (habilita el grupo 1 en esa vista).
+
+### 2026-11-03 02:4x — C9 (cuatro núcleos)
+
+`arranque.s` reorganizado con dos macros, `A_EL1` (de EL2 a EL1 en big-endian) y `MMU` (encender la MMU con las
+tablas que construye el núcleo 0), y una entrada `_secundario` para los núcleos 1 a 3, con pila de 64 KB por
+núcleo. `kernel/src/nucleos.rs`: escribe la dirección física de `_secundario` en la tabla de espera (`0xe0`, `0xe8`,
+`0xf0`) en little-endian, porque esos núcleos aún no han cambiado de orden de bytes; la saca de la caché y avisa con
+`sev`. Cada núcleo pone sus vectores, su interfaz del GIC y se presenta. La serie ya tiene cerrojo. Prueba: los tres
+se presentan con su MPIDR. BIEN a la primera.
 

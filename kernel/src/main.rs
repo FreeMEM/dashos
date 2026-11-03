@@ -11,6 +11,7 @@ mod excepciones;
 mod gic;
 mod memoria;
 mod mmu;
+mod nucleos;
 mod monton;
 mod reloj;
 mod mmio;
@@ -50,6 +51,9 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_memoria(dtb);
     prueba_monton();
     prueba_reloj(dtb);
+
+    let n = nucleos::despertar();
+    kprintln!("C9: {} núcleos más en marcha: {}", n, if n == 3 { "bien" } else { "MAL" });
     loop {
         unsafe { core::arch::asm!("wfe") };
     }

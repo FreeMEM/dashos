@@ -45,8 +45,11 @@ impl fmt::Write for Serie {
     }
 }
 
-/// Sin cerrojo por ahora: solo corre el núcleo 0. El cerrojo llega con C9.
+/// Un cerrojo para que las líneas de varios núcleos no se mezclen (C9). No se imprime desde interrupciones.
+static CERROJO: crate::cerrojo::Cerrojo<()> = crate::cerrojo::Cerrojo::new(());
+
 pub fn imprimir(args: fmt::Arguments) {
+    let _g = CERROJO.tomar();
     let _ = fmt::Write::write_fmt(&mut Serie, args);
 }
 

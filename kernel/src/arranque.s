@@ -1,28 +1,19 @@
 // DashOS: entrada del kernel en AArch64.
 //
-// El firmware de la Pi (y QEMU raspi4b) salta aquí en EL2, con la MMU apagada, en little-endian y con la
-// dirección del árbol de dispositivos en x0. Solo entra el núcleo 0: los demás esperan en la tabla de espera
-// del firmware (se despiertan en C9).
+// El firmware de la Pi (y QEMU raspi4b) salta a _start en EL2, con la MMU apagada, en little-endian y con la
+// dirección del árbol de dispositivos en x0. Solo entra el núcleo 0. Los demás esperan en la tabla de espera del
+// firmware hasta que el núcleo 0 les da una dirección: entonces saltan a _secundario, también en EL2 (C9).
 //
 // Ojo: hasta poner el bit EE no se puede leer ningún dato de la imagen (las constantes con "ldr =" están en
 // big-endian). Antes de eso solo se usan mrs, msr y mov.
 
-    .section .text.arranque, "ax"
-    .globl _start
-_start:
-    mov     x20, x0                     // árbol de dispositivos
-    mrs     x1, mpidr_el1
-    and     x1, x1, #0xff
-    cbz     x1, 1f
-0:  wfe                                 // otro núcleo: esperar
-    b       0b
-
-1:  mrs     x2, CurrentEL
+// Deja el núcleo en EL1, en big-endian, y salta a \destino. Vale tanto si el firmware entra en EL2 como en EL1.
+.macro A_EL1 destino
+    mrs     x2, CurrentEL
     lsr     x2, x2, #2
     cmp     x2, #2
-    b.ne    desde_el1
+    b.ne    9f
 
-    // --- En EL2 ---
     mrs     x2, sctlr_el2               // big-endian en EL2
     orr     x2, x2, #(1 << 25)
     msr     sctlr_el2, x2
@@ -40,18 +31,55 @@ _start:
 
     mov     x2, #0x3c5                  // SPSR_EL2: EL1h con D, A, I y F enmascaradas
     msr     spsr_el2, x2
-    adr     x2, en_el1
+    adr     x2, \destino
     msr     elr_el2, x2
     eret
 
-desde_el1:
-    mrs     x2, sctlr_el1               // si el firmware ya nos dejó en EL1: big-endian aquí
+9:  mrs     x2, sctlr_el1               // el firmware ya nos dejó en EL1: big-endian aquí
     orr     x2, x2, #(3 << 24)
     msr     sctlr_el1, x2
     isb
+    b       \destino
+.endm
+
+// Enciende la MMU con las tablas de __tabla_l1 (ya construidas por el núcleo 0) y salta a \destino_alto.
+.macro MMU destino_alto
+    adrp    x0, __tabla_l1
+    ldr     x2, =0x44FF00               // MAIR: 0 dispositivo nGnRnE, 1 normal con caché, 2 normal sin caché
+    msr     mair_el1, x2
+    ldr     x2, =0x4B5193519            // TCR: T0SZ=T1SZ=25, 4 KB, caché y compartible interno, IPS 44 bits
+    msr     tcr_el1, x2
+    msr     ttbr0_el1, x0
+    msr     ttbr1_el1, x0
+    isb
+    ic      iallu
+    tlbi    vmalle1
+    dsb     ish
+    isb
+    mrs     x2, sctlr_el1               // MMU, caché de datos y de instrucciones
+    orr     x2, x2, #(1 << 0)
+    orr     x2, x2, #(1 << 2)
+    orr     x2, x2, #(1 << 12)
+    msr     sctlr_el1, x2
+    isb
+    ldr     x2, =\destino_alto          // saltar a la mitad alta
+    br      x2
+.endm
+
+    .section .text.arranque, "ax"
+    .globl _start
+_start:
+    mov     x20, x0                     // árbol de dispositivos
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0xff
+    cbz     x1, 1f
+0:  wfe                                 // otro núcleo que entra por aquí: esperar
+    b       0b
+
+1:  A_EL1   en_el1
 
 en_el1:
-    // --- Tablas de páginas del arranque (S3) ---
+    // --- Tablas de páginas del arranque (S3, C6) ---
     // Una tabla de nivel 1 sirve a la vez para TTBR0 (la memoria física tal cual, para poder seguir aquí al
     // encender la MMU) y para TTBR1 (la misma memoria a partir de KERNEL_VA). Con 39 bits de dirección virtual,
     // cada entrada de nivel 1 es 1 GB: los tres primeros GB son memoria normal; el cuarto va a una tabla de
@@ -86,27 +114,9 @@ en_el1:
     add     x2, x2, #1
     cmp     x2, #512
     b.ne    6b
+    dsb     ish                         // que los demás núcleos vean las tablas al leerlas sin caché
 
-    ldr     x2, =0x44FF00               // MAIR: 0 dispositivo nGnRnE, 1 normal con caché, 2 normal sin caché
-    msr     mair_el1, x2
-    ldr     x2, =0x4B5193519            // TCR: T0SZ=T1SZ=25, 4 KB, caché y compartible interno, IPS 44 bits
-    msr     tcr_el1, x2
-    msr     ttbr0_el1, x0
-    msr     ttbr1_el1, x0
-    isb
-    ic      iallu
-    tlbi    vmalle1
-    dsb     ish
-    isb
-    mrs     x2, sctlr_el1               // MMU, caché de datos y de instrucciones
-    orr     x2, x2, #(1 << 0)
-    orr     x2, x2, #(1 << 2)
-    orr     x2, x2, #(1 << 12)
-    msr     sctlr_el1, x2
-    isb
-
-    ldr     x2, =en_alto                // saltar a la mitad alta
-    br      x2
+    MMU     en_alto
 
 en_alto:
     ldr     x1, =__pilas_fin            // pila del núcleo 0, ya en direcciones altas
@@ -123,3 +133,22 @@ en_alto:
     bl      kmain
 4:  wfe
     b       4b
+
+// --- Núcleos 1 a 3 ---
+// Entran aquí desde la tabla de espera del firmware, en EL2, little-endian y sin MMU (C9).
+    .globl _secundario
+_secundario:
+    mrs     x19, mpidr_el1
+    and     x19, x19, #0xff             // número de núcleo
+    A_EL1   sec_el1
+sec_el1:
+    MMU     sec_alto
+sec_alto:
+    ldr     x1, =__pilas_fin            // pila: 64 KB por núcleo, hacia abajo desde el final
+    lsl     x2, x19, #16
+    sub     x1, x1, x2
+    mov     sp, x1
+    mov     x0, x19
+    bl      kmain_secundario
+7:  wfe
+    b       7b
