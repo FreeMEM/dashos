@@ -20,3 +20,5 @@ Memoria física:
 C5: zonas bien, devolución bien
   suma 49995000 con 10000 elementos; caja 7; mapa 500 claves
 C7: montón bien
+  frecuencia del temporizador 
+C8: interrupciones bien

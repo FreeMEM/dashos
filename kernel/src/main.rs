@@ -8,9 +8,11 @@ extern crate alloc;
 mod cerrojo;
 mod dtb;
 mod excepciones;
+mod gic;
 mod memoria;
 mod mmu;
 mod monton;
+mod reloj;
 mod mmio;
 mod serie;
 
@@ -47,6 +49,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
 
     prueba_memoria(dtb);
     prueba_monton();
+    prueba_reloj(dtb);
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -145,6 +148,27 @@ fn prueba_monton() {
     drop(mapa);
     let devueltas = memoria::paginas().libres() + monton::paginas_pequenas() >= libres;
     kprintln!("C7: montón {}", if suma == 49_995_000 && devueltas { "bien" } else { "MAL" });
+}
+
+/// C8: el temporizador y el GIC.
+fn prueba_reloj(direccion: usize) {
+    let Some(d) = (unsafe { dtb::Dtb::desde(mmu::virt(direccion)) }) else { return };
+    let (Some(g), Some(t)) = (d.compatible("arm,gic-400"), d.compatible("arm,armv8-timer")) else {
+        kprintln!("C8: falta el GIC o el temporizador en el árbol");
+        return;
+    };
+    let (Some((dist, _)), Some((cpu, _))) = (d.reg_cpu(&g, 0), d.reg_cpu(&g, 1)) else { return };
+    let ppi = d.propiedad(&t, "interrupts").map(|(datos, _)| d.celda(datos, 4)).unwrap_or(14);
+    gic::iniciar(dist, cpu);
+    reloj::iniciar(ppi, 100);
+    reloj::habilitar_irq();
+    let inicio = reloj::ahora();
+    while reloj::tics() < 10 {
+        reloj::esperar_interrupcion();
+    }
+    let ms = (reloj::ahora() - inicio) * 1000 / reloj::frecuencia();
+    kprintln!("  frecuencia del temporizador {} Hz; 10 tics en {} ms", reloj::frecuencia(), ms);
+    kprintln!("C8: interrupciones {}", if (80..=130).contains(&ms) { "bien" } else { "MAL" });
 }
 
 #[panic_handler]

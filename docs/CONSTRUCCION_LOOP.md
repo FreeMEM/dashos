@@ -66,7 +66,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C5 **Memoria física.** Asignador de páginas con zonas (primer GB, primeros 3 GB, resto) sacadas de C4. Prueba.
 - [x] C6 **MMU.** Mitad alta del kernel en `TTBR1`, periféricos como dispositivo, páginas de 4 KB. Prueba.
 - [x] C7 **Montón del kernel.** `alloc` sobre C5. Prueba.
-- [ ] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
+- [x] C8 **Temporizador y GIC-400.** Interrupción periódica. Prueba: cuenta tics.
 - [ ] C9 **Cuatro núcleos.** Despertar 1 a 3 con la tabla de espera de la Pi (como Emu68 y QEMU). Prueba: cada núcleo
   se presenta.
 - [ ] C10 **Hilos y planificador.** Cambio de contexto, una cola por núcleo, clase justa sencilla (S2). Prueba: hilos
@@ -178,4 +178,12 @@ interrupciones). `kernel/src/monton.rs`: `#[global_allocator]` con ocho clases d
 lista de bloques libres troceando páginas del reparto, y páginas seguidas para lo mayor, que se devuelven al
 liberar. Prueba: un `Vec` de 10.000 números (suma correcta), `String` con formato, `Box` y un `BTreeMap` de 500
 claves; al liberar no se pierden páginas. BIEN. Quitados dos avisos del compilador.
+
+### 2026-11-03 02:3x — C8 (temporizador y GIC-400)
+
+`kernel/src/gic.rs`: distribuidor y CPU del GIC-400 desde el árbol (por el mapa directo), habilitar con prioridad,
+reconocer y terminar. `kernel/src/reloj.rs`: temporizador físico de EL1 con el PPI del árbol (14, INTID 30), tic a
+100 Hz que se vuelve a programar en la interrupción. Las IRQ de EL1 van del vector al GIC y al reloj. Prueba: 10 tics
+con `wfi` miden 100 ms con la frecuencia de 62,5 MHz que da QEMU. BIEN a la primera. No probado en la placa: si el
+firmware real deja el GIC en el grupo 1 no seguro, `GICD_CTLR = 1` también vale (habilita el grupo 1 en esa vista).
 

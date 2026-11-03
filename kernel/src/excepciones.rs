@@ -33,6 +33,18 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
     let clase = (marco.esr >> 26) & 0x3f;
     let iss = marco.esr & 0x1ff_ffff;
 
+    // IRQ: al GIC, y de ahí a quien corresponda.
+    if tipo & 3 == 1 {
+        let intid = crate::gic::reconocer();
+        if intid != crate::gic::FALSA {
+            if !crate::reloj::interrupcion(intid) {
+                kprintln!("IRQ {} sin dueño", intid);
+            }
+            crate::gic::terminar(intid);
+        }
+        return;
+    }
+
     // BRK desde EL1: se usa para las pruebas. Se avisa y se sigue con la instrucción siguiente.
     if tipo == 4 && clase == 0x3c {
         kprintln!("Excepción: BRK #{:#x} en {:#x}; se sigue", iss & 0xffff, marco.elr);
