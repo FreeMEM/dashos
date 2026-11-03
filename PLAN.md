@@ -31,6 +31,8 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Kits de interfaz** (usuario, 2026-11-03): un motor nativo con el modelo de MUI, y las caras de ReAction y
   GadTools encima, para que funcionen todos los programas. GTK y Qt en la caja Linux desde el principio, y en nativo
   más adelante.
+- **Aspecto: Material Design** (usuario, 2026-11-03). El kit sigue el modelo de Magic User Interface y se dibuja
+  con Material 3, con colores sacados del fondo de pantalla. Tema "Amiga clásico" como opción.
 - **Controladores** (usuario, 2026-11-03; `docs/diseño/S12-controladores.md`): lo no documentado se hace en sala
   limpia (una sesión lee Linux y escribe la especificación, otra escribe el controlador); se acepta el firmware
   cerrado del Wi-Fi; la Pi 4 se compra al terminar la fase Base en QEMU.

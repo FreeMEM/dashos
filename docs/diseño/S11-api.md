@@ -110,9 +110,11 @@ de Linux con GTK o Qt, como Firefox.
 Pregunta del usuario (2026-11-03) sobre "el MUI de Google, el de Android". Ojo con el nombre: MUI del Amiga (Magic
 User Interface) y MUI de la web (una biblioteca de React que sigue Material Design) no tienen nada que ver.
 
-- **Material Design como tema**: el motor de interfaz nativo puede llevar un tema Material 3, al lado del tema
-  Amiga moderno. DMS, la barra que el usuario usa a diario, ya sigue Material 3. Los controles son los mismos; cambia
-  cómo se dibujan.
+- **Material Design como aspecto de DashOS** (decidido por el usuario, 2026-11-03): el motor de interfaz sigue el
+  modelo de Magic User Interface, y se dibuja con el aspecto de Material 3. Es el tema por defecto, con un tema
+  "Amiga clásico" como opción (S10). DMS, la barra que el usuario usa a diario, ya sigue Material 3.
+- Los programas MUI de 68k en la caja usan su MUI y sus preferencias. Se les puede preparar una configuración de MUI
+  parecida a Material 3, para que no desentonen.
 - **Programas de Android**: se podrían ejecutar dentro de la caja Linux con Waydroid, que mete Android en un
   contenedor de Linux. No se ha comprobado en la Pi 4 ni en una máquina virtual. Queda como idea, no como plan.
 

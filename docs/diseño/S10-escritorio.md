@@ -101,10 +101,15 @@ Como DMS con niri: **el compositor y el escritorio son procesos distintos.**
 
 ### Aspecto
 
-- El aire del Amiga hecho moderno: bordes finos con los gadgets de cerrar y de profundidad en su sitio, barra arriba,
-  iconos con su estilo.
-- Tema claro y oscuro, color de acento, y una paleta inspirada en MagicWB.
-- Animaciones cortas y que se pueden quitar.
+Decidido por el usuario (2026-11-03): **aspecto de Material Design** (Material 3), con el modelo de MUI por debajo
+(S11).
+
+- La estructura es la del Amiga: pantallas, barra arriba con los menús al botón derecho, Workbench con iconos y
+  cajones, gadgets de cerrar y de profundidad.
+- El dibujo es el de Material 3: esquinas redondeadas, superficies con tono, tipografía y espaciado de Material, y
+  animaciones cortas que se pueden quitar.
+- Colores sacados del fondo de pantalla, como Material You y como hace DMS con matugen. Tema claro y oscuro.
+- Un tema "Amiga clásico" como opción, para quien quiera el aire de MagicWB.
 
 ## Lo que queda abierto
 
