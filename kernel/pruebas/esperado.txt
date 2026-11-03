@@ -38,3 +38,4 @@ C12: canales lanzados
   memoria compartida: escrito por el productor
   memoria compartida: cambiado por el consumidor
 C13: memoria compartida lanzada
+C14: clase de plazo bien

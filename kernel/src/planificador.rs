@@ -6,7 +6,9 @@
 //! - Cada núcleo tiene un hilo ocioso (el de su arranque), que solo corre si no hay nada más.
 //! - Un hilo se puede bloquear (esperando un mensaje, C12) y otro lo despierta.
 //!
-//! La clase de plazo (S2) llega en C14.
+//! - Clase de plazo (C14, S2): un hilo con capacidad y periodo corre antes que cualquier hilo justo mientras le
+//!   quede presupuesto en su periodo; entre los de plazo, el de plazo más cercano (EDF). Al agotarlo, espera al
+//!   periodo siguiente. El temporizador se programa para el momento justo en que eso cambia.
 
 use crate::cerrojo::CerrojoIrq;
 use crate::nucleos;
@@ -45,7 +47,29 @@ pub struct Hilo {
     ttbr0: u64,
     /// El proceso (C12): puntero de `Arc<Proceso>::into_raw`, 0 si es del kernel.
     proceso: usize,
+    /// Clase de plazo (C14), en cuentas del temporizador.
+    plazo: Option<Plazo>,
     _pila: Option<Box<[u8]>>,
+}
+
+#[derive(Clone, Copy)]
+struct Plazo {
+    capacidad: u64,
+    periodo: u64,
+    restante: u64,
+    /// Fin del periodo actual: es su plazo.
+    fin: u64,
+}
+
+impl Plazo {
+    /// Si el periodo ha acabado, empieza otro con el presupuesto entero.
+    fn renovar(&mut self, ahora: u64) {
+        if ahora >= self.fin {
+            let saltos = (ahora - self.fin) / self.periodo + 1;
+            self.fin += saltos * self.periodo;
+            self.restante = self.capacidad;
+        }
+    }
 }
 
 struct Nucleo {
@@ -79,6 +103,7 @@ pub fn iniciar_nucleo() {
         nucleo: n,
         ttbr0: 0,
         proceso: 0,
+        plazo: None,
         _pila: None,
     }));
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), desde: reloj::ahora() });
@@ -111,10 +136,65 @@ pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usi
         nucleo,
         ttbr0: 0,
         proceso,
+        plazo: None,
         _pila: Some(pila),
     }));
     nc.listos.push(h);
     id
+}
+
+/// Crea un hilo del kernel de la clase de plazo: `capacidad` microsegundos de CPU cada `periodo` microsegundos.
+/// Solo se admite si la suma de lo pedido en ese núcleo no pasa del 80 % (S2: no se promete lo que no hay).
+pub fn crear_plazo(f: extern "C" fn(usize), arg: usize, nucleo: usize, capacidad_us: u64, periodo_us: u64) -> Option<u64> {
+    let fr = reloj::frecuencia();
+    let (capacidad, periodo) = (capacidad_us * fr / 1_000_000, periodo_us * fr / 1_000_000);
+    if capacidad == 0 || capacidad > periodo {
+        return None;
+    }
+    let id = {
+        let mut g = NUCLEOS[nucleo].tomar();
+        let nc = g.as_mut()?;
+        let usado: u64 = nc
+            .listos
+            .iter()
+            .chain(core::iter::once(&nc.actual))
+            .filter_map(|h| unsafe { (**h).plazo.map(|p| p.capacidad * 1000 / p.periodo) })
+            .sum();
+        if usado + capacidad * 1000 / periodo > 800 {
+            return None;
+        }
+        drop(g);
+        crear_en(f, arg, nucleo, 0)
+    };
+    let mut g = NUCLEOS[nucleo].tomar();
+    let nc = g.as_mut()?;
+    let ahora = reloj::ahora();
+    for &h in &nc.listos {
+        unsafe {
+            if (*h).id == id {
+                (*h).plazo = Some(Plazo { capacidad, periodo, restante: capacidad, fin: ahora + periodo });
+            }
+        }
+    }
+    Some(id)
+}
+
+/// Un hilo de plazo da por hecho el trabajo de este periodo y espera al siguiente.
+pub fn esperar_periodo() {
+    let estado = crate::cerrojo::enmascarar_irq();
+    {
+        let n = nucleos::numero() as usize;
+        let mut g = NUCLEOS[n].tomar();
+        if let Some(nc) = g.as_mut() {
+            unsafe {
+                if let Some(p) = (*nc.actual).plazo.as_mut() {
+                    p.restante = 0;
+                }
+            }
+        }
+    }
+    planificar();
+    crate::cerrojo::restaurar_irq(estado);
 }
 
 pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
@@ -139,38 +219,106 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
             if bloquear {
                 (*actual).estado = Estado::Bloqueado;
             }
-            // Cobrar el tiempo al hilo que corría.
+            // Cobrar el tiempo al hilo que corría: al presupuesto si es de plazo, al tiempo virtual si es justo.
             if (*actual).id != 0 {
                 let gastado = ahora.saturating_sub(nucleo.desde);
-                (*actual).virtual_ = (*actual).virtual_.saturating_add(gastado * PESO_NORMAL / (*actual).peso);
+                match (*actual).plazo.as_mut() {
+                    Some(p) => p.restante = p.restante.saturating_sub(gastado),
+                    None => {
+                        (*actual).virtual_ = (*actual).virtual_.saturating_add(gastado * PESO_NORMAL / (*actual).peso)
+                    }
+                }
             }
         }
         soltar();
-        // El listo con menos tiempo virtual.
-        let mejor = nucleo
+
+        // Renovar presupuestos de los hilos de plazo de este núcleo.
+        unsafe {
+            if let Some(p) = (*actual).plazo.as_mut() {
+                p.renovar(ahora);
+            }
+            for &h in &nucleo.listos {
+                if let Some(p) = (*h).plazo.as_mut() {
+                    p.renovar(ahora);
+                }
+            }
+        }
+
+        let corriendo = unsafe { (*actual).estado == Estado::Corriendo && (*actual).id != 0 };
+        let elegible = |h: *mut Hilo| unsafe { (*h).plazo.map(|p| p.restante > 0).unwrap_or(false) };
+
+        // 1. Clase de plazo: el elegible con el plazo más cercano.
+        let mejor_plazo = nucleo
             .listos
             .iter()
             .enumerate()
-            .min_by_key(|(_, h)| unsafe { (***h).virtual_ })
-            .map(|(i, _)| i);
-        let sigue_actual = unsafe { (*actual).estado == Estado::Corriendo && (*actual).id != 0 };
-        let siguiente = match mejor {
-            Some(i) => {
-                let candidato = nucleo.listos[i];
-                if sigue_actual && unsafe { (*actual).virtual_ <= (*candidato).virtual_ } {
-                    nucleo.desde = ahora;
-                    return;
+            .filter(|(_, h)| elegible(**h))
+            .min_by_key(|(_, h)| unsafe { (***h).plazo.unwrap().fin })
+            .map(|(i, h)| (i, unsafe { (**h).plazo.unwrap().fin }));
+        let actual_plazo = if corriendo && elegible(actual) { unsafe { (*actual).plazo.map(|p| p.fin) } } else { None };
+
+        // Qué hacer: None = seguir con el actual; Some(Some(i)) = el listo i; Some(None) = el ocioso.
+        let decision: Option<Option<usize>> = match (actual_plazo, mejor_plazo) {
+            (Some(fa), Some((i, fm))) => if fm < fa { Some(Some(i)) } else { None },
+            (Some(_), None) => None,
+            (None, Some((i, _))) => Some(Some(i)),
+            (None, None) => {
+                // 2. Clase justa: el listo sin plazo con menos tiempo virtual.
+                let mejor = nucleo
+                    .listos
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, h)| unsafe { (***h).plazo.is_none() })
+                    .min_by_key(|(_, h)| unsafe { (***h).virtual_ })
+                    .map(|(i, _)| i);
+                let actual_justo = corriendo && unsafe { (*actual).plazo.is_none() };
+                match mejor {
+                    Some(i) => {
+                        if actual_justo && unsafe { (*actual).virtual_ <= (*nucleo.listos[i]).virtual_ } {
+                            None
+                        } else {
+                            Some(Some(i))
+                        }
+                    }
+                    None => {
+                        if actual_justo || (actual == nucleo.ocioso && unsafe { (*actual).estado == Estado::Corriendo }) {
+                            None
+                        } else {
+                            Some(None)
+                        }
+                    }
                 }
-                nucleo.listos.swap_remove(i)
-            }
-            None => {
-                if sigue_actual || (actual == nucleo.ocioso && unsafe { (*actual).estado == Estado::Corriendo }) {
-                    nucleo.desde = ahora;
-                    return;
-                }
-                nucleo.ocioso
             }
         };
+
+        let siguiente = match decision {
+            None => actual,
+            Some(Some(i)) => nucleo.listos.swap_remove(i),
+            Some(None) => nucleo.ocioso,
+        };
+
+        // Siguiente interrupción: el tic normal, o antes si el hilo elegido agota su presupuesto o si algún hilo de
+        // plazo recupera el suyo.
+        let mut proxima = reloj::periodo();
+        unsafe {
+            if let Some(p) = (*siguiente).plazo {
+                if p.restante > 0 {
+                    proxima = proxima.min(p.restante);
+                }
+            }
+            let espera = |h: *mut Hilo| (*h).plazo.filter(|p| p.restante == 0).map(|p| p.fin.saturating_sub(ahora));
+            for &h in nucleo.listos.iter().chain(core::iter::once(&actual)) {
+                if let Some(e) = espera(h) {
+                    proxima = proxima.min(e.max(1));
+                }
+            }
+        }
+        reloj::programar(proxima.max(1));
+
+        nucleo.desde = ahora;
+        if siguiente == actual {
+            return;
+        }
         unsafe {
             if (*actual).estado == Estado::Corriendo {
                 (*actual).estado = Estado::Listo;
@@ -184,15 +332,12 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
             }
         }
         nucleo.actual = siguiente;
-        nucleo.desde = ahora;
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
         // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
-    if viejo != nuevo {
-        unsafe { cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto) };
-    }
+    unsafe { cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto) };
 }
 
 fn planificar() {

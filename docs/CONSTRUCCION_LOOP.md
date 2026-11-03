@@ -76,7 +76,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C12 **Capacidades y canales.** Tabla de llaves por proceso, canales con mensajes cortos y paso de llaves (S1).
   Prueba: dos procesos se pasan mensajes.
 - [x] C13 **Objetos de memoria.** Crear, proyectar y compartir (S3). Prueba: dos procesos comparten una página.
-- [ ] C14 **Clase de plazo.** Presupuesto y periodo (S2). Prueba: un hilo de plazo cumple con los cuatro núcleos
+- [x] C14 **Clase de plazo.** Presupuesto y periodo (S2). Prueba: un hilo de plazo cumple con los cuatro núcleos
   cargados.
 - [ ] C15 **Buzón de la VideoCore y pantalla del firmware.** Controlador del buzón y la pantalla (fase A de S9) como
   base del vídeo. Prueba: pinta un degradado y lo comprueba leyendo la memoria de la pantalla.
@@ -254,4 +254,15 @@ página, la proyecta en `0x600000`, escribe su texto y manda la llave al consumi
 proyecta en `0x700000`, lee el texto del productor, escribe el suyo y avisa; el productor lee entonces el texto del
 consumidor en su propia dirección. Tres ejecuciones, BIEN, a la primera. Pendiente: devolver las páginas cuando no
 quede ninguna llave ni proyección; quitar proyecciones.
+
+### 2026-11-03 03:0x — C14 (clase de plazo)
+
+El planificador gana la clase de plazo de S2: un hilo con capacidad y periodo corre antes que cualquier hilo justo
+mientras le quede presupuesto; entre los de plazo, el de plazo más cercano (EDF). Al agotarlo o al llamar a
+`esperar_periodo()`, espera al periodo siguiente. El temporizador ya no da un tic fijo: el planificador lo programa en
+cada decisión para el momento exacto en que algo cambia (fin del tic, fin del presupuesto, o renovación de un hilo
+de plazo). `reloj::tics()` se calcula con la hora. `crear_plazo` rechaza lo que pase del 80 % del núcleo. Prueba: un
+hilo de 2 ms cada 10 ms en el núcleo 1, que ya tiene tres hilos justos ocupados: 31 activaciones en 300 ms, con una
+desviación máxima del periodo de 44 a 346 µs según la ejecución (QEMU); los hilos justos siguen avanzando; pedir un
+70 % más se rechaza. BIEN. Es la base de la meta de S0 de un escritorio fluido con carga; falta medirlo en la placa.
 

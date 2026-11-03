@@ -4,8 +4,8 @@ use crate::gic;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
 static INTID: AtomicU32 = AtomicU32::new(30);
-static TICS: AtomicU64 = AtomicU64::new(0);
 static PERIODO: AtomicU64 = AtomicU64::new(0);
+static ARRANQUE: AtomicU64 = AtomicU64::new(0);
 
 pub fn frecuencia() -> u64 {
     let f: u64;
@@ -19,7 +19,9 @@ pub fn ahora() -> u64 {
     t
 }
 
-fn programar(cuentas: u64) {
+/// Programa la siguiente interrupción del temporizador de este núcleo dentro de `cuentas`. El planificador la
+/// pone en cada decisión: el tic normal, o antes si un hilo de plazo agota su presupuesto o lo recupera (C14).
+pub fn programar(cuentas: u64) {
     unsafe {
         core::arch::asm!("msr cntp_tval_el0, {}", in(reg) cuentas);
         core::arch::asm!("msr cntp_ctl_el0, {}", in(reg) 1u64); // encendido, sin máscara
@@ -32,6 +34,7 @@ pub fn iniciar(ppi: u32, hz: u64) {
     INTID.store(intid, Ordering::Relaxed);
     let periodo = frecuencia() / hz;
     PERIODO.store(periodo, Ordering::Relaxed);
+    ARRANQUE.store(ahora(), Ordering::Relaxed);
     gic::habilitar(intid, 0x80);
     programar(periodo);
 }
@@ -42,17 +45,22 @@ pub fn iniciar_nucleo() {
     programar(PERIODO.load(Ordering::Relaxed));
 }
 
+/// Tics normales transcurridos desde que se inició el reloj (se calcula con la hora, no se cuenta).
 pub fn tics() -> u64 {
-    TICS.load(Ordering::Relaxed)
+    let p = PERIODO.load(Ordering::Relaxed);
+    if p == 0 { 0 } else { (ahora() - ARRANQUE.load(Ordering::Relaxed)) / p }
 }
 
-/// Lo llama la interrupción: cuenta el tic y vuelve a programar el siguiente.
+/// Cuentas de un tic normal.
+pub fn periodo() -> u64 {
+    PERIODO.load(Ordering::Relaxed)
+}
+
+/// ¿Es del temporizador? Deja una interrupción de reserva por si el planificador no reprograma; el planificador la
+/// sustituye al decidir.
 pub fn interrupcion(intid: u32) -> bool {
     if intid != INTID.load(Ordering::Relaxed) {
         return false;
-    }
-    if crate::nucleos::numero() == 0 {
-        TICS.fetch_add(1, Ordering::Relaxed);
     }
     programar(PERIODO.load(Ordering::Relaxed));
     true

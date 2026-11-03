@@ -320,6 +320,59 @@ fn prueba_procesos() {
         reloj::esperar_interrupcion();
     }
     kprintln!("C13: memoria compartida lanzada");
+
+    prueba_plazo();
+}
+
+// C14: un hilo de plazo (2 ms cada 10 ms) en el núcleo 1, que ya tiene tres hilos justos ocupados (C10).
+const ACTIVACIONES: usize = 64;
+static VECES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+static MOMENTOS: [core::sync::atomic::AtomicU64; ACTIVACIONES] = [const { core::sync::atomic::AtomicU64::new(0) }; ACTIVACIONES];
+
+extern "C" fn hilo_de_plazo(_: usize) {
+    use core::sync::atomic::Ordering;
+    let ms = reloj::frecuencia() / 1000;
+    loop {
+        let i = VECES.load(Ordering::Relaxed);
+        if i >= ACTIVACIONES {
+            return;
+        }
+        MOMENTOS[i].store(reloj::ahora(), Ordering::Relaxed);
+        VECES.store(i + 1, Ordering::Release);
+        let t = reloj::ahora();
+        while reloj::ahora() - t < ms {} // 1 ms de trabajo
+        planificador::esperar_periodo();
+    }
+}
+
+fn prueba_plazo() {
+    use core::sync::atomic::Ordering;
+    let antes: u64 = CONTADORES.iter().map(|c| c.load(Ordering::Relaxed)).sum();
+    if planificador::crear_plazo(hilo_de_plazo, 0, 1, 2_000, 10_000).is_none() {
+        kprintln!("C14: plazo no admitido");
+        return;
+    }
+    // Pedir más del 80 % tiene que fallar.
+    let rechazado = planificador::crear_plazo(hilo_de_plazo, 0, 1, 7_000, 10_000).is_none();
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + 30 {
+        reloj::esperar_interrupcion();
+    }
+    let n = VECES.load(Ordering::Acquire).min(ACTIVACIONES);
+    let periodo = reloj::frecuencia() / 100;
+    // Desviación entre activaciones seguidas respecto al periodo (de la segunda en adelante: la primera llega
+    // cuando se crea el hilo, a mitad de un periodo).
+    let mut retraso_max = 0u64;
+    for k in 2..n {
+        let d = MOMENTOS[k].load(Ordering::Relaxed) - MOMENTOS[k - 1].load(Ordering::Relaxed);
+        retraso_max = retraso_max.max(d.abs_diff(periodo));
+    }
+    let despues: u64 = CONTADORES.iter().map(|c| c.load(Ordering::Relaxed)).sum();
+    let us = retraso_max * 1_000_000 / reloj::frecuencia();
+    kprintln!("  {} activaciones en 300 ms; desviación máxima del periodo {} µs; los hilos justos siguen: {}; exceso rechazado: {}",
+        n, us, despues > antes, rechazado);
+    let bien = n >= 25 && us < 1000 && despues > antes && rechazado;
+    kprintln!("C14: clase de plazo {}", if bien { "bien" } else { "MAL" });
 }
 
 #[panic_handler]
