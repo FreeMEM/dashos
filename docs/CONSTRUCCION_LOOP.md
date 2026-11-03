@@ -650,6 +650,18 @@ por encima está llena.
 en `E_MEMORIA` tras 14 trozos de 64 MB y se recupera al soltarla) y llenar la tabla de llaves (509 canales). Cuatro
 pasadas seguidas en verde. C18 falló una vez antes de la pista y no se ha repetido; no sé por qué falló.
 
+### 2026-11-03 tarde — C32, quinta vuelta (hallazgo 3)
+
+**Hallazgo 3.** `Drop` de `Canal` suelta lo que hay dentro con una lista en vez de por recursión. Cada canal (o
+interrupción con canal de destino) que se queda sin dueños se vacía en la lista y se suelta ya vacío. Además, cada
+pila del kernel lleva una marca al fondo que se comprueba en cada cambio de hilo: un desbordamiento para el kernel
+con un mensaje claro en vez de seguir con memoria pisada. Las páginas de guarda de verdad necesitan el mapa del
+kernel por páginas (fase 2).
+
+**Prueba.** `malo`, paso 24: una cadena de 3000 canales, cada uno con los dos extremos del siguiente en su cola, y se
+cierra el primero. Sin el arreglo, el kernel cae con una excepción en EL1; con él, sigue. C14 falló una vez de
+cuatro, como antes.
+
 ## Resumen de la noche
 
 Del 2 de noviembre a las 23:xx al 3 de noviembre a las 08:30, con una pausa de 03:10 a 07:47 por un problema al

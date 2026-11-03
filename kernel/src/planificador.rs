@@ -49,7 +49,7 @@ pub struct Hilo {
     proceso: usize,
     /// Clase de plazo (C14), en cuentas del temporizador.
     plazo: Option<Plazo>,
-    _pila: Option<Box<[u8]>>,
+    pila: Option<Box<[u8]>>,
     /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
     fp: Option<Box<EstadoFp>>,
     /// Su TPIDR_EL0, el puntero de TLS que EL0 puede leer y escribir: se guarda y se repone en cada cambio para que
@@ -147,7 +147,7 @@ pub fn iniciar_nucleo() {
         ttbr0: 0,
         proceso: 0,
         plazo: None,
-        _pila: None,
+        pila: None,
         fp: None,
         tpidr: 0,
     }));
@@ -181,9 +181,14 @@ fn registros_el0() {
     };
 }
 
+/// Marca al fondo de cada pila del kernel. Las pilas no tienen página de guarda todavía (S16, fase 2): si un hilo
+/// la desborda, al menos se ve en el siguiente cambio y el kernel para en vez de seguir con memoria pisada.
+const MARCA_PILA: u64 = 0x5049_4C41_2D44_4153;
+
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
 pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
-    let pila = alloc::vec![0u8; PILA].into_boxed_slice();
+    let mut pila = alloc::vec![0u8; PILA].into_boxed_slice();
+    pila[..8].copy_from_slice(&MARCA_PILA.to_ne_bytes());
     let tope = (pila.as_ptr() as usize + PILA) & !15;
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
     let mut contexto = Contexto::default();
@@ -209,7 +214,7 @@ pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usi
         ttbr0: 0,
         proceso,
         plazo: None,
-        _pila: Some(pila),
+        pila: Some(pila),
         fp: None,
         tpidr: 0,
     }));
@@ -423,6 +428,11 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
     unsafe {
+        if let Some(p) = &(*viejo).pila {
+            if p[..8] != MARCA_PILA.to_ne_bytes() {
+                panic!("la pila del kernel del hilo {} se ha desbordado", (*viejo).id);
+            }
+        }
         let tpidr: u64;
         core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
         (*viejo).tpidr = tpidr;

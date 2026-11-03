@@ -100,6 +100,39 @@ pub enum Error {
     SinMemoria,
 }
 
+/// Soltar un canal suelta los mensajes de sus colas, y con ellos sus llaves, que pueden ser de otros canales con
+/// más mensajes dentro. Hecho por recursión, una cadena de unas decenas de canales desbordaba la pila del kernel
+/// (auditoría, hallazgo 3). Aquí se hace con una lista: cada canal que se queda sin dueños se vacía en ella, y lo
+/// que hay dentro se suelta en el mismo bucle.
+impl Drop for Canal {
+    fn drop(&mut self) {
+        let mut mensajes: Vec<Mensaje> = Vec::new();
+        for lado in self.lados.get_mut().iter_mut() {
+            mensajes.extend(lado.cola.drain(..));
+        }
+        while let Some(m) = mensajes.pop() {
+            for l in m.llaves {
+                let canal = match l.objeto {
+                    Objeto::Extremo(c, _) => Some(c),
+                    Objeto::Interrupcion(i) => match Arc::try_unwrap(i) {
+                        Ok(mut i) => i.quitar_destino(),
+                        Err(_) => None,
+                    },
+                    _ => None,
+                };
+                // Si era el último dueño, sus mensajes pasan a la lista y el canal se suelta ya vacío.
+                if let Some(c) = canal {
+                    if let Ok(mut c) = Arc::try_unwrap(c) {
+                        for lado in c.lados.get_mut().iter_mut() {
+                            mensajes.extend(lado.cola.drain(..));
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
 impl Canal {
     pub fn nuevo() -> (Llave, Llave) {
         let c = Arc::new(Canal { lados: Cerrojo::new([Lado::default(), Lado::default()]) });

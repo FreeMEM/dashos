@@ -143,6 +143,21 @@ fn principal() -> u64 {
     if fin != E_LIMITE {
         return 23;
     }
+    // 24: una cadena de 3000 canales, cada uno con los dos extremos del siguiente en su cola (hallazgo 3). Al cerrar
+    // el primero se suelta toda; por recursión desbordaba la pila del kernel. Primero se vacía la tabla del paso 23.
+    for k in 1..=1100u64 {
+        x0(6, [k, 0, 0, 0, 0]);
+    }
+    let (mut a, mut b) = dashos::canal_crear();
+    for _ in 0..3000 {
+        let (c, d) = dashos::canal_crear();
+        if dashos::canal_escribir(c, b"cadena", &[a, b]) != 0 {
+            return 24;
+        }
+        (a, b) = (c, d);
+    }
+    x0(6, [a as u64, 0, 0, 0, 0]);
+    x0(6, [b as u64, 0, 0, 0, 0]);
     println!("  [malo] memoria agotada en {} trozos de 64 MB y tabla llena en {} canales, sin pánico", n, canales);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31

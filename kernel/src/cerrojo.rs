@@ -20,6 +20,11 @@ impl<T> Cerrojo<T> {
         Self { tomado: AtomicBool::new(false), dato: UnsafeCell::new(dato) }
     }
 
+    /// Acceso directo cuando nadie más puede tenerlo (`&mut self`): sin cerrojo.
+    pub fn get_mut(&mut self) -> &mut T {
+        self.dato.get_mut()
+    }
+
     pub fn tomar(&self) -> Guarda<'_, T> {
         while self
             .tomado

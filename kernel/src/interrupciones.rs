@@ -69,6 +69,13 @@ impl Interrupcion {
     }
 }
 
+impl Interrupcion {
+    /// Saca el canal de destino de un objeto que ya no comparte nadie, para soltarlo sin recursión (`objetos.rs`).
+    pub fn quitar_destino(&mut self) -> Option<Arc<Canal>> {
+        self.destino.get_mut().take().map(|(c, _)| c)
+    }
+}
+
 impl Drop for Interrupcion {
     fn drop(&mut self) {
         crate::gic::deshabilitar(self.intid);
