@@ -98,7 +98,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
 - [x] C26 **Búferes de la GPU** (añadida a las 08:16): crear, VA, liberar, sobre la tabla de la MMU de la GPU.
-- [~] V5 **Listas de control mínimas de la V3D** (añadida a las 08:16, agente analista): borrar baldosas y guardarlas
+- [x] V5 **Listas de control mínimas de la V3D** (añadida a las 08:16, agente analista): borrar baldosas y guardarlas
   en memoria sin Mesa, para el primer trabajo de la GPU en la Pi 4. Salida: `docs/spec/hw/v3d-listas.md`.
 - [x] C25 **El ratón USB mueve la ventana del compositor** (añadida a las 08:14). Con captura.
 - [x] C24 **V3D, lado del kernel, según la especificación** (añadida a las 08:05). Encendido, identificación, MMU
@@ -468,3 +468,12 @@ va justo debajo de 2 GB (`0x80000000`), porque Dash quiere toda la memoria de un
 Ningún segmento puede pasar de 2 GB menos 8 MB. Prueba: `hola` usa 40 KB de pila, que antes fallaban; `sd` pide 128
 KB con `-zstack-size=131072` (en `usuario/build.rs`) y los recibe. BIEN dos de tres. La tercera falló otra vez en
 C14, con el analista de V5 cargando la máquina.
+
+### 2026-11-03 08:3x — V5 (listas de control mínimas de la V3D), del analista
+
+`docs/spec/hw/v3d-listas.md`, 764 líneas, leyendo Mesa (MIT). 25 paquetes campo a campo. Hallazgo: Mesa nunca lanza
+un render sin binning; para borrar manda antes un binning vacío. El documento da dos variantes: A, solo render, con
+la lista de cada baldosa sin el salto a lo que escribe el binner; B, la de Mesa, con binning vacío. Ejemplo de 64 ×
+64 con volcados byte a byte (RCL de 106 bytes, lista de baldosa de 17), contrastados con los empaquetadores que
+genera Mesa compilados fuera del repositorio: comprueba la codificación, no el hardware. Resultado esperado en
+memoria: `20 40 80 FF` en cada píxel. Revisado por encima: prosa y tablas, sin código de Mesa copiado.
