@@ -762,6 +762,26 @@ fn prueba_v3d() {
     };
     let devuelta = memoria::paginas().libres() == libres;
     kprintln!("  tabla de 4 MB: mapear y quitar {}; memoria devuelta: {}", if bien_mmu { "bien" } else { "MAL" }, if devuelta { "sí" } else { "no" });
+    // C27: las listas de borrado del ejemplo de v3d-listas.md §8, comparadas byte a byte con sus volcados.
+    let ejemplo = v3d::listas::Borrado { ancho: 64, alto: 64, color: 0xFF80_4020, destino: 0x0010_0000, paso: 256, generica: 0x0020_0100, memoria_baldosas: 0x0020_1000 };
+    let rcl_esperada: [u8; 106] = [
+        0x79, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x00, 0x00, 0x79, 0x03, 0x20, 0x40, 0x80, 0xFF, 0x00, 0x00, 0x00,
+        0x79, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79, 0x02, 0x00, 0x00, 0x00, 0x80, 0x3F, 0x00, 0x00,
+        0x7E, 0x05, 0x7B, 0x00, 0x10, 0x20, 0x00, 0x7A, 0x00, 0x00, 0x01, 0x01, 0x01, 0x10, 0x00, 0x00,
+        0x7C, 0x00, 0x00, 0x00, 0x1A, 0x1D, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x19, 0x03, 0x1B, 0x7C, 0x00, 0x00, 0x00, 0x1A, 0x1D, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+        0x00, 0x00, 0x00, 0x1B, 0x13, 0x14, 0x00, 0x01, 0x20, 0x00, 0x11, 0x01, 0x20, 0x00, 0x17, 0x00, 0x00, 0x0D,
+    ];
+    let generica_esperada: [u8; 17] = [0x7D, 0x1A, 0x1D, 0x00, 0xB0, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x1B, 0x12];
+    let rcl = ejemplo.rcl().unwrap_or_default();
+    let generica = ejemplo.lista_generica();
+    let bien_listas = rcl[..] == rcl_esperada[..] && generica[..] == generica_esperada[..];
+    kprintln!("  listas de borrado del ejemplo: RCL {} bytes, genérica {} bytes, iguales al volcado: {}", rcl.len(), generica.len(), if bien_listas { "sí" } else { "no" });
+    if !bien_listas {
+        kprintln!("  RCL {:02x?}", rcl);
+        kprintln!("  genérica {:02x?}", generica);
+    }
+    kprintln!("C27: listas de borrado de la V3D {}", if bien_listas { "bien" } else { "MAL" });
     match v3d::V3d::iniciar() {
         Err(v3d::Error::NoHayGpu) => kprintln!("  sin V3D (QEMU no la emula): la parte del hardware no se prueba"),
         Err(e) => kprintln!("  la V3D no arranca: {:?}", e),
@@ -771,10 +791,7 @@ fn prueba_v3d() {
             kprintln!("  tabla de la MMU en {:#x}; eventos pendientes {:x?}", g.mmu.tabla, g.eventos());
             // Con hardware, los búferes de C26 irían sobre esta tabla.
             let mut bos = gpu::Gpu::con_hardware(g);
-            if let Ok((h, va)) = bos.crear(4096) {
-                kprintln!("  BO de prueba en la VA {:#x} de la GPU", va);
-                let _ = bos.liberar(h);
-            }
+            primer_borrado(&mut bos);
         }
     }
     kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
@@ -891,6 +908,42 @@ fn raton_mueve_ventana(u: &usb::Dwc2, raton: &mut usb::PuntoInterrupcion) {
 fn esperar_ms(ms: u64) {
     let fin = reloj::ahora() + ms * reloj::frecuencia() / 1000;
     while reloj::ahora() < fin {}
+}
+
+/// C27 en la Pi 4: el primer trabajo de la GPU. Borra 64 × 64 píxeles a `20 40 80 FF` y comprueba la memoria.
+fn primer_borrado(bos: &mut gpu::Gpu) {
+    let (Ok(dest), Ok(listas), Ok(baldosas)) = (bos.crear(64 * 64 * 4), bos.crear(4096), bos.crear(4096)) else {
+        kprintln!("C27: sin memoria para los búferes");
+        return;
+    };
+    let b = v3d::listas::Borrado { ancho: 64, alto: 64, color: 0xFF80_4020, destino: dest.1, paso: 256, generica: listas.1 + 0x100, memoria_baldosas: baldosas.1 };
+    let rcl = b.rcl().unwrap();
+    let generica = b.lista_generica();
+    let escribir = |bos: &gpu::Gpu, h: u32, desde: usize, datos: &[u8]| {
+        let p = bos.bo(h).unwrap().paginas[0];
+        let va = mmu::virt(p as usize);
+        unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), (va + desde) as *mut u8, datos.len()) };
+        hvs::limpiar_cache(va, 4096);
+    };
+    escribir(bos, listas.0, 0, &rcl);
+    escribir(bos, listas.0, 0x100, &generica);
+    for &p in &bos.bo(dest.0).unwrap().paginas {
+        let va = mmu::virt(p as usize);
+        unsafe { core::ptr::write_bytes(va as *mut u8, 0xA5, 4096) };
+        hvs::limpiar_cache(va, 4096);
+    }
+    let Some(g) = bos.hardware() else { return };
+    g.lanzar_render(listas.1, listas.1 + rcl.len() as u32);
+    let fin = g.esperar_evento(v3d::INT_FRDONE, 1_000_000);
+    let mut bien = 0;
+    for &p in &bos.bo(dest.0).unwrap().paginas {
+        let va = mmu::virt(p as usize);
+        hvs::limpiar_e_invalidar(va, 4096); // antes de leer lo que escribió la GPU
+        let px = unsafe { core::slice::from_raw_parts(va as *const u8, 4096) };
+        bien += px.chunks(4).filter(|c| *c == [0x20, 0x40, 0x80, 0xFF]).count();
+    }
+    kprintln!("  render: fin {:x?}; píxeles con el color: {} de 4096", fin, bien);
+    kprintln!("C27: primer trabajo de la GPU {}", if bien == 4096 { "bien" } else { "MAL" });
 }
 
 /// C26: búferes de la GPU con su VA, sobre la tabla de la MMU de la GPU.

@@ -97,6 +97,8 @@ del kernel sobre la que irán esos controladores.
   la serie.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
+- [x] C27 **Listas de borrado de la V3D** (añadida a las 08:27): construir la RCL de V5 y, en la Pi, el primer
+  trabajo de la GPU.
 - [x] C26 **Búferes de la GPU** (añadida a las 08:16): crear, VA, liberar, sobre la tabla de la MMU de la GPU.
 - [x] V5 **Listas de control mínimas de la V3D** (añadida a las 08:16, agente analista): borrar baldosas y guardarlas
   en memoria sin Mesa, para el primer trabajo de la GPU en la Pi 4. Salida: `docs/spec/hw/v3d-listas.md`.
@@ -477,3 +479,16 @@ la lista de cada baldosa sin el salto a lo que escribe el binner; B, la de Mesa,
 64 con volcados byte a byte (RCL de 106 bytes, lista de baldosa de 17), contrastados con los empaquetadores que
 genera Mesa compilados fuera del repositorio: comprueba la codificación, no el hardware. Resultado esperado en
 memoria: `20 40 80 FF` en cada píxel. Revisado por encima: prosa y tablas, sin código de Mesa copiado.
+
+### 2026-11-03 08:2x — C27 (listas de borrado de la V3D)
+
+`v3d::listas::Borrado`, escrito solo con `docs/spec/hw/v3d-listas.md`, variante A (solo render): la RCL y la lista
+genérica de baldosa, byte a byte. De momento, una sola baldosa (hasta 64 × 64). Prueba en QEMU: con los datos del
+ejemplo de §8 salen 106 y 17 bytes, iguales a los volcados. BIEN. En la Pi 4, `prueba_v3d` lanza el primer trabajo de
+la GPU (`primer_borrado`): tres búferes (destino lleno de `0xA5`, listas, memoria de baldosas a cero), render, espera
+de `FRDONE` y cuenta de los píxeles `20 40 80 FF`. Sin probar: falta la Pi. Si la variante A no va, la B (binning
+vacío, como Mesa) está en §7 de la especificación.
+
+C14 falla ahora en dos de cada tres vueltas: carga media de la máquina de 15 (otra sesión compilando). La desviación
+sube a 1-2,3 ms con un límite de 1 ms. Las demás pruebas pasan. Es ruido de QEMU con el reloj real, no de C27; con la
+máquina en calma pasaba siempre.

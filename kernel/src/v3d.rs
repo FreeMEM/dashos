@@ -405,3 +405,98 @@ impl V3d {
         None
     }
 }
+
+/// Listas de control mínimas: borrar una baldosa a un color y guardarla en memoria (C27).
+///
+/// Escrito solo con `docs/spec/hw/v3d-listas.md` (V5), variante A (solo render). De momento solo una baldosa (hasta
+/// 64 × 64 píxeles), formato `rgba8` lineal. Los paquetes van byte a byte, con los campos en little-endian (§2).
+pub mod listas {
+    use alloc::vec::Vec;
+
+    /// Formato de guardado `rgba8` (§3.12).
+    const FORMATO_RGBA8: u128 = 27;
+
+    pub struct Borrado {
+        pub ancho: u32,
+        pub alto: u32,
+        /// Palabra del color como la define §3.9: R en los bits bajos (`0xAABBGGRR`).
+        pub color: u32,
+        pub destino: u32,
+        pub paso: u32,
+        /// VA de la lista genérica de baldosa.
+        pub generica: u32,
+        /// VA de una página a cero, alineada a 64 bytes (§3.7).
+        pub memoria_baldosas: u32,
+    }
+
+    fn mas(v: &mut Vec<u8>, b: &[u8]) {
+        v.extend_from_slice(b);
+    }
+
+    fn le32(x: u32) -> [u8; 4] {
+        x.to_le_bytes()
+    }
+
+    /// Guardado de un búfer de baldosa (`STORE_TILE_BUFFER_GENERAL`, 13 bytes).
+    fn guardar(v: &mut Vec<u8>, bufer: u8, paso: u32, direccion: u32) {
+        let campos: u128 = 0x1D | ((bufer as u128) << 8) | if bufer == 8 { 0 } else { (FORMATO_RGBA8 << 20) | ((paso as u128) << 36) };
+        mas(v, &campos.to_le_bytes()[..9]);
+        mas(v, &le32(direccion));
+    }
+
+    impl Borrado {
+        /// La lista genérica de baldosa (§5.2): 17 bytes.
+        pub fn lista_generica(&self) -> Vec<u8> {
+            let mut v = Vec::new();
+            mas(&mut v, &[0x7D, 0x1A]); // TILE_COORDINATES_IMPLICIT, END_OF_LOADS
+            guardar(&mut v, 0, self.paso, self.destino);
+            mas(&mut v, &[0x1B, 0x12]); // END_OF_TILE_MARKER, RETURN_FROM_SUB_LIST
+            v
+        }
+
+        /// La RCL (§5.1). `None` si no cabe en una baldosa.
+        pub fn rcl(&self) -> Option<Vec<u8>> {
+            if self.ancho == 0 || self.alto == 0 || self.ancho > 64 || self.alto > 64 || self.memoria_baldosas % 64 != 0 {
+                return None;
+            }
+            let fin_generica = self.generica + self.lista_generica().len() as u32;
+            let (w, h) = (self.ancho as u16, self.alto as u16);
+            let mut v = Vec::new();
+            // COMMON: un RT, anchura, altura, early-Z desactivado (§3.2, §8.2).
+            mas(&mut v, &[0x79, 0x00]);
+            mas(&mut v, &w.to_le_bytes());
+            mas(&mut v, &h.to_le_bytes());
+            mas(&mut v, &[0x40, 0, 0]);
+            // CLEAR_COLORS_PART1 del RT 0 (§3.3).
+            mas(&mut v, &[0x79, 0x03]);
+            mas(&mut v, &le32(self.color));
+            mas(&mut v, &[0, 0, 0]);
+            // COLOR: 32 bpp, tipo interno rgba8 (§3.4).
+            mas(&mut v, &[0x79, 0x81, 0, 0, 0, 0, 0, 0, 0]);
+            // ZS_CLEAR_VALUES: plantilla 0, Z 1.0 (§3.5).
+            mas(&mut v, &[0x79, 0x02, 0]);
+            mas(&mut v, &1.0f32.to_bits().to_le_bytes());
+            mas(&mut v, &[0, 0]);
+            mas(&mut v, &[0x7E, 0x05]); // TILE_LIST_INITIAL_BLOCK_SIZE
+            v.push(0x7B); // MULTICORE_RENDERING_TILE_LIST_SET_BASE, conjunto 0
+            mas(&mut v, &le32(self.memoria_baldosas));
+            // SUPERTILE_CFG: supertiles de 1 × 1, cuadro de 1 × 1, una baldosa de ancho y de alto (§3.8).
+            mas(&mut v, &[0x7A, 0, 0, 1, 1, 1, 0x10, 0, 0]);
+            // Dos baldosas de preparación (errata GFXH-1742); la primera borra el TLB.
+            for borrar in [true, false] {
+                mas(&mut v, &[0x7C, 0, 0, 0, 0x1A]); // TILE_COORDINATES (0, 0), END_OF_LOADS
+                guardar(&mut v, 8, 0, 0); // guardado de relleno: ningún búfer
+                if borrar {
+                    mas(&mut v, &[0x19, 0x03]); // CLEAR_TILE_BUFFERS
+                }
+                v.push(0x1B); // END_OF_TILE_MARKER
+            }
+            v.push(0x13); // FLUSH_VCD_CACHE
+            v.push(0x14); // START_ADDRESS_OF_GENERIC_TILE_LIST
+            mas(&mut v, &le32(self.generica));
+            mas(&mut v, &le32(fin_generica));
+            mas(&mut v, &[0x17, 0, 0, 0x0D]); // SUPERTILE_COORDINATES (0, 0), END_OF_RENDERING
+            Some(v)
+        }
+    }
+}

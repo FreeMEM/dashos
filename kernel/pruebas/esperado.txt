@@ -63,6 +63,8 @@ C21: controlador de la tarjeta SD lanzado
 C23: listas del HVS bien
   entrada de la tabla en memoria: [45, 23, 01, 30]; registros como la especificación: sí
   tabla de 4 MB: mapear y quitar bien; memoria devuelta: sí
+  listas de borrado del ejemplo: RCL 106 bytes, genérica 17 bytes, iguales al volcado: sí
+C27: listas de borrado de la V3D bien
 C24: V3D, lado del kernel bien
   dispositivo en la dirección 0: clase 9, 0409:55aa, paquetes de 8 bytes, 1 configuración
   dirección 1 asignada y descriptor releído: sí

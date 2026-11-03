@@ -225,3 +225,13 @@ pub fn limpiar_cache(va: usize, largo: usize) {
     }
     unsafe { core::arch::asm!("dsb sy") };
 }
+
+/// Limpia e invalida un tramo de la caché de datos, para leer lo que escribió un aparato en la RAM.
+pub fn limpiar_e_invalidar(va: usize, largo: usize) {
+    let mut p = va & !63;
+    while p < va + largo {
+        unsafe { core::arch::asm!("dc civac, {}", in(reg) p) };
+        p += 64;
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+}

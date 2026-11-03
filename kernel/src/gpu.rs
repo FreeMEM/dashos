@@ -52,6 +52,10 @@ impl Gpu {
         }
     }
 
+    pub fn hardware(&self) -> Option<&V3d> {
+        self.v3d.as_ref()
+    }
+
     fn vaciar(&self) {
         if let Some(g) = &self.v3d {
             let _ = g.vaciar_mmu();
