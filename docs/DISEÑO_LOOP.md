@@ -112,7 +112,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
 - [x] S11 **Interfaz de programación.** La API nativa de DashOS para aplicaciones nuevas, frente a la API Amiga de
   la caja (decisión pendiente en `PLAN.md`). Juego de controles para la interfaz, formato de ejecutables, bibliotecas
   compartidas y cómo encaja Dash.
-- [ ] S12 **Controladores de la Pi 4.** Lista y orden: serie, temporizador, interrupciones, tarjeta SD, USB (VL805
+- [x] S12 **Controladores de la Pi 4.** Lista y orden: serie, temporizador, interrupciones, tarjeta SD, USB (VL805
   por PCIe), red GENET, Wi-Fi y Bluetooth, audio, HDMI. Cuáles se escriben, cuáles se adaptan y con qué licencia.
 - [ ] S13 **Red.** Pila TCP/IP, cortafuegos, DNS, TLS, y `bsdsocket.library` para los programas Amiga.
 - [ ] S14 **Arranque, servicios y actualizaciones.** Del firmware de la Pi al escritorio. Gestor de servicios.
@@ -159,7 +159,10 @@ Preguntas para el usuario que salen de las tareas. Cada una dice de qué tarea v
 - (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? Mientras: sí.
 - (S10) ¿Disposición por defecto: Workbench flotante y el resto en mosaico con desplazamiento? Mientras: sí.
 - (S10) ¿Menús del programa en la barra de la pantalla con el botón derecho? Mientras: sí.
-- (S0) ¿Comprar ya una Pi 4 para medir la referencia con Raspberry Pi OS? Mientras: las cifras de Linux son de oídas.
+- (S12, sustituye a la de S0) ¿Comprar la Pi 4 al terminar la fase Base en QEMU, y no antes? Mientras: sí.
+- (S12) ¿Lo no documentado (HVS, HDMI, V3D, Wi-Fi): una sesión lee Linux y escribe una especificación, otra escribe
+  el controlador sin verlo? Mientras: sí.
+- (S12) ¿Aceptar el firmware cerrado del Wi-Fi de Infineon? Mientras: sí.
 
 ## Bitácora
 
@@ -296,4 +299,13 @@ compartida por defecto; POSIX con relibc para portar. Al kernel solo por una bib
 el paso de interfaces de AmigaOS 4. ELF big-endian, y las `.library` nativas son ELF con versión. Kit de interfaz con
 el modelo de MUI (como Zune), para que `.dashui` valga en los dos sistemas. Consecuencia: un programa Dash debería
 compilar para AmigaOS 3.x y para DashOS sin cambios.
+
+### 2026-11-03 — S12 (controladores de la Pi 4)
+
+`docs/diseño/S12-controladores.md`. Comprobado con `info qtree`: QEMU `raspi4b` emula serie, GIC, buzón, pantalla del
+firmware, SD, USB DWC2, GPIO y DMA, pero no PCIe con el VL805, GENET, HVS y HDMI, V3D ni Wi-Fi. Comprobado con
+`info usb`: el DWC2 de QEMU acepta teclado, ratón y disco USB, así que hay entrada en QEMU desde el principio.
+Las fases Kernel y Base caben enteras en QEMU; la Pi 4 hace falta a partir de la fase Placa. El VL805 de las placas
+nuevas pierde su firmware y la VideoCore lo recarga con la etiqueta `0x00030058`. Fuentes permitidas: hoja de datos,
+normas, FreeBSD y NetBSD, Emu68 y los tutoriales de Rust; Linux solo para entender, con sala limpia.
 
