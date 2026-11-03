@@ -185,7 +185,7 @@ Son provisionales, hasta que haya cupos por grupo de procesos (S16, F).
 Con la cola llena, `canal_escribir` devuelve `E_LIMITE` y las llaves vuelven a sus números. Una interrupción que
 llega con la cola llena se pierde.
 
-Un número de llamada desconocido devuelve `E_ARGUMENTO` y se avisa en la consola.
+Un número de llamada desconocido devuelve `E_ARGUMENTO` y se avisa en la consola. La 99 existe solo para las pruebas del kernel y desaparecerá; no la uséis.
 
 ## Llaves y objetos
 

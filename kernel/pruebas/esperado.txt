@@ -23,6 +23,7 @@ C7: montón bien
   frecuencia del temporizador 
 C8: interrupciones bien
 C9: 3 núcleos más en marcha: bien
+C34: mapa del kernel con W^X y guardas bien
 C10: hilos bien
   proceso con ASID 1 en el núcleo 2
   proceso con ASID 2 en el núcleo 3
@@ -110,3 +111,5 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
+PÁNICO: panicked at src/excepciones.rs
+pila del kernel desbordada

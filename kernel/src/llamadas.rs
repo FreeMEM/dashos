@@ -70,12 +70,25 @@ fn leer_usuario(p: u64, n: usize) -> Option<Vec<u8>> {
     let mut v = Vec::new();
     v.try_reserve_exact(n).ok()?;
     v.resize(n, 0);
-    (unsafe { desde_usuario(v.as_mut_ptr(), p, n) } == 0).then_some(v)
+    (con_espacio(|| unsafe { desde_usuario(v.as_mut_ptr(), p, n) }) == 0).then_some(v)
+}
+
+/// Pone la mitad baja del proceso solo mientras dura una copia (PAN por software, C34). El resto del tiempo el kernel
+/// tiene TTBR0 vacío, así que un fallo que siga un puntero de usuario sin pasar por aquí no encuentra nada.
+fn con_espacio(copia: impl FnOnce() -> u64) -> u64 {
+    let ttbr0 = planificador::ttbr0_actual();
+    if ttbr0 == 0 {
+        return 1;
+    }
+    crate::espacio::activar(ttbr0);
+    let r = copia();
+    crate::espacio::activar_vacio();
+    r
 }
 
 /// Copia `datos` a la memoria del proceso actual, con sus permisos. Falso si no se puede (C31).
 fn escribir_usuario(p: u64, datos: &[u8]) -> bool {
-    tramo(p, datos.len() as u64).is_some() && unsafe { hacia_usuario(p, datos.as_ptr(), datos.len()) } == 0
+    tramo(p, datos.len() as u64).is_some() && con_espacio(|| unsafe { hacia_usuario(p, datos.as_ptr(), datos.len()) }) == 0
 }
 
 /// Una tabla de números de llave en el orden de bytes del proceso (C30).
@@ -115,6 +128,9 @@ pub fn atender(marco: &mut Marco) {
             planificador::terminar_actual();
         }
         3 => canal_crear(marco),
+        // Solo para la prueba de C34 (sale de la imagen con las pruebas, C36): 1 si el kernel ve la dirección de
+        // usuario fuera de una copia. Tiene que dar 0.
+        99 => crate::mapa::traducir(a[0] as usize).0 as u64,
         4 => canal_escribir(a[0] as u32, a[1], a[2], a[3], a[4]),
         5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4]),
         6 => cerrar(a[0] as u32),

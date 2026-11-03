@@ -21,6 +21,7 @@ mod usb;
 mod interrupciones;
 mod llamadas;
 mod memoria;
+mod mapa;
 mod mmu;
 mod nucleos;
 mod objetos;
@@ -65,11 +66,17 @@ extern "C" fn kmain(dtb: usize) -> ! {
     kprintln!("C4: árbol de dispositivos leído");
 
     prueba_memoria(dtb);
+    mapa::construir();
+    mapa::activar();
     prueba_monton();
     prueba_reloj(dtb);
 
     let n = nucleos::despertar();
     kprintln!("C9: {} núcleos más en marcha: {}", n, if n == 3 { "bien" } else { "MAL" });
+    if n == 3 {
+        mapa::olvidar_arranque();
+    }
+    prueba_mapa();
 
     prueba_hilos();
     prueba_procesos();
@@ -92,6 +99,7 @@ extern "C" fn kmain(dtb: usize) -> ! {
     prueba_repartos();
     prueba_asid();
     prueba_el0();
+    prueba_desborde();
     loop {
         unsafe { core::arch::asm!("wfe") };
     }
@@ -1167,6 +1175,66 @@ fn prueba_el0() {
     }
     let vivas = llamadas::SALIDAS.load(Ordering::Relaxed) - salidas;
     kprintln!("C32: registros de EL0 {}", if vivas == 0 { "bien" } else { "MAL (alguna trampa salió viva)" });
+}
+
+/// C34: el mapa del kernel por páginas. La MMU (instrucción AT) y las entradas de la tabla dicen, para cada parte:
+/// código de solo lectura y ejecutable, `.rodata` de solo lectura, datos y montón sin ejecución, la guarda de la pila
+/// de arranque sin proyectar y la mitad baja vacía.
+static SOLO_LECTURA_C34: [u8; 8] = *b"rodata!!";
+static DATOS_C34: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
+
+fn prueba_mapa() {
+    unsafe extern "C" {
+        static __pilas_fin: u8;
+    }
+    let pxn = |va: usize| mapa::entrada(va).map(|e| e & mapa::PXN != 0);
+    let uxn = |va: usize| mapa::entrada(va).map(|e| e & mapa::UXN != 0);
+    let texto = kmain as *const () as usize;
+    let rodata = SOLO_LECTURA_C34.as_ptr() as usize;
+    let datos = &DATOS_C34 as *const _ as usize;
+    let monton = alloc::boxed::Box::new(0u64);
+    let monton_va = &*monton as *const u64 as usize;
+    let guarda = unsafe { &__pilas_fin as *const u8 as usize } - 0x8000;
+    let pila = mapa::pila_nueva();
+    let (pila_arriba, pila_guarda) = pila.as_ref().map(|p| (p.tope() - 8, p.tope() - mapa::PILA - 8)).unwrap_or((0, 0));
+    let casos = [
+        ("código", texto, (true, false), Some(false)),
+        ("rodata", rodata, (true, false), Some(true)),
+        ("datos", datos, (true, true), Some(true)),
+        ("montón", monton_va, (true, true), Some(true)),
+        ("guarda de la pila", guarda, (false, false), None),
+        ("mitad baja (0x80000)", 0x80000, (false, false), None),
+        ("pila de un hilo", pila_arriba, (true, true), Some(true)),
+        ("guarda de esa pila", pila_guarda, (false, false), None),
+    ];
+    let mut bien = true;
+    for (nombre, va, acceso, ejecutar_no) in casos {
+        let visto = mapa::traducir(va);
+        let ok = visto == acceso && pxn(va) == ejecutar_no && (ejecutar_no.is_none() || uxn(va) == Some(true));
+        kprintln!("  {}: leer {}, escribir {}, ejecutar en EL1 {}", nombre, visto.0, visto.1,
+            match pxn(va) { Some(true) => "no", Some(false) => "sí", None => "-" });
+        bien &= ok;
+    }
+    drop(pila);
+    kprintln!("C34: mapa del kernel con W^X y guardas {}", if bien { "bien" } else { "MAL" });
+}
+
+/// C34, la última prueba: un hilo del kernel que se llama a sí mismo sin fin llega a la guarda de su pila. El kernel
+/// tiene que parar con un pánico claro, no pisar la memoria de al lado. Es la última porque deja parado ese núcleo.
+#[inline(never)]
+fn hondo(n: u64) -> u64 {
+    let mut relleno = [n; 32];
+    relleno[n as usize % 32] = hondo(core::hint::black_box(n + 1));
+    core::hint::black_box(relleno)[0]
+}
+
+extern "C" fn desbordar(_: usize) {
+    hondo(0);
+}
+
+fn prueba_desborde() {
+    planificador::crear(desbordar, 0, 3);
+    esperar_tics(50);
 }
 
 #[panic_handler]

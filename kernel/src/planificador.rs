@@ -18,7 +18,6 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 const MAX_NUCLEOS: usize = 4;
-const PILA: usize = 16 * 1024;
 pub const PESO_NORMAL: u64 = 1024;
 
 #[repr(C)]
@@ -49,7 +48,7 @@ pub struct Hilo {
     proceso: usize,
     /// Clase de plazo (C14), en cuentas del temporizador.
     plazo: Option<Plazo>,
-    pila: Option<Box<[u8]>>,
+    pila: Option<crate::mapa::Pila>,
     /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
     fp: Option<Box<EstadoFp>>,
     /// Su TPIDR_EL0, el puntero de TLS que EL0 puede leer y escribir: se guarda y se repone en cada cambio para que
@@ -181,15 +180,12 @@ fn registros_el0() {
     };
 }
 
-/// Marca al fondo de cada pila del kernel. Las pilas no tienen página de guarda todavía (S16, fase 2): si un hilo
-/// la desborda, al menos se ve en el siguiente cambio y el kernel para en vez de seguir con memoria pisada.
-const MARCA_PILA: u64 = 0x5049_4C41_2D44_4153;
 
 /// Crea un hilo en el núcleo dado, que ejecuta `f(arg)`. `proceso` es 0 para hilos del kernel.
 pub fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
-    let mut pila = alloc::vec![0u8; PILA].into_boxed_slice();
-    pila[..8].copy_from_slice(&MARCA_PILA.to_ne_bytes());
-    let tope = (pila.as_ptr() as usize + PILA) & !15;
+    // Pila con guarda (C34). Hoy solo crea hilos el kernel; sin pilas libres no puede seguir.
+    let pila = crate::mapa::pila_nueva().expect("sin pilas del kernel");
+    let tope = pila.tope();
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
     let mut contexto = Contexto::default();
     contexto.x19_x30[0] = f as *const () as usize as u64; // x19
@@ -410,11 +406,9 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
                 nucleo.muertos.push(actual);
             }
             (*siguiente).estado = Estado::Corriendo;
-            if (*siguiente).ttbr0 != 0 {
-                crate::espacio::activar((*siguiente).ttbr0);
-            } else {
-                crate::espacio::activar_vacio();
-            }
+            // Dentro del kernel la mitad baja siempre está vacía (PAN por software, C34): el espacio del hilo se pone
+            // al volver a EL0 (excepciones.rs) y solo durante las copias de usuario (llamadas.rs).
+            crate::espacio::activar_vacio();
             if (*siguiente).proceso != 0 {
                 orden_el0((*((*siguiente).proceso as *const crate::objetos::Proceso)).big_endian);
             }
@@ -428,11 +422,6 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
     unsafe {
-        if let Some(p) = &(*viejo).pila {
-            if p[..8] != MARCA_PILA.to_ne_bytes() {
-                panic!("la pila del kernel del hilo {} se ha desbordado", (*viejo).id);
-            }
-        }
         let tpidr: u64;
         core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
         (*viejo).tpidr = tpidr;
@@ -552,7 +541,13 @@ pub fn actual_id() -> u64 {
     if h.is_null() { 0 } else { unsafe { (*h).id } }
 }
 
-/// Asocia el hilo actual a un espacio de direcciones y lo activa.
+/// El TTBR0 del hilo actual (0 si es del kernel).
+pub fn ttbr0_actual() -> u64 {
+    let h = actual();
+    if h.is_null() { 0 } else { unsafe { (*h).ttbr0 } }
+}
+
+/// Asocia el hilo actual a un espacio de direcciones y lo activa (para bajar a EL0 justo después).
 pub fn asignar_espacio(ttbr0: u64) {
     let n = nucleos::numero() as usize;
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {

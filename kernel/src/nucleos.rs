@@ -41,6 +41,7 @@ pub fn despertar() -> u32 {
 
 #[unsafe(no_mangle)]
 extern "C" fn kmain_secundario(nucleo: u64) -> ! {
+    crate::mapa::activar();
     excepciones::iniciar();
     gic::iniciar_cpu();
     crate::planificador::iniciar_nucleo();

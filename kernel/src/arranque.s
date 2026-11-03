@@ -135,6 +135,46 @@ en_alto:
 4:  wfe
     b       4b
 
+// cambiar_ttbr1(x0 = tabla nueva, x1 = tabla vacía, x2 = __tabla_l1; las tres físicas): pasa la mitad alta de este
+// núcleo a las tablas del mapa del kernel (mapa.rs, C34). Sigue la regla de romper antes de hacer: corre desde la
+// proyección identidad, deja TTBR1 vacío, vacía la TLB y solo entonces pone la tabla nueva. Entre medias no toca la
+// memoria, ni la pila. Al volver, TTBR0 queda como estaba y se vacía la TLB otra vez, para que no queden entradas
+// globales de la proyección identidad.
+    .globl  cambiar_ttbr1
+cambiar_ttbr1:
+    mrs     x9, daif
+    msr     daifset, #0xf
+    mrs     x10, ttbr0_el1
+    msr     ttbr0_el1, x2
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    ldr     x4, =0xFFFFFF8000000000     // KERNEL_VA
+    adr     x3, 1f
+    sub     x3, x3, x4
+    br      x3                          // a la misma instrucción por su dirección física
+1:  msr     ttbr1_el1, x1
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    msr     ttbr1_el1, x0
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    adr     x3, 2f
+    add     x3, x3, x4
+    br      x3                          // de vuelta a la mitad alta, ya con el mapa nuevo
+2:  msr     ttbr0_el1, x10
+    isb
+    tlbi    vmalle1
+    dsb     nsh
+    isb
+    msr     daif, x9
+    ret
+
 // --- Núcleos 1 a 3 ---
 // Entran aquí desde la tabla de espera del firmware, en EL2, little-endian y sin MMU (C9).
     .globl _secundario
@@ -145,8 +185,8 @@ _secundario:
 sec_el1:
     MMU     sec_alto
 sec_alto:
-    ldr     x1, =__pilas_fin            // pila: 64 KB por núcleo, hacia abajo desde el final
-    lsl     x2, x19, #16
+    ldr     x1, =__pilas_fin            // pila: una ranura de 32 KB por núcleo, hacia abajo desde el final
+    lsl     x2, x19, #15
     sub     x1, x1, x2
     mov     sp, x1
     mov     x0, x19

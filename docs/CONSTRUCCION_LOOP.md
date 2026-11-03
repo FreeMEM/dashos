@@ -98,7 +98,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C21 **Tarjeta SD.** Controlador SDHCI (EMMC2) que lee el primer sector de una imagen en QEMU.
 - [x] C22 **USB DWC2.** Enumerar dispositivos y leer el teclado y el ratón de QEMU. Varias vueltas.
 - [x] C33 **Kernel en little-endian** (fase 2 de S16, A).
-- [ ] C34 **Mapa del kernel por páginas** (fase 2): W^X en el kernel, pilas con página de guarda, sin proyección
+- [x] C34 **Mapa del kernel por páginas** (fase 2): W^X en el kernel, pilas con página de guarda, sin proyección
   identidad después del arranque, PAN por software (TTBR0 vacío mientras el kernel no copia de usuario).
 - [ ] C35 **El kernel no se expulsa** (fase 2, E): hilos del kernel con las IRQ enmascaradas salvo en puntos fijos,
   trabajo acotado por llamada (poner a cero por tandas, `escribir` corto).
@@ -729,6 +729,30 @@ Fase 2 de S16, decisión A. El kernel compila para `aarch64-unknown-none-softflo
 como `repartos`. Es la causa del fallo de C18 que no sabía explicar en C32.
 
 **C14** falló 2 de 5 veces con la máquina a carga 18: mide el reloj real y QEMU no corre a tiempo. No es del cambio.
+
+### 2026-11-03 tarde — C34 (mapa del kernel por páginas)
+
+Fase 2 de S16. Tres partes, cada una con su prueba:
+
+**Mapa con W^X** (`mapa.rs`). El núcleo 0 hace las tablas de la mitad alta al poner en marcha el repartidor, y cada
+núcleo se pasa a ellas con `cambiar_ttbr1` (arranque.s), que rompe antes de hacer: corre desde la proyección
+identidad, deja TTBR1 vacío, vacía la TLB y pone la tabla nueva. Código: solo lectura y ejecutable. `.rodata`: solo
+lectura. Datos, montón y mapa lineal: sin ejecución. Periféricos: dispositivo. UXN en todo. Con los cuatro núcleos en
+marcha se borran las tablas del arranque: ya no hay proyección identidad. Cada sección del enlace empieza en página
+propia. La prueba lo mira con la instrucción AT y con las entradas de la tabla.
+
+**Pilas con guarda.** Toda pila del kernel es la mitad de arriba (16 KB) de una ranura de 32 KB alineada. La mitad de
+abajo no se proyecta. Las de los hilos van en el GB 256 de la mitad alta. Las de arranque son ranuras iguales dentro
+de la imagen. La entrada de cada excepción comprueba el bit 14 del SP antes de escribir el marco: si el marco caería en
+la guarda, pasa a una pila de emergencia y el kernel para con "pila del kernel desbordada". Lo hace como Linux,
+cambiando SP y x0 con sumas, sin tocar la memoria. La última prueba del arranque hace que un hilo se llame a sí mismo
+sin fin y espera ese pánico. Sustituye a la marca de C32.
+
+**PAN por software.** Dentro del kernel, TTBR0 es la tabla vacía (ASID 0). El espacio del proceso solo se pone al
+volver a EL0 y durante `desde_usuario`/`hacia_usuario`. `malo`, paso 27, pregunta con la llamada de prueba 99 si el
+kernel ve su memoria fuera de una copia: tiene que ser que no. Sin este cambio, el paso falla.
+
+La llamada 99 es solo para esta prueba; sale con las pruebas en C36.
 
 ## Resumen de la noche
 

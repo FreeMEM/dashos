@@ -236,6 +236,11 @@ pub fn activar(ttbr0: u64) {
     unsafe { core::arch::asm!("msr ttbr0_el1, {}", "isb", in(reg) ttbr0) };
 }
 
+/// Dirección física de la tabla vacía.
+pub fn vacia_fisica() -> u64 {
+    mmu::fisica(&VACIA as *const TablaVacia as usize) as u64
+}
+
 /// Deja este núcleo sin mitad baja: la tabla vacía, con ASID 0.
 pub fn activar_vacio() {
     activar(mmu::fisica(&VACIA as *const TablaVacia as usize) as u64);

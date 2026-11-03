@@ -39,11 +39,29 @@ pub fn iniciar() {
     }
 }
 
+/// La entrada de una excepción vio que el marco no cabía en la pila del kernel (vectores.s): el hilo ha llegado a la
+/// página de guarda. Corre en la pila de emergencia del núcleo.
+#[unsafe(no_mangle)]
+extern "C" fn pila_desbordada(sp: u64, elr: u64) -> ! {
+    panic!("pila del kernel desbordada (SP {:#x}, ELR {:#x}, hilo {})", sp, elr, crate::planificador::actual_id());
+}
+
 #[unsafe(no_mangle)]
 extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
     if tipo >= 8 {
         unsafe { recoger_serror() };
+        // PAN por software (C34): dentro del kernel, la mitad baja vacía. Se repone al volver a EL0 (`volver`).
+        crate::espacio::activar_vacio();
     }
+    tratar(marco, tipo);
+    // Vuelve a EL0 (SPSR.M = EL0t): el espacio del hilo que vuelve, que puede no ser el que entró si hubo cambio de
+    // hilo por el camino; cada hilo vuelve por su propio marco.
+    if marco.spsr & 0xf == 0 {
+        crate::espacio::activar(crate::planificador::ttbr0_actual());
+    }
+}
+
+fn tratar(marco: &mut Marco, tipo: u64) {
     let clase = (marco.esr >> 26) & 0x3f;
     let iss = marco.esr & 0x1ff_ffff;
 

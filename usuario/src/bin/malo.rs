@@ -169,6 +169,11 @@ fn principal() -> u64 {
     }
     x0(6, [a as u64, 0, 0, 0, 0]);
     x0(6, [b as u64, 0, 0, 0, 0]);
+    // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
+    let local = 0u64;
+    if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {
+        return 27;
+    }
     // 25: una secuencia de escape no llega al terminal: sale "?" en lugar del ESC.
     dashos::escribir("  [malo] escape: \x1b[31m\n");
     println!("  [malo] memoria agotada en {} trozos de 64 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);

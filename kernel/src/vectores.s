@@ -7,9 +7,18 @@
 
     .section .text.vectores, "ax"
 
+// Antes de escribir el marco se comprueba que cabe en la pila (C34). Toda pila del kernel es la mitad de arriba de
+// una ranura de 32 KB alineada (mapa.rs), así que una dirección válida tiene el bit 14 a 1; con el bit 14 a 0, el
+// marco caería en la guarda. Sin registros libres, SP y x0 se intercambian con sumas, sin tocar la memoria (como
+// Linux). Si no cabe, se pasa a la pila de emergencia del núcleo y el kernel para con un mensaje.
 .macro ENTRADA tipo
     .balign 0x80
     sub     sp, sp, #288
+    add     sp, sp, x0                  // sp' = sp + x0
+    sub     x0, sp, x0                  // x0 = sp
+    tbz     x0, #14, desbordada
+    sub     x0, sp, x0                  // x0 = x0 de antes
+    sub     sp, sp, x0                  // sp = sp de antes
     stp     x0, x1, [sp, #0]
     mov     x1, #\tipo
     b       comun
@@ -39,6 +48,25 @@ vectores_el1:
     ENTRADA 14
     ENTRADA 15
 
+// La pila del kernel se ha desbordado: x0 = el SP que no cabía.
+desbordada:
+    mrs     x1, mpidr_el1
+    and     x1, x1, #0xff
+    ldr     x2, =pila_emergencia_fin
+    sub     x2, x2, x1, lsl #12
+    mov     sp, x2
+    mrs     x1, elr_el1
+    bl      pila_desbordada
+0:  wfe
+    b       0b
+
+    .section .bss.emergencia, "aw", %nobits
+    .balign 4096
+pila_emergencia:
+    .space  4 * 4096
+pila_emergencia_fin:
+
+    .section .text.vectores, "ax"
 comun:
     stp     x2, x3, [sp, #16]
     stp     x4, x5, [sp, #32]
