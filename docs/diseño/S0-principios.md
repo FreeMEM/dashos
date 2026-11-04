@@ -80,12 +80,17 @@ Las metas de memoria y de tamaño del kernel son provisionales. Se revisan en S1
 - **Raspberry Pi 5**, en una fase posterior. Antes hay que comprobar que su CPU admite big-endian (`PLAN.md`).
 - **Raspberry Pi 3**: posible placa de pruebas, porque el usuario tiene varias. Su CPU admite big-endian, pero su
   controlador de interrupciones es otro y tiene 1 GB de memoria. Ver la pregunta 2.
+- **THEA1200** (Retro Games, diciembre de 2026): candidata, sin decidir (`PLAN.md`). Si lleva el chip del A500 Mini,
+  es un Allwinner H6 con cuatro Cortex-A53 y 512 MB: la misma clase de CPU que la Pi 3.
 
 ## Lo que queda abierto
 
 1. ¿Valen estas metas? Sobre todo las de arranque (menos de 5 s) y memoria (menos de 128 MB).
 2. ¿La Pi 3 entra como placa soportada, o solo la Pi 4 y después la Pi 5? Soportarla obliga a dos controladores de
-   interrupciones desde el principio.
+   interrupciones desde el principio. Se respondió "solo de pruebas" el 2026-11-03 y se reabre el 2026-11-05 por el
+   THEA1200: una placa de Cortex-A53 soportada abriría la puerta a esa máquina. Lo que cuesta: un segundo
+   controlador de interrupciones, las metas medidas también en un A53 (más lento que el A72 de la Pi 4), y 512 MB
+   a 1 GB de memoria.
 3. ¿DashOS es para una persona por máquina, o para varias cuentas? Cambia mucho la seguridad (S6).
 4. ¿Hace falta comprar ya una Pi 4 para tener la medida de referencia con Raspberry Pi OS? Sin ella, las
    comparaciones con Linux son de oídas.
