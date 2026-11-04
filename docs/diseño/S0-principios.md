@@ -66,8 +66,8 @@ Las metas de memoria y de tamaño del kernel son provisionales. Se revisan en S1
 ## En qué no compite DashOS
 
 - **Variedad de hardware.** Pi 4 primero, después Pi 5 y alguna placa más. No hay x86 ni tarjetas gráficas de PC.
-  Los portátiles y los Mac con ARM llegan primero por una máquina virtual (`virt` de QEMU con virtio; usuario,
-  2026-11-04, `PLAN.md`), no arrancando sin nada debajo.
+  Los portátiles y los Mac con ARM son objetivo (usuario, 2026-11-04, `PLAN.md`): DashOS arranca en ellos
+  directamente, por UEFI, sin máquina virtual; sus controladores propios llegan después.
 - **Servidores y nube.** DashOS es un sistema de escritorio para una persona delante de la pantalla.
 - **Todo el software de Linux de forma nativa.** El que haga falta va por la capa de S7.
 - **Juegos 3D exigentes.** La GPU de la Pi 4 no da para eso, y portar sus controladores cuesta mucho (S9).

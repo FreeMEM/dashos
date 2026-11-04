@@ -17,11 +17,13 @@ Estas decisiones son del usuario, del 2026-11-03.
 - **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
   adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
 - **Otros ordenadores ARM** (usuario, 2026-11-04). El objetivo es que DashOS corra en ordenadores ARM en general, no
-  solo en placas: también en los Mac con Apple Silicon y en los portátiles ARM nuevos. El camino corto es una
-  segunda plataforma, la máquina `virt` de QEMU con dispositivos virtio (disco, red, teclado, ratón, pantalla), que
-  sirve en un Mac (UTM o QEMU con Hypervisor.framework), en los portátiles ARM con Windows o Linux y en cualquier
-  placa ARM con Linux. Arrancar sin nada debajo en un Mac o en un portátil Snapdragon queda lejos (Asahi Linux lleva
-  desde 2021 con los Mac).
+  solo en placas: también en los Mac con Apple Silicon y en los portátiles ARM nuevos. Arrancando DashOS
+  directamente, sin otro sistema debajo: el usuario descarta la máquina virtual. El primer paso común es arrancar por
+  UEFI, con la pantalla que deja el firmware (GOP) y los controladores estándar donde los haya (USB xHCI, NVMe). Eso
+  vale para muchas placas ARM y para los portátiles con Snapdragon; en los Mac, el arranque de Asahi Linux (m1n1 y
+  U-Boot) da UEFI. Después vienen los controladores de cada máquina (GPU, Wi-Fi, sonido, teclado y panel táctil de
+  los portátiles), que es lo caro: en Apple y Qualcomm no hay documentación oficial. Asahi Linux lleva desde 2021
+  con los Mac.
 - **Caja Amiga sin big-endian** (usuario, 2026-11-04). Los procesadores de Apple no tienen big-endian en EL0, ni en una
   máquina virtual. Para que la caja Amiga corra ahí, el JIT necesita un modo que dé la vuelta a los bytes en cada
   acceso a la memoria del 68k, en una CPU little-endian. En las CPU que sí tienen big-endian, la caja sigue como
