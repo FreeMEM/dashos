@@ -24,6 +24,11 @@ Estas decisiones son del usuario, del 2026-11-03.
   U-Boot) da UEFI. Después vienen los controladores de cada máquina (GPU, Wi-Fi, sonido, teclado y panel táctil de
   los portátiles), que es lo caro: en Apple y Qualcomm no hay documentación oficial. Asahi Linux lleva desde 2021
   con los Mac.
+  Se desarrolla en QEMU (usuario, 2026-11-04), porque no se puede comprar todo el hardware: la máquina `virt` con el
+  firmware UEFI de EDK2 (instalado en `/usr/share/edk2/aarch64/`), la pantalla del firmware (`ramfb` o
+  `virtio-gpu`), `qemu-xhci` y `nvme` cubren lo común a todas. El modo del JIT que da la vuelta a los bytes también
+  se prueba ahí. Para los controladores propios de cada máquina y para medir hace falta la máquina de verdad: una o
+  dos, al final.
 - **Caja Amiga sin big-endian** (usuario, 2026-11-04). Los procesadores de Apple no tienen big-endian en EL0, ni en una
   máquina virtual. Para que la caja Amiga corra ahí, el JIT necesita un modo que dé la vuelta a los bytes en cada
   acceso a la memoria del 68k, en una CPU little-endian. En las CPU que sí tienen big-endian, la caja sigue como
