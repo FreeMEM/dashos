@@ -16,6 +16,16 @@ Estas decisiones son del usuario, del 2026-11-03.
 
 - **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
   adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
+- **Otros ordenadores ARM** (usuario, 2026-11-04). El objetivo es que DashOS corra en ordenadores ARM en general, no
+  solo en placas: también en los Mac con Apple Silicon y en los portátiles ARM nuevos. El camino corto es una
+  segunda plataforma, la máquina `virt` de QEMU con dispositivos virtio (disco, red, teclado, ratón, pantalla), que
+  sirve en un Mac (UTM o QEMU con Hypervisor.framework), en los portátiles ARM con Windows o Linux y en cualquier
+  placa ARM con Linux. Arrancar sin nada debajo en un Mac o en un portátil Snapdragon queda lejos (Asahi Linux lleva
+  desde 2021 con los Mac).
+- **Caja Amiga sin big-endian** (usuario, 2026-11-04). Los procesadores de Apple no tienen big-endian en EL0, ni en una
+  máquina virtual. Para que la caja Amiga corra ahí, el JIT necesita un modo que dé la vuelta a los bytes en cada
+  acceso a la memoria del 68k, en una CPU little-endian. En las CPU que sí tienen big-endian, la caja sigue como
+  está.
 - **Sistema moderno.** Tiene protección de memoria y usa todos los núcleos de la CPU.
 - **Planificador** (usuario, 2026-11-03; `docs/diseño/S2-planificador.md`): clase de plazos para compositor, entrada
   y audio, y clase justa para el resto. Dentro de la caja Amiga, prioridad estricta como en exec. Perfil de energía
@@ -263,8 +273,9 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - ~~Mesa y el orden de bytes~~ (V4, `docs/spec/hw/mesa-v3d.md`, sección 10). Resuelta el 2026-11-03 por la tarde: lo
   nativo es little-endian, así que Mesa va tal cual (era la opción A).
 - Antes de la Pi 5, comprobar en una real que su CPU, Cortex-A76, admite big-endian en EL0 para la caja Amiga
-  (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja no podría correr ahí; el resto del sistema sí.
-  Lo mismo para cualquier otra placa ARM.
+  (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja necesita el modo del JIT que da la vuelta a
+  los bytes (decisión del 2026-11-04); el resto del sistema va igual. Lo mismo para cualquier otra placa ARM y para
+  los Snapdragon X de los portátiles (sin comprobar).
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas
