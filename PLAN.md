@@ -14,7 +14,7 @@ Los juegos y demos que tocan el chipset directamente no son objetivo. Petunia ta
 
 Estas decisiones son del usuario, del 2026-11-03.
 
-- **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 5 viene después y sería lo más redondo. Más
+- **Placas.** La primera placa real es la Raspberry Pi 4. La Pi 3 también es placa soportada (usuario, 2026-11-05). La Pi 5 viene después y sería lo más redondo. Más
   adelante, otras placas como las Orange Pi. Mientras no haya una Pi 4, se desarrolla en QEMU `raspi4b`.
 - **THEA1200 como placa candidata** (usuario, 2026-11-05). Es la réplica del Amiga 1200 de Retro Games: tamaño real,
   teclado de verdad, unos 190 euros, a la venta el 4 de diciembre de 2026. Por dentro, un ARM de 64 bits con Linux y
@@ -27,7 +27,8 @@ Estas decisiones son del usuario, del 2026-11-03.
     128 MB en reposo; el Cortex-A53 admite big-endian, así que la caja Amiga va sin dar la vuelta a los bytes.
     Faltaría saber si el arranque está cerrado, y escribir sus controladores (HDMI, USB, tarjeta o eMMC).
   Se decide tras el 4 de diciembre, con el chip conocido y una máquina abierta. Un Cortex-A53 es de la clase de la
-  Pi 3: por eso se reabre la pregunta de la Pi 3 (S0).
+  Pi 3, que pasa a placa soportada (usuario, 2026-11-05): lo que se haga para ella (controlador de interrupciones,
+  metas medidas en un A53, 1 GB) prepara el THEA1200.
 - **Otros ordenadores ARM** (usuario, 2026-11-04). El objetivo es que DashOS corra en ordenadores ARM en general, no
   solo en placas: también en los Mac con Apple Silicon y en los portátiles ARM nuevos. Arrancando DashOS
   directamente, sin otro sistema debajo: el usuario descarta la máquina virtual. El primer paso común es arrancar por
@@ -132,8 +133,8 @@ lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/
 
 - (S0) ¿Valen las metas de `docs/diseño/S0-principios.md`? Sobre todo arranque en menos de 5 s y memoria en reposo por debajo de 128 MB. **esas.**
 - (S0) ¿La Pi 3 entra como placa soportada? **no; solo como placa de pruebas si sale barato.**
-  **Reabierta** (usuario, 2026-11-05) por el THEA1200, de la misma clase de CPU (Cortex-A53). Ver "THEA1200 como
-  placa candidata" y `docs/diseño/S0-principios.md`, pregunta 2.
+  **Cambiada** (usuario, 2026-11-05): **la Pi 3 pasa a placa soportada**, por el THEA1200, de la misma clase de CPU
+  (Cortex-A53). Ver "THEA1200 como placa candidata" y `docs/diseño/S0-principios.md`, pregunta 2.
 - (S4) ¿Adornos de ventana Amiga por dentro y borde de DashOS por fuera, o todo Amiga? **Amiga por dentro, DashOS por fuera.**
 - (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? **sí.**
 - (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? **sí.**

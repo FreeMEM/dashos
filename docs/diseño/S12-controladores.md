@@ -99,7 +99,7 @@ con un controlador CDC Ethernet. No se ha comprobado.
 
 ## Cómo encaja
 
-- Con S0: la Pi 3 tendría que añadir su controlador de interrupciones; la compra de la Pi 4 se concreta aquí.
+- Con S0: la Pi 3 es placa soportada (2026-11-05) y necesita su controlador de interrupciones (el local de la BCM2837, no GIC-400); la compra de la Pi 4 se concreta aquí.
 - Con S1: cada controlador es un proceso; registros con vuelta de bytes.
 - Con S2: el buzón da la frecuencia y la temperatura.
 - Con S3: memoria DMA por zonas.
