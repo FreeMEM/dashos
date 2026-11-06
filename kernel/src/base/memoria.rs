@@ -45,7 +45,11 @@ pub struct Paginas {
     piso: usize,
     /// Páginas libres por debajo del piso.
     libres_bajo: usize,
+    /// Los tramos de RAM de los nodos de memoria del árbol (C50): lo que nunca se da como memoria del firmware.
+    ram: [(u64, u64); MAX_TRAMOS],
 }
+
+const MAX_TRAMOS: usize = 16;
 
 /// Una sola instancia para los cuatro núcleos, tras un cerrojo que enmascara las IRQ: así nadie se queda con el
 /// cerrojo expulsado por el tic (auditoría, hallazgos 1 y 10). Orden: el del montón antes que este.
@@ -59,6 +63,7 @@ static PAGINAS: CerrojoIrq<Paginas> = CerrojoIrq::new(Paginas {
     pista: PALABRAS - 1,
     piso: 0,
     libres_bajo: 0,
+    ram: [(0, 0); MAX_TRAMOS],
 });
 
 /// El repartidor, con su cerrojo tomado hasta que se suelte la guarda. Un `paginas().x()` lo suelta al acabar la
@@ -121,6 +126,14 @@ impl Paginas {
             let mut i = 0;
             while let Some((dir, tam)) = d.reg(m, i) {
                 self.marcar_tramo(dir, tam, false);
+                // Si hubiera más tramos que huecos, el último se ensancha para cubrirlos: nunca queda RAM sin apuntar.
+                if let Some(h) = self.ram.iter_mut().find(|t| t.1 == 0) {
+                    *h = (dir, tam);
+                } else {
+                    let u = &mut self.ram[MAX_TRAMOS - 1];
+                    let (ini, fin) = (u.0.min(dir), (u.0 + u.1).max(dir + tam));
+                    *u = (ini, fin - ini);
+                }
                 let fin = (((dir + tam) / PAGINA) as usize).min(MAPA_LINEAL);
                 self.total += fin.saturating_sub((dir / PAGINA) as usize);
                 self.max_pagina = self.max_pagina.max(fin);
@@ -182,6 +195,12 @@ impl Paginas {
             self.limite_1g as u64 * PAGINA >> 20,
             self.limite_3g as u64 * PAGINA >> 20
         );
+    }
+
+    /// ¿El tramo cae entero fuera de la RAM que conoce el kernel? Para la memoria del firmware (C50).
+    pub fn fuera_de_la_ram(&self, fisica: u64, tamano: u64) -> bool {
+        let Some(fin) = fisica.checked_add(tamano) else { return false };
+        self.ram.iter().filter(|t| t.1 != 0).all(|&(d, t)| fin <= d || fisica >= d + t)
     }
 
     /// Bytes libres para procesos: los de la zona normal menos la reserva del kernel (para el grupo raíz, C43).

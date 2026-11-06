@@ -376,11 +376,20 @@ fn memoria_quitar(va: u64) -> u64 {
 fn registros_proyectar(h: u32, va: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
-    let Objeto::Registros { fisica, tamano } = l.objeto else { return E_TIPO };
+    let (fisica, tamano, firmware) = match l.objeto {
+        Objeto::Registros { fisica, tamano } => (fisica, tamano, false),
+        Objeto::Firmware { fisica, tamano } => (fisica, tamano, true),
+        _ => return E_TIPO,
+    };
     if l.derechos & (objetos::LEER | objetos::ESCRIBIR) != objetos::LEER | objetos::ESCRIBIR {
         return E_DERECHOS;
     }
-    match proc_.espacio.tomar().proyectar_dispositivo(va, fisica, tamano) {
+    let r = if firmware {
+        proc_.espacio.tomar().proyectar_firmware(va, fisica, tamano)
+    } else {
+        proc_.espacio.tomar().proyectar_dispositivo(va, fisica, tamano)
+    };
+    match r {
         Ok(()) => 0,
         Err(err) => error_espacio(err),
     }

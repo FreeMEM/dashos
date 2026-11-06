@@ -114,3 +114,13 @@ test = false
 name = "tiempo"
 path = "src/bin/tiempo.rs"
 test = false
+
+[[bin]]
+name = "buzon"
+path = "src/bin/buzon.rs"
+test = false
+
+[[bin]]
+name = "compositor"
+path = "src/bin/compositor.rs"
+test = false

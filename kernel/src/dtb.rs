@@ -301,6 +301,28 @@ impl Dtb {
         Some((bus, self.traducir(nodo, cpu), tam))
     }
 
+    /// La memoria de la VideoCore (C50): de donde acaba el tramo de RAM que empieza en 0 hasta el primer GB. El firmware
+    /// se la reserva (`gpu_mem`) y no sale en los nodos de memoria; la pantalla del firmware está ahí.
+    pub fn memoria_vc(&self) -> Option<(u64, u64)> {
+        let d = self;
+        let mut fin = None;
+        d.cada_tipo("memory", |m| {
+            let mut i = 0;
+            while let Some((dir, tam)) = d.reg(m, i) {
+                if dir == 0 {
+                    fin = Some(tam);
+                }
+                i += 1;
+            }
+        });
+        let fin = fin?.div_ceil(crate::memoria::PAGINA) * crate::memoria::PAGINA;
+        let tope = 1u64 << 30;
+        if fin >= tope || !crate::memoria::paginas().fuera_de_la_ram(fin, tope - fin) {
+            return None;
+        }
+        Some((fin, tope - fin))
+    }
+
     /// Entrada `i` del mapa de memoria reservada de la cabecera (`/memreserve/`): (dirección, tamaño).
     pub fn reserva(&self, i: usize) -> Option<(u64, u64)> {
         let mapa = self.u32(16) as usize + 16 * i;

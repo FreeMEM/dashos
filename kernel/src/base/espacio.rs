@@ -312,6 +312,23 @@ impl Espacio {
         true
     }
 
+    /// Proyecta memoria del firmware (C50): la de la VideoCore, por debajo de 4 GB y fuera de la RAM que reparte el
+    /// kernel; la pantalla del firmware está ahí. Como memoria normal sin caché (lo ve también la VideoCore), nunca
+    /// ejecutable. Comprueba otra vez que no toca la RAM, aunque solo el kernel crea estos objetos.
+    pub fn proyectar_firmware(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
+        let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
+        if fin > 1 << 32 || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !paginas().fuera_de_la_ram(fisica, tamano) {
+            return Err(Error::Direccion);
+        }
+        self.preparar(va, tamano.div_ceil(PAGINA))?;
+        let mut i = 0;
+        while i < tamano {
+            let _ = self.proyectar(va + i, fisica + i, Permiso::DatosSinCache);
+            i += PAGINA;
+        }
+        Ok(())
+    }
+
     /// Proyecta registros de aparatos (C20) como memoria de dispositivo, nunca ejecutable. Solo direcciones de la
     /// ventana de periféricos: nunca memoria normal, aunque alguien le pase una.
     pub fn proyectar_dispositivo(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {

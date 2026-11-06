@@ -7,9 +7,12 @@
 //! El paquete dice qué es cada llave y trae los ELF de los servicios, para que `inicio` los lance. Formato
 //! (little-endian; lo lee `usuario/src/bin/inicio.rs`):
 //! - u32 cuántos aparatos; por cada uno, 24 bytes: nombre (16, relleno con 0), tipo (u32: 1 registros,
-//!   2 interrupción, 3 permiso DMA) y número de llave (u32);
-//! - u32 cuántos programas; por cada uno, 24 bytes: tamaño (u32), qué aparatos le pasa `inicio` (u32: el bit i es
-//!   el aparato i de la lista de arriba; sus llaves serán la 1, la 2... del programa, en ese orden) y nombre (16);
+//!   2 interrupción, 3 permiso DMA, 4 registro, 5 memoria del firmware) y número de llave (u32);
+//! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué aparatos le pasa `inicio` (u32: el bit i es
+//!   el aparato i de la lista de arriba), qué canales (u32: el bit i es el canal i; C50), 0 (u32) y nombre (16).
+//!   Sus llaves serán la 1, la 2...: primero los aparatos y después los canales, en ese orden. `inicio` le da una
+//!   copia de cada llave de aparato (se queda la suya) y crea cada canal la primera vez que se nombra: el primer
+//!   programa que lo nombra recibe un extremo y el segundo, el otro;
 //! - los ELF seguidos, cada uno desde un múltiplo de 8.
 
 use crate::dtb::Dtb;
@@ -19,17 +22,21 @@ use alloc::vec::Vec;
 
 static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/inicio");
 
-/// Los servicios que lanza `inicio`, en orden, con los aparatos que le pasa a cada uno (por nombre y tipo).
-static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)])] = &[
-    ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)]),
-    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)]),
-    ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[]),
+/// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
+/// pasa a cada uno. Lo que ve cada servicio de los demás está en `docs/referencia/servicios.md`.
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
+    ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma", PERMISO_DMA), ("buzon", REGISTROS)], &["buzon"]),
+    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
+    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("vc", FIRMWARE)], &["buzon", "entrada"]),
+    ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
 
 const REGISTROS: u32 = 1;
 const INTERRUPCION: u32 = 2;
 const PERMISO_DMA: u32 = 3;
 const REGISTRO: u32 = 4;
+const FIRMWARE: u32 = 5;
 /// Las llaves de arranque llevan todos los derechos: `inicio` las reparte (transferir) a los servicios.
 const DERECHOS: u32 = crate::objetos::TODOS;
 
@@ -63,10 +70,16 @@ pub fn lanzar() -> bool {
         apuntar(&mut llaves, "dma", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     apuntar(&mut llaves, "registro", REGISTRO, Llave::nueva(Objeto::Registro, DERECHOS));
+    if let Some((fisica, tamano)) = d.memoria_vc() {
+        apuntar(&mut llaves, "vc", FIRMWARE, Llave::nueva(Objeto::Firmware { fisica, tamano }, DERECHOS));
+    }
     for &(nombre, compatible, con_irq) in APARATOS {
         let Some(n) = d.compatible(compatible) else { continue };
         let Some((fisica, tamano)) = d.reg_cpu(&n, 0) else { continue };
-        let tamano = tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA;
+        // La llave cubre páginas enteras: el buzón, por ejemplo, empieza a mitad de una (0x880).
+        let pagina = fisica & !(memoria::PAGINA - 1);
+        let tamano = (fisica + tamano - pagina).div_ceil(memoria::PAGINA) * memoria::PAGINA;
+        let fisica = pagina;
         apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
         if con_irq {
             if let Some((datos, _)) = d.propiedad(&n, "interrupts") {
@@ -86,18 +99,29 @@ pub fn lanzar() -> bool {
         paquete.extend_from_slice(&llave.to_le_bytes());
     }
     paquete.extend_from_slice(&(PROGRAMAS.len() as u32).to_le_bytes());
-    for (nombre, elf, aparatos) in PROGRAMAS {
+    let mut canales: Vec<&str> = Vec::new();
+    for (nombre, elf, aparatos, suyos) in PROGRAMAS {
         let mut mascara = 0u32;
         for (aparato, tipo) in aparatos.iter() {
             if let Some(i) = manifiesto.iter().position(|(n, t, _)| *n == nombre16(aparato) && t == tipo) {
                 mascara |= 1 << i;
             }
         }
+        let mut de_canales = 0u32;
+        for c in suyos.iter() {
+            let i = canales.iter().position(|x| x == c).unwrap_or_else(|| {
+                canales.push(c);
+                canales.len() - 1
+            });
+            de_canales |= 1 << i;
+        }
         paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
         paquete.extend_from_slice(&mascara.to_le_bytes());
+        paquete.extend_from_slice(&de_canales.to_le_bytes());
+        paquete.extend_from_slice(&0u32.to_le_bytes());
         paquete.extend_from_slice(&nombre16(nombre));
     }
-    for (_, elf, _) in PROGRAMAS {
+    for (_, elf, _, _) in PROGRAMAS {
         while paquete.len() % 8 != 0 {
             paquete.push(0);
         }

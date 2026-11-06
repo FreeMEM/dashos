@@ -8,7 +8,7 @@
 // Los programas de usuario en ensamblador de C11 a C18.
 core::arch::global_asm!(include_str!("usuario.s"));
 
-use crate::{buzon, cerrojo, compositor, dtb, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
+use crate::{buzon, cerrojo, dtb, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
     mapa, memoria, mmu, monton, objetos, planificador, reloj, v3d};
 
 /// Todas las pruebas, con el sistema ya en marcha. `nucleos` es cuántos núcleos más arrancaron.
@@ -27,7 +27,6 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_hilos();
     prueba_procesos();
     prueba_pantalla(dtb);
-    prueba_compositor();
     prueba_avisos();
     prueba_recoger();
     prueba_rust();
@@ -298,54 +297,85 @@ fn prueba_procesos() {
     prueba_plazo();
 }
 
-/// C15: el buzón de la VideoCore y la pantalla del firmware. Pinta un degradado con un tablero en homenaje a la
-/// Boing Ball y lo comprueba leyendo la memoria de la pantalla.
+/// C50 (antes C15 y C16, dentro del kernel): el buzón de la VideoCore y el compositor son procesos. El kernel les da
+/// lo que les daría `inicio`: al buzón, el permiso DMA, sus registros y un canal; al compositor, la memoria de la
+/// VideoCore, el otro lado de ese canal y uno de entrada, por el que el kernel manda tres movimientos del ratón. Al
+/// cerrar la entrada, el compositor acaba, y con él el buzón. Lo que comprueban lo escriben ellos.
+static BUZON: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon");
+static COMPOSITOR: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor");
+
 fn prueba_pantalla(_dtb: usize) {
     let Some(d) = dtb::Dtb::desde() else { return };
     let Some(n) = d.compatible("brcm,bcm2835-mbox") else {
-        kprintln!("C15: no hay buzón en el árbol");
+        kprintln!("C50: no hay buzón en el árbol");
         return;
     };
-    let Some((base, _)) = d.reg_cpu(&n, 0) else { return };
+    let Some((base, tamano)) = d.reg_cpu(&n, 0) else { return };
+    // Las pruebas de la V3D y del HVS aún usan el buzón desde el kernel (salen en la segunda parte de C50).
     buzon::iniciar(base);
-    match buzon::reloj(3) {
-        Some(hz) => kprintln!("  reloj de la CPU según el firmware: {} MHz", hz / 1_000_000),
-        None => kprintln!("  el firmware no da el reloj de la CPU"),
-    }
-    let Some(p) = buzon::pantalla(640, 480) else {
-        kprintln!("C15: el firmware no da pantalla");
+    let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) else { return };
+    let Some((vc, vc_tamano)) = d.memoria_vc() else {
+        kprintln!("C50: sin memoria de la VideoCore");
         return;
     };
-    kprintln!("  pantalla {}x{}, paso {} bytes, en {:#x} ({} KB)", p.ancho, p.alto, p.paso, p.fisica, p.tamano / 1024);
-    let fb = mmu::virt(p.fisica as usize);
-    let pixel = |x: u32, y: u32| -> u32 {
-        // Tablero rojo y blanco de 8x8 casillas en el centro; alrededor, degradado del azul al violeta.
-        let (cx, cy) = (p.ancho / 2, p.alto / 2);
-        if x + 120 >= cx && x < cx + 120 && y + 120 >= cy && y < cy + 120 {
-            let (i, j) = ((x + 120 - cx) / 30, (y + 120 - cy) / 30);
-            if (i + j) % 2 == 0 { 0x00e0_2020 } else { 0x00f0_f0f0 }
-        } else {
-            let r = 40 + y * 100 / p.alto;
-            let b = 120 + y * 100 / p.alto;
-            (r << 16) | (40 << 8) | b
+    let (al_buzon, al_compositor) = objetos::Canal::nuevo();
+    let (mio, entrada) = objetos::Canal::nuevo();
+    let objetos::Objeto::Extremo(punta) = mio.objeto.clone() else { return };
+    let buzon_llaves = alloc::vec![
+        objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::Registros { fisica: base & !(memoria::PAGINA - 1), tamano: ((base & (memoria::PAGINA - 1)) + tamano).div_ceil(memoria::PAGINA) * memoria::PAGINA }, objetos::TODOS),
+        al_buzon,
+    ];
+    let compositor_llaves = alloc::vec![
+        objetos::Llave::nueva(objetos::Objeto::Firmware { fisica: vc, tamano: vc_tamano }, objetos::TODOS),
+        al_compositor,
+        entrada,
+    ];
+    let (Some(g1), Some(g2)) = (crate::cupo::Cupo::raiz().hijo(16 << 20), crate::cupo::Cupo::raiz().hijo(16 << 20)) else { return };
+    let Some(b) = lanzar_elf_en(BUZON, buzon_llaves, 2, g1) else { return };
+    // Antes de dar el canal al compositor, lo que el buzón no debe dejar pasar: una etiqueta que no está en su lista
+    // (poner un reloj), un mensaje cuyo tamaño no cuadra y uno sin etiqueta de fin. Los tres vuelven con 0x80000001.
+    let (c_buzon, lado) = extremo(&compositor_llaves[1]);
+    let mut rechazos = 0;
+    let palabras = |p: &[u32]| p.iter().flat_map(|w| w.to_le_bytes()).collect::<alloc::vec::Vec<u8>>();
+    for m in [
+        palabras(&[36, 0, 0x0003_8002, 12, 0, 3, 600_000_000, 0, 0]),
+        palabras(&[40, 0, 0x0003_0002, 8, 0, 3, 0, 0]),
+        palabras(&[28, 0, 0x0003_0002, 8, 0, 3, 0]),
+    ] {
+        let n = m.len();
+        let _ = c_buzon.escribir(lado, objetos::Mensaje { datos: m, llaves: alloc::vec::Vec::new(), marca: 0 });
+        if let Ok(r) = c_buzon.leer(lado) {
+            if r.datos.len() == n && r.datos[4..8] == 0x8000_0001u32.to_le_bytes() {
+                rechazos += 1;
+            }
         }
+    }
+    // La memoria del firmware no puede cubrir RAM del kernel, ni entera ni a medias.
+    let ram_no = {
+        let p = memoria::paginas();
+        p.fuera_de_la_ram(vc, vc_tamano) && !p.fuera_de_la_ram(0x10_0000, 4096) && !p.fuera_de_la_ram(vc - 4096, 8192)
     };
-    for y in 0..p.alto {
-        for x in 0..p.ancho {
-            // La memoria de la pantalla es little-endian, como la VideoCore.
-            unsafe { ((fb + (y * p.paso + x * 4) as usize) as *mut u32).write_volatile(pixel(x, y).to_le()) };
-        }
+    kprintln!("  buzón: {} de 3 mensajes que no valen rechazados; memoria del firmware fuera de la RAM y nada más: {}", rechazos, if ram_no { "sí" } else { "no" });
+    let Some(c) = lanzar_elf_en(COMPOSITOR, compositor_llaves, 3, g2) else { return };
+    for _ in 0..3 {
+        let m = objetos::Mensaje { datos: alloc::vec![2, 0, 10, 5, 0, 0, 0, 0], llaves: alloc::vec::Vec::new(), marca: 0 };
+        let _ = punta.canal().escribir(punta.lado(), m);
     }
-    let mut a = fb;
-    while a < fb + (p.paso * p.alto) as usize {
-        unsafe { core::arch::asm!("dc cvac, {}", in(reg) a) };
-        a += 64;
+    drop(punta);
+    drop(mio);
+    let inicio = reloj::tics();
+    while (c.estado.tomar().fin.is_none() || b.estado.tomar().fin.is_none()) && reloj::tics() < inicio + 2000 {
+        esperar_tics(5);
     }
-    unsafe { core::arch::asm!("dsb sy") };
-    let muestra = |x: u32, y: u32| u32::from_le(unsafe { ((fb + (y * p.paso + x * 4) as usize) as *const u32).read_volatile() });
-    let bien = muestra(p.ancho / 2 - 119, p.alto / 2 - 119) == pixel(p.ancho / 2 - 119, p.alto / 2 - 119)
-        && muestra(5, p.alto - 1) == pixel(5, p.alto - 1);
-    kprintln!("C15: pantalla del firmware {}", if bien { "bien" } else { "MAL" });
+    let fines = (c.estado.tomar().fin, b.estado.tomar().fin);
+    let bien = matches!(fines, (Some(objetos::Fin::Salida(0)), Some(objetos::Fin::Salida(0)))) && rechazos == 3 && ram_no;
+    if !bien {
+        crate::planificador::matar_proceso(&c);
+        crate::planificador::matar_proceso(&b);
+    }
+    esperar_tics(10);
+    kprintln!("C50: buzón y compositor fuera del kernel {}", if bien { "bien" } else { "MAL" });
 }
 
 // C14: un hilo de plazo (2 ms cada 10 ms) en el núcleo 1, que ya tiene tres hilos justos ocupados (C10).
@@ -399,34 +429,6 @@ fn prueba_plazo() {
     kprintln!("C14: clase de plazo {}", if bien { "bien" } else { "MAL" });
 }
 
-/// C16: doble búfer y compositor por daños. 60 cuadros moviendo una ventana repintando solo los daños, y otros 60
-/// repintando todo, para comparar.
-fn prueba_compositor() {
-    let Some(mut c) = compositor::Compositor::nuevo(640, 480) else {
-        kprintln!("C16: sin pantalla");
-        return;
-    };
-    let medir = |c: &mut compositor::Compositor, todo: bool| {
-        let pintados = c.pixeles_pintados;
-        let t = reloj::ahora();
-        for i in 0..60u32 {
-            c.mover(40 + i * 5, 40 + i * 3, todo);
-        }
-        let us = (reloj::ahora() - t) * 1_000_000 / reloj::frecuencia() / 60;
-        (us, (c.pixeles_pintados - pintados) / 60)
-    };
-    let (us_todo, px_todo) = medir(&mut c, true);
-    c.mover(40, 40, true);
-    c.mover(40, 40, true);
-    let (us_danos, px_danos) = medir(&mut c, false);
-    kprintln!("  por cuadro: repintando todo {} µs ({} píxeles); solo daños {} µs ({} píxeles)", us_todo, px_todo, us_danos, px_danos);
-    // Comprobar el búfer visible: la ventana en su sitio final y sin rastro en su sitio inicial.
-    let v = c.ventana;
-    let puntos = [(v.x + 1, v.y + 1), (v.x + 50, v.y + 10), (v.x + 100, v.y + 100), (45, 45), (240, 100), (639, 479)];
-    let bien_px = puntos.iter().all(|&(x, y)| c.leer(x, y) == c.esperado(x, y));
-    let bien = bien_px && px_danos * 4 < px_todo;
-    kprintln!("C16: doble búfer y daños {}", if bien { "bien" } else { "MAL" });
-}
 
 /// C17: ida y vuelta de un mensaje entre los núcleos 2 y 3 por canales del kernel, sin y con avisos entre núcleos.
 static CANALES_C17: cerrojo::Cerrojo<Option<(objetos::Llave, objetos::Llave, objetos::Llave, objetos::Llave)>> =

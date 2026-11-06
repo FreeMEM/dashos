@@ -95,11 +95,12 @@ las únicas que da el kernel:
 
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
-- Después, el permiso DMA y, para cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la
-  VideoCore), sus registros y su interrupción.
+- Después, el permiso DMA, el registro del sistema, la memoria de la VideoCore y, para cada aparato del árbol que
+  conoce el kernel (serie, SD, USB, buzón de la VideoCore), sus registros (en páginas enteras) y su interrupción.
 
-`inicio` lanza cada servicio en su grupo y se queda esperando. Hoy son la consola (C48) y el USB (C49); lo que ve un
-programa de ellos está en `servicios.md`. Ningún otro proceso recibe nada del kernel: todo lo
+`inicio` lanza cada servicio en su grupo, con copias de las llaves de sus aparatos y los canales que comparte con
+otros servicios, y se queda esperando. Hoy son la consola (C48), el buzón, el USB y el compositor (C49, C50); lo que
+ve un programa de ellos está en `servicios.md`. Ningún otro proceso recibe nada del kernel: todo lo
 que tenga le llega desde `inicio`.
 
 ## Llamadas al sistema
@@ -182,6 +183,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Para controladores. La llave de registros solo la da el kernel, al lanzar el controlador.
   - Pide los derechos de leer y escribir.
   - Se proyecta como memoria de dispositivo: sin caché, sin reordenar y nunca se ejecuta.
+  - También proyecta una llave de memoria del firmware (C50): la de la VideoCore, donde está la pantalla. Esa va como
+    memoria normal sin caché. El kernel comprueba que no toca la RAM que reparte.
   - Los registros de los periféricos de la Pi son little-endian. Un proceso big-endian tiene que darles la vuelta.
 - **10, `interrupcion_asociar`.**
   - Solo interrupciones de aparato (SPI, de la 32 a la 255), y cada una con un único dueño.
@@ -316,6 +319,7 @@ Tipos de objeto:
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
 | Memoria | `memoria_crear` | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
+| Memoria del firmware | Solo el kernel | La de la VideoCore, para el compositor (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |

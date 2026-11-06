@@ -1271,6 +1271,38 @@ los programas también llevan "│ ".
   usa, contando avisos (arriba). **No comprobado:** en una Pi 4 real (los puertos USB-A van por el VL805, no por el
   DWC2).
 
+### 2026-11-06 noche, bucle (sesión DashOS) — C50, primera parte (buzón y compositor fuera del kernel)
+
+- **El buzón de la VideoCore, servicio** (`usuario/src/bin/buzon.rs`). Recibe mensajes de propiedades por un canal y
+  solo deja pasar una lista de etiquetas (memoria de la VideoCore, relojes que se leen, pantalla). Lo demás, o un
+  mensaje mal formado, vuelve con 0x80000001 sin llegar al firmware. Decisión apuntada: la lista la decide el
+  servicio, no quien tiene el canal, porque el firmware puede apagar aparatos o cambiar relojes.
+- **El compositor, proceso** (`usuario/src/bin/compositor.rs`), portado de `kernel/src/compositor.rs`, que se borra.
+  Pinta en la memoria de la VideoCore, mide como C16 (desde un proceso: todo 4,7 ms por cuadro, daños 0,65 ms, en
+  QEMU) y mueve la ventana con el ratón que le llega del USB.
+- **Objeto nuevo: memoria del firmware** (`Objeto::Firmware`). La pantalla está en la memoria de la VideoCore, por
+  debajo de 1 GB y fuera de la RAM del kernel, y `registros_proyectar` solo admitía periféricos. El kernel la saca
+  del árbol (de donde acaba el tramo de RAM que empieza en 0 hasta 1 GB, `Dtb::memoria_vc`), solo la da a `inicio`, y
+  al proyectarla comprueba que no toca ningún tramo de RAM (`Paginas::fuera_de_la_ram`, que ahora guarda los tramos).
+  Va sin caché. Quien la tiene puede escribir en toda la memoria de la VideoCore: es el compositor, de confianza.
+- **`inicio` conecta servicios** con canales con nombre ("buzon", "entrada"): el primero que lo nombra recibe un
+  extremo y el segundo el otro. Da copias de las llaves de aparatos (antes las movía, y el permiso DMA solo podía ir
+  a uno). La cabecera de cada programa en el paquete pasa de 24 a 32 bytes. Arreglado de paso: si un servicio no se
+  podía copiar, los siguientes se leían del sitio equivocado.
+- **Registros en páginas enteras.** El buzón empieza en 0xFE00B880, a mitad de página, y no se podía proyectar; la
+  llave cubre ahora la página entera (en `inicio` y en la prueba).
+- **`println!` de una vez** (`Linea` en la biblioteca): cada línea va en una sola llamada `escribir`. Antes se
+  partía y dos procesos mezclaban sus líneas a medias.
+- **Prueba C50** (sustituye a C15 y C16): el kernel lanza el buzón y el compositor con lo que les daría `inicio`,
+  manda tres mensajes que el buzón tiene que rechazar (etiqueta de poner un reloj, tamaño que no cuadra, sin fin),
+  comprueba la memoria del firmware contra la RAM, manda tres movimientos del ratón y cierra la entrada: el
+  compositor acaba y el buzón detrás. Sin la lista de etiquetas falla (2 de 3), comprobado.
+- **Arranque normal:** USB → canal "entrada" → compositor: la ventana se mueve con el ratón del monitor de QEMU.
+- **Comprobado:** `make -C kernel prueba` tres veces bien (una cuarta, C14 falló por la carga de la máquina, con
+  1021 µs de desviación: el fallo de siempre, apuntado en "Pendiente o a vigilar"); `make -C kernel arranque` dos.
+  **No comprobado:** en la Pi 4 (allí la pantalla sale por el HVS; el compositor sigue en la pantalla del firmware).
+- **Queda de C50:** el HVS y la V3D como procesos (segunda parte); el kernel aún usa `buzon.rs` para sus pruebas.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:

@@ -30,6 +30,10 @@ pub enum Objeto {
     Memoria(Arc<Memoria>),
     /// Registros de un aparato (C20): un tramo físico de periféricos que se puede proyectar en un proceso.
     Registros { fisica: u64, tamano: u64 },
+    /// Memoria del firmware (C50): la de la VideoCore, fuera de la RAM del kernel. Se proyecta como los registros, pero
+    /// como memoria normal sin caché. Solo la crea el kernel, para `inicio`. Quien la tiene puede escribir en toda la
+    /// memoria de la VideoCore, también la del propio firmware: es para el compositor, de confianza.
+    Firmware { fisica: u64, tamano: u64 },
     /// Una interrupción de aparato (C20): llega como mensaje a un canal.
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un temporizador (C49): avisa por un canal pasado un plazo, una vez o cada cierto tiempo.

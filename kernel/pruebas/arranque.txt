@@ -8,18 +8,20 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] en marcha, con
 │   [inicio]   llave 2: permiso DMA de dma
 │   [inicio]   llave 3: registro de registro
-│   [inicio]   llave 4: registros de serie
+│   [inicio]   llave 4: memoria del firmware de vc
+│   [inicio]   llave 5: registros de serie
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 ~registro: la consola pasa a un proceso; el kernel deja el puerto serie
-│   [inicio] usb lanzado en su grupo, con 3 llaves
+│   [inicio] buzon lanzado en su grupo, con 3 llaves
+│   [inicio] usb lanzado en su grupo, con 4 llaves
+│   [inicio] compositor lanzado en su grupo, con 3 llaves
 │   [inicio] hola lanzado en su grupo, con 0 llaves
-│   hola desde Rust en EL0 (DashOS, little-endian)
-sale con código 5
-│   [inicio] hola acabó: clase 0, código 5
-│   [inicio] todo lanzado; se queda esperando
-# El USB (C49), con su interrupción y sin canal de eventos todavía (llega con el compositor, C50): los escribe.
-~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0xfbfff000; espera con su interrupción y un temporizador
+~│   hola desde Rust en EL0 (DashOS, little-endian)
+~│   [inicio] hola acabó: clase 0, código 5
+~│   [inicio] todo lanzado; se queda esperando
+# El buzón y el compositor (C50) y el USB (C49), que le manda el ratón por un canal que crea inicio.
+~│   [compositor] pantalla 640x480 a 32 bits, doble búfer, en la memoria de la VideoCore
+~│   [compositor] doble búfer y daños: bien
+~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
 ~│   [usb] HID de arranque: 1 teclado y 1 ratón
-~│   [usb] tecla: uso 0x04 (a) pulsada
-~│   [usb] tecla: uso 0x04 (a) soltada
-~│   [usb] ratón: botones 0x0, movimiento (
+~│   [compositor] ventana movida con el ratón a (

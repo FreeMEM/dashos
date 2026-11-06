@@ -189,11 +189,58 @@ impl fmt::Write for Consola {
     }
 }
 
+/// Junta lo escrito en un búfer y lo manda de una vez (C50): así las líneas de dos procesos no se mezclan a medias.
+/// Si no cabe, se manda por trozos de 256 bytes.
+pub struct Linea {
+    buf: [u8; 256],
+    n: usize,
+}
+
+impl Linea {
+    pub const fn nueva() -> Self {
+        Self { buf: [0; 256], n: 0 }
+    }
+
+    fn vaciar(&mut self) {
+        if self.n > 0 {
+            // Los trozos se cortan por bytes: `escribir` toma bytes, aunque no sean UTF-8 completo.
+            let mut resto = &self.buf[..self.n];
+            while !resto.is_empty() {
+                let n = llamada(1, [resto.as_ptr() as u64, resto.len() as u64, 0, 0, 0]).0 as i64;
+                if n <= 0 {
+                    break;
+                }
+                resto = &resto[(n as usize).min(resto.len())..];
+            }
+            self.n = 0;
+        }
+    }
+
+    pub fn acabar(mut self) {
+        self.vaciar();
+    }
+}
+
+impl fmt::Write for Linea {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        for &b in s.as_bytes() {
+            if self.n == self.buf.len() {
+                self.vaciar();
+            }
+            self.buf[self.n] = b;
+            self.n += 1;
+        }
+        Ok(())
+    }
+}
+
 #[macro_export]
 macro_rules! println {
     ($($arg:tt)*) => {{
-        let _ = core::fmt::Write::write_fmt(&mut $crate::Consola, format_args!($($arg)*));
-        $crate::escribir("\n");
+        let mut l = $crate::Linea::nueva();
+        let _ = core::fmt::Write::write_fmt(&mut l, format_args!($($arg)*));
+        let _ = core::fmt::Write::write_str(&mut l, "\n");
+        l.acabar();
     }};
 }
 

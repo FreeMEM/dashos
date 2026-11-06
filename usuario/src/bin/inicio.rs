@@ -1,11 +1,12 @@
 //! El programa de inicio (C47). Lo lanza el kernel con las llaves de arranque: la 1 es el paquete de arranque, que
 //! dice qué es cada una de las demás y trae los ELF de los servicios (formato en `kernel/src/inicio.rs`). Lanza cada
-//! servicio en su grupo y se queda esperando: no acaba nunca.
+//! servicio en su grupo, con copias de las llaves de sus aparatos y los extremos de los canales que comparte con otros
+//! (C50), y se queda esperando: no acaba nunca.
 
 #![no_std]
 #![no_main]
 
-use dashos::{grupo_crear, memoria_crear, memoria_proyectar, println, proceso_crear_en, proceso_esperar};
+use dashos::{canal_crear, grupo_crear, llave_duplicar, memoria_crear, memoria_proyectar, println, proceso_crear_en, proceso_esperar};
 
 dashos::programa!(principal);
 
@@ -37,6 +38,7 @@ fn principal() -> u64 {
             2 => "interrupción",
             3 => "permiso DMA",
             4 => "registro",
+            5 => "memoria del firmware",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -45,40 +47,63 @@ fn principal() -> u64 {
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
-    let mut datos = cabeceras + 24 * programas;
+    const CABECERA: usize = 32;
+    let mut datos = cabeceras + CABECERA * programas;
+    // Los canales entre servicios: el extremo que espera al segundo programa que lo nombre (0: aún no creado).
+    let mut pendientes = [0u32; 32];
     for i in 0..programas {
-        let cab = cabeceras + 24 * i;
+        let cab = cabeceras + CABECERA * i;
         let tamano = u32_en(cab) as usize;
         let mascara = u32_en(cab + 4);
-        // Las llaves de los aparatos que le tocan, en orden; pasan a ser la 1, la 2... del servicio.
+        let de_canales = u32_en(cab + 8);
+        let nombre_cab = cab + 16;
+        // Las llaves que le tocan, en orden; pasan a ser la 1, la 2... del servicio. De los aparatos, una copia: así
+        // `inicio` conserva la suya y puede dar el mismo aparato a otro (el permiso DMA, por ejemplo).
         let mut suyas = [0u32; 8];
         let mut k = 0;
         for a in 0..n.min(32) {
             if mascara & (1 << a) != 0 && k < suyas.len() {
-                suyas[k] = u32_en(aparatos + 24 * a + 20);
+                let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7, 0);
+                if copia > 0 {
+                    suyas[k] = copia as u32;
+                    k += 1;
+                }
+            }
+        }
+        for c in 0..32 {
+            if de_canales & (1 << c) != 0 && k < suyas.len() {
+                if pendientes[c] == 0 {
+                    let (a, b) = canal_crear();
+                    pendientes[c] = b;
+                    suyas[k] = a;
+                } else {
+                    suyas[k] = pendientes[c];
+                    pendientes[c] = 0;
+                }
                 k += 1;
             }
         }
         datos = (datos + 7) & !7;
+        let origen = datos;
+        datos += tamano;
         let m = memoria_crear(tamano);
         let destino = COPIA + i * (8 << 20);
         if (m as i32) <= 0 || memoria_proyectar(m, destino, true) != 0 {
-            println!("  [inicio] {}: sin memoria", nombre(cab + 8));
+            println!("  [inicio] {}: sin memoria", nombre(nombre_cab));
             continue;
         }
-        unsafe { core::ptr::copy_nonoverlapping(datos as *const u8, destino as *mut u8, tamano) };
-        datos += tamano;
+        unsafe { core::ptr::copy_nonoverlapping(origen as *const u8, destino as *mut u8, tamano) };
         let g = grupo_crear(16 << 20);
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
-            println!("  [inicio] {}: no se pudo lanzar ({})", nombre(cab + 8), proceso);
+            println!("  [inicio] {}: no se pudo lanzar ({})", nombre(nombre_cab), proceso);
             continue;
         }
-        println!("  [inicio] {} lanzado en su grupo, con {} llaves", nombre(cab + 8), k);
+        println!("  [inicio] {} lanzado en su grupo, con {} llaves", nombre(nombre_cab), k);
         // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera.
         if k == 0 {
             let (clase, codigo) = proceso_esperar(proceso as u32);
-            println!("  [inicio] {} acabó: clase {}, código {}", nombre(cab + 8), clase, codigo);
+            println!("  [inicio] {} acabó: clase {}, código {}", nombre(nombre_cab), clase, codigo);
         }
     }
     println!("  [inicio] todo lanzado; se queda esperando");

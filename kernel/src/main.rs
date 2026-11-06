@@ -22,9 +22,6 @@ mod cupo;
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
 mod buzon;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod compositor;
 mod dtb;
 mod elf;
 mod gic;
