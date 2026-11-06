@@ -24,9 +24,12 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   memoria y salta a ella con el árbol en `x0`, como el firmware de la Pi. Hace falta que el kernel no dependa de
   dónde se carga (en `virt` la RAM empieza en 0x40000000) y que respete las zonas que UEFI reserva (mapa de memoria:
   se pasan al kernel como `/memreserve/` o en un nodo del árbol).
-- [ ] U3 **El kernel en `virt`.** GICv3 (redistribuidores por núcleo, registros del sistema `ICC_*`), el PL011 y la
-  memoria sacados del árbol, nada de direcciones fijas de la Pi (ventana de periféricos en 0xFC000000, zonas DMA),
-  PSCI para arrancar los demás núcleos. Prueba: `make -C kernel prueba` en las dos máquinas.
+- [x] U3 **El kernel en `virt`**, con el GICv2 de `virt`: `make -C kernel arranque-virt` llega a `inicio` con los
+  cuatro núcleos (PSCI) y la consola como servicio.
+- [ ] U3b **GICv3** (redistribuidores por núcleo, registros del sistema `ICC_*`), para `gic-version=3` y las máquinas
+  de verdad.
+- [ ] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba` en las dos máquinas): muchas son de la Pi
+  (SD, USB, buzón); separar las que valen para las dos.
 - [ ] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
   (dirección, tamaño, paso, formato); el compositor pinta ahí cuando no hay buzón de la VideoCore. En QEMU, `ramfb`
   o `virtio-gpu`.
@@ -40,7 +43,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 
 - `make -C uefi/prueba` saca el núcleo de prueba de U2 (`nucleo.bin`, en C, enlazado en 0x40200000).
 - `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
-- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv3, 4 núcleos, 2 GB, `acpi=off`) con
+- `make -C kernel arranque-virt`: el kernel con la característica `virt`, metido en el programa de UEFI y arrancado.
+- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; 4 núcleos, 2 GB,
+  `acpi=off`) con
   EDK2 y el programa como `EFI/BOOT/BOOTAA64.EFI` en un disco FAT; comprueba el puerto serie como `prueba_qemu.sh` y
   para en cuanto sale la última línea esperada.
 
@@ -75,3 +80,22 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - Siguiente, U3: el kernel de verdad en `virt`. Hace falta enlazarlo en 0x40200000 (o hacerlo reubicable), sacar del
   árbol el PL011 (hoy fijo en 0xFE201000), un GICv3, PSCI para los otros núcleos y unas tablas de arranque que no den
   por hecho el mapa de la Pi (periféricos en 0xFC000000).
+
+### 2026-11-07 madrugada — U3 (el kernel en `virt`, con GICv2)
+
+- **Característica `virt`** del kernel: se elige al compilar, porque el kernel está enlazado para una física fija
+  (la Pi en 0x80000, `virt` en 0x40200000: `enlace_virt.ld`, que elige `build.rs`). Lo que cambia de placa está en
+  `kernel/src/base/placa.rs`: la ventana de periféricos (Pi: 0xFC000000 a 4 GB; `virt`: el primer GB entero) y el
+  PL011 de antes de leer el árbol. `mapa.rs`, `espacio.rs`, `mmio.rs` y el árbol la usan en vez de 0xFC000000.
+- **Tablas de arranque** (`arranque.s`, `.if PLACA_VIRT`): en `virt`, el primer GB de dispositivo y los otros tres
+  normales, en bloques de 1 GB.
+- **Mapa del kernel** (`mapa.rs`): solo los bloques de 2 MB que tocan la imagen van en páginas; antes, todo lo que
+  había por debajo de su final (en `virt` habría sido el primer GB entero en páginas de 4 KB). En la Pi, igual.
+- **PSCI** (`nucleos.rs`): si el árbol trae `/psci`, los núcleos 1 a 3 se encienden con CPU_ON por `hvc` o `smc`
+  según su `method`; si no, la tabla de espera de la Pi.
+- **GIC:** el GICv2 de `virt` ("arm,cortex-a15-gic") se maneja como el GIC-400 de la Pi.
+- **`inicio`** no sondea la V3D donde no es zona de aparatos (en `virt` caía en un `assert`). Sin buzón, USB,
+  pantalla ni GPU, se lanzan la consola y `hola`.
+- **Comprobado:** `make -C kernel arranque-virt` bien; en la Pi, `make -C kernel prueba` (C14 falla a ratos por la
+  carga de la máquina, media de 5) y `make -C kernel arranque`, bien. **No comprobado:** GICv3, ACPI, máquinas de
+  verdad; las pruebas del kernel en `virt`.

@@ -14,9 +14,10 @@ DISCO=$(mktemp -d)
 mkdir -p "$DISCO/EFI/BOOT"
 cp "$EFI" "$DISCO/EFI/BOOT/BOOTAA64.EFI"
 SALIDA=$(mktemp)
-# gic-version=3: el de los portátiles con Snapdragon y las placas de servidor; los Mac usan el AIC de Apple.
-# acpi=off: así EDK2 da el árbol de dispositivos (como U-Boot en los Mac). Los portátiles dan ACPI: queda para después.
-timeout "$SEGUNDOS" qemu-system-aarch64 -M virt,gic-version=3,acpi=off -cpu cortex-a72 -smp 4 -m 2G \
+# GIC=2 por ahora (el kernel maneja el GICv2 desde U3); con GIC=3, el de los portátiles con Snapdragon y las placas de
+# servidor (los Mac usan el AIC de Apple). acpi=off: así EDK2 da el árbol de dispositivos (como U-Boot en los Mac).
+# Los portátiles dan ACPI: queda para después.
+timeout "$SEGUNDOS" qemu-system-aarch64 -M virt,gic-version=${GIC:-2},acpi=off -cpu cortex-a72 -smp 4 -m 2G \
     -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
     -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
 QEMU=$!

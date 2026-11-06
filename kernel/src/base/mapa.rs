@@ -8,7 +8,8 @@
 //! - lo demás de la imagen (datos, `.bss`, tablas, pilas de arranque): lectura y escritura, sin ejecución;
 //! - la página más baja de cada pila de arranque, sin proyectar: una página de guarda;
 //! - el resto de la memoria (el mapa lineal): lectura y escritura, sin ejecución;
-//! - los periféricos (desde `0xFC00_0000`): memoria de dispositivo, sin ejecución.
+//! - los periféricos (la ventana de la placa, `placa.rs`; en la Pi, desde `0xFC00_0000`): memoria de dispositivo, sin
+//!   ejecución.
 //!
 //! Nada se puede escribir y ejecutar a la vez (W^X), y EL0 no ejecuta nada de la mitad alta (UXN en todo). La zona
 //! de la imagen va en páginas de 4 KB; lo demás, en bloques de 2 MB y 1 GB.
@@ -30,7 +31,7 @@ const DIRECCION: u64 = 0x0000_ffff_ffff_f000;
 
 const GB: u64 = 1 << 30;
 const MB2: u64 = 1 << 21;
-const PERIFERICOS: u64 = 0xFC00_0000;
+use super::placa::{es_periferico, PERIFERICOS};
 /// Ranuras de pila: 32 KB alineados; la mitad de abajo es guarda, la de arriba la pila (vectores.s lo comprueba).
 const RANURA: u64 = 0x8000;
 pub const PILA: usize = 0x4000;
@@ -136,7 +137,8 @@ pub fn construir() {
     let l1 = tabla_nueva();
     for g in 0..4u64 {
         let base = g * GB;
-        let especial = base < fin_fino || base + GB > PERIFERICOS || (destino != 0 && destino < base + GB && destino + reservado > base);
+        let cruza_perifericos = base < PERIFERICOS.1 && base + GB > PERIFERICOS.0;
+        let especial = (base + GB > bajo && base < fin_fino) || cruza_perifericos || (destino != 0 && destino < base + GB && destino + reservado > base);
         if !especial {
             poner(l1, g as usize, base | BLOQUE | atributos(Tipo::Datos));
             continue;
@@ -145,11 +147,11 @@ pub fn construir() {
         poner(l1, g as usize, l2 | TABLA);
         for i in 0..512u64 {
             let b = base + i * MB2;
-            if b >= PERIFERICOS {
+            if es_periferico(b) {
                 poner(l2, i as usize, b | BLOQUE | atributos(Tipo::Dispositivo));
             } else if hueco(b) {
                 // La copia de la imagen: sin alias en el mapa lineal.
-            } else if b < fin_fino {
+            } else if b + MB2 > bajo && b < fin_fino {
                 let l3 = tabla_nueva();
                 poner(l2, i as usize, l3 | TABLA);
                 for j in 0..512u64 {

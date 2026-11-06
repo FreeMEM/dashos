@@ -15,7 +15,7 @@ extern crate alloc;
 
 #[allow(unsafe_code)]
 mod base;
-pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, planificador};
+pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, placa, planificador};
 
 mod azar;
 mod cupo;
@@ -59,7 +59,9 @@ pub fn kmain(dtb: usize) -> ! {
     mapa::activar();
     base::copiar_arbol();
 
-    let (Some(g), Some(t)) = (d.compatible("arm,gic-400"), d.compatible("arm,armv8-timer")) else {
+    // El GIC-400 de la Pi o el GICv2 de QEMU `virt` (U3), que se manejan igual.
+    let gic = d.compatible("arm,gic-400").or_else(|| d.compatible("arm,cortex-a15-gic"));
+    let (Some(g), Some(t)) = (gic, d.compatible("arm,armv8-timer")) else {
         panic!("falta el GIC o el temporizador en el árbol de dispositivos");
     };
     let (Some((dist, _)), Some((cpu, _))) = (d.reg_cpu(&g, 0), d.reg_cpu(&g, 1)) else {
@@ -71,7 +73,13 @@ pub fn kmain(dtb: usize) -> ! {
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();
 
-    let n = nucleos::despertar();
+    // Los otros núcleos: por PSCI si el árbol lo trae (U3), si no con la tabla de espera de la Pi.
+    let como = match d.por_nombre("psci").and_then(|p| d.propiedad(&p, "method")) {
+        Some((datos, largo)) if largo >= 3 && d.u8(datos) == b'h' => nucleos::Encendido::PsciHvc,
+        Some(_) => nucleos::Encendido::PsciSmc,
+        None => nucleos::Encendido::TablaDeEspera,
+    };
+    let n = nucleos::despertar(como);
     interrupciones::iniciar();
 
     #[cfg(feature = "pruebas")]

@@ -10,10 +10,12 @@ use core::ptr::{read_volatile, write_volatile};
 pub struct RegLe32(usize);
 
 impl RegLe32 {
-    /// Solo direcciones de la ventana de periféricos (desde `0xFC00_0000`, vista en la mitad alta): con cualquier otra
-    /// para (en tiempo de compilación si es una constante). Así un registro nunca es memoria normal del kernel.
+    /// Solo direcciones de la ventana de periféricos de la placa (`placa.rs`; en la Pi, desde `0xFC00_0000`), vista en
+    /// la mitad alta: con cualquier otra para (en tiempo de compilación si es una constante). Así un registro nunca es
+    /// memoria normal del kernel.
     pub const fn new(direccion: usize) -> Self {
-        assert!(direccion >= crate::mmu::virt(0xFC00_0000) && direccion <= crate::mmu::virt(0xFFFF_FFFC) && direccion % 4 == 0);
+        let (ini, fin) = super::placa::PERIFERICOS;
+        assert!(direccion >= crate::mmu::virt(ini as usize) && direccion <= crate::mmu::virt(fin as usize - 4) && direccion % 4 == 0);
         Self(direccion)
     }
 

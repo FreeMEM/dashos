@@ -109,7 +109,6 @@ pub enum Error {
 /// Proyecciones de objetos de memoria por proceso, hasta los cupos de S16 (F).
 const MAX_PROYECCIONES: usize = 1024;
 /// Inicio de la ventana de periféricos de la Pi 4.
-const PERIFERICOS: u64 = 0xFC00_0000;
 
 /// Por debajo de esto no se proyecta nada.
 pub const VA_MINIMA: u64 = 0x1_0000;
@@ -333,7 +332,7 @@ impl Espacio {
     /// ventana de periféricos: nunca memoria normal, aunque alguien le pase una.
     pub fn proyectar_dispositivo(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
         let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
-        if fisica < PERIFERICOS || fin > 1 << 32 || fisica % PAGINA != 0 {
+        if !super::placa::es_periferico(fisica) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
             return Err(Error::Direccion);
         }
         self.preparar(va, tamano.div_ceil(PAGINA))?;

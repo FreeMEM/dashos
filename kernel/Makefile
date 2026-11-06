@@ -3,6 +3,8 @@
 # make         la imagen normal, sin pruebas (target/kernel8.img)
 # make prueba  la imagen con las pruebas del arranque y los programas de usuario que lanzan, y la prueba en QEMU
 # make arranque  la imagen normal en QEMU: tiene que llegar a "DashOS en marcha"
+# make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
+# make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -33,6 +35,16 @@ prueba: $(PRUEBAS)
 
 arranque: $(IMAGEN)
 	../tools/prueba_qemu.sh $(IMAGEN) pruebas/arranque.txt 5
+
+VIRT := target/kernel8-virt.img
+
+virt: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt
+	$(OBJCOPY) -O binary $(ELF) $(VIRT)
+
+arranque-virt: virt
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
+	../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
 
 clean:
 	cargo clean

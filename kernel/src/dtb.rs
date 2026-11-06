@@ -65,7 +65,7 @@ impl Dtb {
     }
 
     // Fuera del árbol se lee 0: un árbol mal formado da respuestas raras, no accesos fuera.
-    fn u8(&self, off: usize) -> u8 {
+    pub fn u8(&self, off: usize) -> u8 {
         self.bytes.get(off).copied().unwrap_or(0)
     }
 

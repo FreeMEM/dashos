@@ -95,7 +95,12 @@ pub fn lanzar() -> bool {
     // La V3D (C50): solo si su puente contesta. QEMU no la emula, y leer su ventana daría un fallo de bus: se sondea.
     // Sus registros son ventanas fijas (`docs/spec/hw/v3d.md`, §2.1 y §2.4). Su permiso DMA tiene desplazamiento 0: la
     // V3D ve direcciones físicas.
-    let puente = crate::mmio::RegLe32::new(crate::mmu::virt(0xFEC1_1000) + 0x20).sondear();
+    // Solo si esa dirección es de aparatos en esta placa (en QEMU `virt` no lo es, U3).
+    let puente = if crate::placa::es_periferico(0xFEC1_1000) {
+        crate::mmio::RegLe32::new(crate::mmu::virt(0xFEC1_1000) + 0x20).sondear()
+    } else {
+        None
+    };
     if puente == Some(0x6272_6467) {
         for (nombre, fisica, tamano) in [("v3d", 0xFEC0_0000, 0x8000), ("v3d-puente", 0xFEC1_1000, 0x1000), ("pm", 0xFE10_0000, 0x1000), ("cprman", 0xFE10_1000, 0x1000)] {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));

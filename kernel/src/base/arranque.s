@@ -95,6 +95,18 @@ en_el1:
 
     ldr     x4, =0x0040000000000705     // bloque normal: válido, AttrIndx 1, compartible interno, AF, UXN (EL0 nunca
                                         // ejecuta por aquí; auditoría, hallazgo 12)
+.if PLACA_VIRT
+    // QEMU virt (U3, placa.rs): el primer GB son aparatos y la RAM empieza en 1 GB. Bloques de 1 GB: el primero de
+    // dispositivo, los otros tres normales. Sin nivel 2.
+    ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
+    str     x8, [x0, #0]
+    orr     x5, x4, #(1 << 30)
+    str     x5, [x0, #8]
+    orr     x5, x4, #(2 << 30)
+    str     x5, [x0, #16]
+    orr     x5, x4, #(3 << 30)
+    str     x5, [x0, #24]
+.else
     str     x4, [x0, #0]
     orr     x5, x4, #(1 << 30)
     str     x5, [x0, #8]
@@ -115,6 +127,7 @@ en_el1:
     add     x2, x2, #1
     cmp     x2, #512
     b.ne    6b
+.endif
     dsb     ish                         // que los demás núcleos vean las tablas al leerlas sin caché
 
     MMU     en_alto

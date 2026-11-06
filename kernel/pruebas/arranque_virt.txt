@@ -1,0 +1,10 @@
+# U3: la imagen normal en QEMU virt, arrancada por EDK2 con el programa de UEFI: llega a inicio, que lanza la consola
+# y los servicios que tienen sus aparatos (en virt, ni USB ni buzón ni GPU).
+DashOS: fuera de los servicios de arranque
+DashOS 0.0.1
+Orden de bytes: little-endian
+Memoria física:
+DashOS en marcha con 4 núcleos.
+│   [inicio] consola lanzado en su grupo, con 2 llaves
+│   hola desde Rust en EL0 (DashOS, little-endian)
+│   [inicio] todo lanzado; se queda esperando

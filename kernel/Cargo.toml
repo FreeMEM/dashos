@@ -12,6 +12,8 @@ bench = false
 [features]
 # Las pruebas del arranque y lo que solo usan ellas (C36). `make prueba` las pone; `make` no.
 pruebas = []
+# QEMU virt por UEFI (U3, docs/UEFI_LOOP.md): otra dirección de carga, otro mapa de aparatos, PSCI.
+virt = []
 
 [profile.dev]
 panic = "abort"

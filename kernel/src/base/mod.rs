@@ -19,7 +19,12 @@ pub mod nucleos;
 pub mod planificador;
 pub mod usuario;
 
-core::arch::global_asm!(include_str!("arranque.s"));
+pub mod placa;
+// Para arranque.s, en el mismo bloque: qué tablas de arranque se hacen (placa.rs).
+#[cfg(not(feature = "virt"))]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", include_str!("arranque.s"));
+#[cfg(feature = "virt")]
+core::arch::global_asm!(".equ PLACA_VIRT, 1", include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("copia.s"));
 
@@ -80,7 +85,7 @@ pub fn arbol_de_dispositivos() -> Option<&'static [u8]> {
         return Some(copia);
     }
     let fisica = ARBOL.load(core::sync::atomic::Ordering::Relaxed);
-    if fisica >= 0xFC00_0000 || fisica % 8 != 0 {
+    if placa::es_periferico(fisica as u64) || fisica % 8 != 0 {
         return None;
     }
     let p = mmu::virt(fisica) as *const u32;

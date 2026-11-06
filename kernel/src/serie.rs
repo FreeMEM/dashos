@@ -5,7 +5,7 @@ use core::fmt;
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Dirección del PL011 con los periféricos en modo bajo. En C4 se leerá del árbol de dispositivos.
-const BASE: usize = crate::mmu::virt(0xFE20_1000);
+const BASE: usize = crate::mmu::virt(crate::placa::SERIE);
 
 const DR: RegLe32 = RegLe32::new(BASE + 0x00);
 const FR: RegLe32 = RegLe32::new(BASE + 0x18);
