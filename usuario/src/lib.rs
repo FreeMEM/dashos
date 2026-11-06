@@ -85,6 +85,25 @@ pub fn interrupcion_asociar(llave: u32, canal: u32) -> i64 {
     llamada(10, [llave as u64, canal as u64, 0, 0, 0]).0 as i64
 }
 
+/// Un temporizador (C49): avisa al otro lado de `canal` dentro de `primero_us` y, si `periodo_us` no es 0, cada
+/// `periodo_us` después. El aviso son 8 bytes: cuántas veces ha vencido desde el último que se pudo entregar. La
+/// resolución es de 10 ms. Se para al cerrar su llave. Devuelve la llave o un error negativo.
+pub fn temporizador_crear(canal: u32, primero_us: u64, periodo_us: u64) -> i64 {
+    llamada(24, [canal as u64, primero_us, periodo_us, 0, 0]).0 as i64
+}
+
+/// Suelta una llave.
+pub fn cerrar(llave: u32) -> i64 {
+    llamada(6, [llave as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// Microsegundos desde que arrancó la máquina, con el contador de la CPU.
+pub fn ahora_us() -> u64 {
+    let (t, f): (u64, u64);
+    unsafe { asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
+    (t as u128 * 1_000_000 / f.max(1) as u128) as u64
+}
+
 /// Interrupción atendida: el kernel la vuelve a habilitar.
 pub fn interrupcion_terminar(llave: u32) -> i64 {
     llamada(11, [llave as u64, 0, 0, 0, 0]).0 as i64

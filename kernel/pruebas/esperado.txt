@@ -75,11 +75,9 @@ C23: listas del HVS bien
   listas de borrado del ejemplo: RCL 106 bytes, genérica 17 bytes, iguales al volcado: sí
 C27: listas de borrado de la V3D bien
 C24: V3D, lado del kernel bien
-  [usb] DWC2 0x4f54294a en marcha
+  [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
   [usb] HID de arranque: 1 teclado y 1 ratón
-~  [usb] tecla: uso 0x04 (a)
-~  [usb] ratón: botones 0x0, movimiento (
-C49: controlador USB fuera del kernel lanzado
+C49: USB fuera del kernel, con su interrupción y eventos por un canal bien
   VA 0x1000, 0x2000, 0x5000; tabla bien; hueco reutilizado sí; tramos juntados sí; memoria devuelta sí
 C26: búferes de la GPU bien
 sale con código 28
@@ -113,7 +111,9 @@ C39: crear, matar y esperar procesos desde un proceso bien
   [lanzador] malo: clase 0, código 31
   [llaves] copias con menos derechos, marcas que no se cambian y revocación
   [lanzador] llaves: clase 0, código 41
-  [lanzador] 2 pruebas lanzadas desde un proceso, cada una en su grupo
+  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale
+  [lanzador] tiempo: clase 0, código 49
+  [lanzador] 3 pruebas lanzadas desde un proceso, cada una en su grupo
 C43: pruebas de usuario lanzadas por un proceso bien
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse

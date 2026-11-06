@@ -105,7 +105,7 @@ del kernel sobre la que irán esos controladores.
 - [x] C48 **Consola como servicio.** El controlador serie en EL0 es la consola. El kernel deja de usar el PL011 cuando
   la consola arranca y escribe su registro en un anillo que la consola vacía; `escribir` va también al anillo. Solo el
   pánico escribe directo. Cierra N2/N6 de las auditorías.
-- [~] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
+- [x] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
   canales.
 - [ ] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
   HVS y la V3D como procesos (sin probar en QEMU). El buzón de la VideoCore, como servicio.
@@ -1242,6 +1242,34 @@ los programas también llevan "│ ".
   registros de "usb", y la línea en `pruebas/arranque.txt`);
 - que mande los eventos por un canal en vez de solo escribirlos (para el compositor de C50);
 - que use la interrupción del DWC2 en vez de consultar sin parar: hoy gasta CPU girando.
+
+### 2026-11-06 noche, bucle (sesión DashOS) — C49, segunda parte (interrupción, canal y temporizadores)
+
+- **Temporizadores en el kernel** (llamada 24, `temporizador_crear`; `kernel/src/temporizadores.rs`). Hacían falta
+  para que el USB espere sin girar, y los pedirá el `Delay` de Dash (A7). No estaba decidido en S16: se eligió un
+  objeto que avisa por un canal, como las interrupciones, para que un controlador espere las dos cosas en una sola
+  lectura. El tic del núcleo 0 mira el vencimiento más próximo y despierta al repartidor de interrupciones, que manda
+  los avisos (8 bytes: cuántas veces venció). Resolución de 10 ms. Se cobra al cupo y entra en las reglas de ciclos
+  (`forma_ciclo`, `soltar`). Prueba nueva `tiempo` (código 49, lanzada por `lanzador`): una vez, periódico, se para
+  al cerrar la llave, y rechaza llave cerrada, llave que no es canal, canal sin escribir, plazo de más de un día y
+  mandar el temporizador por su propio canal.
+- **USB con interrupción.** Solo se habilita la de canal parado. Cada transferencia consume su propia interrupción
+  aunque el canal ya estuviera parado al mirar; si no, se quedaba deshabilitada y la siguiente tenía que esperar al
+  temporizador (medido: 8 interrupciones en unas 50 esperas; tras el arreglo, 111 interrupciones, todas). Las pausas
+  largas (10 ms o más) esperan al temporizador.
+- **Eventos por un canal** (llave 4), 8 bytes cada uno: teclas pulsadas y soltadas (comparando informes, con los
+  modificadores como usos 0xE0-0xE7) y ratón. Formato en `docs/referencia/servicios.md`, nuevo. Sin llave 4 los
+  escribe. Fallo encontrado: la comprobación de la llave 4 se hacía después de crear la memoria DMA, que tomaba
+  justo el número 4.
+- **`inicio` lanza `usb`** en la imagen normal con el permiso DMA, sus registros y su interrupción; sin canal de
+  eventos hasta que haya quien los lea (el compositor, C50). `pruebas/arranque.txt` comprueba la "a" pulsada y
+  soltada y el ratón.
+- **Prueba C49** (imagen de pruebas): el kernel lanza `usb` con las cuatro llaves y lee el canal hasta ver la "a"
+  pulsada y soltada y el ratón. Ahora espera a que el proceso acabe antes de seguir: C26 cuenta las páginas libres
+  y fallaba a veces con el USB aún soltándolas.
+- **Comprobado:** `make -C kernel prueba` tres veces y `make -C kernel arranque` dos, bien. Que la interrupción se
+  usa, contando avisos (arriba). **No comprobado:** en una Pi 4 real (los puertos USB-A van por el VL805, no por el
+  DWC2).
 
 ## Pausa (2026-11-03, 20:5x)
 

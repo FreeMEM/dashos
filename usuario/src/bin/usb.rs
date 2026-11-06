@@ -1,9 +1,15 @@
 //! El controlador USB (C49): el DWC2 de la Pi 4 en modo anfitrión, fuera del kernel. Antes iba dentro (C22); el
 //! protocolo es el mismo (USB 2.0 y HID 1.11), por consulta.
 //!
-//! Llaves: la 1, el permiso DMA; la 2, los registros del DWC2. El búfer de DMA es memoria DMA (C46): una página del
-//! primer GB, con su dirección de bus, que se ve sin caché. Enumera el hub de QEMU, busca teclados y ratones de
-//! arranque y escribe lo que mandan.
+//! Llaves: la 1, el permiso DMA; la 2, los registros del DWC2; la 3, su interrupción; la 4, el canal por el que manda
+//! los eventos. El búfer de DMA es memoria DMA (C46): una página del primer GB, con su dirección de bus, que se ve sin
+//! caché. Enumera el hub de QEMU y busca teclados y ratones de arranque.
+//!
+//! Espera con la interrupción del DWC2 (solo la de canal parado) y un temporizador de 10 ms, los dos en un mismo
+//! canal: entre una consulta y otra no gasta CPU. Sin la llave 3 gira, como antes.
+//!
+//! Eventos (8 bytes cada uno, `docs/referencia/servicios.md`): tecla `[1, uso, 1 pulsada o 0 soltada, 0...]`, con los
+//! modificadores como usos 0xE0 a 0xE7; ratón `[2, botones, dx, dy, rueda, 0...]`. Sin la llave 4 los escribe.
 
 #![no_std]
 #![no_main]
@@ -16,12 +22,16 @@ const GAHBCFG: usize = 0x008;
 const GUSBCFG: usize = 0x00C;
 const GRSTCTL: usize = 0x010;
 const GINTSTS: usize = 0x014;
+const GINTMSK: usize = 0x018;
+const HAINTMSK: usize = 0x418;
 const GSNPSID: usize = 0x040;
 const HCFG: usize = 0x400;
 const HPRT: usize = 0x440;
 const PCGCCTL: usize = 0xE00;
 
 const GAHBCFG_DMA: u32 = 1 << 5;
+const GAHBCFG_INTERRUPCIONES: u32 = 1 << 0;
+const GINTSTS_CANALES: u32 = 1 << 25;
 const GUSBCFG_FORZAR_ANFITRION: u32 = 1 << 29;
 const GRSTCTL_REINICIO: u32 = 1 << 0;
 const GRSTCTL_AHB_LIBRE: u32 = 1 << 31;
@@ -85,6 +95,17 @@ pub struct Dwc2 {
     bus: u64,
     /// Tamaño de paquete del punto 0 de cada dirección.
     mps: [u32; 16],
+    avisos: Option<Avisos>,
+    /// Llegó la interrupción y aún no se ha vuelto a habilitar: se hace al borrar HCINT.
+    irq_pendiente: core::cell::Cell<bool>,
+}
+
+/// Por dónde espera (C49): el canal donde llegan la interrupción (4 bytes) y el temporizador (8), y la llave de la
+/// interrupción.
+#[derive(Clone, Copy)]
+pub struct Avisos {
+    lectura: u32,
+    irq: u32,
 }
 
 fn ahora() -> u64 {
@@ -97,6 +118,13 @@ fn frecuencia() -> u64 {
     let f: u64;
     unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) f) };
     f
+}
+
+/// Lee un aviso del canal: 4 bytes, la interrupción; 8, el temporizador.
+fn leer_aviso(canal: u32) -> i64 {
+    let mut buf = [0u8; 16];
+    let mut ll = [0u32; 1];
+    dashos::canal_leer(canal, &mut buf, &mut ll).0
 }
 
 fn esperar_us(us: u64) {
@@ -133,12 +161,12 @@ impl Dwc2 {
 
     /// Arranca el controlador en modo anfitrión y reinicia el puerto. `base` es donde están proyectados sus
     /// registros; `bufer` y `bus`, el búfer de DMA.
-    pub fn iniciar(base: usize, bufer: usize, bus: u64) -> Result<Self, Error> {
+    pub fn iniciar(base: usize, bufer: usize, bus: u64, avisos: Option<Avisos>) -> Result<Self, Error> {
         let id = RegLe32(base + GSNPSID).leer();
         if id & 0xffff_f000 != 0x4f54_2000 && id & 0xffff_f000 != 0x4f54_3000 {
             return Err(Error::NoHay);
         }
-        let u = Self { base, bufer, bus, mps: [8; 16] };
+        let u = Self { base, bufer, bus, mps: [8; 16], avisos, irq_pendiente: core::cell::Cell::new(false) };
         // Reinicio del núcleo: esperar a que el bus interno esté libre, pedirlo y esperar a que acabe.
         u.esperar(|s| s.r(GRSTCTL).leer() & GRSTCTL_AHB_LIBRE != 0, 100_000)?;
         u.r(GRSTCTL).escribir(GRSTCTL_REINICIO);
@@ -146,8 +174,15 @@ impl Dwc2 {
         esperar_us(100);
         u.r(PCGCCTL).escribir(0);
         u.r(GUSBCFG).escribir(u.r(GUSBCFG).leer() | GUSBCFG_FORZAR_ANFITRION);
-        esperar_us(25_000);
-        u.r(GAHBCFG).escribir(GAHBCFG_DMA); // sin interrupciones globales: por consulta
+        u.dormir(25_000);
+        if u.avisos.is_some() {
+            // Solo la interrupción de los canales, y de ellos solo el 0 y cuando se para (HCINTMSK en cada transacción).
+            u.r(GINTMSK).escribir(GINTSTS_CANALES);
+            u.r(HAINTMSK).escribir(1);
+            u.r(GAHBCFG).escribir(GAHBCFG_DMA | GAHBCFG_INTERRUPCIONES);
+        } else {
+            u.r(GAHBCFG).escribir(GAHBCFG_DMA); // por consulta
+        }
         u.r(HCFG).escribir((u.r(HCFG).leer() & !3) | 1); // reloj de 48 MHz para velocidad completa y baja
         u.r(GINTSTS).escribir(0xffff_ffff);
 
@@ -157,24 +192,84 @@ impl Dwc2 {
         if !u.esperar(|s| s.r(HPRT).leer() & HPRT_CONECTADO != 0, 500_000).is_ok() {
             return Err(Error::SinDispositivo);
         }
-        esperar_us(100_000);
+        u.dormir(100_000);
         puerto(u.r(HPRT).leer() | HPRT_REINICIO);
-        esperar_us(50_000);
+        u.dormir(50_000);
         puerto(u.r(HPRT).leer() & !HPRT_REINICIO);
         u.esperar(|s| s.r(HPRT).leer() & HPRT_ACTIVO != 0, 200_000)?;
         u.r(HPRT).escribir((u.r(HPRT).leer() & !HPRT_W1C) | (1 << 1) | (1 << 3)); // borrar los avisos de cambio
-        esperar_us(10_000);
+        u.dormir(10_000);
         Ok(u)
     }
 
+    /// Espera a que se cumpla `cond`, como mucho `us`. Con avisos, entre mirada y mirada se bloquea hasta el siguiente
+    /// (la interrupción o el temporizador); sin ellos, gira.
     fn esperar(&self, cond: impl Fn(&Self) -> bool, us: u64) -> Result<(), Error> {
         let fin = ahora() + us * frecuencia() / 1_000_000;
-        while ahora() < fin {
+        loop {
             if cond(self) {
                 return Ok(());
             }
+            if ahora() >= fin {
+                return Err(Error::Plazo);
+            }
+            self.siguiente_aviso();
         }
-        if cond(self) { Ok(()) } else { Err(Error::Plazo) }
+    }
+
+    /// Lee el siguiente aviso del canal. Verdad si era del temporizador. Sin avisos, vuelve enseguida. Una
+    /// interrupción que llega aquí es de una transferencia que ya se dio por acabada: con HCINT ya borrado, se vuelve
+    /// a habilitar.
+    pub fn siguiente_aviso(&self) -> bool {
+        let Some(a) = self.avisos else { return false };
+        let n = leer_aviso(a.lectura);
+        if n == 4 {
+            dashos::interrupcion_terminar(a.irq);
+        }
+        n == 8
+    }
+
+    /// Espera a que se pare el canal 0. Con avisos, cada parada da una interrupción, y esa interrupción se consume aquí
+    /// aunque el canal ya estuviera parado al empezar: si se dejara en la cola, se quedaría deshabilitada y la siguiente
+    /// transferencia tendría que esperar al temporizador.
+    fn esperar_canal(&self, us: u64) -> Result<(), Error> {
+        let parado = |s: &Self| s.r(HCINT).leer() & PARADO_O_HECHO != 0;
+        let Some(a) = self.avisos else { return self.esperar(parado, us) };
+        let fin = ahora() + us * frecuencia() / 1_000_000;
+        loop {
+            match leer_aviso(a.lectura) {
+                4 if parado(self) => {
+                    self.irq_pendiente.set(true); // se habilita en `borrar_canal`, tras borrar HCINT
+                    return Ok(());
+                }
+                // De una parada anterior que se dio por acabada con el temporizador: se habilita y se sigue esperando.
+                4 => {
+                    dashos::interrupcion_terminar(a.irq);
+                }
+                _ if ahora() >= fin => return if parado(self) { Ok(()) } else { Err(Error::Plazo) },
+                _ => {}
+            }
+        }
+    }
+
+    /// Pausa larga: con avisos, sin gastar CPU (resolución de 10 ms); sin ellos, girando.
+    fn dormir(&self, us: u64) {
+        if self.avisos.is_some() && us >= 10_000 {
+            let _ = self.esperar(|_| false, us);
+        } else {
+            esperar_us(us);
+        }
+    }
+
+    /// Borra lo que dice el canal 0 y, si llegó su interrupción, la vuelve a habilitar (después de borrar: es por
+    /// nivel, y si no volvería enseguida).
+    fn borrar_canal(&self) {
+        self.r(HCINT).escribir(0xffff_ffff);
+        if let Some(a) = self.avisos {
+            if self.irq_pendiente.replace(false) {
+                dashos::interrupcion_terminar(a.irq);
+            }
+        }
     }
 
     /// Velocidad del puerto: 0 alta, 1 completa, 2 baja.
@@ -201,8 +296,9 @@ impl Dwc2 {
     #[allow(clippy::too_many_arguments)]
     fn transaccion_en(&self, direccion: u32, punto: u32, tipo: u32, mps: u32, entrada: bool, pid: u32, datos: usize, largo: u32) -> Result<u32, Error> {
         let paquetes = if largo == 0 { 1 } else { largo.div_ceil(mps) };
-        self.r(HCINT).escribir(0xffff_ffff);
-        self.r(HCINTMSK).escribir(0x7ff);
+        self.borrar_canal();
+        // Solo "parado": en modo DMA el canal siempre se para al acabar, bien o mal.
+        self.r(HCINTMSK).escribir(HCINT_PARADO);
         self.r(HCTSIZ).escribir((pid << 29) | (paquetes << 19) | largo);
         self.r(HCDMA).escribir((self.bus + datos as u64) as u32);
         let lenta = if self.velocidad() == 2 { 1 << 17 } else { 0 };
@@ -210,8 +306,9 @@ impl Dwc2 {
             HCCHAR_HABILITAR | (1 << 20) | (direccion << 22) | (tipo << 18) | lenta | (punto << 11)
                 | if entrada { HCCHAR_ENTRADA } else { 0 } | mps,
         );
-        self.esperar(|s| s.r(HCINT).leer() & PARADO_O_HECHO != 0, 100_000)?;
+        self.esperar_canal(100_000)?;
         let int = self.r(HCINT).leer();
+        self.borrar_canal();
         if int & HCINT_STALL != 0 {
             return Err(Error::Stall);
         }
@@ -314,17 +411,17 @@ impl Dwc2 {
         for p in 1..=puertos {
             self.orden(hub, [0x23, 3, PUERTO_ALIMENTACION, 0, p, 0, 0, 0])?;
         }
-        esperar_us(espera.max(20) * 1000);
+        self.dormir(espera.max(20) * 1000);
         for p in 1..=puertos {
             if self.estado_puerto(hub, p)? & 1 == 0 {
                 continue; // nada conectado
             }
             self.orden(hub, [0x23, 3, PUERTO_REINICIO, 0, p, 0, 0, 0])?;
-            esperar_us(50_000);
+            self.dormir(50_000);
             self.esperar_puerto(hub, p)?;
             self.orden(hub, [0x23, 1, C_PUERTO_REINICIO, 0, p, 0, 0, 0])?;
             self.orden(hub, [0x23, 1, C_PUERTO_CONEXION, 0, p, 0, 0, 0])?;
-            esperar_us(10_000);
+            self.dormir(10_000);
             let desc = self.descriptor(0)?;
             let dir = siguiente;
             siguiente += 1;
@@ -396,7 +493,87 @@ impl Dwc2 {
 const VA_REGISTROS: usize = 0x0090_0000;
 const VA_BUFER: usize = 0x30_0000_0000;
 
+/// Lo que se manda a quien use el teclado y el ratón (C49).
+struct Entrada {
+    /// El canal de eventos (la llave 4); sin él, se escriben.
+    canal: Option<u32>,
+    previo: [u8; 8],
+}
+
+impl Entrada {
+    fn mandar(&mut self, ev: [u8; 8]) {
+        if let Some(c) = self.canal {
+            // Si el canal está lleno o cerrado, el evento se pierde: quien lee no da abasto o no está.
+            dashos::canal_escribir(c, &ev, &[]);
+            return;
+        }
+        match ev[0] {
+            1 => {
+                let letra = if (4..=29).contains(&ev[1]) { (b'a' + ev[1] - 4) as char } else { '?' };
+                dashos::println!("  [usb] tecla: uso {:#04x} ({}) {}", ev[1], letra, if ev[2] != 0 { "pulsada" } else { "soltada" });
+            }
+            _ => dashos::println!("  [usb] ratón: botones {:#x}, movimiento ({}, {})", ev[1], ev[2] as i8, ev[3] as i8),
+        }
+    }
+
+    /// Un informe de teclado de arranque (HID 1.11, B.1): modificadores, reservado y hasta seis teclas. Se compara con
+    /// el anterior para sacar lo que se pulsó y lo que se soltó.
+    fn teclado(&mut self, i: &[u8]) {
+        if i.len() < 8 || i[2] == 1 {
+            return; // demasiadas teclas a la vez: el informe no dice cuáles
+        }
+        let previo = self.previo;
+        let cambios = previo[0] ^ i[0];
+        for b in 0..8 {
+            if cambios & (1 << b) != 0 {
+                self.mandar([1, 0xE0 + b, (i[0] >> b) & 1, 0, 0, 0, 0, 0]);
+            }
+        }
+        for &k in &previo[2..8] {
+            if k > 3 && !i[2..8].contains(&k) {
+                self.mandar([1, k, 0, 0, 0, 0, 0, 0]);
+            }
+        }
+        for &k in &i[2..8] {
+            if k > 3 && !previo[2..8].contains(&k) {
+                self.mandar([1, k, 1, 0, 0, 0, 0, 0]);
+            }
+        }
+        self.previo.copy_from_slice(&i[..8]);
+    }
+
+    /// Un informe de ratón de arranque (HID 1.11, B.2): botones, x, y y, si lo trae, la rueda.
+    fn raton(&mut self, i: &[u8]) {
+        if i.len() >= 3 {
+            self.mandar([2, i[0], i[1], i[2], i.get(3).copied().unwrap_or(0), 0, 0, 0]);
+        }
+    }
+}
+
+/// La interrupción (llave 3) y un temporizador de 10 ms en un canal nuevo. `None` si no hay llave 3.
+fn preparar_avisos() -> Option<Avisos> {
+    let (a, b) = dashos::canal_crear();
+    if dashos::interrupcion_asociar(3, b) != 0 {
+        dashos::cerrar(a);
+        dashos::cerrar(b);
+        return None;
+    }
+    if dashos::temporizador_crear(b, 10_000, 10_000) <= 0 {
+        return None;
+    }
+    Some(Avisos { lectura: a, irq: 3 })
+}
+
 fn principal() -> u64 {
+    // Lo primero, antes de crear ninguna llave (la memoria DMA, el canal de avisos...): la 4, si existe, es la que trae
+    // el canal de eventos.
+    let copia = dashos::llave_duplicar(4, dashos::ESCRIBIR, 0);
+    let canal = if copia > 0 {
+        dashos::cerrar(copia as u32);
+        Some(4)
+    } else {
+        None
+    };
     if dashos::registros_proyectar(2, VA_REGISTROS) != 0 {
         dashos::println!("  [usb] sin registros");
         return 1;
@@ -406,14 +583,16 @@ fn principal() -> u64 {
         dashos::println!("  [usb] sin memoria DMA");
         return 2;
     }
-    let mut u = match Dwc2::iniciar(VA_REGISTROS, VA_BUFER, bus) {
+    let avisos = preparar_avisos();
+    let mut u = match Dwc2::iniciar(VA_REGISTROS, VA_BUFER, bus, avisos) {
         Ok(u) => u,
         Err(e) => {
             dashos::println!("  [usb] no arranca: {:?}", e);
             return 3;
         }
     };
-    dashos::println!("  [usb] DWC2 {:#x} en marcha; búfer DMA en el bus {:#x}", u.identificador(), bus);
+    dashos::println!("  [usb] DWC2 {:#x} en marcha; búfer DMA en el bus {:#x}; {}", u.identificador(), bus,
+        if avisos.is_some() { "espera con su interrupción y un temporizador" } else { "por consulta" });
     if u.descriptor(0).is_err() || u.poner_direccion(1).is_err() {
         dashos::println!("  [usb] no se pudo enumerar el primer dispositivo");
         return 4;
@@ -426,22 +605,22 @@ fn principal() -> u64 {
     let teclados = hids.iter().flatten().filter(|h| h.teclado).count();
     let ratones = hids.iter().flatten().filter(|h| !h.teclado).count();
     dashos::println!("  [usb] HID de arranque: {} teclado y {} ratón", teclados, ratones);
-    // Por consulta: cada pocos milisegundos se pregunta a cada uno.
+    let mut entrada = Entrada { canal, previo: [0; 8] };
+    // Se pregunta a cada uno en cada tic del temporizador (sin él, cada 8 ms girando).
     loop {
+        if u.avisos.is_some() {
+            while !u.siguiente_aviso() {}
+        } else {
+            esperar_us(8000);
+        }
         for h in hids.iter_mut().flatten() {
             let teclado = h.teclado;
-            match u.leer_interrupcion(&mut h.entrada) {
-                Ok(Some(i)) if teclado && i.len() >= 3 && i[2] != 0 => {
-                    let c = i[2];
-                    let letra = if (4..=29).contains(&c) { (b'a' + c - 4) as char } else { '?' };
-                    dashos::println!("  [usb] tecla: uso {:#04x} ({})", c, letra);
-                }
-                Ok(Some(i)) if !teclado && i.len() >= 3 => {
-                    dashos::println!("  [usb] ratón: botones {:#x}, movimiento ({}, {})", i[0], i[1] as i8, i[2] as i8);
-                }
-                _ => {}
+            if let Ok(Some(i)) = u.leer_interrupcion(&mut h.entrada) {
+                let mut copia = [0u8; 16];
+                let n = i.len().min(16);
+                copia[..n].copy_from_slice(&i[..n]);
+                if teclado { entrada.teclado(&copia[..n]) } else { entrada.raton(&copia[..n]) }
             }
         }
-        esperar_us(8000);
     }
 }

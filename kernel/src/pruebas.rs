@@ -736,8 +736,8 @@ fn prueba_v3d() {
 }
 
 /// C49 (antes C22 y C25, dentro del kernel): el controlador USB es un proceso (`usuario/src/bin/usb.rs`). Recibe el
-/// permiso DMA y los registros del DWC2, enumera el hub de QEMU y escribe lo que mandan el teclado y el ratón (la
-/// prueba de QEMU los mueve por el monitor).
+/// permiso DMA, los registros y la interrupción del DWC2 y un lado de un canal; enumera el hub de QEMU y manda por el
+/// canal lo que hacen el teclado y el ratón (la prueba de QEMU los mueve por el monitor). El kernel lee el otro lado.
 static USB: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb");
 
 fn prueba_usb() {
@@ -747,16 +747,50 @@ fn prueba_usb() {
         kprintln!("C49: no hay DWC2 en el árbol");
         return;
     };
+    let nodo = d.compatible("brcm,bcm2708-usb").unwrap();
+    let intid = d.propiedad(&nodo, "interrupts").map(|(datos, _)| if d.celda(datos, 0) == 0 { 32 + d.celda(datos, 1) } else { 16 + d.celda(datos, 1) });
+    let Some(irq) = intid.and_then(crate::interrupciones::Interrupcion::nueva) else {
+        kprintln!("C49: sin la interrupción del DWC2");
+        return;
+    };
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let objetos::Objeto::Extremo(punta) = mio.objeto.clone() else { return };
     let llaves = alloc::vec![
         objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) }, objetos::TODOS),
         objetos::Llave::nueva(objetos::Objeto::Registros { fisica, tamano: tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::Interrupcion(irq), objetos::TODOS),
+        suyo,
     ];
     let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };
     let Some(control) = lanzar_elf_en(USB, llaves, 1, grupo) else { return };
-    // El monitor manda una "a" y un movimiento cada medio segundo; con tres segundos sobra.
-    esperar_tics(300);
+    // El monitor manda una "a" y un movimiento cada medio segundo: se espera a ver la "a" pulsada y soltada y el ratón,
+    // como mucho cinco segundos.
+    let (mut pulsada, mut soltada, mut raton, mut otros) = (false, false, 0, 0);
+    let fin = reloj::tics() + 500;
+    while reloj::tics() < fin && !(pulsada && soltada && raton > 0) {
+        esperar_tics(5);
+        while let Some(m) = punta.canal().intentar_leer(punta.lado()) {
+            match m.datos.as_slice() {
+                [1, 0x04, 1, ..] => pulsada = true,
+                [1, 0x04, 0, ..] => soltada = true,
+                [2, _, _, _, _, _, _, _] => raton += 1,
+                _ => otros += 1,
+            }
+        }
+    }
     crate::planificador::matar_proceso(&control);
-    kprintln!("C49: controlador USB fuera del kernel lanzado");
+    // Que acabe del todo antes de la prueba siguiente, que cuenta las páginas libres (C26).
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 300 {
+        esperar_tics(1);
+    }
+    esperar_tics(10);
+    let bien = pulsada && soltada && raton > 0 && otros == 0;
+    kprintln!("C49: USB fuera del kernel, con su interrupción y eventos por un canal {}", if bien { "bien" } else { "MAL" });
+    if !bien {
+        kprintln!("  tecla pulsada {}, soltada {}, {} del ratón, {} raros", pulsada, soltada, raton, otros);
+    }
+    drop(mio);
 }
 
 fn esperar_ms(ms: u64) {
@@ -1078,13 +1112,14 @@ fn prueba_padre() {
 
 /// C41: llaves completas (`usuario/src/bin/llaves.rs`).
 static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
+static TIEMPO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tiempo");
 
 /// C43: las pruebas que son programas sueltos las lanza un proceso (`usuario/src/bin/lanzador.rs`), cada una en su
 /// grupo de 64 MB, y comprueba sus códigos de salida. El kernel solo le da el paquete con los ELF.
 static LANZADOR: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/lanzador");
 
 fn prueba_lanzador() {
-    let pruebas: [(&str, u32, &[u8]); 2] = [("malo", 31, MALO), ("llaves", 41, LLAVES)];
+    let pruebas: [(&str, u32, &[u8]); 3] = [("malo", 31, MALO), ("llaves", 41, LLAVES), ("tiempo", 49, TIEMPO)];
     let mut paquete = alloc::vec::Vec::new();
     paquete.extend_from_slice(&(pruebas.len() as u32).to_le_bytes());
     for (nombre, codigo, elf) in pruebas {

@@ -32,6 +32,8 @@ pub enum Objeto {
     Registros { fisica: u64, tamano: u64 },
     /// Una interrupción de aparato (C20): llega como mensaje a un canal.
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
+    /// Un temporizador (C49): avisa por un canal pasado un plazo, una vez o cada cierto tiempo.
+    Temporizador(Arc<crate::temporizadores::Temporizador>),
     /// Un proceso visto desde fuera (C39): con escribir se mata, con leer se espera a que acabe.
     Proceso(Arc<Control>),
     /// Permiso para crear memoria DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de
@@ -146,6 +148,7 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
     match &l.objeto {
         Objeto::Extremo(p) => Arc::ptr_eq(p.canal(), canal),
         Objeto::Interrupcion(i) => i.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
+        Objeto::Temporizador(t) => t.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
         // Un revocador lleva dentro su objeto: si es un lado de este canal, también es un ciclo (auditoría, M1).
         Objeto::Revocador(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
         _ => false,
@@ -296,6 +299,15 @@ fn soltar(mut pendientes: Vec<Mensaje>) {
                         }
                     }
                 }
+                Objeto::Temporizador(t) => {
+                    if let Ok(mut t) = Arc::try_unwrap(t) {
+                        if let Some(c) = t.quitar_destino() {
+                            if let Ok(mut canal) = Arc::try_unwrap(c) {
+                                pendientes.extend(canal.vaciar());
+                            }
+                        }
+                    }
+                }
                 _ => {}
             }
         }
@@ -395,6 +407,12 @@ impl Canal {
             // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
             planificador::bloquear_soltando(l);
         }
+    }
+
+    /// Lee en el lado `lado` sin esperar (para las pruebas del kernel).
+    #[cfg(feature = "pruebas")]
+    pub fn intentar_leer(&self, lado: usize) -> Option<Mensaje> {
+        self.lados.tomar()[lado].cola.pop_front()
     }
 
     /// Devuelve al principio de la cola de `lado` un mensaje que se leyó pero no se pudo entregar (C31).

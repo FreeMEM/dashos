@@ -46,6 +46,7 @@ mod procesos;
 mod registro;
 mod reloj;
 mod serie;
+mod temporizadores;
 // Las pruebas tocan el hardware a mano; no van en la imagen normal.
 #[cfg(feature = "pruebas")]
 #[allow(unsafe_code)]

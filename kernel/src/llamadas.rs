@@ -143,6 +143,7 @@ pub fn atender(marco: &mut Marco) {
         21 => memoria_quitar(a[0]),
         22 => memoria_dma(marco, a[0] as u32, a[1]),
         23 => registro_leer(a[0] as u32, a[1], a[2]),
+        24 => temporizador_crear(a[0] as u32, a[1], a[2]),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -400,6 +401,31 @@ fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
     }
     i.asociar(c, lado);
     0
+}
+
+/// Un temporizador que avisa al otro lado del canal de `hc` (C49). Como con las interrupciones, hace falta poder
+/// escribir en ese canal.
+fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if primero_us > crate::temporizadores::MAX_US || periodo_us > crate::temporizadores::MAX_US {
+        return E_ARGUMENTO;
+    }
+    let mut t = proc_.llaves.tomar();
+    let Some(canal) = t.ver(hc) else { return E_LLAVE };
+    let Objeto::Extremo(p) = canal.objeto else { return E_TIPO };
+    if canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    if t.huecos() < 1 {
+        return E_LIMITE;
+    }
+    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), primero_us, periodo_us, &proc_.cupo) else {
+        return E_MEMORIA;
+    };
+    match t.instalar(objetos::Llave::nueva(Objeto::Temporizador(tm), objetos::TODOS)) {
+        Ok(h) => h as u64,
+        Err(_) => E_MEMORIA,
+    }
 }
 
 fn interrupcion_terminar(h: u32) -> u64 {

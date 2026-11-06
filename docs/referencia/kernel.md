@@ -98,7 +98,8 @@ las únicas que da el kernel:
 - Después, el permiso DMA y, para cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la
   VideoCore), sus registros y su interrupción.
 
-`inicio` lanza cada servicio en su grupo y se queda esperando. Ningún otro proceso recibe nada del kernel: todo lo
+`inicio` lanza cada servicio en su grupo y se queda esperando. Hoy son la consola (C48) y el USB (C49); lo que ve un
+programa de ellos está en `servicios.md`. Ningún otro proceso recibe nada del kernel: todo lo
 que tenga le llega desde `inicio`.
 
 ## Llamadas al sistema
@@ -138,6 +139,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
+| 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 
 ### Detalles
 
@@ -151,7 +153,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Las llaves enviadas salen de la tabla de quien escribe y entran en la de quien lee, con los mismos derechos.
   - Cada llave enviada necesita el derecho de transferir.
   - Sin ciclos (C40): no se puede mandar un extremo de este mismo canal (ni el propio ni su pareja), ni una llave de
-    interrupción que avise a este canal. Da `E_ARGUMENTO`.
+    interrupción o de temporizador que avise a este canal. Da `E_ARGUMENTO`.
   - La llave por la que se escribe necesita el derecho de escribir.
   - Nunca bloquea: el mensaje se queda en la cola del otro extremo.
   - Una misma llave dos veces en la tabla devuelve `E_ARGUMENTO`, y no se manda nada.
@@ -232,6 +234,13 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **21, `memoria_quitar`** (C45). Quita la proyección de un objeto de memoria que empieza en esa dirección: el tramo
   entero que se proyectó. Desde ese momento, leer o escribir ahí es un fallo. Si no empieza ninguna ahí,
   `E_ARGUMENTO`. Los registros de aparatos no se quitan así.
+- **24, `temporizador_crear`** (C49). Pasado el primer plazo, y después cada periodo si no es 0, llega un mensaje al
+  otro lado del canal: 8 bytes, un número de 64 bits en little-endian con las veces que ha vencido desde el último
+  aviso que se pudo entregar (casi siempre 1; más si la cola del canal estaba llena o el aviso llegó tarde). Así se
+  distingue de una interrupción, que llega en 4 bytes. Pide el derecho de escribir en el canal (`E_DERECHOS`); otra
+  llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Se cobra al cupo.
+  Resolución: el tic del sistema, 10 ms; nunca avisa antes de tiempo. Se para al soltarse su última llave (`cerrar`,
+  o al morir el proceso). Para esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -313,6 +322,7 @@ Tipos de objeto:
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
+| Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 
 ## Biblioteca de usuario en Rust
 

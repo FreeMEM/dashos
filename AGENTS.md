@@ -40,7 +40,8 @@ las pruebas no valen como oráculo.
   opción `pruebas`) y los programas de `usuario/`, y la prueba en QEMU `raspi4b`.
 - `usuario/`: biblioteca `dashos` y programas de usuario en Rust.
 - `docs/referencia/kernel.md`: lo que un programa ve del kernel. Llamadas, llaves, formato del ELF, mapa de memoria
-  y limitaciones. Quien cambie una llamada o el cargador la pone al día en el mismo commit.
+  y limitaciones. Quien cambie una llamada o el cargador la pone al día en el mismo commit. Lo que ve un programa de
+  los servicios (USB...), en `docs/referencia/servicios.md`.
 - `docs/DISEÑO_LOOP.md`: el bucle de diseño (tareas S0 a S15 y bitácora). Sus documentos van en `docs/diseño/`.
 - `docs/spec/`: especificaciones de la sala limpia, una por función o por grupo.
 - `jit-host/`: el JIT de Emu68 solo, como programa Linux big-endian. `make -C jit-host run` lo prueba con

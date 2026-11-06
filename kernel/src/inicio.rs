@@ -22,6 +22,7 @@ static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 /// Los servicios que lanza `inicio`, en orden, con los aparatos que le pasa a cada uno (por nombre y tipo).
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)]),
+    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[]),
 ];
 

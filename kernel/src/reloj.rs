@@ -54,6 +54,9 @@ pub fn interrupcion(intid: u32) -> bool {
         return false;
     }
     programar(PERIODO.load(Ordering::Relaxed));
+    if crate::temporizadores::tic() {
+        crate::interrupciones::despertar_repartidor();
+    }
     true
 }
 

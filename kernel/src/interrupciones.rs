@@ -110,6 +110,11 @@ pub fn atender(intid: u32) -> bool {
     true
 }
 
+/// Despierta al repartidor (desde el tic del núcleo 0, cuando vence un temporizador, C49).
+pub fn despertar_repartidor() {
+    REPARTIDOR.tomar().despertar_todos();
+}
+
 /// Arranca el repartidor en el núcleo 0.
 pub fn iniciar() {
     planificador::crear(repartidor, 0, 0);
@@ -123,7 +128,8 @@ extern "C" fn repartidor(_: usize) {
         for (i, p) in PENDIENTES.iter().enumerate() {
             llegadas[i] = p.swap(0, Ordering::SeqCst);
         }
-        if llegadas.iter().all(|&x| x == 0) {
+        let vencidos = crate::temporizadores::tomar_pendiente();
+        if llegadas.iter().all(|&x| x == 0) && !vencidos {
             // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde.
             let mut cola = REPARTIDOR.tomar();
             cola.apuntarme();
@@ -132,6 +138,9 @@ extern "C" fn repartidor(_: usize) {
             continue;
         }
         crate::cerrojo::restaurar_irq(estado);
+        if vencidos {
+            crate::temporizadores::repartir();
+        }
         for (w, &palabra) in llegadas.iter().enumerate() {
             let mut p = palabra;
             while p != 0 {
