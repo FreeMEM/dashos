@@ -1344,6 +1344,20 @@ los programas también llevan "│ ".
 - **Comprobado:** `make -C kernel prueba` bien (otra vez C14 falló una vez por la carga de la máquina, media de 5; ver
   "Pendiente o a vigilar"); `make -C kernel arranque` bien.
 
+### 2026-11-06 noche, bucle (sesión DashOS) — C51, segunda parte (ventana de entrada del PCIe)
+
+- **Especificación** `docs/spec/hw/pcie.md`, de un analista aparte (sala limpia, de `pcie-brcmstb.c` de Linux):
+  registros de las ventanas de entrada, codificación del tamaño, qué deja Linux y dos caminos para DashOS.
+- **`kernel/src/pcie.rs`:** al arrancar, antes de iniciar la memoria, apaga BAR1 (lleva a los registros del chip) y
+  BAR3, pone BAR2 a 1 GB con desplazamiento 0 (bus = física) y `SCB0_SIZE` igual, en ese orden, y lo comprueba
+  leyendo. Decisión apuntada: el camino rápido de la especificación (§11.3, cambiar en caliente, sin respaldo en
+  Linux) y no el seguro (§11.2, reiniciar el enlace), porque este pide levantar todo el enlace sin poder probarlo.
+  Cuando haya controlador xHCI y una Pi, pasar al seguro. Consecuencia: los búferes del PCIe, en `Dma1G`.
+- **QEMU quita el nodo del PCIe** del árbol (no lo emula): el kernel lo dice al arrancar y no toca nada.
+- **Prueba:** la codificación del tamaño contra la tabla de la especificación (§5), en `pruebas.rs`.
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. **No comprobado:** todo lo demás (Pi 4;
+  pasos de §12 de la especificación).
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:

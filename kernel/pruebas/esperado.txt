@@ -16,6 +16,7 @@ C3: de vuelta de la excepción
   DMA de emmc2bus: bus 0xc0000000 -> CPU 0x0, 1024 MB
   DMA de scb: bus 0x0 -> CPU 0x0, 16384 MB
 C4: árbol de dispositivos leído
+C51: tamaños de la ventana de entrada del PCIe como la especificación bien
   escrito y leído por el mapa directo en 0xffffff80
 C5: zonas bien, devolución bien
   suma 49995000 con 10000 elementos; caja 7; mapa 500 claves

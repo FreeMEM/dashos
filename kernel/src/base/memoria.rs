@@ -23,7 +23,8 @@ const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
 pub enum Zona {
     /// Alcanzable por la SD y el DMA clásico.
     Dma1G,
-    /// Alcanzable por el USB del PCIe.
+    /// Alcanzable por el USB del PCIe con la ventana del firmware. Desde C51 el kernel la cierra al primer GB: para
+    /// el PCIe, `Dma1G`.
     Dma3G,
     /// Cualquier sitio.
     Normal,

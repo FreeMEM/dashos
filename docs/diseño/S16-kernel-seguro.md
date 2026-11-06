@@ -130,8 +130,9 @@ memoria que alcance el aparato, incluido el kernel. No hay forma de impedirlo so
    descriptores. Es seguro, pero el kernel tiene que conocer cada motor de DMA, y vuelve a crecer.
 
 **Hecho en parte (C38, 2026-11-03):** con memoria por encima del primer GB, el kernel y la memoria de los procesos
-viven arriba y el primer GB queda para los búferes de DMA. La SD y el DMA de la placa ya no alcanzan al kernel. Falta
-el PCIe (fase 4).
+viven arriba y el primer GB queda para los búferes de DMA. La SD y el DMA de la placa ya no alcanzan al kernel.
+**PCIe (C51, 2026-11-06, sin probar):** el kernel cierra su ventana de entrada al primer GB al arrancar
+(`kernel/src/pcie.rs`, con `docs/spec/hw/pcie.md`); falta comprobarlo en una Pi 4.
 
 **Recomendado: 1 en la Pi 4, con la memoria DMA del apartado C** para que, al menos, los búferes salgan de objetos con
 dueño. En otras placas, comprobar si la CPU tiene IOMMU para los aparatos que se usen, y usarla si la tiene. Es el

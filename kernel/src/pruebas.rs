@@ -18,6 +18,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     kprintln!("C3: de vuelta de la excepción");
     mapa_dispositivos(dtb);
     kprintln!("C4: árbol de dispositivos leído");
+    prueba_pcie();
     prueba_memoria();
     prueba_monton();
     prueba_reloj();
@@ -82,6 +83,14 @@ fn mapa_dispositivos(direccion: usize) {
             }
         }
     }
+}
+
+/// C51: la codificación del tamaño de la ventana de entrada del PCIe, contra la tabla de `docs/spec/hw/pcie.md` (§5).
+/// El cierre de la ventana en sí solo se ve en la Pi 4: en QEMU el controlador no contesta (lo dice el arranque).
+fn prueba_pcie() {
+    let casos: [(u64, u32); 9] = [(4096, 0x1C), (32 << 10, 0x1F), (64 << 10, 1), (256 << 20, 13), (1 << 30, 15), (4 << 30, 17), (64 << 30, 21), (3 << 30, 0), (128 << 30, 0)];
+    let bien = casos.iter().all(|&(b, c)| crate::pcie::codificar_tamano(b) == c) && crate::pcie::TAMANO_1GB == crate::pcie::codificar_tamano(1 << 30);
+    kprintln!("C51: tamaños de la ventana de entrada del PCIe como la especificación {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C5: reparto de páginas por zonas.
