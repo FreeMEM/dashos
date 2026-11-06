@@ -49,18 +49,6 @@ C14: clase de plazo bien
 C50: buzón y compositor fuera del kernel bien
 C17: avisos entre núcleos bien
 C18: recogida bien
-  hola desde Rust en EL0 (DashOS, little-endian)
-  la suma de 1 a 100 es 5050
-  memoria propia proyectada (0); primer byte de 0x11223344: 0x44
-  40 KB en la pila: suma 5222400
-sale con código 5
-C19: programa en Rust lanzado
-  hola desde Rust en EL0 (DashOS, big-endian)
-  la suma de 1 a 100 es 5050
-  memoria propia proyectada (0); primer byte de 0x11223344: 0x11
-  40 KB en la pila: suma 5222400
-sale con código 5
-C30: el mismo programa en big-endian lanzado
   [serie] escrito por un controlador en EL0, sin pasar por el kernel
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7
@@ -101,10 +89,20 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
+# C51: hola (C19 y C30), padre (C39) y grupos (C42) los lanza también el lanzador, y cada grupo tiene que quedar a cero.
+  subgrupos uno dentro de otro: 7 niveles como mucho
+  hola desde Rust en EL0 (DashOS, little-endian)
+  la suma de 1 a 100 es 5050
+  memoria propia proyectada (0); primer byte de 0x11223344: 0x44
+  40 KB en la pila: suma 5222400
+  [lanzador] hola: clase 0, código 5
+  hola desde Rust en EL0 (DashOS, big-endian)
+  memoria propia proyectada (0); primer byte de 0x11223344: 0x11
+  [lanzador] hola-be: clase 0, código 5
   [padre] proyecciones quitadas, y revocar quita las hechas con la copia revocable
   [padre] hijos que salen, giran, se bloquean y fallan: creados, matados y esperados
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
-C39: crear, matar y esperar procesos desde un proceso bien
+  [lanzador] padre: clase 0, código 39
   [malo] escape: ?[31m
   [malo] memoria agotada en
   [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada
@@ -113,11 +111,11 @@ C39: crear, matar y esperar procesos desde un proceso bien
   [lanzador] llaves: clase 0, código 41
   [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale
   [lanzador] tiempo: clase 0, código 49
-  [lanzador] 3 pruebas lanzadas desde un proceso, cada una en su grupo
-C43: pruebas de usuario lanzadas por un proceso bien
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
-C42: cupos por grupo bien
+  [lanzador] grupos: clase 0, código 42
+  [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
+C43: pruebas de usuario lanzadas por un proceso bien
   [dma] 64 KB seguidos con dirección de bus 0x
 C46: memoria DMA con permiso bien
 PÁNICO: panicked at src/base/excepciones.rs

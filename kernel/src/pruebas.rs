@@ -29,7 +29,6 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_pantalla(dtb);
     prueba_avisos();
     prueba_recoger();
-    prueba_rust();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -40,9 +39,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_repartos();
     prueba_asid();
     prueba_el0();
-    prueba_padre();
     prueba_lanzador();
-    prueba_grupos();
     prueba_dma_proceso();
     prueba_desborde();
 }
@@ -560,20 +557,6 @@ fn esperar_tics(n: u64) {
     }
 }
 
-fn prueba_rust() {
-    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
-    if !lanzar_elf(HOLA, alloc::vec::Vec::new(), 2) {
-        return;
-    }
-    esperar_tics(20);
-    kprintln!("C19: programa en Rust lanzado");
-    // C30: el mismo programa en big-endian, como uno de la caja Amiga. Ve el primer byte de 0x11223344 como 0x11.
-    if !lanzar_elf(HOLA_BE, alloc::vec::Vec::new(), 2) {
-        return;
-    }
-    esperar_tics(20);
-    kprintln!("C30: el mismo programa en big-endian lanzado");
-}
 
 /// C20: un controlador fuera del kernel (`usuario/src/bin/serie.rs`). Recibe la llave de los registros del PL011
 /// y la de su interrupción; escribe por su cuenta y espera la interrupción como mensaje.
@@ -937,29 +920,6 @@ fn prueba_dma() {
 static PADRE: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/padre");
 static HIJO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hijo");
 
-fn prueba_padre() {
-    use core::sync::atomic::Ordering;
-    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
-    let Some(m) = memoria::Memoria::nueva(HIJO.len(), &crate::cupo::Cupo::raiz()) else { return };
-    m.escribir(0, HIJO);
-    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
-    let (a, b) = objetos::Canal::nuevo();
-    let (c, lado) = extremo(&a);
-    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
-    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
-    let Some(control) = lanzar_elf_control(PADRE, alloc::vec![m, b], 2) else { return };
-    let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 1000 {
-        reloj::esperar_interrupcion();
-    }
-    let fin = control.estado.tomar().fin;
-    drop((a, c, control));
-    esperar_tics(20);
-    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
-    kprintln!("  el padre acabó: {:?}; páginas libres antes {}, después {}", fin, libres, despues);
-    let bien = fin == Some(objetos::Fin::Salida(39)) && despues >= libres;
-    kprintln!("C39: crear, matar y esperar procesos desde un proceso {}", if bien { "bien" } else { "MAL" });
-}
 
 /// C41: llaves completas (`usuario/src/bin/llaves.rs`).
 static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
@@ -970,47 +930,8 @@ static TIEMPO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 static LANZADOR: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/lanzador");
 
 fn prueba_lanzador() {
-    let pruebas: [(&str, u32, &[u8]); 3] = [("malo", 31, MALO), ("llaves", 41, LLAVES), ("tiempo", 49, TIEMPO)];
-    let mut paquete = alloc::vec::Vec::new();
-    paquete.extend_from_slice(&(pruebas.len() as u32).to_le_bytes());
-    for (nombre, codigo, elf) in pruebas {
-        paquete.extend_from_slice(&codigo.to_le_bytes());
-        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
-        let mut n = [0u8; 16];
-        n[..nombre.len()].copy_from_slice(nombre.as_bytes());
-        paquete.extend_from_slice(&n);
-    }
-    for (_, _, elf) in pruebas {
-        while paquete.len() % 8 != 0 {
-            paquete.push(0);
-        }
-        paquete.extend_from_slice(elf);
-    }
-    let Some(m) = memoria::Memoria::nueva(paquete.len(), &crate::cupo::Cupo::raiz()) else { return };
-    m.escribir(0, &paquete);
-    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
-    let Some(control) = lanzar_elf_control(LANZADOR, alloc::vec![m], 2) else { return };
-    let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 2500 {
-        reloj::esperar_interrupcion();
-    }
-    let fin = control.estado.tomar().fin;
-    kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if fin == Some(objetos::Fin::Salida(43)) { "bien" } else { "MAL" });
-}
-
-/// C42: cupos por grupo (`usuario/src/bin/grupos.rs`), con los hijos de C39.
-static GRUPOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/grupos");
-
-fn prueba_grupos() {
-    // C44 añade estrés: más tiempo.
+    // Grupos dentro de grupos tienen fondo (auditoría de la fase 3, A1): esto lo mira el kernel.
     let raiz = crate::cupo::Cupo::raiz();
-    let Some(m) = memoria::Memoria::nueva(HIJO.len(), &raiz) else { return };
-    m.escribir(0, HIJO);
-    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
-    let (a, b) = objetos::Canal::nuevo();
-    let (c, lado) = extremo(&a);
-    let _ = c.escribir(lado, objetos::Mensaje { datos: (HIJO.len() as u64).to_le_bytes().to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
-    // Grupos dentro de grupos tienen fondo (auditoría de la fase 3, A1).
     let mut cadena = alloc::vec![raiz.clone()];
     let mut limite = 1u64 << 20;
     while let Some(h) = cadena.last().unwrap().hijo(limite) {
@@ -1020,20 +941,61 @@ fn prueba_grupos() {
     let niveles = cadena.len() - 1;
     drop(cadena);
     kprintln!("  subgrupos uno dentro de otro: {} niveles como mucho", niveles);
-    let Some(grupo) = raiz.hijo(64 << 20) else { return };
-    let Some(control) = lanzar_elf_en(GRUPOS, alloc::vec![m, b], 2, grupo.clone()) else { return };
+    // (nombre, código esperado, ayudante: número de la entrada más 1, ELF). C51: hola, padre y grupos pasan aquí
+    // desde el kernel; padre y grupos reciben el ELF de hijo. Código u32::MAX: solo ayudante, no se lanza.
+    const NADA: u32 = 0;
+    const HIJO_N: u32 = 8;
+    let pruebas: [(&str, u32, u32, &[u8]); 8] = [
+        ("hola", 5, NADA, HOLA),
+        ("hola-be", 5, NADA, HOLA_BE),
+        ("padre", 39, HIJO_N, PADRE),
+        ("malo", 31, NADA, MALO),
+        ("llaves", 41, NADA, LLAVES),
+        ("tiempo", 49, NADA, TIEMPO),
+        ("grupos", 42, HIJO_N, GRUPOS),
+        ("hijo", u32::MAX, NADA, HIJO),
+    ];
+    let mut paquete = alloc::vec::Vec::new();
+    paquete.extend_from_slice(&(pruebas.len() as u32).to_le_bytes());
+    for (nombre, codigo, ayudante, elf) in pruebas {
+        paquete.extend_from_slice(&codigo.to_le_bytes());
+        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        paquete.extend_from_slice(&ayudante.to_le_bytes());
+        paquete.extend_from_slice(&0u32.to_le_bytes());
+        let mut n = [0u8; 16];
+        n[..nombre.len()].copy_from_slice(nombre.as_bytes());
+        paquete.extend_from_slice(&n);
+    }
+    for (_, _, _, elf) in pruebas {
+        while paquete.len() % 8 != 0 {
+            paquete.push(0);
+        }
+        paquete.extend_from_slice(elf);
+    }
+    llamadas::SALIDAS_VISIBLES.store(true, core::sync::atomic::Ordering::Relaxed);
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+    let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
+    m.escribir(0, &paquete);
+    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
+    let Some(grupo) = raiz.hijo(256 << 20) else { return };
+    let Some(control) = lanzar_elf_en(LANZADOR, alloc::vec![m], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 2500 {
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 4000 {
         reloj::esperar_interrupcion();
     }
     let fin = control.estado.tomar().fin;
-    drop((a, c, control));
-    esperar_tics(10);
-    let (_, usado) = grupo.uso();
-    kprintln!("  grupos acabó: {:?}; usado en su grupo al final: {} bytes", fin, usado);
-    let bien = fin == Some(objetos::Fin::Salida(42)) && usado == 0 && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
-    kprintln!("C42: cupos por grupo {}", if bien { "bien" } else { "MAL" });
+    drop(control);
+    esperar_tics(20);
+    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
+    let usado = grupo.uso().1;
+    kprintln!("  lanzador acabó: {:?}; usado en su grupo al final: {} bytes; páginas libres antes {}, después {}", fin, usado, libres, despues);
+    let bien = fin == Some(objetos::Fin::Salida(43)) && usado == 0 && despues >= libres && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
+    kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if bien { "bien" } else { "MAL" });
 }
+
+/// C42: cupos por grupo (`usuario/src/bin/grupos.rs`), con los hijos de C39.
+static GRUPOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/grupos");
+
 
 /// C46: memoria DMA desde un proceso con permiso (`usuario/src/bin/dma.rs`). El desplazamiento de bus sale de la
 /// ventana de la SD en el árbol de dispositivos.

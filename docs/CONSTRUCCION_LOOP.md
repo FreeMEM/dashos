@@ -1328,6 +1328,22 @@ los programas también llevan "│ ".
 - **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque` dos, bien. **No comprobado:** todo lo
   que toca el HVS y la V3D (Pi 4).
 
+### 2026-11-06 noche, bucle (sesión DashOS) — C51, primera parte (pruebas del kernel a procesos)
+
+- **`lanzador` lanza también** `hola` en los dos órdenes de bytes (C19, C30), `padre` (C39) y `grupos` (C42), que
+  antes lanzaba el kernel. Su paquete gana un "ayudante": una entrada cuyo ELF recibe otra prueba como objeto de
+  memoria, con un canal que dice su tamaño (lo que esperan `padre` y `grupos` para lanzar a `hijo`). Cabecera de 24 a
+  32 bytes.
+- **Cada prueba tiene que dejar su grupo a cero** al acabar (lo mira `lanzador` con `grupo_uso`, esperando con un
+  temporizador hasta medio segundo). Y el kernel mira que el grupo de `lanzador` queda a cero y que no se pierden
+  páginas en toda la tanda.
+- **Se quedan en el kernel** las que prueban el propio kernel (memoria, montón, hilos, mapa, ASID, repartos,
+  desborde de pila, avisos entre núcleos), las que cuentan salidas o excepciones desde dentro (FPU, registros de EL0,
+  PIE) y las que dan llaves que solo da el kernel (controladores, USB, buzón y compositor, gráficos, DMA). Estas
+  últimas ya son procesos; solo el arranque de la prueba queda en el kernel.
+- **Comprobado:** `make -C kernel prueba` bien (otra vez C14 falló una vez por la carga de la máquina, media de 5; ver
+  "Pendiente o a vigilar"); `make -C kernel arranque` bien.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:
