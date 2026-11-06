@@ -1,4 +1,4 @@
-//! GPU V3D 4.2 de la BCM2711, lado del kernel (C24).
+//! GPU V3D 4.2 de la BCM2711 (C24; desde C50, en un proceso: el servicio `gpu`).
 //!
 //! Escrito solo con `docs/spec/hw/v3d.md` (sala limpia). Las referencias "§" son a sus secciones.
 //!
@@ -7,20 +7,23 @@
 //! render. Las listas de control las escribirá Mesa portada (V4, `docs/spec/hw/mesa-v3d.md`).
 //!
 //! Sin probar: QEMU `raspi4b` no emula la V3D. En QEMU solo se comprueba la codificación (entradas de la tabla en
-//! little-endian, valores de registro de la especificación) y que el controlador ve que no hay GPU. Falta la Pi 4.
+//! little-endian, valores de registro de la especificación). Falta la Pi 4.
+//!
+//! En un proceso: los registros llegan como llaves (la ventana de la V3D con el hub y el núcleo, el puente ASB, el
+//! bloque PM y el cprman, cada uno en su página) y la tabla de la MMU es memoria DMA. La V3D ve direcciones físicas:
+//! el permiso DMA del servicio `gpu` tiene desplazamiento 0, así que su "dirección de bus" es la física.
 
-#![allow(dead_code)] // los trabajos los pedirá el servidor de la GPU, que aún no existe
+use super::{esperar_hasta, Reg};
 
-use crate::memoria::{paginas, Zona, PAGINA};
-use crate::mmio::RegLe32;
-use crate::{buzon, mmu, reloj};
+const PAGINA: u64 = 4096;
 
-// Ventanas físicas (§2.1, §2.4), con el modo de periféricos bajo.
-const HUB: usize = 0xFEC0_0000;
-const NUCLEO: usize = 0xFEC0_4000;
-const PM: usize = 0xFE10_0000;
-const ASB_RPIVID: usize = 0xFEC1_1000;
-const CPRMAN: usize = 0xFE10_1000;
+// Ventanas físicas (§2.1, §2.4), con el modo de periféricos bajo. Las llaves de registros las cubren por páginas.
+pub const FISICA_V3D: u64 = 0xFEC0_0000; // hub; el núcleo 0 en +0x4000
+pub const TAMANO_V3D: u64 = 0x8000;
+pub const FISICA_PM: u64 = 0xFE10_0000;
+pub const FISICA_ASB: u64 = 0xFEC1_1000;
+pub const FISICA_CPRMAN: u64 = 0xFE10_1000;
+const NUCLEO: usize = 0x4000;
 
 // Bloque PM, ASB y cprman (§2.4). Toda escritura lleva la contraseña.
 const CONTRASENA: u32 = 0x5A00_0000;
@@ -31,7 +34,8 @@ const ASB_M_CTRL: usize = 0x0C;
 const ASB_REQ_STOP: u32 = 1 << 0;
 const ASB_ACK: u32 = 1 << 1;
 const ASB_BRDG_ID: usize = 0x20;
-const ASB_ID: u32 = 0x6272_6467; // "brdg"
+pub const ASB_BRDG: usize = ASB_BRDG_ID;
+pub const ASB_ID: u32 = 0x6272_6467; // "brdg"
 const CM_V3DCTL: usize = 0x038;
 const CM_ENABLE: u32 = 1 << 4;
 const CM_GATE: u32 = 1 << 6;
@@ -110,26 +114,11 @@ pub const MASCARA_HUB: u32 = HUB_TFUC | HUB_MMU_CAP | HUB_MMU_PTI | HUB_MMU_WRV;
 
 /// La tabla de páginas cubre 4 GB de VA con páginas de 4 KB: 1 048 576 entradas, 4 MB contiguos (§5.1).
 const ENTRADAS: usize = 1 << 20;
-const PAGINAS_TABLA: usize = ENTRADAS * 4 / PAGINA as usize;
-
-fn r(base: usize, off: usize) -> RegLe32 {
-    RegLe32::new(mmu::virt(base) + off)
-}
+pub const TAMANO_TABLA: usize = ENTRADAS * 4;
 
 fn esperar_us(us: u64) {
-    let fin = reloj::ahora() + us * reloj::frecuencia() / 1_000_000;
-    while reloj::ahora() < fin {}
-}
-
-/// Espera a que `cond` se cumpla, como mucho `us` microsegundos.
-fn esperar_hasta(us: u64, cond: impl Fn() -> bool) -> bool {
-    let fin = reloj::ahora() + us * reloj::frecuencia() / 1_000_000;
-    while reloj::ahora() < fin {
-        if cond() {
-            return true;
-        }
-    }
-    cond()
+    let fin = crate::ahora_us() + us;
+    while crate::ahora_us() < fin {}
 }
 
 /// Entrada de la tabla para una dirección física, ya en el orden de bytes de la GPU (little-endian, §13.2).
@@ -140,6 +129,7 @@ pub fn entrada(fisica: u64) -> u32 {
 #[derive(Debug, PartialEq, Eq)]
 pub enum Error {
     NoHayGpu,
+    Reloj,
     Puente,
     SinMemoria,
     Plazo,
@@ -161,76 +151,100 @@ pub struct Identidad {
     pub para_mesa: [u32; 7],
 }
 
-/// La MMU de la GPU: una tabla para todos (§5.1).
+/// La MMU de la GPU: una tabla para todos (§5.1). La tabla (4 MB seguidos) y la página de relleno son memoria DMA,
+/// proyectadas sin caché en el proceso: la GPU las lee sin pasar por las cachés de la CPU (§2.7) y no hay que
+/// limpiarlas. `memoria_dma` las da a cero.
 pub struct Mmu {
+    /// Dirección física (de bus, con el permiso de desplazamiento 0) de la tabla y de la página de relleno.
     pub tabla: u64,
     pub relleno: u64,
+    llaves: [u32; 2],
+    va: usize,
 }
 
 impl Mmu {
-    pub fn nueva() -> Result<Self, Error> {
-        let tabla = paginas().reservar(Zona::Normal, PAGINAS_TABLA, 1).ok_or(Error::SinMemoria)?;
-        let relleno = paginas().pagina(Zona::Normal).ok_or(Error::SinMemoria)?;
-        // A cero y fuera de la caché: la GPU no ve las cachés de la CPU (§2.7).
-        for (p, n) in [(tabla, PAGINAS_TABLA), (relleno, 1)] {
-            let va = mmu::virt(p as usize);
-            unsafe { core::ptr::write_bytes(va as *mut u8, 0, n * PAGINA as usize) };
-            crate::hvs::limpiar_cache(va, n * PAGINA as usize);
+    /// Con el permiso DMA `permiso`; la tabla se proyecta en `va` y el relleno detrás.
+    pub fn nueva(permiso: u32, va: usize) -> Result<Self, Error> {
+        let (t, tabla) = crate::memoria_dma(permiso, TAMANO_TABLA);
+        if t <= 0 {
+            return Err(Error::SinMemoria);
         }
-        Ok(Self { tabla, relleno })
+        let (r, relleno) = crate::memoria_dma(permiso, PAGINA as usize);
+        if r <= 0 {
+            crate::cerrar(t as u32);
+            return Err(Error::SinMemoria);
+        }
+        let m = Self { tabla, relleno, llaves: [t as u32, r as u32], va };
+        if crate::memoria_proyectar(t as u32, va, true) != 0 {
+            return Err(Error::SinMemoria); // el Drop cierra las llaves
+        }
+        Ok(m)
+    }
+
+    fn base(&self) -> *mut u32 {
+        self.va as *mut u32
     }
 
     /// Mapea páginas físicas desde la VA `va` (múltiplo de 4 KB, nunca la página 0, §6). Hay que vaciar después.
-    pub fn mapear(&self, va: u32, fisicas: &[u64]) {
-        let base = mmu::virt(self.tabla as usize) as *mut u32;
+    pub fn mapear(&self, va: u32, fisicas: impl Iterator<Item = u64>) {
         let primera = (va >> 12) as usize;
-        for (i, &f) in fisicas.iter().enumerate() {
-            unsafe { base.add(primera + i).write_volatile(entrada(f)) };
+        for (i, f) in fisicas.enumerate() {
+            unsafe { self.base().add(primera + i).write_volatile(entrada(f)) };
         }
-        crate::hvs::limpiar_cache(base as usize + primera * 4, fisicas.len() * 4);
     }
 
     /// La entrada de una VA, tal como la lee la GPU (little-endian).
     pub fn ver(&self, va: u32) -> u32 {
-        unsafe { (mmu::virt(self.tabla as usize) as *const u32).add((va >> 12) as usize).read_volatile() }
+        unsafe { self.base().add((va >> 12) as usize).read_volatile() }
     }
 
     pub fn quitar(&self, va: u32, n: usize) {
-        let base = mmu::virt(self.tabla as usize) as *mut u32;
         let primera = (va >> 12) as usize;
         for i in 0..n {
-            unsafe { base.add(primera + i).write_volatile(0) };
+            unsafe { self.base().add(primera + i).write_volatile(0) };
         }
-        crate::hvs::limpiar_cache(base as usize + primera * 4, n * 4);
     }
 }
 
 impl Drop for Mmu {
     fn drop(&mut self) {
-        unsafe { paginas().liberar(self.tabla, PAGINAS_TABLA) };
-        unsafe { paginas().liberar(self.relleno, 1) };
+        crate::memoria_quitar(self.va);
+        for l in self.llaves {
+            crate::cerrar(l);
+        }
     }
+}
+
+/// Las ventanas de registros de la V3D, ya proyectadas en el proceso.
+#[derive(Clone, Copy)]
+pub struct Ventanas {
+    pub v3d: usize,
+    pub asb: usize,
+    pub pm: usize,
+    pub cprman: usize,
 }
 
 pub struct V3d {
     pub identidad: Identidad,
     pub mmu: Mmu,
+    v: Ventanas,
 }
 
-/// ¿Está el puente de la V3D? En QEMU la ventana no existe: se sondea para no caer (C23).
-pub fn presente() -> bool {
-    r(ASB_RPIVID, ASB_BRDG_ID).sondear() == Some(ASB_ID)
+/// ¿Está el puente de la V3D? Con los registros del puente proyectados en `asb`. El kernel solo da la llave si lo
+/// encontró (en QEMU leerlo daría un fallo de bus).
+pub fn presente(asb: usize) -> bool {
+    Reg(asb + ASB_BRDG_ID).leer() == ASB_ID
 }
 
 /// Activa un lado del puente ASB (§2.4): quitar `REQ_STOP` y esperar a que `ACK` sea 0.
-fn puente_activar(off: usize) -> Result<(), Error> {
-    let reg = r(ASB_RPIVID, off);
+fn puente_activar(v: &Ventanas, off: usize) -> Result<(), Error> {
+    let reg = Reg(v.asb + off);
     reg.escribir(CONTRASENA | (reg.leer() & !ASB_REQ_STOP & 0x00FF_FFFF));
     if esperar_hasta(100, || reg.leer() & ASB_ACK == 0) { Ok(()) } else { Err(Error::Puente) }
 }
 
-fn reloj_cprman(encender: bool) {
-    let cm = r(CPRMAN, CM_V3DCTL);
+fn reloj_cprman(v: &Ventanas, encender: bool) {
+    let cm = Reg(v.cprman + CM_V3DCTL);
     if encender {
         cm.escribir(CONTRASENA | (cm.leer() & 0x00FF_FFFF) | CM_ENABLE | CM_GATE);
     } else {
@@ -240,35 +254,39 @@ fn reloj_cprman(encender: bool) {
 }
 
 /// Enciende el dominio de la V3D: reloj, reinicio y puente (§2.4).
-fn encender_dominio() -> Result<(), Error> {
-    reloj_cprman(true);
+fn encender_dominio(v: &Ventanas) -> Result<(), Error> {
+    reloj_cprman(v, true);
     esperar_us(1);
-    reloj_cprman(false);
-    let g = r(PM, PM_GRAFX);
+    reloj_cprman(v, false);
+    let g = Reg(v.pm + PM_GRAFX);
     g.escribir(CONTRASENA | (g.leer() & 0x00FF_FFFF) | PM_GRAFX_V3DRSTN);
-    reloj_cprman(true);
-    puente_activar(ASB_M_CTRL)?;
-    puente_activar(ASB_S_CTRL)
+    reloj_cprman(v, true);
+    puente_activar(v, ASB_M_CTRL)?;
+    puente_activar(v, ASB_S_CTRL)
 }
 
-/// Enciende el reloj del firmware y lo pone a su máximo (§2.3). Devuelve los Hz.
-fn encender_reloj() -> Option<u32> {
-    // Mensaje completo: tamaño, petición, etiqueta, tamaño del valor, código, valores y la etiqueta de fin.
+/// Enciende el reloj del firmware y lo pone a su máximo (§2.3), por el buzón. Devuelve los Hz.
+fn encender_reloj(buzon: &dyn Fn(&mut [u32]) -> bool) -> Option<u32> {
     let mut m = [8 * 4, 0, 0x0003_0004, 8, 0, RELOJ_V3D, 0, 0]; // GET_MAX_CLOCK_RATE
-    buzon::propiedades(&mut m)?;
+    if !buzon(&mut m) {
+        return None;
+    }
     let maximo = m[6];
     let mut e = [8 * 4, 0, 0x0003_8001, 8, 0, RELOJ_V3D, 1, 0]; // SET_CLOCK_STATE, encendido
-    buzon::propiedades(&mut e)?;
     let mut f = [9 * 4, 0, 0x0003_8002, 12, 0, RELOJ_V3D, maximo, 0, 0]; // SET_CLOCK_RATE, sin turbo
-    buzon::propiedades(&mut f)?;
+    if !buzon(&mut e) || !buzon(&mut f) {
+        return None;
+    }
     Some(f[6])
 }
 
-fn leer_identidad() -> Identidad {
-    let ident1 = r(HUB, HUB_IDENT1).leer();
-    let ident3 = r(HUB, HUB_IDENT3).leer();
-    let core1 = r(NUCLEO, CTL_IDENT1).leer();
-    let debug = r(HUB, MMU_DEBUG_INFO).leer();
+fn leer_identidad(v: &Ventanas) -> Identidad {
+    let hub = |off| Reg(v.v3d + off).leer();
+    let nucleo = |off| Reg(v.v3d + NUCLEO + off).leer();
+    let ident1 = hub(HUB_IDENT1);
+    let ident3 = hub(HUB_IDENT3);
+    let core1 = nucleo(CTL_IDENT1);
+    let debug = hub(MMU_DEBUG_INFO);
     let slices = (core1 >> 4) & 0xf;
     Identidad {
         version: (ident1 & 0xf) * 10 + ((ident1 >> 4) & 0xf),
@@ -279,45 +297,35 @@ fn leer_identidad() -> Identidad {
         tmus: slices * ((core1 >> 12) & 0xf),
         va_bits: 30 + ((debug >> 4) & 0xf),
         pa_bits: 30 + ((debug >> 8) & 0xf),
-        para_mesa: [
-            r(HUB, HUB_UIFCFG).leer(),
-            ident1,
-            r(HUB, HUB_IDENT2).leer(),
-            ident3,
-            r(NUCLEO, CTL_IDENT0).leer(),
-            core1,
-            r(NUCLEO, CTL_IDENT2).leer(),
-        ],
+        para_mesa: [hub(HUB_UIFCFG), ident1, hub(HUB_IDENT2), ident3, nucleo(CTL_IDENT0), core1, nucleo(CTL_IDENT2)],
     }
 }
 
 impl V3d {
-    /// Enciende y prepara la GPU (§2.5).
-    pub fn iniciar() -> Result<Self, Error> {
-        if !presente() {
+    /// Enciende y prepara la GPU (§2.5), con sus ventanas proyectadas, la tabla ya creada y el buzón para el reloj.
+    pub fn iniciar(v: Ventanas, mmu: Mmu, buzon: &dyn Fn(&mut [u32]) -> bool) -> Result<Self, Error> {
+        if !presente(v.asb) {
             return Err(Error::NoHayGpu);
         }
-        let mmu = Mmu::nueva()?;
-        encender_dominio()?;
-        encender_reloj();
-        let identidad = leer_identidad();
+        encender_dominio(&v)?;
+        encender_reloj(buzon).ok_or(Error::Reloj)?;
+        let identidad = leer_identidad(&v);
         if identidad.version != 42 {
             return Err(Error::Version(identidad.version));
         }
-        let g = Self { identidad, mmu };
+        let g = Self { identidad, mmu, v };
         g.estado_fijo();
         g.dar_tabla()?;
         g.activar_interrupciones();
         Ok(g)
     }
 
-    fn hub(&self, off: usize) -> RegLe32 {
-        r(HUB, off)
+    fn hub(&self, off: usize) -> Reg {
+        Reg(self.v.v3d + off)
     }
-    fn nucleo(&self, off: usize) -> RegLe32 {
-        r(NUCLEO, off)
+    fn nucleo(&self, off: usize) -> Reg {
+        Reg(self.v.v3d + NUCLEO + off)
     }
-
     /// §8.3.
     fn estado_fijo(&self) {
         self.nucleo(CTL_L2TFLSTA).escribir(0);
@@ -392,111 +400,16 @@ impl V3d {
     }
 
     /// Espera por consulta a que llegue alguno de los eventos del núcleo `bits`, como mucho `us` microsegundos.
-    /// Provisional: con la interrupción en el GIC (INTID 106, §2.2) lo hará el repartidor de C20.
+    /// Provisional: con la interrupción de la V3D (INTID 106, §2.2) y un canal, como el USB (C49).
     pub fn esperar_evento(&self, bits: u32, us: u64) -> Option<u32> {
-        let fin = reloj::ahora() + us * reloj::frecuencia() / 1_000_000;
+        let fin = crate::ahora_us() + us;
         let mut vistos = 0;
-        while reloj::ahora() < fin {
+        while crate::ahora_us() < fin {
             vistos |= self.eventos().0;
             if vistos & bits != 0 {
                 return Some(vistos);
             }
         }
         None
-    }
-}
-
-/// Listas de control mínimas: borrar una baldosa a un color y guardarla en memoria (C27).
-///
-/// Escrito solo con `docs/spec/hw/v3d-listas.md` (V5), variante A (solo render). De momento solo una baldosa (hasta
-/// 64 × 64 píxeles), formato `rgba8` lineal. Los paquetes van byte a byte, con los campos en little-endian (§2).
-pub mod listas {
-    use alloc::vec::Vec;
-
-    /// Formato de guardado `rgba8` (§3.12).
-    const FORMATO_RGBA8: u128 = 27;
-
-    pub struct Borrado {
-        pub ancho: u32,
-        pub alto: u32,
-        /// Palabra del color como la define §3.9: R en los bits bajos (`0xAABBGGRR`).
-        pub color: u32,
-        pub destino: u32,
-        pub paso: u32,
-        /// VA de la lista genérica de baldosa.
-        pub generica: u32,
-        /// VA de una página a cero, alineada a 64 bytes (§3.7).
-        pub memoria_baldosas: u32,
-    }
-
-    fn mas(v: &mut Vec<u8>, b: &[u8]) {
-        v.extend_from_slice(b);
-    }
-
-    fn le32(x: u32) -> [u8; 4] {
-        x.to_le_bytes()
-    }
-
-    /// Guardado de un búfer de baldosa (`STORE_TILE_BUFFER_GENERAL`, 13 bytes).
-    fn guardar(v: &mut Vec<u8>, bufer: u8, paso: u32, direccion: u32) {
-        let campos: u128 = 0x1D | ((bufer as u128) << 8) | if bufer == 8 { 0 } else { (FORMATO_RGBA8 << 20) | ((paso as u128) << 36) };
-        mas(v, &campos.to_le_bytes()[..9]);
-        mas(v, &le32(direccion));
-    }
-
-    impl Borrado {
-        /// La lista genérica de baldosa (§5.2): 17 bytes.
-        pub fn lista_generica(&self) -> Vec<u8> {
-            let mut v = Vec::new();
-            mas(&mut v, &[0x7D, 0x1A]); // TILE_COORDINATES_IMPLICIT, END_OF_LOADS
-            guardar(&mut v, 0, self.paso, self.destino);
-            mas(&mut v, &[0x1B, 0x12]); // END_OF_TILE_MARKER, RETURN_FROM_SUB_LIST
-            v
-        }
-
-        /// La RCL (§5.1). `None` si no cabe en una baldosa.
-        pub fn rcl(&self) -> Option<Vec<u8>> {
-            if self.ancho == 0 || self.alto == 0 || self.ancho > 64 || self.alto > 64 || self.memoria_baldosas % 64 != 0 {
-                return None;
-            }
-            let fin_generica = self.generica + self.lista_generica().len() as u32;
-            let (w, h) = (self.ancho as u16, self.alto as u16);
-            let mut v = Vec::new();
-            // COMMON: un RT, anchura, altura, early-Z desactivado (§3.2, §8.2).
-            mas(&mut v, &[0x79, 0x00]);
-            mas(&mut v, &w.to_le_bytes());
-            mas(&mut v, &h.to_le_bytes());
-            mas(&mut v, &[0x40, 0, 0]);
-            // CLEAR_COLORS_PART1 del RT 0 (§3.3).
-            mas(&mut v, &[0x79, 0x03]);
-            mas(&mut v, &le32(self.color));
-            mas(&mut v, &[0, 0, 0]);
-            // COLOR: 32 bpp, tipo interno rgba8 (§3.4).
-            mas(&mut v, &[0x79, 0x81, 0, 0, 0, 0, 0, 0, 0]);
-            // ZS_CLEAR_VALUES: plantilla 0, Z 1.0 (§3.5).
-            mas(&mut v, &[0x79, 0x02, 0]);
-            mas(&mut v, &1.0f32.to_bits().to_le_bytes());
-            mas(&mut v, &[0, 0]);
-            mas(&mut v, &[0x7E, 0x05]); // TILE_LIST_INITIAL_BLOCK_SIZE
-            v.push(0x7B); // MULTICORE_RENDERING_TILE_LIST_SET_BASE, conjunto 0
-            mas(&mut v, &le32(self.memoria_baldosas));
-            // SUPERTILE_CFG: supertiles de 1 × 1, cuadro de 1 × 1, una baldosa de ancho y de alto (§3.8).
-            mas(&mut v, &[0x7A, 0, 0, 1, 1, 1, 0x10, 0, 0]);
-            // Dos baldosas de preparación (errata GFXH-1742); la primera borra el TLB.
-            for borrar in [true, false] {
-                mas(&mut v, &[0x7C, 0, 0, 0, 0x1A]); // TILE_COORDINATES (0, 0), END_OF_LOADS
-                guardar(&mut v, 8, 0, 0); // guardado de relleno: ningún búfer
-                if borrar {
-                    mas(&mut v, &[0x19, 0x03]); // CLEAR_TILE_BUFFERS
-                }
-                v.push(0x1B); // END_OF_TILE_MARKER
-            }
-            v.push(0x13); // FLUSH_VCD_CACHE
-            v.push(0x14); // START_ADDRESS_OF_GENERIC_TILE_LIST
-            mas(&mut v, &le32(self.generica));
-            mas(&mut v, &le32(fin_generica));
-            mas(&mut v, &[0x17, 0, 0, 0x0D]); // SUPERTILE_COORDINATES (0, 0), END_OF_RENDERING
-            Some(v)
-        }
     }
 }

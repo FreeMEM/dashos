@@ -70,19 +70,16 @@ pila de 128 KB
   [sd] sector 1: "segundo sector: bien"
 sale con código 9
 C21: controlador de la tarjeta SD lanzado
-  lista del ejemplo de la especificación: igual palabra a palabra
-  escritorio y cursor: 17 palabras; fuera del primer GB se rechaza: sí
-C23: listas del HVS bien
-  entrada de la tabla en memoria: [45, 23, 01, 30]; registros como la especificación: sí
-  tabla de 4 MB: mapear y quitar bien; memoria devuelta: sí
-  listas de borrado del ejemplo: RCL 106 bytes, genérica 17 bytes, iguales al volcado: sí
-C27: listas de borrado de la V3D bien
-C24: V3D, lado del kernel bien
   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
   [usb] HID de arranque: 1 teclado y 1 ratón
 C49: USB fuera del kernel, con su interrupción y eventos por un canal bien
-  VA 0x1000, 0x2000, 0x5000; tabla bien; hueco reutilizado sí; tramos juntados sí; memoria devuelta sí
-C26: búferes de la GPU bien
+  [graficos] lista del HVS del ejemplo de la especificación: igual palabra a palabra
+  [graficos] escritorio y cursor: 17 palabras; fuera del primer GB se rechaza: sí
+  [graficos] V3D: entrada de la tabla en memoria [45, 23, 01, 30]; registros como la especificación: sí; tabla de 4 MB: bien
+  [graficos] búferes: VA 0x1000, 0x2000, 0x5000; tabla bien; hueco reutilizado sí; tramos juntados sí
+  [graficos] listas de borrado del ejemplo: RCL 106 bytes, genérica 17 bytes, iguales al volcado: sí
+  memoria devuelta: sí
+C50: listas del HVS y de la V3D, tabla de la MMU y búferes de la GPU desde un proceso bien
 sale con código 28
 sale con código 28
 C28: FPU por hilo bien

@@ -124,3 +124,13 @@ test = false
 name = "compositor"
 path = "src/bin/compositor.rs"
 test = false
+
+[[bin]]
+name = "graficos"
+path = "src/bin/graficos.rs"
+test = false
+
+[[bin]]
+name = "gpu"
+path = "src/bin/gpu.rs"
+test = false

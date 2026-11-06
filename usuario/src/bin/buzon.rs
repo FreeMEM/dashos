@@ -3,8 +3,10 @@
 //! Llaves: la 1, el permiso DMA; la 2, los registros del buzón (la página entera: el buzón está en su desplazamiento
 //! 0x880, en todas las Pi); la 3, el canal por el que llegan las peticiones.
 //! Cada petición es un mensaje de propiedades del firmware tal cual (palabras de 32 bits en little-endian: tamaño,
-//! código 0, etiquetas y la etiqueta 0 de fin), de hasta 256 bytes. La respuesta vuelve por el mismo canal, del mismo
-//! tamaño; si el servicio no la acepta, vuelve con el código 0x80000001 y sin tocar el firmware.
+//! código 0, etiquetas y la etiqueta 0 de fin), de hasta 256 bytes, y lleva una llave: un extremo de canal por el que
+//! va la respuesta, del mismo tamaño. Así varios clientes comparten el canal de peticiones (cada uno con una copia del
+//! mismo extremo). Si el servicio no acepta la petición, la respuesta lleva el código 0x80000001 y el firmware no la
+//! ve; sin llave de respuesta, no se contesta.
 //!
 //! Solo deja pasar las etiquetas de la lista `PERMITIDAS`: el firmware puede apagar aparatos o cambiar relojes, y
 //! eso no lo decide quien tenga el canal. Formato en `docs/referencia/servicios.md`.
@@ -26,8 +28,16 @@ const CANAL_PROPIEDADES: u32 = 8;
 
 const RECHAZADO: u32 = 0x8000_0001;
 
-/// Las etiquetas que se dejan pasar: leer la memoria de la VideoCore y los relojes, y lo de la pantalla.
+/// Reloj de la V3D (`docs/spec/hw/v3d.md`, §2.3): el único que se deja encender y poner.
+const RELOJ_V3D: u32 = 5;
+const PONER_ESTADO_RELOJ: u32 = 0x0003_8001;
+const PONER_FRECUENCIA: u32 = 0x0003_8002;
+
+/// Las etiquetas que se dejan pasar: leer la memoria de la VideoCore y los relojes, lo de la pantalla y, solo para el
+/// reloj de la V3D, encenderlo y ponerle la frecuencia.
 const PERMITIDAS: &[u32] = &[
+    PONER_ESTADO_RELOJ,
+    PONER_FRECUENCIA,
     0x0001_0006, // memoria de la VideoCore: base y tamaño
     0x0003_0002, // frecuencia de un reloj
     0x0003_0004, // frecuencia máxima de un reloj
@@ -66,6 +76,10 @@ fn valido(p: &[u32]) -> bool {
             return false;
         }
         let palabras = (p[i + 1] as usize).div_ceil(4);
+        // Poner un reloj, solo el de la V3D: el primer valor es el número de reloj.
+        if (etiqueta == PONER_ESTADO_RELOJ || etiqueta == PONER_FRECUENCIA) && (palabras == 0 || i + 3 >= p.len() || p[i + 3] != RELOJ_V3D) {
+            return false;
+        }
         i += 3 + palabras;
     }
     false // sin etiqueta de fin
@@ -104,10 +118,14 @@ fn principal() -> u64 {
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 1];
     loop {
-        let (n, _) = dashos::canal_leer(3, &mut buf, &mut ll);
+        let (n, k) = dashos::canal_leer(3, &mut buf, &mut ll);
         if n < 0 {
-            return 0; // el cliente cerró el canal
+            return 0; // los clientes cerraron el canal
         }
+        if k == 0 {
+            continue; // sin canal de respuesta
+        }
+        let respuesta = ll[0];
         let n = n as usize;
         let mut p = [0u32; 64];
         let palabras = n / 4;
@@ -134,6 +152,7 @@ fn principal() -> u64 {
         for (i, &w) in p.iter().enumerate() {
             buf[4 * i..4 * i + 4].copy_from_slice(&w.to_le_bytes());
         }
-        dashos::canal_escribir(3, &buf[..n], &[]);
+        dashos::canal_escribir(respuesta, &buf[..n], &[]);
+        dashos::cerrar(respuesta);
     }
 }

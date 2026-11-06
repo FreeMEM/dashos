@@ -5,6 +5,8 @@ Orden de bytes: little-endian
 Memoria física: 
   núcleo 1 en marcha
 DashOS en marcha con 4 núcleos.
+# La GPU (C50) solo se lanza si el kernel encuentra la V3D; QEMU no la emula.
+~inicio: gpu no se lanza: falta
 │   [inicio] en marcha, con
 │   [inicio]   llave 2: permiso DMA de dma
 │   [inicio]   llave 3: registro de registro

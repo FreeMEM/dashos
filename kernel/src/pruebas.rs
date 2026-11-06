@@ -8,8 +8,8 @@
 // Los programas de usuario en ensamblador de C11 a C18.
 core::arch::global_asm!(include_str!("usuario.s"));
 
-use crate::{buzon, cerrojo, dtb, espacio, gpu, hvs, interrupciones, kprintln, llamadas,
-    mapa, memoria, mmu, monton, objetos, planificador, reloj, v3d};
+use crate::{cerrojo, dtb, espacio, interrupciones, kprintln, llamadas,
+    mapa, memoria, mmu, monton, objetos, planificador, reloj};
 
 /// Todas las pruebas, con el sistema ya en marcha. `nucleos` es cuántos núcleos más arrancaron.
 pub fn ejecutar(dtb: usize, nucleos: u32) {
@@ -32,10 +32,8 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_rust();
     prueba_controlador(dtb);
     prueba_sd(dtb);
-    prueba_hvs();
-    prueba_v3d();
     prueba_usb();
-    prueba_bo();
+    prueba_graficos();
     prueba_fpu();
     prueba_pie();
     prueba_tenis();
@@ -311,8 +309,6 @@ fn prueba_pantalla(_dtb: usize) {
         return;
     };
     let Some((base, tamano)) = d.reg_cpu(&n, 0) else { return };
-    // Las pruebas de la V3D y del HVS aún usan el buzón desde el kernel (salen en la segunda parte de C50).
-    buzon::iniciar(base);
     let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) else { return };
     let Some((vc, vc_tamano)) = d.memoria_vc() else {
         kprintln!("C50: sin memoria de la VideoCore");
@@ -335,17 +331,20 @@ fn prueba_pantalla(_dtb: usize) {
     let Some(b) = lanzar_elf_en(BUZON, buzon_llaves, 2, g1) else { return };
     // Antes de dar el canal al compositor, lo que el buzón no debe dejar pasar: una etiqueta que no está en su lista
     // (poner un reloj), un mensaje cuyo tamaño no cuadra y uno sin etiqueta de fin. Los tres vuelven con 0x80000001.
+    // Cada petición lleva el extremo por el que vuelve la respuesta.
     let (c_buzon, lado) = extremo(&compositor_llaves[1]);
     let mut rechazos = 0;
     let palabras = |p: &[u32]| p.iter().flat_map(|w| w.to_le_bytes()).collect::<alloc::vec::Vec<u8>>();
     for m in [
-        palabras(&[36, 0, 0x0003_8002, 12, 0, 3, 600_000_000, 0, 0]),
+        palabras(&[36, 0, 0x0003_8002, 12, 0, 3, 600_000_000, 0, 0]), // poner el reloj de la CPU: no
         palabras(&[40, 0, 0x0003_0002, 8, 0, 3, 0, 0]),
         palabras(&[28, 0, 0x0003_0002, 8, 0, 3, 0]),
     ] {
         let n = m.len();
-        let _ = c_buzon.escribir(lado, objetos::Mensaje { datos: m, llaves: alloc::vec::Vec::new(), marca: 0 });
-        if let Ok(r) = c_buzon.leer(lado) {
+        let (vuelta, para_el) = objetos::Canal::nuevo();
+        let _ = c_buzon.escribir(lado, objetos::Mensaje { datos: m, llaves: alloc::vec![para_el], marca: 0 });
+        let (cv, lv) = extremo(&vuelta);
+        if let Ok(r) = cv.leer(lv) {
             if r.datos.len() == n && r.datos[4..8] == 0x8000_0001u32.to_le_bytes() {
                 rechazos += 1;
             }
@@ -630,112 +629,7 @@ fn prueba_sd(_dtb: usize) {
     kprintln!("C21: controlador de la tarjeta SD lanzado");
 }
 
-/// C23: controlador del HVS según `docs/spec/hw/hvs.md`. En QEMU solo se comprueba la codificación de las listas;
-/// la parte del hardware se ejecuta si hay un HVS encendido (en la Pi 4).
-fn prueba_hvs() {
-    use hvs::{Alfa, Formato, Plano};
-    // El ejemplo de §5.10: 1920 × 1080 en XRGB8888 de DRM, en (0, 0), paso 7680, búfer en 0x10000000.
-    let ejemplo = Plano { x: 0, y: 0, ancho: 1920, alto: 1080, fisica: 0x1000_0000, paso: 7680, formato: Formato::Xrgb8888Drm, alfa: Alfa::Fijo(0xfff) };
-    let esperado = [0x4800_D807u32, 0, 0x4000_FFF0, 0x0438_0780, 0xC0C0_C0C0, 0xD000_0000, 0xC0C0_C0C0, 0x0000_1E00, 0x8000_0000];
-    let mut p = [0u32; 32];
-    let n = hvs::codificar_lista(&[ejemplo], &mut p);
-    let bien_ejemplo = n == Ok(9) && p[..9] == esperado;
-    kprintln!("  lista del ejemplo de la especificación: {}", if bien_ejemplo { "igual palabra a palabra" } else { "DISTINTA" });
-    if !bien_ejemplo {
-        kprintln!("  {:08x?}", &p[..9]);
-    }
-    // Escritorio nativo de DashOS y un cursor con alfa por píxel encima.
-    let escritorio = Plano { formato: Formato::Argb8888Nativo, ..ejemplo };
-    let cursor = Plano { x: 100, y: 200, ancho: 64, alto: 64, fisica: 0x2000_0000, paso: 256, formato: Formato::Argb8888Nativo, alfa: Alfa::PorPixelPremultiplicado };
-    let n2 = hvs::codificar_lista(&[escritorio, cursor], &mut p);
-    // En little-endian (C33), el formato nativo es el mismo que XRGB8888: ORDER 2, la palabra 0 del ejemplo.
-    let bien_dos = n2 == Ok(17) && p[0] == 0x4800_D807 && p[8] == 0x4800_D807 && p[9] == (200 << 16 | 100)
-        && p[10] == 0x2000_FFF0 && p[11] == 0x0040_0040 && p[13] == 0xE000_0000 && p[16] == 0x8000_0000;
-    let fuera = Plano { fisica: 0x4000_0000, ..cursor }.codificar(&mut p) == Err(hvs::Error::FueraDelPrimerGb);
-    kprintln!("  escritorio y cursor: {} palabras; fuera del primer GB se rechaza: {}", n2.unwrap_or(0), if fuera { "sí" } else { "no" });
-    let bien = bien_ejemplo && bien_dos && fuera;
-    match hvs::Hvs::detectar() {
-        None => kprintln!("  sin HVS encendido (QEMU no lo emula): la parte del hardware no se prueba"),
-        Some(mut h) => {
-            kprintln!("  HVS encendido: canal {} de {}x{}, lista activa {}, línea {}", h.canal, h.ancho, h.alto, h.lista_activa(), h.linea());
-            match buzon::pantalla(h.ancho, h.alto) {
-                None => kprintln!("  sin pantalla del firmware"),
-                Some(pt) => {
-                    let fondo = Plano { x: 0, y: 0, ancho: pt.ancho, alto: pt.alto, fisica: pt.fisica, paso: pt.paso, formato: Formato::Argb8888Nativo, alfa: Alfa::Fijo(0xfff) };
-                    // Cursor: un cuadrado de 64 × 64, blanco con alfa a medias (premultiplicado), en la zona DMA.
-                    let c = memoria::paginas().reservar(memoria::Zona::Dma1G, 4, 1).unwrap_or(0);
-                    let px = mmu::virt(c as usize) as *mut u32;
-                    for i in 0..64 * 64 {
-                        unsafe { px.add(i).write_volatile(0x8080_8080) };
-                    }
-                    let cursor = Plano { x: 100, y: 100, fisica: c, ..cursor };
-                    match h.instalar(&[fondo, cursor]) {
-                        Ok(i) => kprintln!("  lista {} instalada; el hardware la usa: {}", i, if h.esperar(i, 10_000_000) { "sí" } else { "no" }),
-                        Err(e) => kprintln!("  no se pudo instalar la lista: {:?}", e),
-                    }
-                }
-            }
-        }
-    }
-    kprintln!("C23: listas del HVS {}", if bien { "bien" } else { "MAL" });
-}
 
-/// C24: lado del kernel de la V3D según `docs/spec/hw/v3d.md`. En QEMU solo la codificación; el resto en la Pi 4.
-fn prueba_v3d() {
-    // §5.2: una página física en 0x12345000 da la entrada 0x30012345, guardada en little-endian.
-    let e = v3d::entrada(0x1234_5000);
-    let bytes = e.to_ne_bytes();
-    let bien_pte = bytes == [0x45, 0x23, 0x01, 0x30];
-    // §5.4, §9.2, §9.3: los valores que da la especificación, rehechos con los bits.
-    let bien_reg = v3d::MMU_CTL_ARRANQUE == 0x060D_0C01 && v3d::MASCARA_NUCLEO == 0xA7 && v3d::MASCARA_HUB == 0x3A;
-    kprintln!("  entrada de la tabla en memoria: {:02x?}; registros como la especificación: {}", bytes, if bien_reg { "sí" } else { "no" });
-    // La tabla de verdad (4 MB): mapear dos páginas, leerlas, quitarlas y devolver la memoria.
-    let libres = memoria::paginas().libres();
-    let bien_mmu = match v3d::Mmu::nueva() {
-        Err(_) => false,
-        Ok(t) => {
-            t.mapear(0x10000, &[0x1234_5000, 0x1234_6000]);
-            let puestas = t.ver(0x10000) == v3d::entrada(0x1234_5000) && t.ver(0x11000) == v3d::entrada(0x1234_6000) && t.ver(0x12000) == 0;
-            t.quitar(0x10000, 2);
-            puestas && t.ver(0x10000) == 0
-        }
-    };
-    let devuelta = memoria::paginas().libres() == libres;
-    kprintln!("  tabla de 4 MB: mapear y quitar {}; memoria devuelta: {}", if bien_mmu { "bien" } else { "MAL" }, if devuelta { "sí" } else { "no" });
-    // C27: las listas de borrado del ejemplo de v3d-listas.md §8, comparadas byte a byte con sus volcados.
-    let ejemplo = v3d::listas::Borrado { ancho: 64, alto: 64, color: 0xFF80_4020, destino: 0x0010_0000, paso: 256, generica: 0x0020_0100, memoria_baldosas: 0x0020_1000 };
-    let rcl_esperada: [u8; 106] = [
-        0x79, 0x00, 0x40, 0x00, 0x40, 0x00, 0x40, 0x00, 0x00, 0x79, 0x03, 0x20, 0x40, 0x80, 0xFF, 0x00, 0x00, 0x00,
-        0x79, 0x81, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x79, 0x02, 0x00, 0x00, 0x00, 0x80, 0x3F, 0x00, 0x00,
-        0x7E, 0x05, 0x7B, 0x00, 0x10, 0x20, 0x00, 0x7A, 0x00, 0x00, 0x01, 0x01, 0x01, 0x10, 0x00, 0x00,
-        0x7C, 0x00, 0x00, 0x00, 0x1A, 0x1D, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x19, 0x03, 0x1B, 0x7C, 0x00, 0x00, 0x00, 0x1A, 0x1D, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-        0x00, 0x00, 0x00, 0x1B, 0x13, 0x14, 0x00, 0x01, 0x20, 0x00, 0x11, 0x01, 0x20, 0x00, 0x17, 0x00, 0x00, 0x0D,
-    ];
-    let generica_esperada: [u8; 17] = [0x7D, 0x1A, 0x1D, 0x00, 0xB0, 0x01, 0x00, 0x10, 0x00, 0x00, 0x00, 0x00, 0x00, 0x10, 0x00, 0x1B, 0x12];
-    let rcl = ejemplo.rcl().unwrap_or_default();
-    let generica = ejemplo.lista_generica();
-    let bien_listas = rcl[..] == rcl_esperada[..] && generica[..] == generica_esperada[..];
-    kprintln!("  listas de borrado del ejemplo: RCL {} bytes, genérica {} bytes, iguales al volcado: {}", rcl.len(), generica.len(), if bien_listas { "sí" } else { "no" });
-    if !bien_listas {
-        kprintln!("  RCL {:02x?}", rcl);
-        kprintln!("  genérica {:02x?}", generica);
-    }
-    kprintln!("C27: listas de borrado de la V3D {}", if bien_listas { "bien" } else { "MAL" });
-    match v3d::V3d::iniciar() {
-        Err(v3d::Error::NoHayGpu) => kprintln!("  sin V3D (QEMU no la emula): la parte del hardware no se prueba"),
-        Err(e) => kprintln!("  la V3D no arranca: {:?}", e),
-        Ok(g) => {
-            let i = g.identidad;
-            kprintln!("  V3D {}.{}: {} núcleo, {} slices, {} QPU, {} TMU; VA {} bits, PA {} bits", i.version / 10, i.version % 10, i.nucleos, i.slices, i.qpus, i.tmus, i.va_bits, i.pa_bits);
-            kprintln!("  tabla de la MMU en {:#x}; eventos pendientes {:x?}", g.mmu.tabla, g.eventos());
-            // Con hardware, los búferes de C26 irían sobre esta tabla.
-            let mut bos = gpu::Gpu::con_hardware(g);
-            primer_borrado(&mut bos);
-        }
-    }
-    kprintln!("C24: V3D, lado del kernel {}", if bien_pte && bien_reg && bien_mmu && devuelta { "bien" } else { "MAL" });
-}
 
 /// C49 (antes C22 y C25, dentro del kernel): el controlador USB es un proceso (`usuario/src/bin/usb.rs`). Recibe el
 /// permiso DMA, los registros y la interrupción del DWC2 y un lado de un canal; enumera el hub de QEMU y manda por el
@@ -795,81 +689,36 @@ fn prueba_usb() {
     drop(mio);
 }
 
+/// C50, segunda parte (antes C23, C24, C26 y C27 en el kernel): los gráficos de la Pi 4 desde un proceso. Se le da un
+/// permiso DMA de desplazamiento 0, como el del servicio `gpu`, y se comprueba que toda la memoria vuelve.
+static GRAFICOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/graficos");
+
+fn prueba_graficos() {
+    let libres = memoria::paginas().libres();
+    let llaves = alloc::vec![objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Normal, desplazamiento_bus: 0 }, objetos::TODOS)];
+    let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };
+    let Some(c) = lanzar_elf_en(GRAFICOS, llaves, 1, grupo) else { return };
+    let inicio = reloj::tics();
+    while c.estado.tomar().fin.is_none() && reloj::tics() < inicio + 1000 {
+        esperar_tics(2);
+    }
+    esperar_tics(10);
+    let fin = c.estado.tomar().fin;
+    let devuelta = memoria::paginas().libres() == libres;
+    kprintln!("  memoria devuelta: {}", if devuelta { "sí" } else { "no" });
+    let bien = matches!(fin, Some(objetos::Fin::Salida(50))) && devuelta;
+    kprintln!("C50: listas del HVS y de la V3D, tabla de la MMU y búferes de la GPU desde un proceso {}", if bien { "bien" } else { "MAL" });
+    if !bien {
+        kprintln!("  acabó: {:?}", fin.map(|f| f.valores()));
+    }
+}
+
 fn esperar_ms(ms: u64) {
     let fin = reloj::ahora() + ms * reloj::frecuencia() / 1000;
     while reloj::ahora() < fin {}
 }
 
-/// C27 en la Pi 4: el primer trabajo de la GPU. Borra 64 × 64 píxeles a `20 40 80 FF` y comprueba la memoria.
-fn primer_borrado(bos: &mut gpu::Gpu) {
-    let (Ok(dest), Ok(listas), Ok(baldosas)) = (bos.crear(64 * 64 * 4), bos.crear(4096), bos.crear(4096)) else {
-        kprintln!("C27: sin memoria para los búferes");
-        return;
-    };
-    let b = v3d::listas::Borrado { ancho: 64, alto: 64, color: 0xFF80_4020, destino: dest.1, paso: 256, generica: listas.1 + 0x100, memoria_baldosas: baldosas.1 };
-    let rcl = b.rcl().unwrap();
-    let generica = b.lista_generica();
-    let escribir = |bos: &gpu::Gpu, h: u32, desde: usize, datos: &[u8]| {
-        let p = bos.bo(h).unwrap().paginas[0];
-        let va = mmu::virt(p as usize);
-        unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), (va + desde) as *mut u8, datos.len()) };
-        hvs::limpiar_cache(va, 4096);
-    };
-    escribir(bos, listas.0, 0, &rcl);
-    escribir(bos, listas.0, 0x100, &generica);
-    for &p in &bos.bo(dest.0).unwrap().paginas {
-        let va = mmu::virt(p as usize);
-        unsafe { core::ptr::write_bytes(va as *mut u8, 0xA5, 4096) };
-        hvs::limpiar_cache(va, 4096);
-    }
-    let Some(g) = bos.hardware() else { return };
-    g.lanzar_render(listas.1, listas.1 + rcl.len() as u32);
-    let fin = g.esperar_evento(v3d::INT_FRDONE, 1_000_000);
-    let mut bien = 0;
-    for &p in &bos.bo(dest.0).unwrap().paginas {
-        let va = mmu::virt(p as usize);
-        hvs::limpiar_e_invalidar(va, 4096); // antes de leer lo que escribió la GPU
-        let px = unsafe { core::slice::from_raw_parts(va as *const u8, 4096) };
-        bien += px.chunks(4).filter(|c| *c == [0x20, 0x40, 0x80, 0xFF]).count();
-    }
-    kprintln!("  render: fin {:x?}; píxeles con el color: {} de 4096", fin, bien);
-    kprintln!("C27: primer trabajo de la GPU {}", if bien == 4096 { "bien" } else { "MAL" });
-}
 
-/// C26: búferes de la GPU con su VA, sobre la tabla de la MMU de la GPU.
-fn prueba_bo() {
-    let libres = memoria::paginas().libres();
-    let mut g = match gpu::Gpu::sin_hardware() {
-        Ok(g) => g,
-        Err(e) => {
-            kprintln!("C26: sin memoria para la tabla: {:?}", e);
-            return;
-        }
-    };
-    let a = g.crear(4096).unwrap();
-    let b = g.crear(10_000).unwrap(); // tres páginas
-    let c = g.crear(4096).unwrap();
-    let vas = [a.1, b.1, c.1];
-    let bien_va = vas.iter().all(|&v| v != 0 && v % 4096 == 0) && a.1 + 4096 == b.1 && b.1 + 3 * 4096 == c.1;
-    // Cada página del BO está en la tabla, en orden, y llega a cero.
-    let bo = g.bo(b.0).unwrap();
-    let bien_tabla = bo.paginas.iter().enumerate().all(|(i, &p)| g.tabla().ver(b.1 + i as u32 * 4096) == v3d::entrada(p))
-        && bo.paginas.iter().all(|&p| unsafe { *(mmu::virt(p as usize) as *const u64) } == 0);
-    // Liberar el del medio deja un hueco que se reutiliza; al final todo vuelve.
-    g.liberar(b.0).unwrap();
-    let hueco = g.tramos_libres() == 2 && g.tabla().ver(b.1) == 0;
-    let d = g.crear(8192).unwrap();
-    let reutiliza = d.1 == b.1 && g.va(d.0) == Some(d.1);
-    for h in [a.0, c.0, d.0] {
-        g.liberar(h).unwrap();
-    }
-    let junta = g.tramos_libres() == 1 && g.liberar(a.0) == Err(gpu::Error::Manija);
-    drop(g);
-    let devuelta = memoria::paginas().libres() == libres;
-    kprintln!("  VA {:#x}, {:#x}, {:#x}; tabla {}; hueco reutilizado {}; tramos juntados {}; memoria devuelta {}", a.1, b.1, c.1,
-        if bien_tabla { "bien" } else { "MAL" }, if hueco && reutiliza { "sí" } else { "no" }, if junta { "sí" } else { "no" }, if devuelta { "sí" } else { "no" });
-    kprintln!("C26: búferes de la GPU {}", if bien_va && bien_tabla && hueco && reutiliza && junta && devuelta { "bien" } else { "MAL" });
-}
 
 /// C28: registros de FP/SIMD por hilo. Dos procesos en el mismo núcleo llenan los 32 registros con patrones distintos
 /// y comprueban que el otro no se los pisa (`usuario/src/fpu_comun.rs`). Salen con 28 si todo va bien.

@@ -44,6 +44,11 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | buzon | permiso DMA, registros del buzón | "buzon" |
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
 | compositor | memoria de la VideoCore | "buzon", "entrada" |
+| gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
+
+Un canal que nombran más de dos servicios ("buzon") da a todos menos al primero una copia del mismo extremo: varios
+clientes, un servidor. Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
+("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
 ## Buzón de la VideoCore (C50)
 
@@ -51,8 +56,9 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 el desplazamiento 0x880), 3 el canal de peticiones.
 
 Cada petición es un mensaje de propiedades del firmware tal cual, de hasta 256 bytes: palabras de 32 bits en
-little-endian con el tamaño, el código 0, las etiquetas y la etiqueta 0 de fin. La respuesta vuelve por el mismo canal
-con el mismo tamaño y el código 0x80000000. Si el mensaje está mal formado o lleva una etiqueta que no está en la
+little-endian con el tamaño, el código 0, las etiquetas y la etiqueta 0 de fin. Lleva una llave: un extremo de un canal
+nuevo del cliente, por el que vuelve la respuesta, con el mismo tamaño y el código 0x80000000. Así varios clientes
+comparten el canal de peticiones. Sin esa llave no se contesta. Si el mensaje está mal formado o lleva una etiqueta que no está en la
 lista, vuelve con el código 0x80000001 y el firmware no lo ve. Etiquetas permitidas:
 
 | Etiqueta | Para |
@@ -62,11 +68,22 @@ lista, vuelve con el código 0x80000001 y el firmware no lo ve. Etiquetas permit
 | 0x00040001, 0x00040008 | Reservar la pantalla y su paso de línea |
 | 0x00048003 a 0x00048006 | Tamaño físico y virtual, bits por píxel y orden de colores |
 | 0x00048009 | Desplazamiento virtual (cambiar de búfer) |
-
-Hoy atiende a un solo cliente, el compositor. Las etiquetas de la V3D llegarán con ella.
+| 0x00038001, 0x00038002 | Encender un reloj y ponerle la frecuencia: solo el de la V3D (reloj 5) |
 
 ## Compositor (C50)
 
 `usuario/src/bin/compositor.rs`. Llaves: 1 la memoria de la VideoCore, 2 el canal del buzón, 3 el canal de entrada.
 Pide al firmware una pantalla de 640 × 480 a 32 bits con dos búferes, pinta el fondo y una ventana, y repinta solo lo
 que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verdad hablará Wayland (S9).
+
+## GPU (C50)
+
+`usuario/src/bin/gpu.rs`, con la biblioteca `dashos::graficos` (HVS, V3D, listas y búferes). Llaves: 1 el permiso DMA
+de la GPU (desplazamiento 0: la V3D ve direcciones físicas), 2 los registros de la V3D (hub y núcleo 0), 3 el puente
+ASB, 4 el bloque PM, 5 el cprman, 6 el canal del buzón. Enciende la V3D, prepara su MMU (tabla de 4 MB en memoria DMA)
+y hace el primer trabajo: borrar 64 × 64 píxeles y comprobarlo. Después espera; el servidor de verdad atenderá a Mesa
+(S9). **Sin probar**: QEMU no emula la V3D. El bloque PM también tiene el perro guardián: quien tiene esa llave puede
+reiniciar la máquina, como puede leer toda la memoria con la GPU; es un servicio de confianza (S16, D).
+
+El controlador del HVS está en la biblioteca, sin servicio propio: lo usará el compositor en la Pi 4 para componer con
+planos por hardware.

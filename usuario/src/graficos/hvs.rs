@@ -1,4 +1,4 @@
-//! HVS de la BCM2711: el compositor de vídeo por hardware (C23).
+//! HVS de la BCM2711: el compositor de vídeo por hardware (C23; desde C50, en un proceso).
 //!
 //! Escrito solo con `docs/spec/hw/hvs.md` (sala limpia). Las referencias "§" son a sus secciones.
 //!
@@ -7,13 +7,15 @@
 //! hardware el escritorio, el cursor y las ventanas que se quieran como planos, sin tocar los tiempos de la pantalla.
 //!
 //! Sin probar: QEMU `raspi4b` no emula el HVS. En QEMU solo se comprueba la codificación de la lista (contra el
-//! ejemplo de §5.10) y que el controlador ve que no hay HVS. Falta la Pi 4.
+//! ejemplo de §5.10). Falta la Pi 4.
+//!
+//! En un proceso, los planos se dan por su dirección de bus (la que da `memoria_dma` o el firmware), y no hay que
+//! limpiar cachés: la memoria DMA y la de la VideoCore se proyectan sin caché.
 
-use crate::mmio::RegLe32;
-use crate::mmu;
+use super::Reg;
 
 /// Dirección física de la ventana del HVS (§2.1), con el modo de periféricos bajo.
-pub const FISICA: usize = 0xFE40_0000;
+pub const FISICA: u64 = 0xFE40_0000;
 
 // Registros (§3.1).
 const DISPCTRL: usize = 0x000;
@@ -80,8 +82,8 @@ pub struct Plano {
     pub y: u32,
     pub ancho: u32,
     pub alto: u32,
-    /// Dirección física del primer píxel. Tiene que estar en el primer GB (§2.4).
-    pub fisica: u64,
+    /// Dirección de bus del primer píxel. Tiene que ser del primer GB: 0xC0000000 más la física (§2.4).
+    pub bus: u32,
     /// Bytes por línea.
     pub paso: u32,
     pub formato: Formato,
@@ -100,6 +102,11 @@ pub fn bus(fisica: u64) -> Option<u32> {
     if fisica < 0x4000_0000 { Some((fisica + 0xC000_0000) as u32) } else { None }
 }
 
+/// ¿Es una dirección de bus del primer GB, la única que alcanza el HVS?
+fn del_primer_gb(bus: u32) -> bool {
+    bus >= 0xC000_0000
+}
+
 impl Plano {
     /// Escribe la entrada del plano (§5.1, caso RGB sin escalado) y devuelve cuántas palabras usó.
     pub fn codificar(&self, p: &mut [u32]) -> Result<usize, Error> {
@@ -111,7 +118,10 @@ impl Plano {
         if p.len() < PALABRAS_PLANO {
             return Err(Error::SinSitio);
         }
-        let puntero = bus(self.fisica).ok_or(Error::FueraDelPrimerGb)?;
+        if !del_primer_gb(self.bus) {
+            return Err(Error::FueraDelPrimerGb);
+        }
+        let puntero = self.bus;
         let (codigo, orden) = self.formato.codigo_y_orden();
         p[0] = CTL0_VALID | ((PALABRAS_PLANO as u32) << 24) | CTL0_UNITY | (orden << 13) | CTL0_ALPHA_EXPAND
             | CTL0_RGB_EXPAND | codigo;
@@ -144,6 +154,7 @@ pub fn codificar_lista(planos: &[Plano], p: &mut [u32]) -> Result<usize, Error> 
 
 /// El HVS y el canal que dejó encendido el firmware.
 pub struct Hvs {
+    /// Donde están proyectados sus registros en el proceso.
     base: usize,
     pub canal: usize,
     pub ancho: u32,
@@ -152,16 +163,15 @@ pub struct Hvs {
 }
 
 impl Hvs {
-    fn r(&self, off: usize) -> RegLe32 {
-        RegLe32::new(self.base + off)
+    fn r(&self, off: usize) -> Reg {
+        Reg(self.base + off)
     }
 
-    /// Busca el HVS encendido y un canal activo. En QEMU no hay HVS y devuelve `None`.
-    pub fn detectar() -> Option<Self> {
-        let base = mmu::virt(FISICA);
+    /// Busca el HVS encendido y un canal activo, con sus registros proyectados en `base`. Quien da la llave de los
+    /// registros (el kernel) ya ha comprobado que el HVS existe: en QEMU, leerlo daría un fallo de bus.
+    pub fn detectar(base: usize) -> Option<Self> {
         let mut h = Self { base, canal: 0, ancho: 0, alto: 0, zona: 1 };
-        // En QEMU la ventana del HVS no existe y leerla da un fallo de bus: por eso se sondea.
-        if h.r(DISPCTRL).sondear()? & DISPCTRL_ENABLE == 0 {
+        if h.r(DISPCTRL).leer() & DISPCTRL_ENABLE == 0 {
             return None;
         }
         for c in 0..3 {
@@ -192,10 +202,6 @@ impl Hvs {
     pub fn instalar(&mut self, planos: &[Plano]) -> Result<u32, Error> {
         let mut palabras = [0u32; TAMANO_ZONA];
         let n = codificar_lista(planos, &mut palabras)?;
-        // Los píxeles los lee el HVS de la RAM sin pasar por las cachés de la CPU (§2.4).
-        for pl in planos {
-            limpiar_cache(mmu::virt(pl.fisica as usize), (pl.paso * pl.alto) as usize);
-        }
         let zona = 1 - self.zona;
         let inicio = ZONA[zona];
         for (i, &w) in palabras[..n].iter().enumerate() {
@@ -214,24 +220,4 @@ impl Hvs {
     pub fn esperar(&self, indice: u32, intentos: usize) -> bool {
         (0..intentos).any(|_| self.lista_activa() == indice)
     }
-}
-
-/// Limpia de la caché de datos un tramo, para que lo vea un aparato que lee la RAM directamente.
-pub fn limpiar_cache(va: usize, largo: usize) {
-    let mut p = va & !63;
-    while p < va + largo {
-        unsafe { core::arch::asm!("dc cvac, {}", in(reg) p) };
-        p += 64;
-    }
-    unsafe { core::arch::asm!("dsb sy") };
-}
-
-/// Limpia e invalida un tramo de la caché de datos, para leer lo que escribió un aparato en la RAM.
-pub fn limpiar_e_invalidar(va: usize, largo: usize) {
-    let mut p = va & !63;
-    while p < va + largo {
-        unsafe { core::arch::asm!("dc civac, {}", in(reg) p) };
-        p += 64;
-    }
-    unsafe { core::arch::asm!("dsb sy") };
 }

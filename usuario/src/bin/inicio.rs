@@ -49,7 +49,8 @@ fn principal() -> u64 {
     let cabeceras = p;
     const CABECERA: usize = 32;
     let mut datos = cabeceras + CABECERA * programas;
-    // Los canales entre servicios: el extremo que espera al segundo programa que lo nombre (0: aún no creado).
+    // Los canales entre servicios: el extremo que reciben, en copias, los demás programas que lo nombran (0: aún no
+    // creado). El primero recibe el otro extremo.
     let mut pendientes = [0u32; 32];
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
@@ -76,11 +77,14 @@ fn principal() -> u64 {
                     let (a, b) = canal_crear();
                     pendientes[c] = b;
                     suyas[k] = a;
+                    k += 1;
                 } else {
-                    suyas[k] = pendientes[c];
-                    pendientes[c] = 0;
+                    let copia = llave_duplicar(pendientes[c], 7, 0);
+                    if copia > 0 {
+                        suyas[k] = copia as u32;
+                        k += 1;
+                    }
                 }
-                k += 1;
             }
         }
         datos = (datos + 7) & !7;

@@ -59,11 +59,17 @@ fn buzon(m: &mut [u32]) -> bool {
     for (i, w) in m.iter().enumerate() {
         b[4 * i..4 * i + 4].copy_from_slice(&w.to_le_bytes());
     }
-    if dashos::canal_escribir(2, &b[..n], &[]) != 0 {
+    // La respuesta vuelve por un canal propio de esta petición: mandamos uno de sus extremos con ella.
+    let (mio, suyo) = dashos::canal_crear();
+    if dashos::canal_escribir(2, &b[..n], &[suyo]) != 0 {
+        dashos::cerrar(mio);
+        dashos::cerrar(suyo);
         return false;
     }
     let mut ll = [0u32; 1];
-    if dashos::canal_leer(2, &mut b, &mut ll).0 != n as i64 {
+    let leido = dashos::canal_leer(mio, &mut b, &mut ll).0;
+    dashos::cerrar(mio);
+    if leido != n as i64 {
         return false;
     }
     for (i, w) in m.iter_mut().enumerate() {

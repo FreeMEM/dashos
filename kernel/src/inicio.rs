@@ -29,6 +29,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma", PERMISO_DMA), ("buzon", REGISTROS)], &["buzon"]),
     ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
     ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("vc", FIRMWARE)], &["buzon", "entrada"]),
+    ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
 
@@ -91,6 +92,28 @@ pub fn lanzar() -> bool {
             }
         }
     }
+    // La V3D (C50): solo si su puente contesta. QEMU no la emula, y leer su ventana daría un fallo de bus: se sondea.
+    // Sus registros son ventanas fijas (`docs/spec/hw/v3d.md`, §2.1 y §2.4). Su permiso DMA tiene desplazamiento 0: la
+    // V3D ve direcciones físicas.
+    let puente = crate::mmio::RegLe32::new(crate::mmu::virt(0xFEC1_1000) + 0x20).sondear();
+    if puente == Some(0x6272_6467) {
+        for (nombre, fisica, tamano) in [("v3d", 0xFEC0_0000, 0x8000), ("v3d-puente", 0xFEC1_1000, 0x1000), ("pm", 0xFE10_0000, 0x1000), ("cprman", 0xFE10_1000, 0x1000)] {
+            apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        }
+        let permiso = Objeto::PermisoDma { zona: memoria::Zona::Normal, desplazamiento_bus: 0 };
+        apuntar(&mut llaves, "dma-gpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
+    let lanzables: Vec<_> = PROGRAMAS
+        .iter()
+        .filter(|(nombre, _, aparatos, _)| {
+            let falta = aparatos.iter().find(|(a, t)| !manifiesto.iter().any(|(n, tm, _)| *n == nombre16(a) && tm == t));
+            if let Some((a, _)) = falta {
+                kprintln!("inicio: {} no se lanza: falta {}", nombre, a);
+            }
+            falta.is_none()
+        })
+        .collect();
     let mut paquete: Vec<u8> = Vec::new();
     paquete.extend_from_slice(&(manifiesto.len() as u32).to_le_bytes());
     for (nombre, tipo, llave) in &manifiesto {
@@ -98,9 +121,9 @@ pub fn lanzar() -> bool {
         paquete.extend_from_slice(&tipo.to_le_bytes());
         paquete.extend_from_slice(&llave.to_le_bytes());
     }
-    paquete.extend_from_slice(&(PROGRAMAS.len() as u32).to_le_bytes());
+    paquete.extend_from_slice(&(lanzables.len() as u32).to_le_bytes());
     let mut canales: Vec<&str> = Vec::new();
-    for (nombre, elf, aparatos, suyos) in PROGRAMAS {
+    for (nombre, elf, aparatos, suyos) in lanzables.iter() {
         let mut mascara = 0u32;
         for (aparato, tipo) in aparatos.iter() {
             if let Some(i) = manifiesto.iter().position(|(n, t, _)| *n == nombre16(aparato) && t == tipo) {
@@ -121,7 +144,7 @@ pub fn lanzar() -> bool {
         paquete.extend_from_slice(&0u32.to_le_bytes());
         paquete.extend_from_slice(&nombre16(nombre));
     }
-    for (_, elf, _, _) in PROGRAMAS {
+    for (_, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {
             paquete.push(0);
         }

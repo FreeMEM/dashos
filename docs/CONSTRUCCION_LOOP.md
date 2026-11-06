@@ -107,7 +107,7 @@ del kernel sobre la que irán esos controladores.
   pánico escribe directo. Cierra N2/N6 de las auditorías.
 - [x] C49 **USB fuera del kernel.** El controlador DWC2 como proceso, con memoria DMA (C46), que da teclado y ratón por
   canales.
-- [ ] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
+- [x] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
   HVS y la V3D como procesos (sin probar en QEMU). El buzón de la VideoCore, como servicio.
 - [ ] C51 **Cierre de la fase 4**: la ventana de entrada del PCIe (sin probar, Pi 4), las pruebas que quedan en el
   kernel pasan a `inicio` donde se pueda, y auditoría independiente de cierre con sus fallos arreglados.
@@ -1302,6 +1302,31 @@ los programas también llevan "│ ".
   1021 µs de desviación: el fallo de siempre, apuntado en "Pendiente o a vigilar"); `make -C kernel arranque` dos.
   **No comprobado:** en la Pi 4 (allí la pantalla sale por el HVS; el compositor sigue en la pantalla del firmware).
 - **Queda de C50:** el HVS y la V3D como procesos (segunda parte); el kernel aún usa `buzon.rs` para sus pruebas.
+
+### 2026-11-06 noche, bucle (sesión DashOS) — C50, segunda parte (el HVS y la V3D fuera del kernel)
+
+- **Biblioteca `dashos::graficos`** (`usuario/src/graficos/`): el HVS, la V3D, las listas de borrado y los búferes de
+  la GPU, portados de `kernel/src/{hvs,v3d,gpu}.rs`, que se borran (y `buzon.rs`: el kernel ya no habla con el
+  firmware). Sin montón: las listas van en búferes fijos y los búferes de la GPU en una tabla de 32. En un proceso,
+  los planos del HVS se dan por dirección de bus, la tabla de la MMU y los búferes de la GPU son memoria DMA sin
+  caché (ya no se limpian cachés), y cada búfer es un objeto DMA de páginas seguidas.
+- **Servicio `gpu`** (`usuario/src/bin/gpu.rs`): enciende la V3D, su MMU y hace el primer trabajo (C27 en la Pi).
+  Sus registros son llaves (ventana de la V3D, puente, PM, cprman) y el reloj lo pide al buzón. **Sin probar.**
+  Decisión apuntada: su permiso DMA tiene desplazamiento 0 y zona normal, porque la V3D ve direcciones físicas.
+- **`inicio`** solo da las llaves de la V3D si su puente contesta (el kernel lo sondea; en QEMU leerlo es un fallo
+  de bus), y un servicio al que le falta un aparato no se lanza (lo dice al arrancar).
+- **El buzón atiende a varios clientes:** cada petición lleva el extremo de un canal de respuesta. `inicio` da a
+  todos menos al primero una copia del mismo extremo. Admite encender y poner la frecuencia del reloj de la V3D, y
+  ningún otro.
+- **El HVS** queda en la biblioteca, sin servicio: lo usará el compositor en la Pi 4. Hoy el compositor sigue en la
+  pantalla del firmware.
+- **Prueba C50** (sustituye a C23, C24, C26 y C27): el programa `graficos`, con un permiso DMA, comprueba lo mismo
+  que hacía el kernel (listas del HVS y de la V3D contra los ejemplos de las especificaciones, tabla de 4 MB,
+  búferes con su VA y su hueco reutilizado) y el kernel, que la memoria vuelve entera.
+- **Ya no queda `unsafe` fuera de `kernel/src/base/`** salvo en las pruebas: las excepciones de los controladores de
+  vídeo y GPU se han ido con ellos.
+- **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque` dos, bien. **No comprobado:** todo lo
+  que toca el HVS y la V3D (Pi 4).
 
 ## Pausa (2026-11-03, 20:5x)
 

@@ -19,21 +19,9 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 
 mod azar;
 mod cupo;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod buzon;
 mod dtb;
 mod elf;
 mod gic;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod hvs;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod v3d;
-#[cfg(feature = "pruebas")]
-#[allow(unsafe_code)] // solo con pruebas; sale del kernel en la fase 4 de S16
-mod gpu;
 #[cfg(not(feature = "pruebas"))]
 mod inicio;
 mod interrupciones;
