@@ -1,0 +1,16 @@
+[package]
+name = "dashos-uefi"
+version = "0.0.1"
+edition = "2024"
+
+[[bin]]
+name = "dashos-uefi"
+path = "src/main.rs"
+test = false
+
+[profile.release]
+panic = "abort"
+opt-level = "s"
+
+[profile.dev]
+panic = "abort"

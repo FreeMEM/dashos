@@ -1,0 +1,6 @@
+# U1 (la consola de UEFI saca "?" en lugar de las letras con tilde): EDK2 en QEMU virt arranca el programa de UEFI de DashOS, que encuentra el árbol, sale de los servicios de arranque
+# y escribe solo en el puerto serie.
+DashOS: arranque por UEFI
+de dispositivos en 0x
+DashOS: fuera de los servicios de arranque; mapa de memoria con
+DashOS: U1 bien
