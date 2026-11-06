@@ -1,9 +1,9 @@
 //! Arranque de DashOS por UEFI (U1). Un programa de UEFI que el firmware (EDK2 en QEMU `virt`, y en su día el de un
 //! portátil ARM o el U-Boot de un Mac) carga desde `EFI/BOOT/BOOTAA64.EFI`.
 //!
-//! Hoy: escribe por la consola de UEFI, busca el árbol de dispositivos en la tabla de configuración, pide el mapa de
-//! memoria, sale de los servicios de arranque y, ya solo, escribe directamente en el puerto serie (PL011). Lo siguiente
-//! (U2) es cargar el kernel y saltar a él con el árbol, como hace el firmware de la Pi.
+//! Hace lo que en la Pi hace su firmware (U2): pone la imagen del kernel en su dirección física, le prepara una copia
+//! del árbol de dispositivos con las zonas que UEFI se queda (como `/memreserve/`), sale de los servicios de arranque,
+//! apaga la MMU y salta al kernel con el árbol en `x0`.
 //!
 //! Escrito con la especificación de UEFI 2.10 (tablas del sistema y de servicios de arranque, protocolo de texto) y la
 //! de devicetree (cabecera FDT).
@@ -64,7 +64,7 @@ type Reservado = usize;
 struct ServiciosArranque {
     cabecera: Cabecera,
     _tpl: [Reservado; 2],
-    reservar_paginas: Reservado,
+    reservar_paginas: extern "efiapi" fn(u32, u32, usize, *mut u64) -> Estado,
     liberar_paginas: Reservado,
     mapa_memoria: extern "efiapi" fn(*mut usize, *mut u8, *mut usize, *mut usize, *mut u32) -> Estado,
     _pool: [Reservado; 2],
@@ -149,49 +149,185 @@ fn buscar_dtb(st: &TablaSistema) -> Option<(usize, u32)> {
     None
 }
 
+/// La imagen del kernel y dónde va en la memoria física. En QEMU `virt` la RAM empieza en 0x40000000.
+static NUCLEO: &[u8] = include_bytes!(env!("DASHOS_NUCLEO"));
+const DIRECCION_NUCLEO: u64 = 0x4020_0000;
+/// Lo que se reserva tras la imagen: pila de arranque y algo de margen (el kernel pone sus tablas y pilas detrás).
+const MARGEN_NUCLEO: usize = 2 << 20;
+
+// Reservar páginas (UEFI 2.10, 7.2): tipos de reserva y de memoria.
+const EN_CUALQUIER_SITIO: u32 = 0;
+const EN_ESA_DIRECCION: u32 = 2;
+const DATOS_DEL_CARGADOR: u32 = 2;
+const PAGINA: usize = 4096;
+
+/// Tipos del mapa de memoria que quedan libres al salir de los servicios de arranque: código y datos del cargador y de
+/// los servicios de arranque, y memoria convencional. Lo demás (servicios de ejecución, ACPI, reservado, inservible,
+/// persistente...) lo sigue usando el firmware o no es RAM normal: va al árbol como zona reservada.
+fn libre_al_salir(tipo: u32) -> bool {
+    matches!(tipo, 1 | 2 | 3 | 4 | 7)
+}
+
+fn be32(p: *const u8) -> u32 {
+    u32::from_be_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] })
+}
+
+fn poner_be32(p: *mut u8, v: u32) {
+    let b = v.to_be_bytes();
+    for (i, x) in b.iter().enumerate() {
+        unsafe { *p.add(i) = *x };
+    }
+}
+
+/// Copia el árbol `origen` en `destino` con sus reservas y, detrás, las zonas reservadas de UEFI que da `reservas`.
+/// Formato FDT (devicetree 0.4, cap. 5): cabecera de 40 bytes, mapa de reservas (pares de 64 bits big-endian acabados
+/// en un par a cero), bloque de estructura y bloque de cadenas. Devuelve el tamaño nuevo, o `None` si no cabe.
+fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas: &[(u64, u64)]) -> Option<usize> {
+    let (tam_estructura, off_estructura) = (be32(unsafe { origen.add(36) }) as usize, be32(unsafe { origen.add(8) }) as usize);
+    let (tam_cadenas, off_cadenas) = (be32(unsafe { origen.add(32) }) as usize, be32(unsafe { origen.add(12) }) as usize);
+    let off_reservas = be32(unsafe { origen.add(16) }) as usize;
+    let mut viejas = 0;
+    while unsafe { core::ptr::read_unaligned(origen.add(off_reservas + 16 * viejas) as *const [u64; 2]) } != [0, 0] {
+        viejas += 1;
+    }
+    let n_reservas = viejas + reservas.len() + 1;
+    let nuevo_reservas = 40usize.next_multiple_of(8);
+    let nuevo_estructura = nuevo_reservas + 16 * n_reservas;
+    let nuevo_cadenas = nuevo_estructura + tam_estructura;
+    let total = nuevo_cadenas + tam_cadenas;
+    if total > capacidad {
+        return None;
+    }
+    unsafe {
+        core::ptr::copy_nonoverlapping(origen, destino, 40);
+        core::ptr::copy_nonoverlapping(origen.add(off_reservas), destino.add(nuevo_reservas), 16 * viejas);
+        for (k, &(dir, tam)) in reservas.iter().enumerate() {
+            let e = destino.add(nuevo_reservas + 16 * (viejas + k));
+            core::ptr::copy_nonoverlapping(dir.to_be_bytes().as_ptr(), e, 8);
+            core::ptr::copy_nonoverlapping(tam.to_be_bytes().as_ptr(), e.add(8), 8);
+        }
+        core::ptr::write_bytes(destino.add(nuevo_reservas + 16 * (n_reservas - 1)), 0, 16);
+        core::ptr::copy_nonoverlapping(origen.add(off_estructura), destino.add(nuevo_estructura), tam_estructura);
+        core::ptr::copy_nonoverlapping(origen.add(off_cadenas), destino.add(nuevo_cadenas), tam_cadenas);
+    }
+    poner_be32(unsafe { destino.add(4) }, total as u32);
+    poner_be32(unsafe { destino.add(8) }, nuevo_estructura as u32);
+    poner_be32(unsafe { destino.add(12) }, nuevo_cadenas as u32);
+    poner_be32(unsafe { destino.add(16) }, nuevo_reservas as u32);
+    Some(total)
+}
+
+/// Lleva un tramo hasta el punto de coherencia: con la MMU apagada, el kernel lo leerá de la memoria, no de la caché.
+fn limpiar(dir: usize, tam: usize) {
+    let mut p = dir & !63;
+    while p < dir + tam {
+        unsafe { core::arch::asm!("dc civac, {}", in(reg) p) };
+        p += 64;
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+}
+
+/// Apaga la MMU y las cachés del nivel en que estemos (EL1 o EL2) y salta a `entrada` con `arbol` en x0. No vuelve.
+fn saltar(entrada: u64, arbol: u64) -> ! {
+    unsafe {
+        core::arch::asm!(
+            "msr daifset, #0xf",
+            "mrs x3, CurrentEL",
+            "cmp x3, #8",
+            "b.eq 2f",
+            "mrs x4, sctlr_el1",
+            "bic x4, x4, #1",
+            "bic x4, x4, #(1 << 2)",
+            "bic x4, x4, #(1 << 12)",
+            "msr sctlr_el1, x4",
+            "b 3f",
+            "2:",
+            "mrs x4, sctlr_el2",
+            "bic x4, x4, #1",
+            "bic x4, x4, #(1 << 2)",
+            "bic x4, x4, #(1 << 12)",
+            "msr sctlr_el2, x4",
+            "3:",
+            "isb",
+            "ic iallu",
+            "tlbi vmalle1",
+            "dsb sy",
+            "isb",
+            "br x1",
+            in("x0") arbol,
+            in("x1") entrada,
+            options(noreturn)
+        )
+    }
+}
+
 static mut MAPA: [u8; 64 * 1024] = [0; 64 * 1024];
 
 #[unsafe(export_name = "efi_main")]
 extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> Estado {
     let st = unsafe { &*st };
     let mut c = Consola(st.salida);
-    let _ = writeln!(c, "DashOS: arranque por UEFI (revisión {:#x} del firmware)", st.cabecera.revision);
-    let dtb = buscar_dtb(st);
-    match dtb {
-        Some((d, t)) => {
-            let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", d, t);
-        }
-        None => {
-            let _ = writeln!(c, "DashOS: el firmware no da árbol de dispositivos");
-        }
-    }
-    // El mapa de memoria, y con su llave se sale de los servicios de arranque. Si el mapa cambió entre medias (el
-    // firmware puede reservar al escribir), se vuelve a pedir.
     let bs = unsafe { &*st.servicios_arranque };
-    let mapa = &raw mut MAPA;
-    let mut salido = false;
-    let mut regiones = 0;
-    for _ in 0..4 {
-        let (mut tamano, mut llave, mut tam_desc, mut version) = (unsafe { (*mapa).len() }, 0usize, 0usize, 0u32);
-        if (bs.mapa_memoria)(&mut tamano, mapa as *mut u8, &mut llave, &mut tam_desc, &mut version) != BIEN {
-            break;
-        }
-        regiones = if tam_desc > 0 { tamano / tam_desc } else { 0 };
-        if (bs.salir_servicios)(imagen, llave) == BIEN {
-            salido = true;
-            break;
-        }
-    }
-    if !salido {
-        let _ = writeln!(c, "DashOS: no se pudo salir de los servicios de arranque");
+    let _ = writeln!(c, "DashOS: arranque por UEFI (revisión {:#x} del firmware)", st.cabecera.revision);
+    let Some((arbol, tam_arbol)) = buscar_dtb(st) else {
+        let _ = writeln!(c, "DashOS: el firmware no da árbol de dispositivos");
+        return 1;
+    };
+    let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", arbol, tam_arbol);
+    // El kernel, en su dirección física. Si UEFI la tiene ocupada, no se puede seguir (el kernel no es reubicable).
+    let mut dir = DIRECCION_NUCLEO;
+    let paginas = (NUCLEO.len() + MARGEN_NUCLEO).div_ceil(PAGINA);
+    if (bs.reservar_paginas)(EN_ESA_DIRECCION, DATOS_DEL_CARGADOR, paginas, &mut dir) != BIEN {
+        let _ = writeln!(c, "DashOS: la memoria de {:#x} está ocupada; no se puede cargar el kernel", DIRECCION_NUCLEO);
         return 1;
     }
-    // Desde aquí, sin firmware: solo el hardware.
-    let _ = writeln!(Serie, "DashOS: fuera de los servicios de arranque; mapa de memoria con {} regiones", regiones);
-    let _ = writeln!(Serie, "DashOS: U1 bien");
-    loop {
-        unsafe { core::arch::asm!("wfe") };
+    unsafe { core::ptr::copy_nonoverlapping(NUCLEO.as_ptr(), dir as *mut u8, NUCLEO.len()) };
+    let _ = writeln!(c, "DashOS: kernel de {} bytes en {:#x}", NUCLEO.len(), dir);
+    // Sitio para la copia del árbol, con hueco para 128 zonas reservadas más.
+    let capacidad = tam_arbol as usize + 16 * 128 + 64;
+    let mut copia = 0u64;
+    if (bs.reservar_paginas)(EN_CUALQUIER_SITIO, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
+        let _ = writeln!(c, "DashOS: sin memoria para el árbol");
+        return 1;
     }
+    // El mapa de memoria, la copia del árbol con sus zonas reservadas y la salida de los servicios de arranque. Si el
+    // mapa cambió entre medias, otra vuelta (aquí ya no se reserva nada).
+    let mapa = &raw mut MAPA;
+    let mut reservas = [(0u64, 0u64); 128];
+    for _ in 0..4 {
+        let (mut tamano, mut llave, mut tam_desc, mut version) = (unsafe { (*mapa).len() }, 0usize, 0usize, 0u32);
+        if (bs.mapa_memoria)(&mut tamano, mapa as *mut u8, &mut llave, &mut tam_desc, &mut version) != BIEN || tam_desc == 0 {
+            break;
+        }
+        // Descriptor (UEFI 2.10, 7.2): tipo (u32), relleno, inicio físico, inicio virtual, páginas, atributos.
+        let mut n = 0;
+        for k in 0..tamano / tam_desc {
+            let d = unsafe { (mapa as *const u8).add(k * tam_desc) };
+            let tipo = unsafe { core::ptr::read_unaligned(d as *const u32) };
+            let inicio = unsafe { core::ptr::read_unaligned(d.add(8) as *const u64) };
+            let pags = unsafe { core::ptr::read_unaligned(d.add(24) as *const u64) };
+            if libre_al_salir(tipo) || pags == 0 {
+                continue;
+            }
+            let tam = pags * PAGINA as u64;
+            if n > 0 && reservas[n - 1].0 + reservas[n - 1].1 == inicio {
+                reservas[n - 1].1 += tam; // seguida de la anterior: se juntan
+            } else if n < reservas.len() {
+                reservas[n] = (inicio, tam);
+                n += 1;
+            }
+        }
+        let Some(nuevo) = copiar_arbol(arbol as *const u8, copia as *mut u8, capacidad, &reservas[..n]) else { break };
+        if (bs.salir_servicios)(imagen, llave) == BIEN {
+            // Desde aquí, sin firmware: solo el hardware.
+            let _ = writeln!(Serie, "DashOS: fuera de los servicios de arranque; árbol en {:#x}, {} bytes, {} zonas de UEFI reservadas", copia, nuevo, n);
+            limpiar(dir as usize, NUCLEO.len());
+            limpiar(copia as usize, nuevo);
+            saltar(dir, copia);
+        }
+    }
+    let _ = writeln!(c, "DashOS: no se pudo salir de los servicios de arranque");
+    1
 }
 
 #[panic_handler]

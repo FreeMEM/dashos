@@ -1,0 +1,8 @@
+# U2: el cargador pone el núcleo de prueba en 0x40200000, le da una copia del árbol con las zonas de UEFI reservadas,
+# sale de los servicios de arranque, apaga la MMU y salta. (La consola de UEFI saca "?" por las letras con tilde.)
+DashOS: arranque por UEFI
+de dispositivos en 0x
+DashOS: kernel de
+DashOS: fuera de los servicios de arranque; árbol en
+DashOS: núcleo de prueba en 0x40200000, árbol en
+DashOS: U2 bien

@@ -4,3 +4,7 @@ target = "aarch64-unknown-uefi"
 [unstable]
 build-std = ["core", "compiler_builtins"]
 build-std-features = ["compiler-builtins-mem"]
+
+[env]
+# La imagen del kernel que lleva dentro el cargador (U2): el núcleo de prueba si no se dice otra.
+DASHOS_NUCLEO = { value = "prueba/nucleo.bin", relative = true }

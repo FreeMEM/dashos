@@ -20,7 +20,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 
 - [x] U1 **Programa de UEFI mínimo.** EDK2 lo arranca desde `EFI/BOOT/BOOTAA64.EFI`; escribe por la consola de UEFI,
   encuentra el árbol en la tabla de configuración, sale de los servicios de arranque y escribe solo en el PL011.
-- [ ] U2 **Cargar el kernel.** El programa de UEFI lleva dentro (o lee del disco) la imagen del kernel, la pone en
+- [x] U2 **Cargar el kernel** (con un núcleo de prueba; el kernel de verdad, en U3). El programa de UEFI lleva dentro (o lee del disco) la imagen del kernel, la pone en
   memoria y salta a ella con el árbol en `x0`, como el firmware de la Pi. Hace falta que el kernel no dependa de
   dónde se carga (en `virt` la RAM empieza en 0x40000000) y que respete las zonas que UEFI reserva (mapa de memoria:
   se pasan al kernel como `/memreserve/` o en un nodo del árbol).
@@ -38,7 +38,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 
 ## Herramientas
 
-- `cd uefi && cargo build --release` saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
+- `make -C uefi/prueba` saca el núcleo de prueba de U2 (`nucleo.bin`, en C, enlazado en 0x40200000).
+- `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
 - `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv3, 4 núcleos, 2 GB, `acpi=off`) con
   EDK2 y el programa como `EFI/BOOT/BOOTAA64.EFI` en un disco FAT; comprueba el puerto serie como `prueba_qemu.sh` y
   para en cuanto sale la última línea esperada.
@@ -55,3 +56,22 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   el kernel, que escribe directo en el puerto serie.
 - **Comprobado:** `tools/prueba_uefi.sh ... uefi/pruebas/u1.txt` bien, en 6 s. **No comprobado:** ninguna máquina
   real.
+
+### 2026-11-07 madrugada — U2 (cargar el kernel)
+
+- El cargador lleva la imagen dentro (`include_bytes!` de `DASHOS_NUCLEO`) y la pone en 0x40200000 con
+  `AllocatePages` en esa dirección: el kernel no es reubicable (está enlazado para una física fija), así que si UEFI
+  la tuviera ocupada no se puede seguir, y lo dice. Detrás reserva 2 MB más.
+- Copia el árbol con las zonas que UEFI se queda tras salir (servicios de ejecución, ACPI, reservado, inservible,
+  persistente) añadidas a su mapa de reservas, juntando las seguidas. Así el kernel no las reparte, sin cambiar su
+  lectura de memoria (ya respeta `/memreserve/`). Sale de los servicios de arranque con la llave de ese mapa; si
+  cambió, otra vuelta.
+- Lleva la imagen y el árbol hasta el punto de coherencia (`dc civac`), apaga MMU y cachés en EL1 o EL2 y salta con
+  el árbol en `x0`, como el firmware de la Pi.
+- Núcleo de prueba (`uefi/prueba/nucleo.c`): con la MMU apagada escribe dónde está, dónde le llegó el árbol, su
+  tamaño y cuántas reservas trae. En QEMU: árbol de 8769 bytes con 5 zonas de UEFI.
+- **Comprobado:** `tools/prueba_uefi.sh ... uefi/pruebas/u2.txt`, bien. **No comprobado:** máquinas reales; un
+  firmware que deje el núcleo en EL2 (en QEMU `virt` EDK2 corre en EL1; con `virtualization=on`, en EL2).
+- Siguiente, U3: el kernel de verdad en `virt`. Hace falta enlazarlo en 0x40200000 (o hacerlo reubicable), sacar del
+  árbol el PL011 (hoy fijo en 0xFE201000), un GICv3, PSCI para los otros núcleos y unas tablas de arranque que no den
+  por hecho el mapa de la Pi (periféricos en 0xFC000000).
