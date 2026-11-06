@@ -59,8 +59,12 @@ pub fn kmain(dtb: usize) -> ! {
     mapa::activar();
     base::copiar_arbol();
 
-    // El GIC-400 de la Pi o el GICv2 de QEMU `virt` (U3), que se manejan igual.
-    let gic = d.compatible("arm,gic-400").or_else(|| d.compatible("arm,cortex-a15-gic"));
+    // El GIC-400 de la Pi o el GICv2 de QEMU `virt` (U3), que se manejan igual; o un GICv3 (U3b).
+    let v2 = d.compatible("arm,gic-400").or_else(|| d.compatible("arm,cortex-a15-gic"));
+    let (version, gic) = match v2 {
+        Some(n) => (gic::Version::V2, Some(n)),
+        None => (gic::Version::V3, d.compatible("arm,gic-v3")),
+    };
     let (Some(g), Some(t)) = (gic, d.compatible("arm,armv8-timer")) else {
         panic!("falta el GIC o el temporizador en el árbol de dispositivos");
     };
@@ -68,7 +72,7 @@ pub fn kmain(dtb: usize) -> ! {
         panic!("el GIC no tiene sus registros en el árbol de dispositivos");
     };
     let ppi = d.propiedad(&t, "interrupts").map(|(datos, _)| d.celda(datos, 4)).unwrap_or(14);
-    gic::iniciar(dist, cpu);
+    gic::iniciar(version, dist, cpu);
     planificador::iniciar_nucleo();
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();

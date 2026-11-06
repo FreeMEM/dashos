@@ -26,7 +26,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   se pasan al kernel como `/memreserve/` o en un nodo del árbol).
 - [x] U3 **El kernel en `virt`**, con el GICv2 de `virt`: `make -C kernel arranque-virt` llega a `inicio` con los
   cuatro núcleos (PSCI) y la consola como servicio.
-- [ ] U3b **GICv3** (redistribuidores por núcleo, registros del sistema `ICC_*`), para `gic-version=3` y las máquinas
+- [x] U3b **GICv3** (redistribuidores por núcleo, registros del sistema `ICC_*`), para `gic-version=3` y las máquinas
   de verdad.
 - [ ] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba` en las dos máquinas): muchas son de la Pi
   (SD, USB, buzón); separar las que valen para las dos.
@@ -44,8 +44,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - `make -C uefi/prueba` saca el núcleo de prueba de U2 (`nucleo.bin`, en C, enlazado en 0x40200000).
 - `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
 - `make -C kernel arranque-virt`: el kernel con la característica `virt`, metido en el programa de UEFI y arrancado.
-- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; 4 núcleos, 2 GB,
-  `acpi=off`) con
+- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `MAQUINA=...` añade
+  opciones a la máquina, como `virtualization=on` para entrar en EL2; 4 núcleos, 2 GB, `acpi=off`) con
   EDK2 y el programa como `EFI/BOOT/BOOTAA64.EFI` en un disco FAT; comprueba el puerto serie como `prueba_qemu.sh` y
   para en cuanto sale la última línea esperada.
 
@@ -99,3 +99,17 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - **Comprobado:** `make -C kernel arranque-virt` bien; en la Pi, `make -C kernel prueba` (C14 falla a ratos por la
   carga de la máquina, media de 5) y `make -C kernel arranque`, bien. **No comprobado:** GICv3, ACPI, máquinas de
   verdad; las pruebas del kernel en `virt`.
+
+### 2026-11-07 madrugada — U3b (GICv3)
+
+- `kernel/src/gic.rs` maneja las dos versiones y elige por el árbol ("arm,gic-v3" si no hay GICv2). GICv3: el
+  distribuidor con afinidades (ARE) y las interrupciones de aparatos en el grupo 1, dirigidas con `IROUTER`; un
+  redistribuidor por núcleo, que se busca por su afinidad en `GICR_TYPER` y se despierta (`GICR_WAKER`), con las
+  privadas y las de software; la interfaz de CPU por registros del sistema (`ICC_SRE_EL1`, `PMR`, `BPR1`,
+  `IGRPEN1`, `IAR1`, `EOIR1`, `SGI1R`), con envoltorios en `base/cpu.rs` (el `asm`, solo en `base`).
+- Si el núcleo entra en EL2 con un GICv3, `arranque.s` pone `ICC_SRE_EL2` para que EL1 pueda usar esos registros.
+- Escrito con la arquitectura pública de ARM (GICv3/v4, IHI 0069). Supone una sola seguridad (`GICD_CTLR.DS` = 1,
+  como QEMU sin EL3) y solo la afinidad 0 (hasta 16 núcleos en un grupo): suficiente para `virt`, no para máquinas
+  con varios grupos de núcleos.
+- **Comprobado:** `arranque_virt.txt` bien con GICv2 y GICv3, entrando en EL1 y en EL2 (`virtualization=on`).
+  **No comprobado:** máquinas de verdad; firmware con EL3 (seguridad doble).

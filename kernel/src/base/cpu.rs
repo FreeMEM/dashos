@@ -49,3 +49,41 @@ pub fn parar() -> ! {
 pub fn barrera_escrituras() {
     unsafe { asm!("dsb ishst") };
 }
+
+/// La interfaz de CPU del GICv3 por registros del sistema (U3b): encenderla en este núcleo (SRE, máscara de
+/// prioridad, punto binario y grupo 1).
+pub fn gicv3_iniciar_cpu(mascara: u8) {
+    unsafe {
+        asm!(
+            "mrs {t}, S3_0_C12_C12_5", // ICC_SRE_EL1
+            "orr {t}, {t}, #1",
+            "msr S3_0_C12_C12_5, {t}",
+            "isb",
+            "msr S3_0_C4_C6_0, {m}", // ICC_PMR_EL1
+            "msr S3_0_C12_C12_3, xzr", // ICC_BPR1_EL1
+            "mov {t}, #1",
+            "msr S3_0_C12_C12_7, {t}", // ICC_IGRPEN1_EL1
+            "isb",
+            t = out(reg) _,
+            m = in(reg) mascara as u64,
+        )
+    };
+}
+
+/// ICC_IAR1_EL1: reconoce la interrupción de grupo 1 pendiente.
+pub fn gicv3_reconocer() -> u32 {
+    let v: u64;
+    unsafe { asm!("mrs {}, S3_0_C12_C12_0", out(reg) v) };
+    v as u32
+}
+
+/// ICC_EOIR1_EL1.
+pub fn gicv3_terminar(iar: u32) {
+    unsafe { asm!("msr S3_0_C12_C12_1, {}", "isb", in(reg) iar as u64) };
+}
+
+/// ICC_SGI1R_EL1: interrupción por software al núcleo de afinidad 0 `nucleo` (afinidades 1 a 3 a cero).
+pub fn gicv3_sgi(nucleo: u32, sgi: u32) {
+    let v = ((sgi as u64 & 0xf) << 24) | (1u64 << (nucleo & 15));
+    unsafe { asm!("dsb ishst", "msr S3_0_C12_C11_5, {}", "isb", in(reg) v) };
+}

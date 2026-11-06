@@ -25,6 +25,13 @@
     orr     x2, x2, #3
     msr     cnthctl_el2, x2
     msr     cntvoff_el2, xzr
+    mrs     x2, id_aa64pfr0_el1         // con GICv3 (U3b): sus registros del sistema, usables desde EL1
+    ubfx    x2, x2, #24, #4
+    cbz     x2, 8f
+    mov     x2, #0xf                    // ICC_SRE_EL2: SRE, DFB, DIB y Enable
+    msr     S3_4_C12_C9_5, x2
+    isb
+8:
 
     ldr     x2, =0x30D00800             // SCTLR_EL1: bits RES1, little-endian; MMU y cachés apagadas
     msr     sctlr_el1, x2
