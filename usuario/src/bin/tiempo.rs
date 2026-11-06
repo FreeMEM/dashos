@@ -4,7 +4,8 @@
 #![no_std]
 #![no_main]
 
-use dashos::{ahora_us, canal_crear, canal_escribir, canal_leer, cerrar, llave_duplicar, println, temporizador_crear, LEER};
+use dashos::{ahora_us, canal_crear, canal_escribir, canal_leer, canal_leer_marca, cerrar, llave_duplicar, llave_revocable, println, revocar,
+    temporizador_crear, ESCRIBIR, LEER};
 
 dashos::programa!(principal);
 
@@ -84,6 +85,67 @@ fn principal() -> u64 {
     if canal_escribir(c1, b"t", &[tm as u32]) >= 0 {
         return 9;
     }
-    println!("  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale");
+    // 10 (auditoría de la fase 4, A1): el periodo más corto es un tic. Uno de 1 µs, en tres avisos, no pasa de unas
+    // decenas de vencimientos (sin el tope serían decenas de miles).
+    let (a2, b2) = canal_crear();
+    let r = temporizador_crear(b2, 1, 1);
+    let mut suma = 0;
+    for _ in 0..3 {
+        suma += aviso(a2).1;
+    }
+    cerrar(r as u32);
+    if suma > 30 {
+        println!("  [tiempo] periodo de 1 µs: {} vencimientos en tres avisos", suma);
+        return 10;
+    }
+    // 11-12 (A2): los avisos llevan la marca de la llave del canal, y revocar esa llave para el temporizador.
+    let (a3, b3) = canal_crear();
+    let marcada = llave_duplicar(b3, ESCRIBIR, 77);
+    let tm = temporizador_crear(marcada as u32, 10_000, 0);
+    let mut buf = [0u8; 16];
+    let mut ll = [0u32; 1];
+    let (n, _, marca) = canal_leer_marca(a3, &mut buf, &mut ll);
+    cerrar(tm as u32);
+    if n != 8 || marca != 77 {
+        println!("  [tiempo] aviso con marca {}", marca);
+        return 11;
+    }
+    let (copia, revocador) = llave_revocable(b3);
+    let p = temporizador_crear(copia as u32, 20_000, 20_000);
+    aviso(a3);
+    revocar(revocador);
+    let t0 = ahora_us();
+    let otro = temporizador_crear(b3, 100_000, 0);
+    let pasado = {
+        aviso(a3);
+        ahora_us() - t0
+    };
+    cerrar(p as u32);
+    cerrar(otro as u32);
+    if p <= 0 || pasado < 90_000 {
+        println!("  [tiempo] tras revocar, un aviso a los {} µs", pasado);
+        return 12;
+    }
+    // 13 (M1): uno de una vez con la cola llena no se pierde: llega cuando hay sitio. Un vigilante de 500 ms con otra
+    // marca dice si se perdió.
+    let (a4, b4) = canal_crear();
+    for _ in 0..16 {
+        canal_escribir(b4, b"x", &[]);
+    }
+    let plazo = temporizador_crear(llave_duplicar(b4, ESCRIBIR, 1) as u32, 20_000, 0);
+    let t0 = ahora_us();
+    while ahora_us() - t0 < 60_000 {}
+    for _ in 0..16 {
+        canal_leer(a4, &mut buf, &mut ll);
+    }
+    let vigilante = temporizador_crear(llave_duplicar(b4, ESCRIBIR, 2) as u32, 500_000, 0);
+    let (n, _, marca) = canal_leer_marca(a4, &mut buf, &mut ll);
+    cerrar(plazo as u32);
+    cerrar(vigilante as u32);
+    if n != 8 || marca != 1 {
+        println!("  [tiempo] con la cola llena, el aviso de una vez se perdió (llegó la marca {})", marca);
+        return 13;
+    }
+    println!("  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale; periodo mínimo, marca, revocación y cola llena");
     49
 }

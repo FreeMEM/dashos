@@ -11,7 +11,7 @@
 //! la comprobación del repartidor y su bloqueo, con las interrupciones enmascaradas, no pierden ningún aviso.
 
 use crate::cerrojo::Cerrojo;
-use crate::objetos::{Canal, Mensaje};
+use crate::objetos::{Canal, Mensaje, Revocable};
 use crate::planificador::{self, ColaEspera};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
@@ -35,6 +35,8 @@ static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new()
 pub struct Interrupcion {
     pub intid: u32,
     destino: Cerrojo<Option<(Arc<Canal>, usize)>>,
+    /// Los intermediarios revocables de la llave del canal y su marca (auditoría de la fase 4, A2).
+    via: Cerrojo<(Vec<Arc<Revocable>>, u64)>,
 }
 
 impl Interrupcion {
@@ -48,13 +50,15 @@ impl Interrupcion {
         if d.iter().any(|(i, _)| *i == intid) {
             return None;
         }
-        let o = Arc::new(Self { intid, destino: Cerrojo::new(None) });
+        let o = Arc::new(Self { intid, destino: Cerrojo::new(None), via: Cerrojo::new((Vec::new(), 0)) });
         d.push((intid, Arc::downgrade(&o)));
         Some(o)
     }
 
-    /// Asocia la interrupción a un extremo de canal y la habilita, dirigida al núcleo 0.
-    pub fn asociar(&self, canal: Arc<Canal>, lado: usize) {
+    /// Asocia la interrupción a un extremo de canal y la habilita, dirigida al núcleo 0. Los avisos llevan `marca` y
+    /// dejan de llegar si se revoca alguno de `via`.
+    pub fn asociar(&self, canal: Arc<Canal>, lado: usize, via: Vec<Arc<Revocable>>, marca: u64) {
+        *self.via.tomar() = (via, marca);
         *self.destino.tomar() = Some((canal, lado));
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_or(b, Ordering::SeqCst);
@@ -155,10 +159,20 @@ extern "C" fn repartidor(_: usize) {
 fn entregar(intid: u32) {
     let objeto = DUENOS.tomar().iter().find(|(i, _)| *i == intid).and_then(|(_, w)| w.upgrade());
     let Some(o) = objeto else { return };
+    let (revocada, marca) = {
+        let v = o.via.tomar();
+        (v.0.iter().any(|r| r.revocado()), v.1)
+    };
+    if revocada {
+        // Revocada la llave del canal: la interrupción se desasocia y queda enmascarada (A2).
+        let viejo = o.destino.tomar().take();
+        drop(viejo);
+        return;
+    }
     let destino = o.destino.tomar().clone();
     if let Some((canal, lado)) = destino {
         // Los mensajes que escribe el kernel van en little-endian, el orden nativo de DashOS (C30).
-        let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new(), marca: 0 };
+        let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new(), marca };
         let _ = canal.escribir(lado, m);
     }
 }

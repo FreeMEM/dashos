@@ -62,7 +62,15 @@ pub enum Permiso {
     /// Búferes de DMA (C46): memoria normal sin caché, para que el aparato y el proceso vean lo mismo sin limpiar
     /// cachés (en la Pi 4 el DMA no es coherente con ellas). Se lee y escribe; nunca se ejecuta.
     DatosSinCache,
+    /// Búferes de DMA proyectados solo para leer: sin caché también, para ver lo que escribe el aparato y no tener el
+    /// mismo objeto con dos atributos (auditoría de la fase 4, B6).
+    SoloLecturaSinCache,
 }
+
+/// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
+pub const VIAS: usize = 4;
+/// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3).
+const TLB_POR_PAGINA: u64 = 32;
 
 pub struct Espacio {
     l1: u64, // dirección física
@@ -71,8 +79,9 @@ pub struct Espacio {
     tablas: alloc::vec::Vec<u64>,
     propias: alloc::vec::Vec<u64>,
     /// Objetos de memoria proyectados, con la dirección donde empiezan: el espacio los mantiene vivos mientras estén
-    /// proyectados (C18, C45).
-    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>)>,
+    /// proyectados (C18, C45). Con cada uno, los intermediarios revocables por los que se hizo (como números que solo
+    /// se comparan; 0, ninguno): revocar quita solo las suyas (auditoría de la fase 4, M2).
+    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS])>,
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
@@ -255,6 +264,7 @@ impl Espacio {
                 Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
                 Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
                 Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
+                Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
             };
         unsafe {
             e.write_volatile((fisica & DIRECCION) | atributos);
@@ -266,7 +276,10 @@ impl Espacio {
     /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
     /// Primero comprueba el tramo entero y crea sus tablas, así que o se proyecta todo o nada. El espacio guarda el
     /// objeto mientras exista (C18).
-    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool) -> Result<(), Error> {
+    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool, via: &[usize]) -> Result<(), Error> {
+        if via.len() > VIAS {
+            return Err(Error::Limite);
+        }
         if self.proyectados.len() >= MAX_PROYECCIONES {
             return Err(Error::Limite);
         }
@@ -275,35 +288,51 @@ impl Espacio {
         let permiso = match (escribir, m.bus().is_some()) {
             (true, true) => Permiso::DatosSinCache,
             (true, false) => Permiso::Datos,
-            (false, _) => Permiso::SoloLectura,
+            (false, true) => Permiso::SoloLecturaSinCache,
+            (false, false) => Permiso::SoloLectura,
         };
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }
-        self.proyectados.push((va, m.clone()));
+        let mut vias = [0usize; VIAS];
+        vias[..via.len()].copy_from_slice(via);
+        self.proyectados.push((va, m.clone(), vias));
         Ok(())
     }
 
-    /// Quita la proyección que empieza en `va` (C45): borra sus entradas y vacía la TLB de este ASID para cada página,
-    /// en todos los núcleos. Si se da `m`, solo si es ese objeto (para revocar sin tocar otra proyección que haya
-    /// ocupado el sitio). Falso si no había.
-    pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>) -> bool {
-        let Some(i) = self
-            .proyectados
-            .iter()
-            .position(|(v, o)| *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)))
-        else {
+    /// ¿Hay en `va` una proyección hecha a través del intermediario `via`? (para purgar sus listas, M2)
+    pub fn proyectada_via(&self, va: u64, via: usize) -> bool {
+        self.proyectados.iter().any(|(v, _, vs)| *v == va && vs.contains(&via))
+    }
+
+    /// Quita la proyección que empieza en `va` (C45): borra sus entradas y vacía la TLB de este ASID en todos los
+    /// núcleos. Si se da `m`, solo si es ese objeto, y si se da `via`, solo si se hizo a través de ese intermediario
+    /// (para revocar sin tocar otra proyección que haya ocupado el sitio, o la misma hecha con la llave original; M2).
+    /// Falso si no había.
+    pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>, via: Option<usize>) -> bool {
+        let Some(i) = self.proyectados.iter().position(|(v, o, vs)| {
+            *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)) && via.is_none_or(|x| vs.contains(&x))
+        }) else {
             return false;
         };
-        let (_, objeto) = self.proyectados.swap_remove(i);
-        for k in 0..objeto.paginas() as u64 {
+        let (_, objeto, _) = self.proyectados.swap_remove(i);
+        // Con pocas páginas, una invalidación por página; con muchas, una sola de todo el ASID: así el trabajo con
+        // las IRQ enmascaradas no depende de lo grande que sea el objeto (auditoría de la fase 4, M3).
+        let paginas = objeto.paginas() as u64;
+        let por_pagina = paginas <= TLB_POR_PAGINA;
+        for k in 0..paginas {
             let p = va + k * PAGINA;
             if let Some(e) = self.hoja(p) {
                 unsafe {
                     e.write_volatile(0);
-                    core::arch::asm!("dsb ishst", "tlbi vae1is, {}", in(reg) (self.asid << 48) | (p >> 12));
+                    if por_pagina {
+                        core::arch::asm!("dsb ishst", "tlbi vae1is, {}", in(reg) (self.asid << 48) | (p >> 12));
+                    }
                 }
             }
+        }
+        if !por_pagina {
+            unsafe { core::arch::asm!("dsb ishst", "tlbi aside1is, {}", in(reg) self.asid << 48) };
         }
         unsafe { core::arch::asm!("dsb ish", "isb") };
         // El objeto se suelta aquí, ya sin entradas que lo vean.

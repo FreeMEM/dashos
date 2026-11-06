@@ -1,7 +1,9 @@
 //! El programa de inicio (C47). Lo lanza el kernel con las llaves de arranque: la 1 es el paquete de arranque, que
 //! dice qué es cada una de las demás y trae los ELF de los servicios (formato en `kernel/src/inicio.rs`). Lanza cada
 //! servicio en su grupo, con copias de las llaves de sus aparatos y los extremos de los canales que comparte con otros
-//! (C50), y se queda esperando: no acaba nunca.
+//! (C50), y se queda esperando: no acaba nunca. En cada canal, el primer servicio que lo nombra es el servidor; los
+//! demás reciben una copia marcada del otro extremo, y el servidor un mensaje sin marca por cliente: 8 bytes de marca y
+//! 16 de nombre (auditoría de la fase 4, M6).
 
 #![no_std]
 #![no_main]
@@ -55,15 +57,15 @@ fn principal() -> u64 {
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
         let tamano = u32_en(cab) as usize;
-        let mascara = u32_en(cab + 4);
-        let de_canales = u32_en(cab + 8);
+        let de_canales = u32_en(cab + 4);
         let nombre_cab = cab + 16;
         // Las llaves que le tocan, en orden; pasan a ser la 1, la 2... del servicio. De los aparatos, una copia: así
         // `inicio` conserva la suya y puede dar el mismo aparato a otro (el permiso DMA, por ejemplo).
         let mut suyas = [0u32; 8];
         let mut k = 0;
-        for a in 0..n.min(32) {
-            if mascara & (1 << a) != 0 && k < suyas.len() {
+        for j in 0..8 {
+            let a = unsafe { *((cab + 8 + j) as *const u8) } as usize;
+            if a < n && k < suyas.len() {
                 let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7, 0);
                 if copia > 0 {
                     suyas[k] = copia as u32;
@@ -79,10 +81,17 @@ fn principal() -> u64 {
                     suyas[k] = a;
                     k += 1;
                 } else {
-                    let copia = llave_duplicar(pendientes[c], 7, 0);
+                    // Cada cliente, con su marca (el número del programa más 1), y el servidor sabe de quién es por un
+                    // mensaje sin marca que solo puede mandar `inicio` (auditoría de la fase 4, M6).
+                    let marca = i as u64 + 1;
+                    let copia = llave_duplicar(pendientes[c], 7, marca);
                     if copia > 0 {
                         suyas[k] = copia as u32;
                         k += 1;
+                        let mut dir = [0u8; 24];
+                        dir[..8].copy_from_slice(&marca.to_le_bytes());
+                        dir[8..].copy_from_slice(unsafe { core::slice::from_raw_parts(nombre_cab as *const u8, 16) });
+                        dashos::canal_escribir(pendientes[c], &dir, &[]);
                     }
                 }
             }

@@ -95,11 +95,12 @@ las únicas que da el kernel:
 
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
-- Después, el permiso DMA, el registro del sistema, la memoria de la VideoCore y, para cada aparato del árbol que
-  conoce el kernel (serie, SD, USB, buzón de la VideoCore), sus registros (en páginas enteras) y su interrupción.
+- Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, la memoria de la VideoCore y, para
+  cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
+  registros (en páginas enteras) y su interrupción.
 
 `inicio` lanza cada servicio en su grupo, con copias de las llaves de sus aparatos y los canales que comparte con
-otros servicios, y se queda esperando. Hoy son la consola (C48), el buzón, el USB y el compositor (C49, C50); lo que
+otros servicios, y se queda esperando. Hoy son la consola (C48), el buzón, el USB, el compositor y la GPU (C49, C50); lo que
 ve un programa de ellos está en `servicios.md`. Ningún otro proceso recibe nada del kernel: todo lo
 que tenga le llega desde `inicio`.
 
@@ -140,6 +141,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
+| 25 | `registros_recortar` | `x0` llave de registros o de memoria del firmware, `x1` desde, `x2` tamaño (páginas enteras) | Llave nueva |
+| 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 
 ### Detalles
@@ -231,9 +234,10 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   solo escribe en el registro, salvo el pánico, que va directo.
 - **22, `memoria_dma`** (C46). Pide una llave de permiso DMA con derecho de escribir; solo la da el kernel, a los
   controladores que la necesitan. Da un objeto de memoria de hasta 4 MB de páginas seguidas de la zona del permiso
-  (el primer GB, el que alcanza el DMA), a cero, cobrado al cupo, y en `x1` la dirección de bus de su primera página,
-  la que hay que dar al aparato. Al proyectarlo para escribir, va sin caché: el aparato y el proceso ven lo mismo sin
-  limpiar cachés. Con otra llave, `E_TIPO`; con más de 4 MB, `E_TAMANO`.
+  (el primer GB, el que alcanza el DMA; la de la GPU, de la zona normal), a cero, cobrado al cupo, y en `x1` la
+  dirección de bus de su primera página, la que hay que dar al aparato. Se proyecta sin caché, también para leer: el
+  aparato y el proceso ven lo mismo sin limpiar cachés. Al soltarse, va a la cuarentena del permiso (ver 26). Con otra
+  llave, `E_TIPO`; con más de 4 MB, `E_TAMANO`.
 - **21, `memoria_quitar`** (C45). Quita la proyección de un objeto de memoria que empieza en esa dirección: el tramo
   entero que se proyectó. Desde ese momento, leer o escribir ahí es un fallo. Si no empieza ninguna ahí,
   `E_ARGUMENTO`. Los registros de aparatos no se quitan así.
@@ -241,9 +245,19 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   otro lado del canal: 8 bytes, un número de 64 bits en little-endian con las veces que ha vencido desde el último
   aviso que se pudo entregar (casi siempre 1; más si la cola del canal estaba llena o el aviso llegó tarde). Así se
   distingue de una interrupción, que llega en 4 bytes. Pide el derecho de escribir en el canal (`E_DERECHOS`); otra
-  llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Se cobra al cupo.
-  Resolución: el tic del sistema, 10 ms; nunca avisa antes de tiempo. Se para al soltarse su última llave (`cerrar`,
-  o al morir el proceso). Para esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal.
+  llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Cuesta 4 KB del cupo
+  del grupo. Resolución: el tic del sistema, 10 ms, que es también el periodo más corto; nunca avisa antes de tiempo.
+  Los avisos llevan la marca de la llave del canal con que se creó (C41); si esa llave era revocable y se revoca, el
+  temporizador se para para siempre. Si la cola está llena, el aviso se cuenta para el siguiente; uno de una vez se
+  reintenta en cada tic hasta que cabe. Se para al soltarse su última llave (`cerrar`, o al morir el proceso). Para
+  esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal. Lo mismo vale para `interrupcion_asociar`:
+  sus avisos llevan la marca de la llave del canal y dejan de llegar si se revoca.
+- **25, `registros_recortar`** (auditoría de la fase 4, M4). Una llave nueva del mismo tipo que solo cubre
+  `[desde, desde + tamaño)` del tramo de la original, con sus mismos derechos. Los dos, múltiplos de 4 KB; fuera del
+  tramo o tamaño 0, `E_ARGUMENTO`; otra llave, `E_TIPO`. Así quien tiene un tramo grande da solo un trozo.
+- **26, `dma_liberar`** (M5). La memoria DMA, al soltarse, no vuelve al sistema: queda en la cuarentena de su
+  permiso, porque el aparato puede seguir escribiendo en ella (su controlador murió a medias). El controlador nuevo,
+  con el aparato ya reiniciado, la devuelve con esta llamada. Pide el derecho de escribir en el permiso.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -307,10 +321,8 @@ lleva unos derechos:
 | Transferir | 4 |
 
 Un proceso nuevo no tiene ninguna llave. Solo tiene las que le da quien lo lanza, y esas ocupan los números 1, 2,
-etc. Hoy el kernel lanza los controladores con:
-
-- La llave 1: los registros del aparato.
-- La llave 2: su interrupción.
+etc. El kernel solo lanza `inicio`, con las llaves de arranque; los controladores y demás servicios reciben las suyas
+de `inicio` (ver "El programa de inicio" y `servicios.md`).
 
 Tipos de objeto:
 
@@ -319,7 +331,7 @@ Tipos de objeto:
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
 | Memoria | `memoria_crear` | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
-| Memoria del firmware | Solo el kernel | La de la VideoCore, para el compositor (C50) |
+| Memoria del firmware | Solo el kernel | La de la VideoCore, para el buzón, que da al compositor solo la pantalla (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
@@ -355,7 +367,12 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Si el montón del kernel se queda sin memoria, el kernel cae. Un proceso en un grupo con cupo no puede llevarlo
   ahí; los del grupo raíz (los que lanza el kernel) no tienen cupo.
 - Una llave de registros da páginas enteras de 4 KB. La del controlador serie incluye, en la misma página, las UART 2
-  a 5 de la BCM2711; son del mismo controlador.
+  a 5 de la BCM2711; son del mismo controlador. La del buzón incluye el controlador de interrupciones antiguo, el
+  temporizador ARM y otros buzones de la BCM2711: falta comprobar en la Pi que no molestan con el GIC en marcha
+  (auditoría de la fase 4, B8).
+- `inicio` sondea la V3D al arrancar; en QEMU es un fallo de bus que se recoge. En la Pi, con el dominio de la V3D
+  apagado, falta comprobar que leer no cuelga el bus (B9).
+- Un temporizador puede dar un aviso más justo después de cerrar su última llave, si ya estaba saliendo (B10).
 - Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).

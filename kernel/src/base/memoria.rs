@@ -23,7 +23,8 @@ const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
 pub enum Zona {
     /// Alcanzable por la SD y el DMA clásico.
     Dma1G,
-    /// Alcanzable por el USB del PCIe.
+    /// Alcanzable por el USB del PCIe con la ventana del firmware. Desde C51 el kernel la cierra al primer GB: para
+    /// el PCIe, `Dma1G`.
     Dma3G,
     /// Cualquier sitio.
     Normal,
@@ -335,10 +336,44 @@ impl Paginas {
 /// Un objeto de memoria (C13): páginas del proceso, a cero, que se pueden proyectar en varios espacios. Las páginas
 /// vuelven al repartidor cuando se suelta el último `Arc`: la llave del proceso o la proyección de algún espacio
 /// (C18). Es la única forma que tiene el resto del kernel de dar memoria a un proceso (C37).
+/// Un permiso DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de bus. Con su
+/// cuarentena (auditoría de la fase 4, M5): la memoria DMA hecha con él no vuelve al repartidor al soltarse, porque el
+/// aparato puede seguir escribiendo en ella (su controlador murió a medias); espera aquí hasta que un controlador
+/// nuevo, con el aparato ya reiniciado, la libera (`liberar_cuarentena`). Si el permiso se suelta del todo, su
+/// cuarentena no vuelve nunca: nadie podría ya decir que el aparato está parado.
+pub struct PermisoDma {
+    pub zona: Zona,
+    pub desplazamiento_bus: u64,
+    cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize)>>,
+}
+
+impl PermisoDma {
+    pub fn nuevo(zona: Zona, desplazamiento_bus: u64) -> Self {
+        Self { zona, desplazamiento_bus, cuarentena: CerrojoIrq::new(alloc::vec::Vec::new()) }
+    }
+
+    /// Devuelve al repartidor la memoria en cuarentena. Cuántas páginas.
+    pub fn liberar_cuarentena(&self) -> usize {
+        let tramos = core::mem::take(&mut *self.cuarentena.tomar());
+        let mut n = 0;
+        let mut p = paginas();
+        for (base, k) in tramos {
+            for i in 0..k as u64 {
+                // Eran de un objeto DMA ya soltado, y nadie las proyecta.
+                unsafe { p.liberar(base + i * PAGINA, 1) };
+            }
+            n += k;
+        }
+        n
+    }
+}
+
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
     bus: Option<u64>,
+    /// Si es memoria DMA, el permiso con que se hizo: al soltarse, sus páginas van a su cuarentena (M5).
+    permiso: Option<alloc::sync::Arc<PermisoDma>>,
     /// Lo cobrado a su grupo (C42); se devuelve al soltarse.
     _cargo: crate::cupo::Cargo,
 }
@@ -349,7 +384,7 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, _cargo: cargo };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, _cargo: cargo };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(paginas().pagina_usuario()?);
@@ -359,7 +394,8 @@ impl Memoria {
 
     /// Memoria para DMA (C46): `tamano` bytes seguidos de la `zona`, a cero y fuera de la caché, cuya dirección de bus
     /// es la física más `desplazamiento_bus`. `None` si no caben en el cupo o no hay un tramo seguido libre.
-    pub fn nueva_dma(tamano: usize, zona: Zona, desplazamiento_bus: u64, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+    pub fn nueva_dma(tamano: usize, permiso: &alloc::sync::Arc<PermisoDma>, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        let (zona, desplazamiento_bus) = (permiso.zona, permiso.desplazamiento_bus);
         let n = tamano.div_ceil(PAGINA as usize);
         if n == 0 {
             return None;
@@ -367,7 +403,14 @@ impl Memoria {
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
         let mut paginas = alloc::vec::Vec::new();
         paginas.try_reserve_exact(n).ok()?;
-        let base = self::paginas().reservar(zona, n, 1)?;
+        let base = {
+            let mut p = self::paginas();
+            // En la zona normal, respetando la reserva del kernel, como `pagina_usuario` (auditoría de la fase 4, B7).
+            if zona == Zona::Normal && (p.libres - p.libres_bajo).saturating_sub(n) <= RESERVA {
+                return None;
+            }
+            p.reservar(zona, n, 1)?
+        };
         let k = crate::mmu::virt(base as usize);
         // Recién sacadas y seguidas: a cero, y fuera de la caché, para que no quede nada sucio que el aparato no vea
         // o que pise lo que escriba él.
@@ -381,7 +424,7 @@ impl Memoria {
         for i in 0..n as u64 {
             paginas.push(base + i * PAGINA);
         }
-        Some(Self { paginas, bus: Some(base + desplazamiento_bus), _cargo: cargo })
+        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), _cargo: cargo })
     }
 
     /// La dirección de bus si es memoria DMA.
@@ -444,6 +487,17 @@ impl Memoria {
 
 impl Drop for Memoria {
     fn drop(&mut self) {
+        if let Some(permiso) = self.permiso.take() {
+            // Memoria DMA: a la cuarentena de su permiso (M5). Son seguidas. Si no hay memoria para apuntarlas, se
+            // quedan sin devolver: mejor perderlas que dárselas a otro con el aparato escribiendo.
+            if let Some(&base) = self.paginas.first() {
+                let mut c = permiso.cuarentena.tomar();
+                if c.try_reserve(1).is_ok() {
+                    c.push((base, self.paginas.len()));
+                }
+            }
+            return;
+        }
         let mut p = paginas();
         for &f in &self.paginas {
             // Son nuestras, y ya no las proyecta nadie: cada espacio que las proyecta guarda un Arc.

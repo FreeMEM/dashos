@@ -2,6 +2,8 @@
 # la consola (C48). Desde que la consola toma el registro, todo sale por ella; las líneas de los programas llevan "│ ".
 DashOS 0.0.1
 Orden de bytes: little-endian
+# C51: la ventana de entrada del PCIe. QEMU no emula el controlador y quita su nodo del árbol.
+PCIe: no está en el árbol de dispositivos: ventana de entrada sin tocar
 Memoria física: 
   núcleo 1 en marcha
 DashOS en marcha con 4 núcleos.
@@ -9,20 +11,20 @@ DashOS en marcha con 4 núcleos.
 ~inicio: gpu no se lanza: falta
 │   [inicio] en marcha, con
 │   [inicio]   llave 2: permiso DMA de dma
-│   [inicio]   llave 3: registro de registro
-│   [inicio]   llave 4: memoria del firmware de vc
-│   [inicio]   llave 5: registros de serie
+│   [inicio]   llave 3: permiso DMA de dma-buzon
+│   [inicio]   llave 4: registro de registro
+│   [inicio]   llave 5: memoria del firmware de vc
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 ~registro: la consola pasa a un proceso; el kernel deja el puerto serie
-│   [inicio] buzon lanzado en su grupo, con 3 llaves
+│   [inicio] buzon lanzado en su grupo, con 4 llaves
 │   [inicio] usb lanzado en su grupo, con 4 llaves
-│   [inicio] compositor lanzado en su grupo, con 3 llaves
+│   [inicio] compositor lanzado en su grupo, con 2 llaves
 │   [inicio] hola lanzado en su grupo, con 0 llaves
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 ~│   [inicio] hola acabó: clase 0, código 5
 ~│   [inicio] todo lanzado; se queda esperando
 # El buzón y el compositor (C50) y el USB (C49), que le manda el ratón por un canal que crea inicio.
-~│   [compositor] pantalla 640x480 a 32 bits, doble búfer, en la memoria de la VideoCore
+~│   [compositor] pantalla 640x480 a 32 bits, doble búfer, solo con su memoria
 ~│   [compositor] doble búfer y daños: bien
 ~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
 ~│   [usb] HID de arranque: 1 teclado y 1 ratón

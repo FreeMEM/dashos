@@ -37,7 +37,16 @@ fn principal() -> u64 {
     if memoria_dma(1, 8 << 20).0 != E_TAMANO {
         return 5;
     }
-    // 6: la memoria normal de un proceso nunca sale del primer GB; la DMA, siempre.
-    println!("  [dma] 64 KB seguidos con dirección de bus {:#x}, sin permiso no", bus);
+    // 6-7 (auditoría de la fase 4, M5): la memoria DMA soltada no vuelve al repartidor hasta que se pide; entonces
+    // vuelve entera, una sola vez.
+    let (m2, _) = memoria_dma(1, 4 * 4096);
+    dashos::cerrar(m2 as u32);
+    if dashos::dma_liberar(1) != 4 {
+        return 6;
+    }
+    if dashos::dma_liberar(1) != 0 || dashos::dma_liberar(normal) != -6 {
+        return 7;
+    }
+    println!("  [dma] 64 KB seguidos con dirección de bus {:#x}, sin permiso no; cuarentena al soltarla", bus);
     46
 }

@@ -28,12 +28,15 @@
 //! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
 //! | 22 | memoria_dma(permiso DMA, tamaño) -> (llave de memoria, dirección de bus) |
 //! | 23 | registro_leer(llave del registro, búfer, capacidad) -> bytes: para la consola |
+//! | 24 | temporizador_crear(llave de canal, primer plazo µs, periodo µs) -> llave |
+//! | 25 | registros_recortar(llave de registros o del firmware, desde, tamaño) -> llave |
+//! | 26 | dma_liberar(permiso DMA) -> páginas devueltas de su cuarentena |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
-use crate::{kprint, kprintln, planificador};
+use crate::{kprintln, planificador};
 use alloc::vec::Vec;
 
 const LIMITE_USUARIO: u64 = 1 << 39;
@@ -144,6 +147,8 @@ pub fn atender(marco: &mut Marco) {
         22 => memoria_dma(marco, a[0] as u32, a[1]),
         23 => registro_leer(a[0] as u32, a[1], a[2]),
         24 => temporizador_crear(a[0] as u32, a[1], a[2]),
+        25 => registros_recortar(a[0] as u32, a[1], a[2]),
+        26 => dma_liberar(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -164,27 +169,20 @@ fn escribir_consola(p: u64, n: u64) -> u64 {
     // Cada línea de un programa empieza por "│ " (C48): así no puede hacerse pasar por una línea del kernel (N6).
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let mut limpio = alloc::string::String::new();
-    if limpio.try_reserve(texto.len() * 2 + 4).is_err() {
+    // Un byte de entrada da como mucho 3 de salida ("?" por un carácter de control de 2 bytes no pasa de 3; un byte
+    // inválido, "?"); la marca la pone `imprimir_programa` (B3).
+    if limpio.try_reserve(texto.len() * 3).is_err() {
         return E_MEMORIA;
     }
-    let mut a_media = proc_.a_media_linea.load(core::sync::atomic::Ordering::Relaxed);
     for trozo in texto.utf8_chunks() {
         for c in trozo.valid().chars() {
-            if !a_media {
-                limpio.push_str("│ ");
-                a_media = true;
-            }
             limpio.push(if c.is_control() && c != '\n' && c != '\t' { '?' } else { c });
-            if c == '\n' {
-                a_media = false;
-            }
         }
         for _ in trozo.invalid() {
             limpio.push('?');
         }
     }
-    proc_.a_media_linea.store(a_media, core::sync::atomic::Ordering::Relaxed);
-    kprint!("{}", limpio);
+    crate::serie::imprimir_programa(alloc::sync::Arc::as_ptr(&proc_) as u64, &limpio);
     crate::registro::avisar();
     n as u64
 }
@@ -357,11 +355,12 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
             return E_LIMITE;
         }
     }
-    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir) {
+    let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
+    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir, &via) {
         return error_espacio(err);
     }
     if por.iter().any(|r| r.revocado()) {
-        proc_.espacio.tomar().quitar_proyeccion(va, Some(&m));
+        proc_.espacio.tomar().quitar_proyeccion(va, Some(&m), None);
         return E_LLAVE;
     }
     0
@@ -370,7 +369,7 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
 /// Quita la proyección de un objeto de memoria que empieza en `va` (C45).
 fn memoria_quitar(va: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    if proc_.espacio.tomar().quitar_proyeccion(va, None) { 0 } else { E_ARGUMENTO }
+    if proc_.espacio.tomar().quitar_proyeccion(va, None, None) { 0 } else { E_ARGUMENTO }
 }
 
 fn registros_proyectar(h: u32, va: u64) -> u64 {
@@ -399,16 +398,18 @@ fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let (irq, canal) = {
         let t = proc_.llaves.tomar();
-        (t.ver(h), t.ver(hc))
+        (t.ver(h), t.ver_con_intermediarios(hc))
     };
-    let (Some(irq), Some(canal)) = (irq, canal) else { return E_LLAVE };
+    let (Some(irq), Some((canal, via))) = (irq, canal) else { return E_LLAVE };
     let (Objeto::Interrupcion(i), Objeto::Extremo(p)) = (irq.objeto, canal.objeto) else { return E_TIPO };
     let (c, lado) = (p.canal().clone(), p.lado());
     // Controlar una interrupción pide el derecho de escribir en su llave, y que lleguen al canal, el de escribir en él.
     if canal.derechos & objetos::ESCRIBIR == 0 || irq.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
-    i.asociar(c, lado);
+    // Con la marca y los intermediarios de la llave del canal: avisa como esa llave y deja de avisar si la revocan
+    // (auditoría de la fase 4, A2).
+    i.asociar(c, lado, via, canal.marca);
     0
 }
 
@@ -420,7 +421,9 @@ fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
         return E_ARGUMENTO;
     }
     let mut t = proc_.llaves.tomar();
-    let Some(canal) = t.ver(hc) else { return E_LLAVE };
+    // Con sus intermediarios y su marca: el temporizador escribe como esa llave y se para si la revocan (auditoría de
+    // la fase 4, A2).
+    let Some((canal, via)) = t.ver_con_intermediarios(hc) else { return E_LLAVE };
     let Objeto::Extremo(p) = canal.objeto else { return E_TIPO };
     if canal.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
@@ -428,7 +431,7 @@ fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
     if t.huecos() < 1 {
         return E_LIMITE;
     }
-    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), primero_us, periodo_us, &proc_.cupo) else {
+    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), via, canal.marca, primero_us, periodo_us, &proc_.cupo) else {
         return E_MEMORIA;
     };
     match t.instalar(objetos::Llave::nueva(Objeto::Temporizador(tm), objetos::TODOS)) {
@@ -677,7 +680,7 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
 fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
-    let Objeto::PermisoDma { zona, desplazamiento_bus } = l.objeto else { return E_TIPO };
+    let Objeto::PermisoDma(permiso) = l.objeto else { return E_TIPO };
     if l.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
@@ -687,7 +690,7 @@ fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(m) = objetos::Memoria::nueva_dma(tamano as usize, zona, desplazamiento_bus, &proc_.cupo) else { return E_MEMORIA };
+    let Some(m) = objetos::Memoria::nueva_dma(tamano as usize, &permiso, &proc_.cupo) else { return E_MEMORIA };
     let bus = m.bus().unwrap_or(0);
     match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS)) {
         Ok(n) => {
@@ -695,6 +698,49 @@ fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
             n as u64
         }
         Err(_) => E_LIMITE,
+    }
+}
+
+/// Devuelve la memoria DMA en cuarentena de un permiso (auditoría de la fase 4, M5): la llama un controlador cuando
+/// ya ha reiniciado su aparato. Pide el derecho de escribir. Devuelve cuántas páginas.
+fn dma_liberar(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::PermisoDma(permiso) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    permiso.liberar_cuarentena() as u64
+}
+
+/// Una llave de registros o de memoria del firmware que solo cubre un trozo, de páginas enteras (auditoría de la fase 4,
+/// M4): así el buzón da al compositor solo la pantalla, no toda la memoria de la VideoCore. Con los mismos derechos.
+fn registros_recortar(h: u32, desde: u64, tamano: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let mut t = proc_.llaves.tomar();
+    let Some(l) = t.ver(h) else { return E_LLAVE };
+    let pagina = crate::memoria::PAGINA;
+    let dentro = |fisica: u64, total: u64| -> Option<(u64, u64)> {
+        let fin = desde.checked_add(tamano)?;
+        (tamano > 0 && desde % pagina == 0 && tamano % pagina == 0 && fin <= total).then_some((fisica + desde, tamano))
+    };
+    let objeto = match l.objeto {
+        Objeto::Registros { fisica, tamano: total } => match dentro(fisica, total) {
+            Some((fisica, tamano)) => Objeto::Registros { fisica, tamano },
+            None => return E_ARGUMENTO,
+        },
+        Objeto::Firmware { fisica, tamano: total } => match dentro(fisica, total) {
+            Some((fisica, tamano)) => Objeto::Firmware { fisica, tamano },
+            None => return E_ARGUMENTO,
+        },
+        _ => return E_TIPO,
+    };
+    if t.huecos() < 1 {
+        return E_LIMITE;
+    }
+    match t.instalar(objetos::Llave::nueva(objeto, l.derechos)) {
+        Ok(n) => n as u64,
+        Err(_) => E_MEMORIA,
     }
 }
 

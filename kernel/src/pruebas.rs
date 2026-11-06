@@ -18,6 +18,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     kprintln!("C3: de vuelta de la excepción");
     mapa_dispositivos(dtb);
     kprintln!("C4: árbol de dispositivos leído");
+    prueba_pcie();
     prueba_memoria();
     prueba_monton();
     prueba_reloj();
@@ -82,6 +83,14 @@ fn mapa_dispositivos(direccion: usize) {
             }
         }
     }
+}
+
+/// C51: la codificación del tamaño de la ventana de entrada del PCIe, contra la tabla de `docs/spec/hw/pcie.md` (§5).
+/// El cierre de la ventana en sí solo se ve en la Pi 4: en QEMU el controlador no contesta (lo dice el arranque).
+fn prueba_pcie() {
+    let casos: [(u64, u32); 9] = [(4096, 0x1C), (32 << 10, 0x1F), (64 << 10, 1), (256 << 20, 13), (1 << 30, 15), (4 << 30, 17), (64 << 30, 21), (3 << 30, 0), (128 << 30, 0)];
+    let bien = casos.iter().all(|&(b, c)| crate::pcie::codificar_tamano(b) == c) && crate::pcie::TAMANO_1GB == crate::pcie::codificar_tamano(1 << 30);
+    kprintln!("C51: tamaños de la ventana de entrada del PCIe como la especificación {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C5: reparto de páginas por zonas.
@@ -245,7 +254,6 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
         cupo: crate::cupo::Cupo::raiz(),
-        a_media_linea: Default::default(),
         _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
         control: Default::default(),
     });
@@ -315,27 +323,35 @@ fn prueba_pantalla(_dtb: usize) {
     let (mio, entrada) = objetos::Canal::nuevo();
     let objetos::Objeto::Extremo(punta) = mio.objeto.clone() else { return };
     let buzon_llaves = alloc::vec![
-        objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, bus.wrapping_sub(cpu)))), objetos::TODOS),
         objetos::Llave::nueva(objetos::Objeto::Registros { fisica: base & !(memoria::PAGINA - 1), tamano: ((base & (memoria::PAGINA - 1)) + tamano).div_ceil(memoria::PAGINA) * memoria::PAGINA }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::Firmware { fisica: vc, tamano: vc_tamano }, objetos::TODOS),
         al_buzon,
     ];
-    let compositor_llaves = alloc::vec![
-        objetos::Llave::nueva(objetos::Objeto::Firmware { fisica: vc, tamano: vc_tamano }, objetos::TODOS),
-        al_compositor,
-        entrada,
-    ];
+    // Como `inicio`: el compositor, con una copia marcada (1); y su entrada en el directorio del buzón, sin marca.
+    let mut del_compositor = al_compositor.clone();
+    del_compositor.marca = 1;
+    let compositor_llaves = alloc::vec![del_compositor, entrada];
     let (Some(g1), Some(g2)) = (crate::cupo::Cupo::raiz().hijo(16 << 20), crate::cupo::Cupo::raiz().hijo(16 << 20)) else { return };
     let Some(b) = lanzar_elf_en(BUZON, buzon_llaves, 2, g1) else { return };
     // Antes de dar el canal al compositor, lo que el buzón no debe dejar pasar: una etiqueta que no está en su lista
-    // (poner un reloj), un mensaje cuyo tamaño no cuadra y uno sin etiqueta de fin. Los tres vuelven con 0x80000001.
-    // Cada petición lleva el extremo por el que vuelve la respuesta.
-    let (c_buzon, lado) = extremo(&compositor_llaves[1]);
+    // (poner un reloj), un mensaje cuyo tamaño no cuadra, uno sin etiqueta de fin y la pantalla pedida por quien no es
+    // el compositor (M6). Vuelven con 0x80000001. Antes, un mensaje con dos llaves, que no debe tumbar el buzón (M6).
+    // Cada petición lleva el extremo por el que vuelve la respuesta. El kernel escribe sin marca, como un cliente
+    // desconocido.
+    let (c_buzon, lado) = extremo(&compositor_llaves[0]);
+    let mut dir = alloc::vec::Vec::from(1u64.to_le_bytes());
+    dir.extend_from_slice(b"compositor\0\0\0\0\0\0");
+    let _ = c_buzon.escribir(lado, objetos::Mensaje { datos: dir, llaves: alloc::vec::Vec::new(), marca: 0 });
+    let (x, y) = objetos::Canal::nuevo();
+    let _ = c_buzon.escribir(lado, objetos::Mensaje { datos: alloc::vec![0; 12], llaves: alloc::vec![x, y], marca: 0 });
     let mut rechazos = 0;
     let palabras = |p: &[u32]| p.iter().flat_map(|w| w.to_le_bytes()).collect::<alloc::vec::Vec<u8>>();
     for m in [
         palabras(&[36, 0, 0x0003_8002, 12, 0, 3, 600_000_000, 0, 0]), // poner el reloj de la CPU: no
         palabras(&[40, 0, 0x0003_0002, 8, 0, 3, 0, 0]),
         palabras(&[28, 0, 0x0003_0002, 8, 0, 3, 0]),
+        palabras(&[32, 0, 0x0004_0001, 8, 0, 4096, 0, 0]), // reservar la pantalla sin ser el compositor: no
     ] {
         let n = m.len();
         let (vuelta, para_el) = objetos::Canal::nuevo();
@@ -352,7 +368,7 @@ fn prueba_pantalla(_dtb: usize) {
         let p = memoria::paginas();
         p.fuera_de_la_ram(vc, vc_tamano) && !p.fuera_de_la_ram(0x10_0000, 4096) && !p.fuera_de_la_ram(vc - 4096, 8192)
     };
-    kprintln!("  buzón: {} de 3 mensajes que no valen rechazados; memoria del firmware fuera de la RAM y nada más: {}", rechazos, if ram_no { "sí" } else { "no" });
+    kprintln!("  buzón: {} de 4 mensajes que no valen rechazados; memoria del firmware fuera de la RAM y nada más: {}", rechazos, if ram_no { "sí" } else { "no" });
     let Some(c) = lanzar_elf_en(COMPOSITOR, compositor_llaves, 3, g2) else { return };
     for _ in 0..3 {
         let m = objetos::Mensaje { datos: alloc::vec![2, 0, 10, 5, 0, 0, 0, 0], llaves: alloc::vec::Vec::new(), marca: 0 };
@@ -360,12 +376,13 @@ fn prueba_pantalla(_dtb: usize) {
     }
     drop(punta);
     drop(mio);
+    drop(al_compositor); // la del kernel: con la del compositor muerto, el buzón tiene que ver el canal cerrado
     let inicio = reloj::tics();
     while (c.estado.tomar().fin.is_none() || b.estado.tomar().fin.is_none()) && reloj::tics() < inicio + 2000 {
         esperar_tics(5);
     }
     let fines = (c.estado.tomar().fin, b.estado.tomar().fin);
-    let bien = matches!(fines, (Some(objetos::Fin::Salida(0)), Some(objetos::Fin::Salida(0)))) && rechazos == 3 && ram_no;
+    let bien = matches!(fines, (Some(objetos::Fin::Salida(0)), Some(objetos::Fin::Salida(0)))) && rechazos == 4 && ram_no;
     if !bien {
         crate::planificador::matar_proceso(&c);
         crate::planificador::matar_proceso(&b);
@@ -635,7 +652,7 @@ fn prueba_usb() {
     let (mio, suyo) = objetos::Canal::nuevo();
     let objetos::Objeto::Extremo(punta) = mio.objeto.clone() else { return };
     let llaves = alloc::vec![
-        objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) }, objetos::TODOS),
+        objetos::Llave::nueva(objetos::Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, bus.wrapping_sub(cpu)))), objetos::TODOS),
         objetos::Llave::nueva(objetos::Objeto::Registros { fisica, tamano: tamano.div_ceil(memoria::PAGINA) * memoria::PAGINA }, objetos::TODOS),
         objetos::Llave::nueva(objetos::Objeto::Interrupcion(irq), objetos::TODOS),
         suyo,
@@ -678,7 +695,7 @@ static GRAFICOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-no
 
 fn prueba_graficos() {
     let libres = memoria::paginas().libres();
-    let llaves = alloc::vec![objetos::Llave::nueva(objetos::Objeto::PermisoDma { zona: memoria::Zona::Normal, desplazamiento_bus: 0 }, objetos::TODOS)];
+    let llaves = alloc::vec![objetos::Llave::nueva(objetos::Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Normal, 0))), objetos::TODOS)];
     let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };
     let Some(c) = lanzar_elf_en(GRAFICOS, llaves, 1, grupo) else { return };
     let inicio = reloj::tics();
@@ -1005,7 +1022,7 @@ fn prueba_dma_proceso() {
     let Some(d) = dtb::Dtb::desde() else { return };
     let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) else { return };
     let permiso = objetos::Llave::nueva(
-        objetos::Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) },
+        objetos::Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, bus.wrapping_sub(cpu)))),
         objetos::LEER | objetos::ESCRIBIR,
     );
     let Some(grupo) = crate::cupo::Cupo::raiz().hijo(16 << 20) else { return };

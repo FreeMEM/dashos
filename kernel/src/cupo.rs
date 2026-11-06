@@ -24,8 +24,9 @@ pub const COSTE_PROCESO: u64 = 64 * 1024;
 pub const COSTE_GRUPO: u64 = 512;
 /// Lo que cuesta un intermediario de llave revocable (C43).
 pub const COSTE_REVOCABLE: u64 = 256;
-/// Un temporizador (C49).
-pub const COSTE_TEMPORIZADOR: u64 = 256;
+/// Un temporizador (C49). Caro a propósito: acota cuántos puede tener un grupo, y con ello el trabajo que da al
+/// repartidor del núcleo 0 (auditoría de la fase 4, A1).
+pub const COSTE_TEMPORIZADOR: u64 = 4096;
 /// Grupos dentro de grupos, como mucho: soltar una cadena va por recursión (auditoría de la fase 3, A1).
 pub const MAX_PROFUNDIDAD: u32 = 8;
 /// Lo que cuesta un canal: sus dos colas llenas, con llaves en cada mensaje.

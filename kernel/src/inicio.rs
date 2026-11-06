@@ -8,9 +8,10 @@
 //! (little-endian; lo lee `usuario/src/bin/inicio.rs`):
 //! - u32 cuántos aparatos; por cada uno, 24 bytes: nombre (16, relleno con 0), tipo (u32: 1 registros,
 //!   2 interrupción, 3 permiso DMA, 4 registro, 5 memoria del firmware) y número de llave (u32);
-//! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué aparatos le pasa `inicio` (u32: el bit i es
-//!   el aparato i de la lista de arriba), qué canales (u32: el bit i es el canal i; C50), 0 (u32) y nombre (16).
-//!   Sus llaves serán la 1, la 2...: primero los aparatos y después los canales, en ese orden. `inicio` le da una
+//! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué canales (u32: el bit i es el canal i; C50),
+//!   qué aparatos le pasa `inicio` (8 bytes: el número de cada uno en la lista de arriba, en el orden en que los pide
+//!   el programa, y 0xFF en los huecos) y nombre (16). Sus llaves serán la 1, la 2...: primero los aparatos, en ese
+//!   orden, y después los canales. `inicio` le da una
 //!   copia de cada llave de aparato (se queda la suya) y crea cada canal la primera vez que se nombra: el primer
 //!   programa que lo nombra recibe un extremo y el segundo, el otro;
 //! - los ELF seguidos, cada uno desde un múltiplo de 8.
@@ -26,9 +27,9 @@ static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 /// pasa a cada uno. Lo que ve cada servicio de los demás está en `docs/referencia/servicios.md`.
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
-    ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma", PERMISO_DMA), ("buzon", REGISTROS)], &["buzon"]),
+    ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
     ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
-    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("vc", FIRMWARE)], &["buzon", "entrada"]),
+    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "entrada"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
@@ -67,8 +68,11 @@ pub fn lanzar() -> bool {
         manifiesto.push((nombre16(nombre), tipo, llaves.len() as u32 + 1));
     };
     if let Some((bus, cpu, _)) = d.por_nombre("emmc2bus").and_then(|n| d.ventana_dma(&n, 0)) {
-        let permiso = Objeto::PermisoDma { zona: memoria::Zona::Dma1G, desplazamiento_bus: bus.wrapping_sub(cpu) };
-        apuntar(&mut llaves, "dma", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+        // Uno por aparato, cada uno con su cuarentena (auditoría de la fase 4, M5): el del USB y el del buzón.
+        for nombre in ["dma", "dma-buzon"] {
+            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, bus.wrapping_sub(cpu))));
+            apuntar(&mut llaves, nombre, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+        }
     }
     apuntar(&mut llaves, "registro", REGISTRO, Llave::nueva(Objeto::Registro, DERECHOS));
     if let Some((fisica, tamano)) = d.memoria_vc() {
@@ -105,7 +109,7 @@ pub fn lanzar() -> bool {
         for (nombre, fisica, tamano) in [("v3d", 0xFEC0_0000, 0x8000), ("v3d-puente", 0xFEC1_1000, 0x1000), ("pm", 0xFE10_0000, 0x1000), ("cprman", 0xFE10_1000, 0x1000)] {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
         }
-        let permiso = Objeto::PermisoDma { zona: memoria::Zona::Normal, desplazamiento_bus: 0 };
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Normal, 0)));
         apuntar(&mut llaves, "dma-gpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
@@ -129,10 +133,10 @@ pub fn lanzar() -> bool {
     paquete.extend_from_slice(&(lanzables.len() as u32).to_le_bytes());
     let mut canales: Vec<&str> = Vec::new();
     for (nombre, elf, aparatos, suyos) in lanzables.iter() {
-        let mut mascara = 0u32;
-        for (aparato, tipo) in aparatos.iter() {
+        let mut suyos_aparatos = [0xFFu8; 8];
+        for (k, (aparato, tipo)) in aparatos.iter().enumerate().take(8) {
             if let Some(i) = manifiesto.iter().position(|(n, t, _)| *n == nombre16(aparato) && t == tipo) {
-                mascara |= 1 << i;
+                suyos_aparatos[k] = i as u8;
             }
         }
         let mut de_canales = 0u32;
@@ -144,9 +148,8 @@ pub fn lanzar() -> bool {
             de_canales |= 1 << i;
         }
         paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
-        paquete.extend_from_slice(&mascara.to_le_bytes());
         paquete.extend_from_slice(&de_canales.to_le_bytes());
-        paquete.extend_from_slice(&0u32.to_le_bytes());
+        paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
     }
     for (_, elf, _, _) in lanzables.iter() {

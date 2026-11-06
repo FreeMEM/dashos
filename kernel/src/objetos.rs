@@ -42,7 +42,7 @@ pub enum Objeto {
     Proceso(Arc<Control>),
     /// Permiso para crear memoria DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de
     /// bus. Solo lo da el kernel, a los controladores que lo necesitan.
-    PermisoDma { zona: crate::memoria::Zona, desplazamiento_bus: u64 },
+    PermisoDma(Arc<crate::memoria::PermisoDma>),
     /// El registro del sistema (C48): con leer se saca, y quien lo saca es la consola. Solo lo da el kernel.
     Registro,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
@@ -89,17 +89,24 @@ impl Revocable {
             let proyecciones = core::mem::take(&mut *self.proyecciones.tomar());
             for (p, va) in proyecciones {
                 if let Some(p) = p.upgrade() {
-                    p.espacio.tomar().quitar_proyeccion(va, Some(&m));
+                    p.espacio.tomar().quitar_proyeccion(va, Some(&m), Some(self.id()));
                 }
             }
         }
         drop(objeto);
     }
 
-    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe.
+    /// Un número que identifica este intermediario en las proyecciones del espacio (solo para comparar).
+    pub fn id(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe. Antes
+    /// purga las que ya no están: de procesos muertos o quitadas con `memoria_quitar` (auditoría de la fase 4, M2).
     pub fn apuntar_proyeccion(&self, p: &Arc<Proceso>, va: u64) -> bool {
         let mut v = self.proyecciones.tomar();
-        v.retain(|(w, _)| w.strong_count() > 0);
+        let id = self.id();
+        v.retain(|(w, va)| w.upgrade().is_some_and(|q| q.espacio.tomar().proyectada_via(*va, id)));
         if v.len() >= MAX_PROYECCIONES_REVOCABLE || v.try_reserve(1).is_err() {
             return false;
         }
@@ -114,7 +121,7 @@ impl Revocable {
 }
 
 /// Proyecciones apuntadas en un intermediario, como mucho.
-const MAX_PROYECCIONES_REVOCABLE: usize = 1024;
+const MAX_PROYECCIONES_REVOCABLE: usize = 256;
 
 /// El objeto de memoria detrás de `o`, atravesando intermediarios.
 fn memoria_de(o: &Objeto) -> Option<Arc<Memoria>> {
@@ -155,6 +162,8 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
         Objeto::Temporizador(t) => t.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
         // Un revocador lleva dentro su objeto: si es un lado de este canal, también es un ciclo (auditoría, M1).
         Objeto::Revocador(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
+        // Y una revocable, que puede estar dentro de un revocador (auditoría de la fase 4, B1).
+        Objeto::Revocable(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
         _ => false,
     }
 }
@@ -531,8 +540,6 @@ pub struct Proceso {
     pub llaves: Cerrojo<TablaLlaves>,
     /// Su grupo (C42): a él se cobra lo que crea.
     pub cupo: Arc<crate::cupo::Cupo>,
-    /// Lo último que escribió no acabó en salto de línea (C48): lo siguiente no lleva la marca de principio de línea.
-    pub a_media_linea: core::sync::atomic::AtomicBool,
     /// Lo que cuesta el proceso en sí (`COSTE_PROCESO`).
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.

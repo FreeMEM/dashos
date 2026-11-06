@@ -27,6 +27,7 @@ mod inicio;
 mod interrupciones;
 mod llamadas;
 mod objetos;
+mod pcie;
 mod procesos;
 mod registro;
 mod reloj;
@@ -54,6 +55,8 @@ pub fn kmain(dtb: usize) -> ! {
     let Some(d) = dtb::Dtb::desde() else {
         panic!("árbol de dispositivos no válido en {:#x}", dtb);
     };
+    // Antes de que nada viva por encima del primer GB: que el PCIe no llegue ahí (C51).
+    pcie::cerrar_ventana(&d);
     memoria::paginas().iniciar(&d, dtb);
     mapa::construir();
     mapa::activar();

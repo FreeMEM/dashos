@@ -33,10 +33,14 @@ pub fn directo() -> bool {
     !TOMADO.load(Ordering::Acquire)
 }
 
-/// Añade bytes al anillo.
-pub fn poner(b: &[u8]) {
+/// Lo último del anillo, solo para el kernel: un programa que escribe sin parar no tapa sus avisos (auditoría de la
+/// fase 4, B4).
+const SOLO_KERNEL: u64 = 4096;
+
+/// Añade bytes al anillo. Los de los programas no llenan los últimos `SOLO_KERNEL`.
+pub fn poner(b: &[u8], kernel: bool) {
     let mut a = ANILLO.tomar();
-    let libre = TAMANO as u64 - (a.fin - a.inicio);
+    let libre = (TAMANO as u64 - (a.fin - a.inicio)).saturating_sub(if kernel { 0 } else { SOLO_KERNEL });
     let n = (b.len() as u64).min(libre);
     for &c in &b[..n as usize] {
         let i = (a.fin % TAMANO as u64) as usize;

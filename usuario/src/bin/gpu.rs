@@ -99,6 +99,8 @@ fn principal() -> u64 {
             return 3;
         }
     };
+    // Con la V3D ya reiniciada, lo que dejara en cuarentena una GPU anterior puede volver (auditoría de la fase 4, M5).
+    dashos::dma_liberar(1);
     let i = g.identidad;
     println!("  [gpu] V3D {}.{}: {} núcleo, {} slices, {} QPU, {} TMU; VA {} bits, PA {} bits; tabla en {:#x}",
         i.version / 10, i.version % 10, i.nucleos, i.slices, i.qpus, i.tmus, i.va_bits, i.pa_bits, g.mmu.tabla);

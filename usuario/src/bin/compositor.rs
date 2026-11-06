@@ -1,7 +1,8 @@
 //! El compositor por CPU como proceso (C50). Antes iba dentro del kernel (C16, fase A de S9).
 //!
-//! Llaves: la 1, la memoria de la VideoCore (donde el firmware pone la pantalla); la 2, el canal del buzón (C50); la
-//! 3, el canal de entrada, por el que llegan los eventos del USB (C49).
+//! Llaves: la 1, el canal del buzón (C50); la 2, el canal de entrada, por el que llegan los eventos del USB (C49). La
+//! pantalla le llega del buzón, como una llave de la memoria de la VideoCore recortada a ella (auditoría de la fase 4,
+//! M4): no ve el resto de esa memoria.
 //!
 //! Dos búferes en la pantalla virtual del firmware: se pinta en el que no se ve y se cambia con el desplazamiento
 //! virtual. Solo se repinta lo que cambia (los daños). Como cada búfer se vio hace dos cuadros, en el que se va a pintar
@@ -52,8 +53,9 @@ impl Rect {
     }
 }
 
-/// Un mensaje al buzón (llave 2): palabras en el orden de la CPU; vuelve con la respuesta. Falso si no la aceptó.
-fn buzon(m: &mut [u32]) -> bool {
+/// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
+/// no, la llave que trajera la respuesta (0 si ninguna).
+fn buzon(m: &mut [u32]) -> Option<u32> {
     let mut b = [0u8; 256];
     let n = m.len() * 4;
     for (i, w) in m.iter().enumerate() {
@@ -61,21 +63,22 @@ fn buzon(m: &mut [u32]) -> bool {
     }
     // La respuesta vuelve por un canal propio de esta petición: mandamos uno de sus extremos con ella.
     let (mio, suyo) = dashos::canal_crear();
-    if dashos::canal_escribir(2, &b[..n], &[suyo]) != 0 {
+    if dashos::canal_escribir(1, &b[..n], &[suyo]) != 0 {
         dashos::cerrar(mio);
         dashos::cerrar(suyo);
-        return false;
+        return None;
     }
     let mut ll = [0u32; 1];
-    let leido = dashos::canal_leer(mio, &mut b, &mut ll).0;
+    let (leido, k) = dashos::canal_leer(mio, &mut b, &mut ll);
     dashos::cerrar(mio);
+    let llave = if k > 0 { ll[0] } else { 0 };
     if leido != n as i64 {
-        return false;
+        return None;
     }
     for (i, w) in m.iter_mut().enumerate() {
         *w = u32::from_le_bytes(b[4 * i..4 * i + 4].try_into().unwrap());
     }
-    m[1] == 0x8000_0000
+    (m[1] == 0x8000_0000).then_some(llave)
 }
 
 struct Pantalla {
@@ -86,8 +89,9 @@ struct Pantalla {
     base: usize,
 }
 
-/// Pide una pantalla de `ancho` × `alto` a 32 bits con `buferes` pantallas virtuales una debajo de otra.
-fn pantalla(ancho: u32, alto: u32, buferes: u32, vc: (u32, u32)) -> Option<Pantalla> {
+/// Pide una pantalla de `ancho` × `alto` a 32 bits con `buferes` pantallas virtuales una debajo de otra. La memoria
+/// llega con la respuesta, como una llave que solo cubre la pantalla; se proyecta en `VA_VC`.
+fn pantalla(ancho: u32, alto: u32, buferes: u32) -> Option<Pantalla> {
     #[rustfmt::skip]
     let mut m = [
         0, 0,
@@ -100,23 +104,23 @@ fn pantalla(ancho: u32, alto: u32, buferes: u32, vc: (u32, u32)) -> Option<Panta
         0,
     ];
     m[0] = m.len() as u32 * 4;
-    if !buzon(&mut m) || m[23] == 0 {
+    let llave = buzon(&mut m)?;
+    if m[23] == 0 || llave == 0 {
         return None;
     }
+    if dashos::registros_proyectar(llave, VA_VC) != 0 {
+        println!("  [compositor] no se puede proyectar la pantalla");
+        return None;
+    }
+    // La llave empieza en la página de la pantalla: dentro, su desplazamiento.
     let fisica = m[23] & 0x3fff_ffff;
-    let (base, tamano) = vc;
-    // Tiene que caer dentro de la memoria de la VideoCore que tenemos proyectada.
-    if fisica < base || fisica as u64 + m[24] as u64 > base as u64 + tamano as u64 {
-        println!("  [compositor] la pantalla ({:#x}) cae fuera de la memoria de la VideoCore", fisica);
-        return None;
-    }
-    Some(Pantalla { ancho: m[5], alto: m[6], paso: m[28], base: VA_VC + (fisica - base) as usize })
+    Some(Pantalla { ancho: m[5], alto: m[6], paso: m[28], base: VA_VC + (fisica & 0xfff) as usize })
 }
 
 fn desplazar(y: u32) -> bool {
     let mut m = [0, 0, 0x0004_8009, 8, 0, 0, y, 0];
     m[0] = m.len() as u32 * 4;
-    buzon(&mut m)
+    buzon(&mut m).is_some()
 }
 
 /// El fondo: degradado del azul al violeta con un tablero rojo y blanco en el centro.
@@ -200,23 +204,11 @@ impl Compositor {
 }
 
 fn principal() -> u64 {
-    // La memoria de la VideoCore, según el firmware; la llave 1 la cubre y se proyecta entera.
-    let mut m = [0, 0, 0x0001_0006, 8, 0, 0, 0, 0];
-    m[0] = m.len() as u32 * 4;
-    if !buzon(&mut m) {
-        println!("  [compositor] el buzón no contesta");
-        return 1;
-    }
-    let vc = (m[5], m[6]);
-    if dashos::registros_proyectar(1, VA_VC) != 0 {
-        println!("  [compositor] no se puede proyectar la memoria de la VideoCore");
-        return 2;
-    }
-    let Some(p) = pantalla(ANCHO, ALTO, 2, vc) else {
+    let Some(p) = pantalla(ANCHO, ALTO, 2) else {
         println!("  [compositor] el firmware no da pantalla");
         return 3;
     };
-    println!("  [compositor] pantalla {}x{} a 32 bits, doble búfer, en la memoria de la VideoCore ({} MB)", p.ancho, p.alto, vc.1 >> 20);
+    println!("  [compositor] pantalla {}x{} a 32 bits, doble búfer, solo con su memoria", p.ancho, p.alto);
     let mut c = Compositor { p, visible: 0, ventana: Rect { x: 40, y: 40, w: 200, h: 140 }, danos_previos: Rect::default(), pixeles_pintados: 0 };
     let todo = Rect { x: 0, y: 0, w: c.p.ancho, h: c.p.alto };
     c.pintar(0, todo);
@@ -244,11 +236,18 @@ fn principal() -> u64 {
     let (mut x, mut y) = (c.ventana.x as i32, c.ventana.y as i32);
     let mut primera = true;
     let mut ev = [0u8; 16];
-    let mut ll = [0u32; 1];
+    let mut ll = [0u32; 8];
     loop {
-        let (n, _) = dashos::canal_leer(3, &mut ev, &mut ll);
-        if n < 0 {
+        let (n, k) = dashos::canal_leer(2, &mut ev, &mut ll);
+        if n == -4 {
             return 0; // la entrada se cerró
+        }
+        // Un mensaje que no vale no para el compositor; las llaves que lleguen, fuera (M6).
+        for &l in ll.iter().take(k) {
+            dashos::cerrar(l);
+        }
+        if n < 0 {
+            continue;
         }
         if n != 8 || ev[0] != 2 {
             continue;

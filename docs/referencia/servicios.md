@@ -14,7 +14,8 @@ Lo que ve un programa de los servicios que lanza `inicio` (`kernel/src/inicio.rs
 | 3 | Su interrupción (sin ella, consulta girando) |
 | 4 | Un extremo de canal por el que manda los eventos (sin ella, los escribe en la consola) |
 
-Espera con la interrupción del DWC2 y un temporizador de 10 ms; entre consulta y consulta no gasta CPU. Enumera el
+Al arrancar, con el DWC2 ya reiniciado, devuelve la cuarentena de su permiso (`dma_liberar`). Espera con la
+interrupción del DWC2 y un temporizador de 10 ms; entre consulta y consulta no gasta CPU. Enumera el
 hub y usa los teclados y ratones en modo de arranque (HID 1.11, apéndice B).
 
 Cada evento es un mensaje de 8 bytes:
@@ -41,38 +42,42 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | Servicio | Aparatos | Canales |
 |---|---|---|
 | consola | registro, registros del puerto serie | — |
-| buzon | permiso DMA, registros del buzón | "buzon" |
+| buzon | su permiso DMA, registros del buzón, memoria de la VideoCore | "buzon" |
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
-| compositor | memoria de la VideoCore | "buzon", "entrada" |
+| compositor | — | "buzon", "entrada" |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 
-Un canal que nombran más de dos servicios ("buzon") da a todos menos al primero una copia del mismo extremo: varios
-clientes, un servidor. Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
+En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
+1) del otro extremo, y el servidor, un mensaje sin marca por cliente con su marca (8 bytes) y su nombre (16). Solo
+`inicio` escribe sin marca, así que el servidor sabe quién le pide qué (auditoría de la fase 4, M6). Las llaves de
+aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
 ## Buzón de la VideoCore (C50)
 
-`usuario/src/bin/buzon.rs`. Llaves: 1 el permiso DMA, 2 los registros del buzón (la página entera; el buzón está en
-el desplazamiento 0x880), 3 el canal de peticiones.
+`usuario/src/bin/buzon.rs`. Llaves: 1 su permiso DMA, 2 los registros del buzón (la página entera; el buzón está en
+el desplazamiento 0x880), 3 la memoria de la VideoCore, 4 el canal de peticiones.
 
 Cada petición es un mensaje de propiedades del firmware tal cual, de hasta 256 bytes: palabras de 32 bits en
 little-endian con el tamaño, el código 0, las etiquetas y la etiqueta 0 de fin. Lleva una llave: un extremo de un canal
 nuevo del cliente, por el que vuelve la respuesta, con el mismo tamaño y el código 0x80000000. Así varios clientes
-comparten el canal de peticiones. Sin esa llave no se contesta. Si el mensaje está mal formado o lleva una etiqueta que no está en la
+comparten el canal de peticiones. Sin esa llave no se contesta; las llaves de más se sueltan, y un mensaje que no vale
+no para el servicio (M6). Cada cliente, según su nombre en el directorio, puede pedir unas etiquetas u otras. Al
+reservar la pantalla, la respuesta lleva además una llave de la memoria de la VideoCore recortada a ella (M4). Si el mensaje está mal formado o lleva una etiqueta que no está en la
 lista, vuelve con el código 0x80000001 y el firmware no lo ve. Etiquetas permitidas:
 
-| Etiqueta | Para |
-|---|---|
-| 0x00010006 | Memoria de la VideoCore: base y tamaño |
-| 0x00030002, 0x00030004 | Frecuencia de un reloj y su máximo |
-| 0x00040001, 0x00040008 | Reservar la pantalla y su paso de línea |
-| 0x00048003 a 0x00048006 | Tamaño físico y virtual, bits por píxel y orden de colores |
-| 0x00048009 | Desplazamiento virtual (cambiar de búfer) |
-| 0x00038001, 0x00038002 | Encender un reloj y ponerle la frecuencia: solo el de la V3D (reloj 5) |
+| Etiqueta | Para | Quién |
+|---|---|---|
+| 0x00030002, 0x00030004 | Frecuencia de un reloj y su máximo | Todos |
+| 0x00040001, 0x00040008 | Reservar la pantalla y su paso de línea | "compositor" |
+| 0x00048003 a 0x00048006 | Tamaño físico y virtual, bits por píxel y orden de colores | "compositor" |
+| 0x00048009 | Desplazamiento virtual (cambiar de búfer) | "compositor" |
+| 0x00038001, 0x00038002 | Encender un reloj y ponerle la frecuencia: solo el de la V3D (reloj 5) | "gpu" |
 
 ## Compositor (C50)
 
-`usuario/src/bin/compositor.rs`. Llaves: 1 la memoria de la VideoCore, 2 el canal del buzón, 3 el canal de entrada.
+`usuario/src/bin/compositor.rs`. Llaves: 1 el canal del buzón, 2 el canal de entrada. La pantalla le llega del buzón,
+como una llave que solo cubre su memoria.
 Pide al firmware una pantalla de 640 × 480 a 32 bits con dos búferes, pinta el fondo y una ventana, y repinta solo lo
 que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verdad hablará Wayland (S9).
 

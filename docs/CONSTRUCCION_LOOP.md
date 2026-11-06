@@ -1344,6 +1344,80 @@ los programas también llevan "│ ".
 - **Comprobado:** `make -C kernel prueba` bien (otra vez C14 falló una vez por la carga de la máquina, media de 5; ver
   "Pendiente o a vigilar"); `make -C kernel arranque` bien.
 
+### 2026-11-06 noche, bucle (sesión DashOS) — C51, segunda parte (ventana de entrada del PCIe)
+
+- **Especificación** `docs/spec/hw/pcie.md`, de un analista aparte (sala limpia, de `pcie-brcmstb.c` de Linux):
+  registros de las ventanas de entrada, codificación del tamaño, qué deja Linux y dos caminos para DashOS.
+- **`kernel/src/pcie.rs`:** al arrancar, antes de iniciar la memoria, apaga BAR1 (lleva a los registros del chip) y
+  BAR3, pone BAR2 a 1 GB con desplazamiento 0 (bus = física) y `SCB0_SIZE` igual, en ese orden, y lo comprueba
+  leyendo. Decisión apuntada: el camino rápido de la especificación (§11.3, cambiar en caliente, sin respaldo en
+  Linux) y no el seguro (§11.2, reiniciar el enlace), porque este pide levantar todo el enlace sin poder probarlo.
+  Cuando haya controlador xHCI y una Pi, pasar al seguro. Consecuencia: los búferes del PCIe, en `Dma1G`.
+- **QEMU quita el nodo del PCIe** del árbol (no lo emula): el kernel lo dice al arrancar y no toca nada.
+- **Prueba:** la codificación del tamaño contra la tabla de la especificación (§5), en `pruebas.rs`.
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. **No comprobado:** todo lo demás (Pi 4;
+  pasos de §12 de la especificación).
+
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, tercera parte (auditoría de cierre de la fase 4: altos y M1-M3)
+
+Auditoría independiente: `docs/seguridad/auditoria-2026-11-06-fase4.md`. Ningún fallo crítico, dos altos, seis medios
+y once bajos. Arreglados en esta parte:
+
+- **A1.** Los temporizadores dejaban el núcleo 0 con las IRQ enmascaradas: cada tic recorría todos los del sistema.
+  Ahora van en un montículo por vencimiento y cada pasada toca como mucho 64 vencidos (los demás, en el tic
+  siguiente); el periodo más corto es un tic; cada uno cuesta 4 KB del cupo (antes 256 bytes), y crear ya no recorre
+  la lista (las entradas de los soltados se quitan al vencer, o todas cuando pasan del doble de los vivos). Prueba:
+  `tiempo`, paso 10 (uno de 1 µs da como mucho un aviso por tic).
+- **A2.** Un temporizador seguía escribiendo tras revocar la llave del canal, y con marca 0. Ahora guarda la marca y
+  los intermediarios de esa llave: sus avisos llevan la marca y se para al ver uno revocado. Lo mismo las
+  interrupciones (era el B2 de la fase 3). Prueba: `tiempo`, pasos 11 y 12; sin el arreglo, el 11 falla (marca 0),
+  comprobado.
+- **M1.** Un aviso de una vez se perdía con la cola llena. Ahora se reintenta cada tic. Prueba: `tiempo`, paso 13.
+- **M2.** La lista de proyecciones de una revocable no se vaciaba, y revocar podía quitar una proyección hecha con la
+  llave original en la misma dirección. Ahora cada proyección del espacio guarda por qué intermediarios se hizo:
+  revocar solo quita las suyas, y al apuntar una nueva se purgan las que ya no están. Tope: 256.
+- **M3.** Revocar un objeto grande hacía una invalidación de TLB por página con las IRQ enmascaradas. Ahora, con más
+  de 32 páginas, una sola de todo el ASID.
+- `make prueba` pasa a 60 s: con las pruebas nuevas, la tanda rozaba los 40.
+- **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque`, bien.
+
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, cuarta parte (auditoría de la fase 4: M4-M6)
+
+- **M4.** El compositor recibía toda la memoria de la VideoCore. Ahora la tiene el buzón y, al reservar la pantalla
+  para el compositor, le manda una llave recortada a ella: llamada nueva 25, `registros_recortar`.
+- **M5.** La memoria DMA volvía al repartidor aunque el aparato siguiera escribiendo. Ahora el permiso DMA es un
+  objeto (`memoria::PermisoDma`) con una cuarentena: al soltarse, la memoria DMA espera ahí hasta que el controlador
+  nuevo, con su aparato reiniciado, la devuelve con la llamada nueva 26, `dma_liberar` (el USB tras reiniciar el
+  DWC2, la GPU tras encender la V3D, el buzón al empezar). Cada aparato tiene su permiso: "dma" (USB) y "dma-buzon".
+  Prueba: `dma`, pasos 6 y 7.
+- **M6.** Un mensaje con dos llaves tumbaba el buzón, y no sabía quién le pedía qué. Ahora lee con sitio para 8 llaves
+  y suelta las de más, y solo acaba con el canal cerrado. `inicio` da a cada cliente una copia marcada y manda al
+  servidor un directorio (marca y nombre) sin marca, que solo puede escribir él. El buzón decide las etiquetas por
+  cliente: la pantalla, solo el "compositor"; el reloj de la V3D, solo la "gpu". El compositor, igual con su entrada.
+  Prueba C50: cuatro rechazos (también la pantalla pedida por un desconocido) tras un mensaje con dos llaves.
+- **Fallo encontrado de paso:** `inicio` daba las llaves de aparatos en el orden de su lista, no en el que las pide
+  cada servicio (con la memoria de la VideoCore en el buzón, sus llaves 2 y 3 se cruzaban). El paquete lleva ahora,
+  por programa, los números de sus aparatos en orden.
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. Con la máquina muy cargada (media de 8 a
+  10 por otras sesiones), C14 y C43 fallan a ratos por tiempo; en calma pasa todo.
+
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, quinta parte (auditoría de la fase 4: bajos)
+
+- **B1.** `forma_ciclo` mira también dentro de una revocable (que puede ir dentro de un revocador).
+- **B2.** La marca "│ " de las líneas de los programas se podía saltar: dependía de lo que creía cada proceso. Ahora
+  la salida guarda quién escribió lo último y si está a principio de línea, con el mismo cerrojo con que se escribe
+  (`serie::imprimir_programa`); si otro dejó la línea a medias, se empieza una nueva. Prueba: `malo`, paso 26 (media
+  línea, una línea del kernel y "C99: ..." que sale con la marca).
+- **B3.** `escribir` reserva lo que de verdad puede necesitar.
+- **B4.** Los últimos 4 KB del registro son solo para el kernel: un programa que escribe sin parar no tapa sus avisos.
+- **B5.** Se cierra con A1 (ya no hay lista de todos los temporizadores; los `Arc` se sueltan fuera del cerrojo).
+- **B6.** La memoria DMA proyectada solo para leer va también sin caché.
+- **B7.** `memoria_dma` en la zona normal respeta la reserva del kernel.
+- **B8, B9.** Dependen de la Pi: apuntados en "Limitaciones conocidas" de `kernel.md`.
+- **B10.** Documentado: puede llegar un aviso más justo tras cerrar un temporizador.
+- **B11.** Documentación puesta al día (tabla de llamadas, llaves que da el kernel, zona de la GPU, servicios).
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:
