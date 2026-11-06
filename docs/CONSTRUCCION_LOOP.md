@@ -1381,6 +1381,26 @@ y once bajos. Arreglados en esta parte:
 - `make prueba` pasa a 60 s: con las pruebas nuevas, la tanda rozaba los 40.
 - **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque`, bien.
 
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, cuarta parte (auditoría de la fase 4: M4-M6)
+
+- **M4.** El compositor recibía toda la memoria de la VideoCore. Ahora la tiene el buzón y, al reservar la pantalla
+  para el compositor, le manda una llave recortada a ella: llamada nueva 25, `registros_recortar`.
+- **M5.** La memoria DMA volvía al repartidor aunque el aparato siguiera escribiendo. Ahora el permiso DMA es un
+  objeto (`memoria::PermisoDma`) con una cuarentena: al soltarse, la memoria DMA espera ahí hasta que el controlador
+  nuevo, con su aparato reiniciado, la devuelve con la llamada nueva 26, `dma_liberar` (el USB tras reiniciar el
+  DWC2, la GPU tras encender la V3D, el buzón al empezar). Cada aparato tiene su permiso: "dma" (USB) y "dma-buzon".
+  Prueba: `dma`, pasos 6 y 7.
+- **M6.** Un mensaje con dos llaves tumbaba el buzón, y no sabía quién le pedía qué. Ahora lee con sitio para 8 llaves
+  y suelta las de más, y solo acaba con el canal cerrado. `inicio` da a cada cliente una copia marcada y manda al
+  servidor un directorio (marca y nombre) sin marca, que solo puede escribir él. El buzón decide las etiquetas por
+  cliente: la pantalla, solo el "compositor"; el reloj de la V3D, solo la "gpu". El compositor, igual con su entrada.
+  Prueba C50: cuatro rechazos (también la pantalla pedida por un desconocido) tras un mensaje con dos llaves.
+- **Fallo encontrado de paso:** `inicio` daba las llaves de aparatos en el orden de su lista, no en el que las pide
+  cada servicio (con la memoria de la VideoCore en el buzón, sus llaves 2 y 3 se cruzaban). El paquete lleva ahora,
+  por programa, los números de sus aparatos en orden.
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. Con la máquina muy cargada (media de 8 a
+  10 por otras sesiones), C14 y C43 fallan a ratos por tiempo; en calma pasa todo.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:

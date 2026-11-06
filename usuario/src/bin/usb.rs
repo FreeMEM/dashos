@@ -591,6 +591,8 @@ fn principal() -> u64 {
             return 3;
         }
     };
+    // Con el DWC2 ya reiniciado, lo que dejara en cuarentena un USB anterior puede volver (auditoría de la fase 4, M5).
+    dashos::dma_liberar(1);
     dashos::println!("  [usb] DWC2 {:#x} en marcha; búfer DMA en el bus {:#x}; {}", u.identificador(), bus,
         if avisos.is_some() { "espera con su interrupción y un temporizador" } else { "por consulta" });
     if u.descriptor(0).is_err() || u.poner_direccion(1).is_err() {

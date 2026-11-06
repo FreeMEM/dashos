@@ -42,7 +42,7 @@ pub enum Objeto {
     Proceso(Arc<Control>),
     /// Permiso para crear memoria DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de
     /// bus. Solo lo da el kernel, a los controladores que lo necesitan.
-    PermisoDma { zona: crate::memoria::Zona, desplazamiento_bus: u64 },
+    PermisoDma(Arc<crate::memoria::PermisoDma>),
     /// El registro del sistema (C48): con leer se saca, y quien lo saca es la consola. Solo lo da el kernel.
     Registro,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.

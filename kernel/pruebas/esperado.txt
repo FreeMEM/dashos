@@ -42,8 +42,8 @@ C12: canales lanzados
   memoria compartida: cambiado por el consumidor
 C13: memoria compartida lanzada
 C14: clase de plazo bien
-  buzón: 3 de 3 mensajes que no valen rechazados; memoria del firmware fuera de la RAM y nada más: sí
-  [compositor] pantalla 640x480 a 32 bits, doble búfer, en la memoria de la VideoCore
+  buzón: 4 de 4 mensajes que no valen rechazados; memoria del firmware fuera de la RAM y nada más: sí
+  [compositor] pantalla 640x480 a 32 bits, doble búfer, solo con su memoria
   [compositor] por cuadro: repintando todo
   [compositor] doble búfer y daños: bien
   [compositor] ventana movida con el ratón a (

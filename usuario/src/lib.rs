@@ -94,6 +94,18 @@ pub fn temporizador_crear(canal: u32, primero_us: u64, periodo_us: u64) -> i64 {
     llamada(24, [canal as u64, primero_us, periodo_us, 0, 0]).0 as i64
 }
 
+/// Devuelve al sistema la memoria DMA en cuarentena de un permiso (auditoría de la fase 4, M5). Se llama cuando el
+/// aparato ya está reiniciado. Devuelve cuántas páginas, o un error negativo.
+pub fn dma_liberar(permiso: u32) -> i64 {
+    llamada(26, [permiso as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// Una llave de registros o de memoria del firmware que solo cubre `tamano` bytes desde `desde` (páginas enteras).
+/// Devuelve la llave nueva o un error negativo (M4).
+pub fn registros_recortar(llave: u32, desde: u64, tamano: u64) -> i64 {
+    llamada(25, [llave as u64, desde, tamano, 0, 0]).0 as i64
+}
+
 /// Suelta una llave.
 pub fn cerrar(llave: u32) -> i64 {
     llamada(6, [llave as u64, 0, 0, 0, 0]).0 as i64

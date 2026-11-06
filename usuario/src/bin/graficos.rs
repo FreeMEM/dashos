@@ -107,5 +107,9 @@ fn principal() -> u64 {
             return n;
         }
     }
+    // La memoria DMA soltada espera en la cuarentena del permiso (M5): sin aparato de verdad, se devuelve ya.
+    if dashos::dma_liberar(1) <= 0 {
+        return 51;
+    }
     50
 }

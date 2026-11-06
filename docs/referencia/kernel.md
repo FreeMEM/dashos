@@ -140,6 +140,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
+| 25 | `registros_recortar` | `x0` llave de registros o de memoria del firmware, `x1` desde, `x2` tamaño (páginas enteras) | Llave nueva |
+| 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 
 ### Detalles
@@ -248,6 +250,12 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   reintenta en cada tic hasta que cabe. Se para al soltarse su última llave (`cerrar`, o al morir el proceso). Para
   esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal. Lo mismo vale para `interrupcion_asociar`:
   sus avisos llevan la marca de la llave del canal y dejan de llegar si se revoca.
+- **25, `registros_recortar`** (auditoría de la fase 4, M4). Una llave nueva del mismo tipo que solo cubre
+  `[desde, desde + tamaño)` del tramo de la original, con sus mismos derechos. Los dos, múltiplos de 4 KB; fuera del
+  tramo o tamaño 0, `E_ARGUMENTO`; otra llave, `E_TIPO`. Así quien tiene un tramo grande da solo un trozo.
+- **26, `dma_liberar`** (M5). La memoria DMA, al soltarse, no vuelve al sistema: queda en la cuarentena de su
+  permiso, porque el aparato puede seguir escribiendo en ella (su controlador murió a medias). El controlador nuevo,
+  con el aparato ya reiniciado, la devuelve con esta llamada. Pide el derecho de escribir en el permiso.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -323,7 +331,7 @@ Tipos de objeto:
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
 | Memoria | `memoria_crear` | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
-| Memoria del firmware | Solo el kernel | La de la VideoCore, para el compositor (C50) |
+| Memoria del firmware | Solo el kernel | La de la VideoCore, para el buzón, que da al compositor solo la pantalla (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
 | Proceso | `proceso_crear` | Matarlo (escribir) y esperar a que acabe (leer) |
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
