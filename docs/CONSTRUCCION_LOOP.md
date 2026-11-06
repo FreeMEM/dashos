@@ -1,12 +1,12 @@
 # Bucle de construcción de DashOS
 
-## Encargo siguiente: fase 4, A7 de Dash y UEFI (2026-11-06)
+## Encargo vigente: fase 4, A7 de Dash y UEFI (2026-11-06)
 
 Del usuario, el 2026-11-06 por la noche, en la sesión "DashOS" (que lleva DashOS y Dash para AArch64 desde el
-traspaso de ese día): "1, 2 y 3, en loop". Sin empezar: el uso semanal estaba al 94 % (regla del 90 %); se lanza con
-`/loop` cuando baje (reinicio: lunes 2026-11-09 a las 23:00).
+traspaso de ese día): "1, 2 y 3, en loop". Con `/loop`. El uso se mira en
+`~/.claude-ftapias/state/uso-7d-ftapias.txt` (la cuenta de esta sesión); al 90 % se para.
 
-1. **Fase 4 de S16**, tal como dice "Encargo vigente" (abajo): terminar C49, C50, C51 y la auditoría de cierre.
+1. **Fase 4 de S16**, tal como dice "Encargo de la fase 4 de S16" (abajo): terminar C49, C50, C51 y la auditoría de cierre.
 2. **A7 de Dash** (builtins de procesos, canales, llaves y grupos, C39-C48; y devolver memoria con `memoria_quitar`,
    C45). Tras cerrar la fase 4, con la API ya quieta. En un worktree propio de FreeMEMLang
    (`.worktrees/dashos-a7`), con plan y bitácora en `docs/AARCH64_LOOP.md`; los dos caminos (`./dash` y
@@ -17,7 +17,7 @@ traspaso de ese día): "1, 2 y 3, en loop". Sin empezar: el uso semanal estaba a
 
 Nada hacia fuera (push, PR, mensajes) sin permiso del usuario: commits locales y se le pregunta al acabar cada parte.
 
-## Encargo vigente: fase 4 de S16
+## Encargo de la fase 4 de S16 (parte 1 del de arriba)
 
 Del usuario, el 2026-11-03 a las 20:1x, tras cerrar la fase 3: "cierra lo que ha quedado abierto y empieza la fase
 4". El bucle hace la fase 4 de `docs/diseño/S16-kernel-seguro.md` (tareas C45 a C51) y la cierra con su auditoría.
