@@ -357,11 +357,12 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
             return E_LIMITE;
         }
     }
-    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir) {
+    let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
+    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir, &via) {
         return error_espacio(err);
     }
     if por.iter().any(|r| r.revocado()) {
-        proc_.espacio.tomar().quitar_proyeccion(va, Some(&m));
+        proc_.espacio.tomar().quitar_proyeccion(va, Some(&m), None);
         return E_LLAVE;
     }
     0
@@ -370,7 +371,7 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
 /// Quita la proyección de un objeto de memoria que empieza en `va` (C45).
 fn memoria_quitar(va: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
-    if proc_.espacio.tomar().quitar_proyeccion(va, None) { 0 } else { E_ARGUMENTO }
+    if proc_.espacio.tomar().quitar_proyeccion(va, None, None) { 0 } else { E_ARGUMENTO }
 }
 
 fn registros_proyectar(h: u32, va: u64) -> u64 {
@@ -399,16 +400,18 @@ fn interrupcion_asociar(h: u32, hc: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let (irq, canal) = {
         let t = proc_.llaves.tomar();
-        (t.ver(h), t.ver(hc))
+        (t.ver(h), t.ver_con_intermediarios(hc))
     };
-    let (Some(irq), Some(canal)) = (irq, canal) else { return E_LLAVE };
+    let (Some(irq), Some((canal, via))) = (irq, canal) else { return E_LLAVE };
     let (Objeto::Interrupcion(i), Objeto::Extremo(p)) = (irq.objeto, canal.objeto) else { return E_TIPO };
     let (c, lado) = (p.canal().clone(), p.lado());
     // Controlar una interrupción pide el derecho de escribir en su llave, y que lleguen al canal, el de escribir en él.
     if canal.derechos & objetos::ESCRIBIR == 0 || irq.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
-    i.asociar(c, lado);
+    // Con la marca y los intermediarios de la llave del canal: avisa como esa llave y deja de avisar si la revocan
+    // (auditoría de la fase 4, A2).
+    i.asociar(c, lado, via, canal.marca);
     0
 }
 
@@ -420,7 +423,9 @@ fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
         return E_ARGUMENTO;
     }
     let mut t = proc_.llaves.tomar();
-    let Some(canal) = t.ver(hc) else { return E_LLAVE };
+    // Con sus intermediarios y su marca: el temporizador escribe como esa llave y se para si la revocan (auditoría de
+    // la fase 4, A2).
+    let Some((canal, via)) = t.ver_con_intermediarios(hc) else { return E_LLAVE };
     let Objeto::Extremo(p) = canal.objeto else { return E_TIPO };
     if canal.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
@@ -428,7 +433,7 @@ fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
     if t.huecos() < 1 {
         return E_LIMITE;
     }
-    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), primero_us, periodo_us, &proc_.cupo) else {
+    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), via, canal.marca, primero_us, periodo_us, &proc_.cupo) else {
         return E_MEMORIA;
     };
     match t.instalar(objetos::Llave::nueva(Objeto::Temporizador(tm), objetos::TODOS)) {

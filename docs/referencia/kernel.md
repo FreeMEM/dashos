@@ -241,9 +241,13 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   otro lado del canal: 8 bytes, un número de 64 bits en little-endian con las veces que ha vencido desde el último
   aviso que se pudo entregar (casi siempre 1; más si la cola del canal estaba llena o el aviso llegó tarde). Así se
   distingue de una interrupción, que llega en 4 bytes. Pide el derecho de escribir en el canal (`E_DERECHOS`); otra
-  llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Se cobra al cupo.
-  Resolución: el tic del sistema, 10 ms; nunca avisa antes de tiempo. Se para al soltarse su última llave (`cerrar`,
-  o al morir el proceso). Para esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal.
+  llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Cuesta 4 KB del cupo
+  del grupo. Resolución: el tic del sistema, 10 ms, que es también el periodo más corto; nunca avisa antes de tiempo.
+  Los avisos llevan la marca de la llave del canal con que se creó (C41); si esa llave era revocable y se revoca, el
+  temporizador se para para siempre. Si la cola está llena, el aviso se cuenta para el siguiente; uno de una vez se
+  reintenta en cada tic hasta que cabe. Se para al soltarse su última llave (`cerrar`, o al morir el proceso). Para
+  esperar un rato sin gastar CPU: un temporizador de una vez y leer el canal. Lo mismo vale para `interrupcion_asociar`:
+  sus avisos llevan la marca de la llave del canal y dejan de llegar si se revoca.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.

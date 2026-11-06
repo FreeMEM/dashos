@@ -1358,6 +1358,29 @@ los programas también llevan "│ ".
 - **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. **No comprobado:** todo lo demás (Pi 4;
   pasos de §12 de la especificación).
 
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, tercera parte (auditoría de cierre de la fase 4: altos y M1-M3)
+
+Auditoría independiente: `docs/seguridad/auditoria-2026-11-06-fase4.md`. Ningún fallo crítico, dos altos, seis medios
+y once bajos. Arreglados en esta parte:
+
+- **A1.** Los temporizadores dejaban el núcleo 0 con las IRQ enmascaradas: cada tic recorría todos los del sistema.
+  Ahora van en un montículo por vencimiento y cada pasada toca como mucho 64 vencidos (los demás, en el tic
+  siguiente); el periodo más corto es un tic; cada uno cuesta 4 KB del cupo (antes 256 bytes), y crear ya no recorre
+  la lista (las entradas de los soltados se quitan al vencer, o todas cuando pasan del doble de los vivos). Prueba:
+  `tiempo`, paso 10 (uno de 1 µs da como mucho un aviso por tic).
+- **A2.** Un temporizador seguía escribiendo tras revocar la llave del canal, y con marca 0. Ahora guarda la marca y
+  los intermediarios de esa llave: sus avisos llevan la marca y se para al ver uno revocado. Lo mismo las
+  interrupciones (era el B2 de la fase 3). Prueba: `tiempo`, pasos 11 y 12; sin el arreglo, el 11 falla (marca 0),
+  comprobado.
+- **M1.** Un aviso de una vez se perdía con la cola llena. Ahora se reintenta cada tic. Prueba: `tiempo`, paso 13.
+- **M2.** La lista de proyecciones de una revocable no se vaciaba, y revocar podía quitar una proyección hecha con la
+  llave original en la misma dirección. Ahora cada proyección del espacio guarda por qué intermediarios se hizo:
+  revocar solo quita las suyas, y al apuntar una nueva se purgan las que ya no están. Tope: 256.
+- **M3.** Revocar un objeto grande hacía una invalidación de TLB por página con las IRQ enmascaradas. Ahora, con más
+  de 32 páginas, una sola de todo el ASID.
+- `make prueba` pasa a 60 s: con las pruebas nuevas, la tanda rozaba los 40.
+- **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque`, bien.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:

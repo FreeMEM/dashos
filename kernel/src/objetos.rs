@@ -89,17 +89,24 @@ impl Revocable {
             let proyecciones = core::mem::take(&mut *self.proyecciones.tomar());
             for (p, va) in proyecciones {
                 if let Some(p) = p.upgrade() {
-                    p.espacio.tomar().quitar_proyeccion(va, Some(&m));
+                    p.espacio.tomar().quitar_proyeccion(va, Some(&m), Some(self.id()));
                 }
             }
         }
         drop(objeto);
     }
 
-    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe.
+    /// Un número que identifica este intermediario en las proyecciones del espacio (solo para comparar).
+    pub fn id(&self) -> usize {
+        self as *const Self as usize
+    }
+
+    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe. Antes
+    /// purga las que ya no están: de procesos muertos o quitadas con `memoria_quitar` (auditoría de la fase 4, M2).
     pub fn apuntar_proyeccion(&self, p: &Arc<Proceso>, va: u64) -> bool {
         let mut v = self.proyecciones.tomar();
-        v.retain(|(w, _)| w.strong_count() > 0);
+        let id = self.id();
+        v.retain(|(w, va)| w.upgrade().is_some_and(|q| q.espacio.tomar().proyectada_via(*va, id)));
         if v.len() >= MAX_PROYECCIONES_REVOCABLE || v.try_reserve(1).is_err() {
             return false;
         }
@@ -114,7 +121,7 @@ impl Revocable {
 }
 
 /// Proyecciones apuntadas en un intermediario, como mucho.
-const MAX_PROYECCIONES_REVOCABLE: usize = 1024;
+const MAX_PROYECCIONES_REVOCABLE: usize = 256;
 
 /// El objeto de memoria detrás de `o`, atravesando intermediarios.
 fn memoria_de(o: &Objeto) -> Option<Arc<Memoria>> {

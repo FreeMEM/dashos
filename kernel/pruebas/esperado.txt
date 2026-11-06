@@ -110,7 +110,7 @@ C32: registros de EL0 bien
   [lanzador] malo: clase 0, código 31
   [llaves] copias con menos derechos, marcas que no se cambian y revocación
   [lanzador] llaves: clase 0, código 41
-  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale
+  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale; periodo mínimo, marca, revocación y cola llena
   [lanzador] tiempo: clase 0, código 49
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
