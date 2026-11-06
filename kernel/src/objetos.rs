@@ -162,6 +162,8 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
         Objeto::Temporizador(t) => t.destino().is_some_and(|c| Arc::ptr_eq(&c, canal)),
         // Un revocador lleva dentro su objeto: si es un lado de este canal, también es un ciclo (auditoría, M1).
         Objeto::Revocador(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
+        // Y una revocable, que puede estar dentro de un revocador (auditoría de la fase 4, B1).
+        Objeto::Revocable(r) => r.objeto.tomar().as_ref().is_some_and(|o| forma_ciclo(&Llave::nueva(o.clone(), 0), canal)),
         _ => false,
     }
 }
@@ -538,8 +540,6 @@ pub struct Proceso {
     pub llaves: Cerrojo<TablaLlaves>,
     /// Su grupo (C42): a él se cobra lo que crea.
     pub cupo: Arc<crate::cupo::Cupo>,
-    /// Lo último que escribió no acabó en salto de línea (C48): lo siguiente no lleva la marca de principio de línea.
-    pub a_media_linea: core::sync::atomic::AtomicBool,
     /// Lo que cuesta el proceso en sí (`COSTE_PROCESO`).
     pub _cargo: crate::cupo::Cargo,
     /// Sus hilos y cómo acabó (C39). Lo comparte con las llaves de proceso que lo nombran.

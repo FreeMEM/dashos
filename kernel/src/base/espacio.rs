@@ -62,6 +62,9 @@ pub enum Permiso {
     /// Búferes de DMA (C46): memoria normal sin caché, para que el aparato y el proceso vean lo mismo sin limpiar
     /// cachés (en la Pi 4 el DMA no es coherente con ellas). Se lee y escribe; nunca se ejecuta.
     DatosSinCache,
+    /// Búferes de DMA proyectados solo para leer: sin caché también, para ver lo que escribe el aparato y no tener el
+    /// mismo objeto con dos atributos (auditoría de la fase 4, B6).
+    SoloLecturaSinCache,
 }
 
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
@@ -262,6 +265,7 @@ impl Espacio {
                 Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
                 Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
                 Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
+                Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
             };
         unsafe {
             e.write_volatile((fisica & DIRECCION) | atributos);
@@ -285,7 +289,8 @@ impl Espacio {
         let permiso = match (escribir, m.bus().is_some()) {
             (true, true) => Permiso::DatosSinCache,
             (true, false) => Permiso::Datos,
-            (false, _) => Permiso::SoloLectura,
+            (false, true) => Permiso::SoloLecturaSinCache,
+            (false, false) => Permiso::SoloLectura,
         };
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);

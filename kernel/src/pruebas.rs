@@ -254,7 +254,6 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
         cupo: crate::cupo::Cupo::raiz(),
-        a_media_linea: Default::default(),
         _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
         control: Default::default(),
     });

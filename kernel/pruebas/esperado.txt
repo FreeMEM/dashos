@@ -105,6 +105,7 @@ C32: registros de EL0 bien
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
   [lanzador] padre: clase 0, código 39
   [malo] escape: ?[31m
+│ C99: imitado por un programa
   [malo] memoria agotada en
   [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada
   [lanzador] malo: clase 0, código 31

@@ -179,6 +179,11 @@ fn principal() -> u64 {
     }
     // 25: una secuencia de escape no llega al terminal: sale "?" en lugar del ESC.
     dashos::escribir("  [malo] escape: \x1b[31m\n");
+    // 26 (auditoría de la fase 4, B2): media línea, una línea del kernel (una llamada que no existe) y después algo que
+    // quiere parecer del kernel. Tiene que salir con la marca "│ " delante.
+    dashos::escribir("x");
+    dashos::llamada(77, [0; 5]);
+    dashos::escribir("C99: imitado por un programa\n");
     println!("  [malo] memoria agotada en {} trozos de 4 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31

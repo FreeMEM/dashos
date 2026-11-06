@@ -1401,6 +1401,23 @@ y once bajos. Arreglados en esta parte:
 - **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien. Con la máquina muy cargada (media de 8 a
   10 por otras sesiones), C14 y C43 fallan a ratos por tiempo; en calma pasa todo.
 
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, quinta parte (auditoría de la fase 4: bajos)
+
+- **B1.** `forma_ciclo` mira también dentro de una revocable (que puede ir dentro de un revocador).
+- **B2.** La marca "│ " de las líneas de los programas se podía saltar: dependía de lo que creía cada proceso. Ahora
+  la salida guarda quién escribió lo último y si está a principio de línea, con el mismo cerrojo con que se escribe
+  (`serie::imprimir_programa`); si otro dejó la línea a medias, se empieza una nueva. Prueba: `malo`, paso 26 (media
+  línea, una línea del kernel y "C99: ..." que sale con la marca).
+- **B3.** `escribir` reserva lo que de verdad puede necesitar.
+- **B4.** Los últimos 4 KB del registro son solo para el kernel: un programa que escribe sin parar no tapa sus avisos.
+- **B5.** Se cierra con A1 (ya no hay lista de todos los temporizadores; los `Arc` se sueltan fuera del cerrojo).
+- **B6.** La memoria DMA proyectada solo para leer va también sin caché.
+- **B7.** `memoria_dma` en la zona normal respeta la reserva del kernel.
+- **B8, B9.** Dependen de la Pi: apuntados en "Limitaciones conocidas" de `kernel.md`.
+- **B10.** Documentado: puede llegar un aviso más justo tras cerrar un temporizador.
+- **B11.** Documentación puesta al día (tabla de llamadas, llaves que da el kernel, zona de la GPU, servicios).
+- **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien.
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:

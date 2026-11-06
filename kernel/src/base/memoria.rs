@@ -403,7 +403,14 @@ impl Memoria {
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
         let mut paginas = alloc::vec::Vec::new();
         paginas.try_reserve_exact(n).ok()?;
-        let base = self::paginas().reservar(zona, n, 1)?;
+        let base = {
+            let mut p = self::paginas();
+            // En la zona normal, respetando la reserva del kernel, como `pagina_usuario` (auditoría de la fase 4, B7).
+            if zona == Zona::Normal && (p.libres - p.libres_bajo).saturating_sub(n) <= RESERVA {
+                return None;
+            }
+            p.reservar(zona, n, 1)?
+        };
         let k = crate::mmu::virt(base as usize);
         // Recién sacadas y seguidas: a cero, y fuera de la caché, para que no quede nada sucio que el aparato no vea
         // o que pise lo que escriba él.

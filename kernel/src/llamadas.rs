@@ -28,12 +28,15 @@
 //! | 21 | memoria_quitar(dirección): quita la proyección que empieza ahí |
 //! | 22 | memoria_dma(permiso DMA, tamaño) -> (llave de memoria, dirección de bus) |
 //! | 23 | registro_leer(llave del registro, búfer, capacidad) -> bytes: para la consola |
+//! | 24 | temporizador_crear(llave de canal, primer plazo µs, periodo µs) -> llave |
+//! | 25 | registros_recortar(llave de registros o del firmware, desde, tamaño) -> llave |
+//! | 26 | dma_liberar(permiso DMA) -> páginas devueltas de su cuarentena |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
 use crate::excepciones::Marco;
 use crate::objetos::{self, Canal, Mensaje, Objeto, MAX_DATOS, MAX_LLAVES};
-use crate::{kprint, kprintln, planificador};
+use crate::{kprintln, planificador};
 use alloc::vec::Vec;
 
 const LIMITE_USUARIO: u64 = 1 << 39;
@@ -166,27 +169,20 @@ fn escribir_consola(p: u64, n: u64) -> u64 {
     // Cada línea de un programa empieza por "│ " (C48): así no puede hacerse pasar por una línea del kernel (N6).
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let mut limpio = alloc::string::String::new();
-    if limpio.try_reserve(texto.len() * 2 + 4).is_err() {
+    // Un byte de entrada da como mucho 3 de salida ("?" por un carácter de control de 2 bytes no pasa de 3; un byte
+    // inválido, "?"); la marca la pone `imprimir_programa` (B3).
+    if limpio.try_reserve(texto.len() * 3).is_err() {
         return E_MEMORIA;
     }
-    let mut a_media = proc_.a_media_linea.load(core::sync::atomic::Ordering::Relaxed);
     for trozo in texto.utf8_chunks() {
         for c in trozo.valid().chars() {
-            if !a_media {
-                limpio.push_str("│ ");
-                a_media = true;
-            }
             limpio.push(if c.is_control() && c != '\n' && c != '\t' { '?' } else { c });
-            if c == '\n' {
-                a_media = false;
-            }
         }
         for _ in trozo.invalid() {
             limpio.push('?');
         }
     }
-    proc_.a_media_linea.store(a_media, core::sync::atomic::Ordering::Relaxed);
-    kprint!("{}", limpio);
+    crate::serie::imprimir_programa(alloc::sync::Arc::as_ptr(&proc_) as u64, &limpio);
     crate::registro::avisar();
     n as u64
 }

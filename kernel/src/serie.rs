@@ -72,27 +72,69 @@ impl fmt::Write for Serie {
 /// una interrupción sin colgar el núcleo cuando el hilo interrumpido estaba imprimiendo (auditoría, bajos).
 static CERROJO: crate::cerrojo::CerrojoIrq<()> = crate::cerrojo::CerrojoIrq::new(());
 
-/// Escribe en el registro (C48) y, mientras la consola no lo haya tomado, también directo al PL011.
-pub fn imprimir(args: fmt::Arguments) {
-    let _g = CERROJO.tomar();
-    let _ = fmt::Write::write_fmt(&mut AlRegistro, args);
+/// Cómo va la salida (auditoría de la fase 4, B2), con `CERROJO` tomado: quién escribió lo último (0, el kernel; si
+/// no, un número de proceso) y si se está a principio de línea. Así la marca "│ " de las líneas de los programas no
+/// depende de lo que crea cada proceso, y ninguno puede escribir algo que empiece una línea como si fuera del kernel.
+static ULTIMO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static A_PRINCIPIO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
+
+fn salida(s: &str, kernel: bool) {
+    crate::registro::poner(s.as_bytes(), kernel);
     if crate::registro::directo() {
-        let _ = fmt::Write::write_fmt(&mut Serie, args);
+        let _ = fmt::Write::write_str(&mut Serie, s);
+    }
+}
+
+/// Escribe en el registro (C48) y, mientras la consola no lo haya tomado, también directo al PL011. Si un programa
+/// dejó una línea a medias, el kernel empieza una nueva.
+pub fn imprimir(args: fmt::Arguments) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let _g = CERROJO.tomar();
+    if !A_PRINCIPIO.load(Relaxed) && ULTIMO.load(Relaxed) != 0 {
+        salida("\n", true);
+    }
+    let mut w = Kernel;
+    let _ = fmt::Write::write_fmt(&mut w, args);
+    ULTIMO.store(0, Relaxed);
+}
+
+/// Escribe lo de un programa (`escribir`, C48): cada línea suya empieza por "│ ". Si la salida estaba a media línea de
+/// otro, empieza una nueva.
+pub fn imprimir_programa(escritor: u64, texto: &str) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let _g = CERROJO.tomar();
+    let mut a_principio = A_PRINCIPIO.load(Relaxed);
+    if !a_principio && ULTIMO.load(Relaxed) != escritor {
+        salida("\n", false);
+        a_principio = true;
+    }
+    for (i, linea) in texto.split_inclusive('\n').enumerate() {
+        if a_principio || i > 0 {
+            salida("│ ", false);
+        }
+        salida(linea, false);
+        a_principio = linea.ends_with('\n');
+    }
+    A_PRINCIPIO.store(a_principio, Relaxed);
+    ULTIMO.store(escritor, Relaxed);
+}
+
+/// La escritura del kernel, apuntando si acaba a principio de línea.
+struct Kernel;
+
+impl fmt::Write for Kernel {
+    fn write_str(&mut self, s: &str) -> fmt::Result {
+        if !s.is_empty() {
+            salida(s, true);
+            A_PRINCIPIO.store(s.ends_with('\n'), core::sync::atomic::Ordering::Relaxed);
+        }
+        Ok(())
     }
 }
 
 /// Directo al PL011, aunque la consola haya tomado el registro: para el pánico, que puede ser lo último que se vea.
 pub fn imprimir_directo(args: fmt::Arguments) {
     let _ = fmt::Write::write_fmt(&mut Serie, args);
-}
-
-struct AlRegistro;
-
-impl fmt::Write for AlRegistro {
-    fn write_str(&mut self, s: &str) -> fmt::Result {
-        crate::registro::poner(s.as_bytes());
-        Ok(())
-    }
 }
 
 #[macro_export]
