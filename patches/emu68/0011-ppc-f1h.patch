@@ -1,0 +1,145 @@
+diff --git a/src/PPC_Arithmetic.cpp b/src/PPC_Arithmetic.cpp
+index 8def19b..a47b84e 100644
+--- a/src/PPC_Arithmetic.cpp
++++ b/src/PPC_Arithmetic.cpp
+@@ -1301,6 +1301,28 @@ int negx(PPCTranslatorContext* tc, uint32_t opcode)
+     return 1;
+ }
+ 
++/*
++    DashOS (F1h): the OE forms (divwuo, divwo, mullwo). OV = 1 on overflow, 0 otherwise; SO is sticky. For the
++    cases the architecture leaves undefined (division by zero, 0x80000000 / -1) rD is what qemu-ppc gives: the
++    divisor is taken as 1, so rD = rA. The forms without OE keep the plain ARM division (rD = 0 on division by zero).
++*/
++static constexpr uint32_t ccmp_imm(uint8_t rn, uint8_t imm5, uint8_t nzcv, uint8_t cond)
++{
++    return I32(0x7a400800 | ((imm5 & 31) << 16) | ((cond & 15) << 12) | ((rn & 31) << 5) | (nzcv & 15));
++}
++
++static void setOV(PPCTranslatorContext* tc, uint8_t cc_overflow)
++{
++    GPR reg_xer = tc->mapGPRForReadAndWrite(XERn);
++    GPR tmp = GPR::allocate();
++
++    tc->emit({
++        bic_immed(reg_xer, reg_xer, 1, 2),          // OV = 0, SO stays (sticky)
++        orr_immed(tmp, reg_xer, 2, 2),              // OV and SO
++        csel(reg_xer, tmp, reg_xer, cc_overflow)
++    });
++}
++
+ int divwux(PPCTranslatorContext* tc, uint32_t opcode)
+ {
+     uint8_t rd = (opcode >> 21) & 31;
+@@ -1315,21 +1337,20 @@ int divwux(PPCTranslatorContext* tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+ 
+     if (oe) {
+-        GPR tmp = GPR::allocate();
+-        GPR reg_xer = tc->mapGPRForReadAndWrite(XERn);
++        GPR div = GPR::allocate();
+ 
+         tc->emit({
+             cmp_immed(reg_rb, 0),
+-            orr_immed(reg_xer, reg_xer, 2, 2),
+-            bic_immed(tmp, reg_xer, 1, 2),
+-            csel(reg_xer, reg_xer, tmp, A64_CC_EQ)
++            csinc(div, reg_rb, WZR, A64_CC_NE)      // divisor 0 -> 1
+         });
++        setOV(tc, A64_CC_EQ);
++        tc->emit(udiv(reg_rd, reg_ra, div));
++    }
++    else {
++        tc->emit(udiv(reg_rd, reg_ra, reg_rb));
+     }
+-
+-    tc->emit(udiv(reg_rd, reg_ra, reg_rb));
+ 
+     if (rc) {
+-        tc->emit(cmp_immed(reg_rd, 0));
+         tc->emit(cmp_immed(reg_rd, 0));   // DashOS F1
+         setCRnSigned(tc, 0);
+     }
+@@ -1353,23 +1374,26 @@ int divwx(PPCTranslatorContext* tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+ 
+     if (oe) {
+-        GPR tmp = GPR::allocate();
+-        GPR reg_xer = tc->mapGPRForReadAndWrite(XERn);
+-
+-        // TODO: set XER OV if 0x80000000 / -1 is attempted
++        GPR div = GPR::allocate();
++        GPR ovf = GPR::allocate();
+ 
+         tc->emit({
++            cmn_immed(reg_rb, 1),                   // rB == -1 ?
++            ccmp_imm(reg_ra, 1, 0, A64_CC_EQ),      // then rA - 1 overflows only for rA == 0x80000000
++            cset(ovf, A64_CC_VS),
+             cmp_immed(reg_rb, 0),
+-            orr_immed(reg_xer, reg_xer, 2, 2),
+-            bic_immed(tmp, reg_xer, 1, 2),
+-            csel(reg_xer, reg_xer, tmp, A64_CC_EQ)
++            csinc(ovf, ovf, WZR, A64_CC_NE),        // or rB == 0
++            cmp_immed(ovf, 0),
++            csinc(div, reg_rb, WZR, A64_CC_EQ)      // on overflow the divisor is 1
+         });
++        setOV(tc, A64_CC_NE);
++        tc->emit(sdiv(reg_rd, reg_ra, div));
++    }
++    else {
++        tc->emit(sdiv(reg_rd, reg_ra, reg_rb));
+     }
+-
+-    tc->emit(sdiv(reg_rd, reg_ra, reg_rb));
+ 
+     if (rc) {
+-        tc->emit(cmp_immed(reg_rd, 0));
+         tc->emit(cmp_immed(reg_rd, 0));   // DashOS F1
+         setCRnSigned(tc, 0);
+     }
+@@ -1396,19 +1420,15 @@ int mullwx(PPCTranslatorContext* tc, uint32_t opcode)
+ 
+     if (oe) {
+         GPR tmp = GPR::allocate();
+-        GPR reg_xer = tc->mapGPRForReadAndWrite(XERn);
+ 
+         tc->emit({
+-            sxtw64(tmp, reg_rd),
+-            cmp_reg(tmp, reg_rd, LSL, 0),
+-            orr_immed(reg_xer, reg_xer, 2, 2),
+-            bic_immed(tmp, reg_xer, 1, 2),
+-            csel(reg_xer, reg_xer, tmp, A64_CC_NE)
++            sxtw64(tmp, reg_rd),                    // DashOS F1h: the 64-bit product fits in 32 bits?
++            cmp64_reg(tmp, reg_rd, LSL, 0)
+         });
++        setOV(tc, A64_CC_NE);
+     }
+ 
+     if (rc) {
+-        tc->emit(cmp_immed(reg_rd, 0));
+         tc->emit(cmp_immed(reg_rd, 0));   // DashOS F1
+         setCRnSigned(tc, 0);
+     }
+diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
+index 22c5be6..fdd45d8 100644
+--- a/src/PPC_Translator.cpp
++++ b/src/PPC_Translator.cpp
+@@ -1277,7 +1277,7 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+     uint32_t secondary = (opcode >> 1) & 0x3ff;
+ 
+     /* DashOS (F1): the XO forms with OE = 1 (addo, subfo...) go to the same functions, which read the OE bit.
+-       No X-form instruction of group 31 has these low 9 bits with bit 9 set. mullwo, divwo and divwuo, not yet. */
++       No X-form instruction of group 31 has these low 9 bits with bit 9 set. */
+     if (secondary & 0x200) {
+         switch (secondary & 0x1ff) {
+             case 266: return Emit::addx(tc, opcode);
+@@ -1291,6 +1291,9 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+             case 232: return Emit::subfmex(tc, opcode);
+             case 200: return Emit::subfzex(tc, opcode);
+             case 104: return Emit::negx(tc, opcode);
++            case 235: return Emit::mullwx(tc, opcode);      // DashOS F1h: mullwo
++            case 459: return Emit::divwux(tc, opcode);      // DashOS F1h: divwuo
++            case 491: return Emit::divwx(tc, opcode);       // DashOS F1h: divwo
+         }
+     }
+ 

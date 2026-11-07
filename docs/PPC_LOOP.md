@@ -34,8 +34,13 @@ final salta a 0: el banco sale de su bucle y el oráculo recoge el SIGSEGV. Se c
 32 FPR, FPSCR y una suma de la memoria; si la memoria difiere, se dice en qué bytes.
 
 El Emu68 del worktree es un clon aparte (`third_party/Emu68`, no va a git) en af63580 con los parches 0001-0009 como
-commit "base"; `0010-ppc-f1.patch` sale de su `git diff` (todo lo de F1, que solo toca el JIT PPC, salvo
-`csel64` en A64.h, que no usaba nadie). El banco PPC se compila con `PPC_SO_PROPAGATION=1`
+commit "base" y `0010-ppc-f1.patch` como commit "0010" (F1a-F1g, solo toca el JIT PPC, salvo `csel64` en A64.h, que
+no usaba nadie; es lo que se mandó a Emu68 en el PR #354 y no se cambia). `0011-ppc-f1h.patch` es el `git diff`
+desde el commit "0010" (F1h y F1e). El banco se compila contra ese árbol:
+
+```
+make -C jit-host/ppc EMU68=$PWD/third_party/Emu68
+``` El banco PPC se compila con `PPC_SO_PROPAGATION=1`
 (SO de XER copiado a CR, como en un PPC de verdad; Emu68 lo deja a 0 por velocidad).
 
 ## Entradas
@@ -181,3 +186,19 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   exacta con una instrucción más.
 - Worktree del clon de Emu68 en `.worktrees/emu68-upstream`. Si lo acepta, el parche 0010 se parte en lo de Emu68
   y lo de DashOS.
+
+### 2026-11-07 — F1h (1): mullwo, divwo, divwuo
+
+- Rama `ppc-f1h` (worktree `.worktrees/ppc-f1h`, con su propio clon de Emu68). Lo nuevo del JIT va en
+  `patches/emu68/0011-ppc-f1h.patch`; el 0010 queda como se mandó a Emu68.
+- `pruebas/gen_t5.py` (t5, 4074 casos): `mullwo`, `divwo` y `divwuo`, con y sin punto, con 15 valores por operando
+  (también la división entre 0 y 0x80000000 / -1), con XER de entrada a 0, con SO y con CA; y con rD igual a rA o rB.
+- **Faltaba**, ahora en el 0011: las tres no se despachaban (el bit OE cambia el código secundario).
+- **Fallos del JIT de Emu68**:
+  - `divwuo`/`divwo` ponían SO aunque no hubiera desbordamiento (SO se ponía antes de elegir); `mullwo` igual, y
+    además comparaba el producto en 32 bits (`cmp` en vez de `cmp64`), así que nunca veía el desbordamiento.
+  - `divwo` no veía 0x80000000 / -1 (había un TODO).
+- Decisión: en los casos que PPC deja sin definir, rD sale como en qemu-ppc (el divisor pasa a ser 1: rD = rA), pero
+  solo en las formas con OE, que ya calculan el desbordamiento. `divw`/`divwu` sin OE siguen con la división de ARM
+  tal cual (rD = 0 entre 0), para no añadir instrucciones a la división normal; t1b sigue sin probar esos casos.
+- Las once pruebas, bien.
