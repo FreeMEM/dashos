@@ -46,6 +46,15 @@ arranque-virt: virt
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
 	QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
 
+PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
+
+# Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas.
+prueba-virt: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features pruebas,virt
+	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS_VIRT)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(PRUEBAS_VIRT)) cargo build --release
+	QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_virt.txt 120
+
 clean:
 	cargo clean
 

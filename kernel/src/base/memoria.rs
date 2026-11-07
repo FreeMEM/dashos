@@ -176,7 +176,7 @@ impl Paginas {
         });
 
         // Límites de las zonas: la SD (emmc2bus) y, si se encuentra, el PCIe. Si no, los valores de la Pi 4.
-        self.limite_1g = (1u64 << 30) as usize / PAGINA as usize;
+        self.limite_1g = (super::placa::LIMITE_DMA / PAGINA) as usize;
         if let Some(n) = d.por_nombre("emmc2bus") {
             if let Some((_, cpu, tam)) = d.ventana_dma(&n, 0) {
                 if cpu == 0 {

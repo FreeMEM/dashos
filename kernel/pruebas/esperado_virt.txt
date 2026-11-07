@@ -1,0 +1,33 @@
+# U3c: las pruebas del arranque en QEMU virt por UEFI (make -C kernel prueba-virt). Las de la Pi que no tienen
+# aparato aquí (buzón, USB, SD con tarjeta, DMA de la SD) se saltan solas. Mismo formato que esperado.txt.
+C2: esqueleto en marcha
+C3: de vuelta de la excepción
+C4: árbol de dispositivos leído
+C51: tamaños de la ventana de entrada del PCIe como la especificación bien
+C5: zonas bien, devolución bien
+C7: montón bien
+C8: interrupciones bien
+C9: 3 núcleos más en marcha: bien
+C34: mapa del kernel con W^X y guardas bien
+C38: el kernel y los procesos, fuera del alcance del DMA: bien
+C10: hilos bien
+C11: procesos lanzados
+C12: canales lanzados
+C13: memoria compartida lanzada
+C14: clase de plazo bien
+C50: no hay buzón en el árbol
+C17: avisos entre núcleos bien
+C18: recogida bien
+C20: controlador fuera del kernel lanzado
+C21: controlador de la tarjeta SD lanzado
+C50: listas del HVS y de la V3D, tabla de la MMU y búferes de la GPU desde un proceso bien
+C28: FPU por hilo bien
+C29: cargador de PIE bien
+C32: los dos extremos de un canal a la vez, en dos núcleos: bien
+C32: reparto de páginas desde varios núcleos bien
+C32: ASID de 16 bits sin repetirse bien, y se vuelven a dar bien
+C32: registros de EL0 bien
+C43: pruebas de usuario lanzadas por un proceso bien
+C51: temporizadores repartidos por grupos bien
+PÁNICO: panicked at src/base/excepciones.rs
+pila del kernel desbordada

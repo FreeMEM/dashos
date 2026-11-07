@@ -28,8 +28,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   cuatro núcleos (PSCI) y la consola como servicio.
 - [x] U3b **GICv3** (redistribuidores por núcleo, registros del sistema `ICC_*`), para `gic-version=3` y las máquinas
   de verdad.
-- [ ] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba` en las dos máquinas): muchas son de la Pi
-  (SD, USB, buzón); separar las que valen para las dos.
+- [x] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba-virt`).
+- [ ] U3d **Memoria que vuelve tarde con GICv3** (abierto, abajo).
 - [x] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
   (dirección, tamaño, paso, formato); el compositor pinta ahí cuando no hay buzón de la VideoCore. En QEMU, `ramfb`
   o `virtio-gpu`.
@@ -43,6 +43,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 
 - `make -C uefi/prueba` saca el núcleo de prueba de U2 (`nucleo.bin`, en C, enlazado en 0x40200000).
 - `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
+- `make -C kernel prueba-virt`: la imagen de pruebas en `virt` (`pruebas/esperado_virt.txt`).
 - `make -C kernel arranque-virt`: el kernel con la característica `virt`, metido en el programa de UEFI y arrancado.
 - `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `MAQUINA=...` añade
   opciones a la máquina, como `virtualization=on` para entrar en EL2; 4 núcleos, 2 GB, `acpi=off`) con
@@ -130,3 +131,19 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - **Comprobado:** `arranque_virt.txt` con GICv2 y GICv3; la captura tiene el fondo, el tablero y la ventana con los
   colores que pinta el compositor. En la Pi, `make -C kernel prueba` y `arranque`, bien. **No comprobado:** máquinas
   de verdad (otro formato de píxel, pantallas que no son de 32 bits).
+
+### 2026-11-07 madrugada — U3c (las pruebas del kernel en `virt`)
+
+- `make -C kernel prueba-virt`: la imagen de pruebas con la característica `virt`, dentro del programa de UEFI, en
+  QEMU `virt` con `ramfb`. `pruebas/esperado_virt.txt` tiene los veredictos que valen en las dos placas; las pruebas
+  de la Pi sin aparato aquí (buzón, USB, SD con tarjeta, DMA de la SD) se saltan solas.
+- **Zona de DMA de `virt`:** el primer GB de RAM (1 a 2 GB, `placa::LIMITE_DMA`), porque allí la RAM empieza en
+  1 GB. C5 y C38 miran ese límite y no 1 GB fijo; C5 ya no libera lo que no obtuvo (caía con la zona vacía).
+- **Comprobado:** `prueba-virt` bien con GICv2 (cuatro de cuatro); en la Pi, `prueba` y `arranque` bien.
+- **U3d, abierto: con GICv3, a veces C43 da MAL.** Tras `lanzador` faltan 64 a 77 páginas (unos 300 KB). No es una
+  pérdida para siempre: vuelven en vueltas posteriores de `lanzador` (repitiendo la prueba de `grupos` diez veces en
+  un arranque, los saldos van +64, -64, +68, -68...). En un arranque ocioso no vuelven en 10 s. Solo con GICv3 y con
+  `grupos` (que mata grupos a la vez mientras se crean procesos); con GICv2, nunca en ocho tandas. Los tics llegan a
+  los cuatro núcleos (100 por segundo cada uno). Sospecha sin comprobar: algo que solo se suelta con actividad en un
+  núcleo concreto (un hilo muerto que no se recoge, o un objeto retenido en una cola), que la temporización del
+  GICv3 destapa. Falta encontrarlo: no está claro que sea solo de `virt`.

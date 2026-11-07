@@ -14,6 +14,14 @@ pub const SERIE: usize = 0xFE20_1000;
 #[cfg(feature = "virt")]
 pub const SERIE: usize = 0x0900_0000;
 
+/// Hasta dónde llega la zona de DMA (`Dma1G`) si el árbol no lo dice: en la Pi, el primer GB, el que alcanzan la SD y
+/// el DMA de la placa; en `virt`, el primer GB de RAM (de 1 a 2 GB), porque allí la RAM empieza en 1 GB y los aparatos
+/// de QEMU alcanzan toda la memoria (U3c).
+#[cfg(not(feature = "virt"))]
+pub const LIMITE_DMA: u64 = 1 << 30;
+#[cfg(feature = "virt")]
+pub const LIMITE_DMA: u64 = 2 << 30;
+
 pub const fn es_periferico(fisica: u64) -> bool {
     fisica >= PERIFERICOS.0 && fisica < PERIFERICOS.1
 }

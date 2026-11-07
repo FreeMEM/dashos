@@ -110,11 +110,14 @@ fn prueba_memoria() {
         v.write_volatile(0x0123_4567_89ab_cdef);
         kprintln!("  escrito y leído por el mapa directo en {:#x}: {:#x}", v as usize, v.read_volatile());
     }
-    let bien = d1 < (1 << 30) && d3 < (3 << 30) && bloque % (16 * PAGINA) == 0 && bloque < (1 << 30);
-    unsafe { p.liberar(normal, 1) };
-    unsafe { p.liberar(d1, 1) };
-    unsafe { p.liberar(d3, 1) };
-    unsafe { p.liberar(bloque, 16) };
+    let limite = crate::placa::LIMITE_DMA;
+    let bien = d1 < limite && d3 < (3 << 30) && bloque % (16 * PAGINA) == 0 && bloque < limite;
+    // Solo lo que se obtuvo (si una zona no tiene, la prueba ya dice MAL).
+    for (dir, n) in [(normal, 1), (d1, 1), (d3, 1), (bloque, 16)] {
+        if dir != u64::MAX && dir != 0 {
+            unsafe { p.liberar(dir, n) };
+        }
+    }
     let vuelta = p.libres() == antes;
     kprintln!("C5: zonas {}, devolución {}", if bien { "bien" } else { "MAL" }, if vuelta { "bien" } else { "MAL" });
 }
@@ -908,7 +911,8 @@ fn prueba_mapa() {
 /// de la placa (el primer GB): la imagen del kernel está en su copia, y el montón, las pilas y la memoria de los
 /// procesos salen de arriba. El primer GB queda para los búferes de DMA. La copia no tiene alias en el mapa lineal.
 fn prueba_dma() {
-    const GB: u64 = 1 << 30;
+    // El límite de la zona de DMA de la placa: 1 GB en la Pi, 2 GB en QEMU `virt` (U3c).
+    const GB: u64 = crate::placa::LIMITE_DMA;
     let imagen = mapa::imagen_fisica();
     let (ini, _) = mmu::imagen_va();
     let codigo = mapa::traducir_fisica(crate::kmain as *const () as usize);
