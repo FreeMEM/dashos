@@ -29,6 +29,9 @@ Estas decisiones son del usuario, del 2026-11-03.
   Se decide tras el 4 de diciembre, con el chip conocido y una máquina abierta. Un Cortex-A53 es de la clase de la
   Pi 3, que pasa a placa soportada (usuario, 2026-11-05): lo que se haga para ella (controlador de interrupciones,
   metas medidas en un A53, 1 GB) prepara el THEA1200.
+- **THEA500 Mini como placa candidata** (usuario, 2026-11-07). Allwinner H6, 512 MB, 256 MB de NAND, ya a la venta.
+  Se arranca por FEL (USB) sin tocar su NAND, y U-Boot de mainline da UEFI en el H6: vale el cargador de la fase U.
+  Adelanta el THEA1200. Análisis y primer paso en `docs/diseño/placa-thea500-mini.md`.
 - **Otros ordenadores ARM** (usuario, 2026-11-04). El objetivo es que DashOS corra en ordenadores ARM en general, no
   solo en placas: también en los Mac con Apple Silicon y en los portátiles ARM nuevos. Arrancando DashOS
   directamente, sin otro sistema debajo: el usuario descarta la máquina virtual. El primer paso común es arrancar por
