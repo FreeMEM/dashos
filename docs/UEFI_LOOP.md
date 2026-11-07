@@ -43,7 +43,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   falta: conectar y quitar aparatos USB en marcha, USB 3, varias colas del NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`. Análisis hecho (`docs/diseño/U7-caja-sin-big-endian.md`): unas 1200 líneas en
-  Emu68; espera a que el usuario decida cuándo.
+  Emu68. El usuario dijo que sí el 2026-11-07; se hace en la rama `u7` (worktree `.worktrees/u7`), por pasos:
+  U7a banco de pruebas en los dos órdenes, U7b parche base, U7c direcciones efectivas, U7d instrucciones, U7e FPU.
+  Prueba: `make -C jit-host && make -C jit-host ORDEN=le && python3 jit-host/comparar.py`.
 
 ## Herramientas
 
@@ -348,3 +350,28 @@ comprobado si lo tienen).
   terminadas con su etiqueta y su estado.
 - **Comprobado:** las cuatro máquinas de `virt` y la Pi (`prueba`, `arranque`). **No comprobado:** varios clientes
   con anillo a la vez, un cliente que deja de recoger terminadas (el servicio para su anillo; los demás siguen).
+
+### 2026-11-07 — U7a (el banco de pruebas en los dos órdenes)
+
+- `make -C jit-host ORDEN=le` compila el banco del JIT en little-endian (en `build-le/`, se ejecuta con
+  `qemu-aarch64`) con la misma cadena de Bootlin big-endian: GCC de AArch64 hace los dos órdenes y el banco no usa
+  libgcc. Su sysroot solo trae `gnu/stubs-lp64_be.h`; `jit-host/include-le/` pone el que piden las cabeceras.
+- El banco escribe y lee la memoria del 68k siempre en big-endian (`pon16`, `pon32`, `lee32`), y con
+  `jit-host programa.bin [volcado]` ejecuta un programa 68k plano en $140000 y saca registros, FPU y una suma de
+  toda la memoria del 68k. Con volcado, guarda el código ARM de cada bloque que traduce el JIT.
+- Programas de prueba en `jit-host/pruebas68k/`: `c1.c` (C con `-O2` y `-O0`: ordenar bytes, palabras y largos,
+  campos de bits, estructuras con Double, Float, 64 bits y precisión extendida, tablas de saltos, CRC) y `t1.s`
+  (modos de dirección del 68020 con indirecto en memoria, aritmética y desplazamientos sobre memoria, BCD y ADDX con
+  predecremento, CMPM, campos de bits, MOVEM en todas sus formas, MOVEP, CAS y CAS2, CMP2, PACK y UNPK, MULU.L y
+  DIVU.L de 64 bits, LINK, PEA, RTD, SR y CCR, MOVE16, y la FPU con todos los formatos de memoria y FMOVEM). Se
+  compilan con el GCC del Amiga de Dash; `hunk2bin.py` pasa el ejecutable a binario plano. Los `.bin` van en git.
+- `jit-host/comparar.py`: (1) cada programa da lo mismo con el JIT big-endian y con el little-endian; (2) el código
+  que genera el JIT big-endian es el de la referencia (`pruebas68k/ref/`, sacada antes de tocar nada para U7),
+  salvo inmediatos de MOVZ/MOVK (direcciones de funciones de C). Hoy: (2) bien en los tres (211 bloques iguales);
+  (1) el little-endian cae en la primera instrucción, como se espera antes de girar nada.
+- Parche `0003-volcado-del-banco.patch`: el volcado, y que en el banco (`DASHOS_HOST`) las llamadas del código
+  traducido a C (excepciones, precisión extendida) no pongan la mitad alta de las direcciones del kernel. Sin él,
+  el banco caía con cualquier FMOVEM.X; las pruebas de antes no lo tocaban.
+- Avisos que da Emu68 en big-endian y que son suyos, no de U7: "SBCD mem is not yet fixed!".
+- `third_party/Emu68` del worktree es un clon aparte con 0001 y 0002 como un commit "base"; cada parche nuevo sale
+  de `git diff` de su commit.

@@ -1,0 +1,67 @@
+diff --git a/src/M68k_Exception.c b/src/M68k_Exception.c
+index c451c0d..163aa22 100644
+--- a/src/M68k_Exception.c
++++ b/src/M68k_Exception.c
+@@ -60,8 +60,13 @@ void EMIT_Exception(struct TranslatorContext *ctx, uint16_t exception, uint8_t f
+     EMIT(ctx,
+         mov_reg(0, sr),
+         mov_immed_u16(2, val & 0xffff, 0),
+-        movk_immed_u16(2, val >> 16, 1),
+-        orr64_immed(2, 2, 25, 25, 1),
++        movk_immed_u16(2, val >> 16, 1)
++    );
++#ifndef DASHOS_HOST
++    /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
++    EMIT(ctx, orr64_immed(2, 2, 25, 25, 1));
++#endif
++    EMIT(ctx,
+         blr(2),
+         mov_reg(sr, 0)
+     );
+diff --git a/src/M68k_LINEF.c b/src/M68k_LINEF.c
+index 5cbf4bf..c5422c2 100644
+--- a/src/M68k_LINEF.c
++++ b/src/M68k_LINEF.c
+@@ -29,9 +29,12 @@ void get_Load96(struct TranslatorContext *ctx)
+         reg_Load96 = RA_AllocARMRegister(ctx);
+         uint32_t val = (uintptr_t)Load96bit;
+         EMIT_LoadImmediate(ctx, reg_Load96, val);
++#ifndef DASHOS_HOST
++        /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
+         EMIT(ctx, 
+             orr64_immed(reg_Load96, reg_Load96, 25, 25, 1)
+         );
++#endif
+     }
+ }
+ 
+@@ -41,9 +44,12 @@ void get_Save96(struct TranslatorContext *ctx)
+         reg_Save96 = RA_AllocARMRegister(ctx);
+         uint32_t val = (uintptr_t)Store96bit;
+         EMIT_LoadImmediate(ctx, reg_Save96, val);
++#ifndef DASHOS_HOST
++        /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
+         EMIT(ctx, 
+             orr64_immed(reg_Save96, reg_Save96, 25, 25, 1)
+         );
++#endif
+     }
+ }
+ 
+diff --git a/src/M68k_Translator.c b/src/M68k_Translator.c
+index 363687e..58e0643 100644
+--- a/src/M68k_Translator.c
++++ b/src/M68k_Translator.c
+@@ -1038,6 +1038,12 @@ struct M68KTranslationUnit *M68K_GetTranslationUnit(uint16_t *m68kcodeptr)
+     uintptr_t line_length = M68K_Translate(m68kcodeptr, &unit->mt_ARMCode[0], &unit->mt_ARMCode[((uint32_t)icnt + 1) * 64]);
+     uintptr_t arm_insn_count = line_length/4 - 1;
+ 
++#ifdef DASHOS_HOST
++    /* DashOS (U7): el banco de pruebas guarda el código de cada bloque, para comparar lo que genera el JIT */
++    extern void dashos_jit_unit(uint32_t m68k_addr, const uint32_t *arm, uint32_t bytes);
++    dashos_jit_unit((uint32_t)(uintptr_t)orig_m68kcodeptr, &unit->mt_ARMCode[0], (uint32_t)line_length);
++#endif
++
+     uintptr_t unit_length = (line_length + 63 + sizeof(struct M68KTranslationUnit)) & ~63;
+ 
+     //kprintf("unit length: %ld, initial alloc: %ld\n", unit_length, initial_alloc);
