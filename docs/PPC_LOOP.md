@@ -15,7 +15,7 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
 - [x] F1d FPU: doble y simple (grupo 59), cargas y guardados de todas las formas, NaN de PPC, redondeo, FPSCR
   (sus bits de control).
 - [ ] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
-- [ ] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
+- [x] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
 - [ ] AltiVec, después de MorphOS (orden del usuario).
 
 ## Cómo se prueba
@@ -134,3 +134,16 @@ commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO
 - Resultado: las ocho pruebas iguales en el JIT y en qemu-ppc; el banco del 68k, igual que la referencia.
 - Pendiente: las formas con punto de la FPU y los bits de excepción de FPSCR (FX, VX..., XX, FI, FR, FPRF), fres,
   frsqrte, mcrfs, el redondeo de las simples con doble redondeo en casos raros (no ha salido en las pruebas).
+
+### 2026-11-07 — F1f: la llamada nativa
+
+- El opcode primario 1 (ilegal en todos los PowerPC) con un número de función en sus 26 bits bajos
+  (`Emit::native`, con `DASHOS_NATIVE_CALLS`): el bloque acaba con el PC en la instrucción siguiente,
+  `NATIVE_INDEX` y `INT.NATIVE` en `PPCState`. El bucle (`PPCMainLoop`), en la comprobación de interrupciones de
+  cada vuelta, guarda el contexto, llama a `dashos_ppc_native(ctx, n)`, lo vuelve a cargar y sigue. Una entrada de
+  biblioteca es esa instrucción y `blr`, como la línea A del 68k seguida de RTS (parche 0002).
+- `pruebas/p3.s`: tres entradas llamadas con `bl`, 20 veces por `bctrl` en un bucle, y una sin función. El banco
+  hace las funciones en `host_ppc.cpp`; el oráculo, en su manejador de SIGILL (qemu-ppc da SIGILL con el opcode
+  1), que cambia los registros del contexto y salta la instrucción. Igual en los dos: 24 llamadas, resultados 42,
+  142, 36, 2^20 y -1.
+- Las nueve pruebas, bien; el banco del 68k, igual.

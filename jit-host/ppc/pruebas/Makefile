@@ -7,7 +7,7 @@ FLAGS := -mcpu=powerpc -ffreestanding -nostdlib -fno-pic -fno-pie -no-pie -stati
 	-fno-asynchronous-unwind-tables -Wall
 ENTEROS := -msoft-float
 
-all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin oraculo
+all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin p3.bin oraculo
 
 p1.bin: p1.c prueba.ld
 	$(CC) $(FLAGS) $(ENTEROS) -O2 -T prueba.ld -o p1.elf $< -lgcc && $(OC) -O binary p1.elf $@
@@ -32,6 +32,8 @@ t3.s: gen_t3.py
 	python3 gen_t3.py > $@
 t3.bin: t3.s prueba.ld
 	$(CC) $(FLAGS) -mhard-float -T prueba.ld -o t3.elf $< && $(OC) -O binary t3.elf $@
+p3.bin: p3.s prueba.ld
+	$(CC) $(FLAGS) -T prueba.ld -o p3.elf $< && $(OC) -O binary p3.elf $@
 
 oraculo: oraculo.c
 	$(CC) -O2 -static -o $@ $<

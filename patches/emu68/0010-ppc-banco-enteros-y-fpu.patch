@@ -29,10 +29,26 @@ index 06a592c..f432403 100644
  __constexpr uint32_t csinc64(uint8_t rd, uint8_t rn, uint8_t rm, uint8_t cond) { ASSERT_REG(rd); ASSERT_REG(rn); ASSERT_REG(rm); return I32(0x9a800400 | (rd & 31) | ((rn & 31) << 5) | ((rm & 31) << 16) | ((cond & 15) << 12)); }
  __constexpr uint32_t csinv(uint8_t rd, uint8_t rn, uint8_t rm, uint8_t cond) { ASSERT_REG(rd); ASSERT_REG(rn); ASSERT_REG(rm); return I32(0x5a800000 | (rd & 31) | ((rn & 31) << 5) | ((rm & 31) << 16) | ((cond & 15) << 12)); }
 diff --git a/include/PPC.h b/include/PPC.h
-index 26b10ba..3b16cf2 100644
+index 26b10ba..d0973bf 100644
 --- a/include/PPC.h
 +++ b/include/PPC.h
-@@ -455,6 +455,11 @@ int subfic(PPCTranslatorContext *tc, uint32_t opcode);
+@@ -61,6 +61,7 @@ struct PPCState
+             volatile uint8_t EXT;
+             volatile uint8_t RESET;
+             volatile uint8_t DEC;
++            volatile uint8_t NATIVE;    /* DashOS (F1f): a native call waits (NATIVE_INDEX) */
+         } INT;
+         volatile uint64_t INT64;
+     };
+@@ -82,6 +83,7 @@ struct PPCState
+     uint32_t JIT_CONTROL2;
+     uint32_t BASEREG;
+     uint8_t * M68K_FLAG;
++    uint32_t NATIVE_INDEX;      /* DashOS (F1f) */
+ };
+ 
+ #define MSR_LE      0x000001
+@@ -455,6 +457,11 @@ int subfic(PPCTranslatorContext *tc, uint32_t opcode);
  int subfcx(PPCTranslatorContext *tc, uint32_t opcode);
  int addcx(PPCTranslatorContext *tc, uint32_t opcode);
  int addex(PPCTranslatorContext *tc, uint32_t opcode);
@@ -44,7 +60,7 @@ index 26b10ba..3b16cf2 100644
  int cmp(PPCTranslatorContext *tc, uint32_t opcode);
  int cmpl(PPCTranslatorContext *tc, uint32_t opcode);
  int negx(PPCTranslatorContext *tc, uint32_t opcode);
-@@ -503,6 +508,20 @@ int sthux(PPCTranslatorContext *tc, uint32_t opcode);
+@@ -503,6 +510,21 @@ int sthux(PPCTranslatorContext *tc, uint32_t opcode);
  int sthbrx(PPCTranslatorContext *tc, uint32_t opcode);
  
  int stw(PPCTranslatorContext *tc, uint32_t opcode);
@@ -61,6 +77,7 @@ index 26b10ba..3b16cf2 100644
 +int fUnary(PPCTranslatorContext *tc, uint32_t opcode);
 +int mffs(PPCTranslatorContext *tc, uint32_t opcode);
 +int mtfs(PPCTranslatorContext *tc, uint32_t opcode);
++int native(PPCTranslatorContext *tc, uint32_t opcode);
 +int stmw(PPCTranslatorContext *tc, uint32_t opcode);
  int stwx(PPCTranslatorContext *tc, uint32_t opcode);
  int stwu(PPCTranslatorContext *tc, uint32_t opcode);
@@ -584,6 +601,41 @@ index c73784b..8def19b 100644
  
      if (rc) {
          tc->emit(cmp_immed(reg_ra, 0));
+diff --git a/src/PPC_ExecutionLoop.cpp b/src/PPC_ExecutionLoop.cpp
+index eadb0d2..bd63c22 100644
+--- a/src/PPC_ExecutionLoop.cpp
++++ b/src/PPC_ExecutionLoop.cpp
+@@ -30,6 +30,11 @@
+ 
+ #define jit_tlsf DO_NOT_USE_jit_tlsf
+ 
++#ifdef DASHOS_NATIVE_CALLS
++namespace Emu68::PPC { struct PPCState; }
++extern "C" void dashos_ppc_native(struct Emu68::PPC::PPCState *ctx, uint32_t index);   /* DashOS (F1f) */
++#endif
++
+ namespace Emu68::PPC {
+ 
+ LRUCache __used__ cache __attribute__((aligned(64)));
+@@ -247,6 +252,18 @@ void PPCMainLoop()
+         {
+             uint32_t vector = 0;
+ 
++#ifdef DASHOS_NATIVE_CALLS
++            /* DashOS (F1f): a native call (Emit::native). The whole context goes to PPCState and back */
++            if (ctx->INT.NATIVE) {
++                ctx->INT.NATIVE = 0;
++                saveContext(ctx);
++                dashos_ppc_native(ctx, ctx->NATIVE_INDEX);
++                loadContext(ctx);
++                setLastPC(0xffffffff);
++                continue;
++            }
++#endif
++
+             /* Check flags by the priority */
+             if (ctx->INT.EXT) {
+                 if (ctx->MSR & MSR_EE) {
 diff --git a/src/PPC_FPU.cpp b/src/PPC_FPU.cpp
 index 2ca20ee..841d094 100644
 --- a/src/PPC_FPU.cpp
@@ -1375,7 +1427,7 @@ index ed3dc1e..2863ec5 100644
          /* Ra is a register, check if displacement can be used for store directly */
          if (d >= 0 && d <= 0x3ffc && (d & 7) == 0) {
 diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
-index 2375cd3..7be1ac8 100644
+index 2375cd3..7b1af7c 100644
 --- a/src/PPC_SystemInstructions.cpp
 +++ b/src/PPC_SystemInstructions.cpp
 @@ -115,7 +115,7 @@ int mftb(PPCTranslatorContext *tc, uint32_t opcode)
@@ -1481,8 +1533,44 @@ index 2375cd3..7be1ac8 100644
      
      GPR reg_rb = tc->mapGPRForRead(rb);
      GPR base;
+@@ -944,6 +947,35 @@ int dcbi(PPCTranslatorContext *tc, uint32_t opcode)
+     return 1;
+ }
+ 
++/*
++    DashOS (F1f, docs/PPC_LOOP.md): the native call, like the line A of the 68k (patch 0002). The primary opcode 1
++    is illegal on every PowerPC; its low 26 bits are the number of a native function. The block ends here with the
++    PC after the instruction, NATIVE_INDEX and INT.NATIVE set: the loop (PPC_ExecutionLoop.cpp) saves the context,
++    calls dashos_ppc_native(ctx, index) and goes on. A library entry is that instruction followed by blr.
++*/
++int native(PPCTranslatorContext *tc, uint32_t opcode)
++{
++    uint32_t index = opcode & 0x03ffffff;
++
++    tc->advancePC(4);
++    tc->flushPC();
++
++    GPR ctx = tc->getCTX();
++    GPR tmp = GPR::allocate();
++
++    tc->emit({
++        mov_immed_u16(tmp, index & 0xffff, 0),
++        movk_immed_u16(tmp, index >> 16, 1),
++        str_offset(ctx, tmp, __builtin_offsetof(PPCState, NATIVE_INDEX)),
++        mov_immed_u16(tmp, 1, 0),
++        strb_offset(ctx, tmp, __builtin_offsetof(PPCState, INT.NATIVE))
++    });
++
++    tc->emitStop();
++
++    return 1;
++}
++
+ int sc(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+     /* Sanity check */
 diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
-index 6981aa5..014c048 100644
+index 6981aa5..4219dc9 100644
 --- a/src/PPC_Translator.cpp
 +++ b/src/PPC_Translator.cpp
 @@ -530,7 +530,7 @@ static __used__ int EMIT_crandc(PPCTranslatorContext *tc, uint32_t opcode)
@@ -1653,7 +1741,17 @@ index 6981aa5..014c048 100644
          //case 0b1000010111: return EMIT_lfsx(tc, opcode);      // FPU
          //case 0b1000110111: return EMIT_lfsux(tc, opcode);     // FPU
          //case 0b1001010111: return EMIT_lfdx(tc, opcode);      // FPU
-@@ -1396,17 +1413,17 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+@@ -1359,6 +1376,9 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+     //kprintf("[PPC] EmitINSN @ %08x, opcode %08x, group %d\n", (uint32_t)(uintptr_t)tc->getPC(), opcode, group);
+ 
+     switch (group) {
++#ifdef DASHOS_NATIVE_CALLS
++        case 0b000001: count = Emit::native(tc, opcode); break;  // DashOS F1f
++#endif
+         case 0b000011: count = Emit::twi(tc, opcode); break;
+         case 0b000111: count = Emit::mulli(tc, opcode); break;
+         case 0b001000: count = Emit::subfic(tc, opcode); break;
+@@ -1396,17 +1416,17 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
          case 0b101011: count = Emit::lhau(tc, opcode); break;
          case 0b101100: count = Emit::sth(tc, opcode); break;
          case 0b101101: count = Emit::sthu(tc, opcode); break;
@@ -1678,7 +1776,7 @@ index 6981aa5..014c048 100644
          case 0b111111: count = EMIT_Group_63(tc, opcode); break;
          default: break;
      }
-@@ -1420,6 +1437,10 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+@@ -1420,6 +1440,10 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
  
          disasm_print_ppc_only(tc->getPC());
  
@@ -1689,7 +1787,7 @@ index 6981aa5..014c048 100644
          while(1);
      }
  
-@@ -1851,12 +1872,12 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+@@ -1851,12 +1875,12 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
      if (debug > 2)
          kprintf("[PPC] GetTranslationUnit(%08x)\n[PPC] Hash: 0x%04x\n", (void*)ppccodeptr, (int)hash);
  
@@ -1704,7 +1802,7 @@ index 6981aa5..014c048 100644
  
      do {
          unit = (PPCTranslationUnit *)jit_ppc.malloc_aligned(unit_length, 64);
-@@ -1918,9 +1939,9 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+@@ -1918,9 +1942,9 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
      unit->ptu_PPCHigh = (uint32_t)(uintptr_t)ppc_high;
      unit->ptu_Fingerprint = cache_read_32(ICACHE, unit->ptu_PPCAddress) ^ cache_read_32(ICACHE, unit->ptu_PPCAddress + 4);
      

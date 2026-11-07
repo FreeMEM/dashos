@@ -154,6 +154,22 @@ void InitPPC();
 
 namespace Emu68::PPC { void PPCMainLoop(); }
 
+/* Llamadas nativas (F1f): el opcode 1 de PPC con el número de la función. Las mismas que emula el oráculo
+   (pruebas/oraculo.c): 1, r3 = r3 * 2; 2, r3 = r3 + r4; 3, r3 = la suma de r3..r10. El resto, r3 = -1. */
+static int nativas;
+
+extern "C" void dashos_ppc_native(Emu68::PPC::PPCState *ctx, uint32_t index)
+{
+    nativas++;
+    uint32_t *r = ctx->GPR;
+    switch (index) {
+        case 1: r[3] = r[3] * 2; break;
+        case 2: r[3] = r[3] + r[4]; break;
+        case 3: { uint32_t t = 0; for (int i = 3; i <= 10; i++) t += r[i]; r[3] = t; break; }
+        default: r[3] = 0xffffffff;
+    }
+}
+
 /* PPC_Translator.cpp (parche 0010): una instrucción que el JIT no traduce. El banco acaba con 5. */
 extern "C" void dashos_ppc_unimplemented(uint32_t opcode, uint32_t pc)
 {
@@ -285,7 +301,7 @@ extern "C" void host_main(uint64_t *pila)
         long f = sys6(SYS_openat, -100, (long)argv[2], 01 | 0100 | 01000, 0644, 0, 0);
         if (f >= 0) { sys6(SYS_write, f, (long)PPC_RAM, PPC_RAM_LEN, 0, 0, 0); sys6(SYS_close, f, 0, 0, 0, 0, 0); }
     }
-    kprintf("[HOST] Instrucciones PPC ejecutadas (aprox.): %d\n", (int)ppc.INSN_COUNT);
+    kprintf("[HOST] Instrucciones PPC ejecutadas (aprox.): %d; llamadas nativas: %d\n", (int)ppc.INSN_COUNT, nativas);
     flush_out();
     sys6(SYS_exit_group, 0, 0, 0, 0, 0, 0);
 }

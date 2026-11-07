@@ -38,6 +38,18 @@ static void manejador(int sig, siginfo_t *si, void *ucv)
     ucontext_t *uc = ucv;
     mcontext_t *m = uc->uc_mcontext.uc_regs;
     (void)sig; (void)si;
+    /* una llamada nativa (F1f): el opcode 1 con el número de la función, las mismas que ../host_ppc.cpp */
+    if (sig == SIGILL && m->gregs[32] != 0 && (*(uint32_t *)m->gregs[32] >> 26) == 1) {
+        unsigned long *r = (unsigned long *)m->gregs;
+        switch (*(uint32_t *)m->gregs[32] & 0x03ffffff) {
+            case 1: r[3] = (uint32_t)(r[3] * 2); break;
+            case 2: r[3] = (uint32_t)(r[3] + r[4]); break;
+            case 3: { uint32_t t = 0; for (int i = 3; i <= 10; i++) t += (uint32_t)r[i]; r[3] = t; break; }
+            default: r[3] = 0xffffffff;
+        }
+        m->gregs[32] += 4;
+        return;
+    }
     if (m->gregs[32] != 0) {
         printf("[REG] fallo en %08lx (dirección %p)\n", (unsigned long)m->gregs[32], si->si_addr);
         fflush(stdout);
