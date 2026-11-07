@@ -7,7 +7,8 @@
 //! - el puerto serie, de la SPCR (un PL011);
 //! - PSCI y si va por `hvc` o `smc`, de la FADT;
 //! - el PCIe genérico (su ECAM), de la MCFG (U6: el xHCI va ahí);
-//! - el marco GICv2m de las MSI (U6g) o el ITS del GICv3 (U6h), de la MADT.
+//! - el marco GICv2m de las MSI (U6g) o el ITS del GICv3 (U6h), de la MADT;
+//! - cómo pasan los RID del PCIe a números de aparato del ITS, del IORT (U6j), como `msi-map`.
 //!
 //! Escrito con la especificación de ACPI 6.5 (cap. 5: RSDP, XSDT, FADT, MADT con GICC, GICD y GICR) y las tablas de
 //! ARM que define (GTDT) o referencia (SPCR, de Microsoft). Lo demás de ACPI (AML, aparatos del DSDT) no se mira: eso
@@ -49,6 +50,10 @@ pub struct Maquina {
     pub v2m: Option<u64>,
     /// El ITS del GICv3, si lo hay (U6h).
     pub its: Option<u64>,
+    /// Del IORT (U6j): cómo pasan los RID del primer PCIe a números de aparato del ITS: (RID base, número base,
+    /// cuántos), hasta 8.
+    pub msi_map: [(u32, u32, u32); 8],
+    pub msi_n: usize,
 }
 
 /// La tabla con esa firma, buscada en la XSDT.
@@ -127,6 +132,39 @@ pub fn leer(rsdp: usize) -> Option<Maquina> {
             m.ecam = Some((base + (primero << 20), (ultimo.saturating_sub(primero) + 1) << 20));
         }
     }
+    // IORT (ARM DEN 0049): nodos desde el desplazamiento del byte 40; cada uno con tipo, largo, número de
+    // correspondencias (byte 8) y dónde están (byte 12). De los de tipo 2 (raíz del PCIe), las correspondencias que
+    // van a un grupo de ITS (tipo 0): 20 bytes, base de entrada, cuántos menos uno, base de salida y nodo de destino.
+    // Las que pasan por una SMMU no se siguen aún.
+    if let Some(t) = tabla(xsdt, b"IORT") {
+        let fin = t + u32_en(t + 4) as usize;
+        let (nodos, mut p) = (u32_en(t + 36), t + u32_en(t + 40) as usize);
+        for _ in 0..nodos.min(64) {
+            if p + 16 > fin {
+                break;
+            }
+            let (tipo, largo) = (u8_en(p), u16_en(p + 1) as usize);
+            if tipo == 2 {
+                let (cuantas, desde) = (u32_en(p + 8) as usize, u32_en(p + 12) as usize);
+                for k in 0..cuantas.min(8) {
+                    let c = p + desde + 20 * k;
+                    if c + 20 > fin {
+                        break;
+                    }
+                    let destino = t + u32_en(c + 12) as usize;
+                    if destino < fin && u8_en(destino) == 0 && m.msi_n < m.msi_map.len() {
+                        m.msi_map[m.msi_n] = (u32_en(c), u32_en(c + 8), u32_en(c + 4).saturating_add(1));
+                        m.msi_n += 1;
+                    }
+                }
+                break; // el primer PCIe, el de la MCFG
+            }
+            if largo == 0 {
+                break;
+            }
+            p += largo;
+        }
+    }
     Some(m)
 }
 
@@ -184,6 +222,7 @@ pub fn arbol(m: &Maquina, ram: &[(u64, u64)], destino: &mut [u8]) -> Option<usiz
         f.nodo(core::str::from_utf8(&nombre[..n]).unwrap_or("its"));
         f.texto("compatible", "arm,gic-v3-its");
         f.prop("msi-controller", &[]);
+        f.celdas("phandle", &[1]);
         let (b, t) = (par(base), par(0x20000));
         f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
         f.fin_nodo();
@@ -201,6 +240,14 @@ pub fn arbol(m: &Maquina, ram: &[(u64, u64)], destino: &mut [u8]) -> Option<usiz
         f.nodo(core::str::from_utf8(&nombre[..n]).unwrap_or("pcie"));
         f.texto("compatible", "pci-host-ecam-generic");
         f.texto("device_type", "pci");
+        // Del IORT: los RID a números de aparato del ITS (que lleva el phandle 1).
+        if m.its.is_some() && m.msi_n > 0 {
+            let mut v = [0u32; 32];
+            for (i, &(base, salida, cuantos)) in m.msi_map[..m.msi_n].iter().enumerate() {
+                v[4 * i..4 * i + 4].copy_from_slice(&[base, 1, salida, cuantos]);
+            }
+            f.celdas("msi-map", &v[..4 * m.msi_n]);
+        }
         let (b, t) = (par(base), par(tam));
         f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
         f.fin_nodo();

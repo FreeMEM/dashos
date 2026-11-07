@@ -38,8 +38,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
   lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
   INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) U6g (MSI-X
-  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: hubs, el anillo de peticiones del disco,
-  leer el `msi-map` y el IORT. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: hubs y el anillo de peticiones del disco.
+  Hechos también U6i (NVMe por interrupción) y U6j (`msi-map` e IORT). xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -304,3 +304,13 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - **Comprobado:** las cuatro máquinas, con el cliente de disco bien. Una vuelta sin girar nada (todo por
   interrupción) también pasa, con GICv3 (LPI) y GICv2 (SPI); por plazo, una docena de órdenes no cabrían en el
   minuto de la prueba. Pi: `prueba` y `arranque`; `prueba-virt`.
+
+### 2026-11-07 — U6j (`msi-map` y el IORT)
+
+- El kernel saca el número de aparato del ITS (DeviceID) del `msi-map` del nodo del PCIe (RID base, phandle, base de
+  salida, cuántos); sin `msi-map`, el RID.
+- El cargador lee el IORT de ACPI (ARM DEN 0049): de la primera raíz del PCIe (nodo de tipo 2), las correspondencias
+  que van a un grupo de ITS (tipo 0), y las escribe como `msi-map` en el árbol (el ITS lleva el phandle 1). Las que
+  pasan por una SMMU no se siguen aún. Lo dice por la consola: "IORT: RID 0x0 a 0xffff al ITS como 0x0" en QEMU.
+- **Comprobado:** las cuatro máquinas de `virt`, bien; la Pi, `arranque`. **No comprobado:** una correspondencia
+  que no sea la identidad (QEMU solo da esa).

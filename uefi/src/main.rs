@@ -466,6 +466,9 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
                 return 1;
             };
             let _ = writeln!(c, "DashOS: sin árbol; hecho desde ACPI: GIC{} en {:#x}, serie {:?}, PSCI {:?}, {} tramos de RAM", if m.gic_v3 { 3 } else { 2 }, m.distribuidor, m.serie, m.psci, n);
+            for &(base, salida, cuantos) in &m.msi_map[..m.msi_n] {
+                let _ = writeln!(c, "DashOS: IORT: RID {:#x} a {:#x} al ITS como {:#x}", base, base as u64 + cuantos as u64 - 1, salida);
+            }
             (buf.as_ptr() as usize, t as u32)
         }
     };

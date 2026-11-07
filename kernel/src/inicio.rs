@@ -119,7 +119,7 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
         }
         // Su interrupción: una MSI-X por el GICv2m si hay los dos (U6g); si no, la INTx de su patilla (1 a 4, INTA a
         // INTD, en el byte 0x3D; 0, sin INTx), por el `interrupt-map` (U6e).
-        let msi = msix(d, &|off| r(dev, off), base, (dev as u32) << 3);
+        let msi = msix(d, &|off| r(dev, off), base, id_msi(d, &n, (dev as u32) << 3));
         let patilla = (r(dev, 0x3C).leer() >> 8) & 0xff;
         let irq = msi.or_else(|| if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None });
         match irq {
@@ -131,13 +131,27 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
     None
 }
 
+/// El número de aparato que ve el controlador de MSI (el DeviceID del ITS) para un RID del PCIe, por el `msi-map` del
+/// nodo del PCIe (U6j; binding "pci-msi" de devicetree: entradas de RID base, phandle del controlador, número base y
+/// cuántos). Sin `msi-map`, el mismo RID. Con ACPI, el cargador lo escribe desde el IORT.
+fn id_msi(d: &Dtb, pcie: &crate::dtb::Nodo, rid: u32) -> u32 {
+    let Some((mapa, largo)) = d.propiedad(pcie, "msi-map") else { return rid };
+    for i in 0..largo / 16 {
+        let (base, _, salida, cuantos) = (d.celda(mapa, 4 * i), d.celda(mapa, 4 * i + 1), d.celda(mapa, 4 * i + 2), d.celda(mapa, 4 * i + 3));
+        if rid >= base && rid - base < cuantos {
+            return salida + (rid - base);
+        }
+    }
+    rid
+}
+
 /// Si el ITS está encendido (U6h): las MSI van por él.
 static ITS_LISTO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 /// La siguiente SPI libre del GICv2m (U6g), 0 si aún no se ha leído su MSI_TYPER.
 static MSI_SIGUIENTE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Una MSI-X para un aparato del PCIe por el ITS del GICv3 (U6h; `rid` es su número en el bus) o por el marco GICv2m (el de QEMU `virt` con GICv2 y el de la MADT de ACPI; spec.
+/// Una MSI-X para un aparato del PCIe por el ITS del GICv3 (U6h; `rid` es su número para el ITS, U6j) o por el marco GICv2m (el de QEMU `virt` con GICv2 y el de la MADT de ACPI; spec.
 /// del GICv2m en la SBSA, apéndice E): el aparato escribe el número de una SPI en MSI_SETSPI_NS (0x40) del marco, y el
 /// GIC la levanta, por flanco. Da al aparato la primera entrada de su tabla de MSI-X (spec. de PCI 3.0, 6.8.2: la
 /// capacidad 0x11, con el control en los bits 31:16 de su primera palabra y la tabla en una BAR, aquí solo la 0) y
