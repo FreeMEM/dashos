@@ -7,7 +7,7 @@ FLAGS := -mcpu=powerpc -ffreestanding -nostdlib -fno-pic -fno-pie -no-pie -stati
 	-fno-asynchronous-unwind-tables -Wall
 ENTEROS := -msoft-float
 
-all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin t4.bin p3.bin t5.bin oraculo
+all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin t4.bin p3.bin t5.bin t6.bin oraculo
 
 p1.bin: p1.c prueba.ld
 	$(CC) $(FLAGS) $(ENTEROS) -O2 -T prueba.ld -o p1.elf $< -lgcc && $(OC) -O binary p1.elf $@
@@ -43,6 +43,11 @@ t5.s: gen_t5.py gen_t1.py
 t5.bin: t5.s prueba.ld
 	$(CC) $(FLAGS) -T prueba.ld -o t5.elf $< && $(OC) -O binary t5.elf $@
 
+t6.s: gen_t6.py
+	python3 gen_t6.py > $@
+t6.bin: t6.s prueba.ld
+	$(CC) $(FLAGS) -T prueba.ld -o t6.elf $< && $(OC) -O binary t6.elf $@
+
 p3.bin: p3.s prueba.ld
 	$(CC) $(FLAGS) -T prueba.ld -o p3.elf $< && $(OC) -O binary p3.elf $@
 
@@ -50,4 +55,4 @@ oraculo: oraculo.c
 	$(CC) -O2 -static -o $@ $<
 
 clean:
-	rm -f *.elf *.bin oraculo t1*.s t2.s t3.s t4.s t5.s
+	rm -f *.elf *.bin oraculo t1*.s t2.s t3.s t4.s t5.s t6.s

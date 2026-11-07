@@ -202,3 +202,25 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   solo en las formas con OE, que ya calculan el desbordamiento. `divw`/`divwu` sin OE siguen con la división de ARM
   tal cual (rD = 0 entre 0), para no añadir instrucciones a la división normal; t1b sigue sin probar esos casos.
 - Las once pruebas, bien.
+
+### 2026-11-07 — F1h (2): lswi, lswx, stswi, stswx; mullw como dirección
+
+- `pruebas/gen_t6.py` (t6, 705 casos de 132 bytes): `lswi`/`stswi` con rD 3, 13, 14, 25 y 30 (con la vuelta de r31
+  a r0) y de 1 a 32 bytes; `lswx`/`stswx` con rD 3, 14 y 30 y la cuenta de XER de 0 a 108 (127 en stswx), también
+  con rA = 0; direcciones sin alinear. Cargas: antes, cada GPR con un centinela, y después todos los GPR y XER a la
+  tabla; guardados: escriben en una zona llena de 0xee. rA, rB y el puntero de la tabla quedan siempre fuera de los
+  registros que se cargan (lo contrario es una forma no válida: qemu da SIGILL; el JIT no lo comprueba).
+- **Faltaban** las cuatro. Cómo van (0011, `PPC_LoadStore.cpp`):
+  - `lswi`/`stswi`: la cuenta está en la instrucción, así que se desenrolla como `lmw`/`stmw`: una palabra por
+    registro y, en el último, de 1 a 3 bytes con `ldrh`/`ldrb` (los bytes bajos a 0). Sin bucles ni saltos.
+  - `lswx`/`stswx`: la cuenta (XER[25-31]) y el registro al que va cada byte solo se saben al ejecutar. Se vuelcan
+    todos los GPR (y CR y XER, que van detrás) a `PPCState.GPR` (7 `stp` y 5 `st1`), un bucle copia los bytes entre
+    la memoria y ese vector (el byte i a GPR[rD] + i, módulo 128; lswx pone a 0 lo que queda del último registro) y
+    lswx los vuelve a cargar. `PPCState.GPR` no tiene datos vivos mientras corre el código traducido: el bucle
+    guarda el contexto antes de leerlo. Con cuenta 0 no se hace nada (como qemu). Son unas 40 instrucciones de ARM
+    y unos 6 ciclos por byte; son instrucciones raras (gcc no las saca para el 603e/604e/G3/G4 sin `-mstring`).
+- **Fallo del JIT de Emu68**: `mullw` usaba `smull` (producto de 64 bits) y dejaba la mitad alta del registro de ARM
+  con bits: usado luego como dirección (`lwz 5,0(5)`), la dirección se salía de los 4 GB (en el banco, SIGSEGV).
+  Ahora `mul` de 32 bits; `mullwo` hace `smull` en un temporal para ver el desbordamiento y copia la palabra baja.
+  Prueba nueva en t5 (el producto 0x10000 * 0x10010, de parte baja 0x00100000).
+- Las doce pruebas, bien.

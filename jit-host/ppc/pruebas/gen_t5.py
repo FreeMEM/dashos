@@ -38,6 +38,12 @@ def main():
                 g.emit(*li32("3", a), *li32("4", b), "li 0,0", "mtxer 0", "mtcrf 0xff,0")
                 g.emit(f"{op} {dest},3,4", f"mr 5,{dest}")
                 g.guarda()
+    # el producto como dirección: la parte baja (0x00100000, la tabla) con parte alta distinta de 0
+    for op in ("mullw", "mullwo", "mullw.", "mullwo."):
+        g.ahora = f"{op:8} 5,3,4; lwz 5,0(5) r3=00010000 r4=00010010"
+        g.emit(*li32("3", 0x10000), *li32("4", 0x10010), "li 0,0", "mtxer 0", "mtcrf 0xff,0")
+        g.emit(f"{op} 5,3,4", "lwz 5,0(5)")
+        g.guarda()
     g.emit("addi 1,1,16", "lwz 0,4(1)", "mtlr 0", "li 0,0", "mtxer 0", "mtcrf 0xff,0", "blr")
     (Path(__file__).parent / "t5.map").write_text("\n".join(g.mapa) + "\n")
     print("\n".join(("        " + l) if not l.startswith((" ", "prueba:")) else l for l in g.out))
