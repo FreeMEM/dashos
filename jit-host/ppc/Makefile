@@ -25,7 +25,7 @@ PPC_USED := -fcall-used-x4 -fcall-used-x5 -fcall-used-x6 -fcall-used-x7 -fcall-u
 COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
-	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DPPC_SO_PROPAGATION=1 -DPPC_FPSCR_EXCEPTIONS=$(FPSCR) -DDASHOS_NATIVE_CALLS=1 \
+	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DPPC_SO_PROPAGATION=1 -DPPC_FPSCR_EXCEPTIONS=$(FPSCR) -DPPC_NAN_PROPAGATION=1 -DDASHOS_NATIVE_CALLS=1 \
 	-Iinclude -I$(EMU68)/include -I../include $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error -fno-threadsafe-statics
