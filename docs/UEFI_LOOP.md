@@ -38,8 +38,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
   lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
   INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) U6g (MSI-X
-  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: el anillo de peticiones del disco.
-  Hechos también U6i (NVMe por interrupción), U6j (`msi-map` e IORT) y U6k (concentradores USB). xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Hechos también U6i (NVMe por
+  interrupción), U6j (`msi-map` e IORT), U6k (concentradores USB) y U6l (el anillo del disco). Queda para cuando haga
+  falta: conectar y quitar aparatos USB en marcha, USB 3, varias colas del NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`. Análisis hecho (`docs/diseño/U7-caja-sin-big-endian.md`): unas 1200 líneas en
   Emu68; espera a que el usuario decida cuándo.
@@ -336,3 +337,14 @@ Un agente recorrió Emu68 y dejó el mapa en `docs/diseño/U7-caja-sin-big-endia
 líneas en cuatro parches. No se empieza sin que el usuario lo diga: es el trabajo más largo de la lista y no hace
 falta en las CPU con big-endian en EL0 (la de la Pi 4, la de QEMU; en las Oryon de los Snapdragon nuevos no está
 comprobado si lo tienen).
+
+### 2026-11-07 — U6l (el anillo del disco)
+
+- El servicio de disco da a cada cliente que lo pide un anillo en memoria compartida (S1, "anillos en memoria
+  compartida para datos en volumen"): envíos y terminadas de 32 entradas, con marcas de "duermo" y "espero" para que
+  el canal solo se use cuando el otro está dormido. Protocolo en `docs/referencia/servicios.md`. El servicio copia
+  cada envío antes de comprobarlo (el cliente puede cambiarlo a la vez) y no pasa de 32 terminadas sin recoger.
+- El cliente de prueba manda 16 lecturas y una fuera del disco de golpe: un aviso al servicio y una espera, y las 17
+  terminadas con su etiqueta y su estado.
+- **Comprobado:** las cuatro máquinas de `virt` y la Pi (`prueba`, `arranque`). **No comprobado:** varios clientes
+  con anillo a la vez, un cliente que deja de recoger terminadas (el servicio para su anillo; los demás siguen).

@@ -126,5 +126,13 @@ servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce po
 cabe en dos páginas de la ventana (8 KB desde un principio de página). La ventana lleva derecho a transferir, para que
 el cliente pueda dársela a otro proceso suyo.
 
-Pendiente: el anillo de peticiones en memoria compartida (S1), con aviso por canal solo cuando hace falta; varias
-colas de E/S.
+**Anillo** (U6l, S1): con la orden 3 (tras abrir, con una llave de respuesta propia) el servicio da una página de
+memoria compartida y se queda con esa llave para avisar. Cabecera de palabras de 32 bits: 0 cabeza de envíos (la
+mueve el servicio), 4 cola de envíos (el cliente), 8 cabeza de terminadas (el cliente), 12 cola de terminadas (el
+servicio), 16 "el servicio duerme", 20 "el cliente espera". Envíos de 32 bytes desde el byte 64 (orden 1 o 2,
+sectores, primer sector de 64 bits, desplazamiento en la ventana, etiqueta); terminadas de 16 desde el 2048
+(etiqueta, estado). 32 de cada. El cliente pone envíos, mueve la cola y, solo si el servicio duerme, le manda la
+orden 4 (24 bytes, sin llave, sin respuesta). El servicio, si el cliente espera, le manda 4 bytes por su canal. El
+servicio copia cada envío antes de comprobarlo. Hasta 16 sectores por envío.
+
+Pendiente: varias colas de E/S del NVMe.

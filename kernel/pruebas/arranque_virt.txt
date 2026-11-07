@@ -29,6 +29,8 @@ DashOS en marcha con 4 núcleos.
 # U6f: el servicio de disco, con un cliente de prueba.
 ~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien
+# U6l: el anillo de peticiones en memoria compartida.
+~│   [disco] anillo: 16 lecturas y un rechazo: bien
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer

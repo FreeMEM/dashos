@@ -1,6 +1,7 @@
 //! Prueba del servicio de disco (U6f): un cliente del canal "disco" (la llave 1, con su marca de `inicio`). Abre el
 //! disco, lee los dos primeros sectores en su ventana, escribe el sector 2 y lo vuelve a leer, lee 4 KB que cruzan
 //! una página de la ventana, y comprueba que se rechazan un sector fuera del disco y un trozo fuera de la ventana.
+//! Después pide su anillo (U6l) y manda por él 16 lecturas de golpe y una que se debe rechazar.
 
 #![no_std]
 #![no_main]
@@ -10,6 +11,9 @@ use dashos::println;
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
+const VA_ANILLO: usize = 0x41_0000_0000;
+const ANILLO: u32 = 3;
+const MIRAR: u32 = 4;
 
 const ABRIR: u32 = 0;
 const LEER: u32 = 1;
@@ -94,5 +98,70 @@ fn principal() -> u64 {
     let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (64 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3;
     let si = |b: bool| if b { "bien" } else { "MAL" };
     println!("  [disco] leer: {}; escribir y releer: {}; cruzando páginas: {}; rechazos: {}", si(leidos), si(escrito), si(cruzando), si(rechazos));
+    // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
+    let (l2, v2) = dashos::canal_crear();
+    let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {
+        println!("  [disco] sin anillo");
+        return 4;
+    };
+    if r.ventana.is_none_or(|m| dashos::memoria_proyectar(m, VA_ANILLO, true) != 0) {
+        println!("  [disco] no se proyecta el anillo");
+        return 5;
+    }
+    let (avisos, esperas, bien) = probar_anillo(l2);
+    println!("  [disco] anillo: 16 lecturas y un rechazo: {}", si(bien));
+    println!("  [disco] (anillo con {} avisos al servicio y {} esperas)", avisos, esperas);
     0
+}
+
+fn palabra(off: usize) -> &'static core::sync::atomic::AtomicU32 {
+    unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) }
+}
+
+/// Pone en el anillo lecturas de los sectores `0..n` (más una fuera del disco si `malo`), avisa si el servicio
+/// duerme, y espera sus terminadas. Devuelve (avisos mandados, veces que esperó, todo bien).
+fn probar_anillo(lectura: u32) -> (u32, u32, bool) {
+    use core::sync::atomic::{fence, Ordering::*};
+    let (mut avisos, mut esperas) = (0, 0);
+    let total = 17u32;
+    // 16 lecturas de un sector a la ventana desde 16 KB, con etiqueta 100 + i; la 17, fuera del disco (etiqueta 999).
+    for i in 0..total {
+        let e = 64 + 32 * (i % 32) as usize;
+        let (primero, etiqueta) = if i < 16 { (i as u64, 100 + i) } else { (u64::MAX - 1, 999) };
+        palabra(e).store(1, Relaxed);
+        palabra(e + 4).store(1, Relaxed);
+        palabra(e + 8).store(primero as u32, Relaxed);
+        palabra(e + 12).store((primero >> 32) as u32, Relaxed);
+        palabra(e + 16).store((16384 + 512 * (i % 16) as usize) as u32, Relaxed);
+        palabra(e + 20).store(etiqueta, Relaxed);
+    }
+    palabra(4).store(total, Release);
+    fence(SeqCst);
+    if palabra(16).load(SeqCst) != 0 {
+        let mut p = [0u8; 24];
+        p[..4].copy_from_slice(&MIRAR.to_le_bytes());
+        dashos::canal_escribir(1, &p, &[]);
+        avisos += 1;
+    }
+    // Esperar las 17 terminadas: "espero" y mirar; si no están, dormir hasta el aviso del servicio.
+    let mut buf = [0u8; 8];
+    let mut ll = [0u32; 1];
+    loop {
+        palabra(20).store(1, SeqCst);
+        fence(SeqCst);
+        if palabra(12).load(Acquire).wrapping_sub(palabra(8).load(Relaxed)) >= total {
+            break;
+        }
+        dashos::canal_leer(lectura, &mut buf, &mut ll);
+        esperas += 1;
+    }
+    let mut bien = true;
+    for i in 0..total {
+        let c = 2048 + 16 * (i % 32) as usize;
+        let (etiqueta, estado) = (palabra(c).load(Relaxed), palabra(c + 4).load(Relaxed) as i32);
+        bien &= if etiqueta == 999 { estado == -2 } else { (100..116).contains(&etiqueta) && estado == 0 };
+    }
+    palabra(8).store(total, Release);
+    bien &= empieza(16384, b"DashOS: sector 0") && empieza(16384 + 512, b"DashOS: sector 1") && empieza(16384 + 1024, b"DashOS: sector 2");
+    (avisos, esperas, bien)
 }

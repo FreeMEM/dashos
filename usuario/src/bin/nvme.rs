@@ -66,6 +66,24 @@ const FUERA_DEL_DISCO: i32 = -2;
 const FUERA_DE_LA_VENTANA: i32 = -3;
 const ERROR_DEL_DISCO: i32 = -4;
 const SIN_SITIO: i32 = -5;
+const PEDIR_ANILLO: u32 = 3;
+// La orden 4, "mira mi anillo", va sin llave de respuesta y no se contesta: solo despierta al servicio.
+
+// El anillo de cada cliente (U6l; S1, "anillos en memoria compartida"): una página de memoria compartida. Cabecera de
+// palabras de 32 bits: cabeza de envíos (la mueve el servicio), cola de envíos (el cliente), cabeza de terminadas (el
+// cliente), cola de terminadas (el servicio), "el servicio duerme" y "el cliente espera". Envíos de 32 bytes desde el
+// byte 64 (orden, sectores, primer sector, desplazamiento, etiqueta); terminadas de 16 desde el 2048 (etiqueta,
+// estado).
+const VA_ANILLOS: usize = 0x31_0000_0000;
+const A_SQ_CABEZA: usize = 0;
+const A_SQ_COLA: usize = 4;
+const A_CQ_CABEZA: usize = 8;
+const A_CQ_COLA: usize = 12;
+const A_DUERME: usize = 16;
+const A_ESPERA: usize = 20;
+const A_SQ: usize = 64;
+const A_CQ: usize = 2048;
+const A_ENTRADAS: u32 = 32;
 
 fn leer(off: usize) -> u32 {
     u32::from_le(unsafe { core::ptr::read_volatile((VA + off) as *const u32) })
@@ -319,23 +337,102 @@ fn principal() -> u64 {
     servir(&n, &mut es, sectores, tam_sector, disco)
 }
 
-/// Un cliente: su marca, su ventana (la llave y su dirección de bus).
+/// Un cliente: su marca, su ventana (la llave y su dirección de bus) y, si lo pidió, su anillo (la llave de su
+/// memoria, dónde está proyectado aquí y el canal por el que se le despierta).
 #[derive(Clone, Copy)]
 struct Cliente {
     marca: u64,
     llave: u32,
     bus: u64,
+    anillo: Option<(u32, usize, u32)>,
+}
+
+fn anillo(va: usize, off: usize) -> &'static core::sync::atomic::AtomicU32 {
+    unsafe { &*((va + off) as *const core::sync::atomic::AtomicU32) }
+}
+
+/// Una lectura o escritura en la ventana de `c`, comprobada antes de llegar al disco: su estado.
+fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, sectores: u64, tam_sector: usize) -> i32 {
+    let bytes = cuantos as usize * tam_sector;
+    if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR {
+        MAL_FORMADO
+    } else if cuantos == 0 || cuantos > 16 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
+        FUERA_DEL_DISCO
+    } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) || off % 4096 + bytes > 8192 {
+        FUERA_DE_LA_VENTANA
+    } else {
+        let prp1 = c.bus + off as u64;
+        let prp2 = if off % 4096 + bytes > 4096 { (prp1 & !0xfff) + 4096 } else { 0 };
+        let op = if orden == PEDIR_LEER { O_LEER } else { O_ESCRIBIR };
+        let cdw = [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0];
+        if n.orden(es, op, 1, (prp1, prp2), cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }
+    }
+}
+
+/// Atiende lo que haya en el anillo de `c`: copia cada envío antes de mirarlo (el cliente puede cambiarlo a la vez),
+/// pone su terminada y, si el cliente espera, le avisa. Devuelve cuántos atendió. Si no caben más terminadas, para.
+fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, sectores: u64, tam_sector: usize) -> u32 {
+    use core::sync::atomic::Ordering::*;
+    let Some((_, va, aviso)) = c.anillo else { return 0 };
+    let mut hechas = 0;
+    loop {
+        let (cabeza, cola) = (anillo(va, A_SQ_CABEZA).load(Relaxed), anillo(va, A_SQ_COLA).load(Acquire));
+        let (cq_cabeza, cq_cola) = (anillo(va, A_CQ_CABEZA).load(Acquire), anillo(va, A_CQ_COLA).load(Relaxed));
+        if cabeza == cola || cq_cola.wrapping_sub(cq_cabeza) >= A_ENTRADAS {
+            break;
+        }
+        let e = va + A_SQ + 32 * (cabeza % A_ENTRADAS) as usize;
+        let mut b = [0u8; 32];
+        for (i, x) in b.iter_mut().enumerate() {
+            *x = unsafe { core::ptr::read_volatile((e + i) as *const u8) };
+        }
+        let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+        let primero = u32_en(8) as u64 | (u32_en(12) as u64) << 32;
+        let estado = transferir(n, es, c, u32_en(0), u32_en(4) as u64, primero, u32_en(16) as usize, sectores, tam_sector);
+        let t = va + A_CQ + 16 * (cq_cola % A_ENTRADAS) as usize;
+        anillo(t, 0).store(u32_en(20), Relaxed);
+        anillo(t, 4).store(estado as u32, Relaxed);
+        anillo(va, A_CQ_COLA).store(cq_cola.wrapping_add(1), Release);
+        anillo(va, A_SQ_CABEZA).store(cabeza.wrapping_add(1), Release);
+        hechas += 1;
+    }
+    core::sync::atomic::fence(SeqCst);
+    if hechas > 0 && anillo(va, A_ESPERA).swap(0, SeqCst) != 0 {
+        dashos::canal_escribir(aviso, &[0; 4], &[]);
+    }
+    hechas
 }
 
 /// Sirve el disco por el canal de la llave `disco`. Cada petición son 24 bytes (orden, sectores, primer sector y
 /// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores del disco,
-/// tamaño del sector y de la ventana) y, al abrir, la ventana.
+/// tamaño del sector y de la ventana) y, al abrir, la ventana; al pedir el anillo, su memoria. Un mensaje de 24 bytes
+/// con la orden 4 y sin llave solo despierta al servicio para que mire los anillos.
 fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32) -> u64 {
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
+        // Antes de dormir: "duermo" en cada anillo y, después, una última mirada (un cliente que puso algo sin ver la
+        // marca lo habría puesto antes de ella y se ve aquí; uno que la ve, avisa).
+        let mut quedaba = 0;
+        for c in clientes.iter().flatten() {
+            if let Some((_, va, _)) = c.anillo {
+                anillo(va, A_DUERME).store(1, core::sync::atomic::Ordering::SeqCst);
+            }
+        }
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+        for c in clientes.iter().flatten() {
+            quedaba += atender_anillo(n, es, c, sectores, tam_sector);
+        }
+        if quedaba > 0 {
+            continue;
+        }
         let (r, k, marca) = dashos::canal_leer_marca(disco, &mut buf, &mut ll);
+        for c in clientes.iter().flatten() {
+            if let Some((_, va, _)) = c.anillo {
+                anillo(va, A_DUERME).store(0, core::sync::atomic::Ordering::SeqCst);
+            }
+        }
         if r == E_CERRADO {
             return 0;
         }
@@ -347,7 +444,8 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         for &l in ll.iter().take(k).skip(1) {
             dashos::cerrar(l);
         }
-        // Sin llave de respuesta no hay a quién contestar (el directorio de `inicio` es así: no hace falta aquí).
+        // "Mira mi anillo": sin respuesta (el anillo se atiende al dar la vuelta). Sin llave de respuesta no hay a quién
+        // contestar (el directorio de `inicio` es así: no hace falta aquí).
         if k == 0 {
             continue;
         }
@@ -365,7 +463,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
                     if clientes[h].is_none() {
                         let (m, bus) = dashos::memoria_dma(1, VENTANA);
                         if m > 0 {
-                            clientes[h] = Some(Cliente { marca, llave: m as u32, bus });
+                            clientes[h] = Some(Cliente { marca, llave: m as u32, bus, anillo: None });
                         }
                     }
                     match clientes[h] {
@@ -384,20 +482,27 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR {
             match clientes.iter().flatten().find(|c| c.marca == marca) {
                 None => MAL_FORMADO,
-                Some(c) => {
-                    let bytes = cuantos as usize * tam_sector;
-                    if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
-                        FUERA_DEL_DISCO
-                    } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) || off % 4096 + bytes > 8192 {
-                        FUERA_DE_LA_VENTANA
+                Some(c) => transferir(n, es, c, orden, cuantos, primero, off, sectores, tam_sector),
+            }
+        } else if orden == PEDIR_ANILLO {
+            // El anillo: una página nueva, proyectada aquí, y el canal de la respuesta se queda para despertarle.
+            match clientes.iter().position(|c| c.is_some_and(|c| c.marca == marca)) {
+                Some(h) if clientes[h].is_some_and(|c| c.anillo.is_none()) => {
+                    let m = dashos::memoria_crear(4096);
+                    let va = VA_ANILLOS + 4096 * h;
+                    if m > 0 && dashos::memoria_proyectar(m as u32, va, true) == 0 {
+                        let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+                        ventana = (copia > 0).then_some(copia as u32);
+                        let aviso = dashos::llave_duplicar(respuesta, dashos::ESCRIBIR, 0);
+                        if let Some(c) = clientes[h].as_mut() {
+                            c.anillo = Some((m as u32, va, aviso as u32));
+                        }
+                        if ventana.is_some() && aviso > 0 { 0 } else { SIN_SITIO }
                     } else {
-                        let prp1 = c.bus + off as u64;
-                        let prp2 = if off % 4096 + bytes > 4096 { (prp1 & !0xfff) + 4096 } else { 0 };
-                        let op = if orden == PEDIR_LEER { O_LEER } else { O_ESCRIBIR };
-                        let cdw = [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0];
-                        if n.orden(es, op, 1, (prp1, prp2), cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }
+                        SIN_SITIO
                     }
                 }
+                _ => MAL_FORMADO, // sin abrir antes, o ya con anillo
             }
         } else {
             MAL_FORMADO
