@@ -290,6 +290,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 log::error!("SYNC WRITE_CACHE: WRONG NUMBER OF BYTES");
                 return Err(Error::new(EIO));
             }
+            // The blocks must be on disk before the header that points to them.
+            self.fs.disk.flush()?;
         }
         self.write_cache.clear();
 
@@ -317,6 +319,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
             log::error!("SYNC: WRONG NUMBER OF BYTES");
             return Err(Error::new(EIO));
         }
+        // And the header must be on disk before the blocks of the next transaction, which may reuse blocks that this
+        // header frees.
+        self.fs.disk.flush()?;
 
         self.header_changed = false;
         Ok(true)

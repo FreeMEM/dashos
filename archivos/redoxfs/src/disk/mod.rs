@@ -54,6 +54,13 @@ pub trait Disk {
 
     /// Get size of disk in bytes
     fn size(&mut self) -> Result<u64>;
+
+    /// Make every write done so far durable before any later write. A disk with a volatile write cache must flush
+    /// it here: the filesystem calls this before and after writing a header, so that a header never reaches the
+    /// disk before the blocks it points to. The default does nothing, which is right for disks that write through.
+    fn flush(&mut self) -> Result<()> {
+        Ok(())
+    }
 }
 
 impl Disk for Box<dyn Disk> {
@@ -71,5 +78,9 @@ impl Disk for Box<dyn Disk> {
 
     fn size(&mut self) -> Result<u64> {
         (**self).size()
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        (**self).flush()
     }
 }
