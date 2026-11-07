@@ -13,6 +13,7 @@
                                       # make EMU68=<clon sin U7> B=build-ref
     python3 comparar.py --solo-be     # solo el punto 2
 """
+import re
 import resource
 import struct
 import subprocess
@@ -35,8 +36,13 @@ def ejecutar(orden, prog, volcado, memoria=None):
     i = salida.find("[HOST] Programa")
     resto = salida[i:] if i >= 0 else ""
     # los avisos de Emu68 de "instrucción vista por primera vez" (FMOVEM...) no cuentan
-    lineas = [l for l in resto.splitlines() if l.startswith("[")]
+    lineas = [sin_ruta(l) for l in resto.splitlines() if l.startswith("[")]
     return r.returncode, lineas
+
+
+def sin_ruta(linea):
+    """La línea "[HOST] Programa ruta" sin la ruta (la referencia se sacó en otro directorio)"""
+    return re.sub(r"^(\[HOST\] Programa )\S*/", r"\1", linea)
 
 
 def bloques(f, cab=">"):
@@ -99,7 +105,7 @@ def main():
             continue
         rc_be, be = ejecutar("be", prog, TMP / f"{nombre}.be.vol")
         iguales, solo_inm, problemas = comparar_codigo(REF / f"{nombre}.vol", TMP / f"{nombre}.be.vol")
-        ref_txt = (REF / f"{nombre}.txt").read_text().splitlines()
+        ref_txt = [sin_ruta(l) for l in (REF / f"{nombre}.txt").read_text().splitlines()]
         if be != ref_txt:
             problemas.append("la salida en big-endian no es la de la referencia")
         estado = "bien" if not problemas and rc_be == 0 else "MAL"
