@@ -34,6 +34,8 @@ PPC     := PPC_TranslatorContext PPC_LoadStore PPC_FPU PPC_SystemInstructions PP
 OBJS    := $(PPC:%=$(B)/%.o) $(B)/PPC_Translator.o $(B)/PPC_ExecutionLoop.o $(B)/LRUCache.o \
 	$(B)/TranslatorContext.o $(B)/ReturnStack.o $(B)/cpp_support.o $(B)/support.o $(B)/tlsf.o $(B)/cache.o $(B)/md5.o \
 	$(B)/host_ppc.o $(B)/entry.o
+# La rama 1_1_wip de Emu68 junta sus variables globales en src/globals.c.
+OBJS    += $(if $(wildcard $(EMU68)/src/globals.c),$(B)/globals.o)
 
 all: $(B)/jit-ppc
 
