@@ -1553,3 +1553,16 @@ acordado: estático en 0x400000. Pila de 64 KB o la que pida el ELF. El usuario 
   - Interrupciones de la GPU por el repartidor de C20.
   - Más de una baldosa en las listas de borrado.
   - Cerrar los canales de un proceso que muere.
+
+## Parada del 2026-11-07 (encargo "1, 2 y 3")
+
+1. Fase 4 de S16: cerrada (arriba, "Resumen de la fase 4").
+2. A7 de Dash: hecha la parte que no cambia la API (Delay y el reloj de DashOS, en `.worktrees/dashos-a7` de
+   FreeMEMLang, sin fusionar). Los builtins de procesos, canales, llaves y grupos esperan a que el usuario elija
+   nombres y forma.
+3. UEFI en QEMU `virt`: U1 a U6l hechos (`docs/UEFI_LOOP.md`): arranque con árbol o ACPI, GICv2 o GICv3, pantalla
+   del firmware, teclado y ratón por xHCI (con concentradores), disco NVMe con servicio, ventanas y anillo, e
+   interrupciones INTx, MSI-X por GICv2m y por el ITS. U7 (la caja Amiga sin big-endian) tiene su análisis
+   (`docs/diseño/U7-caja-sin-big-endian.md`, unas 1200 líneas en Emu68) y espera a que el usuario diga cuándo.
+
+El bucle para aquí: lo que queda pide decisiones del usuario. Todo en commits locales de `main`, sin subir.
