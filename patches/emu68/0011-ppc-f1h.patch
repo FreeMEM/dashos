@@ -343,7 +343,7 @@ index 2863ec5..5aafd17 100644
 +
  }
 diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
-index 7b1af7c..6021fb7 100644
+index 7b1af7c..e4173a3 100644
 --- a/src/PPC_SystemInstructions.cpp
 +++ b/src/PPC_SystemInstructions.cpp
 @@ -64,7 +64,7 @@ SupervisorCheck::SupervisorCheck(PPCTranslatorContext *t) : tc(t)
@@ -355,7 +355,17 @@ index 7b1af7c..6021fb7 100644
          uint32_t *exit_code_end = tc->restore();
          std::size_t exception_size = exit_code_end - exit_code_start;
  
-@@ -479,7 +479,7 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -399,6 +399,9 @@ int mfspr(PPCTranslatorContext *tc, uint32_t opcode)
+     }
+     else
+     {
++        /* DashOS (F1h): mfspr 268/269 (TBL/TBU) is mftb, the way newer assemblers encode it */
++        if (spr == 268 || spr == 269) return mftb(tc, opcode);
++
+         GPR tmp;
+         GPR reg_rd = tc->mapGPRForWrite(rd);
+ 
+@@ -479,7 +482,7 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
      {
          /* All bits set, trap always */
          tc->flushPC();
@@ -364,7 +374,7 @@ index 7b1af7c..6021fb7 100644
          tc->emitStop();
          return 1;
      }
-@@ -520,9 +520,12 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -520,9 +523,12 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
          locations[number_of_cases++] = tc->tc_CodePtr - 1;
      }
  
@@ -380,7 +390,7 @@ index 7b1af7c..6021fb7 100644
  
      /* Insert additional exit points */
      for (int i=0; i < number_of_cases; i++) {
-@@ -558,7 +561,7 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -558,7 +564,7 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
      {
          /* All bits set, trap always */
          tc->flushPC();
@@ -389,7 +399,7 @@ index 7b1af7c..6021fb7 100644
          tc->emitStop();
          return 1;
      }
-@@ -611,9 +614,12 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -611,9 +617,12 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
          locations[number_of_cases++] = tc->tc_CodePtr - 1;
      }
  
@@ -405,7 +415,7 @@ index 7b1af7c..6021fb7 100644
  
      /* Insert additional exit points */
      for (int i=0; i < number_of_cases; i++) {
-@@ -1024,9 +1030,9 @@ int rfi(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1024,9 +1033,9 @@ int rfi(PPCTranslatorContext *tc, uint32_t opcode)
      GPR tmp = GPR::allocate();
  
      tc->emit({

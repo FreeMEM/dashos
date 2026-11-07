@@ -247,3 +247,15 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   como en el 603e/750); `emitException` tiene un argumento para eso. `rfi` borra de MSR los bits 17-23 (POW y esas
   causas) en vez de solo POW, para que la causa no pase a MSR.
 - Las trece pruebas, bien.
+
+### 2026-11-07 — F1h (4): mftb
+
+- El contador de tiempo no puede coincidir: el JIT lee `CNTPCT_EL0` de ARM (en el banco `CNTVCT_EL0`, que da
+  qemu-aarch64_be) y qemu-ppc, el reloj de la máquina, a otra frecuencia. Decisión: no se comparan valores, sino lo
+  que tiene que cumplir el contador, y la prueba deja a 0 los registros que lo tuvieron.
+- `pruebas/p4.s`: lectura de 64 bits con `mftbu`/`mftb`/`mftbu` (otra vez si TBU cambia); TB avanza a lo largo de
+  un bucle de 196608 vueltas; 1000 lecturas seguidas nunca menores que la anterior; 1000 lecturas de TBL con
+  `mfspr 268` que no bajan sin que cambie TBU; `mfspr 269` igual que `mftbu`. Cuatro palabras de resultado.
+- **Faltaba**: `mfspr rD,268/269` (TBL, TBU), que es como codifican `mftb` los ensambladores nuevos (para POWER4 y
+  después) y que qemu-ppc acepta en el 750: ahora va a la misma función que `mftb`.
+- Las catorce pruebas, bien.
