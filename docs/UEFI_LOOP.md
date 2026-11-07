@@ -334,4 +334,5 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 Un agente recorrió Emu68 y dejó el mapa en `docs/diseño/U7-caja-sin-big-endian.md`: unos 350 accesos a la memoria del
 68k que hay que girar, 280 de ellos sueltos por las instrucciones, con saltos de distancia fija alrededor; unas 1200
 líneas en cuatro parches. No se empieza sin que el usuario lo diga: es el trabajo más largo de la lista y no hace
-falta en las CPU con big-endian (la Pi, los Snapdragon).
+falta en las CPU con big-endian en EL0 (la de la Pi 4, la de QEMU; en las Oryon de los Snapdragon nuevos no está
+comprobado si lo tienen).
