@@ -12,8 +12,9 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
 - [x] F1a Banco `jit-host/ppc/` (Emu68 PPC sin libc en qemu-aarch64_be), oráculo en qemu-ppc, comparación.
 - [x] F1b Enteros: lo que traduce el JIT, con programas en C a -O0 y -O2 y en ensamblador.
 - [x] F1c Cargas y guardados de todas las formas, `lmw` y `stmw`, reserva, `dcbz`.
-- [ ] F1d FPU de doble precisión (lo que hay) y las formas con actualización (`lfsu`, `stfdu`...).
-- [ ] F1e FPU de precisión simple (grupo 59).
+- [x] F1d FPU: doble y simple (grupo 59), cargas y guardados de todas las formas, NaN de PPC, redondeo, FPSCR
+  (sus bits de control).
+- [ ] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
 - [ ] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
 - [ ] AltiVec, después de MorphOS (orden del usuario).
 
@@ -43,7 +44,7 @@ commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO
   manejador de la señal recupera r2 y r13 de glibc antes de escribir), `p1.c` (enteros, saltos, llamadas
   recursivas, tabla de saltos, divisiones, 64 bits en 32, estructuras, comparaciones) a -O0 y -O2. Las pruebas se
   compilan sin PIE: el compilador de Bootlin lo da por defecto, y con PIE `lis` sale a 0 (reubicaciones sin aplicar).
-- Parche `0010-ppc-banco-y-enteros.patch` (entonces `-rlwinm`):
+- Parche 0010 (hoy `0010-ppc-banco-enteros-y-fpu.patch`):
   - En el banco, `CNTPCT_EL0` no se lee desde EL0 en qemu-user: `CNTVCT_EL0` (`sys_CNTPCT_EL0_HOST`).
   - **Fallos del JIT de Emu68** que encontró `p1` a -O0 (`rlwinm r9,r9,0,24,19`):
     - Máscaras que dan la vuelta (MB > ME) en `rlwinm`, `rlwimi` y `rlwnm`: tomaba MB - ME - 1 unos, que son los ceros.
@@ -105,3 +106,31 @@ commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO
 - Pendiente de esta parte: `icbi` borra la caché de traducciones con direcciones altas del kernel de Emu68 (en el
   banco fallaría; hace falta para código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`,
   `sc`, `mftb`, `mfspr`/`mtspr` de usuario (LR, CTR, XER).
+
+### 2026-11-07 — F1d: la FPU
+
+- `pruebas/p2.c` (double y float como los genera gcc, a -O2 y -O0: las cuatro operaciones, multiplicar y sumar,
+  conversiones, comparaciones, raíz por Newton, polinomios) y `pruebas/gen_t3.py` (t3, 6052 casos): cada operación
+  con valores de borde (±0, ±1, 0.1, 1e300, -1e-300, el menor denormal, el mayor doble, ±infinito, NaN silencioso,
+  con señal y negativo con datos), las de tres operandos con 7 valores, fsel, fneg, fabs, fnabs, frsp, fctiw,
+  fctiwz, fmr, fcmpu, fcmpo, y fctiw, frsp, fadd y fadds con los cuatro modos de redondeo (mtfsfi), y mffs.
+  Registros de 12 bytes: frD y CR. FPSCR no se compara entero: el JIT no lleva sus bits de excepción; mffs, solo
+  los de control. El banco y el oráculo escriben FPSCR al final, que da lo mismo en todas las pruebas.
+- **Faltaba**, ahora en el parche 0010: todo el grupo 59 (fadds, fsubs, fmuls, fdivs, fsqrts, fmadds, fmsubs,
+  fnmadds, fnmsubs: la operación en doble y el resultado redondeado a simple), lfsu, lfdu, stfsu, stfdu y las ocho
+  formas X (lfsx ... stfdux), frsp, fneg, fabs, fnabs, fsel, fmsub, fnmadd, fnmsub, fctiw, fcmpo, mffs, mtfsf,
+  mtfsfi, mtfsb0 y mtfsb1 (estos llevan RN de FPSCR al modo de redondeo de ARM).
+- **Fallos del JIT de Emu68**:
+  - `FPR::allocate()` sacaba el temporal de los registros enteros: un "temporal" de coma flotante podía ser v9,
+    que es f1 de PPC (stfs pisaba f1).
+  - `lfs` con rA = 0 cargaba un doble; `stfs` con rA = 0 guardaba un registro entero.
+  - `fcmpu` con un NaN daba LT en vez de FU.
+  - NaN: ARM prefiere el NaN con señal y cambia el signo del NaN del sumando en FNMADD, FNMSUB y FMSUB; PPC toma
+    el primero de frA, frB, frC, silenciado (`ppcNaN`, solo en el camino del NaN). fnmadd y fnmsub niegan el
+    resultado, también un cero, pero no un NaN.
+  - `csel64` de A64.h ponía Rm en el bit 6 en vez del 16 (no lo usaba nadie).
+- Lo que se toma de qemu porque PPC no lo define: la palabra alta de fctiw/fctiwz (el signo; 0 con un NaN) y de
+  mffs (0).
+- Resultado: las ocho pruebas iguales en el JIT y en qemu-ppc; el banco del 68k, igual que la referencia.
+- Pendiente: las formas con punto de la FPU y los bits de excepción de FPSCR (FX, VX..., XX, FI, FR, FPRF), fres,
+  frsqrte, mcrfs, el redondeo de las simples con doble redondeo en casos raros (no ha salido en las pruebas).
