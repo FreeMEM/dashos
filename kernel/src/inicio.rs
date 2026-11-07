@@ -37,7 +37,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["entrada"]),
     ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
-    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS)], &["entrada"]),
+    // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
+    // temporizador.
+    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["entrada"]),
     // El disco NVMe (U6d): de momento solo lo reconoce y lee su principio.
     ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS)], &[]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
@@ -51,6 +53,9 @@ const REGISTRO: u32 = 4;
 const FIRMWARE: u32 = 5;
 /// Un objeto de memoria con datos, de solo lectura (U4: las medidas de la pantalla).
 const DATOS: u32 = 6;
+/// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
+/// corren un puesto).
+const OPCIONAL: u32 = 0x100;
 /// Las llaves de arranque llevan todos los derechos: `inicio` las reparte (transferir) a los servicios.
 const DERECHOS: u32 = crate::objetos::TODOS;
 
@@ -74,7 +79,7 @@ const APARATOS: &[(&str, &str, bool)] = &[
 /// mide la BAR escribiendo unos (con la decodificación apagada mientras). Solo si el ECAM y la BAR caen en la ventana
 /// de aparatos de la placa. Escrito con la especificación de PCI (espacio de configuración, cabecera de tipo 0). Las
 /// clases: xHCI, 0x0C0330 (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe).
-fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64)> {
+fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u32>)> {
     let n = d.compatible("pci-host-ecam-generic")?;
     let (ecam, _) = d.reg_cpu(&n, 0)?;
     if !crate::placa::es_periferico(ecam) {
@@ -101,15 +106,58 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64)> {
         let mascara = bar0.leer() & !0xf;
         bar0.escribir(bajo);
         let tamano = (!mascara).wrapping_add(1) as u64;
-        // Memoria y bus master encendidos (los dos bits bajos del registro de mando; el de estado no se toca).
-        mando.escribir(antes | 0x6);
+        // Memoria y bus master encendidos (los bits 1 y 2 del registro de mando; el de estado no se toca), y la INTx
+        // permitida (el bit 10 la apaga).
+        mando.escribir((antes & !0x400) | 0x6);
         let paginas = tamano.max(memoria::PAGINA).div_ceil(memoria::PAGINA) * memoria::PAGINA;
         if base == 0 || !crate::placa::es_periferico(base) || !crate::placa::es_periferico(base + paginas - 1) {
             kprintln!("{}: BAR en {:#x} fuera de la ventana de aparatos", nombre, base);
             return None;
         }
-        kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", nombre, dev, base, tamano / 1024);
-        return Some((base, paginas));
+        // La patilla de interrupción (1 a 4, INTA a INTD) en el byte 0x3D; 0, sin INTx.
+        let patilla = (r(dev, 0x3C).leer() >> 8) & 0xff;
+        let irq = if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None };
+        match irq {
+            Some(i) => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB), INTx en la {}", nombre, dev, base, tamano / 1024, i),
+            None => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", nombre, dev, base, tamano / 1024),
+        }
+        return Some((base, paginas, irq));
+    }
+    None
+}
+
+/// La interrupción del GIC de la patilla `patilla` del aparato `dev` del bus 0, por el `interrupt-map` del nodo del
+/// PCIe (especificación de devicetree, 2.4.3; "PCI Bus Binding to Open Firmware"): cada entrada es la dirección del
+/// hijo (3 celdas: en la primera, el aparato en los bits 15:11), su patilla (1 celda), el phandle del padre, la
+/// dirección del padre (sus #address-cells) y su interrupción (sus #interrupt-cells: tipo, número, flags), y se compara
+/// con `interrupt-map-mask` aplicada. Solo vale con el GIC como padre.
+fn intx(d: &Dtb, pcie: &crate::dtb::Nodo, dev: u32, patilla: u32) -> Option<u32> {
+    let (mapa, largo) = d.propiedad(pcie, "interrupt-map")?;
+    let (mascara, _) = d.propiedad(pcie, "interrupt-map-mask")?;
+    let (m0, m3) = (d.celda(mascara, 0), d.celda(mascara, 3));
+    let (hijo_dir, hijo_pat) = (dev << 11, patilla);
+    let celdas = |phandle: u32| -> Option<(usize, usize)> {
+        let mut r = None;
+        d.cada_nodo(|n| {
+            if r.is_none() && d.propiedad(n, "phandle").is_some_and(|(p, _)| d.celda(p, 0) == phandle) {
+                let c = |nombre: &str, def: u32| d.propiedad(n, nombre).map_or(def, |(p, _)| d.celda(p, 0)) as usize;
+                r = Some((c("#address-cells", 0), c("#interrupt-cells", 3)));
+            }
+        });
+        r
+    };
+    let mut i = 0;
+    while (i + 5) * 4 <= largo {
+        let (dir, pat, phandle) = (d.celda(mapa, i), d.celda(mapa, i + 3), d.celda(mapa, i + 4));
+        let (pdir, pirq) = celdas(phandle)?;
+        if pirq < 2 || (i + 5 + pdir + pirq) * 4 > largo {
+            return None;
+        }
+        if dir & m0 == hijo_dir & m0 && pat & m3 == hijo_pat & m3 {
+            let (tipo, num) = (d.celda(mapa, i + 5 + pdir), d.celda(mapa, i + 6 + pdir));
+            return Some(if tipo == 0 { 32 + num } else { 16 + num });
+        }
+        i += 5 + pdir + pirq;
     }
     None
 }
@@ -202,8 +250,11 @@ pub fn lanzar() -> bool {
     // cada uno. En QEMU `virt` los aparatos del PCIe alcanzan toda la memoria; se les da la zona de DMA, como a los
     // demás.
     for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
-        if let Some((fisica, tamano)) = aparato_pci(&d, clase, nombre) {
+        if let Some((fisica, tamano, irq)) = aparato_pci(&d, clase, nombre) {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+            if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
+                apuntar(&mut llaves, nombre, INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
+            }
             let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
             apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
         }
@@ -212,7 +263,7 @@ pub fn lanzar() -> bool {
     let lanzables: Vec<_> = PROGRAMAS
         .iter()
         .filter(|(nombre, _, aparatos, _)| {
-            let falta = aparatos.iter().find(|(a, t)| !manifiesto.iter().any(|(n, tm, _)| *n == nombre16(a) && tm == t));
+            let falta = aparatos.iter().find(|(a, t)| t & OPCIONAL == 0 && !manifiesto.iter().any(|(n, tm, _)| *n == nombre16(a) && tm == t));
             if let Some((a, _)) = falta {
                 kprintln!("inicio: {} no se lanza: falta {}", nombre, a);
             }
@@ -231,7 +282,7 @@ pub fn lanzar() -> bool {
     for (nombre, elf, aparatos, suyos) in lanzables.iter() {
         let mut suyos_aparatos = [0xFFu8; 8];
         for (k, (aparato, tipo)) in aparatos.iter().enumerate().take(8) {
-            if let Some(i) = manifiesto.iter().position(|(n, t, _)| *n == nombre16(aparato) && t == tipo) {
+            if let Some(i) = manifiesto.iter().position(|(n, t, _)| *n == nombre16(aparato) && *t == tipo & !OPCIONAL) {
                 suyos_aparatos[k] = i as u8;
             }
         }

@@ -36,8 +36,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
-  lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor) y U6d (NVMe: reconoce el disco y lee). Falta:
-  interrupciones (MSI o INTx) en vez de girar o del temporizador, hubs, y servir bloques del NVMe a otros procesos. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee) y U6e (la
+  INTx del árbol para el xHCI). Falta: interrupciones con ACPI (MSI, o el `_PRT` del AML), hubs, y servir bloques
+  del NVMe a otros procesos. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -225,3 +226,17 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   **No comprobado:** discos reales, sectores de 4 KB, más de un espacio de nombres.
 - Siguiente: que `nvme` sirva bloques por un canal (leer y escribir), para un sistema de ficheros; y las
   interrupciones del PCIe (INTx por el `interrupt-map` del árbol, o MSI por el GICv2m/ITS).
+
+### 2026-11-07 — U6e (la interrupción del xHCI)
+
+- El kernel saca la INTx de cada aparato del PCIe: su patilla (byte 0x3D de la configuración) y el `interrupt-map`
+  del nodo del PCIe (con `interrupt-map-mask` y las celdas del padre por su phandle). Permite la INTx en el registro
+  de mando (bit 10 a 0). En QEMU `virt`, el xHCI (0:1) da la 36 y el NVMe (0:2) la 37.
+- Aparatos opcionales en `PROGRAMAS` (`OPCIONAL`): un servicio se lanza aunque falten; sus llaves siguientes corren
+  un puesto. El xHCI lleva su interrupción así: con ACPI no hay `interrupt-map` (va en el AML) y sigue con el
+  temporizador de 10 ms.
+- `xhci.rs`: si tiene llave 4, la 3 es su interrupción. Enciende IMAN.IE y USBCMD.INTE; en cada vuelta borra
+  USBSTS.EINT e IMAN.IP, mira los eventos y vuelve a permitir la interrupción.
+- **Comprobado:** con árbol, GICv2 y GICv3: "avisos por su interrupción" y el ratón mueve la ventana sin temporizador.
+  Con ACPI (GICv2 y GICv3): "cada 10 ms" y lo mismo. Pi: `prueba` y `arranque`; `prueba-virt`. **No comprobado:** dos
+  aparatos con la misma INTx (el segundo se quedaría sin llave: `Interrupcion::nueva` no comparte).

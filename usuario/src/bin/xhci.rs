@@ -2,11 +2,13 @@
 //! VL805 (por el PCIe). Escrito con la especificación de xHCI 1.2 de Intel (registros de capacidad, de operación y de
 //! puertos, cap. 5).
 //!
-//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0); la 3, el canal de entrada del compositor.
+//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0); la 3, su interrupción (INTx), si el kernel la sabe;
+//! la siguiente, el canal de entrada del compositor.
 //!
 //! Reinicia el controlador (U6b), monta sus anillos de órdenes y de eventos, da dirección a lo que haya en cada puerto,
 //! y a los teclados y ratones de arranque les configura su punto de interrupción y manda sus eventos al compositor,
-//! como `usb.rs` (U6c). Sin interrupciones por ahora: mira los eventos en cada tic de un temporizador de 10 ms. Toda su
+//! como `usb.rs` (U6c). Con su interrupción, despierta con ella (U6e); sin ella, mira los eventos en cada tic de un
+//! temporizador de 10 ms. Toda su
 //! memoria es un objeto DMA del permiso, sin caché; su dirección de bus es la física (permiso de desplazamiento 0).
 
 #![no_std]
@@ -28,6 +30,11 @@ const USBSTS: usize = 0x04;
 const PORTSC: usize = 0x400; // + 0x10 · (puerto - 1)
 const CMD_RUN: u32 = 1 << 0;
 const CMD_HCRST: u32 = 1 << 1;
+const CMD_INTE: u32 = 1 << 2;
+const STS_EINT: u32 = 1 << 3;
+/// IMAN del interruptor (5.5.2.1): IP (se borra con 1) e IE.
+const IMAN_IP: u32 = 1 << 0;
+const IMAN_IE: u32 = 1 << 1;
 const STS_HCH: u32 = 1 << 0;
 const STS_CNR: u32 = 1 << 11;
 const PORT_CCS: u32 = 1 << 0;
@@ -254,12 +261,16 @@ impl Xhci {
 }
 
 fn principal() -> u64 {
-    // Lo primero, antes de crear llaves: la 3, si existe, es el canal de entrada del compositor.
-    let copia = dashos::llave_duplicar(3, dashos::ESCRIBIR, 0);
-    let canal = (copia > 0).then(|| {
-        dashos::cerrar(copia as u32);
-        3
-    });
+    // Lo primero, antes de crear llaves: si hay llave 4, la 3 es la interrupción y la 4 el canal de entrada del
+    // compositor; si no, el canal (si lo hay) es la 3.
+    let existe = |k: u32| {
+        let copia = dashos::llave_duplicar(k, dashos::ESCRIBIR, 0);
+        if copia > 0 {
+            dashos::cerrar(copia as u32);
+        }
+        copia > 0
+    };
+    let (irq, canal) = if existe(4) { (Some(3), Some(4)) } else { (None, existe(3).then_some(3)) };
     if dashos::registros_proyectar(2, VA) != 0 {
         println!("  [xhci] sin registros");
         return 1;
@@ -340,16 +351,28 @@ fn principal() -> u64 {
     let teclados = lista.iter().flatten().filter(|r| r.activo && r.teclado).count();
     let ratones = lista.iter().flatten().filter(|r| r.activo && !r.teclado).count();
     println!("  [xhci] versión {:x}.{:02x}, {} puertos; HID de arranque: {} teclado y {} ratón", version >> 8, version & 0xff, puertos, teclados, ratones);
-    // Cada 10 ms se miran los eventos: los informes que llegan van al compositor y se pide el siguiente.
+    // Los eventos se miran al llegar la interrupción (o cada 10 ms sin ella): los informes que llegan van al
+    // compositor y se pide el siguiente.
     let mut entrada = dashos::hid::Entrada::nueva(canal, "xhci");
     let (a, b) = dashos::canal_crear();
-    if dashos::temporizador_crear(b, 10_000, 10_000) <= 0 {
+    let irq = irq.filter(|&i| dashos::interrupcion_asociar(i, b) == 0);
+    if irq.is_none() && dashos::temporizador_crear(b, 10_000, 10_000) <= 0 {
         return 6;
+    }
+    println!("  [xhci] avisos {}", if irq.is_some() { "por su interrupción" } else { "cada 10 ms" });
+    if irq.is_some() {
+        escribir(ir, IMAN_IE | IMAN_IP);
+        escribir(op + USBCMD, CMD_RUN | CMD_INTE);
     }
     let mut buf = [0u8; 8];
     let mut ll = [0u32; 1];
+    let mut n_aviso = 0; // el tamaño del último aviso: 4, de la interrupción; 8, del temporizador
     loop {
-        dashos::canal_leer(a, &mut buf, &mut ll);
+        // Borrar el aviso antes de mirar los eventos: uno que llegue mientras vuelve a ponerlo (4.17.5).
+        if irq.is_some() {
+            escribir(op + USBSTS, STS_EINT);
+            escribir(ir, IMAN_IE | IMAN_IP);
+        }
         while let Some(ev) = x.evento() {
             if (ev.2 >> 10) & 0x3f != T_EV_TRANSFERENCIA {
                 continue;
@@ -369,6 +392,11 @@ fn principal() -> u64 {
             r.int.poner(bus + (base_ranura(k) + R_INFORME) as u64, r.mps, (T_NORMAL << 10) | (1 << 5) | (1 << 2));
             x.timbre(r.id as usize, r.dci);
         }
+        // La interrupción se vuelve a permitir con el aviso ya borrado; si llegó otro evento, salta otra vez.
+        if let Some(i) = irq.filter(|_| n_aviso == 4) {
+            dashos::interrupcion_terminar(i);
+        }
+        n_aviso = dashos::canal_leer(a, &mut buf, &mut ll).0;
     }
 }
 
