@@ -45,7 +45,7 @@ xHCI. Así lo hacen Linux y FreeBSD.
 | FreeBSD y NetBSD | BSD, ISC | Referencia y, si encaja, código adaptado |
 | Emu68 | MPL-2.0 | Buzón, pantalla del firmware, arranque de núcleos |
 | Tutoriales de SO en Rust de Andre Richter | MIT o Apache-2.0 | Serie, temporizador, MMU, excepciones |
-| Linux | GPL-2.0 | Solo para entender lo que no está documentado; no se copia |
+| Linux | GPL-2.0 | Para los controladores propios, solo para entender lo que no está documentado (no se copia). Desde el 2026-11-07, sus controladores se usan tal cual en la zona GPL (`AGENTS.md`, regla 7) |
 
 Para lo que no está documentado (HVS, HDMI, V3D, Wi-Fi), la única fuente fiable es el código de Linux. Se propone el
 mismo método que con la ROM del Amiga (AGENTS.md, regla 1): una sesión de análisis lo lee y escribe una
@@ -124,3 +124,14 @@ con un controlador CDC Ethernet. No se ha comprobado.
 - Buzón de Emu68: `src/raspi/support_rpi.c`.
 
 Lo que no se comprobó: el RNG200 en QEMU, la red USB en QEMU, y el estado de GENET en FreeBSD y NetBSD.
+
+## Decisión del 2026-11-07: controladores de Linux en procesos aparte (opción C)
+
+El usuario eligió la mezcla. Los controladores básicos son propios y MPL: Pi, USB (xHCI, DWC2), NVMe, consola,
+pantalla de las placas soportadas. Para lo demás (Wi-Fi, GPU de portátiles, aparatos USB raros) se usan los de
+Linux, cada uno en un proceso, sobre una capa que imita las partes del kernel de Linux que necesitan (memoria, DMA,
+interrupciones, temporizadores, colas de trabajo, PCI, USB), como DDE en Genode. El controlador y la capa son
+GPL-2.0, en un directorio propio; hablan con DashOS solo por canales, así que el kernel y el resto siguen en MPL. La
+MPL-2.0 admite la GPL-2.0 como licencia secundaria, por si algún fichero nuestro (la biblioteca de canales) tiene
+que entrar en esos procesos. Reglas en `AGENTS.md` (1 y 7).
+

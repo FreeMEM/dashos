@@ -322,7 +322,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
   big.LITTLE con plazos y energía; MTE para la caja Amiga donde haya hardware; Mesa (v3dv, turnip, panvk,
   honeykrisp) sobre un servidor de GPU; ideas Amiga (puertos con llave, ARexx con permiso, datatypes aislados,
   ASSIGN como pasaporte, pantallas arrastrables).
-- **Controladores de Linux como procesos (estilo DDE de Genode)**: pendiente, el usuario quiere hablar antes lo de
-  la licencia GPL.
+- **Controladores de Linux como procesos (estilo DDE de Genode)**: opción C, la mezcla. Los básicos, propios (MPL);
+  el resto, de Linux en procesos aparte con su capa, en una zona GPL-2.0 separada que solo habla por canales.
+  Cambia la sala limpia como se recomendó (`AGENTS.md`, reglas 1 y 7; `docs/diseño/S12-controladores.md`).
 - **THEA500 Mini**: placa candidata (`docs/diseño/placa-thea500-mini.md`).
 

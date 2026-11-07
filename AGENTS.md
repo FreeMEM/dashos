@@ -11,6 +11,8 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
 1. **Sala limpia.** Quien implementa no lee desensamblados del Kickstart ni código de AROS. Trabaja con
    `docs/spec/` y las pruebas. Quien analiza escribe especificaciones en prosa y no escribe código del sistema.
    Cada sesión dice al empezar qué papel tiene.
+   Lo mismo con Linux para los controladores propios (MPL): quien analiza puede leer Linux y escribe la
+   especificación; quien implementa no lo lee. Nada de un fichero MPL sale copiado ni traducido de código GPL.
 2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados.
 3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte.
 4. **Los cambios en Dash los hacen las sesiones de Dash** (`~/Projects/FreeMEMLang`). Aquí solo se usa.
@@ -20,6 +22,12 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
 6. **`unsafe` solo en `kernel/src/base/`.** El resto del kernel tiene `deny(unsafe_code)`. Lo que necesite del
    hardware se pide a `base` con una interfaz segura; una función pública de `base` que no sea segura con cualquier
    argumento es `unsafe fn`. Las únicas excepciones son las pruebas y los controladores que solo van con ellas.
+7. **Controladores de Linux, solo en la zona GPL** (usuario, 2026-11-07). Se usan controladores de Linux tal cual
+   para lo que no tiene controlador propio (Wi-Fi, GPU de portátiles, aparatos USB raros), cada uno como un proceso
+   aparte con una capa que le imita el kernel de Linux (como DDE de Genode). Ese código y su capa son GPL-2.0, viven en
+   un directorio propio con su licencia, y solo hablan con DashOS por canales. Ahí sí se lee y se copia Linux; de ahí
+   no sale nada hacia el kernel ni hacia los ficheros MPL. Quien reparta DashOS con ellos ofrece su código fuente. El
+   firmware que cargan lleva su propia licencia: se comprueba que se puede repartir antes de meterlo.
 
 ## Oráculo
 
