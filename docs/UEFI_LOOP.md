@@ -38,10 +38,11 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
   lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
   INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) U6g (MSI-X
-  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: hubs y el anillo de peticiones del disco.
-  Hechos también U6i (NVMe por interrupción) y U6j (`msi-map` e IORT). xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: el anillo de peticiones del disco.
+  Hechos también U6i (NVMe por interrupción), U6j (`msi-map` e IORT) y U6k (concentradores USB). xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
-  en EL0 (Apple). Se prueba en `virt`.
+  en EL0 (Apple). Se prueba en `virt`. Análisis hecho (`docs/diseño/U7-caja-sin-big-endian.md`): unas 1200 líneas en
+  Emu68; espera a que el usuario decida cuándo.
 
 ## Herramientas
 
@@ -314,3 +315,23 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   pasan por una SMMU no se siguen aún. Lo dice por la consola: "IORT: RID 0x0 a 0xffff al ITS como 0x0" en QEMU.
 - **Comprobado:** las cuatro máquinas de `virt`, bien; la Pi, `arranque`. **No comprobado:** una correspondencia
   que no sea la identidad (QEMU solo da esa).
+
+### 2026-11-07 — U6k (concentradores USB)
+
+- `xhci.rs` reconoce un concentrador (clase 9 en el descriptor de aparato), lo marca en su ranura (Hub y número de
+  puertos, con "configurar punto"), enciende sus puertos, y a cada uno con algo lo reinicia por el concentrador
+  (GET_STATUS, SET_FEATURE y CLEAR_FEATURE de USB 2.0, cap. 11.24) y le da ranura con su cadena de ruta. Los lentos
+  detrás de uno de alta velocidad llevan su traductor (TT); concentradores encadenados hasta 5 saltos. 6 ranuras.
+- `make -C kernel arranque-virt` pone el teclado detrás de un concentrador (`usb-hub`, puerto 1.1) y el ratón en un
+  puerto raíz.
+- **Comprobado:** las cuatro máquinas de `virt`: concentrador en el puerto 5 y el teclado en la ruta 1; ratón bien.
+  Pi: `prueba` y `arranque`. **No comprobado:** que lleguen las teclas del teclado de detrás (el compositor no las
+  enseña; el ratón sí se comprueba), concentradores de alta velocidad (el de QEMU es de plena) y de USB 3, y
+  conectar o quitar aparatos con la máquina en marcha.
+
+### 2026-11-07 — U7: análisis
+
+Un agente recorrió Emu68 y dejó el mapa en `docs/diseño/U7-caja-sin-big-endian.md`: unos 350 accesos a la memoria del
+68k que hay que girar, 280 de ellos sueltos por las instrucciones, con saltos de distancia fija alrededor; unas 1200
+líneas en cuatro parches. No se empieza sin que el usuario lo diga: es el trabajo más largo de la lista y no hace
+falta en las CPU con big-endian (la Pi, los Snapdragon).

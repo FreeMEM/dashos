@@ -12,6 +12,9 @@ DashOS en marcha con 4 núcleos.
 # U6g y U6h: por MSI-X, con GICv2 por el marco GICv2m (desde la SPI 80) y con GICv3 por el ITS (desde la LPI 8192),
 # con árbol y con ACPI. Sin ninguno de los dos, la INTx (U6e) o, con ACPI, el temporizador.
 ~xhci: en el PCIe 0:1.0, registros en 0x10004000 (16 KB), MSI-X en la
+# U6k: el teclado, detrás de un concentrador.
+~│   [xhci] puerto 5: ranura 1, concentrador
+~│   [xhci] puerto 5 ruta 1: ranura 2, teclado
 ~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
 # U6e: el xHCI despierta con su interrupción.
 ~│   [xhci] avisos por su interrupción

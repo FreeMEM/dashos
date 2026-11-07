@@ -59,7 +59,7 @@ const M_ORDENES: usize = 0x1000;
 const M_EVENTOS: usize = 0x2000;
 const M_RANURAS: usize = 0x4000; // + 0x4000 por ranura
 const TRBS: usize = 64;
-const MAX_RANURAS: usize = 4;
+const MAX_RANURAS: usize = 6;
 
 // Tipos de TRB (6.4.6).
 const T_NORMAL: u32 = 1;
@@ -216,6 +216,10 @@ impl Xhci {
 #[derive(Clone, Copy)]
 struct Ranura {
     id: u32,
+    /// Es un concentrador (clase 9): sus puertos se recorren aparte (U6k).
+    hub: bool,
+    velocidad: u32,
+    ruta: u32,
     ep0: Anillo,
     int: Anillo,
     dci: u32,
@@ -339,11 +343,16 @@ fn principal() -> u64 {
         }
         escribir(reg, (leer(reg) & !PORT_RW1C) | PORT_PRC);
         let velocidad_p = (leer(reg) >> 10) & 0xf;
-        match configurar(&mut x, p as u32, velocidad_p, n) {
+        match configurar(&mut x, p as u32, velocidad_p, n, 0, None) {
             Some(r) => {
-                println!("  [xhci] puerto {}: ranura {}, {}", p, r.id, if r.dci == 0 { "sin teclado ni ratón de arranque" } else if r.teclado { "teclado" } else { "ratón" });
                 lista[n] = Some(r);
                 n += 1;
+                if r.hub {
+                    println!("  [xhci] puerto {}: ranura {}, concentrador", p, r.id);
+                    concentrador(&mut x, p as u32, n - 1, None, &mut lista, &mut n, ranuras);
+                } else {
+                    println!("  [xhci] puerto {}: ranura {}, {}", p, r.id, que_es(&r));
+                }
             }
             None => println!("  [xhci] puerto {}: no se pudo configurar", p),
         }
@@ -400,9 +409,99 @@ fn principal() -> u64 {
     }
 }
 
+fn que_es(r: &Ranura) -> &'static str {
+    if r.dci == 0 { "sin teclado ni ratón de arranque" } else if r.teclado { "teclado" } else { "ratón" }
+}
+
+/// Los saltos de concentrador de una cadena de ruta (cuántos grupos de 4 bits tiene).
+fn saltos(ruta: u32) -> u32 {
+    (0..5).take_while(|i| (ruta >> (4 * i)) & 0xf != 0).count() as u32
+}
+
+/// Recorre los puertos de un concentrador (USB 2.0, cap. 11.23 y 11.24): lo marca como concentrador en su ranura
+/// (Hub y número de puertos, 6.2.2), enciende sus puertos, y a cada uno con algo lo reinicia y le da ranura, con la
+/// ruta del concentrador más el puerto. Los concentradores de detrás, también (hasta 5 saltos). `k` es el sitio del
+/// concentrador en `lista`; `tt`, el traductor que ya lleve.
+fn concentrador(x: &mut Xhci, p: u32, k: usize, tt: Option<(u32, u32)>, lista: &mut [Option<Ranura>; MAX_RANURAS], n: &mut usize, max: usize) {
+    let Some(mut h) = lista[k] else { return };
+    // Descriptor de concentrador (tipo 0x29): puertos en el byte 2; tiempo hasta tener corriente en el 5 (2 ms).
+    let Some(_) = x.control(&mut h, k, [0xA0, 6, 0, 0x29, 0, 0, 9, 0], 9) else { return };
+    let d = x.datos(k, 9);
+    let (puertos, espera) = (d[2] as u32, d[5] as u64 * 2);
+    // La ranura como concentrador (con "configurar punto", solo el contexto de ranura).
+    let c = x.ctx;
+    let e = base_ranura(k) + R_ENTRADA;
+    for i in (0..33 * c).step_by(4) {
+        x.poner32(e + i, 0);
+    }
+    x.poner32(e + 4, 1);
+    x.poner32(e + c, (h.velocidad << 20) | (1 << 26) | (1 << 27) | h.ruta);
+    x.poner32(e + c + 4, p << 16 | puertos << 24);
+    x.poner32(e + c + 8, tt.map_or(0, |(ranura, puerto)| ranura | puerto << 8));
+    let _ = x.orden(x.bus + e as u64, (T_CONFIGURAR_EP << 10) | (h.id << 24));
+    let salto = saltos(h.ruta);
+    for i in 1..=puertos.min(15) {
+        let _ = x.control(&mut h, k, [0x23, 3, 8, 0, i as u8, 0, 0, 0], 0); // SET_FEATURE(PORT_POWER)
+    }
+    dashos::dormir_us(espera.max(20) * 1000);
+    for i in 1..=puertos.min(15) {
+        if *n >= max {
+            break;
+        }
+        // GET_STATUS del puerto: estado (bit 0 conectado, 1 activo, 9 baja velocidad, 10 alta) y cambios.
+        let estado = |x: &mut Xhci, h: &mut Ranura| -> Option<(u16, u16)> {
+            x.control(h, k, [0xA3, 0, 0, 0, i as u8, 0, 4, 0], 4)?;
+            let d = x.datos(k, 4);
+            Some((u16::from_le_bytes([d[0], d[1]]), u16::from_le_bytes([d[2], d[3]])))
+        };
+        let Some((e0, _)) = estado(x, &mut h) else { continue };
+        if e0 & 1 == 0 {
+            continue;
+        }
+        let _ = x.control(&mut h, k, [0x23, 3, 4, 0, i as u8, 0, 0, 0], 0); // SET_FEATURE(PORT_RESET)
+        let mut listo = None;
+        for _ in 0..20 {
+            dashos::dormir_us(10_000);
+            if let Some((e1, cambio)) = estado(x, &mut h) {
+                if cambio & (1 << 4) != 0 && e1 & 2 != 0 {
+                    listo = Some(e1);
+                    break;
+                }
+            }
+        }
+        let _ = x.control(&mut h, k, [0x23, 1, 20, 0, i as u8, 0, 0, 0], 0); // CLEAR_FEATURE(C_PORT_RESET)
+        let _ = x.control(&mut h, k, [0x23, 1, 16, 0, i as u8, 0, 0, 0], 0); // CLEAR_FEATURE(C_PORT_CONNECTION)
+        let Some(e1) = listo else {
+            println!("  [xhci] concentrador {}, puerto {}: no se activa", h.id, i);
+            continue;
+        };
+        // Velocidades de xHCI (7.2.2.1.1): plena 1, baja 2, alta 3.
+        let velocidad = if e1 & (1 << 9) != 0 { 2 } else if e1 & (1 << 10) != 0 { 3 } else { 1 };
+        // Un aparato lento detrás de un concentrador de alta velocidad va por su traductor.
+        let tt_hijo = if h.velocidad == 3 && velocidad < 3 { Some((h.id, i)) } else { tt };
+        let ruta = h.ruta | i << (4 * salto);
+        match configurar(x, p, velocidad, *n, ruta, tt_hijo) {
+            Some(r) => {
+                lista[*n] = Some(r);
+                *n += 1;
+                if r.hub && salto < 4 {
+                    println!("  [xhci] puerto {} ruta {:x}: ranura {}, concentrador", p, ruta, r.id);
+                    concentrador(x, p, *n - 1, tt_hijo, lista, n, max);
+                } else {
+                    println!("  [xhci] puerto {} ruta {:x}: ranura {}, {}", p, ruta, r.id, que_es(&r));
+                }
+            }
+            None => println!("  [xhci] puerto {} ruta {:x}: no se pudo configurar", p, ruta),
+        }
+    }
+    lista[k] = Some(h);
+}
+
 /// Pide una ranura, da dirección al aparato del puerto `p` y, si es un teclado o ratón de arranque, configura su punto
 /// de interrupción y pide el primer informe (4.3.2 a 4.3.5). `k` es su sitio en la memoria.
-fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize) -> Option<Ranura> {
+/// `ruta` es la cadena de ruta (4 bits por salto de concentrador, 4.3.3; 0 en un puerto raíz) y `tt`, el traductor
+/// de un aparato de baja o plena velocidad detrás de un concentrador de alta (ranura y puerto del concentrador).
+fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Option<(u32, u32)>) -> Option<Ranura> {
     let (codigo, id) = x.orden(0, T_PEDIR_RANURA << 10)?;
     if codigo != 1 || id == 0 {
         return None;
@@ -425,8 +524,10 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize) -> Option<Ranura> 
         x.poner32(e + i, 0);
     }
     x.poner32(e + 4, 0b11);
-    x.poner32(e + c, (velocidad << 20) | (1 << 27));
+    let tt = tt.map_or(0, |(ranura, puerto)| ranura | puerto << 8);
+    x.poner32(e + c, (velocidad << 20) | (1 << 27) | ruta);
     x.poner32(e + c + 4, p << 16);
+    x.poner32(e + c + 8, tt);
     x.poner32(e + 2 * c + 4, (3 << 1) | (4 << 3) | (mps0 << 16));
     x.poner64(e + 2 * c + 8, ep0.bus | 1);
     x.poner32(e + 2 * c + 16, 8);
@@ -434,9 +535,10 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize) -> Option<Ranura> 
     if codigo != 1 {
         return None;
     }
-    let mut r = Ranura { id, ep0, int, dci: 0, mps: 0, teclado: false, activo: false };
+    let mut r = Ranura { id, hub: false, velocidad, ruta, ep0, int, dci: 0, mps: 0, teclado: false, activo: false };
     // Descriptor de aparato (18) y de configuración (9 y después entero).
     x.control(&mut r, k, [0x80, 6, 0, 1, 0, 0, 18, 0], 18)?;
+    r.hub = x.datos(k, 18)[4] == 9;
     let n = x.control(&mut r, k, [0x80, 6, 0, 2, 0, 0, 9, 0], 9)?;
     let d = x.datos(k, n as usize);
     let total = u16::from_le_bytes([d[2], d[3]]).min(256) as u32;
@@ -464,6 +566,9 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize) -> Option<Ranura> 
         i += (d[i] as usize).max(2);
     }
     x.control(&mut r, k, [0x00, 9, valor, 0, 0, 0, 0, 0], 0)?; // SET_CONFIGURATION
+    if r.hub {
+        return Some(r);
+    }
     let Some((ifz, teclado, num, mps, b_intervalo)) = hallado else { return Some(r) };
     x.control(&mut r, k, [0x21, 0x0B, 0, 0, ifz, 0, 0, 0], 0)?; // SET_PROTOCOL: arranque
     let _ = x.control(&mut r, k, [0x21, 0x0A, 0, 0, ifz, 0, 0, 0], 0); // SET_IDLE 0: puede no admitirse
@@ -473,8 +578,9 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize) -> Option<Ranura> 
         x.poner32(e + i, 0);
     }
     x.poner32(e + 4, 1 | (1 << dci));
-    x.poner32(e + c, (velocidad << 20) | (dci << 27));
+    x.poner32(e + c, (velocidad << 20) | (dci << 27) | ruta);
     x.poner32(e + c + 4, p << 16);
+    x.poner32(e + c + 8, tt);
     // Intervalo en potencias de dos de 125 µs (6.2.3.6): en alta velocidad, bInterval - 1; si no, bInterval ms.
     let intervalo = if velocidad >= 3 { (b_intervalo as u32).clamp(1, 16) - 1 } else { (31 - ((b_intervalo as u32).max(1) * 8).leading_zeros()).clamp(3, 10) };
     let ep = e + (dci as usize + 1) * c;
