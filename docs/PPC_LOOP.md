@@ -259,3 +259,21 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
 - **Faltaba**: `mfspr rD,268/269` (TBL, TBU), que es como codifican `mftb` los ensambladores nuevos (para POWER4 y
   después) y que qemu-ppc acepta en el 750: ahora va a la misma función que `mftb`.
 - Las catorce pruebas, bien.
+
+### 2026-11-07 — F1h (5): icbi y el código que se modifica a sí mismo
+
+- `pruebas/p5.s`: (1) una rutina en 0x00120000 (`li 3,N; blr`) que se reescribe y se llama con `bctrl` 10 veces;
+  (2) una instrucción del propio programa, dentro de un bucle, ya traducida en la vuelta anterior y cambiada antes de
+  llegar a ella; (3) una rutina llamada con `bl` (que el JIT puede meter en el bloque que llama) con sus dos
+  instrucciones cambiadas cada vez. Siempre `stw`, `dcbst`, `sync`, `icbi` e `isync`, como pide PPC.
+- **Fallos del JIT de Emu68** (los tres los encontró p5):
+  - `icbi` vacía la caché LRU de bloques con una dirección hecha de los 32 bits bajos y los bits 39-63 a 1, que solo
+    vale con el núcleo de Emu68 en 0xffffff80xxxxxxxx: en el banco (y en DashOS) caía. Ahora carga la dirección
+    entera de 64 bits (cuatro `mov`). La segunda parte (la tabla `alloc`) usaba `movk` de 32 bits, que borra la mitad
+    alta del registro: ahora `movk` de 64.
+  - Aun así se volvía a ejecutar el código viejo: el traductor lee el código PPC por la caché de instrucciones por
+    software de Emu68 (`cache_read_32(ICACHE, ...)`, la de `cache.c`), y `icbi` no la tocaba; ni la comprobación del
+    bloque (la huella y el CRC) ni la traducción nueva veían el cambio. `icbi` solo sube EPOCH (desde el código
+    traducido no se puede llamar a C), así que el bucle (`PPCMainLoop`), en el camino lento, vacía esa caché entera
+    cuando ve un EPOCH nuevo. PPC deja que `icbi` invalide más de lo pedido; el coste es el de volver a llenarla.
+- Las quince pruebas, bien.

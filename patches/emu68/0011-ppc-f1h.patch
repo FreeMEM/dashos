@@ -158,6 +158,29 @@ index 8def19b..67dd9c4 100644
          tc->emit(cmp_immed(reg_rd, 0));   // DashOS F1
          setCRnSigned(tc, 0);
      }
+diff --git a/src/PPC_ExecutionLoop.cpp b/src/PPC_ExecutionLoop.cpp
+index bd63c22..8216ecf 100644
+--- a/src/PPC_ExecutionLoop.cpp
++++ b/src/PPC_ExecutionLoop.cpp
+@@ -343,6 +343,18 @@ void PPCMainLoop()
+ 
+             uint32_t copyPC = getCTX()->PC;
+ 
++            /*
++                DashOS (F1h): icbi increments EPOCH, so every unit is looked up here again. The PPC code read to
++                verify a unit and to translate goes through the software instruction cache (cache_read_32), which
++                has to forget what it holds, or the old code would be translated again (icbi may invalidate more
++                than asked for: here, everything)
++            */
++            static uint32_t icache_epoch;
++            if (unlikely(GET_EPOCH() != icache_epoch)) {
++                icache_epoch = GET_EPOCH();
++                cache_invalidate_all(ICACHE);
++            }
++
+             /* Perform search without testing Epoch */
+             PPCTranslationUnit *node = nullptr;
+             uint32_t hash = (copyPC >> EMU68_HASHSHIFT) & EMU68_HASHMASK;
 diff --git a/src/PPC_LoadStore.cpp b/src/PPC_LoadStore.cpp
 index 2863ec5..5aafd17 100644
 --- a/src/PPC_LoadStore.cpp
@@ -343,7 +366,7 @@ index 2863ec5..5aafd17 100644
 +
  }
 diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
-index 7b1af7c..e4173a3 100644
+index 7b1af7c..2ebdc5c 100644
 --- a/src/PPC_SystemInstructions.cpp
 +++ b/src/PPC_SystemInstructions.cpp
 @@ -64,7 +64,7 @@ SupervisorCheck::SupervisorCheck(PPCTranslatorContext *t) : tc(t)
@@ -415,7 +438,43 @@ index 7b1af7c..e4173a3 100644
  
      /* Insert additional exit points */
      for (int i=0; i < number_of_cases; i++) {
-@@ -1024,9 +1033,9 @@ int rfi(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -674,13 +683,15 @@ int icbi(PPCTranslatorContext *tc, uint32_t opcode)
+         PPC Architecture allows that icbi flushes more than requested. This is what
+         will be done here.
+     */
+-    tc->emit({
+-        /* Load offset for LRU cache */
+-        mov_immed_u16(base, (uint16_t)(uintptr_t)cache.cacheLoc(), 0),
+-        movk_immed_u16(base, (uint16_t)((uintptr_t)cache.cacheLoc() >> 16), 1),
++    uintptr_t loc = cache.cacheLoc();
+ 
+-        /* make "high" address from offset */
+-        orr64_immed(base, base, 25, 25, 1),
++    tc->emit({
++        /* DashOS (F1h): the whole 64-bit address of the LRU cache. It was the low 32 bits with bits 39-63 set,
++           which is only right where the kernel lives at 0xffffff80xxxxxxxx (on DashOS or in the test bench it does not) */
++        mov64_immed_u16(base, loc & 0xffff, 0),
++        movk64_immed_u16(base, (loc >> 16) & 0xffff, 1),
++        movk64_immed_u16(base, (loc >> 32) & 0xffff, 2),
++        movk64_immed_u16(base, (loc >> 48) & 0xffff, 3),
+ 
+         /* Load fill values */
+         movn64_immed_u16(fill, 0, 0),
+@@ -693,9 +704,10 @@ int icbi(PPCTranslatorContext *tc, uint32_t opcode)
+         subs_immed(cnt, cnt, 1),
+         b_cc(A64_CC_NE, -2),
+ 
+-        /* Upper base bits are still valid, update lower ones */
+-        movk_immed_u16(base, (uint16_t)(uintptr_t)cache.allocLoc(), 0),
+-        movk_immed_u16(base, (uint16_t)((uintptr_t)cache.allocLoc() >> 16), 1),
++        /* Upper base bits are still valid, update lower ones (DashOS F1h: with the 64-bit movk; the 32-bit one
++           cleared the upper half) */
++        movk64_immed_u16(base, (uint16_t)(uintptr_t)cache.allocLoc(), 0),
++        movk64_immed_u16(base, (uint16_t)((uintptr_t)cache.allocLoc() >> 16), 1),
+ 
+         /* Load counter, we clear 4 items with one stp */
+         mov_immed_u16(cnt, EMU68_LRU_SET_COUNT / 4, 0),
+@@ -1024,9 +1036,9 @@ int rfi(PPCTranslatorContext *tc, uint32_t opcode)
      GPR tmp = GPR::allocate();
  
      tc->emit({
