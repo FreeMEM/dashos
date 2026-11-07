@@ -14,10 +14,10 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
 - [x] F1c Cargas y guardados de todas las formas, `lmw` y `stmw`, reserva, `dcbz`.
 - [x] F1d FPU: doble y simple (grupo 59), cargas y guardados de todas las formas, NaN de PPC, redondeo, FPSCR
   (sus bits de control).
-- [ ] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
+- [x] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
 - [x] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
 - [x] F1g Saltos condicionales: todos los BO en bc, bcl, bclr, bclrl, bcctr, bcctrl.
-- [ ] F1h `icbi` en el banco (código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`, `sc`,
+- [x] F1h `icbi` en el banco (código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`, `sc`,
   `mftb`, `mullwo`/`divwo`/`divwuo`.
 - [ ] AltiVec, después de MorphOS (orden del usuario).
 
@@ -40,7 +40,12 @@ desde el commit "0010" (F1h y F1e). El banco se compila contra ese árbol:
 
 ```
 make -C jit-host/ppc EMU68=$PWD/third_party/Emu68
-``` El banco PPC se compila con `PPC_SO_PROPAGATION=1`
+```
+
+El banco se compila con `PPC_FPSCR_EXCEPTIONS=1` (FPSCR exacto tras cada operación de la FPU; F1e). Con
+`make -C jit-host/ppc EMU68=... FPSCR=0` sale en `build-rapido/` el camino rápido de Emu68 (el valor por defecto de
+`config.h`), que se prueba con `JIT=build-rapido/jit-ppc python3 jit-host/ppc/comparar_ppc.py`: ahí p2, p2-o0, t3 y
+t8 difieren de qemu-ppc a propósito (solo en FPSCR) y las demás tienen que dar bien, t9 incluida. El banco PPC se compila con `PPC_SO_PROPAGATION=1`
 (SO de XER copiado a CR, como en un PPC de verdad; Emu68 lo deja a 0 por velocidad).
 
 ## Entradas
@@ -277,3 +282,63 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
     traducido no se puede llamar a C), así que el bucle (`PPCMainLoop`), en el camino lento, vacía esa caché entera
     cuando ve un EPOCH nuevo. PPC deja que `icbi` invalide más de lo pedido; el coste es el de volver a llenarla.
 - Las quince pruebas, bien.
+
+### 2026-11-07 — F1e: los bits de excepción de FPSCR y las formas con punto de la FPU
+
+- **El oráculo daba siempre FPSCR = 0 al final**: en el contexto de la señal, FPSCR es un `double` y se convertía su
+  valor a entero. Ahora se copian sus 8 bytes y se toma la palabra baja. Desde aquí el FPSCR final se compara de
+  verdad en todas las pruebas (p2 y t3 acaban con FX, VX, OX, UX, ZX, XX y varios VX puestos).
+- `comparar_ppc.py`: un mapa puede empezar por `#tam=16` (registros de 16 bytes); `JIT=...` elige otro banco.
+- `pruebas/gen_t8.py` (t8, 11115 casos de 16 bytes: frD, CR y FPSCR con `mffs`): cada caso parte de un FPSCR
+  conocido (`mtfsf 0xff`). Las aritméticas de doble y simple con y sin punto y valores que dan cada excepción
+  (inexacto, desbordamiento, subdesbordamiento, división entre 0, NaN con señal, inf - inf, inf / inf, 0 / 0,
+  inf * 0), multiplicar y sumar con punto, `frsp`, `fctiw`, `fctiwz`, `fcmpu`, `fcmpo`, las que no cambian FPSCR con
+  punto, `mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1` (con y sin punto), `mcrfs` y secuencias (bits pegajosos, FI y FPRF de
+  la última, frD igual a una fuente). Sin estados con una excepción habilitada: qemu-ppc (linux-user) da SIGFPE.
+- Cómo va (0011, `PPC_FPU.cpp`): ARM lleva sus banderas pegajosas en FPSR (IOC, DZC, OFC, UFC, IXC). Una operación
+  "completa" vacía FPSR antes y después la pasa a FPSCR: OX, UX, ZX y XX (pegajosos), FI (esta fue inexacta), FX, y
+  con IOC el bit VX de la causa, que se saca de los operandos solo en ese camino (VXSNAN, VXISI, VXIDI, VXZDZ, VXIMZ,
+  VXVC, VXSQRT, VXCVI); FPRF de la clase del resultado; VX y FEX como resúmenes. Las formas con punto copian
+  FPSCR[0-3] a CR1. `mtfsf`/`mtfsfi`/`mtfsb*` ya no escriben FEX ni VX (salen de los demás) ni el bit reservado 20;
+  `mcrfs`, que faltaba, copia el campo y borra sus bits de excepción.
+- **Velocidad** (`config.h`, `PPC_FPSCR_EXCEPTIONS`, como `PPC_SO_PROPAGATION`): con 1 (el banco) todas las
+  operaciones son completas (unas 40-60 instrucciones de ARM más cada una). Con 0, lo que trae Emu68 por defecto,
+  solo lo son las formas con punto: las demás se traducen como antes y sus OX, UX, ZX y XX se quedan en FPSR, que no
+  cuesta nada y se recoge en FPSCR (con FX) al leerlo (`mffs`, `mtfs*`, `mcrfs`, una forma con punto) y al guardar el
+  contexto (`PPC_ExecutionLoop.cpp`; al cargarlo, FPSR se vacía). Con 0 se pierden: los bits VX de las operaciones
+  sin punto (de IOC no se sabe la causa), FI, FPRF y FPCC (solo los ponen las formas con punto; `fcmpu`/`fcmpo` no
+  tienen) y, si se guarda con `stfs` un doble que no es de precisión simple, su `fcvt` puede poner XX, OX o UX de
+  más (los compiladores hacen `frsp` antes). `pruebas/gen_t9.py` (t9, 390 casos) prueba ese camino con secuencias en
+  las que da lo mismo que qemu-ppc (operaciones sin punto que no son inválidas y luego una con punto, `mffs`,
+  `mcrfs`, `mtfsb1`, una llamada nativa en medio, y la recogida al guardar el contexto al final).
+- Decisiones, donde qemu-ppc y un PPC de verdad no hacen lo mismo se sigue a qemu (es el oráculo):
+  - FX se pone con cada excepción, aunque su bit ya estuviera a 1 (en el 750, solo si pasa de 0 a 1). Para hacerlo
+    como el 750 bastaría comparar con el FPSCR de antes.
+  - FR no se calcula nunca (qemu tampoco; haría falta el resultado exacto) y se deja como está.
+  - `fcmpu`/`fcmpo` borran FI; `fcmpo` con un NaN pone también C (FPRF de NaN); `fctiw` inválida pone FPRF de NaN y
+    borra FR y FI; `mtfsb1` de un bit de excepción no pone FX; inf * 0 + NaN con señal da solo VXIMZ.
+  - Una excepción habilitada (VE, OE, UE, ZE, XE) solo se ve en FEX: ni excepción de programa ni el resultado que
+    pide el modo habilitado. Sin probar (SIGFPE en qemu-ppc).
+  - El subdesbordamiento: ARM decide si el resultado es diminuto después de redondear y PPC antes; difiere solo en
+    el caso límite que redondea al menor normal. No ha salido en las pruebas.
+  - `fsqrt` no está en el 750 (qemu-ppc da SIGILL): su VXSQRT queda sin probar.
+- **Fallos del JIT de Emu68** (encontrados por t8 y por el oráculo arreglado):
+  - Con frD igual a una fuente (`fadd 1,1,4`), el NaN de PPC (`ppcNaN`) leía la fuente ya pisada por el resultado:
+    con un NaN silencioso en frA y uno con señal en frB salía el de frB. Ahora el resultado va a un temporal y luego
+    a frD, solo en ese caso (una instrucción más).
+  - El doble redondeo de las de precisión simple (F1d) da otro resultado con 2^24 + 1 más un valor pequeño: t8 no
+    lo usa; sigue pendiente.
+- Una lección del asignador de registros de Emu68: el código que solo se ejecuta a veces (detrás de un salto) no puede
+  pedir temporales, porque pedirlo puede vaciar un registro PPC a su sitio y ese vaciado no se ejecutaría por el
+  otro camino; y con más de unos 10 temporales a la vez se vacía el propio registro que se está usando (FPSCR). Los
+  ayudantes de `PPC_FPU.cpp` reciben los temporales hechos y los piden en ámbitos cortos.
+- Las diecisiete pruebas, bien (con `FPSCR=0`: todas salvo p2, p2-o0, t3 y t8, que difieren solo en FPSCR). El banco
+  del 68k, igual que la referencia en los dos órdenes.
+
+## Dónde se queda F1 tras F1h y F1e (2026-11-07)
+
+Todo F1 hecho y probado contra qemu-ppc: las 17 pruebas en el banco (`PPC_FPSCR_EXCEPTIONS=1`) y 13 de 17 (todas
+salvo p2, p2-o0, t3 y t8) con el camino rápido (`FPSCR=0`). Lo nuevo del JIT está en `patches/emu68/0011-ppc-f1h.patch` (sobre el
+0010, que no cambia). Queda: el doble redondeo de las de precisión simple (F1d), `fres` y `frsqrte` (no están en el
+JIT), FR, las excepciones de la FPU habilitadas (MSR[FE0,FE1] y la excepción de programa), `fsqrt` sin probar, y
+mandar a Emu68 lo de 0011 que no es de DashOS (si el usuario quiere, como el PR #354).

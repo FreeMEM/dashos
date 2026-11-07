@@ -1,9 +1,12 @@
 diff --git a/include/PPC.h b/include/PPC.h
-index d0973bf..b238a26 100644
+index d0973bf..05fa59d 100644
 --- a/include/PPC.h
 +++ b/include/PPC.h
-@@ -525,6 +525,10 @@ int mffs(PPCTranslatorContext *tc, uint32_t opcode);
+@@ -523,8 +523,13 @@ int fctiw(PPCTranslatorContext *tc, uint32_t opcode);
+ int fUnary(PPCTranslatorContext *tc, uint32_t opcode);
+ int mffs(PPCTranslatorContext *tc, uint32_t opcode);
  int mtfs(PPCTranslatorContext *tc, uint32_t opcode);
++int mcrfs(PPCTranslatorContext *tc, uint32_t opcode);
  int native(PPCTranslatorContext *tc, uint32_t opcode);
  int stmw(PPCTranslatorContext *tc, uint32_t opcode);
 +int lswi(PPCTranslatorContext *tc, uint32_t opcode);
@@ -13,6 +16,23 @@ index d0973bf..b238a26 100644
  int stwx(PPCTranslatorContext *tc, uint32_t opcode);
  int stwu(PPCTranslatorContext *tc, uint32_t opcode);
  int stwux(PPCTranslatorContext *tc, uint32_t opcode);
+diff --git a/include/config.h b/include/config.h
+index 481dead..ff7c9b9 100644
+--- a/include/config.h
++++ b/include/config.h
+@@ -33,6 +33,12 @@
+ #define PPC_SO_PROPAGATION      0
+ #endif
+ 
++/* DashOS (F1e): 1 to keep the FPSCR exception bits (FI, FPRF, VX*, ...) after every PPC FPU operation. With 0 only
++   the record forms (Rc = 1) do it; OX, UX, ZX and XX still accumulate (from the ARM FPSR) at no cost. PPC_FPU.cpp */
++#ifndef PPC_FPSCR_EXCEPTIONS
++#define PPC_FPSCR_EXCEPTIONS    0
++#endif
++
+ #define EMU68_USE_LRU           1
+ #define EMU68_LRU_WAY_COUNT     4
+ #define EMU68_LRU_SET_COUNT     128
 diff --git a/include/emu68/ppc/PPCTranslatorContext.hpp b/include/emu68/ppc/PPCTranslatorContext.hpp
 index b109759..d3b6b24 100644
 --- a/include/emu68/ppc/PPCTranslatorContext.hpp
@@ -159,10 +179,53 @@ index 8def19b..67dd9c4 100644
          setCRnSigned(tc, 0);
      }
 diff --git a/src/PPC_ExecutionLoop.cpp b/src/PPC_ExecutionLoop.cpp
-index bd63c22..8216ecf 100644
+index bd63c22..e6ff4ad 100644
 --- a/src/PPC_ExecutionLoop.cpp
 +++ b/src/PPC_ExecutionLoop.cpp
-@@ -343,6 +343,18 @@ void PPCMainLoop()
+@@ -55,8 +55,34 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr);
+ register uint32_t PC __asm__("w18");
+ register void (*ARMCode)() __asm__("x12");
+ 
++/*
++    DashOS (F1e): with PPC_FPSCR_EXCEPTIONS = 0 the FPU operations leave their overflow, underflow, divide by zero
++    and inexact flags in the ARM FPSR (PPC_FPU.cpp); they go into FPSCR (OX, UX, ZX, XX, FX, and FEX) when the
++    context is saved, and FPSR starts clean when it is loaded (the C code in between may have used the FPU)
++*/
++static void foldFPSR(struct PPCState *ctx)
++{
++#if !PPC_FPSCR_EXCEPTIONS
++    uint64_t s;
++    __asm__ volatile("mrs %0, fpsr" : "=r"(s));
++    if (s & 0x1e) {
++        uint32_t f = ctx->FPSCR | 0x80000000;
++        if (s & 4) f |= 0x10000000;
++        if (s & 8) f |= 0x08000000;
++        if (s & 2) f |= 0x04000000;
++        if (s & 16) f |= 0x02000000;
++        if (((f >> 25) & (f >> 3) & 0xf) || ((f >> 29) & (f >> 7) & 1)) f |= 0x40000000;
++        ctx->FPSCR = f;
++    }
++#else
++    (void)ctx;
++#endif
++}
++
+ void loadContext(struct PPCState *ctx)
+ {
++    __asm__ volatile("msr fpsr, xzr");      /* DashOS (F1e) */
++
+     __asm__ volatile("mov " CTX_POINTER_ASM ", %0\n"::"r"(ctx));
+ 
+     __asm__ volatile("mov " CTX_INSN_COUNT_ASM ", %0"::"r"(ctx->INSN_COUNT));
+@@ -96,6 +122,7 @@ void saveContext(struct PPCState *ctx)
+ {
+     __asm__ volatile("mov x1, " CTX_INSN_COUNT_ASM "; str x1, %0"::"m"(ctx->INSN_COUNT):"x1");
+     __asm__ volatile("mov w1, " REG_FPSCR_ASM "; str w1, %0"::"m"(ctx->FPSCR):"x1");
++    foldFPSR(ctx);                          /* DashOS (F1e) */
+ 
+     __asm__ volatile("stp w%0, w%1, %2"::"i"(INT_REG_MAPPING[0]),"i"(INT_REG_MAPPING[1]),"m"(ctx->GPR[0]));
+     __asm__ volatile("stp w%0, w%1, %2"::"i"(INT_REG_MAPPING[2]),"i"(INT_REG_MAPPING[3]),"m"(ctx->GPR[2]));
+@@ -343,6 +370,18 @@ void PPCMainLoop()
  
              uint32_t copyPC = getCTX()->PC;
  
@@ -181,6 +244,674 @@ index bd63c22..8216ecf 100644
              /* Perform search without testing Epoch */
              PPCTranslationUnit *node = nullptr;
              uint32_t hash = (copyPC >> EMU68_HASHSHIFT) & EMU68_HASHMASK;
+diff --git a/src/PPC_FPU.cpp b/src/PPC_FPU.cpp
+index 841d094..7e6014a 100644
+--- a/src/PPC_FPU.cpp
++++ b/src/PPC_FPU.cpp
+@@ -234,8 +234,8 @@ int fmadd(PPCTranslatorContext *tc, uint32_t opcode)
+     - fctiw y fctiwz: la palabra alta del resultado (que PPC no define) con el signo, como qemu; un NaN da
+       0x80000000.
+     - FPSCR: mffs, mtfsf, mtfsfi, mtfsb0 y mtfsb1 guardan los bits de control (RN, NI y las habilitaciones) y
+-      llevan RN al modo de redondeo de ARM (FPCR.RMode). Los bits de excepción (FX, VX..., XX) no se calculan.
+-    - Las formas con punto (CR1 desde las excepciones de FPSCR) siguen sin hacer.
++      llevan RN al modo de redondeo de ARM (FPCR.RMode).
++    - FPSCR exception bits and record forms: F1e, below.
+ */
+ static constexpr uint32_t fp2(uint8_t op, uint8_t type, uint8_t d, uint8_t n, uint8_t m)
+ {
+@@ -295,6 +295,281 @@ static void toSingle(PPCTranslatorContext *tc, FPR &rd)
+     tc->emit({ fp1(F1_TO_S, T_D, rd, rd), fp1(F1_TO_D, T_S, rd, rd) });
+ }
+ 
++/*
++    DashOS (F1e, docs/PPC_LOOP.md): the FPSCR exception bits and the record forms (Rc = 1: CR1 = FPSCR[FX, FEX, VX,
++    OX]), checked against qemu-ppc.
++
++    ARM keeps its own sticky flags in FPSR: IOC (invalid), DZC (divide by zero), OFC, UFC and IXC (inexact). An FPU
++    operation that keeps FPSCR exact ("full" below) clears FPSR before it and turns FPSR into FPSCR bits after it:
++    OX, UX, ZX and XX (sticky), FI (this operation was inexact), FX (any exception; like qemu-ppc, also when the bit
++    was already set), and with IOC the VX bit of the cause, worked out from the operands only in that case (VXSNAN,
++    VXISI, VXIDI, VXZDZ, VXIMZ, VXVC, VXSQRT, VXCVI). FPRF comes from the class of the result (fcmpu/fcmpo: FPCC
++    only; fctiw/fctiwz: left as it is, QNaN class on an invalid conversion, as qemu-ppc). VX and FEX are summaries.
++    FR is left as it is: qemu-ppc never sets it, and it would need the exact result. An enabled exception (VE, OE,
++    UE, ZE, XE) only shows in FEX: there is no program exception and the result is the one of the disabled case.
++
++    PPC_FPSCR_EXCEPTIONS = 1: every FPU operation is "full" (the test bench). 0, the default, keeps Emu68's fast
++    path: only the record forms are "full"; the other operations are translated as before and leave OX, UX, ZX and
++    XX in FPSR, which costs nothing and is folded into FPSCR (with FX) when FPSCR is read (mffs, mtfs*, mcrfs, a
++    record form) and when the context is saved (PPC_ExecutionLoop.cpp). FI, FPRF and the VX bits then come only from
++    the record forms.
++*/
++#define sys_FPSR 3,3,4,4,1
++
++static constexpr uint32_t FPSCR_FX = 1u << 31, FPSCR_OX = 1u << 28, FPSCR_UX = 1u << 27, FPSCR_ZX = 1u << 26,
++    FPSCR_XX = 1u << 25, FPSCR_VXSNAN = 1u << 24, FPSCR_VXISI = 1u << 23, FPSCR_VXIDI = 1u << 22,
++    FPSCR_VXZDZ = 1u << 21, FPSCR_VXIMZ = 1u << 20, FPSCR_VXVC = 1u << 19, FPSCR_FR = 1u << 18, FPSCR_FI = 1u << 17,
++    FPSCR_VXSQRT = 1u << 9, FPSCR_VXCVI = 1u << 8;
++
++static constexpr uint32_t ccmp64_imm(uint8_t rn, uint8_t imm5, uint8_t nzcv, uint8_t cond)
++{
++    return I32(0xfa400800 | ((imm5 & 31) << 16) | ((cond & 15) << 12) | ((rn & 31) << 5) | (nzcv & 15));
++}
++
++enum class FpKind { ADDSUB, MUL, DIV, FMA, SQRT, RSP };
++
++/*
++    The code that runs only sometimes (behind tbz/cbz) must not allocate registers: an allocation may spill a PPC
++    register to its slot, and the spill would be skipped on the other path while the allocator takes it as done. So
++    the helpers below take their temporaries from the caller, which allocates them before the branch.
++*/
++
++/* VX = any VX* bit; FEX = any exception bit with its enable bit */
++static void fpscrSummary(PPCTranslatorContext *tc, GPR &f, uint8_t t, uint8_t u)
++{
++    tc->emit({
++        and_immed(t, f, 6, 13),                     /* VXSNAN ... VXVC */
++        and_immed(u, f, 3, 24),                     /* VXSOFT, VXSQRT, VXCVI */
++        orr_reg(t, t, u, LSL, 0),
++        cmp_immed(t, 0),
++        cset(t, A64_CC_NE),
++        bfi(f, t, 29, 1),                           /* VX */
++        lsr(t, f, 25),
++        and_reg(t, t, f, LSR, 3),                   /* OX UX ZX XX against OE UE ZE XE */
++        and_immed(t, t, 4, 0),
++        lsr(u, f, 29),
++        and_reg(u, u, f, LSR, 7),                   /* VX against VE */
++        and_immed(u, u, 1, 0),
++        orr_reg(t, t, u, LSL, 0),
++        cmp_immed(t, 0),
++        cset(t, A64_CC_NE),
++        bfi(f, t, 30, 1)                            /* FEX */
++    });
++}
++
++static void fpscrSummary(PPCTranslatorContext *tc, GPR &f)
++{
++    GPR t = GPR::allocate();
++    GPR u = GPR::allocate();
++    fpscrSummary(tc, f, t, u);
++}
++
++/* OX, UX, ZX, XX and FX (and FI, if fi) from the ARM flags in s; FX if any flag of mask (0x1f with IOC, 0x1e not) */
++static void fpsrBits(PPCTranslatorContext *tc, GPR &f, GPR &s, bool with_ioc, bool fi, uint8_t t)
++{
++    tc->emit({
++        ubfx(t, s, 2, 1), orr_reg(f, f, t, LSL, 28),       /* OFC -> OX */
++        ubfx(t, s, 3, 1), orr_reg(f, f, t, LSL, 27),       /* UFC -> UX */
++        ubfx(t, s, 1, 1), orr_reg(f, f, t, LSL, 26),       /* DZC -> ZX */
++        ubfx(t, s, 4, 1), orr_reg(f, f, t, LSL, 25)        /* IXC -> XX */
++    });
++    if (fi) tc->emit(bfi(f, t, 17, 1));                     /* IXC -> FI */
++    tc->emit({
++        with_ioc ? tst_immed(s, 5, 0) : tst_immed(s, 4, 31),
++        cset(t, A64_CC_NE),
++        orr_reg(f, f, t, LSL, 31)                           /* FX */
++    });
++}
++
++#if !PPC_FPSCR_EXCEPTIONS
++/* The flags the fast path left in FPSR, into FPSCR; FPSR is cleared. IOC is dropped: its cause is not known */
++static void fpsrFold(PPCTranslatorContext *tc, GPR &f)
++{
++    GPR s = GPR::allocate();
++    GPR t = GPR::allocate();
++    GPR u = GPR::allocate();
++    tc->emit({ mrs(s, sys_FPSR), tst_immed(s, 4, 31) });
++    uint32_t *skip = tc->tc_CodePtr;
++    tc->emit(b_cc(A64_CC_EQ, 0));
++    fpsrBits(tc, f, s, false, false, t);
++    fpscrSummary(tc, f, t, u);
++    *skip = b_cc(A64_CC_EQ, tc->tc_CodePtr - skip);
++    tc->emit(msr(31, sys_FPSR));
++}
++#endif
++
++/* Before a "full" operation: FPSR clear (with the fast path, what it held goes into FPSCR first) */
++static void fpBegin(PPCTranslatorContext *tc, GPR &f)
++{
++#if PPC_FPSCR_EXCEPTIONS
++    (void)f;
++    tc->emit(msr(31, sys_FPSR));
++#else
++    fpsrFold(tc, f);
++#endif
++}
++
++/* Before reading FPSCR outside an operation (mffs, mtfs*, mcrfs, the record forms that raise nothing) */
++static void fpscrRead(PPCTranslatorContext *tc, GPR &f)
++{
++#if PPC_FPSCR_EXCEPTIONS
++    (void)tc; (void)f;
++#else
++    fpsrFold(tc, f);
++#endif
++}
++
++/* CR1 = FPSCR[0-3] */
++static void setCR1(PPCTranslatorContext *tc, GPR &f)
++{
++    GPR cr = tc->mapGPRForReadAndWrite(CRn);
++    GPR t = GPR::allocate();
++    tc->emit({ lsr(t, f, 28), bfi(cr, t, 24, 4) });
++}
++
++/* FPRF from the class of d: QNaN 0x11, -inf 0x09, -normal 0x08, -denormal 0x18, -0 0x12, +0 0x02, +denormal 0x14,
++   +normal 0x04, +inf 0x05 */
++static void setFPRF(PPCTranslatorContext *tc, GPR &f, uint8_t d)
++{
++    GPR x = GPR::allocate();
++    GPR e = GPR::allocate();
++    GPR v = GPR::allocate();
++    GPR t = GPR::allocate();
++    tc->emit({
++        fmov_to_x(x, d),
++        ubfx64(e, x, 52, 11),
++        fcmpzd(d),
++        mov_immed_u16(v, 0x02, 0),
++        mov_immed_u16(t, 0x08, 0), csel(v, t, v, A64_CC_MI),
++        mov_immed_u16(t, 0x04, 0), csel(v, t, v, A64_CC_GT),
++        mov_immed_u16(t, 0x11, 0), csel(v, t, v, A64_CC_VS),
++        cmp_immed(e, 0),
++        ccmp64_imm(x, 0, 4, A64_CC_EQ),             /* exponent 0 and not +0: denormal or -0, C */
++        cset(t, A64_CC_NE),
++        orr_reg(v, v, t, LSL, 4),
++        cmp_immed(e, 0x7ff),                        /* infinity (a NaN has FU already): FU */
++        cset(t, A64_CC_EQ),
++        orr_reg(v, v, t, LSL, 0),
++        bfi(f, v, 12, 5)
++    });
++}
++
++/* out = 1 if one of the registers (0xff: none) holds a signaling NaN */
++static void anySNaN(PPCTranslatorContext *tc, uint8_t out, uint8_t t, uint8_t u, uint8_t r0, uint8_t r1 = 0xff,
++                    uint8_t r2 = 0xff)
++{
++    tc->emit(mov_immed_u16(out, 0, 0));
++    for (uint8_t r : { r0, r1, r2 }) {
++        if (r == 0xff) continue;
++        tc->emit({
++            fmov_to_x(t, r),
++            fcmpd(r, r),
++            cset(u, A64_CC_VS),
++            tst64_immed(t, 1, 13, 1),               /* the quiet bit (51) */
++            csel(u, u, WZR, A64_CC_EQ),
++            orr_reg(out, out, u, LSL, 0)
++        });
++    }
++}
++
++/* v = cond != 0 ? yes : no */
++static void pick(PPCTranslatorContext *tc, uint8_t v, uint8_t cond, uint32_t yes, uint32_t no, uint8_t y, uint8_t n)
++{
++    tc->emitLoadImmediate(y, yes);
++    tc->emitLoadImmediate(n, no);
++    tc->emit({ cmp_immed(cond, 0), csel(v, y, n, A64_CC_NE) });
++}
++
++/* cond = 1 if x * y is infinity times zero */
++static void infTimesZero(PPCTranslatorContext *tc, uint8_t cond, uint8_t x, uint8_t y, uint8_t a, uint8_t b,
++                         uint8_t inf)
++{
++    tc->emit({
++        fmov_to_x(a, x), lsl64(a, a, 1),
++        fmov_to_x(b, y), lsl64(b, b, 1),
++        mov64_immed_u16(inf, 0xffe0, 3),            /* infinity shifted left by one */
++        cmp64_reg(a, inf, LSL, 0),
++        ccmp64_imm(b, 0, 0, A64_CC_EQ),
++        cset(cond, A64_CC_EQ),
++        cmp64_reg(b, inf, LSL, 0),
++        ccmp64_imm(a, 0, 0, A64_CC_EQ),
++        cset(a, A64_CC_EQ),
++        orr_reg(cond, cond, a, LSL, 0)
++    });
++}
++
++/* After a "full" arithmetic operation: res is the result, a, b, c the operands as in PPC (0xff: not used) */
++static void fpEnd(PPCTranslatorContext *tc, GPR &f, FpKind kind, uint8_t res, uint8_t a, uint8_t b, uint8_t c,
++                  bool record)
++{
++    /* The temporaries live in short scopes: with too many at once the allocator would spill f (FPSCR) itself */
++    {
++        GPR s = GPR::allocate();
++        tc->emit(mrs(s, sys_FPSR));
++        {
++            /* An invalid operation: which one, from the operands (only on this path; the temporaries first) */
++            GPR v = GPR::allocate();
++            GPR k = GPR::allocate();
++            GPR t1 = GPR::allocate();
++            GPR t2 = GPR::allocate();
++            GPR t3 = GPR::allocate();
++            uint32_t *skip = tc->tc_CodePtr;
++            tc->emit(tbz(s, 0, 0));
++            switch (kind) {
++                case FpKind::ADDSUB:
++                    anySNaN(tc, k, t1, t2, a, b);
++                    pick(tc, v, k, FPSCR_VXSNAN, FPSCR_VXISI, t1, t2);
++                    break;
++                case FpKind::MUL:
++                    anySNaN(tc, k, t1, t2, a, c);
++                    pick(tc, v, k, FPSCR_VXSNAN, FPSCR_VXIMZ, t1, t2);
++                    break;
++                case FpKind::DIV:
++                    tc->emit({
++                        fmov_to_x(t3, a), fmov_to_x(k, b),
++                        orr64_reg(t3, t3, k, LSL, 0), lsl64(t3, t3, 1),
++                        cmp64_immed(t3, 0), cset(t3, A64_CC_EQ)        /* 0 / 0 */
++                    });
++                    pick(tc, v, t3, FPSCR_VXZDZ, FPSCR_VXIDI, t1, t2);
++                    anySNaN(tc, k, t1, t2, a, b);
++                    tc->emitLoadImmediate(t3, FPSCR_VXSNAN);
++                    tc->emit({ cmp_immed(k, 0), csel(v, t3, v, A64_CC_NE) });
++                    break;
++                case FpKind::FMA:
++                    /* qemu-ppc: infinity times zero is VXIMZ only, even with a signaling NaN in frB */
++                    anySNaN(tc, k, t1, t2, a, b, c);
++                    pick(tc, v, k, FPSCR_VXSNAN, FPSCR_VXISI, t1, t2);
++                    infTimesZero(tc, k, a, c, t1, t2, t3);
++                    tc->emitLoadImmediate(t3, FPSCR_VXIMZ);
++                    tc->emit({ cmp_immed(k, 0), csel(v, t3, v, A64_CC_NE) });
++                    break;
++                case FpKind::SQRT:
++                    anySNaN(tc, k, t1, t2, b);
++                    pick(tc, v, k, FPSCR_VXSNAN, FPSCR_VXSQRT, t1, t2);
++                    break;
++                case FpKind::RSP:
++                    tc->emitLoadImmediate(v, FPSCR_VXSNAN);
++                    break;
++            }
++            tc->emit(orr_reg(f, f, v, LSL, 0));
++            *skip = tbz(s, 0, tc->tc_CodePtr - skip);
++        }
++        GPR t = GPR::allocate();
++        fpsrBits(tc, f, s, true, true, t);
++    }
++    setFPRF(tc, f, res);
++    fpscrSummary(tc, f);
++    if (record) setCR1(tc, f);
++}
++
++/* A record form of an operation that raises nothing (fmr, fneg, fabs, fnabs, fsel): CR1 from FPSCR */
++static void recordOnly(PPCTranslatorContext *tc)
++{
++    GPR f = tc->mapGPRForReadAndWrite(FPSCRn);
++    fpscrRead(tc, f);
++    setCR1(tc, f);
++}
++
+ /* A-form: fadd, fsub, fmul, fdiv (simple o doble), fsqrt, fsel, fmadd y compañía */
+ static int aForm(PPCTranslatorContext *tc, uint32_t opcode, bool single)
+ {
+@@ -303,56 +578,78 @@ static int aForm(PPCTranslatorContext *tc, uint32_t opcode, bool single)
+     uint8_t rb = (opcode >> 11) & 31;
+     uint8_t rc = (opcode >> 6) & 31;
+     uint8_t xo = (opcode >> 1) & 31;
++    bool record = opcode & 1;
++    bool full = PPC_FPSCR_EXCEPTIONS || record;
+ 
+-    if (opcode & 1) return -1;      /* con punto: CR1 desde FPSCR, sin hacer */
++    if (xo == 23) {     /* fsel: frD = frA >= 0 ? frC : frB (un NaN: frB) */
++        if (single) return -1;
++        FPR a = tc->mapFPRForRead(ra);
++        FPR b = tc->mapFPRForRead(rb);
++        FPR c = tc->mapFPRForRead(rc);
++        FPR d = tc->mapFPRForWrite(rd);
++        tc->emit({ fcmpzd(a), fpcsel(T_D, d, c, b, A64_CC_GE) });
++        if (record) recordOnly(tc);
++        tc->advancePC(4);
++        return 1;
++    }
+ 
++    FpKind kind;
+     switch (xo) {
+-        case 18: case 20: case 21: case 25: {
+-            uint8_t src2 = (xo == 25) ? rc : rb;
+-            FPR a = tc->mapFPRForRead(ra);
+-            FPR b = tc->mapFPRForRead(src2);
+-            FPR d = tc->mapFPRForWrite(rd);
++        case 18: kind = FpKind::DIV; break;
++        case 20: case 21: kind = FpKind::ADDSUB; break;
++        case 25: kind = FpKind::MUL; break;
++        case 22: kind = FpKind::SQRT; break;
++        case 28: case 29: case 30: case 31: kind = FpKind::FMA; break;
++        default: return -1;
++    }
++
++    /* The operands as PPC names them: frA, frB, frC (0xff: not used) */
++    bool use_a = kind != FpKind::SQRT;
++    bool use_b = kind != FpKind::MUL;
++    bool use_c = kind == FpKind::MUL || kind == FpKind::FMA;
++    FPR a = use_a ? tc->mapFPRForRead(ra) : FPR();
++    FPR b = use_b ? tc->mapFPRForRead(rb) : FPR();
++    FPR c = use_c ? tc->mapFPRForRead(rc) : FPR();
++    FPR d = tc->mapFPRForWrite(rd);
++    uint8_t ra_ = use_a ? (uint8_t)a : 0xff;
++    uint8_t rb_ = use_b ? (uint8_t)b : 0xff;
++    uint8_t rc_ = use_c ? (uint8_t)c : 0xff;
++
++    /* DashOS (F1e): with frD one of the sources, the result goes to a temporary first: the NaN of PPC (ppcNaN) and
++       the cause of an invalid operation need the operands as they were */
++    bool alias = (use_a && rd == ra) || (use_b && rd == rb) || (use_c && rd == rc);
++    FPR res = alias ? FPR::allocate() : FPR((uint8_t)d);
++
++    GPR f = full ? tc->mapGPRForReadAndWrite(FPSCRn) : GPR();
++    if (full) fpBegin(tc, f);
++
++    switch (kind) {
++        case FpKind::ADDSUB: case FpKind::MUL: case FpKind::DIV: {
+             uint8_t op = xo == 18 ? FDIV : xo == 20 ? FSUB : xo == 21 ? FADD : FMUL;
+-            tc->emit(fp2(op, T_D, d, a, b));
+-            ppcNaN(tc, d, a, b, 0xff);
+-            if (single) toSingle(tc, d);
++            uint8_t y = kind == FpKind::MUL ? rc_ : rb_;
++            tc->emit(fp2(op, T_D, res, ra_, y));
++            ppcNaN(tc, res, ra_, y, 0xff);
+             break;
+         }
+-        case 22: {
+-            FPR b = tc->mapFPRForRead(rb);
+-            FPR d = tc->mapFPRForWrite(rd);
+-            tc->emit(fp1(F1_SQRT, T_D, d, b));
+-            if (single) toSingle(tc, d);
++        case FpKind::SQRT:
++            tc->emit(fp1(F1_SQRT, T_D, res, rb_));
+             break;
+-        }
+-        case 23: {      /* fsel: frD = frA >= 0 ? frC : frB (un NaN: frB) */
+-            if (single) return -1;
+-            FPR a = tc->mapFPRForRead(ra);
+-            FPR b = tc->mapFPRForRead(rb);
+-            FPR c = tc->mapFPRForRead(rc);
+-            FPR d = tc->mapFPRForWrite(rd);
+-            tc->emit({ fcmpzd(a), fpcsel(T_D, d, c, b, A64_CC_GE) });
+-            break;
+-        }
+-        case 28: case 29: case 30: case 31: {
+-            FPR a = tc->mapFPRForRead(ra);
+-            FPR b = tc->mapFPRForRead(rb);
+-            FPR c = tc->mapFPRForRead(rc);
+-            FPR d = tc->mapFPRForWrite(rd);
++        case FpKind::FMA: {
+             /* PPC: fmsub A*C-B, fmadd A*C+B, fnmsub -(A*C-B), fnmadd -(A*C+B): las dos últimas niegan el
+                resultado (también un cero), no los operandos. ARM (n*m, a): FMADD a+nm y FNMSUB -a+nm */
+             bool sub = (xo == 28 || xo == 30);
+-            FPR t = FPR::allocate();
+-            tc->emit(fp3(sub ? 1 : 0, sub ? 1 : 0, T_D, t, a, c, b));
+-            if (xo == 30 || xo == 31) tc->emit(fp1(F1_NEG, T_D, d, t));
+-            else tc->emit(fcpyd(d, t));
+-            ppcNaN(tc, d, a, b, c);
+-            if (single) toSingle(tc, d);
++            tc->emit(fp3(sub ? 1 : 0, sub ? 1 : 0, T_D, res, ra_, rc_, rb_));
++            if (xo == 30 || xo == 31) tc->emit(fp1(F1_NEG, T_D, res, res));
++            ppcNaN(tc, res, ra_, rb_, rc_);
+             break;
+         }
+         default:
+-            return -1;
++            break;
+     }
++    if (single) toSingle(tc, res);
++
++    if (full) fpEnd(tc, f, kind, res, ra_, rb_, rc_, record);
++    if (alias) tc->emit(fcpyd(d, res));
+ 
+     tc->advancePC(4);
+     return 1;
+@@ -361,7 +658,8 @@ static int aForm(PPCTranslatorContext *tc, uint32_t opcode, bool single)
+ int group59(PPCTranslatorContext *tc, uint32_t opcode) { return aForm(tc, opcode, true); }
+ int group63A(PPCTranslatorContext *tc, uint32_t opcode) { return aForm(tc, opcode, false); }
+ 
+-/* fcmpu y fcmpo: el campo de CR con LT, GT, EQ o FU */
++/* fcmpu and fcmpo: LT, GT, EQ or FU in the CR field; with PPC_FPSCR_EXCEPTIONS also FPCC, VXSNAN and VXVC (fcmpo).
++   Without it FPSCR is not touched (FPCC included): they have no record form */
+ int fcmp(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+     if (opcode & 0x00600001) return -1;
+@@ -376,6 +674,11 @@ int fcmp(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR v = GPR::allocate();
+     GPR t = GPR::allocate();
+ 
++#if PPC_FPSCR_EXCEPTIONS
++    GPR f = tc->mapGPRForReadAndWrite(FPSCRn);
++    fpBegin(tc, f);
++#endif
++
+     tc->emit({
+         fcmpd(a, b),
+         mov_immed_u16(v, 1, 0),                     /* FU */
+@@ -385,6 +688,31 @@ int fcmp(PPCTranslatorContext *tc, uint32_t opcode)
+         bfi(cr, v, 4 * (7 - crn), 4)
+     });
+ 
++#if PPC_FPSCR_EXCEPTIONS
++    {
++        bool ordered = ((opcode >> 1) & 0x3ff) == 32;
++        GPR s = GPR::allocate();
++        tc->emit({
++            bfi(f, v, 12, 4),                       /* FPCC; C and FR stay, FI is cleared (qemu-ppc) */
++            bic_immed(f, f, 1, 15),
++            mrs(s, sys_FPSR),
++            ubfx(t, s, 0, 1),                       /* a quiet compare raises IOC only for a signaling NaN */
++            orr_reg(f, f, t, LSL, 24)               /* VXSNAN */
++        });
++        if (ordered) {
++            tc->emit({
++                cmp_immed(v, 1),                    /* fcmpo: any NaN, VXVC, and C (qemu-ppc: FPRF QNaN) */
++                cset(s, A64_CC_EQ),
++                orr_reg(f, f, s, LSL, 19),
++                orr_reg(f, f, s, LSL, 16),
++                orr_reg(t, t, s, LSL, 0)
++            });
++        }
++        tc->emit(orr_reg(f, f, t, LSL, 31));        /* FX */
++        fpscrSummary(tc, f);
++    }
++#endif
++
+     tc->advancePC(4);
+     return 1;
+ }
+@@ -392,27 +720,70 @@ int fcmp(PPCTranslatorContext *tc, uint32_t opcode)
+ /* fctiw (con el redondeo actual) y fctiwz (hacia cero) */
+ int fctiw(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+-    if (opcode & 0x001f0001) return -1;
++    if (opcode & 0x001f0000) return -1;
+ 
+     uint8_t rd = (opcode >> 21) & 31;
+     uint8_t rb = (opcode >> 11) & 31;
+     bool z = ((opcode >> 1) & 0x3ff) == 15;
++    bool record = opcode & 1;
++    bool full = PPC_FPSCR_EXCEPTIONS || record;
+ 
+     FPR b = tc->mapFPRForRead(rb);
+     FPR d = tc->mapFPRForWrite(rd);
+-    FPR r = FPR::allocate();
+     GPR lo = GPR::allocate();
+-    GPR hi = GPR::allocate();
++    GPR f = full ? tc->mapGPRForReadAndWrite(FPSCRn) : GPR();
+ 
+-    if (z) tc->emit(fcvtzs_Dto32(lo, b));
+-    else tc->emit({ fp1(F1_RINTX, T_D, r, b), fcvtzs_Dto32(lo, r) });
+-    tc->emit({
+-        sxtw64(lo, lo),                             /* la palabra alta: el signo, como qemu ... */
+-        fcmpd(b, b),                                /* NaN: sin orden */
+-        mov_immed_u16(hi, 0x8000, 1),               /* ... salvo con un NaN: 0x0000000080000000 */
+-        csel64(lo, hi, lo, A64_CC_VS),
+-        fmov_from_reg(d, lo)
+-    });
++    if (full) fpBegin(tc, f);
++
++    {
++        FPR r = FPR::allocate();
++        GPR hi = GPR::allocate();
++        if (z) tc->emit(fcvtzs_Dto32(lo, b));
++        else tc->emit({ fp1(F1_RINTX, T_D, r, b), fcvtzs_Dto32(lo, r) });
++        tc->emit({
++            sxtw64(lo, lo),                         /* la palabra alta: el signo, como qemu ... */
++            fcmpd(b, b),                            /* NaN: sin orden */
++            mov_immed_u16(hi, 0x8000, 1),           /* ... salvo con un NaN: 0x0000000080000000 */
++            csel64(lo, hi, lo, A64_CC_VS)
++        });
++    }
++
++    if (full) {
++      {
++        /* DashOS (F1e), before frD is written (it may be frB). Invalid (NaN, out of range): VXCVI, and VXSNAN for a
++           signaling NaN; FR and FI cleared, FPRF the QNaN class, as qemu-ppc. Else XX and FI from IXC, FPRF stays */
++        GPR s = GPR::allocate();
++        GPR t = GPR::allocate();
++        GPR t1 = GPR::allocate();
++        GPR t2 = GPR::allocate();
++        tc->emit(mrs(s, sys_FPSR));
++        uint32_t *invalid = tc->tc_CodePtr;
++        tc->emit(tbnz(s, 0, 0));
++        tc->emit({
++            ubfx(t, s, 4, 1),
++            orr_reg(f, f, t, LSL, 25),              /* XX */
++            bfi(f, t, 17, 1),                       /* FI */
++            orr_reg(f, f, t, LSL, 31)               /* FX */
++        });
++        uint32_t *done = tc->tc_CodePtr;
++        tc->emit(::b(0));
++        *invalid = tbnz(s, 0, tc->tc_CodePtr - invalid);
++        anySNaN(tc, t, t1, t2, b);
++        tc->emitLoadImmediate(s, FPSCR_FX | FPSCR_VXCVI);
++        tc->emit({
++            orr_reg(f, f, t, LSL, 24),              /* VXSNAN */
++            orr_reg(f, f, s, LSL, 0),
++            bic_immed(f, f, 2, 15),                 /* FR, FI */
++            mov_immed_u16(t, 0x11, 0),
++            bfi(f, t, 12, 5)                        /* FPRF */
++        });
++        *done = ::b(tc->tc_CodePtr - done);
++      }
++        fpscrSummary(tc, f);
++        if (record) setCR1(tc, f);
++    }
++
++    tc->emit(fmov_from_reg(d, lo));
+ 
+     tc->advancePC(4);
+     return 1;
+@@ -421,23 +792,34 @@ int fctiw(PPCTranslatorContext *tc, uint32_t opcode)
+ /* frsp, fneg, fabs, fnabs, fmr */
+ int fUnary(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+-    if (opcode & 0x001f0001) return -1;
++    if (opcode & 0x001f0000) return -1;
+ 
+     uint8_t rd = (opcode >> 21) & 31;
+     uint8_t rb = (opcode >> 11) & 31;
+     uint32_t xo = (opcode >> 1) & 0x3ff;
++    bool record = opcode & 1;
+ 
+     FPR b = tc->mapFPRForRead(rb);
+     FPR d = tc->mapFPRForWrite(rd);
+ 
++    if (xo == 12) {         /* frsp: invalid only with a signaling NaN, which does not need frB afterwards */
++        bool full = PPC_FPSCR_EXCEPTIONS || record;
++        GPR f = full ? tc->mapGPRForReadAndWrite(FPSCRn) : GPR();
++        if (full) fpBegin(tc, f);
++        tc->emit({ fp1(F1_TO_S, T_D, d, b), fp1(F1_TO_D, T_S, d, d) });
++        if (full) fpEnd(tc, f, FpKind::RSP, d, 0xff, b, 0xff, record);
++        tc->advancePC(4);
++        return 1;
++    }
++
+     switch (xo) {
+-        case 12: tc->emit({ fp1(F1_TO_S, T_D, d, b), fp1(F1_TO_D, T_S, d, d) }); break;
+         case 40: tc->emit(fp1(F1_NEG, T_D, d, b)); break;
+         case 264: tc->emit(fp1(F1_ABS, T_D, d, b)); break;
+         case 136: tc->emit({ fp1(F1_ABS, T_D, d, b), fp1(F1_NEG, T_D, d, d) }); break;
+         case 72: tc->emit(fcpyd(d, b)); break;
+         default: return -1;
+     }
++    if (record) recordOnly(tc);
+ 
+     tc->advancePC(4);
+     return 1;
+@@ -463,30 +845,36 @@ static void fpscrToFpcr(PPCTranslatorContext *tc, GPR &fpscr)
+     });
+ }
+ 
+-/* mffs: frD = 0 : FPSCR */
++/* mffs: frD = 0 : FPSCR (record form: CR1) */
+ int mffs(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+-    if (opcode & 0x001ff801) return -1;
++    if (opcode & 0x001ff800) return -1;
+     uint8_t rd = (opcode >> 21) & 31;
+     FPR d = tc->mapFPRForWrite(rd);
+-    GPR f = tc->mapGPRForRead(FPSCRn);
++    GPR f = tc->mapGPRForReadAndWrite(FPSCRn);
+     GPR v = GPR::allocate();
+-    GPR hi = GPR::allocate();
++    fpscrRead(tc, f);
+     tc->emit({
+         mov_reg(v, f),                              /* la palabra alta a 0, como qemu */
+         fmov_from_reg(d, v)
+     });
++    if (opcode & 1) setCR1(tc, f);
+     tc->advancePC(4);
+     return 1;
+ }
+ 
+-/* mtfsf FM,frB / mtfsfi BF,U / mtfsb0 / mtfsb1: solo los bits que se guardan; luego el redondeo de ARM */
++/*
++    mtfsf FM,frB / mtfsfi BF,U / mtfsb0 / mtfsb1 (record form: CR1), then the ARM rounding mode. DashOS (F1e): FEX and
++    VX are not written (they come from the other bits); FX is, but only explicitly (mtfsb1 of another bit does not
++    set it, as in qemu-ppc)
++*/
+ int mtfs(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+-    if (opcode & 1) return -1;
+     uint32_t xo = (opcode >> 1) & 0x3ff;
+     GPR f = tc->mapGPRForReadAndWrite(FPSCRn);
+ 
++    fpscrRead(tc, f);
++
+     if (xo == 711) {            /* mtfsf */
+         uint8_t fm = (opcode >> 17) & 0xff;
+         uint8_t rb = (opcode >> 11) & 31;
+@@ -515,7 +903,38 @@ int mtfs(PPCTranslatorContext *tc, uint32_t opcode)
+         return -1;
+     }
+ 
++    tc->emit(bic_immed(f, f, 1, 21));             /* bit 20 (0x800) is reserved */
++    fpscrSummary(tc, f);
+     fpscrToFpcr(tc, f);
++    if (opcode & 1) setCR1(tc, f);
++    tc->advancePC(4);
++    return 1;
++}
++
++/* DashOS (F1e): mcrfs crfD,crfS. The field to CR and its exception bits cleared (FX, OX, UX, ZX, XX, the VX ones) */
++int mcrfs(PPCTranslatorContext *tc, uint32_t opcode)
++{
++    if (opcode & 0x0063f801) return -1;
++
++    uint8_t crfd = (opcode >> 23) & 7;
++    uint8_t crfs = (opcode >> 18) & 7;
++    uint32_t clear = 0x9ff80700u & (0xf0000000u >> (4 * crfs));
++
++    GPR f = tc->mapGPRForReadAndWrite(FPSCRn);
++    GPR cr = tc->mapGPRForReadAndWrite(CRn);
++    GPR t = GPR::allocate();
++
++    fpscrRead(tc, f);
++    tc->emit({
++        ubfx(t, f, 28 - 4 * crfs, 4),
++        bfi(cr, t, 28 - 4 * crfd, 4)
++    });
++    if (clear) {
++        tc->emitLoadImmediate(t, clear);
++        tc->emit(bic_reg(f, f, t, LSL, 0));
++        fpscrSummary(tc, f);
++    }
++
+     tc->advancePC(4);
+     return 1;
+ }
 diff --git a/src/PPC_LoadStore.cpp b/src/PPC_LoadStore.cpp
 index 2863ec5..5aafd17 100644
 --- a/src/PPC_LoadStore.cpp
@@ -487,10 +1218,18 @@ index 7b1af7c..2ebdc5c 100644
  
          /* Load SRR0, store into PC */
 diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
-index 22c5be6..103d293 100644
+index 22c5be6..bdfc658 100644
 --- a/src/PPC_Translator.cpp
 +++ b/src/PPC_Translator.cpp
-@@ -1277,7 +1277,7 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1245,6 +1245,7 @@ static inline int EMIT_Group_63(PPCTranslatorContext *tc, uint32_t opcode)
+         case 14: case 15: return Emit::fctiw(tc, opcode);               /* fctiw, fctiwz */
+         case 583: return Emit::mffs(tc, opcode);
+         case 38: case 70: case 134: case 711: return Emit::mtfs(tc, opcode);   /* mtfsb1, mtfsb0, mtfsfi, mtfsf */
++        case 64: return Emit::mcrfs(tc, opcode);                        /* DashOS F1e */
+     }
+ 
+     return Emit::group63A(tc, opcode);
+@@ -1277,7 +1278,7 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
      uint32_t secondary = (opcode >> 1) & 0x3ff;
  
      /* DashOS (F1): the XO forms with OE = 1 (addo, subfo...) go to the same functions, which read the OE bit.
@@ -499,7 +1238,7 @@ index 22c5be6..103d293 100644
      if (secondary & 0x200) {
          switch (secondary & 0x1ff) {
              case 266: return Emit::addx(tc, opcode);
-@@ -1291,6 +1291,9 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1291,6 +1292,9 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
              case 232: return Emit::subfmex(tc, opcode);
              case 200: return Emit::subfzex(tc, opcode);
              case 104: return Emit::negx(tc, opcode);
@@ -509,7 +1248,7 @@ index 22c5be6..103d293 100644
          }
      }
  
-@@ -1359,15 +1362,15 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1359,15 +1363,15 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
          case 0b0111011100: return Emit::nandx(tc, opcode);
          case 0b0111101011: return Emit::divwx(tc, opcode);
          case 0b1000000000: return EMIT_mcrxr(tc, opcode);
@@ -528,7 +1267,7 @@ index 22c5be6..103d293 100644
          case 0b1010010110: return Emit::stwbrx(tc, opcode);
          case 0b1011110110: return Emit::dcba(tc, opcode);      // VEA, optional
          case 0b1100010110: return Emit::lhbrx(tc, opcode);
-@@ -1392,7 +1395,7 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1392,7 +1396,7 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
          //case 0b1011110111: return EMIT_stfdux(tc, opcode);    // FPU
          //case 0b1010010111: return EMIT_stfsx(tc, opcode);     // FPU
          //case 0b1010110111: return EMIT_stfsux(tc, opcode);    // FPU

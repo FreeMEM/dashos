@@ -158,11 +158,11 @@ namespace Emu68::PPC { void PPCMainLoop(); }
    (pruebas/oraculo.c): 1, r3 = r3 * 2; 2, r3 = r3 + r4; 3, r3 = la suma de r3..r10. El resto, r3 = -1. */
 static int nativas;
 
-/* Excepciones (F1h): Emu68 salta a los vectores altos (0xfff00000 + tipo). El banco pone en 0x700 (programa: tw,
-   twi) y en 0xc00 (sc) una llamada nativa con el tipo y rfi; el manejador hace lo mismo que el oráculo con su señal:
-   - trap (SRR1 con 0x00020000): r20 += 1, r21 = la dirección de la instrucción (SRR0) y sigue en la siguiente;
-   - sc: como Linux en qemu-ppc con una llamada que no existe: r3 = ENOSYS (38) y SO de CR0 a 1.
-   Lo demás (otra excepción de programa) para el banco con 7. */
+/* Exceptions (F1h): Emu68 jumps to the high vectors (0xfff00000 + type). The bench puts at 0x700 (program: tw, twi)
+   and at 0xc00 (sc) a native call with the type, then rfi; the handler does what the oracle does in its signal handler:
+   - trap (SRR1 with 0x00020000): r20 += 1, r21 = the address of the instruction (SRR0), and go on after it;
+   - sc: what Linux does in qemu-ppc with a system call that does not exist: r3 = ENOSYS (38) and SO of CR0 set.
+   Anything else (another program exception) stops the bench with 7. */
 static int excepciones;
 
 static void excepcion(Emu68::PPC::PPCState *ctx, uint32_t tipo)
@@ -295,7 +295,7 @@ extern "C" void host_main(uint64_t *pila)
         sys6(SYS_exit_group, 1, 0, 0, 0, 0, 0);
     }
 
-    /* los vectores de excepción (F1h): llamada nativa con el tipo y rfi */
+    /* the exception vectors (F1h): a native call with the type, then rfi */
     map(0xfff00000UL, 0x2000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1);
     for (uint32_t v : { 0x700u, 0xc00u }) {
         ((uint32_t *)(0xfff00000UL + v))[0] = 0x04000000 | v;
