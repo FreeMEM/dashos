@@ -8,7 +8,9 @@
    los inmediatos de MOVZ/MOVK/MOVN (direcciones de funciones de C, que se mueven al cambiar el programa).
 
     python3 comparar.py               # las dos cosas (hacen falta build/jit-host y build-le/jit-host)
-    python3 comparar.py --guardar-ref # guarda el código de ahora como referencia (solo antes de empezar U7)
+    python3 comparar.py --guardar-ref # guarda la referencia con build-ref/jit-host: Emu68 sin los parches de U7
+                                      # (0001-0003 y 0008), compilado con
+                                      # make EMU68=<clon sin U7> B=build-ref
     python3 comparar.py --solo-be     # solo el punto 2
 """
 import resource
@@ -25,6 +27,7 @@ TMP = AQUI / "build" / "comparar"
 
 def ejecutar(orden, prog, volcado, memoria=None):
     exe, qemu = (AQUI / "build" / "jit-host", "qemu-aarch64_be") if orden == "be" else \
+        (AQUI / "build-ref" / "jit-host", "qemu-aarch64_be") if orden == "ref" else \
         (AQUI / "build-le" / "jit-host", "qemu-aarch64")
     r = subprocess.run([qemu, str(exe), str(prog), str(volcado)] + ([str(memoria)] if memoria else []), capture_output=True, text=True, timeout=120,
                        preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)))
@@ -88,12 +91,13 @@ def main():
     fallos = 0
     for prog in sorted(PRUEBAS.glob("*.bin")):
         nombre = prog.stem
-        rc_be, be = ejecutar("be", prog, TMP / f"{nombre}.be.vol")
         if guardar:
+            rc_be, be = ejecutar("ref", prog, TMP / f"{nombre}.be.vol")
             (REF / f"{nombre}.vol").write_bytes((TMP / f"{nombre}.be.vol").read_bytes())
             (REF / f"{nombre}.txt").write_text("\n".join(be) + "\n")
             print(f"{nombre}: referencia guardada (rc {rc_be})")
             continue
+        rc_be, be = ejecutar("be", prog, TMP / f"{nombre}.be.vol")
         iguales, solo_inm, problemas = comparar_codigo(REF / f"{nombre}.vol", TMP / f"{nombre}.be.vol")
         ref_txt = (REF / f"{nombre}.txt").read_text().splitlines()
         if be != ref_txt:

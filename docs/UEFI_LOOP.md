@@ -413,3 +413,21 @@ comprobado si lo tienen).
   toda la memoria), y en big-endian el código generado es el de la referencia salvo direcciones de C.
 - **No comprobado:** excepciones (U7f), y las funciones de la FPU que `t1` no usa (FETOX, FLOGN, FTAN, FATAN...),
   aunque van por la misma `libm.h`.
+
+### 2026-11-07 — U7f (excepciones)
+
+- Parche `0009-u7-excepciones.patch`: el marco de excepción (SR, PC, formato y vector, y la dirección de los
+  formatos 2 a 4) se escribe desde C en `M68k_ExceptionEntry.c`, y el de las interrupciones en `ExecutionLoop.c`;
+  los dos, girados con `BE16`/`BE32` de `support.h` (en big-endian no hacen nada), igual que el vector que se lee
+  de la tabla de VBR.
+- Parche de banco `0008-banco-sin-daif.patch`: RTE y los que cambian la máscara de interrupciones emiten
+  `msr daifset/daifclr`, que en un programa de Linux (EL0) es instrucción ilegal. En el banco (`DASHOS_HOST`), NOP.
+- `pruebas68k/t2.s`: VBR a una tabla propia y diez excepciones (TRAP #0 y #5, división por cero de DIVU.W y DIVS.L,
+  CHK por arriba y por abajo, ILLEGAL, una línea A que no es llamada nativa, TRAPV y TRAPEQ); un manejador común apunta
+  cada marco y vuelve con RTE.
+- La referencia de `comparar.py --guardar-ref` sale ahora de `build-ref/`: Emu68 con 0001-0003 y 0008, sin nada de
+  U7 (`make EMU68=<clon> B=build-ref`). Rehecha para los cuatro programas.
+- **Comprobado:** los cuatro programas, bien en big-endian (código de la referencia) y en little-endian (misma
+  salida y memoria). Sin el parche 0009, `t2` cae en little-endian: la prueba lo ve.
+- **No comprobado:** las interrupciones (el banco no tiene), los formatos 3 y 4 (fallos de bus y de MMU) y la
+  excepción de privilegio.

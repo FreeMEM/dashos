@@ -5,3 +5,4 @@ jit-host/build-le/
 jit-host/pruebas68k/*.o
 jit-host/pruebas68k/*.exe
 jit-host/**/*.core
+jit-host/build-ref/
