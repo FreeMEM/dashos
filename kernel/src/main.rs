@@ -25,6 +25,7 @@ mod gic;
 #[cfg(not(feature = "pruebas"))]
 mod inicio;
 mod interrupciones;
+mod its;
 mod llamadas;
 mod objetos;
 mod pcie;

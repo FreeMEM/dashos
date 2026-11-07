@@ -37,8 +37,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   serie), o convertirlo a árbol en el programa de UEFI.
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
   lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
-  INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) y U6g (MSI-X
-  por el GICv2m, también con ACPI). Falta: MSI con GICv3 (el ITS), hubs, y el anillo de peticiones del disco. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) U6g (MSI-X
+  por el GICv2m, también con ACPI) y U6h (MSI-X por el ITS del GICv3). Falta: hubs, el anillo de peticiones del disco,
+  leer el `msi-map` y el IORT. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -272,3 +273,24 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   GICv3 (el pánico del final es la prueba C34, a propósito). **No comprobado:** tablas de MSI-X en otra BAR,
   máquinas reales.
 - Siguiente en esta línea: el ITS del GICv3 (LPI), que es lo de los portátiles con Snapdragon.
+
+### 2026-11-07 — U6h (el ITS del GICv3)
+
+- `kernel/src/its.rs`, con la especificación del GICv3 (IHI 0069): tablas de LPI en el redistribuidor del núcleo 0
+  (configuración de 8 KB y pendientes, `gic::encender_lpis`), el ITS con tablas planas de aparatos (4 páginas) y de
+  colecciones, una cola de órdenes de una página, la colección 0 al núcleo 0 (MAPC, según GITS_TYPER.PTA), y por
+  aparato su ITT y su suceso 0 a una LPI nueva (MAPD, MAPTI, SYNC). El DeviceID es el RID del PCIe (identidad, como
+  el `msi-map` de QEMU; el IORT de ACPI no se lee).
+- Con ITS, la MSI-X del aparato apunta a GITS_TRANSLATER con el suceso 0; si no, al GICv2m (U6g).
+- El kernel da LPI a los procesos (las 64 primeras): se encienden en la tabla de configuración al asociarlas
+  (INVALL y SYNC) y se apagan al soltarlas; mientras tanto se enmascaran en software. Fallo encontrado: encendidas
+  desde el principio, la del NVMe (que su servicio no pide) llegaba sin dueño.
+- `gic::numero`: con GICv3 el número de IAR es de 24 bits (antes se cortaba a 10, y la LPI 8192 parecía la 0).
+- `base/memoria.rs`: `paginas_fijas` y `escribir_fisica` (memoria para tablas del GIC, fuera de la caché).
+- El árbol hecho desde ACPI lleva el ITS (MADT, entrada 0x0F).
+- **Comprobado:** las cuatro máquinas (árbol o ACPI, GICv2 o GICv3) con MSI-X: el xHCI en la SPI 80 o en la LPI
+  8192, y el ratón mueve la ventana. Pi: `prueba` y `arranque`; `prueba-virt`. **No comprobado:** máquinas reales
+  (cachés del GIC no coherentes: se limpia la caché al escribir las tablas, pero sin probar), varios núcleos
+  recibiendo LPI.
+- Ojo para las pruebas a mano: en zsh, `env $c` no parte `c` en palabras (hace falta `${=c}`); así salieron dos
+  falsos fallos en esta tanda.

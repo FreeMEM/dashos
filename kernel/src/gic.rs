@@ -51,6 +51,9 @@ const GICD_CTLR_RWP: u32 = 1 << 31;
 /// Con una sola seguridad (DS = 1, QEMU sin EL3): grupo 0, grupo 1 y afinidades (ARE).
 const GICD_CTLR_V3: u32 = (1 << 4) | (1 << 1) | 1;
 const GICR_WAKER: usize = 0x14;
+const GICR_CTLR: usize = 0x00;
+const GICR_PROPBASER: usize = 0x70;
+const GICR_PENDBASER: usize = 0x78;
 const GICR_TYPER: usize = 0x08;
 const GICR_SGI: usize = 0x1_0000; // la segunda página de cada redistribuidor
 const GICR_MARCO: usize = 0x2_0000;
@@ -98,7 +101,11 @@ fn esperar_rwp() {
 
 /// GICv3: la página RD del redistribuidor de este núcleo. La busca por su afinidad la primera vez.
 fn rd() -> usize {
-    let n = crate::nucleos::numero() as usize;
+    rd_de(crate::nucleos::numero() as usize)
+}
+
+/// GICv3: la página RD del redistribuidor del núcleo `n`.
+fn rd_de(n: usize) -> usize {
     let v = RD[n & 7].load(Ordering::Relaxed);
     if v != 0 {
         return v;
@@ -192,6 +199,40 @@ pub fn dirigir(intid: u32, nucleo: u32) {
     let desp = (i & 3) * 8;
     let _g = RMW.tomar();
     r.escribir((r.leer() & !(0xff << desp)) | ((1u32 << nucleo) << desp));
+}
+
+/// El número de interrupción de un valor de IAR: 24 bits en el GICv3 (las LPI empiezan en la 8192), 10 en el GICv2.
+pub fn numero(iar: u32) -> u32 {
+    if V3.load(Ordering::Relaxed) { iar & 0xff_ffff } else { iar & 0x3ff }
+}
+
+pub fn es_v3() -> bool {
+    V3.load(Ordering::Relaxed)
+}
+
+/// Enciende las LPI en el redistribuidor del núcleo 0 (U6h; spec. del GICv3, 5.1 y 12.11): su tabla de configuración
+/// (un byte por LPI desde la 8192), su tabla de pendientes (de 64 KB de alineación) y `idbits` bits de número.
+/// Devuelve (la dirección física de su página RD, su número de procesador), o `None` si no tiene LPI.
+pub fn encender_lpis(config: u64, pendientes: u64, idbits: u32) -> Option<(u64, u32)> {
+    if !V3.load(Ordering::Relaxed) {
+        return None;
+    }
+    let r = rd_de(0);
+    let typer = RegLe32::new(r + GICR_TYPER).leer();
+    if typer & 1 == 0 {
+        return None; // PLPIS: sin LPI físicas
+    }
+    // Cacheable y compartible por dentro (como la memoria del kernel); igualmente se limpia la caché al escribir.
+    let atributos = (0b111 << 7) | (0b01 << 10);
+    let prop = config | atributos | (idbits as u64 - 1);
+    RegLe32::new(r + GICR_PROPBASER).escribir(prop as u32);
+    RegLe32::new(r + GICR_PROPBASER + 4).escribir((prop >> 32) as u32);
+    let pend = pendientes | atributos | (1 << 62); // PTZ: la tabla está a cero
+    RegLe32::new(r + GICR_PENDBASER).escribir(pend as u32);
+    RegLe32::new(r + GICR_PENDBASER + 4).escribir((pend >> 32) as u32);
+    let ctlr = RegLe32::new(r + GICR_CTLR);
+    ctlr.escribir(ctlr.leer() | 1);
+    Some((crate::mmu::fisica(r) as u64, (typer >> 8) & 0xffff))
 }
 
 /// Reconoce la interrupción pendiente. Devuelve el valor entero de IAR: el número va en los bits 9:0 y, en las

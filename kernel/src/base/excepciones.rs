@@ -95,7 +95,7 @@ fn tratar(marco: &mut Marco, tipo: u64) {
     // IRQ: al GIC, y de ahí a quien corresponda.
     if tipo & 3 == 1 {
         let iar = crate::gic::reconocer();
-        let intid = iar & 0x3ff;
+        let intid = crate::gic::numero(iar);
         if intid != crate::gic::FALSA {
             // Software (otro núcleo pide que se replanifique, C17) o el reloj: los dos acaban en el planificador.
             // Las de aparatos con dueño fuera del kernel van al repartidor (C20), y también se replanifica.

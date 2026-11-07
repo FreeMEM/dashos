@@ -119,7 +119,7 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
         }
         // Su interrupción: una MSI-X por el GICv2m si hay los dos (U6g); si no, la INTx de su patilla (1 a 4, INTA a
         // INTD, en el byte 0x3D; 0, sin INTx), por el `interrupt-map` (U6e).
-        let msi = msix(d, &|off| r(dev, off), base);
+        let msi = msix(d, &|off| r(dev, off), base, (dev as u32) << 3);
         let patilla = (r(dev, 0x3C).leer() >> 8) & 0xff;
         let irq = msi.or_else(|| if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None });
         match irq {
@@ -131,25 +131,37 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
     None
 }
 
+/// Si el ITS está encendido (U6h): las MSI van por él.
+static ITS_LISTO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 /// La siguiente SPI libre del GICv2m (U6g), 0 si aún no se ha leído su MSI_TYPER.
 static MSI_SIGUIENTE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Una MSI-X para un aparato del PCIe por el marco GICv2m (el de QEMU `virt` con GICv2 y el de la MADT de ACPI; spec.
+/// Una MSI-X para un aparato del PCIe por el ITS del GICv3 (U6h; `rid` es su número en el bus) o por el marco GICv2m (el de QEMU `virt` con GICv2 y el de la MADT de ACPI; spec.
 /// del GICv2m en la SBSA, apéndice E): el aparato escribe el número de una SPI en MSI_SETSPI_NS (0x40) del marco, y el
 /// GIC la levanta, por flanco. Da al aparato la primera entrada de su tabla de MSI-X (spec. de PCI 3.0, 6.8.2: la
 /// capacidad 0x11, con el control en los bits 31:16 de su primera palabra y la tabla en una BAR, aquí solo la 0) y
 /// enciende la MSI-X, que apaga la INTx. `cfg` lee y escribe la configuración del aparato; `bar0`, su BAR 0 física.
-fn msix(d: &Dtb, cfg: &dyn Fn(u64) -> crate::mmio::RegLe32, bar0: u64) -> Option<u32> {
+fn msix(d: &Dtb, cfg: &dyn Fn(u64) -> crate::mmio::RegLe32, bar0: u64, rid: u32) -> Option<u32> {
     use core::sync::atomic::Ordering;
-    let marco = d.compatible("arm,gic-v2m-frame")?;
-    let (fisica, _) = d.reg_cpu(&marco, 0)?;
-    if !crate::placa::es_periferico(fisica) {
-        return None;
+    // Con ITS (U6h) va por él; si no, por un marco GICv2m.
+    let its = ITS_LISTO.load(Ordering::Relaxed);
+    let marco = if its { None } else { Some(d.compatible("arm,gic-v2m-frame")?) };
+    let (fisica, primera, cuantas) = match marco {
+        Some(m) => {
+            let (fisica, _) = d.reg_cpu(&m, 0)?;
+            if !crate::placa::es_periferico(fisica) {
+                return None;
+            }
+            // MSI_TYPER (0x08): la primera SPI en los bits 25:16 y cuántas en los 9:0.
+            let typer = crate::mmio::RegLe32::new(crate::mmu::virt(fisica as usize + 0x08)).leer();
+            (fisica, (typer >> 16) & 0x3ff, typer & 0x3ff)
+        }
+        None => (0, 0, 0),
+    };
+    if !its {
+        let _ = MSI_SIGUIENTE.compare_exchange(0, primera, Ordering::Relaxed, Ordering::Relaxed);
     }
-    // MSI_TYPER (0x08): la primera SPI en los bits 25:16 y cuántas en los 9:0.
-    let typer = crate::mmio::RegLe32::new(crate::mmu::virt(fisica as usize + 0x08)).leer();
-    let (primera, cuantas) = ((typer >> 16) & 0x3ff, typer & 0x3ff);
-    let _ = MSI_SIGUIENTE.compare_exchange(0, primera, Ordering::Relaxed, Ordering::Relaxed);
     // La lista de capacidades (bit 4 del estado), desde el puntero de 0x34.
     if (cfg(4).leer() >> 16) & (1 << 4) == 0 {
         return None;
@@ -163,20 +175,24 @@ fn msix(d: &Dtb, cfg: &dyn Fn(u64) -> crate::mmio::RegLe32, bar0: u64) -> Option
             if tabla & 7 != 0 {
                 return None; // la tabla en otra BAR: aún no
             }
-            let spi = MSI_SIGUIENTE.fetch_add(1, Ordering::Relaxed);
-            if spi >= primera + cuantas {
-                return None;
-            }
+            let (destino, dato, intid) = if its {
+                crate::its::msi(rid)?
+            } else {
+                let spi = MSI_SIGUIENTE.fetch_add(1, Ordering::Relaxed);
+                if spi >= primera + cuantas {
+                    return None;
+                }
+                crate::gic::por_flanco(spi);
+                (fisica + 0x40, spi, spi)
+            };
             let entrada = crate::mmu::virt((bar0 + (tabla & !7) as u64) as usize);
-            let destino = fisica + 0x40;
             crate::mmio::RegLe32::new(entrada).escribir(destino as u32);
             crate::mmio::RegLe32::new(entrada + 4).escribir((destino >> 32) as u32);
-            crate::mmio::RegLe32::new(entrada + 8).escribir(spi);
+            crate::mmio::RegLe32::new(entrada + 8).escribir(dato);
             crate::mmio::RegLe32::new(entrada + 12).escribir(0); // sin máscara
-            crate::gic::por_flanco(spi);
             // Control: encendida (bit 15) y sin la máscara de función (bit 14).
             cfg(p).escribir((palabra & 0x3fff_ffff) | (1 << 31));
-            return Some(spi);
+            return Some(intid);
         }
         p = ((palabra >> 8) & 0xfc) as u64;
         vueltas += 1;
@@ -307,6 +323,10 @@ pub fn lanzar() -> bool {
     // El xHCI y el NVMe del PCIe genérico (U6), si los hay: sus registros (la BAR 0) y un permiso DMA propio para
     // cada uno. En QEMU `virt` los aparatos del PCIe alcanzan toda la memoria; se les da la zona de DMA, como a los
     // demás.
+    // Con GICv3, el ITS para sus MSI (U6h), si lo hay.
+    if d.compatible("pci-host-ecam-generic").is_some() && crate::its::iniciar(&d) {
+        ITS_LISTO.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
         if let Some((fisica, tamano, irq)) = aparato_pci(&d, clase, nombre) {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));

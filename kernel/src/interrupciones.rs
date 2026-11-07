@@ -9,6 +9,9 @@
 //! enmascara interrupciones). La interrupción solo apunta que está pendiente y despierta al repartidor, un hilo
 //! del kernel en el núcleo 0 que manda los mensajes. Todas las interrupciones de aparatos van al núcleo 0: así
 //! la comprobación del repartidor y su bloqueo, con las interrupciones enmascaradas, no pierden ningún aviso.
+//!
+//! Las LPI (U6h, las MSI que pasan por el ITS del GICv3) se enmascaran aquí, sin tocar el GIC: enmascararlas allí
+//! pide órdenes al ITS. Son mensajes, sin nivel: una que llega enmascarada se apunta y se avisa al terminar.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -17,10 +20,21 @@ use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255.
+/// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255, y las primeras `LPIS` LPI
+/// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256.
 pub const PRIMERA: u32 = 32;
 pub const ULTIMA: u32 = 255;
-const PALABRAS: usize = 4;
+pub const LPIS: u32 = 64;
+const PRIMERA_LPI: u32 = 8192;
+const PALABRAS: usize = 5;
+
+fn es_lpi(intid: u32) -> bool {
+    (PRIMERA_LPI..PRIMERA_LPI + LPIS).contains(&intid)
+}
+
+/// LPI enmascaradas (avisadas y aún sin terminar) y las que llegaron así, para avisar al terminar.
+static LPI_ENMASCARADAS: AtomicU64 = AtomicU64::new(0);
+static LPI_RETENIDAS: AtomicU64 = AtomicU64::new(0);
 
 /// Las que tienen dueño fuera del kernel (un bit por interrupción).
 static ASOCIADAS: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
@@ -43,7 +57,7 @@ pub struct Interrupcion {
 impl Interrupcion {
     /// Crea el objeto si la interrupción está en el tramo de aparatos y nadie más la tiene.
     pub fn nueva(intid: u32) -> Option<Arc<Self>> {
-        if !(PRIMERA..=ULTIMA).contains(&intid) {
+        if !(PRIMERA..=ULTIMA).contains(&intid) && !es_lpi(intid) {
             return None;
         }
         let mut d = DUENOS.tomar();
@@ -63,15 +77,42 @@ impl Interrupcion {
         *self.destino.tomar() = Some((canal, lado));
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_or(b, Ordering::SeqCst);
+        if es_lpi(self.intid) {
+            // Dirigida al núcleo 0 por la colección 0 (its.rs); se enciende en su tabla de configuración.
+            let m = 1u64 << (self.intid - PRIMERA_LPI);
+            LPI_ENMASCARADAS.fetch_and(!m, Ordering::SeqCst);
+            crate::its::encender(self.intid, true);
+            return;
+        }
         crate::gic::dirigir(self.intid, 0);
         crate::gic::habilitar(self.intid, 0xa0);
     }
 
     /// El controlador ya atendió el aparato: se vuelve a habilitar.
     pub fn terminar(&self) {
-        if self.destino.tomar().is_some() {
-            crate::gic::habilitar(self.intid, 0xa0);
+        if self.destino.tomar().is_none() {
+            return;
         }
+        if es_lpi(self.intid) {
+            let m = 1u64 << (self.intid - PRIMERA_LPI);
+            if LPI_RETENIDAS.fetch_and(!m, Ordering::SeqCst) & m != 0 {
+                // Llegó otra mientras estaba enmascarada: se avisa ya (y sigue enmascarada hasta el próximo terminar).
+                let (w, b) = bit(self.intid);
+                PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
+                REPARTIDOR.tomar().despertar_todos();
+            } else {
+                LPI_ENMASCARADAS.fetch_and(!m, Ordering::SeqCst);
+                // Una que llegue entre las dos líneas de arriba se habría retenido: se mira otra vez.
+                if LPI_RETENIDAS.fetch_and(!m, Ordering::SeqCst) & m != 0 {
+                    LPI_ENMASCARADAS.fetch_or(m, Ordering::SeqCst);
+                    let (w, b) = bit(self.intid);
+                    PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
+                    REPARTIDOR.tomar().despertar_todos();
+                }
+            }
+            return;
+        }
+        crate::gic::habilitar(self.intid, 0xa0);
     }
 }
 
@@ -89,27 +130,41 @@ impl Interrupcion {
 
 impl Drop for Interrupcion {
     fn drop(&mut self) {
-        crate::gic::deshabilitar(self.intid);
+        if es_lpi(self.intid) {
+            crate::its::encender(self.intid, false);
+        } else {
+            crate::gic::deshabilitar(self.intid);
+        }
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_and(!b, Ordering::SeqCst);
         PENDIENTES[w].fetch_and(!b, Ordering::SeqCst);
     }
 }
 
+/// La palabra y el bit de una interrupción en los mapas: las SPI por su número; las LPI, desde el bit 256.
 fn bit(intid: u32) -> (usize, u64) {
-    ((intid / 64) as usize, 1u64 << (intid % 64))
+    let i = if es_lpi(intid) { ULTIMA + 1 + intid - PRIMERA_LPI } else { intid };
+    ((i / 64) as usize, 1u64 << (i % 64))
 }
 
 /// Desde la excepción de IRQ. Devuelve verdad si la interrupción era de un proceso.
 pub fn atender(intid: u32) -> bool {
-    if intid > ULTIMA {
+    if intid > ULTIMA && !es_lpi(intid) {
         return false;
     }
     let (w, b) = bit(intid);
     if ASOCIADAS[w].load(Ordering::SeqCst) & b == 0 {
         return false;
     }
-    crate::gic::deshabilitar(intid);
+    if es_lpi(intid) {
+        let m = 1u64 << (intid - PRIMERA_LPI);
+        if LPI_ENMASCARADAS.fetch_or(m, Ordering::SeqCst) & m != 0 {
+            LPI_RETENIDAS.fetch_or(m, Ordering::SeqCst);
+            return true;
+        }
+    } else {
+        crate::gic::deshabilitar(intid);
+    }
     PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
     REPARTIDOR.tomar().despertar_todos();
     true
@@ -156,8 +211,9 @@ extern "C" fn repartidor(_: usize) {
         for (w, &palabra) in llegadas.iter().enumerate() {
             let mut p = palabra;
             while p != 0 {
-                let intid = w as u32 * 64 + p.trailing_zeros();
+                let i = w as u32 * 64 + p.trailing_zeros();
                 p &= p - 1;
+                let intid = if i > ULTIMA { PRIMERA_LPI + i - ULTIMA - 1 } else { i };
                 entregar(intid);
             }
         }

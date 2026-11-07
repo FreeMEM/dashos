@@ -7,7 +7,7 @@
 //! - el puerto serie, de la SPCR (un PL011);
 //! - PSCI y si va por `hvc` o `smc`, de la FADT;
 //! - el PCIe genérico (su ECAM), de la MCFG (U6: el xHCI va ahí);
-//! - el marco GICv2m de las MSI, de la MADT (U6g).
+//! - el marco GICv2m de las MSI (U6g) o el ITS del GICv3 (U6h), de la MADT.
 //!
 //! Escrito con la especificación de ACPI 6.5 (cap. 5: RSDP, XSDT, FADT, MADT con GICC, GICD y GICR) y las tablas de
 //! ARM que define (GTDT) o referencia (SPCR, de Microsoft). Lo demás de ACPI (AML, aparatos del DSDT) no se mira: eso
@@ -47,6 +47,8 @@ pub struct Maquina {
     pub ecam: Option<(u64, u64)>,
     /// El marco GICv2m de las MSI, si lo hay (U6g).
     pub v2m: Option<u64>,
+    /// El ITS del GICv3, si lo hay (U6h).
+    pub its: Option<u64>,
 }
 
 /// La tabla con esa firma, buscada en la XSDT.
@@ -84,6 +86,8 @@ pub fn leer(rsdp: usize) -> Option<Maquina> {
             }
             // GIC MSI Frame: su dirección en el byte 8.
             0x0D if m.v2m.is_none() => m.v2m = Some(u64_en(p + 8)),
+            // GIC ITS: su dirección en el byte 8.
+            0x0F if m.its.is_none() => m.its = Some(u64_en(p + 8)),
             0x0E => {
                 m.segunda = u64_en(p + 4);
                 m.segunda_tam = u32_en(p + 12) as u64;
@@ -171,6 +175,16 @@ pub fn arbol(m: &Maquina, ram: &[(u64, u64)], destino: &mut [u8]) -> Option<usiz
         f.texto("compatible", "arm,gic-v2m-frame");
         f.prop("msi-controller", &[]);
         let (b, t) = (par(base), par(0x1000));
+        f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
+        f.fin_nodo();
+    }
+    if let Some(base) = m.its {
+        let mut nombre = [0u8; 32];
+        let n = escribir_hex(&mut nombre, b"its@", base);
+        f.nodo(core::str::from_utf8(&nombre[..n]).unwrap_or("its"));
+        f.texto("compatible", "arm,gic-v3-its");
+        f.prop("msi-controller", &[]);
+        let (b, t) = (par(base), par(0x20000));
         f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
         f.fin_nodo();
     }

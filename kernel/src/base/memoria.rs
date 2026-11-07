@@ -79,6 +79,34 @@ pub fn paginas() -> GuardaIrq<'static, Paginas> {
     PAGINAS.tomar()
 }
 
+/// Páginas seguidas para tablas que lee un aparato del sistema, como el GIC (U6h): a cero, fuera de la caché, y para
+/// siempre (no se devuelven). Devuelve la dirección física.
+pub fn paginas_fijas(n: usize, alineacion: usize) -> Option<u64> {
+    let base = paginas().reservar(Zona::Normal, n, alineacion)?;
+    let k = crate::mmu::virt(base as usize);
+    unsafe { core::ptr::write_bytes(k as *mut u8, 0, n * PAGINA as usize) };
+    limpiar_cache(k, n * PAGINA as usize);
+    Some(base)
+}
+
+/// Escribe en memoria física del kernel (de `paginas_fijas`) y la saca de la caché, para que la vea un aparato que no
+/// mira la caché de la CPU.
+pub fn escribir_fisica(fisica: u64, datos: &[u8]) {
+    let k = crate::mmu::virt(fisica as usize);
+    unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), k as *mut u8, datos.len()) };
+    limpiar_cache(k, datos.len());
+}
+
+/// Limpia e invalida la caché de datos de un trozo de memoria del kernel, y espera a que acabe.
+fn limpiar_cache(direccion: usize, bytes: usize) {
+    let mut a = direccion & !63;
+    while a < direccion + bytes {
+        unsafe { core::arch::asm!("dc civac, {}", in(reg) a) };
+        a += 64;
+    }
+    unsafe { core::arch::asm!("dsb sy") };
+}
+
 unsafe extern "C" {
     static __kernel_inicio: u8;
     static __kernel_fin: u8;

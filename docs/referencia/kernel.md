@@ -190,7 +190,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     memoria normal sin caché. El kernel comprueba que no toca la RAM que reparte.
   - Los registros de los periféricos de la Pi son little-endian. Un proceso big-endian tiene que darles la vuelta.
 - **10, `interrupcion_asociar`.**
-  - Solo interrupciones de aparato (SPI, de la 32 a la 255), y cada una con un único dueño.
+  - Solo interrupciones de aparato (SPI, de la 32 a la 255, y con GICv3 las LPI de la 8192 a la 8255, que son las
+    MSI que pasan por el ITS), y cada una con un único dueño. Las LPI se enmascaran en el kernel, no en el GIC: una
+    que llega enmascarada se avisa al terminar la anterior. El mensaje es el número, 4 bytes.
   - El extremo de canal necesita el derecho de escribir.
   - Cuando llega la interrupción, el kernel la enmascara y escribe en el canal un mensaje de 4 bytes con su número,
     **siempre en little-endian**.
