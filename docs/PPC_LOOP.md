@@ -170,3 +170,14 @@ condicionales de todas las formas y la llamada nativa. 26 fallos o faltas del JI
 `patches/emu68/0010-ppc-f1.patch`, que se podría mandar a Emu68 (con permiso del usuario). Falta (F1h): icbi en el
 banco, las instrucciones de cadenas, tw/twi, sc, mftb, mullwo/divwo/divwuo, las formas con punto de la FPU y los bits
 de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-powerpc.md`), que necesita la caja.
+
+### 2026-11-07 — Los arreglos del JIT PPC, a Emu68 (con permiso del usuario)
+
+- PR https://github.com/michalsc/Emu68/pull/354 desde el fork FreeMEM/Emu68, rama `ppc-jit-fixes` (un commit sobre
+  af63580). Es el parche 0010 sin lo de DashOS (llamada nativa, contador y parada del banco, `PPC_SO_PROPAGATION`
+  con `#ifndef`) y con los comentarios en inglés. Comprobado: sin comentarios, el código solo difiere de 0010 en
+  eso; compila sin las definiciones de DashOS. No se ha compilado el Emu68 entero para la Pi.
+- En el texto se le deja a Michal decidir lo de SXTW (exacto con la memoria PPC por debajo de 2 GB) o la forma
+  exacta con una instrucción más.
+- Worktree del clon de Emu68 en `.worktrees/emu68-upstream`. Si lo acepta, el parche 0010 se parte en lo de Emu68
+  y lo de DashOS.
