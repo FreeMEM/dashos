@@ -6,7 +6,7 @@
     con qemu-aarch64. La memoria del 68k es siempre big-endian: el banco la escribe y la lee
     con pon16/pon32/lee32.
 
-    jit-host [programa.bin [volcado]]: además de las pruebas de siempre, carga un binario 68k
+    jit-host [programa.bin [volcado [memoria]]]: además de las pruebas de siempre, carga un binario 68k
     plano en $140000 (lejos de lo que ya está traducido), lo ejecuta y escribe sus registros y una suma de toda su memoria (para
     comparar el JIT big-endian con el little-endian). Con volcado, guarda ahí el código ARM de
     cada bloque traducido (para comparar el código que genera el JIT antes y después de un cambio).
@@ -379,6 +379,10 @@ void host_main(uint64_t *pila)
             kprintf("[JIT]");
             for (int i = 0; i < 8; i++) kprintf(" FP%d=%08x%08x", i, (uint32_t)(m68k.FP[i].u64 >> 32), (uint32_t)m68k.FP[i].u64);
             kprintf("\n[JIT] FPSR=%08x FPCR=%08x\n", m68k.FPSR, m68k.FPCR);
+            if (argc > 3) {   /* la memoria del programa, para ver dónde difiere */
+                long fd = sys6(SYS_openat, -100, (long)argv[3], 01 | 0100 | 01000, 0644, 0, 0);
+                if (fd >= 0) { sys6(SYS_write, fd, (long)M68K_PROGRAMA, 0x30000, 0, 0, 0); sys6(SYS_close, fd, 0, 0, 0, 0, 0); }
+            }
             uint64_t h = suma(ram, M68K_RAM_LEN);
             kprintf("[HOST] Suma de la memoria del 68k: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
         }

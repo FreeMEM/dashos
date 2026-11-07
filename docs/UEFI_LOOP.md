@@ -375,3 +375,25 @@ comprobado si lo tienen).
 - Avisos que da Emu68 en big-endian y que son suyos, no de U7: "SBCD mem is not yet fixed!".
 - `third_party/Emu68` del worktree es un clon aparte con 0001 y 0002 como un commit "base"; cada parche nuevo sale
   de `git diff` de su commit.
+
+### 2026-11-07 — U7b, U7c y U7d (el JIT en little-endian, sin la FPU)
+
+- U7b, parche `0004-u7-base.patch`: `include/M68k_Endian.h` con lo que gira (`EMIT_LoadBE`, `EMIT_StoreBE`,
+  `EMIT_LD`/`EMIT_ST` para una carga o un guardado suelto, `EMIT_LDP`/`EMIT_STP` para pares, y `ldrsh_*_be`, que en
+  little-endian carga sin signo para extender después). En big-endian nada de eso emite instrucciones. `cache.c` gira
+  en sus hojas (lee el flujo de instrucciones y las palabras de extensión). Y las 176 uniones con que el JIT parte una
+  dirección de C en MOVZ/MOVK cuentan las mitades con `U16IDX`, que vale en los dos órdenes.
+- U7c, parche `0005-u7-direcciones-efectivas.patch`: `M68k_EA.c`, cargas y guardados de todos los modos (también
+  los punteros del indirecto en memoria y los desplazamientos que se leen relativos al PC).
+- U7d, parche `0006-u7-instrucciones.patch`: 190 cargas y guardados sueltos pasados a `EMIT_LD`/`EMIT_ST` con un
+  guion (en `/tmp`, no va al repo) y revisados uno a uno (dos no eran memoria del 68k: una variable de C y una
+  lectura para frenar, que se quedan); a mano, los que van dentro de listas: ADDX/SUBX, CMP2, CAS y CAS2 (giros
+  fuera de las listas con saltos fijos), MOVEM y los pares de MOVE (`stp`/`ldp`), LINK, UNLK, RTE y RTR, y los campos
+  de bits de anchura variable (con su versión little-endian de las listas, saltos recalculados). MOVE16 no se gira
+  (copia memoria a memoria).
+- **Comprobado** (`comparar.py`): en big-endian el código generado es el de la referencia (solo cambian direcciones
+  de C en MOVZ/MOVK). En little-endian, `t1` y `c1` dan los mismos registros enteros que en big-endian, y la memoria
+  solo difiere en lo de la FPU (los Float, Double y extendidos de `c1`, desde `datos+0x420` en `t1`). Las dos
+  pruebas fijas del banco (bucle y llamadas nativas) dan BIEN en little-endian.
+- **No comprobado:** excepciones (los marcos y el vector se escriben desde C, `M68k_ExceptionEntry.c`), MOVES,
+  NBCD y los desplazamientos de memoria más allá de los de `t1`. Falta la FPU (U7e).

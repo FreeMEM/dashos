@@ -1,0 +1,422 @@
+diff --git a/src/M68k_EA.c b/src/M68k_EA.c
+index 1f8e248..57ff4d5 100644
+--- a/src/M68k_EA.c
++++ b/src/M68k_EA.c
+@@ -62,12 +62,12 @@ static inline __attribute__((always_inline)) void load_reg_from_addr_offset(stru
+         case 2:
+             if (offset > -256 && offset < 256)
+                 if (sign_ext)
+-                    EMIT(ctx, ldursh_offset(base, reg, offset & 0x1ff));
++                    EMIT(ctx, ldursh_offset_be(base, reg, offset & 0x1ff));
+                 else
+                     EMIT(ctx, ldurh_offset(base, reg, offset & 0x1ff));
+             else if (offset >= 0 && offset < 8192 && (offset & 1) == 0)
+                 if (sign_ext)
+-                    EMIT(ctx, ldrsh_offset(base, reg, offset));
++                    EMIT(ctx, ldrsh_offset_be(base, reg, offset));
+                 else
+                     EMIT(ctx, ldrh_offset(base, reg, offset));
+             else {
+@@ -81,7 +81,7 @@ static inline __attribute__((always_inline)) void load_reg_from_addr_offset(stru
+                 }
+                 EMIT(ctx, add_reg(reg_d16, base, reg_d16, LSL, 0));
+                 if (sign_ext)
+-                    EMIT(ctx, ldrsh_offset(reg_d16, reg, 0));
++                    EMIT(ctx, ldrsh_offset_be(reg_d16, reg, 0));
+                 else
+                     EMIT(ctx, ldrh_offset(reg_d16, reg, 0));
+             }
+@@ -139,6 +139,10 @@ static inline __attribute__((always_inline)) void load_reg_from_addr_offset(stru
+             break;
+     }
+ 
++    /* DashOS (U7) */
++    if (size == 2 || size == 4)
++        EMIT_LoadBE(ctx, size, reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);
++
+     RA_FreeARMRegister(ctx, reg_d16);
+ 
+     if (free_base)
+@@ -165,7 +169,7 @@ static inline __attribute__((always_inline)) void load_reg_from_addr(struct Tran
+                 break;
+             case 2:
+                 if (sign_ext)
+-                    EMIT(ctx, ldrsh_offset(base, reg, 0));
++                    EMIT(ctx, ldrsh_offset_be(base, reg, 0));
+                 else
+                     EMIT(ctx, ldrh_offset(base, reg, 0));
+                 break;
+@@ -197,7 +201,7 @@ static inline __attribute__((always_inline)) void load_reg_from_addr(struct Tran
+             case 2:
+                 EMIT(ctx, add_reg(tmp, base, index, LSL, shift));
+                 if (sign_ext)
+-                    EMIT(ctx, ldrsh_offset(tmp, reg, 0));
++                    EMIT(ctx, ldrsh_offset_be(tmp, reg, 0));
+                 else
+                     EMIT(ctx, ldrh_offset(tmp, reg, 0));
+                 break;
+@@ -218,12 +222,18 @@ static inline __attribute__((always_inline)) void load_reg_from_addr(struct Tran
+         RA_FreeARMRegister(ctx, tmp);
+     }
+ 
++    /* DashOS (U7) */
++    if (size == 2 || size == 4)
++        EMIT_LoadBE(ctx, size, reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);
++
+     if (free_base)
+         RA_FreeARMRegister(ctx, base);
+ }
+ 
+ static inline __attribute__((always_inline)) void store_reg_to_addr_offset(struct TranslatorContext *ctx, uint8_t size, uint8_t base, uint8_t reg, int32_t offset, uint8_t offset_32bit)
+ {
++    /* DashOS (U7): lo que se guarda, girado en little-endian */
++    uint8_t val = (size == 2 || size == 4) ? EMIT_StoreBE(ctx, size, reg) : reg;
+     uint8_t reg_d16 = RA_AllocARMRegister(ctx);
+     int free_base = 0;
+ 
+@@ -238,11 +248,11 @@ static inline __attribute__((always_inline)) void store_reg_to_addr_offset(struc
+     {
+         case 4:
+             if (offset == 0)
+-                EMIT(ctx, str_offset(base, reg, 0));
++                EMIT(ctx, str_offset(base, val, 0));
+             else if (offset > -256 && offset < 256)
+-                EMIT(ctx, stur_offset(base, reg, offset & 0x1ff));
++                EMIT(ctx, stur_offset(base, val, offset & 0x1ff));
+             else if (offset > 0 && offset < 16384 && (offset & 3) == 0)
+-                EMIT(ctx, str_offset(base, reg, offset));
++                EMIT(ctx, str_offset(base, val, offset));
+             else {
+                 if (offset_32bit) {
+                     EMIT_LoadImmediate(ctx, reg_d16, offset);
+@@ -255,15 +265,15 @@ static inline __attribute__((always_inline)) void store_reg_to_addr_offset(struc
+                 }
+                 EMIT(ctx, 
+                     add_reg(reg_d16, base, reg_d16, LSL, 0),
+-                    str_offset(reg_d16, reg, 0)
++                    str_offset(reg_d16, val, 0)
+                 );
+             }
+             break;
+         case 2:
+             if (offset > -256 && offset < 256)
+-                EMIT(ctx, sturh_offset(base, reg, offset & 0x1ff));
++                EMIT(ctx, sturh_offset(base, val, offset & 0x1ff));
+             else if (offset >= 0 && offset < 8192 && (offset & 1) == 0)
+-                EMIT(ctx, strh_offset(base, reg, offset));
++                EMIT(ctx, strh_offset(base, val, offset));
+             else {
+                 if (offset_32bit) {
+                     EMIT_LoadImmediate(ctx, reg_d16, offset);
+@@ -275,7 +285,7 @@ static inline __attribute__((always_inline)) void store_reg_to_addr_offset(struc
+                 }
+                 EMIT(ctx, 
+                     add_reg(reg_d16, base, reg_d16, LSL, 0),
+-                    strh_offset(reg_d16, reg, 0)
++                    strh_offset(reg_d16, val, 0)
+                 );
+             }
+             break;
+@@ -327,12 +337,16 @@ static inline __attribute__((always_inline)) void store_reg_to_addr_offset(struc
+     
+     RA_FreeARMRegister(ctx, reg_d16);
+ 
++    EMIT_StoreBE_Done(ctx, val, reg);
++
+     if (free_base)
+         RA_FreeARMRegister(ctx, base);
+ }
+ 
+ static inline __attribute__((always_inline)) void store_reg_to_addr(struct TranslatorContext *ctx, uint8_t size, uint8_t base, uint8_t reg, uint8_t index, uint8_t shift)
+ {
++    /* DashOS (U7): lo que se guarda, girado en little-endian */
++    uint8_t val = (size == 2 || size == 4) ? EMIT_StoreBE(ctx, size, reg) : reg;
+     int free_base = 0;
+ 
+     if (base == 0xff)
+@@ -347,10 +361,10 @@ static inline __attribute__((always_inline)) void store_reg_to_addr(struct Trans
+         switch (size)
+         {
+             case 4:
+-                EMIT(ctx, str_offset(base, reg, 0));
++                EMIT(ctx, str_offset(base, val, 0));
+                 break;
+             case 2:
+-                EMIT(ctx, strh_offset(base, reg, 0));
++                EMIT(ctx, strh_offset(base, val, 0));
+                 break;
+             case 1:
+                 EMIT(ctx, strb_offset(base, reg, 0));
+@@ -371,13 +385,13 @@ static inline __attribute__((always_inline)) void store_reg_to_addr(struct Trans
+             case 4:
+                 EMIT(ctx, 
+                     add_reg(tmp, base, index, LSL, shift),
+-                    str_offset(tmp, reg, 0)
++                    str_offset(tmp, val, 0)
+                 );
+                 break;
+             case 2:
+                 EMIT(ctx, 
+                     add_reg(tmp, base, index, LSL, shift),
+-                    strh_offset(tmp, reg, 0)
++                    strh_offset(tmp, val, 0)
+                 );
+                 break;
+             case 1:
+@@ -396,6 +410,8 @@ static inline __attribute__((always_inline)) void store_reg_to_addr(struct Trans
+         RA_FreeARMRegister(ctx, tmp);
+     }
+ 
++    EMIT_StoreBE_Done(ctx, val, reg);
++
+     if (free_base)
+         RA_FreeARMRegister(ctx, base);
+ }
+@@ -556,7 +572,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                         break;
+                     case 2:
+                         if (sign_ext)
+-                            EMIT(ctx, ldrsh_offset(reg_An, *arm_reg, 0));
++                            EMIT(ctx, ldrsh_offset_be(reg_An, *arm_reg, 0));
+                         else
+                             EMIT(ctx, ldrh_offset(reg_An, *arm_reg, 0));
+                         break;
+@@ -570,6 +586,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                         kprintf("Unknown size opcode\n");
+                         break;
+                 }
++                EMIT_LoadBE(ctx, size, *arm_reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);   /* DashOS (U7) */
+             }
+         }
+         else if (mode == 3) /* Mode 003: (An)+ */
+@@ -597,7 +614,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             break;
+                         case 2:
+                             if (sign_ext)
+-                                EMIT(ctx, ldrsh_offset_postindex(reg_An, *arm_reg, 2));
++                                EMIT(ctx, ldrsh_offset_postindex_be(reg_An, *arm_reg, 2));
+                             else
+                                 EMIT(ctx, ldrh_offset_postindex(reg_An, *arm_reg, 2));
+                             break;
+@@ -618,6 +635,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             break;
+                     }
+                 }
++                EMIT_LoadBE(ctx, size, *arm_reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);   /* DashOS (U7) */
+             }
+         }
+         else if (mode == 4) /* Mode 004: -(An) */
+@@ -644,7 +662,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             break;
+                         case 2:
+                             if (sign_ext)
+-                                EMIT(ctx, ldrsh_offset_preindex(reg_An, *arm_reg, -2));
++                                EMIT(ctx, ldrsh_offset_preindex_be(reg_An, *arm_reg, -2));
+                             else
+                                 EMIT(ctx, ldrh_offset_preindex(reg_An, *arm_reg, -2));
+                             break;
+@@ -665,6 +683,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             break;
+                     }
+                 }
++                EMIT_LoadBE(ctx, size, *arm_reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);   /* DashOS (U7) */
+             }
+         }
+         else if (mode == 5) /* Mode 005: (d16, An) */
+@@ -847,6 +866,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                         else
+                             EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                        EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                         
+                         if (outer_reg != 0xff)
+                             EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -861,6 +881,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             if (bd_reg == 0xff) {
+                                 bd_reg = RA_AllocARMRegister(ctx);
+                                 EMIT(ctx, ldr_offset(base_reg, bd_reg, 0));
++                                EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                             }
+                             else
+                                 load_reg_from_addr(ctx, 4, base_reg, bd_reg, bd_reg, 0, 0);
+@@ -1015,7 +1036,8 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                     {
+                         case 2: /* Word displacement */
+                             bd_reg = RA_AllocARMRegister(ctx);
+-                            EMIT(ctx, ldrsh_offset(REG_PC, bd_reg, pc_off));
++                            EMIT(ctx, ldrsh_offset_be(REG_PC, bd_reg, pc_off));
++                            EMIT_LoadBE(ctx, 2, bd_reg, BE_SXT32);   /* DashOS (U7) */
+                             (*ext_words)++;
+                             break;
+                         case 3: /* Long displacement */
+@@ -1025,6 +1047,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             } else {
+                                 EMIT(ctx, ldr_offset(REG_PC, bd_reg, pc_off));
+                             }
++                            EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                             (*ext_words) += 2;
+                             break;
+                     }
+@@ -1037,7 +1060,8 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                     {
+                         case 2: /* Word outer displacement */
+                             outer_reg = RA_AllocARMRegister(ctx);
+-                            EMIT(ctx, ldrsh_offset(REG_PC, outer_reg, pc_off));
++                            EMIT(ctx, ldrsh_offset_be(REG_PC, outer_reg, pc_off));
++                            EMIT_LoadBE(ctx, 2, outer_reg, BE_SXT32);   /* DashOS (U7) */
+                             (*ext_words)++;
+                             break;
+                         case 3: /* Long outer displacement */
+@@ -1047,6 +1071,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             }
+                             else
+                                 EMIT(ctx, ldr_offset(REG_PC, outer_reg, pc_off));
++                            EMIT_LoadBE(ctx, 4, outer_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                             (*ext_words) += 2;
+                             break;
+                     }
+@@ -1089,6 +1114,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                                 EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                             else
+                                 EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                            EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+ 
+                             if (outer_reg != 0xff)
+                                 EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -1103,6 +1129,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                                 if (bd_reg == 0xff) {
+                                     bd_reg = RA_AllocARMRegister(ctx);
+                                     EMIT(ctx, ldr_offset(base_reg, bd_reg, 0));
++                                    EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                 }
+                                 else
+                                 {
+@@ -1112,10 +1139,12 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                                             mov_reg(t, 31),
+                                             ldr_regoffset(t, bd_reg, bd_reg, UXTW, 0)
+                                         );
++                                        EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                         RA_FreeARMRegister(ctx, t);
+                                     }
+                                     else {
+                                         EMIT(ctx, ldr_regoffset(base_reg, bd_reg, bd_reg, UXTW, 0));
++                                        EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                     }
+                                 }
+                             }
+@@ -1184,7 +1213,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             break;
+                         case 2:
+                             if (sign_ext)
+-                                EMIT(ctx, ldrsh_offset(tmp_reg, *arm_reg, 0));
++                                EMIT(ctx, ldrsh_offset_be(tmp_reg, *arm_reg, 0));
+                             else
+                                 EMIT(ctx, ldrh_offset(tmp_reg, *arm_reg, 0));
+                             break;
+@@ -1195,6 +1224,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                                 EMIT(ctx, ldrb_offset(tmp_reg, *arm_reg, 0));
+                             break;
+                     }
++                    EMIT_LoadBE(ctx, size, *arm_reg, sign_ext ? BE_SXT32 : BE_UNSIGNED);   /* DashOS (U7) */
+                     RA_FreeARMRegister(ctx, tmp_reg);
+                 }
+             }
+@@ -1363,13 +1393,14 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+ 
+                 RA_SetDirtyM68kRegister(ctx, 8 + src_reg);
+ 
++                uint8_t val = EMIT_StoreBE(ctx, size, *arm_reg);   /* DashOS (U7) */
+                 switch (size)
+                 {
+                     case 4:
+-                        EMIT(ctx, str_offset_postindex(reg_An, *arm_reg, 4));
++                        EMIT(ctx, str_offset_postindex(reg_An, val, 4));
+                         break;
+                     case 2:
+-                        EMIT(ctx, strh_offset_postindex(reg_An, *arm_reg, 2));
++                        EMIT(ctx, strh_offset_postindex(reg_An, val, 2));
+                         break;
+                     case 1:
+                         if (src_reg == 7)
+@@ -1381,6 +1412,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                         kprintf("Unknown size opcode\n");
+                         break;
+                 }
++                EMIT_StoreBE_Done(ctx, val, *arm_reg);
+             }
+         }
+         else if (mode == 4) /* Mode 004: -(An) */
+@@ -1395,13 +1427,14 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+ 
+                 RA_SetDirtyM68kRegister(ctx, 8 + src_reg);
+ 
++                uint8_t val = EMIT_StoreBE(ctx, size, *arm_reg);   /* DashOS (U7) */
+                 switch (size)
+                 {
+                     case 4:
+-                        EMIT(ctx, str_offset_preindex(reg_An, *arm_reg, -4));
++                        EMIT(ctx, str_offset_preindex(reg_An, val, -4));
+                         break;
+                     case 2:
+-                        EMIT(ctx, strh_offset_preindex(reg_An, *arm_reg, -2));
++                        EMIT(ctx, strh_offset_preindex(reg_An, val, -2));
+                         break;
+                     case 1:
+                         if (src_reg == 7)
+@@ -1413,6 +1446,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                         kprintf("Unknown size opcode\n");
+                         break;
+                 }
++                EMIT_StoreBE_Done(ctx, val, *arm_reg);
+             }
+         }
+         else if (mode == 5) /* Mode 005: (d16, An) */
+@@ -1583,6 +1617,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                             EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                         else
+                             EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                        EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                         
+                         if (outer_reg != 0xff)
+                             EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -1598,6 +1633,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                             {
+                                 bd_reg = RA_AllocARMRegister(ctx);
+                                 EMIT(ctx, ldr_offset(base_reg, bd_reg, 0));
++                                EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                             }
+                             else
+                             {
+@@ -1607,10 +1643,12 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                                         mov_reg(t, 31),
+                                         ldr_regoffset(t, bd_reg, bd_reg, UXTW, 0)
+                                     );
++                                    EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                     RA_FreeARMRegister(ctx, t);
+                                 }
+                                 else
+                                     EMIT(ctx, ldr_regoffset(base_reg, bd_reg, bd_reg, UXTW, 0));
++                                    EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                             }
+                         }
+                         else
+@@ -1814,8 +1852,10 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                         if (brief & 0x04)
+                         {
+                             /* Fetch data from base reg */
+-                            if (base_reg == 0xff)
++                            if (base_reg == 0xff) {
+                                 EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
++                                EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
++                            }
+                             else
+                                 load_reg_from_addr(ctx, 4, bd_reg, bd_reg, base_reg, 0, 0);
+ 
+@@ -1832,6 +1872,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                                 if (bd_reg == 0xff) {
+                                     bd_reg = RA_AllocARMRegister(ctx);
+                                     EMIT(ctx, ldr_offset(base_reg, bd_reg, 0));
++                                    EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                 }
+                                 else
+                                     load_reg_from_addr(ctx, 4, base_reg, bd_reg, bd_reg, 0, 0);

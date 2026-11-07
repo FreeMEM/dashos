@@ -11,6 +11,7 @@
     python3 comparar.py --guardar-ref # guarda el código de ahora como referencia (solo antes de empezar U7)
     python3 comparar.py --solo-be     # solo el punto 2
 """
+import resource
 import struct
 import subprocess
 import sys
@@ -22,10 +23,11 @@ REF = PRUEBAS / "ref"
 TMP = AQUI / "build" / "comparar"
 
 
-def ejecutar(orden, prog, volcado):
+def ejecutar(orden, prog, volcado, memoria=None):
     exe, qemu = (AQUI / "build" / "jit-host", "qemu-aarch64_be") if orden == "be" else \
         (AQUI / "build-le" / "jit-host", "qemu-aarch64")
-    r = subprocess.run([qemu, str(exe), str(prog), str(volcado)], capture_output=True, text=True, timeout=120)
+    r = subprocess.run([qemu, str(exe), str(prog), str(volcado)] + ([str(memoria)] if memoria else []), capture_output=True, text=True, timeout=120,
+                       preexec_fn=lambda: resource.setrlimit(resource.RLIMIT_CORE, (0, 0)))
     salida = r.stdout
     i = salida.find("[HOST] Programa")
     resto = salida[i:] if i >= 0 else ""
@@ -103,13 +105,19 @@ def main():
         fallos += estado != "bien"
         if solo_be:
             continue
-        rc_le, le = ejecutar("le", prog, TMP / f"{nombre}.le.vol")
+        rc_le, le = ejecutar("le", prog, TMP / f"{nombre}.le.vol", TMP / f"{nombre}.le.mem")
         if rc_le == 0 and le == be:
             print(f"{nombre}: little-endian bien: la misma salida")
         else:
             fallos += 1
             dif = next((f"{x}  |  {y}" for x, y in zip(be, le) if x != y), "salida más corta")
             print(f"{nombre}: little-endian MAL (rc {rc_le}): {dif}")
+            ejecutar("be", prog, TMP / f"{nombre}.be.vol", TMP / f"{nombre}.be.mem")
+            mb, ml = (TMP / f"{nombre}.be.mem").read_bytes(), (TMP / f"{nombre}.le.mem").read_bytes() if (TMP / f"{nombre}.le.mem").exists() else b""
+            difs = [i for i in range(min(len(mb), len(ml))) if mb[i] != ml[i]]
+            if difs:
+                print(f"    memoria distinta en {len(difs)} bytes; los primeros: " +
+                      " ".join(f"${0x140000 + i:x}" for i in difs[:8]))
     sys.exit(1 if fallos else 0)
 
 
