@@ -1,0 +1,46 @@
+[HOST] Programa /home/freemem/Projects/dashos/.worktrees/u7/jit-host/pruebas68k/t3.bin (36896 bytes)
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[ERROR] SBCD mem is not yet fixed!
+[JIT] D0=f821fd0e D1=00e8006d D2=c1163cdc D3=17deb9e8 D4=3be4de9c D5=30a59af9 D6=3393c487 D7=00000003
+[JIT] A0=00148720 A1=00148760 A2=001487a0 A3=001489d4 A4=00148e14 A5=00148720 A6=00000000 A7=001ff000
+[JIT] PC=00000000 SR=2710
+[JIT] FP0=7fffffffffffffff FP1=7fffffffffffffff FP2=7fffffffffffffff FP3=7fffffffffffffff FP4=7fffffffffffffff FP5=7fffffffffffffff FP6=7fffffffffffffff FP7=7fffffffffffffff
+[JIT] FPSR=00000000 FPCR=00000000
+[HOST] Suma de la memoria del 68k: cabe0d999dab434c

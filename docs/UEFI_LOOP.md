@@ -46,6 +46,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   Emu68. El usuario dijo que sí el 2026-11-07; se hace en la rama `u7` (worktree `.worktrees/u7`), por pasos:
   U7a banco de pruebas en los dos órdenes, U7b parche base, U7c direcciones efectivas, U7d instrucciones, U7e FPU.
   Prueba: `make -C jit-host && make -C jit-host ORDEN=le && python3 jit-host/comparar.py`.
+  Hecho en el banco (`jit-host`) del 2026-11-07, U7a a U7g: el JIT corre en little-endian con los cinco programas de
+  prueba iguales que en big-endian. Falta llevarlo a la caja de DashOS cuando la caja exista (hoy el JIT solo corre
+  en el banco) y probarlo en una CPU sin big-endian de verdad.
 
 ## Herramientas
 
@@ -431,3 +434,17 @@ comprobado si lo tienen).
   salida y memoria). Sin el parche 0009, `t2` cae en little-endian: la prueba lo ve.
 - **No comprobado:** las interrupciones (el banco no tiene), los formatos 3 y 4 (fallos de bus y de MMU) y la
   excepción de privilegio.
+
+### 2026-11-07 — U7g (3000 instrucciones al azar)
+
+- `pruebas68k/gen_t3.py` genera `t3.s` con semilla fija: 3000 instrucciones al azar de 25 clases (aritmética y
+  lógica con memoria, inmediatos, ADDQ/SUBQ, NEG/NOT/CLR/TST, MOVE memoria a memoria, ADDX/SUBX y ABCD/SBCD/NBCD con
+  predecremento, CMPM, desplazamientos de memoria, bits, Scc, TAS, MUL y DIV de 16 y 32 bits, MULx.L de 64, MOVEM en
+  las dos direcciones, MOVEP, CAS, CMP2, campos de bits con campo fijo y en registros, PACK/UNPK, CCR y SR) por siete
+  modos de dirección (también el indirecto en memoria y el absoluto). Al final guarda todos los registros.
+- **Comprobado:** `t3` sale igual en little-endian a la primera, y en big-endian con el código de la referencia (39
+  bloques). Prueba de que el banco lo vería: quitando el giro de `EMIT_LD`, los cinco programas caen.
+- Estado de U7: el JIT de Emu68 (enteros, FPU y excepciones) en little-endian, en el banco. Parches 0004 a 0009
+  (0008 es solo del banco). Se aplican limpios sobre Emu68 af63580 tras 0001 a 0003, y un banco compilado desde ahí da
+  las mismas sumas. **No comprobado:** interrupciones, fallos de bus y de MMU (formatos 3 y 4), MOVES, la parte de PPC
+  de Emu68, y nada fuera de QEMU de usuario.
