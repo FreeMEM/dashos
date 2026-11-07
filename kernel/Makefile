@@ -44,7 +44,7 @@ virt: usuario FORCE
 
 arranque-virt: virt
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci -device usb-kbd -device usb-mouse" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
+	TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci -device usb-kbd -device usb-mouse" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

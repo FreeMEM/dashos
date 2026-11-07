@@ -22,6 +22,25 @@ timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -
     -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
     -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
 QEMU=$!
+# Con TECLAS=1, una "a" y un movimiento del ratón cada medio segundo desde el segundo 3 (U6: el xHCI).
+if [ -n "${TECLAS:-}" ]; then
+    python3 -I - "$MONITOR" "$SEGUNDOS" <<'PY' >/dev/null 2>&1 &
+import socket, sys, time
+ruta, total = sys.argv[1], float(sys.argv[2])
+inicio = time.time()
+time.sleep(3)
+while time.time() - inicio < total:
+    try:
+        s = socket.socket(socket.AF_UNIX)
+        s.connect(ruta)
+        s.sendall(b"sendkey a\nmouse_move 10 5\n")
+        s.close()
+    except OSError:
+        pass
+    time.sleep(0.5)
+PY
+    TECLAS_PID=$!
+fi
 # Se para en cuanto sale la última línea esperada (o al acabar el tiempo). Con CAPTURA=fichero.ppm, antes guarda la
 # pantalla (U4).
 FIN=$(grep -v '^#' "$ESPERADOS" | grep -v '^$' | tail -1 | sed 's/^~//')
@@ -37,6 +56,7 @@ while kill -0 "$QEMU" 2>/dev/null; do
     sleep 0.5
 done
 wait "$QEMU" 2>/dev/null
+[ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 

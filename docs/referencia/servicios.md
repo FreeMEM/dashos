@@ -44,7 +44,8 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | consola | registro, registros del puerto serie | — |
 | buzon | su permiso DMA, registros del buzón, memoria de la VideoCore | "buzon" |
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
-| compositor | — | "buzon", "entrada" |
+| xhci | su permiso DMA, registros del xHCI del PCIe | "entrada" |
+| compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI) | "buzon" (en la Pi), "entrada" (es quien lee) |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
@@ -92,3 +93,10 @@ reiniciar la máquina, como puede leer toda la memoria con la GPU; es un servici
 
 El controlador del HVS está en la biblioteca, sin servicio propio: lo usará el compositor en la Pi 4 para componer con
 planos por hardware.
+
+## xHCI (U6)
+
+`usuario/src/bin/xhci.rs`. Llaves: 1 su permiso DMA, 2 sus registros (la BAR 0 del aparato del PCIe, que busca el
+kernel), 3 el canal de entrada del compositor. Reinicia el controlador, da dirección a lo que haya en cada puerto y,
+a los teclados y ratones de arranque, les lee los informes y los manda como eventos, con el mismo formato que `usb`.
+Hoy sin hubs y mirando los eventos cada 10 ms (sin interrupción).

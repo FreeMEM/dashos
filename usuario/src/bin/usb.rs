@@ -493,63 +493,6 @@ impl Dwc2 {
 const VA_REGISTROS: usize = 0x0090_0000;
 const VA_BUFER: usize = 0x30_0000_0000;
 
-/// Lo que se manda a quien use el teclado y el ratón (C49).
-struct Entrada {
-    /// El canal de eventos (la llave 4); sin él, se escriben.
-    canal: Option<u32>,
-    previo: [u8; 8],
-}
-
-impl Entrada {
-    fn mandar(&mut self, ev: [u8; 8]) {
-        if let Some(c) = self.canal {
-            // Si el canal está lleno o cerrado, el evento se pierde: quien lee no da abasto o no está.
-            dashos::canal_escribir(c, &ev, &[]);
-            return;
-        }
-        match ev[0] {
-            1 => {
-                let letra = if (4..=29).contains(&ev[1]) { (b'a' + ev[1] - 4) as char } else { '?' };
-                dashos::println!("  [usb] tecla: uso {:#04x} ({}) {}", ev[1], letra, if ev[2] != 0 { "pulsada" } else { "soltada" });
-            }
-            _ => dashos::println!("  [usb] ratón: botones {:#x}, movimiento ({}, {})", ev[1], ev[2] as i8, ev[3] as i8),
-        }
-    }
-
-    /// Un informe de teclado de arranque (HID 1.11, B.1): modificadores, reservado y hasta seis teclas. Se compara con
-    /// el anterior para sacar lo que se pulsó y lo que se soltó.
-    fn teclado(&mut self, i: &[u8]) {
-        if i.len() < 8 || i[2] == 1 {
-            return; // demasiadas teclas a la vez: el informe no dice cuáles
-        }
-        let previo = self.previo;
-        let cambios = previo[0] ^ i[0];
-        for b in 0..8 {
-            if cambios & (1 << b) != 0 {
-                self.mandar([1, 0xE0 + b, (i[0] >> b) & 1, 0, 0, 0, 0, 0]);
-            }
-        }
-        for &k in &previo[2..8] {
-            if k > 3 && !i[2..8].contains(&k) {
-                self.mandar([1, k, 0, 0, 0, 0, 0, 0]);
-            }
-        }
-        for &k in &i[2..8] {
-            if k > 3 && !previo[2..8].contains(&k) {
-                self.mandar([1, k, 1, 0, 0, 0, 0, 0]);
-            }
-        }
-        self.previo.copy_from_slice(&i[..8]);
-    }
-
-    /// Un informe de ratón de arranque (HID 1.11, B.2): botones, x, y y, si lo trae, la rueda.
-    fn raton(&mut self, i: &[u8]) {
-        if i.len() >= 3 {
-            self.mandar([2, i[0], i[1], i[2], i.get(3).copied().unwrap_or(0), 0, 0, 0]);
-        }
-    }
-}
-
 /// La interrupción (llave 3) y un temporizador de 10 ms en un canal nuevo. `None` si no hay llave 3.
 fn preparar_avisos() -> Option<Avisos> {
     let (a, b) = dashos::canal_crear();
@@ -607,7 +550,7 @@ fn principal() -> u64 {
     let teclados = hids.iter().flatten().filter(|h| h.teclado).count();
     let ratones = hids.iter().flatten().filter(|h| !h.teclado).count();
     dashos::println!("  [usb] HID de arranque: {} teclado y {} ratón", teclados, ratones);
-    let mut entrada = Entrada { canal, previo: [0; 8] };
+    let mut entrada = dashos::hid::Entrada::nueva(canal, "usb");
     // Se pregunta a cada uno en cada tic del temporizador (sin él, cada 8 ms girando).
     loop {
         if u.avisos.is_some() {

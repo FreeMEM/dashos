@@ -5,7 +5,8 @@
 //! - el GIC, de la MADT (distribuidor, redistribuidores o interfaz de CPU, y su versión);
 //! - el temporizador, de la GTDT (sus interrupciones privadas);
 //! - el puerto serie, de la SPCR (un PL011);
-//! - PSCI y si va por `hvc` o `smc`, de la FADT.
+//! - PSCI y si va por `hvc` o `smc`, de la FADT;
+//! - el PCIe genérico (su ECAM), de la MCFG (U6: el xHCI va ahí).
 //!
 //! Escrito con la especificación de ACPI 6.5 (cap. 5: RSDP, XSDT, FADT, MADT con GICC, GICD y GICR) y las tablas de
 //! ARM que define (GTDT) o referencia (SPCR, de Microsoft). Lo demás de ACPI (AML, aparatos del DSDT) no se mira: eso
@@ -41,6 +42,8 @@ pub struct Maquina {
     pub tiempo: [u32; 4],
     pub serie: Option<(u64, u32)>,
     pub psci: Option<bool>, // Some(true) con hvc
+    /// El ECAM del primer segmento PCI: (base, tamaño según sus buses).
+    pub ecam: Option<(u64, u64)>,
 }
 
 /// La tabla con esa firma, buscada en la XSDT.
@@ -108,6 +111,13 @@ pub fn leer(rsdp: usize) -> Option<Maquina> {
             m.psci = Some(arranque & 2 != 0);
         }
     }
+    // MCFG (PCI Firmware, 4.1.2): desde el byte 44, entradas de 16 bytes: base, segmento, primer y último bus.
+    if let Some(c) = tabla(xsdt, b"MCFG") {
+        if u32_en(c + 4) as usize >= 44 + 16 {
+            let (base, primero, ultimo) = (u64_en(c + 44), u8_en(c + 54) as u64, u8_en(c + 55) as u64);
+            m.ecam = Some((base + (primero << 20), (ultimo.saturating_sub(primero) + 1) << 20));
+        }
+    }
     Some(m)
 }
 
@@ -156,6 +166,16 @@ pub fn arbol(m: &Maquina, ram: &[(u64, u64)], destino: &mut [u8]) -> Option<usiz
     let t = &m.tiempo;
     f.celdas("interrupts", &[1, ppi(t[0]), 0xf04, 1, ppi(t[1]), 0xf04, 1, ppi(t[2]), 0xf04, 1, ppi(t[3]), 0xf04]);
     f.fin_nodo();
+    if let Some((base, tam)) = m.ecam {
+        let mut nombre = [0u8; 32];
+        let n = escribir_hex(&mut nombre, b"pcie@", base);
+        f.nodo(core::str::from_utf8(&nombre[..n]).unwrap_or("pcie"));
+        f.texto("compatible", "pci-host-ecam-generic");
+        f.texto("device_type", "pci");
+        let (b, t) = (par(base), par(tam));
+        f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
+        f.fin_nodo();
+    }
     if let Some((base, gsiv)) = m.serie {
         let mut nombre = [0u8; 32];
         let n = escribir_hex(&mut nombre, b"pl011@", base);

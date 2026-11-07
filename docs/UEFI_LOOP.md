@@ -35,8 +35,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   o `virtio-gpu`.
 - [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
-- [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe) y U6b (el servicio
-  `xhci` lo reinicia y ve los puertos). Falta U6c (anillos, dirección, teclado y ratón) y NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+- [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
+  lo reinicia) y U6c (teclado y ratón por xHCI hasta el compositor). Falta: interrupciones (MSI o INTx) en vez del
+  temporizador, hubs, y NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -46,7 +47,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
 - `make -C kernel prueba-virt`: la imagen de pruebas en `virt` (`pruebas/esperado_virt.txt`).
 - `make -C kernel arranque-virt`: el kernel con la característica `virt`, metido en el programa de UEFI y arrancado.
-- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `ACPI=on` para
+- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `TECLAS=1` manda una
+  "a" y un movimiento del ratón cada medio segundo; `ACPI=on` para
   arrancar con ACPI y sin árbol, como un portátil; `MAQUINA=...` añade
   opciones a la máquina, como `virtualization=on` para entrar en EL2; 4 núcleos, 2 GB, `acpi=off`) con
   EDK2 y el programa como `EFI/BOOT/BOOTAA64.EFI` en un disco FAT; comprueba el puerto serie como `prueba_qemu.sh` y
@@ -193,3 +195,18 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   llaves si la lectura falla.
 - **Comprobado:** `arranque-virt` (con `qemu-xhci`, teclado y ratón) bien; en la Pi, `prueba` y `arranque` (dos
   veces), bien.
+
+### 2026-11-07 madrugada — U6c (teclado y ratón por xHCI)
+
+- `usuario/src/bin/xhci.rs`, con la especificación xHCI 1.2: anillo de órdenes y de eventos (un segmento),
+  ranuras, contextos de 32 o 64 bytes según `HCCPARAMS1.CSZ`, reinicio de cada puerto con algo, "pedir ranura" y
+  "dar dirección", transferencias de control por el punto 0 (preparación, datos, estado), descriptores de aparato y
+  de configuración, la interfaz HID de arranque, SET_CONFIGURATION, SET_PROTOCOL y SET_IDLE, "configurar punto" con
+  su intervalo, y un TRB normal por informe. Mira los eventos en cada tic de un temporizador de 10 ms (aún sin
+  interrupción). Toda su memoria en un objeto DMA de 128 KB.
+- Los informes pasan a eventos con `dashos::hid::Entrada`, que ahora comparten `usb` (el DWC2 de la Pi) y `xhci`.
+- El árbol hecho desde ACPI (U5) lleva también el PCIe genérico, de la MCFG: sin él, con ACPI no aparecía el xHCI.
+- `tools/prueba_uefi.sh` manda teclas y ratón con `TECLAS=1`; `make -C kernel arranque-virt` lo usa.
+- **Comprobado:** en `virt` con árbol y con ACPI, con GICv2 y GICv3: el teclado y el ratón se enumeran y el ratón
+  mueve la ventana del compositor. En la Pi, `prueba` y `arranque`, bien. **No comprobado:** el VL805 de la Pi 4
+  (además necesita su firmware por el buzón, `docs/spec/hw/pcie.md` §8), hubs, aparatos de USB 3 y máquinas reales.
