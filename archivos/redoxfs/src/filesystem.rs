@@ -2,6 +2,7 @@ use aes::Aes128;
 use alloc::{
     collections::{BTreeMap, VecDeque},
     vec,
+    vec::Vec,
 };
 use syscall::error::{EKEYREJECTED, ENOENT, ENOKEY, Error, Result};
 use xts_mode::{Xts128, get_tweak_default};
