@@ -30,7 +30,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   de verdad.
 - [ ] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba` en las dos máquinas): muchas son de la Pi
   (SD, USB, buzón); separar las que valen para las dos.
-- [ ] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
+- [x] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
   (dirección, tamaño, paso, formato); el compositor pinta ahí cuando no hay buzón de la VideoCore. En QEMU, `ramfb`
   o `virtio-gpu`.
 - [ ] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
@@ -113,3 +113,20 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   con varios grupos de núcleos.
 - **Comprobado:** `arranque_virt.txt` bien con GICv2 y GICv3, entrando en EL1 y en EL2 (`virtualization=on`).
   **No comprobado:** máquinas de verdad; firmware con EL3 (seguridad doble).
+
+### 2026-11-07 madrugada — U4 (la pantalla de UEFI)
+
+- El cargador busca el GOP (`LocateProtocol`) y, si tiene búfer lineal de 32 bits, añade al árbol un nodo
+  `simple-framebuffer` (el de Linux: `reg`, `width`, `height`, `stride`, `format`), al final de la raíz. En QEMU `virt`
+  solo `ramfb` da GOP con este EDK2 (`bochs-display` y `virtio-gpu-pci`, no): 800×600 en RAM, en una zona que UEFI se
+  reserva.
+- El kernel lee ese nodo y da a `inicio` la pantalla como memoria del firmware y sus medidas en un objeto de memoria
+  (tipo nuevo de aparato, 6 "datos"). La memoria del firmware vale ahora también dentro de una zona reservada del
+  árbol (`Paginas::dentro_de_una_reserva`), nunca en RAM que reparta el kernel.
+- El compositor, si su llave 1 se proyecta como pantalla, pinta en ella con un solo búfer (GOP no tiene
+  desplazamiento virtual), y da la vuelta a R y B si el formato lo pide; si no, sigue con el buzón, como en la Pi.
+- `tools/prueba_uefi.sh` guarda la pantalla con `CAPTURA=fichero.ppm` y espera a la última línea esperada, lleve "~"
+  o no. `make -C kernel arranque-virt` va con `-device ramfb`.
+- **Comprobado:** `arranque_virt.txt` con GICv2 y GICv3; la captura tiene el fondo, el tablero y la ventana con los
+  colores que pinta el compositor. En la Pi, `make -C kernel prueba` y `arranque`, bien. **No comprobado:** máquinas
+  de verdad (otro formato de píxel, pantallas que no son de 32 bits).

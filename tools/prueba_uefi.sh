@@ -24,7 +24,7 @@ timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -
 QEMU=$!
 # Se para en cuanto sale la última línea esperada (o al acabar el tiempo). Con CAPTURA=fichero.ppm, antes guarda la
 # pantalla (U4).
-FIN=$(grep -v '^#' "$ESPERADOS" | grep -v '^~' | grep -v '^$' | tail -1)
+FIN=$(grep -v '^#' "$ESPERADOS" | grep -v '^$' | tail -1 | sed 's/^~//')
 while kill -0 "$QEMU" 2>/dev/null; do
     if [ -n "$FIN" ] && tr -d '\r' < "$SALIDA" | grep -qF -- "$FIN"; then
         sleep 0.5
