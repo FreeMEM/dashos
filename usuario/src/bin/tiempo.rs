@@ -57,8 +57,13 @@ fn principal() -> u64 {
     cerrar(p as u32);
     let t0 = ahora_us();
     let otro = temporizador_crear(b, 100_000, 0);
-    let (n, _) = aviso(a);
-    let pasado = ahora_us() - t0;
+    let (mut n, _) = aviso(a);
+    let mut pasado = ahora_us() - t0;
+    // Puede llegar uno más del periódico, si ya estaba saliendo al cerrarlo (kernel.md, B10): uno, no más.
+    if pasado < 90_000 {
+        n = aviso(a).0;
+        pasado = ahora_us() - t0;
+    }
     if otro <= 0 || n != 8 || pasado < 90_000 {
         println!("  [tiempo] tras cerrar el periódico llegó algo a los {} µs", pasado);
         return 4;
