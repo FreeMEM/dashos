@@ -1570,7 +1570,7 @@ index 2375cd3..7b1af7c 100644
  {
      /* Sanity check */
 diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
-index 6981aa5..4219dc9 100644
+index 6981aa5..22c5be6 100644
 --- a/src/PPC_Translator.cpp
 +++ b/src/PPC_Translator.cpp
 @@ -530,7 +530,7 @@ static __used__ int EMIT_crandc(PPCTranslatorContext *tc, uint32_t opcode)
@@ -1611,7 +1611,67 @@ index 6981aa5..4219dc9 100644
              bfi(cr_reg, tmp, 31 - crd, 1)
          });
      }
-@@ -1120,7 +1120,7 @@ static __used__ int EMIT_mtcrf(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -891,6 +891,11 @@ static __used__ int EMIT_bclrx(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         else
+         {
++            /* DashOS (F1): with LK, LR = the next instruction also when the branch is not taken */
++            if (update_lr) {
++                if (pc_offset >= 0) tc->emit(add_immed(REG_LR, REG_PC, pc_offset));
++                else tc->emit(sub_immed(REG_LR, REG_PC, -pc_offset));
++            }
+             int32_t pc_adj = pc_offset;
+             tc->emitAddImmediate(REG_PC, pc_adj);
+             tc->setPC(tc->getPC() + 1);
+@@ -925,6 +930,11 @@ static __used__ int EMIT_bclrx(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         else
+         {
++            /* DashOS (F1): with LK, LR = the next instruction also when the branch is not taken */
++            if (update_lr) {
++                if (pc_offset >= 0) tc->emit(add_immed(REG_LR, REG_PC, pc_offset));
++                else tc->emit(sub_immed(REG_LR, REG_PC, -pc_offset));
++            }
+             int32_t pc_adj = pc_offset;
+             tc->emitAddImmediate(REG_PC, pc_adj);
+         }
+@@ -1056,10 +1066,32 @@ static __used__ int EMIT_bcctrx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emitStop();
+ 
+         tc->resetOffsetPC();
+-    } else {
+-        (void)bi;
++    } else if (bo & 0b00100) {
++        /* DashOS (F1): the conditional form (it was not translated). BO[2] = 1 here (bcctr cannot decrement CTR):
++           only the bit BI of CR. PC = condition ? CTR : next; with LK, LR = next whether taken or not */
++        int8_t pc_offset = 4;
++        uint8_t condition_true = (bo >> 3) & 1;
++        GPR next = GPR::allocate();
++        GPR target = GPR::allocate();
++        GPR reg_cr = tc->mapGPRForRead(CRn);
++
+         (void)take_branch;
+-        return -1;
++        tc->getOffsetPC(&pc_offset);
++        tc->resetOffsetPC();
++
++        if (pc_offset >= 0) tc->emit(add_immed(next, REG_PC, pc_offset));
++        else tc->emit(sub_immed(next, REG_PC, -pc_offset));
++
++        tc->emit({
++            bic_immed(target, REG_CTR, 2, 0),
++            tst_immed(reg_cr, 1, (1 + bi) & 31),
++            csel(REG_PC, target, next, condition_true ? A64_CC_NE : A64_CC_EQ)
++        });
++        if (update_lr) tc->emit(mov_reg(REG_LR, next));
++
++        tc->emitStop();
++    } else {
++        return -1;      /* BO[2] = 0: decrementing CTR in bcctr is an invalid form */
+     }
+ 
+     return 1;
+@@ -1120,7 +1152,7 @@ static __used__ int EMIT_mtcrf(PPCTranslatorContext *tc, uint32_t opcode)
      if (mask == 0xff) {
          tc->emit( mov_reg(reg_cr, reg_rs));
      } else if (mask == 0) {
@@ -1620,7 +1680,7 @@ index 6981aa5..4219dc9 100644
      } else {
          GPR tmp = GPR::allocate();
          uint32_t mask32 = 0;
-@@ -1140,13 +1140,13 @@ static __used__ int EMIT_mtcrf(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1140,13 +1172,13 @@ static __used__ int EMIT_mtcrf(PPCTranslatorContext *tc, uint32_t opcode)
              tc->emitLoadImmediate(imm, mask32);
              tc->emit({
                  bic_reg(reg_cr, reg_cr, imm, LSL, 0),
@@ -1636,7 +1696,7 @@ index 6981aa5..4219dc9 100644
                  orr_reg(reg_cr, reg_cr, tmp, LSL, 0)
              });
          }
-@@ -1180,7 +1180,7 @@ static __used__ int EMIT_subfex(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1180,7 +1212,7 @@ static __used__ int EMIT_subfex(PPCTranslatorContext *tc, uint32_t opcode)
          return 1;
      }
  
@@ -1645,7 +1705,7 @@ index 6981aa5..4219dc9 100644
  }
  
  
-@@ -1188,6 +1188,9 @@ extern "C" {
+@@ -1188,6 +1220,9 @@ extern "C" {
  
  extern int debug;
  extern int disasm;
@@ -1655,7 +1715,7 @@ index 6981aa5..4219dc9 100644
  
  }
  
-@@ -1202,24 +1205,17 @@ static inline int globalDisasm() {
+@@ -1202,24 +1237,17 @@ static inline int globalDisasm() {
  
  static inline int EMIT_Group_63(PPCTranslatorContext *tc, uint32_t opcode)
  {
@@ -1665,15 +1725,6 @@ index 6981aa5..4219dc9 100644
 -    switch (secondary_long) {
 -        case 0b0000000000: return Emit::fcmpu(tc, opcode);
 -        case 0b0001001000: return Emit::fmrx(tc, opcode);
--    }
--
--    switch (secondary_short) {
--        case 0b10100: return Emit::fsubx(tc, opcode);
--        case 0b10101: return Emit::faddx(tc, opcode);
--        case 0b11001: return Emit::fmulx(tc, opcode);
--        case 0b10010: return Emit::fdivx(tc, opcode);
--        case 0b01111: return Emit::fctiwzx(tc, opcode);
--        case 0b11101: return Emit::fmadd(tc, opcode);
 +    /* DashOS (F1d): the X forms first, then the A forms (Emit::group63A) */
 +    switch ((opcode >> 1) & 0x3ff) {
 +        case 0: case 32: return Emit::fcmp(tc, opcode);                 /* fcmpu, fcmpo */
@@ -1684,12 +1735,21 @@ index 6981aa5..4219dc9 100644
 +        case 38: case 70: case 134: case 711: return Emit::mtfs(tc, opcode);   /* mtfsb1, mtfsb0, mtfsfi, mtfsf */
      }
  
+-    switch (secondary_short) {
+-        case 0b10100: return Emit::fsubx(tc, opcode);
+-        case 0b10101: return Emit::faddx(tc, opcode);
+-        case 0b11001: return Emit::fmulx(tc, opcode);
+-        case 0b10010: return Emit::fdivx(tc, opcode);
+-        case 0b01111: return Emit::fctiwzx(tc, opcode);
+-        case 0b11101: return Emit::fmadd(tc, opcode);
+-    }
+-
 -    return -1;
 +    return Emit::group63A(tc, opcode);
  }
  
  static inline int EMIT_Group_19(PPCTranslatorContext *tc, uint32_t opcode)
-@@ -1248,6 +1244,24 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1248,6 +1276,24 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
  {
      uint32_t secondary = (opcode >> 1) & 0x3ff;
  
@@ -1714,7 +1774,7 @@ index 6981aa5..4219dc9 100644
      switch (secondary) {
          case 0b0000000000: return Emit::cmp(tc, opcode);
          case 0b0000000100: return Emit::tw(tc, opcode);
-@@ -1279,12 +1293,12 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1279,12 +1325,12 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
          case 0b0010010110: return Emit::stwcx_dot(tc, opcode);
          case 0b0010010111: return Emit::stwx(tc, opcode);
          case 0b0010110111: return Emit::stwux(tc, opcode);
@@ -1731,7 +1791,7 @@ index 6981aa5..4219dc9 100644
          case 0b0011101011: return Emit::mullwx(tc, opcode);
          //case 0b0011110010: return EMIT_mtsrin(tc, opcode);    // OEA, supervisor
          case 0b0011110110: return Emit::dcbtst(tc, opcode);    // VEA
-@@ -1335,6 +1349,9 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -1335,6 +1381,9 @@ static inline int EMIT_Group_31(PPCTranslatorContext *tc, uint32_t opcode)
          case 0b1111110110: return Emit::dcbz(tc, opcode);      // VEA
  
          /* FPU part */
@@ -1741,7 +1801,7 @@ index 6981aa5..4219dc9 100644
          //case 0b1000010111: return EMIT_lfsx(tc, opcode);      // FPU
          //case 0b1000110111: return EMIT_lfsux(tc, opcode);     // FPU
          //case 0b1001010111: return EMIT_lfdx(tc, opcode);      // FPU
-@@ -1359,6 +1376,9 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+@@ -1359,6 +1408,9 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
      //kprintf("[PPC] EmitINSN @ %08x, opcode %08x, group %d\n", (uint32_t)(uintptr_t)tc->getPC(), opcode, group);
  
      switch (group) {
@@ -1751,7 +1811,7 @@ index 6981aa5..4219dc9 100644
          case 0b000011: count = Emit::twi(tc, opcode); break;
          case 0b000111: count = Emit::mulli(tc, opcode); break;
          case 0b001000: count = Emit::subfic(tc, opcode); break;
-@@ -1396,17 +1416,17 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+@@ -1396,17 +1448,17 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
          case 0b101011: count = Emit::lhau(tc, opcode); break;
          case 0b101100: count = Emit::sth(tc, opcode); break;
          case 0b101101: count = Emit::sthu(tc, opcode); break;
@@ -1776,7 +1836,7 @@ index 6981aa5..4219dc9 100644
          case 0b111111: count = EMIT_Group_63(tc, opcode); break;
          default: break;
      }
-@@ -1420,6 +1440,10 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+@@ -1420,6 +1472,10 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
  
          disasm_print_ppc_only(tc->getPC());
  
@@ -1787,7 +1847,7 @@ index 6981aa5..4219dc9 100644
          while(1);
      }
  
-@@ -1851,12 +1875,12 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+@@ -1851,12 +1907,12 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
      if (debug > 2)
          kprintf("[PPC] GetTranslationUnit(%08x)\n[PPC] Hash: 0x%04x\n", (void*)ppccodeptr, (int)hash);
  
@@ -1802,7 +1862,7 @@ index 6981aa5..4219dc9 100644
  
      do {
          unit = (PPCTranslationUnit *)jit_ppc.malloc_aligned(unit_length, 64);
-@@ -1918,9 +1942,9 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+@@ -1918,9 +1974,9 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
      unit->ptu_PPCHigh = (uint32_t)(uintptr_t)ppc_high;
      unit->ptu_Fingerprint = cache_read_32(ICACHE, unit->ptu_PPCAddress) ^ cache_read_32(ICACHE, unit->ptu_PPCAddress + 4);
      

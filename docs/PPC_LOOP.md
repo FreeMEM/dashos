@@ -16,6 +16,9 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
   (sus bits de control).
 - [ ] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
 - [x] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
+- [x] F1g Saltos condicionales: todos los BO en bc, bcl, bclr, bclrl, bcctr, bcctrl.
+- [ ] F1h `icbi` en el banco (código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`, `sc`,
+  `mftb`, `mullwo`/`divwo`/`divwuo`.
 - [ ] AltiVec, después de MorphOS (orden del usuario).
 
 ## Cómo se prueba
@@ -31,7 +34,8 @@ final salta a 0: el banco sale de su bucle y el oráculo recoge el SIGSEGV. Se c
 32 FPR, FPSCR y una suma de la memoria; si la memoria difiere, se dice en qué bytes.
 
 El Emu68 del worktree es un clon aparte (`third_party/Emu68`, no va a git) en af63580 con los parches 0001-0009 como
-commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO_PROPAGATION=1`
+commit "base"; `0010-ppc-f1.patch` sale de su `git diff` (todo lo de F1, que solo toca el JIT PPC, salvo
+`csel64` en A64.h, que no usaba nadie). El banco PPC se compila con `PPC_SO_PROPAGATION=1`
 (SO de XER copiado a CR, como en un PPC de verdad; Emu68 lo deja a 0 por velocidad).
 
 ## Entradas
@@ -147,3 +151,22 @@ commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO
   1), que cambia los registros del contexto y salta la instrucción. Igual en los dos: 24 llamadas, resultados 42,
   142, 36, 2^20 y -1.
 - Las nueve pruebas, bien; el banco del 68k, igual.
+
+### 2026-11-07 — F1g: saltos
+
+- `pruebas/gen_t4.py` (t4, 2112 casos): cada BO que admite el ensamblador (con y sin restar CTR, condición a 1, a
+  0 o ninguna, con y sin el bit y) con BI 0, 2, 5 y 31, tres CR y cuatro CTR (0, 1, 2, 0xffffffff), en bc, bcl,
+  bclr, bclrl, bcctr y bcctrl. Registros: si saltó, CTR y LR.
+- **Fallos del JIT de Emu68** (parche 0010, ahora `0010-ppc-f1.patch`):
+  - `bcctr`/`bcctrl` condicional no se traducía (solo "salta siempre"): ahora PC = condición ? CTR : siguiente.
+  - `bclrl` condicional que no salta no ponía LR (PPC lo pone salte o no).
+- Las diez pruebas iguales en el JIT y en qemu-ppc; el banco del 68k, igual que la referencia.
+
+## Dónde se queda F1 (2026-11-07)
+
+Probado contra qemu-ppc: enteros (todas las formas, con CA, OE y punto), cargas y guardados (todas las formas,
+lmw/stmw, reserva, dcbz), FPU de doble y simple (con NaN, infinitos, denormales y los cuatro redondeos), saltos
+condicionales de todas las formas y la llamada nativa. 26 fallos o faltas del JIT de Emu68 arreglados en
+`patches/emu68/0010-ppc-f1.patch`, que se podría mandar a Emu68 (con permiso del usuario). Falta (F1h): icbi en el
+banco, las instrucciones de cadenas, tw/twi, sc, mftb, mullwo/divwo/divwuo, las formas con punto de la FPU y los bits
+de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-powerpc.md`), que necesita la caja.

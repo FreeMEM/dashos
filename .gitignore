@@ -14,3 +14,5 @@ jit-host/ppc/pruebas/t1*.bin
 jit-host/ppc/pruebas/t1*.map
 jit-host/ppc/pruebas/t2.*
 jit-host/ppc/pruebas/t3.*
+jit-host/ppc/pruebas/t4.*
+jit-host/ppc/pruebas/p3.elf
