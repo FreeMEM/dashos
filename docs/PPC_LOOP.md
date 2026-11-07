@@ -11,7 +11,7 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
 
 - [x] F1a Banco `jit-host/ppc/` (Emu68 PPC sin libc en qemu-aarch64_be), oráculo en qemu-ppc, comparación.
 - [x] F1b Enteros: lo que traduce el JIT, con programas en C a -O0 y -O2 y en ensamblador.
-- [ ] F1c `lmw` y `stmw`.
+- [x] F1c Cargas y guardados de todas las formas, `lmw` y `stmw`, reserva, `dcbz`.
 - [ ] F1d FPU de doble precisión (lo que hay) y las formas con actualización (`lfsu`, `stfdu`...).
 - [ ] F1e FPU de precisión simple (grupo 59).
 - [ ] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
@@ -83,3 +83,25 @@ commit "base"; `0010` sale de su `git diff`. El banco PPC se compila con `PPC_SO
 - Sin probar aún: `lwarx`/`stwcx.`, `lwbrx`/`stwbrx`, `dcbz`, `tw`/`twi`, `sc`, `mftb`, `mfspr`/`mtspr`, las
   cargas y guardados con actualización de todos los tamaños. Faltan del todo: `lmw`, `stmw`, `lswi`, `lswx`,
   `stswi`, `stswx`, `mullwo`, `divwo`, `divwuo`.
+
+### 2026-11-07 — F1c: cargas y guardados
+
+- `pruebas/gen_t2.py` (t2, 1033 casos): una zona de 64 KB con un patrón; `lbz/lhz/lha/lwz` y `stb/sth/stw` en las
+  formas D, X, con actualización y con rA = 0, con desplazamientos de borde (0, ±4, impares, 255, -256, 256, -257,
+  0x3ffc, 0x4000, 0x7fff, -0x8000...) e índices negativos; `lhbrx`, `lwbrx`, `sthbrx`, `stwbrx`; `lmw` y `stmw`
+  desde r5, r14, r20, r29 y r31 con desplazamientos (también impares); `lwarx`/`stwcx.` con y sin reserva; `dcbz`.
+  La tabla usa r2 de puntero (lmw pisa hasta r31).
+- El banco recoge los fallos de memoria (SIGSEGV, SIGBUS, SIGILL) y dice la instrucción PPC (w18) y la dirección.
+- **Fallos del JIT de Emu68** (parche 0010):
+  - Desplazamientos negativos fuera del rango de `ldur` (-257 y menos) e índices negativos en las formas X: la
+    dirección subía 4 GB (SXTX de un registro escrito en 32 bits). Ahora SXTW, exacto mientras la memoria del PPC
+    esté por debajo de 2 GB, como en la caja de DashOS.
+  - `lmw` y `stmw` no estaban ("need to be interpreted"): traducidos, con el asignador de registros.
+  - Las operaciones de caché (`dcbz`, `dcbst`, `dcbf`, `dcbi`, `dcbt`, `dcbtst`, `dcba`) leían rA y rB de los campos
+    equivocados: tomaban rA como dirección entera.
+  - `dcbz` borraba el bloque de ARM (`dc zva`, 64 bytes); el de los PPC del Amiga es de 32: ahora cuatro `stp` de
+    ceros desde la dirección redondeada a 32.
+- Resultado: las cinco pruebas iguales en el JIT y en qemu-ppc.
+- Pendiente de esta parte: `icbi` borra la caché de traducciones con direcciones altas del kernel de Emu68 (en el
+  banco fallaría; hace falta para código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`,
+  `sc`, `mftb`, `mfspr`/`mtspr` de usuario (LR, CTR, XER).

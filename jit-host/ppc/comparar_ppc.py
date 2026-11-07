@@ -44,13 +44,13 @@ def main():
             mj, mr = vj.read_bytes(), vr.read_bytes()
             mapa = p.with_suffix(".map")
             if mapa.exists():
-                # las pruebas generadas (gen_t1.py): registros de 12 bytes (rD, CR, XER) desde 0x00100000
+                # las pruebas generadas (gen_t*.py): registros de 12 bytes desde 0x00100000 (t1: rD, CR, XER; t2: valor, r3, CR)
                 desc = mapa.read_text().splitlines()
                 malos = [i for i in range(len(desc)) if mj[12 * i:12 * i + 12] != mr[12 * i:12 * i + 12]]
                 for i in malos[:MAX]:
                     w = lambda m, k: int.from_bytes(m[12 * i + 4 * k:12 * i + 4 * k + 4], "big")
-                    print(f"    {desc[i]}\n        JIT  rD={w(mj, 0):08x} CR={w(mj, 1):08x} XER={w(mj, 2):08x}"
-                          f"\n        qemu rD={w(mr, 0):08x} CR={w(mr, 1):08x} XER={w(mr, 2):08x}")
+                    print(f"    {desc[i]}\n        JIT  {w(mj, 0):08x} {w(mj, 1):08x} {w(mj, 2):08x}"
+                          f"\n        qemu {w(mr, 0):08x} {w(mr, 1):08x} {w(mr, 2):08x}")
                 if len(malos) > MAX:
                     print(f"    ... {len(malos)} de {len(desc)} distintos")
             else:

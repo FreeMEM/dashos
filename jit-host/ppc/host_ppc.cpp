@@ -199,11 +199,32 @@ static void informe(const Emu68::PPC::PPCState *s)
     kprintf("[REG] Suma de la memoria: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
 }
 
+/* Un fallo de memoria del código traducido: dice en qué instrucción PPC iba (w18) y acaba con 6. Los desplazamientos
+   del ucontext son los del núcleo de Linux en arm64 (uc_mcontext en 176: fault_address, regs[31], sp, pc). */
+static void fallo(int sig, void *info, void *uc)
+{
+    (void)info;
+    const uint8_t *m = (const uint8_t *)uc + 176;
+    uint64_t dir = *(const uint64_t *)m, x18 = *(const uint64_t *)(m + 8 + 18 * 8), pc = *(const uint64_t *)(m + 8 + 32 * 8);
+    kprintf("[REG] fallo %d: PC PPC %08x, pc ARM %08x%08x, dirección %08x%08x\n", sig, (uint32_t)x18,
+            (uint32_t)(pc >> 32), (uint32_t)pc, (uint32_t)(dir >> 32), (uint32_t)dir);
+    flush_out();
+    sys6(SYS_exit_group, 6, 0, 0, 0, 0, 0);
+}
+
+static void captura_fallos(void)
+{
+    struct { void (*h)(int, void *, void *); uint64_t flags; void *restorer; uint64_t mask; } act = { fallo, 4, nullptr, 0 };
+    for (int sig : { 4, 7, 11 })   /* SIGILL, SIGBUS, SIGSEGV */
+        sys6(134, sig, (long)&act, 0, 8, 0, 0);
+}
+
 extern "C" void host_main(uint64_t *pila)
 {
     int argc = (int)pila[0];
     char **argv = (char **)&pila[1];
     kprintf("[HOST] DashOS: JIT PPC de Emu68 en Linux AArch64 big-endian\n");
+    captura_fallos();
     if (argc < 2) {
         kprintf("[HOST] uso: jit-ppc programa.bin\n");
         flush_out();

@@ -19,7 +19,7 @@ index 06a592c..94270ba 100644
  #define sys_CTR_EL0         3,3,0,0,1
  #define sys_PMCCNTR_EL0     3,3,9,13,0
 diff --git a/include/PPC.h b/include/PPC.h
-index 26b10ba..fe9a4cb 100644
+index 26b10ba..6dac1b1 100644
 --- a/include/PPC.h
 +++ b/include/PPC.h
 @@ -455,6 +455,11 @@ int subfic(PPCTranslatorContext *tc, uint32_t opcode);
@@ -34,6 +34,15 @@ index 26b10ba..fe9a4cb 100644
  int cmp(PPCTranslatorContext *tc, uint32_t opcode);
  int cmpl(PPCTranslatorContext *tc, uint32_t opcode);
  int negx(PPCTranslatorContext *tc, uint32_t opcode);
+@@ -503,6 +508,8 @@ int sthux(PPCTranslatorContext *tc, uint32_t opcode);
+ int sthbrx(PPCTranslatorContext *tc, uint32_t opcode);
+ 
+ int stw(PPCTranslatorContext *tc, uint32_t opcode);
++int lmw(PPCTranslatorContext *tc, uint32_t opcode);
++int stmw(PPCTranslatorContext *tc, uint32_t opcode);
+ int stwx(PPCTranslatorContext *tc, uint32_t opcode);
+ int stwu(PPCTranslatorContext *tc, uint32_t opcode);
+ int stwux(PPCTranslatorContext *tc, uint32_t opcode);
 diff --git a/include/config.h b/include/config.h
 index b6adca1..481dead 100644
 --- a/include/config.h
@@ -523,8 +532,392 @@ index c73784b..8def19b 100644
  
      if (rc) {
          tc->emit(cmp_immed(reg_ra, 0));
+diff --git a/src/PPC_LoadStore.cpp b/src/PPC_LoadStore.cpp
+index ed3dc1e..6f07e8d 100644
+--- a/src/PPC_LoadStore.cpp
++++ b/src/PPC_LoadStore.cpp
+@@ -16,6 +16,12 @@
+ #include "PPC.h"
+ #include "A64.h"
+ 
++/*
++    DashOS (F1, docs/PPC_LOOP.md): addresses with a register offset (rA + rB, rA + a displacement out of the range
++    of ldr/ldur) extend the offset as a signed 32-bit number (SXTW). It was SXTX of a register written as 32 bits,
++    that is zero-extended: a negative index or displacement went 4 GB up. SXTW is exact while the PPC memory is
++    below 2 GB (in the DashOS box it is), so a value of rB from 0x80000000 up is a negative index.
++*/
+ namespace Emu68::PPC::Emit {
+ 
+ int stb(PPCTranslatorContext *tc, uint32_t opcode)
+@@ -56,7 +62,7 @@ int stb(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit(mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit(strb_regoffset(base, reg, ea, SXTX));
++            tc->emit(strb_regoffset(base, reg, ea, SXTW));
+         }
+     }
+ 
+@@ -100,7 +106,7 @@ int stbu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            strb_regoffset(base, reg, ea, SXTX),
++            strb_regoffset(base, reg, ea, SXTW),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -149,7 +155,7 @@ int sth(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( strh_regoffset(base, reg, ea, SXTX, 0));
++            tc->emit( strh_regoffset(base, reg, ea, SXTW, 0));
+         }
+     }
+ 
+@@ -175,7 +181,7 @@ int stbx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit( strb_offset(reg_rb, reg_rd, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit( strb_regoffset(reg_ra, reg_rd, reg_rb, SXTX));
++        tc->emit( strb_regoffset(reg_ra, reg_rd, reg_rb, SXTW));
+     }
+ 
+     tc->advancePC(4);
+@@ -199,7 +205,7 @@ int stbux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_ra = tc->mapGPRForReadAndWrite(ra);
+ 
+     tc->emit({ 
+-        strb_regoffset(reg_ra, reg_rd, reg_rb, SXTX),
++        strb_regoffset(reg_ra, reg_rd, reg_rb, SXTW),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -225,7 +231,7 @@ int sthx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit( strh_offset(reg_rb, reg_rd, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit( strh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( strh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -249,7 +255,7 @@ int sthux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_ra = tc->mapGPRForReadAndWrite(ra);
+ 
+     tc->emit({ 
+-        strh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0),
++        strh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -275,7 +281,7 @@ int stwx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit( str_offset(reg_rb, reg_rd, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit( str_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( str_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -299,7 +305,7 @@ int stwux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_ra = tc->mapGPRForReadAndWrite(ra);
+ 
+     tc->emit({ 
+-        str_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0),
++        str_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -308,6 +314,69 @@ int stwux(PPCTranslatorContext *tc, uint32_t opcode)
+     return 1;
+ }
+ 
++/*
++    DashOS (F1): lmw y stmw, que faltaban ("need to be interpreted"). La dirección se calcula una vez en un
++    temporal (rA + d en 32 bits, o d si rA es 0) y cada registro de rD a r31 se carga o se guarda a 4 bytes del
++    anterior: los r14 a r31 que no tienen registro fijo los reparte el asignador, que vacía los más viejos.
++    rA dentro de los registros de lmw es una forma no válida: queda sin traducir.
++*/
++static void multipleEA(PPCTranslatorContext *tc, GPR &ea, uint8_t ra, int16_t d)
++{
++    if (ra == 0) {
++        if (d < 0) tc->emit(movn_immed_u16(ea, ~d & 0xffff, 0));
++        else tc->emit(mov_immed_u16(ea, d, 0));
++        return;
++    }
++    GPR base = tc->mapGPRForRead(ra);
++    if (d >= 0 && d < 4096) {
++        tc->emit(add_immed(ea, base, d));
++    } else if (d < 0 && d > -4096) {
++        tc->emit(sub_immed(ea, base, -d));
++    } else {
++        if (d < 0) tc->emit(movn_immed_u16(ea, ~d & 0xffff, 0));
++        else tc->emit(mov_immed_u16(ea, d, 0));
++        tc->emit(add_reg(ea, base, ea, LSL, 0));
++    }
++}
++
++int lmw(PPCTranslatorContext *tc, uint32_t opcode)
++{
++    uint8_t rd = (opcode >> 21) & 31;
++    uint8_t ra = (opcode >> 16) & 31;
++    int16_t d = opcode & 0xffff;
++
++    if (ra != 0 && ra >= rd) return -1;
++
++    GPR ea = GPR::allocate();
++    multipleEA(tc, ea, ra, d);
++    for (int r = rd; r < 32; r++) {
++        GPR reg = tc->mapGPRForWrite(r);
++        tc->emit(ldr_offset(ea, reg, 4 * (r - rd)));
++    }
++
++    tc->advancePC(4);
++
++    return 1;
++}
++
++int stmw(PPCTranslatorContext *tc, uint32_t opcode)
++{
++    uint8_t rs = (opcode >> 21) & 31;
++    uint8_t ra = (opcode >> 16) & 31;
++    int16_t d = opcode & 0xffff;
++
++    GPR ea = GPR::allocate();
++    multipleEA(tc, ea, ra, d);
++    for (int r = rs; r < 32; r++) {
++        GPR reg = tc->mapGPRForRead(r);
++        tc->emit(str_offset(ea, reg, 4 * (r - rs)));
++    }
++
++    tc->advancePC(4);
++
++    return 1;
++}
++
+ int stw(PPCTranslatorContext *tc, uint32_t opcode)
+ {
+     uint8_t rs = (opcode >> 21) & 31;
+@@ -347,7 +416,7 @@ int stw(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( str_regoffset(base, reg, ea, SXTX, 0));
++            tc->emit( str_regoffset(base, reg, ea, SXTW, 0));
+         }
+     }
+ 
+@@ -391,7 +460,7 @@ int stwu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            str_regoffset(base, reg, ea, SXTX, 0),
++            str_regoffset(base, reg, ea, SXTW, 0),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -436,7 +505,7 @@ int sthu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            strh_regoffset(base, reg, ea, SXTX, 0),
++            strh_regoffset(base, reg, ea, SXTW, 0),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -501,7 +570,7 @@ int sthbrx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit( strh_offset(reg_rb, tmp, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit( strh_regoffset(reg_ra, tmp, reg_rb, SXTX, 0));
++        tc->emit( strh_regoffset(reg_ra, tmp, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -529,7 +598,7 @@ int stwbrx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit( str_offset(reg_rb, tmp, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit( str_regoffset(reg_ra, tmp, reg_rb, SXTX, 0));
++        tc->emit( str_regoffset(reg_ra, tmp, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -575,7 +644,7 @@ int lbz(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( ldrb_regoffset(base, reg, ea, SXTX));
++            tc->emit( ldrb_regoffset(base, reg, ea, SXTW));
+         }
+     }
+ 
+@@ -614,7 +683,7 @@ int lbzu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            ldrb_regoffset(base, reg, ea, SXTX),
++            ldrb_regoffset(base, reg, ea, SXTW),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -640,7 +709,7 @@ int lbzux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+ 
+     tc->emit({ 
+-        ldrb_regoffset(reg_ra, reg_rd, reg_rb, SXTX),
++        ldrb_regoffset(reg_ra, reg_rd, reg_rb, SXTW),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -666,7 +735,7 @@ int lbzx(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldrb_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldrb_regoffset(reg_ra, reg_rd, reg_rb, SXTX));
++        tc->emit( ldrb_regoffset(reg_ra, reg_rd, reg_rb, SXTW));
+     }
+ 
+     tc->advancePC(4);
+@@ -712,7 +781,7 @@ int lha(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( ldrsh_regoffset(base, reg, ea, SXTX, 0));
++            tc->emit( ldrsh_regoffset(base, reg, ea, SXTW, 0));
+         }
+     }
+ 
+@@ -751,7 +820,7 @@ int lhau(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            ldrsh_regoffset(base, reg, ea, SXTX, 0),
++            ldrsh_regoffset(base, reg, ea, SXTW, 0),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -778,7 +847,7 @@ int lhax(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldrsh_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldrsh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( ldrsh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -802,7 +871,7 @@ int lhaux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+ 
+     tc->emit({ 
+-        ldrsh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0),
++        ldrsh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -851,7 +920,7 @@ int lhz(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( ldrh_regoffset(base, reg, ea, SXTX, 0));
++            tc->emit( ldrh_regoffset(base, reg, ea, SXTW, 0));
+         }
+     }
+ 
+@@ -877,7 +946,7 @@ int lhzx(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldrh_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -915,7 +984,7 @@ int lhzu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            ldrh_regoffset(base, reg, ea, SXTX, 0),
++            ldrh_regoffset(base, reg, ea, SXTW, 0),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -941,7 +1010,7 @@ int lhzux(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+     
+     tc->emit({ 
+-        ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0),
++        ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -967,7 +1036,7 @@ int lhbrx(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldrh_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( ldrh_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->emit( rev16(reg_rd, reg_rd));
+@@ -1015,7 +1084,7 @@ int lwz(PPCTranslatorContext *tc, uint32_t opcode)
+                 tc->emit( mov_immed_u16(ea, d, 0));
+             }
+             
+-            tc->emit( ldr_regoffset(base, reg, ea, SXTX, 0));
++            tc->emit( ldr_regoffset(base, reg, ea, SXTW, 0));
+         }
+     }
+ 
+@@ -1054,7 +1123,7 @@ int lwzu(PPCTranslatorContext *tc, uint32_t opcode)
+         }
+         
+         tc->emit({ 
+-            ldr_regoffset(base, reg, ea, SXTX, 0),
++            ldr_regoffset(base, reg, ea, SXTW, 0),
+             add_reg(base, base, ea, LSL, 0)
+         });
+     }
+@@ -1081,7 +1150,7 @@ int lwzx(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldr_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
+@@ -1107,7 +1176,7 @@ int lwzux(PPCTranslatorContext *tc, uint32_t opcode)
+     /* If Ra is 0, then address is the displacement, only */
+     
+     tc->emit({ 
+-        ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0),
++        ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0),
+         add_reg(reg_ra, reg_ra, reg_rb, LSL, 0)
+     });
+ 
+@@ -1133,7 +1202,7 @@ int lwbrx(PPCTranslatorContext *tc, uint32_t opcode)
+     if (ra == 0) {
+         tc->emit( ldr_offset(reg_rb, reg_rd, 0));
+     } else {
+-        tc->emit( ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTX, 0));
++        tc->emit( ldr_regoffset(reg_ra, reg_rd, reg_rb, SXTW, 0));
+     }
+ 
+     tc->emit( rev(reg_rd, reg_rd));
+@@ -1293,7 +1362,7 @@ int stfiwx(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit(fsts(reg_rs, reg_rb, 0));
+     } else {
+         GPR reg_ra = tc->mapGPRForRead(ra);
+-        tc->emit(fsts_regoffset(reg_rs, reg_ra, reg_rb, SXTX, 0));
++        tc->emit(fsts_regoffset(reg_rs, reg_ra, reg_rb, SXTW, 0));
+     }
+ 
+     tc->advancePC(4);
 diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
-index 2375cd3..3f1c953 100644
+index 2375cd3..7be1ac8 100644
 --- a/src/PPC_SystemInstructions.cpp
 +++ b/src/PPC_SystemInstructions.cpp
 @@ -115,7 +115,7 @@ int mftb(PPCTranslatorContext *tc, uint32_t opcode)
@@ -536,8 +929,102 @@ index 2375cd3..3f1c953 100644
  
      if (tbr == 268) // TBL
          tc->emit( mov_reg(reg_rd, tmp));
+@@ -747,8 +747,8 @@ int dcbst(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+ 
+@@ -776,8 +776,8 @@ int dcbtst(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+ 
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+@@ -802,8 +802,8 @@ int dcbt(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+ 
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+@@ -828,8 +828,8 @@ int dcbf(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+ 
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+@@ -858,8 +858,8 @@ int dcbz(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+ 
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+@@ -872,10 +872,13 @@ int dcbz(PPCTranslatorContext *tc, uint32_t opcode)
+         tc->emit(add_reg(base, reg_ra, reg_rb, LSL, 0));
+     }
+ 
++    /* DashOS (F1): the PPC block of the Amiga PowerPCs (603e, 604e, G3, G4) is 32 bytes; dc zva clears the ARM
++       block (64 bytes on most). Four 8-byte zeros from the address rounded down to 32 */
++    GPR blk = GPR::allocate();
+     tc->emit({
+-        dsb_sy(),
+-        dc_zva(base),
+-        dsb_sy()
++        bic_immed(blk, base, 5, 0),
++        stp64(blk, 31, 31, 0),
++        stp64(blk, 31, 31, 16)
+     });
+ 
+     tc->advancePC(4);
+@@ -888,8 +891,8 @@ int dcba(PPCTranslatorContext *tc, uint32_t opcode)
+     /* Sanity check */
+     if (opcode & 0x03e00001) return -1;
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+ 
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
+@@ -918,8 +921,8 @@ int dcbi(PPCTranslatorContext *tc, uint32_t opcode)
+ 
+     SupervisorCheck sc(tc);
+ 
+-    uint8_t ra = (opcode >> 21) & 31;
+-    uint8_t rb = (opcode >> 16) & 31;
++    uint8_t ra = (opcode >> 16) & 31;   /* DashOS F1: X form, rA in 16-20 and rB in 11-15 */
++    uint8_t rb = (opcode >> 11) & 31;
+     
+     GPR reg_rb = tc->mapGPRForRead(rb);
+     GPR base;
 diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
-index 6981aa5..5fac36c 100644
+index 6981aa5..3dca7c7 100644
 --- a/src/PPC_Translator.cpp
 +++ b/src/PPC_Translator.cpp
 @@ -530,7 +530,7 @@ static __used__ int EMIT_crandc(PPCTranslatorContext *tc, uint32_t opcode)
@@ -664,6 +1151,17 @@ index 6981aa5..5fac36c 100644
          case 0b0011101011: return Emit::mullwx(tc, opcode);
          //case 0b0011110010: return EMIT_mtsrin(tc, opcode);    // OEA, supervisor
          case 0b0011110110: return Emit::dcbtst(tc, opcode);    // VEA
+@@ -1396,8 +1417,8 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
+         case 0b101011: count = Emit::lhau(tc, opcode); break;
+         case 0b101100: count = Emit::sth(tc, opcode); break;
+         case 0b101101: count = Emit::sthu(tc, opcode); break;
+-        //case 0b101110: count = EMIT_lmw(tc, opcode); break;   // Need to be interpreted
+-        //case 0b101111: count = EMIT_stmw(tc, opcode); break;  // Need to be interpreted
++        case 0b101110: count = Emit::lmw(tc, opcode); break;     // DashOS F1
++        case 0b101111: count = Emit::stmw(tc, opcode); break;    // DashOS F1
+         case 0b110000: count = Emit::lfs(tc, opcode); break;
+         //case 0b110001: count = EMIT_lfsu(tc, opcode); break;
+         case 0b110010: count = Emit::lfd(tc, opcode); break;
 @@ -1420,6 +1441,10 @@ static inline int EmitINSN(PPCTranslatorContext *tc)
  
          disasm_print_ppc_only(tc->getPC());

@@ -12,3 +12,4 @@ jit-host/ppc/pruebas/oraculo
 jit-host/ppc/pruebas/t1*.s
 jit-host/ppc/pruebas/t1*.bin
 jit-host/ppc/pruebas/t1*.map
+jit-host/ppc/pruebas/t2.*
