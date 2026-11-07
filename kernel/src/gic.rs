@@ -37,6 +37,7 @@ const GICD_ISENABLER: usize = 0x100;
 const GICD_ICENABLER: usize = 0x180;
 const GICD_IPRIORITYR: usize = 0x400;
 const GICD_ITARGETSR: usize = 0x800;
+const GICD_ICFGR: usize = 0xC00;
 const GICD_SGIR: usize = 0xF00;
 const GICD_IROUTER: usize = 0x6000;
 const GICC_CTLR: usize = 0x000;
@@ -158,6 +159,18 @@ pub fn habilitar(intid: u32, prioridad: u8) {
     let _g = RMW.tomar();
     r.escribir((r.leer() & !(0xff << desp)) | ((prioridad as u32) << desp));
     RegLe32::new(base + GICD_ISENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
+}
+
+/// Hace que una interrupción de aparato (SPI) sea por flanco y no por nivel (U6g: las MSI llegan así). ICFGR: dos
+/// bits por interrupción, el alto a 1 es flanco. Con la interrupción deshabilitada (spec. del GIC, 4.3.13 / 12.9.8).
+pub fn por_flanco(intid: u32) {
+    let i = intid as usize;
+    if i < 32 {
+        return;
+    }
+    let r = d(GICD_ICFGR + 4 * (i / 16));
+    let _g = RMW.tomar();
+    r.escribir(r.leer() | (2 << (2 * (i % 16))));
 }
 
 /// Enmascara una interrupción (C20).

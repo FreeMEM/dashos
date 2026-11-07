@@ -6,7 +6,8 @@
 //! - el temporizador, de la GTDT (sus interrupciones privadas);
 //! - el puerto serie, de la SPCR (un PL011);
 //! - PSCI y si va por `hvc` o `smc`, de la FADT;
-//! - el PCIe genérico (su ECAM), de la MCFG (U6: el xHCI va ahí).
+//! - el PCIe genérico (su ECAM), de la MCFG (U6: el xHCI va ahí);
+//! - el marco GICv2m de las MSI, de la MADT (U6g).
 //!
 //! Escrito con la especificación de ACPI 6.5 (cap. 5: RSDP, XSDT, FADT, MADT con GICC, GICD y GICR) y las tablas de
 //! ARM que define (GTDT) o referencia (SPCR, de Microsoft). Lo demás de ACPI (AML, aparatos del DSDT) no se mira: eso
@@ -44,6 +45,8 @@ pub struct Maquina {
     pub psci: Option<bool>, // Some(true) con hvc
     /// El ECAM del primer segmento PCI: (base, tamaño según sus buses).
     pub ecam: Option<(u64, u64)>,
+    /// El marco GICv2m de las MSI, si lo hay (U6g).
+    pub v2m: Option<u64>,
 }
 
 /// La tabla con esa firma, buscada en la XSDT.
@@ -79,6 +82,8 @@ pub fn leer(rsdp: usize) -> Option<Maquina> {
                 m.distribuidor = u64_en(p + 8);
                 m.gic_v3 = u8_en(p + 20) >= 3;
             }
+            // GIC MSI Frame: su dirección en el byte 8.
+            0x0D if m.v2m.is_none() => m.v2m = Some(u64_en(p + 8)),
             0x0E => {
                 m.segunda = u64_en(p + 4);
                 m.segunda_tam = u32_en(p + 12) as u64;
@@ -159,6 +164,16 @@ pub fn arbol(m: &Maquina, ram: &[(u64, u64)], destino: &mut [u8]) -> Option<usiz
     f.celdas("#interrupt-cells", &[3]);
     f.prop("interrupt-controller", &[]);
     f.fin_nodo();
+    if let Some(base) = m.v2m {
+        let mut nombre = [0u8; 32];
+        let n = escribir_hex(&mut nombre, b"v2m@", base);
+        f.nodo(core::str::from_utf8(&nombre[..n]).unwrap_or("v2m"));
+        f.texto("compatible", "arm,gic-v2m-frame");
+        f.prop("msi-controller", &[]);
+        let (b, t) = (par(base), par(0x1000));
+        f.celdas("reg", &[b[0], b[1], t[0], t[1]]);
+        f.fin_nodo();
+    }
     // El temporizador: interrupciones privadas (tipo 1), número de PPI = GSIV - 16, nivel.
     f.nodo("timer");
     f.texto("compatible", "arm,armv8-timer");

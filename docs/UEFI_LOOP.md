@@ -37,8 +37,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   serie), o convertirlo a árbol en el programa de UEFI.
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
   lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
-  INTx del árbol para el xHCI) y U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas). Falta:
-  interrupciones con ACPI (MSI, o el `_PRT` del AML), hubs, y el anillo de peticiones del disco. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  INTx del árbol para el xHCI), U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas) y U6g (MSI-X
+  por el GICv2m, también con ACPI). Falta: MSI con GICv3 (el ITS), hubs, y el anillo de peticiones del disco. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -258,3 +258,17 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   sector 2 escrito en `target/nvme.img`. Pi: `prueba` y `arranque`; `prueba-virt`. **No comprobado:** varios
   clientes a la vez; un cliente que muere con la ventana (la ventana sigue del servicio, que la vuelve a dar a la
   misma marca).
+
+### 2026-11-07 — U6g (MSI-X por el GICv2m)
+
+- El kernel da a cada aparato del PCIe una MSI-X si hay marco GICv2m ("arm,gic-v2m-frame"; su MSI_TYPER dice qué
+  SPI puede usar): la primera entrada de la tabla de MSI-X (en la BAR 0) apunta a MSI_SETSPI_NS con el número de una
+  SPI, que se pone por flanco (`gic::por_flanco`, GICD_ICFGR). Si no hay marco o MSI-X, la INTx de U6e.
+- El árbol hecho desde ACPI lleva el marco GICv2m de la MADT (entrada 0x0D).
+- En QEMU `virt` con GICv2: xHCI en la 80 y NVMe en la 81, con árbol y con ACPI. Con GICv3 no hay GICv2m (su MSI es
+  el ITS): con árbol, INTx; con ACPI, el temporizador.
+- **Comprobado:** `arranque-virt` (árbol, GICv2, MSI-X), árbol con GICv3 (INTx), ACPI con GICv2 (MSI-X) y con GICv3
+  (cada 10 ms): todos con el ratón moviendo la ventana. Pi: `prueba` y `arranque`; `prueba-virt`, también con ACPI y
+  GICv3 (el pánico del final es la prueba C34, a propósito). **No comprobado:** tablas de MSI-X en otra BAR,
+  máquinas reales.
+- Siguiente en esta línea: el ITS del GICv3 (LPI), que es lo de los portátiles con Snapdragon.

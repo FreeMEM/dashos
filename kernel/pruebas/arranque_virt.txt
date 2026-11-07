@@ -9,9 +9,10 @@ DashOS en marcha con 4 núcleos.
 │   hola desde Rust en EL0 (DashOS, little-endian)
 │   [inicio] todo lanzado; se queda esperando
 # U6: el xHCI del PCIe (con highmem=off, por debajo de 4 GB), con un teclado y un ratón.
-~xhci: en el PCIe 0:1.0, registros en
+# U6g: con GICv2, por MSI-X (el marco GICv2m); con GICv3, la INTx (U6e). La prueba con GICv3 cambia esta línea.
+~xhci: en el PCIe 0:1.0, registros en 0x10004000 (16 KB), MSI-X en la
 ~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
-# U6e: con árbol, el xHCI despierta con su INTx (con ACPI, cada 10 ms: la prueba con ACPI cambia esta línea).
+# U6e: el xHCI despierta con su interrupción (con ACPI y GICv3, cada 10 ms: esa prueba cambia esta línea).
 ~│   [xhci] avisos por su interrupción
 ~│   [compositor] ventana movida con el ratón a (
 # U6d: un disco NVMe de 1 MB (target/nvme.img), su modelo y sus dos primeros sectores.

@@ -117,14 +117,69 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
             kprintln!("{}: BAR en {:#x} fuera de la ventana de aparatos", nombre, base);
             return None;
         }
-        // La patilla de interrupción (1 a 4, INTA a INTD) en el byte 0x3D; 0, sin INTx.
+        // Su interrupción: una MSI-X por el GICv2m si hay los dos (U6g); si no, la INTx de su patilla (1 a 4, INTA a
+        // INTD, en el byte 0x3D; 0, sin INTx), por el `interrupt-map` (U6e).
+        let msi = msix(d, &|off| r(dev, off), base);
         let patilla = (r(dev, 0x3C).leer() >> 8) & 0xff;
-        let irq = if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None };
+        let irq = msi.or_else(|| if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None });
         match irq {
-            Some(i) => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB), INTx en la {}", nombre, dev, base, tamano / 1024, i),
+            Some(i) => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB), {} en la {}", nombre, dev, base, tamano / 1024, if msi.is_some() { "MSI-X" } else { "INTx" }, i),
             None => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", nombre, dev, base, tamano / 1024),
         }
         return Some((base, paginas, irq));
+    }
+    None
+}
+
+/// La siguiente SPI libre del GICv2m (U6g), 0 si aún no se ha leído su MSI_TYPER.
+static MSI_SIGUIENTE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Una MSI-X para un aparato del PCIe por el marco GICv2m (el de QEMU `virt` con GICv2 y el de la MADT de ACPI; spec.
+/// del GICv2m en la SBSA, apéndice E): el aparato escribe el número de una SPI en MSI_SETSPI_NS (0x40) del marco, y el
+/// GIC la levanta, por flanco. Da al aparato la primera entrada de su tabla de MSI-X (spec. de PCI 3.0, 6.8.2: la
+/// capacidad 0x11, con el control en los bits 31:16 de su primera palabra y la tabla en una BAR, aquí solo la 0) y
+/// enciende la MSI-X, que apaga la INTx. `cfg` lee y escribe la configuración del aparato; `bar0`, su BAR 0 física.
+fn msix(d: &Dtb, cfg: &dyn Fn(u64) -> crate::mmio::RegLe32, bar0: u64) -> Option<u32> {
+    use core::sync::atomic::Ordering;
+    let marco = d.compatible("arm,gic-v2m-frame")?;
+    let (fisica, _) = d.reg_cpu(&marco, 0)?;
+    if !crate::placa::es_periferico(fisica) {
+        return None;
+    }
+    // MSI_TYPER (0x08): la primera SPI en los bits 25:16 y cuántas en los 9:0.
+    let typer = crate::mmio::RegLe32::new(crate::mmu::virt(fisica as usize + 0x08)).leer();
+    let (primera, cuantas) = ((typer >> 16) & 0x3ff, typer & 0x3ff);
+    let _ = MSI_SIGUIENTE.compare_exchange(0, primera, Ordering::Relaxed, Ordering::Relaxed);
+    // La lista de capacidades (bit 4 del estado), desde el puntero de 0x34.
+    if (cfg(4).leer() >> 16) & (1 << 4) == 0 {
+        return None;
+    }
+    let mut p = (cfg(0x34).leer() & 0xfc) as u64;
+    let mut vueltas = 0;
+    while p != 0 && vueltas < 48 {
+        let palabra = cfg(p).leer();
+        if palabra & 0xff == 0x11 {
+            let tabla = cfg(p + 4).leer();
+            if tabla & 7 != 0 {
+                return None; // la tabla en otra BAR: aún no
+            }
+            let spi = MSI_SIGUIENTE.fetch_add(1, Ordering::Relaxed);
+            if spi >= primera + cuantas {
+                return None;
+            }
+            let entrada = crate::mmu::virt((bar0 + (tabla & !7) as u64) as usize);
+            let destino = fisica + 0x40;
+            crate::mmio::RegLe32::new(entrada).escribir(destino as u32);
+            crate::mmio::RegLe32::new(entrada + 4).escribir((destino >> 32) as u32);
+            crate::mmio::RegLe32::new(entrada + 8).escribir(spi);
+            crate::mmio::RegLe32::new(entrada + 12).escribir(0); // sin máscara
+            crate::gic::por_flanco(spi);
+            // Control: encendida (bit 15) y sin la máscara de función (bit 14).
+            cfg(p).escribir((palabra & 0x3fff_ffff) | (1 << 31));
+            return Some(spi);
+        }
+        p = ((palabra >> 8) & 0xfc) as u64;
+        vueltas += 1;
     }
     None
 }
