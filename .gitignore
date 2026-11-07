@@ -9,3 +9,6 @@ jit-host/build-ref/
 jit-host/ppc/build/
 jit-host/ppc/pruebas/*.elf
 jit-host/ppc/pruebas/oraculo
+jit-host/ppc/pruebas/t1*.s
+jit-host/ppc/pruebas/t1*.bin
+jit-host/ppc/pruebas/t1*.map

@@ -13,6 +13,7 @@ from pathlib import Path
 AQUI = Path(__file__).resolve().parent
 PRUEBAS = AQUI / "pruebas"
 TMP = AQUI / "build" / "comparar"
+MAX = int(__import__("os").environ.get("MAX", "12"))
 
 
 def salida(cmd):
@@ -41,11 +42,23 @@ def main():
                 print(f"    JIT:  {a}\n    qemu: {b}")
         if vj.exists() and vr.exists():
             mj, mr = vj.read_bytes(), vr.read_bytes()
-            difs = [i for i in range(min(len(mj), len(mr))) if mj[i] != mr[i]]
-            for i in difs[:8]:
-                print(f"    memoria {0x100000 + i:08x}: JIT {mj[i]:02x}, qemu {mr[i]:02x}")
-            if len(difs) > 8:
-                print(f"    ... {len(difs)} bytes distintos")
+            mapa = p.with_suffix(".map")
+            if mapa.exists():
+                # las pruebas generadas (gen_t1.py): registros de 12 bytes (rD, CR, XER) desde 0x00100000
+                desc = mapa.read_text().splitlines()
+                malos = [i for i in range(len(desc)) if mj[12 * i:12 * i + 12] != mr[12 * i:12 * i + 12]]
+                for i in malos[:MAX]:
+                    w = lambda m, k: int.from_bytes(m[12 * i + 4 * k:12 * i + 4 * k + 4], "big")
+                    print(f"    {desc[i]}\n        JIT  rD={w(mj, 0):08x} CR={w(mj, 1):08x} XER={w(mj, 2):08x}"
+                          f"\n        qemu rD={w(mr, 0):08x} CR={w(mr, 1):08x} XER={w(mr, 2):08x}")
+                if len(malos) > MAX:
+                    print(f"    ... {len(malos)} de {len(desc)} distintos")
+            else:
+                difs = [i for i in range(min(len(mj), len(mr))) if mj[i] != mr[i]]
+                for i in difs[:8]:
+                    print(f"    memoria {0x100000 + i:08x}: JIT {mj[i]:02x}, qemu {mr[i]:02x}")
+                if len(difs) > 8:
+                    print(f"    ... {len(difs)} bytes distintos")
     sys.exit(1 if fallos else 0)
 
 

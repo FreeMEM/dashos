@@ -154,6 +154,14 @@ void InitPPC();
 
 namespace Emu68::PPC { void PPCMainLoop(); }
 
+/* PPC_Translator.cpp (parche 0010): una instrucción que el JIT no traduce. El banco acaba con 5. */
+extern "C" void dashos_ppc_unimplemented(uint32_t opcode, uint32_t pc)
+{
+    kprintf("[REG] sin traducir: %08x en %08x\n", opcode, pc);
+    flush_out();
+    sys6(SYS_exit_group, 5, 0, 0, 0, 0, 0);
+}
+
 /* Los constructores globales de C++ (las listas de la caché del JIT, jit_ppc): sin libc nadie los llama. */
 typedef void (*ctor_t)(void);
 extern "C" ctor_t __init_array_start[] __attribute__((weak));
