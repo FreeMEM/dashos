@@ -6,11 +6,13 @@
 //!
 //! El mensaje son 8 bytes en little-endian: cuántas veces ha vencido desde el último aviso que se pudo entregar
 //! (1 casi siempre; más si el canal estaba lleno o el tic llegó tarde). Lleva la marca de la llave del canal con que
-//! se creó. Al soltarse la última llave del temporizador, se para; también si se revoca la llave del canal (A2).
+//! se creó. Al soltarse la última llave del temporizador, se para; también si se revoca la llave del canal, o si su
+//! intermediario revocable ya no existe (auditoría de la fase 4, A2 y C1).
 //!
-//! Trabajo acotado (auditoría de la fase 4, A1): un montículo ordenado por vencimiento, así que cada pasada solo toca
-//! los vencidos, y como mucho `MAX_POR_PASADA`; los que queden siguen en el tic siguiente. Cada temporizador cuesta
-//! `COSTE_TEMPORIZADOR` del cupo de su grupo, lo que acota cuántos puede tener un grupo.
+//! Trabajo acotado y repartido (A1, A3): una cola (un montículo por vencimiento) por grupo de primer nivel, es decir,
+//! por servicio. Cada pasada da la vuelta a los grupos con algo vencido, como mucho `POR_GRUPO` avisos de cada uno por
+//! vuelta y `MAX_POR_PASADA` en total; lo que quede, en el tic siguiente. Así los temporizadores de un servicio no
+//! retrasan los de los demás más de un tic. Cada temporizador cuesta `COSTE_TEMPORIZADOR` del cupo de su grupo.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -22,15 +24,21 @@ use core::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 /// Un plazo, como mucho: un día.
 pub const MAX_US: u64 = 86_400 * 1_000_000;
-/// Avisos por pasada del repartidor, como mucho.
+/// Avisos por pasada del repartidor, como mucho, y de cada grupo por vuelta.
 const MAX_POR_PASADA: usize = 64;
+const POR_GRUPO: usize = 8;
+/// Entradas sacadas por pasada, contando las de temporizadores ya soltados (B14).
+const MAX_SACADAS: usize = 256;
 
 pub struct Temporizador {
     estado: Cerrojo<Estado>,
-    /// Los intermediarios revocables por los que pasaba la llave del canal: si alguno se revoca, se para (A2).
-    via: Vec<Arc<Revocable>>,
+    /// Los intermediarios revocables por los que pasaba la llave del canal, sin sujetarlos (C1, B13): si alguno se
+    /// revoca o ya no existe, se para.
+    via: Vec<Weak<Revocable>>,
     /// La marca de esa llave: la llevan sus avisos (A2).
     marca: u64,
+    /// Su grupo de primer nivel: en qué cola va.
+    grupo: usize,
     _cargo: crate::cupo::Cargo,
 }
 
@@ -42,7 +50,7 @@ struct Estado {
     perdidos: u64,
 }
 
-/// Una entrada del montículo: cuándo vence un temporizador. El más próximo, arriba.
+/// Una entrada de una cola: cuándo vence un temporizador. El más próximo, arriba.
 struct Entrada {
     vence: u64,
     t: Weak<Temporizador>,
@@ -65,13 +73,23 @@ impl Ord for Entrada {
     }
 }
 
-struct Cola {
+/// La cola de un grupo de primer nivel. Las entradas de temporizadores ya soltados se quitan al vencer; y, para que no
+/// sujeten memoria del kernel hasta entonces, la cola se purga cuando hay más muertos que vivos más 32, y se quita
+/// entera al soltarse su último temporizador. Trabajo acotado por los temporizadores del grupo, y amortizado.
+struct ColaGrupo {
+    grupo: usize,
     monton: BinaryHeap<Entrada>,
-    /// Temporizadores vivos. Las entradas de los ya soltados se quitan al vencer, o todas de golpe si son muchas.
     vivos: usize,
+    muertos: usize,
 }
 
-static COLA: Cerrojo<Cola> = Cerrojo::new(Cola { monton: BinaryHeap::new(), vivos: 0 });
+struct Colas {
+    grupos: Vec<ColaGrupo>,
+    /// Por qué grupo empieza la próxima vuelta.
+    turno: usize,
+}
+
+static COLAS: Cerrojo<Colas> = Cerrojo::new(Colas { grupos: Vec::new(), turno: 0 });
 /// El vencimiento más próximo de todos. Lo lee el tic, sin cerrojo.
 static PROXIMO: AtomicU64 = AtomicU64::new(u64::MAX);
 /// El tic vio uno vencido y el repartidor aún no lo ha atendido.
@@ -81,37 +99,66 @@ fn cuentas(us: u64) -> u64 {
     (us as u128 * reloj::frecuencia() as u128 / 1_000_000) as u64
 }
 
-/// Pone una entrada en el montículo. Falso sin memoria.
-fn programar(cola: &mut Cola, vence: u64, t: &Arc<Temporizador>) -> bool {
-    if cola.monton.try_reserve(1).is_err() {
-        return false;
+impl Colas {
+    /// La cola del grupo `g`, creándola si no está. `None` sin memoria.
+    fn cola(&mut self, g: usize) -> Option<&mut ColaGrupo> {
+        let i = match self.grupos.iter().position(|c| c.grupo == g) {
+            Some(i) => i,
+            None => {
+                self.grupos.try_reserve(1).ok()?;
+                self.grupos.push(ColaGrupo { grupo: g, monton: BinaryHeap::new(), vivos: 0, muertos: 0 });
+                self.grupos.len() - 1
+            }
+        };
+        Some(&mut self.grupos[i])
     }
-    cola.monton.push(Entrada { vence, t: Arc::downgrade(t) });
-    PROXIMO.fetch_min(vence, Ordering::SeqCst);
-    true
+
+    /// Pone una entrada en la cola de su grupo. Falso sin memoria.
+    fn programar(&mut self, vence: u64, t: &Arc<Temporizador>) -> bool {
+        let Some(c) = self.cola(t.grupo) else { return false };
+        if c.monton.try_reserve(1).is_err() {
+            return false;
+        }
+        c.monton.push(Entrada { vence, t: Arc::downgrade(t) });
+        PROXIMO.fetch_min(vence, Ordering::SeqCst);
+        true
+    }
+
+    fn proximo(&self) -> u64 {
+        self.grupos.iter().filter_map(|g| g.monton.peek()).map(|e| e.vence).min().unwrap_or(u64::MAX)
+    }
+
 }
 
 impl Temporizador {
     /// Vence dentro de `primero_us` y, si `periodo_us` no es 0, cada `periodo_us` después (como poco, un tic). Avisa al
-    /// otro lado de `lado` del canal, con `marca`, mientras no se revoque ninguno de `via`. Se cobra a `cupo`; `None`
-    /// si no cabe.
-    pub fn nuevo(canal: Arc<Canal>, lado: usize, via: Vec<Arc<Revocable>>, marca: u64, primero_us: u64, periodo_us: u64, cupo: &Arc<crate::cupo::Cupo>) -> Option<Arc<Self>> {
+    /// otro lado de `lado` del canal, con `marca`, mientras no se revoque ninguno de `via`. Se cobra a `cupo` y va en la
+    /// cola de su grupo de primer nivel; `None` si no cabe.
+    pub fn nuevo(canal: Arc<Canal>, lado: usize, via: &[Arc<Revocable>], marca: u64, primero_us: u64, periodo_us: u64, cupo: &Arc<crate::cupo::Cupo>) -> Option<Arc<Self>> {
         let cargo = cupo.cobrar(crate::cupo::COSTE_TEMPORIZADOR)?;
+        let mut debiles = Vec::new();
+        debiles.try_reserve(via.len()).ok()?;
+        debiles.extend(via.iter().map(Arc::downgrade));
         let vence = reloj::ahora().saturating_add(cuentas(primero_us.min(MAX_US)));
         let periodo = if periodo_us == 0 { 0 } else { cuentas(periodo_us.min(MAX_US)).max(reloj::periodo()).max(1) };
-        let t = Arc::new(Self { estado: Cerrojo::new(Estado { destino: Some((canal, lado)), periodo, perdidos: 0 }), via, marca, _cargo: cargo });
-        let mut cola = COLA.tomar();
-        // Si se han acumulado muchas entradas de temporizadores ya soltados, fuera de golpe (acotado: como mucho el
-        // doble de los vivos, que acota el cupo).
-        if cola.monton.len() > 2 * cola.vivos + 256 {
-            cola.monton.retain(|e| e.t.strong_count() > 0);
+        let estado = Estado { destino: Some((canal, lado)), periodo, perdidos: 0 };
+        let t = Arc::new(Self { estado: Cerrojo::new(estado), via: debiles, marca, grupo: cupo.primer_nivel(), _cargo: cargo });
+        let mut colas = COLAS.tomar();
+        // Cuenta como vivo desde ya: si no se puede programar, su `Drop` lo descuenta (B14).
+        let bien = match colas.cola(t.grupo) {
+            Some(c) => {
+                c.vivos += 1;
+                colas.programar(vence, &t)
+            }
+            None => false,
+        };
+        drop(colas);
+        if bien {
+            Some(t)
+        } else {
+            drop(t);
+            None
         }
-        if !programar(&mut cola, vence, &t) {
-            return None;
-        }
-        cola.vivos += 1;
-        drop(cola);
-        Some(t)
     }
 
     /// El canal al que avisa, si lo hay.
@@ -123,13 +170,30 @@ impl Temporizador {
     pub fn quitar_destino(&mut self) -> Option<Arc<Canal>> {
         self.estado.get_mut().destino.take().map(|(c, _)| c)
     }
+
+    /// ¿Se ha revocado (o ya no existe) algún intermediario de la llave del canal?
+    fn revocado(&self) -> bool {
+        self.via.iter().any(|w| w.upgrade().is_none_or(|r| r.revocado()))
+    }
 }
 
 impl Drop for Temporizador {
     fn drop(&mut self) {
-        // Nunca se suelta con `COLA` tomado: `repartir` suelta los suyos fuera.
-        let mut cola = COLA.tomar();
-        cola.vivos = cola.vivos.saturating_sub(1);
+        // Nunca se suelta con `COLAS` tomado: `repartir` suelta los suyos fuera.
+        let mut colas = COLAS.tomar();
+        let Some(i) = colas.grupos.iter().position(|c| c.grupo == self.grupo) else { return };
+        let c = &mut colas.grupos[i];
+        if c.vivos == 0 {
+            return; // no llegó a contarse (sin memoria al crearlo)
+        }
+        c.vivos -= 1;
+        c.muertos += 1;
+        if c.vivos == 0 {
+            colas.grupos.swap_remove(i); // sus entradas, fuera: era el último del grupo
+        } else if c.muertos > c.vivos + 32 {
+            c.monton.retain(|e| e.t.strong_count() > 0);
+            c.muertos = 0;
+        }
     }
 }
 
@@ -148,8 +212,8 @@ pub fn tomar_pendiente() -> bool {
     PENDIENTE.swap(false, Ordering::SeqCst)
 }
 
-/// Desde el repartidor: manda los avisos de los vencidos (como mucho `MAX_POR_PASADA`) y vuelve a programar los
-/// periódicos. Los que no quepan en esta pasada siguen en el tic siguiente.
+/// Desde el repartidor: manda los avisos de los vencidos, por turnos entre grupos, y vuelve a programar los periódicos.
+/// Lo que no quepa en esta pasada sigue en el tic siguiente.
 pub fn repartir() {
     let ahora = reloj::ahora();
     // Sitio para el lote, antes de tomar el cerrojo. Los `Arc` se sueltan fuera de él (su `Drop` lo toma).
@@ -159,50 +223,81 @@ pub fn repartir() {
         return;
     }
     {
-        let mut cola = COLA.tomar();
-        while lote.len() < MAX_POR_PASADA {
-            match cola.monton.peek() {
-                Some(e) if e.vence <= ahora => {}
-                _ => break,
-            }
-            let e = cola.monton.pop().unwrap();
-            let Some(t) = e.t.upgrade() else { continue }; // de un temporizador ya soltado
-            let aviso = {
-                let mut s = t.estado.tomar();
-                if t.via.iter().any(|r| r.revocado()) {
-                    s.destino = None; // revocada la llave del canal: se para para siempre (A2)
-                }
-                match s.destino.clone() {
-                    None => None,
-                    Some((c, lado)) => {
-                        let veces = if s.periodo == 0 { 1 } else { 1 + (ahora - e.vence) / s.periodo };
-                        if s.periodo != 0 {
-                            let siguiente = e.vence.saturating_add(veces * s.periodo);
-                            programar(&mut cola, siguiente, &t);
-                        }
-                        Some((c, lado, veces + core::mem::take(&mut s.perdidos)))
+        let mut colas = COLAS.tomar();
+        let mut sacadas = 0;
+        'pasada: loop {
+            let n = colas.grupos.len();
+            let mut alguno = false;
+            for k in 0..n {
+                let gi = (colas.turno + k) % n;
+                let mut de_este = 0;
+                while de_este < POR_GRUPO {
+                    if lote.len() >= MAX_POR_PASADA || sacadas >= MAX_SACADAS {
+                        colas.turno = gi; // por aquí se sigue en la próxima pasada
+                        break 'pasada;
                     }
+                    let e = match colas.grupos[gi].monton.peek() {
+                        Some(e) if e.vence <= ahora => colas.grupos[gi].monton.pop().unwrap(),
+                        _ => break,
+                    };
+                    sacadas += 1;
+                    let Some(t) = e.t.upgrade() else {
+                        // de un temporizador ya soltado
+                        colas.grupos[gi].muertos = colas.grupos[gi].muertos.saturating_sub(1);
+                        continue;
+                    };
+                    alguno = true;
+                    de_este += 1;
+                    let aviso = {
+                        let mut s = t.estado.tomar();
+                        if t.revocado() {
+                            s.destino = None; // revocada la llave del canal: se para para siempre (A2)
+                        }
+                        match s.destino.clone() {
+                            None => None,
+                            Some((c, lado)) => {
+                                let veces = if s.periodo == 0 { 1 } else { 1 + (ahora - e.vence) / s.periodo };
+                                if s.periodo != 0 {
+                                    let siguiente = e.vence.saturating_add(veces * s.periodo);
+                                    // Sin memoria para volver a programarlo, se para (B14): lo dice `kernel.md`.
+                                    colas.programar(siguiente, &t);
+                                }
+                                Some((c, lado, veces + core::mem::take(&mut s.perdidos)))
+                            }
+                        }
+                    };
+                    lote.push((t, aviso));
                 }
-            };
-            lote.push((t, aviso));
+            }
+            if !alguno {
+                colas.turno = colas.turno.wrapping_add(1);
+                break;
+            }
         }
-        PROXIMO.store(cola.monton.peek().map_or(u64::MAX, |e| e.vence), Ordering::SeqCst);
+        colas.grupos.retain(|g| !g.monton.is_empty() || g.vivos > 0);
+        if colas.turno >= colas.grupos.len() {
+            colas.turno = 0;
+        }
+        PROXIMO.store(colas.proximo(), Ordering::SeqCst);
     }
     // Fuera del cerrojo: escribir en un canal despierta hilos.
     for (t, aviso) in &lote {
         let Some((canal, lado, n)) = aviso else { continue };
         let m = Mensaje { datos: n.to_le_bytes().to_vec(), llaves: Vec::new(), marca: t.marca };
         if canal.escribir(*lado, m).is_err() {
-            // No cupo: se cuenta para el siguiente aviso. Un periódico ya está programado; uno de una vez se reintenta
-            // en el tic siguiente, para que no se pierda (M1).
+            // No cupo. Un periódico lo cuenta para el siguiente aviso, que ya está programado. Uno de una vez se
+            // reintenta en el tic siguiente, para que no se pierda (M1), sin contar dos veces el mismo vencimiento
+            // (B12).
             let una_vez = {
                 let mut s = t.estado.tomar();
-                s.perdidos = s.perdidos.saturating_add(*n);
+                if s.periodo != 0 {
+                    s.perdidos = s.perdidos.saturating_add(*n);
+                }
                 s.periodo == 0
             };
             if una_vez {
-                let mut cola = COLA.tomar();
-                programar(&mut cola, ahora.saturating_add(reloj::periodo()), t);
+                let mut colas = COLAS.tomar();
+                colas.programar(ahora.saturating_add(reloj::periodo()), t);
             }
         }
     }

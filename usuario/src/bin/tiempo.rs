@@ -146,6 +146,35 @@ fn principal() -> u64 {
         println!("  [tiempo] con la cola llena, el aviso de una vez se perdió (llegó la marca {})", marca);
         return 13;
     }
-    println!("  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale; periodo mínimo, marca, revocación y cola llena");
+    // 14 (segunda vuelta de la auditoría, C1): una cadena de temporizadores, cada uno con una llave revocable del
+    // lado de un canal en cuya cola va el siguiente. Al soltar el primero se suelta la cadena entera: sin recursión en
+    // la pila del kernel.
+    let mut anterior: Option<u32> = None;
+    let mut primero = 0;
+    for i in 0..30 {
+        let (a, b) = canal_crear();
+        let (ra, rev) = llave_revocable(a);
+        cerrar(a);
+        let t = temporizador_crear(ra as u32, 86_400_000_000, 0);
+        cerrar(ra as u32);
+        cerrar(rev);
+        if t <= 0 {
+            return 14;
+        }
+        match anterior {
+            Some(b_ant) => {
+                canal_escribir(b_ant, b"t", &[t as u32]);
+                cerrar(b_ant);
+            }
+            None => primero = t as u32,
+        }
+        anterior = Some(b);
+        let _ = i;
+    }
+    if let Some(b) = anterior {
+        cerrar(b);
+    }
+    cerrar(primero);
+    println!("  [tiempo] una vez, periódico, se para al cerrar y rechaza lo que no vale; periodo mínimo, marca, revocación y cola llena; cadena de 30 soltada");
     49
 }

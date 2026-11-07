@@ -12,7 +12,8 @@
 //! antes, sin marca, un mensaje de directorio por cliente (8 bytes de marca y 16 de nombre). Las etiquetas de leer
 //! valen para todos; las de la pantalla, solo para el "compositor"; encender y poner el reloj de la V3D, solo para la
 //! "gpu". Al reservar la pantalla, la respuesta lleva una segunda llave: la memoria de la VideoCore recortada a la
-//! pantalla (M4). El compositor no recibe más.
+//! pantalla (M4). Una sola vez: después ya no se deja reservar otra ni cambiar su tamaño, para que el compositor no vaya
+//! juntando trozos de esa memoria con pantallas que el firmware mueve (M8).
 
 #![no_std]
 #![no_main]
@@ -63,10 +64,32 @@ enum Cliente {
     Gpu,
 }
 
+/// Una vez dada la pantalla, esto ya no se deja: reservar otra y cambiar el tamaño (M8).
+const TRAS_LA_PANTALLA: &[u32] = &[RESERVAR_PANTALLA, 0x0004_8003, 0x0004_8004, 0x0004_8005];
+
+static PANTALLA_DADA: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 fn permitida(c: Cliente, etiqueta: u32) -> bool {
+    if PANTALLA_DADA.load(core::sync::atomic::Ordering::Relaxed) && TRAS_LA_PANTALLA.contains(&etiqueta) {
+        return false;
+    }
     DE_TODOS.contains(&etiqueta)
         || (c == Cliente::Compositor && DEL_COMPOSITOR.contains(&etiqueta))
         || (c == Cliente::Gpu && DE_LA_GPU.contains(&etiqueta))
+}
+
+/// Espera un tic sin gastar CPU (un temporizador de una vez).
+fn esperar_un_tic() {
+    let (a, b) = dashos::canal_crear();
+    let t = dashos::temporizador_crear(b, 10_000, 0);
+    if t > 0 {
+        let mut buf = [0u8; 8];
+        let mut ll = [0u32; 1];
+        dashos::canal_leer(a, &mut buf, &mut ll);
+        dashos::cerrar(t as u32);
+    }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
 }
 
 /// Dónde empieza el buzón 0 dentro de su página (0x7E00B880 en el bus de la VideoCore).
@@ -163,7 +186,10 @@ fn principal() -> u64 {
             return 0; // los clientes cerraron el canal
         }
         if n < 0 {
-            continue; // un mensaje que no vale (demasiado grande, por ejemplo): se descarta y se sigue (M6)
+            // Sin sitio en la tabla o sin memoria: el mensaje vuelve a la cola. Se espera un tic antes de intentarlo
+            // otra vez, para no girar (B16).
+            esperar_un_tic();
+            continue;
         }
         // Las llaves de más, fuera.
         for &l in ll.iter().take(k).skip(1) {
@@ -220,6 +246,7 @@ fn principal() -> u64 {
         }
         match pantalla {
             Some(l) => {
+                PANTALLA_DADA.store(true, core::sync::atomic::Ordering::Relaxed);
                 if dashos::canal_escribir(respuesta, &buf[..n], &[l]) != 0 {
                     dashos::cerrar(l);
                 }
@@ -232,13 +259,18 @@ fn principal() -> u64 {
     }
 }
 
-/// Si la respuesta reservó la pantalla, una llave de la memoria de la VideoCore recortada a ella (M4).
+/// Si la respuesta reservó la pantalla, una llave de la memoria de la VideoCore recortada a ella (M4). Solo si el
+/// firmware contestó bien al mensaje y a esa etiqueta, con 8 bytes de respuesta: si no, los valores serían los que
+/// puso el cliente (segunda vuelta de la auditoría, M8).
 fn recortar_pantalla(p: &[u32], vc: Option<(u32, u32)>) -> Option<u32> {
     let (base, tamano_vc) = vc?;
+    if p.len() < 2 || p[1] != 0x8000_0000 {
+        return None;
+    }
     let mut i = 2;
     while i + 3 <= p.len() && p[i] != 0 {
         let palabras = (p[i + 1] as usize).div_ceil(4);
-        if p[i] == RESERVAR_PANTALLA && i + 4 < p.len() && p[i + 3] != 0 {
+        if p[i] == RESERVAR_PANTALLA && i + 4 < p.len() && p[i + 2] == 0x8000_0008 && p[i + 3] != 0 {
             let fisica = (p[i + 3] & 0x3fff_ffff) as u64;
             let tamano = p[i + 4] as u64;
             let desde = (fisica.checked_sub(base as u64)?) & !0xfff;

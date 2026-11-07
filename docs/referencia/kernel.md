@@ -254,10 +254,12 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   sus avisos llevan la marca de la llave del canal y dejan de llegar si se revoca.
 - **25, `registros_recortar`** (auditoría de la fase 4, M4). Una llave nueva del mismo tipo que solo cubre
   `[desde, desde + tamaño)` del tramo de la original, con sus mismos derechos. Los dos, múltiplos de 4 KB; fuera del
-  tramo o tamaño 0, `E_ARGUMENTO`; otra llave, `E_TIPO`. Así quien tiene un tramo grande da solo un trozo.
+  tramo o tamaño 0, `E_ARGUMENTO`; otra llave, `E_TIPO`; una llave revocable, `E_ARGUMENTO` (la copia no se podría
+  revocar). Así quien tiene un tramo grande da solo un trozo.
 - **26, `dma_liberar`** (M5). La memoria DMA, al soltarse, no vuelve al sistema: queda en la cuarentena de su
   permiso, porque el aparato puede seguir escribiendo en ella (su controlador murió a medias). El controlador nuevo,
-  con el aparato ya reiniciado, la devuelve con esta llamada. Pide el derecho de escribir en el permiso.
+  con el aparato ya reiniciado, la devuelve con esta llamada. Mientras, sigue cobrada al grupo que la pidió. Pide el
+  derecho de escribir en el permiso.
 - **12, `proceso_crear`** (C39).
   - El ELF son los primeros `tamaño` bytes del objeto de memoria, que necesita el derecho de leer. Se copia al
     crear: después se puede cambiar o soltar el objeto.
@@ -373,6 +375,13 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - `inicio` sondea la V3D al arrancar; en QEMU es un fallo de bus que se recoge. En la Pi, con el dominio de la V3D
   apagado, falta comprobar que leer no cuelga el bus (B9).
 - Un temporizador puede dar un aviso más justo después de cerrar su última llave, si ya estaba saliendo (B10).
+- Con la llave del canal revocable, un temporizador o una interrupción dejan de avisar también si se suelta ese
+  intermediario (no solo si se revoca): no lo sujetan (segunda vuelta de la auditoría, C1).
+- Un temporizador periódico que no se puede volver a programar por falta de memoria del kernel se para sin aviso.
+- `dma_liberar` devuelve toda la cuarentena de un permiso de una vez; no hay forma de devolver un búfer suelto
+  mientras el aparato sigue en marcha.
+- El PCIe (C51): el VL805 alcanza todo el primer GB, también la memoria de la VideoCore; la llave de los registros
+  del controlador PCIe no se da a ningún proceso.
 - Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).

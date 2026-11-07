@@ -35,8 +35,9 @@ static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new()
 pub struct Interrupcion {
     pub intid: u32,
     destino: Cerrojo<Option<(Arc<Canal>, usize)>>,
-    /// Los intermediarios revocables de la llave del canal y su marca (auditoría de la fase 4, A2).
-    via: Cerrojo<(Vec<Arc<Revocable>>, u64)>,
+    /// Los intermediarios revocables de la llave del canal, sin sujetarlos (C1), y su marca (auditoría de la fase 4,
+    /// A2).
+    via: Cerrojo<(Vec<Weak<Revocable>>, u64)>,
 }
 
 impl Interrupcion {
@@ -58,7 +59,7 @@ impl Interrupcion {
     /// Asocia la interrupción a un extremo de canal y la habilita, dirigida al núcleo 0. Los avisos llevan `marca` y
     /// dejan de llegar si se revoca alguno de `via`.
     pub fn asociar(&self, canal: Arc<Canal>, lado: usize, via: Vec<Arc<Revocable>>, marca: u64) {
-        *self.via.tomar() = (via, marca);
+        *self.via.tomar() = (via.iter().map(Arc::downgrade).collect(), marca);
         *self.destino.tomar() = Some((canal, lado));
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_or(b, Ordering::SeqCst);
@@ -161,7 +162,7 @@ fn entregar(intid: u32) {
     let Some(o) = objeto else { return };
     let (revocada, marca) = {
         let v = o.via.tomar();
-        (v.0.iter().any(|r| r.revocado()), v.1)
+        (v.0.iter().any(|w| w.upgrade().is_none_or(|r| r.revocado())), v.1)
     };
     if revocada {
         // Revocada la llave del canal: la interrupción se desasocia y queda enmascarada (A2).

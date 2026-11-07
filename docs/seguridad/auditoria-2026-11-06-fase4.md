@@ -344,3 +344,207 @@ una marca de "soltado" antes de escribir.
   el VL805, como la SD y el USB, sigue llegando a ella y, a través de ella, a todo. Es lo que acepta S16 D, pero
   conviene decirlo junto al cierre de la ventana.
 - Las pruebas de C51 (`lanzador.rs`, `pruebas.rs`), solo por encima.
+
+## Segunda vuelta (arreglos)
+
+Hecha el 2026-11-07 sobre tres commits: `919e255` (ventana de entrada del PCIe), `2869322` (arreglos de A1, A2, M1, M2
+y M3) y `59de692` (arreglos de M4, M5 y M6, con las llamadas 25 `registros_recortar` y 26 `dma_liberar`). Los números
+de línea son de `59de692`. Mismo método: leer el camino entero. C1 y A3 están medidos en QEMU, en una copia del
+repositorio fuera de él, con un programa hostil en lugar de `tiempo`; lo demás está leído.
+
+### Qué cierra cada arreglo
+
+| Hallazgo | Estado | Por qué |
+|---|---|---|
+| A1 | Cerrado lo de las IRQ; abre A3 | El montículo y el tope de 64 por pasada acotan el trabajo con `COLA` tomado. Pero el tope reparte mal: los temporizadores de un grupo retrasan segundos los de todos (A3, medido). |
+| A2 | Cerrado; abre C1 | El temporizador y la interrupción llevan la marca de la llave y se paran al ver revocado un intermediario. Pero guardar los intermediarios (`via`) mete un camino de soltar recursivo que tumba el kernel (C1, medido). |
+| M1 | Cerrado | Un aviso de una vez que no cabe se vuelve a programar al tic siguiente. Queda la cuenta (B12). |
+| M2 | Cerrado el caso de la auditoría; abre A4 | La purga quita lo que ya no está proyectado. Pero también quita lo que está a punto de proyectarse, y con eso una proyección escapa a la revocación (A4). |
+| M3 | Cerrado | Con más de 32 páginas, un solo `tlbi aside1is`. |
+| M4 | A medias | El compositor ya no recibe toda la memoria de la VideoCore. Pero las llaves de pantalla viejas siguen valiendo, y el recorte se hace con valores de la respuesta que no se comprueban (M8). |
+| M5 | Cerrado el reúso; abre M7 | La memoria DMA soltada no vuelve al repartidor hasta `dma_liberar`. Pero la cuarentena no se cobra y no tiene tope (M7). |
+| M6 | Cerrado | El buzón lee con hueco para 8 llaves, cierra las de más y solo acaba con `E_CERRADO`. Clientes con marca y etiquetas por cliente. Quedan detalles (B16). |
+| B1 | Cerrado | `forma_ciclo` resuelve también una revocable (`objetos.rs:165-166`). |
+
+### Crítica
+
+**C1. Una cadena de temporizadores con llave revocable tumba el kernel.** Medido en QEMU: pánico por pila del kernel
+desbordada con 20 eslabones.
+
+- `temporizadores.rs:31`: el temporizador guarda en `via` los `Arc<Revocable>` de la llave del canal (A2). Un
+  intermediario sin revocar tiene dentro su objeto: la punta del canal.
+- `objetos.rs:315-323`: `soltar` saca el destino de un temporizador sin recursión, pero después lo suelta con la
+  vía normal de Rust. Al soltar `via`, si era el último dueño del intermediario, se suelta la punta.
+- `objetos.rs`, `Punta::drop`: cerrar un lado vacía su cola y llama otra vez a `soltar`. Si en esa cola hay otro
+  temporizador como el primero, se repite. Es recursión otra vez, como el C1 y el hallazgo 3 de auditorías anteriores.
+
+Escenario, desde un grupo cualquiera y sin llaves especiales. Por cada eslabón i:
+
+1. `canal_crear` da `(a, b)`; `(ra, rev) = llave_revocable(a)`; `cerrar(a)`.
+2. `t = temporizador_crear(ra, un día, 0)`; `cerrar(ra)`; `cerrar(rev)`. Ahora el lado `a` solo vive dentro del
+   intermediario, que solo vive en `t.via`.
+3. Mandar `t` por el `b` del eslabón anterior (va a la cola del lado `a` anterior) y cerrar ese `b`. `forma_ciclo` no
+   lo para: el destino de `t` es otro canal.
+
+Al final se cierra la llave del primer temporizador. Suelta su intermediario, que cierra su lado `a`, que suelta el
+temporizador siguiente, y así hasta el fondo, todo en la pila del kernel. Con 20 eslabones (unos 620 KB de cupo) la
+pila llega a la guarda: "pila del kernel desbordada" en `soltar` (`objetos.rs:287`) y el kernel se para.
+
+Lo mismo vale para `Interrupcion` (`interrupciones.rs`, campo `via`), aunque ahí hace falta una llave de interrupción
+por eslabón.
+
+Arreglo propuesto: que `soltar` trate el temporizador y la interrupción enteros, metiendo en la lista de objetos lo que
+llevan en `via` (como ya hace con el objeto de un intermediario). O guardar en `via` un `Weak<Revocable>`: si el
+intermediario ya no existe, nadie puede revocarlo, y basta con mirar que el `Weak` siga vivo o tratarlo como revocado.
+Con `Weak`, además, el temporizador deja de sujetar el lado del canal (B13).
+
+### Alta
+
+**A3. Los temporizadores de un grupo retrasan segundos los de todos los demás.** Medido en QEMU.
+
+- `temporizadores.rs:163`: cada pasada saca como mucho 64 avisos, y el repartidor solo pasa una vez por tic.
+- El montículo está ordenado por vencimiento. Un periódico atendido se vuelve a programar en el futuro, pero los que no
+  caben en la pasada se quedan con su vencimiento viejo, por delante de cualquiera que venza después.
+- Un temporizador cuesta 4 KB de cupo y su periodo mínimo es un tic.
+
+Escenario: un grupo de 64 MB crea 12.800 temporizadores periódicos de 10 ms (guardados en colas de canales, como en
+A1). Cada tic vencen todos y solo salen 64. Medido: un temporizador de 100 ms de otro proceso llegó a los 2,13 s (sin
+carga, 0,11 s). Con 16 MB serían unos 0,5 s. Le pasa a todo el sistema: la espera del USB (10 ms) y el `Delay` de
+Dash, por ejemplo.
+
+A1 era trabajo sin tope con las IRQ enmascaradas; ahora el trabajo está acotado, pero el reparto no es justo.
+
+Arreglo propuesto: reparto por grupo (por ejemplo, una cola por grupo y turno entre grupos en cada pasada), o un tope
+de temporizadores vencidos por grupo y pasada. Y, si quedan vencidos al acabar la pasada, volver a marcar `PENDIENTE`
+para seguir sin esperar al tic, con el trabajo de cada pasada acotado como ahora.
+
+**A4. Una proyección puede escapar a la revocación.** Plausible: es una carrera. El camino está comprobado.
+
+- `llamadas.rs:353-359`: `memoria_proyectar` apunta la proyección en los intermediarios y después la hace, con el
+  cerrojo del espacio tomado solo en ese segundo paso.
+- `objetos.rs:109`: `apuntar_proyeccion` purga cada entrada cuyo proceso no tenga ya esa proyección en su espacio
+  (`proyectada_via`). Una entrada recién apuntada, cuya proyección aún no se ha hecho, no la tiene.
+
+Escenario con dos procesos que colaboran, P y Q, cada uno con una copia de la misma revocable de memoria (la misma
+copia duplicada pasa por el mismo intermediario):
+
+1. P llama a `memoria_proyectar`: apunta (P, va).
+2. Antes de que P proyecte, Q llama a `memoria_proyectar` en otro núcleo. Su purga ve que P no tiene nada en `va` y
+   borra (P, va).
+3. P proyecta. Nadie ha revocado todavía, así que vuelve con 0.
+4. Más tarde, el dueño revoca. La lista ya no tiene (P, va): la proyección de P se queda. P sigue leyendo y
+   escribiendo esa memoria después de la revocación.
+
+Es fácil de repetir: Q proyecta y quita sin parar mientras P proyecta en muchas direcciones. Basta con que una gane la
+carrera. Rompe lo que dice `kernel.md` de revocar memoria (C45).
+
+Arreglo propuesto: no purgar entradas "pendientes". Por ejemplo, que cada entrada lleve un estado (pendiente o hecha),
+que P la marque como hecha después de proyectar, y que la purga solo quite las hechas que ya no estén. O quitar la
+entrada desde `quitar_proyeccion`, que sabe por qué intermediarios se hizo, en vez de purgar a ciegas.
+
+### Media
+
+**M7. La cuarentena DMA no se cobra ni tiene tope.** Comprobado leyendo.
+
+- `memoria.rs:488-499`: la memoria DMA soltada va a la cuarentena de su permiso, y su `Cargo` se devuelve al grupo.
+  Las páginas siguen fuera del repartidor, sin cobrar a nadie, hasta que alguien llame a `dma_liberar`.
+- Los controladores solo llaman a `dma_liberar` al arrancar (`usb.rs:595`, `gpu.rs:103`, `buzon.rs:148`).
+- El permiso de la GPU es de la zona normal, y `nueva_dma` no respeta la reserva del kernel (B7).
+
+Escenario: el servidor de la GPU crea y suelta búferes, que es su trabajo normal (cada búfer es un objeto DMA). Cada
+búfer soltado se queda en la cuarentena. Con el tiempo se come la zona normal, después la reserva del kernel, y el
+montón del kernel falla: el kernel cae. Con el USB o el buzón, que piden una vez, no pasa; con el servidor de Mesa
+(S9), sí. Un controlador con un fallo que cree y suelte en bucle lo hace en segundos.
+
+Además, `dma_liberar` devuelve toda la cuarentena de una vez con las IRQ enmascaradas (hasta toda la zona), y solo
+tiene sentido si el aparato entero se ha reiniciado: no sirve para un búfer suelto mientras el aparato sigue en marcha.
+
+Arreglo propuesto: cobrar la cuarentena al grupo del permiso (o al del controlador) hasta que se libere, con un tope;
+dar al controlador una forma de devolver un búfer concreto cuando sabe que el aparato ya no lo usa; y respetar la
+reserva en `nueva_dma` (B7).
+
+**M8. Las llaves de pantalla viejas siguen valiendo, y el recorte se fía de la respuesta.** Comprobado leyendo lo del
+buzón; lo que hace el firmware, a comprobar en la Pi.
+
+- `buzon.rs:236-255`: `recortar_pantalla` saca la base y el tamaño de la etiqueta de reservar pantalla, después de
+  `mandar`, sin mirar el código de la respuesta (`p[1] == 0x80000000`) ni el bit de respuesta de la etiqueta. Si el
+  firmware no llega a escribir esa etiqueta (por ejemplo, porque rechaza el mensaje entero), los valores son los que
+  puso el cliente, y el cliente elige qué trozo de la memoria de la VideoCore recibe.
+- Cada vez que el compositor reserva la pantalla recibe una llave nueva. Las viejas no se revocan, y aunque se
+  revocaran, lo ya proyectado con `registros_proyectar` no se quita. Si el compositor cambia el tamaño (0x00048003,
+  0x00048004) y vuelve a reservar, el firmware puede mover la pantalla, y el compositor se queda con llaves y
+  proyecciones de memoria que el firmware ya usa para otra cosa.
+
+M4 queda a medias: el compositor ya no tiene toda la memoria de la VideoCore de entrada, pero puede ir juntando trozos.
+
+Arreglo propuesto: recortar solo con `p[1] == 0x80000000`, el bit de respuesta puesto y una longitud de respuesta de 8
+bytes; dar la llave de pantalla una sola vez (o no dejar cambiar el tamaño después); y, si hace falta cambiarla, que
+el kernel pueda quitar las proyecciones de memoria del firmware al revocar, como hace con la memoria normal (C45).
+
+### Baja
+
+**B12. Un aviso de una vez reintentado dice que venció dos veces.** Comprobado leyendo. `temporizadores.rs:175-183` y
+`205`: al reintentarlo, cuenta 1 más lo que quedó en `perdidos` (el 1 del intento fallido). Arreglo: en los de una vez,
+no sumar a `perdidos` al reprogramar.
+
+**B13. El temporizador sujeta abierto el lado del canal.** Comprobado leyendo. Con `via` (`temporizadores.rs:31`), el
+temporizador tiene el intermediario y, con él, la punta por la que escribe. Si el cliente se va y deja la llave del
+temporizador en otro sitio, el servidor no recibe `E_CERRADO` por ese lado. Antes no pasaba. Se arregla con el `Weak`
+de C1.
+
+**B14. Cuentas de la cola de temporizadores.** Comprobado leyendo.
+
+- `temporizadores.rs:169`: las entradas de temporizadores ya soltados se sacan sin contar para el tope de 64. Su número
+  lo acota la purga de `nuevo` (`len > 2 · vivos + 256`, línea 106), así que es trabajo acotado por los temporizadores
+  vivos de todo el sistema, pero no por pasada.
+- `temporizadores.rs:128-133`: el `Drop` resta de `vivos` también cuando `nuevo` falló antes de sumar.
+- `temporizadores.rs:180-181`: si `programar` falla sin memoria, un periódico se para para siempre sin aviso.
+
+**B15. La purga de `apuntar_proyeccion` trabaja mucho con cerrojos tomados.** Comprobado leyendo. `objetos.rs:109`: por
+cada una de hasta 256 entradas, toma el cerrojo del espacio de ese proceso y recorre sus hasta 1024 proyecciones: unas
+260.000 comparaciones con las IRQ enmascaradas en cada proyección por una revocable. Además, el `Arc<Proceso>` de
+`upgrade` puede ser el último y soltar un proceso entero dentro del cerrojo del intermediario. Se arregla con lo de A4.
+
+**B16. Detalles del buzón.** Comprobado leyendo.
+
+- `inicio.rs:94` (usuario): el mensaje de directorio de cada cliente no mira el resultado. Si un cliente ya lanzado
+  llena la cola del buzón (16 mensajes) antes de que `inicio` lance al siguiente, el siguiente queda como "Otro" y no
+  puede pedir lo suyo (la GPU, su reloj).
+- `buzon.rs:166`: con un error que se repite (`E_LIMITE` con la tabla llena, `E_MEMORIA`), el mensaje vuelve a la cola
+  y el buzón lo vuelve a leer sin fin, gastando CPU.
+- `buzon.rs:148`: el buzón libera la cuarentena al arrancar. Si el anterior murió con una petición en el firmware, la
+  VideoCore puede escribir la respuesta en una página ya devuelta. Ventana muy pequeña.
+
+**B17. Recortar una revocable da una llave que no se revoca.** Comprobado leyendo. `llamadas.rs:718-745`:
+`registros_recortar` resuelve la llave con `ver` y crea un objeto nuevo, sin intermediario. Con `desde = 0` y el
+tamaño entero, es una copia no revocable de una llave revocable de registros o de memoria del firmware. Hoy pesa poco,
+porque revocar tampoco quita lo ya proyectado de registros, pero conviene que la copia recortada pase por los mismos
+intermediarios.
+
+**B18. La ventana del PCIe se puede volver a abrir.** Comprobado leyendo (`919e255`). `pcie.rs:46-77` cierra la ventana
+de entrada al primer GB en el arranque, antes de repartir memoria. No he visto fallos en el orden de las escrituras
+(BAR2 antes que `SCB0_SIZE`, como dice la especificación). Pero quien reciba algún día los registros del controlador
+PCIe (0xFD50_0000) puede volver a abrirla. Conviene dejar escrito que esa llave no se da nunca (el xHCI solo necesita
+sus BAR de salida), y que el primer GB que sigue viendo el VL805 incluye la memoria de la VideoCore. Sin probar: QEMU
+no emula el PCIe.
+
+### Revisado y correcto en la segunda vuelta
+
+- **Cerrojos de los temporizadores.** El orden es tabla de llaves, `COLA` y el del temporizador. `repartir` suelta el
+  del temporizador antes de volver a tomar `COLA` (M1), y escribe en los canales fuera de `COLA`. El `Drop` del
+  temporizador toma `COLA`, y no he encontrado ningún sitio donde se suelte el último `Arc` con `COLA` tomado: en
+  `repartir` van al lote y se sueltan fuera, y en `nuevo` la guarda se suelta antes. Quitar el destino de un temporizador
+  revocado dentro de `COLA` puede soltar el último `Arc<Canal>`, pero en ese momento sus dos lados ya están cerrados y
+  sus colas vacías, así que no se suelta nada más.
+- **Revocación y marca (A2).** Los avisos llevan la marca de la llave del canal. Un temporizador o una interrupción
+  cuya llave se revoca deja de avisar en el siguiente vencimiento. La interrupción, además, queda enmascarada.
+- **M3.** Con muchas páginas se borran las entradas y se invalida el ASID entero una vez, con sus barreras.
+- **`dma_liberar` y `registros_recortar`.** Piden el tipo de llave correcto; `dma_liberar`, el derecho de escribir.
+  El recorte exige páginas enteras, tamaño mayor que 0 y quedar dentro del original (`checked_add`). Una llave de
+  memoria del firmware recortada se sigue comprobando contra la RAM al proyectarla.
+- **Cuarentena y reúso.** Las páginas de un objeto DMA solo entran en la cuarentena al soltarse su último `Arc`, cuando
+  ya no las proyecta nadie. Cada aparato tiene su permiso y su cuarentena, y el USB y la GPU liberan la suya después de
+  reiniciar su aparato, con el búfer nuevo ya pedido antes.
+- **Directorio del buzón.** Los clientes reciben copias marcadas, que no se pueden volver a marcar. Un mensaje sin
+  marca solo lo puede mandar quien tiene la llave sin marca, que es `inicio`. Los temporizadores y las interrupciones
+  ya no escriben con marca 0. No he encontrado forma de que un cliente se haga pasar por otro.

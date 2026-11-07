@@ -1418,6 +1418,38 @@ y once bajos. Arreglados en esta parte:
 - **B11.** Documentación puesta al día (tabla de llamadas, llaves que da el kernel, zona de la GPU, servicios).
 - **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien.
 
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, sexta parte (segunda vuelta de la auditoría)
+
+El mismo auditor revisó los arreglos y la ventana del PCIe (sección "Segunda vuelta" del informe): un crítico, dos
+altos, dos medios y siete bajos nuevos. Arreglados:
+
+- **C1.** Guardar los intermediarios en el temporizador (A2) devolvía la recursión al soltar: una cadena de 20
+  temporizadores con llave revocable desbordaba la pila del kernel. Ahora se guardan como `Weak` (temporizador e
+  interrupción): no sujetan el lado del canal (B13), y si el intermediario ya no existe, se paran. Prueba: `tiempo`,
+  paso 14 (cadena de 30).
+- **A3.** Los temporizadores de un grupo retrasaban segundos los de los demás. Ahora hay una cola por grupo de primer
+  nivel (un servicio y sus subgrupos, `Cupo::primer_nivel`) y cada pasada da la vuelta a los grupos con algo vencido,
+  8 avisos de cada uno por vuelta y 64 en total. Prueba nueva: un proceso con 900 temporizadores de 10 ms y uno de
+  100 ms de otro grupo, que llega a los 101 ms; con una sola cola, a los 243 ms (comprobado: falla).
+- **A4.** La purga de proyecciones de una revocable podía quitar una que aún no se había hecho. Ahora cada entrada
+  está pendiente hasta que la proyección se hace (o se retira si falla), la purga no toca las pendientes, y solo se
+  purga con la lista llena, soltando los procesos fuera del cerrojo (B15).
+- **M7.** La cuarentena DMA no se cobraba: ahora sigue cobrada al grupo hasta que se libera.
+- **M8.** El buzón recortaba la pantalla sin mirar la respuesta del firmware: ahora solo con el mensaje y la etiqueta
+  contestados (8 bytes). Y la pantalla se da una sola vez: después no se deja reservar otra ni cambiar su tamaño.
+- **B12, B14.** Cuentas de los temporizadores: un aviso de una vez reintentado dice 1; las entradas de soltados
+  cuentan para el tope de la pasada; cada cola lleva sus vivos y muertos, se purga con más muertos que vivos más 32 y
+  se quita al soltarse su último temporizador (si no, sujetaban memoria del kernel hasta su vencimiento: C43 lo vio
+  como páginas perdidas).
+- **B16.** `inicio` reintenta el directorio si la cola del buzón está llena; el buzón espera un tic ante un error en
+  vez de girar.
+- **B17.** `registros_recortar` no recorta una llave revocable (`E_ARGUMENTO`).
+- **B18.** Escrito: la llave de los registros del PCIe no se da a nadie; el VL805 sigue viendo todo el primer GB.
+- **Pruebas más tolerantes con la carga:** `make prueba` a 90 s; C43 espera a `lanzador` hasta 80 s y a que vuelvan
+  las pilas de los hilos muertos (se recogen tarde, C18) hasta 3 s antes de contar páginas.
+- **Comprobado:** `make -C kernel prueba` cuatro veces seguidas y `make -C kernel arranque`, bien, con la máquina
+  cargada (media de 8 a 10).
+
 ## Pausa (2026-11-03, 20:5x)
 
 El usuario para el bucle con el 38 % de la cuota semanal gastado: "seguiremos la semana que viene". Para retomar:
