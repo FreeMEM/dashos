@@ -1566,3 +1566,16 @@ acordado: estático en 0x400000. Pila de 64 KB o la que pida el ELF. El usuario 
    (`docs/diseño/U7-caja-sin-big-endian.md`, unas 1200 líneas en Emu68) y espera a que el usuario diga cuándo.
 
 El bucle para aquí: lo que queda pide decisiones del usuario. Todo en commits locales de `main`, sin subir.
+
+### 2026-11-07 — Vuelta tras "sí a todo"
+
+- El usuario autorizó subir, empezar U7 y que yo eligiera los nombres de A7; y pidió seguir con la caja PowerPC.
+- Subidos los 37 commits de `main`.
+- U7 fusionado (ff2fff7): el JIT de Emu68 corre en little-endian con la memoria del 68k en big-endian, en el banco
+  `jit-host` (enteros, FPU y excepciones; cinco programas iguales en los dos órdenes; en big-endian, el mismo
+  código que antes). Falta llevarlo a la caja cuando exista y probarlo en una CPU sin big-endian.
+- Caja PowerPC: diseño en `docs/diseño/S17-caja-powerpc.md` (7ee5d52). Base: el JIT PPC de Emu68 (MPL, a medias).
+  Seis decisiones del usuario pendientes, al final del documento.
+- A7 en Dash: 32 builtins propios (canales, llaves, temporizadores, memoria, procesos, grupos), rama `dashos-a7`
+  de FreeMEMLang (21b4bc3), probados en qemu y en DashOS de verdad (raspi4b, en `lanzador`, por los dos caminos).
+  Bitácora en `docs/AARCH64_LOOP.md` de Dash. freememlang de acuerdo; falta el PR a `main` de Dash, con permiso.
