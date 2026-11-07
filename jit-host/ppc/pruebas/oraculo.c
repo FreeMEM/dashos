@@ -50,6 +50,14 @@ static void manejador(int sig, siginfo_t *si, void *ucv)
         m->gregs[32] += 4;
         return;
     }
+    /* a trap (F1h, tw/twi): the same as the bench's vector 0x700 (../host_ppc.cpp): r20 += 1, r21 = the address of
+       the instruction, and go on after it */
+    if (sig == SIGTRAP) {
+        m->gregs[20] = (uint32_t)(m->gregs[20] + 1);
+        m->gregs[21] = m->gregs[32];
+        m->gregs[32] += 4;
+        return;
+    }
     if (m->gregs[32] != 0) {
         printf("[REG] fallo en %08lx (dirección %p)\n", (unsigned long)m->gregs[32], si->si_addr);
         fflush(stdout);
@@ -64,7 +72,9 @@ static void manejador(int sig, siginfo_t *si, void *ucv)
         memcpy(&f, &m->fpregs.fpregs[i], 8);
         printf("%s f%d=%08x%08x%s", (i % 4) ? "" : "[REG]", i, (uint32_t)(f >> 32), (uint32_t)f, (i % 4 == 3) ? "\n" : "");
     }
-    printf("[REG] FPSCR=%08x\n", (uint32_t)m->fpregs.fpscr);
+    uint64_t fpscr;   /* F1e: a double in the context, FPSCR in its low word (converting the value gave 0) */
+    memcpy(&fpscr, &m->fpregs.fpscr, 8);
+    printf("[REG] FPSCR=%08x\n", (uint32_t)fpscr);
     uint64_t h = suma((const uint8_t *)PPC_RAM, PPC_RAM_LEN);
     printf("[REG] Suma de la memoria: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
     fflush(stdout);
@@ -102,6 +112,7 @@ int main(int argc, char **argv)
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
 
     __asm__ volatile("mr %0,2\n mr %1,13" : "=r"(r2_guardado), "=r"(r13_guardado));
     printf("[HOST] Programa %s (%d bytes)\n", argv[1], (int)n);

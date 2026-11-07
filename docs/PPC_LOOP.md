@@ -14,10 +14,10 @@ SonnetAmiga) no se compila ni se lee: el banco lleva un `ppc_rom.h` vacío.
 - [x] F1c Cargas y guardados de todas las formas, `lmw` y `stmw`, reserva, `dcbz`.
 - [x] F1d FPU: doble y simple (grupo 59), cargas y guardados de todas las formas, NaN de PPC, redondeo, FPSCR
   (sus bits de control).
-- [ ] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
+- [x] F1e Las formas con punto de la FPU (CR1 desde las excepciones de FPSCR) y los bits de excepción de FPSCR.
 - [x] F1f La llamada nativa por instrucción reservada (como la línea A del 68k, C1).
 - [x] F1g Saltos condicionales: todos los BO en bc, bcl, bclr, bclrl, bcctr, bcctrl.
-- [ ] F1h `icbi` en el banco (código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`, `sc`,
+- [x] F1h `icbi` en el banco (código que se modifica a sí mismo), `lswi`/`lswx`/`stswi`/`stswx`, `tw`/`twi`, `sc`,
   `mftb`, `mullwo`/`divwo`/`divwuo`.
 - [ ] AltiVec, después de MorphOS (orden del usuario).
 
@@ -34,8 +34,18 @@ final salta a 0: el banco sale de su bucle y el oráculo recoge el SIGSEGV. Se c
 32 FPR, FPSCR y una suma de la memoria; si la memoria difiere, se dice en qué bytes.
 
 El Emu68 del worktree es un clon aparte (`third_party/Emu68`, no va a git) en af63580 con los parches 0001-0009 como
-commit "base"; `0010-ppc-f1.patch` sale de su `git diff` (todo lo de F1, que solo toca el JIT PPC, salvo
-`csel64` en A64.h, que no usaba nadie). El banco PPC se compila con `PPC_SO_PROPAGATION=1`
+commit "base" y `0010-ppc-f1.patch` como commit "0010" (F1a-F1g, solo toca el JIT PPC, salvo `csel64` en A64.h, que
+no usaba nadie; es lo que se mandó a Emu68 en el PR #354 y no se cambia). `0011-ppc-f1h.patch` es el `git diff`
+desde el commit "0010" (F1h y F1e). El banco se compila contra ese árbol:
+
+```
+make -C jit-host/ppc EMU68=$PWD/third_party/Emu68
+```
+
+El banco se compila con `PPC_FPSCR_EXCEPTIONS=1` (FPSCR exacto tras cada operación de la FPU; F1e). Con
+`make -C jit-host/ppc EMU68=... FPSCR=0` sale en `build-rapido/` el camino rápido de Emu68 (el valor por defecto de
+`config.h`), que se prueba con `JIT=build-rapido/jit-ppc python3 jit-host/ppc/comparar_ppc.py`: ahí p2, p2-o0, t3 y
+t8 difieren de qemu-ppc a propósito (solo en FPSCR) y las demás tienen que dar bien, t9 incluida. El banco PPC se compila con `PPC_SO_PROPAGATION=1`
 (SO de XER copiado a CR, como en un PPC de verdad; Emu68 lo deja a 0 por velocidad).
 
 ## Entradas
@@ -193,3 +203,154 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   salida serie (`<dir>/os4serie.txt`).
 - Uso: caja negra (regla 1), para ver qué hace un programa PPC en un sistema de verdad (WarpOS, después). No se
   desensambla nada del sistema. MorphOS no venía; su ISO de prueba es pública si hace falta.
+
+### 2026-11-07 — F1h (1): mullwo, divwo, divwuo
+
+- Rama `ppc-f1h` (worktree `.worktrees/ppc-f1h`, con su propio clon de Emu68). Lo nuevo del JIT va en
+  `patches/emu68/0011-ppc-f1h.patch`; el 0010 queda como se mandó a Emu68.
+- `pruebas/gen_t5.py` (t5, 4074 casos): `mullwo`, `divwo` y `divwuo`, con y sin punto, con 15 valores por operando
+  (también la división entre 0 y 0x80000000 / -1), con XER de entrada a 0, con SO y con CA; y con rD igual a rA o rB.
+- **Faltaba**, ahora en el 0011: las tres no se despachaban (el bit OE cambia el código secundario).
+- **Fallos del JIT de Emu68**:
+  - `divwuo`/`divwo` ponían SO aunque no hubiera desbordamiento (SO se ponía antes de elegir); `mullwo` igual, y
+    además comparaba el producto en 32 bits (`cmp` en vez de `cmp64`), así que nunca veía el desbordamiento.
+  - `divwo` no veía 0x80000000 / -1 (había un TODO).
+- Decisión: en los casos que PPC deja sin definir, rD sale como en qemu-ppc (el divisor pasa a ser 1: rD = rA), pero
+  solo en las formas con OE, que ya calculan el desbordamiento. `divw`/`divwu` sin OE siguen con la división de ARM
+  tal cual (rD = 0 entre 0), para no añadir instrucciones a la división normal; t1b sigue sin probar esos casos.
+- Las once pruebas, bien.
+
+### 2026-11-07 — F1h (2): lswi, lswx, stswi, stswx; mullw como dirección
+
+- `pruebas/gen_t6.py` (t6, 705 casos de 132 bytes): `lswi`/`stswi` con rD 3, 13, 14, 25 y 30 (con la vuelta de r31
+  a r0) y de 1 a 32 bytes; `lswx`/`stswx` con rD 3, 14 y 30 y la cuenta de XER de 0 a 108 (127 en stswx), también
+  con rA = 0; direcciones sin alinear. Cargas: antes, cada GPR con un centinela, y después todos los GPR y XER a la
+  tabla; guardados: escriben en una zona llena de 0xee. rA, rB y el puntero de la tabla quedan siempre fuera de los
+  registros que se cargan (lo contrario es una forma no válida: qemu da SIGILL; el JIT no lo comprueba).
+- **Faltaban** las cuatro. Cómo van (0011, `PPC_LoadStore.cpp`):
+  - `lswi`/`stswi`: la cuenta está en la instrucción, así que se desenrolla como `lmw`/`stmw`: una palabra por
+    registro y, en el último, de 1 a 3 bytes con `ldrh`/`ldrb` (los bytes bajos a 0). Sin bucles ni saltos.
+  - `lswx`/`stswx`: la cuenta (XER[25-31]) y el registro al que va cada byte solo se saben al ejecutar. Se vuelcan
+    todos los GPR (y CR y XER, que van detrás) a `PPCState.GPR` (7 `stp` y 5 `st1`), un bucle copia los bytes entre
+    la memoria y ese vector (el byte i a GPR[rD] + i, módulo 128; lswx pone a 0 lo que queda del último registro) y
+    lswx los vuelve a cargar. `PPCState.GPR` no tiene datos vivos mientras corre el código traducido: el bucle
+    guarda el contexto antes de leerlo. Con cuenta 0 no se hace nada (como qemu). Son unas 40 instrucciones de ARM
+    y unos 6 ciclos por byte; son instrucciones raras (gcc no las saca para el 603e/604e/G3/G4 sin `-mstring`).
+- **Fallo del JIT de Emu68**: `mullw` usaba `smull` (producto de 64 bits) y dejaba la mitad alta del registro de ARM
+  con bits: usado luego como dirección (`lwz 5,0(5)`), la dirección se salía de los 4 GB (en el banco, SIGSEGV).
+  Ahora `mul` de 32 bits; `mullwo` hace `smull` en un temporal para ver el desbordamiento y copia la palabra baja.
+  Prueba nueva en t5 (el producto 0x10000 * 0x10010, de parte baja 0x00100000).
+- Las doce pruebas, bien.
+
+### 2026-11-07 — F1h (3): tw, twi y sc, por los vectores de excepción
+
+- Decisión: el banco no para en un trap ni en `sc` (como con lo que no se traduce), sino que deja que el JIT haga lo
+  que hace en Emu68: SRR0, SRR1 y MSR, y saltar al vector alto (0xfff00700, 0xfff00c00). `host_ppc.cpp` pone en esos
+  vectores una llamada nativa con el tipo y `rfi`, así que se prueban también la entrada, `rfi` y la vuelta. El
+  manejador hace lo mismo que el oráculo con su señal:
+  - trap (0x700 con el bit de trap en SRR1): r20 += 1, r21 = SRR0 (la dirección del trap) y SRR0 += 4. El oráculo
+    recoge SIGTRAP y hace lo mismo con el contexto de la señal.
+  - `sc` (0xc00): qemu-ppc ejecuta la llamada de Linux de r0, y no hay manera de cogerla antes; la prueba usa una que
+    no existe (r0 = 0x7777) y el banco responde como Linux: r3 = 38 (ENOSYS) y SO de CR0 a 1.
+  - Otra excepción de programa para el banco con "excepción" y código 7.
+- `pruebas/gen_t7.py` (t7, 1829 casos): `tw` con los 32 TO y 8 pares (con y sin signo), `twi` con los 32 TO, 7
+  valores y 7 inmediatos (cortos, largos y negativos, que Emu68 compara de tres maneras), y `sc` con 5 CR. Tras cada
+  trap: r20, r21 y r25, que se cambia en el mismo bloque justo antes; tras `sc`, r3, CR y r20 (+1 en la siguiente).
+- **Fallo del JIT de Emu68**: `tw`/`twi` condicionales emitían la salida por la excepción (que vacía los registros
+  y carga el puntero al contexto) sin guardar el estado del asignador, y el camino sin trap seguía como si los
+  registros sucios ya estuvieran guardados y el puntero cargado: con un registro sucio, el banco caía (SIGSEGV en la
+  dirección 0). Ahora `save()`/`restore()` alrededor, como `SupervisorCheck`.
+- **Mejora**: SRR1 lleva la causa de la excepción de programa (0x00020000 trap, 0x00040000 instrucción privilegiada,
+  como en el 603e/750); `emitException` tiene un argumento para eso. `rfi` borra de MSR los bits 17-23 (POW y esas
+  causas) en vez de solo POW, para que la causa no pase a MSR.
+- Las trece pruebas, bien.
+
+### 2026-11-07 — F1h (4): mftb
+
+- El contador de tiempo no puede coincidir: el JIT lee `CNTPCT_EL0` de ARM (en el banco `CNTVCT_EL0`, que da
+  qemu-aarch64_be) y qemu-ppc, el reloj de la máquina, a otra frecuencia. Decisión: no se comparan valores, sino lo
+  que tiene que cumplir el contador, y la prueba deja a 0 los registros que lo tuvieron.
+- `pruebas/p4.s`: lectura de 64 bits con `mftbu`/`mftb`/`mftbu` (otra vez si TBU cambia); TB avanza a lo largo de
+  un bucle de 196608 vueltas; 1000 lecturas seguidas nunca menores que la anterior; 1000 lecturas de TBL con
+  `mfspr 268` que no bajan sin que cambie TBU; `mfspr 269` igual que `mftbu`. Cuatro palabras de resultado.
+- **Faltaba**: `mfspr rD,268/269` (TBL, TBU), que es como codifican `mftb` los ensambladores nuevos (para POWER4 y
+  después) y que qemu-ppc acepta en el 750: ahora va a la misma función que `mftb`.
+- Las catorce pruebas, bien.
+
+### 2026-11-07 — F1h (5): icbi y el código que se modifica a sí mismo
+
+- `pruebas/p5.s`: (1) una rutina en 0x00120000 (`li 3,N; blr`) que se reescribe y se llama con `bctrl` 10 veces;
+  (2) una instrucción del propio programa, dentro de un bucle, ya traducida en la vuelta anterior y cambiada antes de
+  llegar a ella; (3) una rutina llamada con `bl` (que el JIT puede meter en el bloque que llama) con sus dos
+  instrucciones cambiadas cada vez. Siempre `stw`, `dcbst`, `sync`, `icbi` e `isync`, como pide PPC.
+- **Fallos del JIT de Emu68** (los tres los encontró p5):
+  - `icbi` vacía la caché LRU de bloques con una dirección hecha de los 32 bits bajos y los bits 39-63 a 1, que solo
+    vale con el núcleo de Emu68 en 0xffffff80xxxxxxxx: en el banco (y en DashOS) caía. Ahora carga la dirección
+    entera de 64 bits (cuatro `mov`). La segunda parte (la tabla `alloc`) usaba `movk` de 32 bits, que borra la mitad
+    alta del registro: ahora `movk` de 64.
+  - Aun así se volvía a ejecutar el código viejo: el traductor lee el código PPC por la caché de instrucciones por
+    software de Emu68 (`cache_read_32(ICACHE, ...)`, la de `cache.c`), y `icbi` no la tocaba; ni la comprobación del
+    bloque (la huella y el CRC) ni la traducción nueva veían el cambio. `icbi` solo sube EPOCH (desde el código
+    traducido no se puede llamar a C), así que el bucle (`PPCMainLoop`), en el camino lento, vacía esa caché entera
+    cuando ve un EPOCH nuevo. PPC deja que `icbi` invalide más de lo pedido; el coste es el de volver a llenarla.
+- Las quince pruebas, bien.
+
+### 2026-11-07 — F1e: los bits de excepción de FPSCR y las formas con punto de la FPU
+
+- **El oráculo daba siempre FPSCR = 0 al final**: en el contexto de la señal, FPSCR es un `double` y se convertía su
+  valor a entero. Ahora se copian sus 8 bytes y se toma la palabra baja. Desde aquí el FPSCR final se compara de
+  verdad en todas las pruebas (p2 y t3 acaban con FX, VX, OX, UX, ZX, XX y varios VX puestos).
+- `comparar_ppc.py`: un mapa puede empezar por `#tam=16` (registros de 16 bytes); `JIT=...` elige otro banco.
+- `pruebas/gen_t8.py` (t8, 11115 casos de 16 bytes: frD, CR y FPSCR con `mffs`): cada caso parte de un FPSCR
+  conocido (`mtfsf 0xff`). Las aritméticas de doble y simple con y sin punto y valores que dan cada excepción
+  (inexacto, desbordamiento, subdesbordamiento, división entre 0, NaN con señal, inf - inf, inf / inf, 0 / 0,
+  inf * 0), multiplicar y sumar con punto, `frsp`, `fctiw`, `fctiwz`, `fcmpu`, `fcmpo`, las que no cambian FPSCR con
+  punto, `mtfsf`, `mtfsfi`, `mtfsb0`, `mtfsb1` (con y sin punto), `mcrfs` y secuencias (bits pegajosos, FI y FPRF de
+  la última, frD igual a una fuente). Sin estados con una excepción habilitada: qemu-ppc (linux-user) da SIGFPE.
+- Cómo va (0011, `PPC_FPU.cpp`): ARM lleva sus banderas pegajosas en FPSR (IOC, DZC, OFC, UFC, IXC). Una operación
+  "completa" vacía FPSR antes y después la pasa a FPSCR: OX, UX, ZX y XX (pegajosos), FI (esta fue inexacta), FX, y
+  con IOC el bit VX de la causa, que se saca de los operandos solo en ese camino (VXSNAN, VXISI, VXIDI, VXZDZ, VXIMZ,
+  VXVC, VXSQRT, VXCVI); FPRF de la clase del resultado; VX y FEX como resúmenes. Las formas con punto copian
+  FPSCR[0-3] a CR1. `mtfsf`/`mtfsfi`/`mtfsb*` ya no escriben FEX ni VX (salen de los demás) ni el bit reservado 20;
+  `mcrfs`, que faltaba, copia el campo y borra sus bits de excepción.
+- **Velocidad** (`config.h`, `PPC_FPSCR_EXCEPTIONS`, como `PPC_SO_PROPAGATION`): con 1 (el banco) todas las
+  operaciones son completas (unas 40-60 instrucciones de ARM más cada una). Con 0, lo que trae Emu68 por defecto,
+  solo lo son las formas con punto: las demás se traducen como antes y sus OX, UX, ZX y XX se quedan en FPSR, que no
+  cuesta nada y se recoge en FPSCR (con FX) al leerlo (`mffs`, `mtfs*`, `mcrfs`, una forma con punto) y al guardar el
+  contexto (`PPC_ExecutionLoop.cpp`; al cargarlo, FPSR se vacía). Con 0 se pierden: los bits VX de las operaciones
+  sin punto (de IOC no se sabe la causa), FI, FPRF y FPCC (solo los ponen las formas con punto; `fcmpu`/`fcmpo` no
+  tienen) y, si se guarda con `stfs` un doble que no es de precisión simple, su `fcvt` puede poner XX, OX o UX de
+  más (los compiladores hacen `frsp` antes). `pruebas/gen_t9.py` (t9, 390 casos) prueba ese camino con secuencias en
+  las que da lo mismo que qemu-ppc (operaciones sin punto que no son inválidas y luego una con punto, `mffs`,
+  `mcrfs`, `mtfsb1`, una llamada nativa en medio, y la recogida al guardar el contexto al final).
+- Decisiones, donde qemu-ppc y un PPC de verdad no hacen lo mismo se sigue a qemu (es el oráculo):
+  - FX se pone con cada excepción, aunque su bit ya estuviera a 1 (en el 750, solo si pasa de 0 a 1). Para hacerlo
+    como el 750 bastaría comparar con el FPSCR de antes.
+  - FR no se calcula nunca (qemu tampoco; haría falta el resultado exacto) y se deja como está.
+  - `fcmpu`/`fcmpo` borran FI; `fcmpo` con un NaN pone también C (FPRF de NaN); `fctiw` inválida pone FPRF de NaN y
+    borra FR y FI; `mtfsb1` de un bit de excepción no pone FX; inf * 0 + NaN con señal da solo VXIMZ.
+  - Una excepción habilitada (VE, OE, UE, ZE, XE) solo se ve en FEX: ni excepción de programa ni el resultado que
+    pide el modo habilitado. Sin probar (SIGFPE en qemu-ppc).
+  - El subdesbordamiento: ARM decide si el resultado es diminuto después de redondear y PPC antes; difiere solo en
+    el caso límite que redondea al menor normal. No ha salido en las pruebas.
+  - `fsqrt` no está en el 750 (qemu-ppc da SIGILL): su VXSQRT queda sin probar.
+- **Fallos del JIT de Emu68** (encontrados por t8 y por el oráculo arreglado):
+  - Con frD igual a una fuente (`fadd 1,1,4`), el NaN de PPC (`ppcNaN`) leía la fuente ya pisada por el resultado:
+    con un NaN silencioso en frA y uno con señal en frB salía el de frB. Ahora el resultado va a un temporal y luego
+    a frD, solo en ese caso (una instrucción más).
+  - El doble redondeo de las de precisión simple (F1d) da otro resultado con 2^24 + 1 más un valor pequeño: t8 no
+    lo usa; sigue pendiente.
+- Una lección del asignador de registros de Emu68: el código que solo se ejecuta a veces (detrás de un salto) no puede
+  pedir temporales, porque pedirlo puede vaciar un registro PPC a su sitio y ese vaciado no se ejecutaría por el
+  otro camino; y con más de unos 10 temporales a la vez se vacía el propio registro que se está usando (FPSCR). Los
+  ayudantes de `PPC_FPU.cpp` reciben los temporales hechos y los piden en ámbitos cortos.
+- Las diecisiete pruebas, bien (con `FPSCR=0`: todas salvo p2, p2-o0, t3 y t8, que difieren solo en FPSCR). El banco
+  del 68k, igual que la referencia en los dos órdenes.
+
+## Dónde se queda F1 tras F1h y F1e (2026-11-07)
+
+Todo F1 hecho y probado contra qemu-ppc: las 17 pruebas en el banco (`PPC_FPSCR_EXCEPTIONS=1`) y 13 de 17 (todas
+salvo p2, p2-o0, t3 y t8) con el camino rápido (`FPSCR=0`). Lo nuevo del JIT está en `patches/emu68/0011-ppc-f1h.patch` (sobre el
+0010, que no cambia). Queda: el doble redondeo de las de precisión simple (F1d), `fres` y `frsqrte` (no están en el
+JIT), FR, las excepciones de la FPU habilitadas (MSR[FE0,FE1] y la excepción de programa), `fsqrt` sin probar, y
+mandar a Emu68 lo de 0011 que no es de DashOS (si el usuario quiere, como el PR #354).

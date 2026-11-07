@@ -7,6 +7,7 @@ jit-host/pruebas68k/*.exe
 jit-host/**/*.core
 jit-host/build-ref/
 jit-host/ppc/build/
+jit-host/ppc/build-rapido/
 jit-host/ppc/pruebas/*.elf
 jit-host/ppc/pruebas/oraculo
 jit-host/ppc/pruebas/t1*.s
@@ -15,4 +16,6 @@ jit-host/ppc/pruebas/t1*.map
 jit-host/ppc/pruebas/t2.*
 jit-host/ppc/pruebas/t3.*
 jit-host/ppc/pruebas/t4.*
+jit-host/ppc/pruebas/t[5-9].*
+jit-host/ppc/pruebas/__pycache__/
 jit-host/ppc/pruebas/p3.elf

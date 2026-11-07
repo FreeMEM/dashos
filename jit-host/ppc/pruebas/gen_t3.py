@@ -4,8 +4,8 @@
 Los operandos salen de una tabla (0, -0, 1, -1, 1.5, 0.1, 1e300, -1e-300, el menor denormal, el mayor doble,
 infinitos, un NaN silencioso y otro con señal...). Cada operación deja frD en la tabla de resultados (0x00100000,
 r2) con CR: registros de 12 bytes (frD, 8 bytes, y CR). Las de precisión simple, fsel, fneg, fabs, fnabs, frsp,
-fctiw, fctiwz y fcmpu, y también fctiw, frsp y fadd con los cuatro modos de redondeo (mtfsfi). FPSCR no se compara:
-el JIT no lleva sus bits de excepción.
+fctiw, fctiwz y fcmpu, y también fctiw, frsp y fadd con los cuatro modos de redondeo (mtfsfi). FPSCR no se compara
+caso a caso (eso lo hace t8, F1e), solo al final, como en todas las pruebas.
 
     python3 gen_t3.py > t3.s
 """
