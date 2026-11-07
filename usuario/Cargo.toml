@@ -160,3 +160,8 @@ name = "archivos"
 path = "src/bin/archivos.rs"
 test = false
 required-features = ["archivos"]
+
+[[bin]]
+name = "ficheros"
+path = "src/bin/ficheros.rs"
+test = false

@@ -1,0 +1,14 @@
+[package]
+name = "dashos-archivos-herramientas"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Herramientas de Linux para los discos de DashOS (S5)"
+
+[dependencies]
+redoxfs = { path = "../redoxfs", default-features = false, features = ["std"] }
+syscall = { package = "redox_syscall", version = "0.9.5" }
+
+[[bin]]
+name = "ver"
+path = "src/ver.rs"
