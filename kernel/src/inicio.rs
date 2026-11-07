@@ -28,12 +28,16 @@ static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
-    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
+    // El compositor nombra "entrada" antes que los controladores de USB: el primero que nombra un canal es quien lee
+    // (el servidor), y los demás le escriben con copias marcadas (U6).
     #[cfg(not(feature = "virt"))]
     ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "entrada"]),
     // En QEMU `virt` (U4) no hay buzón: la pantalla es la del firmware de UEFI, que llega en el árbol.
     #[cfg(feature = "virt")]
     ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["entrada"]),
+    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
+    // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
+    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS)], &["entrada"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
@@ -62,6 +66,51 @@ const APARATOS: &[(&str, &str, bool)] = &[
     ("usb", "brcm,bcm2708-usb", true),
     ("buzon", "brcm,bcm2835-mbox", false),
 ];
+
+/// Un xHCI en el PCIe genérico de ECAM ("pci-host-ecam-generic", el de QEMU `virt` y las máquinas con UEFI): (física
+/// y tamaño de su BAR 0, en páginas enteras). Mira el bus 0. Enciende la decodificación de memoria y el bus master, y
+/// mide la BAR escribiendo unos (con la decodificación apagada mientras). Solo si el ECAM y la BAR caen en la ventana
+/// de aparatos de la placa. Escrito con la especificación de PCI (espacio de configuración, cabecera de tipo 0) y la de
+/// xHCI (clase 0x0C0330).
+fn xhci_pci(d: &Dtb) -> Option<(u64, u64)> {
+    let n = d.compatible("pci-host-ecam-generic")?;
+    let (ecam, _) = d.reg_cpu(&n, 0)?;
+    if !crate::placa::es_periferico(ecam) {
+        return None;
+    }
+    let r = |dispositivo: u64, off: u64| crate::mmio::RegLe32::new(crate::mmu::virt((ecam + (dispositivo << 15) + off) as usize));
+    for dev in 0..32 {
+        if r(dev, 0).leer() == 0xffff_ffff {
+            continue;
+        }
+        if r(dev, 8).leer() >> 8 != 0x0C_0330 {
+            continue;
+        }
+        let (bar0, bar1) = (r(dev, 0x10), r(dev, 0x14));
+        let bajo = bar0.leer();
+        let es64 = bajo & 0x6 == 0x4;
+        let alto = if es64 { bar1.leer() } else { 0 };
+        let base = ((alto as u64) << 32) | (bajo & !0xf) as u64;
+        // Medir: decodificación apagada, unos, leer, y volver a poner.
+        let mando = r(dev, 4);
+        let antes = mando.leer() & 0xffff;
+        mando.escribir(antes & !0x7);
+        bar0.escribir(0xffff_ffff);
+        let mascara = bar0.leer() & !0xf;
+        bar0.escribir(bajo);
+        let tamano = (!mascara).wrapping_add(1) as u64;
+        // Memoria y bus master encendidos (los dos bits bajos del registro de mando; el de estado no se toca).
+        mando.escribir(antes | 0x6);
+        let paginas = tamano.max(memoria::PAGINA).div_ceil(memoria::PAGINA) * memoria::PAGINA;
+        if base == 0 || !crate::placa::es_periferico(base) || !crate::placa::es_periferico(base + paginas - 1) {
+            kprintln!("xhci: BAR en {:#x} fuera de la ventana de aparatos", base);
+            return None;
+        }
+        kprintln!("xhci: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", dev, base, tamano / 1024);
+        return Some((base, paginas));
+    }
+    None
+}
 
 /// La pantalla de un nodo `simple-framebuffer` con `status = "okay"`, si lo hay: (memoria, objeto con sus medidas).
 fn pantalla_del_firmware(d: &Dtb) -> Option<(Objeto, Objeto)> {
@@ -146,6 +195,13 @@ pub fn lanzar() -> bool {
         }
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Normal, 0)));
         apuntar(&mut llaves, "dma-gpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // El xHCI del PCIe genérico (U6), si lo hay: sus registros (la BAR 0) y un permiso DMA propio. En QEMU `virt` los
+    // aparatos del PCIe alcanzan toda la memoria; se les da la zona de DMA, como a los demás.
+    if let Some((fisica, tamano)) = xhci_pci(&d) {
+        apuntar(&mut llaves, "xhci", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+        apuntar(&mut llaves, "dma-xhci", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS

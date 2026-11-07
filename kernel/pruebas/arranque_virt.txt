@@ -8,6 +8,9 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 │   hola desde Rust en EL0 (DashOS, little-endian)
 │   [inicio] todo lanzado; se queda esperando
+# U6: el xHCI del PCIe (con highmem=off, por debajo de 4 GB), con un teclado y un ratón.
+~xhci: en el PCIe 0:1.0, registros en
+~│   [xhci] versión 1.00, 8 puertos, 2 con algo; reiniciado
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer

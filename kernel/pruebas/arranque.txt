@@ -17,8 +17,8 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 ~registro: la consola pasa a un proceso; el kernel deja el puerto serie
 │   [inicio] buzon lanzado en su grupo, con 4 llaves
-│   [inicio] usb lanzado en su grupo, con 4 llaves
 │   [inicio] compositor lanzado en su grupo, con 2 llaves
+│   [inicio] usb lanzado en su grupo, con 4 llaves
 │   [inicio] hola lanzado en su grupo, con 0 llaves
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 ~│   [inicio] hola acabó: clase 0, código 5

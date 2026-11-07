@@ -35,7 +35,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   o `virtio-gpu`.
 - [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
-- [ ] U6 **Controladores estándar.** xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+- [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe) y U6b (el servicio
+  `xhci` lo reinicia y ve los puertos). Falta U6c (anillos, dirección, teclado y ratón) y NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -175,3 +176,20 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   árbol, igual que antes. **No comprobado:** un portátil de verdad. Su ACPI trae más (varios grupos de núcleos, el
   SMMU, el DSDT con los aparatos) y su puerto serie no es siempre un PL011; el kernel aún escribe al principio en el
   PL011 de `virt` (`placa::SERIE`).
+
+### 2026-11-07 madrugada — U6a y U6b (xHCI)
+
+- **Kernel** (`inicio.rs`, `xhci_pci`): en el PCIe genérico de ECAM ("pci-host-ecam-generic") busca en el bus 0 un
+  aparato de clase 0x0C0330, mide su BAR 0, enciende la memoria y el bus master, y da a `inicio` sus registros y un
+  permiso DMA propio ("dma-xhci"). Solo si el ECAM y la BAR caen en la ventana de aparatos: en `virt` hace falta
+  `highmem=off` (si no, el ECAM está por encima de 256 GB). Con la especificación de PCI.
+- **Servicio `xhci`** (`usuario/src/bin/xhci.rs`, con la especificación xHCI 1.2): para el controlador, lo reinicia,
+  devuelve la cuarentena de su permiso y dice qué puertos tienen algo. En QEMU: versión 1.00, 8 puertos, el teclado y
+  el ratón en los puertos 5 y 6.
+- **`inicio`:** el compositor nombra "entrada" antes que los controladores USB, para ser quien lee (el servidor del
+  canal); el USB de la Pi y el xHCI le escriben con copias marcadas.
+- **Fallo encontrado de paso:** el compositor leía la entrada con un búfer de 16 bytes; el directorio de `inicio` (24)
+  daba `E_TAMANO`, se quedaba el primero de la cola y el compositor ya no leía nada. Ahora lee con 256 y no mira las
+  llaves si la lectura falla.
+- **Comprobado:** `arranque-virt` (con `qemu-xhci`, teclado y ratón) bien; en la Pi, `prueba` y `arranque` (dos
+  veces), bien.

@@ -278,7 +278,9 @@ fn principal() -> u64 {
     // El ratón mueve la ventana. La primera vez se comprueba el búfer visible.
     let (mut x, mut y) = (c.ventana.x as i32, c.ventana.y as i32);
     let mut primera = true;
-    let mut ev = [0u8; 16];
+    // Con sitio para cualquier mensaje (256 bytes): uno más grande que el búfer se quedaría el primero de la cola para
+    // siempre (el directorio de `inicio` mide 24).
+    let mut ev = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
         let (n, k) = dashos::canal_leer(entrada, &mut ev, &mut ll);
@@ -286,11 +288,11 @@ fn principal() -> u64 {
             return 0; // la entrada se cerró
         }
         // Un mensaje que no vale no para el compositor; las llaves que lleguen, fuera (M6).
-        for &l in ll.iter().take(k) {
-            dashos::cerrar(l);
-        }
         if n < 0 {
             continue;
+        }
+        for &l in ll.iter().take(k) {
+            dashos::cerrar(l);
         }
         if n != 8 || ev[0] != 2 {
             continue;
