@@ -181,3 +181,15 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   exacta con una instrucción más.
 - Worktree del clon de Emu68 en `.worktrees/emu68-upstream`. Si lo acepta, el parche 0010 se parte en lo de Emu68
   y lo de DashOS.
+
+### 2026-11-07 — AmigaOS 4.1 en QEMU, como oráculo
+
+- Jaime Cagigal le pasó al usuario (Telegram, 2026-10-24) una imagen de AmigaOS 4.1 Final Edition Update 2 para
+  QEMU `pegasos2` y el CD de instalación de Pegasos II (53.54). Están en `~/.cache/dashos-ppc/` (fuera del repo: son
+  comerciales, como el firmware `pegasos2.rom`; no se reparten ni se suben).
+- Arranca hasta el Workbench en `qemu-system-ppc` 11.1.3, sin ventana y con `-snapshot` (la imagen no cambia):
+  `cd ~/.cache/dashos-ppc/QEMU_AmigaOS && python3 ../arrancar_os4.py <dir>`. El script escribe `boot hd:0
+  amigaboot.of` en la consola de SmartFirmware, espera 90 segundos y guarda la pantalla (`<dir>/os4.ppm`) y la
+  salida serie (`<dir>/os4serie.txt`).
+- Uso: caja negra (regla 1), para ver qué hace un programa PPC en un sistema de verdad (WarpOS, después). No se
+  desensambla nada del sistema. MorphOS no venía; su ISO de prueba es pública si hace falta.
