@@ -50,6 +50,14 @@ static void manejador(int sig, siginfo_t *si, void *ucv)
         m->gregs[32] += 4;
         return;
     }
+    /* un trap (F1h, tw/twi): lo mismo que el vector 0x700 del banco (../host_ppc.cpp): r20 += 1, r21 = la dirección
+       de la instrucción, y sigue en la siguiente */
+    if (sig == SIGTRAP) {
+        m->gregs[20] = (uint32_t)(m->gregs[20] + 1);
+        m->gregs[21] = m->gregs[32];
+        m->gregs[32] += 4;
+        return;
+    }
     if (m->gregs[32] != 0) {
         printf("[REG] fallo en %08lx (dirección %p)\n", (unsigned long)m->gregs[32], si->si_addr);
         fflush(stdout);
@@ -102,6 +110,7 @@ int main(int argc, char **argv)
     sigaction(SIGSEGV, &sa, NULL);
     sigaction(SIGILL, &sa, NULL);
     sigaction(SIGBUS, &sa, NULL);
+    sigaction(SIGTRAP, &sa, NULL);
 
     __asm__ volatile("mr %0,2\n mr %1,13" : "=r"(r2_guardado), "=r"(r13_guardado));
     printf("[HOST] Programa %s (%d bytes)\n", argv[1], (int)n);

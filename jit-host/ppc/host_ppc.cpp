@@ -158,8 +158,33 @@ namespace Emu68::PPC { void PPCMainLoop(); }
    (pruebas/oraculo.c): 1, r3 = r3 * 2; 2, r3 = r3 + r4; 3, r3 = la suma de r3..r10. El resto, r3 = -1. */
 static int nativas;
 
+/* Excepciones (F1h): Emu68 salta a los vectores altos (0xfff00000 + tipo). El banco pone en 0x700 (programa: tw,
+   twi) y en 0xc00 (sc) una llamada nativa con el tipo y rfi; el manejador hace lo mismo que el oráculo con su señal:
+   - trap (SRR1 con 0x00020000): r20 += 1, r21 = la dirección de la instrucción (SRR0) y sigue en la siguiente;
+   - sc: como Linux en qemu-ppc con una llamada que no existe: r3 = ENOSYS (38) y SO de CR0 a 1.
+   Lo demás (otra excepción de programa) para el banco con 7. */
+static int excepciones;
+
+static void excepcion(Emu68::PPC::PPCState *ctx, uint32_t tipo)
+{
+    excepciones++;
+    if (tipo == 0x700 && (ctx->SRR1 & 0x00020000)) {
+        ctx->GPR[20]++;
+        ctx->GPR[21] = ctx->SRR0;
+        ctx->SRR0 += 4;
+    } else if (tipo == 0xc00) {
+        ctx->GPR[3] = 38;
+        ctx->CR |= 0x10000000;
+    } else {
+        kprintf("[REG] excepción %03x en %08x, SRR1 %08x\n", tipo, ctx->SRR0, ctx->SRR1);
+        flush_out();
+        sys6(SYS_exit_group, 7, 0, 0, 0, 0, 0);
+    }
+}
+
 extern "C" void dashos_ppc_native(Emu68::PPC::PPCState *ctx, uint32_t index)
 {
+    if (index == 0x700 || index == 0xc00) return excepcion(ctx, index);
     nativas++;
     uint32_t *r = ctx->GPR;
     switch (index) {
@@ -270,6 +295,13 @@ extern "C" void host_main(uint64_t *pila)
         sys6(SYS_exit_group, 1, 0, 0, 0, 0, 0);
     }
 
+    /* los vectores de excepción (F1h): llamada nativa con el tipo y rfi */
+    map(0xfff00000UL, 0x2000, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1);
+    for (uint32_t v : { 0x700u, 0xc00u }) {
+        ((uint32_t *)(0xfff00000UL + v))[0] = 0x04000000 | v;
+        ((uint32_t *)(0xfff00000UL + v))[1] = 0x4c000064;
+    }
+
     cache_setup();
     InitPPC();
 
@@ -301,7 +333,8 @@ extern "C" void host_main(uint64_t *pila)
         long f = sys6(SYS_openat, -100, (long)argv[2], 01 | 0100 | 01000, 0644, 0, 0);
         if (f >= 0) { sys6(SYS_write, f, (long)PPC_RAM, PPC_RAM_LEN, 0, 0, 0); sys6(SYS_close, f, 0, 0, 0, 0, 0); }
     }
-    kprintf("[HOST] Instrucciones PPC ejecutadas (aprox.): %d; llamadas nativas: %d\n", (int)ppc.INSN_COUNT, nativas);
+    kprintf("[HOST] Instrucciones PPC ejecutadas (aprox.): %d; llamadas nativas: %d; excepciones: %d\n", (int)ppc.INSN_COUNT,
+            nativas, excepciones);
     flush_out();
     sys6(SYS_exit_group, 0, 0, 0, 0, 0, 0);
 }

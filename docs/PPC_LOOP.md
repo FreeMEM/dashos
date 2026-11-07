@@ -224,3 +224,26 @@ de excepción de FPSCR. Después de F1 viene WarpOS/PowerUP (F2 en `S17-caja-pow
   Ahora `mul` de 32 bits; `mullwo` hace `smull` en un temporal para ver el desbordamiento y copia la palabra baja.
   Prueba nueva en t5 (el producto 0x10000 * 0x10010, de parte baja 0x00100000).
 - Las doce pruebas, bien.
+
+### 2026-11-07 — F1h (3): tw, twi y sc, por los vectores de excepción
+
+- Decisión: el banco no para en un trap ni en `sc` (como con lo que no se traduce), sino que deja que el JIT haga lo
+  que hace en Emu68: SRR0, SRR1 y MSR, y saltar al vector alto (0xfff00700, 0xfff00c00). `host_ppc.cpp` pone en esos
+  vectores una llamada nativa con el tipo y `rfi`, así que se prueban también la entrada, `rfi` y la vuelta. El
+  manejador hace lo mismo que el oráculo con su señal:
+  - trap (0x700 con el bit de trap en SRR1): r20 += 1, r21 = SRR0 (la dirección del trap) y SRR0 += 4. El oráculo
+    recoge SIGTRAP y hace lo mismo con el contexto de la señal.
+  - `sc` (0xc00): qemu-ppc ejecuta la llamada de Linux de r0, y no hay manera de cogerla antes; la prueba usa una que
+    no existe (r0 = 0x7777) y el banco responde como Linux: r3 = 38 (ENOSYS) y SO de CR0 a 1.
+  - Otra excepción de programa para el banco con "excepción" y código 7.
+- `pruebas/gen_t7.py` (t7, 1829 casos): `tw` con los 32 TO y 8 pares (con y sin signo), `twi` con los 32 TO, 7
+  valores y 7 inmediatos (cortos, largos y negativos, que Emu68 compara de tres maneras), y `sc` con 5 CR. Tras cada
+  trap: r20, r21 y r25, que se cambia en el mismo bloque justo antes; tras `sc`, r3, CR y r20 (+1 en la siguiente).
+- **Fallo del JIT de Emu68**: `tw`/`twi` condicionales emitían la salida por la excepción (que vacía los registros
+  y carga el puntero al contexto) sin guardar el estado del asignador, y el camino sin trap seguía como si los
+  registros sucios ya estuvieran guardados y el puntero cargado: con un registro sucio, el banco caía (SIGSEGV en la
+  dirección 0). Ahora `save()`/`restore()` alrededor, como `SupervisorCheck`.
+- **Mejora**: SRR1 lleva la causa de la excepción de programa (0x00020000 trap, 0x00040000 instrucción privilegiada,
+  como en el 603e/750); `emitException` tiene un argumento para eso. `rfi` borra de MSR los bits 17-23 (POW y esas
+  causas) en vez de solo POW, para que la causa no pase a MSR.
+- Las trece pruebas, bien.

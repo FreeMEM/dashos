@@ -13,6 +13,19 @@ index d0973bf..b238a26 100644
  int stwx(PPCTranslatorContext *tc, uint32_t opcode);
  int stwu(PPCTranslatorContext *tc, uint32_t opcode);
  int stwux(PPCTranslatorContext *tc, uint32_t opcode);
+diff --git a/include/emu68/ppc/PPCTranslatorContext.hpp b/include/emu68/ppc/PPCTranslatorContext.hpp
+index b109759..d3b6b24 100644
+--- a/include/emu68/ppc/PPCTranslatorContext.hpp
++++ b/include/emu68/ppc/PPCTranslatorContext.hpp
+@@ -89,7 +89,7 @@ public:
+     void setPCStart(uint32_t* pc) { tc_PPCCodeStart = pc; }
+     void flushPC();
+     void resetOffsetPC() { tc_pc_rel = 0; }
+-    void emitException(uint16_t type);
++    void emitException(uint16_t type, uint32_t srr1_bit = 0);   /* DashOS F1h: srr1_bit, the reason (one bit) */
+     void emitLocalExit(uint32_t insn_fixup);
+     void storeDirtyGPRs();
+     void storeDirtyFPRs();
 diff --git a/src/PPC_Arithmetic.cpp b/src/PPC_Arithmetic.cpp
 index 8def19b..67dd9c4 100644
 --- a/src/PPC_Arithmetic.cpp
@@ -329,6 +342,81 @@ index 2863ec5..5aafd17 100644
 +int stswx(PPCTranslatorContext *tc, uint32_t opcode) { return stringIndexed(tc, opcode, false); }
 +
  }
+diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
+index 7b1af7c..6021fb7 100644
+--- a/src/PPC_SystemInstructions.cpp
++++ b/src/PPC_SystemInstructions.cpp
+@@ -64,7 +64,7 @@ SupervisorCheck::SupervisorCheck(PPCTranslatorContext *t) : tc(t)
+ 
+         /* Now insert the program exception path - raise exception if RFI was not allowed */
+         uint32_t *exit_code_start = tc->save();
+-        tc->emitException(0x700);
++        tc->emitException(0x700, 0x00040000);   /* DashOS F1h: privileged instruction */
+         uint32_t *exit_code_end = tc->restore();
+         std::size_t exception_size = exit_code_end - exit_code_start;
+ 
+@@ -479,7 +479,7 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
+     {
+         /* All bits set, trap always */
+         tc->flushPC();
+-        tc->emitException(0x700);
++        tc->emitException(0x700, 0x00020000);   /* DashOS F1h: trap */
+         tc->emitStop();
+         return 1;
+     }
+@@ -520,9 +520,12 @@ int tw(PPCTranslatorContext *tc, uint32_t opcode)
+         locations[number_of_cases++] = tc->tc_CodePtr - 1;
+     }
+ 
+-    uint32_t *exit_code_start = tc->tc_CodePtr;
+-    tc->emitException(0x700);
+-    uint32_t *exit_code_end = tc->tc_CodePtr;
++    /* DashOS (F1h): the exception path flushes the registers; the allocator state must stay as it was for the
++       path that does not trap (as in SupervisorCheck), or a dirty register would be taken as already stored */
++    uint32_t *exit_code_start = tc->save();
++    tc->emitException(0x700, 0x00020000);
++    uint32_t *exit_code_end = tc->restore();
++    tc->tc_CodePtr = exit_code_end;
+ 
+     /* Insert additional exit points */
+     for (int i=0; i < number_of_cases; i++) {
+@@ -558,7 +561,7 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
+     {
+         /* All bits set, trap always */
+         tc->flushPC();
+-        tc->emitException(0x700);
++        tc->emitException(0x700, 0x00020000);   /* DashOS F1h: trap */
+         tc->emitStop();
+         return 1;
+     }
+@@ -611,9 +614,12 @@ int twi(PPCTranslatorContext *tc, uint32_t opcode)
+         locations[number_of_cases++] = tc->tc_CodePtr - 1;
+     }
+ 
+-    uint32_t *exit_code_start = tc->tc_CodePtr;
+-    tc->emitException(0x700);
+-    uint32_t *exit_code_end = tc->tc_CodePtr;
++    /* DashOS (F1h): the exception path flushes the registers; the allocator state must stay as it was for the
++       path that does not trap (as in SupervisorCheck), or a dirty register would be taken as already stored */
++    uint32_t *exit_code_start = tc->save();
++    tc->emitException(0x700, 0x00020000);
++    uint32_t *exit_code_end = tc->restore();
++    tc->tc_CodePtr = exit_code_end;
+ 
+     /* Insert additional exit points */
+     for (int i=0; i < number_of_cases; i++) {
+@@ -1024,9 +1030,9 @@ int rfi(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR tmp = GPR::allocate();
+ 
+     tc->emit({
+-        /* Load SRR1, clear POW bit, store into MSR */
++        /* Load SRR1, clear POW bit and the exception reasons (DashOS F1h: bits 17-23), store into MSR */
+         ldr_offset(ctx, tmp, __builtin_offsetof(PPCState, SRR1)),
+-        bic_immed(tmp, tmp, 1, 14),
++        bic_immed(tmp, tmp, 7, 15),
+         str_offset(ctx, tmp, __builtin_offsetof(PPCState, MSR)),
+ 
+         /* Load SRR0, store into PC */
 diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
 index 22c5be6..103d293 100644
 --- a/src/PPC_Translator.cpp
@@ -380,3 +468,43 @@ index 22c5be6..103d293 100644
          //case 0b1011010111: return EMIT_stfdx(tc, opcode);     // FPU
          
          default: return -1;
+diff --git a/src/PPC_TranslatorContext.cpp b/src/PPC_TranslatorContext.cpp
+index 7179331..b81150d 100644
+--- a/src/PPC_TranslatorContext.cpp
++++ b/src/PPC_TranslatorContext.cpp
+@@ -18,7 +18,7 @@
+ 
+ namespace Emu68::PPC {
+ 
+-void PPCTranslatorContext::emitException(uint16_t type)
++void PPCTranslatorContext::emitException(uint16_t type, uint32_t srr1_bit)
+ {
+     /* When entering exception, all dirty registers must be stored! */
+     flushAllFPRs();
+@@ -38,10 +38,23 @@ void PPCTranslatorContext::emitException(uint16_t type)
+     }
+ #endif
+ 
++    emit(ldr_offset(ctx, tmp, __builtin_offsetof(PPCState, MSR)));
++
++    /* DashOS (F1h): the reason of a program exception in SRR1 (0x00020000 trap, 0x00040000 privileged instruction) */
++    if (srr1_bit) {
++        uint8_t ror = (32 - __builtin_ctz(srr1_bit)) & 31;
++        emit({
++            orr_immed(tmp, tmp, 1, ror),
++            str_offset(ctx, tmp, __builtin_offsetof(PPCState, SRR1)),
++            bic_immed(tmp, tmp, 1, ror)
++        });
++    }
++    else {
++        emit(str_offset(ctx, tmp, __builtin_offsetof(PPCState, SRR1)));
++    }
++
+     emit({
+-        /* Store MSR into SRR1, Store PC into SRR0 */
+-        ldr_offset(ctx, tmp, __builtin_offsetof(PPCState, MSR)),
+-        str_offset(ctx, tmp, __builtin_offsetof(PPCState, SRR1)),
++        /* Store PC into SRR0 */
+         str_offset(ctx, REG_PC, __builtin_offsetof(PPCState, SRR0)),
+         
+         /* Set supervisor mode in MSR */
