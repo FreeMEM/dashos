@@ -1,0 +1,952 @@
+diff --git a/include/A64.h b/include/A64.h
+index 9eadc76..85ba463 100644
+--- a/include/A64.h
++++ b/include/A64.h
+@@ -688,6 +688,7 @@ static inline uint32_t ftosidrz(uint8_t s_dst, uint8_t d_src) { return ftosidrz_
+ 
+ 
+ #include <RegisterAllocator.h>
++#include "M68k_Endian.h"   /* DashOS (U7) */
+ 
+ static inline __attribute__((always_inline))
+ void EMIT_GetFPUFlags(struct TranslatorContext *ctx, uint8_t fpsr)
+diff --git a/include/M68k_Endian.h b/include/M68k_Endian.h
+new file mode 100644
+index 0000000..7662800
+--- /dev/null
++++ b/include/M68k_Endian.h
+@@ -0,0 +1,114 @@
++/*
++    DashOS (U7): la memoria del 68k es siempre big-endian.
++
++    En una CPU que no tiene big-endian en EL0 (las de Apple), el JIT se compila en little-endian y da la vuelta a los
++    bytes en cada acceso de 16, 32 o 64 bits a la memoria del 68k. Estas funciones lo hacen. En big-endian (la Pi,
++    QEMU) no emiten nada: el código generado es el de siempre.
++
++    Las cargas con signo de 16 bits (LDRSH) no sirven en little-endian: extienden el signo del byte que no es. Se
++    cargan sin signo (LDRH_BE*), se giran y se extienden (EMIT_LoadBE con ext).
++
++    This Source Code Form is subject to the terms of the
++    Mozilla Public License, v. 2.0. If a copy of the MPL was not distributed
++    with this file, You can obtain one at http://mozilla.org/MPL/2.0/.
++*/
++
++#ifndef _M68K_ENDIAN_H
++#define _M68K_ENDIAN_H
++
++#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++#define EMU68_HOST_LE 1
++#else
++#define EMU68_HOST_LE 0
++#endif
++
++enum { BE_UNSIGNED = 0, BE_SXT32 = 1, BE_SXT64 = 2 };
++
++/* Las uniones { uint64_t u64; uint16_t u16[4]; } con que el JIT parte una dirección de C en cuatro MOVZ/MOVK cuentan
++   u16[0] como la parte alta, que es así solo en big-endian. U16IDX(n): la parte n desde arriba en los dos órdenes. */
++#define U16IDX(n) (EMU68_HOST_LE ? 3 - (n) : (n))
++
++/* Instrucciones de más que pone EMIT_LoadBE (para los saltos de distancia fija que la rodean) */
++static inline __attribute__((always_inline)) int LoadBE_Count(int size, int ext)
++{
++    if (!EMU68_HOST_LE || size < 2)
++        return 0;
++    return (size == 2 && ext != BE_UNSIGNED) ? 2 : 1;
++}
++
++/* Tras cargar `size` bytes (2, 4 u 8) de la memoria del 68k en `reg`: el valor en el orden de la CPU. Con ext, la
++   carga de 16 bits fue sin signo y se extiende a 32 (BE_SXT32) o 64 bits (BE_SXT64). */
++static inline __attribute__((always_inline)) void EMIT_LoadBE(struct TranslatorContext *ctx, int size, uint8_t reg, int ext)
++{
++    if (!EMU68_HOST_LE)
++        return;
++    switch (size)
++    {
++        case 2:
++            EMIT(ctx, rev16(reg, reg));
++            if (ext == BE_SXT32)
++                EMIT(ctx, sxth(reg, reg));
++            else if (ext == BE_SXT64)
++                EMIT(ctx, sxth64(reg, reg));
++            break;
++        case 4:
++            EMIT(ctx, rev(reg, reg));
++            break;
++        case 8:
++            EMIT(ctx, rev64(reg, reg));
++            break;
++    }
++}
++
++/* Lo mismo, como instrucción suelta para listas de EMIT: en big-endian, un NOP no se puede poner (cambiaría el código),
++   así que solo vale donde se sabe que es little-endian. */
++static inline __attribute__((always_inline)) uint32_t rev_be(int size, uint8_t rd, uint8_t rn)
++{
++    return size == 2 ? rev16(rd, rn) : size == 4 ? rev(rd, rn) : rev64(rd, rn);
++}
++
++/* Antes de guardar `size` bytes de `reg` en la memoria del 68k: el registro que hay que guardar. En little-endian, un
++   temporal con los bytes girados; en big-endian, `reg`. Se suelta con EMIT_StoreBE_Done(ctx, devuelto, reg). */
++static inline __attribute__((always_inline)) uint8_t EMIT_StoreBE(struct TranslatorContext *ctx, int size, uint8_t reg)
++{
++    if (!EMU68_HOST_LE || size < 2)
++        return reg;
++    uint8_t tmp = RA_AllocARMRegister(ctx);
++    EMIT(ctx, rev_be(size, tmp, reg));
++    return tmp;
++}
++
++static inline __attribute__((always_inline)) void EMIT_StoreBE_Done(struct TranslatorContext *ctx, uint8_t used, uint8_t reg)
++{
++    if (used != reg)
++        RA_FreeARMRegister(ctx, used);
++}
++
++/* Instrucciones de más que pone EMIT_StoreBE */
++static inline __attribute__((always_inline)) int StoreBE_Count(int size)
++{
++    return (EMU68_HOST_LE && size >= 2) ? 1 : 0;
++}
++
++/* Dar la vuelta en el sitio (un registro que ya es temporal), o nada en big-endian */
++static inline __attribute__((always_inline)) void EMIT_SwapBE(struct TranslatorContext *ctx, int size, uint8_t reg)
++{
++    if (EMU68_HOST_LE && size >= 2)
++        EMIT(ctx, rev_be(size, reg, reg));
++}
++
++#if EMU68_HOST_LE
++#define ldrsh_offset_be(rn, rt, off)            ldrh_offset(rn, rt, off)
++#define ldursh_offset_be(rn, rt, off)           ldurh_offset(rn, rt, off)
++#define ldrsh_offset_postindex_be(rn, rt, off)  ldrh_offset_postindex(rn, rt, off)
++#define ldrsh_offset_preindex_be(rn, rt, off)   ldrh_offset_preindex(rn, rt, off)
++#define ldrsh_regoffset_be(rn, rt, rm, e, l)    ldrh_regoffset(rn, rt, rm, e, l)
++#else
++#define ldrsh_offset_be(rn, rt, off)            ldrsh_offset(rn, rt, off)
++#define ldursh_offset_be(rn, rt, off)           ldursh_offset(rn, rt, off)
++#define ldrsh_offset_postindex_be(rn, rt, off)  ldrsh_offset_postindex(rn, rt, off)
++#define ldrsh_offset_preindex_be(rn, rt, off)   ldrsh_offset_preindex(rn, rt, off)
++#define ldrsh_regoffset_be(rn, rt, rm, e, l)    ldrsh_regoffset(rn, rt, rm, e, l)
++#endif
++
++#endif /* _M68K_ENDIAN_H */
+diff --git a/src/M68k_LINE4.c b/src/M68k_LINE4.c
+index ec7c41d..4702319 100644
+--- a/src/M68k_LINE4.c
++++ b/src/M68k_LINE4.c
+@@ -1497,10 +1497,10 @@ static uint32_t EMIT_RESET(struct TranslatorContext *ctx, uint16_t opcode)
+     EMIT(ctx, str64_offset(31, 30, 240));
+ 
+     EMIT(ctx, 
+-        mov64_immed_u16(1, u.u16[3], 0),
+-        movk64_immed_u16(1, u.u16[2], 1),
+-        movk64_immed_u16(1, u.u16[1], 2),
+-        movk64_immed_u16(1, u.u16[0], 3),
++        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+         blr(1)
+     );
+@@ -1987,10 +1987,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 EMIT(ctx, str64_offset(31, 30, 240));
+ 
+                 EMIT(ctx, 
+-                    mov64_immed_u16(1, u.u16[3], 0),
+-                    movk64_immed_u16(1, u.u16[2], 1),
+-                    movk64_immed_u16(1, u.u16[1], 2),
+-                    movk64_immed_u16(1, u.u16[0], 3),
++                    mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+                     blr(1)
+                 );
+@@ -2034,10 +2034,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                     ubfx(tmp2, reg, 0, 2),
+                     str_offset(tmp, tmp2, 0)
+                 );
+@@ -2053,10 +2053,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 {
+                     u.u64 = (uintptr_t)&disasm;
+                     EMIT(ctx, 
+-                        mov64_immed_u16(tmp, u.u16[3], 0),
+-                        movk64_immed_u16(tmp, u.u16[2], 1),
+-                        movk64_immed_u16(tmp, u.u16[1], 2),
+-                        movk64_immed_u16(tmp, u.u16[0], 3),
++                        mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                         ubfx(tmp2, reg, 2, 1),
+                         str_offset(tmp, tmp2, 0)
+                     );
+@@ -2069,10 +2069,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug_range_min;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                     str_offset(tmp, reg, 0)
+                 );
+                 RA_FreeARMRegister(ctx, tmp);
+@@ -2081,10 +2081,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug_range_max;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                     str_offset(tmp, reg, 0)
+                 );
+                 RA_FreeARMRegister(ctx, tmp);
+@@ -2298,10 +2298,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+ 
+                     ldr_offset(tmp, tmp2, 0),
+                     ubfx(reg, tmp2, 0, 2)
+@@ -2316,10 +2316,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 {
+                     u.u64 = (uintptr_t)&disasm;
+                     EMIT(ctx, 
+-                        mov64_immed_u16(tmp, u.u16[3], 0),
+-                        movk64_immed_u16(tmp, u.u16[2], 1),
+-                        movk64_immed_u16(tmp, u.u16[1], 2),
+-                        movk64_immed_u16(tmp, u.u16[0], 3),
++                        mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                         ldr_offset(tmp, tmp2, 0)
+                     );
+                 }
+@@ -2336,10 +2336,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug_range_min;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                     ldr_offset(tmp, reg, 0)
+                 );
+                 RA_FreeARMRegister(ctx, tmp);
+@@ -2348,10 +2348,10 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 tmp = RA_AllocARMRegister(ctx);
+                 u.u64 = (uintptr_t)&debug_range_max;
+                 EMIT(ctx, 
+-                    mov64_immed_u16(tmp, u.u16[3], 0),
+-                    movk64_immed_u16(tmp, u.u16[2], 1),
+-                    movk64_immed_u16(tmp, u.u16[1], 2),
+-                    movk64_immed_u16(tmp, u.u16[0], 3),
++                    mov64_immed_u16(tmp, u.u16[U16IDX(3)], 0),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(2)], 1),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(1)], 2),
++                    movk64_immed_u16(tmp, u.u16[U16IDX(0)], 3),
+                     ldr_offset(tmp, reg, 0)
+                 );
+                 RA_FreeARMRegister(ctx, tmp);
+diff --git a/src/M68k_LINEF.c b/src/M68k_LINEF.c
+index c5422c2..08c8471 100644
+--- a/src/M68k_LINEF.c
++++ b/src/M68k_LINEF.c
+@@ -827,10 +827,10 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                             ldr64_offset(int_reg, 0, 0),
+                             ldr64_offset(int_reg, 1, 8),
+                         
+-                            mov64_immed_u16(2, u.u16[3], 0),
+-                            movk64_immed_u16(2, u.u16[2], 1),
+-                            movk64_immed_u16(2, u.u16[1], 2),
+-                            movk64_immed_u16(2, u.u16[0], 3),
++                            mov64_immed_u16(2, u.u16[U16IDX(3)], 0),
++                            movk64_immed_u16(2, u.u16[U16IDX(2)], 1),
++                            movk64_immed_u16(2, u.u16[U16IDX(1)], 2),
++                            movk64_immed_u16(2, u.u16[U16IDX(0)], 3),
+ 
+                             blr(2),
+ 
+@@ -916,10 +916,10 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                             ldur64_offset(int_reg, 0, imm_offset),
+                             ldur64_offset(int_reg, 1, imm_offset + 8),
+                         
+-                            mov64_immed_u16(2, u.u16[3], 0),
+-                            movk64_immed_u16(2, u.u16[2], 1),
+-                            movk64_immed_u16(2, u.u16[1], 2),
+-                            movk64_immed_u16(2, u.u16[0], 3),
++                            mov64_immed_u16(2, u.u16[U16IDX(3)], 0),
++                            movk64_immed_u16(2, u.u16[U16IDX(2)], 1),
++                            movk64_immed_u16(2, u.u16[U16IDX(1)], 2),
++                            movk64_immed_u16(2, u.u16[U16IDX(0)], 3),
+ 
+                             blr(2),
+                         
+@@ -1350,10 +1350,10 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         mov_reg(19, int_reg),
+                         mov_immed_s8(0, k),
+                     
+-                        mov64_immed_u16(1, u.u16[3], 0),
+-                        movk64_immed_u16(1, u.u16[2], 1),
+-                        movk64_immed_u16(1, u.u16[1], 2),
+-                        movk64_immed_u16(1, u.u16[0], 3),
++                        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+                         blr(1),
+                 
+@@ -1387,10 +1387,10 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                     EMIT(ctx, 
+                         mov_immed_s8(0, k),
+ 
+-                        mov64_immed_u16(1, u.u16[3], 0),
+-                        movk64_immed_u16(1, u.u16[2], 1),
+-                        movk64_immed_u16(1, u.u16[1], 2),
+-                        movk64_immed_u16(1, u.u16[0], 3),
++                        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+                         blr(1),
+ 
+@@ -1429,10 +1429,10 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         mov_reg(0, k),
+                         mov_reg(19, int_reg),
+ 
+-                        mov64_immed_u16(1, u.u16[3], 0),
+-                        movk64_immed_u16(1, u.u16[2], 1),
+-                        movk64_immed_u16(1, u.u16[1], 2),
+-                        movk64_immed_u16(1, u.u16[0], 3),
++                        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+                         blr(1),
+ 
+@@ -1466,10 +1466,10 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                     }
+ 
+                     EMIT(ctx, 
+-                        mov64_immed_u16(1, u.u16[3], 0),
+-                        movk64_immed_u16(1, u.u16[2], 1),
+-                        movk64_immed_u16(1, u.u16[1], 2),
+-                        movk64_immed_u16(1, u.u16[0], 3),
++                        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++                        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++                        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++                        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+                         blr(1),
+ 
+@@ -2130,10 +2130,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         else {
+             u.u64 = (uintptr_t)constants;
+             EMIT(ctx, 
+-                mov64_immed_u16(0, u.u16[3], 0),
+-                movk64_immed_u16(0, u.u16[2], 1),
+-                movk64_immed_u16(0, u.u16[1], 2),
+-                movk64_immed_u16(0, u.u16[0], 3),
++                mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++                movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++                movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++                movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+                 fldd_pimm(fp_dst, 0, offset)
+             );
+         }
+@@ -2942,10 +2942,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3186,10 +3186,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3244,10 +3244,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3363,10 +3363,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3418,10 +3418,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3473,10 +3473,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3528,10 +3528,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3583,10 +3583,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3638,10 +3638,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3693,10 +3693,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3748,10 +3748,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3803,10 +3803,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3858,10 +3858,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3913,10 +3913,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -3968,10 +3968,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -4023,10 +4023,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -4078,10 +4078,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+         
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -4133,10 +4133,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -5052,10 +5052,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -5107,10 +5107,10 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+         EMIT_SaveRegFrame(ctx, RA_GetTempAllocMask() | REG_PROTECT);
+ 
+         EMIT(ctx, 
+-            mov64_immed_u16(0, u.u16[3], 0),
+-            movk64_immed_u16(0, u.u16[2], 1),
+-            movk64_immed_u16(0, u.u16[1], 2),
+-            movk64_immed_u16(0, u.u16[0], 3),
++            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+ 
+             blr(0),
+ 
+@@ -5381,10 +5381,10 @@ uint32_t EMIT_lineF(struct TranslatorContext *ctx)
+ 
+                         EMIT(ctx, 
+                             stp64_preindex(31, 0, 30, -16),
+-                            mov64_immed_u16(0, u.u16[3], 0),
+-                            movk64_immed_u16(0, u.u16[2], 1),
+-                            movk64_immed_u16(0, u.u16[1], 2),
+-                            movk64_immed_u16(0, u.u16[0], 3),
++                            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++                            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++                            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++                            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+                             blr(0),
+                             ldp64_postindex(31, 0, 30, 16)
+                         );
+@@ -5418,10 +5418,10 @@ uint32_t EMIT_lineF(struct TranslatorContext *ctx)
+                 EMIT(ctx, sub_immed(1, REG_PC, -off));
+ 
+             EMIT(ctx, 
+-                mov64_immed_u16(3, u.u16[3], 0),
+-                movk64_immed_u16(3, u.u16[2], 1),
+-                movk64_immed_u16(3, u.u16[1], 2),
+-                movk64_immed_u16(3, u.u16[0], 3),
++                mov64_immed_u16(3, u.u16[U16IDX(3)], 0),
++                movk64_immed_u16(3, u.u16[U16IDX(2)], 1),
++                movk64_immed_u16(3, u.u16[U16IDX(1)], 2),
++                movk64_immed_u16(3, u.u16[U16IDX(0)], 3),
+                 adr(2, 4*2),
+                 br(3)
+             );
+@@ -5496,10 +5496,10 @@ uint32_t EMIT_lineF(struct TranslatorContext *ctx)
+ 
+                         EMIT(ctx, 
+                             stp64_preindex(31, 0, 30, -16),
+-                            mov64_immed_u16(0, u.u16[3], 0),
+-                            movk64_immed_u16(0, u.u16[2], 1),
+-                            movk64_immed_u16(0, u.u16[1], 2),
+-                            movk64_immed_u16(0, u.u16[0], 3),
++                            mov64_immed_u16(0, u.u16[U16IDX(3)], 0),
++                            movk64_immed_u16(0, u.u16[U16IDX(2)], 1),
++                            movk64_immed_u16(0, u.u16[U16IDX(1)], 2),
++                            movk64_immed_u16(0, u.u16[U16IDX(0)], 3),
+                             blr(0),
+                             ldp64_postindex(31, 0, 30, 16)
+                         );
+@@ -5533,10 +5533,10 @@ uint32_t EMIT_lineF(struct TranslatorContext *ctx)
+                 EMIT(ctx, sub_immed(1, REG_PC, -off));
+ 
+             EMIT(ctx, 
+-                mov64_immed_u16(3, u.u16[3], 0),
+-                movk64_immed_u16(3, u.u16[2], 1),
+-                movk64_immed_u16(3, u.u16[1], 2),
+-                movk64_immed_u16(3, u.u16[0], 3),
++                mov64_immed_u16(3, u.u16[U16IDX(3)], 0),
++                movk64_immed_u16(3, u.u16[U16IDX(2)], 1),
++                movk64_immed_u16(3, u.u16[U16IDX(1)], 2),
++                movk64_immed_u16(3, u.u16[U16IDX(0)], 3),
+                 adr(2, 4*2),
+                 br(3)
+             );
+diff --git a/src/M68k_Translator.c b/src/M68k_Translator.c
+index 58e0643..19069f2 100644
+--- a/src/M68k_Translator.c
++++ b/src/M68k_Translator.c
+@@ -134,10 +134,10 @@ static void EMIT_DashOSNativeCall(struct TranslatorContext *ctx, uint16_t index)
+     EMIT(ctx,
+         add64_immed(0, 31, 0),                  /* x0 = sp: la copia de los registros */
+         mov_immed_u16(1, index, 0),             /* w1 = número de función */
+-        mov64_immed_u16(2, u.u16[3], 0),
+-        movk64_immed_u16(2, u.u16[2], 1),
+-        movk64_immed_u16(2, u.u16[1], 2),
+-        movk64_immed_u16(2, u.u16[0], 3),
++        mov64_immed_u16(2, u.u16[U16IDX(3)], 0),
++        movk64_immed_u16(2, u.u16[U16IDX(2)], 1),
++        movk64_immed_u16(2, u.u16[U16IDX(1)], 2),
++        movk64_immed_u16(2, u.u16[U16IDX(0)], 3),
+         blr(2)
+     );
+ 
+@@ -1221,10 +1221,10 @@ void EMIT_InjectPrintContext(struct TranslatorContext *ctx)
+ 
+         mov_simd_to_reg(0, CTX_POINTER),
+ 
+-        mov64_immed_u16(1, u.u16[3], 0),
+-        movk64_immed_u16(1, u.u16[2], 1),
+-        movk64_immed_u16(1, u.u16[1], 2),
+-        movk64_immed_u16(1, u.u16[0], 3),
++        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+         blr(1),
+ 
+@@ -1268,10 +1268,10 @@ void EMIT_InjectDebugStringV(struct TranslatorContext *ctx, const char * restric
+     EMIT(ctx, 
+         adr(0, 48),
+ 
+-        mov64_immed_u16(1, u.u16[3], 0),
+-        movk64_immed_u16(1, u.u16[2], 1),
+-        movk64_immed_u16(1, u.u16[1], 2),
+-        movk64_immed_u16(1, u.u16[0], 3),
++        mov64_immed_u16(1, u.u16[U16IDX(3)], 0),
++        movk64_immed_u16(1, u.u16[U16IDX(2)], 1),
++        movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
++        movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+         blr(1)
+     );
+diff --git a/src/cache.c b/src/cache.c
+index e5303ff..4a5d84d 100644
+--- a/src/cache.c
++++ b/src/cache.c
+@@ -223,7 +223,7 @@ uint128_t cache_read_128(enum CacheType type, uint32_t address)
+     int way = -1;
+ 
+     if (address >= 0x01000000)
+-        return *(uint128_t *)(uintptr_t)address;
++        return (uint128_t){ BE64(((uint128_t *)(uintptr_t)address)->hi), BE64(((uint128_t *)(uintptr_t)address)->lo) };
+ 
+     D(kprintf("[CACHE] %cCache read_128(%08lx)\n", type == ICACHE ? 'I':'D', address));
+ 
+@@ -285,7 +285,7 @@ uint128_t cache_read_128(enum CacheType type, uint32_t address)
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    uint128_t data = cache->c_Lines[set][way].cl_128;
++    uint128_t data = { BE64(cache->c_Lines[set][way].cl_128.hi), BE64(cache->c_Lines[set][way].cl_128.lo) };
+ 
+     D(kprintf("[CACHE]   => %016lx%016lx\n", data.hi, data.lo));
+ 
+@@ -300,7 +300,7 @@ uint64_t cache_read_64(enum CacheType type, uint32_t address)
+     int way = -1;
+ 
+     if (address >= 0x01000000)
+-        return *(uint64_t *)(uintptr_t)address;
++        return BE64(*(uint64_t *)(uintptr_t)address);
+ 
+     D(kprintf("[CACHE] %cCache read_64(%08lx)\n", type == ICACHE ? 'I':'D', address));
+ 
+@@ -400,7 +400,7 @@ uint64_t cache_read_64(enum CacheType type, uint32_t address)
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    uint64_t data = *(uint64_t *)&cache->c_Lines[set][way].cl_8[address & 15];
++    uint64_t data = BE64(*(uint64_t *)&cache->c_Lines[set][way].cl_8[address & 15]);
+ 
+     D(kprintf("[CACHE]   => %016lx\n", data));
+ 
+@@ -415,7 +415,7 @@ uint32_t cache_read_32(enum CacheType type, uint32_t address)
+     int way = -1;
+ 
+     if (address >= 0x01000000)
+-        return *(uint32_t *)(uintptr_t)address;
++        return BE32(*(uint32_t *)(uintptr_t)address);
+ 
+     D(kprintf("[CACHE] %cCache read_32(%08lx)\n", type == ICACHE ? 'I':'D', address));
+ 
+@@ -493,7 +493,7 @@ uint32_t cache_read_32(enum CacheType type, uint32_t address)
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    uint32_t data = *(uint32_t *)&cache->c_Lines[set][way].cl_8[address & 15];
++    uint32_t data = BE32(*(uint32_t *)&cache->c_Lines[set][way].cl_8[address & 15]);
+     D(kprintf("[CACHE]   => %08x\n", data));
+ 
+     return data;
+@@ -507,7 +507,7 @@ uint16_t cache_read_16(enum CacheType type, uint32_t address)
+     int way = -1;
+ 
+     if (address >= 0x01000000)
+-        return *(uint16_t *)(uintptr_t)address;
++        return BE16(*(uint16_t *)(uintptr_t)address);
+ 
+     D(kprintf("[CACHE] %cCache read_16(%08lx)\n", type == ICACHE ? 'I':'D', address));
+ 
+@@ -569,7 +569,7 @@ uint16_t cache_read_16(enum CacheType type, uint32_t address)
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    uint16_t data = *(uint16_t *)(void *)&cache->c_Lines[set][way].cl_8[address & 15];
++    uint16_t data = BE16(*(uint16_t *)(void *)&cache->c_Lines[set][way].cl_8[address & 15]);
+     D(kprintf("[CACHE]   => %04x\n", data));
+ 
+     return data;
+@@ -712,7 +712,7 @@ int cache_write_128(enum CacheType type, uint32_t address, uint128_t data, uint8
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    cache->c_Lines[set][way].cl_128 = data;
++    cache->c_Lines[set][way].cl_128 = (uint128_t){ BE64(data.hi), BE64(data.lo) };
+ 
+     if (write_back)
+     {
+@@ -722,7 +722,7 @@ int cache_write_128(enum CacheType type, uint32_t address, uint128_t data, uint8
+     else
+     {
+         /* Write-through cache performs direct write to memory, cache line remains not-dirty */
+-        *(uint128_t *)(uintptr_t)address = data;
++        *(uint128_t *)(uintptr_t)address = (uint128_t){ BE64(data.hi), BE64(data.lo) };
+     }
+ 
+     return 1;
+@@ -798,7 +798,7 @@ int cache_write_64(enum CacheType type, uint32_t address, uint64_t data, uint8_t
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    (*(uint64_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = data;
++    (*(uint64_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = BE64(data);
+ 
+     if (write_back)
+     {
+@@ -823,7 +823,7 @@ int cache_write_64(enum CacheType type, uint32_t address, uint64_t data, uint8_t
+     else
+     {
+         /* Write-through cache performs direct write to memory, cache line remains not-dirty */
+-        *(uint64_t *)(uintptr_t)address = data;
++        *(uint64_t *)(uintptr_t)address = BE64(data);
+     }
+ 
+     return 1;
+@@ -899,7 +899,7 @@ int cache_write_32(enum CacheType type, uint32_t address, uint32_t data, uint8_t
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    (*(uint32_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = data;
++    (*(uint32_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = BE32(data);
+ 
+     if (write_back)
+     {
+@@ -929,7 +929,7 @@ int cache_write_32(enum CacheType type, uint32_t address, uint32_t data, uint8_t
+     else
+     {
+         /* Write-through cache performs direct write to memory, cache line remains not-dirty */
+-        *(uint32_t *)(uintptr_t)address = data;
++        *(uint32_t *)(uintptr_t)address = BE32(data);
+     }
+ 
+     return 1;
+@@ -1006,7 +1006,7 @@ int cache_write_16(enum CacheType type, uint32_t address, uint16_t data, uint8_t
+     /* Mark LRUm */
+     cache_mark_hit(cache, set, way);
+ 
+-    (*(uint16_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = data;
++    (*(uint16_t *)(void*)&cache->c_Lines[set][way].cl_8[address & 15]) = BE16(data);
+ 
+     if (write_back)
+     {
+@@ -1036,7 +1036,7 @@ int cache_write_16(enum CacheType type, uint32_t address, uint16_t data, uint8_t
+     else
+     {
+         /* Write-through cache performs direct write to memory, cache line remains not-dirty */
+-        *(uint16_t*)(uintptr_t)address = data;
++        *(uint16_t*)(uintptr_t)address = BE16(data);
+     }
+ 
+     return 1;

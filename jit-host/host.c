@@ -1,8 +1,15 @@
 /*
-    DashOS: banco de pruebas del JIT de Emu68 en Linux AArch64 big-endian.
+    DashOS: banco de pruebas del JIT de Emu68 en Linux AArch64.
 
     Ejecuta un trozo de código 68k con el traductor de Emu68, sin el resto de Emu68
-    (arranque, MMU, controladores). Se ejecuta en shiva con qemu-aarch64_be.
+    (arranque, MMU, controladores). Se ejecuta con qemu-aarch64_be o, en little-endian (U7),
+    con qemu-aarch64. La memoria del 68k es siempre big-endian: el banco la escribe y la lee
+    con pon16/pon32/lee32.
+
+    jit-host [programa.bin [volcado [memoria]]]: además de las pruebas de siempre, carga un binario 68k
+    plano en $140000 (lejos de lo que ya está traducido), lo ejecuta y escribe sus registros y una suma de toda su memoria (para
+    comparar el JIT big-endian con el little-endian). Con volcado, guarda ahí el código ARM de
+    cada bloque traducido (para comparar el código que genera el JIT antes y después de un cambio).
 
     No usa libc: las llamadas al sistema van a mano, y las funciones de cadena y memoria
     son las de src/support.c de Emu68.
@@ -32,6 +39,9 @@ static long sys6(long n, long a, long b, long c, long d, long e, long f)
     return x0;
 }
 
+#define SYS_openat       56
+#define SYS_close        57
+#define SYS_read         63
 #define SYS_write        64
 #define SYS_exit_group   94
 #define SYS_mmap         222
@@ -55,6 +65,28 @@ static void *map(uintptr_t addr, size_t len, int prot, int flags, int fd)
     }
     return (void *)r;
 }
+
+/* --- La memoria del 68k, en big-endian --- */
+
+static inline uint16_t be16(uint16_t v)
+{
+#ifdef __AARCH64EB__
+    return v;
+#else
+    return __builtin_bswap16(v);
+#endif
+}
+static inline uint32_t be32(uint32_t v)
+{
+#ifdef __AARCH64EB__
+    return v;
+#else
+    return __builtin_bswap32(v);
+#endif
+}
+static void pon16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = be16(v); }
+static void pon32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = be32(v); }
+static uint32_t lee32(uintptr_t a) { return be32(*(volatile uint32_t *)a); }
 
 /* --- Salida de texto --- */
 
@@ -109,6 +141,19 @@ void M68K_PrintContext(struct M68KState *m68k)
 
 void MainLoop(void);
 
+/* --- Volcado del código traducido (U7) --- */
+
+static long volcado_fd = -1;
+
+/* La llama M68k_Translator.c (parche 0003) con cada bloque nuevo: dirección 68k, código ARM y su longitud. */
+void dashos_jit_unit(uint32_t m68k_addr, const uint32_t *arm, uint32_t bytes)
+{
+    if (volcado_fd < 0) return;
+    uint32_t cab[2] = { m68k_addr, bytes };
+    sys6(SYS_write, volcado_fd, (long)cab, sizeof(cab), 0, 0, 0);
+    sys6(SYS_write, volcado_fd, (long)arm, bytes, 0, 0, 0);
+}
+
 /* --- Llamadas nativas desde el 68k (C1) --- */
 
 /* Registros del 68k en la copia de x0..x30 que deja el JIT (ver EMIT_lineA en Emu68). */
@@ -142,6 +187,7 @@ void dashos_native_call(uint64_t *regs, uint32_t index)
 #define M68K_RAM     0x00100000UL
 #define M68K_RAM_LEN 0x00100000UL
 #define M68K_RESULT  0x00180000UL
+#define M68K_PROGRAMA 0x00140000UL   /* donde va el programa de fuera (U7), hasta $170000 */
 
 /*
     Emu68 escribe el código traducido en una dirección y lo ejecuta en la misma dirección con el
@@ -186,7 +232,7 @@ static void prepara(struct M68KState *m68k, uint32_t pc)
     for (int fp = 0; fp < 8; fp++) m68k->FP[fp].u64 = 0x7fffffffffffffffULL;
     uint32_t sp = (uint32_t)(0x00100000UL + 0x00100000UL - 4096);
     m68k->ISP.u32 = sp - 4;
-    *(uint32_t *)(uintptr_t)(sp - 4) = 0;
+    pon32(sp - 4, 0);
     m68k->PC = pc;
     m68k->SR = SR_S | SR_IPL;
 }
@@ -202,9 +248,35 @@ static void ejecuta(struct M68KState *m68k)
                      "v18", "v27", "v28", "v29", "v30", "v31", "memory", "cc");
 }
 
-void host_main(void)
+/* Carga un fichero en la memoria del 68k; devuelve su tamaño, o -1. */
+static long carga(const char *ruta, uintptr_t donde, size_t max)
 {
+    long fd = sys6(SYS_openat, -100, (long)ruta, 0, 0, 0, 0);
+    if (fd < 0) return -1;
+    long total = 0, n;
+    while ((size_t)total < max && (n = sys6(SYS_read, fd, (long)(donde + total), max - total, 0, 0, 0)) > 0) total += n;
+    sys6(SYS_close, fd, 0, 0, 0, 0, 0);
+    return total;
+}
+
+/* FNV-1a de 64 bits */
+static uint64_t suma(const uint8_t *p, size_t n)
+{
+    uint64_t h = 0xcbf29ce484222325ULL;
+    while (n--) { h ^= *p++; h *= 0x100000001b3ULL; }
+    return h;
+}
+
+void host_main(uint64_t *pila)
+{
+    int argc = (int)pila[0];
+    char **argv = (char **)&pila[1];
+#ifdef __AARCH64EB__
     kprintf("[HOST] DashOS: JIT de Emu68 en Linux AArch64 big-endian\n");
+#else
+    kprintf("[HOST] DashOS: JIT de Emu68 en Linux AArch64 little-endian (memoria del 68k en big-endian)\n");
+#endif
+    if (argc > 2) volcado_fd = sys6(SYS_openat, -100, (long)argv[2], 01 | 0100 | 01000, 0644, 0, 0);
 
     /* Montón general de Emu68 (tlsf) */
     tlsf = tlsf_init_with_memory(map(0, HEAP_LEN, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1), HEAP_LEN);
@@ -219,8 +291,7 @@ void host_main(void)
 
     /* Memoria del 68k */
     map(M68K_RAM, M68K_RAM_LEN, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON | MAP_FIXED, -1);
-    uint16_t *code = (uint16_t *)M68K_RAM;
-    for (size_t i = 0; i < sizeof(prueba) / sizeof(prueba[0]); i++) code[i] = prueba[i];
+    for (size_t i = 0; i < sizeof(prueba) / sizeof(prueba[0]); i++) pon16(M68K_RAM + 2 * i, prueba[i]);
 
     uint64_t ctr;
     __asm__ volatile("mrs %0, CTR_EL0" : "=r"(ctr));
@@ -235,7 +306,7 @@ void host_main(void)
     for (int fp = 0; fp < 8; fp++) m68k.FP[fp].u64 = 0x7fffffffffffffffULL;
     uint32_t sp = (uint32_t)(M68K_RAM + M68K_RAM_LEN - 4096);
     m68k.ISP.u32 = sp - 4;
-    *(uint32_t *)(uintptr_t)(sp - 4) = 0;   /* rts a la dirección 0: MainLoop vuelve */
+    pon32(sp - 4, 0);                       /* rts a la dirección 0: MainLoop vuelve */
     m68k.PC = (uint32_t)M68K_RAM;
     m68k.SR = SR_S | SR_IPL;
     m68k.CACR = 0x80008000;                 /* caché de instrucciones del JIT activa */
@@ -264,30 +335,58 @@ void host_main(void)
     M68K_PrintContext(&m68k);
     uint32_t esperado = 0;
     for (uint32_t i = 1; i <= 100000; i++) esperado += i;
-    uint32_t leido = *(volatile uint32_t *)M68K_RESULT;
+    uint32_t leido = lee32(M68K_RESULT);
     kprintf("[HOST] Memoria en $180000: %08x, esperado %08x: %s\n", leido, esperado,
             (leido == esperado && m68k.D[0].u32 == esperado) ? "BIEN" : "MAL");
     kprintf("[HOST] Instrucciones 68k ejecutadas (aprox.): %d\n", (int)m68k.INSN_COUNT);
     int fallos = (leido == esperado && m68k.D[0].u32 == esperado) ? 0 : 1;
 
     /* C1: la biblioteca nativa. Tabla de saltos: $A0FF <n> RTS en LIB_BASE-6*n. */
-    uint16_t *lib = (uint16_t *)LIB_BASE;
     for (int n = 1; n <= 2; n++) {
-        uint16_t *e = lib - 3 * n;
-        e[0] = 0xa0ff; e[1] = (uint16_t)n; e[2] = 0x4e75;
+        uintptr_t e = LIB_BASE - 6 * n;
+        pon16(e, 0xa0ff); pon16(e + 2, (uint16_t)n); pon16(e + 4, 0x4e75);
     }
-    uint16_t *codigo2 = (uint16_t *)(M68K_RAM + 0x8000);
-    for (size_t i = 0; i < sizeof(prueba_nativa) / sizeof(prueba_nativa[0]); i++) codigo2[i] = prueba_nativa[i];
-    prepara(&m68k, (uint32_t)(uintptr_t)codigo2);
+    uintptr_t codigo2 = M68K_RAM + 0x8000;
+    for (size_t i = 0; i < sizeof(prueba_nativa) / sizeof(prueba_nativa[0]); i++) pon16(codigo2 + 2 * i, prueba_nativa[i]);
+    prepara(&m68k, (uint32_t)codigo2);
     m68k.CACR = 0x80008000;
     kprintf("[HOST] Prueba C1: llamadas nativas desde el 68k\n");
     flush_out();
     ejecuta(&m68k);
-    uint32_t r2 = *(volatile uint32_t *)(M68K_RESULT + 4);
+    uint32_t r2 = lee32(M68K_RESULT + 4);
     kprintf("[HOST] Llamadas nativas: %d; resultado en $180004: %d (esperado 17); D0=%d: %s\n",
             llamadas_nativas, r2, m68k.D[0].u32,
             (llamadas_nativas == 2 && r2 == 17 && m68k.D[0].u32 == 17) ? "BIEN" : "MAL");
     if (!(llamadas_nativas == 2 && r2 == 17)) fallos++;
     flush_out();
+
+    /* U7: un programa 68k de fuera, con la memoria limpia */
+    if (argc > 1) {
+        uint8_t *ram = (uint8_t *)M68K_RAM;
+        for (size_t i = 0; i < M68K_RAM_LEN; i++) ram[i] = 0;
+        long n = carga(argv[1], M68K_PROGRAMA, 0x30000);
+        if (n <= 0) {
+            kprintf("[HOST] no se puede leer %s\n", argv[1]);
+            fallos++;
+        } else {
+            prepara(&m68k, (uint32_t)M68K_PROGRAMA);
+            m68k.CACR = 0x80008000;
+            m68k.A[7].u32 = m68k.ISP.u32;
+            kprintf("[HOST] Programa %s (%d bytes)\n", argv[1], (int)n);
+            flush_out();
+            ejecuta(&m68k);
+            M68K_PrintContext(&m68k);
+            kprintf("[JIT]");
+            for (int i = 0; i < 8; i++) kprintf(" FP%d=%08x%08x", i, (uint32_t)(m68k.FP[i].u64 >> 32), (uint32_t)m68k.FP[i].u64);
+            kprintf("\n[JIT] FPSR=%08x FPCR=%08x\n", m68k.FPSR, m68k.FPCR);
+            if (argc > 3) {   /* la memoria del programa, para ver dónde difiere */
+                long fd = sys6(SYS_openat, -100, (long)argv[3], 01 | 0100 | 01000, 0644, 0, 0);
+                if (fd >= 0) { sys6(SYS_write, fd, (long)M68K_PROGRAMA, 0x30000, 0, 0, 0); sys6(SYS_close, fd, 0, 0, 0, 0, 0); }
+            }
+            uint64_t h = suma(ram, M68K_RAM_LEN);
+            kprintf("[HOST] Suma de la memoria del 68k: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
+        }
+        flush_out();
+    }
     sys6(SYS_exit_group, fallos, 0, 0, 0, 0, 0);
 }

@@ -1,0 +1,67 @@
+diff --git a/src/ExecutionLoop.c b/src/ExecutionLoop.c
+index f968d72..c2e4f7a 100644
+--- a/src/ExecutionLoop.c
++++ b/src/ExecutionLoop.c
+@@ -421,9 +421,10 @@ void MainLoop()
+                 SR |= ((level & 7) << SRB_IPL);
+ 
+                 /* Push exception frame */
+-                __asm__ volatile("strh %w1, [%0, #-8]!":"=r"(sp):"r"(SRcopy),"0"(sp));
+-                __asm__ volatile("str %w1, [%0, #2]": :"r"(sp),"r"(PC));
+-                __asm__ volatile("strh %w1, [%0, #6]": :"r"(sp),"r"(vector));
++                /* DashOS (U7): el marco, en big-endian */
++                __asm__ volatile("strh %w1, [%0, #-8]!":"=r"(sp):"r"(BE16(SRcopy)),"0"(sp));
++                __asm__ volatile("str %w1, [%0, #2]": :"r"(sp),"r"(BE32(PC)));
++                __asm__ volatile("strh %w1, [%0, #6]": :"r"(sp),"r"(BE16(vector)));
+ 
+                 /* Set SR */
+                 setSR(SR);
+@@ -433,6 +434,7 @@ void MainLoop()
+ 
+                 /* Load PC */
+                 __asm__ volatile("ldr %w0, [%1, %2]":"=r"(PC):"r"(vbr),"r"(vector)); 
++                PC = BE32(PC);
+             }
+ 
+             /* All interrupts masked or new PC loaded and stack swapped, continue with code execution */
+diff --git a/src/M68k_ExceptionEntry.c b/src/M68k_ExceptionEntry.c
+index 9d55e83..3959771 100644
+--- a/src/M68k_ExceptionEntry.c
++++ b/src/M68k_ExceptionEntry.c
+@@ -44,12 +44,12 @@ uint32_t M68K_Exception(uint32_t M68k_SR, uint32_t type_and_format, uint32_t, ui
+     if (unlikely((type_and_format & 0xf000) == 0x2000 || (type_and_format & 0xf000) == 0x3000))
+     {
+         // format 2 and format 3 - store EA
+-        __asm__ volatile("str %w1, [%0, #-4]!":"=r"(M68k_A7):"r"(ea),"0"(M68k_A7));
++        __asm__ volatile("str %w1, [%0, #-4]!":"=r"(M68k_A7):"r"(BE32(ea)),"0"(M68k_A7));   /* DashOS (U7): BE32 */
+     }
+     else if (unlikely((type_and_format & 0xf000) == 0x4000))
+     {
+         // format 4 - store fault address and EA
+-        __asm__ volatile("str %w1, [%0, #-8]!\t\nstr %w2, [%0, #4]":"=r"(M68k_A7):"r"(fault),"r"(ea),"0"(M68k_A7));
++        __asm__ volatile("str %w1, [%0, #-8]!\t\nstr %w2, [%0, #4]":"=r"(M68k_A7):"r"(BE32(fault)),"r"(BE32(ea)),"0"(M68k_A7));
+     }
+ 
+     uint32_t tmp = M68k_SR;
+@@ -61,9 +61,9 @@ uint32_t M68K_Exception(uint32_t M68k_SR, uint32_t type_and_format, uint32_t, ui
+         "str  %w2, [%0, #2]     \n\t"
+         "strh %w3, [%0, #6]"
+     :"=r"(M68k_A7)
+-    :"r"(tmp),
+-     "r"(M68k_PC),
+-     "r"(type_and_format),
++    :"r"(BE16(tmp)),               /* DashOS (U7): el marco, en big-endian */
++     "r"(BE32(M68k_PC)),
++     "r"(BE16(type_and_format)),
+      "0"(M68k_A7)
+     );
+ 
+@@ -72,7 +72,7 @@ uint32_t M68K_Exception(uint32_t M68k_SR, uint32_t type_and_format, uint32_t, ui
+     M68k_SR &= ~(SR_T0 | SR_T1);
+ 
+     uint32_t vbr = getCTX()->VBR + (type_and_format & 0x0fff);
+-    M68k_PC = *(uint32_t *)(uintptr_t)vbr;
++    M68k_PC = BE32(*(uint32_t *)(uintptr_t)vbr);
+ 
+     __asm__ volatile("": :"r"(M68k_PC));
+ 

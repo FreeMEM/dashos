@@ -1,0 +1,7 @@
+[HOST] Programa /home/freemem/Projects/dashos/.worktrees/u7/jit-host/pruebas68k/c1-o0.bin (7112 bytes)
+[JIT] D0=00000000 D1=ffff0000 D2=00000000 D3=00000000 D4=00000000 D5=00000000 D6=00000000 D7=00000000
+[JIT] A0=00141a66 A1=fff2d1d2 A2=00000000 A3=00000000 A4=00000000 A5=00000000 A6=00000000 A7=001ff000
+[JIT] PC=00000000 SR=2700
+[JIT] FP0=40c67ffff6000000 FP1=3ff0000000000000 FP2=7fffffffffffffff FP3=7fffffffffffffff FP4=7fffffffffffffff FP5=7fffffffffffffff FP6=7fffffffffffffff FP7=7fffffffffffffff
+[JIT] FPSR=00000000 FPCR=00000000
+[HOST] Suma de la memoria del 68k: 35dfbd0a64ffd04d

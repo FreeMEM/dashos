@@ -43,7 +43,12 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   falta: conectar y quitar aparatos USB en marcha, USB 3, varias colas del NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`. Análisis hecho (`docs/diseño/U7-caja-sin-big-endian.md`): unas 1200 líneas en
-  Emu68; espera a que el usuario decida cuándo.
+  Emu68. El usuario dijo que sí el 2026-11-07; se hace en la rama `u7` (worktree `.worktrees/u7`), por pasos:
+  U7a banco de pruebas en los dos órdenes, U7b parche base, U7c direcciones efectivas, U7d instrucciones, U7e FPU.
+  Prueba: `make -C jit-host && make -C jit-host ORDEN=le && python3 jit-host/comparar.py`.
+  Hecho en el banco (`jit-host`) del 2026-11-07, U7a a U7g: el JIT corre en little-endian con los cinco programas de
+  prueba iguales que en big-endian. Falta llevarlo a la caja de DashOS cuando la caja exista (hoy el JIT solo corre
+  en el banco) y probarlo en una CPU sin big-endian de verdad.
 
 ## Herramientas
 
@@ -348,3 +353,98 @@ comprobado si lo tienen).
   terminadas con su etiqueta y su estado.
 - **Comprobado:** las cuatro máquinas de `virt` y la Pi (`prueba`, `arranque`). **No comprobado:** varios clientes
   con anillo a la vez, un cliente que deja de recoger terminadas (el servicio para su anillo; los demás siguen).
+
+### 2026-11-07 — U7a (el banco de pruebas en los dos órdenes)
+
+- `make -C jit-host ORDEN=le` compila el banco del JIT en little-endian (en `build-le/`, se ejecuta con
+  `qemu-aarch64`) con la misma cadena de Bootlin big-endian: GCC de AArch64 hace los dos órdenes y el banco no usa
+  libgcc. Su sysroot solo trae `gnu/stubs-lp64_be.h`; `jit-host/include-le/` pone el que piden las cabeceras.
+- El banco escribe y lee la memoria del 68k siempre en big-endian (`pon16`, `pon32`, `lee32`), y con
+  `jit-host programa.bin [volcado]` ejecuta un programa 68k plano en $140000 y saca registros, FPU y una suma de
+  toda la memoria del 68k. Con volcado, guarda el código ARM de cada bloque que traduce el JIT.
+- Programas de prueba en `jit-host/pruebas68k/`: `c1.c` (C con `-O2` y `-O0`: ordenar bytes, palabras y largos,
+  campos de bits, estructuras con Double, Float, 64 bits y precisión extendida, tablas de saltos, CRC) y `t1.s`
+  (modos de dirección del 68020 con indirecto en memoria, aritmética y desplazamientos sobre memoria, BCD y ADDX con
+  predecremento, CMPM, campos de bits, MOVEM en todas sus formas, MOVEP, CAS y CAS2, CMP2, PACK y UNPK, MULU.L y
+  DIVU.L de 64 bits, LINK, PEA, RTD, SR y CCR, MOVE16, y la FPU con todos los formatos de memoria y FMOVEM). Se
+  compilan con el GCC del Amiga de Dash; `hunk2bin.py` pasa el ejecutable a binario plano. Los `.bin` van en git.
+- `jit-host/comparar.py`: (1) cada programa da lo mismo con el JIT big-endian y con el little-endian; (2) el código
+  que genera el JIT big-endian es el de la referencia (`pruebas68k/ref/`, sacada antes de tocar nada para U7),
+  salvo inmediatos de MOVZ/MOVK (direcciones de funciones de C). Hoy: (2) bien en los tres (211 bloques iguales);
+  (1) el little-endian cae en la primera instrucción, como se espera antes de girar nada.
+- Parche `0003-volcado-del-banco.patch`: el volcado, y que en el banco (`DASHOS_HOST`) las llamadas del código
+  traducido a C (excepciones, precisión extendida) no pongan la mitad alta de las direcciones del kernel. Sin él,
+  el banco caía con cualquier FMOVEM.X; las pruebas de antes no lo tocaban.
+- Avisos que da Emu68 en big-endian y que son suyos, no de U7: "SBCD mem is not yet fixed!".
+- `third_party/Emu68` del worktree es un clon aparte con 0001 y 0002 como un commit "base"; cada parche nuevo sale
+  de `git diff` de su commit.
+
+### 2026-11-07 — U7b, U7c y U7d (el JIT en little-endian, sin la FPU)
+
+- U7b, parche `0004-u7-base.patch`: `include/M68k_Endian.h` con lo que gira (`EMIT_LoadBE`, `EMIT_StoreBE`,
+  `EMIT_LD`/`EMIT_ST` para una carga o un guardado suelto, `EMIT_LDP`/`EMIT_STP` para pares, y `ldrsh_*_be`, que en
+  little-endian carga sin signo para extender después). En big-endian nada de eso emite instrucciones. `cache.c` gira
+  en sus hojas (lee el flujo de instrucciones y las palabras de extensión). Y las 176 uniones con que el JIT parte una
+  dirección de C en MOVZ/MOVK cuentan las mitades con `U16IDX`, que vale en los dos órdenes.
+- U7c, parche `0005-u7-direcciones-efectivas.patch`: `M68k_EA.c`, cargas y guardados de todos los modos (también
+  los punteros del indirecto en memoria y los desplazamientos que se leen relativos al PC).
+- U7d, parche `0006-u7-instrucciones.patch`: 190 cargas y guardados sueltos pasados a `EMIT_LD`/`EMIT_ST` con un
+  guion (en `/tmp`, no va al repo) y revisados uno a uno (dos no eran memoria del 68k: una variable de C y una
+  lectura para frenar, que se quedan); a mano, los que van dentro de listas: ADDX/SUBX, CMP2, CAS y CAS2 (giros
+  fuera de las listas con saltos fijos), MOVEM y los pares de MOVE (`stp`/`ldp`), LINK, UNLK, RTE y RTR, y los campos
+  de bits de anchura variable (con su versión little-endian de las listas, saltos recalculados). MOVE16 no se gira
+  (copia memoria a memoria).
+- **Comprobado** (`comparar.py`): en big-endian el código generado es el de la referencia (solo cambian direcciones
+  de C en MOVZ/MOVK). En little-endian, `t1` y `c1` dan los mismos registros enteros que en big-endian, y la memoria
+  solo difiere en lo de la FPU (los Float, Double y extendidos de `c1`, desde `datos+0x420` en `t1`). Las dos
+  pruebas fijas del banco (bucle y llamadas nativas) dan BIEN en little-endian.
+- **No comprobado:** excepciones (los marcos y el vector se escriben desde C, `M68k_ExceptionEntry.c`), MOVES,
+  NBCD y los desplazamientos de memoria más allá de los de `t1`. Falta la FPU (U7e).
+
+### 2026-11-07 — U7e (la FPU en little-endian)
+
+- Parche `0007-u7-fpu.patch`: REV64 y REV32 de vectores (`vrev64_8b`, `vrev32_8b`, `EMIT_FSwapBE`) tras cargar un
+  Double o un Float (también los inmediatos, que se leen relativos al PC) y antes de guardarlos (de una copia en el
+  temporal de la FPU: el registro del 68k no se toca). La precisión extendida se hace en C (`math/96bit.c`, también
+  FMOVEM.X): ahí, `M16/M32/M64`. El empaquetado no se gira (va y vuelve como imagen de memoria en x0 y x1), pero en
+  little-endian sobra el `ror64` con que Emu68 bajaba su mitad de x1. FMOVEM de FPCR, FPSR y FPIAR, girados.
+- `math/libm.h` (las funciones de C para FSIN, FCOS, FETOX...) suponía la mitad alta de un Double primero en
+  memoria; en little-endian va segunda. Sin eso, FSIN de 0.5 daba 0.5.
+- El banco recompila al cambiar una cabecera (`-MMD`): antes, tocar `libm.h` no recompilaba nada y la prueba seguía
+  dando el fallo arreglado.
+- **Comprobado:** `comparar.py` da bien los tres programas en los dos órdenes (misma salida, registros, FPU y suma de
+  toda la memoria), y en big-endian el código generado es el de la referencia salvo direcciones de C.
+- **No comprobado:** excepciones (U7f), y las funciones de la FPU que `t1` no usa (FETOX, FLOGN, FTAN, FATAN...),
+  aunque van por la misma `libm.h`.
+
+### 2026-11-07 — U7f (excepciones)
+
+- Parche `0009-u7-excepciones.patch`: el marco de excepción (SR, PC, formato y vector, y la dirección de los
+  formatos 2 a 4) se escribe desde C en `M68k_ExceptionEntry.c`, y el de las interrupciones en `ExecutionLoop.c`;
+  los dos, girados con `BE16`/`BE32` de `support.h` (en big-endian no hacen nada), igual que el vector que se lee
+  de la tabla de VBR.
+- Parche de banco `0008-banco-sin-daif.patch`: RTE y los que cambian la máscara de interrupciones emiten
+  `msr daifset/daifclr`, que en un programa de Linux (EL0) es instrucción ilegal. En el banco (`DASHOS_HOST`), NOP.
+- `pruebas68k/t2.s`: VBR a una tabla propia y diez excepciones (TRAP #0 y #5, división por cero de DIVU.W y DIVS.L,
+  CHK por arriba y por abajo, ILLEGAL, una línea A que no es llamada nativa, TRAPV y TRAPEQ); un manejador común apunta
+  cada marco y vuelve con RTE.
+- La referencia de `comparar.py --guardar-ref` sale ahora de `build-ref/`: Emu68 con 0001-0003 y 0008, sin nada de
+  U7 (`make EMU68=<clon> B=build-ref`). Rehecha para los cuatro programas.
+- **Comprobado:** los cuatro programas, bien en big-endian (código de la referencia) y en little-endian (misma
+  salida y memoria). Sin el parche 0009, `t2` cae en little-endian: la prueba lo ve.
+- **No comprobado:** las interrupciones (el banco no tiene), los formatos 3 y 4 (fallos de bus y de MMU) y la
+  excepción de privilegio.
+
+### 2026-11-07 — U7g (3000 instrucciones al azar)
+
+- `pruebas68k/gen_t3.py` genera `t3.s` con semilla fija: 3000 instrucciones al azar de 25 clases (aritmética y
+  lógica con memoria, inmediatos, ADDQ/SUBQ, NEG/NOT/CLR/TST, MOVE memoria a memoria, ADDX/SUBX y ABCD/SBCD/NBCD con
+  predecremento, CMPM, desplazamientos de memoria, bits, Scc, TAS, MUL y DIV de 16 y 32 bits, MULx.L de 64, MOVEM en
+  las dos direcciones, MOVEP, CAS, CMP2, campos de bits con campo fijo y en registros, PACK/UNPK, CCR y SR) por siete
+  modos de dirección (también el indirecto en memoria y el absoluto). Al final guarda todos los registros.
+- **Comprobado:** `t3` sale igual en little-endian a la primera, y en big-endian con el código de la referencia (39
+  bloques). Prueba de que el banco lo vería: quitando el giro de `EMIT_LD`, los cinco programas caen.
+- Estado de U7: el JIT de Emu68 (enteros, FPU y excepciones) en little-endian, en el banco. Parches 0004 a 0009
+  (0008 es solo del banco). Se aplican limpios sobre Emu68 af63580 tras 0001 a 0003, y un banco compilado desde ahí da
+  las mismas sumas. **No comprobado:** interrupciones, fallos de bus y de MMU (formatos 3 y 4), MOVES, la parte de PPC
+  de Emu68, y nada fuera de QEMU de usuario.

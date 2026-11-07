@@ -1,0 +1,1898 @@
+diff --git a/include/M68k_Endian.h b/include/M68k_Endian.h
+index 7662800..1d8f148 100644
+--- a/include/M68k_Endian.h
++++ b/include/M68k_Endian.h
+@@ -97,6 +97,16 @@ static inline __attribute__((always_inline)) void EMIT_SwapBE(struct TranslatorC
+         EMIT(ctx, rev_be(size, reg, reg));
+ }
+ 
++/* Una carga suelta de la memoria del 68k en `reg`, y un guardado suelto de `reg` (en la instrucción del guardado, el
++   registro que se guarda se escribe __be). En big-endian son la instrucción tal cual. */
++#define EMIT_LD(ctx, size, ext, reg, insn) do { EMIT(ctx, insn); EMIT_LoadBE(ctx, size, reg, ext); } while (0)
++#define EMIT_ST(ctx, size, reg, insn) do { uint8_t __be = EMIT_StoreBE(ctx, size, reg); EMIT(ctx, insn); EMIT_StoreBE_Done(ctx, __be, reg); } while (0)
++
++/* Pares de 32 bits (LDP/STP de registros W): los dos registros, en la instrucción del guardado __be1 y __be2 */
++#define EMIT_LDP(ctx, r1, r2, insn) do { EMIT(ctx, insn); EMIT_LoadBE(ctx, 4, r1, BE_UNSIGNED); EMIT_LoadBE(ctx, 4, r2, BE_UNSIGNED); } while (0)
++#define EMIT_STP(ctx, r1, r2, insn) do { uint8_t __be1 = EMIT_StoreBE(ctx, 4, r1); uint8_t __be2 = EMIT_StoreBE(ctx, 4, r2); \
++    EMIT(ctx, insn); EMIT_StoreBE_Done(ctx, __be2, r2); EMIT_StoreBE_Done(ctx, __be1, r1); } while (0)
++
+ #if EMU68_HOST_LE
+ #define ldrsh_offset_be(rn, rt, off)            ldrh_offset(rn, rt, off)
+ #define ldursh_offset_be(rn, rt, off)           ldurh_offset(rn, rt, off)
+diff --git a/src/M68k_LINE0.c b/src/M68k_LINE0.c
+index 5f7b07e..95f55d6 100644
+--- a/src/M68k_LINE0.c
++++ b/src/M68k_LINE0.c
+@@ -329,11 +329,11 @@ uint32_t EMIT_SUBI(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             if (immediate)
+@@ -359,20 +359,20 @@ uint32_t EMIT_SUBI(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, immed, 4));
++                EMIT_ST(ctx, 4, immed, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, immed, 0));
++                EMIT_ST(ctx, 4, immed, str_offset(dest, __be, 0));
+             break;
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+             
+             /* Perform calcualtion */
+             if (update_mask == 0) {               
+@@ -402,11 +402,11 @@ uint32_t EMIT_SUBI(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, immed, 2));
++                EMIT_ST(ctx, 2, immed, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, immed, 0));
++                EMIT_ST(ctx, 2, immed, strh_offset(dest, __be, 0));
+             break;
+         case 1:
+             if (mode == 4)
+@@ -631,11 +631,11 @@ uint32_t EMIT_ADDI(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (add_immediate)
+@@ -661,20 +661,20 @@ uint32_t EMIT_ADDI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, immed, 4));
++                    EMIT_ST(ctx, 4, immed, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 4, immed, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+                 
+                 /* Perform calcualtion */
+                 if (update_mask == 0) {
+@@ -703,11 +703,11 @@ uint32_t EMIT_ADDI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, immed, 2));
++                    EMIT_ST(ctx, 2, immed, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 2, immed, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+@@ -1067,11 +1067,11 @@ uint32_t EMIT_ORI(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (mask32 == 0)
+@@ -1085,20 +1085,20 @@ uint32_t EMIT_ORI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, immed, 4));
++                    EMIT_ST(ctx, 4, immed, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 4, immed, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (update_mask == 0) {
+@@ -1138,11 +1138,11 @@ uint32_t EMIT_ORI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, immed, 2));
++                    EMIT_ST(ctx, 2, immed, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 2, immed, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+@@ -1485,11 +1485,11 @@ uint32_t EMIT_ANDI(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (mask32 == 0)
+@@ -1500,20 +1500,20 @@ uint32_t EMIT_ANDI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, immed, 4));
++                    EMIT_ST(ctx, 4, immed, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 4, immed, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+                 
+                 /* Perform calcualtion */
+                 if (update_mask == 0) {
+@@ -1532,11 +1532,11 @@ uint32_t EMIT_ANDI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, immed, 2));
++                    EMIT_ST(ctx, 2, immed, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 2, immed, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+@@ -1821,11 +1821,11 @@ uint32_t EMIT_EORI(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (mask32 == 0)
+@@ -1838,20 +1838,20 @@ uint32_t EMIT_EORI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, immed, 4));
++                    EMIT_ST(ctx, 4, immed, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 4, immed, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+                 
+                 /* Perform calcualtion */
+                 if (mask32 == 0)
+@@ -1864,11 +1864,11 @@ uint32_t EMIT_EORI(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, immed, 2));
++                    EMIT_ST(ctx, 2, immed, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, immed, 0));
++                    EMIT_ST(ctx, 2, immed, strh_offset(dest, __be, 0));
+                 break;
+             
+             case 1:
+@@ -2280,12 +2280,16 @@ uint32_t EMIT_CMP2(struct TranslatorContext *ctx, uint16_t opcode)
+             break;
+         case 1:
+             EMIT(ctx, 
+-                ldrsh_offset(ea, lower, 0),
+-                ldrsh_offset(ea, higher, 2)
++                ldrsh_offset_be(ea, lower, 0),
++                ldrsh_offset_be(ea, higher, 2)
+             );
++            EMIT_LoadBE(ctx, 2, lower, BE_SXT32);   /* DashOS (U7) */
++            EMIT_LoadBE(ctx, 2, higher, BE_SXT32);
+             break;
+         case 2:
+             EMIT(ctx, ldp(ea, lower, higher, 0));
++            EMIT_LoadBE(ctx, 4, lower, BE_UNSIGNED);   /* DashOS (U7) */
++            EMIT_LoadBE(ctx, 4, higher, BE_UNSIGNED);
+             break;
+     }
+ 
+@@ -2523,13 +2527,15 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+                           subs_reg(31, tmp, dc, LSL, 24));\
+                 break;\
+             case 2:\
+-                EMIT(ctx, ldxrh(ea, tmp),\
+-                          lsl(tmp, tmp, 16),\
++                EMIT(ctx, ldxrh(ea, tmp));\
++                EMIT_LoadBE(ctx, 2, tmp, BE_UNSIGNED);\
++                EMIT(ctx, lsl(tmp, tmp, 16),\
+                           subs_reg(31, tmp, dc, LSL, 16));\
+                 break;\
+             case 3:\
+-                EMIT(ctx, ldxr(ea, tmp),\
+-                          subs_reg(31, tmp, dc, LSL, 0));\
++                EMIT(ctx, ldxr(ea, tmp));\
++                EMIT_LoadBE(ctx, 4, tmp, BE_UNSIGNED);\
++                EMIT(ctx, subs_reg(31, tmp, dc, LSL, 0));\
+                 break;\
+         }\
+         uint32_t *b0 = ctx->tc_CodePtr;\
+@@ -2540,10 +2546,10 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+                 EMIT(ctx, stlxrb(ea, du, status));\
+                 break;\
+             case 2:\
+-                EMIT(ctx, stlxrh(ea, du, status));\
++                EMIT_ST(ctx, 2, du, stlxrh(ea, __be, status));\
+                 break;\
+             case 3:\
+-                EMIT(ctx, stlxr(ea, du, status));\
++                EMIT_ST(ctx, 4, du, stlxr(ea, __be, status));\
+                 break;\
+         }\
+         *ctx->tc_CodePtr = cbnz(status, l0 - ctx->tc_CodePtr);\
+@@ -2573,13 +2579,15 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+                           subs_reg(31, tmp, dc, LSL, 24));\
+                 break;\
+             case 2:\
+-                EMIT(ctx, ldrh_offset(ea, tmp, 0),\
+-                          lsl(tmp, tmp, 16),\
++                EMIT(ctx, ldrh_offset(ea, tmp, 0));\
++                EMIT_LoadBE(ctx, 2, tmp, BE_UNSIGNED);\
++                EMIT(ctx, lsl(tmp, tmp, 16),\
+                           subs_reg(31, tmp, dc, LSL, 16));\
+                 break;\
+             case 3:\
+-                EMIT(ctx, ldr_offset(ea, tmp, 0),\
+-                          subs_reg(31, tmp, dc, LSL, 0));\
++                EMIT(ctx, ldr_offset(ea, tmp, 0));\
++                EMIT_LoadBE(ctx, 4, tmp, BE_UNSIGNED);\
++                EMIT(ctx, subs_reg(31, tmp, dc, LSL, 0));\
+                 break;\
+         }\
+         uint32_t *b0 = ctx->tc_CodePtr;\
+@@ -2590,10 +2598,10 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+                 EMIT(ctx, strb_offset(ea, du, 0));\
+                 break;\
+             case 2:\
+-                EMIT(ctx, strh_offset(ea, du, 0));\
++                EMIT_ST(ctx, 2, du, strh_offset(ea, __be, 0));\
+                 break;\
+             case 3:\
+-                EMIT(ctx, str_offset(ea, du, 0));\
++                EMIT_ST(ctx, 4, du, str_offset(ea, __be, 0));\
+                 break;\
+         }\
+         EMIT(ctx, b(2));\
+@@ -2638,9 +2646,16 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+             uint8_t tmp1 = RA_AllocARMRegister(ctx);
+             uint8_t tmp2 = RA_AllocARMRegister(ctx);
+ 
++            /* DashOS (U7): los giros, fuera de la lista (tiene saltos de distancia fija) */
+             EMIT(ctx, 
+                 ldrh_offset(rn1, val1, 0),
+-                ldrh_offset(rn2, val2, 0),
++                ldrh_offset(rn2, val2, 0)
++            );
++            EMIT_LoadBE(ctx, 2, val1, BE_UNSIGNED);
++            EMIT_LoadBE(ctx, 2, val2, BE_UNSIGNED);
++            uint8_t s1 = EMIT_StoreBE(ctx, 2, du1);
++            uint8_t s2 = EMIT_StoreBE(ctx, 2, du2);
++            EMIT(ctx, 
+                 lsl(val1, val1, 16),
+                 lsl(val2, val2, 16),
+                 subs_reg(31, val1, dc1, LSL, 16),
+@@ -2649,33 +2664,44 @@ uint32_t EMIT_CAS(struct TranslatorContext *ctx, uint16_t opcode)
+                 b_cc(A64_CC_NE, 4),
+                 
+                 // 68040 stores du2 first, then du1
+-                strh_offset(rn2, du2, 0),
+-                strh_offset(rn1, du1, 0),
++                strh_offset(rn2, s2, 0),
++                strh_offset(rn1, s1, 0),
+                 b(3),
+                 bfxil(dc1, val1, 16, 16),
+                 bfxil(dc2, val2, 16, 16)
+             );
++            EMIT_StoreBE_Done(ctx, s1, du1);
++            EMIT_StoreBE_Done(ctx, s2, du2);
+ 
+             RA_FreeARMRegister(ctx, tmp1);
+             RA_FreeARMRegister(ctx, tmp2);
+         }
+         else
+         {
++            /* DashOS (U7): los giros, fuera de la lista (tiene saltos de distancia fija) */
+             EMIT(ctx, 
+                 ldr_offset(rn1, val1, 0),
+-                ldr_offset(rn2, val2, 0),
++                ldr_offset(rn2, val2, 0)
++            );
++            EMIT_LoadBE(ctx, 4, val1, BE_UNSIGNED);
++            EMIT_LoadBE(ctx, 4, val2, BE_UNSIGNED);
++            uint8_t s1 = EMIT_StoreBE(ctx, 4, du1);
++            uint8_t s2 = EMIT_StoreBE(ctx, 4, du2);
++            EMIT(ctx, 
+                 subs_reg(31, val1, dc1, LSL, 0),
+                 b_cc(A64_CC_NE, 6),
+                 subs_reg(31, val2, dc2, LSL, 0),
+                 b_cc(A64_CC_NE, 4),
+                 
+                 // 68040 stores du2 first, then du1
+-                str_offset(rn2, du2, 0),
+-                str_offset(rn1, du1, 0),
++                str_offset(rn2, s2, 0),
++                str_offset(rn1, s1, 0),
+                 b(3),
+                 mov_reg(dc1, val1),
+                 mov_reg(dc2, val2)
+             );
++            EMIT_StoreBE_Done(ctx, s1, du1);
++            EMIT_StoreBE_Done(ctx, s2, du2);
+         }
+ 
+         EMIT(ctx, dmb_ish());
+diff --git a/src/M68k_LINE4.c b/src/M68k_LINE4.c
+index 4702319..fda113b 100644
+--- a/src/M68k_LINE4.c
++++ b/src/M68k_LINE4.c
+@@ -159,40 +159,40 @@ uint32_t EMIT_NOT(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 EMIT(ctx, mvn_reg(tmp, tmp, LSL, 0));
+ 
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                    EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+                 EMIT(ctx, mvn_reg(tmp, tmp, LSL, 0));
+ 
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                    EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+@@ -344,11 +344,11 @@ uint32_t EMIT_NEG(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             if (update_mask == 0)
+                 EMIT(ctx, neg_reg(tmp, tmp, LSL, 0));
+@@ -357,20 +357,20 @@ uint32_t EMIT_NEG(struct TranslatorContext *ctx, uint16_t opcode)
+ 
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+             if (update_mask == 0) {
+                 EMIT(ctx, neg_reg(tmp, tmp, LSL, 0));
+@@ -384,11 +384,11 @@ uint32_t EMIT_NEG(struct TranslatorContext *ctx, uint16_t opcode)
+ 
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+         case 1:
+             if (mode == 4)
+@@ -649,30 +649,30 @@ uint32_t EMIT_NEGX(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, src, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, src, ldr_offset_preindex(dest, src, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, src, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, src, ldr_offset(dest, src, 0));
+ 
+             EMIT(ctx, ngcs(tmp, src));
+ 
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, src, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, src, ldrh_offset_preindex(dest, src, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, src, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, src, ldrh_offset(dest, src, 0));
+ 
+             EMIT(ctx, 
+                 neg_reg(tmp, src, LSL, 0),     // negate
+@@ -728,11 +728,11 @@ uint32_t EMIT_NEGX(struct TranslatorContext *ctx, uint16_t opcode)
+ 
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+         case 1:
+             if (mode == 4)
+@@ -1304,10 +1304,8 @@ static uint32_t EMIT_LINK32(struct TranslatorContext *ctx, uint16_t opcode)
+     else {
+         reg = RA_MapM68kRegister(ctx, 8 + (opcode & 7));
+     }
+-    EMIT(ctx, 
+-        str_offset_preindex(sp, reg, -4),  /* SP = SP - 4; An -> (SP) */
+-        mov_reg(reg, sp)
+-    );
++    EMIT_ST(ctx, 4, reg, str_offset_preindex(sp, __be, -4));  /* SP = SP - 4; An -> (SP) */
++    EMIT(ctx, mov_reg(reg, sp));
+     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+ 
+     EMIT(ctx, add_reg(sp, sp, displ, LSL, 0));
+@@ -1340,10 +1338,8 @@ static uint32_t EMIT_LINK16(struct TranslatorContext *ctx, uint16_t opcode)
+     else {
+         reg = RA_MapM68kRegister(ctx, 8 + (opcode & 7));
+     }
+-    EMIT(ctx, 
+-        str_offset_preindex(sp, reg, -4),  /* SP = SP - 4; An -> (SP) */
+-        mov_reg(reg, sp)
+-    );
++    EMIT_ST(ctx, 4, reg, str_offset_preindex(sp, __be, -4));  /* SP = SP - 4; An -> (SP) */
++    EMIT(ctx, mov_reg(reg, sp));
+     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+ 
+     if (offset > 0 && offset < 4096)
+@@ -1445,6 +1441,7 @@ static uint32_t EMIT_UNLK(struct TranslatorContext *ctx, uint16_t opcode)
+         mov_reg(sp, reg),
+         ldr_offset_postindex(sp, reg, 4)
+     );
++    EMIT_LoadBE(ctx, 4, reg, BE_UNSIGNED);   /* DashOS (U7) */
+ 
+     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+     RA_SetDirtyM68kRegister(ctx, 15);
+@@ -1670,10 +1667,8 @@ static uint32_t EMIT_RTE(struct TranslatorContext *ctx, uint16_t opcode)
+     branch_privilege = ctx->tc_CodePtr++;
+ 
+     // Now check frame format
+-    EMIT(ctx, 
+-        ldrh_offset(sp, tmp, 6),
+-        lsr(tmp, tmp, 12)
+-    );
++    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(sp, tmp, 6));   /* DashOS (U7) */
++    EMIT(ctx, lsr(tmp, tmp, 12));
+ 
+     // Is format valid?
+     EMIT(ctx, cmp_immed(tmp, 2));
+@@ -1694,15 +1689,16 @@ static uint32_t EMIT_RTE(struct TranslatorContext *ctx, uint16_t opcode)
+     tmpptr += 2;
+     *tmpptr = b_cc(A64_CC_EQ, ctx->tc_CodePtr - tmpptr);
+ 
++    /* Fetch sr from stack */
++    EMIT_LD(ctx, 2, BE_UNSIGNED, changed, ldrh_offset_postindex(sp, changed, 2));   /* DashOS (U7) */
+     EMIT(ctx, 
+-        /* Fetch sr from stack */
+-        ldrh_offset_postindex(sp, changed, 2),
+         /* Reverse C and V */
+         rbit(orig, changed),
+-        bfxil(changed, orig, 30, 2),
+-        /* Fetch PC from stack, advance sp so that format word is skipped */
+-        ldr_offset_postindex(sp, REG_PC, 6),
+-
++        bfxil(changed, orig, 30, 2)
++    );
++    /* Fetch PC from stack, advance sp so that format word is skipped */
++    EMIT_LD(ctx, 4, BE_UNSIGNED, REG_PC, ldr_offset_postindex(sp, REG_PC, 6));
++    EMIT(ctx, 
+         /* In case of format 2, skip subsequent longword on stack */
+         cmp_immed(tmp, 2),
+         b_cc(A64_CC_NE, 2),
+@@ -1769,7 +1765,7 @@ static uint32_t EMIT_RTD(struct TranslatorContext *ctx, uint16_t opcode)
+     int16_t addend = cache_read_16(ICACHE, (uintptr_t)ctx->tc_M68kCodePtr);
+ 
+     /* Fetch return address from stack */
+-    EMIT(ctx, ldr_offset_postindex(sp, tmp2, 4));
++    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp2, ldr_offset_postindex(sp, tmp2, 4));
+ 
+     if (addend > -4096 && addend < 4096)
+     {
+@@ -1812,7 +1808,7 @@ static uint32_t EMIT_RTS(struct TranslatorContext *ctx, uint16_t opcode)
+     uint8_t sp = RA_MapM68kRegister(ctx, 15);
+ 
+     /* Fetch return address from stack */
+-    EMIT(ctx, ldr_offset_postindex(sp, REG_PC, 4));
++    EMIT_LD(ctx, 4, BE_UNSIGNED, REG_PC, ldr_offset_postindex(sp, REG_PC, 4));
+     EMIT_ResetOffsetPC(ctx);
+     RA_SetDirtyM68kRegister(ctx, 15);
+ 
+@@ -1884,9 +1880,9 @@ static uint32_t EMIT_RTR(struct TranslatorContext *ctx, uint16_t opcode)
+     uint8_t mask = RA_AllocARMRegister(ctx);
+     uint8_t sp = RA_MapM68kRegister(ctx, 15);
+ 
++    /* Fetch status byte from stack */
++    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_postindex(sp, tmp, 2));   /* DashOS (U7) */
+     EMIT(ctx, 
+-        /* Fetch status byte from stack */
+-        ldrh_offset_postindex(sp, tmp, 2),
+         /* Reverse C and V */
+         rbit(0, tmp),
+         bfxil(tmp, 0, 30, 2)
+@@ -1898,7 +1894,7 @@ static uint32_t EMIT_RTR(struct TranslatorContext *ctx, uint16_t opcode)
+     host_flags = 0;
+     
+     /* Fetch return address from stack */
+-    EMIT(ctx, ldr_offset_postindex(sp, REG_PC, 4));
++    EMIT_LD(ctx, 4, BE_UNSIGNED, REG_PC, ldr_offset_postindex(sp, REG_PC, 4));
+     EMIT_ResetOffsetPC(ctx);
+     RA_SetDirtyM68kRegister(ctx, 15);
+     EMIT(ctx, INSN_TO_LE(0xffffffff));
+@@ -2310,7 +2306,7 @@ static uint32_t EMIT_MOVEC(struct TranslatorContext *ctx, uint16_t opcode)
+                 if (_abs((intptr_t)&debug - (intptr_t)&disasm) < 255)
+                 {
+                     int delta = (uintptr_t)&disasm - (uintptr_t)&debug;
+-                    EMIT(ctx, ldur_offset(tmp, tmp2, delta));
++                    EMIT(ctx, ldur_offset(tmp, tmp2, delta));   /* una variable de C, no memoria del 68k */
+                 }
+                 else
+                 {
+@@ -2453,7 +2449,7 @@ static uint32_t EMIT_JSR(struct TranslatorContext *ctx, uint16_t opcode)
+     EMIT_LoadFromEffectiveAddress(ctx, 0, &ea, opcode & 0x3f, &ext_words, 1, NULL);
+     EMIT_AdvancePC(ctx, 2 * (ext_words + 1));
+     EMIT_FlushPC(ctx);
+-    EMIT(ctx, str_offset_preindex(sp, REG_PC, -4));
++    EMIT_ST(ctx, 4, REG_PC, str_offset_preindex(sp, __be, -4));
+     RA_SetDirtyM68kRegister(ctx, 15);
+     EMIT_ResetOffsetPC(ctx);
+     EMIT(ctx, mov_reg(REG_PC, ea));
+@@ -2645,7 +2641,7 @@ static uint32_t EMIT_PEA(struct TranslatorContext *ctx, uint16_t opcode)
+     sp = RA_MapM68kRegister(ctx, 15);
+     RA_SetDirtyM68kRegister(ctx, 15);
+ 
+-    EMIT(ctx, str_offset_preindex(sp, ea, -4));
++    EMIT_ST(ctx, 4, ea, str_offset_preindex(sp, __be, -4));
+ 
+     RA_FreeARMRegister(ctx, sp);
+     RA_FreeARMRegister(ctx, ea);
+@@ -2710,9 +2706,9 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                             rt1 = reg;
+                         else {
+                             if (offset == 0)
+-                                EMIT(ctx, stp_preindex(base, rt1, reg, -block_size));
++                                EMIT_STP(ctx, rt1, reg, stp_preindex(base, __be1, __be2, -block_size));
+                             else
+-                                EMIT(ctx, stp(base, rt1, reg, offset));
++                                EMIT_STP(ctx, rt1, reg, stp(base, __be1, __be2, offset));
+                             offset += 8;
+                             rt1 = 0xff;
+                         }
+@@ -2720,9 +2716,9 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                     else
+                     {
+                         if (offset == 0)
+-                            EMIT(ctx, strh_offset_preindex(base, reg, -block_size));
++                            EMIT_ST(ctx, 2, reg, strh_offset_preindex(base, __be, -block_size));
+                         else
+-                            EMIT(ctx, strh_offset(base, reg, offset));
++                            EMIT_ST(ctx, 2, reg, strh_offset(base, __be, offset));
+ 
+                         offset += 2;
+                     }
+@@ -2730,9 +2726,9 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+             }
+             if (rt1 != 0xff) {
+                 if (offset == 0)
+-                    EMIT(ctx, str_offset_preindex(base, rt1, -block_size));
++                    EMIT_ST(ctx, 4, rt1, str_offset_preindex(base, __be, -block_size));
+                 else
+-                    EMIT(ctx, str_offset(base, rt1, offset));
++                    EMIT_ST(ctx, 4, rt1, str_offset(base, __be, offset));
+             }
+ 
+             RA_FreeARMRegister(ctx, tmp_base_reg);
+@@ -2751,20 +2747,20 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                         if (rt1 == 0xff)
+                             rt1 = reg;
+                         else {
+-                            EMIT(ctx, stp(base, rt1, reg, offset));
++                            EMIT_STP(ctx, rt1, reg, stp(base, __be1, __be2, offset));
+                             offset += 8;
+                             rt1 = 0xff;
+                         }
+                     }
+                     else
+                     {
+-                        EMIT(ctx, strh_offset(base, reg, offset));
++                        EMIT_ST(ctx, 2, reg, strh_offset(base, __be, offset));
+                         offset += 2;
+                     }
+                 }
+             }
+             if (rt1 != 0xff)
+-                EMIT(ctx, str_offset(base, rt1, offset));
++                EMIT_ST(ctx, 4, rt1, str_offset(base, __be, offset));
+         }
+ 
+         RA_FreeARMRegister(ctx, base);
+@@ -2790,7 +2786,7 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                     if ((((opcode & 0x38) == 0x18) && (i == (opcode & 7) + 8))) {
+                         /* If rt1 was set, flush it now and reset, skip the base register */
+                         if (rt1 != 0xff) {
+-                            EMIT(ctx, ldr_offset(base, rt1, offset));
++                            EMIT_LD(ctx, 4, BE_UNSIGNED, rt1, ldr_offset(base, rt1, offset));
+                             rt1 = 0xff;
+                             offset += 4;
+                         }
+@@ -2802,9 +2798,9 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                         rt1 = reg;
+                     else {
+                         if (block_size == 8 && (opcode & 0x38) == 0x18)
+-                            EMIT(ctx, ldp_postindex(base, rt1, reg, 8));
++                            EMIT_LDP(ctx, rt1, reg, ldp_postindex(base, rt1, reg, 8));
+                         else 
+-                            EMIT(ctx, ldp(base, rt1, reg, offset));
++                            EMIT_LDP(ctx, rt1, reg, ldp(base, rt1, reg, offset));
+                         offset += 8;
+                         rt1 = 0xff;
+                     }
+@@ -2812,13 +2808,13 @@ static uint32_t EMIT_MOVEM(struct TranslatorContext *ctx, uint16_t opcode)
+                 else
+                 {
+                     if (!(((opcode & 0x38) == 0x18) && (i == (opcode & 7) + 8)))
+-                        EMIT(ctx, ldrsh_offset(base, reg, offset));
++                        EMIT_LD(ctx, 2, BE_SXT32, reg, ldrsh_offset_be(base, reg, offset));
+                     offset += 2;
+                 }
+             }
+         }
+         if (rt1 != 0xff) {
+-            EMIT(ctx, ldr_offset(base, rt1, offset));
++            EMIT_LD(ctx, 4, BE_UNSIGNED, rt1, ldr_offset(base, rt1, offset));
+         }
+ 
+         /* Post-increment mode? Increase the base now */
+diff --git a/src/M68k_LINE5.c b/src/M68k_LINE5.c
+index 1379bfc..1e4abfb 100644
+--- a/src/M68k_LINE5.c
++++ b/src/M68k_LINE5.c
+@@ -170,11 +170,11 @@ uint32_t EMIT_ADDQ(struct TranslatorContext *ctx, uint16_t opcode)
+             case 1: /* 16-bit */
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (update_mask == 0 || update_mask == SR_Z || update_mask == SR_N) {
+@@ -201,21 +201,21 @@ uint32_t EMIT_ADDQ(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                    EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+                 break;
+ 
+             case 2: /* 32-bit */
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 EMIT(ctx, 
+@@ -227,11 +227,11 @@ uint32_t EMIT_ADDQ(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                    EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+                 break;
+         }
+ 
+@@ -454,11 +454,11 @@ uint32_t EMIT_SUBQ(struct TranslatorContext *ctx, uint16_t opcode)
+         case 1: /* 16-bit */
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             if (update_mask == 0 || update_mask == SR_Z || update_mask == SR_N) {
+@@ -486,21 +486,21 @@ uint32_t EMIT_SUBQ(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+ 
+         case 2: /* 32-bit */
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             EMIT(ctx, 
+@@ -512,11 +512,11 @@ uint32_t EMIT_SUBQ(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         }
+ 
+diff --git a/src/M68k_LINE6.c b/src/M68k_LINE6.c
+index 4ae9046..98f034f 100644
+--- a/src/M68k_LINE6.c
++++ b/src/M68k_LINE6.c
+@@ -67,9 +67,9 @@ uint32_t EMIT_BRA(struct TranslatorContext *ctx, uint16_t opcode)
+         }
+ 
+         if ((addend + abs_off))
+-            EMIT(ctx, str_offset_preindex(sp, tmp, -4));
++            EMIT_ST(ctx, 4, tmp, str_offset_preindex(sp, __be, -4));
+         else
+-            EMIT(ctx, str_offset_preindex(sp, REG_PC, -4));
++            EMIT_ST(ctx, 4, REG_PC, str_offset_preindex(sp, __be, -4));
+ 
+         bsr = 1;
+ 
+diff --git a/src/M68k_LINE8.c b/src/M68k_LINE8.c
+index 7e8b632..13337d9 100644
+--- a/src/M68k_LINE8.c
++++ b/src/M68k_LINE8.c
+@@ -31,7 +31,7 @@ uint32_t EMIT_PACK_reg(struct TranslatorContext *ctx, uint16_t opcode)
+         uint8_t an_src = RA_MapM68kRegister(ctx, 8 + (opcode & 7));
+         tmp = RA_AllocARMRegister(ctx);
+         
+-        EMIT(ctx, ldrsh_offset_preindex(an_src, tmp, -2));
++        EMIT_LD(ctx, 2, BE_SXT32, tmp, ldrsh_offset_preindex_be(an_src, tmp, -2));
+ 
+         RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+     }
+@@ -120,7 +120,7 @@ uint32_t EMIT_UNPK_reg(struct TranslatorContext *ctx, uint16_t opcode)
+     {
+         uint8_t dst = RA_MapM68kRegister(ctx, 8 + ((opcode >> 9) & 7));
+         RA_SetDirtyM68kRegister(ctx, 8 + ((opcode >> 9) & 7));
+-        EMIT(ctx, strh_offset_preindex(dst, tmp, -2));
++        EMIT_ST(ctx, 2, tmp, strh_offset_preindex(dst, __be, -2));
+     }
+     else
+     {
+@@ -218,11 +218,11 @@ uint32_t EMIT_OR_reg(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             EMIT(ctx, orr_reg(tmp, tmp, src, LSL, 0));
+@@ -230,21 +230,21 @@ uint32_t EMIT_OR_reg(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+             
+             /* Perform calcualtion */
+             EMIT(ctx, orr_reg(tmp, tmp, src, LSL, 0));
+@@ -252,11 +252,11 @@ uint32_t EMIT_OR_reg(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+         
+         case 1:
+diff --git a/src/M68k_LINE9.c b/src/M68k_LINE9.c
+index d8eca2e..79397ca 100644
+--- a/src/M68k_LINE9.c
++++ b/src/M68k_LINE9.c
+@@ -154,11 +154,11 @@ uint32_t EMIT_SUB_reg(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             if (update_mask == 0)
+@@ -169,21 +169,21 @@ uint32_t EMIT_SUB_reg(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+             
+             /* Perform calcualtion */
+             if (update_mask == 0 || update_mask == SR_Z || update_mask == SR_N) {
+@@ -200,11 +200,11 @@ uint32_t EMIT_SUB_reg(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+         
+         case 1:
+@@ -609,6 +609,8 @@ uint32_t EMIT_SUBX_reg(struct TranslatorContext *ctx, uint16_t opcode)
+                     ldrh_offset_preindex(regx, src, -2),
+                     ldrh_offset_preindex(regy, dest, -2)
+                 );
++                EMIT_LoadBE(ctx, 2, src, BE_UNSIGNED);   /* DashOS (U7) */
++                EMIT_LoadBE(ctx, 2, dest, BE_UNSIGNED);
+                 tmp = RA_AllocARMRegister(ctx);
+ 
+                 EMIT(ctx, 
+@@ -647,7 +649,7 @@ uint32_t EMIT_SUBX_reg(struct TranslatorContext *ctx, uint16_t opcode)
+                     EMIT(ctx, adds_reg(31, 31, tmp, LSL, 16));
+                 }
+ 
+-                EMIT(ctx, strh_offset(regy, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(regy, __be, 0));
+                 RA_FreeARMRegister(ctx, tmp);
+                 break;
+ 
+@@ -656,12 +658,12 @@ uint32_t EMIT_SUBX_reg(struct TranslatorContext *ctx, uint16_t opcode)
+                     ldr_offset_preindex(regx, src, -4),
+                     ldr_offset_preindex(regy, dest, -4)
+                 );
++                EMIT_LoadBE(ctx, 4, src, BE_UNSIGNED);   /* DashOS (U7) */
++                EMIT_LoadBE(ctx, 4, dest, BE_UNSIGNED);
+ 
+                 tmp = RA_AllocARMRegister(ctx);
+-                EMIT(ctx, 
+-                    sbcs(dest, dest, src),
+-                    str_offset(regy, dest, 0)
+-                );
++                EMIT(ctx, sbcs(dest, dest, src));
++                EMIT_ST(ctx, 4, dest, str_offset(regy, __be, 0));   /* DashOS (U7) */
+                 RA_FreeARMRegister(ctx, tmp);
+                 break;
+         }
+diff --git a/src/M68k_LINEB.c b/src/M68k_LINEB.c
+index efefa75..24dbab1 100644
+--- a/src/M68k_LINEB.c
++++ b/src/M68k_LINEB.c
+@@ -246,11 +246,11 @@ static uint32_t EMIT_EOR_ext(struct TranslatorContext *ctx, uint16_t opcode)
+         case 4:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldr_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+             /* Perform calcualtion */
+             EMIT(ctx, eor_reg(tmp, tmp, src, LSL, 0));
+@@ -258,21 +258,21 @@ static uint32_t EMIT_EOR_ext(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, str_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+             break;
+         
+         case 2:
+             if (mode == 4)
+             {
+-                EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+             
+             /* Perform calcualtion */
+             EMIT(ctx, eor_reg(tmp, tmp, src, LSL, 0));
+@@ -280,11 +280,11 @@ static uint32_t EMIT_EOR_ext(struct TranslatorContext *ctx, uint16_t opcode)
+             /* Store back */
+             if (mode == 3)
+             {
+-                EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                 RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+             }
+             else
+-                EMIT(ctx, strh_offset(dest, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+             break;
+         case 1:
+             if (mode == 4)
+diff --git a/src/M68k_LINEC.c b/src/M68k_LINEC.c
+index 5fe314a..84c502e 100644
+--- a/src/M68k_LINEC.c
++++ b/src/M68k_LINEC.c
+@@ -84,11 +84,11 @@ static uint32_t EMIT_AND_ext(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 EMIT(ctx, 
+@@ -100,20 +100,20 @@ static uint32_t EMIT_AND_ext(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                    EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+                 break;
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 EMIT(ctx, and_reg(tmp, tmp, src, LSL, 0));
+@@ -121,11 +121,11 @@ static uint32_t EMIT_AND_ext(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                    EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+diff --git a/src/M68k_LINED.c b/src/M68k_LINED.c
+index b44acf0..6d2da76 100644
+--- a/src/M68k_LINED.c
++++ b/src/M68k_LINED.c
+@@ -140,11 +140,11 @@ static uint32_t EMIT_ADD_ext(struct TranslatorContext *ctx, uint16_t opcode)
+             case 4:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldr_offset_preindex(dest, tmp, -4));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset_preindex(dest, tmp, -4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldr_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(dest, tmp, 0));
+ 
+                 /* Perform calcualtion */
+                 if (update_mask == 0)
+@@ -155,21 +155,21 @@ static uint32_t EMIT_ADD_ext(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, str_offset_postindex(dest, tmp, 4));
++                    EMIT_ST(ctx, 4, tmp, str_offset_postindex(dest, __be, 4));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, str_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 4, tmp, str_offset(dest, __be, 0));
+                 break;
+             
+             case 2:
+                 if (mode == 4)
+                 {
+-                    EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, ldrh_offset(dest, tmp, 0));
++                    EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+                 
+                 /* Perform calcualtion */
+                 if (update_mask == 0 || update_mask == SR_Z || update_mask == SR_N) {
+@@ -187,11 +187,11 @@ static uint32_t EMIT_ADD_ext(struct TranslatorContext *ctx, uint16_t opcode)
+                 /* Store back */
+                 if (mode == 3)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++                    EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+                     RA_SetDirtyM68kRegister(ctx, 8 + (opcode & 7));
+                 }
+                 else
+-                    EMIT(ctx, strh_offset(dest, tmp, 0));
++                    EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+                 break;
+             case 1:
+                 if (mode == 4)
+@@ -564,6 +564,8 @@ static uint32_t EMIT_ADDX_mem(struct TranslatorContext *ctx, uint16_t opcode)
+                     ldrh_offset_preindex(regx, src, -2),
+                     ldrh_offset_preindex(regy, dest, -2)
+                 );
++                EMIT_LoadBE(ctx, 2, src, BE_UNSIGNED);   /* DashOS (U7) */
++                EMIT_LoadBE(ctx, 2, dest, BE_UNSIGNED);
+ 
+                 tmp = RA_AllocARMRegister(ctx);
+ 
+@@ -602,7 +604,7 @@ static uint32_t EMIT_ADDX_mem(struct TranslatorContext *ctx, uint16_t opcode)
+                     EMIT(ctx, adds_reg(31, 31, tmp, LSL, 16));
+                 }
+ 
+-                EMIT(ctx, strh_offset(regy, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(regy, __be, 0));
+                 RA_FreeARMRegister(ctx, tmp);
+                 break;
+ 
+@@ -611,12 +613,12 @@ static uint32_t EMIT_ADDX_mem(struct TranslatorContext *ctx, uint16_t opcode)
+                     ldr_offset_preindex(regx, src, -4),
+                     ldr_offset_preindex(regy, dest, -4)
+                 );
++                EMIT_LoadBE(ctx, 4, src, BE_UNSIGNED);   /* DashOS (U7) */
++                EMIT_LoadBE(ctx, 4, dest, BE_UNSIGNED);
+ 
+                 tmp = RA_AllocARMRegister(ctx);
+-                EMIT(ctx, 
+-                    adcs(dest, dest, src),
+-                    str_offset(regy, dest, 0)
+-                );
++                EMIT(ctx, adcs(dest, dest, src));
++                EMIT_ST(ctx, 4, dest, str_offset(regy, __be, 0));   /* DashOS (U7) */
+                 RA_FreeARMRegister(ctx, tmp);
+                 break;
+         }
+diff --git a/src/M68k_LINEE.c b/src/M68k_LINEE.c
+index 83d3928..e8d97da 100644
+--- a/src/M68k_LINEE.c
++++ b/src/M68k_LINEE.c
+@@ -24,10 +24,10 @@ static uint32_t EMIT_ASL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+ 
+     /* Pre-decrement mode */
+     if ((opcode & 0x38) == 0x20) {
+-        EMIT(ctx, ldrsh_offset_preindex(dest, tmp, -2));
++        EMIT_LD(ctx, 2, BE_SXT32, tmp, ldrsh_offset_preindex_be(dest, tmp, -2));
+     }
+     else {
+-        EMIT(ctx, ldrsh_offset(dest, tmp, 0));
++        EMIT_LD(ctx, 2, BE_SXT32, tmp, ldrsh_offset_be(dest, tmp, 0));
+     }
+ 
+     if (update_mask & (SR_C | SR_X)) {
+@@ -49,10 +49,10 @@ static uint32_t EMIT_ASL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     }
+ 
+     if ((opcode & 0x38) == 0x18) {
+-        EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++        EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+     }
+     else {
+-        EMIT(ctx, strh_offset(dest, tmp, 0));
++        EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+     }
+ 
+     EMIT_AdvancePC(ctx, 2 * (ext_words + 1));
+@@ -125,10 +125,10 @@ static uint32_t EMIT_LSL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+ 
+     /* Pre-decrement mode */
+     if ((opcode & 0x38) == 0x20) {
+-        EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+     }
+     else {
+-        EMIT(ctx, ldrh_offset(dest, tmp, 0));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+     }
+ 
+     if (update_mask & (SR_C | SR_X)) {
+@@ -150,10 +150,10 @@ static uint32_t EMIT_LSL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     }
+ 
+     if ((opcode & 0x38) == 0x18) {
+-        EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++        EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+     }
+     else {
+-        EMIT(ctx, strh_offset(dest, tmp, 0));
++        EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+     }
+         
+     EMIT_AdvancePC(ctx, 2 * (ext_words + 1));
+@@ -216,10 +216,10 @@ static uint32_t EMIT_ROXL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     uint8_t cc = RA_ModifyCC(ctx);
+ 
+     if ((opcode & 0x38) == 0x20) {
+-        EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+     }
+     else {
+-        EMIT(ctx, ldrh_offset(dest, tmp, 0));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+     }
+ 
+     /* Test X flag, push the flag value into tmp register */
+@@ -242,10 +242,10 @@ static uint32_t EMIT_ROXL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     }
+ 
+     if ((opcode & 0x38) == 0x18) {
+-        EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++        EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+     }
+     else {
+-        EMIT(ctx, strh_offset(dest, tmp, 0));
++        EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+     }
+ 
+     EMIT_AdvancePC(ctx, 2 * (ext_words + 1));
+@@ -306,10 +306,10 @@ static uint32_t EMIT_ROL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     EMIT_LoadFromEffectiveAddress(ctx, 0, &dest, opcode & 0x3f, &ext_words, 1, NULL);
+ 
+     if ((opcode & 0x38) == 0x20) {
+-        EMIT(ctx, ldrh_offset_preindex(dest, tmp, -2));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset_preindex(dest, tmp, -2));
+     }
+     else {
+-        EMIT(ctx, ldrh_offset(dest, tmp, 0));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, tmp, ldrh_offset(dest, tmp, 0));
+     }
+     EMIT(ctx, bfi(tmp, tmp, 16, 16));
+ 
+@@ -323,10 +323,10 @@ static uint32_t EMIT_ROL_mem(struct TranslatorContext *ctx, uint16_t opcode)
+     }
+ 
+     if ((opcode & 0x38) == 0x18) {
+-        EMIT(ctx, strh_offset_postindex(dest, tmp, 2));
++        EMIT_ST(ctx, 2, tmp, strh_offset_postindex(dest, __be, 2));
+     }
+     else {
+-        EMIT(ctx, strh_offset(dest, tmp, 0));
++        EMIT_ST(ctx, 2, tmp, strh_offset(dest, __be, 0));
+     }
+ 
+     EMIT_AdvancePC(ctx, 2 * (ext_words + 1));
+@@ -2855,21 +2855,21 @@ static inline uint32_t EMIT_BFxxx_II(struct TranslatorContext *ctx, uint8_t base
+     /* bit offset + width <= 16: fetch a word */
+     else if ((bit_offset + width) <= 16)
+     {
+-        EMIT(ctx, ldurh_offset(base, data_reg, base_offset));
++        EMIT_LD(ctx, 2, BE_UNSIGNED, data_reg, ldurh_offset(base, data_reg, base_offset));
+         fetched_size = 2;
+         data_offset = 48;
+     }
+     /* bit offset + width <= 32: fetch a long */
+     else if ((bit_offset + width) <= 32)
+     {
+-        EMIT(ctx, ldur_offset(base, data_reg, base_offset));
++        EMIT_LD(ctx, 4, BE_UNSIGNED, data_reg, ldur_offset(base, data_reg, base_offset));
+         fetched_size = 4;
+         data_offset = 32;
+     }
+     /* Worst case otherwise - fetch 64bit */
+     else
+     {
+-        EMIT(ctx, ldur64_offset(base, data_reg, base_offset));
++        EMIT_LD(ctx, 8, BE_UNSIGNED, data_reg, ldur64_offset(base, data_reg, base_offset));
+         fetched_size = 8;
+     }
+ 
+@@ -2983,13 +2983,13 @@ static inline uint32_t EMIT_BFxxx_II(struct TranslatorContext *ctx, uint8_t base
+                     EMIT(ctx, sturb_offset(base, data_reg, base_offset));
+                     break;
+                 case 2:
+-                    EMIT(ctx, sturh_offset(base, data_reg, base_offset));
++                    EMIT_ST(ctx, 2, data_reg, sturh_offset(base, __be, base_offset));
+                     break;
+                 case 4:
+-                    EMIT(ctx, stur_offset(base, data_reg, base_offset));
++                    EMIT_ST(ctx, 4, data_reg, stur_offset(base, __be, base_offset));
+                     break;
+                 case 8:
+-                    EMIT(ctx, stur64_offset(base, data_reg, base_offset));
++                    EMIT_ST(ctx, 8, data_reg, stur64_offset(base, __be, base_offset));
+                     break;
+             }
+         }
+@@ -3025,6 +3025,27 @@ static inline uint32_t EMIT_BFxxx_IR(struct TranslatorContext *ctx, uint8_t base
+         /* Fetch the data */
+         /* Width == 1? Fetch byte */
+         cmp_immed(width_reg, 1),
++#if EMU68_HOST_LE
++        /* DashOS (U7): en little-endian, cada carga lleva su giro (y los saltos, una instrucción más) */
++        b_cc(A64_CC_NE, 4),
++        ldurb_offset(base, data_reg, base_offset),
++        ror64(data_reg, data_reg, 8),
++        b(15),
++        cmp_immed(width_reg, 8),
++        b_cc(A64_CC_GT, 5),
++        ldurh_offset(base, data_reg, base_offset),
++        rev16(data_reg, data_reg),
++        ror64(data_reg, data_reg, 16),
++        b(9),
++        cmp_immed(width_reg, 24),
++        b_cc(A64_CC_GT, 5),
++        ldur_offset(base, data_reg, base_offset),
++        rev(data_reg, data_reg),
++        ror64(data_reg, data_reg, 32),
++        b(3),
++        ldur64_offset(base, data_reg, base_offset),
++        rev64(data_reg, data_reg)
++#else
+         b_cc(A64_CC_NE, 4),
+         ldurb_offset(base, data_reg, base_offset),
+         ror64(data_reg, data_reg, 8),
+@@ -3042,6 +3063,7 @@ static inline uint32_t EMIT_BFxxx_IR(struct TranslatorContext *ctx, uint8_t base
+         ror64(data_reg, data_reg, 32),
+         b(2),
+         ldur64_offset(base, data_reg, base_offset)
++#endif
+     );
+ 
+     /* In case of INS, prepare the source data accordingly */
+@@ -3164,6 +3186,27 @@ static inline uint32_t EMIT_BFxxx_IR(struct TranslatorContext *ctx, uint8_t base
+             EMIT(ctx, 
+                 /* Width == 1? Fetch byte */
+                 cmp_immed(width_reg, 1),
++#if EMU68_HOST_LE
++                /* DashOS (U7): en little-endian, cada guardado lleva su giro (data_reg ya no se usa) */
++                b_cc(A64_CC_NE, 4),
++                ror64(data_reg, data_reg, 64 - 8),
++                sturb_offset(base, data_reg, base_offset),
++                b(15),
++                cmp_immed(width_reg, 8),
++                b_cc(A64_CC_GT, 5),
++                ror64(data_reg, data_reg, 64 - 16),
++                rev16(data_reg, data_reg),
++                sturh_offset(base, data_reg, base_offset),
++                b(9),
++                cmp_immed(width_reg, 24),
++                b_cc(A64_CC_GT, 5),
++                ror64(data_reg, data_reg, 32),
++                rev(data_reg, data_reg),
++                stur_offset(base, data_reg, base_offset),
++                b(3),
++                rev64(data_reg, data_reg),
++                stur64_offset(base, data_reg, base_offset)
++#else
+                 b_cc(A64_CC_NE, 4),
+                 ror64(data_reg, data_reg, 64 - 8),
+                 sturb_offset(base, data_reg, base_offset),
+@@ -3181,6 +3224,7 @@ static inline uint32_t EMIT_BFxxx_IR(struct TranslatorContext *ctx, uint8_t base
+                 stur_offset(base, data_reg, base_offset),
+                 b(2),
+                 stur64_offset(base, data_reg, base_offset)
++#endif
+             );
+         }
+     }
+@@ -3385,6 +3429,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             // Load data 
+             ldrh_offset(base, tmp, 0)
+         );
++        EMIT_LoadBE(ctx, 2, tmp, BE_UNSIGNED);   /* DashOS (U7) */
+ 
+         if (op == OP_INS)
+         {
+@@ -3531,7 +3576,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             if (op != OP_EXTS && op != OP_EXTU && op != OP_FFO)
+             {
+                 // Store back
+-                EMIT(ctx, strh_offset(base, tmp, 0));
++                EMIT_ST(ctx, 2, tmp, strh_offset(base, __be, 0));
+             }
+         }
+     }
+@@ -3544,6 +3589,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             // Load data 
+             ldr_offset(base, tmp, 0)
+         );
++        EMIT_LoadBE(ctx, 4, tmp, BE_UNSIGNED);   /* DashOS (U7) */
+ 
+         if (op == OP_INS)
+         {
+@@ -3683,7 +3729,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             if (op != OP_EXTS && op != OP_EXTU && op != OP_FFO)
+             {
+                 // Store back
+-                EMIT(ctx, str_offset(base, tmp, 0));
++                EMIT_ST(ctx, 4, tmp, str_offset(base, __be, 0));
+             }
+         }
+     }
+@@ -3696,6 +3742,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             // Load data and shift it left according to reminder in offset reg
+             ldr64_offset(base, tmp, 0)
+         );
++        EMIT_LoadBE(ctx, 8, tmp, BE_UNSIGNED);   /* DashOS (U7) */
+ 
+         if (op == OP_INS)
+         {
+@@ -3842,7 +3889,7 @@ static inline uint32_t EMIT_BFxxx_RI(struct TranslatorContext *ctx, uint8_t base
+             if (op != OP_EXTS && op != OP_EXTU && op != OP_FFO)
+             {
+                 // Store back
+-                EMIT(ctx, str64_offset(base, tmp, 0));
++                EMIT_ST(ctx, 8, tmp, str64_offset(base, __be, 0));
+             }
+         }
+     }
+@@ -3899,6 +3946,27 @@ static inline uint32_t EMIT_BFxxx_RR(struct TranslatorContext *ctx, uint8_t base
+         /* Fetch the data */
+         /* Width == 1? Fetch byte */
+         cmp_immed(width_reg, 1),
++#if EMU68_HOST_LE
++        /* DashOS (U7): en little-endian, cada carga lleva su giro (y los saltos, una instrucción más) */
++        b_cc(A64_CC_NE, 4),
++        ldrb_offset(base, data_reg, 0),
++        ror64(data_reg, data_reg, 8),
++        b(15),
++        cmp_immed(width_reg, 8),
++        b_cc(A64_CC_GT, 5),
++        ldrh_offset(base, data_reg, 0),
++        rev16(data_reg, data_reg),
++        ror64(data_reg, data_reg, 16),
++        b(9),
++        cmp_immed(width_reg, 24),
++        b_cc(A64_CC_GT, 5),
++        ldr_offset(base, data_reg, 0),
++        rev(data_reg, data_reg),
++        ror64(data_reg, data_reg, 32),
++        b(3),
++        ldr64_offset(base, data_reg, 0),
++        rev64(data_reg, data_reg)
++#else
+         b_cc(A64_CC_NE, 4),
+         ldrb_offset(base, data_reg, 0),
+         ror64(data_reg, data_reg, 8),
+@@ -3916,6 +3984,7 @@ static inline uint32_t EMIT_BFxxx_RR(struct TranslatorContext *ctx, uint8_t base
+         ror64(data_reg, data_reg, 32),
+         b(2),
+         ldr64_offset(base, data_reg, 0)
++#endif
+     );
+ 
+     /* In case of INS, prepare the source data accordingly */
+@@ -4047,6 +4116,27 @@ static inline uint32_t EMIT_BFxxx_RR(struct TranslatorContext *ctx, uint8_t base
+                 /* Store the data back */
+                 /* Width == 1? Fetch byte */
+                 cmp_immed(width_reg, 1),
++#if EMU68_HOST_LE
++                /* DashOS (U7): en little-endian, cada guardado lleva su giro (data_reg ya no se usa) */
++                b_cc(A64_CC_NE, 4),
++                ror64(data_reg, data_reg, 64 - 8),
++                strb_offset(base, data_reg, 0),
++                b(15),
++                cmp_immed(width_reg, 8),
++                b_cc(A64_CC_GT, 5),
++                ror64(data_reg, data_reg, 64 - 16),
++                rev16(data_reg, data_reg),
++                strh_offset(base, data_reg, 0),
++                b(9),
++                cmp_immed(width_reg, 24),
++                b_cc(A64_CC_GT, 5),
++                ror64(data_reg, data_reg, 32),
++                rev(data_reg, data_reg),
++                str_offset(base, data_reg, 0),
++                b(3),
++                rev64(data_reg, data_reg),
++                str64_offset(base, data_reg, 0)
++#else
+                 b_cc(A64_CC_NE, 4),
+                 ror64(data_reg, data_reg, 64 - 8),
+                 strb_offset(base, data_reg, 0),
+@@ -4064,6 +4154,7 @@ static inline uint32_t EMIT_BFxxx_RR(struct TranslatorContext *ctx, uint8_t base
+                 str_offset(base, data_reg, 0),
+                 b(2),
+                 str64_offset(base, data_reg, 0)
++#endif
+             );
+         }
+     }
+diff --git a/src/M68k_LINEF.c b/src/M68k_LINEF.c
+index 08c8471..638a36f 100644
+--- a/src/M68k_LINEF.c
++++ b/src/M68k_LINEF.c
+@@ -1064,19 +1064,19 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+ 
+                     if (pre_sz)
+                     {
+-                        EMIT(ctx, ldr_offset_preindex(int_reg, val_reg, pre_sz));
++                        EMIT_LD(ctx, 4, BE_UNSIGNED, val_reg, ldr_offset_preindex(int_reg, val_reg, pre_sz));
+                     }
+                     else if (post_sz)
+                     {
+-                        EMIT(ctx, ldr_offset_postindex(int_reg, val_reg, post_sz));
++                        EMIT_LD(ctx, 4, BE_UNSIGNED, val_reg, ldr_offset_postindex(int_reg, val_reg, post_sz));
+                     }
+                     else if (imm_offset >= -255 && imm_offset <= 255)
+                     {
+-                        EMIT(ctx, ldur_offset(int_reg, val_reg, imm_offset));
++                        EMIT_LD(ctx, 4, BE_UNSIGNED, val_reg, ldur_offset(int_reg, val_reg, imm_offset));
+                     }
+                     else if (imm_offset >= 0 && imm_offset < 16380 && !(imm_offset & 3))
+                     {
+-                        EMIT(ctx, ldr_offset(int_reg, val_reg, imm_offset));
++                        EMIT_LD(ctx, 4, BE_UNSIGNED, val_reg, ldr_offset(int_reg, val_reg, imm_offset));
+                     }
+                     else
+                     {
+@@ -1094,7 +1094,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                             EMIT_LoadImmediate(ctx, off, imm_offset);
+                             EMIT(ctx, add_reg(off, int_reg, off, LSL, 0));
+                         }
+-                        EMIT(ctx, ldr_offset(off, val_reg, 0));
++                        EMIT_LD(ctx, 4, BE_UNSIGNED, val_reg, ldr_offset(off, val_reg, 0));
+                         RA_FreeARMRegister(ctx, off);
+                     }
+                     EMIT(ctx, scvtf_32toD(*reg, val_reg));
+@@ -1104,19 +1104,19 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+ 
+                     if (pre_sz)
+                     {
+-                        EMIT(ctx, ldrsh_offset_preindex(int_reg, val_reg, pre_sz));
++                        EMIT_LD(ctx, 2, BE_SXT32, val_reg, ldrsh_offset_preindex_be(int_reg, val_reg, pre_sz));
+                     }
+                     else if (post_sz)
+                     {
+-                        EMIT(ctx, ldrsh_offset_postindex(int_reg, val_reg, post_sz));
++                        EMIT_LD(ctx, 2, BE_SXT32, val_reg, ldrsh_offset_postindex_be(int_reg, val_reg, post_sz));
+                     }
+                     else if (imm_offset >= -255 && imm_offset <= 255)
+                     {
+-                        EMIT(ctx, ldursh_offset(int_reg, val_reg, imm_offset));
++                        EMIT_LD(ctx, 2, BE_SXT32, val_reg, ldursh_offset_be(int_reg, val_reg, imm_offset));
+                     }
+                     else if (imm_offset >= 0 && imm_offset < 8190 && !(imm_offset & 1))
+                     {
+-                        EMIT(ctx, ldrsh_offset(int_reg, val_reg, imm_offset));
++                        EMIT_LD(ctx, 2, BE_SXT32, val_reg, ldrsh_offset_be(int_reg, val_reg, imm_offset));
+                     }
+                     else
+                     {
+@@ -1134,7 +1134,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                             EMIT_LoadImmediate(ctx, off, imm_offset);
+                             EMIT(ctx, add_reg(off, int_reg, off, LSL, 0));
+                         }
+-                        EMIT(ctx, ldrsh_offset(off, val_reg, 0));
++                        EMIT_LD(ctx, 2, BE_SXT32, val_reg, ldrsh_offset_be(off, val_reg, 0));
+                         RA_FreeARMRegister(ctx, off);
+                     }
+                     EMIT(ctx, scvtf_32toD(*reg, val_reg));
+@@ -1630,19 +1630,19 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+ 
+                 if (pre_sz)
+                 {
+-                    EMIT(ctx, str_offset_preindex(int_reg, val_reg, pre_sz));
++                    EMIT_ST(ctx, 4, val_reg, str_offset_preindex(int_reg, __be, pre_sz));
+                 }
+                 else if (post_sz)
+                 {
+-                    EMIT(ctx, str_offset_postindex(int_reg, val_reg, post_sz));
++                    EMIT_ST(ctx, 4, val_reg, str_offset_postindex(int_reg, __be, post_sz));
+                 }
+                 else if (imm_offset >= -255 && imm_offset <= 255)
+                 {
+-                    EMIT(ctx, stur_offset(int_reg, val_reg, imm_offset));
++                    EMIT_ST(ctx, 4, val_reg, stur_offset(int_reg, __be, imm_offset));
+                 }
+                 else if (imm_offset >= 0 && imm_offset < 16380 && !(imm_offset & 3))
+                 {
+-                    EMIT(ctx, str_offset(int_reg, val_reg, imm_offset));
++                    EMIT_ST(ctx, 4, val_reg, str_offset(int_reg, __be, imm_offset));
+                 }
+                 else
+                 {
+@@ -1660,7 +1660,7 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         EMIT_LoadImmediate(ctx, off, imm_offset);
+                         EMIT(ctx, add_reg(off, int_reg, off, LSL, 0));
+                     }
+-                    EMIT(ctx, str_offset(off, val_reg, 0));
++                    EMIT_ST(ctx, 4, val_reg, str_offset(off, __be, 0));
+                     RA_FreeARMRegister(ctx, off);
+                 }
+                 break;
+@@ -1681,19 +1681,19 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+ 
+                 if (pre_sz)
+                 {
+-                    EMIT(ctx, strh_offset_preindex(int_reg, val_reg, pre_sz));
++                    EMIT_ST(ctx, 2, val_reg, strh_offset_preindex(int_reg, __be, pre_sz));
+                 }
+                 else if (post_sz)
+                 {
+-                    EMIT(ctx, strh_offset_postindex(int_reg, val_reg, post_sz));
++                    EMIT_ST(ctx, 2, val_reg, strh_offset_postindex(int_reg, __be, post_sz));
+                 }
+                 else if (imm_offset >= -255 && imm_offset <= 255)
+                 {
+-                    EMIT(ctx, sturh_offset(int_reg, val_reg, imm_offset));
++                    EMIT_ST(ctx, 2, val_reg, sturh_offset(int_reg, __be, imm_offset));
+                 }
+                 else if (imm_offset >= 0 && imm_offset < 8190 && !(imm_offset & 1))
+                 {
+-                    EMIT(ctx, strh_offset(int_reg, val_reg, imm_offset));
++                    EMIT_ST(ctx, 2, val_reg, strh_offset(int_reg, __be, imm_offset));
+                 }
+                 else
+                 {
+@@ -1711,7 +1711,7 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         EMIT_LoadImmediate(ctx, off, imm_offset);
+                         EMIT(ctx, add_reg(off, int_reg, off, LSL, 0));
+                     }
+-                    EMIT(ctx, strh_offset(off, val_reg, 0));
++                    EMIT_ST(ctx, 2, val_reg, strh_offset(off, __be, 0));
+                     RA_FreeARMRegister(ctx, off);
+                 }
+                 break;
+@@ -4303,14 +4303,14 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+             {
+                 reg = RA_GetFPCR(ctx);
+                 
+-                EMIT(ctx, str_offset(dst, reg, offset));
++                EMIT_ST(ctx, 4, reg, str_offset(dst, __be, offset));
+                 offset += 4;
+             }
+ 
+             if (opcode2 & 0x0800)
+             {
+                 reg = RA_GetFPSR(ctx);
+-                EMIT(ctx, str_offset(dst, reg, offset));
++                EMIT_ST(ctx, 4, reg, str_offset(dst, __be, offset));
+                 offset += 4;
+             }
+ 
+@@ -4323,7 +4323,7 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+                 else {
+                     EMIT(ctx, mov_simd_to_reg(reg, REG_FPIAR));
+                 }
+-                EMIT(ctx, str_offset(dst, reg, offset));
++                EMIT_ST(ctx, 4, reg, str_offset(dst, __be, offset));
+                 RA_FreeARMRegister(ctx, reg);
+                 reg = 0xff;
+             }
+diff --git a/src/M68k_MOVE.c b/src/M68k_MOVE.c
+index 34a65b9..9427776 100644
+--- a/src/M68k_MOVE.c
++++ b/src/M68k_MOVE.c
+@@ -185,7 +185,7 @@ uint32_t EMIT_move(struct TranslatorContext *ctx)
+                         EMIT(ctx, cmn_reg(31, src_reg_2, LSL, 0));
+                     }
+ 
+-                    EMIT(ctx, stp_preindex(addr_reg, src_reg_2, src_reg_1, -8));
++                    EMIT_STP(ctx, src_reg_2, src_reg_1, stp_preindex(addr_reg, __be1, __be2, -8));
+ 
+                     tmp_reg = src_reg_2;
+                 
+@@ -223,7 +223,7 @@ uint32_t EMIT_move(struct TranslatorContext *ctx)
+                         EMIT(ctx, cmn_reg(31, src_reg_2, LSL, 0));
+                     }
+ 
+-                    EMIT(ctx, stp_postindex(addr_reg, src_reg_1, src_reg_2, 8));
++                    EMIT_STP(ctx, src_reg_1, src_reg_2, stp_postindex(addr_reg, __be1, __be2, 8));
+ 
+                     tmp_reg = src_reg_2;
+                 
+@@ -259,7 +259,7 @@ uint32_t EMIT_move(struct TranslatorContext *ctx)
+                         /* Two subsequent register moves from (An)+ */
+                         ctx->tc_M68kCodePtr+=2;
+                         
+-                        EMIT(ctx, ldp_postindex(addr_reg, dst_reg_1, dst_reg_2, 8));
++                        EMIT_LDP(ctx, dst_reg_1, dst_reg_2, ldp_postindex(addr_reg, dst_reg_1, dst_reg_2, 8));
+ 
+                         if (!is_movea2) {
+                             update_mask = M68K_GetSRMask(ctx->tc_M68kCodePtr - 1);
+@@ -310,7 +310,7 @@ uint32_t EMIT_move(struct TranslatorContext *ctx)
+                         /* Two subsequent register moves to (An)+ */
+                         ctx->tc_M68kCodePtr+=2;
+ 
+-                        EMIT(ctx, ldp_preindex(addr_reg, dst_reg_2, dst_reg_1, -8));
++                        EMIT_LDP(ctx, dst_reg_2, dst_reg_1, ldp_preindex(addr_reg, dst_reg_2, dst_reg_1, -8));
+ 
+                         if (!is_movea2) {
+                             update_mask = M68K_GetSRMask(ctx->tc_M68kCodePtr - 1);
+diff --git a/src/M68k_Translator.c b/src/M68k_Translator.c
+index 19069f2..c4b1b00 100644
+--- a/src/M68k_Translator.c
++++ b/src/M68k_Translator.c
+@@ -231,7 +231,7 @@ static inline uint32_t EmitINSN(struct TranslatorContext *ctx)
+         {
+             int8_t off = 0;
+             EMIT_GetOffsetPC(ctx, &off);
+-            EMIT(ctx, ldurh_offset(REG_PC, 0, off));
++            EMIT(ctx, ldurh_offset(REG_PC, 0, off));   /* solo para frenar; el valor no se usa */
+         }
+     }
+ 
