@@ -397,3 +397,19 @@ comprobado si lo tienen).
   pruebas fijas del banco (bucle y llamadas nativas) dan BIEN en little-endian.
 - **No comprobado:** excepciones (los marcos y el vector se escriben desde C, `M68k_ExceptionEntry.c`), MOVES,
   NBCD y los desplazamientos de memoria más allá de los de `t1`. Falta la FPU (U7e).
+
+### 2026-11-07 — U7e (la FPU en little-endian)
+
+- Parche `0007-u7-fpu.patch`: REV64 y REV32 de vectores (`vrev64_8b`, `vrev32_8b`, `EMIT_FSwapBE`) tras cargar un
+  Double o un Float (también los inmediatos, que se leen relativos al PC) y antes de guardarlos (de una copia en el
+  temporal de la FPU: el registro del 68k no se toca). La precisión extendida se hace en C (`math/96bit.c`, también
+  FMOVEM.X): ahí, `M16/M32/M64`. El empaquetado no se gira (va y vuelve como imagen de memoria en x0 y x1), pero en
+  little-endian sobra el `ror64` con que Emu68 bajaba su mitad de x1. FMOVEM de FPCR, FPSR y FPIAR, girados.
+- `math/libm.h` (las funciones de C para FSIN, FCOS, FETOX...) suponía la mitad alta de un Double primero en
+  memoria; en little-endian va segunda. Sin eso, FSIN de 0.5 daba 0.5.
+- El banco recompila al cambiar una cabecera (`-MMD`): antes, tocar `libm.h` no recompilaba nada y la prueba seguía
+  dando el fallo arreglado.
+- **Comprobado:** `comparar.py` da bien los tres programas en los dos órdenes (misma salida, registros, FPU y suma de
+  toda la memoria), y en big-endian el código generado es el de la referencia salvo direcciones de C.
+- **No comprobado:** excepciones (U7f), y las funciones de la FPU que `t1` no usa (FETOX, FLOGN, FTAN, FATAN...),
+  aunque van por la misma `libm.h`.

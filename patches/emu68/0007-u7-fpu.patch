@@ -1,0 +1,305 @@
+diff --git a/include/M68k_Endian.h b/include/M68k_Endian.h
+index 1d8f148..e9dc306 100644
+--- a/include/M68k_Endian.h
++++ b/include/M68k_Endian.h
+@@ -107,6 +107,18 @@ static inline __attribute__((always_inline)) void EMIT_SwapBE(struct TranslatorC
+ #define EMIT_STP(ctx, r1, r2, insn) do { uint8_t __be1 = EMIT_StoreBE(ctx, 4, r1); uint8_t __be2 = EMIT_StoreBE(ctx, 4, r2); \
+     EMIT(ctx, insn); EMIT_StoreBE_Done(ctx, __be2, r2); EMIT_StoreBE_Done(ctx, __be1, r1); } while (0)
+ 
++/* FPU: REV64 y REV32 de vectores (8B), para un Double o un Float en un registro de la FPU (ARM DDI 0487, C7.2) */
++static inline __attribute__((always_inline)) uint32_t vrev64_8b(uint8_t rd, uint8_t rn) { return I32(0x0e200800 | (rd & 31) | ((rn & 31) << 5)); }
++static inline __attribute__((always_inline)) uint32_t vrev32_8b(uint8_t rd, uint8_t rn) { return I32(0x2e200800 | (rd & 31) | ((rn & 31) << 5)); }
++
++/* Tras cargar un Double (8) o un Float (4) de la memoria del 68k en un registro de la FPU; o antes de guardarlo (de
++   `rn` a `rd`, que puede ser el mismo) */
++static inline __attribute__((always_inline)) void EMIT_FSwapBE(struct TranslatorContext *ctx, int size, uint8_t rd, uint8_t rn)
++{
++    if (EMU68_HOST_LE)
++        EMIT(ctx, size == 8 ? vrev64_8b(rd, rn) : vrev32_8b(rd, rn));
++}
++
+ #if EMU68_HOST_LE
+ #define ldrsh_offset_be(rn, rt, off)            ldrh_offset(rn, rt, off)
+ #define ldursh_offset_be(rn, rt, off)           ldurh_offset(rn, rt, off)
+diff --git a/src/M68k_LINEF.c b/src/M68k_LINEF.c
+index 638a36f..ba7a644 100644
+--- a/src/M68k_LINEF.c
++++ b/src/M68k_LINEF.c
+@@ -684,10 +684,9 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                     } else {
+                         int8_t off = 4;
+                         EMIT_GetOffsetPC(ctx, &off);
+-                        EMIT(ctx, 
+-                            flds(*reg, REG_PC, off),
+-                            fcvtds(*reg, *reg)
+-                        );
++                        EMIT(ctx, flds(*reg, REG_PC, off));
++                        EMIT_FSwapBE(ctx, 4, *reg, *reg);   /* DashOS (U7) */
++                        EMIT(ctx, fcvtds(*reg, *reg));
+                     }
+                     *ext_count += 2;
+                     break;
+@@ -786,6 +785,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                         int8_t off = 4;
+                         EMIT_GetOffsetPC(ctx, &off);
+                         EMIT(ctx, fldd(*reg, REG_PC, off));
++                        EMIT_FSwapBE(ctx, 8, *reg, *reg);   /* DashOS (U7) */
+                     }
+                     *ext_count += 4;
+                     break;
+@@ -803,6 +803,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                 {
+                     case SIZE_D:
+                         EMIT(ctx, fldd(*reg, int_reg, 0));
++                        EMIT_FSwapBE(ctx, 8, *reg, *reg);   /* DashOS (U7) */
+                         *ext_count += 4;
+                         break;
+ 
+@@ -1020,6 +1021,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                             RA_FreeARMRegister(ctx, off);
+                         }
+                     }
++                    EMIT_FSwapBE(ctx, 8, *reg, *reg);   /* DashOS (U7) */
+                     break;
+                 case SIZE_S:
+                     if (pre_sz)
+@@ -1057,6 +1059,7 @@ void FPU_FetchData(struct TranslatorContext *ctx, uint8_t *reg, uint16_t opcode,
+                         EMIT(ctx, flds(*reg, off, 0));
+                         RA_FreeARMRegister(ctx, off);
+                     }
++                    EMIT_FSwapBE(ctx, 4, *reg, *reg);   /* DashOS (U7) */
+                     EMIT(ctx, fcvtds(*reg, *reg));
+                     break;
+                 case SIZE_L:
+@@ -1355,9 +1358,12 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
+                         movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+-                        blr(1),
+-                
+-                        ror64(1, 1, 32),
++                        blr(1)
++                    );
++                    /* DashOS (U7): en little-endian, la mitad de packed_t que vuelve en x1 ya está abajo */
++                    if (!EMU68_HOST_LE)
++                        EMIT(ctx, ror64(1, 1, 32));
++                    EMIT(ctx, 
+                         stur64_offset(19, 0, imm_offset),
+                         stur_offset(19, 1, imm_offset + 8)
+                     );
+@@ -1392,9 +1398,12 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
+                         movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+-                        blr(1),
+-
+-                        ror64(1, 1, 32),
++                        blr(1)
++                    );
++                    /* DashOS (U7): en little-endian, la mitad de packed_t que vuelve en x1 ya está abajo */
++                    if (!EMU68_HOST_LE)
++                        EMIT(ctx, ror64(1, 1, 32));
++                    EMIT(ctx, 
+                         stur64_offset(19, 0, 0),
+                         stur_offset(19, 1, 8)
+                     );
+@@ -1434,9 +1443,12 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
+                         movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+-                        blr(1),
+-
+-                        ror64(1, 1, 32),
++                        blr(1)
++                    );
++                    /* DashOS (U7): en little-endian, la mitad de packed_t que vuelve en x1 ya está abajo */
++                    if (!EMU68_HOST_LE)
++                        EMIT(ctx, ror64(1, 1, 32));
++                    EMIT(ctx, 
+                         stur64_offset(19, 0, imm_offset),
+                         stur_offset(19, 1, imm_offset + 8)
+                     );
+@@ -1471,9 +1483,12 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                         movk64_immed_u16(1, u.u16[U16IDX(1)], 2),
+                         movk64_immed_u16(1, u.u16[U16IDX(0)], 3),
+ 
+-                        blr(1),
+-
+-                        ror64(1, 1, 32),
++                        blr(1)
++                    );
++                    /* DashOS (U7): en little-endian, la mitad de packed_t que vuelve en x1 ya está abajo */
++                    if (!EMU68_HOST_LE)
++                        EMIT(ctx, ror64(1, 1, 32));
++                    EMIT(ctx, 
+                         stur64_offset(19, 0, 0),
+                         stur_offset(19, 1, 8)
+                     );
+@@ -1546,21 +1561,27 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                 break;
+             case SIZE_D:
+                 {
++                    /* DashOS (U7): en little-endian se guarda una copia girada */
++                    uint8_t sreg = reg;
++                    if (EMU68_HOST_LE) {
++                        EMIT_FSwapBE(ctx, 8, vfp_reg, reg);
++                        sreg = vfp_reg;
++                    }
+                     if (pre_sz)
+                     {
+-                        EMIT(ctx, fstd_preindex(reg, int_reg, pre_sz));
++                        EMIT(ctx, fstd_preindex(sreg, int_reg, pre_sz));
+                     }
+                     else if (post_sz)
+                     {
+-                        EMIT(ctx, fstd_postindex(reg, int_reg, post_sz));
++                        EMIT(ctx, fstd_postindex(sreg, int_reg, post_sz));
+                     }
+                     else if (imm_offset >= -255 && imm_offset <= 255)
+                     {
+-                        EMIT(ctx, fstd(reg, int_reg, imm_offset));
++                        EMIT(ctx, fstd(sreg, int_reg, imm_offset));
+                     }
+                     else if (imm_offset >= 0 && imm_offset < 32760 && !(imm_offset & 7))
+                     {
+-                        EMIT(ctx, fstd_pimm(reg, int_reg, imm_offset >> 3));
++                        EMIT(ctx, fstd_pimm(sreg, int_reg, imm_offset >> 3));
+                     }
+                     else
+                     {
+@@ -1578,13 +1599,14 @@ void FPU_StoreData(struct TranslatorContext *ctx, uint8_t reg, uint16_t opcode,
+                             EMIT_LoadImmediate(ctx, off, imm_offset);
+                             EMIT(ctx, add_reg(off, int_reg, off, LSL, 0));
+                         }
+-                        EMIT(ctx, fstd(reg, off, 0));
++                        EMIT(ctx, fstd(sreg, off, 0));
+                         RA_FreeARMRegister(ctx, off);
+                     }
+                 }
+                 break;
+             case SIZE_S:
+                 EMIT(ctx, fcvtsd(vfp_reg, reg));
++                EMIT_FSwapBE(ctx, 4, vfp_reg, vfp_reg);   /* DashOS (U7) */
+                 if (pre_sz)
+                 {
+                     EMIT(ctx, fsts_preindex(vfp_reg, int_reg, pre_sz));
+@@ -4430,8 +4452,8 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+                 uint8_t round = RA_AllocARMRegister(ctx);
+                 reg = RA_ModifyFPCR(ctx);
+                 
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(src, tmp, offset));   /* DashOS (U7) */
+                 EMIT(ctx, 
+-                    ldr_offset(src, tmp, offset),
+                     mov_reg(reg, tmp),
+ 
+                     get_fpcr(tmp),
+@@ -4450,20 +4472,16 @@ uint32_t EMIT_FPU(struct TranslatorContext *ctx)
+             if (opcode2 & 0x0800)
+             {
+                 reg = RA_ModifyFPSR(ctx);
+-                EMIT(ctx, 
+-                    ldr_offset(src, tmp, offset),
+-                    mov_reg(reg, tmp)
+-                );
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(src, tmp, offset));   /* DashOS (U7) */
++                EMIT(ctx, mov_reg(reg, tmp));
+                 offset += 4;
+             }
+ 
+             if (opcode2 & 0x0400)
+             {
+                 val_FPIAR = 0xffffffff;
+-                EMIT(ctx, 
+-                    ldr_offset(src, tmp, offset),
+-                    mov_reg_to_simd(REG_FPIAR, tmp)
+-                );
++                EMIT_LD(ctx, 4, BE_UNSIGNED, tmp, ldr_offset(src, tmp, offset));   /* DashOS (U7) */
++                EMIT(ctx, mov_reg_to_simd(REG_FPIAR, tmp));
+             }
+ 
+             // In postincrement mode adjust the value now
+diff --git a/src/math/96bit.c b/src/math/96bit.c
+index 843ec11..c46d4d6 100644
+--- a/src/math/96bit.c
++++ b/src/math/96bit.c
+@@ -2,12 +2,23 @@
+ 
+ #define unlikely(x)    __builtin_expect(!!(x), 0)
+ 
++/* DashOS (U7): la memoria del 68k es big-endian también cuando el JIT corre en little-endian */
++#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++#define M16(x) __builtin_bswap16(x)
++#define M32(x) __builtin_bswap32(x)
++#define M64(x) __builtin_bswap64(x)
++#else
++#define M16(x) (x)
++#define M32(x) (x)
++#define M64(x) (x)
++#endif
++
+ uint64_t Load96bit(uintptr_t __ignore, uintptr_t base)
+ {
+     (void)__ignore;
+     
+-    uint16_t exp = *(uint16_t *)base;
+-    uint64_t mant = *(uint64_t *)(base + 4);
++    uint16_t exp = M16(*(uint16_t *)base);
++    uint64_t mant = M64(*(uint64_t *)(base + 4));
+     uint64_t ret;
+ 
+     /* Load zero, positive or negative */
+@@ -49,7 +60,7 @@ void Store96bit(uint64_t value, uintptr_t base)
+     /* Store zero, positive or negative */
+     if (unlikely((value & 0x7fffffffffffffffULL) == 0))
+     {
+-        *(uint64_t *)base = value;
++        *(uint64_t *)base = M64(value);
+         *(uint32_t *)(base + 8) = 0;
+         return;
+     }
+@@ -57,7 +68,7 @@ void Store96bit(uint64_t value, uintptr_t base)
+     /* Store plus/minus infinity */
+     if (unlikely((value & 0x7fffffffffffffffULL) == 0x7ff0000000000000ULL))
+     {
+-        *(uint64_t *)base = value | 0x000f000000000000ULL;
++        *(uint64_t *)base = M64(value | 0x000f000000000000ULL);
+         *(uint32_t *)(base + 8) = 0;
+         return;
+     }
+@@ -65,7 +76,7 @@ void Store96bit(uint64_t value, uintptr_t base)
+     /* Store NaN */
+     if (unlikely((value & 0x7ff0000000000000ULL) == 0x7ff0000000000000ULL && (value & 0x000fffffffffffff) != 0))
+     {
+-        *(uint32_t *)base = ((value >> 32) | 0x000f0000ULL) & 0xffff0000;
++        *(uint32_t *)base = M32(((value >> 32) | 0x000f0000ULL) & 0xffff0000);
+         *(uint64_t *)(base + 4) = 0xffffffffffffffffULL;
+         return;
+     }
+@@ -73,6 +84,6 @@ void Store96bit(uint64_t value, uintptr_t base)
+     exp |= (((value >> 52) & 0x7ff) - 0x3ff + 0x3fff) << 16;
+     mant |= (value & 0x000fffffffffffffULL) << 11;
+ 
+-    *(uint32_t *)base = exp;
+-    *(uint64_t *)(base + 4) = mant;
++    *(uint32_t *)base = M32(exp);
++    *(uint64_t *)(base + 4) = M64(mant);
+ }
+diff --git a/src/math/libm.h b/src/math/libm.h
+index afb3f4a..81f17f3 100644
+--- a/src/math/libm.h
++++ b/src/math/libm.h
+@@ -12,8 +12,14 @@ typedef union
+   double value;
+   struct
+   { 
++#if __BYTE_ORDER__ == __ORDER_LITTLE_ENDIAN__
++    /* DashOS (U7): la mitad alta va segunda en little-endian */
++    uint32_t lsw;
++    uint32_t msw;
++#else
+     uint32_t msw;
+     uint32_t lsw;
++#endif
+   } parts;
+   struct
+   { 

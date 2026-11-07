@@ -28,7 +28,7 @@ M68K_FIXED := -ffixed-x12 -ffixed-x18 -ffixed-x19 -ffixed-x20 -ffixed-x21 -ffixe
 M68K_SAVED := -fcall-saved-x4 -fcall-saved-x5 -fcall-saved-x6 -fcall-saved-x7 -fcall-saved-x8 \
 	-fcall-saved-x9 -fcall-saved-x10 -fcall-saved-x11
 
-COMMON  := $(ENDIAN) -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
+COMMON  := -MMD -MP $(ENDIAN) -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
@@ -75,6 +75,9 @@ $(B)/jit-host: $(OBJS)
 
 $(B):
 	mkdir -p $(B)
+
+# las cabeceras de Emu68 (M68k_Endian.h, libm.h...): sin esto, cambiarlas no recompila nada
+-include $(OBJS:.o=.d)
 
 clean:
 	rm -rf build build-le
