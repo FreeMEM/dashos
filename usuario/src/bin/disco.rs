@@ -18,6 +18,7 @@ const MIRAR: u32 = 4;
 const ABRIR: u32 = 0;
 const LEER: u32 = 1;
 const ESCRIBIR: u32 = 2;
+const VACIAR: u32 = 5;
 
 struct Respuesta {
     estado: i32,
@@ -96,8 +97,10 @@ fn principal() -> u64 {
     let cruzando = estado(LEER, (4096 / t) as u32, 0, 2048) == 0 && empieza(2048, b"DashOS: sector 0") && empieza(2048 + 2 * t, texto);
     // Lo que se debe rechazar: fuera del disco (-2) y fuera de la ventana (-3).
     let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (64 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3;
+    // Vaciar la caché del disco (FS2).
+    let vaciado = estado(VACIAR, 0, 0, 0) == 0;
     let si = |b: bool| if b { "bien" } else { "MAL" };
-    println!("  [disco] leer: {}; escribir y releer: {}; cruzando páginas: {}; rechazos: {}", si(leidos), si(escrito), si(cruzando), si(rechazos));
+    println!("  [disco] leer: {}; escribir y releer: {}; cruzando páginas: {}; rechazos: {}; vaciar: {}", si(leidos), si(escrito), si(cruzando), si(rechazos), si(vaciado));
     // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
     let (l2, v2) = dashos::canal_crear();
     let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {

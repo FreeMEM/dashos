@@ -113,7 +113,7 @@ canal del cliente (con derecho a transferir), por el que vuelve la respuesta.
 
 | Bytes | Campo |
 |---|---|
-| 0-3 | orden: 0 abrir, 1 leer, 2 escribir |
+| 0-3 | orden: 0 abrir, 1 leer, 2 escribir, 5 vaciar la caché del disco |
 | 4-7 | sectores |
 | 8-15 | primer sector |
 | 16-19 | desplazamiento en la ventana (múltiplo de 4) |
@@ -125,6 +125,10 @@ servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce po
 `inicio`): un mensaje sin marca se rechaza, y abrir otra vez da la misma ventana. Hasta 4 clientes. Una transferencia
 cabe en dos páginas de la ventana (8 KB desde un principio de página). La ventana lleva derecho a transferir, para que
 el cliente pueda dársela a otro proceso suyo.
+
+**Vaciar** (orden 5, FS2): sin sectores ni ventana. Cuando contesta, todo lo escrito antes está guardado en el disco,
+también lo que estuviera en su caché. Un sistema de archivos lo pide antes y después de escribir su cabecera: sin esto,
+un disco con caché puede guardar la cabecera antes que los bloques a los que apunta. Vale también en el anillo.
 
 **Anillo** (U6l, S1): con la orden 3 (tras abrir, con una llave de respuesta propia) el servicio da una página de
 memoria compartida y se queda con esa llave para avisar. Cabecera de palabras de 32 bits: 0 cabeza de envíos (la
