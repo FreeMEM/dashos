@@ -350,14 +350,24 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     }
     // Si la llave es revocable, la proyección se apunta en sus intermediarios antes de hacerla, y después se mira si
     // la revocaron entre medias: así o la ve quien revoca, o la quitamos aquí (C45).
-    for r in &por {
+    // Se apunta como pendiente; al acabar, hecha o retirada (A4).
+    for (k, r) in por.iter().enumerate() {
         if !r.apuntar_proyeccion(&proc_, va) {
+            for r in &por[..k] {
+                r.retirar_proyeccion(&proc_, va);
+            }
             return E_LIMITE;
         }
     }
     let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
     if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir, &via) {
+        for r in &por {
+            r.retirar_proyeccion(&proc_, va);
+        }
         return error_espacio(err);
+    }
+    for r in &por {
+        r.confirmar_proyeccion(&proc_, va);
     }
     if por.iter().any(|r| r.revocado()) {
         proc_.espacio.tomar().quitar_proyeccion(va, Some(&m), None);
@@ -431,7 +441,7 @@ fn temporizador_crear(hc: u32, primero_us: u64, periodo_us: u64) -> u64 {
     if t.huecos() < 1 {
         return E_LIMITE;
     }
-    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), via, canal.marca, primero_us, periodo_us, &proc_.cupo) else {
+    let Some(tm) = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), &via, canal.marca, primero_us, periodo_us, &proc_.cupo) else {
         return E_MEMORIA;
     };
     match t.instalar(objetos::Llave::nueva(Objeto::Temporizador(tm), objetos::TODOS)) {
@@ -718,7 +728,12 @@ fn dma_liberar(h: u32) -> u64 {
 fn registros_recortar(h: u32, desde: u64, tamano: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let mut t = proc_.llaves.tomar();
-    let Some(l) = t.ver(h) else { return E_LLAVE };
+    // Una llave revocable no se recorta: la copia no pasaría por su intermediario y no se podría revocar (segunda
+    // vuelta de la auditoría, B17).
+    let Some((l, por)) = t.ver_con_intermediarios(h) else { return E_LLAVE };
+    if !por.is_empty() {
+        return E_ARGUMENTO;
+    }
     let pagina = crate::memoria::PAGINA;
     let dentro = |fisica: u64, total: u64| -> Option<(u64, u64)> {
         let fin = desde.checked_add(tamano)?;

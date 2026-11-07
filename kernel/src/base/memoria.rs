@@ -354,12 +354,14 @@ impl Paginas {
 /// Un permiso DMA (C46): de qué zona, y cuánto hay que sumar a la física para tener la dirección de bus. Con su
 /// cuarentena (auditoría de la fase 4, M5): la memoria DMA hecha con él no vuelve al repartidor al soltarse, porque el
 /// aparato puede seguir escribiendo en ella (su controlador murió a medias); espera aquí hasta que un controlador
-/// nuevo, con el aparato ya reiniciado, la libera (`liberar_cuarentena`). Si el permiso se suelta del todo, su
-/// cuarentena no vuelve nunca: nadie podría ya decir que el aparato está parado.
+/// nuevo, con el aparato ya reiniciado, la libera (`liberar_cuarentena`). Mientras, sigue cobrada al grupo que la pidió
+/// (segunda vuelta de la auditoría, M7): un controlador que pide y suelta sin parar agota su cupo, no la memoria del
+/// sistema. Si el permiso se suelta del todo, su cuarentena no vuelve nunca: nadie podría ya decir que el aparato
+/// está parado.
 pub struct PermisoDma {
     pub zona: Zona,
     pub desplazamiento_bus: u64,
-    cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize)>>,
+    cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize, Option<crate::cupo::Cargo>)>>,
 }
 
 impl PermisoDma {
@@ -371,14 +373,18 @@ impl PermisoDma {
     pub fn liberar_cuarentena(&self) -> usize {
         let tramos = core::mem::take(&mut *self.cuarentena.tomar());
         let mut n = 0;
-        let mut p = paginas();
-        for (base, k) in tramos {
-            for i in 0..k as u64 {
-                // Eran de un objeto DMA ya soltado, y nadie las proyecta.
-                unsafe { p.liberar(base + i * PAGINA, 1) };
+        {
+            let mut p = paginas();
+            for (base, k, _) in &tramos {
+                for i in 0..*k as u64 {
+                    // Eran de un objeto DMA ya soltado, y nadie las proyecta.
+                    unsafe { p.liberar(base + i * PAGINA, 1) };
+                }
+                n += k;
             }
-            n += k;
         }
+        // Lo cobrado vuelve a su grupo ahora, fuera del cerrojo de las páginas.
+        drop(tramos);
         n
     }
 }
@@ -389,8 +395,8 @@ pub struct Memoria {
     bus: Option<u64>,
     /// Si es memoria DMA, el permiso con que se hizo: al soltarse, sus páginas van a su cuarentena (M5).
     permiso: Option<alloc::sync::Arc<PermisoDma>>,
-    /// Lo cobrado a su grupo (C42); se devuelve al soltarse.
-    _cargo: crate::cupo::Cargo,
+    /// Lo cobrado a su grupo (C42); se devuelve al soltarse, o al salir de la cuarentena si es DMA (M7).
+    cargo: Option<crate::cupo::Cargo>,
 }
 
 impl Memoria {
@@ -399,7 +405,7 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, _cargo: cargo };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(paginas().pagina_usuario()?);
@@ -439,7 +445,7 @@ impl Memoria {
         for i in 0..n as u64 {
             paginas.push(base + i * PAGINA);
         }
-        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), _cargo: cargo })
+        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), cargo: Some(cargo) })
     }
 
     /// La dirección de bus si es memoria DMA.
@@ -508,7 +514,7 @@ impl Drop for Memoria {
             if let Some(&base) = self.paginas.first() {
                 let mut c = permiso.cuarentena.tomar();
                 if c.try_reserve(1).is_ok() {
-                    c.push((base, self.paginas.len()));
+                    c.push((base, self.paginas.len(), self.cargo.take()));
                 }
             }
             return;

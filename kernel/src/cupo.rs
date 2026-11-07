@@ -121,6 +121,20 @@ impl Cupo {
     }
 
     /// (límite, usado), en bytes.
+    /// El grupo de primer nivel al que pertenece (el hijo del raíz por el que se baja hasta este; el raíz, si es el
+    /// raíz), como un número que solo se compara. Para repartir el trabajo entre servicios (auditoría de la fase 4,
+    /// A3): un servicio y sus subgrupos cuentan como uno.
+    pub fn primer_nivel(self: &Arc<Self>) -> usize {
+        let mut c: &Arc<Cupo> = self;
+        loop {
+            match &c._del_padre {
+                None => return Arc::as_ptr(c) as usize,
+                Some(cargo) if cargo.cupo._del_padre.is_none() => return Arc::as_ptr(c) as usize,
+                Some(cargo) => c = &cargo.cupo,
+            }
+        }
+    }
+
     pub fn uso(&self) -> (u64, u64) {
         (self.limite, self.usado.load(Ordering::Relaxed))
     }

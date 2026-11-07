@@ -24,6 +24,20 @@ fn nombre(p: usize) -> &'static str {
     core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
 
+/// Espera un tic sin gastar CPU (un temporizador de una vez).
+fn dormir_un_tic() {
+    let (a, b) = canal_crear();
+    let t = dashos::temporizador_crear(b, 10_000, 0);
+    if t > 0 {
+        let mut buf = [0u8; 8];
+        let mut ll = [0u32; 1];
+        dashos::canal_leer(a, &mut buf, &mut ll);
+        dashos::cerrar(t as u32);
+    }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
+}
+
 fn principal() -> u64 {
     if memoria_proyectar(1, PAQUETE, false) != 0 {
         println!("  [inicio] sin paquete de arranque");
@@ -92,7 +106,14 @@ fn principal() -> u64 {
                         let mut dir = [0u8; 24];
                         dir[..8].copy_from_slice(&marca.to_le_bytes());
                         dir[8..].copy_from_slice(unsafe { core::slice::from_raw_parts(nombre_cab as *const u8, 16) });
-                        dashos::canal_escribir(pendientes[c], &dir, &[]);
+                        // Si la cola del servidor está llena, se reintenta un rato: sin su entrada, el cliente no
+                        // podría pedir lo suyo (segunda vuelta de la auditoría, B16).
+                        for _ in 0..100 {
+                            if dashos::canal_escribir(pendientes[c], &dir, &[]) == 0 {
+                                break;
+                            }
+                            dormir_un_tic();
+                        }
                     }
                 }
             }

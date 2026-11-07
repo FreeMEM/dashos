@@ -57,10 +57,21 @@ pub enum Objeto {
 pub struct Revocable {
     objeto: Cerrojo<Option<Objeto>>,
     /// Proyecciones de memoria hechas a través de este intermediario (C45): al revocar se quitan.
-    proyecciones: Cerrojo<Vec<(alloc::sync::Weak<Proceso>, u64)>>,
+    /// Con cada una, si ya está hecha: las pendientes no se purgan (segunda vuelta de la auditoría, A4).
+    proyecciones: Cerrojo<Vec<(alloc::sync::Weak<Proceso>, u64, bool)>>,
     /// Cuántos intermediarios hay por debajo, contando este: como mucho `MAX_REVOCABLES` (C43, auditoría C1).
     profundidad: u32,
+    /// A verdadero al revocarse o al soltarse. La comparten quienes vigilan este intermediario sin sujetarlo
+    /// (temporizadores e interrupciones): la leen sin crear un `Arc`, que podría ser el último y soltar una cadena con
+    /// cerrojos tomados (tercera vuelta de la auditoría de la fase 4, A5).
+    caido: Arc<core::sync::atomic::AtomicBool>,
     _cargo: crate::cupo::Cargo,
+}
+
+impl Drop for Revocable {
+    fn drop(&mut self) {
+        self.caido.store(true, core::sync::atomic::Ordering::Release);
+    }
 }
 
 /// Intermediarios dentro de intermediarios, como mucho. Soltar una cadena va por recursión, y `ver` la recorre.
@@ -78,16 +89,18 @@ impl Revocable {
             return None;
         }
         let cargo = cupo.cobrar(crate::cupo::COSTE_REVOCABLE)?;
-        Some(Self { objeto: Cerrojo::new(Some(objeto)), proyecciones: Cerrojo::default(), profundidad: debajo + 1, _cargo: cargo })
+        let caido = Arc::new(core::sync::atomic::AtomicBool::new(false));
+        Some(Self { objeto: Cerrojo::new(Some(objeto)), proyecciones: Cerrojo::default(), profundidad: debajo + 1, caido, _cargo: cargo })
     }
 
     /// Revoca: suelta el objeto (fuera del cerrojo). Si era lo último que lo tenía, se libera; un lado de canal se
     /// cierra. Si es memoria, se quitan las proyecciones que se hicieron a través de este intermediario (C45).
     pub fn revocar(&self) {
+        self.caido.store(true, core::sync::atomic::Ordering::Release);
         let objeto = self.objeto.tomar().take();
         if let Some(m) = objeto.as_ref().and_then(memoria_de) {
             let proyecciones = core::mem::take(&mut *self.proyecciones.tomar());
-            for (p, va) in proyecciones {
+            for (p, va, _) in proyecciones {
                 if let Some(p) = p.upgrade() {
                     p.espacio.tomar().quitar_proyeccion(va, Some(&m), Some(self.id()));
                 }
@@ -101,17 +114,64 @@ impl Revocable {
         self as *const Self as usize
     }
 
-    /// Apunta una proyección hecha (o a punto de hacerse) a través de este intermediario. Falso si no cabe. Antes
-    /// purga las que ya no están: de procesos muertos o quitadas con `memoria_quitar` (auditoría de la fase 4, M2).
+    /// Apunta una proyección a punto de hacerse a través de este intermediario, como pendiente. Falso si no cabe. Si
+    /// la lista está llena, antes purga las hechas que ya no están (de procesos muertos o quitadas con
+    /// `memoria_quitar`; M2), nunca las pendientes, que aún no se ven en el espacio (A4). Solo al llenarse, y soltando
+    /// los procesos fuera del cerrojo (B15).
     pub fn apuntar_proyeccion(&self, p: &Arc<Proceso>, va: u64) -> bool {
-        let mut v = self.proyecciones.tomar();
-        let id = self.id();
-        v.retain(|(w, va)| w.upgrade().is_some_and(|q| q.espacio.tomar().proyectada_via(*va, id)));
-        if v.len() >= MAX_PROYECCIONES_REVOCABLE || v.try_reserve(1).is_err() {
-            return false;
+        let mut soltar: Vec<Arc<Proceso>> = Vec::new();
+        let bien = {
+            let mut v = self.proyecciones.tomar();
+            if v.len() >= MAX_PROYECCIONES_REVOCABLE {
+                let id = self.id();
+                let _ = soltar.try_reserve(v.len());
+                v.retain(|(w, va, hecha)| {
+                    if !*hecha {
+                        return w.strong_count() > 0;
+                    }
+                    match w.upgrade() {
+                        None => false,
+                        Some(q) => {
+                            let sigue = q.espacio.tomar().proyectada_via(*va, id);
+                            if soltar.len() < soltar.capacity() {
+                                soltar.push(q);
+                            }
+                            sigue
+                        }
+                    }
+                });
+            }
+            if v.len() >= MAX_PROYECCIONES_REVOCABLE || v.try_reserve(1).is_err() {
+                false
+            } else {
+                v.push((Arc::downgrade(p), va, false));
+                true
+            }
+        };
+        drop(soltar);
+        bien
+    }
+
+    /// La proyección apuntada como pendiente ya está hecha (A4).
+    pub fn confirmar_proyeccion(&self, p: &Arc<Proceso>, va: u64) {
+        let pw = Arc::as_ptr(p);
+        if let Some(e) = self.proyecciones.tomar().iter_mut().find(|(w, v, h)| !*h && *v == va && core::ptr::eq(w.as_ptr(), pw)) {
+            e.2 = true;
         }
-        v.push((Arc::downgrade(p), va));
-        true
+    }
+
+    /// La proyección apuntada como pendiente no se llegó a hacer: fuera de la lista.
+    pub fn retirar_proyeccion(&self, p: &Arc<Proceso>, va: u64) {
+        let pw = Arc::as_ptr(p);
+        let mut v = self.proyecciones.tomar();
+        if let Some(i) = v.iter().position(|(w, x, h)| !*h && *x == va && core::ptr::eq(w.as_ptr(), pw)) {
+            v.swap_remove(i);
+        }
+    }
+
+    /// La marca que se pone al revocarse o soltarse este intermediario, para vigilarlo sin sujetarlo (A5).
+    pub fn vigia(&self) -> Arc<core::sync::atomic::AtomicBool> {
+        self.caido.clone()
     }
 
     /// ¿Ya está revocado?

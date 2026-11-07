@@ -109,7 +109,7 @@ del kernel sobre la que irán esos controladores.
   canales.
 - [x] C50 **Compositor y GPU fuera del kernel.** El compositor por CPU como proceso sobre la pantalla del firmware; el
   HVS y la V3D como procesos (sin probar en QEMU). El buzón de la VideoCore, como servicio.
-- [ ] C51 **Cierre de la fase 4**: la ventana de entrada del PCIe (sin probar, Pi 4), las pruebas que quedan en el
+- [x] C51 **Cierre de la fase 4**: la ventana de entrada del PCIe (sin probar, Pi 4), las pruebas que quedan en el
   kernel pasan a `inicio` donde se pueda, y auditoría independiente de cierre con sus fallos arreglados.
 
 ### Fase 3 de S16 (cumplida)
@@ -1417,6 +1417,75 @@ y once bajos. Arreglados en esta parte:
 - **B10.** Documentado: puede llegar un aviso más justo tras cerrar un temporizador.
 - **B11.** Documentación puesta al día (tabla de llamadas, llaves que da el kernel, zona de la GPU, servicios).
 - **Comprobado:** `make -C kernel prueba` y `make -C kernel arranque`, bien.
+
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, sexta parte (segunda vuelta de la auditoría)
+
+El mismo auditor revisó los arreglos y la ventana del PCIe (sección "Segunda vuelta" del informe): un crítico, dos
+altos, dos medios y siete bajos nuevos. Arreglados:
+
+- **C1.** Guardar los intermediarios en el temporizador (A2) devolvía la recursión al soltar: una cadena de 20
+  temporizadores con llave revocable desbordaba la pila del kernel. Ahora se guardan como `Weak` (temporizador e
+  interrupción): no sujetan el lado del canal (B13), y si el intermediario ya no existe, se paran. Prueba: `tiempo`,
+  paso 14 (cadena de 30).
+- **A3.** Los temporizadores de un grupo retrasaban segundos los de los demás. Ahora hay una cola por grupo de primer
+  nivel (un servicio y sus subgrupos, `Cupo::primer_nivel`) y cada pasada da la vuelta a los grupos con algo vencido,
+  8 avisos de cada uno por vuelta y 64 en total. Prueba nueva: un proceso con 900 temporizadores de 10 ms y uno de
+  100 ms de otro grupo, que llega a los 101 ms; con una sola cola, a los 243 ms (comprobado: falla).
+- **A4.** La purga de proyecciones de una revocable podía quitar una que aún no se había hecho. Ahora cada entrada
+  está pendiente hasta que la proyección se hace (o se retira si falla), la purga no toca las pendientes, y solo se
+  purga con la lista llena, soltando los procesos fuera del cerrojo (B15).
+- **M7.** La cuarentena DMA no se cobraba: ahora sigue cobrada al grupo hasta que se libera.
+- **M8.** El buzón recortaba la pantalla sin mirar la respuesta del firmware: ahora solo con el mensaje y la etiqueta
+  contestados (8 bytes). Y la pantalla se da una sola vez: después no se deja reservar otra ni cambiar su tamaño.
+- **B12, B14.** Cuentas de los temporizadores: un aviso de una vez reintentado dice 1; las entradas de soltados
+  cuentan para el tope de la pasada; cada cola lleva sus vivos y muertos, se purga con más muertos que vivos más 32 y
+  se quita al soltarse su último temporizador (si no, sujetaban memoria del kernel hasta su vencimiento: C43 lo vio
+  como páginas perdidas).
+- **B16.** `inicio` reintenta el directorio si la cola del buzón está llena; el buzón espera un tic ante un error en
+  vez de girar.
+- **B17.** `registros_recortar` no recorta una llave revocable (`E_ARGUMENTO`).
+- **B18.** Escrito: la llave de los registros del PCIe no se da a nadie; el VL805 sigue viendo todo el primer GB.
+- **Pruebas más tolerantes con la carga:** `make prueba` a 90 s; C43 espera a `lanzador` hasta 80 s y a que vuelvan
+  las pilas de los hilos muertos (se recogen tarde, C18) hasta 3 s antes de contar páginas.
+- **Comprobado:** `make -C kernel prueba` cuatro veces seguidas y `make -C kernel arranque`, bien, con la máquina
+  cargada (media de 8 a 10).
+
+### 2026-11-07 madrugada, bucle (sesión DashOS) — C51, séptima parte (tercera vuelta de la auditoría) y cierre
+
+Tercera vuelta del auditor (sección "Tercera vuelta" del informe): ningún crítico, un alto, un medio y dos bajos.
+
+- **A5.** Mirar si la llave estaba revocada creaba un `Arc` del intermediario con cerrojos tomados; si era el último,
+  al soltarlo se podía volver a pedir `COLAS` en el mismo núcleo y colgar el núcleo 0. Ahora cada intermediario tiene
+  una marca atómica compartida (`Revocable::vigia`), que pone al revocarse o al soltarse; temporizadores e
+  interrupciones la leen sin crear ningún `Arc`.
+- **M9.** El reparto era solo entre servicios: dentro de uno, un programa con muchos temporizadores retrasaba a los
+  demás. Ahora, dentro de cada servicio, una cola por grupo y turnos entre ellas. Prueba: además del de otro servicio,
+  uno de 100 ms en otro grupo del mismo servicio; los dos llegan a los 101 ms.
+- **B19.** El buzón rechaza un mensaje que, tras reservar la pantalla, vuelve a reservarla o cambia su tamaño.
+- **B20.** Queda: si no hay memoria para la lista de procesos al purgar, alguno se suelta dentro del cerrojo; y el
+  servidor de la GPU necesitará devolver búferes sueltos con la V3D en marcha (para S9).
+- **Comprobado:** `make -C kernel prueba` dos veces y `make -C kernel arranque`, bien.
+
+**Fase 4 cerrada.** Auditoría en tres vueltas, con todos los críticos, altos y medios arreglados.
+
+## Resumen de la fase 4
+
+Del 2026-11-03 al 2026-11-07. Lo que no es del kernel salió del kernel:
+
+- **Servicios en EL0**, que lanza `inicio` (C47) con las llaves de arranque: la consola (C48), el USB con su
+  interrupción y eventos por un canal (C49), el buzón de la VideoCore con etiquetas por cliente, el compositor con
+  solo la memoria de su pantalla (C50) y el servidor de la GPU (C50, solo si hay V3D). `inicio` los conecta por
+  canales con nombre, con copias marcadas y un directorio para el servidor.
+- **Objetos y llamadas nuevos:** quitar proyecciones (21), memoria DMA con permiso y cuarentena (22, 26), registro del
+  sistema (23), temporizadores (24), memoria del firmware y recortarla (25).
+- **Gráficos fuera del kernel:** el HVS, la V3D, sus listas y los búferes de la GPU, en la biblioteca `graficos`.
+- **DMA:** el PCIe ya solo alcanza el primer GB (sin probar, falta la Pi), y la memoria DMA soltada espera en
+  cuarentena hasta que el controlador reinicia su aparato.
+- **Pruebas:** más pruebas como procesos (`lanzador`, que deja cada grupo a cero), y pruebas hostiles para cada
+  arreglo de la auditoría.
+- **Sin probar en la Pi 4:** PCIe, HVS, V3D, el USB por el VL805 y todo lo que QEMU no emula.
+- **Pendiente para después:** devolver búferes DMA sueltos (S9), y lo apuntado en "Limitaciones conocidas" de
+  `docs/referencia/kernel.md`.
 
 ## Pausa (2026-11-03, 20:5x)
 

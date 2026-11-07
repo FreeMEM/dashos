@@ -134,3 +134,8 @@ test = false
 name = "gpu"
 path = "src/bin/gpu.rs"
 test = false
+
+[[bin]]
+name = "muchos"
+path = "src/bin/muchos.rs"
+test = false

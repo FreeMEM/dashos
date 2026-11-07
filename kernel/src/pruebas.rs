@@ -41,6 +41,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_asid();
     prueba_el0();
     prueba_lanzador();
+    prueba_reparto();
     prueba_dma_proceso();
     prueba_desborde();
 }
@@ -997,17 +998,70 @@ fn prueba_lanzador() {
     let Some(grupo) = raiz.hijo(256 << 20) else { return };
     let Some(control) = lanzar_elf_en(LANZADOR, alloc::vec![m], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
-    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 4000 {
+    // Con margen: con la máquina cargada, QEMU va mucho más lento.
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 8000 {
         reloj::esperar_interrupcion();
     }
     let fin = control.estado.tomar().fin;
     drop(control);
-    esperar_tics(20);
-    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
+    // Las pilas de los hilos muertos se recogen cuando su núcleo pasa por ahí (C18): se espera a que vuelvan, como mucho
+    // 3 s (con la máquina cargada, QEMU tarda).
+    let espera = reloj::tics();
+    let mut despues = 0;
+    while reloj::tics() < espera + 300 {
+        esperar_tics(5);
+        despues = memoria::paginas().libres() + monton::paginas_pequenas();
+        if despues >= libres {
+            break;
+        }
+    }
     let usado = grupo.uso().1;
     kprintln!("  lanzador acabó: {:?}; usado en su grupo al final: {} bytes; páginas libres antes {}, después {}", fin, usado, libres, despues);
     let bien = fin == Some(objetos::Fin::Salida(43)) && usado == 0 && despues >= libres && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
     kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Segunda vuelta de la auditoría de la fase 4, A3: los temporizadores se reparten por grupos de primer nivel. Un
+/// proceso (`muchos`) con 900 periódicos de un tic en su grupo; uno de 100 ms de otro grupo tiene que llegar a tiempo
+/// (con un solo turno para todos, llegaba segundos tarde).
+static MUCHOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/muchos");
+
+fn prueba_reparto() {
+    // El de los 900 va en un grupo dentro de un servicio; uno de 100 ms en otro servicio, y otro en otro grupo del mismo
+    // servicio (tercera vuelta, M9). Los dos tienen que llegar a tiempo.
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(servicio) = raiz.hijo(32 << 20) else { return };
+    let (Some(g1), Some(hermano), Some(otro)) = (servicio.hijo(16 << 20), servicio.hijo(1 << 20), raiz.hijo(1 << 20)) else { return };
+    let Some(c) = lanzar_elf_en(MUCHOS, alloc::vec::Vec::new(), 1, g1) else { return };
+    esperar_tics(100); // a que los cree todos y vayan venciendo
+    let mut llegados = [None, None];
+    let mut vivos = alloc::vec::Vec::new();
+    let mut lados = alloc::vec::Vec::new();
+    let inicio = reloj::ahora();
+    for g in [&otro, &hermano] {
+        let (mio, suyo) = objetos::Canal::nuevo();
+        let objetos::Objeto::Extremo(p) = suyo.objeto.clone() else { return };
+        vivos.push(crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), &[], 0, 100_000, 0, g));
+        lados.push((extremo(&mio), mio, suyo));
+    }
+    while llegados.iter().any(|l| l.is_none()) && reloj::ahora() - inicio < reloj::frecuencia() * 3 {
+        esperar_tics(1);
+        for (k, ((cm, lm), _, _)) in lados.iter().enumerate() {
+            if llegados[k].is_none() && cm.intentar_leer(*lm).is_some() {
+                llegados[k] = Some((reloj::ahora() - inicio) * 1000 / reloj::frecuencia());
+            }
+        }
+    }
+    crate::planificador::matar_proceso(&c);
+    let fin = reloj::tics();
+    while c.estado.tomar().fin.is_none() && reloj::tics() < fin + 300 {
+        esperar_tics(1);
+    }
+    drop((vivos, lados));
+    esperar_tics(10);
+    let bien = llegados.iter().all(|l| l.is_some_and(|ms| ms < 150));
+    kprintln!("  uno de 100 ms de otro servicio llegó a los {:?} ms, y otro del mismo servicio, a los {:?} ms", llegados[0], llegados[1]);
+    kprintln!("C51: temporizadores repartidos por grupos {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C42: cupos por grupo (`usuario/src/bin/grupos.rs`), con los hijos de C39.

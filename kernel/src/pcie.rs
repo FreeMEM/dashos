@@ -7,6 +7,10 @@
 //! camino seguro (§11.2, reiniciar el enlace) queda para cuando haya controlador xHCI y una Pi en la que probarlo.
 //!
 //! Sin probar: QEMU `raspi4b` no emula el PCIe (leerlo es un fallo de bus: se sondea).
+//!
+//! La llave de los registros del controlador (0xFD500000) no se da nunca a un proceso: con ellos se podría volver a
+//! abrir la ventana (segunda vuelta de la auditoría, B18). El xHCI solo necesita sus ventanas de salida. Con la ventana
+//! en 1 GB, el VL805 sigue alcanzando todo el primer GB, también la memoria de la VideoCore.
 
 use crate::dtb::Dtb;
 use crate::kprintln;
