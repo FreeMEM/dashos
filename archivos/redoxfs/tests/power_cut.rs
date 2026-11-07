@@ -305,3 +305,27 @@ fn power_cut_header_slot_0() {
         assert!(i < 1000, "the header ring did not come back to slot 0");
     }
 }
+
+/// Moving a directory into itself or into one of its descendants would leave it unreachable, with a loop.
+#[test]
+fn rename_dir_into_itself() {
+    let disk = RecDisk { data: vec![0; DISK_SIZE as usize], log: None };
+    let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
+    let root = TreePtr::root();
+    let (a, b) = fs
+        .tx(|tx| {
+            let a = tx.create_node(root, "a", Node::MODE_DIR | 0o755, 1, 0)?;
+            let b = tx.create_node(a.ptr(), "b", Node::MODE_DIR | 0o755, 1, 0)?;
+            Ok((a, b))
+        })
+        .unwrap();
+    assert!(fs.tx(|tx| tx.rename_node(root, "a", b.ptr(), "a2")).is_err(), "moved a into a/b");
+    assert!(fs.tx(|tx| tx.rename_node(root, "a", a.ptr(), "a2")).is_err(), "moved a into a");
+    // Still all there.
+    let state = walk(&mut fs).unwrap();
+    assert!(state.contains_key("/a/b"), "{:?}", state.keys().collect::<Vec<_>>());
+    // A sibling move is fine.
+    fs.tx(|tx| tx.create_node(root, "c", Node::MODE_DIR | 0o755, 1, 0)).unwrap();
+    fs.tx(|tx| tx.rename_node(root, "c", b.ptr(), "c")).unwrap();
+    assert!(walk(&mut fs).unwrap().contains_key("/a/b/c"));
+}

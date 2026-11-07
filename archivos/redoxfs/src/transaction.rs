@@ -1462,6 +1462,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         new_name: &str,
     ) -> Result<()> {
         let orig = self.find_node(orig_parent_ptr, orig_name)?;
+        self.check_not_inside(&orig, new_parent_ptr)?;
 
         // TODO: only allow ENOENT as an error?
         if let Ok(new) = self.find_node(new_parent_ptr, new_name) {
@@ -1501,6 +1502,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         new_name: &str,
     ) -> Result<()> {
         let orig = self.find_node(orig_parent_ptr, orig_name)?;
+        self.check_not_inside(&orig, new_parent_ptr)?;
 
         // The target shouldn't exist.
         if self.find_node(new_parent_ptr, new_name).is_ok() {
@@ -1519,6 +1521,28 @@ impl<'a, D: Disk> Transaction<'a, D> {
             orig.data().mode() & Node::MODE_TYPE,
         )?;
 
+        Ok(())
+    }
+
+    /// A directory cannot be moved into itself or into one of its descendants: it would become unreachable, inside
+    /// a loop. Nodes do not point to their parents, so this walks the directories under `node` looking for `dest`.
+    fn check_not_inside(&mut self, node: &TreeData<Node>, dest: TreePtr<Node>) -> Result<()> {
+        if !node.data().is_dir() {
+            return Ok(());
+        }
+        let mut pending = alloc::vec![node.ptr()];
+        while let Some(dir) = pending.pop() {
+            if dir.id() == dest.id() {
+                return Err(Error::new(EINVAL));
+            }
+            let mut children = Vec::new();
+            self.child_nodes(dir, &mut children)?;
+            for child in children {
+                if self.read_tree(child.node_ptr())?.data().is_dir() {
+                    pending.push(child.node_ptr());
+                }
+            }
+        }
         Ok(())
     }
 
