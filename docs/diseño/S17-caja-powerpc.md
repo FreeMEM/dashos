@@ -365,3 +365,24 @@ Son estimaciones sin medir: no se ha escrito nada de esto.
 Lo que no se comprobó: nada se ha compilado ni ejecutado del JIT PPC; no se midió la velocidad de QEMU con un PPC en
 ARM; no se leyó la licencia del SDK de OS4; no se comprobó si MorphOS deja registrar una máquina emulada; el derivado
 de Cemu con ARM64 se cita por su README, sin mirar el código.
+
+## Licencia del SDK de AmigaOS 4 (pregunta 4, leída el 2026-11-07)
+
+SDK 53.34 (diciembre de 2021), bajado de la web de Hyperion. No tiene licencia propia: "All Rights Reserved",
+Hyperion Entertainment CVBA. No permite ni prohíbe nada en concreto. Así que:
+
+- Sí, sin pedir permiso: quien analiza lee el SDK en local y escribe en `docs/spec/`, en prosa, los nombres, el
+  orden de los métodos, el tamaño y la posición de los campos y lo que hacen. Quien implementa escribe sus propios
+  `.h` e IDL. Es la misma regla de sala limpia que con 3.x. También vale leer los XML de interfaces al compilar si
+  cada uno se baja el SDK, como con el de MUI.
+- No: subir al repositorio cabeceras, XML o autodocs (ni convertidos por un script), ni repartir sus herramientas,
+  ni `newlib.library` u otros binarios de OS4.
+- Para más (meter el SDK en un paquete de DashOS, o subir IDL generado desde sus XML): permiso por escrito de
+  Hyperion. Para probar contra OS4 en QEMU, una licencia de AmigaOS 4.1 comprada.
+- El acuerdo de Hyperion y Amiga Corp. de junio de 2026 confirma que el copyright de OS4 es de Hyperion; no habla de
+  la API ni de reimplementaciones (según un resumen de prensa; el texto no se leyó).
+- Componentes libres del SDK que sí se pueden usar con su licencia: clib2 y clib4 (BSD), SDI (dominio público),
+  newlib (tipo BSD; la `newlib.library` de Hyperion no), GCC y binutils (GPL, como herramientas).
+
+Las referencias a la sentencia SAS Institute (C-406/10) y a la Directiva 2009/24/CE, art. 6, son de memoria, sin
+comprobar; no es consejo de abogado.
