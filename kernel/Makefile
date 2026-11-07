@@ -42,9 +42,14 @@ virt: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features virt
 	$(OBJCOPY) -O binary $(ELF) $(VIRT)
 
-arranque-virt: virt
+# Un disco de 1 MB para el NVMe (U6d), con un texto y la firma 0x55AA en el sector 0 y otro texto en el 1.
+DISCO_NVME := target/nvme.img
+$(DISCO_NVME):
+	python3 -c "import sys; d=bytearray(1<<20); t=b'DashOS: sector 0 del disco NVMe'; d[:len(t)]=t; d[510:512]=b'\x55\xaa'; u=b'DashOS: sector 1'; d[512:512+len(u)]=u; open(sys.argv[1],'wb').write(d)" $@
+
+arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci -device usb-kbd -device usb-mouse" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
+	TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci -device usb-kbd -device usb-mouse -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

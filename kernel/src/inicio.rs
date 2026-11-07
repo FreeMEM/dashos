@@ -38,6 +38,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
     ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS)], &["entrada"]),
+    // El disco NVMe (U6d): de momento solo lo reconoce y lee su principio.
+    ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS)], &[]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
@@ -67,12 +69,12 @@ const APARATOS: &[(&str, &str, bool)] = &[
     ("buzon", "brcm,bcm2835-mbox", false),
 ];
 
-/// Un xHCI en el PCIe genérico de ECAM ("pci-host-ecam-generic", el de QEMU `virt` y las máquinas con UEFI): (física
-/// y tamaño de su BAR 0, en páginas enteras). Mira el bus 0. Enciende la decodificación de memoria y el bus master, y
+/// El primer aparato de la clase `clase` (clase, subclase e interfaz) en el PCIe genérico de ECAM ("pci-host-ecam-generic",
+/// el de QEMU `virt` y las máquinas con UEFI): (física y tamaño de su BAR 0, en páginas enteras). Mira el bus 0. Enciende la decodificación de memoria y el bus master, y
 /// mide la BAR escribiendo unos (con la decodificación apagada mientras). Solo si el ECAM y la BAR caen en la ventana
-/// de aparatos de la placa. Escrito con la especificación de PCI (espacio de configuración, cabecera de tipo 0) y la de
-/// xHCI (clase 0x0C0330).
-fn xhci_pci(d: &Dtb) -> Option<(u64, u64)> {
+/// de aparatos de la placa. Escrito con la especificación de PCI (espacio de configuración, cabecera de tipo 0). Las
+/// clases: xHCI, 0x0C0330 (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe).
+fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64)> {
     let n = d.compatible("pci-host-ecam-generic")?;
     let (ecam, _) = d.reg_cpu(&n, 0)?;
     if !crate::placa::es_periferico(ecam) {
@@ -83,7 +85,7 @@ fn xhci_pci(d: &Dtb) -> Option<(u64, u64)> {
         if r(dev, 0).leer() == 0xffff_ffff {
             continue;
         }
-        if r(dev, 8).leer() >> 8 != 0x0C_0330 {
+        if r(dev, 8).leer() >> 8 != clase {
             continue;
         }
         let (bar0, bar1) = (r(dev, 0x10), r(dev, 0x14));
@@ -103,10 +105,10 @@ fn xhci_pci(d: &Dtb) -> Option<(u64, u64)> {
         mando.escribir(antes | 0x6);
         let paginas = tamano.max(memoria::PAGINA).div_ceil(memoria::PAGINA) * memoria::PAGINA;
         if base == 0 || !crate::placa::es_periferico(base) || !crate::placa::es_periferico(base + paginas - 1) {
-            kprintln!("xhci: BAR en {:#x} fuera de la ventana de aparatos", base);
+            kprintln!("{}: BAR en {:#x} fuera de la ventana de aparatos", nombre, base);
             return None;
         }
-        kprintln!("xhci: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", dev, base, tamano / 1024);
+        kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", nombre, dev, base, tamano / 1024);
         return Some((base, paginas));
     }
     None
@@ -196,12 +198,15 @@ pub fn lanzar() -> bool {
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Normal, 0)));
         apuntar(&mut llaves, "dma-gpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
-    // El xHCI del PCIe genérico (U6), si lo hay: sus registros (la BAR 0) y un permiso DMA propio. En QEMU `virt` los
-    // aparatos del PCIe alcanzan toda la memoria; se les da la zona de DMA, como a los demás.
-    if let Some((fisica, tamano)) = xhci_pci(&d) {
-        apuntar(&mut llaves, "xhci", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
-        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
-        apuntar(&mut llaves, "dma-xhci", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    // El xHCI y el NVMe del PCIe genérico (U6), si los hay: sus registros (la BAR 0) y un permiso DMA propio para
+    // cada uno. En QEMU `virt` los aparatos del PCIe alcanzan toda la memoria; se les da la zona de DMA, como a los
+    // demás.
+    for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
+        if let Some((fisica, tamano)) = aparato_pci(&d, clase, nombre) {
+            apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+            apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+        }
     }
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS

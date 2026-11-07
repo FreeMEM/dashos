@@ -36,8 +36,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
-  lo reinicia) y U6c (teclado y ratón por xHCI hasta el compositor). Falta: interrupciones (MSI o INTx) en vez del
-  temporizador, hubs, y NVMe. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor) y U6d (NVMe: reconoce el disco y lee). Falta:
+  interrupciones (MSI o INTx) en vez de girar o del temporizador, hubs, y servir bloques del NVMe a otros procesos. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -210,3 +210,18 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - **Comprobado:** en `virt` con árbol y con ACPI, con GICv2 y GICv3: el teclado y el ratón se enumeran y el ratón
   mueve la ventana del compositor. En la Pi, `prueba` y `arranque`, bien. **No comprobado:** el VL805 de la Pi 4
   (además necesita su firmware por el buzón, `docs/spec/hw/pcie.md` §8), hubs, aparatos de USB 3 y máquinas reales.
+
+### 2026-11-07 — U6d (NVMe)
+
+- `usuario/src/bin/nvme.rs`, con NVM Express Base 2.0: apagar, colas de administración (16 entradas), encender,
+  Identify del controlador y del espacio de nombres 1, una cola de E/S y una lectura de los dos primeros sectores.
+  Mira las terminadas por su bit de fase, girando (solo al arrancar). Memoria: un objeto DMA de 64 KB.
+- El kernel busca en el PCIe por clase (`aparato_pci`): el xHCI (0x0C0330) y el NVMe (0x010802), cada uno con sus
+  registros y su permiso DMA. `inicio` lanza `nvme` si lo hay.
+- `make -C kernel arranque-virt` crea `target/nvme.img` (1 MB, con un texto y la firma 0x55AA en el sector 0) y se
+  lo pone a QEMU como disco NVMe.
+- **Comprobado:** en `virt` con árbol y con ACPI (GICv2 y GICv3): modelo "QEMU NVMe Ctrl", 2048 sectores de 512, y
+  los dos sectores con su texto y su firma. En la Pi, `prueba` y `arranque`, bien (allí no hay NVMe y no se lanza).
+  **No comprobado:** discos reales, sectores de 4 KB, más de un espacio de nombres.
+- Siguiente: que `nvme` sirva bloques por un canal (leer y escribir), para un sistema de ficheros; y las
+  interrupciones del PCIe (INTx por el `interrupt-map` del árbol, o MSI por el GICv2m/ITS).

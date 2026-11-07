@@ -12,6 +12,11 @@ DashOS en marcha con 4 núcleos.
 ~xhci: en el PCIe 0:1.0, registros en
 ~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
 ~│   [compositor] ventana movida con el ratón a (
+# U6d: un disco NVMe de 1 MB (target/nvme.img), su modelo y sus dos primeros sectores.
+~nvme: en el PCIe 0:
+~│   [nvme] disco de 2048 sectores de 512 bytes (1024 KB)
+~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
+~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer
