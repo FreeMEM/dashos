@@ -310,3 +310,19 @@ resumido, en `docs/diseño/RESUMEN.md`.
   `powerpc-440fp`. Los ficheros de CMake están en `toolchains/`. El de PowerPC solo lo pide el ROM PPC de Emu68.
 - `qemu-aarch64_be` está instalado: ejecuta programas Linux AArch64 big-endian en shiva.
 - El Kickstart 3.1 de A1200 está en `~/Descargas/Telegram Desktop/kick40068.A1200`.
+
+## Decisiones del usuario del 2026-11-07
+
+- **Caja PowerPC** (`docs/diseño/S17-caja-powerpc.md`): todo como se recomendaba. Una sola caja Amiga con dos motores
+  (68k y PPC); orden WarpOS y PowerUP, MorphOS, AltiVec y OS4 al final; OS4 entero de momento solo con QEMU
+  empaquetado como aplicación (como Amiberry); la licencia del SDK de OS4 se lee antes de usarlo; la fase 1 (el JIT
+  PPC en el banco `jit-host`) empieza ya (bitácora `docs/PPC_LOOP.md`).
+- **Propuestas de la visión**: aceptadas como direcciones del diseño, para ir pasándolas a tareas: cajas con
+  pasaporte y panel de poderes revocables; congelar un programa y llevárselo a otra máquina ARM; planificador
+  big.LITTLE con plazos y energía; MTE para la caja Amiga donde haya hardware; Mesa (v3dv, turnip, panvk,
+  honeykrisp) sobre un servidor de GPU; ideas Amiga (puertos con llave, ARexx con permiso, datatypes aislados,
+  ASSIGN como pasaporte, pantallas arrastrables).
+- **Controladores de Linux como procesos (estilo DDE de Genode)**: pendiente, el usuario quiere hablar antes lo de
+  la licencia GPL.
+- **THEA500 Mini**: placa candidata (`docs/diseño/placa-thea500-mini.md`).
+
