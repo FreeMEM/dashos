@@ -1027,20 +1027,29 @@ fn prueba_lanzador() {
 static MUCHOS: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/muchos");
 
 fn prueba_reparto() {
+    // El de los 900 va en un grupo dentro de un servicio; uno de 100 ms en otro servicio, y otro en otro grupo del mismo
+    // servicio (tercera vuelta, M9). Los dos tienen que llegar a tiempo.
     let raiz = crate::cupo::Cupo::raiz();
-    let (Some(g1), Some(g2)) = (raiz.hijo(16 << 20), raiz.hijo(1 << 20)) else { return };
+    let Some(servicio) = raiz.hijo(32 << 20) else { return };
+    let (Some(g1), Some(hermano), Some(otro)) = (servicio.hijo(16 << 20), servicio.hijo(1 << 20), raiz.hijo(1 << 20)) else { return };
     let Some(c) = lanzar_elf_en(MUCHOS, alloc::vec::Vec::new(), 1, g1) else { return };
     esperar_tics(100); // a que los cree todos y vayan venciendo
-    let (mio, suyo) = objetos::Canal::nuevo();
-    let objetos::Objeto::Extremo(p) = suyo.objeto.clone() else { return };
-    let (cm, lm) = extremo(&mio);
+    let mut llegados = [None, None];
+    let mut vivos = alloc::vec::Vec::new();
+    let mut lados = alloc::vec::Vec::new();
     let inicio = reloj::ahora();
-    let t = crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), &[], 0, 100_000, 0, &g2);
-    let mut llegado = None;
-    while t.is_some() && llegado.is_none() && reloj::ahora() - inicio < reloj::frecuencia() * 3 {
+    for g in [&otro, &hermano] {
+        let (mio, suyo) = objetos::Canal::nuevo();
+        let objetos::Objeto::Extremo(p) = suyo.objeto.clone() else { return };
+        vivos.push(crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), &[], 0, 100_000, 0, g));
+        lados.push((extremo(&mio), mio, suyo));
+    }
+    while llegados.iter().any(|l| l.is_none()) && reloj::ahora() - inicio < reloj::frecuencia() * 3 {
         esperar_tics(1);
-        if cm.intentar_leer(lm).is_some() {
-            llegado = Some((reloj::ahora() - inicio) * 1000 / reloj::frecuencia());
+        for (k, ((cm, lm), _, _)) in lados.iter().enumerate() {
+            if llegados[k].is_none() && cm.intentar_leer(*lm).is_some() {
+                llegados[k] = Some((reloj::ahora() - inicio) * 1000 / reloj::frecuencia());
+            }
         }
     }
     crate::planificador::matar_proceso(&c);
@@ -1048,10 +1057,10 @@ fn prueba_reparto() {
     while c.estado.tomar().fin.is_none() && reloj::tics() < fin + 300 {
         esperar_tics(1);
     }
-    drop((t, mio, suyo));
+    drop((vivos, lados));
     esperar_tics(10);
-    let bien = llegado.is_some_and(|ms| ms < 150);
-    kprintln!("  uno de 100 ms de otro grupo llegó a los {:?} ms", llegado);
+    let bien = llegados.iter().all(|l| l.is_some_and(|ms| ms < 150));
+    kprintln!("  uno de 100 ms de otro servicio llegó a los {:?} ms, y otro del mismo servicio, a los {:?} ms", llegados[0], llegados[1]);
     kprintln!("C51: temporizadores repartidos por grupos {}", if bien { "bien" } else { "MAL" });
 }
 

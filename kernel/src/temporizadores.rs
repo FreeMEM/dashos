@@ -9,10 +9,12 @@
 //! se creó. Al soltarse la última llave del temporizador, se para; también si se revoca la llave del canal, o si su
 //! intermediario revocable ya no existe (auditoría de la fase 4, A2 y C1).
 //!
-//! Trabajo acotado y repartido (A1, A3): una cola (un montículo por vencimiento) por grupo de primer nivel, es decir,
-//! por servicio. Cada pasada da la vuelta a los grupos con algo vencido, como mucho `POR_GRUPO` avisos de cada uno por
-//! vuelta y `MAX_POR_PASADA` en total; lo que quede, en el tic siguiente. Así los temporizadores de un servicio no
-//! retrasan los de los demás más de un tic. Cada temporizador cuesta `COSTE_TEMPORIZADOR` del cupo de su grupo.
+//! Trabajo acotado y repartido (A1, A3, M9): una cola (un montículo por vencimiento) por grupo, agrupadas por grupo de
+//! primer nivel, es decir, por servicio. Cada pasada da la vuelta a los servicios con algo vencido, como mucho
+//! `POR_GRUPO` avisos de cada uno por vuelta y `MAX_POR_PASADA` en total; dentro de un servicio, los avisos se reparten
+//! por turnos entre sus grupos. Lo que quede, en el tic siguiente. Así los temporizadores de un servicio no retrasan
+//! los de los demás más de un tic, ni los de un grupo los de otro del mismo servicio más de unos pocos. Cada
+//! temporizador cuesta `COSTE_TEMPORIZADOR` del cupo de su grupo.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -32,13 +34,14 @@ const MAX_SACADAS: usize = 256;
 
 pub struct Temporizador {
     estado: Cerrojo<Estado>,
-    /// Los intermediarios revocables por los que pasaba la llave del canal, sin sujetarlos (C1, B13): si alguno se
-    /// revoca o ya no existe, se para.
-    via: Vec<Weak<Revocable>>,
+    /// Las marcas de los intermediarios revocables por los que pasaba la llave del canal, sin sujetarlos (C1, B13): si
+    /// alguno se revoca o se suelta, se para. Se leen sin crear ningún `Arc` (A5).
+    via: Vec<Arc<core::sync::atomic::AtomicBool>>,
     /// La marca de esa llave: la llevan sus avisos (A2).
     marca: u64,
-    /// Su grupo de primer nivel: en qué cola va.
+    /// Su grupo de primer nivel y su grupo: en qué cola va.
     grupo: usize,
+    cupo: usize,
     _cargo: crate::cupo::Cargo,
 }
 
@@ -73,19 +76,26 @@ impl Ord for Entrada {
     }
 }
 
-/// La cola de un grupo de primer nivel. Las entradas de temporizadores ya soltados se quitan al vencer; y, para que no
-/// sujeten memoria del kernel hasta entonces, la cola se purga cuando hay más muertos que vivos más 32, y se quita
-/// entera al soltarse su último temporizador. Trabajo acotado por los temporizadores del grupo, y amortizado.
-struct ColaGrupo {
-    grupo: usize,
+/// La cola de un grupo. Las entradas de temporizadores ya soltados se quitan al vencer; y, para que no sujeten memoria
+/// del kernel hasta entonces, la cola se purga cuando hay más muertos que vivos más 32, y se quita entera al soltarse
+/// su último temporizador. Trabajo acotado por los temporizadores del grupo, y amortizado.
+struct Sub {
+    cupo: usize,
     monton: BinaryHeap<Entrada>,
     vivos: usize,
     muertos: usize,
 }
 
+/// Las colas de los grupos de un servicio (grupo de primer nivel), con su turno.
+struct ColaGrupo {
+    grupo: usize,
+    subs: Vec<Sub>,
+    turno: usize,
+}
+
 struct Colas {
     grupos: Vec<ColaGrupo>,
-    /// Por qué grupo empieza la próxima vuelta.
+    /// Por qué servicio empieza la próxima vuelta.
     turno: usize,
 }
 
@@ -100,22 +110,31 @@ fn cuentas(us: u64) -> u64 {
 }
 
 impl Colas {
-    /// La cola del grupo `g`, creándola si no está. `None` sin memoria.
-    fn cola(&mut self, g: usize) -> Option<&mut ColaGrupo> {
-        let i = match self.grupos.iter().position(|c| c.grupo == g) {
+    /// La cola del grupo `c` del servicio `g`, creándolas si no están. `None` sin memoria.
+    fn cola(&mut self, g: usize, c: usize) -> Option<&mut Sub> {
+        let gi = match self.grupos.iter().position(|x| x.grupo == g) {
             Some(i) => i,
             None => {
                 self.grupos.try_reserve(1).ok()?;
-                self.grupos.push(ColaGrupo { grupo: g, monton: BinaryHeap::new(), vivos: 0, muertos: 0 });
+                self.grupos.push(ColaGrupo { grupo: g, subs: Vec::new(), turno: 0 });
                 self.grupos.len() - 1
             }
         };
-        Some(&mut self.grupos[i])
+        let subs = &mut self.grupos[gi].subs;
+        let si = match subs.iter().position(|x| x.cupo == c) {
+            Some(i) => i,
+            None => {
+                subs.try_reserve(1).ok()?;
+                subs.push(Sub { cupo: c, monton: BinaryHeap::new(), vivos: 0, muertos: 0 });
+                subs.len() - 1
+            }
+        };
+        Some(&mut subs[si])
     }
 
     /// Pone una entrada en la cola de su grupo. Falso sin memoria.
     fn programar(&mut self, vence: u64, t: &Arc<Temporizador>) -> bool {
-        let Some(c) = self.cola(t.grupo) else { return false };
+        let Some(c) = self.cola(t.grupo, t.cupo) else { return false };
         if c.monton.try_reserve(1).is_err() {
             return false;
         }
@@ -125,9 +144,8 @@ impl Colas {
     }
 
     fn proximo(&self) -> u64 {
-        self.grupos.iter().filter_map(|g| g.monton.peek()).map(|e| e.vence).min().unwrap_or(u64::MAX)
+        self.grupos.iter().flat_map(|g| g.subs.iter()).filter_map(|c| c.monton.peek()).map(|e| e.vence).min().unwrap_or(u64::MAX)
     }
-
 }
 
 impl Temporizador {
@@ -138,14 +156,15 @@ impl Temporizador {
         let cargo = cupo.cobrar(crate::cupo::COSTE_TEMPORIZADOR)?;
         let mut debiles = Vec::new();
         debiles.try_reserve(via.len()).ok()?;
-        debiles.extend(via.iter().map(Arc::downgrade));
+        debiles.extend(via.iter().map(|r| r.vigia()));
         let vence = reloj::ahora().saturating_add(cuentas(primero_us.min(MAX_US)));
         let periodo = if periodo_us == 0 { 0 } else { cuentas(periodo_us.min(MAX_US)).max(reloj::periodo()).max(1) };
         let estado = Estado { destino: Some((canal, lado)), periodo, perdidos: 0 };
-        let t = Arc::new(Self { estado: Cerrojo::new(estado), via: debiles, marca, grupo: cupo.primer_nivel(), _cargo: cargo });
+        let (grupo, de_cupo) = (cupo.primer_nivel(), Arc::as_ptr(cupo) as usize);
+        let t = Arc::new(Self { estado: Cerrojo::new(estado), via: debiles, marca, grupo, cupo: de_cupo, _cargo: cargo });
         let mut colas = COLAS.tomar();
         // Cuenta como vivo desde ya: si no se puede programar, su `Drop` lo descuenta (B14).
-        let bien = match colas.cola(t.grupo) {
+        let bien = match colas.cola(t.grupo, t.cupo) {
             Some(c) => {
                 c.vivos += 1;
                 colas.programar(vence, &t)
@@ -171,9 +190,9 @@ impl Temporizador {
         self.estado.get_mut().destino.take().map(|(c, _)| c)
     }
 
-    /// ¿Se ha revocado (o ya no existe) algún intermediario de la llave del canal?
+    /// ¿Se ha revocado (o soltado) algún intermediario de la llave del canal?
     fn revocado(&self) -> bool {
-        self.via.iter().any(|w| w.upgrade().is_none_or(|r| r.revocado()))
+        self.via.iter().any(|c| c.load(Ordering::Acquire))
     }
 }
 
@@ -181,15 +200,20 @@ impl Drop for Temporizador {
     fn drop(&mut self) {
         // Nunca se suelta con `COLAS` tomado: `repartir` suelta los suyos fuera.
         let mut colas = COLAS.tomar();
-        let Some(i) = colas.grupos.iter().position(|c| c.grupo == self.grupo) else { return };
-        let c = &mut colas.grupos[i];
+        let Some(gi) = colas.grupos.iter().position(|g| g.grupo == self.grupo) else { return };
+        let g = &mut colas.grupos[gi];
+        let Some(si) = g.subs.iter().position(|c| c.cupo == self.cupo) else { return };
+        let c = &mut g.subs[si];
         if c.vivos == 0 {
             return; // no llegó a contarse (sin memoria al crearlo)
         }
         c.vivos -= 1;
         c.muertos += 1;
         if c.vivos == 0 {
-            colas.grupos.swap_remove(i); // sus entradas, fuera: era el último del grupo
+            g.subs.swap_remove(si); // sus entradas, fuera: era el último del grupo
+            if g.subs.is_empty() {
+                colas.grupos.swap_remove(gi);
+            }
         } else if c.muertos > c.vivos + 32 {
             c.monton.retain(|e| e.t.strong_count() > 0);
             c.muertos = 0;
@@ -230,43 +254,57 @@ pub fn repartir() {
             let mut alguno = false;
             for k in 0..n {
                 let gi = (colas.turno + k) % n;
+                // Hasta `POR_GRUPO` de este servicio, de uno en uno por turnos entre sus grupos (M9).
                 let mut de_este = 0;
-                while de_este < POR_GRUPO {
-                    if lote.len() >= MAX_POR_PASADA || sacadas >= MAX_SACADAS {
-                        colas.turno = gi; // por aquí se sigue en la próxima pasada
-                        break 'pasada;
-                    }
-                    let e = match colas.grupos[gi].monton.peek() {
-                        Some(e) if e.vence <= ahora => colas.grupos[gi].monton.pop().unwrap(),
-                        _ => break,
-                    };
-                    sacadas += 1;
-                    let Some(t) = e.t.upgrade() else {
-                        // de un temporizador ya soltado
-                        colas.grupos[gi].muertos = colas.grupos[gi].muertos.saturating_sub(1);
-                        continue;
-                    };
-                    alguno = true;
-                    de_este += 1;
-                    let aviso = {
-                        let mut s = t.estado.tomar();
-                        if t.revocado() {
-                            s.destino = None; // revocada la llave del canal: se para para siempre (A2)
+                let mut vuelta_vacia = false;
+                while de_este < POR_GRUPO && !vuelta_vacia {
+                    vuelta_vacia = true;
+                    let m = colas.grupos[gi].subs.len();
+                    for j in 0..m {
+                        if de_este >= POR_GRUPO {
+                            break;
                         }
-                        match s.destino.clone() {
-                            None => None,
-                            Some((c, lado)) => {
-                                let veces = if s.periodo == 0 { 1 } else { 1 + (ahora - e.vence) / s.periodo };
-                                if s.periodo != 0 {
-                                    let siguiente = e.vence.saturating_add(veces * s.periodo);
-                                    // Sin memoria para volver a programarlo, se para (B14): lo dice `kernel.md`.
-                                    colas.programar(siguiente, &t);
-                                }
-                                Some((c, lado, veces + core::mem::take(&mut s.perdidos)))
+                        if lote.len() >= MAX_POR_PASADA || sacadas >= MAX_SACADAS {
+                            colas.turno = gi; // por aquí se sigue en la próxima pasada
+                            break 'pasada;
+                        }
+                        let si = (colas.grupos[gi].turno + j) % m;
+                        let e = match colas.grupos[gi].subs[si].monton.peek() {
+                            Some(e) if e.vence <= ahora => colas.grupos[gi].subs[si].monton.pop().unwrap(),
+                            _ => continue,
+                        };
+                        vuelta_vacia = false;
+                        sacadas += 1;
+                        let Some(t) = e.t.upgrade() else {
+                            // de un temporizador ya soltado
+                            let c = &mut colas.grupos[gi].subs[si];
+                            c.muertos = c.muertos.saturating_sub(1);
+                            continue;
+                        };
+                        alguno = true;
+                        de_este += 1;
+                        let aviso = {
+                            let mut s = t.estado.tomar();
+                            if t.revocado() {
+                                s.destino = None; // revocada la llave del canal: se para para siempre (A2)
                             }
-                        }
-                    };
-                    lote.push((t, aviso));
+                            match s.destino.clone() {
+                                None => None,
+                                Some((c, lado)) => {
+                                    let veces = if s.periodo == 0 { 1 } else { 1 + (ahora - e.vence) / s.periodo };
+                                    if s.periodo != 0 {
+                                        let siguiente = e.vence.saturating_add(veces * s.periodo);
+                                        // Sin memoria para volver a programarlo, se para (B14): lo dice `kernel.md`.
+                                        colas.programar(siguiente, &t);
+                                    }
+                                    Some((c, lado, veces + core::mem::take(&mut s.perdidos)))
+                                }
+                            }
+                        };
+                        lote.push((t, aviso));
+                    }
+                    let m = colas.grupos[gi].subs.len().max(1);
+                    colas.grupos[gi].turno = (colas.grupos[gi].turno + 1) % m;
                 }
             }
             if !alguno {
@@ -274,7 +312,13 @@ pub fn repartir() {
                 break;
             }
         }
-        colas.grupos.retain(|g| !g.monton.is_empty() || g.vivos > 0);
+        for g in &mut colas.grupos {
+            g.subs.retain(|c| !c.monton.is_empty() || c.vivos > 0);
+            if g.turno >= g.subs.len() {
+                g.turno = 0;
+            }
+        }
+        colas.grupos.retain(|g| !g.subs.is_empty());
         if colas.turno >= colas.grupos.len() {
             colas.turno = 0;
         }

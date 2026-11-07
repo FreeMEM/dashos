@@ -61,7 +61,17 @@ pub struct Revocable {
     proyecciones: Cerrojo<Vec<(alloc::sync::Weak<Proceso>, u64, bool)>>,
     /// Cuántos intermediarios hay por debajo, contando este: como mucho `MAX_REVOCABLES` (C43, auditoría C1).
     profundidad: u32,
+    /// A verdadero al revocarse o al soltarse. La comparten quienes vigilan este intermediario sin sujetarlo
+    /// (temporizadores e interrupciones): la leen sin crear un `Arc`, que podría ser el último y soltar una cadena con
+    /// cerrojos tomados (tercera vuelta de la auditoría de la fase 4, A5).
+    caido: Arc<core::sync::atomic::AtomicBool>,
     _cargo: crate::cupo::Cargo,
+}
+
+impl Drop for Revocable {
+    fn drop(&mut self) {
+        self.caido.store(true, core::sync::atomic::Ordering::Release);
+    }
 }
 
 /// Intermediarios dentro de intermediarios, como mucho. Soltar una cadena va por recursión, y `ver` la recorre.
@@ -79,12 +89,14 @@ impl Revocable {
             return None;
         }
         let cargo = cupo.cobrar(crate::cupo::COSTE_REVOCABLE)?;
-        Some(Self { objeto: Cerrojo::new(Some(objeto)), proyecciones: Cerrojo::default(), profundidad: debajo + 1, _cargo: cargo })
+        let caido = Arc::new(core::sync::atomic::AtomicBool::new(false));
+        Some(Self { objeto: Cerrojo::new(Some(objeto)), proyecciones: Cerrojo::default(), profundidad: debajo + 1, caido, _cargo: cargo })
     }
 
     /// Revoca: suelta el objeto (fuera del cerrojo). Si era lo último que lo tenía, se libera; un lado de canal se
     /// cierra. Si es memoria, se quitan las proyecciones que se hicieron a través de este intermediario (C45).
     pub fn revocar(&self) {
+        self.caido.store(true, core::sync::atomic::Ordering::Release);
         let objeto = self.objeto.tomar().take();
         if let Some(m) = objeto.as_ref().and_then(memoria_de) {
             let proyecciones = core::mem::take(&mut *self.proyecciones.tomar());
@@ -155,6 +167,11 @@ impl Revocable {
         if let Some(i) = v.iter().position(|(w, x, h)| !*h && *x == va && core::ptr::eq(w.as_ptr(), pw)) {
             v.swap_remove(i);
         }
+    }
+
+    /// La marca que se pone al revocarse o soltarse este intermediario, para vigilarlo sin sujetarlo (A5).
+    pub fn vigia(&self) -> Arc<core::sync::atomic::AtomicBool> {
+        self.caido.clone()
     }
 
     /// ¿Ya está revocado?

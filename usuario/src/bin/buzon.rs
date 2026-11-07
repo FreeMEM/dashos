@@ -110,11 +110,17 @@ fn valido(c: Cliente, p: &[u32]) -> bool {
         return false;
     }
     let mut i = 2;
+    let mut reservada = false;
     while i < p.len() {
         let etiqueta = p[i];
         if etiqueta == 0 {
             return true; // lo que haya detrás es relleno
         }
+        // Tras reservar la pantalla, en el mismo mensaje, ni otra reserva ni cambios de tamaño (tercera vuelta, B19).
+        if reservada && TRAS_LA_PANTALLA.contains(&etiqueta) {
+            return false;
+        }
+        reservada |= etiqueta == RESERVAR_PANTALLA;
         if i + 3 > p.len() || !permitida(c, etiqueta) {
             return false;
         }

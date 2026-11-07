@@ -548,3 +548,104 @@ no emula el PCIe.
 - **Directorio del buzón.** Los clientes reciben copias marcadas, que no se pueden volver a marcar. Un mensaje sin
   marca solo lo puede mandar quien tiene la llave sin marca, que es `inicio`. Los temporizadores y las interrupciones
   ya no escriben con marca 0. No he encontrado forma de que un cliente se haga pasar por otro.
+
+## Tercera vuelta
+
+Hecha el 2026-11-07 sobre `5ff4b4c` (arreglos de la segunda vuelta). Los números de línea son de ese commit. Todo
+leído; esta vez no he ejecutado nada.
+
+### Qué cierra cada arreglo
+
+| Hallazgo | Estado | Por qué |
+|---|---|---|
+| C1 | Cerrado; abre A5 | `via` guarda `Weak<Revocable>` en el temporizador y en la interrupción: soltarlos ya no suelta ningún intermediario ni ninguna punta. He buscado otras variantes y no las hay (ver abajo). Pero mirar los `Weak` con `upgrade` dentro de `COLAS` abre una carrera (A5). |
+| A3 | Cerrado entre servicios; queda dentro de un mismo servicio (M9) | Una cola por grupo de primer nivel y turnos de 8 avisos por grupo. Un servicio ya no retrasa a otro más de un tic o dos. |
+| A4 | Cerrado | Las entradas pendientes no se purgan nunca, solo las hechas cuya proyección ya no está. Todos los caminos de `memoria_proyectar` acaban confirmando o retirando la suya. He repasado los órdenes con `revocar` y en todos la proyección se quita. |
+| M7 | Cerrado | La cuarentena se queda con el `Cargo` de la memoria: un controlador que pide y suelta agota su cupo, no la memoria del sistema. |
+| M8 | Cerrado, salvo un resto (B19) | El recorte exige `p[1] == 0x80000000` y la respuesta de 8 bytes en la etiqueta, y después de dar la pantalla ya no se deja reservar otra ni cambiar el tamaño. |
+| B12-B18 | Cerrados | Cuenta de los de una vez, `Weak` en `via`, entradas muertas dentro del tope de 256 sacadas, purga solo al llenarse y con los procesos soltados fuera, reintentos del directorio y del buzón con un tic de espera, recorte de revocables rechazado, y la llave del PCIe dicha en `pcie.rs`. |
+
+### Alta
+
+**A5. Mirar si una llave está revocada puede soltar un intermediario con `COLAS` tomado.** Plausible: es una carrera.
+El camino está comprobado leyendo.
+
+- `temporizadores.rs:175-177`: `revocado` hace `upgrade` de cada `Weak<Revocable>`. El `Arc` que sale vive hasta el
+  final del cierre.
+- `temporizadores.rs:253`: se llama dentro de `repartir`, con `COLAS` y el cerrojo del temporizador tomados.
+- Si otro núcleo suelta a la vez la última llave de ese intermediario, el `Arc` de `upgrade` es el último. Al soltarlo
+  se suelta la punta que tenía dentro (`Punta::drop`), que vacía su cola con `soltar`. Si en esa cola hay otro
+  temporizador, su `Drop` toma `COLAS` (`temporizadores.rs:128-145`). Es el mismo núcleo, que ya lo tiene, y el
+  cerrojo es de espera activa con las IRQ enmascaradas: el núcleo 0 se queda colgado para siempre, y con él todas
+  las interrupciones de aparatos.
+
+Escenario, desde un grupo cualquiera: `canal_crear` da `(a, b)`; `(ra, rev) = llave_revocable(a)`; `cerrar(a)` y
+`cerrar(rev)`; un temporizador sobre `ra` que venza en un instante conocido; otro temporizador cualquiera mandado por
+`b` (va a la cola del lado `a`). Justo en ese instante, `cerrar(ra)` desde otro núcleo. La ventana es de unas pocas
+instrucciones, pero el programa sabe cuándo vence el temporizador (lee el mismo contador) y puede repetir la
+preparación miles de veces, porque es barata.
+
+Lo mismo pasa en `interrupciones.rs:165` (`entregar`), con el cerrojo `via` de la interrupción tomado. Ahí no hay
+bloqueo, porque esa cadena no vuelve a tomar ese cerrojo, pero se suelta un canal entero con un cerrojo tomado.
+
+Arreglo propuesto: no hacer `upgrade` con cerrojos tomados. Por ejemplo, una marca atómica "revocado" en el
+`Revocable` que se pueda leer desde el `Weak` sin crear un `Arc` (un `Arc<AtomicBool>` compartido entre el
+intermediario y quien lo vigila), o guardar los `Arc` de `upgrade` en el lote y soltarlos fuera de `COLAS`, como ya se
+hace con los temporizadores.
+
+### Media
+
+**M9. Dentro de un mismo grupo de primer nivel, el reparto de A3 sigue igual.** Comprobado leyendo.
+
+- `cupo.rs`, `primer_nivel`: un grupo y todos sus subgrupos comparten cola.
+- Dentro de una cola, el orden es por vencimiento y salen 8 por vuelta: un programa con miles de periódicos retrasa
+  segundos a los demás de su mismo servicio, como medí en A3 (2,13 s con 12.800).
+
+Hoy cada servicio es un grupo de primer nivel y está solo. Pero los programas de usuario irán todos colgando de un
+mismo servicio (un lanzador, una sesión), y en la imagen de pruebas todas las pruebas cuelgan de `lanzador`. Ahí un
+programa hostil retrasa los temporizadores de todos los demás programas.
+
+Arreglo propuesto: el mismo turno, pero por grupo y no solo por grupo de primer nivel (o por proceso dentro de cada
+cola), o un tope de temporizadores vencidos por grupo en cada vuelta.
+
+### Baja
+
+**B19. La pantalla se puede reservar dos veces en un mismo mensaje.** Comprobado leyendo lo del buzón; lo del
+firmware, a comprobar. `buzon.rs` mira `PANTALLA_DADA` al validar, pero solo se pone después de contestar. Un mensaje
+con "reservar", "tamaño físico" y otra vez "reservar" pasa la validación. `recortar_pantalla` da la llave de la primera
+reserva. Si el firmware mueve la pantalla al cambiar el tamaño, el compositor se queda con una llave de memoria que el
+firmware ya usa para otra cosa. Es un solo trozo, no muchos como en M8. Arreglo: rechazar un mensaje con más de una de
+las etiquetas de `TRAS_LA_PANTALLA`, o con alguna de ellas después de "reservar".
+
+**B20. Restos menores.** Comprobado leyendo.
+
+- `objetos.rs`, `apuntar_proyeccion`: si `try_reserve` del vector `soltar` falla, el `Arc<Proceso>` de `upgrade` se
+  suelta dentro del cerrojo del intermediario (lo que B15 quería evitar). Solo sin memoria.
+- La cuarentena DMA se libera entera y solo cuando el aparato está reiniciado. El servidor de la GPU, que crea y suelta
+  búferes con la V3D en marcha, llegará al tope de su cupo y no tendrá forma segura de devolver un búfer suelto. No es
+  un fallo de seguridad, pero conviene pensarlo antes de S9.
+
+### Revisado y correcto en la tercera vuelta
+
+- **Otras recursiones al soltar.** Un temporizador o una interrupción ya solo sujetan su canal (`Arc<Canal>`). Cuando
+  ese `Arc` es el último, los dos lados ya están cerrados y sus colas vacías: escribir en un lado cerrado se rechaza, y
+  lo que `devolver` mete en una cola lo vuelve a vaciar el cierre de la punta, que llega después. `soltar` sigue
+  tratando con su lista las puntas, los intermediarios, las interrupciones y los temporizadores. Una revocable soltada
+  fuera de `soltar` tiene como mucho 4 niveles (`MAX_REVOCABLES`), y un grupo, 8. La cuarentena guarda `Cargo`, que
+  solo suelta cupos. No he encontrado otra cadena sin fondo.
+- **Cuentas de las colas.** `vivos` se suma antes de programar, y el `Drop` lo resta solo si se llegó a sumar. Una
+  cola se quita cuando se suelta su último temporizador, o en `repartir` si está vacía y sin vivos. `muertos` puede
+  contar de más (un temporizador de una vez ya avisado no tiene entrada), pero eso solo adelanta la purga. Ningún
+  temporizador vivo tiene dos entradas: un periódico se vuelve a programar una vez dentro de `COLAS`, y uno de una vez
+  solo si no se pudo escribir, ya fuera del cerrojo.
+- **`Drop` con `COLAS` tomado.** Salvo A5, ningún `Arc<Temporizador>` se suelta con `COLAS` tomado: en `repartir` van al
+  lote, y en `nuevo` la guarda se suelta antes. Quitar el destino de uno revocado puede soltar el último `Arc<Canal>`,
+  pero entonces el canal está vacío (punto anterior). Soltar una `ColaGrupo` dentro de `COLAS` solo suelta `Weak`.
+- **Turnos.** Cada vuelta saca al menos un aviso o termina, y la pasada para a los 64 avisos o a las 256 entradas
+  sacadas, también si todas son de temporizadores ya soltados. El turno sigue donde se quedó, y se corrige si se han
+  quitado colas. Con dos o más servicios, ninguno queda sin servir más de unas pocas pasadas, y dentro de cada cola
+  salen siempre los más antiguos: nada vencido se queda para siempre.
+- **A4.** Las pendientes solo se quitan si su proceso ha muerto. `confirmar` y `retirar` buscan la pendiente de ese
+  proceso en esa dirección, y un proceso tiene un solo hilo, así que no hay dos pendientes suyas a la vez. Revocar entre
+  apuntar y confirmar se lleva la entrada y quita la proyección si ya está, y si no, la quita `memoria_proyectar` al
+  ver el intermediario revocado.
