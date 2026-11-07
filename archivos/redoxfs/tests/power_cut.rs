@@ -274,3 +274,34 @@ fn power_cut_in_order() {
 fn power_cut_in_order_search() {
     report(run(None));
 }
+
+/// After 256 transactions the header ring wraps and slot 0 is written again. A cut in the middle of that write must
+/// not make the filesystem unopenable when `open` is told where it starts.
+#[test]
+fn power_cut_header_slot_0() {
+    let disk = RecDisk { data: vec![0; DISK_SIZE as usize], log: None };
+    let fs = FileSystem::create(disk, None, 0, 0).unwrap();
+    let mut fs = open(fs.disk.data, Some(0)).unwrap();
+    let root = TreePtr::root();
+    let n = fs.tx(|tx| tx.create_node(root, "n", Node::MODE_FILE | 0o644, 1, 0)).unwrap();
+    let log: Log = Arc::new(Mutex::new(Vec::new()));
+    let mut i = 0u64;
+    loop {
+        let before = fs.disk.data.clone();
+        fs.disk.log = Some(log.clone());
+        log.lock().unwrap().clear();
+        fs.tx(|tx| tx.write_node(n.ptr(), 0, &i.to_le_bytes(), 2, 0)).unwrap();
+        fs.disk.log = None;
+        let header = log.lock().unwrap().iter().flatten().last().cloned().unwrap();
+        i += 1;
+        if header.0 == 0 {
+            // Slot 0 again: tear it.
+            let disk = apply(&before, &[Some((0, header.1[..SECTOR].to_vec()))], None);
+            let mut fs = open(disk, Some(0)).expect("does not open with slot 0 torn");
+            let state = walk(&mut fs).unwrap();
+            assert_eq!(state["/n"].as_deref(), Some(&(i - 2).to_le_bytes()[..]));
+            break;
+        }
+        assert!(i < 1000, "the header ring did not come back to slot 0");
+    }
+}

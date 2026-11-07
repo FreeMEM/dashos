@@ -40,7 +40,8 @@ impl<D: Disk> FileSystem<D> {
         block_opt: Option<u64>,
         cleanup: bool,
     ) -> Result<Self> {
-        for ring_block in block_opt.map_or(0..65536, |x| x..x + 1) {
+        // With a known start, any slot of its header ring will do: slot 0 may be the one torn by a power cut.
+        for ring_block in block_opt.map_or(0..65536, |x| x..x + HEADER_RING) {
             let mut header = Header::default();
             unsafe { disk.read_at(ring_block, &mut header)? };
 
