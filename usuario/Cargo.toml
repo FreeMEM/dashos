@@ -4,6 +4,16 @@ version = "0.0.1"
 edition = "2024"
 license = "MPL-2.0"
 
+[features]
+# El servicio de archivos (FS1): RedoxFS y el montón. La caja big-endian no lo compila.
+archivos = ["monton", "dep:redoxfs", "dep:syscall"]
+monton = ["dep:linked_list_allocator"]
+
+[dependencies]
+linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
+redoxfs = { path = "../archivos/redoxfs", default-features = false, optional = true }
+syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
+
 [lib]
 name = "dashos"
 path = "src/lib.rs"
@@ -144,3 +154,9 @@ test = false
 name = "xhci"
 path = "src/bin/xhci.rs"
 test = false
+
+[[bin]]
+name = "archivos"
+path = "src/bin/archivos.rs"
+test = false
+required-features = ["archivos"]
