@@ -135,8 +135,15 @@ extern "C" fn repartidor(_: usize) {
         }
         let vencidos = crate::temporizadores::tomar_pendiente();
         if llegadas.iter().all(|&x| x == 0) && !vencidos {
-            // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde.
+            // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde. Los
+            // muertos de otros núcleos se miran con el cerrojo tomado: quien los apunta avisa tomándolo (U3d).
             let mut cola = REPARTIDOR.tomar();
+            if crate::planificador::hay_muertos_global() {
+                drop(cola);
+                crate::cerrojo::restaurar_irq(estado);
+                crate::planificador::recoger_global();
+                continue;
+            }
             cola.apuntarme();
             planificador::bloquear_soltando(cola);
             crate::cerrojo::restaurar_irq(estado);

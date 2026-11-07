@@ -29,7 +29,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [x] U3b **GICv3** (redistribuidores por núcleo, registros del sistema `ICC_*`), para `gic-version=3` y las máquinas
   de verdad.
 - [x] U3c **Las pruebas del kernel en `virt`** (`make -C kernel prueba-virt`).
-- [ ] U3d **Memoria que vuelve tarde con GICv3** (abierto, abajo).
+- [x] U3d **Memoria que vuelve tarde con GICv3** (era del planificador, no de `virt`).
 - [x] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
   (dirección, tamaño, paso, formato); el compositor pinta ahí cuando no hay buzón de la VideoCore. En QEMU, `ramfb`
   o `virtio-gpu`.
@@ -147,3 +147,17 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   los cuatro núcleos (100 por segundo cada uno). Sospecha sin comprobar: algo que solo se suelta con actividad en un
   núcleo concreto (un hilo muerto que no se recoge, o un objeto retenido en una cola), que la temporización del
   GICv3 destapa. Falta encontrarlo: no está claro que sea solo de `virt`.
+
+### 2026-11-07 madrugada — U3d (hilos muertos sin recoger)
+
+- **Causa** (con contadores puestos un momento en el kernel): en el núcleo 1 quedaban de 16 a 30 hilos muertos sin
+  recoger, 4 páginas de pila cada uno. Ese núcleo nunca quedaba ocioso (lo ocupan los hilos del kernel que giran de
+  C10), y los muertos solo se soltaban desde el hilo ocioso de su núcleo o en una llamada al sistema hecha en él. Con
+  GICv3 cambia en qué núcleo mueren los hilos de `grupos`; por eso salía ahí. Afecta a cualquier núcleo siempre
+  ocupado sin llamadas al sistema (cálculo puro): no es de `virt`.
+- **Arreglo** (`base/planificador.rs`): tras cada cambio de hilo, el que vuelve pasa los muertos de su núcleo a una
+  lista global enlazada (`sig_muerto`, sin reservar memoria, que vale en la interrupción) y avisa al repartidor del
+  núcleo 0, que los suelta (`recoger_global`). El repartidor mira la lista con su cerrojo tomado antes de dormir, y
+  quien apunta avisa tomándolo: no se pierde el aviso. La pila se suelta invalidando la TLB en todos los núcleos.
+- **Comprobado:** `prueba-virt` cuatro de cuatro con GICv3 y dos de dos con GICv2, sin páginas perdidas; en la Pi,
+  `prueba` y `arranque`, bien.

@@ -57,6 +57,8 @@ pub struct Hilo {
     tpidr: u64,
     /// Lo han matado (C39): muere en su siguiente vuelta a EL0, o al despertar si estaba bloqueado.
     matar: bool,
+    /// Ya muerto y con su contexto guardado: el siguiente en la lista global de muertos (U3d).
+    sig_muerto: *mut Hilo,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
@@ -156,6 +158,7 @@ pub fn iniciar_nucleo() {
         fp: None,
         tpidr: 0,
         matar: false,
+        sig_muerto: core::ptr::null_mut(),
     }));
     fpen(FPEN_ATRAPAR);
     registros_el0();
@@ -234,6 +237,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         fp: None,
         tpidr: 0,
         matar: false,
+        sig_muerto: core::ptr::null_mut(),
     }));
     nc.listos.push(h);
     drop(cola);
@@ -471,6 +475,53 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         core::arch::asm!("msr tpidr_el0, {}", in(reg) (*nuevo).tpidr);
         cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto)
     };
+    // Ya en el hilo que vuelve: los muertos de este núcleo tienen su contexto guardado (U3d).
+    trasladar_muertos(n);
+}
+
+/// Hilos muertos de todos los núcleos, ya con su contexto guardado, enlazados por `sig_muerto` (sin reservar memoria:
+/// se llena desde la interrupción del tic). Los suelta el repartidor del núcleo 0 (U3d). Antes solo los soltaba el
+/// hilo ocioso de su núcleo o una llamada al sistema en él: un núcleo siempre ocupado sin llamadas (hilos del kernel o
+/// cálculo puro) se quedaba con sus pilas.
+static MUERTOS_GLOBAL: core::sync::atomic::AtomicPtr<Hilo> = core::sync::atomic::AtomicPtr::new(core::ptr::null_mut());
+
+/// Pasa los muertos del núcleo `n` a la lista global y avisa al repartidor. Con las IRQ enmascaradas, tras un cambio.
+fn trasladar_muertos(n: usize) {
+    let mut movidos = false;
+    loop {
+        let h = NUCLEOS[n].tomar().as_mut().and_then(|nc| nc.muertos.pop());
+        let Some(h) = h else { break };
+        let mut cab = MUERTOS_GLOBAL.load(Ordering::Acquire);
+        loop {
+            unsafe { (*h).sig_muerto = cab };
+            match MUERTOS_GLOBAL.compare_exchange_weak(cab, h, Ordering::AcqRel, Ordering::Acquire) {
+                Ok(_) => break,
+                Err(otra) => cab = otra,
+            }
+        }
+        movidos = true;
+    }
+    if movidos {
+        crate::interrupciones::despertar_repartidor();
+    }
+}
+
+/// ¿Hay muertos en la lista global?
+pub fn hay_muertos_global() -> bool {
+    !MUERTOS_GLOBAL.load(Ordering::Acquire).is_null()
+}
+
+/// Suelta los muertos de la lista global (desde el repartidor: un hilo, con las IRQ abiertas).
+pub fn recoger_global() {
+    let mut h = MUERTOS_GLOBAL.swap(core::ptr::null_mut(), Ordering::AcqRel);
+    while !h.is_null() {
+        let hilo = unsafe { Box::from_raw(h) };
+        h = hilo.sig_muerto;
+        if hilo.proceso != 0 {
+            unsafe { drop(alloc::sync::Arc::from_raw(hilo.proceso as *const crate::objetos::Proceso)) };
+        }
+        drop(hilo);
+    }
 }
 
 fn planificar() {
