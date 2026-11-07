@@ -14,6 +14,9 @@
 use core::ffi::c_void;
 use core::fmt::Write;
 
+mod acpi;
+mod fdt;
+
 type Estado = usize;
 const BIEN: Estado = 0;
 
@@ -395,6 +398,46 @@ fn saltar(entrada: u64, arbol: u64) -> ! {
     }
 }
 
+/// La tabla de configuración con ese GUID, si la hay.
+fn tabla_config(st: &TablaSistema, guid: &[u8; 16]) -> Option<usize> {
+    (0..st.entradas_configuracion)
+        .map(|i| unsafe { &*st.configuracion.add(i) })
+        .find(|e| &e.guid.0 == guid)
+        .map(|e| e.tabla as usize)
+}
+
+/// Los tramos de RAM del mapa de memoria de UEFI, juntando los seguidos (U5: para el árbol hecho desde ACPI). Es RAM
+/// todo salvo lo reservado, lo inservible y la entrada y salida proyectadas (tipos 0, 8, 11, 12 y 13).
+fn tramos_de_ram(bs: &ServiciosArranque, ram: &mut [(u64, u64); 32]) -> usize {
+    let mapa = &raw mut MAPA;
+    let (mut tamano, mut llave, mut tam_desc, mut version) = (unsafe { (*mapa).len() }, 0usize, 0usize, 0u32);
+    if (bs.mapa_memoria)(&mut tamano, mapa as *mut u8, &mut llave, &mut tam_desc, &mut version) != BIEN || tam_desc == 0 {
+        return 0;
+    }
+    let mut n = 0;
+    for k in 0..tamano / tam_desc {
+        let d = unsafe { (mapa as *const u8).add(k * tam_desc) };
+        let tipo = unsafe { core::ptr::read_unaligned(d as *const u32) };
+        let inicio = unsafe { core::ptr::read_unaligned(d.add(8) as *const u64) };
+        let tam = unsafe { core::ptr::read_unaligned(d.add(24) as *const u64) } * PAGINA as u64;
+        if matches!(tipo, 0 | 8 | 11 | 12 | 13) || tam == 0 {
+            continue;
+        }
+        if n > 0 && ram[n - 1].0 + ram[n - 1].1 == inicio {
+            ram[n - 1].1 += tam;
+        } else if n < ram.len() {
+            ram[n] = (inicio, tam);
+            n += 1;
+        }
+    }
+    // El mapa no viene ordenado por fuerza: se ordena (son pocos).
+    ram[..n].sort_unstable_by_key(|t| t.0);
+    n
+}
+
+/// El árbol hecho desde ACPI (U5), aquí hasta que se copie.
+static mut ARBOL_ACPI: [u8; 16384] = [0; 16384];
+
 static mut MAPA: [u8; 64 * 1024] = [0; 64 * 1024];
 
 #[unsafe(export_name = "efi_main")]
@@ -403,9 +446,28 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     let mut c = Consola(st.salida);
     let bs = unsafe { &*st.servicios_arranque };
     let _ = writeln!(c, "DashOS: arranque por UEFI (revisión {:#x} del firmware)", st.cabecera.revision);
-    let Some((arbol, tam_arbol)) = buscar_dtb(st) else {
-        let _ = writeln!(c, "DashOS: el firmware no da árbol de dispositivos");
-        return 1;
+    // El árbol del firmware; si no lo hay, uno hecho desde ACPI (U5: los portátiles dan solo ACPI).
+    let (arbol, tam_arbol) = match buscar_dtb(st) {
+        Some(a) => a,
+        None => {
+            let Some(rsdp) = tabla_config(st, &acpi::GUID_ACPI2) else {
+                let _ = writeln!(c, "DashOS: el firmware no da árbol de dispositivos ni ACPI");
+                return 1;
+            };
+            let Some(m) = acpi::leer(rsdp) else {
+                let _ = writeln!(c, "DashOS: ACPI sin lo que hace falta (MADT con el GIC)");
+                return 1;
+            };
+            let mut ram = [(0u64, 0u64); 32];
+            let n = tramos_de_ram(bs, &mut ram);
+            let buf = unsafe { &mut *(&raw mut ARBOL_ACPI) };
+            let Some(t) = acpi::arbol(&m, &ram[..n], buf) else {
+                let _ = writeln!(c, "DashOS: el árbol hecho desde ACPI no cabe");
+                return 1;
+            };
+            let _ = writeln!(c, "DashOS: sin árbol; hecho desde ACPI: GIC{} en {:#x}, serie {:?}, PSCI {:?}, {} tramos de RAM", if m.gic_v3 { 3 } else { 2 }, m.distribuidor, m.serie, m.psci, n);
+            (buf.as_ptr() as usize, t as u32)
+        }
     };
     let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", arbol, tam_arbol);
     let pantalla = buscar_pantalla(bs);

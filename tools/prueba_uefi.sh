@@ -18,7 +18,7 @@ SALIDA=$(mktemp)
 # servidor (los Mac usan el AIC de Apple). acpi=off: así EDK2 da el árbol de dispositivos (como U-Boot en los Mac).
 # Los portátiles dan ACPI: queda para después.
 MONITOR=$SALIDA.mon
-timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -M virt,gic-version=${GIC:-2},acpi=off${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
+timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -M virt,gic-version=${GIC:-2},acpi=${ACPI:-off}${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
     -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
     -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
 QEMU=$!

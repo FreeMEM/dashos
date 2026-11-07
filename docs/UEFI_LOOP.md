@@ -33,7 +33,7 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [x] U4 **La pantalla del firmware (GOP).** El programa de UEFI pasa al kernel el búfer de pantalla de GOP
   (dirección, tamaño, paso, formato); el compositor pinta ahí cuando no hay buzón de la VideoCore. En QEMU, `ramfb`
   o `virtio-gpu`.
-- [ ] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
+- [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
 - [ ] U6 **Controladores estándar.** xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
@@ -45,7 +45,8 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - `cd uefi && cargo build --release` (con `DASHOS_NUCLEO=<imagen>` para meter otra) saca `uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi`.
 - `make -C kernel prueba-virt`: la imagen de pruebas en `virt` (`pruebas/esperado_virt.txt`).
 - `make -C kernel arranque-virt`: el kernel con la característica `virt`, metido en el programa de UEFI y arrancado.
-- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `MAQUINA=...` añade
+- `tools/prueba_uefi.sh <programa.efi> <esperados> [segundos]`: QEMU `virt` (GICv2, o `GIC=3`; `ACPI=on` para
+  arrancar con ACPI y sin árbol, como un portátil; `MAQUINA=...` añade
   opciones a la máquina, como `virtualization=on` para entrar en EL2; 4 núcleos, 2 GB, `acpi=off`) con
   EDK2 y el programa como `EFI/BOOT/BOOTAA64.EFI` en un disco FAT; comprueba el puerto serie como `prueba_qemu.sh` y
   para en cuanto sale la última línea esperada.
@@ -161,3 +162,16 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   quien apunta avisa tomándolo: no se pierde el aviso. La pila se suelta invalidando la TLB en todos los núcleos.
 - **Comprobado:** `prueba-virt` cuatro de cuatro con GICv3 y dos de dos con GICv2, sin páginas perdidas; en la Pi,
   `prueba` y `arranque`, bien.
+
+### 2026-11-07 madrugada — U5 (ACPI)
+
+- Si el firmware no da árbol (los portátiles con Snapdragon dan solo ACPI), el cargador lo hace desde ACPI
+  (`uefi/src/acpi.rs`, con la especificación ACPI 6.5): la memoria del mapa de UEFI (todo salvo lo reservado, lo
+  inservible y la entrada y salida proyectadas), el GIC de la MADT (GICD y su versión, GICR o la interfaz de CPU de
+  GICC), el temporizador de la GTDT, el PL011 de la SPCR (tipos 3 y 0x0E) y PSCI de la FADT (`hvc` o `smc`). El
+  kernel no cambia: lee el árbol de siempre. `uefi/src/fdt.rs` escribe un árbol desde cero, sin montón.
+- `tools/prueba_uefi.sh` arranca con ACPI con `ACPI=on`.
+- **Comprobado:** con `ACPI=on`, `arranque_virt.txt` con GICv2 y GICv3, y `esperado_virt.txt` con GICv3, bien; con
+  árbol, igual que antes. **No comprobado:** un portátil de verdad. Su ACPI trae más (varios grupos de núcleos, el
+  SMMU, el DSDT con los aparatos) y su puerto serie no es siempre un PL011; el kernel aún escribe al principio en el
+  PL011 de `virt` (`placa::SERIE`).
