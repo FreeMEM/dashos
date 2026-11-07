@@ -294,3 +294,13 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
   recibiendo LPI.
 - Ojo para las pruebas a mano: en zsh, `env $c` no parte `c` en palabras (hace falta `${=c}`); así salieron dos
   falsos fallos en esta tanda.
+
+### 2026-11-07 — U6i (el NVMe con su interrupción)
+
+- `nvme` recibe su interrupción (opcional, como el xHCI: si hay llave 4, la 3 es la interrupción y la 4 el canal
+  "disco"). Su cola de E/S lleva interrupción (IEN, vector 0, el de la MSI-X). Cada orden gira 50 µs y, si no ha
+  acabado, duerme hasta la interrupción o hasta el plazo del controlador (CAP.TO), con un temporizador de un disparo;
+  un aviso viejo solo hace mirar otra vez.
+- **Comprobado:** las cuatro máquinas, con el cliente de disco bien. Una vuelta sin girar nada (todo por
+  interrupción) también pasa, con GICv3 (LPI) y GICv2 (SPI); por plazo, una docena de órdenes no cabrían en el
+  minuto de la prueba. Pi: `prueba` y `arranque`; `prueba-virt`.

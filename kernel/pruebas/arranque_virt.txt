@@ -21,6 +21,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [nvme] disco de 2048 sectores de 512 bytes (1024 KB)
 ~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
 ~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
+# U6i: el NVMe espera sus órdenes con su interrupción.
+~│   [nvme] avisos por su interrupción
 # U6f: el servicio de disco, con un cliente de prueba.
 ~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien

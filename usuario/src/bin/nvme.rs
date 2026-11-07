@@ -1,13 +1,15 @@
 //! El controlador de discos NVMe (U6d), fuera del kernel. Escrito con la especificación NVM Express Base 2.0 (registros
 //! del controlador, cap. 3.1; colas, cap. 4; órdenes de administración, cap. 5) y la del juego de órdenes NVM (Read).
 //!
-//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0); la 3, el canal "disco" (el extremo de lectura).
+//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0); la 3, su interrupción (MSI-X o INTx) si el kernel
+//! la sabe; la siguiente, el canal "disco" (el extremo de lectura).
 //!
 //! Reinicia el controlador, monta las colas de administración, pide sus datos (Identify) y los del espacio de nombres
 //! 1, crea una cola de E/S y lee los dos primeros sectores (U6d). Después sirve el disco por el canal (U6f; el
 //! protocolo, en `docs/referencia/servicios.md`): cada cliente, por su marca, tiene una ventana de memoria DMA que
-//! comparten los dos, y el disco lee y escribe en ella directamente, sin copias. Sin interrupciones: mira la cola de
-//! terminadas girando (una orden dura microsegundos). Toda su memoria es memoria DMA del permiso, sin caché; su
+//! comparten los dos, y el disco lee y escribe en ella directamente, sin copias. Cada orden espera a su terminada
+//! girando un poco (en QEMU acaban en microsegundos) y, si tarda, durmiendo hasta su interrupción (U6i); sin
+//! interrupción, girando. Toda su memoria es memoria DMA del permiso, sin caché; su
 //! dirección de bus es la física. Con páginas de 4 KB (CC.MPS = 0): una transferencia de hasta dos páginas se
 //! describe con PRP1 y PRP2, sin lista.
 
@@ -113,6 +115,8 @@ struct Cola {
 }
 
 struct Nvme {
+    /// El canal de avisos (lectura y escritura) y la llave de la interrupción, si la hay.
+    avisos: Option<(u32, u32, u32)>,
     paso: usize, // la separación de los timbres (4 << CAP.DSTRD)
     espera_ms: u64,
 }
@@ -141,7 +145,12 @@ impl Nvme {
         // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
         let t = c.cq + 16 * c.cabeza;
         let fase = c.fase;
-        if !esperar(self.espera_ms, || (dma32(t + 12) >> 16) & 1 == fase) {
+        let hecha = || (dma32(t + 12) >> 16) & 1 == fase;
+        let lista = match self.avisos {
+            None => esperar(self.espera_ms, hecha),
+            Some(a) => hecha() || esperar_aviso(a, self.espera_ms, &hecha),
+        };
+        if !lista {
             return Err(u32::MAX);
         }
         unsafe { core::arch::asm!("dmb oshld") };
@@ -159,6 +168,45 @@ impl Nvme {
     }
 }
 
+/// Espera a que se cumpla `hecha`: gira 50 µs y después duerme hasta la interrupción (que se vuelve a permitir) o
+/// hasta el plazo, con un temporizador de un disparo en el mismo canal. Un aviso viejo (de otra orden, o de un
+/// temporizador que ya había saltado) solo hace mirar otra vez.
+fn esperar_aviso(avisos: (u32, u32, u32), ms: u64, hecha: &dyn Fn() -> bool) -> bool {
+    if esperar_us(50, hecha) {
+        return true;
+    }
+    let (lectura, escritura, irq) = avisos;
+    let fin = dashos::ahora_us() + ms * 1000;
+    let t = dashos::temporizador_crear(escritura, ms * 1000, 0);
+    let mut buf = [0u8; 8];
+    let mut ll = [0u32; 1];
+    let bien = loop {
+        if hecha() {
+            break true;
+        }
+        if dashos::ahora_us() >= fin {
+            break hecha();
+        }
+        if dashos::canal_leer(lectura, &mut buf, &mut ll).0 == 4 {
+            dashos::interrupcion_terminar(irq);
+        }
+    };
+    if t > 0 {
+        dashos::cerrar(t as u32);
+    }
+    bien
+}
+
+fn esperar_us(us: u64, cond: &dyn Fn() -> bool) -> bool {
+    let fin = dashos::ahora_us() + us;
+    while dashos::ahora_us() < fin {
+        if cond() {
+            return true;
+        }
+    }
+    cond()
+}
+
 /// Los `n` bytes de texto de `off` en la memoria DMA, sin los espacios del final (los de Identify van rellenos).
 fn texto(off: usize, n: usize, b: &mut [u8; 64]) -> &str {
     let mut l = 0;
@@ -173,13 +221,27 @@ fn texto(off: usize, n: usize, b: &mut [u8; 64]) -> &str {
 }
 
 fn principal() -> u64 {
+    // Lo primero, antes de crear llaves: si hay llave 4, la 3 es la interrupción y la 4 el canal "disco"; si no, el
+    // canal es la 3.
+    let existe = |k: u32| {
+        let copia = dashos::llave_duplicar(k, dashos::LEER, 0);
+        if copia > 0 {
+            dashos::cerrar(copia as u32);
+        }
+        copia > 0
+    };
+    let (irq, disco) = if existe(4) { (Some(3), 4) } else { (None, 3) };
     if dashos::registros_proyectar(2, VA) != 0 {
         println!("  [nvme] sin registros");
         return 1;
     }
+    let avisos = irq.and_then(|i| {
+        let (a, b) = dashos::canal_crear();
+        (dashos::interrupcion_asociar(i, b) == 0).then_some((a, b, i))
+    });
     let cap = (leer(CAP) as u64) | (leer(CAP + 4) as u64) << 32;
     let vs = leer(VS);
-    let n = Nvme { paso: 4 << ((cap >> 32) & 0xf), espera_ms: 500 * ((cap >> 24) & 0xff).max(1) };
+    let n = Nvme { avisos, paso: 4 << ((cap >> 32) & 0xf), espera_ms: 500 * ((cap >> 24) & 0xff).max(1) };
     if (cap >> 48) & 0xf != 0 {
         println!("  [nvme] no admite páginas de 4 KB");
         return 2;
@@ -232,9 +294,10 @@ fn principal() -> u64 {
         println!("  [nvme] sectores demasiado grandes");
         return 8;
     }
-    // Una cola de E/S, la 1: primero la de terminadas (sin interrupción) y luego la de envío (5.4, 5.5).
+    // Una cola de E/S, la 1: primero la de terminadas (con interrupción, la del vector 0, si la hay) y luego la de
+    // envío (5.4, 5.5).
     let tam = q << 16 | 1;
-    if n.orden(&mut adm, O_CREAR_CQ, 0, (bus + M_ES_CQ as u64, 0), [tam, 1, 0, 0, 0, 0]).is_err()
+    if n.orden(&mut adm, O_CREAR_CQ, 0, (bus + M_ES_CQ as u64, 0), [tam, 1 | (n.avisos.is_some() as u32) << 1, 0, 0, 0, 0]).is_err()
         || n.orden(&mut adm, O_CREAR_SQ, 0, (bus + M_ES_SQ as u64, 0), [tam, 1 << 16 | 1, 0, 0, 0, 0]).is_err()
     {
         println!("  [nvme] no crea la cola de E/S");
@@ -252,7 +315,8 @@ fn principal() -> u64 {
         let l = (0..64).find(|&i| dma8(off + i) == 0).unwrap_or(64);
         println!("  [nvme] sector {}: \"{}\", firma {:#06x}", s, texto(off, l, &mut b), firma);
     }
-    servir(&n, &mut es, sectores, tam_sector)
+    println!("  [nvme] avisos {}", if n.avisos.is_some() { "por su interrupción" } else { "girando" });
+    servir(&n, &mut es, sectores, tam_sector, disco)
 }
 
 /// Un cliente: su marca, su ventana (la llave y su dirección de bus).
@@ -263,15 +327,15 @@ struct Cliente {
     bus: u64,
 }
 
-/// Sirve el disco por el canal de la llave 3. Cada petición son 24 bytes (orden, sectores, primer sector y
+/// Sirve el disco por el canal de la llave `disco`. Cada petición son 24 bytes (orden, sectores, primer sector y
 /// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores del disco,
 /// tamaño del sector y de la ventana) y, al abrir, la ventana.
-fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize) -> u64 {
+fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32) -> u64 {
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
-        let (r, k, marca) = dashos::canal_leer_marca(3, &mut buf, &mut ll);
+        let (r, k, marca) = dashos::canal_leer_marca(disco, &mut buf, &mut ll);
         if r == E_CERRADO {
             return 0;
         }

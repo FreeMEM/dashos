@@ -45,7 +45,7 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | buzon | su permiso DMA, registros del buzón, memoria de la VideoCore | "buzon" |
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
 | xhci | su permiso DMA, registros del xHCI del PCIe, su INTx (opcional) | "entrada" |
-| nvme | su permiso DMA, registros del NVMe del PCIe | "disco" (es quien lee) |
+| nvme | su permiso DMA, registros del NVMe del PCIe, su interrupción (opcional) | "disco" (es quien lee) |
 | disco (prueba, solo `virt`) | — | "disco" |
 | compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI) | "buzon" (en la Pi), "entrada" (es quien lee) |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
@@ -106,7 +106,7 @@ Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 ## NVMe (U6d)
 
 `usuario/src/bin/nvme.rs`. Llaves: 1 su permiso DMA, 2 sus registros (la BAR 0, que busca el kernel por la clase
-0x010802), 3 el canal "disco". Al arrancar reconoce el disco (modelo, sectores) y lee los dos primeros sectores.
+0x010802), 3 su interrupción si el kernel la sabe, y después el canal "disco". Al arrancar reconoce el disco (modelo, sectores) y lee los dos primeros sectores.
 
 Protocolo del canal "disco" (U6f). Petición, 24 bytes little-endian, con una llave: el extremo de escritura de un
 canal del cliente (con derecho a transferir), por el que vuelve la respuesta.
@@ -126,5 +126,5 @@ servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce po
 cabe en dos páginas de la ventana (8 KB desde un principio de página). La ventana lleva derecho a transferir, para que
 el cliente pueda dársela a otro proceso suyo.
 
-Pendiente: el anillo de peticiones en memoria compartida (S1), con aviso por canal solo cuando hace falta; las
-interrupciones; varias colas de E/S.
+Pendiente: el anillo de peticiones en memoria compartida (S1), con aviso por canal solo cuando hace falta; varias
+colas de E/S.
