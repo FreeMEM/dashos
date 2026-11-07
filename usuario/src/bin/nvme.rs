@@ -1,12 +1,15 @@
 //! El controlador de discos NVMe (U6d), fuera del kernel. Escrito con la especificación NVM Express Base 2.0 (registros
 //! del controlador, cap. 3.1; colas, cap. 4; órdenes de administración, cap. 5) y la del juego de órdenes NVM (Read).
 //!
-//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0).
+//! Llaves: la 1, su permiso DMA; la 2, sus registros (la BAR 0); la 3, el canal "disco" (el extremo de lectura).
 //!
 //! Reinicia el controlador, monta las colas de administración, pide sus datos (Identify) y los del espacio de nombres
-//! 1, crea una cola de E/S y lee los dos primeros sectores. Sin interrupciones: mira la cola de terminadas girando
-//! (solo al arrancar). Toda su memoria es un objeto DMA del permiso, sin caché; su dirección de bus es la física.
-//! Con páginas de 4 KB (CC.MPS = 0): cada búfer cabe en una página y basta PRP1.
+//! 1, crea una cola de E/S y lee los dos primeros sectores (U6d). Después sirve el disco por el canal (U6f; el
+//! protocolo, en `docs/referencia/servicios.md`): cada cliente, por su marca, tiene una ventana de memoria DMA que
+//! comparten los dos, y el disco lee y escribe en ella directamente, sin copias. Sin interrupciones: mira la cola de
+//! terminadas girando (una orden dura microsegundos). Toda su memoria es memoria DMA del permiso, sin caché; su
+//! dirección de bus es la física. Con páginas de 4 KB (CC.MPS = 0): una transferencia de hasta dos páginas se
+//! describe con PRP1 y PRP2, sin lista.
 
 #![no_std]
 #![no_main]
@@ -47,6 +50,20 @@ const O_CREAR_SQ: u8 = 0x01;
 const O_CREAR_CQ: u8 = 0x05;
 const O_IDENTIFICAR: u8 = 0x06;
 const O_LEER: u8 = 0x02;
+const O_ESCRIBIR: u8 = 0x01;
+
+// El servicio (U6f).
+const VENTANA: usize = 64 * 1024;
+const MAX_CLIENTES: usize = 4;
+const E_CERRADO: i64 = -4;
+const PEDIR_ABRIR: u32 = 0;
+const PEDIR_LEER: u32 = 1;
+const PEDIR_ESCRIBIR: u32 = 2;
+const MAL_FORMADO: i32 = -1;
+const FUERA_DEL_DISCO: i32 = -2;
+const FUERA_DE_LA_VENTANA: i32 = -3;
+const ERROR_DEL_DISCO: i32 = -4;
+const SIN_SITIO: i32 = -5;
 
 fn leer(off: usize) -> u32 {
     u32::from_le(unsafe { core::ptr::read_volatile((VA + off) as *const u32) })
@@ -102,7 +119,8 @@ struct Nvme {
 
 impl Nvme {
     /// Manda una orden por `c` y espera a que termine: su estado (0 = bien) y su DW0.
-    fn orden(&self, c: &mut Cola, opcode: u8, nsid: u32, prp1: u64, cdw: [u32; 6]) -> Result<u32, u32> {
+    fn orden(&self, c: &mut Cola, opcode: u8, nsid: u32, prp: (u64, u64), cdw: [u32; 6]) -> Result<u32, u32> {
+        let (prp1, prp2) = prp;
         let e = c.sq + 64 * c.cola;
         for i in 0..16 {
             poner32(e + 4 * i, 0);
@@ -112,6 +130,8 @@ impl Nvme {
         poner32(e + 4, nsid);
         poner32(e + 24, prp1 as u32);
         poner32(e + 28, (prp1 >> 32) as u32);
+        poner32(e + 32, prp2 as u32);
+        poner32(e + 36, (prp2 >> 32) as u32);
         for (i, v) in cdw.iter().enumerate() {
             poner32(e + 40 + 4 * i, *v);
         }
@@ -193,14 +213,14 @@ fn principal() -> u64 {
     let mut adm = Cola { id: 0, sq: M_ADM_SQ, cq: M_ADM_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0 };
     let datos = bus + M_DATOS as u64;
     // Identify del controlador (CNS 1): modelo en los bytes 24 a 63.
-    if n.orden(&mut adm, O_IDENTIFICAR, 0, datos, [1, 0, 0, 0, 0, 0]).is_err() {
+    if n.orden(&mut adm, O_IDENTIFICAR, 0, (datos, 0), [1, 0, 0, 0, 0, 0]).is_err() {
         println!("  [nvme] Identify falla");
         return 6;
     }
     let mut b = [0u8; 64];
     println!("  [nvme] versión {}.{}, modelo \"{}\"", vs >> 16, (vs >> 8) & 0xff, texto(M_DATOS + 24, 40, &mut b));
     // Identify del espacio de nombres 1 (CNS 0): sectores (NSZE) y su tamaño (el formato que dice FLBAS).
-    if n.orden(&mut adm, O_IDENTIFICAR, 1, datos, [0, 0, 0, 0, 0, 0]).is_err() {
+    if n.orden(&mut adm, O_IDENTIFICAR, 1, (datos, 0), [0, 0, 0, 0, 0, 0]).is_err() {
         println!("  [nvme] sin espacio de nombres 1");
         return 7;
     }
@@ -214,15 +234,15 @@ fn principal() -> u64 {
     }
     // Una cola de E/S, la 1: primero la de terminadas (sin interrupción) y luego la de envío (5.4, 5.5).
     let tam = q << 16 | 1;
-    if n.orden(&mut adm, O_CREAR_CQ, 0, bus + M_ES_CQ as u64, [tam, 1, 0, 0, 0, 0]).is_err()
-        || n.orden(&mut adm, O_CREAR_SQ, 0, bus + M_ES_SQ as u64, [tam, 1 << 16 | 1, 0, 0, 0, 0]).is_err()
+    if n.orden(&mut adm, O_CREAR_CQ, 0, (bus + M_ES_CQ as u64, 0), [tam, 1, 0, 0, 0, 0]).is_err()
+        || n.orden(&mut adm, O_CREAR_SQ, 0, (bus + M_ES_SQ as u64, 0), [tam, 1 << 16 | 1, 0, 0, 0, 0]).is_err()
     {
         println!("  [nvme] no crea la cola de E/S");
         return 9;
     }
     let mut es = Cola { id: 1, sq: M_ES_SQ, cq: M_ES_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0 };
     // Los dos primeros sectores (NLB va menos uno).
-    if let Err(e) = n.orden(&mut es, O_LEER, 1, datos, [0, 0, 1, 0, 0, 0]) {
+    if let Err(e) = n.orden(&mut es, O_LEER, 1, (datos, 0), [0, 0, 1, 0, 0, 0]) {
         println!("  [nvme] la lectura falla (estado {:#x})", e);
         return 10;
     }
@@ -232,5 +252,108 @@ fn principal() -> u64 {
         let l = (0..64).find(|&i| dma8(off + i) == 0).unwrap_or(64);
         println!("  [nvme] sector {}: \"{}\", firma {:#06x}", s, texto(off, l, &mut b), firma);
     }
-    0
+    servir(&n, &mut es, sectores, tam_sector)
+}
+
+/// Un cliente: su marca, su ventana (la llave y su dirección de bus).
+#[derive(Clone, Copy)]
+struct Cliente {
+    marca: u64,
+    llave: u32,
+    bus: u64,
+}
+
+/// Sirve el disco por el canal de la llave 3. Cada petición son 24 bytes (orden, sectores, primer sector y
+/// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores del disco,
+/// tamaño del sector y de la ventana) y, al abrir, la ventana.
+fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize) -> u64 {
+    let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
+    let mut buf = [0u8; 256];
+    let mut ll = [0u32; 8];
+    loop {
+        let (r, k, marca) = dashos::canal_leer_marca(3, &mut buf, &mut ll);
+        if r == E_CERRADO {
+            return 0;
+        }
+        if r < 0 {
+            // Sin sitio en la tabla o sin memoria: el mensaje vuelve a la cola; se espera un tic para no girar (B16).
+            dashos::dormir_us(10_000);
+            continue;
+        }
+        for &l in ll.iter().take(k).skip(1) {
+            dashos::cerrar(l);
+        }
+        // Sin llave de respuesta no hay a quién contestar (el directorio de `inicio` es así: no hace falta aquí).
+        if k == 0 {
+            continue;
+        }
+        let respuesta = ll[0];
+        let u32_en = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
+        let (orden, cuantos, primero, off) = (u32_en(0), u32_en(4) as u64, u32_en(8) as u64 | (u32_en(12) as u64) << 32, u32_en(16) as usize);
+        let mut ventana = None;
+        // Sin marca no se sabe de quién es: solo los clientes que puso `inicio` (o a quienes ellos den su llave).
+        let estado = if r != 24 || marca == 0 {
+            MAL_FORMADO
+        } else if orden == PEDIR_ABRIR {
+            let hueco = clientes.iter().position(|c| c.is_some_and(|c| c.marca == marca)).or_else(|| clientes.iter().position(|c| c.is_none()));
+            match hueco {
+                Some(h) => {
+                    if clientes[h].is_none() {
+                        let (m, bus) = dashos::memoria_dma(1, VENTANA);
+                        if m > 0 {
+                            clientes[h] = Some(Cliente { marca, llave: m as u32, bus });
+                        }
+                    }
+                    match clientes[h] {
+                        Some(c) => {
+                            // Con TRANSFERIR, que hace falta para mandarla (y el cliente puede pasarla a otro proceso
+                            // suyo, como un sistema de ficheros).
+                            let copia = dashos::llave_duplicar(c.llave, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+                            ventana = (copia > 0).then_some(copia as u32);
+                            if ventana.is_some() { 0 } else { SIN_SITIO }
+                        }
+                        None => SIN_SITIO,
+                    }
+                }
+                None => SIN_SITIO,
+            }
+        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR {
+            match clientes.iter().flatten().find(|c| c.marca == marca) {
+                None => MAL_FORMADO,
+                Some(c) => {
+                    let bytes = cuantos as usize * tam_sector;
+                    if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
+                        FUERA_DEL_DISCO
+                    } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) || off % 4096 + bytes > 8192 {
+                        FUERA_DE_LA_VENTANA
+                    } else {
+                        let prp1 = c.bus + off as u64;
+                        let prp2 = if off % 4096 + bytes > 4096 { (prp1 & !0xfff) + 4096 } else { 0 };
+                        let op = if orden == PEDIR_LEER { O_LEER } else { O_ESCRIBIR };
+                        let cdw = [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0];
+                        if n.orden(es, op, 1, (prp1, prp2), cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }
+                    }
+                }
+            }
+        } else {
+            MAL_FORMADO
+        };
+        let mut r = [0u8; 24];
+        r[..4].copy_from_slice(&estado.to_le_bytes());
+        r[8..16].copy_from_slice(&sectores.to_le_bytes());
+        r[16..20].copy_from_slice(&(tam_sector as u32).to_le_bytes());
+        r[20..24].copy_from_slice(&(VENTANA as u32).to_le_bytes());
+        let llaves: &[u32] = match &ventana {
+            Some(v) => core::slice::from_ref(v),
+            None => &[],
+        };
+        if dashos::canal_escribir(respuesta, &r, llaves) != 0 {
+            if let Some(v) = ventana {
+                dashos::cerrar(v);
+                r[..4].copy_from_slice(&SIN_SITIO.to_le_bytes());
+                dashos::canal_escribir(respuesta, &r, &[]);
+            }
+        }
+        dashos::cerrar(respuesta);
+    }
 }

@@ -112,6 +112,20 @@ pub fn cerrar(llave: u32) -> i64 {
     llamada(6, [llave as u64, 0, 0, 0, 0]).0 as i64
 }
 
+/// Espera `us` microsegundos sin gastar CPU, con un temporizador de un solo disparo en un canal propio.
+pub fn dormir_us(us: u64) {
+    let (a, b) = canal_crear();
+    let t = temporizador_crear(b, us.max(1), 0);
+    if t > 0 {
+        let mut buf = [0u8; 8];
+        let mut ll = [0u32; 1];
+        canal_leer(a, &mut buf, &mut ll);
+        cerrar(t as u32);
+    }
+    cerrar(a);
+    cerrar(b);
+}
+
 /// Microsegundos desde que arrancó la máquina, con el contador de la CPU.
 pub fn ahora_us() -> u64 {
     let (t, f): (u64, u64);

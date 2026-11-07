@@ -42,9 +42,10 @@ virt: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features virt
 	$(OBJCOPY) -O binary $(ELF) $(VIRT)
 
-# Un disco de 1 MB para el NVMe (U6d), con un texto y la firma 0x55AA en el sector 0 y otro texto en el 1.
+# Un disco de 1 MB para el NVMe (U6d), con un texto y la firma 0x55AA en el sector 0 y otro texto en el 1. Nuevo en
+# cada prueba: el cliente de U6f escribe el sector 2, y lo de una vuelta anterior no debe servir de prueba.
 DISCO_NVME := target/nvme.img
-$(DISCO_NVME):
+$(DISCO_NVME): FORCE
 	python3 -c "import sys; d=bytearray(1<<20); t=b'DashOS: sector 0 del disco NVMe'; d[:len(t)]=t; d[510:512]=b'\x55\xaa'; u=b'DashOS: sector 1'; d[512:512+len(u)]=u; open(sys.argv[1],'wb').write(d)" $@
 
 arranque-virt: virt $(DISCO_NVME)

@@ -80,16 +80,7 @@ fn permitida(c: Cliente, etiqueta: u32) -> bool {
 
 /// Espera un tic sin gastar CPU (un temporizador de una vez).
 fn esperar_un_tic() {
-    let (a, b) = dashos::canal_crear();
-    let t = dashos::temporizador_crear(b, 10_000, 0);
-    if t > 0 {
-        let mut buf = [0u8; 8];
-        let mut ll = [0u32; 1];
-        dashos::canal_leer(a, &mut buf, &mut ll);
-        dashos::cerrar(t as u32);
-    }
-    dashos::cerrar(a);
-    dashos::cerrar(b);
+    dashos::dormir_us(10_000);
 }
 
 /// Dónde empieza el buzón 0 dentro de su página (0x7E00B880 en el bus de la VideoCore).

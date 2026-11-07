@@ -36,9 +36,9 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - [x] U5 **ACPI.** Para los portátiles: leer MADT (interrupciones y núcleos), GTDT (temporizador) y SPCR (puerto
   serie), o convertirlo a árbol en el programa de UEFI.
 - [~] U6 **Controladores estándar.** Hecho: U6a (el kernel encuentra el xHCI en el PCIe), U6b (el servicio `xhci`
-  lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee) y U6e (la
-  INTx del árbol para el xHCI). Falta: interrupciones con ACPI (MSI, o el `_PRT` del AML), hubs, y servir bloques
-  del NVMe a otros procesos. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
+  lo reinicia), U6c (teclado y ratón por xHCI hasta el compositor), U6d (NVMe: reconoce el disco y lee), U6e (la
+  INTx del árbol para el xHCI) y U6f (el NVMe sirve el disco por un canal, con ventanas DMA compartidas). Falta:
+  interrupciones con ACPI (MSI, o el `_PRT` del AML), hubs, y el anillo de peticiones del disco. xHCI (`qemu-xhci`) y NVMe (`nvme`), como procesos, igual que el USB de la Pi.
 - [ ] U7 **La caja Amiga sin big-endian.** El modo del JIT que da la vuelta a los bytes, para las CPU sin big-endian
   en EL0 (Apple). Se prueba en `virt`.
 
@@ -240,3 +240,21 @@ Rama `uefi` de `~/Projects/dashos`, en `.worktrees/uefi`. Se fusiona en `main` p
 - **Comprobado:** con árbol, GICv2 y GICv3: "avisos por su interrupción" y el ratón mueve la ventana sin temporizador.
   Con ACPI (GICv2 y GICv3): "cada 10 ms" y lo mismo. Pi: `prueba` y `arranque`; `prueba-virt`. **No comprobado:** dos
   aparatos con la misma INTx (el segundo se quedaría sin llave: `Interrupcion::nueva` no comparte).
+
+### 2026-11-07 — U6f (el servicio de disco)
+
+- `nvme` sirve el disco por el canal "disco" (protocolo en `docs/referencia/servicios.md`): órdenes de 24 bytes por
+  el canal, con una llave de respuesta; los datos, en una ventana de 64 KB de memoria DMA por cliente, compartida, en
+  la que el NVMe lee y escribe directamente (PRP1 y PRP2). Clientes por la marca que les pone `inicio`; sin marca, se
+  rechaza. Comprueba sector, tamaño y desplazamiento antes de mandar nada al disco.
+- `usuario/src/bin/disco.rs`, cliente de prueba (solo en `virt`): abre, lee los dos primeros sectores, escribe el 2 y
+  lo relee, lee 4 KB que cruzan página (PRP2) y comprueba tres rechazos.
+- `dashos::dormir_us` en la biblioteca (el buzón lo usa en vez de su función propia).
+- Fallo encontrado: para mandar una llave en un mensaje hace falta su derecho de transferir; la ventana y la copia
+  de la llave de respuesta lo llevan. Si la respuesta con la ventana no se puede mandar, va sin ella y con -5.
+- El disco de prueba se crea de nuevo en cada `make arranque-virt`: así, lo escrito en una vuelta no hace pasar la
+  siguiente.
+- **Comprobado:** `virt` con árbol (GICv2 y GICv3) y ACPI (GICv2 y GICv3): las cuatro comprobaciones bien, y el
+  sector 2 escrito en `target/nvme.img`. Pi: `prueba` y `arranque`; `prueba-virt`. **No comprobado:** varios
+  clientes a la vez; un cliente que muere con la ventana (la ventana sigue del servicio, que la vuelve a dar a la
+  misma marca).

@@ -40,8 +40,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
     // temporizador.
     ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["entrada"]),
-    // El disco NVMe (U6d): de momento solo lo reconoce y lee su principio.
-    ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS)], &[]),
+    // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
+    ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS)], &["disco"]),
+    // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
+    #[cfg(feature = "virt")]
+    ("disco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/disco"), &[], &["disco"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
