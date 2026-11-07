@@ -115,3 +115,9 @@ Pausa del 03/11 por la tarde, tras una auditoría del kernel (`docs/seguridad/`)
 Siete cambios de arquitectura esperan decisión: kernel en little-endian, `unsafe` en una sola caja, sacar del kernel el
 USB, la GPU y los compositores, DMA de confianza en la Pi 4, kernel no expulsable, cupos y capacidades completas. El
 trabajo va en seis fases; la primera arregla los fallos que un programa hostil puede explotar hoy.
+
+## La caja PowerPC (S17)
+
+Programas de AmigaOS 4, MorphOS y WarpOS/PowerUP en la misma caja Amiga, con un segundo motor: el JIT PPC de Emu68
+(MPL). Orden recomendado: WarpOS y PowerUP, MorphOS, AltiVec y OS4 al final; OS4 y MorphOS enteros con QEMU
+empaquetado. Después de H5; pendiente de decisión (`S17-caja-powerpc.md`).
