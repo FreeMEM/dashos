@@ -17,15 +17,20 @@ SALIDA=$(mktemp)
 # GIC=2 por ahora (el kernel maneja el GICv2 desde U3); con GIC=3, el de los portátiles con Snapdragon y las placas de
 # servidor (los Mac usan el AIC de Apple). acpi=off: así EDK2 da el árbol de dispositivos (como U-Boot en los Mac).
 # Los portátiles dan ACPI: queda para después.
-timeout "$SEGUNDOS" qemu-system-aarch64 -M virt,gic-version=${GIC:-2},acpi=off${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
+MONITOR=$SALIDA.mon
+timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -M virt,gic-version=${GIC:-2},acpi=off${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
     -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
     -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
 QEMU=$!
-# Se para en cuanto sale la última línea esperada (o al acabar el tiempo).
+# Se para en cuanto sale la última línea esperada (o al acabar el tiempo). Con CAPTURA=fichero.ppm, antes guarda la
+# pantalla (U4).
 FIN=$(grep -v '^#' "$ESPERADOS" | grep -v '^~' | grep -v '^$' | tail -1)
 while kill -0 "$QEMU" 2>/dev/null; do
     if [ -n "$FIN" ] && tr -d '\r' < "$SALIDA" | grep -qF -- "$FIN"; then
         sleep 0.5
+        if [ -n "${CAPTURA:-}" ]; then
+            python3 -I -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(("screendump "+sys.argv[2]+"\n").encode()); time.sleep(1)' "$MONITOR" "$CAPTURA"
+        fi
         kill "$QEMU" 2>/dev/null
         break
     fi
@@ -63,5 +68,5 @@ else
     tail -40 "$SALIDA.txt"
 fi
 [ -n "${GUARDAR:-}" ] && cp "$SALIDA.txt" "$GUARDAR"
-rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt"
+rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR"
 exit $FALLO

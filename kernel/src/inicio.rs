@@ -29,7 +29,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
     ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
+    #[cfg(not(feature = "virt"))]
     ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "entrada"]),
+    // En QEMU `virt` (U4) no hay buzón: la pantalla es la del firmware de UEFI, que llega en el árbol.
+    #[cfg(feature = "virt")]
+    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["entrada"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
@@ -39,6 +43,8 @@ const INTERRUPCION: u32 = 2;
 const PERMISO_DMA: u32 = 3;
 const REGISTRO: u32 = 4;
 const FIRMWARE: u32 = 5;
+/// Un objeto de memoria con datos, de solo lectura (U4: las medidas de la pantalla).
+const DATOS: u32 = 6;
 /// Las llaves de arranque llevan todos los derechos: `inicio` las reparte (transferir) a los servicios.
 const DERECHOS: u32 = crate::objetos::TODOS;
 
@@ -56,6 +62,28 @@ const APARATOS: &[(&str, &str, bool)] = &[
     ("usb", "brcm,bcm2708-usb", true),
     ("buzon", "brcm,bcm2835-mbox", false),
 ];
+
+/// La pantalla de un nodo `simple-framebuffer` con `status = "okay"`, si lo hay: (memoria, objeto con sus medidas).
+fn pantalla_del_firmware(d: &Dtb) -> Option<(Objeto, Objeto)> {
+    let n = d.compatible("simple-framebuffer")?;
+    let (fisica, tamano) = d.reg_cpu(&n, 0)?;
+    let celda = |nombre: &str| d.propiedad(&n, nombre).map(|(datos, _)| d.celda(datos, 0));
+    let (ancho, alto, paso) = (celda("width")?, celda("height")?, celda("stride")?);
+    let formato = match d.propiedad(&n, "format") {
+        Some((datos, _)) if d.u8(datos + 1) == b'8' && d.u8(datos + 2) == b'b' => 1, // a8b8g8r8
+        _ => 0,                                                                     // a8r8g8b8
+    };
+    let pagina = fisica & !(memoria::PAGINA - 1);
+    let fin = (fisica + tamano).div_ceil(memoria::PAGINA) * memoria::PAGINA;
+    kprintln!("pantalla del firmware: {}x{} en {:#x} ({} KB)", ancho, alto, fisica, tamano / 1024);
+    let info = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz())?;
+    let mut datos = [0u8; 20];
+    for (i, v) in [ancho, alto, paso, formato, (fisica - pagina) as u32].iter().enumerate() {
+        datos[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    info.escribir(0, &datos);
+    Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
+}
 
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
 pub fn lanzar() -> bool {
@@ -95,6 +123,13 @@ pub fn lanzar() -> bool {
                 }
             }
         }
+    }
+    // La pantalla que dejó el firmware (U4): un nodo `simple-framebuffer` del árbol, que pone el cargador UEFI. Su
+    // memoria, como memoria del firmware (está fuera de la RAM o en una zona reservada), y sus medidas en un objeto de
+    // memoria: ancho, alto, bytes por línea, formato (0 a8r8g8b8, 1 a8b8g8r8) y desplazamiento dentro de la página.
+    if let Some((pantalla, info)) = pantalla_del_firmware(&d) {
+        apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
+        apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
     }
     // La V3D (C50): solo si su puente contesta. QEMU no la emula, y leer su ventana daría un fallo de bus: se sondea.
     // Sus registros son ventanas fijas (`docs/spec/hw/v3d.md`, §2.1 y §2.4). Su permiso DMA tiene desplazamiento 0: la

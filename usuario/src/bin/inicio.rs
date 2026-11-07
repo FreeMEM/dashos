@@ -41,6 +41,7 @@ fn principal() -> u64 {
             3 => "permiso DMA",
             4 => "registro",
             5 => "memoria del firmware",
+            6 => "datos",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));

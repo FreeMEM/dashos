@@ -8,3 +8,7 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] consola lanzado en su grupo, con 2 llaves
 │   hola desde Rust en EL0 (DashOS, little-endian)
 │   [inicio] todo lanzado; se queda esperando
+# U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
+~pantalla del firmware: 800x600 en
+~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer
+~│   [compositor] doble búfer y daños: bien

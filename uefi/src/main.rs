@@ -77,6 +77,70 @@ struct ServiciosArranque {
     _instalar_configuracion: Reservado,
     _imagenes: [Reservado; 4],
     salir_servicios: extern "efiapi" fn(*const c_void, usize) -> Estado,
+    _contador_reloj_vigilante: [Reservado; 3],
+    _controladores: [Reservado; 2],
+    _abrir_protocolos: [Reservado; 3],
+    _protocolos_por_handle: Reservado,
+    _localizar_handles: Reservado,
+    localizar_protocolo: extern "efiapi" fn(*const [u8; 16], *const c_void, *mut *const Gop) -> Estado,
+}
+
+/// EFI_GRAPHICS_OUTPUT_PROTOCOL (UEFI 2.10, 12.9): solo lo que hace falta para saber dónde está la pantalla.
+#[repr(C)]
+struct Gop {
+    _consultar_modo: Reservado,
+    _poner_modo: Reservado,
+    _blt: Reservado,
+    modo: *const ModoGop,
+}
+
+#[repr(C)]
+struct ModoGop {
+    max_modo: u32,
+    modo: u32,
+    info: *const InfoGop,
+    tam_info: usize,
+    base: u64,
+    tamano: usize,
+}
+
+#[repr(C)]
+struct InfoGop {
+    version: u32,
+    ancho: u32,
+    alto: u32,
+    /// 0 RGB de 8 bits y uno libre, 1 BGR, 2 por máscaras, 3 solo Blt (sin búfer).
+    formato: u32,
+    _mascaras: [u32; 4],
+    pixeles_por_linea: u32,
+}
+
+/// EFI_GRAPHICS_OUTPUT_PROTOCOL_GUID, 9042a9de-23dc-4a38-96fb-7aded080516a, en orden de memoria.
+const GUID_GOP: [u8; 16] = [0xde, 0xa9, 0x42, 0x90, 0xdc, 0x23, 0x38, 0x4a, 0x96, 0xfb, 0x7a, 0xde, 0xd0, 0x80, 0x51, 0x6a];
+
+/// La pantalla que deja el firmware: (base física, tamaño en bytes, ancho, alto, píxeles por línea, formato).
+#[derive(Clone, Copy)]
+struct Pantalla {
+    base: u64,
+    tamano: u64,
+    ancho: u32,
+    alto: u32,
+    por_linea: u32,
+    formato: u32,
+}
+
+fn buscar_pantalla(bs: &ServiciosArranque) -> Option<Pantalla> {
+    let mut gop: *const Gop = core::ptr::null();
+    if (bs.localizar_protocolo)(&GUID_GOP, core::ptr::null(), &mut gop) != BIEN || gop.is_null() {
+        return None;
+    }
+    let modo = unsafe { &*(*gop).modo };
+    let info = unsafe { &*modo.info };
+    // Solo un búfer lineal de 32 bits por píxel (formatos 0 y 1): con "solo Blt" no hay memoria que pintar.
+    if info.formato > 1 || modo.base == 0 {
+        return None;
+    }
+    Some(Pantalla { base: modo.base, tamano: modo.tamano as u64, ancho: info.ancho, alto: info.alto, por_linea: info.pixeles_por_linea, formato: info.formato })
 }
 
 /// GUID de la tabla del árbol de dispositivos (EFI_DTB_TABLE_GUID), b1b621d5-f19c-41a5-830b-d9152c69aae0, en el orden
@@ -179,10 +243,67 @@ fn poner_be32(p: *mut u8, v: u32) {
     }
 }
 
+/// Un nodo `simple-framebuffer` (devicetree, `bindings/display/simple-framebuffer.yaml`) para la pantalla del firmware:
+/// sus tokens del bloque de estructura y las cadenas que usan. Supone `#address-cells` y `#size-cells` de 2 en la raíz
+/// (los de QEMU `virt` y de las máquinas de 64 bits). Las cadenas van detrás de las del árbol, desde `base_cadenas`.
+fn nodo_pantalla(p: &Pantalla, base_cadenas: u32, estructura: &mut [u8; 256], cadenas: &mut [u8; 64]) -> (usize, usize) {
+    const NOMBRES: &[u8] = b"compatible\0reg\0width\0height\0stride\0format\0status\0";
+    cadenas[..NOMBRES.len()].copy_from_slice(NOMBRES);
+    let desp = |nombre: &[u8]| -> u32 {
+        let i = NOMBRES.windows(nombre.len()).position(|w| w == nombre).unwrap();
+        base_cadenas + i as u32
+    };
+    let mut n = 0;
+    let mut poner = |b: &[u8]| {
+        estructura[n..n + b.len()].copy_from_slice(b);
+        n += b.len().next_multiple_of(4);
+    };
+    poner(&1u32.to_be_bytes()); // FDT_BEGIN_NODE
+    let mut nombre = [0u8; 28];
+    let _ = write!(Trozo(&mut nombre[..], 0), "framebuffer@{:x}", p.base);
+    let largo = nombre.iter().position(|&b| b == 0).unwrap_or(27) + 1;
+    poner(&nombre[..largo]);
+    let mut prop = |nombre: &[u8], valor: &[u8]| {
+        poner(&3u32.to_be_bytes()); // FDT_PROP
+        poner(&(valor.len() as u32).to_be_bytes());
+        poner(&desp(nombre).to_be_bytes());
+        poner(valor);
+    };
+    prop(b"compatible\0", b"simple-framebuffer\0");
+    let mut reg = [0u8; 16];
+    reg[..8].copy_from_slice(&p.base.to_be_bytes());
+    reg[8..].copy_from_slice(&p.tamano.to_be_bytes());
+    prop(b"reg\0", &reg);
+    prop(b"width\0", &p.ancho.to_be_bytes());
+    prop(b"height\0", &p.alto.to_be_bytes());
+    prop(b"stride\0", &(p.por_linea * 4).to_be_bytes());
+    // GOP 1 es B, G, R y uno libre en memoria: a8r8g8b8 en little-endian; GOP 0, R, G, B: a8b8g8r8.
+    prop(b"format\0", if p.formato == 1 { b"a8r8g8b8\0" } else { b"a8b8g8r8\0" });
+    prop(b"status\0", b"okay\0");
+    poner(&2u32.to_be_bytes()); // FDT_END_NODE
+    (n, NOMBRES.len())
+}
+
+/// Escribe texto con formato en un trozo de bytes, cortando lo que no quepa.
+struct Trozo<'a>(&'a mut [u8], usize);
+
+impl Write for Trozo<'_> {
+    fn write_str(&mut self, s: &str) -> core::fmt::Result {
+        for &b in s.as_bytes() {
+            if self.1 + 1 < self.0.len() {
+                self.0[self.1] = b;
+                self.1 += 1;
+            }
+        }
+        Ok(())
+    }
+}
+
 /// Copia el árbol `origen` en `destino` con sus reservas y, detrás, las zonas reservadas de UEFI que da `reservas`.
 /// Formato FDT (devicetree 0.4, cap. 5): cabecera de 40 bytes, mapa de reservas (pares de 64 bits big-endian acabados
 /// en un par a cero), bloque de estructura y bloque de cadenas. Devuelve el tamaño nuevo, o `None` si no cabe.
-fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas: &[(u64, u64)]) -> Option<usize> {
+/// Con `pantalla`, añade al final de la raíz su nodo `simple-framebuffer` (U4).
+fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas: &[(u64, u64)], pantalla: Option<&Pantalla>) -> Option<usize> {
     let (tam_estructura, off_estructura) = (be32(unsafe { origen.add(36) }) as usize, be32(unsafe { origen.add(8) }) as usize);
     let (tam_cadenas, off_cadenas) = (be32(unsafe { origen.add(32) }) as usize, be32(unsafe { origen.add(12) }) as usize);
     let off_reservas = be32(unsafe { origen.add(16) }) as usize;
@@ -191,10 +312,16 @@ fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas:
         viejas += 1;
     }
     let n_reservas = viejas + reservas.len() + 1;
+    let (mut nodo, mut nuevas_cadenas) = ([0u8; 256], [0u8; 64]);
+    let (tam_nodo, tam_nuevas) = match pantalla {
+        Some(p) => nodo_pantalla(p, tam_cadenas as u32, &mut nodo, &mut nuevas_cadenas),
+        None => (0, 0),
+    };
     let nuevo_reservas = 40usize.next_multiple_of(8);
     let nuevo_estructura = nuevo_reservas + 16 * n_reservas;
-    let nuevo_cadenas = nuevo_estructura + tam_estructura;
-    let total = nuevo_cadenas + tam_cadenas;
+    let tam_estructura_nueva = tam_estructura + tam_nodo;
+    let nuevo_cadenas = nuevo_estructura + tam_estructura_nueva;
+    let total = nuevo_cadenas + tam_cadenas + tam_nuevas;
     if total > capacidad {
         return None;
     }
@@ -207,9 +334,16 @@ fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas:
             core::ptr::copy_nonoverlapping(tam.to_be_bytes().as_ptr(), e.add(8), 8);
         }
         core::ptr::write_bytes(destino.add(nuevo_reservas + 16 * (n_reservas - 1)), 0, 16);
-        core::ptr::copy_nonoverlapping(origen.add(off_estructura), destino.add(nuevo_estructura), tam_estructura);
+        // La estructura acaba con el fin de la raíz (FDT_END_NODE) y FDT_END: el nodo nuevo va justo antes.
+        let antes = tam_estructura - 8;
+        core::ptr::copy_nonoverlapping(origen.add(off_estructura), destino.add(nuevo_estructura), antes);
+        core::ptr::copy_nonoverlapping(nodo.as_ptr(), destino.add(nuevo_estructura + antes), tam_nodo);
+        core::ptr::copy_nonoverlapping(origen.add(off_estructura + antes), destino.add(nuevo_estructura + antes + tam_nodo), 8);
         core::ptr::copy_nonoverlapping(origen.add(off_cadenas), destino.add(nuevo_cadenas), tam_cadenas);
+        core::ptr::copy_nonoverlapping(nuevas_cadenas.as_ptr(), destino.add(nuevo_cadenas + tam_cadenas), tam_nuevas);
     }
+    poner_be32(unsafe { destino.add(32) }, (tam_cadenas + tam_nuevas) as u32);
+    poner_be32(unsafe { destino.add(36) }, tam_estructura_nueva as u32);
     poner_be32(unsafe { destino.add(4) }, total as u32);
     poner_be32(unsafe { destino.add(8) }, nuevo_estructura as u32);
     poner_be32(unsafe { destino.add(12) }, nuevo_cadenas as u32);
@@ -274,6 +408,15 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
         return 1;
     };
     let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", arbol, tam_arbol);
+    let pantalla = buscar_pantalla(bs);
+    match pantalla {
+        Some(p) => {
+            let _ = writeln!(c, "DashOS: pantalla del firmware de {}x{} ({} por línea, formato {}) en {:#x}, {} KB", p.ancho, p.alto, p.por_linea, p.formato, p.base, p.tamano / 1024);
+        }
+        None => {
+            let _ = writeln!(c, "DashOS: el firmware no da pantalla");
+        }
+    }
     // El kernel, en su dirección física. Si UEFI la tiene ocupada, no se puede seguir (el kernel no es reubicable).
     let mut dir = DIRECCION_NUCLEO;
     let paginas = (NUCLEO.len() + MARGEN_NUCLEO).div_ceil(PAGINA);
@@ -284,7 +427,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     unsafe { core::ptr::copy_nonoverlapping(NUCLEO.as_ptr(), dir as *mut u8, NUCLEO.len()) };
     let _ = writeln!(c, "DashOS: kernel de {} bytes en {:#x}", NUCLEO.len(), dir);
     // Sitio para la copia del árbol, con hueco para 128 zonas reservadas más.
-    let capacidad = tam_arbol as usize + 16 * 128 + 64;
+    let capacidad = tam_arbol as usize + 16 * 128 + 64 + 256 + 64;
     let mut copia = 0u64;
     if (bs.reservar_paginas)(EN_CUALQUIER_SITIO, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
         let _ = writeln!(c, "DashOS: sin memoria para el árbol");
@@ -317,7 +460,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
                 n += 1;
             }
         }
-        let Some(nuevo) = copiar_arbol(arbol as *const u8, copia as *mut u8, capacidad, &reservas[..n]) else { break };
+        let Some(nuevo) = copiar_arbol(arbol as *const u8, copia as *mut u8, capacidad, &reservas[..n], pantalla.as_ref()) else { break };
         if (bs.salir_servicios)(imagen, llave) == BIEN {
             // Desde aquí, sin firmware: solo el hardware.
             let _ = writeln!(Serie, "DashOS: fuera de los servicios de arranque; árbol en {:#x}, {} bytes, {} zonas de UEFI reservadas", copia, nuevo, n);

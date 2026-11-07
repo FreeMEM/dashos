@@ -1,8 +1,12 @@
 //! El compositor por CPU como proceso (C50). Antes iba dentro del kernel (C16, fase A de S9).
 //!
-//! Llaves: la 1, el canal del buzón (C50); la 2, el canal de entrada, por el que llegan los eventos del USB (C49). La
-//! pantalla le llega del buzón, como una llave de la memoria de la VideoCore recortada a ella (auditoría de la fase 4,
-//! M4): no ve el resto de esa memoria.
+//! Llaves, en la Pi: la 1, el canal del buzón (C50); la 2, el canal de entrada, por el que llegan los eventos del USB
+//! (C49). La pantalla le llega del buzón, como una llave de la memoria de la VideoCore recortada a ella (auditoría de
+//! la fase 4, M4): no ve el resto de esa memoria.
+//!
+//! Por UEFI (U4): la 1, la pantalla que dejó el firmware (memoria del firmware); la 2, sus medidas (un objeto de
+//! memoria: ancho, alto, bytes por línea, formato y desplazamiento dentro de la página); la 3, el canal de entrada. Esa
+//! pantalla no tiene desplazamiento virtual: un solo búfer, y se repintan los daños en él.
 //!
 //! Dos búferes en la pantalla virtual del firmware: se pinta en el que no se ve y se cambia con el desplazamiento
 //! virtual. Solo se repinta lo que cambia (los daños). Como cada búfer se vio hace dos cuadros, en el que se va a pintar
@@ -87,6 +91,22 @@ struct Pantalla {
     paso: u32,
     /// Dónde se ve en este proceso.
     base: usize,
+    /// Dos búferes con desplazamiento virtual (la del buzón) o uno solo (la de UEFI).
+    doble: bool,
+    /// Los colores van R, G, B en memoria (a8b8g8r8) y no B, G, R.
+    rb: bool,
+}
+
+const VA_INFO: usize = 0x61_0000_0000;
+
+/// La pantalla que dejó el firmware de UEFI (U4): llave 1, la memoria; llave 2, sus medidas.
+fn pantalla_uefi() -> Option<Pantalla> {
+    if dashos::registros_proyectar(1, VA_VC) != 0 || dashos::memoria_proyectar(2, VA_INFO, false) != 0 {
+        return None;
+    }
+    let leer = |i: usize| unsafe { core::ptr::read_volatile((VA_INFO + 4 * i) as *const u32) };
+    let (ancho, alto, paso, formato, desp) = (leer(0), leer(1), leer(2), leer(3), leer(4));
+    Some(Pantalla { ancho, alto, paso, base: VA_VC + desp as usize, doble: false, rb: formato == 1 })
 }
 
 /// Pide una pantalla de `ancho` × `alto` a 32 bits con `buferes` pantallas virtuales una debajo de otra. La memoria
@@ -114,7 +134,7 @@ fn pantalla(ancho: u32, alto: u32, buferes: u32) -> Option<Pantalla> {
     }
     // La llave empieza en la página de la pantalla: dentro, su desplazamiento.
     let fisica = m[23] & 0x3fff_ffff;
-    Some(Pantalla { ancho: m[5], alto: m[6], paso: m[28], base: VA_VC + (fisica & 0xfff) as usize })
+    Some(Pantalla { ancho: m[5], alto: m[6], paso: m[28], base: VA_VC + (fisica & 0xfff) as usize, doble: true, rb: false })
 }
 
 fn desplazar(y: u32) -> bool {
@@ -169,6 +189,7 @@ impl Compositor {
             let linea = self.p.base + ((fila0 + y) * self.p.paso) as usize;
             for x in r.x..r.x + r.w {
                 let c = self.esperado(x, y);
+                let c = if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
                 unsafe { ((linea + x as usize * 4) as *mut u32).write_volatile(c.to_le()) };
             }
         }
@@ -181,6 +202,12 @@ impl Compositor {
         self.ventana.x = x.min(self.p.ancho - self.ventana.w);
         self.ventana.y = y.min(self.p.alto - self.ventana.h);
         let danos = antes.union(self.ventana);
+        if !self.p.doble {
+            // Un solo búfer (U4): los daños de este cuadro, directamente en lo que se ve.
+            let zona = if todo { Rect { x: 0, y: 0, w: self.p.ancho, h: self.p.alto } } else { danos };
+            self.pintar(0, zona);
+            return;
+        }
         let oculto = 1 - self.visible;
         let zona = if todo { Rect { x: 0, y: 0, w: self.p.ancho, h: self.p.alto } } else { danos.union(self.danos_previos) };
         self.pintar(oculto, zona);
@@ -191,7 +218,8 @@ impl Compositor {
 
     fn leer(&self, x: u32, y: u32) -> u32 {
         let fila = self.visible * self.p.alto + y;
-        u32::from_le(unsafe { ((self.p.base + (fila * self.p.paso + x * 4) as usize) as *const u32).read_volatile() })
+        let c = u32::from_le(unsafe { ((self.p.base + (fila * self.p.paso + x * 4) as usize) as *const u32).read_volatile() });
+        if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c }
     }
 
     /// El búfer visible tiene la ventana en su sitio y nada de ella fuera.
@@ -204,16 +232,31 @@ impl Compositor {
 }
 
 fn principal() -> u64 {
-    let Some(p) = pantalla(ANCHO, ALTO, 2) else {
-        println!("  [compositor] el firmware no da pantalla");
-        return 3;
+    // Por UEFI, la pantalla llega como llave; si no, se pide al buzón (la Pi). La entrada va detrás.
+    let (p, entrada) = match pantalla_uefi() {
+        Some(p) => (p, 3),
+        None => match pantalla(ANCHO, ALTO, 2) {
+            Some(p) => (p, 2),
+            None => {
+                println!("  [compositor] el firmware no da pantalla");
+                return 3;
+            }
+        },
     };
-    println!("  [compositor] pantalla {}x{} a 32 bits, doble búfer, solo con su memoria", p.ancho, p.alto);
+    if p.doble {
+        println!("  [compositor] pantalla {}x{} a 32 bits, doble búfer, solo con su memoria", p.ancho, p.alto);
+    } else {
+        println!("  [compositor] pantalla de UEFI de {}x{} a 32 bits, un búfer", p.ancho, p.alto);
+    }
     let mut c = Compositor { p, visible: 0, ventana: Rect { x: 40, y: 40, w: 200, h: 140 }, danos_previos: Rect::default(), pixeles_pintados: 0 };
     let todo = Rect { x: 0, y: 0, w: c.p.ancho, h: c.p.alto };
     c.pintar(0, todo);
-    c.pintar(1, todo);
-    desplazar(0);
+    if c.p.doble {
+        c.pintar(1, todo);
+    }
+    if c.p.doble {
+        desplazar(0);
+    }
 
     // Lo que costaba en el kernel (C16), ahora desde un proceso: 60 cuadros repintando todo y 60 solo con los daños.
     let medir = |c: &mut Compositor, todo: bool| {
@@ -238,7 +281,7 @@ fn principal() -> u64 {
     let mut ev = [0u8; 16];
     let mut ll = [0u32; 8];
     loop {
-        let (n, k) = dashos::canal_leer(2, &mut ev, &mut ll);
+        let (n, k) = dashos::canal_leer(entrada, &mut ev, &mut ll);
         if n == -4 {
             return 0; // la entrada se cerró
         }

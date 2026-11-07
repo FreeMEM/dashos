@@ -345,7 +345,10 @@ impl Espacio {
     /// ejecutable. Comprueba otra vez que no toca la RAM, aunque solo el kernel crea estos objetos.
     pub fn proyectar_firmware(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
         let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
-        if fin > 1 << 32 || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !paginas().fuera_de_la_ram(fisica, tamano) {
+        let p = paginas();
+        let permitido = p.fuera_de_la_ram(fisica, tamano) || p.dentro_de_una_reserva(fisica, tamano);
+        drop(p);
+        if fin > 1 << 32 || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !permitido {
             return Err(Error::Direccion);
         }
         self.preparar(va, tamano.div_ceil(PAGINA))?;

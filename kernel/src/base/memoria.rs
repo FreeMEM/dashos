@@ -48,7 +48,12 @@ pub struct Paginas {
     libres_bajo: usize,
     /// Los tramos de RAM de los nodos de memoria del árbol (C50): lo que nunca se da como memoria del firmware.
     ram: [(u64, u64); MAX_TRAMOS],
+    /// Las zonas reservadas del árbol (`/memreserve/`): el kernel no las reparte. Una pantalla del firmware en RAM (la
+    /// de UEFI, U4) está en una de ellas.
+    reservadas: [(u64, u64); MAX_RESERVADAS],
 }
+
+const MAX_RESERVADAS: usize = 64;
 
 const MAX_TRAMOS: usize = 16;
 
@@ -65,6 +70,7 @@ static PAGINAS: CerrojoIrq<Paginas> = CerrojoIrq::new(Paginas {
     piso: 0,
     libres_bajo: 0,
     ram: [(0, 0); MAX_TRAMOS],
+    reservadas: [(0, 0); MAX_RESERVADAS],
 });
 
 /// El repartidor, con su cerrojo tomado hasta que se suelte la guarda. Un `paginas().x()` lo suelta al acabar la
@@ -154,6 +160,9 @@ impl Paginas {
         let mut i = 0;
         while let Some((dir, tam)) = d.reserva(i) {
             self.marcar_tramo(dir, tam, true);
+            if i < MAX_RESERVADAS {
+                self.reservadas[i] = (dir, tam);
+            }
             i += 1;
         }
         d.cada_nodo(|n| {
@@ -202,6 +211,12 @@ impl Paginas {
     pub fn fuera_de_la_ram(&self, fisica: u64, tamano: u64) -> bool {
         let Some(fin) = fisica.checked_add(tamano) else { return false };
         self.ram.iter().filter(|t| t.1 != 0).all(|&(d, t)| fin <= d || fisica >= d + t)
+    }
+
+    /// ¿El tramo cae entero dentro de una zona reservada del árbol? (U4: la pantalla de UEFI en RAM)
+    pub fn dentro_de_una_reserva(&self, fisica: u64, tamano: u64) -> bool {
+        let Some(fin) = fisica.checked_add(tamano) else { return false };
+        self.reservadas.iter().any(|&(d, t)| t != 0 && fisica >= d && fin <= d + t)
     }
 
     /// Bytes libres para procesos: los de la zona normal menos la reserva del kernel (para el grupo raíz, C43).
