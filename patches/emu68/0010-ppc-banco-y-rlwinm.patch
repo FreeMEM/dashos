@@ -1,0 +1,231 @@
+diff --git a/include/A64.h b/include/A64.h
+index 06a592c..94270ba 100644
+--- a/include/A64.h
++++ b/include/A64.h
+@@ -176,6 +176,15 @@ __constexpr uint32_t bx_lr() { return ret(); }
+ #define sys_CNTP_TVAL_EL0   3,3,14,2,0
+ #define sys_CNTP_CTL_EL0    3,3,14,2,1
+ #define sys_CNTPCT_EL0      3,3,14,0,1
++#define sys_CNTVCT_EL0      3,3,14,0,2
++#ifdef DASHOS_HOST
++/* DashOS: en el banco de pruebas (Linux, EL0) el contador físico no se lee; el virtual sí */
++#define sys_CNTPCT_EL0_HOST sys_CNTVCT_EL0
++#define CNTPCT_EL0_HOST     "CNTVCT_EL0"
++#else
++#define sys_CNTPCT_EL0_HOST sys_CNTPCT_EL0
++#define CNTPCT_EL0_HOST     "CNTPCT_EL0"
++#endif
+ #define sys_CNTFRQ_EL0      3,3,14,0,0
+ #define sys_CTR_EL0         3,3,0,0,1
+ #define sys_PMCCNTR_EL0     3,3,9,13,0
+diff --git a/src/PPC_Arithmetic.cpp b/src/PPC_Arithmetic.cpp
+index c73784b..fa959e0 100644
+--- a/src/PPC_Arithmetic.cpp
++++ b/src/PPC_Arithmetic.cpp
+@@ -370,6 +370,17 @@ int xoris(PPCTranslatorContext* tc, uint32_t opcode)
+     return 1;
+ }
+ 
++/*
++    DashOS (F1, docs/PPC_LOOP.md): la máscara MB..ME de rlwinm, rlwimi y rlwnm como inmediato lógico de ARM (w unos
++    rotados r a la derecha). Si MB > ME la máscara da la vuelta: 32 - (MB - ME - 1) unos, no MB - ME - 1 (eso eran
++    los ceros). Y la máscara complementaria (la de bic) con su rotación módulo 32: con 6 bits no se codifica.
++*/
++static inline void ppcMask(uint8_t mb, uint8_t me, uint8_t &w, uint8_t &r)
++{
++    w = (mb <= me) ? 1 + me - mb : 33 + me - mb;
++    r = (me + 1) & 31;
++}
++
+ int rlwimix(PPCTranslatorContext* tc, uint32_t opcode)
+ {
+     uint8_t update_cr = opcode & 1;
+@@ -386,40 +397,29 @@ int rlwimix(PPCTranslatorContext* tc, uint32_t opcode)
+     /* TODO: add obvious shortcuts! */
+ 
+     /* If sh is set, rotate left */
++    GPR src = GPR(reg_rs.get());
+     if (sh) {
+         tc->emit(ror(tmp, reg_rs, (32 - sh) & 31));
++        src = GPR(tmp.get());
+     }
+ 
+-    /* Mask result if me - mb is not 31 */
++    /* Insert under the mask (all of it if me - mb is 31) */
+     if (((me - mb) & 31) != 31)
+     {
+-        if (mb <= me)
+-        {
+-            /* mb < me - mask of type 0x0f...f0 */
+-            tc->emit({
+-                bic_immed(reg_ra, reg_ra, 1 + me - mb, 31 & (me + 1)),
+-                and_immed(tmp, tmp, 1 + me - mb, 31 & (me + 1)),
+-                orr_reg(reg_ra, reg_ra, tmp, LSL, 0)
+-            });
+-        }
+-        else if (me < mb)
+-        {
+-            /* mb < me - mask of type 0xf..0..f */
+-            tc->emit({
+-                bic_immed(reg_ra, reg_ra, mb - me - 1, me + 1),
+-                and_immed(tmp, tmp, mb - me - 1, me + 1),
+-                orr_reg(reg_ra, reg_ra, tmp, LSL, 0)
+-            });
+-        }
+-    } else if (update_cr) {
+-        if (!sh)
+-            tc->emit(adds_immed(reg_ra, reg_rs, 0));
+-        else
+-            tc->emit(adds_immed(reg_ra, tmp, 0));
++        uint8_t w, r;
++        ppcMask(mb, me, w, r);
++        tc->emit({
++            and_immed(reg_ra, reg_ra, 32 - w, (r - w) & 31),
++            and_immed(tmp, src, w, r),
++            orr_reg(reg_ra, reg_ra, tmp, LSL, 0)
++        });
++    } else {
++        tc->emit(mov_reg(reg_ra, src));
+     }
+ 
+-    if (update_cr) 
++    if (update_cr)
+     {
++        tc->emit(cmp_immed(reg_ra, 0));
+         setCRnLogic(tc, 0);
+     }
+ 
+@@ -441,17 +441,17 @@ int rlwinmx(PPCTranslatorContext* tc, uint32_t opcode)
+     GPR reg_ra = tc->mapGPRForWrite(ra);
+     GPR and_src = GPR(reg_rs.get());
+ 
+-    /* TODO: add obvious shortcuts! */
+-
+     if (mb == 0 && me == (31 - sh))
+     {
+         /* shifting left, leaving zeros on right */
+         tc->emit(lsl(reg_ra, reg_rs, sh));
++        if (update_cr) tc->emit(cmp_immed(reg_ra, 0));
+     }
+     else if (me == 31 && sh == (32 - mb))
+     {
+         /* shifting right, zeros on the left */
+         tc->emit(lsr(reg_ra, reg_rs, 32 - sh));
++        if (update_cr) tc->emit(cmp_immed(reg_ra, 0));
+     }
+     else
+     {
+@@ -464,31 +464,21 @@ int rlwinmx(PPCTranslatorContext* tc, uint32_t opcode)
+         /* Mask result if me - mb is not 31 */
+         if (((me - mb) & 31) != 31)
+         {
+-            if (mb <= me)
+-            {
+-                /* mb < me - mask of type 0x0f...f0 */
+-                tc->emit(update_cr ?
+-                    ands_immed(reg_ra, and_src, 1 + me - mb, 31 & (me + 1)) :
+-                    and_immed(reg_ra, and_src, 1 + me - mb, 31 & (me + 1))
+-                );
+-            }
+-            else if (me < mb)
+-            {
+-                /* mb < me - mask of type 0xf..0..f */
+-                tc->emit(update_cr ?
+-                    ands_immed(reg_ra, and_src, mb - me - 1, me + 1) :
+-                    and_immed(reg_ra, and_src, mb - me - 1, me + 1)
+-                );
+-            }
+-        } else if (update_cr) {
+-            if (!sh)
+-                tc->emit(adds_immed(reg_ra, reg_rs, 0));
+-            else
+-                tc->emit(tst_immed(reg_ra, 32, 0));
++            uint8_t w, r;
++            ppcMask(mb, me, w, r);
++            tc->emit(update_cr ? ands_immed(reg_ra, and_src, w, r) : and_immed(reg_ra, and_src, w, r));
++        }
++        else if (!sh)
++        {
++            tc->emit(update_cr ? adds_immed(reg_ra, reg_rs, 0) : mov_reg(reg_ra, reg_rs));
++        }
++        else if (update_cr)
++        {
++            tc->emit(cmp_immed(reg_ra, 0));
+         }
+     }
+ 
+-    if (update_cr) 
++    if (update_cr)
+     {
+         setCRnLogic(tc, 0);
+     }
+@@ -521,22 +511,9 @@ int rlwnmx(PPCTranslatorContext* tc, uint32_t opcode)
+     /* Mask result if me - mb is not 31 */
+     if (((me - mb) & 31) != 31)
+     {
+-        if (mb <= me)
+-        {
+-            /* mb < me - mask of type 0x0f...f0 */
+-            tc->emit(update_cr ?
+-                ands_immed(reg_ra, reg_ra, 1 + me - mb, 31 & (me + 1)) :
+-                and_immed(reg_ra, reg_ra, 1 + me - mb, 31 & (me + 1))
+-            );
+-        }
+-        else if (me < mb)
+-        {
+-            /* mb < me - mask of type 0xf..0..f */
+-            tc->emit(update_cr ?
+-                ands_immed(reg_ra, reg_ra, mb - me - 1, me + 1) :
+-                and_immed(reg_ra, reg_ra, mb - me - 1, me + 1)
+-            );
+-        }
++        uint8_t w, r;
++        ppcMask(mb, me, w, r);
++        tc->emit(update_cr ? ands_immed(reg_ra, reg_ra, w, r) : and_immed(reg_ra, reg_ra, w, r));
+     } else if (update_cr) {
+         tc->emit(cmp_immed(reg_ra, 0));
+     }
+diff --git a/src/PPC_SystemInstructions.cpp b/src/PPC_SystemInstructions.cpp
+index 2375cd3..3f1c953 100644
+--- a/src/PPC_SystemInstructions.cpp
++++ b/src/PPC_SystemInstructions.cpp
+@@ -115,7 +115,7 @@ int mftb(PPCTranslatorContext *tc, uint32_t opcode)
+     GPR reg_rd = tc->mapGPRForWrite(rd);
+     GPR tmp = GPR::allocate();
+ 
+-    tc->emit(mrs(tmp, sys_CNTPCT_EL0));
++    tc->emit(mrs(tmp, sys_CNTPCT_EL0_HOST));
+ 
+     if (tbr == 268) // TBL
+         tc->emit( mov_reg(reg_rd, tmp));
+diff --git a/src/PPC_Translator.cpp b/src/PPC_Translator.cpp
+index 6981aa5..348fa01 100644
+--- a/src/PPC_Translator.cpp
++++ b/src/PPC_Translator.cpp
+@@ -1851,12 +1851,12 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+     if (debug > 2)
+         kprintf("[PPC] GetTranslationUnit(%08x)\n[PPC] Hash: 0x%04x\n", (void*)ppccodeptr, (int)hash);
+ 
+-    asm volatile("mrs %0, CNTPCT_EL0":"=r"(time_start));
++    asm volatile("mrs %0, " CNTPCT_EL0_HOST:"=r"(time_start));
+     uint32_t insn_count = 0;
+     uintptr_t line_length = PPC_Translate(ppccodeptr, &insn_count);
+     uintptr_t arm_insn_count = line_length/4 - 1;
+     uintptr_t unit_length = (line_length + 63 + sizeof(PPCTranslationUnit)) & ~63;
+-    asm volatile("mrs %0, CNTPCT_EL0":"=r"(time_end));
++    asm volatile("mrs %0, " CNTPCT_EL0_HOST:"=r"(time_end));
+ 
+     do {
+         unit = (PPCTranslationUnit *)jit_ppc.malloc_aligned(unit_length, 64);
+@@ -1918,9 +1918,9 @@ PPCTranslationUnit *PPC_GetTranslationUnit(uint32_t *ppccodeptr)
+     unit->ptu_PPCHigh = (uint32_t)(uintptr_t)ppc_high;
+     unit->ptu_Fingerprint = cache_read_32(ICACHE, unit->ptu_PPCAddress) ^ cache_read_32(ICACHE, unit->ptu_PPCAddress + 4);
+     
+-    asm volatile("mrs %0, CNTPCT_EL0":"=r"(time_start));
++    asm volatile("mrs %0, " CNTPCT_EL0_HOST:"=r"(time_start));
+     unit->ptu_CRC32 = CalcCRC32(ppc_low, ppc_high);
+-    asm volatile("mrs %0, CNTPCT_EL0":"=r"(time_end));
++    asm volatile("mrs %0, " CNTPCT_EL0_HOST:"=r"(time_end));
+     unit->ptu_VerifyTime = time_end - time_start;
+     #if 0
+     unit->ptu_UseCount = 0;

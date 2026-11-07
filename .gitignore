@@ -6,3 +6,6 @@ jit-host/pruebas68k/*.o
 jit-host/pruebas68k/*.exe
 jit-host/**/*.core
 jit-host/build-ref/
+jit-host/ppc/build/
+jit-host/ppc/pruebas/*.elf
+jit-host/ppc/pruebas/oraculo
