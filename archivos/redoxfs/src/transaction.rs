@@ -2220,6 +2220,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
     ) -> Result<bool> {
         let mut node_changed = false;
 
+        // Past the end, the gap reads as zeros: what a shorter size left in its last record must not show again.
+        if *offset > node.data().size() {
+            node_changed |= self.truncate_node_inner(node, *offset)?;
+        }
+
         // Try writing to inline data
         let node_size = node.data().size();
         let convert_inline = if let Some(inline_data) = node.data_mut().inline_data_mut() {

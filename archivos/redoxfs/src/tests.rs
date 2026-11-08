@@ -142,6 +142,40 @@ fn remove_and_truncate_free_partial_records() {
     });
 }
 
+/// Writing past the end after shrinking a file: the gap reads as zeros, not as the data that was cut off.
+#[test]
+fn write_past_the_end_after_shrinking() {
+    with_redoxfs(|mut fs| {
+        let tree_ptr = TreePtr::<Node>::root();
+        let mut x = 7u64;
+        let data: Vec<u8> = (0..40_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8 | 1
+            })
+            .collect();
+        // Inline (small) and in records (large).
+        for (name, len, cut, at) in [("inline", 100, 10, 50), ("records", 40_000, 4639, 20_000)] {
+            fs.tx(|tx| {
+                let node = tx.create_node(tree_ptr, name, Node::MODE_FILE | 0o644, 1, 0)?;
+                tx.write_node(node.ptr(), 0, &data[..len], 1, 0)?;
+                tx.truncate_node(node.ptr(), cut, 1, 0)?;
+                tx.write_node(node.ptr(), at, b"x", 1, 0)?;
+                let node = tx.read_tree(node.ptr())?;
+                let mut buf = vec![0xFF; at as usize + 1];
+                assert_eq!(tx.read_node_inner(&node, 0, &mut buf)?, buf.len());
+                assert_eq!(&buf[..cut as usize], &data[..cut as usize], "{name}");
+                assert!(buf[cut as usize..at as usize].iter().all(|b| *b == 0), "{name}");
+                assert_eq!(buf[at as usize], b'x');
+                Ok(())
+            })
+            .unwrap();
+        }
+    });
+}
+
 #[test]
 fn empty_dir() {
     with_redoxfs(|mut fs| {
