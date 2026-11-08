@@ -8,6 +8,10 @@ EMU68   ?= ../../third_party/Emu68
 # F1e: FPSCR=1 (por defecto), los bits de excepción de FPSCR tras cada operación de la FPU (PPC_FPSCR_EXCEPTIONS);
 # FPSCR=0, el camino rápido de Emu68 (solo las formas con punto), en build-rapido/
 FPSCR   ?= 1
+# PPC_NAN_PROPAGATION de Emu68: 1, el NaN que da el PowerPC (lo comprueban las pruebas)
+NAN     ?= 1
+# JITMB=n: el JIT PPC con n MB para el código traducido (para probar la expulsión de bloques)
+JITMB   ?=
 ifeq ($(FPSCR),0)
 B       := build-rapido
 else
@@ -25,7 +29,7 @@ PPC_USED := -fcall-used-x4 -fcall-used-x5 -fcall-used-x6 -fcall-used-x7 -fcall-u
 COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
 	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
-	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DPPC_SO_PROPAGATION=1 -DPPC_FPSCR_EXCEPTIONS=$(FPSCR) -DPPC_NAN_PROPAGATION=1 -DDASHOS_NATIVE_CALLS=1 \
+	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DPPC_SO_PROPAGATION=1 -DPPC_FPSCR_EXCEPTIONS=$(FPSCR) -DPPC_NAN_PROPAGATION=$(NAN) -DDASHOS_NATIVE_CALLS=1 $(if $(JITMB),-DPPC_JIT_MB=$(JITMB)) \
 	-Iinclude -I$(EMU68)/include -I../include $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error -fno-threadsafe-statics

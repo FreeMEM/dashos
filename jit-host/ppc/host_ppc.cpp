@@ -110,6 +110,10 @@ static void *map(uintptr_t addr, size_t len, int prot, int flags, int fd)
 #define JIT_RW  0x2000000000UL
 #define JIT_RX  0x3000000000UL
 #define JIT_LEN (64UL << 20)
+/* Lo que se le dice al JIT, en MB: con JITMB=1 en make se llena pronto y tiene que expulsar bloques */
+#ifndef PPC_JIT_MB
+#define PPC_JIT_MB (JIT_LEN >> 20)
+#endif
 #define HEAP_LEN (16UL << 20)
 
 /* --- Lo que Emu68 define en start.c, devicetree.c, mmu.c, intc.c y disasm.c --- */
@@ -130,7 +134,7 @@ uint32_t dt_get_property_value_u32(void *key, const char *propname, uint32_t def
 {
     (void)key; (void)def_val; (void)check_parent;
     /* tamaño del código traducido del PPC, en MB (PPC_Translator.cpp: jit_ppc) */
-    if (propname && propname[0] == 'p') return JIT_LEN >> 20;
+    if (propname && propname[0] == 'p') return PPC_JIT_MB;
     return def_val;
 }
 uintptr_t mmu_virt2phys(uintptr_t addr) { return addr; }
@@ -243,6 +247,9 @@ static void informe(const Emu68::PPC::PPCState *s)
     kprintf("[REG] FPSCR=%08x\n", s->FPSCR);
     uint64_t h = suma((const uint8_t *)PPC_RAM, PPC_RAM_LEN);
     kprintf("[REG] Suma de la memoria: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
+    /* No es parte de la comparación: cuánto JIT se usó (con JITMB pequeño, si hubo que expulsar bloques) */
+    kprintf("[JIT] bloques %u, fallos de caché %u, libre %u de %u\n", s->JIT_UNIT_COUNT, s->JIT_CACHE_MISS,
+            s->JIT_CACHE_FREE, s->JIT_CACHE_TOTAL);
 }
 
 /* Un fallo de memoria del código traducido: dice en qué instrucción PPC iba (w18) y acaba con 6. Los desplazamientos

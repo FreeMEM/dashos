@@ -327,3 +327,15 @@ resumido, en `docs/diseño/RESUMEN.md`.
   Cambia la sala limpia como se recomendó (`AGENTS.md`, reglas 1 y 7; `docs/diseño/S12-controladores.md`).
 - **THEA500 Mini**: placa candidata (`docs/diseño/placa-thea500-mini.md`).
 
+
+## Decisiones del usuario del 2026-11-08
+
+- **DashOS sigue con su plan aunque Emu68 no lo apoye.** Michal dijo que no dará soporte a quien use Emu68 para
+  emular el Amiga entero "como un Amiberry". El usuario: el hardware original se estropea y no hay repuestos, la
+  PiStorm tiene fecha de caducidad, y DashOS es el camino que queda. Los arreglos a Emu68 se siguen mandando como PR
+  (con su permiso), pero el plan no depende de que los acepten. Si hace falta, el JIT va en nuestra propia rama
+  (MPL: lo cambiado de sus ficheros se publica).
+- Pendiente de decidir: para los programas que tocan el chipset, además de Amiberry como aplicación (S4), un camino
+  intermedio: capturar los accesos a `0xDFF000` con la MMU e imitar los chips mientras la CPU sigue en el JIT. Valdría
+  para muchos juegos; lo que cuenta ciclos seguiría en Amiberry. Hoy la línea 11 de este plan dice que los juegos y
+  demos que tocan el chipset no son objetivo.

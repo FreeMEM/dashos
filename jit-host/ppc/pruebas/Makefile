@@ -7,7 +7,7 @@ FLAGS := -mcpu=powerpc -ffreestanding -nostdlib -fno-pic -fno-pie -no-pie -stati
 	-fno-asynchronous-unwind-tables -Wall
 ENTEROS := -msoft-float
 
-all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin t4.bin p3.bin t5.bin t6.bin t7.bin p4.bin p5.bin t8.bin t9.bin oraculo
+all: p1.bin p1-o0.bin p2.bin p2-o0.bin t1a.bin t1b.bin t2.bin t3.bin t4.bin p3.bin t5.bin t6.bin t7.bin p4.bin p5.bin t8.bin t9.bin t10.bin oraculo
 
 p1.bin: p1.c prueba.ld
 	$(CC) $(FLAGS) $(ENTEROS) -O2 -T prueba.ld -o p1.elf $< -lgcc && $(OC) -O binary p1.elf $@
@@ -75,3 +75,9 @@ oraculo: oraculo.c
 
 clean:
 	rm -f *.elf *.bin oraculo t1*.s t2.s t3.s t4.s t5.s t6.s t7.s t8.s t9.s
+
+# t10: expulsión de bloques (make JITMB=1 en el banco)
+t10.s: gen_t10.py
+	python3 gen_t10.py > $@
+t10.bin: t10.s prueba.ld
+	$(CC) $(FLAGS) -T prueba.ld -o t10.elf $< && $(OC) -O binary t10.elf $@
