@@ -79,6 +79,8 @@ volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volume
 - FS4: `rename_node` no deja mover un cajón dentro de sí mismo (e8b2f76).
 - FS8: borrar o acortar un fichero suelta también su último trozo a medias (a5652ad). Antes, cada fichero borrado
   cuyo tamaño no era múltiplo de 128 KB dejaba hasta 128 KB perdidos.
+- FS8: `DirList` con la disposición fijada (`repr(C, packed)`, cuentas al final en little-endian), la misma que ya
+  dejaba el compilador (694bc7c).
 - FS8: el comprobador y la reparación (`check.rs`, `repair.rs`, `redoxfs-fsck`), sin lo que es solo de DashFS
   (mayúsculas, atributos), y que abrir un disco con la lista de libres rota dé error en vez de abortar.
 
@@ -169,5 +171,7 @@ volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volume
   bloques en uso, siempre reparadas dejando solo datos ilegibles; un corte de luz en cada escritura de una
   reparación; y ficheros de todos los tamaños escritos, recortados y borrados. La prueba de cortar la luz
   (`tests/power_cut.rs`) y la de operaciones al azar de FS6 comprueban ahora el disco en cada paso.
-  Pendiente visto: `DirList` guarda su cuenta y su largo en el orden de bytes de la CPU, no en little-endian fijo;
-  un DashOS big-endian no leería los cajones de un disco hecho en un PC.
+  Visto al terminar: `DirList` guardaba su cuenta y su largo en el orden de bytes de la CPU, y el sitio de cada
+  campo lo elegía el compilador (`repr(Rust)`): los puso al final del bloque. Ahora es `repr(C, packed)` con ese
+  mismo orden y `Le<u16>`: los discos de siempre se leen igual (comprobado con un disco hecho antes del cambio), y
+  un DashOS big-endian u otro compilador también. Prueba `layout_on_disk`.
