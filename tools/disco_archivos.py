@@ -25,7 +25,7 @@ if sys.argv[1] == "--comprobar":
         "C/ cajón",
         "C/grande.txt 313890",
         "Escrito/ cajón",
-        "Escrito/hola.txt 19",
+        "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "LEEME.txt 19",
         "Prefs/ cajón",
         "Prefs/fuente 8",

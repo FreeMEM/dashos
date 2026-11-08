@@ -15,8 +15,8 @@ extern crate alloc;
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use dashos::println;
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
-use syscall::error::{EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
+use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
+use syscall::error::{EACCES, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -53,6 +53,9 @@ const RENOMBRAR: u32 = 9;
 const TAMANO: u32 = 10;
 const VACIAR: u32 = 11;
 const INFO: u32 = 12;
+const COMENTARIO: u32 = 13;
+const COMENTAR: u32 = 14;
+const PROTEGER: u32 = 15;
 
 // Estados.
 const BIEN: i32 = 0;
@@ -67,6 +70,7 @@ const SOLO_LECTURA: i32 = -8;
 const YA_EXISTE: i32 = -9;
 const NO_VACIO: i32 = -10;
 const LLENO: i32 = -11;
+const PROTEGIDO: i32 = -12;
 
 // Tipos.
 const FICHERO: u8 = 1;
@@ -200,6 +204,7 @@ fn estado_de(e: Error) -> i32 {
         ENOTEMPTY => NO_VACIO,
         ENOSPC => LLENO,
         EINVAL => MAL_FORMADO,
+        EACCES => PROTEGIDO,
         _ => ERROR_DEL_DISCO,
     }
 }
@@ -250,8 +255,28 @@ fn dar_asa(fs: &mut Fs, c: &mut Cliente, n: &TreeData<Node>) -> Respuesta {
     let asa = c.siguiente;
     c.siguiente = c.siguiente.wrapping_add(1).max(1);
     c.asas.insert(asa, n.ptr());
-    let d = n.data();
-    Respuesta { estado: BIEN, asa, a: d.size(), b: d.mtime().0, c: d.mode() as u64 | (tipo(d) as u64) << 16 }
+    datos(asa, n.data())
+}
+
+/// La respuesta de buscar, crear y datos: tamaño, fecha, y modo | tipo << 16 | bits del Amiga << 32.
+fn datos(asa: u32, d: &Node) -> Respuesta {
+    let c = d.mode() as u64 | (tipo(d) as u64) << 16 | (d.amiga_bits().bits() as u64) << 32;
+    Respuesta { estado: BIEN, asa, a: d.size(), b: d.mtime().0, c }
+}
+
+/// Lo que AmigaOS no deja tocar: un fichero sin permiso de escritura (la W del Amiga, el bit de escritura del dueño)
+/// o protegido contra el borrado. Con usuarios (S6), se mirará quién lo pide.
+fn sin_escritura(d: &Node) -> bool {
+    d.mode() & 0o200 == 0
+}
+
+/// El comentario, recortado a 255 bytes sin partir una letra, para la lista.
+fn comentario_corto(texto: &str) -> &str {
+    let mut fin = texto.len().min(255);
+    while !texto.is_char_boundary(fin) {
+        fin -= 1;
+    }
+    &texto[..fin]
 }
 
 /// Lo que pide un mensaje, ya copiado del canal.
@@ -296,10 +321,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
         DATOS => {
             let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             match fs.tx(|tx| tx.read_tree(n)) {
-                Ok(n) => {
-                    let d = n.data();
-                    Respuesta { estado: BIEN, asa: p.asa, a: d.size(), b: d.mtime().0, c: d.mode() as u64 | (tipo(d) as u64) << 16 }
-                }
+                Ok(n) => datos(p.asa, n.data()),
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -345,19 +367,26 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
                         i += 1;
                         continue;
                     };
-                    let largo = 20 + nombre.len();
+                    let h = tx.read_tree(hijos[i].node_ptr())?;
+                    let comentario = tx.comment(h.ptr())?;
+                    let comentario = comentario_corto(&comentario);
+                    let largo = 24 + nombre.len() + comentario.len();
                     let paso = largo.next_multiple_of(8);
                     if off + paso > VENTANA {
                         break;
                     }
-                    let h = tx.read_tree(hijos[i].node_ptr())?;
                     let d = h.data();
                     v[off..off + 8].copy_from_slice(&d.size().to_le_bytes());
                     v[off + 8..off + 16].copy_from_slice(&d.mtime().0.to_le_bytes());
                     v[off + 16..off + 18].copy_from_slice(&d.mode().to_le_bytes());
                     v[off + 18] = tipo(d);
                     v[off + 19] = nombre.len() as u8;
-                    v[off + 20..off + largo].copy_from_slice(nombre.as_bytes());
+                    v[off + 20..off + 22].copy_from_slice(&(d.amiga_bits().bits() as u16).to_le_bytes());
+                    v[off + 22] = comentario.len() as u8;
+                    v[off + 23] = 0;
+                    let fin_nombre = off + 24 + nombre.len();
+                    v[off + 24..fin_nombre].copy_from_slice(nombre.as_bytes());
+                    v[fin_nombre..off + largo].copy_from_slice(comentario.as_bytes());
                     off += paso;
                     i += 1;
                     cuantos += 1;
@@ -386,8 +415,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
             let datos = c.ventana()[..p.b as usize].to_vec();
             let r = fs.tx(|tx| {
-                if tx.read_tree(n)?.data().is_dir() {
+                let nodo = tx.read_tree(n)?;
+                if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
+                }
+                if sin_escritura(nodo.data()) {
+                    return Err(Error::new(EACCES));
                 }
                 let k = tx.write_node(n, p.a, &datos, AHORA, 0)?;
                 Ok((k, tx.read_tree(n)?.data().size()))
@@ -418,6 +451,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             let r = fs.tx(|tx| {
                 let n = tx.find_node(dir, nombre)?;
+                if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) {
+                    return Err(Error::new(EACCES));
+                }
                 tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)
             });
             match r {
@@ -441,13 +477,55 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
         TAMANO => {
             let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let r = fs.tx(|tx| {
-                if tx.read_tree(n)?.data().is_dir() {
+                let nodo = tx.read_tree(n)?;
+                if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
+                }
+                if sin_escritura(nodo.data()) {
+                    return Err(Error::new(EACCES));
                 }
                 tx.truncate_node(n, p.a, AHORA, 0)
             });
             match r {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        COMENTARIO => {
+            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let v = c.ventana();
+            match fs.tx(|tx| tx.comment(n)) {
+                Ok(texto) => {
+                    let texto = comentario_corto(&texto);
+                    v[..texto.len()].copy_from_slice(texto.as_bytes());
+                    Respuesta { estado: BIEN, asa: p.asa, a: texto.len() as u64, ..Default::default() }
+                }
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        COMENTAR => {
+            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Ok(texto) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| tx.set_comment(n, texto)) {
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        PROTEGER => {
+            // a: los bits del Amiga; b: los permisos de Unix (los 12 bits bajos del modo).
+            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let (Some(bits), true) = (u32::try_from(p.a).ok().and_then(AmigaBits::from_bits), p.b <= 0o7777) else {
+                return mal(MAL_FORMADO);
+            };
+            let r = fs.tx(|tx| {
+                let mut nodo = tx.read_tree(n)?;
+                let modo = nodo.data().mode() & Node::MODE_TYPE | p.b as u16;
+                nodo.data_mut().set_mode(modo);
+                nodo.data_mut().set_amiga_bits(bits);
+                tx.sync_tree(nodo)
+            });
+            match r {
+                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }

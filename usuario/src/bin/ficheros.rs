@@ -2,7 +2,9 @@
 //! `inicio`). Abre su sesión, lista la raíz, lee `LEEME.txt` y `C/grande.txt` entero por trozos de la ventana, pide
 //! los datos de un fichero y del volumen, y comprueba los rechazos: lo que no existe, una asa cerrada, leer un cajón y
 //! listar un fichero. Después escribe: crea un cajón y un fichero de 200 KB, lo relee, lo recorta, lo mueve, lo borra
-//! abierto y deja `Escrito/hola.txt` para que `tools/disco_archivos.py --comprobar` lo vea en Linux.
+//! abierto y deja `Escrito/hola.txt` para que `tools/disco_archivos.py --comprobar` lo vea en Linux. Por último, FS6
+//! y FS7: buscar sin mirar mayúsculas, el comentario y los bits del Amiga, que dejan `hola.txt` sin escribir ni
+//! borrar mientras lo pidan.
 
 #![no_std]
 #![no_main]
@@ -25,6 +27,13 @@ const RENOMBRAR: u32 = 9;
 const TAMANO: u32 = 10;
 const VACIAR: u32 = 11;
 const INFO: u32 = 12;
+const COMENTARIO: u32 = 13;
+const COMENTAR: u32 = 14;
+const PROTEGER: u32 = 15;
+// Bits del Amiga (`AmigaBits` de DashFS).
+const ARCHIVO: u64 = 1;
+const GUION: u64 = 4;
+const NO_BORRAR: u64 = 16;
 
 #[derive(Clone, Copy)]
 struct R {
@@ -103,15 +112,16 @@ fn principal() -> u64 {
     c.ventana = VA;
     let si = |b: bool| if b { "bien" } else { "MAL" };
 
-    // Listar la raíz: tamaño, fecha, modo, tipo, largo del nombre y nombre, de 8 en 8 bytes.
+    // Listar la raíz: tamaño, fecha, modo, tipo, largo del nombre, bits del Amiga, largo del comentario, nombre y
+    // comentario, de 8 en 8 bytes.
     let r = c.pedir(LISTAR, 0, 0, 0, "");
     let mut nombres: [(&str, u8); 8] = [("", 0); 8];
     let v = c.ventana();
     let mut off = 0;
     for e in nombres.iter_mut().take(r.a as usize) {
         let largo = v[off + 19] as usize;
-        *e = (core::str::from_utf8(&v[off + 20..off + 20 + largo]).unwrap_or("?"), v[off + 18]);
-        off += (20 + largo).next_multiple_of(8);
+        *e = (core::str::from_utf8(&v[off + 24..off + 24 + largo]).unwrap_or("?"), v[off + 18]);
+        off += (24 + largo + v[off + 22] as usize).next_multiple_of(8);
     }
     let lista = &mut nombres[..r.a as usize];
     lista.sort_unstable();
@@ -244,5 +254,54 @@ fn principal() -> u64 {
         && c.pedir(BORRAR, dir.asa, 0, 0, "Sub").estado == 0
         && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
     println!("  [ficheros] hola.txt: {}; rechazos al escribir: {}", si(hola), si(rechazos));
+
+    // FS6: la raíz no distingue mayúsculas.
+    let mayus = c.pedir(BUSCAR, 0, 0, 0, "leeme.TXT");
+    let mayusculas = mayus.estado == 0 && mayus.a == 19 && c.pedir(CERRAR, mayus.asa, 0, 0, "").estado == 0;
+    let otra = c.pedir(BUSCAR, 0, 0, 0, "ESCRITO/HOLA.TXT");
+    let mayusculas = mayusculas && otra.estado == 0 && c.pedir(CERRAR, otra.asa, 0, 0, "").estado == 0;
+
+    // FS7: el comentario.
+    const NOTA: &str = "Saludo de DashOS, ñandú";
+    let r = (c.pedir(COMENTAR, h.asa, 0, 0, NOTA), c.pedir(COMENTARIO, h.asa, 0, 0, ""));
+    let comentario = r.0.estado == 0 && r.1.estado == 0 && &c.ventana()[..r.1.a as usize] == NOTA.as_bytes();
+    let r = c.pedir(LISTAR, dir.asa, 0, 0, "");
+    let v = c.ventana();
+    let mut en_lista = false;
+    let mut off = 0;
+    for _ in 0..r.a {
+        let (largo, largo_c) = (v[off + 19] as usize, v[off + 22] as usize);
+        let fin = off + 24 + largo;
+        if &v[off + 24..fin] == b"hola.txt" {
+            en_lista = &v[fin..fin + largo_c] == NOTA.as_bytes();
+        }
+        off += (24 + largo + largo_c).next_multiple_of(8);
+    }
+
+    // FS7: los bits. Sin la W (modo 0444) no se escribe ni se recorta; con "no borrar", no se borra; escribir quita
+    // el bit de archivado.
+    let modo_y_bits = |c: &Cliente| {
+        let d = c.pedir(DATOS, h.asa, 0, 0, "");
+        (d.c & 0o7777, d.c >> 32)
+    };
+    let mut bits = c.pedir(PROTEGER, h.asa, ARCHIVO | GUION, 0o444, "").estado == 0
+        && modo_y_bits(&c) == (0o444, ARCHIVO | GUION)
+        && c.pedir(ESCRIBIR, h.asa, 0, 1, "").estado == -12
+        && c.pedir(TAMANO, h.asa, 0, 0, "").estado == -12
+        && c.pedir(PROTEGER, h.asa, ARCHIVO | NO_BORRAR, 0o644, "").estado == 0
+        && c.pedir(BORRAR, dir.asa, 0, 0, "hola.txt").estado == -12;
+    c.ventana_mut()[..19].copy_from_slice(b"hola desde DashOS!\n");
+    bits = bits
+        && c.pedir(ESCRIBIR, h.asa, 0, 19, "").a == 19
+        && modo_y_bits(&c) == (0o644, NO_BORRAR)
+        && c.pedir(PROTEGER, h.asa, GUION, 0o644, "").estado == 0
+        && c.pedir(PROTEGER, h.asa, 1 << 20, 0o644, "").estado == -1;
+    println!(
+        "  [ficheros] FS6 mayúsculas: {}; FS7 comentario: {}, en la lista: {}; bits: {}",
+        si(mayusculas),
+        si(comentario),
+        si(en_lista),
+        si(bits)
+    );
     0
 }

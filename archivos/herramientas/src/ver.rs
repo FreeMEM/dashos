@@ -1,5 +1,6 @@
 //! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Sin RUTA,
-//! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño); con RUTA, saca el fichero por la salida.
+//! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño, y los bits del Amiga y el comentario si los
+//! tiene); con RUTA, saca el fichero por la salida.
 
 use std::fs::File;
 use std::io::Write;
@@ -36,11 +37,18 @@ fn arbol(tx: &mut Transaction<Trozo>, ptr: TreePtr<Node>, prefijo: &str, out: &m
     for h in hijos {
         let ruta = format!("{prefijo}{}", h.name().unwrap_or("?"));
         let n = tx.read_tree(h.node_ptr())?;
+        let mut linea = if n.data().is_dir() { format!("{ruta}/ cajón") } else { format!("{ruta} {}", n.data().size()) };
+        let bits = n.data().amiga_bits().bits();
+        if bits != 0 {
+            linea += &format!(" bits={bits:#x}");
+        }
+        let comentario = tx.comment(n.ptr())?;
+        if !comentario.is_empty() {
+            linea += &format!(" : {comentario}");
+        }
+        out.push(linea);
         if n.data().is_dir() {
-            out.push(format!("{ruta}/ cajón"));
             arbol(tx, n.ptr(), &format!("{ruta}/"), out)?;
-        } else {
-            out.push(format!("{ruta} {}", n.data().size()));
         }
     }
     Ok(())

@@ -43,6 +43,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
 ~│   [ficheros] recortar: bien; renombrar y mover: bien; borrar abierto: bien
 ~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
+~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer

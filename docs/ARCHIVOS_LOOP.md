@@ -39,7 +39,7 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS4 | Escribir desde DashOS (crear, escribir, borrar, renombrar), con las pruebas de FS2 pasando | hecha |
 | FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | hecha (DashFS 1) |
 | FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | hecha (DashFS 2, marca por carpeta) |
-| FS7 | Atributos del Amiga: comentario y bits de protección | |
+| FS7 | Atributos del Amiga: comentario y bits de protección | hecha (DashFS 3) |
 | FS8 | Herramienta de reparación (comprobar y arreglar) | |
 | FS9 | Instantáneas | |
 | FS10 | Carpeta cifrada por usuario con Adiantum | |
@@ -99,3 +99,21 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
   modelo con tres semillas reabriendo el disco, y DashFS 1 a 2. La prueba al azar encontró un fallo: renombrar "ñ" a
   "n" + tilde aparte, con los dos argumentos iguales, no cambiaba el nombre guardado; ahora compara con el guardado.
   `cargo test`: 55 + 5 + 9 bien.
+- FS7, DashFS 3: cada nodo lleva, en lo que era relleno, los bits del Amiga (`AmigaBits`: archivado, puro, guion,
+  residente y "no borrar" para dueño, grupo y otros; leer, escribir y ejecutar son los de Unix) y un puntero a un
+  bloque de atributos (`attributes.rs`: clave y valor; el comentario es "amiga.comment", y servirá para los atributos
+  de la caja Linux). Ceros, que es lo que tienen los discos de antes, son lo que AmigaOS da a un fichero nuevo y
+  ningún atributo: DashFS 1 y 2 se abren tal cual. El bloque se escribe de nuevo en cada cambio (copia al escribir),
+  se suelta al quedar vacío y al borrar el fichero. Escribir o cambiar el tamaño quita el bit de archivado.
+  `clone` copia los bits y los atributos, y ahora también si cada carpeta distingue mayúsculas (faltaba en FS6:
+  clonar un disco con "a" y "A" en una carpeta que distingue fallaba en una que no).
+  Protocolo: órdenes 13 comentario, 14 comentar y 15 proteger (bits y permisos); buscar y datos dan los bits en
+  c >> 32; cada entrada de listar lleva bits y comentario; -12 protegido al escribir sin permiso de escritura o
+  borrar con "no borrar". `ver` enseña bits y comentario.
+  Pruebas: `src/tests_amiga.rs` (valores de partida, comentarios de 79 letras con eñes, atributos que no caben,
+  los bits y el de archivado, 600 ficheros con comentario creados y borrados y 600 comentarios reescritos sin perder
+  un bloque, borrado mientras está abierto, DashFS 2 a 3, clonar); se comprobó que la de bloques perdidos falla si
+  no se suelta el bloque al borrar. `tests/power_cut.rs` con dos pasos más (comentarios, bits y escritura que quita
+  el archivado): cortar la luz en cada escritura deja lo viejo o lo nuevo. En QEMU, `ficheros` busca sin mirar
+  mayúsculas, pone y lee el comentario, lo ve en la lista, y comprueba los rechazos por protección; `ver` lo ve en
+  Linux. `cargo test`: 66 + 5 + 9 bien.

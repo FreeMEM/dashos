@@ -141,7 +141,7 @@ servicio copia cada envío antes de comprobarlo. Hasta 16 sectores por envío.
 
 Pendiente: varias colas de E/S del NVMe.
 
-## Archivos (FS1, FS3)
+## Archivos (FS1, FS3, FS7)
 
 `usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": hoy, el que
 empieza en el MB 1 del disco NVMe de `virt`. Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
@@ -164,12 +164,13 @@ Todo va en little-endian.
 
 **Respuesta**: 32 bytes por el canal de respuesta del cliente: estado (0-3), asa (4-7), a (8-15), b (16-23), c (24-31).
 Estados: 0 bien, -1 mal formado, -2 no existe, -3 no es un cajón, -4 es un cajón, -5 asa mala, -6 sin sitio (de asas
-o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno.
+o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno, -12 protegido
+(sin permiso de escritura, o con "no borrar").
 
 | Orden | Qué | Pide | Devuelve |
 |---|---|---|---|
 | 0 sesión | Empieza; con una llave: el extremo de escritura del canal de respuesta | — | a: tamaño de la ventana; y su llave |
-| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa | asa, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 |
+| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa | asa, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 \| bits del Amiga << 32 |
 | 2 leer | Lee del fichero al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes leídos, b tamaño del fichero |
 | 3 escribir | Escribe en el fichero lo que hay al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes escritos, b tamaño del fichero |
 | 4 listar | Pone en la ventana las entradas de un cajón desde la número a | asa, a desde | a cuántas, b la siguiente (o `u64::MAX` si no hay más), c bytes usados |
@@ -181,9 +182,21 @@ o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no va
 | 10 tamaño | Recorta o alarga el fichero | asa, a tamaño nuevo | a tamaño |
 | 11 vaciar | Que todo esté en el disco (hoy ya lo está al contestar cada orden) | — | — |
 | 12 info | Datos del volumen | — | a tamaño, b libre, c tamaño de bloque (bytes) |
+| 13 comentario | Pone en la ventana el comentario (UTF-8, hasta 255 bytes) | asa | a su largo |
+| 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
+| 15 proteger | Cambia los bits del Amiga y los permisos de Unix | asa, a bits, b permisos (hasta 0o7777) | — |
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
-tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1) y el nombre; la siguiente empieza en un múltiplo de 8.
+tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte
+a 0, el nombre y el comentario; la siguiente empieza en un múltiplo de 8.
+
+Los nombres no distinguen mayúsculas en las carpetas que lo tienen así (DashFS 2, FS6): hoy, todas las del disco.
+
+**Bits del Amiga** (DashFS 3, FS7): 1 archivado, 2 puro, 4 guion, 8 residente, 16 no borrar (dueño), 32 no borrar
+(grupo), 64 no borrar (otros). Leer, escribir y ejecutar son los permisos de Unix: `dos.library` los junta en los
+bits de protección del Amiga. Escribir o cambiar el tamaño quita el bit de archivado, como en el Amiga. El servicio no
+deja escribir ni cambiar el tamaño de un fichero sin permiso de escritura del dueño, ni borrar uno con "no borrar"
+(-12); con usuarios (S6) mirará quién lo pide.
 
 La **ventana** es memoria del servicio (64 KB) que el cliente proyecta: así el servicio sabe su tamaño y un cliente no
 puede tumbarlo con una más pequeña. La sesión se puede abrir otra vez: da la misma ventana y cambia el canal de
@@ -193,4 +206,4 @@ Lo borrado mientras alguien lo tiene abierto sigue leyéndose por esa asa hasta 
 el servicio se para antes, lo suelta al abrir el disco la vez siguiente.
 
 Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar escrituras (FS11), usuarios y permisos
-(S6), atributos del Amiga (FS7).
+(S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
