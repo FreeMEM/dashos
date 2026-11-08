@@ -1,5 +1,6 @@
 use alloc::vec::Vec;
 use core::{mem, ops, slice, str};
+use endian_num::Le;
 
 use crate::casefold::Wanted;
 use crate::{BLOCK_SIZE, BlockLevel, BlockTrait, DIR_ENTRY_MAX_LENGTH, Node, TreePtr};
@@ -103,19 +104,23 @@ impl Default for DirEntry {
     }
 }
 
+/// The entries, then the two counts, little-endian on every CPU, like the rest of the disk. RedoxFS left the order
+/// of the fields to the compiler (`repr(Rust)`), which put the counts at the end, in the order of the CPU: this is
+/// that same layout, now fixed, so a big-endian CPU or another compiler reads the same disks.
+#[repr(C, packed)]
 pub struct DirList {
-    count: u16,
-    entry_bytes_len: u16,
     entry_bytes: [u8; BLOCK_SIZE as usize - 4],
+    count: Le<u16>,
+    entry_bytes_len: Le<u16>,
 }
 
 unsafe impl BlockTrait for DirList {
     fn empty(level: BlockLevel) -> Option<Self> {
         if level.0 == 0 {
             Some(Self {
-                count: 0,
-                entry_bytes_len: 0,
                 entry_bytes: [0; BLOCK_SIZE as usize - 4],
+                count: 0.into(),
+                entry_bytes_len: 0.into(),
             })
         } else {
             None
@@ -125,7 +130,7 @@ unsafe impl BlockTrait for DirList {
 
 impl DirList {
     pub fn is_empty(&self) -> bool {
-        self.count == 0
+        self.count.to_ne() == 0
     }
 
     pub fn entries(&self) -> DirEntryIterator<'_> {
@@ -140,7 +145,7 @@ impl DirList {
         let mut position = 0;
         let mut entry_id = 0;
 
-        while entry_id < self.count {
+        while entry_id < self.count.to_ne() {
             let entry_name_len = self.entry_bytes[position + 4] as usize;
             let start = DirEntry::SERIALIZED_PREFIX_SIZE + position;
             if wanted.matches(&self.entry_bytes[start..start + entry_name_len]) {
@@ -164,15 +169,15 @@ impl DirList {
         if let Some(position) = self.entry_position(wanted) {
             let entry_size =
                 DirEntry::SERIALIZED_PREFIX_SIZE + self.entry_bytes[position + 4] as usize;
-            let remaining_size = self.entry_bytes_len as usize - position - entry_size;
+            let remaining_size = self.entry_bytes_len.to_ne() as usize - position - entry_size;
             if remaining_size > 0 {
                 self.entry_bytes.copy_within(
-                    position + entry_size..self.entry_bytes_len as usize,
+                    position + entry_size..self.entry_bytes_len.to_ne() as usize,
                     position,
                 );
             }
-            self.entry_bytes_len -= entry_size as u16;
-            self.count -= 1;
+            self.entry_bytes_len = (self.entry_bytes_len.to_ne() - entry_size as u16).into();
+            self.count = (self.count.to_ne() - 1).into();
             return true;
         }
         false
@@ -185,7 +190,7 @@ impl DirList {
         let mut position = 0;
         let mut entry_id = 0;
 
-        while entry_id < self.count {
+        while entry_id < self.count.to_ne() {
             let node_ptr_bytes = &self.entry_bytes[position..position + 4];
             //let node_ptr = TreePtr::<Node>::from_bytes(node_ptr_bytes.try_into().unwrap());
             let entry_name_len = self.entry_bytes[position + 4] as usize;
@@ -200,26 +205,28 @@ impl DirList {
     }
 
     pub fn append(&mut self, entry: &DirEntry) -> bool {
-        let entry_bytes_len = self.entry_bytes_len as usize;
+        let entry_bytes_len = self.entry_bytes_len.to_ne() as usize;
         if let Some(size) = entry.serialize_into(&mut self.entry_bytes[entry_bytes_len..]) {
-            self.count += 1;
-            self.entry_bytes_len += size as u16;
+            self.count = (self.count.to_ne() + 1).into();
+            self.entry_bytes_len = (self.entry_bytes_len.to_ne() + size as u16).into();
             return true;
         }
         false
     }
 
     pub fn entry_count(&self) -> usize {
-        self.count as usize
+        self.count.to_ne() as usize
     }
 
     /// The entries as (node, name), or None if the list is malformed: an entry past the end, a bad name length,
     /// or bytes left over. Unlike `entries`, never panics (for `check`).
     pub fn checked_entries(&self) -> Option<Vec<(TreePtr<Node>, &[u8])>> {
-        let bytes = self.entry_bytes.get(..self.entry_bytes_len as usize)?;
-        let mut out = Vec::with_capacity(self.count as usize);
+        let bytes = self
+            .entry_bytes
+            .get(..self.entry_bytes_len.to_ne() as usize)?;
+        let mut out = Vec::with_capacity(self.count.to_ne() as usize);
         let mut at = 0;
-        for _ in 0..self.count {
+        for _ in 0..self.count.to_ne() {
             let prefix = bytes.get(at..at + DirEntry::SERIALIZED_PREFIX_SIZE)?;
             let name_len = prefix[4] as usize;
             if name_len == 0 || name_len > DIR_ENTRY_MAX_LENGTH {
@@ -294,6 +301,18 @@ mod test {
         );
     }
 
+    /// On the disk: the entries, then count and length, little-endian (the layout of RedoxFS disks).
+    #[test]
+    fn layout_on_disk() {
+        use core::ops::Deref;
+        let mut dir_list = DirList::empty(BlockLevel(0)).unwrap();
+        assert!(dir_list.append(&DirEntry::new(TreePtr::new(0x0102_0304), "abc")));
+        assert!(dir_list.append(&DirEntry::new(TreePtr::new(5), "d")));
+        let bytes = dir_list.deref();
+        assert_eq!(&bytes[..8], &[4, 3, 2, 1, 3, b'a', b'b', b'c']);
+        assert_eq!(&bytes[4092..], &[2, 0, 14, 0]);
+    }
+
     #[test]
     fn test_append() {
         let mut dir_list = DirList::empty(BlockLevel(0)).unwrap();
@@ -301,7 +320,10 @@ mod test {
 
         assert!(dir_list.append(&dirent));
         assert_eq!(dir_list.entry_count(), 1);
-        assert_eq!(dir_list.entry_bytes_len as usize, dirent.serialized_size());
+        assert_eq!(
+            dir_list.entry_bytes_len.to_ne() as usize,
+            dirent.serialized_size()
+        );
 
         let max_entries = dir_list.entry_bytes.len() / dirent.serialized_size();
         for i in 1..max_entries {
