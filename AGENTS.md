@@ -62,3 +62,12 @@ las pruebas no valen como oráculo.
 
 El kernel, en Rust (objetivo `aarch64-unknown-none-softfloat`, little-endian desde C33, con nightly). El JIT, en C. Las bibliotecas Amiga
 y las aplicaciones, en Dash. Ensamblador solo en el arranque, las excepciones y el cambio de contexto.
+
+## Reconocimiento a quien lo pide
+
+Regla del usuario (2026-11-08). Cada arreglo o novedad que venga de una persona lleva su nombre. Vale para una petición, una idea, un aviso de fallo o una indicación. Es para reconocer su interés por el proyecto.
+
+- En el mensaje del commit. Por ejemplo: "(idea de Ferrán García)" o "(lo contó David Martínez)".
+- En las notas de la versión, el CHANGELOG y la documentación donde se describa el cambio.
+- Se usa el nombre con el que se presenta en el grupo. Nunca datos de contacto: ni teléfono, ni correo.
+- Si no se sabe quién lo pidió, preguntar a la sesión "telegram" o al usuario.
