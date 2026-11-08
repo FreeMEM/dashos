@@ -63,7 +63,7 @@ pub fn repair<D: Disk>(
     // Each volume in turn (FS10d), as if it were the only one: the main one, those without encryption and the
     // encrypted ones that are unlocked. A locked one is only checked: its contents cannot be read.
     let meta = Options { data: false };
-    let mut ids = vec![0];
+    let mut ids = Vec::from([0]);
     for volume in tx.volumes()? {
         if !volume.is_encrypted() || tx.is_unlocked(volume.id()) {
             ids.push(volume.id());
