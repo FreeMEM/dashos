@@ -1,7 +1,7 @@
 # S19. El sonido
 
 Del 2026-11-09. Lo pidió el usuario ese día. Es análisis y diseño: no hay código. Orden decidido por el usuario: el
-sonido se programa después del compositor que habla Wayland.
+sonido se programa detrás de los gráficos (el compositor que habla Wayland y el kit de interfaz).
 
 ## El problema
 
@@ -168,7 +168,8 @@ Los tamaños son estimaciones, sin medir.
 - Con S7: virtio-sound para la caja Linux.
 - Con S10 y S10b: volumen y programas que suenan en la barra; el aviso de grabación lo dibuja el compositor.
 - Con S12: los controladores son procesos aparte, recargables.
-- Con S15: la fase 1 va tras el compositor que habla Wayland (decidido el 2026-11-09); las de la placa, con H6.
+- Con S15: la fase 1 va tras los gráficos, el compositor que habla Wayland y el kit de interfaz (decidido el
+  2026-11-09); las de la placa, con H6.
 
 ## Fuentes
 

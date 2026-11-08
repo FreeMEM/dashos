@@ -139,6 +139,6 @@ Niri. Wayland estándar más una extensión propia; kit oficial en Dash. Aceptad
 Un servicio de sonido propio y pequeño en la clase de plazos, con un anillo de muestras por flujo; `audio.device` y
 AHI nativos para la caja Amiga; virtio-sound para la caja Linux y para las pruebas en QEMU (el WAV que escribe QEMU
 es el oráculo). Controladores por orden: virtio-sound, auriculares de la Pi 4, HDMI, USB Audio, I2S. Grabar pide
-permiso y el compositor enseña un aviso. Se programa tras el compositor Wayland (decidido el 2026-11-09); lo demás,
+permiso y el compositor enseña un aviso. Se programa detrás de los gráficos, el compositor Wayland y el kit (decidido el 2026-11-09); lo demás,
 pendiente de visto bueno (`S19-sonido.md`).
 

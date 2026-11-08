@@ -361,6 +361,6 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - **FS10 (decidido la noche del 2026-11-08): carpeta cifrada por usuario como los datasets de ZFS** (A2 "como ZFS"): varios volúmenes en un disco que
   comparten el espacio, cada uno con su llave; la estructura a la vista y el contenido cifrado con Adiantum
   (`docs/ARCHIVOS_LOOP.md`).
-- **Orden tras FS10**: el compositor que habla Wayland, luego el sonido (`docs/diseño/S19-sonido.md`) y luego el kit
-  de interfaz en Rust.
+- **Orden tras FS10**: los gráficos primero (el compositor que habla Wayland y el kit de interfaz en Rust), y el
+  sonido detrás (`docs/diseño/S19-sonido.md`).
 
