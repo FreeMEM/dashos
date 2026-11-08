@@ -37,6 +37,12 @@ doc = false
 required-features = ["std"]
 
 [[bin]]
+name = "redoxfs-volume"
+path = "src/bin/volume.rs"
+doc = false
+required-features = ["std"]
+
+[[bin]]
 name = "redoxfs-snapshot"
 path = "src/bin/snapshot.rs"
 doc = false

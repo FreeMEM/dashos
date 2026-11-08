@@ -95,10 +95,30 @@ Pasos:
 | Paso | Qué | Estado |
 |------|-----|--------|
 | FS10a | Adiantum (XChaCha12, AES-256, NH, Poly1305) desde la especificación, con los vectores de Google | hecho |
-| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | |
+| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | hecho (DashFS 5, `redoxfs-volume`) |
 | FS10c | Cifrar un volumen como ZFS: llave propia envuelta por la contraseña, contenido y nombres con Adiantum (el tweak es la dirección del bloque), firma de cada bloque en el hash de su puntero | |
 | FS10d | Comprobar y reparar sin llaves: la estructura sí, el contenido cifrado no | |
 | FS10e | DashOS: abrir el volumen del usuario al entrar, y la llave de recuperación | |
+
+Diseño de FS10c (el cifrado de un volumen):
+
+- La llave del volumen (32 bytes al azar) cifra con Adiantum; de ella sale también la llave de las firmas
+  (SipHash-2-4, 128 bits). En la lista de volúmenes, el volumen apunta a un bloque de llaves con hasta 8 huecos:
+  cada uno guarda su sal, los parámetros de Argon2 y la llave envuelta (cifrada con Adiantum con la llave que sale
+  de la contraseña, y 16 bytes a cero detrás para saber si la contraseña es buena). Cambiar la contraseña reescribe
+  solo su hueco; la llave de recuperación es otro hueco.
+- Qué se cifra (el tweak es la dirección del bloque): los datos de los ficheros, los bloques de las carpetas (los
+  nombres y el índice, que lleva hashes de los nombres), los atributos (el comentario) y, de cada nodo, el dueño,
+  los tiempos, el tamaño, los enlaces, los permisos y los bits del Amiga. Queda a la vista: los punteros (qué
+  bloques usa cada nodo), si es fichero o carpeta, y el árbol de nodos.
+- La firma de cada bloque cifrado va en el hash de su puntero: SipHash con la llave del volumen sobre el
+  contenido sin cifrar. No deja comprobar adivinanzas del contenido, como haría el hash de siempre, y un bloque
+  cambiado o movido a otra dirección no pasa (Adiantum lo deja irreconocible).
+- Sin la llave: se recorre la estructura y se sabe qué bloques usa el volumen (FS8 comprueba el espacio); no se
+  comprueban enlaces, nombres ni contenido. Con la llave, todo.
+- Límite, como en ZFS: la estructura a la vista no va firmada con llave. Quien pueda escribir en el disco puede
+  cambiar punteros, por ejemplo devolver un bloque a una versión vieja en la misma dirección. No puede leer ni
+  fabricar contenido.
 
 Descartadas: A (un fichero cifrado por usuario, como FileVault 1 y systemd-homed: escribe dos veces y recuperar
 espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado para lo mismo que A2 como ZFS).
@@ -234,3 +254,20 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   Límites: solo se vuelve a la más nueva (como ZFS sin `-r`). La reparación no arregla una instantánea dañada
   (la dice), y al rehacer un cajón de un volumen con instantáneas sus bloques viejos no van a la lista de muertos:
   ese espacio no vuelve al borrar la instantánea (el comprobador lo dará como perdido y la reparación lo recupera).
+- FS10a: Adiantum escrito desde la especificación (`src/adiantum.rs`), con `chacha20` y `poly1305` de RustCrypto
+  para las piezas. Pasan 33 vectores de Adiantum (16 a 4096 bytes, tweak de 0, 17 y 32 bytes) y los de NH y
+  NHPoly1305, sacados de github.com/google/adiantum (MIT) a `src/vectores/`.
+- FS10b: DashFS 5, varios volúmenes en un disco (`src/volume.rs`). La cabecera guarda los campos del volumen
+  principal y apunta a una lista de los demás (cadena de bloques, 21 por bloque). Una transacción entra en un
+  volumen (`enter_volume`, `FileSystem::tx_in`) poniendo sus campos en su copia de la cabecera, así que el resto del
+  código lo ve como el único; al escribir la cabecera, los del volumen van a la lista y los del principal a la
+  cabecera. La época es del disco y `latest` de cada volumen: soltar un bloque mira solo las instantáneas de su
+  volumen. Los abiertos se cuentan por volumen y nodo. Borrar un volumen borra sus instantáneas y suelta su árbol
+  entero; con algo abierto da EBUSY. El comprobador recorre todos los volúmenes (lo de otro volumen sale como
+  `InVolume`); la reparación arregla el principal y deja los demás en uso, y no repara si no puede leer la lista de
+  volúmenes o entrar en uno (sus bloques parecerían libres). Pruebas: un modelo con 3 semillas × 1200 pasos
+  (volúmenes que se crean y se borran, instantáneas en cada uno, dos volúmenes en una transacción, reabrir); al
+  final, borrado todo, vuelve todo el espacio. Cortes de luz: 4 pasos más con volúmenes. Si el comprobador no
+  recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
+  Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
+  montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).

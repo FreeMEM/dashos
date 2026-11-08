@@ -40,6 +40,15 @@ pub fn repair<D: Disk>(
     if before.is_clean() {
         return Ok((before, None));
     }
+    // Without the list of volumes, or with a volume that cannot be entered, their blocks would look free and
+    // the repair would hand them out: better not to repair.
+    if before
+        .problems
+        .iter()
+        .any(|p| matches!(p, Problem::Volumes | Problem::VolumeUnreadable { .. }))
+    {
+        return Err(syscall::error::Error::new(syscall::error::EIO));
+    }
     let mut tx = Transaction::new(fs);
 
     // Until the new header is written, only blocks that the old one does not use can be written.
@@ -176,7 +185,11 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             | Problem::Outside { .. }
             | Problem::Snapshots
             | Problem::Snapshot { .. }
-            | Problem::Dead { .. } => {}
+            | Problem::Dead { .. }
+            // FS10: the other volumes are only checked, not yet repaired; their blocks stay in use.
+            | Problem::Volumes
+            | Problem::VolumeUnreadable { .. }
+            | Problem::InVolume { .. } => {}
         }
     }
 

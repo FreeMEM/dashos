@@ -266,7 +266,7 @@ impl<D: Disk> Transaction<'_, D> {
     }
 
     /// The nodes in a release list, and the blocks of the list.
-    fn read_release(
+    pub(crate) fn read_release(
         &mut self,
         mut ptr: BlockPtr<ReleaseList>,
     ) -> Result<(Vec<u32>, Vec<BlockAddr>)> {
@@ -437,7 +437,10 @@ impl<D: Disk> Transaction<'_, D> {
         for addr in own {
             unsafe { self.deallocate_unshared(addr) };
         }
-        self.fs.node_usages.clear();
+        let volume = self.volume;
+        self.fs
+            .node_usages
+            .retain(|key, _| key >> 32 != volume);
         // Every block written after the snapshot: under an older block there are only older blocks.
         let mut newer = Vec::new();
         let since = snapshot.epoch() + 1;
@@ -600,7 +603,18 @@ impl<D: Disk> FileSystem<D> {
         name: &str,
         f: impl FnOnce(&mut Transaction<D>) -> Result<T>,
     ) -> Result<T> {
+        self.snapshot_tx_in(0, name, f)
+    }
+
+    /// The same, in volume `volume` (FS10).
+    pub fn snapshot_tx_in<T>(
+        &mut self,
+        volume: u64,
+        name: &str,
+        f: impl FnOnce(&mut Transaction<D>) -> Result<T>,
+    ) -> Result<T> {
         let mut tx = Transaction::new(self);
+        tx.enter_volume(volume)?;
         let snapshot = tx
             .snapshots()?
             .into_iter()
@@ -616,4 +630,10 @@ fn sizes() {
     assert_eq!(mem::size_of::<Snapshot>(), 136);
     assert_eq!(mem::size_of::<SnapshotList>(), BLOCK_SIZE as usize);
     assert_eq!(mem::size_of::<DeadList>(), BLOCK_SIZE as usize);
+    assert_eq!(mem::size_of::<crate::volume::Volume>(), 192);
+    assert_eq!(
+        mem::size_of::<crate::volume::VolumeList>(),
+        BLOCK_SIZE as usize
+    );
+    assert_eq!(mem::size_of::<crate::Header>(), BLOCK_SIZE as usize);
 }

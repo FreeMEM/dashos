@@ -20,7 +20,7 @@ pub const RECORD_SIZE: u64 = BLOCK_SIZE << RECORD_LEVEL;
 /// block of attributes (the comment) to each node, in what was padding. Version 4 adds snapshots: the epoch in the
 /// top bits of block addresses, and in the header the epoch, the snapshots and the dead list (FS9).
 pub const SIGNATURE: &[u8; 8] = b"DashFS\0\0";
-pub const VERSION: u64 = 4;
+pub const VERSION: u64 = 5;
 /// Older versions still read, as they are: their nodes have no caseless directories, and zeros in the padding,
 /// which are the AmigaOS defaults and no attributes.
 pub const OLDEST_VERSION: u64 = 1;
@@ -83,6 +83,7 @@ pub mod repair;
 pub mod snapshot;
 mod transaction;
 mod tree;
+pub mod volume;
 #[cfg(feature = "std")]
 mod unmount;
 
@@ -96,3 +97,5 @@ mod tests_casefold;
 mod tests_check;
 #[cfg(all(feature = "std", test))]
 mod tests_snapshot;
+#[cfg(test)]
+mod tests_volume;

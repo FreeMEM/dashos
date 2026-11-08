@@ -6,12 +6,13 @@
 //! that with the free blocks of the allocator. Nothing is written: `repair` fixes what can be fixed.
 
 use alloc::{
+    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     string::String,
     vec,
     vec::Vec,
 };
-use core::fmt;
+use core::{fmt, mem};
 
 use crate::casefold::{self, Names};
 use crate::htree::{HTreeHash, HTreeNode};
@@ -99,6 +100,12 @@ pub enum Problem {
     Snapshot { name: String },
     /// Blocks in dead lists that no snapshot sees: lost space.
     Dead { count: u64 },
+    /// The list of volumes cannot be read (FS10).
+    Volumes,
+    /// A volume cannot be entered.
+    VolumeUnreadable { name: String },
+    /// Something wrong in a volume other than the main one.
+    InVolume { name: String, problem: Box<Problem> },
 }
 
 impl fmt::Display for EntryFault {
@@ -157,6 +164,9 @@ impl fmt::Display for Problem {
             Problem::Dead { count } => {
                 write!(f, "{count} blocks in dead lists that no snapshot sees")
             }
+            Problem::Volumes => write!(f, "list of volumes unreadable"),
+            Problem::VolumeUnreadable { name } => write!(f, "volume {name:?}: unreadable"),
+            Problem::InVolume { name, problem } => write!(f, "volume {name:?}: {problem}"),
         }
     }
 }
@@ -348,13 +358,29 @@ pub fn check<D: Disk>(
         c.problems.push(Problem::AllocLog);
     }
     c.alloc_log(allocator_read);
-    c.release_list();
-    let node_ptrs = c.tree();
-    for &(id, ptr) in &node_ptrs {
-        c.node(id, ptr);
+    let volumes = c.volume_list();
+    let node_ptrs = c.volume();
+    // The other volumes (FS10), each as if it were the only one; what is found there goes in `InVolume`.
+    let main = c.take_state();
+    for volume in volumes {
+        let name: String = volume.name().into();
+        if c.tx.enter_volume(volume.id()).is_err() {
+            c.problems.push(Problem::VolumeUnreadable { name });
+            continue;
+        }
+        let outer = mem::take(&mut c.problems);
+        c.volume();
+        let inner = mem::replace(&mut c.problems, outer);
+        c.take_state();
+        let _ = c.tx.leave_volume();
+        for problem in inner {
+            c.problems.push(Problem::InVolume {
+                name: name.clone(),
+                problem: Box::new(problem),
+            });
+        }
     }
-    c.links_and_places();
-    c.snapshots();
+    c.put_state(main);
     let free = c.free_blocks(allocator_read);
     let dir_ids: BTreeSet<u32> = c.nodes.iter().filter(|n| n.1.dir).map(|n| *n.0).collect();
     let report = Report {
@@ -376,7 +402,66 @@ pub fn check<D: Disk>(
     Ok(report)
 }
 
+/// What `check` keeps of one volume.
+#[derive(Default)]
+struct VolumeState {
+    nodes: BTreeMap<u32, NodeInfo>,
+    released: BTreeSet<u32>,
+    edges: Vec<(u32, u32)>,
+    places: BTreeMap<u32, (u32, String)>,
+    data_lost: BTreeSet<u32>,
+    unreadable: BTreeSet<u32>,
+}
+
 impl<D: Disk> Checker<'_, '_, D> {
+    /// The other volumes, with the blocks of their list marked.
+    fn volume_list(&mut self) -> Vec<crate::volume::Volume> {
+        match self.tx.volumes_on_disk() {
+            Ok((volumes, own)) => {
+                for addr in own {
+                    self.usage.mark(addr);
+                }
+                volumes
+            }
+            Err(_) => {
+                self.problems.push(Problem::Volumes);
+                Vec::new()
+            }
+        }
+    }
+
+    /// Checks the volume the transaction is in; returns its nodes.
+    fn volume(&mut self) -> Vec<(u32, BlockPtr<Node>)> {
+        self.release_list();
+        let node_ptrs = self.tree();
+        for &(id, ptr) in &node_ptrs {
+            self.node(id, ptr);
+        }
+        self.links_and_places();
+        self.snapshots();
+        node_ptrs
+    }
+
+    fn take_state(&mut self) -> VolumeState {
+        VolumeState {
+            nodes: mem::take(&mut self.nodes),
+            released: mem::take(&mut self.released),
+            edges: mem::take(&mut self.edges),
+            places: mem::take(&mut self.places),
+            data_lost: mem::take(&mut self.data_lost),
+            unreadable: mem::take(&mut self.unreadable),
+        }
+    }
+
+    fn put_state(&mut self, state: VolumeState) {
+        self.nodes = state.nodes;
+        self.released = state.released;
+        self.edges = state.edges;
+        self.places = state.places;
+        self.data_lost = state.data_lost;
+        self.unreadable = state.unreadable;
+    }
+
     fn alloc_log(&mut self, read: bool) {
         let mut ptr = self.tx.header.alloc;
         while !ptr.is_null() {

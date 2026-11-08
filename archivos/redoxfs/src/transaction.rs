@@ -85,6 +85,14 @@ pub struct Transaction<'a, D: Disk> {
     /// Blocks let go in this transaction that a snapshot still sees: they go to the dead list (FS9).
     pub(crate) dead: Vec<BlockAddr>,
     pub(crate) write_cache: BTreeMap<BlockAddr, Vec<u8>>,
+    /// The volume this transaction works in, 0 for the main one (FS10).
+    pub(crate) volume: u64,
+    /// While in another volume: the fields of the main one, which the header on disk keeps.
+    pub(crate) main: Option<crate::volume::VolumeFields>,
+    /// The fields of the volume as they were when entered, to know whether they changed.
+    pub(crate) entered: Option<crate::volume::VolumeFields>,
+    /// Volumes made, changed (Some) or removed (None) in this transaction, not yet in the list on disk.
+    pub(crate) volume_changes: BTreeMap<u64, Option<crate::volume::Volume>>,
 }
 
 impl<'a, D: Disk> Transaction<'a, D> {
@@ -100,11 +108,18 @@ impl<'a, D: Disk> Transaction<'a, D> {
             deallocate: Vec::new(),
             dead: Vec::new(),
             write_cache: BTreeMap::new(),
+            volume: 0,
+            main: None,
+            entered: None,
+            volume_changes: BTreeMap::new(),
         }
     }
 
     pub fn commit(mut self, squash: bool) -> Result<()> {
         self.sync(squash)?;
+        if let Some(main) = self.main {
+            main.apply(&mut self.header);
+        }
         self.fs.header = self.header;
         self.fs.allocator = self.allocator;
         Ok(())
@@ -311,6 +326,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub fn sync(&mut self, force_squash: bool) -> Result<bool> {
         // The dead list first: writing it allocates and frees blocks.
         self.write_dead()?;
+        // Then the list of volumes, which allocates and frees too.
+        self.note_volume();
+        self.write_volume_changes()?;
 
         // Make sure alloc is synced
         self.sync_allocator(force_squash)?;
@@ -349,6 +367,13 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(false);
         }
 
+        // On disk, the header keeps the fields of the main volume.
+        let inside = self.main.map(|main| {
+            let here = crate::volume::VolumeFields::of(&self.header);
+            main.apply(&mut self.header);
+            here
+        });
+
         // Update header to next generation
         let generation = self.header.update(self.fs.cipher_opt.as_ref());
         let gen_block = generation % HEADER_RING;
@@ -359,6 +384,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 .disk
                 .write_at(self.fs.block + gen_block, &self.header)?
         };
+        if let Some(here) = inside {
+            here.apply(&mut self.header);
+        }
         if count != mem::size_of_val(&self.header) {
             // Read wrong number of bytes
             #[cfg(feature = "log")]
@@ -1288,7 +1316,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Notify of node open, for tracking node usage
     pub fn on_open_node(&mut self, node_ptr: TreePtr<Node>) -> Result<()> {
-        let entry = self.fs.node_usages.entry(node_ptr.id()).or_insert(0);
+        let entry = self.fs.node_usages.entry(self.usage_key(node_ptr.id())).or_insert(0);
         *entry = entry.checked_add(1).ok_or_else(|| {
             #[cfg(feature = "log")]
             log::error!("node {} usage overflow", node_ptr.id());
@@ -1303,7 +1331,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Returns `Ok(true)` if the node was deleted
     pub fn on_close_node(&mut self, node_ptr: TreePtr<Node>) -> Result<()> {
         // Subtract from usages and return if not zero
-        match self.fs.node_usages.get_mut(&node_ptr.id()) {
+        match self.fs.node_usages.get_mut(&self.usage_key(node_ptr.id())) {
             Some(entry) => {
                 *entry = entry.checked_sub(1).ok_or_else(|| {
                     #[cfg(feature = "log")]
@@ -1326,7 +1354,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         // Remove node usages entry
-        self.fs.node_usages.remove(&node_ptr.id());
+        self.fs.node_usages.remove(&self.usage_key(node_ptr.id()));
 
         // Check for node in release list and delete it
         self.release_unused_nodes()
@@ -1357,7 +1385,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let mut empty = true;
             for entry in release.data_mut().entries.iter_mut() {
                 if !entry.is_null() {
-                    let usages = self.fs.node_usages.get(&entry.id()).copied().unwrap_or(0);
+                    let usages = self.fs.node_usages.get(&self.usage_key(entry.id())).copied().unwrap_or(0);
                     if usages == 0 {
                         release_nodes.push(*entry);
                         *entry = TreePtr::default();
@@ -1400,7 +1428,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let usages = self
             .fs
             .node_usages
-            .get(&node_ptr.id())
+            .get(&self.usage_key(node_ptr.id()))
             .copied()
             .unwrap_or(0);
         if usages > 0 {

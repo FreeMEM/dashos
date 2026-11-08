@@ -6,6 +6,7 @@ use aes::Aes128;
 use xts_mode::{Xts128, get_tweak_default};
 
 use crate::snapshot::{DeadList, SnapshotList};
+use crate::volume::VolumeList;
 use crate::{
     AllocList, BLOCK_SIZE, BlockPtr, KeySlot, OLDEST_VERSION, REDOXFS_SIGNATURE, REDOXFS_VERSION,
     ReleaseList, SIGNATURE, Tree, VERSION,
@@ -43,8 +44,13 @@ pub struct Header {
     pub snapshots: BlockPtr<SnapshotList>,
     /// DashFS 4: blocks let go after the newest snapshot that it still sees, may be null.
     pub dead: BlockPtr<DeadList>,
+    /// DashFS 5: the other volumes of the disk, may be null (FS10). The fields above, from `tree` to `dead`
+    /// without `alloc` and `key_slots`, are those of the main volume.
+    pub volumes: BlockPtr<VolumeList>,
+    /// DashFS 5: the number of the next volume made; numbers are never used twice.
+    pub next_volume: Le<u64>,
     /// Padding
-    pub padding: [u8; BLOCK_SIZE as usize - 3240],
+    pub padding: [u8; BLOCK_SIZE as usize - 3264],
     /// encrypted hash of header data without hash, set to hash and padded if disk is not encrypted
     pub encrypted_hash: [u8; 16],
     /// hash of header data without hash
@@ -180,7 +186,9 @@ impl Default for Header {
             latest: 0.into(),
             snapshots: BlockPtr::default(),
             dead: BlockPtr::default(),
-            padding: [0; BLOCK_SIZE as usize - 3240],
+            volumes: BlockPtr::default(),
+            next_volume: 0.into(),
+            padding: [0; BLOCK_SIZE as usize - 3264],
             encrypted_hash: [0; 16],
             hash: 0.into(),
         }

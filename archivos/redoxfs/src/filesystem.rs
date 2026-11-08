@@ -31,7 +31,8 @@ pub struct FileSystem<D: Disk> {
     pub(crate) allocator: Allocator,
     pub(crate) cipher_opt: Option<Xts128<Aes128>>,
     pub(crate) compress_cache: Vec<u8>,
-    pub node_usages: BTreeMap<u32, u64>,
+    /// How many times each node is open, by `Transaction::usage_key`: the volume and the node.
+    pub node_usages: BTreeMap<u64, u64>,
 }
 
 impl<D: Disk> FileSystem<D> {
@@ -270,12 +271,30 @@ impl<D: Disk> FileSystem<D> {
     pub fn cleanup(&mut self) -> Result<()> {
         let mut tx = Transaction::new(self);
         tx.release_unused_nodes()?;
+        for volume in tx.volumes()? {
+            tx.enter_volume(volume.id())?;
+            tx.release_unused_nodes()?;
+            tx.leave_volume()?;
+        }
         tx.commit(true)
     }
 
     /// start a filesystem transaction, required for making any changes
     pub fn tx<F: FnOnce(&mut Transaction<D>) -> Result<T>, T>(&mut self, f: F) -> Result<T> {
         let mut tx = Transaction::new(self);
+        let t = f(&mut tx)?;
+        tx.commit(false)?;
+        Ok(t)
+    }
+
+    /// A transaction in volume `volume` (0 is the main one): it sees that volume as if it were the only one (FS10).
+    pub fn tx_in<F: FnOnce(&mut Transaction<D>) -> Result<T>, T>(
+        &mut self,
+        volume: u64,
+        f: F,
+    ) -> Result<T> {
+        let mut tx = Transaction::new(self);
+        tx.enter_volume(volume)?;
         let t = f(&mut tx)?;
         tx.commit(false)?;
         Ok(t)
