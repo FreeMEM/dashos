@@ -342,3 +342,14 @@ resumido, en `docs/diseño/RESUMEN.md`.
   una imitación propia de los chips. Amiberry deja de ser el plan (S4). Falta el diseño: `docs/diseño/S18-chips.md`
   (cómo se capturan los accesos, cuánta exactitud de tiempo, qué se sacrifica, cómo se prueba contra un Amiga real
   o contra FS-UAE como oráculo, y la sala limpia: UAE es GPL, no se copia).
+- **Diseños S18 (chips) y S10b (escritorios), aceptados enteros** ("vale a todo"):
+  - S18 (`docs/diseño/S18-chips.md`): se empieza por la máquina entera (Kickstart del usuario y todos los chips),
+    exacta a nivel de línea (el ciclo, fase opcional); el kernel entregará los fallos de página al propio proceso;
+    el núcleo de vAmiga (MPL-2.0) se puede leer y reutilizar; UAE solo por un analista y en casos concretos
+    (`AGENTS.md`, regla 1); velocidad A500 u A1200 por defecto; fases 1 a 3 en el banco si hay manos; ROM de AROS
+    como extra.
+  - S10b (`docs/diseño/S10b-escritorios.md`): compositor oficial de confianza, servicios con el estado y escritorios
+    de terceros sin privilegios, por Wayland estándar y una extensión propia ("inestable" hasta la 1.0); kit oficial
+    en Dash compilado; política de ventanas en el compositor; la contraseña la dibuja el compositor; módulos que
+    dan datos; Workbench aparte; nada de escritorios de la caja Linux de serie; rescate con Ctrl+Alt+Supr. El
+    escritorio oficial será uno más; el usuario pasará un vídeo con la idea.

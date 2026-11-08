@@ -551,6 +551,8 @@ del orden de meses de una línea de trabajo. Son estimaciones sin medir: no se h
 
 ## Lo que queda abierto
 
+Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
+
 1. ¿Se empieza por la máquina entera, antes que el modo mixto? Recomendado: sí.
 2. ¿Nivel línea como objetivo y el nivel ciclo solo como fase opcional? Recomendado: sí.
 3. ¿Se añade al kernel la entrega del fallo al propio proceso (con `reanudar`), en el mismo hilo? Recomendado: sí, como

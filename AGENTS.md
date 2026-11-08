@@ -13,6 +13,9 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    Cada sesión dice al empezar qué papel tiene.
    Lo mismo con Linux para los controladores propios (MPL): quien analiza puede leer Linux y escribe la
    especificación; quien implementa no lo lee. Nada de un fichero MPL sale copiado ni traducido de código GPL.
+   Con los chips del Amiga (S18, usuario, 2026-11-08): el núcleo de vAmiga (`Core`, MPL-2.0) se puede leer y
+   reutilizar con su aviso, tras revisar las cabeceras. UAE, WinUAE y Amiberry (GPL) no se leen; solo un analista,
+   y solo para un comportamiento concreto que no salga del manual, de vAmiga ni de las pruebas, en prosa.
 2. **Nada de código de la ROM en el repositorio.** Ni desensamblados, ni traducciones, ni volcados.
 3. **Los cambios en ficheros de Emu68 siguen siendo MPL-2.0.** Lo propio de DashOS va en ficheros aparte.
 4. **Los cambios en Dash los hacen las sesiones de Dash** (`~/Projects/FreeMEMLang`). Aquí solo se usa.
@@ -69,5 +72,6 @@ Regla del usuario (2026-11-08). Cada arreglo o novedad que venga de una persona 
 
 - En el mensaje del commit. Por ejemplo: "(idea de Ferrán García)" o "(lo contó David Martínez)".
 - En las notas de la versión, el CHANGELOG y la documentación donde se describa el cambio.
+- En la web del proyecto: sección "Gracias", datos en `~/Projects/webs-freemem/paquetes/retro/src/reconocimientos.ts`. Se añade al publicar la versión.
 - Se usa el nombre con el que se presenta en el grupo. Nunca datos de contacto: ni teléfono, ni correo.
 - Si no se sabe quién lo pidió, preguntar a la sesión "telegram" o al usuario.

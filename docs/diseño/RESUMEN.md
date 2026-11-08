@@ -121,3 +121,15 @@ trabajo va en seis fases; la primera arregla los fallos que un programa hostil p
 Programas de AmigaOS 4, MorphOS y WarpOS/PowerUP en la misma caja Amiga, con un segundo motor: el JIT PPC de Emu68
 (MPL). Orden recomendado: WarpOS y PowerUP, MorphOS, AltiVec y OS4 al final; OS4 y MorphOS enteros con QEMU
 empaquetado. Después de H5; pendiente de decisión (`S17-caja-powerpc.md`).
+
+## Los chips del Amiga (S18)
+
+Los juegos y demos que tocan el chipset también funcionan, con chips imitados por DashOS y la CPU en el JIT de
+Emu68. Se empieza por la máquina entera (Kickstart del usuario), exacta a nivel de línea. Los accesos a los chips se
+capturan con un fallo de página y se reescribe la instrucción traducida. El núcleo de vAmiga es MPL-2.0 y se puede
+aprovechar. Aceptado el 2026-11-08 (`S18-chips.md`).
+
+## Escritorios de terceros (S10b)
+
+Un compositor oficial de confianza y escritorios de cualquiera encima, sin privilegios, como Noctalia o DMS sobre
+Niri. Wayland estándar más una extensión propia; kit oficial en Dash. Aceptado el 2026-11-08 (`S10b-escritorios.md`).

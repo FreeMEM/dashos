@@ -454,6 +454,8 @@ E1 a E3 no necesitan Dash ni la caja, y se pueden empezar en cuanto el composito
 
 ## Lo que queda abierto
 
+Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
+
 1. ¿Protocolo público para escritorios de terceros desde el principio? Recomendado: sí, marcado "inestable" hasta
    DashOS 1.0, para poder corregirlo.
 2. ¿Wayland estándar más una extensión propia, o un protocolo todo propio? Recomendado: estándar donde exista, para
