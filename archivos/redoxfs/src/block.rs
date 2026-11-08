@@ -10,7 +10,9 @@ const BLOCK_LIST_ENTRIES: usize = BLOCK_SIZE as usize / mem::size_of::<BlockPtr<
 /// This encodes a block's position _and_ [`BlockLevel`]:
 /// the first four bits of this `u64` encode the block's level,
 /// the next four bits indicates decompression level,
-/// the rest encode its index.
+/// the next 36 bits its index (up to 256 TiB of 4 KiB blocks),
+/// and the top 20 bits, in DashFS 4, its epoch: how many snapshots had been taken when it was written (FS9). Disks
+/// from before have zeros there: epoch 0.
 #[derive(Clone, Copy, Debug, Default, Eq, Hash, Ord, PartialEq, PartialOrd)]
 pub struct BlockAddr(u64);
 
@@ -19,6 +21,10 @@ impl BlockAddr {
     const DECOMP_LEVEL_MASK: u64 = 0xF0;
     const DECOMP_LEVEL_SHIFT: u64 = 4;
     const LEVEL_MASK: u64 = 0xF;
+    const INDEX_BITS: u32 = 36;
+    const EPOCH_SHIFT: u32 = 44;
+    /// Epochs go from 0 to `MAX_EPOCH`.
+    pub const MAX_EPOCH: u64 = (1 << (64 - Self::EPOCH_SHIFT)) - 1;
 
     // Unsafe because this can create invalid blocks
     pub unsafe fn new(index: u64, meta: BlockMeta) -> Self {
@@ -33,13 +39,23 @@ impl BlockAddr {
             panic!("decompressed block level too large");
         }
 
-        // Index must not use the metadata bits
-        let inner = index
-            .checked_shl(Self::INDEX_SHIFT as u32)
-            .expect("block index too large")
+        // Index must not use the metadata or epoch bits
+        if index >> Self::INDEX_BITS != 0 {
+            panic!("block index too large");
+        }
+        let inner = (index << Self::INDEX_SHIFT)
             | ((decomp_level.0 as u64) << Self::DECOMP_LEVEL_SHIFT)
             | (meta.level.0 as u64);
         Self(inner)
+    }
+
+    /// The address as it is stored on the disk, and back.
+    pub fn raw(&self) -> u64 {
+        self.0
+    }
+
+    pub fn from_raw(raw: u64) -> Self {
+        Self(raw)
     }
 
     pub fn null(meta: BlockMeta) -> Self {
@@ -47,8 +63,18 @@ impl BlockAddr {
     }
 
     pub fn index(&self) -> u64 {
-        // The first four bits store the level
-        self.0 >> Self::INDEX_SHIFT
+        (self.0 >> Self::INDEX_SHIFT) & ((1 << Self::INDEX_BITS) - 1)
+    }
+
+    /// The epoch when the block was written (FS9).
+    pub fn epoch(&self) -> u64 {
+        self.0 >> Self::EPOCH_SHIFT
+    }
+
+    /// The same address, stamped with `epoch`.
+    pub fn with_epoch(self, epoch: u64) -> Self {
+        assert!(epoch <= Self::MAX_EPOCH, "epoch too large");
+        Self((self.0 & ((1 << Self::EPOCH_SHIFT) - 1)) | (epoch << Self::EPOCH_SHIFT))
     }
 
     pub fn level(&self) -> BlockLevel {
@@ -390,4 +416,18 @@ fn block_ptr_marker_test() {
     let ptr = BlockPtr::<BlockRaw>::marker(2);
     assert_eq!(ptr.addr().level().0, 2);
     assert!(ptr.is_marker());
+}
+
+#[test]
+fn block_addr_epoch_test() {
+    let meta = BlockMeta::new_compressed(BlockLevel(3), BlockLevel(5));
+    let addr = unsafe { BlockAddr::new((1 << 36) - 1, meta) };
+    assert_eq!(addr.epoch(), 0);
+    let stamped = addr.with_epoch(BlockAddr::MAX_EPOCH);
+    assert_eq!(stamped.index(), (1 << 36) - 1);
+    assert_eq!(stamped.meta(), meta);
+    assert_eq!(stamped.epoch(), BlockAddr::MAX_EPOCH);
+    assert_eq!(stamped.with_epoch(7).epoch(), 7);
+    assert!(!BlockPtr::<BlockRaw>::marker(2).is_null());
+    assert!(BlockAddr::null(meta).with_epoch(9).is_null());
 }

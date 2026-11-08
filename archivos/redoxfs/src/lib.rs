@@ -17,9 +17,10 @@ pub const RECORD_LEVEL: usize = 5;
 pub const RECORD_SIZE: u64 = BLOCK_SIZE << RECORD_LEVEL;
 /// DashFS, the DashOS format. Version 1 has the same layout as RedoxFS version 8. Version 2 adds directories
 /// whose names are compared without case (`NodeFlags::CASEFOLD`). Version 3 adds the Amiga protection bits and a
-/// block of attributes (the comment) to each node, in what was padding.
+/// block of attributes (the comment) to each node, in what was padding. Version 4 adds snapshots: the epoch in the
+/// top bits of block addresses, and in the header the epoch, the snapshots and the dead list (FS9).
 pub const SIGNATURE: &[u8; 8] = b"DashFS\0\0";
-pub const VERSION: u64 = 3;
+pub const VERSION: u64 = 4;
 /// Older versions still read, as they are: their nodes have no caseless directories, and zeros in the padding,
 /// which are the AmigaOS defaults and no attributes.
 pub const OLDEST_VERSION: u64 = 1;
@@ -78,6 +79,7 @@ pub mod mount;
 mod node;
 mod record;
 pub mod repair;
+pub mod snapshot;
 mod transaction;
 mod tree;
 #[cfg(feature = "std")]
@@ -91,3 +93,5 @@ mod tests_amiga;
 mod tests_casefold;
 #[cfg(all(feature = "std", test))]
 mod tests_check;
+#[cfg(all(feature = "std", test))]
+mod tests_snapshot;

@@ -58,6 +58,10 @@ const COMENTARIO: u32 = 13;
 const COMENTAR: u32 = 14;
 const PROTEGER: u32 = 15;
 const COMPROBAR: u32 = 16;
+const INSTANTANEAS: u32 = 17;
+const TOMAR: u32 = 18;
+const DESCARTAR: u32 = 19;
+const VOLVER: u32 = 20;
 
 // Estados.
 const BIEN: i32 = 0;
@@ -557,6 +561,41 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
                 Err(e) => mal(estado_de(e)),
             }
         }
+        // FS9: instantáneas del volumen.
+        INSTANTANEAS => match fs.tx(|tx| tx.snapshots()) {
+            Ok(lista) => {
+                // Cada una: fecha (8), largo del nombre (1), el nombre; la siguiente en un múltiplo de 8.
+                let v = c.ventana();
+                let (mut n, mut cuantas) = (0, 0);
+                for s in &lista {
+                    let nombre = s.name().as_bytes();
+                    let largo = (9 + nombre.len()).next_multiple_of(8);
+                    if n + largo > v.len() {
+                        break;
+                    }
+                    v[n..n + 8].copy_from_slice(&s.time.to_ne().to_le_bytes());
+                    v[n + 8] = nombre.len() as u8;
+                    v[n + 9..n + 9 + nombre.len()].copy_from_slice(nombre);
+                    v[n + 9 + nombre.len()..n + largo].fill(0);
+                    n += largo;
+                    cuantas += 1;
+                }
+                Respuesta { estado: BIEN, a: cuantas, b: lista.len() as u64, c: n as u64, ..Default::default() }
+            }
+            Err(e) => mal(estado_de(e)),
+        },
+        TOMAR | DESCARTAR | VOLVER => {
+            let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
+            let r = fs.tx(|tx| match p.orden {
+                TOMAR => tx.create_snapshot(nombre, AHORA, 0),
+                DESCARTAR => tx.delete_snapshot(nombre),
+                _ => tx.rollback_snapshot(nombre),
+            });
+            match r {
+                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
         // Cada orden ya se guarda entera antes de contestar: no queda nada pendiente.
         VACIAR => Respuesta { estado: BIEN, ..Default::default() },
         INFO => Respuesta {
@@ -699,7 +738,14 @@ fn principal() -> u64 {
             mal(MAL_FORMADO)
         } else {
             let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &buf[CABECERA..CABECERA + largo] };
-            atender(&mut fs, clientes[i].as_mut().unwrap(), &p)
+            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p);
+            // Tras volver a una instantánea, las asas de todos llevan a nodos que ya no son los mismos: se sueltan.
+            if orden == VOLVER && r.estado == BIEN {
+                for c in clientes.iter_mut().flatten() {
+                    c.asas.clear();
+                }
+            }
+            r
         };
         let llave = clientes[i].as_ref().unwrap().respuesta;
         if contestar(llave, &r, &[]) != 0 {

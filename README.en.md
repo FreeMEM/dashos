@@ -132,8 +132,10 @@ Everything done has been tested in QEMU. Nothing has been tested on a real board
 
 ### In progress
 
-- **DashFS file system**, based on RedoxFS (`archivos` branch): the service reads and writes the NVMe disk from
-  DashOS, with power-cut tests and its own format (DashFS 1). Now: folders that ignore case (DashFS 2).
+- **DashFS file system**, based on RedoxFS: the service reads and writes the NVMe disk from DashOS, with power-cut
+  tests. Done: folders that ignore case, the Amiga comment and protection bits, a tool that checks and repairs the
+  disk, and snapshots (DashFS 4: take, delete and roll back to one). Still to do: each user's encrypted drawer and
+  SD card care.
 
 ### Missing
 

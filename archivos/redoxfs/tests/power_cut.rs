@@ -94,11 +94,18 @@ fn walk(fs: &mut FileSystem<RecDisk>) -> Result<State> {
         }
         Ok(())
     }
-    fs.tx(|tx| {
+    let mut out = fs.tx(|tx| {
         let mut out = State::new();
         go(tx, TreePtr::root(), "", &mut out)?;
         Ok(out)
-    })
+    })?;
+    // DashFS 4: each snapshot too, under "@name".
+    let names: Vec<String> = fs.tx(|tx| tx.snapshots())?.iter().map(|s| s.name().to_string()).collect();
+    for name in names {
+        out.insert(format!("@{name}"), (None, String::new(), 0));
+        fs.snapshot_tx(&name, |tx| go(tx, TreePtr::root(), &format!("@{name}"), &mut out))?;
+    }
+    Ok(out)
 }
 
 /// Pseudo-random bytes (xorshift), so that LZ4 cannot shrink them and records take many blocks.
@@ -172,11 +179,28 @@ fn step(fs: &mut FileSystem<RecDisk>, i: usize) -> Result<()> {
             tx.set_comment(d.ptr(), "")?;
             Ok(())
         }
+        // DashFS 4: snapshots. Changes after one send blocks to the dead list; deleting one frees what only it
+        // saw; going back frees what came after.
+        9 => tx.create_snapshot("uno", 9, 0),
+        10 => {
+            let c = tx.find_node(root, "c")?;
+            tx.write_node(c.ptr(), 100_000, &pattern(10, 60_000), 10, 0)?;
+            let d = tx.find_node(root, "dir")?;
+            tx.remove_node(d.ptr(), "b", Node::MODE_FILE)?;
+            Ok(())
+        }
+        11 => {
+            tx.create_snapshot("dos", 11, 0)?;
+            let c = tx.find_node(root, "c")?;
+            tx.truncate_node(c.ptr(), 5_000, 11, 0)
+        }
+        12 => tx.delete_snapshot("uno"),
+        13 => tx.rollback_snapshot("dos"),
         _ => unreachable!(),
     })
 }
 
-const STEPS: usize = 9;
+const STEPS: usize = 14;
 
 fn open(data: Vec<u8>, block: Option<u64>) -> Result<FileSystem<RecDisk>> {
     FileSystem::open(RecDisk { data, log: None }, None, block, false)

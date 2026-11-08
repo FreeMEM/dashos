@@ -5,6 +5,7 @@ use endian_num::Le;
 use aes::Aes128;
 use xts_mode::{Xts128, get_tweak_default};
 
+use crate::snapshot::{DeadList, SnapshotList};
 use crate::{
     AllocList, BLOCK_SIZE, BlockPtr, KeySlot, OLDEST_VERSION, REDOXFS_SIGNATURE, REDOXFS_VERSION,
     ReleaseList, SIGNATURE, Tree, VERSION,
@@ -34,8 +35,16 @@ pub struct Header {
     pub key_slots: [KeySlot; 64],
     /// Nodes pending release, may be null
     pub release: BlockPtr<ReleaseList>,
+    /// DashFS 4: the epoch of new blocks, how many snapshots have been taken (FS9).
+    pub epoch: Le<u64>,
+    /// DashFS 4: the epoch of the newest snapshot plus one; zero if there are none.
+    pub latest: Le<u64>,
+    /// DashFS 4: the snapshots, may be null.
+    pub snapshots: BlockPtr<SnapshotList>,
+    /// DashFS 4: blocks let go after the newest snapshot that it still sees, may be null.
+    pub dead: BlockPtr<DeadList>,
     /// Padding
-    pub padding: [u8; BLOCK_SIZE as usize - 3192],
+    pub padding: [u8; BLOCK_SIZE as usize - 3240],
     /// encrypted hash of header data without hash, set to hash and padded if disk is not encrypted
     pub encrypted_hash: [u8; 16],
     /// hash of header data without hash
@@ -167,7 +176,11 @@ impl Default for Header {
             alloc: BlockPtr::<AllocList>::default(),
             key_slots: [KeySlot::default(); 64],
             release: BlockPtr::<ReleaseList>::default(),
-            padding: [0; BLOCK_SIZE as usize - 3192],
+            epoch: 0.into(),
+            latest: 0.into(),
+            snapshots: BlockPtr::default(),
+            dead: BlockPtr::default(),
+            padding: [0; BLOCK_SIZE as usize - 3240],
             encrypted_hash: [0; 16],
             hash: 0.into(),
         }

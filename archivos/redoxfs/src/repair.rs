@@ -173,7 +173,10 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             | Problem::Shared { .. }
             | Problem::UsedButFree { .. }
             | Problem::Leaked { .. }
-            | Problem::Outside { .. } => {}
+            | Problem::Outside { .. }
+            | Problem::Snapshots
+            | Problem::Snapshot { .. }
+            | Problem::Dead { .. } => {}
         }
     }
 
