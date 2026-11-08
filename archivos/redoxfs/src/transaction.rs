@@ -2071,9 +2071,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
             assert_eq!(offset, size);
         } else if !node.data().has_inline_data() {
-            // Deallocate records
-            for record in
-                (size.div_ceil(record_level.bytes())..old_size / record_level.bytes()).rev()
+            // Deallocate records, the last one too when it is not full.
+            for record in (size.div_ceil(record_level.bytes())
+                ..old_size.div_ceil(record_level.bytes()))
+                .rev()
             {
                 self.remove_node_record_ptr(node, record)?;
             }

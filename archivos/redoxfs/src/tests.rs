@@ -105,6 +105,43 @@ fn many_create_then_many_remove_should_not_increase_size() {
     });
 }
 
+/// Removing or truncating a file frees its last record too when it is not full.
+#[test]
+fn remove_and_truncate_free_partial_records() {
+    with_redoxfs(|mut fs| {
+        let tree_ptr = TreePtr::<Node>::root();
+        let _ = fs.tx(|tx| tx.sync(true));
+        let initially_free = fs.allocator().free();
+
+        // Data that LZ4 does not shrink, so each record keeps its size.
+        let mut x = 1u64;
+        let data: Vec<u8> = (0..300_000)
+            .map(|_| {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                x as u8
+            })
+            .collect();
+        for (i, len) in [40_000, 131_072, 300_000].into_iter().enumerate() {
+            let name = format!("test{i}");
+            fs.tx(|tx| {
+                let node = tx.create_node(tree_ptr, &name, Node::MODE_FILE | 0o644, 1, 0)?;
+                tx.write_node(node.ptr(), 0, &data[..len], 1, 0)?;
+                // Shrinking keeps the first record, which is not full now.
+                tx.truncate_node(node.ptr(), 100_000, 1, 0)?;
+                tx.remove_node(tree_ptr, &name, Node::MODE_FILE)
+            })
+            .unwrap();
+        }
+
+        // Any value greater than 0 indicates a storage leak
+        let _ = fs.tx(|tx| tx.sync(true));
+        let diff = initially_free - fs.allocator().free();
+        assert_eq!(diff, 0);
+    });
+}
+
 #[test]
 fn empty_dir() {
     with_redoxfs(|mut fs| {
