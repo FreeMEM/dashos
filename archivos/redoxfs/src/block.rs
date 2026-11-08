@@ -162,6 +162,9 @@ impl BlockLevel {
 }
 
 pub unsafe trait BlockTrait {
+    /// How blocks of this type are encrypted in an encrypted volume (FS10c): not at all, by default.
+    const SEAL: crate::seal::Seal = crate::seal::Seal::None;
+
     /// Create an empty block of this type.
     fn empty(level: BlockLevel) -> Option<Self>
     where
@@ -218,6 +221,15 @@ impl<T: BlockTrait> BlockData<T> {
 }
 
 impl<T: ops::Deref<Target = [u8]>> BlockData<T> {
+    /// A pointer with another hash: the signature of a block of an encrypted volume (FS10c).
+    pub(crate) fn ptr_with_hash(&self, hash: u64) -> BlockPtr<T> {
+        BlockPtr {
+            addr: self.addr.0.into(),
+            hash: hash.into(),
+            phantom: PhantomData,
+        }
+    }
+
     pub fn create_ptr(&self) -> BlockPtr<T> {
         BlockPtr {
             addr: self.addr.0.into(),

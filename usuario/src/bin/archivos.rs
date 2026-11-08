@@ -14,10 +14,11 @@ extern crate alloc;
 
 use alloc::collections::BTreeMap;
 use alloc::format;
+use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
 use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
-use syscall::error::{EACCES, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
+use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -62,6 +63,12 @@ const INSTANTANEAS: u32 = 17;
 const TOMAR: u32 = 18;
 const DESCARTAR: u32 = 19;
 const VOLVER: u32 = 20;
+const VOLUMEN: u32 = 21;
+const VOLUMENES: u32 = 22;
+const HACER_VOLUMEN: u32 = 23;
+const QUITAR_VOLUMEN: u32 = 24;
+const ABRIR_VOLUMEN: u32 = 25;
+const CERRAR_VOLUMEN: u32 = 26;
 
 // Estados.
 const BIEN: i32 = 0;
@@ -77,6 +84,7 @@ const YA_EXISTE: i32 = -9;
 const NO_VACIO: i32 = -10;
 const LLENO: i32 = -11;
 const PROTEGIDO: i32 = -12;
+const EN_USO: i32 = -13;
 
 // Tipos.
 const FICHERO: u8 = 1;
@@ -182,13 +190,14 @@ impl Disk for Disco {
 
 type Fs = FileSystem<Disco>;
 
-/// Un cliente: su marca, el canal por el que se le contesta, su ventana y sus asas (número → nodo).
+/// Un cliente: su marca, el canal por el que se le contesta, su ventana y sus asas (número → volumen y nodo; FS10:
+/// el volumen 0 es el principal).
 struct Cliente {
     marca: u64,
     respuesta: u32,
     ventana: u32,
     va: usize,
-    asas: BTreeMap<u32, TreePtr<Node>>,
+    asas: BTreeMap<u32, (u64, TreePtr<Node>)>,
     siguiente: u32,
 }
 
@@ -211,6 +220,7 @@ fn estado_de(e: Error) -> i32 {
         ENOSPC => LLENO,
         EINVAL => MAL_FORMADO,
         EACCES => PROTEGIDO,
+        EBUSY => EN_USO,
         _ => ERROR_DEL_DISCO,
     }
 }
@@ -225,9 +235,9 @@ fn tipo(n: &Node) -> u8 {
     }
 }
 
-/// Busca `nombre` (partes separadas por "/", o vacío para el mismo) desde `desde`.
-fn buscar(fs: &mut Fs, desde: TreePtr<Node>, nombre: &str) -> Result<TreeData<Node>> {
-    fs.tx(|tx| {
+/// Busca `nombre` (partes separadas por "/", o vacío para el mismo) desde `desde`, en el volumen `vol`.
+fn buscar(fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str) -> Result<TreeData<Node>> {
+    fs.tx_in(vol, |tx| {
         let mut nodo = tx.read_tree(desde)?;
         if nombre.is_empty() {
             return Ok(nodo);
@@ -253,14 +263,15 @@ fn un_nombre(b: &[u8]) -> Option<&str> {
     core::str::from_utf8(b).ok().filter(|n| !n.is_empty() && !n.contains('/') && !n.contains('\0'))
 }
 
-/// Da una asa nueva para el nodo `n`, ya contado como abierto (si se borra, sigue vivo hasta que se cierre).
-fn dar_asa(fs: &mut Fs, c: &mut Cliente, n: &TreeData<Node>) -> Respuesta {
-    if fs.tx(|tx| tx.on_open_node(n.ptr())).is_err() {
+/// Da una asa nueva para el nodo `n` del volumen `vol`, ya contado como abierto (si se borra, sigue vivo hasta que
+/// se cierre).
+fn dar_asa(fs: &mut Fs, c: &mut Cliente, vol: u64, n: &TreeData<Node>) -> Respuesta {
+    if fs.tx_in(vol, |tx| tx.on_open_node(n.ptr())).is_err() {
         return mal(SIN_SITIO);
     }
     let asa = c.siguiente;
     c.siguiente = c.siguiente.wrapping_add(1).max(1);
-    c.asas.insert(asa, n.ptr());
+    c.asas.insert(asa, (vol, n.ptr()));
     datos(asa, n.data())
 }
 
@@ -309,33 +320,33 @@ fn mal(estado: i32) -> Respuesta {
 }
 
 fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
-    let nodo_de = |c: &Cliente, asa: u32| -> Option<TreePtr<Node>> {
-        if asa == 0 { Some(TreePtr::root()) } else { c.asas.get(&asa).copied() }
+    let nodo_de = |c: &Cliente, asa: u32| -> Option<(u64, TreePtr<Node>)> {
+        if asa == 0 { Some((0, TreePtr::root())) } else { c.asas.get(&asa).copied() }
     };
     match p.orden {
         BUSCAR => {
-            let Some(desde) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, desde)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
-            match buscar(fs, desde, nombre) {
-                Ok(n) => dar_asa(fs, c, &n),
+            match buscar(fs, vol, desde, nombre) {
+                Ok(n) => dar_asa(fs, c, vol, &n),
                 Err(e) => mal(estado_de(e)),
             }
         }
         DATOS => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            match fs.tx(|tx| tx.read_tree(n)) {
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            match fs.tx_in(vol, |tx| tx.read_tree(n)) {
                 Ok(n) => datos(p.asa, n.data()),
                 Err(e) => mal(estado_de(e)),
             }
         }
         LEER => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let cuanto = p.b.min(VENTANA as u64) as usize;
             let v = c.ventana();
-            let r = fs.tx(|tx| {
+            let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
@@ -357,9 +368,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
         }
         LISTAR => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let v = c.ventana();
-            let r = fs.tx(|tx| {
+            let r = fs.tx_in(vol, |tx| {
                 if !tx.read_tree(n)?.data().is_dir() {
                     return Err(Error::new(ENOTDIR));
                 }
@@ -406,21 +417,21 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
         }
         CERRAR => match c.asas.remove(&p.asa) {
-            Some(n) => {
+            Some((vol, n)) => {
                 // Si se borró mientras estaba abierto, ahora se suelta de verdad.
-                let _ = fs.tx(|tx| tx.on_close_node(n));
+                let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
                 Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }
             }
             None => mal(ASA_MALA),
         },
         ESCRIBIR => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             if p.b > VENTANA as u64 {
                 return mal(MAL_FORMADO);
             }
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
             let datos = c.ventana()[..p.b as usize].to_vec();
-            let r = fs.tx(|tx| {
+            let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
@@ -437,7 +448,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
         }
         CREAR => {
-            let Some(dir) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             let modo = match p.a as u8 {
                 FICHERO => Node::MODE_FILE | 0o644,
@@ -447,15 +458,15 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
-            match fs.tx(|tx| tx.create_node(dir, nombre, modo, AHORA, 0)) {
-                Ok(n) => dar_asa(fs, c, &n),
+            match fs.tx_in(vol, |tx| tx.create_node(dir, nombre, modo, AHORA, 0)) {
+                Ok(n) => dar_asa(fs, c, vol, &n),
                 Err(e) => mal(estado_de(e)),
             }
         }
         BORRAR => {
-            let Some(dir) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
-            let r = fs.tx(|tx| {
+            let r = fs.tx_in(vol, |tx| {
                 let n = tx.find_node(dir, nombre)?;
                 if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) {
                     return Err(Error::new(EACCES));
@@ -469,20 +480,26 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
         }
         RENOMBRAR => {
             // El nombre lleva el viejo y el nuevo separados por un 0; b es la asa del cajón de destino.
-            let Some(dir) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            let Some(destino) = nodo_de(c, p.b as u32).filter(|_| p.b <= u32::MAX as u64) else { return mal(ASA_MALA) };
+            let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol_destino, destino)) = nodo_de(c, p.b as u32).filter(|_| p.b <= u32::MAX as u64) else {
+                return mal(ASA_MALA);
+            };
+            // De un volumen a otro no se renombra: se copia.
+            if vol_destino != vol {
+                return mal(MAL_FORMADO);
+            }
             let mut partes = p.nombre.splitn(2, |&b| b == 0);
             let (Some(viejo), Some(nuevo)) = (partes.next().and_then(un_nombre), partes.next().and_then(un_nombre)) else {
                 return mal(MAL_FORMADO);
             };
-            match fs.tx(|tx| tx.rename_node_no_replace(dir, viejo, destino, nuevo)) {
+            match fs.tx_in(vol, |tx| tx.rename_node_no_replace(dir, viejo, destino, nuevo)) {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }
         TAMANO => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            let r = fs.tx(|tx| {
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
@@ -498,9 +515,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
         }
         COMENTARIO => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let v = c.ventana();
-            match fs.tx(|tx| tx.comment(n)) {
+            match fs.tx_in(vol, |tx| tx.comment(n)) {
                 Ok(texto) => {
                     let texto = comentario_corto(&texto);
                     v[..texto.len()].copy_from_slice(texto.as_bytes());
@@ -510,20 +527,20 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
         }
         COMENTAR => {
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(texto) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
-            match fs.tx(|tx| tx.set_comment(n, texto)) {
+            match fs.tx_in(vol, |tx| tx.set_comment(n, texto)) {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }
         PROTEGER => {
             // a: los bits del Amiga; b: los permisos de Unix (los 12 bits bajos del modo).
-            let Some(n) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let (Some(bits), true) = (u32::try_from(p.a).ok().and_then(AmigaBits::from_bits), p.b <= 0o7777) else {
                 return mal(MAL_FORMADO);
             };
-            let r = fs.tx(|tx| {
+            let r = fs.tx_in(vol, |tx| {
                 let mut nodo = tx.read_tree(n)?;
                 let modo = nodo.data().mode() & Node::MODE_TYPE | p.b as u16;
                 nodo.data_mut().set_mode(modo);
@@ -561,8 +578,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
                 Err(e) => mal(estado_de(e)),
             }
         }
-        // FS9: instantáneas del volumen.
-        INSTANTANEAS => match fs.tx(|tx| tx.snapshots()) {
+        // FS9: instantáneas del volumen de la asa (0, el principal).
+        INSTANTANEAS => match nodo_de(c, p.asa).map(|(vol, _)| fs.tx_in(vol, |tx| tx.snapshots())) {
+            None => mal(ASA_MALA),
+            Some(r) => match r {
             Ok(lista) => {
                 // Cada una: fecha (8), largo del nombre (1), el nombre; la siguiente en un múltiplo de 8.
                 let v = c.ventana();
@@ -583,15 +602,107 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
                 Respuesta { estado: BIEN, a: cuantas, b: lista.len() as u64, c: n as u64, ..Default::default() }
             }
             Err(e) => mal(estado_de(e)),
+            },
         },
         TOMAR | DESCARTAR | VOLVER => {
+            let Some((vol, _)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
-            let r = fs.tx(|tx| match p.orden {
+            let r = fs.tx_in(vol, |tx| match p.orden {
                 TOMAR => tx.create_snapshot(nombre, AHORA, 0),
                 DESCARTAR => tx.delete_snapshot(nombre),
                 _ => tx.rollback_snapshot(nombre),
             });
             match r {
+                // `a`: el volumen, para que el bucle principal suelte sus asas tras volver.
+                Ok(()) => Respuesta { estado: BIEN, a: vol, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        // FS10: volúmenes del disco.
+        VOLUMEN => {
+            // La raíz de un volumen por su nombre; vacío, la del principal.
+            let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
+            if c.asas.len() >= 256 {
+                return mal(SIN_SITIO);
+            }
+            let vol = if nombre.is_empty() {
+                Ok(0)
+            } else {
+                fs.tx(|tx| tx.find_volume(nombre))
+            };
+            match vol.and_then(|vol| Ok((vol, fs.tx_in(vol, |tx| tx.read_tree(TreePtr::<Node>::root()))?))) {
+                Ok((vol, raiz)) => dar_asa(fs, c, vol, &raiz),
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        VOLUMENES => match fs.tx(|tx| {
+            let lista = tx.volumes()?;
+            Ok(lista.iter().map(|v| (v.id(), v.is_encrypted(), tx.is_unlocked(v.id()), String::from(v.name()))).collect::<Vec<_>>())
+        }) {
+            Ok(lista) => {
+                // Cada uno: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el
+                // siguiente en un múltiplo de 8.
+                let v = c.ventana();
+                let (mut n, mut cuantos) = (0, 0);
+                for (id, cifrado, abierto, nombre) in &lista {
+                    let largo = (10 + nombre.len()).next_multiple_of(8);
+                    if n + largo > v.len() {
+                        break;
+                    }
+                    v[n..n + 8].copy_from_slice(&id.to_le_bytes());
+                    v[n + 8] = *cifrado as u8 | (*abierto as u8) << 1;
+                    v[n + 9] = nombre.len() as u8;
+                    v[n + 10..n + 10 + nombre.len()].copy_from_slice(nombre.as_bytes());
+                    v[n + 10 + nombre.len()..n + largo].fill(0);
+                    n += largo;
+                    cuantos += 1;
+                }
+                Respuesta { estado: BIEN, a: cuantos, b: lista.len() as u64, c: n as u64, ..Default::default() }
+            }
+            Err(e) => mal(estado_de(e)),
+        },
+        HACER_VOLUMEN => {
+            // Sin cifrar: para cifrar hacen falta llaves al azar de verdad, y DashOS aún no tiene de dónde sacarlas
+            // (el generador de la Pi 4, RNG200, sin controlador). Los cifrados se hacen en Linux, con redoxfs-volume.
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            if p.a != 0 {
+                return mal(MAL_FORMADO);
+            }
+            match fs.tx(|tx| tx.create_volume(nombre, AHORA, 0)) {
+                Ok(id) => Respuesta { estado: BIEN, a: id, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        QUITAR_VOLUMEN => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                tx.delete_volume(id)
+            }) {
+                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        ABRIR_VOLUMEN => {
+            // El nombre y la contraseña, separados por un 0. La contraseña no se guarda: solo la llave que abre.
+            let mut partes = p.nombre.splitn(2, |&b| b == 0);
+            let (Some(nombre), Some(clave)) = (partes.next().and_then(un_nombre), partes.next()) else {
+                return mal(MAL_FORMADO);
+            };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                tx.unlock_volume(id, clave)
+            }) {
+                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        CERRAR_VOLUMEN => {
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            match fs.tx(|tx| {
+                let id = tx.find_volume(nombre)?;
+                tx.lock_volume(id)
+            }) {
                 Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
@@ -639,8 +750,8 @@ fn sesion(clientes: &mut [Option<Cliente>], marca: u64, respuesta: u32) -> (i32,
 /// Suelta al cliente que ya no escucha, con su ventana y sus asas.
 fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize) {
     if let Some(c) = clientes[i].take() {
-        for (_, n) in c.asas {
-            let _ = fs.tx(|tx| tx.on_close_node(n));
+        for (_, (vol, n)) in c.asas {
+            let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
         }
         dashos::cerrar(c.respuesta);
         dashos::memoria_quitar(c.va);
@@ -739,10 +850,11 @@ fn principal() -> u64 {
         } else {
             let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &buf[CABECERA..CABECERA + largo] };
             let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p);
-            // Tras volver a una instantánea, las asas de todos llevan a nodos que ya no son los mismos: se sueltan.
+            // Tras volver a una instantánea, las asas de todos en ese volumen llevan a nodos que ya no son los
+            // mismos: se sueltan (la vuelta ya olvidó que estaban abiertos).
             if orden == VOLVER && r.estado == BIEN {
                 for c in clientes.iter_mut().flatten() {
-                    c.asas.clear();
+                    c.asas.retain(|_, (vol, _)| *vol != r.a);
                 }
             }
             r

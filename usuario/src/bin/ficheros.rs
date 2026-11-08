@@ -5,7 +5,8 @@
 //! abierto y deja `Escrito/hola.txt` para que `tools/disco_archivos.py --comprobar` lo vea en Linux. Por último, FS6
 //! y FS7: buscar sin mirar mayúsculas, el comentario y los bits del Amiga, que dejan `hola.txt` sin escribir ni
 //! borrar mientras lo pidan. Y FS8: el servicio comprueba el disco entero y no encuentra nada. FS9: tomar una
-//! instantánea, volver a ella y descartarla.
+//! instantánea, volver a ella y descartarla. FS10: volúmenes; el cifrado "Ana" (hecho en Linux) no se lee cerrado, se
+//! abre con su contraseña y no con otra, y uno sin cifrar se hace y se quita.
 
 #![no_std]
 #![no_main]
@@ -36,6 +37,14 @@ const INSTANTANEAS: u32 = 17;
 const TOMAR: u32 = 18;
 const DESCARTAR: u32 = 19;
 const VOLVER: u32 = 20;
+const VOLUMEN: u32 = 21;
+const VOLUMENES: u32 = 22;
+const HACER_VOLUMEN: u32 = 23;
+const QUITAR_VOLUMEN: u32 = 24;
+const ABRIR_VOLUMEN: u32 = 25;
+const CERRAR_VOLUMEN: u32 = 26;
+const PROTEGIDO: i32 = -12;
+const EN_USO: i32 = -13;
 // Bits del Amiga (`AmigaBits` de DashFS).
 const ARCHIVO: u64 = 1;
 const GUION: u64 = 4;
@@ -333,6 +342,52 @@ fn principal() -> u64 {
     println!(
         "  [ficheros] FS9 instantáneas: {}",
         si(tomada && nuevo.estado == 0 && en_lista && vuelta && descartada && limpio)
+    );
+
+    // FS10: el volumen cifrado "Ana", que el disco trae cerrado: se ve, pero no se lee.
+    let lista = c.pedir(VOLUMENES, 0, 0, 0, "");
+    let v = c.ventana();
+    let listado = lista.estado == 0 && lista.a == 1 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
+    let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
+    let cerrado = raiz.estado == 0 && c.pedir(LISTAR, raiz.asa, 0, 0, "").estado == PROTEGIDO;
+    // Con otra contraseña no se abre; con la suya, sí.
+    let abierto = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0otra").estado == PROTEGIDO
+        && c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0
+        && c.pedir(VOLUMENES, 0, 0, 0, "").estado == 0
+        && c.ventana()[8] == 3;
+    let f = c.pedir(CREAR, raiz.asa, ARCHIVO, 0, "secreto.txt");
+    c.ventana_mut()[..14].copy_from_slice(b"solo para Ana\n");
+    let escrito = f.estado == 0 && c.pedir(ESCRIBIR, f.asa, 0, 14, "").a == 14 && c.pedir(CERRAR, f.asa, 0, 0, "").estado == 0;
+    // Con algo abierto no se cierra; sin nada, sí, y entonces no se lee lo de dentro.
+    let cerrado_otra_vez = c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == EN_USO
+        && c.pedir(CERRAR, raiz.asa, 0, 0, "").estado == 0
+        && c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0;
+    let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
+    let sin_llave = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt").estado == PROTEGIDO;
+    let releido = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0 && {
+        let h = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt");
+        let l = c.pedir(LEER, h.asa, 0, 64, "");
+        let bien = l.a == 14 && &c.ventana()[..14] == b"solo para Ana\n";
+        c.pedir(CERRAR, h.asa, 0, 0, "");
+        bien
+    };
+    c.pedir(CERRAR, raiz.asa, 0, 0, "");
+    // Uno sin cifrar: se hace, se usa y se quita (no con algo abierto).
+    let hecho = c.pedir(HACER_VOLUMEN, 0, 0, 0, "Temporal");
+    let t = c.pedir(VOLUMEN, 0, 0, 0, "Temporal");
+    let g = c.pedir(CREAR, t.asa, ARCHIVO, 0, "x");
+    let quitado = hecho.estado == 0
+        && g.estado == 0
+        && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == EN_USO
+        && c.pedir(CERRAR, g.asa, 0, 0, "").estado == 0
+        && c.pedir(CERRAR, t.asa, 0, 0, "").estado == 0
+        && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == 0
+        && c.pedir(VOLUMEN, 0, 0, 0, "Temporal").estado == -2;
+    // Lo deja cerrado, y el disco sin un problema.
+    let limpio = c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0 && c.pedir(COMPROBAR, 0, 1, 0, "").a == 0;
+    println!(
+        "  [ficheros] FS10 volúmenes: {}",
+        si(listado && cerrado && abierto && escrito && cerrado_otra_vez && sin_llave && releido && quitado && limpio)
     );
     0
 }

@@ -14,7 +14,7 @@ use alloc::{collections::BTreeSet, format, string::String, vec::Vec};
 use syscall::error::Result;
 
 use crate::allocator::RELEASE_LIST_ENTRIES;
-use crate::casefold::{self, Names};
+use crate::casefold;
 use crate::check::{self, FIRST_BLOCK, Options, Problem, Report};
 use crate::htree::HTreeNode;
 use crate::transaction::FsCtx;
@@ -60,14 +60,28 @@ pub fn repair<D: Disk>(
     tx.header.alloc = BlockPtr::default();
     tx.header_changed = true;
 
+    // Each volume in turn (FS10d), as if it were the only one: the main one, those without encryption and the
+    // encrypted ones that are unlocked. A locked one is only checked: its contents cannot be read.
     let meta = Options { data: false };
-    let mut report = check::check(&mut tx, meta, true)?;
-    for _ in 0..ROUNDS {
-        if !fix(&mut tx, &report, lost)? {
-            break;
+    let mut ids = vec![0];
+    for volume in tx.volumes()? {
+        if !volume.is_encrypted() || tx.is_unlocked(volume.id()) {
+            ids.push(volume.id());
         }
-        report = check::check(&mut tx, meta, true)?;
     }
+    for id in ids {
+        tx.enter_volume(id)?;
+        let mut report = check::check(&mut tx, meta, true)?;
+        for _ in 0..ROUNDS {
+            if !fix(&mut tx, &report, lost)? {
+                break;
+            }
+            report = check::check(&mut tx, meta, true)?;
+        }
+        tx.leave_volume()?;
+    }
+    // What every volume uses now.
+    let report = check::check(&mut tx, meta, true)?;
 
     // The new allocation log: free is what neither header uses; what only the old one uses is freed after it.
     let used = |i| before.is_used(i) || report.is_used(i);
@@ -176,6 +190,26 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
                 changed = true;
             }
             Problem::Orphan { id, .. } => orphans.push(*id),
+            // A copy of the list of volumes or of the keys of one: written anew from the other, from the main volume.
+            Problem::VolumesCopy if tx.volume() == 0 => {
+                tx.rewrite_volume_list()?;
+                changed = true;
+            }
+            Problem::KeysCopy { name } if tx.volume() == 0 => {
+                let id = tx.find_volume(name)?;
+                tx.rewrite_volume_keys(id)?;
+                changed = true;
+            }
+            // The list of snapshots cannot be read: they are lost. They are forgotten, with their dead lists, so
+            // the volume does not go on putting blocks in lists nobody sees; the blocks only they saw are freed at
+            // the end, as nothing uses them.
+            Problem::Snapshots => {
+                tx.header.snapshots = BlockPtr::default();
+                tx.header.dead = BlockPtr::default();
+                tx.header.latest = 0.into();
+                tx.header_changed = true;
+                changed = true;
+            }
             // Left to the end (blocks), or not repairable (data).
             Problem::AllocLog
             | Problem::Data { .. }
@@ -183,10 +217,12 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             | Problem::UsedButFree { .. }
             | Problem::Leaked { .. }
             | Problem::Outside { .. }
-            | Problem::Snapshots
             | Problem::Snapshot { .. }
             | Problem::Dead { .. }
-            // FS10: the other volumes are only checked, not yet repaired; their blocks stay in use.
+            | Problem::VolumesCopy
+            | Problem::KeysCopy { .. }
+            | Problem::Keys { .. }
+            // FS10d: each volume is repaired in its own turn; their blocks stay in use.
             | Problem::Volumes
             | Problem::VolumeUnreadable { .. }
             | Problem::InVolume { .. } => {}
@@ -549,7 +585,7 @@ fn rebuild_dir<D: Disk>(
 ) -> Result<()> {
     let ptr = TreePtr::<Node>::new(dir);
     let mut node = tx.read_tree(ptr)?;
-    let names = Names::of(node.data());
+    let names = tx.names_of(node.data());
     let mut keys = BTreeSet::new();
     let mut kept_twice = BTreeSet::new();
     let mut keep = Vec::new();
@@ -566,9 +602,9 @@ fn rebuild_dir<D: Disk>(
         {
             continue;
         }
-        let key = match names {
-            Names::Exact => name.clone(),
-            Names::Caseless => casefold::key(&name),
+        let key = match names.caseless {
+            false => name.clone(),
+            true => casefold::key(&name),
         };
         if keys.insert(key) {
             keep.push((child, name));

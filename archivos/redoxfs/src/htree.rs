@@ -23,8 +23,24 @@ impl HTreeHash {
 
     #[cfg(not(test))]
     pub fn from_name(name: &str) -> Self {
-        let hash = seahash::hash(name.as_bytes()) as u32;
-        // Don't allow the default hash value to be calculated for a real hash
+        Self::from_bytes(name.as_bytes())
+    }
+
+    #[cfg(not(test))]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        Self::from_u32(seahash::hash(bytes) as u32)
+    }
+
+    #[cfg(test)]
+    pub fn from_bytes(bytes: &[u8]) -> Self {
+        match core::str::from_utf8(bytes) {
+            Ok(name) => Self::from_name(name),
+            Err(_) => Self::from_u32(seahash::hash(bytes) as u32),
+        }
+    }
+
+    /// A hash, never the default value (u32::MAX), which marks an empty place.
+    pub fn from_u32(hash: u32) -> Self {
         if hash == u32::MAX {
             return Self::MAX;
         }

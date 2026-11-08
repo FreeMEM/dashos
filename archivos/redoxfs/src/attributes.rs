@@ -23,6 +23,7 @@ pub struct Attributes {
 }
 
 unsafe impl BlockTrait for Attributes {
+    const SEAL: crate::seal::Seal = crate::seal::Seal::Full;
     fn empty(level: BlockLevel) -> Option<Self> {
         if level.0 == 0 {
             Some(Self {

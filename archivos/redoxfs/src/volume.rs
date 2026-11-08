@@ -13,10 +13,12 @@ use core::{fmt, mem, ops, slice};
 use endian_num::Le;
 use syscall::error::{EBUSY, EEXIST, EINVAL, ENOENT, Error, Result};
 
+use crate::casefold::Names;
+use crate::seal::{Cost, SlotKind, VOLUME_ENCRYPTED, VolumeCipher, VolumeKeys};
 use crate::snapshot::{DeadList, SnapshotList};
 use crate::transaction::FsCtx;
 use crate::{
-    BLOCK_SIZE, BlockAddr, BlockData, BlockLevel, BlockMeta, BlockPtr, BlockRaw, BlockTrait, Disk,
+    BLOCK_SIZE, BlockAddr, BlockData, BlockLevel, BlockMeta, BlockPtr, BlockTrait, Disk,
     Header, Node, NodeFlags, ReleaseList, Transaction, Tree, TreeList,
 };
 
@@ -101,8 +103,9 @@ pub struct Volume {
     pub ctime: Le<u64>,
     pub ctime_nsec: Le<u32>,
     pub flags: Le<u32>,
-    /// FS10c: its keys, wrapped by passwords. Null if it is not encrypted.
-    pub keys: BlockPtr<BlockRaw>,
+    /// FS10c: its keys, wrapped by passwords, in two copies. Null if it is not encrypted.
+    pub keys: BlockPtr<VolumeKeys>,
+    pub keys_copy: BlockPtr<VolumeKeys>,
     name_len: u8,
     _reserved: [u8; 7],
     name: [u8; VOLUME_NAME_MAX],
@@ -122,6 +125,7 @@ impl Default for Volume {
             ctime_nsec: 0.into(),
             flags: 0.into(),
             keys: BlockPtr::default(),
+            keys_copy: BlockPtr::default(),
             name_len: 0,
             _reserved: [0; 7],
             name: [0; VOLUME_NAME_MAX],
@@ -141,6 +145,11 @@ impl Volume {
 
     pub fn is_null(&self) -> bool {
         self.id.to_ne() == 0
+    }
+
+    /// Whether it is encrypted (FS10c).
+    pub fn is_encrypted(&self) -> bool {
+        self.flags.to_ne() & VOLUME_ENCRYPTED != 0
     }
 }
 
@@ -206,6 +215,16 @@ impl<D: Disk> Transaction<'_, D> {
         self.volume
     }
 
+    /// How the directory `node` compares and hashes names: with the key of the volume if it is encrypted.
+    pub(crate) fn names_of(&self, node: &Node) -> Names {
+        Names::of(node).keyed(self.cipher.as_ref().map(|c| c.names_key()))
+    }
+
+    /// Whether the volume this transaction is in is encrypted and locked: only its structure can be read.
+    pub fn is_locked(&self) -> bool {
+        self.sealed && self.cipher.is_none()
+    }
+
     /// The volumes other than the main one, as they are in this transaction, by number.
     pub fn volumes(&mut self) -> Result<Vec<Volume>> {
         let mut map = BTreeMap::new();
@@ -225,11 +244,10 @@ impl<D: Disk> Transaction<'_, D> {
         Ok(map.into_values().collect())
     }
 
-    /// The volumes in the list on disk, and the blocks of the list.
-    pub(crate) fn volumes_on_disk(&mut self) -> Result<(Vec<Volume>, Vec<BlockAddr>)> {
+    /// One copy of the list of volumes: its volumes and its blocks.
+    fn volume_chain(&mut self, mut ptr: BlockPtr<VolumeList>) -> Result<(Vec<Volume>, Vec<BlockAddr>)> {
         let mut volumes = Vec::new();
         let mut own = Vec::new();
-        let mut ptr = self.header.volumes;
         while !ptr.is_null() {
             let block = self.read_block(ptr)?;
             let entries = block.data().entries;
@@ -238,6 +256,39 @@ impl<D: Disk> Transaction<'_, D> {
             ptr = block.data().prev;
         }
         Ok((volumes, own))
+    }
+
+    /// The volumes in the list on disk, from the first copy, or from the second if the first cannot be read.
+    pub(crate) fn volumes_on_disk(&mut self) -> Result<(Vec<Volume>, Vec<BlockAddr>)> {
+        match self.volume_chain(self.header.volumes) {
+            Ok(found) => Ok(found),
+            Err(err) => self.volume_chain(self.header.volumes_copy).map_err(|_| err),
+        }
+    }
+
+    /// The two copies of the list of volumes, each read or not, and the blocks of both that can be read: what
+    /// the checker marks, and what writing the list anew frees.
+    pub(crate) fn volume_copies(&mut self) -> (Result<Vec<Volume>>, Result<Vec<Volume>>, Vec<BlockAddr>) {
+        let mut own = Vec::new();
+        let mut one = |tx: &mut Self, ptr| match tx.volume_chain(ptr) {
+            Ok((volumes, blocks)) => {
+                own.extend(blocks);
+                Ok(volumes)
+            }
+            Err(err) => Err(err),
+        };
+        let first = one(self, self.header.volumes);
+        let second = one(self, self.header.volumes_copy);
+        (first, second, own)
+    }
+
+    /// Writes the list of volumes anew, both copies, as it is (when one copy was damaged).
+    pub(crate) fn rewrite_volume_list(&mut self) -> Result<()> {
+        let (volumes, _) = self.volumes_on_disk()?;
+        for volume in volumes {
+            self.volume_changes.entry(volume.id()).or_insert(Some(volume));
+        }
+        self.write_volume_changes_always()
     }
 
     /// The number of the volume called `name`.
@@ -267,6 +318,8 @@ impl<D: Disk> Transaction<'_, D> {
         fields.apply(&mut self.header);
         self.entered = Some(fields);
         self.volume = id;
+        self.sealed = volume.is_encrypted();
+        self.cipher = self.fs.unlocked.get(&id).cloned();
         Ok(())
     }
 
@@ -281,6 +334,8 @@ impl<D: Disk> Transaction<'_, D> {
         self.main = None;
         self.entered = None;
         self.volume = 0;
+        self.sealed = false;
+        self.cipher = None;
         Ok(())
     }
 
@@ -315,7 +370,12 @@ impl<D: Disk> Transaction<'_, D> {
         if self.volume_changes.is_empty() {
             return Ok(());
         }
-        let (on_disk, own) = self.volumes_on_disk()?;
+        self.write_volume_changes_always()
+    }
+
+    fn write_volume_changes_always(&mut self) -> Result<()> {
+        let (on_disk, _) = self.volumes_on_disk()?;
+        let (_, _, own) = self.volume_copies();
         let mut map: BTreeMap<u64, Volume> = on_disk.into_iter().map(|v| (v.id(), v)).collect();
         for (id, change) in mem::take(&mut self.volume_changes) {
             match change {
@@ -327,16 +387,21 @@ impl<D: Disk> Transaction<'_, D> {
             unsafe { self.deallocate_unshared(addr) };
         }
         let list: Vec<Volume> = map.into_values().collect();
-        let mut prev = BlockPtr::default();
-        for chunk in list.chunks(VOLUME_LIST_ENTRIES) {
-            let mut block = BlockData::<VolumeList>::empty(BlockAddr::default()).unwrap();
-            block.data_mut().prev = prev;
-            let mut entries = block.data().entries;
-            entries[..chunk.len()].copy_from_slice(chunk);
-            block.data_mut().entries = entries;
-            prev = self.sync_block_unshared(block)?;
+        let mut heads = [BlockPtr::default(); 2];
+        for head in heads.iter_mut() {
+            let mut prev = BlockPtr::default();
+            for chunk in list.chunks(VOLUME_LIST_ENTRIES) {
+                let mut block = BlockData::<VolumeList>::empty(BlockAddr::default()).unwrap();
+                block.data_mut().prev = prev;
+                let mut entries = block.data().entries;
+                entries[..chunk.len()].copy_from_slice(chunk);
+                block.data_mut().entries = entries;
+                prev = self.sync_block_unshared(block)?;
+            }
+            *head = prev;
         }
-        self.header.volumes = prev;
+        self.header.volumes = heads[0];
+        self.header.volumes_copy = heads[1];
         self.header_changed = true;
         Ok(())
     }
@@ -344,6 +409,35 @@ impl<D: Disk> Transaction<'_, D> {
     /// Makes a volume with an empty root directory, which compares names without case, as the main one. Only
     /// from the main volume. Returns its number.
     pub fn create_volume(&mut self, name: &str, ctime: u64, ctime_nsec: u32) -> Result<u64> {
+        self.create_volume_inner(name, ctime, ctime_nsec, None)
+    }
+
+    /// Makes an encrypted volume (FS10c), unlocked, with its first password. `master` is its key and `salt` the
+    /// salt of the password: both random, from the caller, which knows where to get randomness.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_encrypted_volume(
+        &mut self,
+        name: &str,
+        ctime: u64,
+        ctime_nsec: u32,
+        password: &[u8],
+        master: &[u8; 32],
+        salt: [u8; 16],
+        cost: Cost,
+    ) -> Result<u64> {
+        let mut keys = BlockData::<VolumeKeys>::empty(BlockAddr::default()).unwrap();
+        keys.data_mut()
+            .add(SlotKind::Password, password, salt, cost, master)?;
+        self.create_volume_inner(name, ctime, ctime_nsec, Some((keys, master)))
+    }
+
+    fn create_volume_inner(
+        &mut self,
+        name: &str,
+        ctime: u64,
+        ctime_nsec: u32,
+        keys: Option<(BlockData<VolumeKeys>, &[u8; 32])>,
+    ) -> Result<u64> {
         if self.main.is_some() || !good_name(name) {
             return Err(Error::new(EINVAL));
         }
@@ -364,6 +458,16 @@ impl<D: Disk> Transaction<'_, D> {
             ..Default::default()
         };
         volume.name[..name.len()].copy_from_slice(name.as_bytes());
+        if let Some((keys, master)) = keys {
+            let mut copy = BlockData::<VolumeKeys>::empty(BlockAddr::default()).unwrap();
+            copy.data_mut().copy_from_slice(keys.data());
+            volume.keys = self.sync_block_unshared(keys)?;
+            volume.keys_copy = self.sync_block_unshared(copy)?;
+            volume.flags = VOLUME_ENCRYPTED.into();
+            self.fs
+                .unlocked
+                .insert(id, alloc::sync::Arc::new(VolumeCipher::new(master)));
+        }
         self.volume_changes.insert(id, Some(volume));
 
         self.enter_volume(id)?;
@@ -416,6 +520,14 @@ impl<D: Disk> Transaction<'_, D> {
             unsafe { self.deallocate_unshared(addr) };
         }
         self.write_dead()?;
+        if let Some(volume) = self.volumes()?.iter().find(|v| v.id() == id) {
+            for keys in [volume.keys, volume.keys_copy] {
+                if !keys.is_null() {
+                    unsafe { self.deallocate_unshared(keys.addr()) };
+                }
+            }
+        }
+        self.fs.unlocked.remove(&id);
         // Its dead list must be empty now: no snapshot is left to see anything.
         if !self.header.dead.is_null() || !self.header.snapshots.is_null() {
             return Err(Error::new(syscall::error::EIO));
@@ -424,8 +536,145 @@ impl<D: Disk> Transaction<'_, D> {
         main.apply(&mut self.header);
         self.entered = None;
         self.volume = 0;
+        self.sealed = false;
+        self.cipher = None;
         self.volume_changes.insert(id, None);
         self.header_changed = true;
         Ok(())
     }
 }
+
+/// The keys of encrypted volumes (FS10c). Only from the main volume.
+impl<D: Disk> Transaction<'_, D> {
+    fn volume_by_id(&mut self, id: u64) -> Result<Volume> {
+        if self.main.is_some() {
+            return Err(Error::new(EINVAL));
+        }
+        self.volumes()?
+            .into_iter()
+            .find(|v| v.id() == id)
+            .ok_or(Error::new(ENOENT))
+    }
+
+    /// One copy of the key block of a volume, if it can be read and is one.
+    pub(crate) fn read_volume_keys(&mut self, ptr: BlockPtr<VolumeKeys>) -> Result<BlockData<VolumeKeys>> {
+        let keys = self.read_block(ptr)?;
+        if !keys.data().is_valid() {
+            return Err(Error::new(syscall::error::EIO));
+        }
+        Ok(keys)
+    }
+
+    /// The key block of a volume: the first copy, or the second if the first cannot be read.
+    fn volume_keys(&mut self, volume: &Volume) -> Result<BlockData<VolumeKeys>> {
+        if !volume.is_encrypted() || volume.keys.is_null() {
+            return Err(Error::new(EINVAL));
+        }
+        match self.read_volume_keys(volume.keys) {
+            Ok(keys) => Ok(keys),
+            Err(err) => self.read_volume_keys(volume.keys_copy).map_err(|_| err),
+        }
+    }
+
+    /// Writes the key block of a volume anew, both copies, from the one that can be read (repair).
+    pub(crate) fn rewrite_volume_keys(&mut self, id: u64) -> Result<()> {
+        let volume = self.volume_by_id(id)?;
+        let keys = self.volume_keys(&volume)?;
+        self.write_volume_keys(volume, keys)
+    }
+
+    /// Unlocks an encrypted volume with one of its passwords: from here on, transactions in it can read and
+    /// write its contents, until `lock_volume`. EACCES if the password is not one of its own.
+    pub fn unlock_volume(&mut self, id: u64, password: &[u8]) -> Result<()> {
+        let volume = self.volume_by_id(id)?;
+        let keys = self.volume_keys(&volume)?;
+        let (mut master, _) = keys.data().unwrap(password)?;
+        self.fs
+            .unlocked
+            .insert(id, alloc::sync::Arc::new(VolumeCipher::new(&master)));
+        master.fill(0);
+        Ok(())
+    }
+
+    /// Forgets the key of a volume. EBUSY with something of it open.
+    pub fn lock_volume(&mut self, id: u64) -> Result<()> {
+        if self.fs.node_usages.keys().any(|key| key >> 32 == id) {
+            return Err(Error::new(EBUSY));
+        }
+        self.fs.unlocked.remove(&id);
+        Ok(())
+    }
+
+    /// Whether an encrypted volume is unlocked.
+    pub fn is_unlocked(&self, id: u64) -> bool {
+        self.fs.unlocked.contains_key(&id)
+    }
+
+    /// What each slot of the keys of a volume holds.
+    pub fn volume_slots(&mut self, id: u64) -> Result<Vec<SlotKind>> {
+        let volume = self.volume_by_id(id)?;
+        let keys = self.volume_keys(&volume)?;
+        let slots = keys.data().slots;
+        Ok(slots.iter().map(|s| s.kind()).collect())
+    }
+
+    /// Adds a password or a recovery code to an unlocked volume; returns its slot.
+    pub fn add_volume_password(
+        &mut self,
+        id: u64,
+        kind: SlotKind,
+        password: &[u8],
+        salt: [u8; 16],
+        cost: Cost,
+    ) -> Result<usize> {
+        let volume = self.volume_by_id(id)?;
+        let cipher = self
+            .fs
+            .unlocked
+            .get(&id)
+            .cloned()
+            .ok_or(Error::new(syscall::error::EACCES))?;
+        let mut keys = self.volume_keys(&volume)?;
+        let slot = keys
+            .data_mut()
+            .add(kind, password, salt, cost, cipher.master())?;
+        self.write_volume_keys(volume, keys)?;
+        Ok(slot)
+    }
+
+    /// Empties a slot of the keys of a volume; the last one cannot go (the volume could not be opened again).
+    pub fn remove_volume_password(&mut self, id: u64, slot: usize) -> Result<()> {
+        let volume = self.volume_by_id(id)?;
+        let mut keys = self.volume_keys(&volume)?;
+        let slots = keys.data().slots;
+        let used = slots.iter().filter(|s| s.kind() != SlotKind::Empty).count();
+        match slots.get(slot) {
+            Some(s) if s.kind() != SlotKind::Empty && used > 1 => {}
+            _ => return Err(Error::new(EINVAL)),
+        }
+        keys.data_mut().remove(slot)?;
+        self.write_volume_keys(volume, keys)
+    }
+
+    fn write_volume_keys(&mut self, mut volume: Volume, keys: BlockData<VolumeKeys>) -> Result<()> {
+        // Two new copies, and the old ones freed: the key block is outside the tree, as the lists. A damaged old
+        // copy is not freed: the repair gets it back.
+        let mut fresh = [BlockPtr::default(); 2];
+        for ptr in fresh.iter_mut() {
+            let mut copy = BlockData::<VolumeKeys>::empty(BlockAddr::default()).unwrap();
+            copy.data_mut().copy_from_slice(keys.data());
+            *ptr = self.sync_block_unshared(copy)?;
+        }
+        for old in [volume.keys, volume.keys_copy] {
+            if self.read_volume_keys(old).is_ok() {
+                unsafe { self.deallocate_unshared(old.addr()) };
+            }
+        }
+        volume.keys = fresh[0];
+        volume.keys_copy = fresh[1];
+        self.volume_changes.insert(volume.id(), Some(volume));
+        self.header_changed = true;
+        Ok(())
+    }
+}
+

@@ -630,7 +630,7 @@ fn sizes() {
     assert_eq!(mem::size_of::<Snapshot>(), 136);
     assert_eq!(mem::size_of::<SnapshotList>(), BLOCK_SIZE as usize);
     assert_eq!(mem::size_of::<DeadList>(), BLOCK_SIZE as usize);
-    assert_eq!(mem::size_of::<crate::volume::Volume>(), 192);
+    assert_eq!(mem::size_of::<crate::volume::Volume>(), 208);
     assert_eq!(
         mem::size_of::<crate::volume::VolumeList>(),
         BLOCK_SIZE as usize

@@ -98,6 +98,10 @@ fn walk(fs: &mut FileSystem<RecDisk>) -> Result<State> {
     // DashFS 5: every volume, the others under "#name".
     let mut volumes = vec![(0, String::new())];
     for v in fs.tx(|tx| tx.volumes())? {
+        // DashFS 5 (FS10c): the encrypted ones open with their password.
+        if v.is_encrypted() {
+            fs.tx(|tx| tx.unlock_volume(v.id(), b"clave"))?;
+        }
         volumes.push((v.id(), format!("#{}", v.name())));
     }
     for (id, prefix) in volumes {
@@ -240,11 +244,36 @@ fn step(fs: &mut FileSystem<RecDisk>, i: usize) -> Result<()> {
             let ana = tx.find_volume("Ana")?;
             tx.delete_volume(ana)
         }
+        // An encrypted volume: made with a file, then changed with a snapshot in between.
+        18 => {
+            let id = tx.create_encrypted_volume(
+                "Cifra",
+                18,
+                0,
+                b"clave",
+                &[0x5A; 32],
+                [3; 16],
+                redoxfs::seal::Cost::CHEAP,
+            )?;
+            tx.enter_volume(id)?;
+            let n = tx.create_node(root, "secreto", Node::MODE_FILE | 0o600, 18, 0)?;
+            tx.write_node(n.ptr(), 0, &pattern(18, 150_000), 18, 0)?;
+            tx.set_comment(n.ptr(), "oculto")?;
+            Ok(())
+        }
+        19 => {
+            let id = tx.find_volume("Cifra")?;
+            tx.enter_volume(id)?;
+            tx.create_snapshot("uno", 19, 0)?;
+            let n = tx.find_node(root, "secreto")?;
+            tx.write_node(n.ptr(), 100_000, &pattern(19, 100_000), 19, 0)?;
+            Ok(())
+        }
         _ => unreachable!(),
     })
 }
 
-const STEPS: usize = 18;
+const STEPS: usize = 20;
 
 fn open(data: Vec<u8>, block: Option<u64>) -> Result<FileSystem<RecDisk>> {
     FileSystem::open(RecDisk { data, log: None }, None, block, false)
