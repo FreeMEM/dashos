@@ -15,8 +15,12 @@ pub const BLOCK_SIZE: u64 = 4096;
 // A record is 4KiB << 5 = 128KiB
 pub const RECORD_LEVEL: usize = 5;
 pub const RECORD_SIZE: u64 = BLOCK_SIZE << RECORD_LEVEL;
-pub const SIGNATURE: &[u8; 8] = b"RedoxFS\0";
-pub const VERSION: u64 = 8;
+/// DashFS, the DashOS format. Version 1 has the same layout as RedoxFS version 8.
+pub const SIGNATURE: &[u8; 8] = b"DashFS\0\0";
+pub const VERSION: u64 = 1;
+/// RedoxFS version 8 is still read, and its header becomes DashFS 1 on the next write.
+pub const REDOXFS_SIGNATURE: &[u8; 8] = b"RedoxFS\0";
+pub const REDOXFS_VERSION: u64 = 8;
 pub const DIR_ENTRY_MAX_LENGTH: usize = 252;
 
 pub static IS_UMT: AtomicUsize = AtomicUsize::new(0);

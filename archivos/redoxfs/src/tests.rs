@@ -994,3 +994,49 @@ fn split_htree_with_multiple_levels_using_duplicates() {
         .unwrap();
     });
 }
+
+/// DashOS: a RedoxFS 8 disk opens, and the next write turns its header into DashFS 1.
+#[test]
+fn redoxfs_header_becomes_dashfs_on_write() {
+    use crate::{Disk, DiskMemory, Header, REDOXFS_SIGNATURE, REDOXFS_VERSION, SIGNATURE, VERSION, header::HEADER_RING};
+
+    let disk = DiskMemory::new(64 * 1024 * 1024);
+    let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
+    let block = fs.block;
+
+    // Write every valid header back as RedoxFS 8, as an older DashOS or Redox would have left it
+    for i in 0..HEADER_RING {
+        let mut header = Header::default();
+        unsafe { fs.disk.read_at(block + i, &mut header).unwrap() };
+        if header.valid() {
+            header.signature = *REDOXFS_SIGNATURE;
+            header.version = REDOXFS_VERSION.into();
+            header.update_hash(None);
+            assert!(header.valid());
+            unsafe { fs.disk.write_at(block + i, &header).unwrap() };
+        }
+    }
+
+    let fs = FileSystem::open(fs.disk, None, Some(block), false).unwrap();
+    assert_eq!(&fs.header.signature, REDOXFS_SIGNATURE);
+
+    let mut fs = fs;
+    fs.tx(|tx| tx.create_node(TreePtr::root(), "hola", Node::MODE_FILE | 0o644, 0, 0))
+        .unwrap();
+    assert_eq!(&fs.header.signature, SIGNATURE);
+    assert_eq!(fs.header.version.to_ne(), VERSION);
+
+    let mut fs = FileSystem::open(fs.disk, None, Some(block), false).unwrap();
+    assert_eq!(&fs.header.signature, SIGNATURE);
+    fs.tx(|tx| tx.find_node(TreePtr::root(), "hola")).unwrap();
+
+    // Anything else is not a header
+    let mut header = fs.header;
+    header.signature = *b"Unknown\0";
+    header.update_hash(None);
+    assert!(!header.valid());
+    header.signature = *SIGNATURE;
+    header.version = 2.into();
+    header.update_hash(None);
+    assert!(!header.valid());
+}

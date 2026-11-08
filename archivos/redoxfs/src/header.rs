@@ -5,7 +5,10 @@ use endian_num::Le;
 use aes::Aes128;
 use xts_mode::{Xts128, get_tweak_default};
 
-use crate::{AllocList, BLOCK_SIZE, BlockPtr, KeySlot, ReleaseList, SIGNATURE, Tree, VERSION};
+use crate::{
+    AllocList, BLOCK_SIZE, BlockPtr, KeySlot, REDOXFS_SIGNATURE, REDOXFS_VERSION, ReleaseList, SIGNATURE, Tree,
+    VERSION,
+};
 
 pub const HEADER_RING: u64 = 256;
 
@@ -55,13 +58,10 @@ impl Header {
     }
 
     pub fn valid(&self) -> bool {
-        if &self.signature != SIGNATURE {
-            // Signature does not match
-            return false;
-        }
-
-        if self.version.to_ne() != VERSION {
-            // Version does not match
+        let current = &self.signature == SIGNATURE && self.version.to_ne() == VERSION;
+        let redoxfs = &self.signature == REDOXFS_SIGNATURE && self.version.to_ne() == REDOXFS_VERSION;
+        if !current && !redoxfs {
+            // Signature or version does not match
             return false;
         }
 
@@ -135,7 +135,7 @@ impl Header {
         None
     }
 
-    fn update_hash(&mut self, cipher_opt: Option<&Xts128<Aes128>>) {
+    pub(crate) fn update_hash(&mut self, cipher_opt: Option<&Xts128<Aes128>>) {
         self.hash = self.create_hash().into();
         // Make sure to do this second, it relies on the hash being up to date
         self.encrypted_hash = self.create_encrypted_hash(cipher_opt);
@@ -145,6 +145,9 @@ impl Header {
         let mut generation = self.generation();
         generation += 1;
         self.generation = generation.into();
+        // A RedoxFS header is written back as DashFS: the layout is the same
+        self.signature = *SIGNATURE;
+        self.version = VERSION.into();
         self.update_hash(cipher_opt);
         generation
     }

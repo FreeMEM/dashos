@@ -35,9 +35,9 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS0 | RedoxFS en el repo; compila sin std (arreglo para Redox) | hecha |
 | FS1 | Servicio que lee un RedoxFS por el canal "disco", en QEMU virt | hecha |
 | FS2 | Pruebas en Linux de cortar la luz: cortar las escrituras en cada punto y comprobar que el disco abre con lo viejo o lo nuevo | hecha (`archivos/redoxfs/tests/power_cut.rs`) |
-| FS3 | API de ficheros por canal para los clientes (abrir, leer, listar, datos de un fichero), en `docs/referencia/servicios.md` | |
-| FS4 | Escribir desde DashOS (crear, escribir, borrar, renombrar), con las pruebas de FS2 pasando | |
-| FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | |
+| FS3 | API de ficheros por canal para los clientes (abrir, leer, listar, datos de un fichero), en `docs/referencia/servicios.md` | hecha |
+| FS4 | Escribir desde DashOS (crear, escribir, borrar, renombrar), con las pruebas de FS2 pasando | hecha |
+| FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | hecha (DashFS 1) |
 | FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | |
 | FS7 | Atributos del Amiga: comentario y bits de protección | |
 | FS8 | Herramienta de reparación (comprobar y arreglar) | |
@@ -52,6 +52,7 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
 - FS0: los `use` de `alloc` que faltaban para compilar sin std (629bc2e).
 - FS2: `Disk::flush` antes y después de la cabecera, y `tests/power_cut.rs` (4fddf69).
 - FS2: `open` con el inicio dado busca en todo el anillo de cabeceras (642b3fc).
+- FS4: `rename_node` no deja mover un cajón dentro de sí mismo (e8b2f76).
 
 ## Bitácora
 
@@ -68,3 +69,14 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
   dos fallos de RedoxFS: sin vaciar la caché, la cabecera podía llegar antes que sus bloques (69 cortes ilegibles), y
   con `open(.., Some(0), ..)` un corte al reescribir el hueco 0 del anillo dejaba el disco sin abrir. Arreglados; se
   comprobó que la prueba falla sin cada arreglo. El servicio NVMe tiene la orden 5, vaciar (NVMe Flush).
+
+### 2026-11-08
+
+- FS3 y FS4 (a779b38): el protocolo "archivos" (`docs/referencia/servicios.md`) y escribir desde DashOS; el cliente
+  `ficheros` lo prueba todo en QEMU virt.
+- FS5: el formato se llama DashFS (firma `DashFS\0\0`, versión 1). La versión 1 tiene la misma disposición que RedoxFS
+  8: un disco RedoxFS 8 se abre tal cual y la siguiente escritura pone la cabecera nueva (`Header::update`). Prueba
+  `redoxfs_header_becomes_dashfs_on_write` (cabeceras pasadas a RedoxFS 8, abrir, escribir, volver a abrir; firmas
+  o versiones desconocidas, rechazadas). Solo DashOS: Redox ya no abre nuestros discos. `cargo test`: 39 + 5 + 9
+  bien; `make -C kernel arranque-virt` y `prueba`: BIEN; las cabeceras del disco de prueba dicen DashFS.
+  Cuando cambie la disposición (FS6, FS7), DashFS 2 y una conversión de verdad.
