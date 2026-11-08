@@ -45,6 +45,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
     #[cfg(feature = "virt")]
     ("disco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/disco"), &[], &["disco"]),
+    // El servicio de archivos (FS1, S5): sirve el RedoxFS del mismo disco por el canal "archivos" (FS3), con un
+    // cliente de prueba. Solo en `virt`, como la prueba de arriba.
+    #[cfg(feature = "virt")]
+    ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
+    #[cfg(feature = "virt")]
+    ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];

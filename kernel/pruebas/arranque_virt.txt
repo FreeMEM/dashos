@@ -19,18 +19,30 @@ DashOS en marcha con 4 núcleos.
 # U6e: el xHCI despierta con su interrupción.
 ~│   [xhci] avisos por su interrupción
 ~│   [compositor] ventana movida con el ratón a (
-# U6d: un disco NVMe de 1 MB (target/nvme.img), su modelo y sus dos primeros sectores.
+# U6d: un disco NVMe de 8 MB (target/nvme.img), su modelo y sus dos primeros sectores.
 ~nvme: en el PCIe 0:
-~│   [nvme] disco de 2048 sectores de 512 bytes (1024 KB)
+~│   [nvme] disco de 16384 sectores de 512 bytes (8192 KB)
 ~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
 ~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
 # U6i: el NVMe espera sus órdenes con su interrupción.
 ~│   [nvme] avisos por su interrupción
 # U6f: el servicio de disco, con un cliente de prueba.
-~│   [disco] abierto: 2048 sectores de 512 bytes
-~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien
+~│   [disco] abierto: 16384 sectores de 512 bytes
+~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
 # U6l: el anillo de peticiones en memoria compartida.
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
+# FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
+~│   [archivos] RedoxFS abierto: 7168 KB,
+# FS3: un cliente del protocolo de ficheros por el canal "archivos".
+~│   [ficheros] raíz (3 entradas, fin bien): C/ LEEME.txt Prefs/
+~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
+~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
+~│   [ficheros] datos: bien; volumen: 7168 KB,
+~│   [ficheros] rechazos: bien; desde un cajón: bien
+# FS4: escribir; tools/disco_archivos.py --comprobar mira después el disco en Linux.
+~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
+~│   [ficheros] recortar: bien; renombrar y mover: bien; borrar abierto: bien
+~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer

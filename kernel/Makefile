@@ -21,7 +21,7 @@ $(IMAGEN): usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 
 usuario: FORCE
-	cd ../usuario && cargo build --release
+	cd ../usuario && cargo build --release --features archivos
 	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
@@ -42,15 +42,21 @@ virt: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features virt
 	$(OBJCOPY) -O binary $(ELF) $(VIRT)
 
-# Un disco de 1 MB para el NVMe (U6d), con un texto y la firma 0x55AA en el sector 0 y otro texto en el 1. Nuevo en
-# cada prueba: el cliente de U6f escribe el sector 2, y lo de una vuelta anterior no debe servir de prueba.
+# Un disco de 8 MB para el NVMe (U6d): en el primer MB, un texto y la firma 0x55AA en el sector 0 y otro texto en el
+# 1; desde el MB 1, un RedoxFS para el servicio de archivos (FS1, `tools/disco_archivos.py`). Nuevo en cada prueba: el
+# cliente de U6f escribe el sector 2, y lo de una vuelta anterior no debe servir de prueba.
 DISCO_NVME := target/nvme.img
+REDOXFS_AR := ../archivos/redoxfs/target/release/redoxfs-ar
+VER := ../archivos/herramientas/target/release/ver
 $(DISCO_NVME): FORCE
-	python3 -c "import sys; d=bytearray(1<<20); t=b'DashOS: sector 0 del disco NVMe'; d[:len(t)]=t; d[510:512]=b'\x55\xaa'; u=b'DashOS: sector 1'; d[512:512+len(u)]=u; open(sys.argv[1],'wb').write(d)" $@
+	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	cd ../archivos/herramientas && cargo build --release
+	python3 ../tools/disco_archivos.py $@ $(REDOXFS_AR)
 
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
 	TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw -device nvme,serial=dashos,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 60
+	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

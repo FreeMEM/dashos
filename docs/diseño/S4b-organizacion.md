@@ -120,6 +120,8 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
   escribió. Linux distingue unas de otras. macOS demuestra que casi todo el software de Unix funciona sin
   distinguirlas. Recomendación: sin distinguir, como el Amiga, en todo el sistema; y volúmenes que sí distinguen
   para quien lo necesite, por ejemplo para trabajar con repositorios git (S5).
+  Decidido después (2026-11-08, FS6): la marca va por carpeta, no por volumen, como el casefold de ext4 que usan
+  Android y Steam. Una carpeta nueva hereda la de su madre; solo cambia vacía. Ver `docs/ARCHIVOS_LOOP.md`.
 
 ### Usuarios y permisos encima de todo esto
 

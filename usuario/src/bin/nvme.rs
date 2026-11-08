@@ -53,6 +53,7 @@ const O_CREAR_CQ: u8 = 0x05;
 const O_IDENTIFICAR: u8 = 0x06;
 const O_LEER: u8 = 0x02;
 const O_ESCRIBIR: u8 = 0x01;
+const O_VACIAR: u8 = 0x00;
 
 // El servicio (U6f).
 const VENTANA: usize = 64 * 1024;
@@ -68,6 +69,9 @@ const ERROR_DEL_DISCO: i32 = -4;
 const SIN_SITIO: i32 = -5;
 const PEDIR_ANILLO: u32 = 3;
 // La orden 4, "mira mi anillo", va sin llave de respuesta y no se contesta: solo despierta al servicio.
+/// Vaciar la caché del disco (FS2): lo escrito antes queda guardado de verdad antes de lo que venga después. El sistema
+/// de archivos lo pide antes y después de cada cabecera.
+const PEDIR_VACIAR: u32 = 5;
 
 // El anillo de cada cliente (U6l; S1, "anillos en memoria compartida"): una página de memoria compartida. Cabecera de
 // palabras de 32 bits: cabeza de envíos (la mueve el servicio), cola de envíos (el cliente), cabeza de terminadas (el
@@ -354,6 +358,10 @@ fn anillo(va: usize, off: usize) -> &'static core::sync::atomic::AtomicU32 {
 /// Una lectura o escritura en la ventana de `c`, comprobada antes de llegar al disco: su estado.
 fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, sectores: u64, tam_sector: usize) -> i32 {
     let bytes = cuantos as usize * tam_sector;
+    if orden == PEDIR_VACIAR {
+        // Las órdenes van de una en una: todas las escrituras de antes ya terminaron.
+        return if n.orden(es, O_VACIAR, 1, (0, 0), [0; 6]).is_ok() { 0 } else { ERROR_DEL_DISCO };
+    }
     if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR {
         MAL_FORMADO
     } else if cuantos == 0 || cuantos > 16 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
@@ -479,7 +487,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
                 }
                 None => SIN_SITIO,
             }
-        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR {
+        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR {
             match clientes.iter().flatten().find(|c| c.marca == marca) {
                 None => MAL_FORMADO,
                 Some(c) => transferir(n, es, c, orden, cuantos, primero, off, sectores, tam_sector),
