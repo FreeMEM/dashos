@@ -13,6 +13,7 @@
 extern crate alloc;
 
 use alloc::collections::BTreeMap;
+use alloc::format;
 use alloc::vec::Vec;
 use dashos::println;
 use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
@@ -56,6 +57,7 @@ const INFO: u32 = 12;
 const COMENTARIO: u32 = 13;
 const COMENTAR: u32 = 14;
 const PROTEGER: u32 = 15;
+const COMPROBAR: u32 = 16;
 
 // Estados.
 const BIEN: i32 = 0;
@@ -526,6 +528,32 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             });
             match r {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        COMPROBAR => {
+            // FS8: a & 1, leer también los datos. Los problemas, uno por línea, van a la ventana hasta que se llene.
+            let opciones = redoxfs::check::Options { data: p.a & 1 != 0 };
+            match fs.tx(|tx| redoxfs::check::check(tx, opciones, true)) {
+                Ok(informe) => {
+                    let v = c.ventana();
+                    let mut n = 0;
+                    for problema in &informe.problems {
+                        let linea = format!("{problema}\n");
+                        if n + linea.len() > v.len() {
+                            break;
+                        }
+                        v[n..n + linea.len()].copy_from_slice(linea.as_bytes());
+                        n += linea.len();
+                    }
+                    Respuesta {
+                        estado: BIEN,
+                        a: informe.problems.len() as u64,
+                        b: n as u64,
+                        c: informe.used * BLOCK_SIZE,
+                        ..Default::default()
+                    }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }

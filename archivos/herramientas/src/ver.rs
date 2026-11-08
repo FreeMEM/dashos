@@ -1,6 +1,7 @@
 //! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Sin RUTA,
 //! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño, y los bits del Amiga y el comentario si los
-//! tiene); con RUTA, saca el fichero por la salida.
+//! tiene); con RUTA, saca el fichero por la salida. Con `--comprobar` en vez de RUTA, comprueba el disco entero, datos
+//! incluidos (FS8), y dice "sin problemas" o uno por línea.
 
 use std::fs::File;
 use std::io::Write;
@@ -66,6 +67,14 @@ fn main() {
     // Sin `cleanup`: no escribe nada.
     let mut fs = FileSystem::open(disco, None, Some(0), false).expect("no es un RedoxFS");
     let r = fs.tx(|tx| match args.get(3) {
+        Some(o) if o == "--comprobar" => {
+            let informe = redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)?;
+            let mut out: Vec<String> = informe.problems.iter().map(|p| p.to_string()).collect();
+            if out.is_empty() {
+                out.push("sin problemas".into());
+            }
+            Ok((out.join("\n") + "\n").into_bytes())
+        }
         None => {
             let mut out = Vec::new();
             arbol(tx, TreePtr::root(), "", &mut out)?;

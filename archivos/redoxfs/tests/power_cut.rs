@@ -224,6 +224,13 @@ fn check(disk: Vec<u8>, block: Option<u64>, states: &[State], done: usize, what:
         Ok(s) => s,
         Err(e) => return Some(format!("{what}: cannot be read: {e}")),
     };
+    // And nothing wrong in it, not even a block lost.
+    let opts = redoxfs::check::Options { data: true };
+    match fs.tx(|tx| redoxfs::check::check(tx, opts, true)) {
+        Ok(report) if report.is_clean() => {}
+        Ok(report) => return Some(format!("{what}: check: {:?}", report.problems)),
+        Err(e) => return Some(format!("{what}: check failed: {e}")),
+    }
     match states.iter().position(|s| *s == state) {
         None => Some(format!("{what}: shows a state that no transaction made")),
         Some(i) if i < done => Some(format!("{what}: went back to step {i}, but {done} steps were on disk")),

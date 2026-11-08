@@ -4,7 +4,7 @@
 //! listar un fichero. Después escribe: crea un cajón y un fichero de 200 KB, lo relee, lo recorta, lo mueve, lo borra
 //! abierto y deja `Escrito/hola.txt` para que `tools/disco_archivos.py --comprobar` lo vea en Linux. Por último, FS6
 //! y FS7: buscar sin mirar mayúsculas, el comentario y los bits del Amiga, que dejan `hola.txt` sin escribir ni
-//! borrar mientras lo pidan.
+//! borrar mientras lo pidan. Y FS8: el servicio comprueba el disco entero y no encuentra nada.
 
 #![no_std]
 #![no_main]
@@ -30,6 +30,7 @@ const INFO: u32 = 12;
 const COMENTARIO: u32 = 13;
 const COMENTAR: u32 = 14;
 const PROTEGER: u32 = 15;
+const COMPROBAR: u32 = 16;
 // Bits del Amiga (`AmigaBits` de DashFS).
 const ARCHIVO: u64 = 1;
 const GUION: u64 = 4;
@@ -303,5 +304,10 @@ fn principal() -> u64 {
         si(en_lista),
         si(bits)
     );
+
+    // FS8: el disco entero, datos incluidos, tras todo lo anterior: ni un problema, ni un bloque perdido.
+    let k = c.pedir(COMPROBAR, 0, 1, 0, "");
+    let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");
+    println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
     0
 }

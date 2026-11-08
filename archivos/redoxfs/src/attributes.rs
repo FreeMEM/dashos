@@ -59,6 +59,22 @@ impl Attributes {
             .map(|(_, v)| v)
     }
 
+    /// Whether the entries fill exactly the bytes in use, each with a key in UTF-8 (for `check`).
+    pub fn is_well_formed(&self) -> bool {
+        let len = self.len.to_ne() as usize;
+        if len > DATA_SIZE {
+            return false;
+        }
+        let mut at = 0;
+        for (key, value) in self.entries() {
+            if key.is_empty() || core::str::from_utf8(key).is_err() {
+                return false;
+            }
+            at += ENTRY_HEADER + key.len() + value.len();
+        }
+        at == len
+    }
+
     pub fn is_empty(&self) -> bool {
         self.len.to_ne() == 0
     }

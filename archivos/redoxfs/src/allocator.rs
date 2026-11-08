@@ -53,6 +53,27 @@ impl Allocator {
         free
     }
 
+    /// An allocator whose free blocks are the given runs of (first block, count), which must not overlap or touch.
+    /// Each run is split into aligned blocks as large as possible, as `deallocate` would join them.
+    pub fn from_free_runs(runs: impl IntoIterator<Item = (u64, u64)>) -> Self {
+        let mut allocator = Allocator::default();
+        for (mut start, count) in runs {
+            let end = start + count;
+            while start < end {
+                let mut level = 0;
+                while start.is_multiple_of(2 << level) && start + (2 << level) <= end {
+                    level += 1;
+                }
+                while level >= allocator.levels.len() {
+                    allocator.levels.push(BTreeSet::new());
+                }
+                allocator.levels[level].insert(start);
+                start += 1 << level;
+            }
+        }
+        allocator
+    }
+
     /// Find a free block of the given level, mark it as "used", and return its address.
     /// Returns [`None`] if there are no free blocks with this level.
     pub fn allocate(&mut self, meta: BlockMeta) -> Option<BlockAddr> {
@@ -391,4 +412,22 @@ fn allocator_test() {
     for level in 0..alloc.levels.len() {
         assert_eq!(alloc.levels[level], [0u64; 0].into());
     }
+}
+
+#[test]
+fn from_free_runs_test() {
+    // The same as freeing each block.
+    let runs = [(1u64, 1u64), (3, 2), (8, 21), (64, 64), (200, 3)];
+    let built = Allocator::from_free_runs(runs);
+    let mut freed = Allocator::default();
+    for (start, count) in runs {
+        for i in start..start + count {
+            freed.deallocate(unsafe { BlockAddr::new(i, BlockMeta::default()) });
+        }
+    }
+    while freed.levels.last().is_some_and(|l| l.is_empty()) {
+        freed.levels.pop();
+    }
+    assert_eq!(built.levels, freed.levels);
+    assert_eq!(built.free(), 91);
 }

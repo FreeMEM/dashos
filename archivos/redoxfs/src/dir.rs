@@ -1,3 +1,4 @@
+use alloc::vec::Vec;
 use core::{mem, ops, slice, str};
 
 use crate::casefold::Wanted;
@@ -210,6 +211,26 @@ impl DirList {
 
     pub fn entry_count(&self) -> usize {
         self.count as usize
+    }
+
+    /// The entries as (node, name), or None if the list is malformed: an entry past the end, a bad name length,
+    /// or bytes left over. Unlike `entries`, never panics (for `check`).
+    pub fn checked_entries(&self) -> Option<Vec<(TreePtr<Node>, &[u8])>> {
+        let bytes = self.entry_bytes.get(..self.entry_bytes_len as usize)?;
+        let mut out = Vec::with_capacity(self.count as usize);
+        let mut at = 0;
+        for _ in 0..self.count {
+            let prefix = bytes.get(at..at + DirEntry::SERIALIZED_PREFIX_SIZE)?;
+            let name_len = prefix[4] as usize;
+            if name_len == 0 || name_len > DIR_ENTRY_MAX_LENGTH {
+                return None;
+            }
+            let start = at + DirEntry::SERIALIZED_PREFIX_SIZE;
+            let name = bytes.get(start..start + name_len)?;
+            out.push((TreePtr::from_bytes(prefix[..4].try_into().unwrap()), name));
+            at = start + name_len;
+        }
+        (at == bytes.len()).then_some(out)
     }
 }
 

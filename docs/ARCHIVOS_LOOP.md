@@ -40,7 +40,7 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | hecha (DashFS 1) |
 | FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | hecha (DashFS 2, marca por carpeta) |
 | FS7 | Atributos del Amiga: comentario y bits de protección | hecha (DashFS 3) |
-| FS8 | Herramienta de reparación (comprobar y arreglar) | |
+| FS8 | Herramienta de reparación (comprobar y arreglar) | hecha (`redoxfs-fsck`, orden 16 del servicio) |
 | FS9 | Instantáneas | |
 | FS10 | Carpeta cifrada por usuario con Adiantum | |
 | FS11 | Cuidar la SD: escrituras juntas, TRIM, alineación a 4 MB | |
@@ -53,6 +53,10 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
 - FS2: `Disk::flush` antes y después de la cabecera, y `tests/power_cut.rs` (4fddf69).
 - FS2: `open` con el inicio dado busca en todo el anillo de cabeceras (642b3fc).
 - FS4: `rename_node` no deja mover un cajón dentro de sí mismo (e8b2f76).
+- FS8: borrar o acortar un fichero suelta también su último trozo a medias (a5652ad). Antes, cada fichero borrado
+  cuyo tamaño no era múltiplo de 128 KB dejaba hasta 128 KB perdidos.
+- FS8: el comprobador y la reparación (`check.rs`, `repair.rs`, `redoxfs-fsck`), sin lo que es solo de DashFS
+  (mayúsculas, atributos), y que abrir un disco con la lista de libres rota dé error en vez de abortar.
 
 ## Bitácora
 
@@ -117,3 +121,29 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
   el archivado): cortar la luz en cada escritura deja lo viejo o lo nuevo. En QEMU, `ficheros` busca sin mirar
   mayúsculas, pone y lee el comentario, lo ve en la lista, y comprueba los rechazos por protección; `ver` lo ve en
   Linux. `cargo test`: 66 + 5 + 9 bien.
+- FS8: `src/check.rs` comprueba un disco sin escribir nada: la lista de libres, la de nodos por soltar, el árbol de
+  nodos y sus marcas, cada nodo (tipo, marcas, bits, atributos, cuenta de bloques), cada cajón (su índice en orden,
+  nombres buenos y sin repetir, cada entrada en su sitio del índice y hacia un nodo que existe) y, si se pide, cada
+  trozo de datos con su suma. Cuenta quién usa cada bloque: usados dos veces, usados pero libres, perdidos, fuera
+  del disco; enlaces contra entradas; nodos a los que no lleva ningún cajón. `src/repair.rs` arregla lo que se
+  puede en una sola transacción: rehace el árbol sin los nodos ilegibles (y una raíz nueva si se perdió), rehace
+  cada cajón con las entradas buenas, da a cada dueño su copia de un bloque compartido, pone los nodos sin cajón en
+  `/Perdidos` por su número (no borra nada: la cuenta de enlaces puede ser lo roto), corrige cuentas y escribe la
+  lista de libres de nuevo. Mientras repara solo escribe en bloques que el disco no usa, así que cortar la luz deja
+  el disco como estaba o reparado. Los datos ilegibles se quedan como están, y se dicen.
+  Encontró un fallo de RedoxFS: al borrar o acortar, el último trozo de un fichero, si no estaba lleno, nunca se
+  soltaba (arreglado en su propio commit, para enviar a Redox; la prueba falla sin él: 96 bloques perdidos).
+  También: `FileSystem::open_to_check` abre un disco con la lista de libres rota; abrirlo normal da error en vez de
+  abortar.
+  Órdenes: `redoxfs-fsck [--data] [--repair] DISCO` en Linux; `ver DISCO DESDE --comprobar`, que ahora usa
+  `tools/disco_archivos.py` tras la prueba en QEMU; la orden 16 "comprobar" del servicio, que `ficheros` pide al
+  final (el disco que escribió DashOS, sin un problema).
+  Pruebas (`src/tests_check.rs`): discos sanos sin avisos, con cada clase de daño hecha a mano (bloques ilegibles
+  de nodo, cajón, árbol, atributos, datos, listas; enlaces y cuentas mal; bloques perdidos, usados y libres,
+  compartidos; nodos sin cajón, entradas a nada, nombres repetidos o imposibles, nombres fuera de sitio en el índice,
+  marcas del árbol) encontrada y reparada, con lo que no estaba roto intacto; 300 rondas de daños al azar en
+  bloques en uso, siempre reparadas dejando solo datos ilegibles; un corte de luz en cada escritura de una
+  reparación; y ficheros de todos los tamaños escritos, recortados y borrados. La prueba de cortar la luz
+  (`tests/power_cut.rs`) y la de operaciones al azar de FS6 comprueban ahora el disco en cada paso.
+  Pendiente visto: `DirList` guarda su cuenta y su largo en el orden de bytes de la CPU, no en little-endian fijo;
+  un DashOS big-endian no leería los cajones de un disco hecho en un PC.

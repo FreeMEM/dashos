@@ -80,8 +80,8 @@ pub struct Transaction<'a, D: Disk> {
     //TODO: make private
     pub header_changed: bool,
     pub(crate) allocator: Allocator,
-    allocator_log: VecDeque<AllocEntry>,
-    deallocate: Vec<BlockAddr>,
+    pub(crate) allocator_log: VecDeque<AllocEntry>,
+    pub(crate) deallocate: Vec<BlockAddr>,
     pub(crate) write_cache: BTreeMap<BlockAddr, Vec<u8>>,
 }
 
@@ -412,7 +412,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
     }
 
-    unsafe fn read_record<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) unsafe fn read_record<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         mut ptr: BlockPtr<T>,
         level: BlockLevel,
@@ -517,7 +517,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Walk the tree and return the contents and address
     /// of the data block that `ptr` points too.
-    fn read_tree_and_addr<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) fn read_tree_and_addr<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         ptr: TreePtr<T>,
     ) -> Result<(TreeData<T>, BlockAddr)> {
@@ -626,7 +626,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Clear the previously claimed slot in the tree for the given `ptr`. Note that this
     /// should only be called after the corresponding node block has already been deallocated.
-    fn remove_tree<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) fn remove_tree<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         ptr: TreePtr<T>,
     ) -> Result<()> {
@@ -1759,7 +1759,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Get a pointer to a the record of `node` with the given offset.
     /// (i.e, to the `n`th record of `node`.)
-    fn node_record_ptr(
+    pub(crate) fn node_record_ptr(
         &mut self,
         node: &TreeData<Node>,
         record_offset: u64,
@@ -2072,9 +2072,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
             assert_eq!(offset, size);
         } else if !node.data().has_inline_data() {
             // Deallocate records, the last one too when it is not full.
-            for record in (size.div_ceil(record_level.bytes())
-                ..old_size.div_ceil(record_level.bytes()))
-                .rev()
+            for record in
+                (size.div_ceil(record_level.bytes())..old_size.div_ceil(record_level.bytes())).rev()
             {
                 self.remove_node_record_ptr(node, record)?;
             }

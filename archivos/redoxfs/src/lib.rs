@@ -62,6 +62,7 @@ mod attributes;
 mod block;
 mod casefold;
 mod casefold_data;
+pub mod check;
 #[cfg(feature = "std")]
 mod clone;
 mod dir;
@@ -76,6 +77,7 @@ mod mount;
 pub mod mount;
 mod node;
 mod record;
+pub mod repair;
 mod transaction;
 mod tree;
 #[cfg(feature = "std")]
@@ -87,3 +89,5 @@ mod tests;
 mod tests_amiga;
 #[cfg(all(feature = "std", test))]
 mod tests_casefold;
+#[cfg(all(feature = "std", test))]
+mod tests_check;

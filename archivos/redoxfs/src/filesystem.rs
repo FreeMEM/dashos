@@ -4,7 +4,7 @@ use alloc::{
     vec,
     vec::Vec,
 };
-use syscall::error::{EKEYREJECTED, ENOENT, ENOKEY, Error, Result};
+use syscall::error::{EIO, EKEYREJECTED, ENOENT, ENOKEY, Error, Result};
 use xts_mode::{Xts128, get_tweak_default};
 
 #[cfg(feature = "std")]
@@ -37,11 +37,31 @@ pub struct FileSystem<D: Disk> {
 impl<D: Disk> FileSystem<D> {
     /// Open a file system on a disk
     pub fn open(
-        mut disk: D,
+        disk: D,
         password_opt: Option<&[u8]>,
         block_opt: Option<u64>,
         cleanup: bool,
     ) -> Result<Self> {
+        Self::open_inner(disk, password_opt, block_opt, cleanup, false).map(|(fs, _)| fs)
+    }
+
+    /// Open a file system to check or repair it (`check`). An allocation log that cannot be read leaves the
+    /// allocator empty instead of failing: the second value says whether it was read.
+    pub fn open_to_check(
+        disk: D,
+        password_opt: Option<&[u8]>,
+        block_opt: Option<u64>,
+    ) -> Result<(Self, bool)> {
+        Self::open_inner(disk, password_opt, block_opt, false, true)
+    }
+
+    fn open_inner(
+        mut disk: D,
+        password_opt: Option<&[u8]>,
+        block_opt: Option<u64>,
+        cleanup: bool,
+        damaged_allocator: bool,
+    ) -> Result<(Self, bool)> {
         // With a known start, any slot of its header ring will do: slot 0 may be the one torn by a power cut.
         for ring_block in block_opt.map_or(0..65536, |x| x..x + HEADER_RING) {
             let mut header = Header::default();
@@ -101,13 +121,20 @@ impl<D: Disk> FileSystem<D> {
                 node_usages: BTreeMap::new(),
             };
 
-            unsafe { fs.reset_allocator()? };
+            let allocator_read = match unsafe { fs.reset_allocator() } {
+                Ok(()) => true,
+                Err(_) if damaged_allocator => {
+                    fs.allocator = Allocator::default();
+                    false
+                }
+                Err(err) => return Err(err),
+            };
 
             if cleanup {
                 fs.cleanup()?
             }
 
-            return Ok(fs);
+            return Ok((fs, allocator_read));
         }
 
         Err(Error::new(ENOENT))
@@ -290,10 +317,14 @@ impl<D: Disk> FileSystem<D> {
                 let count = entry.count();
                 if count < 0 {
                     for i in 0..-count {
-                        //TODO: replace assert with error?
                         let addr =
                             unsafe { BlockAddr::new(index + i as u64, BlockMeta::default()) };
-                        assert_eq!(self.allocator.allocate_exact(addr), Some(addr));
+                        // A log that allocates a block that is not free is damaged.
+                        if self.allocator.allocate_exact(addr) != Some(addr) {
+                            #[cfg(feature = "log")]
+                            log::error!("RESET_ALLOCATOR: BLOCK 0x{:X} IS NOT FREE", addr.index());
+                            return Err(Error::new(EIO));
+                        }
                     }
                 } else {
                     for i in 0..count {

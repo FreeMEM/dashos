@@ -10,7 +10,8 @@ Uso: disco_archivos.py SALIDA REDOXFS_AR
      disco_archivos.py --comprobar DISCO VER
 
 Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) que el disco tiene lo que escribió
-el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco.
+el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco. Y que el comprobador (FS8)
+no encuentra nada roto en él.
 """
 import os
 import subprocess
@@ -32,7 +33,11 @@ if sys.argv[1] == "--comprobar":
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
+    # FS8: y nada roto, ni un bloque perdido.
+    comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
+    if comprobado != "sin problemas\n":
+        fallos.append(f"comprobación: {comprobado.strip()}")
     if arbol != esperado:
         fallos.append(f"árbol: {arbol}")
     if hola != b"hola desde DashOS!\n":

@@ -141,7 +141,7 @@ servicio copia cada envío antes de comprobarlo. Hasta 16 sectores por envío.
 
 Pendiente: varias colas de E/S del NVMe.
 
-## Archivos (FS1, FS3, FS7)
+## Archivos (FS1, FS3, FS7, FS8)
 
 `usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": hoy, el que
 empieza en el MB 1 del disco NVMe de `virt`. Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
@@ -185,6 +185,7 @@ o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no va
 | 13 comentario | Pone en la ventana el comentario (UTF-8, hasta 255 bytes) | asa | a su largo |
 | 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
 | 15 proteger | Cambia los bits del Amiga y los permisos de Unix | asa, a bits, b permisos (hasta 0o7777) | — |
+| 16 comprobar | Comprueba el disco entero, sin cambiar nada (FS8); pone en la ventana los problemas, uno por línea, hasta llenarla | a: 1 = leer también los datos | a cuántos problemas, b bytes en la ventana, c bytes en uso |
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
 tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte
