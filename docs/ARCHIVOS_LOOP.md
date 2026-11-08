@@ -47,6 +47,30 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 
 Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
 
+## FS9, instantáneas: para decidir
+
+Una instantánea es el volumen tal como estaba en un momento, para leerlo o para volver a él (S5: `SYS:`,
+`Paquetes:`, las de cada hora de `Usuarios:`). Con copia al escribir, guardar la raíz vieja es gratis. Lo difícil
+es soltar bloques: al cambiar un fichero, su bloque viejo solo se puede soltar si ninguna instantánea lo usa.
+RedoxFS hoy lo suelta siempre. Hay que saber, de cada bloque, si alguna instantánea lo ve.
+
+- **A (recomendada): la época en la dirección de cada bloque.** El número de bloque tiene 56 bits; 36 bastan
+  (256 TB). Los otros 20 guardan la época: cuántas instantáneas había cuando se escribió el bloque. Al soltar un
+  bloque: si es de la época de ahora, se suelta; si es de antes, alguna instantánea lo ve y va a su lista de
+  pendientes. Crear una instantánea es inmediato (sube la época y guarda la raíz). Borrarla solo recorre lo que
+  cambió después de ella. Y deja saber qué cambió entre dos instantáneas, para copias de seguridad por partes.
+  Los discos de antes tienen ceros ahí, época 0: se abren tal cual. Límite: un millón de instantáneas en la vida
+  del volumen (una por hora, 119 años). Es lo que hace ZFS, con la época en vez de su número de transacción.
+- **B: un mapa de bloques por instantánea.** Al crearla, se recorre el disco entero y se guarda qué bloques usa,
+  como hace el comprobador de FS8. No toca el formato de los punteros, pero crear y borrar cuesta leer todos los
+  metadatos: segundos o minutos en una SD llena, cada hora.
+- **C: punteros más grandes**, de 24 bytes con la época, como ZFS. Cambia todo el formato y hay que reescribir los
+  discos, para lo mismo que A.
+
+Las instantáneas son del volumen entero: en RedoxFS los cajones apuntan a los nodos por número, a través del
+árbol, así que congelar un cajón suelto pide congelar el árbol. Una instantánea de un cajón se ve como la del
+volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volumen aparte.
+
 ## Para enviar a Redox (con permiso)
 
 - FS0: los `use` de `alloc` que faltaban para compilar sin std (629bc2e).
