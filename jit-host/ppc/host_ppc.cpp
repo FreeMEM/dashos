@@ -18,6 +18,11 @@
 #include "PPC.h"
 #include "support.h"
 #include "tlsf.h"
+/* La rama 1_1_wip de Emu68 junta sus variables globales en `globals` (src/globals.c). */
+#if __has_include("globals.h")
+#include "globals.h"
+#define DASHOS_GLOBALS 1
+#endif
 #include "config.h"
 #include "M68k.h"
 #include "devicetree.h"
@@ -105,6 +110,10 @@ static void *map(uintptr_t addr, size_t len, int prot, int flags, int fd)
 #define JIT_RW  0x2000000000UL
 #define JIT_RX  0x3000000000UL
 #define JIT_LEN (64UL << 20)
+/* Lo que se le dice al JIT, en MB: con JITMB=1 en make se llena pronto y tiene que expulsar bloques */
+#ifndef PPC_JIT_MB
+#define PPC_JIT_MB (JIT_LEN >> 20)
+#endif
 #define HEAP_LEN (16UL << 20)
 
 /* --- Lo que Emu68 define en start.c, devicetree.c, mmu.c, intc.c y disasm.c --- */
@@ -125,7 +134,7 @@ uint32_t dt_get_property_value_u32(void *key, const char *propname, uint32_t def
 {
     (void)key; (void)def_val; (void)check_parent;
     /* tamaño del código traducido del PPC, en MB (PPC_Translator.cpp: jit_ppc) */
-    if (propname && propname[0] == 'p') return JIT_LEN >> 20;
+    if (propname && propname[0] == 'p') return PPC_JIT_MB;
     return def_val;
 }
 uintptr_t mmu_virt2phys(uintptr_t addr) { return addr; }
@@ -238,6 +247,9 @@ static void informe(const Emu68::PPC::PPCState *s)
     kprintf("[REG] FPSCR=%08x\n", s->FPSCR);
     uint64_t h = suma((const uint8_t *)PPC_RAM, PPC_RAM_LEN);
     kprintf("[REG] Suma de la memoria: %08x%08x\n", (uint32_t)(h >> 32), (uint32_t)h);
+    /* No es parte de la comparación: cuánto JIT se usó (con JITMB pequeño, si hubo que expulsar bloques) */
+    kprintf("[JIT] bloques %u, fallos de caché %u, libre %u de %u\n", s->JIT_UNIT_COUNT, s->JIT_CACHE_MISS,
+            s->JIT_CACHE_FREE, s->JIT_CACHE_TOTAL);
 }
 
 /* Un fallo de memoria del código traducido: dice en qué instrucción PPC iba (w18) y acaba con 6. Los desplazamientos
@@ -245,7 +257,21 @@ static void informe(const Emu68::PPC::PPCState *s)
 static void fallo(int sig, void *info, void *uc)
 {
     (void)info;
-    const uint8_t *m = (const uint8_t *)uc + 176;
+    uint8_t *mm = (uint8_t *)uc + 176;
+    /* La rama 1_1_wip de Emu68 mide el tiempo con cntpct_el0, que Linux no deja leer en EL0: se hace como si fuera
+       cntvct_el0 y se sigue. Las instrucciones van en little-endian también en big-endian. */
+    if (sig == 4) {
+        uint64_t *regs = (uint64_t *)(mm + 8), *pcp = (uint64_t *)(mm + 8 + 32 * 8);
+        uint32_t insn = __builtin_bswap32(*(const uint32_t *)*pcp);
+        if ((insn & ~31u) == 0xd53be020) {   /* mrs xT, cntpct_el0 */
+            uint64_t t;
+            __asm__ volatile("mrs %0, cntvct_el0" : "=r"(t));
+            if ((insn & 31) != 31) regs[insn & 31] = t;
+            *pcp += 4;
+            return;
+        }
+    }
+    const uint8_t *m = mm;
     uint64_t dir = *(const uint64_t *)m, x18 = *(const uint64_t *)(m + 8 + 18 * 8), pc = *(const uint64_t *)(m + 8 + 32 * 8);
     kprintf("[REG] fallo %d: PC PPC %08x, pc ARM %08x%08x, dirección %08x%08x\n", sig, (uint32_t)x18,
             (uint32_t)(pc >> 32), (uint32_t)pc, (uint32_t)(dir >> 32), (uint32_t)dir);
@@ -284,6 +310,10 @@ extern "C" void host_main(uint64_t *pila)
     __asm__ volatile("mrs %0, CTR_EL0" : "=r"(ctr));
     dcache_mask_bits = 2 + ((ctr >> 16) & 15);
 
+#ifdef DASHOS_GLOBALS
+    globals.ppc_jit_virt_base = (void *)JIT_RW;
+    globals.dcache_mask_bits = dcache_mask_bits;
+#endif
     /* ahora sí: jit_ppc se construye sobre JIT_RW */
     for (ctor_t *c = __init_array_start; c && c < __init_array_end; c++) (*c)();
 

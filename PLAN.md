@@ -8,7 +8,9 @@ DashOS es un sistema operativo propio para placas ARM. Implementa la API de Amig
 Los programas 68k del sistema se ejecutan sin emular un Amiga entero. Un JIT traduce su código a ARM, y sus llamadas a
 las bibliotecas van a las versiones nativas. Es la idea de Petunia en AmigaOS 4 y de Trance en MorphOS.
 
-Los juegos y demos que tocan el chipset directamente no son objetivo. Petunia tampoco los ejecuta.
+Los juegos y demos que tocan el chipset directamente también son objetivo (usuario, 2026-11-08): DashOS imita
+los chips del Amiga (Paula, Blitter, Copper, Denise, Agnus, CIA) con código propio, sin depender de Amiberry.
+Petunia no los ejecuta; DashOS sí.
 
 ## Decisiones tomadas
 
@@ -140,7 +142,7 @@ lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/
   (Cortex-A53). Ver "THEA1200 como placa candidata" y `docs/diseño/S0-principios.md`, pregunta 2.
 - (S4) ¿Adornos de ventana Amiga por dentro y borde de DashOS por fuera, o todo Amiga? **Amiga por dentro, DashOS por fuera.**
 - (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? **sí.**
-- (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? **sí.**
+- (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? **sí.** Cambiado el 2026-11-08: chips propios, sin Amiberry.
 - (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? **`Paquetes:`.**
 - (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? **sí.**
 - (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? **sí.**
@@ -327,3 +329,27 @@ resumido, en `docs/diseño/RESUMEN.md`.
   Cambia la sala limpia como se recomendó (`AGENTS.md`, reglas 1 y 7; `docs/diseño/S12-controladores.md`).
 - **THEA500 Mini**: placa candidata (`docs/diseño/placa-thea500-mini.md`).
 
+
+## Decisiones del usuario del 2026-11-08
+
+- **DashOS sigue con su plan aunque Emu68 no lo apoye.** Michal dijo que no dará soporte a quien use Emu68 para
+  emular el Amiga entero "como un Amiberry". El usuario: el hardware original se estropea y no hay repuestos, la
+  PiStorm tiene fecha de caducidad, y DashOS es el camino que queda. Los arreglos a Emu68 se siguen mandando como PR
+  (con su permiso), pero el plan no depende de que los acepten. Si hace falta, el JIT va en nuestra propia rama
+  (MPL: lo cambiado de sus ficheros se publica).
+- **Los chips del Amiga, propios** (usuario: "tenemos que escribir un Petunia y no depender de un Amiberry"). La caja
+  Amiga ejecuta también lo que toca el chipset: el JIT sigue con la CPU y los accesos a `0xDFF000` y a los CIA van a
+  una imitación propia de los chips. Amiberry deja de ser el plan (S4). Falta el diseño: `docs/diseño/S18-chips.md`
+  (cómo se capturan los accesos, cuánta exactitud de tiempo, qué se sacrifica, cómo se prueba contra un Amiga real
+  o contra FS-UAE como oráculo, y la sala limpia: UAE es GPL, no se copia).
+- **Diseños S18 (chips) y S10b (escritorios), aceptados enteros** ("vale a todo"):
+  - S18 (`docs/diseño/S18-chips.md`): se empieza por la máquina entera (Kickstart del usuario y todos los chips),
+    exacta a nivel de línea (el ciclo, fase opcional); el kernel entregará los fallos de página al propio proceso;
+    el núcleo de vAmiga (MPL-2.0) se puede leer y reutilizar; UAE solo por un analista y en casos concretos
+    (`AGENTS.md`, regla 1); velocidad A500 u A1200 por defecto; fases 1 a 3 en el banco si hay manos; ROM de AROS
+    como extra.
+  - S10b (`docs/diseño/S10b-escritorios.md`): compositor oficial de confianza, servicios con el estado y escritorios
+    de terceros sin privilegios, por Wayland estándar y una extensión propia ("inestable" hasta la 1.0); kit oficial
+    en Dash compilado; política de ventanas en el compositor; la contraseña la dibuja el compositor; módulos que
+    dan datos; Workbench aparte; nada de escritorios de la caja Linux de serie; rescate con Ctrl+Alt+Supr. El
+    escritorio oficial será uno más; el usuario pasará un vídeo con la idea.
