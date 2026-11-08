@@ -47,7 +47,9 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 
 Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
 
-## FS9, instantáneas: para decidir
+## FS9, instantáneas
+
+Decisión del usuario (2026-11-08): A, la época en la dirección de cada bloque.
 
 Una instantánea es el volumen tal como estaba en un momento, para leerlo o para volver a él (S5: `SYS:`,
 `Paquetes:`, las de cada hora de `Usuarios:`). Con copia al escribir, guardar la raíz vieja es gratis. Lo difícil
