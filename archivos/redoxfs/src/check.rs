@@ -93,6 +93,12 @@ pub enum Problem {
     Leaked { count: u64 },
     /// Pointers to blocks, or free blocks, outside the file system.
     Outside { count: u64 },
+    /// The list of snapshots, or a dead list, cannot be read.
+    Snapshots,
+    /// Part of the tree of a snapshot cannot be read.
+    Snapshot { name: String },
+    /// Blocks in dead lists that no snapshot sees: lost space.
+    Dead { count: u64 },
 }
 
 impl fmt::Display for EntryFault {
@@ -146,6 +152,11 @@ impl fmt::Display for Problem {
             }
             Problem::Leaked { count } => write!(f, "{count} blocks lost"),
             Problem::Outside { count } => write!(f, "{count} blocks outside the file system"),
+            Problem::Snapshots => write!(f, "list of snapshots unreadable"),
+            Problem::Snapshot { name } => write!(f, "snapshot {name:?}: tree unreadable"),
+            Problem::Dead { count } => {
+                write!(f, "{count} blocks in dead lists that no snapshot sees")
+            }
         }
     }
 }
@@ -250,6 +261,28 @@ impl Usage {
         self.bits[(i / 64) as usize] & (1 << (i % 64)) != 0
     }
 
+    /// Marks the blocks of `addr` as used if none was: a block of a snapshot that the volume or another snapshot
+    /// shares is not used twice. False if it was used already or is outside.
+    fn mark_new(&mut self, addr: BlockAddr) -> bool {
+        let start = addr.index();
+        let range = start..start.saturating_add(addr.level().blocks::<u64>());
+        if range
+            .clone()
+            .any(|i| !(FIRST_BLOCK..self.total).contains(&i))
+        {
+            self.outside += 1;
+            return false;
+        }
+        if range.clone().any(|i| self.is_set(i)) {
+            return false;
+        }
+        for i in range {
+            self.bits[(i / 64) as usize] |= 1 << (i % 64);
+            self.used += 1;
+        }
+        true
+    }
+
     /// Marks the blocks of `addr` as used. False if any was used already or is outside.
     fn mark(&mut self, addr: BlockAddr) -> bool {
         let mut fresh = true;
@@ -321,6 +354,7 @@ pub fn check<D: Disk>(
         c.node(id, ptr);
     }
     c.links_and_places();
+    c.snapshots();
     let free = c.free_blocks(allocator_read);
     let dir_ids: BTreeSet<u32> = c.nodes.iter().filter(|n| n.1.dir).map(|n| *n.0).collect();
     let report = Report {
@@ -806,6 +840,50 @@ impl<D: Disk> Checker<'_, '_, D> {
         }
         for &id in &self.data_lost {
             self.problems.push(Problem::Data { id });
+        }
+    }
+
+    /// The snapshots (FS9): their lists, and their trees, which share blocks with the volume and each other. Every
+    /// block in a dead list must be seen by a snapshot.
+    fn snapshots(&mut self) {
+        let snapshots = match (self.tx.snapshot_list_blocks(), self.tx.snapshots()) {
+            (Ok(blocks), Ok(snapshots)) => {
+                for block in blocks {
+                    self.usage.mark(block);
+                }
+                snapshots
+            }
+            _ => {
+                self.problems.push(Problem::Snapshots);
+                return;
+            }
+        };
+        for snapshot in snapshots {
+            let usage = &mut self.usage;
+            if self
+                .tx
+                .tree_blocks(snapshot.tree, &mut |addr| usage.mark_new(addr))
+                .is_err()
+            {
+                self.problems.push(Problem::Snapshot {
+                    name: snapshot.name().into(),
+                });
+            }
+        }
+        if let Ok(dead) = self.tx.dead_entries() {
+            let usage = &self.usage;
+            let unseen = dead
+                .iter()
+                .filter(|a| {
+                    (a.index()..a.index() + a.level().blocks::<u64>())
+                        .any(|i| !(FIRST_BLOCK..usage.total).contains(&i) || !usage.is_set(i))
+                })
+                .count();
+            if unseen > 0 {
+                self.problems.push(Problem::Dead {
+                    count: unseen as u64,
+                });
+            }
         }
     }
 

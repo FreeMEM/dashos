@@ -132,9 +132,10 @@ Todo lo hecho se ha probado en QEMU. Nada se ha probado todavía en una placa re
 
 ### En curso
 
-- **Sistema de archivos DashFS**, a partir de RedoxFS (rama `archivos`): el servicio lee y escribe en el disco NVMe
-  desde DashOS, con pruebas de cortes de luz y formato propio (DashFS 1). Ahora: carpetas que no distinguen
-  mayúsculas (DashFS 2).
+- **Sistema de archivos DashFS**, a partir de RedoxFS: el servicio lee y escribe en el disco NVMe desde DashOS, con
+  pruebas de cortes de luz. Hecho: carpetas que no distinguen mayúsculas, el comentario y los bits de protección del
+  Amiga, una herramienta que comprueba y repara el disco, e instantáneas (DashFS 4: tomar, borrar y volver a una).
+  Falta: el cajón cifrado de cada usuario y el cuidado de la SD.
 
 ### Falta
 

@@ -4,7 +4,8 @@
 //! listar un fichero. Después escribe: crea un cajón y un fichero de 200 KB, lo relee, lo recorta, lo mueve, lo borra
 //! abierto y deja `Escrito/hola.txt` para que `tools/disco_archivos.py --comprobar` lo vea en Linux. Por último, FS6
 //! y FS7: buscar sin mirar mayúsculas, el comentario y los bits del Amiga, que dejan `hola.txt` sin escribir ni
-//! borrar mientras lo pidan. Y FS8: el servicio comprueba el disco entero y no encuentra nada.
+//! borrar mientras lo pidan. Y FS8: el servicio comprueba el disco entero y no encuentra nada. FS9: tomar una
+//! instantánea, volver a ella y descartarla.
 
 #![no_std]
 #![no_main]
@@ -31,6 +32,10 @@ const COMENTARIO: u32 = 13;
 const COMENTAR: u32 = 14;
 const PROTEGER: u32 = 15;
 const COMPROBAR: u32 = 16;
+const INSTANTANEAS: u32 = 17;
+const TOMAR: u32 = 18;
+const DESCARTAR: u32 = 19;
+const VOLVER: u32 = 20;
 // Bits del Amiga (`AmigaBits` de DashFS).
 const ARCHIVO: u64 = 1;
 const GUION: u64 = 4;
@@ -309,5 +314,25 @@ fn principal() -> u64 {
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
+
+    // FS9: una instantánea, un fichero nuevo, volver a ella (el fichero ya no está y las asas de antes no valen) y
+    // descartarla. El disco queda como estaba, sin un problema.
+    let tomada = c.pedir(TOMAR, 0, 0, 0, "antes").estado == 0 && c.pedir(TOMAR, 0, 0, 0, "antes").estado == -9;
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let nuevo = c.pedir(CREAR, escrito.asa, 1, 0, "temporal.txt");
+    let lista = c.pedir(INSTANTANEAS, 0, 0, 0, "");
+    let en_lista = lista.estado == 0 && lista.a == 1 && &c.ventana()[8..14] == b"\x05antes";
+    let vuelta = c.pedir(VOLVER, 0, 0, 0, "antes").estado == 0
+        && c.pedir(BUSCAR, 0, 0, 0, "Escrito/temporal.txt").estado == -2
+        && c.pedir(DATOS, nuevo.asa, 0, 0, "").estado == -5
+        && c.pedir(BUSCAR, 0, 0, 0, "Escrito/hola.txt").estado == 0;
+    let descartada = c.pedir(DESCARTAR, 0, 0, 0, "antes").estado == 0
+        && c.pedir(INSTANTANEAS, 0, 0, 0, "").a == 0
+        && c.pedir(DESCARTAR, 0, 0, 0, "antes").estado == -2;
+    let limpio = c.pedir(COMPROBAR, 0, 1, 0, "").a == 0;
+    println!(
+        "  [ficheros] FS9 instantáneas: {}",
+        si(tomada && nuevo.estado == 0 && en_lista && vuelta && descartada && limpio)
+    );
     0
 }

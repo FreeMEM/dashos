@@ -41,8 +41,8 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | hecha (DashFS 2, marca por carpeta) |
 | FS7 | Atributos del Amiga: comentario y bits de protección | hecha (DashFS 3) |
 | FS8 | Herramienta de reparación (comprobar y arreglar) | hecha (`redoxfs-fsck`, orden 16 del servicio) |
-| FS9 | Instantáneas | |
-| FS10 | Carpeta cifrada por usuario con Adiantum | |
+| FS9 | Instantáneas | hecha (DashFS 4, la época en la dirección de cada bloque) |
+| FS10 | Carpeta cifrada por usuario con Adiantum | decidida: A2 como ZFS |
 | FS11 | Cuidar la SD: escrituras juntas, TRIM, alineación a 4 MB | |
 
 Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
@@ -73,6 +73,26 @@ Las instantáneas son del volumen entero: en RedoxFS los cajones apuntan a los n
 árbol, así que congelar un cajón suelto pide congelar el árbol. Una instantánea de un cajón se ve como la del
 volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volumen aparte.
 
+## FS10, carpeta cifrada por usuario
+
+Decisión del usuario (2026-11-08): A2 "como ZFS".
+
+- Varios volúmenes en un mismo disco (el común y uno por usuario), como los datasets de ZFS o los volúmenes de
+  APFS. Comparten el espacio libre; un máximo por usuario es opcional. Sin fichero en medio: se escribe una vez y
+  lo borrado vuelve al momento.
+- Cada volumen tiene su llave, guardada en su cabecera y envuelta por la contraseña (Argon2, como los 64 huecos
+  de RedoxFS): cambiar la contraseña no recifra nada, y cabe una llave de recuperación.
+- Se cifra el contenido, los nombres, los permisos y los atributos. La estructura queda a la vista (cuántos
+  ficheros, tamaños, nombres de volúmenes e instantáneas), como en ZFS: así FS8 comprueba y repara sin
+  contraseñas y se puede copiar una carpeta cifrada sin abrirla.
+- Adiantum en vez de AES (la Pi 4 no tiene instrucciones de AES). Adiantum no firma: cada bloque cifrado lleva su
+  firma para notar si alguien lo ha cambiado.
+- Pendiente de decidir: si hay llave de recuperación por defecto (un código en papel al crear el usuario). Sin
+  contraseña ni llave de recuperación, los ficheros se pierden.
+
+Descartadas: A (un fichero cifrado por usuario, como FileVault 1 y systemd-homed: escribe dos veces y recuperar
+espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado para lo mismo que A2 como ZFS).
+
 ## Para enviar a Redox (con permiso)
 
 - FS0: los `use` de `alloc` que faltaban para compilar sin std (629bc2e).
@@ -81,6 +101,8 @@ volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volume
 - FS4: `rename_node` no deja mover un cajón dentro de sí mismo (e8b2f76).
 - FS8: borrar o acortar un fichero suelta también su último trozo a medias (a5652ad). Antes, cada fichero borrado
   cuyo tamaño no era múltiplo de 128 KB dejaba hasta 128 KB perdidos.
+- FS9: escribir más allá del final tras acortar un fichero deja el hueco a ceros (175734b). Antes se leían los
+  datos que se habían quitado.
 - FS8: `DirList` con la disposición fijada (`repr(C, packed)`, cuentas al final en little-endian), la misma que ya
   dejaba el compilador (694bc7c).
 - FS8: el comprobador y la reparación (`check.rs`, `repair.rs`, `redoxfs-fsck`), sin lo que es solo de DashFS
@@ -177,3 +199,28 @@ volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volume
   campo lo elegía el compilador (`repr(Rust)`): los puso al final del bloque. Ahora es `repr(C, packed)` con ese
   mismo orden y `Le<u16>`: los discos de siempre se leen igual (comprobado con un disco hecho antes del cambio), y
   un DashOS big-endian u otro compilador también. Prueba `layout_on_disk`.
+- FS9, DashFS 4 (decidido por el usuario: opción A). La dirección de cada bloque guarda, en sus 20 bits altos, la
+  época en que se escribió: cuántas instantáneas se habían tomado. El número de bloque se queda en 36 bits (256 TB).
+  La cabecera guarda la época, la de la instantánea más nueva, la lista de instantáneas y la lista de muertos del
+  volumen (`src/snapshot.rs`). Al soltar un bloque que una instantánea ve, va a la lista de muertos en vez de
+  liberarse. Tomar una instantánea es inmediato: guarda la raíz del árbol y se lleva la lista de muertos. Borrarla
+  libera, de la lista de muertos de la siguiente, lo escrito después de la anterior. Volver a la más nueva libera lo
+  escrito después de ella, bajando por el árbol solo donde hay bloques nuevos. La lista por soltar, la de libres, la
+  de muertos y la de instantáneas no son del árbol: se liberan siempre. Los discos de antes tienen época 0 y se abren
+  tal cual. `FileSystem::snapshot_tx` lee una instantánea; `redoxfs-snapshot DISCO [list | take | delete | rollback]`
+  en Linux; órdenes 17 a 20 del servicio. El comprobador recorre también los árboles de las instantáneas (sus
+  bloques se comparten, no están "usados dos veces") y mira que cada bloque de una lista de muertos lo vea alguna.
+  Encontró otro fallo de RedoxFS: tras acortar un fichero, escribir más allá del final dejaba ver en el hueco los
+  datos quitados (arreglado en su propio commit, para enviar a Redox).
+  Pruebas (`src/tests_snapshot.rs`): 4.500 operaciones al azar contra un modelo, con más de 350 instantáneas tomadas,
+  casi todas borradas y 180 vueltas atrás; tras cada una, el volumen y cada instantánea iguales a su copia del modelo
+  y el comprobador sin avisos; al final, borrándolo todo, el espacio libre vuelve a ser el del principio. Nombres y
+  errores, 100 instantáneas en varios bloques, una tomada a mitad de una transacción, DashFS 3 a 4, y reparar un
+  volumen con instantáneas sin tocarlas. `tests/power_cut.rs` con cinco pasos de instantáneas. Se comprobó que la
+  prueba falla si al soltar no se miran las instantáneas. En QEMU, `ficheros` toma una, crea un fichero, vuelve a
+  ella (el fichero ya no está, las asas de antes no valen) y la descarta. Esa prueba encontró que al volver se
+  perdían los ficheros borrados mientras estaban abiertos (quedaban sin cajón): cada instantánea guarda ahora su
+  copia de la lista por soltar, y al volver se sueltan, porque ya nadie los tiene abiertos.
+  Límites: solo se vuelve a la más nueva (como ZFS sin `-r`). La reparación no arregla una instantánea dañada
+  (la dice), y al rehacer un cajón de un volumen con instantáneas sus bloques viejos no van a la lista de muertos:
+  ese espacio no vuelve al borrar la instantánea (el comprobador lo dará como perdido y la reparación lo recupera).

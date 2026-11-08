@@ -74,7 +74,7 @@ impl AllocCtx for TreeData<Node> {
 }
 
 pub struct Transaction<'a, D: Disk> {
-    fs: &'a mut FileSystem<D>,
+    pub(crate) fs: &'a mut FileSystem<D>,
     //TODO: make private
     pub header: Header,
     //TODO: make private
@@ -82,6 +82,8 @@ pub struct Transaction<'a, D: Disk> {
     pub(crate) allocator: Allocator,
     pub(crate) allocator_log: VecDeque<AllocEntry>,
     pub(crate) deallocate: Vec<BlockAddr>,
+    /// Blocks let go in this transaction that a snapshot still sees: they go to the dead list (FS9).
+    pub(crate) dead: Vec<BlockAddr>,
     pub(crate) write_cache: BTreeMap<BlockAddr, Vec<u8>>,
 }
 
@@ -96,6 +98,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             allocator,
             allocator_log: VecDeque::new(),
             deallocate: Vec::new(),
+            dead: Vec::new(),
             write_cache: BTreeMap::new(),
         }
     }
@@ -121,6 +124,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
     ) -> Result<BlockAddr> {
         match self.allocator.allocate(meta) {
             Some(addr) => {
+                // Stamped with the epoch, for the snapshots (FS9).
+                let addr = addr.with_epoch(self.header.epoch.to_ne());
                 self.allocator_log.push_back(AllocEntry::allocate(addr));
                 ctx.allocate(addr);
                 Ok(addr)
@@ -129,12 +134,28 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
     }
 
-    /// Deallocate the given block.
+    /// Whether a snapshot sees the block at `addr`: one was taken after it was written (FS9).
+    pub(crate) fn seen_by_snapshot(&self, addr: BlockAddr) -> bool {
+        addr.epoch() < self.header.latest.to_ne()
+    }
+
+    /// Deallocate the given block. If a snapshot sees it, it goes to the dead list instead, still in use (FS9).
     /// - unsafe because order must be done carefully and changes must be flushed to disk
     pub(crate) unsafe fn deallocate(&mut self, ctx: &mut dyn AllocCtx, addr: BlockAddr) {
         //TODO: should we use some sort of not-null abstraction?
         assert!(!addr.is_null());
+        ctx.deallocate(addr);
+        if self.seen_by_snapshot(addr) {
+            // Even if it was written in this transaction, before the snapshot: it must still reach the disk.
+            self.dead.push(addr);
+            return;
+        }
+        unsafe { self.deallocate_unshared(addr) };
+    }
 
+    /// Deallocate a block that no snapshot can see: the allocation log, the release list, the dead lists and the
+    /// list of snapshots, which are not part of the tree of nodes.
+    pub(crate) unsafe fn deallocate_unshared(&mut self, addr: BlockAddr) {
         // Remove from write_cache if it is there, since it no longer needs to be written
         //TODO: for larger blocks do we need to check for sub-blocks in here?
         self.write_cache.remove(&addr);
@@ -157,7 +178,19 @@ impl<'a, D: Disk> Transaction<'a, D> {
             // Deallocate later when syncing filesystem, to avoid re-use
             self.deallocate.push(addr);
         }
-        ctx.deallocate(addr);
+    }
+
+    /// `sync_block` for blocks that no snapshot can see (see `deallocate_unshared`).
+    pub(crate) fn sync_block_unshared<T: BlockTrait + Deref<Target = [u8]>>(
+        &mut self,
+        mut block: BlockData<T>,
+    ) -> Result<BlockPtr<T>> {
+        let meta = block.addr().meta();
+        let old_addr = block.swap_addr(unsafe { self.allocate(&mut FsCtx, meta)? });
+        if !old_addr.is_null() {
+            unsafe { self.deallocate_unshared(old_addr) };
+        }
+        unsafe { self.write_block(block) }
     }
 
     unsafe fn deallocate_block<T: BlockTrait>(
@@ -276,6 +309,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Write all changes cached in this [`Transaction`] to disk.
     pub fn sync(&mut self, force_squash: bool) -> Result<bool> {
+        // The dead list first: writing it allocates and frees blocks.
+        self.write_dead()?;
+
         // Make sure alloc is synced
         self.sync_allocator(force_squash)?;
 
@@ -1335,13 +1371,13 @@ impl<'a, D: Disk> Transaction<'a, D> {
             if empty {
                 // Deallocate this release list block
                 unsafe {
-                    self.deallocate(&mut FsCtx, release.addr());
+                    self.deallocate_unshared(release.addr());
                 }
                 // Skip this block in the list
                 update_prev = Some(release.data().prev);
             } else if changed {
                 // Update this block
-                update_prev = Some(self.sync_block(&mut FsCtx, release)?);
+                update_prev = Some(self.sync_block_unshared(release)?);
             } else {
                 update_prev = None;
             }
@@ -1388,7 +1424,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
 
             // Update header
-            self.header.release = self.sync_block(&mut FsCtx, release)?;
+            self.header.release = self.sync_block_unshared(release)?;
             self.header_changed = true;
         } else {
             let (mut node, node_addr) = self.read_tree_and_addr(node_ptr)?;
@@ -2219,6 +2255,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
         buf: &[u8],
     ) -> Result<bool> {
         let mut node_changed = false;
+
+        // Past the end, the gap reads as zeros: what a shorter size left in its last record must not show again.
+        if *offset > node.data().size() {
+            node_changed |= self.truncate_node_inner(node, *offset)?;
+        }
 
         // Try writing to inline data
         let node_size = node.data().size();
