@@ -415,6 +415,33 @@ Si una idea del vídeo no cabe en el protocolo (por ejemplo, un efecto que mezcl
 se amplía el protocolo o se lleva al compositor. Lo que necesite el oficial para el vídeo está, por regla, a mano de
 los demás.
 
+### Lo que enseña el vídeo del usuario (2026-11-08)
+
+El usuario pasó un vídeo de 89 segundos (1280x720, no va al repositorio) con el escritorio que quiere como oficial. Se
+miró un fotograma cada 4 segundos; puede haber detalles entre medias que no se vieron. El fondo es un cuadro (Hopper,
+"Nighthawks") y el tema, oscuro con acentos naranjas.
+
+| Lo que se ve | Va en | Qué pide |
+|---|---|---|
+| Un marco con esquinas redondeadas alrededor de toda la pantalla; la barra forma parte del marco | Escritorio, con ayuda del compositor | Zona exclusiva en los cuatro bordes y esquinas redondeadas del área de ventanas |
+| Cuatro estilos de barra que se cambian en vivo: "Island" (pastillas que se abren), "Classic", "Dashboard" (una pastilla que crece) y "Vertical" (barra y paneles pegados) | Escritorio | Nada nuevo: son capas suyas |
+| Barra vertical a la izquierda: lanzador, espacios de trabajo como puntos, foto del usuario, reloj en vertical, grabación con su tiempo, avisos, brillo, red, Bluetooth, volumen, batería y apagado | Escritorio, con datos de los servicios | Servicios de red, sonido, energía, Bluetooth y avisos; estado de los espacios de trabajo |
+| Isla arriba en el centro: hora, fecha, canción que suena con su onda, red, batería | Escritorio | Servicio de música (con la carátula) |
+| Lanzador con buscador, categorías con su número (Todo, Favoritos, Recientes, Internet, Desarrollo, Juegos, Multimedia, Gráficos, Oficina) y favoritos con estrella | Escritorio | La lista de programas y sus categorías, del servicio de paquetes (S8) |
+| Panel de ajustes rápidos pegado a la barra: modo noche, modo juego, no molestar, pantallas, deslizadores de brillo, volumen y micrófono, uso de CPU, memoria y temperatura | Escritorio | Poder de cambiar brillo, sonido y "no molestar" a través de los servicios; el modo noche (tono de color) lo aplica el compositor |
+| Centro de control que cae desde arriba, con pestañas: reproductor con carátula, calendario, avisos ("Recording started"), portapapeles con imágenes, barras del sistema | Escritorio | Servicio de portapapeles con su propio poder (leer el portapapeles es sensible, S6) |
+| Grabación de pantalla con contador, y un temporizador de 5 minutos | Compositor graba; escritorio solo lo pide y enseña el estado | La captura es del compositor, con su indicador que el escritorio no puede quitar (sección 2) |
+| Selector de tema: claro u oscuro y paletas sacadas del fondo ("monochrome", "tinted"...) | Servicio de apariencia | Colores calculados del fondo, para todos los escritorios y programas |
+| Selector de fondo a pantalla completa: la imagen grande, una tira de miniaturas con su paleta al lado y el resto desenfocado | Escritorio y servicio de apariencia | Desenfoque de lo que hay detrás de una capa: efecto del compositor |
+| Una ventana que se abre con un zoom mientras el fondo se desenfoca | Compositor | Animaciones de ventanas y desenfoque, configurables |
+| Menú de apagado: bloquear, cerrar sesión, suspender, reiniciar, apagar, con confirmación | Escritorio pide; sesión decide | Poder de pedir el apagado; la confirmación de lo que no se deshace la pone el sistema |
+
+Lo que añade al compositor (fase E3 o E4): desenfoque detrás de las capas que lo pidan, esquinas redondeadas del
+área de ventanas, animaciones de abrir y cerrar con zoom, y el tono de color del modo noche. Lo que añade a los
+servicios: música con carátula, portapapeles con imágenes y paletas sacadas del fondo. Lo demás es del escritorio
+oficial y no pide nada nuevo al protocolo. Se parece a lo que hacen hoy las shells de Quickshell sobre Niri; no se
+comprobó de cuál sale el vídeo.
+
 ## 8. Fases y su prueba
 
 Primero en QEMU `virt` con `ramfb` y teclado y ratón por xHCI, que ya funcionan (U6). Después en la Pi 4. Cada fase
