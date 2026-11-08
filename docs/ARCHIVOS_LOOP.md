@@ -42,7 +42,7 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS7 | Atributos del Amiga: comentario y bits de protección | hecha (DashFS 3) |
 | FS8 | Herramienta de reparación (comprobar y arreglar) | hecha (`redoxfs-fsck`, orden 16 del servicio) |
 | FS9 | Instantáneas | hecha (DashFS 4, la época en la dirección de cada bloque) |
-| FS10 | Carpeta cifrada por usuario con Adiantum | |
+| FS10 | Carpeta cifrada por usuario con Adiantum | decidida: A2 como ZFS |
 | FS11 | Cuidar la SD: escrituras juntas, TRIM, alineación a 4 MB | |
 
 Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
@@ -72,6 +72,26 @@ RedoxFS hoy lo suelta siempre. Hay que saber, de cada bloque, si alguna instant�
 Las instantáneas son del volumen entero: en RedoxFS los cajones apuntan a los nodos por número, a través del
 árbol, así que congelar un cajón suelto pide congelar el árbol. Una instantánea de un cajón se ve como la del
 volumen, mirando solo ese cajón. Por eso `Usuarios:` conviene que sea un volumen aparte.
+
+## FS10, carpeta cifrada por usuario
+
+Decisión del usuario (2026-11-08): A2 "como ZFS".
+
+- Varios volúmenes en un mismo disco (el común y uno por usuario), como los datasets de ZFS o los volúmenes de
+  APFS. Comparten el espacio libre; un máximo por usuario es opcional. Sin fichero en medio: se escribe una vez y
+  lo borrado vuelve al momento.
+- Cada volumen tiene su llave, guardada en su cabecera y envuelta por la contraseña (Argon2, como los 64 huecos
+  de RedoxFS): cambiar la contraseña no recifra nada, y cabe una llave de recuperación.
+- Se cifra el contenido, los nombres, los permisos y los atributos. La estructura queda a la vista (cuántos
+  ficheros, tamaños, nombres de volúmenes e instantáneas), como en ZFS: así FS8 comprueba y repara sin
+  contraseñas y se puede copiar una carpeta cifrada sin abrirla.
+- Adiantum en vez de AES (la Pi 4 no tiene instrucciones de AES). Adiantum no firma: cada bloque cifrado lleva su
+  firma para notar si alguien lo ha cambiado.
+- Pendiente de decidir: si hay llave de recuperación por defecto (un código en papel al crear el usuario). Sin
+  contraseña ni llave de recuperación, los ficheros se pierden.
+
+Descartadas: A (un fichero cifrado por usuario, como FileVault 1 y systemd-homed: escribe dos veces y recuperar
+espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado para lo mismo que A2 como ZFS).
 
 ## Para enviar a Redox (con permiso)
 
