@@ -271,3 +271,6 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
   Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
   montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).
+  QEMU: `arranque-virt` bien (con el disco leído en Linux). `prueba` (raspi4b) falló una vez en
+  `[grupos] cupo agotado` (C43), con el emulador cargado por otras sesiones, y salió bien al repetirla: nada que
+  ver con los archivos.
