@@ -56,6 +56,7 @@ pub use self::tree::{Tree, TreeData, TreeList, TreePtr};
 #[cfg(feature = "std")]
 pub use self::unmount::unmount_path;
 
+pub mod adiantum;
 mod allocator;
 #[cfg(feature = "std")]
 mod archive;

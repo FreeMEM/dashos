@@ -90,6 +90,16 @@ Decisión del usuario (2026-11-08): A2 "como ZFS".
 - Pendiente de decidir: si hay llave de recuperación por defecto (un código en papel al crear el usuario). Sin
   contraseña ni llave de recuperación, los ficheros se pierden.
 
+Pasos:
+
+| Paso | Qué | Estado |
+|------|-----|--------|
+| FS10a | Adiantum (XChaCha12, AES-256, NH, Poly1305) desde la especificación, con los vectores de Google | hecho |
+| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | |
+| FS10c | Cifrar un volumen como ZFS: llave propia envuelta por la contraseña, contenido y nombres con Adiantum (el tweak es la dirección del bloque), firma de cada bloque en el hash de su puntero | |
+| FS10d | Comprobar y reparar sin llaves: la estructura sí, el contenido cifrado no | |
+| FS10e | DashOS: abrir el volumen del usuario al entrar, y la llave de recuperación | |
+
 Descartadas: A (un fichero cifrado por usuario, como FileVault 1 y systemd-homed: escribe dos veces y recuperar
 espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado para lo mismo que A2 como ZFS).
 
