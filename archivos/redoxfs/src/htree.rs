@@ -4,6 +4,7 @@ use core::{fmt, mem, ops, slice};
 use endian_num::Le;
 use syscall::error::{EEXIST, EIO, Error, Result};
 
+use crate::casefold::Names;
 use crate::{
     BLOCK_SIZE, BlockLevel, BlockPtr, BlockRaw, BlockTrait, DirEntry, DirList, RECORD_LEVEL,
 };
@@ -59,11 +60,11 @@ impl HTreeHash {
         if *self > other { *self } else { other }
     }
 
-    pub fn find_max(dir_list: &DirList) -> Option<HTreeHash> {
+    pub fn find_max(dir_list: &DirList, names: Names) -> Option<HTreeHash> {
         let mut max_hash = HTreeHash::default();
         dir_list.for_each_entry(|_ptr_bytes, name_bytes| {
             let name = String::from_utf8_lossy(name_bytes);
-            let hash = HTreeHash::from_name(name.as_ref());
+            let hash = names.hash(name.as_ref());
             max_hash = max_hash.max_ignoring_default(hash);
         });
 
@@ -275,9 +276,10 @@ pub fn add_dir_entry(
     dir_list: &mut DirList,
     htree_hash: &mut HTreeHash,
     dirent: DirEntry,
+    names: Names,
 ) -> Result<Option<(HTreeHash, DirList)>> {
     if let Some(name) = dirent.name() {
-        if dir_list.find_entry(name).is_some() {
+        if dir_list.find_entry(&names.wanted(name)).is_some() {
             return Err(Error::new(EEXIST));
         }
     }
@@ -285,19 +287,16 @@ pub fn add_dir_entry(
     // Update the input htree parameters in place
     let name = dirent.name().ok_or(Error::new(EIO))?;
     if dir_list.append(&dirent) {
-        *htree_hash = HTreeHash::from_name(name).max_ignoring_default(*htree_hash);
+        *htree_hash = names.hash(name).max_ignoring_default(*htree_hash);
         return Ok(None);
     }
 
     // The dir_list is full. We need to split it into two dir_lists by half, ordered by the name hash.
     let mut entries_with_name_hash = Vec::with_capacity(dir_list.entry_count() + 1);
     for entry in dir_list.entries() {
-        entries_with_name_hash.push((
-            HTreeHash::from_name(entry.name().ok_or(Error::new(EIO))?),
-            entry,
-        ));
+        entries_with_name_hash.push((names.hash(entry.name().ok_or(Error::new(EIO))?), entry));
     }
-    entries_with_name_hash.push((HTreeHash::from_name(dirent.name().unwrap()), dirent));
+    entries_with_name_hash.push((names.hash(dirent.name().unwrap()), dirent));
     entries_with_name_hash.sort_by(|a, b| a.0.cmp(&b.0));
     let half = entries_with_name_hash.len() / 2;
     let half_name_hash = entries_with_name_hash[half].0;
@@ -484,14 +483,15 @@ mod tests {
         let mut dir_list = DirList::empty(BlockLevel::default()).unwrap();
         let mut htree_hash = HTreeHash::default();
         let dirent = DirEntry::new(TreePtr::new(123), "test");
-        let new_sibling = add_dir_entry(&mut dir_list, &mut htree_hash, dirent).unwrap();
+        let new_sibling =
+            add_dir_entry(&mut dir_list, &mut htree_hash, dirent, Names::Exact).unwrap();
         assert!(new_sibling.is_none());
         assert_eq!(htree_hash, HTreeHash::from_name("test"));
         assert_eq!(dir_list.entries().next().unwrap().name(), Some("test"));
 
         // Add the same entry again, and it should fail with an appropriate IO error
         let dirent = DirEntry::new(TreePtr::new(123), "test");
-        let error_expected = add_dir_entry(&mut dir_list, &mut htree_hash, dirent);
+        let error_expected = add_dir_entry(&mut dir_list, &mut htree_hash, dirent, Names::Exact);
         assert!(error_expected.is_err());
         assert_eq!(error_expected.err().unwrap().errno, EEXIST);
     }
@@ -506,7 +506,8 @@ mod tests {
         for i in 0..total_count {
             let v: usize = i % 10;
             let dirent = DirEntry::new(TreePtr::new(123), format!("test{v}_{i:0244}").as_str());
-            let new_sibling = add_dir_entry(&mut dir_list, &mut htree_hash, dirent).unwrap();
+            let new_sibling =
+                add_dir_entry(&mut dir_list, &mut htree_hash, dirent, Names::Exact).unwrap();
             assert!(new_sibling.is_none());
         }
 
@@ -530,7 +531,8 @@ mod tests {
 
         // Test a split by adding one more entry
         let dirent = DirEntry::new(TreePtr::new(123), "test_split");
-        let new_sibling = add_dir_entry(&mut dir_list, &mut htree_hash, dirent).unwrap();
+        let new_sibling =
+            add_dir_entry(&mut dir_list, &mut htree_hash, dirent, Names::Exact).unwrap();
         let (new_sibling_htree_hash, new_sibling_dir_list) =
             new_sibling.expect("new_sibling should be created");
         // assert!(new_sibling_dir_list.entries.len() );

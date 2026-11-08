@@ -38,7 +38,7 @@ también a Redox (arreglos, pruebas, reparación) se les manda, siempre con perm
 | FS3 | API de ficheros por canal para los clientes (abrir, leer, listar, datos de un fichero), en `docs/referencia/servicios.md` | hecha |
 | FS4 | Escribir desde DashOS (crear, escribir, borrar, renombrar), con las pruebas de FS2 pasando | hecha |
 | FS5 | Formato propio: marca "DashFS", versión propia y conversión desde la anterior | hecha (DashFS 1) |
-| FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | |
+| FS6 | Nombres sin distinguir mayúsculas (guardando cómo se escribieron) | hecha (DashFS 2, marca por carpeta) |
 | FS7 | Atributos del Amiga: comentario y bits de protección | |
 | FS8 | Herramienta de reparación (comprobar y arreglar) | |
 | FS9 | Instantáneas | |
@@ -80,3 +80,22 @@ Con FS1 a FS4 ya puede empezar la caja Amiga (H4) y su `dos.library`.
   o versiones desconocidas, rechazadas). Solo DashOS: Redox ya no abre nuestros discos. `cargo test`: 39 + 5 + 9
   bien; `make -C kernel arranque-virt` y `prueba`: BIEN; las cabeceras del disco de prueba dicen DashFS.
   Cuando cambie la disposición (FS6, FS7), DashFS 2 y una conversión de verdad.
+- FS6, decidido por el usuario: una marca por carpeta (`NodeFlags::CASEFOLD`), como el casefold de ext4, en vez de
+  todo el sistema. La raíz la lleva (`redoxfs-mkfs --exact-names` la quita) y cada carpeta nueva hereda la de su
+  madre; `Transaction::set_casefold` la cambia solo en una carpeta vacía (como ext4: con nombres dentro, dos podrían
+  volverse uno). El nombre se guarda como se escribió y se busca por su clave: NFD(casefold(NFD(c))) por carácter y
+  orden canónico de las marcas. Así "Árbol", "ÁRBOL" y "A" + tilde aparte son el mismo nombre, y "Straße" y
+  "STRASSE" también. Plegado por defecto, no el turco. Las tablas (`src/casefold_data.rs`, Unicode 16) salen de
+  `tools/gen_casefold.py` y quedan fijas: si cambiaran, cambiarían las claves de nombres ya escritos, y eso pide
+  otra versión de DashFS. Una carpeta marcada pone el hash del H-tree sobre la clave.
+  Versión 2 del formato: la disposición no cambia; un disco DashFS 1 no tiene carpetas marcadas, así que se abre
+  tal cual y sigue distinguiendo mayúsculas en todas sus carpetas. Un lector de DashFS 1 rechaza la versión 2.
+  Renombrar cambiando solo cómo se escribe ("readme" a "ReadMe") cambia el nombre guardado; con `no_replace` y el
+  mismo texto da EEXIST, como `renameat2` de Linux; dos enlaces duros del mismo fichero siguen siendo dos entradas.
+  Pruebas: `src/casefold.rs` (casos, que la clave de una clave es ella misma en todos los caracteres, y 3.000
+  cadenas mezcladas iguales a las de Python, `tests/casefold_vectors.txt`) y `src/tests_casefold.rs`: raíz y
+  herencia, nombres con y sin tilde, carpetas que distinguen, cambiar la marca, renombrar, enlaces duros, 5.000
+  nombres largos (H-tree de dos niveles) buscados y borrados con otras grafías, 6.000 operaciones al azar contra un
+  modelo con tres semillas reabriendo el disco, y DashFS 1 a 2. La prueba al azar encontró un fallo: renombrar "ñ" a
+  "n" + tilde aparte, con los dos argumentos iguales, no cambiaba el nombre guardado; ahora compara con el guardado.
+  `cargo test`: 55 + 5 + 9 bien.

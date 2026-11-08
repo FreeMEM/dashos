@@ -142,7 +142,9 @@ lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/
 - (S4) ¿Cargar bibliotecas de la ROM de Kickstart del usuario mientras falten las nativas? **sí.**
 - (S4) ¿Amiberry empaquetado como aplicación para lo que toca el chipset? **sí.**
 - (S4b) ¿Nombre del volumen de paquetes: `Paquetes:`, `Programas:` o `Apps:`? **`Paquetes:`.**
-- (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? **sí.**
+- (S4b) ¿Sin distinguir mayúsculas en todo el sistema, con volúmenes que sí distinguen a petición? **sí.** Cambiado
+  por el usuario el 2026-11-08 (FS6): una marca por carpeta, como el casefold de ext4. La raíz y lo que cuelga de
+  ella no distinguen; la caja Linux parte de una carpeta que sí distingue. Hecho en DashFS 2.
 - (S4b) ¿Preferencias compartidas con la caja en IFF, y las solo de DashOS en texto? **sí.**
 - (S5) ¿Partir de RedoxFS o diseñar uno propio? **RedoxFS, con rama propia.**
 - (S5) ¿Cajón de cada usuario cifrado de serie con su contraseña (Adiantum en la Pi 4)? **sí.**

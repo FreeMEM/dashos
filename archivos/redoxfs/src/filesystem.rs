@@ -8,7 +8,9 @@ use syscall::error::{EKEYREJECTED, ENOENT, ENOKEY, Error, Result};
 use xts_mode::{Xts128, get_tweak_default};
 
 #[cfg(feature = "std")]
-use crate::{AllocEntry, AllocList, BlockData, BlockTrait, Key, KeySlot, Node, Salt, TreeList};
+use crate::{
+    AllocEntry, AllocList, BlockData, BlockTrait, Key, KeySlot, Node, NodeFlags, Salt, TreeList,
+};
 use crate::{
     Allocator, BLOCK_SIZE, BlockAddr, BlockLevel, BlockMeta, Disk, HEADER_RING, Header,
     RECORD_SIZE, Transaction,
@@ -223,6 +225,10 @@ impl<D: Disk> FileSystem<D> {
                 Node::new(Node::MODE_DIR | 0o755, 0, 0, ctime, ctime_nsec),
             );
             root.data_mut().set_links(1);
+            // DashFS 2: the root and what is made under it compare names without case, as in AmigaOS. Trees
+            // that need case (the Linux box) start from an empty directory with `set_casefold(dir, false)`.
+            let flags = root.data().flags() | NodeFlags::CASEFOLD;
+            root.data_mut().set_flags(flags);
             let root_ptr = tx.write_block(root)?;
             assert_eq!(tx.insert_tree(root_ptr)?.id(), 1);
             Ok(())

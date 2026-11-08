@@ -6,8 +6,8 @@ use aes::Aes128;
 use xts_mode::{Xts128, get_tweak_default};
 
 use crate::{
-    AllocList, BLOCK_SIZE, BlockPtr, KeySlot, REDOXFS_SIGNATURE, REDOXFS_VERSION, ReleaseList, SIGNATURE, Tree,
-    VERSION,
+    AllocList, BLOCK_SIZE, BlockPtr, KeySlot, OLDEST_VERSION, REDOXFS_SIGNATURE, REDOXFS_VERSION,
+    ReleaseList, SIGNATURE, Tree, VERSION,
 };
 
 pub const HEADER_RING: u64 = 256;
@@ -58,8 +58,10 @@ impl Header {
     }
 
     pub fn valid(&self) -> bool {
-        let current = &self.signature == SIGNATURE && self.version.to_ne() == VERSION;
-        let redoxfs = &self.signature == REDOXFS_SIGNATURE && self.version.to_ne() == REDOXFS_VERSION;
+        let current = &self.signature == SIGNATURE
+            && (OLDEST_VERSION..=VERSION).contains(&self.version.to_ne());
+        let redoxfs =
+            &self.signature == REDOXFS_SIGNATURE && self.version.to_ne() == REDOXFS_VERSION;
         if !current && !redoxfs {
             // Signature or version does not match
             return false;

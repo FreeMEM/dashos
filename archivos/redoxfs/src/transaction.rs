@@ -16,6 +16,7 @@ use crate::{
     BlockLevel, BlockMeta, BlockPtr, BlockTrait, DIR_ENTRY_MAX_LENGTH, DirEntry, DirList, Disk,
     FileSystem, HEADER_RING, Header, Node, NodeFlags, NodeLevel, NodeLevelData, RecordRaw,
     ReleaseList, TreeData, TreePtr,
+    casefold::Names,
     htree::{self, HTreeHash, HTreeNode, HTreePtr},
 };
 
@@ -780,6 +781,19 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Find a node that is a child of the `parent_ptr` and is named `name`.
     /// Returns ENOENT if this node is not found.
     pub fn find_node(&mut self, parent_ptr: TreePtr<Node>, name: &str) -> Result<TreeData<Node>> {
+        self.lookup(parent_ptr, name).map(|(node, _entry)| node)
+    }
+
+    /// The entry of `name` in a directory, with the name as it is stored.
+    pub fn find_entry(&mut self, parent_ptr: TreePtr<Node>, name: &str) -> Result<DirEntry> {
+        self.lookup(parent_ptr, name).map(|(_node, entry)| entry)
+    }
+
+    fn lookup(
+        &mut self,
+        parent_ptr: TreePtr<Node>,
+        name: &str,
+    ) -> Result<(TreeData<Node>, DirEntry)> {
         let parent = self.read_tree(parent_ptr)?;
         if !level_data(&parent)?.level0[0].is_marker() {
             return Err(Error::new(ENOENT));
@@ -801,14 +815,16 @@ impl<'a, D: Disk> Transaction<'a, D> {
             self.read_block(root_htree_ptr)?
         };
 
+        let names = Names::of(parent.data());
         let result = self.find_node_inner(
             root_htree_node.data(),
             name,
-            HTreeHash::from_name(name),
+            names,
+            names.hash(name),
             htree_levels.max(1),
         )?;
         result
-            .map(|(tree_node, _address)| tree_node)
+            .map(|(tree_node, _address, entry)| (tree_node, entry))
             .ok_or(Error::new(ENOENT))
     }
 
@@ -816,19 +832,21 @@ impl<'a, D: Disk> Transaction<'a, D> {
         &mut self,
         parent_htree_node: &HTreeNode<RecordRaw>,
         name: &str,
+        names: Names,
         name_hash: HTreeHash,
         htree_levels: usize,
-    ) -> Result<Option<(TreeData<Node>, BlockAddr)>> {
+    ) -> Result<Option<(TreeData<Node>, BlockAddr, DirEntry)>> {
         assert!(htree_levels > 0);
         if htree_levels == 1 {
             // If we are at the leaf level, search for the name
+            let wanted = names.wanted(name);
             for (_, htree_ptr) in parent_htree_node.find_ptrs_for_read(name_hash) {
                 let dir_ptr: BlockPtr<DirList> = unsafe { htree_ptr.ptr.cast() };
                 let dir = self.read_block(dir_ptr)?;
 
-                if let Some(entry) = dir.data().find_entry(name) {
-                    let node_ptr = entry.node_ptr();
-                    return Ok(Some(self.read_tree_and_addr(node_ptr)?));
+                if let Some(entry) = dir.data().find_entry(&wanted) {
+                    let (node, addr) = self.read_tree_and_addr(entry.node_ptr())?;
+                    return Ok(Some((node, addr, entry)));
                 }
             }
             #[cfg(feature = "log")]
@@ -841,7 +859,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let htree_ptr: BlockPtr<HTreeNode<RecordRaw>> = unsafe { entry.ptr.cast() };
             let htree_node = self.read_block(htree_ptr)?;
             let result =
-                self.find_node_inner(htree_node.data(), name, name_hash, htree_levels - 1)?;
+                self.find_node_inner(htree_node.data(), name, names, name_hash, htree_levels - 1)?;
             if let Some(node) = result {
                 return Ok(Some(node));
             }
@@ -868,16 +886,19 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
         unsafe {
             let parent = self.read_tree(parent_ptr)?;
-            let node_block_data = BlockData::new(
-                self.allocate(&mut FsCtx, BlockMeta::default())?,
-                Node::new(
-                    mode,
-                    parent.data().uid(),
-                    parent.data().gid(),
-                    ctime,
-                    ctime_nsec,
-                ),
+            let mut node = Node::new(
+                mode,
+                parent.data().uid(),
+                parent.data().gid(),
+                ctime,
+                ctime_nsec,
             );
+            // A new directory compares names as its parent does.
+            if node.is_dir() && Names::of(parent.data()) == Names::Caseless {
+                node.set_flags(node.flags() | NodeFlags::CASEFOLD);
+            }
+            let node_block_data =
+                BlockData::new(self.allocate(&mut FsCtx, BlockMeta::default())?, node);
             let node_block_ptr = self.write_block(node_block_data)?;
             let node_ptr = self.insert_tree(node_block_ptr)?;
 
@@ -901,8 +922,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let links = node.data().links();
         node.data_mut().set_links(links + 1);
 
+        let names = Names::of(parent.data());
         let dir_entry = DirEntry::new(node_ptr, name);
-        let dir_entry_htree_hash = HTreeHash::from_name(name);
+        let dir_entry_htree_hash = names.hash(name);
         let record_byte_size = parent.data().record_level().bytes();
 
         // If this is a brand new directory, create the first DirList block
@@ -944,6 +966,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             &mut parent,
             htree_root.data_mut(),
             dir_entry,
+            names,
             dir_entry_htree_hash,
             htree_levels.max(1),
         )?;
@@ -1007,6 +1030,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         parent_dir_node: &mut TreeData<Node>,
         parent_htree_node: &mut HTreeNode<RecordRaw>,
         dir_entry: DirEntry,
+        names: Names,
         dir_entry_htree_hash: HTreeHash,
         htree_levels: usize,
     ) -> Result<Option<(HTreeHash, HTreeNode<RecordRaw>)>> {
@@ -1033,7 +1057,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let dir_ptr: BlockPtr<DirList> = unsafe { htree_ptr.ptr.cast() };
             let mut dir = self.read_block(dir_ptr)?;
             let unallocated_sibling =
-                htree::add_dir_entry(dir.data_mut(), &mut htree_ptr.htree_hash, dir_entry)?;
+                htree::add_dir_entry(dir.data_mut(), &mut htree_ptr.htree_hash, dir_entry, names)?;
             let dir_record_ptr = unsafe { self.sync_block(parent_dir_node, dir)?.cast() };
             parent_htree_node.ptrs[htree_ptr_idx] =
                 HTreePtr::new(htree_ptr.htree_hash, dir_record_ptr);
@@ -1061,6 +1085,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             parent_dir_node,
             htree_block.data_mut(),
             dir_entry,
+            names,
             dir_entry_htree_hash,
             htree_levels - 1,
         )?;
@@ -1111,7 +1136,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         let htree_levels = level_data(&parent)?.level0[0].addr().level().0;
-        let name_hash = HTreeHash::from_name(name);
+        let names = Names::of(parent.data());
+        let name_hash = names.hash(name);
 
         let mut htree_root = if htree_levels == 0 {
             // If we have no H-tree root, create a fake one to satisfy the recurisve inner_link_node function
@@ -1131,8 +1157,14 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
         // Read node and test type against requested type
         // TODO: Do this check as part of the removal tree processing, and get rid of this extra find
-        let (mut node, _node_addr) = self
-            .find_node_inner(htree_root.data(), name, name_hash, htree_levels.max(1))?
+        let (mut node, _node_addr, _entry) = self
+            .find_node_inner(
+                htree_root.data(),
+                name,
+                names,
+                name_hash,
+                htree_levels.max(1),
+            )?
             .ok_or(Error::new(ENOENT))?;
 
         if mode & Node::MODE_TYPE == Node::MODE_DIR {
@@ -1167,6 +1199,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             &mut parent,
             htree_root.data_mut(),
             name,
+            names,
             name_hash,
             htree_levels.max(1),
         )?;
@@ -1364,6 +1397,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         parent_dir_node: &mut TreeData<Node>,
         parent_htree_node: &mut HTreeNode<RecordRaw>,
         dir_entry_name: &str,
+        names: Names,
         dir_entry_htree_hash: HTreeHash,
         htree_levels: usize,
     ) -> Result<()> {
@@ -1383,14 +1417,16 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 let mut dir_list = self.read_block(dir_ptr)?;
 
                 // If we don't find the entry to remove, continue to the next relevant node
-                if !dir_list.data_mut().remove_entry(dir_entry_name) {
+                if !dir_list
+                    .data_mut()
+                    .remove_entry(&names.wanted(dir_entry_name))
+                {
                     continue;
                 }
 
                 // Determine if the htree_hash needs to be updated
-                let new_htree_hash = if dir_entry_htree_hash == HTreeHash::from_name(dir_entry_name)
-                {
-                    HTreeHash::find_max(dir_list.data())
+                let new_htree_hash = if dir_entry_htree_hash == names.hash(dir_entry_name) {
+                    HTreeHash::find_max(dir_list.data(), names)
                 } else {
                     Some(dir_entry_htree_hash)
                 };
@@ -1417,6 +1453,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                     parent_dir_node,
                     htree_node.data_mut(),
                     dir_entry_name,
+                    names,
                     dir_entry_htree_hash,
                     htree_levels - 1,
                 );
@@ -1468,6 +1505,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
         if let Ok(new) = self.find_node(new_parent_ptr, new_name) {
             // Move to same name, return
             if new.id() == orig.id() {
+                if self.same_entry(orig_parent_ptr, orig_name, new_parent_ptr, new_name)? {
+                    return self.respell(&orig, orig_parent_ptr, orig_name, new_name);
+                }
                 return Ok(());
             }
 
@@ -1504,8 +1544,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let orig = self.find_node(orig_parent_ptr, orig_name)?;
         self.check_not_inside(&orig, new_parent_ptr)?;
 
-        // The target shouldn't exist.
-        if self.find_node(new_parent_ptr, new_name).is_ok() {
+        // The target shouldn't exist, unless it is the same entry written another way (caseless directories).
+        // The same name is EEXIST, as in Linux's renameat2 with RENAME_NOREPLACE.
+        if let Ok(new) = self.find_node(new_parent_ptr, new_name) {
+            if new.id() == orig.id()
+                && orig_name != new_name
+                && self.same_entry(orig_parent_ptr, orig_name, new_parent_ptr, new_name)?
+            {
+                return self.respell(&orig, orig_parent_ptr, orig_name, new_name);
+            }
             return Err(Error::new(EEXIST));
         }
 
@@ -1522,6 +1569,68 @@ impl<'a, D: Disk> Transaction<'a, D> {
         )?;
 
         Ok(())
+    }
+
+    /// Whether two names are the same entry of the same directory: in a caseless directory "Readme" and "README"
+    /// are. Two hard links to one node in one directory are not.
+    fn same_entry(
+        &mut self,
+        orig_parent_ptr: TreePtr<Node>,
+        orig_name: &str,
+        new_parent_ptr: TreePtr<Node>,
+        new_name: &str,
+    ) -> Result<bool> {
+        if orig_parent_ptr.id() != new_parent_ptr.id() {
+            return Ok(false);
+        }
+        let parent = self.read_tree(orig_parent_ptr)?;
+        Ok(Names::of(parent.data())
+            .wanted(orig_name)
+            .matches(new_name.as_bytes()))
+    }
+
+    /// Writes an entry of a caseless directory another way ("readme" to "ReadMe"), if it is not already written
+    /// so. The link count goes up first so that removing the old spelling does not free the node.
+    fn respell(
+        &mut self,
+        node: &TreeData<Node>,
+        parent_ptr: TreePtr<Node>,
+        old_name: &str,
+        new_name: &str,
+    ) -> Result<()> {
+        if self.find_entry(parent_ptr, old_name)?.name() == Some(new_name) {
+            return Ok(());
+        }
+        if new_name.contains(':') || new_name.len() > DIR_ENTRY_MAX_LENGTH {
+            return Err(Error::new(EINVAL));
+        }
+        let node_ptr = node.ptr();
+        let mode = node.data().mode() & Node::MODE_TYPE;
+        let mut node = self.read_tree(node_ptr)?;
+        let links = node.data().links();
+        node.data_mut().set_links(links + 1);
+        self.sync_tree(node)?;
+        self.remove_node(parent_ptr, old_name, mode)?;
+        self.link_node(parent_ptr, new_name, node_ptr)?;
+        let mut node = self.read_tree(node_ptr)?;
+        node.data_mut().set_links(links);
+        self.sync_tree(node)
+    }
+
+    /// DashFS 2: makes a directory compare names without case, or with case again. Only while it is empty, as
+    /// ext4 does: with entries, two names could become one, and every name would need a new hash.
+    pub fn set_casefold(&mut self, node_ptr: TreePtr<Node>, caseless: bool) -> Result<()> {
+        let mut node = self.read_tree(node_ptr)?;
+        if !node.data().is_dir() {
+            return Err(Error::new(ENOTDIR));
+        }
+        if level_data(&node)?.level0[0].is_marker() {
+            return Err(Error::new(ENOTEMPTY));
+        }
+        let mut flags = node.data().flags();
+        flags.set(NodeFlags::CASEFOLD, caseless);
+        node.data_mut().set_flags(flags);
+        self.sync_tree(node)
     }
 
     /// A directory cannot be moved into itself or into one of its descendants: it would become unreachable, inside

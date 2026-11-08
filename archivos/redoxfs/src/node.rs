@@ -6,6 +6,9 @@ use crate::{BLOCK_SIZE, BlockLevel, BlockList, BlockPtr, BlockTrait, RECORD_LEVE
 bitflags::bitflags! {
     pub struct NodeFlags: u32 {
         const INLINE_DATA = 0x1;
+        /// DashFS 2: a directory whose names are compared without case (see `casefold`). New subdirectories
+        /// inherit it.
+        const CASEFOLD = 0x2;
     }
 }
 

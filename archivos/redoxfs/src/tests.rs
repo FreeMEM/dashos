@@ -995,10 +995,13 @@ fn split_htree_with_multiple_levels_using_duplicates() {
     });
 }
 
-/// DashOS: a RedoxFS 8 disk opens, and the next write turns its header into DashFS 1.
+/// DashOS: a RedoxFS 8 disk opens, and the next write turns its header into DashFS.
 #[test]
 fn redoxfs_header_becomes_dashfs_on_write() {
-    use crate::{Disk, DiskMemory, Header, REDOXFS_SIGNATURE, REDOXFS_VERSION, SIGNATURE, VERSION, header::HEADER_RING};
+    use crate::{
+        Disk, DiskMemory, Header, REDOXFS_SIGNATURE, REDOXFS_VERSION, SIGNATURE, VERSION,
+        header::HEADER_RING,
+    };
 
     let disk = DiskMemory::new(64 * 1024 * 1024);
     let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
@@ -1036,7 +1039,10 @@ fn redoxfs_header_becomes_dashfs_on_write() {
     header.update_hash(None);
     assert!(!header.valid());
     header.signature = *SIGNATURE;
-    header.version = 2.into();
+    header.version = (VERSION + 1).into();
+    header.update_hash(None);
+    assert!(!header.valid());
+    header.version = 0.into();
     header.update_hash(None);
     assert!(!header.valid());
 }

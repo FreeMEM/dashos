@@ -4,12 +4,15 @@ extern crate uuid;
 use std::io::Read;
 use std::{env, fs, io, process, time};
 
-use redoxfs::{DiskFile, FileSystem};
+use redoxfs::{DiskFile, FileSystem, TreePtr};
 use termion::input::TermRead;
 use uuid::Uuid;
 
 fn usage() -> ! {
-    eprintln!("redoxfs-mkfs [--encrypt] DISK [BOOTLOADER]");
+    eprintln!("redoxfs-mkfs [--encrypt] [--exact-names] DISK [BOOTLOADER]");
+    eprintln!(
+        "  --exact-names: the root compares names with case (by default it does not, as in AmigaOS)"
+    );
     process::exit(1);
 }
 
@@ -17,11 +20,14 @@ fn main() {
     env_logger::init();
 
     let mut encrypt = false;
+    let mut exact_names = false;
     let mut disk_path_opt = None;
     let mut bootloader_path_opt = None;
     for arg in env::args().skip(1) {
         if arg == "--encrypt" {
             encrypt = true;
+        } else if arg == "--exact-names" {
+            exact_names = true;
         } else if disk_path_opt.is_none() {
             disk_path_opt = Some(arg);
         } else if bootloader_path_opt.is_none() {
@@ -100,7 +106,16 @@ fn main() {
         ctime.as_secs(),
         ctime.subsec_nanos(),
     ) {
-        Ok(filesystem) => {
+        Ok(mut filesystem) => {
+            if exact_names
+                && let Err(err) = filesystem.tx(|tx| tx.set_casefold(TreePtr::root(), false))
+            {
+                eprintln!(
+                    "redoxfs-mkfs: failed to make the root compare names with case: {}",
+                    err
+                );
+                process::exit(1);
+            }
             let uuid = Uuid::from_bytes(filesystem.header.uuid());
             eprintln!(
                 "redoxfs-mkfs: created filesystem on {}, reserved {} blocks, size {} MB, uuid {}",

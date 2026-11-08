@@ -15,10 +15,13 @@ pub const BLOCK_SIZE: u64 = 4096;
 // A record is 4KiB << 5 = 128KiB
 pub const RECORD_LEVEL: usize = 5;
 pub const RECORD_SIZE: u64 = BLOCK_SIZE << RECORD_LEVEL;
-/// DashFS, the DashOS format. Version 1 has the same layout as RedoxFS version 8.
+/// DashFS, the DashOS format. Version 1 has the same layout as RedoxFS version 8. Version 2 adds directories
+/// whose names are compared without case (`NodeFlags::CASEFOLD`).
 pub const SIGNATURE: &[u8; 8] = b"DashFS\0\0";
-pub const VERSION: u64 = 1;
-/// RedoxFS version 8 is still read, and its header becomes DashFS 1 on the next write.
+pub const VERSION: u64 = 2;
+/// Older versions still read: DashFS 1 has no caseless directories, so it is DashFS 2 as it is.
+pub const OLDEST_VERSION: u64 = 1;
+/// RedoxFS version 8 is still read too, and its header becomes DashFS on the next write.
 pub const REDOXFS_SIGNATURE: &[u8; 8] = b"RedoxFS\0";
 pub const REDOXFS_VERSION: u64 = 8;
 pub const DIR_ENTRY_MAX_LENGTH: usize = 252;
@@ -33,6 +36,8 @@ pub use self::block::{
 };
 #[cfg(feature = "std")]
 pub use self::clone::clone;
+pub use self::casefold::{Names, key as casefold_key};
+pub use self::casefold_data::UNICODE_VERSION as CASEFOLD_UNICODE_VERSION;
 pub use self::dir::{DirEntry, DirList};
 pub use self::disk::*;
 pub use self::filesystem::FileSystem;
@@ -51,6 +56,8 @@ mod allocator;
 #[cfg(feature = "std")]
 mod archive;
 mod block;
+mod casefold;
+mod casefold_data;
 #[cfg(feature = "std")]
 mod clone;
 mod dir;
@@ -72,3 +79,5 @@ mod unmount;
 
 #[cfg(all(feature = "std", test))]
 mod tests;
+#[cfg(all(feature = "std", test))]
+mod tests_casefold;

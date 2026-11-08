@@ -1,5 +1,6 @@
 use core::{mem, ops, slice, str};
 
+use crate::casefold::Wanted;
 use crate::{BLOCK_SIZE, BlockLevel, BlockTrait, DIR_ENTRY_MAX_LENGTH, Node, TreePtr};
 
 #[repr(C, packed)]
@@ -134,19 +135,15 @@ impl DirList {
         }
     }
 
-    fn entry_position_for_name(&self, name: &str) -> Option<usize> {
-        let name_len = name.len();
+    fn entry_position(&self, wanted: &Wanted) -> Option<usize> {
         let mut position = 0;
         let mut entry_id = 0;
 
         while entry_id < self.count {
             let entry_name_len = self.entry_bytes[position + 4] as usize;
-            if entry_name_len == name_len {
-                let start = DirEntry::SERIALIZED_PREFIX_SIZE + position;
-                let entry_name = &self.entry_bytes[start..start + entry_name_len];
-                if entry_name == name.as_bytes() {
-                    return Some(position);
-                }
+            let start = DirEntry::SERIALIZED_PREFIX_SIZE + position;
+            if wanted.matches(&self.entry_bytes[start..start + entry_name_len]) {
+                return Some(position);
             }
             position += DirEntry::SERIALIZED_PREFIX_SIZE + entry_name_len;
             entry_id += 1;
@@ -154,16 +151,16 @@ impl DirList {
         None
     }
 
-    pub fn find_entry(&self, name: &str) -> Option<DirEntry> {
-        if let Some(position) = self.entry_position_for_name(name) {
+    pub fn find_entry(&self, wanted: &Wanted) -> Option<DirEntry> {
+        if let Some(position) = self.entry_position(wanted) {
             let (entry, _) = DirEntry::deserialize_from(&self.entry_bytes[position..]).unwrap();
             return Some(entry);
         }
         None
     }
 
-    pub fn remove_entry(&mut self, name: &str) -> bool {
-        if let Some(position) = self.entry_position_for_name(name) {
+    pub fn remove_entry(&mut self, wanted: &Wanted) -> bool {
+        if let Some(position) = self.entry_position(wanted) {
             let entry_size =
                 DirEntry::SERIALIZED_PREFIX_SIZE + self.entry_bytes[position + 4] as usize;
             let remaining_size = self.entry_bytes_len as usize - position - entry_size;
