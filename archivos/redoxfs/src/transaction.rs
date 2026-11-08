@@ -1,3 +1,4 @@
+use alloc::string::String;
 use alloc::{
     collections::{BTreeMap, VecDeque},
     vec::Vec,
@@ -12,13 +13,21 @@ use syscall::error::{
 };
 
 use crate::{
-    ALLOC_GC_THRESHOLD, ALLOC_LIST_ENTRIES, AllocEntry, AllocList, Allocator, BlockAddr, BlockData,
-    BlockLevel, BlockMeta, BlockPtr, BlockTrait, DIR_ENTRY_MAX_LENGTH, DirEntry, DirList, Disk,
-    FileSystem, HEADER_RING, Header, Node, NodeFlags, NodeLevel, NodeLevelData, RecordRaw,
-    ReleaseList, TreeData, TreePtr,
+    ALLOC_GC_THRESHOLD, ALLOC_LIST_ENTRIES, AllocEntry, AllocList, Allocator, AmigaBits,
+    Attributes, BlockAddr, BlockData, BlockLevel, BlockMeta, BlockPtr, BlockTrait, COMMENT,
+    DIR_ENTRY_MAX_LENGTH, DirEntry, DirList, Disk, FileSystem, HEADER_RING, Header, Node,
+    NodeFlags, NodeLevel, NodeLevelData, RecordRaw, ReleaseList, TreeData, TreePtr,
     casefold::Names,
     htree::{self, HTreeHash, HTreeNode, HTreePtr},
 };
+
+/// AmigaOS: a change to the data clears the archive bit, so that a backup knows to copy the file again.
+fn clear_archive(node: &mut TreeData<Node>) {
+    let bits = node.data().amiga_bits();
+    if bits.contains(AmigaBits::ARCHIVE) {
+        node.data_mut().set_amiga_bits(bits - AmigaBits::ARCHIVE);
+    }
+}
 
 pub(crate) fn level_data(node: &TreeData<Node>) -> Result<&NodeLevelData> {
     node.data().level_data().ok_or_else(|| {
@@ -71,8 +80,8 @@ pub struct Transaction<'a, D: Disk> {
     //TODO: make private
     pub header_changed: bool,
     pub(crate) allocator: Allocator,
-    allocator_log: VecDeque<AllocEntry>,
-    deallocate: Vec<BlockAddr>,
+    pub(crate) allocator_log: VecDeque<AllocEntry>,
+    pub(crate) deallocate: Vec<BlockAddr>,
     pub(crate) write_cache: BTreeMap<BlockAddr, Vec<u8>>,
 }
 
@@ -403,7 +412,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
     }
 
-    unsafe fn read_record<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) unsafe fn read_record<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         mut ptr: BlockPtr<T>,
         level: BlockLevel,
@@ -508,7 +517,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Walk the tree and return the contents and address
     /// of the data block that `ptr` points too.
-    fn read_tree_and_addr<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) fn read_tree_and_addr<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         ptr: TreePtr<T>,
     ) -> Result<(TreeData<T>, BlockAddr)> {
@@ -617,7 +626,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Clear the previously claimed slot in the tree for the given `ptr`. Note that this
     /// should only be called after the corresponding node block has already been deallocated.
-    fn remove_tree<T: BlockTrait + DerefMut<Target = [u8]>>(
+    pub(crate) fn remove_tree<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         ptr: TreePtr<T>,
     ) -> Result<()> {
@@ -1384,6 +1393,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
         } else {
             let (mut node, node_addr) = self.read_tree_and_addr(node_ptr)?;
             self.truncate_node_inner(&mut node, 0)?;
+            let attributes = node.data().attributes;
+            if !attributes.is_null() {
+                unsafe { self.deallocate(&mut FsCtx, attributes.addr()) };
+            }
             self.remove_tree(node.ptr())?;
             unsafe {
                 self.deallocate(&mut FsCtx, node_addr);
@@ -1633,6 +1646,78 @@ impl<'a, D: Disk> Transaction<'a, D> {
         self.sync_tree(node)
     }
 
+    /// DashFS 3: one attribute of a node (`attributes.rs`).
+    pub fn attribute(&mut self, node_ptr: TreePtr<Node>, key: &str) -> Result<Option<Vec<u8>>> {
+        let node = self.read_tree(node_ptr)?;
+        let ptr = node.data().attributes;
+        if ptr.is_null() {
+            return Ok(None);
+        }
+        let block = self.read_block(ptr)?;
+        Ok(block.data().get(key).map(|v| v.to_vec()))
+    }
+
+    /// DashFS 3: sets or removes (`None`) an attribute. The block is written anew (copy on write) and freed when it
+    /// is left empty. ENOSPC if the attributes of the node do not fit in a block.
+    pub fn set_attribute(
+        &mut self,
+        node_ptr: TreePtr<Node>,
+        key: &str,
+        value: Option<&[u8]>,
+    ) -> Result<()> {
+        let mut node = self.read_tree(node_ptr)?;
+        let ptr = node.data().attributes;
+        let mut block = if ptr.is_null() {
+            if value.is_none() {
+                return Ok(());
+            }
+            BlockData::<Attributes>::empty(BlockAddr::default()).unwrap()
+        } else {
+            self.read_block(ptr)?
+        };
+        if !block.data_mut().set(key, value) {
+            return Err(Error::new(ENOSPC));
+        }
+        node.data_mut().attributes = if block.data().is_empty() {
+            unsafe { self.deallocate(&mut FsCtx, block.addr()) };
+            BlockPtr::default()
+        } else {
+            self.sync_block(&mut FsCtx, block)?
+        };
+        self.sync_tree(node)
+    }
+
+    /// Writes a copy of a block of attributes (for `clone`).
+    pub(crate) fn write_attributes(
+        &mut self,
+        attributes: &Attributes,
+    ) -> Result<BlockPtr<Attributes>> {
+        let mut block = BlockData::<Attributes>::empty(BlockAddr::default()).unwrap();
+        block.data_mut().copy_from_slice(attributes);
+        self.sync_block(&mut FsCtx, block)
+    }
+
+    /// The Amiga comment of a node; empty if it has none.
+    pub fn comment(&mut self, node_ptr: TreePtr<Node>) -> Result<String> {
+        Ok(self
+            .attribute(node_ptr, COMMENT)?
+            .map(|v| String::from_utf8_lossy(&v).into_owned())
+            .unwrap_or_default())
+    }
+
+    /// Sets the Amiga comment of a node; an empty one removes it.
+    pub fn set_comment(&mut self, node_ptr: TreePtr<Node>, comment: &str) -> Result<()> {
+        let value = (!comment.is_empty()).then_some(comment.as_bytes());
+        self.set_attribute(node_ptr, COMMENT, value)
+    }
+
+    /// Sets the Amiga protection bits of a node (read, write and execute are its Unix mode).
+    pub fn set_amiga_bits(&mut self, node_ptr: TreePtr<Node>, bits: AmigaBits) -> Result<()> {
+        let mut node = self.read_tree(node_ptr)?;
+        node.data_mut().set_amiga_bits(bits);
+        self.sync_tree(node)
+    }
+
     /// A directory cannot be moved into itself or into one of its descendants: it would become unreachable, inside
     /// a loop. Nodes do not point to their parents, so this walks the directories under `node` looking for `dest`.
     fn check_not_inside(&mut self, node: &TreeData<Node>, dest: TreePtr<Node>) -> Result<()> {
@@ -1674,7 +1759,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Get a pointer to a the record of `node` with the given offset.
     /// (i.e, to the `n`th record of `node`.)
-    fn node_record_ptr(
+    pub(crate) fn node_record_ptr(
         &mut self,
         node: &TreeData<Node>,
         record_offset: u64,
@@ -1986,9 +2071,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
             assert_eq!(offset, size);
         } else if !node.data().has_inline_data() {
-            // Deallocate records
+            // Deallocate records, the last one too when it is not full.
             for record in
-                (size.div_ceil(record_level.bytes())..old_size / record_level.bytes()).rev()
+                (size.div_ceil(record_level.bytes())..old_size.div_ceil(record_level.bytes())).rev()
             {
                 self.remove_node_record_ptr(node, record)?;
             }
@@ -2017,6 +2102,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             if mtime > node_mtime.0 || (mtime == node_mtime.0 && mtime_nsec > node_mtime.1) {
                 node.data_mut().set_mtime(mtime, mtime_nsec);
             }
+            clear_archive(&mut node);
 
             self.sync_tree(node)?;
         }
@@ -2185,6 +2271,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             if mtime > node_mtime.0 || (mtime == node_mtime.0 && mtime_nsec > node_mtime.1) {
                 node.data_mut().set_mtime(mtime, mtime_nsec);
             }
+            clear_archive(&mut node);
 
             self.sync_tree(node)?;
         }

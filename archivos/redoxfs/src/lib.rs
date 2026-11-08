@@ -16,10 +16,12 @@ pub const BLOCK_SIZE: u64 = 4096;
 pub const RECORD_LEVEL: usize = 5;
 pub const RECORD_SIZE: u64 = BLOCK_SIZE << RECORD_LEVEL;
 /// DashFS, the DashOS format. Version 1 has the same layout as RedoxFS version 8. Version 2 adds directories
-/// whose names are compared without case (`NodeFlags::CASEFOLD`).
+/// whose names are compared without case (`NodeFlags::CASEFOLD`). Version 3 adds the Amiga protection bits and a
+/// block of attributes (the comment) to each node, in what was padding.
 pub const SIGNATURE: &[u8; 8] = b"DashFS\0\0";
-pub const VERSION: u64 = 2;
-/// Older versions still read: DashFS 1 has no caseless directories, so it is DashFS 2 as it is.
+pub const VERSION: u64 = 3;
+/// Older versions still read, as they are: their nodes have no caseless directories, and zeros in the padding,
+/// which are the AmigaOS defaults and no attributes.
 pub const OLDEST_VERSION: u64 = 1;
 /// RedoxFS version 8 is still read too, and its header becomes DashFS on the next write.
 pub const REDOXFS_SIGNATURE: &[u8; 8] = b"RedoxFS\0";
@@ -31,13 +33,14 @@ pub static IS_UMT: AtomicUsize = AtomicUsize::new(0);
 pub use self::allocator::{ALLOC_LIST_ENTRIES, AllocEntry, AllocList, Allocator, ReleaseList};
 #[cfg(feature = "std")]
 pub use self::archive::{archive, archive_at};
+pub use self::attributes::{Attributes, COMMENT};
 pub use self::block::{
     BlockAddr, BlockData, BlockLevel, BlockList, BlockMeta, BlockPtr, BlockRaw, BlockTrait,
 };
-#[cfg(feature = "std")]
-pub use self::clone::clone;
 pub use self::casefold::{Names, key as casefold_key};
 pub use self::casefold_data::UNICODE_VERSION as CASEFOLD_UNICODE_VERSION;
+#[cfg(feature = "std")]
+pub use self::clone::clone;
 pub use self::dir::{DirEntry, DirList};
 pub use self::disk::*;
 pub use self::filesystem::FileSystem;
@@ -45,7 +48,7 @@ pub use self::header::{HEADER_RING, Header};
 pub use self::key::{Key, KeySlot, Salt};
 #[cfg(feature = "std")]
 pub use self::mount::mount;
-pub use self::node::{Node, NodeFlags, NodeLevel, NodeLevelData};
+pub use self::node::{AmigaBits, Node, NodeFlags, NodeLevel, NodeLevelData};
 pub use self::record::RecordRaw;
 pub use self::transaction::Transaction;
 pub use self::tree::{Tree, TreeData, TreeList, TreePtr};
@@ -55,9 +58,11 @@ pub use self::unmount::unmount_path;
 mod allocator;
 #[cfg(feature = "std")]
 mod archive;
+mod attributes;
 mod block;
 mod casefold;
 mod casefold_data;
+pub mod check;
 #[cfg(feature = "std")]
 mod clone;
 mod dir;
@@ -72,6 +77,7 @@ mod mount;
 pub mod mount;
 mod node;
 mod record;
+pub mod repair;
 mod transaction;
 mod tree;
 #[cfg(feature = "std")]
@@ -80,4 +86,8 @@ mod unmount;
 #[cfg(all(feature = "std", test))]
 mod tests;
 #[cfg(all(feature = "std", test))]
+mod tests_amiga;
+#[cfg(all(feature = "std", test))]
 mod tests_casefold;
+#[cfg(all(feature = "std", test))]
+mod tests_check;

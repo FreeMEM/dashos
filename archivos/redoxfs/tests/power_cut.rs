@@ -6,7 +6,7 @@
 use std::collections::BTreeMap;
 use std::sync::{Arc, Mutex};
 
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, TreePtr};
+use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreePtr};
 use syscall::error::{EIO, Error, Result};
 
 const DISK_SIZE: u64 = 8 << 20;
@@ -58,8 +58,8 @@ impl Disk for RecDisk {
     }
 }
 
-/// What a user can see: every path, with its contents (or `None` for a directory).
-type State = BTreeMap<String, Option<Vec<u8>>>;
+/// What a user can see: every path, with its contents (or `None` for a directory), its Amiga comment and bits.
+type State = BTreeMap<String, (Option<Vec<u8>>, String, u32)>;
 
 fn walk(fs: &mut FileSystem<RecDisk>) -> Result<State> {
     fn go(
@@ -74,8 +74,10 @@ fn walk(fs: &mut FileSystem<RecDisk>) -> Result<State> {
             let name = entry.name().unwrap().to_string();
             let path = format!("{prefix}/{name}");
             let node = tx.read_tree(entry.node_ptr())?;
+            let comment = tx.comment(node.ptr())?;
+            let bits = node.data().amiga_bits().bits();
             if node.data().is_dir() {
-                out.insert(path.clone(), None);
+                out.insert(path.clone(), (None, comment, bits));
                 go(tx, node.ptr(), &path, out)?;
             } else {
                 let mut buf = vec![0u8; node.data().size() as usize];
@@ -87,7 +89,7 @@ fn walk(fs: &mut FileSystem<RecDisk>) -> Result<State> {
                     }
                     done += n;
                 }
-                out.insert(path, Some(buf));
+                out.insert(path, (Some(buf), comment, bits));
             }
         }
         Ok(())
@@ -152,11 +154,29 @@ fn step(fs: &mut FileSystem<RecDisk>, i: usize) -> Result<()> {
             tx.write_node(n.ptr(), 0, &pattern(9, 150_000), 6, 0)?;
             Ok(())
         }
+        7 => {
+            // DashFS 3: a comment and Amiga bits.
+            let d = tx.find_node(root, "dir")?;
+            let b = tx.find_node(d.ptr(), "b")?;
+            tx.set_comment(b.ptr(), "Copia de \"a\", ñandú")?;
+            tx.set_amiga_bits(b.ptr(), AmigaBits::ARCHIVE | AmigaBits::SCRIPT)?;
+            tx.set_comment(d.ptr(), "Cajón")?;
+            Ok(())
+        }
+        8 => {
+            // Another comment (the block is written anew), and a write that clears the archive bit.
+            let d = tx.find_node(root, "dir")?;
+            let b = tx.find_node(d.ptr(), "b")?;
+            tx.set_comment(b.ptr(), &"x".repeat(79))?;
+            tx.write_node(b.ptr(), 0, b"B", 8, 0)?;
+            tx.set_comment(d.ptr(), "")?;
+            Ok(())
+        }
         _ => unreachable!(),
     })
 }
 
-const STEPS: usize = 7;
+const STEPS: usize = 9;
 
 fn open(data: Vec<u8>, block: Option<u64>) -> Result<FileSystem<RecDisk>> {
     FileSystem::open(RecDisk { data, log: None }, None, block, false)
@@ -204,6 +224,13 @@ fn check(disk: Vec<u8>, block: Option<u64>, states: &[State], done: usize, what:
         Ok(s) => s,
         Err(e) => return Some(format!("{what}: cannot be read: {e}")),
     };
+    // And nothing wrong in it, not even a block lost.
+    let opts = redoxfs::check::Options { data: true };
+    match fs.tx(|tx| redoxfs::check::check(tx, opts, true)) {
+        Ok(report) if report.is_clean() => {}
+        Ok(report) => return Some(format!("{what}: check: {:?}", report.problems)),
+        Err(e) => return Some(format!("{what}: check failed: {e}")),
+    }
     match states.iter().position(|s| *s == state) {
         None => Some(format!("{what}: shows a state that no transaction made")),
         Some(i) if i < done => Some(format!("{what}: went back to step {i}, but {done} steps were on disk")),
@@ -299,7 +326,7 @@ fn power_cut_header_slot_0() {
             let disk = apply(&before, &[Some((0, header.1[..SECTOR].to_vec()))], None);
             let mut fs = open(disk, Some(0)).expect("does not open with slot 0 torn");
             let state = walk(&mut fs).unwrap();
-            assert_eq!(state["/n"].as_deref(), Some(&(i - 2).to_le_bytes()[..]));
+            assert_eq!(state["/n"].0.as_deref(), Some(&(i - 2).to_le_bytes()[..]));
             break;
         }
         assert!(i < 1000, "the header ring did not come back to slot 0");

@@ -449,6 +449,14 @@ fn random_operations(seed: u64) {
         }
         if step % 1000 == 999 {
             fs = reopen(fs);
+            let report = fs
+                .tx(|tx| crate::check::check(tx, crate::check::Options { data: true }, true))
+                .unwrap();
+            assert!(
+                report.is_clean(),
+                "seed {seed:x} step {step}: {:?}",
+                report.problems
+            );
             for d in 0..2 {
                 let mut wanted: Vec<String> = model[d].values().map(|e| e.0.clone()).collect();
                 wanted.sort();

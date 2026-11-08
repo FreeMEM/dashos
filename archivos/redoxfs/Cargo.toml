@@ -31,6 +31,12 @@ doc = false
 required-features = ["std"]
 
 [[bin]]
+name = "redoxfs-fsck"
+path = "src/bin/fsck.rs"
+doc = false
+required-features = ["std"]
+
+[[bin]]
 name = "redoxfs-mkfs"
 path = "src/bin/mkfs.rs"
 doc = false

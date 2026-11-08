@@ -1,7 +1,29 @@
 use core::{fmt, mem, ops, slice};
 use endian_num::Le;
 
-use crate::{BLOCK_SIZE, BlockLevel, BlockList, BlockPtr, BlockTrait, RECORD_LEVEL, RecordRaw};
+use crate::{
+    Attributes, BLOCK_SIZE, BlockLevel, BlockList, BlockPtr, BlockTrait, RECORD_LEVEL, RecordRaw,
+};
+
+bitflags::bitflags! {
+    /// DashFS 3: what AmigaOS keeps in the protection bits of a file and the Unix permissions do not say. Read,
+    /// write and execute are the Unix ones. Zero is what AmigaOS gives a new file: archive clear, deletable.
+    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    pub struct AmigaBits: u32 {
+        /// Backed up: cleared by every change to the data (as the Amiga file systems do).
+        const ARCHIVE = 1 << 0;
+        /// Reentrant program, can stay resident.
+        const PURE = 1 << 1;
+        /// A script that the shell runs.
+        const SCRIPT = 1 << 2;
+        /// Stays resident after the first run.
+        const HOLD = 1 << 3;
+        /// Cannot be deleted by its owner, by its group, by others.
+        const NO_DELETE = 1 << 4;
+        const GROUP_NO_DELETE = 1 << 5;
+        const OTHER_NO_DELETE = 1 << 6;
+    }
+}
 
 bitflags::bitflags! {
     pub struct NodeFlags: u32 {
@@ -181,8 +203,14 @@ pub struct Node {
     /// Flags
     pub flags: Le<u32>,
 
+    /// DashFS 3: Amiga protection bits (`AmigaBits`).
+    pub amiga: Le<u32>,
+
+    /// DashFS 3: block of attributes, such as the Amiga comment. Null if there are none.
+    pub attributes: BlockPtr<Attributes>,
+
     /// Padding
-    pub padding: [u8; BLOCK_SIZE as usize - 4042],
+    pub padding: [u8; BLOCK_SIZE as usize - 4062],
 
     /// Level data, should not be used directly so inline data can be supported
     pub(crate) level_data: NodeLevelData,
@@ -216,7 +244,9 @@ impl Default for Node {
             atime_nsec: 0.into(),
             record_level: 0.into(),
             flags: 0.into(),
-            padding: [0; BLOCK_SIZE as usize - 4042],
+            amiga: 0.into(),
+            attributes: BlockPtr::default(),
+            padding: [0; BLOCK_SIZE as usize - 4062],
             level_data: NodeLevelData::default(),
         }
     }
@@ -355,6 +385,14 @@ impl Node {
     pub fn set_atime(&mut self, atime: u64, atime_nsec: u32) {
         self.atime = atime.into();
         self.atime_nsec = atime_nsec.into();
+    }
+
+    pub fn amiga_bits(&self) -> AmigaBits {
+        AmigaBits::from_bits_retain(self.amiga.to_ne())
+    }
+
+    pub fn set_amiga_bits(&mut self, bits: AmigaBits) {
+        self.amiga = bits.bits().into();
     }
 
     pub fn set_flags(&mut self, flags: NodeFlags) {
