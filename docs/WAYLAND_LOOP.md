@@ -18,7 +18,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 |------|-----|--------|
 | W1 | El formato de los mensajes: cabecera, argumentos por su firma, llaves en vez de descriptores; tablas desde los XML | hecho |
 | W2 | El transporte: un canal "ventanas" que da a cada cliente su canal propio de ida y vuelta, con su marca (S10b: se sabe quién es por la marca, no por lo que diga) | trozos y juntador hechos; el reparto de llaves por `inicio`, con W3 |
-| W3 | El servidor de objetos: `wl_display`, `wl_registry`, `wl_callback`, errores de protocolo que cortan la conexión | |
+| W3 | El servidor de objetos: `wl_display`, `wl_registry`, `wl_callback`, errores de protocolo que cortan la conexión | hecho (`servidor.rs`) |
 | W4 | Memoria compartida: `wl_shm`, `wl_shm_pool` (la llave es un objeto de memoria que el compositor proyecta solo para leer), `wl_buffer` | |
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | |
 | W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada, foco y orden con el ratón | |
@@ -45,4 +45,12 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
   800 bytes partido, 20 `create_pool` (los corta el tope de 8 llaves), basura.
   Límite: la cola de 16 mensajes del canal de entrada es de todos los clientes y de la entrada; con la cola llena,
   quien escribe reintenta. Si se queda corta, habrá que subirla en el kernel o dar un anillo por cliente (S1).
+- W3: `Conexion` lleva los objetos de un cliente (con su interfaz y versión), lo que llega a medias y lo que hay que
+  mandarle. Hace lo común: `sync` (done y delete_id), `get_registry` (un `global` por global), `bind` (misma
+  interfaz, versión entre 1 y la del global), objetos nuevos con la versión de quien los crea, destructores con
+  `delete_id`, y los errores de protocolo (`wl_display.error`; después no se atiende nada más). Lo demás va a un
+  `Servicio`. Pruebas con un servicio que apunta: registro, sync, bind en la versión 4 y una superficie que la hereda,
+  destroy; y cada error: objeto que no existe, petición más nueva que el objeto, orden que no existe, bind de más
+  versión o de otra interfaz, número nuevo repetido o del servidor, argumentos que no cuadran. Sin la comprobación de
+  versión, la prueba falla.
 

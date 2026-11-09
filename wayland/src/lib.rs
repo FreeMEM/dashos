@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 pub mod canal;
+pub mod servidor;
 pub mod tablas;
 
 /// El tipo de un argumento.

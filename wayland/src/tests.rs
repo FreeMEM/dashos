@@ -192,3 +192,126 @@ mod transporte {
         assert_eq!(j.siguiente(), Ok(None));
     }
 }
+
+mod servidor {
+    use super::*;
+    use crate::servidor::*;
+    use crate::tablas::{wl_callback, wl_compositor, wl_registry, wl_surface};
+
+    /// Un servicio de prueba: apunta lo que le llega.
+    #[derive(Default)]
+    struct Apuntes {
+        peticiones: Vec<(u32, &'static str, u16)>,
+        enlazados: Vec<(&'static str, u32)>,
+        destruidos: Vec<u32>,
+    }
+
+    impl Servicio for Apuntes {
+        fn peticion(&mut self, con: &mut Conexion, objeto: u32, orden: u16, _args: &[Valor]) -> Result<(), ErrorProtocolo> {
+            self.peticiones.push((objeto, con.interfaz(objeto).unwrap().name, orden));
+            Ok(())
+        }
+        fn enlazado(&mut self, _con: &mut Conexion, g: &Global, id: u32) {
+            self.enlazados.push((g.interfaz.name, id));
+        }
+        fn destruido(&mut self, _con: &mut Conexion, objeto: u32) {
+            self.destruidos.push(objeto);
+        }
+    }
+
+    fn globales() -> [Global; 2] {
+        [
+            Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+            Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+        ]
+    }
+
+    fn mandar(con: &mut Conexion, s: &mut Apuntes, e: &Escritor) -> Vec<(u32, u16, Vec<u8>)> {
+        con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        con.atender(&globales(), s);
+        eventos(&con.sacar())
+    }
+
+    #[test]
+    fn registro_sync_bind_y_destruir() {
+        let (mut con, mut s) = (Conexion::new(), Apuntes::default());
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(1, wl_display::req::SYNC).uint(3).fin();
+        let ev = mandar(&mut con, &mut s, &e);
+        // Dos globales, el done del sync y su delete_id.
+        assert_eq!(ev.len(), 4);
+        assert_eq!((ev[0].0, ev[0].1), (2, wl_registry::ev::GLOBAL));
+        assert_eq!(leer_args(&tablas::WL_REGISTRY.events[0], &ev[1].2, &mut [].into_iter()).unwrap()[1], Valor::Str(Some("wl_shm")));
+        assert_eq!((ev[2].0, ev[2].1), (3, wl_callback::ev::DONE));
+        assert_eq!((ev[3].0, ev[3].1, ev[3].2.clone()), (1, wl_display::ev::DELETE_ID, 3u32.to_le_bytes().to_vec()));
+
+        // bind de wl_compositor en la versión 4, y una superficie: tiene la versión 4.
+        e.vaciar();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(4).uint(4).fin();
+        e.empezar(4, wl_compositor::req::CREATE_SURFACE).uint(5).fin();
+        assert!(mandar(&mut con, &mut s, &e).is_empty());
+        assert_eq!(s.enlazados, [("wl_compositor", 4)]);
+        assert_eq!(s.peticiones, [(4, "wl_compositor", wl_compositor::req::CREATE_SURFACE)]);
+        assert_eq!(con.objetos[&5].version, 4);
+        assert_eq!(con.objetos[&5].interfaz.name, "wl_surface");
+
+        // destroy: el servicio la ve, se quita y el cliente recibe delete_id.
+        e.vaciar();
+        e.empezar(5, wl_surface::req::DESTROY).fin();
+        let ev = mandar(&mut con, &mut s, &e);
+        assert_eq!(s.destruidos, [5]);
+        assert!(!con.objetos.contains_key(&5));
+        assert_eq!((ev[0].0, ev[0].1), (1, wl_display::ev::DELETE_ID));
+        assert!(con.roto.is_none());
+    }
+
+    fn error_de(ev: &[(u32, u16, Vec<u8>)]) -> (u32, u32) {
+        let (o, orden, cuerpo) = ev.last().unwrap();
+        assert_eq!((*o, *orden), (1, wl_display::ev::ERROR));
+        let a = leer_args(&tablas::WL_DISPLAY.events[0], cuerpo, &mut [].into_iter()).unwrap();
+        (a[0].uint(), a[1].uint())
+    }
+
+    #[test]
+    fn errores_de_protocolo() {
+        let caso = |preparar: &dyn Fn(&mut Escritor)| {
+            let (mut con, mut s) = (Conexion::new(), Apuntes::default());
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(4).uint(4).fin();
+            e.empezar(4, wl_compositor::req::CREATE_SURFACE).uint(5).fin();
+            preparar(&mut e);
+            let ev = mandar(&mut con, &mut s, &e);
+            assert!(con.roto.is_some());
+            // Lo que venga después no se atiende.
+            let mut otra = Escritor::new();
+            otra.empezar(1, wl_display::req::SYNC).uint(50).fin();
+            assert!(mandar(&mut con, &mut s, &otra).is_empty());
+            error_de(&ev)
+        };
+        // Un objeto que no existe.
+        assert_eq!(caso(&|e| { e.empezar(99, 0).fin(); }), (1, INVALID_OBJECT));
+        // Una petición más nueva que el objeto: offset es de la versión 5, la superficie es de la 4.
+        assert_eq!(caso(&|e| { e.empezar(5, wl_surface::req::OFFSET).int(0).int(0).fin(); }), (5, INVALID_METHOD));
+        // Una orden que no existe.
+        assert_eq!(caso(&|e| { e.empezar(5, 40).fin(); }), (5, INVALID_METHOD));
+        // bind en una versión más alta que la del global, o de otra interfaz.
+        assert_eq!(
+            caso(&|e| { e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(7).uint(9).fin(); }),
+            (2, INVALID_METHOD)
+        );
+        assert_eq!(
+            caso(&|e| { e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_compositor")).uint(1).uint(9).fin(); }),
+            (2, INVALID_METHOD)
+        );
+        // Un número de objeto nuevo que ya está, o del servidor.
+        assert_eq!(caso(&|e| { e.empezar(4, wl_compositor::req::CREATE_SURFACE).uint(5).fin(); }), (1, INVALID_OBJECT));
+        assert_eq!(
+            caso(&|e| { e.empezar(4, wl_compositor::req::CREATE_SURFACE).uint(PRIMERO_DEL_SERVIDOR).fin(); }),
+            (1, INVALID_OBJECT)
+        );
+        // Argumentos que no cuadran con la firma.
+        assert_eq!(caso(&|e| { e.empezar(5, wl_surface::req::COMMIT).uint(1).fin(); }), (1, INVALID_METHOD));
+    }
+}
