@@ -333,7 +333,7 @@ fn principal() -> u64 {
             };
             let ms = (dashos::ahora_us() / 1000) as u32;
             for (cl, ev) in entrada {
-                if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get(&cl)) {
+                if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
                     escena::escribir_entrada(&mut cli.con, de, ev, ms);
                     mandar(cli);
                 }
@@ -377,7 +377,7 @@ fn principal() -> u64 {
         // La entrada que salió de las peticiones (el teclado a una ventana nueva).
         let ms = (dashos::ahora_us() / 1000) as u32;
         for (cl, ev) in core::mem::take(&mut escena.pendientes) {
-            if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get(&cl)) {
+            if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
                 escena::escribir_entrada(&mut cli.con, de, ev, ms);
                 mandar(cli);
             }

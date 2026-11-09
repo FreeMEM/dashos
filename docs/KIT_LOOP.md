@@ -30,7 +30,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | hechos: texto, botón, casilla, deslizador, campo de texto, ciclo y lista |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | hecho: el esquema de referencia y sacarlo de cualquier color base (HCT) |
-| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón y teclado) y raspi4b; el tamaño que pida el compositor, pendiente |
+| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón, teclado y el tamaño que pide el compositor) y raspi4b |
 
 ## Bitácora
 
@@ -131,3 +131,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   a nivel y con las teclas muertas: salieron 3 errores míos (en gb, AltGr de la tecla de arriba a la izquierda da |,
   no ¦; en fr, ~ y ` con AltGr no son muertas en xkb, sí en Windows) y 2 del comparador; ahora 0 diferencias. xkb da
   135 signos más con AltGr (æ, ½...) que el kit no tiene. Pruebas por mapa: 8 del teclado.
+- El tamaño que pide el compositor: Super+Arriba maximiza la ventana que tiene el teclado (a (0, 0), configure con el
+  tamaño de la pantalla y el estado "maximizada") y Super+Abajo la devuelve a su sitio con un configure de 0 x 0. Las
+  flechas con Super no llegan a la ventana. La escena admite varios configure sin confirmar (confirmar uno confirma
+  los de antes); `escribir_entrada` recibe el cliente modificable. Ajustes crea memoria, pool y búfer nuevos del
+  tamaño pedido y suelta los viejos: la primera versión pedía de una vez la memoria del tamaño más grande (9,2 MB) y
+  no cabía en el cupo de 16 MB de cada servicio (ahora lo dice si le falta). Prueba nueva de la escena
+  (`maximizar_y_volver`); en virt, las teclas de QEMU mandan Super+Arriba y Super+Abajo antes del clic: "el compositor
+  pide 800x600" y "vuelve a 360x250", con la captura igual que antes. raspi4b bien.

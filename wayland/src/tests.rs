@@ -696,6 +696,52 @@ mod entrada {
         ev
     }
 
+    /// Super+Arriba maximiza la ventana que tiene el teclado: a (0, 0), con un configure del tamaño de la pantalla y
+    /// el estado "maximizada"; el cliente lo confirma. Super+Abajo la devuelve a su sitio con un configure de 0 × 0.
+    /// Las flechas con Super no llegan a la ventana; sin Super, sí.
+    #[test]
+    fn maximizar_y_volver() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        abrir(&mut escena, &mut a, 1, 100, 100); // en (40, 40)
+        abrir(&mut escena, &mut b, 2, 100, 100); // en (72, 72), con el teclado
+        let mut pantalla = vec![0u32; 300 * 200];
+        escena.componer(&mut pantalla, 300, 200, 300, 0, &mut |_, _, _| {});
+        escena.pendientes.clear();
+        assert_eq!(escena.tecla(0xE3, true), [(2, Entrada::Tecla { codigo: 125, pulsada: true }), (2, Entrada::Mods { pulsados: 64 })]);
+        // El cursor está en (0, 0): ahora sobre la ventana, que se entera.
+        let ev = escena.tecla(0x52, true);
+        assert_eq!(
+            ev,
+            [(2, Entrada::Configura { xdg: 9, ancho: 300, alto: 200, maximizada: true }), (2, Entrada::Entra { superficie: 7, x: 0, y: 0 })]
+        );
+        assert!(escena.tecla(0x52, false).is_empty());
+        assert_eq!(escena.clientes[&2].superficies[&7].sitio, Some((0, 0)));
+        // Otra vez arriba: ya lo está.
+        assert!(escena.tecla(0x52, true).is_empty());
+
+        // Al cliente: configure de la ventana (300, 200, [maximizada, activa]) y el de la superficie con su número.
+        escribir_entrada(&mut b, escena.clientes.get_mut(&2).unwrap(), ev[0].1, 0);
+        let sal = eventos(&b.sacar());
+        assert_eq!(sal.iter().map(|e| (e.0, e.1)).collect::<Vec<_>>(), [(10, xdg_toplevel::ev::CONFIGURE), (9, xdg_surface::ev::CONFIGURE)]);
+        let conf = leer_args(&tablas::XDG_TOPLEVEL.events[0], &sal[0].2, &mut [].into_iter()).unwrap();
+        assert_eq!(conf[..2], [Valor::Int(300), Valor::Int(200)]);
+        let serie = u32::from_le_bytes(sal[1].2[..4].try_into().unwrap());
+        let mut e = Escritor::new();
+        e.empezar(9, xdg_surface::req::ACK_CONFIGURE).uint(serie).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut b, 2, &e);
+        assert!(escena.clientes[&2].xdg[&9].pedidos.is_empty());
+
+        // Super+Abajo: a su sitio y 0 × 0.
+        let ev = escena.tecla(0x51, true);
+        assert_eq!(ev, [(2, Entrada::Configura { xdg: 9, ancho: 0, alto: 0, maximizada: false }), (2, Entrada::Sale { superficie: 7 })]);
+        assert_eq!(escena.clientes[&2].superficies[&7].sitio, Some((72, 72)));
+        // Sin Super, la flecha es una tecla más.
+        escena.tecla(0xE3, false);
+        assert_eq!(escena.tecla(0x51, true), [(2, Entrada::Tecla { codigo: 108, pulsada: true })]);
+    }
+
     #[test]
     fn asiento_puntero_y_teclado() {
         let mut escena = Escena::new(Mem::default(), 0);
@@ -744,7 +790,7 @@ mod entrada {
         assert_eq!(pantalla[299 * 300], 0xff00_0000);
 
         // Cómo llega al cliente: enter y botón con su serie y frame (puntero de la versión 7).
-        let cli = &escena.clientes[&1];
+        let cli = escena.clientes.get_mut(&1).unwrap();
         escribir_entrada(&mut a, cli, Entrada::Entra { superficie: 7, x: 3, y: 4 }, 100);
         escribir_entrada(&mut a, cli, Entrada::Tecla { codigo: 30, pulsada: true }, 101);
         let ev = eventos(&a.sacar());

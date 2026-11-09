@@ -26,6 +26,10 @@ pub const UNCONFIGURED_BUFFER: u32 = 3;
 pub const INVALID_SERIAL: u32 = 4;
 use crate::Valor;
 
+/// Las flechas de evdev que usan los atajos del compositor.
+const KEY_ARRIBA: u32 = 103;
+const KEY_ABAJO: u32 = 108;
+
 /// Un cliente es su marca de canal (S10b): la conexión.
 pub type Cliente = u64;
 
@@ -83,8 +87,11 @@ pub struct Superficie {
 pub struct Xdg {
     pub superficie: u32,
     pub toplevel: Option<u32>,
-    /// El número del último `configure` mandado, hasta que el cliente lo confirma.
-    pub pendiente: Option<u32>,
+    /// Los números de los `configure` mandados que el cliente aún no ha confirmado (confirmar uno confirma los de
+    /// antes).
+    pub pedidos: Vec<u32>,
+    /// Maximizada por el compositor: dónde estaba antes.
+    pub antes_de_maximizar: Option<(i32, i32)>,
     /// El cliente ya confirmó un `configure`: puede poner búfer.
     pub configurada: bool,
     pub titulo: alloc::string::String,
@@ -364,10 +371,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         return Err(ErrorProtocolo::new(1, crate::servidor::IMPLEMENTATION, "sin menús emergentes"));
                     }
                     xdg_surface::req::ACK_CONFIGURE => {
-                        if x.pendiente != Some(args[0].uint()) {
+                        let serie = args[0].uint();
+                        let Some(k) = x.pedidos.iter().position(|&p| p == serie) else {
                             return Err(ErrorProtocolo::new(objeto, INVALID_SERIAL, "configure que no se mandó"));
-                        }
-                        x.pendiente = None;
+                        };
+                        x.pedidos.drain(..=k);
                         x.configurada = true;
                     }
                     _ => {}
@@ -396,11 +404,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         if !x.configurada && pone_bufer {
                             return Err(ErrorProtocolo::new(rol, UNCONFIGURED_BUFFER, "búfer antes de configure"));
                         }
-                        if !x.configurada && x.pendiente.is_none() {
+                        if !x.configurada && x.pedidos.is_empty() {
                             let serie = con.serie_nueva();
                             con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(0).int(0).array(&[]).fin();
                             con.salida.empezar(rol, xdg_surface::ev::CONFIGURE).uint(serie).fin();
-                            x.pendiente = Some(serie);
+                            x.pedidos.push(serie);
                         }
                     }
                 }
@@ -567,6 +575,8 @@ pub enum Entrada {
     Tecla { codigo: u32, pulsada: bool },
     /// Los modificadores pulsados, como máscaras de xkb (1 mayúsculas, 4 control, 8 alt, 64 meta).
     Mods { pulsados: u32 },
+    /// El compositor pide a una ventana (su `xdg_surface`) otro tamaño; 0 × 0: el que quiera ella.
+    Configura { xdg: u32, ancho: i32, alto: i32, maximizada: bool },
 }
 
 impl<M: Memorias> Escena<M> {
@@ -655,6 +665,14 @@ impl<M: Memorias> Escena<M> {
         if codigo == 0 {
             return out;
         }
+        // Atajos del compositor, con Super (no llegan a la ventana): Arriba maximiza la ventana que tiene el teclado y
+        // Abajo la devuelve a su tamaño y su sitio.
+        if self.mods & 64 != 0 && matches!(codigo, KEY_ARRIBA | KEY_ABAJO) {
+            if pulsada {
+                self.maximizar(codigo == KEY_ARRIBA, &mut out);
+            }
+            return out;
+        }
         out.push((c, Entrada::Tecla { codigo, pulsada }));
         let mascara = match uso {
             0xE1 | 0xE5 => 1,
@@ -674,6 +692,50 @@ impl<M: Memorias> Escena<M> {
         out
     }
 
+    /// Maximiza (o devuelve) la ventana que tiene el teclado: la pone en (0, 0) y le pide el tamaño de la pantalla, o
+    /// la devuelve a su sitio y le deja elegir su tamaño. Se mueve ya; el tamaño llega con su búfer nuevo.
+    pub fn maximizar(&mut self, si: bool, out: &mut Vec<(Cliente, Entrada)>) {
+        let Some((c, sup)) = self.teclado else { return };
+        let (w, h) = self.medidas;
+        let Some(cli) = self.clientes.get_mut(&c) else { return };
+        let Some(s) = cli.superficies.get(&sup) else { return };
+        let (Some(rol), Some(sitio)) = (s.rol, s.sitio) else { return };
+        let Some(x) = cli.xdg.get_mut(&rol) else { return };
+        let nuevo = match (si, x.antes_de_maximizar) {
+            (true, None) => {
+                x.antes_de_maximizar = Some(sitio);
+                (0, 0)
+            }
+            (false, Some(antes)) => {
+                x.antes_de_maximizar = None;
+                antes
+            }
+            _ => return,
+        };
+        if let Some(r) = rect_de(cli, sup) {
+            self.danos.push(r);
+        }
+        let cli = self.clientes.get_mut(&c).unwrap();
+        cli.superficies.get_mut(&sup).unwrap().sitio = Some(nuevo);
+        if let Some(r) = rect_de(cli, sup) {
+            self.danos.push(r);
+        }
+        let (ancho, alto) = if si { (w, h) } else { (0, 0) };
+        out.push((c, Entrada::Configura { xdg: rol, ancho, alto, maximizada: si }));
+        // El puntero pudo quedar sobre otra ventana.
+        let bajo = self.bajo(self.cursor.0, self.cursor.1);
+        let ahora = bajo.map(|b| b.0);
+        if ahora != self.puntero {
+            if let Some((pc, ps)) = self.puntero {
+                out.push((pc, Entrada::Sale { superficie: ps }));
+            }
+            if let Some(((nc, ns), px, py)) = bajo {
+                out.push((nc, Entrada::Entra { superficie: ns, x: px, y: py }));
+            }
+            self.puntero = ahora;
+        }
+    }
+
     /// Un cliente se fue: la entrada deja de apuntarle.
     pub fn sin_entrada(&mut self, cliente: Cliente) {
         if self.puntero.is_some_and(|p| p.0 == cliente) {
@@ -686,9 +748,23 @@ impl<M: Memorias> Escena<M> {
 }
 
 /// Escribe un evento de entrada en la conexión de su cliente, para todos sus `wl_pointer` o `wl_keyboard`.
-pub fn escribir_entrada(con: &mut Conexion, cli: &DeCliente, ev: Entrada, ms: u32) {
+pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms: u32) {
     let fixed = |v: i32| v.wrapping_mul(256) as u32;
     match ev {
+        Entrada::Configura { xdg, ancho, alto, maximizada } => {
+            let Some(x) = cli.xdg.get_mut(&xdg) else { return };
+            let Some(toplevel) = x.toplevel else { return };
+            // Estados de xdg_toplevel: 1 maximizada, 4 activa (la que tiene el teclado).
+            let mut estados = Vec::new();
+            if maximizada {
+                estados.extend_from_slice(&1u32.to_le_bytes());
+            }
+            estados.extend_from_slice(&4u32.to_le_bytes());
+            let serie = con.serie_nueva();
+            con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(ancho).int(alto).array(&estados).fin();
+            con.salida.empezar(xdg, xdg_surface::ev::CONFIGURE).uint(serie).fin();
+            x.pedidos.push(serie);
+        }
         Entrada::Entra { .. } | Entrada::Sale { .. } | Entrada::Mueve { .. } | Entrada::Boton { .. } => {
             let serie = con.serie_nueva();
             for &p in &cli.punteros {
