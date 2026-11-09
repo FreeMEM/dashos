@@ -11,34 +11,63 @@ use wayland::tablas::{
 };
 use wayland::{Escritor, leer_args};
 
-const VENTANAS: u32 = 1;
-const VA: usize = 0x40_0000_0000;
+pub const VENTANAS: u32 = 1;
+pub const VA: usize = 0x40_0000_0000;
 pub const CUADROS: u32 = 30;
 
 // Los objetos de este cliente.
-const REGISTRO: u32 = 2;
-const SYNC: u32 = 3;
-const COMPOSITOR: u32 = 4;
-const SHM: u32 = 5;
-const XDG: u32 = 6;
-const POOL: u32 = 7;
-const BUFER: u32 = 8;
-const SUPERFICIE: u32 = 9;
-const XDG_SUPERFICIE: u32 = 10;
-const VENTANA: u32 = 11;
-const ASIENTO: u32 = 12;
-const PUNTERO: u32 = 13;
-const TECLADO: u32 = 14;
+pub const REGISTRO: u32 = 2;
+pub const SYNC: u32 = 3;
+pub const COMPOSITOR: u32 = 4;
+pub const SHM: u32 = 5;
+pub const XDG: u32 = 6;
+pub const POOL: u32 = 7;
+pub const BUFER: u32 = 8;
+pub const SUPERFICIE: u32 = 9;
+pub const XDG_SUPERFICIE: u32 = 10;
+pub const VENTANA: u32 = 11;
+pub const ASIENTO: u32 = 12;
+pub const PUNTERO: u32 = 13;
+pub const TECLADO: u32 = 14;
 /// Los avisos de frame, uno por cuadro desde aquí.
-const AVISO: u32 = 100;
+pub const AVISO: u32 = 100;
 
 pub struct Cliente {
     respuesta: u32,
-    juntador: Juntador,
+    pub juntador: Juntador,
 }
 
 impl Cliente {
-    fn mandar(&mut self, e: &Escritor) {
+    /// Se conecta al compositor por el canal "ventanas" (llave 1).
+    pub fn conectar() -> Option<Cliente> {
+        let (mio, suyo) = dashos::canal_crear();
+        if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
+            return None;
+        }
+        Some(Cliente { respuesta: mio, juntador: Juntador::new() })
+    }
+
+    /// Los globales del compositor (nombre, interfaz, versión), con un sync.
+    pub fn globales(&mut self) -> Option<Vec<(u32, alloc::string::String, u32)>> {
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(REGISTRO).fin();
+        e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
+        self.mandar(&e);
+        let mut globales = Vec::new();
+        loop {
+            let (o, orden, cuerpo) = self.evento()?;
+            if o == REGISTRO && orden == wl_registry::ev::GLOBAL {
+                let a = leer_args(&tablas::WL_REGISTRY.events[0], &cuerpo, &mut core::iter::empty()).unwrap_or_default();
+                if a.len() == 3 {
+                    globales.push((a[0].uint(), alloc::string::String::from(a[1].texto()), a[2].uint()));
+                }
+            } else if o == SYNC && orden == wl_callback::ev::DONE {
+                return Some(globales);
+            }
+        }
+    }
+
+    pub fn mandar(&mut self, e: &Escritor) {
         for t in canal::trocear(e).expect("mensajes propios bien formados") {
             // Con la cola llena, se espera un poco y se reintenta.
             for _ in 0..1000 {
@@ -51,7 +80,7 @@ impl Cliente {
     }
 
     /// El siguiente evento: objeto, orden y cuerpo.
-    fn evento(&mut self) -> Option<(u32, u16, Vec<u8>)> {
+    pub fn evento(&mut self) -> Option<(u32, u16, Vec<u8>)> {
         loop {
             if let Ok(Some(m)) = self.juntador.siguiente() {
                 return Some((m.objeto, m.orden, m.cuerpo));
@@ -69,7 +98,7 @@ impl Cliente {
     }
 }
 
-fn dormir() {
+pub fn dormir() {
     let (a, b) = dashos::canal_crear();
     let t = dashos::temporizador_crear(b, 1_000, 0);
     if t > 0 {
@@ -100,31 +129,11 @@ pub fn ventana(
     formato: u32,
     color: impl Fn(u32, u32, u32) -> u32,
 ) -> bool {
-    // La conexión: un canal propio, cuyo otro extremo se le da al compositor.
-    let (mio, suyo) = dashos::canal_crear();
-    if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
+    let Some(mut c) = Cliente::conectar() else {
         println!("  [{}] no se puede conectar", nombre);
         return false;
-    }
-    let mut c = Cliente { respuesta: mio, juntador: Juntador::new() };
-
-    // Los globales, hasta el sync.
-    let mut e = Escritor::new();
-    e.empezar(1, wl_display::req::GET_REGISTRY).uint(REGISTRO).fin();
-    e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
-    c.mandar(&e);
-    let mut globales = Vec::new();
-    loop {
-        let Some((o, orden, cuerpo)) = c.evento() else { return false };
-        if o == REGISTRO && orden == wl_registry::ev::GLOBAL {
-            let a = leer_args(&tablas::WL_REGISTRY.events[0], &cuerpo, &mut core::iter::empty()).unwrap_or_default();
-            if a.len() == 3 {
-                globales.push((a[0].uint(), alloc::string::String::from(a[1].texto()), a[2].uint()));
-            }
-        } else if o == SYNC && orden == wl_callback::ev::DONE {
-            break;
-        }
-    }
+    };
+    let Some(globales) = c.globales() else { return false };
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
     let (Some(gc), Some(gs), Some(gx), Some(ga)) =
         (global("wl_compositor"), global("wl_shm"), global("xdg_wm_base"), global("wl_seat"))

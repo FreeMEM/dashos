@@ -30,7 +30,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador y campo de texto hechos; ciclo y lista, pendientes |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
-| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
+| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón; teclado y tamaño del compositor, pendientes) |
 
 ## Bitácora
 
@@ -85,4 +85,16 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   y Bloq Mayús, AltGr (@ # € [ ] { } | \ ~ ¬) y las teclas muertas de los acentos (´ ` ^ ¨). Pruebas: escribir
   "Ñandú" con Mayús y la tecla muerta, signos, AltGr, ü, el acento solo con espacio; el campo: foco por clic,
   escribir, Inicio, Suprimir, Fin, Retroceso, Intro con aviso, tabulador al otro campo, contorno y cursor dibujados.
+- K7: `usuario/src/bin/ajustes.rs`, la ventana de `examples/vista.rs` como cliente de Wayland en DashOS (lo común de
+  los clientes de prueba pasó a `ventana_cliente.rs`: conectar, globales, mandar, recibir). Responde al puntero que
+  le manda el compositor (enter, motion, button, leave) y vuelve a dibujar y presentar cuando algo cambia. Espera 2 s
+  antes de conectarse para salir tercera en la cascada. Dos fallos en QEMU: (1) se quedaba sin memoria al arrancar
+  (pánico en `alloc`): `fontdue` carga los contornos de todas las letras y Roboto traía unas 3.000 por fuente
+  (cirílico, griego...), más que los 16 MB de su grupo. Se recortaron las fuentes al latino (básico, Latin-1,
+  Latin Extended-A, puntuación, €, ™) con `pyftsubset`: 378 letras y 31 KB cada una en vez de 388 KB (Roboto no
+  tiene nombre reservado en su OFL, así que recortada sigue llamándose así). (2) La prueba acaba en la última línea
+  esperada: con la línea del kit al final se paraba antes de que llegara el ratón; la última es ahora "tecla 30
+  recibida". La captura comprueba la superficie del kit donde no llega otra ventana (un clic subió el tablero encima)
+  y el primario de sus botones. Pendiente: el teclado en la aplicación (el campo de texto ya lo usa en el PC) y el
+  tamaño que pida el compositor.
 

@@ -21,6 +21,7 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] usb lanzado en su grupo, con 4 llaves
 │   [inicio] ventana-a lanzado en su grupo, con 1 llaves
 │   [inicio] ventana-b lanzado en su grupo, con 1 llaves
+│   [inicio] ajustes lanzado en su grupo, con 1 llaves
 │   [inicio] hola lanzado en su grupo, con 0 llaves
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 ~│   [inicio] hola acabó: clase 0, código 5
@@ -31,5 +32,6 @@ DashOS en marcha con 4 núcleos.
 ~│   [ventana-a] 30 cuadros: bien
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
+~│   [ajustes] ventana del kit en pantalla (360x180)
 ~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
 ~│   [usb] HID de arranque: 1 teclado y 1 ratón
