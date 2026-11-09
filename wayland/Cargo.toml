@@ -1,0 +1,10 @@
+[package]
+name = "dashos-wayland"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "Wayland para DashOS: el formato de los mensajes sobre canales y llaves (W1)"
+
+[lib]
+name = "wayland"
+path = "src/lib.rs"

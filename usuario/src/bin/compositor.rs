@@ -1,61 +1,50 @@
-//! El compositor por CPU como proceso (C50). Antes iba dentro del kernel (C16, fase A de S9).
+//! El compositor (C50, y desde W7 de S10b, el que habla Wayland). Antes iba dentro del kernel (C16, fase A de S9).
 //!
-//! Llaves, en la Pi: la 1, el canal del buzón (C50); la 2, el canal de entrada, por el que llegan los eventos del USB
-//! (C49). La pantalla le llega del buzón, como una llave de la memoria de la VideoCore recortada a ella (auditoría de
-//! la fase 4, M4): no ve el resto de esa memoria.
+//! Llaves, en la Pi: la 1, el canal del buzón (C50); la 2, el canal "ventanas". Por UEFI (U4): la 1, la pantalla que
+//! dejó el firmware (memoria del firmware); la 2, sus medidas (ancho, alto, bytes por línea, formato y desplazamiento
+//! dentro de la página); la 3, el canal "ventanas".
 //!
-//! Por UEFI (U4): la 1, la pantalla que dejó el firmware (memoria del firmware); la 2, sus medidas (un objeto de
-//! memoria: ancho, alto, bytes por línea, formato y desplazamiento dentro de la página); la 3, el canal de entrada. Esa
-//! pantalla no tiene desplazamiento virtual: un solo búfer, y se repintan los daños en él.
+//! Por el canal "ventanas" llega todo, porque un proceso solo espera en un canal: los mensajes de `inicio` (sin marca:
+//! qué marca es de quién), la entrada de los controladores de USB y los clientes de Wayland, cada uno con su marca
+//! (S10b: se sabe quién es por la marca, no por lo que diga). El protocolo va en `wayland/` (W1 a W6): aquí solo está
+//! lo de DashOS. Las proyecciones de la memoria de los clientes (solo para leer), la pantalla y el bucle.
 //!
-//! Dos búferes en la pantalla virtual del firmware: se pinta en el que no se ve y se cambia con el desplazamiento
-//! virtual. Solo se repinta lo que cambia (los daños). Como cada búfer se vio hace dos cuadros, en el que se va a pintar
-//! hay que rehacer los daños de este cuadro y los del anterior. El ratón mueve la ventana.
-//!
-//! El compositor de verdad hablará Wayland (S9); esto es para medir y para tener algo en pantalla.
+//! Se compone por CPU en un búfer propio y se copia a la pantalla lo dañado. Con dos búferes (el buzón de la Pi) se
+//! pinta en el que no se ve y se cambia con el desplazamiento virtual; como cada búfer se vio hace dos cuadros, se
+//! copian los daños de este cuadro y los del anterior.
 
 #![no_std]
 #![no_main]
 
-use dashos::{ahora_us, println};
+extern crate alloc;
+
+use alloc::collections::BTreeMap;
+use alloc::string::String;
+use alloc::vec;
+use alloc::vec::Vec;
+use dashos::println;
+use wayland::canal::{self, TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS};
+use wayland::escena::{self, Cliente, Escena, Rect};
+use wayland::servidor::{Conexion, Global};
+use wayland::shm::{Memorias, MAX_POOL};
+use wayland::tablas;
 
 dashos::programa!(principal);
+dashos::monton!();
 
 const VA_VC: usize = 0x60_0000_0000;
 const ANCHO: u32 = 640;
 const ALTO: u32 = 480;
+/// Las proyecciones de la memoria de los clientes: una cada 64 MB desde aquí (lo más que mide un pool).
+const VA_CLIENTES: usize = 0x70_0000_0000;
+const FONDO: u32 = 0xff20_4060;
 
-#[derive(Clone, Copy, Default, PartialEq, Eq)]
-struct Rect {
-    x: u32,
-    y: u32,
-    w: u32,
-    h: u32,
-}
-
-impl Rect {
-    fn union(self, o: Rect) -> Rect {
-        if self.w == 0 || self.h == 0 {
-            return o;
-        }
-        if o.w == 0 || o.h == 0 {
-            return self;
-        }
-        let (x0, y0) = (self.x.min(o.x), self.y.min(o.y));
-        let (x1, y1) = ((self.x + self.w).max(o.x + o.w), (self.y + self.h).max(o.y + o.h));
-        Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
-    }
-
-    fn contiene(&self, x: u32, y: u32) -> bool {
-        x >= self.x && x < self.x + self.w && y >= self.y && y < self.y + self.h
-    }
-
-    fn recortar(self, w: u32, h: u32) -> Rect {
-        let x1 = (self.x + self.w).min(w);
-        let y1 = (self.y + self.h).min(h);
-        Rect { x: self.x.min(w), y: self.y.min(h), w: x1.saturating_sub(self.x), h: y1.saturating_sub(self.y) }
-    }
-}
+static GLOBALES: [Global; 4] = [
+    Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+    Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+    Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+    Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+];
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
 /// no, la llave que trajera la respuesta (0 si ninguna).
@@ -143,97 +132,147 @@ fn desplazar(y: u32) -> bool {
     buzon(&mut m).is_some()
 }
 
-/// El fondo: degradado del azul al violeta con un tablero rojo y blanco en el centro.
-fn fondo(p: &Pantalla, x: u32, y: u32) -> u32 {
-    let (cx, cy) = (p.ancho / 2, p.alto / 2);
-    if x + 120 >= cx && x < cx + 120 && y + 120 >= cy && y < cy + 120 {
-        let (i, j) = ((x + 120 - cx) / 30, (y + 120 - cy) / 30);
-        if (i + j) % 2 == 0 { 0x00e0_2020 } else { 0x00f0_f0f0 }
-    } else {
-        let r = 40 + y * 100 / p.alto;
-        let b = 120 + y * 100 / p.alto;
-        (r << 16) | (40 << 8) | b
+/// Los objetos de memoria de los clientes, proyectados solo para leer, cada uno en su hueco de 64 MB.
+#[derive(Default)]
+struct Proyecciones {
+    por_llave: BTreeMap<u32, usize>,
+    libres: Vec<usize>,
+    siguiente: usize,
+    /// Un objeto de memoria de una página, vacío: el mapa de teclas que se da sin mapa (W8).
+    vacia: Option<u32>,
+}
+
+impl Memorias for Proyecciones {
+    fn proyectar(&mut self, llave: u32, tamano: usize) -> Option<*const u8> {
+        // Lo que dice el cliente no basta: el objeto tiene que medir al menos eso, o se leería fuera (W7).
+        let mide = dashos::memoria_tamano(llave);
+        if mide < tamano as i64 || tamano > MAX_POOL {
+            return None;
+        }
+        let va = match self.por_llave.get(&llave) {
+            Some(&va) => {
+                dashos::memoria_quitar(va);
+                va
+            }
+            None => self.libres.pop().unwrap_or_else(|| {
+                self.siguiente += 1;
+                VA_CLIENTES + (self.siguiente - 1) * MAX_POOL
+            }),
+        };
+        if dashos::memoria_proyectar(llave, va, false) != 0 {
+            self.libres.push(va);
+            self.por_llave.remove(&llave);
+            return None;
+        }
+        self.por_llave.insert(llave, va);
+        Some(va as *const u8)
+    }
+
+    fn llave_vacia(&mut self) -> Option<u32> {
+        if self.vacia.is_none() {
+            let m = dashos::memoria_crear(4096);
+            if (m as i32) <= 0 {
+                return None;
+            }
+            self.vacia = Some(m as u32);
+        }
+        let copia = dashos::llave_duplicar(self.vacia?, dashos::LEER | dashos::TRANSFERIR, 0);
+        (copia > 0).then_some(copia as u32)
+    }
+
+    fn soltar(&mut self, llave: u32, _base: *const u8, _tamano: usize) {
+        if let Some(va) = self.por_llave.remove(&llave) {
+            dashos::memoria_quitar(va);
+            self.libres.push(va);
+        }
+        dashos::cerrar(llave);
     }
 }
 
-/// Una ventana sencilla: borde, barra de título oscura y cuerpo claro.
-fn ventana(v: &Rect, x: u32, y: u32) -> u32 {
-    let (dx, dy) = (x - v.x, y - v.y);
-    if dx < 2 || dy < 2 || dx >= v.w - 2 || dy >= v.h - 2 {
-        0x0020_2028
-    } else if dy < 24 {
-        if dx >= v.w - 22 && dx < v.w - 8 && dy >= 6 && dy < 18 { 0x00f0_f0f0 } else { 0x0030_3a5a }
-    } else {
-        0x00ec_eef4
+/// Un cliente de Wayland: su conexión y el canal por el que se le contesta.
+struct DeVentanas {
+    con: Conexion,
+    respuesta: u32,
+}
+
+fn dormir() {
+    let (a, b) = dashos::canal_crear();
+    let t = dashos::temporizador_crear(b, 1_000, 0);
+    if t > 0 {
+        let mut buf = [0u8; 8];
+        let mut ll = [0u32; 1];
+        dashos::canal_leer(a, &mut buf, &mut ll);
+        dashos::cerrar(t as u32);
     }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
+}
+
+/// Manda lo que haya para el cliente. Falso si no se pudo (el cliente no lee): entonces se le suelta.
+fn mandar(c: &mut DeVentanas) -> bool {
+    let e = c.con.sacar();
+    if e.bytes.is_empty() {
+        return true;
+    }
+    let Ok(trozos) = canal::trocear(&e) else { return false };
+    for t in trozos {
+        let mut hecho = false;
+        // Con su cola llena se espera un poco; un cliente que no lee no puede parar a todos mucho rato.
+        for _ in 0..50 {
+            if dashos::canal_escribir(c.respuesta, &t.bytes, &t.llaves) == 0 {
+                hecho = true;
+                break;
+            }
+            dormir();
+        }
+        if !hecho {
+            return false;
+        }
+    }
+    true
 }
 
 struct Compositor {
     p: Pantalla,
+    marco: Vec<u32>,
     visible: u32,
-    ventana: Rect,
-    danos_previos: Rect,
-    pixeles_pintados: u64,
+    danos_previos: Vec<Rect>,
 }
 
 impl Compositor {
-    fn esperado(&self, x: u32, y: u32) -> u32 {
-        if self.ventana.contiene(x, y) { ventana(&self.ventana, x, y) } else { fondo(&self.p, x, y) }
-    }
-
-    /// La memoria de la pantalla se proyecta sin caché: se escribe píxel a píxel y no hay que limpiar nada.
-    fn pintar(&mut self, bufer: u32, r: Rect) {
-        let r = r.recortar(self.p.ancho, self.p.alto);
-        let fila0 = bufer * self.p.alto;
-        for y in r.y..r.y + r.h {
-            let linea = self.p.base + ((fila0 + y) * self.p.paso) as usize;
-            for x in r.x..r.x + r.w {
-                let c = self.esperado(x, y);
-                let c = if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
-                unsafe { ((linea + x as usize * 4) as *mut u32).write_volatile(c.to_le()) };
-            }
-        }
-        self.pixeles_pintados += (r.w * r.h) as u64;
-    }
-
-    /// Mueve la ventana y presenta un cuadro nuevo. Con `todo`, repinta la pantalla entera (para comparar).
-    fn mover(&mut self, x: u32, y: u32, todo: bool) {
-        let antes = self.ventana;
-        self.ventana.x = x.min(self.p.ancho - self.ventana.w);
-        self.ventana.y = y.min(self.p.alto - self.ventana.h);
-        let danos = antes.union(self.ventana);
-        if !self.p.doble {
-            // Un solo búfer (U4): los daños de este cuadro, directamente en lo que se ve.
-            let zona = if todo { Rect { x: 0, y: 0, w: self.p.ancho, h: self.p.alto } } else { danos };
-            self.pintar(0, zona);
+    /// Copia lo dañado del marco a la pantalla y la presenta.
+    fn presentar(&mut self, danos: &[Rect]) {
+        if danos.is_empty() {
             return;
         }
-        let oculto = 1 - self.visible;
-        let zona = if todo { Rect { x: 0, y: 0, w: self.p.ancho, h: self.p.alto } } else { danos.union(self.danos_previos) };
-        self.pintar(oculto, zona);
-        self.danos_previos = danos;
-        desplazar(oculto * self.p.alto);
-        self.visible = oculto;
-    }
-
-    fn leer(&self, x: u32, y: u32) -> u32 {
-        let fila = self.visible * self.p.alto + y;
-        let c = u32::from_le(unsafe { ((self.p.base + (fila * self.p.paso + x * 4) as usize) as *const u32).read_volatile() });
-        if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c }
-    }
-
-    /// El búfer visible tiene la ventana en su sitio y nada de ella fuera.
-    fn comprobar(&self) -> bool {
-        let v = self.ventana;
-        let (w, h) = (self.p.ancho, self.p.alto);
-        let puntos = [(v.x + 1, v.y + 1), (v.x + 50, v.y + 10), (v.x + 100, v.y + 100), (5, 5), (w / 2, 10), (w - 1, h - 1), (v.x + v.w, v.y), (v.x, v.y + v.h)];
-        puntos.iter().filter(|&&(x, y)| x < w && y < h).all(|&(x, y)| self.leer(x, y) == self.esperado(x, y))
+        let bufer = if self.p.doble { 1 - self.visible } else { 0 };
+        let mut zonas: Vec<Rect> = danos.to_vec();
+        if self.p.doble {
+            zonas.extend(self.danos_previos.iter().copied());
+        }
+        let fila0 = bufer * self.p.alto;
+        for r in &zonas {
+            for y in r.y..r.y + r.h {
+                let linea = self.p.base + ((fila0 + y as u32) * self.p.paso) as usize;
+                let origen = y as usize * self.p.ancho as usize;
+                for x in r.x..r.x + r.w {
+                    let c = self.marco[origen + x as usize] & 0x00ff_ffff;
+                    let c = if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
+                    unsafe { ((linea + x as usize * 4) as *mut u32).write_volatile(c.to_le()) };
+                }
+            }
+        }
+        if self.p.doble {
+            self.danos_previos = danos.to_vec();
+            desplazar(bufer * self.p.alto);
+            self.visible = bufer;
+        }
     }
 }
 
 fn principal() -> u64 {
-    // Por UEFI, la pantalla llega como llave; si no, se pide al buzón (la Pi). La entrada va detrás.
-    let (p, entrada) = match pantalla_uefi() {
+    // Por UEFI, la pantalla llega como llave; si no, se pide al buzón (la Pi). El canal "ventanas" va detrás.
+    let (p, ventanas) = match pantalla_uefi() {
         Some(p) => (p, 3),
         None => match pantalla(ANCHO, ALTO, 2) {
             Some(p) => (p, 2),
@@ -248,61 +287,108 @@ fn principal() -> u64 {
     } else {
         println!("  [compositor] pantalla de UEFI de {}x{} a 32 bits, un búfer", p.ancho, p.alto);
     }
-    let mut c = Compositor { p, visible: 0, ventana: Rect { x: 40, y: 40, w: 200, h: 140 }, danos_previos: Rect::default(), pixeles_pintados: 0 };
-    let todo = Rect { x: 0, y: 0, w: c.p.ancho, h: c.p.alto };
-    c.pintar(0, todo);
+    let (ancho, alto) = (p.ancho as i32, p.alto as i32);
+    let mut c = Compositor { marco: vec![0; (p.ancho * p.alto) as usize], p, visible: 0, danos_previos: Vec::new() };
+    let mut escena = Escena::new(Proyecciones::default(), FONDO);
+    let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
+    c.presentar(&danos);
     if c.p.doble {
-        c.pintar(1, todo);
-    }
-    if c.p.doble {
-        desplazar(0);
+        // El otro búfer, también con el fondo.
+        c.presentar(&danos);
     }
 
-    // Lo que costaba en el kernel (C16), ahora desde un proceso: 60 cuadros repintando todo y 60 solo con los daños.
-    let medir = |c: &mut Compositor, todo: bool| {
-        let pintados = c.pixeles_pintados;
-        let t = ahora_us();
-        for i in 0..60u32 {
-            c.mover(40 + i * 5, 40 + i * 3, todo);
-        }
-        ((ahora_us() - t) / 60, (c.pixeles_pintados - pintados) / 60)
-    };
-    let (us_todo, px_todo) = medir(&mut c, true);
-    c.mover(40, 40, true);
-    c.mover(40, 40, true);
-    let (us_danos, px_danos) = medir(&mut c, false);
-    println!("  [compositor] por cuadro: repintando todo {} µs ({} píxeles); solo daños {} µs ({} píxeles)", us_todo, px_todo, us_danos, px_danos);
-    let bien = c.comprobar() && px_danos * 4 < px_todo;
-    println!("  [compositor] doble búfer y daños: {}", if bien { "bien" } else { "MAL" });
-
-    // El ratón mueve la ventana. La primera vez se comprueba el búfer visible.
-    let (mut x, mut y) = (c.ventana.x as i32, c.ventana.y as i32);
-    let mut primera = true;
-    // Con sitio para cualquier mensaje (256 bytes): uno más grande que el búfer se quedaría el primero de la cola para
-    // siempre (el directorio de `inicio` mide 24).
-    let mut ev = [0u8; 256];
-    let mut ll = [0u32; 8];
+    // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
+    let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
+    let mut clientes: BTreeMap<Cliente, DeVentanas> = BTreeMap::new();
+    let mut vistas = 0;
+    let mut buf = [0u8; canal::MAX_CANAL];
+    let mut ll = [0u32; canal::MAX_LLAVES];
     loop {
-        let (n, k) = dashos::canal_leer(entrada, &mut ev, &mut ll);
+        let (n, k, marca) = dashos::canal_leer_marca(ventanas, &mut buf, &mut ll);
         if n == -4 {
-            return 0; // la entrada se cerró
+            return 0; // el canal se cerró
         }
-        // Un mensaje que no vale no para el compositor; las llaves que lleguen, fuera (M6).
+        // Un mensaje que no vale no para el compositor (M6).
         if n < 0 {
             continue;
         }
-        for &l in ll.iter().take(k) {
-            dashos::cerrar(l);
-        }
-        if n != 8 || ev[0] != 2 {
+        let n = n as usize;
+        let llaves = &ll[..k];
+        if marca == 0 {
+            if n == 24 {
+                let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
+                let fin = buf[8..24].iter().position(|&b| b == 0).unwrap_or(16);
+                nombres.insert(m, String::from(core::str::from_utf8(&buf[8..8 + fin]).unwrap_or("?")));
+            }
+            llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             continue;
         }
-        x = (x + ev[2] as i8 as i32).clamp(0, (c.p.ancho - c.ventana.w) as i32);
-        y = (y + ev[3] as i8 as i32).clamp(0, (c.p.alto - c.ventana.h) as i32);
-        c.mover(x as u32, y as u32, false);
-        if primera {
-            primera = false;
-            println!("  [compositor] ventana movida con el ratón a ({}, {}): {}", x, y, if c.comprobar() { "bien" } else { "MAL" });
+        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y).
+        if matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) {
+            llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+            let entrada = match (n, buf[0]) {
+                (8, 1) => escena.tecla(buf[1], buf[2] != 0),
+                (8, 2) => escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]),
+                _ => Vec::new(),
+            };
+            let ms = (dashos::ahora_us() / 1000) as u32;
+            for (cl, ev) in entrada {
+                if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get(&cl)) {
+                    escena::escribir_entrada(&mut cli.con, de, ev, ms);
+                    mandar(cli);
+                }
+            }
+        }
+        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci"));
+        let mut soltar = false;
+        match buf.first().copied().filter(|_| de_ventanas) {
+            Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
+                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0] });
+            }
+            Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
+                let cli = clientes.get_mut(&marca).unwrap();
+                if cli.con.juntador.meter(&buf[1..n], llaves).is_err() {
+                    soltar = true;
+                } else {
+                    cli.con.atender(&GLOBALES, &mut escena.de(marca));
+                    soltar = !mandar(cli) || cli.con.roto.is_some();
+                }
+            }
+            Some(TROZO_ADIOS) => soltar = true,
+            _ if !de_ventanas => {}
+            _ => {
+                llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+            }
+        }
+        if soltar {
+            if let Some(cli) = clientes.remove(&marca) {
+                if let Some(e) = &cli.con.roto {
+                    println!("  [compositor] error de protocolo de {}: {}", nombres.get(&marca).map_or("?", |s| s), e.texto);
+                }
+                escena.adios(marca);
+                let mut j = cli.con;
+                while let Some(l) = j.juntador.tomar_llave() {
+                    dashos::cerrar(l);
+                }
+                dashos::cerrar(cli.respuesta);
+            }
+        }
+
+        // Se compone lo dañado y se avisa a quien esperaba su cuadro.
+        let mut avisos = Vec::new();
+        let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, (dashos::ahora_us() / 1000) as u32, &mut |cl, aviso, ms| {
+            avisos.push((cl, aviso, ms));
+        });
+        c.presentar(&danos);
+        for (cl, aviso, ms) in avisos {
+            if let Some(cli) = clientes.get_mut(&cl) {
+                escena::avisar_frame(&mut cli.con, aviso, ms);
+                mandar(cli);
+            }
+        }
+        if escena.orden.len() != vistas {
+            vistas = escena.orden.len();
+            println!("  [compositor] Wayland: {} ventanas en pantalla", vistas);
         }
     }
 }

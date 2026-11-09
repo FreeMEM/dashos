@@ -18,7 +18,6 @@ DashOS en marcha con 4 núcleos.
 ~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
 # U6e: el xHCI despierta con su interrupción.
 ~│   [xhci] avisos por su interrupción
-~│   [compositor] ventana movida con el ratón a (
 # U6d: un disco NVMe de 8 MB (target/nvme.img), su modelo y sus dos primeros sectores.
 ~nvme: en el PCIe 0:
 ~│   [nvme] disco de 16384 sectores de 512 bytes (8192 KB)
@@ -50,4 +49,10 @@ DashOS en marcha con 4 núcleos.
 # U4: la pantalla de UEFI (ramfb), del cargador al compositor por el árbol y por inicio.
 ~pantalla del firmware: 800x600 en
 ~│   [compositor] pantalla de UEFI de 800x600 a 32 bits, un búfer
-~│   [compositor] doble búfer y daños: bien
+# W7: el compositor habla Wayland; dos clientes de prueba, cada uno con su ventana, animada 30 cuadros.
+~│   [ventana-a] 30 cuadros: bien
+~│   [ventana-b] 30 cuadros: bien
+~│   [compositor] Wayland: 2 ventanas en pantalla
+# W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
+~│   [ventana] ratón dentro
+~│   [ventana] tecla 30 recibida

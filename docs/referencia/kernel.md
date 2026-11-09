@@ -143,6 +143,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
 | 25 | `registros_recortar` | `x0` llave de registros o de memoria del firmware, `x1` desde, `x2` tamaño (páginas enteras) | Llave nueva |
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
+| 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 
 ### Detalles

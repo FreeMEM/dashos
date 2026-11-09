@@ -22,18 +22,27 @@ timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -
     -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
     -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
 QEMU=$!
-# Con TECLAS=1, una "a" y un movimiento del ratón cada medio segundo desde el segundo 3 (U6: el xHCI).
+# Con TECLAS=1, una "a" y un movimiento del ratón (10, 5) cada medio segundo desde el segundo 3 (U6: el xHCI). Desde
+# el paso 15 también un clic (W8): el cursor del compositor, que empieza en (0, 0), ya está en (150, 75), sobre la
+# ventana de prueba de arriba, que se lleva el teclado sin cambiar el orden de las ventanas.
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
 ruta, total = sys.argv[1], float(sys.argv[2])
 inicio = time.time()
 time.sleep(3)
+paso = 0
 while time.time() - inicio < total:
     try:
         s = socket.socket(socket.AF_UNIX)
         s.connect(ruta)
-        s.sendall(b"sendkey a\nmouse_move 10 5\n")
+        s.sendall(b"mouse_move 10 5\n")
+        paso += 1
+        if paso >= 15:
+            s.sendall(b"mouse_button 1\n")
+            time.sleep(0.1)
+            s.sendall(b"mouse_button 0\n")
+        s.sendall(b"sendkey a\n")
         s.close()
     except OSError:
         pass

@@ -19,13 +19,17 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] buzon lanzado en su grupo, con 4 llaves
 │   [inicio] compositor lanzado en su grupo, con 2 llaves
 │   [inicio] usb lanzado en su grupo, con 4 llaves
+│   [inicio] ventana-a lanzado en su grupo, con 1 llaves
+│   [inicio] ventana-b lanzado en su grupo, con 1 llaves
 │   [inicio] hola lanzado en su grupo, con 0 llaves
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 ~│   [inicio] hola acabó: clase 0, código 5
 ~│   [inicio] todo lanzado; se queda esperando
-# El buzón y el compositor (C50) y el USB (C49), que le manda el ratón por un canal que crea inicio.
+# El buzón y el compositor (C50) y el USB (C49), que le manda la entrada por el canal "ventanas", que crea inicio.
+# W7: el compositor habla Wayland; dos clientes de prueba, cada uno con su ventana, animada 30 cuadros.
 ~│   [compositor] pantalla 640x480 a 32 bits, doble búfer, solo con su memoria
-~│   [compositor] doble búfer y daños: bien
+~│   [ventana-a] 30 cuadros: bien
+~│   [ventana-b] 30 cuadros: bien
+~│   [compositor] Wayland: 2 ventanas en pantalla
 ~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
 ~│   [usb] HID de arranque: 1 teclado y 1 ratón
-~│   [compositor] ventana movida con el ratón a (

@@ -149,6 +149,7 @@ pub fn atender(marco: &mut Marco) {
         24 => temporizador_crear(a[0] as u32, a[1], a[2]),
         25 => registros_recortar(a[0] as u32, a[1], a[2]),
         26 => dma_liberar(a[0] as u32),
+        27 => memoria_tamano(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -374,6 +375,17 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         return E_LLAVE;
     }
     0
+}
+
+/// Lo que mide un objeto de memoria, en bytes (W7): para no fiarse de lo que diga quien lo manda. Pide poder leerlo.
+fn memoria_tamano(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some((l, _)) = proc_.llaves.tomar().ver_con_intermediarios(h) else { return E_LLAVE };
+    let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    m.tamano()
 }
 
 /// Quita la proyección de un objeto de memoria que empieza en `va` (C45).

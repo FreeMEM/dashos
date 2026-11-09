@@ -109,10 +109,15 @@ dependencies = [
 name = "dashos-usuario"
 version = "0.0.1"
 dependencies = [
+ "dashos-wayland",
  "linked_list_allocator",
  "redox_syscall 0.9.5",
  "redoxfs",
 ]
+
+[[package]]
+name = "dashos-wayland"
+version = "0.0.1"
 
 [[package]]
 name = "digest"
