@@ -9,6 +9,7 @@ pub mod controles;
 pub mod grupos;
 pub mod lienzo;
 pub mod objetos;
+pub mod color;
 pub mod tema;
 pub mod teclado;
 pub mod texto;

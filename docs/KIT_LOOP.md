@@ -29,7 +29,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | hechos: texto, botón, casilla, deslizador, campo de texto, ciclo y lista |
-| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
+| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | hecho: el esquema de referencia y sacarlo de cualquier color base (HCT) |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón y teclado) y raspi4b; el tamaño que pida el compositor, pendiente |
 
 ## Bitácora
@@ -113,3 +113,15 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   en la segunda fila, flechas que desplazan, Fin, Inicio, colores. Con esto K5 tiene los siete controles del plan.
   El teclado del kit reconoce arriba y abajo. raspi4b con el teclado en "ajustes": bien.
 
+
+### 2026-11-09 (pulido, tras el sonido)
+
+- K6, el color base: `kit/src/color.rs`. HCT (matiz y croma de CAM16, tono L*) con las condiciones de visión de
+  Material, escrito desde el modelo publicado de CAM16; de HCT a sRGB por bisección (la J que da la Y del tono y, si
+  el croma no cabe, el más alto que cabe). Paletas: primaria (croma 48 como poco), secundaria 16, terciaria (matiz +
+  60) 24, neutra 6, neutra variante 8. `Tema::desde_color(base, oscuro)`. La prueba: los veinte papeles del esquema
+  de referencia (claro y oscuro, puestos de memoria en K6) salen del violeta 0x6750A4 a 1 por canal como mucho; con
+  eso quedan comprobados a la vez el algoritmo y aquellos colores. Con croma 4 en la neutra (la primera versión de
+  Material 3) fallaba la superficie (0xFDF8FD frente a 0xFEF7FF). También: secundario y terciario 40 de la
+  referencia (0x625B71, 0x7D5260), HCT de ida y vuelta para siete colores, y que otro color base da su matiz con el
+  primario en el tono 40. 28 pruebas del kit.
