@@ -150,6 +150,9 @@ pub fn atender(marco: &mut Marco) {
         25 => registros_recortar(a[0] as u32, a[1], a[2]),
         26 => dma_liberar(a[0] as u32),
         27 => memoria_tamano(a[0] as u32),
+        // A6 (S19): el hilo que llama pasa a la clase de plazo (capacidad y periodo en microsegundos), o vuelve a la
+        // justa con capacidad 0. E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
+        28 => if planificador::plazo_actual(a[0], a[1]) { 0 } else { E_LIMITE },
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO

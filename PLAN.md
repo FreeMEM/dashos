@@ -363,4 +363,12 @@ resumido, en `docs/diseño/RESUMEN.md`.
   (`docs/ARCHIVOS_LOOP.md`).
 - **Orden tras FS10**: los gráficos primero (el compositor que habla Wayland y el kit de interfaz en Rust), y el
   sonido detrás (`docs/diseño/S19-sonido.md`).
+- **Después de los gráficos, el sonido; el pulido del kit, al final** (colores desde un color base, tamaño que pide
+  el compositor, otros teclados). Bitácora del sonido: `docs/SONIDO_LOOP.md`.
+- **Compiladores dentro de DashOS: Dash, Rust y C**, no solo el de Dash. Se programa en DashOS para DashOS, sin un
+  PC al lado. Falta el diseño (qué compilador de C, LLVM compartido con Rust o GCC, y el `std` de Rust para DashOS
+  sobre la biblioteca POSIX nativa de S7, como hizo Redox con relibc). Mientras tanto, la caja Linux de S7 los trae
+  ya hechos.
+- **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
+  programas de pago de DashOS se venden ahí.
 

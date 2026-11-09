@@ -222,3 +222,29 @@ el servicio se para antes, lo suelta al abrir el disco la vez siguiente.
 
 Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar escrituras (FS11), usuarios y permisos
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
+
+## Sonido (S19, A4)
+
+El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias
+marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian):
+
+| Orden | Quién | Datos | Llaves |
+|-------|-------|-------|--------|
+| 1 `SALIDA` | solo "virtio-sonido" | ranuras (1 a 64), cuadros por período (16 a 4096), ritmo (48.000) | la memoria de la salida |
+| 2 `TIC` | el controlador | | |
+| 10 `ABRIR` | un programa | muestra (0 enteros de 16 bits, 1 de 32, 2 coma flotante), canales (1 o 2), ritmo (8.000 a 192.000) | la memoria del anillo y el extremo de escritura de un canal del programa |
+| 11 `VOLUMEN` | el programa | izquierdo y derecho, como `f32` (0 a 4) | |
+| 12 `CERRAR` | el programa | | |
+
+**La salida** (del controlador): cabecera de palabras (escritos, leídos, ranuras, cuadros) y las ranuras desde el
+byte 64, cada una un período en estéreo de 16 bits. El servicio mueve "escritos" y el controlador "leídos". Con cada
+`TIC` (un búfer que devolvió el aparato) el servicio mezcla hasta tener 4 períodos por delante; si al controlador no
+le queda ninguno, suena silencio y lo cuenta como vacío.
+
+**El anillo** de un programa (`usuario/src/sonido_cliente.rs`): cabecera de palabras (cabeza: bytes escritos; cola:
+bytes leídos; tamaño de los datos, potencia de dos) y los datos desde el byte 64. El programa mueve la cabeza y el
+servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa del tamaño. Un flujo por programa.
+
+Cuando el anillo baja de la mitad, el servicio escribe 4 bytes en el canal del programa para despertarlo (una vez
+hasta que la cabeza se mueva). Si ese canal está cerrado, el programa murió: su flujo sale con un fundido de 5 ms. Al
+`CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo.

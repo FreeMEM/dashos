@@ -1,0 +1,5 @@
+# A6 (S19): el sonido con los cuatro núcleos ocupados por cuatro programas que giran 6 s.
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [sonido] tono-a: flujo cerrado
+~│   [sonido] tono-b: flujo cerrado
+~│   [carga] 6 s ocupado

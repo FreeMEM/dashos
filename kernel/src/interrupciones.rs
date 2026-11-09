@@ -175,9 +175,13 @@ pub fn despertar_repartidor() {
     REPARTIDOR.tomar().despertar_todos();
 }
 
-/// Arranca el repartidor en el núcleo 0.
+/// Arranca el repartidor en el núcleo 0, en la clase de plazo (A6, S19): hasta 300 µs de CPU cada milisegundo. Así
+/// una interrupción o un temporizador no esperan a que acabe el turno de un hilo justo del núcleo 0 (el sonido se
+/// cortaba), y una lluvia de interrupciones no le da más del 30 % del núcleo. Si no se admite, en la justa.
 pub fn iniciar() {
-    planificador::crear(repartidor, 0, 0);
+    if planificador::crear_plazo(repartidor, 0, 0, 300, 1_000).is_none() {
+        planificador::crear(repartidor, 0, 0);
+    }
 }
 
 extern "C" fn repartidor(_: usize) {
