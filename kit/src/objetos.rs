@@ -98,13 +98,40 @@ struct Aviso {
     que: Que,
 }
 
-/// Lo que hace una clase con sus atributos: qué acepta y cómo los guarda.
+/// Lo que hace una clase con sus atributos (qué acepta y cómo los guarda) y, si se ve, cómo mide, se dibuja y
+/// responde al ratón (K5). Lo que no hace una clase, lo hace por defecto: nada.
 pub trait Clase {
     /// El nombre de la clase, para depurar.
     fn nombre(&self) -> &'static str;
     /// Ajusta un valor antes de guardarlo (un deslizador lo deja entre su mínimo y su máximo). `None`: no lo acepta.
     fn ajustar(&self, _atr: Atr, valor: Valor, _attrs: &BTreeMap<Atr, Valor>) -> Option<Valor> {
         Some(valor)
+    }
+    /// Lo que mide.
+    fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut crate::controles::Contexto) -> crate::grupos::Medida {
+        crate::grupos::Medida::fija(0, 0)
+    }
+    /// Se dibuja en `r`.
+    fn dibujar(
+        &self,
+        _attrs: &BTreeMap<Atr, Valor>,
+        _l: &mut crate::lienzo::Lienzo,
+        _r: crate::lienzo::Rect,
+        _ctx: &mut crate::controles::Contexto,
+        _estado: crate::tema::Estado,
+    ) {
+    }
+    /// Si se le puede pulsar.
+    fn pulsable(&self) -> bool {
+        false
+    }
+    /// El ratón pulsado o arrastrado en (x, y) de su rectángulo `r`: los atributos que cambian.
+    fn arrastrar(&self, _attrs: &BTreeMap<Atr, Valor>, _r: crate::lienzo::Rect, _x: i32, _y: i32) -> Vec<(Atr, Valor)> {
+        Vec::new()
+    }
+    /// Un clic: pulsar y soltar dentro.
+    fn clic(&self, _attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
+        Vec::new()
     }
 }
 
@@ -197,6 +224,11 @@ impl Arbol {
         if let Some(obj) = self.objetos.get_mut(&o) {
             obj.avisos.push(Aviso { atr: a, cuando, destino, destino_atr, que });
         }
+    }
+
+    /// Los objetos que hay que volver a dibujar, sin limpiarlos.
+    pub fn sucios_sin_limpiar(&self) -> Vec<Obj> {
+        self.objetos.iter().filter(|(_, o)| o.sucio).map(|(&id, _)| id).collect()
     }
 
     /// Los objetos que hay que volver a dibujar, y los deja limpios.

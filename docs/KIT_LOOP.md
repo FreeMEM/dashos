@@ -28,7 +28,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
-| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | |
+| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla y deslizador hechos; campo, ciclo y lista, pendientes |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
 
@@ -68,4 +68,14 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   colores están puestos de memoria de la especificación: sin comprobar todavía contra m3.material.io. Sacar el
   esquema de un color base (Material You, espacio HCT) queda para después. Pruebas: las capas y que en los dos
   temas el texto contrasta con su fondo.
+- K5 (primera tanda): `kit/src/controles.rs`. La `Clase` de K3 gana, con valores por defecto, medida, dibujo,
+  pulsable, arrastre y clic. Controles de Material 3: texto; botón relleno (40 de alto, 24 de relleno, esquinas
+  redondas, Roboto Medium 14; su `CLIC` pasa a sí y vuelve a no con cada clic); casilla (18 en una zona de 40, con
+  marca); deslizador (carril de 4, agarre de 20, valor al arrastrar). Capas de estado y desactivado del tema.
+  `Interfaz`: los objetos en filas y columnas (`Hijo`), colocados con los grupos de K4 (8 entre controles, 16 de
+  margen), dibujados sobre la superficie, y el ratón (encima, pulsar, arrastrar, clic solo si se suelta dentro,
+  foco al pulsar). Prueba: una ventana con texto, deslizador, casilla y dos botones atados con avisos; medidas al
+  píxel, colores, capa al pasar por encima, clic en Aceptar, la casilla que lo desactiva (y un clic que ya no hace
+  nada), arrastrar el deslizador a 0 y a 75, pulsar fuera y soltar dentro. Se encontró y arregló que la medida
+  máxima no sumaba el margen. `cargo run --example vista -- f.ppm [oscuro]` la dibuja en el PC.
 
