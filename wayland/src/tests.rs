@@ -633,3 +633,129 @@ mod ventanas {
         );
     }
 }
+
+mod entrada {
+    use super::*;
+    use crate::escena::*;
+    use crate::servidor::*;
+    use crate::shm::{Memorias, XRGB8888};
+    use crate::tablas::{wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
+
+    #[derive(Default)]
+    struct Mem(alloc::collections::BTreeMap<u32, Vec<u8>>);
+    impl Memorias for Mem {
+        fn proyectar(&mut self, llave: u32, _t: usize) -> Option<*const u8> {
+            Some(self.0.entry(llave).or_insert_with(|| vec![0; 1 << 16]).as_ptr())
+        }
+        fn soltar(&mut self, _: u32, _: *const u8, _: usize) {}
+        fn llave_vacia(&mut self) -> Option<u32> {
+            Some(99)
+        }
+    }
+
+    fn globales() -> [Global; 4] {
+        [
+            Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+            Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+            Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+            Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+        ]
+    }
+
+    fn mandar(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, e: &Escritor) -> Vec<(u32, u16, Vec<u8>)> {
+        con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        con.atender(&globales(), &mut escena.de(c));
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        eventos(&con.sacar())
+    }
+
+    /// Un cliente con una ventana de `w`×`h`, el asiento, su puntero (12) y su teclado (13).
+    fn abrir(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, w: i32, h: i32) -> Vec<(u32, u16, Vec<u8>)> {
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(3).texto(Some("xdg_wm_base")).uint(6).uint(8).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_seat")).uint(7).uint(11).fin();
+        e.empezar(11, wl_seat::req::GET_POINTER).uint(12).fin();
+        e.empezar(11, wl_seat::req::GET_KEYBOARD).uint(13).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(5).llave(70 + c as u32).int(w * h * 4).fin();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(6).int(0).int(w).int(h).int(w * 4).uint(XRGB8888).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(7).fin();
+        e.empezar(8, xdg_wm_base::req::GET_XDG_SURFACE).uint(9).uint(7).fin();
+        e.empezar(9, xdg_surface::req::GET_TOPLEVEL).uint(10).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        let ev = mandar(escena, con, c, &e);
+        let serie = ev.iter().find(|x| x.0 == 9).map(|x| u32::from_le_bytes(x.2[..4].try_into().unwrap())).unwrap();
+        let mut e = Escritor::new();
+        e.empezar(9, xdg_surface::req::ACK_CONFIGURE).uint(serie).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(escena, con, c, &e);
+        let _ = xdg_toplevel::req::SET_TITLE;
+        ev
+    }
+
+    #[test]
+    fn asiento_puntero_y_teclado() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        let ev = abrir(&mut escena, &mut a, 1, 100, 100); // en (40, 40)
+        // Al enlazar el asiento: puntero y teclado, y su nombre; al pedir el teclado, el mapa (sin mapa, con llave).
+        assert!(ev.iter().any(|e| (e.0, e.1, e.2.clone()) == (11, wl_seat::ev::CAPABILITIES, 3u32.to_le_bytes().to_vec())));
+        assert!(ev.iter().any(|e| (e.0, e.1) == (11, wl_seat::ev::NAME)));
+        assert!(ev.iter().any(|e| (e.0, e.1) == (13, wl_keyboard::ev::KEYMAP)));
+        abrir(&mut escena, &mut b, 2, 100, 100); // en (72, 72), encima
+        let mut pantalla = vec![0u32; 300 * 300];
+        escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
+
+        // El cursor empieza en (0, 0): fuera de todo. Entra en a por (50, 50).
+        assert_eq!(escena.raton(50, 50, 0), [(1, Entrada::Entra { superficie: 7, x: 10, y: 10 })]);
+        assert_eq!(escena.raton(5, 0, 0), [(1, Entrada::Mueve { x: 15, y: 10 })]);
+        // A (80, 80): b está encima.
+        assert_eq!(
+            escena.raton(25, 30, 0),
+            [(1, Entrada::Sale { superficie: 7 }), (2, Entrada::Entra { superficie: 7, x: 8, y: 8 })]
+        );
+        // Pulsar sobre b le da el teclado (ya estaba encima); el botón le llega.
+        assert_eq!(
+            escena.raton(0, 0, 1),
+            [(2, Entrada::TecladoEntra { superficie: 7 }), (2, Entrada::Boton { boton: 0x110, pulsado: true })]
+        );
+        escena.raton(0, 0, 0);
+        // La a de un teclado HID (0x04) es la tecla 30; Mayúsculas, el modificador 1.
+        assert_eq!(escena.tecla(0x04, true), [(2, Entrada::Tecla { codigo: 30, pulsada: true })]);
+        assert_eq!(
+            escena.tecla(0xE1, true),
+            [(2, Entrada::Tecla { codigo: 42, pulsada: true }), (2, Entrada::Mods { pulsados: 1 })]
+        );
+        // Volver a a, donde no la tapa b, y pulsar: sube encima y se lleva el teclado.
+        escena.raton(-35, -35, 0);
+        let ev = escena.raton(0, 0, 1);
+        assert_eq!(escena.orden.last(), Some(&(1, 7)));
+        assert!(ev.contains(&(2, Entrada::TecladoSale { superficie: 7 })));
+        assert!(ev.contains(&(1, Entrada::TecladoEntra { superficie: 7 })));
+        // El cursor no sale de la pantalla.
+        escena.raton(-1000, 5000, 0);
+        assert_eq!(escena.cursor, (0, 299));
+        // Y se ve: la punta de la flecha, negra, en su sitio.
+        escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[299 * 300], 0xff00_0000);
+
+        // Cómo llega al cliente: enter y botón con su serie y frame (puntero de la versión 7).
+        let cli = &escena.clientes[&1];
+        escribir_entrada(&mut a, cli, Entrada::Entra { superficie: 7, x: 3, y: 4 }, 100);
+        escribir_entrada(&mut a, cli, Entrada::Tecla { codigo: 30, pulsada: true }, 101);
+        let ev = eventos(&a.sacar());
+        let ordenes: Vec<(u32, u16)> = ev.iter().map(|e| (e.0, e.1)).collect();
+        assert_eq!(ordenes, [(12, wl_pointer::ev::ENTER), (12, wl_pointer::ev::FRAME), (13, wl_keyboard::ev::KEY)]);
+        let enter = leer_args(&tablas::WL_POINTER.events[0], &ev[0].2, &mut [].into_iter()).unwrap();
+        assert_eq!(enter[2], Valor::Fixed(3 * 256));
+        let key = leer_args(&tablas::WL_KEYBOARD.events[3], &ev[2].2, &mut [].into_iter()).unwrap();
+        assert_eq!(&key[1..], [Valor::Uint(101), Valor::Uint(30), Valor::Uint(1)]);
+
+        // Si el cliente se va, la entrada deja de apuntarle.
+        escena.adios(1);
+        assert!(escena.teclado.is_none());
+    }
+}

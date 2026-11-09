@@ -19,6 +19,7 @@ pub mod escena;
 pub mod servidor;
 pub mod shm;
 pub mod tablas;
+pub mod teclas;
 
 /// El tipo de un argumento.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

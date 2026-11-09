@@ -29,6 +29,10 @@ pub trait Memorias {
     fn proyectar(&mut self, llave: u32, tamano: usize) -> Option<*const u8>;
     /// Quita la proyección y suelta la llave.
     fn soltar(&mut self, llave: u32, base: *const u8, tamano: usize);
+    /// Una llave de memoria vacía, de solo lectura, para dar a un cliente (el mapa de teclas sin mapa, W8).
+    fn llave_vacia(&mut self) -> Option<u32> {
+        None
+    }
 }
 
 struct Pool {
