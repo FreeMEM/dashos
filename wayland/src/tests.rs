@@ -110,3 +110,85 @@ fn tablas_como_en_el_xml() {
     assert!(attach.args[0].nullable);
     assert!(tablas::WL_SURFACE.requests[0].destructor);
 }
+
+mod transporte {
+    use super::*;
+    use crate::canal::*;
+    use crate::tablas::xdg_toplevel;
+
+    /// Manda por trozos y junta al otro lado: salen los mismos mensajes, cada uno con sus llaves.
+    fn ida_y_vuelta(e: &Escritor) -> (Vec<Trozo>, Vec<(Recibido, Vec<u32>)>) {
+        let trozos = trocear(e).unwrap();
+        let mut j = Juntador::new();
+        let mut out = Vec::new();
+        let mut cuentas = e.cuentas.iter();
+        for t in &trozos {
+            assert!(t.bytes.len() <= MAX_CANAL && t.llaves.len() <= MAX_LLAVES);
+            assert_eq!(t.bytes[0], TROZO_DATOS);
+            j.meter(&t.bytes[1..], &t.llaves).unwrap();
+            while let Some(m) = j.siguiente().unwrap() {
+                // Las llaves de un mensaje ya están cuando está entero.
+                let n = *cuentas.next().unwrap();
+                let suyas: Vec<u32> = (0..n).map(|_| j.tomar_llave().expect("llave tarde")).collect();
+                out.push((m, suyas));
+            }
+        }
+        assert!(cuentas.next().is_none() && j.llaves.is_empty());
+        (trozos, out)
+    }
+
+    #[test]
+    fn mensajes_pequenos_juntos() {
+        let mut e = Escritor::new();
+        for i in 0..40 {
+            e.empezar(10 + i, wl_surface::req::COMMIT).fin();
+        }
+        let (trozos, out) = ida_y_vuelta(&e);
+        // 40 mensajes de 8 bytes: 320 bytes, dos trozos (31 enteros caben en el primero).
+        assert_eq!(trozos.len(), 2);
+        assert_eq!(out.len(), 40);
+        assert_eq!(out[39].0, Recibido { objeto: 49, orden: 6, cuerpo: Vec::new() });
+    }
+
+    #[test]
+    fn un_mensaje_largo_partido() {
+        let titulo: alloc::string::String = core::iter::repeat_n('ñ', 400).collect();
+        let mut e = Escritor::new();
+        e.empezar(1, 0).fin();
+        e.empezar(9, xdg_toplevel::req::SET_TITLE).texto(Some(&titulo)).fin();
+        e.empezar(2, 0).fin();
+        let (trozos, out) = ida_y_vuelta(&e);
+        assert!(trozos.len() >= 4);
+        assert_eq!(out.len(), 3);
+        let a = leer_args(&tablas::XDG_TOPLEVEL.requests[2], &out[1].0.cuerpo, &mut [].into_iter()).unwrap();
+        assert_eq!(a, [Valor::Str(Some(&titulo))]);
+    }
+
+    #[test]
+    fn muchas_llaves() {
+        // 20 create_pool de 16 bytes caben en un trozo por bytes, pero no por llaves: 8 por trozo.
+        let mut e = Escritor::new();
+        for i in 0..20 {
+            e.empezar(4, wl_shm::req::CREATE_POOL).uint(100 + i).llave(500 + i).int(4096).fin();
+        }
+        let (trozos, out) = ida_y_vuelta(&e);
+        assert_eq!(trozos.len(), 3);
+        for (i, (m, llaves)) in out.iter().enumerate() {
+            let a = leer_args(&tablas::WL_SHM.requests[0], &m.cuerpo, &mut llaves.iter().copied()).unwrap();
+            assert_eq!(a[1], Valor::Fd(500 + i as u32));
+        }
+    }
+
+    #[test]
+    fn juntador_rechaza_basura() {
+        let mut j = Juntador::new();
+        j.meter(&[1, 0, 0, 0, 6, 0, 0, 0], &[]).unwrap();
+        assert_eq!(j.siguiente(), Err(Fallo::Tamano));
+        let mut j = Juntador::new();
+        assert_eq!(j.meter(&alloc::vec![0; MAX_PENDIENTE + 1], &[]), Err(Fallo::Tamano));
+        // Medio mensaje: espera, no falla.
+        let mut j = Juntador::new();
+        j.meter(&[1, 0, 0, 0, 0, 0, 16, 0, 1, 2], &[]).unwrap();
+        assert_eq!(j.siguiente(), Ok(None));
+    }
+}

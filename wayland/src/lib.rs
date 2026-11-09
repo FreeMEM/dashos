@@ -14,6 +14,7 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+pub mod canal;
 pub mod tablas;
 
 /// El tipo de un argumento.
@@ -207,7 +208,10 @@ pub fn leer_args<'a>(
 pub struct Escritor {
     pub bytes: Vec<u8>,
     pub llaves: Vec<u32>,
+    /// Cuántas llaves usa cada mensaje, en orden: para trocear el flujo (`canal::trocear`).
+    pub cuentas: Vec<usize>,
     inicio: usize,
+    llaves_al_empezar: usize,
 }
 
 impl Escritor {
@@ -218,6 +222,7 @@ impl Escritor {
     /// Empieza un mensaje para `objeto` con la orden `orden`; se cierra con `fin`.
     pub fn empezar(&mut self, objeto: u32, orden: u16) -> &mut Self {
         self.inicio = self.bytes.len();
+        self.llaves_al_empezar = self.llaves.len();
         self.bytes.extend_from_slice(&objeto.to_le_bytes());
         self.bytes.extend_from_slice(&(orden as u32).to_le_bytes());
         self
@@ -274,11 +279,13 @@ impl Escritor {
         let i = self.inicio + 4;
         let orden = u32::from_le_bytes(self.bytes[i..i + 4].try_into().unwrap()) & 0xFFFF;
         self.bytes[i..i + 4].copy_from_slice(&(tamano << 16 | orden).to_le_bytes());
+        self.cuentas.push(self.llaves.len() - self.llaves_al_empezar);
     }
 
     pub fn vaciar(&mut self) {
         self.bytes.clear();
         self.llaves.clear();
+        self.cuentas.clear();
     }
 }
 
