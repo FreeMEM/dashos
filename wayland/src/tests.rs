@@ -377,3 +377,120 @@ mod memoria_compartida {
         assert_eq!(m.sueltas, [70]);
     }
 }
+
+mod composicion {
+    use super::*;
+    use crate::escena::*;
+    use crate::servidor::*;
+    use crate::shm::{ARGB8888, Memorias, XRGB8888};
+    use crate::tablas::{wl_buffer, wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface};
+    use alloc::collections::BTreeMap;
+    use core::cell::RefCell;
+    use std::rc::Rc;
+
+    /// Memoria de prueba compartida con el "cliente", que pinta en ella.
+    #[derive(Clone, Default)]
+    struct Compartida(Rc<RefCell<BTreeMap<u32, Vec<u8>>>>);
+
+    impl Memorias for Compartida {
+        fn proyectar(&mut self, llave: u32, tamano: usize) -> Option<*const u8> {
+            let mut m = self.0.borrow_mut();
+            let v = m.entry(llave).or_insert_with(|| vec![0; 1 << 16]);
+            (tamano <= v.len()).then(|| v.as_ptr())
+        }
+        fn soltar(&mut self, _llave: u32, _base: *const u8, _tamano: usize) {}
+    }
+
+    fn globales() -> [Global; 2] {
+        [
+            Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+            Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+        ]
+    }
+
+    /// Un cliente con una superficie de `w`×`h` de un color, en un búfer de shm.
+    fn cliente(escena: &mut Escena<Compartida>, con: &mut Conexion, c: Cliente, llave: u32, w: i32, h: i32, color: u32, formato: u32) {
+        {
+            let mut m = escena.memorias.0.borrow_mut();
+            let v = m.entry(llave).or_insert_with(|| vec![0; 1 << 16]);
+            for p in v[..(w * h * 4) as usize].chunks_mut(4) {
+                p.copy_from_slice(&color.to_le_bytes());
+            }
+        }
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(5).llave(llave).int(w * h * 4).fin();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(6).int(0).int(w).int(h).int(w * 4).uint(formato).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(7).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::DAMAGE).int(0).int(0).int(w).int(h).fin();
+        e.empezar(7, wl_surface::req::FRAME).uint(8).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        con.atender(&globales(), &mut escena.de(c));
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+    }
+
+    #[test]
+    fn dos_ventanas_apiladas_y_avisos() {
+        let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        cliente(&mut escena, &mut a, 1, 70, 20, 10, 0xFFFF_0000, XRGB8888);
+        cliente(&mut escena, &mut b, 2, 71, 10, 10, 0x8000_0080, ARGB8888); // azul a medias, premultiplicado
+        // wl_shm anunció sus dos formatos al enlazarlo.
+        let ev = eventos(&a.sacar());
+        assert_eq!(ev.iter().filter(|e| e.0 == 4 && e.1 == wl_shm::ev::FORMAT).count(), 2);
+        b.sacar();
+        escena.colocar(1, 7, 5, 5);
+        escena.colocar(2, 7, 15, 10);
+        let (w, h) = (40, 30);
+        let mut pantalla = vec![0u32; (w * h) as usize];
+        let mut avisos = Vec::new();
+        let danos = escena.componer(&mut pantalla, w, h, w as usize, 1234, &mut |c, aviso, ms| avisos.push((c, aviso, ms)));
+        assert!(!danos.is_empty());
+        let px = |p: &[u32], x: i32, y: i32| p[(y * w + x) as usize];
+        let pa = &pantalla;
+        assert_eq!(px(pa, 0, 0), 0xFF20_4060); // fondo
+        assert_eq!(px(pa, 6, 6), 0xFFFF_0000); // la roja
+        assert_eq!(px(pa, 30, 18), 0xFF20_4060); // fuera de las dos
+        // La azul, a medias sobre la roja y sobre el fondo.
+        assert_eq!(px(pa, 16, 11), 0xFF7F_0080);
+        assert_eq!(px(pa, 24, 16), 0xFF10_20B0);
+        assert_eq!(avisos, [(1, 8, 1234), (2, 8, 1234)]);
+
+        // Otra vez sin cambios: nada que componer, ni avisos.
+        avisos.clear();
+        assert!(escena.componer(&mut pantalla, w, h, w as usize, 1250, &mut |c, a, ms| avisos.push((c, a, ms))).is_empty());
+        assert!(avisos.is_empty());
+
+        // La roja cambia de búfer: el viejo se devuelve con release.
+        let mut e = Escritor::new();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(9).int(0).int(20).int(10).int(80).uint(XRGB8888).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(9).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        a.juntador.meter(&e.bytes, &[]).unwrap();
+        a.atender(&globales(), &mut escena.de(1));
+        let ev = eventos(&a.sacar());
+        assert_eq!(ev, [(6, wl_buffer::ev::RELEASE, Vec::new())]);
+
+        // El cliente azul se va: su sitio vuelve a ser rojo y fondo.
+        escena.adios(2);
+        escena.componer(&mut pantalla, w, h, w as usize, 1300, &mut |_, _, _| {});
+        assert_eq!(px(&pantalla, 16, 11), 0xFFFF_0000);
+        assert_eq!(px(&pantalla, 24, 16), 0xFF20_4060);
+    }
+
+    #[test]
+    fn adjuntar_algo_que_no_es_un_bufer() {
+        let mut escena = Escena::new(Compartida::default(), 0);
+        let mut a = Conexion::new();
+        cliente(&mut escena, &mut a, 1, 70, 4, 4, 0, XRGB8888);
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::ATTACH).uint(5).int(0).int(0).fin(); // 5 es el pool
+        a.juntador.meter(&e.bytes, &[]).unwrap();
+        a.atender(&globales(), &mut escena.de(1));
+        assert!(a.roto.is_some());
+    }
+}

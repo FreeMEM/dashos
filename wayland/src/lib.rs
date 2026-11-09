@@ -15,6 +15,7 @@ extern crate alloc;
 use alloc::vec::Vec;
 
 pub mod canal;
+pub mod escena;
 pub mod servidor;
 pub mod shm;
 pub mod tablas;
