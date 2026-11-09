@@ -78,6 +78,9 @@ pub struct Superficie {
     avisos: Vec<u32>,
     /// Dónde está en la pantalla, si se ve.
     pub sitio: Option<(i32, i32)>,
+    /// Lo que ocupaba en la pantalla la última vez que se compuso: al cambiar de búfer se repinta aunque el viejo ya
+    /// no exista (el cliente puede destruirlo antes de poner el nuevo, como al cambiar de tamaño).
+    pub visto: Option<Rect>,
     /// Su `xdg_surface`, si tiene ese papel (W6).
     pub rol: Option<u32>,
 }
@@ -223,6 +226,12 @@ impl<M: Memorias> Escena<M> {
                 pantalla[i + d.x as usize..i + (d.x + d.w) as usize].fill(self.fondo);
             }
             for &(c, id) in &self.orden {
+                let cli = self.clientes.get_mut(&c).unwrap();
+                let visto = rect_de(cli, id);
+                let s = cli.superficies.get_mut(&id).unwrap();
+                if visto.is_some() {
+                    s.visto = visto;
+                }
                 let cli = &self.clientes[&c];
                 let s = &cli.superficies[&id];
                 let (Some((x, y)), Some(b)) = (s.sitio, s.bufer) else { continue };
@@ -439,6 +448,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             let s = yo.superficies.get_mut(&objeto).unwrap();
                             s.bufer = nuevo;
                             if let Some(r) = antes {
+                                escena.danos.push(r);
+                            }
+                            if let Some(r) = s.visto {
                                 escena.danos.push(r);
                             }
                             if let Some(r) = rect_de(yo, objeto) {

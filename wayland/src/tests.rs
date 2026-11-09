@@ -639,7 +639,7 @@ mod entrada {
     use crate::escena::*;
     use crate::servidor::*;
     use crate::shm::{Memorias, XRGB8888};
-    use crate::tablas::{wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
+    use crate::tablas::{wl_buffer, wl_compositor, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
 
     #[derive(Default)]
     struct Mem(alloc::collections::BTreeMap<u32, Vec<u8>>);
@@ -740,6 +740,28 @@ mod entrada {
         // Sin Super, la flecha es una tecla más.
         escena.tecla(0xE3, false);
         assert_eq!(escena.tecla(0x51, true), [(2, Entrada::Tecla { codigo: 108, pulsada: true })]);
+    }
+
+    /// Un cliente que destruye su búfer y pone otro más pequeño (como al volver de maximizada): se repinta lo que
+    /// ocupaba el viejo, aunque ya no exista, para que no se quede en pantalla.
+    #[test]
+    fn bufer_mas_pequeno_repinta_lo_de_antes() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut a = Conexion::new();
+        abrir(&mut escena, &mut a, 1, 100, 100); // en (40, 40)
+        let mut pantalla = vec![0u32; 300 * 300];
+        escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
+        assert!(escena.danos.is_empty());
+        let mut e = Escritor::new();
+        e.empezar(6, wl_buffer::req::DESTROY).fin();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(20).int(0).int(50).int(50).int(200).uint(XRGB8888).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(20).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut a, 1, &e);
+        assert!(escena.danos.contains(&Rect { x: 40, y: 40, w: 100, h: 100 }), "{:?}", escena.danos);
+        // Compuesto, lo de fuera del búfer nuevo es fondo otra vez.
+        escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[120 * 300 + 120], 0);
     }
 
     #[test]

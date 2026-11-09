@@ -139,3 +139,10 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   no cabía en el cupo de 16 MB de cada servicio (ahora lo dice si le falta). Prueba nueva de la escena
   (`maximizar_y_volver`); en virt, las teclas de QEMU mandan Super+Arriba y Super+Abajo antes del clic: "el compositor
   pide 800x600" y "vuelve a 360x250", con la captura igual que antes. raspi4b bien.
+- Un fallo que vio la captura de QEMU (y no su comprobación): al volver de maximizada, a la derecha y abajo se quedaba
+  pintada la parte de 800x600. El cliente destruye el búfer viejo antes de poner el nuevo, y el compositor sacaba lo
+  que había que repintar del búfer viejo, que ya no existía. Ahora cada superficie recuerda lo que ocupaba al
+  componerse (`visto`) y eso se repinta al cambiar de búfer. Prueba nueva de la escena
+  (`bufer_mas_pequeno_repinta_lo_de_antes`) y una sonda más en `tools/captura_ventanas.py` (el fondo en (700, 500)),
+  que da MAL con la captura del fallo. virt y raspi4b bien. `kit/examples/vista.rs` acepta un color base como tercer
+  argumento.
