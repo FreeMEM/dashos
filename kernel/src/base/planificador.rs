@@ -108,6 +108,27 @@ static NUCLEOS: [CerrojoIrq<Option<Nucleo>>; MAX_NUCLEOS] =
 static SIGUIENTE_ID: AtomicU64 = AtomicU64::new(1);
 static CAMBIOS: AtomicU64 = AtomicU64::new(0);
 
+/// Contadores por núcleo para medir (M0, docs/MULTITAREA_LOOP.md): tics del reloj, cambios de hilo y cuentas del
+/// temporizador que ha pasado el hilo ocioso. Se leen con la llamada 29.
+struct Contadores {
+    tics: AtomicU64,
+    cambios: AtomicU64,
+    ocioso: AtomicU64,
+}
+static CONTADORES: [Contadores; MAX_NUCLEOS] =
+    [const { Contadores { tics: AtomicU64::new(0), cambios: AtomicU64::new(0), ocioso: AtomicU64::new(0) } }; MAX_NUCLEOS];
+
+/// Un contador del núcleo `n`: 1 = tics, 2 = cambios de hilo, 3 = microsegundos en el hilo ocioso. `None` si no hay.
+pub fn contador(que: u64, n: usize) -> Option<u64> {
+    let c = CONTADORES.get(n)?;
+    match que {
+        1 => Some(c.tics.load(Ordering::Relaxed)),
+        2 => Some(c.cambios.load(Ordering::Relaxed)),
+        3 => Some((c.ocioso.load(Ordering::Relaxed) as u128 * 1_000_000 / reloj::frecuencia().max(1) as u128) as u64),
+        _ => None,
+    }
+}
+
 unsafe extern "C" {
     fn cambiar_contexto(viejo: *mut Contexto, nuevo: *const Contexto);
     fn hilo_entrada();
@@ -379,6 +400,9 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 (*actual).estado = Estado::Bloqueado;
             }
             // Cobrar el tiempo al hilo que corría: al presupuesto si es de plazo, al tiempo virtual si es justo.
+            if actual == nucleo.ocioso {
+                CONTADORES[n].ocioso.fetch_add(ahora.saturating_sub(nucleo.desde), Ordering::Relaxed);
+            }
             if (*actual).id != 0 {
                 let gastado = ahora.saturating_sub(nucleo.desde);
                 match (*actual).plazo.as_mut() {
@@ -501,6 +525,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
         fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
+        CONTADORES[n].cambios.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
         // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
@@ -567,6 +592,9 @@ fn planificar() {
 
 /// Lo llama el tic del reloj, desde la interrupción.
 pub(in crate::base) fn tic() {
+    if let Some(c) = CONTADORES.get(nucleos::numero() as usize) {
+        c.tics.fetch_add(1, Ordering::Relaxed);
+    }
     planificar();
 }
 

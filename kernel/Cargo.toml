@@ -18,6 +18,9 @@ virt = []
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).
 paula = []
+# El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md; `make medir`): solo `consola` y `medir`, con
+# el paquete de los hijos de prueba.
+medir = []
 
 [profile.dev]
 panic = "abort"
