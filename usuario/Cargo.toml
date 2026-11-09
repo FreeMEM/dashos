@@ -8,11 +8,14 @@ license = "MPL-2.0"
 # El servicio de archivos (FS1): RedoxFS y el montón. La caja big-endian no lo compila.
 archivos = ["monton", "dep:redoxfs", "dep:syscall"]
 monton = ["dep:linked_list_allocator"]
+# El compositor que habla Wayland y sus clientes de prueba (W7).
+ventanas = ["monton", "dep:wayland"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
 redoxfs = { path = "../archivos/redoxfs", default-features = false, optional = true }
 syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
+wayland = { package = "dashos-wayland", path = "../wayland", optional = true }
 
 [lib]
 name = "dashos"
@@ -134,6 +137,19 @@ test = false
 name = "compositor"
 path = "src/bin/compositor.rs"
 test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "ventana-a"
+path = "src/bin/ventana_a.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
+name = "ventana-b"
+path = "src/bin/ventana_b.rs"
+test = false
+required-features = ["ventanas"]
 
 [[bin]]
 name = "graficos"

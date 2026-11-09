@@ -428,6 +428,11 @@ pub struct Memoria {
 }
 
 impl Memoria {
+    /// Lo que mide, en bytes (páginas enteras).
+    pub fn tamano(&self) -> u64 {
+        self.paginas.len() as u64 * PAGINA
+    }
+
     /// `tamano` bytes, redondeado a páginas. `None` si no hay memoria fuera de la reserva del kernel; entonces las
     /// páginas que ya se habían tomado vuelven al repartidor.
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {

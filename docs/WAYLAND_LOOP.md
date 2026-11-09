@@ -22,7 +22,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 | W4 | Memoria compartida: `wl_shm`, `wl_shm_pool` (la llave es un objeto de memoria que el compositor proyecta solo para leer), `wl_buffer` | hecho (`shm.rs`) |
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | hecho (`escena.rs`) |
 | W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada | hecho (en `escena.rs`; foco y orden con el ratón, en W8) |
-| W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | |
+| W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | hecho (virt; raspi4b, pendiente de pasar) |
 | W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | |
 
 ## Bitácora
@@ -73,4 +73,17 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
   papeles para una superficie, dos ventanas para una `xdg_surface`, `xdg_surface` para una superficie con búfer,
   commit sin ventana; los menús emergentes (`get_popup`) aún no. Pruebas: dos ventanas de dos clientes en cascada,
   compuestas y quitadas; cada error.
+- W7: el compositor de DashOS habla Wayland (`usuario/src/bin/compositor.rs`, la capa fina sobre `wayland/`). Un solo
+  canal, "ventanas" (antes "entrada"), por el que llega todo: lo de `inicio` (qué marca es de quién), la entrada de
+  usb y xhci (se ignora hasta W8) y los clientes. Compone en un búfer propio y copia lo dañado a la pantalla (con dos
+  búferes en la Pi, los daños de este cuadro y del anterior). La memoria de los clientes se proyecta solo para leer,
+  en huecos de 64 MB; nueva llamada del kernel `memoria_tamano` (27): el compositor no se fía del tamaño que dice el
+  cliente y rechaza un pool mayor que su objeto (si no, leería fuera y caería). Un cliente que no lee su canal se
+  suelta. Dos clientes de prueba (`ventana-a`: roja XRGB de 160 × 120 con una banda blanca que crece; `ventana-b`:
+  tablero ARGB de 120 × 100, verde y negro a medias) se conectan, piden su ventana, la animan 30 cuadros al ritmo de
+  `frame` y se quedan. La prueba de virt guarda la captura (`CAPTURA`) y `tools/captura_ventanas.py` mira el fondo,
+  las dos ventanas en cascada (en cualquiera de los dos órdenes) y lo que deja ver el negro a medias. Salió bien a
+  la primera: "BIEN: la captura del compositor (800x600, orden 2)".
+  Se quitó la ventana de demostración de C50 (y sus líneas en las pruebas: medidas por cuadro y mover con el ratón);
+  la prueba C50 del kernel sigue igual (manda movimientos sin marca, que ahora se ignoran, y cierra el canal).
 

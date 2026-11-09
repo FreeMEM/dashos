@@ -28,18 +28,19 @@ static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
-    // El compositor nombra "entrada" antes que los controladores de USB: el primero que nombra un canal es quien lee
-    // (el servidor), y los demás le escriben con copias marcadas (U6).
+    // El compositor nombra "ventanas" antes que los controladores de USB y que los clientes de Wayland: el primero que
+    // nombra un canal es quien lee (el servidor), y los demás le escriben con copias marcadas (U6, W7). Un proceso solo
+    // espera en un canal, así que por él le llega todo.
     #[cfg(not(feature = "virt"))]
-    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "entrada"]),
+    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "ventanas"]),
     // En QEMU `virt` (U4) no hay buzón: la pantalla es la del firmware de UEFI, que llega en el árbol.
     #[cfg(feature = "virt")]
-    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["entrada"]),
-    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["entrada"]),
+    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
+    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["ventanas"]),
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
     // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
     // temporizador.
-    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["entrada"]),
+    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
     ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
@@ -52,6 +53,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(feature = "virt")]
     ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
+    // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
+    ("ventana-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-a"), &[], &["ventanas"]),
+    ("ventana-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-b"), &[], &["ventanas"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
 
