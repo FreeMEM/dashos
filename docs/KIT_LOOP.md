@@ -125,3 +125,9 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   Material 3) fallaba la superficie (0xFDF8FD frente a 0xFEF7FF). También: secundario y terciario 40 de la
   referencia (0x625B71, 0x7D5260), HCT de ida y vuelta para siete colores, y que otro color base da su matiz con el
   primario en el tono 40. 28 pruebas del kit.
+- Teclados: `kit/src/teclado.rs` pasa de un español escrito en el código a mapas en tablas (tres niveles por tecla y
+  cuáles son muertas): es, us, gb, de y fr; `Teclado::con(mapa)`, `cambiar` y `mapa("de")`. Las tablas las escribí
+  de memoria y las comprueba `tools/teclados_xkb.py` contra los mapas de xkb del equipo (`xkbcli compile-keymap`), nivel
+  a nivel y con las teclas muertas: salieron 3 errores míos (en gb, AltGr de la tecla de arriba a la izquierda da |,
+  no ¦; en fr, ~ y ` con AltGr no son muertas en xkb, sí en Windows) y 2 del comparador; ahora 0 diferencias. xkb da
+  135 signos más con AltGr (æ, ½...) que el kit no tiene. Pruebas por mapa: 8 del teclado.
