@@ -125,6 +125,10 @@ name = "dashos-amigados"
 version = "0.0.1"
 
 [[package]]
+name = "dashos-audiodevice"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-kit"
 version = "0.0.1"
 dependencies = [
@@ -141,6 +145,7 @@ name = "dashos-usuario"
 version = "0.0.1"
 dependencies = [
  "dashos-amigados",
+ "dashos-audiodevice",
  "dashos-kit",
  "dashos-sonido",
  "dashos-wayland",

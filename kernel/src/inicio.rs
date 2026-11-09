@@ -69,10 +69,13 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[], &["sonido"]),
     ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "paula")))]
     ("tono-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-a"), &[], &["sonido"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "paula")))]
     ("tono-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-b"), &[], &["sonido"]),
+    // audio.device nativo (S19, fase 2), en lugar de los tonos: `make sonido-paula`.
+    #[cfg(all(feature = "virt", feature = "paula"))]
+    ("paula-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/paula-prueba"), &[], &["sonido"]),
     // Cuatro programas que esperan medio segundo y giran sin parar 6 s, detrás de los tonos: los cortes del sonido con los núcleos ocupados (A6).
     #[cfg(all(feature = "virt", feature = "carga"))]
     ("carga-1", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),

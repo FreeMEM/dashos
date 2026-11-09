@@ -16,6 +16,8 @@ pruebas = []
 virt = []
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
+# Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).
+paula = []
 
 [profile.dev]
 panic = "abort"
