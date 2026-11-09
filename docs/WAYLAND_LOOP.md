@@ -21,7 +21,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 | W3 | El servidor de objetos: `wl_display`, `wl_registry`, `wl_callback`, errores de protocolo que cortan la conexión | hecho (`servidor.rs`) |
 | W4 | Memoria compartida: `wl_shm`, `wl_shm_pool` (la llave es un objeto de memoria que el compositor proyecta solo para leer), `wl_buffer` | hecho (`shm.rs`) |
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | hecho (`escena.rs`) |
-| W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada, foco y orden con el ratón | |
+| W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada | hecho (en `escena.rs`; foco y orden con el ratón, en W8) |
 | W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | |
 | W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | |
 
@@ -66,4 +66,11 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
   dos formatos al enlazarlo. Pruebas: dos clientes con una superficie cada uno, apiladas y solapadas (fondo, rojo,
   azul a medias sobre rojo y sobre fondo, comprobados al píxel), avisos de frame, nada que componer sin cambios,
   release al cambiar de búfer, un cliente que se va; adjuntar algo que no es un búfer corta la conexión.
+- W6: ventanas de `xdg-shell` en la escena. El primer commit de una ventana sin búfer recibe su `configure` (de
+  `xdg_toplevel` y de `xdg_surface`, con su serie); tras confirmarlo, el primer búfer la pone en pantalla en
+  cascada (de 32 en 32 desde (40, 40)), encima de todo. Título e id de programa se guardan. Destruir la ventana la
+  quita de la pantalla. Errores de `xdg-shell`: búfer antes de confirmar, confirmar una serie que no se mandó, dos
+  papeles para una superficie, dos ventanas para una `xdg_surface`, `xdg_surface` para una superficie con búfer,
+  commit sin ventana; los menús emergentes (`get_popup`) aún no. Pruebas: dos ventanas de dos clientes en cascada,
+  compuestas y quitadas; cada error.
 

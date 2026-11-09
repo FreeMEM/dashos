@@ -494,3 +494,142 @@ mod composicion {
         assert!(a.roto.is_some());
     }
 }
+
+mod ventanas {
+    use super::*;
+    use crate::escena::*;
+    use crate::servidor::*;
+    use crate::shm::{Memorias, XRGB8888};
+    use crate::tablas::{wl_compositor, wl_registry, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
+
+    #[derive(Default)]
+    struct Mem(alloc::collections::BTreeMap<u32, Vec<u8>>);
+    impl Memorias for Mem {
+        fn proyectar(&mut self, llave: u32, _t: usize) -> Option<*const u8> {
+            Some(self.0.entry(llave).or_insert_with(|| vec![0x11; 1 << 16]).as_ptr())
+        }
+        fn soltar(&mut self, _: u32, _: *const u8, _: usize) {}
+    }
+
+    fn globales() -> [Global; 3] {
+        [
+            Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+            Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+            Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+        ]
+    }
+
+    /// Objetos del cliente: 3 compositor, 4 shm, 5 pool, 6 búfer, 7 superficie, 8 xdg_wm_base, 9 xdg_surface,
+    /// 10 xdg_toplevel.
+    fn preparar(e: &mut Escritor, llave: u32) {
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(3).texto(Some("xdg_wm_base")).uint(6).uint(8).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(5).llave(llave).int(16 * 16 * 4).fin();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(6).int(0).int(16).int(16).int(64).uint(XRGB8888).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(7).fin();
+        e.empezar(8, xdg_wm_base::req::GET_XDG_SURFACE).uint(9).uint(7).fin();
+        e.empezar(9, xdg_surface::req::GET_TOPLEVEL).uint(10).fin();
+        e.empezar(10, xdg_toplevel::req::SET_TITLE).texto(Some("Prueba")).fin();
+    }
+
+    fn mandar(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, e: &Escritor) -> Vec<(u32, u16, Vec<u8>)> {
+        con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        con.atender(&globales(), &mut escena.de(c));
+        eventos(&con.sacar())
+    }
+
+    /// Una ventana entera: commit sin búfer, configure, ack, búfer. Devuelve la serie del configure.
+    fn abrir(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, llave: u32) -> u32 {
+        let mut e = Escritor::new();
+        preparar(&mut e, llave);
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        let ev = mandar(escena, con, c, &e);
+        let conf: Vec<_> = ev.iter().filter(|x| x.0 == 9 || x.0 == 10).collect();
+        assert_eq!((conf[0].0, conf[0].1), (10, xdg_toplevel::ev::CONFIGURE));
+        assert_eq!((conf[1].0, conf[1].1), (9, xdg_surface::ev::CONFIGURE));
+        let serie = u32::from_le_bytes(conf[1].2[..4].try_into().unwrap());
+        // Sin ack todavía: nada en pantalla.
+        assert!(escena.orden.is_empty() || !escena.orden.contains(&(c, 7)));
+        let mut e = Escritor::new();
+        e.empezar(9, xdg_surface::req::ACK_CONFIGURE).uint(serie).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(escena, con, c, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        serie
+    }
+
+    #[test]
+    fn dos_ventanas_en_cascada() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        abrir(&mut escena, &mut a, 1, 70);
+        abrir(&mut escena, &mut b, 2, 71);
+        assert_eq!(escena.orden, [(1, 7), (2, 7)]);
+        let sitio = |e: &Escena<Mem>, c: Cliente| e.clientes[&c].superficies[&7].sitio;
+        assert_eq!(sitio(&escena, 1), Some((40, 40)));
+        assert_eq!(sitio(&escena, 2), Some((72, 72)));
+        assert_eq!(escena.clientes[&1].xdg[&9].titulo, "Prueba");
+        // Se compone: el búfer (0x11111111 en XRGB) sale en su sitio.
+        let mut pantalla = vec![0u32; 200 * 150];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 200 + 41], 0xFF11_1111);
+        assert_eq!(pantalla[10 * 200 + 10], 0);
+        // Destruir la ventana la quita de la pantalla.
+        let mut e = Escritor::new();
+        e.empezar(10, xdg_toplevel::req::DESTROY).fin();
+        mandar(&mut escena, &mut a, 1, &e);
+        assert_eq!(escena.orden, [(2, 7)]);
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 200 + 41], 0);
+    }
+
+    fn error(preparar_mas: &dyn Fn(&mut Escritor)) -> (u32, u32) {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut con = Conexion::new();
+        let mut e = Escritor::new();
+        preparar(&mut e, 70);
+        preparar_mas(&mut e);
+        mandar(&mut escena, &mut con, 1, &e);
+        let r = con.roto.expect("tenía que cortarse");
+        (r.objeto, r.codigo)
+    }
+
+    #[test]
+    fn errores_de_ventana() {
+        // Búfer antes de confirmar el configure.
+        assert_eq!(
+            error(&|e| {
+                e.empezar(7, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+                e.empezar(7, wl_surface::req::COMMIT).fin();
+            }),
+            (9, UNCONFIGURED_BUFFER)
+        );
+        // Confirmar un configure que no se mandó.
+        assert_eq!(error(&|e| { e.empezar(9, xdg_surface::req::ACK_CONFIGURE).uint(77).fin(); }), (9, INVALID_SERIAL));
+        // Dos papeles para una superficie.
+        assert_eq!(error(&|e| { e.empezar(8, xdg_wm_base::req::GET_XDG_SURFACE).uint(11).uint(7).fin(); }), (8, XDG_WM_BASE_ROLE));
+        // Dos ventanas para una xdg_surface.
+        assert_eq!(error(&|e| { e.empezar(9, xdg_surface::req::GET_TOPLEVEL).uint(11).fin(); }), (9, ALREADY_CONSTRUCTED));
+        // Una xdg_surface para una superficie que ya tiene búfer.
+        assert_eq!(
+            error(&|e| {
+                e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(12).fin();
+                e.empezar(12, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+                e.empezar(8, xdg_wm_base::req::GET_XDG_SURFACE).uint(13).uint(12).fin();
+            }),
+            (8, INVALID_SURFACE_STATE)
+        );
+        // Commit de una xdg_surface sin ventana.
+        assert_eq!(
+            error(&|e| {
+                e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(12).fin();
+                e.empezar(8, xdg_wm_base::req::GET_XDG_SURFACE).uint(13).uint(12).fin();
+                e.empezar(12, wl_surface::req::COMMIT).fin();
+            }),
+            (13, NOT_CONSTRUCTED)
+        );
+    }
+}

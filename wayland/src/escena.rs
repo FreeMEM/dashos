@@ -12,7 +12,18 @@ use alloc::vec::Vec;
 
 use crate::servidor::{Conexion, ErrorProtocolo, Servicio, INVALID_METHOD};
 use crate::shm::{Memorias, Shm, ARGB8888};
-use crate::tablas::{self, wl_buffer, wl_callback, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface};
+use crate::tablas::{
+    self, wl_buffer, wl_callback, wl_compositor, wl_region, wl_shm, wl_shm_pool, wl_surface, xdg_surface,
+    xdg_toplevel, xdg_wm_base,
+};
+
+/// Errores de `xdg_wm_base` y `xdg_surface` (de `xdg-shell.xml`).
+pub const XDG_WM_BASE_ROLE: u32 = 0;
+pub const INVALID_SURFACE_STATE: u32 = 4;
+pub const NOT_CONSTRUCTED: u32 = 1;
+pub const ALREADY_CONSTRUCTED: u32 = 2;
+pub const UNCONFIGURED_BUFFER: u32 = 3;
+pub const INVALID_SERIAL: u32 = 4;
 use crate::Valor;
 
 /// Un cliente es su marca de canal (S10b): la conexión.
@@ -63,6 +74,21 @@ pub struct Superficie {
     avisos: Vec<u32>,
     /// Dónde está en la pantalla, si se ve.
     pub sitio: Option<(i32, i32)>,
+    /// Su `xdg_surface`, si tiene ese papel (W6).
+    pub rol: Option<u32>,
+}
+
+/// Una superficie con papel de ventana (`xdg_surface` y su `xdg_toplevel`).
+#[derive(Debug, Default)]
+pub struct Xdg {
+    pub superficie: u32,
+    pub toplevel: Option<u32>,
+    /// El número del último `configure` mandado, hasta que el cliente lo confirma.
+    pub pendiente: Option<u32>,
+    /// El cliente ya confirmó un `configure`: puede poner búfer.
+    pub configurada: bool,
+    pub titulo: alloc::string::String,
+    pub app: alloc::string::String,
 }
 
 /// Lo de cada cliente.
@@ -70,6 +96,8 @@ pub struct Superficie {
 pub struct DeCliente {
     pub shm: Shm,
     pub superficies: BTreeMap<u32, Superficie>,
+    /// Por número de `xdg_surface`.
+    pub xdg: BTreeMap<u32, Xdg>,
 }
 
 /// Todas las superficies de todos los clientes y el orden en que se apilan.
@@ -82,13 +110,15 @@ pub struct Escena<M: Memorias> {
     pub fondo: u32,
     /// Daños de la pantalla que aún no se han compuesto (en coordenadas de la pantalla).
     pub danos: Vec<Rect>,
+    /// Cuántas ventanas se han colocado: la siguiente va en cascada.
+    colocadas: i32,
 }
 
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
         // Al empezar, la pantalla entera está por pintar.
         let todo = alloc::vec![Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 }];
-        Self { memorias, clientes: BTreeMap::new(), orden: Vec::new(), fondo, danos: todo }
+        Self { memorias, clientes: BTreeMap::new(), orden: Vec::new(), fondo, danos: todo, colocadas: 0 }
     }
 
     /// Lo que atiende las peticiones de un cliente.
@@ -249,7 +279,76 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 wl_shm_pool::req::RESIZE => yo.shm.crecer_pool(mem, objeto, args[0].int())?,
                 _ => {}
             },
+            "xdg_wm_base" => {
+                if orden == xdg_wm_base::req::GET_XDG_SURFACE {
+                    let (id, sup) = (args[0].uint(), args[1].uint());
+                    let Some(s) = yo.superficies.get_mut(&sup) else {
+                        return Err(ErrorProtocolo::new(objeto, XDG_WM_BASE_ROLE, "no es una superficie"));
+                    };
+                    if s.rol.is_some() {
+                        return Err(ErrorProtocolo::new(objeto, XDG_WM_BASE_ROLE, "la superficie ya tiene papel"));
+                    }
+                    if s.bufer.is_some() || matches!(s.pendiente.bufer, Some(Some(_))) {
+                        return Err(ErrorProtocolo::new(objeto, INVALID_SURFACE_STATE, "superficie con búfer"));
+                    }
+                    s.rol = Some(id);
+                    yo.xdg.insert(id, Xdg { superficie: sup, ..Default::default() });
+                }
+                // create_positioner y pong: nada que guardar todavía (sin menús emergentes en E1).
+            }
+            "xdg_surface" => {
+                let x = yo.xdg.get_mut(&objeto).unwrap();
+                match orden {
+                    xdg_surface::req::GET_TOPLEVEL => {
+                        if x.toplevel.is_some() {
+                            return Err(ErrorProtocolo::new(objeto, ALREADY_CONSTRUCTED, "ya es una ventana"));
+                        }
+                        x.toplevel = Some(args[0].uint());
+                    }
+                    xdg_surface::req::GET_POPUP => {
+                        return Err(ErrorProtocolo::new(1, crate::servidor::IMPLEMENTATION, "sin menús emergentes"));
+                    }
+                    xdg_surface::req::ACK_CONFIGURE => {
+                        if x.pendiente != Some(args[0].uint()) {
+                            return Err(ErrorProtocolo::new(objeto, INVALID_SERIAL, "configure que no se mandó"));
+                        }
+                        x.pendiente = None;
+                        x.configurada = true;
+                    }
+                    _ => {}
+                }
+            }
+            "xdg_toplevel" => {
+                let Some(x) = yo.xdg.values_mut().find(|x| x.toplevel == Some(objeto)) else {
+                    return Ok(());
+                };
+                match orden {
+                    xdg_toplevel::req::SET_TITLE => x.titulo = args[0].texto().into(),
+                    xdg_toplevel::req::SET_APP_ID => x.app = args[0].texto().into(),
+                    _ => {}
+                }
+            }
             "wl_surface" => {
+                // Una ventana: el primer commit sin búfer pide su configure; con búfer, tiene que haberlo confirmado.
+                if orden == wl_surface::req::COMMIT {
+                    let s = &yo.superficies[&objeto];
+                    if let Some(rol) = s.rol {
+                        let pone_bufer = matches!(s.pendiente.bufer, Some(Some(_)));
+                        let x = yo.xdg.get_mut(&rol).unwrap();
+                        let Some(toplevel) = x.toplevel else {
+                            return Err(ErrorProtocolo::new(rol, NOT_CONSTRUCTED, "commit sin papel completo"));
+                        };
+                        if !x.configurada && pone_bufer {
+                            return Err(ErrorProtocolo::new(rol, UNCONFIGURED_BUFFER, "búfer antes de configure"));
+                        }
+                        if !x.configurada && x.pendiente.is_none() {
+                            let serie = con.serie_nueva();
+                            con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(0).int(0).array(&[]).fin();
+                            con.salida.empezar(rol, xdg_surface::ev::CONFIGURE).uint(serie).fin();
+                            x.pendiente = Some(serie);
+                        }
+                    }
+                }
                 let s = yo.superficies.get_mut(&objeto).unwrap();
                 match orden {
                     wl_surface::req::ATTACH => {
@@ -286,6 +385,13 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         let s = yo.superficies.get_mut(&objeto).unwrap();
                         s.danos.extend(p.danos);
                         s.avisos.extend(p.avisos);
+                        // Una ventana con búfer que aún no está en pantalla: se coloca en cascada, encima de todo.
+                        if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() {
+                            let k = escena.colocadas % 8;
+                            escena.colocadas += 1;
+                            let cliente = self.cliente;
+                            escena.colocar(cliente, objeto, 40 + 32 * k, 40 + 32 * k);
+                        }
                     }
                     _ => {}
                 }
@@ -315,6 +421,29 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         }
         yo.shm.destruir_bufer(&mut escena.memorias, objeto);
         yo.shm.destruir_pool(&mut escena.memorias, objeto);
+        // Una ventana que se destruye deja de verse; su superficie vuelve a no tener papel de ventana visible.
+        let mut quitar = None;
+        if let Some(x) = yo.xdg.values_mut().find(|x| x.toplevel == Some(objeto)) {
+            x.toplevel = None;
+            x.configurada = false;
+            quitar = Some(x.superficie);
+        }
+        if let Some(x) = yo.xdg.remove(&objeto) {
+            if let Some(s) = yo.superficies.get_mut(&x.superficie) {
+                s.rol = None;
+            }
+            quitar = Some(x.superficie);
+        }
+        if let Some(sup) = quitar {
+            if let Some(s) = yo.superficies.get_mut(&sup) {
+                s.sitio = None;
+            }
+            let antes = escena.orden.len();
+            escena.orden.retain(|o| *o != (self.cliente, sup));
+            if escena.orden.len() != antes {
+                escena.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+            }
+        }
     }
 }
 

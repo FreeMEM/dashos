@@ -94,6 +94,14 @@ impl Valor<'_> {
     pub fn int(&self) -> i32 {
         self.uint() as i32
     }
+
+    /// El texto de un argumento (vacío si es nulo o no es texto).
+    pub fn texto(&self) -> &str {
+        match self {
+            Valor::Str(Some(t)) => t,
+            _ => "",
+        }
+    }
 }
 
 /// Lo que puede estar mal en un mensaje.
