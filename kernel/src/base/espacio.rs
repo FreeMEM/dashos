@@ -423,5 +423,16 @@ pub fn vacia_fisica() -> u64 {
 
 /// Deja este núcleo sin mitad baja: la tabla vacía, con ASID 0.
 pub(in crate::base) fn activar_vacio() {
+    // Solo para medir (opción `medir_asid`, no segura): la tabla vacía con el ASID que hubiera, para ver cuánto de una
+    // llamada en QEMU es vaciar su TLB, que lo hace entera con cada cambio de ASID. Así la protección se pierde: la
+    // TLB aún tiene las traducciones del proceso con ese ASID.
+    #[cfg(feature = "medir_asid")]
+    {
+        let t: u64;
+        unsafe { core::arch::asm!("mrs {}, ttbr0_el1", out(reg) t) };
+        activar(mmu::fisica(&VACIA as *const TablaVacia as usize) as u64 | (t & (0xffff << 48)));
+        return;
+    }
+    #[allow(unreachable_code)]
     activar(mmu::fisica(&VACIA as *const TablaVacia as usize) as u64);
 }

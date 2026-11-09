@@ -4,6 +4,8 @@
     tools/medir.py paquete SALIDA            junta los hijos de prueba (Rust, C y Dash) en el paquete del kernel
     tools/medir.py correr IMAGEN JSON [-n N] arranca la imagen de `make medir` N veces en QEMU raspi4b y guarda las
                                              medianas de cada medida en JSON (con todas las vueltas)
+    tools/medir.py linux JSON [-n N]         lo mismo con el kernel de Raspberry Pi OS y el banco de Linux (paso L;
+                                             antes, tools/medir_linux/hacer.sh)
     tools/medir.py comparar BASE NUEVO       compara dos JSON
 
 El hijo en C se compila con clang y ld.lld; el de Dash, con `./dash --dashos` de ~/Projects/FreeMEMLang (o $DASH).
@@ -76,11 +78,21 @@ def dtb():
     sys.exit("falta build/firmware/bcm2711-rpi-4-b-qemu.dtb: se crea con una vuelta de tools/prueba_qemu.sh")
 
 
+LINUX = os.path.expanduser("~/.cache/dashos-linux")
+
+
+def orden_linux():
+    """QEMU con kernel8.img de Raspberry Pi OS, el árbol sin Bluetooth y el banco como /init (tools/medir_linux)."""
+    return ["-kernel", os.path.join(LINUX, "kernel8.img"), "-dtb", os.path.join(LINUX, "banco.dtb"), "-initrd",
+            os.path.join(LINUX, "banco.cpio.gz"), "-append", "console=ttyAMA1,115200 rdinit=/init loglevel=3"]
+
+
 def una_vuelta(imagen, segundos=300):
-    """Arranca la imagen y devuelve la salida del puerto serie hasta "[medir] fin" (o hasta el tope)."""
+    """Arranca la imagen (o Linux, con imagen None) y devuelve la salida del puerto serie hasta "[medir] fin"."""
     import selectors
     import time
-    q = subprocess.Popen(["qemu-system-aarch64", "-M", "raspi4b", "-kernel", imagen, "-dtb", dtb(), "-display", "none",
+    arranque = orden_linux() if imagen is None else ["-kernel", imagen, "-dtb", dtb()]
+    q = subprocess.Popen(["qemu-system-aarch64", "-M", "raspi4b", *arranque, "-display", "none",
                           "-serial", "stdio", "-serial", "null", "-monitor", "none"],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     sel = selectors.DefaultSelector()
@@ -148,6 +160,9 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 4 and sys.argv[1] == "correr":
         n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
         correr(sys.argv[2], sys.argv[3], n)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "linux":
+        n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
+        correr(None, sys.argv[2], n)
     elif len(sys.argv) == 4 and sys.argv[1] == "comparar":
         comparar(sys.argv[2], sys.argv[3])
     else:

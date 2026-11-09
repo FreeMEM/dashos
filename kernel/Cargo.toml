@@ -21,6 +21,8 @@ paula = []
 # El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md; `make medir`): solo `consola` y `medir`, con
 # el paquete de los hijos de prueba.
 medir = []
+# Con `medir`: experimento, no seguro (M9). La tabla vacía conserva el ASID: cuánto pesa en QEMU vaciar la TLB.
+medir_asid = []
 
 [profile.dev]
 panic = "abort"

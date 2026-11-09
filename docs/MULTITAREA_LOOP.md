@@ -50,12 +50,13 @@ Pruebas:
 | M2 | Temporizadores de alta resolución (el vencimiento programa el reloj) | hecho |
 | M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | hecho (con M1) |
 | M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | hecho |
-| M5 | Sin tic en núcleos ociosos | pendiente |
+| M5 | Sin tic en núcleos ociosos | hecho |
+| M6a | Copias de usuario sin cambiar de espacio (menos cambios de ASID por llamada) | pendiente |
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
 | M7 | Préstamo de tiempo del cliente al servidor (seL4 MCS) | pendiente |
 | M8 | Pesos: foco del compositor y procesos de fondo (con permiso) | pendiente |
 | M9 | Lo que salga de medir | abierto |
-| L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | pendiente |
+| L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
 Cada paso: medir antes, cambiar, medir después, `make prueba` (raspi4b) y `make arranque-virt` sin fallos, apuntar
@@ -166,3 +167,44 @@ aquí los números y commit local.
 - Lo que empeora: con 6 hilos en 4 núcleos el reparto baja de 0,98 a 0,80 (2, 2, 1, 1: la rotación no llega a
   igualarlos), aunque se hace un 17 % más de trabajo al usar el núcleo 0. Queda para M9.
 - `make prueba` (8 vueltas) y `make arranque-virt` (con el sonido): bien.
+
+### 2026-11-09 — M5: sin tic en los núcleos ociosos
+
+- Cuando un núcleo pasa a su hilo ocioso, ya en su bucle de espera (`ocioso()`), el reloj se programa a 1 s en lugar
+  de 10 ms (el registro del temporizador es de 32 bits). Lo que le da trabajo ya le avisa: despertar a un hilo suyo,
+  un robo pendiente (`avisar_ocioso`), un temporizador en el núcleo 0 (M2), una interrupción, y ahora también un hilo
+  nuevo en su cola. El hilo de arranque del núcleo 0, que es su ocioso, corre `inicio` y las pruebas esperando tics:
+  hasta entrar en `ocioso()` conserva el tic (la primera versión rompió C8 por eso). Sin avisos entre núcleos
+  (la medida de C17), también.
+- `docs/medidas/m5.json` contra `m4.json`: interrupciones por segundo en núcleos sin trabajo de 97-101 a 0-5 (el 0
+  atiende la consola y el repartidor). Lo demás, igual dentro del ruido (ida y vuelta ±5 %, reparto ±3 %; el
+  temporizador con carga, p99 de 299 a 494 µs, ruido de ese caso; queda mirado en M9).
+- `make prueba` (3 vueltas) y `make arranque-virt` (con el sonido): bien.
+
+### 2026-11-09 — L: Linux de la Raspberry Pi en el mismo QEMU
+
+- `tools/medir_linux/banco.c`: las mismas pruebas en C para Linux (fork, tuberías, `sched_setaffinity`,
+  `clock_nanosleep`, `/proc/interrupts`), con la misma unidad de trabajo y el contador de la CPU. Va como `/init` de
+  un initramfs (`tools/medir_linux/hacer.sh`, compilador musl de Bootlin) con el `kernel8.img` de Raspberry Pi OS
+  (6.18.33-v8+, del repositorio raspberrypi/firmware; nada de eso va al repo: `~/.cache/dashos-linux`). El árbol de la
+  Pi lleva el PL011 para el Bluetooth y Linux no deja consola: una copia sin ese nodo, consola `ttyAMA1`.
+  `tools/medir.py linux JSON -n 3`.
+- `docs/medidas/linux.json` (3 arranques) contra DashOS con M5:
+
+| Medida | DashOS (M5) | Linux 6.18 (Raspberry Pi OS) |
+|---|---|---|
+| Ida y vuelta, núcleos distintos, sin carga | 91-99 µs | 33 µs |
+| Ida y vuelta, mismo núcleo, sin carga | 91-95 µs | 80 µs |
+| Ida y vuelta con 4 calculando | 122 µs | 119 µs |
+| Reparto, 4 / 5 / 6 / 8 calculando | 0,99 / 0,89 / 0,80 / 0,93 | 0,99 / 0,89 / 0,81 / 0,93 |
+| Trabajo total con 4 calculando | 17,0 M | 17,0 M |
+| Espera de 1 ms, retraso mediano sin / con carga | 178 / 208 µs | 81 / 123 µs |
+| Interrupciones por segundo en núcleos sin trabajo | 0-5 | 5-20 |
+| Dormilón: tiempo perdido por el otro | 3 ms (núcleos distintos) | 516 ms (mismo núcleo, fijados) |
+
+- Experimento (`--features medir,medir_asid`, no seguro, `docs/medidas/m9-asid.json`): si la tabla vacía del kernel
+  conserva el ASID del proceso, la ida y vuelta baja de 91 a 26 µs (-71 %, por debajo de Linux) y la espera de 1 ms
+  de 178 a 119 µs. Lo que cuesta en QEMU es que vacía su TLB entera con cada cambio de ASID, y DashOS cambia de ASID
+  al entrar y salir del kernel y en cada copia de usuario (PAN por software). En una Pi de verdad cambiar de ASID no
+  vacía nada: esa parte de la diferencia es del emulador. Pero hay una mejora real que también la quita: copiar sin
+  cambiar de espacio (siguiente paso, M6a).

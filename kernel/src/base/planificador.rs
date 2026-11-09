@@ -339,6 +339,10 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
     publicar_carga(nucleo, nc);
     drop(cola);
     avisar_ocioso(nucleo);
+    // Su núcleo puede estar en el ocioso sin tic (M5): que lo vea ya.
+    if nucleo != nucleos::numero() as usize && EN_OCIOSO[nucleo].load(Ordering::Relaxed) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+        crate::gic::avisar(nucleo as u32, crate::gic::SGI_PLANIFICAR);
+    }
     if let Some(c) = registrar {
         let mut e = c.estado.tomar();
         // Si ya lo mataron mientras se creaba (M2), el hilo nace marcado: morirá antes de bajar a EL0.
@@ -654,8 +658,12 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         };
 
         // Siguiente interrupción: el tic normal, o antes si el hilo elegido agota su presupuesto o si algún hilo de
-        // plazo recupera el suyo.
-        let mut proxima = reloj::periodo();
+        // plazo recupera el suyo. En el ocioso no hace falta tic (M5): lo que le dé trabajo avisa al núcleo (despertar,
+        // un hilo nuevo, un temporizador en el 0, una interrupción). Sin avisos entre núcleos (la medida de C17), sí.
+        let ocioso_sin_tic = siguiente == nucleo.ocioso
+            && SOLO_ESPERA[n].load(Ordering::Relaxed)
+            && AVISAR_NUCLEOS.load(Ordering::Relaxed);
+        let mut proxima = if ocioso_sin_tic { SIN_TIC_S * reloj::frecuencia() } else { reloj::periodo() };
         unsafe {
             if let Some(p) = (*siguiente).plazo {
                 if p.restante > 0 {
@@ -811,6 +819,14 @@ pub fn bloquear() {
 pub fn bloquear_soltando<T>(guarda: crate::cerrojo::Guarda<'_, T>) {
     planificar_con(true, move || guarda.soltar_sin_irq());
 }
+
+/// Lo más que duerme un núcleo ocioso sin interrupción del reloj (M5). El registro del temporizador (CNTP_TVAL) es de
+/// 32 bits con signo: con el contador a 54 o 62,5 MHz, 1 s cabe de sobra.
+const SIN_TIC_S: u64 = 1;
+
+/// El hilo ocioso de cada núcleo ya está en su bucle de espera (`ocioso`). Antes es el hilo del arranque, que hace
+/// trabajo (en el núcleo 0, `inicio` y las pruebas, que esperan tics) y necesita el reloj.
+static SOLO_ESPERA: [AtomicBool; MAX_NUCLEOS] = [const { AtomicBool::new(false) }; MAX_NUCLEOS];
 
 /// Si es falso, no se avisa a otro núcleo al despertar uno de sus hilos (para medir, C17).
 pub static AVISAR_NUCLEOS: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(true);
@@ -1106,6 +1122,7 @@ pub fn recoger() {
 
 /// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones.
 pub fn ocioso() -> ! {
+    SOLO_ESPERA[nucleos::numero() as usize].store(true, Ordering::Relaxed);
     reloj::habilitar_irq();
     loop {
         recoger();
