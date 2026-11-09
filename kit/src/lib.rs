@@ -6,4 +6,5 @@
 extern crate alloc;
 
 pub mod lienzo;
+pub mod objetos;
 pub mod texto;

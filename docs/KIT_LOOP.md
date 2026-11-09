@@ -26,7 +26,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 |------|-----|--------|--------|
 | K1 | Lienzo: rectángulos, esquinas redondeadas, bordes, mezcla con alfa, recortes | Píxeles en el PC | hecho |
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
-| K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | |
+| K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | |
@@ -48,4 +48,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   Medium más ancha), las letras del castellano están todas (ñ, tildes, diéresis, ¿¡, €, ç), y "Ñandú" se dibuja
   entero dentro de su caja, con la tilde de la Ñ por encima de la altura de la x. Compila para
   `aarch64-unknown-none-softfloat`.
+- K3: `kit/src/objetos.rs`. `Arbol` con objetos de una `Clase` (que ajusta o rechaza valores), atributos numerados
+  como las etiquetas de MUI (comunes del 1 al 99: texto, desactivado, valor, pulsado, clic, mínimo, máximo, peso) y
+  `notificar` como `MUIM_Notify`: cuándo (siempre o con un valor) y qué se pone en el destino (fijo, el valor que
+  cambió, su contrario, o como texto con formato). Un aviso solo salta si el valor cambia, y una cadena de avisos se
+  corta a los 32 saltos. Lo que cambia queda "sucio" para dibujarlo. Pruebas: un deslizador (0 a 10) que pone
+  "Volumen: 7" en un texto y se queda en 10 si se le pide 99; una casilla que desactiva un botón; dos deslizadores
+  atados en los dos sentidos; una cadena que cambiaría siempre, cortada.
 
