@@ -13,6 +13,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
+use core::sync::atomic::{AtomicU64, Ordering};
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -34,8 +35,9 @@ const DISCO_ESCRIBIR: u32 = 2;
 const DISCO_VACIAR: u32 = 5;
 /// El sistema de archivos empieza en el primer MB del disco.
 const INICIO: u64 = 1 << 20;
-/// Lo que cabe en una transferencia del disco: 8 KB desde un principio de página de su ventana.
-const TRAMO: usize = 8192;
+/// Lo que cabe en una transferencia del disco: la ventana entera, 64 KB (antes, 8 KB: el NVMe no usaba listas de
+/// páginas).
+const TRAMO: usize = 64 * 1024;
 
 const CANAL: u32 = 2;
 const VENTANA: usize = 64 * 1024;
@@ -70,6 +72,32 @@ const HACER_VOLUMEN: u32 = 23;
 const QUITAR_VOLUMEN: u32 = 24;
 const ABRIR_VOLUMEN: u32 = 25;
 const CERRAR_VOLUMEN: u32 = 26;
+/// Diagnóstico (paso F): en la ventana del cliente, en texto, cuántas veces se ha atendido cada orden y cuánto ha
+/// costado en total, y lo mismo de las lecturas, escrituras y vaciados del disco. Devuelve el largo en `a`.
+const PERFIL: u32 = 98;
+
+/// Para PERFIL: veces y cuentas del reloj por orden (hasta la 31) y del disco (leer, escribir, vaciar).
+struct Perfil {
+    veces: [AtomicU64; 32],
+    cuentas: [AtomicU64; 32],
+    disco: [(AtomicU64, AtomicU64); 3],
+}
+static PERFIL_DATOS: Perfil = Perfil {
+    veces: [const { AtomicU64::new(0) }; 32],
+    cuentas: [const { AtomicU64::new(0) }; 32],
+    disco: [const { (AtomicU64::new(0), AtomicU64::new(0)) }; 3],
+};
+
+fn reloj() -> u64 {
+    let t: u64;
+    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) t) };
+    t
+}
+
+fn apuntar_disco(cual: usize, desde: u64) {
+    PERFIL_DATOS.disco[cual].0.fetch_add(1, Ordering::Relaxed);
+    PERFIL_DATOS.disco[cual].1.fetch_add(reloj() - desde, Ordering::Relaxed);
+}
 
 // Estados.
 const BIEN: i32 = 0;
@@ -111,7 +139,9 @@ struct Cache {
     reloj: u64,
 }
 
-const MAX_BLOQUES: usize = 16 * 1024 * 1024 / BLOCK_SIZE as usize;
+/// 6 MB: el grupo de cada servicio tiene 16 MB (`inicio`), y en él van también el programa, las ventanas y los
+/// nodos recordados (`Recuerdos`). Con 16 MB de caché, el servicio se quedaba sin memoria.
+const MAX_BLOQUES: usize = 6 * 1024 * 1024 / BLOCK_SIZE as usize;
 
 impl Cache {
     fn leer(&mut self, bloque: u64, destino: &mut [u8]) -> bool {
@@ -196,6 +226,31 @@ impl Disk for Disco {
         Ok(buffer.len())
     }
 
+    /// Lo que escribe una transacción, junto (F2): los bloques seguidos van en una sola petición al servicio de disco
+    /// (hasta `TRAMO`), no uno a uno. Cada petición cuesta unos 100 µs en QEMU.
+    unsafe fn write_at_batched(&mut self, batch: &[(u64, &[u8])]) -> Result<usize> {
+        let mut orden: Vec<&(u64, &[u8])> = batch.iter().collect();
+        orden.sort_unstable_by_key(|(b, _)| *b);
+        let bs = BLOCK_SIZE as usize;
+        let mut escrito = 0;
+        let mut i = 0;
+        while i < orden.len() {
+            let (inicio, primero) = *orden[i];
+            let mut junto = Vec::from(primero);
+            let mut j = i + 1;
+            while j < orden.len()
+                && orden[j].0 == inicio + (junto.len() / bs) as u64
+                && junto.len() + orden[j].1.len() <= TRAMO
+            {
+                junto.extend_from_slice(orden[j].1);
+                j += 1;
+            }
+            escrito += unsafe { self.write_at(inicio, &junto)? };
+            i = j;
+        }
+        Ok(escrito)
+    }
+
     unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         let n = unsafe { self.escribir_disco(block, buffer)? };
         for (i, b) in buffer.chunks_exact(BLOCK_SIZE as usize).enumerate() {
@@ -209,15 +264,32 @@ impl Disk for Disco {
     }
 
     fn flush(&mut self) -> Result<()> {
-        match self.pedir(DISCO_VACIAR, 0, 0) {
+        let t0 = reloj();
+        let r = match self.pedir(DISCO_VACIAR, 0, 0) {
             Some((0, _, _)) => Ok(()),
             _ => Err(Error::new(EIO)),
-        }
+        };
+        apuntar_disco(2, t0);
+        r
     }
 }
 
 impl Disco {
     unsafe fn leer_disco(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
+        let t0 = reloj();
+        let r = unsafe { self.leer_disco_sin_medir(block, buffer) };
+        apuntar_disco(0, t0);
+        r
+    }
+
+    unsafe fn escribir_disco(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+        let t0 = reloj();
+        let r = unsafe { self.escribir_disco_sin_medir(block, buffer) };
+        apuntar_disco(1, t0);
+        r
+    }
+
+    unsafe fn leer_disco_sin_medir(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         let mut hecho = 0;
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TRAMO);
@@ -236,7 +308,7 @@ impl Disco {
         Ok(hecho)
     }
 
-    unsafe fn escribir_disco(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+    unsafe fn escribir_disco_sin_medir(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         if buffer.len() as u64 % BLOCK_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
@@ -305,25 +377,6 @@ fn tipo(n: &Node) -> u8 {
     }
 }
 
-/// Busca `nombre` (partes separadas por "/", o vacío para el mismo) desde `desde`, en el volumen `vol`.
-fn buscar(fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str) -> Result<TreeData<Node>> {
-    fs.tx_in(vol, |tx| {
-        let mut nodo = tx.read_tree(desde)?;
-        if nombre.is_empty() {
-            return Ok(nodo);
-        }
-        for parte in nombre.split('/') {
-            if parte.is_empty() {
-                return Err(Error::new(EINVAL));
-            }
-            if !nodo.data().is_dir() {
-                return Err(Error::new(ENOTDIR));
-            }
-            nodo = tx.find_node(nodo.ptr(), parte)?;
-        }
-        Ok(nodo)
-    })
-}
 
 /// La fecha que se pone a lo nuevo. Aún no hay reloj de la hora (`ahora_us` cuenta desde el arranque): se deja en 0.
 const AHORA: u64 = 0;
@@ -333,12 +386,33 @@ fn un_nombre(b: &[u8]) -> Option<&str> {
     core::str::from_utf8(b).ok().filter(|n| !n.is_empty() && !n.contains('/') && !n.contains('\0'))
 }
 
+/// Cierra un nodo abierto. Sin transacción si sigue abierto por otro, o si era el último y no hay nodos borrados
+/// esperando a que se cierren (la lista de liberar del volumen principal, vacía); si no, `on_close_node`, que los
+/// suelta (F2).
+fn cerrar_nodo(fs: &mut Fs, vol: u64, n: TreePtr<Node>) {
+    let clave = (vol << 32) | u64::from(n.id());
+    match fs.node_usages.get_mut(&clave) {
+        Some(c) if *c > 1 => {
+            *c -= 1;
+            return;
+        }
+        Some(_) if vol == 0 && fs.header.release.is_null() => {
+            fs.node_usages.remove(&clave);
+            return;
+        }
+        _ => {}
+    }
+    let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
+}
+
 /// Da una asa nueva para el nodo `n` del volumen `vol`, ya contado como abierto (si se borra, sigue vivo hasta que
 /// se cierre).
 fn dar_asa(fs: &mut Fs, c: &mut Cliente, vol: u64, n: &TreeData<Node>) -> Respuesta {
-    if fs.tx_in(vol, |tx| tx.on_open_node(n.ptr())).is_err() {
-        return mal(SIN_SITIO);
-    }
+    // Contar la apertura no necesita una transacción (F2: una vacía cuesta unos 30 µs): es lo que hace
+    // `on_open_node`, la cuenta en `node_usages` con la clave de `usage_key`.
+    let cuenta = fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0);
+    let Some(mas) = cuenta.checked_add(1) else { return mal(SIN_SITIO) };
+    *cuenta = mas;
     let asa = c.siguiente;
     c.siguiente = c.siguiente.wrapping_add(1).max(1);
     c.asas.insert(asa, (vol, n.ptr()));
@@ -389,25 +463,148 @@ fn mal(estado: i32) -> Respuesta {
     Respuesta { estado, ..Default::default() }
 }
 
-fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
+/// Lo que el servicio recuerda de lo leído (F2, docs/MULTITAREA_LOOP.md), como la caché de nombres y de nodos de
+/// Linux: buscar un nombre recorre varios bloques del árbol y comprueba la suma de cada uno (275 µs en QEMU). Se
+/// olvida todo con cualquier orden que pueda cambiar algo (solo las de `SOLO_LEEN` lo conservan): así nunca da algo
+/// viejo, aunque una escritura borre de más.
+struct Recuerdos {
+    /// (volumen, cajón, nombre) → el número del nodo.
+    nombres: BTreeMap<(u64, u32, Vec<u8>), u32>,
+    /// (volumen, nodo) → sus datos (un bloque de 4 KB cada uno: hasta `MAX_RECUERDOS`, 4 MB).
+    nodos: BTreeMap<(u64, u32), Box<TreeData<Node>>>,
+}
+
+/// Las órdenes que no cambian nada en el disco ni en los nodos. Crear, borrar, escribir y recortar olvidan solo lo
+/// suyo: el nodo que cambia (y, al crear o borrar, su cajón y el nombre). CERRAR puede soltar un nodo borrado, pero a ese ya no
+/// se llega por su nombre (borrarlo lo olvidó todo) y, si su número se vuelve a usar, será al crear, que también.
+const SOLO_LEEN: &[u32] = &[BUSCAR, LEER, LISTAR, DATOS, CERRAR, INFO, COMENTARIO, INSTANTANEAS, VOLUMENES, PERFIL];
+const MAX_RECUERDOS: usize = 1024;
+
+/// Una copia de un nodo leído (`Node` no es `Clone`: es un bloque de bytes).
+fn copia(n: &TreeData<Node>) -> TreeData<Node> {
+    let mut d = Node::default();
+    d.copy_from_slice(n.data());
+    TreeData::new(n.id(), d)
+}
+
+impl Recuerdos {
+    fn olvidar(&mut self) {
+        self.nombres.clear();
+        self.nodos.clear();
+    }
+
+    fn olvidar_nodo(&mut self, vol: u64, id: u32) {
+        self.nodos.remove(&(vol, id));
+    }
+
+    /// Lo que recuerda un fichero nuevo `n` llamado `nombre` en el cajón `dir`.
+    fn creado(&mut self, vol: u64, dir: u32, nombre: &str, n: &TreeData<Node>) {
+        if self.nombres.len() < MAX_RECUERDOS * 4 {
+            self.nombres.insert((vol, dir, Vec::from(nombre.as_bytes())), n.id());
+        }
+        if self.nodos.len() < MAX_RECUERDOS {
+            self.nodos.insert((vol, n.id()), Box::new(copia(n)));
+        }
+    }
+
+    /// Borrado el nodo `id` del cajón `dir`: fuera todo nombre que lleve a él (se busca sin mirar mayúsculas, así que
+    /// puede estar con otras) y sus datos.
+    fn borrado(&mut self, vol: u64, dir: u32, id: u32) {
+        self.nombres.retain(|k, v| !(k.0 == vol && k.1 == dir && *v == id));
+        self.nodos.remove(&(vol, id));
+    }
+
+    fn nodo(&mut self, fs: &mut Fs, vol: u64, n: TreePtr<Node>) -> Result<TreeData<Node>> {
+        if let Some(d) = self.nodos.get(&(vol, n.id())) {
+            return Ok(copia(d));
+        }
+        let d = fs.tx_in(vol, |tx| tx.read_tree(n))?;
+        if self.nodos.len() >= MAX_RECUERDOS {
+            self.nodos.clear();
+        }
+        self.nodos.insert((vol, n.id()), Box::new(copia(&d)));
+        Ok(d)
+    }
+
+    /// Buscar `nombre` (con '/') desde `desde`, recordando cada paso.
+    fn buscar(&mut self, fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str) -> Result<TreeData<Node>> {
+        let mut nodo = self.nodo(fs, vol, desde)?;
+        if nombre.is_empty() {
+            return Ok(nodo);
+        }
+        for parte in nombre.split('/') {
+            if parte.is_empty() {
+                return Err(Error::new(EINVAL));
+            }
+            if !nodo.data().is_dir() {
+                return Err(Error::new(ENOTDIR));
+            }
+            let clave = (vol, nodo.ptr().id(), Vec::from(parte.as_bytes()));
+            nodo = match self.nombres.get(&clave) {
+                Some(&id) => self.nodo(fs, vol, TreePtr::new(id))?,
+                None => {
+                    let dir = nodo.ptr();
+                    let n = fs.tx_in(vol, |tx| tx.find_node(dir, parte))?;
+                    if self.nombres.len() >= MAX_RECUERDOS * 4 {
+                        self.nombres.clear();
+                    }
+                    self.nombres.insert(clave, n.id());
+                    if self.nodos.len() >= MAX_RECUERDOS {
+                        self.nodos.clear();
+                    }
+                    self.nodos.insert((vol, n.id()), Box::new(copia(&n)));
+                    n
+                }
+            };
+        }
+        Ok(nodo)
+    }
+}
+
+fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> Respuesta {
+    // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
+    if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO].contains(&p.orden) {
+        rec.olvidar();
+    }
     let nodo_de = |c: &Cliente, asa: u32| -> Option<(u64, TreePtr<Node>)> {
         if asa == 0 { Some((0, TreePtr::root())) } else { c.asas.get(&asa).copied() }
     };
     match p.orden {
+        PERFIL => {
+            let mut t = String::new();
+            let us = |c: u64| {
+                let f: u64;
+                unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) f) };
+                c * 1_000_000 / f.max(1)
+            };
+            for o in 0..32 {
+                let v = PERFIL_DATOS.veces[o].load(Ordering::Relaxed);
+                if v > 0 {
+                    t += &format!("o{}={}/{} ", o, v, us(PERFIL_DATOS.cuentas[o].load(Ordering::Relaxed)));
+                }
+            }
+            for (nombre, (v, c)) in ["leer", "escribir", "vaciar"].iter().zip(PERFIL_DATOS.disco.iter()) {
+                t += &format!("{}={}/{} ", nombre, v.load(Ordering::Relaxed), us(c.load(Ordering::Relaxed)));
+            }
+            let n = t.len().min(4096);
+            let v = unsafe { core::slice::from_raw_parts_mut(c.va as *mut u8, n) };
+            v.copy_from_slice(&t.as_bytes()[..n]);
+            Respuesta { a: n as u64, ..Default::default() }
+        }
         BUSCAR => {
             let Some((vol, desde)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
-            match buscar(fs, vol, desde, nombre) {
+            match rec.buscar(fs, vol, desde, nombre) {
                 Ok(n) => dar_asa(fs, c, vol, &n),
                 Err(e) => mal(estado_de(e)),
             }
         }
         DATOS => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            match fs.tx_in(vol, |tx| tx.read_tree(n)) {
+            match rec.nodo(fs, vol, n) {
                 Ok(n) => datos(p.asa, n.data()),
                 Err(e) => mal(estado_de(e)),
             }
@@ -489,7 +686,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
         CERRAR => match c.asas.remove(&p.asa) {
             Some((vol, n)) => {
                 // Si se borró mientras estaba abierto, ahora se suelta de verdad.
-                let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
+                cerrar_nodo(fs, vol, n);
                 Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }
             }
             None => mal(ASA_MALA),
@@ -501,6 +698,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             }
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
             let datos = c.ventana()[..p.b as usize].to_vec();
+            rec.olvidar_nodo(vol, n.id());
             let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
@@ -528,8 +726,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
+            rec.olvidar_nodo(vol, dir.id());
             match fs.tx_in(vol, |tx| tx.create_node(dir, nombre, modo, AHORA, 0)) {
-                Ok(n) => dar_asa(fs, c, vol, &n),
+                Ok(n) => {
+                    rec.creado(vol, dir.id(), nombre, &n);
+                    dar_asa(fs, c, vol, &n)
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -541,10 +743,15 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
                 if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) {
                     return Err(Error::new(EACCES));
                 }
-                tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)
+                tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)?;
+                Ok(n.id())
             });
+            rec.olvidar_nodo(vol, dir.id());
             match r {
-                Ok(_) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
+                Ok(id) => {
+                    rec.borrado(vol, dir.id(), id);
+                    Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -569,6 +776,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion) -> Respuesta {
         }
         TAMANO => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            rec.olvidar_nodo(vol, n.id());
             let r = fs.tx_in(vol, |tx| {
                 let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
@@ -821,7 +1029,7 @@ fn sesion(clientes: &mut [Option<Cliente>], marca: u64, respuesta: u32) -> (i32,
 fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize) {
     if let Some(c) = clientes[i].take() {
         for (_, (vol, n)) in c.asas {
-            let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
+            cerrar_nodo(fs, vol, n);
         }
         dashos::cerrar(c.respuesta);
         dashos::memoria_quitar(c.va);
@@ -859,6 +1067,7 @@ fn principal() -> u64 {
     println!("  [archivos] RedoxFS abierto: {} KB, {} KB libres", fs.header.size() / 1024, fs.allocator().free() * BLOCK_SIZE / 1024);
 
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = Default::default();
+    let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new() };
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
@@ -919,7 +1128,12 @@ fn principal() -> u64 {
             mal(MAL_FORMADO)
         } else {
             let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &buf[CABECERA..CABECERA + largo] };
-            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p);
+            let t0 = reloj();
+            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos);
+            if let (Some(v), Some(c)) = (PERFIL_DATOS.veces.get(orden as usize), PERFIL_DATOS.cuentas.get(orden as usize)) {
+                v.fetch_add(1, Ordering::Relaxed);
+                c.fetch_add(reloj() - t0, Ordering::Relaxed);
+            }
             // Tras volver a una instantánea, las asas de todos en ese volumen llevan a nodos que ya no son los
             // mismos: se sueltan (la vuelta ya olvidó que estaban abiertos).
             if orden == VOLVER && r.estado == BIEN {

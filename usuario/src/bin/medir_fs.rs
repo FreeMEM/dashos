@@ -171,6 +171,12 @@ fn principal() -> u64 {
     }
     dato("borrar_sync", 1, PEQUENOS, cuentas() - t0, "ficheros/s");
     println!("[medir] fs-bien bien={} listados={}", bien as u8, listados);
+    // Dónde se fue el tiempo dentro del servicio (orden 98): "orden=veces/µs" y lo mismo del disco.
+    let r = c.pedir(98, 0, 0, 0, b"");
+    if r.estado == 0 {
+        let v = &ventana()[..(r.a as usize).min(4096)];
+        println!("[medir] fs-perfil {}", core::str::from_utf8(v).unwrap_or("?"));
+    }
     println!("[medir] fin");
     0
 }

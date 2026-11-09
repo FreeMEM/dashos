@@ -123,7 +123,8 @@ del disco, -5 sin sitio), en 8-15 los sectores del disco, en 16-19 el tamaño de
 Al abrir lleva además la llave de la **ventana**: 64 KB de memoria DMA (sin caché) del cliente, compartida con el
 servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce por la marca de su llave (la pone
 `inicio`): un mensaje sin marca se rechaza, y abrir otra vez da la misma ventana. Hasta 4 clientes. Una transferencia
-cabe en dos páginas de la ventana (8 KB desde un principio de página). La ventana lleva derecho a transferir, para que
+puede ocupar la ventana entera (64 KB), con una lista de páginas; si el controlador admite menos (MDTS), dos páginas (8
+KB desde un principio de página). La ventana lleva derecho a transferir, para que
 el cliente pueda dársela a otro proceso suyo.
 
 **Vaciar** (orden 5, FS2): sin sectores ni ventana. Cuando contesta, todo lo escrito antes está guardado en el disco,

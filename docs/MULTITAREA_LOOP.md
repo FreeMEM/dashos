@@ -59,7 +59,7 @@ Pruebas:
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 caché hecha; sigue |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1, F2 y F3 hechos; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | pendiente |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -287,3 +287,35 @@ aquí los números y commit local.
   (crear y escribir) frente a un `fsync`. Siguiente: medir dónde se va el tiempo dentro del servicio.
 - `make arranque-virt` (con la caché; comprueba en Linux que lo escrito está en el disco): bien. El banco comprueba
   lo que lee (`fs-bien bien=1`, 500 listados).
+
+### 2026-11-10 — F2 y F3: lo que el servicio recuerda, menos transacciones y órdenes de disco de 64 KB
+
+- Fallo de F1, encontrado al añadir al banco la comprobación de lo leído (`fs-bien`): con 16 MB de caché de bloques el
+  servicio podía quedarse sin memoria (cada servicio tiene un grupo de 16 MB, `inicio`) y morir; con F2 murió a mitad
+  del banco. Las cifras de F1 no las comprobaba nadie. Ahora la caché de bloques es de 6 MB y los nodos recordados, 4
+  MB como mucho.
+- Orden 98 (`PERFIL`) del servicio, para medir: veces y tiempo de cada orden y del disco. Lo que salió: buscar un
+  nombre, 275 µs (recorre el árbol y comprueba la suma de cada bloque); vaciar el disco, 1,25 ms, dos por transacción;
+  cada bloque escrito, una petición de 110 µs; una transacción vacía (abrir y cerrar cuentan con una), 30 µs.
+- F2: `Recuerdos`, la caché de nombres y nodos del servicio (como la de Linux): nombre → nodo y nodo → sus datos.
+  Crear, borrar, escribir y recortar olvidan solo lo suyo; cualquier otra orden que cambie algo, todo. Abrir y cerrar
+  cuentan sin transacción (salvo al cerrar el último con nodos borrados esperando). Las escrituras de una transacción
+  van juntas: los bloques seguidos, en una sola petición.
+- F3: el NVMe usa lista de páginas (PRP list): una orden puede ocupar la ventana entera, 64 KB (antes, 8 KB). Respeta el
+  MDTS del controlador. `docs/referencia/servicios.md` al día.
+- `docs/medidas/fs-f3.json` (3 arranques, `fs-bien` en las tres):
+
+| Operación | F1 | F3 | Linux 6.12, ext4 |
+|---|---|---|---|
+| Escribir 8 MB, cada trozo al disco | 13,7 MB/s | 15,5 MB/s | 26 MB/s |
+| Leer 8 MB, primera / segunda | 161 / 162 MB/s | 163 / 167 MB/s | 384 / 1.603 MB/s |
+| Crear y escribir un fichero de 4 KB, al disco | 111 /s | 124 /s | 390 /s |
+| Leer un fichero de 4 KB | 1.633 /s | 2.262 /s | 9.088 /s |
+| Datos de un fichero | 1.624 /s | 4.225 /s | 26.864 /s |
+| Listar un cajón de 500 | 15 /s | 17 /s | 154 /s |
+| Borrar un fichero, al disco | 209 /s | 216 /s | 420 /s |
+
+- Por dónde sigue: cada operación son tres idas y vueltas (buscar, leer o datos, cerrar) donde Linux hace una llamada;
+  RedoxFS comprueba la suma de cada bloque en cada lectura, aunque venga de la caché; y cada escritura al disco vacía
+  dos veces (1,3 ms cada una en este QEMU).
+- `make arranque-virt` (con el sonido y la comprobación del disco en Linux): bien.
