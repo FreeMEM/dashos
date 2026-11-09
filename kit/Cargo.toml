@@ -8,3 +8,7 @@ description = "El kit de interfaz de DashOS (S11): el modelo de MUI con el aspec
 [lib]
 name = "kit"
 path = "src/lib.rs"
+
+[dependencies]
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+libm = "0.2"

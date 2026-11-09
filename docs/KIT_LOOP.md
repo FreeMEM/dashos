@@ -12,7 +12,9 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 
 ## Decisiones tomadas por defecto (cambiables)
 
-- **Fuente: Roboto** (la de Material 3; licencia Apache 2.0, se puede llevar en el repositorio).
+- **Fuente: Roboto** (la de Material 3). Roboto Classic 3.016, la publicación oficial de googlefonts, sin hinting,
+  normal y Medium; licencia SIL OFL 1.1 (ya no Apache), que deja llevarla en el repositorio con su licencia
+  (`kit/fuentes/OFL.txt`).
 - **Rasterizar TrueType con `fontdue`** (MIT o Apache 2.0, sin std), en vez de escribir un rasterizador: es lo más
   grande del kit y está resuelto.
 - **Rust primero** (S11 dice Dash para las aplicaciones; Dash nativo para ARM es A7, que va aparte). La API del kit
@@ -23,7 +25,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | Paso | Qué | Prueba | Estado |
 |------|-----|--------|--------|
 | K1 | Lienzo: rectángulos, esquinas redondeadas, bordes, mezcla con alfa, recortes | Píxeles en el PC | hecho |
-| K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | |
+| K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | |
@@ -39,4 +41,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   bordes hacia dentro, recortes apilados. Pruebas: rellenar y mezclar (rojo a medias bajo negro a medias), alfa sobre
   transparente, esquinas (fuera, dentro, un píxel que cruza la curva a medias, simétrico en las cuatro), borde y
   recorte. La primera fórmula de la cobertura estaba mal; se rehízo en octavos de píxel.
+- K2: `kit/src/texto.rs`. Roboto normal y Medium (388 KB cada una, con cirílico y griego: se puede recortar más
+  adelante) rasterizadas con `fontdue` (sin std: con su `hashbrown`; redondeos con `libm`, que `core` no trae para
+  `f32`). Caché de glifos por letra y tamaño, espaciado entre pares de la fuente, medidas de línea (ancho, lo que
+  sube y lo que baja de la base). Pruebas: medidas (más texto, más ancho; el doble de tamaño, el doble de ancho; la
+  Medium más ancha), las letras del castellano están todas (ñ, tildes, diéresis, ¿¡, €, ç), y "Ñandú" se dibuja
+  entero dentro de su caja, con la tilde de la Ñ por encima de la altura de la x. Compila para
+  `aarch64-unknown-none-softfloat`.
 
