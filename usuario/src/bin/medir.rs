@@ -113,9 +113,9 @@ fn hijo_de(lenguaje: &str) -> &'static str {
     }
 }
 
-/// P1: idas y vueltas entre dos hijos, en el mismo núcleo (`juntos`) o en dos distintos, con `carga` hijos calculando
-/// a la vez.
-fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: bool, carga: usize) {
+/// P1: idas y vueltas entre dos hijos, en el mismo núcleo (`juntos`), en dos distintos o donde los ponga el
+/// planificador (`None`), con `carga` hijos calculando a la vez.
+fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: Option<bool>, carga: usize) {
     // Con carga: hijos calculando mientras tanto, que acaban solos.
     let mut cargas: [Option<Hijo>; 4] = Default::default();
     for c in cargas.iter_mut().take(carga) {
@@ -128,21 +128,36 @@ fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: bool, carga: usi
     let Some(eco) = lanzar(p, hijo_de(lenguaje), Some(x)) else { return };
     // Se lanzan hijos hasta tener uno en el núcleo pedido (el del eco o, sin `juntos`, otro), y ese hace de ping; los
     // demás esperan sin gastar CPU. El de Dash no sabe en qué núcleo está: con él, el primero que salga (9 = no se sabe).
-    let sabe = lenguaje != "dash";
+    let sabe = lenguaje != "dash" && juntos.is_some();
+    let juntos_b = juntos.unwrap_or(false);
     let n_eco = if sabe { eco.nucleo() } else { 9 };
-    let mut relleno: [Option<Hijo>; 4] = Default::default();
+    let mut relleno: [Option<Hijo>; 8] = Default::default();
     let mut ping = None;
     for r in relleno.iter_mut() {
         let Some(h) = lanzar(p, hijo_de(lenguaje), None) else { break };
         let n = if sabe { h.nucleo() } else { 9 };
-        if !sabe || (n == n_eco) == juntos {
+        if !sabe || (n == n_eco) == juntos_b {
             ping = Some(h);
             break;
         }
         *r = Some(h);
     }
     let Some(ping) = ping else {
-        println!("  [medir] ida-vuelta: no se pudo colocar");
+        let mut t = Texto::nuevo();
+        for h in relleno.iter().flatten() {
+            let _ = core::fmt::Write::write_fmt(&mut t, format_args!(" {}", h.nucleo()));
+        }
+        println!("  [medir] ida-vuelta: no se pudo colocar (eco en {}, probados:{})", n_eco, core::str::from_utf8(t.bytes()).unwrap_or(""));
+        // Sin dejar nada corriendo para la prueba siguiente.
+        cerrar(y);
+        eco.acabar();
+        for h in relleno.into_iter().flatten() {
+            h.acabar();
+        }
+        for c in cargas.into_iter().flatten() {
+            let _ = c.respuesta();
+            c.acabar();
+        }
         return;
     };
     // La llave del canal con el eco va con la orden.
@@ -155,7 +170,7 @@ fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: bool, carga: usi
     println!(
         "[medir] ida-vuelta lenguaje={} juntos={} carga={} rondas={} ns={} nucleos={}-{}",
         lenguaje,
-        juntos as u8,
+        juntos.map_or(2, |j| j as u8),
         carga,
         n,
         if n > 0 { us * 1000 / n } else { 0 },
@@ -180,6 +195,7 @@ fn reparto(p: &Paquete, lenguaje: &str, n: usize, ms: u64) {
         *h = lanzar(p, hijo_de(lenguaje), None);
     }
     let antes = contadores();
+    let robos = contador(4, 0);
     for h in hijos.iter().flatten() {
         h.mandar(&texto!("calc {}", ms));
     }
@@ -199,7 +215,7 @@ fn reparto(p: &Paquete, lenguaje: &str, n: usize, ms: u64) {
     }
     let despues = contadores();
     println!(
-        "[medir] reparto lenguaje={} n={} ms={} total={} min={} max={} justo={} hueco_max_us={} cambios={} nucleos={}",
+        "[medir] reparto lenguaje={} n={} ms={} total={} min={} max={} justo={} hueco_max_us={} cambios={} robos={} nucleos={}",
         lenguaje,
         n,
         ms,
@@ -209,6 +225,7 @@ fn reparto(p: &Paquete, lenguaje: &str, n: usize, ms: u64) {
         if max > 0 { min * 1000 / max } else { 0 },
         hueco,
         despues.1 - antes.1,
+        contador(4, 0) - robos,
         core::str::from_utf8(nucleos.bytes()).unwrap_or("?")
     );
     for h in hijos.into_iter().flatten() {
@@ -246,7 +263,7 @@ fn temporizador(p: &Paquete, us: u64, veces: u64, carga: usize) {
 fn dormilon(p: &Paquete, dormir_ms: u64) {
     let Some(v) = lanzar(p, "hijo-rust", None) else { return };
     let nv = v.nucleo();
-    let mut relleno: [Option<Hijo>; 4] = Default::default();
+    let mut relleno: [Option<Hijo>; 8] = Default::default();
     let mut d = None;
     for r in relleno.iter_mut() {
         let Some(h) = lanzar(p, "hijo-rust", None) else { break };
@@ -258,6 +275,10 @@ fn dormilon(p: &Paquete, dormir_ms: u64) {
     }
     let Some(d) = d else {
         println!("  [medir] dormilón: no se pudo colocar");
+        v.acabar();
+        for h in relleno.into_iter().flatten() {
+            h.acabar();
+        }
         return;
     };
     let calc = dormir_ms + 2000;
@@ -301,19 +322,21 @@ fn principal() -> u64 {
     println!("[medir] empieza");
     ociosos();
     for lenguaje in ["rust", "c"] {
-        ida_vuelta(&p, lenguaje, 20_000, false, 0);
-        ida_vuelta(&p, lenguaje, 20_000, true, 0);
+        ida_vuelta(&p, lenguaje, 20_000, Some(false), 0);
+        ida_vuelta(&p, lenguaje, 20_000, Some(true), 0);
     }
-    ida_vuelta(&p, "dash", 20_000, false, 0);
-    ida_vuelta(&p, "rust", 5_000, false, 4);
-    ida_vuelta(&p, "rust", 5_000, true, 4);
+    ida_vuelta(&p, "dash", 20_000, Some(false), 0);
+    // Con carga, donde los ponga el planificador (juntos=2): con robo de trabajo no se puede forzar.
+    ida_vuelta(&p, "rust", 5_000, None, 4);
     for n in [1, 2, 3, 4, 5, 6, 8] {
         reparto(&p, "rust", n, 2000);
     }
     reparto(&p, "c", 4, 2000);
     reparto(&p, "dash", 4, 2000);
-    temporizador(&p, 1000, 100, 0);
-    temporizador(&p, 1000, 100, 4);
+    // Una tanda para calentar (la primera de cada arranque sale peor) y luego las que cuentan.
+    temporizador(&p, 1000, 50, 0);
+    temporizador(&p, 1000, 300, 0);
+    temporizador(&p, 1000, 300, 4);
     dormilon(&p, 2000);
     println!("[medir] fin");
     0

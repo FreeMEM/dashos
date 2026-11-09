@@ -43,6 +43,18 @@ impl<T> Cerrojo<T> {
         }
         Guarda { cerrojo: self, daif, _no_send: core::marker::PhantomData }
     }
+
+    /// Como `tomar`, pero sin esperar: `None` si ya lo tiene otro. Para tomar un segundo cerrojo del mismo tipo sin
+    /// riesgo de abrazo mortal (el robo de trabajo entre núcleos, M4).
+    pub fn intentar(&self) -> Option<Guarda<'_, T>> {
+        let daif = enmascarar_irq();
+        if self.tomado.compare_exchange(false, true, Ordering::Acquire, Ordering::Relaxed).is_ok() {
+            Some(Guarda { cerrojo: self, daif, _no_send: core::marker::PhantomData })
+        } else {
+            restaurar_irq(daif);
+            None
+        }
+    }
 }
 
 /// La guarda no se puede pasar a otro hilo: repone las IRQ del núcleo donde se tomó.

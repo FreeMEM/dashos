@@ -45,6 +45,9 @@ pub struct Temporizador {
     /// Su grupo de primer nivel y su grupo: en qué cola va.
     grupo: usize,
     cupo: usize,
+    /// Cuánto puede esperar de más para juntarse con otros (M4b, como el "timer slack" de Linux), en cuentas: 1/16 de
+    /// su intervalo, como mucho 1 ms. Así 900 temporizadores de 10 ms no despiertan al núcleo 0 900 veces cada 10 ms.
+    holgura: u64,
     _cargo: crate::cupo::Cargo,
 }
 
@@ -59,6 +62,8 @@ struct Estado {
 /// Una entrada de una cola: cuándo vence un temporizador. El más próximo, arriba.
 struct Entrada {
     vence: u64,
+    /// `vence` más la holgura: lo más tarde que se puede avisar.
+    tarde: u64,
     t: Weak<Temporizador>,
 }
 
@@ -150,13 +155,16 @@ impl Colas {
         if c.monton.try_reserve(1).is_err() {
             return false;
         }
-        c.monton.push(Entrada { vence, t: Arc::downgrade(t) });
-        PROXIMO.fetch_min(vence, Ordering::SeqCst);
+        let tarde = vence.saturating_add(t.holgura);
+        c.monton.push(Entrada { vence, tarde, t: Arc::downgrade(t) });
+        PROXIMO.fetch_min(tarde, Ordering::SeqCst);
         true
     }
 
     fn proximo(&self) -> u64 {
-        self.grupos.iter().flat_map(|g| g.subs.iter()).filter_map(|c| c.monton.peek()).map(|e| e.vence).min().unwrap_or(u64::MAX)
+        // El reloj se programa para lo más tarde del más próximo de cada cola; al llegar, se avisa a todos los que ya
+        // han vencido (con su holgura, se juntan).
+        self.grupos.iter().flat_map(|g| g.subs.iter()).filter_map(|c| c.monton.peek()).map(|e| e.tarde).min().unwrap_or(u64::MAX)
     }
 }
 
@@ -173,7 +181,9 @@ impl Temporizador {
         let periodo = if periodo_us == 0 { 0 } else { cuentas(periodo_us.clamp(MIN_PERIODO_US, MAX_US)).max(1) };
         let estado = Estado { destino: Some((canal, lado)), periodo, perdidos: 0 };
         let (grupo, de_cupo) = (cupo.primer_nivel(), Arc::as_ptr(cupo) as usize);
-        let t = Arc::new(Self { estado: Cerrojo::new(estado), via: debiles, marca, grupo, cupo: de_cupo, _cargo: cargo });
+        let intervalo = if periodo != 0 { periodo } else { cuentas(primero_us.min(MAX_US)) };
+        let holgura = (intervalo / 16).min(cuentas(1000));
+        let t = Arc::new(Self { estado: Cerrojo::new(estado), via: debiles, marca, grupo, cupo: de_cupo, holgura, _cargo: cargo });
         let mut colas = COLAS.tomar();
         // Cuenta como vivo desde ya: si no se puede programar, su `Drop` lo descuenta (B14).
         let antes = PROXIMO.load(Ordering::SeqCst);
@@ -186,7 +196,7 @@ impl Temporizador {
         };
         drop(colas);
         // Vence antes que lo que tenía programado el núcleo 0: que replanifique y ponga su reloj (M2).
-        if bien && vence < antes {
+        if bien && vence.saturating_add(holgura) < antes {
             crate::gic::avisar(0, crate::gic::SGI_PLANIFICAR);
         }
         if bien {

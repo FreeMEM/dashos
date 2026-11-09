@@ -49,7 +49,7 @@ Pruebas:
 | M1 | Despertar justo: el dormilón no acapara (lag acotado, como EEVDF) | hecho |
 | M2 | Temporizadores de alta resolución (el vencimiento programa el reloj) | hecho |
 | M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | hecho (con M1) |
-| M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | pendiente |
+| M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | hecho |
 | M5 | Sin tic en núcleos ociosos | pendiente |
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
 | M7 | Préstamo de tiempo del cliente al servidor (seL4 MCS) | pendiente |
@@ -127,3 +127,42 @@ aquí los números y commit local.
   +11 %, dentro del ruido de ese caso).
 - La llamada 29 cuenta todas las interrupciones del núcleo, no solo las del reloj ("tics" en el banco).
 - `make prueba` y `make arranque-virt` (con el sonido): bien. Referencia del kernel al día.
+
+### 2026-11-09 — M4: robo de trabajo entre núcleos, el núcleo 0 para programas y holgura en los temporizadores
+
+- Un proceso nuevo va al núcleo con menos carga (el 0 incluido; entre iguales, por turno desde el 1). Un núcleo sin
+  nada de la clase justa se lleva un hilo del más cargado si este tiene dos o más; uno con dos menos que otro,
+  también. En su tic, con uno menos basta (rotación: cinco hilos en cuatro núcleos se turnan). Si un núcleo se queda
+  con dos o más y hay otro en el ocioso, se le avisa para que robe sin esperar a su tic.
+- Solo se mueven hilos de procesos, de la clase justa, ya con su contexto guardado (`en_cambio` hasta `fin_cambio`)
+  y sin sus registros en la FPU de su núcleo. Entre núcleos con trabajo, solo los que fueron expulsados calculando:
+  los que despiertan (los que hablan con otros) se quedan donde están. El tiempo virtual se traslada respecto al
+  mínimo de cada núcleo.
+- Fallos encontrados al revisar, ya corregidos: el núcleo de un hilo se leía sin cerrojo al despertarlo o matarlo
+  (ahora es atómico y `cola_de` lo comprueba con el cerrojo tomado); `actual`, `debe_morir` y `recoger` miraban el
+  número de núcleo con las IRQ abiertas; tras el cambio de contexto se usaba el núcleo de antes.
+- Holgura en los temporizadores (como el "timer slack" de Linux): 1/16 del intervalo, como mucho 1 ms, para que
+  muchos temporizadores se junten en una interrupción. Sube el retraso mediano de 1 ms de 106 a 177 µs.
+- El fallo de vez en cuando de C43 (una página menos al acabar) no era una fuga: con más hilos vivos a la vez, la
+  zona de pilas crea una tabla de nivel 3 que no se devuelve. La prueba la cuenta aparte (`mapa::tablas_pilas`).
+  En 8 vueltas de `make prueba`, todas bien, 3 con tabla nueva. C14 falló una vez en 11 (845 µs de desviación con
+  límite de 1.000; sin M4 ya dio 595): parece ruido de QEMU, no está comprobado.
+- `docs/medidas/m4.json` contra `m2.json` (3 arranques):
+
+| Medida | M2 | M4 |
+|---|---|---|
+| Reparto, 4 calculando (Rust / C / Dash): el peor contra el mejor | 0,50 / 0,50 / 0,50 | 0,99 / 1,00 / 1,00 |
+| Reparto, 4 calculando: trabajo total | | +15 % / +19 % / +28 % |
+| Reparto, 5 calculando | 0,50 | 0,89 (+16 % de trabajo) |
+| Reparto, 6 calculando | 0,98 | 0,80 (+17 % de trabajo) |
+| Reparto, 8 calculando | 0,66 | 0,95 (+16 % de trabajo) |
+| Ida y vuelta, mismo núcleo, sin carga (Rust / C) | 111 / 111 µs | 91 / 92 µs |
+| Ida y vuelta con 4 calculando, donde los ponga el sistema | | 125 µs |
+| Dormilón: tiempo perdido por el otro | 505 ms | 3 ms (ya no comparten núcleo) |
+| Espera de 1 ms: retraso mediano sin / con carga | 106 / 132 µs | 177 / 196 µs (la holgura) |
+| Espera de 1 ms con carga: p99 / máx | 324 / 357 µs | 299 / 988 µs |
+| Ociosos | 100 tics/s | igual (eso es M5) |
+
+- Lo que empeora: con 6 hilos en 4 núcleos el reparto baja de 0,98 a 0,80 (2, 2, 1, 1: la rotación no llega a
+  igualarlos), aunque se hace un 17 % más de trabajo al usar el núcleo 0. Queda para M9.
+- `make prueba` (8 vueltas) y `make arranque-virt` (con el sonido): bien.
