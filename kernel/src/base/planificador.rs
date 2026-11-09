@@ -291,6 +291,43 @@ pub fn crear_plazo(f: extern "C" fn(usize), arg: usize, nucleo: usize, capacidad
     Some(id)
 }
 
+/// Pone al hilo actual en la clase de plazo, `capacidad_us` de CPU cada `periodo_us` (A6, S19: el sonido), o lo
+/// devuelve a la justa con capacidad 0. El periodo va de 1 ms a 1 s. Como en `crear_plazo`, solo se admite si lo
+/// prometido en su núcleo no pasa del 80 %. Falta decidir quién puede pedirlo (S6): hoy, cualquier proceso, y lo
+/// acota ese 80 %.
+pub fn plazo_actual(capacidad_us: u64, periodo_us: u64) -> bool {
+    let fr = reloj::frecuencia();
+    let estado = crate::cerrojo::enmascarar_irq();
+    let n = nucleos::numero() as usize;
+    let hecho = {
+        let mut g = NUCLEOS[n].tomar();
+        match g.as_mut() {
+            None => false,
+            Some(nc) => unsafe {
+                let actual = nc.actual;
+                if capacidad_us == 0 {
+                    (*actual).plazo = None;
+                    true
+                } else if !(1_000..=1_000_000).contains(&periodo_us) || capacidad_us > periodo_us {
+                    false
+                } else {
+                    let (capacidad, periodo) = (capacidad_us * fr / 1_000_000, periodo_us * fr / 1_000_000);
+                    let usado: u64 =
+                        nc.listos.iter().filter_map(|h| (**h).plazo.map(|p| p.capacidad * 1000 / p.periodo)).sum();
+                    if capacidad == 0 || usado + capacidad * 1000 / periodo > 800 {
+                        false
+                    } else {
+                        (*actual).plazo = Some(Plazo { capacidad, periodo, restante: capacidad, fin: reloj::ahora() + periodo });
+                        true
+                    }
+                }
+            },
+        }
+    };
+    crate::cerrojo::restaurar_irq(estado);
+    hecho
+}
+
 /// Un hilo de plazo da por hecho el trabajo de este periodo y espera al siguiente.
 pub fn esperar_periodo() {
     let estado = crate::cerrojo::enmascarar_irq();
@@ -561,7 +598,10 @@ pub static AVISAR_NUCLEOS: core::sync::atomic::AtomicBool = core::sync::atomic::
 pub(super) fn despertar(h: *mut Hilo) {
     let n = unsafe { (*h).nucleo };
     despertar_en(h, n);
-    if n != nucleos::numero() as usize && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+    // Un hilo de plazo que despierta en este núcleo no espera al tic (A6): el aviso a uno mismo replanifica en cuanto
+    // se abren las interrupciones.
+    let de_plazo = unsafe { (*h).plazo.is_some() };
+    if (n != nucleos::numero() as usize || de_plazo) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
         crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
     }
 }

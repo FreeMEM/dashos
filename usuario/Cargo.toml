@@ -10,6 +10,8 @@ archivos = ["monton", "dep:redoxfs", "dep:syscall"]
 monton = ["dep:linked_list_allocator"]
 # El compositor que habla Wayland y sus clientes de prueba (W7).
 ventanas = ["monton", "dep:wayland", "dep:kit"]
+# El servicio de sonido (S19, A4).
+sonido = ["monton", "dep:sonido"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -17,6 +19,7 @@ redoxfs = { path = "../archivos/redoxfs", default-features = false, optional = t
 syscall = { package = "redox_syscall", version = "0.9.5", default-features = false, optional = true }
 wayland = { package = "dashos-wayland", path = "../wayland", optional = true }
 kit = { package = "dashos-kit", path = "../kit", optional = true }
+sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 
 [lib]
 name = "dashos"
@@ -145,6 +148,32 @@ name = "ventana-a"
 path = "src/bin/ventana_a.rs"
 test = false
 required-features = ["ventanas"]
+
+[[bin]]
+name = "virtio-sonido"
+path = "src/bin/virtio_sonido.rs"
+test = false
+
+[[bin]]
+name = "sonido"
+path = "src/bin/sonido.rs"
+test = false
+required-features = ["sonido"]
+
+[[bin]]
+name = "carga"
+path = "src/bin/carga.rs"
+test = false
+
+[[bin]]
+name = "tono-a"
+path = "src/bin/tono_a.rs"
+test = false
+
+[[bin]]
+name = "tono-b"
+path = "src/bin/tono_b.rs"
+test = false
 
 [[bin]]
 name = "ajustes"

@@ -58,6 +58,24 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("ventana-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-b"), &[], &["ventanas"]),
     // Una aplicación con el kit de interfaz (K7): Material 3, con el ratón.
     ("ajustes", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ajustes"), &[], &["ventanas"]),
+    // El sonido (S19): el servicio, que nombra "sonido" antes que nadie (A4), y el controlador de virtio-sound (A3),
+    // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
+    ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[], &["sonido"]),
+    ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
+    #[cfg(feature = "virt")]
+    ("tono-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-a"), &[], &["sonido"]),
+    #[cfg(feature = "virt")]
+    ("tono-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-b"), &[], &["sonido"]),
+    // Cuatro programas que esperan medio segundo y giran sin parar 6 s, detrás de los tonos: los cortes del sonido con los núcleos ocupados (A6).
+    #[cfg(all(feature = "virt", feature = "carga"))]
+    ("carga-1", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    #[cfg(all(feature = "virt", feature = "carga"))]
+    ("carga-2", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    #[cfg(all(feature = "virt", feature = "carga"))]
+    ("carga-3", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    #[cfg(all(feature = "virt", feature = "carga"))]
+    ("carga-4", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
 
@@ -89,12 +107,20 @@ const APARATOS: &[(&str, &str, bool)] = &[
     ("buzon", "brcm,bcm2835-mbox", false),
 ];
 
-/// El primer aparato de la clase `clase` (clase, subclase e interfaz) en el PCIe genérico de ECAM ("pci-host-ecam-generic",
-/// el de QEMU `virt` y las máquinas con UEFI): (física y tamaño de su BAR 0, en páginas enteras). Mira el bus 0. Enciende la decodificación de memoria y el bus master, y
+/// Cómo se busca un aparato del PCIe: por su clase (clase, subclase e interfaz) o por fabricante y número de aparato.
+#[derive(Clone, Copy)]
+enum Pci {
+    Clase(u32),
+    Id(u16, u16),
+}
+
+/// El primer aparato que case con `quien` en el PCIe genérico de ECAM ("pci-host-ecam-generic", el de QEMU `virt` y
+/// las máquinas con UEFI): (física y tamaño de la BAR del registro `bar` de su configuración, 0x10 para la 0, en
+/// páginas enteras; su interrupción; y la física de su espacio de configuración, 4 KB). Mira el bus 0. Enciende la decodificación de memoria y el bus master, y
 /// mide la BAR escribiendo unos (con la decodificación apagada mientras). Solo si el ECAM y la BAR caen en la ventana
 /// de aparatos de la placa. Escrito con la especificación de PCI (espacio de configuración, cabecera de tipo 0). Las
 /// clases: xHCI, 0x0C0330 (especificación de xHCI); NVMe, 0x010802 (especificación de NVMe).
-fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u32>)> {
+fn aparato_pci(d: &Dtb, quien: Pci, bar: u64, nombre: &str) -> Option<(u64, u64, Option<u32>, u64)> {
     let n = d.compatible("pci-host-ecam-generic")?;
     let (ecam, _) = d.reg_cpu(&n, 0)?;
     if !crate::placa::es_periferico(ecam) {
@@ -105,10 +131,14 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
         if r(dev, 0).leer() == 0xffff_ffff {
             continue;
         }
-        if r(dev, 8).leer() >> 8 != clase {
+        let casa = match quien {
+            Pci::Clase(clase) => r(dev, 8).leer() >> 8 == clase,
+            Pci::Id(fabricante, aparato) => r(dev, 0).leer() == (aparato as u32) << 16 | fabricante as u32,
+        };
+        if !casa {
             continue;
         }
-        let (bar0, bar1) = (r(dev, 0x10), r(dev, 0x14));
+        let (bar0, bar1) = (r(dev, bar), r(dev, bar + 4));
         let bajo = bar0.leer();
         let es64 = bajo & 0x6 == 0x4;
         let alto = if es64 { bar1.leer() } else { 0 };
@@ -131,14 +161,15 @@ fn aparato_pci(d: &Dtb, clase: u32, nombre: &str) -> Option<(u64, u64, Option<u3
         }
         // Su interrupción: una MSI-X por el GICv2m si hay los dos (U6g); si no, la INTx de su patilla (1 a 4, INTA a
         // INTD, en el byte 0x3D; 0, sin INTx), por el `interrupt-map` (U6e).
-        let msi = msix(d, &|off| r(dev, off), base, id_msi(d, &n, (dev as u32) << 3));
+        // La MSI-X solo con la tabla en la BAR 0 (la de `msix`).
+        let msi = if bar == 0x10 { msix(d, &|off| r(dev, off), base, id_msi(d, &n, (dev as u32) << 3)) } else { None };
         let patilla = (r(dev, 0x3C).leer() >> 8) & 0xff;
         let irq = msi.or_else(|| if patilla != 0 { intx(d, &n, dev as u32, patilla) } else { None });
         match irq {
             Some(i) => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB), {} en la {}", nombre, dev, base, tamano / 1024, if msi.is_some() { "MSI-X" } else { "INTx" }, i),
             None => kprintln!("{}: en el PCIe 0:{}.0, registros en {:#x} ({} KB)", nombre, dev, base, tamano / 1024),
         }
-        return Some((base, paginas, irq));
+        return Some((base, paginas, irq, ecam + (dev << 15)));
     }
     None
 }
@@ -353,8 +384,20 @@ pub fn lanzar() -> bool {
     if d.compatible("pci-host-ecam-generic").is_some() && crate::its::iniciar(&d) {
         ITS_LISTO.store(true, core::sync::atomic::Ordering::Relaxed);
     }
+    // El sonido de virtio (A2, S19): virtio 1.2, 4.1.2, fabricante 0x1af4 y aparato 0x1040 más el tipo, 25. Sus
+    // registros los dicen sus capacidades de configuración; en QEMU, todos en la BAR 4. El controlador recibe también
+    // su espacio de configuración, para leerlas.
+    if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x1af4, 0x1059), 0x20, "virtio-sonido") {
+        apuntar(&mut llaves, "virtio-sonido", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        apuntar(&mut llaves, "vsonido-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
+        if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
+            apuntar(&mut llaves, "virtio-sonido", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
+        }
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+        apuntar(&mut llaves, "dma-vsonido", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
     for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
-        if let Some((fisica, tamano, irq)) = aparato_pci(&d, clase, nombre) {
+        if let Some((fisica, tamano, irq, _)) = aparato_pci(&d, Pci::Clase(clase), 0x10, nombre) {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
             if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
                 apuntar(&mut llaves, nombre, INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));

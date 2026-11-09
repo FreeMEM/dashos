@@ -14,6 +14,8 @@ bench = false
 pruebas = []
 # QEMU virt por UEFI (U3, docs/UEFI_LOOP.md): otra dirección de carga, otro mapa de aparatos, PSCI.
 virt = []
+# Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
+carga = []
 
 [profile.dev]
 panic = "abort"

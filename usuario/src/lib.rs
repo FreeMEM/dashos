@@ -74,6 +74,12 @@ pub fn memoria_tamano(llave: u32) -> i64 {
     llamada(27, [llave as u64, 0, 0, 0, 0]).0 as i64
 }
 
+/// Pasa el hilo a la clase de plazo: `capacidad_us` de CPU cada `periodo_us` (A6, S19), o a la justa con 0. 0 si se
+/// admite; E_LIMITE (-8) si su núcleo ya tiene prometido demasiado.
+pub fn plazo(capacidad_us: u64, periodo_us: u64) -> i64 {
+    llamada(28, [capacidad_us, periodo_us, 0, 0, 0]).0 as i64
+}
+
 /// Memoria DMA (C46) con la llave de permiso `permiso`: (llave de memoria, dirección de bus), o un error negativo.
 pub fn memoria_dma(permiso: u32, tamano: usize) -> (i64, u64) {
     let (a, b) = llamada(22, [permiso as u64, tamano as u64, 0, 0, 0]);
