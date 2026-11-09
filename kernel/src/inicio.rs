@@ -52,6 +52,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
     #[cfg(feature = "virt")]
     ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
+    // Un ADF montado como volumen (S20, fase 1): el servicio lo lee por "archivos" y lo sirve por "imagen", con
+    // un cliente de prueba.
+    #[cfg(feature = "virt")]
+    ("imagen", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/imagen"), &[], &["archivos", "imagen"]),
+    #[cfg(feature = "virt")]
+    ("adf-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/adf-prueba"), &[], &["imagen"]),
     ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
     ("ventana-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-a"), &[], &["ventanas"]),
