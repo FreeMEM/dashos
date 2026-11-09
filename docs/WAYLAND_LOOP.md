@@ -19,7 +19,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 | W1 | El formato de los mensajes: cabecera, argumentos por su firma, llaves en vez de descriptores; tablas desde los XML | hecho |
 | W2 | El transporte: un canal "ventanas" que da a cada cliente su canal propio de ida y vuelta, con su marca (S10b: se sabe quién es por la marca, no por lo que diga) | trozos y juntador hechos; el reparto de llaves por `inicio`, con W3 |
 | W3 | El servidor de objetos: `wl_display`, `wl_registry`, `wl_callback`, errores de protocolo que cortan la conexión | hecho (`servidor.rs`) |
-| W4 | Memoria compartida: `wl_shm`, `wl_shm_pool` (la llave es un objeto de memoria que el compositor proyecta solo para leer), `wl_buffer` | |
+| W4 | Memoria compartida: `wl_shm`, `wl_shm_pool` (la llave es un objeto de memoria que el compositor proyecta solo para leer), `wl_buffer` | hecho (`shm.rs`) |
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | |
 | W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada, foco y orden con el ratón | |
 | W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | |
@@ -53,4 +53,9 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
   destroy; y cada error: objeto que no existe, petición más nueva que el objeto, orden que no existe, bind de más
   versión o de otra interfaz, número nuevo repetido o del servidor, argumentos que no cuadran. Sin la comprobación de
   versión, la prueba falla.
+- W4: toda la lógica del compositor va en la biblioteca, para probarla en el PC con memoria falsa (`Memorias`); el
+  programa de DashOS será la capa fina (canales, `memoria_proyectar`, pantalla). `Shm`: pools (hasta 64 MB, solo
+  crecen, se proyectan otra vez al crecer), búferes (ARGB8888 y XRGB8888; dentro del pool, línea de al menos
+  ancho × 4, sin desbordar con números enormes) y sus píxeles. Destruir un pool no quita la memoria a sus búferes: se
+  suelta con el último. Pruebas: un píxel pintado por el "cliente" se lee donde toca; cada error de `wl_shm`.
 

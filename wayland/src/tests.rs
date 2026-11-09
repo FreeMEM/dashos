@@ -315,3 +315,65 @@ mod servidor {
         assert_eq!(caso(&|e| { e.empezar(5, wl_surface::req::COMMIT).uint(1).fin(); }), (1, INVALID_METHOD));
     }
 }
+
+mod memoria_compartida {
+    use super::*;
+    use crate::shm::*;
+    use alloc::collections::BTreeMap;
+
+    /// Objetos de memoria de prueba: cada llave, 1 MB; apunta lo que se suelta.
+    #[derive(Default)]
+    struct Falsas {
+        objetos: BTreeMap<u32, Vec<u8>>,
+        sueltas: Vec<u32>,
+    }
+
+    impl Memorias for Falsas {
+        fn proyectar(&mut self, llave: u32, tamano: usize) -> Option<*const u8> {
+            let v = self.objetos.entry(llave).or_insert_with(|| vec![0; 1 << 20]);
+            (tamano <= v.len() && llave != 666).then(|| v.as_ptr())
+        }
+        fn soltar(&mut self, llave: u32, _base: *const u8, _tamano: usize) {
+            self.sueltas.push(llave);
+        }
+    }
+
+    #[test]
+    fn pool_buferes_y_pixeles() {
+        let (mut m, mut shm) = (Falsas::default(), Shm::default());
+        shm.crear_pool(&mut m, 3, 10, 70, 64 * 64 * 4).unwrap();
+        // El cliente pinta: un píxel rojo en (2, 1) de un búfer de 16x16 que empieza en el byte 4096.
+        m.objetos.get_mut(&70).unwrap()[4096 + 64 + 8..4096 + 64 + 12].copy_from_slice(&[0, 0, 255, 255]);
+        shm.crear_bufer(10, 11, 4096, 16, 16, 64, ARGB8888).unwrap();
+        let (px, b) = shm.pixeles(11).unwrap();
+        assert_eq!((b.ancho, b.alto, b.linea), (16, 16, 64));
+        assert_eq!(&px[64 + 8..64 + 12], &[0, 0, 255, 255]);
+        // Destruir el pool no quita la memoria al búfer; se suelta con él.
+        shm.destruir_pool(&mut m, 10);
+        assert!(m.sueltas.is_empty() && shm.pixeles(11).is_some());
+        shm.destruir_bufer(&mut m, 11);
+        assert_eq!(m.sueltas, [70]);
+    }
+
+    #[test]
+    fn errores() {
+        let (mut m, mut shm) = (Falsas::default(), Shm::default());
+        let codigo = |r: Result<(), crate::servidor::ErrorProtocolo>| r.unwrap_err().codigo;
+        assert_eq!(codigo(shm.crear_pool(&mut m, 3, 10, 70, 0)), INVALID_STRIDE);
+        assert_eq!(codigo(shm.crear_pool(&mut m, 3, 10, 666, 4096)), INVALID_FD);
+        shm.crear_pool(&mut m, 3, 10, 70, 4096).unwrap();
+        // Formato no anunciado; línea menor que el ancho; no cabe; desplazamiento negativo.
+        assert_eq!(codigo(shm.crear_bufer(10, 11, 0, 8, 8, 32, 0x3432_5258)), INVALID_FORMAT);
+        assert_eq!(codigo(shm.crear_bufer(10, 11, 0, 8, 8, 28, XRGB8888)), INVALID_STRIDE);
+        assert_eq!(codigo(shm.crear_bufer(10, 11, 1024, 32, 32, 128, XRGB8888)), INVALID_STRIDE);
+        assert_eq!(codigo(shm.crear_bufer(10, 11, -4, 8, 8, 32, XRGB8888)), INVALID_STRIDE);
+        // Desbordar con números enormes no cuela.
+        assert_eq!(codigo(shm.crear_bufer(10, 11, i32::MAX, 8, 8, 32, XRGB8888)), INVALID_STRIDE);
+        // Crecer sí; encoger no.
+        shm.crecer_pool(&mut m, 10, 8192).unwrap();
+        shm.crear_bufer(10, 11, 4096, 32, 32, 128, XRGB8888).unwrap();
+        assert_eq!(codigo(shm.crecer_pool(&mut m, 10, 4096)), INVALID_STRIDE);
+        shm.soltar_todo(&mut m);
+        assert_eq!(m.sueltas, [70]);
+    }
+}
