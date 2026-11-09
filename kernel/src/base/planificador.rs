@@ -78,6 +78,28 @@ struct Plazo {
     fin: u64,
 }
 
+impl Nucleo {
+    /// Sube `min_virtual` al menor tiempo virtual de la clase justa entre los listos y el que corre (M1).
+    fn actualizar_min(&mut self) {
+        let justo = |h: *mut Hilo| unsafe { (*h).plazo.is_none() && (*h).id != 0 };
+        let mut m = self.listos.iter().copied().filter(|&h| justo(h)).map(|h| unsafe { (*h).virtual_ }).min();
+        let a = self.actual;
+        if justo(a) && unsafe { (*a).estado == Estado::Corriendo } {
+            let va = unsafe { (*a).virtual_ };
+            m = Some(m.map_or(va, |x| x.min(va)));
+        }
+        if let Some(m) = m {
+            self.min_virtual = self.min_virtual.max(m);
+        }
+    }
+}
+
+/// Cuánto por debajo del mínimo puede despertar un hilo (M1): medio tic. Como el "lag" acotado de EEVDF: lo que no
+/// gastó durmiendo no se le guarda entero.
+fn credito() -> u64 {
+    reloj::periodo() / 2
+}
+
 impl Plazo {
     /// Si el periodo ha acabado, empieza otro con el presupuesto entero.
     fn renovar(&mut self, ahora: u64) {
@@ -96,6 +118,10 @@ struct Nucleo {
     /// Hilos muertos de este núcleo, para liberar desde otro hilo del mismo núcleo (C18).
     muertos: Vec<*mut Hilo>,
     desde: u64, // cuándo empezó a correr el actual
+    /// El tiempo virtual mínimo de la clase justa en este núcleo (M1): el menor entre los listos y el que corre, y nunca
+    /// baja. Un hilo nuevo empieza ahí y uno que despierta, como mucho `credito()` por debajo: así no acapara el núcleo
+    /// por lo que no gastó mientras dormía, y aun así pasa delante de quien lleva rato calculando.
+    min_virtual: u64,
     /// El hilo cuyos registros de FP están ahora en la FPU de este núcleo (C28), o nulo. Los hilos no cambian de
     /// núcleo, así que basta con un dueño por núcleo: si solo un hilo usa la FPU, no se guarda nada nunca.
     fp_dueno: *mut Hilo,
@@ -187,7 +213,7 @@ pub fn iniciar_nucleo() {
     // valdrían para cualquier ASID.
     crate::espacio::activar_vacio();
     unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
-    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
+    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), min_virtual: 0, fp_dueno: core::ptr::null_mut() });
 }
 
 /// Lo que EL0 puede tocar de los registros del sistema, a un valor conocido: en la Pi dependen del firmware
@@ -238,12 +264,8 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
     contexto.sp = tope as u64;
     let mut cola = NUCLEOS[nucleo].tomar();
     let nc = cola.as_mut().expect("núcleo sin planificador");
-    let minimo = nc
-        .listos
-        .iter()
-        .map(|h| unsafe { (**h).virtual_ })
-        .min()
-        .unwrap_or_else(|| unsafe { if (*nc.actual).id == 0 { 0 } else { (*nc.actual).virtual_ } });
+    nc.actualizar_min();
+    let minimo = nc.min_virtual;
     let h = Box::into_raw(Box::new(Hilo {
         id,
         contexto,
@@ -414,6 +436,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             }
         }
         soltar();
+        nucleo.actualizar_min();
 
         // Renovar presupuestos de los hilos de plazo de este núcleo.
         unsafe {
@@ -625,26 +648,34 @@ pub static AVISAR_NUCLEOS: core::sync::atomic::AtomicBool = core::sync::atomic::
 /// su siguiente tic (C17).
 pub(super) fn despertar(h: *mut Hilo) {
     let n = unsafe { (*h).nucleo };
-    despertar_en(h, n);
-    // Un hilo de plazo que despierta en este núcleo no espera al tic (A6): el aviso a uno mismo replanifica en cuanto
-    // se abren las interrupciones.
+    let adelanta = despertar_en(h, n);
+    // Un hilo de plazo que despierta en este núcleo no espera al tic (A6), ni uno justo que va por delante del que
+    // corre (M3): el aviso a uno mismo replanifica en cuanto se abren las interrupciones.
     let de_plazo = unsafe { (*h).plazo.is_some() };
-    if (n != nucleos::numero() as usize || de_plazo) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+    if (n != nucleos::numero() as usize || de_plazo || adelanta) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
         crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
     }
 }
 
-fn despertar_en(h: *mut Hilo, n: usize) {
+/// Pone en la cola un hilo bloqueado. Verdad si, siendo de la clase justa, debería correr ya en lugar del que corre
+/// (M3): tiene menos tiempo virtual que el que corre, contando lo que este lleva gastado desde la última decisión.
+fn despertar_en(h: *mut Hilo, n: usize) -> bool {
     let mut g = NUCLEOS[n].tomar();
-    if let Some(nc) = g.as_mut() {
-        unsafe {
-            if (*h).estado == Estado::Bloqueado {
-                (*h).estado = Estado::Listo;
-                let minimo = nc.listos.iter().map(|x| (**x).virtual_).min().unwrap_or((*h).virtual_);
-                (*h).virtual_ = (*h).virtual_.max(minimo);
-                nc.listos.push(h);
-            }
+    let Some(nc) = g.as_mut() else { return false };
+    unsafe {
+        if (*h).estado != Estado::Bloqueado {
+            return false;
         }
+        (*h).estado = Estado::Listo;
+        nc.actualizar_min();
+        (*h).virtual_ = (*h).virtual_.max(nc.min_virtual.saturating_sub(credito()));
+        nc.listos.push(h);
+        let a = nc.actual;
+        (*h).plazo.is_none()
+            && (*a).id != 0
+            && (*a).plazo.is_none()
+            && (*a).estado == Estado::Corriendo
+            && (*h).virtual_ < (*a).virtual_.saturating_add(reloj::ahora().saturating_sub(nc.desde) * PESO_NORMAL / (*a).peso)
     }
 }
 

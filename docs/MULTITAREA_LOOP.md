@@ -46,9 +46,9 @@ Pruebas:
 | Paso | Qué | Estado |
 |---|---|---|
 | M0 | Banco de medidas y línea base | hecho |
-| M1 | Despertar justo: el dormilón no acapara (lag acotado, como EEVDF) | pendiente |
+| M1 | Despertar justo: el dormilón no acapara (lag acotado, como EEVDF) | hecho |
 | M2 | Temporizadores de alta resolución (el vencimiento programa el reloj) | pendiente |
-| M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | pendiente |
+| M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | hecho (con M1) |
 | M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | pendiente |
 | M5 | Sin tic en núcleos ociosos | pendiente |
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
@@ -92,3 +92,26 @@ aquí los números y commit local.
   llamada (PAN por software). Eso inflaría las idas y vueltas en QEMU respecto a una Pi. Linux en una A72 haría lo
   mismo si tiene SW_TTBR0_PAN; se mira en L.
 - Iguales en Rust, C y Dash: lo que cuesta es el kernel, no el lenguaje (Dash calcula un 15 % menos por unidad).
+
+### 2026-11-09 — M1 y M3: despertar con crédito acotado, y adelantarse al que corre
+
+- El fallo existía: una traza en el kernel (quitada; imprimir dentro del planificador colgaba el arranque) vio
+  despertar un hilo con 1 ms de tiempo virtual mientras el que corría llevaba 1.295 ms. Al despertar solo se miraba
+  el mínimo de la cola, sin contar el que corre: con la cola vacía, el dormido conservaba su tiempo viejo y podía
+  quedarse el núcleo más de un segundo. La prueba del dormilón de M0 no lo reprodujo (no sé por qué; queda abierto).
+- Ahora cada núcleo lleva `min_virtual`, el mínimo de la clase justa entre los listos y el que corre, que nunca
+  baja. Un hilo nuevo empieza ahí; uno que despierta, como mucho medio tic por debajo (el "lag" acotado de EEVDF).
+- M3: si el que despierta tiene menos tiempo virtual que el que corre (contando lo gastado desde la última
+  decisión), se avisa al propio núcleo y se replanifica al momento, sin esperar al tic.
+- `docs/medidas/m1.json` contra `m0-base.json` (3 arranques):
+
+| Medida | M0 | M1 |
+|---|---|---|
+| Ida y vuelta, mismo núcleo, con 4 calculando | 890 µs | 200 µs (-77 %) |
+| Ida y vuelta, núcleos distintos, con 4 calculando | 107 µs | 122 µs (+14 %, ruido o el precio de la justicia) |
+| Dormilón: hueco más largo del otro | 20 ms | 10,5 ms |
+| Resto | | igual (±7 %) |
+
+- 200 µs con carga frente a 108 sin ella: el ping, el eco y el que calcula se reparten el núcleo a partes iguales,
+  que es lo justo. Bajarlo más es cosa de M6/M7 (el servidor trabaja con el tiempo del cliente).
+- `make prueba` y `make arranque-virt`: bien.
