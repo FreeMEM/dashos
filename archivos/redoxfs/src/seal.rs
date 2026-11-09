@@ -88,6 +88,10 @@ impl VolumeCipher {
             Seal::None => {}
             Seal::Full => self.adiantum.encrypt(data, &addr.raw().to_le_bytes()),
             Seal::Node => {
+                // A small file keeps its contents in the node, where its pointers would go: those go too.
+                if inline(data) {
+                    self.adiantum.encrypt(&mut data[LEVEL_DATA..], &inline_tweak(addr));
+                }
                 let mut buf = [0u8; NODE_SECRET];
                 gather(data, &mut buf);
                 self.adiantum.encrypt(&mut buf, &node_tweak(addr));
@@ -106,6 +110,9 @@ impl VolumeCipher {
                 gather_sealed(data, &mut buf);
                 self.adiantum.decrypt(&mut buf, &node_tweak(addr));
                 unscatter(&buf, data);
+                if inline(data) {
+                    self.adiantum.decrypt(&mut data[LEVEL_DATA..], &inline_tweak(addr));
+                }
             }
         }
     }
@@ -117,6 +124,20 @@ impl Drop for VolumeCipher {
         self.mac = (0, 0);
         self.names = (0, 0);
     }
+}
+
+fn inline_tweak(addr: BlockAddr) -> [u8; 13] {
+    let mut tweak = [0u8; 13];
+    tweak[..8].copy_from_slice(&addr.raw().to_le_bytes());
+    tweak[8..].copy_from_slice(b"datos");
+    tweak
+}
+
+/// Whether a node keeps its contents inside (`NodeFlags::INLINE_DATA`). The flags are in the clear: they are
+/// structure, and say that the node has no blocks to walk.
+fn inline(node: &[u8]) -> bool {
+    let flags = u32::from_le_bytes(node[FLAGS..FLAGS + 4].try_into().unwrap());
+    flags & crate::NodeFlags::INLINE_DATA.bits() != 0
 }
 
 fn node_tweak(addr: BlockAddr) -> [u8; 12] {
@@ -134,6 +155,8 @@ const FROM: usize = mem::offset_of!(Node, uid);
 const TO: usize = mem::offset_of!(Node, record_level);
 const AMIGA: usize = mem::offset_of!(Node, amiga);
 const PADDING: usize = mem::offset_of!(Node, padding);
+const FLAGS: usize = mem::offset_of!(Node, flags);
+const LEVEL_DATA: usize = mem::offset_of!(Node, level_data);
 const NODE_SECRET: usize = 2 + (TO - FROM) + 4;
 
 fn gather(node: &[u8], buf: &mut [u8; NODE_SECRET]) {
@@ -395,16 +418,27 @@ fn sizes() {
 #[test]
 fn node_round_trip() {
     let cipher = VolumeCipher::new(&[3; 32]);
-    let mut node = Node::new(Node::MODE_FILE | 0o640, 1000, 100, 12345, 6);
-    node.set_links(2);
-    let plain = node.to_vec();
     let addr = unsafe { BlockAddr::new(300, crate::BlockMeta::default()) };
+    // A directory: its pointers stay in the clear, to walk it without the key.
+    let mut dir = Node::new(Node::MODE_DIR | 0o750, 1000, 100, 12345, 6);
+    dir.set_links(2);
+    let plain = dir.to_vec();
     let mut data = plain.clone();
     cipher.seal(Seal::Node, addr, &mut data);
     // The type stays, the rest of what tells about it does not.
-    assert_eq!(u16::from_le_bytes([data[0], data[1]]), Node::MODE_FILE);
+    assert_eq!(u16::from_le_bytes([data[0], data[1]]), Node::MODE_DIR);
     assert_ne!(data[FROM..TO], plain[FROM..TO]);
-    assert_eq!(data[mem::offset_of!(Node, level_data)..], plain[mem::offset_of!(Node, level_data)..]);
+    assert_eq!(data[LEVEL_DATA..], plain[LEVEL_DATA..]);
+    cipher.open(Seal::Node, addr, &mut data);
+    assert_eq!(data, plain);
+    // A small file keeps its contents in the node: they go encrypted too.
+    let mut file = Node::new(Node::MODE_FILE | 0o640, 1000, 100, 12345, 6);
+    assert!(file.has_inline_data());
+    file.inline_data_mut().unwrap()[..9].copy_from_slice(b"en linea!");
+    let plain = file.to_vec();
+    let mut data = plain.clone();
+    cipher.seal(Seal::Node, addr, &mut data);
+    assert!(!data.windows(9).any(|w| w == b"en linea!"));
     cipher.open(Seal::Node, addr, &mut data);
     assert_eq!(data, plain);
 }

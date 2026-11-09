@@ -316,4 +316,12 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   Pi 4, virtio-rng en QEMU); abrir el volumen del usuario al entrar va con los usuarios (S6); el código de
   recuperación en papel, sin decidir; Argon2 con 64 MiB deja el montón del servicio en ese tamaño (no devuelve
   memoria).
+- FS10c, fallo encontrado por la prueba de QEMU: el contenido de un fichero pequeño estaba en claro en el disco. RedoxFS
+  guarda los ficheros pequeños dentro del nodo (`INLINE_DATA`), en la zona de los punteros, que no se cifraba. Ahora,
+  en un nodo con esa marca, esa zona también va cifrada (Adiantum, otro tweak); la marca queda a la vista porque dice
+  que no hay bloques que recorrer. Las pruebas en el PC usaban ficheros grandes y no lo vieron: `nothing_in_the_clear`
+  lleva ahora uno pequeño (falla sin el arreglo) y la de ida y vuelta del nodo, un fichero con datos en línea.
+  En la misma prueba de QEMU, listar "Ana" cerrado y vacío da cero entradas, no "protegido": una carpeta vacía no
+  tiene bloques que descifrar. Es lo esperado con la estructura a la vista; la prueba lo comprueba así, y "protegido"
+  al listar con algo dentro.
 
