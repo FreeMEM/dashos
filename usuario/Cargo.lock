@@ -129,10 +129,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashos-sonido"
+version = "0.0.1"
+
+[[package]]
 name = "dashos-usuario"
 version = "0.0.1"
 dependencies = [
  "dashos-kit",
+ "dashos-sonido",
  "dashos-wayland",
  "linked_list_allocator",
  "redox_syscall 0.9.5",

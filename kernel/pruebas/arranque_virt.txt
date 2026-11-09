@@ -11,7 +11,7 @@ DashOS en marcha con 4 núcleos.
 # U6: el xHCI del PCIe (con highmem=off, por debajo de 4 GB), con un teclado y un ratón.
 # U6g y U6h: por MSI-X, con GICv2 por el marco GICv2m (desde la SPI 80) y con GICv3 por el ITS (desde la LPI 8192),
 # con árbol y con ACPI. Sin ninguno de los dos, la INTx (U6e) o, con ACPI, el temporizador.
-~xhci: en el PCIe 0:1.0, registros en 0x10004000 (16 KB), MSI-X en la
+~xhci: en el PCIe 0:1.0, registros en 
 # U6k: el teclado, detrás de un concentrador.
 ~│   [xhci] puerto 5: ranura 1, concentrador
 ~│   [xhci] puerto 5 ruta 1: ranura 2, teclado
@@ -63,3 +63,13 @@ DashOS en marcha con 4 núcleos.
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
+# A3, A4 y A5 (S19): el controlador de virtio-sound suena lo que mezcla el servicio; dos programas suenan a la vez y uno
+# muere a mitad (su flujo sale con fundido). El WAV de QEMU lo comprueba tools/sonido_wav.py.
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [virtio-sonido] suena el flujo 0 para el servicio
+~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
+~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
+~│   [tono-a] 1,5 s escritos; ahora falla a propósito
+~│   [sonido] tono-a ya no está: su flujo sale con fundido
+~│   [sonido] tono-a: flujo cerrado
+~│   [sonido] tono-b: flujo cerrado
