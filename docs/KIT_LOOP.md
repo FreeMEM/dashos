@@ -28,7 +28,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
-| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla y deslizador hechos; campo, ciclo y lista, pendientes |
+| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador y campo de texto hechos; ciclo y lista, pendientes |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
 
@@ -78,4 +78,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   píxel, colores, capa al pasar por encima, clic en Aceptar, la casilla que lo desactiva (y un clic que ya no hace
   nada), arrastrar el deslizador a 0 y a 75, pulsar fuera y soltar dentro. Se encontró y arregló que la medida
   máxima no sumaba el margen. `cargo run --example vista -- f.ppm [oscuro]` la dibuja en el PC.
+- K5 (segunda tanda): el campo de texto de Material 3 con contorno (56 de alto, contorno de 2 del primario con el
+  foco, cursor de 2; Intro pone su `CLIC`, como `MUIA_String_Acknowledge`), y el teclado en la `Interfaz`: las teclas
+  van al objeto con el foco si lo usa, y el tabulador pasa el foco al siguiente. El compositor manda códigos de Linux
+  sin mapa de xkb, así que el kit trae el teclado español (`teclado.rs`): letras con ñ, números y signos, mayúsculas
+  y Bloq Mayús, AltGr (@ # € [ ] { } | \ ~ ¬) y las teclas muertas de los acentos (´ ` ^ ¨). Pruebas: escribir
+  "Ñandú" con Mayús y la tecla muerta, signos, AltGr, ü, el acento solo con espacio; el campo: foco por clic,
+  escribir, Inicio, Suprimir, Fin, Retroceso, Intro con aviso, tabulador al otro campo, contorno y cursor dibujados.
 

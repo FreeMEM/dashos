@@ -34,6 +34,8 @@ pub mod atr {
     pub const MAXIMO: Atr = 7;
     /// El peso de un objeto en su grupo (100 por defecto).
     pub const PESO: Atr = 8;
+    /// Dónde está el cursor de un campo de texto, en letras desde el principio.
+    pub const CURSOR: Atr = 9;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -131,6 +133,14 @@ pub trait Clase {
     }
     /// Un clic: pulsar y soltar dentro.
     fn clic(&self, _attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
+        Vec::new()
+    }
+    /// Si recibe el teclado cuando tiene el foco.
+    fn usa_teclado(&self) -> bool {
+        false
+    }
+    /// Una tecla, con el foco: los atributos que cambian.
+    fn escribir(&self, _attrs: &BTreeMap<Atr, Valor>, _t: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
         Vec::new()
     }
 }

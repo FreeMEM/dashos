@@ -195,6 +195,96 @@ impl Clase for Deslizador {
     }
 }
 
+/// Un campo de texto de Material 3, con contorno: 56 de alto, esquinas de 4, contorno de 1 (de 2 y del primario con
+/// el foco), texto de 16 con 16 de relleno y un cursor de 2. Intro pone su `CLIC` a sí y a no (como
+/// `MUIA_String_Acknowledge`).
+pub struct Campo;
+
+impl Campo {
+    fn partes(attrs: &BTreeMap<Atr, Valor>) -> (alloc::string::String, usize) {
+        let t = texto_de(attrs);
+        let n = t.chars().count();
+        let c = attrs.get(&atr::CURSOR).map_or(n as i64, Valor::int).clamp(0, n as i64) as usize;
+        (t, c)
+    }
+}
+
+impl Clase for Campo {
+    fn nombre(&self) -> &'static str {
+        "campo"
+    }
+
+    fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut Contexto) -> Medida {
+        Medida { min: (200, 56), max: (SIN_MAX, 56), peso: 100 }
+    }
+
+    fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
+        let t = &ctx.tema;
+        let (borde, grosor) = if e.desactivado {
+            (tema::fondo_apagado(t.sobre_superficie), 1)
+        } else if e.foco {
+            (t.primario, 2)
+        } else {
+            (t.contorno, 1)
+        };
+        l.borde(r, 4, grosor, borde);
+        let tam = t.letra_texto;
+        let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_superficie };
+        let (texto, cursor) = Self::partes(attrs);
+        let m = ctx.regular.medir(&texto, tam);
+        let base = r.y + (r.h - m.alto()) / 2 + m.sube;
+        l.recortar(r.dentro(grosor));
+        ctx.regular.dibujar(l, r.x + 16, base, &texto, tam, tinta);
+        if e.foco {
+            let antes: alloc::string::String = texto.chars().take(cursor).collect();
+            let x = r.x + 16 + ctx.regular.medir(&antes, tam).ancho;
+            l.rellenar(Rect::new(x, base - m.sube, 2, m.alto()), t.primario);
+        }
+        l.soltar_recorte();
+    }
+
+    fn pulsable(&self) -> bool {
+        true
+    }
+
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    fn escribir(&self, attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        use crate::teclado::Tecla;
+        let (texto, c) = Self::partes(attrs);
+        let mut letras: Vec<char> = texto.chars().collect();
+        let n = letras.len();
+        let (nuevo, cursor) = match tecla {
+            Tecla::Letra(l) => {
+                letras.insert(c, l);
+                (Some(letras), c + 1)
+            }
+            Tecla::Retroceso if c > 0 => {
+                letras.remove(c - 1);
+                (Some(letras), c - 1)
+            }
+            Tecla::Suprimir if c < n => {
+                letras.remove(c);
+                (Some(letras), c)
+            }
+            Tecla::Izquierda => (None, c.saturating_sub(1)),
+            Tecla::Derecha => (None, (c + 1).min(n)),
+            Tecla::Inicio => (None, 0),
+            Tecla::Fin => (None, n),
+            Tecla::Intro => return alloc::vec![(atr::CLIC, Valor::Bool(true)), (atr::CLIC, Valor::Bool(false))],
+            _ => (None, c),
+        };
+        let mut out = Vec::new();
+        if let Some(l) = nuevo {
+            out.push((atr::TEXTO, Valor::Texto(l.into_iter().collect())));
+        }
+        out.push((atr::CURSOR, Valor::Int(cursor as i64)));
+        out
+    }
+}
+
 /// Cómo se colocan los objetos: en filas y columnas, como los grupos de MUI.
 pub enum Hijo {
     Obj(Obj),
@@ -212,11 +302,21 @@ pub struct Interfaz {
     encima: Option<Obj>,
     pulsado: Option<Obj>,
     pub foco: Option<Obj>,
+    teclado: crate::teclado::Teclado,
 }
 
 impl Interfaz {
     pub fn new(arbol: Arbol, raiz: Hijo, tema: Tema) -> Self {
-        Self { arbol, raiz, ctx: Contexto::new(tema), sitios: BTreeMap::new(), encima: None, pulsado: None, foco: None }
+        Self {
+            arbol,
+            raiz,
+            ctx: Contexto::new(tema),
+            sitios: BTreeMap::new(),
+            encima: None,
+            pulsado: None,
+            foco: None,
+            teclado: crate::teclado::Teclado::new(),
+        }
     }
 
     fn nodo(&mut self, h: &Hijo) -> (Nodo, Vec<Obj>) {
@@ -331,6 +431,37 @@ impl Interfaz {
         antes != (self.encima, self.pulsado, self.foco) || !self.arbol.sucios_sin_limpiar().is_empty()
     }
 
+    /// Una tecla de Linux (lo que manda el compositor): va al objeto con el foco si usa el teclado; el tabulador pasa
+    /// el foco al siguiente que lo use. Devuelve si hay que dibujar.
+    pub fn tecla(&mut self, codigo: u32, pulsada: bool) -> bool {
+        let Some(t) = self.teclado.tecla(codigo, pulsada) else { return false };
+        if t == crate::teclado::Tecla::Tabulador {
+            let usan: Vec<Obj> = self
+                .sitios
+                .keys()
+                .copied()
+                .filter(|o| {
+                    let obj = self.arbol.objeto(*o).unwrap();
+                    obj.clase.usa_teclado() && !desactivado(&obj.attrs)
+                })
+                .collect();
+            if usan.is_empty() {
+                return false;
+            }
+            let i = self.foco.and_then(|f| usan.iter().position(|&o| o == f)).map_or(0, |i| (i + 1) % usan.len());
+            self.foco = Some(usan[i]);
+            return true;
+        }
+        let Some(o) = self.foco else { return false };
+        let obj = self.arbol.objeto(o).unwrap();
+        if !obj.clase.usa_teclado() || desactivado(&obj.attrs) {
+            return false;
+        }
+        let cambios = obj.clase.escribir(&obj.attrs, t);
+        self.aplicar(o, cambios);
+        true
+    }
+
     fn arrastre(&mut self, o: Obj, x: i32, y: i32) {
         let r = self.sitios[&o];
         let obj = self.arbol.objeto(o).unwrap();
@@ -373,6 +504,49 @@ mod pruebas {
     fn clic(i: &mut Interfaz, (x, y): (i32, i32)) {
         i.raton(x, y, true);
         i.raton(x, y, false);
+    }
+
+    #[test]
+    fn un_campo_de_texto() {
+        let mut a = Arbol::new();
+        let nombre = a.crear(Campo, &[]);
+        let otro = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("hola".into()))]);
+        let saludo = a.crear(Texto, &[]);
+        a.notificar(nombre, atr::CLIC, Cuando::Igual(Valor::Bool(true)), saludo, atr::TEXTO, Que::Fijo(Valor::Texto("Enviado".into())));
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(nombre), Hijo::Obj(otro), Hijo::Obj(saludo)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 300, 200));
+        // Sin foco, las teclas no van a ninguna parte.
+        assert!(!i.tecla(30, true));
+        // Un clic le da el foco; se escribe "Ñandú" (con la tecla muerta del acento), se corrige y se envía.
+        let r = i.sitios[&nombre];
+        clic(&mut i, (r.x + 20, r.y + 20));
+        assert_eq!(i.foco, Some(nombre));
+        for (c, p) in [(42, true), (39, true), (39, false), (42, false), (30, true), (49, true), (32, true), (40, true), (22, true)] {
+            i.tecla(c, p);
+        }
+        assert_eq!(i.arbol.leer(nombre, atr::TEXTO), Some(&Valor::Texto("Ñandú".into())));
+        // Inicio, Suprimir: "andú"; Fin, Retroceso: "and".
+        for c in [102, 111, 107, 14] {
+            i.tecla(c, true);
+        }
+        assert_eq!(i.arbol.leer(nombre, atr::TEXTO), Some(&Valor::Texto("and".into())));
+        assert_eq!(i.arbol.leer(nombre, atr::CURSOR), Some(&Valor::Int(3)));
+        i.tecla(28, true);
+        assert_eq!(i.arbol.leer(saludo, atr::TEXTO), Some(&Valor::Texto("Enviado".into())));
+        // El tabulador pasa al otro campo, y lo escrito va allí, al final de lo que tenía.
+        i.tecla(15, true);
+        assert_eq!(i.foco, Some(otro));
+        i.tecla(57, true);
+        i.tecla(31, true);
+        assert_eq!(i.arbol.leer(otro, atr::TEXTO), Some(&Valor::Texto("hola s".into())));
+        // Se dibuja con su contorno del primario (tiene el foco) y su cursor.
+        let mut px = vec![0u32; 300 * 200];
+        let mut l = Lienzo::new(&mut px, 300, 200, 300);
+        i.dibujar(&mut l);
+        let ro = i.sitios[&otro];
+        assert_eq!(px[((ro.y + 28) * 300 + ro.x) as usize], 0xff67_50a4);
+        let rn = i.sitios[&nombre];
+        assert_eq!(px[((rn.y + 28) * 300 + rn.x) as usize], 0xff79_747e);
     }
 
     #[test]
