@@ -23,16 +23,29 @@ const T_COUNT: u32 = 28;
 const N_COUNT: u32 = V_COUNT * T_COUNT;
 const S_COUNT: u32 = 19 * N_COUNT;
 
-/// How a directory compares the names of its entries.
+/// How a directory compares the names of its entries, and how the index hashes them.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum Names {
-    /// Byte by byte, as in RedoxFS and Unix.
-    Exact,
-    /// By key, as in AmigaOS, Windows and macOS.
-    Caseless,
+pub struct Names {
+    /// By key, as in AmigaOS, Windows and macOS; if not, byte by byte, as in RedoxFS and Unix.
+    pub caseless: bool,
+    /// FS10c: in an encrypted volume the index hashes names with a key, so the hashes in the clear do not give
+    /// the names away.
+    key: Option<(u64, u64)>,
 }
 
+#[allow(non_upper_case_globals)]
 impl Names {
+    /// Byte by byte.
+    pub const Exact: Names = Names {
+        caseless: false,
+        key: None,
+    };
+    /// By key.
+    pub const Caseless: Names = Names {
+        caseless: true,
+        key: None,
+    };
+
     pub fn of(dir: &Node) -> Self {
         if dir.flags().contains(NodeFlags::CASEFOLD) {
             Names::Caseless
@@ -41,19 +54,46 @@ impl Names {
         }
     }
 
+    /// The same, hashing with `key` (FS10c).
+    pub fn keyed(self, key: Option<(u64, u64)>) -> Self {
+        Self { key, ..self }
+    }
+
+    /// What is compared: the name itself, or its key.
+    pub fn compared(self, name: &str) -> String {
+        if self.caseless {
+            key(name)
+        } else {
+            name.into()
+        }
+    }
+
     /// The H-tree hash of a name in a directory of this kind.
     pub fn hash(self, name: &str) -> HTreeHash {
-        match self {
-            Names::Exact => HTreeHash::from_name(name),
-            Names::Caseless => HTreeHash::from_name(&key(name)),
+        let compared;
+        let bytes = if self.caseless {
+            compared = key(name);
+            compared.as_bytes()
+        } else {
+            name.as_bytes()
+        };
+        match self.key {
+            None => HTreeHash::from_bytes(bytes),
+            Some((k0, k1)) => {
+                use core::hash::Hasher;
+                let mut h = siphasher::sip::SipHasher13::new_with_keys(k0, k1);
+                h.write(bytes);
+                HTreeHash::from_u32(h.finish() as u32)
+            }
         }
     }
 
     /// What `name` is compared against: the name itself, or its key.
     pub fn wanted(self, name: &str) -> Wanted<'_> {
-        match self {
-            Names::Exact => Wanted::Exact(name),
-            Names::Caseless => Wanted::Key(key(name)),
+        if self.caseless {
+            Wanted::Key(key(name))
+        } else {
+            Wanted::Exact(name)
         }
     }
 }

@@ -10,23 +10,23 @@ use crate::{
     Disk, DiskMemory, FileSystem, Header, Node, Transaction, TreePtr, VERSION, header::HEADER_RING,
 };
 
-type Fs = FileSystem<DiskMemory>;
+pub(crate) type Fs = FileSystem<DiskMemory>;
 /// Path to contents; a directory is a path ending in '/'.
-type Model = BTreeMap<String, Vec<u8>>;
+pub(crate) type Model = BTreeMap<String, Vec<u8>>;
 
-const FILE: u16 = Node::MODE_FILE | 0o644;
-const DIR: u16 = Node::MODE_DIR | 0o755;
+pub(crate) const FILE: u16 = Node::MODE_FILE | 0o644;
+pub(crate) const DIR: u16 = Node::MODE_DIR | 0o755;
 
-fn new_fs(mb: u64) -> Fs {
+pub(crate) fn new_fs(mb: u64) -> Fs {
     FileSystem::create(DiskMemory::new(mb * 1024 * 1024), None, 0, 0).unwrap()
 }
 
-fn reopen(fs: Fs) -> Fs {
+pub(crate) fn reopen(fs: Fs) -> Fs {
     let block = fs.block;
     FileSystem::open(fs.disk, None, Some(block), false).unwrap()
 }
 
-fn assert_clean(fs: &mut Fs, what: &str) {
+pub(crate) fn assert_clean(fs: &mut Fs, what: &str) {
     let report = fs
         .tx(|tx| check::check(tx, Options { data: true }, true))
         .unwrap();
@@ -34,7 +34,7 @@ fn assert_clean(fs: &mut Fs, what: &str) {
 }
 
 /// Everything under the root, as a model.
-fn read_all(tx: &mut Transaction<DiskMemory>) -> Model {
+pub(crate) fn read_all(tx: &mut Transaction<DiskMemory>) -> Model {
     fn go(tx: &mut Transaction<DiskMemory>, dir: TreePtr<Node>, prefix: &str, out: &mut Model) {
         let mut children = Vec::new();
         tx.child_nodes(dir, &mut children).unwrap();
@@ -63,7 +63,7 @@ fn read_all(tx: &mut Transaction<DiskMemory>) -> Model {
     out
 }
 
-fn find(tx: &mut Transaction<DiskMemory>, path: &str) -> TreePtr<Node> {
+pub(crate) fn find(tx: &mut Transaction<DiskMemory>, path: &str) -> TreePtr<Node> {
     let mut node = TreePtr::root();
     for part in path.trim_end_matches('/').split('/') {
         node = tx.find_node(node, part).unwrap().ptr();
@@ -71,7 +71,7 @@ fn find(tx: &mut Transaction<DiskMemory>, path: &str) -> TreePtr<Node> {
     node
 }
 
-fn parent_and_name(path: &str) -> (&str, &str) {
+pub(crate) fn parent_and_name(path: &str) -> (&str, &str) {
     let path = path.trim_end_matches('/');
     match path.rsplit_once('/') {
         Some((dir, name)) => (dir, name),
@@ -80,7 +80,7 @@ fn parent_and_name(path: &str) -> (&str, &str) {
 }
 
 /// Bytes that LZ4 does not shrink.
-fn noise(len: usize, seed: u64) -> Vec<u8> {
+pub(crate) fn noise(len: usize, seed: u64) -> Vec<u8> {
     let mut x = seed | 1;
     (0..len)
         .map(|_| {
@@ -93,7 +93,7 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 }
 
 /// What differs between two models, briefly; None if nothing.
-fn diff(got: &Model, wanted: &Model) -> Option<String> {
+pub(crate) fn diff(got: &Model, wanted: &Model) -> Option<String> {
     let mut out = Vec::new();
     for (path, data) in wanted {
         match got.get(path) {
@@ -115,17 +115,17 @@ fn diff(got: &Model, wanted: &Model) -> Option<String> {
     (!out.is_empty()).then(|| out.join("; "))
 }
 
-struct Rng(u64);
+pub(crate) struct Rng(pub(crate) u64);
 
 impl Rng {
-    fn next(&mut self) -> u64 {
+    pub(crate) fn next(&mut self) -> u64 {
         self.0 ^= self.0 << 13;
         self.0 ^= self.0 >> 7;
         self.0 ^= self.0 << 17;
         self.0
     }
 
-    fn below(&mut self, n: usize) -> usize {
+    pub(crate) fn below(&mut self, n: usize) -> usize {
         (self.next() % n as u64) as usize
     }
 }

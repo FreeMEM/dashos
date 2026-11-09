@@ -37,6 +37,12 @@ doc = false
 required-features = ["std"]
 
 [[bin]]
+name = "redoxfs-volume"
+path = "src/bin/volume.rs"
+doc = false
+required-features = ["std"]
+
+[[bin]]
 name = "redoxfs-snapshot"
 path = "src/bin/snapshot.rs"
 doc = false
@@ -59,6 +65,7 @@ aes = { version = "0.8", default-features = false }
 argon2 = { version = "0.4", default-features = false, features = ["alloc"] }
 base64ct = { version = "1", default-features = false }
 bitflags = "2"
+chacha20 = { version = "0.9", default-features = false }
 endian-num = "0.1"
 env_logger = { version = "0.11", optional = true, default-features = false }
 getrandom = { version = "0.4", optional = true }
@@ -67,9 +74,11 @@ libc = "0.2"
 log = { version = "0.4.14", default-features = false, optional = true }
 lz4_flex = { version = "0.11", default-features = false, features = ["checked-decode"] }
 parse-size = { version = "1", optional = true }
+poly1305 = "0.8"
 range-tree = { version = "0.1.1", optional = true }
 redox_syscall = "0.9.5"
 seahash = { version = "4.1.0", default-features = false }
+siphasher = { version = "1", default-features = false }
 smallvec = { version = "1.15.2", optional = true }
 termion = { version = "4", optional = true }
 uuid = { version = "1.4", default-features = false }

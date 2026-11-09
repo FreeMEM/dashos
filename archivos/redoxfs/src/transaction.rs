@@ -85,6 +85,17 @@ pub struct Transaction<'a, D: Disk> {
     /// Blocks let go in this transaction that a snapshot still sees: they go to the dead list (FS9).
     pub(crate) dead: Vec<BlockAddr>,
     pub(crate) write_cache: BTreeMap<BlockAddr, Vec<u8>>,
+    /// The volume this transaction works in, 0 for the main one (FS10).
+    pub(crate) volume: u64,
+    /// While in another volume: the fields of the main one, which the header on disk keeps.
+    pub(crate) main: Option<crate::volume::VolumeFields>,
+    /// The fields of the volume as they were when entered, to know whether they changed.
+    pub(crate) entered: Option<crate::volume::VolumeFields>,
+    /// Volumes made, changed (Some) or removed (None) in this transaction, not yet in the list on disk.
+    pub(crate) volume_changes: BTreeMap<u64, Option<crate::volume::Volume>>,
+    /// Whether the volume this transaction is in is encrypted, and its keys if it is unlocked (FS10c).
+    pub(crate) sealed: bool,
+    pub(crate) cipher: Option<alloc::sync::Arc<crate::seal::VolumeCipher>>,
 }
 
 impl<'a, D: Disk> Transaction<'a, D> {
@@ -100,11 +111,20 @@ impl<'a, D: Disk> Transaction<'a, D> {
             deallocate: Vec::new(),
             dead: Vec::new(),
             write_cache: BTreeMap::new(),
+            volume: 0,
+            main: None,
+            entered: None,
+            volume_changes: BTreeMap::new(),
+            sealed: false,
+            cipher: None,
         }
     }
 
     pub fn commit(mut self, squash: bool) -> Result<()> {
         self.sync(squash)?;
+        if let Some(main) = self.main {
+            main.apply(&mut self.header);
+        }
         self.fs.header = self.header;
         self.fs.allocator = self.allocator;
         Ok(())
@@ -311,6 +331,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub fn sync(&mut self, force_squash: bool) -> Result<bool> {
         // The dead list first: writing it allocates and frees blocks.
         self.write_dead()?;
+        // Then the list of volumes, which allocates and frees too.
+        self.note_volume();
+        self.write_volume_changes()?;
 
         // Make sure alloc is synced
         self.sync_allocator(force_squash)?;
@@ -349,6 +372,13 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(false);
         }
 
+        // On disk, the header keeps the fields of the main volume.
+        let inside = self.main.map(|main| {
+            let here = crate::volume::VolumeFields::of(&self.header);
+            main.apply(&mut self.header);
+            here
+        });
+
         // Update header to next generation
         let generation = self.header.update(self.fs.cipher_opt.as_ref());
         let gen_block = generation % HEADER_RING;
@@ -359,6 +389,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 .disk
                 .write_at(self.fs.block + gen_block, &self.header)?
         };
+        if let Some(here) = inside {
+            here.apply(&mut self.header);
+        }
         if count != mem::size_of_val(&self.header) {
             // Read wrong number of bytes
             #[cfg(feature = "log")]
@@ -376,6 +409,16 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub fn read_block<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         ptr: BlockPtr<T>,
+    ) -> Result<BlockData<T>> {
+        self.read_block_as(ptr, T::SEAL)
+    }
+
+    /// `read_block` of a block encrypted as `seal` says, whatever its type: the leaves of the tree of nodes are
+    /// nodes read as raw blocks (FS10c).
+    pub(crate) fn read_block_as<T: BlockTrait + DerefMut<Target = [u8]>>(
+        &mut self,
+        ptr: BlockPtr<T>,
+        seal: crate::seal::Seal,
     ) -> Result<BlockData<T>> {
         if ptr.is_null() {
             // Pointer is invalid (should this return None?)
@@ -407,6 +450,24 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 return Err(Error::new(EIO));
             }
             self.fs.decrypt(&mut data, ptr.addr());
+        }
+
+        // FS10c: in an encrypted volume, decrypted with its key and checked against its signature.
+        if self.sealed && seal != crate::seal::Seal::None {
+            let Some(cipher) = self.cipher.clone() else {
+                // Without the key a node can be read for its structure, and nothing else.
+                if seal == crate::seal::Seal::Node {
+                    return Ok(BlockData::new(ptr.addr(), data));
+                }
+                return Err(Error::new(syscall::error::EACCES));
+            };
+            cipher.open(seal, ptr.addr(), &mut data);
+            if cipher.mac(ptr.addr(), &data) != ptr.hash() {
+                #[cfg(feature = "log")]
+                log::error!("READ_BLOCK: BAD SIGNATURE for block 0x{:X}", ptr.addr().index());
+                return Err(Error::new(EIO));
+            }
+            return Ok(BlockData::new(ptr.addr(), data));
         }
 
         let block = BlockData::new(ptr.addr(), data);
@@ -510,7 +571,17 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub fn sync_block<T: BlockTrait + Deref<Target = [u8]>>(
         &mut self,
         ctx: &mut dyn AllocCtx,
+        block: BlockData<T>,
+    ) -> Result<BlockPtr<T>> {
+        self.sync_block_as(ctx, block, T::SEAL)
+    }
+
+    /// `sync_block` of a block encrypted as `seal` says (FS10c).
+    pub(crate) fn sync_block_as<T: BlockTrait + Deref<Target = [u8]>>(
+        &mut self,
+        ctx: &mut dyn AllocCtx,
         mut block: BlockData<T>,
+        seal: crate::seal::Seal,
     ) -> Result<BlockPtr<T>> {
         // Swap block to new address
         let meta = block.addr().meta();
@@ -523,7 +594,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
         }
         // Write new block
-        unsafe { self.write_block(block) }
+        unsafe { self.write_block_as(block, seal) }
     }
 
     /// Write block data, returning a calculated block pointer
@@ -534,11 +605,32 @@ impl<'a, D: Disk> Transaction<'a, D> {
         &mut self,
         block: BlockData<T>,
     ) -> Result<BlockPtr<T>> {
+        unsafe { self.write_block_as(block, T::SEAL) }
+    }
+
+    pub(crate) unsafe fn write_block_as<T: BlockTrait + Deref<Target = [u8]>>(
+        &mut self,
+        block: BlockData<T>,
+        seal: crate::seal::Seal,
+    ) -> Result<BlockPtr<T>> {
         if block.addr().is_null() {
             // Pointer is invalid
             #[cfg(feature = "log")]
             log::error!("WRITE_BLOCK: POINTER IS NULL");
             return Err(Error::new(ENOENT));
+        }
+
+        // FS10c: in an encrypted volume, signed and encrypted with its key; without it, it cannot be written.
+        if self.sealed && seal != crate::seal::Seal::None {
+            let cipher = self
+                .cipher
+                .clone()
+                .ok_or(Error::new(syscall::error::EACCES))?;
+            let mut raw = block.data().deref().to_vec();
+            let mac = cipher.mac(block.addr(), &raw);
+            cipher.seal(seal, block.addr(), &mut raw);
+            self.write_cache.insert(block.addr(), raw);
+            return Ok(block.ptr_with_hash(mac));
         }
 
         self.write_cache
@@ -569,7 +661,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let l2 = self.read_block(l3.data().ptrs[i3])?;
         let l1 = self.read_block(l2.data().ptrs[i2])?;
         let l0 = self.read_block(l1.data().ptrs[i1])?;
-        let raw = self.read_block(l0.data().ptrs[i0])?;
+        // The leaves of the tree are nodes.
+        let raw = self.read_block_as(l0.data().ptrs[i0], crate::seal::Seal::Node)?;
 
         //TODO: transmute instead of copy?
         let mut data = match T::empty(BlockLevel::default()) {
@@ -739,7 +832,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let mut l2 = self.read_block(l3.data().ptrs[i3])?;
             let mut l1 = self.read_block(l2.data().ptrs[i2])?;
             let mut l0 = self.read_block(l1.data().ptrs[i1])?;
-            let mut raw = self.read_block(l0.data().ptrs[i0])?;
+            let mut raw = self.read_block_as(l0.data().ptrs[i0], crate::seal::Seal::Node)?;
 
             // Return if data is equal
             if raw.data().deref() == node.data().deref() {
@@ -750,7 +843,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             raw.data_mut().copy_from_slice(node.data());
 
             // Write updates to newly allocated blocks
-            l0.data_mut().ptrs[i0] = self.sync_block(&mut FsCtx, raw)?;
+            l0.data_mut().ptrs[i0] = self.sync_block_as(&mut FsCtx, raw, crate::seal::Seal::Node)?;
             l1.data_mut().ptrs[i1] = self.sync_block(&mut FsCtx, l0)?;
             l2.data_mut().ptrs[i2] = self.sync_block(&mut FsCtx, l1)?;
             l3.data_mut().ptrs[i3] = self.sync_block(&mut FsCtx, l2)?;
@@ -860,7 +953,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             self.read_block(root_htree_ptr)?
         };
 
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let result = self.find_node_inner(
             root_htree_node.data(),
             name,
@@ -939,7 +1032,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 ctime_nsec,
             );
             // A new directory compares names as its parent does.
-            if node.is_dir() && Names::of(parent.data()) == Names::Caseless {
+            if node.is_dir() && self.names_of(parent.data()).caseless {
                 node.set_flags(node.flags() | NodeFlags::CASEFOLD);
             }
             let node_block_data =
@@ -967,7 +1060,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let links = node.data().links();
         node.data_mut().set_links(links + 1);
 
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let dir_entry = DirEntry::new(node_ptr, name);
         let dir_entry_htree_hash = names.hash(name);
         let record_byte_size = parent.data().record_level().bytes();
@@ -1181,7 +1274,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         let htree_levels = level_data(&parent)?.level0[0].addr().level().0;
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let name_hash = names.hash(name);
 
         let mut htree_root = if htree_levels == 0 {
@@ -1288,7 +1381,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     /// Notify of node open, for tracking node usage
     pub fn on_open_node(&mut self, node_ptr: TreePtr<Node>) -> Result<()> {
-        let entry = self.fs.node_usages.entry(node_ptr.id()).or_insert(0);
+        let entry = self.fs.node_usages.entry(self.usage_key(node_ptr.id())).or_insert(0);
         *entry = entry.checked_add(1).ok_or_else(|| {
             #[cfg(feature = "log")]
             log::error!("node {} usage overflow", node_ptr.id());
@@ -1303,7 +1396,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     /// Returns `Ok(true)` if the node was deleted
     pub fn on_close_node(&mut self, node_ptr: TreePtr<Node>) -> Result<()> {
         // Subtract from usages and return if not zero
-        match self.fs.node_usages.get_mut(&node_ptr.id()) {
+        match self.fs.node_usages.get_mut(&self.usage_key(node_ptr.id())) {
             Some(entry) => {
                 *entry = entry.checked_sub(1).ok_or_else(|| {
                     #[cfg(feature = "log")]
@@ -1326,7 +1419,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         // Remove node usages entry
-        self.fs.node_usages.remove(&node_ptr.id());
+        self.fs.node_usages.remove(&self.usage_key(node_ptr.id()));
 
         // Check for node in release list and delete it
         self.release_unused_nodes()
@@ -1357,7 +1450,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let mut empty = true;
             for entry in release.data_mut().entries.iter_mut() {
                 if !entry.is_null() {
-                    let usages = self.fs.node_usages.get(&entry.id()).copied().unwrap_or(0);
+                    let usages = self.fs.node_usages.get(&self.usage_key(entry.id())).copied().unwrap_or(0);
                     if usages == 0 {
                         release_nodes.push(*entry);
                         *entry = TreePtr::default();
@@ -1400,7 +1493,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let usages = self
             .fs
             .node_usages
-            .get(&node_ptr.id())
+            .get(&self.usage_key(node_ptr.id()))
             .copied()
             .unwrap_or(0);
         if usages > 0 {
@@ -1633,7 +1726,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(false);
         }
         let parent = self.read_tree(orig_parent_ptr)?;
-        Ok(Names::of(parent.data())
+        Ok(self.names_of(parent.data())
             .wanted(orig_name)
             .matches(new_name.as_bytes()))
     }

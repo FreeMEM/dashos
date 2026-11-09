@@ -12,7 +12,7 @@ type Fs = FileSystem<DiskMemory>;
 
 const FILE: u16 = Node::MODE_FILE | 0o644;
 const DIR: u16 = Node::MODE_DIR | 0o755;
-const ALL: Options = Options { data: true };
+pub(crate) const ALL: Options = Options { data: true };
 
 fn new_fs(mb: u64) -> Fs {
     FileSystem::create(DiskMemory::new(mb * 1024 * 1024), None, 0, 0).unwrap()
@@ -56,7 +56,7 @@ fn noise(len: usize, seed: u64) -> Vec<u8> {
 }
 
 /// Changes one byte of a block on the disk, under the checksums.
-fn damage(fs: &mut Fs, addr: BlockAddr) {
+pub(crate) fn damage(fs: &mut Fs, addr: BlockAddr) {
     let mut block = [0; BLOCK_SIZE as usize];
     let at = fs.block + addr.index();
     unsafe { fs.disk.read_at(at, &mut block).unwrap() };
@@ -687,7 +687,7 @@ fn files_come_and_go() {
 }
 
 /// A copy of a disk in memory.
-fn copy_disk(fs: &mut Fs) -> DiskMemory {
+pub(crate) fn copy_disk(fs: &mut Fs) -> DiskMemory {
     let size = fs.disk.size().unwrap();
     let mut copy = DiskMemory::new(size);
     let mut block = vec![0; 1024 * 1024];

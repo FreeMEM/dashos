@@ -6,12 +6,13 @@
 //! that with the free blocks of the allocator. Nothing is written: `repair` fixes what can be fixed.
 
 use alloc::{
+    boxed::Box,
     collections::{BTreeMap, BTreeSet},
     string::String,
     vec,
     vec::Vec,
 };
-use core::fmt;
+use core::{fmt, mem};
 
 use crate::casefold::{self, Names};
 use crate::htree::{HTreeHash, HTreeNode};
@@ -99,6 +100,18 @@ pub enum Problem {
     Snapshot { name: String },
     /// Blocks in dead lists that no snapshot sees: lost space.
     Dead { count: u64 },
+    /// The list of volumes cannot be read (FS10).
+    Volumes,
+    /// A volume cannot be entered.
+    VolumeUnreadable { name: String },
+    /// One of the two copies of the list of volumes cannot be read; the other one can.
+    VolumesCopy,
+    /// One of the two copies of the key block of an encrypted volume cannot be read.
+    KeysCopy { name: String },
+    /// Neither copy of the key block of an encrypted volume can be read: it cannot be opened any more.
+    Keys { name: String },
+    /// Something wrong in a volume other than the main one.
+    InVolume { name: String, problem: Box<Problem> },
 }
 
 impl fmt::Display for EntryFault {
@@ -157,6 +170,15 @@ impl fmt::Display for Problem {
             Problem::Dead { count } => {
                 write!(f, "{count} blocks in dead lists that no snapshot sees")
             }
+            Problem::Volumes => write!(f, "list of volumes unreadable"),
+            Problem::VolumeUnreadable { name } => write!(f, "volume {name:?}: unreadable"),
+            Problem::VolumesCopy => write!(f, "a copy of the list of volumes unreadable"),
+            Problem::KeysCopy { name } => write!(f, "volume {name:?}: a copy of its keys unreadable"),
+            Problem::Keys { name } => write!(f, "volume {name:?}: its keys unreadable, it cannot be opened"),
+            Problem::InVolume { name, problem } if name.is_empty() => {
+                write!(f, "main volume: {problem}")
+            }
+            Problem::InVolume { name, problem } => write!(f, "volume {name:?}: {problem}"),
         }
     }
 }
@@ -347,14 +369,46 @@ pub fn check<D: Disk>(
     if !allocator_read {
         c.problems.push(Problem::AllocLog);
     }
+    let focus = c.tx.volume();
+    c.tx.leave_volume()?;
+    // The list as this transaction has it (a repair may have changed it), not as the disk had it.
+    c.tx.write_volume_changes()?;
     c.alloc_log(allocator_read);
-    c.release_list();
-    let node_ptrs = c.tree();
-    for &(id, ptr) in &node_ptrs {
-        c.node(id, ptr);
+    // Every volume (FS10), each as if it were the only one. The report is of the volume the transaction is in:
+    // what is found in the others goes in `InVolume` (the main one has no name).
+    let mut all = vec![(0, String::new())];
+    all.extend(
+        c.volume_list()
+            .into_iter()
+            .map(|v| (v.id(), String::from(v.name()))),
+    );
+    let mut kept = VolumeState::default();
+    let mut node_ptrs = Vec::new();
+    for (id, name) in all {
+        if c.tx.enter_volume(id).is_err() {
+            c.problems.push(Problem::VolumeUnreadable { name });
+            continue;
+        }
+        let outer = mem::take(&mut c.problems);
+        let ptrs = c.volume();
+        let inner = mem::replace(&mut c.problems, outer);
+        let state = c.take_state();
+        c.tx.leave_volume()?;
+        if id == focus {
+            kept = state;
+            node_ptrs = ptrs;
+            c.problems.extend(inner);
+        } else {
+            for problem in inner {
+                c.problems.push(Problem::InVolume {
+                    name: name.clone(),
+                    problem: Box::new(problem),
+                });
+            }
+        }
     }
-    c.links_and_places();
-    c.snapshots();
+    c.tx.enter_volume(focus)?;
+    c.put_state(kept);
     let free = c.free_blocks(allocator_read);
     let dir_ids: BTreeSet<u32> = c.nodes.iter().filter(|n| n.1.dir).map(|n| *n.0).collect();
     let report = Report {
@@ -376,7 +430,113 @@ pub fn check<D: Disk>(
     Ok(report)
 }
 
+/// What `check` keeps of one volume.
+#[derive(Default)]
+struct VolumeState {
+    nodes: BTreeMap<u32, NodeInfo>,
+    released: BTreeSet<u32>,
+    edges: Vec<(u32, u32)>,
+    places: BTreeMap<u32, (u32, String)>,
+    data_lost: BTreeSet<u32>,
+    unreadable: BTreeSet<u32>,
+}
+
 impl<D: Disk> Checker<'_, '_, D> {
+    /// The other volumes, with the blocks of their list marked.
+    fn volume_list(&mut self) -> Vec<crate::volume::Volume> {
+        let (first, second, own) = self.tx.volume_copies();
+        for addr in own {
+            self.usage.mark(addr);
+        }
+        // The head of a copy that cannot be read stays in use until the repair writes the list anew.
+        for head in [self.tx.header.volumes, self.tx.header.volumes_copy] {
+            if !head.is_null() && !self.usage.is_set(head.addr().index()) {
+                self.usage.mark(head.addr());
+            }
+        }
+        let volumes = match (first, second) {
+            (Ok(volumes), Ok(_)) => volumes,
+            (Ok(volumes), Err(_)) | (Err(_), Ok(volumes)) => {
+                self.problems.push(Problem::VolumesCopy);
+                volumes
+            }
+            (Err(_), Err(_)) => {
+                self.problems.push(Problem::Volumes);
+                return Vec::new();
+            }
+        };
+        for volume in &volumes {
+            if !volume.is_encrypted() {
+                continue;
+            }
+            let mut good = 0;
+            for keys in [volume.keys, volume.keys_copy] {
+                if keys.is_null() {
+                    continue;
+                }
+                self.usage.mark(keys.addr());
+                if self.tx.read_volume_keys(keys).is_ok() {
+                    good += 1;
+                }
+            }
+            let name = String::from(volume.name());
+            match good {
+                2 => {}
+                1 => self.problems.push(Problem::KeysCopy { name }),
+                _ => self.problems.push(Problem::Keys { name }),
+            }
+        }
+        volumes
+    }
+
+    /// Checks the volume the transaction is in; returns its nodes.
+    fn volume(&mut self) -> Vec<(u32, BlockPtr<Node>)> {
+        if self.tx.is_locked() {
+            self.locked_volume();
+            return Vec::new();
+        }
+        self.release_list();
+        let node_ptrs = self.tree();
+        for &(id, ptr) in &node_ptrs {
+            self.node(id, ptr);
+        }
+        self.links_and_places();
+        self.snapshots();
+        node_ptrs
+    }
+
+    /// An encrypted volume without its key (FS10c): only which blocks it uses, from its structure. Its names,
+    /// links and contents are not checked.
+    fn locked_volume(&mut self) {
+        self.release_list();
+        let root = self.tx.header.tree;
+        let usage = &mut self.usage;
+        if self.tx.tree_blocks(root, &mut |addr| usage.mark(addr)).is_err() {
+            self.problems.push(Problem::TreeBlock { first: 0 });
+        }
+        self.snapshots();
+    }
+
+    fn take_state(&mut self) -> VolumeState {
+        VolumeState {
+            nodes: mem::take(&mut self.nodes),
+            released: mem::take(&mut self.released),
+            edges: mem::take(&mut self.edges),
+            places: mem::take(&mut self.places),
+            data_lost: mem::take(&mut self.data_lost),
+            unreadable: mem::take(&mut self.unreadable),
+        }
+    }
+
+    fn put_state(&mut self, state: VolumeState) {
+        self.nodes = state.nodes;
+        self.released = state.released;
+        self.edges = state.edges;
+        self.places = state.places;
+        self.data_lost = state.data_lost;
+        self.unreadable = state.unreadable;
+    }
+
     fn alloc_log(&mut self, read: bool) {
         let mut ptr = self.tx.header.alloc;
         while !ptr.is_null() {
@@ -627,7 +787,7 @@ impl<D: Disk> Checker<'_, '_, D> {
             self.problems.push(bad("directory index missing"));
             return;
         }
-        let names = Names::of(node);
+        let names = self.tx.names_of(node);
         let mut keys = BTreeSet::new();
         let levels = marker.addr().level().0;
         if levels == 0 {
@@ -740,9 +900,9 @@ impl<D: Disk> Checker<'_, '_, D> {
                     continue;
                 }
             };
-            let key = match names {
-                Names::Exact => raw.to_vec(),
-                Names::Caseless => casefold::key(name).into_bytes(),
+            let key = match names.caseless {
+                false => raw.to_vec(),
+                true => casefold::key(name).into_bytes(),
             };
             if !keys.insert(key) {
                 self.problems.push(entry(EntryFault::Duplicate, name));

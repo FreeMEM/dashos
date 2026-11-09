@@ -90,6 +90,36 @@ Decisión del usuario (2026-11-08): A2 "como ZFS".
 - Pendiente de decidir: si hay llave de recuperación por defecto (un código en papel al crear el usuario). Sin
   contraseña ni llave de recuperación, los ficheros se pierden.
 
+Pasos:
+
+| Paso | Qué | Estado |
+|------|-----|--------|
+| FS10a | Adiantum (XChaCha12, AES-256, NH, Poly1305) desde la especificación, con los vectores de Google | hecho |
+| FS10b | Varios volúmenes en un disco: cada uno con su árbol, su lista por soltar, sus instantáneas y sus listas de muertos; el espacio libre es común. El volumen de hoy es el primero | hecho (DashFS 5, `redoxfs-volume`) |
+| FS10c | Cifrar un volumen como ZFS: llave propia envuelta por la contraseña, contenido y nombres con Adiantum (el tweak es la dirección del bloque), firma de cada bloque en el hash de su puntero | hecho (`seal.rs`, `redoxfs-volume create-encrypted`) |
+| FS10d | Comprobar y reparar sin llaves: la estructura sí, el contenido cifrado no | hecho (cada volumen en su turno; dos copias de la lista y de las llaves) |
+| FS10e | DashOS: abrir el volumen del usuario al entrar, y la llave de recuperación | órdenes 21 a 26 del servicio; crear cifrados desde DashOS espera azar de calidad |
+
+Diseño de FS10c (el cifrado de un volumen):
+
+- La llave del volumen (32 bytes al azar) cifra con Adiantum; de ella sale también la llave de las firmas
+  (SipHash-2-4, 128 bits). En la lista de volúmenes, el volumen apunta a un bloque de llaves con hasta 8 huecos:
+  cada uno guarda su sal, los parámetros de Argon2 y la llave envuelta (cifrada con Adiantum con la llave que sale
+  de la contraseña, y 16 bytes a cero detrás para saber si la contraseña es buena). Cambiar la contraseña reescribe
+  solo su hueco; la llave de recuperación es otro hueco.
+- Qué se cifra (el tweak es la dirección del bloque): los datos de los ficheros, los bloques de las carpetas (los
+  nombres y el índice, que lleva hashes de los nombres), los atributos (el comentario) y, de cada nodo, el dueño,
+  los tiempos, el tamaño, los enlaces, los permisos y los bits del Amiga. Queda a la vista: los punteros (qué
+  bloques usa cada nodo), si es fichero o carpeta, y el árbol de nodos.
+- La firma de cada bloque cifrado va en el hash de su puntero: SipHash con la llave del volumen sobre el
+  contenido sin cifrar. No deja comprobar adivinanzas del contenido, como haría el hash de siempre, y un bloque
+  cambiado o movido a otra dirección no pasa (Adiantum lo deja irreconocible).
+- Sin la llave: se recorre la estructura y se sabe qué bloques usa el volumen (FS8 comprueba el espacio); no se
+  comprueban enlaces, nombres ni contenido. Con la llave, todo.
+- Límite, como en ZFS: la estructura a la vista no va firmada con llave. Quien pueda escribir en el disco puede
+  cambiar punteros, por ejemplo devolver un bloque a una versión vieja en la misma dirección. No puede leer ni
+  fabricar contenido.
+
 Descartadas: A (un fichero cifrado por usuario, como FileVault 1 y systemd-homed: escribe dos veces y recuperar
 espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado para lo mismo que A2 como ZFS).
 
@@ -224,3 +254,77 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   Límites: solo se vuelve a la más nueva (como ZFS sin `-r`). La reparación no arregla una instantánea dañada
   (la dice), y al rehacer un cajón de un volumen con instantáneas sus bloques viejos no van a la lista de muertos:
   ese espacio no vuelve al borrar la instantánea (el comprobador lo dará como perdido y la reparación lo recupera).
+- FS10a: Adiantum escrito desde la especificación (`src/adiantum.rs`), con `chacha20` y `poly1305` de RustCrypto
+  para las piezas. Pasan 33 vectores de Adiantum (16 a 4096 bytes, tweak de 0, 17 y 32 bytes) y los de NH y
+  NHPoly1305, sacados de github.com/google/adiantum (MIT) a `src/vectores/`.
+- FS10b: DashFS 5, varios volúmenes en un disco (`src/volume.rs`). La cabecera guarda los campos del volumen
+  principal y apunta a una lista de los demás (cadena de bloques, 21 por bloque). Una transacción entra en un
+  volumen (`enter_volume`, `FileSystem::tx_in`) poniendo sus campos en su copia de la cabecera, así que el resto del
+  código lo ve como el único; al escribir la cabecera, los del volumen van a la lista y los del principal a la
+  cabecera. La época es del disco y `latest` de cada volumen: soltar un bloque mira solo las instantáneas de su
+  volumen. Los abiertos se cuentan por volumen y nodo. Borrar un volumen borra sus instantáneas y suelta su árbol
+  entero; con algo abierto da EBUSY. El comprobador recorre todos los volúmenes (lo de otro volumen sale como
+  `InVolume`); la reparación arregla el principal y deja los demás en uso, y no repara si no puede leer la lista de
+  volúmenes o entrar en uno (sus bloques parecerían libres). Pruebas: un modelo con 3 semillas × 1200 pasos
+  (volúmenes que se crean y se borran, instantáneas en cada uno, dos volúmenes en una transacción, reabrir); al
+  final, borrado todo, vuelve todo el espacio. Cortes de luz: 4 pasos más con volúmenes. Si el comprobador no
+  recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
+  Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
+  montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).
+  QEMU: `arranque-virt` bien (con el disco leído en Linux). `prueba` (raspi4b) falló una vez en
+  `[grupos] cupo agotado` (C43), con el emulador cargado por otras sesiones, y salió bien al repetirla: nada que
+  ver con los archivos.
+- FS10c: volúmenes cifrados (`src/seal.rs`). Cada tipo de bloque dice cómo se cifra (`BlockTrait::SEAL`): los
+  datos, los bloques de las carpetas y los atributos, enteros; los nodos, solo lo que cuenta del fichero (permisos,
+  dueño, tiempos, tamaño, enlaces, bits del Amiga), y el tipo queda a la vista para recorrer la estructura sin la
+  llave. Las hojas del árbol se leen como bloques sin tipo: el árbol las lee y escribe como nodos
+  (`read_block_as`, `sync_block_as`), que fue el primer fallo de las pruebas. La firma de un bloque cifrado
+  (SipHash-2-4 con llave, sobre la dirección y el contenido) va en el hash de su puntero; el índice de las carpetas
+  hashea los nombres con otra llave del volumen (`Names::keyed`). La llave del volumen va en un bloque de llaves
+  con 8 huecos (contraseña o código de recuperación), envuelta con Argon2id + Adiantum y 16 bytes a cero para
+  notar una contraseña mala. Sin la llave: leer da EACCES, escribir también, y el comprobador recorre solo la
+  estructura (qué bloques usa). Se pueden tomar instantáneas y borrar el volumen sin la llave, como en ZFS.
+  Pruebas: el nombre, la carpeta, el comentario y los datos no están en el disco (y sí en un volumen sin cifrar);
+  contraseña mala; recuperación; quitar la última contraseña no se deja; un bit cambiado en un bloque da EIO y el
+  comprobador lo ve (y sin la comprobación de la firma la prueba falla); instantáneas, volver y borrar sin llave
+  devolviendo todo el espacio; el modelo de volúmenes con la mitad cifrados, cerrándolos al reabrir; cortes de luz
+  con un volumen cifrado. Argon2id con 64 MiB y 3 pasadas tarda 0,1 s en este PC; en la Pi 4 no se ha medido.
+  Límite: el tamaño comprimido de cada trozo de un fichero se ve, como en ZFS.
+- FS10d: el comprobador da el informe del volumen en que está la transacción, y lo de los demás como `InVolume`
+  (el principal sin nombre). La reparación entra en cada volumen por turno (el principal, los no cifrados y los
+  cifrados abiertos) y lo arregla como si fuera el único; uno cerrado solo se comprueba. Las copias de nodos de la
+  reparación van por bloques con tipo, así que un nodo cifrado se copia descifrado y vuelto a cifrar con su nueva
+  dirección. Lo crítico va dos veces, como las copias "ditto" de ZFS: la lista de volúmenes (dos cadenas, la
+  segunda en `Header::volumes_copy`) y el bloque de llaves de cada volumen cifrado. Con una copia dañada no se
+  pierde nada y la reparación la rehace; con las dos de la lista, la reparación se niega; con las dos de las llaves,
+  ese volumen ya no se puede abrir y el comprobador lo dice (`Keys`). Un fallo de las pruebas: la reparación
+  rehacía las llaves en cada ronda porque la comprobación leía la lista del disco y no la de la transacción; ahora
+  el comprobador escribe antes los cambios pendientes de la lista. Pruebas: daños en un volumen normal y en uno
+  cifrado (con mutación: si la reparación no entra en los otros volúmenes, falla); 150 rondas de daños al azar en
+  un disco con tres volúmenes, uno cifrado con instantánea (lo que queda es solo datos ilegibles, o una instantánea
+  dañada, que FS9 dice y no repara); cada copia dañada por separado y las dos a la vez.
+- FS10d, después: una lista de instantáneas ilegible ya no se queda así: la reparación olvida las instantáneas de ese
+  volumen y sus listas de muertos (estaban perdidas igualmente), y lo que solo ellas veían vuelve al espacio libre.
+  Antes, cada escritura en ese volumen dejaba bloques perdidos (lo encontró la prueba de daños al azar).
+- FS10e: el servicio de archivos con volúmenes. Cada asa lleva su volumen; la orden 21 da la raíz de uno por su nombre
+  y lo demás se hace desde ahí; renombrar de un volumen a otro no se deja. Órdenes 22 (lista, con las marcas cifrado
+  y abierto), 23 (hacer, sin cifrar), 24 (quitar), 25 (abrir con contraseña) y 26 (cerrar); estado -13 "en uso". Las
+  instantáneas (17 a 20) van al volumen de la asa, y volver suelta solo las asas de ese volumen. Prueba en QEMU
+  (`ficheros`, "FS10 volúmenes"): el disco trae "Ana" cifrado (hecho en Linux con `redoxfs-volume create-encrypted
+  Ana --test-cost`, Argon2 barato para que QEMU no tarde); cerrado no se lista, con otra contraseña no se abre, con la
+  suya sí; se escribe dentro; con algo abierto no se cierra; cerrado no se busca dentro; se reabre y se lee; un
+  volumen sin cifrar se hace, no se quita con algo abierto, y se quita; el disco queda sin problemas. En Linux,
+  `disco_archivos.py --comprobar` mira que "secreto.txt" y su contenido no están en claro en el disco.
+  Pendiente: crear volúmenes cifrados desde DashOS pide azar de calidad (el kernel solo mezcla el reloj: RNG200 en la
+  Pi 4, virtio-rng en QEMU); abrir el volumen del usuario al entrar va con los usuarios (S6); el código de
+  recuperación en papel, sin decidir; Argon2 con 64 MiB deja el montón del servicio en ese tamaño (no devuelve
+  memoria).
+- FS10c, fallo encontrado por la prueba de QEMU: el contenido de un fichero pequeño estaba en claro en el disco. RedoxFS
+  guarda los ficheros pequeños dentro del nodo (`INLINE_DATA`), en la zona de los punteros, que no se cifraba. Ahora,
+  en un nodo con esa marca, esa zona también va cifrada (Adiantum, otro tweak); la marca queda a la vista porque dice
+  que no hay bloques que recorrer. Las pruebas en el PC usaban ficheros grandes y no lo vieron: `nothing_in_the_clear`
+  lleva ahora uno pequeño (falla sin el arreglo) y la de ida y vuelta del nodo, un fichero con datos en línea.
+  En la misma prueba de QEMU, listar "Ana" cerrado y vacío da cero entradas, no "protegido": una carpeta vacía no
+  tiene bloques que descifrar. Es lo esperado con la estructura a la vista; la prueba lo comprueba así, y "protegido"
+  al listar con algo dentro.
+
