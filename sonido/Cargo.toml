@@ -1,0 +1,12 @@
+[package]
+name = "dashos-sonido"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "La mezcla del servicio de sonido de DashOS (S19): formatos, remuestreo, volumen y fundidos"
+
+[lib]
+name = "sonido"
+path = "src/lib.rs"
+
+[dependencies]
