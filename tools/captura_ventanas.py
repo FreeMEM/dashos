@@ -99,6 +99,16 @@ def main():
     if not any(vale):
         detalle = ", ".join(f"({x}, {y}) = {en(x, y)}" for (x, y), _ in orden1 + orden2 + orden3 + orden4)
         fallos.append(f"las ventanas no están donde deben: {detalle}")
+    # La aplicación del kit (K7), tercera en la cascada, en (104, 104): su superficie (Material 3, claro) abajo a la
+    # derecha, donde no llega ninguna de las otras (un clic puede subir una de ellas encima), y el primario de sus
+    # botones (al menos un botón entero de 40 de alto).
+    SUPERFICIE = (0xFE, 0xF7, 0xFF)
+    PRIMARIO = (0x67, 0x50, 0xA4)
+    if not casi(en(450, 270), SUPERFICIE):
+        fallos.append(f"la ventana del kit: superficie en (450, 270): {en(450, 270)}")
+    primario = sum(1 for y in range(104, 104 + 250) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
+    if primario < 2000:
+        fallos.append(f"la ventana del kit: {primario} píxeles del primario")
     if fallos:
         print("MAL: la captura del compositor:", *fallos, sep="\n  ")
         sys.exit(1)

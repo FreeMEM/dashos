@@ -717,11 +717,12 @@ mod entrada {
             escena.raton(25, 30, 0),
             [(1, Entrada::Sale { superficie: 7 }), (2, Entrada::Entra { superficie: 7, x: 8, y: 8 })]
         );
-        // Pulsar sobre b le da el teclado (ya estaba encima); el botón le llega.
-        assert_eq!(
-            escena.raton(0, 0, 1),
-            [(2, Entrada::TecladoEntra { superficie: 7 }), (2, Entrada::Boton { boton: 0x110, pulsado: true })]
-        );
+        // b se llevó el teclado al aparecer (la última ventana nueva), y a lo perdió.
+        assert_eq!(escena.teclado, Some((2, 7)));
+        assert!(escena.pendientes.contains(&(1, Entrada::TecladoSale { superficie: 7 })));
+        assert!(escena.pendientes.contains(&(2, Entrada::TecladoEntra { superficie: 7 })));
+        // Pulsar sobre b: ya tenía el teclado; solo le llega el botón.
+        assert_eq!(escena.raton(0, 0, 1), [(2, Entrada::Boton { boton: 0x110, pulsado: true })]);
         escena.raton(0, 0, 0);
         // La a de un teclado HID (0x04) es la tecla 30; Mayúsculas, el modificador 1.
         assert_eq!(escena.tecla(0x04, true), [(2, Entrada::Tecla { codigo: 30, pulsada: true })]);

@@ -56,6 +56,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
     ("ventana-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-a"), &[], &["ventanas"]),
     ("ventana-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-b"), &[], &["ventanas"]),
+    // Una aplicación con el kit de interfaz (K7): Material 3, con el ratón.
+    ("ajustes", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ajustes"), &[], &["ventanas"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
 ];
 

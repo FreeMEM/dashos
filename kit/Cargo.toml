@@ -1,0 +1,14 @@
+[package]
+name = "dashos-kit"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El kit de interfaz de DashOS (S11): el modelo de MUI con el aspecto de Material 3"
+
+[lib]
+name = "kit"
+path = "src/lib.rs"
+
+[dependencies]
+fontdue = { version = "0.9", default-features = false, features = ["hashbrown"] }
+libm = "0.2"

@@ -374,6 +374,14 @@ fn principal() -> u64 {
             }
         }
 
+        // La entrada que salió de las peticiones (el teclado a una ventana nueva).
+        let ms = (dashos::ahora_us() / 1000) as u32;
+        for (cl, ev) in core::mem::take(&mut escena.pendientes) {
+            if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get(&cl)) {
+                escena::escribir_entrada(&mut cli.con, de, ev, ms);
+                mandar(cli);
+            }
+        }
         // Se compone lo dañado y se avisa a quien esperaba su cuadro.
         let mut avisos = Vec::new();
         let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, (dashos::ahora_us() / 1000) as u32, &mut |cl, aviso, ms| {
