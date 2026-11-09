@@ -38,6 +38,10 @@ pub mod atr {
     pub const CURSOR: Atr = 9;
     /// Las opciones de un ciclo, separadas por '|' (como el array de textos de `MUIA_Cycle_Entries`).
     pub const OPCIONES: Atr = 10;
+    /// La primera fila que se ve de una lista (cuánto se ha desplazado).
+    pub const PRIMERA: Atr = 11;
+    /// Cuántas filas se ven de una lista (lo que mide de alto en filas).
+    pub const FILAS: Atr = 12;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

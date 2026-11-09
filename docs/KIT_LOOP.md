@@ -28,7 +28,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
-| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador, campo de texto y ciclo hechos; lista, pendiente |
+| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | hechos: texto, botón, casilla, deslizador, campo de texto, ciclo y lista |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón y teclado) y raspi4b; el tamaño que pida el compositor, pendiente |
 
@@ -107,4 +107,9 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   prueba llegan al campo: "el campo dice: DashOSa". Con eso, la última línea en salir ya no era la última del fichero
   y la prueba se paraba antes de tiempo: `prueba_uefi.sh` se para ahora cuando han salido todas las líneas
   esperadas, en cualquier orden (el orden se comprueba después, como antes).
+- K5: la lista (`List` de MUI): filas de 56 (Material 3, una línea), `FILAS` de alto, `VALOR` la elegida (-1 si
+  ninguna), elegida con un clic o con las flechas, Inicio y Fin si tiene el foco; se desplaza (`PRIMERA`) para que
+  la elegida se vea. La elegida va con el contenedor del primario; el foco, con un borde del primario. Prueba: clic
+  en la segunda fila, flechas que desplazan, Fin, Inicio, colores. Con esto K5 tiene los siete controles del plan.
+  El teclado del kit reconoce arriba y abajo. raspi4b con el teclado en "ajustes": bien.
 

@@ -354,6 +354,104 @@ impl Clase for Ciclo {
     }
 }
 
+/// Una lista (`List` de MUI): sus `OPCIONES` (separadas por '|') en filas de 56 (Material 3, una línea), `FILAS` de
+/// alto (5 si no se dice). `VALOR` es la elegida (-1, ninguna): se elige con un clic, o con las flechas si tiene el
+/// foco, y la lista se desplaza (`PRIMERA`) para que se vea.
+pub struct Lista;
+
+const FILA: i32 = 56;
+
+impl Lista {
+    fn filas(attrs: &BTreeMap<Atr, Valor>) -> i64 {
+        attrs.get(&atr::FILAS).map_or(5, Valor::int).max(1)
+    }
+
+    /// Elegir la opción `v` (dentro de rango) y desplazar para que se vea.
+    fn elegir(attrs: &BTreeMap<Atr, Valor>, v: i64) -> Vec<(Atr, Valor)> {
+        let n = Ciclo::opciones(attrs).len() as i64;
+        if n == 0 {
+            return Vec::new();
+        }
+        let v = v.clamp(0, n - 1);
+        let filas = Self::filas(attrs);
+        let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int);
+        let primera = if v < primera { v } else if v >= primera + filas { v - filas + 1 } else { primera };
+        alloc::vec![(atr::PRIMERA, Valor::Int(primera)), (atr::VALOR, Valor::Int(v))]
+    }
+}
+
+impl Clase for Lista {
+    fn nombre(&self) -> &'static str {
+        "lista"
+    }
+
+    fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
+        let tam = ctx.tema.letra_texto;
+        let ancho = Ciclo::opciones(attrs).iter().map(|o| ctx.regular.medir(o, tam).ancho).max().unwrap_or(0);
+        let alto = Self::filas(attrs) as i32 * FILA;
+        Medida { min: (ancho + 32, alto), max: (SIN_MAX, alto), peso: 100 }
+    }
+
+    fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
+        let t = &ctx.tema;
+        let opciones = Ciclo::opciones(attrs);
+        let elegida = attrs.get(&atr::VALOR).map_or(-1, Valor::int);
+        let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int).max(0) as usize;
+        let tam = t.letra_texto;
+        l.recortar(r);
+        for (k, o) in opciones.iter().enumerate().skip(primera).take(Self::filas(attrs) as usize) {
+            let fila = Rect::new(r.x, r.y + (k - primera) as i32 * FILA, r.w, FILA);
+            if k as i64 == elegida {
+                l.rellenar(fila, t.contenedor_primario);
+            }
+            let tinta = if e.desactivado {
+                tema::apagado(t.sobre_superficie)
+            } else if k as i64 == elegida {
+                t.sobre_contenedor_primario
+            } else {
+                t.sobre_superficie
+            };
+            let m = ctx.regular.medir(o, tam);
+            let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
+            ctx.regular.dibujar(l, fila.x + 16, base, o, tam, tinta);
+        }
+        if e.foco {
+            l.borde(r, 0, 2, t.primario);
+        }
+        l.soltar_recorte();
+    }
+
+    fn pulsable(&self) -> bool {
+        true
+    }
+
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    fn arrastrar(&self, attrs: &BTreeMap<Atr, Valor>, r: Rect, _x: i32, y: i32) -> Vec<(Atr, Valor)> {
+        let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int);
+        let k = primera + ((y - r.y).max(0) / FILA) as i64;
+        if k >= Ciclo::opciones(attrs).len() as i64 {
+            return Vec::new();
+        }
+        Self::elegir(attrs, k)
+    }
+
+    fn escribir(&self, attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        use crate::teclado::Tecla;
+        let v = attrs.get(&atr::VALOR).map_or(-1, Valor::int);
+        match tecla {
+            Tecla::Abajo => Self::elegir(attrs, v + 1),
+            Tecla::Arriba => Self::elegir(attrs, (v - 1).max(0)),
+            Tecla::Inicio => Self::elegir(attrs, 0),
+            Tecla::Fin => Self::elegir(attrs, i64::MAX / 2),
+            Tecla::Intro => alloc::vec![(atr::CLIC, Valor::Bool(true)), (atr::CLIC, Valor::Bool(false))],
+            _ => Vec::new(),
+        }
+    }
+}
+
 /// Cómo se colocan los objetos: en filas y columnas, como los grupos de MUI.
 pub enum Hijo {
     Obj(Obj),
@@ -573,6 +671,45 @@ mod pruebas {
     fn clic(i: &mut Interfaz, (x, y): (i32, i32)) {
         i.raton(x, y, true);
         i.raton(x, y, false);
+    }
+
+    #[test]
+    fn una_lista() {
+        let mut a = Arbol::new();
+        let lista = a.crear(Lista, &[
+            (atr::OPCIONES, Valor::Texto("Uno|Dos|Tres|Cuatro|Cinco|Seis|Siete|Ocho".into())),
+            (atr::FILAS, Valor::Int(3)),
+            (atr::VALOR, Valor::Int(-1)),
+        ]);
+        let texto = a.crear(Texto, &[]);
+        a.notificar(lista, atr::VALOR, Cuando::Siempre, texto, atr::TEXTO, Que::Formato("elegida: {}".into()));
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(lista), Hijo::Obj(texto)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 300, 260));
+        let r = i.sitios[&lista];
+        assert_eq!(r.h, 3 * 56);
+        // Un clic en la segunda fila la elige (y le da el foco).
+        clic(&mut i, (r.x + 20, r.y + 56 + 20));
+        assert_eq!(i.arbol.leer(lista, atr::VALOR), Some(&Valor::Int(1)));
+        assert_eq!(i.arbol.leer(texto, atr::TEXTO), Some(&Valor::Texto("elegida: 1".into())));
+        // Las flechas bajan; al pasar de la tercera fila visible, se desplaza.
+        for _ in 0..3 {
+            i.tecla(108, true);
+        }
+        assert_eq!(i.arbol.leer(lista, atr::VALOR), Some(&Valor::Int(4)));
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(2)));
+        // Fin: la última, y arriba del todo con Inicio.
+        i.tecla(107, true);
+        assert_eq!(i.arbol.leer(lista, atr::VALOR), Some(&Valor::Int(7)));
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(5)));
+        i.tecla(102, true);
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(0)));
+        // Se dibuja la elegida con el contenedor del primario.
+        i.tecla(108, true);
+        let mut px = vec![0u32; 300 * 260];
+        let mut l = Lienzo::new(&mut px, 300, 260, 300);
+        i.dibujar(&mut l);
+        assert_eq!(px[((r.y + 56 + 4) * 300 + r.x + r.w - 10) as usize], 0xffea_ddff);
+        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], 0xff67_50a4); // el borde del foco, de 2
     }
 
     #[test]
