@@ -22,7 +22,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 
 | Paso | Qué | Prueba | Estado |
 |------|-----|--------|--------|
-| K1 | Lienzo: rectángulos, esquinas redondeadas, bordes, mezcla con alfa, recortes | Píxeles en el PC | |
+| K1 | Lienzo: rectángulos, esquinas redondeadas, bordes, mezcla con alfa, recortes | Píxeles en el PC | hecho |
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | |
@@ -31,3 +31,12 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
 
 ## Bitácora
+
+### 2026-11-09
+
+- K1: `kit/src/lienzo.rs`. Píxeles ARGB8888 premultiplicados (los de `wl_shm`); colores dados sin premultiplicar
+  y mezclados encima. Rectángulos, esquinas redondeadas suavizadas (4 × 4 muestras en cada píxel de la curva),
+  bordes hacia dentro, recortes apilados. Pruebas: rellenar y mezclar (rojo a medias bajo negro a medias), alfa sobre
+  transparente, esquinas (fuera, dentro, un píxel que cruza la curva a medias, simétrico en las cuatro), borde y
+  recorte. La primera fórmula de la cobertura estaba mal; se rehízo en octavos de píxel.
+
