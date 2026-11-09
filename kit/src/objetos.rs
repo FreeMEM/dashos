@@ -36,6 +36,8 @@ pub mod atr {
     pub const PESO: Atr = 8;
     /// Dónde está el cursor de un campo de texto, en letras desde el principio.
     pub const CURSOR: Atr = 9;
+    /// Las opciones de un ciclo, separadas por '|' (como el array de textos de `MUIA_Cycle_Entries`).
+    pub const OPCIONES: Atr = 10;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

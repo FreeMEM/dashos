@@ -285,6 +285,75 @@ impl Clase for Campo {
     }
 }
 
+/// Un ciclo (`Cycle` de MUI): enseña una de sus `OPCIONES` (la de `VALOR`, desde 0) y cada clic pasa a la siguiente,
+/// y de la última a la primera. Con Material 3 es un botón con contorno y una flecha abajo, del ancho de su opción
+/// más larga.
+pub struct Ciclo;
+
+impl Ciclo {
+    fn opciones(attrs: &BTreeMap<Atr, Valor>) -> Vec<alloc::string::String> {
+        attrs
+            .get(&atr::OPCIONES)
+            .map(Valor::texto)
+            .unwrap_or_default()
+            .split('|')
+            .map(alloc::string::String::from)
+            .collect()
+    }
+}
+
+impl Clase for Ciclo {
+    fn nombre(&self) -> &'static str {
+        "ciclo"
+    }
+
+    fn ajustar(&self, a: Atr, valor: Valor, attrs: &BTreeMap<Atr, Valor>) -> Option<Valor> {
+        if a != atr::VALOR {
+            return Some(valor);
+        }
+        let n = Self::opciones(attrs).len().max(1) as i64;
+        Some(Valor::Int(valor.int().rem_euclid(n)))
+    }
+
+    fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
+        let tam = ctx.tema.letra_etiqueta;
+        let ancho = Self::opciones(attrs).iter().map(|o| ctx.medium.medir(o, tam).ancho).max().unwrap_or(0);
+        // 24 de relleno a cada lado, y 24 para la flecha.
+        Medida { min: (ancho + 48 + 24, 40), max: (SIN_MAX, 40), peso: 100 }
+    }
+
+    fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
+        let t = &ctx.tema;
+        let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.primario };
+        let radio = t.radio_boton.min(r.h / 2);
+        if let Some(c) = tema::capa(e, t.primario) {
+            l.redondeado(r, radio, c);
+        }
+        l.borde(r, radio, 1, if e.desactivado { tema::fondo_apagado(t.sobre_superficie) } else { t.contorno });
+        let opciones = Self::opciones(attrs);
+        let v = attrs.get(&atr::VALOR).map_or(0, Valor::int) as usize;
+        let texto = opciones.get(v).cloned().unwrap_or_default();
+        let tam = t.letra_etiqueta;
+        let m = ctx.medium.medir(&texto, tam);
+        let base = r.y + (r.h - m.alto()) / 2 + m.sube;
+        ctx.medium.dibujar(l, r.x + 24, base, &texto, tam, tinta);
+        // La flecha: un triángulo de 10 de ancho y 5 de alto.
+        let (fx, fy) = (r.x + r.w - 24 - 5, r.y + r.h / 2 - 2);
+        for i in 0..5 {
+            l.rellenar(Rect::new(fx + i, fy + i, 10 - 2 * i, 1), tinta);
+        }
+    }
+
+    fn pulsable(&self) -> bool {
+        true
+    }
+
+    fn clic(&self, attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
+        let v = attrs.get(&atr::VALOR).map_or(0, Valor::int);
+        alloc::vec![(atr::VALOR, Valor::Int(v + 1))]
+    }
+}
+
 /// Cómo se colocan los objetos: en filas y columnas, como los grupos de MUI.
 pub enum Hijo {
     Obj(Obj),
@@ -504,6 +573,38 @@ mod pruebas {
     fn clic(i: &mut Interfaz, (x, y): (i32, i32)) {
         i.raton(x, y, true);
         i.raton(x, y, false);
+    }
+
+    #[test]
+    fn un_ciclo() {
+        let mut a = Arbol::new();
+        let ciclo = a.crear(Ciclo, &[(atr::OPCIONES, Valor::Texto("Claro|Oscuro|Automático".into()))]);
+        let texto = a.crear(Texto, &[]);
+        a.notificar(ciclo, atr::VALOR, Cuando::Igual(Valor::Int(1)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("noche".into())));
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(ciclo), Hijo::Obj(texto)]), Tema::CLARO);
+        // Del ancho de la opción más larga, más el relleno y la flecha.
+        let largo = i.ctx.medium.medir("Automático", 14).ancho;
+        let obj = i.arbol.objeto(ciclo).unwrap();
+        assert_eq!(obj.clase.medida(&obj.attrs, &mut i.ctx).min, (largo + 72, 40));
+        i.colocar(Rect::new(0, 0, 300, 150));
+        let c = centro(&i, ciclo);
+        clic(&mut i, c);
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(1)));
+        assert_eq!(i.arbol.leer(texto, atr::TEXTO), Some(&Valor::Texto("noche".into())));
+        clic(&mut i, c);
+        clic(&mut i, c);
+        // De la última vuelve a la primera; y un valor fuera de rango se queda dentro.
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(0)));
+        i.arbol.poner(ciclo, atr::VALOR, Valor::Int(-1));
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(2)));
+        // Se dibuja: el contorno, y dentro la flecha del primario.
+        let mut px = vec![0u32; 300 * 150];
+        let mut l = Lienzo::new(&mut px, 300, 150, 300);
+        i.dibujar(&mut l);
+        let r = i.sitios[&ciclo];
+        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], 0xff79_747e);
+        let flecha = (r.x + r.w - 29..r.x + r.w - 19).filter(|&x| px[((r.y + r.h / 2 - 2) * 300 + x) as usize] == 0xff67_50a4).count();
+        assert_eq!(flecha, 10);
     }
 
     #[test]

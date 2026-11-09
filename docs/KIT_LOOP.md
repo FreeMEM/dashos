@@ -28,9 +28,9 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
-| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador y campo de texto hechos; ciclo y lista, pendientes |
+| K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador, campo de texto y ciclo hechos; lista, pendiente |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
-| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón; teclado y tamaño del compositor, pendientes) |
+| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt y raspi4b (ratón; teclado y tamaño del compositor, pendientes) |
 
 ## Bitácora
 
@@ -97,4 +97,8 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   recibida". La captura comprueba la superficie del kit donde no llega otra ventana (un clic subió el tablero encima)
   y el primario de sus botones. Pendiente: el teclado en la aplicación (el campo de texto ya lo usa en el PC) y el
   tamaño que pida el compositor.
+- K5: el ciclo (`Cycle` de MUI): enseña una de sus `OPCIONES` (separadas por '|') según `VALOR`, y cada clic pasa a
+  la siguiente, de la última a la primera; un valor fuera de rango vuelve dentro. Con Material 3, botón con
+  contorno y flecha, del ancho de su opción más larga. Prueba: medida, clics con aviso, la vuelta, el valor -1 que
+  queda en 2, contorno y flecha dibujados.
 
