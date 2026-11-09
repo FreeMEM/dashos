@@ -175,7 +175,7 @@ del principal; la orden 21 da la raíz de otro.
 | Orden | Qué | Pide | Devuelve |
 |---|---|---|---|
 | 0 sesión | Empieza; con una llave: el extremo de escritura del canal de respuesta | — | a: tamaño de la ventana; y su llave |
-| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa | asa, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 \| bits del Amiga << 32 |
+| 1 buscar | Abre lo que hay en `nombre` (partes separadas por "/"; vacío, el mismo) desde la asa. Con a = 1, solo sus datos, sin abrirlo (como `stat`; sin asa nueva, asa 0) | asa, a, nombre | asa nueva; a tamaño, b fecha (segundos), c modo \| tipo << 16 \| bits del Amiga << 32 |
 | 2 leer | Lee del fichero al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes leídos, b tamaño del fichero |
 | 3 escribir | Escribe en el fichero lo que hay al principio de la ventana | asa, a desde, b cuánto (hasta la ventana) | a bytes escritos, b tamaño del fichero |
 | 4 listar | Pone en la ventana las entradas de un cajón desde la número a | asa, a desde | a cuántas, b la siguiente (o `u64::MAX` si no hay más), c bytes usados |

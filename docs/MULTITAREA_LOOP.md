@@ -59,7 +59,7 @@ Pruebas:
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1, F2 y F3 hechos; sigue |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F5 hechos; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | pendiente |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -319,3 +319,17 @@ aquí los números y commit local.
   RedoxFS comprueba la suma de cada bloque en cada lectura, aunque venga de la caché; y cada escritura al disco vacía
   dos veces (1,3 ms cada una en este QEMU).
 - `make arranque-virt` (con el sonido y la comprobación del disco en Linux): bien.
+
+### 2026-11-10 — F4 y F5: no volver a comprobar lo comprobado, y datos sin abrir
+
+- F4: RedoxFS comprueba la suma de cada bloque que lee. Ahora recuerda los bloques (dirección y suma) que ya
+  comprobó al leerlos del disco y, si el disco dice que esta lectura salió de su memoria (`Disk::last_read_from_memory`,
+  nuevo, falso por defecto), no la repite. Si el bloque se lee otra vez del disco, se vuelve a comprobar: la
+  protección contra un disco estropeado sigue. Las 130 pruebas de RedoxFS, bien. Efecto pequeño: listar +38 %, lo
+  demás igual dentro del ruido.
+- F5: buscar con `a = 1` da los datos sin abrir (como `stat`): un viaje en lugar de tres (buscar, datos, cerrar).
+  `docs/referencia/servicios.md` al día. El banco mide las dos cosas (`datos_asa`, la de antes, y `datos`).
+- `docs/medidas/fs-f5.json` (3 arranques, `fs-bien` en los tres): datos de un fichero, de 4.221 a 9.788 por segundo
+  (Linux: 26.864); lo demás, como en F3. Ahora lo que más pesa en cada operación es el mensaje (unos 60 µs de ida y
+  vuelta): M6 (paso directo en los canales) ayuda también aquí.
+- `make arranque-virt`: bien.

@@ -33,6 +33,9 @@ pub struct FileSystem<D: Disk> {
     pub(crate) compress_cache: Vec<u8>,
     /// How many times each node is open, by `Transaction::usage_key`: the volume and the node.
     pub node_usages: BTreeMap<u64, u64>,
+    /// Blocks (address and hash) whose hash was checked when read from the disk, while the disk keeps them in memory
+    /// (`Disk::last_read_from_memory`): read again from there, they are not checked again (DashOS, F4).
+    pub(crate) verified: alloc::collections::BTreeSet<(u64, u64)>,
     /// The keys of the encrypted volumes that are unlocked, by volume (FS10c).
     pub(crate) unlocked: BTreeMap<u64, alloc::sync::Arc<crate::seal::VolumeCipher>>,
 }
@@ -123,6 +126,7 @@ impl<D: Disk> FileSystem<D> {
                 compress_cache: compress_cache(),
                 node_usages: BTreeMap::new(),
                 unlocked: BTreeMap::new(),
+                verified: alloc::collections::BTreeSet::new(),
             };
 
             let allocator_read = match unsafe { fs.reset_allocator() } {
@@ -214,6 +218,7 @@ impl<D: Disk> FileSystem<D> {
             compress_cache: compress_cache(),
             node_usages: BTreeMap::new(),
             unlocked: BTreeMap::new(),
+            verified: alloc::collections::BTreeSet::new(),
         };
 
         // Write header generation zero

@@ -160,6 +160,13 @@ fn principal() -> u64 {
         bien &= g.estado == 0 && c.pedir(DATOS, g.asa, 0, 0, b"").a == 4096;
         c.pedir(CERRAR, g.asa, 0, 0, b"");
     }
+    dato("datos_asa", 1, PEQUENOS, cuentas() - t0, "ops/s");
+    // Como `stat` de Linux: buscar con a = 1 da los datos sin abrir (F5).
+    let t0 = cuentas();
+    for i in 0..PEQUENOS {
+        let g = c.pedir(BUSCAR, dir.asa, 1, 0, nombre(i, &mut nb));
+        bien &= g.estado == 0 && g.asa == 0 && g.a == 4096;
+    }
     dato("datos", 1, PEQUENOS, cuentas() - t0, "ops/s");
     let t0 = cuentas();
     let l = c.pedir(LISTAR, dir.asa, 0, 0, b"");

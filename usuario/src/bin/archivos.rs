@@ -127,6 +127,8 @@ struct Disco {
     tam_sector: u64,
     sectores: u64,
     cache: Cache,
+    /// La última lectura salió entera de la caché (F4: RedoxFS no vuelve a comprobar la suma de lo que ya comprobó).
+    de_memoria: bool,
 }
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
@@ -195,7 +197,7 @@ impl Disco {
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0 } };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0 }, de_memoria: false };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -217,8 +219,10 @@ impl Disk for Disco {
         // Todo en la caché: sin ir al disco.
         let bs = BLOCK_SIZE as usize;
         if buffer.chunks_exact_mut(bs).enumerate().all(|(i, b)| self.cache.leer(block + i as u64, b)) {
+            self.de_memoria = true;
             return Ok(buffer.len());
         }
+        self.de_memoria = false;
         unsafe { self.leer_disco(block, buffer)? };
         for (i, b) in buffer.chunks_exact(bs).enumerate() {
             self.cache.poner(block + i as u64, b);
@@ -261,6 +265,10 @@ impl Disk for Disco {
 
     fn size(&mut self) -> Result<u64> {
         Ok(self.sectores * self.tam_sector - INICIO)
+    }
+
+    fn last_read_from_memory(&self) -> bool {
+        self.de_memoria
     }
 
     fn flush(&mut self) -> Result<()> {
@@ -598,6 +606,8 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 return mal(SIN_SITIO);
             }
             match rec.buscar(fs, vol, desde, nombre) {
+                // Solo los datos, sin abrirlo (F5): como `stat`, un viaje en lugar de buscar, datos y cerrar.
+                Ok(n) if p.a == 1 => datos(0, n.data()),
                 Ok(n) => dar_asa(fs, c, vol, &n),
                 Err(e) => mal(estado_de(e)),
             }
