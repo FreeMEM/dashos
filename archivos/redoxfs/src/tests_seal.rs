@@ -42,6 +42,9 @@ fn fill(fs: &mut Fs, volume: u64, data: &[u8]) {
         tx.set_amiga_bits(file, AmigaBits::SCRIPT)?;
         let text = tx.create_node(TreePtr::root(), "texto", FILE, 5, 0)?.ptr();
         tx.write_node(text, 0, "Querida abuela: ".repeat(500).as_bytes(), 5, 0)?;
+        // Un fichero pequeño: su contenido va dentro del nodo (datos en línea).
+        let small = tx.create_node(TreePtr::root(), "nota", FILE, 5, 0)?.ptr();
+        tx.write_node(small, 0, b"solo para Ana, en linea", 5, 0)?;
         Ok(())
     })
     .unwrap();
@@ -73,6 +76,7 @@ fn nothing_in_the_clear() {
     assert!(contains(&disk, NAME.as_bytes()));
     assert!(contains(&disk, COMMENT.as_bytes()));
     assert!(contains(&disk, &data[1000..1064]));
+    assert!(contains(&disk, b"solo para Ana"));
 
     let mut fs = new_fs(16);
     let id = encrypted(&mut fs, "Ana", "contraseña");
@@ -84,6 +88,7 @@ fn nothing_in_the_clear() {
     assert!(!contains(&disk, COMMENT.as_bytes()), "the comment is in the clear");
     assert!(!contains(&disk, &data[1000..1064]), "the data is in the clear");
     assert!(!contains(&disk, b"Querida abuela"), "the text is in the clear");
+    assert!(!contains(&disk, b"solo para Ana"), "the inline data is in the clear");
     // The name of the volume is structure, as in ZFS.
     assert!(contains(&disk, b"Ana"));
 

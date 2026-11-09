@@ -271,6 +271,9 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   recorre los otros volúmenes, las pruebas fallan (bloques perdidos).
   Pendiente: el máximo por volumen se guarda pero no se aplica; reparar dentro de otros volúmenes (FS10d); el
   montaje FUSE y el servicio de DashOS solo ven el principal (FS10e).
+  QEMU: `arranque-virt` bien (con el disco leído en Linux). `prueba` (raspi4b) falló una vez en
+  `[grupos] cupo agotado` (C43), con el emulador cargado por otras sesiones, y salió bien al repetirla: nada que
+  ver con los archivos.
 - FS10c: volúmenes cifrados (`src/seal.rs`). Cada tipo de bloque dice cómo se cifra (`BlockTrait::SEAL`): los
   datos, los bloques de las carpetas y los atributos, enteros; los nodos, solo lo que cuenta del fichero (permisos,
   dueño, tiempos, tamaño, enlaces, bits del Amiga), y el tipo queda a la vista para recorrer la estructura sin la
@@ -316,4 +319,12 @@ espacio cuesta) y B (cifrar fichero a fichero, como fscrypt: más complicado par
   Pi 4, virtio-rng en QEMU); abrir el volumen del usuario al entrar va con los usuarios (S6); el código de
   recuperación en papel, sin decidir; Argon2 con 64 MiB deja el montón del servicio en ese tamaño (no devuelve
   memoria).
+- FS10c, fallo encontrado por la prueba de QEMU: el contenido de un fichero pequeño estaba en claro en el disco. RedoxFS
+  guarda los ficheros pequeños dentro del nodo (`INLINE_DATA`), en la zona de los punteros, que no se cifraba. Ahora,
+  en un nodo con esa marca, esa zona también va cifrada (Adiantum, otro tweak); la marca queda a la vista porque dice
+  que no hay bloques que recorrer. Las pruebas en el PC usaban ficheros grandes y no lo vieron: `nothing_in_the_clear`
+  lleva ahora uno pequeño (falla sin el arreglo) y la de ida y vuelta del nodo, un fichero con datos en línea.
+  En la misma prueba de QEMU, listar "Ana" cerrado y vacío da cero entradas, no "protegido": una carpeta vacía no
+  tiene bloques que descifrar. Es lo esperado con la estructura a la vista; la prueba lo comprueba así, y "protegido"
+  al listar con algo dentro.
 

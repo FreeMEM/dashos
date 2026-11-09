@@ -344,12 +344,14 @@ fn principal() -> u64 {
         si(tomada && nuevo.estado == 0 && en_lista && vuelta && descartada && limpio)
     );
 
-    // FS10: el volumen cifrado "Ana", que el disco trae cerrado: se ve, pero no se lee.
+    // FS10: el volumen cifrado "Ana", que el disco trae cerrado y vacío. Vacío se lista (no hay nada que descifrar:
+    // la estructura está a la vista, como en ZFS); con algo dentro y cerrado, no.
     let lista = c.pedir(VOLUMENES, 0, 0, 0, "");
     let v = c.ventana();
     let listado = lista.estado == 0 && lista.a == 1 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
-    let cerrado = raiz.estado == 0 && c.pedir(LISTAR, raiz.asa, 0, 0, "").estado == PROTEGIDO;
+    let l = c.pedir(LISTAR, raiz.asa, 0, 0, "");
+    let cerrado = raiz.estado == 0 && l.estado == 0 && l.a == 0;
     // Con otra contraseña no se abre; con la suya, sí.
     let abierto = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0otra").estado == PROTEGIDO
         && c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0
@@ -363,7 +365,8 @@ fn principal() -> u64 {
         && c.pedir(CERRAR, raiz.asa, 0, 0, "").estado == 0
         && c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0;
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
-    let sin_llave = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt").estado == PROTEGIDO;
+    let sin_llave = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt").estado == PROTEGIDO
+        && c.pedir(LISTAR, raiz.asa, 0, 0, "").estado == PROTEGIDO;
     let releido = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0 && {
         let h = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt");
         let l = c.pedir(LEER, h.asa, 0, 64, "");
@@ -385,9 +388,11 @@ fn principal() -> u64 {
         && c.pedir(VOLUMEN, 0, 0, 0, "Temporal").estado == -2;
     // Lo deja cerrado, y el disco sin un problema.
     let limpio = c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0 && c.pedir(COMPROBAR, 0, 1, 0, "").a == 0;
-    println!(
-        "  [ficheros] FS10 volúmenes: {}",
-        si(listado && cerrado && abierto && escrito && cerrado_otra_vez && sin_llave && releido && quitado && limpio)
-    );
+    let partes = [listado, cerrado, abierto, escrito, cerrado_otra_vez, sin_llave, releido, quitado, limpio];
+    println!("  [ficheros] FS10 volúmenes: {}", si(partes.iter().all(|&p| p)));
+    if !partes.iter().all(|&p| p) {
+        // Cuál falla, en el orden de arriba.
+        println!("  [ficheros] FS10 por partes: {:?}", partes);
+    }
     0
 }
