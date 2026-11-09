@@ -88,7 +88,7 @@ aquí los números y commit local.
 
 - Lo del dormilón no se confirma: la sospecha de que un hilo que duerme acapara al despertar era falsa en esta
   prueba. Queda la de 890 µs: en el mismo núcleo con carga, el despertado no pasa delante del que calcula.
-- QEMU vacía su TLB entera en cada cambio de TTBR0, y DashOS cambia TTBR0 en cada llamada (PAN por software). Eso
-  infla las idas y vueltas en QEMU respecto a una Pi. Linux en una A72 hace lo mismo (SW_TTBR0_PAN), así que la
-  comparación con Linux en QEMU sigue siendo justa.
+- Sospecha, sin comprobar: QEMU vacía su TLB en cada cambio de ASID en TTBR0, y DashOS cambia TTBR0 en cada
+  llamada (PAN por software). Eso inflaría las idas y vueltas en QEMU respecto a una Pi. Linux en una A72 haría lo
+  mismo si tiene SW_TTBR0_PAN; se mira en L.
 - Iguales en Rust, C y Dash: lo que cuesta es el kernel, no el lenguaje (Dash calcula un 15 % menos por unidad).
