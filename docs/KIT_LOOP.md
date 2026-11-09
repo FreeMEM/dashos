@@ -30,7 +30,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | texto, botón, casilla, deslizador, campo de texto y ciclo hechos; lista, pendiente |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
-| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt y raspi4b (ratón; teclado y tamaño del compositor, pendientes) |
+| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón y teclado) y raspi4b; el tamaño que pida el compositor, pendiente |
 
 ## Bitácora
 
@@ -101,4 +101,10 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   la siguiente, de la última a la primera; un valor fuera de rango vuelve dentro. Con Material 3, botón con
   contorno y flecha, del ancho de su opción más larga. Prueba: medida, clics con aviso, la vuelta, el valor -1 que
   queda en 2, contorno y flecha dibujados.
+- K7, el teclado: "ajustes" lleva un campo de texto ("Nombre", con el foco al empezar) y pasa las teclas de
+  `wl_keyboard` a la interfaz. El compositor da el teclado a cada ventana nueva al salir (como cualquier escritorio;
+  `Escena::pendientes` lleva esos eventos, que salen de una petición, hasta quien los manda). En QEMU las "a" de la
+  prueba llegan al campo: "el campo dice: DashOSa". Con eso, la última línea en salir ya no era la última del fichero
+  y la prueba se paraba antes de tiempo: `prueba_uefi.sh` se para ahora cuando han salido todas las líneas
+  esperadas, en cualquier orden (el orden se comprueba después, como antes).
 

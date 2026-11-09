@@ -123,6 +123,8 @@ pub struct Escena<M: Memorias> {
     pub mods: u32,
     /// El cursor se ve desde el primer movimiento del ratón.
     pub con_cursor: bool,
+    /// Eventos de entrada que salen de peticiones (el teclado a una ventana nueva): quien atiende los manda.
+    pub pendientes: Vec<(Cliente, Entrada)>,
     /// Lo que mide la pantalla (lo pone `componer`).
     medidas: (i32, i32),
 }
@@ -144,6 +146,7 @@ impl<M: Memorias> Escena<M> {
             teclado: None,
             mods: 0,
             con_cursor: false,
+            pendientes: Vec::new(),
             medidas: (i32::MAX / 2, i32::MAX / 2),
         }
     }
@@ -443,6 +446,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             escena.colocadas += 1;
                             let cliente = self.cliente;
                             escena.colocar(cliente, objeto, 40 + 32 * k, 40 + 32 * k);
+                            // Una ventana nueva se lleva el teclado, como en cualquier escritorio.
+                            let mut ev = Vec::new();
+                            escena.activar((cliente, objeto), &mut ev);
+                            escena.pendientes.extend(ev);
                         }
                     }
                     _ => {}

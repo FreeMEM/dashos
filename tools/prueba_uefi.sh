@@ -50,11 +50,20 @@ while time.time() - inicio < total:
 PY
     TECLAS_PID=$!
 fi
-# Se para en cuanto sale la última línea esperada (o al acabar el tiempo). Con CAPTURA=fichero.ppm, antes guarda la
-# pantalla (U4).
-FIN=$(grep -v '^#' "$ESPERADOS" | grep -v '^$' | tail -1 | sed 's/^~//')
+# Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
+# mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
+# el fichero no siempre es la última en salir. Con CAPTURA=fichero.ppm, antes guarda la pantalla (U4).
+LINEAS=$(mktemp)
+grep -v '^#' "$ESPERADOS" | grep -v '^$' | sed 's/^~//' > "$LINEAS"
+todas() {
+    local texto
+    texto=$(sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA")
+    while IFS= read -r l; do
+        grep -qF -- "$l" <<< "$texto" || return 1
+    done < "$LINEAS"
+}
 while kill -0 "$QEMU" 2>/dev/null; do
-    if [ -n "$FIN" ] && tr -d '\r' < "$SALIDA" | grep -qF -- "$FIN"; then
+    if todas; then
         sleep 0.5
         if [ -n "${CAPTURA:-}" ]; then
             python3 -I -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(("screendump "+sys.argv[2]+"\n").encode()); time.sleep(1)' "$MONITOR" "$CAPTURA"
@@ -97,5 +106,5 @@ else
     tail -40 "$SALIDA.txt"
 fi
 [ -n "${GUARDAR:-}" ] && cp "$SALIDA.txt" "$GUARDAR"
-rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR"
+rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR" "$LINEAS"
 exit $FALLO

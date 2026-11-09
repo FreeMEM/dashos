@@ -106,7 +106,7 @@ def main():
     PRIMARIO = (0x67, 0x50, 0xA4)
     if not casi(en(450, 270), SUPERFICIE):
         fallos.append(f"la ventana del kit: superficie en (450, 270): {en(450, 270)}")
-    primario = sum(1 for y in range(104, 104 + 180) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
+    primario = sum(1 for y in range(104, 104 + 250) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
     if primario < 2000:
         fallos.append(f"la ventana del kit: {primario} píxeles del primario")
     if fallos:

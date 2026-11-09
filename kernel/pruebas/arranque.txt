@@ -32,6 +32,6 @@ DashOS en marcha con 4 núcleos.
 ~│   [ventana-a] 30 cuadros: bien
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
-~│   [ajustes] ventana del kit en pantalla (360x180)
+~│   [ajustes] ventana del kit en pantalla (360x250)
 ~│   [usb] DWC2 0x4f54294a en marcha; búfer DMA en el bus 0x
 ~│   [usb] HID de arranque: 1 teclado y 1 ratón

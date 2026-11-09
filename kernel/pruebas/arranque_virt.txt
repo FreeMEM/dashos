@@ -54,7 +54,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
 # K7: una aplicación con el kit de interfaz, la tercera en la cascada.
-~│   [ajustes] ventana del kit en pantalla (360x180)
+~│   [ajustes] ventana del kit en pantalla (360x250)
+# Se lleva el teclado al salir, con el foco en su campo: las "a" de la prueba van al campo hasta el clic.
+~│   [ajustes] el campo dice: DashOSa
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida
