@@ -6,6 +6,10 @@
                                              medianas de cada medida en JSON (con todas las vueltas)
     tools/medir.py linux JSON [-n N]         lo mismo con el kernel de Raspberry Pi OS y el banco de Linux (paso L;
                                              antes, tools/medir_linux/hacer.sh)
+    tools/medir.py linux-fs JSON [-n N]      el banco de ficheros en Linux (Debian arm64, ext4 en NVMe, QEMU virt; paso F;
+                                             antes, tools/medir_linux/hacer_fs.sh)
+    tools/medir.py disco-fs DISCO REDOXFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F)
+    tools/medir.py dashos-fs EFI DISCO JSON [-n N]  el banco de ficheros de DashOS en QEMU virt por UEFI (`make medir-fs`)
     tools/medir.py comparar BASE NUEVO       compara dos JSON
 
 El hijo en C se compila con clang y ld.lld; el de Dash, con `./dash --dashos` de ~/Projects/FreeMEMLang (o $DASH).
@@ -57,7 +61,7 @@ LINEA = re.compile(r"\[medir\] (\S+)(.*)")
 def clave(prueba, campos):
     """Lo que identifica una medida (sin los valores)."""
     ident = {"ida-vuelta": ("lenguaje", "juntos", "carga"), "reparto": ("lenguaje", "n"),
-             "temporizador": ("us", "carga"), "dormilon": ("dormir_ms",), "ociosos": ()}.get(prueba, ())
+             "temporizador": ("us", "carga"), "dormilon": ("dormir_ms",), "ociosos": (), "fs": ("op",)}.get(prueba, ())
     return prueba + "".join(f" {k}={campos[k]}" for k in ident if k in campos)
 
 
@@ -87,12 +91,60 @@ def orden_linux():
             os.path.join(LINUX, "banco.cpio.gz"), "-append", "console=ttyAMA1,115200 rdinit=/init loglevel=3"]
 
 
+def orden_linux_fs():
+    """QEMU virt con el kernel de Debian, el banco de ficheros como /init y una copia del disco ext4 (nuevo cada vez)."""
+    v = os.path.join(LINUX, "virt")
+    import shutil
+    disco = os.path.join(v, "ext4-vuelta.img")
+    shutil.copyfile(os.path.join(v, "ext4.img"), disco)
+    return ["-M", "virt,gic-version=2,highmem=off", "-cpu", "cortex-a72", "-smp", "4", "-m", "2G",
+            "-kernel", os.path.join(v, "linux"), "-initrd", os.path.join(v, "fs.cpio.gz"),
+            "-append", "console=ttyAMA0 rdinit=/init loglevel=3",
+            "-drive", f"file={disco},if=none,id=nv,format=raw", "-device", "nvme,serial=dashos,drive=nv"]
+
+
+def disco_fs(salida, ar):
+    t = tempfile.mkdtemp(prefix="medir-fs-")
+    raiz = os.path.join(t, "raiz")
+    os.mkdir(raiz)
+    fs = os.path.join(t, "fs.img")
+    with open(fs, "wb") as f:
+        f.truncate(64 << 20)
+    subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
+    with open(salida, "wb") as f:
+        f.write(bytes(1 << 20))
+        f.write(open(fs, "rb").read())
+
+
+DASHOS_FS = None
+
+
+def orden_dashos_fs():
+    """QEMU virt con EDK2, DashOS como BOOTAA64.EFI y una copia del disco del banco (nuevo cada vez)."""
+    import shutil
+    efi, disco = DASHOS_FS
+    d = tempfile.mkdtemp(prefix="medir-efi-")
+    os.makedirs(os.path.join(d, "EFI", "BOOT"))
+    shutil.copyfile(efi, os.path.join(d, "EFI", "BOOT", "BOOTAA64.EFI"))
+    copia = disco + ".vuelta"
+    shutil.copyfile(disco, copia)
+    return ["-M", "virt,gic-version=2,acpi=off,highmem=off", "-cpu", "cortex-a72", "-smp", "4", "-m", "2G",
+            "-bios", os.environ.get("EDK2", "/usr/share/edk2/aarch64/QEMU_EFI.fd"),
+            "-drive", f"file=fat:rw:{d},format=raw,if=virtio", "-net", "none",
+            "-drive", f"file={copia},if=none,id=nv,format=raw", "-device", "nvme,serial=dashos,drive=nv"]
+
+
 def una_vuelta(imagen, segundos=300):
     """Arranca la imagen (o Linux, con imagen None) y devuelve la salida del puerto serie hasta "[medir] fin"."""
     import selectors
     import time
-    arranque = orden_linux() if imagen is None else ["-kernel", imagen, "-dtb", dtb()]
-    q = subprocess.Popen(["qemu-system-aarch64", "-M", "raspi4b", *arranque, "-display", "none",
+    if imagen == "linux-fs":
+        maquina = orden_linux_fs()
+    elif imagen == "dashos-fs":
+        maquina = orden_dashos_fs()
+    else:
+        maquina = ["-M", "raspi4b", *(orden_linux() if imagen is None else ["-kernel", imagen, "-dtb", dtb()])]
+    q = subprocess.Popen(["qemu-system-aarch64", *maquina, "-display", "none",
                           "-serial", "stdio", "-serial", "null", "-monitor", "none"],
                          stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, stdin=subprocess.DEVNULL)
     sel = selectors.DefaultSelector()
@@ -163,6 +215,15 @@ if __name__ == "__main__":
     elif len(sys.argv) >= 3 and sys.argv[1] == "linux":
         n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
         correr(None, sys.argv[2], n)
+    elif len(sys.argv) >= 3 and sys.argv[1] == "linux-fs":
+        n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
+        correr("linux-fs", sys.argv[2], n)
+    elif len(sys.argv) == 4 and sys.argv[1] == "disco-fs":
+        disco_fs(sys.argv[2], sys.argv[3])
+    elif len(sys.argv) >= 5 and sys.argv[1] == "dashos-fs":
+        DASHOS_FS = (sys.argv[2], sys.argv[3])
+        n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
+        correr("dashos-fs", sys.argv[4], n)
     elif len(sys.argv) == 4 and sys.argv[1] == "comparar":
         comparar(sys.argv[2], sys.argv[3])
     else:

@@ -2,10 +2,10 @@
  "medianas": {
   "dormilon dormir_ms=2000": {
    "dormir_ms": 2000.0,
-   "hueco_max_us": 4503.0,
-   "huecos_us": 515931.0,
+   "hueco_max_us": 4343.0,
+   "huecos_us": 517406.0,
    "nucleo": 1.0,
-   "unidades_dormilon": 1427502.0
+   "unidades_dormilon": 1424204.0
   },
   "empieza": {},
   "fin": {},
@@ -13,7 +13,7 @@
    "carga": 0.0,
    "juntos": 0.0,
    "lenguaje": "linux",
-   "ns": 33011.0,
+   "ns": 33592.0,
    "nucleos": "2-3",
    "rondas": 20000.0
   },
@@ -21,7 +21,7 @@
    "carga": 0.0,
    "juntos": 1.0,
    "lenguaje": "linux",
-   "ns": 80445.0,
+   "ns": 82934.0,
    "nucleos": "1-1",
    "rondas": 20000.0
   },
@@ -29,117 +29,126 @@
    "carga": 4.0,
    "juntos": 2.0,
    "lenguaje": "linux",
-   "ns": 119358.0,
-   "nucleos": "9-0",
+   "ns": 153414.0,
+   "nucleos": "9-2",
    "rondas": 5000.0
   },
+  "memoria": {
+   "kernel_kb": 22935.0,
+   "por_proceso_kb": 538.0,
+   "residente_kb": 106.0,
+   "slab_kb": 12340.0,
+   "tablas_kb": 468.0,
+   "total_kb": 983040.0,
+   "usada_kb": 91756.0
+  },
   "ociosos": {
-   "ocio0": 1000.0,
+   "ocio0": 990.0,
    "ocio1": 1000.0,
    "ocio2": 1000.0,
    "ocio3": 1000.0,
-   "tics0": 15.0,
-   "tics1": 5.0,
-   "tics2": 6.0,
-   "tics3": 20.0
+   "tics0": 29.0,
+   "tics1": 20.0,
+   "tics2": 14.0,
+   "tics3": 21.0
   },
   "reparto lenguaje=linux n=1": {
-   "cambios": 23743.0,
-   "hueco_max_us": 303.0,
+   "cambios": 24506.0,
+   "hueco_max_us": 785.0,
    "justo": 1000.0,
    "lenguaje": "linux",
-   "max": 5723712.0,
-   "min": 5723712.0,
+   "max": 5707188.0,
+   "min": 5707188.0,
    "ms": 2000.0,
    "n": 1.0,
-   "nucleos": 0.0,
-   "total": 5723712.0
+   "nucleos": 2.0,
+   "total": 5707188.0
   },
   "reparto lenguaje=linux n=2": {
-   "cambios": 185.0,
-   "hueco_max_us": 901.0,
-   "justo": 996.0,
+   "cambios": 202.0,
+   "hueco_max_us": 1087.0,
+   "justo": 999.0,
    "lenguaje": "linux",
-   "max": 5293248.0,
-   "min": 5273429.0,
+   "max": 5245018.0,
+   "min": 5239672.0,
    "ms": 2000.0,
    "n": 2.0,
-   "nucleos": "1,2",
-   "total": 10566677.0
+   "nucleos": "0,1",
+   "total": 10484690.0
   },
   "reparto lenguaje=linux n=3": {
-   "cambios": 222.0,
-   "hueco_max_us": 1226.0,
-   "justo": 998.0,
+   "cambios": 233.0,
+   "hueco_max_us": 1954.0,
+   "justo": 997.0,
    "lenguaje": "linux",
-   "max": 5199158.0,
-   "min": 5194333.0,
+   "max": 5092385.0,
+   "min": 5089848.0,
    "ms": 2000.0,
    "n": 3.0,
-   "nucleos": "0,1,2",
-   "total": 15590034.0
+   "nucleos": "3,1,0>2",
+   "total": 15273365.0
   },
   "reparto lenguaje=linux n=4": {
-   "cambios": 259.0,
-   "hueco_max_us": 2004.0,
-   "justo": 985.0,
+   "cambios": 254.0,
+   "hueco_max_us": 2031.0,
+   "justo": 991.0,
    "lenguaje": "linux",
-   "max": 4290394.0,
-   "min": 4227481.0,
+   "max": 4184838.0,
+   "min": 4117599.0,
    "ms": 2000.0,
    "n": 4.0,
    "nucleos": "0,1,2,3",
-   "total": 17008152.0
+   "total": 16642289.0
   },
   "reparto lenguaje=linux n=5": {
-   "cambios": 705.0,
-   "hueco_max_us": 8021.0,
-   "justo": 885.0,
+   "cambios": 697.0,
+   "hueco_max_us": 8138.0,
+   "justo": 883.0,
    "lenguaje": "linux",
-   "max": 3587222.0,
-   "min": 3123136.0,
+   "max": 3507755.0,
+   "min": 3072119.0,
    "ms": 2000.0,
    "n": 5.0,
-   "nucleos": "3>0,0>3,2>0,1>2,1",
-   "total": 16931277.0
+   "nucleos": "2>0,3>2,1>2,0>3,0>1",
+   "total": 16242195.0
   },
   "reparto lenguaje=linux n=6": {
-   "cambios": 1111.0,
-   "hueco_max_us": 12082.0,
-   "justo": 808.0,
+   "cambios": 1119.0,
+   "hueco_max_us": 12145.0,
+   "justo": 740.0,
    "lenguaje": "linux",
-   "max": 3014041.0,
-   "min": 2473648.0,
+   "max": 3034280.0,
+   "min": 2242242.0,
    "ms": 2000.0,
    "n": 6.0,
-   "nucleos": "2>0,0>3,1,3>2,3,3>0",
-   "total": 16860244.0
+   "nucleos": "0>3,2>1,1>0,3>1,3,3>2",
+   "total": 16502063.0
   },
   "reparto lenguaje=linux n=8": {
-   "cambios": 1984.0,
-   "hueco_max_us": 12125.0,
-   "justo": 926.0,
+   "cambios": 1967.0,
+   "hueco_max_us": 12103.0,
+   "justo": 930.0,
    "lenguaje": "linux",
-   "max": 2242132.0,
-   "min": 2068126.0,
+   "max": 2149067.0,
+   "min": 1999571.0,
    "ms": 2000.0,
    "n": 8.0,
-   "nucleos": "2,1,3,0,1,1>2,3,0",
-   "total": 16962731.0
+   "nucleos": "3,2>0,0,1,1,2,1>3,2>0",
+   "total": 16322694.0
   },
   "temporizador us=1000 carga=0": {
    "carga": 0.0,
-   "max_us": 338.0,
-   "p50_us": 81.0,
-   "p99_us": 203.0,
+   "max_us": 784.0,
+   "p50_us": 88.0,
+   "p99_us": 246.0,
    "us": 1000.0,
    "veces": 300.0
   },
   "temporizador us=1000 carga=4": {
    "carga": 4.0,
-   "max_us": 513.0,
-   "p50_us": 123.0,
-   "p99_us": 228.0,
+   "max_us": 1069.0,
+   "p50_us": 133.0,
+   "p99_us": 386.0,
    "us": 1000.0,
    "veces": 300.0
   }
@@ -148,10 +157,10 @@
   {
    "dormilon dormir_ms=2000": {
     "dormir_ms": "2000",
-    "hueco_max_us": "4503",
-    "huecos_us": "515931",
+    "hueco_max_us": "4310",
+    "huecos_us": "517406",
     "nucleo": "1",
-    "unidades_dormilon": "1421230"
+    "unidades_dormilon": "1424204"
    },
    "empieza": {},
    "fin": {},
@@ -159,7 +168,7 @@
     "carga": "0",
     "juntos": "0",
     "lenguaje": "linux",
-    "ns": "33011",
+    "ns": "34938",
     "nucleos": "2-3",
     "rondas": "20000"
    },
@@ -167,7 +176,7 @@
     "carga": "0",
     "juntos": "1",
     "lenguaje": "linux",
-    "ns": "80445",
+    "ns": "86651",
     "nucleos": "1-1",
     "rondas": "20000"
    },
@@ -175,407 +184,434 @@
     "carga": "4",
     "juntos": "2",
     "lenguaje": "linux",
-    "ns": "109303",
-    "nucleos": "9-0",
+    "ns": "153414",
+    "nucleos": "9-2",
     "rondas": "5000"
    },
-   "ociosos": {
-    "ocio0": "1000",
-    "ocio1": "1000",
-    "ocio2": "1000",
-    "ocio3": "990",
-    "tics0": "6",
-    "tics1": "7",
-    "tics2": "4",
-    "tics3": "25"
-   },
-   "reparto lenguaje=linux n=1": {
-    "cambios": "23743",
-    "hueco_max_us": "2000",
-    "justo": "1000",
-    "lenguaje": "linux",
-    "max": "5723712",
-    "min": "5723712",
-    "ms": "2000",
-    "n": "1",
-    "nucleos": "0",
-    "total": "5723712"
-   },
-   "reparto lenguaje=linux n=2": {
-    "cambios": "185",
-    "hueco_max_us": "1025",
-    "justo": "996",
-    "lenguaje": "linux",
-    "max": "5293248",
-    "min": "5273429",
-    "ms": "2000",
-    "n": "2",
-    "nucleos": "1,2",
-    "total": "10566677"
-   },
-   "reparto lenguaje=linux n=3": {
-    "cambios": "228",
-    "hueco_max_us": "1226",
-    "justo": "999",
-    "lenguaje": "linux",
-    "max": "5199158",
-    "min": "5194333",
-    "ms": "2000",
-    "n": "3",
-    "nucleos": "0,1,2",
-    "total": "15590034"
-   },
-   "reparto lenguaje=linux n=4": {
-    "cambios": "261",
-    "hueco_max_us": "2017",
-    "justo": "984",
-    "lenguaje": "linux",
-    "max": "4357355",
-    "min": "4288539",
-    "ms": "2000",
-    "n": "4",
-    "nucleos": "0,1,2,3",
-    "total": "17271561"
-   },
-   "reparto lenguaje=linux n=5": {
-    "cambios": "705",
-    "hueco_max_us": "4938",
-    "justo": "808",
-    "lenguaje": "linux",
-    "max": "3776450",
-    "min": "3054265",
-    "ms": "2000",
-    "n": "5",
-    "nucleos": "3>0,0>3,2>0,1>2,1",
-    "total": "17316960"
-   },
-   "reparto lenguaje=linux n=6": {
-    "cambios": "1111",
-    "hueco_max_us": "8267",
-    "justo": "785",
-    "lenguaje": "linux",
-    "max": "3226648",
-    "min": "2535765",
-    "ms": "2000",
-    "n": "6",
-    "nucleos": "2>0,0>3,1,3>2,3,3>0",
-    "total": "17234459"
-   },
-   "reparto lenguaje=linux n=8": {
-    "cambios": "1976",
-    "hueco_max_us": "12082",
-    "justo": "931",
-    "lenguaje": "linux",
-    "max": "2253811",
-    "min": "2099245",
-    "ms": "2000",
-    "n": "8",
-    "nucleos": "2,1,3,0,1,1>2,3,0",
-    "total": "17227627"
-   },
-   "temporizador us=1000 carga=0": {
-    "carga": "0",
-    "max_us": "224",
-    "p50_us": "78",
-    "p99_us": "203",
-    "us": "1000",
-    "veces": "300"
-   },
-   "temporizador us=1000 carga=4": {
-    "carga": "4",
-    "max_us": "485",
-    "p50_us": "126",
-    "p99_us": "228",
-    "us": "1000",
-    "veces": "300"
-   }
-  },
-  {
-   "dormilon dormir_ms=2000": {
-    "dormir_ms": "2000",
-    "hueco_max_us": "4196",
-    "huecos_us": "512111",
-    "nucleo": "1",
-    "unidades_dormilon": "1430924"
-   },
-   "empieza": {},
-   "fin": {},
-   "ida-vuelta lenguaje=linux juntos=0 carga=0": {
-    "carga": "0",
-    "juntos": "0",
-    "lenguaje": "linux",
-    "ns": "31244",
-    "nucleos": "2-3",
-    "rondas": "20000"
-   },
-   "ida-vuelta lenguaje=linux juntos=1 carga=0": {
-    "carga": "0",
-    "juntos": "1",
-    "lenguaje": "linux",
-    "ns": "79381",
-    "nucleos": "1-1",
-    "rondas": "20000"
-   },
-   "ida-vuelta lenguaje=linux juntos=2 carga=4": {
-    "carga": "4",
-    "juntos": "2",
-    "lenguaje": "linux",
-    "ns": "257213",
-    "nucleos": "9-0",
-    "rondas": "5000"
+   "memoria": {
+    "kernel_kb": "22935",
+    "por_proceso_kb": "538",
+    "residente_kb": "106",
+    "slab_kb": "12396",
+    "tablas_kb": "468",
+    "total_kb": "983040",
+    "usada_kb": "96416"
    },
    "ociosos": {
-    "ocio0": "1000",
+    "ocio0": "990",
     "ocio1": "1000",
     "ocio2": "1000",
     "ocio3": "1000",
-    "tics0": "24",
-    "tics1": "5",
-    "tics2": "9",
-    "tics3": "5"
-   },
-   "reparto lenguaje=linux n=1": {
-    "cambios": "27723",
-    "hueco_max_us": "257",
-    "justo": "1000",
-    "lenguaje": "linux",
-    "max": "5659267",
-    "min": "5659267",
-    "ms": "2000",
-    "n": "1",
-    "nucleos": "0",
-    "total": "5659267"
-   },
-   "reparto lenguaje=linux n=2": {
-    "cambios": "185",
-    "hueco_max_us": "901",
-    "justo": "995",
-    "lenguaje": "linux",
-    "max": "5127148",
-    "min": "5105311",
-    "ms": "2000",
-    "n": "2",
-    "nucleos": "3,1>2",
-    "total": "10232459"
-   },
-   "reparto lenguaje=linux n=3": {
-    "cambios": "222",
-    "hueco_max_us": "1605",
-    "justo": "997",
-    "lenguaje": "linux",
-    "max": "5193624",
-    "min": "5181771",
-    "ms": "2000",
-    "n": "3",
-    "nucleos": "2,3,1",
-    "total": "15563066"
-   },
-   "reparto lenguaje=linux n=4": {
-    "cambios": "251",
-    "hueco_max_us": "1851",
-    "justo": "995",
-    "lenguaje": "linux",
-    "max": "4179332",
-    "min": "4161173",
-    "ms": "2000",
-    "n": "4",
-    "nucleos": "1,2,3,0",
-    "total": "16682567"
-   },
-   "reparto lenguaje=linux n=5": {
-    "cambios": "706",
-    "hueco_max_us": "8021",
-    "justo": "885",
-    "lenguaje": "linux",
-    "max": "3525338",
-    "min": "3123136",
-    "ms": "2000",
-    "n": "5",
-    "nucleos": "0>2,2>3,3>1,1>3,1>0",
-    "total": "16803032"
-   },
-   "reparto lenguaje=linux n=6": {
-    "cambios": "1122",
-    "hueco_max_us": "12089",
-    "justo": "808",
-    "lenguaje": "linux",
-    "max": "2970976",
-    "min": "2402560",
-    "ms": "2000",
-    "n": "6",
-    "nucleos": "2>1,0>3,1>2,3,1>0,1",
-    "total": "16776900"
-   },
-   "reparto lenguaje=linux n=8": {
-    "cambios": "1993",
-    "hueco_max_us": "12171",
-    "justo": "926",
-    "lenguaje": "linux",
-    "max": "2194239",
-    "min": "2032804",
-    "ms": "2000",
-    "n": "8",
-    "nucleos": "0,1,3,2,3>0,3,1,2",
-    "total": "16705734"
-   },
-   "temporizador us=1000 carga=0": {
-    "carga": "0",
-    "max_us": "374",
-    "p50_us": "81",
-    "p99_us": "198",
-    "us": "1000",
-    "veces": "300"
-   },
-   "temporizador us=1000 carga=4": {
-    "carga": "4",
-    "max_us": "513",
-    "p50_us": "123",
-    "p99_us": "225",
-    "us": "1000",
-    "veces": "300"
-   }
-  },
-  {
-   "dormilon dormir_ms=2000": {
-    "dormir_ms": "2000",
-    "hueco_max_us": "8034",
-    "huecos_us": "519240",
-    "nucleo": "1",
-    "unidades_dormilon": "1427502"
-   },
-   "empieza": {},
-   "fin": {},
-   "ida-vuelta lenguaje=linux juntos=0 carga=0": {
-    "carga": "0",
-    "juntos": "0",
-    "lenguaje": "linux",
-    "ns": "33765",
-    "nucleos": "2-3",
-    "rondas": "20000"
-   },
-   "ida-vuelta lenguaje=linux juntos=1 carga=0": {
-    "carga": "0",
-    "juntos": "1",
-    "lenguaje": "linux",
-    "ns": "81006",
-    "nucleos": "1-1",
-    "rondas": "20000"
-   },
-   "ida-vuelta lenguaje=linux juntos=2 carga=4": {
-    "carga": "4",
-    "juntos": "2",
-    "lenguaje": "linux",
-    "ns": "119358",
-    "nucleos": "9-0",
-    "rondas": "5000"
-   },
-   "ociosos": {
-    "ocio0": "1000",
-    "ocio1": "1010",
-    "ocio2": "1000",
-    "ocio3": "1000",
-    "tics0": "15",
-    "tics1": "4",
-    "tics2": "6",
+    "tics0": "31",
+    "tics1": "12",
+    "tics2": "14",
     "tics3": "20"
    },
    "reparto lenguaje=linux n=1": {
-    "cambios": "23526",
-    "hueco_max_us": "303",
+    "cambios": "24617",
+    "hueco_max_us": "785",
     "justo": "1000",
     "lenguaje": "linux",
-    "max": "5863646",
-    "min": "5863646",
+    "max": "5600168",
+    "min": "5600168",
     "ms": "2000",
     "n": "1",
-    "nucleos": "0",
-    "total": "5863646"
+    "nucleos": "3",
+    "total": "5600168"
    },
    "reparto lenguaje=linux n=2": {
-    "cambios": "177",
-    "hueco_max_us": "629",
-    "justo": "998",
+    "cambios": "201",
+    "hueco_max_us": "1070",
+    "justo": "999",
     "lenguaje": "linux",
-    "max": "5335822",
-    "min": "5327734",
+    "max": "5251538",
+    "min": "5247437",
     "ms": "2000",
     "n": "2",
-    "nucleos": "3,1>2",
-    "total": "10663556"
+    "nucleos": "0,1",
+    "total": "10498975"
    },
    "reparto lenguaje=linux n=3": {
-    "cambios": "219",
-    "hueco_max_us": "1062",
-    "justo": "998",
+    "cambios": "233",
+    "hueco_max_us": "1567",
+    "justo": "999",
     "lenguaje": "linux",
-    "max": "5248005",
-    "min": "5238034",
+    "max": "5092385",
+    "min": "5089848",
     "ms": "2000",
     "n": "3",
-    "nucleos": "1,3,2",
-    "total": "15729194"
+    "nucleos": "3,1,0>2",
+    "total": "15273365"
    },
    "reparto lenguaje=linux n=4": {
-    "cambios": "259",
-    "hueco_max_us": "2004",
-    "justo": "985",
+    "cambios": "254",
+    "hueco_max_us": "2017",
+    "justo": "995",
     "lenguaje": "linux",
-    "max": "4290394",
-    "min": "4227481",
+    "max": "4122105",
+    "min": "4104745",
     "ms": "2000",
     "n": "4",
-    "nucleos": "3,2,1,0",
-    "total": "17008152"
+    "nucleos": "0,1,2,3",
+    "total": "16452503"
    },
    "reparto lenguaje=linux n=5": {
-    "cambios": "700",
-    "hueco_max_us": "8053",
-    "justo": "907",
+    "cambios": "689",
+    "hueco_max_us": "8209",
+    "justo": "883",
     "lenguaje": "linux",
-    "max": "3587222",
-    "min": "3254640",
+    "max": "3475924",
+    "min": "3072119",
     "ms": "2000",
     "n": "5",
-    "nucleos": "2>1,0>2,3>2,1>0,1>3",
-    "total": "16931277"
+    "nucleos": "2>0,3>2,1>2,0>3,0>1",
+    "total": "16162397"
    },
    "reparto lenguaje=linux n=6": {
-    "cambios": "1104",
-    "hueco_max_us": "12082",
-    "justo": "820",
+    "cambios": "1119",
+    "hueco_max_us": "12149",
+    "justo": "681",
     "lenguaje": "linux",
-    "max": "3014041",
-    "min": "2473648",
+    "max": "3290095",
+    "min": "2242242",
     "ms": "2000",
     "n": "6",
-    "nucleos": "3>2,1,0>2,2>0,1>0,1>3",
-    "total": "16860244"
+    "nucleos": "0>3,2>1,1>0,3>1,3,3>2",
+    "total": "16530074"
    },
    "reparto lenguaje=linux n=8": {
-    "cambios": "1984",
-    "hueco_max_us": "12125",
-    "justo": "922",
+    "cambios": "1939",
+    "hueco_max_us": "12116",
+    "justo": "875",
     "lenguaje": "linux",
-    "max": "2242132",
-    "min": "2068126",
+    "max": "2231754",
+    "min": "1954960",
     "ms": "2000",
     "n": "8",
-    "nucleos": "0,3,1>2,2,1,1,3,0",
-    "total": "16962731"
+    "nucleos": "3,2>0,0,1,1,2,1>3,2>0",
+    "total": "16451821"
    },
    "temporizador us=1000 carga=0": {
     "carga": "0",
-    "max_us": "338",
-    "p50_us": "87",
-    "p99_us": "271",
+    "max_us": "473",
+    "p50_us": "88",
+    "p99_us": "224",
     "us": "1000",
     "veces": "300"
    },
    "temporizador us=1000 carga=4": {
     "carga": "4",
-    "max_us": "4023",
-    "p50_us": "122",
-    "p99_us": "253",
+    "max_us": "1069",
+    "p50_us": "134",
+    "p99_us": "386",
+    "us": "1000",
+    "veces": "300"
+   }
+  },
+  {
+   "dormilon dormir_ms=2000": {
+    "dormir_ms": "2000",
+    "hueco_max_us": "4343",
+    "huecos_us": "515258",
+    "nucleo": "1",
+    "unidades_dormilon": "1424951"
+   },
+   "empieza": {},
+   "fin": {},
+   "ida-vuelta lenguaje=linux juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "linux",
+    "ns": "33592",
+    "nucleos": "2-3",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=linux juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "linux",
+    "ns": "82934",
+    "nucleos": "1-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=linux juntos=2 carga=4": {
+    "carga": "4",
+    "juntos": "2",
+    "lenguaje": "linux",
+    "ns": "136650",
+    "nucleos": "9-3",
+    "rondas": "5000"
+   },
+   "memoria": {
+    "kernel_kb": "22935",
+    "por_proceso_kb": "565",
+    "residente_kb": "106",
+    "slab_kb": "12340",
+    "tablas_kb": "464",
+    "total_kb": "983040",
+    "usada_kb": "91756"
+   },
+   "ociosos": {
+    "ocio0": "990",
+    "ocio1": "1000",
+    "ocio2": "1000",
+    "ocio3": "990",
+    "tics0": "29",
+    "tics1": "20",
+    "tics2": "24",
+    "tics3": "21"
+   },
+   "reparto lenguaje=linux n=1": {
+    "cambios": "24369",
+    "hueco_max_us": "368",
+    "justo": "1000",
+    "lenguaje": "linux",
+    "max": "5707188",
+    "min": "5707188",
+    "ms": "2000",
+    "n": "1",
+    "nucleos": "2",
+    "total": "5707188"
+   },
+   "reparto lenguaje=linux n=2": {
+    "cambios": "204",
+    "hueco_max_us": "1087",
+    "justo": "998",
+    "lenguaje": "linux",
+    "max": "5245018",
+    "min": "5239672",
+    "ms": "2000",
+    "n": "2",
+    "nucleos": "3>0,2",
+    "total": "10484690"
+   },
+   "reparto lenguaje=linux n=3": {
+    "cambios": "224",
+    "hueco_max_us": "1954",
+    "justo": "996",
+    "lenguaje": "linux",
+    "max": "5120103",
+    "min": "5101416",
+    "ms": "2000",
+    "n": "3",
+    "nucleos": "3,2,0",
+    "total": "15337920"
+   },
+   "reparto lenguaje=linux n=4": {
+    "cambios": "250",
+    "hueco_max_us": "2044",
+    "justo": "983",
+    "lenguaje": "linux",
+    "max": "4184838",
+    "min": "4117599",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "2,3,0,1",
+    "total": "16642289"
+   },
+   "reparto lenguaje=linux n=5": {
+    "cambios": "697",
+    "hueco_max_us": "8071",
+    "justo": "909",
+    "lenguaje": "linux",
+    "max": "3523843",
+    "min": "3204259",
+    "ms": "2000",
+    "n": "5",
+    "nucleos": "3,1>2,0>3,2>1,2>0",
+    "total": "16695240"
+   },
+   "reparto lenguaje=linux n=6": {
+    "cambios": "1119",
+    "hueco_max_us": "12145",
+    "justo": "740",
+    "lenguaje": "linux",
+    "max": "3034280",
+    "min": "2246486",
+    "ms": "2000",
+    "n": "6",
+    "nucleos": "0>1,2>3,1>3,3>2,2,2>0",
+    "total": "16502063"
+   },
+   "reparto lenguaje=linux n=8": {
+    "cambios": "1967",
+    "hueco_max_us": "10424",
+    "justo": "930",
+    "lenguaje": "linux",
+    "max": "2149067",
+    "min": "1999571",
+    "ms": "2000",
+    "n": "8",
+    "nucleos": "1,2,0,3>1,3,3>1,0,2",
+    "total": "16322694"
+   },
+   "temporizador us=1000 carga=0": {
+    "carga": "0",
+    "max_us": "784",
+    "p50_us": "88",
+    "p99_us": "246",
+    "us": "1000",
+    "veces": "300"
+   },
+   "temporizador us=1000 carga=4": {
+    "carga": "4",
+    "max_us": "5396",
+    "p50_us": "133",
+    "p99_us": "779",
+    "us": "1000",
+    "veces": "300"
+   }
+  },
+  {
+   "dormilon dormir_ms=2000": {
+    "dormir_ms": "2000",
+    "hueco_max_us": "8043",
+    "huecos_us": "529956",
+    "nucleo": "1",
+    "unidades_dormilon": "1328614"
+   },
+   "empieza": {},
+   "fin": {},
+   "ida-vuelta lenguaje=linux juntos=0 carga=0": {
+    "carga": "0",
+    "juntos": "0",
+    "lenguaje": "linux",
+    "ns": "32693",
+    "nucleos": "2-3",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=linux juntos=1 carga=0": {
+    "carga": "0",
+    "juntos": "1",
+    "lenguaje": "linux",
+    "ns": "80816",
+    "nucleos": "1-1",
+    "rondas": "20000"
+   },
+   "ida-vuelta lenguaje=linux juntos=2 carga=4": {
+    "carga": "4",
+    "juntos": "2",
+    "lenguaje": "linux",
+    "ns": "161644",
+    "nucleos": "9-3",
+    "rondas": "5000"
+   },
+   "memoria": {
+    "kernel_kb": "22935",
+    "por_proceso_kb": "527",
+    "residente_kb": "106",
+    "slab_kb": "12316",
+    "tablas_kb": "468",
+    "total_kb": "983040",
+    "usada_kb": "89732"
+   },
+   "ociosos": {
+    "ocio0": "1000",
+    "ocio1": "1000",
+    "ocio2": "1000",
+    "ocio3": "1000",
+    "tics0": "9",
+    "tics1": "36",
+    "tics2": "10",
+    "tics3": "29"
+   },
+   "reparto lenguaje=linux n=1": {
+    "cambios": "24506",
+    "hueco_max_us": "965",
+    "justo": "1000",
+    "lenguaje": "linux",
+    "max": "5722194",
+    "min": "5722194",
+    "ms": "2000",
+    "n": "1",
+    "nucleos": "2",
+    "total": "5722194"
+   },
+   "reparto lenguaje=linux n=2": {
+    "cambios": "202",
+    "hueco_max_us": "2117",
+    "justo": "999",
+    "lenguaje": "linux",
+    "max": "5192981",
+    "min": "5190294",
+    "ms": "2000",
+    "n": "2",
+    "nucleos": "3,0",
+    "total": "10383275"
+   },
+   "reparto lenguaje=linux n=3": {
+    "cambios": "237",
+    "hueco_max_us": "2031",
+    "justo": "997",
+    "lenguaje": "linux",
+    "max": "5077232",
+    "min": "5063457",
+    "ms": "2000",
+    "n": "3",
+    "nucleos": "2,3,0>1",
+    "total": "15204370"
+   },
+   "reparto lenguaje=linux n=4": {
+    "cambios": "254",
+    "hueco_max_us": "2031",
+    "justo": "991",
+    "lenguaje": "linux",
+    "max": "4208769",
+    "min": "4172440",
+    "ms": "2000",
+    "n": "4",
+    "nucleos": "1,3,2,0",
+    "total": "16796717"
+   },
+   "reparto lenguaje=linux n=5": {
+    "cambios": "709",
+    "hueco_max_us": "8138",
+    "justo": "848",
+    "lenguaje": "linux",
+    "max": "3507755",
+    "min": "2977299",
+    "ms": "2000",
+    "n": "5",
+    "nucleos": "0>3,1>0,3>1,2>3,3>2",
+    "total": "16242195"
+   },
+   "reparto lenguaje=linux n=6": {
+    "cambios": "1107",
+    "hueco_max_us": "11608",
+    "justo": "745",
+    "lenguaje": "linux",
+    "max": "2930092",
+    "min": "2185305",
+    "ms": "2000",
+    "n": "6",
+    "nucleos": "1>3,2>1,0,3>2,3>2,3>0",
+    "total": "16402399"
+   },
+   "reparto lenguaje=linux n=8": {
+    "cambios": "1981",
+    "hueco_max_us": "12103",
+    "justo": "972",
+    "lenguaje": "linux",
+    "max": "2057558",
+    "min": "2001258",
+    "ms": "2000",
+    "n": "8",
+    "nucleos": "2,3,1,0,3,1,2,0",
+    "total": "16268237"
+   },
+   "temporizador us=1000 carga=0": {
+    "carga": "0",
+    "max_us": "993",
+    "p50_us": "105",
+    "p99_us": "330",
+    "us": "1000",
+    "veces": "300"
+   },
+   "temporizador us=1000 carga=4": {
+    "carga": "4",
+    "max_us": "895",
+    "p50_us": "129",
+    "p99_us": "264",
     "us": "1000",
     "veces": "300"
    }

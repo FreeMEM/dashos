@@ -58,8 +58,8 @@ Pruebas:
 | M9 | Lo que salga de medir | abierto |
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
-| R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | en curso |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | pendiente |
+| R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 caché hecha; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | pendiente |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -236,3 +236,54 @@ aquí los números y commit local.
   202 a 46 µs con 4 calculando (Linux: 123); p99 sin carga de 432 a 171 µs (Linux: 203). Con carga, el p99 baja de
   772 a 510 µs pero sigue peor que Linux (228): pendiente para M9. Lo demás igual (±5 %).
 - `make prueba` (3 vueltas) y `make arranque-virt` (con el sonido): bien.
+
+### 2026-11-10 — R: la memoria, DashOS contra Linux
+
+- DashOS: la llamada 29 da páginas de RAM (5), libres (6) y bytes de la imagen del kernel (7). `medir` lanza 20 hijos
+  que esperan sin hacer nada y mira cuántas páginas libres faltan. Linux (`banco.c`, `memoria()`): `Memory: X/Y` del
+  registro del kernel, `MemFree` con las cachés vaciadas antes de cada lectura (si no, baila cientos de KB) y 20
+  procesos nuevos con `fork` y `execve` de `/init`, más lo residente de cada uno (`/proc/PID/statm`).
+- `docs/medidas/r.json` y `linux.json` (3 arranques, mismo QEMU raspi4b):
+
+| Medida | DashOS | Linux 6.18 (Raspberry Pi OS) |
+|---|---|---|
+| Ocupada nada más arrancar (kernel y lo mínimo para el banco) | 9,3 MB | 90 MB |
+| La imagen del kernel | 3,3 MB (código, datos, bss y pilas de arranque) | 22,4 MB (código, datos y bss) |
+| Cada proceso de más | 118 KB | 540 KB (106 KB residentes; lo demás, del kernel: pila, tablas, slab) |
+
+- Cuidado al leerlo: en los dos es solo el kernel; un Raspberry Pi OS de escritorio gasta cientos de MB más. Parte de
+  lo de Linux crece con la RAM (64 bytes por página de 4 KB, unos 15 MB con 960 MB). DashOS ve 1,9 GB (el árbol con la
+  memoria alta) y Linux 960 MB; no cambia lo ocupado.
+
+### 2026-11-10 — F: el sistema de archivos, DashOS contra Linux; F1: caché de bloques
+
+- Banco: `usuario/src/bin/medir_fs.rs` (DashOS, por el protocolo del servicio `archivos`) y
+  `tools/medir_linux/fs.c` (Linux), con las mismas operaciones: un fichero de 8 MB por trozos de 64 KB, leerlo dos
+  veces, 500 ficheros de 4 KB (crear y escribir, leer, sus datos, listar el cajón, borrar). Los dos en QEMU `virt`
+  (cortex-a72, 4 núcleos, 2 GB) con el disco en un NVMe. DashOS: `make medir-fs` (opción `medir_fs`: solo consola,
+  nvme, archivos y el banco; RedoxFS vacío de 64 MB). Linux: el kernel genérico de Debian 13 (6.12, el de Raspberry
+  Pi OS no arranca en `virt`) con los módulos de NVMe y ext4 en el initramfs (`tools/medir_linux/hacer_fs.sh`), ext4
+  de 64 MB; `tools/medir.py linux-fs`. Nada de Debian va al repo.
+- DashOS guarda en el disco cada orden que cambia algo antes de contestar: se compara con las pruebas "sync" de Linux
+  (fsync tras cada escritura o fichero). Linux sin fsync va aparte, solo como referencia.
+- F1: el servicio no tenía caché: cada bloque que miraba RedoxFS era una petición al servicio de disco y una orden al
+  NVMe (la caché de RedoxFS solo existe con `std`). Ahora, una caché de hasta 16 MB en el servicio, que escribe
+  siempre en el disco antes (nada pendiente al quitar un bloque).
+- Resultados (DashOS antes: 1 arranque; después y Linux: medianas de 3; `docs/medidas/fs-dashos.json`,
+  `fs-linux.json`):
+
+| Operación | DashOS sin caché | DashOS con F1 | Linux 6.12, ext4 |
+|---|---|---|---|
+| Escribir 8 MB, cada trozo al disco | 10 MB/s | 13,7 MB/s | 26 MB/s (sin fsync: 107) |
+| Leer 8 MB, primera vez / segunda | 59 / 60 MB/s | 161 / 162 MB/s | 384 / 1.603 MB/s |
+| Crear y escribir un fichero de 4 KB, al disco | 79 /s | 111 /s | 390 /s (sin fsync: 3.000) |
+| Leer un fichero de 4 KB | 319 /s | 1.633 /s | 9.088 /s |
+| Datos de un fichero | 334 /s | 1.624 /s | 26.864 /s |
+| Listar un cajón de 500 | 1,6 /s | 15 /s | 154 /s |
+| Borrar un fichero, al disco | 118 /s | 209 /s | 420 /s |
+
+- Queda mucho. Cada petición cuesta unos 200 µs (una ida y vuelta de mensaje, 60) y DashOS pide tres cosas donde
+  Linux hace una llamada (buscar, datos, cerrar frente a `stat`). Cada fichero nuevo son dos transacciones al disco
+  (crear y escribir) frente a un `fsync`. Siguiente: medir dónde se va el tiempo dentro del servicio.
+- `make arranque-virt` (con la caché; comprueba en Linux que lo escrito está en el disco): bien. El banco comprueba
+  lo que lee (`fs-bien bien=1`, 500 listados).

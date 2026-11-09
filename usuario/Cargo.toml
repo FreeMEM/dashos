@@ -249,3 +249,9 @@ test = false
 name = "medir-hijo"
 path = "src/bin/medir_hijo.rs"
 test = false
+
+# Paso F (docs/MULTITAREA_LOOP.md): el banco del sistema de archivos, por el servicio "archivos".
+[[bin]]
+name = "medir-fs"
+path = "src/bin/medir_fs.rs"
+test = false

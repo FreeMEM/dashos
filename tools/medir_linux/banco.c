@@ -260,6 +260,9 @@ static void memoria(void) {
                    &disp, &total_kb, &codigo, &rw, &ro, &ini, &bss);
         }
     }
+    /* Sin caché de ficheros ni de slab que vaciar entre medida y medida: si no, MemFree baila cientos de KB. */
+    int dc = open("/proc/sys/vm/drop_caches", O_WRONLY);
+    if (dc >= 0) { write(dc, "3", 1); close(dc); }
     unsigned long long libre0 = meminfo("MemFree");
     int p[2];
     pipe(p);
@@ -275,13 +278,26 @@ static void memoria(void) {
         }
     }
     sleep(1);
+    dc = open("/proc/sys/vm/drop_caches", O_WRONLY);
+    if (dc >= 0) { write(dc, "3", 1); close(dc); }
     unsigned long long libre1 = meminfo("MemFree");
+    /* Lo residente de cada uno (páginas propias y compartidas que tiene en su tabla), de /proc/PID/statm. */
+    unsigned long long rss = 0;
+    for (int i = 0; i < 20; i++) {
+        char r[64];
+        snprintf(r, sizeof r, "/proc/%d/statm", hijos[i]);
+        FILE *f = fopen(r, "r");
+        unsigned long long tam = 0, res = 0;
+        if (f && fscanf(f, "%llu %llu", &tam, &res) == 2) rss += res * 4;
+        if (f) fclose(f);
+    }
     close(p[1]);
     close(p[0]);
     esperar_todos();
-    printf("[medir] memoria usada_kb=%llu kernel_kb=%llu por_proceso_kb=%llu total_kb=%llu slab_kb=%llu tablas_kb=%llu\n",
+    printf("[medir] memoria usada_kb=%llu kernel_kb=%llu por_proceso_kb=%llu total_kb=%llu slab_kb=%llu tablas_kb=%llu "
+           "residente_kb=%llu\n",
            total_kb - libre0, codigo + rw + ro + bss, libre0 > libre1 ? (libre0 - libre1) / 20 : 0, total_kb,
-           meminfo("Slab"), meminfo("PageTables"));
+           meminfo("Slab"), meminfo("PageTables"), rss / 20);
 }
 
 int main(int argc, char **argv) {

@@ -12,6 +12,7 @@
 
 extern crate alloc;
 
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -97,6 +98,52 @@ struct Disco {
     vuelta: u32,
     tam_sector: u64,
     sectores: u64,
+    cache: Cache,
+}
+
+/// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
+/// cajón, los datos de un nodo) era una petición al servicio de disco y una orden al NVMe, y buscar un fichero costaba
+/// un milisegundo. Se escribe siempre en el disco antes que aquí (lo que se contesta como hecho ya está en el disco,
+/// FS4), así que nunca hay nada que guardar al quitar un bloque. Hasta `MAX_BLOQUES`; al llenarse, se quita la octava
+/// parte menos usada.
+struct Cache {
+    bloques: BTreeMap<u64, (u64, Box<[u8; BLOCK_SIZE as usize]>)>,
+    reloj: u64,
+}
+
+const MAX_BLOQUES: usize = 16 * 1024 * 1024 / BLOCK_SIZE as usize;
+
+impl Cache {
+    fn leer(&mut self, bloque: u64, destino: &mut [u8]) -> bool {
+        self.reloj += 1;
+        let r = self.reloj;
+        match self.bloques.get_mut(&bloque) {
+            Some((uso, b)) => {
+                *uso = r;
+                destino.copy_from_slice(&b[..]);
+                true
+            }
+            None => false,
+        }
+    }
+
+    fn poner(&mut self, bloque: u64, datos: &[u8]) {
+        self.reloj += 1;
+        if let Some((uso, b)) = self.bloques.get_mut(&bloque) {
+            *uso = self.reloj;
+            b.copy_from_slice(datos);
+            return;
+        }
+        if self.bloques.len() >= MAX_BLOQUES {
+            let mut usos: Vec<u64> = self.bloques.values().map(|(u, _)| *u).collect();
+            usos.sort_unstable();
+            let corte = usos[usos.len() / 8];
+            self.bloques.retain(|_, (u, _)| *u > corte);
+        }
+        let mut b = Box::new([0u8; BLOCK_SIZE as usize]);
+        b.copy_from_slice(datos);
+        self.bloques.insert(bloque, (self.reloj, b));
+    }
 }
 
 impl Disco {
@@ -118,7 +165,7 @@ impl Disco {
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0 };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0 } };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -137,6 +184,40 @@ impl Disk for Disco {
         if buffer.len() as u64 % BLOCK_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
+        // Todo en la caché: sin ir al disco.
+        let bs = BLOCK_SIZE as usize;
+        if buffer.chunks_exact_mut(bs).enumerate().all(|(i, b)| self.cache.leer(block + i as u64, b)) {
+            return Ok(buffer.len());
+        }
+        unsafe { self.leer_disco(block, buffer)? };
+        for (i, b) in buffer.chunks_exact(bs).enumerate() {
+            self.cache.poner(block + i as u64, b);
+        }
+        Ok(buffer.len())
+    }
+
+    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+        let n = unsafe { self.escribir_disco(block, buffer)? };
+        for (i, b) in buffer.chunks_exact(BLOCK_SIZE as usize).enumerate() {
+            self.cache.poner(block + i as u64, b);
+        }
+        Ok(n)
+    }
+
+    fn size(&mut self) -> Result<u64> {
+        Ok(self.sectores * self.tam_sector - INICIO)
+    }
+
+    fn flush(&mut self) -> Result<()> {
+        match self.pedir(DISCO_VACIAR, 0, 0) {
+            Some((0, _, _)) => Ok(()),
+            _ => Err(Error::new(EIO)),
+        }
+    }
+}
+
+impl Disco {
+    unsafe fn leer_disco(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         let mut hecho = 0;
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TRAMO);
@@ -155,7 +236,7 @@ impl Disk for Disco {
         Ok(hecho)
     }
 
-    unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+    unsafe fn escribir_disco(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         if buffer.len() as u64 % BLOCK_SIZE != 0 {
             return Err(Error::new(EINVAL));
         }
@@ -174,17 +255,6 @@ impl Disk for Disco {
             hecho += n;
         }
         Ok(hecho)
-    }
-
-    fn size(&mut self) -> Result<u64> {
-        Ok(self.sectores * self.tam_sector - INICIO)
-    }
-
-    fn flush(&mut self) -> Result<()> {
-        match self.pedir(DISCO_VACIAR, 0, 0) {
-            Some((0, _, _)) => Ok(()),
-            _ => Err(Error::new(EIO)),
-        }
     }
 }
 

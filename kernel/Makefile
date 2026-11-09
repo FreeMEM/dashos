@@ -94,6 +94,17 @@ medir: usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(MEDIR)
 	python3 ../tools/medir.py correr $(MEDIR) target/medir.json -n $(VUELTAS)
 
+# Paso F (docs/MULTITAREA_LOOP.md): el banco del sistema de archivos en QEMU virt, con un disco de 1 + 64 MB con un
+# RedoxFS vacío, nuevo en cada vuelta. Linux, con `tools/medir.py linux-fs`.
+MEDIR_FS := target/kernel8-medir-fs.img
+medir-fs: usuario FORCE
+	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	python3 ../tools/medir.py disco-fs target/medir-fs.img $(REDOXFS_AR)
+	cargo build $(CARGO_PERFIL) --features virt,medir_fs
+	$(OBJCOPY) -O binary $(ELF) $(MEDIR_FS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(MEDIR_FS)) cargo build --release
+	python3 ../tools/medir.py dashos-fs ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi target/medir-fs.img target/medir-fs.json -n $(VUELTAS)
+
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 
 # Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas.

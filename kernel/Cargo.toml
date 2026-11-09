@@ -23,6 +23,8 @@ paula = []
 medir = []
 # Con `medir`: experimento, no seguro (M9). La tabla vacía conserva el ASID: cuánto pesa en QEMU vaciar la TLB.
 medir_asid = []
+# Con `virt`: el banco del sistema de archivos (paso F; `make medir-fs`): solo consola, nvme, archivos y `medir-fs`.
+medir_fs = []
 
 [profile.dev]
 panic = "abort"
