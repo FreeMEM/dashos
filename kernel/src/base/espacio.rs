@@ -49,6 +49,16 @@ const PXN: u64 = 1 << 53;
 const UXN: u64 = 1 << 54;
 const DIRECCION: u64 = 0x0000_ffff_ffff_f000;
 
+/// Lo que dice `para_copiar` de una página del proceso.
+pub enum Copia {
+    /// Se puede copiar aquí, por el mapa directo del kernel.
+    Directa(*mut u8),
+    /// EL0 no puede (o no está proyectada): la copia falla.
+    Falla,
+    /// Se puede, pero no por el mapa directo: por el camino de LDTRB/STTRB.
+    Lenta,
+}
+
 #[derive(Clone, Copy)]
 pub enum Permiso {
     /// Código del proceso: se lee y se ejecuta en EL0.
@@ -200,6 +210,25 @@ impl Espacio {
             tabla = v & DIRECCION;
         }
         Some(entrada(tabla, ix[2]))
+    }
+
+    /// Para copiar sin cambiar de espacio (M6a): dónde ve el kernel la página de `va`, por el mapa directo, si EL0
+    /// puede leerla (y escribirla, con `escribir`). Solo memoria normal con caché, que el mapa directo ve igual; con
+    /// otra (aparatos, búferes de DMA sin caché), `Lenta`: se copia por el camino de siempre. Hay que tener el espacio
+    /// tomado mientras se copia: así no se puede quitar la página entre tanto.
+    pub fn para_copiar(&self, va: u64, escribir: bool) -> Copia {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return Copia::Falla;
+        }
+        let Some(e) = self.hoja(va) else { return Copia::Falla };
+        let v = unsafe { e.read_volatile() };
+        if v & VALIDO != VALIDO || v & AF == 0 || v & AP_EL0 == 0 || (escribir && v & AP_SOLO_LECTURA != 0) {
+            return Copia::Falla;
+        }
+        if v & (7 << 2) != ATTR_NORMAL {
+            return Copia::Lenta;
+        }
+        Copia::Directa((mmu::virt((v & DIRECCION) as usize) + (va % PAGINA) as usize) as *mut u8)
     }
 
     /// La entrada de nivel 3 de `va`, creando las tablas que falten.

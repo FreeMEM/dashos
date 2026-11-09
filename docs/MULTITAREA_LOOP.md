@@ -51,7 +51,7 @@ Pruebas:
 | M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | hecho (con M1) |
 | M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | hecho |
 | M5 | Sin tic en núcleos ociosos | hecho |
-| M6a | Copias de usuario sin cambiar de espacio (menos cambios de ASID por llamada) | pendiente |
+| M6a | Copias de usuario sin cambiar de espacio (menos cambios de ASID por llamada) | hecho |
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
 | M7 | Préstamo de tiempo del cliente al servidor (seL4 MCS) | pendiente |
 | M8 | Pesos: foco del compositor y procesos de fondo (con permiso) | pendiente |
@@ -208,3 +208,15 @@ aquí los números y commit local.
   al entrar y salir del kernel y en cada copia de usuario (PAN por software). En una Pi de verdad cambiar de ASID no
   vacía nada: esa parte de la diferencia es del emulador. Pero hay una mejora real que también la quita: copiar sin
   cambiar de espacio (siguiente paso, M6a).
+
+### 2026-11-09 — M6a: copias de usuario sin cambiar de espacio
+
+- `usuario::leer` y `escribir` copian página a página por el mapa directo del kernel, con el espacio del proceso
+  tomado mientras dura cada página (nadie puede quitarla entre tanto). Los permisos se miran en la tabla del proceso
+  como los miraría la MMU para EL0 (`Espacio::para_copiar`: válida, con AF, de EL0 y, para escribir, no de solo
+  lectura). Solo memoria normal con caché; con otra (aparatos, DMA sin caché) se sigue por LDTRB/STTRB. Además de
+  quitar dos cambios de ASID por copia, copia con `memcpy` en lugar de byte a byte: en una Pi de verdad también gana
+  en mensajes grandes.
+- `docs/medidas/m6a.json` contra `m5.json`: ida y vuelta de 91-99 a 58 µs (-37 a -42 %, igual en Rust, C y Dash);
+  con 4 calculando, de 122 a 91 µs (Linux: 119). Lo demás igual (reparto ±2 %, temporizador ±3 % en la mediana).
+- `make prueba` (3 vueltas): bien. `make arranque-virt`: en otro worktree, pendiente al escribir esto.
