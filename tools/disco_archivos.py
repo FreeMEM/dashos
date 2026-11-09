@@ -4,14 +4,16 @@
 - Primer MB: lo de la prueba del servicio de disco (U6f): un texto y la firma 0x55AA en el sector 0, otro texto en
   el 1. El cliente de U6f escribe el sector 2.
 - Desde el MB 1: un RedoxFS hecho con `redoxfs-ar` a partir de una carpeta con LEEME.txt, C/grande.txt (las líneas
-  "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente.
+  "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente. Y un volumen
+  cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `redoxfs-volume`, que está al lado de
+  `redoxfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde.
 
 Uso: disco_archivos.py SALIDA REDOXFS_AR
      disco_archivos.py --comprobar DISCO VER
 
 Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) que el disco tiene lo que escribió
 el cliente `ficheros` (FS4) y nada más: lo escrito por DashOS está de verdad en el disco. Y que el comprobador (FS8)
-no encuentra nada roto en él.
+no encuentra nada roto en él. Y que lo que DashOS escribió en el volumen cifrado no está en claro en el disco (FS10).
 """
 import os
 import subprocess
@@ -36,6 +38,11 @@ if sys.argv[1] == "--comprobar":
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
+    # FS10: el nombre y el contenido de lo que DashOS escribió en "Ana" no están en claro.
+    crudo = open(disco, "rb").read()
+    for secreto in (b"secreto.txt", b"solo para Ana"):
+        if secreto in crudo:
+            fallos.append(f"{secreto!r} en claro en el disco")
     if comprobado != "sin problemas\n":
         fallos.append(f"comprobación: {comprobado.strip()}")
     if arbol != esperado:
@@ -65,6 +72,8 @@ with tempfile.TemporaryDirectory() as t:
     with open(fs, "wb") as f:
         f.truncate(7 << 20)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
+    volumen = os.path.join(os.path.dirname(ar), "redoxfs-volume")
+    subprocess.run([volumen, fs, "create-encrypted", "Ana", "--test-cost"], input=b"clave de Ana\n", check=True)
     d = bytearray(1 << 20)
     s0 = b"DashOS: sector 0 del disco NVMe"
     d[: len(s0)] = s0

@@ -6,7 +6,9 @@ use std::{env, process};
 use redoxfs::{DiskFile, FileSystem};
 
 fn usage() -> ! {
-    eprintln!("redoxfs-volume DISK [list | create NAME | delete NAME]");
+    eprintln!("redoxfs-volume DISK [list | create NAME | create-encrypted NAME | delete NAME]");
+    eprintln!("  create-encrypted: reads the password from the first line of the standard input; with");
+    eprintln!("    --test-cost after the name, a cheap Argon2 (64 KiB, 1 pass), for test disks only");
     eprintln!("  delete: removes the volume with all its files and snapshots");
     process::exit(2);
 }
@@ -18,6 +20,9 @@ fn main() {
         [path] => (path, "list", None),
         [path, what] if what == "list" => (path, "list", None),
         [path, what, name] => (path, what.as_str(), Some(name.as_str())),
+        [path, what, name, flag] if what == "create-encrypted" && flag == "--test-cost" => {
+            (path, "create-encrypted-test", Some(name.as_str()))
+        }
         _ => usage(),
     };
     let disk = match DiskFile::open(path) {
@@ -38,9 +43,45 @@ fn main() {
     let result = match (what, name) {
         ("list", None) => fs.tx(|tx| tx.volumes()).map(|list| {
             for v in list {
-                println!("{}\t{}", v.id(), v.name());
+                let kind = if v.is_encrypted() { "encrypted" } else { "" };
+                println!("{}\t{}\t{kind}", v.id(), v.name());
             }
         }),
+        ("create-encrypted" | "create-encrypted-test", Some(name)) => {
+            let cost = if what == "create-encrypted" {
+                redoxfs::seal::Cost::NORMAL
+            } else {
+                redoxfs::seal::Cost::CHEAP
+            };
+            let mut password = String::new();
+            if std::io::stdin().read_line(&mut password).is_err() {
+                usage();
+            }
+            let password = password.trim_end_matches(['\n', '\r']);
+            if password.is_empty() {
+                eprintln!("redoxfs-volume: empty password");
+                process::exit(2);
+            }
+            let mut master = [0u8; 32];
+            let mut salt = [0u8; 16];
+            getrandom::fill(&mut master).expect("randomness");
+            getrandom::fill(&mut salt).expect("randomness");
+            let result = fs
+                .tx(|tx| {
+                    tx.create_encrypted_volume(
+                        name,
+                        now.as_secs(),
+                        now.subsec_nanos(),
+                        password.as_bytes(),
+                        &master,
+                        salt,
+                        cost,
+                    )
+                })
+                .map(|_| ());
+            master.fill(0);
+            result
+        }
         ("create", Some(name)) => fs
             .tx(|tx| tx.create_volume(name, now.as_secs(), now.subsec_nanos()))
             .map(|_| ()),

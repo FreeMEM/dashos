@@ -93,6 +93,9 @@ pub struct Transaction<'a, D: Disk> {
     pub(crate) entered: Option<crate::volume::VolumeFields>,
     /// Volumes made, changed (Some) or removed (None) in this transaction, not yet in the list on disk.
     pub(crate) volume_changes: BTreeMap<u64, Option<crate::volume::Volume>>,
+    /// Whether the volume this transaction is in is encrypted, and its keys if it is unlocked (FS10c).
+    pub(crate) sealed: bool,
+    pub(crate) cipher: Option<alloc::sync::Arc<crate::seal::VolumeCipher>>,
 }
 
 impl<'a, D: Disk> Transaction<'a, D> {
@@ -112,6 +115,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
             main: None,
             entered: None,
             volume_changes: BTreeMap::new(),
+            sealed: false,
+            cipher: None,
         }
     }
 
@@ -405,6 +410,16 @@ impl<'a, D: Disk> Transaction<'a, D> {
         &mut self,
         ptr: BlockPtr<T>,
     ) -> Result<BlockData<T>> {
+        self.read_block_as(ptr, T::SEAL)
+    }
+
+    /// `read_block` of a block encrypted as `seal` says, whatever its type: the leaves of the tree of nodes are
+    /// nodes read as raw blocks (FS10c).
+    pub(crate) fn read_block_as<T: BlockTrait + DerefMut<Target = [u8]>>(
+        &mut self,
+        ptr: BlockPtr<T>,
+        seal: crate::seal::Seal,
+    ) -> Result<BlockData<T>> {
         if ptr.is_null() {
             // Pointer is invalid (should this return None?)
             #[cfg(feature = "log")]
@@ -435,6 +450,24 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 return Err(Error::new(EIO));
             }
             self.fs.decrypt(&mut data, ptr.addr());
+        }
+
+        // FS10c: in an encrypted volume, decrypted with its key and checked against its signature.
+        if self.sealed && seal != crate::seal::Seal::None {
+            let Some(cipher) = self.cipher.clone() else {
+                // Without the key a node can be read for its structure, and nothing else.
+                if seal == crate::seal::Seal::Node {
+                    return Ok(BlockData::new(ptr.addr(), data));
+                }
+                return Err(Error::new(syscall::error::EACCES));
+            };
+            cipher.open(seal, ptr.addr(), &mut data);
+            if cipher.mac(ptr.addr(), &data) != ptr.hash() {
+                #[cfg(feature = "log")]
+                log::error!("READ_BLOCK: BAD SIGNATURE for block 0x{:X}", ptr.addr().index());
+                return Err(Error::new(EIO));
+            }
+            return Ok(BlockData::new(ptr.addr(), data));
         }
 
         let block = BlockData::new(ptr.addr(), data);
@@ -538,7 +571,17 @@ impl<'a, D: Disk> Transaction<'a, D> {
     pub fn sync_block<T: BlockTrait + Deref<Target = [u8]>>(
         &mut self,
         ctx: &mut dyn AllocCtx,
+        block: BlockData<T>,
+    ) -> Result<BlockPtr<T>> {
+        self.sync_block_as(ctx, block, T::SEAL)
+    }
+
+    /// `sync_block` of a block encrypted as `seal` says (FS10c).
+    pub(crate) fn sync_block_as<T: BlockTrait + Deref<Target = [u8]>>(
+        &mut self,
+        ctx: &mut dyn AllocCtx,
         mut block: BlockData<T>,
+        seal: crate::seal::Seal,
     ) -> Result<BlockPtr<T>> {
         // Swap block to new address
         let meta = block.addr().meta();
@@ -551,7 +594,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             }
         }
         // Write new block
-        unsafe { self.write_block(block) }
+        unsafe { self.write_block_as(block, seal) }
     }
 
     /// Write block data, returning a calculated block pointer
@@ -562,11 +605,32 @@ impl<'a, D: Disk> Transaction<'a, D> {
         &mut self,
         block: BlockData<T>,
     ) -> Result<BlockPtr<T>> {
+        unsafe { self.write_block_as(block, T::SEAL) }
+    }
+
+    pub(crate) unsafe fn write_block_as<T: BlockTrait + Deref<Target = [u8]>>(
+        &mut self,
+        block: BlockData<T>,
+        seal: crate::seal::Seal,
+    ) -> Result<BlockPtr<T>> {
         if block.addr().is_null() {
             // Pointer is invalid
             #[cfg(feature = "log")]
             log::error!("WRITE_BLOCK: POINTER IS NULL");
             return Err(Error::new(ENOENT));
+        }
+
+        // FS10c: in an encrypted volume, signed and encrypted with its key; without it, it cannot be written.
+        if self.sealed && seal != crate::seal::Seal::None {
+            let cipher = self
+                .cipher
+                .clone()
+                .ok_or(Error::new(syscall::error::EACCES))?;
+            let mut raw = block.data().deref().to_vec();
+            let mac = cipher.mac(block.addr(), &raw);
+            cipher.seal(seal, block.addr(), &mut raw);
+            self.write_cache.insert(block.addr(), raw);
+            return Ok(block.ptr_with_hash(mac));
         }
 
         self.write_cache
@@ -597,7 +661,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let l2 = self.read_block(l3.data().ptrs[i3])?;
         let l1 = self.read_block(l2.data().ptrs[i2])?;
         let l0 = self.read_block(l1.data().ptrs[i1])?;
-        let raw = self.read_block(l0.data().ptrs[i0])?;
+        // The leaves of the tree are nodes.
+        let raw = self.read_block_as(l0.data().ptrs[i0], crate::seal::Seal::Node)?;
 
         //TODO: transmute instead of copy?
         let mut data = match T::empty(BlockLevel::default()) {
@@ -767,7 +832,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             let mut l2 = self.read_block(l3.data().ptrs[i3])?;
             let mut l1 = self.read_block(l2.data().ptrs[i2])?;
             let mut l0 = self.read_block(l1.data().ptrs[i1])?;
-            let mut raw = self.read_block(l0.data().ptrs[i0])?;
+            let mut raw = self.read_block_as(l0.data().ptrs[i0], crate::seal::Seal::Node)?;
 
             // Return if data is equal
             if raw.data().deref() == node.data().deref() {
@@ -778,7 +843,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             raw.data_mut().copy_from_slice(node.data());
 
             // Write updates to newly allocated blocks
-            l0.data_mut().ptrs[i0] = self.sync_block(&mut FsCtx, raw)?;
+            l0.data_mut().ptrs[i0] = self.sync_block_as(&mut FsCtx, raw, crate::seal::Seal::Node)?;
             l1.data_mut().ptrs[i1] = self.sync_block(&mut FsCtx, l0)?;
             l2.data_mut().ptrs[i2] = self.sync_block(&mut FsCtx, l1)?;
             l3.data_mut().ptrs[i3] = self.sync_block(&mut FsCtx, l2)?;
@@ -888,7 +953,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             self.read_block(root_htree_ptr)?
         };
 
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let result = self.find_node_inner(
             root_htree_node.data(),
             name,
@@ -967,7 +1032,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 ctime_nsec,
             );
             // A new directory compares names as its parent does.
-            if node.is_dir() && Names::of(parent.data()) == Names::Caseless {
+            if node.is_dir() && self.names_of(parent.data()).caseless {
                 node.set_flags(node.flags() | NodeFlags::CASEFOLD);
             }
             let node_block_data =
@@ -995,7 +1060,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let links = node.data().links();
         node.data_mut().set_links(links + 1);
 
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let dir_entry = DirEntry::new(node_ptr, name);
         let dir_entry_htree_hash = names.hash(name);
         let record_byte_size = parent.data().record_level().bytes();
@@ -1209,7 +1274,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         let htree_levels = level_data(&parent)?.level0[0].addr().level().0;
-        let names = Names::of(parent.data());
+        let names = self.names_of(parent.data());
         let name_hash = names.hash(name);
 
         let mut htree_root = if htree_levels == 0 {
@@ -1661,7 +1726,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(false);
         }
         let parent = self.read_tree(orig_parent_ptr)?;
-        Ok(Names::of(parent.data())
+        Ok(self.names_of(parent.data())
             .wanted(orig_name)
             .matches(new_name.as_bytes()))
     }

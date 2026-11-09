@@ -49,7 +49,7 @@ DISCO_NVME := target/nvme.img
 REDOXFS_AR := ../archivos/redoxfs/target/release/redoxfs-ar
 VER := ../archivos/herramientas/target/release/ver
 $(DISCO_NVME): FORCE
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
 	cd ../archivos/herramientas && cargo build --release
 	python3 ../tools/disco_archivos.py $@ $(REDOXFS_AR)
 

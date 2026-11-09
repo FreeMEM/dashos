@@ -74,6 +74,8 @@ fn run_model(seed: u64, steps: usize) {
     vols.insert(0, Vol::default());
     let mut names: BTreeMap<u64, String> = BTreeMap::new();
     let (mut made, mut removed, mut taken) = (0, 0, 0);
+    // The encrypted volumes, with their passwords.
+    let mut encrypted: BTreeMap<u64, String> = BTreeMap::new();
     let dirs = ["", "Cajón/"];
 
     for step in 0..steps {
@@ -139,7 +141,28 @@ fn run_model(seed: u64, steps: usize) {
             77..=84 if vols.len() < 6 => {
                 let name = format!("Usuario{made}");
                 made += 1;
-                let new = fs.tx(|tx| tx.create_volume(&name, step as u64, 0)).unwrap();
+                // Half of them encrypted (FS10c), with a password of their own.
+                let new = if rng.below(2) == 0 {
+                    let mut master = [0u8; 32];
+                    master[..8].copy_from_slice(&rng.next().to_le_bytes());
+                    let new = fs
+                        .tx(|tx| {
+                            tx.create_encrypted_volume(
+                                &name,
+                                step as u64,
+                                0,
+                                name.as_bytes(),
+                                &master,
+                                [made as u8; 16],
+                                crate::seal::Cost::CHEAP,
+                            )
+                        })
+                        .unwrap();
+                    encrypted.insert(new, name.clone());
+                    new
+                } else {
+                    fs.tx(|tx| tx.create_volume(&name, step as u64, 0)).unwrap()
+                };
                 assert!(!vols.contains_key(&new) && new != 0);
                 vols.insert(new, Vol::default());
                 names.insert(new, name);
@@ -149,6 +172,7 @@ fn run_model(seed: u64, steps: usize) {
                 fs.tx(|tx| tx.delete_volume(id)).unwrap();
                 vols.remove(&id);
                 names.remove(&id);
+                encrypted.remove(&id);
                 removed += 1;
             }
             // Several volumes in one transaction.
@@ -175,7 +199,14 @@ fn run_model(seed: u64, steps: usize) {
                         .insert("juntos".into(), data.clone());
                 }
             }
-            94..=96 => fs = reopen(fs),
+            // Closing and opening the disk forgets the keys: locked, the check sees only the structure.
+            94..=96 => {
+                fs = reopen(fs);
+                assert_clean(&mut fs, &format!("seed {seed:x} step {step}, locked"));
+                for (&id, password) in &encrypted {
+                    fs.tx(|tx| tx.unlock_volume(id, password.as_bytes())).unwrap();
+                }
+            }
             _ => {}
         }
         if step % 20 == 19 || what >= 60 {
@@ -184,6 +215,12 @@ fn run_model(seed: u64, steps: usize) {
     }
     eprintln!("seed {seed:x}: {made} volumes made, {removed} removed, {taken} snapshots");
     assert!(made > 10 && removed > 5 && taken > 30);
+    // Some removed while locked.
+    for &id in encrypted.keys() {
+        if id % 2 == 0 {
+            fs.tx(|tx| tx.lock_volume(id)).unwrap();
+        }
+    }
 
     // Removing every volume, snapshot and file gives all the space back.
     for &id in vols.keys().filter(|&&id| id != 0) {
@@ -335,4 +372,248 @@ fn repair_keeps_volumes() {
     .unwrap();
     assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["grande"], data);
     assert_clean(&mut fs, "after repair");
+}
+
+#[test]
+fn repair_inside_every_volume() {
+    // FS10d: wrong counts in a plain volume and in an encrypted one, unlocked, are repaired in their own turn; a
+    // locked one is left as it is, and said.
+    let mut fs = new_fs(32);
+    let plain = fs.tx(|tx| tx.create_volume("Claro", 0, 0)).unwrap();
+    let mut ids = vec![plain];
+    for (name, key) in [("Cifrado", 1u8), ("Cerrado", 2)] {
+        ids.push(
+            fs.tx(|tx| {
+                tx.create_encrypted_volume(name, 0, 0, name.as_bytes(), &[key; 32], [key; 16], crate::seal::Cost::CHEAP)
+            })
+            .unwrap(),
+        );
+    }
+    let data = noise(150_000, 4);
+    for &id in &ids {
+        fs.tx_in(id, |tx| {
+            let n = tx.create_node(TreePtr::root(), "fichero", FILE, 0, 0)?.ptr();
+            tx.write_node(n, 0, &data, 0, 0)?;
+            // The damage: counts that do not match.
+            let mut node = tx.read_tree(n)?;
+            node.data_mut().set_links(7);
+            node.data_mut().set_blocks(3);
+            tx.sync_tree(node)
+        })
+        .unwrap();
+    }
+    let mut fs = reopen(fs);
+    for (&id, name) in ids[..2].iter().zip(["Claro", "Cifrado"]) {
+        if id != plain {
+            fs.tx(|tx| tx.unlock_volume(id, name.as_bytes())).unwrap();
+        }
+    }
+    let (before, after) = crate::repair::repair(
+        &mut fs,
+        crate::check::Options { data: true },
+        true,
+        "Perdidos",
+    )
+    .unwrap();
+    let in_volume = |p: &crate::check::Problem, wanted: &str| {
+        matches!(p, crate::check::Problem::InVolume { name, .. } if name == wanted)
+    };
+    for name in ["Claro", "Cifrado"] {
+        assert!(before.problems.iter().any(|p| in_volume(p, name)), "{name} before: {:?}", before.problems);
+    }
+    let after = after.unwrap();
+    // Locked, "Cerrado" is only checked for its structure: its counts are not seen.
+    assert!(after.is_clean(), "after: {:?}", after.problems);
+    for &id in &ids[..2] {
+        assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["fichero"], data);
+    }
+    fs.tx(|tx| tx.unlock_volume(ids[2], b"Cerrado")).unwrap();
+    let report = fs
+        .tx(|tx| crate::check::check(tx, crate::check::Options { data: true }, true))
+        .unwrap();
+    assert!(report.problems.iter().all(|p| in_volume(p, "Cerrado")) && !report.is_clean());
+    // Unlocked, the next repair goes into it too.
+    let (_, after) = crate::repair::repair(&mut fs, crate::check::Options { data: true }, true, "Perdidos").unwrap();
+    assert!(after.unwrap().is_clean());
+    assert_eq!(fs.tx_in(ids[2], |tx| Ok(read_all(tx))).unwrap()["fichero"], data);
+}
+
+/// FS10d: blocks in use damaged at random in a disk with three volumes, one of them encrypted. The repair, with
+/// the encrypted one unlocked, must leave only data that cannot be read, in any volume; if the damage falls on
+/// the list of volumes or a key block, it refuses to repair rather than hand out blocks of a volume it cannot see.
+#[test]
+fn random_damage_in_volumes_is_repaired() {
+    use crate::check::Problem;
+    use crate::tests_check::{ALL, copy_disk, damage};
+    let mut fs = new_fs(48);
+    let plain = fs.tx(|tx| tx.create_volume("Claro", 0, 0)).unwrap();
+    let secret = fs
+        .tx(|tx| tx.create_encrypted_volume("Cifrado", 0, 0, b"clave", &[5; 32], [5; 16], crate::seal::Cost::CHEAP))
+        .unwrap();
+    for (v, id) in [0, plain, secret].into_iter().enumerate() {
+        fs.tx_in(id, |tx| {
+            let root = TreePtr::root();
+            let d = tx.create_node(root, "Cajón", DIR, 0, 0)?.ptr();
+            for i in 0..200 {
+                let parent = [root, d][i % 2];
+                let f = tx.create_node(parent, &format!("Fichero {i}"), FILE, 0, 0)?.ptr();
+                if i % 7 == 0 {
+                    tx.write_node(f, 0, &noise(1000 + i * 300, (v * 1000 + i) as u64), 0, 0)?;
+                }
+                if i % 11 == 0 {
+                    tx.set_comment(f, &format!("comentario {i}"))?;
+                }
+            }
+            Ok(())
+        })
+        .unwrap();
+    }
+    fs.tx_in(secret, |tx| tx.create_snapshot("antes", 0, 0)).unwrap();
+    let mut fs = reopen(fs);
+    fs.tx(|tx| tx.unlock_volume(secret, b"clave")).unwrap();
+    let healthy = fs
+        .tx(|tx| crate::check::check(tx, ALL, true))
+        .unwrap();
+    assert!(healthy.is_clean(), "{:?}", healthy.problems);
+    let used: Vec<u64> = (crate::check::FIRST_BLOCK..healthy.total + crate::check::FIRST_BLOCK)
+        .filter(|i| healthy.is_used(*i))
+        .collect();
+    let block = fs.block;
+    let mut rng = Rng(0x0F5_10D0_0000_0001);
+    let (mut repaired, mut refused) = (0, 0);
+    for round in 0..150 {
+        let mut damaged = FileSystem::open(copy_disk(&mut fs), None, Some(block), false).unwrap();
+        let mut where_ = Vec::new();
+        for _ in 0..1 + rng.below(3) {
+            let i = used[rng.below(used.len())];
+            damage(&mut damaged, unsafe {
+                crate::BlockAddr::new(i, crate::BlockMeta::default())
+            });
+            where_.push(i);
+        }
+        let (mut damaged, read) =
+            FileSystem::open_to_check(damaged.disk, None, Some(block)).unwrap();
+        // The key block may be the damaged one: then the volume stays locked.
+        let _ = damaged.tx(|tx| tx.unlock_volume(secret, b"clave"));
+        let (before, after) = match crate::repair::repair(&mut damaged, ALL, read, "Perdidos") {
+            Ok(result) => result,
+            Err(_) => {
+                refused += 1;
+                continue;
+            }
+        };
+        repaired += 1;
+        let left = after.map_or(before.problems, |a| a.problems);
+        // A damaged snapshot is said, not repaired (FS9), and the dead list it sees then looks unseen. (A damaged
+        // list of snapshots is forgotten.)
+        let only_data = |p: &Problem| match p {
+            Problem::Data { .. } => true,
+            Problem::InVolume { problem, .. } => matches!(
+                **problem,
+                Problem::Data { .. } | Problem::Snapshot { .. } | Problem::Dead { .. }
+            ),
+            _ => false,
+        };
+        assert!(left.iter().all(only_data), "round {round} {where_:?}: {left:?}");
+        let mut again = reopen(damaged);
+        let _ = again.tx(|tx| tx.unlock_volume(secret, b"clave"));
+        for id in [0, plain, secret] {
+            again
+                .tx_in(id, |tx| {
+                    let n = tx.create_node(TreePtr::root(), "nuevo", FILE, 0, 0)?.ptr();
+                    tx.write_node(n, 0, &noise(50_000, round), 0, 0).map(|_| ())
+                })
+                .unwrap_or_else(|e| panic!("round {round} {where_:?}: volume {id}: {e}"));
+        }
+        let now = again.tx(|tx| crate::check::check(tx, ALL, true)).unwrap();
+        // How many blocks a damaged snapshot no longer sees changes with what is written after (to none, too).
+        let shape = |list: &[Problem]| -> Vec<Problem> {
+            list.iter()
+                .filter(|p| !matches!(p, Problem::InVolume { problem, .. } if matches!(**problem, Problem::Dead { .. })))
+                .cloned()
+                .collect()
+        };
+        assert_eq!(shape(&now.problems), shape(&left), "round {round} {where_:?}");
+    }
+    eprintln!("{repaired} repaired, {refused} refused");
+    assert!(repaired > 100);
+}
+
+/// FS10d: the list of volumes and the keys of each encrypted volume are kept twice. One damaged copy loses
+/// nothing and the repair writes it anew; both damaged, the list makes the repair refuse, and the keys leave
+/// that volume closed for good (said, not hidden).
+#[test]
+fn second_copies() {
+    use crate::check::Problem;
+    use crate::tests_check::{ALL, damage};
+    let make = || {
+        let mut fs = new_fs(16);
+        let plain = fs.tx(|tx| tx.create_volume("Claro", 0, 0)).unwrap();
+        let secret = fs
+            .tx(|tx| tx.create_encrypted_volume("Cifrado", 0, 0, b"clave", &[6; 32], [6; 16], crate::seal::Cost::CHEAP))
+            .unwrap();
+        for id in [plain, secret] {
+            fs.tx_in(id, |tx| {
+                let n = tx.create_node(TreePtr::root(), "dentro", FILE, 0, 0)?.ptr();
+                tx.write_node(n, 0, b"sigue aqui", 0, 0).map(|_| ())
+            })
+            .unwrap();
+        }
+        (reopen(fs), plain, secret)
+    };
+    let check = |fs: &mut Fs| fs.tx(|tx| crate::check::check(tx, ALL, true)).unwrap();
+    let intact = |fs: &mut Fs, plain: u64, secret: u64| {
+        fs.tx(|tx| tx.unlock_volume(secret, b"clave")).unwrap();
+        for id in [plain, secret] {
+            assert_eq!(fs.tx_in(id, |tx| Ok(read_all(tx))).unwrap()["dentro"], b"sigue aqui");
+        }
+    };
+
+    // One copy of the list, either.
+    for which in 0..2 {
+        let (mut fs, plain, secret) = make();
+        let head = [fs.header.volumes, fs.header.volumes_copy][which];
+        damage(&mut fs, head.addr());
+        assert_eq!(check(&mut fs).problems, [Problem::VolumesCopy], "copy {which}");
+        intact(&mut fs, plain, secret);
+        let (_, after) = crate::repair::repair(&mut fs, ALL, true, "Perdidos").unwrap();
+        assert!(after.unwrap().is_clean(), "copy {which}");
+        let mut fs = reopen(fs);
+        assert!(check(&mut fs).is_clean());
+        intact(&mut fs, plain, secret);
+    }
+    // Both copies of the list: no repair.
+    let (mut fs, _, _) = make();
+    for head in [fs.header.volumes, fs.header.volumes_copy] {
+        damage(&mut fs, head.addr());
+    }
+    assert!(check(&mut fs).problems.contains(&Problem::Volumes));
+    assert!(crate::repair::repair(&mut fs, ALL, true, "Perdidos").is_err());
+
+    // One copy of the keys, either.
+    for which in 0..2 {
+        let (mut fs, plain, secret) = make();
+        let volume = fs.tx(|tx| tx.volumes()).unwrap()[1];
+        damage(&mut fs, [volume.keys, volume.keys_copy][which].addr());
+        assert_eq!(
+            check(&mut fs).problems,
+            [Problem::KeysCopy { name: "Cifrado".into() }],
+            "keys {which}"
+        );
+        intact(&mut fs, plain, secret);
+        let (_, after) = crate::repair::repair(&mut fs, ALL, true, "Perdidos").unwrap();
+        assert!(after.unwrap().is_clean(), "keys {which}: {:?}", check(&mut fs).problems);
+        let mut fs = reopen(fs);
+        assert!(check(&mut fs).is_clean());
+        intact(&mut fs, plain, secret);
+    }
+    // Both copies of the keys: the volume cannot be opened, the rest goes on.
+    let (mut fs, plain, secret) = make();
+    let volume = fs.tx(|tx| tx.volumes()).unwrap()[1];
+    for keys in [volume.keys, volume.keys_copy] {
+        damage(&mut fs, keys.addr());
+    }
+    assert_eq!(check(&mut fs).problems, [Problem::Keys { name: "Cifrado".into() }]);
+    assert!(fs.tx(|tx| tx.unlock_volume(secret, b"clave")).is_err());
+    assert_eq!(fs.tx_in(plain, |tx| Ok(read_all(tx))).unwrap()["dentro"], b"sigue aqui");
 }

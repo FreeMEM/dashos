@@ -7,6 +7,7 @@ use crate::{BlockLevel, BlockTrait, RECORD_LEVEL};
 pub struct RecordRaw(pub(crate) Vec<u8>);
 
 unsafe impl BlockTrait for RecordRaw {
+    const SEAL: crate::seal::Seal = crate::seal::Seal::Full;
     fn empty(level: BlockLevel) -> Option<Self> {
         if level.0 <= RECORD_LEVEL {
             Some(Self(vec![0; level.bytes() as usize]))

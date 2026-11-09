@@ -78,6 +78,7 @@ poly1305 = "0.8"
 range-tree = { version = "0.1.1", optional = true }
 redox_syscall = "0.9.5"
 seahash = { version = "4.1.0", default-features = false }
+siphasher = { version = "1", default-features = false }
 smallvec = { version = "1.15.2", optional = true }
 termion = { version = "4", optional = true }
 uuid = { version = "1.4", default-features = false }

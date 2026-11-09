@@ -141,7 +141,7 @@ servicio copia cada envío antes de comprobarlo. Hasta 16 sectores por envío.
 
 Pendiente: varias colas de E/S del NVMe.
 
-## Archivos (FS1, FS3, FS7, FS8, FS9)
+## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 
 `usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": hoy, el que
 empieza en el MB 1 del disco NVMe de `virt`. Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
@@ -157,7 +157,7 @@ Todo va en little-endian.
 | Bytes | Campo |
 |---|---|
 | 0-3 | orden |
-| 4-7 | asa (0: la raíz del volumen) |
+| 4-7 | asa (0: la raíz del volumen principal) |
 | 8-15 | a |
 | 16-23 | b |
 | 24-27 | largo del nombre |
@@ -165,7 +165,11 @@ Todo va en little-endian.
 **Respuesta**: 32 bytes por el canal de respuesta del cliente: estado (0-3), asa (4-7), a (8-15), b (16-23), c (24-31).
 Estados: 0 bien, -1 mal formado, -2 no existe, -3 no es un cajón, -4 es un cajón, -5 asa mala, -6 sin sitio (de asas
 o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno, -12 protegido
-(sin permiso de escritura, o con "no borrar").
+(sin permiso de escritura, o con "no borrar"; o un volumen cifrado cerrado, o una contraseña que no es), -13 en uso
+(un volumen con algo abierto).
+
+Cada asa es de un volumen (FS10): lo que se busca, crea o renombra desde ella queda en el suyo. La asa 0 es la raíz
+del principal; la orden 21 da la raíz de otro.
 
 | Orden | Qué | Pide | Devuelve |
 |---|---|---|---|
@@ -186,10 +190,16 @@ o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no va
 | 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
 | 15 proteger | Cambia los bits del Amiga y los permisos de Unix | asa, a bits, b permisos (hasta 0o7777) | — |
 | 16 comprobar | Comprueba el disco entero, sin cambiar nada (FS8); pone en la ventana los problemas, uno por línea, hasta llenarla | a: 1 = leer también los datos | a cuántos problemas, b bytes en la ventana, c bytes en uso |
-| 17 instantáneas | Pone en la ventana las instantáneas del volumen, de la más vieja a la más nueva: fecha (8), largo del nombre (1) y el nombre; la siguiente en un múltiplo de 8 (FS9) | — | a cuántas caben, b cuántas hay, c bytes usados |
-| 18 tomar | Toma una instantánea del volumen | nombre (hasta 64 bytes, sin ':' ni '/') | — |
-| 19 descartar | Borra una instantánea y suelta lo que solo veía ella | nombre | — |
-| 20 volver | Vuelve el volumen a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes dejan de valer | nombre | — |
+| 17 instantáneas | Pone en la ventana las instantáneas del volumen de la asa, de la más vieja a la más nueva: fecha (8), largo del nombre (1) y el nombre; la siguiente en un múltiplo de 8 (FS9) | asa | a cuántas caben, b cuántas hay, c bytes usados |
+| 18 tomar | Toma una instantánea del volumen de la asa | asa, nombre (hasta 64 bytes, sin ':' ni '/') | — |
+| 19 descartar | Borra una instantánea y suelta lo que solo veía ella | asa, nombre | — |
+| 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer | asa, nombre | a el volumen |
+| 21 volumen | Abre la raíz del volumen `nombre` (vacío: el principal) (FS10). Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
+| 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
+| 23 hacer volumen | Hace un volumen sin cifrar. Los cifrados, de momento, solo con `redoxfs-volume` en Linux: DashOS no tiene aún azar de calidad para las llaves | nombre; a = 0 | a su número |
+| 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
+| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña no se guarda | nombre "volumen\0contraseña" | — |
+| 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
 tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte

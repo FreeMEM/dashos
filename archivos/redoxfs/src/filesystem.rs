@@ -33,6 +33,8 @@ pub struct FileSystem<D: Disk> {
     pub(crate) compress_cache: Vec<u8>,
     /// How many times each node is open, by `Transaction::usage_key`: the volume and the node.
     pub node_usages: BTreeMap<u64, u64>,
+    /// The keys of the encrypted volumes that are unlocked, by volume (FS10c).
+    pub(crate) unlocked: BTreeMap<u64, alloc::sync::Arc<crate::seal::VolumeCipher>>,
 }
 
 impl<D: Disk> FileSystem<D> {
@@ -120,6 +122,7 @@ impl<D: Disk> FileSystem<D> {
                 cipher_opt,
                 compress_cache: compress_cache(),
                 node_usages: BTreeMap::new(),
+                unlocked: BTreeMap::new(),
             };
 
             let allocator_read = match unsafe { fs.reset_allocator() } {
@@ -210,6 +213,7 @@ impl<D: Disk> FileSystem<D> {
             cipher_opt,
             compress_cache: compress_cache(),
             node_usages: BTreeMap::new(),
+            unlocked: BTreeMap::new(),
         };
 
         // Write header generation zero

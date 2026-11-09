@@ -217,6 +217,7 @@ pub struct Node {
 }
 
 unsafe impl BlockTrait for Node {
+    const SEAL: crate::seal::Seal = crate::seal::Seal::Node;
     fn empty(level: BlockLevel) -> Option<Self> {
         if level.0 == 0 {
             Some(Self::default())

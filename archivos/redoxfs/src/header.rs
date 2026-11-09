@@ -49,8 +49,10 @@ pub struct Header {
     pub volumes: BlockPtr<VolumeList>,
     /// DashFS 5: the number of the next volume made; numbers are never used twice.
     pub next_volume: Le<u64>,
+    /// DashFS 5: a second copy of the list of volumes, in other blocks: one damaged block must not lose them all.
+    pub volumes_copy: BlockPtr<VolumeList>,
     /// Padding
-    pub padding: [u8; BLOCK_SIZE as usize - 3264],
+    pub padding: [u8; BLOCK_SIZE as usize - 3280],
     /// encrypted hash of header data without hash, set to hash and padded if disk is not encrypted
     pub encrypted_hash: [u8; 16],
     /// hash of header data without hash
@@ -188,7 +190,8 @@ impl Default for Header {
             dead: BlockPtr::default(),
             volumes: BlockPtr::default(),
             next_volume: 0.into(),
-            padding: [0; BLOCK_SIZE as usize - 3264],
+            volumes_copy: BlockPtr::default(),
+            padding: [0; BLOCK_SIZE as usize - 3280],
             encrypted_hash: [0; 16],
             hash: 0.into(),
         }

@@ -83,6 +83,7 @@ pub mod repair;
 pub mod snapshot;
 mod transaction;
 mod tree;
+pub mod seal;
 pub mod volume;
 #[cfg(feature = "std")]
 mod unmount;
@@ -99,3 +100,5 @@ mod tests_check;
 mod tests_snapshot;
 #[cfg(test)]
 mod tests_volume;
+#[cfg(all(feature = "std", test))]
+mod tests_seal;
