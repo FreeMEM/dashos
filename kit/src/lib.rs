@@ -8,4 +8,5 @@ extern crate alloc;
 pub mod grupos;
 pub mod lienzo;
 pub mod objetos;
+pub mod tema;
 pub mod texto;

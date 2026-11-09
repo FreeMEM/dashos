@@ -29,7 +29,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | |
-| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | |
+| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
 
 ## Bitácora
@@ -61,4 +61,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   `colocar` deja el rectángulo de cada hoja, cada una centrada a lo ancho si no llega. Pruebas al píxel: dos botones
   iguales, pesos 100 y 300 con uno fijo en medio, un máximo que cede lo suyo, centrado, grupos dentro de grupos (una
   ventana con texto y fila de botones), y menos sitio que el mínimo (se sale, no se aplasta).
+- K6 (adelantado, lo necesitan los controles): `kit/src/tema.rs`. El esquema de referencia de Material 3 (el
+  violeta "baseline"), claro y oscuro: primario, contenedor, superficie y su variante, contornos, con sus colores de
+  contenido; radio de los botones y tamaños de letra de etiqueta (14) y texto (16). Capas de estado del color del
+  contenido: encima 8 %, foco y pulsado 10 %; desactivado: contenido al 38 % y fondo al 12 %. Los valores de los
+  colores están puestos de memoria de la especificación: sin comprobar todavía contra m3.material.io. Sacar el
+  esquema de un color base (Material You, espacio HCT) queda para después. Pruebas: las capas y que en los dos
+  temas el texto contrasta con su fondo.
 
