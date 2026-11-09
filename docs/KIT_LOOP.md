@@ -27,7 +27,7 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K1 | Lienzo: rectángulos, esquinas redondeadas, bordes, mezcla con alfa, recortes | Píxeles en el PC | hecho |
 | K2 | Texto: Roboto con `fontdue`, caché de glifos, medir y dibujar líneas en UTF-8 | Medidas y píxeles; ñ, acentos | hecho |
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
-| K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | |
+| K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | |
 | K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | |
 | K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | |
@@ -55,4 +55,10 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   corta a los 32 saltos. Lo que cambia queda "sucio" para dibujarlo. Pruebas: un deslizador (0 a 10) que pone
   "Volumen: 7" en un texto y se queda en 10 si se le pide 99; una casilla que desactiva un botón; dos deslizadores
   atados en los dos sentidos; una cadena que cambiaría siempre, cortada.
+- K4: `kit/src/grupos.rs`. Árbol de colocación aparte de los objetos (`Nodo`: hoja con su `Medida`, o grupo
+  horizontal o vertical con espacio y margen). `medir` saca la medida de un grupo de la de sus hijos; `repartir` da a
+  cada uno su mínimo y reparte lo que sobra por pesos sin pasar del máximo (sin perder píxeles al redondear);
+  `colocar` deja el rectángulo de cada hoja, cada una centrada a lo ancho si no llega. Pruebas al píxel: dos botones
+  iguales, pesos 100 y 300 con uno fijo en medio, un máximo que cede lo suyo, centrado, grupos dentro de grupos (una
+  ventana con texto y fila de botones), y menos sitio que el mínimo (se sale, no se aplasta).
 
