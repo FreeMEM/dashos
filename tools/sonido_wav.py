@@ -84,9 +84,43 @@ def comprobar(ruta):
     return ritmo, fallos, resumen
 
 
+def comprobar_paula(ruta):
+    """S19, fase 2 (`usuario/src/bin/paula_prueba.rs`): audio.device nativo. A la izquierda, 439,8 Hz durante 1 s; a
+    la derecha, 659,8 Hz 0,5 s y, tras robarle el canal, 879,7 Hz otros 0,5 s. Cada lado solo con lo suyo."""
+    ritmo, izq, der = leer(ruta)
+    if ritmo != 48000:
+        return ritmo, [f"el WAV va a {ritmo} Hz, no a 48000"], ""
+    reloj = 3546895
+    f440, f660, f880 = reloj / 252 / 32, reloj / 168 / 32, reloj / 126 / 32
+    v = ritmo // 10
+    fallos = []
+    trozos = range(0, len(izq) - v + 1, v)
+    i440 = [i for i, k in enumerate(trozos) if nivel(izq[k : k + v], f440, ritmo) > 0.3]
+    d660 = [i for i, k in enumerate(trozos) if nivel(der[k : k + v], f660, ritmo) > 0.2]
+    d880 = [i for i, k in enumerate(trozos) if nivel(der[k : k + v], f880, ritmo) > 0.2]
+    if not 9 <= len(i440) <= 11:
+        fallos.append(f"440 Hz a la izquierda en {len(i440)} ventanas de 0,1 s, no unas 10")
+    if not 4 <= len(d660) <= 6:
+        fallos.append(f"660 Hz a la derecha en {len(d660)} ventanas, no unas 5")
+    if not 4 <= len(d880) <= 6:
+        fallos.append(f"880 Hz a la derecha en {len(d880)} ventanas, no unas 5")
+    if d660 and d880 and d880[0] <= d660[-1]:
+        fallos.append("el 880 Hz empieza antes de que se robe el canal del 660")
+    for nombre, lista in (("440 Hz", i440), ("660 Hz", d660), ("880 Hz", d880)):
+        if lista and lista[-1] - lista[0] + 1 != len(lista):
+            fallos.append(f"el tono de {nombre} tiene huecos: ventanas {lista}")
+    cruzado = [k for k in trozos if nivel(izq[k : k + v], f660, ritmo) > 0.02 or nivel(izq[k : k + v], f880, ritmo) > 0.02 or nivel(der[k : k + v], f440, ritmo) > 0.02]
+    if cruzado:
+        fallos.append(f"un lado suena con lo del otro en {len(cruzado)} ventanas")
+    resumen = f"440 Hz a la izquierda en {len(i440)} ventanas; a la derecha 660 Hz en {len(d660)} y 880 Hz en {len(d880)}"
+    return ritmo, fallos, resumen
+
+
 def main():
-    ruta = sys.argv[1]
-    ritmo, fallos, resumen = comprobar(ruta)
+    if sys.argv[1] == "--paula":
+        ritmo, fallos, resumen = comprobar_paula(sys.argv[2])
+    else:
+        ritmo, fallos, resumen = comprobar(sys.argv[1])
     if fallos:
         print("MAL: el sonido:")
         for f in fallos:
