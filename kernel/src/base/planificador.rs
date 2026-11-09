@@ -71,6 +71,8 @@ pub struct Hilo {
     /// Está en la cola porque lo echaron cuando corría, no porque despertó (M4): calcula. Entre núcleos con trabajo
     /// solo se mueven estos; los que despiertan (los que hablan con otros) se quedan donde están.
     expulsado: bool,
+    /// Duerme hasta este momento (cuentas del contador) en la lista `dormidos` de su núcleo (M2b, llamada 30), o 0.
+    despierta: u64,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
@@ -137,6 +139,9 @@ struct Nucleo {
     /// El hilo cuyos registros de FP están ahora en la FPU de este núcleo (C28), o nulo. Los hilos no cambian de
     /// núcleo, así que basta con un dueño por núcleo: si solo un hilo usa la FPU, no se guarda nada nunca.
     fp_dueno: *mut Hilo,
+    /// Hilos de este núcleo dormidos hasta un momento (M2b): los despierta su propio planificador, que programa el
+    /// reloj para el primero. Sin canal, sin temporizador y sin pasar por el núcleo 0.
+    dormidos: Vec<*mut Hilo>,
 }
 
 unsafe impl Send for Nucleo {}
@@ -183,7 +188,7 @@ static CONTADORES: [Contadores; MAX_NUCLEOS] =
     [const { Contadores { tics: AtomicU64::new(0), cambios: AtomicU64::new(0), ocioso: AtomicU64::new(0) } }; MAX_NUCLEOS];
 
 /// Un contador del núcleo `n`: 1 = interrupciones, 2 = cambios de hilo, 3 = microsegundos en el hilo ocioso; 4 = hilos
-/// robados entre núcleos, de todos. `None` si no hay.
+/// robados entre núcleos, de todos; 5, 6 y 7 = páginas de RAM, páginas libres y bytes del kernel. `None` si no hay.
 pub fn contador(que: u64, n: usize) -> Option<u64> {
     let c = CONTADORES.get(n)?;
     match que {
@@ -191,6 +196,16 @@ pub fn contador(que: u64, n: usize) -> Option<u64> {
         2 => Some(c.cambios.load(Ordering::Relaxed)),
         3 => Some((c.ocioso.load(Ordering::Relaxed) as u128 * 1_000_000 / reloj::frecuencia().max(1) as u128) as u64),
         4 => Some(ROBOS.load(Ordering::Relaxed)),
+        // Memoria (R): páginas de RAM, páginas libres y bytes de la imagen del kernel (código, datos, bss y sus pilas).
+        5 => Some(crate::memoria::paginas().total() as u64),
+        6 => Some(crate::memoria::paginas().libres() as u64),
+        7 => {
+            unsafe extern "C" {
+                static __kernel_inicio: u8;
+                static __kernel_fin: u8;
+            }
+            Some(unsafe { &__kernel_fin as *const u8 as u64 - &__kernel_inicio as *const u8 as u64 })
+        }
         _ => None,
     }
 }
@@ -249,6 +264,7 @@ pub fn iniciar_nucleo() {
         en_cambio: AtomicBool::new(false),
         listo_desde: 0,
         expulsado: false,
+        despierta: 0,
     }));
     fpen(FPEN_ATRAPAR);
     registros_el0();
@@ -262,7 +278,9 @@ pub fn iniciar_nucleo() {
     listos.reserve(64);
     let mut muertos = Vec::new();
     muertos.reserve(32);
-    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos, muertos, desde: reloj::ahora(), min_virtual: 0, fp_dueno: core::ptr::null_mut() });
+    let mut dormidos = Vec::new();
+    dormidos.reserve(64);
+    *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos, muertos, desde: reloj::ahora(), min_virtual: 0, fp_dueno: core::ptr::null_mut(), dormidos });
     PRESENTES.fetch_or(1 << n, Ordering::AcqRel);
 }
 
@@ -334,6 +352,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         en_cambio: AtomicBool::new(false),
         listo_desde: reloj::ahora(),
         expulsado: false,
+        despierta: 0,
     }));
     nc.listos.push(h);
     publicar_carga(nucleo, nc);
@@ -566,6 +585,17 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             // el mismo que toma `matar_proceso`, así que no hay hueco entre marcarlo y bloquearse.
             if bloquear && !(*actual).matar {
                 (*actual).estado = Estado::Bloqueado;
+                // Duerme hasta un momento (M2b). Si no cabe en la lista (no debería: se reserva de antemano), no duerme.
+                if (*actual).despierta != 0 {
+                    if nucleo.dormidos.len() < nucleo.dormidos.capacity() {
+                        nucleo.dormidos.push(actual);
+                    } else {
+                        (*actual).despierta = 0;
+                        (*actual).estado = Estado::Corriendo;
+                    }
+                }
+            } else {
+                (*actual).despierta = 0;
             }
             // Cobrar el tiempo al hilo que corría: al presupuesto si es de plazo, al tiempo virtual si es justo.
             if actual == nucleo.ocioso {
@@ -583,6 +613,24 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         }
         soltar();
         nucleo.actualizar_min();
+        // Los dormidos de este núcleo a los que ya les toca (M2b): a la cola, como al despertar.
+        let mut i = 0;
+        while i < nucleo.dormidos.len() {
+            let h = nucleo.dormidos[i];
+            if unsafe { (*h).despierta } <= ahora {
+                nucleo.dormidos.swap_remove(i);
+                unsafe {
+                    (*h).despierta = 0;
+                    (*h).estado = Estado::Listo;
+                    (*h).virtual_ = (*h).virtual_.max(nucleo.min_virtual.saturating_sub(credito()));
+                    (*h).listo_desde = ahora;
+                    (*h).expulsado = false;
+                }
+                nucleo.listos.push(h);
+            } else {
+                i += 1;
+            }
+        }
 
         // Renovar presupuestos de los hilos de plazo de este núcleo.
         unsafe {
@@ -676,6 +724,10 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                     proxima = proxima.min(e.max(1));
                 }
             }
+        }
+        // El dormido que despierta antes (M2b).
+        if let Some(d) = nucleo.dormidos.iter().map(|&h| unsafe { (*h).despierta }).min() {
+            proxima = proxima.min(d.saturating_sub(ahora).max(1));
         }
         // En el núcleo 0, también el temporizador más próximo (M2): sin esto, la resolución sería la del tic.
         if n == 0 {
@@ -808,6 +860,19 @@ pub fn ceder() {
     crate::cerrojo::restaurar_irq(estado);
 }
 
+/// Duerme el hilo actual `us` microsegundos (M2b, llamada 30): sin canal ni temporizador, en la lista de su núcleo. Vuelve
+/// antes si lo matan.
+pub fn dormir_us(us: u64) {
+    let fr = reloj::frecuencia();
+    let cuentas = ((us as u128 * fr as u128) / 1_000_000).min(u64::MAX as u128 / 2) as u64;
+    let vence = reloj::ahora().saturating_add(cuentas.max(1));
+    let estado = crate::cerrojo::enmascarar_irq();
+    if let Some(()) = aqui(|nc| unsafe { (*nc.actual).despierta = vence }) {
+        planificar_enmascarado(true, || {});
+    }
+    crate::cerrojo::restaurar_irq(estado);
+}
+
 /// Bloquea el hilo actual hasta que alguien lo despierte.
 pub fn bloquear() {
     planificar_con(true, || {});
@@ -852,6 +917,11 @@ fn despertar_en(h: *mut Hilo) -> (usize, bool) {
     let adelanta = unsafe {
         if (*h).estado != Estado::Bloqueado {
             return (n, false);
+        }
+        // Dormía hasta un momento (M2b) y lo despiertan antes (para matarlo): fuera de la lista.
+        if (*h).despierta != 0 {
+            (*h).despierta = 0;
+            nc.dormidos.retain(|&d| d != h);
         }
         (*h).estado = Estado::Listo;
         nc.actualizar_min();

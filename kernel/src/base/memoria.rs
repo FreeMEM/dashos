@@ -261,6 +261,11 @@ impl Paginas {
         self.libres
     }
 
+    /// Páginas de RAM que conoce el kernel (M0, para medir la memoria ocupada).
+    pub fn total(&self) -> usize {
+        self.total
+    }
+
     /// Reserva `n` páginas seguidas, alineadas a `alineacion` páginas, en la zona. Devuelve la dirección física.
     pub fn reservar(&mut self, zona: Zona, n: usize, alineacion: usize) -> Option<u64> {
         let tope = match zona {

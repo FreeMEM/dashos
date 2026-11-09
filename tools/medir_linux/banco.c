@@ -12,6 +12,7 @@
 #include <string.h>
 #include <sys/mount.h>
 #include <sys/reboot.h>
+#include <sys/klog.h>
 #include <sys/resource.h>
 #include <sys/wait.h>
 #include <time.h>
@@ -231,7 +232,65 @@ static void dormilon(uint64_t dormir_ms) {
            (unsigned long long)d.unidades);
 }
 
-int main(void) {
+static unsigned long long meminfo(const char *clave) {
+    FILE *f = fopen("/proc/meminfo", "r");
+    char l[256];
+    unsigned long long v = 0;
+    size_t n = strlen(clave);
+    while (f && fgets(l, sizeof l, f))
+        if (!strncmp(l, clave, n) && l[n] == ':') v = strtoull(l + n + 1, 0, 10);
+    if (f) fclose(f);
+    return v;
+}
+
+/* P7: la memoria. Ocupada nada más arrancar (RAM que conoce el kernel menos la libre), el kernel en sí (del mensaje
+ * "Memory: X/Y available (... kernel code, ... rwdata, ... rodata, ... init, ... bss ...)") y lo que cuesta cada
+ * proceso de más: 20 que esperan sin hacer nada, cada uno un programa nuevo (fork y execve de /init, como DashOS carga
+ * un ELF), y la diferencia de memoria libre entre 20. */
+static void memoria(void) {
+    static char log[1 << 17];
+    int n = klogctl(3, log, sizeof log - 1);
+    unsigned long long total_kb = 0, codigo = 0, rw = 0, ro = 0, ini = 0, bss = 0;
+    if (n > 0) {
+        log[n] = 0;
+        char *m = strstr(log, "Memory: ");
+        if (m) {
+            unsigned long long disp;
+            sscanf(m, "Memory: %lluK/%lluK available (%lluK kernel code, %lluK rwdata, %lluK rodata, %lluK init, %lluK bss",
+                   &disp, &total_kb, &codigo, &rw, &ro, &ini, &bss);
+        }
+    }
+    unsigned long long libre0 = meminfo("MemFree");
+    int p[2];
+    pipe(p);
+    pid_t hijos[20];
+    for (int i = 0; i < 20; i++) {
+        hijos[i] = fork();
+        if (hijos[i] == 0) {
+            close(p[1]);
+            dup2(p[0], 0);
+            char *argv[] = {"init", "espera", 0};
+            execve("/init", argv, 0);
+            _exit(1);
+        }
+    }
+    sleep(1);
+    unsigned long long libre1 = meminfo("MemFree");
+    close(p[1]);
+    close(p[0]);
+    esperar_todos();
+    printf("[medir] memoria usada_kb=%llu kernel_kb=%llu por_proceso_kb=%llu total_kb=%llu slab_kb=%llu tablas_kb=%llu\n",
+           total_kb - libre0, codigo + rw + ro + bss, libre0 > libre1 ? (libre0 - libre1) / 20 : 0, total_kb,
+           meminfo("Slab"), meminfo("PageTables"));
+}
+
+int main(int argc, char **argv) {
+    /* Un proceso de la prueba de memoria: espera a que se cierre la tubería y acaba. */
+    if (argc > 1 && !strcmp(argv[1], "espera")) {
+        char c;
+        while (read(0, &c, 1) > 0) {}
+        return 0;
+    }
     mount("proc", "/proc", "proc", 0, 0);
     /* Sin /dev/console en el initramfs, la salida no llega: devtmpfs y la consola a mano. */
     mount("devtmpfs", "/dev", "devtmpfs", 0, 0);
@@ -243,6 +302,7 @@ int main(void) {
     char l[256];
     if (v && fgets(l, sizeof l, v)) printf("  %s", l);
     if (v) fclose(v);
+    memoria();
     ociosos();
     ida_vuelta(0, 0, 20000);
     ida_vuelta(1, 0, 20000);

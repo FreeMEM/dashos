@@ -312,6 +312,32 @@ fn ociosos() {
     println!("[medir] ociosos{}", core::str::from_utf8(t.bytes()).unwrap_or(""));
 }
 
+/// P7 (R): la memoria. Ocupada nada más arrancar (páginas de RAM menos las libres), el kernel en sí y lo que cuesta
+/// cada proceso de más: 20 hijos que esperan una orden sin hacer nada, y la diferencia de páginas libres entre 20.
+fn memoria(p: &Paquete) {
+    let total = contador(5, 0);
+    let libres0 = contador(6, 0);
+    let kernel = contador(7, 0);
+    let mut hijos: [Option<Hijo>; 20] = Default::default();
+    for h in hijos.iter_mut() {
+        *h = lanzar(p, "hijo-rust", None);
+    }
+    dashos::dormir_us(200_000);
+    let libres1 = contador(6, 0);
+    let vivos = hijos.iter().filter(|h| h.is_some()).count() as u64;
+    for h in hijos.into_iter().flatten() {
+        h.acabar();
+    }
+    println!(
+        "[medir] memoria usada_kb={} kernel_kb={} por_proceso_kb={} total_kb={} procesos={}",
+        (total - libres0) * 4,
+        kernel / 1024,
+        if vivos > 0 { libres0.saturating_sub(libres1) * 4 / vivos } else { 0 },
+        total * 4,
+        vivos
+    );
+}
+
 fn principal() -> u64 {
     if memoria_proyectar(1, PAQUETE, false) != 0 {
         println!("  [medir] sin paquete");
@@ -320,6 +346,7 @@ fn principal() -> u64 {
     let tamano = dashos::memoria_tamano(1).max(0) as usize;
     let p = Paquete { base: unsafe { core::slice::from_raw_parts(PAQUETE as *const u8, tamano) } };
     println!("[medir] empieza");
+    memoria(&p);
     ociosos();
     for lenguaje in ["rust", "c"] {
         ida_vuelta(&p, lenguaje, 20_000, Some(false), 0);

@@ -57,6 +57,10 @@ Pruebas:
 | M8 | Pesos: foco del compositor y procesos de fondo (con permiso) | pendiente |
 | M9 | Lo que salga de medir | abierto |
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
+| M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
+| R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | en curso |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | pendiente |
+| P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | pendiente |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
 Cada paso: medir antes, cambiar, medir después, `make prueba` (raspi4b) y `make arranque-virt` sin fallos, apuntar
@@ -219,4 +223,16 @@ aquí los números y commit local.
   en mensajes grandes.
 - `docs/medidas/m6a.json` contra `m5.json`: ida y vuelta de 91-99 a 58 µs (-37 a -42 %, igual en Rust, C y Dash);
   con 4 calculando, de 122 a 91 µs (Linux: 119). Lo demás igual (reparto ±2 %, temporizador ±3 % en la mediana).
-- `make prueba` (3 vueltas): bien. `make arranque-virt`: en otro worktree, pendiente al escribir esto.
+- `make prueba` (3 vueltas): bien. `make arranque-virt` (en otro worktree, con el sonido): bien.
+
+### 2026-11-10 — M2b: llamada 30, dormir
+
+- Dormir costaba seis llamadas (crear un canal y un temporizador, leer, cerrar tres llaves) y el aviso pasaba por el
+  repartidor del núcleo 0 y un aviso entre núcleos. Ahora `dormir_us` (llamada 30) apunta el momento en el hilo y lo
+  deja en `dormidos` de su núcleo; el planificador de ese núcleo programa su reloj para el primero y lo despierta él
+  mismo, como al despertar (crédito acotado de M1). Un hilo dormido está bloqueado: no se roba. Si lo matan,
+  `despertar_en` lo saca de la lista. `dashos::dormir_us` usa la llamada 30 y, si el kernel no la tiene, lo de antes.
+- `docs/medidas/m2b.json` contra `m6a.json`: espera de 1 ms, retraso mediano de 172 a 35 µs sin carga (Linux: 81) y de
+  202 a 46 µs con 4 calculando (Linux: 123); p99 sin carga de 432 a 171 µs (Linux: 203). Con carga, el p99 baja de
+  772 a 510 µs pero sigue peor que Linux (228): pendiente para M9. Lo demás igual (±5 %).
+- `make prueba` (3 vueltas) y `make arranque-virt` (con el sonido): bien.
