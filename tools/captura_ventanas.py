@@ -76,14 +76,33 @@ def main():
         ((75, 75), ROJO),
         ((75, 72 + 115), BLANCO),
     ]
-    vale = [all(casi(en(x, y), c) for (x, y), c in o) for o in (orden1, orden2)]
+    # Un clic (W8) puede subir la de (40, 40) encima de la otra.
+    # Orden 3: ventana-a en (40, 40) encima de ventana-b en (72, 72).
+    orden3 = [
+        ((45, 45), ROJO),
+        ((45, 40 + 115), BLANCO),
+        ((75, 75), ROJO),
+        ((75, 165), VERDE),
+        ((85, 165), mitad(FONDO)),
+    ]
+    # Orden 4: ventana-b en (40, 40) encima de ventana-a en (72, 72): en (75, 75) el negro a medias de b sobre a.
+    orden4 = [
+        ((45, 45), VERDE),
+        ((55, 45), mitad(FONDO)),
+        ((75, 75), mitad(ROJO)),
+        ((85, 75), VERDE),
+        ((75, 165), ROJO),
+        ((75, 72 + 115), BLANCO),
+    ]
+    ordenes = (orden1, orden2, orden3, orden4)
+    vale = [all(casi(en(x, y), c) for (x, y), c in o) for o in ordenes]
     if not any(vale):
-        detalle = ", ".join(f"({x}, {y}) = {en(x, y)}" for (x, y), _ in orden1 + orden2)
+        detalle = ", ".join(f"({x}, {y}) = {en(x, y)}" for (x, y), _ in orden1 + orden2 + orden3 + orden4)
         fallos.append(f"las ventanas no están donde deben: {detalle}")
     if fallos:
         print("MAL: la captura del compositor:", *fallos, sep="\n  ")
         sys.exit(1)
-    print(f"BIEN: la captura del compositor ({ancho}x{alto}, orden {'1' if vale[0] else '2'})")
+    print(f"BIEN: la captura del compositor ({ancho}x{alto}, orden {vale.index(True) + 1})")
 
 
 main()

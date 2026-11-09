@@ -6,8 +6,8 @@ use alloc::vec::Vec;
 use dashos::println;
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{
-    self, wl_callback, wl_compositor, wl_display, wl_registry, wl_shm, wl_shm_pool, wl_surface, xdg_surface,
-    xdg_toplevel, xdg_wm_base,
+    self, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
+    wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland::{Escritor, leer_args};
 
@@ -26,6 +26,9 @@ const BUFER: u32 = 8;
 const SUPERFICIE: u32 = 9;
 const XDG_SUPERFICIE: u32 = 10;
 const VENTANA: u32 = 11;
+const ASIENTO: u32 = 12;
+const PUNTERO: u32 = 13;
+const TECLADO: u32 = 14;
 /// Los avisos de frame, uno por cuadro desde aquí.
 const AVISO: u32 = 100;
 
@@ -123,7 +126,9 @@ pub fn ventana(
         }
     }
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
-    let (Some(gc), Some(gs), Some(gx)) = (global("wl_compositor"), global("wl_shm"), global("xdg_wm_base")) else {
+    let (Some(gc), Some(gs), Some(gx), Some(ga)) =
+        (global("wl_compositor"), global("wl_shm"), global("xdg_wm_base"), global("wl_seat"))
+    else {
         println!("  [{}] faltan globales", nombre);
         return false;
     };
@@ -142,6 +147,9 @@ pub fn ventana(
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gx).texto(Some("xdg_wm_base")).uint(6).uint(XDG).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+    e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
+    e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER)
         .uint(BUFER)
@@ -158,33 +166,35 @@ pub fn ventana(
     e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
 
-    // Su configure, y el primer cuadro.
+    // Un solo bucle: su configure y sus cuadros, el ping, y la entrada (W8).
     let mut cuadro = 0;
     let mut configurada = false;
+    let (mut raton, mut tecla) = (false, false);
     loop {
-        let Some((o, orden, cuerpo)) = c.evento() else { return false };
+        let Some((o, orden, cuerpo)) = c.evento() else { return cuadro >= CUADROS };
+        let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
         match (o, orden) {
             (XDG, xdg_wm_base::ev::PING) => {
                 let mut e = Escritor::new();
-                e.empezar(XDG, xdg_wm_base::req::PONG).uint(u32::from_le_bytes(cuerpo[..4].try_into().unwrap())).fin();
+                e.empezar(XDG, xdg_wm_base::req::PONG).uint(palabra(0)).fin();
                 c.mandar(&e);
             }
             (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) if !configurada => {
                 configurada = true;
-                let serie = u32::from_le_bytes(cuerpo[..4].try_into().unwrap());
                 pintar(px, ancho, alto, 0, &color);
                 let mut e = Escritor::new();
-                e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(serie).fin();
+                e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho as i32).int(alto as i32).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::FRAME).uint(AVISO).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
                 c.mandar(&e);
             }
-            (aviso, wl_callback::ev::DONE) if aviso == AVISO + cuadro => {
+            (aviso, wl_callback::ev::DONE) if cuadro < CUADROS && aviso == AVISO + cuadro => {
                 cuadro += 1;
                 if cuadro == CUADROS {
-                    break;
+                    println!("  [{}] {} cuadros: bien", nombre, CUADROS);
+                    continue;
                 }
                 pintar(px, ancho, alto, cuadro, &color);
                 let mut e = Escritor::new();
@@ -193,21 +203,26 @@ pub fn ventana(
                 e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
                 c.mandar(&e);
             }
+            // El mapa de teclas llega con una llave de memoria: sin mapa todavía, se suelta.
+            (TECLADO, wl_keyboard::ev::KEYMAP) => {
+                if let Some(l) = c.juntador.tomar_llave() {
+                    dashos::cerrar(l);
+                }
+            }
+            (PUNTERO, wl_pointer::ev::ENTER) if !raton => {
+                raton = true;
+                println!("  [ventana] ratón dentro ({})", nombre);
+            }
+            // La a (tecla 30 de evdev), pulsada.
+            (TECLADO, wl_keyboard::ev::KEY) if !tecla && palabra(2) == 30 && palabra(3) == 1 => {
+                tecla = true;
+                println!("  [ventana] tecla 30 recibida ({})", nombre);
+            }
             (1, wl_display::ev::ERROR) => {
                 println!("  [{}] error de protocolo", nombre);
                 return false;
             }
             _ => {}
-        }
-    }
-    println!("  [{}] {} cuadros: bien", nombre, CUADROS);
-    // La ventana se queda: el cliente sigue escuchando (y contestando a ping).
-    loop {
-        let Some((o, orden, cuerpo)) = c.evento() else { return true };
-        if (o, orden) == (XDG, xdg_wm_base::ev::PING) {
-            let mut e = Escritor::new();
-            e.empezar(XDG, xdg_wm_base::req::PONG).uint(u32::from_le_bytes(cuerpo[..4].try_into().unwrap())).fin();
-            c.mandar(&e);
         }
     }
 }

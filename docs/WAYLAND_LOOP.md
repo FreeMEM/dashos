@@ -23,7 +23,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | hecho (`escena.rs`) |
 | W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada | hecho (en `escena.rs`; foco y orden con el ratón, en W8) |
 | W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | hecho (virt con captura; raspi4b con doble búfer) |
-| W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | |
+| W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | hecho (virt) |
 
 ## Bitácora
 
@@ -89,4 +89,17 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
   raspi4b: `make arranque` (la imagen normal, con las dos ventanas en la pantalla del buzón y doble búfer) y
   `make prueba` (la de pruebas del kernel, con C50) bien. Una copia de trabajo nueva necesita
   `build/firmware/bcm2711-rpi-4-b.dtb`: si GitHub falla al bajarlo (dio 504), se copia de otra.
+- W8: `wl_seat` (versión 7: puntero y teclado, nombre "asiento0"), `wl_pointer` (enter, leave, motion, button, y
+  frame desde la versión 5) y `wl_keyboard` (mapa "no_keymap" con una llave de memoria vacía, enter, leave, key,
+  modifiers con las máscaras de xkb). El compositor dibuja su cursor (flecha de 12 × 18) desde el primer movimiento
+  del ratón; pulsar sobre una ventana la sube y le da el teclado. Teclas HID a evdev (`teclas.rs`), escritas a mano y
+  comprobadas una a una contra `linux/input-event-codes.h` del sistema. Un cliente o una ventana que se van dejan de
+  tener el puntero y el teclado. Pruebas en el PC: entrar, moverse, pasar a la de encima, pulsar, foco, teclas y
+  mayúsculas, el cursor en el borde y dibujado, los eventos como le llegan al cliente.
+  QEMU virt: la prueba mueve el ratón, hace clic desde el paso 15 y manda la "a"; los clientes dicen "ratón dentro"
+  y "tecla 30 recibida". QEMU mueve el cursor menos de lo que se le pide (tras unos 50 pasos de (10, 5) estaba en
+  (90, 46)), así que el clic cae en la parte de la ventana de abajo que no tapa la otra y la sube:
+  `captura_ventanas.py` acepta los cuatro órdenes posibles (salió el 4: el tablero subido sobre la roja).
+  Fallo encontrado antes de probar: al componer tras un evento de entrada se tiraban los avisos de frame; la entrada
+  pasa ahora por la misma composición que lo demás.
 

@@ -39,10 +39,11 @@ const ALTO: u32 = 480;
 const VA_CLIENTES: usize = 0x70_0000_0000;
 const FONDO: u32 = 0xff20_4060;
 
-static GLOBALES: [Global; 3] = [
+static GLOBALES: [Global; 4] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+    Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
 ];
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
@@ -137,6 +138,8 @@ struct Proyecciones {
     por_llave: BTreeMap<u32, usize>,
     libres: Vec<usize>,
     siguiente: usize,
+    /// Un objeto de memoria de una página, vacío: el mapa de teclas que se da sin mapa (W8).
+    vacia: Option<u32>,
 }
 
 impl Memorias for Proyecciones {
@@ -163,6 +166,18 @@ impl Memorias for Proyecciones {
         }
         self.por_llave.insert(llave, va);
         Some(va as *const u8)
+    }
+
+    fn llave_vacia(&mut self) -> Option<u32> {
+        if self.vacia.is_none() {
+            let m = dashos::memoria_crear(4096);
+            if (m as i32) <= 0 {
+                return None;
+            }
+            self.vacia = Some(m as u32);
+        }
+        let copia = dashos::llave_duplicar(self.vacia?, dashos::LEER | dashos::TRANSFERIR, 0);
+        (copia > 0).then_some(copia as u32)
     }
 
     fn soltar(&mut self, llave: u32, _base: *const u8, _tamano: usize) {
@@ -308,13 +323,25 @@ fn principal() -> u64 {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             continue;
         }
-        // La entrada de los controladores de USB: el ratón y el teclado, con W8.
+        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y).
         if matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
-            continue;
+            let entrada = match (n, buf[0]) {
+                (8, 1) => escena.tecla(buf[1], buf[2] != 0),
+                (8, 2) => escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]),
+                _ => Vec::new(),
+            };
+            let ms = (dashos::ahora_us() / 1000) as u32;
+            for (cl, ev) in entrada {
+                if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get(&cl)) {
+                    escena::escribir_entrada(&mut cli.con, de, ev, ms);
+                    mandar(cli);
+                }
+            }
         }
+        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci"));
         let mut soltar = false;
-        match buf.first().copied() {
+        match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0] });
             }
@@ -328,6 +355,7 @@ fn principal() -> u64 {
                 }
             }
             Some(TROZO_ADIOS) => soltar = true,
+            _ if !de_ventanas => {}
             _ => {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             }
