@@ -369,6 +369,9 @@ resumido, en `docs/diseño/RESUMEN.md`.
   PC al lado. Falta el diseño (qué compilador de C, LLVM compartido con Rust o GCC, y el `std` de Rust para DashOS
   sobre la biblioteca POSIX nativa de S7, como hizo Redox con relibc). Mientras tanto, la caja Linux de S7 los trae
   ya hechos.
+- **RAD: y las imágenes del Amiga (S20, `docs/diseño/S20-rad-adf-hdf.md`):** RAD: como disco DashFS en memoria
+  reservada, un volumen cifrado por usuario, que aguanta caídas y el reinicio en caliente propio, con copia opcional a
+  la tarjeta; ADF y HDF montables como volúmenes, con copia al escribir (guardar o tirar los cambios al desmontar).
 - **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
   programas de pago de DashOS se venden ahí.
 

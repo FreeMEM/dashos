@@ -1,6 +1,7 @@
-//! El teclado español (es) sobre los códigos de Linux que manda el compositor (W8, sin mapa de xkb): las letras con
-//! la ñ, los números y signos, mayúsculas, AltGr (@, #, €, [, ], {, }, |, \) y las teclas muertas de los acentos
-//! (´ ` ^ ¨) seguidas de una vocal. Hecho para el kit mientras no haya mapas de teclado de verdad.
+//! Los mapas de teclado sobre los códigos de Linux que manda el compositor (W8, sin xkb): español (es), inglés de
+//! EE. UU. (us) y del Reino Unido (gb), alemán (de) y francés (fr). Cada tecla da hasta tres signos: normal, con
+//! mayúsculas y con AltGr; algunos son teclas muertas (los acentos), que esperan la letra siguiente. Bloq Mayús solo
+//! cambia las letras.
 
 /// Lo que sale de una tecla.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -18,47 +19,157 @@ pub enum Tecla {
     Tabulador,
 }
 
-#[derive(Default)]
+/// Una tecla de un mapa: su código, (normal, con mayúsculas, con AltGr) con `N` si no da nada, y qué niveles son
+/// teclas muertas (bit 0 normal, 1 mayúsculas, 2 AltGr).
+type Entrada = (u32, [char; 3], u8);
+
+const N: char = '\0';
+
+/// Un mapa: sus teclas propias, que mandan, y las letras de QWERTY con el espacio.
+pub struct Mapa {
+    pub nombre: &'static str,
+    propias: &'static [Entrada],
+}
+
+const QWERTY: [Entrada; 27] = [
+    (16, ['q', 'Q', N], 0), (17, ['w', 'W', N], 0), (18, ['e', 'E', N], 0), (19, ['r', 'R', N], 0),
+    (20, ['t', 'T', N], 0), (21, ['y', 'Y', N], 0), (22, ['u', 'U', N], 0), (23, ['i', 'I', N], 0),
+    (24, ['o', 'O', N], 0), (25, ['p', 'P', N], 0), (30, ['a', 'A', N], 0), (31, ['s', 'S', N], 0),
+    (32, ['d', 'D', N], 0), (33, ['f', 'F', N], 0), (34, ['g', 'G', N], 0), (35, ['h', 'H', N], 0),
+    (36, ['j', 'J', N], 0), (37, ['k', 'K', N], 0), (38, ['l', 'L', N], 0), (44, ['z', 'Z', N], 0),
+    (45, ['x', 'X', N], 0), (46, ['c', 'C', N], 0), (47, ['v', 'V', N], 0), (48, ['b', 'B', N], 0),
+    (49, ['n', 'N', N], 0), (50, ['m', 'M', N], 0), (57, [' ', ' ', ' '], 0),
+];
+
+/// Español: ´ ` ^ ¨ son muertas; AltGr da | @ # ~ € ¬ [ ] { } \.
+pub static ES: Mapa = Mapa {
+    nombre: "es",
+    propias: &[
+        (18, ['e', 'E', '€'], 0),
+        (2, ['1', '!', '|'], 0), (3, ['2', '"', '@'], 0), (4, ['3', '·', '#'], 0), (5, ['4', '$', '~'], 0),
+        (6, ['5', '%', N], 0), (7, ['6', '&', '¬'], 0), (8, ['7', '/', N], 0), (9, ['8', '(', N], 0),
+        (10, ['9', ')', N], 0), (11, ['0', '=', N], 0), (12, ['\'', '?', N], 0), (13, ['¡', '¿', N], 0),
+        (26, ['`', '^', '['], 0b011), (27, ['+', '*', ']'], 0), (39, ['ñ', 'Ñ', N], 0),
+        (40, ['´', '¨', '{'], 0b011), (41, ['º', 'ª', '\\'], 0), (43, ['ç', 'Ç', '}'], 0), (51, [',', ';', N], 0),
+        (52, ['.', ':', N], 0), (53, ['-', '_', N], 0), (86, ['<', '>', N], 0),
+    ],
+};
+
+/// Inglés de EE. UU.: sin AltGr ni teclas muertas.
+pub static US: Mapa = Mapa {
+    nombre: "us",
+    propias: &[
+        (41, ['`', '~', N], 0), (2, ['1', '!', N], 0), (3, ['2', '@', N], 0), (4, ['3', '#', N], 0),
+        (5, ['4', '$', N], 0), (6, ['5', '%', N], 0), (7, ['6', '^', N], 0), (8, ['7', '&', N], 0),
+        (9, ['8', '*', N], 0), (10, ['9', '(', N], 0), (11, ['0', ')', N], 0), (12, ['-', '_', N], 0),
+        (13, ['=', '+', N], 0), (26, ['[', '{', N], 0), (27, [']', '}', N], 0), (39, [';', ':', N], 0),
+        (40, ['\'', '"', N], 0), (43, ['\\', '|', N], 0), (51, [',', '<', N], 0), (52, ['.', '>', N], 0),
+        (53, ['/', '?', N], 0),
+    ],
+};
+
+/// Inglés del Reino Unido: " y @ cambian de sitio, £ en el 3, # ~ junto a Intro, \ | junto a la z, € con AltGr.
+pub static GB: Mapa = Mapa {
+    nombre: "gb",
+    propias: &[
+        (41, ['`', '¬', '|'], 0), (2, ['1', '!', N], 0), (3, ['2', '"', N], 0), (4, ['3', '£', N], 0),
+        (5, ['4', '$', '€'], 0), (6, ['5', '%', N], 0), (7, ['6', '^', N], 0), (8, ['7', '&', N], 0),
+        (9, ['8', '*', N], 0), (10, ['9', '(', N], 0), (11, ['0', ')', N], 0), (12, ['-', '_', N], 0),
+        (13, ['=', '+', N], 0), (26, ['[', '{', N], 0), (27, [']', '}', N], 0), (39, [';', ':', N], 0),
+        (40, ['\'', '@', N], 0), (43, ['#', '~', N], 0), (51, [',', '<', N], 0), (52, ['.', '>', N], 0),
+        (53, ['/', '?', N], 0), (86, ['\\', '|', N], 0),
+    ],
+};
+
+/// Alemán (QWERTZ): la z y la y cambian de sitio; ^ y ´ ` son muertas.
+pub static DE: Mapa = Mapa {
+    nombre: "de",
+    propias: &[
+        (21, ['z', 'Z', N], 0), (44, ['y', 'Y', N], 0), (16, ['q', 'Q', '@'], 0), (18, ['e', 'E', '€'], 0),
+        (50, ['m', 'M', 'µ'], 0),
+        (41, ['^', '°', N], 0b001), (2, ['1', '!', N], 0), (3, ['2', '"', '²'], 0), (4, ['3', '§', '³'], 0),
+        (5, ['4', '$', N], 0), (6, ['5', '%', N], 0), (7, ['6', '&', N], 0), (8, ['7', '/', '{'], 0),
+        (9, ['8', '(', '['], 0), (10, ['9', ')', ']'], 0), (11, ['0', '=', '}'], 0), (12, ['ß', '?', '\\'], 0),
+        (13, ['´', '`', N], 0b011), (26, ['ü', 'Ü', N], 0), (27, ['+', '*', '~'], 0), (39, ['ö', 'Ö', N], 0),
+        (40, ['ä', 'Ä', N], 0), (43, ['#', '\'', N], 0), (51, [',', ';', N], 0), (52, ['.', ':', N], 0),
+        (53, ['-', '_', N], 0), (86, ['<', '>', '|'], 0),
+    ],
+};
+
+/// Francés (AZERTY): a y q, z y w cambian de sitio y la m va junto a la l; los números van con mayúsculas; ^ y ¨ son
+/// muertas (con AltGr, ~ y ` no lo son, como en xkb).
+pub static FR: Mapa = Mapa {
+    nombre: "fr",
+    propias: &[
+        (16, ['a', 'A', N], 0), (30, ['q', 'Q', N], 0), (17, ['z', 'Z', N], 0), (44, ['w', 'W', N], 0),
+        (39, ['m', 'M', N], 0), (18, ['e', 'E', '€'], 0),
+        (41, ['²', N, N], 0), (2, ['&', '1', N], 0), (3, ['é', '2', '~'], 0), (4, ['"', '3', '#'], 0),
+        (5, ['\'', '4', '{'], 0), (6, ['(', '5', '['], 0), (7, ['-', '6', '|'], 0), (8, ['è', '7', '`'], 0),
+        (9, ['_', '8', '\\'], 0), (10, ['ç', '9', '^'], 0), (11, ['à', '0', '@'], 0), (12, [')', '°', ']'], 0),
+        (13, ['=', '+', '}'], 0), (26, ['^', '¨', N], 0b011), (27, ['$', '£', '¤'], 0), (40, ['ù', '%', N], 0),
+        (43, ['*', 'µ', N], 0), (50, [',', '?', N], 0), (51, [';', '.', N], 0), (52, [':', '/', N], 0),
+        (53, ['!', '§', N], 0), (86, ['<', '>', N], 0),
+    ],
+};
+
+pub static MAPAS: [&Mapa; 5] = [&ES, &US, &GB, &DE, &FR];
+
+/// El mapa de ese nombre ("es", "us", "gb", "de", "fr").
+pub fn mapa(nombre: &str) -> Option<&'static Mapa> {
+    MAPAS.iter().copied().find(|m| m.nombre == nombre)
+}
+
+impl Mapa {
+    fn buscar(&self, codigo: u32) -> Option<([char; 3], u8)> {
+        self.propias.iter().chain(QWERTY.iter()).find(|t| t.0 == codigo).map(|t| (t.1, t.2))
+    }
+}
+
+/// Una letra con su acento, o `None` si no se combinan.
+fn acentuar(acento: char, c: char) -> Option<char> {
+    let (base, con) = match acento {
+        '´' => ("aeiouyAEIOUY", "áéíóúýÁÉÍÓÚÝ"),
+        '`' => ("aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
+        '^' => ("aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
+        '¨' => ("aeiouyAEIOU", "äëïöüÿÄËÏÖÜ"),
+        '~' => ("anoANO", "ãñõÃÑÕ"),
+        _ => return None,
+    };
+    base.chars().position(|b| b == c).and_then(|i| con.chars().nth(i))
+}
+
 pub struct Teclado {
+    mapa: &'static Mapa,
     mayus: u8,
     altgr: bool,
     bloq_mayus: bool,
     muerta: Option<char>,
 }
 
-const LETRAS: [(u32, char); 26] = [
-    (16, 'q'), (17, 'w'), (18, 'e'), (19, 'r'), (20, 't'), (21, 'y'), (22, 'u'), (23, 'i'), (24, 'o'), (25, 'p'),
-    (30, 'a'), (31, 's'), (32, 'd'), (33, 'f'), (34, 'g'), (35, 'h'), (36, 'j'), (37, 'k'), (38, 'l'),
-    (44, 'z'), (45, 'x'), (46, 'c'), (47, 'v'), (48, 'b'), (49, 'n'), (50, 'm'),
-];
-
-/// (código, normal, con mayúsculas, con AltGr). '\0': nada.
-const SIGNOS: [(u32, char, char, char); 21] = [
-    (2, '1', '!', '|'), (3, '2', '"', '@'), (4, '3', '·', '#'), (5, '4', '$', '~'), (6, '5', '%', '\0'),
-    (7, '6', '&', '¬'), (8, '7', '/', '\0'), (9, '8', '(', '\0'), (10, '9', ')', '\0'), (11, '0', '=', '\0'),
-    (12, '\'', '?', '\0'), (13, '¡', '¿', '\0'), (27, '+', '*', ']'), (39, 'ñ', 'Ñ', '\0'), (41, 'º', 'ª', '\\'),
-    (43, 'ç', 'Ç', '}'), (51, ',', ';', '\0'), (52, '.', ':', '\0'), (53, '-', '_', '\0'), (86, '<', '>', '\0'),
-    (57, ' ', ' ', ' '),
-];
-
-/// Las teclas muertas: (código, normal, con mayúsculas, con AltGr). El acento que dejan esperando.
-const MUERTAS: [(u32, char, char, char); 2] = [(26, '`', '^', '['), (40, '´', '¨', '{')];
-
-/// Una vocal con su acento, o `None` si no se combinan.
-fn acentuar(acento: char, c: char) -> Option<char> {
-    let (base, con) = match acento {
-        '´' => ("aeiouAEIOU", "áéíóúÁÉÍÓÚ"),
-        '`' => ("aeiouAEIOU", "àèìòùÀÈÌÒÙ"),
-        '^' => ("aeiouAEIOU", "âêîôûÂÊÎÔÛ"),
-        '¨' => ("aeiouAEIOU", "äëïöüÄËÏÖÜ"),
-        _ => return None,
-    };
-    base.chars().position(|b| b == c).and_then(|i| con.chars().nth(i))
+impl Default for Teclado {
+    fn default() -> Self {
+        Teclado::con(&ES)
+    }
 }
 
 impl Teclado {
+    /// Con el mapa español.
     pub fn new() -> Self {
         Self::default()
+    }
+
+    pub fn con(mapa: &'static Mapa) -> Self {
+        Teclado { mapa, mayus: 0, altgr: false, bloq_mayus: false, muerta: None }
+    }
+
+    pub fn mapa(&self) -> &'static Mapa {
+        self.mapa
+    }
+
+    /// Cambia de mapa; una tecla muerta a medias se olvida.
+    pub fn cambiar(&mut self, mapa: &'static Mapa) {
+        self.mapa = mapa;
+        self.muerta = None;
     }
 
     /// Una tecla de Linux pulsada o soltada: lo que sale, si sale algo.
@@ -81,7 +192,6 @@ impl Teclado {
         if !pulsada {
             return None;
         }
-        let mayus = self.mayus > 0;
         let especial = match codigo {
             14 => Some(Tecla::Retroceso),
             111 => Some(Tecla::Suprimir),
@@ -99,32 +209,19 @@ impl Teclado {
             self.muerta = None;
             return especial;
         }
-        // Una tecla muerta: con AltGr da su signo; si no, espera la siguiente letra.
-        if let Some(&(_, n, m, a)) = MUERTAS.iter().find(|t| t.0 == codigo) {
-            if self.altgr {
-                return Some(Tecla::Letra(a));
-            }
-            self.muerta = Some(if mayus { m } else { n });
+        let (signos, muertas) = self.mapa.buscar(codigo)?;
+        // Bloq Mayús solo cambia las letras (las que tienen mayúscula propia).
+        let letra = signos[0].is_alphabetic() && signos[1] != signos[0];
+        let nivel = if self.altgr { 2 } else if (self.mayus > 0) != (self.bloq_mayus && letra) { 1 } else { 0 };
+        let c = signos[nivel];
+        if c == N {
             return None;
         }
-        let c = if let Some(&(_, l)) = LETRAS.iter().find(|t| t.0 == codigo) {
-            if self.altgr && l == 'e' {
-                '€'
-            } else if mayus != self.bloq_mayus {
-                l.to_ascii_uppercase()
-            } else {
-                l
-            }
-        } else if let Some(&(_, n, m, a)) = SIGNOS.iter().find(|t| t.0 == codigo) {
-            let c = if self.altgr { a } else if mayus { m } else { n };
-            if c == '\0' {
-                return None;
-            }
-            c
-        } else {
+        if muertas & (1 << nivel) != 0 {
+            self.muerta = Some(c);
             return None;
-        };
-        // Tras una tecla muerta: la vocal acentuada; o, con espacio, el acento solo.
+        }
+        // Tras una tecla muerta: la letra acentuada; o, con espacio, el acento solo.
         Some(Tecla::Letra(match self.muerta.take() {
             Some(acento) => match (acentuar(acento, c), c) {
                 (Some(con), _) => con,
@@ -180,6 +277,58 @@ mod pruebas {
         assert_eq!(escribir(&mut t, &[(42, true), (40, true), (42, false), (22, true)]), "ü");
         assert_eq!(escribir(&mut t, &pulsar(&[40, 57])), "´");
         assert_eq!(escribir(&mut t, &pulsar(&[40, 49])), "n");
+    }
+
+    /// Bloq Mayús no cambia los signos: en español, con él, el 1 sigue siendo 1 y la ñ pasa a Ñ.
+    #[test]
+    fn bloq_mayus_solo_letras() {
+        let mut t = Teclado::new();
+        assert_eq!(escribir(&mut t, &[(58, true), (58, false), (2, true), (39, true), (53, true)]), "1Ñ-");
+    }
+
+    #[test]
+    fn ingles() {
+        let mut t = Teclado::con(&US);
+        assert_eq!(escribir(&mut t, &[(42, true), (3, true), (40, true), (42, false), (40, true), (26, true)]), "@\"'[");
+        // Sin teclas muertas: la comilla sale sola.
+        assert_eq!(escribir(&mut t, &pulsar(&[40, 30])), "'a");
+        let mut t = Teclado::con(&GB);
+        assert_eq!(escribir(&mut t, &[(42, true), (3, true), (4, true), (40, true), (42, false), (43, true)]), "\"£@#");
+        assert_eq!(escribir(&mut t, &[(100, true), (5, true), (100, false)]), "€");
+    }
+
+    #[test]
+    fn aleman() {
+        let mut t = Teclado::con(&DE);
+        // QWERTZ, umlauts, ß, ^ muerta y ´ muerta.
+        assert_eq!(escribir(&mut t, &pulsar(&[21, 44, 26, 39, 40, 12])), "zyüöäß");
+        assert_eq!(escribir(&mut t, &pulsar(&[41, 18, 13, 30])), "êá");
+        assert_eq!(escribir(&mut t, &[(42, true), (13, true), (42, false), (18, true)]), "è");
+        assert_eq!(escribir(&mut t, &[(100, true), (16, true), (8, true), (86, true), (100, false)]), "@{|");
+    }
+
+    #[test]
+    fn frances() {
+        let mut t = Teclado::con(&FR);
+        // AZERTY: las teclas de q, w, a, z y ; dan a, z, q, w y m; los números, con mayúsculas.
+        assert_eq!(escribir(&mut t, &pulsar(&[16, 17, 30, 44, 39])), "azqwm");
+        assert_eq!(escribir(&mut t, &pulsar(&[2, 3, 8, 10, 11])), "&éèçà");
+        assert_eq!(escribir(&mut t, &[(42, true), (2, true), (3, true), (42, false)]), "12");
+        // ^ y ¨ muertas; con AltGr, ~ sale sola.
+        assert_eq!(escribir(&mut t, &pulsar(&[26, 18])), "ê");
+        assert_eq!(escribir(&mut t, &[(42, true), (26, true), (42, false), (23, true)]), "ï");
+        assert_eq!(escribir(&mut t, &[(100, true), (3, true), (100, false), (49, true)]), "~n");
+    }
+
+    #[test]
+    fn cambiar_de_mapa() {
+        let mut t = Teclado::new();
+        t.tecla(40, true); // ´ muerta, a medias
+        t.cambiar(mapa("us").unwrap());
+        assert_eq!(t.mapa().nombre, "us");
+        assert_eq!(escribir(&mut t, &pulsar(&[30])), "a");
+        assert!(mapa("xx").is_none());
+        assert_eq!(MAPAS.len(), 5);
     }
 
     #[test]

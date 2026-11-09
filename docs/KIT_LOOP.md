@@ -29,8 +29,8 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
 | K3 | Objetos al modo MUI: clases, atributos (poner y leer), avisos entre objetos (`notify`) | Un deslizador que mueve un texto por aviso | hecho |
 | K4 | Grupos que se colocan solos: horizontal y vertical, mínimo, máximo y pesos, espaciado de Material | Medidas al píxel en varios tamaños | hecho |
 | K5 | Controles: texto, botón, casilla, campo de texto, deslizador, ciclo, lista | Cada uno, dibujado y con su entrada | hechos: texto, botón, casilla, deslizador, campo de texto, ciclo y lista |
-| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | el esquema de referencia, hecho; sacarlo de un color base, pendiente |
-| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón y teclado) y raspi4b; el tamaño que pida el compositor, pendiente |
+| K6 | Tema Material 3: colores de un tono base (claro y oscuro), estados (encima, pulsado, foco) | Colores de los estados | hecho: el esquema de referencia y sacarlo de cualquier color base (HCT) |
+| K7 | Ventana de Wayland: la superficie, el tamaño que pide el compositor, cuadros a su ritmo, ratón y teclado al objeto con foco | En QEMU, una aplicación de prueba con captura comparada | hecho en virt (ratón, teclado y el tamaño que pide el compositor) y raspi4b |
 
 ## Bitácora
 
@@ -113,3 +113,36 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   en la segunda fila, flechas que desplazan, Fin, Inicio, colores. Con esto K5 tiene los siete controles del plan.
   El teclado del kit reconoce arriba y abajo. raspi4b con el teclado en "ajustes": bien.
 
+
+### 2026-11-09 (pulido, tras el sonido)
+
+- K6, el color base: `kit/src/color.rs`. HCT (matiz y croma de CAM16, tono L*) con las condiciones de visión de
+  Material, escrito desde el modelo publicado de CAM16; de HCT a sRGB por bisección (la J que da la Y del tono y, si
+  el croma no cabe, el más alto que cabe). Paletas: primaria (croma 48 como poco), secundaria 16, terciaria (matiz +
+  60) 24, neutra 6, neutra variante 8. `Tema::desde_color(base, oscuro)`. La prueba: los veinte papeles del esquema
+  de referencia (claro y oscuro, puestos de memoria en K6) salen del violeta 0x6750A4 a 1 por canal como mucho; con
+  eso quedan comprobados a la vez el algoritmo y aquellos colores. Con croma 4 en la neutra (la primera versión de
+  Material 3) fallaba la superficie (0xFDF8FD frente a 0xFEF7FF). También: secundario y terciario 40 de la
+  referencia (0x625B71, 0x7D5260), HCT de ida y vuelta para siete colores, y que otro color base da su matiz con el
+  primario en el tono 40. 28 pruebas del kit.
+- Teclados: `kit/src/teclado.rs` pasa de un español escrito en el código a mapas en tablas (tres niveles por tecla y
+  cuáles son muertas): es, us, gb, de y fr; `Teclado::con(mapa)`, `cambiar` y `mapa("de")`. Las tablas las escribí
+  de memoria y las comprueba `tools/teclados_xkb.py` contra los mapas de xkb del equipo (`xkbcli compile-keymap`), nivel
+  a nivel y con las teclas muertas: salieron 3 errores míos (en gb, AltGr de la tecla de arriba a la izquierda da |,
+  no ¦; en fr, ~ y ` con AltGr no son muertas en xkb, sí en Windows) y 2 del comparador; ahora 0 diferencias. xkb da
+  135 signos más con AltGr (æ, ½...) que el kit no tiene. Pruebas por mapa: 8 del teclado.
+- El tamaño que pide el compositor: Super+Arriba maximiza la ventana que tiene el teclado (a (0, 0), configure con el
+  tamaño de la pantalla y el estado "maximizada") y Super+Abajo la devuelve a su sitio con un configure de 0 x 0. Las
+  flechas con Super no llegan a la ventana. La escena admite varios configure sin confirmar (confirmar uno confirma
+  los de antes); `escribir_entrada` recibe el cliente modificable. Ajustes crea memoria, pool y búfer nuevos del
+  tamaño pedido y suelta los viejos: la primera versión pedía de una vez la memoria del tamaño más grande (9,2 MB) y
+  no cabía en el cupo de 16 MB de cada servicio (ahora lo dice si le falta). Prueba nueva de la escena
+  (`maximizar_y_volver`); en virt, las teclas de QEMU mandan Super+Arriba y Super+Abajo antes del clic: "el compositor
+  pide 800x600" y "vuelve a 360x250", con la captura igual que antes. raspi4b bien.
+- Un fallo que vio la captura de QEMU (y no su comprobación): al volver de maximizada, a la derecha y abajo se quedaba
+  pintada la parte de 800x600. El cliente destruye el búfer viejo antes de poner el nuevo, y el compositor sacaba lo
+  que había que repintar del búfer viejo, que ya no existía. Ahora cada superficie recuerda lo que ocupaba al
+  componerse (`visto`) y eso se repinta al cambiar de búfer. Prueba nueva de la escena
+  (`bufer_mas_pequeno_repinta_lo_de_antes`) y una sonda más en `tools/captura_ventanas.py` (el fondo en (700, 500)),
+  que da MAL con la captura del fallo. virt y raspi4b bien. `kit/examples/vista.rs` acepta un color base como tercer
+  argumento.

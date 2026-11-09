@@ -8,7 +8,13 @@ use kit::tema::Tema;
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    let tema = if args.get(2).map(String::as_str) == Some("oscuro") { Tema::OSCURO } else { Tema::CLARO };
+    // Con un tercer argumento (un color en hexadecimal, 386a20), el tema sale de ese color base.
+    let oscuro = args.get(2).map(String::as_str) == Some("oscuro");
+    let tema = match args.get(3).and_then(|c| u32::from_str_radix(c.trim_start_matches('#'), 16).ok()) {
+        Some(base) => Tema::desde_color(0xff00_0000 | base, oscuro),
+        None if oscuro => Tema::OSCURO,
+        None => Tema::CLARO,
+    };
     let mut a = Arbol::new();
     let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into()))]);
     let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(60))]);

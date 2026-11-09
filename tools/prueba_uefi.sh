@@ -38,6 +38,11 @@ while time.time() - inicio < total:
         s.connect(ruta)
         s.sendall(b"mouse_move 10 5\n")
         paso += 1
+        # Super+Arriba maximiza la ventana que tiene el teclado (Ajustes) y Super+Abajo la devuelve, antes del clic.
+        if paso == 12:
+            s.sendall(b"sendkey meta_l-up\n")
+        if paso == 14:
+            s.sendall(b"sendkey meta_l-down\n")
         if paso >= 15:
             s.sendall(b"mouse_button 1\n")
             time.sleep(0.1)
