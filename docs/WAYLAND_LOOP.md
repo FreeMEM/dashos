@@ -23,7 +23,7 @@ memoria compartida, dos clientes de prueba, captura por QMP comparada con la esp
 | W5 | Superficies: `wl_compositor`, `wl_surface` (attach, damage, frame, commit con estado pendiente y aplicado) y la composición por CPU con daños | hecho (`escena.rs`) |
 | W6 | Ventanas: `xdg_wm_base` (ping), `xdg_surface` (configure y su respuesta), `xdg_toplevel` (título, cerrar), colocación en cascada | hecho (en `escena.rs`; foco y orden con el ratón, en W8) |
 | W7 | Dos clientes de prueba en Rust (un degradado y un tablero, con animación por `frame`) y la prueba: captura por QMP en QEMU `virt`, comparada con la esperada | hecho (virt con captura; raspi4b con doble búfer) |
-| W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | hecho (virt) |
+| W8 | Entrada: `wl_seat`, `wl_pointer`, `wl_keyboard` (sin keymap de xkb al principio), foco del teclado | hecho (virt con clic y tecla; raspi4b, arranque bien) |
 
 ## Bitácora
 
