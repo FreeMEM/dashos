@@ -519,6 +519,12 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 }
             }
         }
+        // En el núcleo 0, también el temporizador más próximo (M2): sin esto, la resolución sería la del tic.
+        if n == 0 {
+            if let Some(t) = crate::temporizadores::proximo() {
+                proxima = proxima.min(t.saturating_sub(ahora).max(1));
+            }
+        }
         reloj::programar(proxima.max(1));
 
         nucleo.desde = ahora;

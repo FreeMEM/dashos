@@ -47,7 +47,7 @@ Pruebas:
 |---|---|---|
 | M0 | Banco de medidas y línea base | hecho |
 | M1 | Despertar justo: el dormilón no acapara (lag acotado, como EEVDF) | hecho |
-| M2 | Temporizadores de alta resolución (el vencimiento programa el reloj) | pendiente |
+| M2 | Temporizadores de alta resolución (el vencimiento programa el reloj) | hecho |
 | M3 | Despertar en el mismo núcleo replanifica si el despertado va antes | hecho (con M1) |
 | M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | pendiente |
 | M5 | Sin tic en núcleos ociosos | pendiente |
@@ -115,3 +115,15 @@ aquí los números y commit local.
 - 200 µs con carga frente a 108 sin ella: el ping, el eco y el que calcula se reparten el núcleo a partes iguales,
   que es lo justo. Bajarlo más es cosa de M6/M7 (el servidor trabaja con el tiempo del cliente).
 - `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-09 — M2: temporizadores de alta resolución
+
+- El planificador del núcleo 0 programa su reloj también para el vencimiento más próximo (`temporizadores::proximo`,
+  que no cuenta mientras el repartidor tiene algo pendiente, para no provocar una lluvia de interrupciones). Un
+  temporizador nuevo que vence antes de lo programado avisa al núcleo 0. El periodo más corto baja de 10 ms a
+  100 µs. El reintento de un aviso que no cupo sigue a un tic.
+- `docs/medidas/m2.json` contra `m1.json`: espera de 1 ms, retraso mediano de 9.085 a 106 µs sin carga y de 9.066
+  a 132 µs con carga; p99 de 9,3 ms a 0,3 ms. Lo demás, igual (±4 %; ida y vuelta en el mismo núcleo con carga
+  +11 %, dentro del ruido de ese caso).
+- La llamada 29 cuenta todas las interrupciones del núcleo, no solo las del reloj ("tics" en el banco).
+- `make prueba` y `make arranque-virt` (con el sonido): bien. Referencia del kernel al día.
