@@ -107,8 +107,12 @@ fn principal() -> u64 {
         println!("  [medir] sin servicio de archivos\n[medir] fin");
         return 1;
     }
-    for (i, b) in ventana().iter_mut().enumerate() {
-        *b = (i * 7) as u8;
+    // Bytes al azar (un congruencial de 32 bits, igual en fs.c): no se comprimen, como casi todo lo que se guarda
+    // (imágenes, programas). Con datos que se repiten, RedoxFS los comprimiría con lz4 y ext4 no.
+    let mut x = 12345u32;
+    for b in ventana().iter_mut() {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        *b = (x >> 24) as u8;
     }
     let mb = 1u64 << 20;
 

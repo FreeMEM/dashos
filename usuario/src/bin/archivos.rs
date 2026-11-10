@@ -141,9 +141,10 @@ struct Cache {
     reloj: u64,
 }
 
-/// 6 MB: el grupo de cada servicio tiene 16 MB (`inicio`), y en él van también el programa, las ventanas y los
-/// nodos recordados (`Recuerdos`). Con 16 MB de caché, el servicio se quedaba sin memoria.
-const MAX_BLOQUES: usize = 6 * 1024 * 1024 / BLOCK_SIZE as usize;
+/// 40 MB: el grupo de este servicio tiene 64 MB (`inicio`, F9), y en él van también el programa, las ventanas y los
+/// nodos recordados (`Recuerdos`, 4 MB). Con un grupo de 16 MB y 16 MB de caché, se quedaba sin memoria (F2). La caché
+/// solo ocupa lo que se va leyendo.
+const MAX_BLOQUES: usize = 40 * 1024 * 1024 / BLOCK_SIZE as usize;
 
 impl Cache {
     fn leer(&mut self, bloque: u64, destino: &mut [u8]) -> bool {
@@ -306,11 +307,9 @@ impl Disco {
                 Some((0, _, _)) => {}
                 _ => return Err(Error::new(EIO)),
             }
-            // La ventana del disco no tiene caché: se lee de 8 en 8 bytes, alineado.
-            for (i, trozo) in buffer[hecho..hecho + n].chunks_exact_mut(8).enumerate() {
-                let w = unsafe { core::ptr::read_volatile((VA_DISCO + i * 8) as *const u64) };
-                trozo.copy_from_slice(&w.to_ne_bytes());
-            }
+            // La ventana del disco es memoria normal sin caché (no de aparato): admite una copia normal, mucho más
+            // rápida que de 8 en 8 bytes (F9). Lo que escribió el disco ya está ahí: la respuesta llegó después.
+            unsafe { core::ptr::copy_nonoverlapping(VA_DISCO as *const u8, buffer[hecho..hecho + n].as_mut_ptr(), n) };
             hecho += n;
         }
         Ok(hecho)
@@ -323,10 +322,9 @@ impl Disco {
         let mut hecho = 0;
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TRAMO);
-            for (i, trozo) in buffer[hecho..hecho + n].chunks_exact(8).enumerate() {
-                let w = u64::from_ne_bytes(trozo.try_into().unwrap());
-                unsafe { core::ptr::write_volatile((VA_DISCO + i * 8) as *mut u64, w) };
-            }
+            unsafe { core::ptr::copy_nonoverlapping(buffer[hecho..hecho + n].as_ptr(), VA_DISCO as *mut u8, n) };
+            // Que el disco vea lo escrito antes de la petición (que va por otro proceso y otro núcleo).
+            unsafe { core::arch::asm!("dmb ish") };
             let primero = (INICIO + block * BLOCK_SIZE + hecho as u64) / self.tam_sector;
             match self.pedir(DISCO_ESCRIBIR, (n as u64 / self.tam_sector) as u32, primero) {
                 Some((0, _, _)) => {}

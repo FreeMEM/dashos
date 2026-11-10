@@ -60,7 +60,7 @@ Pruebas:
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F8 hechos; sigue |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F9 hechos; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | hecho en QEMU; falta la placa |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -424,3 +424,17 @@ aquí los números y commit local.
 - `docs/medidas/fs-f8.json` (3 arranques, `fs-bien` en los tres): listar un cajón de 500, de 20 a 97 por segundo
   (Linux: 154); lo demás +3 a +12 %, dentro del ruido.
 - `make arranque-virt` (comprueba los comentarios al listar, FS7): bien.
+
+### 2026-11-10 — Datos que no se comprimen, y F9: caché de 40 MB y copias normales de la ventana del disco
+
+- El banco escribía `i * 7`, que se repite: RedoxFS lo comprime con lz4 (lo hace con todo registro de más de un bloque)
+  y ext4 no. Ahora los dos bancos escriben bytes al azar (el mismo congruencial), como casi todo lo que se guarda. Con
+  ellos (`fs-f8-azar.json`, `fs-linux-azar.json`), DashOS lee 8 MB a 86-90 MB/s en lugar de 190: la compresión le
+  ayudaba, leía menos.
+- F9: el fichero de 8 MB no cabía en la caché de 6 MB y, leído de corrido, iba siempre al disco. El grupo del servicio
+  de archivos pasa a 64 MB (`inicio`; los demás siguen con 16) y su caché de bloques a 40 MB, que solo ocupa lo que se
+  lee. Y la ventana del disco (memoria normal sin caché) se copia con `copy_nonoverlapping` en vez de de 8 en 8 bytes
+  con accesos `volatile`, con un `dmb ish` antes de pedir una escritura.
+- `docs/medidas/fs-f9.json` (3 arranques, `fs-bien` en los tres) contra `fs-f8-azar.json`: leer 8 MB, de 86 a 309 MB/s
+  la segunda vez y de 90 a 253 la primera (Linux: 1.652 y 401); lo demás igual (±4 %; listar -14 %, ruido).
+- `make prueba` y `make arranque-virt`: bien.

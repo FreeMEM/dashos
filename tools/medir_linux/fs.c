@@ -135,7 +135,9 @@ int main(void) {
         printf("  no se monta /dev/nvme0n1\n[medir] fin\n");
         reboot(RB_POWER_OFF);
     }
-    for (int i = 0; i < TROZO; i++) buf[i] = (char)(i * 7);
+    /* Bytes al azar, como medir_fs.rs: no se comprimen (RedoxFS comprime con lz4 lo que se repite; ext4, nada). */
+    uint32_t x = 12345;
+    for (int i = 0; i < TROZO; i++) { x = x * 1664525u + 1013904223u; buf[i] = (char)(x >> 24); }
     escribir_grande("/mnt/grande", 0);
     escribir_grande("/mnt/grande_sync", 1);
     vaciar_cache();
