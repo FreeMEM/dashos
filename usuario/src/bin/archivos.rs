@@ -33,11 +33,19 @@ const DISCO_ABRIR: u32 = 0;
 const DISCO_LEER: u32 = 1;
 const DISCO_ESCRIBIR: u32 = 2;
 const DISCO_VACIAR: u32 = 5;
+const DISCO_ANILLO: u32 = 3;
+const DISCO_MIRAR: u32 = 4;
+/// Donde se proyecta el anillo del servicio de disco (una página).
+const VA_ANILLO: usize = 0x60_1000_0000;
+/// Entradas del anillo (`A_ENTRADAS` en nvme.rs); el servicio deja de atender si no caben más terminadas.
+const ANILLO_ENTRADAS: u32 = 32;
 /// El sistema de archivos empieza en el primer MB del disco.
 const INICIO: u64 = 1 << 20;
 /// Lo que cabe en una transferencia del disco: la ventana entera, 64 KB (antes, 8 KB: el NVMe no usaba listas de
 /// páginas).
 const TRAMO: usize = 64 * 1024;
+/// La ventana del servicio de disco.
+const VENTANA_DISCO: usize = 64 * 1024;
 
 const CANAL: u32 = 2;
 const VENTANA: usize = 64 * 1024;
@@ -138,6 +146,9 @@ struct Disco {
     cache: Cache,
     /// La última lectura salió entera de la caché (F4: RedoxFS no vuelve a comprobar la suma de lo que ya comprobó).
     de_memoria: bool,
+    /// El anillo del servicio de disco, si lo tiene (paso A2): el canal por el que avisa, y por dónde van los envíos y
+    /// las terminadas (cuentas que solo crecen).
+    anillo: Option<(u32, u32, u32)>,
 }
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
@@ -200,23 +211,76 @@ impl Cache {
 impl Disco {
     /// Una petición al servicio de disco; devuelve (estado, respuesta, llave recibida).
     fn pedir(&self, orden: u32, cuantos: u32, primero: u64) -> Option<(i32, [u8; 24], Option<u32>)> {
-        let mut p = [0u8; 24];
-        p[0..4].copy_from_slice(&orden.to_le_bytes());
-        p[4..8].copy_from_slice(&cuantos.to_le_bytes());
-        p[8..16].copy_from_slice(&primero.to_le_bytes());
-        let copia = dashos::llave_duplicar(self.vuelta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
-        if copia <= 0 || dashos::canal_escribir(1, &p, &[copia as u32]) != 0 {
-            return None;
+        pedir_por(self.lectura, self.vuelta, orden, cuantos, primero)
+    }
+
+    /// Pide el anillo, con su propio canal (por él llegan la respuesta y luego los avisos de terminadas).
+    fn pedir_anillo(&mut self) {
+        let (lectura, vuelta) = dashos::canal_crear();
+        let ok = matches!(pedir_por(lectura, vuelta, DISCO_ANILLO, 0, 0), Some((0, _, Some(m))) if dashos::memoria_proyectar(m, VA_ANILLO, true) == 0);
+        dashos::cerrar(vuelta);
+        if ok {
+            self.anillo = Some((lectura, 0, 0));
+        } else {
+            dashos::cerrar(lectura);
         }
-        let mut r = [0u8; 24];
+    }
+
+    /// Manda por el anillo los tramos (bloque, bytes desde el principio de la ventana) y, si `vaciar`, un vaciado
+    /// detrás: el servicio los hace por orden, uno tras otro. Un aviso y una espera para todos.
+    fn por_anillo(&mut self, tramos: &[(u64, usize, usize)], vaciar: bool) -> Result<()> {
+        use core::sync::atomic::{Ordering::*, fence};
+        let (lectura, mut sq, mut cq) = self.anillo.unwrap();
+        let palabra = |off: usize| unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) };
+        let total = tramos.len() as u32 + vaciar as u32;
+        debug_assert!(total <= ANILLO_ENTRADAS);
+        for (i, (bloque, off, largo)) in tramos.iter().copied().chain(vaciar.then_some((0, 0, 0))).enumerate() {
+            let e = 64 + 32 * (sq.wrapping_add(i as u32) % ANILLO_ENTRADAS) as usize;
+            let es_vaciar = vaciar && i == tramos.len();
+            let primero = (INICIO + bloque * BLOCK_SIZE) / self.tam_sector;
+            palabra(e).store(if es_vaciar { DISCO_VACIAR } else { DISCO_ESCRIBIR }, Relaxed);
+            palabra(e + 4).store((largo as u64 / self.tam_sector) as u32, Relaxed);
+            palabra(e + 8).store(primero as u32, Relaxed);
+            palabra(e + 12).store((primero >> 32) as u32, Relaxed);
+            palabra(e + 16).store(off as u32, Relaxed);
+            palabra(e + 20).store(i as u32, Relaxed);
+        }
+        // Que el disco vea lo escrito en la ventana y en el anillo antes que la nueva cola.
+        unsafe { core::arch::asm!("dmb ish") };
+        sq = sq.wrapping_add(total);
+        palabra(4).store(sq, Release);
+        fence(SeqCst);
+        if palabra(16).load(SeqCst) != 0 {
+            let mut p = [0u8; 24];
+            p[..4].copy_from_slice(&DISCO_MIRAR.to_le_bytes());
+            dashos::canal_escribir(1, &p, &[]);
+        }
+        let mut buf = [0u8; 8];
         let mut ll = [0u32; 1];
-        let (n, k) = dashos::canal_leer(self.lectura, &mut r, &mut ll);
-        (n == 24).then(|| (i32::from_le_bytes(r[0..4].try_into().unwrap()), r, (k > 0).then_some(ll[0])))
+        loop {
+            palabra(20).store(1, SeqCst);
+            fence(SeqCst);
+            if palabra(12).load(Acquire).wrapping_sub(cq) >= total {
+                break;
+            }
+            if dashos::canal_leer(lectura, &mut buf, &mut ll).0 < 0 {
+                return Err(Error::new(EIO));
+            }
+        }
+        let mut bien = true;
+        for i in 0..total {
+            let c = 2048 + 16 * (cq.wrapping_add(i) % ANILLO_ENTRADAS) as usize;
+            bien &= palabra(c + 4).load(Relaxed) == 0;
+        }
+        cq = cq.wrapping_add(total);
+        palabra(8).store(cq, Release);
+        self.anillo = Some((lectura, sq, cq));
+        if bien { Ok(()) } else { Err(Error::new(EIO)) }
     }
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -226,8 +290,25 @@ impl Disco {
         if d.tam_sector == 0 || BLOCK_SIZE % d.tam_sector != 0 {
             return Err("tamaño de sector raro");
         }
+        d.pedir_anillo();
         Ok(d)
     }
+}
+
+/// Una petición al servicio de disco con la respuesta por el canal (`lectura`, `vuelta`).
+fn pedir_por(lectura: u32, vuelta: u32, orden: u32, cuantos: u32, primero: u64) -> Option<(i32, [u8; 24], Option<u32>)> {
+    let mut p = [0u8; 24];
+    p[0..4].copy_from_slice(&orden.to_le_bytes());
+    p[4..8].copy_from_slice(&cuantos.to_le_bytes());
+    p[8..16].copy_from_slice(&primero.to_le_bytes());
+    let copia = dashos::llave_duplicar(vuelta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    if copia <= 0 || dashos::canal_escribir(1, &p, &[copia as u32]) != 0 {
+        return None;
+    }
+    let mut r = [0u8; 24];
+    let mut ll = [0u32; 1];
+    let (n, k) = dashos::canal_leer(lectura, &mut r, &mut ll);
+    (n == 24).then(|| (i32::from_le_bytes(r[0..4].try_into().unwrap()), r, (k > 0).then_some(ll[0])))
 }
 
 impl Disk for Disco {
@@ -276,28 +357,60 @@ impl Disk for Disco {
         }
     }
 
-    /// Escribe los bloques sucios, los seguidos juntos en una petición (hasta `TRAMO`; F2: cada petición cuesta unos
-    /// 100 µs en QEMU), y vacía la caché del disco.
+    /// Escribe los bloques sucios, los seguidos juntos en un tramo (hasta `TRAMO`), y vacía la caché del disco. Con
+    /// anillo (paso A2), los tramos que caben en la ventana van de una vez, el último lote con el vaciado detrás; sin
+    /// él, una petición por tramo (F2: cada una cuesta unos 100 µs en QEMU).
     fn flush(&mut self) -> Result<()> {
-        if !self.cache.sucios.is_empty() {
-            let sucios: Vec<u64> = core::mem::take(&mut self.cache.sucios).into_iter().collect();
-            let bs = BLOCK_SIZE as usize;
-            let mut junto: Vec<u8> = Vec::with_capacity(TRAMO);
-            let mut inicio = 0;
-            for (k, &b) in sucios.iter().enumerate() {
-                if junto.is_empty() {
-                    inicio = b;
-                }
-                junto.extend_from_slice(&self.cache.bloques[&b].1[..]);
-                let sigue = sucios.get(k + 1).is_some_and(|&c| c == b + 1) && junto.len() + bs <= TRAMO;
-                if !sigue {
-                    if let Err(e) = unsafe { self.escribir_disco(inicio, &junto) } {
-                        // Lo que no llegó sigue sucio.
-                        self.cache.sucios.extend(sucios[k + 1 - junto.len() / bs..].iter().copied());
-                        return Err(e);
+        let sucios: Vec<u64> = core::mem::take(&mut self.cache.sucios).into_iter().collect();
+        let bs = BLOCK_SIZE as usize;
+        // Los tramos: (primer bloque, cuántos).
+        let mut tramos: Vec<(u64, usize)> = Vec::new();
+        for &b in &sucios {
+            match tramos.last_mut() {
+                Some((p, n)) if *p + *n as u64 == b && (*n + 1) * bs <= TRAMO => *n += 1,
+                _ => tramos.push((b, 1)),
+            }
+        }
+        if self.anillo.is_some() {
+            let t0 = reloj();
+            let mut i = 0;
+            loop {
+                // Un lote: los tramos que caben en la ventana y en el anillo (con sitio para el vaciado).
+                let mut lote: Vec<(u64, usize, usize)> = Vec::new();
+                let mut off = 0;
+                while i < tramos.len() && lote.len() + 1 < ANILLO_ENTRADAS as usize && off + tramos[i].1 * bs <= VENTANA_DISCO {
+                    let (p, n) = tramos[i];
+                    for k in 0..n {
+                        let dst = unsafe { core::slice::from_raw_parts_mut((VA_DISCO + off + k * bs) as *mut u8, bs) };
+                        dst.copy_from_slice(&self.cache.bloques[&(p + k as u64)].1[..]);
                     }
-                    junto.clear();
+                    lote.push((p, off, n * bs));
+                    off += n * bs;
+                    i += 1;
                 }
+                let ultimo = i >= tramos.len();
+                if let Err(e) = self.por_anillo(&lote, ultimo) {
+                    // Lo que no llegó (o no se sabe) sigue sucio.
+                    self.cache.sucios.extend(sucios.iter().copied());
+                    return Err(e);
+                }
+                if ultimo {
+                    break;
+                }
+            }
+            apuntar_disco(2, t0);
+            return Ok(());
+        }
+        for (k, &(p, n)) in tramos.iter().enumerate() {
+            let mut junto: Vec<u8> = Vec::with_capacity(n * bs);
+            for j in 0..n {
+                junto.extend_from_slice(&self.cache.bloques[&(p + j as u64)].1[..]);
+            }
+            if let Err(e) = unsafe { self.escribir_disco(p, &junto) } {
+                for &(q, m) in &tramos[k..] {
+                    self.cache.sucios.extend(q..q + m as u64);
+                }
+                return Err(e);
             }
         }
         let t0 = reloj();

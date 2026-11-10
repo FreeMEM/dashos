@@ -13,6 +13,9 @@ use crate::{Disk, DiskMemory, FileSystem, Node, TreePtr, BLOCK_SIZE};
 struct Volatile {
     disk: DiskMemory,
     pending: BTreeMap<u64, Vec<u8>>,
+    /// If set, the next flush writes only this many of the pending blocks, lowest first, and fails: the power goes
+    /// in the middle (the header ring is at the lowest blocks, so it goes first).
+    limit: Option<usize>,
 }
 
 impl Volatile {
@@ -61,6 +64,14 @@ impl Disk for Volatile {
     }
 
     fn flush(&mut self) -> Result<()> {
+        if let Some(limit) = self.limit {
+            let blocks: Vec<u64> = self.pending.keys().copied().take(limit).collect();
+            for block in blocks {
+                let data = self.pending.remove(&block).unwrap();
+                unsafe { self.disk.write_at(block, &data)? };
+            }
+            return Err(syscall::error::Error::new(syscall::error::EIO));
+        }
         for (block, data) in core::mem::take(&mut self.pending) {
             unsafe { self.disk.write_at(block, &data)? };
         }
@@ -73,7 +84,7 @@ type Fs = FileSystem<Volatile>;
 const FILE: u16 = Node::MODE_FILE | 0o644;
 
 fn new_fs() -> Fs {
-    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new() };
+    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new(), limit: None };
     let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
     fs.disk.flush().unwrap();
     fs
@@ -190,6 +201,69 @@ fn cut_before_durable_nothing_written() {
 #[test]
 fn cut_before_durable_all_written() {
     cut_before_durable(true);
+}
+
+/// One flush for blocks and header (few new blocks; `keep` gets how many blocks wait before the header joins them):
+/// a cut in the middle of it, with the header already written but
+/// not all its blocks, opens the previous state; with all of them, the new one.
+fn cut_in_single_flush(keep: impl Fn(usize) -> usize, expect_new: bool) {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let old = noise(9000, 1);
+    put(&mut fs, "f", &old);
+    fs.durable().unwrap();
+    remove(&mut fs, "f");
+    let new = noise(9000, 2);
+    put(&mut fs, "f", &new);
+    put(&mut fs, "g", &noise(3000, 3));
+    let pending = fs.fresh.len();
+    assert!(pending <= crate::COMMIT_MAX && pending > 2);
+    let written = fs.disk.pending.len();
+    let k = keep(written);
+    fs.disk.limit = Some(k);
+    let r = fs.durable();
+    assert!(r.is_err());
+    let block = fs.block;
+    let mut fs = reopen(fs.disk.cut(false), block);
+    if expect_new {
+        assert_eq!(get(&mut fs, "f"), Some(new));
+        assert!(get(&mut fs, "g").is_some());
+    } else {
+        assert_eq!(get(&mut fs, "f"), Some(old), "with {} of {} blocks written", k, written);
+        assert_eq!(get(&mut fs, "g"), None);
+    }
+    assert_clean(&mut fs);
+}
+
+#[test]
+fn single_flush_only_header() {
+    cut_in_single_flush(|_| 1, false);
+}
+
+#[test]
+fn single_flush_all_but_one() {
+    cut_in_single_flush(|n| n, false);
+}
+
+#[test]
+fn single_flush_each_cut() {
+    for k in 0..12 {
+        cut_in_single_flush(move |n| k.min(n - 1), false);
+    }
+}
+
+#[test]
+fn single_flush_everything() {
+    cut_in_single_flush(|_| usize::MAX, true);
+}
+
+#[test]
+fn single_flush_is_used() {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    put(&mut fs, "f", &noise(9000, 1));
+    fs.durable().unwrap();
+    assert!(fs.header.commit_count.to_ne() > 0);
 }
 
 /// Several durable points: a cut leaves the last one.

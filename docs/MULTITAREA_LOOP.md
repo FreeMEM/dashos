@@ -481,3 +481,29 @@ que se escribía en el disco con dos vaciados (unos 1,3 ms cada uno en QEMU) ant
   lost" hasta eso).
 - `make prueba` y `make arranque-virt` (incluye leer el disco en Linux tras apagar): bien. RedoxFS: 138 pruebas
   bien.
+
+### 2026-11-10 — A2 y B2: los guardados por el anillo del disco, y un solo vaciado
+
+- A2: el servicio de archivos pide el anillo del servicio de disco (U6l, que tenía y no usaba) y cada guardado va por
+  él: todos los tramos que caben en la ventana y el vaciado detrás, con un aviso y una espera, en lugar de una petición
+  por tramo. Sin anillo (otro servicio de disco), como antes.
+- B2: un guardado con pocos bloques nuevos (hasta 50, `COMMIT_MAX`) los escribe con la cabecera bajo un solo vaciado,
+  en lugar de vaciar, escribir la cabecera y vaciar otra vez. La cabecera lleva en su relleno la lista de esos bloques
+  con la suma (seahash) de lo escrito. Al abrir, si alguno de la cabecera más nueva no está como se escribió, se usa la
+  anterior, cuyos bloques se vaciaron antes y siguen intactos (cuarentena). Con muchos bloques, dos vaciados, como
+  antes. Las cabeceras viejas tienen la lista a cero y se abren igual. Pruebas: cortes a mitad del vaciado con la
+  cabecera escrita y 0 a 11 bloques, o todos menos uno (sin la comprobación al abrir, tres fallan).
+- `docs/medidas/fs-b2.json` (3 arranques, `fs-bien` en los tres) contra `fs-ab.json` y Linux:
+
+  | Por segundo | A y B | A2 | A2 y B2 | Linux |
+  |---|---|---|---|---|
+  | Crear 4 KB, guardando cada uno | 187 | 230 | 305 | 442 |
+  | Guardar 4 KB (orden 27) | 202 | 252 | 351 | — |
+  | Borrar, guardando cada uno | 226 | 274 | 388 | 454 |
+  | Escribir 8 MB, guardando cada trozo (MB/s) | 15 | 17 | 22 | 30 |
+
+  Lo demás, igual.
+- RedoxFS en el PC (`tests_deferred::perfil`, con lecturas "de memoria" como en el servicio): crear un nodo, 34 µs, en
+  trozos pequeños (la ruta del árbol copiada en sitio nuevo, 10 µs; leer el nodo y el cajón, 5; buscar el nombre, 4).
+  En DashOS bajo QEMU, crear cuesta unos 900 µs: 27 veces. Queda por ver si es la emulación o algo de DashOS.
+- `make prueba` y `make arranque-virt`: bien. RedoxFS: 139 pruebas bien.

@@ -91,6 +91,7 @@ impl<D: Disk> FileSystem<D> {
             }
 
             let block = ring_block - (header.generation() % HEADER_RING);
+            let mut newest: Vec<Header> = Vec::new();
             for i in 0..HEADER_RING {
                 let mut other_header = Header::default();
                 unsafe { disk.read_at(block + i, &mut other_header)? };
@@ -99,11 +100,14 @@ impl<D: Disk> FileSystem<D> {
                 if !other_header.valid() {
                     continue;
                 }
-
-                // If this is a newer header, use it
-                if other_header.generation() > header.generation() {
-                    header = other_header;
-                }
+                newest.push(other_header);
+            }
+            newest.sort_by_key(|h| core::cmp::Reverse(h.generation()));
+            // The newest, unless it was written with its blocks under one flush and they did not all arrive: then
+            // the one before, whose blocks were flushed before the newest was written (DashOS, step B2).
+            header = newest[0];
+            if !Self::committed(&mut disk, block, &newest[0])? && newest.len() > 1 {
+                header = newest[1];
             }
 
             let cipher_opt = match password_opt {
@@ -308,6 +312,21 @@ impl<D: Disk> FileSystem<D> {
         tx.commit(true)
     }
 
+    /// Whether every block that `header` lists as written with it (`Header::commit`) is on the disk as written.
+    fn committed(disk: &mut D, block: u64, header: &Header) -> Result<bool> {
+        let commit = header.commit;
+        for entry in commit.iter().take((header.commit_count.to_ne() as usize).min(crate::COMMIT_MAX)) {
+            let (at, hash) = (entry[0].to_ne(), entry[1].to_ne());
+            let count = (at >> 56) as usize;
+            let mut data = alloc::vec![0; count * BLOCK_SIZE as usize];
+            unsafe { disk.read_at(block + (at & ((1 << 56) - 1)), &mut data)? };
+            if seahash::hash(&data) != hash {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     /// Whether there are committed changes that are not yet durable (see `deferred`).
     pub fn pending(&self) -> bool {
         self.header_dirty
@@ -319,7 +338,22 @@ impl<D: Disk> FileSystem<D> {
         if !self.header_dirty {
             return Ok(());
         }
-        self.disk.flush()?;
+        // Few new blocks: they go in the header, with a hash of each, and blocks and header reach the disk under one
+        // flush; opening checks them (`committed`). Many: the blocks are flushed before the header is written.
+        let few = self.fresh.len() <= crate::COMMIT_MAX;
+        let mut count = 0;
+        if few {
+            let fresh: Vec<(u64, u64)> = self.fresh.iter().copied().collect();
+            for (index, blocks) in fresh {
+                let mut data = alloc::vec![0; (blocks * BLOCK_SIZE) as usize];
+                unsafe { self.disk.read_at(self.block + index, &mut data)? };
+                self.header.commit[count] = [(index | blocks << 56).into(), seahash::hash(&data).into()];
+                count += 1;
+            }
+        } else {
+            self.disk.flush()?;
+        }
+        self.header.commit_count = (count as u64).into();
         let generation = self.header.update(self.cipher_opt.as_ref());
         let count = unsafe {
             self.disk

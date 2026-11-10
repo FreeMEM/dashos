@@ -14,6 +14,9 @@ use crate::{
 
 pub const HEADER_RING: u64 = 256;
 
+/// How many blocks a header can list as written with it (`Header::commit`).
+pub const COMMIT_MAX: usize = 50;
+
 /// The header of the filesystem
 #[derive(Clone, Copy)]
 #[repr(C, packed)]
@@ -51,8 +54,14 @@ pub struct Header {
     pub next_volume: Le<u64>,
     /// DashFS 5: a second copy of the list of volumes, in other blocks: one damaged block must not lose them all.
     pub volumes_copy: BlockPtr<VolumeList>,
+    /// DashOS, step B2: how many entries of `commit` count; 0 if the header was written after its blocks were flushed.
+    pub commit_count: Le<u64>,
+    /// DashOS, step B2: the blocks written since the previous header, under the same flush as this one: the block
+    /// (index | count << 56) and the seahash of what was written. Opening, a header whose blocks do not all match is
+    /// not used: the previous one is (`FileSystem::durable`). Zeros in older versions.
+    pub commit: [[Le<u64>; 2]; COMMIT_MAX],
     /// Padding
-    pub padding: [u8; BLOCK_SIZE as usize - 3280],
+    pub padding: [u8; BLOCK_SIZE as usize - 3280 - 8 - 16 * COMMIT_MAX],
     /// encrypted hash of header data without hash, set to hash and padded if disk is not encrypted
     pub encrypted_hash: [u8; 16],
     /// hash of header data without hash
@@ -191,7 +200,9 @@ impl Default for Header {
             volumes: BlockPtr::default(),
             next_volume: 0.into(),
             volumes_copy: BlockPtr::default(),
-            padding: [0; BLOCK_SIZE as usize - 3280],
+            commit_count: 0.into(),
+            commit: [[Le::from(0u64); 2]; COMMIT_MAX],
+            padding: [0; BLOCK_SIZE as usize - 3280 - 8 - 16 * COMMIT_MAX],
             encrypted_hash: [0; 16],
             hash: 0.into(),
         }

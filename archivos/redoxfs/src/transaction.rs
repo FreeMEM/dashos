@@ -208,6 +208,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
         if found {
             // Deallocate immediately since it is an allocation that was not needed
+            let key = (addr.index(), addr.level().blocks::<u64>());
+            self.fresh.retain(|f| *f != key);
             self.allocator.deallocate(addr);
         } else {
             // Deallocate later when syncing filesystem, to avoid re-use
@@ -413,6 +415,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
             here
         });
 
+        // Its blocks were flushed above: nothing for the opening to check (`Header::commit`).
+        self.header.commit_count = 0.into();
         // Update header to next generation
         let generation = self.header.update(self.fs.cipher_opt.as_ref());
         let gen_block = generation % HEADER_RING;
