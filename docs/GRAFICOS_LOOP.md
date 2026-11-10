@@ -36,7 +36,7 @@ Primero lo que se puede probar ya con programas reales en el PC; después lo que
 
 | Paso | Qué | Prueba | Estado |
 |---|---|---|---|
-| G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | pendiente |
+| G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | hecho |
 | G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | pendiente |
 | G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | pendiente |
 | G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | pendiente |
@@ -62,3 +62,8 @@ código de compositores.
 
 - Plan escrito. En el PC hay `swaybg`, `swaylock`, `waybar` y `alacritty`, y libwayland 1.26 con `wayland-scanner`
   para un cliente de prueba propio.
+- G0 hecho: `puente/` con `compositor-pc` (el servidor y la escena de `wayland/` tras un socket de Unix; los
+  descriptores que llegan hacen de llaves, `mmap` para `wl_shm`) y `puente/pruebas/cliente_shm.c` (libwayland 1.26,
+  `xdg-shell`, 10 cuadros por `frame`). Primera prueba contra libwayland: ningún error de protocolo; la captura tiene
+  la ventana y la banda del último cuadro. `puente/pruebas/g0.sh`, dentro de `make prueba`.
+
