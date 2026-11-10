@@ -59,7 +59,7 @@ Pruebas:
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F5 hechos; sigue |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F6 hechos; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | hecho en QEMU; falta la placa |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -388,4 +388,15 @@ aquí los números y commit local.
 | Interrupciones de un núcleo sin trabajo | 0-1 | 0-1 | 5-20 |
 
 - Lo demás igual dentro del ruido; la espera de 1 ms con carga, p99 de 158 a 234 µs (mediana igual, 35 µs).
+- `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — F6: listas por tamaño en el montón de los programas
+
+- `usuario/src/monton.rs`: delante de `linked_list_allocator`, una lista por tamaño (16 bytes a 4 KB, potencias de
+  dos, alineado como mucho a 16). Lo que se suelta se guarda en su lista y se da otra vez sin buscar. El servicio de
+  archivos pide y suelta bloques de 4 KB sin parar, y `linked_list_allocator` recorre su lista libre para cada uno.
+  Vale para todos los programas de DashOS en Rust.
+- `docs/medidas/fs-f6.json` contra `fs-f5.json` (3 arranques, `fs-bien` en los tres): leer un fichero de 4 KB +29 %
+  (2.615 por segundo), borrar +26 %, crear +10 %, lo demás +2 a +6 %. Memoria igual (118 KB por proceso, 9,3 MB al
+  arrancar).
 - `make prueba` y `make arranque-virt`: bien.
