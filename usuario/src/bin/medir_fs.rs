@@ -195,17 +195,20 @@ fn principal() -> u64 {
     // 500 ficheros de 4 KB en un cajón: crear y escribir (cerrar los lleva al disco), leer, sus datos, listar y borrar.
     let dir = c.pedir(CREAR, 0, 2, 0, b"peq");
     let mut nb = [0u8; 5];
-    let crear = |op: &str, bien: &mut bool, nb: &mut [u8; 5]| {
+    let crear = |op: &str, cada_vez: bool, bien: &mut bool, nb: &mut [u8; 5]| {
         let t0 = cuentas();
         for i in 0..PEQUENOS {
             let g = c.pedir(CREAR, dir.asa, 1, 0, nombre(i, nb));
             *bien &= g.estado == 0 && c.pedir(ESCRIBIR, g.asa, 0, 4096, b"").estado == 0;
             *bien &= c.pedir(CERRAR, g.asa, 0, 0, b"").estado == 0;
+            if cada_vez {
+                *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+            }
         }
         *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
         dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
     };
-    crear("crear_4k", &mut bien, &mut nb);
+    crear("crear_4k", false, &mut bien, &mut nb);
     let t0 = cuentas();
     for i in 0..PEQUENOS {
         let g = c.pedir(BUSCAR, dir.asa, 0, 0, nombre(i, &mut nb));
@@ -243,8 +246,8 @@ fn principal() -> u64 {
         dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
     };
     borrar("borrar", false, &mut bien, &mut nb);
-    // Cerrar ya es como fsync: "crear_4k_sync" es lo mismo que "crear_4k".
-    crear("crear_4k_sync", &mut bien, &mut nb);
+    // Desde A1 cerrar ya no espera al disco: "crear_4k_sync" vacía tras cada fichero, como fsync en fs.c.
+    crear("crear_4k_sync", true, &mut bien, &mut nb);
     borrar("borrar_sync", true, &mut bien, &mut nb);
     // Paso A: crear con datos, una orden por fichero, en el disco al contestar. La ventana trae aún lo del listado.
     rellenar();

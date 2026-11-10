@@ -131,3 +131,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Medidas frente a `f9adec2` (7 y 3 arranques, `medir-antes.json`): sin carga, igual (dentro del ruido); con 4
   cargas, la ida y vuelta 133 a 89 µs (-33 %) y las esperas tarde 825 a 50 (-94 %); temporizador con carga, p99 884
   a 538 µs. Ficheros: crear 4K +7 %, escribir 8 MB +11 %, datos +4 %. `make prueba` y `make arranque-virt` pasan.
+- El banco de ficheros medía mal "crear_4k_sync" desde A1: decía que cerrar ya era como fsync, y cerrar ya no espera
+  al disco. Ahora vacía tras cada fichero, como `fs.c` en Linux: 345 ficheros/s (Linux 442; antes de A1, 375). Sin
+  vaciar, 1.006 (Linux sin fsync, 3.107).
