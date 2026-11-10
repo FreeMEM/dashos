@@ -98,6 +98,9 @@ pub struct Transaction<'a, D: Disk> {
     pub(crate) cipher: Option<alloc::sync::Arc<crate::seal::VolumeCipher>>,
 }
 
+/// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
+const VERIFIED_MAX: usize = 32768;
+
 impl<'a, D: Disk> Transaction<'a, D> {
     pub(crate) fn new(fs: &'a mut FileSystem<D>) -> Self {
         let header = fs.header;
@@ -435,6 +438,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 return Err(Error::new(ENOENT));
             }
         };
+        let mut from_memory = false;
         if let Some(raw) = self.write_cache.get(&ptr.addr()) {
             data.copy_from_slice(raw);
         } else {
@@ -449,6 +453,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 log::error!("READ_BLOCK: WRONG NUMBER OF BYTES");
                 return Err(Error::new(EIO));
             }
+            from_memory = self.fs.disk.last_read_from_memory();
             self.fs.decrypt(&mut data, ptr.addr());
         }
 
@@ -470,6 +475,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(BlockData::new(ptr.addr(), data));
         }
 
+        // Checked when it came from the disk, and the disk has had it in memory since (F4).
+        let key = (ptr.addr().raw(), ptr.hash());
+        if from_memory && self.fs.verified.contains(&key) {
+            return Ok(BlockData::new(ptr.addr(), data));
+        }
         let block = BlockData::new(ptr.addr(), data);
         let block_ptr = block.create_ptr();
         if block_ptr.hash() != ptr.hash() {
@@ -483,6 +493,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
             );
             return Err(Error::new(EIO));
         }
+        if self.fs.verified.len() >= VERIFIED_MAX {
+            self.fs.verified.clear();
+        }
+        self.fs.verified.insert(key);
         Ok(block)
     }
 

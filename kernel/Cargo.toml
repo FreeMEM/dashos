@@ -14,10 +14,20 @@ bench = false
 pruebas = []
 # QEMU virt por UEFI (U3, docs/UEFI_LOOP.md): otra dirección de carga, otro mapa de aparatos, PSCI.
 virt = []
+# La Raspberry Pi 3 (P3, docs/MULTITAREA_LOOP.md): periféricos en 0x3F000000 y el controlador de interrupciones de la
+# BCM2836 (QA7) en lugar del GIC. Sin `virt`.
+pi3 = []
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).
 paula = []
+# El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md; `make medir`): solo `consola` y `medir`, con
+# el paquete de los hijos de prueba.
+medir = []
+# Con `medir`: experimento, no seguro (M9). La tabla vacía conserva el ASID: cuánto pesa en QEMU vaciar la TLB.
+medir_asid = []
+# Con `virt`: el banco del sistema de archivos (paso F; `make medir-fs`): solo consola, nvme, archivos y `medir-fs`.
+medir_fs = []
 
 [profile.dev]
 panic = "abort"

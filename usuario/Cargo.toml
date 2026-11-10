@@ -238,3 +238,20 @@ name = "paula-prueba"
 path = "src/bin/paula_prueba.rs"
 test = false
 required-features = ["sonido"]
+
+# El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md): el orquestador y el hijo en Rust.
+[[bin]]
+name = "medir"
+path = "src/bin/medir.rs"
+test = false
+
+[[bin]]
+name = "medir-hijo"
+path = "src/bin/medir_hijo.rs"
+test = false
+
+# Paso F (docs/MULTITAREA_LOOP.md): el banco del sistema de archivos, por el servicio "archivos".
+[[bin]]
+name = "medir-fs"
+path = "src/bin/medir_fs.rs"
+test = false

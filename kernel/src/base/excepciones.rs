@@ -77,6 +77,10 @@ extern "C" fn excepcion(marco: &mut Marco, tipo: u64) {
         crate::espacio::activar_vacio();
     }
     tratar(marco, tipo);
+    // Tras una llamada al sistema desde EL0: lo que un despertar en este núcleo dejó apuntado (M6b).
+    if tipo >= 8 && tipo & 3 == 0 {
+        crate::planificador::replanificar_si_toca();
+    }
     // Vuelve a EL0 (SPSR.M = EL0t): el espacio del hilo que vuelve, que puede no ser el que entró si hubo cambio de
     // hilo por el camino; cada hilo vuelve por su propio marco.
     if marco.spsr & 0xf == 0 {

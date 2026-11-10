@@ -85,8 +85,10 @@ otro hilo del mismo núcleo usa la FPU (C28). No hay SVE.
 
 ### Planificación
 
-Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. La clase de plazos de
-S2 existe, pero hoy solo la usa el kernel. Un proceso corre en el núcleo donde se creó y no cambia de núcleo.
+Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. Un hilo que despierta
+empieza como mucho medio tic por debajo del mínimo de su núcleo y, si va por delante del que corre, se adelanta al
+momento (M1 y M3, `docs/MULTITAREA_LOOP.md`). La clase de plazos de S2 la usan el kernel y el sonido (llamada 28). Un
+proceso corre en el núcleo donde se creó y no cambia de núcleo.
 
 ### El programa de inicio
 
@@ -145,6 +147,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
+| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel | El número |
+| 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
+| 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 
 ### Detalles
 
@@ -249,7 +254,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   aviso que se pudo entregar (casi siempre 1; más si la cola del canal estaba llena o el aviso llegó tarde). Así se
   distingue de una interrupción, que llega en 4 bytes. Pide el derecho de escribir en el canal (`E_DERECHOS`); otra
   llave que no sea de canal da `E_TIPO`; un plazo o un periodo de más de un día, `E_ARGUMENTO`. Cuesta 4 KB del cupo
-  del grupo. Resolución: el tic del sistema, 10 ms, que es también el periodo más corto; nunca avisa antes de tiempo.
+  del grupo. Resolución: la del contador de la CPU (M2); el periodo más corto, 100 µs. Nunca avisa antes de tiempo.
   Los avisos llevan la marca de la llave del canal con que se creó (C41); si esa llave era revocable y se revoca, el
   temporizador se para para siempre. Si la cola está llena, el aviso se cuenta para el siguiente; uno de una vez se
   reintenta en cada tic hasta que cabe. Se para al soltarse su última llave (`cerrar`, o al morir el proceso). Para

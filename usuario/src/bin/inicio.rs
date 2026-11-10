@@ -128,7 +128,10 @@ fn principal() -> u64 {
             continue;
         }
         unsafe { core::ptr::copy_nonoverlapping(origen as *const u8, destino as *mut u8, tamano) };
-        let g = grupo_crear(16 << 20);
+        // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
+        // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
+        let cupo = if nombre(nombre_cab) == "archivos" { 64 << 20 } else { 16 << 20 };
+        let g = grupo_crear(cupo);
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
             println!("  [inicio] {}: no se pudo lanzar ({})", nombre(nombre_cab), proceso);

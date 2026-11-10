@@ -84,6 +84,36 @@ sonido-paula: usuario FORCE
 	GUARDAR=$(abspath target/salida_paula.txt) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -audiodev wav,id=snd0,path=$(abspath target/sonido-paula.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/sonido_paula.txt 60
 	python3 ../tools/sonido_wav.py --paula target/sonido-paula.wav
 
+# El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md): la imagen de raspi4b con solo la consola y el
+# orquestador `medir`, y los hijos de prueba en Rust, C y Dash. VUELTAS arranques; medianas en target/medir.json.
+MEDIR := target/kernel8-medir.img
+VUELTAS ?= 3
+medir: usuario FORCE
+	python3 ../tools/medir.py paquete ../usuario/target/medir.paq
+	cargo build $(CARGO_PERFIL) --features medir
+	$(OBJCOPY) -O binary $(ELF) $(MEDIR)
+	python3 ../tools/medir.py correr $(MEDIR) target/medir.json -n $(VUELTAS)
+
+# Paso F (docs/MULTITAREA_LOOP.md): el banco del sistema de archivos en QEMU virt, con un disco de 1 + 64 MB con un
+# RedoxFS vacío, nuevo en cada vuelta. Linux, con `tools/medir.py linux-fs`.
+MEDIR_FS := target/kernel8-medir-fs.img
+medir-fs: usuario FORCE
+	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	python3 ../tools/medir.py disco-fs target/medir-fs.img $(REDOXFS_AR)
+	cargo build $(CARGO_PERFIL) --features virt,medir_fs
+	$(OBJCOPY) -O binary $(ELF) $(MEDIR_FS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(MEDIR_FS)) cargo build --release
+	python3 ../tools/medir.py dashos-fs ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi target/medir-fs.img target/medir-fs.json -n $(VUELTAS)
+
+# P3 (docs/MULTITAREA_LOOP.md): el mismo banco en la Raspberry Pi 3 (QEMU raspi3b, o una de verdad con
+# `tools/sd_pi3.py`).
+MEDIR_PI3 := target/kernel8-medir-pi3.img
+medir-pi3: usuario FORCE
+	python3 ../tools/medir.py paquete ../usuario/target/medir.paq
+	cargo build $(CARGO_PERFIL) --features pi3,medir
+	$(OBJCOPY) -O binary $(ELF) $(MEDIR_PI3)
+	python3 ../tools/medir.py pi3 $(MEDIR_PI3) target/medir-pi3.json -n $(VUELTAS)
+
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 
 # Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas.
