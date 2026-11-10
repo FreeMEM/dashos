@@ -33,8 +33,15 @@ const REPARTE: &[(&str, u32)] = &[("eco", 2)];
 const PERMISOS: &[(&str, &str)] = &[("pide", "eco")];
 /// Llaves repartidas que se pueden revocar, a la vez.
 const MAX_DADAS: usize = 64;
-/// Dónde ve su ventana del servicio de archivos.
+/// Dónde ve su ventana del servicio de archivos, y dónde copia un programa que lanza.
 const VA_VENTANA: usize = 0x40_0000_0000;
+const VA_PROGRAMA: usize = 0x48_0000_0000;
+/// Lo más que mide un programa que se lanza desde el disco (lo que admite `proceso_crear`).
+const MAX_PROGRAMA: usize = 4 << 20;
+/// Los números de proceso de lo que lanza `sesiones` empiezan aquí: los de `inicio` son el número del programa más 1.
+const PRIMER_PID_PROPIO: u64 = 0x1_0000;
+/// Lo que se da a cada programa que lanza (su grupo de recursos).
+const PRESUPUESTO_LANZADO: u64 = 4 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 
@@ -88,6 +95,62 @@ impl Archivos {
         Some(Archivos { lectura })
     }
 
+    /// Una orden entera: (estado, asa, a) de la respuesta.
+    fn orden(&self, orden: u32, asa: u32, a: u64, b: u64, nombre: &[u8]) -> (i32, u32, u64) {
+        let mut p = [0u8; 256];
+        let largo = nombre.len().min(256 - 32);
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&asa.to_le_bytes());
+        p[8..16].copy_from_slice(&a.to_le_bytes());
+        p[16..24].copy_from_slice(&b.to_le_bytes());
+        p[24..28].copy_from_slice(&(largo as u32).to_le_bytes());
+        p[32..32 + largo].copy_from_slice(&nombre[..largo]);
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + largo], &[]) != 0 {
+            return (-1, 0, 0);
+        }
+        let mut r = [0u8; 32];
+        let (n, _) = dashos::canal_leer(self.lectura, &mut r, &mut []);
+        if n != 32 {
+            return (-1, 0, 0);
+        }
+        (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()))
+    }
+
+    /// Lee el fichero `camino` entero a un objeto de memoria nuevo: (llave, tamaño), o el estado si no se pudo.
+    fn leer_entero(&self, camino: &[u8]) -> Result<(u32, usize), i32> {
+        use dashos::protocolo::archivos as a;
+        let (e, asa, tam) = self.orden(a::BUSCAR, 0, 0, 0, camino);
+        if e != a::BIEN {
+            return Err(e);
+        }
+        let tam = tam as usize;
+        let r = (|| {
+            if tam == 0 || tam > MAX_PROGRAMA {
+                return Err(a::MAL_FORMADO);
+            }
+            let m = dashos::memoria_crear(tam);
+            if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA_PROGRAMA, true) != 0 {
+                return Err(a::SIN_SITIO);
+            }
+            let mut hecho = 0;
+            while hecho < tam {
+                let (e, _, n) = self.orden(a::LEER, asa, hecho as u64, a::VENTANA as u64, b"");
+                if e != a::BIEN || n == 0 {
+                    dashos::memoria_quitar(VA_PROGRAMA);
+                    dashos::cerrar(m as u32);
+                    return Err(if e != a::BIEN { e } else { a::ERROR_DEL_DISCO });
+                }
+                let n = (n as usize).min(tam - hecho);
+                unsafe { core::ptr::copy_nonoverlapping(VA_VENTANA as *const u8, (VA_PROGRAMA + hecho) as *mut u8, n) };
+                hecho += n;
+            }
+            dashos::memoria_quitar(VA_PROGRAMA);
+            Ok((m as u32, tam))
+        })();
+        self.orden(a::CERRAR, asa, 0, 0, b"");
+        r
+    }
+
     /// Una orden con `nombre` y `b`; el estado de la respuesta.
     fn pedir(&self, orden: u32, b: u64, nombre: &[u8]) -> i32 {
         let mut p = [0u8; 256];
@@ -137,6 +200,7 @@ fn principal() -> u64 {
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0 };
+    let mut siguiente_pid = PRIMER_PID_PROPIO;
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     let mut idos = [0u64; 8];
     let mut ido = 0;
@@ -235,6 +299,50 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
+                }
+                LANZAR => {
+                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let nl = u32_en(4) as usize;
+                    let camino = m.get(12..12 + nl).unwrap_or(b"");
+                    let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let (estado, pid) = match (&archivos, guardian, fichas.iter().position(|x| x.is_none())) {
+                        (_, false, _) => {
+                            registro.apuntar(R_LANZAR, PROTEGIDO, &pide, camino);
+                            (PROTEGIDO, 0)
+                        }
+                        (None, ..) | (_, _, None) => (-1, 0),
+                        (Some(a), true, Some(hueco)) => match a.leer_entero(camino) {
+                            Err(e) => (e, 0),
+                            Ok((mem, tam)) => {
+                                // Su grupo sale del cupo de `sesiones` (16 MB): 4 MB para cada uno, de momento.
+                                let g = dashos::grupo_crear(PRESUPUESTO_LANZADO);
+                                let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, &[]) } else { g };
+                                dashos::cerrar(mem);
+                                if p <= 0 {
+                                    if g > 0 {
+                                        dashos::cerrar(g as u32);
+                                    }
+                                    (p as i32, 0)
+                                } else {
+                                    // Su ficha: el usuario de quien lo pide, y el nombre del fichero.
+                                    let pid = siguiente_pid;
+                                    siguiente_pid += 1;
+                                    let corto = camino.rsplit(|&c| c == b'/').next().unwrap_or(camino);
+                                    let mut n16 = [0u8; 16];
+                                    n16[..corto.len().min(16)].copy_from_slice(&corto[..corto.len().min(16)]);
+                                    let (uid, gid) = yo.map_or((1, 1), |f| (f.uid, f.gid));
+                                    fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32 });
+                                    dashos::cerrar(p as u32);
+                                    (BIEN, pid)
+                                }
+                            }
+                        },
+                    };
+                    println!("  [sesiones] {} lanza {}: {} (proceso {})", nombre(&pide), core::str::from_utf8(camino).unwrap_or("?"), estado, pid);
+                    let mut r = [0u8; 12];
+                    r[0..4].copy_from_slice(&estado.to_le_bytes());
+                    r[4..12].copy_from_slice(&pid.to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r, &[]);
                 }
                 REGISTRO => {
                     // Solo `guardian` lee el registro (U6).

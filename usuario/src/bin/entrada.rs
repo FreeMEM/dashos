@@ -6,7 +6,7 @@
 #![no_main]
 
 use dashos::println;
-use dashos::protocolo::sesiones::{ENTRADA_REGISTRO, ENTRAR, POR_PAGINA_REGISTRO, REGISTRO, R_ENTRAR, R_MATAR, R_SERVICIO, SALIR, VOLVER};
+use dashos::protocolo::sesiones::{ENTRADA_REGISTRO, ENTRAR, LANZAR, POR_PAGINA_REGISTRO, REGISTRO, R_ENTRAR, R_MATAR, R_SERVICIO, SALIR, VOLVER};
 
 dashos::programa!(principal);
 
@@ -51,6 +51,22 @@ fn principal() -> u64 {
         salir,
         if bien { "bien" } else { "MAL" }
     );
+    // U2: lanzar un programa del disco, y uno que no es un programa.
+    let lanzar = |camino: &str| -> (i32, u64) {
+        let mut p = [0u8; 64];
+        p[0..4].copy_from_slice(&LANZAR.to_le_bytes());
+        p[4..8].copy_from_slice(&(camino.len() as u32).to_le_bytes());
+        p[12..12 + camino.len()].copy_from_slice(camino.as_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 12];
+        let n = if dashos::canal_escribir(SESIONES, &p[..12 + camino.len()], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
+    };
+    let (hola, pid) = lanzar("Programas/hola");
+    let (texto, _) = lanzar("LEEME.txt");
+    let lanza = hola == 0 && pid >= 0x1_0000 && texto < 0;
+    println!("  [entrada] lanzar del disco: Programas/hola {} (proceso {}), un texto {}: {}", hola, pid, texto, if lanza { "bien" } else { "MAL" });
     // U6: el registro de seguridad tiene que acabar teniendo los tres intentos del hostil (matar al compositor, la llave
     // de `eco` y entrar como Carla). Se mira cada medio segundo, hasta 20 s.
     let mut visto = (0, [false; 3]);
@@ -63,7 +79,7 @@ fn principal() -> u64 {
     }
     let todo = visto.1.iter().all(|&x| x);
     println!("  [entrada] registro de seguridad: {} entradas; las del hostil (matar, servicio, entrar): {}", visto.0, if todo { "bien" } else { "FALTAN" });
-    if bien && todo { 0 } else { 1 }
+    if bien && todo && lanza { 0 } else { 1 }
 }
 
 /// Lee el registro entero: cuántas entradas hay y si están las tres del hostil.

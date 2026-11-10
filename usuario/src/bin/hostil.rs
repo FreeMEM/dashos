@@ -465,8 +465,24 @@ fn sesiones(memoria: u32) -> bool {
     if !registro_negado {
         println!("  [hostil] sesiones: leer el registro de seguridad da {} bytes (tenía que negarse)", registro);
     }
+    // U2: lanzar un programa del disco, sin ser `guardian`.
+    let mut p = [0u8; 32];
+    p[0..4].copy_from_slice(&s::LANZAR.to_le_bytes());
+    p[4..8].copy_from_slice(&14u32.to_le_bytes());
+    p[12..26].copy_from_slice(b"Programas/hola");
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r12 = [0u8; 12];
+    let lanzar = if escribir(SESIONES, &p[..26], &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r12, &mut [], 2_000_000).0 == 12 {
+        i32::from_le_bytes(r12[0..4].try_into().unwrap())
+    } else {
+        i32::MIN
+    };
+    dashos::cerrar(lectura);
+    if lanzar != s::PROTEGIDO {
+        println!("  [hostil] sesiones: lanzar del disco da {} (tenía que dar -2)", lanzar);
+    }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado;
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

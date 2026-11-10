@@ -26,6 +26,9 @@ import subprocess
 import sys
 import tempfile
 
+# U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
+HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
+
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
     desde = str(1 << 20)
@@ -42,6 +45,8 @@ if sys.argv[1] == "--comprobar":
         "LEEME.txt 19",
         "Prefs/ cajón",
         "Prefs/fuente 8",
+        "Programas/ cajón",
+        f"Programas/hola {os.path.getsize(HOLA)}",
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
@@ -82,6 +87,10 @@ with tempfile.TemporaryDirectory() as t:
         f.write("".join(f"línea {i}\n" for i in range(25000)))
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
+    os.makedirs(os.path.join(raiz, "Programas"))
+    with open(os.path.join(raiz, "Programas", "hola"), "wb") as f:
+        f.write(open(HOLA, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "hola"), 0o755)
     privado = os.path.join(raiz, "C", "Privado")
     os.makedirs(privado)
     with open(os.path.join(privado, "nota.txt"), "w") as f:

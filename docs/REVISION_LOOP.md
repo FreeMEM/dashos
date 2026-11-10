@@ -35,7 +35,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6, E9 y casi todo E8 (E7, pendiente) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
-| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
+| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar y lanzar desde el disco |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
@@ -234,3 +234,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   quién y qué, en un anillo de 64 en memoria; REGISTRO lo da por páginas, solo a `guardian`. Prueba: `entrada` lee
   6 entradas y encuentra los tres intentos del hostil; el hostil pide el registro y se le niega. Falta guardarlo en
   el disco (cuando `sesiones` tenga su cajón), Prefs de usuarios, PID en el kernel y cambio rápido de usuario.
+- U2, lanzar desde el disco: LANZAR en `sesiones` (solo `guardian`; luego también el escritorio y el Shell). Busca el
+  fichero por el servicio de archivos, lo copia por la ventana a un objeto de memoria y lo crea con `proceso_crear_en`
+  en un grupo propio de 4 MB (sale del cupo de `sesiones`, de 16), con ficha: número desde 0x10000, el usuario de
+  quien lo pide y el nombre del fichero. El disco de pruebas trae `Programas/hola` (el `hola` que se construye).
+  Prueba: `entrada` lanza `Programas/hola` (sale su "hola desde Rust") y un texto (-1); el hostil no puede (-2).
+  Falta: sus llaves al nacer (el canal con `sesiones` y los servicios concedidos), la baja al morir (su aviso de fin) y
+  la tabla de nombres.

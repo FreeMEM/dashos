@@ -32,6 +32,10 @@ pub const DEJAR: u32 = 7;
 /// `POR_PAGINA_REGISTRO`: cuántas van (u32), cuántas hay (u32) y las entradas de `ENTRADA_REGISTRO` bytes (tipo u32,
 /// estado i32, quién 16 bytes, qué 16 bytes). A cualquier otro le contesta -2 (cuatro bytes).
 pub const REGISTRO: u32 = 8;
+/// De `guardian` (y, más adelante, del escritorio y el Shell) (U2): lanzar un programa del disco (orden, largo del
+/// camino, 0, el camino). `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
+/// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
+pub const LANZAR: u32 = 9;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
 /// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
@@ -39,6 +43,7 @@ pub const R_MATAR: u32 = 1;
 pub const R_SERVICIO: u32 = 2;
 pub const R_ENTRAR: u32 = 3;
 pub const R_FALLO: u32 = 4;
+pub const R_LANZAR: u32 = 5;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;
