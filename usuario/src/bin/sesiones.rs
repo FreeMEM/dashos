@@ -9,6 +9,9 @@
 //!   (256 bytes), hasta 7 fichas: cuántas van (u32), cuántas hay (u32) y las fichas de 32 bytes (marca, uid, gid y
 //!   nombre). Matar contesta un i32: 0 hecho, -1 no existe, -2 es de otro usuario.
 //!
+//! - Del kernel, con la marca de la ficha y el bit alto puesto (que solo pone `inicio` al pedir el aviso de fin, K7):
+//!   16 bytes, clase y código del fin. Es la **baja**: la ficha se quita.
+//!
 //! Solo se mata lo del mismo usuario (más adelante, lo de otro con una acción de administrador, U5). El usuario es el
 //! de la ficha de quien pide, que sale de la marca: ningún programa puede decir que es otro.
 
@@ -58,7 +61,15 @@ fn principal() -> u64 {
         let u64_en = |i: usize| m.get(i..i + 8).map_or(0, |x| u64::from_le_bytes(x.try_into().unwrap()));
         // Las llaves que sobren se cierran siempre (E2).
         let mut usadas = 0;
-        if marca == 0 {
+        if marca >> 63 == 1 && k == 0 && n == 16 {
+            // La baja: el proceso acabó.
+            let de = marca & !(1 << 63);
+            if let Some(i) = fichas.iter().position(|x| x.is_some_and(|x| x.marca == de)) {
+                let f = fichas[i].take().unwrap();
+                dashos::cerrar(f.grupo);
+                println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
+            }
+        } else if marca == 0 {
             // De `inicio`: un alta, con la llave del grupo.
             if u32_en(0) == ALTA && m.len() >= 36 && k >= 1 {
                 let mut nombre_ = [0u8; 16];

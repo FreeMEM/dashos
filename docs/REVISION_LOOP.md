@@ -158,3 +158,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   es el primero que se nombra, en `hostil` las llaves se corren una (sesiones 1, ventanas 2, archivos 3, sonido 4).
   Falta de U2: lanzar desde disco, la tabla de nombres, repartir las llaves (hoy, `inicio`), la baja al morir un
   proceso (con K7) y el grupo nuevo de un servicio relanzado.
+- U2, la baja: `inicio` pide para cada programa el aviso de fin (K7) hacia `sesiones`, con la marca de su ficha y el
+  bit alto puesto (ningún programa puede escribir con esa marca), y `sesiones` quita la ficha al llegar. En virt salen
+  las bajas de los que acaban (disco, ficheros, hola, tono-a con clase 2, que falla a propósito...). La prueba del
+  hostil ahora intenta matar al compositor (usuario 1), porque `ficheros` puede haber acabado ya, y comprueba que
+  `caida-cliente`, que acabó solo, ya no está en la lista.

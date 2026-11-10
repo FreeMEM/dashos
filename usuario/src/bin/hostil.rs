@@ -340,8 +340,9 @@ fn si(b: bool) -> &'static str {
     if b { "sí" } else { "no" }
 }
 
-/// U2: por `sesiones`, la lista de procesos y matar. A `ficheros` (usuario 1000) no puede; a `presa` (1001, el suyo),
-/// sí; a uno que no existe, tampoco. Devuelve si todo fue como debe.
+/// U2: por `sesiones`, la lista de procesos y matar. Al compositor (un servicio, usuario 1) no puede; a `presa`
+/// (1001, el suyo), sí; a uno que no existe, tampoco. `caida-cliente`, que acabó solo, ya no está (su baja llegó con
+/// el aviso de fin). Devuelve si todo fue como debe.
 fn sesiones() -> bool {
     let pedir = |orden: u32, objetivo: u64, buf: &mut [u8]| -> i64 {
         let (lectura, suyo) = dashos::canal_crear();
@@ -381,18 +382,19 @@ fn sesiones() -> bool {
     let marca_de = |nombre: &[u8]| {
         lista[..cuantos].iter().find(|f| &f[16..16 + nombre.len()] == nombre && f.get(16 + nombre.len()) == Some(&0)).map(|f| u64::from_le_bytes(f[..8].try_into().unwrap()))
     };
-    let (Some(ficheros), Some(presa)) = (marca_de(b"ficheros"), marca_de(b"presa")) else {
-        println!("  [hostil] sesiones: en la lista no están ficheros y presa ({} procesos)", cuantos);
+    let (Some(ajeno), Some(presa)) = (marca_de(b"compositor"), marca_de(b"presa")) else {
+        println!("  [hostil] sesiones: en la lista no están el compositor y presa ({} procesos)", cuantos);
         return false;
     };
+    let sin_baja = marca_de(b"caida-cliente").is_some();
     let mut r = [0u8; 4];
     let matar = |m: u64, r: &mut [u8; 4]| if pedir(2, m, r) == 4 { i32::from_le_bytes(*r) } else { i32::MIN };
-    let (a, c, d) = (matar(ficheros, &mut r), matar(presa, &mut r), matar(u64::MAX, &mut r));
-    let bien = a == -2 && c == 0 && d == -1;
+    let (a, c, d) = (matar(ajeno, &mut r), matar(presa, &mut r), matar(u64::MAX, &mut r));
+    let bien = a == -2 && c == 0 && d == -1 && !sin_baja;
     if bien {
-        println!("  [hostil] sesiones: ve {} procesos; no mata a ficheros (otro usuario), sí a presa (el suyo)", cuantos);
+        println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {
-        println!("  [hostil] sesiones: MAL (ficheros {}, presa {}, inexistente {})", a, c, d);
+        println!("  [hostil] sesiones: MAL (compositor {}, presa {}, inexistente {}, caida-cliente en la lista: {})", a, c, d, sin_baja);
     }
     bien
 }

@@ -64,6 +64,17 @@ fn alta_en_sesiones(canal: u32, nombre_cab: usize, marca: u64, grupo: u32) {
     dashos::cerrar(copia as u32);
 }
 
+/// La baja en `sesiones` cuando acabe el proceso (U2, con el aviso de fin de K7): el kernel escribe su fin por
+/// `canal` con la marca de la ficha y el bit alto puesto, que ningún programa puede poner en sus mensajes.
+fn baja_en_sesiones(canal: u32, proceso: u32, marca: u64) {
+    let aviso = llave_duplicar(canal, dashos::ESCRIBIR, (1 << 63) | marca);
+    if aviso > 0 {
+        dashos::proceso_avisar(proceso, aviso as u32);
+        // El kernel guarda el canal y la marca: la llave ya no hace falta.
+        dashos::cerrar(aviso as u32);
+    }
+}
+
 /// El alta de `programa`, con la marca `marca`, para el servicio de archivos: cabecera de 32 bytes y el cajón raíz.
 fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
     let &(_, uid, gid, derechos, raiz) = FICHAS.iter().find(|f| f.0 == programa)?;
@@ -258,6 +269,7 @@ fn principal() -> u64 {
             }
         } else if sesiones != 0 {
             alta_en_sesiones(sesiones, nombre_cab, i as u64 + 1, g as u32);
+            baja_en_sesiones(sesiones, proceso as u32, i as u64 + 1);
         }
         if lee != 0 && i < servicios.len() {
             let aviso = llave_duplicar(avisos_a, dashos::ESCRIBIR, i as u64 + 1).max(0) as u32;

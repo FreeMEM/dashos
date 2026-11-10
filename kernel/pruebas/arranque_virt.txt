@@ -96,10 +96,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] compositor sigue: sí
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha
-~│   [sesiones] hostil (usuario 1001) no puede matar a ficheros (usuario 1000)
+~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)
+~│   [sesiones] baja de caida-cliente (clase 0)
 ~│   [sesiones] hostil mata a presa (los dos, usuario 1001)
 ~│   [hostil] sesiones: ve 
-~no mata a ficheros (otro usuario), sí a presa (el suyo)
+~no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera
 # E6: inicio vigila los servicios. Uno que se cae a propósito vuelve con el mismo canal, tres veces, y se deja.
 ~│   [caida] arranca y cae a propósito
 ~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 1)
