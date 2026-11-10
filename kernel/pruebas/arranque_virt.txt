@@ -95,8 +95,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sonido sigue: sí
 ~│   [hostil] compositor sigue: sí
 # E6: inicio vigila los servicios. Uno que se cae a propósito vuelve con el mismo canal, tres veces, y se deja.
-~│   [caida] arranca (0 avisos de inicio en su canal) y cae a propósito
+~│   [caida] arranca y cae a propósito
 ~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 1)
-~│   [caida] arranca (1 avisos de inicio en su canal) y cae a propósito
+~│   [caida] relanzado, con 1 cliente en el directorio; cae a propósito
 ~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 3)
 ~│   [inicio] caida acabó (clase 0, código 3): se deja tras 3 relanzados

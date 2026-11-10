@@ -93,6 +93,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(feature = "virt")]
     ("caida", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/caida"), &[], &["caida"]),
+    // Un cliente suyo (el programa de saludo, que acaba solo): al relanzar a `caida`, `inicio` le vuelve a dar su
+    // entrada del directorio.
+    #[cfg(feature = "virt")]
+    ("caida-cliente", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &["caida"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),

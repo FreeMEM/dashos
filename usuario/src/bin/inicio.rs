@@ -91,7 +91,6 @@ fn principal() -> u64 {
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
-    const CABECERA: usize = 32;
     let mut datos = cabeceras + CABECERA * programas;
     // Los canales entre servicios: el extremo que reciben, en copias, los demás programas que lo nombran (0: aún no
     // creado). El primero recibe el otro extremo.
@@ -101,6 +100,9 @@ fn principal() -> u64 {
     // E6: los servicios (los que leen algún canal), para relanzarlos si acaban. Sus avisos de fin (K7) llegan por
     // `avisos`, con la marca del número del programa más 1.
     let mut servicios: [Option<Servicio>; 32] = Default::default();
+    // Los clientes de cada canal (bit = número del programa), para darle otra vez a su servicio, si se relanza, sus
+    // entradas del directorio y, al de archivos, sus altas.
+    let mut clientes_de = [0u64; 32];
     let (avisos_a, avisos) = canal_crear();
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
@@ -160,6 +162,9 @@ fn principal() -> u64 {
                             }
                             dormir_un_tic();
                         }
+                        if i < 64 {
+                            clientes_de[c] |= 1 << i;
+                        }
                         // Al de archivos, además, su ficha (R6), también antes de que el cliente arranque.
                         if nombre(lector[c] + 16) == "archivos" {
                             if let Some((m, n)) = alta(nombre(nombre_cab), marca) {
@@ -169,6 +174,7 @@ fn principal() -> u64 {
                                     }
                                     dormir_un_tic();
                                 }
+
                             }
                         }
                     }
@@ -246,7 +252,7 @@ fn principal() -> u64 {
         s.veces += 1;
         println!("  [inicio] {} acabó (clase {}, código {}): se relanza (vez {})", nombre(s.cab), clase, codigo, s.veces);
         dashos::dormir_us(100_000 << (s.veces - 1));
-        if !relanzar(s, &pendientes) {
+        if !relanzar(s, &pendientes, &clientes_de, &lector, cabeceras) {
             println!("  [inicio] {}: no se pudo relanzar", nombre(s.cab));
             servicios[i] = None;
         }
@@ -271,13 +277,38 @@ struct Servicio {
 }
 
 const MAX_RELANZAR: u32 = 3;
+/// Lo que mide la cabecera de cada programa en el paquete de arranque.
+const CABECERA: usize = 32;
 
-/// Relanza `s` con copias de sus llaves guardadas, en un grupo nuevo, y pide otra vez su aviso de fin. Antes deja un
-/// mensaje sin marca en cada canal que lee: así ve que el canal es el mismo (y un servicio de verdad, que vuelve).
-fn relanzar(s: &mut Servicio, pendientes: &[u32; 32]) -> bool {
+/// Relanza `s` con copias de sus llaves guardadas, en un grupo nuevo, y pide otra vez su aviso de fin. Antes deja en
+/// cada canal que lee un aviso sin marca de que es un relanzado y, otra vez, lo que se le dio de sus clientes (su
+/// entrada del directorio y, al de archivos, su alta): sin eso no sabría quién le habla.
+fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], lector: &[usize; 32], cabeceras: usize) -> bool {
+    let escribir = |p: u32, m: &[u8]| {
+        for _ in 0..100 {
+            if dashos::canal_escribir(p, m, &[]) == 0 {
+                break;
+            }
+            dormir_un_tic();
+        }
+    };
     for (c, &p) in pendientes.iter().enumerate() {
         if s.lee & (1 << c) != 0 && p != 0 {
-            dashos::canal_escribir(p, b"inicio: relanzado", &[]);
+            escribir(p, b"inicio: relanzado");
+            for j in (0..64).filter(|j| clientes_de[c] & (1 << j) != 0) {
+                // Como al lanzarlos: marca (el número del programa más 1) y nombre; al de archivos, también la ficha.
+                let marca = j as u64 + 1;
+                let nombre_cab = cabeceras + CABECERA * j + 16;
+                let mut dir = [0u8; 24];
+                dir[..8].copy_from_slice(&marca.to_le_bytes());
+                dir[8..].copy_from_slice(unsafe { core::slice::from_raw_parts(nombre_cab as *const u8, 16) });
+                escribir(p, &dir);
+                if nombre(lector[c] + 16) == "archivos" {
+                    if let Some((m, n)) = alta(nombre(nombre_cab), marca) {
+                        escribir(p, &m[..n]);
+                    }
+                }
+            }
         }
     }
     let mut suyas = [0u32; 8];

@@ -140,3 +140,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   PC (`medir_componer`, 800 x 600 entera con tres ventanas): 311 a 225 µs por cuadro (-28 %); la ventana a medias
   sola, 182 a 107 µs. Dividir entre 255 o copiar fila a fila sin más no ganaba nada (el compilador ya lo hacía).
   Falta de E8: componer con un temporizador de cuadro y el canal fijo con el buzón.
+- E6, lo que faltaba: al relanzar un servicio, `inicio` le vuelve a dar, tras el aviso de relanzado, la entrada del
+  directorio de cada cliente de sus canales y, al de archivos, sus altas (sin montón: un mapa de bits de clientes por
+  canal, y se rehacen desde el paquete de arranque). Prueba: `caida` tiene un cliente (`caida-cliente`) y cada
+  relanzado lo ve en su directorio. Falta avisar a los clientes de que su servicio volvió (sus sesiones se pierden).
