@@ -166,4 +166,8 @@ Del 2026-11-10, aceptados por el usuario.
   despertar; cada fase de dormirse tiene plazo y lo que no contesta se para; la imagen de hibernación va cifrada con
   la contraseña y, si no cuadra, se arranca normal sin perder el disco.
 - **El escritorio**: fase E3b de S10b, mosaico y flotantes sin modos, detrás de E3 (2026-11-10).
+- **Las pantallas del Amiga** (S23, 2026-11-10): cada pantalla del Amiga es una pantalla de DashOS (escritorio
+  virtual), con su mapa de bits de fondo y sus ventanas como ventanas del compositor. Workbench, pantallas públicas,
+  propias (base de modos con PAL, HAM, AGA y RTG, escalado con su proporción) y clonadas; arrastrar dejando dos a la
+  vez; menús en la barra; ficha de compatibilidad por programa.
 

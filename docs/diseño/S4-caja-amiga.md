@@ -1,5 +1,7 @@
 # S4. La caja Amiga
 
+> **2026-11-10.** Las pantallas (Workbench, públicas, propias y clonadas, modos y menús), juntas en [S23](S23-pantallas-amiga.md).
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
