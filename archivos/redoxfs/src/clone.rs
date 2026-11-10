@@ -25,7 +25,7 @@ fn copy_extras<D: Disk, E: Disk>(
 
 fn tx_progress<D: Disk, F: FnMut(u64)>(tx: &mut Transaction<D>, progress: &mut F) {
     let size = tx.header.size();
-    let free = tx.allocator.free() * BLOCK_SIZE;
+    let free = tx.allocator.as_ref().unwrap_or(&tx.fs.allocator).free() * BLOCK_SIZE;
     progress(size - free);
 }
 

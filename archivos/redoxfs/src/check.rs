@@ -1070,7 +1070,7 @@ impl<D: Disk> Checker<'_, '_, D> {
         let mut used_but_free = 0;
         let mut first_used = 0;
         let mut outside = usage.outside;
-        for (level, indexes) in self.tx.allocator.levels().iter().enumerate() {
+        for (level, indexes) in self.tx.allocator.as_ref().unwrap_or(&self.tx.fs.allocator).levels().iter().enumerate() {
             for &start in indexes {
                 for i in start..start + (1 << level) {
                     if !(FIRST_BLOCK..total).contains(&i) {

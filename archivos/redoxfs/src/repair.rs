@@ -53,7 +53,7 @@ pub fn repair<D: Disk>(
 
     // Until the new header is written, only blocks that the old one does not use can be written.
     let total = tx.header.size() / crate::BLOCK_SIZE;
-    tx.allocator = Allocator::from_free_runs(runs(FIRST_BLOCK, total, |i| !before.is_used(i)));
+    tx.allocator = Some(Allocator::from_free_runs(runs(FIRST_BLOCK, total, |i| !before.is_used(i))));
     tx.allocator_log.clear();
     tx.deallocate.clear();
     // The allocation log is written anew at the end: the old one is not in use from here on.
@@ -85,7 +85,7 @@ pub fn repair<D: Disk>(
 
     // The new allocation log: free is what neither header uses; what only the old one uses is freed after it.
     let used = |i| before.is_used(i) || report.is_used(i);
-    tx.allocator = Allocator::from_free_runs(runs(FIRST_BLOCK, total, |i| !used(i)));
+    tx.allocator = Some(Allocator::from_free_runs(runs(FIRST_BLOCK, total, |i| !used(i))));
     tx.allocator_log.clear();
     tx.deallocate = Vec::new();
     for (start, count) in runs(FIRST_BLOCK, total, |i| {

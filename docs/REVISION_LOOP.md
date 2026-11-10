@@ -29,7 +29,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
 | R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho (ceder asas, con R17) |
 | R7 | Banco fiable | B1 a B4 | hecho |
-| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | A1 a A4 y A6 hechos (A5, pendiente) |
+| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | azar hecho (falta RNG200 y arranque) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
@@ -165,3 +165,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `caida-cliente`, que acabó solo, ya no está en la lista.
 - U2: un servicio relanzado vuelve a tener ficha en `sesiones`, con su grupo nuevo, y su baja pedida otra vez. En
   virt, `caida` sale tres veces como "vuelve, con su grupo nuevo".
+- A5, primera mitad: una transacción de RedoxFS ya no copia el asignador al empezar; lo copia la primera vez que
+  reserva o libera (`allocator: Option`). En el PC (`perfil`, 285 trozos libres), una transacción vacía pasa de
+  1,2 µs a 60 ns; escribir, igual. En QEMU (banco de ficheros, 7 arranques), todo dentro del ruido: con el disco de
+  pruebas recién hecho, el asignador es pequeño. Se notará con discos fragmentados. Falta la otra mitad: copiar de la
+  caché a la ventana sin pasar por un registro puesto a ceros.

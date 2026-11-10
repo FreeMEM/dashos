@@ -79,7 +79,9 @@ pub struct Transaction<'a, D: Disk> {
     pub header: Header,
     //TODO: make private
     pub header_changed: bool,
-    pub(crate) allocator: Allocator,
+    /// DashOS (A5 de docs/REVISION_ARQUITECTURA.md): la copia del asignador del sistema de archivos se hace la primera
+    /// vez que la transacción reserva o libera, no al empezar. Una transacción que solo lee no copia nada.
+    pub(crate) allocator: Option<Allocator>,
     pub(crate) allocator_log: VecDeque<AllocEntry>,
     pub(crate) deallocate: Vec<BlockAddr>,
     /// Blocks let go in this transaction that a snapshot still sees: they go to the dead list (FS9).
@@ -109,12 +111,11 @@ const VERIFIED_MAX: usize = 32768;
 impl<'a, D: Disk> Transaction<'a, D> {
     pub(crate) fn new(fs: &'a mut FileSystem<D>) -> Self {
         let header = fs.header;
-        let allocator = fs.allocator.clone();
         Self {
             fs,
             header,
             header_changed: false,
-            allocator,
+            allocator: None,
             allocator_log: VecDeque::new(),
             deallocate: Vec::new(),
             dead: Vec::new(),
@@ -136,7 +137,9 @@ impl<'a, D: Disk> Transaction<'a, D> {
             main.apply(&mut self.header);
         }
         self.fs.header = self.header;
-        self.fs.allocator = self.allocator;
+        if let Some(a) = self.allocator.take() {
+            self.fs.allocator = a;
+        }
         self.fs.quarantine.append(&mut self.quarantine);
         self.fs.fresh.extend(self.fresh.drain(..));
         Ok(())
@@ -154,7 +157,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         ctx: &mut dyn AllocCtx,
         meta: BlockMeta,
     ) -> Result<BlockAddr> {
-        match self.allocator.allocate(meta) {
+        match self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).allocate(meta) {
             Some(addr) => {
                 // Stamped with the epoch, for the snapshots (FS9).
                 let addr = addr.with_epoch(self.header.epoch.to_ne());
@@ -210,7 +213,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             // Deallocate immediately since it is an allocation that was not needed
             let key = (addr.index(), addr.level().blocks::<u64>());
             self.fresh.retain(|f| *f != key);
-            self.allocator.deallocate(addr);
+            self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).deallocate(addr);
         } else {
             // Deallocate later when syncing filesystem, to avoid re-use
             self.deallocate.push(addr);
@@ -257,12 +260,12 @@ impl<'a, D: Disk> Transaction<'a, D> {
         // Not while blocks wait in quarantine: the rebuilt log would keep them in use (`deferred`).
         let should_gc = self.header.generation() % ALLOC_GC_THRESHOLD == 0
             && self.header.generation() >= ALLOC_GC_THRESHOLD
-            && self.allocator.free() > 0
+            && self.allocator.as_ref().unwrap_or(&self.fs.allocator).free() > 0
             && self.fs.quarantine.is_empty();
         if force_squash || should_gc {
             // Clear and rebuild alloc log
             self.allocator_log.clear();
-            let levels = self.allocator.levels();
+            let levels = self.allocator.as_ref().unwrap_or(&self.fs.allocator).levels();
             for level in (0..levels.len()).rev() {
                 let count = (1 << level) as i64;
                 'indexs: for &index in levels[level].iter() {
@@ -330,7 +333,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 if self.fs.deferred {
                     self.fs.disk.forget(self.fs.block + key.0, key.1);
                 }
-                self.allocator.deallocate(addr);
+                self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).deallocate(addr);
             }
             self.allocator_log.push_back(AllocEntry::deallocate(addr));
         }
