@@ -147,7 +147,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
-| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1` | El número |
+| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel | El número |
+| 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
+| 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 
 ### Detalles
 

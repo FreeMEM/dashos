@@ -12,6 +12,7 @@
 //! - `temp US N`: N esperas de US microsegundos con un temporizador de un disparo. Responde `temp p50 p99 max` de lo
 //!   que tarda de más, en µs.
 //! - `dormir MS`: duerme MS milisegundos y responde `dormir real_us`.
+//! - `nucleo`: se fija a su núcleo (llamada 31, para que el reparto entre núcleos no lo mueva) y responde `nucleo N`.
 //! - `fin`: acaba.
 
 #![no_std]
@@ -125,7 +126,8 @@ fn principal() -> u64 {
                 dashos::dormir_us(x * 1000);
                 responder(&texto!("dormir {}", a_us(cuentas() - t0)));
             }
-            b"nucleo" => responder(&texto!("nucleo {}", nucleo())),
+            // Se fija a su núcleo y dice cuál: el orquestador lo pregunta para colocar a dos juntos o separados.
+            b"nucleo" => responder(&texto!("nucleo {}", fijar())),
             _ => return 0,
         }
     }

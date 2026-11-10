@@ -352,3 +352,14 @@ aquí los números y commit local.
 - Fallo del banco, apuntado: desde M4 un núcleo ocioso se lleva hilos, y la ida y vuelta "en el mismo núcleo" puede
   acabar con los dos en núcleos distintos (el resultado lo dice, `nucleos=`). Falta poder fijar un hilo a su núcleo.
 - `make prueba`, `make arranque-virt` (Pi 4 y virt, para ver que no se rompe nada): bien.
+
+### 2026-11-10 — Llamada 31, fijar: el banco vuelve a medir "en el mismo núcleo"
+
+- `fijar` (llamada 31): el hilo que llama no se mueve de su núcleo (`Hilo::fijo`, que `robar` respeta); con 0, se
+  suelta. Los hijos del banco (Rust y C) se fijan al responder `nucleo`, que es lo que pregunta el orquestador para
+  colocarlos. `docs/referencia/kernel.md`: filas de las llamadas 29 (contadores nuevos), 30 y 31.
+- `docs/medidas/m-fijar.json` (3 arranques): ida y vuelta en el mismo núcleo, ahora de verdad (núcleos 2-2), 85 µs
+  (Linux: 80); entre núcleos, 58 (Linux: 33). El dormilón vuelve a compartir núcleo: el otro pierde 505 ms en 3 s, la
+  mitad del segundo en que calculan los dos (Linux: 516). Las cifras de "mismo núcleo" de M4 a M2b eran con los dos en
+  núcleos distintos.
+- `make prueba` y `make arranque-virt`: bien.

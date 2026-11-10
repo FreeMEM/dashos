@@ -73,6 +73,8 @@ pub struct Hilo {
     expulsado: bool,
     /// Duerme hasta este momento (cuentas del contador) en la lista `dormidos` de su núcleo (M2b, llamada 30), o 0.
     despierta: u64,
+    /// No se lleva a otro núcleo (llamada 31): para medir en un núcleo concreto, o para un hilo que lo necesite.
+    fijo: bool,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
@@ -265,6 +267,7 @@ pub fn iniciar_nucleo() {
         listo_desde: 0,
         expulsado: false,
         despierta: 0,
+        fijo: false,
     }));
     fpen(FPEN_ATRAPAR);
     registros_el0();
@@ -353,6 +356,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         listo_desde: reloj::ahora(),
         expulsado: false,
         despierta: 0,
+        fijo: false,
     }));
     nc.listos.push(h);
     publicar_carga(nucleo, nc);
@@ -516,6 +520,7 @@ fn robar(n: usize, nc: &mut Nucleo, ocioso: bool, rotar: bool) {
     let movible = |h: *mut Hilo| unsafe {
         (ocioso || ((*h).expulsado && (!rotar || ahora.saturating_sub((*h).listo_desde) >= reloj::periodo() / 2)))
             && (*h).proceso != 0
+            && !(*h).fijo
             && (*h).plazo.is_none()
             && (*h).estado == Estado::Listo
             && !(*h).en_cambio.load(Ordering::Acquire)
@@ -871,6 +876,11 @@ pub fn dormir_us(us: u64) {
         planificar_enmascarado(true, || {});
     }
     crate::cerrojo::restaurar_irq(estado);
+}
+
+/// Fija el hilo actual a su núcleo (`si`) o lo suelta (llamada 31): un hilo fijo no se roba (M4).
+pub fn fijar_actual(si: bool) {
+    aqui(|nc| unsafe { (*nc.actual).fijo = si });
 }
 
 /// Bloquea el hilo actual hasta que alguien lo despierte.

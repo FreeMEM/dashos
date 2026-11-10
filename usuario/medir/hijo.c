@@ -175,6 +175,7 @@ static int principal(void)
             poner_num(a_us(huecos)); poner(" "); poner_num(n0); poner(" "); poner_num(nucleo());
             responder();
         } else if (empieza(b, (int)n, "nucleo")) {
+            svc(31, 1, 0, 0, 0, 0); /* fijarse a su núcleo: el reparto entre núcleos no lo mueve */
             poner("nucleo ");
             poner_num(nucleo());
             responder();

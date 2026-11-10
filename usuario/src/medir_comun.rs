@@ -65,6 +65,12 @@ pub fn nucleo() -> u64 {
     dashos::llamada(29, [0, 0, 0, 0, 0]).0
 }
 
+/// Fija el hilo a su núcleo (llamada 31), para que el reparto entre núcleos no lo mueva, y dice cuál es.
+pub fn fijar() -> u64 {
+    dashos::llamada(31, [1, 0, 0, 0, 0]);
+    nucleo()
+}
+
 /// Un contador del kernel del núcleo `n`: 1 = tics, 2 = cambios de hilo, 3 = µs ocioso.
 pub fn contador(que: u64, n: u64) -> u64 {
     dashos::llamada(29, [que, n, 0, 0, 0]).0

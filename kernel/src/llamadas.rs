@@ -158,6 +158,11 @@ pub fn atender(marco: &mut Marco) {
             planificador::dormir_us(a[0].min(3_600_000_000));
             0
         }
+        // Fijar el hilo que llama a su núcleo (a[0] = 1) o soltarlo (0): no lo moverá el reparto entre núcleos (M4).
+        31 => {
+            planificador::fijar_actual(a[0] != 0);
+            0
+        }
         // M0 (docs/MULTITAREA_LOOP.md): para medir. 0 = el núcleo en que corre quien llama; 1, 2 y 3 = interrupciones,
         // cambios de hilo y microsegundos ociosos del núcleo a[1]; 4 = hilos robados entre núcleos; 5, 6 y 7 = páginas
         // de RAM, páginas libres y bytes del kernel. Nada de otros procesos.
