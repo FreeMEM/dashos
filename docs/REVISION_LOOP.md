@@ -211,5 +211,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   va ahora tras archivos y `inicio` da de alta también lo lanzado antes; en el hostil, las llaves pasan a ventanas 1,
   archivos 2, sesiones 3, sonido 4. Pruebas: `entrada` entra con contraseña mala (-12), con la buena (0) y sale (0);
   el hostil intenta entrar como Carla con la contraseña buena y recibe -12. `ficheros` ve ahora dos volúmenes.
-  Falta de U3: la pantalla de `guardian`, el bloqueo de la sesión (compositor G5) y comprobar la contraseña al volver
-  sin tocar el volumen.
+  Falta de U3: la pantalla de `guardian` y el bloqueo de la sesión (compositor G5).
+- U3, volver de un bloqueo: orden 29 de archivos, COMPROBAR_CLAVE (RedoxFS `check_volume_password`: deriva la llave
+  y la tira, sin abrir ni tocar el volumen), y VOLVER en `sesiones`. Tras una contraseña mala, `sesiones` tarda
+  300 ms en contestar. `entrada` comprueba volver con una mala (-12) y con la buena (0) con el volumen abierto.

@@ -37,6 +37,9 @@ pub const ABRIR_VOLUMEN: u32 = 25;
 pub const CERRAR_VOLUMEN: u32 = 26;
 pub const GUARDAR: u32 = 27;
 pub const LEER_NOMBRE: u32 = 28;
+/// U3: comprobar la contraseña de un volumen cifrado sin abrirlo (como `ABRIR_VOLUMEN`: nombre en el mensaje, la
+/// contraseña en la ventana). Para volver de un bloqueo sin tocar el volumen.
+pub const COMPROBAR_CLAVE: u32 = 29;
 pub const ALTA: u32 = 100;
 pub const D_ADMINISTRAR: u32 = 1;
 

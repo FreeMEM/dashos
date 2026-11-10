@@ -764,7 +764,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN)
+    let de_administrar = matches!(p.orden, COMPROBAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -1335,7 +1335,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                 Err(e) => mal(estado_de(e)),
             }
         }
-        ABRIR_VOLUMEN => {
+        ABRIR_VOLUMEN | COMPROBAR_CLAVE => {
             // El nombre en el mensaje; la contraseña, sus `b` primeros bytes de la ventana (A13): así no pasa por las colas
             // del kernel. Se copia, se borra de la ventana y, usada, de aquí. No se guarda: solo la llave que abre.
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
@@ -1347,9 +1347,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
             let largo = p.b as usize;
             clave[..largo].copy_from_slice(&v[..largo]);
             v[..largo].fill(0);
+            let comprobar = p.orden == COMPROBAR_CLAVE;
             let r = fs.tx(|tx| {
                 let id = tx.find_volume(nombre)?;
-                tx.unlock_volume(id, &clave[..largo])
+                if comprobar { tx.check_volume_password(id, &clave[..largo]) } else { tx.unlock_volume(id, &clave[..largo]) }
             });
             clave.fill(0);
             core::hint::black_box(&clave);

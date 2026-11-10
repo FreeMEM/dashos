@@ -20,6 +20,9 @@ pub const ENTRAR: u32 = 3;
 /// De `guardian`: salir (orden, largo del nombre, 0, el nombre). Cierra el volumen; contesta como `ENTRAR`, o -13 si
 /// algo suyo sigue abierto.
 pub const SALIR: u32 = 4;
+/// De `guardian`: volver de un bloqueo (como `ENTRAR`). Comprueba la contraseña sin tocar el volumen, que sigue
+/// abierto. Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
+pub const VOLVER: u32 = 5;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

@@ -70,12 +70,14 @@ impl Archivos {
         if n != 32 { -1 } else { i32::from_le_bytes(r[0..4].try_into().unwrap()) }
     }
 
-    /// Abre el volumen `nombre` con `clave`: la clave va por la ventana, no en el mensaje (A13), y la borra el servicio.
-    fn abrir_volumen(&self, nombre: &[u8], clave: &[u8]) -> i32 {
+    /// Abre el volumen `nombre` con `clave` (o, con `solo_comprobar`, mira si es la suya sin abrirlo): la clave va por la
+    /// ventana, no en el mensaje (A13), y la borra el servicio.
+    fn abrir_volumen(&self, nombre: &[u8], clave: &[u8], solo_comprobar: bool) -> i32 {
         let clave = &clave[..clave.len().min(128)];
         let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 128) };
         ventana[..clave.len()].copy_from_slice(clave);
-        let r = self.pedir(dashos::protocolo::archivos::ABRIR_VOLUMEN, clave.len() as u64, nombre);
+        use dashos::protocolo::archivos::{ABRIR_VOLUMEN, COMPROBAR_CLAVE};
+        let r = self.pedir(if solo_comprobar { COMPROBAR_CLAVE } else { ABRIR_VOLUMEN }, clave.len() as u64, nombre);
         // Por si el servicio no llegó a leerla.
         ventana.fill(0);
         r
@@ -168,18 +170,23 @@ fn principal() -> u64 {
                     r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
                     dashos::canal_escribir(respuesta, &r[..8 + 32 * i], &[]);
                 }
-                ENTRAR | SALIR => {
+                ENTRAR | SALIR | VOLVER => {
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
                     let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
                     let estado = match (&archivos, guardian, m.get(12..12 + nl), m.get(12 + nl..12 + nl + cl)) {
                         (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
-                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave),
+                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave, false),
+                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == VOLVER => a.abrir_volumen(usuario, clave, true),
                         (Some(a), true, Some(usuario), _) => a.pedir(dashos::protocolo::archivos::CERRAR_VOLUMEN, 0, usuario),
                         _ => -1,
                     };
                     let quien = m.get(12..12 + nl).and_then(|u| core::str::from_utf8(u).ok()).unwrap_or("?");
-                    let que = if u32_en(0) == ENTRAR { "entrar" } else { "salir" };
+                    let que = match u32_en(0) { ENTRAR => "entrar", VOLVER => "volver", _ => "salir" };
+                    // Tras una contraseña mala, un rato sin contestar: probar a ciegas sale caro.
+                    if estado == dashos::protocolo::archivos::PROTEGIDO && guardian {
+                        dashos::dormir_us(300_000);
+                    }
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     println!("  [sesiones] {} pide {} como {}: {}", nombre(&pide), que, quien, estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);

@@ -224,6 +224,7 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
 | 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
 | 28 leer por nombre | Busca `nombre` desde la asa y lo lee al principio de la ventana, sin dejar asa abierta (A3): buscar, leer y cerrar en un viaje | asa, a desde, b cuánto (hasta la ventana), nombre | a bytes leídos, b fecha, c tamaño total; asa 0 |
+| 29 comprobar clave | Mira si la contraseña es la del volumen cifrado `nombre`, sin abrirlo ni tocarlo (U3: volver de un bloqueo). Solo con el derecho de administrar | b largo de la contraseña (en la ventana, como en 25), nombre | estado: 0 es la suya, -12 no |
 
 **Cuándo está en el disco.** Cada orden que cambia algo se confirma entera o nada, pero en memoria: va al disco con
 vaciar (11) o guardar (27), con las órdenes de instantáneas y volúmenes (18 a 20, 23 a 26), al juntarse 8 MB por

@@ -6,7 +6,7 @@
 #![no_main]
 
 use dashos::println;
-use dashos::protocolo::sesiones::{ENTRAR, SALIR};
+use dashos::protocolo::sesiones::{ENTRAR, SALIR, VOLVER};
 
 dashos::programa!(principal);
 
@@ -37,12 +37,17 @@ fn principal() -> u64 {
     dashos::dormir_us(1_000_000);
     let mala = pedir(ENTRAR, "Carla", "no es esta");
     let buena = pedir(ENTRAR, "Carla", "clave de Carla");
+    // Volver de un bloqueo: la contraseña se comprueba sin tocar el volumen, que sigue abierto.
+    let volver_mala = pedir(VOLVER, "Carla", "tampoco");
+    let volver = pedir(VOLVER, "Carla", "clave de Carla");
     let salir = pedir(SALIR, "Carla", "");
-    let bien = mala == -12 && buena == 0 && salir == 0;
+    let bien = mala == -12 && buena == 0 && volver_mala == -12 && volver == 0 && salir == 0;
     println!(
-        "  [entrada] Carla: contraseña mala {}, buena {}, salir {}: {}",
+        "  [entrada] Carla: contraseña mala {}, buena {}, volver con mala {} y con buena {}, salir {}: {}",
         mala,
         buena,
+        volver_mala,
+        volver,
         salir,
         if bien { "bien" } else { "MAL" }
     );

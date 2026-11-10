@@ -97,7 +97,7 @@ DashOS en marcha con 4 núcleos.
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
-~│   [entrada] Carla: contraseña mala -12, buena 0, salir 0: bien
+~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
 ~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)
 ~│   [sesiones] baja de caida-cliente (clase 0)

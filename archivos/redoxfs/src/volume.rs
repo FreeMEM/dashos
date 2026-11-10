@@ -619,6 +619,15 @@ impl<D: Disk> Transaction<'_, D> {
         Ok(())
     }
 
+    /// DashOS (U3): whether `password` is one of the volume's, without unlocking it nor touching anything. EACCES if not.
+    pub fn check_volume_password(&mut self, id: u64, password: &[u8]) -> Result<()> {
+        let volume = self.volume_by_id(id)?;
+        let keys = self.volume_keys(&volume)?;
+        let (mut master, _) = keys.data().unwrap(password)?;
+        master.fill(0);
+        Ok(())
+    }
+
     /// Forgets the key of a volume. EBUSY with something of it open.
     pub fn lock_volume(&mut self, id: u64) -> Result<()> {
         if self.fs.node_usages.keys().any(|key| key >> 32 == id) {
