@@ -63,6 +63,10 @@ test = false
 [profile.release]
 panic = "abort"
 opt-level = "s"
+# Las dependencias (RedoxFS, seahash, lz4 del servicio de archivos), para ir rápido: con "s", crear un fichero costaba
+# en DashOS cuatro veces lo que el mismo RedoxFS bajo QEMU en modo usuario (paso F10 de docs/MULTITAREA_LOOP.md).
+[profile.release.package."*"]
+opt-level = 3
 [profile.dev]
 panic = "abort"
 

@@ -1,0 +1,356 @@
+{
+ "medianas": {
+  "empieza": {},
+  "fin": {},
+  "fs op=borrar": {
+   "op": "borrar",
+   "unidad": "ficheros/s",
+   "valor": 1931.9
+  },
+  "fs op=borrar_sync": {
+   "op": "borrar_sync",
+   "unidad": "ficheros/s",
+   "valor": 466.5
+  },
+  "fs op=crear_4k": {
+   "op": "crear_4k",
+   "unidad": "ficheros/s",
+   "valor": 387.9
+  },
+  "fs op=crear_4k_sync": {
+   "op": "crear_4k_sync",
+   "unidad": "ficheros/s",
+   "valor": 375.2
+  },
+  "fs op=datos": {
+   "op": "datos",
+   "unidad": "ops/s",
+   "valor": 14275.5
+  },
+  "fs op=datos_asa": {
+   "op": "datos_asa",
+   "unidad": "ops/s",
+   "valor": 5141.2
+  },
+  "fs op=escribir_8mb": {
+   "op": "escribir_8mb",
+   "unidad": "MB/s",
+   "valor": 78.6
+  },
+  "fs op=escribir_8mb_sync": {
+   "op": "escribir_8mb_sync",
+   "unidad": "MB/s",
+   "valor": 26.5
+  },
+  "fs op=guardar_4k_sync": {
+   "op": "guardar_4k_sync",
+   "unidad": "ficheros/s",
+   "valor": 433.8
+  },
+  "fs op=leer_4k": {
+   "op": "leer_4k",
+   "unidad": "ficheros/s",
+   "valor": 3027.6
+  },
+  "fs op=leer_8mb": {
+   "op": "leer_8mb",
+   "unidad": "MB/s",
+   "valor": 406.7
+  },
+  "fs op=leer_8mb_frio": {
+   "op": "leer_8mb_frio",
+   "unidad": "MB/s",
+   "valor": 300.0
+  },
+  "fs op=listar_500": {
+   "op": "listar_500",
+   "unidad": "listados/s",
+   "valor": 404.5
+  },
+  "fs-bien": {
+   "bien": 1.0,
+   "listados": 500.0
+  },
+  "fs-perfil": {
+   "escribir": "0/0",
+   "leer": "262/28625",
+   "o1": "2000/80532",
+   "o11": "634/979946",
+   "o2": "1256/66921",
+   "o27": "500/1111453",
+   "o3": "1256/362221",
+   "o4": "1/2370",
+   "o5": "500/3141",
+   "o6": "2502/1630839",
+   "o7": "1003/517803",
+   "o8": "1000/449980",
+   "vaciar": "2133/3236808"
+  }
+ },
+ "vueltas": [
+  {
+   "empieza": {},
+   "fin": {},
+   "fs op=borrar": {
+    "op": "borrar",
+    "unidad": "ficheros/s",
+    "valor": "1844.0"
+   },
+   "fs op=borrar_sync": {
+    "op": "borrar_sync",
+    "unidad": "ficheros/s",
+    "valor": "466.5"
+   },
+   "fs op=crear_4k": {
+    "op": "crear_4k",
+    "unidad": "ficheros/s",
+    "valor": "388.7"
+   },
+   "fs op=crear_4k_sync": {
+    "op": "crear_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "375.2"
+   },
+   "fs op=datos": {
+    "op": "datos",
+    "unidad": "ops/s",
+    "valor": "14275.5"
+   },
+   "fs op=datos_asa": {
+    "op": "datos_asa",
+    "unidad": "ops/s",
+    "valor": "5105.7"
+   },
+   "fs op=escribir_8mb": {
+    "op": "escribir_8mb",
+    "unidad": "MB/s",
+    "valor": "78.6"
+   },
+   "fs op=escribir_8mb_sync": {
+    "op": "escribir_8mb_sync",
+    "unidad": "MB/s",
+    "valor": "26.6"
+   },
+   "fs op=guardar_4k_sync": {
+    "op": "guardar_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "435.3"
+   },
+   "fs op=leer_4k": {
+    "op": "leer_4k",
+    "unidad": "ficheros/s",
+    "valor": "2949.4"
+   },
+   "fs op=leer_8mb": {
+    "op": "leer_8mb",
+    "unidad": "MB/s",
+    "valor": "367.7"
+   },
+   "fs op=leer_8mb_frio": {
+    "op": "leer_8mb_frio",
+    "unidad": "MB/s",
+    "valor": "263.2"
+   },
+   "fs op=listar_500": {
+    "op": "listar_500",
+    "unidad": "listados/s",
+    "valor": "404.5"
+   },
+   "fs-bien": {
+    "bien": "1",
+    "listados": "500"
+   },
+   "fs-perfil": {
+    "escribir": "0/0",
+    "leer": "262/28625",
+    "o1": "2000/80532",
+    "o11": "634/979946",
+    "o2": "1256/66921",
+    "o27": "500/1111453",
+    "o3": "1256/362221",
+    "o4": "1/2370",
+    "o5": "500/3141",
+    "o6": "2502/1630839",
+    "o7": "1003/517803",
+    "o8": "1000/449980",
+    "vaciar": "2133/3236808"
+   }
+  },
+  {
+   "empieza": {},
+   "fin": {},
+   "fs op=borrar": {
+    "op": "borrar",
+    "unidad": "ficheros/s",
+    "valor": "1931.9"
+   },
+   "fs op=borrar_sync": {
+    "op": "borrar_sync",
+    "unidad": "ficheros/s",
+    "valor": "454.7"
+   },
+   "fs op=crear_4k": {
+    "op": "crear_4k",
+    "unidad": "ficheros/s",
+    "valor": "363.3"
+   },
+   "fs op=crear_4k_sync": {
+    "op": "crear_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "386.2"
+   },
+   "fs op=datos": {
+    "op": "datos",
+    "unidad": "ops/s",
+    "valor": "14119.1"
+   },
+   "fs op=datos_asa": {
+    "op": "datos_asa",
+    "unidad": "ops/s",
+    "valor": "5141.2"
+   },
+   "fs op=escribir_8mb": {
+    "op": "escribir_8mb",
+    "unidad": "MB/s",
+    "valor": "77.4"
+   },
+   "fs op=escribir_8mb_sync": {
+    "op": "escribir_8mb_sync",
+    "unidad": "MB/s",
+    "valor": "23.9"
+   },
+   "fs op=guardar_4k_sync": {
+    "op": "guardar_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "433.8"
+   },
+   "fs op=leer_4k": {
+    "op": "leer_4k",
+    "unidad": "ficheros/s",
+    "valor": "3027.6"
+   },
+   "fs op=leer_8mb": {
+    "op": "leer_8mb",
+    "unidad": "MB/s",
+    "valor": "406.7"
+   },
+   "fs op=leer_8mb_frio": {
+    "op": "leer_8mb_frio",
+    "unidad": "MB/s",
+    "valor": "300.0"
+   },
+   "fs op=listar_500": {
+    "op": "listar_500",
+    "unidad": "listados/s",
+    "valor": "372.4"
+   },
+   "fs-bien": {
+    "bien": "1",
+    "listados": "500"
+   },
+   "fs-perfil": {
+    "escribir": "0/0",
+    "leer": "262/30276",
+    "o1": "2000/80759",
+    "o11": "634/1044421",
+    "o2": "1256/64785",
+    "o27": "500/1116440",
+    "o3": "1256/366357",
+    "o4": "1/2565",
+    "o5": "500/3164",
+    "o6": "2502/1664197",
+    "o7": "1003/523997",
+    "o8": "1000/434726",
+    "vaciar": "2133/3339969"
+   }
+  },
+  {
+   "empieza": {},
+   "fin": {},
+   "fs op=borrar": {
+    "op": "borrar",
+    "unidad": "ficheros/s",
+    "valor": "2066.0"
+   },
+   "fs op=borrar_sync": {
+    "op": "borrar_sync",
+    "unidad": "ficheros/s",
+    "valor": "468.7"
+   },
+   "fs op=crear_4k": {
+    "op": "crear_4k",
+    "unidad": "ficheros/s",
+    "valor": "387.9"
+   },
+   "fs op=crear_4k_sync": {
+    "op": "crear_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "373.6"
+   },
+   "fs op=datos": {
+    "op": "datos",
+    "unidad": "ops/s",
+    "valor": "14486.4"
+   },
+   "fs op=datos_asa": {
+    "op": "datos_asa",
+    "unidad": "ops/s",
+    "valor": "5424.1"
+   },
+   "fs op=escribir_8mb": {
+    "op": "escribir_8mb",
+    "unidad": "MB/s",
+    "valor": "84.5"
+   },
+   "fs op=escribir_8mb_sync": {
+    "op": "escribir_8mb_sync",
+    "unidad": "MB/s",
+    "valor": "26.5"
+   },
+   "fs op=guardar_4k_sync": {
+    "op": "guardar_4k_sync",
+    "unidad": "ficheros/s",
+    "valor": "429.3"
+   },
+   "fs op=leer_4k": {
+    "op": "leer_4k",
+    "unidad": "ficheros/s",
+    "valor": "3218.3"
+   },
+   "fs op=leer_8mb": {
+    "op": "leer_8mb",
+    "unidad": "MB/s",
+    "valor": "443.3"
+   },
+   "fs op=leer_8mb_frio": {
+    "op": "leer_8mb_frio",
+    "unidad": "MB/s",
+    "valor": "325.5"
+   },
+   "fs op=listar_500": {
+    "op": "listar_500",
+    "unidad": "listados/s",
+    "valor": "404.5"
+   },
+   "fs-bien": {
+    "bien": "1",
+    "listados": "500"
+   },
+   "fs-perfil": {
+    "escribir": "0/0",
+    "leer": "262/24050",
+    "o1": "2000/77773",
+    "o11": "634/998989",
+    "o2": "1256/61261",
+    "o27": "500/1127463",
+    "o3": "1256/348790",
+    "o4": "1/2361",
+    "o5": "500/2971",
+    "o6": "2502/1660037",
+    "o7": "1003/497494",
+    "o8": "1000/411939",
+    "vaciar": "2133/3324237"
+   }
+  }
+ ]
+}

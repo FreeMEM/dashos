@@ -507,3 +507,32 @@ que se escribía en el disco con dos vaciados (unos 1,3 ms cada uno en QEMU) ant
   trozos pequeños (la ruta del árbol copiada en sitio nuevo, 10 µs; leer el nodo y el cajón, 5; buscar el nombre, 4).
   En DashOS bajo QEMU, crear cuesta unos 900 µs: 27 veces. Queda por ver si es la emulación o algo de DashOS.
 - `make prueba` y `make arranque-virt`: bien. RedoxFS: 139 pruebas bien.
+
+### 2026-11-10 — F10 y F11: las dependencias con optimización de velocidad, y un `memcpy` de 64 bytes por vuelta
+
+- El mismo `tests_deferred::perfil` compilado para aarch64 y corrido con `qemu-aarch64` (modo usuario, sin MMU
+  emulada): crear un nodo, 227 µs. En DashOS, unos 900. La emulación no lo explicaba todo.
+- F10: los programas de usuario se compilan con `opt-level = "s"`. Las dependencias (RedoxFS, seahash, lz4) pasan a
+  `opt-level = 3` (`[profile.release.package."*"]`); los programas siguen con "s".
+- F11: el `memcpy` de `compiler_builtins` (`compiler-builtins-mem`) copia de palabra en palabra. `usuario/src/copiar.rs`
+  pone uno con `ldp`/`stp`, 64 bytes por vuelta, que manda sobre el débil. Con alineaciones distintas hace accesos sin
+  alinear, que la memoria normal admite (SCTLR_EL1.A a 0): nada copia con `memcpy` a registros de aparatos.
+- `docs/medidas/fs-f10.json` y `fs-f11.json` (3 arranques cada uno, `fs-bien` en todos):
+
+  | Por segundo | B2 | F10 | F11 | Linux |
+  |---|---|---|---|---|
+  | Crear 4 KB, guardando cada uno | 305 | 348 | 375 | 442 |
+  | Guardar 4 KB (orden 27) | 351 | 391 | 434 | — |
+  | Borrar, guardando cada uno | 388 | 451 | 467 | 454 |
+  | Borrar, guardando al final | 1.185 | 1.610 | 1.932 | 5.397 |
+  | Leer 4 KB | 2.207 | 2.754 | 3.028 | 8.984 |
+  | Datos (como `stat`) | 10.121 | 12.144 | 14.276 | 27.084 |
+  | Listar 500 | 107 | 246 | 405 | 165 |
+  | Leer 8 MB, la segunda vez (MB/s) | 309 | 358 | 407 | 1.652 |
+  | Escribir 8 MB, guardando cada trozo (MB/s) | 22 | 25 | 27 | 30 |
+- Multitarea con F10 y F11 (`docs/medidas/m-f11.json`): todo igual (±4 %) salvo la ida y vuelta con 4 calculando
+  donde los ponga el planificador: 139, 200 y 193 µs en tres tandas (M6b: 98; sin F10 ni F11, 80; con uno solo, 106).
+  No es la ida y vuelta: en M6b el eco cayó las tres veces en el núcleo 0, sin carga al lado (82 a 112 µs); ahora cae
+  en el 1, el 3 o el 0 (256, 193, 118). Crear procesos más deprisa cambia dónde caen. Lo que destapa: despertar a un
+  hilo en un núcleo con uno calculando no lo pone a correr en seguida. Paso pendiente (M10).
+- `make prueba` y `make arranque-virt`: bien.

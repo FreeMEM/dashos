@@ -12,6 +12,7 @@ pub mod graficos;
 pub mod hid;
 #[cfg(feature = "monton")]
 pub mod monton;
+mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
 pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
