@@ -3,7 +3,10 @@
  * Sale con 0 si todo fue bien. Es la prueba de que el compositor de DashOS entiende a libwayland tal cual.
  *
  * Pinta un fondo azul (0xff3366cc) con una banda blanca en la fila 10 * cuadro: así la captura dice cuántos cuadros
- * llegaron a la pantalla. */
+ * llegaron a la pantalla.
+ *
+ * Con DOBLE=1 en el entorno, alterna dos búferes del mismo pool y solo declara dañadas la banda vieja y la nueva, como
+ * los programas de verdad: así se prueba que quien copie solo lo dañado no deje bandas viejas en el otro búfer. */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -21,8 +24,9 @@ static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
 static struct wl_surface *superficie;
-static struct wl_buffer *bufer;
-static uint32_t *px;
+static struct wl_buffer *buferes[2];
+static uint32_t *pxs[2];
+static int doble;
 static int configurada, cuadro, fallo;
 
 static void global(void *d, struct wl_registry *r, uint32_t nombre, const char *interfaz, uint32_t version) {
@@ -38,7 +42,7 @@ static const struct wl_registry_listener registro = {global, global_quitado};
 static void ping(void *d, struct xdg_wm_base *w, uint32_t serie) { (void)d; xdg_wm_base_pong(w, serie); }
 static const struct xdg_wm_base_listener oyente_wm = {ping};
 
-static void pintar(int n) {
+static void pintar(uint32_t *px, int n) {
     for (int y = 0; y < ALTO; y++)
         for (int x = 0; x < ANCHO; x++)
             px[y * ANCHO + x] = (y / 10 == n) ? 0xffffffff : 0xff3366cc;
@@ -46,9 +50,15 @@ static void pintar(int n) {
 
 static const struct wl_callback_listener oyente_frame;
 static void siguiente(void) {
-    pintar(cuadro);
-    wl_surface_attach(superficie, bufer, 0, 0);
-    wl_surface_damage(superficie, 0, 0, ANCHO, ALTO);
+    int b = doble ? cuadro % 2 : 0;
+    pintar(pxs[b], cuadro);
+    wl_surface_attach(superficie, buferes[b], 0, 0);
+    if (doble && cuadro > 0) {
+        wl_surface_damage(superficie, 0, (cuadro - 1) * 10, ANCHO, 10);
+        wl_surface_damage(superficie, 0, cuadro * 10, ANCHO, 10);
+    } else {
+        wl_surface_damage(superficie, 0, 0, ANCHO, ALTO);
+    }
     struct wl_callback *cb = wl_surface_frame(superficie);
     wl_callback_add_listener(cb, &oyente_frame, NULL);
     wl_surface_commit(superficie);
@@ -90,13 +100,17 @@ int main(void) {
         return 3;
     }
     xdg_wm_base_add_listener(wm, &oyente_wm, NULL);
+    doble = getenv("DOBLE") && !strcmp(getenv("DOBLE"), "1");
     int fd = memfd_create("dashos-prueba", MFD_CLOEXEC);
     int tam = ANCHO * ALTO * 4;
-    if (fd < 0 || ftruncate(fd, tam) < 0) return 4;
-    px = mmap(NULL, tam, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+    if (fd < 0 || ftruncate(fd, 2 * tam) < 0) return 4;
+    uint32_t *px = mmap(NULL, 2 * tam, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (px == MAP_FAILED) return 4;
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, tam);
-    bufer = wl_shm_pool_create_buffer(pool, 0, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 2 * tam);
+    for (int i = 0; i < 2; i++) {
+        pxs[i] = px + i * ANCHO * ALTO;
+        buferes[i] = wl_shm_pool_create_buffer(pool, i * tam, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
+    }
     close(fd);
     superficie = wl_compositor_create_surface(compositor);
     struct xdg_surface *xs = xdg_wm_base_get_xdg_surface(wm, superficie);

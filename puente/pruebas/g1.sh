@@ -20,15 +20,16 @@ COMP=$!
 for _ in $(seq 50); do [ -S "$R-transporte" ] && break; sleep 0.1; done
 timeout 30 target/release/puente "$SOCK" "$R-transporte" > "$T/puente.txt" 2>&1 &
 for _ in $(seq 50); do [ -S "$SOCK" ] && break; sleep 0.1; done
-WAYLAND_DISPLAY="$SOCK" timeout 20 "$C/cliente_shm"
+WAYLAND_DISPLAY="$SOCK" DOBLE=1 timeout 20 "$C/cliente_shm"
 wait "$COMP"
 python3 - "$T/captura.ppm" <<'PY'
 import sys
 d = open(sys.argv[1], "rb").read()
 px = d[d.index(b"255\n") + 4:]
 p = lambda x, y: px[(y * 800 + x) * 3:(y * 800 + x) * 3 + 3].hex()
-bien = p(45, 45) == "3366cc" and p(45, 135) == "ffffff" and p(5, 5) == "204060"
+bien = p(45, 45) == "3366cc" and p(45, 135) == "ffffff" and p(45, 125) == "3366cc" and p(5, 5) == "204060"
 print("G1: libwayland por el puente de la caja Linux:", "bien" if bien else f"MAL ({p(45, 45)} {p(45, 135)} {p(5, 5)})")
 sys.exit(0 if bien else 1)
 PY
+grep "por cuadro" "$T/puente.txt" || true
 rm -rf "$T"

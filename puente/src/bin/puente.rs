@@ -34,17 +34,35 @@ struct Programa {
     fds: VecDeque<RawFd>,
     objetos: HashMap<u32, &'static Interface>,
     pools: HashMap<u32, Pool>,
-    /// Búfer → (pool, desde, bytes).
-    buferes: HashMap<u32, (u32, usize, usize)>,
+    /// Búfer → (pool, desde, bytes, bytes por fila).
+    buferes: HashMap<u32, (u32, usize, usize, usize)>,
     /// Superficie → búfer puesto.
     superficies: HashMap<u32, u32>,
+    /// Lo dañado de cada superficie: el pendiente (filas, del próximo commit) y la historia (cuadro, filas).
+    danos: HashMap<u32, Danos>,
+    /// Búfer → cuadro de su superficie con el que se mandó por última vez.
+    enviado: HashMap<u32, u64>,
+    /// Bytes copiados al otro lado, para la medida.
+    copiado: u64,
+    cuadros: u64,
+}
+
+/// Cuántos cuadros de daño se recuerdan: un programa con más búferes que esto recibe la copia entera.
+const HISTORIA: usize = 8;
+
+#[derive(Default)]
+struct Danos {
+    cuadro: u64,
+    pendiente: Vec<(usize, usize)>,
+    todo: bool,
+    historia: VecDeque<(u64, Vec<(usize, usize)>, bool)>,
 }
 
 impl Programa {
     fn nuevo(sock: UnixStream) -> Self {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
-        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new() }
+        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0 }
     }
 }
 
@@ -146,21 +164,75 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 }
             }
             ("wl_shm_pool", wl_shm_pool::req::CREATE_BUFFER) if args.len() == 6 => {
-                let largo = (args[4].uint() as usize).saturating_mul(args[3].uint() as usize);
-                pr.buferes.insert(args[0].uint(), (objeto, args[1].uint() as usize, largo));
+                let (alto, linea) = (args[3].uint() as usize, args[4].uint() as usize);
+                pr.buferes.insert(args[0].uint(), (objeto, args[1].uint() as usize, alto.saturating_mul(linea), linea));
+                pr.enviado.remove(&args[0].uint());
             }
             ("wl_surface", wl_surface::req::ATTACH) if !args.is_empty() => {
                 pr.superficies.insert(objeto, args[0].uint());
             }
+            ("wl_surface", wl_surface::req::DAMAGE | wl_surface::req::DAMAGE_BUFFER) if args.len() == 4 => {
+                // Por filas: lo que importa para copiar son las filas del búfer (escala 1).
+                let (y, alto) = (args[1].uint() as i32, args[3].uint() as i32);
+                let d = pr.danos.entry(objeto).or_default();
+                if y < 0 || alto <= 0 || y > 1 << 16 || alto > 1 << 16 {
+                    d.todo = true;
+                } else {
+                    d.pendiente.push((y as usize, (y + alto) as usize));
+                }
+            }
             ("wl_surface", wl_surface::req::COMMIT) => {
-                // Lo que se va a ver, al otro lado antes que el commit.
-                if let Some(&(pool, desde, largo)) = pr.superficies.get(&objeto).and_then(|b| pr.buferes.get(b)) {
-                    if let Some(pl) = pr.pools.get(&pool) {
-                        let fin = (desde + largo).min(pl.tamano);
-                        if desde < fin && pl.base != libc::MAP_FAILED {
-                            let bytes = unsafe { std::slice::from_raw_parts((pl.base as *const u8).add(desde), fin - desde) };
-                            p::escribir_memoria(&mut pu.transporte, pl.memoria, desde as u64, bytes).expect("el transporte se cerró");
+                // Lo que se va a ver, al otro lado antes que el commit: lo cambiado desde la última vez que se mandó
+                // este búfer (el programa puede ir alternando búferes, y su daño es frente al cuadro anterior).
+                let d = pr.danos.entry(objeto).or_default();
+                d.cuadro += 1;
+                let cuadro = d.cuadro;
+                let pendiente = std::mem::take(&mut d.pendiente);
+                let todo_ahora = std::mem::take(&mut d.todo);
+                d.historia.push_back((cuadro, pendiente, todo_ahora));
+                if d.historia.len() > HISTORIA {
+                    d.historia.pop_front();
+                }
+                if let Some(&b) = pr.superficies.get(&objeto) {
+                    if let Some(&(pool, desde, largo, linea)) = pr.buferes.get(&b) {
+                        let filas: Option<Vec<(usize, usize)>> = match pr.enviado.get(&b) {
+                            Some(&ultimo) if d.historia.front().is_some_and(|h| h.0 <= ultimo + 1) => {
+                                let mut f = Vec::new();
+                                let mut todo = false;
+                                for (c, r, t) in d.historia.iter().filter(|h| h.0 > ultimo) {
+                                    let _ = c;
+                                    todo |= *t;
+                                    f.extend(r.iter().copied());
+                                }
+                                (!todo).then_some(f)
+                            }
+                            _ => None,
+                        };
+                        if let Some(pl) = pr.pools.get(&pool) {
+                            let tramos: Vec<(usize, usize)> = match filas {
+                                None => vec![(desde, (desde + largo).min(pl.tamano))],
+                                Some(mut f) => {
+                                    f.sort();
+                                    let mut juntas: Vec<(usize, usize)> = Vec::new();
+                                    for (a, z) in f {
+                                        match juntas.last_mut() {
+                                            Some(u) if a <= u.1 => u.1 = u.1.max(z),
+                                            _ => juntas.push((a, z)),
+                                        }
+                                    }
+                                    juntas.into_iter().map(|(a, z)| (desde + a * linea, (desde + z * linea).min(desde + largo).min(pl.tamano))).collect()
+                                }
+                            };
+                            for (ini, fin) in tramos {
+                                if ini < fin && pl.base != libc::MAP_FAILED {
+                                    let bytes = unsafe { std::slice::from_raw_parts((pl.base as *const u8).add(ini), fin - ini) };
+                                    p::escribir_memoria(&mut pu.transporte, pl.memoria, ini as u64, bytes).expect("el transporte se cerró");
+                                    pr.copiado += bytes.len() as u64;
+                                }
+                            }
+                            pr.cuadros += 1;
                         }
+                        pr.enviado.insert(b, cuadro);
                     }
                 }
             }
@@ -220,6 +292,9 @@ fn main() {
         }
         for c in fuera {
             if let Some(pr) = programas.remove(&c) {
+                if pr.cuadros > 0 {
+                    println!("puente: cliente {}: {} cuadros, {} bytes copiados, {} por cuadro", c, pr.cuadros, pr.copiado, pr.copiado / pr.cuadros);
+                }
                 for pl in pr.pools.values() {
                     unsafe {
                         libc::munmap(pl.base, pl.tamano.max(1));

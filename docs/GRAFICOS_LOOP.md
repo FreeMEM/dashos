@@ -72,4 +72,10 @@ código de compositores.
   llaves, adiós y memorias con número). `compositor-pc --transporte` hace de lado de DashOS. Prueba de punta a punta:
   `puente/pruebas/g1.sh`, dentro de `make prueba`: misma captura que en directo. Falta, con la caja Linux: `vsock` en
   vez del socket y el lado de DashOS con canales y objetos de memoria; y copiar solo lo dañado.
+- G1, copiar solo lo dañado: el puente guarda el daño de los últimos 8 cuadros de cada superficie y, al hacer
+  `commit` con un búfer, copia la unión de las filas cambiadas desde la última vez que mandó ese búfer (con doble
+  búfer, el daño del programa es frente al cuadro anterior, no frente a ese búfer). El cliente de prueba gana un modo
+  `DOBLE=1` (dos búferes y solo la banda vieja y la nueva dañadas) y las pruebas miran que no quede una banda vieja.
+  Medida en la ventana de 200 x 150: antes 120.000 bytes por cuadro; ahora 43.200 de media en 10 cuadros (los dos
+  primeros, enteros) y 24.000 en marcha (-80 %). Va al panel de medidas con las primeras de la revisión.
 
