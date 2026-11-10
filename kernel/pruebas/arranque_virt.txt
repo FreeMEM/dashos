@@ -84,3 +84,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [sonido] tono-a ya no está: su flujo sale con fundido
 ~│   [sonido] tono-a: flujo cerrado
 ~│   [sonido] tono-b: flujo cerrado
+# R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
+# sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
+~│   [hostil] archivos sigue: sí
+~│   [hostil] sonido sigue: sí
+~│   [hostil] compositor sigue: sí
