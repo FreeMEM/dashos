@@ -55,7 +55,7 @@ Pruebas:
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
 | M7 | Préstamo de tiempo del cliente al servidor (seL4 MCS) | pendiente |
 | M8 | Pesos: foco del compositor y procesos de fondo (con permiso) | pendiente |
-| M9 | Lo que salga de medir | abierto |
+| M9 | Lo que salga de medir | M9a y M9b hechos; abierto |
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
@@ -362,4 +362,30 @@ aquí los números y commit local.
   (Linux: 80); entre núcleos, 58 (Linux: 33). El dormilón vuelve a compartir núcleo: el otro pierde 505 ms en 3 s, la
   mitad del segundo en que calculan los dos (Linux: 516). Las cifras de "mismo núcleo" de M4 a M2b eran con los dos en
   núcleos distintos.
+- `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — M9a y M9b: el que sobra rota por quien lleva menos CPU; y un fallo de M5 con los hijos en Dash
+
+- Fallo de M5, que no vi entonces porque solo miré las cifras de Rust: con cuatro hijos en Dash, el reparto bajó de 0,99
+  a 0,75 y el trabajo un 11 %. Un experimento con el tic de los ociosos puesto otra vez lo devolvió a 0,99: era una
+  carrera. Un núcleo que se dormía sin tic y otro que ganaba un segundo hilo miraban la marca del otro antes de que el
+  otro la escribiera (cargas y "ocioso" con orden relajado); nadie avisaba y el ocioso dormía un segundo con dos hilos
+  en otro núcleo. M9b: las dos marcas con orden SeqCst y, al dormirse, `vigilar_al_dormir`: si otro núcleo tiene dos
+  hilos o más, el ocioso duerme solo hasta el siguiente tic (y en él roba). Desde ahora miro Rust, C y Dash en cada
+  paso.
+- M9a: cada hilo lleva su tiempo de CPU total (`consumido`). En la rotación de M4 (el tic de un núcleo con un hilo
+  menos que otro) se lleva el que menos lleva, y solo si lleva medio tic menos que el que corre aquí; antes, el que más
+  esperaba en su cola.
+- `docs/medidas/m9-rotar.json` contra `m-fijar.json` (3 arranques):
+
+| Medida | Antes | Ahora | Linux |
+|---|---|---|---|
+| Reparto, 4 hijos en Dash | 0,76 (14,3 M de trabajo) | 0,99 (15,8 M) | — |
+| Reparto, 5 calculando | 0,85 | 0,99 | 0,89 |
+| Reparto, 6 calculando | 0,69 | 0,93 | 0,81 |
+| Reparto, 8 calculando | 0,95 | 0,97 | 0,93 |
+| Trabajo total (4, 5, 6, 8) | | igual (±2 %) | |
+| Interrupciones de un núcleo sin trabajo | 0-1 | 0-1 | 5-20 |
+
+- Lo demás igual dentro del ruido; la espera de 1 ms con carga, p99 de 158 a 234 µs (mediana igual, 35 µs).
 - `make prueba` y `make arranque-virt`: bien.

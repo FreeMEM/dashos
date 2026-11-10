@@ -75,6 +75,9 @@ pub struct Hilo {
     despierta: u64,
     /// No se lleva a otro núcleo (llamada 31): para medir en un núcleo concreto, o para un hilo que lo necesite.
     fijo: bool,
+    /// Tiempo de CPU que lleva en la clase justa, en cuentas del contador, en cualquier núcleo (M9): la rotación entre
+    /// núcleos da la vez al que lleva menos.
+    consumido: u64,
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
@@ -268,6 +271,7 @@ pub fn iniciar_nucleo() {
         expulsado: false,
         despierta: 0,
         fijo: false,
+        consumido: 0,
     }));
     fpen(FPEN_ATRAPAR);
     registros_el0();
@@ -357,6 +361,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         expulsado: false,
         despierta: 0,
         fijo: false,
+        consumido: 0,
     }));
     nc.listos.push(h);
     publicar_carga(nucleo, nc);
@@ -480,17 +485,18 @@ pub fn crear(f: extern "C" fn(usize), arg: usize, nucleo: usize) -> u64 {
 fn publicar_carga(n: usize, nc: &Nucleo) {
     let justo = |h: *mut Hilo| unsafe { (*h).plazo.is_none() };
     let corre = nc.actual != nc.ocioso && justo(nc.actual) && unsafe { (*nc.actual).estado == Estado::Corriendo };
-    CARGA[n].store(nc.listos.iter().filter(|&&h| justo(h)).count() + corre as usize, Ordering::Relaxed);
+    // SeqCst, como `EN_OCIOSO`: entre un núcleo que gana carga y otro que se duerme, uno de los dos ve al otro (M5).
+    CARGA[n].store(nc.listos.iter().filter(|&&h| justo(h)).count() + corre as usize, Ordering::SeqCst);
 }
 
 /// Si el núcleo `n` tiene más de un hilo que quiere correr y hay otro núcleo en el ocioso, se le avisa para que robe
 /// (M4): así no espera a su tic.
 fn avisar_ocioso(n: usize) {
-    if CARGA[n].load(Ordering::Relaxed) < 2 || !AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+    if CARGA[n].load(Ordering::SeqCst) < 2 || !AVISAR_NUCLEOS.load(Ordering::Relaxed) {
         return;
     }
     let presentes = MAX_NUCLEOS;
-    if let Some(m) = (0..presentes).find(|&m| m != n && presente(m) && EN_OCIOSO[m].load(Ordering::Relaxed)) {
+    if let Some(m) = (0..presentes).find(|&m| m != n && presente(m) && EN_OCIOSO[m].load(Ordering::SeqCst)) {
         crate::gic::avisar(m as u32, crate::gic::SGI_PLANIFICAR);
     }
 }
@@ -518,7 +524,7 @@ fn robar(n: usize, nc: &mut Nucleo, ocioso: bool, rotar: bool) {
     let Some(otro) = g.as_mut() else { return };
     let ahora = reloj::ahora();
     let movible = |h: *mut Hilo| unsafe {
-        (ocioso || ((*h).expulsado && (!rotar || ahora.saturating_sub((*h).listo_desde) >= reloj::periodo() / 2)))
+        (ocioso || (*h).expulsado)
             && (*h).proceso != 0
             && !(*h).fijo
             && (*h).plazo.is_none()
@@ -526,10 +532,26 @@ fn robar(n: usize, nc: &mut Nucleo, ocioso: bool, rotar: bool) {
             && !(*h).en_cambio.load(Ordering::Acquire)
             && h != otro.fp_dueno
     };
-    let Some(i) = otro.listos.iter().enumerate().filter(|(_, h)| movible(**h)).min_by_key(|(_, h)| unsafe { (***h).virtual_ }).map(|(i, _)| i)
-    else {
+    // En la rotación (M9), el que lleva menos CPU en total, y solo si lleva medio tic menos que el que corre aquí: así el
+    // que sobra va pasando por todos los núcleos y cada uno recibe lo mismo (antes, el que más esperaba en su cola).
+    // Si no, el que va primero en su núcleo.
+    let rotacion = rotar && !ocioso;
+    let elegido = if rotacion {
+        otro.listos.iter().enumerate().filter(|(_, h)| movible(**h)).min_by_key(|(_, h)| unsafe { (***h).consumido })
+    } else {
+        otro.listos.iter().enumerate().filter(|(_, h)| movible(**h)).min_by_key(|(_, h)| unsafe { (***h).virtual_ })
+    };
+    let Some(i) = elegido.map(|(i, _)| i) else {
         return;
     };
+    if rotacion {
+        let a = nc.actual;
+        let (suyo, mio) = unsafe { ((*otro.listos[i]).consumido, (*a).consumido) };
+        let corre_justo = unsafe { (*a).id != 0 && (*a).plazo.is_none() && (*a).estado == Estado::Corriendo };
+        if corre_justo && suyo.saturating_add(reloj::periodo() / 2) >= mio {
+            return;
+        }
+    }
     let h = otro.listos.swap_remove(i);
     otro.actualizar_min();
     let vmin = otro.min_virtual;
@@ -553,6 +575,17 @@ fn robar(n: usize, nc: &mut Nucleo, ocioso: bool, rotar: bool) {
     }
     nc.listos.push(h);
     ROBOS.fetch_add(1, Ordering::Relaxed);
+}
+
+/// El núcleo `n` va a dormir sin tic (M5), y ya consta como ocioso. Si otro núcleo tiene dos hilos o más, puede que ese
+/// no lo viera ocioso al ganar carga (los dos miraron antes de que el otro escribiera): entonces este no duerme sin tic,
+/// sino hasta el siguiente, y en él roba. Sin esto, con cuatro hilos en cuatro núcleos, dos podían quedarse en uno y
+/// otro núcleo dormido un segundo (lo vio el banco con los hijos en Dash).
+fn vigilar_al_dormir(n: usize) {
+    core::sync::atomic::fence(Ordering::SeqCst);
+    if (0..MAX_NUCLEOS).any(|m| m != n && presente(m) && CARGA[m].load(Ordering::SeqCst) >= 2) {
+        reloj::programar(reloj::periodo());
+    }
 }
 
 /// Ya en el hilo que entra: el que salió tiene su contexto guardado y se puede llevar a otro núcleo (M4).
@@ -611,7 +644,8 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 match (*actual).plazo.as_mut() {
                     Some(p) => p.restante = p.restante.saturating_sub(gastado),
                     None => {
-                        (*actual).virtual_ = (*actual).virtual_.saturating_add(gastado * PESO_NORMAL / (*actual).peso)
+                        (*actual).virtual_ = (*actual).virtual_.saturating_add(gastado * PESO_NORMAL / (*actual).peso);
+                        (*actual).consumido = (*actual).consumido.saturating_add(gastado);
                     }
                 }
             }
@@ -745,7 +779,10 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         nucleo.desde = ahora;
         if siguiente == actual {
             publicar_carga(n, nucleo);
-            EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::Relaxed);
+            EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::SeqCst);
+            if ocioso_sin_tic {
+                vigilar_al_dormir(n);
+            }
             return;
         }
         unsafe {
@@ -776,7 +813,10 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             PREVIO[n].store(actual, Ordering::Release);
         }
         publicar_carga(n, nucleo);
-        EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::Relaxed);
+        EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::SeqCst);
+        if ocioso_sin_tic {
+            vigilar_al_dormir(n);
+        }
         // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
         fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
