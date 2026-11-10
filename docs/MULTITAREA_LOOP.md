@@ -60,7 +60,7 @@ Pruebas:
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
 | F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F5 hechos; sigue |
-| P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | pendiente |
+| P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | hecho en QEMU; falta la placa |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
 Cada paso: medir antes, cambiar, medir después, `make prueba` (raspi4b) y `make arranque-virt` sin fallos, apuntar
@@ -333,3 +333,22 @@ aquí los números y commit local.
   (Linux: 26.864); lo demás, como en F3. Ahora lo que más pesa en cada operación es el mensaje (unos 60 µs de ida y
   vuelta): M6 (paso directo en los canales) ayuda también aquí.
 - `make arranque-virt`: bien.
+
+### 2026-11-10 — P3: DashOS en la Raspberry Pi 3 (QEMU raspi3b)
+
+- Opción `pi3` del kernel: periféricos desde 0x3F000000 y los locales de los núcleos en 0x40000000 (`placa.rs`), las
+  tablas del arranque para ese mapa (`arranque.s`, `PLACA_PI3`) y `bcm2836.rs`: el controlador de interrupciones de la
+  Pi 3, que no tiene GIC (los periféricos locales de la QA7 y el ARMCTRL de la BCM2835, escrito con sus dos
+  documentos de Broadcom). Da los mismos números que el GIC (avisos 0 a 15 por el buzón 0, el temporizador en el 30,
+  los periféricos desde el 32), así que el resto del kernel no cambia: `gic.rs` pasa a él si `main.rs` encuentra en el
+  árbol `brcm,bcm2836-l1-intc`. El temporizador del árbol de la Pi 3 es `armv7-timer`: en esa rama se usa el 30.
+- Arranca a la primera en QEMU raspi3b con `bcm2710-rpi-3-b.dtb` (no va al repo): los 4 núcleos, la consola y el banco.
+  `make medir-pi3`; `docs/medidas/pi3-qemu.json` (3 arranques): como en la Pi 4 emulada (ida y vuelta 64 µs, espera de
+  1 ms 27 µs de retraso, ociosos a 0 interrupciones por segundo). Con 6 calculando, el reparto da 0,64 (en la Pi 4,
+  0,81): la rotación de M4 sigue pendiente.
+- `tools/sd_pi3.py dashos|linux SALIDA`: lo que va en la tarjeta SD de una Pi 3 de verdad (firmware, árbol,
+  `config.txt` con `disable-bt` para que el PL011 quede en los GPIO 14 y 15, y DashOS o el kernel de Raspberry Pi OS
+  con el banco de Linux como initramfs). Hace falta un cable USB a serie de 3,3 V para leer la salida.
+- Fallo del banco, apuntado: desde M4 un núcleo ocioso se lleva hilos, y la ida y vuelta "en el mismo núcleo" puede
+  acabar con los dos en núcleos distintos (el resultado lo dice, `nucleos=`). Falta poder fijar un hilo a su núcleo.
+- `make prueba`, `make arranque-virt` (Pi 4 y virt, para ver que no se rompe nada): bien.

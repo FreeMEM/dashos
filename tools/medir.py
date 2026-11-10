@@ -10,6 +10,7 @@
                                              antes, tools/medir_linux/hacer_fs.sh)
     tools/medir.py disco-fs DISCO REDOXFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F)
     tools/medir.py dashos-fs EFI DISCO JSON [-n N]  el banco de ficheros de DashOS en QEMU virt por UEFI (`make medir-fs`)
+    tools/medir.py pi3 IMAGEN JSON [-n N]    lo mismo en QEMU raspi3b (P3, `make medir-pi3`)
     tools/medir.py comparar BASE NUEVO       compara dos JSON
 
 El hijo en C se compila con clang y ld.lld; el de Dash, con `./dash --dashos` de ~/Projects/FreeMEMLang (o $DASH).
@@ -117,6 +118,16 @@ def disco_fs(salida, ar):
 
 
 DASHOS_FS = None
+PI3 = False
+
+
+def dtb_pi3():
+    f = os.path.join(RAIZ, "build/firmware/bcm2710-rpi-3-b.dtb")
+    if not os.path.exists(f):
+        os.makedirs(os.path.dirname(f), exist_ok=True)
+        subprocess.run(["curl", "-sSfL", "-o", f,
+                        "https://github.com/raspberrypi/firmware/raw/0ea2874060/boot/bcm2710-rpi-3-b.dtb"], check=True)
+    return f
 
 
 def orden_dashos_fs():
@@ -142,6 +153,8 @@ def una_vuelta(imagen, segundos=300):
         maquina = orden_linux_fs()
     elif imagen == "dashos-fs":
         maquina = orden_dashos_fs()
+    elif PI3:
+        maquina = ["-M", "raspi3b", "-kernel", imagen, "-dtb", dtb_pi3()]
     else:
         maquina = ["-M", "raspi4b", *(orden_linux() if imagen is None else ["-kernel", imagen, "-dtb", dtb()])]
     q = subprocess.Popen(["qemu-system-aarch64", *maquina, "-display", "none",
@@ -210,6 +223,10 @@ if __name__ == "__main__":
     if len(sys.argv) >= 3 and sys.argv[1] == "paquete":
         paquete(sys.argv[2])
     elif len(sys.argv) >= 4 and sys.argv[1] == "correr":
+        n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
+        correr(sys.argv[2], sys.argv[3], n)
+    elif len(sys.argv) >= 4 and sys.argv[1] == "pi3":
+        PI3 = True
         n = int(sys.argv[sys.argv.index("-n") + 1]) if "-n" in sys.argv else 1
         correr(sys.argv[2], sys.argv[3], n)
     elif len(sys.argv) >= 3 and sys.argv[1] == "linux":

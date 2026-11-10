@@ -105,6 +105,15 @@ medir-fs: usuario FORCE
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(MEDIR_FS)) cargo build --release
 	python3 ../tools/medir.py dashos-fs ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi target/medir-fs.img target/medir-fs.json -n $(VUELTAS)
 
+# P3 (docs/MULTITAREA_LOOP.md): el mismo banco en la Raspberry Pi 3 (QEMU raspi3b, o una de verdad con
+# `tools/sd_pi3.py`).
+MEDIR_PI3 := target/kernel8-medir-pi3.img
+medir-pi3: usuario FORCE
+	python3 ../tools/medir.py paquete ../usuario/target/medir.paq
+	cargo build $(CARGO_PERFIL) --features pi3,medir
+	$(OBJCOPY) -O binary $(ELF) $(MEDIR_PI3)
+	python3 ../tools/medir.py pi3 $(MEDIR_PI3) target/medir-pi3.json -n $(VUELTAS)
+
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 
 # Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas.

@@ -61,6 +61,15 @@ const WAKER_DORMIDO: u32 = 1 << 1;
 const WAKER_HIJOS_DORMIDOS: u32 = 1 << 2;
 const TYPER_ULTIMO: u32 = 1 << 4;
 
+/// La Raspberry Pi 3 (P3): sin GIC, el controlador de la BCM2836 (`bcm2836.rs`) con los mismos números.
+static BCM2836: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Usa el controlador de la BCM2836 en lugar del GIC.
+pub fn iniciar_bcm2836(local_fisica: u64, armctrl_fisica: u64) {
+    BCM2836.store(true, Ordering::Relaxed);
+    crate::bcm2836::iniciar(local_fisica, armctrl_fisica);
+}
+
 /// Interrupción falsa: el GIC no tenía nada que dar.
 pub const FALSA: u32 = 1023;
 
@@ -128,6 +137,10 @@ fn rd_de(n: usize) -> usize {
 
 /// La parte de cada núcleo (las interrupciones privadas y la interfaz de CPU son por núcleo).
 pub fn iniciar_cpu() {
+    if BCM2836.load(Ordering::Relaxed) {
+        crate::bcm2836::iniciar_cpu();
+        return;
+    }
     if V3.load(Ordering::Relaxed) {
         let r = rd();
         // Despertar el redistribuidor y poner las privadas y las de software en el grupo 1.
@@ -158,6 +171,10 @@ fn base_de(intid: u32) -> usize {
 
 /// Habilita una interrupción con una prioridad (menor número = más prioridad).
 pub fn habilitar(intid: u32, prioridad: u8) {
+    if BCM2836.load(Ordering::Relaxed) {
+        crate::bcm2836::habilitar(intid);
+        return;
+    }
     let i = intid as usize;
     let base = base_de(intid);
     // IPRIORITYR: un byte por interrupción; en un registro little-endian, el byte n es el de la interrupción 4k+n.
@@ -172,7 +189,7 @@ pub fn habilitar(intid: u32, prioridad: u8) {
 /// bits por interrupción, el alto a 1 es flanco. Con la interrupción deshabilitada (spec. del GIC, 4.3.13 / 12.9.8).
 pub fn por_flanco(intid: u32) {
     let i = intid as usize;
-    if i < 32 {
+    if i < 32 || BCM2836.load(Ordering::Relaxed) {
         return;
     }
     let r = d(GICD_ICFGR + 4 * (i / 16));
@@ -182,12 +199,20 @@ pub fn por_flanco(intid: u32) {
 
 /// Enmascara una interrupción (C20).
 pub fn deshabilitar(intid: u32) {
+    if BCM2836.load(Ordering::Relaxed) {
+        crate::bcm2836::deshabilitar(intid);
+        return;
+    }
     let i = intid as usize;
     RegLe32::new(base_de(intid) + GICD_ICENABLER + 4 * (i / 32)).escribir(1 << (i % 32));
 }
 
 /// Dirige una interrupción de aparato (SPI) a un núcleo. Las SPI no llegan a ninguno hasta que se dirigen (C20).
 pub fn dirigir(intid: u32, nucleo: u32) {
+    if BCM2836.load(Ordering::Relaxed) {
+        crate::bcm2836::dirigir(intid, nucleo);
+        return;
+    }
     let i = intid as usize;
     if V3.load(Ordering::Relaxed) {
         // IROUTER: un registro de 64 bits por interrupción, con la afinidad del núcleo (aquí solo la 0).
@@ -203,6 +228,9 @@ pub fn dirigir(intid: u32, nucleo: u32) {
 
 /// El número de interrupción de un valor de IAR: 24 bits en el GICv3 (las LPI empiezan en la 8192), 10 en el GICv2.
 pub fn numero(iar: u32) -> u32 {
+    if BCM2836.load(Ordering::Relaxed) {
+        return iar;
+    }
     if V3.load(Ordering::Relaxed) { iar & 0xff_ffff } else { iar & 0x3ff }
 }
 
@@ -238,10 +266,17 @@ pub fn encender_lpis(config: u64, pendientes: u64, idbits: u32) -> Option<(u64, 
 /// Reconoce la interrupción pendiente. Devuelve el valor entero de IAR: el número va en los bits 9:0 y, en las
 /// interrupciones por software del GICv2, el núcleo que la mandó en los 12:10. Hay que devolverlo entero a `terminar`.
 pub fn reconocer() -> u32 {
+    if BCM2836.load(Ordering::Relaxed) {
+        return crate::bcm2836::reconocer();
+    }
     if V3.load(Ordering::Relaxed) { crate::base::cpu::gicv3_reconocer() } else { c(GICC_IAR).leer() }
 }
 
 pub fn terminar(iar: u32) {
+    // En la BCM2836 no hay fin de interrupción: el aviso se borró al reconocerlo y lo demás va por nivel.
+    if BCM2836.load(Ordering::Relaxed) {
+        return;
+    }
     if V3.load(Ordering::Relaxed) {
         crate::base::cpu::gicv3_terminar(iar);
     } else {
@@ -254,6 +289,10 @@ pub const SGI_PLANIFICAR: u32 = 1;
 
 /// Manda una interrupción por software (SGI) a un núcleo.
 pub fn avisar(nucleo: u32, sgi: u32) {
+    if BCM2836.load(Ordering::Relaxed) {
+        crate::bcm2836::avisar(nucleo, sgi);
+        return;
+    }
     if V3.load(Ordering::Relaxed) {
         crate::base::cpu::gicv3_sgi(nucleo, sgi);
         return;

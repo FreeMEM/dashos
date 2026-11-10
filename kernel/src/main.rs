@@ -18,6 +18,7 @@ mod base;
 pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, placa, planificador};
 
 mod azar;
+mod bcm2836;
 mod cupo;
 mod dtb;
 mod elf;
@@ -63,6 +64,17 @@ pub fn kmain(dtb: usize) -> ! {
     mapa::activar();
     base::copiar_arbol();
 
+    // La Pi 3 (P3): sin GIC, los controladores de la BCM2836 y la BCM2835, con los números del GIC.
+    if let (Some(l), Some(a)) = (d.compatible("brcm,bcm2836-l1-intc"), d.compatible("brcm,bcm2836-armctrl-ic")) {
+        let (Some((local, _)), Some((armctrl, _))) = (d.reg_cpu(&l, 0), d.reg_cpu(&a, 0)) else {
+            panic!("los controladores de interrupciones de la Pi 3 no tienen sus registros en el árbol");
+        };
+        gic::iniciar_bcm2836(local, armctrl);
+        planificador::iniciar_nucleo();
+        // El temporizador físico no seguro: el 30, como el PPI 14 del GIC.
+        reloj::iniciar(14, 100);
+        reloj::habilitar_irq();
+    } else {
     // El GIC-400 de la Pi o el GICv2 de QEMU `virt` (U3), que se manejan igual; o un GICv3 (U3b).
     let v2 = d.compatible("arm,gic-400").or_else(|| d.compatible("arm,cortex-a15-gic"));
     let (version, gic) = match v2 {
@@ -80,6 +92,7 @@ pub fn kmain(dtb: usize) -> ! {
     planificador::iniciar_nucleo();
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();
+    }
 
     // Los otros núcleos: por PSCI si el árbol lo trae (U3), si no con la tabla de espera de la Pi.
     let como = match d.por_nombre("psci").and_then(|p| d.propiedad(&p, "method")) {
