@@ -1,6 +1,6 @@
 # S6b. Usuarios y permisos: el diseño concreto
 
-Propuesta del 2026-11-10. Pendiente del visto bueno de Fran. No hay nada implementado.
+Propuesta del 2026-11-10, aprobada el mismo día (ver "Decisiones"). Se implementa en `docs/REVISION_LOOP.md`.
 
 ## El problema
 
@@ -377,18 +377,19 @@ Cada una acaba con pruebas en `make prueba` y deja el sistema arrancando.
 
 U1 se puede hacer ya: no depende del azar ni del escritorio.
 
-## Lo que queda abierto
+## Decisiones
 
-1. ¿La identidad en la marca de las llaves, sin tocar el kernel? Recomendado: sí.
-2. ¿El usuario 0 sin privilegios y el bit `setuid` sin efecto? Recomendado: sí. Es lo que pide "sin superusuario".
-3. ¿El Shell como la caja Amiga, con `Home:`, `Work:` y red, y los programas sueltos con doble clic encerrados?
-   Recomendado: sí.
-4. ¿Que ni un administrador lea el cajón de otro, con código de recuperación en papel? Recomendado: sí.
-5. ¿Confirmar cada acción de administrador, sin plazo de gracia? Recomendado: sí.
-6. ¿Imagen o frase secreta en las ventanas del sistema? Recomendado: sí; el detalle, en S10.
-7. ¿Volumen `Estado:` para lo que escribe el sistema? Recomendado: sí.
-8. ¿Los discos ajenos en un proceso lector aparte? Recomendado: sí.
-9. ¿Las aplicaciones encerradas sin `Home:Libs`? Recomendado: sí. Cambia S4b para ellas.
+Fran aprobó las nueve el 2026-11-10:
+
+1. La identidad va en la marca de las llaves; el kernel no aprende qué es un usuario.
+2. El usuario 0 no tiene privilegios y el bit `setuid` no hace nada.
+3. El Shell es como la caja Amiga (`Home:`, `Work:` y red); un programa suelto con doble clic va encerrado.
+4. Ni un administrador lee el cajón de otro usuario; cada usuario recibe un código de recuperación en papel.
+5. Cada acción de administrador se confirma, sin plazo de gracia.
+6. Las ventanas del sistema llevan una imagen o frase secreta del usuario (el detalle, en S10).
+7. Volumen `Estado:` para lo que escribe el sistema.
+8. Los discos ajenos se leen en un proceso aparte.
+9. Las aplicaciones encerradas no cargan de `Home:Libs`.
 
 ## Cómo encaja
 

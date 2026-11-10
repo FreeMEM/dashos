@@ -137,15 +137,15 @@ Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su
 ## El diseño concreto
 
 Cómo se hace todo esto con lo que ya hay (llaves con marca, grupos de recursos, dueño y modo en los ficheros), y en
-qué fases, está en [S6b](S6b-usuarios-y-permisos.md). Propone un cambio sobre este documento: la identidad de un
-proceso va en la marca de sus llaves y no la guarda el kernel.
+qué fases, está en [S6b](S6b-usuarios-y-permisos.md). Cambia una cosa de este documento, aprobada el 2026-11-10: la
+identidad de un proceso va en la marca de sus llaves y no la guarda el kernel.
 
 ## Lo que queda abierto
 
 1. ¿Sin superusuario: administradores que confirman cada acción con contraseña, y `SYS:` intocable salvo por
-   actualizaciones? Recomendado: sí.
+   actualizaciones? Recomendado: sí. **Decidido: sí** (2026-11-10, con S6b).
 2. ¿Permisos por aplicación preguntados en el primer uso, como macOS, o todos al instalar, como el Android antiguo?
-   Recomendado: en el primer uso.
+   Recomendado: en el primer uso. **Decidido: en el primer uso** (2026-11-10).
 3. ¿Arranque verificado de la Pi 4 solo como opción documentada, porque es irreversible? Recomendado: sí.
 
 ## Cómo encaja

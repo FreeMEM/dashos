@@ -111,6 +111,11 @@ compartida) gana mucho con K6.
 - **S3**: quién puede pedir la clase de plazo.
 - **A13**: permisos por programa en el servicio de archivos (es parte de S6).
 
+**Decidido por Fran el 2026-11-10:** A1 sí, junto con A2 (la orden 27, "guardar", sigue siendo durable; sin opción
+por volumen). K7 sí, con los números 32 en adelante. K6 espera a medir en la Pi real (B5); se reservan sus números.
+S3: la clase de plazo solo con una llave que reparte `inicio`, para el compositor y el sonido. A13: ahora lo barato
+(derecho "administrar" y contraseña fuera del mensaje); el resto, con `diseño/S6b-usuarios-y-permisos.md`.
+
 ## 3. Banco de medidas (fase 0)
 
 Va primero: sin esto no se distingue una mejora del 10 % del ruido.

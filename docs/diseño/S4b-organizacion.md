@@ -37,6 +37,7 @@ Así, `LIBS:` o `ENVARC:` pueden ser distintos para cada usuario, sin que ningú
 | `Usuarios:` | Un cajón por usuario | Cada usuario el suyo |
 | `RAM:` | Disco en memoria, uno por sesión | El usuario de la sesión |
 | `Work:`, `DH1:`, ... | Discos de datos, como en el Amiga | Según sus permisos |
+| `Estado:` | Lo que escribe el sistema y no es de ningún usuario: cuentas, cajones de los servicios (S6b) | Cada servicio el suyo; `Cuentas`, solo `sesiones` |
 
 El nombre `Paquetes:` es provisional. En el Amiga los programas solían ir a `Work:` o a un cajón suelto.
 
@@ -54,6 +55,10 @@ primera capa en la que el usuario tiene permiso.
 | `LOCALE:` | — | `Paquetes:*/Locale` | `SYS:Locale` |
 | `ENVARC:` | `Home:Prefs/Env-Archive` | — | `SYS:Prefs/Env-Archive` (valores de fábrica) |
 | `S:` | `Home:S` | — | `SYS:S` |
+
+Las aplicaciones encerradas (perfil "aplicación" y "suelto" de S6b) no tienen la capa del usuario en `LIBS:`, `C:`
+ni `FONTS:`: solo su paquete, `Paquetes:` y `SYS:`. Así un programa no deja una biblioteca en `Home:Libs` que se
+cuele en todas las demás.
 
 Otras asignaciones:
 
