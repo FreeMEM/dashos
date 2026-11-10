@@ -1,21 +1,25 @@
-//! G0 de `docs/GRAFICOS_LOOP.md`: el compositor de DashOS (`wayland/`: el servidor y la escena) corriendo en el PC,
-//! detrás de un socket de Unix como el de cualquier compositor de Linux. Sirve para probarlo con clientes de verdad
-//! (libwayland, `swaybg`, `swaylock`, `alacritty`) sin QEMU. Los descriptores que llegan con los mensajes hacen de
-//! llaves: cada uno toma un número, y la memoria de un `wl_shm` se proyecta con `mmap`.
+//! G0 y G1 de `docs/GRAFICOS_LOOP.md`: el compositor de DashOS (`wayland/`: el servidor y la escena) corriendo en el
+//! PC, detrás de un socket de Unix como el de cualquier compositor de Linux, y con el transporte del puente de la caja
+//! Linux. Sirve para probarlo con clientes de verdad (libwayland, `swaybg`, `swaylock`, `alacritty`) sin QEMU.
 //!
-//!     compositor-pc SOCKET [--captura FICHERO.ppm] [--salir-sin-clientes]
+//!     compositor-pc SOCKET [--transporte FICHERO] [--captura FICHERO.ppm] [--salir-sin-clientes]
 //!
-//! Con `--captura`, al acabar guarda la pantalla (800 × 600) en PPM. Con `--salir-sin-clientes`, acaba cuando se va
-//! el último cliente (para las pruebas).
+//! - Por `SOCKET` llegan clientes de Wayland directos: los descriptores que traen hacen de llaves (cada uno toma un
+//!   número) y la memoria de un `wl_shm` se proyecta con `mmap`.
+//! - Por `--transporte` llega el puente (`puente`): tramas con clientes, bytes de Wayland y memorias con número, que
+//!   aquí son `memfd`. Es lo que hará en DashOS el lado de la caja Linux, con canales y objetos de memoria.
+//! - Con `--captura`, guarda la pantalla (800 × 600) en PPM antes de que se vaya el último cliente.
+//! - Con `--salir-sin-clientes`, acaba cuando se va el último cliente (para las pruebas).
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Write;
-use std::os::fd::{AsRawFd, IntoRawFd, RawFd};
+use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 use std::rc::Rc;
 use std::time::Instant;
 
+use dashos_puente as p;
 use wayland::escena::{self, Cliente, Escena};
 use wayland::servidor::{Conexion, Global};
 use wayland::shm::Memorias;
@@ -24,6 +28,8 @@ use wayland::tablas;
 const ANCHO: i32 = 800;
 const ALTO: i32 = 600;
 const FONDO: u32 = 0xff20_4060;
+/// Los clientes del puente, desde aquí: no chocan con los directos.
+const DEL_PUENTE: Cliente = 1 << 32;
 
 static GLOBALES: [Global; 4] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
@@ -47,7 +53,7 @@ impl Tabla {
         self.siguiente
     }
 
-    /// Saca la llave para mandarla: el descriptor pasa al cliente y aquí se cierra después de mandarlo.
+    /// Saca la llave para mandarla: quien la saca cierra el descriptor después.
     fn sacar(&mut self, llave: u32) -> Option<RawFd> {
         self.fds.remove(&llave)
     }
@@ -63,18 +69,18 @@ impl Memorias for MemoriasPc {
         if let Some((viejo, largo)) = t.proyectado.remove(&llave) {
             unsafe { libc::munmap(viejo, largo) };
         }
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), tamano, libc::PROT_READ, libc::MAP_SHARED, fd, 0) };
-        if p == libc::MAP_FAILED {
+        let q = unsafe { libc::mmap(std::ptr::null_mut(), tamano, libc::PROT_READ, libc::MAP_SHARED, fd, 0) };
+        if q == libc::MAP_FAILED {
             return None;
         }
-        t.proyectado.insert(llave, (p, tamano));
-        Some(p as *const u8)
+        t.proyectado.insert(llave, (q, tamano));
+        Some(q as *const u8)
     }
 
     fn soltar(&mut self, llave: u32, _base: *const u8, _tamano: usize) {
         let mut t = self.0.borrow_mut();
-        if let Some((p, largo)) = t.proyectado.remove(&llave) {
-            unsafe { libc::munmap(p, largo) };
+        if let Some((q, largo)) = t.proyectado.remove(&llave) {
+            unsafe { libc::munmap(q, largo) };
         }
         if let Some(fd) = t.fds.remove(&llave) {
             unsafe { libc::close(fd) };
@@ -82,89 +88,64 @@ impl Memorias for MemoriasPc {
     }
 
     fn llave_vacia(&mut self) -> Option<u32> {
-        let fd = unsafe { libc::memfd_create(c"dashos-vacio".as_ptr(), libc::MFD_CLOEXEC) };
-        (fd >= 0).then(|| self.0.borrow_mut().poner(fd))
+        let fd = p::memfd(c"dashos-vacio", 0)?;
+        Some(self.0.borrow_mut().poner(fd))
     }
+}
+
+/// Por dónde se contesta a un cliente.
+enum Salida {
+    Directo(UnixStream),
+    Puente(u32),
 }
 
 struct DelCliente {
-    sock: UnixStream,
+    salida: Salida,
     con: Conexion,
 }
 
-/// Lee lo que haya: bytes y descriptores (SCM_RIGHTS). `None` si el cliente cerró.
-fn recibir(sock: &UnixStream, bytes: &mut Vec<u8>, fds: &mut Vec<RawFd>) -> Option<()> {
-    let mut buf = [0u8; 4096];
-    let mut control = [0u8; 256];
-    let mut iov = libc::iovec { iov_base: buf.as_mut_ptr().cast(), iov_len: buf.len() };
-    let mut m: libc::msghdr = unsafe { std::mem::zeroed() };
-    m.msg_iov = &mut iov;
-    m.msg_iovlen = 1;
-    m.msg_control = control.as_mut_ptr().cast();
-    m.msg_controllen = control.len() as _;
-    let n = unsafe { libc::recvmsg(sock.as_raw_fd(), &mut m, libc::MSG_DONTWAIT | libc::MSG_CMSG_CLOEXEC) };
-    if n == 0 {
-        return None;
-    }
-    if n < 0 {
-        let e = std::io::Error::last_os_error();
-        return (e.kind() == std::io::ErrorKind::WouldBlock).then_some(());
-    }
-    bytes.extend_from_slice(&buf[..n as usize]);
-    let mut c = unsafe { libc::CMSG_FIRSTHDR(&m) };
-    while !c.is_null() {
-        let h = unsafe { &*c };
-        if h.cmsg_level == libc::SOL_SOCKET && h.cmsg_type == libc::SCM_RIGHTS {
-            let datos = unsafe { libc::CMSG_DATA(c) } as *const RawFd;
-            let cuantos = (h.cmsg_len as usize - unsafe { libc::CMSG_LEN(0) } as usize) / size_of::<RawFd>();
-            for i in 0..cuantos {
-                fds.push(unsafe { datos.add(i).read_unaligned() });
-            }
-        }
-        c = unsafe { libc::CMSG_NXTHDR(&m, c) };
-    }
-    Some(())
+/// El lado de DashOS del transporte del puente.
+struct Transporte {
+    sock: UnixStream,
+    entrada: Vec<u8>,
+    /// Memoria del puente (su número) → llave de aquí.
+    memorias: HashMap<u32, u32>,
+    siguiente_memoria: u32,
 }
 
-/// Manda bytes y descriptores (los descriptores, con el primer trozo).
-fn mandar(sock: &UnixStream, bytes: &[u8], fds: &[RawFd]) -> bool {
-    let mut hecho = 0;
-    let mut con_fds = !fds.is_empty();
-    while hecho < bytes.len() {
-        let mut iov = libc::iovec { iov_base: bytes[hecho..].as_ptr() as *mut _, iov_len: bytes.len() - hecho };
-        let mut control = vec![0u8; unsafe { libc::CMSG_SPACE((fds.len() * size_of::<RawFd>()) as u32) } as usize];
-        let mut m: libc::msghdr = unsafe { std::mem::zeroed() };
-        m.msg_iov = &mut iov;
-        m.msg_iovlen = 1;
-        if con_fds {
-            m.msg_control = control.as_mut_ptr().cast();
-            m.msg_controllen = control.len() as _;
-            unsafe {
-                let c = libc::CMSG_FIRSTHDR(&m);
-                (*c).cmsg_level = libc::SOL_SOCKET;
-                (*c).cmsg_type = libc::SCM_RIGHTS;
-                (*c).cmsg_len = libc::CMSG_LEN((fds.len() * size_of::<RawFd>()) as u32) as _;
-                std::ptr::copy_nonoverlapping(fds.as_ptr(), libc::CMSG_DATA(c) as *mut RawFd, fds.len());
-            }
-        }
-        let n = unsafe { libc::sendmsg(sock.as_raw_fd(), &m, libc::MSG_NOSIGNAL) };
-        if n <= 0 {
-            return false;
-        }
-        con_fds = false;
-        hecho += n as usize;
-    }
-    true
-}
-
-/// Lo que el servidor tiene para el cliente, con sus llaves vueltas descriptores.
-fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>) -> bool {
+/// Lo que el servidor tiene para el cliente, con sus llaves vueltas descriptores (directo) o memorias (puente).
+fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transporte>) -> bool {
     let e = c.con.sacar();
     if e.bytes.is_empty() {
         return true;
     }
     let fds: Vec<RawFd> = e.llaves.iter().filter_map(|&l| tabla.borrow_mut().sacar(l)).collect();
-    let bien = mandar(&c.sock, &e.bytes, &fds);
+    let bien = match &c.salida {
+        Salida::Directo(s) => p::mandar(s.as_raw_fd(), &e.bytes, &fds),
+        Salida::Puente(conexion) => match tr.as_mut() {
+            None => false,
+            Some(t) => {
+                // Cada descriptor cruza como una memoria con su contenido.
+                let mut numeros = Vec::new();
+                for &fd in &fds {
+                    let mut st: libc::stat = unsafe { std::mem::zeroed() };
+                    let tam = if unsafe { libc::fstat(fd, &mut st) } == 0 { st.st_size.max(0) as usize } else { 0 };
+                    let mut datos = vec![0u8; tam];
+                    if tam > 0 {
+                        unsafe { libc::pread(fd, datos.as_mut_ptr().cast(), tam, 0) };
+                    }
+                    t.siguiente_memoria += 1;
+                    let n = t.siguiente_memoria;
+                    let mut d = n.to_le_bytes().to_vec();
+                    d.extend_from_slice(&(tam as u64).to_le_bytes());
+                    let _ = p::escribir_trama(&mut t.sock, p::MEMORIA_NUEVA, 0, &d);
+                    let _ = p::escribir_memoria(&mut t.sock, n, 0, &datos);
+                    numeros.push(n);
+                }
+                p::escribir_trama(&mut t.sock, p::DATOS, *conexion, &p::juntar_datos(&numeros, &e.bytes)).is_ok()
+            }
+        },
+    };
     for fd in fds {
         unsafe { libc::close(fd) };
     }
@@ -174,21 +155,41 @@ fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>) -> bool {
 fn captura(fichero: &str, marco: &[u32]) {
     let mut f = std::fs::File::create(fichero).expect("no se crea la captura");
     write!(f, "P6\n{} {}\n255\n", ANCHO, ALTO).unwrap();
-    let px: Vec<u8> = marco.iter().flat_map(|p| [(p >> 16) as u8, (p >> 8) as u8, *p as u8]).collect();
+    let px: Vec<u8> = marco.iter().flat_map(|q| [(q >> 16) as u8, (q >> 8) as u8, *q as u8]).collect();
     f.write_all(&px).unwrap();
+}
+
+/// Mete bytes de un cliente en su conexión y atiende. Falso si hay que soltarlo.
+fn atender(id: Cliente, c: &mut DelCliente, bytes: &[u8], llaves: &[u32], escena: &mut Escena<MemoriasPc>, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transporte>) -> bool {
+    if c.con.juntador.meter(bytes, llaves).is_err() {
+        return false;
+    }
+    c.con.atender(&GLOBALES, &mut escena.de(id));
+    if let Some(e) = &c.con.roto {
+        println!("compositor-pc: error de protocolo del cliente {}: {}", id, e.texto);
+    }
+    vaciar(c, tabla, tr) && c.con.roto.is_none()
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     let Some(ruta) = args.get(1) else {
-        eprintln!("uso: compositor-pc SOCKET [--captura FICHERO.ppm] [--salir-sin-clientes]");
+        eprintln!("uso: compositor-pc SOCKET [--transporte FICHERO] [--captura FICHERO.ppm] [--salir-sin-clientes]");
         std::process::exit(2);
     };
-    let fichero = args.iter().position(|a| a == "--captura").and_then(|i| args.get(i + 1)).cloned();
+    let opcion = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
+    let fichero = opcion("--captura");
     let salir_sin_clientes = args.iter().any(|a| a == "--salir-sin-clientes");
     let _ = std::fs::remove_file(ruta);
     let escucha = UnixListener::bind(ruta).expect("no se abre el socket");
     escucha.set_nonblocking(true).unwrap();
+    let escucha_tr = opcion("--transporte").map(|f| {
+        let _ = std::fs::remove_file(&f);
+        let l = UnixListener::bind(&f).expect("no se abre el transporte");
+        l.set_nonblocking(true).unwrap();
+        l
+    });
+    let mut tr: Option<Transporte> = None;
 
     let tabla = Rc::new(RefCell::new(Tabla::default()));
     let mut escena = Escena::new(MemoriasPc(tabla.clone()), FONDO);
@@ -196,25 +197,106 @@ fn main() {
     let mut clientes: HashMap<Cliente, DelCliente> = HashMap::new();
     let mut siguiente: Cliente = 1;
     let mut alguno = false;
-    let empiezo = Instant::now();
     let mut capturada = false;
+    let empiezo = Instant::now();
     loop {
         // Esperar a algo (o a 16 ms, el cuadro siguiente).
         let mut pfd = vec![libc::pollfd { fd: escucha.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
-        let orden: Vec<Cliente> = clientes.keys().copied().collect();
-        pfd.extend(orden.iter().map(|c| libc::pollfd { fd: clientes[c].sock.as_raw_fd(), events: libc::POLLIN, revents: 0 }));
+        if let Some(l) = &escucha_tr {
+            pfd.push(libc::pollfd { fd: l.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+        }
+        let i_tr = pfd.len();
+        if let Some(t) = &tr {
+            pfd.push(libc::pollfd { fd: t.sock.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+        }
+        for c in clientes.values() {
+            if let Salida::Directo(s) = &c.salida {
+                pfd.push(libc::pollfd { fd: s.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+            }
+        }
         unsafe { libc::poll(pfd.as_mut_ptr(), pfd.len() as _, 16) };
         if let Ok((sock, _)) = escucha.accept() {
             sock.set_nonblocking(true).unwrap();
-            clientes.insert(siguiente, DelCliente { sock, con: Conexion::new() });
+            clientes.insert(siguiente, DelCliente { salida: Salida::Directo(sock), con: Conexion::new() });
             println!("compositor-pc: cliente {} conectado", siguiente);
             siguiente += 1;
             alguno = true;
         }
+        if tr.is_none() {
+            if let Some(Ok((sock, _))) = escucha_tr.as_ref().map(|l| l.accept()) {
+                // Bloqueante: solo se lee cuando `poll` dice que hay algo.
+                sock.set_nonblocking(false).unwrap();
+                println!("compositor-pc: puente conectado");
+                tr = Some(Transporte { sock, entrada: Vec::new(), memorias: HashMap::new(), siguiente_memoria: 0 });
+            }
+        }
         let mut fuera = Vec::new();
-        for (&id, c) in clientes.iter_mut() {
+        // Lo del puente.
+        let listo_tr = pfd.get(i_tr).is_some_and(|f| f.revents & (libc::POLLIN | libc::POLLHUP) != 0);
+        if listo_tr && tr.is_some() {
+            let cerrado = {
+                let t = tr.as_mut().unwrap();
+                p::leer_transporte(&mut t.sock, &mut t.entrada).is_none()
+            };
+            let tramas = p::sacar_tramas(&mut tr.as_mut().unwrap().entrada).unwrap_or_default();
+            for t in tramas {
+                let id = DEL_PUENTE + t.conexion as Cliente;
+                match t.tipo {
+                    p::CONECTAR => {
+                        clientes.insert(id, DelCliente { salida: Salida::Puente(t.conexion), con: Conexion::new() });
+                        println!("compositor-pc: cliente {} del puente conectado", t.conexion);
+                        alguno = true;
+                    }
+                    p::MEMORIA_NUEVA if t.datos.len() == 12 => {
+                        let n = u32::from_le_bytes(t.datos[0..4].try_into().unwrap());
+                        let tam = u64::from_le_bytes(t.datos[4..12].try_into().unwrap());
+                        if let Some(fd) = p::memfd(c"dashos-puente", tam) {
+                            let l = tabla.borrow_mut().poner(fd);
+                            tr.as_mut().unwrap().memorias.insert(n, l);
+                        }
+                    }
+                    p::MEMORIA_CRECER if t.datos.len() == 12 => {
+                        let n = u32::from_le_bytes(t.datos[0..4].try_into().unwrap());
+                        let tam = u64::from_le_bytes(t.datos[4..12].try_into().unwrap());
+                        let l = tr.as_ref().unwrap().memorias.get(&n).copied();
+                        if let Some(&fd) = l.and_then(|l| tabla.borrow().fds.get(&l).copied()).as_ref() {
+                            unsafe { libc::ftruncate(fd, tam as libc::off_t) };
+                        }
+                    }
+                    p::MEMORIA_ESCRIBIR if t.datos.len() >= 12 => {
+                        let n = u32::from_le_bytes(t.datos[0..4].try_into().unwrap());
+                        let desde = u64::from_le_bytes(t.datos[4..12].try_into().unwrap());
+                        let l = tr.as_ref().unwrap().memorias.get(&n).copied();
+                        if let Some(fd) = l.and_then(|l| tabla.borrow().fds.get(&l).copied()) {
+                            unsafe { libc::pwrite(fd, t.datos[12..].as_ptr().cast(), t.datos.len() - 12, desde as libc::off_t) };
+                        }
+                    }
+                    p::DATOS => {
+                        let Some((numeros, bytes)) = p::partir_datos(&t.datos) else { continue };
+                        let llaves: Vec<u32> = numeros.iter().filter_map(|n| tr.as_ref().unwrap().memorias.get(n).copied()).collect();
+                        if let Some(c) = clientes.get_mut(&id) {
+                            if !atender(id, c, bytes, &llaves, &mut escena, &tabla, &mut tr) {
+                                fuera.push(id);
+                            }
+                        }
+                    }
+                    p::ADIOS => fuera.push(id),
+                    _ => {}
+                }
+            }
+            if cerrado {
+                println!("compositor-pc: el puente se fue");
+                fuera.extend(clientes.iter().filter(|(_, c)| matches!(c.salida, Salida::Puente(_))).map(|(&id, _)| id));
+                tr = None;
+            }
+        }
+        // Los directos.
+        let ids: Vec<Cliente> = clientes.keys().copied().filter(|id| *id < DEL_PUENTE).collect();
+        for id in ids {
+            let c = clientes.get_mut(&id).unwrap();
+            let Salida::Directo(s) = &c.salida else { continue };
             let (mut bytes, mut fds) = (Vec::new(), Vec::new());
-            if recibir(&c.sock, &mut bytes, &mut fds).is_none() {
+            if p::recibir(s.as_raw_fd(), &mut bytes, &mut fds).is_none() {
                 fuera.push(id);
                 continue;
             }
@@ -222,20 +304,14 @@ fn main() {
                 continue;
             }
             let llaves: Vec<u32> = fds.into_iter().map(|fd| tabla.borrow_mut().poner(fd)).collect();
-            if c.con.juntador.meter(&bytes, &llaves).is_err() {
-                fuera.push(id);
-                continue;
-            }
-            c.con.atender(&GLOBALES, &mut escena.de(id));
-            if let Some(e) = &c.con.roto {
-                println!("compositor-pc: error de protocolo del cliente {}: {}", id, e.texto);
-            }
-            if !vaciar(c, &tabla) || c.con.roto.is_some() {
+            if !atender(id, c, &bytes, &llaves, &mut escena, &tabla, &mut tr) {
                 fuera.push(id);
             }
         }
+        fuera.sort();
+        fuera.dedup();
         // La captura, antes de que se vaya el último cliente: con su ventana aún en pantalla.
-        if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && fuera.len() == clientes.len()) {
+        if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && fuera.len() == clientes.len() && !capturada) {
             escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);
@@ -244,6 +320,9 @@ fn main() {
         for id in fuera {
             if let Some(c) = clientes.remove(&id) {
                 println!("compositor-pc: cliente {} se va", id);
+                if let (Salida::Puente(conexion), Some(t)) = (&c.salida, tr.as_mut()) {
+                    let _ = p::escribir_trama(&mut t.sock, p::ADIOS, *conexion, &[]);
+                }
                 escena.adios(id);
                 let mut j = c.con;
                 while let Some(l) = j.juntador.tomar_llave() {
@@ -260,7 +339,7 @@ fn main() {
         for (cl, aviso, ms) in avisos {
             if let Some(c) = clientes.get_mut(&cl) {
                 escena::avisar_frame(&mut c.con, aviso, ms);
-                vaciar(c, &tabla);
+                vaciar(c, &tabla, &mut tr);
             }
         }
         escena.pendientes.clear();
@@ -273,5 +352,4 @@ fn main() {
         println!("compositor-pc: captura en {}", f);
     }
     let _ = std::fs::remove_file(ruta);
-    let _ = escucha.into_raw_fd();
 }

@@ -37,7 +37,7 @@ Primero lo que se puede probar ya con programas reales en el PC; después lo que
 | Paso | Qué | Prueba | Estado |
 |---|---|---|---|
 | G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | hecho |
-| G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | pendiente |
+| G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | hecho (copia de wl_shm; vsock y QEMU, con la caja) |
 | G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | pendiente |
 | G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | pendiente |
 | G4 | `zwlr_layer_shell_v1`: fondo, barras y avisos (capas, anclas, márgenes, zona exclusiva, teclado). Solo para clientes con el poder de escritorio (S10b: por la marca) | `swaybg` pinta el fondo; un cliente sin el poder recibe error | pendiente |
@@ -66,4 +66,10 @@ código de compositores.
   descriptores que llegan hacen de llaves, `mmap` para `wl_shm`) y `puente/pruebas/cliente_shm.c` (libwayland 1.26,
   `xdg-shell`, 10 cuadros por `frame`). Primera prueba contra libwayland: ningún error de protocolo; la captura tiene
   la ventana y la banda del último cuadro. `puente/pruebas/g0.sh`, dentro de `make prueba`.
+- G1 hecho: `puente/src/bin/puente.rs` (el lado de la caja: escucha como un compositor, sigue los objetos con las
+  tablas de `wayland/`, proyecta cada pool de `wl_shm` y copia el búfer puesto en cada `commit`; otros descriptores,
+  una copia; los que manda DashOS, `memfd`) y el transporte de tramas (`puente/src/lib.rs`: conectar, datos con
+  llaves, adiós y memorias con número). `compositor-pc --transporte` hace de lado de DashOS. Prueba de punta a punta:
+  `puente/pruebas/g1.sh`, dentro de `make prueba`: misma captura que en directo. Falta, con la caja Linux: `vsock` en
+  vez del socket y el lado de DashOS con canales y objetos de memoria; y copiar solo lo dañado.
 

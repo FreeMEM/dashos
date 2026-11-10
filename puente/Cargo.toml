@@ -9,6 +9,14 @@ description = "El puente de Wayland para la caja Linux y el compositor de DashOS
 wayland = { package = "dashos-wayland", path = "../wayland" }
 libc = "0.2"
 
+[lib]
+name = "dashos_puente"
+path = "src/lib.rs"
+
 [[bin]]
 name = "compositor-pc"
 path = "src/bin/compositor_pc.rs"
+
+[[bin]]
+name = "puente"
+path = "src/bin/puente.rs"
