@@ -19,19 +19,12 @@
 #![no_main]
 
 use dashos::println;
+use dashos::protocolo::sesiones::*;
 
 dashos::programa!(principal);
 
 const CANAL: u32 = 1;
-const ALTA: u32 = 1;
-const PROCESOS: u32 = 1;
-const MATAR: u32 = 2;
-const BIEN: i32 = 0;
-const NO_EXISTE: i32 = -1;
-const PROTEGIDO: i32 = -2;
 const MAX: usize = 64;
-/// Fichas por respuesta: 8 + 7 × 32 = 232 bytes, dentro de los 256 de un mensaje.
-const POR_PAGINA: usize = 7;
 
 #[derive(Clone, Copy)]
 struct Ficha {

@@ -19,6 +19,7 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
+use dashos::protocolo::archivos::*;
 use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
 use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
@@ -48,51 +49,10 @@ const TRAMO: usize = 64 * 1024;
 const VENTANA_DISCO: usize = 64 * 1024;
 
 const CANAL: u32 = 2;
-/// La ventana de un cliente: 64 KB si no pide otra cosa en SESION. Hasta `VENTANA_MAX` si la pide (A4): con 1 MB,
-/// leer 8 MB son 8 viajes y no 128, y se escribe en trozos múltiplos del registro de RedoxFS (128 KB), sin rehacerlo.
-const VENTANA: usize = 64 * 1024;
-const VENTANA_MAX: usize = 1 << 20;
 /// Hasta 64 clientes (R6): con un programa por aplicación (S6b), 8 se quedaban cortos.
 const MAX_CLIENTES: usize = 64;
-const CABECERA: usize = 32;
 
 // Órdenes del protocolo de ficheros.
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const ESCRIBIR: u32 = 3;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const RENOMBRAR: u32 = 9;
-const TAMANO: u32 = 10;
-const VACIAR: u32 = 11;
-const INFO: u32 = 12;
-const COMENTARIO: u32 = 13;
-const COMENTAR: u32 = 14;
-const PROTEGER: u32 = 15;
-const COMPROBAR: u32 = 16;
-const INSTANTANEAS: u32 = 17;
-const TOMAR: u32 = 18;
-const DESCARTAR: u32 = 19;
-const VOLVER: u32 = 20;
-const VOLUMEN: u32 = 21;
-const VOLUMENES: u32 = 22;
-const HACER_VOLUMEN: u32 = 23;
-const QUITAR_VOLUMEN: u32 = 24;
-const ABRIR_VOLUMEN: u32 = 25;
-const CERRAR_VOLUMEN: u32 = 26;
-/// Crear un fichero con lo que hay en la ventana, en una sola transacción, y que esté en el disco al contestar
-/// (paso A de docs/MULTITAREA_LOOP.md): como crear, escribir, cerrar y vaciar, en un viaje.
-const GUARDAR: u32 = 27;
-/// Busca y lee en un solo viaje, sin dejar asa abierta (A3).
-const LEER_NOMBRE: u32 = 28;
-/// El alta de un cliente (R6, U1 de S6b): solo sin marca, es decir, de quien reparte las llaves (hoy `inicio`).
-const ALTA: u32 = 100;
-/// Derechos de un cliente en el servicio, además de lo que digan dueños y permisos (R6).
-const D_ADMINISTRAR: u32 = 1;
 /// Lo más largo de una contraseña de volumen, que llega por la ventana (A13).
 const MAX_CLAVE: usize = 1024;
 /// La llave con la que el servicio se escribe a sí mismo (la da `inicio` tras las demás): para su temporizador.
@@ -129,27 +89,8 @@ fn apuntar_disco(cual: usize, desde: u64) {
 }
 
 // Estados.
-const BIEN: i32 = 0;
-const MAL_FORMADO: i32 = -1;
-const NO_EXISTE: i32 = -2;
-const NO_ES_CAJON: i32 = -3;
-const ES_CAJON: i32 = -4;
-const ASA_MALA: i32 = -5;
-const SIN_SITIO: i32 = -6;
-const ERROR_DEL_DISCO: i32 = -7;
-const SOLO_LECTURA: i32 = -8;
-const YA_EXISTE: i32 = -9;
-const NO_VACIO: i32 = -10;
-const LLENO: i32 = -11;
-const PROTEGIDO: i32 = -12;
-const EN_USO: i32 = -13;
-/// Sin azar de calidad no se hacen llaves (R10): el kernel no tuvo semilla del firmware.
-const SIN_AZAR: i32 = -14;
 
 // Tipos.
-const FICHERO: u8 = 1;
-const CAJON: u8 = 2;
-const ENLACE: u8 = 3;
 
 /// El disco visto por RedoxFS: bloques de 4 KB desde `INICIO`, por el canal del servicio de disco.
 struct Disco {

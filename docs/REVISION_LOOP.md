@@ -191,3 +191,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   dice que no hay hilos muertos. Medido: dentro del ruido (-2 a +5 %); se deja porque quita un cerrojo por llamada,
   que en placa con cuatro núcleos sí se disputa. Lo grande de K1 (hilo actual en TPIDR_EL1, proceso prestado sin
   subir y bajar el Arc) sigue pendiente.
+- E7, primer trozo: `dashos::protocolo::archivos` (órdenes, estados, tipos, cabecera y ventanas) y
+  `dashos::protocolo::sesiones`, sacados de los servicios. Se quitaron 143 copias exactas de 6 programas (archivos,
+  ficheros, hostil, medir-fs, imagen, adf-prueba); las que no coinciden se quedan, y como un nombre local tapa al del
+  módulo, nada cambia sin querer. Pasan `arranque-virt`, `prueba` y el banco de ficheros (`fs-bien`). Falta lo grande
+  de E7: el bucle común de los servicios (leer con marca, cerrar llaves sobrantes, dormir en error, clientes por
+  marca, soltar al que no lee).

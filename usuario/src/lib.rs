@@ -10,6 +10,11 @@ use core::fmt;
 
 pub mod graficos;
 pub mod hid;
+/// Los protocolos de los servicios, compartidos con sus clientes (E7).
+pub mod protocolo {
+    pub mod archivos;
+    pub mod sesiones;
+}
 #[cfg(feature = "monton")]
 pub mod monton;
 mod copiar;

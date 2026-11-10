@@ -21,6 +21,7 @@
 extern crate alloc;
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 use wayland::canal::{TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{wl_callback, wl_display};
 use wayland::{Escritor, leer_cabecera};
@@ -135,17 +136,6 @@ fn pedir(lectura: u32, copia: u32, orden: u32, asa: u32, a: u64, b: u64, nombre:
     Some((i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap())))
 }
 
-const BUSCAR: u32 = 1;
-const ESCRIBIR: u32 = 3;
-const LISTAR: u32 = 4;
-const CERRAR: u32 = 6;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const PROTEGER: u32 = 15;
-const VOLUMEN: u32 = 21;
-const VOLUMENES: u32 = 22;
-const NO_EXISTE: i32 = -2;
-const PROTEGIDO: i32 = -12;
 
 /// Los permisos del servicio de archivos (R6). Devuelve lo que falló, o "bien".
 fn permisos(lectura: u32, copia: u32) -> &'static str {
@@ -362,7 +352,7 @@ fn sesiones() -> bool {
     let mut cuantos = 0;
     loop {
         let mut b = [0u8; 256];
-        let n = pedir(1, cuantos as u64, &mut b);
+        let n = pedir(dashos::protocolo::sesiones::PROCESOS, cuantos as u64, &mut b);
         if n < 8 {
             println!("  [hostil] sesiones: sin lista de procesos ({})", n);
             return false;
@@ -388,9 +378,10 @@ fn sesiones() -> bool {
     };
     let sin_baja = marca_de(b"caida-cliente").is_some();
     let mut r = [0u8; 4];
-    let matar = |m: u64, r: &mut [u8; 4]| if pedir(2, m, r) == 4 { i32::from_le_bytes(*r) } else { i32::MIN };
+    let matar = |m: u64, r: &mut [u8; 4]| if pedir(dashos::protocolo::sesiones::MATAR, m, r) == 4 { i32::from_le_bytes(*r) } else { i32::MIN };
     let (a, c, d) = (matar(ajeno, &mut r), matar(presa, &mut r), matar(u64::MAX, &mut r));
-    let bien = a == -2 && c == 0 && d == -1 && !sin_baja;
+    use dashos::protocolo::sesiones as s;
+    let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

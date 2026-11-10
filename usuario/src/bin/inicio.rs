@@ -50,7 +50,7 @@ fn alta_en_sesiones(canal: u32, nombre_cab: usize, marca: u64, grupo: u32) {
     }
     let (uid, gid) = usuario_de(nombre(nombre_cab));
     let mut m = [0u8; 36];
-    m[0..4].copy_from_slice(&1u32.to_le_bytes());
+    m[0..4].copy_from_slice(&dashos::protocolo::sesiones::ALTA.to_le_bytes());
     m[4..12].copy_from_slice(&marca.to_le_bytes());
     m[12..16].copy_from_slice(&uid.to_le_bytes());
     m[16..20].copy_from_slice(&gid.to_le_bytes());

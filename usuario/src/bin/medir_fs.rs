@@ -13,22 +13,12 @@
 mod medir_comun;
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 use medir_comun::*;
 
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const ESCRIBIR: u32 = 3;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const VACIAR: u32 = 11;
-const GUARDAR: u32 = 27;
 
 const GRANDE: u64 = 8 << 20;
 const TROZO: u64 = 64 << 10;

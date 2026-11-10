@@ -12,40 +12,11 @@
 #![no_main]
 
 use dashos::println;
+use dashos::protocolo::archivos::*;
 
 dashos::programa!(principal);
 
 const VA: usize = 0x40_0000_0000;
-const SESION: u32 = 0;
-const BUSCAR: u32 = 1;
-const LEER: u32 = 2;
-const LISTAR: u32 = 4;
-const DATOS: u32 = 5;
-const CERRAR: u32 = 6;
-const ESCRIBIR: u32 = 3;
-const CREAR: u32 = 7;
-const BORRAR: u32 = 8;
-const RENOMBRAR: u32 = 9;
-const TAMANO: u32 = 10;
-const VACIAR: u32 = 11;
-const INFO: u32 = 12;
-const COMENTARIO: u32 = 13;
-const COMENTAR: u32 = 14;
-const PROTEGER: u32 = 15;
-const COMPROBAR: u32 = 16;
-const INSTANTANEAS: u32 = 17;
-const TOMAR: u32 = 18;
-const DESCARTAR: u32 = 19;
-const VOLVER: u32 = 20;
-const VOLUMEN: u32 = 21;
-const VOLUMENES: u32 = 22;
-const HACER_VOLUMEN: u32 = 23;
-const QUITAR_VOLUMEN: u32 = 24;
-const ABRIR_VOLUMEN: u32 = 25;
-const LEER_NOMBRE: u32 = 28;
-const CERRAR_VOLUMEN: u32 = 26;
-const PROTEGIDO: i32 = -12;
-const EN_USO: i32 = -13;
 // Bits del Amiga (`AmigaBits` de DashFS).
 const ARCHIVO: u64 = 1;
 const GUION: u64 = 4;
