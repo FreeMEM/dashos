@@ -651,12 +651,17 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
         LISTAR => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let v = c.ventana();
-            let r = fs.tx_in(vol, |tx| {
+            // Los nombres, en una transacción; los datos de cada uno, de lo que recuerda el servicio, y el comentario
+            // solo si el nodo tiene atributos (F8: antes, dos recorridos del árbol por fichero).
+            let hijos = fs.tx_in(vol, |tx| {
                 if !tx.read_tree(n)?.data().is_dir() {
                     return Err(Error::new(ENOTDIR));
                 }
                 let mut hijos = Vec::new();
                 tx.child_nodes(n, &mut hijos)?;
+                Ok(hijos)
+            });
+            let r = hijos.and_then(|hijos| {
                 let mut off = 0;
                 let mut i = p.a as usize;
                 let mut cuantos = 0;
@@ -665,8 +670,13 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                         i += 1;
                         continue;
                     };
-                    let h = tx.read_tree(hijos[i].node_ptr())?;
-                    let comentario = tx.comment(h.ptr())?;
+                    let h = rec.nodo(fs, vol, hijos[i].node_ptr())?;
+                    let comentario = if h.data().attributes.is_null() {
+                        String::new()
+                    } else {
+                        let ptr = h.ptr();
+                        fs.tx_in(vol, |tx| tx.comment(ptr))?
+                    };
                     let comentario = comentario_corto(&comentario);
                     let largo = 24 + nombre.len() + comentario.len();
                     let paso = largo.next_multiple_of(8);

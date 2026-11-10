@@ -60,7 +60,7 @@ Pruebas:
 | L | Las mismas pruebas en C en Raspberry Pi OS, en el mismo QEMU `raspi4b` (pedido del usuario) | hecho |
 | M2b | Llamada 30 "dormir": el hilo duerme en la lista de su núcleo, sin canal ni temporizador ni pasar por el 0 | hecho |
 | R | Memoria: ocupada al arrancar, el kernel y lo que cuesta cada proceso, en DashOS y en Linux (pedido del usuario) | hecho |
-| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F6 hechos; sigue |
+| F | Sistema de archivos: escritura y lectura seguidas, muchos ficheros pequeños, metadatos y directorios; RedoxFS de DashOS contra ext4 de Linux en el mismo disco emulado (pedido del usuario) | banco hecho; F1 a F8 hechos; sigue |
 | P3 | La Pi 3 (su controlador de interrupciones) para medir en una placa de verdad: el usuario tiene una | hecho en QEMU; falta la placa |
 | A | Artefacto con las comparativas (pedido del usuario) | pendiente |
 
@@ -415,3 +415,12 @@ aquí los números y commit local.
   (-11 %; Linux: 83); con 4 calculando, de 105 a 98 (-7 %); entre núcleos, +3 a +7 % (ruido; ahí no cambia nada). El
   resto igual.
 - `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — F8: listar con los nodos recordados
+
+- Listar leía cada fichero dos veces del árbol: sus datos (`read_tree`) y su comentario (`comment`, que vuelve a
+  leer el nodo y luego su bloque de atributos). Ahora los nombres salen en una transacción, los datos de cada uno de
+  `Recuerdos` y el comentario solo si el nodo tiene atributos.
+- `docs/medidas/fs-f8.json` (3 arranques, `fs-bien` en los tres): listar un cajón de 500, de 20 a 97 por segundo
+  (Linux: 154); lo demás +3 a +12 %, dentro del ruido.
+- `make arranque-virt` (comprueba los comentarios al listar, FS7): bien.
