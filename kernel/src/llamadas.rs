@@ -56,6 +56,8 @@ const E_TIPO: u64 = -6i64 as u64;
 const E_MEMORIA: u64 = -7i64 as u64;
 /// Un límite por proceso o por canal: tabla de llaves llena, cola llena o demasiadas proyecciones.
 const E_LIMITE: u64 = -8i64 as u64;
+/// Venció el plazo de una lectura (K7).
+const E_PLAZO: u64 = -9i64 as u64;
 /// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
 /// lleva menos de un milisegundo en la Pi 4; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
 /// la consola como servicio).
@@ -127,7 +129,11 @@ pub fn atender(marco: &mut Marco) {
         #[cfg(feature = "pruebas")]
         99 => crate::mapa::traducir(a[0] as usize).0 as u64,
         4 => canal_escribir(a[0] as u32, a[1], a[2], a[3], a[4]),
-        5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4]),
+        5 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4], 0),
+        // K7: leer con plazo. El quinto argumento lleva en sus 16 bits bajos cuántas llaves caben y en el resto el
+        // plazo en microsegundos.
+        35 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4] & 0xffff, a[4] >> 16),
+        36 => proceso_avisar(a[0] as u32, a[1] as u32),
         6 => cerrar(a[0] as u32),
         7 => memoria_crear(a[0]),
         8 => memoria_proyectar(a[0] as u32, a[1], a[2]),
@@ -280,12 +286,13 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
                 objetos::Error::Cerrado => E_CERRADO,
                 objetos::Error::Llena => E_LIMITE,
                 objetos::Error::SinMemoria => E_MEMORIA,
+                objetos::Error::Plazo => E_PLAZO,
             }
         }
     }
 }
 
-fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_llaves: u64) -> u64 {
+fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_llaves: u64, plazo_us: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(bytes_llaves) = cap_llaves.checked_mul(4) else { return E_ARGUMENTO };
     if tramo(buf, cap).is_none() || tramo(llaves, bytes_llaves).is_none() {
@@ -297,8 +304,17 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
     }
     let Objeto::Extremo(punta) = origen.objeto else { return E_TIPO };
     let (canal, lado) = (punta.canal().clone(), punta.lado());
-    let m = match canal.leer(lado) {
+    let vence = if plazo_us == 0 {
+        0
+    } else {
+        let cuentas = (plazo_us as u128 * crate::reloj::frecuencia() as u128 / 1_000_000).min(u64::MAX as u128 / 4) as u64;
+        crate::reloj::ahora().saturating_add(cuentas.max(1))
+    };
+    let m = match canal.leer_hasta(lado, vence) {
         Ok(m) => m,
+        // Cada cosa con su error: falta de memoria no es un canal cerrado (K7).
+        Err(objetos::Error::Plazo) => return E_PLAZO,
+        Err(objetos::Error::SinMemoria) => return E_MEMORIA,
         Err(_) => return E_CERRADO,
     };
     // Si no cabe o no se puede escribir donde dice el proceso, el mensaje vuelve a la cola, intacto (C31).
@@ -594,6 +610,50 @@ fn proceso_matar(h: u32) -> u64 {
         return E_DERECHOS;
     }
     planificador::matar_proceso(&c);
+    0
+}
+
+/// K7: cuando acabe el proceso de la llave `hp` (con derecho de leer), escribir su fin por el canal `hc` (con derecho
+/// de escribir), con la marca de esa llave. Si ya acabó, el aviso sale ya. Hasta `MAX_AVISOS` por proceso.
+fn proceso_avisar(hp: u32, hc: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let t = proc_.llaves.tomar();
+    let Some(l) = t.ver(hp) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let Some((canal, via)) = t.ver_con_intermediarios(hc) else { return E_LLAVE };
+    drop(t);
+    let Objeto::Extremo(p) = canal.objeto else { return E_TIPO };
+    if canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let mut vias = Vec::new();
+    if vias.try_reserve(via.len()).is_err() {
+        return E_MEMORIA;
+    }
+    vias.extend(via.iter().map(|r| r.vigia()));
+    let aviso = objetos::AvisoFin { canal: p.canal().clone(), lado: p.lado(), marca: canal.marca, via: vias };
+    let ya = {
+        let mut e = c.estado.tomar();
+        match e.fin {
+            Some(f) => Some(f),
+            None => {
+                if e.avisos.len() >= objetos::MAX_AVISOS {
+                    return E_LIMITE;
+                }
+                if e.avisos.try_reserve(1).is_err() {
+                    return E_MEMORIA;
+                }
+                e.avisos.push(aviso);
+                return 0;
+            }
+        }
+    };
+    if let Some(f) = ya {
+        aviso.mandar(f);
+    }
     0
 }
 

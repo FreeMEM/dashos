@@ -139,9 +139,8 @@ pub const VA_LIMITE: u64 = 1 << 39;
 
 /// Una tabla nueva, a cero. Es memoria del proceso: no entra en la reserva del kernel.
 fn tabla_nueva() -> Result<u64, Error> {
-    let p = paginas().pagina_usuario().ok_or(Error::SinMemoria)?;
-    unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-    Ok(p)
+    // `pagina_usuario` ya la da a cero.
+    crate::memoria::pagina_usuario().ok_or(Error::SinMemoria)
 }
 
 fn entrada(tabla: u64, i: usize) -> *mut u64 {
@@ -423,14 +422,14 @@ impl Espacio {
     pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.cobrar()?;
-        let Some(p) = paginas().pagina_usuario() else {
+        let Some(p) = crate::memoria::pagina_usuario() else {
             self.descobrar();
             return Err(Error::SinMemoria);
         };
         let k = mmu::virt(p as usize);
         // La página es nuestra (recién sacada del repartidor) y la mitad alta la ve entera por el mapa lineal.
+        // Ya viene a cero (`pagina_usuario`).
         let pagina = unsafe { core::slice::from_raw_parts_mut(k as *mut u8, PAGINA as usize) };
-        pagina.fill(0);
         let desde = desplazamiento.min(pagina.len());
         let n = contenido.len().min(pagina.len() - desde);
         pagina[desde..desde + n].copy_from_slice(&contenido[..n]);

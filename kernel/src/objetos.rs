@@ -253,6 +253,48 @@ pub struct EstadoProceso {
     pub esperando: ColaEspera,
     /// Lo han matado (C43, M2): los hilos que se apunten después nacen marcados.
     pub matado: bool,
+    /// Canales a los que avisar cuando acabe (K7, `proceso_avisar`).
+    pub avisos: Vec<AvisoFin>,
+}
+
+/// Los bytes de un aviso del kernel (interrupción, temporizador, fin de proceso), o `None` si no queda montón (S1):
+/// quien avisa lo reintenta o lo pierde, pero no hay pánico.
+pub fn bytes_aviso(b: &[u8]) -> Option<Vec<u8>> {
+    let mut v = Vec::new();
+    v.try_reserve_exact(b.len()).ok()?;
+    v.extend_from_slice(b);
+    Some(v)
+}
+
+/// Lo más de avisos de fin que se apuntan en un proceso (K7): cada uno sujeta un canal.
+pub const MAX_AVISOS: usize = 16;
+
+/// Un aviso de fin de proceso (K7): cuando acabe, se escribe en `canal` desde `lado` un mensaje de 16 bytes, clase y
+/// código como en `proceso_esperar` (u64 little-endian), con `marca`, como hace un temporizador. Si se revoca una de
+/// las llaves por las que se pidió (`via`), no se manda.
+pub struct AvisoFin {
+    pub canal: Arc<Canal>,
+    pub lado: usize,
+    pub marca: u64,
+    pub via: Vec<Arc<core::sync::atomic::AtomicBool>>,
+}
+
+impl AvisoFin {
+    /// Manda el aviso de `fin`. Si la cola está llena, se pierde: quien lo pidió puede preguntar con
+    /// `proceso_esperar`.
+    pub fn mandar(self, fin: Fin) {
+        if self.via.iter().any(|r| r.load(core::sync::atomic::Ordering::Acquire)) {
+            return;
+        }
+        let (clase, codigo) = fin.valores();
+        let mut datos = Vec::new();
+        if datos.try_reserve(16).is_err() {
+            return;
+        }
+        datos.extend_from_slice(&clase.to_le_bytes());
+        datos.extend_from_slice(&codigo.to_le_bytes());
+        let _ = self.canal.escribir(self.lado, Mensaje { datos, llaves: Vec::new(), marca: self.marca });
+    }
 }
 
 /// Un objeto de memoria: está en `base`, que es quien toca las páginas (C37).
@@ -312,6 +354,8 @@ pub enum Error {
     /// La cola del otro lado tiene ya `MAX_COLA` mensajes.
     Llena,
     SinMemoria,
+    /// Venció el plazo de la lectura sin que llegara nada (K7).
+    Plazo,
 }
 
 /// Soltar un canal suelta los mensajes de sus colas, y con ellos sus llaves, que pueden ser de otros canales con
@@ -466,15 +510,21 @@ impl Canal {
 
     /// Lee en el lado `lado`, esperando si no hay nada.
     pub fn leer(&self, lado: usize) -> Result<Mensaje, Error> {
+        self.leer_hasta(lado, 0)
+    }
+
+    /// Como `leer`, pero esperando como mucho hasta `vence` (cuentas del reloj; 0 es sin plazo): entonces
+    /// `Error::Plazo` (K7).
+    pub fn leer_hasta(&self, lado: usize, vence: u64) -> Result<Mensaje, Error> {
         // Con las IRQ enmascaradas desde antes de tomar el cerrojo: se suelta dentro del planificador al bloquearse,
         // y ahí no deben abrirse (cerrojo.rs).
         let estado = crate::cerrojo::enmascarar_irq();
-        let r = self.leer_enmascarado(lado);
+        let r = self.leer_enmascarado(lado, vence);
         crate::cerrojo::restaurar_irq(estado);
         r
     }
 
-    fn leer_enmascarado(&self, lado: usize) -> Result<Mensaje, Error> {
+    fn leer_enmascarado(&self, lado: usize, vence: u64) -> Result<Mensaje, Error> {
         loop {
             let mut l = self.lados.tomar();
             // Si lo despertaron para matarlo (C39), nadie lo quitó de la cola: se quita él, para que el canal no guarde
@@ -489,11 +539,22 @@ impl Canal {
             if l[1 - lado].cerrado {
                 return Err(Error::Cerrado);
             }
+            // Sin plazo, ni se mira el reloj: es el camino de cada ida y vuelta.
+            let ahora = if vence == 0 { 0 } else { crate::reloj::ahora() };
+            if vence != 0 && ahora >= vence {
+                return Err(Error::Plazo);
+            }
             if !l[lado].esperando.apuntarme() {
                 return Err(Error::SinMemoria);
             }
-            // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes.
-            planificador::bloquear_soltando(l);
+            // El cerrojo se suelta con el hilo ya bloqueado: así quien escriba no puede despertarlo antes. Con plazo,
+            // despierta solo al vencer y la vuelta siguiente lo ve.
+            if vence == 0 {
+                planificador::bloquear_soltando(l);
+            } else {
+                let us = ((vence - ahora) as u128 * 1_000_000 / crate::reloj::frecuencia().max(1) as u128) as u64;
+                planificador::bloquear_soltando_hasta(l, us.max(1));
+            }
         }
     }
 

@@ -25,7 +25,7 @@ DashOS en marcha con 4 núcleos.
 │   [inicio] hola lanzado en su grupo, con 0 llaves
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
 ~│   [inicio] hola acabó: clase 0, código 5
-~│   [inicio] todo lanzado; se queda esperando
+~│   [inicio] todo lanzado; se queda vigilando los servicios
 # El buzón y el compositor (C50) y el USB (C49), que le manda la entrada por el canal "ventanas", que crea inicio.
 # W7: el compositor habla Wayland; dos clientes de prueba, cada uno con su ventana, animada 30 cuadros.
 ~│   [compositor] pantalla 640x480 a 32 bits, doble búfer, solo con su memoria

@@ -36,6 +36,7 @@ prueba: $(PRUEBAS)
 	cd ../sonido && cargo test --quiet
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
+	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh
 	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 90
 
 arranque: $(IMAGEN)
@@ -92,7 +93,7 @@ sonido-paula: usuario FORCE
 # El banco de medidas de la multitarea (M0, docs/MULTITAREA_LOOP.md): la imagen de raspi4b con solo la consola y el
 # orquestador `medir`, y los hijos de prueba en Rust, C y Dash. VUELTAS arranques; medianas en target/medir.json.
 MEDIR := target/kernel8-medir.img
-VUELTAS ?= 3
+VUELTAS ?= 7
 medir: usuario FORCE
 	python3 ../tools/medir.py paquete ../usuario/target/medir.paq
 	cargo build $(CARGO_PERFIL) --features medir

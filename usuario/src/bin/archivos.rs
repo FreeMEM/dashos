@@ -48,7 +48,10 @@ const TRAMO: usize = 64 * 1024;
 const VENTANA_DISCO: usize = 64 * 1024;
 
 const CANAL: u32 = 2;
+/// La ventana de un cliente: 64 KB si no pide otra cosa en SESION. Hasta `VENTANA_MAX` si la pide (A4): con 1 MB,
+/// leer 8 MB son 8 viajes y no 128, y se escribe en trozos múltiplos del registro de RedoxFS (128 KB), sin rehacerlo.
 const VENTANA: usize = 64 * 1024;
+const VENTANA_MAX: usize = 1 << 20;
 /// Hasta 64 clientes (R6): con un programa por aplicación (S6b), 8 se quedaban cortos.
 const MAX_CLIENTES: usize = 64;
 const CABECERA: usize = 32;
@@ -553,13 +556,15 @@ struct Cliente {
     pendiente: bool,
     /// Un guardado falló con algo suyo dentro: se le dice en su siguiente CERRAR, VACIAR o GUARDAR (A2).
     fallo: Option<i32>,
+    /// Lo que mide su ventana (A4).
+    tam: usize,
 }
 
 impl Cliente {
     fn ventana(&self) -> &'static mut [u8] {
         // La ventana es de este proceso (la creó `sesion`) y queda proyectada mientras viva el cliente. El cliente
         // puede cambiarla a la vez: lo que se lea de ella se copia antes de usarlo.
-        unsafe { core::slice::from_raw_parts_mut(self.va as *mut u8, VENTANA) }
+        unsafe { core::slice::from_raw_parts_mut(self.va as *mut u8, self.tam) }
     }
 }
 
@@ -873,7 +878,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
             if !puede(&ficha, nodo.data(), R) {
                 return mal(PROTEGIDO);
             }
-            let cuanto = p.b.min(VENTANA as u64) as usize;
+            let cuanto = p.b.min(c.tam as u64) as usize;
             let v = c.ventana();
             let r = fs.tx_in(vol, |tx| {
                 let mut hecho = 0;
@@ -905,7 +910,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
         }
         LEER => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            let cuanto = p.b.min(VENTANA as u64) as usize;
+            let cuanto = p.b.min(c.tam as u64) as usize;
             let v = c.ventana();
             // El nodo, de lo que recuerda el servicio (F7): sin recorrer el árbol en cada lectura.
             let nodo = match rec.nodo(fs, vol, n) {
@@ -971,7 +976,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                     let comentario = comentario_corto(&comentario);
                     let largo = 24 + nombre.len() + comentario.len();
                     let paso = largo.next_multiple_of(8);
-                    if off + paso > VENTANA {
+                    if off + paso > c.tam {
                         break;
                     }
                     let d = h.data();
@@ -1012,7 +1017,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
         },
         ESCRIBIR => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
-            if p.b > VENTANA as u64 {
+            if p.b > c.tam as u64 {
                 return mal(MAL_FORMADO);
             }
             // Se copia antes: el cliente puede cambiar la ventana mientras tanto.
@@ -1075,7 +1080,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
             }
             let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
-            if p.b > VENTANA as u64 {
+            if p.b > c.tam as u64 {
                 return mal(MAL_FORMADO);
             }
             let datos = c.ventana()[..p.b as usize].to_vec();
@@ -1466,7 +1471,7 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
 
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,
 /// cambia el canal de respuesta y le da la misma ventana. Sin alta no hay sesión (R6).
-fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32) -> (i32, Option<u32>) {
+fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32, pide: u64) -> (i32, Option<u32>, usize) {
     let i = match clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == marca)) {
         Some(i) => {
             let c = clientes[i].as_mut().unwrap();
@@ -1475,21 +1480,26 @@ fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca:
             i
         }
         None => {
-            let Some(&ficha) = altas.get(&marca) else { return (PROTEGIDO, None) };
-            let Some(i) = clientes.iter().position(|c| c.is_none()) else { return (SIN_SITIO, None) };
-            let m = dashos::memoria_crear(VENTANA);
-            let va = VA_CLIENTES + i * 0x10_0000;
+            let Some(&ficha) = altas.get(&marca) else { return (PROTEGIDO, None, 0) };
+            let Some(i) = clientes.iter().position(|c| c.is_none()) else { return (SIN_SITIO, None, 0) };
+            // La que pida, entre 64 KB y 1 MB, en páginas enteras (A4). Cada cliente tiene un hueco de 1 MB.
+            let tam = (pide as usize).clamp(VENTANA, VENTANA_MAX).next_multiple_of(4096);
+            let m = dashos::memoria_crear(tam);
+            let va = VA_CLIENTES + i * VENTANA_MAX;
             if (m as i32) <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
-                return (SIN_SITIO, None);
+                if (m as i32) > 0 {
+                    dashos::cerrar(m);
+                }
+                return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None, tam });
             i
         }
     };
-    let ventana = clientes[i].as_ref().unwrap().ventana;
+    let (ventana, tam) = clientes[i].as_ref().map(|c| (c.ventana, c.tam)).unwrap();
     // Mandar una llave pide el derecho de transferir; el cliente podrá dar su ventana a otro proceso suyo.
     let copia = dashos::llave_duplicar(ventana, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
-    if copia > 0 { (BIEN, Some(copia as u32)) } else { (SIN_SITIO, None) }
+    if copia > 0 { (BIEN, Some(copia as u32), tam) } else { (SIN_SITIO, None, 0) }
 }
 
 /// Suelta al cliente que ya no escucha, con su ventana y sus asas.
@@ -1589,8 +1599,10 @@ fn principal() -> u64 {
             if k == 0 {
                 continue;
             }
-            let (estado, ventana) = sesion(&mut clientes, &altas, marca, ll[0]);
-            let r = Respuesta { estado, a: VENTANA as u64, ..Default::default() };
+            // En `a`, la ventana que pide (A4); 0 es la de siempre.
+            let pide = if n >= 16 { u64::from_le_bytes(buf[8..16].try_into().unwrap()) } else { 0 };
+            let (estado, ventana, tam) = sesion(&mut clientes, &altas, marca, ll[0], pide);
+            let r = Respuesta { estado, a: tam as u64, ..Default::default() };
             let llaves: &[u32] = match &ventana {
                 Some(v) => core::slice::from_ref(v),
                 None => &[],

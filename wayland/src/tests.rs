@@ -530,14 +530,399 @@ mod ventanas {
             Some(self.0.entry(llave).or_insert_with(|| vec![0x11; 1 << 16]).as_ptr())
         }
         fn soltar(&mut self, _: u32, _: *const u8, _: usize) {}
+        fn llave_con(&mut self, _: &'static [u8]) -> Option<u32> {
+            Some(0xDA7A)
+        }
     }
 
-    fn globales() -> [Global; 3] {
+    fn globales() -> [Global; 8] {
         [
             Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
             Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+            Global { nombre: 4, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+            Global { nombre: 5, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
+            Global { nombre: 6, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
+            Global { nombre: 7, interfaz: &tablas::WL_OUTPUT, version: 4 },
+            Global { nombre: 8, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
         ]
+    }
+
+    /// G5: un bloqueador. Objetos: 3 compositor, 4 shm, 39 pantalla, 40 manager, 41 lock, 42 superficie, 43 lock_surface, 44 pool,
+    /// 45 búfer de la pantalla entera (100 x 60). Devuelve los eventos del lock.
+    fn bloquear(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente) -> Vec<(u32, u16, Vec<u8>)> {
+        use crate::tablas::ext_session_lock_manager_v1;
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("ext_session_lock_manager_v1")).uint(1).uint(40).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("wl_output")).uint(4).uint(39).fin();
+        e.empezar(40, ext_session_lock_manager_v1::req::LOCK).uint(41).fin();
+        mandar(escena, con, c, &e)
+    }
+
+    /// Pone la pantalla de bloqueo: get_lock_surface, ack y búfer del tamaño que pidió.
+    fn pantalla_de_bloqueo(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, llave: u32) {
+        use crate::tablas::{ext_session_lock_surface_v1, ext_session_lock_v1};
+        let mut e = Escritor::new();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(42).fin();
+        e.empezar(41, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(43).uint(42).uint(39).fin();
+        let ev = mandar(escena, con, c, &e);
+        let conf = ev.iter().find(|x| (x.0, x.1) == (43, ext_session_lock_surface_v1::ev::CONFIGURE)).expect("sin configure");
+        assert_eq!(&conf.2[4..12], &[100u32.to_le_bytes(), 60u32.to_le_bytes()].concat()[..], "la pantalla entera");
+        let serie = u32::from_le_bytes(conf.2[..4].try_into().unwrap());
+        let mut e = Escritor::new();
+        e.empezar(43, ext_session_lock_surface_v1::req::ACK_CONFIGURE).uint(serie).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(44).llave(llave).int(100 * 60 * 4).fin();
+        e.empezar(44, wl_shm_pool::req::CREATE_BUFFER).uint(45).int(0).int(100).int(60).int(400).uint(XRGB8888).fin();
+        e.empezar(42, wl_surface::req::ATTACH).uint(45).int(0).int(0).fin();
+        e.empezar(42, wl_surface::req::COMMIT).fin();
+        mandar(escena, con, c, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+    }
+
+    /// G5: bloquear tapa todo al momento (negro) y quita el teclado; la pantalla de bloqueo lo toma; un segundo
+    /// bloqueador nace acabado; si el bloqueador muere sigue bloqueado; otro toma el relevo y desbloquea.
+    #[test]
+    fn bloqueo_de_sesion() {
+        use crate::tablas::{ext_session_lock_v1, ext_session_lock_v1::ev as lev};
+        let mut escena = Escena::new(Mem::default(), 0);
+        escena.fondo = 0xFF12_3456;
+        let mut pantalla = vec![0u32; 100 * 60];
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        let mut v = Conexion::new();
+        abrir(&mut escena, &mut v, 1, 70);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 100 + 41], 0xFF11_1111);
+        // Bloquear: locked, y ya no se ve la ventana ni tiene el teclado.
+        let mut b = Conexion::new();
+        let ev = bloquear(&mut escena, &mut b, 9);
+        assert!(ev.iter().any(|x| (x.0, x.1) == (41, lev::LOCKED)));
+        assert_eq!(escena.teclado, None);
+        assert!(escena.raices().is_empty());
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 100 + 41], 0xFF00_0000, "la ventana sigue viéndose");
+        assert_eq!(pantalla[5 * 100 + 5], 0xFF00_0000, "el fondo de siempre, no negro");
+        // La pantalla de bloqueo: se ve y tiene el teclado; las teclas van a ella, y Super+Arriba no hace nada.
+        pantalla_de_bloqueo(&mut escena, &mut b, 9, 80);
+        assert_eq!(escena.raices(), [(9, 42)]);
+        assert_eq!(escena.teclado, Some((9, 42)));
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 100 + 41], 0xFF11_1111, "la pantalla de bloqueo");
+        // La ventana no puede tomar el teclado ni subir.
+        assert!(!escena.puede_tomar_teclado(1));
+        // Otro bloqueador mientras este vive: finished.
+        let mut otro = Conexion::new();
+        let ev = bloquear(&mut escena, &mut otro, 10);
+        assert!(ev.iter().any(|x| (x.0, x.1) == (41, lev::FINISHED)));
+        assert_eq!(escena.bloqueo.as_ref().unwrap().cliente, 9);
+        // Muere el bloqueador: sigue bloqueado, en negro, sin teclado.
+        escena.adios(9);
+        assert!(escena.bloqueo.is_some());
+        assert!(escena.raices().is_empty());
+        assert_eq!(escena.teclado, None);
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 100 + 41], 0xFF00_0000);
+        // La ventana no puede quitarlo: su unlock no es de nadie.
+        // Otro con el poder toma el relevo y desbloquea: vuelve la ventana con el teclado.
+        let mut relevo = Conexion::new();
+        let ev = bloquear(&mut escena, &mut relevo, 11);
+        assert!(ev.iter().any(|x| (x.0, x.1) == (41, lev::LOCKED)));
+        let mut e = Escritor::new();
+        e.empezar(41, ext_session_lock_v1::req::UNLOCK_AND_DESTROY).fin();
+        mandar(&mut escena, &mut relevo, 11, &e);
+        assert!(relevo.roto.is_none(), "{:?}", relevo.roto);
+        assert!(escena.bloqueo.is_none());
+        assert_eq!(escena.teclado, Some((1, 7)));
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        assert_eq!(pantalla[41 * 100 + 41], 0xFF11_1111);
+        assert_eq!(pantalla[5 * 100 + 5], 0xFF12_3456);
+    }
+
+    /// G6: dmabuf (ya enlazado). Objetos: 50 linux_dmabuf, 51 feedback, 52 params, 53 búfer (16 x 16, lineal, llave 90).
+    fn dmabuf(e: &mut Escritor, modificador: u64, inmediato: bool) {
+        use crate::tablas::{zwp_linux_buffer_params_v1 as par, zwp_linux_dmabuf_v1 as dma};
+        e.empezar(50, dma::req::CREATE_PARAMS).uint(52).fin();
+        e.empezar(52, par::req::ADD).llave(90).uint(0).uint(0).uint(64).uint((modificador >> 32) as u32).uint(modificador as u32).fin();
+        if inmediato {
+            e.empezar(52, par::req::CREATE_IMMED).uint(53).int(16).int(16).uint(DRM_XRGB8888).uint(0).fin();
+        } else {
+            e.empezar(52, par::req::CREATE).int(16).int(16).uint(DRM_XRGB8888).uint(0).fin();
+        }
+        e.empezar(52, par::req::DESTROY).fin();
+    }
+
+    /// G6: la tabla de formatos y una ventana con un búfer de dmabuf, que se ve como uno de wl_shm.
+    #[test]
+    fn dmabuf_lineal() {
+        use crate::tablas::{zwp_linux_buffer_params_v1 as par, zwp_linux_dmabuf_feedback_v1 as fb, zwp_linux_dmabuf_v1 as dma};
+        let mut escena = Escena::new(Mem::default(), 0);
+        escena.dispositivo = 0xE280;
+        let mut con = Conexion::new();
+        abrir(&mut escena, &mut con, 1, 70);
+        let mut e = Escritor::new();
+        e.empezar(2, wl_registry::req::BIND).uint(8).texto(Some("zwp_linux_dmabuf_v1")).uint(4).uint(50).fin();
+        e.empezar(50, dma::req::GET_DEFAULT_FEEDBACK).uint(51).fin();
+        let ev = mandar(&mut escena, &mut con, 1, &e);
+        let ordenes: Vec<u16> = ev.iter().filter(|x| x.0 == 51).map(|x| x.1).collect();
+        assert_eq!(ordenes, [fb::ev::FORMAT_TABLE, fb::ev::MAIN_DEVICE, fb::ev::TRANCHE_TARGET_DEVICE, fb::ev::TRANCHE_FORMATS, fb::ev::TRANCHE_FLAGS, fb::ev::TRANCHE_DONE, fb::ev::DONE]);
+        let disp = &ev.iter().find(|x| (x.0, x.1) == (51, fb::ev::MAIN_DEVICE)).unwrap().2;
+        assert_eq!(&disp[..], &[&8u32.to_le_bytes()[..], &0xE280u64.to_le_bytes()].concat()[..]);
+        assert_eq!(&TABLA_FORMATOS[..4], b"AR24");
+        assert_eq!(&TABLA_FORMATOS[16..20], b"XR24");
+        // create_immed lineal: el búfer va a la ventana y se ve.
+        let mut e = Escritor::new();
+        dmabuf(&mut e, MOD_LINEAL, true);
+        e.empezar(7, wl_surface::req::ATTACH).uint(53).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        assert_eq!(escena.clientes[&1].superficies[&7].bufer, Some(53));
+        assert_eq!(escena.clientes[&1].shm.llave_dmabuf(53), Some(90));
+        assert!(escena.clientes[&1].params.is_empty());
+        // create (no inmediato): el búfer lo numera el servidor y llega con created.
+        let mut e = Escritor::new();
+        e.empezar(50, dma::req::CREATE_PARAMS).uint(54).fin();
+        e.empezar(54, par::req::ADD).llave(91).uint(0).uint(0).uint(64).uint(0).uint(0).fin();
+        e.empezar(54, par::req::CREATE).int(16).int(16).uint(DRM_ARGB8888).uint(0).fin();
+        let ev = mandar(&mut escena, &mut con, 1, &e);
+        let creado = ev.iter().find(|x| (x.0, x.1) == (54, par::ev::CREATED)).expect("sin created");
+        let id = u32::from_le_bytes(creado.2[..4].try_into().unwrap());
+        assert!(id >= crate::servidor::PRIMERO_DEL_SERVIDOR);
+        assert!(escena.clientes[&1].shm.buferes.contains_key(&id));
+        // Un modificador que no se anunció, con create: failed, y la conexión sigue.
+        let mut e = Escritor::new();
+        e.empezar(50, dma::req::CREATE_PARAMS).uint(55).fin();
+        e.empezar(55, par::req::ADD).llave(92).uint(0).uint(0).uint(64).uint(0x0100_0000).uint(1).fin();
+        e.empezar(55, par::req::CREATE).int(16).int(16).uint(DRM_XRGB8888).uint(0).fin();
+        let ev = mandar(&mut escena, &mut con, 1, &e);
+        assert!(ev.iter().any(|x| (x.0, x.1) == (55, par::ev::FAILED)));
+        assert!(con.roto.is_none());
+    }
+
+    #[test]
+    fn errores_de_dmabuf() {
+        use crate::tablas::{zwp_linux_buffer_params_v1 as par, zwp_linux_dmabuf_v1 as dma};
+        let base = |e: &mut Escritor| {
+            e.empezar(2, wl_registry::req::BIND).uint(8).texto(Some("zwp_linux_dmabuf_v1")).uint(4).uint(50).fin();
+            e.empezar(50, dma::req::CREATE_PARAMS).uint(52).fin();
+        };
+        let add = |e: &mut Escritor, plano: u32| {
+            e.empezar(52, par::req::ADD).llave(90 + plano).uint(plano).uint(0).uint(64).uint(0).uint(0).fin();
+        };
+        let crear = |e: &mut Escritor, w: i32, f: u32| {
+            e.empezar(52, par::req::CREATE_IMMED).uint(53).int(w).int(16).uint(f).uint(0).fin();
+        };
+        assert_eq!(error(&|e| { base(e); add(e, 4); }), (52, DMABUF_PLANO));
+        assert_eq!(error(&|e| { base(e); add(e, 0); add(e, 0); }), (52, DMABUF_PLANO_PUESTO));
+        assert_eq!(error(&|e| { base(e); add(e, 0); crear(e, 16, DRM_XRGB8888); add(e, 1); }), (52, DMABUF_USADO));
+        assert_eq!(error(&|e| { base(e); add(e, 0); crear(e, 16, u32::from_le_bytes(*b"NV12")); }), (52, DMABUF_FORMATO));
+        assert_eq!(error(&|e| { base(e); add(e, 1); crear(e, 16, DRM_XRGB8888); }), (52, DMABUF_INCOMPLETO));
+        assert_eq!(error(&|e| { base(e); add(e, 0); add(e, 1); crear(e, 16, DRM_XRGB8888); }), (52, DMABUF_INCOMPLETO));
+        assert_eq!(error(&|e| { base(e); add(e, 0); crear(e, 0, DRM_XRGB8888); }), (52, DMABUF_MEDIDAS));
+        // 64 bytes por línea no bastan para 17 de ancho.
+        assert_eq!(error(&|e| { base(e); add(e, 0); crear(e, 17, DRM_XRGB8888); }), (52, DMABUF_FUERA));
+        assert_eq!(error(&|e| { base(e); e.empezar(52, par::req::DESTROY).fin(); dmabuf(e, 0x0100_0000_0000_0001, true); }), (52, DMABUF_BUFER));
+    }
+
+    #[test]
+    fn errores_de_bloqueo() {
+        use crate::tablas::{ext_session_lock_surface_v1, ext_session_lock_v1};
+        let probar = |mas: &dyn Fn(&mut Escritor)| {
+            let mut escena = Escena::new(Mem::default(), 0);
+            let mut pantalla = vec![0u32; 100 * 60];
+            escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+            let mut con = Conexion::new();
+            bloquear(&mut escena, &mut con, 9);
+            let mut e = Escritor::new();
+            e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(42).fin();
+            e.empezar(4, wl_shm::req::CREATE_POOL).uint(44).llave(80).int(100 * 60 * 4).fin();
+            e.empezar(44, wl_shm_pool::req::CREATE_BUFFER).uint(45).int(0).int(100).int(60).int(400).uint(XRGB8888).fin();
+            e.empezar(44, wl_shm_pool::req::CREATE_BUFFER).uint(46).int(0).int(50).int(60).int(200).uint(XRGB8888).fin();
+            mas(&mut e);
+            mandar(&mut escena, &mut con, 9, &e);
+            let r = con.roto.expect("tenía que cortarse");
+            (r.objeto, r.codigo)
+        };
+        // destroy con la sesión bloqueada.
+        assert_eq!(probar(&|e| { e.empezar(41, ext_session_lock_v1::req::DESTROY).fin(); }), (41, BLOQUEO_DESTRUIR));
+        // Búfer antes de su configure.
+        assert_eq!(
+            probar(&|e| {
+                e.empezar(41, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(43).uint(42).uint(39).fin();
+                e.empezar(42, wl_surface::req::ATTACH).uint(45).int(0).int(0).fin();
+                e.empezar(42, wl_surface::req::COMMIT).fin();
+            }),
+            (43, BLOQUEO_COMMIT_SIN_ACK)
+        );
+        // Un búfer que no tapa la pantalla entera.
+        assert_eq!(
+            probar(&|e| {
+                e.empezar(41, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(43).uint(42).uint(39).fin();
+                e.empezar(43, ext_session_lock_surface_v1::req::ACK_CONFIGURE).uint(1).fin();
+                e.empezar(42, wl_surface::req::ATTACH).uint(46).int(0).int(0).fin();
+                e.empezar(42, wl_surface::req::COMMIT).fin();
+            }),
+            (43, BLOQUEO_TAMANO)
+        );
+        // Dos para la misma pantalla.
+        assert_eq!(
+            probar(&|e| {
+                e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(47).fin();
+                e.empezar(41, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(43).uint(42).uint(39).fin();
+                e.empezar(41, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(48).uint(47).uint(39).fin();
+            }),
+            (41, BLOQUEO_PANTALLA_REPETIDA)
+        );
+    }
+
+    /// G4: una barra arriba (capa 2) de 20 de alto con su zona exclusiva; la ventana nueva se coloca debajo.
+    #[test]
+    fn capa_con_zona_exclusiva() {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 200 * 150];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        let mut barra = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+        e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(2).texto(Some("barra")).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_SIZE).uint(0).uint(20).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(ARRIBA | IZQUIERDA | DERECHA).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(20).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        let ev = mandar(&mut escena, &mut barra, 9, &e);
+        let conf = ev.iter().find(|x| (x.0, x.1) == (32, zwlr_layer_surface_v1::ev::CONFIGURE)).expect("sin configure");
+        let serie = u32::from_le_bytes(conf.2[..4].try_into().unwrap());
+        assert_eq!(&conf.2[4..12], &[200u32.to_le_bytes(), 20u32.to_le_bytes()].concat()[..], "toda la anchura, 20 de alto");
+        let mut e = Escritor::new();
+        e.empezar(32, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(serie).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(33).llave(72).int(200 * 20 * 4).fin();
+        e.empezar(33, wl_shm_pool::req::CREATE_BUFFER).uint(34).int(0).int(200).int(20).int(800).uint(XRGB8888).fin();
+        e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut barra, 9, &e);
+        assert!(barra.roto.is_none(), "{:?}", barra.roto);
+        assert_eq!(escena.clientes[&9].superficies[&31].sitio, Some((0, 0)));
+        assert_eq!(escena.area, Rect { x: 0, y: 20, w: 200, h: 130 });
+        // La ventana nueva, en cascada dentro de lo que queda.
+        let mut v = Conexion::new();
+        abrir(&mut escena, &mut v, 1, 70);
+        assert_eq!(escena.clientes[&1].superficies[&7].sitio, Some((40, 60)));
+        // La barra (capa de arriba) se pinta encima de las ventanas.
+        assert_eq!(escena.raices().last(), Some(&(9, 31)));
+    }
+
+    #[test]
+    fn errores_de_capas() {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let base = |e: &mut Escritor| {
+            e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+            e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+        };
+        // Tamaño 0 de ancho sin anclas a izquierda y derecha.
+        assert_eq!(
+            error(&|e| {
+                base(e);
+                e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(2).texto(Some("x")).fin();
+                e.empezar(32, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(ARRIBA).fin();
+                e.empezar(31, wl_surface::req::COMMIT).fin();
+            }),
+            (32, CAPA_TAMANO_MALO)
+        );
+        // Una capa que no existe, y una ventana que quiere ser capa.
+        assert_eq!(error(&|e| { base(e); e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(7).texto(Some("x")).fin(); }), (30, CAPA_INVALIDA));
+        assert_eq!(error(&|e| { base(e); e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(7).uint(0).uint(2).texto(Some("x")).fin(); }), (30, CAPA_ROL));
+    }
+
+    /// G3: una subsuperficie de 8 x 8 en (5, 5) de una ventana de 16 x 16 en (40, 40). Objetos: 20 subcompositor,
+    /// 21 superficie hija, 22 pool (llave 71: el primer búfer 0x22, el segundo 0x33), 23 y 25 búferes, 24 subsurface.
+    #[test]
+    fn subsuperficies() {
+        use crate::tablas::{wl_subcompositor, wl_subsurface};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut con = Conexion::new();
+        abrir(&mut escena, &mut con, 1, 70);
+        let mut e = Escritor::new();
+        e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_subcompositor")).uint(1).uint(20).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(21).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(22).llave(71).int(2 * 8 * 8 * 4).fin();
+        e.empezar(22, wl_shm_pool::req::CREATE_BUFFER).uint(23).int(0).int(8).int(8).int(32).uint(XRGB8888).fin();
+        e.empezar(22, wl_shm_pool::req::CREATE_BUFFER).uint(25).int(256).int(8).int(8).int(32).uint(XRGB8888).fin();
+        e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(24).uint(21).uint(7).fin();
+        e.empezar(24, wl_subsurface::req::SET_POSITION).int(5).int(5).fin();
+        e.empezar(21, wl_surface::req::ATTACH).uint(23).int(0).int(0).fin();
+        e.empezar(21, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        {
+            let m = escena.memorias.0.get_mut(&71).unwrap();
+            m[..256].fill(0x22);
+            m[256..512].fill(0x33);
+        }
+        let mut pantalla = vec![0u32; 200 * 150];
+        let px = |p: &Vec<u32>, x: usize, y: usize| p[y * 200 + x];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        // Sincronizada: hasta el commit de la madre, no se ve.
+        assert_eq!(px(&pantalla, 46, 46), 0xFF11_1111);
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!(px(&pantalla, 46, 46), 0xFF22_2222, "la hija, encima y en (45, 45)");
+        assert_eq!(px(&pantalla, 54, 54), 0xFF11_1111, "fuera de la hija, la madre");
+        assert_eq!(escena.bajo(46, 46).map(|b| b.0), Some((1, 21)), "el ratón ve la hija");
+        // Debajo de la madre: deja de verse.
+        let mut e = Escritor::new();
+        e.empezar(24, wl_subsurface::req::PLACE_BELOW).uint(7).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!(px(&pantalla, 46, 46), 0xFF11_1111);
+        // Encima otra vez y sin sincronizar: su commit se ve sin el de la madre.
+        let mut e = Escritor::new();
+        e.empezar(24, wl_subsurface::req::PLACE_ABOVE).uint(7).fin();
+        e.empezar(24, wl_subsurface::req::SET_DESYNC).fin();
+        e.empezar(21, wl_surface::req::ATTACH).uint(25).int(0).int(0).fin();
+        e.empezar(21, wl_surface::req::DAMAGE).int(0).int(0).int(8).int(8).fin();
+        e.empezar(21, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!(px(&pantalla, 46, 46), 0xFF33_3333);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+    }
+
+    #[test]
+    fn errores_de_subsuperficies() {
+        use crate::tablas::wl_subcompositor;
+        let preparar_sub = |e: &mut Escritor| {
+            e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_subcompositor")).uint(1).uint(20).fin();
+            e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+            e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(32).fin();
+        };
+        // Una superficie con papel de ventana no puede ser hija.
+        assert_eq!(
+            error(&|e| {
+                preparar_sub(e);
+                e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(30).uint(7).uint(31).fin();
+            }),
+            (20, BAD_SURFACE)
+        );
+        // Ni madre de sí misma, ni madre que cuelga de la hija.
+        assert_eq!(error(&|e| { preparar_sub(e); e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(30).uint(31).uint(31).fin(); }), (20, BAD_PARENT));
+        assert_eq!(
+            error(&|e| {
+                preparar_sub(e);
+                e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(33).uint(31).uint(32).fin();
+                e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(34).uint(32).uint(31).fin();
+            }),
+            (20, BAD_PARENT)
+        );
     }
 
     /// Objetos del cliente: 3 compositor, 4 shm, 5 pool, 6 búfer, 7 superficie, 8 xdg_wm_base, 9 xdg_surface,

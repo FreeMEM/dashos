@@ -8,6 +8,8 @@
 //! - **La memoria de `wl_shm`**: el puente proyecta el pool del programa y, en cada `wl_surface.commit`, copia al otro
 //!   lado el búfer que se va a ver. Así no hace falta memoria compartida entre la máquina virtual y DashOS (llegará
 //!   con virtio, y entonces sin copia).
+//! - **Los búferes de dmabuf** (G6, los de Mesa): igual que un pool de `wl_shm`, uno por búfer; antes de copiar se
+//!   espera a que la tarjeta acabe de pintar (`DMA_BUF_IOCTL_SYNC`). Solo con `create_immed`, que es lo que usa Mesa.
 //! - **Otros descriptores** (un mapa de teclado, por ejemplo): se copia lo que tienen, una vez.
 //! - **Lo que viene de DashOS** con memorias (el mapa de teclado que da el compositor): el puente crea un `memfd`
 //!   con su contenido y se lo da al programa.
@@ -18,7 +20,7 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use dashos_puente as p;
-use wayland::tablas::{self, wl_shm, wl_shm_pool, wl_surface};
+use wayland::tablas::{self, wl_buffer, wl_shm, wl_shm_pool, wl_surface, zwp_linux_buffer_params_v1};
 use wayland::{Interface, Kind, Valor, leer_args, leer_cabecera};
 
 struct Pool {
@@ -26,6 +28,19 @@ struct Pool {
     tamano: usize,
     fd: RawFd,
     memoria: u32,
+    /// La memoria de un búfer de dmabuf (G6): se suelta con su búfer.
+    dmabuf: bool,
+}
+
+/// Desde aquí, los números de pool de los búferes de dmabuf (no chocan con objetos del programa).
+const POOL_DMABUF: u32 = 0x8000_0000;
+
+/// Espera a que la tarjeta acabe con un dmabuf antes de leerlo (empezar y acabar una lectura).
+fn esperar_tarjeta(fd: RawFd) {
+    const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
+    for flags in [1u64, 1 | 4] {
+        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC, &flags as *const u64) };
+    }
 }
 
 struct Programa {
@@ -40,6 +55,8 @@ struct Programa {
     superficies: HashMap<u32, u32>,
     /// Lo dañado de cada superficie: el pendiente (filas, del próximo commit) y la historia (cuadro, filas).
     danos: HashMap<u32, Danos>,
+    /// Params de dmabuf → (pool, desde, bytes por fila) de su plano 0 (G6).
+    planos: HashMap<u32, (u32, usize, usize)>,
     /// Búfer → cuadro de su superficie con el que se mandó por última vez.
     enviado: HashMap<u32, u64>,
     /// Bytes copiados al otro lado, para la medida.
@@ -62,7 +79,7 @@ impl Programa {
     fn nuevo(sock: UnixStream) -> Self {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
-        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0 }
+        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0 }
     }
 }
 
@@ -146,7 +163,7 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 let memoria = pu.memoria();
                 pu.memoria_nueva(memoria, tamano as u64);
                 if base != libc::MAP_FAILED {
-                    pr.pools.insert(id, Pool { base, tamano, fd: fds[0], memoria });
+                    pr.pools.insert(id, Pool { base, tamano, fd: fds[0], memoria, dmabuf: false });
                 } else {
                     unsafe { libc::close(fds[0]) };
                 }
@@ -167,6 +184,42 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 let (alto, linea) = (args[3].uint() as usize, args[4].uint() as usize);
                 pr.buferes.insert(args[0].uint(), (objeto, args[1].uint() as usize, alto.saturating_mul(linea), linea));
                 pr.enviado.remove(&args[0].uint());
+            }
+            ("zwp_linux_buffer_params_v1", zwp_linux_buffer_params_v1::req::ADD) if fds.len() == 1 && args.len() == 6 => {
+                // El plano entero se proyecta y va a una memoria del otro lado de su tamaño.
+                let tamano = unsafe { libc::lseek(fds[0], 0, libc::SEEK_END) }.max(0) as usize;
+                let base = unsafe { libc::mmap(std::ptr::null_mut(), tamano.max(1), libc::PROT_READ, libc::MAP_SHARED, fds[0], 0) };
+                let memoria = pu.memoria();
+                pu.memoria_nueva(memoria, tamano as u64);
+                if base != libc::MAP_FAILED && args[1].uint() == 0 {
+                    pr.pools.insert(POOL_DMABUF | memoria, Pool { base, tamano, fd: fds[0], memoria, dmabuf: true });
+                    pr.planos.insert(objeto, (POOL_DMABUF | memoria, args[2].uint() as usize, args[3].uint() as usize));
+                } else {
+                    if base != libc::MAP_FAILED {
+                        unsafe { libc::munmap(base, tamano.max(1)) };
+                    }
+                    unsafe { libc::close(fds[0]) };
+                }
+                suyas.push(memoria);
+            }
+            ("zwp_linux_buffer_params_v1", zwp_linux_buffer_params_v1::req::CREATE_IMMED) if args.len() == 5 => {
+                if let Some((pool, desde, linea)) = pr.planos.remove(&objeto) {
+                    let alto = args[2].uint() as usize;
+                    pr.buferes.insert(args[0].uint(), (pool, desde, alto.saturating_mul(linea), linea));
+                    pr.enviado.remove(&args[0].uint());
+                }
+            }
+            ("wl_buffer", wl_buffer::req::DESTROY) => {
+                // Un búfer de dmabuf se lleva su memoria.
+                if let Some((pool, ..)) = pr.buferes.remove(&objeto).filter(|b| b.0 & POOL_DMABUF != 0) {
+                    if let Some(pl) = pr.pools.remove(&pool) {
+                        unsafe {
+                            libc::munmap(pl.base, pl.tamano.max(1));
+                            libc::close(pl.fd);
+                        }
+                        pu.trama(p::MEMORIA_SOLTAR, 0, &pl.memoria.to_le_bytes());
+                    }
+                }
             }
             ("wl_surface", wl_surface::req::ATTACH) if !args.is_empty() => {
                 pr.superficies.insert(objeto, args[0].uint());
@@ -209,6 +262,9 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                             _ => None,
                         };
                         if let Some(pl) = pr.pools.get(&pool) {
+                            if pl.dmabuf {
+                                esperar_tarjeta(pl.fd);
+                            }
                             let tramos: Vec<(usize, usize)> = match filas {
                                 None => vec![(desde, (desde + largo).min(pl.tamano))],
                                 Some(mut f) => {

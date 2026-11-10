@@ -22,18 +22,18 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 
 | Paso | Qué | Puntos | Estado |
 |---|---|---|---|
-| R1 | Cliente hostil en las pruebas del arranque | B6 | pendiente |
-| R2 | Servicios: mensajes vacíos, fugas de llaves, giros, topes de Wayland, tecla perdida | E1 a E5 | pendiente |
-| R3 | Kernel: dormidos sin tope, temporizador puntual, interrupción con la cola llena, aviso perdido | K9 a K12, K15 | pendiente |
-| R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | pendiente |
-| R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | pendiente |
-| R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | pendiente |
-| R7 | Banco fiable | B1 a B4 | pendiente |
-| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | pendiente |
-| R9 | Aviso de muerte y plazo al leer | K7 | pendiente |
-| R10 | Azar de la placa y arranque endurecido | S5, S6 | pendiente |
-| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | pendiente |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | pendiente |
+| R1 | Cliente hostil en las pruebas del arranque | B6 | hecho |
+| R2 | Servicios: mensajes vacíos, fugas de llaves, giros, topes de Wayland, tecla perdida | E1 a E5 | hecho |
+| R3 | Kernel: dormidos sin tope, temporizador puntual, interrupción con la cola llena, aviso perdido | K9 a K12, K15 | hecho (lo de placa, en la Pi) |
+| R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | hecho (falta sacar el GIC de la ventana) |
+| R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
+| R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho (ceder asas, con R17) |
+| R7 | Banco fiable | B1 a B4 | hecho |
+| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | A1 a A4 y A6 hechos (A5, pendiente) |
+| R9 | Aviso de muerte y plazo al leer | K7 | hecho |
+| R10 | Azar de la placa y arranque endurecido | S5, S6 | azar hecho (falta RNG200 y arranque) |
+| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6 y parte de E8 |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | pendiente |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | pendiente |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | pendiente |
@@ -102,3 +102,32 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   tras la batería de Tachyon): hostil sin tumbar nada, FS10, A3, archivos con fichas, sonido sin huecos, captura del
   compositor, disco leído en Linux. La prueba de UEFI ya es determinista (espera a Ajustes en pantalla, clic y
   Super+Arriba/Abajo).
+- Gráficos G3 a G6 (detalle en `GRAFICOS_LOOP.md`): subsuperficies, capas del escritorio, bloqueo de sesión y
+  dmabuf, probados en el PC con swaybg, swaylock y alacritty (directo y por el puente).
+- R7, banco fiable: el orquestador se fija en su núcleo; eco y ping en los dos siguientes (el núcleo del orquestador
+  cuenta como ocupado y el kernel no pondría ahí un proceso nuevo); una carga fijada por núcleo que calcula hasta que
+  acaba la medida (bandera en memoria compartida). El ping hace 500 rondas de calentamiento, N seguidas (la media de
+  siempre, comparable con Linux) y N con el reloj en cada una (mediana, p99 y máximo, por histograma; leer el reloj
+  en cada ronda cuesta). 7 arranques; el JSON guarda mediana, mínimo y máximo, y `comparar` dice "dentro del ruido".
+  QEMU fijado con `taskset` a 6 núcleos libres del PC, uno por núcleo físico, y la carga del PC en el JSON (sin
+  fijar, la ida y vuelta sale un 12-16 % peor).
+- R9, K7: llamada 35, leer con plazo (`E_PLAZO`, -9); llamada 36, aviso de fin de proceso por canal (16 bytes:
+  clase y código, con la marca de la llave; hasta 16 por proceso). `canal_leer` ya no dice `E_CERRADO` sin memoria.
+  Pruebas: `malo` pasos 35 y 36 (plazo, plazo enorme, rechazos) y el lanzador pide el aviso de sus 7 pruebas antes y
+  después de acabar (7 de 7).
+- R8: A4, ventana de hasta 1 MB pedida en SESION (el hostil pide una enorme y le dan 1 MB). A6, RedoxFS prueba 4 KB
+  antes de comprimir un registro. Medido (7 arranques): escribir 8 MB por trozos de 1 MB 180 MB/s (78 con 64 KB),
+  leer 705 MB/s (405).
+- R11: S2, las páginas de usuario se ponen a cero fuera del cerrojo del repartidor (y se quitó un segundo borrado al
+  crear tablas y páginas). S1: los avisos de interrupción, temporizador y fin ya no hacen pánico sin montón. La parte
+  de reservar el hilo antes de dar las llaves se quitó: cualquier reserva de más en `procesos::lanzar` hacía la ida
+  y vuelta un 10 % más lenta en QEMU (seis medidas para acotarlo: no es la FPU, ni la línea de caché del hilo, ni el
+  asignador). Pendiente: entender por qué la colocación de esos objetos pesa tanto.
+- R12: E6, `inicio` vigila los servicios (los que leen algún canal): guarda una copia de sus llaves, pide su aviso de
+  fin y los relanza con el mismo canal tras 100, 200 y 400 ms; a la cuarta, los deja. Prueba en virt con `caida`,
+  que se cae a propósito y ve en su canal el mensaje que le deja `inicio`. Falta reenviar el directorio y las altas
+  a un servicio relanzado y avisar a quien dependía de él. E8, en parte: el compositor espera como mucho 5 ms a un
+  cliente con la cola llena y lo suelta; también a los que no leen sus eventos de entrada o de cuadro.
+- Medidas frente a `f9adec2` (7 y 3 arranques, `medir-antes.json`): sin carga, igual (dentro del ruido); con 4
+  cargas, la ida y vuelta 133 a 89 µs (-33 %) y las esperas tarde 825 a 50 (-94 %); temporizador con carga, p99 884
+  a 538 µs. Ficheros: crear 4K +7 %, escribir 8 MB +11 %, datos +4 %. `make prueba` y `make arranque-virt` pasan.

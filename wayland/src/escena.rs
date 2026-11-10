@@ -13,9 +13,98 @@ use alloc::vec::Vec;
 use crate::servidor::{Conexion, ErrorProtocolo, Servicio, INVALID_METHOD};
 use crate::shm::{Memorias, Shm, ARGB8888};
 use crate::tablas::{
-    self, wl_buffer, wl_callback, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
-    wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
+    self, wl_buffer, wl_callback, zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
+    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_output, wl_subcompositor,
+    wl_subsurface, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
+
+/// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
+pub const DMABUF_USADO: u32 = 0;
+pub const DMABUF_PLANO: u32 = 1;
+pub const DMABUF_PLANO_PUESTO: u32 = 2;
+pub const DMABUF_INCOMPLETO: u32 = 3;
+pub const DMABUF_FORMATO: u32 = 4;
+pub const DMABUF_MEDIDAS: u32 = 5;
+pub const DMABUF_FUERA: u32 = 6;
+pub const DMABUF_BUFER: u32 = 7;
+
+/// Formatos de DRM (fourcc) que se aceptan, los mismos dos de `wl_shm`, y solo con el modificador lineal: el
+/// compositor lee los píxeles con la CPU (en la Pi, el HVS también los lee lineales).
+pub const DRM_ARGB8888: u32 = u32::from_le_bytes(*b"AR24");
+pub const DRM_XRGB8888: u32 = u32::from_le_bytes(*b"XR24");
+pub const MOD_LINEAL: u64 = 0;
+
+/// La tabla de formatos de `zwp_linux_dmabuf_feedback_v1`: por formato, fourcc (u32), relleno (u32) y modificador
+/// (u64), en little-endian.
+pub static TABLA_FORMATOS: [u8; 32] = {
+    let mut t = [0u8; 32];
+    let (a, x) = (DRM_ARGB8888.to_le_bytes(), DRM_XRGB8888.to_le_bytes());
+    let mut i = 0;
+    while i < 4 {
+        t[i] = a[i];
+        t[16 + i] = x[i];
+        i += 1;
+    }
+    t
+};
+
+/// Lo que va juntando un `zwp_linux_buffer_params_v1`: los planos (llave, desplazamiento, bytes por línea).
+#[derive(Debug, Default)]
+pub struct Params {
+    planos: [Option<(u32, u32, u32, u64)>; 4],
+    usado: bool,
+}
+
+/// Errores de `ext_session_lock_v1` y `ext_session_lock_surface_v1` (de `ext-session-lock-v1.xml`, G5).
+pub const BLOQUEO_DESTRUIR: u32 = 0;
+pub const BLOQUEO_DESBLOQUEAR: u32 = 1;
+pub const BLOQUEO_ROL: u32 = 2;
+pub const BLOQUEO_PANTALLA_REPETIDA: u32 = 3;
+pub const BLOQUEO_YA_HECHO: u32 = 4;
+pub const BLOQUEO_COMMIT_SIN_ACK: u32 = 0;
+pub const BLOQUEO_TAMANO: u32 = 2;
+pub const BLOQUEO_SERIE: u32 = 3;
+
+/// El bloqueo de la sesión (G5). Mientras dura, solo se ven y reciben entrada sus superficies; sin ellas, negro. Si
+/// el programa que bloqueó muere, sigue bloqueado: otro con el poder puede tomar el relevo, nadie más quitarlo.
+#[derive(Debug)]
+pub struct Bloqueo {
+    pub cliente: Cliente,
+    pub objeto: u32,
+    pub vivo: bool,
+    /// Sus superficies en pantalla.
+    pub superficies: Vec<u32>,
+}
+
+#[derive(Debug, Default)]
+pub struct SupBloqueo {
+    pub superficie: u32,
+    pedidos: Vec<u32>,
+    configurada: bool,
+    enviado: (i32, i32),
+}
+
+/// Errores de `zwlr_layer_shell_v1` y `zwlr_layer_surface_v1` (de `wlr-layer-shell-unstable-v1.xml`, G4).
+pub const CAPA_ROL: u32 = 0;
+pub const CAPA_INVALIDA: u32 = 1;
+pub const CAPA_YA_HECHA: u32 = 2;
+pub const CAPA_ESTADO_MALO: u32 = 0;
+pub const CAPA_TAMANO_MALO: u32 = 1;
+pub const CAPA_ANCLA_MALA: u32 = 2;
+pub const CAPA_TECLADO_MALO: u32 = 3;
+/// Anclas de una capa.
+pub const ARRIBA: u32 = 1;
+pub const ABAJO: u32 = 2;
+pub const IZQUIERDA: u32 = 4;
+pub const DERECHA: u32 = 8;
+
+/// Errores de `wl_subcompositor` (de `wayland.xml`).
+pub const BAD_SURFACE: u32 = 0;
+pub const BAD_PARENT: u32 = 1;
+/// Error de `wl_subsurface`: el hermano no es hermano ni la madre.
+pub const BAD_SIBLING: u32 = 0;
+/// Lo más hondo de un árbol de subsuperficies.
+const MAX_HONDO: usize = 16;
 
 /// Errores de `xdg_wm_base` y `xdg_surface` (de `xdg-shell.xml`).
 pub const XDG_WM_BASE_ROLE: u32 = 0;
@@ -103,6 +192,165 @@ pub struct Superficie {
     pub visto: Option<Rect>,
     /// Su `xdg_surface`, si tiene ese papel (W6).
     pub rol: Option<u32>,
+    /// Subsuperficies (G3): su madre, su sitio respecto a ella, el que tendrá tras el commit de la madre, y si va
+    /// sincronizada (lo que hace en su commit espera al de la madre).
+    pub madre: Option<u32>,
+    pub pos: (i32, i32),
+    pos_pendiente: Option<(i32, i32)>,
+    pub sincronizada: bool,
+    /// Lo que guardó en sus commit mientras va sincronizada.
+    guardado: Option<Estado>,
+    /// Ella y sus hijas, de abajo arriba. Vacía: solo ella.
+    pub pila: Vec<u32>,
+    /// Su `zwlr_layer_surface_v1`, si es una capa del escritorio (G4).
+    pub capa: Option<u32>,
+    /// Su `ext_session_lock_surface_v1`, si es la pantalla de bloqueo (G5).
+    pub bloqueo: Option<u32>,
+}
+
+/// Lo que pide una capa del escritorio (G4): tamaño (0: lo que dé la pantalla entre sus anclas), anclas, zona
+/// exclusiva, márgenes (arriba, derecha, abajo, izquierda), teclado (0 nada, 1 exclusivo, 2 a petición) y capa (0
+/// fondo, 1 abajo, 2 arriba, 3 encima de todo).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct EstadoCapa {
+    pub ancho: u32,
+    pub alto: u32,
+    pub anclas: u32,
+    pub zona: i32,
+    pub margenes: [i32; 4],
+    pub teclado: u32,
+    pub capa: u32,
+}
+
+#[derive(Debug, Default)]
+pub struct Capa {
+    pub superficie: u32,
+    pendiente: EstadoCapa,
+    pub actual: EstadoCapa,
+    pedidos: Vec<u32>,
+    configurada: bool,
+    /// El tamaño del último configure.
+    enviado: Option<(i32, i32)>,
+}
+
+/// El tamaño de una capa en una pantalla de `w` x `h`: el pedido, o lo que haya entre sus anclas.
+fn tamano_capa(e: &EstadoCapa, w: i32, h: i32) -> (i32, i32) {
+    let [ar, de, ab, iz] = e.margenes;
+    let ancho = if e.ancho == 0 { (w - iz - de).max(1) } else { e.ancho as i32 };
+    let alto = if e.alto == 0 { (h - ar - ab).max(1) } else { e.alto as i32 };
+    (ancho, alto)
+}
+
+/// Dónde va una capa de `bw` x `bh` en una pantalla de `w` x `h`: pegada a sus anclas con sus márgenes, y centrada
+/// en el eje en que no tiene ancla o tiene las dos.
+fn sitio_capa(e: &EstadoCapa, w: i32, h: i32, bw: i32, bh: i32) -> (i32, i32) {
+    let [ar, de, ab, iz] = e.margenes;
+    let x = match (e.anclas & IZQUIERDA != 0, e.anclas & DERECHA != 0) {
+        (true, false) => iz,
+        (false, true) => w - bw - de,
+        _ => (w - bw) / 2,
+    };
+    let y = match (e.anclas & ARRIBA != 0, e.anclas & ABAJO != 0) {
+        (true, false) => ar,
+        (false, true) => h - bh - ab,
+        _ => (h - bh) / 2,
+    };
+    (x, y)
+}
+
+/// La superficie `id` y sus subsuperficies, con su sitio en la pantalla, de abajo arriba (G3). `(x, y)`: dónde está
+/// `id`.
+pub fn arbol(c: &DeCliente, id: u32, x: i32, y: i32, out: &mut Vec<(u32, i32, i32)>) {
+    fn ir(c: &DeCliente, id: u32, x: i32, y: i32, out: &mut Vec<(u32, i32, i32)>, hondo: usize) {
+        let Some(s) = c.superficies.get(&id) else { return };
+        if s.pila.is_empty() || hondo >= MAX_HONDO {
+            out.push((id, x, y));
+            return;
+        }
+        for &h in &s.pila {
+            if h == id {
+                out.push((id, x, y));
+            } else if let Some(hija) = c.superficies.get(&h) {
+                ir(c, h, x.saturating_add(hija.pos.0), y.saturating_add(hija.pos.1), out, hondo + 1);
+            }
+        }
+    }
+    ir(c, id, x, y, out, 0);
+}
+
+/// La superficie de primer nivel de la que cuelga `id` (ella misma si no es subsuperficie).
+pub fn raiz(c: &DeCliente, mut id: u32) -> u32 {
+    for _ in 0..MAX_HONDO {
+        match c.superficies.get(&id).and_then(|s| s.madre) {
+            Some(m) => id = m,
+            None => break,
+        }
+    }
+    id
+}
+
+/// Dónde está `id` en la pantalla: el sitio de su raíz más las posiciones del camino. `None` si no se ve.
+fn sitio_abs(c: &DeCliente, id: u32) -> Option<(i32, i32)> {
+    let (mut x, mut y, mut cur) = (0i32, 0i32, id);
+    for _ in 0..MAX_HONDO {
+        let s = c.superficies.get(&cur)?;
+        match s.madre {
+            Some(m) => {
+                // Una hija que la madre ya no lista no se ve.
+                if !c.superficies.get(&m)?.pila.contains(&cur) {
+                    return None;
+                }
+                x = x.saturating_add(s.pos.0);
+                y = y.saturating_add(s.pos.1);
+                cur = m;
+            }
+            None => {
+                let (sx, sy) = s.sitio?;
+                return Some((x.saturating_add(sx), y.saturating_add(sy)));
+            }
+        }
+    }
+    None
+}
+
+/// Junta un estado nuevo con el guardado de una subsuperficie sincronizada: el último búfer, y todos los daños y
+/// avisos.
+fn juntar(g: &mut Option<Estado>, p: Estado) {
+    match g {
+        None => *g = Some(p),
+        Some(e) => {
+            if p.bufer.is_some() {
+                e.bufer = p.bufer;
+            }
+            e.danos.extend(p.danos);
+            if e.danos.len() > MAX_DANOS {
+                let todo = e.danos.drain(..).fold(Rect::default(), cubrir);
+                e.danos.push(todo);
+            }
+            e.avisos.extend(p.avisos);
+        }
+    }
+}
+
+/// Lo que ocupan en la pantalla `id` y lo que cuelga de ella.
+fn rects_arbol(c: &DeCliente, id: u32) -> Vec<Rect> {
+    let Some((x, y)) = sitio_abs(c, id) else { return Vec::new() };
+    let mut a = Vec::new();
+    arbol(c, id, x, y, &mut a);
+    a.into_iter().filter_map(|(s, _, _)| rect_de(c, s)).collect()
+}
+
+/// Si `id` va sincronizada: ella o alguna subsuperficie de su camino lo está.
+fn sincronizada(c: &DeCliente, mut id: u32) -> bool {
+    for _ in 0..MAX_HONDO {
+        let Some(s) = c.superficies.get(&id) else { return false };
+        let Some(m) = s.madre else { return false };
+        if s.sincronizada {
+            return true;
+        }
+        id = m;
+    }
+    false
 }
 
 /// Una superficie con papel de ventana (`xdg_surface` y su `xdg_toplevel`).
@@ -131,6 +379,14 @@ pub struct DeCliente {
     /// Sus `wl_pointer` y `wl_keyboard` (W8).
     pub punteros: Vec<u32>,
     pub teclados: Vec<u32>,
+    /// Objeto `wl_subsurface` → la superficie hija (G3).
+    pub subsuperficies: BTreeMap<u32, u32>,
+    /// Por número de `zwlr_layer_surface_v1` (G4).
+    pub capas: BTreeMap<u32, Capa>,
+    /// Por número de `ext_session_lock_surface_v1` (G5).
+    pub bloqueos: BTreeMap<u32, SupBloqueo>,
+    /// Por número de `zwp_linux_buffer_params_v1` (G6).
+    pub params: BTreeMap<u32, Params>,
 }
 
 /// Todas las superficies de todos los clientes y el orden en que se apilan.
@@ -157,6 +413,15 @@ pub struct Escena<M: Memorias> {
     pub pendientes: Vec<(Cliente, Entrada)>,
     /// Lo que mide la pantalla (lo pone `componer`).
     medidas: (i32, i32),
+    /// Las capas del escritorio en pantalla, en el orden en que salieron (G4).
+    pub capas: Vec<(Cliente, u32)>,
+    /// Lo que queda para las ventanas tras las zonas exclusivas de las capas (G4).
+    pub area: Rect,
+    /// La sesión bloqueada (G5).
+    pub bloqueo: Option<Bloqueo>,
+    /// El dispositivo de render que se anuncia a los clientes de dmabuf (G6): el `dev_t` de Linux. En el PC, el de
+    /// `/dev/dri/renderD128`; en DashOS, 0 hasta que haya V3D (G8).
+    pub dispositivo: u64,
     /// La hora en milisegundos (la pone quien atiende, antes de cada mensaje) y la de la última tecla pulsada (S8).
     pub reloj_ms: u32,
     ultima_tecla_ms: Option<u32>,
@@ -185,6 +450,10 @@ impl<M: Memorias> Escena<M> {
             con_cursor: false,
             pendientes: Vec::new(),
             medidas: (i32::MAX / 2, i32::MAX / 2),
+            capas: Vec::new(),
+            area: Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 },
+            bloqueo: None,
+            dispositivo: 0,
             reloj_ms: 0,
             ultima_tecla_ms: None,
         }
@@ -199,14 +468,222 @@ impl<M: Memorias> Escena<M> {
     /// Un cliente se fue: suelta su memoria y sus superficies.
     pub fn adios(&mut self, cliente: Cliente) {
         self.sin_entrada(cliente);
-        if let Some(mut c) = self.clientes.remove(&cliente) {
-            c.shm.soltar_todo(&mut self.memorias);
-        }
-        let antes = self.orden.len();
-        self.orden.retain(|o| o.0 != cliente);
-        if self.orden.len() != antes {
+        // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
+        if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
+            b.vivo = false;
+            b.superficies.clear();
             self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
         }
+        if let Some(mut c) = self.clientes.remove(&cliente) {
+            c.shm.soltar_todo(&mut self.memorias);
+            for (_, p) in c.params {
+                for (l, ..) in p.planos.into_iter().flatten() {
+                    self.memorias.soltar(l, core::ptr::null(), 0);
+                }
+            }
+        }
+        let antes = self.orden.len() + self.capas.len();
+        self.orden.retain(|o| o.0 != cliente);
+        self.capas.retain(|o| o.0 != cliente);
+        if self.orden.len() + self.capas.len() != antes {
+            self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+            self.recalcular_area();
+        }
+    }
+
+    /// Aplica el estado `p` a la superficie `id`: búfer, daños y avisos. Después, a sus hijas, su sitio nuevo y, a las
+    /// sincronizadas, lo que guardaron (G3).
+    fn aplicar(&mut self, cliente: Cliente, id: u32, p: Estado, con: &mut Conexion) {
+        let Some(yo) = self.clientes.get_mut(&cliente) else { return };
+        if !yo.superficies.contains_key(&id) {
+            return;
+        }
+        if let Some(nuevo) = p.bufer {
+            if let Some(viejo) = yo.superficies[&id].bufer.filter(|v| Some(*v) != nuevo) {
+                // Uno apartado (el cliente ya lo destruyó): se suelta sin avisar a nadie.
+                if viejo >= crate::shm::PRIMERO_PRIVADO {
+                    yo.shm.destruir_bufer(&mut self.memorias, viejo);
+                } else {
+                    con.salida.empezar(viejo, wl_buffer::ev::RELEASE).fin();
+                }
+            }
+            // Un búfer nuevo se ve entero (lo que tapaba el viejo también cambia).
+            let antes = rect_de(yo, id);
+            let s = yo.superficies.get_mut(&id).unwrap();
+            s.bufer = nuevo;
+            let visto = s.visto;
+            self.danos.extend(antes);
+            self.danos.extend(visto);
+            self.danos.extend(rect_de(yo, id));
+        }
+        let s = yo.superficies.get_mut(&id).unwrap();
+        s.danos.extend(p.danos);
+        // Varios commit antes de componer: también con tope.
+        if s.danos.len() > MAX_DANOS {
+            let todo = s.danos.drain(..).fold(Rect::default(), cubrir);
+            s.danos.push(todo);
+        }
+        s.avisos.extend(p.avisos);
+        let hijas: Vec<u32> = s.pila.iter().copied().filter(|&h| h != id).collect();
+        for h in hijas {
+            let yo = self.clientes.get_mut(&cliente).unwrap();
+            if let Some(pos) = yo.superficies.get_mut(&h).and_then(|s| s.pos_pendiente.take()) {
+                // Se mueve con todo lo que cuelga de ella: se repinta donde estaba y donde va.
+                self.danos.extend(rects_arbol(yo, h));
+                yo.superficies.get_mut(&h).unwrap().pos = pos;
+                self.danos.extend(rects_arbol(yo, h));
+            }
+            let guardado = yo.superficies.get_mut(&h).and_then(|s| s.guardado.take());
+            self.aplicar(cliente, h, guardado.unwrap_or_default(), con);
+        }
+    }
+
+    /// Tras el commit de una capa del escritorio: si tiene búfer, en su sitio según sus anclas; si no, fuera (G4).
+    fn colocar_capa(&mut self, cliente: Cliente, sup: u32) {
+        let (w, h) = self.medidas;
+        let Some(yo) = self.clientes.get_mut(&cliente) else { return };
+        let Some(id) = yo.superficies.get(&sup).and_then(|s| s.capa) else { return };
+        let e = yo.capas[&id].actual;
+        let antes = rect_de(yo, sup);
+        self.danos.extend(antes);
+        let medida = yo.superficies[&sup].bufer.and_then(|b| yo.shm.pixeles(b)).map(|(_, b)| (b.ancho as i32, b.alto as i32));
+        let s = yo.superficies.get_mut(&sup).unwrap();
+        match medida {
+            Some((bw, bh)) => {
+                s.sitio = Some(sitio_capa(&e, w, h, bw, bh));
+                if !self.capas.contains(&(cliente, sup)) {
+                    self.capas.push((cliente, sup));
+                }
+                self.danos.extend(rect_de(yo, sup));
+                // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
+                if e.teclado == 1 && e.capa >= 2 && self.teclado != Some((cliente, sup)) {
+                    let mut ev = Vec::new();
+                    self.dar_teclado((cliente, sup), &mut ev);
+                    self.pendientes.extend(ev);
+                }
+            }
+            None => {
+                s.sitio = None;
+                self.capas.retain(|x| *x != (cliente, sup));
+                if self.teclado == Some((cliente, sup)) {
+                    self.teclado = None;
+                }
+            }
+        }
+        self.recalcular_area();
+    }
+
+    /// Bloquea la sesión (G5): se deja de ver todo al momento, y nadie tiene el teclado ni el puntero hasta que salga
+    /// la pantalla de bloqueo.
+    fn bloquear(&mut self, cliente: Cliente, objeto: u32) {
+        self.bloqueo = Some(Bloqueo { cliente, objeto, vivo: true, superficies: Vec::new() });
+        if let Some((c, s)) = self.teclado.take() {
+            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
+        }
+        if let Some((c, s)) = self.puntero.take() {
+            self.pendientes.push((c, Entrada::Sale { superficie: s }));
+        }
+        self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+    }
+
+    /// Quita el bloqueo (solo su dueño, con unlock_and_destroy): vuelve todo, y el teclado a la ventana de arriba.
+    fn desbloquear(&mut self) {
+        if let Some(b) = self.bloqueo.take()
+            && let Some(cli) = self.clientes.get_mut(&b.cliente) {
+                cli.bloqueos.clear();
+                for s in b.superficies {
+                    if let Some(sup) = cli.superficies.get_mut(&s) {
+                        sup.sitio = None;
+                        sup.bloqueo = None;
+                    }
+                }
+            }
+        self.teclado = None;
+        if let Some(&v) = self.orden.last() {
+            let mut ev = Vec::new();
+            self.dar_teclado(v, &mut ev);
+            self.pendientes.extend(ev);
+        }
+        self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+    }
+
+    /// Tras el commit de la pantalla de bloqueo: del tamaño de la pantalla, en (0, 0), con el teclado.
+    fn colocar_bloqueo(&mut self, cliente: Cliente, sup: u32) -> Result<(), ErrorProtocolo> {
+        let Some(yo) = self.clientes.get_mut(&cliente) else { return Ok(()) };
+        let Some(id) = yo.superficies.get(&sup).and_then(|s| s.bloqueo) else { return Ok(()) };
+        let medida = yo.superficies[&sup].bufer.and_then(|b| yo.shm.pixeles(b)).map(|(_, b)| (b.ancho as i32, b.alto as i32));
+        let Some(m) = medida else { return Ok(()) };
+        if m != yo.bloqueos[&id].enviado {
+            return Err(ErrorProtocolo::new(id, BLOQUEO_TAMANO, "búfer de otro tamaño que la pantalla"));
+        }
+        yo.superficies.get_mut(&sup).unwrap().sitio = Some((0, 0));
+        let activo = self.bloqueo.as_ref().is_some_and(|b| b.cliente == cliente);
+        if activo {
+            let b = self.bloqueo.as_mut().unwrap();
+            if !b.superficies.contains(&sup) {
+                b.superficies.push(sup);
+            }
+            self.danos.push(Rect { x: 0, y: 0, w: m.0, h: m.1 });
+            if self.teclado != Some((cliente, sup)) {
+                let mut ev = Vec::new();
+                self.dar_teclado((cliente, sup), &mut ev);
+                self.pendientes.extend(ev);
+            }
+        }
+        Ok(())
+    }
+
+    /// Lo que queda para las ventanas: la pantalla menos la zona exclusiva de cada capa pegada a un borde (G4).
+    pub fn recalcular_area(&mut self) {
+        let (w, h) = self.medidas;
+        let mut a = Rect { x: 0, y: 0, w, h };
+        for &(c, sup) in &self.capas {
+            let Some(cli) = self.clientes.get(&c) else { continue };
+            let Some(e) = cli.superficies.get(&sup).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)).map(|c| c.actual) else { continue };
+            if e.zona <= 0 {
+                continue;
+            }
+            let (ar, ab, iz, de) = (e.anclas & ARRIBA != 0, e.anclas & ABAJO != 0, e.anclas & IZQUIERDA != 0, e.anclas & DERECHA != 0);
+            let [m_ar, m_de, m_ab, m_iz] = e.margenes;
+            if ar && !ab && iz == de {
+                let r = e.zona + m_ar;
+                a.y += r;
+                a.h -= r;
+            } else if ab && !ar && iz == de {
+                a.h -= e.zona + m_ab;
+            } else if iz && !de && ar == ab {
+                let r = e.zona + m_iz;
+                a.x += r;
+                a.w -= r;
+            } else if de && !iz && ar == ab {
+                a.w -= e.zona + m_de;
+            }
+        }
+        a.w = a.w.max(1);
+        a.h = a.h.max(1);
+        self.area = a;
+    }
+
+    /// Lo que se pinta, de abajo arriba: capas de fondo y de abajo, las ventanas, y las capas de arriba y de encima.
+    pub fn raices(&self) -> Vec<(Cliente, u32)> {
+        // Bloqueada: solo la pantalla de bloqueo (G5).
+        if let Some(b) = &self.bloqueo {
+            return b.superficies.iter().map(|&s| (b.cliente, s)).collect();
+        }
+        let capa_de = |&(c, sup): &(Cliente, u32)| {
+            let cli = self.clientes.get(&c)?;
+            let id = cli.superficies.get(&sup)?.capa?;
+            Some(cli.capas.get(&id)?.actual.capa)
+        };
+        let mut out: Vec<(Cliente, u32)> = Vec::new();
+        for nivel in [0, 1] {
+            out.extend(self.capas.iter().filter(|x| capa_de(x) == Some(nivel)));
+        }
+        out.extend(self.orden.iter().copied());
+        for nivel in [2, 3] {
+            out.extend(self.capas.iter().filter(|x| capa_de(x) == Some(nivel)));
+        }
+        out
     }
 
     /// Pone una superficie en la pantalla, encima de todo (W6 lo hará `xdg_toplevel`).
@@ -233,17 +710,28 @@ impl<M: Memorias> Escena<M> {
         avisar: &mut impl FnMut(Cliente, u32, u32),
     ) -> Vec<Rect> {
         let todo = Rect { x: 0, y: 0, w: ancho, h: alto };
-        self.medidas = (ancho, alto);
+        if self.medidas != (ancho, alto) {
+            self.medidas = (ancho, alto);
+            self.recalcular_area();
+        }
+        // Las superficies de cada ventana, con sus subsuperficies (G3), de abajo arriba, con su sitio en la pantalla.
+        let mut capas: Vec<(Cliente, u32, i32, i32)> = Vec::new();
+        for (c, id) in self.raices() {
+            let Some(cli) = self.clientes.get(&c) else { continue };
+            let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
+            let mut a = Vec::new();
+            arbol(cli, id, x, y, &mut a);
+            capas.extend(a.into_iter().map(|(s, x, y)| (c, s, x, y)));
+        }
         // Los daños de cada superficie, pasados a la pantalla.
-        for &(c, id) in &self.orden {
-            let Some(cli) = self.clientes.get_mut(&c) else { continue };
-            let Some(s) = cli.superficies.get_mut(&id) else { continue };
-            if let Some((x, y)) = s.sitio {
+        for &(c, id, x, y) in &capas {
+            if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
                 for d in s.danos.drain(..) {
                     self.danos.push(Rect { x: x + d.x, y: y + d.y, w: d.w, h: d.h });
                 }
             }
         }
+        let fondo = if self.bloqueo.is_some() { 0xFF00_0000 } else { self.fondo };
         let danos: Vec<Rect> = core::mem::take(&mut self.danos)
             .into_iter()
             .map(|d| d.cruce(todo))
@@ -252,9 +740,9 @@ impl<M: Memorias> Escena<M> {
         for d in &danos {
             for fila in d.y..d.y + d.h {
                 let i = fila as usize * linea;
-                pantalla[i + d.x as usize..i + (d.x + d.w) as usize].fill(self.fondo);
+                pantalla[i + d.x as usize..i + (d.x + d.w) as usize].fill(fondo);
             }
-            for &(c, id) in &self.orden {
+            for &(c, id, x, y) in &capas {
                 let cli = self.clientes.get_mut(&c).unwrap();
                 let visto = rect_de(cli, id);
                 let s = cli.superficies.get_mut(&id).unwrap();
@@ -263,7 +751,7 @@ impl<M: Memorias> Escena<M> {
                 }
                 let cli = &self.clientes[&c];
                 let s = &cli.superficies[&id];
-                let (Some((x, y)), Some(b)) = (s.sitio, s.bufer) else { continue };
+                let Some(b) = s.bufer else { continue };
                 let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
                 let r = Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }.cruce(*d);
                 if r.vacio() {
@@ -294,7 +782,7 @@ impl<M: Memorias> Escena<M> {
             }
         }
         // Los avisos de frame: de lo que está en pantalla, se haya dañado o no (el cliente espera su turno).
-        for &(c, id) in &self.orden {
+        for &(c, id, _, _) in &capas {
             if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
                 for aviso in s.avisos.drain(..) {
                     avisar(c, aviso, ms);
@@ -322,7 +810,7 @@ fn mezclar(p: u32, fondo: u32) -> u32 {
 
 fn rect_de(c: &DeCliente, id: u32) -> Option<Rect> {
     let s = c.superficies.get(&id)?;
-    let (x, y) = s.sitio?;
+    let (x, y) = sitio_abs(c, id)?;
     let (_, b) = c.shm.pixeles(s.bufer?)?;
     Some(Rect { x, y, w: b.ancho as i32, h: b.alto as i32 })
 }
@@ -361,8 +849,295 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 }
                 _ => {}
             },
+            "ext_session_lock_manager_v1" if orden == ext_session_lock_manager_v1::req::LOCK => {
+                let id = args[0].uint();
+                let cliente = self.cliente;
+                if escena.bloqueo.as_ref().is_some_and(|b| b.vivo) {
+                    // Ya hay uno vivo: este nace acabado.
+                    con.salida.empezar(id, ext_session_lock_v1::ev::FINISHED).fin();
+                } else {
+                    escena.bloquear(cliente, id);
+                    con.salida.empezar(id, ext_session_lock_v1::ev::LOCKED).fin();
+                }
+            }
+            "ext_session_lock_v1" => {
+                let cliente = self.cliente;
+                let activo = escena.bloqueo.as_ref().is_some_and(|b| b.cliente == cliente && b.objeto == objeto);
+                match orden {
+                    ext_session_lock_v1::req::GET_LOCK_SURFACE if activo => {
+                        let (id, sup) = (args[0].uint(), args[1].uint());
+                        let Some(s) = yo.superficies.get_mut(&sup) else {
+                            return Err(ErrorProtocolo::new(objeto, BLOQUEO_ROL, "no es una superficie"));
+                        };
+                        if s.rol.is_some() || s.madre.is_some() || s.capa.is_some() || s.bloqueo.is_some() {
+                            return Err(ErrorProtocolo::new(objeto, BLOQUEO_ROL, "la superficie ya tiene papel"));
+                        }
+                        if s.bufer.is_some() {
+                            return Err(ErrorProtocolo::new(objeto, BLOQUEO_YA_HECHO, "la superficie ya tiene búfer"));
+                        }
+                        if !yo.bloqueos.is_empty() {
+                            return Err(ErrorProtocolo::new(objeto, BLOQUEO_PANTALLA_REPETIDA, "ya hay una para esta pantalla"));
+                        }
+                        s.bloqueo = Some(id);
+                        let (w, h) = escena.medidas;
+                        let serie = con.serie_nueva();
+                        con.salida.empezar(id, ext_session_lock_surface_v1::ev::CONFIGURE).uint(serie).uint(w as u32).uint(h as u32).fin();
+                        yo.bloqueos.insert(id, SupBloqueo { superficie: sup, pedidos: alloc::vec![serie], configurada: false, enviado: (w, h) });
+                    }
+                    ext_session_lock_v1::req::UNLOCK_AND_DESTROY if activo => escena.desbloquear(),
+                    ext_session_lock_v1::req::DESTROY if activo => {
+                        return Err(ErrorProtocolo::new(objeto, BLOQUEO_DESTRUIR, "destroy con la sesión bloqueada: unlock_and_destroy"));
+                    }
+                    _ => {}
+                }
+            }
+            "ext_session_lock_surface_v1" if orden == ext_session_lock_surface_v1::req::ACK_CONFIGURE => {
+                let Some(b) = yo.bloqueos.get_mut(&objeto) else { return Ok(()) };
+                let serie = args[0].uint();
+                let Some(i) = b.pedidos.iter().position(|&x| x == serie) else {
+                    return Err(ErrorProtocolo::new(objeto, BLOQUEO_SERIE, "configure que no se mandó"));
+                };
+                b.pedidos.drain(..=i);
+                b.configurada = true;
+            }
+            "zwlr_layer_shell_v1" if orden == zwlr_layer_shell_v1::req::GET_LAYER_SURFACE => {
+                let (id, sup, capa) = (args[0].uint(), args[1].uint(), args[3].uint());
+                let Some(s) = yo.superficies.get_mut(&sup) else {
+                    return Err(ErrorProtocolo::new(objeto, CAPA_ROL, "no es una superficie"));
+                };
+                if s.rol.is_some() || s.madre.is_some() || s.capa.is_some() {
+                    return Err(ErrorProtocolo::new(objeto, CAPA_ROL, "la superficie ya tiene papel"));
+                }
+                if s.bufer.is_some() {
+                    return Err(ErrorProtocolo::new(objeto, CAPA_YA_HECHA, "la superficie ya tiene búfer"));
+                }
+                if capa > 3 {
+                    return Err(ErrorProtocolo::new(objeto, CAPA_INVALIDA, "capa que no existe"));
+                }
+                s.capa = Some(id);
+                let pendiente = EstadoCapa { capa, ..Default::default() };
+                yo.capas.insert(id, Capa { superficie: sup, pendiente, ..Default::default() });
+            }
+            "zwlr_layer_surface_v1" => {
+                let Some(c) = yo.capas.get_mut(&objeto) else { return Ok(()) };
+                let p = &mut c.pendiente;
+                match orden {
+                    zwlr_layer_surface_v1::req::SET_SIZE => (p.ancho, p.alto) = (args[0].uint(), args[1].uint()),
+                    zwlr_layer_surface_v1::req::SET_ANCHOR => {
+                        if args[0].uint() > 15 {
+                            return Err(ErrorProtocolo::new(objeto, CAPA_ANCLA_MALA, "anclas que no existen"));
+                        }
+                        p.anclas = args[0].uint();
+                    }
+                    zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE => p.zona = args[0].int(),
+                    zwlr_layer_surface_v1::req::SET_MARGIN => {
+                        p.margenes = [args[0].int(), args[1].int(), args[2].int(), args[3].int()];
+                    }
+                    zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY => {
+                        if args[0].uint() > 2 {
+                            return Err(ErrorProtocolo::new(objeto, CAPA_TECLADO_MALO, "teclado que no existe"));
+                        }
+                        p.teclado = args[0].uint();
+                    }
+                    zwlr_layer_surface_v1::req::SET_LAYER => {
+                        if args[0].uint() > 3 {
+                            return Err(ErrorProtocolo::new(objeto, CAPA_INVALIDA, "capa que no existe"));
+                        }
+                        p.capa = args[0].uint();
+                    }
+                    zwlr_layer_surface_v1::req::ACK_CONFIGURE => {
+                        let serie = args[0].uint();
+                        if let Some(i) = c.pedidos.iter().position(|&x| x == serie) {
+                            c.pedidos.drain(..=i);
+                            c.configurada = true;
+                        } else {
+                            return Err(ErrorProtocolo::new(objeto, CAPA_ESTADO_MALO, "configure que no se mandó"));
+                        }
+                    }
+                    // get_popup y set_exclusive_edge: aún no (los menús de una barra van con xdg_popup).
+                    _ => {}
+                }
+            }
+            "wl_subcompositor" if orden == wl_subcompositor::req::GET_SUBSURFACE => {
+                let (sub, hija, madre) = (args[0].uint(), args[1].uint(), args[2].uint());
+                let Some(h) = yo.superficies.get(&hija) else {
+                    return Err(ErrorProtocolo::new(objeto, BAD_SURFACE, "no es una superficie"));
+                };
+                if h.rol.is_some() || h.madre.is_some() {
+                    return Err(ErrorProtocolo::new(objeto, BAD_SURFACE, "la superficie ya tiene papel"));
+                }
+                if !yo.superficies.contains_key(&madre) || hija == madre {
+                    return Err(ErrorProtocolo::new(objeto, BAD_PARENT, "madre que no vale"));
+                }
+                // La madre no puede colgar de la hija, ni el árbol pasar de su tope.
+                let mut cur = madre;
+                for paso in 0..=MAX_HONDO {
+                    if cur == hija || paso == MAX_HONDO {
+                        return Err(ErrorProtocolo::new(objeto, BAD_PARENT, "la madre cuelga de la hija"));
+                    }
+                    match yo.superficies.get(&cur).and_then(|s| s.madre) {
+                        Some(m) => cur = m,
+                        None => break,
+                    }
+                }
+                let h = yo.superficies.get_mut(&hija).unwrap();
+                h.madre = Some(madre);
+                h.pos = (0, 0);
+                h.sincronizada = true;
+                let m = yo.superficies.get_mut(&madre).unwrap();
+                if m.pila.is_empty() {
+                    m.pila.push(madre);
+                }
+                m.pila.push(hija);
+                yo.subsuperficies.insert(sub, hija);
+            }
+            "wl_subsurface" => {
+                let Some(&hija) = yo.subsuperficies.get(&objeto) else { return Ok(()) };
+                let madre = yo.superficies.get(&hija).and_then(|s| s.madre);
+                match orden {
+                    wl_subsurface::req::SET_POSITION => {
+                        if let Some(s) = yo.superficies.get_mut(&hija) {
+                            s.pos_pendiente = Some((args[0].int(), args[1].int()));
+                        }
+                    }
+                    wl_subsurface::req::PLACE_ABOVE | wl_subsurface::req::PLACE_BELOW => {
+                        // Encima o debajo de la madre o de una hermana. Se aplica ya (el protocolo dice al siguiente
+                        // commit de la madre: la diferencia no se ve, porque solo se compone tras los commit).
+                        let otra = args[0].uint();
+                        let Some(m) = madre.and_then(|m| yo.superficies.get_mut(&m)) else { return Ok(()) };
+                        if otra == hija || !m.pila.contains(&otra) {
+                            return Err(ErrorProtocolo::new(objeto, BAD_SIBLING, "no es hermana ni madre"));
+                        }
+                        m.pila.retain(|&x| x != hija);
+                        let i = m.pila.iter().position(|&x| x == otra).unwrap();
+                        let en = if orden == wl_subsurface::req::PLACE_ABOVE { i + 1 } else { i };
+                        m.pila.insert(en, hija);
+                        escena.danos.extend(rects_arbol(yo, hija));
+                    }
+                    wl_subsurface::req::SET_SYNC => {
+                        if let Some(s) = yo.superficies.get_mut(&hija) {
+                            s.sincronizada = true;
+                        }
+                    }
+                    wl_subsurface::req::SET_DESYNC => {
+                        let guardado = yo.superficies.get_mut(&hija).and_then(|s| {
+                            s.sincronizada = false;
+                            s.guardado.take()
+                        });
+                        // Lo guardado se aplica ya, si nada de encima la sigue sincronizando.
+                        if let Some(g) = guardado {
+                            if sincronizada(yo, hija) {
+                                yo.superficies.get_mut(&hija).unwrap().guardado = Some(g);
+                            } else {
+                                let cliente = self.cliente;
+                                escena.aplicar(cliente, hija, g, con);
+                            }
+                        }
+                    }
+                    _ => {}
+                }
+            }
             "wl_region" => {
                 let _ = wl_region::req::ADD;
+            }
+            "zwp_linux_dmabuf_v1" => match orden {
+                zwp_linux_dmabuf_v1::req::CREATE_PARAMS => {
+                    yo.params.insert(args[0].uint(), Params::default());
+                }
+                zwp_linux_dmabuf_v1::req::GET_DEFAULT_FEEDBACK | zwp_linux_dmabuf_v1::req::GET_SURFACE_FEEDBACK => {
+                    let id = args[0].uint();
+                    // Una sola tanda: los dos formatos, lineales, en el dispositivo de la escena.
+                    let disp = escena.dispositivo.to_le_bytes();
+                    if let Some(llave) = mem.llave_con(&TABLA_FORMATOS) {
+                        con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::FORMAT_TABLE).llave(llave).uint(TABLA_FORMATOS.len() as u32).fin();
+                    }
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::MAIN_DEVICE).array(&disp).fin();
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::TRANCHE_TARGET_DEVICE).array(&disp).fin();
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::TRANCHE_FORMATS).array(&[0, 0, 1, 0]).fin();
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::TRANCHE_FLAGS).uint(0).fin();
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::TRANCHE_DONE).fin();
+                    con.salida.empezar(id, zwp_linux_dmabuf_feedback_v1::ev::DONE).fin();
+                }
+                _ => {}
+            },
+            "zwp_linux_buffer_params_v1" => {
+                let Some(p) = yo.params.get_mut(&objeto) else { return Ok(()) };
+                if orden == zwp_linux_buffer_params_v1::req::ADD {
+                    let (llave, plano) = (args[0].uint(), args[1].uint());
+                    let modificador = (args[4].uint() as u64) << 32 | args[5].uint() as u64;
+                    if p.usado {
+                        mem.soltar(llave, core::ptr::null(), 0);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_USADO, "params ya usado"));
+                    }
+                    let Some(sitio) = p.planos.get_mut(plano as usize) else {
+                        mem.soltar(llave, core::ptr::null(), 0);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_PLANO, "plano que no existe"));
+                    };
+                    if sitio.is_some() {
+                        mem.soltar(llave, core::ptr::null(), 0);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_PLANO_PUESTO, "plano repetido"));
+                    }
+                    *sitio = Some((llave, args[2].uint(), args[3].uint(), modificador));
+                } else if orden == zwp_linux_buffer_params_v1::req::CREATE || orden == zwp_linux_buffer_params_v1::req::CREATE_IMMED {
+                    let inmediato = orden == zwp_linux_buffer_params_v1::req::CREATE_IMMED;
+                    let a = if inmediato { &args[1..] } else { args };
+                    let (w, h, fourcc) = (a[0].int(), a[1].int(), a[2].uint());
+                    if p.usado {
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_USADO, "params ya usado"));
+                    }
+                    p.usado = true;
+                    let planos = core::mem::take(&mut p.planos);
+                    let soltar = |mem: &mut M| {
+                        for (l, ..) in planos.iter().flatten() {
+                            mem.soltar(*l, core::ptr::null(), 0);
+                        }
+                    };
+                    let formato = match fourcc {
+                        DRM_ARGB8888 => crate::shm::ARGB8888,
+                        DRM_XRGB8888 => crate::shm::XRGB8888,
+                        _ => {
+                            soltar(mem);
+                            return Err(ErrorProtocolo::new(objeto, DMABUF_FORMATO, "formato que no se anunció"));
+                        }
+                    };
+                    // Un solo plano (los dos formatos tienen uno), y seguido desde el 0.
+                    let Some((llave, desde, linea, modificador)) = planos[0] else {
+                        soltar(mem);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_INCOMPLETO, "sin plano 0"));
+                    };
+                    if planos[1..].iter().any(|x| x.is_some()) {
+                        soltar(mem);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_INCOMPLETO, "planos de más para el formato"));
+                    }
+                    if w <= 0 || h <= 0 || w > 16384 || h > 16384 {
+                        soltar(mem);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_MEDIDAS, "medidas malas"));
+                    }
+                    if (linea as u64) < w as u64 * 4 || desde as u64 + linea as u64 * h as u64 > u32::MAX as u64 {
+                        soltar(mem);
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_FUERA, "el plano no cabe"));
+                    }
+                    if modificador != MOD_LINEAL {
+                        // No es un error de protocolo: la importación falla.
+                        soltar(mem);
+                        if inmediato {
+                            return Err(ErrorProtocolo::new(objeto, DMABUF_BUFER, "modificador que no se anunció"));
+                        }
+                        con.salida.empezar(objeto, zwp_linux_buffer_params_v1::ev::FAILED).fin();
+                        return Ok(());
+                    }
+                    let id = if inmediato { args[0].uint() } else { con.objeto_propio(&tablas::WL_BUFFER, 1) };
+                    if yo.shm.crear_dmabuf(mem, id, llave, desde, w, h, linea, formato) {
+                        if !inmediato {
+                            con.salida.empezar(objeto, zwp_linux_buffer_params_v1::ev::CREATED).uint(id).fin();
+                        }
+                    } else if inmediato {
+                        return Err(ErrorProtocolo::new(objeto, DMABUF_BUFER, "no se pudo importar"));
+                    } else {
+                        con.quitar(id);
+                        con.salida.empezar(objeto, zwp_linux_buffer_params_v1::ev::FAILED).fin();
+                    }
+                }
             }
             "wl_shm" => {
                 if orden == wl_shm::req::CREATE_POOL {
@@ -433,6 +1208,44 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 }
             }
             "wl_surface" => {
+                // Un búfer de dmabuf: esperar a que la tarjeta acabe antes de leerlo (G6).
+                if orden == wl_surface::req::COMMIT
+                    && let Some(Some(b)) = yo.superficies.get(&objeto).and_then(|s| s.pendiente.bufer)
+                        && let Some(l) = yo.shm.llave_dmabuf(b) {
+                            mem.antes_de_leer(l);
+                        }
+                // La pantalla de bloqueo (G5): búfer solo tras su configure.
+                if orden == wl_surface::req::COMMIT
+                    && let Some(id) = yo.superficies[&objeto].bloqueo {
+                        let pone_bufer = matches!(yo.superficies[&objeto].pendiente.bufer, Some(Some(_)));
+                        if pone_bufer && !yo.bloqueos[&id].configurada {
+                            return Err(ErrorProtocolo::new(id, BLOQUEO_COMMIT_SIN_ACK, "búfer antes de configure"));
+                        }
+                    }
+                // Una capa del escritorio (G4): su estado pendiente pasa a actual, y si cambió su tamaño, configure.
+                if orden == wl_surface::req::COMMIT
+                    && let Some(id) = yo.superficies[&objeto].capa {
+                        let pone_bufer = matches!(yo.superficies[&objeto].pendiente.bufer, Some(Some(_)));
+                        let (w, h) = escena.medidas;
+                        let c = yo.capas.get_mut(&id).unwrap();
+                        let e = c.pendiente;
+                        if (e.ancho == 0 && e.anclas & (IZQUIERDA | DERECHA) != IZQUIERDA | DERECHA)
+                            || (e.alto == 0 && e.anclas & (ARRIBA | ABAJO) != ARRIBA | ABAJO)
+                        {
+                            return Err(ErrorProtocolo::new(id, CAPA_TAMANO_MALO, "tamaño 0 sin las dos anclas de ese lado"));
+                        }
+                        if pone_bufer && !c.configurada {
+                            return Err(ErrorProtocolo::new(id, CAPA_ESTADO_MALO, "búfer antes de configure"));
+                        }
+                        c.actual = e;
+                        let t = tamano_capa(&e, w, h);
+                        if c.enviado != Some(t) {
+                            let serie = con.serie_nueva();
+                            con.salida.empezar(id, zwlr_layer_surface_v1::ev::CONFIGURE).uint(serie).uint(t.0 as u32).uint(t.1 as u32).fin();
+                            c.pedidos.push(serie);
+                            c.enviado = Some(t);
+                        }
+                    }
                 // Una ventana: el primer commit sin búfer pide su configure; con búfer, tiene que haberlo confirmado.
                 if orden == wl_surface::req::COMMIT {
                     let s = &yo.superficies[&objeto];
@@ -475,38 +1288,25 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     wl_surface::req::FRAME => s.pendiente.avisos.push(args[0].uint()),
                     wl_surface::req::COMMIT => {
                         let p = core::mem::take(&mut s.pendiente);
-                        if let Some(nuevo) = p.bufer {
-                            if let Some(viejo) = s.bufer.filter(|v| Some(*v) != nuevo) {
-                                con.salida.empezar(viejo, wl_buffer::ev::RELEASE).fin();
-                            }
-                            // Un búfer nuevo se ve entero (lo que tapaba el viejo también cambia).
-                            let antes = rect_de(yo, objeto);
+                        // Una subsuperficie sincronizada guarda su estado hasta el commit de su madre (G3).
+                        if sincronizada(yo, objeto) {
                             let s = yo.superficies.get_mut(&objeto).unwrap();
-                            s.bufer = nuevo;
-                            if let Some(r) = antes {
-                                escena.danos.push(r);
-                            }
-                            if let Some(r) = s.visto {
-                                escena.danos.push(r);
-                            }
-                            if let Some(r) = rect_de(yo, objeto) {
-                                escena.danos.push(r);
-                            }
+                            juntar(&mut s.guardado, p);
+                            return Ok(());
                         }
+                        let cliente = self.cliente;
+                        escena.aplicar(cliente, objeto, p, con);
+                        escena.colocar_capa(cliente, objeto);
+                        escena.colocar_bloqueo(cliente, objeto)?;
+                        let yo = escena.clientes.get_mut(&cliente).unwrap();
                         let s = yo.superficies.get_mut(&objeto).unwrap();
-                        s.danos.extend(p.danos);
-                        // Varios commit antes de componer: también con tope.
-                        if s.danos.len() > MAX_DANOS {
-                            let todo = s.danos.drain(..).fold(Rect::default(), cubrir);
-                            s.danos.push(todo);
-                        }
-                        s.avisos.extend(p.avisos);
                         // Una ventana con búfer que aún no está en pantalla: se coloca en cascada, encima de todo.
                         if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() {
                             let k = escena.colocadas % 8;
                             escena.colocadas += 1;
-                            let cliente = self.cliente;
-                            escena.colocar(cliente, objeto, 40 + 32 * k, 40 + 32 * k);
+                            // En cascada dentro de lo que dejan las barras (G4).
+                            let (ax, ay) = (escena.area.x, escena.area.y);
+                            escena.colocar(cliente, objeto, ax + 40 + 32 * k, ay + 40 + 32 * k);
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
                             // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();
@@ -534,6 +1334,36 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 con.salida.empezar(id, wl_seat::ev::NAME).texto(Some("asiento0")).fin();
             }
         }
+        if core::ptr::eq(global.interfaz, &tablas::WL_OUTPUT) {
+            // Una sola pantalla, la de la escena (G4: las capas y el bloqueo la piden).
+            let (w, h) = self.escena.medidas;
+            let v = con.objetos[&id].version;
+            con.salida.empezar(id, wl_output::ev::GEOMETRY).int(0).int(0).int(0).int(0).int(0).texto(Some("DashOS")).texto(Some("pantalla")).int(0).fin();
+            con.salida.empezar(id, wl_output::ev::MODE).uint(3).int(w).int(h).int(60_000).fin();
+            if v >= 2 {
+                con.salida.empezar(id, wl_output::ev::SCALE).int(1).fin();
+            }
+            if v >= 4 {
+                con.salida.empezar(id, wl_output::ev::NAME).texto(Some("DASHOS-1")).fin();
+                con.salida.empezar(id, wl_output::ev::DESCRIPTION).texto(Some("Pantalla de DashOS")).fin();
+            }
+            if v >= 2 {
+                con.salida.empezar(id, wl_output::ev::DONE).fin();
+            }
+        }
+        if core::ptr::eq(global.interfaz, &tablas::ZWP_LINUX_DMABUF_V1) {
+            // Antes de la versión 4 no hay tabla: los formatos van en eventos (y desde la 3, con su modificador).
+            let v = con.objetos[&id].version;
+            if v < 4 {
+                for f in [DRM_ARGB8888, DRM_XRGB8888] {
+                    if v >= 3 {
+                        con.salida.empezar(id, zwp_linux_dmabuf_v1::ev::MODIFIER).uint(f).uint(0).uint(0).fin();
+                    } else {
+                        con.salida.empezar(id, zwp_linux_dmabuf_v1::ev::FORMAT).uint(f).fin();
+                    }
+                }
+            }
+        }
         if core::ptr::eq(global.interfaz, &tablas::WL_SHM) {
             for f in [crate::shm::ARGB8888, crate::shm::XRGB8888] {
                 con.salida.empezar(id, wl_shm::ev::FORMAT).uint(f).fin();
@@ -544,7 +1374,78 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     fn destruido(&mut self, _con: &mut Conexion, objeto: u32) {
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
-        if let Some(_s) = yo.superficies.remove(&objeto) {
+        // Unos params sin usar: sus memorias se sueltan (G6).
+        if let Some(p) = yo.params.remove(&objeto) {
+            for (l, ..) in p.planos.into_iter().flatten() {
+                escena.memorias.soltar(l, core::ptr::null(), 0);
+            }
+        }
+        // Una wl_subsurface que se destruye: su superficie deja de ser hija y deja de verse (G3).
+        if let Some(hija) = yo.subsuperficies.remove(&objeto) {
+            escena.danos.extend(rects_arbol(yo, hija));
+            if let Some(m) = yo.superficies.get(&hija).and_then(|s| s.madre)
+                && let Some(ms) = yo.superficies.get_mut(&m) {
+                    ms.pila.retain(|&x| x != hija);
+                }
+            if let Some(s) = yo.superficies.get_mut(&hija) {
+                s.madre = None;
+                s.guardado = None;
+                s.pos_pendiente = None;
+            }
+        }
+        // Una pantalla de bloqueo que se destruye, o su superficie: deja de verse; el bloqueo sigue (G5).
+        let bloq_obj = yo.bloqueos.contains_key(&objeto).then_some(objeto).or_else(|| yo.superficies.get(&objeto).and_then(|s| s.bloqueo));
+        if let Some(id) = bloq_obj
+            && let Some(b) = yo.bloqueos.remove(&id) {
+                if let Some(s) = yo.superficies.get_mut(&b.superficie) {
+                    s.bloqueo = None;
+                    s.sitio = None;
+                }
+                let cliente = self.cliente;
+                if let Some(bl) = escena.bloqueo.as_mut().filter(|bl| bl.cliente == cliente) {
+                    bl.superficies.retain(|&x| x != b.superficie);
+                }
+                if escena.teclado == Some((cliente, b.superficie)) {
+                    escena.teclado = None;
+                }
+                escena.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+            }
+        let yo = escena.clientes.get_mut(&self.cliente).unwrap();
+        // Una capa que se destruye, o su superficie: fuera de la pantalla (G4).
+        let capa_obj = yo.capas.contains_key(&objeto).then_some(objeto).or_else(|| yo.superficies.get(&objeto).and_then(|s| s.capa));
+        if let Some(id) = capa_obj
+            && let Some(c) = yo.capas.remove(&id) {
+                escena.danos.extend(rect_de(yo, c.superficie));
+                if let Some(s) = yo.superficies.get_mut(&c.superficie) {
+                    s.capa = None;
+                    s.sitio = None;
+                }
+                let cliente = self.cliente;
+                escena.capas.retain(|x| *x != (cliente, c.superficie));
+                if escena.teclado == Some((cliente, c.superficie)) {
+                    escena.teclado = None;
+                }
+                escena.recalcular_area();
+            }
+        let yo = escena.clientes.get_mut(&self.cliente).unwrap();
+        // Una superficie que se destruye: sale de la pila de su madre, y sus hijas se quedan sin madre (no se ven).
+        if let Some(madre) = yo.superficies.get(&objeto).and_then(|s| s.madre) {
+            escena.danos.extend(rects_arbol(yo, objeto));
+            if let Some(ms) = yo.superficies.get_mut(&madre) {
+                ms.pila.retain(|&x| x != objeto);
+            }
+        }
+        let hijas: Vec<u32> = yo.superficies.get(&objeto).map(|s| s.pila.iter().copied().filter(|&h| h != objeto).collect()).unwrap_or_default();
+        for h in hijas {
+            if let Some(s) = yo.superficies.get_mut(&h) {
+                s.madre = None;
+            }
+        }
+        if let Some(s) = yo.superficies.remove(&objeto) {
+            // Su búfer apartado, si lo tenía, ya no lo ve nadie.
+            if let Some(b) = s.bufer.filter(|&b| b >= crate::shm::PRIMERO_PRIVADO) {
+                yo.shm.destruir_bufer(&mut escena.memorias, b);
+            }
             let antes = escena.orden.len();
             escena.orden.retain(|o| *o != (self.cliente, objeto));
             if escena.orden.len() != antes {
@@ -553,6 +1454,14 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         }
         yo.punteros.retain(|&p| p != objeto);
         yo.teclados.retain(|&t| t != objeto);
+        // Un búfer que aún se ve se aparta y se suelta cuando la superficie ponga otro.
+        let viendo: Vec<u32> = yo.superficies.iter().filter(|(_, s)| s.bufer == Some(objeto)).map(|(&k, _)| k).collect();
+        if !viendo.is_empty()
+            && let Some(k) = yo.shm.apartar_bufer(objeto) {
+                for sup in viendo {
+                    yo.superficies.get_mut(&sup).unwrap().bufer = Some(k);
+                }
+            }
         yo.shm.destruir_bufer(&mut escena.memorias, objeto);
         yo.shm.destruir_pool(&mut escena.memorias, objeto);
         // Una ventana que se destruye deja de verse; su superficie vuelve a no tener papel de ventana visible.
@@ -640,11 +1549,16 @@ pub enum Entrada {
 impl<M: Memorias> Escena<M> {
     /// La superficie que está bajo (x, y), la de más arriba, y el punto dentro de ella.
     pub fn bajo(&self, x: i32, y: i32) -> Option<((Cliente, u32), i32, i32)> {
-        for &(c, id) in self.orden.iter().rev() {
-            if let Some(r) = rect_de(&self.clientes[&c], id) {
-                if x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
-                    return Some(((c, id), x - r.x, y - r.y));
-                }
+        for (c, raiz) in self.raices().into_iter().rev() {
+            let cli = &self.clientes[&c];
+            let Some((sx, sy)) = cli.superficies.get(&raiz).and_then(|s| s.sitio) else { continue };
+            let mut a = Vec::new();
+            arbol(cli, raiz, sx, sy, &mut a);
+            for &(id, _, _) in a.iter().rev() {
+                if let Some(r) = rect_de(cli, id)
+                    && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
+                        return Some(((c, id), x - r.x, y - r.y));
+                    }
             }
         }
         None
@@ -653,6 +1567,9 @@ impl<M: Memorias> Escena<M> {
     /// Si una ventana nueva de `cliente` puede llevarse el teclado sin que nadie lo pida (S8): sí cuando nadie lo tiene,
     /// cuando lo tiene el mismo programa, o cuando no se ha pulsado una tecla en `SIN_ROBAR_MS`.
     pub fn puede_tomar_teclado(&self, cliente: Cliente) -> bool {
+        if self.bloqueo.is_some() {
+            return false;
+        }
         match self.teclado {
             None => true,
             Some((c, _)) if c == cliente => true,
@@ -674,6 +1591,11 @@ impl<M: Memorias> Escena<M> {
     /// Sube una ventana encima de todo y le da el teclado.
     pub fn activar(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
         self.subir(ventana);
+        self.dar_teclado(ventana, out);
+    }
+
+    /// Le da el teclado sin cambiar el orden (una capa del escritorio no está entre las ventanas, G4).
+    pub fn dar_teclado(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
         if self.teclado != Some(ventana) {
             if let Some((c, s)) = self.teclado {
                 out.push((c, Entrada::TecladoSale { superficie: s }));
@@ -717,11 +1639,18 @@ impl<M: Memorias> Escena<M> {
             }
             let pulsado = botones & (1 << bit) != 0;
             // Pulsar sobre una ventana la sube y le da el teclado.
-            if pulsado {
-                if let Some(v) = ahora {
-                    self.activar(v, &mut out);
+            if pulsado
+                && let Some(v) = ahora {
+                    // El teclado va a la ventana, no a la subsuperficie que se pulsó (G3). Una capa del escritorio no se
+                    // sube entre las ventanas; se lleva el teclado solo si lo pidió (G4).
+                    let cli = &self.clientes[&v.0];
+                    let r = raiz(cli, v.1);
+                    match cli.superficies.get(&r).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)) {
+                        Some(c) if c.actual.teclado != 0 => self.dar_teclado((v.0, r), &mut out),
+                        Some(_) => {}
+                        None => self.activar((v.0, r), &mut out),
+                    }
                 }
-            }
             if let Some((c, _)) = self.puntero {
                 out.push((c, Entrada::Boton { boton, pulsado }));
             }
@@ -743,7 +1672,7 @@ impl<M: Memorias> Escena<M> {
         }
         // Atajos del compositor, con Super (no llegan a la ventana): Arriba maximiza la ventana que tiene el teclado y
         // Abajo la devuelve a su tamaño y su sitio.
-        if self.mods & 64 != 0 && matches!(codigo, KEY_ARRIBA | KEY_ABAJO) {
+        if self.mods & 64 != 0 && matches!(codigo, KEY_ARRIBA | KEY_ABAJO) && self.bloqueo.is_none() {
             if pulsada {
                 self.maximizar(codigo == KEY_ARRIBA, &mut out);
             }
@@ -772,7 +1701,9 @@ impl<M: Memorias> Escena<M> {
     /// la devuelve a su sitio y le deja elegir su tamaño. Se mueve ya; el tamaño llega con su búfer nuevo.
     pub fn maximizar(&mut self, si: bool, out: &mut Vec<(Cliente, Entrada)>) {
         let Some((c, sup)) = self.teclado else { return };
-        let (w, h) = self.medidas;
+        // Dentro de lo que dejan las barras (G4).
+        let (w, h) = (self.area.w, self.area.h);
+        let origen = (self.area.x, self.area.y);
         let Some(cli) = self.clientes.get_mut(&c) else { return };
         let Some(s) = cli.superficies.get(&sup) else { return };
         let (Some(rol), Some(sitio)) = (s.rol, s.sitio) else { return };
@@ -780,7 +1711,7 @@ impl<M: Memorias> Escena<M> {
         let nuevo = match (si, x.antes_de_maximizar) {
             (true, None) => {
                 x.antes_de_maximizar = Some(sitio);
-                (0, 0)
+                origen
             }
             (false, Some(antes)) => {
                 x.antes_de_maximizar = None;

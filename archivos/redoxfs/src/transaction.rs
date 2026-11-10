@@ -2320,7 +2320,14 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
                 // Handle record compression, if record is larger than one block
                 let decomp_level = record.addr().level();
-                if decomp_level.0 > 0 {
+                // DashOS (A6 de docs/REVISION_ARQUITECTURA.md): antes, una prueba con los primeros 4 KB; si no bajan
+                // de 15/16, el registro no comprime (vídeo, imágenes, algo ya comprimido o cifrado) y no se intenta.
+                let comprime = decomp_level.0 > 0
+                    && match lz4_flex::compress_into(&record.data()[..4096], &mut self.fs.compress_cache) {
+                        Ok(n) => n < 4096 * 15 / 16,
+                        Err(_) => false,
+                    };
+                if comprime {
                     assert_eq!(decomp_level.bytes(), record.data().len() as u64);
                     match lz4_flex::compress_into(record.data(), &mut self.fs.compress_cache) {
                         Ok(comp_len) => {

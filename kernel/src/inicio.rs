@@ -90,6 +90,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // comprueba que siguen contestando.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["ventanas", "archivos", "sonido"]),
+    // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
+    #[cfg(feature = "virt")]
+    ("caida", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/caida"), &[], &["caida"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),

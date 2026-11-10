@@ -8,7 +8,11 @@
 //!   número) y la memoria de un `wl_shm` se proyecta con `mmap`.
 //! - Por `--transporte` llega el puente (`puente`): tramas con clientes, bytes de Wayland y memorias con número, que
 //!   aquí son `memfd`. Es lo que hará en DashOS el lado de la caja Linux, con canales y objetos de memoria.
-//! - Con `--captura`, guarda la pantalla (800 × 600) en PPM antes de que se vaya el último cliente.
+//! - Con `--captura`, guarda la pantalla (800 × 600) en PPM cuando se va el primer cliente. Si el nombre lleva `%d`,
+//!   cada vez que se va uno, ya sin lo suyo, numeradas desde 1 (G5). Con `--captura-tras MS`, a esos milisegundos
+//!   de empezar, con todos aún dentro (G6).
+//! - Con `--dri RUTA`, el dispositivo de render que se anuncia para dmabuf (G6); si no, `/dev/dri/renderD128`.
+//! - Con `--escritorio`, todos los clientes tienen el poder de escritorio: `layer-shell` (G4).
 //! - Con `--salir-sin-clientes`, acaba cuando se va el último cliente (para las pruebas).
 
 use std::cell::RefCell;
@@ -28,14 +32,33 @@ use wayland::tablas;
 const ANCHO: i32 = 800;
 const ALTO: i32 = 600;
 const FONDO: u32 = 0xff20_4060;
+/// `--escritorio`: todos los clientes con el poder de escritorio.
+static ESCRITORIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 /// Los clientes del puente, desde aquí: no chocan con los directos.
 const DEL_PUENTE: Cliente = 1 << 32;
 
-static GLOBALES: [Global; 4] = [
+/// Con `zwp_linux_dmabuf_v1` (G6): búferes de la tarjeta gráfica, lineales, que se leen con la CPU. Solo en el PC
+/// por ahora: en DashOS llegará con el puente (los dmabuf de la caja pasan a memoria).
+static GLOBALES: [Global; 7] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+    Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
+    Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
+];
+/// Los de un escritorio (S10b, G4): además, las capas. Un cliente sin el poder ni los ve; si los pide igual, error.
+static GLOBALES_ESCRITORIO: [Global; 9] = [
+    Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+    Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+    Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+    Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+    Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
+    Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
+    Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
+    Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
 ];
 
 /// Los descriptores que hacen de llaves, y lo que hay proyectado de cada uno.
@@ -93,9 +116,22 @@ impl Memorias for MemoriasPc {
     }
 
     fn llave_con(&mut self, datos: &'static [u8]) -> Option<u32> {
-        let fd = p::memfd(c"dashos-mapa-teclado", datos.len() as u64)?;
+        let fd = p::memfd(c"dashos-datos", datos.len() as u64)?;
         unsafe { libc::pwrite(fd, datos.as_ptr().cast(), datos.len(), 0) };
         Some(self.0.borrow_mut().poner(fd))
+    }
+
+    /// G6: espera a que la tarjeta acabe con el dmabuf (DMA_BUF_IOCTL_SYNC, empezar y acabar una lectura). Si no es
+    /// un dmabuf, la orden falla y no pasa nada.
+    fn antes_de_leer(&mut self, llave: u32) {
+        const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
+        const LEER: u64 = 1;
+        const ACABAR: u64 = 4;
+        if let Some(&fd) = self.0.borrow().fds.get(&llave) {
+            for flags in [LEER, LEER | ACABAR] {
+                unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC, &flags as *const u64) };
+            }
+        }
     }
 }
 
@@ -170,7 +206,9 @@ fn atender(id: Cliente, c: &mut DelCliente, bytes: &[u8], llaves: &[u32], escena
     if c.con.juntador.meter(bytes, llaves).is_err() {
         return false;
     }
-    c.con.atender(&GLOBALES, &mut escena.de(id));
+    // Con --escritorio, todos los clientes tienen el poder de escritorio (para probar barras y fondos de verdad).
+    let globales: &[Global] = if ESCRITORIO.load(std::sync::atomic::Ordering::Relaxed) { &GLOBALES_ESCRITORIO } else { &GLOBALES };
+    c.con.atender(globales, &mut escena.de(id));
     if let Some(e) = &c.con.roto {
         println!("compositor-pc: error de protocolo del cliente {}: {}", id, e.texto);
     }
@@ -186,6 +224,7 @@ fn main() {
     let opcion = |n: &str| args.iter().position(|a| a == n).and_then(|i| args.get(i + 1)).cloned();
     let fichero = opcion("--captura");
     let salir_sin_clientes = args.iter().any(|a| a == "--salir-sin-clientes");
+    ESCRITORIO.store(args.iter().any(|a| a == "--escritorio"), std::sync::atomic::Ordering::Relaxed);
     let _ = std::fs::remove_file(ruta);
     let escucha = UnixListener::bind(ruta).expect("no se abre el socket");
     escucha.set_nonblocking(true).unwrap();
@@ -199,11 +238,20 @@ fn main() {
 
     let tabla = Rc::new(RefCell::new(Tabla::default()));
     let mut escena = Escena::new(MemoriasPc(tabla.clone()), FONDO);
+    // El dispositivo de render que usarán los clientes de dmabuf (G6): `--dri`, o el primero.
+    let dri = opcion("--dri").unwrap_or_else(|| "/dev/dri/renderD128".into());
+    if let Ok(m) = std::fs::metadata(&dri) {
+        use std::os::unix::fs::MetadataExt;
+        escena.dispositivo = m.rdev();
+    }
     let mut marco = vec![0u32; (ANCHO * ALTO) as usize];
     let mut clientes: HashMap<Cliente, DelCliente> = HashMap::new();
     let mut siguiente: Cliente = 1;
     let mut alguno = false;
     let mut capturada = false;
+    let numeradas = fichero.as_ref().is_some_and(|f| f.contains("%d"));
+    let captura_tras: Option<u128> = opcion("--captura-tras").and_then(|t| t.parse().ok());
+    let mut capturas = 0;
     let empiezo = Instant::now();
     loop {
         // Esperar a algo (o a 16 ms, el cuadro siguiente).
@@ -316,13 +364,15 @@ fn main() {
         }
         fuera.sort();
         fuera.dedup();
-        // La captura, antes de que se vaya el último cliente: con su ventana aún en pantalla.
-        if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && fuera.len() == clientes.len() && !capturada) {
+        // La captura, cuando se va el primer cliente, antes de quitar lo suyo: con su ventana aún en pantalla (y lo
+        // de los demás, como un fondo de swaybg).
+        if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && !numeradas && !capturada && captura_tras.is_none()) {
             escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);
             capturada = true;
         }
+        let se_fue = !fuera.is_empty();
         for id in fuera {
             if let Some(c) = clientes.remove(&id) {
                 println!("compositor-pc: cliente {} se va", id);
@@ -342,6 +392,17 @@ fn main() {
         let ms = empiezo.elapsed().as_millis() as u32;
         let mut avisos = Vec::new();
         escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, ms, &mut |cl, aviso, ms| avisos.push((cl, aviso, ms)));
+        if let Some(f) = fichero.as_ref().filter(|_| !capturada && captura_tras.is_some_and(|t| empiezo.elapsed().as_millis() >= t)) {
+            captura(f, &marco);
+            println!("compositor-pc: captura en {}", f);
+            capturada = true;
+        }
+        if let Some(f) = fichero.as_ref().filter(|_| se_fue && numeradas) {
+            capturas += 1;
+            let f = f.replace("%d", &capturas.to_string());
+            captura(&f, &marco);
+            println!("compositor-pc: captura en {}", f);
+        }
         for (cl, aviso, ms) in avisos {
             if let Some(c) = clientes.get_mut(&cl) {
                 escena::avisar_frame(&mut c.con, aviso, ms);
@@ -353,7 +414,7 @@ fn main() {
             break;
         }
     }
-    if let Some(f) = fichero.filter(|_| !capturada) {
+    if let Some(f) = fichero.filter(|_| !capturada && !numeradas) {
         captura(&f, &marco);
         println!("compositor-pc: captura en {}", f);
     }

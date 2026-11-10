@@ -11,6 +11,8 @@ use dashos::{llamada, println};
 dashos::programa!(principal);
 
 const E_ARGUMENTO: i64 = -1;
+const E_LLAVE: i64 = -2;
+const E_TIPO: i64 = -6;
 const E_DERECHOS: i64 = -3;
 const E_CERRADO: i64 = -4;
 const E_TAMANO: i64 = -5;
@@ -198,6 +200,29 @@ fn principal() -> u64 {
     if dashos::plazo(0, 1_000, 10_000) >= 0 || dashos::plazo(1, 1_000, 10_000) >= 0 || dashos::plazo(0, 0, 0) != 0 {
         return 34;
     }
+    // 35 (K7): leer con plazo. Sin nada que leer, E_PLAZO pasado el plazo y no antes; con un mensaje, lo lee.
+    let (a, b) = dashos::canal_crear();
+    let t0 = dashos::ahora_us();
+    let (r, _, _) = dashos::canal_leer_plazo(b, &mut buf, &mut [], 3_000);
+    let us = dashos::ahora_us() - t0;
+    dashos::canal_escribir(a, b"hola", &[]);
+    let (r2, _, _) = dashos::canal_leer_plazo(b, &mut buf, &mut [], 3_000);
+    if r != dashos::E_PLAZO || us < 3_000 || r2 != 4 {
+        return 35;
+    }
+    // Un plazo enorme no desborda: el otro lado cerrado sigue dando E_CERRADO.
+    dashos::cerrar(a);
+    if dashos::canal_leer_plazo(b, &mut buf, &mut [], u64::MAX >> 16).0 != E_CERRADO {
+        return 35;
+    }
+    dashos::cerrar(b);
+    // 36 (K7): un aviso de fin sobre algo que no es un proceso, o sin canal, se rechaza.
+    let (a, b) = dashos::canal_crear();
+    if dashos::proceso_avisar(a, b) != E_TIPO || dashos::proceso_avisar(999, b) != E_LLAVE {
+        return 36;
+    }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
     // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
     let local = 0u64;
     if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {

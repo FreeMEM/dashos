@@ -39,10 +39,10 @@ Primero lo que se puede probar ya con programas reales en el PC; después lo que
 | G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | hecho |
 | G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | hecho (copia de wl_shm; vsock y QEMU, con la caja) |
 | G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | hecho (mapa español; elegir en Prefs, después) |
-| G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | pendiente |
-| G4 | `zwlr_layer_shell_v1`: fondo, barras y avisos (capas, anclas, márgenes, zona exclusiva, teclado). Solo para clientes con el poder de escritorio (S10b: por la marca) | `swaybg` pinta el fondo; un cliente sin el poder recibe error | pendiente |
-| G5 | `ext_session_lock_v1`: bloqueo. Mientras dura, solo se ven y reciben entrada las superficies del bloqueo; si su cliente muere, la pantalla sigue bloqueada. Solo `guardian` (S6b) o quien tenga el poder | `swaylock`; un cliente hostil no ve ni recibe nada bloqueado | pendiente |
-| G6 | `zwp_linux_dmabuf_v1` (v4, con feedback de formatos): un búfer es un objeto de memoria con formato, modificador y planos. En QEMU se lee con la CPU; en la Pi, va a un plano del HVS si cabe. En el PC, el puente pasa los dmabuf de Mesa a memoria (copia) | `alacritty` por el puente en el PC; prueba de PC de formatos y errores | pendiente |
+| G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | hecho (sin wp_viewporter) |
+| G4 | `zwlr_layer_shell_v1`: fondo, barras y avisos (capas, anclas, márgenes, zona exclusiva, teclado). Solo para clientes con el poder de escritorio (S10b: por la marca) | `swaybg` pinta el fondo; un cliente sin el poder recibe error | hecho (sin get_popup) |
+| G5 | `ext_session_lock_v1`: bloqueo. Mientras dura, solo se ven y reciben entrada las superficies del bloqueo; si su cliente muere, la pantalla sigue bloqueada. Solo `guardian` (S6b) o quien tenga el poder | `swaylock`; un cliente hostil no ve ni recibe nada bloqueado | hecho (una pantalla; el relevo, por el poder) |
+| G6 | `zwp_linux_dmabuf_v1` (v4, con feedback de formatos): un búfer es un objeto de memoria con formato, modificador y planos. En QEMU se lee con la CPU; en la Pi, va a un plano del HVS si cabe. En el PC, el puente pasa los dmabuf de Mesa a memoria (copia) | `alacritty` por el puente en el PC; prueba de PC de formatos y errores | hecho en el PC (en DashOS, con la caja) |
 | G7 | Planos del HVS en el compositor (fase B de S9): cada ventana a un plano mientras quepan; el resto, juntado por CPU en un plano más. Cursor en su plano | En la Pi real: cuadros por segundo y CPU usada, antes y después | pendiente |
 | G8 | V3D (fase C de S9): Mesa con relibc y el servicio de v3d. Plan aparte | — | fuera de este loop |
 
@@ -83,4 +83,43 @@ código de compositores.
   escribe una vez en un objeto de memoria y da a cada cliente una copia de solo lectura; el del PC, un `memfd`. El
   cliente de prueba lo lee con libwayland: bien en directo y por el puente (donde cruza de DashOS a Linux como
   memoria). Sin mapa (no_keymap) solo si no se puede crear la memoria.
-
+- G3 hecho: `wl_subcompositor` y `wl_subsurface`. Cada superficie lleva su pila (ella y sus hijas, de abajo arriba) y
+  cada hija su sitio respecto a la madre; componer, dañar, avisar de cuadro y buscar bajo el ratón recorren el árbol
+  (`escena::arbol`). Sincronizada (por defecto): su commit se guarda hasta el de la madre; la posición siempre con el
+  de la madre; `place_above` y `place_below` frente a la madre o hermanas; `set_desync` aplica lo guardado. El
+  teclado va a la ventana aunque se pulse una hija. Errores `bad_surface`, `bad_parent` (también ciclos) y
+  `bad_sibling`. Pruebas de PC (27 en total) y, con libwayland, un botón rojo de 20 x 20 como subsuperficie en el
+  cliente de prueba: en su sitio en directo y por el puente. Falta `wp_viewporter` (escalar), que va con G6.
+- G4 hecho: `zwlr_layer_shell_v1` (v4) y `wl_output` (v4). Capas de fondo y abajo debajo de las ventanas, arriba y
+  encima por encima (`Escena::raices`); tamaño 0 = lo que dé la pantalla entre sus anclas; sitio por anclas y
+  márgenes; configure al cambiar el tamaño; zona exclusiva que recorta el área de las ventanas (cascada y maximizar
+  dentro de `area`); teclado exclusivo en las capas de arriba, a petición con un clic. Errores de rol, capa, tamaño,
+  anclas, teclado y búfer antes de configure. Poder de escritorio: solo quien lo tiene ve el global (en DashOS, la
+  lista `ESCRITORIOS` del compositor, vacía hasta que haya escritorio; `compositor-pc --escritorio` en el PC).
+  Un búfer o un pool que el cliente destruye mientras se ve sigue vivo con un número privado hasta que se cambia
+  (como wlroots: `swaybg` destruye el suyo tras el commit, y reusa el número del pool).
+  Pruebas: 29 de PC (zona exclusiva con ventana debajo, errores) y `puente/pruebas/g4.sh`: **`swaybg` de verdad**
+  pinta el fondo naranja con la ventana del cliente encima, y sin el poder no puede. Falta `get_popup` (menús de
+  una barra), con `xdg_popup`.
+- G5 hecho: `ext_session_lock_manager_v1`, `ext_session_lock_v1` y `ext_session_lock_surface_v1`. Al bloquear deja de
+  verse todo al momento (fondo negro) y nadie tiene el teclado ni el ratón; la pantalla de bloqueo, del tamaño de la
+  pantalla tras su configure, se ve sola y toma el teclado. Un segundo `lock` mientras vive el primero recibe
+  `finished`. Si el bloqueador muere, sigue bloqueado en negro: solo otro con el poder puede tomar el relevo y quitarlo
+  con `unlock_and_destroy` (`destroy` sin desbloquear es error). Super+Arriba/Abajo no hacen nada bloqueado. Errores
+  de rol, búfer antes de configure, tamaño, configure que no se mandó y pantalla repetida. El global, solo con el
+  poder de escritorio (en DashOS lo tendrá `guardian`, S6b). Pruebas: 31 de PC (bloqueo, relevo, errores) y
+  `puente/pruebas/g5.sh`: **`swaylock` de verdad** tapa la pantalla de verde, una ventana que se abre detrás no se ve
+  ni completa cuadros, al matar a swaylock queda negra, y sin el poder swaylock acaba con error. `compositor-pc
+  --captura x%d.ppm` guarda una captura cada vez que se va un cliente.
+- G6 hecho en el PC: `zwp_linux_dmabuf_v1` v4. Dos formatos (AR24 y XR24, los de `wl_shm`) solo lineales: la tabla de
+  formatos va en una memoria de solo lectura (`Memorias::llave_con`, que en DashOS ya guarda varios datos fijos, no
+  solo el mapa de teclado), con `main_device` el `dev_t` de la escena (`compositor-pc --dri`, por defecto
+  `renderD128`; en DashOS 0 hasta V3D). Un búfer de dmabuf es un pool de un búfer, que se suelta con él; antes de
+  leerlo tras el commit, `Memorias::antes_de_leer` (en Linux, `DMA_BUF_IOCTL_SYNC`: espera a la tarjeta). `create`
+  da el búfer con número del servidor y `created`; un modificador no lineal, `failed` (o `invalid_wl_buffer` con
+  `create_immed`). Errores de params: usado, plano, plano repetido, incompleto, formato, medidas, fuera. El puente
+  trata el plano como un pool de `wl_shm` (proyecta, espera a la tarjeta, copia lo dañado) y suelta la memoria con el
+  búfer. Pruebas: 33 de PC y `puente/pruebas/g6.sh`: **alacritty de verdad** (Mesa, EGL) pinta su fondo verde en
+  búferes de dmabuf, directo y por el puente (590 KB por cuadro: alacritty daña la ventana entera). Pendiente: el
+  global en el compositor de DashOS (cuando la caja exista: el puente tendrá que cambiar `main_device` por el
+  dispositivo de la caja), `create` no inmediato por el puente (Mesa usa `create_immed`) y `wp_viewporter`.

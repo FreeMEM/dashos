@@ -98,6 +98,10 @@ fn principal() -> u64 {
     let mut pendientes = [0u32; 32];
     // Quién lee cada canal (su cabecera), para saber cuál es el del servicio de archivos.
     let mut lector = [0usize; 32];
+    // E6: los servicios (los que leen algún canal), para relanzarlos si acaban. Sus avisos de fin (K7) llegan por
+    // `avisos`, con la marca del número del programa más 1.
+    let mut servicios: [Option<Servicio>; 32] = Default::default();
+    let (avisos_a, avisos) = canal_crear();
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
         let tamano = u32_en(cab) as usize;
@@ -123,12 +127,14 @@ fn principal() -> u64 {
         // ningún cliente.
         let mut propios = [0u32; 8];
         let mut np = 0;
+        let mut lee = 0u32;
         for c in 0..32 {
             if de_canales & (1 << c) != 0 && k < suyas.len() {
                 if pendientes[c] == 0 {
                     let (a, b) = canal_crear();
                     pendientes[c] = b;
                     lector[c] = cab;
+                    lee |= 1 << c;
                     suyas[k] = a;
                     k += 1;
                     if np < propios.len() {
@@ -191,6 +197,13 @@ fn principal() -> u64 {
         // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
         // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
         let cupo = if nombre(nombre_cab) == "archivos" { 64 << 20 } else { 16 << 20 };
+        // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
+        let mut guardadas = [0u32; 8];
+        if lee != 0 {
+            for j in 0..k {
+                guardadas[j] = llave_duplicar(suyas[j], u64::MAX, 0).max(0) as u32;
+            }
+        }
         let g = grupo_crear(cupo);
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
@@ -198,17 +211,89 @@ fn principal() -> u64 {
             continue;
         }
         println!("  [inicio] {} lanzado en su grupo, con {} llaves", nombre(nombre_cab), k);
+        if lee != 0 && i < servicios.len() {
+            let aviso = llave_duplicar(avisos_a, dashos::ESCRIBIR, i as u64 + 1).max(0) as u32;
+            if aviso > 0 && dashos::proceso_avisar(proceso as u32, aviso) == 0 {
+                servicios[i] = Some(Servicio { cab: nombre_cab, m, tamano, guardadas, k, cupo, lee, aviso, proceso: proceso as u32, grupo: g as u32, veces: 0 });
+            }
+        }
         // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera.
         if k == 0 {
             let (clase, codigo) = proceso_esperar(proceso as u32);
             println!("  [inicio] {} acabó: clase {}, código {}", nombre(nombre_cab), clase, codigo);
         }
     }
-    println!("  [inicio] todo lanzado; se queda esperando");
-    let (a, _b) = dashos::canal_crear();
-    let mut buf = [0u8; 1];
-    let mut ll = [0u32; 1];
+    println!("  [inicio] todo lanzado; se queda vigilando los servicios");
+    // E6: un servicio que acaba se relanza con las mismas llaves, tras 100, 200 y 400 ms; a la cuarta, se deja. Su
+    // canal sigue siendo el mismo (inicio guarda una copia de su extremo): sus clientes no lo pierden.
+    let mut buf = [0u8; 16];
     loop {
-        dashos::canal_leer(a, &mut buf, &mut ll);
+        let (n, k, marca) = dashos::canal_leer_marca(avisos, &mut buf, &mut []);
+        if n != 16 || k != 0 || marca == 0 || marca as usize > servicios.len() {
+            continue;
+        }
+        let i = marca as usize - 1;
+        let Some(s) = servicios[i].as_mut() else { continue };
+        let clase = u64::from_le_bytes(buf[..8].try_into().unwrap());
+        let codigo = u64::from_le_bytes(buf[8..].try_into().unwrap());
+        dashos::cerrar(s.proceso);
+        dashos::cerrar(s.grupo);
+        if s.veces >= MAX_RELANZAR {
+            println!("  [inicio] {} acabó (clase {}, código {}): se deja tras {} relanzados", nombre(s.cab), clase, codigo, s.veces);
+            servicios[i] = None;
+            continue;
+        }
+        s.veces += 1;
+        println!("  [inicio] {} acabó (clase {}, código {}): se relanza (vez {})", nombre(s.cab), clase, codigo, s.veces);
+        dashos::dormir_us(100_000 << (s.veces - 1));
+        if !relanzar(s, &pendientes) {
+            println!("  [inicio] {}: no se pudo relanzar", nombre(s.cab));
+            servicios[i] = None;
+        }
     }
+}
+
+/// Un servicio vigilado (E6): de dónde sale y con qué llaves, para relanzarlo.
+struct Servicio {
+    cab: usize,
+    m: u32,
+    tamano: usize,
+    guardadas: [u32; 8],
+    k: usize,
+    cupo: u64,
+    /// Los canales que lee (bits).
+    lee: u32,
+    /// La copia marcada del canal de avisos de fin.
+    aviso: u32,
+    proceso: u32,
+    grupo: u32,
+    veces: u32,
+}
+
+const MAX_RELANZAR: u32 = 3;
+
+/// Relanza `s` con copias de sus llaves guardadas, en un grupo nuevo, y pide otra vez su aviso de fin. Antes deja un
+/// mensaje sin marca en cada canal que lee: así ve que el canal es el mismo (y un servicio de verdad, que vuelve).
+fn relanzar(s: &mut Servicio, pendientes: &[u32; 32]) -> bool {
+    for (c, &p) in pendientes.iter().enumerate() {
+        if s.lee & (1 << c) != 0 && p != 0 {
+            dashos::canal_escribir(p, b"inicio: relanzado", &[]);
+        }
+    }
+    let mut suyas = [0u32; 8];
+    for j in 0..s.k {
+        let c = llave_duplicar(s.guardadas[j], u64::MAX, 0);
+        if c <= 0 {
+            return false;
+        }
+        suyas[j] = c as u32;
+    }
+    let g = grupo_crear(s.cupo);
+    let proceso = if g > 0 { proceso_crear_en(g as u32, s.m, s.tamano, &suyas[..s.k]) } else { g };
+    if proceso <= 0 {
+        return false;
+    }
+    s.proceso = proceso as u32;
+    s.grupo = g as u32;
+    dashos::proceso_avisar(s.proceso, s.aviso) == 0
 }

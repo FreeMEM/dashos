@@ -32,6 +32,8 @@ const GUARDAR: u32 = 27;
 
 const GRANDE: u64 = 8 << 20;
 const TROZO: u64 = 64 << 10;
+/// Con la ventana de 1 MB (A4): los trozos grandes, múltiplos del registro de RedoxFS.
+const TROZO_GRANDE: u64 = 1 << 20;
 const PEQUENOS: u64 = 500;
 
 #[derive(Clone, Copy)]
@@ -74,7 +76,7 @@ impl Cliente {
 }
 
 fn ventana() -> &'static mut [u8] {
-    unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, TROZO as usize) }
+    unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, TROZO_GRANDE as usize) }
 }
 
 /// Valor con un decimal, como `fs.c`.
@@ -110,9 +112,11 @@ fn principal() -> u64 {
     let c = Cliente { lectura };
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&SESION.to_le_bytes());
+    // Una ventana de 1 MB (A4): las medidas de siempre siguen con trozos de 64 KB, como fs.c en Linux.
+    p[8..16].copy_from_slice(&TROZO_GRANDE.to_le_bytes());
     let mut ll = [0u32; 1];
     if dashos::canal_escribir(1, &p, &[vuelta]) != 0
-        || !c.leer_respuesta(&mut ll).is_some_and(|(r, k)| r.estado == 0 && k == 1)
+        || !c.leer_respuesta(&mut ll).is_some_and(|(r, k)| r.estado == 0 && k == 1 && r.a == TROZO_GRANDE)
         || dashos::memoria_proyectar(ll[0], VA, true) != 0
     {
         println!("  [medir] sin servicio de archivos\n[medir] fin");
@@ -162,6 +166,31 @@ fn principal() -> u64 {
         dato(op, mb, GRANDE, cuentas() - t0, "MB/s");
     }
     c.pedir(CERRAR, grande, 0, 0, b"");
+
+    // Lo mismo con trozos de 1 MB (A4): 8 viajes en lugar de 128, y registros de 128 KB enteros al escribir.
+    let t0 = cuentas();
+    let f = c.pedir(CREAR, 0, 1, 0, b"grande1m");
+    bien &= f.estado == 0;
+    let mut off = 0;
+    while bien && off < GRANDE {
+        bien = c.pedir(ESCRIBIR, f.asa, off, TROZO_GRANDE, b"").estado == 0;
+        off += TROZO_GRANDE;
+    }
+    bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+    dato("escribir_8mb_1m", mb, GRANDE, cuentas() - t0, "MB/s");
+    let t0 = cuentas();
+    let mut off = 0;
+    while off < GRANDE {
+        let r = c.pedir(LEER, f.asa, off, TROZO_GRANDE, b"");
+        if r.estado != 0 || r.a == 0 {
+            bien = false;
+            break;
+        }
+        off += r.a;
+    }
+    dato("leer_8mb_1m", mb, GRANDE, cuentas() - t0, "MB/s");
+    c.pedir(CERRAR, f.asa, 0, 0, b"");
+    c.pedir(BORRAR, 0, 0, 0, b"grande1m");
 
     // 500 ficheros de 4 KB en un cajón: crear y escribir (cerrar los lleva al disco), leer, sus datos, listar y borrar.
     let dir = c.pedir(CREAR, 0, 2, 0, b"peq");

@@ -154,6 +154,10 @@ required-features = ["ventanas"]
 [[bin]]
 name = "hostil"
 path = "src/bin/hostil.rs"
+
+[[bin]]
+name = "caida"
+path = "src/bin/caida.rs"
 test = false
 required-features = ["ventanas"]
 

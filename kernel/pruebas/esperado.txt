@@ -115,6 +115,7 @@ C32: registros de EL0 bien
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
   [lanzador] grupos: clase 0, código 42
   [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero
+  [lanzador] avisos de fin por canal (K7): 7 de 7
 C43: pruebas de usuario lanzadas por un proceso bien
   [muchos] 900 temporizadores de 10 ms
 C51: temporizadores repartidos por grupos bien

@@ -187,13 +187,19 @@ fn permisos(lectura: u32, copia: u32) -> &'static str {
 fn archivos(memoria: u32) -> bool {
     let (lectura, suyo, copia) = canal_respuesta();
     let mut b = [0u8; 64];
-    if !escribir(ARCHIVOS, &peticion_archivos(0, ""), &[suyo]) {
+    // Pide una ventana enorme (A4): se queda en 1 MB.
+    if !escribir(ARCHIVOS, &peticion_con(0, 0, u64::MAX, 0, ""), &[suyo]) {
         println!("  [hostil] archivos: no se puede pedir la sesión");
         return false;
     }
     let r = leer_con_plazo(lectura, copia, &mut b);
     if r != Some(32) {
         println!("  [hostil] archivos: sin sesión ({:?})", r);
+        return false;
+    }
+    let ventana = u64::from_le_bytes(b[8..16].try_into().unwrap());
+    if ventana != 1 << 20 {
+        println!("  [hostil] archivos: pidió una ventana enorme y le dieron {} bytes", ventana);
         return false;
     }
     escribir(ARCHIVOS, &[], &[]);

@@ -73,6 +73,7 @@ fn principal() -> u64 {
         datos += u32_en(PAQUETE + 4 + CABECERA * i + 4) as usize;
     }
     let mut lanzadas = 0;
+    let mut avisados = 0;
     let mut zona = 0;
     for i in 0..n {
         let cab = PAQUETE + 4 + CABECERA * i;
@@ -104,7 +105,24 @@ fn principal() -> u64 {
         if p <= 0 {
             return 100 + i as u64;
         }
+        // K7: aviso de fin por un canal, pedido antes de acabar y después (ese sale al momento).
+        let (av_a, av_b) = canal_crear();
+        let pedido = dashos::proceso_avisar(p as u32, av_a);
         let (clase, codigo) = proceso_esperar(p as u32);
+        let despues = dashos::proceso_avisar(p as u32, av_a);
+        let mut bien_aviso = pedido == 0 && despues == 0;
+        for _ in 0..2 {
+            let mut b = [0u8; 16];
+            let (n, _, _) = dashos::canal_leer_plazo(av_b, &mut b, &mut [], 1_000_000);
+            let c = u64::from_le_bytes(b[..8].try_into().unwrap());
+            let d = u64::from_le_bytes(b[8..].try_into().unwrap());
+            bien_aviso &= n == 16 && c == clase as u64 && d == codigo;
+        }
+        cerrar(av_a);
+        cerrar(av_b);
+        if bien_aviso {
+            avisados += 1;
+        }
         if nuestro != 0 {
             cerrar(nuestro);
         }
@@ -122,5 +140,6 @@ fn principal() -> u64 {
         lanzadas += 1;
     }
     println!("  [lanzador] {} pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero", lanzadas);
+    println!("  [lanzador] avisos de fin por canal (K7): {} de {}", avisados, lanzadas);
     43
 }

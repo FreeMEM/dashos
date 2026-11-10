@@ -269,7 +269,9 @@ fn entregar(intid: u32) -> bool {
     let destino = o.destino.tomar().clone();
     if let Some((canal, lado)) = destino {
         // Los mensajes que escribe el kernel van en little-endian, el orden nativo de DashOS (C30).
-        let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new(), marca };
+        // Sin montón, se reintenta como con la cola llena (S1).
+        let Some(datos) = crate::objetos::bytes_aviso(&intid.to_le_bytes()) else { return false };
+        let m = Mensaje { datos, llaves: Vec::new(), marca };
         if let Err((crate::objetos::Error::Llena | crate::objetos::Error::SinMemoria, _)) = canal.escribir(lado, m) {
             return false;
         }

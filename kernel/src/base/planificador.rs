@@ -1292,14 +1292,21 @@ pub fn terminar_actual(fin: crate::objetos::Fin) -> ! {
         // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: se apunta cómo y se despierta a
         // quien esperaba.
         let yo = HiloRef(actual());
-        {
+        let avisos = {
             let mut e = p.control.estado.tomar();
             e.hilos.retain(|&h| h != yo);
             if e.hilos.is_empty() && e.fin.is_none() {
                 e.fin = Some(fin);
                 // Con el cerrojo tomado: los que esperan siguen vivos mientras lo tengamos (A2).
                 e.esperando.despertar_todos();
+                core::mem::take(&mut e.avisos)
+            } else {
+                alloc::vec::Vec::new()
             }
+        };
+        // Los avisos de fin (K7), fuera del cerrojo del proceso: escribir en un canal despierta hilos.
+        for a in avisos {
+            a.mandar(fin);
         }
         drop(p);
     }

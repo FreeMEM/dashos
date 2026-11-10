@@ -134,7 +134,7 @@ pub fn leer_cabecera(bytes: &[u8]) -> Result<(u32, u16, usize), Fallo> {
     let objeto = u32::from_le_bytes(bytes[0..4].try_into().unwrap());
     let segundo = u32::from_le_bytes(bytes[4..8].try_into().unwrap());
     let tamano = (segundo >> 16) as usize;
-    if tamano < 8 || tamano % 4 != 0 {
+    if tamano < 8 || !tamano.is_multiple_of(4) {
         return Err(Fallo::Tamano);
     }
     if tamano > bytes.len() {
@@ -285,7 +285,7 @@ impl Escritor {
     }
 
     fn rellenar(&mut self) -> &mut Self {
-        while self.bytes.len() % 4 != 0 {
+        while !self.bytes.len().is_multiple_of(4) {
             self.bytes.push(0);
         }
         self

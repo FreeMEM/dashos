@@ -155,6 +155,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 | 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
 | 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware), 0 si no |
+| 35 | `canal_leer_plazo` | Como 5, pero `x4` lleva en sus 16 bits bajos cuántas llaves caben y en el resto el plazo en µs (0: sin plazo) | Como 5, o `E_PLAZO` si vence sin mensaje (K7) |
+| 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
 
 ### Detalles
 
@@ -302,6 +304,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −6 | `E_TIPO` | La llave es de otro tipo de objeto |
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
+| −9 | `E_PLAZO` | Venció el plazo de `canal_leer_plazo` sin mensaje (K7). `canal_leer` ya no dice `E_CERRADO` por falta de memoria: `E_MEMORIA` |
 
 ### Topes de trabajo
 

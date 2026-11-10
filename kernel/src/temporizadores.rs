@@ -358,8 +358,12 @@ pub fn repartir() {
     // Fuera del cerrojo: escribir en un canal despierta hilos.
     for (t, aviso) in &lote {
         let Some((canal, lado, n)) = aviso else { continue };
-        let m = Mensaje { datos: n.to_le_bytes().to_vec(), llaves: Vec::new(), marca: t.marca };
-        if canal.escribir(*lado, m).is_err() {
+        // Sin montón, como si no cupiera (S1).
+        let enviado = match crate::objetos::bytes_aviso(&n.to_le_bytes()) {
+            Some(datos) => canal.escribir(*lado, Mensaje { datos, llaves: Vec::new(), marca: t.marca }).is_ok(),
+            None => false,
+        };
+        if !enviado {
             // No cupo. Un periódico lo cuenta para el siguiente aviso, que ya está programado. Uno de una vez se
             // reintenta en el tic siguiente, para que no se pierda (M1), sin contar dos veces el mismo vencimiento
             // (B12).

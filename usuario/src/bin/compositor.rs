@@ -39,12 +39,28 @@ const ALTO: u32 = 480;
 const VA_CLIENTES: usize = 0x70_0000_0000;
 const FONDO: u32 = 0xff20_4060;
 
-static GLOBALES: [Global; 4] = [
+static GLOBALES: [Global; 6] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+    Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
 ];
+/// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
+static GLOBALES_ESCRITORIO: [Global; 8] = [
+    Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+    Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+    Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+    Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+    Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
+    Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
+    Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
+];
+/// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. Ninguno todavía: el escritorio
+/// oficial (S10b) aún no existe.
+const ESCRITORIOS: &[&str] = &[];
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
 /// no, la llave que trajera la respuesta (0 si ninguna).
@@ -140,8 +156,9 @@ struct Proyecciones {
     siguiente: usize,
     /// Un objeto de memoria de una página, vacío: el mapa de teclas que se da sin mapa (W8).
     vacia: Option<u32>,
-    /// El mapa de teclado de xkb (G2), escrito una vez en su objeto de memoria.
-    mapa: Option<u32>,
+    /// Datos fijos para los clientes (el mapa de teclado de xkb, G2; la tabla de formatos, G6), escritos una vez en
+    /// su objeto de memoria: por dónde empiezan.
+    datos: Vec<(usize, u32)>,
 }
 
 /// Dónde se escribe el mapa de teclado al crearlo, antes de quitarlo de en medio.
@@ -174,17 +191,22 @@ impl Memorias for Proyecciones {
     }
 
     fn llave_con(&mut self, datos: &'static [u8]) -> Option<u32> {
-        if self.mapa.is_none() {
-            let m = dashos::memoria_crear(datos.len());
-            if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA_MAPA, true) != 0 {
-                return None;
+        let clave = datos.as_ptr() as usize;
+        let llave = match self.datos.iter().find(|d| d.0 == clave) {
+            Some(d) => d.1,
+            None => {
+                let m = dashos::memoria_crear(datos.len());
+                if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA_MAPA, true) != 0 {
+                    return None;
+                }
+                unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), VA_MAPA as *mut u8, datos.len()) };
+                dashos::memoria_quitar(VA_MAPA);
+                self.datos.push((clave, m as u32));
+                m as u32
             }
-            unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), VA_MAPA as *mut u8, datos.len()) };
-            dashos::memoria_quitar(VA_MAPA);
-            self.mapa = Some(m as u32);
-        }
-        // Cada cliente, una copia de solo lectura: no puede cambiar el mapa de los demás.
-        let copia = dashos::llave_duplicar(self.mapa?, dashos::LEER | dashos::TRANSFERIR, 0);
+        };
+        // Cada cliente, una copia de solo lectura: no puede cambiar los datos de los demás.
+        let copia = dashos::llave_duplicar(llave, dashos::LEER | dashos::TRANSFERIR, 0);
         (copia > 0).then_some(copia as u32)
     }
 
@@ -216,16 +238,8 @@ struct DeVentanas {
 }
 
 fn dormir() {
-    let (a, b) = dashos::canal_crear();
-    let t = dashos::temporizador_crear(b, 1_000, 0);
-    if t > 0 {
-        let mut buf = [0u8; 8];
-        let mut ll = [0u32; 1];
-        dashos::canal_leer(a, &mut buf, &mut ll);
-        dashos::cerrar(t as u32);
-    }
-    dashos::cerrar(a);
-    dashos::cerrar(b);
+    // Un milisegundo, sin crear canal ni temporizador en cada espera (E8).
+    dashos::dormir_us(1_000);
 }
 
 /// Manda lo que haya para el cliente. Falso si no se pudo (el cliente no lee): entonces se le suelta.
@@ -237,8 +251,9 @@ fn mandar(c: &mut DeVentanas) -> bool {
     let Ok(trozos) = canal::trocear(&e) else { return false };
     for t in trozos {
         let mut hecho = false;
-        // Con su cola llena se espera un poco; un cliente que no lee no puede parar a todos mucho rato.
-        for _ in 0..50 {
+        // Con su cola llena se espera un poco, como mucho 5 ms (antes, 50): un cliente que no lee no puede parar a todos
+        // (E8). Si no, se le suelta: lo que ya se mandó a medias dejaría su conexión rota.
+        for _ in 0..5 {
             if dashos::canal_escribir(c.respuesta, &t.bytes, &t.llaves) == 0 {
                 hecho = true;
                 break;
@@ -250,6 +265,21 @@ fn mandar(c: &mut DeVentanas) -> bool {
         }
     }
     true
+}
+
+/// Suelta a un cliente: su escena, sus llaves a medio juntar y su canal de respuesta.
+fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Escena<Proyecciones>, nombres: &BTreeMap<u64, String>, marca: Cliente) {
+    if let Some(cli) = clientes.remove(&marca) {
+        if let Some(e) = &cli.con.roto {
+            println!("  [compositor] error de protocolo de {}: {}", nombres.get(&marca).map_or("?", |s| s), e.texto);
+        }
+        escena.adios(marca);
+        let mut j = cli.con;
+        while let Some(l) = j.juntador.tomar_llave() {
+            dashos::cerrar(l);
+        }
+        dashos::cerrar(cli.respuesta);
+    }
 }
 
 struct Compositor {
@@ -320,6 +350,7 @@ fn principal() -> u64 {
     // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
     let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
     let mut clientes: BTreeMap<Cliente, DeVentanas> = BTreeMap::new();
+    let mut caidos: Vec<Cliente> = Vec::new();
     let mut vistas = 0;
     let mut buf = [0u8; canal::MAX_CANAL];
     let mut ll = [0u32; canal::MAX_LLAVES];
@@ -363,7 +394,9 @@ fn principal() -> u64 {
             for (cl, ev) in entrada {
                 if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
                     escena::escribir_entrada(&mut cli.con, de, ev, ms);
-                    mandar(cli);
+                    if !mandar(cli) {
+                        caidos.push(cl);
+                    }
                 }
             }
         }
@@ -379,7 +412,9 @@ fn principal() -> u64 {
                     llaves.iter().for_each(|&l| { dashos::cerrar(l); });
                     soltar = true;
                 } else {
-                    cli.con.atender(&GLOBALES, &mut escena.de(marca));
+                    let escritorio = nombres.get(&marca).is_some_and(|n| ESCRITORIOS.contains(&n.as_str()));
+                    let globales: &[Global] = if escritorio { &GLOBALES_ESCRITORIO } else { &GLOBALES };
+                    cli.con.atender(globales, &mut escena.de(marca));
                     soltar = !mandar(cli) || cli.con.roto.is_some();
                 }
             }
@@ -393,17 +428,7 @@ fn principal() -> u64 {
             }
         }
         if soltar {
-            if let Some(cli) = clientes.remove(&marca) {
-                if let Some(e) = &cli.con.roto {
-                    println!("  [compositor] error de protocolo de {}: {}", nombres.get(&marca).map_or("?", |s| s), e.texto);
-                }
-                escena.adios(marca);
-                let mut j = cli.con;
-                while let Some(l) = j.juntador.tomar_llave() {
-                    dashos::cerrar(l);
-                }
-                dashos::cerrar(cli.respuesta);
-            }
+            soltar_cliente(&mut clientes, &mut escena, &nombres, marca);
         }
 
         // La entrada que salió de las peticiones (el teclado a una ventana nueva).
@@ -411,7 +436,9 @@ fn principal() -> u64 {
         for (cl, ev) in core::mem::take(&mut escena.pendientes) {
             if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
                 escena::escribir_entrada(&mut cli.con, de, ev, ms);
-                mandar(cli);
+                if !mandar(cli) {
+                    caidos.push(cl);
+                }
             }
         }
         // Se compone lo dañado y se avisa a quien esperaba su cuadro.
@@ -423,8 +450,15 @@ fn principal() -> u64 {
         for (cl, aviso, ms) in avisos {
             if let Some(cli) = clientes.get_mut(&cl) {
                 escena::avisar_frame(&mut cli.con, aviso, ms);
-                mandar(cli);
+                if !mandar(cli) {
+                    caidos.push(cl);
+                }
             }
+        }
+        // Los que no leían sus eventos (E8).
+        for cl in core::mem::take(&mut caidos) {
+            println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));
+            soltar_cliente(&mut clientes, &mut escena, &nombres, cl);
         }
         if escena.orden.len() != vistas {
             vistas = escena.orden.len();

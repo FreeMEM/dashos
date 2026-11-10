@@ -200,6 +200,31 @@ pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
     (a as i64, b)
 }
 
+/// Venció el plazo de `canal_leer_plazo` (K7).
+pub const E_PLAZO: i64 = -9;
+
+/// Como `canal_leer_marca`, pero esperando como mucho `plazo_us` microsegundos (0 es sin plazo): al vencer, `E_PLAZO`
+/// (K7). Caben hasta 65535 llaves.
+pub fn canal_leer_plazo(llave: u32, bufer: &mut [u8], llaves: &mut [u32], plazo_us: u64) -> (i64, usize, u64) {
+    let (n, k, m): (u64, u64, u64);
+    unsafe {
+        core::arch::asm!("svc #0",
+            in("x8") 35u64,
+            inlateout("x0") llave as u64 => n,
+            inlateout("x1") bufer.as_mut_ptr() as u64 => k,
+            inlateout("x2") bufer.len() as u64 => m,
+            in("x3") llaves.as_mut_ptr() as u64, in("x4") (llaves.len() as u64).min(0xffff) | plazo_us << 16,
+            options(nostack));
+    }
+    (n as i64, k as usize, m)
+}
+
+/// Cuando acabe el proceso de la llave `proceso`, el kernel escribe por `canal` 16 bytes: clase y código como en
+/// `proceso_esperar` (u64 little-endian), con la marca de esa llave (K7). Si ya acabó, al momento.
+pub fn proceso_avisar(proceso: u32, canal: u32) -> i64 {
+    llamada(36, [proceso as u64, canal as u64, 0, 0, 0]).0 as i64
+}
+
 /// Como `canal_leer`, y además la marca de la llave por la que se escribió el mensaje (C41): (bytes, llaves, marca).
 pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i64, usize, u64) {
     let (n, k, m): (u64, u64, u64);

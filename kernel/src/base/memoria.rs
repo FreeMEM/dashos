@@ -79,6 +79,15 @@ pub fn paginas() -> GuardaIrq<'static, Paginas> {
     PAGINAS.tomar()
 }
 
+/// Una página para un proceso, a cero (ver `Paginas::pagina_usuario_sucia`). Se borra después de soltar el cerrojo
+/// del repartidor (S2).
+pub fn pagina_usuario() -> Option<u64> {
+    let p = paginas().pagina_usuario_sucia()?;
+    // Recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
+    unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
+    Some(p)
+}
+
 /// Páginas seguidas para tablas que lee un aparato del sistema, como el GIC (U6h): a cero, fuera de la caché, y para
 /// siempre (no se devuelven). Devuelve la dirección física.
 pub fn paginas_fijas(n: usize, alineacion: usize) -> Option<u64> {
@@ -355,14 +364,14 @@ impl Paginas {
     /// Una página para un proceso, a cero: su memoria, su imagen, su pila o sus tablas. Nunca toca las últimas
     /// `RESERVA` páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la
     /// memoria recibe un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
-    pub fn pagina_usuario(&mut self) -> Option<u64> {
+    ///
+    /// Sin poner a cero: eso lo hace `pagina_usuario` ya fuera del cerrojo (S2), para que los demás núcleos no esperen
+    /// a que se borren 4 KB por cada página de un `memoria_crear` grande.
+    fn pagina_usuario_sucia(&mut self) -> Option<u64> {
         if self.libres - self.libres_bajo <= RESERVA {
             return None;
         }
-        let p = self.pagina(Zona::Normal)?;
-        // Recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
-        unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-        Some(p)
+        self.pagina(Zona::Normal)
     }
 
     /// Devuelve `n` páginas desde `dir` al repartidor.
@@ -446,7 +455,7 @@ impl Memoria {
         let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
-            m.paginas.push(paginas().pagina_usuario()?);
+            m.paginas.push(pagina_usuario()?);
         }
         Some(m)
     }

@@ -27,7 +27,7 @@ import sys
 d = open(sys.argv[1], "rb").read()
 px = d[d.index(b"255\n") + 4:]
 p = lambda x, y: px[(y * 800 + x) * 3:(y * 800 + x) * 3 + 3].hex()
-bien = p(45, 45) == "3366cc" and p(45, 135) == "ffffff" and p(45, 125) == "3366cc" and p(5, 5) == "204060"
+bien = p(45, 45) == "3366cc" and p(45, 135) == "ffffff" and p(45, 125) == "3366cc" and p(5, 5) == "204060" and p(195, 55) == "cc3333"
 print("G1: libwayland por el puente de la caja Linux:", "bien" if bien else f"MAL ({p(45, 45)} {p(45, 135)} {p(5, 5)})")
 sys.exit(0 if bien else 1)
 PY

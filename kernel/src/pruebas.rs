@@ -929,7 +929,7 @@ fn prueba_dma() {
     let pila = mapa::pila_nueva();
     let pila_f = pila.as_ref().and_then(|p| mapa::traducir_fisica(p.tope() - 8)).unwrap_or(0);
     drop(pila);
-    let usuario = memoria::paginas().pagina_usuario().unwrap_or(0);
+    let usuario = memoria::pagina_usuario().unwrap_or(0);
     let dma = memoria::paginas().pagina(memoria::Zona::Dma1G).unwrap_or(u64::MAX);
     unsafe {
         memoria::paginas().liberar(usuario, 1);

@@ -784,6 +784,234 @@ pub mod xdg_popup {
     }
 }
 
+pub static ZWLR_LAYER_SHELL_V1: Interface = Interface {
+    name: "zwlr_layer_shell_v1",
+    version: 5,
+    requests: &[
+        Message { name: "get_layer_surface", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zwlr_layer_surface_v1") }, Arg { name: "surface", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "output", kind: Kind::Object, nullable: true, interface: Some("wl_output") }, Arg { name: "layer", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "namespace", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "destroy", since: 3, destructor: true, args: &[] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwlr_layer_shell_v1`.
+pub mod zwlr_layer_shell_v1 {
+    pub mod req {
+        pub const GET_LAYER_SURFACE: u16 = 0;
+        pub const DESTROY: u16 = 1;
+    }
+    pub mod ev {
+    }
+}
+
+pub static ZWLR_LAYER_SURFACE_V1: Interface = Interface {
+    name: "zwlr_layer_surface_v1",
+    version: 5,
+    requests: &[
+        Message { name: "set_size", since: 1, destructor: false, args: &[Arg { name: "width", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "height", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "set_anchor", since: 1, destructor: false, args: &[Arg { name: "anchor", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "set_exclusive_zone", since: 1, destructor: false, args: &[Arg { name: "zone", kind: Kind::Int, nullable: false, interface: None }] },
+        Message { name: "set_margin", since: 1, destructor: false, args: &[Arg { name: "top", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "right", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "bottom", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "left", kind: Kind::Int, nullable: false, interface: None }] },
+        Message { name: "set_keyboard_interactivity", since: 1, destructor: false, args: &[Arg { name: "keyboard_interactivity", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "get_popup", since: 1, destructor: false, args: &[Arg { name: "popup", kind: Kind::Object, nullable: false, interface: Some("xdg_popup") }] },
+        Message { name: "ack_configure", since: 1, destructor: false, args: &[Arg { name: "serial", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "set_layer", since: 2, destructor: false, args: &[Arg { name: "layer", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "set_exclusive_edge", since: 5, destructor: false, args: &[Arg { name: "edge", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "configure", since: 1, destructor: false, args: &[Arg { name: "serial", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "width", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "height", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "closed", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwlr_layer_surface_v1`.
+pub mod zwlr_layer_surface_v1 {
+    pub mod req {
+        pub const SET_SIZE: u16 = 0;
+        pub const SET_ANCHOR: u16 = 1;
+        pub const SET_EXCLUSIVE_ZONE: u16 = 2;
+        pub const SET_MARGIN: u16 = 3;
+        pub const SET_KEYBOARD_INTERACTIVITY: u16 = 4;
+        pub const GET_POPUP: u16 = 5;
+        pub const ACK_CONFIGURE: u16 = 6;
+        pub const DESTROY: u16 = 7;
+        pub const SET_LAYER: u16 = 8;
+        pub const SET_EXCLUSIVE_EDGE: u16 = 9;
+    }
+    pub mod ev {
+        pub const CONFIGURE: u16 = 0;
+        pub const CLOSED: u16 = 1;
+    }
+}
+
+pub static EXT_SESSION_LOCK_MANAGER_V1: Interface = Interface {
+    name: "ext_session_lock_manager_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "lock", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("ext_session_lock_v1") }] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `ext_session_lock_manager_v1`.
+pub mod ext_session_lock_manager_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const LOCK: u16 = 1;
+    }
+    pub mod ev {
+    }
+}
+
+pub static EXT_SESSION_LOCK_V1: Interface = Interface {
+    name: "ext_session_lock_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "get_lock_surface", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("ext_session_lock_surface_v1") }, Arg { name: "surface", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }, Arg { name: "output", kind: Kind::Object, nullable: false, interface: Some("wl_output") }] },
+        Message { name: "unlock_and_destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "locked", since: 1, destructor: false, args: &[] },
+        Message { name: "finished", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `ext_session_lock_v1`.
+pub mod ext_session_lock_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const GET_LOCK_SURFACE: u16 = 1;
+        pub const UNLOCK_AND_DESTROY: u16 = 2;
+    }
+    pub mod ev {
+        pub const LOCKED: u16 = 0;
+        pub const FINISHED: u16 = 1;
+    }
+}
+
+pub static EXT_SESSION_LOCK_SURFACE_V1: Interface = Interface {
+    name: "ext_session_lock_surface_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "ack_configure", since: 1, destructor: false, args: &[Arg { name: "serial", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "configure", since: 1, destructor: false, args: &[Arg { name: "serial", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "width", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "height", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `ext_session_lock_surface_v1`.
+pub mod ext_session_lock_surface_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ACK_CONFIGURE: u16 = 1;
+    }
+    pub mod ev {
+        pub const CONFIGURE: u16 = 0;
+    }
+}
+
+pub static ZWP_LINUX_DMABUF_V1: Interface = Interface {
+    name: "zwp_linux_dmabuf_v1",
+    version: 6,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "create_params", since: 1, destructor: false, args: &[Arg { name: "params_id", kind: Kind::NewId, nullable: false, interface: Some("zwp_linux_buffer_params_v1") }] },
+        Message { name: "get_default_feedback", since: 4, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zwp_linux_dmabuf_feedback_v1") }] },
+        Message { name: "get_surface_feedback", since: 4, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zwp_linux_dmabuf_feedback_v1") }, Arg { name: "surface", kind: Kind::Object, nullable: false, interface: Some("wl_surface") }] },
+    ],
+    events: &[
+        Message { name: "format", since: 1, destructor: false, args: &[Arg { name: "format", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "modifier", since: 3, destructor: false, args: &[Arg { name: "format", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "modifier_hi", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "modifier_lo", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_linux_dmabuf_v1`.
+pub mod zwp_linux_dmabuf_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const CREATE_PARAMS: u16 = 1;
+        pub const GET_DEFAULT_FEEDBACK: u16 = 2;
+        pub const GET_SURFACE_FEEDBACK: u16 = 3;
+    }
+    pub mod ev {
+        pub const FORMAT: u16 = 0;
+        pub const MODIFIER: u16 = 1;
+    }
+}
+
+pub static ZWP_LINUX_BUFFER_PARAMS_V1: Interface = Interface {
+    name: "zwp_linux_buffer_params_v1",
+    version: 6,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "add", since: 1, destructor: false, args: &[Arg { name: "fd", kind: Kind::Fd, nullable: false, interface: None }, Arg { name: "plane_idx", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "offset", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "stride", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "modifier_hi", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "modifier_lo", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "create", since: 1, destructor: false, args: &[Arg { name: "width", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "height", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "format", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "flags", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "create_immed", since: 2, destructor: false, args: &[Arg { name: "buffer_id", kind: Kind::NewId, nullable: false, interface: Some("wl_buffer") }, Arg { name: "width", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "height", kind: Kind::Int, nullable: false, interface: None }, Arg { name: "format", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "flags", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "set_sampling_device", since: 6, destructor: false, args: &[Arg { name: "device", kind: Kind::Array, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "created", since: 1, destructor: false, args: &[Arg { name: "buffer", kind: Kind::NewId, nullable: false, interface: Some("wl_buffer") }] },
+        Message { name: "failed", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_linux_buffer_params_v1`.
+pub mod zwp_linux_buffer_params_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const ADD: u16 = 1;
+        pub const CREATE: u16 = 2;
+        pub const CREATE_IMMED: u16 = 3;
+        pub const SET_SAMPLING_DEVICE: u16 = 4;
+    }
+    pub mod ev {
+        pub const CREATED: u16 = 0;
+        pub const FAILED: u16 = 1;
+    }
+}
+
+pub static ZWP_LINUX_DMABUF_FEEDBACK_V1: Interface = Interface {
+    name: "zwp_linux_dmabuf_feedback_v1",
+    version: 6,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "done", since: 1, destructor: false, args: &[] },
+        Message { name: "format_table", since: 1, destructor: false, args: &[Arg { name: "fd", kind: Kind::Fd, nullable: false, interface: None }, Arg { name: "size", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "main_device", since: 1, destructor: false, args: &[Arg { name: "device", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "tranche_done", since: 1, destructor: false, args: &[] },
+        Message { name: "tranche_target_device", since: 1, destructor: false, args: &[Arg { name: "device", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "tranche_formats", since: 1, destructor: false, args: &[Arg { name: "indices", kind: Kind::Array, nullable: false, interface: None }] },
+        Message { name: "tranche_flags", since: 1, destructor: false, args: &[Arg { name: "flags", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_linux_dmabuf_feedback_v1`.
+pub mod zwp_linux_dmabuf_feedback_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+    }
+    pub mod ev {
+        pub const DONE: u16 = 0;
+        pub const FORMAT_TABLE: u16 = 1;
+        pub const MAIN_DEVICE: u16 = 2;
+        pub const TRANCHE_DONE: u16 = 3;
+        pub const TRANCHE_TARGET_DEVICE: u16 = 4;
+        pub const TRANCHE_FORMATS: u16 = 5;
+        pub const TRANCHE_FLAGS: u16 = 6;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -812,4 +1040,12 @@ pub static INTERFACES: &[&Interface] = &[
     &XDG_SURFACE,
     &XDG_TOPLEVEL,
     &XDG_POPUP,
+    &ZWLR_LAYER_SHELL_V1,
+    &ZWLR_LAYER_SURFACE_V1,
+    &EXT_SESSION_LOCK_MANAGER_V1,
+    &EXT_SESSION_LOCK_V1,
+    &EXT_SESSION_LOCK_SURFACE_V1,
+    &ZWP_LINUX_DMABUF_V1,
+    &ZWP_LINUX_BUFFER_PARAMS_V1,
+    &ZWP_LINUX_DMABUF_FEEDBACK_V1,
 ];

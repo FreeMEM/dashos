@@ -24,6 +24,7 @@ static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
 static struct wl_seat *asiento;
+static struct wl_subcompositor *subcompositor;
 static int mapa_bien = -1;
 static struct wl_surface *superficie;
 static struct wl_buffer *buferes[2];
@@ -37,6 +38,7 @@ static void global(void *d, struct wl_registry *r, uint32_t nombre, const char *
     else if (!strcmp(interfaz, "wl_shm")) shm = wl_registry_bind(r, nombre, &wl_shm_interface, 1);
     else if (!strcmp(interfaz, "xdg_wm_base")) wm = wl_registry_bind(r, nombre, &xdg_wm_base_interface, 1);
     else if (!strcmp(interfaz, "wl_seat")) asiento = wl_registry_bind(r, nombre, &wl_seat_interface, 4);
+    else if (!strcmp(interfaz, "wl_subcompositor")) subcompositor = wl_registry_bind(r, nombre, &wl_subcompositor_interface, 1);
     (void)version;
 }
 static void global_quitado(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
@@ -133,6 +135,26 @@ int main(void) {
     }
     close(fd);
     superficie = wl_compositor_create_surface(compositor);
+    /* G3: una subsuperficie roja de 20 x 20 en (150, 10), como un botón de un borde dibujado por el programa. Va
+     * sincronizada: se ve con el primer commit de la ventana. */
+    if (!subcompositor) {
+        fprintf(stderr, "cliente: sin wl_subcompositor\n");
+        return 8;
+    }
+    int fd2 = memfd_create("dashos-boton", MFD_CLOEXEC);
+    if (fd2 < 0 || ftruncate(fd2, 20 * 20 * 4) < 0) return 4;
+    uint32_t *rojo = mmap(NULL, 20 * 20 * 4, PROT_READ | PROT_WRITE, MAP_SHARED, fd2, 0);
+    if (rojo == MAP_FAILED) return 4;
+    for (int i = 0; i < 20 * 20; i++) rojo[i] = 0xffcc3333;
+    struct wl_shm_pool *pool2 = wl_shm_create_pool(shm, fd2, 20 * 20 * 4);
+    struct wl_buffer *b2 = wl_shm_pool_create_buffer(pool2, 0, 20, 20, 80, WL_SHM_FORMAT_XRGB8888);
+    close(fd2);
+    struct wl_surface *boton = wl_compositor_create_surface(compositor);
+    struct wl_subsurface *sub = wl_subcompositor_get_subsurface(subcompositor, boton, superficie);
+    wl_subsurface_set_position(sub, 150, 10);
+    wl_surface_attach(boton, b2, 0, 0);
+    wl_surface_damage(boton, 0, 0, 20, 20);
+    wl_surface_commit(boton);
     struct xdg_surface *xs = xdg_wm_base_get_xdg_surface(wm, superficie);
     xdg_surface_add_listener(xs, &oyente_xdg, NULL);
     struct xdg_toplevel *top = xdg_surface_get_toplevel(xs);

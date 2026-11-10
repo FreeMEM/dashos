@@ -55,6 +55,29 @@ static u64 frecuencia(void)
 static u64 a_us(u64 c) { return c * 1000 / (frecuencia() / 1000); }
 static u64 de_us(u64 us) { return us * (frecuencia() / 1000) / 1000; }
 
+/* Histograma de rondas de ping (R7, B2), como en Rust: de 100 en 100 ns hasta 102,4 µs, luego de 10 en 10 µs. */
+static unsigned short histo[2048];
+
+static void meter(u64 ns)
+{
+    u64 i = ns < 102400 ? ns / 100 : 1024 + ((ns - 102400) / 10000 < 1023 ? (ns - 102400) / 10000 : 1023);
+    if (histo[i] < 65535)
+        histo[i]++;
+}
+
+static u64 cuantil(u64 q, u64 n)
+{
+    u64 meta = (n * q + 999) / 1000, suma = 0;
+    if (meta == 0)
+        meta = 1;
+    for (u64 i = 0; i < 2048; i++) {
+        suma += histo[i];
+        if (suma >= meta)
+            return i < 1024 ? (i + 1) * 100 : 102400 + (i - 1023) * 10000;
+    }
+    return 0;
+}
+
 __attribute__((noinline)) static u32 unidad(u32 x)
 {
     for (int i = 0; i < 256; i++)
@@ -143,6 +166,11 @@ static int principal(void)
             responder();
         } else if (empieza(b, (int)n, "ping")) {
             u64 m = 0;
+            for (u64 i = 0; i < 500; i++) {
+                m = i;
+                escribir(otro, &m, 8);
+                leer(otro, &m, 8);
+            }
             u64 t0 = cuentas();
             for (u64 i = 0; i < x; i++) {
                 m = i;
@@ -150,8 +178,22 @@ static int principal(void)
                 leer(otro, &m, 8);
             }
             u64 us = a_us(cuentas() - t0);
+            for (int i = 0; i < 2048; i++)
+                histo[i] = 0;
+            u64 ant = cuentas(), max = 0, khz = frecuencia() / 1000;
+            for (u64 i = 0; i < x; i++) {
+                m = i;
+                escribir(otro, &m, 8);
+                leer(otro, &m, 8);
+                u64 t = cuentas(), ns = (t - ant) * 1000000 / khz;
+                ant = t;
+                meter(ns);
+                if (ns > max)
+                    max = ns;
+            }
             cerrar(otro);
             poner("ping "); poner_num(x); poner(" "); poner_num(us); poner(" "); poner_num(nucleo());
+            poner(" "); poner_num(cuantil(500, x)); poner(" "); poner_num(cuantil(990, x)); poner(" "); poner_num(max);
             responder();
         } else if (empieza(b, (int)n, "calc")) {
             u64 n0 = nucleo(), umbral = de_us(200), t0 = cuentas(), fin = t0 + de_us(x * 1000), ant = t0;
