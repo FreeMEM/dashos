@@ -40,7 +40,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | pendiente |
-| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | pendiente |
+| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 
@@ -229,3 +229,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `C/Privado/nota.txt` (0600, del 1000). Prueba hostil: el hostil (1001, encerrado en `C`) lee con esa asa, pero no
   escribe en ella, no la cede (no tiene el derecho) y sigue sin abrir el fichero por su nombre. En el hostil, el
   canal "selector" es la llave 5. Falta de U5: la ventana del selector y `guardian` con sus acciones de administrador.
+- R19 (U6), el registro de seguridad: `sesiones` apunta cada negativa (matar a otro usuario, la llave de un servicio
+  sin permiso, entrar o volver con contraseña mala o sin ser `guardian`) y cada proceso que muere por un fallo, con
+  quién y qué, en un anillo de 64 en memoria; REGISTRO lo da por páginas, solo a `guardian`. Prueba: `entrada` lee
+  6 entradas y encuentra los tres intentos del hostil; el hostil pide el registro y se le niega. Falta guardarlo en
+  el disco (cuando `sesiones` tenga su cajón), Prefs de usuarios, PID en el kernel y cambio rápido de usuario.

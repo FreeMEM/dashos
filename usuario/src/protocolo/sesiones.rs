@@ -28,6 +28,17 @@ pub const VOLVER: u32 = 5;
 pub const SERVICIO: u32 = 6;
 /// De un programa: renunciar a la llave de un servicio (como `SERVICIO`). `sesiones` la revoca: deja de servir.
 pub const DEJAR: u32 = 7;
+/// De `guardian` (U6): el registro de seguridad desde la entrada que se diga (u64), por páginas de
+/// `POR_PAGINA_REGISTRO`: cuántas van (u32), cuántas hay (u32) y las entradas de `ENTRADA_REGISTRO` bytes (tipo u32,
+/// estado i32, quién 16 bytes, qué 16 bytes). A cualquier otro le contesta -2 (cuatro bytes).
+pub const REGISTRO: u32 = 8;
+pub const ENTRADA_REGISTRO: usize = 40;
+pub const POR_PAGINA_REGISTRO: usize = 5;
+/// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
+pub const R_MATAR: u32 = 1;
+pub const R_SERVICIO: u32 = 2;
+pub const R_ENTRAR: u32 = 3;
+pub const R_FALLO: u32 = 4;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

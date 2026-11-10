@@ -106,6 +106,9 @@ DashOS en marcha con 4 núcleos.
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 ~│   [selector] cede C/Privado/nota.txt solo para leer: 0
 ~│   [hostil] selector: bien
+# U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.
+~│   [entrada] registro de seguridad: 
+~las del hostil (matar, servicio, entrar): bien
 ~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)
 ~│   [sesiones] baja de caida-cliente (clase 0)
 ~│   [sesiones] vuelve caida, con su grupo nuevo

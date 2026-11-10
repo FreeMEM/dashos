@@ -38,6 +38,33 @@ const VA_VENTANA: usize = 0x40_0000_0000;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 
+/// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos, en memoria. (Al disco, cuando
+/// `sesiones` tenga su cajón: hoy no puede escribir en el disco de pruebas.)
+const REGISTRO_MAX: usize = 64;
+struct Registro {
+    entradas: [[u8; ENTRADA_REGISTRO]; REGISTRO_MAX],
+    total: usize,
+}
+
+impl Registro {
+    fn apuntar(&mut self, tipo: u32, estado: i32, quien: &[u8], que: &[u8]) {
+        let e = &mut self.entradas[self.total % REGISTRO_MAX];
+        e.fill(0);
+        e[0..4].copy_from_slice(&tipo.to_le_bytes());
+        e[4..8].copy_from_slice(&estado.to_le_bytes());
+        let q = quien.iter().position(|&c| c == 0).map_or(quien, |n| &quien[..n]);
+        e[8..8 + q.len().min(16)].copy_from_slice(&q[..q.len().min(16)]);
+        e[24..24 + que.len().min(16)].copy_from_slice(&que[..que.len().min(16)]);
+        self.total += 1;
+    }
+
+    /// Las entradas que se guardan, de la más vieja a la más nueva.
+    fn entrada(&self, i: usize) -> Option<&[u8; ENTRADA_REGISTRO]> {
+        let guardadas = self.total.min(REGISTRO_MAX);
+        (i < guardadas).then(|| &self.entradas[(self.total - guardadas + i) % REGISTRO_MAX])
+    }
+}
+
 /// Su sesión con el servicio de archivos: el canal por el que le contesta.
 struct Archivos {
     lectura: u32,
@@ -109,6 +136,7 @@ fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
+    let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0 };
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     let mut idos = [0u64; 8];
     let mut ido = 0;
@@ -134,6 +162,9 @@ fn principal() -> u64 {
                 let f = fichas[i].take().unwrap();
                 dashos::cerrar(f.grupo);
                 println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
+                if u64_en(0) == 2 {
+                    registro.apuntar(R_FALLO, 2, &f.nombre, b"");
+                }
                 idos[ido % idos.len()] = f.marca;
                 ido += 1;
             }
@@ -198,9 +229,30 @@ fn principal() -> u64 {
                     }
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     println!("  [sesiones] {} pide {} como {}: {}", nombre(&pide), que, quien, estado);
+                    if estado == dashos::protocolo::archivos::PROTEGIDO {
+                        registro.apuntar(R_ENTRAR, estado, &pide, quien.as_bytes());
+                    }
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
+                }
+                REGISTRO => {
+                    // Solo `guardian` lee el registro (U6).
+                    if !yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) {
+                        dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
+                    } else {
+                        let desde = u64_en(4) as usize;
+                        let mut r = [0u8; 8 + ENTRADA_REGISTRO * POR_PAGINA_REGISTRO];
+                        let mut van = 0;
+                        while van < POR_PAGINA_REGISTRO {
+                            let Some(e) = registro.entrada(desde + van) else { break };
+                            r[8 + ENTRADA_REGISTRO * van..8 + ENTRADA_REGISTRO * (van + 1)].copy_from_slice(e);
+                            van += 1;
+                        }
+                        r[0..4].copy_from_slice(&(van as u32).to_le_bytes());
+                        r[4..8].copy_from_slice(&(registro.total.min(REGISTRO_MAX) as u32).to_le_bytes());
+                        dashos::canal_escribir(respuesta, &r[..8 + ENTRADA_REGISTRO * van], &[]);
+                    }
                 }
                 SERVICIO | DEJAR => {
                     let nl = u32_en(4) as usize;
@@ -239,7 +291,10 @@ fn principal() -> u64 {
                                 }
                             }
                         }
-                        (SERVICIO, Some(_)) => PROTEGIDO,
+                        (SERVICIO, Some(_)) => {
+                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                            PROTEGIDO
+                        }
                         (_, Some(s)) => {
                             // Dejar: se revocan todas las suyas de ese servicio.
                             let mut alguna = false;
@@ -279,6 +334,7 @@ fn principal() -> u64 {
                             let f = fichas[i].unwrap();
                             if f.uid != yo.uid {
                                 println!("  [sesiones] {} (usuario {}) no puede matar a {} (usuario {})", nombre(&yo.nombre), yo.uid, nombre(&f.nombre), f.uid);
+                                registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);
                                 PROTEGIDO
                             } else {
                                 dashos::grupo_matar(f.grupo);

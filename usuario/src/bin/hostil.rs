@@ -454,8 +454,19 @@ fn sesiones(memoria: u32) -> bool {
     if servicio != s::PROTEGIDO || k != 0 {
         println!("  [hostil] sesiones: la llave de eco sin permiso da {} con {} llaves (tenía que dar -2 y ninguna)", servicio, k);
     }
+    // U6: leer el registro de seguridad, sin ser `guardian`.
+    let mut p = [0u8; 12];
+    p[0..4].copy_from_slice(&s::REGISTRO.to_le_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rr = [0u8; 256];
+    let registro = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rr, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let registro_negado = registro == 4 && i32::from_le_bytes(rr[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    if !registro_negado {
+        println!("  [hostil] sesiones: leer el registro de seguridad da {} bytes (tenía que negarse)", registro);
+    }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0;
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

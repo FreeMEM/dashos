@@ -6,7 +6,7 @@
 #![no_main]
 
 use dashos::println;
-use dashos::protocolo::sesiones::{ENTRAR, SALIR, VOLVER};
+use dashos::protocolo::sesiones::{ENTRADA_REGISTRO, ENTRAR, POR_PAGINA_REGISTRO, REGISTRO, R_ENTRAR, R_MATAR, R_SERVICIO, SALIR, VOLVER};
 
 dashos::programa!(principal);
 
@@ -51,5 +51,54 @@ fn principal() -> u64 {
         salir,
         if bien { "bien" } else { "MAL" }
     );
-    if bien { 0 } else { 1 }
+    // U6: el registro de seguridad tiene que acabar teniendo los tres intentos del hostil (matar al compositor, la llave
+    // de `eco` y entrar como Carla). Se mira cada medio segundo, hasta 20 s.
+    let mut visto = (0, [false; 3]);
+    for _ in 0..40 {
+        visto = registro_del_hostil();
+        if visto.1.iter().all(|&x| x) {
+            break;
+        }
+        dashos::dormir_us(500_000);
+    }
+    let todo = visto.1.iter().all(|&x| x);
+    println!("  [entrada] registro de seguridad: {} entradas; las del hostil (matar, servicio, entrar): {}", visto.0, if todo { "bien" } else { "FALTAN" });
+    if bien && todo { 0 } else { 1 }
+}
+
+/// Lee el registro entero: cuántas entradas hay y si están las tres del hostil.
+fn registro_del_hostil() -> (usize, [bool; 3]) {
+    let mut vistos = [false; 3];
+    let mut desde = 0;
+    let mut total = 0;
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&REGISTRO.to_le_bytes());
+        p[4..12].copy_from_slice(&(desde as u64).to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 8 + ENTRADA_REGISTRO * POR_PAGINA_REGISTRO];
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n < 8 {
+            return (total, vistos);
+        }
+        let van = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
+        total = u32::from_le_bytes(r[4..8].try_into().unwrap()) as usize;
+        for i in 0..van {
+            let e = &r[8 + ENTRADA_REGISTRO * i..8 + ENTRADA_REGISTRO * (i + 1)];
+            let tipo = u32::from_le_bytes(e[0..4].try_into().unwrap());
+            if &e[8..15] == b"hostil\0" {
+                match tipo {
+                    R_MATAR => vistos[0] = true,
+                    R_SERVICIO => vistos[1] = true,
+                    R_ENTRAR => vistos[2] = true,
+                    _ => {}
+                }
+            }
+        }
+        desde += van;
+        if van == 0 || desde >= total {
+            return (total, vistos);
+        }
+    }
 }
