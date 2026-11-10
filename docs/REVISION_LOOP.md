@@ -176,3 +176,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (-94 %). Con 4 cargas (`sonido-carga`), 16 µs. Las pruebas de sonido (`arranque-virt`, `sonido-carga`,
   `sonido-paula`) siguen sin huecos ni chasquidos; las 8 de PC del mezclador, adaptadas (comparan lo mismo pasando a
   -1..1). Falta de E9: mezclar directo del anillo del cliente a la ranura de salida.
+- R18, K2 y K3: la tabla de llaves lleva la cuenta de sus huecos y desde dónde buscar (antes, `huecos` recorría hasta
+  1.024 entradas en cada lectura); un mensaje sin llaves no toma la tabla ni al escribir ni al leer. Medido (7
+  arranques, frente a r19): la ida y vuelta baja del 3 al 8 % en todas las variantes (entre núcleos, 64,1 a 59,7 µs;
+  con carga, 90,3 a 83,9), casi todo dentro de la dispersión pero en el mismo sentido. `malo` (llaves repetidas,
+  tabla llena, canales cerrados) y el hostil pasan.

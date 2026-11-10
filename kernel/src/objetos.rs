@@ -592,6 +592,10 @@ impl Canal {
 #[derive(Default)]
 pub struct TablaLlaves {
     llaves: Vec<Option<Llave>>,
+    /// Huecos vacíos dentro de `llaves` (sin contar el 0), y por debajo de cuál no hay ninguno (K2): ni `huecos` ni
+    /// `instalar` recorren la tabla entera en cada mensaje.
+    libres: usize,
+    primero: usize,
 }
 
 impl TablaLlaves {
@@ -604,9 +608,15 @@ impl TablaLlaves {
             }
             self.llaves.push(None);
         }
-        if let Some(i) = self.llaves.iter().skip(1).position(|x| x.is_none()) {
-            self.llaves[i + 1] = Some(l);
-            return Ok((i + 1) as u32);
+        if self.libres > 0 {
+            let desde = self.primero.max(1);
+            if let Some(i) = self.llaves[desde..].iter().position(|x| x.is_none()) {
+                let i = desde + i;
+                self.llaves[i] = Some(l);
+                self.libres -= 1;
+                self.primero = i + 1;
+                return Ok(i as u32);
+            }
         }
         if self.llaves.len() > MAX_TABLA || self.llaves.try_reserve(1).is_err() {
             return Err(l);
@@ -622,8 +632,7 @@ impl TablaLlaves {
 
     /// Cuántas llaves caben todavía sin pasar de `MAX_TABLA`.
     pub fn huecos(&self) -> usize {
-        let libres = self.llaves.iter().skip(1).filter(|x| x.is_none()).count();
-        libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
+        self.libres + (MAX_TABLA + 1).saturating_sub(self.llaves.len().max(1))
     }
 
     /// La llave `h` lista para usarse: si es revocable, con el objeto de detrás (y `None` si está revocada).
@@ -655,7 +664,12 @@ impl TablaLlaves {
     }
 
     pub fn quitar(&mut self, h: u32) -> Option<Llave> {
-        self.llaves.get_mut(h as usize).and_then(|x| x.take())
+        let l = self.llaves.get_mut(h as usize).and_then(|x| x.take());
+        if l.is_some() {
+            self.libres += 1;
+            self.primero = self.primero.min(h as usize);
+        }
+        l
     }
 
     /// La llave `h` como queda al llegar a este proceso (`Llave::llegada`, S4).
@@ -671,6 +685,7 @@ impl TablaLlaves {
     pub fn reponer(&mut self, h: u32, l: Llave) {
         if let Some(x @ None) = self.llaves.get_mut(h as usize) {
             *x = Some(l);
+            self.libres -= 1;
         }
     }
 }

@@ -252,7 +252,8 @@ fn canal_escribir(h: u32, datos: u64, largo: u64, llaves: u64, n_llaves: u64) ->
     // Las llaves que viajan salen de la tabla de quien manda. Hacen falta derechos de transferir.
     let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
     let mut viajan = Vec::new();
-    {
+    // Sin llaves que viajen, la tabla ni se toma (K3).
+    if !numeros.is_empty() {
         let mut t = proc_.llaves.tomar();
         for (i, &n) in numeros.iter().enumerate() {
             // Una llave repetida en la tabla es un error, no un pánico (auditoría, hallazgo 6).
@@ -327,6 +328,12 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return E_ARGUMENTO;
     }
     let largo = m.datos.len() as u64;
+    // Sin llaves en el mensaje, ni se toma la tabla ni se escribe nada en la del proceso (K3).
+    if m.llaves.is_empty() {
+        marco.poner_x1(0);
+        marco.poner_x2(m.marca);
+        return largo;
+    }
     let mut t = proc_.llaves.tomar();
     if t.huecos() < m.llaves.len() {
         drop(t);
