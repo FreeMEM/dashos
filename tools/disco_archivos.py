@@ -96,6 +96,9 @@ with tempfile.TemporaryDirectory() as t:
     # La raíz de "Ana", del 1000 al crearla: cambiarla después la reescribiría con la llave del volumen.
     subprocess.run([volumen, fs, "create-encrypted", "Ana", "--test-cost"], input=b"clave de Ana\n", check=True,
                    env={**os.environ, "REDOXFS_DUENO": "1000:1000"})
+    # U3: "Carla", el volumen de la usuaria 1001, que `sesiones` abre al entrar y cierra al salir.
+    subprocess.run([volumen, fs, "create-encrypted", "Carla", "--test-cost"], input=b"clave de Carla\n", check=True,
+                   env={**os.environ, "REDOXFS_DUENO": "1001:1001"})
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     d = bytearray(1 << 20)

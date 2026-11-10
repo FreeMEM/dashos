@@ -166,6 +166,10 @@ path = "src/bin/sesiones.rs"
 [[bin]]
 name = "presa"
 path = "src/bin/presa.rs"
+
+[[bin]]
+name = "entrada"
+path = "src/bin/entrada.rs"
 test = false
 required-features = ["ventanas"]
 

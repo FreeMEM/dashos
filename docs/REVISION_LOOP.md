@@ -36,7 +36,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6, E9 y casi todo E8 (E7, pendiente) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | pendiente |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | pendiente |
 | R17 | `guardian` y `selector` | U5 | pendiente |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | pendiente |
@@ -204,3 +204,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   de la cola y el servicio ya no atendía a nadie. Además giraba sin dormir al fallar la lectura (E2). Con el tipo del
   búfer en `recibir`, ningún servicio que lo use puede volver a caer. El hostil ahora inunda también `sesiones` y
   luego comprueba que sigue contestando. Faltan archivos y NVMe (hacen trabajo entre leer y mirar el error).
+- R15 (U3), primera parte: `sesiones` es cliente del servicio de archivos (ficha con el derecho de administrar
+  volúmenes, raíz entera; no lee lo de nadie) y atiende ENTRAR y SALIR: abre o cierra el volumen cifrado del usuario,
+  con la contraseña por la ventana (A13) y borrada de su memoria tras usarla (regla 9). Solo los pide `guardian` (en
+  las pruebas, `entrada`, que hace de él). Disco de pruebas: volumen "Carla" (1001, "clave de Carla"). `sesiones`
+  va ahora tras archivos y `inicio` da de alta también lo lanzado antes; en el hostil, las llaves pasan a ventanas 1,
+  archivos 2, sesiones 3, sonido 4. Pruebas: `entrada` entra con contraseña mala (-12), con la buena (0) y sale (0);
+  el hostil intenta entrar como Carla con la contraseña buena y recibe -12. `ficheros` ve ahora dos volúmenes.
+  Falta de U3: la pantalla de `guardian`, el bloqueo de la sesión (compositor G5) y comprobar la contraseña al volver
+  sin tocar el volumen.

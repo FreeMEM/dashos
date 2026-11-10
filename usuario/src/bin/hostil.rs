@@ -29,10 +29,11 @@ use wayland::{Escritor, leer_cabecera};
 dashos::programa!(principal);
 dashos::monton!();
 
-// Las llaves van en el orden en que se nombra cada canal por primera vez en el arranque: "sesiones" es el primero.
-const SESIONES: u32 = 1;
-const VENTANAS: u32 = 2;
-const ARCHIVOS: u32 = 3;
+// Las llaves van en el orden en que se nombra cada canal por primera vez en el arranque: ventanas, archivos,
+// sesiones (que va tras archivos, U3) y sonido.
+const VENTANAS: u32 = 1;
+const ARCHIVOS: u32 = 2;
+const SESIONES: u32 = 3;
 const SONIDO: u32 = 4;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
@@ -384,7 +385,26 @@ fn sesiones(memoria: u32) -> bool {
     let matar = |m: u64, r: &mut [u8; 4]| if pedir(dashos::protocolo::sesiones::MATAR, m, r) == 4 { i32::from_le_bytes(*r) } else { i32::MIN };
     let (a, c, d) = (matar(ajeno, &mut r), matar(presa, &mut r), matar(u64::MAX, &mut r));
     use dashos::protocolo::sesiones as s;
-    let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja;
+    // U3: entrar como Carla, con su contraseña buena: solo `guardian` puede pedirlo.
+    let mut p = [0u8; 40];
+    let (usuario, clave) = (b"Carla", b"clave de Carla");
+    p[0..4].copy_from_slice(&s::ENTRAR.to_le_bytes());
+    p[4..8].copy_from_slice(&(usuario.len() as u32).to_le_bytes());
+    p[8..12].copy_from_slice(&(clave.len() as u32).to_le_bytes());
+    p[12..17].copy_from_slice(usuario);
+    p[17..31].copy_from_slice(clave);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r4 = [0u8; 4];
+    let entrar = if escribir(SESIONES, &p[..31], &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 2_000_000).0 == 4 {
+        i32::from_le_bytes(r4)
+    } else {
+        i32::MIN
+    };
+    dashos::cerrar(lectura);
+    if entrar != dashos::protocolo::archivos::PROTEGIDO {
+        println!("  [hostil] sesiones: entrar como Carla da {} (tenía que dar -12)", entrar);
+    }
+    let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

@@ -337,7 +337,8 @@ fn principal() -> u64 {
     // puede leer, y sin ella no hay permisos que mirar (R6; antes, vacío se listaba).
     let lista = c.pedir(VOLUMENES, 0, 0, 0, "");
     let v = c.ventana();
-    let listado = lista.estado == 0 && lista.a == 1 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
+    // Dos volúmenes: "Ana" y "Carla" (U3).
+    let listado = lista.estado == 0 && lista.a == 2 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
     let l = c.pedir(LISTAR, raiz.asa, 0, 0, "");
     let cerrado = raiz.estado == 0 && l.estado == PROTEGIDO;

@@ -23,7 +23,64 @@ use dashos::protocolo::sesiones::*;
 
 dashos::programa!(principal);
 
-const CANAL: u32 = 1;
+/// Llave 1: el canal del servicio de archivos; 2: el suyo (los canales van en el orden en que se nombran).
+const ARCHIVOS: u32 = 1;
+const CANAL: u32 = 2;
+/// Dónde ve su ventana del servicio de archivos.
+const VA_VENTANA: usize = 0x40_0000_0000;
+/// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
+const GUARDIANES: &[&str] = &["guardian", "entrada"];
+
+/// Su sesión con el servicio de archivos: el canal por el que le contesta.
+struct Archivos {
+    lectura: u32,
+}
+
+impl Archivos {
+    fn abrir() -> Option<Archivos> {
+        use dashos::protocolo::archivos as a;
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut p = [0u8; a::CABECERA];
+        p[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+        if dashos::canal_escribir(ARCHIVOS, &p, &[suyo]) != 0 {
+            return None;
+        }
+        let mut r = [0u8; 32];
+        let mut ll = [0u32; 1];
+        let (n, k) = dashos::canal_leer(lectura, &mut r, &mut ll);
+        if n != 32 || k != 1 || i32::from_le_bytes(r[0..4].try_into().unwrap()) != 0 || dashos::memoria_proyectar(ll[0], VA_VENTANA, true) != 0 {
+            return None;
+        }
+        Some(Archivos { lectura })
+    }
+
+    /// Una orden con `nombre` y `b`; el estado de la respuesta.
+    fn pedir(&self, orden: u32, b: u64, nombre: &[u8]) -> i32 {
+        let mut p = [0u8; 256];
+        let largo = nombre.len().min(256 - 32);
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[16..24].copy_from_slice(&b.to_le_bytes());
+        p[24..28].copy_from_slice(&(largo as u32).to_le_bytes());
+        p[32..32 + largo].copy_from_slice(&nombre[..largo]);
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + largo], &[]) != 0 {
+            return -1;
+        }
+        let mut r = [0u8; 32];
+        let (n, _) = dashos::canal_leer(self.lectura, &mut r, &mut []);
+        if n != 32 { -1 } else { i32::from_le_bytes(r[0..4].try_into().unwrap()) }
+    }
+
+    /// Abre el volumen `nombre` con `clave`: la clave va por la ventana, no en el mensaje (A13), y la borra el servicio.
+    fn abrir_volumen(&self, nombre: &[u8], clave: &[u8]) -> i32 {
+        let clave = &clave[..clave.len().min(128)];
+        let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 128) };
+        ventana[..clave.len()].copy_from_slice(clave);
+        let r = self.pedir(dashos::protocolo::archivos::ABRIR_VOLUMEN, clave.len() as u64, nombre);
+        // Por si el servicio no llegó a leerla.
+        ventana.fill(0);
+        r
+    }
+}
 const MAX: usize = 64;
 
 #[derive(Clone, Copy)]
@@ -46,7 +103,8 @@ fn principal() -> u64 {
     let mut ido = 0;
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
     let mut ll = [0u32; dashos::servicio::MAX_LLAVES];
-    println!("  [sesiones] en marcha");
+    let archivos = Archivos::abrir();
+    println!("  [sesiones] en marcha{}", if archivos.is_some() { ", con el servicio de archivos" } else { ", sin el servicio de archivos" });
     loop {
         let (n, k, marca) = match dashos::servicio::recibir(CANAL, &mut b, &mut ll) {
             dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
@@ -109,6 +167,24 @@ fn principal() -> u64 {
                     r[0..4].copy_from_slice(&(i as u32).to_le_bytes());
                     r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
                     dashos::canal_escribir(respuesta, &r[..8 + 32 * i], &[]);
+                }
+                ENTRAR | SALIR => {
+                    // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
+                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
+                    let estado = match (&archivos, guardian, m.get(12..12 + nl), m.get(12 + nl..12 + nl + cl)) {
+                        (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
+                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave),
+                        (Some(a), true, Some(usuario), _) => a.pedir(dashos::protocolo::archivos::CERRAR_VOLUMEN, 0, usuario),
+                        _ => -1,
+                    };
+                    let quien = m.get(12..12 + nl).and_then(|u| core::str::from_utf8(u).ok()).unwrap_or("?");
+                    let que = if u32_en(0) == ENTRAR { "entrar" } else { "salir" };
+                    let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    println!("  [sesiones] {} pide {} como {}: {}", nombre(&pide), que, quien, estado);
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                    // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
+                    b.fill(0);
                 }
                 MATAR => {
                     let objetivo = u64_en(4);

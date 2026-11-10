@@ -13,6 +13,14 @@ pub const POR_PAGINA: usize = 7;
 /// Lo que mide cada ficha en la lista: marca, uid, gid y nombre.
 pub const FICHA: usize = 32;
 
+/// De `guardian` (U3): entrar, con el nombre del usuario y su contraseña: orden, largo del nombre (u32), largo de la
+/// contraseña (u32), el nombre y la contraseña. `sesiones` abre su volumen cifrado. Contesta un i32: 0 dentro, -12
+/// contraseña mala (o quien pide no es `guardian`), -2 no hay volumen con ese nombre.
+pub const ENTRAR: u32 = 3;
+/// De `guardian`: salir (orden, largo del nombre, 0, el nombre). Cierra el volumen; contesta como `ENTRAR`, o -13 si
+/// algo suyo sigue abierto.
+pub const SALIR: u32 = 4;
+
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;
 pub const NO_EXISTE: i32 = -1;

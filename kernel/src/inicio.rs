@@ -27,10 +27,6 @@ static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none
 /// pasa a cada uno. Lo que ve cada servicio de los demás está en `docs/referencia/servicios.md`.
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
-    // Las fichas de los procesos (U2, primera parte), solo en `virt` por ahora: `inicio` le da de alta cada programa que
-    // lanza después. Va pronto para conocerlos a todos; su canal es el primero, así que en quien lo nombra es la llave 1.
-    #[cfg(feature = "virt")]
-    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[], &["sesiones"]),
     ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
     // El compositor nombra "ventanas" antes que los controladores de USB y que los clientes de Wayland: el primero que
     // nombra un canal es quien lee (el servidor), y los demás le escriben con copias marcadas (U6, W7). Un proceso solo
@@ -54,6 +50,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // cliente de prueba. Solo en `virt`, como la prueba de arriba.
     #[cfg(feature = "virt")]
     ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
+    // Las fichas de los procesos (U2) y la entrada de los usuarios (U3), solo en `virt` por ahora. Va tras archivos,
+    // del que es cliente (abre y cierra el volumen de cada usuario); `inicio` le da de alta también lo lanzado antes.
+    // Sus llaves: 1 archivos, 2 su canal "sesiones" (los canales van en el orden en que se nombran).
+    #[cfg(feature = "virt")]
+    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[], &["archivos", "sesiones"]),
+    // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
+    #[cfg(feature = "virt")]
+    ("entrada", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/entrada"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
     ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
     // Un ADF montado como volumen (S20, fase 1): el servicio lo lee por "archivos" y lo sirve por "imagen", con

@@ -28,6 +28,8 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     ("medir-fs", 1000, 1000, 1, ""),
     ("imagen", 1000, 1000, 0, ""),
     ("hostil", 1001, 1001, 0, "C"),
+    // U3: `sesiones` abre y cierra el volumen de cada usuario (administrar volúmenes); no lee lo de nadie.
+    ("sesiones", 1, 1, 1, ""),
 ];
 /// La orden de alta del servicio de archivos.
 const ALTA: u32 = 100;
@@ -146,8 +148,10 @@ fn principal() -> u64 {
     // Los clientes de cada canal (bit = número del programa), para darle otra vez a su servicio, si se relanza, sus
     // entradas del directorio y, al de archivos, sus altas.
     let mut clientes_de = [0u64; 32];
-    // El canal (sin marca) de `sesiones`, en cuanto se lance (U2).
+    // El canal (sin marca) de `sesiones`, en cuanto se lance (U2), y lo lanzado antes, para darlo de alta entonces.
     let mut sesiones = 0u32;
+    let mut antes = [(0usize, 0u64, 0u32, 0u32); 32];
+    let mut n_antes = 0;
     let (avisos_a, avisos) = canal_crear();
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
@@ -267,6 +271,13 @@ fn principal() -> u64 {
             if let Some(c) = (0..32).find(|&c| lee & (1 << c) != 0) {
                 sesiones = pendientes[c];
             }
+            for &(cab, marca, grupo, p) in &antes[..n_antes] {
+                alta_en_sesiones(sesiones, cab, marca, grupo);
+                baja_en_sesiones(sesiones, p, marca);
+            }
+        } else if sesiones == 0 && n_antes < antes.len() {
+            antes[n_antes] = (nombre_cab, i as u64 + 1, g as u32, proceso as u32);
+            n_antes += 1;
         } else if sesiones != 0 {
             alta_en_sesiones(sesiones, nombre_cab, i as u64 + 1, g as u32);
             baja_en_sesiones(sesiones, proceso as u32, i as u64 + 1);
