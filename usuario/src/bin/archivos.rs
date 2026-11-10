@@ -499,6 +499,8 @@ struct Cliente {
     fallo: Option<i32>,
     /// Lo que mide su ventana (A4).
     tam: usize,
+    /// Las asas que le cedieron (U1, U5) y con qué derechos (R, W): con ellas no se miran los permisos del fichero.
+    cedidas: BTreeMap<u32, u16>,
 }
 
 impl Cliente {
@@ -582,6 +584,38 @@ fn guardar(fs: &mut Fs) -> i32 {
             estado
         }
     }
+}
+
+/// CEDER (U1, U5): el cliente `i` da a otro (el de la marca `p.a`) una asa nueva para el nodo de su asa `p.asa`, con los
+/// derechos `p.b` (R, W), que no pueden ser más de los que él tiene sobre ese nodo.
+fn ceder(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, p: &Peticion, rec: &mut Recuerdos) -> Respuesta {
+    let Some(c) = clientes[i].as_ref() else { return mal(MAL_FORMADO) };
+    if c.ficha.derechos & D_REPARTIR == 0 {
+        return mal(PROTEGIDO);
+    }
+    let derechos = p.b as u16;
+    if derechos == 0 || derechos & !(R | W) != 0 {
+        return mal(MAL_FORMADO);
+    }
+    let asa_de = if p.asa == 0 { Some(c.ficha.raiz) } else { c.asas.get(&p.asa).copied() };
+    let Some((vol, n)) = asa_de else { return mal(ASA_MALA) };
+    let suyos = c.cedidas.get(&p.asa).copied();
+    let ficha = c.ficha;
+    let Some(j) = clientes.iter().position(|x| x.as_ref().is_some_and(|x| x.marca == p.a)) else { return mal(NO_EXISTE) };
+    let nodo = match rec.nodo(fs, vol, n) {
+        Ok(nodo) => nodo,
+        Err(e) => return mal(estado_de(e)),
+    };
+    let tiene = suyos.map_or_else(|| puede(&ficha, nodo.data(), derechos), |d| d & derechos == derechos);
+    if !tiene {
+        return mal(PROTEGIDO);
+    }
+    let otro = clientes[j].as_mut().unwrap();
+    let r = dar_asa(fs, otro, vol, &nodo);
+    if r.estado == BIEN {
+        otro.cedidas.insert(r.asa, derechos);
+    }
+    Respuesta { estado: r.estado, asa: r.asa, ..Default::default() }
 }
 
 /// Da una asa nueva para el nodo `n` del volumen `vol`, ya contado como abierto (si se borra, sigue vivo hasta que
@@ -851,6 +885,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
         }
         LEER => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let cedida = c.cedidas.get(&p.asa).copied();
             let cuanto = p.b.min(c.tam as u64) as usize;
             let v = c.ventana();
             // El nodo, de lo que recuerda el servicio (F7): sin recorrer el árbol en cada lectura.
@@ -862,7 +897,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if !puede(&ficha, nodo.data(), R) {
+                if !cedida.map_or_else(|| puede(&ficha, nodo.data(), R), |d| d & R != 0) {
                     return Err(negado());
                 }
                 // read_node_inner da lo que haya en un registro: se repite hasta llenar o acabar el fichero.
@@ -951,6 +986,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                 // Cerrar ya no espera al disco (A1): lo cambiado va con el guardado de cada segundo, o con VACIAR o
                 // GUARDAR. Si uno de esos guardados falló con algo suyo dentro, se le dice ahora (A2).
                 c.cambiadas.remove(&p.asa);
+                c.cedidas.remove(&p.asa);
                 let estado = c.fallo.take().unwrap_or(BIEN);
                 Respuesta { estado, asa: p.asa, ..Default::default() }
             }
@@ -958,6 +994,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
         },
         ESCRIBIR => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let cedida = c.cedidas.get(&p.asa).copied();
             if p.b > c.tam as u64 {
                 return mal(MAL_FORMADO);
             }
@@ -969,7 +1006,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(&ficha, nodo.data()) {
+                if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
                     return Err(Error::new(EACCES));
                 }
                 let k = tx.write_node(n, p.a, &datos, AHORA, 0)?;
@@ -1434,7 +1471,7 @@ fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca:
                 }
                 return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None, tam });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new() });
             i
         }
     };
@@ -1573,7 +1610,11 @@ fn principal() -> u64 {
         } else {
             let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &buf[CABECERA..CABECERA + largo] };
             let t0 = reloj();
-            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos, solo_lectura);
+            let r = if orden == CEDER {
+                ceder(&mut fs, &mut clientes, i, &p, &mut recuerdos)
+            } else {
+                atender(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos, solo_lectura)
+            };
             if r.estado == BIEN && !SOLO_LEEN.contains(&orden) {
                 clientes[i].as_mut().unwrap().pendiente = true;
             }

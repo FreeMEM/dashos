@@ -30,6 +30,8 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     ("hostil", 1001, 1001, 0, "C"),
     // U3: `sesiones` abre y cierra el volumen de cada usuario (administrar volúmenes); no lee lo de nadie.
     ("sesiones", 1, 1, 1, ""),
+    // U5: el selector de prueba, del usuario 1000, con el derecho de repartir (ceder asas).
+    ("selector", 1000, 1000, 2, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.

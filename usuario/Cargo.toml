@@ -178,6 +178,10 @@ path = "src/bin/eco.rs"
 [[bin]]
 name = "pide"
 path = "src/bin/pide.rs"
+
+[[bin]]
+name = "selector"
+path = "src/bin/selector.rs"
 test = false
 required-features = ["ventanas"]
 

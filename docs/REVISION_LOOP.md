@@ -27,7 +27,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R3 | Kernel: dormidos sin tope, temporizador puntual, interrupción con la cola llena, aviso perdido | K9 a K12, K15 | hecho (lo de placa, en la Pi) |
 | R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | hecho (falta sacar el GIC de la ventana) |
 | R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
-| R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho (ceder asas, con R17) |
+| R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho |
 | R7 | Banco fiable | B1 a B4 | hecho |
 | R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
@@ -38,7 +38,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
-| R17 | `guardian` y `selector` | U5 | pendiente |
+| R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | pendiente |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | pendiente |
 
@@ -222,3 +222,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   escribe su entrada en el directorio del servicio y se la da. DEJAR la revoca. Prueba: `pide` (con permiso) usa
   `eco`, no puede regalar la llave (-3), renuncia y la llave ya no sirve (-2); el hostil la pide sin permiso: -2.
   Falta de U4: los permisos declarados en el paquete (S8), preguntar al usuario (`guardian`) y guardarlo.
+- U1 (lo que faltaba) y R17 (U5), primera parte: orden 30 de archivos, CEDER. Un cliente con el derecho de repartir
+  (nuevo, `D_REPARTIR`) da a otro cliente (por su marca) una asa nueva para el nodo de una suya, con derechos de leer
+  y escribir que no pueden pasar de los que él tiene. Con una asa cedida se mira lo cedido, no los permisos del
+  fichero. Un `selector` de prueba (usuario 1000, con el derecho) cede a quien se lo pide la lectura de
+  `C/Privado/nota.txt` (0600, del 1000). Prueba hostil: el hostil (1001, encerrado en `C`) lee con esa asa, pero no
+  escribe en ella, no la cede (no tiene el derecho) y sigue sin abrir el fichero por su nombre. En el hostil, el
+  canal "selector" es la llave 5. Falta de U5: la ventana del selector y `guardian` con sus acciones de administrador.

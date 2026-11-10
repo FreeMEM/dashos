@@ -100,10 +100,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("carga-3", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
     #[cfg(all(feature = "virt", feature = "carga"))]
     ("carga-4", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    // El selector de prueba (U5): cede a quien se lo pide la lectura de un fichero que su ficha no le deja. Va tras el
+    // sonido: así, en el hostil, su canal es la llave 5 y las demás no cambian.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("selector", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/selector"), &[], &["archivos", "selector"]),
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido"]),
+    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector"]),
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("presa", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/presa"), &[], &["sesiones"]),

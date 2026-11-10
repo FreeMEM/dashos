@@ -35,6 +35,7 @@ const VENTANAS: u32 = 1;
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
 const SONIDO: u32 = 4;
+const SELECTOR: u32 = 5;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
 const ATAQUES: usize = 160;
@@ -138,6 +139,37 @@ fn pedir(lectura: u32, copia: u32, orden: u32, asa: u32, a: u64, b: u64, nombre:
 }
 
 
+/// U5: el selector le cede la lectura de `C/Privado/nota.txt` (su raíz es `C`: para él, `Privado/nota.txt`). Con esa
+/// asa lee, pero no escribe ni la cede; y el fichero sigue sin abrirse por su nombre. Devuelve lo que falló, o "bien".
+fn cedida(lectura: u32, copia: u32) -> &'static str {
+    let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
+    let (sel_l, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let asa = if escribir(SELECTOR, b"abrir", &[suyo]) && dashos::canal_leer_plazo(sel_l, &mut r, &mut [], 3_000_000).0 == 4 {
+        u32::from_le_bytes(r)
+    } else {
+        0
+    };
+    dashos::cerrar(sel_l);
+    if asa == 0 {
+        return "el selector no le dio nada";
+    }
+    if p(LEER, asa, 0, 18, "").map(|r| r.0) != Some(BIEN) {
+        return "no lee lo que le cedieron";
+    }
+    if p(ESCRIBIR, asa, 0, 4, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "escribe en lo que le cedieron para leer";
+    }
+    if p(dashos::protocolo::archivos::CEDER, asa, 1, 4, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "cede sin el derecho de repartir";
+    }
+    if p(BUSCAR, 0, 0, 0, "Privado/nota.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "abre el fichero por su nombre";
+    }
+    p(CERRAR, asa, 0, 0, "");
+    "bien"
+}
+
 /// Los permisos del servicio de archivos (R6). Devuelve lo que falló, o "bien".
 fn permisos(lectura: u32, copia: u32) -> &'static str {
     let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
@@ -226,6 +258,7 @@ fn archivos(memoria: u32) -> bool {
         let asa = u32::from_le_bytes(b[4..8].try_into().unwrap());
         pedir(lectura, copia, CERRAR, asa, 0, 0, "");
         println!("  [hostil] archivos, permisos: {}", permisos(lectura, copia));
+        println!("  [hostil] selector: {}", cedida(lectura, copia));
     }
     vivo
 }

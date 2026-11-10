@@ -40,8 +40,15 @@ pub const LEER_NOMBRE: u32 = 28;
 /// U3: comprobar la contraseña de un volumen cifrado sin abrirlo (como `ABRIR_VOLUMEN`: nombre en el mensaje, la
 /// contraseña en la ventana). Para volver de un bloqueo sin tocar el volumen.
 pub const COMPROBAR_CLAVE: u32 = 29;
+/// U1, U5: ceder una asa propia a otro cliente (asa, a su marca, b los derechos: 4 leer, 2 escribir, nunca más de los
+/// que se tienen). Solo con el derecho de repartir (`selector`, `sesiones`, el escritorio). Contesta con el número de
+/// asa que tiene ahora el otro. Con una asa cedida se lee o escribe lo que se cedió, sin mirar los permisos del fichero:
+/// así un programa encerrado abre el fichero que el usuario eligió y nada más.
+pub const CEDER: u32 = 30;
 pub const ALTA: u32 = 100;
 pub const D_ADMINISTRAR: u32 = 1;
+/// Derecho de repartir: ceder asas (U1).
+pub const D_REPARTIR: u32 = 2;
 
 // Estados de las respuestas.
 pub const BIEN: i32 = 0;
