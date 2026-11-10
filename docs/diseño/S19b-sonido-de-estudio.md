@@ -77,6 +77,20 @@ nodo reproductor que manda órdenes al nodo del chip. Así un SID de verdad toca
   grafo con un fundido.
 - Un plugin no tiene permisos: ni red, ni ficheros fuera de su cajón (S6b), salvo los que declare su paquete.
 
+## API compatible con JACK
+
+Para los programas de audio de Linux portados en nativo (Ardour, sintetizadores, secuenciadores), una biblioteca con
+la API de JACK que habla con el grafo de DashOS: cada cliente de JACK es un nodo, sus puertos son puertos del grafo y
+su función de proceso corre en el período del grafo. Así no hace falta la caja Linux para ellos. Es lo que hace
+PipeWire con su biblioteca que imita a JACK.
+
+- **Sala limpia**: se escribe desde la documentación pública de la API de JACK, sin copiar su código (la biblioteca de
+  JACK es LGPL). Las cabeceras dicen las firmas; lo que no digan, la documentación y las pruebas con programas reales.
+- **Lo que no tiene sentido aquí** (arrancar un servidor, elegir el controlador de la tarjeta) se acepta y no hace
+  nada: el servidor es el servicio de sonido.
+- **Permisos**: un programa portado es una aplicación más (S6b). Conectarse a otros nodos que no son suyos pide el
+  mismo permiso que grabar lo que suena (S19).
+
 ## Que no tire solo de CPU (S21)
 
 - **DMA** para mandar el audio a USB, I2S y PWM.
@@ -111,6 +125,7 @@ Van después de las de S19 (A1 a A6, ya hechas en parte).
 | E8 | SID de verdad por USB | USBSID-Pico |
 | E9 | SID propio en sala limpia, OPL y AY/YM | Contra reSID y VICE |
 | E10 | Efectos en la GPU (S21, H4) | Convolución: tiempo por bloque frente a NEON |
+| E11 | API compatible con JACK para programas nativos portados | Un cliente de JACK de prueba en C con dos puertos y un sintetizador portado; mismo resultado en el WAV de QEMU |
 
 ## Decisiones
 
@@ -119,7 +134,8 @@ Aceptadas por el usuario el 2026-11-10:
 1. El grafo como motor, con períodos de 64 muestras para tocar.
 2. SID: primero reSID en la zona GPL, después uno propio.
 3. CLAP, cada plugin en su proceso.
-4. Orden: después de la revisión y de Wayland con el puente (`docs/GRAFICOS_LOOP.md`), y antes de los hilos, LKL y el
+4. API compatible con JACK para los programas portados (E11), en sala limpia.
+5. Orden: después de la revisión y de Wayland con el puente (`docs/GRAFICOS_LOOP.md`), y antes de los hilos, LKL y el
    Wi-Fi (S12b).
 
 ## Cómo encaja

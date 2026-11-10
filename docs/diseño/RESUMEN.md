@@ -152,7 +152,7 @@ Del 2026-11-10, aceptados por el usuario.
   chips. Tabla para la Pi 3, la 4 y la 5, con el uso de CPU al lado.
 - **S19b**: el sonido como grafo (JACK), períodos de 64 muestras, USB Audio 2 e I2S, MIDI 2.0 y `camd.library`, los
   chips como instrumentos (Paula, SID con reSID en la zona GPL y después uno propio, OPL, AY/YM), SID de verdad por
-  USB y plugins CLAP en su proceso.
+  USB, plugins CLAP en su proceso y una API compatible con JACK para programas portados.
 - **S12b**: los controladores de Linux con LKL (Linux como biblioteca) en la zona GPL, empezando por el Wi-Fi de la
   Pi; antes, hilos en los procesos. Red: SACK si hace falta y `amissl.library` nativa antes.
 - Orden: revisión y Wayland con el puente; después el sonido de estudio; después hilos, LKL y Wi-Fi.
