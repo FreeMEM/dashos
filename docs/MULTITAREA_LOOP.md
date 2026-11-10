@@ -536,3 +536,20 @@ que se escribía en el disco con dos vaciados (unos 1,3 ms cada uno en QEMU) ant
   en el 1, el 3 o el 0 (256, 193, 118). Crear procesos más deprisa cambia dónde caen. Lo que destapa: despertar a un
   hilo en un núcleo con uno calculando no lo pone a correr en seguida. Paso pendiente (M10).
 - `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — M10: el reloj, para cuando el que corre alcanza a uno recién despertado
+
+- El banco mide ahora la ida y vuelta con carga también con los dos fijos en su núcleo, juntos y separados, y cuenta
+  las esperas de los que despiertan (llamada 29, contadores 8 a 11).
+- Lo que salió: con los dos en núcleos distintos, cada uno con uno calculando al lado, 185 µs (sin carga, 60). El
+  aviso entre núcleos llega en 11 µs y el planificador elige al despertado 1 µs después (medido con marcas de tiempo,
+  ya quitadas). Lo que hinchaba la media eran unas 40 veces por tanda en que el que calculaba iba por detrás en tiempo
+  virtual (la rotación de M9a le da menos al llegar) y el despertado esperaba al tic siguiente, varios milisegundos.
+- M10: si sigue corriendo uno que va por delante de alguno recién despertado de la cola (no `expulsado`), el reloj se
+  programa para cuando el despertado lo alcance, más 50 µs, y no para el tic entero. Solo por los que despiertan: entre
+  dos que calculan sigue bastando el tic.
+- `docs/medidas/m10.json` (3 arranques): con 4 calculando, donde caigan, 137 µs (con F10 y F11 sin esto, 190; M6b,
+  98, cuando el eco cayó las tres veces en el núcleo 0; Linux, 153); juntos, 101; separados, 142. Lo que queda es en
+  buena parte reparto justo: cada uno de la pareja gasta casi la mitad de su núcleo, y con uno calculando al lado le
+  toca esperar a veces, como en Linux. Lo demás, igual (±4 %).
+- `make prueba` y `make arranque-virt`: bien.

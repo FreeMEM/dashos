@@ -113,6 +113,12 @@ impl Nucleo {
     }
 }
 
+/// Margen tras el momento en que el que corre alcanza a uno recién despertado (M10): 50 µs, para que al llegar el reloj
+/// ya lo haya pasado.
+fn grano_despierto() -> u64 {
+    reloj::frecuencia() / 20_000
+}
+
 /// Cuánto por debajo del mínimo puede despertar un hilo (M1): medio tic. Como el "lag" acotado de EEVDF: lo que no
 /// gastó durmiendo no se le guarda entero.
 fn credito() -> u64 {
@@ -162,6 +168,12 @@ static CARGA: [AtomicUsize; MAX_NUCLEOS] = [const { AtomicUsize::new(0) }; MAX_N
 static EN_OCIOSO: [AtomicBool; MAX_NUCLEOS] = [const { AtomicBool::new(false) }; MAX_NUCLEOS];
 static PREVIO: [AtomicPtr<Hilo>; MAX_NUCLEOS] = [const { AtomicPtr::new(core::ptr::null_mut()) }; MAX_NUCLEOS];
 static ROBOS: AtomicU64 = AtomicU64::new(0);
+/// Para medir la espera de los que despiertan (M10): cuántos pasaron a correr, cuántos tras más de 100 µs en la cola,
+/// cuántos µs en total, y cuántas veces una pasada dejó seguir al que corría teniendo uno recién despertado en la cola.
+static DESPERTADOS: AtomicU64 = AtomicU64::new(0);
+static DESPERTADOS_TARDE: AtomicU64 = AtomicU64::new(0);
+static DESPERTADOS_US: AtomicU64 = AtomicU64::new(0);
+static NO_ADELANTA: AtomicU64 = AtomicU64::new(0);
 /// Los núcleos con planificador en marcha (un bit por núcleo).
 static PRESENTES: AtomicUsize = AtomicUsize::new(0);
 
@@ -193,7 +205,8 @@ static CONTADORES: [Contadores; MAX_NUCLEOS] =
     [const { Contadores { tics: AtomicU64::new(0), cambios: AtomicU64::new(0), ocioso: AtomicU64::new(0) } }; MAX_NUCLEOS];
 
 /// Un contador del núcleo `n`: 1 = interrupciones, 2 = cambios de hilo, 3 = microsegundos en el hilo ocioso; 4 = hilos
-/// robados entre núcleos, de todos; 5, 6 y 7 = páginas de RAM, páginas libres y bytes del kernel. `None` si no hay.
+/// robados entre núcleos, de todos; 5, 6 y 7 = páginas de RAM, páginas libres y bytes del kernel; 8 a 11, las esperas
+/// de los que despiertan (M10). `None` si no hay.
 pub fn contador(que: u64, n: usize) -> Option<u64> {
     let c = CONTADORES.get(n)?;
     match que {
@@ -201,6 +214,10 @@ pub fn contador(que: u64, n: usize) -> Option<u64> {
         2 => Some(c.cambios.load(Ordering::Relaxed)),
         3 => Some((c.ocioso.load(Ordering::Relaxed) as u128 * 1_000_000 / reloj::frecuencia().max(1) as u128) as u64),
         4 => Some(ROBOS.load(Ordering::Relaxed)),
+        8 => Some(DESPERTADOS.load(Ordering::Relaxed)),
+        9 => Some(DESPERTADOS_TARDE.load(Ordering::Relaxed)),
+        10 => Some(DESPERTADOS_US.load(Ordering::Relaxed)),
+        11 => Some(NO_ADELANTA.load(Ordering::Relaxed)),
         // Memoria (R): páginas de RAM, páginas libres y bytes de la imagen del kernel (código, datos, bss y sus pilas).
         5 => Some(crate::memoria::paginas().total() as u64),
         6 => Some(crate::memoria::paginas().libres() as u64),
@@ -724,6 +741,9 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 match mejor {
                     Some(i) => {
                         if actual_justo && unsafe { (*actual).virtual_ <= (*nucleo.listos[i]).virtual_ } {
+                            if nucleo.listos.iter().any(|&h| unsafe { !(*h).expulsado && (*h).plazo.is_none() }) {
+                                NO_ADELANTA.fetch_add(1, Ordering::Relaxed);
+                            }
                             None
                         } else {
                             Some(Some(i))
@@ -745,6 +765,16 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             Some(Some(i)) => nucleo.listos.swap_remove(i),
             Some(None) => nucleo.ocioso,
         };
+        unsafe {
+            if siguiente != actual && siguiente != nucleo.ocioso && !(*siguiente).expulsado {
+                let us = ahora.saturating_sub((*siguiente).listo_desde) * 1_000_000 / reloj::frecuencia().max(1);
+                DESPERTADOS.fetch_add(1, Ordering::Relaxed);
+                DESPERTADOS_US.fetch_add(us, Ordering::Relaxed);
+                if us > 100 {
+                    DESPERTADOS_TARDE.fetch_add(1, Ordering::Relaxed);
+                }
+            }
+        }
 
         // Siguiente interrupción: el tic normal, o antes si el hilo elegido agota su presupuesto o si algún hilo de
         // plazo recupera el suyo. En el ocioso no hace falta tic (M5): lo que le dé trabajo avisa al núcleo (despertar,
@@ -769,6 +799,23 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         // El dormido que despierta antes (M2b).
         if let Some(d) = nucleo.dormidos.iter().map(|&h| unsafe { (*h).despierta }).min() {
             proxima = proxima.min(d.saturating_sub(ahora).max(1));
+        }
+        // Uno recién despertado que no pudo adelantarse al que sigue corriendo (va por detrás en tiempo virtual, por
+        // ejemplo porque la rotación le dio menos al que corre): el reloj, para cuando lo alcance, no para el tic entero
+        // (M10). Solo por los que despiertan, no por los que calculan (`expulsado`): entre esos basta el tic.
+        unsafe {
+            if siguiente != nucleo.ocioso && (*siguiente).plazo.is_none() {
+                let despierto = nucleo
+                    .listos
+                    .iter()
+                    .filter(|&&h| (*h).plazo.is_none() && !(*h).expulsado)
+                    .map(|&h| (*h).virtual_)
+                    .min();
+                if let Some(v) = despierto {
+                    let hueco = v.saturating_sub((*siguiente).virtual_) * (*siguiente).peso / PESO_NORMAL;
+                    proxima = proxima.min(hueco.saturating_add(grano_despierto()));
+                }
+            }
         }
         // En el núcleo 0, también el temporizador más próximo (M2): sin esto, la resolución sería la del tic.
         if n == 0 {

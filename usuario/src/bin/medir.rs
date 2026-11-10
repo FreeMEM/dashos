@@ -163,19 +163,27 @@ fn ida_vuelta(p: &Paquete, lenguaje: &str, rondas: u64, juntos: Option<bool>, ca
     // La llave del canal con el eco va con la orden.
     let orden = texto!("ping {}", rondas);
     eco.mandar(&texto!("eco"));
+    let espera = || [8u64, 9, 10, 11].map(|q| dashos::llamada(29, [q, 0, 0, 0, 0]).0);
+    let e0 = espera();
     canal_escribir(ping.control, orden.bytes(), &[y]);
     let r = ping.respuesta();
+    let e1 = espera();
+    let [desp, tarde, us_desp, no_adelanta] = [0, 1, 2, 3].map(|i| e1[i].wrapping_sub(e0[i]));
     let [_, n, us, n_ping] = numeros::<4>(r.bytes());
     let _ = eco.respuesta();
     println!(
-        "[medir] ida-vuelta lenguaje={} juntos={} carga={} rondas={} ns={} nucleos={}-{}",
+        "[medir] ida-vuelta lenguaje={} juntos={} carga={} rondas={} ns={} nucleos={}-{} despiertan={} tarde={} espera_us={} no_adelanta={}",
         lenguaje,
         juntos.map_or(2, |j| j as u8),
         carga,
         n,
         if n > 0 { us * 1000 / n } else { 0 },
         n_eco,
-        n_ping
+        n_ping,
+        desp,
+        tarde,
+        if desp > 0 { us_desp / desp } else { 0 },
+        no_adelanta
     );
     eco.acabar();
     ping.acabar();
@@ -355,6 +363,9 @@ fn principal() -> u64 {
     ida_vuelta(&p, "dash", 20_000, Some(false), 0);
     // Con carga, donde los ponga el planificador (juntos=2): con robo de trabajo no se puede forzar.
     ida_vuelta(&p, "rust", 5_000, None, 4);
+    // Y con los dos fijos en su núcleo (llamada 31), juntos y separados, con la carga donde caiga (M10).
+    ida_vuelta(&p, "rust", 5_000, Some(true), 4);
+    ida_vuelta(&p, "rust", 5_000, Some(false), 4);
     for n in [1, 2, 3, 4, 5, 6, 8] {
         reparto(&p, "rust", n, 2000);
     }
