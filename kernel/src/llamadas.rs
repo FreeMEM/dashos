@@ -151,8 +151,11 @@ pub fn atender(marco: &mut Marco) {
         26 => dma_liberar(a[0] as u32),
         27 => memoria_tamano(a[0] as u32),
         // A6 (S19): el hilo que llama pasa a la clase de plazo (capacidad y periodo en microsegundos), o vuelve a la
-        // justa con capacidad 0. E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
-        28 => if planificador::plazo_actual(a[0], a[1]) { 0 } else { E_LIMITE },
+        // justa con capacidad 0. Desde S3 pide una llave de permiso de plazo en a[0] (para volver a la justa, no).
+        // E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
+        28 => plazo(a[0] as u32, a[1], a[2]),
+        // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
+        34 => azar(marco, a[0], a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -332,6 +335,10 @@ fn canal_leer(marco: &mut Marco, h: u32, buf: u64, cap: u64, llaves: u64, cap_ll
         return error;
     }
 
+    // Las que se podían transferir una vez ya no se pueden pasar más (S4).
+    for &n in &numeros {
+        t.llegada(n);
+    }
     marco.poner_x1(numeros.len() as u64);
     marco.poner_x2(marca);
     largo
@@ -621,6 +628,36 @@ fn proceso_esperar(marco: &mut Marco, h: u32) -> u64 {
 /// `marca` (C41). Con marca 0 se queda la que tenga. Una llave marcada no se puede volver a marcar con otra: así quien
 /// la recibe no puede hacerse pasar por otro. La copia es del mismo objeto: un lado de canal sigue abierto mientras
 /// quede una.
+/// La llamada 34 (R10): bytes al azar del generador del kernel.
+fn azar(marco: &mut Marco, dir: u64, largo: u64) -> u64 {
+    if largo > 256 {
+        return E_TAMANO;
+    }
+    let mut b = [0u8; 256];
+    crate::azar::llenar(&mut b[..largo as usize]);
+    let bien = escribir_usuario(dir, &b[..largo as usize]);
+    b.fill(0);
+    core::hint::black_box(&b);
+    if !bien {
+        return E_ARGUMENTO;
+    }
+    marco.poner_x1(crate::azar::de_calidad() as u64);
+    largo
+}
+
+/// La llamada 28 (S3): la clase de plazo, solo con el permiso.
+fn plazo(h: u32, capacidad_us: u64, periodo_us: u64) -> u64 {
+    if capacidad_us != 0 {
+        let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+        let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+        let Objeto::PermisoPlazo = l.objeto else { return E_TIPO };
+        if l.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    if planificador::plazo_actual(capacidad_us, periodo_us) { 0 } else { E_LIMITE }
+}
+
 fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     // Declarada antes que la guarda de la tabla, para soltarse después de ella (B5).
@@ -638,7 +675,9 @@ fn llave_duplicar(h: u32, derechos: u64, marca: u64) -> u64 {
     if marca != 0 && l.marca != 0 && marca != l.marca {
         return E_DERECHOS;
     }
-    let nueva = objetos::Llave { objeto: l.objeto, derechos: l.derechos & derechos as u32, marca: if marca != 0 { marca } else { l.marca } };
+    // Los derechos, como mucho los de la original; la restricción `UNA_VEZ`, si la pide quien duplica o ya la tenía (S4).
+    let una_vez = (l.derechos | derechos as u32) & objetos::UNA_VEZ;
+    let nueva = objetos::Llave { objeto: l.objeto, derechos: (l.derechos & derechos as u32 & objetos::TODOS) | una_vez, marca: if marca != 0 { marca } else { l.marca } };
     match t.instalar(nueva) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,

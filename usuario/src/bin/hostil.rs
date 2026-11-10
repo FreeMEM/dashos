@@ -1,7 +1,8 @@
 //! Un cliente hostil de los servicios (R1, B6 de `docs/REVISION_ARQUITECTURA.md`). Ataca al servicio de archivos, al
 //! de sonido y al compositor con lo que cualquier programa puede mandar, y después comprueba que cada uno sigue
-//! contestando a una petición normal, con un plazo. Llaves: 1 "ventanas", 2 "sonido", 3 "archivos", marcadas por
-//! `inicio`.
+//! contestando a una petición normal, con un plazo. Llaves, marcadas por `inicio`, en el orden en que se nombra cada
+//! canal por primera vez en `PROGRAMAS` (no en el de la lista de este programa): 1 "ventanas", 2 "archivos", 3
+//! "sonido".
 //!
 //! Ataques:
 //! - un mensaje vacío (E1: el compositor leía el primer byte del mensaje anterior);
@@ -9,6 +10,10 @@
 //!   gira para siempre sin poder leer).
 //!
 //! Saca una línea por servicio: "sigue: sí" o "sigue: no".
+//!
+//! Y los permisos del servicio de archivos (R6): es el usuario 1001, encerrado en el cajón `C` de un disco que es todo
+//! del 1000. No llega a lo de fuera de `C`, no entra en `C/Privado` (0700), no escribe, crea, borra ni protege lo
+//! ajeno, y no administra volúmenes.
 
 #![no_std]
 #![no_main]
@@ -24,8 +29,8 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const VENTANAS: u32 = 1;
-const SONIDO: u32 = 2;
-const ARCHIVOS: u32 = 3;
+const ARCHIVOS: u32 = 2;
+const SONIDO: u32 = 3;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
 const ATAQUES: usize = 160;
@@ -68,6 +73,15 @@ fn inundar(canal: u32, memoria: u32, cuerpo: &[u8]) {
 /// Lee de `lectura` hasta `PLAZO_US`, con un temporizador sobre `copia` (una copia del extremo de escritura). Devuelve
 /// los bytes del primer mensaje que no sea del temporizador, o `None` si vence el plazo o se cierra el canal.
 fn leer_con_plazo(lectura: u32, copia: u32, buf: &mut [u8]) -> Option<usize> {
+    let desde = dashos::ahora_us();
+    let r = leer_con_plazo_sin_aviso(lectura, copia, buf);
+    if r.is_none() {
+        println!("  [hostil] sin respuesta tras {} ms", (dashos::ahora_us() - desde) / 1000);
+    }
+    r
+}
+
+fn leer_con_plazo_sin_aviso(lectura: u32, copia: u32, buf: &mut [u8]) -> Option<usize> {
     let t = dashos::temporizador_crear(copia, PLAZO_US, 0);
     let mut ll = [0u32; 8];
     let r = loop {
@@ -96,18 +110,90 @@ fn canal_respuesta() -> (u32, u32, u32) {
 }
 
 fn peticion_archivos(orden: u32, nombre: &str) -> alloc::vec::Vec<u8> {
+    peticion_con(orden, 0, 0, 0, nombre)
+}
+
+fn peticion_con(orden: u32, asa: u32, a: u64, b: u64, nombre: &str) -> alloc::vec::Vec<u8> {
     let mut p = alloc::vec![0u8; 32 + nombre.len()];
     p[0..4].copy_from_slice(&orden.to_le_bytes());
+    p[4..8].copy_from_slice(&asa.to_le_bytes());
+    p[8..16].copy_from_slice(&a.to_le_bytes());
+    p[16..24].copy_from_slice(&b.to_le_bytes());
     p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
     p[32..].copy_from_slice(nombre.as_bytes());
     p
 }
 
-/// Archivos: sesión, ataques y, después, buscar `LEEME.txt` tiene que contestar bien.
+/// Una orden al servicio de archivos: (estado, asa), o `None` si no contesta a tiempo.
+fn pedir(lectura: u32, copia: u32, orden: u32, asa: u32, a: u64, b: u64, nombre: &str) -> Option<(i32, u32)> {
+    let mut r = [0u8; 64];
+    if !escribir(ARCHIVOS, &peticion_con(orden, asa, a, b, nombre), &[]) || leer_con_plazo(lectura, copia, &mut r) != Some(32) {
+        return None;
+    }
+    Some((i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap())))
+}
+
+const BUSCAR: u32 = 1;
+const ESCRIBIR: u32 = 3;
+const LISTAR: u32 = 4;
+const CERRAR: u32 = 6;
+const CREAR: u32 = 7;
+const BORRAR: u32 = 8;
+const PROTEGER: u32 = 15;
+const VOLUMEN: u32 = 21;
+const VOLUMENES: u32 = 22;
+const NO_EXISTE: i32 = -2;
+const PROTEGIDO: i32 = -12;
+
+/// Los permisos del servicio de archivos (R6). Devuelve lo que falló, o "bien".
+fn permisos(lectura: u32, copia: u32) -> &'static str {
+    let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
+    // Lo de fuera de su raíz no existe para él.
+    if p(BUSCAR, 0, 0, 0, "LEEME.txt").map(|r| r.0) != Some(NO_EXISTE) {
+        return "sale de su raíz";
+    }
+    if p(BUSCAR, 0, 0, 0, "Privado/nota.txt").map(|r| r.0) != Some(PROTEGIDO) || p(28, 0, 0, 64, "Privado/nota.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "entra en lo privado";
+    }
+    let Some((0, privado)) = p(BUSCAR, 0, 0, 0, "Privado") else { return "no ve el cajón privado" };
+    let listar = p(LISTAR, privado, 0, 0, "").map(|r| r.0);
+    p(CERRAR, privado, 0, 0, "");
+    if listar != Some(PROTEGIDO) {
+        return "lista lo privado";
+    }
+    let Some((0, grande)) = p(BUSCAR, 0, 0, 0, "grande.txt") else { return "no lee lo de todos" };
+    let escribir = p(ESCRIBIR, grande, 0, 1, "").map(|r| r.0);
+    let proteger = p(PROTEGER, grande, 0, 0o777, "").map(|r| r.0);
+    p(CERRAR, grande, 0, 0, "");
+    if escribir != Some(PROTEGIDO) {
+        return "escribe lo ajeno";
+    }
+    if proteger != Some(PROTEGIDO) {
+        return "cambia los permisos de lo ajeno";
+    }
+    if p(CREAR, 0, 1, 0, "mio.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "crea en un cajón ajeno";
+    }
+    if p(BORRAR, 0, 0, 0, "grande.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "borra lo ajeno";
+    }
+    if p(VOLUMENES, 0, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) || p(VOLUMEN, 0, 0, 0, "Ana").map(|r| r.0) != Some(PROTEGIDO) {
+        return "administra volúmenes";
+    }
+    "bien"
+}
+
+/// Archivos: sesión, ataques y, después, buscar `grande.txt` (en su raíz, `C`) tiene que contestar bien.
 fn archivos(memoria: u32) -> bool {
     let (lectura, suyo, copia) = canal_respuesta();
     let mut b = [0u8; 64];
-    if !escribir(ARCHIVOS, &peticion_archivos(0, ""), &[suyo]) || leer_con_plazo(lectura, copia, &mut b) != Some(32) {
+    if !escribir(ARCHIVOS, &peticion_archivos(0, ""), &[suyo]) {
+        println!("  [hostil] archivos: no se puede pedir la sesión");
+        return false;
+    }
+    let r = leer_con_plazo(lectura, copia, &mut b);
+    if r != Some(32) {
+        println!("  [hostil] archivos: sin sesión ({:?})", r);
         return false;
     }
     escribir(ARCHIVOS, &[], &[]);
@@ -124,9 +210,25 @@ fn archivos(memoria: u32) -> bool {
             break;
         }
     }
-    escribir(ARCHIVOS, &peticion_archivos(1, "LEEME.txt"), &[])
-        && leer_con_plazo(lectura, copia, &mut b) == Some(32)
-        && i32::from_le_bytes(b[0..4].try_into().unwrap()) == 0
+    // Archivos suelta a un cliente que no lee sus respuestas (la cola llena): es lo previsto. Se abre sesión otra vez,
+    // por otro canal, y se le pide algo normal.
+    let (lectura, suyo, copia) = canal_respuesta();
+    let r = if escribir(ARCHIVOS, &peticion_archivos(0, ""), &[suyo]) { leer_con_plazo(lectura, copia, &mut b) } else { None };
+    if r != Some(32) {
+        println!("  [hostil] archivos: sin sesión tras los ataques ({:?})", r);
+        return false;
+    }
+    let r = if escribir(ARCHIVOS, &peticion_archivos(BUSCAR, "grande.txt"), &[]) { leer_con_plazo(lectura, copia, &mut b) } else { None };
+    let vivo = r == Some(32) && i32::from_le_bytes(b[0..4].try_into().unwrap()) == 0;
+    if !vivo {
+        println!("  [hostil] archivos: buscar grande.txt da {:?}, estado {}", r, i32::from_le_bytes(b[0..4].try_into().unwrap()));
+    }
+    if vivo {
+        let asa = u32::from_le_bytes(b[4..8].try_into().unwrap());
+        pedir(lectura, copia, CERRAR, asa, 0, 0, "");
+        println!("  [hostil] archivos, permisos: {}", permisos(lectura, copia));
+    }
+    vivo
 }
 
 /// Sonido: ataques y, después, abrir un flujo tiene que dar el aviso de "pide muestras".
@@ -139,6 +241,7 @@ fn sonido(memoria: u32) -> bool {
     let tam = 4096;
     let m = dashos::memoria_crear(64 + tam);
     if (m as i32) <= 0 || dashos::memoria_proyectar(m, VA_SONIDO, true) != 0 {
+        println!("  [hostil] sonido: sin memoria para el anillo");
         return false;
     }
     let cab = VA_SONIDO as *mut u32;
@@ -152,10 +255,15 @@ fn sonido(memoria: u32) -> bool {
     let bytes: alloc::vec::Vec<u8> = abrir.iter().flat_map(|w| w.to_le_bytes()).collect();
     let anillo = dashos::llave_duplicar(m, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0) as u32;
     if !escribir(SONIDO, &bytes, &[anillo, suyo]) {
+        println!("  [hostil] sonido: no se puede pedir el flujo");
         return false;
     }
     let mut b = [0u8; 16];
-    let vivo = leer_con_plazo(lectura, copia, &mut b) == Some(4);
+    let r = leer_con_plazo(lectura, copia, &mut b);
+    let vivo = r == Some(4);
+    if !vivo {
+        println!("  [hostil] sonido: el flujo no pide muestras ({:?})", r);
+    }
     escribir(SONIDO, &12u32.to_le_bytes(), &[]);
     vivo
 }

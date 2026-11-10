@@ -148,6 +148,11 @@ fn prueba_monton() {
     drop(mapa);
     let devueltas = memoria::paginas().libres() + monton::paginas_pequenas() >= libres;
     kprintln!("C7: montón {}", if suma == 49_995_000 && devueltas { "bien" } else { "MAL" });
+    // R10: el bloque de ChaCha20, como la RFC 8439; dos peticiones seguidas no dan lo mismo.
+    let (mut x, mut y) = ([0u8; 100], [0u8; 100]);
+    crate::azar::llenar(&mut x);
+    crate::azar::llenar(&mut y);
+    kprintln!("R10: azar con ChaCha20 {}", if crate::azar::bloque_como_la_rfc() && x != y && x.iter().any(|&b| b != 0) { "bien" } else { "MAL" });
 }
 
 /// C8: el temporizador y el GIC.
@@ -241,6 +246,7 @@ fn crear_proceso_opc(ini: *const u8, fin: *const u8, mensaje: &str, nucleo: usiz
     let mut e = Espacio::nuevo(crate::cupo::Cupo::raiz()).expect("prueba: sin espacio");
     let codigo = unsafe { core::slice::from_raw_parts(ini, fin as usize - ini as usize) };
     e.pagina_nueva(VA_CODIGO, Permiso::Codigo, codigo, 0).expect("prueba: sin memoria");
+    e.codigo_listo();
     let mut datos = alloc::vec![mensaje.len() as u8];
     datos.extend_from_slice(mensaje.as_bytes());
     e.pagina_nueva(VA_DATOS, Permiso::Datos, &datos, 0).expect("prueba: sin memoria");

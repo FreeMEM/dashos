@@ -5,8 +5,8 @@
 //! `interrupcion_terminar`, que la vuelve a habilitar. Así una interrupción por nivel no se repite sin parar
 //! mientras el proceso aún no la ha atendido.
 //!
-//! El mensaje no se manda desde la interrupción: ahí no se puede reservar memoria (el montón usa un cerrojo que no
-//! enmascara interrupciones). La interrupción solo apunta que está pendiente y despierta al repartidor, un hilo
+//! El mensaje no se manda desde la interrupción: ahí no se reserva memoria (el cerrojo del montón enmascara las
+//! interrupciones, pero una reserva desde una interrupción podría encontrarlo tomado en el mismo núcleo). La interrupción solo apunta que está pendiente y despierta al repartidor, un hilo
 //! del kernel en el núcleo 0 que manda los mensajes. Todas las interrupciones de aparatos van al núcleo 0: así
 //! la comprobación del repartidor y su bloqueo, con las interrupciones enmascaradas, no pierden ningún aviso.
 //!
@@ -40,6 +40,12 @@ static LPI_RETENIDAS: AtomicU64 = AtomicU64::new(0);
 static ASOCIADAS: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
 /// Las que han llegado y esperan al repartidor.
 static PENDIENTES: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
+/// Las que no se pudieron entregar porque la cola del canal estaba llena (K11). Siguen enmascaradas hasta que su dueño
+/// llame a `interrupcion_terminar`, que solo llamará si le llega el aviso: el repartidor lo reintenta cada milisegundo
+/// (y con cada interrupción nueva) hasta que cabe.
+static REENTREGAR: [AtomicU64; PALABRAS] = [const { AtomicU64::new(0) }; PALABRAS];
+/// Cada cuánto se reintenta una entrega con la cola llena.
+const REINTENTO_US: u64 = 1_000;
 /// Donde espera el repartidor a que llegue una interrupción.
 static REPARTIDOR: crate::cerrojo::Cerrojo<ColaEspera> = crate::cerrojo::Cerrojo::new(ColaEspera::nueva());
 static DUENOS: Cerrojo<Vec<(u32, Weak<Interrupcion>)>> = Cerrojo::new(Vec::new());
@@ -190,13 +196,20 @@ extern "C" fn repartidor(_: usize) {
         let estado = crate::cerrojo::enmascarar_irq();
         let mut llegadas = [0u64; PALABRAS];
         for (i, p) in PENDIENTES.iter().enumerate() {
-            llegadas[i] = p.swap(0, Ordering::SeqCst);
+            llegadas[i] = p.swap(0, Ordering::SeqCst) | REENTREGAR[i].swap(0, Ordering::SeqCst);
         }
         let vencidos = crate::temporizadores::tomar_pendiente();
         if llegadas.iter().all(|&x| x == 0) && !vencidos {
             // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde. Los
             // muertos de otros núcleos se miran con el cerrojo tomado: quien los apunta avisa tomándolo (U3d).
             let mut cola = REPARTIDOR.tomar();
+            // Otra vez con el cerrojo (K12): `terminar()` en otro núcleo puede marcar una y despertar entre la mirada
+            // de arriba y aquí; sin esto, esperaría al siguiente despertar.
+            if PENDIENTES.iter().any(|p| p.load(Ordering::SeqCst) != 0) {
+                drop(cola);
+                crate::cerrojo::restaurar_irq(estado);
+                continue;
+            }
             if crate::planificador::hay_muertos_global() {
                 drop(cola);
                 crate::cerrojo::restaurar_irq(estado);
@@ -215,18 +228,34 @@ extern "C" fn repartidor(_: usize) {
         for (w, &palabra) in llegadas.iter().enumerate() {
             let mut p = palabra;
             while p != 0 {
-                let i = w as u32 * 64 + p.trailing_zeros();
+                let b = p.trailing_zeros();
+                let i = w as u32 * 64 + b;
                 p &= p - 1;
                 let intid = if i > ULTIMA { PRIMERA_LPI + i - ULTIMA - 1 } else { i };
-                entregar(intid);
+                if !entregar(intid) {
+                    REENTREGAR[w].fetch_or(1 << b, Ordering::SeqCst);
+                }
             }
+        }
+        // Alguna no cupo: se espera a una interrupción nueva o, como mucho, `REINTENTO_US`, y se vuelve a probar. Sin
+        // esto, girar aquí dejaría sin CPU al lector que tiene que vaciar la cola.
+        if REENTREGAR.iter().any(|r| r.load(Ordering::SeqCst) != 0) {
+            let estado = crate::cerrojo::enmascarar_irq();
+            let mut cola = REPARTIDOR.tomar();
+            if PENDIENTES.iter().all(|p| p.load(Ordering::SeqCst) == 0) {
+                cola.apuntarme();
+                planificador::bloquear_soltando_hasta(cola, REINTENTO_US);
+                REPARTIDOR.tomar().quitarme();
+            }
+            crate::cerrojo::restaurar_irq(estado);
         }
     }
 }
 
-fn entregar(intid: u32) {
+/// Entrega el aviso de `intid` a su canal. Falso solo si la cola estaba llena: hay que reintentarlo (K11).
+fn entregar(intid: u32) -> bool {
     let objeto = DUENOS.tomar().iter().find(|(i, _)| *i == intid).and_then(|(_, w)| w.upgrade());
-    let Some(o) = objeto else { return };
+    let Some(o) = objeto else { return true };
     let (revocada, marca) = {
         let v = o.via.tomar();
         (v.0.iter().any(|c| c.load(core::sync::atomic::Ordering::Acquire)), v.1)
@@ -235,12 +264,15 @@ fn entregar(intid: u32) {
         // Revocada la llave del canal: la interrupción se desasocia y queda enmascarada (A2).
         let viejo = o.destino.tomar().take();
         drop(viejo);
-        return;
+        return true;
     }
     let destino = o.destino.tomar().clone();
     if let Some((canal, lado)) = destino {
         // Los mensajes que escribe el kernel van en little-endian, el orden nativo de DashOS (C30).
         let m = Mensaje { datos: intid.to_le_bytes().to_vec(), llaves: Vec::new(), marca };
-        let _ = canal.escribir(lado, m);
+        if let Err((crate::objetos::Error::Llena | crate::objetos::Error::SinMemoria, _)) = canal.escribir(lado, m) {
+            return false;
+        }
     }
+    true
 }

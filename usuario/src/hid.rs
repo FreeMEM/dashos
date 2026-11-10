@@ -1,6 +1,9 @@
 //! Teclado y ratón de arranque (HID 1.11, apéndice B) como eventos para el compositor (C49): lo comparten los
 //! controladores de USB (`usb`, el DWC2 de la Pi; `xhci`, U6). Formato de los eventos en `docs/referencia/servicios.md`.
 
+/// Eventos que esperan a que el compositor haga sitio en su cola (E4).
+const PENDIENTES: usize = 32;
+
 /// Lo que se manda a quien use el teclado y el ratón.
 pub struct Entrada {
     /// El canal de eventos; sin él, se escriben.
@@ -8,17 +11,64 @@ pub struct Entrada {
     previo: [u8; 8],
     /// Quién escribe, para las líneas sin canal.
     nombre: &'static str,
+    /// Los eventos que no cupieron, en orden (E4): una tecla soltada que se perdiera quedaría pulsada para siempre.
+    pendientes: [[u8; 8]; PENDIENTES],
+    n: usize,
 }
 
 impl Entrada {
     pub fn nueva(canal: Option<u32>, nombre: &'static str) -> Self {
-        Self { canal, previo: [0; 8], nombre }
+        Self { canal, previo: [0; 8], nombre, pendientes: [[0; 8]; PENDIENTES], n: 0 }
+    }
+
+    /// Si quedan eventos sin entregar: quien llame tiene que volver a llamar a `reintentar` dentro de poco.
+    pub fn pendiente(&self) -> bool {
+        self.n > 0
+    }
+
+    /// Entrega los eventos que esperan, en orden, mientras quepan.
+    pub fn reintentar(&mut self) {
+        let Some(c) = self.canal else { return };
+        while self.n > 0 {
+            match crate::canal_escribir(c, &self.pendientes[0], &[]) {
+                0 => {}
+                // Nadie lee: se tira todo.
+                -4 => {
+                    self.n = 0;
+                    return;
+                }
+                _ => return,
+            }
+            self.pendientes.copy_within(1..self.n, 0);
+            self.n -= 1;
+        }
+    }
+
+    /// Guarda un evento que no cupo. Sin sitio, se tira un movimiento del ratón (el más viejo); las teclas y los
+    /// botones no se tiran mientras haya movimientos.
+    fn guardar(&mut self, ev: [u8; 8]) {
+        if self.n == PENDIENTES {
+            let movimiento = |e: &[u8; 8]| e[0] == 2;
+            let fuera = self.pendientes[..self.n].iter().position(movimiento).unwrap_or(0);
+            if movimiento(&ev) && !self.pendientes[..self.n].iter().any(movimiento) {
+                return;
+            }
+            self.pendientes.copy_within(fuera + 1..self.n, fuera);
+            self.n -= 1;
+        }
+        self.pendientes[self.n] = ev;
+        self.n += 1;
     }
 
     pub fn mandar(&mut self, ev: [u8; 8]) {
         if let Some(c) = self.canal {
-            // Si el canal está lleno o cerrado, el evento se pierde: quien lee no da abasto o no está.
-            crate::canal_escribir(c, &ev, &[]);
+            // Si el canal está lleno, el evento espera (detrás de los que ya esperaban); si está cerrado, se pierde.
+            self.reintentar();
+            if self.n > 0 {
+                self.guardar(ev);
+            } else if crate::canal_escribir(c, &ev, &[]) == -8 {
+                self.guardar(ev);
+            }
             return;
         }
         match ev[0] {

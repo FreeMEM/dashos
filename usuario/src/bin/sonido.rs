@@ -103,8 +103,9 @@ fn recoger(m: &mut Mezclador, c: &mut Cliente, tmp: &mut Vec<u8>) {
 const PLAZO_US: (u64, u64) = (3_000, 5_333);
 
 fn principal() -> u64 {
-    let canal = 1;
-    if dashos::plazo(PLAZO_US.0, PLAZO_US.1) != 0 {
+    // Llaves: 1 el permiso de la clase de plazo (S3) y 2 el canal "sonido".
+    let canal = 2;
+    if dashos::plazo(1, PLAZO_US.0, PLAZO_US.1) != 0 {
         println!("  [sonido] sin clase de plazo: va en la justa");
     }
     let mut m = Mezclador::nuevo(48_000);
@@ -122,7 +123,9 @@ fn principal() -> u64 {
         if n == E_CERRADO {
             return 0;
         }
+        // Si no se pudo leer, el mensaje sigue en la cola: se espera un poco para no girar (E2).
         if n < 0 {
+            dashos::dormir_us(1_000);
             continue;
         }
         let n = n as usize;
@@ -156,7 +159,9 @@ fn principal() -> u64 {
                 salida = Some(Salida { ranuras, cuadros });
                 println!("  [sonido] salida por {}: {} ranuras de {} cuadros a 48 kHz", nombre, ranuras, cuadros);
             }
-            TIC => {
+            // Solo el controlador marca el ritmo de la mezcla (S8).
+            TIC if nombre == "virtio-sonido" => {
+                cerrar_llaves(&llaves);
                 let Some(s) = &salida else { continue };
                 // Medida de A6: tics separados más de 15 ms, o un tic que tarda más de 3 ms en mezclar.
                 let t0 = dashos::ahora_us();
@@ -246,11 +251,13 @@ fn principal() -> u64 {
                 clientes.insert(marca, Cliente { nombre, id, va, tam, aviso: llaves[1], memoria: llaves[0], avisado: false, ultima: 0, cerrando: false, faltas: 0 });
             }
             VOLUMEN if n == 12 => {
+                cerrar_llaves(&llaves);
                 if let Some(c) = clientes.get(&marca) {
                     m.volumen(c.id, f32::from_bits(w(1)), f32::from_bits(w(2)));
                 }
             }
             CERRAR => {
+                cerrar_llaves(&llaves);
                 // Las faltas, de antes de cerrar: al acabarse el anillo, el último período siempre se queda corto.
                 if let Some(c) = clientes.get_mut(&marca) {
                     c.faltas = m.faltas(c.id).unwrap_or(0);

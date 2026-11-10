@@ -22,6 +22,9 @@ pub const PRIMERO_DEL_SERVIDOR: u32 = 0xFF00_0000;
 pub const INVALID_OBJECT: u32 = 0;
 pub const INVALID_METHOD: u32 = 1;
 pub const NO_MEMORY: u32 = 2;
+/// Lo más de objetos vivos de un cliente (E3): una aplicación normal usa unas decenas; sin tope, un cliente agotaría
+/// la memoria del compositor.
+pub const MAX_OBJETOS: usize = 1024;
 pub const IMPLEMENTATION: u32 = 3;
 
 /// Un global que se anuncia: su nombre (número), su interfaz y la versión más alta que se sirve.
@@ -232,6 +235,9 @@ impl Conexion {
         };
         if id == 0 || id >= PRIMERO_DEL_SERVIDOR || self.objetos.contains_key(&id) {
             return Err(ErrorProtocolo::new(1, INVALID_OBJECT, "número de objeto nuevo malo"));
+        }
+        if self.objetos.len() >= MAX_OBJETOS {
+            return Err(ErrorProtocolo::new(1, NO_MEMORY, "demasiados objetos"));
         }
         self.objetos.insert(id, Objeto { interfaz: i, version });
         Ok(())

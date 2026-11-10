@@ -57,6 +57,13 @@ pub fn kmain(dtb: usize) -> ! {
     let Some(d) = dtb::Dtb::desde() else {
         panic!("árbol de dispositivos no válido en {:#x}", dtb);
     };
+    // La semilla del azar, antes de copiar el árbol: se borra del original (R10).
+    let semilla = azar::sembrar(&d);
+    if azar::de_calidad() {
+        kprintln!("Azar: semilla del firmware, {} bytes", semilla);
+    } else {
+        kprintln!("Azar: sin semilla, solo el contador");
+    }
     // Antes de que nada viva por encima del primer GB: que el PCIe no llegue ahí (C51).
     pcie::cerrar_ventana(&d);
     memoria::paginas().iniciar(&d, dtb);

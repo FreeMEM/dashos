@@ -21,6 +21,7 @@ C51: tamaños de la ventana de entrada del PCIe como la especificación bien
 C5: zonas bien, devolución bien
   suma 49995000 con 10000 elementos; caja 7; mapa 500 claves
 C7: montón bien
+R10: azar con ChaCha20 bien
   frecuencia del temporizador 
 C8: interrupciones bien
 C9: 3 núcleos más en marcha: bien

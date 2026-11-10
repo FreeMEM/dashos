@@ -14,6 +14,10 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 
+/// El mapa de teclado por defecto (G2): la distribución española de xkb, compilada, con su 0 final como pide
+/// `wl_keyboard.keymap`. Origen y licencia en `teclados/LEEME.md`.
+pub static MAPA_TECLADO: &[u8] = concat!(include_str!("../teclados/es.xkb"), "\0").as_bytes();
+
 pub mod canal;
 pub mod escena;
 pub mod servidor;
@@ -118,6 +122,8 @@ pub enum Fallo {
     Nulo,
     /// Faltan llaves para sus descriptores.
     SinLlave,
+    /// Demasiadas llaves esperando un mensaje que las use (E2).
+    Llaves,
 }
 
 /// La cabecera de un mensaje: objeto, orden y tamaño (con la cabecera).

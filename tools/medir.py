@@ -112,6 +112,10 @@ def disco_fs(salida, ar):
     with open(fs, "wb") as f:
         f.truncate(64 << 20)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
+    # La raíz, del usuario del banco (1000, como `medir-fs` en las fichas de `inicio`): desde R6 el servicio mira
+    # dueños y permisos, y la raíz que hace redoxfs-ar es del 0.
+    duenos = os.path.join(RAIZ, "archivos/herramientas/target/release/duenos")
+    subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     with open(salida, "wb") as f:
         f.write(bytes(1 << 20))
         f.write(open(fs, "rb").read())

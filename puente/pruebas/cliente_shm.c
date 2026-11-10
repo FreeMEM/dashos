@@ -23,6 +23,8 @@
 static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
+static struct wl_seat *asiento;
+static int mapa_bien = -1;
 static struct wl_surface *superficie;
 static struct wl_buffer *buferes[2];
 static uint32_t *pxs[2];
@@ -34,10 +36,27 @@ static void global(void *d, struct wl_registry *r, uint32_t nombre, const char *
     if (!strcmp(interfaz, "wl_compositor")) compositor = wl_registry_bind(r, nombre, &wl_compositor_interface, 4);
     else if (!strcmp(interfaz, "wl_shm")) shm = wl_registry_bind(r, nombre, &wl_shm_interface, 1);
     else if (!strcmp(interfaz, "xdg_wm_base")) wm = wl_registry_bind(r, nombre, &xdg_wm_base_interface, 1);
+    else if (!strcmp(interfaz, "wl_seat")) asiento = wl_registry_bind(r, nombre, &wl_seat_interface, 4);
     (void)version;
 }
 static void global_quitado(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
 static const struct wl_registry_listener registro = {global, global_quitado};
+
+/* G2: el mapa de teclado de xkb tiene que llegar en formato xkb_v1 y empezar como un mapa compilado. */
+static void mapa(void *d, struct wl_keyboard *k, uint32_t formato, int32_t fd, uint32_t tam) {
+    (void)d; (void)k;
+    char *m = tam ? mmap(NULL, tam, PROT_READ, MAP_PRIVATE, fd, 0) : MAP_FAILED;
+    mapa_bien = formato == WL_KEYBOARD_KEYMAP_FORMAT_XKB_V1 && m != MAP_FAILED && !strncmp(m, "xkb_keymap {", 12) && m[tam - 1] == 0;
+    printf("teclado: mapa xkb de %u bytes: %s\n", tam, mapa_bien ? "bien" : "MAL");
+    if (m != MAP_FAILED) munmap(m, tam);
+    close(fd);
+}
+static void k_entra(void *d, struct wl_keyboard *k, uint32_t s, struct wl_surface *f, struct wl_array *t) { (void)d; (void)k; (void)s; (void)f; (void)t; }
+static void k_sale(void *d, struct wl_keyboard *k, uint32_t s, struct wl_surface *f) { (void)d; (void)k; (void)s; (void)f; }
+static void k_tecla(void *d, struct wl_keyboard *k, uint32_t s, uint32_t t, uint32_t c, uint32_t e) { (void)d; (void)k; (void)s; (void)t; (void)c; (void)e; }
+static void k_mods(void *d, struct wl_keyboard *k, uint32_t s, uint32_t a, uint32_t b, uint32_t c, uint32_t g) { (void)d; (void)k; (void)s; (void)a; (void)b; (void)c; (void)g; }
+static void k_repetir(void *d, struct wl_keyboard *k, int32_t r, int32_t e) { (void)d; (void)k; (void)r; (void)e; }
+static const struct wl_keyboard_listener oyente_teclado = {mapa, k_entra, k_sale, k_tecla, k_mods, k_repetir};
 
 static void ping(void *d, struct xdg_wm_base *w, uint32_t serie) { (void)d; xdg_wm_base_pong(w, serie); }
 static const struct xdg_wm_base_listener oyente_wm = {ping};
@@ -100,6 +119,7 @@ int main(void) {
         return 3;
     }
     xdg_wm_base_add_listener(wm, &oyente_wm, NULL);
+    if (asiento) wl_keyboard_add_listener(wl_seat_get_keyboard(asiento), &oyente_teclado, NULL);
     doble = getenv("DOBLE") && !strcmp(getenv("DOBLE"), "1");
     int fd = memfd_create("dashos-prueba", MFD_CLOEXEC);
     int tam = ANCHO * ALTO * 4;
@@ -127,5 +147,6 @@ int main(void) {
     }
     printf("cliente: %d cuadros\n", cuadro);
     wl_display_disconnect(pantalla);
+    if (mapa_bien != 1) return 7;
     return fallo ? 6 : 0;
 }

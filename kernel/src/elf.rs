@@ -197,6 +197,7 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
         e.pagina_nueva(p, Permiso::Datos, &[], 0)?;
         p += PAGINA;
     }
+    e.codigo_listo();
     Ok(Cargado { base, entrada, pila: tope, tamano_pila, big_endian: orden.0 })
 }
 

@@ -59,6 +59,26 @@ impl Rect {
     }
 }
 
+/// Lo más de rectángulos dañados que guarda una superficie entre dos `commit` (E3).
+pub const MAX_DANOS: usize = 32;
+
+/// El rectángulo más pequeño que cubre los dos. Los vacíos no cuentan; los números vienen del cliente, así que se
+/// cuenta en 64 bits y se recorta a 32.
+fn cubrir(a: Rect, b: Rect) -> Rect {
+    if a.vacio() {
+        return b;
+    }
+    if b.vacio() {
+        return a;
+    }
+    let x0 = (a.x as i64).min(b.x as i64);
+    let y0 = (a.y as i64).min(b.y as i64);
+    let x1 = (a.x as i64 + a.w as i64).max(b.x as i64 + b.w as i64);
+    let y1 = (a.y as i64 + a.h as i64).max(b.y as i64 + b.h as i64);
+    let c = |v: i64| v.clamp(i32::MIN as i64, i32::MAX as i64) as i32;
+    Rect { x: c(x0), y: c(y0), w: c(x1 - x0), h: c(y1 - y0) }
+}
+
 #[derive(Clone, Debug, Default)]
 struct Estado {
     /// `Some(None)`: se quitó el búfer; `None`: no se tocó.
@@ -137,7 +157,14 @@ pub struct Escena<M: Memorias> {
     pub pendientes: Vec<(Cliente, Entrada)>,
     /// Lo que mide la pantalla (lo pone `componer`).
     medidas: (i32, i32),
+    /// La hora en milisegundos (la pone quien atiende, antes de cada mensaje) y la de la última tecla pulsada (S8).
+    pub reloj_ms: u32,
+    ultima_tecla_ms: Option<u32>,
 }
+
+/// Tras una tecla, cuánto tiempo no se lleva el teclado una ventana nueva de otro programa (S8): así un programa no
+/// abre una ventana justo cuando se escribe una contraseña para quedarse con lo que se teclea.
+pub const SIN_ROBAR_MS: u32 = 2_000;
 
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
@@ -158,6 +185,8 @@ impl<M: Memorias> Escena<M> {
             con_cursor: false,
             pendientes: Vec::new(),
             medidas: (i32::MAX / 2, i32::MAX / 2),
+            reloj_ms: 0,
+            ultima_tecla_ms: None,
         }
     }
 
@@ -322,8 +351,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 wl_seat::req::GET_KEYBOARD => {
                     let id = args[0].uint();
                     yo.teclados.push(id);
-                    // Sin mapa de teclas todavía (formato no_keymap): una llave de memoria vacía, como pide el evento.
-                    if let Some(llave) = mem.llave_vacia() {
+                    // El mapa de teclado de xkb (G2), en una memoria de solo lectura; si no se puede, sin mapa
+                    // (no_keymap), con una llave vacía, como pide el evento.
+                    if let Some(llave) = mem.llave_con(crate::MAPA_TECLADO) {
+                        con.salida.empezar(id, wl_keyboard::ev::KEYMAP).uint(1).llave(llave).uint(crate::MAPA_TECLADO.len() as u32).fin();
+                    } else if let Some(llave) = mem.llave_vacia() {
                         con.salida.empezar(id, wl_keyboard::ev::KEYMAP).uint(0).llave(llave).uint(0).fin();
                     }
                 }
@@ -430,12 +462,16 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         }
                         s.pendiente.bufer = Some((b != 0).then_some(b));
                     }
-                    wl_surface::req::DAMAGE | wl_surface::req::DAMAGE_BUFFER => s.pendiente.danos.push(Rect {
-                        x: args[0].int(),
-                        y: args[1].int(),
-                        w: args[2].int(),
-                        h: args[3].int(),
-                    }),
+                    wl_surface::req::DAMAGE | wl_surface::req::DAMAGE_BUFFER => {
+                        let r = Rect { x: args[0].int(), y: args[1].int(), w: args[2].int(), h: args[3].int() };
+                        // Con tope (E3): pasado, todo lo dañado se junta en un solo rectángulo que lo cubre.
+                        if s.pendiente.danos.len() >= MAX_DANOS {
+                            let todo = s.pendiente.danos.drain(..).fold(r, cubrir);
+                            s.pendiente.danos.push(todo);
+                        } else {
+                            s.pendiente.danos.push(r);
+                        }
+                    }
                     wl_surface::req::FRAME => s.pendiente.avisos.push(args[0].uint()),
                     wl_surface::req::COMMIT => {
                         let p = core::mem::take(&mut s.pendiente);
@@ -459,6 +495,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         }
                         let s = yo.superficies.get_mut(&objeto).unwrap();
                         s.danos.extend(p.danos);
+                        // Varios commit antes de componer: también con tope.
+                        if s.danos.len() > MAX_DANOS {
+                            let todo = s.danos.drain(..).fold(Rect::default(), cubrir);
+                            s.danos.push(todo);
+                        }
                         s.avisos.extend(p.avisos);
                         // Una ventana con búfer que aún no está en pantalla: se coloca en cascada, encima de todo.
                         if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() {
@@ -466,9 +507,14 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             escena.colocadas += 1;
                             let cliente = self.cliente;
                             escena.colocar(cliente, objeto, 40 + 32 * k, 40 + 32 * k);
-                            // Una ventana nueva se lleva el teclado, como en cualquier escritorio.
+                            // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
+                            // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();
-                            escena.activar((cliente, objeto), &mut ev);
+                            if escena.puede_tomar_teclado(cliente) {
+                                escena.activar((cliente, objeto), &mut ev);
+                            } else {
+                                escena.subir((cliente, objeto));
+                            }
                             escena.pendientes.extend(ev);
                         }
                     }
@@ -604,8 +650,18 @@ impl<M: Memorias> Escena<M> {
         None
     }
 
-    /// Sube una ventana encima de todo y le da el teclado.
-    pub fn activar(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
+    /// Si una ventana nueva de `cliente` puede llevarse el teclado sin que nadie lo pida (S8): sí cuando nadie lo tiene,
+    /// cuando lo tiene el mismo programa, o cuando no se ha pulsado una tecla en `SIN_ROBAR_MS`.
+    pub fn puede_tomar_teclado(&self, cliente: Cliente) -> bool {
+        match self.teclado {
+            None => true,
+            Some((c, _)) if c == cliente => true,
+            _ => self.ultima_tecla_ms.is_none_or(|t| self.reloj_ms.wrapping_sub(t) >= SIN_ROBAR_MS),
+        }
+    }
+
+    /// Sube una ventana encima de todo, sin tocar el teclado.
+    pub fn subir(&mut self, ventana: (Cliente, u32)) {
         if self.orden.last() != Some(&ventana) {
             self.orden.retain(|o| *o != ventana);
             self.orden.push(ventana);
@@ -613,6 +669,11 @@ impl<M: Memorias> Escena<M> {
                 self.danos.push(r);
             }
         }
+    }
+
+    /// Sube una ventana encima de todo y le da el teclado.
+    pub fn activar(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
+        self.subir(ventana);
         if self.teclado != Some(ventana) {
             if let Some((c, s)) = self.teclado {
                 out.push((c, Entrada::TecladoSale { superficie: s }));
@@ -673,6 +734,9 @@ impl<M: Memorias> Escena<M> {
     pub fn tecla(&mut self, uso: u8, pulsada: bool) -> Vec<(Cliente, Entrada)> {
         let mut out = Vec::new();
         let codigo = crate::teclas::evdev(uso);
+        if pulsada {
+            self.ultima_tecla_ms = Some(self.reloj_ms);
+        }
         let Some((c, _)) = self.teclado else { return out };
         if codigo == 0 {
             return out;

@@ -42,6 +42,7 @@ const VOLUMENES: u32 = 22;
 const HACER_VOLUMEN: u32 = 23;
 const QUITAR_VOLUMEN: u32 = 24;
 const ABRIR_VOLUMEN: u32 = 25;
+const LEER_NOMBRE: u32 = 28;
 const CERRAR_VOLUMEN: u32 = 26;
 const PROTEGIDO: i32 = -12;
 const EN_USO: i32 = -13;
@@ -89,6 +90,17 @@ impl Cliente {
             return malo;
         }
         self.leer_respuesta(&mut []).map_or(malo, |r| r.0)
+    }
+
+    /// Abre un volumen cifrado: la contraseña va por la ventana, no en el mensaje (A13); el servicio la borra de ahí.
+    fn abrir_volumen(&self, nombre: &str, clave: &str) -> R {
+        self.ventana_mut()[..clave.len()].copy_from_slice(clave.as_bytes());
+        let r = self.pedir(ABRIR_VOLUMEN, 0, 0, clave.len() as u64, nombre);
+        if self.ventana()[..clave.len()].iter().any(|&b| b != 0) {
+            println!("  [ficheros] la contraseña sigue en la ventana");
+            return R { estado: i32::MIN, asa: 0, a: 0, b: 0, c: 0 };
+        }
+        r
     }
 
     fn ventana(&self) -> &[u8] {
@@ -154,6 +166,12 @@ fn principal() -> u64 {
     let f = c.pedir(BUSCAR, 0, 0, 0, "LEEME.txt");
     let l = c.pedir(LEER, f.asa, 0, 4096, "");
     println!("  [ficheros] LEEME.txt ({} bytes): {:?}", f.a, core::str::from_utf8(&c.ventana()[..l.a as usize]).unwrap_or("?").trim_end());
+    // A3: lo mismo en un viaje (la asa de arriba sigue abierta: la usan los rechazos), desde el byte 7, y lo que no existe.
+    let ln = c.pedir(LEER_NOMBRE, 0, 7, 4096, "LEEME.txt");
+    let a3 = ln.estado == 0 && ln.a == 12 && ln.c == 19 && ln.asa == 0 && &c.ventana()[..12] == b"lee RedoxFS\n"
+        && c.pedir(LEER_NOMBRE, 0, 0, 4096, "no-existe").estado == -2
+        && c.pedir(LEER_NOMBRE, 0, 0, 4096, "C").estado == -4;
+    println!("  [ficheros] A3 leer por nombre: {}", si(a3));
 
     // C/grande.txt por trozos de 64 KB: las líneas "línea 0", "línea 1"...
     let g = c.pedir(BUSCAR, 0, 0, 0, "C/grande.txt");
@@ -344,17 +362,20 @@ fn principal() -> u64 {
         si(tomada && nuevo.estado == 0 && en_lista && vuelta && descartada && limpio)
     );
 
-    // FS10: el volumen cifrado "Ana", que el disco trae cerrado y vacío. Vacío se lista (no hay nada que descifrar:
-    // la estructura está a la vista, como en ZFS); con algo dentro y cerrado, no.
+    // FS10: el volumen cifrado "Ana", que el disco trae cerrado y vacío. Cerrado no se lista, ni vacío: su raíz no se
+    // puede leer, y sin ella no hay permisos que mirar (R6; antes, vacío se listaba).
     let lista = c.pedir(VOLUMENES, 0, 0, 0, "");
     let v = c.ventana();
     let listado = lista.estado == 0 && lista.a == 1 && v[8] == 1 && v[9] == 3 && &v[10..13] == b"Ana";
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
     let l = c.pedir(LISTAR, raiz.asa, 0, 0, "");
-    let cerrado = raiz.estado == 0 && l.estado == 0 && l.a == 0;
+    let cerrado = raiz.estado == 0 && l.estado == PROTEGIDO;
+    if !cerrado {
+        println!("  [ficheros] Ana cerrado: raíz {}, listar {} con {}", raiz.estado, l.estado, l.a);
+    }
     // Con otra contraseña no se abre; con la suya, sí.
-    let abierto = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0otra").estado == PROTEGIDO
-        && c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0
+    let abierto = c.abrir_volumen("Ana", "otra").estado == PROTEGIDO
+        && c.abrir_volumen("Ana", "clave de Ana").estado == 0
         && c.pedir(VOLUMENES, 0, 0, 0, "").estado == 0
         && c.ventana()[8] == 3;
     let f = c.pedir(CREAR, raiz.asa, ARCHIVO, 0, "secreto.txt");
@@ -367,7 +388,7 @@ fn principal() -> u64 {
     let raiz = c.pedir(VOLUMEN, 0, 0, 0, "Ana");
     let sin_llave = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt").estado == PROTEGIDO
         && c.pedir(LISTAR, raiz.asa, 0, 0, "").estado == PROTEGIDO;
-    let releido = c.pedir(ABRIR_VOLUMEN, 0, 0, 0, "Ana\0clave de Ana").estado == 0 && {
+    let releido = c.abrir_volumen("Ana", "clave de Ana").estado == 0 && {
         let h = c.pedir(BUSCAR, raiz.asa, 0, 0, "secreto.txt");
         let l = c.pedir(LEER, h.asa, 0, 64, "");
         let bien = l.a == 14 && &c.ventana()[..14] == b"solo para Ana\n";
@@ -386,9 +407,31 @@ fn principal() -> u64 {
         && c.pedir(CERRAR, t.asa, 0, 0, "").estado == 0
         && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Temporal").estado == 0
         && c.pedir(VOLUMEN, 0, 0, 0, "Temporal").estado == -2;
+    // R10: uno cifrado hecho aquí, con llaves del azar del kernel: abierto al hacerlo, se escribe, se cierra, no se abre
+    // con otra contraseña y sí con la suya, y se quita.
+    c.ventana_mut()[..10].copy_from_slice(b"clave Beto");
+    let hecho = c.pedir(HACER_VOLUMEN, 0, 2, 10, "Beto");
+    let cifrado_aqui = if hecho.estado == -14 {
+        println!("  [ficheros] FS10 cifrado hecho aquí: sin azar de calidad");
+        true
+    } else {
+        let b = c.pedir(VOLUMEN, 0, 0, 0, "Beto");
+        let f = c.pedir(CREAR, b.asa, ARCHIVO, 0, "x");
+        let bien = hecho.estado == 0
+            && c.ventana()[..10].iter().all(|&x| x == 0)
+            && f.estado == 0
+            && c.pedir(CERRAR, f.asa, 0, 0, "").estado == 0
+            && c.pedir(CERRAR, b.asa, 0, 0, "").estado == 0
+            && c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Beto").estado == 0
+            && c.abrir_volumen("Beto", "otra").estado == PROTEGIDO
+            && c.abrir_volumen("Beto", "clave Beto").estado == 0
+            && c.pedir(QUITAR_VOLUMEN, 0, 0, 0, "Beto").estado == 0;
+        println!("  [ficheros] FS10 cifrado hecho aquí: {}", si(bien));
+        bien
+    };
     // Lo deja cerrado, y el disco sin un problema.
     let limpio = c.pedir(CERRAR_VOLUMEN, 0, 0, 0, "Ana").estado == 0 && c.pedir(COMPROBAR, 0, 1, 0, "").a == 0;
-    let partes = [listado, cerrado, abierto, escrito, cerrado_otra_vez, sin_llave, releido, quitado, limpio];
+    let partes = [listado, cerrado, abierto, escrito, cerrado_otra_vez, sin_llave, releido, quitado, limpio, cifrado_aqui];
     println!("  [ficheros] FS10 volúmenes: {}", si(partes.iter().all(|&p| p)));
     if !partes.iter().all(|&p| p) {
         // Cuál falla, en el orden de arriba.

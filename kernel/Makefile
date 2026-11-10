@@ -30,7 +30,12 @@ $(PRUEBAS): usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS)
 
+# Antes de QEMU, las pruebas de PC de las bibliotecas de los servicios (B6): Wayland y la mezcla del sonido.
 prueba: $(PRUEBAS)
+	cd ../wayland && cargo test --quiet
+	cd ../sonido && cargo test --quiet
+	../puente/pruebas/g0.sh
+	../puente/pruebas/g1.sh
 	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 90
 
 arranque: $(IMAGEN)
@@ -99,6 +104,7 @@ medir: usuario FORCE
 MEDIR_FS := target/kernel8-medir-fs.img
 medir-fs: usuario FORCE
 	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	cd ../archivos/herramientas && cargo build --release
 	python3 ../tools/medir.py disco-fs target/medir-fs.img $(REDOXFS_AR)
 	cargo build $(CARGO_PERFIL) --features virt,medir_fs
 	$(OBJCOPY) -O binary $(ELF) $(MEDIR_FS)

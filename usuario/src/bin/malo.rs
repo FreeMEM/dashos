@@ -11,6 +11,7 @@ use dashos::{llamada, println};
 dashos::programa!(principal);
 
 const E_ARGUMENTO: i64 = -1;
+const E_DERECHOS: i64 = -3;
 const E_CERRADO: i64 = -4;
 const E_TAMANO: i64 = -5;
 const E_MEMORIA: i64 = -7;
@@ -172,6 +173,31 @@ fn principal() -> u64 {
     }
     x0(6, [a as u64, 0, 0, 0, 0]);
     x0(6, [b as u64, 0, 0, 0, 0]);
+    // 32-33 (S4 de docs/REVISION_ARQUITECTURA.md): una llave que se puede transferir una vez llega por un canal y ya
+    // no se puede pasar; su copia hereda la restricción.
+    let mu = dashos::memoria_crear(4096);
+    let una = dashos::llave_duplicar(mu, dashos::LEER | dashos::TRANSFERIR | dashos::UNA_VEZ, 0) as u32;
+    let (a, b) = dashos::canal_crear();
+    if dashos::canal_escribir(a, b"una vez", &[una]) != 0 {
+        return 32;
+    }
+    let mut buf = [0u8; 16];
+    let mut ll = [0u32; 1];
+    let (leido, k) = dashos::canal_leer(b, &mut buf, &mut ll);
+    if leido != 7 || k != 1 || dashos::canal_escribir(a, b"otra", &[ll[0]]) != E_DERECHOS {
+        return 32;
+    }
+    let copia = dashos::llave_duplicar(ll[0], dashos::LEER | dashos::TRANSFERIR, 0);
+    if copia <= 0 || dashos::canal_escribir(a, b"copia", &[copia as u32]) != E_DERECHOS {
+        return 33;
+    }
+    for l in [ll[0], copia as u32, a, b, mu] {
+        dashos::cerrar(l);
+    }
+    // 34 (S3): sin el permiso, la clase de plazo no se da; volver a la justa, sí.
+    if dashos::plazo(0, 1_000, 10_000) >= 0 || dashos::plazo(1, 1_000, 10_000) >= 0 || dashos::plazo(0, 0, 0) != 0 {
+        return 34;
+    }
     // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
     let local = 0u64;
     if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {

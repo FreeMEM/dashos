@@ -40,7 +40,7 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
     }
     for l in llaves {
         // Con sitio reservado y la tabla vacía, no falla.
-        let _ = tabla.instalar(l);
+        let _ = tabla.instalar(l.llegada());
     }
     let p = Arc::new(Proceso {
         ttbr0: e.ttbr0(),

@@ -66,8 +66,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("ajustes", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ajustes"), &[], &["ventanas"]),
     // El sonido (S19): el servicio, que nombra "sonido" antes que nadie (A4), y el controlador de virtio-sound (A3),
     // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
-    ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[], &["sonido"]),
-    ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    // Los dos, con el permiso de la clase de plazo (S3).
+    ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[("plazo", PLAZO)], &["sonido"]),
+    ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
     #[cfg(all(feature = "virt", not(feature = "paula")))]
     ("tono-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-a"), &[], &["sonido"]),
@@ -88,7 +89,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["ventanas", "sonido", "archivos"]),
+    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["ventanas", "archivos", "sonido"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),
@@ -103,6 +104,8 @@ const REGISTRO: u32 = 4;
 const FIRMWARE: u32 = 5;
 /// Un objeto de memoria con datos, de solo lectura (U4: las medidas de la pantalla).
 const DATOS: u32 = 6;
+/// El permiso de la clase de plazo (S3).
+const PLAZO: u32 = 7;
 /// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
 /// corren un puesto).
 const OPCIONAL: u32 = 0x100;
@@ -350,6 +353,7 @@ pub fn lanzar() -> bool {
         }
     }
     apuntar(&mut llaves, "registro", REGISTRO, Llave::nueva(Objeto::Registro, DERECHOS));
+    apuntar(&mut llaves, "plazo", PLAZO, Llave::nueva(Objeto::PermisoPlazo, DERECHOS));
     if let Some((fisica, tamano)) = d.memoria_vc() {
         apuntar(&mut llaves, "vc", FIRMWARE, Llave::nueva(Objeto::Firmware { fisica, tamano }, DERECHOS));
     }

@@ -35,6 +35,8 @@ DashOS en marcha con 4 núcleos.
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
 ~│   [ficheros] raíz (4 entradas, fin bien): C/ Imagenes/ LEEME.txt Prefs/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
+# A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
+~│   [ficheros] A3 leer por nombre: bien
 ~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
 ~│   [ficheros] datos: bien; volumen: 7168 KB,
 ~│   [ficheros] rechazos: bien; desde un cajón: bien
@@ -66,7 +68,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] Wayland: 2 ventanas en pantalla
 # K7: una aplicación con el kit de interfaz, la tercera en la cascada.
 ~│   [ajustes] ventana del kit en pantalla (360x250)
-# Se lleva el teclado al salir, con el foco en su campo: las "a" de la prueba van al campo hasta el clic.
+# Sale cuando ya se teclea en otra ventana, así que no se lleva el teclado al salir (S8); lo coge con un clic, con el
+# foco en su campo: las "a" de la prueba van al campo.
 ~│   [ajustes] el campo dice: DashOSa
 # El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño.
 ~│   [ajustes] el compositor pide 800x600
@@ -87,5 +90,7 @@ DashOS en marcha con 4 núcleos.
 # R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
 # sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
 ~│   [hostil] archivos sigue: sí
+# R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
+~│   [hostil] archivos, permisos: bien
 ~│   [hostil] sonido sigue: sí
 ~│   [hostil] compositor sigue: sí

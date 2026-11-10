@@ -77,8 +77,15 @@ pub fn memoria_tamano(llave: u32) -> i64 {
 
 /// Pasa el hilo a la clase de plazo: `capacidad_us` de CPU cada `periodo_us` (A6, S19), o a la justa con 0. 0 si se
 /// admite; E_LIMITE (-8) si su núcleo ya tiene prometido demasiado.
-pub fn plazo(capacidad_us: u64, periodo_us: u64) -> i64 {
-    llamada(28, [capacidad_us, periodo_us, 0, 0, 0]).0 as i64
+/// Llena `bufer` (hasta 256 bytes) con bytes al azar del kernel (R10). Devuelve si son de calidad: si el kernel tuvo
+/// semilla del firmware. Sin ella, no sirven para llaves.
+pub fn azar(bufer: &mut [u8]) -> Option<bool> {
+    let (n, calidad) = llamada(34, [bufer.as_mut_ptr() as u64, bufer.len() as u64, 0, 0, 0]);
+    (n as i64 == bufer.len() as i64).then_some(calidad == 1)
+}
+
+pub fn plazo(permiso: u32, capacidad_us: u64, periodo_us: u64) -> i64 {
+    llamada(28, [permiso as u64, capacidad_us, periodo_us, 0, 0]).0 as i64
 }
 
 /// Memoria DMA (C46) con la llave de permiso `permiso`: (llave de memoria, dirección de bus), o un error negativo.
@@ -211,6 +218,8 @@ pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i6
 pub const LEER: u64 = 1;
 pub const ESCRIBIR: u64 = 2;
 pub const TRANSFERIR: u64 = 4;
+/// Restricción, no derecho: la llave se transfiere una vez y llega sin el derecho de transferir (S4).
+pub const UNA_VEZ: u64 = 8;
 
 /// Una copia de la llave con esos derechos o menos, y con `marca` si no tenía (0: la que tenga). C41.
 pub fn llave_duplicar(llave: u32, derechos: u64, marca: u64) -> i64 {

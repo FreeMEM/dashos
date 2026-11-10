@@ -98,16 +98,23 @@ pub struct Juntador {
 
 /// Lo más que se guarda de una conexión sin un mensaje entero: más es un cliente roto o malicioso.
 pub const MAX_PENDIENTE: usize = 64 * 1024;
+/// Lo más de llaves que esperan a un mensaje que las use (E2). Ningún mensaje de Wayland lleva más de unas pocas; sin
+/// tope, un cliente llenaría la tabla de llaves del servidor, que dejaría de poder leer.
+pub const MAX_LLAVES_PENDIENTES: usize = 32;
 
 impl Juntador {
     pub fn new() -> Self {
         Self::default()
     }
 
-    /// Mete los bytes de un trozo de datos (sin su byte de tipo) y sus llaves.
+    /// Mete los bytes de un trozo de datos (sin su byte de tipo) y sus llaves. Si no caben, no se queda nada: las
+    /// llaves siguen siendo de quien llama.
     pub fn meter(&mut self, bytes: &[u8], llaves: &[u32]) -> Result<(), Fallo> {
         if self.bytes.len() + bytes.len() > MAX_PENDIENTE {
             return Err(Fallo::Tamano);
+        }
+        if self.llaves.len() + llaves.len() > MAX_LLAVES_PENDIENTES {
+            return Err(Fallo::Llaves);
         }
         self.bytes.extend_from_slice(bytes);
         self.llaves.extend(llaves.iter().copied());

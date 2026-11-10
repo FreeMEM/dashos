@@ -140,7 +140,12 @@ struct Proyecciones {
     siguiente: usize,
     /// Un objeto de memoria de una página, vacío: el mapa de teclas que se da sin mapa (W8).
     vacia: Option<u32>,
+    /// El mapa de teclado de xkb (G2), escrito una vez en su objeto de memoria.
+    mapa: Option<u32>,
 }
+
+/// Dónde se escribe el mapa de teclado al crearlo, antes de quitarlo de en medio.
+const VA_MAPA: usize = 0x62_0000_0000;
 
 impl Memorias for Proyecciones {
     fn proyectar(&mut self, llave: u32, tamano: usize) -> Option<*const u8> {
@@ -166,6 +171,21 @@ impl Memorias for Proyecciones {
         }
         self.por_llave.insert(llave, va);
         Some(va as *const u8)
+    }
+
+    fn llave_con(&mut self, datos: &'static [u8]) -> Option<u32> {
+        if self.mapa.is_none() {
+            let m = dashos::memoria_crear(datos.len());
+            if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA_MAPA, true) != 0 {
+                return None;
+            }
+            unsafe { core::ptr::copy_nonoverlapping(datos.as_ptr(), VA_MAPA as *mut u8, datos.len()) };
+            dashos::memoria_quitar(VA_MAPA);
+            self.mapa = Some(m as u32);
+        }
+        // Cada cliente, una copia de solo lectura: no puede cambiar el mapa de los demás.
+        let copia = dashos::llave_duplicar(self.mapa?, dashos::LEER | dashos::TRANSFERIR, 0);
+        (copia > 0).then_some(copia as u32)
     }
 
     fn llave_vacia(&mut self) -> Option<u32> {
@@ -308,12 +328,20 @@ fn principal() -> u64 {
         if n == -4 {
             return 0; // el canal se cerró
         }
-        // Un mensaje que no vale no para el compositor (M6).
+        // Un mensaje que no vale no para el compositor (M6). Si no se pudo leer, sigue en la cola: se espera un poco
+        // para no girar (E2).
         if n < 0 {
+            dormir();
             continue;
         }
         let n = n as usize;
         let llaves = &ll[..k];
+        escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
+        // Un mensaje vacío no es nada; `buf` aún tiene el anterior (E1).
+        if n == 0 {
+            llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+            continue;
+        }
         if marca == 0 {
             if n == 24 {
                 let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
@@ -348,13 +376,17 @@ fn principal() -> u64 {
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
                 let cli = clientes.get_mut(&marca).unwrap();
                 if cli.con.juntador.meter(&buf[1..n], llaves).is_err() {
+                    llaves.iter().for_each(|&l| { dashos::cerrar(l); });
                     soltar = true;
                 } else {
                     cli.con.atender(&GLOBALES, &mut escena.de(marca));
                     soltar = !mandar(cli) || cli.con.roto.is_some();
                 }
             }
-            Some(TROZO_ADIOS) => soltar = true,
+            Some(TROZO_ADIOS) => {
+                llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+                soltar = true;
+            }
             _ if !de_ventanas => {}
             _ => {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });

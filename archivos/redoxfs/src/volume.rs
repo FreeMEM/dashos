@@ -409,7 +409,12 @@ impl<D: Disk> Transaction<'_, D> {
     /// Makes a volume with an empty root directory, which compares names without case, as the main one. Only
     /// from the main volume. Returns its number.
     pub fn create_volume(&mut self, name: &str, ctime: u64, ctime_nsec: u32) -> Result<u64> {
-        self.create_volume_inner(name, ctime, ctime_nsec, None)
+        self.create_volume_inner(name, ctime, ctime_nsec, None, (0, 0))
+    }
+
+    /// Like `create_volume`, with its root directory owned by `owner` (uid, gid) from the start (DashOS, R6).
+    pub fn create_volume_owned(&mut self, name: &str, ctime: u64, ctime_nsec: u32, owner: (u32, u32)) -> Result<u64> {
+        self.create_volume_inner(name, ctime, ctime_nsec, None, owner)
     }
 
     /// Makes an encrypted volume (FS10c), unlocked, with its first password. `master` is its key and `salt` the
@@ -425,10 +430,27 @@ impl<D: Disk> Transaction<'_, D> {
         salt: [u8; 16],
         cost: Cost,
     ) -> Result<u64> {
+        self.create_encrypted_volume_owned(name, ctime, ctime_nsec, password, master, salt, cost, (0, 0))
+    }
+
+    /// Like `create_encrypted_volume`, with its root directory owned by `owner` (uid, gid) from the start (DashOS,
+    /// R6): changing it later rewrites the root with the volume's key.
+    #[allow(clippy::too_many_arguments)]
+    pub fn create_encrypted_volume_owned(
+        &mut self,
+        name: &str,
+        ctime: u64,
+        ctime_nsec: u32,
+        password: &[u8],
+        master: &[u8; 32],
+        salt: [u8; 16],
+        cost: Cost,
+        owner: (u32, u32),
+    ) -> Result<u64> {
         let mut keys = BlockData::<VolumeKeys>::empty(BlockAddr::default()).unwrap();
         keys.data_mut()
             .add(SlotKind::Password, password, salt, cost, master)?;
-        self.create_volume_inner(name, ctime, ctime_nsec, Some((keys, master)))
+        self.create_volume_inner(name, ctime, ctime_nsec, Some((keys, master)), owner)
     }
 
     fn create_volume_inner(
@@ -437,6 +459,7 @@ impl<D: Disk> Transaction<'_, D> {
         ctime: u64,
         ctime_nsec: u32,
         keys: Option<(BlockData<VolumeKeys>, &[u8; 32])>,
+        owner: (u32, u32),
     ) -> Result<u64> {
         if self.main.is_some() || !good_name(name) {
             return Err(Error::new(EINVAL));
@@ -478,7 +501,7 @@ impl<D: Disk> Transaction<'_, D> {
         self.header.tree = self.sync_block(&mut FsCtx, tree)?;
         let mut root = BlockData::new(
             BlockAddr::null(BlockMeta::default()),
-            Node::new(Node::MODE_DIR | 0o755, 0, 0, ctime, ctime_nsec),
+            Node::new(Node::MODE_DIR | 0o755, owner.0, owner.1, ctime, ctime_nsec),
         );
         root.data_mut().set_links(1);
         let flags = root.data().flags() | NodeFlags::CASEFOLD;

@@ -91,6 +91,12 @@ impl Memorias for MemoriasPc {
         let fd = p::memfd(c"dashos-vacio", 0)?;
         Some(self.0.borrow_mut().poner(fd))
     }
+
+    fn llave_con(&mut self, datos: &'static [u8]) -> Option<u32> {
+        let fd = p::memfd(c"dashos-mapa-teclado", datos.len() as u64)?;
+        unsafe { libc::pwrite(fd, datos.as_ptr().cast(), datos.len(), 0) };
+        Some(self.0.borrow_mut().poner(fd))
+    }
 }
 
 /// Por dónde se contesta a un cliente.

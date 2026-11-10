@@ -95,6 +95,9 @@ pub struct Espacio {
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
+    /// Hay código escrito que aún no se ha quitado de la caché de instrucciones de los núcleos (K15): se hace una vez,
+    /// en `codigo_listo`, no por cada página.
+    codigo_pendiente: bool,
 }
 
 impl Drop for Espacio {
@@ -150,6 +153,14 @@ fn indices(va: u64) -> [usize; 3] {
 }
 
 impl Espacio {
+    /// Quita de la caché de instrucciones de todos los núcleos lo que había donde ahora hay código nuevo. Una sola vez
+    /// por carga (K15): antes iba una invalidación de los 4 núcleos por cada página de código.
+    pub fn codigo_listo(&mut self) {
+        if core::mem::take(&mut self.codigo_pendiente) {
+            unsafe { core::arch::asm!("ic ialluis", "dsb ish", "isb") };
+        }
+    }
+
     /// Un espacio vacío. `None` si no quedan ASID o memoria.
     pub fn nuevo(cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         if !cupo.cobrar_suelto(PAGINA) {
@@ -172,6 +183,7 @@ impl Espacio {
             proyectados: alloc::vec::Vec::new(),
             cupo,
             cobrado: PAGINA,
+            codigo_pendiente: false,
         })
     }
 
@@ -406,8 +418,8 @@ impl Espacio {
     }
 
     /// Reserva una página nueva para el proceso y la proyecta en `va`. Va a cero, con `contenido` copiado a partir de
-    /// `desplazamiento` (lo que no quepa en la página se descarta). Si es código, se lleva a la caché de
-    /// instrucciones de todos los núcleos.
+    /// `desplazamiento` (lo que no quepa en la página se descarta). Si es código, se limpia de la caché de datos; antes
+    /// de ejecutarlo hay que llamar a `codigo_listo`.
     pub fn pagina_nueva(&mut self, va: u64, permiso: Permiso, contenido: &[u8], desplazamiento: usize) -> Result<(), Error> {
         self.propias.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.cobrar()?;
@@ -428,7 +440,8 @@ impl Espacio {
                 unsafe { core::arch::asm!("dc cvau, {}", in(reg) a) };
                 a += 64;
             }
-            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+            unsafe { core::arch::asm!("dsb ish") };
+            self.codigo_pendiente = true;
         }
         if let Err(e) = self.proyectar(va, p, permiso) {
             unsafe { paginas().liberar(p, 1) };

@@ -13,6 +13,17 @@ fn usage() -> ! {
     process::exit(2);
 }
 
+/// The owner of the new volume's root, from `REDOXFS_DUENO=uid:gid` (DashOS test disks); 0:0 without it.
+fn owner() -> (u32, u32) {
+    env::var("REDOXFS_DUENO")
+        .ok()
+        .and_then(|v| {
+            let (u, g) = v.split_once(':')?;
+            Some((u.parse().ok()?, g.parse().ok()?))
+        })
+        .unwrap_or((0, 0))
+}
+
 fn main() {
     env_logger::init();
     let args: Vec<String> = env::args().skip(1).collect();
@@ -68,7 +79,7 @@ fn main() {
             getrandom::fill(&mut salt).expect("randomness");
             let result = fs
                 .tx(|tx| {
-                    tx.create_encrypted_volume(
+                    tx.create_encrypted_volume_owned(
                         name,
                         now.as_secs(),
                         now.subsec_nanos(),
@@ -76,6 +87,7 @@ fn main() {
                         &master,
                         salt,
                         cost,
+                        owner(),
                     )
                 })
                 .map(|_| ());

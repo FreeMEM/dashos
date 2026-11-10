@@ -82,6 +82,24 @@ mod spin_once {
 /// El árbol de dispositivos que dejó el firmware, como bytes. `None` si no empieza por la marca del FDT o dice medir
 /// más de 2 MB. El firmware lo deja en memoria normal, que el kernel ve por el mapa lineal y que el repartidor de
 /// páginas reserva (`memoria.rs`): nadie más lo escribe.
+/// Pone a cero `largo` bytes del árbol original desde `off` (R10: la semilla del azar, que no debe quedar al alcance
+/// del DMA ni pasar a la copia). Solo antes de `copiar_arbol`: después, la copia no se toca.
+pub fn borrar_del_arbol(off: usize, largo: usize) {
+    if COPIA_ARBOL.get().is_some() {
+        return;
+    }
+    let Some(arbol) = arbol_de_dispositivos() else { return };
+    if off.checked_add(largo).is_none_or(|fin| fin > arbol.len()) {
+        return;
+    }
+    let p = arbol.as_ptr() as *mut u8;
+    for i in off..off + largo {
+        // SAFETY: dentro del árbol del firmware (comprobado arriba), que es RAM del kernel y nadie más lee a la vez:
+        // se llama al arrancar, en un solo núcleo, antes de copiarlo.
+        unsafe { p.add(i).write_volatile(0) };
+    }
+}
+
 pub fn arbol_de_dispositivos() -> Option<&'static [u8]> {
     if let Some(copia) = COPIA_ARBOL.get() {
         return Some(copia);

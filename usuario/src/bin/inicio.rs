@@ -8,7 +8,7 @@
 #![no_std]
 #![no_main]
 
-use dashos::{canal_crear, grupo_crear, llave_duplicar, memoria_crear, memoria_proyectar, println, proceso_crear_en, proceso_esperar};
+use dashos::{canal_crear, grupo_crear, llave_duplicar, UNA_VEZ, memoria_crear, memoria_proyectar, println, proceso_crear_en, proceso_esperar};
 
 dashos::programa!(principal);
 
@@ -17,6 +17,33 @@ const COPIA: usize = 0x20_0000_0000;
 
 fn u32_en(p: usize) -> u32 {
     unsafe { core::ptr::read_volatile(p as *const u32) }
+}
+
+/// Las fichas del servicio de archivos (R6 de `docs/REVISION_LOOP.md`, U1 de S6b), provisionales hasta que reparta
+/// `sesiones`: usuario, grupo, derechos (1: administrar volúmenes, instantáneas y comprobación) y cajón raíz de cada
+/// programa que lo usa. Sin ficha no hay sesión. Las pruebas son del usuario 1000, dueño de todo el disco de pruebas
+/// (`tools/disco_archivos.py`); `hostil`, de otro, encerrado en `C`.
+const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
+    ("ficheros", 1000, 1000, 1, ""),
+    ("medir-fs", 1000, 1000, 1, ""),
+    ("imagen", 1000, 1000, 0, ""),
+    ("hostil", 1001, 1001, 0, "C"),
+];
+/// La orden de alta del servicio de archivos.
+const ALTA: u32 = 100;
+
+/// El alta de `programa`, con la marca `marca`, para el servicio de archivos: cabecera de 32 bytes y el cajón raíz.
+fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
+    let &(_, uid, gid, derechos, raiz) = FICHAS.iter().find(|f| f.0 == programa)?;
+    let mut m = [0u8; 96];
+    m[0..4].copy_from_slice(&ALTA.to_le_bytes());
+    m[4..8].copy_from_slice(&derechos.to_le_bytes());
+    m[8..16].copy_from_slice(&marca.to_le_bytes());
+    m[16..20].copy_from_slice(&uid.to_le_bytes());
+    m[20..24].copy_from_slice(&gid.to_le_bytes());
+    m[24..28].copy_from_slice(&(raiz.len() as u32).to_le_bytes());
+    m[32..32 + raiz.len()].copy_from_slice(raiz.as_bytes());
+    Some((m, 32 + raiz.len()))
 }
 
 fn nombre(p: usize) -> &'static str {
@@ -69,19 +96,22 @@ fn principal() -> u64 {
     // Los canales entre servicios: el extremo que reciben, en copias, los demás programas que lo nombran (0: aún no
     // creado). El primero recibe el otro extremo.
     let mut pendientes = [0u32; 32];
+    // Quién lee cada canal (su cabecera), para saber cuál es el del servicio de archivos.
+    let mut lector = [0usize; 32];
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
         let tamano = u32_en(cab) as usize;
         let de_canales = u32_en(cab + 4);
         let nombre_cab = cab + 16;
         // Las llaves que le tocan, en orden; pasan a ser la 1, la 2... del servicio. De los aparatos, una copia: así
-        // `inicio` conserva la suya y puede dar el mismo aparato a otro (el permiso DMA, por ejemplo).
+        // `inicio` conserva la suya y puede dar el mismo aparato a otro (el permiso DMA, por ejemplo). La copia llega
+        // sin el derecho de transferir (S4): un controlador no puede pasar sus registros a otro programa.
         let mut suyas = [0u32; 8];
         let mut k = 0;
         for j in 0..8 {
             let a = unsafe { *((cab + 8 + j) as *const u8) } as usize;
             if a < n && k < suyas.len() {
-                let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7, 0);
+                let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7 | UNA_VEZ, 0);
                 if copia > 0 {
                     suyas[k] = copia as u32;
                     k += 1;
@@ -98,6 +128,7 @@ fn principal() -> u64 {
                 if pendientes[c] == 0 {
                     let (a, b) = canal_crear();
                     pendientes[c] = b;
+                    lector[c] = cab;
                     suyas[k] = a;
                     k += 1;
                     if np < propios.len() {
@@ -122,6 +153,17 @@ fn principal() -> u64 {
                                 break;
                             }
                             dormir_un_tic();
+                        }
+                        // Al de archivos, además, su ficha (R6), también antes de que el cliente arranque.
+                        if nombre(lector[c] + 16) == "archivos" {
+                            if let Some((m, n)) = alta(nombre(nombre_cab), marca) {
+                                for _ in 0..100 {
+                                    if dashos::canal_escribir(pendientes[c], &m[..n], &[]) == 0 {
+                                        break;
+                                    }
+                                    dormir_un_tic();
+                                }
+                            }
                         }
                     }
                 }

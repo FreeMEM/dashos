@@ -38,7 +38,7 @@ Primero lo que se puede probar ya con programas reales en el PC; después lo que
 |---|---|---|---|
 | G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | hecho |
 | G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | hecho (copia de wl_shm; vsock y QEMU, con la caja) |
-| G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | pendiente |
+| G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | hecho (mapa español; elegir en Prefs, después) |
 | G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | pendiente |
 | G4 | `zwlr_layer_shell_v1`: fondo, barras y avisos (capas, anclas, márgenes, zona exclusiva, teclado). Solo para clientes con el poder de escritorio (S10b: por la marca) | `swaybg` pinta el fondo; un cliente sin el poder recibe error | pendiente |
 | G5 | `ext_session_lock_v1`: bloqueo. Mientras dura, solo se ven y reciben entrada las superficies del bloqueo; si su cliente muere, la pantalla sigue bloqueada. Solo `guardian` (S6b) o quien tenga el poder | `swaylock`; un cliente hostil no ve ni recibe nada bloqueado | pendiente |
@@ -78,4 +78,9 @@ código de compositores.
   `DOBLE=1` (dos búferes y solo la banda vieja y la nueva dañadas) y las pruebas miran que no quede una banda vieja.
   Medida en la ventana de 200 x 150: antes 120.000 bytes por cuadro; ahora 43.200 de media en 10 cuadros (los dos
   primeros, enteros) y 24.000 en marcha (-80 %). Va al panel de medidas con las primeras de la revisión.
+- G2 hecho: `wl_keyboard.keymap` en formato `xkb_v1` con el mapa español compilado de xkeyboard-config
+  (`wayland/teclados/es.xkb`, 73 KB, con su aviso de licencia). `Memorias::llave_con`: el compositor de DashOS lo
+  escribe una vez en un objeto de memoria y da a cada cliente una copia de solo lectura; el del PC, un `memfd`. El
+  cliente de prueba lo lee con libwayland: bien en directo y por el puente (donde cruza de DashOS a Linux como
+  memoria). Sin mapa (no_keymap) solo si no se puede crear la memoria.
 

@@ -376,7 +376,15 @@ fn principal() -> u64 {
     let mut buf = [0u8; 8];
     let mut ll = [0u32; 1];
     let mut n_aviso = 0; // el tamaño del último aviso: 4, de la interrupción; 8, del temporizador
+    // Con la interrupción, un temporizador de una vez mientras haya eventos sin entregar al compositor (E4).
+    let mut reintento: Option<u32> = None;
     loop {
+        if n_aviso == 8 {
+            if let Some(t) = reintento.take() {
+                dashos::cerrar(t);
+            }
+        }
+        entrada.reintentar();
         // Borrar el aviso antes de mirar los eventos: uno que llegue mientras vuelve a ponerlo (4.17.5).
         if irq.is_some() {
             escribir(op + USBSTS, STS_EINT);
@@ -404,6 +412,10 @@ fn principal() -> u64 {
         // La interrupción se vuelve a permitir con el aviso ya borrado; si llegó otro evento, salta otra vez.
         if let Some(i) = irq.filter(|_| n_aviso == 4) {
             dashos::interrupcion_terminar(i);
+        }
+        if irq.is_some() && entrada.pendiente() && reintento.is_none() {
+            let t = dashos::temporizador_crear(b, 10_000, 0);
+            reintento = (t > 0).then_some(t as u32);
         }
         n_aviso = dashos::canal_leer(a, &mut buf, &mut ll).0;
     }
@@ -503,7 +515,8 @@ fn concentrador(x: &mut Xhci, p: u32, k: usize, tt: Option<(u32, u32)>, lista: &
 /// de un aparato de baja o plena velocidad detrás de un concentrador de alta (ranura y puerto del concentrador).
 fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Option<(u32, u32)>) -> Option<Ranura> {
     let (codigo, id) = x.orden(0, T_PEDIR_RANURA << 10)?;
-    if codigo != 1 || id == 0 {
+    // El número lo da el controlador: fuera de las ranuras que se le dieron, escribiría fuera de la tabla (S7).
+    if codigo != 1 || id == 0 || id as usize > MAX_RANURAS {
         return None;
     }
     let base = base_ranura(k);

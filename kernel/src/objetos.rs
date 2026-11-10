@@ -14,6 +14,10 @@ pub const LEER: u32 = 1 << 0;
 pub const ESCRIBIR: u32 = 1 << 1;
 pub const TRANSFERIR: u32 = 1 << 2;
 pub const TODOS: u32 = LEER | ESCRIBIR | TRANSFERIR;
+/// No es un derecho sino una restricción (S4): la llave se puede transferir una vez, y quien la recibe (por un canal o
+/// al nacer) se queda sin el derecho de transferirla. Así `inicio` da a un controlador su llave de aparato sin que este
+/// pueda pasársela a otro. Al duplicar, la restricción se hereda: no se quita nunca.
+pub const UNA_VEZ: u32 = 1 << 3;
 
 pub const MAX_DATOS: usize = 256;
 pub const MAX_LLAVES: usize = 8;
@@ -45,6 +49,9 @@ pub enum Objeto {
     PermisoDma(Arc<crate::memoria::PermisoDma>),
     /// El registro del sistema (C48): con leer se saca, y quien lo saca es la consola. Solo lo da el kernel.
     Registro,
+    /// Permiso para pedir la clase de plazo (S3): con escribir, la llamada 28. Solo lo da el kernel, y `inicio` lo
+    /// reparte al sonido (y, cuando lo use, al compositor).
+    PermisoPlazo,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
@@ -263,6 +270,14 @@ pub struct Llave {
 impl Llave {
     pub fn nueva(objeto: Objeto, derechos: u32) -> Self {
         Self { objeto, derechos, marca: 0 }
+    }
+
+    /// Como queda al llegar a su nuevo dueño: con `UNA_VEZ`, sin el derecho de transferir (S4).
+    pub fn llegada(mut self) -> Self {
+        if self.derechos & UNA_VEZ != 0 {
+            self.derechos &= !(TRANSFERIR | UNA_VEZ);
+        }
+        self
     }
 }
 
@@ -580,6 +595,15 @@ impl TablaLlaves {
 
     pub fn quitar(&mut self, h: u32) -> Option<Llave> {
         self.llaves.get_mut(h as usize).and_then(|x| x.take())
+    }
+
+    /// La llave `h` como queda al llegar a este proceso (`Llave::llegada`, S4).
+    pub fn llegada(&mut self, h: u32) {
+        if let Some(Some(l)) = self.llaves.get_mut(h as usize) {
+            if l.derechos & UNA_VEZ != 0 {
+                l.derechos &= !(TRANSFERIR | UNA_VEZ);
+            }
+        }
     }
 
     /// Vuelve a poner una llave en el hueco `h`, que tiene que estar vacío (se quitó en la misma llamada).

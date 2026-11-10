@@ -8,7 +8,7 @@
 
 use alloc::collections::BTreeMap;
 
-use crate::servidor::ErrorProtocolo;
+use crate::servidor::{ErrorProtocolo, NO_MEMORY};
 
 /// Formatos (de `wl_shm.format`): los dos que todo compositor anuncia.
 pub const ARGB8888: u32 = 0;
@@ -21,6 +21,8 @@ pub const INVALID_FD: u32 = 2;
 
 /// Lo más grande que se acepta de un pool: 64 MB (una pantalla 4K a 32 bits, dos veces, cabe).
 pub const MAX_POOL: usize = 64 << 20;
+/// Lo más de pools de un cliente (E3): cada uno es una proyección en el compositor.
+pub const MAX_POOLS: usize = 16;
 
 /// Quien proyecta los objetos de memoria: en DashOS, `memoria_proyectar` solo para leer; en las pruebas, vectores.
 pub trait Memorias {
@@ -31,6 +33,12 @@ pub trait Memorias {
     fn soltar(&mut self, llave: u32, base: *const u8, tamano: usize);
     /// Una llave de memoria vacía, de solo lectura, para dar a un cliente (el mapa de teclas sin mapa, W8).
     fn llave_vacia(&mut self) -> Option<u32> {
+        None
+    }
+
+    /// Una llave de solo lectura de una memoria con `datos`, para dar a un cliente (el mapa de teclado, G2). La
+    /// memoria se puede crear una vez y dar copias. `None` si no se puede: entonces va sin mapa.
+    fn llave_con(&mut self, _datos: &'static [u8]) -> Option<u32> {
         None
     }
 }
@@ -73,6 +81,9 @@ impl Shm {
     ) -> Result<(), ErrorProtocolo> {
         if tamano <= 0 || tamano as usize > MAX_POOL {
             return Err(ErrorProtocolo::new(shm, INVALID_STRIDE, "tamaño de pool malo"));
+        }
+        if self.pools.len() >= MAX_POOLS {
+            return Err(ErrorProtocolo::new(1, NO_MEMORY, "demasiados pools"));
         }
         let tamano = tamano as usize;
         let Some(base) = memorias.proyectar(llave, tamano) else {

@@ -87,7 +87,9 @@ otro hilo del mismo núcleo usa la FPU (C28). No hay SVE.
 
 Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. Un hilo que despierta
 empieza como mucho medio tic por debajo del mínimo de su núcleo y, si va por delante del que corre, se adelanta al
-momento (M1 y M3, `docs/MULTITAREA_LOOP.md`). La clase de plazos de S2 la usan el kernel y el sonido (llamada 28). Un
+momento (M1 y M3, `docs/MULTITAREA_LOOP.md`). La clase de plazos de S2 la usan el kernel y el sonido (llamada 28, con
+el permiso de plazo que reparte `inicio`, S3). Lo prometido a la clase en un núcleo, contando los hilos que duermen o
+esperan, no pasa del 80 % (K8). Un
 proceso corre en el núcleo donde se creó y no cambia de núcleo.
 
 ### El programa de inicio
@@ -147,9 +149,12 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
+| 28 | `plazo` | `x0` permiso de plazo (con escribir; no hace falta con capacidad 0), `x1` capacidad en µs (0: vuelve a la clase justa), `x2` periodo en µs (de 1 ms a 1 s) | 0, o `E_LIMITE` si no se admite |
 | 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola | El número |
 | 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
 | 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
+| 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
+| 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware), 0 si no |
 
 ### Detalles
 
@@ -210,7 +215,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **Varios lectores.** Con copias de una llave, varios hilos pueden leer el mismo lado: cada mensaje lo recibe uno, y
   al cerrarse el otro lado se despiertan todos.
 - **15, `llave_duplicar`** (C41). Una copia del mismo objeto con los derechos pedidos que ya tenga la llave, nunca
-  más. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
+  más. Con el bit 8 en `x1`, la copia lleva la restricción "una vez"; si la original ya la tenía, la copia también. Si la llave no tenía marca y `x2` no es 0, la copia lleva esa marca; con `x2` a 0 conserva la suya. Marcar con
   otra una llave ya marcada da `E_DERECHOS`. Un lado de canal sigue abierto mientras quede alguna copia.
 - **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
   que se hagan de la revocable también pasan por él. Cada intermediario cuesta 256 bytes del cupo. Como mucho hay 4
@@ -329,6 +334,11 @@ lleva unos derechos:
 | Leer | 1 |
 | Escribir | 2 |
 | Transferir | 4 |
+| Una vez (restricción) | 8 |
+
+**Una vez** (S4 de `REVISION_ARQUITECTURA.md`) no es un derecho sino una restricción: la llave se puede transferir,
+pero llega a su nuevo dueño (por `canal_leer` o al nacer con `proceso_crear`) sin el derecho de transferir y sin esta
+marca. Al duplicar se hereda siempre: quien la tiene no se la puede quitar. `inicio` la pone en las llaves de aparato.
 
 Un proceso nuevo no tiene ninguna llave. Solo tiene las que le da quien lo lanza, y esas ocupan los números 1, 2,
 etc. El kernel solo lanza `inicio`, con las llaves de arranque; los controladores y demás servicios reciben las suyas
@@ -347,6 +357,7 @@ Tipos de objeto:
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
+| Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 

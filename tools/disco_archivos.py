@@ -7,7 +7,11 @@
   "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente. Y un volumen
   cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `redoxfs-volume`, que está al lado de
   `redoxfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde. Y `Imagenes/disquete.adf`, el ADF de la
-  prueba de S20 (`kernel/pruebas/disquete.adf.gz`, hecho con `tools/adf_oraculo.py --disquete`).
+  prueba de S20 (`kernel/pruebas/disquete.adf.gz`, hecho con `tools/adf_oraculo.py --disquete`). Y `C/Privado/nota.txt`,
+  solo para su dueño (cajón 0700, fichero 0600), para la prueba de permisos de R6 (`docs/REVISION_LOOP.md`).
+- Todo, raíces incluidas (la del disco y la de "Ana"), es del usuario 1000, grupo 1000 (`duenos`, en
+  archivos/herramientas, y `REDOXFS_DUENO` para "Ana"): `redoxfs-ar` copiaría el dueño de Linux, que cambia de un
+  PC a otro.
 
 Uso: disco_archivos.py SALIDA REDOXFS_AR
      disco_archivos.py --comprobar DISCO VER
@@ -28,6 +32,8 @@ if sys.argv[1] == "--comprobar":
     arbol = subprocess.run([ver, disco, desde], check=True, capture_output=True, text=True).stdout.splitlines()
     esperado = [
         "C/ cajón",
+        "C/Privado/ cajón",
+        "C/Privado/nota.txt 18",
         "C/grande.txt 313890",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
@@ -76,12 +82,22 @@ with tempfile.TemporaryDirectory() as t:
         f.write("".join(f"línea {i}\n" for i in range(25000)))
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
+    privado = os.path.join(raiz, "C", "Privado")
+    os.makedirs(privado)
+    with open(os.path.join(privado, "nota.txt"), "w") as f:
+        f.write("privado de prueba\n")
+    os.chmod(os.path.join(privado, "nota.txt"), 0o600)
+    os.chmod(privado, 0o700)
     fs = os.path.join(t, "fs.img")
     with open(fs, "wb") as f:
         f.truncate(7 << 20)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
     volumen = os.path.join(os.path.dirname(ar), "redoxfs-volume")
-    subprocess.run([volumen, fs, "create-encrypted", "Ana", "--test-cost"], input=b"clave de Ana\n", check=True)
+    # La raíz de "Ana", del 1000 al crearla: cambiarla después la reescribiría con la llave del volumen.
+    subprocess.run([volumen, fs, "create-encrypted", "Ana", "--test-cost"], input=b"clave de Ana\n", check=True,
+                   env={**os.environ, "REDOXFS_DUENO": "1000:1000"})
+    duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
+    subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     d = bytearray(1 << 20)
     s0 = b"DashOS: sector 0 del disco NVMe"
     d[: len(s0)] = s0

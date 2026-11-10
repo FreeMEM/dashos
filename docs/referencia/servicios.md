@@ -49,11 +49,14 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | disco (prueba, solo `virt`) | — | "disco" |
 | compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI) | "buzon" (en la Pi), "entrada" (es quien lee) |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
+| sonido | permiso de plazo (S3) | "sonido" (es quien lee) |
+| virtio-sonido | su permiso DMA, registros y configuración del aparato, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
 1) del otro extremo, y el servidor, un mensaje sin marca por cliente con su marca (8 bytes) y su nombre (16). Solo
 `inicio` escribe sin marca, así que el servidor sabe quién le pide qué (auditoría de la fase 4, M6). Las llaves de
-aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
+aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Llegan
+con la restricción "una vez" (S4): el servicio no puede pasárselas a otro programa. Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
 ## Buzón de la VideoCore (C50)
@@ -150,7 +153,25 @@ orden que cambia algo es una transacción de RedoxFS que queda en el disco, con 
 (FS4). Este protocolo es el de todos los sistemas de archivos de DashOS: los que vengan (FAT, ext4,
 los del Amiga) lo cumplen igual, y `dos.library` habla con todos de la misma forma.
 
-Cada cliente se reconoce por la marca de su llave (la pone `inicio`): un mensaje sin marca se tira. Hasta 8 clientes.
+Cada cliente se reconoce por la marca de su llave (la pone `inicio`). Hasta 64 clientes.
+
+**Fichas y permisos** (R6 de `docs/REVISION_LOOP.md`, U1 de `diseño/S6b-usuarios-y-permisos.md`). Antes que el
+cliente llega, sin marca (solo escribe sin marca quien reparte las llaves, hoy `inicio`), su **alta**, orden 100:
+derechos en la asa (bytes 4-7; 1 = administrar), su marca en a, usuario (16-19) y grupo (20-23) en b, y el cajón raíz
+como nombre, desde la raíz del volumen principal. Sin alta no hay sesión (-12). Las fichas provisionales están en
+`usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
+
+- La asa 0 es la raíz del cliente, no la del disco. Por encima no se llega: no hay "cajón padre" ni se siguen enlaces.
+- Dueño, grupo y modo, como en Unix y sin paso libre para nadie (el usuario 0 es "sistema", sin privilegios): para
+  pasar por un cajón al buscar hace falta su x; leer y listar, r; escribir y cambiar el tamaño, w; crear, guardar,
+  borrar y renombrar, w y x en el cajón (o en los dos). En un cajón con el bit pegajoso solo borra o renombra el dueño
+  de lo tocado o el del cajón. Comentar y proteger, solo el dueño. El bit setuid no da nada.
+- Lo nuevo es del usuario del cliente y de su grupo (o del del cajón, si tiene setgid), con los permisos pedidos menos
+  0o022. Un volumen nuevo, de quien lo hace.
+- Con el derecho de administrar: comprobar (16), instantáneas (17 a 20) y volúmenes (21 con nombre, 22 a 26). Sin él,
+  -12.
+
+Un mensaje sin marca que no sea un alta se tira.
 Todo va en little-endian.
 
 **Petición**: 32 bytes de cabecera y, detrás, el nombre en UTF-8 (hasta 224 bytes; el mensaje entero, hasta 256).
@@ -167,10 +188,10 @@ Todo va en little-endian.
 Estados: 0 bien, -1 mal formado, -2 no existe, -3 no es un cajón, -4 es un cajón, -5 asa mala, -6 sin sitio (de asas
 o clientes), -7 error del disco, -8 solo lectura, -9 ya existe, -10 cajón no vacío, -11 disco lleno, -12 protegido
 (sin permiso de escritura, o con "no borrar"; o un volumen cifrado cerrado, o una contraseña que no es), -13 en uso
-(un volumen con algo abierto).
+(un volumen con algo abierto), -14 sin azar de calidad (para hacer llaves).
 
 Cada asa es de un volumen (FS10): lo que se busca, crea o renombra desde ella queda en el suyo. La asa 0 es la raíz
-del principal; la orden 21 da la raíz de otro.
+del cliente; la orden 21 da la raíz de otro volumen.
 
 | Orden | Qué | Pide | Devuelve |
 |---|---|---|---|
@@ -195,20 +216,24 @@ del principal; la orden 21 da la raíz de otro.
 | 18 tomar | Toma una instantánea del volumen de la asa | asa, nombre (hasta 64 bytes, sin ':' ni '/') | — |
 | 19 descartar | Borra una instantánea y suelta lo que solo veía ella | asa, nombre | — |
 | 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer | asa, nombre | a el volumen |
-| 21 volumen | Abre la raíz del volumen `nombre` (vacío: el principal) (FS10). Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
+| 21 volumen | Abre la raíz del volumen `nombre` (FS10); vacío, la raíz del cliente. Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
 | 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
-| 23 hacer volumen | Hace un volumen sin cifrar. Los cifrados, de momento, solo con `redoxfs-volume` en Linux: DashOS no tiene aún azar de calidad para las llaves | nombre; a = 0 | a su número |
+| 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto | nombre; a: 0 sin cifrar, 1 cifrado, 2 cifrado con Argon2 barato (pruebas); b largo de la contraseña | a su número |
 | 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
-| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña no se guarda | nombre "volumen\0contraseña" | — |
+| 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña va en los b primeros bytes de la ventana, no en el mensaje (A13): el servicio la copia y la borra de la ventana. No se guarda | nombre, b largo de la contraseña (hasta 1.024) | — |
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
 | 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
+| 28 leer por nombre | Busca `nombre` desde la asa y lo lee al principio de la ventana, sin dejar asa abierta (A3): buscar, leer y cerrar en un viaje | asa, a desde, b cuánto (hasta la ventana), nombre | a bytes leídos, b fecha, c tamaño total; asa 0 |
 
-**Cuándo está en el disco.** Cada orden que cambia algo se confirma entera o nada, pero en memoria: va al disco al
-cerrar una asa por la que se creó, escribió o cambió de tamaño algo, con vaciar (11) o guardar (27), con las órdenes
-de instantáneas y volúmenes (18 a 20, 23 a 26), al juntarse 8 MB por escribir, y si no, como mucho un segundo
-después. Si se va la luz antes, el disco queda como tras el último guardado, entero: RedoxFS no reusa hasta entonces
-los bloques que soltó. Lo que borra, renombra, comenta o protege se pierde así hasta un segundo; quien necesite más,
-vacía (11) tras la orden.
+**Cuándo está en el disco.** Cada orden que cambia algo se confirma entera o nada, pero en memoria: va al disco con
+vaciar (11) o guardar (27), con las órdenes de instantáneas y volúmenes (18 a 20, 23 a 26), al juntarse 8 MB por
+escribir, y si no, como mucho un segundo después. Cerrar no espera al disco (A1, como Linux). Si se va la luz antes,
+el disco queda como tras el último guardado, entero: RedoxFS no reusa hasta entonces los bloques que soltó. Se puede
+perder así hasta el último segundo; quien necesite más, vacía (11) o guarda (27).
+
+**Si un guardado falla** (A2): cada cliente que tenía algo sin guardar recibe el error en su siguiente cerrar, vaciar
+o guardar, y el disco pasa a solo lectura (-8 a todo lo que cambie algo) hasta que una comprobación (16) no encuentre
+problemas.
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
 tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte
@@ -219,8 +244,8 @@ Los nombres no distinguen mayúsculas en las carpetas que lo tienen así (DashFS
 **Bits del Amiga** (DashFS 3, FS7): 1 archivado, 2 puro, 4 guion, 8 residente, 16 no borrar (dueño), 32 no borrar
 (grupo), 64 no borrar (otros). Leer, escribir y ejecutar son los permisos de Unix: `dos.library` los junta en los
 bits de protección del Amiga. Escribir o cambiar el tamaño quita el bit de archivado, como en el Amiga. El servicio no
-deja escribir ni cambiar el tamaño de un fichero sin permiso de escritura del dueño, ni borrar uno con "no borrar"
-(-12); con usuarios (S6) mirará quién lo pide.
+deja escribir ni cambiar el tamaño de un fichero sin permiso de escritura para quien lo pide, ni borrar uno con "no
+borrar" (-12).
 
 La **ventana** es memoria del servicio (64 KB) que el cliente proyecta: así el servicio sabe su tamaño y un cliente no
 puede tumbarlo con una más pequeña. La sesión se puede abrir otra vez: da la misma ventana y cambia el canal de

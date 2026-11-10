@@ -13,7 +13,7 @@
 extern crate alloc;
 
 use alloc::boxed::Box;
-use core::sync::atomic::{AtomicU64, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicI32, AtomicU64, Ordering};
 use alloc::collections::BTreeMap;
 use alloc::format;
 use alloc::string::String;
@@ -49,7 +49,8 @@ const VENTANA_DISCO: usize = 64 * 1024;
 
 const CANAL: u32 = 2;
 const VENTANA: usize = 64 * 1024;
-const MAX_CLIENTES: usize = 8;
+/// Hasta 64 clientes (R6): con un programa por aplicación (S6b), 8 se quedaban cortos.
+const MAX_CLIENTES: usize = 64;
 const CABECERA: usize = 32;
 
 // Órdenes del protocolo de ficheros.
@@ -83,6 +84,14 @@ const CERRAR_VOLUMEN: u32 = 26;
 /// Crear un fichero con lo que hay en la ventana, en una sola transacción, y que esté en el disco al contestar
 /// (paso A de docs/MULTITAREA_LOOP.md): como crear, escribir, cerrar y vaciar, en un viaje.
 const GUARDAR: u32 = 27;
+/// Busca y lee en un solo viaje, sin dejar asa abierta (A3).
+const LEER_NOMBRE: u32 = 28;
+/// El alta de un cliente (R6, U1 de S6b): solo sin marca, es decir, de quien reparte las llaves (hoy `inicio`).
+const ALTA: u32 = 100;
+/// Derechos de un cliente en el servicio, además de lo que digan dueños y permisos (R6).
+const D_ADMINISTRAR: u32 = 1;
+/// Lo más largo de una contraseña de volumen, que llega por la ventana (A13).
+const MAX_CLAVE: usize = 1024;
 /// La llave con la que el servicio se escribe a sí mismo (la da `inicio` tras las demás): para su temporizador.
 const DESPERTADOR: u32 = 3;
 /// Lo confirmado en memoria va al disco como mucho tras este tiempo (paso B), o antes si...
@@ -131,6 +140,8 @@ const NO_VACIO: i32 = -10;
 const LLENO: i32 = -11;
 const PROTEGIDO: i32 = -12;
 const EN_USO: i32 = -13;
+/// Sin azar de calidad no se hacen llaves (R10): el kernel no tuvo semilla del firmware.
+const SIN_AZAR: i32 = -14;
 
 // Tipos.
 const FICHERO: u8 = 1;
@@ -480,8 +491,57 @@ type Fs = FileSystem<Disco>;
 
 /// Un cliente: su marca, el canal por el que se le contesta, su ventana y sus asas (número → volumen y nodo; FS10:
 /// el volumen 0 es el principal).
+/// Quién es un cliente y qué alcanza (R6): su usuario y su grupo (capa "quién" de S6b), sus derechos y su cajón raíz
+/// (capa "qué programa"). Llega en el alta, antes que el cliente.
+#[derive(Clone, Copy)]
+struct Ficha {
+    uid: u32,
+    gid: u32,
+    derechos: u32,
+    /// Volumen y nodo de su asa 0. No se sube por encima: no hay "cajón padre" ni se siguen enlaces.
+    raiz: (u64, TreePtr<Node>),
+}
+
+const R: u16 = 4;
+const W: u16 = 2;
+const X: u16 = 1;
+
+/// Si la ficha `f` puede `quiero` (bits de R, W y X) en el nodo `d`, como Unix: los bits del dueño si es suyo, los
+/// del grupo si es de su grupo, si no los de los demás. Nadie pasa sin mirar: el usuario 0 es "sistema" y no tiene
+/// paso libre (S6b).
+fn puede(f: &Ficha, d: &Node, quiero: u16) -> bool {
+    let m = d.mode();
+    let bits = if d.uid() == f.uid {
+        m >> 6
+    } else if d.gid() == f.gid {
+        m >> 3
+    } else {
+        m
+    } & 7;
+    bits & quiero == quiero
+}
+
+fn negado() -> Error {
+    Error::new(EACCES)
+}
+
+/// Pone a un nodo recién creado el dueño que le toca: el usuario del cliente, y su grupo o, si el cajón tiene el bit
+/// setgid, el del cajón. Los permisos, sin lo que quita la máscara de los nuevos (0o022).
+fn poner_dueno<D: Disk>(tx: &mut redoxfs::Transaction<D>, n: TreePtr<Node>, f: &Ficha, cajon: &Node) -> Result<TreeData<Node>> {
+    let mut nodo = tx.read_tree(n)?;
+    let gid = if cajon.mode() & 0o2000 != 0 { cajon.gid() } else { f.gid };
+    nodo.data_mut().set_uid(f.uid);
+    nodo.data_mut().set_gid(gid);
+    let modo = nodo.data().mode();
+    nodo.data_mut().set_mode(modo & !0o022);
+    let copia = copia(&nodo);
+    tx.sync_tree(nodo)?;
+    Ok(copia)
+}
+
 struct Cliente {
     marca: u64,
+    ficha: Ficha,
     respuesta: u32,
     ventana: u32,
     va: usize,
@@ -489,6 +549,10 @@ struct Cliente {
     /// Las asas por las que se cambió algo (creadas, escritas o recortadas): al cerrarlas, todo va al disco (paso B).
     cambiadas: alloc::collections::BTreeSet<u32>,
     siguiente: u32,
+    /// Cambió algo que aún no está en el disco (A2).
+    pendiente: bool,
+    /// Un guardado falló con algo suyo dentro: se le dice en su siguiente CERRAR, VACIAR o GUARDAR (A2).
+    fallo: Option<i32>,
 }
 
 impl Cliente {
@@ -553,11 +617,24 @@ fn cerrar_nodo(fs: &mut Fs, vol: u64, n: TreePtr<Node>) {
     let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
 }
 
+/// El último guardado que falló, para el bucle principal (A2): avisa a quien tenía cambios y pasa a solo lectura.
+static FALLO_GUARDADO: AtomicI32 = AtomicI32::new(0);
+/// Hubo un guardado bueno: lo de todos los clientes está en el disco.
+static GUARDADO: AtomicBool = AtomicBool::new(false);
+
 /// Que todo lo confirmado esté en el disco (paso B): el estado para contestar.
 fn guardar(fs: &mut Fs) -> i32 {
     match fs.durable() {
-        Ok(()) => BIEN,
-        Err(e) => estado_de(e),
+        Ok(()) => {
+            GUARDADO.store(true, Ordering::Relaxed);
+            BIEN
+        }
+        Err(e) => {
+            let estado = estado_de(e);
+            println!("  [archivos] no se guarda en el disco: {}", e);
+            FALLO_GUARDADO.store(estado, Ordering::Relaxed);
+            estado
+        }
     }
 }
 
@@ -581,10 +658,14 @@ fn datos(asa: u32, d: &Node) -> Respuesta {
     Respuesta { estado: BIEN, asa, a: d.size(), b: d.mtime().0, c }
 }
 
-/// Lo que AmigaOS no deja tocar: un fichero sin permiso de escritura (la W del Amiga, el bit de escritura del dueño)
-/// o protegido contra el borrado. Con usuarios (S6), se mirará quién lo pide.
-fn sin_escritura(d: &Node) -> bool {
-    d.mode() & 0o200 == 0
+/// Lo que no se deja escribir a la ficha `f`: sin su permiso de escritura (para el dueño, la W del Amiga) (R6).
+fn sin_escritura(f: &Ficha, d: &Node) -> bool {
+    !puede(f, d, W)
+}
+
+/// El bit pegajoso de un cajón (0o1000): dentro, solo borra o renombra el dueño de lo que se toca o el del cajón.
+fn pegajoso(f: &Ficha, cajon: &Node, n: &Node) -> bool {
+    cajon.mode() & 0o1000 != 0 && n.uid() != f.uid && cajon.uid() != f.uid
 }
 
 /// El comentario, recortado a 255 bytes sin partir una letra, para la lista.
@@ -633,7 +714,7 @@ struct Recuerdos {
 /// Las órdenes que no cambian nada en el disco ni en los nodos. Crear, borrar, escribir y recortar olvidan solo lo
 /// suyo: el nodo que cambia (y, al crear o borrar, su cajón y el nombre). CERRAR puede soltar un nodo borrado, pero a ese ya no
 /// se llega por su nombre (borrarlo lo olvidó todo) y, si su número se vuelve a usar, será al crear, que también.
-const SOLO_LEEN: &[u32] = &[BUSCAR, LEER, LISTAR, DATOS, CERRAR, INFO, COMENTARIO, INSTANTANEAS, VOLUMENES, PERFIL];
+const SOLO_LEEN: &[u32] = &[BUSCAR, LEER, LISTAR, DATOS, CERRAR, INFO, COMENTARIO, INSTANTANEAS, VOLUMENES, PERFIL, LEER_NOMBRE];
 const MAX_RECUERDOS: usize = 1024;
 
 /// Una copia de un nodo leído (`Node` no es `Clone`: es un bloque de bytes).
@@ -682,8 +763,9 @@ impl Recuerdos {
         Ok(d)
     }
 
-    /// Buscar `nombre` (con '/') desde `desde`, recordando cada paso.
-    fn buscar(&mut self, fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str) -> Result<TreeData<Node>> {
+    /// Buscar `nombre` (con '/') desde `desde`, recordando cada paso. Para pasar por un cajón, la ficha necesita su
+    /// permiso de ejecutar (R6).
+    fn buscar(&mut self, fs: &mut Fs, vol: u64, desde: TreePtr<Node>, nombre: &str, ficha: &Ficha) -> Result<TreeData<Node>> {
         let mut nodo = self.nodo(fs, vol, desde)?;
         if nombre.is_empty() {
             return Ok(nodo);
@@ -694,6 +776,9 @@ impl Recuerdos {
             }
             if !nodo.data().is_dir() {
                 return Err(Error::new(ENOTDIR));
+            }
+            if !puede(ficha, nodo.data(), X) {
+                return Err(negado());
             }
             let clave = (vol, nodo.ptr().id(), Vec::from(parte.as_bytes()));
             nodo = match self.nombres.get(&clave) {
@@ -717,14 +802,27 @@ impl Recuerdos {
     }
 }
 
-fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> Respuesta {
+fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo_lectura: bool) -> Respuesta {
+    // Tras un guardado que falló, nada cambia el disco hasta que una comprobación lo dé por bueno (A2).
+    if solo_lectura && !SOLO_LEEN.contains(&p.orden) && ![COMPROBAR, VACIAR].contains(&p.orden) {
+        return mal(SOLO_LECTURA);
+    }
     // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
     if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
         rec.olvidar();
     }
+    // La asa 0 es la raíz del cliente, no la del disco (R6).
     let nodo_de = |c: &Cliente, asa: u32| -> Option<(u64, TreePtr<Node>)> {
-        if asa == 0 { Some((0, TreePtr::root())) } else { c.asas.get(&asa).copied() }
+        if asa == 0 { Some(c.ficha.raiz) } else { c.asas.get(&asa).copied() }
     };
+    let ficha = c.ficha;
+    // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
+    // propia (VOLUMEN sin nombre) no lo necesita.
+    let de_administrar = matches!(p.orden, COMPROBAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN)
+        || (p.orden == VOLUMEN && !p.nombre.is_empty());
+    if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
+        return mal(PROTEGIDO);
+    }
     match p.orden {
         PERFIL => {
             let mut t = String::new();
@@ -753,10 +851,48 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
-            match rec.buscar(fs, vol, desde, nombre) {
+            match rec.buscar(fs, vol, desde, nombre, &ficha) {
                 // Solo los datos, sin abrirlo (F5): como `stat`, un viaje en lugar de buscar, datos y cerrar.
                 Ok(n) if p.a == 1 => datos(0, n.data()),
                 Ok(n) => dar_asa(fs, c, vol, &n),
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        // A3: buscar, leer y cerrar en un viaje (unos 200 de los 330 µs de leer 4 KB eran los otros dos). Lee desde
+        // a hasta b bytes (como mucho la ventana) y da el tamaño total, para seguir con LEER si no cupo.
+        LEER_NOMBRE => {
+            let Some((vol, desde)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
+            let nodo = match rec.buscar(fs, vol, desde, nombre, &ficha) {
+                Ok(n) => n,
+                Err(e) => return mal(estado_de(e)),
+            };
+            if nodo.data().is_dir() {
+                return mal(ES_CAJON);
+            }
+            if !puede(&ficha, nodo.data(), R) {
+                return mal(PROTEGIDO);
+            }
+            let cuanto = p.b.min(VENTANA as u64) as usize;
+            let v = c.ventana();
+            let r = fs.tx_in(vol, |tx| {
+                let mut hecho = 0;
+                while hecho < cuanto {
+                    let k = tx.read_node_inner(&nodo, p.a + hecho as u64, &mut v[hecho..cuanto])?;
+                    if k == 0 {
+                        break;
+                    }
+                    hecho += k;
+                }
+                Ok(hecho)
+            });
+            match r {
+                Ok(hecho) => {
+                    let mut d = datos(0, nodo.data());
+                    d.c = d.a; // el tamaño total, en c; en a, lo leído
+                    d.a = hecho as u64;
+                    d
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -780,6 +916,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
+                if !puede(&ficha, nodo.data(), R) {
+                    return Err(negado());
+                }
                 // read_node_inner da lo que haya en un registro: se repite hasta llenar o acabar el fichero.
                 let mut hecho = 0;
                 while hecho < cuanto {
@@ -802,8 +941,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             // Los nombres, en una transacción; los datos de cada uno, de lo que recuerda el servicio, y el comentario
             // solo si el nodo tiene atributos (F8: antes, dos recorridos del árbol por fichero).
             let hijos = fs.tx_in(vol, |tx| {
-                if !tx.read_tree(n)?.data().is_dir() {
+                let cajon = tx.read_tree(n)?;
+                if !cajon.data().is_dir() {
                     return Err(Error::new(ENOTDIR));
+                }
+                if !puede(&ficha, cajon.data(), R) {
+                    return Err(negado());
                 }
                 let mut hijos = Vec::new();
                 tx.child_nodes(n, &mut hijos)?;
@@ -859,8 +1002,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             Some((vol, n)) => {
                 // Si se borró mientras estaba abierto, ahora se suelta de verdad.
                 cerrar_nodo(fs, vol, n);
-                // Lo cambiado por esta asa, en el disco al cerrarla (paso B).
-                let estado = if c.cambiadas.remove(&p.asa) { guardar(fs) } else { BIEN };
+                // Cerrar ya no espera al disco (A1): lo cambiado va con el guardado de cada segundo, o con VACIAR o
+                // GUARDAR. Si uno de esos guardados falló con algo suyo dentro, se le dice ahora (A2).
+                c.cambiadas.remove(&p.asa);
+                let estado = c.fallo.take().unwrap_or(BIEN);
                 Respuesta { estado, asa: p.asa, ..Default::default() }
             }
             None => mal(ASA_MALA),
@@ -878,7 +1023,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(nodo.data()) {
+                if sin_escritura(&ficha, nodo.data()) {
                     return Err(Error::new(EACCES));
                 }
                 let k = tx.write_node(n, p.a, &datos, AHORA, 0)?;
@@ -904,7 +1049,15 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 return mal(SIN_SITIO);
             }
             rec.olvidar_nodo(vol, dir.id());
-            match fs.tx_in(vol, |tx| tx.create_node(dir, nombre, modo, AHORA, 0)) {
+            let creado = fs.tx_in(vol, |tx| {
+                let cajon = tx.read_tree(dir)?;
+                if !puede(&ficha, cajon.data(), W | X) {
+                    return Err(negado());
+                }
+                let n = tx.create_node(dir, nombre, modo, AHORA, 0)?;
+                poner_dueno(tx, n.ptr(), &ficha, cajon.data())
+            });
+            match creado {
                 Ok(n) => {
                     rec.creado(vol, dir.id(), nombre, &n);
                     let r = dar_asa(fs, c, vol, &n);
@@ -917,6 +1070,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             }
         }
         GUARDAR => {
+            if let Some(e) = c.fallo.take() {
+                return mal(e);
+            }
             let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             if p.b > VENTANA as u64 {
@@ -925,7 +1081,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             let datos = c.ventana()[..p.b as usize].to_vec();
             rec.olvidar_nodo(vol, dir.id());
             let r = fs.tx_in(vol, |tx| {
+                let cajon = tx.read_tree(dir)?;
+                if !puede(&ficha, cajon.data(), W | X) {
+                    return Err(negado());
+                }
                 let n = tx.create_node(dir, nombre, Node::MODE_FILE | 0o644, AHORA, 0)?;
+                let n = poner_dueno(tx, n.ptr(), &ficha, cajon.data())?;
                 let k = tx.write_node(n.ptr(), 0, &datos, AHORA, 0)?;
                 Ok((k, tx.read_tree(n.ptr())?))
             });
@@ -944,8 +1105,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             let r = fs.tx_in(vol, |tx| {
+                let cajon = tx.read_tree(dir)?;
+                if !puede(&ficha, cajon.data(), W | X) {
+                    return Err(negado());
+                }
                 let n = tx.find_node(dir, nombre)?;
-                if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) {
+                if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) || pegajoso(&ficha, cajon.data(), n.data()) {
                     return Err(Error::new(EACCES));
                 }
                 tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)?;
@@ -974,7 +1139,19 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             let (Some(viejo), Some(nuevo)) = (partes.next().and_then(un_nombre), partes.next().and_then(un_nombre)) else {
                 return mal(MAL_FORMADO);
             };
-            match fs.tx_in(vol, |tx| tx.rename_node_no_replace(dir, viejo, destino, nuevo)) {
+            let r = fs.tx_in(vol, |tx| {
+                let origen = tx.read_tree(dir)?;
+                let llegada = tx.read_tree(destino)?;
+                if !puede(&ficha, origen.data(), W | X) || !puede(&ficha, llegada.data(), W | X) {
+                    return Err(negado());
+                }
+                let n = tx.find_node(dir, viejo)?;
+                if pegajoso(&ficha, origen.data(), n.data()) {
+                    return Err(negado());
+                }
+                tx.rename_node_no_replace(dir, viejo, destino, nuevo)
+            });
+            match r {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
@@ -987,7 +1164,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
-                if sin_escritura(nodo.data()) {
+                if sin_escritura(&ficha, nodo.data()) {
                     return Err(Error::new(EACCES));
                 }
                 tx.truncate_node(n, p.a, AHORA, 0)
@@ -1015,7 +1192,13 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
         COMENTAR => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(texto) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
-            match fs.tx_in(vol, |tx| tx.set_comment(n, texto)) {
+            let r = fs.tx_in(vol, |tx| {
+                if tx.read_tree(n)?.data().uid() != ficha.uid {
+                    return Err(negado());
+                }
+                tx.set_comment(n, texto)
+            });
+            match r {
                 Ok(()) => Respuesta { estado: BIEN, asa: p.asa, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
@@ -1028,6 +1211,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             };
             let r = fs.tx_in(vol, |tx| {
                 let mut nodo = tx.read_tree(n)?;
+                // Solo el dueño cambia los permisos (R6). El bit setuid se guarda, pero en DashOS no da nada.
+                if nodo.data().uid() != ficha.uid {
+                    return Err(negado());
+                }
                 let modo = nodo.data().mode() & Node::MODE_TYPE | p.b as u16;
                 nodo.data_mut().set_mode(modo);
                 nodo.data_mut().set_amiga_bits(bits);
@@ -1116,12 +1303,13 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             if c.asas.len() >= 256 {
                 return mal(SIN_SITIO);
             }
-            let vol = if nombre.is_empty() {
-                Ok(0)
+            // Sin nombre, la raíz del cliente (R6); con nombre (solo quien administra), la de ese volumen.
+            let (vol, raiz) = if nombre.is_empty() {
+                (Ok(ficha.raiz.0), ficha.raiz.1)
             } else {
-                fs.tx(|tx| tx.find_volume(nombre))
+                (fs.tx(|tx| tx.find_volume(nombre)), TreePtr::<Node>::root())
             };
-            match vol.and_then(|vol| Ok((vol, fs.tx_in(vol, |tx| tx.read_tree(TreePtr::<Node>::root()))?))) {
+            match vol.and_then(|vol| Ok((vol, fs.tx_in(vol, |tx| tx.read_tree(raiz))?))) {
                 Ok((vol, raiz)) => dar_asa(fs, c, vol, &raiz),
                 Err(e) => mal(estado_de(e)),
             }
@@ -1153,13 +1341,40 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             Err(e) => mal(estado_de(e)),
         },
         HACER_VOLUMEN => {
-            // Sin cifrar: para cifrar hacen falta llaves al azar de verdad, y DashOS aún no tiene de dónde sacarlas
-            // (el generador de la Pi 4, RNG200, sin controlador). Los cifrados se hacen en Linux, con redoxfs-volume.
+            // a: 0 sin cifrar; 1 cifrado; 2 cifrado con Argon2 barato (pruebas). Cifrado, con la primera contraseña en
+            // los b primeros bytes de la ventana, como al abrirlo, y llaves del azar del kernel (R10): sin azar de
+            // calidad, no.
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
-            if p.a != 0 {
+            if p.a > 2 || p.b as usize > MAX_CLAVE || (p.a != 0 && p.b == 0) {
                 return mal(MAL_FORMADO);
             }
-            match fs.tx(|tx| tx.create_volume(nombre, AHORA, 0)) {
+            let mut clave = [0u8; MAX_CLAVE];
+            let largo = p.b as usize;
+            let mut llaves = [0u8; 48];
+            if p.a != 0 {
+                let v = c.ventana();
+                clave[..largo].copy_from_slice(&v[..largo]);
+                v[..largo].fill(0);
+                if dashos::azar(&mut llaves) != Some(true) {
+                    clave.fill(0);
+                    return mal(SIN_AZAR);
+                }
+            }
+            let coste = if p.a == 1 { redoxfs::seal::Cost::NORMAL } else { redoxfs::seal::Cost::CHEAP };
+            let hecho = fs.tx(|tx| {
+                // Su raíz, de quien lo hace (R6), desde el principio.
+                let dueno = (ficha.uid, ficha.gid);
+                if p.a == 0 {
+                    return tx.create_volume_owned(nombre, AHORA, 0, dueno);
+                }
+                let master: [u8; 32] = llaves[..32].try_into().unwrap();
+                let salt: [u8; 16] = llaves[32..].try_into().unwrap();
+                tx.create_encrypted_volume_owned(nombre, AHORA, 0, &clave[..largo], &master, salt, coste, dueno)
+            });
+            clave.fill(0);
+            llaves.fill(0);
+            core::hint::black_box((&clave, &llaves));
+            match hecho {
                 Ok(id) => Respuesta { estado: BIEN, a: id, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
@@ -1175,15 +1390,24 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             }
         }
         ABRIR_VOLUMEN => {
-            // El nombre y la contraseña, separados por un 0. La contraseña no se guarda: solo la llave que abre.
-            let mut partes = p.nombre.splitn(2, |&b| b == 0);
-            let (Some(nombre), Some(clave)) = (partes.next().and_then(un_nombre), partes.next()) else {
+            // El nombre en el mensaje; la contraseña, sus `b` primeros bytes de la ventana (A13): así no pasa por las colas
+            // del kernel. Se copia, se borra de la ventana y, usada, de aquí. No se guarda: solo la llave que abre.
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            if p.b as usize > MAX_CLAVE {
                 return mal(MAL_FORMADO);
-            };
-            match fs.tx(|tx| {
+            }
+            let v = c.ventana();
+            let mut clave = [0u8; MAX_CLAVE];
+            let largo = p.b as usize;
+            clave[..largo].copy_from_slice(&v[..largo]);
+            v[..largo].fill(0);
+            let r = fs.tx(|tx| {
                 let id = tx.find_volume(nombre)?;
-                tx.unlock_volume(id, clave)
-            }) {
+                tx.unlock_volume(id, &clave[..largo])
+            });
+            clave.fill(0);
+            core::hint::black_box(&clave);
+            match r {
                 Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
@@ -1198,8 +1422,8 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 Err(e) => mal(estado_de(e)),
             }
         }
-        // Cada orden ya se guarda entera antes de contestar: no queda nada pendiente.
-        VACIAR => Respuesta { estado: guardar(fs), ..Default::default() },
+        // Todo al disco; o el fallo de un guardado anterior con algo suyo dentro (A2).
+        VACIAR => Respuesta { estado: c.fallo.take().unwrap_or_else(|| guardar(fs)), ..Default::default() },
         INFO => Respuesta {
             estado: BIEN,
             a: fs.header.size(),
@@ -1211,9 +1435,38 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
     }
 }
 
+/// Da de alta a un cliente (R6): su ficha, que llega sin marca antes que él. El cajón raíz se busca desde la raíz del
+/// volumen principal sin mirar permisos: quien reparte las llaves decide qué alcanza cada uno.
+fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cliente>], m: &[u8]) {
+    let u32_en = |i: usize| u32::from_le_bytes(m[i..i + 4].try_into().unwrap());
+    let (derechos, marca, uid, gid, largo) = (u32_en(4), u64::from_le_bytes(m[8..16].try_into().unwrap()), u32_en(16), u32_en(20), u32_en(24) as usize);
+    let Some(camino) = m.get(CABECERA..CABECERA + largo).and_then(|b| core::str::from_utf8(b).ok()) else { return };
+    let raiz = fs.tx_in(0, |tx| {
+        let mut n = tx.read_tree(TreePtr::<Node>::root())?;
+        for parte in camino.split('/').filter(|p| !p.is_empty()) {
+            n = tx.find_node(n.ptr(), parte)?;
+        }
+        if !n.data().is_dir() {
+            return Err(Error::new(ENOTDIR));
+        }
+        Ok(n.ptr())
+    });
+    let Ok(raiz) = raiz else {
+        println!("  [archivos] alta sin cajón raíz: {}", camino);
+        return;
+    };
+    let f = Ficha { uid, gid, derechos, raiz: (0, raiz) };
+    if altas.len() < 4 * MAX_CLIENTES || altas.contains_key(&marca) {
+        altas.insert(marca, f);
+    }
+    if let Some(c) = clientes.iter_mut().flatten().find(|c| c.marca == marca) {
+        c.ficha = f;
+    }
+}
+
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,
-/// cambia el canal de respuesta y le da la misma ventana.
-fn sesion(clientes: &mut [Option<Cliente>], marca: u64, respuesta: u32) -> (i32, Option<u32>) {
+/// cambia el canal de respuesta y le da la misma ventana. Sin alta no hay sesión (R6).
+fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32) -> (i32, Option<u32>) {
     let i = match clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == marca)) {
         Some(i) => {
             let c = clientes[i].as_mut().unwrap();
@@ -1222,13 +1475,14 @@ fn sesion(clientes: &mut [Option<Cliente>], marca: u64, respuesta: u32) -> (i32,
             i
         }
         None => {
+            let Some(&ficha) = altas.get(&marca) else { return (PROTEGIDO, None) };
             let Some(i) = clientes.iter().position(|c| c.is_none()) else { return (SIN_SITIO, None) };
             let m = dashos::memoria_crear(VENTANA);
             let va = VA_CLIENTES + i * 0x10_0000;
             if (m as i32) <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
                 return (SIN_SITIO, None);
             }
-            clientes[i] = Some(Cliente { marca, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1 });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None });
             i
         }
     };
@@ -1285,7 +1539,9 @@ fn principal() -> u64 {
     fs.deferred = true;
     // El plazo del siguiente guardado y la llave de su temporizador (0 sin él: se mira al llegar cada mensaje).
     let mut plazo: Option<(u64, u32)> = None;
-    let mut clientes: [Option<Cliente>; MAX_CLIENTES] = Default::default();
+    let mut clientes: Vec<Option<Cliente>> = (0..MAX_CLIENTES).map(|_| None).collect();
+    let mut altas: BTreeMap<u64, Ficha> = BTreeMap::new();
+    let mut solo_lectura = false;
     let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new() };
     let mut buf = [0u8; 256];
     loop {
@@ -1294,11 +1550,10 @@ fn principal() -> u64 {
         if let Some((cuando, _)) = plazo
             && dashos::ahora_us() >= cuando
         {
-            if let Err(e) = fs.durable() {
-                println!("  [archivos] no se guarda en el disco: {}", e);
-            }
+            guardar(&mut fs);
             al_disco(&fs, &mut plazo);
         }
+        tras_guardar(&mut clientes, &mut solo_lectura);
         if n < 0 {
             if n == -4 {
                 // Nadie más puede escribir en el canal.
@@ -1310,6 +1565,14 @@ fn principal() -> u64 {
         let n = n as usize;
         let u32_en = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
         let u64_en = |i: usize| u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
+        // Sin marca solo escribe quien reparte las llaves: las altas (R6).
+        if marca == 0 && n >= CABECERA && u32_en(0) == ALTA {
+            alta(&mut fs, &mut altas, &mut clientes, &buf[..n]);
+            for &l in &ll[..k] {
+                dashos::cerrar(l);
+            }
+            continue;
+        }
         // Sin marca no se sabe de quién es; sin cabecera entera, tampoco qué pide.
         if marca == 0 || n < CABECERA {
             for &l in &ll[..k] {
@@ -1326,7 +1589,7 @@ fn principal() -> u64 {
             if k == 0 {
                 continue;
             }
-            let (estado, ventana) = sesion(&mut clientes, marca, ll[0]);
+            let (estado, ventana) = sesion(&mut clientes, &altas, marca, ll[0]);
             let r = Respuesta { estado, a: VENTANA as u64, ..Default::default() };
             let llaves: &[u32] = match &ventana {
                 Some(v) => core::slice::from_ref(v),
@@ -1356,7 +1619,14 @@ fn principal() -> u64 {
         } else {
             let p = Peticion { orden, asa: u32_en(4), a: u64_en(8), b: u64_en(16), nombre: &buf[CABECERA..CABECERA + largo] };
             let t0 = reloj();
-            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos);
+            let r = atender(&mut fs, clientes[i].as_mut().unwrap(), &p, &mut recuerdos, solo_lectura);
+            if r.estado == BIEN && !SOLO_LEEN.contains(&orden) {
+                clientes[i].as_mut().unwrap().pendiente = true;
+            }
+            if orden == COMPROBAR && r.estado == BIEN && r.a == 0 && solo_lectura {
+                println!("  [archivos] disco comprobado: se puede escribir otra vez");
+                solo_lectura = false;
+            }
             if let (Some(v), Some(c)) = (PERFIL_DATOS.veces.get(orden as usize), PERFIL_DATOS.cuentas.get(orden as usize)) {
                 v.fetch_add(1, Ordering::Relaxed);
                 c.fetch_add(reloj() - t0, Ordering::Relaxed);
@@ -1371,14 +1641,31 @@ fn principal() -> u64 {
             r
         };
         if SIEMPRE_AL_DISCO.contains(&orden) || fs.disk.cache.sucios.len() >= MAX_SUCIO {
-            if let Err(e) = fs.durable() {
-                println!("  [archivos] no se guarda en el disco: {}", e);
-            }
+            guardar(&mut fs);
         }
+        tras_guardar(&mut clientes, &mut solo_lectura);
         al_disco(&fs, &mut plazo);
         let llave = clientes[i].as_ref().unwrap().respuesta;
         if contestar(llave, &r, &[]) != 0 {
             soltar(&mut fs, &mut clientes, i);
+        }
+    }
+}
+
+/// Lo que dejaron los guardados (A2): uno bueno pone al día a todos; uno que falló avisa a quien tenía algo pendiente
+/// y deja el disco en solo lectura hasta comprobarlo.
+fn tras_guardar(clientes: &mut [Option<Cliente>], solo_lectura: &mut bool) {
+    let fallo = FALLO_GUARDADO.swap(0, Ordering::Relaxed);
+    if fallo != 0 {
+        *solo_lectura = true;
+        for c in clientes.iter_mut().flatten().filter(|c| c.pendiente) {
+            c.fallo = Some(fallo);
+            c.pendiente = false;
+        }
+    }
+    if GUARDADO.swap(false, Ordering::Relaxed) {
+        for c in clientes.iter_mut().flatten() {
+            c.pendiente = false;
         }
     }
 }

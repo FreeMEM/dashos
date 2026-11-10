@@ -25,30 +25,44 @@ QEMU=$!
 # Con TECLAS=1, una "a" y un movimiento del ratón (10, 5) cada medio segundo desde el segundo 3 (U6: el xHCI). Desde
 # el paso 15 también un clic (W8): el cursor del compositor, que empieza en (0, 0), ya está en (150, 75), sobre la
 # ventana de prueba de arriba, que se lleva el teclado sin cambiar el orden de las ventanas.
+# Ajustes sale cuando ya se está tecleando en otra ventana, así que no se lleva el teclado al salir (S8,
+# docs/REVISION_LOOP.md). Cuando la salida serie dice que está en pantalla, el cursor va a la esquina y de ahí a
+# (300, 300), donde solo está ella; un clic le da el teclado, y Super+Arriba la maximiza y Super+Abajo la devuelve.
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" <<'PY' >/dev/null 2>&1 &
+    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
-ruta, total = sys.argv[1], float(sys.argv[2])
+ruta, total, serie = sys.argv[1], float(sys.argv[2]), sys.argv[3]
 inicio = time.time()
 time.sleep(3)
 paso = 0
+ajustes = False
+
+def mandar(*ordenes, pausa=0.0):
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(ruta)
+    for o in ordenes:
+        s.sendall(o.encode() + b"\n")
+        time.sleep(pausa)
+    s.close()
+
 while time.time() - inicio < total:
     try:
-        s = socket.socket(socket.AF_UNIX)
-        s.connect(ruta)
-        s.sendall(b"mouse_move 10 5\n")
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in open(serie, errors="replace").read():
+            ajustes = True
+            mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+            mandar(*["mouse_move 100 100"] * 3, pausa=0.05)
+            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+            time.sleep(0.5)
+            mandar("sendkey meta_l-up")
+            time.sleep(2)
+            mandar("sendkey meta_l-down")
+            time.sleep(1)
         paso += 1
-        # Super+Arriba maximiza la ventana que tiene el teclado (Ajustes) y Super+Abajo la devuelve, antes del clic.
-        if paso == 12:
-            s.sendall(b"sendkey meta_l-up\n")
-        if paso == 14:
-            s.sendall(b"sendkey meta_l-down\n")
+        ordenes = ["mouse_move 10 5"]
         if paso >= 15:
-            s.sendall(b"mouse_button 1\n")
-            time.sleep(0.1)
-            s.sendall(b"mouse_button 0\n")
-        s.sendall(b"sendkey a\n")
-        s.close()
+            ordenes += ["mouse_button 1", "mouse_button 0"]
+        ordenes.append("sendkey a")
+        mandar(*ordenes, pausa=0.05)
     except OSError:
         pass
     time.sleep(0.5)

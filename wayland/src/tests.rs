@@ -191,6 +191,18 @@ mod transporte {
         j.meter(&[1, 0, 0, 0, 0, 0, 16, 0, 1, 2], &[]).unwrap();
         assert_eq!(j.siguiente(), Ok(None));
     }
+
+    /// E2: las llaves que esperan tienen tope, y lo que no cabe no se queda a medias.
+    #[test]
+    fn juntador_con_tope_de_llaves() {
+        let mut j = Juntador::new();
+        for i in 0..MAX_LLAVES_PENDIENTES / 8 {
+            j.meter(&[0], &[i as u32; 8]).unwrap();
+        }
+        assert_eq!(j.meter(&[0], &[9]), Err(Fallo::Llaves));
+        assert_eq!(j.llaves.len(), MAX_LLAVES_PENDIENTES);
+        assert_eq!(j.meter(&[], &[]), Ok(()));
+    }
 }
 
 mod servidor {
@@ -313,6 +325,15 @@ mod servidor {
         );
         // Argumentos que no cuadran con la firma.
         assert_eq!(caso(&|e| { e.empezar(5, wl_surface::req::COMMIT).uint(1).fin(); }), (1, INVALID_METHOD));
+        // E3: más objetos vivos que el tope.
+        assert_eq!(
+            caso(&|e| {
+                for i in 0..MAX_OBJETOS as u32 {
+                    e.empezar(4, wl_compositor::req::CREATE_SURFACE).uint(10 + i).fin();
+                }
+            }),
+            (1, NO_MEMORY)
+        );
     }
 }
 
@@ -561,6 +582,26 @@ mod ventanas {
         serie
     }
 
+    /// S8: mientras se escribe en una ventana, una nueva de otro programa no se lleva el teclado.
+    #[test]
+    fn ventana_nueva_no_roba_el_teclado() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut a, mut b, mut c) = (Conexion::new(), Conexion::new(), Conexion::new());
+        escena.reloj_ms = 1_000;
+        abrir(&mut escena, &mut a, 1, 70);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        escena.tecla(4, true);
+        escena.tecla(4, false);
+        escena.reloj_ms = 1_500;
+        abrir(&mut escena, &mut b, 2, 71);
+        assert_eq!(escena.teclado, Some((1, 7)), "se la llevó mientras se escribía");
+        assert_eq!(escena.orden.last(), Some(&(2, 7)), "sale encima");
+        // Pasado el plazo sin teclear, sí.
+        escena.reloj_ms = 1_000 + crate::escena::SIN_ROBAR_MS;
+        abrir(&mut escena, &mut c, 3, 72);
+        assert_eq!(escena.teclado, Some((3, 7)));
+    }
+
     #[test]
     fn dos_ventanas_en_cascada() {
         let mut escena = Escena::new(Mem::default(), 0);
@@ -595,6 +636,24 @@ mod ventanas {
         mandar(&mut escena, &mut con, 1, &e);
         let r = con.roto.expect("tenía que cortarse");
         (r.objeto, r.codigo)
+    }
+
+    /// E3: mil daños antes de un commit se quedan en uno que los cubre a todos.
+    #[test]
+    fn danos_con_tope() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut con = Conexion::new();
+        abrir(&mut escena, &mut con, 1, 70);
+        let mut e = Escritor::new();
+        for i in 0..1000 {
+            e.empezar(7, wl_surface::req::DAMAGE).int(i % 16).int(i / 100).int(1).int(1).fin();
+        }
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        let s = &escena.clientes[&1].superficies[&7];
+        assert!(s.danos.len() <= crate::escena::MAX_DANOS, "{}", s.danos.len());
+        assert!(s.danos.iter().any(|r| r.x == 0 && r.y == 0 && r.w >= 16 && r.h >= 10), "{:?}", s.danos);
     }
 
     #[test]
@@ -650,6 +709,9 @@ mod entrada {
         fn soltar(&mut self, _: u32, _: *const u8, _: usize) {}
         fn llave_vacia(&mut self) -> Option<u32> {
             Some(99)
+        }
+        fn llave_con(&mut self, _datos: &'static [u8]) -> Option<u32> {
+            Some(98)
         }
     }
 
@@ -772,7 +834,11 @@ mod entrada {
         // Al enlazar el asiento: puntero y teclado, y su nombre; al pedir el teclado, el mapa (sin mapa, con llave).
         assert!(ev.iter().any(|e| (e.0, e.1, e.2.clone()) == (11, wl_seat::ev::CAPABILITIES, 3u32.to_le_bytes().to_vec())));
         assert!(ev.iter().any(|e| (e.0, e.1) == (11, wl_seat::ev::NAME)));
-        assert!(ev.iter().any(|e| (e.0, e.1) == (13, wl_keyboard::ev::KEYMAP)));
+        // G2: el mapa de xkb (formato 1), con su tamaño, y el texto empieza como un mapa compilado y acaba en 0.
+        let mapa = ev.iter().find(|e| (e.0, e.1) == (13, wl_keyboard::ev::KEYMAP)).expect("sin mapa");
+        assert_eq!(mapa.2[..4], 1u32.to_le_bytes());
+        assert_eq!(mapa.2[4..8], (crate::MAPA_TECLADO.len() as u32).to_le_bytes());
+        assert!(crate::MAPA_TECLADO.starts_with(b"xkb_keymap {") && crate::MAPA_TECLADO.ends_with(b"\0"));
         abrir(&mut escena, &mut b, 2, 100, 100); // en (72, 72), encima
         let mut pantalla = vec![0u32; 300 * 300];
         escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
