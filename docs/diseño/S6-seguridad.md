@@ -134,6 +134,12 @@ cambiar el kernel; pero un programa malicioso no puede cambiar el sistema.
 La A72 de la Pi 4 no tiene las defensas por hardware de CPUs más nuevas, como PAN, PAC, BTI o MTE (S3). La A76 de la
 Pi 5 añade PAN, pero tampoco tiene PAC, BTI ni MTE. Lo que se hace a mano en su lugar está en S16.
 
+## El diseño concreto
+
+Cómo se hace todo esto con lo que ya hay (llaves con marca, grupos de recursos, dueño y modo en los ficheros), y en
+qué fases, está en [S6b](S6b-usuarios-y-permisos.md). Propone un cambio sobre este documento: la identidad de un
+proceso va en la marca de sus llaves y no la guarda el kernel.
+
 ## Lo que queda abierto
 
 1. ¿Sin superusuario: administradores que confirman cada acción con contraseña, y `SYS:` intocable salvo por
