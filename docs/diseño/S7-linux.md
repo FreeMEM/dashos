@@ -91,6 +91,8 @@ después de probar el otro.
 - **Memoria**: la máquina virtual pide memoria al arrancar y la devuelve cuando no la usa (globo virtio). Se
   recomienda para Pi 4 de 4 y 8 GB. En las de 1 y 2 GB es posible, pero justo.
 - **Arranque bajo demanda**: la caja Linux no arranca con el sistema, sino al abrir el primer programa de Linux.
+  Para servidores y contenedores, se activa como servicio y arranca con el sistema, con memoria reservada, apagado
+  ordenado y puertos publicados (S14, "La caja Linux como servicio", decidido el 2026-11-10).
 
 ### Más adelante, quizá A
 

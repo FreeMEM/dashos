@@ -159,4 +159,7 @@ Del 2026-11-10, aceptados por el usuario.
 - **Caja Linux de serie** (2026-11-10): Arch Linux ARM con pacman, Flatpak con Flathub para el escritorio, Docker y
   Podman con pacman, y la terminal como la del usuario (zsh, Oh My Zsh con `agnosterzak`, autosugerencias, colores,
   `lsd`, `fastfetch`, Terminator). Hangar como escaparate único de los tres mundos (S7, S8).
+- **La caja Linux como servicio** (2026-11-10): `servicio activar caja-linux` la arranca con el sistema, vigilada,
+  con memoria reservada, apagado ordenado y puertos publicados. Dentro, systemd como siempre. La orden `servicio`
+  hace de `systemctl` para todo DashOS (S14).
 
