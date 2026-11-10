@@ -98,8 +98,9 @@ fn recoger(m: &mut Mezclador, c: &mut Cliente, tmp: &mut Vec<u8>) {
     poner(c.va, 1, cola.wrapping_add(usados as u32));
 }
 
-/// La clase de plazo (S2, A6): hasta 3 ms de CPU cada período de 5,3 ms. Mezclar va en coma flotante por software, y
-/// en QEMU un período de dos flujos cuesta 1 a 2 ms.
+/// La clase de plazo (S2, A6): hasta 3 ms de CPU cada período de 5,3 ms. Con la mezcla en coma fija (E9), un período
+/// de dos flujos cuesta unos 20 µs en QEMU (antes, en coma flotante por software, 320 de media y hasta 1 ms): sobra
+/// plazo, que se deja hasta medir en placa.
 const PLAZO_US: (u64, u64) = (3_000, 5_333);
 
 fn principal() -> u64 {

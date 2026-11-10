@@ -33,7 +33,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | azar hecho (falta RNG200 y arranque) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6 y parte de E8 |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6, E9 y casi todo E8 (E7, pendiente) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | pendiente |
@@ -170,3 +170,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   1,2 µs a 60 ns; escribir, igual. En QEMU (banco de ficheros, 7 arranques), todo dentro del ruido: con el disco de
   pruebas recién hecho, el asignador es pequeño. Se notará con discos fragmentados. Falta la otra mitad: copiar de la
   caché a la ventana sin pasar por un registro puesto a ceros.
+- E9: la mezcla del sonido en coma fija. Muestras en enteros con 1,0 = 32.768, volúmenes con 1,0 = 65.536 y el
+  remuestreo con 32 bits de fracción; solo convertir F32 y la API de volumen usan coma flotante. Medido en el servicio
+  (lo que tarda cada período con sonido, en `arranque-virt`): de 320 µs de media y 1.024 de peor a 20 µs y 285
+  (-94 %). Con 4 cargas (`sonido-carga`), 16 µs. Las pruebas de sonido (`arranque-virt`, `sonido-carga`,
+  `sonido-paula`) siguen sin huecos ni chasquidos; las 8 de PC del mezclador, adaptadas (comparan lo mismo pasando a
+  -1..1). Falta de E9: mezclar directo del anillo del cliente a la ranura de salida.
