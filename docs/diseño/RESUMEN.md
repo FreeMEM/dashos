@@ -60,6 +60,7 @@ tiene AES. FAT32 para el arranque, FFS, SFS y PFS3 para discos Amiga, ext4 de le
 - **Usuarios, grupos y permisos como en Linux, y PID por proceso** (decidido), sobre capacidades.
 - Permisos por aplicación, como Android o macOS; el selector de ficheros da una llave para el fichero elegido.
 - Sin superusuario: administradores que confirman cada acción.
+- El diseño concreto, con fases, en `S6b-usuarios-y-permisos.md` (propuesta, pendiente de visto bueno).
 - Paquetes firmados con Ed25519. El arranque verificado de la Pi 4 solo como opción, porque es irreversible.
 
 ## Linux (S7)
