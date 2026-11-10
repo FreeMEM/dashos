@@ -134,3 +134,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - El banco de ficheros medía mal "crear_4k_sync" desde A1: decía que cerrar ya era como fsync, y cerrar ya no espera
   al disco. Ahora vacía tras cada fichero, como `fs.c` en Linux: 345 ficheros/s (Linux 442; antes de A1, 375). Sin
   vaciar, 1.006 (Linux sin fsync, 3.107).
+- E8, componer: por cada fila dañada, tramos entre los bordes de las ventanas; cada tramo empieza por la ventana opaca
+  (XRGB) más alta que lo cubre, o por el fondo: lo de debajo no se pinta. Un tramo ARGB del todo opaco se copia; si
+  no, se mezcla sin saltos (rojo y azul a la vez en un entero, exacto: se comparó con la fórmula vieja). Medido en el
+  PC (`medir_componer`, 800 x 600 entera con tres ventanas): 311 a 225 µs por cuadro (-28 %); la ventana a medias
+  sola, 182 a 107 µs. Dividir entre 255 o copiar fila a fila sin más no ganaba nada (el compilador ya lo hacía).
+  Falta de E8: componer con un temporizador de cuadro y el canal fijo con el buzón.

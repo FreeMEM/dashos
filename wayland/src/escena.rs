@@ -737,35 +737,71 @@ impl<M: Memorias> Escena<M> {
             .map(|d| d.cruce(todo))
             .filter(|d| !d.vacio())
             .collect();
-        for d in &danos {
-            for fila in d.y..d.y + d.h {
-                let i = fila as usize * linea;
-                pantalla[i + d.x as usize..i + (d.x + d.w) as usize].fill(fondo);
-            }
-            for &(c, id, x, y) in &capas {
+        // Lo que se ve de cada superficie, si algo cambió en pantalla.
+        if !danos.is_empty() {
+            for &(c, id, _, _) in &capas {
                 let cli = self.clientes.get_mut(&c).unwrap();
                 let visto = rect_de(cli, id);
-                let s = cli.superficies.get_mut(&id).unwrap();
                 if visto.is_some() {
-                    s.visto = visto;
+                    cli.superficies.get_mut(&id).unwrap().visto = visto;
                 }
-                let cli = &self.clientes[&c];
-                let s = &cli.superficies[&id];
-                let Some(b) = s.bufer else { continue };
-                let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
-                let r = Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }.cruce(*d);
-                if r.vacio() {
-                    continue;
+            }
+        }
+        // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer).
+        let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer)> = Vec::new();
+        for &(c, id, x, y) in &capas {
+            let cli = &self.clientes[&c];
+            let Some(b) = cli.superficies[&id].bufer else { continue };
+            let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
+            con_bufer.push((Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }, x, y, px, bufer));
+        }
+        // E8: por cada fila dañada, tramos entre los bordes de las capas. En cada tramo se empieza por la capa opaca
+        // (XRGB) más alta que lo cubre, o por el fondo si no hay: lo que queda debajo de una opaca no se pinta.
+        let mut bordes: Vec<i32> = Vec::new();
+        let mut activas: Vec<usize> = Vec::new();
+        for d in &danos {
+            for fila in d.y..d.y + d.h {
+                activas.clear();
+                bordes.clear();
+                bordes.push(d.x);
+                bordes.push(d.x + d.w);
+                for (k, (r, ..)) in con_bufer.iter().enumerate() {
+                    if fila >= r.y && fila < r.y + r.h && r.x < d.x + d.w && r.x + r.w > d.x {
+                        activas.push(k);
+                        bordes.push(r.x.max(d.x));
+                        bordes.push((r.x + r.w).min(d.x + d.w));
+                    }
                 }
-                let alfa = bufer.formato == ARGB8888;
-                for fila in r.y..r.y + r.h {
-                    let origen = (fila - y) as usize * bufer.linea + (r.x - x) as usize * 4;
-                    let destino = fila as usize * linea + r.x as usize;
-                    for k in 0..r.w as usize {
-                        let o = &px[origen + 4 * k..origen + 4 * k + 4];
-                        let p = u32::from_le_bytes([o[0], o[1], o[2], o[3]]);
-                        let d = &mut pantalla[destino + k];
-                        *d = if alfa { mezclar(p, *d) } else { p | 0xFF00_0000 };
+                bordes.sort_unstable();
+                bordes.dedup();
+                let base_fila = fila as usize * linea;
+                for t in bordes.windows(2) {
+                    let (a, b) = (t[0], t[1]);
+                    let cubre = |k: &usize| {
+                        let r = &con_bufer[*k].0;
+                        r.x <= a && r.x + r.w >= b
+                    };
+                    let desde = activas.iter().rposition(|k| cubre(k) && con_bufer[*k].4.formato != ARGB8888);
+                    let destino = &mut pantalla[base_fila + a as usize..base_fila + b as usize];
+                    if desde.is_none() {
+                        destino.fill(fondo);
+                    }
+                    for k in activas[desde.unwrap_or(0)..].iter().filter(|k| cubre(k)) {
+                        let (_, x, y, px, bufer) = &con_bufer[*k];
+                        let origen = (fila - y) as usize * bufer.linea + (a - x) as usize * 4;
+                        let de = &px[origen..origen + 4 * destino.len()];
+                        // Un tramo ARGB del todo opaco (en una ventana, casi siempre) se copia; si no, se mezcla entero,
+                        // sin saltos por píxel.
+                        let opaco = bufer.formato != ARGB8888 || de.chunks_exact(4).all(|o| o[3] == 255);
+                        if !opaco {
+                            for (d, o) in destino.iter_mut().zip(de.chunks_exact(4)) {
+                                *d = mezclar(u32::from_le_bytes([o[0], o[1], o[2], o[3]]), *d);
+                            }
+                        } else {
+                            for (d, o) in destino.iter_mut().zip(de.chunks_exact(4)) {
+                                *d = u32::from_le_bytes([o[0], o[1], o[2], o[3]]) | 0xFF00_0000;
+                            }
+                        }
                     }
                 }
             }
@@ -794,18 +830,24 @@ impl<M: Memorias> Escena<M> {
 }
 
 /// Un píxel ARGB premultiplicado (como manda Wayland) sobre el fondo.
-fn mezclar(p: u32, fondo: u32) -> u32 {
-    let a = p >> 24;
-    if a == 255 {
-        return p;
-    }
-    let inv = 255 - a;
-    let canal = |s: u32| -> u32 {
-        let f = (fondo >> s) & 0xFF;
-        let c = (p >> s) & 0xFF;
-        (c + (f * inv + 127) / 255).min(255) << s
-    };
-    0xFF00_0000 | canal(16) | canal(8) | canal(0)
+pub(crate) fn mezclar(p: u32, fondo: u32) -> u32 {
+    let inv = 255 - (p >> 24);
+    // E8: sin saltos, para que el compilador mezcle varios píxeles a la vez. Rojo y azul a la vez en un entero (cada
+    // uno en su mitad de 16 bits) y el verde aparte. Cada canal es c + f * (255 - a) / 255 redondeado, sin dividir:
+    // con t = x + 128, (t + t / 256) / 256 es exacto hasta 255 * 255. Con alfa 255 da el color tal cual; con alfa 0,
+    // el fondo.
+    let rb = (fondo & 0x00FF_00FF) * inv + 0x0080_0080;
+    let rb = ((rb + ((rb >> 8) & 0x00FF_00FF)) >> 8) & 0x00FF_00FF;
+    let g = (fondo & 0x0000_FF00) * inv + 0x0000_8000;
+    let g = ((g + ((g >> 8) & 0x0000_FF00)) >> 8) & 0x0000_FF00;
+    // Un cliente que no premultiplica (color mayor que su alfa) se pasaría de 255: el canal que se pasa queda en 255.
+    let s_rb = (p & 0x00FF_00FF) + rb;
+    let s_g = (p & 0x0000_FF00) + g;
+    let ov_rb = s_rb & 0x0100_0100;
+    let ov_g = s_g & 0x0001_0000;
+    let s_rb = (s_rb | (ov_rb - (ov_rb >> 8))) & 0x00FF_00FF;
+    let s_g = (s_g | (ov_g - (ov_g >> 8))) & 0x0000_FF00;
+    0xFF00_0000 | s_rb | s_g
 }
 
 fn rect_de(c: &DeCliente, id: u32) -> Option<Rect> {

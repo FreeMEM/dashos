@@ -433,7 +433,7 @@ mod composicion {
     fn cliente(escena: &mut Escena<Compartida>, con: &mut Conexion, c: Cliente, llave: u32, w: i32, h: i32, color: u32, formato: u32) {
         {
             let mut m = escena.memorias.0.borrow_mut();
-            let v = m.entry(llave).or_insert_with(|| vec![0; 1 << 16]);
+            let v = m.entry(llave).or_insert_with(|| vec![0; ((w * h * 4) as usize).max(1 << 16)]);
             for p in v[..(w * h * 4) as usize].chunks_mut(4) {
                 p.copy_from_slice(&color.to_le_bytes());
             }
@@ -501,6 +501,46 @@ mod composicion {
         escena.componer(&mut pantalla, w, h, w as usize, 1300, &mut |_, _, _| {});
         assert_eq!(px(&pantalla, 16, 11), 0xFFFF_0000);
         assert_eq!(px(&pantalla, 24, 16), 0xFF20_4060);
+    }
+
+    /// E8: lo que cuesta componer una pantalla de 800 x 600 entera con tres ventanas (una XRGB, una ARGB opaca y una
+    /// ARGB a medias que se solapan). Se mide en el PC: `cargo test --release -- --ignored medir_componer --nocapture`.
+    #[test]
+    #[ignore]
+    fn medir_componer() {
+        extern crate std;
+        let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);
+        let (mut a, mut b, mut c) = (Conexion::new(), Conexion::new(), Conexion::new());
+        let variante: u32 = std::env::var("VARIANTE").ok().and_then(|v| v.parse().ok()).unwrap_or(0);
+        if variante == 0 || variante == 2 {
+            cliente(&mut escena, &mut a, 1, 70, 400, 300, 0xFFFF_0000, XRGB8888);
+            escena.colocar(1, 7, 50, 50);
+        }
+        if variante == 0 || variante == 3 {
+            cliente(&mut escena, &mut b, 2, 71, 400, 300, 0xFF33_6699, ARGB8888);
+            escena.colocar(2, 7, 200, 150);
+        }
+        if variante == 0 || variante == 4 {
+            cliente(&mut escena, &mut c, 3, 72, 300, 200, 0x8000_0080, ARGB8888);
+            escena.colocar(3, 7, 300, 250);
+        }
+        let (w, h) = (800, 600);
+        let mut pantalla = vec![0u32; (w * h) as usize];
+        let vueltas = 300;
+        let t0 = std::time::Instant::now();
+        for _ in 0..vueltas {
+            escena.danos.push(Rect { x: 0, y: 0, w, h });
+            escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+        }
+        let us = t0.elapsed().as_micros() as f64 / vueltas as f64;
+        std::println!("componer 800x600 con 3 ventanas: {:.0} µs por cuadro", us);
+        if variante != 0 {
+            return;
+        }
+        // Lo que sale tiene que ser lo de siempre.
+        let px = |x: i32, y: i32| pantalla[(y * w + x) as usize];
+        assert_eq!((px(10, 10), px(60, 60), px(250, 200)), (0xFF20_4060, 0xFFFF_0000, 0xFF33_6699));
+        assert_eq!(px(350, 300), mezclar(0x8000_0080, 0xFF33_6699));
     }
 
     #[test]
