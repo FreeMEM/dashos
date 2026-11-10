@@ -31,6 +31,10 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // U3: `sesiones` abre y cierra el volumen de cada usuario (administrar volúmenes); no lee lo de nadie.
     ("sesiones", 1, 1, 1, ""),
 ];
+/// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
+/// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
+const REPARTE: &[&str] = &["eco"];
+
 /// La orden de alta del servicio de archivos.
 const ALTA: u32 = 100;
 
@@ -196,7 +200,16 @@ fn principal() -> u64 {
                     // Cada cliente, con su marca (el número del programa más 1), y el servidor sabe de quién es por un
                     // mensaje sin marca que solo puede mandar `inicio` (auditoría de la fase 4, M6).
                     let marca = i as u64 + 1;
-                    let copia = llave_duplicar(pendientes[c], 7, marca);
+                    let reparte = nombre(nombre_cab) == "sesiones" && REPARTE.contains(&nombre(lector[c] + 16));
+                    let copia = llave_duplicar(pendientes[c], 7, if reparte { 0 } else { marca });
+                    if reparte {
+                        // Sin entrada en el directorio: quien escribe por ella es `sesiones` en nombre de otros.
+                        if copia > 0 {
+                            suyas[k] = copia as u32;
+                            k += 1;
+                        }
+                        continue;
+                    }
                     if copia > 0 {
                         suyas[k] = copia as u32;
                         k += 1;

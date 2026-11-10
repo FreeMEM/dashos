@@ -37,7 +37,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
-| R16 | Permisos por aplicación | U4 | pendiente |
+| R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | pendiente |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | pendiente |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | pendiente |
@@ -215,3 +215,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - U3, volver de un bloqueo: orden 29 de archivos, COMPROBAR_CLAVE (RedoxFS `check_volume_password`: deriva la llave
   y la tira, sin abrir ni tocar el volumen), y VOLVER en `sesiones`. Tras una contraseña mala, `sesiones` tarda
   300 ms en contestar. `entrada` comprueba volver con una mala (-12) y con la buena (0) con el volumen abierto.
+- R16 (U4), primera parte: `sesiones` reparte llaves de servicios. `inicio` le da una copia sin marca de los
+  servicios que reparte (`REPARTE`, hoy solo `eco`, un servicio de prueba que contesta lo que le llega); con la
+  orden SERVICIO, si la ficha del programa tiene el permiso (`PERMISOS`, provisional), `sesiones` hace una copia
+  marcada con su número, que viaja una vez (UNA_VEZ: llega sin el derecho de transferir, regla 2), la hace revocable,
+  escribe su entrada en el directorio del servicio y se la da. DEJAR la revoca. Prueba: `pide` (con permiso) usa
+  `eco`, no puede regalar la llave (-3), renuncia y la llave ya no sirve (-2); el hostil la pide sin permiso: -2.
+  Falta de U4: los permisos declarados en el paquete (S8), preguntar al usuario (`guardian`) y guardarlo.

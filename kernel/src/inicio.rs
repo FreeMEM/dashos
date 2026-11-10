@@ -53,9 +53,15 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Las fichas de los procesos (U2) y la entrada de los usuarios (U3), solo en `virt` por ahora. Va tras archivos,
     // del que es cliente (abre y cierra el volumen de cada usuario); `inicio` le da de alta también lo lanzado antes.
     // Sus llaves: 1 archivos, 2 su canal "sesiones" (los canales van en el orden en que se nombran).
+    // Un servicio de prueba que contesta lo que le llega (U4): solo se llega a él con la llave que reparte `sesiones`.
     #[cfg(feature = "virt")]
-    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[], &["archivos", "sesiones"]),
+    ("eco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/eco"), &[], &["eco"]),
+    #[cfg(feature = "virt")]
+    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[], &["archivos", "eco", "sesiones"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
+    // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
+    #[cfg(feature = "virt")]
+    ("pide", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/pide"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
     ("entrada", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/entrada"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]

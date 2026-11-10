@@ -23,9 +23,16 @@ use dashos::protocolo::sesiones::*;
 
 dashos::programa!(principal);
 
-/// Llave 1: el canal del servicio de archivos; 2: el suyo (los canales van en el orden en que se nombran).
+/// Llave 1: el canal del servicio de archivos; 2: el de `eco`, sin marca, para repartirlo (U4); 3: el suyo (los canales
+/// van en el orden en que se nombran).
 const ARCHIVOS: u32 = 1;
-const CANAL: u32 = 2;
+const CANAL: u32 = 3;
+/// Los servicios que reparte, con la llave sin marca de cada uno.
+const REPARTE: &[(&str, u32)] = &[("eco", 2)];
+/// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8) y de lo que diga el usuario.
+const PERMISOS: &[(&str, &str)] = &[("pide", "eco")];
+/// Llaves repartidas que se pueden revocar, a la vez.
+const MAX_DADAS: usize = 64;
 /// Dónde ve su ventana del servicio de archivos.
 const VA_VENTANA: usize = 0x40_0000_0000;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
@@ -100,6 +107,8 @@ fn nombre(n: &[u8; 16]) -> &str {
 
 fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
+    // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
+    let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     let mut idos = [0u64; 8];
     let mut ido = 0;
@@ -192,6 +201,73 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
+                }
+                SERVICIO | DEJAR => {
+                    let nl = u32_en(4) as usize;
+                    let pedido = m.get(12..12 + nl).and_then(|n| core::str::from_utf8(n).ok()).unwrap_or("");
+                    let servicio = REPARTE.iter().position(|s| s.0 == pedido);
+                    let programa = yo.map(|f| f.nombre).unwrap_or([0; 16]);
+                    let permitido = yo.is_some() && PERMISOS.iter().any(|p| p.0 == nombre(&programa) && p.1 == pedido);
+                    let mut respuesta_llave = None;
+                    let estado = match (u32_en(0), servicio) {
+                        (_, None) => NO_EXISTE,
+                        (SERVICIO, Some(s)) if permitido => {
+                            // Una copia marcada con su número, que viaja una vez (S4) y llega sin el derecho de
+                            // transferirla (regla 2), y revocable.
+                            let d = dashos::llave_duplicar(REPARTE[s].1, 7 | dashos::UNA_VEZ, marca);
+                            let (r, revocador) = if d > 0 { dashos::llave_revocable(d as u32) } else { (-1, 0) };
+                            if d > 0 {
+                                dashos::cerrar(d as u32);
+                            }
+                            match dadas.iter().position(|x| x.is_none()) {
+                                Some(i) if r > 0 => {
+                                    dadas[i] = Some((marca, s, revocador));
+                                    // Su entrada en el directorio del servicio, como hace `inicio`.
+                                    let mut dir = [0u8; 24];
+                                    dir[..8].copy_from_slice(&marca.to_le_bytes());
+                                    dir[8..].copy_from_slice(&programa);
+                                    dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
+                                    respuesta_llave = Some(r as u32);
+                                    BIEN
+                                }
+                                _ => {
+                                    if r > 0 {
+                                        dashos::cerrar(r as u32);
+                                        dashos::cerrar(revocador);
+                                    }
+                                    -1
+                                }
+                            }
+                        }
+                        (SERVICIO, Some(_)) => PROTEGIDO,
+                        (_, Some(s)) => {
+                            // Dejar: se revocan todas las suyas de ese servicio.
+                            let mut alguna = false;
+                            for x in dadas.iter_mut() {
+                                if let Some((mc, sv, rev)) = *x {
+                                    if mc == marca && sv == s {
+                                        dashos::revocar(rev);
+                                        dashos::cerrar(rev);
+                                        *x = None;
+                                        alguna = true;
+                                    }
+                                }
+                            }
+                            if alguna { BIEN } else { NO_EXISTE }
+                        }
+                    };
+                    let que = if u32_en(0) == SERVICIO { "pide" } else { "deja" };
+                    println!("  [sesiones] {} {} {}: {}", nombre(&programa), que, pedido, estado);
+                    match respuesta_llave {
+                        Some(l) => {
+                            if dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[l]) != 0 {
+                                dashos::cerrar(l);
+                            }
+                        }
+                        None => {
+                            dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                        }
+                    }
                 }
                 MATAR => {
                     let objetivo = u64_en(4);

@@ -23,6 +23,11 @@ pub const SALIR: u32 = 4;
 /// De `guardian`: volver de un bloqueo (como `ENTRAR`). Comprueba la contraseña sin tocar el volumen, que sigue
 /// abierto. Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
 pub const VOLVER: u32 = 5;
+/// De un programa (U4): la llave de un servicio (orden, largo del nombre, 0, el nombre). Si su ficha tiene el permiso,
+/// contesta 0 con la llave: marcada con su número, revocable y sin derecho de transferirla; si no, -2.
+pub const SERVICIO: u32 = 6;
+/// De un programa: renunciar a la llave de un servicio (como `SERVICIO`). `sesiones` la revoca: deja de servir.
+pub const DEJAR: u32 = 7;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

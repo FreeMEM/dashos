@@ -170,6 +170,14 @@ path = "src/bin/presa.rs"
 [[bin]]
 name = "entrada"
 path = "src/bin/entrada.rs"
+
+[[bin]]
+name = "eco"
+path = "src/bin/eco.rs"
+
+[[bin]]
+name = "pide"
+path = "src/bin/pide.rs"
 test = false
 required-features = ["ventanas"]
 
