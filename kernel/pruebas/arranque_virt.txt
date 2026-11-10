@@ -98,6 +98,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] en marcha
 ~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)
 ~│   [sesiones] baja de caida-cliente (clase 0)
+~│   [sesiones] vuelve caida, con su grupo nuevo
 ~│   [sesiones] hostil mata a presa (los dos, usuario 1001)
 ~│   [hostil] sesiones: ve 
 ~no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera

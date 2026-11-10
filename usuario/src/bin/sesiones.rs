@@ -48,6 +48,9 @@ fn nombre(n: &[u8; 16]) -> &str {
 
 fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
+    // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
+    let mut idos = [0u64; 8];
+    let mut ido = 0;
     let mut b = [0u8; 64];
     let mut ll = [0u32; 4];
     println!("  [sesiones] en marcha");
@@ -68,6 +71,8 @@ fn principal() -> u64 {
                 let f = fichas[i].take().unwrap();
                 dashos::cerrar(f.grupo);
                 println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
+                idos[ido % idos.len()] = f.marca;
+                ido += 1;
             }
         } else if marca == 0 {
             // De `inicio`: un alta, con la llave del grupo.
@@ -79,6 +84,10 @@ fn principal() -> u64 {
                 if let Some(i) = sitio {
                     if let Some(vieja) = fichas[i] {
                         dashos::cerrar(vieja.grupo);
+                    }
+                    if let Some(j) = idos.iter().position(|&m| m == f.marca && m != 0) {
+                        idos[j] = 0;
+                        println!("  [sesiones] vuelve {}, con su grupo nuevo", nombre(&f.nombre));
                     }
                     fichas[i] = Some(f);
                     usadas = 1;

@@ -163,3 +163,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   las bajas de los que acaban (disco, ficheros, hola, tono-a con clase 2, que falla a propósito...). La prueba del
   hostil ahora intenta matar al compositor (usuario 1), porque `ficheros` puede haber acabado ya, y comprueba que
   `caida-cliente`, que acabó solo, ya no está en la lista.
+- U2: un servicio relanzado vuelve a tener ficha en `sesiones`, con su grupo nuevo, y su baja pedida otra vez. En
+  virt, `caida` sale tres veces como "vuelve, con su grupo nuevo".

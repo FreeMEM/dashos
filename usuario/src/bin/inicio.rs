@@ -306,7 +306,7 @@ fn principal() -> u64 {
         s.veces += 1;
         println!("  [inicio] {} acabó (clase {}, código {}): se relanza (vez {})", nombre(s.cab), clase, codigo, s.veces);
         dashos::dormir_us(100_000 << (s.veces - 1));
-        if !relanzar(s, &pendientes, &clientes_de, &lector, cabeceras) {
+        if !relanzar(s, &pendientes, &clientes_de, &lector, cabeceras, i as u64 + 1, sesiones) {
             println!("  [inicio] {}: no se pudo relanzar", nombre(s.cab));
             servicios[i] = None;
         }
@@ -337,7 +337,7 @@ const CABECERA: usize = 32;
 /// Relanza `s` con copias de sus llaves guardadas, en un grupo nuevo, y pide otra vez su aviso de fin. Antes deja en
 /// cada canal que lee un aviso sin marca de que es un relanzado y, otra vez, lo que se le dio de sus clientes (su
 /// entrada del directorio y, al de archivos, su alta): sin eso no sabría quién le habla.
-fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], lector: &[usize; 32], cabeceras: usize) -> bool {
+fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], lector: &[usize; 32], cabeceras: usize, marca: u64, sesiones: u32) -> bool {
     let escribir = |p: u32, m: &[u8]| {
         for _ in 0..100 {
             if dashos::canal_escribir(p, m, &[]) == 0 {
@@ -380,5 +380,10 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
     }
     s.proceso = proceso as u32;
     s.grupo = g as u32;
+    // En `sesiones`, otra vez su ficha con el grupo nuevo y su baja cuando acabe (U2).
+    if sesiones != 0 {
+        alta_en_sesiones(sesiones, s.cab, marca, s.grupo);
+        baja_en_sesiones(sesiones, s.proceso, marca);
+    }
     dashos::proceso_avisar(s.proceso, s.aviso) == 0
 }
