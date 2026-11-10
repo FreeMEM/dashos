@@ -88,6 +88,11 @@ fn principal() -> u64 {
                 }
             }
         }
+        // Los canales que crea este programa: tras sus llaves, una copia para escribirse a sí mismo (paso B de
+        // docs/MULTITAREA_LOOP.md: un temporizador que lo despierte en su propio canal), con una marca que no es de
+        // ningún cliente.
+        let mut propios = [0u32; 8];
+        let mut np = 0;
         for c in 0..32 {
             if de_canales & (1 << c) != 0 && k < suyas.len() {
                 if pendientes[c] == 0 {
@@ -95,6 +100,10 @@ fn principal() -> u64 {
                     pendientes[c] = b;
                     suyas[k] = a;
                     k += 1;
+                    if np < propios.len() {
+                        propios[np] = b;
+                        np += 1;
+                    }
                 } else {
                     // Cada cliente, con su marca (el número del programa más 1), y el servidor sabe de quién es por un
                     // mensaje sin marca que solo puede mandar `inicio` (auditoría de la fase 4, M6).
@@ -115,6 +124,15 @@ fn principal() -> u64 {
                             dormir_un_tic();
                         }
                     }
+                }
+            }
+        }
+        for &b in &propios[..np] {
+            if k < suyas.len() {
+                let copia = llave_duplicar(b, dashos::ESCRIBIR | dashos::TRANSFERIR, u64::MAX);
+                if copia > 0 {
+                    suyas[k] = copia as u32;
+                    k += 1;
                 }
             }
         }

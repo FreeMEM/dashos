@@ -68,6 +68,10 @@ pub trait Disk {
     fn last_read_from_memory(&self) -> bool {
         false
     }
+
+    /// The `count` blocks from `block` are free and nothing written there since the last `flush` needs to reach the
+    /// disk (DashOS, step B: blocks born and freed between two `FileSystem::durable`). The default keeps them.
+    fn forget(&mut self, _block: u64, _count: u64) {}
 }
 
 impl Disk for Box<dyn Disk> {

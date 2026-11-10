@@ -27,6 +27,8 @@ const DATOS: u32 = 5;
 const CERRAR: u32 = 6;
 const CREAR: u32 = 7;
 const BORRAR: u32 = 8;
+const VACIAR: u32 = 11;
+const GUARDAR: u32 = 27;
 
 const GRANDE: u64 = 8 << 20;
 const TROZO: u64 = 64 << 10;
@@ -93,6 +95,15 @@ fn nombre(i: u64, b: &mut [u8; 5]) -> &[u8] {
     &b[..]
 }
 
+/// Bytes al azar en la ventana (un congruencial de 32 bits, igual en fs.c).
+fn rellenar() {
+    let mut x = 12345u32;
+    for b in ventana().iter_mut() {
+        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
+        *b = (x >> 24) as u8;
+    }
+}
+
 fn principal() -> u64 {
     println!("[medir] empieza");
     let (lectura, vuelta) = dashos::canal_crear();
@@ -109,28 +120,39 @@ fn principal() -> u64 {
     }
     // Bytes al azar (un congruencial de 32 bits, igual en fs.c): no se comprimen, como casi todo lo que se guarda
     // (imágenes, programas). Con datos que se repiten, RedoxFS los comprimiría con lz4 y ext4 no.
-    let mut x = 12345u32;
-    for b in ventana().iter_mut() {
-        x = x.wrapping_mul(1664525).wrapping_add(1013904223);
-        *b = (x >> 24) as u8;
-    }
+    rellenar();
     let mb = 1u64 << 20;
 
-    // Un fichero de 8 MB por trozos de 64 KB, y leerlo dos veces.
-    let t0 = cuentas();
-    let f = c.pedir(CREAR, 0, 1, 0, b"grande");
-    let mut bien = f.estado == 0;
-    let mut off = 0;
-    while bien && off < GRANDE {
-        bien = c.pedir(ESCRIBIR, f.asa, off, TROZO, b"").estado == 0;
-        off += TROZO;
+    // Como tools/medir_linux/fs.c. Desde el paso B, lo cambiado va al disco al cerrar, al vaciar (11, como fsync) o
+    // como mucho en un segundo; "_sync" es vaciar tras cada trozo, fichero o borrado.
+    // Un fichero de 8 MB por trozos de 64 KB, sin y con vaciar cada vez, y leer el primero dos veces.
+    let mut bien = true;
+    let mut grande = 0;
+    for (op, nombre_f, cada_vez) in [("escribir_8mb", &b"grande"[..], false), ("escribir_8mb_sync", b"grande_sync", true)] {
+        let t0 = cuentas();
+        let f = c.pedir(CREAR, 0, 1, 0, nombre_f);
+        bien &= f.estado == 0;
+        let mut off = 0;
+        while bien && off < GRANDE {
+            bien = c.pedir(ESCRIBIR, f.asa, off, TROZO, b"").estado == 0;
+            if cada_vez {
+                bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+            }
+            off += TROZO;
+        }
+        bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+        dato(op, mb, GRANDE, cuentas() - t0, "MB/s");
+        if cada_vez {
+            c.pedir(CERRAR, f.asa, 0, 0, b"");
+        } else {
+            grande = f.asa;
+        }
     }
-    dato("escribir_8mb_sync", mb, GRANDE, cuentas() - t0, "MB/s");
     for op in ["leer_8mb_frio", "leer_8mb"] {
         let t0 = cuentas();
         let mut off = 0;
         while off < GRANDE {
-            let r = c.pedir(LEER, f.asa, off, TROZO, b"");
+            let r = c.pedir(LEER, grande, off, TROZO, b"");
             if r.estado != 0 || r.a == 0 {
                 bien = false;
                 break;
@@ -139,18 +161,22 @@ fn principal() -> u64 {
         }
         dato(op, mb, GRANDE, cuentas() - t0, "MB/s");
     }
-    c.pedir(CERRAR, f.asa, 0, 0, b"");
+    c.pedir(CERRAR, grande, 0, 0, b"");
 
-    // 500 ficheros de 4 KB en un cajón: crear y escribir, leer, sus datos, listar y borrar.
+    // 500 ficheros de 4 KB en un cajón: crear y escribir (cerrar los lleva al disco), leer, sus datos, listar y borrar.
     let dir = c.pedir(CREAR, 0, 2, 0, b"peq");
     let mut nb = [0u8; 5];
-    let t0 = cuentas();
-    for i in 0..PEQUENOS {
-        let g = c.pedir(CREAR, dir.asa, 1, 0, nombre(i, &mut nb));
-        bien &= g.estado == 0 && c.pedir(ESCRIBIR, g.asa, 0, 4096, b"").estado == 0;
-        c.pedir(CERRAR, g.asa, 0, 0, b"");
-    }
-    dato("crear_4k_sync", 1, PEQUENOS, cuentas() - t0, "ficheros/s");
+    let crear = |op: &str, bien: &mut bool, nb: &mut [u8; 5]| {
+        let t0 = cuentas();
+        for i in 0..PEQUENOS {
+            let g = c.pedir(CREAR, dir.asa, 1, 0, nombre(i, nb));
+            *bien &= g.estado == 0 && c.pedir(ESCRIBIR, g.asa, 0, 4096, b"").estado == 0;
+            *bien &= c.pedir(CERRAR, g.asa, 0, 0, b"").estado == 0;
+        }
+        *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+        dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
+    };
+    crear("crear_4k", &mut bien, &mut nb);
     let t0 = cuentas();
     for i in 0..PEQUENOS {
         let g = c.pedir(BUSCAR, dir.asa, 0, 0, nombre(i, &mut nb));
@@ -176,11 +202,35 @@ fn principal() -> u64 {
     let l = c.pedir(LISTAR, dir.asa, 0, 0, b"");
     dato("listar_500", 1, 1, cuentas() - t0, "listados/s");
     let listados = l.a;
+    let borrar = |op: &str, cada_vez: bool, bien: &mut bool, nb: &mut [u8; 5]| {
+        let t0 = cuentas();
+        for i in 0..PEQUENOS {
+            *bien &= c.pedir(BORRAR, dir.asa, 0, 0, nombre(i, nb)).estado == 0;
+            if cada_vez {
+                *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+            }
+        }
+        *bien &= c.pedir(VACIAR, 0, 0, 0, b"").estado == 0;
+        dato(op, 1, PEQUENOS, cuentas() - t0, "ficheros/s");
+    };
+    borrar("borrar", false, &mut bien, &mut nb);
+    // Cerrar ya es como fsync: "crear_4k_sync" es lo mismo que "crear_4k".
+    crear("crear_4k_sync", &mut bien, &mut nb);
+    borrar("borrar_sync", true, &mut bien, &mut nb);
+    // Paso A: crear con datos, una orden por fichero, en el disco al contestar. La ventana trae aún lo del listado.
+    rellenar();
+    let muestra: [u8; 8] = ventana()[..8].try_into().unwrap();
     let t0 = cuentas();
     for i in 0..PEQUENOS {
-        bien &= c.pedir(BORRAR, dir.asa, 0, 0, nombre(i, &mut nb)).estado == 0;
+        let g = c.pedir(GUARDAR, dir.asa, 0, 4096, nombre(i, &mut nb));
+        bien &= g.estado == 0 && g.a == 4096;
     }
-    dato("borrar_sync", 1, PEQUENOS, cuentas() - t0, "ficheros/s");
+    dato("guardar_4k_sync", 1, PEQUENOS, cuentas() - t0, "ficheros/s");
+    for i in 0..PEQUENOS {
+        let g = c.pedir(BUSCAR, dir.asa, 0, 0, nombre(i, &mut nb));
+        bien &= g.estado == 0 && c.pedir(LEER, g.asa, 0, 4096, b"").a == 4096 && ventana()[..8] == muestra;
+        c.pedir(CERRAR, g.asa, 0, 0, b"");
+    }
     println!("[medir] fs-bien bien={} listados={}", bien as u8, listados);
     // Dónde se fue el tiempo dentro del servicio (orden 98): "orden=veces/µs" y lo mismo del disco.
     let r = c.pedir(98, 0, 0, 0, b"");

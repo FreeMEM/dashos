@@ -72,6 +72,15 @@ const HACER_VOLUMEN: u32 = 23;
 const QUITAR_VOLUMEN: u32 = 24;
 const ABRIR_VOLUMEN: u32 = 25;
 const CERRAR_VOLUMEN: u32 = 26;
+/// Crear un fichero con lo que hay en la ventana, en una sola transacción, y que esté en el disco al contestar
+/// (paso A de docs/MULTITAREA_LOOP.md): como crear, escribir, cerrar y vaciar, en un viaje.
+const GUARDAR: u32 = 27;
+/// La llave con la que el servicio se escribe a sí mismo (la da `inicio` tras las demás): para su temporizador.
+const DESPERTADOR: u32 = 3;
+/// Lo confirmado en memoria va al disco como mucho tras este tiempo (paso B), o antes si...
+const PLAZO_US: u64 = 1_000_000;
+/// ...ya hay tanto escrito esperando en la caché.
+const MAX_SUCIO: usize = 8 * 1024 * 1024 / BLOCK_SIZE as usize;
 /// Diagnóstico (paso F): en la ventana del cliente, en texto, cuántas veces se ha atendido cada orden y cuánto ha
 /// costado en total, y lo mismo de las lecturas, escrituras y vaciados del disco. Devuelve el largo en `a`.
 const PERFIL: u32 = 98;
@@ -133,12 +142,16 @@ struct Disco {
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
 /// cajón, los datos de un nodo) era una petición al servicio de disco y una orden al NVMe, y buscar un fichero costaba
-/// un milisegundo. Se escribe siempre en el disco antes que aquí (lo que se contesta como hecho ya está en el disco,
-/// FS4), así que nunca hay nada que guardar al quitar un bloque. Hasta `MAX_BLOQUES`; al llenarse, se quita la octava
-/// parte menos usada.
+/// un milisegundo. Hasta `MAX_BLOQUES`; al llenarse, se quita la octava parte menos usada.
+///
+/// Lo escrito espera aquí, sucio, hasta el siguiente `flush` (paso B): RedoxFS pide `flush` antes de escribir una
+/// cabecera, así que los bloques llegan al disco antes que la cabecera que los nombra, y juntos. Un bloque sucio no se
+/// quita.
 struct Cache {
     bloques: BTreeMap<u64, (u64, Box<[u8; BLOCK_SIZE as usize]>)>,
     reloj: u64,
+    /// Los bloques escritos que aún no están en el disco.
+    sucios: alloc::collections::BTreeSet<u64>,
 }
 
 /// 40 MB: el grupo de este servicio tiene 64 MB (`inicio`, F9), y en él van también el programa, las ventanas y los
@@ -160,8 +173,12 @@ impl Cache {
         }
     }
 
-    fn poner(&mut self, bloque: u64, datos: &[u8]) {
+    /// Un bloque leído del disco (`sucio` falso) o escrito y aún no guardado (verdadero).
+    fn poner(&mut self, bloque: u64, datos: &[u8], sucio: bool) {
         self.reloj += 1;
+        if sucio {
+            self.sucios.insert(bloque);
+        }
         if let Some((uso, b)) = self.bloques.get_mut(&bloque) {
             *uso = self.reloj;
             b.copy_from_slice(datos);
@@ -171,7 +188,8 @@ impl Cache {
             let mut usos: Vec<u64> = self.bloques.values().map(|(u, _)| *u).collect();
             usos.sort_unstable();
             let corte = usos[usos.len() / 8];
-            self.bloques.retain(|_, (u, _)| *u > corte);
+            let sucios = &self.sucios;
+            self.bloques.retain(|b, (u, _)| *u > corte || sucios.contains(b));
         }
         let mut b = Box::new([0u8; BLOCK_SIZE as usize]);
         b.copy_from_slice(datos);
@@ -198,7 +216,7 @@ impl Disco {
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0 }, de_memoria: false };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -226,42 +244,20 @@ impl Disk for Disco {
         self.de_memoria = false;
         unsafe { self.leer_disco(block, buffer)? };
         for (i, b) in buffer.chunks_exact(bs).enumerate() {
-            self.cache.poner(block + i as u64, b);
+            self.cache.poner(block + i as u64, b, false);
         }
         Ok(buffer.len())
     }
 
-    /// Lo que escribe una transacción, junto (F2): los bloques seguidos van en una sola petición al servicio de disco
-    /// (hasta `TRAMO`), no uno a uno. Cada petición cuesta unos 100 µs en QEMU.
-    unsafe fn write_at_batched(&mut self, batch: &[(u64, &[u8])]) -> Result<usize> {
-        let mut orden: Vec<&(u64, &[u8])> = batch.iter().collect();
-        orden.sort_unstable_by_key(|(b, _)| *b);
-        let bs = BLOCK_SIZE as usize;
-        let mut escrito = 0;
-        let mut i = 0;
-        while i < orden.len() {
-            let (inicio, primero) = *orden[i];
-            let mut junto = Vec::from(primero);
-            let mut j = i + 1;
-            while j < orden.len()
-                && orden[j].0 == inicio + (junto.len() / bs) as u64
-                && junto.len() + orden[j].1.len() <= TRAMO
-            {
-                junto.extend_from_slice(orden[j].1);
-                j += 1;
-            }
-            escrito += unsafe { self.write_at(inicio, &junto)? };
-            i = j;
-        }
-        Ok(escrito)
-    }
-
+    /// A la caché, sucio: va al disco en el siguiente `flush` (paso B).
     unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
-        let n = unsafe { self.escribir_disco(block, buffer)? };
-        for (i, b) in buffer.chunks_exact(BLOCK_SIZE as usize).enumerate() {
-            self.cache.poner(block + i as u64, b);
+        if buffer.len() as u64 % BLOCK_SIZE != 0 {
+            return Err(Error::new(EINVAL));
         }
-        Ok(n)
+        for (i, b) in buffer.chunks_exact(BLOCK_SIZE as usize).enumerate() {
+            self.cache.poner(block + i as u64, b, true);
+        }
+        Ok(buffer.len())
     }
 
     fn size(&mut self) -> Result<u64> {
@@ -272,7 +268,38 @@ impl Disk for Disco {
         self.de_memoria
     }
 
+    /// Bloques que nacieron y se soltaron entre dos guardados (paso B): fuera, sin escribirlos.
+    fn forget(&mut self, block: u64, count: u64) {
+        for b in block..block + count {
+            self.cache.sucios.remove(&b);
+            self.cache.bloques.remove(&b);
+        }
+    }
+
+    /// Escribe los bloques sucios, los seguidos juntos en una petición (hasta `TRAMO`; F2: cada petición cuesta unos
+    /// 100 µs en QEMU), y vacía la caché del disco.
     fn flush(&mut self) -> Result<()> {
+        if !self.cache.sucios.is_empty() {
+            let sucios: Vec<u64> = core::mem::take(&mut self.cache.sucios).into_iter().collect();
+            let bs = BLOCK_SIZE as usize;
+            let mut junto: Vec<u8> = Vec::with_capacity(TRAMO);
+            let mut inicio = 0;
+            for (k, &b) in sucios.iter().enumerate() {
+                if junto.is_empty() {
+                    inicio = b;
+                }
+                junto.extend_from_slice(&self.cache.bloques[&b].1[..]);
+                let sigue = sucios.get(k + 1).is_some_and(|&c| c == b + 1) && junto.len() + bs <= TRAMO;
+                if !sigue {
+                    if let Err(e) = unsafe { self.escribir_disco(inicio, &junto) } {
+                        // Lo que no llegó sigue sucio.
+                        self.cache.sucios.extend(sucios[k + 1 - junto.len() / bs..].iter().copied());
+                        return Err(e);
+                    }
+                    junto.clear();
+                }
+            }
+        }
         let t0 = reloj();
         let r = match self.pedir(DISCO_VACIAR, 0, 0) {
             Some((0, _, _)) => Ok(()),
@@ -346,6 +373,8 @@ struct Cliente {
     ventana: u32,
     va: usize,
     asas: BTreeMap<u32, (u64, TreePtr<Node>)>,
+    /// Las asas por las que se cambió algo (creadas, escritas o recortadas): al cerrarlas, todo va al disco (paso B).
+    cambiadas: alloc::collections::BTreeSet<u32>,
     siguiente: u32,
 }
 
@@ -409,6 +438,14 @@ fn cerrar_nodo(fs: &mut Fs, vol: u64, n: TreePtr<Node>) {
         _ => {}
     }
     let _ = fs.tx_in(vol, |tx| tx.on_close_node(n));
+}
+
+/// Que todo lo confirmado esté en el disco (paso B): el estado para contestar.
+fn guardar(fs: &mut Fs) -> i32 {
+    match fs.durable() {
+        Ok(()) => BIEN,
+        Err(e) => estado_de(e),
+    }
 }
 
 /// Da una asa nueva para el nodo `n` del volumen `vol`, ya contado como abierto (si se borra, sigue vivo hasta que
@@ -569,7 +606,7 @@ impl Recuerdos {
 
 fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> Respuesta {
     // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
-    if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO].contains(&p.orden) {
+    if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
         rec.olvidar();
     }
     let nodo_de = |c: &Cliente, asa: u32| -> Option<(u64, TreePtr<Node>)> {
@@ -709,7 +746,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             Some((vol, n)) => {
                 // Si se borró mientras estaba abierto, ahora se suelta de verdad.
                 cerrar_nodo(fs, vol, n);
-                Respuesta { estado: BIEN, asa: p.asa, ..Default::default() }
+                // Lo cambiado por esta asa, en el disco al cerrarla (paso B).
+                let estado = if c.cambiadas.remove(&p.asa) { guardar(fs) } else { BIEN };
+                Respuesta { estado, asa: p.asa, ..Default::default() }
             }
             None => mal(ASA_MALA),
         },
@@ -733,7 +772,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 Ok((k, tx.read_tree(n)?.data().size()))
             });
             match r {
-                Ok((k, tam)) => Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, c: 0 },
+                Ok((k, tam)) => {
+                    c.cambiadas.insert(p.asa);
+                    Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, c: 0 }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -752,7 +794,35 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             match fs.tx_in(vol, |tx| tx.create_node(dir, nombre, modo, AHORA, 0)) {
                 Ok(n) => {
                     rec.creado(vol, dir.id(), nombre, &n);
-                    dar_asa(fs, c, vol, &n)
+                    let r = dar_asa(fs, c, vol, &n);
+                    if r.estado == BIEN {
+                        c.cambiadas.insert(r.asa);
+                    }
+                    r
+                }
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        GUARDAR => {
+            let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            if p.b > VENTANA as u64 {
+                return mal(MAL_FORMADO);
+            }
+            let datos = c.ventana()[..p.b as usize].to_vec();
+            rec.olvidar_nodo(vol, dir.id());
+            let r = fs.tx_in(vol, |tx| {
+                let n = tx.create_node(dir, nombre, Node::MODE_FILE | 0o644, AHORA, 0)?;
+                let k = tx.write_node(n.ptr(), 0, &datos, AHORA, 0)?;
+                Ok((k, tx.read_tree(n.ptr())?))
+            });
+            match r {
+                Ok((k, n)) => {
+                    rec.creado(vol, dir.id(), nombre, &n);
+                    match guardar(fs) {
+                        BIEN => Respuesta { estado: BIEN, a: k as u64, b: n.data().size(), ..Default::default() },
+                        e => mal(e),
+                    }
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -810,7 +880,10 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
                 tx.truncate_node(n, p.a, AHORA, 0)
             });
             match r {
-                Ok(()) => Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() },
+                Ok(()) => {
+                    c.cambiadas.insert(p.asa);
+                    Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -855,6 +928,11 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
         COMPROBAR => {
             // FS8: a & 1, leer también los datos. Los problemas, uno por línea, van a la ventana hasta que se llene.
             let opciones = redoxfs::check::Options { data: p.a & 1 != 0 };
+            // Lo que está en cuarentena (paso B) se vería como bloques perdidos: primero, al disco.
+            let e = guardar(fs);
+            if e != BIEN {
+                return mal(e);
+            }
             match fs.tx(|tx| redoxfs::check::check(tx, opciones, true)) {
                 Ok(informe) => {
                     let v = c.ventana();
@@ -1008,7 +1086,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             }
         }
         // Cada orden ya se guarda entera antes de contestar: no queda nada pendiente.
-        VACIAR => Respuesta { estado: BIEN, ..Default::default() },
+        VACIAR => Respuesta { estado: guardar(fs), ..Default::default() },
         INFO => Respuesta {
             estado: BIEN,
             a: fs.header.size(),
@@ -1037,7 +1115,7 @@ fn sesion(clientes: &mut [Option<Cliente>], marca: u64, respuesta: u32) -> (i32,
             if (m as i32) <= 0 || dashos::memoria_proyectar(m, va, true) != 0 {
                 return (SIN_SITIO, None);
             }
-            clientes[i] = Some(Cliente { marca, respuesta, ventana: m, va, asas: BTreeMap::new(), siguiente: 1 });
+            clientes[i] = Some(Cliente { marca, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1 });
             i
         }
     };
@@ -1088,12 +1166,26 @@ fn principal() -> u64 {
     };
     println!("  [archivos] RedoxFS abierto: {} KB, {} KB libres", fs.header.size() / 1024, fs.allocator().free() * BLOCK_SIZE / 1024);
 
+    // Paso B: las transacciones se confirman en memoria y van al disco al cerrar lo cambiado, al vaciar, con `GUARDAR`,
+    // con las órdenes de `SIEMPRE_AL_DISCO`, al juntarse `MAX_SUCIO` o tras `PLAZO_US`. Si se va la luz, el disco
+    // queda como tras el último guardado, entero (RedoxFS no reusa hasta entonces los bloques que suelta).
+    fs.deferred = true;
+    // El plazo del siguiente guardado y la llave de su temporizador (0 sin él: se mira al llegar cada mensaje).
+    let mut plazo: Option<(u64, u32)> = None;
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = Default::default();
     let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new() };
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
         let (n, k, marca) = dashos::canal_leer_marca(CANAL, &mut buf, &mut ll);
+        if let Some((cuando, _)) = plazo
+            && dashos::ahora_us() >= cuando
+        {
+            if let Err(e) = fs.durable() {
+                println!("  [archivos] no se guarda en el disco: {}", e);
+            }
+            al_disco(&fs, &mut plazo);
+        }
         if n < 0 {
             if n == -4 {
                 // Nadie más puede escribir en el canal.
@@ -1165,9 +1257,35 @@ fn principal() -> u64 {
             }
             r
         };
+        if SIEMPRE_AL_DISCO.contains(&orden) || fs.disk.cache.sucios.len() >= MAX_SUCIO {
+            if let Err(e) = fs.durable() {
+                println!("  [archivos] no se guarda en el disco: {}", e);
+            }
+        }
+        al_disco(&fs, &mut plazo);
         let llave = clientes[i].as_ref().unwrap().respuesta;
         if contestar(llave, &r, &[]) != 0 {
             soltar(&mut fs, &mut clientes, i);
         }
+    }
+}
+
+/// Las que cambian instantáneas o volúmenes: raras, y van al disco en seguida.
+const SIEMPRE_AL_DISCO: &[u32] = &[TOMAR, DESCARTAR, VOLVER, HACER_VOLUMEN, QUITAR_VOLUMEN, ABRIR_VOLUMEN, CERRAR_VOLUMEN];
+
+/// Pone o quita el temporizador del siguiente guardado según quede algo por guardar.
+fn al_disco(fs: &Fs, plazo: &mut Option<(u64, u32)>) {
+    match (*plazo, fs.pending()) {
+        (Some((_, t)), false) => {
+            if t != 0 {
+                dashos::cerrar(t);
+            }
+            *plazo = None;
+        }
+        (None, true) => {
+            let t = dashos::temporizador_crear(DESPERTADOR, PLAZO_US, 0);
+            *plazo = Some((dashos::ahora_us() + PLAZO_US, if t > 0 { t as u32 } else { 0 }));
+        }
+        _ => {}
     }
 }

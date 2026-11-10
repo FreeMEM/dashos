@@ -38,6 +38,18 @@ pub struct FileSystem<D: Disk> {
     pub(crate) verified: alloc::collections::BTreeSet<(u64, u64)>,
     /// The keys of the encrypted volumes that are unlocked, by volume (FS10c).
     pub(crate) unlocked: BTreeMap<u64, alloc::sync::Arc<crate::seal::VolumeCipher>>,
+    /// Transactions are committed in memory only: their blocks go to the disk without a flush and the header is not
+    /// written until `durable` (DashOS, step B of docs/MULTITAREA_LOOP.md). The disk must keep what is written until
+    /// its next `flush`, which writes it out first: a crash then leaves the last durable state, never a mix.
+    pub deferred: bool,
+    /// The header in memory is newer than the one on disk (only while `deferred`).
+    pub(crate) header_dirty: bool,
+    /// Blocks freed since the last `durable`: the header on disk may still use them, so they are not reused until it
+    /// is replaced.
+    pub(crate) quarantine: Vec<BlockAddr>,
+    /// Blocks allocated since the last `durable` (index and count): the header on disk does not use them, so when
+    /// freed they are reused at once and what was written to them is forgotten.
+    pub(crate) fresh: alloc::collections::BTreeSet<(u64, u64)>,
 }
 
 impl<D: Disk> FileSystem<D> {
@@ -127,6 +139,10 @@ impl<D: Disk> FileSystem<D> {
                 node_usages: BTreeMap::new(),
                 unlocked: BTreeMap::new(),
                 verified: alloc::collections::BTreeSet::new(),
+                deferred: false,
+                header_dirty: false,
+                quarantine: Vec::new(),
+                fresh: alloc::collections::BTreeSet::new(),
             };
 
             let allocator_read = match unsafe { fs.reset_allocator() } {
@@ -219,6 +235,10 @@ impl<D: Disk> FileSystem<D> {
             node_usages: BTreeMap::new(),
             unlocked: BTreeMap::new(),
             verified: alloc::collections::BTreeSet::new(),
+            deferred: false,
+            header_dirty: false,
+            quarantine: Vec::new(),
+            fresh: alloc::collections::BTreeSet::new(),
         };
 
         // Write header generation zero
@@ -286,6 +306,35 @@ impl<D: Disk> FileSystem<D> {
             tx.leave_volume()?;
         }
         tx.commit(true)
+    }
+
+    /// Whether there are committed changes that are not yet durable (see `deferred`).
+    pub fn pending(&self) -> bool {
+        self.header_dirty
+    }
+
+    /// Make every committed transaction durable: their blocks first, then the header that points to them, each
+    /// followed by a flush. Only then are the blocks they freed given back to the allocator.
+    pub fn durable(&mut self) -> Result<()> {
+        if !self.header_dirty {
+            return Ok(());
+        }
+        self.disk.flush()?;
+        let generation = self.header.update(self.cipher_opt.as_ref());
+        let count = unsafe {
+            self.disk
+                .write_at(self.block + generation % HEADER_RING, &self.header)?
+        };
+        if count != core::mem::size_of_val(&self.header) {
+            return Err(Error::new(syscall::error::EIO));
+        }
+        self.disk.flush()?;
+        self.header_dirty = false;
+        for addr in self.quarantine.drain(..) {
+            self.allocator.deallocate(addr);
+        }
+        self.fresh.clear();
+        Ok(())
     }
 
     /// start a filesystem transaction, required for making any changes

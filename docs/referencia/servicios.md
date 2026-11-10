@@ -185,7 +185,7 @@ del principal; la orden 21 da la raíz de otro.
 | 8 borrar | Borra `nombre` del cajón de la asa; un cajón, solo vacío | asa, nombre | — |
 | 9 renombrar | Mueve `viejo` del cajón de la asa a `nuevo` en el cajón de la asa b. No sobrescribe; no mete un cajón en sí mismo | asa, b, nombre "viejo\0nuevo" | — |
 | 10 tamaño | Recorta o alarga el fichero | asa, a tamaño nuevo | a tamaño |
-| 11 vaciar | Que todo esté en el disco (hoy ya lo está al contestar cada orden) | — | — |
+| 11 vaciar | Que todo esté en el disco al contestar, como `fsync` | — | — |
 | 12 info | Datos del volumen | — | a tamaño, b libre, c tamaño de bloque (bytes) |
 | 13 comentario | Pone en la ventana el comentario (UTF-8, hasta 255 bytes) | asa | a su largo |
 | 14 comentar | Cambia el comentario; vacío, lo quita | asa, nombre: el comentario | — |
@@ -201,6 +201,14 @@ del principal; la orden 21 da la raíz de otro.
 | 24 quitar volumen | Borra un volumen con todo lo que tiene, instantáneas incluidas; no con algo abierto | nombre | — |
 | 25 abrir volumen | Abre un volumen cifrado con una de sus contraseñas, hasta que se cierre. La contraseña no se guarda | nombre "volumen\0contraseña" | — |
 | 26 cerrar volumen | Olvida la llave de un volumen cifrado; no con algo abierto | nombre | — |
+| 27 guardar | Crea el fichero `nombre` en el cajón de la asa con lo que hay al principio de la ventana, en una sola transacción, y en el disco al contestar. No lo deja abierto. No sobrescribe | asa, b cuánto (hasta la ventana), nombre | a bytes escritos, b tamaño |
+
+**Cuándo está en el disco.** Cada orden que cambia algo se confirma entera o nada, pero en memoria: va al disco al
+cerrar una asa por la que se creó, escribió o cambió de tamaño algo, con vaciar (11) o guardar (27), con las órdenes
+de instantáneas y volúmenes (18 a 20, 23 a 26), al juntarse 8 MB por escribir, y si no, como mucho un segundo
+después. Si se va la luz antes, el disco queda como tras el último guardado, entero: RedoxFS no reusa hasta entonces
+los bloques que soltó. Lo que borra, renombra, comenta o protege se pierde así hasta un segundo; quien necesite más,
+vacía (11) tras la orden.
 
 Tipos: 1 fichero, 2 cajón, 3 enlace. El modo es el de Unix (permisos en los 12 bits bajos). Cada entrada de listar:
 tamaño (8), fecha (8), modo (2), tipo (1), largo del nombre (1), bits del Amiga (2), largo del comentario (1), un byte

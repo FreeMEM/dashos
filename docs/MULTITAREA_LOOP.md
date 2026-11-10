@@ -438,3 +438,46 @@ aquí los números y commit local.
 - `docs/medidas/fs-f9.json` (3 arranques, `fs-bien` en los tres) contra `fs-f8-azar.json`: leer 8 MB, de 86 a 309 MB/s
   la segunda vez y de 90 a 253 la primera (Linux: 1.652 y 401); lo demás igual (±4 %; listar -14 %, ruido).
 - `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — A y B: guardar en el disco solo cuando hace falta, y crear con datos en un viaje
+
+Lo pidió el usuario tras ver la comparativa de ficheros. Hasta ahora cada orden que cambiaba algo era una transacción
+que se escribía en el disco con dos vaciados (unos 1,3 ms cada uno en QEMU) antes de contestar. Crear un fichero de
+4 KB (crear, escribir, cerrar) eran tres.
+
+- B, en RedoxFS (`FileSystem::deferred`, en nuestra copia): la transacción se confirma en memoria. Sus bloques van al
+  disco sin vaciar y la cabecera se queda en memoria hasta `durable`, que vacía, escribe la cabecera y vuelve a
+  vaciar. Para que un corte de luz deje siempre el último estado guardado, entero: los bloques que se sueltan quedan
+  en cuarentena (no se reusan) hasta el siguiente `durable`, porque la cabecera del disco aún puede usarlos; y los
+  que nacieron y murieron entre dos `durable` se reusan en seguida y el disco los olvida sin escribirlos
+  (`Disk::forget`), así que de muchas transacciones seguidas solo llega lo último. Pruebas nuevas en
+  `tests_deferred.rs`, con un disco que guarda lo escrito hasta vaciar y un corte que escribe nada o todo lo
+  pendiente: sin la cuarentena, dos fallan.
+- B, en el servicio: el disco del servicio guarda lo escrito en su caché (sucio) hasta `flush`, que lo escribe junto
+  por tramos seguidos. Va al disco al cerrar una asa por la que se cambió algo, con vaciar (11), con las órdenes de
+  instantáneas y volúmenes, al juntarse 8 MB, y si no, en un segundo: `inicio` da ahora a quien crea un canal una
+  llave para escribirse a sí mismo (marca `u64::MAX`), y el servicio pone con ella un temporizador.
+- A: orden 27, guardar: crear un fichero con lo que hay en la ventana, en una transacción, y en el disco al contestar.
+- El banco hace ahora lo mismo que `fs.c`: escribir 8 MB y borrar, sin y con vaciar cada vez, y crear 500 ficheros
+  con un vaciado al final (cerrar ya guarda, así que es lo mismo que con `fsync`).
+- `docs/medidas/fs-ab.json` (3 arranques, `fs-bien` en los tres) contra `fs-f9.json` y Linux (`fs-linux-azar.json`):
+
+  | Por segundo | F9 | A y B | Linux |
+  |---|---|---|---|
+  | Crear 4 KB, guardando cada uno | 138 | 187 | 442 |
+  | Guardar 4 KB (orden 27) | — | 202 | — |
+  | Borrar, guardando cada uno | 245 | 226 | 454 |
+  | Borrar, guardando al final | — | 1.170 | 5.397 |
+  | Escribir 8 MB, guardando al final (MB/s) | — | 54 | 110 |
+  | Escribir 8 MB, guardando cada trozo (MB/s) | 15 | 15 | 30 |
+
+  Lo demás, igual (leer 4 KB, 2.205 frente a 2.701: ruido de una medida a otra, no cambia nada al leer).
+- Dónde se va el tiempo ahora, por fichero guardado (unos 5 ms): los dos vaciados, 2,6 ms (Linux hace uno y una
+  escritura FUA); unas 8 peticiones de escritura al servicio de disco, 0,9 ms; y RedoxFS, 1,5 ms. Medido en el PC
+  (`tests_deferred::perfil`, `cargo test --release perfil -- --ignored`), crear un nodo cuesta 38 µs y de ellos 18
+  son enlazarlo en el cajón (`link_node`). Siguientes pasos posibles: escribir varios tramos en una petición al
+  servicio de disco, y abaratar `link_node`.
+- Comprobar (16) guarda antes: los bloques en cuarentena se verían como perdidos (`arranque-virt` dio "6 blocks
+  lost" hasta eso).
+- `make prueba` y `make arranque-virt` (incluye leer el disco en Linux tras apagar): bien. RedoxFS: 138 pruebas
+  bien.
