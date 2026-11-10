@@ -623,8 +623,12 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos) -> R
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let cuanto = p.b.min(VENTANA as u64) as usize;
             let v = c.ventana();
+            // El nodo, de lo que recuerda el servicio (F7): sin recorrer el árbol en cada lectura.
+            let nodo = match rec.nodo(fs, vol, n) {
+                Ok(nodo) => nodo,
+                Err(e) => return mal(estado_de(e)),
+            };
             let r = fs.tx_in(vol, |tx| {
-                let nodo = tx.read_tree(n)?;
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
                 }
