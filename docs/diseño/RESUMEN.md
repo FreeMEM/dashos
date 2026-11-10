@@ -162,4 +162,8 @@ Del 2026-11-10, aceptados por el usuario.
 - **La caja Linux como servicio** (2026-11-10): `servicio activar caja-linux` la arranca con el sistema, vigilada,
   con memoria reservada, apagado ordenado y puertos publicados. Dentro, systemd como siempre. La orden `servicio`
   hace de `systemctl` para todo DashOS (S14).
+- **Suspender e hibernar sin fallos** (S22, 2026-11-10): los controladores no guardan estado, se relanzan al
+  despertar; cada fase de dormirse tiene plazo y lo que no contesta se para; la imagen de hibernación va cifrada con
+  la contraseña y, si no cuadra, se arranca normal sin perder el disco.
+- **El escritorio**: fase E3b de S10b, mosaico y flotantes sin modos, detrás de E3 (2026-11-10).
 
