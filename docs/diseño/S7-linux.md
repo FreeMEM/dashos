@@ -105,12 +105,27 @@ con licencia MPL-2.0 como DashOS, es la referencia para escribirla en Rust. No e
 - **El hipervisor** es trabajo del kernel (S1) y de los controladores virtio (S12).
 - **Los permisos** de la caja Linux siguen S6: la caja entera es una aplicación, como la caja Amiga.
 
+## Lo que trae la caja de serie (2026-11-10)
+
+Decidido por el usuario:
+
+- **Arch Linux ARM**, con pacman para la línea de órdenes, las bibliotecas y los servidores.
+- **Flatpak de serie**, con Flathub, para las aplicaciones de escritorio: tienen versión para ARM, no dependen de la
+  distribución y van encerradas con permisos. Lo que una aplicación de Flatpak pide (red, ficheros, cámara) se enlaza
+  con los permisos de DashOS (S6b): la caja Linux es una aplicación, y lo que pase de sus permisos lo pregunta DashOS.
+- **Docker y Podman** se instalan con pacman: dentro hay un kernel de Linux de verdad, con namespaces y cgroups.
+- **La terminal como la del usuario**: zsh con Oh My Zsh, el tema `agnosterzak`, `zsh-autosuggestions` y
+  `zsh-syntax-highlighting`, `lsd` en vez de `ls` y `fastfetch` al abrir, con una fuente con los símbolos que usa el
+  tema (una Nerd Font). Terminator como terminal, con sus ventanas en el escritorio de DashOS por Wayland. Es la
+  configuración por defecto de la caja; cada usuario la cambia en su `~/.zshrc`.
+- Lo instalado en la caja aparece en el lanzador de DashOS y en el escaparate de Hangar (S8).
+
 ## Lo que queda abierto
 
 1. ¿Este orden: biblioteca POSIX nativa, después caja Linux en máquina virtual, y la capa de llamadas solo si hace
    falta? Recomendado: sí.
-2. ¿Qué distribución dentro de la caja Linux? Arch Linux ARM usa pacman, como tus máquinas con CachyOS. Debian es la
-   más probada en la Pi. Recomendado: Arch Linux ARM, por pacman y por familiaridad.
+2. ¿Qué distribución dentro de la caja Linux? **Decidido por el usuario (2026-11-10): Arch Linux ARM**, con pacman,
+   como sus máquinas con CachyOS.
 3. ¿La caja Linux solo en Pi 4 de 4 y 8 GB, o también en las de 2 GB con avisos? Recomendado: de 4 GB en adelante.
 
 ## Cómo encaja

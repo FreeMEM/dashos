@@ -86,7 +86,10 @@ Nombre provisional. Es una orden en `C:` y un servicio del sistema:
 **Hangar es la tienda y `Paq` es el motor.** Hangar no instala por su cuenta: le pide a `Paq` que lo haga.
 
 - **El escaparate**: fichas con imágenes, búsqueda, novedades, valoraciones y compras. Lo que Hangar ya hace.
-- **Un catálogo, tres mundos**: nativos de DashOS, programas Amiga y, si se quiere, los de la caja Linux.
+- **Un solo escaparate, tres mundos** (decidido por el usuario, 2026-11-10): nativos de DashOS (`Paq`), programas
+  Amiga y los de la caja Linux (Flatpak para las aplicaciones de escritorio y pacman para lo demás), juntos en las
+  mismas búsquedas y fichas. Por debajo, cada mundo con su gestor: Hangar le pide a `Paq`, a Flatpak o a pacman que
+  instale, y enseña el resultado. Quien quiera usa `pacman` o `flatpak` a mano en la terminal de la caja.
 - **De pago**: el servicio de Hangar entrega el paquete a quien lo compró, firmado con la clave de Hangar.
 - **El cliente de Hangar que hoy es para el Amiga ya funcionaría en DashOS el primer día**, dentro de la caja Amiga:
   es un programa 68k con MUI. Cuando el backend ARM de Dash exista, el mismo código se compila en nativo.
