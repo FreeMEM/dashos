@@ -31,6 +31,8 @@ Lee `PLAN.md` antes de empezar. Ahí están las decisiones tomadas, las piezas y
    un directorio propio con su licencia, y solo hablan con DashOS por canales. Ahí sí se lee y se copia Linux; de ahí
    no sale nada hacia el kernel ni hacia los ficheros MPL. Quien reparta DashOS con ellos ofrece su código fuente. El
    firmware que cargan lleva su propia licencia: se comprueba que se puede repartir antes de meterlo.
+   Lo mismo para los emuladores de chips con licencia GPL (reSID para el SID, S19b; usuario, 2026-11-10): cada uno en
+   su proceso, en la zona GPL, y solo por canales con el servicio de sonido.
 
 ## Oráculo
 

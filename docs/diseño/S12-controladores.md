@@ -1,5 +1,7 @@
 # S12. Controladores de la Pi 4
 
+> **2026-11-10.** Los controladores de Linux con LKL, y el Wi-Fi y las mejoras de red, en [S12b](S12b-controladores-de-linux.md).
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 

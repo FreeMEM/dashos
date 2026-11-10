@@ -1,5 +1,7 @@
 # S9. Gráficos
 
+> **2026-11-10.** Qué chip hace cada trabajo (HVS, V3D, decodificadores, DMA), con la Pi 3, 4 y 5, en [S21](S21-cada-trabajo-a-su-chip.md).
+
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
 > big-endian. Donde este documento dice big-endian para lo nativo, manda `PLAN.md`.
 
