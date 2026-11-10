@@ -114,6 +114,8 @@ fn principal() -> u64 {
     let mut salida: Option<Salida> = None;
     let mut huecos: u64 = 0;
     let mut ultimo_tic = 0u64;
+    // E9: lo que cuesta mezclar un período (µs): suma, cuántos y el peor. Se dice al cerrar cada flujo.
+    let (mut mezcla_us, mut periodos, mut peor_us) = (0u64, 0u64, 0u64);
     let mut periodo: Vec<i16> = Vec::new();
     let mut tmp: Vec<u8> = Vec::new();
     let mut buf = [0u8; 256];
@@ -177,7 +179,14 @@ fn principal() -> u64 {
                     for c in clientes.values_mut() {
                         recoger(&mut m, c, &mut tmp);
                     }
+                    let tm = dashos::ahora_us();
                     m.mezclar_i16(&mut periodo);
+                    let dm = dashos::ahora_us() - tm;
+                    if m.flujos() > 0 {
+                        mezcla_us += dm;
+                        periodos += 1;
+                        peor_us = peor_us.max(dm);
+                    }
                     let base = VA_SALIDA + DATOS + (escritos % s.ranuras) as usize * s.cuadros as usize * 4;
                     for (i, v) in periodo.iter().enumerate() {
                         unsafe { write_volatile((base + 2 * i) as *mut i16, *v) };
@@ -218,6 +227,9 @@ fn principal() -> u64 {
                 for mc in fuera {
                     if let Some(c) = clientes.remove(&mc) {
                         println!("  [sonido] {}: flujo cerrado; {} faltas, la salida lleva {} vacíos", c.nombre, c.faltas, palabra(VA_SALIDA, 4));
+                        if periodos > 0 {
+                            println!("  [sonido] mezclar: {} períodos con sonido, media {} us, el peor {} us", periodos, mezcla_us / periodos, peor_us);
+                        }
                         dashos::memoria_quitar(c.va);
                         dashos::cerrar(c.memoria);
                         dashos::cerrar(c.aviso);
