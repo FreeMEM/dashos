@@ -35,7 +35,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6 y parte de E8 |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
-| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | pendiente |
+| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | primera parte (fichas, procesos, matar) |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | pendiente |
 | R16 | Permisos por aplicación | U4 | pendiente |
 | R17 | `guardian` y `selector` | U5 | pendiente |
@@ -149,3 +149,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   con bytes cambiados al azar (sobre todo arranque, raíz y alrededores) y las sumas de los bloques rehechas, como
   haría quien lo prepara a mala idea; se abren, se listan, se leen y se cuentan los libres. Ninguna tumba el lector;
   la más lenta, 13 µs; 6.527 llegan a listarse. Los lectores de FAT y ext4 tendrán que ir igual y con la misma prueba.
+- R14, primera parte: el servicio `sesiones` (solo en `virt` de momento). `inicio` le da de alta, sin marca, cada
+  programa que lanza después de él: marca (el PID), usuario, grupo, nombre y una copia de la llave de su grupo de
+  recursos. Los programas piden por su canal la lista de procesos (por páginas de 7: un mensaje son 256 bytes) y
+  matar; solo se mata lo del mismo usuario, que sale de la marca de quien pide. Usuarios provisionales en `inicio`
+  (`usuario_de`): los de `FICHAS`, `presa` el 1001 y los servicios el 1 (nadie corre como 0). Prueba hostil: `hostil`
+  (1001) ve 20 procesos, no mata a `ficheros` (1000), sí a `presa` (1001), y un PID que no existe da -1. Como su canal
+  es el primero que se nombra, en `hostil` las llaves se corren una (sesiones 1, ventanas 2, archivos 3, sonido 4).
+  Falta de U2: lanzar desde disco, la tabla de nombres, repartir las llaves (hoy, `inicio`), la baja al morir un
+  proceso (con K7) y el grupo nuevo de un servicio relanzado.

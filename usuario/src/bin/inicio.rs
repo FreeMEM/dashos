@@ -32,6 +32,38 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
 /// La orden de alta del servicio de archivos.
 const ALTA: u32 = 100;
 
+/// Usuario y grupo de cada programa para `sesiones` (U2), provisionales como `FICHAS`: los de `FICHAS` y `presa`, del
+/// mismo usuario que `hostil`. Los demás, servicios del sistema: el usuario 1 (ninguno corre como 0, S6b).
+fn usuario_de(programa: &str) -> (u32, u32) {
+    if let Some(&(_, uid, gid, _, _)) = FICHAS.iter().find(|f| f.0 == programa) {
+        return (uid, gid);
+    }
+    if programa == "presa" { (1001, 1001) } else { (1, 1) }
+}
+
+/// Da de alta en `sesiones` (por `canal`, sin marca) al programa `nombre_cab` con la marca `marca` y una copia de la
+/// llave de su grupo `grupo`, para que pueda matarlo entero.
+fn alta_en_sesiones(canal: u32, nombre_cab: usize, marca: u64, grupo: u32) {
+    let copia = llave_duplicar(grupo, 7, 0);
+    if copia <= 0 {
+        return;
+    }
+    let (uid, gid) = usuario_de(nombre(nombre_cab));
+    let mut m = [0u8; 36];
+    m[0..4].copy_from_slice(&1u32.to_le_bytes());
+    m[4..12].copy_from_slice(&marca.to_le_bytes());
+    m[12..16].copy_from_slice(&uid.to_le_bytes());
+    m[16..20].copy_from_slice(&gid.to_le_bytes());
+    m[20..36].copy_from_slice(unsafe { core::slice::from_raw_parts(nombre_cab as *const u8, 16) });
+    for _ in 0..100 {
+        if dashos::canal_escribir(canal, &m, &[copia as u32]) == 0 {
+            return;
+        }
+        dormir_un_tic();
+    }
+    dashos::cerrar(copia as u32);
+}
+
 /// El alta de `programa`, con la marca `marca`, para el servicio de archivos: cabecera de 32 bytes y el cajón raíz.
 fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
     let &(_, uid, gid, derechos, raiz) = FICHAS.iter().find(|f| f.0 == programa)?;
@@ -103,6 +135,8 @@ fn principal() -> u64 {
     // Los clientes de cada canal (bit = número del programa), para darle otra vez a su servicio, si se relanza, sus
     // entradas del directorio y, al de archivos, sus altas.
     let mut clientes_de = [0u64; 32];
+    // El canal (sin marca) de `sesiones`, en cuanto se lance (U2).
+    let mut sesiones = 0u32;
     let (avisos_a, avisos) = canal_crear();
     for i in 0..programas {
         let cab = cabeceras + CABECERA * i;
@@ -217,6 +251,14 @@ fn principal() -> u64 {
             continue;
         }
         println!("  [inicio] {} lanzado en su grupo, con {} llaves", nombre(nombre_cab), k);
+        // U2: `sesiones` lee su canal; desde ese momento, cada programa que se lanza tiene su ficha allí.
+        if nombre(nombre_cab) == "sesiones" {
+            if let Some(c) = (0..32).find(|&c| lee & (1 << c) != 0) {
+                sesiones = pendientes[c];
+            }
+        } else if sesiones != 0 {
+            alta_en_sesiones(sesiones, nombre_cab, i as u64 + 1, g as u32);
+        }
         if lee != 0 && i < servicios.len() {
             let aviso = llave_duplicar(avisos_a, dashos::ESCRIBIR, i as u64 + 1).max(0) as u32;
             if aviso > 0 && dashos::proceso_avisar(proceso as u32, aviso) == 0 {

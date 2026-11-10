@@ -28,9 +28,11 @@ use wayland::{Escritor, leer_cabecera};
 dashos::programa!(principal);
 dashos::monton!();
 
-const VENTANAS: u32 = 1;
-const ARCHIVOS: u32 = 2;
-const SONIDO: u32 = 3;
+// Las llaves van en el orden en que se nombra cada canal por primera vez en el arranque: "sesiones" es el primero.
+const SESIONES: u32 = 1;
+const VENTANAS: u32 = 2;
+const ARCHIVOS: u32 = 3;
+const SONIDO: u32 = 4;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
 const ATAQUES: usize = 160;
@@ -338,9 +340,67 @@ fn si(b: bool) -> &'static str {
     if b { "sí" } else { "no" }
 }
 
+/// U2: por `sesiones`, la lista de procesos y matar. A `ficheros` (usuario 1000) no puede; a `presa` (1001, el suyo),
+/// sí; a uno que no existe, tampoco. Devuelve si todo fue como debe.
+fn sesiones() -> bool {
+    let pedir = |orden: u32, objetivo: u64, buf: &mut [u8]| -> i64 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..12].copy_from_slice(&objetivo.to_le_bytes());
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 {
+            dashos::canal_leer_plazo(lectura, buf, &mut [], 2_000_000).0
+        } else {
+            -1
+        };
+        dashos::cerrar(lectura);
+        n
+    };
+    // La lista, por páginas de hasta 7 fichas (un mensaje son 256 bytes).
+    let mut lista = [[0u8; 32]; 64];
+    let mut cuantos = 0;
+    loop {
+        let mut b = [0u8; 256];
+        let n = pedir(1, cuantos as u64, &mut b);
+        if n < 8 {
+            println!("  [hostil] sesiones: sin lista de procesos ({})", n);
+            return false;
+        }
+        let van = u32::from_le_bytes(b[0..4].try_into().unwrap()) as usize;
+        let total = u32::from_le_bytes(b[4..8].try_into().unwrap()) as usize;
+        for i in 0..van.min(7) {
+            if cuantos < lista.len() {
+                lista[cuantos].copy_from_slice(&b[8 + 32 * i..8 + 32 * i + 32]);
+                cuantos += 1;
+            }
+        }
+        if van == 0 || cuantos >= total.min(lista.len()) {
+            break;
+        }
+    }
+    let marca_de = |nombre: &[u8]| {
+        lista[..cuantos].iter().find(|f| &f[16..16 + nombre.len()] == nombre && f.get(16 + nombre.len()) == Some(&0)).map(|f| u64::from_le_bytes(f[..8].try_into().unwrap()))
+    };
+    let (Some(ficheros), Some(presa)) = (marca_de(b"ficheros"), marca_de(b"presa")) else {
+        println!("  [hostil] sesiones: en la lista no están ficheros y presa ({} procesos)", cuantos);
+        return false;
+    };
+    let mut r = [0u8; 4];
+    let matar = |m: u64, r: &mut [u8; 4]| if pedir(2, m, r) == 4 { i32::from_le_bytes(*r) } else { i32::MIN };
+    let (a, c, d) = (matar(ficheros, &mut r), matar(presa, &mut r), matar(u64::MAX, &mut r));
+    let bien = a == -2 && c == 0 && d == -1;
+    if bien {
+        println!("  [hostil] sesiones: ve {} procesos; no mata a ficheros (otro usuario), sí a presa (el suyo)", cuantos);
+    } else {
+        println!("  [hostil] sesiones: MAL (ficheros {}, presa {}, inexistente {})", a, c, d);
+    }
+    bien
+}
+
 fn principal() -> u64 {
     // Se deja pasar a las demás pruebas del arranque: lo que sigue carga a los servicios.
     dormir_ms(2000);
+    let ses = sesiones();
     let memoria = dashos::memoria_crear(4096);
     let a = archivos(memoria);
     println!("  [hostil] archivos sigue: {}", si(a));
@@ -349,5 +409,5 @@ fn principal() -> u64 {
     let c = compositor(memoria);
     println!("  [hostil] compositor sigue: {}", si(c));
     let _ = E_LIMITE;
-    if a && s && c { 0 } else { 1 }
+    if a && s && c && ses { 0 } else { 1 }
 }
