@@ -610,6 +610,8 @@ fn planificar_con(bloquear: bool, soltar: impl FnOnce()) {
 
 fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
     let n = nucleos::numero() as usize;
+    // Cualquier pasada atiende lo que se apuntó para la vuelta de la llamada (M6b).
+    REPLANIFICAR[n].store(false, Ordering::Relaxed);
     let (viejo, nuevo) = {
         let mut g = NUCLEOS[n].tomar();
         let Some(nucleo) = g.as_mut() else {
@@ -954,9 +956,38 @@ pub(super) fn despertar(h: *mut Hilo) {
     // Un hilo de plazo que despierta en este núcleo no espera al tic (A6), ni uno justo que va por delante del que
     // corre (M3): el aviso a uno mismo replanifica en cuanto se abren las interrupciones.
     let de_plazo = unsafe { (*h).plazo.is_some() };
-    if (n != nucleos::numero() as usize || de_plazo || adelanta) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
-        crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+    if !AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+        return;
     }
+    let daif = crate::cerrojo::enmascarar_irq();
+    let yo = nucleos::numero() as usize;
+    if n != yo {
+        crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+    } else if de_plazo || adelanta {
+        // En este mismo núcleo, desde una llamada de un proceso (M6b): se apunta y se replanifica al volver de ella, sin
+        // la interrupción que cuesta avisarse a uno mismo (como el "need_resched" de Linux). Desde un hilo del kernel,
+        // que no vuelve a EL0, con el aviso.
+        let de_proceso = aqui(|nc| unsafe { (*nc.actual).proceso != 0 && nc.actual != nc.ocioso }).unwrap_or(false);
+        if de_proceso {
+            REPLANIFICAR[yo].store(true, Ordering::Relaxed);
+        } else {
+            crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+        }
+    }
+    crate::cerrojo::restaurar_irq(daif);
+}
+
+/// Por núcleo (M6b): hay que replanificar al volver de la llamada al sistema en curso.
+static REPLANIFICAR: [AtomicBool; MAX_NUCLEOS] = [const { AtomicBool::new(false) }; MAX_NUCLEOS];
+
+/// Al acabar una llamada al sistema, antes de volver a EL0: si un despertar en este núcleo lo pidió, replanifica.
+pub fn replanificar_si_toca() {
+    let daif = crate::cerrojo::enmascarar_irq();
+    let n = nucleos::numero() as usize;
+    if REPLANIFICAR[n].swap(false, Ordering::Relaxed) {
+        planificar();
+    }
+    crate::cerrojo::restaurar_irq(daif);
 }
 
 /// Pone en la cola un hilo bloqueado. Verdad si, siendo de la clase justa, debería correr ya en lugar del que corre

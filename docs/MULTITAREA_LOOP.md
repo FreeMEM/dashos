@@ -52,6 +52,7 @@ Pruebas:
 | M4 | Equilibrado entre núcleos (robo de trabajo, migración con la FPU) y el núcleo 0 para programas | hecho |
 | M5 | Sin tic en núcleos ociosos | hecho |
 | M6a | Copias de usuario sin cambiar de espacio (menos cambios de ASID por llamada) | hecho |
+| M6b | Despertar en el mismo núcleo: replanificar al volver de la llamada, sin avisarse con una interrupción | hecho |
 | M6 | Paso directo en canales (el cliente cede su núcleo al servidor que espera) | pendiente |
 | M7 | Préstamo de tiempo del cliente al servidor (seL4 MCS) | pendiente |
 | M8 | Pesos: foco del compositor y procesos de fondo (con permiso) | pendiente |
@@ -399,4 +400,18 @@ aquí los números y commit local.
 - `docs/medidas/fs-f6.json` contra `fs-f5.json` (3 arranques, `fs-bien` en los tres): leer un fichero de 4 KB +29 %
   (2.615 por segundo), borrar +26 %, crear +10 %, lo demás +2 a +6 %. Memoria igual (118 KB por proceso, 9,3 MB al
   arrancar).
+- `make prueba` y `make arranque-virt`: bien.
+
+### 2026-11-10 — F7 y M6b
+
+- F7: leer usa el nodo que recuerda el servicio, sin recorrer el árbol en cada lectura. Sin efecto medible (todo dentro
+  de ±10 %, `docs/medidas/fs-f7.json`); se queda porque hace menos trabajo.
+- M6b: en el mismo núcleo, despertar a un hilo que va por delante del que corre (M3) se avisaba con una interrupción a
+  uno mismo (una entrada y una salida del kernel de más). Ahora, si quien despierta es un hilo de proceso en una
+  llamada, se apunta (`REPLANIFICAR` del núcleo) y se replanifica al volver de la llamada, antes de bajar a EL0, como
+  el "need_resched" de Linux. Desde un hilo del kernel, que no vuelve a EL0, sigue el aviso; desde una interrupción ya
+  se replanifica siempre. Cualquier pasada del planificador borra la marca.
+- `docs/medidas/m6b.json` contra `m9-rotar.json` (3 arranques): ida y vuelta en el mismo núcleo, de 84 a 75 µs
+  (-11 %; Linux: 83); con 4 calculando, de 105 a 98 (-7 %); entre núcleos, +3 a +7 % (ruido; ahí no cambia nada). El
+  resto igual.
 - `make prueba` y `make arranque-virt`: bien.
