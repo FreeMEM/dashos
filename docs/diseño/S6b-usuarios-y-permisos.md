@@ -84,9 +84,10 @@ hoy con marca y nombre, ampliado. Al morir el proceso manda la **baja**.
 | `guardian` | Dibuja la entrada, el bloqueo, la confirmación de administrador y las preguntas de permisos | Recibe contraseñas. No reparte llaves: solo contesta a `sesiones` |
 | `selector` | La ventana de "Abrir" y "Guardar". Corre como el usuario y puede ceder asas de ficheros | Solo cede lo que el usuario elige |
 | `archivos` | Ve todos los ficheros abiertos | Es quien aplica los permisos |
+| compositor | Ve todo lo que se teclea y se dibuja, también las contraseñas | No lee datos de fuera: las imágenes las decodifica cada programa |
 
-Un servicio corriente (sonido, red, compositor) no es de confianza para esto: corre con su usuario propio y, como
-cliente de `archivos`, solo ve su cajón.
+Un servicio corriente (sonido, red) no es de confianza para esto: corre con su usuario propio y, como cliente de
+`archivos`, solo ve su cajón. El compositor tampoco reparte llaves ni ve ficheros, pero por él pasa el teclado.
 
 Si cae `sesiones` en malas manos, cae todo salvo los cajones cifrados de quien no tiene la sesión abierta.
 
@@ -278,6 +279,74 @@ Un programa puede dibujar una ventana igual que la de `guardian` para robar la c
 - Más adelante, para ver uno a uno los hijos sin ficha: un número de proceso en el kernel y una llamada que liste los
   de un grupo. No hace falta para empezar.
 
+## Si hay un fallo de seguridad
+
+Se da por hecho que habrá fallos. Lo que este diseño decide es **cuánto gana quien explota uno**. Evitar los fallos
+del kernel y hacerlos difíciles de explotar es cosa de S16.
+
+No hay un sitio al que escalar de un salto: no hay superusuario, `setuid` no hace nada y ser administrador no es un
+estado del proceso. Para subir hacen falta dos fallos: uno en un programa y otro en un servicio de confianza o en el
+kernel.
+
+### Si cae esta pieza, qué gana el atacante
+
+| Pieza que cae | Qué gana | Qué no gana |
+|---|---|---|
+| Una aplicación | Su cajón, los permisos que tenga concedidos y los ficheros que el usuario le cedió | El resto de `Home:`, las demás aplicaciones, contraseñas |
+| Un programa del Shell o de la caja Amiga principal | `Home:` y `Work:` del usuario, y la red | Otros usuarios, `SYS:`, `Paquetes:`, los permisos guardados, acciones de administrador |
+| El escritorio o `selector` | Todo lo del usuario, y ceder sus ficheros a cualquier programa suyo | Otros usuarios, el sistema |
+| Un servicio corriente (sonido, red) | Lo que pasa por él, de todos los usuarios: el sonido, o el tráfico sin cifrar | Ficheros, llaves de otros servicios |
+| El lector de un disco ajeno | Lo que hay en ese disco | Los demás volúmenes |
+| `guardian` | Las contraseñas que se tecleen desde entonces. Contestar "sí" a permisos que un paquete declara | Permisos no declarados. Acciones de administrador sin una contraseña buena: la comprueba `sesiones` |
+| El compositor | Todo lo que se ve y se teclea, también las contraseñas | Ficheros que no estén en pantalla |
+| El gestor de paquetes | Escribir en `Paquetes:`: código que luego ejecutan todos los usuarios | Los cajones cifrados, hasta que su dueño entre |
+| `archivos` | Todos los volúmenes abiertos y sus claves | Los cajones cifrados de quien no tiene sesión |
+| `sesiones` | Todo, salvo los cajones cifrados cerrados | — |
+| Un controlador con acceso directo a memoria (USB, GPU, red, tarjeta) | En la Pi 4, lo mismo que el kernel: no hay IOMMU (S9 de `REVISION_ARQUITECTURA.md`) | — |
+| `inicio`, el kernel | Todo | — |
+
+### Reglas para quien implemente
+
+1. **Un servicio actúa con la ficha del cliente, nunca con la suya.** Ninguna orden hace por el cliente algo que su
+   ficha no permite. Es la defensa contra que lo usen de intermediario.
+2. **Las llaves de permisos se dan sin el derecho de transferir.** Una aplicación con red no puede regalar su llave a
+   otra. Hay que comprobar antes que ningún servicio necesita que el cliente pase su llave.
+3. **Un enlace nunca lleva fuera de la raíz** por la que se llegó. Igual que "cajón padre".
+4. **Los discos ajenos se leen en un proceso aparte**: FAT, los del Amiga, ext4, ADF y HDF. Ese lector solo tiene la
+   llave del aparato y un canal con `archivos`. Hoy los lee `archivos`, que lo ve todo: un pendrive hecho a mala idea
+   que rompa el lector lo gana todo.
+5. **Quien lee datos de fuera no tiene poderes.** Imágenes, tipos de letra, sonidos y páginas web se decodifican en
+   el proceso de la aplicación. Nunca en el compositor, `sesiones`, `guardian` ni `archivos`.
+6. **Las aplicaciones encerradas no cargan bibliotecas de `Home:Libs`.** Solo de su paquete, de `Paquetes:` y de
+   `SYS:`. Si no, un programa del Shell deja una biblioteca en `Home:Libs` y se cuela en todas las aplicaciones del
+   usuario, con sus permisos. Cambia S4b para ese perfil.
+7. **Ningún mensaje tumba un servicio.** Cada campo que manda un cliente se valida: tamaños, índices, asas. Cada
+   servicio tiene su prueba de mensajes al azar.
+8. **Lo que cae se relanza con sus mismas llaves, no con más**, y queda apuntado en el registro de seguridad.
+9. **Las contraseñas se borran de la memoria** al acabar de usarlas, y el kernel pone a cero los bloques de mensaje.
+
+### Pruebas hostiles
+
+Cada camino tiene un programa que lo intenta y tiene que fallar. Van en `make prueba`, en la fase que toca:
+
+| Intento | Fase |
+|---|---|
+| Leer un fichero de otro usuario; subir por encima de la raíz con "padre" y con un enlace | U1 |
+| Ceder una asa sin el derecho de repartir; ceder con más derechos de los que se tienen | U1 |
+| Mandar a un servicio un alta falsa (solo vale sin marca) | U1 |
+| Matar un proceso de otro usuario | U2 |
+| Entrar con contraseña mala; leer el volumen con la sesión cerrada | U3 |
+| Pasar a otro proceso una llave de permiso; usarla después de revocada | U4 |
+| Una acción de administrador sin contraseña; quitar el teclado a `guardian` | U5 |
+| Mensajes al azar a `sesiones` y a `archivos` desde un cliente sin permisos | U1 en adelante |
+
+### Lo que este diseño no arregla
+
+- Un fallo del kernel lo da todo. La Pi 4 no tiene defensas por hardware (S16).
+- Un controlador con acceso directo a memoria vale como el kernel en la Pi 4.
+- La ejecución especulativa: las defensas de S16 están sin medir.
+- Dos aplicaciones que se ponen de acuerdo: una con red puede hacer de recadera de otra sin red.
+
 ## Lo que cambia en cada pieza
 
 | Pieza | Cambio |
@@ -286,7 +355,7 @@ Un programa puede dibujar una ventana igual que la de `guardian` para robar la c
 | `inicio` | Lanza `sesiones` y le pasa los extremos sin marca de los servicios. Deja de marcar clientes |
 | `sesiones` | Nuevo |
 | `guardian`, `selector` | Nuevos. Necesitan un papel propio en el compositor |
-| `archivos` | Alta con usuario, grupos y derechos. Capa 1 y capa 2. Órdenes nuevas: ceder, cambiar dueño, comprobar contraseña. Clientes sin el tope de 8, con la ventana al primer uso |
+| `archivos` | Alta con usuario, grupos y derechos. Capa 1 y capa 2. Órdenes nuevas: ceder, cambiar dueño, comprobar contraseña. Clientes sin el tope de 8, con la ventana al primer uso. Los enlaces no salen de la raíz. Los discos ajenos, en un proceso lector aparte |
 | compositor, sonido, red | Alta ampliada. Derechos por cliente: capturar, micrófono, escuchar |
 | biblioteca (`usuario/`, `kit/`) | Canal de sesión, tabla de nombres, pedir servicios. La de Dash, por la sesión de Dash |
 | S8 | Los datos del paquete declaran permisos con los nombres de la tabla |
@@ -304,7 +373,7 @@ Cada una acaba con pruebas en `make prueba` y deja el sistema arrancando.
 | U3 | Entrada, bloqueo y salida, con el volumen cifrado por usuario | Con la sesión cerrada, el volumen no se lee; contraseña mala, no entra |
 | U4 | Permisos por aplicación: declarar, preguntar, guardar, revocar. Llave de plazo | Sin permiso no hay llave; al revocar, el servicio deja de contestar |
 | U5 | `guardian` y `selector`: acciones de administrador, selector, doble clic y arrastrar | Un programa solo abre el fichero elegido; una acción sin contraseña no se hace |
-| U6 | `Prefs` de usuarios y permisos, registro de seguridad, PID en el kernel, cambio rápido de usuario | — |
+| U6 | `Prefs` de usuarios y permisos, registro de seguridad, PID en el kernel, cambio rápido de usuario. El lector de discos ajenos en proceso aparte (se puede adelantar: no depende de lo demás) | Un disco ajeno roto a propósito no tumba `archivos` |
 
 U1 se puede hacer ya: no depende del azar ni del escritorio.
 
@@ -318,6 +387,8 @@ U1 se puede hacer ya: no depende del azar ni del escritorio.
 5. ¿Confirmar cada acción de administrador, sin plazo de gracia? Recomendado: sí.
 6. ¿Imagen o frase secreta en las ventanas del sistema? Recomendado: sí; el detalle, en S10.
 7. ¿Volumen `Estado:` para lo que escribe el sistema? Recomendado: sí.
+8. ¿Los discos ajenos en un proceso lector aparte? Recomendado: sí.
+9. ¿Las aplicaciones encerradas sin `Home:Libs`? Recomendado: sí. Cambia S4b para ellas.
 
 ## Cómo encaja
 
@@ -331,7 +402,7 @@ U1 se puede hacer ya: no depende del azar ni del escritorio.
 - Con S8: los paquetes declaran permisos; el nombre del paquete es la identidad de la aplicación.
 - Con S10: papel de `guardian` en el compositor, pantalla de entrada y bloqueo.
 - Con S14: `inicio` vigila; los servicios se declaran con su usuario.
-- Con S16: depende del azar de calidad.
+- Con S16: depende del azar de calidad. S16 evita los fallos del kernel; este documento acota lo que da uno.
 
 ## Lo que no se comprobó
 
