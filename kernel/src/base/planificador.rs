@@ -929,6 +929,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 // Su contexto se guarda todavía en el cambio de abajo; se libera más tarde, desde otro hilo de este
                 // mismo núcleo, que no puede correr hasta que el cambio termine.
                 nucleo.muertos.push(actual);
+                HAY_MUERTOS[nucleos::numero() as usize % MAX_NUCLEOS].store(true, Ordering::Release);
             }
             (*siguiente).estado = Estado::Corriendo;
             // Dentro del kernel la mitad baja siempre está vacía (PAN por software, C34): el espacio del hilo se pone
@@ -1414,7 +1415,14 @@ pub fn matar_proceso(c: &crate::objetos::Control) {
 /// Libera los hilos muertos de este núcleo: su pila, el propio hilo y su referencia al proceso. Si era el último
 /// hilo del proceso, el proceso se libera con su espacio, sus páginas y sus llaves (C18). Se llama desde un hilo (no
 /// desde una interrupción) porque toca el montón.
+/// Hay hilos muertos por recoger en ese núcleo (K1): `recoger`, que va en cada llamada al kernel, no toma el cerrojo
+/// del núcleo si no hay nada.
+static HAY_MUERTOS: [AtomicBool; MAX_NUCLEOS] = [const { AtomicBool::new(false) }; MAX_NUCLEOS];
+
 pub fn recoger() {
+    if !HAY_MUERTOS[nucleos::numero() as usize % MAX_NUCLEOS].swap(false, Ordering::Acquire) {
+        return;
+    }
     // De uno en uno, para no dejar la lista sin su sitio reservado (crece dentro del planificador).
     while let Some(h) = aqui(|nc| nc.muertos.pop()).flatten() {
         let hilo = unsafe { Box::from_raw(h) };

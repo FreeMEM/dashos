@@ -187,3 +187,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   en QEMU el cerrojo único apenas se disputa. Queda para medirlo en la Pi (B5), con una caché de bloques de mensaje
   de tamaño fijo como dice el informe y no como montón general. Copiar sin poner a cero antes (la otra parte de K4)
   no se hizo: son 256 bytes como mucho.
+- K1, un trozo: `recoger()` (en cada llamada al kernel) ya no toma el cerrojo del núcleo si un indicador por núcleo
+  dice que no hay hilos muertos. Medido: dentro del ruido (-2 a +5 %); se deja porque quita un cerrojo por llamada,
+  que en placa con cuatro núcleos sí se disputa. Lo grande de K1 (hilo actual en TPIDR_EL1, proceso prestado sin
+  subir y bajar el Arc) sigue pendiente.
