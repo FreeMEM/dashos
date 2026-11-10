@@ -181,3 +181,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   arranques, frente a r19): la ida y vuelta baja del 3 al 8 % en todas las variantes (entre núcleos, 64,1 a 59,7 µs;
   con carga, 90,3 a 83,9), casi todo dentro de la dispersión pero en el mismo sentido. `malo` (llaves repetidas,
   tabla llena, canales cerrados) y el hostil pasan.
+- K4, probado y deshecho: un montón por núcleo (un cerrojo por núcleo para los bloques pequeños, con lo soltado en
+  la lista de quien lo suelta) no gana nada en QEMU: la ida y vuelta queda igual o algo peor (de +1 a +15 %, dentro
+  del ruido). Cada mensaje se pide en un núcleo y se suelta en otro, así que los bloques van de una lista a otra; y
+  en QEMU el cerrojo único apenas se disputa. Queda para medirlo en la Pi (B5), con una caché de bloques de mensaje
+  de tamaño fijo como dice el informe y no como montón general. Copiar sin poner a cero antes (la otra parte de K4)
+  no se hizo: son 256 bytes como mucho.
