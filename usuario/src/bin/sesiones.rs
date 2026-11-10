@@ -44,15 +44,16 @@ fn principal() -> u64 {
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     let mut idos = [0u64; 8];
     let mut ido = 0;
-    let mut b = [0u8; 64];
-    let mut ll = [0u32; 4];
+    let mut b = [0u8; dashos::servicio::MAX_DATOS];
+    let mut ll = [0u32; dashos::servicio::MAX_LLAVES];
     println!("  [sesiones] en marcha");
     loop {
-        let (n, k, marca) = dashos::canal_leer_marca(CANAL, &mut b, &mut ll);
-        if n < 0 {
-            continue;
-        }
-        let m = &b[..n as usize];
+        let (n, k, marca) = match dashos::servicio::recibir(CANAL, &mut b, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
+        let m = &b[..n];
         let u32_en = |i: usize| m.get(i..i + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
         let u64_en = |i: usize| m.get(i..i + 8).map_or(0, |x| u64::from_le_bytes(x.try_into().unwrap()));
         // Las llaves que sobren se cierran siempre (E2).

@@ -197,3 +197,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   módulo, nada cambia sin querer. Pasan `arranque-virt`, `prueba` y el banco de ficheros (`fs-bien`). Falta lo grande
   de E7: el bucle común de los servicios (leer con marca, cerrar llaves sobrantes, dormir en error, clientes por
   marca, soltar al que no lee).
+- E7, el bucle común: `dashos::servicio::recibir` (leer con marca; si el canal se cerró, `Cerrado`; si no se pudo
+  leer, dormir 1 ms y `Nada`) y `cerrar_llaves`, usados por buzón, imagen, sesiones, compositor y sonido. `recibir`
+  exige búferes del máximo del kernel (256 bytes, 8 llaves). **Fallo hostil encontrado**: `sesiones` leía con 64
+  bytes y 4 llaves; un mensaje con 8 llaves (la inundación nueva del hostil) no se podía leer, se quedaba el primero
+  de la cola y el servicio ya no atendía a nadie. Además giraba sin dormir al fallar la lectura (E2). Con el tipo del
+  búfer en `recibir`, ningún servicio que lo use puede volver a caer. El hostil ahora inunda también `sesiones` y
+  luego comprueba que sigue contestando. Faltan archivos y NVMe (hacen trabajo entre leer y mirar el error).

@@ -461,15 +461,11 @@ fn principal() -> u64 {
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
-        let (n, k, marca) = dashos::canal_leer_marca(CANAL, &mut buf, &mut ll);
-        if n < 0 {
-            if n == -4 {
-                return 0;
-            }
-            dashos::dormir_us(10_000);
-            continue;
-        }
-        let n = n as usize;
+        let (n, k, marca) = match dashos::servicio::recibir(CANAL, &mut buf, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
         let u32_en = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
         let u64_en = |i: usize| u64::from_le_bytes(buf[i..i + 8].try_into().unwrap());
         if marca == 0 || n < CABECERA {

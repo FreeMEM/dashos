@@ -355,17 +355,12 @@ fn principal() -> u64 {
     let mut buf = [0u8; canal::MAX_CANAL];
     let mut ll = [0u32; canal::MAX_LLAVES];
     loop {
-        let (n, k, marca) = dashos::canal_leer_marca(ventanas, &mut buf, &mut ll);
-        if n == -4 {
-            return 0; // el canal se cerró
-        }
-        // Un mensaje que no vale no para el compositor (M6). Si no se pudo leer, sigue en la cola: se espera un poco
-        // para no girar (E2).
-        if n < 0 {
-            dormir();
-            continue;
-        }
-        let n = n as usize;
+        // Un mensaje que no vale no para el compositor (M6).
+        let (n, k, marca) = match dashos::servicio::recibir(ventanas, &mut buf, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
         let llaves = &ll[..k];
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         // Un mensaje vacío no es nada; `buf` aún tiene el anterior (E1).

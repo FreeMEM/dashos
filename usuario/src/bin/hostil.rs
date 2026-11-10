@@ -333,13 +333,16 @@ fn si(b: bool) -> &'static str {
 /// U2: por `sesiones`, la lista de procesos y matar. Al compositor (un servicio, usuario 1) no puede; a `presa`
 /// (1001, el suyo), sí; a uno que no existe, tampoco. `caida-cliente`, que acabó solo, ya no está (su baja llegó con
 /// el aviso de fin). Devuelve si todo fue como debe.
-fn sesiones() -> bool {
+fn sesiones(memoria: u32) -> bool {
+    // Antes, una inundación de peticiones que no existen con 8 llaves cada una (E2): tiene que seguir contestando.
+    inundar(SESIONES, memoria, &[99, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0]);
     let pedir = |orden: u32, objetivo: u64, buf: &mut [u8]| -> i64 {
         let (lectura, suyo) = dashos::canal_crear();
         let mut p = [0u8; 12];
         p[0..4].copy_from_slice(&orden.to_le_bytes());
         p[4..12].copy_from_slice(&objetivo.to_le_bytes());
-        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 {
+        // Con reintentos: tras la inundación, la cola de `sesiones` puede estar llena un rato.
+        let n = if escribir(SESIONES, &p, &[suyo]) {
             dashos::canal_leer_plazo(lectura, buf, &mut [], 2_000_000).0
         } else {
             -1
@@ -393,8 +396,8 @@ fn sesiones() -> bool {
 fn principal() -> u64 {
     // Se deja pasar a las demás pruebas del arranque: lo que sigue carga a los servicios.
     dormir_ms(2000);
-    let ses = sesiones();
     let memoria = dashos::memoria_crear(4096);
+    let ses = sesiones(memoria);
     let a = archivos(memoria);
     println!("  [hostil] archivos sigue: {}", si(a));
     let s = sonido(memoria);

@@ -10,6 +10,7 @@ use core::fmt;
 
 pub mod graficos;
 pub mod hid;
+pub mod servicio;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
     pub mod archivos;
@@ -207,6 +208,8 @@ pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
 
 /// Venció el plazo de `canal_leer_plazo` (K7).
 pub const E_PLAZO: i64 = -9;
+/// El otro lado del canal ya no está.
+pub const E_CERRADO: i64 = -4;
 
 /// Como `canal_leer_marca`, pero esperando como mucho `plazo_us` microsegundos (0 es sin plazo): al vencer, `E_PLAZO`
 /// (K7). Caben hasta 65535 llaves.

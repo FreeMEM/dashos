@@ -122,16 +122,11 @@ fn principal() -> u64 {
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
-        let (n, k, marca) = dashos::canal_leer_marca(canal, &mut buf, &mut ll);
-        if n == E_CERRADO {
-            return 0;
-        }
-        // Si no se pudo leer, el mensaje sigue en la cola: se espera un poco para no girar (E2).
-        if n < 0 {
-            dashos::dormir_us(1_000);
-            continue;
-        }
-        let n = n as usize;
+        let (n, k, marca) = match dashos::servicio::recibir(canal, &mut buf, &mut ll) {
+            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            dashos::servicio::Recibido::Cerrado => return 0,
+            dashos::servicio::Recibido::Nada => continue,
+        };
         let llaves: Vec<u32> = ll[..k].to_vec();
         let cerrar_llaves = |ll: &[u32]| ll.iter().for_each(|&l| { dashos::cerrar(l); });
         if marca == 0 {
