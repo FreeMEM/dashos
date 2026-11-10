@@ -34,7 +34,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | azar hecho (falta RNG200 y arranque) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6 y parte de E8 |
-| R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | pendiente |
+| R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | pendiente |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | pendiente |
 | R16 | Permisos por aplicación | U4 | pendiente |
@@ -144,3 +144,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   directorio de cada cliente de sus canales y, al de archivos, sus altas (sin montón: un mapa de bits de clientes por
   canal, y se rehacen desde el paquete de arranque). Prueba: `caida` tiene un cliente (`caida-cliente`) y cada
   relanzado lo ve en su directorio. Falta avisar a los clientes de que su servicio volvió (sus sesiones se pierden).
+- R13: los ADF ya se leen en un proceso aparte (`imagen`, con solo el canal de archivos, y `inicio` lo relanza si
+  cae). Prueba hostil nueva (`amigados/tests/danadas.rs`, en `make prueba`): 20.000 copias del disquete de pruebas
+  con bytes cambiados al azar (sobre todo arranque, raíz y alrededores) y las sumas de los bloques rehechas, como
+  haría quien lo prepara a mala idea; se abren, se listan, se leen y se cuentan los libres. Ninguna tumba el lector;
+  la más lenta, 13 µs; 6.527 llegan a listarse. Los lectores de FAT y ext4 tendrán que ir igual y con la misma prueba.

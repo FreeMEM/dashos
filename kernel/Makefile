@@ -34,6 +34,7 @@ $(PRUEBAS): usuario FORCE
 prueba: $(PRUEBAS)
 	cd ../wayland && cargo test --quiet
 	cd ../sonido && cargo test --quiet
+	cd ../amigados && cargo test --quiet --release
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
 	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh
