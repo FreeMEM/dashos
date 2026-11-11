@@ -32,3 +32,34 @@ pub const LIMITE_DMA: u64 = 2 << 30;
 pub const fn es_periferico(fisica: u64) -> bool {
     fisica >= PERIFERICOS.0 && fisica < PERIFERICOS.1
 }
+
+/// Zonas de la ventana de periféricos que usa el kernel (S4): el GIC, el ITS, el controlador local de la Pi 3. Nunca se
+/// proyectan a un proceso, ni con una llave de registros que las cubra. [inicio, fin) físicos; 0, 0 sin usar.
+static DEL_KERNEL: [(core::sync::atomic::AtomicU64, core::sync::atomic::AtomicU64); 8] =
+    [const { (core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0)) }; 8];
+
+/// Apunta que el kernel usa [`inicio`, `inicio + tamano`), redondeado a páginas.
+pub fn reservar_kernel(inicio: u64, tamano: u64) {
+    use core::sync::atomic::Ordering::Relaxed;
+    let (a, b) = (inicio & !0xfff, (inicio.saturating_add(tamano.max(1)) + 0xfff) & !0xfff);
+    if let Some((i, f)) = DEL_KERNEL.iter().find(|(i, f)| i.load(Relaxed) == 0 && f.load(Relaxed) == 0) {
+        i.store(a, Relaxed);
+        f.store(b, Relaxed);
+    }
+}
+
+/// Si [`inicio`, `fin`) toca algo que usa el kernel.
+pub fn del_kernel(inicio: u64, fin: u64) -> bool {
+    use core::sync::atomic::Ordering::Relaxed;
+    DEL_KERNEL.iter().any(|(i, f)| {
+        let (a, b) = (i.load(Relaxed), f.load(Relaxed));
+        b > a && inicio < b && fin > a
+    })
+}
+
+/// La zona número `i` que usa el kernel (para las pruebas).
+pub fn zona_del_kernel(i: usize) -> Option<(u64, u64)> {
+    use core::sync::atomic::Ordering::Relaxed;
+    let (a, b) = DEL_KERNEL.get(i).map(|(a, b)| (a.load(Relaxed), b.load(Relaxed)))?;
+    (b > a).then_some((a, b))
+}

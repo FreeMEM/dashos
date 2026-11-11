@@ -407,6 +407,10 @@ impl Espacio {
         if !super::placa::es_periferico(fisica) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
             return Err(Error::Direccion);
         }
+        // Lo que usa el kernel (el GIC, el ITS...), nunca (S4).
+        if super::placa::del_kernel(fisica, fin) {
+            return Err(Error::Direccion);
+        }
         self.preparar(va, tamano.div_ceil(PAGINA))?;
         let mut i = 0;
         while i < tamano {

@@ -93,9 +93,13 @@ pub fn kmain(dtb: usize) -> ! {
     let (Some(g), Some(t)) = (gic, d.compatible("arm,armv8-timer")) else {
         panic!("falta el GIC o el temporizador en el árbol de dispositivos");
     };
-    let (Some((dist, _)), Some((cpu, _))) = (d.reg_cpu(&g, 0), d.reg_cpu(&g, 1)) else {
+    let (Some((dist, tam_dist)), Some((cpu, tam_cpu))) = (d.reg_cpu(&g, 0), d.reg_cpu(&g, 1)) else {
         panic!("el GIC no tiene sus registros en el árbol de dispositivos");
     };
+    // S4: el GIC es del kernel; ningún proceso lo proyecta, aunque una llave de registros lo cubra. Con todas sus
+    // partes (en el GIC-400, también la interfaz virtual: hasta 32 KB desde el distribuidor).
+    placa::reservar_kernel(dist, tam_dist.max(0x8000));
+    placa::reservar_kernel(cpu, tam_cpu);
     let ppi = d.propiedad(&t, "interrupts").map(|(datos, _)| d.celda(datos, 4)).unwrap_or(14);
     gic::iniciar(version, dist, cpu);
     planificador::iniciar_nucleo();

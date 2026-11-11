@@ -25,6 +25,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     kprintln!("C9: {} núcleos más en marcha: {}", nucleos, if nucleos == 3 { "bien" } else { "MAL" });
     prueba_mapa();
     prueba_arranque();
+    prueba_gic_del_kernel();
     prueba_dma();
     prueba_hilos();
     prueba_procesos();
@@ -1061,6 +1062,23 @@ fn prueba_arranque() {
     kprintln!("  WXN {}; pilas con las mismas páginas {} de 2, bloque grande el mismo {}; bytes sucios {}",
         if wxn { "puesto" } else { "sin poner" }, mismas, misma_grande, sucias);
     kprintln!("S6: arranque endurecido {}", if wxn && sucias == 0 { "bien" } else { "MAL" });
+}
+
+/// S4: lo que usa el kernel de la ventana de periféricos (el GIC) no se proyecta a ningún proceso, ni una página que
+/// lo pise; el PL011, que es de un controlador, sí.
+fn prueba_gic_del_kernel() {
+    let Some((gic, _)) = crate::placa::zona_del_kernel(0) else {
+        kprintln!("S4: el GIC del kernel MAL (no está apuntado)");
+        return;
+    };
+    let Some(mut e) = espacio::Espacio::nuevo(crate::cupo::Cupo::raiz()) else { return };
+    let va = 0x10_0000_0000u64;
+    let al_gic = e.proyectar_dispositivo(va, gic, 0x1000).is_err();
+    let pisando = e.proyectar_dispositivo(va, gic - 0x1000, 0x2000).is_err();
+    let serie = e.proyectar_dispositivo(va + 0x10_0000, (crate::placa::SERIE as u64) & !0xfff, 0x1000).is_ok();
+    kprintln!("  GIC en {:#x}: proyectarlo {}, una zona que lo pisa {}, el PL011 {}", gic,
+        if al_gic { "no" } else { "SÍ" }, if pisando { "no" } else { "SÍ" }, if serie { "sí" } else { "no" });
+    kprintln!("S4: el GIC del kernel {}", if al_gic && pisando && serie { "bien" } else { "MAL" });
 }
 
 /// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y

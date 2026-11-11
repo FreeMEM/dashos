@@ -94,7 +94,9 @@ pub fn iniciar(d: &Dtb) -> bool {
         return false;
     }
     let Some(n) = d.compatible("arm,gic-v3-its") else { return false };
-    let Some((fisica, _)) = d.reg_cpu(&n, 0) else { return false };
+    let Some((fisica, tamano)) = d.reg_cpu(&n, 0) else { return false };
+    // S4: del kernel, como el GIC.
+    crate::placa::reservar_kernel(fisica, tamano.max(0x2_0000));
     if !crate::placa::es_periferico(fisica) || !crate::placa::es_periferico(fisica + GITS_TRANSLATER) {
         return false;
     }

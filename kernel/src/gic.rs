@@ -67,6 +67,9 @@ static BCM2836: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool:
 /// Usa el controlador de la BCM2836 en lugar del GIC.
 pub fn iniciar_bcm2836(local_fisica: u64, armctrl_fisica: u64) {
     BCM2836.store(true, Ordering::Relaxed);
+    // S4: del kernel, como el GIC.
+    crate::placa::reservar_kernel(local_fisica, 0x1000);
+    crate::placa::reservar_kernel(armctrl_fisica, 0x1000);
     crate::bcm2836::iniciar(local_fisica, armctrl_fisica);
 }
 

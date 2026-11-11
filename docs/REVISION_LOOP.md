@@ -25,7 +25,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R1 | Cliente hostil en las pruebas del arranque | B6 | hecho |
 | R2 | Servicios: mensajes vacíos, fugas de llaves, giros, topes de Wayland, tecla perdida | E1 a E5 | hecho |
 | R3 | Kernel: dormidos sin tope, temporizador puntual, interrupción con la cola llena, aviso perdido | K9 a K12, K15 | hecho (lo de placa, en la Pi) |
-| R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | hecho (falta sacar el GIC de la ventana) |
+| R4 | Llaves de aparato con derechos mínimos, USB hostil, foco del teclado, TIC del sonido | S4, S7, S8 | hecho |
 | R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
 | R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho |
 | R7 | Banco fiable | B1 a B4 | hecho |
@@ -428,3 +428,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sin llave; `guardian` retira al final los dos permisos de `pide`. El guion de la pantalla de bloqueo teclea la
   segunda contraseña cuando `guardian` ya dijo que la primera era mala, y más despacio (una vez se perdió una
   tecla); `guardian` dice cuántas letras le llegan. Tres pasadas seguidas bien.
+- R4, lo que faltaba de S4: el kernel apunta en `placa` las zonas de la ventana de periféricos que usa él (el GIC con
+  todas sus partes, el ITS y, en la Pi 3, los controladores de la BCM2836), con los tamaños del árbol, y
+  `proyectar_dispositivo` se niega a proyectar a un proceso una página que las toque, aunque una llave de registros
+  la cubra. Prueba en el arranque (S4 en `pruebas.rs`): en un espacio de proceso, proyectar el distribuidor del GIC
+  y una zona que lo pisa da error; el PL011, que es de un controlador, sí se proyecta.
