@@ -158,7 +158,12 @@ sectores, primer sector de 64 bits, desplazamiento en la ventana, etiqueta); ter
 orden 4 (24 bytes, sin llave, sin respuesta). El servicio, si el cliente espera, le manda 4 bytes por su canal. El
 servicio copia cada envío antes de comprobarlo. Hasta 16 sectores por envío.
 
-Pendiente: varias colas de E/S del NVMe.
+Desde A15 el servicio manda al disco a la vez hasta 8 envíos seguidos del anillo (lecturas, escrituras y descartes) y
+pone sus terminadas en el orden del anillo cuando acaba el lote. Lo que se pisa va detrás: el mismo sector, si uno
+escribe o descarta, o el mismo sitio de la ventana, si uno lee. Vaciar va solo, con nada en vuelo. Para el cliente,
+todo sale como si fuera de uno en uno.
+
+Pendiente: varias colas de E/S del NVMe (una por núcleo).
 
 ## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 

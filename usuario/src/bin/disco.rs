@@ -155,6 +155,9 @@ fn principal() -> u64 {
     BASE.store(VA_ANILLO2, core::sync::atomic::Ordering::Relaxed);
     poner(16384, &[0; 2048]);
     let nuevo = otro && probar_anillo(l3).2;
+    // A15: el servicio manda a la vez lo que puede del anillo; lo que se pisa tiene que salir en el orden del anillo.
+    let ordenado = otro && probar_orden(l3);
+    println!("  [disco] anillo con órdenes a la vez, en su orden: {}", si(ordenado));
     BASE.store(VA_ANILLO, core::sync::atomic::Ordering::Relaxed);
     {
         use core::sync::atomic::Ordering::*;
@@ -233,3 +236,87 @@ fn probar_anillo(lectura: u32) -> (u32, u32, bool) {
     bien &= empieza(16384, b"DashOS: sector 0") && empieza(16384 + 512, b"DashOS: sector 1") && empieza(16384 + 1024, b"DashOS: sector 2");
     (avisos, esperas, bien)
 }
+
+/// A15: 21 envíos de una vez en el anillo que se usa, que el servicio puede mandar al disco a la vez. Los que se pisan
+/// (el mismo sector, y uno escribe o descarta; el mismo sitio de la ventana, y uno lee) tienen que hacerse en el orden
+/// del anillo: escribir y leer lo escrito, dos escrituras seguidas del mismo sector, descartar y escribir, dos lecturas
+/// al mismo sitio, escribir desde un sitio y leer encima. Y 8 lecturas sueltas tras una escritura de 8 sectores.
+fn probar_orden(lectura: u32) -> bool {
+    use core::sync::atomic::{fence, Ordering::*};
+    let sector = |t: &[u8]| {
+        let mut s = [0u8; 512];
+        s[..t.len()].copy_from_slice(t);
+        s
+    };
+    poner(32768, &sector(b"orden: A"));
+    poner(33280, &sector(b"orden: B"));
+    poner(33792, &sector(b"orden: C"));
+    poner(34304, &sector(b"orden: D"));
+    for k in 0..8u8 {
+        poner(46080 + 512 * k as usize, &sector(&[b'p', b'a', b'r', b' ', b'0' + k]));
+    }
+    poner(40960, &[0xEE; 4096]);
+    poner(50176, &[0xEE; 4096]);
+    let mut envios = [(0u32, 0u32, 0u64, 0usize); 21];
+    let fijos = [
+        (ESCRIBIR, 1, 100, 32768),
+        (LEER, 1, 100, 40960),
+        (ESCRIBIR, 1, 100, 33280),
+        (LEER, 1, 100, 41472),
+        (DESCARTAR, 1, 101, 0),
+        (ESCRIBIR, 1, 101, 33792),
+        (LEER, 1, 101, 41984),
+        (LEER, 1, 0, 42496),
+        (LEER, 1, 1, 42496),
+        (ESCRIBIR, 1, 102, 34304),
+        (LEER, 1, 0, 34304),
+        (LEER, 1, 102, 43008),
+        (ESCRIBIR, 8, 110, 46080),
+    ];
+    envios[..13].copy_from_slice(&fijos);
+    for k in 0..8 {
+        envios[13 + k] = (LEER, 1, 110 + k as u64, 50176 + 512 * k);
+    }
+    let (sq0, cq0) = (palabra(4).load(Relaxed), palabra(8).load(Relaxed));
+    for (i, &(orden, cuantos, primero, off)) in envios.iter().enumerate() {
+        let e = 64 + 32 * (sq0.wrapping_add(i as u32) % 32) as usize;
+        palabra(e).store(orden, Relaxed);
+        palabra(e + 4).store(cuantos, Relaxed);
+        palabra(e + 8).store(primero as u32, Relaxed);
+        palabra(e + 12).store((primero >> 32) as u32, Relaxed);
+        palabra(e + 16).store(off as u32, Relaxed);
+        palabra(e + 20).store(200 + i as u32, Relaxed);
+    }
+    let total = envios.len() as u32;
+    palabra(4).store(sq0.wrapping_add(total), Release);
+    fence(SeqCst);
+    let mut p = [0u8; 24];
+    p[..4].copy_from_slice(&MIRAR.to_le_bytes());
+    dashos::canal_escribir(1, &p, &[]);
+    let mut buf = [0u8; 8];
+    let mut ll = [0u32; 1];
+    loop {
+        palabra(20).store(1, SeqCst);
+        fence(SeqCst);
+        if palabra(12).load(Acquire).wrapping_sub(cq0) >= total {
+            break;
+        }
+        // Sin respuesta, la prueba se queda aquí y falta su línea (como en `probar_anillo`).
+        dashos::canal_leer(lectura, &mut buf, &mut ll);
+    }
+    // Las terminadas, en el orden del anillo y todas bien.
+    let mut bien = true;
+    for i in 0..total {
+        let c = 2048 + 16 * (cq0.wrapping_add(i) % 32) as usize;
+        bien &= palabra(c).load(Relaxed) == 200 + i && palabra(c + 4).load(Relaxed) == 0;
+    }
+    palabra(8).store(cq0.wrapping_add(total), Release);
+    bien && empieza(40960, b"orden: A")
+        && empieza(41472, b"orden: B")
+        && empieza(41984, b"orden: C")
+        && empieza(42496, b"DashOS: sector 1")
+        && empieza(43008, b"orden: D")
+        && empieza(34304, b"DashOS: sector 0")
+        && (0..8u8).all(|k| empieza(50176 + 512 * k as usize, &[b'p', b'a', b'r', b' ', b'0' + k]))
+}
+

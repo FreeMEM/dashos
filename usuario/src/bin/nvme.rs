@@ -46,8 +46,12 @@ const M_ADM_CQ: usize = 0x1000;
 const M_ES_SQ: usize = 0x2000;
 const M_ES_CQ: usize = 0x3000;
 const M_DATOS: usize = 0x4000;
-/// La lista de páginas de una transferencia de más de dos (4.1.1). Una sola: las órdenes van de una en una.
+/// Las listas de páginas de las transferencias de más de dos (4.1.1): una por orden en vuelo, de `PASO_LISTA` bytes
+/// (la ventana entera, 33 páginas como mucho, pide 32 entradas: 256 bytes). La lista puede empezar dentro de la página.
 const M_LISTA: usize = 0xF000;
+const PASO_LISTA: usize = 512;
+/// A15: órdenes del anillo en vuelo a la vez, como mucho (una lista de páginas y un tramo de descarte para cada una).
+const EN_VUELO: usize = 8;
 /// Su dirección de bus, cuando se sabe.
 static LISTA_BUS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 const ENTRADAS: usize = 16;
@@ -161,6 +165,8 @@ struct Cola {
     cabeza: usize,
     fase: u32,
     cid: u16,
+    /// Hasta dónde ha tomado el controlador las órdenes (lo dice cada terminada): la cola no puede alcanzarla.
+    sq_cabeza: usize,
 }
 
 struct Nvme {
@@ -173,8 +179,12 @@ struct Nvme {
 }
 
 impl Nvme {
-    /// Manda una orden por `c` y espera a que termine: su estado (0 = bien) y su DW0.
-    fn orden(&self, c: &mut Cola, opcode: u8, nsid: u32, prp: (u64, u64), cdw: [u32; 6]) -> Result<u32, u32> {
+    /// Pone una orden en `c` y toca su timbre, sin esperar: su identificador. Nada si la cola está llena (el
+    /// controlador aún no ha tomado las de antes).
+    fn enviar(&self, c: &mut Cola, opcode: u8, nsid: u32, prp: (u64, u64), cdw: [u32; 6]) -> Option<u16> {
+        if (c.cola + 1) % ENTRADAS == c.sq_cabeza {
+            return None;
+        }
         let (prp1, prp2) = prp;
         let e = c.sq + 64 * c.cola;
         for i in 0..16 {
@@ -193,35 +203,48 @@ impl Nvme {
         unsafe { core::arch::asm!("dmb oshst") };
         c.cola = (c.cola + 1) % ENTRADAS;
         escribir(TIMBRES + (2 * c.id) * self.paso, c.cola as u32);
+        Some(c.cid)
+    }
+
+    /// La siguiente terminada de `c`, esperando como mucho `ms` (con 0, solo se mira): su identificador, su estado
+    /// (0 = bien) y su DW0. Nada si no llega a tiempo.
+    fn terminada(&self, c: &mut Cola, ms: u64) -> Option<(u16, u32, u32)> {
+        // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
+        let t = c.cq + 16 * c.cabeza;
+        let fase = c.fase;
+        let hecha = || (dma32(t + 12) >> 16) & 1 == fase;
+        let lista = match self.avisos {
+            _ if ms == 0 => hecha(),
+            None => esperar(ms, hecha),
+            Some(a) => hecha() || esperar_aviso(a, ms, &hecha),
+        };
+        if !lista {
+            return None;
+        }
+        unsafe { core::arch::asm!("dmb oshld") };
+        let (dw0, dw2, dw3) = (dma32(t), dma32(t + 8), dma32(t + 12));
+        c.cabeza = (c.cabeza + 1) % ENTRADAS;
+        if c.cabeza == 0 {
+            c.fase ^= 1;
+        }
+        escribir(TIMBRES + (2 * c.id + 1) * self.paso, c.cabeza as u32);
+        c.sq_cabeza = (dw2 & 0xffff) as usize % ENTRADAS;
+        Some(((dw3 & 0xffff) as u16, (dw3 >> 17) & 0x7fff, dw0))
+    }
+
+    /// Manda una orden por `c` y espera a que termine: su estado (0 = bien) y su DW0.
+    fn orden(&self, c: &mut Cola, opcode: u8, nsid: u32, prp: (u64, u64), cdw: [u32; 6]) -> Result<u32, u32> {
         let sin_esperar = self.sin_esperar.replace(false);
+        let Some(cid) = self.enviar(c, opcode, nsid, prp, cdw) else { return Err(u32::MAX) };
         loop {
-            // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
-            let t = c.cq + 16 * c.cabeza;
-            let fase = c.fase;
-            let hecha = || (dma32(t + 12) >> 16) & 1 == fase;
-            let lista = match self.avisos {
-                _ if sin_esperar => hecha(),
-                None => esperar(self.espera_ms, hecha),
-                Some(a) => hecha() || esperar_aviso(a, self.espera_ms, &hecha),
-            };
-            if !lista {
-                // Se deja pendiente: su terminada, cuando llegue, se descarta (abajo).
-                return Err(u32::MAX);
-            }
-            unsafe { core::arch::asm!("dmb oshld") };
-            let (dw0, dw3) = (dma32(t), dma32(t + 12));
-            c.cabeza = (c.cabeza + 1) % ENTRADAS;
-            if c.cabeza == 0 {
-                c.fase ^= 1;
-            }
-            escribir(TIMBRES + (2 * c.id + 1) * self.paso, c.cabeza as u32);
+            // Si no llega, se deja pendiente: su terminada, cuando llegue, se descarta (abajo).
+            let Some((id, estado, dw0)) = self.terminada(c, if sin_esperar { 0 } else { self.espera_ms }) else { return Err(u32::MAX) };
             // A16: la terminada de una orden anterior que venció su plazo. Antes se tomaba por la de esta, el
             // identificador no casaba y desde ahí todo daba error. Se descarta y se sigue esperando la nuestra.
-            if dw3 & 0xffff != c.cid as u32 {
-                println!("  [nvme] terminada tardía descartada (orden {})", dw3 & 0xffff);
+            if id != cid {
+                println!("  [nvme] terminada tardía descartada (orden {})", id);
                 continue;
             }
-            let estado = (dw3 >> 17) & 0x7fff;
             return if estado != 0 { Err(estado) } else { Ok(dw0) };
         }
     }
@@ -332,7 +355,7 @@ fn principal() -> u64 {
         println!("  [nvme] no se enciende");
         return 5;
     }
-    let mut adm = Cola { id: 0, sq: M_ADM_SQ, cq: M_ADM_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0 };
+    let mut adm = Cola { id: 0, sq: M_ADM_SQ, cq: M_ADM_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0, sq_cabeza: 0 };
     let datos = bus + M_DATOS as u64;
     // Identify del controlador (CNS 1): modelo en los bytes 24 a 63.
     if n.orden(&mut adm, O_IDENTIFICAR, 0, (datos, 0), [1, 0, 0, 0, 0, 0]).is_err() {
@@ -373,7 +396,7 @@ fn principal() -> u64 {
         println!("  [nvme] no crea la cola de E/S");
         return 9;
     }
-    let mut es = Cola { id: 1, sq: M_ES_SQ, cq: M_ES_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0 };
+    let mut es = Cola { id: 1, sq: M_ES_SQ, cq: M_ES_CQ, cola: 0, cabeza: 0, fase: 1, cid: 0, sq_cabeza: 0 };
     // Los dos primeros sectores (NLB va menos uno).
     if let Err(e) = n.orden(&mut es, O_LEER, 1, (datos, 0), [0, 0, 1, 0, 0, 0]) {
         println!("  [nvme] la lectura falla (estado {:#x})", e);
@@ -443,30 +466,43 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
         n.sin_esperar.set(false);
         return r;
     }
-    let bytes = cuantos as usize * tam_sector;
     if orden == PEDIR_VACIAR {
-        // Las órdenes van de una en una: todas las escrituras de antes ya terminaron.
+        // Cuando llega aquí no hay nada en vuelo: todas las escrituras de antes ya terminaron.
         return if n.orden(es, O_VACIAR, 1, (0, 0), [0; 6]).is_ok() { 0 } else { ERROR_DEL_DISCO };
     }
+    match preparar(c, orden, cuantos, primero, off, tam_sector, 0) {
+        Err(e) => e,
+        Ok((op, prp, cdw)) => {
+            if n.orden(es, op, 1, prp, cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }
+        }
+    }
+}
+
+/// Comprueba una lectura, escritura o descarte de `c` y prepara su orden NVMe, con su lista de páginas (o su tramo de
+/// descarte) en el sitio `sitio` (uno por orden en vuelo): código, PRP y CDW 10 a 15. Si no hay que mandar nada, el
+/// estado: el del rechazo, o 0 (un descarte en un disco que no sabe).
+fn preparar(c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, tam_sector: usize, sitio: usize) -> Result<(u8, (u64, u64), [u32; 6]), i32> {
+    let bytes = cuantos as usize * tam_sector;
     if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR && orden != PEDIR_DESCARTAR {
-        MAL_FORMADO
+        Err(MAL_FORMADO)
     } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > c.tramo.1 - c.tramo.0) {
         // Fuera de su tramo, que para él es todo el disco (A13, A14).
-        FUERA_DEL_DISCO
+        Err(FUERA_DEL_DISCO)
     } else if orden == PEDIR_DESCARTAR {
         let primero = c.tramo.0 + primero;
         let lista = DSM_BUS.load(core::sync::atomic::Ordering::Relaxed);
         if lista == 0 {
-            return 0;
+            return Err(0);
         }
         // Un tramo (16 bytes): atributos, cuántos sectores y el primero. NR = 0 (uno), AD.
-        poner32(M_DATOS, 0);
-        poner32(M_DATOS + 4, cuantos as u32);
-        poner32(M_DATOS + 8, primero as u32);
-        poner32(M_DATOS + 12, (primero >> 32) as u32);
-        if n.orden(es, O_DSM, 1, (lista, 0), [0, 1 << 2, 0, 0, 0, 0]).is_ok() { 0 } else { ERROR_DEL_DISCO }
+        let m = M_DATOS + 16 * sitio;
+        poner32(m, 0);
+        poner32(m + 4, cuantos as u32);
+        poner32(m + 8, primero as u32);
+        poner32(m + 12, (primero >> 32) as u32);
+        Ok((O_DSM, (lista + 16 * sitio as u64, 0), [0, 1 << 2, 0, 0, 0, 0]))
     } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) {
-        FUERA_DE_LA_VENTANA
+        Err(FUERA_DE_LA_VENTANA)
     } else {
         let primero = c.tramo.0 + primero;
         let prp1 = c.bus + off as u64;
@@ -476,25 +512,57 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
             1 => 0,
             2 => (prp1 & !0xfff) + 4096,
             _ if lista != 0 => {
-                // Las páginas segunda y siguientes, en la lista; PRP2 apunta a ella.
+                // Las páginas segunda y siguientes, en su lista; PRP2 apunta a ella.
+                let m = M_LISTA + PASO_LISTA * sitio;
                 for k in 1..paginas {
                     let p = (prp1 & !0xfff) + 4096 * k as u64;
-                    poner32(M_LISTA + 8 * (k - 1), p as u32);
-                    poner32(M_LISTA + 8 * (k - 1) + 4, (p >> 32) as u32);
+                    poner32(m + 8 * (k - 1), p as u32);
+                    poner32(m + 8 * (k - 1) + 4, (p >> 32) as u32);
                 }
-                lista
+                lista + (PASO_LISTA * sitio) as u64
             }
             // Sin lista (el controlador no admite tanto): como mucho dos páginas.
-            _ => return FUERA_DE_LA_VENTANA,
+            _ => return Err(FUERA_DE_LA_VENTANA),
         };
         let op = if orden == PEDIR_LEER { O_LEER } else { O_ESCRIBIR };
-        let cdw = [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0];
-        if n.orden(es, op, 1, (prp1, prp2), cdw).is_ok() { 0 } else { ERROR_DEL_DISCO }
+        Ok((op, (prp1, prp2), [primero as u32, (primero >> 32) as u32, cuantos as u32 - 1, 0, 0, 0]))
     }
+}
+
+/// Un envío del anillo dentro de un lote (A15): lo que pide y cómo va.
+#[derive(Clone, Copy)]
+struct Pieza {
+    orden: u32,
+    primero: u64,
+    cuantos: u64,
+    off: usize,
+    etiqueta: u32,
+    /// El identificador de su orden NVMe mientras está en vuelo.
+    cid: Option<u16>,
+    estado: i32,
+}
+
+/// Si `b`, que va después de `a` en el anillo, tiene que esperar a que `a` acabe: el disco no guarda el orden entre
+/// órdenes en vuelo. Chocan si tocan los mismos sectores y una escribe o descarta, o el mismo sitio de la ventana y una
+/// lee (y escribe en ella). Con números raros (que dan la vuelta) se supone que chocan.
+fn choca(a: &Pieza, b: &Pieza, tam_sector: usize) -> bool {
+    let tramo = |p: &Pieza| (p.primero, p.primero.saturating_add(p.cuantos));
+    let ventana = |p: &Pieza| (p.off, p.off.saturating_add((p.cuantos as usize).saturating_mul(tam_sector)));
+    let pisa = |x: (u64, u64), y: (u64, u64)| x.0 < y.1 && y.0 < x.1;
+    let cambia = |p: &Pieza| p.orden != PEDIR_LEER;
+    let en_ventana = |p: &Pieza| p.orden != PEDIR_DESCARTAR;
+    let v = |p: &Pieza| (ventana(p).0 as u64, ventana(p).1 as u64);
+    (pisa(tramo(a), tramo(b)) && (cambia(a) || cambia(b)))
+        || (en_ventana(a) && en_ventana(b) && pisa(v(a), v(b)) && (a.orden == PEDIR_LEER || b.orden == PEDIR_LEER))
 }
 
 /// Atiende lo que haya en el anillo de `c`: copia cada envío antes de mirarlo (el cliente puede cambiarlo a la vez),
 /// pone su terminada y, si el cliente espera, le avisa. Devuelve cuántos atendió. Si no caben más terminadas, para.
+///
+/// A15: las lecturas, escrituras y descartes seguidos van al disco a la vez, en lotes de hasta `EN_VUELO`; antes, de
+/// una en una, esperando cada terminada. Un lote se corta en lo que tenga que ir detrás de otro del lote (`choca`) y en
+/// todo lo demás (vaciar, que va solo y con nada en vuelo; órdenes malas). Las terminadas se ponen en el orden del
+/// anillo, cuando ha acabado el lote entero.
 fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, tam_sector: usize) -> u32 {
     use core::sync::atomic::Ordering::*;
     let Some((_, va, aviso)) = c.anillo else { return 0 };
@@ -502,23 +570,81 @@ fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, tam_sector: usize) -> u3
     loop {
         let (cabeza, cola) = (anillo(va, A_SQ_CABEZA).load(Relaxed), anillo(va, A_SQ_COLA).load(Acquire));
         let (cq_cabeza, cq_cola) = (anillo(va, A_CQ_CABEZA).load(Acquire), anillo(va, A_CQ_COLA).load(Relaxed));
-        if cabeza == cola || cq_cola.wrapping_sub(cq_cabeza) >= A_ENTRADAS {
+        let sitio = A_ENTRADAS.saturating_sub(cq_cola.wrapping_sub(cq_cabeza));
+        let pendientes = cola.wrapping_sub(cabeza).min(A_ENTRADAS);
+        if pendientes == 0 || sitio == 0 {
             break;
         }
-        let e = va + A_SQ + 32 * (cabeza % A_ENTRADAS) as usize;
-        let mut b = [0u8; 32];
-        for (i, x) in b.iter_mut().enumerate() {
-            *x = unsafe { core::ptr::read_volatile((e + i) as *const u8) };
+        let mut lote = [Pieza { orden: 0, primero: 0, cuantos: 0, off: 0, etiqueta: 0, cid: None, estado: 0 }; EN_VUELO];
+        let mut nl = 0;
+        while nl < EN_VUELO && (nl as u32) < pendientes.min(sitio) {
+            let e = va + A_SQ + 32 * (cabeza.wrapping_add(nl as u32) % A_ENTRADAS) as usize;
+            let mut b = [0u8; 32];
+            for (i, x) in b.iter_mut().enumerate() {
+                *x = unsafe { core::ptr::read_volatile((e + i) as *const u8) };
+            }
+            let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+            let mut p = Pieza {
+                orden: u32_en(0),
+                cuantos: u32_en(4) as u64,
+                primero: u32_en(8) as u64 | (u32_en(12) as u64) << 32,
+                off: u32_en(16) as usize,
+                etiqueta: u32_en(20),
+                cid: None,
+                estado: 0,
+            };
+            let junta = p.orden == PEDIR_LEER || p.orden == PEDIR_ESCRIBIR || p.orden == PEDIR_DESCARTAR;
+            if !junta {
+                // Sola, con nada en vuelo: si el lote ya tiene algo, en la vuelta siguiente.
+                if nl == 0 {
+                    p.estado = transferir(n, es, c, p.orden, p.cuantos, p.primero, p.off, tam_sector);
+                    lote[0] = p;
+                    nl = 1;
+                }
+                break;
+            }
+            if lote[..nl].iter().any(|a| choca(a, &p, tam_sector)) {
+                break;
+            }
+            match preparar(c, p.orden, p.cuantos, p.primero, p.off, tam_sector, nl) {
+                Err(e) => p.estado = e,
+                Ok((op, prp, cdw)) => match n.enviar(es, op, 1, prp, cdw) {
+                    Some(id) => p.cid = Some(id),
+                    None => p.estado = SIN_SITIO,
+                },
+            }
+            lote[nl] = p;
+            nl += 1;
         }
-        let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
-        let primero = u32_en(8) as u64 | (u32_en(12) as u64) << 32;
-        let estado = transferir(n, es, c, u32_en(0), u32_en(4) as u64, primero, u32_en(16) as usize, tam_sector);
-        let t = va + A_CQ + 16 * (cq_cola % A_ENTRADAS) as usize;
-        anillo(t, 0).store(u32_en(20), Relaxed);
-        anillo(t, 4).store(estado as u32, Relaxed);
-        anillo(va, A_CQ_COLA).store(cq_cola.wrapping_add(1), Release);
-        anillo(va, A_SQ_CABEZA).store(cabeza.wrapping_add(1), Release);
-        hechas += 1;
+        // Las terminadas del lote, en el orden en que lleguen; si alguna no llega a tiempo, las que falten, con error
+        // (su terminada, si llega después, se descarta como en A16).
+        let fin = dashos::ahora_us() + n.espera_ms * 1000;
+        while lote[..nl].iter().any(|p| p.cid.is_some()) {
+            let ms = fin.saturating_sub(dashos::ahora_us()).div_ceil(1000);
+            match n.terminada(es, ms.max(1)) {
+                None => {
+                    for p in lote[..nl].iter_mut().filter(|p| p.cid.is_some()) {
+                        p.cid = None;
+                        p.estado = ERROR_DEL_DISCO;
+                    }
+                }
+                Some((id, estado, _)) => match lote[..nl].iter_mut().find(|p| p.cid == Some(id)) {
+                    Some(p) => {
+                        p.cid = None;
+                        p.estado = if estado == 0 { 0 } else { ERROR_DEL_DISCO };
+                    }
+                    None => println!("  [nvme] terminada tardía descartada (orden {})", id),
+                },
+            }
+        }
+        for (k, p) in lote[..nl].iter().enumerate() {
+            let t = va + A_CQ + 16 * (cq_cola.wrapping_add(k as u32) % A_ENTRADAS) as usize;
+            anillo(t, 0).store(p.etiqueta, Relaxed);
+            anillo(t, 4).store(p.estado as u32, Relaxed);
+        }
+        anillo(va, A_CQ_COLA).store(cq_cola.wrapping_add(nl as u32), Release);
+        anillo(va, A_SQ_CABEZA).store(cabeza.wrapping_add(nl as u32), Release);
+        hechas += nl as u32;
     }
     core::sync::atomic::fence(SeqCst);
     if hechas > 0 && anillo(va, A_ESPERA).swap(0, SeqCst) != 0 {

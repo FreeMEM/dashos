@@ -36,6 +36,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [disco] plazo vencido: bien; después sigue bien: bien
 # U6l: el anillo de peticiones en memoria compartida.
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
+# A15: varias órdenes del anillo en el disco a la vez; lo que se pisa, en su orden.
+~│   [disco] anillo con órdenes a la vez, en su orden: bien
 ~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,

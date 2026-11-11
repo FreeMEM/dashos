@@ -771,3 +771,23 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   con `make medir-fs VUELTAS=3`, antes y después: leer en trozos de 1 MB, 541 a 749 MB/s (+38 %); leer 8 MB por primera
   vez, 343 a 410 (+20 %, por encima de Linux, 401); del disco en frío, 277 a 300 (+8,5 %); lo demás, dentro de ±4 %,
   el ruido. Panel de medidas al día (fila A7b y el grupo Ficheros con esta medida).
+- A15, varias órdenes NVMe a la vez. Antes el servicio de disco atendía el anillo de una en una, esperando cada
+  terminada. Ahora junta hasta 8 envíos seguidos (lecturas, escrituras y descartes) y los manda al disco a la vez,
+  cada uno con su lista de páginas (`M_LISTA`, 512 bytes por orden) y su tramo de descarte; las terminadas van al
+  anillo en su orden cuando acaba el lote. Un lote se corta en lo que tiene que ir detrás (`choca`: el mismo sector y
+  uno escribe o descarta; el mismo sitio de la ventana y uno lee) y en vaciar, que va solo y con nada en vuelo. Si una
+  terminada no llega a tiempo, las que faltan dan error y su terminada tardía se descarta (A16). La cola del NVMe ya
+  no se puede desbordar: se lleva por dónde va el controlador (la cabeza que dice cada terminada) y, llena, se
+  contesta "sin sitio". `Nvme::orden` queda como `enviar` más `terminada`.
+- Prueba hostil (en `disco`, nueva línea): 21 envíos de una vez que se pisan a propósito (escribir y leer el mismo
+  sector, dos escrituras seguidas, descartar y escribir, dos lecturas al mismo sitio de la ventana, escribir desde un
+  sitio y leer encima, y 8 lecturas tras una escritura de 8 sectores): todo bien y en orden. Quitando la regla de
+  orden, la prueba da MAL; con una traza, los lotes salen de 2 a 8 (42 de 8 en un arranque).
+- Medido, 5 vueltas con y 5 sin, seguidas (el PC con carga 4 de otras sesiones; con 3 vueltas, la lectura prestada
+  pareció bajar un 15 %, y con 5 sale igual, 1492 las dos: era ruido): leer del disco en frío, 257 a 299 MB/s
+  (+16 %); crear 4 KB guardado, 320 a 336 (+5 %); escribir guardando cada trozo, 20,8 a 25,3 (las vueltas de antes,
+  muy dispersas); lo demás, igual. Poco, porque `archivos` casi nunca tiene más de dos cosas en el anillo; servirá
+  cuando haya varios clientes y con discos de verdad, que sí trabajan en paralelo.
+- De A15 queda COMPROBAR por trozos (un comprobador que se pueda parar entre vueltas del bucle sin perder la foto del
+  disco; hoy son 19 ms al arrancar con 7 MB, y crecerá con el disco) y, de fondo, hilos en el servicio (fase 8). Los
+  topes: `nvme` admite 4 clientes y solo hay dos con tramo; `archivos`, 64.
