@@ -564,5 +564,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sistema (por el nombre que da `inicio`; nadie más puede llamarse así), y la regla de S8 no los frena (prueba
   `ventana_del_sistema_toma_el_teclado`). `selector` recibe ahora el canal "ventanas" (llave 1). Prueba en virt: el
   guion pulsa Intro sin elegir (no pasa nada), flecha abajo e Intro; el hostil recibe la asa y lee `nota.txt`, sin
-  poder escribir ni ceder. Captura en `docs/capturas/u5-selector.png`. Falta: elegir carpeta (hoy solo `C/Privado`),
-  el doble clic, y decir en la ventana quién lo pide.
+  poder escribir ni ceder. Captura en `docs/capturas/u5-selector.png`. Falta: elegir carpeta (hoy solo `C/Privado`) y
+  el doble clic.
+- U5: la ventana del selector dice quién pide ("\"hostil\" quiere abrir un fichero"), por el nombre que da `inicio` a
+  cada marca del canal "selector" (lo que diga quien pide no cuenta). Una marca sin nombre sale como "un programa".
+  Prueba en virt: la línea "ventana de abrir en pantalla, para hostil". Captura nueva.
+- C14 (clase de plazo, en `make prueba`) sigue fallando de vez en cuando: 1 de 7 pasadas hoy, con una activación un
+  tic tarde (9.985 µs); las otras, de 43 a 726 µs. Ya pasaba antes (1 de 11 en MULTITAREA_LOOP). No viene del arreglo
+  del planificador: el hilo de plazo espera su periodo sin plazo de despertar, y el arreglo solo cambia al que sale de
+  los dormidos y se elige a sí mismo. Queda por mirar.

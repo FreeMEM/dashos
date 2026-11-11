@@ -1,7 +1,8 @@
 //! U5: `selector`, la ventana de "Abrir", de momento solo en `virt`. Quien le pide un fichero no elige: el selector
 //! enseña al usuario una ventana con lo que hay en `C/Privado` (que el que pide no puede ver), el usuario elige con las
 //! flechas e Intro, y solo eso se cede, para leer. Sin elegir (Cancelar, o un minuto sin nada), el que pide no recibe
-//! nada. Con la asa cedida lee ese fichero aunque su ficha no le deje, y nada más.
+//! nada. Con la asa cedida lee ese fichero aunque su ficha no le deje, y nada más. La ventana dice quién lo pide, por
+//! el nombre que da `inicio` a cada marca (no por lo que diga quien pide).
 //!
 //! Llaves: 1 el canal "ventanas", 2 el canal "archivos" (con el derecho de repartir), 3 su canal "selector".
 
@@ -114,14 +115,14 @@ fn ficheros_de_la_carpeta(lectura: u32) -> Vec<String> {
 
 /// La ventana de "Abrir": la lista de `nombres`, y lo que elija el usuario (con las flechas e Intro), o nada si
 /// cancela o no elige en un minuto. Nada elegido de antemano: un Intro de quien estaba escribiendo no abre nada.
-fn elegir(nombres: &[String]) -> Option<usize> {
-    let r = elegir_dentro(nombres);
+fn elegir(nombres: &[String], quien: &str) -> Option<usize> {
+    let r = elegir_dentro(nombres, quien);
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     dashos::memoria_quitar(VA);
     r
 }
 
-fn elegir_dentro(nombres: &[String]) -> Option<usize> {
+fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -133,7 +134,7 @@ fn elegir_dentro(nombres: &[String]) -> Option<usize> {
     let filas = nombres.len().clamp(1, FILAS);
     let alto = 56 * filas as i32 + 116;
     let mut arbol = Arbol::new();
-    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto("Elige un fichero para abrir".into()))]);
+    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" quiere abrir un fichero", quien)))]);
     let opciones: Vec<&str> = nombres.iter().map(String::as_str).collect();
     let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(opciones.join("|"))), (atr::FILAS, Valor::Int(filas as i64)), (atr::VALOR, Valor::Int(-1))]);
     let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into()))]);
@@ -206,7 +207,7 @@ fn elegir_dentro(nombres: &[String]) -> Option<usize> {
                     if !configurada {
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
-                        println!("  [selector] ventana de abrir en pantalla: {} ficheros", nombres.len());
+                        println!("  [selector] ventana de abrir en pantalla, para {}: {} ficheros", quien, nombres.len());
                     }
                     false
                 }
@@ -320,13 +321,19 @@ fn principal() -> u64 {
     println!("  [selector] el registro de sesiones: abrirlo {}, listar su cajón {}: {}", registro, listar, if ajeno { "bien" } else { "MAL" });
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
+    // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
+    let mut quienes: alloc::collections::BTreeMap<u64, String> = alloc::collections::BTreeMap::new();
     loop {
-        let (k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
-            Recibido::Mensaje { k, marca, .. } => (k, marca),
+        let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
+            Recibido::Mensaje { n, k, marca } => (n, k, marca),
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
-        if marca != 0 && k >= 1 && buf.starts_with(b"raiz") {
+        if marca == 0 && n == 24 {
+            let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            let fin = buf[8..24].iter().position(|&b| b == 0).unwrap_or(16);
+            quienes.insert(m, String::from(core::str::from_utf8(&buf[8..8 + fin]).unwrap_or("?")));
+        } else if marca != 0 && k >= 1 && buf.starts_with(b"raiz") {
             // Ceder `C` como raíz 2, solo para leer.
             let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, "C");
             let (estado, hueco) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4 | 2 << 8, "") } else { (e, 0) };
@@ -338,7 +345,8 @@ fn principal() -> u64 {
         } else if marca != 0 && k >= 1 {
             // Lo elige el usuario, no quien pide.
             let nombres = ficheros_de_la_carpeta(lectura);
-            let respuesta = match elegir(&nombres) {
+            let quien = quienes.get(&marca).map_or("un programa", String::as_str);
+            let respuesta = match elegir(&nombres, quien) {
                 Some(k) => {
                     let camino = alloc::format!("{}/{}", CARPETA, nombres[k]);
                     let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, &camino);

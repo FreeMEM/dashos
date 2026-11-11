@@ -131,7 +131,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 # U5: lo cedido lo elige el usuario en la ventana del selector (en la prueba, el guion: flecha abajo e Intro).
-~│   [selector] ventana de abrir en pantalla: 1 ficheros
+~│   [selector] ventana de abrir en pantalla, para hostil: 1 ficheros
 ~│   [selector] Intro sin nada elegido: no abre nada
 ~│   [selector] el usuario elige C/Privado/nota.txt: se cede solo para leer: 0
 ~│   [hostil] selector: bien
