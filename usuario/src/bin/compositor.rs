@@ -235,6 +235,8 @@ impl Memorias for Proyecciones {
 struct DeVentanas {
     con: Conexion,
     respuesta: u32,
+    /// Con el poder de escritorio (`guardian`): parte del sistema, se le espera más (ver `mandar`).
+    del_sistema: bool,
 }
 
 fn dormir() {
@@ -252,8 +254,10 @@ fn mandar(c: &mut DeVentanas) -> bool {
     for t in trozos {
         let mut hecho = false;
         // Con su cola llena se espera un poco, como mucho 5 ms (antes, 50): un cliente que no lee no puede parar a todos
-        // (E8). Si no, se le suelta: lo que ya se mandó a medias dejaría su conexión rota.
-        for _ in 0..5 {
+        // (E8). Si no, se le suelta: lo que ya se mandó a medias dejaría su conexión rota. A uno del sistema (`guardian`,
+        // con la pantalla de bloqueo), hasta 50: soltarlo deja la sesión bloqueada en negro, y en una máquina cargada
+        // basta con que se quede sin CPU un tic mientras se teclea (cada tecla es un mensaje, y caben 16).
+        for _ in 0..if c.del_sistema { 50 } else { 5 } {
             if dashos::canal_escribir(c.respuesta, &t.bytes, &t.llaves) == 0 {
                 hecho = true;
                 break;
@@ -399,7 +403,8 @@ fn principal() -> u64 {
         let mut soltar = false;
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
-                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0] });
+                let del_sistema = nombres.get(&marca).is_some_and(|n| ESCRITORIOS.contains(&n.as_str()));
+                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
                 let cli = clientes.get_mut(&marca).unwrap();

@@ -444,4 +444,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   de QEMU empieza a teclear entonces (antes, a veces tecleaba cuando la pantalla aún no tenía el teclado). Queda un
   fallo intermitente: alguna vez (1 de cada 10 pasadas, con K1 y sin él) el compositor suelta a `guardian` por la cola
   llena más de 5 ms (E8) mientras se teclea, y la pantalla queda negra y bloqueada (lo que debe pasar si el
-  bloqueador muere). Pendiente de mirar por qué tarda en leer.
+  bloqueador muere).
+- La causa: cada evento de entrada es un mensaje aparte (escribir la contraseña son unos 40 en 2 s), la cola de un
+  canal admite 16, y en un QEMU cargado basta con que `guardian` se quede sin CPU un tic. E8 está pensado contra
+  clientes cualquiera; `guardian` es del sistema, y soltarlo deja la sesión en negro. Ahora el compositor espera hasta
+  50 ms a un cliente con el poder de escritorio (`del_sistema`); a los demás, 5 como antes. Ocho pasadas seguidas
+  bien. Mejor aún sería juntar los eventos de un cliente en un mensaje (E8, pendiente).
