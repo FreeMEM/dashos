@@ -583,3 +583,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cada 10 s): pantallas de bloqueo y entrada, de 5.359 ms componiendo y 81 Mpx a 425 ms y 6,9 Mpx (-92 %); el bloqueo
   por tiempo, de 3.122 ms a 238 (-92 %); al salir las ventanas, de 166 a 135 ms (-19 %). Los cuadros, iguales. Sin
   panel: no hay medida de Linux con la que comparar. El temporizador de cuadro no compensa con este ritmo de cuadros.
+- E8, copiar a la pantalla por filas (en vez de una escritura volátil por píxel): medido en virt, igual (dentro del
+  ruido): en QEMU pesa componer, no copiar. No se hace.
+- Un fallo de 1 en 11 arranques: faltó la línea de `entrada` "lanzar como Carla..., salir después". Sin la salida
+  guardada no se sabe la causa; la sospecha es la espera de salir (20 s a que el `pide` lanzado como Carla suelte su
+  volumen), que desde U4 puede esperar a que el usuario conteste una pregunta. Ahora espera hasta 40 s. Sin
+  comprobar que fuera eso: 10 arranques seguidos bien después (8 antes del cambio y 2 con él).

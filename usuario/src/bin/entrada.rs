@@ -72,12 +72,13 @@ fn principal() -> u64 {
     let lanza = hola == 0 && pid >= 0x1_0000 && texto < 0 && pide == 0 && pid_pide == pid + 1;
     println!("  [entrada] lanzar del disco: Programas/hola {} (proceso {}), un texto {}: {}", hola, pid, texto, if lanza { "bien" } else { "MAL" });
     // U2: lanzar como Carla, con su sesión abierta: `pide` nace con su `Home:` (su volumen). Como Ana, que no ha
-    // entrado, no. Después se sale: hasta que `pide` suelte lo suyo, salir da -13.
+    // entrado, no. Después se sale: hasta que `pide` suelte lo suyo, salir da -13. Se espera hasta 40 s: `pide` puede
+    // esperar a que el usuario conteste una pregunta de permisos (U4).
     let entra = pedir(ENTRAR, "Carla", "clave de Carla");
     let (como_carla, _) = lanzar_como("Programas/pide", 1001);
     let (como_ana, _) = lanzar_como("Programas/hola", 1000);
     let mut sale = i32::MIN;
-    for _ in 0..40 {
+    for _ in 0..80 {
         dashos::dormir_us(500_000);
         sale = pedir(SALIR, "Carla", "");
         if sale == 0 {
