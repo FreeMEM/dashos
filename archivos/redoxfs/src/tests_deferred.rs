@@ -361,3 +361,74 @@ fn a_failed_transaction_keeps_the_blocks_of_the_previous_one() {
     assert_eq!(get(&mut fs, "f").as_deref(), Some(&before[..]), "after durable and a reopen");
     assert_clean(&mut fs);
 }
+
+/// A8: la transacción ya no trabaja sobre una copia del asignador, sino sobre el del sistema de archivos con un diario.
+/// Una que reserva y libera y luego falla (por su cuenta, o al escribir en el disco) lo deja exactamente como estaba.
+#[test]
+fn a_failed_transaction_leaves_the_allocator_as_it_was() {
+    for deferred in [false, true] {
+        let mut fs = new_fs();
+        fs.deferred = deferred;
+        put(&mut fs, "viejo", &noise(64 * 1024, 3));
+        if deferred {
+            fs.durable().unwrap();
+        }
+        let antes = (fs.allocator.levels().clone(), fs.allocator.free());
+        // Por su cuenta: crea, escribe, borra y devuelve un error.
+        let r: Result<()> = fs.tx(|tx| {
+            let n = tx.create_node(TreePtr::root(), "nuevo", FILE, 0, 0)?;
+            tx.write_node(n.ptr(), 0, &noise(200 * 1024, 4), 0, 0)?;
+            tx.remove_node(TreePtr::root(), "viejo", Node::MODE_FILE)?;
+            Err(syscall::error::Error::new(syscall::error::EIO))
+        });
+        assert!(r.is_err());
+        assert_eq!((fs.allocator.levels().clone(), fs.allocator.free()), antes, "tras un error suyo (deferred {deferred})");
+        // Al escribir en el disco.
+        fs.disk.fail_writes = true;
+        let r = fs.tx(|tx| {
+            let n = tx.create_node(TreePtr::root(), "nuevo", FILE, 0, 0)?;
+            tx.write_node(n.ptr(), 0, &noise(200 * 1024, 5), 0, 0)?;
+            tx.remove_node(TreePtr::root(), "viejo", Node::MODE_FILE)
+        });
+        fs.disk.fail_writes = false;
+        assert!(r.is_err());
+        assert_eq!((fs.allocator.levels().clone(), fs.allocator.free()), antes, "tras fallar el disco (deferred {deferred})");
+        // Y sigue sirviendo: lo viejo está y se puede crear lo nuevo.
+        assert_eq!(get(&mut fs, "viejo").map(|v| v.len()), Some(64 * 1024));
+        put(&mut fs, "nuevo", b"hola");
+        // Diferido, se comprueba tras guardar: antes, lo que está en cuarentena se ve como perdido (A11).
+        if deferred {
+            fs.durable().unwrap();
+        }
+        assert_clean(&mut fs);
+    }
+}
+
+/// A8: lo que cuesta una transacción con el disco fragmentado (6.000 ficheros pequeños, uno de cada dos borrado). Para
+/// medir a mano: `cargo test --release fragmentado -- --ignored --nocapture`.
+#[test]
+#[ignore]
+fn fragmentado() {
+    use std::time::Instant;
+    let mut fs = FileSystem::create(DiskMemory::new(256 << 20), None, 0, 0).unwrap();
+    fs.deferred = false;
+    let data = noise(4096, 9);
+    for i in 0..6000 {
+        put(&mut fs, &format!("f{i}"), &data);
+    }
+    for i in (0..6000).step_by(2) {
+        remove(&mut fs, &format!("f{i}"));
+    }
+    let trozos = fs.allocator.levels().iter().map(|l| l.len()).sum::<usize>();
+    let t = Instant::now();
+    for i in 0..500 {
+        put(&mut fs, &format!("g{i}"), &data);
+    }
+    let crear = t.elapsed() / 500;
+    let t = Instant::now();
+    for i in 0..500 {
+        remove(&mut fs, &format!("g{i}"));
+    }
+    let borrar = t.elapsed() / 500;
+    eprintln!("A8 fragmentado: {trozos} trozos libres; crear y escribir {crear:?}, borrar {borrar:?}");
+}

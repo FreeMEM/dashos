@@ -79,9 +79,13 @@ pub struct Transaction<'a, D: Disk> {
     pub header: Header,
     //TODO: make private
     pub header_changed: bool,
-    /// DashOS (A5 de docs/REVISION_ARQUITECTURA.md): la copia del asignador del sistema de archivos se hace la primera
-    /// vez que la transacción reserva o libera, no al empezar. Una transacción que solo lee no copia nada.
+    /// Un asignador propio que sustituye al del sistema de archivos al confirmar: solo la reparación, que lo rehace
+    /// entero. Si no hay (lo normal), se usa el del sistema de archivos con `undo` (DashOS, A8: antes se copiaba entero
+    /// la primera vez que la transacción reservaba o liberaba, y eso crece con la fragmentación).
     pub(crate) allocator: Option<Allocator>,
+    /// Lo que se reservó (true) y se liberó (false) en el asignador del sistema de archivos: si la transacción se
+    /// suelta sin confirmar, se deshace al revés.
+    undo: Vec<(bool, BlockAddr)>,
     pub(crate) allocator_log: VecDeque<AllocEntry>,
     pub(crate) deallocate: Vec<BlockAddr>,
     /// Blocks let go in this transaction that a snapshot still sees: they go to the dead list (FS9).
@@ -120,6 +124,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             header,
             header_changed: false,
             allocator: None,
+            undo: Vec::new(),
             allocator_log: VecDeque::new(),
             deallocate: Vec::new(),
             dead: Vec::new(),
@@ -145,6 +150,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         if let Some(a) = self.allocator.take() {
             self.fs.allocator = a;
         }
+        // Confirmada: lo que se hizo en el asignador se queda.
+        self.undo.clear();
         self.fs.quarantine.append(&mut self.quarantine);
         self.fs.fresh.extend(self.fresh.drain(..));
         for key in self.forget_on_commit.drain(..) {
@@ -166,7 +173,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         ctx: &mut dyn AllocCtx,
         meta: BlockMeta,
     ) -> Result<BlockAddr> {
-        match self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).allocate(meta) {
+        match self.alloc_allocate(meta) {
             Some(addr) => {
                 // Stamped with the epoch, for the snapshots (FS9).
                 let addr = addr.with_epoch(self.header.epoch.to_ne());
@@ -178,6 +185,29 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 Ok(addr)
             }
             None => Err(Error::new(ENOSPC)),
+        }
+    }
+
+    /// Reserva en el asignador de la transacción (la reparación) o en el del sistema de archivos, apuntándolo (A8).
+    fn alloc_allocate(&mut self, meta: BlockMeta) -> Option<BlockAddr> {
+        match self.allocator.as_mut() {
+            Some(a) => a.allocate(meta),
+            None => {
+                let addr = self.fs.allocator.allocate(meta)?;
+                self.undo.push((true, addr));
+                Some(addr)
+            }
+        }
+    }
+
+    /// Libera en el asignador de la transacción o en el del sistema de archivos, apuntándolo (A8).
+    fn alloc_deallocate(&mut self, addr: BlockAddr) {
+        match self.allocator.as_mut() {
+            Some(a) => a.deallocate(addr),
+            None => {
+                self.fs.allocator.deallocate(addr);
+                self.undo.push((false, addr));
+            }
         }
     }
 
@@ -222,7 +252,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             // Deallocate immediately since it is an allocation that was not needed
             let key = (addr.index(), addr.level().blocks::<u64>());
             self.fresh.retain(|f| *f != key);
-            self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).deallocate(addr);
+            self.alloc_deallocate(addr);
         } else {
             // Deallocate later when syncing filesystem, to avoid re-use
             self.deallocate.push(addr);
@@ -347,7 +377,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                     // Allocated by this very transaction: if it fails, nobody uses it.
                     self.fs.disk.forget(self.fs.block + key.0, key.1);
                 }
-                self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).deallocate(addr);
+                self.alloc_deallocate(addr);
             }
             self.allocator_log.push_back(AllocEntry::deallocate(addr));
         }
@@ -2442,7 +2472,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 }
 
                 // Write record to disk
-                // On failure, new_addr goes with the transaction's copy of the allocator: nothing to undo (A12).
+                // On failure, new_addr is given back when the transaction is dropped (`undo`, A8).
                 record_ptr = unsafe { self.write_block(record)? };
 
                 // Update record pointer
@@ -2539,5 +2569,22 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
 
         Ok(buf.len())
+    }
+}
+
+/// DashOS, A8: una transacción que se suelta sin confirmar (falló) deshace lo que hizo en el asignador del sistema de
+/// archivos, al revés: lo reservado se libera y lo liberado se vuelve a reservar, bloque a bloque.
+impl<D: Disk> Drop for Transaction<'_, D> {
+    fn drop(&mut self) {
+        while let Some((reservado, addr)) = self.undo.pop() {
+            if reservado {
+                self.fs.allocator.deallocate(addr);
+            } else {
+                for i in 0..addr.level().blocks::<u64>() {
+                    let uno = unsafe { BlockAddr::new(addr.index() + i, BlockMeta::default()) };
+                    self.fs.allocator.allocate_exact(uno);
+                }
+            }
+        }
     }
 }

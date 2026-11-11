@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas (falta bloquear con una tecla y por tiempo) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A9, A10 y A12 |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador), A9, A10 y A12 |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -471,3 +471,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   a 80 s (acaba antes en cuanto salen todas las líneas). Cuatro pasadas seguidas bien. Captura en
   `docs/capturas/u3-entrada.png`. Falta: que sea lo primero al arrancar (hoy, en la prueba, va al final para no parar
   las demás ventanas).
+- A8, el asignador sin copia: la transacción ya no copia el asignador del sistema de archivos la primera vez que
+  reserva o libera; trabaja sobre él y apunta cada reserva y liberación en `undo`. Al confirmar, se borra el diario;
+  si la transacción se suelta sin confirmar (`Drop`), se deshace al revés (lo liberado se vuelve a reservar bloque a
+  bloque con `allocate_exact`). La reparación, que rehace el asignador entero, sigue con el suyo propio. Prueba
+  (`tests_deferred`): con guardado diferido y sin él, una transacción que crea, escribe y borra y luego falla (por su
+  cuenta, o al escribir en el disco) deja el asignador idéntico, lo viejo se lee y lo nuevo se crea después; el disco
+  sale limpio. (Al hacerla salió un falso perdido: en modo diferido, comprobar antes de `durable` ve la cuarentena
+  como perdida, como dice A11; con o sin el cambio. Se comprueba tras guardar.) Medido en el PC: con 285 trozos
+  libres (`perfil`), igual; con el disco fragmentado (`fragmentado`, 4.492 trozos libres), crear y escribir 144 a
+  114 µs (-21 %) y borrar 97 a 71 µs (-27 %). Falta de A8: la transacción abierta entre peticiones.

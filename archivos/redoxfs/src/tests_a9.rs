@@ -8,7 +8,7 @@ use std::panic::{self, AssertUnwindSafe};
 
 use crate::check::{self, Options};
 use crate::transaction::level_data_mut;
-use crate::{BlockData, BlockTrait, DirEntry, Disk, DiskMemory, FileSystem, Node, RecordRaw, TreePtr, BLOCK_SIZE};
+use crate::{BlockData, BlockTrait, DirEntry, Disk, DiskMemory, FileSystem, Node, RecordRaw, TreePtr};
 
 static DONDE: std::sync::Mutex<Vec<String>> = std::sync::Mutex::new(Vec::new());
 
