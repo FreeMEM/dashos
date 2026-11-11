@@ -36,6 +36,12 @@ pub const REGISTRO: u32 = 8;
 /// camino, 0, el camino). `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
 /// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
 pub const LANZAR: u32 = 9;
+/// De un programa (U2): su tabla de nombres. Contesta cuántos (u32) y hasta `MAX_NOMBRES` entradas de
+/// `ENTRADA_NOMBRE` bytes: el nombre (12, sin los dos puntos), el volumen (12; vacío es el disco) y el subcamino (24).
+/// Depende de quien pide (por su marca): su usuario da `Home:`, y el cajón de donde se lanzó, `PROGDIR:`.
+pub const NOMBRES: u32 = 10;
+pub const ENTRADA_NOMBRE: usize = 48;
+pub const MAX_NOMBRES: usize = 5;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
 /// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
@@ -49,3 +55,63 @@ pub const R_LANZAR: u32 = 5;
 pub const BIEN: i32 = 0;
 pub const NO_EXISTE: i32 = -1;
 pub const PROTEGIDO: i32 = -2;
+
+
+/// La tabla de nombres de un programa (U2), tal como llega de `NOMBRES`. La resuelve el propio programa: los nombres
+/// son cosa del cliente (S6b). No es una frontera de seguridad: lo que se alcanza lo decide el servicio de archivos
+/// con las raíces del cliente; esto solo traduce.
+pub struct Nombres {
+    n: usize,
+    e: [[u8; ENTRADA_NOMBRE]; MAX_NOMBRES],
+}
+
+fn campo(b: &[u8]) -> &[u8] {
+    &b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]
+}
+
+impl Nombres {
+    /// Desde la respuesta de `NOMBRES`. Lo que no cuadre, fuera.
+    pub fn desde(r: &[u8]) -> Self {
+        let mut t = Self { n: 0, e: [[0; ENTRADA_NOMBRE]; MAX_NOMBRES] };
+        let dice = r.get(0..4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()) as usize);
+        for i in 0..dice.min(MAX_NOMBRES) {
+            let Some(e) = r.get(4 + i * ENTRADA_NOMBRE..4 + (i + 1) * ENTRADA_NOMBRE) else { break };
+            t.e[t.n].copy_from_slice(e);
+            t.n += 1;
+        }
+        t
+    }
+
+    pub fn len(&self) -> usize {
+        self.n
+    }
+
+    /// La entrada `i`: (nombre, volumen, subcamino).
+    pub fn entrada(&self, i: usize) -> Option<(&[u8], &[u8], &[u8])> {
+        let e = self.e.get(i).filter(|_| i < self.n)?;
+        Some((campo(&e[..12]), campo(&e[12..24]), campo(&e[24..])))
+    }
+
+    /// Traduce "Nombre:resto" a (volumen, camino), con el camino escrito en `sal`. El nombre no distingue mayúsculas,
+    /// como en el Amiga. `None` si no hay ese nombre, si no cabe, o si el resto intenta salir del subcamino (un "/" al
+    /// principio, que en el Amiga es subir, o un componente "..").
+    pub fn resolver<'a>(&self, camino: &str, sal: &'a mut [u8]) -> Option<(&[u8], &'a str)> {
+        let (nombre, resto) = camino.split_once(':')?;
+        if resto.starts_with('/') || resto.split('/').any(|c| c == "..") {
+            return None;
+        }
+        let (_, vol, sub) = (0..self.n).filter_map(|i| self.entrada(i)).find(|(n, _, _)| n.eq_ignore_ascii_case(nombre.as_bytes()))?;
+        let mut largo = 0;
+        let mut poner = |x: &[u8]| -> Option<()> {
+            sal.get_mut(largo..largo + x.len())?.copy_from_slice(x);
+            largo += x.len();
+            Some(())
+        };
+        poner(sub)?;
+        if !sub.is_empty() && !resto.is_empty() {
+            poner(b"/")?;
+        }
+        poner(resto.as_bytes())?;
+        Some((vol, core::str::from_utf8(&sal[..largo]).ok()?))
+    }
+}

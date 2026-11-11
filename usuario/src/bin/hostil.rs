@@ -481,8 +481,21 @@ fn sesiones(memoria: u32) -> bool {
     if lanzar != s::PROTEGIDO {
         println!("  [hostil] sesiones: lanzar del disco da {} (tenía que dar -2)", lanzar);
     }
+    // U2: su tabla de nombres. Es la 1001 (Carla): su `Home:` es su volumen, no el de Ana. No salió del disco: sin
+    // `PROGDIR:`. Y la tabla no le abre nada: solo traduce.
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rn = [0u8; 256];
+    let n = if escribir(SESIONES, &s::NOMBRES.to_le_bytes(), &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rn, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let t = s::Nombres::desde(&rn[..n.max(0) as usize]);
+    let mut sal = [0u8; 64];
+    let home = matches!(t.resolver("home:Notas/a", &mut sal), Some((v, x)) if v == b"Carla" && x == "Notas/a");
+    let nombres = n > 0 && t.len() == 3 && home && t.resolver("Ana:x", &mut sal).is_none() && t.resolver("PROGDIR:x", &mut sal).is_none();
+    if !nombres {
+        println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);
+    }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO;
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

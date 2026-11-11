@@ -102,6 +102,7 @@ DashOS en marcha con 4 núcleos.
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
 ~│   [sesiones] pide pide eco: 0
 ~│   [pide] U4: bien
+~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [sesiones] hostil pide eco: -2
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 ~│   [selector] cede C/Privado/nota.txt solo para leer: 0

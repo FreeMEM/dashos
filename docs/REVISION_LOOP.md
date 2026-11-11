@@ -35,7 +35,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
-| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar y lanzar desde el disco |
+| R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
@@ -297,3 +297,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   un corte cada 64 páginas de segmentos y pila. Sin prueba propia: los programas de las pruebas cargan menos de 64
   páginas, así que ese corte no llega a abrirse en ellas. Queda `its.rs`, `encender` (solo al arrancar, en virt).
   Banco (7 arranques, frente a S1): todo dentro del ruido. `make prueba` y `make arranque-virt` pasan.
+- U2, la tabla de nombres: orden 10 de `sesiones`, NOMBRES. Contesta la tabla de quien pide (por su marca): `SYS:` y
+  `Programas:` para todos, `Home:` en el volumen de su usuario si tiene cuenta (`CUENTAS` provisional: 1000 Ana,
+  1001 Carla) y `PROGDIR:` con el cajón de donde se lanzó, si salió del disco (la ficha lo guarda al LANZAR). Cada
+  entrada: nombre, volumen (vacío es el disco) y subcamino. La biblioteca (`protocolo::sesiones::Nombres`) la lee y
+  resuelve "Nombre:resto" sin distinguir mayúsculas, y no resuelve lo que intenta salir del subcamino ("/" al
+  principio, que en el Amiga es subir, o ".."). No es frontera de seguridad: lo que se alcanza lo deciden las raíces
+  del servicio de archivos. Prueba: `pide` lanzado del disco ve `PROGDIR:` = `Programas` y resuelve
+  `PROGDIR:pide`; lanzado por `inicio`, sin él; sin `Home:` (usuario 1); `PROGDIR:/hola`, `SYS:a/../../b` y un
+  camino sin dos puntos no se resuelven. `hostil` (1001) recibe su tabla: `Home:` es Carla, no Ana. Falta: las
+  raíces 0 a 15 en archivos (hoy una por cliente) para que cada nombre sea una raíz cedida, `RAM:T`, y las
+  asignaciones con capas (S4b).

@@ -192,7 +192,13 @@ struct Ficha {
     gid: u32,
     nombre: [u8; 16],
     grupo: u32,
+    /// El cajón del disco de donde se lanzó (U2, `PROGDIR:`); vacío si no salió del disco.
+    progdir: [u8; 24],
 }
+
+/// Las cuentas, provisionales (luego, `Estado:Cuentas/usuarios`): usuario y nombre, que es también el de su volumen
+/// cifrado y su `Home:`.
+const CUENTAS: &[(u32, &str)] = &[(1000, "Ana"), (1001, "Carla")];
 
 fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
@@ -244,7 +250,7 @@ fn principal() -> u64 {
             if u32_en(0) == ALTA && m.len() >= 36 && k >= 1 {
                 let mut nombre_ = [0u8; 16];
                 nombre_.copy_from_slice(&m[20..36]);
-                let f = Ficha { marca: u64_en(4), uid: u32_en(12), gid: u32_en(16), nombre: nombre_, grupo: ll[0] };
+                let f = Ficha { marca: u64_en(4), uid: u32_en(12), gid: u32_en(16), nombre: nombre_, grupo: ll[0], progdir: [0; 24] };
                 let sitio = fichas.iter().position(|x| x.is_some_and(|x| x.marca == f.marca)).or_else(|| fichas.iter().position(|x| x.is_none()));
                 if let Some(i) = sitio {
                     if let Some(vieja) = fichas[i] {
@@ -350,7 +356,11 @@ fn principal() -> u64 {
                                     let mut n16 = [0u8; 16];
                                     n16[..corto.len().min(16)].copy_from_slice(&corto[..corto.len().min(16)]);
                                     let (uid, gid) = yo.map_or((1, 1), |f| (f.uid, f.gid));
-                                    fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32 });
+                                    let dir = &camino[..camino.len() - corto.len()];
+                                    let dir = dir.strip_suffix(b"/").unwrap_or(dir);
+                                    let mut progdir = [0u8; 24];
+                                    progdir[..dir.len().min(24)].copy_from_slice(&dir[..dir.len().min(24)]);
+                                    fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32, progdir });
                                     dashos::cerrar(p as u32);
                                     (BIEN, pid)
                                 }
@@ -362,6 +372,32 @@ fn principal() -> u64 {
                     r[0..4].copy_from_slice(&estado.to_le_bytes());
                     r[4..12].copy_from_slice(&pid.to_le_bytes());
                     dashos::canal_escribir(respuesta, &r, &[]);
+                }
+                NOMBRES => {
+                    // Su tabla: la de todos, más `Home:` si su usuario tiene cuenta y `PROGDIR:` si salió del disco.
+                    // Sin ficha, vacía.
+                    let mut r = [0u8; 4 + ENTRADA_NOMBRE * MAX_NOMBRES];
+                    let mut van = 0;
+                    let mut poner = |nombre: &[u8], vol: &[u8], sub: &[u8]| {
+                        let o = 4 + ENTRADA_NOMBRE * van;
+                        r[o..o + nombre.len().min(12)].copy_from_slice(&nombre[..nombre.len().min(12)]);
+                        r[o + 12..o + 12 + vol.len().min(12)].copy_from_slice(&vol[..vol.len().min(12)]);
+                        r[o + 24..o + 24 + sub.len().min(24)].copy_from_slice(&sub[..sub.len().min(24)]);
+                        van += 1;
+                    };
+                    if let Some(f) = yo {
+                        poner(b"SYS", b"", b"");
+                        poner(b"Programas", b"", b"Programas");
+                        if let Some(&(_, cuenta)) = CUENTAS.iter().find(|c| c.0 == f.uid) {
+                            poner(b"Home", cuenta.as_bytes(), b"");
+                        }
+                        if f.progdir[0] != 0 {
+                            let largo = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
+                            poner(b"PROGDIR", b"", &f.progdir[..largo]);
+                        }
+                    }
+                    r[0..4].copy_from_slice(&(van as u32).to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r[..4 + ENTRADA_NOMBRE * van], &[]);
                 }
                 REGISTRO => {
                     // Solo `guardian` lee el registro (U6).
