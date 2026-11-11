@@ -42,6 +42,9 @@ if sys.argv[1] == "--comprobar":
         "C/grande.txt 313890",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
+        "Estado/ cajón",
+        "Estado/Servicios/ cajón",
+        "Estado/Servicios/sesiones/ cajón",
         "Imagenes/ cajón",
         "Imagenes/disquete.adf 901120",
         "LEEME.txt 19",
@@ -56,6 +59,20 @@ if sys.argv[1] == "--comprobar":
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
+    # U6: el registro de seguridad de `sesiones`, en su cajón: la cuenta (8 bytes) y un anillo de entradas de 40 (tipo,
+    # estado, quién y qué). Tiene que tener los tres intentos del hostil (matar, la llave de un servicio y entrar).
+    REGISTRO = "Estado/Servicios/sesiones/registro"
+    linea = [l for l in arbol if l.startswith(REGISTRO + " ")]
+    arbol = [l for l in arbol if not l.startswith(REGISTRO + " ")]
+    if not linea:
+        fallos.append("sin registro de seguridad en el disco")
+    else:
+        reg = subprocess.run([ver, disco, desde, REGISTRO], check=True, capture_output=True).stdout
+        total = int.from_bytes(reg[:8], "little")
+        entradas = [reg[8 + 40 * i : 8 + 40 * (i + 1)] for i in range(min(total, 1024))]
+        tipos = {int.from_bytes(e[:4], "little") for e in entradas if e[8:24].rstrip(b"\0") == b"hostil"}
+        if not {1, 2, 3} <= tipos:
+            fallos.append(f"registro: {total} entradas, las del hostil son de los tipos {sorted(tipos)}")
     # FS10: el nombre y el contenido de lo que DashOS escribió en "Ana" no están en claro.
     crudo = open(disco, "rb").read()
     for secreto in (b"secreto.txt", b"solo para Ana"):
@@ -91,6 +108,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
     os.makedirs(os.path.join(raiz, "Programas"))
+    # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
+    os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
+    os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
     with open(os.path.join(raiz, "Programas", "hola"), "wb") as f:
         f.write(open(HOLA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "hola"), 0o755)
@@ -116,6 +136,7 @@ with tempfile.TemporaryDirectory() as t:
                    env={**os.environ, "REDOXFS_DUENO": "1001:1001"})
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
+    subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     d = bytearray(1 << 20)
     s0 = b"DashOS: sector 0 del disco NVMe"
     d[: len(s0)] = s0

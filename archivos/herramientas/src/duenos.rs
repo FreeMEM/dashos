@@ -1,6 +1,7 @@
-//! `duenos DISCO DESDE UID:GID [VOLUMEN]`: pone dueño y grupo a todo lo que hay en el RedoxFS que empieza en el byte
-//! DESDE de DISCO, raíz incluida, sin tocar los permisos. Con VOLUMEN, a todo lo de ese volumen; si está cifrado, la
-//! contraseña llega por la primera línea de la entrada estándar.
+//! `duenos DISCO DESDE UID:GID [VOLUMEN | camino=CAMINO]`: pone dueño y grupo a todo lo que hay en el RedoxFS que
+//! empieza en el byte DESDE de DISCO, raíz incluida, sin tocar los permisos. Con VOLUMEN, a todo lo de ese volumen; si
+//! está cifrado, la contraseña llega por la primera línea de la entrada estándar. Con `camino=`, solo a ese cajón (o
+//! fichero) del volumen principal y a lo que cuelga de él (U6: el cajón de `sesiones`, del usuario 1).
 //!
 //! Para el disco de pruebas (`tools/disco_archivos.py`, R6 de `docs/REVISION_LOOP.md`): `redoxfs-ar` copia el dueño
 //! de Linux de cada fichero, que cambia de un PC a otro, y las raíces salen del usuario 0. Con dueños fijos, las
@@ -63,7 +64,8 @@ fn main() {
     let disco = Trozo { f, desde: args[2].parse().expect("DESDE no es un número"), tam };
     let (uid, gid) = args[3].split_once(':').map(|(u, g)| (u.parse().expect("UID"), g.parse().expect("GID"))).expect("UID:GID");
     let mut fs = FileSystem::open(disco, None, Some(0), false).expect("no es un RedoxFS");
-    let vol = match args.get(4) {
+    let camino = args.get(4).and_then(|a| a.strip_prefix("camino=")).map(String::from);
+    let vol = match args.get(4).filter(|_| camino.is_none()) {
         None => 0,
         Some(nombre) => {
             let (id, cifrado) = fs
@@ -80,7 +82,14 @@ fn main() {
             id
         }
     };
-    if let Err(e) = fs.tx_in(vol, |tx| poner(tx, TreePtr::root(), uid, gid)) {
+    let hecho = fs.tx_in(vol, |tx| {
+        let mut desde = TreePtr::root();
+        for parte in camino.iter().flat_map(|c| c.split('/')).filter(|p| !p.is_empty()) {
+            desde = tx.find_node(desde, parte)?.ptr();
+        }
+        poner(tx, desde, uid, gid)
+    });
+    if let Err(e) = hecho {
         eprintln!("duenos: {e}");
         std::process::exit(1);
     }

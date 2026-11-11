@@ -33,7 +33,7 @@ DashOS en marcha con 4 núcleos.
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
-~│   [ficheros] raíz (5 entradas, fin bien): C/ Imagenes/ LEEME.txt Prefs/ Programas/
+~│   [ficheros] raíz (6 entradas, fin bien): C/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -107,6 +107,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [pide] Home: crea 0 y borra 0 en el volumen de Carla: bien
 ~│   [entrada] lanzar como Carla (entró) 0, como Ana (no entró) -2, salir después 0: bien
 ~│   [sesiones] hostil pide eco: -2
+~│   [selector] el registro de sesiones: abrirlo -12, listar su cajón -12: bien
 ~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 ~│   [selector] cede C/Privado/nota.txt solo para leer: 0

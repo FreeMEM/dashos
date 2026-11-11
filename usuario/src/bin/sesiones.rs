@@ -55,12 +55,18 @@ const PRESUPUESTO_LANZADO: u64 = 4 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 
-/// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos, en memoria. (Al disco, cuando
-/// `sesiones` tenga su cajón: hoy no puede escribir en el disco de pruebas.)
+/// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
+/// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.
 const REGISTRO_MAX: usize = 64;
+const DISCO_MAX: usize = 1024;
+const CAJON: &[u8] = b"Estado/Servicios/sesiones";
+const CAMINO_REGISTRO: &[u8] = b"Estado/Servicios/sesiones/registro";
 struct Registro {
     entradas: [[u8; ENTRADA_REGISTRO]; REGISTRO_MAX],
     total: usize,
+    /// Las últimas que faltan por llevar al disco, y la asa del fichero (0 si no hay).
+    pendientes: usize,
+    asa: u32,
 }
 
 impl Registro {
@@ -73,6 +79,86 @@ impl Registro {
         e[8..8 + q.len().min(16)].copy_from_slice(&q[..q.len().min(16)]);
         e[24..24 + que.len().min(16)].copy_from_slice(&que[..que.len().min(16)]);
         self.total += 1;
+        self.pendientes = (self.pendientes + 1).min(REGISTRO_MAX);
+    }
+
+    /// Abre (o crea) el fichero del registro y trae a memoria las últimas entradas que tenía.
+    fn abrir_disco(&mut self, a: &Archivos) {
+        let Some((asa, tam)) = Self::abrir_fichero(a) else { return };
+        self.asa = asa;
+        self.leer_disco(a, tam);
+    }
+
+    /// La asa del fichero del registro, creándolo si no está, y su tamaño.
+    fn abrir_fichero(a: &Archivos) -> Option<(u32, u64)> {
+        use dashos::protocolo::archivos as x;
+        let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_REGISTRO);
+        let asa = if e == x::BIEN {
+            asa
+        } else {
+            let (e, cajon, _) = a.orden(x::BUSCAR, 0, 0, 0, CAJON);
+            if e != x::BIEN {
+                println!("  [sesiones] sin su cajón ({}): el registro, solo en memoria", e);
+                return None;
+            }
+            let (e, asa, _) = a.orden(x::CREAR, cajon, x::FICHERO as u64, 0, b"registro");
+            a.orden(x::CERRAR, cajon, 0, 0, b"");
+            if e != x::BIEN {
+                println!("  [sesiones] no crea el registro ({}): solo en memoria", e);
+                return None;
+            }
+            asa
+        };
+        Some((asa, if e == x::BIEN { tam } else { 0 }))
+    }
+
+    fn leer_disco(&mut self, a: &Archivos, tam: u64) {
+        use dashos::protocolo::archivos as x;
+        let asa = self.asa;
+        if tam < 8 || a.orden(x::LEER, asa, 0, 8, b"").2 != 8 {
+            return;
+        }
+        let total = unsafe { core::ptr::read_unaligned(VA_VENTANA as *const u64) } as usize;
+        let desde = total.saturating_sub(REGISTRO_MAX.min(DISCO_MAX));
+        for i in desde..total {
+            let o = 8 + (i % DISCO_MAX) * ENTRADA_REGISTRO;
+            if a.orden(x::LEER, asa, o as u64, ENTRADA_REGISTRO as u64, b"").2 == ENTRADA_REGISTRO as u64 {
+                let v = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, ENTRADA_REGISTRO) };
+                self.entradas[i % REGISTRO_MAX].copy_from_slice(v);
+            }
+        }
+        self.total = total;
+        println!("  [sesiones] registro de seguridad en el disco: {} entradas de antes", total);
+    }
+
+    /// Lleva al disco lo que falte: cada entrada a su sitio del anillo, y la cuenta.
+    fn guardar(&mut self, a: &Archivos) {
+        use dashos::protocolo::archivos as x;
+        if self.asa == 0 {
+            self.pendientes = 0;
+            return;
+        }
+        let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, ENTRADA_REGISTRO) };
+        ventana[..8].copy_from_slice(&(self.total as u64).to_le_bytes());
+        if a.orden(x::ESCRIBIR, self.asa, 0, 8, b"").0 == x::ASA_MALA {
+            // Se perdió la asa (volvieron a una instantánea del volumen, que suelta las de todos): se reabre sin leer
+            // lo de antes (sería más viejo) y se escribe todo lo que hay en memoria.
+            match Self::abrir_fichero(a) {
+                Some((asa, _)) => self.asa = asa,
+                None => {
+                    self.asa = 0;
+                    return;
+                }
+            }
+            self.pendientes = self.total.min(REGISTRO_MAX);
+            ventana[..8].copy_from_slice(&(self.total as u64).to_le_bytes());
+            a.orden(x::ESCRIBIR, self.asa, 0, 8, b"");
+        }
+        for i in self.total - self.pendientes..self.total {
+            ventana.copy_from_slice(&self.entradas[i % REGISTRO_MAX]);
+            a.orden(x::ESCRIBIR, self.asa, (8 + (i % DISCO_MAX) * ENTRADA_REGISTRO) as u64, ENTRADA_REGISTRO as u64, b"");
+        }
+        self.pendientes = 0;
     }
 
     /// Las entradas que se guardan, de la más vieja a la más nueva.
@@ -241,7 +327,7 @@ fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
-    let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0 };
+    let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
     let mut siguiente_pid = PRIMER_PID_PROPIO;
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
@@ -252,7 +338,16 @@ fn principal() -> u64 {
     let mut ll = [0u32; dashos::servicio::MAX_LLAVES];
     let archivos = Archivos::abrir();
     println!("  [sesiones] en marcha{}", if archivos.is_some() { ", con el servicio de archivos" } else { ", sin el servicio de archivos" });
+    if let Some(a) = &archivos {
+        registro.abrir_disco(a);
+    }
     loop {
+        // Lo que se apuntó en la vuelta anterior, al disco antes de esperar (U6).
+        if registro.pendientes > 0 {
+            if let Some(a) = &archivos {
+                registro.guardar(a);
+            }
+        }
         let (n, k, marca) = match dashos::servicio::recibir(CANAL, &mut b, &mut ll) {
             dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
             dashos::servicio::Recibido::Cerrado => return 0,

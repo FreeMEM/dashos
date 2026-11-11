@@ -82,6 +82,16 @@ fn principal() -> u64 {
         bien
     };
     println!("  [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: {}", if raices { "bien" } else { "MAL" });
+    // U6: el registro de seguridad es del cajón de `sesiones` (usuario 1, 0700): ni el dueño del resto del disco lo
+    // abre ni lista ese cajón.
+    let registro = pedir(lectura, a::BUSCAR, 0, 0, 0, "Estado/Servicios/sesiones/registro").0;
+    let (e, cajon) = pedir(lectura, a::BUSCAR, 0, 0, 0, "Estado/Servicios/sesiones");
+    let listar = if e == a::BIEN { pedir(lectura, a::LISTAR, cajon, 0, 0, "").0 } else { e };
+    if e == a::BIEN {
+        pedir(lectura, a::CERRAR, cajon, 0, 0, "");
+    }
+    let ajeno = registro == a::PROTEGIDO && listar == a::PROTEGIDO;
+    println!("  [selector] el registro de sesiones: abrirlo {}, listar su cajón {}: {}", registro, listar, if ajeno { "bien" } else { "MAL" });
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
     loop {

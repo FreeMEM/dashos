@@ -40,7 +40,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
-| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria) |
+| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 
@@ -337,3 +337,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   raíces y su alta (sin ella, su raíz `Home:` dejaba el volumen ocupado para siempre). Prueba: `entrada` entra como
   Carla y lanza `pide` como 1001: su tabla trae `Home:` en la raíz 2 y ahí crea y borra; lanzar como Ana (no entró)
   da -2; salir da -13 tres veces mientras `pide` vive y 0 en cuanto acaba.
+- U6, el registro al disco: `sesiones` tiene su cajón, `Estado/Servicios/sesiones` (usuario 1, 0700; el disco de
+  pruebas lo hace con `duenos ... camino=`). Guarda el registro en `registro`: la cuenta (u64) y un anillo de 1.024
+  entradas de 40 bytes. Lo nuevo va al disco antes de esperar el siguiente mensaje; al arrancar lee lo que hubiera.
+  Si pierde la asa (volver a una instantánea del volumen suelta las de todos, y la prueba de `ficheros` lo hace),
+  reabre el fichero sin leerlo y reescribe lo que tiene en memoria. Pruebas: la comprobación del disco en Linux
+  (`disco_archivos.py --comprobar`) lee el registro y encuentra los tres intentos del hostil; `selector` (1000, el
+  dueño del resto del disco) no abre el registro ni lista el cajón (-12). Sin probar: leerlo al arrancar otra vez
+  (cada prueba arranca una vez con un disco nuevo).
