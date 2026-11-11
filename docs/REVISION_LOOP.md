@@ -716,3 +716,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Prueba hostil (en `disco`): pedir el anillo otra vez da uno nuevo con el que 16 lecturas van bien, y una lectura
   puesta en el viejo, con aviso, no se atiende en 50 ms. Lo demás de A15 (varias órdenes NVMe a la vez, COMPROBAR
   por trozos) sigue pendiente.
+- A7, la causa de la bajada al leer en trozos de 1 MB justo después de escribir (886 a 577 MB/s), comprobada: es
+  crear la memoria de los trozos de la caché de páginas la primera vez. Con los 48 trozos creados al arrancar (solo de
+  prueba), 3 arranques con y sin: leer en trozos de 1 MB tras escribir, 515 a 791 MB/s (+53 %); leer del disco en
+  frío, 214 a 317 (+48 %); lo demás, igual. Con trazas: crear un trozo cuesta unos 215 µs (crear la memoria 150-250,
+  proyectarla unos 22, la copia de solo leer unos 11) y llenarlo unos 510; en `medir-fs` los 48 se crean durante la
+  medida, así que cada lectura de 8 MB paga 16 creaciones. Cuando ya existen se reutilizan sin ese coste.
+- Poner las páginas a cero con `dc zva` (de línea en línea) en vez de byte a byte: probado, no cambia nada (leer en
+  trozos de 1 MB, 564 sin y 554 con, en el ruido); lo caro de crear no es poner a cero. Descartado. (Con él, una de
+  cuatro pasadas de `make prueba` falló en el paso 13 de `grupos`, el cupo del grupo no volvía a 0 en el acto tras
+  matarlo; no se vio sin él en una pasada; sin investigar, queda apuntado.)
+- No se cambia: crear los trozos al arrancar quitaría ese coste a costa de 24 MB desde el arranque (hoy se crean
+  según hacen falta) y unos 10 ms más de arranque en QEMU. Para decidir con el usuario. Otra vía: abaratar
+  `memoria_crear` en el kernel (hoy pide las páginas de una en una, con el cerrojo del repartidor cada vez).
