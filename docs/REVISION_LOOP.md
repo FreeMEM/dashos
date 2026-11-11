@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9 |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -392,3 +392,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `tests_a5`): datos al azar (no se comprimen) se leen igual entero y a trozos; con un byte cambiado en el disco, EIO
   por los dos caminos. Medido (7 arranques, contra el mismo banco justo antes): leer 8 MB a trozos de 1 MB, 734 a
   882 MB/s (+20 %); lo demás, dentro del ruido (a trozos de 64 KB no cambia: el trozo es menor que un registro).
+- A9, un disco hecho a mala idea no tumba `archivos`: la suma de cada bloque detecta un daño, no una manipulación
+  (quien prepara el disco rehace las sumas). Prueba nueva en RedoxFS, `tests_a9`, que hace de atacante: en 2000
+  discos cambia campos de nodos (tamaño, nivel de registro, banderas, tipo, bloques, bytes sueltos) con valores
+  extremos y los vuelve a sellar, o hace que el contenido al azar de un fichero se lea como un cajón; recorre, busca,
+  lee y comprueba todo atrapando pánicos. Encontró 41 pánicos, todos en el mismo sitio: el nivel de registro del
+  disco sin comprobar (`BLOCK_SIZE << nivel` daba 0 y una división por cero). Ahora `record_level_checked` da EIO
+  por encima de `RECORD_LEVEL` en todos los caminos de `transaction.rs`: 0 pánicos. Ataques dirigidos: un registro
+  comprimido rehecho con un largo falso (pánico por índice; ahora EIO) y un cajón dentro de sí mismo (mover un
+  cajón no acababa nunca en `check_not_inside`; ahora lleva visitados y un tope). Las dos pruebas fallan sin su
+  arreglo (comprobado). Además, una ranura de clave rota ya no hace pánico al abrir un disco cifrado (no abre). Lo
+  demás que señalaba la revisión (`BlockAddr::new`, `with_epoch`) solo recibe valores calculados, no del disco, y el
+  `count` de los registros de confirmación está acotado (255 bloques). Sin medir: una comparación por lectura.

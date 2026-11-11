@@ -350,6 +350,16 @@ impl Node {
         BlockLevel(self.record_level.to_ne() as usize)
     }
 
+    /// `record_level`, comprobado (DashOS, A9): un disco hecho a mala idea puede traer cualquier número, y con uno
+    /// mayor que `RECORD_LEVEL` el tamaño del registro desborda (y una división por cero tumbaba el servicio).
+    pub fn record_level_checked(&self) -> syscall::error::Result<BlockLevel> {
+        let level = self.record_level();
+        if level.0 > RECORD_LEVEL {
+            return Err(syscall::error::Error::new(syscall::error::EIO));
+        }
+        Ok(level)
+    }
+
     pub fn flags(&self) -> NodeFlags {
         NodeFlags::from_bits_retain(self.flags.to_ne())
     }

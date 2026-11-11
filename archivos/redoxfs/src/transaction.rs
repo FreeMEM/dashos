@@ -624,7 +624,11 @@ impl<'a, D: Disk> Transaction<'a, D> {
             };
             let comp_len = record.data()[0] as usize | ((record.data()[1] as usize) << 8);
             let total_len = comp_len + 2;
-            if let Err(err) = lz4_flex::decompress_into(&record.data()[2..total_len], &mut decomp) {
+            // DashOS, A9: el largo sale del disco; si no cabe en el registro, es un disco roto o hecho a mala idea.
+            let Some(comprimido) = record.data().get(2..total_len) else {
+                return Err(Error::new(EIO));
+            };
+            if let Err(err) = lz4_flex::decompress_into(comprimido, &mut decomp) {
                 #[cfg(feature = "log")]
                 log::error!("READ_RECORD: FAILED TO DECOMPRESS: {:?}", err);
                 return Err(Error::new(EIO));
@@ -1151,7 +1155,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let names = self.names_of(parent.data());
         let dir_entry = DirEntry::new(node_ptr, name);
         let dir_entry_htree_hash = names.hash(name);
-        let record_byte_size = parent.data().record_level().bytes();
+        let record_byte_size = parent.data().record_level_checked()?.bytes();
 
         // If this is a brand new directory, create the first DirList block
         if !level_data(&parent)?.level0[0].is_marker() {
@@ -1260,7 +1264,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         dir_entry_htree_hash: HTreeHash,
         htree_levels: usize,
     ) -> Result<Option<(HTreeHash, HTreeNode<RecordRaw>)>> {
-        let record_byte_size = parent_dir_node.data().record_level().bytes();
+        let record_byte_size = parent_dir_node.data().record_level_checked()?.bytes();
 
         // Find the entry to update
         let mut htree_ptr = parent_htree_node.ptrs[0];
@@ -1440,7 +1444,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 unsafe {
                     self.deallocate(&mut parent, htree_root.addr());
                 }
-                let record_byte_size = parent.data().record_level().bytes();
+                let record_byte_size = parent.data().record_level_checked()?.bytes();
                 let size = parent.data().size() - record_byte_size;
                 parent.data_mut().set_size(size);
             }
@@ -1631,7 +1635,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
         dir_entry_htree_hash: HTreeHash,
         htree_levels: usize,
     ) -> Result<()> {
-        let record_byte_size = parent_dir_node.data().record_level().bytes();
+        let record_byte_size = parent_dir_node.data().record_level_checked()?.bytes();
 
         // Process every node that could hold the entry
         assert!(htree_levels > 0);
@@ -1942,9 +1946,18 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(());
         }
         let mut pending = alloc::vec![node.ptr()];
+        // DashOS, A9: un disco hecho a mala idea puede tener un cajón dentro de sí mismo (un enlace a un antepasado):
+        // sin mirar lo ya visto, esto no acabaría nunca. Y un tope, por si el árbol es enorme a propósito.
+        let mut seen = alloc::collections::BTreeSet::new();
         while let Some(dir) = pending.pop() {
             if dir.id() == dest.id() {
                 return Err(Error::new(EINVAL));
+            }
+            if !seen.insert(dir.id()) {
+                continue;
+            }
+            if seen.len() > 1_000_000 {
+                return Err(Error::new(EIO));
             }
             let mut children = Vec::new();
             self.child_nodes(dir, &mut children)?;
@@ -2194,7 +2207,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             return Ok(i);
         }
 
-        let record_level = node.data().record_level();
+        let record_level = node.data().record_level_checked()?;
 
         let mut bytes_read = 0;
         while bytes_read < buf.len() && offset < node_size {
@@ -2264,7 +2277,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
 
     pub fn truncate_node_inner(&mut self, node: &mut TreeData<Node>, size: u64) -> Result<bool> {
         let old_size = node.data().size();
-        let record_level = node.data().record_level();
+        let record_level = node.data().record_level_checked()?;
 
         // Size already matches, return
         if old_size == size {
@@ -2341,7 +2354,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
     ) -> Result<bool> {
         let mut node_changed = false;
 
-        let record_level = node.data().record_level();
+        let record_level = node.data().record_level_checked()?;
         let node_size = node.data().size();
         let node_records = node_size.div_ceil(record_level.bytes());
 

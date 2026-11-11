@@ -147,8 +147,8 @@ impl Header {
     pub fn cipher(&self, password: &[u8]) -> Option<Xts128<Aes128>> {
         let hash = self.create_encrypted_hash(None);
         for slot in self.key_slots.iter() {
-            //TODO: handle errors
-            let cipher = slot.cipher(password).unwrap();
+            // DashOS, A9: una ranura de clave rota o hecha a mala idea no tumba a nadie: no abre.
+            let Ok(cipher) = slot.cipher(password) else { continue };
             let mut block = aes::Block::from(self.encrypted_hash);
             cipher.decrypt_area(
                 &mut block,
