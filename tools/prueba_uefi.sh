@@ -34,9 +34,9 @@ QEMU=$!
 # y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" <<'PY' >/dev/null 2>&1 &
+    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
-ruta, total, serie, captura_pregunta, diag_registros, captura_selector = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
+ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
 diag_hecho = False
 
 def preguntar_monitor(orden):
@@ -83,6 +83,7 @@ def mandar(*ordenes, pausa=0.0):
 
 preguntas = 0
 selector = 0
+centro = 0
 
 while time.time() - inicio < total:
     try:
@@ -115,6 +116,45 @@ while time.time() - inicio < total:
                 mandar("sendkey n")
             time.sleep(0.5)
             continue
+        # S10c: el centro de control. `guardian` avisa 3 s antes de pedirle que abra Permisos: se deja de teclear, para que
+        # su ventana se lleve el teclado (S8: 2 s sin teclas). Dentro, flecha abajo (pide · eco) y Supr para quitarlo;
+        # luego Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm, la ventana con la fila marcada.
+        if centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
+            centro = 1
+        if centro == 1:
+            if "[centro] Permisos en pantalla" not in texto:
+                time.sleep(0.25)
+                continue
+            centro = 2
+            time.sleep(0.5)
+            mandar("sendkey down")
+            if captura_centro:
+                time.sleep(0.5)
+                mandar("screendump " + captura_centro)
+            time.sleep(0.3)
+            mandar("sendkey delete")
+            reintento = time.time() + 4
+        if centro == 2:
+            if "[centro] quita a " not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                    time.sleep(0.3)
+                    mandar("sendkey delete")
+                time.sleep(0.25)
+                continue
+            centro = 3
+            time.sleep(0.5)
+            mandar("sendkey esc")
+            reintento = time.time() + 4
+        if centro == 3:
+            if "[centro] cerrado" not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey esc")
+                time.sleep(0.25)
+                continue
+            centro = 4
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
         # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo (el primer cajón, Privado) e Intro para
         # entrar; dentro, Fin (el último, nota.txt; el primero es "../") e Intro.

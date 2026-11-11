@@ -64,6 +64,8 @@ const PRIMER_PID_PROPIO: u64 = 0x1_0000;
 const PRESUPUESTO_LANZADO: u64 = 4 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
+/// Quién puede ver y retirar lo concedido (S10c): `guardian` y el centro de control. Nadie más se llama así (`inicio`).
+const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 
 /// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
 /// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.
@@ -950,8 +952,33 @@ fn principal() -> u64 {
                         dashos::cerrar(a_quien);
                     }
                 }
+                CONCEDIDOS => {
+                    let puede = yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre)));
+                    let mut r = [0u8; 16 + POR_PAGINA_CONCEDIDOS * CONCEDIDO];
+                    let largo = if !puede {
+                        let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                        registro.apuntar(R_SERVICIO, PROTEGIDO, &quien, b"concedidos");
+                        r[..4].copy_from_slice(&PROTEGIDO.to_le_bytes());
+                        16
+                    } else {
+                        let total = concedidos.iter().flatten().count();
+                        let desde = u32_en(4) as usize;
+                        let mut van = 0;
+                        for (prog, sv) in concedidos.iter().flatten().skip(desde).take(POR_PAGINA_CONCEDIDOS) {
+                            let e = &mut r[16 + van * CONCEDIDO..16 + (van + 1) * CONCEDIDO];
+                            e[..16].copy_from_slice(prog);
+                            let serv = REPARTE.get(*sv).map_or("?", |x| x.0).as_bytes();
+                            e[16..16 + serv.len().min(16)].copy_from_slice(&serv[..serv.len().min(16)]);
+                            van += 1;
+                        }
+                        r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+                        r[8..12].copy_from_slice(&(van as u32).to_le_bytes());
+                        16 + van * CONCEDIDO
+                    };
+                    dashos::canal_escribir(respuesta, &r[..largo], &[]);
+                }
                 RETIRAR => {
-                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let guardian = yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre)));
                     let (lp, ls) = (u32_en(4) as usize, u32_en(8) as usize);
                     let (prog, serv) = (m.get(12..12 + lp).unwrap_or(b""), m.get(12 + lp..12 + lp + ls).unwrap_or(b""));
                     let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);

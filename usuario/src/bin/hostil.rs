@@ -680,6 +680,17 @@ fn sesiones(memoria: u32) -> bool {
     if !registro_negado {
         println!("  [hostil] sesiones: leer el registro de seguridad da {} bytes (tenía que negarse)", registro);
     }
+    // S10c: ver lo concedido, sin ser el centro de control ni `guardian`: -2 y nada más (16 bytes).
+    let mut p = [0u8; 8];
+    p[0..4].copy_from_slice(&s::CONCEDIDOS.to_le_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rc = [0u8; 256];
+    let visto = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rc, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let concedidos_negado = visto == 16 && i32::from_le_bytes(rc[0..4].try_into().unwrap()) == s::PROTEGIDO && rc[4..16].iter().all(|&b| b == 0);
+    if !concedidos_negado {
+        println!("  [hostil] sesiones: ver lo concedido da {} bytes (tenía que negarse)", visto);
+    }
     // U2: lanzar un programa del disco, sin ser `guardian`.
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&s::LANZAR.to_le_bytes());
@@ -710,7 +721,7 @@ fn sesiones(memoria: u32) -> bool {
         println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);
     }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && concedidos_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
         && admin1 == s::PROTEGIDO && admin2 == s::PROTEGIDO && admin3 == s::PROTEGIDO && plazo == s::PROTEGIDO && kp == 0;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);

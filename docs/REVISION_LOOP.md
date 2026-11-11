@@ -40,7 +40,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario, con cajones y doble clic), acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones |
-| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
+| R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco), PID en el kernel y Permisos en el centro de control (S10c, C1) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 
@@ -837,3 +837,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - El usuario pidió (2026-11-12) un centro de control tan potente como el de DMS (Dux Modular Shell), y capturas de
   todo lo de la interfaz. Diseño en `docs/diseño/S10c-centro-de-control.md`. La pieza de R19 que quedaba, Prefs de
   permisos, se hace como su primera fase (C1): la ventana de Ajustes con la categoría Permisos. Va la siguiente.
+- S10c, fase C1: el centro de control, `centro` (`usuario/src/bin/centro.rs`). Una ventana con el kit: a la izquierda
+  las categorías, a la derecha la elegida. De momento, **Permisos**: lo concedido a cada programa ("pide · eco") y
+  quitarlo, con el botón Quitar o con Supr (se revoca en el acto); Esc o Cerrar la cierran. Por su canal "centro" solo
+  se le pide que abra una categoría ("abrir permisos", el enlace directo de S10c); si el pedido trae llave, contesta al
+  cerrarse. `sesiones` gana la orden 17, CONCEDIDOS (por páginas de 7), y RETIRAR se deja también al centro: las dos,
+  solo para quien `inicio` llama "centro" o "guardian" (y "entrada", que hace de guardian en las pruebas). `centro` va
+  en la tabla de `inicio` antes que `guardian`: el primero que nombra un canal es su servidor.
+- Prueba en virt: `guardian` retira él el permiso de `plazo` y, 3 s después de avisarlo, pide al centro abrir Permisos
+  y espera a que se cierre (lo siguiente es bloquear la sesión). El guion deja de teclear al ver el aviso, así la
+  ventana se lleva el teclado (S8); dentro, flecha abajo y Supr, y Esc. El centro enseña 1 concedido, lo quita (0;
+  quedan 0) y se cierra; el disco acaba con el fichero de permisos vacío, como antes. Hostil: el cliente hostil pide
+  CONCEDIDOS y recibe -2 y 16 bytes sin nada. Captura en `docs/capturas/s10c-centro-permisos.png`. El ratón (clic en
+  Quitar) no se prueba en QEMU: el guion no sabe dónde queda la ventana.

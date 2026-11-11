@@ -185,6 +185,12 @@ name = "pide"
 path = "src/bin/pide.rs"
 
 [[bin]]
+name = "centro"
+path = "src/bin/centro.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
 name = "selector"
 path = "src/bin/selector.rs"
 test = false

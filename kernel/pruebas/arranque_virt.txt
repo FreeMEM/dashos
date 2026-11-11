@@ -125,7 +125,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] ¿pide puede usar eco? El usuario dice sí
 ~│   [guardian] tecla 's' antes de tiempo: no cuenta
 ~│   [guardian] preguntas: de pide 2, de otros 2: bien
-~│   [guardian] retirar a pide el permiso de eco 0, otra vez -1: bien
+~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
+# S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
+~│   [centro] Permisos en pantalla: 1 concedidos
+~│   [centro] quita a pide el permiso de eco: 0; quedan 0
+~│   [centro] cerrado
+~│   [guardian] pide al centro abrir Permisos: 0, y se cerró: sí
 ~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien
 ~│   [pide] bloquear sin tener sesión: -2
 ~│   [pide] bloquear la sesión de Carla: 0

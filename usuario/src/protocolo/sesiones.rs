@@ -50,9 +50,9 @@ pub const SIN_RAIZ: u8 = 0xff;
 pub const PREGUNTAS: u32 = 11;
 /// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.
 pub const RESPUESTA: u32 = 12;
-/// De `guardian`: retirar lo concedido (orden, largo del programa u32, largo del servicio u32, programa, servicio).
-/// `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que tenga ese programa. Contesta 0, o -1 si
-/// no estaba concedido; a otro que no sea `guardian`, -2.
+/// De `guardian` o de `centro` (el centro de control, S10c): retirar lo concedido (orden, largo del programa u32, largo
+/// del servicio u32, programa, servicio). `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que
+/// tenga ese programa. Contesta 0, o -1 si no estaba concedido; a otro, -2.
 pub const RETIRAR: u32 = 13;
 /// De un programa (U5): una acción de administrador de la lista cerrada (`ACCIONES`) (orden, largo, 0, la acción).
 /// `sesiones` le pregunta a `guardian`, que pide la contraseña de un administrador; si es buena, la hace el servicio
@@ -68,6 +68,12 @@ pub const ACCIONES: &[&str] = &["comprobar", "matar"];
 /// se lo pide a `guardian` (por su llave de preguntas, con "*bloquear" y el nombre del usuario en lugar del programa).
 /// Contesta 0, o -2.
 pub const BLOQUEAR: u32 = 16;
+/// De `centro` o de `guardian` (S10c, C1): lo concedido, desde el número `desde` (orden, desde u32). Contesta el estado
+/// (i32), cuántos hay en total (u32) y cuántos van (u32), 4 bytes sin usar y hasta `POR_PAGINA_CONCEDIDOS` entradas de
+/// `CONCEDIDO` bytes: programa (16) y servicio (16), rellenos de ceros. A otro, -2 y nada.
+pub const CONCEDIDOS: u32 = 17;
+pub const CONCEDIDO: usize = 32;
+pub const POR_PAGINA_CONCEDIDOS: usize = 7;
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
 /// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
 pub const PREGUNTA: usize = 40;

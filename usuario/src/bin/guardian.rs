@@ -37,6 +37,8 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const SESIONES: u32 = 2;
+/// El canal del centro de control (S10c): por él solo se le pide que abra una categoría.
+const CENTRO: u32 = 3;
 /// La frase que eligió cada usuario al crear su cuenta (S6b): sale en su pantalla de bloqueo. Provisional, como las
 /// cuentas de `sesiones`.
 const FRASES: &[(&str, &str)] = &[("Carla", "Las gaviotas vuelven al puerto"), ("Ana", "El faro de la isla")];
@@ -141,23 +143,27 @@ fn principal() -> u64 {
     if si_pide != 2 || si_otros != 0 {
         println!("  [guardian] el usuario dijo que sí a pide {} veces y a otros {}", si_pide, si_otros);
     }
-    // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada.
-    let mut r = [0u8; 19];
-    r[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
-    r[4..8].copy_from_slice(&4u32.to_le_bytes());
-    r[8..12].copy_from_slice(&3u32.to_le_bytes());
-    r[12..16].copy_from_slice(b"pide");
-    r[16..19].copy_from_slice(b"eco");
-    let (una, otra) = (pedir(&r, &[]), pedir(&r, &[]));
+    // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada. El de
+    // `plazo`, aquí; el de `eco`, en el centro de control (S10c): se le pide que abra Permisos, como un clic en la
+    // barra, 3 s después de decirlo (en la prueba, el guion deja de teclear para que la ventana se lleve el teclado).
     let mut p2 = [0u8; 21];
     p2[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
     p2[4..8].copy_from_slice(&4u32.to_le_bytes());
     p2[8..12].copy_from_slice(&5u32.to_le_bytes());
     p2[12..16].copy_from_slice(b"pide");
     p2[16..21].copy_from_slice(b"plazo");
-    let el_plazo = pedir(&p2, &[]);
-    let retirado = una == 0 && otra == -1 && el_plazo == 0;
-    println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
+    let (una, otra) = (pedir(&p2, &[]), pedir(&p2, &[]));
+    let retirado = una == 0 && otra == -1;
+    println!("  [guardian] retirar a pide el permiso de plazo {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
+    println!("  [guardian] el centro de control abrirá Permisos en 3 s");
+    dashos::dormir_us(3_000_000);
+    // Con una llave de vuelta: el centro contesta al cerrarse, y hasta entonces no sigue (lo siguiente es bloquear).
+    let (lectura, suyo) = dashos::canal_crear();
+    let mandado = dashos::canal_escribir(CENTRO, b"abrir permisos", &[suyo]);
+    let mut r4 = [0u8; 4];
+    let cerrado = mandado == 0 && dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 60_000_000).0 == 4;
+    dashos::cerrar(lectura);
+    println!("  [guardian] pide al centro abrir Permisos: {}, y se cerró: {}", mandado, if cerrado { "sí" } else { "no" });
     let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
     // Si nadie pidió bloquear (U3), la prueba no lo vio: mal.
