@@ -488,3 +488,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   mismos niveles que el algoritmo de antes, operación a operación. Medido en el PC con el disco fragmentado (4.492
   trozos libres): crear y escribir 114 a 53 µs, borrar 71 a 33; con el diario de antes, desde 144 y 97: -63 % y
   -66 %. Con el disco poco troceado (`perfil`), igual.
+- A8, rehacer el diario del asignador (cada 1.024 generaciones, `sync_allocator` compara cada trozo con todo el
+  diario: cuadrático): medido antes de tocarlo, con 4.492 trozos libres tarda 3,1 ms en el PC. No compensa cambiarlo.
+  Se queda la prueba (`tests_a8`): tras rehacerlo con el disco fragmentado y reabrir, el asignador sale igual.

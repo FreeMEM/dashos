@@ -117,3 +117,35 @@ fn reservar_exacto_otro_nivel_no_hace_panico() {
     a.deallocate(unsafe { BlockAddr::new(0, BlockMeta::new(BlockLevel(3))) });
     assert_eq!(a.allocate_exact(unsafe { BlockAddr::new(0, BlockMeta::new(BlockLevel(2))) }), None);
 }
+
+/// A8: rehacer el diario del asignador (cada `ALLOC_GC_THRESHOLD` generaciones) con el disco fragmentado: lo que tarda,
+/// y que al reabrir el disco el asignador sale igual. Para medir: `cargo test --release rehacer -- --nocapture`.
+#[cfg(feature = "std")]
+#[test]
+fn rehacer_el_diario_del_asignador() {
+    use crate::{DiskMemory, FileSystem, Node, Transaction, TreePtr};
+    let mut fs = FileSystem::create(DiskMemory::new(256 << 20), None, 0, 0).unwrap();
+    let data = vec![7u8; 4096];
+    let raiz = TreePtr::<Node>::root();
+    for i in 0..6000 {
+        fs.tx(|tx| {
+            let n = tx.create_node(raiz, &format!("f{i}"), Node::MODE_FILE | 0o644, 0, 0)?;
+            tx.write_node(n.ptr(), 0, &data, 0, 0)?;
+            Ok(())
+        })
+        .unwrap();
+    }
+    for i in (0..6000).step_by(2) {
+        fs.tx(|tx| tx.remove_node(raiz, &format!("f{i}"), Node::MODE_FILE).map(|_| ())).unwrap();
+    }
+    let trozos = fs.allocator().levels().iter().map(|l| l.len()).sum::<usize>();
+    let t = std::time::Instant::now();
+    Transaction::new(&mut fs).commit(true).unwrap();
+    let tarda = t.elapsed();
+    let antes = fs.allocator().levels().clone();
+    let bloque = fs.block;
+    let FileSystem { disk, .. } = fs;
+    let fs = FileSystem::open(disk, None, Some(bloque), false).unwrap();
+    std::eprintln!("A8 rehacer: {trozos} trozos libres; rehacer el diario {tarda:?}");
+    assert_eq!(fs.allocator().levels(), &antes, "al reabrir, el asignador sale igual");
+}
