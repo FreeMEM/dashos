@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9 y A12 |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9, A10 y A12 |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -412,3 +412,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sobrescribe un fichero aún no duradero falla; el fichero se sigue leyendo como antes, y también tras `durable` y
   reabrir, y el disco queda limpio. Sin el arreglo falla ya la primera lectura (el bloque se había olvidado). Sin
   medir: solo cambia cuándo se hace.
+- A10, comprobar y reparar al arrancar: antes de atender a nadie, `archivos` comprueba los metadatos (sin leer los
+  datos) y, si hay algo mal, repara con `repair.rs` (una transacción: si se va la luz a medias, queda como estaba);
+  si algo queda sin arreglar, el disco va de solo lectura. Herramienta nueva, `estropear`, que pone a mano los
+  enlaces de un nodo. Prueba en virt: el disco de pruebas sale con los enlaces de `LEEME.txt` a 7, y su montaje
+  comprueba que el daño se ve; al arrancar, "1 problemas; reparado, quedan 0" (20 ms en un disco de 7 MB) y la
+  comprobación final desde Linux sale limpia. Falta: la reparación como acción de administrador con el servicio en
+  marcha (hoy reconstruir el árbol con asas abiertas no es seguro) y medir lo que tarda con un disco grande.

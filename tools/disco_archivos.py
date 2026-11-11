@@ -142,6 +142,14 @@ with tempfile.TemporaryDirectory() as t:
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
+    # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
+    # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
+    estropear = os.path.join(os.path.dirname(duenos), "estropear")
+    subprocess.run([estropear, fs, "0", "LEEME.txt", "7"], check=True)
+    ver = os.path.join(os.path.dirname(duenos), "ver")
+    roto = subprocess.run([ver, fs, "0", "--comprobar"], capture_output=True, text=True).stdout
+    if roto == "sin problemas\n":
+        sys.exit("disco de pruebas: el daño de A10 no se ve al comprobar")
     d = bytearray(1 << 20)
     s0 = b"DashOS: sector 0 del disco NVMe"
     d[: len(s0)] = s0

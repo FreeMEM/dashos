@@ -33,6 +33,7 @@ DashOS en marcha con 4 núcleos.
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
+~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 ~│   [ficheros] raíz (6 entradas, fin bien): C/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.

@@ -1616,6 +1616,25 @@ fn principal() -> u64 {
         }
     };
     println!("  [archivos] RedoxFS abierto: {} KB, {} KB libres", fs.header.size() / 1024, fs.allocator().free() * BLOCK_SIZE / 1024);
+    // A10: antes de atender a nadie, se comprueban los metadatos (sin leer los datos: es lo que tarda) y, si hay algo
+    // mal, se repara (en una transacción: si se va la luz a medias, el disco queda como estaba). Con algo sin
+    // arreglar, el disco va de solo lectura hasta que un administrador lo arregle.
+    let t0 = dashos::ahora_us();
+    let reparado = redoxfs::repair::repair(&mut fs, redoxfs::check::Options { data: false }, true, "Perdidos");
+    let us = dashos::ahora_us() - t0;
+    let mut solo_lectura_al_arrancar = false;
+    match reparado {
+        Ok((antes, None)) if antes.is_clean() => println!("  [archivos] comprobado al arrancar: limpio ({} µs)", us),
+        Ok((antes, despues)) => {
+            let quedan = despues.map_or(0, |d| d.problems.len());
+            println!("  [archivos] comprobado al arrancar: {} problemas; reparado, quedan {} ({} µs)", antes.problems.len(), quedan, us);
+            solo_lectura_al_arrancar = quedan > 0;
+        }
+        Err(e) => {
+            println!("  [archivos] comprobar al arrancar falló ({}): solo lectura", e);
+            solo_lectura_al_arrancar = true;
+        }
+    }
 
     // Paso B: las transacciones se confirman en memoria y van al disco al cerrar lo cambiado, al vaciar, con `GUARDAR`,
     // con las órdenes de `SIEMPRE_AL_DISCO`, al juntarse `MAX_SUCIO` o tras `PLAZO_US`. Si se va la luz, el disco
@@ -1625,7 +1644,7 @@ fn principal() -> u64 {
     let mut plazo: Option<(u64, u32)> = None;
     let mut clientes: Vec<Option<Cliente>> = (0..MAX_CLIENTES).map(|_| None).collect();
     let mut altas: BTreeMap<u64, Ficha> = BTreeMap::new();
-    let mut solo_lectura = false;
+    let mut solo_lectura = solo_lectura_al_arrancar;
     let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new() };
     let mut buf = [0u8; 256];
     loop {

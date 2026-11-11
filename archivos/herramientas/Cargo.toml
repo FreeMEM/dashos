@@ -16,3 +16,7 @@ path = "src/ver.rs"
 [[bin]]
 name = "duenos"
 path = "src/duenos.rs"
+
+[[bin]]
+name = "estropear"
+path = "src/estropear.rs"
