@@ -708,8 +708,8 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &r[..4 + ENTRADA_NOMBRE * van], &[]);
                 }
                 REGISTRO => {
-                    // Solo `guardian` lee el registro (U6).
-                    if !yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) {
+                    // Solo `guardian` y el centro de control leen el registro (U6, S10c).
+                    if !yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre))) {
                         dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
                     } else {
                         let desde = u64_en(4) as usize;

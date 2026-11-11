@@ -28,7 +28,7 @@ pub const VOLVER: u32 = 5;
 pub const SERVICIO: u32 = 6;
 /// De un programa: renunciar a la llave de un servicio (como `SERVICIO`). `sesiones` la revoca: deja de servir.
 pub const DEJAR: u32 = 7;
-/// De `guardian` (U6): el registro de seguridad desde la entrada que se diga (u64), por páginas de
+/// De `guardian` o del centro de control (U6, S10c): el registro de seguridad desde la entrada que se diga (u64), por páginas de
 /// `POR_PAGINA_REGISTRO`: cuántas van (u32), cuántas hay (u32) y las entradas de `ENTRADA_REGISTRO` bytes (tipo u32,
 /// estado i32, quién 16 bytes, qué 16 bytes). A cualquier otro le contesta -2 (cuatro bytes).
 pub const REGISTRO: u32 = 8;

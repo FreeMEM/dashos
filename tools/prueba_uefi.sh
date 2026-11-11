@@ -118,7 +118,8 @@ while time.time() - inicio < total:
             continue
         # S10c: el centro de control. `guardian` avisa 3 s antes de pedirle que abra Permisos: se deja de teclear, para que
         # su ventana se lleve el teclado (S8: 2 s sin teclas). Dentro, flecha abajo (pide · eco) y Supr para quitarlo;
-        # luego Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm, la ventana con la fila marcada.
+        # luego Tab (a la lista de categorías) y flecha abajo (Seguridad), y Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm,
+        # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
         if centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
         if centro == 1:
@@ -143,7 +144,25 @@ while time.time() - inicio < total:
                     mandar("sendkey delete")
                 time.sleep(0.25)
                 continue
+            centro = 5
+            time.sleep(0.5)
+            mandar("sendkey tab")
+            time.sleep(0.3)
+            mandar("sendkey down")
+            reintento = time.time() + 4
+        if centro == 5:
+            if "[centro] Seguridad, " not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey tab")
+                    time.sleep(0.3)
+                    mandar("sendkey down")
+                time.sleep(0.25)
+                continue
             centro = 3
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".seg.ppm")
             time.sleep(0.5)
             mandar("sendkey esc")
             reintento = time.time() + 4

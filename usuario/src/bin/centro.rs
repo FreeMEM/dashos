@@ -1,12 +1,15 @@
 //! S10c, fase C1: el centro de control, la ventana de Ajustes (diseño en `docs/diseño/S10c-centro-de-control.md`, con
-//! ideas del de DMS). A la izquierda, las categorías; a la derecha, la elegida. De momento una, **Permisos** (Prefs de
-//! U6): lo que el usuario ha concedido a cada programa, y quitarlo, que lo revoca en el acto (`sesiones`, RETIRAR).
+//! ideas del de DMS). A la izquierda, las categorías; a la derecha, la elegida:
+//! - **Permisos** (Prefs de U6): lo que el usuario ha concedido a cada programa, y quitarlo, que lo revoca en el acto
+//!   (`sesiones`, RETIRAR).
+//! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
 //! Si el mensaje trae una llave, cuando se cierra la ventana se contesta por ella (4 bytes a cero). Ver y quitar lo
 //! concedido solo se lo deja `sesiones` a quien se llama "centro" (o `guardian`), y ese nombre lo da `inicio`.
 //!
-//! Teclado: flechas para elegir, Supr para quitar, Esc para cerrar. Ratón: elegir y el botón Quitar o Cerrar.
+//! Teclado: flechas para elegir, Tab para pasar de la lista de categorías a la de la derecha, Supr para quitar, Esc para
+//! cerrar. Ratón: elegir y el botón Quitar o Cerrar.
 //!
 //! Llaves: 1 el canal "ventanas", 2 el canal "sesiones", 3 su canal "centro".
 
@@ -43,7 +46,8 @@ const CANAL: u32 = 3;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
 /// Las categorías, por su nombre de enlace (lo que va tras "abrir") y el que se ve. Irán creciendo (S10c).
-const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos")];
+const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad")];
+const PERMISOS: usize = 0;
 /// Teclas de Linux que mira el centro antes que el kit.
 const TECLA_ESC: u32 = 1;
 const TECLA_SUPR: u32 = 111;
@@ -103,6 +107,54 @@ fn retirar(programa: &str, servicio: &str) -> i32 {
     if a_sesiones(&p[..12 + lp + ls], &mut r) == 4 { i32::from_le_bytes(r) } else { i32::MIN }
 }
 
+/// El registro de seguridad entero (como mucho las últimas 64 entradas), lo último primero, ya en texto.
+fn registro() -> Vec<String> {
+    let mut lineas = Vec::new();
+    let mut desde = 0u64;
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&s::REGISTRO.to_le_bytes());
+        p[4..12].copy_from_slice(&desde.to_le_bytes());
+        let mut r = [0u8; MAX_DATOS];
+        let n = a_sesiones(&p, &mut r);
+        if n < 8 {
+            println!("  [centro] sesiones no da el registro ({} bytes)", n);
+            break;
+        }
+        let u32_en = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+        let (van, total) = (u32_en(0) as usize, u32_en(4) as usize);
+        if van == 0 || 8 + van * s::ENTRADA_REGISTRO > n as usize {
+            break;
+        }
+        let texto = |b: &[u8]| String::from(core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(b.len())]).unwrap_or("?"));
+        for k in 0..van {
+            let e = &r[8 + k * s::ENTRADA_REGISTRO..8 + (k + 1) * s::ENTRADA_REGISTRO];
+            let (tipo, estado) = (u32::from_le_bytes(e[0..4].try_into().unwrap()), i32::from_le_bytes(e[4..8].try_into().unwrap()));
+            let accion = match tipo {
+                s::R_MATAR => "matar",
+                s::R_SERVICIO => "servicio",
+                s::R_ENTRAR => "entrar",
+                s::R_FALLO => "fallo",
+                s::R_LANZAR => "lanzar",
+                s::R_ADMIN => "administrar",
+                _ => "?",
+            };
+            let como = match estado {
+                0 => String::from("hecho"),
+                s::PROTEGIDO => String::from("negado"),
+                e => alloc::format!("error {}", e),
+            };
+            lineas.push(alloc::format!("{} · {} {} · {}", texto(&e[8..24]), accion, texto(&e[24..40]), como).replace('|', "¦"));
+        }
+        desde += van as u64;
+        if desde as usize >= total {
+            break;
+        }
+    }
+    lineas.reverse();
+    lineas
+}
+
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 fn filas(lista: &[(String, String)]) -> String {
     let f: Vec<String> = lista.iter().map(|(p, s)| alloc::format!("{} · {}", p, s).replace('|', "¦")).collect();
@@ -135,9 +187,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         (atr::VALOR, Valor::Int(categoria as i64)),
         (atr::PESO, Valor::Int(40)),
     ]);
-    let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(CATEGORIAS[categoria].1.into()))]);
-    let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto("Lo que cada programa puede usar. Quitarlo lo revoca ya.".into()))]);
-    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(filas(&lista))), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
+    let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
     let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into()))]);
     let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
@@ -152,6 +204,26 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     i.foco = Some(permisos);
+    // Lo de la derecha según la categoría.
+    let mut cat = categoria;
+    let mut lineas_registro: Vec<String> = Vec::new();
+    let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
+        let (explicacion, contenido) = if cat == PERMISOS {
+            ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
+        } else {
+            ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
+        };
+        i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(CATEGORIAS[cat].1.into()));
+        i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
+        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
+        i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
+        i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS));
+    };
+    if cat != PERMISOS {
+        lineas_registro = registro();
+    }
+    poner(&mut i, cat, &lista, &lineas_registro);
     i.colocar(Rect::new(0, 0, ANCHO, ALTO));
 
     let tamano = (ANCHO * ALTO * 4) as usize;
@@ -210,7 +282,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     if !configurada {
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
-                        println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[categoria].1, lista.len());
+                        println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
                     }
                     false
                 }
@@ -238,7 +310,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     false
                 }
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_ESC => return Some(()),
-                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) => {
+                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && cat == PERMISOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar".into()));
                     false
                 }
@@ -249,8 +321,29 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 }
                 _ => false,
             };
+            // Otra categoría elegida en la barra lateral.
+            let elegida = i.arbol.leer(lado, atr::VALOR).map_or(-1, Valor::int);
+            if let Ok(nueva) = usize::try_from(elegida)
+                && nueva < CATEGORIAS.len()
+                && nueva != cat
+            {
+                cat = nueva;
+                if cat == PERMISOS {
+                    lista = concedidos();
+                    println!("  [centro] {}: {} concedidos", CATEGORIAS[cat].1, lista.len());
+                } else {
+                    lineas_registro = registro();
+                    let hostil = lineas_registro.iter().any(|l| l.starts_with("hostil · "));
+                    println!("  [centro] {}, con negativas del hostil: {}; {} entradas", CATEGORIAS[cat].1, if hostil { "sí" } else { "no" }, lineas_registro.len());
+                }
+                poner(&mut i, cat, &lista, &lineas_registro);
+                cambio = true;
+            }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cerrar") => return Some(()),
+                Some("quitar") if cat != PERMISOS => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                }
                 Some("quitar") => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);

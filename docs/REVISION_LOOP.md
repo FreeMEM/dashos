@@ -850,3 +850,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   quedan 0) y se cierra; el disco acaba con el fichero de permisos vacío, como antes. Hostil: el cliente hostil pide
   CONCEDIDOS y recibe -2 y 16 bytes sin nada. Captura en `docs/capturas/s10c-centro-permisos.png`. El ratón (clic en
   Quitar) no se prueba en QEMU: el guion no sabe dónde queda la ventana.
+- S10c, C1, segunda categoría: **Seguridad**, el registro de `sesiones` (negativas y fallos, lo último primero, con
+  "hecho", "negado" o "error N"), solo de lectura (Quitar, apagado). El registro lo leía solo `guardian`; ahora también
+  el centro (`REGISTRO`, con la lista `VEN_PERMISOS`). Se cambia de categoría en la barra lateral (Tab para llegar a
+  ella con el teclado). Prueba en virt: tras quitar el permiso, Tab y flecha abajo; el centro dice "Seguridad, con
+  negativas del hostil: sí; 18 entradas". El hostil sigue sin poder leer el registro (su prueba de antes). Pendiente:
+  con varias sesiones, que cada usuario vea solo lo suyo (hoy hay una sesión cada vez). Captura en
+  `docs/capturas/s10c-centro-seguridad.png`.
