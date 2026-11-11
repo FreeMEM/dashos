@@ -16,6 +16,8 @@ struct Volatile {
     /// If set, the next flush writes only this many of the pending blocks, lowest first, and fails: the power goes
     /// in the middle (the header ring is at the lowest blocks, so it goes first).
     limit: Option<usize>,
+    /// A12: while set, every write fails (a disk error in the middle of a transaction).
+    fail_writes: bool,
 }
 
 impl Volatile {
@@ -45,6 +47,9 @@ impl Disk for Volatile {
     }
 
     unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
+        if self.fail_writes {
+            return Err(syscall::error::Error::new(syscall::error::EIO));
+        }
         for (i, b) in buffer.chunks(BLOCK_SIZE as usize).enumerate() {
             let mut full = vec![0; BLOCK_SIZE as usize];
             full[..b.len()].copy_from_slice(b);
@@ -84,7 +89,7 @@ type Fs = FileSystem<Volatile>;
 const FILE: u16 = Node::MODE_FILE | 0o644;
 
 fn new_fs() -> Fs {
-    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new(), limit: None };
+    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new(), limit: None, fail_writes: false };
     let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
     fs.disk.flush().unwrap();
     fs
@@ -331,4 +336,28 @@ fn perfil() {
     for _ in 0..10000 { fs.tx(|_| Ok(())).unwrap(); }
     eprintln!("transacción vacía {:?}, libres en {} trozos", t.elapsed() / 10000, fs.allocator.levels().iter().map(|l| l.len()).sum::<usize>());
     eprintln!("por fichero: crear {:?}, escribir {:?}, guardar {:?}, borrar {:?}", crear / 10000, escribir / 10000, guardar / 10000, borrar / 10000);
+}
+
+/// A12: a transaction that frees blocks of an earlier deferred commit and then fails writing must not take them out of
+/// the disk's cache: the committed state still uses them. After `durable` and a reopen, the file is as it was.
+#[test]
+fn a_failed_transaction_keeps_the_blocks_of_the_previous_one() {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let before = noise(200 * 1024, 1);
+    put(&mut fs, "f", &before);
+    fs.disk.fail_writes = true;
+    let r = fs.tx(|tx| {
+        let n = tx.find_node(TreePtr::root(), "f")?;
+        tx.write_node(n.ptr(), 0, &noise(200 * 1024, 2), 0, 0)?;
+        Ok(())
+    });
+    assert!(r.is_err(), "the write had to fail");
+    fs.disk.fail_writes = false;
+    assert_eq!(get(&mut fs, "f").as_deref(), Some(&before[..]));
+    fs.durable().unwrap();
+    let block = fs.block;
+    let mut fs = reopen(fs.disk.cut(false), block);
+    assert_eq!(get(&mut fs, "f").as_deref(), Some(&before[..]), "after durable and a reopen");
+    assert_clean(&mut fs);
 }

@@ -103,6 +103,10 @@ pub struct Transaction<'a, D: Disk> {
     pub(crate) quarantine: Vec<BlockAddr>,
     /// Blocks allocated by this transaction while `deferred`: they join `FileSystem::fresh` on commit.
     pub(crate) fresh: Vec<(u64, u64)>,
+    /// DashOS, A12: blocks of an earlier deferred commit (in `FileSystem::fresh`) freed by this transaction. They leave
+    /// `fresh` and the disk forgets them only when this transaction commits: if it fails, the committed state still
+    /// uses them, and their data must still reach the disk.
+    forget_on_commit: Vec<(u64, u64)>,
 }
 
 /// How many checked blocks `FileSystem::verified` remembers (16 bytes each).
@@ -128,6 +132,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
             cipher: None,
             quarantine: Vec::new(),
             fresh: Vec::new(),
+            forget_on_commit: Vec::new(),
         }
     }
 
@@ -142,6 +147,10 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
         self.fs.quarantine.append(&mut self.quarantine);
         self.fs.fresh.extend(self.fresh.drain(..));
+        for key in self.forget_on_commit.drain(..) {
+            self.fs.fresh.remove(&key);
+            self.fs.disk.forget(self.fs.block + key.0, key.1);
+        }
         Ok(())
     }
 
@@ -327,10 +336,15 @@ impl<'a, D: Disk> Transaction<'a, D> {
         //TODO: optimize allocator log in memory
         while let Some(addr) = self.deallocate.pop() {
             let key = (addr.index(), addr.level().blocks::<u64>());
-            if self.fs.deferred && !self.fs.fresh.remove(&key) && !self.fresh.contains(&key) {
+            let earlier = self.fs.deferred && self.fs.fresh.contains(&key);
+            if self.fs.deferred && !earlier && !self.fresh.contains(&key) {
                 self.quarantine.push(addr);
             } else {
-                if self.fs.deferred {
+                if earlier {
+                    // A12: not yet; on commit (see `forget_on_commit`).
+                    self.forget_on_commit.push(key);
+                } else if self.fs.deferred {
+                    // Allocated by this very transaction: if it fails, nobody uses it.
                     self.fs.disk.forget(self.fs.block + key.0, key.1);
                 }
                 self.allocator.get_or_insert_with(|| self.fs.allocator.clone()).deallocate(addr);
@@ -2428,7 +2442,7 @@ impl<'a, D: Disk> Transaction<'a, D> {
                 }
 
                 // Write record to disk
-                //TODO: deallocate new_addr on failure?
+                // On failure, new_addr goes with the transaction's copy of the allocator: nothing to undo (A12).
                 record_ptr = unsafe { self.write_block(record)? };
 
                 // Update record pointer

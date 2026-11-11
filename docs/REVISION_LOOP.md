@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9 |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9 y A12 |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -404,3 +404,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   arreglo (comprobado). Además, una ranura de clave rota ya no hace pánico al abrir un disco cifrado (no abre). Lo
   demás que señalaba la revisión (`BlockAddr::new`, `with_epoch`) solo recibe valores calculados, no del disco, y el
   `count` de los registros de confirmación está acotado (255 bloques). Sin medir: una comparación por lectura.
+- A12, `sync_allocator` ya no cambia nada fuera de la transacción antes de confirmar: un bloque de una confirmación
+  diferida anterior (en `fs.fresh`) que la transacción suelta se apunta en `forget_on_commit`, y solo al confirmar
+  sale de `fresh` y el disco lo olvida. Los nacidos en la propia transacción se olvidan al momento (si falla, nadie
+  los usa). El TODO de liberar al fallar no era un fallo: lo reservado vive en la copia del asignador de la
+  transacción. Prueba (`tests_deferred`, con un disco que falla al escribir cuando se le pide): una transacción que
+  sobrescribe un fichero aún no duradero falla; el fichero se sigue leyendo como antes, y también tras `durable` y
+  reabrir, y el disco queda limpio. Sin el arreglo falla ya la primera lectura (el bloque se había olvidado). Sin
+  medir: solo cambia cuándo se hace.
