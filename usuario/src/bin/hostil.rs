@@ -193,6 +193,17 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
     if p(CERRAR, 2, 0, 0, "").map(|r| r.0) == Some(BIEN) {
         return "cierra una raíz";
     }
+    // U2: un alta con raíces solo vale sin marca (de `inicio` o `sesiones`): la suya, con el disco entero para
+    // escribir en el hueco 5, no le da nada.
+    let mut alta = [0u8; 40];
+    alta[0..4].copy_from_slice(&ALTA.to_le_bytes());
+    alta[8..16].copy_from_slice(&u64::MAX.to_le_bytes());
+    alta[32..36].copy_from_slice(&[5, 6, 0, 0]);
+    escribir(ARCHIVOS, &alta[..36], &[]);
+    let _ = leer_con_plazo(lectura, copia, &mut [0u8; 32]);
+    if p(LISTAR, 5, 0, 0, "").map(|r| r.0) != Some(ASA_MALA) {
+        return "se da raíces con un alta suya";
+    }
     if p(BUSCAR, 7, 0, 0, "grande.txt").map(|r| r.0) != Some(ASA_MALA) {
         return "usa un hueco de raíz vacío";
     }
@@ -524,7 +535,7 @@ fn sesiones(memoria: u32) -> bool {
     dashos::cerrar(lectura);
     let t = s::Nombres::desde(&rn[..n.max(0) as usize]);
     let mut sal = [0u8; 64];
-    let home = matches!(t.resolver("home:Notas/a", &mut sal), Some((v, x)) if v == b"Carla" && x == "Notas/a");
+    let home = matches!(t.resolver("home:Notas/a", &mut sal), Some((None, v, x)) if v == b"Carla" && x == "Notas/a");
     let nombres = n > 0 && t.len() == 3 && home && t.resolver("Ana:x", &mut sal).is_none() && t.resolver("PROGDIR:x", &mut sal).is_none();
     if !nombres {
         println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);

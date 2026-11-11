@@ -102,6 +102,7 @@ DashOS en marcha con 4 núcleos.
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
 ~│   [sesiones] pide pide eco: 0
 ~│   [pide] U4: bien
+~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [sesiones] hostil pide eco: -2
 ~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien

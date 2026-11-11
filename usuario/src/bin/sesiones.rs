@@ -30,6 +30,13 @@ const CANAL: u32 = 3;
 /// Llave 4: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
 /// que lanza (marcada con su número) y su aviso de fin.
 const PROPIO: u32 = 4;
+/// Llave 5: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
+/// marcada con su número.
+const ARCHIVOS_ALTAS: u32 = 5;
+/// Las raíces con que nace lo que lanza: la 0, el cajón de donde salió (`PROGDIR:`); la 1, el disco para leer
+/// (`SYS:`, `Programas:`); la 2, el volumen de su usuario (`Home:`), si tiene cuenta.
+const RAIZ_SYS: u8 = 1;
+const RAIZ_HOME: u8 = 2;
 /// Los servicios que reparte, con la llave sin marca de cada uno.
 const REPARTE: &[(&str, u32)] = &[("eco", 2)];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8) y de lo que diga el usuario.
@@ -200,6 +207,32 @@ struct Ficha {
 /// cifrado y su `Home:`.
 const CUENTAS: &[(u32, &str)] = &[(1000, "Ana"), (1001, "Carla")];
 
+/// El alta en archivos (orden 100, sin marca) de lo que lanza: su usuario y su grupo, sin derechos, la raíz 0 en el
+/// cajón de donde sale y sus otras raíces: el disco para leer y, si tiene cuenta, su volumen para leer y escribir.
+fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>) {
+    let mut m = [0u8; 160];
+    let dir = &dir[..dir.len().min(64)];
+    m[0..4].copy_from_slice(&dashos::protocolo::archivos::ALTA.to_le_bytes());
+    m[8..16].copy_from_slice(&pid.to_le_bytes());
+    m[16..20].copy_from_slice(&uid.to_le_bytes());
+    m[20..24].copy_from_slice(&gid.to_le_bytes());
+    m[24..28].copy_from_slice(&(dir.len() as u32).to_le_bytes());
+    let mut o = 32;
+    m[o..o + dir.len()].copy_from_slice(dir);
+    o += dir.len();
+    let mut raiz = |hueco: u8, tope: u8, vol: &[u8], cam: &[u8]| {
+        m[o..o + 4].copy_from_slice(&[hueco, tope, vol.len() as u8, cam.len() as u8]);
+        m[o + 4..o + 4 + vol.len()].copy_from_slice(vol);
+        m[o + 4 + vol.len()..o + 4 + vol.len() + cam.len()].copy_from_slice(cam);
+        o += 4 + vol.len() + cam.len();
+    };
+    raiz(RAIZ_SYS, 4, b"", b"");
+    if let Some(c) = cuenta {
+        raiz(RAIZ_HOME, 6, &c[..c.len().min(16)], b"");
+    }
+    dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
+}
+
 fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
@@ -332,10 +365,26 @@ fn principal() -> u64 {
                                 // Nace con una llave: su canal con `sesiones`, marcado con su número (que viaja una vez).
                                 let pid = siguiente_pid;
                                 let canal_suyo = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
-                                let llaves: &[u32] = if canal_suyo > 0 { &[canal_suyo as u32] } else { &[] };
+                                // Su alta en archivos, antes que él: su usuario, y sus raíces (U2).
+                                let (uid, gid) = yo.map_or((1, 1), |f| (f.uid, f.gid));
+                                let corto_ = camino.rsplit(|&c| c == b'/').next().unwrap_or(camino);
+                                let dir = &camino[..camino.len() - corto_.len()];
+                                let dir = dir.strip_suffix(b"/").unwrap_or(dir);
+                                let cuenta = CUENTAS.iter().find(|c| c.0 == uid).map(|c| c.1.as_bytes());
+                                alta_archivos(pid, uid, gid, dir, cuenta);
+                                // Y su llave de archivos, marcada con su número: va la segunda.
+                                let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
+                                let todas = [canal_suyo as u32, archivos_suyo as u32];
+                                let llaves: &[u32] = match (canal_suyo > 0, archivos_suyo > 0) {
+                                    (true, true) => &todas,
+                                    (true, false) => &todas[..1],
+                                    _ => &[],
+                                };
                                 let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, llaves) } else { g };
-                                if p <= 0 && canal_suyo > 0 {
-                                    dashos::cerrar(canal_suyo as u32);
+                                if p <= 0 {
+                                    for &l in llaves {
+                                        dashos::cerrar(l);
+                                    }
                                 }
                                 dashos::cerrar(mem);
                                 if p <= 0 {
@@ -378,22 +427,27 @@ fn principal() -> u64 {
                     // Sin ficha, vacía.
                     let mut r = [0u8; 4 + ENTRADA_NOMBRE * MAX_NOMBRES];
                     let mut van = 0;
-                    let mut poner = |nombre: &[u8], vol: &[u8], sub: &[u8]| {
+                    let mut poner = |nombre: &[u8], raiz: u8, vol: &[u8], sub: &[u8]| {
                         let o = 4 + ENTRADA_NOMBRE * van;
                         r[o..o + nombre.len().min(12)].copy_from_slice(&nombre[..nombre.len().min(12)]);
-                        r[o + 12..o + 12 + vol.len().min(12)].copy_from_slice(&vol[..vol.len().min(12)]);
+                        r[o + 12] = raiz;
+                        r[o + 13..o + 13 + vol.len().min(11)].copy_from_slice(&vol[..vol.len().min(11)]);
                         r[o + 24..o + 24 + sub.len().min(24)].copy_from_slice(&sub[..sub.len().min(24)]);
                         van += 1;
                     };
                     if let Some(f) = yo {
-                        poner(b"SYS", b"", b"");
-                        poner(b"Programas", b"", b"Programas");
+                        // Lo lanzado desde el disco nace con sus raíces (su alta en archivos); lo demás, sin ellas, va
+                        // por volumen y subcamino desde su raíz 0.
+                        let lanzado = f.progdir[0] != 0;
+                        let (sys, home, progdir) = if lanzado { (RAIZ_SYS, RAIZ_HOME, 0) } else { (SIN_RAIZ, SIN_RAIZ, SIN_RAIZ) };
+                        poner(b"SYS", sys, b"", b"");
+                        poner(b"Programas", sys, b"", b"Programas");
                         if let Some(&(_, cuenta)) = CUENTAS.iter().find(|c| c.0 == f.uid) {
-                            poner(b"Home", cuenta.as_bytes(), b"");
+                            poner(b"Home", home, cuenta.as_bytes(), b"");
                         }
-                        if f.progdir[0] != 0 {
+                        if lanzado {
                             let largo = f.progdir.iter().position(|&c| c == 0).unwrap_or(24);
-                            poner(b"PROGDIR", b"", &f.progdir[..largo]);
+                            poner(b"PROGDIR", progdir, b"", if progdir == SIN_RAIZ { &f.progdir[..largo] } else { b"" });
                         }
                     }
                     r[0..4].copy_from_slice(&(van as u32).to_le_bytes());

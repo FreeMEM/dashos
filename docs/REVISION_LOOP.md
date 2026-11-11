@@ -320,3 +320,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   derecho de repartir) y otra cesión no pisa la suya. Sin medir: una búsqueda de más por petición en un mapa casi
   siempre vacío. Falta que `sesiones` ceda las raíces de cada nombre de la tabla al lanzar (el programa aún no tiene
   sesión de archivos cuando nace).
+- U2, nacer con raíces: `inicio` da a `sesiones` una copia sin marca del canal de archivos (su llave 5). Al LANZAR,
+  `sesiones` manda antes el alta del programa (orden 100, sin marca): su usuario, la raíz 0 en el cajón de donde
+  sale (`PROGDIR:`), la 1 el disco para leer (`SYS:`, `Programas:`) y la 2 su volumen para leer y escribir (`Home:`)
+  si tiene cuenta; y le da su llave de archivos marcada con su número (la segunda con que nace). `archivos` lee las
+  raíces de más del alta (hueco, tope, volumen y camino; la que no encuentra, la dice y sigue) y se las pone al
+  abrir la sesión. La tabla de nombres dice ahora en qué raíz está cada nombre (`SIN_RAIZ` para lo que no lanzó
+  `sesiones`: por volumen y subcamino desde su raíz 0). Prueba: `pide` lanzado del disco abre su sesión con esa
+  llave y por la tabla encuentra `PROGDIR:pide`, `Programas:hola` y `SYS:LEEME.txt`; por `SYS:` no crea (-12) ni
+  la cierra (-5). `hostil` manda un alta suya con el disco entero para escribir en el hueco 5: no le da nada (un
+  alta solo vale sin marca). Falta: `Home:` probado con un usuario con cuenta y el volumen abierto (los lanzados en
+  las pruebas son del usuario 1), `RAM:T` y raíces de cada paquete (S8).

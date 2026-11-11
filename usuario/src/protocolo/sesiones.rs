@@ -37,11 +37,14 @@ pub const REGISTRO: u32 = 8;
 /// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
 pub const LANZAR: u32 = 9;
 /// De un programa (U2): su tabla de nombres. Contesta cuántos (u32) y hasta `MAX_NOMBRES` entradas de
-/// `ENTRADA_NOMBRE` bytes: el nombre (12, sin los dos puntos), el volumen (12; vacío es el disco) y el subcamino (24).
-/// Depende de quien pide (por su marca): su usuario da `Home:`, y el cajón de donde se lanzó, `PROGDIR:`.
+/// `ENTRADA_NOMBRE` bytes: el nombre (12, sin los dos puntos), la raíz del servicio de archivos donde está (1 byte;
+/// `SIN_RAIZ` si no tiene una propia y va por volumen y subcamino desde su raíz 0), el volumen (11; vacío es el disco)
+/// y el subcamino dentro de la raíz (24). Depende de quien pide (por su marca): su usuario da `Home:`, y el cajón de
+/// donde se lanzó, `PROGDIR:`. Lo que lanza `sesiones` nace con esas raíces (su alta en archivos).
 pub const NOMBRES: u32 = 10;
 pub const ENTRADA_NOMBRE: usize = 48;
 pub const MAX_NOMBRES: usize = 5;
+pub const SIN_RAIZ: u8 = 0xff;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
 /// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
@@ -86,21 +89,22 @@ impl Nombres {
         self.n
     }
 
-    /// La entrada `i`: (nombre, volumen, subcamino).
-    pub fn entrada(&self, i: usize) -> Option<(&[u8], &[u8], &[u8])> {
+    /// La entrada `i`: (nombre, raíz, volumen, subcamino).
+    pub fn entrada(&self, i: usize) -> Option<(&[u8], Option<u8>, &[u8], &[u8])> {
         let e = self.e.get(i).filter(|_| i < self.n)?;
-        Some((campo(&e[..12]), campo(&e[12..24]), campo(&e[24..])))
+        Some((campo(&e[..12]), Some(e[12]).filter(|&r| r != SIN_RAIZ), campo(&e[13..24]), campo(&e[24..])))
     }
 
-    /// Traduce "Nombre:resto" a (volumen, camino), con el camino escrito en `sal`. El nombre no distingue mayúsculas,
+    /// Traduce "Nombre:resto" a (raíz, volumen, camino), con el camino escrito en `sal`: con raíz, el camino es desde
+    /// ella; sin ella, desde la raíz del volumen. El nombre no distingue mayúsculas,
     /// como en el Amiga. `None` si no hay ese nombre, si no cabe, o si el resto intenta salir del subcamino (un "/" al
     /// principio, que en el Amiga es subir, o un componente "..").
-    pub fn resolver<'a>(&self, camino: &str, sal: &'a mut [u8]) -> Option<(&[u8], &'a str)> {
+    pub fn resolver<'a>(&self, camino: &str, sal: &'a mut [u8]) -> Option<(Option<u8>, &[u8], &'a str)> {
         let (nombre, resto) = camino.split_once(':')?;
         if resto.starts_with('/') || resto.split('/').any(|c| c == "..") {
             return None;
         }
-        let (_, vol, sub) = (0..self.n).filter_map(|i| self.entrada(i)).find(|(n, _, _)| n.eq_ignore_ascii_case(nombre.as_bytes()))?;
+        let (_, raiz, vol, sub) = (0..self.n).filter_map(|i| self.entrada(i)).find(|(n, ..)| n.eq_ignore_ascii_case(nombre.as_bytes()))?;
         let mut largo = 0;
         let mut poner = |x: &[u8]| -> Option<()> {
             sal.get_mut(largo..largo + x.len())?.copy_from_slice(x);
@@ -112,6 +116,6 @@ impl Nombres {
             poner(b"/")?;
         }
         poner(resto.as_bytes())?;
-        Some((vol, core::str::from_utf8(&sal[..largo]).ok()?))
+        Some((raiz, vol, core::str::from_utf8(&sal[..largo]).ok()?))
     }
 }

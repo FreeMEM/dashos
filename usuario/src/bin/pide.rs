@@ -1,5 +1,6 @@
 //! U4: un programa con permiso para `eco`. Pide su llave a `sesiones`, la usa, renuncia y comprueba que la llave ya
-//! no sirve (revocada). Llave 1: el canal "sesiones".
+//! no sirve (revocada). Llave 1: el canal "sesiones". U2: su tabla de nombres y, lanzado desde el disco, sus raíces
+//! en archivos (llave 2, la que le da `sesiones` al lanzarlo).
 
 #![no_std]
 #![no_main]
@@ -10,6 +11,7 @@ use dashos::protocolo::sesiones::{Nombres, DEJAR, NOMBRES, SERVICIO};
 dashos::programa!(principal);
 
 const SESIONES: u32 = 1;
+const ARCHIVOS: u32 = 2;
 
 /// Una petición a `sesiones` con el nombre de un servicio: (estado, llave que llegue).
 fn pedir(orden: u32, servicio: &str) -> (i32, u32) {
@@ -93,18 +95,21 @@ fn nombres() -> (bool, bool) {
     }
     let t = Nombres::desde(&r[..n as usize]);
     for i in 0..t.len() {
-        if let Some((nombre, vol, sub)) = t.entrada(i) {
+        if let Some((nombre, raiz, vol, sub)) = t.entrada(i) {
             fn s(x: &[u8]) -> &str {
                 core::str::from_utf8(x).unwrap_or("?")
             }
-            println!("  [pide] {}: en {} {}", s(nombre), if vol.is_empty() { "el disco," } else { s(vol) }, s(sub));
+            match raiz {
+                Some(r) => println!("  [pide] {}: raíz {}, {}", s(nombre), r, s(sub)),
+                None => println!("  [pide] {}: en {} {}", s(nombre), if vol.is_empty() { "el disco," } else { s(vol) }, s(sub)),
+            }
         }
     }
     let mut sal = [0u8; 64];
     let mut va = |c: &str, vol: &str, ruta: Option<&str>| {
         let r = t.resolver(c, &mut sal);
         let bien = match (r, ruta) {
-            (Some((v, x)), Some(e)) => v == vol.as_bytes() && x == e,
+            (Some((_, v, x)), Some(e)) => v == vol.as_bytes() && x == e,
             (None, None) => true,
             _ => false,
         };
@@ -115,12 +120,75 @@ fn nombres() -> (bool, bool) {
     };
     let mut probe = [0u8; 64];
     let progdir = t.resolver("PROGDIR:", &mut probe).is_some();
-    let a = va("PROGDIR:pide", "", progdir.then_some("Programas/pide"));
-    let b = va("progdir:otro/x", "", progdir.then_some("Programas/otro/x"));
+    // Lanzado del disco, `PROGDIR:` es su raíz 0 (el cajón `Programas`); sin él, no hay.
+    let a = va("PROGDIR:pide", "", progdir.then_some("pide"));
+    let b = va("progdir:otro/x", "", progdir.then_some("otro/x"));
     let c = va("SYS:", "", Some(""));
     let d = va("Home:notas", "", None);
     let e = va("PROGDIR:/hola", "", None);
     let f = va("SYS:a/../../b", "", None);
     let g = va("sin dos puntos", "", None);
-    (t.len() == 2 + progdir as usize && a && b && c && d && e && f && g, progdir)
+    let raices = !progdir || raices(&t);
+    (t.len() == 2 + progdir as usize && a && b && c && d && e && f && g && raices, progdir)
+}
+
+/// Una orden al servicio de archivos: (estado, asa).
+fn orden(lectura: u32, orden: u32, asa: u32, x: u64, nombre: &str) -> (i32, u32) {
+    let mut p = [0u8; 96];
+    p[0..4].copy_from_slice(&orden.to_le_bytes());
+    p[4..8].copy_from_slice(&asa.to_le_bytes());
+    p[8..16].copy_from_slice(&x.to_le_bytes());
+    p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    p[32..32 + nombre.len()].copy_from_slice(nombre.as_bytes());
+    if dashos::canal_escribir(ARCHIVOS, &p[..32 + nombre.len()], &[]) != 0 {
+        return (i32::MIN, 0);
+    }
+    let mut r = [0u8; 32];
+    if dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 != 32 {
+        return (i32::MIN, 0);
+    }
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()))
+}
+
+/// U2: lanzado desde el disco nace con su llave de archivos y sus raíces, las de su tabla: la 0 su cajón (`PROGDIR:`)
+/// y la 1 el disco para leer (`SYS:`). Abre su sesión y busca por la tabla; por `SYS:` no crea (tope de solo leer) y
+/// no cierra sus raíces.
+fn raices(t: &Nombres) -> bool {
+    use dashos::protocolo::archivos as a;
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut s = [0u8; a::CABECERA];
+    s[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+    let mut r = [0u8; 32];
+    let mut ventana = [0u32; 1];
+    let sesion = dashos::canal_escribir(ARCHIVOS, &s, &[suyo]) == 0
+        && dashos::canal_leer_plazo(lectura, &mut r, &mut ventana, 3_000_000).0 == 32
+        && i32::from_le_bytes(r[0..4].try_into().unwrap()) == a::BIEN;
+    if !sesion {
+        println!("  [pide] U2: sin sesión en archivos ({})", i32::from_le_bytes(r[0..4].try_into().unwrap()));
+        dashos::cerrar(lectura);
+        return false;
+    }
+    let mut buscar = |camino: &str| -> (i32, u32) {
+        let mut sal = [0u8; 64];
+        match t.resolver(camino, &mut sal) {
+            Some((Some(raiz), _, ruta)) => orden(lectura, a::BUSCAR, raiz as u32, 0, ruta),
+            _ => (i32::MIN, 0),
+        }
+    };
+    let (yo, asa_yo) = buscar("PROGDIR:pide");
+    let (hola, asa_hola) = buscar("Programas:hola");
+    let (leeme, asa_leeme) = buscar("SYS:LEEME.txt");
+    for (e, asa) in [(yo, asa_yo), (hola, asa_hola), (leeme, asa_leeme)] {
+        if e == a::BIEN {
+            orden(lectura, a::CERRAR, asa, 0, "");
+        }
+    }
+    let crear = orden(lectura, a::CREAR, 1, a::FICHERO as u64, "mio.txt").0;
+    let cerrar = orden(lectura, a::CERRAR, 1, 0, "").0;
+    dashos::cerrar(lectura);
+    dashos::cerrar(ventana[0]);
+    let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN;
+    println!("  [pide] raíces: PROGDIR:pide {}, Programas:hola {}, SYS:LEEME.txt {}; crear por SYS: {}, cerrarla {}: {}",
+        yo, hola, leeme, crear, cerrar, if bien { "bien" } else { "MAL" });
+    bien
 }

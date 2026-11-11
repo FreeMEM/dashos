@@ -256,6 +256,17 @@ fn principal() -> u64 {
                 }
             }
         }
+        // A `sesiones`, además, una copia sin marca del canal de archivos (U2): con ella da de alta lo que lanza (con
+        // sus raíces) y le hace su llave marcada con su número. La suya, marcada, va donde siempre; esta es la última (la 5).
+        if nombre(nombre_cab) == "sesiones" && k < suyas.len() {
+            if let Some(c) = (0..32).find(|&c| pendientes[c] != 0 && de_canales & (1 << c) != 0 && nombre(lector[c] + 16) == "archivos") {
+                let copia = llave_duplicar(pendientes[c], 7, 0);
+                if copia > 0 {
+                    suyas[k] = copia as u32;
+                    k += 1;
+                }
+            }
+        }
         datos = (datos + 7) & !7;
         let origen = datos;
         datos += tamano;

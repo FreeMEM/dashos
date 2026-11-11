@@ -444,6 +444,8 @@ struct Ficha {
     derechos: u32,
     /// Volumen y nodo de su asa 0. No se sube por encima: no hay "cajón padre" ni se siguen enlaces.
     raiz: (u64, TreePtr<Node>),
+    /// Sus raíces 1 a 15 desde el alta (U2: las que pone `sesiones` al lanzar un programa), con su tope.
+    raices: [Option<(u64, TreePtr<Node>, u16)>; RAICES],
 }
 
 const R: u16 = 4;
@@ -1495,7 +1497,37 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
         println!("  [archivos] alta sin cajón raíz: {}", camino);
         return;
     };
-    let f = Ficha { uid, gid, derechos, raiz: (0, raiz) };
+    // Tras el camino, raíces de más (U2): hueco, tope (R, o R y W), largo del volumen y del camino, el volumen (vacío,
+    // el principal) y el camino desde su raíz. La que no se encuentre o no cuadre, fuera; las demás siguen.
+    let mut raices = [None; RAICES];
+    let mut o = CABECERA + largo;
+    while let Some(&[hueco, tope, lv, lc]) = m.get(o..o + 4).map(|x| <&[u8; 4]>::try_from(x).unwrap()) {
+        let (hueco, tope, lv, lc) = (hueco as usize, tope as u16, lv as usize, lc as usize);
+        let (Some(vol), Some(cam)) = (m.get(o + 4..o + 4 + lv), m.get(o + 4 + lv..o + 4 + lv + lc)) else { break };
+        o += 4 + lv + lc;
+        let (Ok(vol), Ok(cam)) = (core::str::from_utf8(vol), core::str::from_utf8(cam)) else { continue };
+        if hueco == 0 || hueco >= RAICES || (tope != R && tope != R | W) {
+            continue;
+        }
+        let id = if vol.is_empty() { Ok(0) } else { fs.tx(|tx| tx.find_volume(vol)) };
+        let nodo = id.and_then(|id| {
+            fs.tx_in(id, |tx| {
+                let mut n = tx.read_tree(TreePtr::<Node>::root())?;
+                for parte in cam.split('/').filter(|p| !p.is_empty()) {
+                    n = tx.find_node(n.ptr(), parte)?;
+                }
+                if !n.data().is_dir() {
+                    return Err(Error::new(ENOTDIR));
+                }
+                Ok((id, n.ptr()))
+            })
+        });
+        match nodo {
+            Ok((id, n)) => raices[hueco] = Some((id, n, tope)),
+            Err(_) => println!("  [archivos] alta: sin la raíz {} ({}:{})", hueco, vol, cam),
+        }
+    }
+    let f = Ficha { uid, gid, derechos, raiz: (0, raiz), raices };
     if altas.len() < 4 * MAX_CLIENTES || altas.contains_key(&marca) {
         altas.insert(marca, f);
     }
@@ -1506,7 +1538,7 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
 
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,
 /// cambia el canal de respuesta y le da la misma ventana. Sin alta no hay sesión (R6).
-fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32, pide: u64) -> (i32, Option<u32>, usize) {
+fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca: u64, respuesta: u32, pide: u64) -> (i32, Option<u32>, usize) {
     let i = match clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == marca)) {
         Some(i) => {
             let c = clientes[i].as_mut().unwrap();
@@ -1527,7 +1559,11 @@ fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca:
                 }
                 return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: [None; RAICES], topes: BTreeMap::new() });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: ficha.raices, topes: BTreeMap::new() });
+            // Las raíces de su alta cuentan como abiertas mientras dure la sesión (se cierran al soltarlo).
+            for (vol, n, _) in ficha.raices.into_iter().flatten() {
+                *fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0) += 1;
+            }
             i
         }
     };
@@ -1639,7 +1675,7 @@ fn principal() -> u64 {
             }
             // En `a`, la ventana que pide (A4); 0 es la de siempre.
             let pide = if n >= 16 { u64::from_le_bytes(buf[8..16].try_into().unwrap()) } else { 0 };
-            let (estado, ventana, tam) = sesion(&mut clientes, &altas, marca, ll[0], pide);
+            let (estado, ventana, tam) = sesion(&mut fs, &mut clientes, &altas, marca, ll[0], pide);
             let r = Respuesta { estado, a: tam as u64, ..Default::default() };
             let llaves: &[u32] = match &ventana {
                 Some(v) => core::slice::from_ref(v),
