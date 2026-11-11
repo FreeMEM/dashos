@@ -589,3 +589,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   guardada no se sabe la causa; la sospecha es la espera de salir (20 s a que el `pide` lanzado como Carla suelte su
   volumen), que desde U4 puede esperar a que el usuario conteste una pregunta. Ahora espera hasta 40 s. Sin
   comprobar que fuera eso: 10 arranques seguidos bien después (8 antes del cambio y 2 con él).
+- C14, mirado un rato más: en 10 pasadas, una con una activación un tic tarde (9.994 µs), y en esa el periodo del hilo
+  de plazo no se renovó más tarde que en las buenas. O sea, el reloj despierta a tiempo y el hilo pierde el turno por
+  otra cosa (un núcleo ocupado con las interrupciones cerradas, o el reparto). Sin resolver; queda para cuando haya
+  medidas en la placa (B5), donde un tic tarde importaría para el sonido.
