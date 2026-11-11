@@ -116,7 +116,7 @@ canal del cliente (con derecho a transferir), por el que vuelve la respuesta.
 
 | Bytes | Campo |
 |---|---|
-| 0-3 | orden: 0 abrir, 1 leer, 2 escribir, 5 vaciar la caché del disco |
+| 0-3 | orden: 0 abrir, 1 leer, 2 escribir, 5 vaciar la caché del disco, 6 descartar |
 | 4-7 | sectores |
 | 8-15 | primer sector |
 | 16-19 | desplazamiento en la ventana (múltiplo de 4) |
@@ -133,6 +133,12 @@ el cliente pueda dársela a otro proceso suyo.
 **Vaciar** (orden 5, FS2): sin sectores ni ventana. Cuando contesta, todo lo escrito antes está guardado en el disco,
 también lo que estuviera en su caché. Un sistema de archivos lo pide antes y después de escribir su cabecera: sin esto,
 un disco con caché puede guardar la cabecera antes que los bloques a los que apunta. Vale también en el anillo.
+
+**Descartar** (orden 6, A14; TRIM): los sectores que se dan ya no guardan nada que importe y el disco puede soltarlos
+(en NVMe, Dataset Management con "deallocate"). Sin ventana; las mismas comprobaciones que leer y escribir (dentro del
+disco y de su tramo, al menos un sector). Es un aviso: si el disco no sabe descartar, contesta bien sin hacer nada.
+Vale también en el anillo, por orden con lo demás: un descarte seguido de una escritura del mismo sector deja lo
+escrito. El servicio de archivos descarta lo que suelta cada guardado, en el envío del guardado siguiente.
 
 **Anillo** (U6l, S1): con la orden 3 (tras abrir, con una llave de respuesta propia) el servicio da una página de
 memoria compartida y se queda con esa llave para avisar. Cabecera de palabras de 32 bits: 0 cabeza de envíos (la

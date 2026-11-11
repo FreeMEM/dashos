@@ -652,3 +652,23 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   era el PC (dos emuladores de otras sesiones a la vez).
 - Falta de A14: ponerla desde la red (con permiso), el controlador de la tarjeta SD, TRIM, la tabla de particiones y
   la lectura anticipada.
+- A14, el descarte (TRIM): el disco NVMe tiene la orden 6, descartar, con las mismas comprobaciones que leer y escribir
+  (en el anillo también); la hace con Dataset Management si el disco lo admite (ONCS) y, si no, contesta bien sin
+  hacer nada. RedoxFS tiene `Disk::discard`: al guardar (`durable`), con la cabecera ya en el disco, avisa de lo que
+  sale de la cuarentena, juntando los bloques seguidos. `archivos` lo manda en el envío del guardado siguiente,
+  delante de sus escrituras (el servicio los hace por orden: si un bloque soltado se vuelve a escribir antes, se
+  descarta y después se escribe). La primera versión los mandaba en el momento, con un viaje más por guardado: guardar
+  un fichero de 4 KB costaba un 12 % más y borrar con guardado un 16 %; así, un 5,5 % y un 8 % (`make medir-fs`, 5
+  arranques, con y sin, uno tras otro; los rangos no se tocan). Lo que queda es el descarte en sí: en QEMU, cada tramo
+  es un `fallocate` en el PC. En la placa habrá que medirlo (algunas tarjetas descartan despacio) y quizá juntar
+  más. Linux, por defecto, no descarta al borrar (lo hace `fstrim` de vez en cuando): la comparación con Linux de esas
+  dos medidas no es del todo igual.
+- No deja ver nada nuevo de los volúmenes cifrados: qué bloques están libres ya se ve en el registro del asignador,
+  que va sin cifrar (`AllocList`, `Seal::None`).
+- Pruebas: RedoxFS (`discard_after_durable`, con un disco que pone a cero lo descartado al momento): nada se descarta
+  antes de guardar, lo descartado se vuelve a usar y, tras un corte, todo está. Descartar antes de tiempo (al entrar
+  en cuarentena) rompe esa y otras siete pruebas de cortes. En el disco en bruto (`disco`): 4 KB escritos y
+  descartados se leen como ceros; fuera de su tramo, cero sectores, fuera del disco y más de lo que cabe, rechazados.
+  En `ficheros`, 256 KB que no se comprimen, borrados y guardados; desde Linux, `disco_archivos.py` comprueba que no
+  queda ni un trozo en la imagen. Sin `discard=unmap` en QEMU estaban los 64 trozos de 4 KB; con él, ninguno.
+  `make arranque-virt` y `medir-fs` llevan ahora `discard=unmap`. RedoxFS: 147 pruebas bien.

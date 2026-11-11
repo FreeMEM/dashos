@@ -77,6 +77,11 @@ pub trait Disk {
     /// with a cache of blocks may keep them out of it when the file's data has a cache of its own. The default
     /// ignores it.
     fn reading_data(&mut self, _data: bool) {}
+
+    /// The blocks of `ranges` (first block, count) are free in the durable state: the disk may drop what they hold
+    /// (TRIM; DashOS, A14). Called after the header that frees them is on the disk and before anything can reuse
+    /// them. A hint: the default does nothing.
+    fn discard(&mut self, _ranges: &[(u64, u64)]) {}
 }
 
 impl Disk for Box<dyn Disk> {
@@ -110,5 +115,9 @@ impl Disk for Box<dyn Disk> {
 
     fn reading_data(&mut self, data: bool) {
         (**self).reading_data(data)
+    }
+
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        (**self).discard(ranges)
     }
 }

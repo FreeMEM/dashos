@@ -136,4 +136,13 @@ impl<T: Disk> Disk for DiskCache<T> {
     fn flush(&mut self) -> Result<()> {
         self.inner.flush()
     }
+
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        for &(start, count) in ranges {
+            for b in start..start + count {
+                self.cache.remove(&b);
+            }
+        }
+        self.inner.discard(ranges)
+    }
 }

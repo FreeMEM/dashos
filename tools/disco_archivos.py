@@ -99,6 +99,16 @@ if sys.argv[1] == "--comprobar":
         fallos.append(f"Escrito/hola.txt: {hola!r}")
     if grande != "".join(f"línea {i}\n" for i in range(25000)).encode():
         fallos.append("C/grande.txt cambió")
+    # A14, TRIM: lo que `ficheros` escribió en "Escrito/descarte.bin", borró y guardó ya no está en el disco (QEMU
+    # descarta con discard=unmap). Se buscan 64 bytes de en medio.
+    x, trozo = 0x9E3779B97F4A7C15, bytearray()
+    for _ in range(128 * 1024 + 64):
+        x ^= (x << 13) & 0xFFFFFFFFFFFFFFFF
+        x ^= x >> 7
+        x ^= (x << 17) & 0xFFFFFFFFFFFFFFFF
+        trozo.append(x & 0xFF)
+    if bytes(trozo[128 * 1024:]) in crudo:
+        fallos.append("Escrito/descarte.bin, borrado y guardado, sigue en el disco")
     if fallos:
         print("MAL: el disco tras la prueba:", *fallos, sep="\n  ")
         sys.exit(1)

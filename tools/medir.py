@@ -151,7 +151,7 @@ def orden_dashos_fs():
     return ["-M", "virt,gic-version=2,acpi=off,highmem=off", "-cpu", "cortex-a72", "-smp", "4", "-m", "2G",
             "-bios", os.environ.get("EDK2", "/usr/share/edk2/aarch64/QEMU_EFI.fd"),
             "-drive", f"file=fat:rw:{d},format=raw,if=virtio", "-net", "none",
-            "-drive", f"file={copia},if=none,id=nv,format=raw", "-device", "nvme,serial=dashos,drive=nv"]
+            "-drive", f"file={copia},if=none,id=nv,format=raw,discard=unmap", "-device", "nvme,serial=dashos,drive=nv"]
 
 
 def nucleos_libres(cuantos):

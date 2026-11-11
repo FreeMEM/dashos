@@ -415,6 +415,26 @@ fn principal() -> u64 {
     };
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
     println!("  [ficheros] A14 fechas: {}{}", si(fecha), if h == 0 { " (sin hora)" } else { "" });
+    // A14, TRIM: 256 KB que no se comprimen (xorshift), borrados y guardados. El disco los descarta; desde fuera,
+    // `disco_archivos.py` comprueba que ya no están en la imagen.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let f = c.pedir(CREAR, escrito.asa, 1, 0, "descarte.bin");
+    let mut x: u64 = 0x9E37_79B9_7F4A_7C15;
+    let mut trim = f.estado == 0;
+    for off in (0..256 * 1024u64).step_by(64 * 1024) {
+        for b in c.ventana_mut()[..64 * 1024].iter_mut() {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            *b = x as u8;
+        }
+        trim &= c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "").a == 64 * 1024;
+    }
+    trim &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    c.pedir(CERRAR, f.asa, 0, 0, "");
+    trim &= c.pedir(BORRAR, escrito.asa, 0, 0, "descarte.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 descarte: {}", si(trim));
     // FS8: el disco entero, datos incluidos, tras todo lo anterior: ni un problema, ni un bloque perdido.
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");

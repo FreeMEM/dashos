@@ -59,6 +59,9 @@ const O_IDENTIFICAR: u8 = 0x06;
 const O_LEER: u8 = 0x02;
 const O_ESCRIBIR: u8 = 0x01;
 const O_VACIAR: u8 = 0x00;
+/// Dataset Management (juego de órdenes NVM): con el atributo AD (CDW11, bit 2), los tramos que se le dan quedan
+/// sin asignar (descarte o TRIM).
+const O_DSM: u8 = 0x09;
 
 // El servicio (U6f).
 const VENTANA: usize = 64 * 1024;
@@ -83,6 +86,13 @@ const PEDIR_ANILLO: u32 = 3;
 /// Vaciar la caché del disco (FS2): lo escrito antes queda guardado de verdad antes de lo que venga después. El sistema
 /// de archivos lo pide antes y después de cada cabecera.
 const PEDIR_VACIAR: u32 = 5;
+/// A14: descartar (TRIM) `sectores` desde `primer sector`: el sistema de archivos ya no los usa. Con las mismas
+/// comprobaciones que leer y escribir, sin ventana. Si el disco no sabe descartar, no hace nada y contesta bien (es
+/// un aviso).
+const PEDIR_DESCARTAR: u32 = 6;
+/// La dirección de bus de la página para la lista de tramos de un descarte (la de los datos de Identify, que después
+/// no se usa); 0 si el disco no admite Dataset Management (ONCS, bit 2).
+static DSM_BUS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 // El anillo de cada cliente (U6l; S1, "anillos en memoria compartida"): una página de memoria compartida. Cabecera de
 // palabras de 32 bits: cabeza de envíos (la mueve el servicio), cola de envíos (el cliente), cabeza de terminadas (el
@@ -318,6 +328,10 @@ fn principal() -> u64 {
     // MDTS (byte 77): lo más que admite una transferencia, 2^MDTS páginas (0 = sin tope). Si no llega a la ventana,
     // las transferencias se quedan en dos páginas, como antes.
     let mdts = dma8(M_DATOS + 77);
+    // ONCS (bytes 520 y 521), bit 2: admite Dataset Management.
+    if dma8(M_DATOS + 520) & 4 != 0 {
+        DSM_BUS.store(datos, core::sync::atomic::Ordering::Relaxed);
+    }
     if mdts != 0 && (4096usize << mdts) < VENTANA {
         LISTA_BUS.store(0, core::sync::atomic::Ordering::Relaxed);
     }
@@ -356,6 +370,7 @@ fn principal() -> u64 {
         println!("  [nvme] sector {}: \"{}\", firma {:#06x}", s, texto(off, l, &mut b), firma);
     }
     println!("  [nvme] avisos {}", if n.avisos.is_some() { "por su interrupción" } else { "girando" });
+    println!("  [nvme] descartar: {}", if DSM_BUS.load(core::sync::atomic::Ordering::Relaxed) != 0 { "sí" } else { "no" });
     servir(&n, &mut es, sectores, tam_sector, disco)
 }
 
@@ -382,13 +397,24 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
         // Las órdenes van de una en una: todas las escrituras de antes ya terminaron.
         return if n.orden(es, O_VACIAR, 1, (0, 0), [0; 6]).is_ok() { 0 } else { ERROR_DEL_DISCO };
     }
-    if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR {
+    if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR && orden != PEDIR_DESCARTAR {
         MAL_FORMADO
     } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
         FUERA_DEL_DISCO
     } else if primero < c.tramo.0 || primero + cuantos > c.tramo.1 {
         // Fuera de su tramo (A13).
         SIN_PERMISO
+    } else if orden == PEDIR_DESCARTAR {
+        let lista = DSM_BUS.load(core::sync::atomic::Ordering::Relaxed);
+        if lista == 0 {
+            return 0;
+        }
+        // Un tramo (16 bytes): atributos, cuántos sectores y el primero. NR = 0 (uno), AD.
+        poner32(M_DATOS, 0);
+        poner32(M_DATOS + 4, cuantos as u32);
+        poner32(M_DATOS + 8, primero as u32);
+        poner32(M_DATOS + 12, (primero >> 32) as u32);
+        if n.orden(es, O_DSM, 1, (lista, 0), [0, 1 << 2, 0, 0, 0, 0]).is_ok() { 0 } else { ERROR_DEL_DISCO }
     } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) {
         FUERA_DE_LA_VENTANA
     } else {
@@ -547,7 +573,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
                 }
                 None => SIN_SITIO,
             }
-        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR {
+        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR || orden == PEDIR_DESCARTAR {
             match clientes.iter().flatten().find(|c| c.marca == marca) {
                 None => MAL_FORMADO,
                 Some(c) => transferir(n, es, c, orden, cuantos, primero, off, sectores, tam_sector),

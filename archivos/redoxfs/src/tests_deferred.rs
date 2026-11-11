@@ -18,6 +18,9 @@ struct Volatile {
     limit: Option<usize>,
     /// A12: while set, every write fails (a disk error in the middle of a transaction).
     fail_writes: bool,
+    /// A14: blocks discarded so far. A discarded block is zeroed at once, on the disk and in what waits: as a disk
+    /// that drops it would read it, and the worst case if it were still in use.
+    discarded: u64,
 }
 
 impl Volatile {
@@ -62,6 +65,17 @@ impl Disk for Volatile {
         self.disk.size()
     }
 
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        let zero = vec![0u8; BLOCK_SIZE as usize];
+        for &(start, count) in ranges {
+            for b in start..start + count {
+                self.pending.remove(&b);
+                unsafe { self.disk.write_at(b, &zero).unwrap() };
+            }
+            self.discarded += count;
+        }
+    }
+
     fn forget(&mut self, block: u64, count: u64) {
         for b in block..block + count {
             self.pending.remove(&b);
@@ -89,7 +103,7 @@ type Fs = FileSystem<Volatile>;
 const FILE: u16 = Node::MODE_FILE | 0o644;
 
 fn new_fs() -> Fs {
-    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new(), limit: None, fail_writes: false };
+    let disk = Volatile { disk: DiskMemory::new(32 * 1024 * 1024), pending: BTreeMap::new(), limit: None, fail_writes: false, discarded: 0 };
     let mut fs = FileSystem::create(disk, None, 0, 0).unwrap();
     fs.disk.flush().unwrap();
     fs
@@ -590,4 +604,38 @@ fn repair_with_quarantine() {
     fs.durable().unwrap();
     assert!(check_all(&mut fs).is_clean());
     assert_eq!(get(&mut fs, "b"), Some(noise(30_000, 42)));
+}
+
+/// A14: what saving frees is discarded (and here zeroed) only once the header that frees it is on the disk: whatever
+/// comes after, a cut included, finds everything. The discarded blocks are not in use, and are used again.
+#[test]
+fn discard_after_durable() {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let keep = noise(150_000, 61);
+    put(&mut fs, "keep", &keep);
+    put(&mut fs, "gone", &noise(400_000, 62));
+    fs.durable().unwrap();
+    let before = fs.disk.discarded;
+    remove(&mut fs, "gone");
+    for i in 0..10 {
+        remove(&mut fs, "keep");
+        put(&mut fs, "keep", &noise(150_000, 70 + i));
+    }
+    assert_eq!(fs.disk.discarded, before, "nothing before saving");
+    fs.durable().unwrap();
+    assert!(fs.disk.discarded - before >= 400_000 / BLOCK_SIZE, "{} discarded", fs.disk.discarded - before);
+    assert_clean(&mut fs);
+    // Reused after: all is there, and after a cut too.
+    put(&mut fs, "new", &noise(300_000, 63));
+    fs.durable().unwrap();
+    remove(&mut fs, "new");
+    put(&mut fs, "newer", &noise(100_000, 64));
+    let block = fs.block;
+    let mut fs = reopen(fs.disk.cut(false), block);
+    assert_eq!(get(&mut fs, "keep"), Some(noise(150_000, 79)));
+    assert_eq!(get(&mut fs, "new"), Some(noise(300_000, 63)));
+    assert_eq!(get(&mut fs, "gone"), None);
+    assert_clean(&mut fs);
+    let _ = keep;
 }

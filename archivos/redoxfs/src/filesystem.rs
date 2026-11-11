@@ -364,6 +364,23 @@ impl<D: Disk> FileSystem<D> {
         }
         self.disk.flush()?;
         self.header_dirty = false;
+        // DashOS, A14: the disk may drop them now (TRIM), runs of neighbours together.
+        if !self.quarantine.is_empty() {
+            let mut runs: Vec<(u64, u64)> = self
+                .quarantine
+                .iter()
+                .map(|a| (a.index(), a.level().blocks::<u64>()))
+                .collect();
+            runs.sort_unstable();
+            let mut ranges: Vec<(u64, u64)> = Vec::with_capacity(runs.len());
+            for (start, count) in runs {
+                match ranges.last_mut() {
+                    Some((s, c)) if *s + *c >= start => *c = (*c).max(start + count - *s),
+                    _ => ranges.push((start, count)),
+                }
+            }
+            self.disk.discard(&ranges);
+        }
         for addr in self.quarantine.drain(..) {
             self.allocator.deallocate(addr);
         }

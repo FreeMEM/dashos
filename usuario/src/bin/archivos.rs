@@ -34,6 +34,8 @@ const DISCO_ABRIR: u32 = 0;
 const DISCO_LEER: u32 = 1;
 const DISCO_ESCRIBIR: u32 = 2;
 const DISCO_VACIAR: u32 = 5;
+/// A14: descartar (TRIM) sectores que el sistema de archivos ya no usa.
+const DISCO_DESCARTAR: u32 = 6;
 const DISCO_ANILLO: u32 = 3;
 const DISCO_MIRAR: u32 = 4;
 /// Donde se proyecta el anillo del servicio de disco (una página).
@@ -108,6 +110,10 @@ struct Disco {
     /// (`datos`) no entra en esta caché: ya va a la otra, y estaría dos veces.
     llenando: bool,
     datos: bool,
+    /// A14: descartes (bloque, 0, bytes) que esperan al siguiente `flush`: van en su mismo envío, delante de las
+    /// escrituras (el servicio los hace por orden), sin un viaje más. Un bloque soltado y vuelto a escribir antes se
+    /// descarta y después se escribe.
+    por_descartar: Vec<(u64, usize, usize)>,
 }
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
@@ -188,17 +194,18 @@ impl Disco {
 
     /// Manda por el anillo los tramos (bloque, bytes desde el principio de la ventana) y, si `vaciar`, un vaciado
     /// detrás: el servicio los hace por orden, uno tras otro. Un aviso y una espera para todos.
-    fn por_anillo(&mut self, tramos: &[(u64, usize, usize)], vaciar: bool) -> Result<()> {
+    /// Cada tramo, con su orden (escribir o descartar). Un descarte que falla no cuenta como error: es un aviso.
+    fn por_anillo(&mut self, tramos: &[(u32, u64, usize, usize)], vaciar: bool) -> Result<()> {
         use core::sync::atomic::{Ordering::*, fence};
         let (lectura, mut sq, mut cq) = self.anillo.unwrap();
         let palabra = |off: usize| unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) };
         let total = tramos.len() as u32 + vaciar as u32;
         debug_assert!(total <= ANILLO_ENTRADAS);
-        for (i, (bloque, off, largo)) in tramos.iter().copied().chain(vaciar.then_some((0, 0, 0))).enumerate() {
+        for (i, (orden, bloque, off, largo)) in tramos.iter().copied().chain(vaciar.then_some((DISCO_VACIAR, 0, 0, 0))).enumerate() {
             let e = 64 + 32 * (sq.wrapping_add(i as u32) % ANILLO_ENTRADAS) as usize;
             let es_vaciar = vaciar && i == tramos.len();
             let primero = (INICIO + bloque * BLOCK_SIZE) / self.tam_sector;
-            palabra(e).store(if es_vaciar { DISCO_VACIAR } else { DISCO_ESCRIBIR }, Relaxed);
+            palabra(e).store(if es_vaciar { DISCO_VACIAR } else { orden }, Relaxed);
             palabra(e + 4).store((largo as u64 / self.tam_sector) as u32, Relaxed);
             palabra(e + 8).store(primero as u32, Relaxed);
             palabra(e + 12).store((primero >> 32) as u32, Relaxed);
@@ -230,7 +237,8 @@ impl Disco {
         let mut bien = true;
         for i in 0..total {
             let c = 2048 + 16 * (cq.wrapping_add(i) % ANILLO_ENTRADAS) as usize;
-            bien &= palabra(c + 4).load(Relaxed) == 0;
+            let aviso = tramos.get(palabra(c).load(Relaxed) as usize).is_some_and(|t| t.0 == DISCO_DESCARTAR);
+            bien &= aviso || palabra(c + 4).load(Relaxed) == 0;
         }
         cq = cq.wrapping_add(total);
         palabra(8).store(cq, Release);
@@ -240,7 +248,7 @@ impl Disco {
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None, llenando: false, datos: false };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None, llenando: false, datos: false, por_descartar: Vec::new() };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -315,6 +323,36 @@ impl Disk for Disco {
         self.datos = data;
     }
 
+    /// A14: lo que el guardado acaba de soltar, al disco para que lo descarte (TRIM), y fuera de la caché. Con anillo,
+    /// en el siguiente `flush` (`por_descartar`). Es un aviso: si falla, el disco sigue igual de bien.
+    fn discard(&mut self, ranges: &[(u64, u64)]) {
+        // Tramos de hasta 64 MB (el número de sectores va en 32 bits).
+        let mut tramos: Vec<(u64, usize, usize)> = Vec::new();
+        for &(desde, cuantos) in ranges {
+            for b in desde..desde + cuantos {
+                self.cache.bloques.remove(&b);
+            }
+            let mut b = desde;
+            while b < desde + cuantos {
+                let n = (desde + cuantos - b).min(64 << 20 >> 12);
+                tramos.push((b, 0, (n * BLOCK_SIZE) as usize));
+                b += n;
+            }
+        }
+        let mut fallos = 0;
+        if self.anillo.is_some() {
+            self.por_descartar.extend(tramos);
+        } else {
+            for &(b, _, largo) in &tramos {
+                let primero = (INICIO + b * BLOCK_SIZE) / self.tam_sector;
+                fallos += !matches!(self.pedir(DISCO_DESCARTAR, (largo as u64 / self.tam_sector) as u32, primero), Some((0, _, _))) as u32;
+            }
+        }
+        if fallos > 0 {
+            println!("  [archivos] el disco no descartó {} tramos", fallos);
+        }
+    }
+
     /// Bloques que nacieron y se soltaron entre dos guardados (paso B): fuera, sin escribirlos.
     fn forget(&mut self, block: u64, count: u64) {
         for b in block..block + count {
@@ -342,19 +380,24 @@ impl Disk for Disco {
             let mut i = 0;
             loop {
                 // Un lote: los tramos que caben en la ventana y en el anillo (con sitio para el vaciado).
-                let mut lote: Vec<(u64, usize, usize)> = Vec::new();
+                let mut lote: Vec<(u32, u64, usize, usize)> = Vec::new();
+                // Primero, los descartes que esperan (A14).
+                while !self.por_descartar.is_empty() && lote.len() + 1 < ANILLO_ENTRADAS as usize {
+                    let (b, o, l) = self.por_descartar.remove(0);
+                    lote.push((DISCO_DESCARTAR, b, o, l));
+                }
                 let mut off = 0;
-                while i < tramos.len() && lote.len() + 1 < ANILLO_ENTRADAS as usize && off + tramos[i].1 * bs <= VENTANA_DISCO {
+                while self.por_descartar.is_empty() && i < tramos.len() && lote.len() + 1 < ANILLO_ENTRADAS as usize && off + tramos[i].1 * bs <= VENTANA_DISCO {
                     let (p, n) = tramos[i];
                     for k in 0..n {
                         let dst = unsafe { core::slice::from_raw_parts_mut((VA_DISCO + off + k * bs) as *mut u8, bs) };
                         dst.copy_from_slice(&self.cache.bloques[&(p + k as u64)].1[..]);
                     }
-                    lote.push((p, off, n * bs));
+                    lote.push((DISCO_ESCRIBIR, p, off, n * bs));
                     off += n * bs;
                     i += 1;
                 }
-                let ultimo = i >= tramos.len();
+                let ultimo = i >= tramos.len() && self.por_descartar.is_empty();
                 if let Err(e) = self.por_anillo(&lote, ultimo) {
                     // Lo que no llegó (o no se sabe) sigue sucio.
                     self.cache.sucios.extend(sucios.iter().copied());

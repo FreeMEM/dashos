@@ -19,6 +19,7 @@ const ABRIR: u32 = 0;
 const LEER: u32 = 1;
 const ESCRIBIR: u32 = 2;
 const VACIAR: u32 = 5;
+const DESCARTAR: u32 = 6;
 
 struct Respuesta {
     estado: i32,
@@ -104,6 +105,18 @@ fn principal() -> u64 {
     let vaciado = estado(VACIAR, 0, 0, 0) == 0;
     let si = |b: bool| if b { "bien" } else { "MAL" };
     println!("  [disco] leer: {}; escribir y releer: {}; cruzando páginas: {}; rechazos: {}; vaciar: {}", si(leidos), si(escrito), si(cruzando), si(rechazos), si(vaciado));
+    // A14, descartar (TRIM): como leer y escribir, nada fuera de su tramo ni del disco, ni cero sectores. Lo suyo, sí:
+    // 4 KB escritos y descartados se leen como ceros (QEMU, con discard=unmap).
+    let ocho = (4096 / t) as u32;
+    poner(4096, &[0x5A; 4096]);
+    let descartado = estado(ESCRIBIR, ocho, 8, 4096) == 0
+        && estado(DESCARTAR, ocho, 8, 0) == 0
+        && estado(LEER, ocho, 8, 8192) == 0
+        && (0..4096).all(|i| byte(8192 + i) == 0);
+    let no_descarta = estado(DESCARTAR, 1, mb, 0) == -6 && estado(DESCARTAR, 2, mb - 1, 0) == -6 && estado(DESCARTAR, 0, 8, 0) == -2
+        && estado(DESCARTAR, 1, a.sectores, 0) == -2 && estado(DESCARTAR, u32::MAX, 8, 0) == -2
+        && estado(LEER, 2, 0, 0) == 0 && empieza(0, b"DashOS: sector 0");
+    println!("  [disco] descartar: {}; rechazos al descartar: {}", si(descartado), si(no_descarta));
     // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
     let (l2, v2) = dashos::canal_crear();
     let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {
