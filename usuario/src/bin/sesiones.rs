@@ -39,8 +39,13 @@ const RAIZ_SYS: u8 = 1;
 const RAIZ_HOME: u8 = 2;
 /// Los servicios que reparte, con la llave sin marca de cada uno.
 const REPARTE: &[(&str, u32)] = &[("eco", 2)];
-/// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8) y de lo que diga el usuario.
-const PERMISOS: &[(&str, &str)] = &[("pide", "eco")];
+/// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
+/// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
+const PERMISOS: &[(&str, &str)] = &[];
+const CAMINO_PERMISOS: &[u8] = b"Estado/Servicios/sesiones/permisos";
+/// Permisos concedidos por el usuario, a la vez, y preguntas sin contestar.
+const MAX_CONCEDIDOS: usize = 32;
+const MAX_PREGUNTAS: usize = 8;
 /// Llaves repartidas que se pueden revocar, a la vez.
 const MAX_DADAS: usize = 64;
 /// Dónde ve su ventana del servicio de archivos, y dónde copia un programa que lanza.
@@ -319,6 +324,92 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
 }
 
+/// Da a `marca` una llave del servicio `s` (U4): una copia marcada con su número, que viaja una vez (S4) y llega sin
+/// el derecho de transferirla (regla 2), y revocable. Apunta su revocador y su entrada en el directorio del servicio.
+fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, programa: &[u8; 16]) -> (i32, Option<u32>) {
+    let d = dashos::llave_duplicar(REPARTE[s].1, 7 | dashos::UNA_VEZ, marca);
+    let (r, revocador) = if d > 0 { dashos::llave_revocable(d as u32) } else { (-1, 0) };
+    if d > 0 {
+        dashos::cerrar(d as u32);
+    }
+    match dadas.iter().position(|x| x.is_none()) {
+        Some(i) if r > 0 => {
+            dadas[i] = Some((marca, s, revocador));
+            // Su entrada en el directorio del servicio, como hace `inicio`.
+            let mut dir = [0u8; 24];
+            dir[..8].copy_from_slice(&marca.to_le_bytes());
+            dir[8..].copy_from_slice(programa);
+            dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
+            (BIEN, Some(r as u32))
+        }
+        _ => {
+            if r > 0 {
+                dashos::cerrar(r as u32);
+                dashos::cerrar(revocador);
+            }
+            (-1, None)
+        }
+    }
+}
+
+/// Lee los permisos concedidos (U4): una línea "programa servicio" por permiso, en el cajón de `sesiones`.
+fn leer_permisos(a: &Archivos, concedidos: &mut [Option<([u8; 16], usize)>]) {
+    use dashos::protocolo::archivos as x;
+    let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
+    if e != x::BIEN {
+        return;
+    }
+    let (e, _, n) = a.orden(x::LEER, asa, 0, tam.min(4096), b"");
+    a.orden(x::CERRAR, asa, 0, 0, b"");
+    if e != x::BIEN {
+        return;
+    }
+    let texto = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, n as usize) };
+    let mut van = 0;
+    for linea in texto.split(|&c| c == b'\n') {
+        let mut partes = linea.splitn(2, |&c| c == b' ');
+        let (Some(p), Some(sv)) = (partes.next(), partes.next()) else { continue };
+        let Some(s) = REPARTE.iter().position(|r| r.0.as_bytes() == sv) else { continue };
+        if p.is_empty() || p.len() > 16 || van >= concedidos.len() {
+            continue;
+        }
+        let mut nombre_ = [0u8; 16];
+        nombre_[..p.len()].copy_from_slice(p);
+        concedidos[van] = Some((nombre_, s));
+        van += 1;
+    }
+    println!("  [sesiones] permisos concedidos en el disco: {}", van);
+}
+
+/// Añade al fichero de permisos lo que el usuario concedió.
+fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str) {
+    use dashos::protocolo::archivos as x;
+    let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
+    let (asa, tam) = if e == x::BIEN {
+        (asa, tam)
+    } else {
+        let (e, cajon, _) = a.orden(x::BUSCAR, 0, 0, 0, CAJON);
+        if e != x::BIEN {
+            return;
+        }
+        let (e, asa, _) = a.orden(x::CREAR, cajon, x::FICHERO as u64, 0, b"permisos");
+        a.orden(x::CERRAR, cajon, 0, 0, b"");
+        if e != x::BIEN {
+            return;
+        }
+        (asa, 0)
+    };
+    let linea_ = [programa.as_bytes(), b" ", servicio.as_bytes(), b"\n"];
+    let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 64) };
+    let mut n = 0;
+    for parte in linea_ {
+        ventana[n..n + parte.len()].copy_from_slice(parte);
+        n += parte.len();
+    }
+    a.orden(x::ESCRIBIR, asa, tam, n as u64, b"");
+    a.orden(x::CERRAR, asa, 0, 0, b"");
+}
+
 fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
@@ -327,6 +418,12 @@ fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
+    // U4: lo que el usuario concedió (programa y servicio), las preguntas a `guardian` sin contestar (número, llave de
+    // respuesta del programa, su marca, su nombre y el servicio) y por dónde se le pregunta.
+    let mut concedidos: [Option<([u8; 16], usize)>; MAX_CONCEDIDOS] = [None; MAX_CONCEDIDOS];
+    let mut preguntas: [Option<(u32, u32, u64, [u8; 16], usize)>; MAX_PREGUNTAS] = [None; MAX_PREGUNTAS];
+    let mut canal_guardian = 0u32;
+    let mut siguiente_pregunta = 1u32;
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
     let mut siguiente_pid = PRIMER_PID_PROPIO;
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
@@ -340,6 +437,7 @@ fn principal() -> u64 {
     println!("  [sesiones] en marcha{}", if archivos.is_some() { ", con el servicio de archivos" } else { ", sin el servicio de archivos" });
     if let Some(a) = &archivos {
         registro.abrir_disco(a);
+        leer_permisos(a, &mut concedidos);
     }
     loop {
         // Lo que se apuntó en la vuelta anterior, al disco antes de esperar (U6).
@@ -605,36 +703,36 @@ fn principal() -> u64 {
                     let pedido = m.get(12..12 + nl).and_then(|n| core::str::from_utf8(n).ok()).unwrap_or("");
                     let servicio = REPARTE.iter().position(|s| s.0 == pedido);
                     let programa = yo.map(|f| f.nombre).unwrap_or([0; 16]);
-                    let permitido = yo.is_some() && PERMISOS.iter().any(|p| p.0 == nombre(&programa) && p.1 == pedido);
+                    let permitido = yo.is_some()
+                        && (PERMISOS.iter().any(|p| p.0 == nombre(&programa) && p.1 == pedido)
+                            || servicio.is_some_and(|s| concedidos.iter().flatten().any(|c| c.0 == programa && c.1 == s)));
                     let mut respuesta_llave = None;
+                    let mut en_espera = false;
                     let estado = match (u32_en(0), servicio) {
                         (_, None) => NO_EXISTE,
                         (SERVICIO, Some(s)) if permitido => {
-                            // Una copia marcada con su número, que viaja una vez (S4) y llega sin el derecho de
-                            // transferirla (regla 2), y revocable.
-                            let d = dashos::llave_duplicar(REPARTE[s].1, 7 | dashos::UNA_VEZ, marca);
-                            let (r, revocador) = if d > 0 { dashos::llave_revocable(d as u32) } else { (-1, 0) };
-                            if d > 0 {
-                                dashos::cerrar(d as u32);
-                            }
-                            match dadas.iter().position(|x| x.is_none()) {
-                                Some(i) if r > 0 => {
-                                    dadas[i] = Some((marca, s, revocador));
-                                    // Su entrada en el directorio del servicio, como hace `inicio`.
-                                    let mut dir = [0u8; 24];
-                                    dir[..8].copy_from_slice(&marca.to_le_bytes());
-                                    dir[8..].copy_from_slice(&programa);
-                                    dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
-                                    respuesta_llave = Some(r as u32);
-                                    BIEN
-                                }
-                                _ => {
-                                    if r > 0 {
-                                        dashos::cerrar(r as u32);
-                                        dashos::cerrar(revocador);
-                                    }
-                                    -1
-                                }
+                            let (e, l) = dar_servicio(&mut dadas, s, marca, &programa);
+                            respuesta_llave = l;
+                            e
+                        }
+                        // Sin permiso: si `guardian` atiende preguntas, se le pregunta al usuario y la respuesta
+                        // espera (sin parar a los demás).
+                        (SERVICIO, Some(s)) if yo.is_some() && canal_guardian != 0 && preguntas.iter().any(|p| p.is_none()) => {
+                            let id = siguiente_pregunta;
+                            siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                            let mut q = [0u8; PREGUNTA];
+                            q[0..4].copy_from_slice(&id.to_le_bytes());
+                            q[4..8].copy_from_slice(&yo.map_or(0, |f| f.uid).to_le_bytes());
+                            q[8..24].copy_from_slice(&programa);
+                            q[24..24 + pedido.len().min(16)].copy_from_slice(&pedido.as_bytes()[..pedido.len().min(16)]);
+                            if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                                let hueco = preguntas.iter().position(|p| p.is_none()).unwrap();
+                                preguntas[hueco] = Some((id, respuesta, marca, programa, s));
+                                en_espera = true;
+                                BIEN
+                            } else {
+                                registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                                PROTEGIDO
                             }
                         }
                         (SERVICIO, Some(_)) => {
@@ -658,6 +756,10 @@ fn principal() -> u64 {
                         }
                     };
                     let que = if u32_en(0) == SERVICIO { "pide" } else { "deja" };
+                    if en_espera {
+                        println!("  [sesiones] {} pide {}: se pregunta al usuario", nombre(&programa), pedido);
+                        continue;
+                    }
                     println!("  [sesiones] {} {} {}: {}", nombre(&programa), que, pedido, estado);
                     match respuesta_llave {
                         Some(l) => {
@@ -668,6 +770,48 @@ fn principal() -> u64 {
                         None => {
                             dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                         }
+                    }
+                }
+                PREGUNTAS if k >= 2 && yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                    // `guardian` atiende las preguntas al usuario (U4) por la llave que manda.
+                    if canal_guardian != 0 {
+                        dashos::cerrar(canal_guardian);
+                    }
+                    canal_guardian = ll[1];
+                    usadas = 2;
+                    println!("  [sesiones] {} atiende las preguntas al usuario", nombre(&yo.unwrap().nombre));
+                    dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
+                }
+                RESPUESTA if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                    dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
+                    let (id, si) = (u32_en(4), u32_en(8) == 1);
+                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id)) {
+                        let (_, a_quien, de, programa, s) = preguntas[i].take().unwrap();
+                        let (estado, llave) = if si {
+                            // Concedido: se apunta y se guarda, y no se vuelve a preguntar.
+                            if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
+                                *c = Some((programa, s));
+                            }
+                            if let Some(a) = &archivos {
+                                guardar_permiso(a, nombre(&programa), REPARTE[s].0);
+                            }
+                            dar_servicio(&mut dadas, s, de, &programa)
+                        } else {
+                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, REPARTE[s].0.as_bytes());
+                            (PROTEGIDO, None)
+                        };
+                        println!("  [sesiones] {} pide {}: el usuario dice {} ({})", nombre(&programa), REPARTE[s].0, if si { "sí" } else { "no" }, estado);
+                        match llave {
+                            Some(l) => {
+                                if dashos::canal_escribir(a_quien, &estado.to_le_bytes(), &[l]) != 0 {
+                                    dashos::cerrar(l);
+                                }
+                            }
+                            None => {
+                                dashos::canal_escribir(a_quien, &estado.to_le_bytes(), &[]);
+                            }
+                        }
+                        dashos::cerrar(a_quien);
                     }
                 }
                 MATAR => {

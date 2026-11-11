@@ -46,6 +46,12 @@ pub const NOMBRES: u32 = 10;
 pub const ENTRADA_NOMBRE: usize = 48;
 pub const MAX_NOMBRES: usize = 5;
 pub const SIN_RAIZ: u8 = 0xff;
+/// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.
+pub const PREGUNTAS: u32 = 11;
+/// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.
+pub const RESPUESTA: u32 = 12;
+/// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16).
+pub const PREGUNTA: usize = 40;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
 /// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.

@@ -164,6 +164,10 @@ name = "sesiones"
 path = "src/bin/sesiones.rs"
 
 [[bin]]
+name = "guardian"
+path = "src/bin/guardian.rs"
+
+[[bin]]
 name = "presa"
 path = "src/bin/presa.rs"
 

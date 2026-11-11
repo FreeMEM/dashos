@@ -37,7 +37,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
-| R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
+| R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
@@ -345,3 +345,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (`disco_archivos.py --comprobar`) lee el registro y encuentra los tres intentos del hostil; `selector` (1000, el
   dueño del resto del disco) no abre el registro ni lista el cajón (-12). Sin probar: leerlo al arrancar otra vez
   (cada prueba arranca una vez con un disco nuevo).
+- U4, preguntar y guardar: `guardian` se apunta en `sesiones` para atender preguntas (orden 11, PREGUNTAS, con la
+  llave por la que se le pregunta). Si un programa pide un servicio sin permiso y `guardian` atiende, `sesiones` le
+  pregunta (número, usuario, programa y servicio) y deja la petición en espera sin parar a los demás; con la
+  respuesta (orden 12, solo de `guardian`), da la llave o -2. Lo concedido se apunta y se guarda en su cajón
+  (`permisos`, una línea "programa servicio"), y se lee al arrancar: no se vuelve a preguntar. `PERMISOS` fijos,
+  ahora vacío. Prueba: un `guardian` de prueba (programa nuevo en `virt`) contesta como el usuario: sí a `pide` con
+  `eco`, no a lo demás. Se le pregunta una vez por `pide` (las otras dos veces que corre, ya concedido) y una por el
+  hostil, que recibe -2; en el disco, `permisos` es "pide eco". Falta: los permisos del paquete (S8), la ventana de
+  la pregunta (con el escritorio) y retirar un permiso concedido (Prefs, U6).
