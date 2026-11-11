@@ -32,7 +32,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
-| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
+| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | S1 hecho; S2 en parte (falta trocear) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar y lanzar desde el disco |
@@ -272,3 +272,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   32 KB más (3.456 a 3.488 KB). Seguramente es lo mismo que hizo un 10 % más lenta la reserva del hilo antes de
   dar las llaves (R11, primera parte): el banco es muy sensible a la colocación de los objetos calientes en QEMU.
   Lo pendiente es saber por qué; en la Pi real puede no pasar.
+- R11, S1 (lo que faltaba): la tabla de llaves crece al doble pero nunca pasa de `MAX_TABLA + 1` entradas
+  (`crecer`, con `try_reserve_exact`): llena ocupa 41 KB, no los 80 de antes (crecía a 2.048). `COSTE_PROCESO` ya
+  no es un número a ojo: la tabla llena (`TABLA_LLENA`, por el tamaño de `Option<Llave>`), la pila del kernel y
+  8 KB para el hilo, la coma flotante, el proceso y el redondeo del montón: 65.576 bytes. Prueba (S1 en
+  `pruebas.rs`): llena una tabla hasta que no admite más (1.024 llaves, 41.000 bytes) y suma lo demás con los
+  tamaños de verdad, redondeados a las clases del montón: 59.320, por debajo de lo cobrado. El cupo de la raíz ya
+  existía (la memoria libre para procesos menos la reserva del kernel, desde la fase 3): la revisión lo daba por
+  pendiente. Sin medir: el crecimiento es el mismo que antes hasta 1.024 llaves.

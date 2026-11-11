@@ -225,7 +225,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **Grupos y cupos** (C42). Cada proceso es de un grupo con un presupuesto en bytes. Todo lo que crea se cobra ahí:
   - un objeto de memoria, por sus páginas;
   - su espacio, por sus tablas y sus páginas de imagen y pila;
-  - cada proceso, 64 KB fijos (hilo, pila del kernel y tabla de llaves);
+  - cada proceso, unos 64 KB fijos: su tabla de llaves llena (41 KB; no crece más), la pila del kernel (16) y el hilo
+    con su estado de coma flotante, el proceso y lo que redondea el montón (8);
   - cada canal, unos 26 KB fijos (sus dos colas llenas).
 
   Al agotarse, la llamada da `E_MEMORIA`. Lo cobrado vuelve al grupo cuando se suelta el objeto, aunque lo tenga otro

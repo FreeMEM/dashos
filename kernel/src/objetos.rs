@@ -603,7 +603,7 @@ impl TablaLlaves {
     /// memoria para crecer, devuelve la llave.
     pub fn instalar(&mut self, l: Llave) -> Result<u32, Llave> {
         if self.llaves.is_empty() {
-            if self.llaves.try_reserve(1).is_err() {
+            if !self.crecer(1) {
                 return Err(l);
             }
             self.llaves.push(None);
@@ -618,7 +618,7 @@ impl TablaLlaves {
                 return Ok(i as u32);
             }
         }
-        if self.llaves.len() > MAX_TABLA || self.llaves.try_reserve(1).is_err() {
+        if self.llaves.len() > MAX_TABLA || !self.crecer(1) {
             return Err(l);
         }
         self.llaves.push(Some(l));
@@ -627,7 +627,23 @@ impl TablaLlaves {
 
     /// Reserva memoria para `n` llaves más, para que `instalar` no tenga que pedirla. Falso si no hay.
     pub fn reservar(&mut self, n: usize) -> bool {
-        self.llaves.try_reserve(n).is_ok()
+        self.crecer(n)
+    }
+
+    /// Sitio para `n` más. Crece al doble, pero nunca pasa de `MAX_TABLA + 1` (la llave 0 y las demás): así la tabla
+    /// llena ocupa lo que se cobra (`cupo::TABLA_LLENA`, S1) y no el doble.
+    fn crecer(&mut self, n: usize) -> bool {
+        let falta = self.llaves.len() + n;
+        if falta <= self.llaves.capacity() {
+            return true;
+        }
+        let nueva = falta.max((self.llaves.capacity() * 2).min(MAX_TABLA + 1)).max(4);
+        self.llaves.try_reserve_exact(nueva - self.llaves.len()).is_ok()
+    }
+
+    /// Los bytes que ocupa ahora (para las pruebas de S1).
+    pub fn bytes(&self) -> usize {
+        self.llaves.capacity() * core::mem::size_of::<Option<Llave>>()
     }
 
     /// Cuántas llaves caben todavía sin pasar de `MAX_TABLA`.

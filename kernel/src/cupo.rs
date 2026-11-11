@@ -13,13 +13,18 @@
 //! `memoria.rs`.
 
 use crate::cerrojo::Cerrojo;
-use crate::objetos::{Control, MAX_COLA, MAX_DATOS, MAX_LLAVES};
+use crate::objetos::{Control, MAX_COLA, MAX_DATOS, MAX_LLAVES, MAX_TABLA};
 use alloc::sync::{Arc, Weak};
 use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
-/// Lo que cuesta un proceso además de su espacio: el hilo, su pila del kernel (16 KB) y la tabla de llaves llena.
-pub const COSTE_PROCESO: u64 = 64 * 1024;
+/// Lo que ocupa la tabla de llaves llena de un proceso (S1: antes se cobraban 64 KB por todo y la tabla sola podía
+/// pasar de 80).
+pub const TABLA_LLENA: u64 = ((MAX_TABLA + 1) * core::mem::size_of::<Option<crate::objetos::Llave>>()) as u64;
+/// Lo que cuesta un proceso además de su espacio: la tabla de llaves llena, la pila del kernel del hilo y 8 KB para
+/// el hilo, su estado de coma flotante, el proceso, su control y lo que redondea el montón (`prueba_coste` en
+/// `pruebas.rs` comprueba que alcanza).
+pub const COSTE_PROCESO: u64 = TABLA_LLENA + crate::mapa::PILA as u64 + 8 * 1024;
 /// Lo que cuesta un grupo en sí (C43).
 pub const COSTE_GRUPO: u64 = 512;
 /// Lo que cuesta un intermediario de llave revocable (C43).

@@ -32,6 +32,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_avisos();
     prueba_recoger();
     prueba_sin_monton();
+    prueba_coste();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -566,6 +567,28 @@ fn prueba_sin_monton() {
     kprintln!("  {} reservas al lanzar; fallando cada una: {} veces SinMemoria, {} lanzado igual; páginas perdidas {}",
         k - 1, errores, lanzados, perdidas);
     kprintln!("S1: lanzar sin montón {}", if k > 1 && k <= 2000 && perdidas <= 4 { "bien" } else { "MAL" });
+}
+
+/// S1: lo que se cobra por un proceso alcanza para lo que ocupa en el kernel con la tabla de llaves llena (un
+/// programa hostil la llena: `malo`, C31). Se llena una tabla hasta que no admite más y se suman el hilo, su estado de
+/// coma flotante, el proceso, su control y la pila del kernel.
+fn prueba_coste() {
+    let clase = |n: usize| if n <= 2048 { n.next_power_of_two().max(16) } else { n.div_ceil(4096) * 4096 };
+    let (a, _b) = objetos::Canal::nuevo();
+    let mut t = objetos::TablaLlaves::default();
+    let mut n = 0;
+    while t.instalar(a.clone()).is_ok() {
+        n += 1;
+    }
+    let tabla = t.bytes();
+    drop(t);
+    let resto = planificador::bytes_por_hilo() + clase(core::mem::size_of::<objetos::Proceso>())
+        + clase(core::mem::size_of::<objetos::Control>()) + crate::mapa::PILA;
+    let total = (tabla + resto) as u64;
+    kprintln!("  tabla llena: {} llaves en {} bytes; con hilo, proceso y pila {} bytes; se cobran {} (antes 65536)",
+        n, tabla, total, crate::cupo::COSTE_PROCESO);
+    let bien = n == objetos::MAX_TABLA && tabla as u64 <= crate::cupo::TABLA_LLENA && total <= crate::cupo::COSTE_PROCESO;
+    kprintln!("S1: coste de un proceso {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.

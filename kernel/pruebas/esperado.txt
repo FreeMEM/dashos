@@ -50,6 +50,7 @@ C50: buzón y compositor fuera del kernel bien
 C17: avisos entre núcleos bien
 C18: recogida bien
 S1: lanzar sin montón bien
+S1: coste de un proceso bien
   [serie] escrito por un controlador en EL0, sin pasar por el kernel
   [serie] interrupción 153 recibida como mensaje (MIS=0x20)
 sale con código 7

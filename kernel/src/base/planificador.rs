@@ -1544,6 +1544,12 @@ fn estado_fp(fp: &mut Option<Box<EstadoFp>>) -> Option<&mut EstadoFp> {
     fp.as_deref_mut()
 }
 
+/// Lo que ocupan en el montón un hilo y su estado de coma flotante, redondeado a las clases del montón (S1).
+pub fn bytes_por_hilo() -> usize {
+    let clase = |n: usize| if n <= 2048 { n.next_power_of_two().max(16) } else { n.div_ceil(4096) * 4096 };
+    clase(core::mem::size_of::<Hilo>()) + clase(core::mem::size_of::<EstadoFp>()) + clase(core::mem::size_of::<Arranque>())
+}
+
 /// Cuántas veces ha cambiado de dueño la FPU de algún núcleo.
 pub fn fp_cambios() -> u64 {
     FP_CAMBIOS.load(Ordering::Relaxed)
