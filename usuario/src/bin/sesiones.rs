@@ -244,6 +244,8 @@ fn principal() -> u64 {
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0 };
     let mut siguiente_pid = PRIMER_PID_PROPIO;
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
+    // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
+    let mut abiertas = [0u32; 8];
     let mut idos = [0u64; 8];
     let mut ido = 0;
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
@@ -267,6 +269,13 @@ fn principal() -> u64 {
             if let Some(i) = fichas.iter().position(|x| x.is_some_and(|x| x.marca == de)) {
                 let f = fichas[i].take().unwrap();
                 dashos::cerrar(f.grupo);
+                // Lo que lanzó `sesiones` tenía alta en archivos: que la suelte, con lo que dejara abierto.
+                if f.marca >= PRIMER_PID_PROPIO {
+                    let mut b = [0u8; dashos::protocolo::archivos::CABECERA];
+                    b[0..4].copy_from_slice(&dashos::protocolo::archivos::BAJA.to_le_bytes());
+                    b[8..16].copy_from_slice(&f.marca.to_le_bytes());
+                    dashos::canal_escribir(ARCHIVOS_ALTAS, &b, &[]);
+                }
                 if f.marca >= PRIMER_PID_PROPIO {
                     println!("  [sesiones] baja de {} (proceso {}, clase {})", nombre(&f.nombre), f.marca, u64_en(0));
                 } else {
@@ -328,6 +337,15 @@ fn principal() -> u64 {
                         (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
                         (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave, false),
                         (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == VOLVER => a.abrir_volumen(usuario, clave, true),
+                        // Salir con programas suyos aún vivos (los que lanzó `sesiones` como él), no: -13, como con
+                        // algo abierto en su volumen.
+                        (Some(_), true, Some(usuario), _)
+                            if CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|&(uid, _)| {
+                                fichas.iter().flatten().any(|f| f.uid == uid && f.marca >= PRIMER_PID_PROPIO)
+                            }) =>
+                        {
+                            -13
+                        }
                         (Some(a), true, Some(usuario), _) => a.pedir(dashos::protocolo::archivos::CERRAR_VOLUMEN, 0, usuario),
                         _ => -1,
                     };
@@ -342,15 +360,31 @@ fn principal() -> u64 {
                     if estado == dashos::protocolo::archivos::PROTEGIDO {
                         registro.apuntar(R_ENTRAR, estado, &pide, quien.as_bytes());
                     }
+                    if estado == BIEN && guardian {
+                        if let Some(&(uid, _)) = CUENTAS.iter().find(|c| c.1.as_bytes() == quien.as_bytes()) {
+                            match u32_en(0) {
+                                ENTRAR if !abiertas.contains(&uid) => {
+                                    if let Some(x) = abiertas.iter_mut().find(|x| **x == 0) {
+                                        *x = uid;
+                                    }
+                                }
+                                SALIR => abiertas.iter_mut().filter(|x| **x == uid).for_each(|x| *x = 0),
+                                _ => {}
+                            }
+                        }
+                    }
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
                 }
                 LANZAR => {
-                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    // Como quién (bytes 8 a 11): 0, como quien pide; si no, ese usuario, que tiene que haber entrado.
+                    let como = u32_en(8);
+                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) && (como == 0 || abiertas.contains(&como));
                     let nl = u32_en(4) as usize;
                     let camino = m.get(12..12 + nl).unwrap_or(b"");
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let yo = if como == 0 { yo } else { yo.map(|f| Ficha { uid: como, gid: como, ..f }) };
                     let (estado, pid) = match (&archivos, guardian, fichas.iter().position(|x| x.is_none())) {
                         (_, false, _) => {
                             registro.apuntar(R_LANZAR, PROTEGIDO, &pide, camino);

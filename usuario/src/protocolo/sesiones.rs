@@ -33,7 +33,8 @@ pub const DEJAR: u32 = 7;
 /// estado i32, quién 16 bytes, qué 16 bytes). A cualquier otro le contesta -2 (cuatro bytes).
 pub const REGISTRO: u32 = 8;
 /// De `guardian` (y, más adelante, del escritorio y el Shell) (U2): lanzar un programa del disco (orden, largo del
-/// camino, 0, el camino). `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
+/// camino, como quién (u32: 0, como quien pide; si no, el usuario, que tiene que haber entrado), el camino).
+/// `sesiones` lo lee por el servicio de archivos, lo crea en su propio grupo y le da ficha.
 /// Contesta un i32 (0, o el error) y el número del proceso nuevo (u64).
 pub const LANZAR: u32 = 9;
 /// De un programa (U2): su tabla de nombres. Contesta cuántos (u32) y hasta `MAX_NOMBRES` entradas de

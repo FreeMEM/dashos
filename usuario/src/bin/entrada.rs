@@ -52,10 +52,11 @@ fn principal() -> u64 {
         if bien { "bien" } else { "MAL" }
     );
     // U2: lanzar un programa del disco, y uno que no es un programa.
-    let lanzar = |camino: &str| -> (i32, u64) {
+    let lanzar_como = |camino: &str, como: u32| -> (i32, u64) {
         let mut p = [0u8; 64];
         p[0..4].copy_from_slice(&LANZAR.to_le_bytes());
         p[4..8].copy_from_slice(&(camino.len() as u32).to_le_bytes());
+        p[8..12].copy_from_slice(&como.to_le_bytes());
         p[12..12 + camino.len()].copy_from_slice(camino.as_bytes());
         let (lectura, suyo) = dashos::canal_crear();
         let mut r = [0u8; 12];
@@ -63,12 +64,28 @@ fn principal() -> u64 {
         dashos::cerrar(lectura);
         if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
     };
+    let lanzar = |camino: &str| lanzar_como(camino, 0);
     let (hola, pid) = lanzar("Programas/hola");
     let (texto, _) = lanzar("LEEME.txt");
     // Uno que habla con `sesiones` por la llave con que nace: repite la prueba de U4.
     let (pide, pid_pide) = lanzar("Programas/pide");
     let lanza = hola == 0 && pid >= 0x1_0000 && texto < 0 && pide == 0 && pid_pide == pid + 1;
     println!("  [entrada] lanzar del disco: Programas/hola {} (proceso {}), un texto {}: {}", hola, pid, texto, if lanza { "bien" } else { "MAL" });
+    // U2: lanzar como Carla, con su sesión abierta: `pide` nace con su `Home:` (su volumen). Como Ana, que no ha
+    // entrado, no. Después se sale: hasta que `pide` suelte lo suyo, salir da -13.
+    let entra = pedir(ENTRAR, "Carla", "clave de Carla");
+    let (como_carla, _) = lanzar_como("Programas/pide", 1001);
+    let (como_ana, _) = lanzar_como("Programas/hola", 1000);
+    let mut sale = i32::MIN;
+    for _ in 0..40 {
+        dashos::dormir_us(500_000);
+        sale = pedir(SALIR, "Carla", "");
+        if sale == 0 {
+            break;
+        }
+    }
+    let como = entra == 0 && como_carla == 0 && como_ana == -2 && sale == 0;
+    println!("  [entrada] lanzar como Carla (entró) {}, como Ana (no entró) {}, salir después {}: {}", como_carla, como_ana, sale, if como { "bien" } else { "MAL" });
     // U6: el registro de seguridad tiene que acabar teniendo los tres intentos del hostil (matar al compositor, la llave
     // de `eco` y entrar como Carla). Se mira cada medio segundo, hasta 20 s.
     let mut visto = (0, [false; 3]);

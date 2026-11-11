@@ -55,6 +55,9 @@ pub const RAICES: u32 = 16;
 /// Para `CEDER`: el propio cliente.
 pub const YO: u64 = u64::MAX;
 pub const ALTA: u32 = 100;
+/// Sin marca, como el alta (de `sesiones`): el programa de la marca de los bytes 8 a 15 acabó. Se suelta su sesión,
+/// con sus asas y sus raíces, y su alta.
+pub const BAJA: u32 = 101;
 pub const D_ADMINISTRAR: u32 = 1;
 /// Derecho de repartir: ceder asas (U1).
 pub const D_REPARTIR: u32 = 2;

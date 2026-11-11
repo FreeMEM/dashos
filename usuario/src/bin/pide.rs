@@ -124,12 +124,14 @@ fn nombres() -> (bool, bool) {
     let a = va("PROGDIR:pide", "", progdir.then_some("pide"));
     let b = va("progdir:otro/x", "", progdir.then_some("otro/x"));
     let c = va("SYS:", "", Some(""));
-    let d = va("Home:notas", "", None);
+    let mut probe2 = [0u8; 64];
+    let home = t.resolver("Home:", &mut probe2).is_some();
+    let d = home || va("Home:notas", "", None);
     let e = va("PROGDIR:/hola", "", None);
     let f = va("SYS:a/../../b", "", None);
     let g = va("sin dos puntos", "", None);
-    let raices = !progdir || raices(&t);
-    (t.len() == 2 + progdir as usize && a && b && c && d && e && f && g && raices, progdir)
+    let raices = !progdir || raices(&t, home);
+    (t.len() == 2 + progdir as usize + home as usize && a && b && c && d && e && f && g && raices, progdir)
 }
 
 /// Una orden al servicio de archivos: (estado, asa).
@@ -153,7 +155,7 @@ fn orden(lectura: u32, orden: u32, asa: u32, x: u64, nombre: &str) -> (i32, u32)
 /// U2: lanzado desde el disco nace con su llave de archivos y sus raíces, las de su tabla: la 0 su cajón (`PROGDIR:`)
 /// y la 1 el disco para leer (`SYS:`). Abre su sesión y busca por la tabla; por `SYS:` no crea (tope de solo leer) y
 /// no cierra sus raíces.
-fn raices(t: &Nombres) -> bool {
+fn raices(t: &Nombres, home: bool) -> bool {
     use dashos::protocolo::archivos as a;
     let (lectura, suyo) = dashos::canal_crear();
     let mut s = [0u8; a::CABECERA];
@@ -185,9 +187,25 @@ fn raices(t: &Nombres) -> bool {
     }
     let crear = orden(lectura, a::CREAR, 1, a::FICHERO as u64, "mio.txt").0;
     let cerrar = orden(lectura, a::CERRAR, 1, 0, "").0;
+    // Lanzado como Carla: en su `Home:` (su volumen, raíz 2) crea y borra.
+    let en_home = !home || {
+        let mut sal = [0u8; 64];
+        match t.resolver("Home:", &mut sal) {
+            Some((Some(raiz), _, "")) => {
+                let (c, asa) = orden(lectura, a::CREAR, raiz as u32, a::FICHERO as u64, "de-pide.txt");
+                if c == a::BIEN {
+                    orden(lectura, a::CERRAR, asa, 0, "");
+                }
+                let b = orden(lectura, a::BORRAR, raiz as u32, 0, "de-pide.txt").0;
+                println!("  [pide] Home: crea {} y borra {} en el volumen de Carla: {}", c, b, if c == a::BIEN && b == a::BIEN { "bien" } else { "MAL" });
+                c == a::BIEN && b == a::BIEN
+            }
+            _ => false,
+        }
+    };
     dashos::cerrar(lectura);
     dashos::cerrar(ventana[0]);
-    let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN;
+    let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN && en_home;
     println!("  [pide] raíces: PROGDIR:pide {}, Programas:hola {}, SYS:LEEME.txt {}; crear por SYS: {}, cerrarla {}: {}",
         yo, hola, leeme, crear, cerrar, if bien { "bien" } else { "MAL" });
     bien

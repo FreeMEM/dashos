@@ -1657,6 +1657,18 @@ fn principal() -> u64 {
             }
             continue;
         }
+        if marca == 0 && n >= CABECERA && u32_en(0) == BAJA {
+            // U2: el programa de esa marca acabó (lo dice `sesiones`): fuera su sesión, con sus asas y raíces, y su alta.
+            let de = u64::from_le_bytes(buf[8..16].try_into().unwrap());
+            if let Some(i) = clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == de)) {
+                soltar(&mut fs, &mut clientes, i);
+            }
+            altas.remove(&de);
+            for &l in &ll[..k] {
+                dashos::cerrar(l);
+            }
+            continue;
+        }
         // Sin marca no se sabe de quién es; sin cabecera entera, tampoco qué pide.
         if marca == 0 || n < CABECERA {
             for &l in &ll[..k] {

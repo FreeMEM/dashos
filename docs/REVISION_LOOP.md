@@ -329,5 +329,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `sesiones`: por volumen y subcamino desde su raíz 0). Prueba: `pide` lanzado del disco abre su sesión con esa
   llave y por la tabla encuentra `PROGDIR:pide`, `Programas:hola` y `SYS:LEEME.txt`; por `SYS:` no crea (-12) ni
   la cierra (-5). `hostil` manda un alta suya con el disco entero para escribir en el hueco 5: no le da nada (un
-  alta solo vale sin marca). Falta: `Home:` probado con un usuario con cuenta y el volumen abierto (los lanzados en
-  las pruebas son del usuario 1), `RAM:T` y raíces de cada paquete (S8).
+  alta solo vale sin marca). Falta: `RAM:T` y raíces de cada paquete (S8).
+- U2/U3, lanzar como el usuario que entró: `sesiones` apunta quién tiene la sesión abierta (ENTRAR y SALIR de
+  `guardian`), y LANZAR lleva "como quién" (bytes 8 a 11): solo `guardian` y solo como un usuario que entró. No se
+  sale mientras siga vivo un programa de ese usuario lanzado por `sesiones` (-13). Orden nueva de archivos, BAJA
+  (101, sin marca): con la baja de lo que lanzó, `sesiones` le dice a archivos que suelte su sesión, sus asas y
+  raíces y su alta (sin ella, su raíz `Home:` dejaba el volumen ocupado para siempre). Prueba: `entrada` entra como
+  Carla y lanza `pide` como 1001: su tabla trae `Home:` en la raíz 2 y ahí crea y borra; lanzar como Ana (no entró)
+  da -2; salir da -13 tres veces mientras `pide` vive y 0 en cuanto acaba.
