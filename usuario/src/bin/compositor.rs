@@ -383,6 +383,8 @@ fn principal() -> u64 {
     let mut ll = [0u32; canal::MAX_LLAVES];
     // Cuánto falta para el siguiente aviso de inactividad (U3): se espera un mensaje como mucho eso.
     let mut falta: Option<u32> = None;
+    // E8: cuadros, microsegundos componiendo, píxeles dañados y desde cuándo se cuenta.
+    let mut medida = (0u64, 0u64, 0u64, dashos::ahora_us());
     loop {
         // Un mensaje que no vale no para el compositor (M6).
         // Con algo pendiente para un cliente que no leía, se vuelve a probar a los 2 ms (E8).
@@ -498,10 +500,23 @@ fn principal() -> u64 {
         }
         // Se compone lo dañado y se avisa a quien esperaba su cuadro.
         let mut avisos = Vec::new();
-        let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, (dashos::ahora_us() / 1000) as u32, &mut |cl, aviso, ms| {
+        let t0 = dashos::ahora_us();
+        let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, (t0 / 1000) as u32, &mut |cl, aviso, ms| {
             avisos.push((cl, aviso, ms));
         });
         c.presentar(&danos);
+        // E8, la medida: cuántos cuadros (composiciones con daño) y cuánto tiempo en ellos, cada 10 s.
+        if !danos.is_empty() {
+            medida.0 += 1;
+            medida.1 += dashos::ahora_us() - t0;
+            medida.2 += danos.iter().map(|r| (r.w as u64) * (r.h as u64)).sum::<u64>();
+        }
+        if t0 >= medida.3 + 10_000_000 {
+            if medida.0 > 0 {
+                println!("  [compositor] en 10 s: {} cuadros, {} ms componiendo, {} kpx", medida.0, medida.1 / 1000, medida.2 / 1000);
+            }
+            medida = (0, 0, 0, t0);
+        }
         for (cl, aviso, ms) in avisos {
             if let Some(cli) = clientes.get_mut(&cl) {
                 escena::avisar_frame(&mut cli.con, aviso, ms);

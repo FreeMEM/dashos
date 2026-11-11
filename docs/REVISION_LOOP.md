@@ -33,7 +33,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 con cola de salida por cliente; sin temporizador de cuadro) |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8: cola de salida por cliente, medida de cuadros y sin daños repetidos) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
@@ -573,3 +573,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   tic tarde (9.985 µs); las otras, de 43 a 726 µs. Ya pasaba antes (1 de 11 en MULTITAREA_LOOP). No viene del arreglo
   del planificador: el hilo de plazo espera su periodo sin plazo de despertar, y el arreglo solo cambia al que sale de
   los dormidos y se elige a sí mismo. Queda por mirar.
+- E8, la medida que faltaba: el compositor dice cada 10 s cuántos cuadros ha compuesto, cuánto tiempo y cuántos píxeles
+  dañados. En la prueba de virt se compone poco (3 a 7 cuadros por segundo): lo que pesaba no era cuántas veces, sino
+  cuánto. Con la pantalla de bloqueo, cada tecla repintaba 4 pantallas enteras: al dar otra vez el mismo búfer, la
+  superficie entera tres veces (antes, el sitio de antes y el de ahora, que eran el mismo), y la pantalla de bloqueo
+  entera en cada commit. Ahora la superficie entera solo si cambia el búfer o el sitio, la de bloqueo solo la primera
+  vez, y al componer, un daño dentro de otro no se compone dos veces. Prueba en el PC (`mismo_bufer_solo_su_dano`):
+  el mismo búfer con un píxel dañado compone 1 píxel, y se ve; otro búfer, entero. Medido en virt (3 arranques, por
+  cada 10 s): pantallas de bloqueo y entrada, de 5.359 ms componiendo y 81 Mpx a 425 ms y 6,9 Mpx (-92 %); el bloqueo
+  por tiempo, de 3.122 ms a 238 (-92 %); al salir las ventanas, de 166 a 135 ms (-19 %). Los cuadros, iguales. Sin
+  panel: no hay medida de Linux con la que comparar. El temporizador de cuadro no compensa con este ritmo de cuadros.

@@ -1100,6 +1100,39 @@ mod ventanas {
         assert_eq!(escena.teclado, Some((3, 7)));
     }
 
+    /// E8: el mismo búfer otra vez, con un daño pequeño, solo compone ese trozo (antes, la superficie entera tres veces),
+    /// y lo nuevo se ve. Un búfer distinto sí se compone entero.
+    #[test]
+    fn mismo_bufer_solo_su_dano() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut a = Conexion::new();
+        let mut pantalla = vec![0u32; 100 * 60];
+        abrir(&mut escena, &mut a, 1, 70);
+        escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        // El píxel (2, 3) de la ventana pasa a 0x22 en su memoria; se vuelve a dar el mismo búfer con ese daño.
+        let px = escena.memorias.0.get_mut(&70).unwrap();
+        px[(3 * 16 + 2) * 4..(3 * 16 + 2) * 4 + 4].copy_from_slice(&[0x22, 0x22, 0x22, 0]);
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::ATTACH).uint(6).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::DAMAGE).int(2).int(3).int(1).int(1).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut a, 1, &e);
+        let danos = escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        let area: i64 = danos.iter().map(|r| r.w as i64 * r.h as i64).sum();
+        assert_eq!(area, 1, "{danos:?}");
+        let (x, y) = escena.clientes[&1].superficies[&7].sitio.unwrap();
+        assert_eq!(pantalla[(y + 3) as usize * 100 + (x + 2) as usize], 0xFF22_2222);
+        // Otro búfer (del mismo pool): entera.
+        let mut e = Escritor::new();
+        e.empezar(5, wl_shm_pool::req::CREATE_BUFFER).uint(11).int(0).int(16).int(16).int(64).uint(XRGB8888).fin();
+        e.empezar(7, wl_surface::req::ATTACH).uint(11).int(0).int(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut a, 1, &e);
+        let danos = escena.componer(&mut pantalla, 100, 60, 100, 0, &mut |_, _, _| {});
+        let area: i64 = danos.iter().map(|r| r.w as i64 * r.h as i64).sum();
+        assert!(area >= 16 * 16, "{danos:?}");
+    }
+
     /// U5: la ventana nueva de un cliente del sistema (el selector) sí se lleva el teclado mientras se escribe; al irse,
     /// deja de serlo.
     #[test]

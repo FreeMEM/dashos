@@ -590,14 +590,22 @@ impl<M: Memorias> Escena<M> {
                     con.salida.empezar(viejo, wl_buffer::ev::RELEASE).fin();
                 }
             }
-            // Un búfer nuevo se ve entero (lo que tapaba el viejo también cambia).
+            // Un búfer nuevo se ve entero (lo que tapaba el viejo también cambia). El mismo de antes, no: basta con los
+            // daños que dice el cliente (E8: la pantalla de bloqueo, que reusa su búfer, se repintaba entera tres veces
+            // por cada tecla).
+            let mismo = yo.superficies[&id].bufer == nuevo;
             let antes = rect_de(yo, id);
             let s = yo.superficies.get_mut(&id).unwrap();
             s.bufer = nuevo;
             let visto = s.visto;
-            self.danos.extend(antes);
-            self.danos.extend(visto);
-            self.danos.extend(rect_de(yo, id));
+            let ahora = rect_de(yo, id);
+            if !mismo || antes != ahora {
+                for d in [antes, visto, ahora].into_iter().flatten() {
+                    if !self.danos.contains(&d) {
+                        self.danos.push(d);
+                    }
+                }
+            }
         }
         let s = yo.superficies.get_mut(&id).unwrap();
         s.danos.extend(p.danos);
@@ -704,10 +712,11 @@ impl<M: Memorias> Escena<M> {
         let activo = self.bloqueo.as_ref().is_some_and(|b| b.cliente == cliente);
         if activo {
             let b = self.bloqueo.as_mut().unwrap();
+            // Entera, la primera vez; después, lo que diga el cliente (E8).
             if !b.superficies.contains(&sup) {
                 b.superficies.push(sup);
+                self.danos.push(Rect { x: 0, y: 0, w: m.0, h: m.1 });
             }
-            self.danos.push(Rect { x: 0, y: 0, w: m.0, h: m.1 });
             if self.teclado != Some((cliente, sup)) {
                 let mut ev = Vec::new();
                 self.dar_teclado((cliente, sup), &mut ev);
@@ -816,11 +825,22 @@ impl<M: Memorias> Escena<M> {
             }
         }
         let fondo = if self.bloqueo.is_some() { 0xFF00_0000 } else { self.fondo };
-        let danos: Vec<Rect> = core::mem::take(&mut self.danos)
+        let mut danos: Vec<Rect> = core::mem::take(&mut self.danos)
             .into_iter()
             .map(|d| d.cruce(todo))
             .filter(|d| !d.vacio())
             .collect();
+        // Uno dentro de otro no se compone dos veces (E8).
+        let dentro = |a: &Rect, b: &Rect| a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
+        let mut k = 0;
+        while k < danos.len() {
+            let d = danos[k];
+            if danos.iter().enumerate().any(|(j, o)| j != k && dentro(&d, o) && (d != *o || j < k)) {
+                danos.remove(k);
+            } else {
+                k += 1;
+            }
+        }
         // Lo que se ve de cada superficie, si algo cambió en pantalla.
         if !danos.is_empty() {
             for &(c, id, _, _) in &capas {
