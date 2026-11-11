@@ -79,6 +79,28 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 2
+        # Después, la pantalla de entrada (U3): el nombre y la contraseña de Ana.
+        if bloqueo == 2 and "[guardian] pantalla de entrada pintada" in texto:
+            bloqueo = 3
+            time.sleep(0.5)
+            # Primero alguien que no existe; cuando `guardian` dice que no, Ana con su contraseña.
+            antes = open(serie, errors="replace").read().count("contraseña mala en la pantalla")
+            teclear("Nadie")
+            time.sleep(0.5)
+            teclear("x")
+            for _ in range(40):
+                time.sleep(0.25)
+                if open(serie, errors="replace").read().count("contraseña mala en la pantalla") > antes:
+                    break
+            time.sleep(0.3)
+            teclear("Ana")
+            time.sleep(0.5)
+            teclear("clave de Ana")
+        if bloqueo == 3:
+            if "[guardian] entra " not in texto:
+                time.sleep(0.5)
+                continue
+            bloqueo = 4
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
             mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)

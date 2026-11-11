@@ -112,6 +112,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] se bloquea la sesión de Carla
 ~│   [guardian] pantalla de bloqueo en pantalla
 ~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
+~│   [guardian] entra Ana tras 1 intento malo: bien
 ~│   [pide] acción de administrador (comprobar el disco): 0 con 0 problemas: bien
 ~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien

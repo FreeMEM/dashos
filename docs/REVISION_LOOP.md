@@ -36,7 +36,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo a petición con su pantalla (falta la pantalla de entrada) |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas (falta bloquear con una tecla y por tiempo) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A9, A10 y A12 |
@@ -461,3 +461,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   contraseña tras una mala. Además, `guardian` no se apuntaba alguna vez: al arrancar, las altas de `inicio` llenan la
   cola de `sesiones` antes de que lea, y los reintentos se gastaban en el acto; ahora espera medio segundo entre
   ellos, hasta 20 s. Cinco pasadas seguidas bien. Falta la tecla para bloquear (el escritorio) y bloquear por tiempo.
+- U3, la pantalla de entrada: la misma de bloqueo en otro modo (`pantalla(None)`): "Entrar en DashOS", primero el
+  nombre (se ve) y después la contraseña (puntos); la frase del usuario sale en cuanto se sabe quién es. Con Intro,
+  ENTRAR (sin esperar, como VOLVER); si falla, vuelve a pedir el nombre. `guardian` se despide del compositor y quita
+  la memoria de la pantalla al acabar cada una (si no, la segunda no tenía dónde ponerse). Al teclear se repinta solo
+  la franja que cambia: repintar la pantalla entera por tecla tardaba más de 50 ms en QEMU y el compositor lo
+  soltaba. Prueba: tras desbloquear, el guion escribe un usuario que no existe ("Nadie": -2, vuelve a pedir el
+  nombre) y después Ana con su contraseña: "entra Ana tras 1 intento malo". El límite de `arranque-virt` pasa de 60
+  a 80 s (acaba antes en cuanto salen todas las líneas). Cuatro pasadas seguidas bien. Captura en
+  `docs/capturas/u3-entrada.png`. Falta: que sea lo primero al arrancar (hoy, en la prueba, va al final para no parar
+  las demás ventanas).

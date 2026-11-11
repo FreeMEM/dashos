@@ -20,7 +20,7 @@ mod ventana_cliente;
 
 use alloc::string::String;
 use dashos::println;
-use dashos::protocolo::sesiones::{PREGUNTA, PREGUNTAS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
+use dashos::protocolo::sesiones::{ENTRAR, PREGUNTA, PREGUNTAS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
 use kit::teclado::{Tecla, Teclado};
 use kit::texto::Fuente;
@@ -153,20 +153,22 @@ fn principal() -> u64 {
     let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
     // Si nadie pidió bloquear (U3), la prueba no lo vio: mal.
-    let bloqueo = por_bloquear.is_some_and(|u| bloquear(&u));
-    if bien && retirado && admin && bloqueo { 0 } else { 1 }
+    let bloqueo = por_bloquear.is_some_and(|u| pantalla(Some(&u)));
+    // U3: y la pantalla de entrada (en la prueba, la usuaria escribe "Ana" y su contraseña).
+    let entrada = pantalla(None);
+    if bien && retirado && admin && bloqueo && entrada { 0 } else { 1 }
 }
 
 /// Manda a `sesiones` la contraseña de la usuaria para comprobarla (VOLVER: sin tocar su volumen) y la borra. No
 /// espera: devuelve el canal por el que llegará la respuesta (tras una mala, `sesiones` tarda a propósito, y mientras
 /// tanto hay que seguir leyendo al compositor).
-fn volver(usuaria: &str, clave: &mut String) -> Option<u32> {
+fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
     // Cuántas letras (no cuáles): para ver una tecla perdida en las pruebas.
     println!("  [guardian] se comprueba una contraseña de {} letras", clave.chars().count());
     let mut m = [0u8; 160];
     let (u, c) = (usuaria.as_bytes(), clave.as_bytes());
     let c = &c[..c.len().min(128)];
-    m[0..4].copy_from_slice(&VOLVER.to_le_bytes());
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
     m[4..8].copy_from_slice(&(u.len() as u32).to_le_bytes());
     m[8..12].copy_from_slice(&(c.len() as u32).to_le_bytes());
     m[12..12 + u.len()].copy_from_slice(u);
@@ -189,17 +191,25 @@ fn volver(usuaria: &str, clave: &mut String) -> Option<u32> {
 /// si la anterior fue mala, el aviso.
 /// Con `todo`, la pantalla entera; si no, solo la caja y el aviso (lo que cambia al teclear), que es mucho menos: el
 /// compositor suelta a quien tarda en leer (E8). Devuelve la zona pintada.
-fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente) -> Rect {
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente) -> Rect {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     let y = alto / 2 - 90;
-    let zona = if todo { Rect::new(0, 0, ancho, alto) } else { Rect::new(0, y + 116, ancho, 100) };
+    // Al teclear, solo la franja que cambia: la caja y el aviso; en la de entrada, también la frase y el nombre.
+    let zona = match (todo, entrada) {
+        (true, _) => Rect::new(0, 0, ancho, alto),
+        (false, false) => Rect::new(0, y + 116, ancho, 100),
+        (false, true) => Rect::new(0, y + 20, ancho, 196),
+    };
     l.rellenar(zona, 0xff0d_1320);
     let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
     if todo {
-        let x = centrado(titulo, "Sesión bloqueada", 34);
-        titulo.dibujar(&mut l, x, y, "Sesión bloqueada", 34, 0xffe7_ecf5);
-        let frase = FRASES.iter().find(|f| f.0 == usuaria).map_or("", |f| f.1);
-        let frase = alloc::format!("\"{}\"", frase);
+        let cabeza = if entrada { "Entrar en DashOS" } else { "Sesión bloqueada" };
+        let x = centrado(titulo, cabeza, 34);
+        titulo.dibujar(&mut l, x, y, cabeza, 34, 0xffe7_ecf5);
+    }
+    if todo || entrada {
+        // La frase de quien entra, en cuanto se sabe quién es (S6b: así se sabe que es el sistema).
+        let frase = FRASES.iter().find(|f| f.0 == usuaria).map_or(alloc::string::String::new(), |f| alloc::format!("\"{}\"", f.1));
         let x = centrado(fuente, &frase, 22);
         fuente.dibujar(&mut l, x, y + 48, &frase, 22, 0xffff_9d3b);
         let x = centrado(fuente, usuaria, 20);
@@ -209,10 +219,14 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, letras: usize, m
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
     l.redondeado(caja, 24, 0xff16_1f31);
     l.borde(caja, 24, 2, if mala { 0xffe0_5050 } else { 0xff2a_3754 });
-    for i in 0..letras.min(20) as i32 {
+    for i in 0..if letras == usize::MAX { 0 } else { letras.min(20) } as i32 {
         l.redondeado(Rect::new(caja.x + 24 + i * 14, caja.y + 19, 10, 10), 5, 0xffe7_ecf5);
     }
-    let aviso = if mala { "Contraseña incorrecta" } else { "Escribe tu contraseña y pulsa Intro" };
+    let aviso = match (mala, entrada && letras == usize::MAX) {
+        (true, _) => "Contraseña incorrecta",
+        (false, true) => "Escribe tu nombre y pulsa Intro",
+        (false, false) => "Escribe tu contraseña y pulsa Intro",
+    };
     let x = centrado(fuente, aviso, 16);
     fuente.dibujar(&mut l, x, y + 200, aviso, 16, if mala { 0xffe0_5050 } else { 0xff9a_a7bf });
     zona
@@ -220,7 +234,20 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, letras: usize, m
 
 /// U3: bloquea la sesión (G5) con su pantalla y espera la contraseña de la usuaria. Devuelve si desbloqueó con la
 /// buena después de una mala, como hace la prueba.
-fn bloquear(usuaria: &str) -> bool {
+/// La pantalla de bloqueo de `usuaria` (U3), o la de entrada con `None`: primero el nombre, luego la contraseña. Al
+/// acabar se despide del compositor, para poder volver a conectarse.
+fn pantalla(usuaria: Option<&str>) -> bool {
+    let r = pantalla_dentro(usuaria);
+    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    // Y la memoria de la pantalla fuera de su sitio, para la siguiente.
+    dashos::memoria_quitar(VA);
+    r
+}
+
+fn pantalla_dentro(usuaria: Option<&str>) -> bool {
+    let entrada = usuaria.is_none();
+    let mut nombre = String::from(usuaria.unwrap_or(""));
+    let mut en_nombre = entrada;
     const SALIDA: u32 = 20;
     const GESTOR: u32 = 21;
     const CERROJO: u32 = 22;
@@ -229,8 +256,8 @@ fn bloquear(usuaria: &str) -> bool {
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     {
         let mut prueba = alloc::vec![0u32; 800 * 600];
-        pintar(&mut prueba, 800, 600, usuaria, 20, true, true, &mut fuente, &mut titulo);
-        pintar(&mut prueba, 800, 600, usuaria, 20, false, true, &mut fuente, &mut titulo);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, 20, true, true, &mut fuente, &mut titulo);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, 20, false, true, &mut fuente, &mut titulo);
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
@@ -292,12 +319,23 @@ fn bloquear(usuaria: &str) -> bool {
                             break;
                         }
                     }
+                    if entrada {
+                        // En la prueba, antes, un usuario que no existe: una mala.
+                        let bien = malas == 1;
+                        println!("  [guardian] entra {} tras {} intento malo: {}", nombre, malas, if bien { "bien" } else { "MAL" });
+                        return bien;
+                    }
                     let bien = malas == 1;
                     println!("  [guardian] desbloqueado con la contraseña buena tras {} mala: {}", malas, if bien { "bien" } else { "MAL" });
                     return bien;
                 }
                 malas += 1;
                 ultima_mala = true;
+                // En la de entrada, se vuelve a pedir el nombre.
+                if entrada {
+                    nombre.clear();
+                    en_nombre = true;
+                }
                 println!("  [guardian] contraseña mala en la pantalla de bloqueo ({})", r);
                 repintar = true;
             }
@@ -312,7 +350,8 @@ fn bloquear(usuaria: &str) -> bool {
             repintar = false;
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
             let primera = entera;
-            let z = pintar(px, ancho, alto, usuaria, clave.chars().count(), ultima_mala, entera, &mut fuente, &mut titulo);
+            let letras = if en_nombre { usize::MAX } else { clave.chars().count() };
+            let z = pintar(px, ancho, alto, &nombre, entrada, letras, ultima_mala, entera, &mut fuente, &mut titulo);
             entera = false;
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
@@ -329,7 +368,9 @@ fn bloquear(usuaria: &str) -> bool {
         let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
         match (o, orden) {
             (0, _) => {}
-            (SYNC, wayland::tablas::wl_callback::ev::DONE) => println!("  [guardian] pantalla de bloqueo pintada: tiene el teclado"),
+            (SYNC, wayland::tablas::wl_callback::ev::DONE) => {
+                println!("  [guardian] pantalla de {} pintada: tiene el teclado", if entrada { "entrada" } else { "bloqueo" })
+            }
             (CERROJO, ext_session_lock_v1::ev::LOCKED) => println!("  [guardian] sesión bloqueada"),
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
                 println!("  [guardian] el compositor no deja bloquear");
@@ -367,16 +408,24 @@ fn bloquear(usuaria: &str) -> bool {
                 teclado.tecla(palabra(2), palabra(3) == 1);
             }
             (TECLADO, wl_keyboard::ev::KEY) => match teclado.tecla(palabra(2), palabra(3) == 1) {
-                Some(Tecla::Letra(ch)) if clave.len() < 128 => {
+                Some(Tecla::Letra(ch)) if en_nombre && nombre.len() < 16 => {
+                    nombre.push(ch);
+                    repintar = true;
+                }
+                Some(Tecla::Letra(ch)) if !en_nombre && clave.len() < 128 => {
                     clave.push(ch);
                     repintar = true;
                 }
                 Some(Tecla::Retroceso) => {
-                    clave.pop();
+                    if en_nombre { nombre.pop() } else { clave.pop() };
+                    repintar = true;
+                }
+                Some(Tecla::Intro) if en_nombre => {
+                    en_nombre = nombre.is_empty();
                     repintar = true;
                 }
                 Some(Tecla::Intro) => {
-                    esperando = volver(usuaria, &mut clave);
+                    esperando = comprobar(if entrada { ENTRAR } else { VOLVER }, &nombre, &mut clave);
                     repintar = true;
                 }
                 _ => {}
