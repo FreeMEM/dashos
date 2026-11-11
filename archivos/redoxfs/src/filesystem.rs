@@ -91,10 +91,14 @@ impl<D: Disk> FileSystem<D> {
             }
 
             let block = ring_block - (header.generation() % HEADER_RING);
+            // DashOS: the whole ring in one read, not one read per slot (256 reads of a block, some 25 ms at each
+            // start in QEMU).
+            let mut ring = vec![0u8; (HEADER_RING * BLOCK_SIZE) as usize];
+            unsafe { disk.read_at(block, &mut ring)? };
             let mut newest: Vec<Header> = Vec::new();
-            for i in 0..HEADER_RING {
+            for slot in ring.chunks_exact(BLOCK_SIZE as usize) {
                 let mut other_header = Header::default();
-                unsafe { disk.read_at(block + i, &mut other_header)? };
+                other_header.copy_from_slice(slot);
 
                 // Skip invalid headers
                 if !other_header.valid() {

@@ -2051,6 +2051,7 @@ fn principal() -> u64 {
     };
     // El primer bloque del anillo de cabeceras: sin `Some(0)`, RedoxFS busca en los 65536 primeros.
     // `cleanup`: suelta los nodos borrados que seguían abiertos cuando se paró la última vez.
+    let t_abrir = dashos::ahora_us();
     let mut fs = match FileSystem::open(disco, None, Some(0), true) {
         Ok(fs) => fs,
         Err(e) => {
@@ -2058,7 +2059,7 @@ fn principal() -> u64 {
             return 2;
         }
     };
-    println!("  [archivos] RedoxFS abierto: {} KB, {} KB libres", fs.header.size() / 1024, fs.allocator().free() * BLOCK_SIZE / 1024);
+    println!("  [archivos] RedoxFS abierto: {} KB, {} KB libres ({} µs)", fs.header.size() / 1024, fs.allocator().free() * BLOCK_SIZE / 1024, dashos::ahora_us() - t_abrir);
     // A10: antes de atender a nadie, se comprueban los metadatos (sin leer los datos: es lo que tarda) y, si hay algo
     // mal, se repara (en una transacción: si se va la luz a medias, el disco queda como estaba). Con algo sin
     // arreglar, el disco va de solo lectura hasta que un administrador lo arregle.

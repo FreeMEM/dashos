@@ -690,3 +690,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   KB escribiendo y guardando otro fichero entre trozo y trozo; sale entero y bien. Con una traza temporal: en esa
   prueba la lectura anticipada se usa 13 veces y una vez se tira por un guardado. `disco` comprueba el nuevo borde de
   la ventana (128 KB).
+- Abrir RedoxFS lee el anillo de cabeceras de una vez (1 MB en una lectura, que `archivos` hace en 16 de 64 KB) en vez
+  de una lectura por casilla (256 de 4 KB). Abrir, medido en `make arranque-virt` (ahora sale en el mensaje "RedoxFS
+  abierto"), 3 arranques: 39,5, 39,0 y 41,6 ms antes; 20,2, 23,7 y 20,9 después (-48 %). Prueba hostil
+  (`header_ring_hostile`): basura en casillas vacías y en tres viejas, y una cabecera falsa con una generación enorme y
+  la suma mal: abre la buena más nueva, con todo. (Al escribirla salió que romper la cabecera más nueva cuando ya se
+  guardó del todo no deja volver a la anterior: sus bloques soltados ya se descartaron. No es un caso de corte de luz:
+  un corte durante su escritura sí vuelve a la anterior, y eso lo prueban `single_flush_*`.) RedoxFS: 148 pruebas.

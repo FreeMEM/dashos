@@ -639,3 +639,40 @@ fn discard_after_durable() {
     assert_clean(&mut fs);
     let _ = keep;
 }
+
+/// The header ring is read in one go (DashOS): a ring with garbage in some slots, older slots torn, and a forged
+/// header with a huge generation and a broken checksum, still opens on the newest good header. (A torn newest header
+/// falling back to the one before is a cut during its flush: `single_flush_*`.)
+#[test]
+fn header_ring_hostile() {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    for i in 0..20 {
+        put(&mut fs, &format!("f{i}"), &noise(5000, 200 + i));
+        fs.durable().unwrap();
+    }
+    let block = fs.block;
+    let newest = fs.header.generation();
+    let mut disk = fs.disk.cut(true);
+    let slot = |g: u64| block + g % crate::HEADER_RING;
+    let bs = BLOCK_SIZE as usize;
+    // Garbage in slots that hold no header, and in three older ones.
+    for g in [newest + 7, newest + 40, newest + 200, newest - 1, newest - 5, newest - 12] {
+        unsafe { disk.write_at(slot(g), &noise(bs, g)).unwrap() };
+    }
+    // A forged header: the newest one, with a huge generation and one byte changed (its checksum no longer fits).
+    let mut forged = vec![0u8; bs];
+    unsafe { disk.read_at(slot(newest), &mut forged).unwrap() };
+    let mut h = crate::Header::default();
+    h.copy_from_slice(&forged);
+    h.generation = (newest + 1000).into();
+    let mut raw = h.to_vec();
+    raw[100] ^= 0xFF;
+    unsafe { disk.write_at(slot(newest + 100), &raw).unwrap() };
+    let mut fs = reopen(disk, block);
+    assert_eq!(fs.header.generation(), newest);
+    for i in 0..20 {
+        assert_eq!(get(&mut fs, &format!("f{i}")), Some(noise(5000, 200 + i)));
+    }
+    assert_clean(&mut fs);
+}
