@@ -140,6 +140,23 @@ fn principal() -> u64 {
     // Un fichero de 8 MB por trozos de 64 KB, sin y con vaciar cada vez, y leer el primero dos veces.
     let mut bien = true;
     let mut grande = 0;
+    // A14: un fichero que ya estaba en el disco al arrancar (lo pone `tools/medir.py`), leído de verdad en frío: nada
+    // suyo en ninguna caché. Sin él (una imagen vieja), no se mide.
+    let previo = c.pedir(BUSCAR, 0, 0, 0, b"previo.bin");
+    if previo.estado == 0 {
+        let t0 = cuentas();
+        let mut off = 0;
+        while off < GRANDE {
+            let r = c.pedir(LEER, previo.asa, off, TROZO, b"");
+            if r.estado != 0 || r.a == 0 {
+                bien = false;
+                break;
+            }
+            off += r.a;
+        }
+        dato("leer_8mb_disco", mb, GRANDE, cuentas() - t0, "MB/s");
+        c.pedir(CERRAR, previo.asa, 0, 0, b"");
+    }
     for (op, nombre_f, cada_vez) in [("escribir_8mb", &b"grande"[..], false), ("escribir_8mb_sync", b"grande_sync", true)] {
         let t0 = cuentas();
         let f = c.pedir(CREAR, 0, 1, 0, nombre_f);

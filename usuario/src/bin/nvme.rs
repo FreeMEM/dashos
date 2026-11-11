@@ -64,7 +64,8 @@ const O_VACIAR: u8 = 0x00;
 const O_DSM: u8 = 0x09;
 
 // El servicio (U6f).
-const VENTANA: usize = 64 * 1024;
+/// 128 KB: dos mitades de 64 KB, una para lo que se lee y otra para lo que se lee por adelantado (A14).
+const VENTANA: usize = 128 * 1024;
 const MAX_CLIENTES: usize = 4;
 const E_CERRADO: i64 = -4;
 const PEDIR_ABRIR: u32 = 0;

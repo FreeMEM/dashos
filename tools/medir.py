@@ -22,6 +22,7 @@ El hijo en C se compila con clang y ld.lld; el de Dash, con `./dash --dashos` de
 """
 import json
 import os
+import random
 import re
 import statistics
 import struct
@@ -113,6 +114,9 @@ def disco_fs(salida, ar):
     t = tempfile.mkdtemp(prefix="medir-fs-")
     raiz = os.path.join(t, "raiz")
     os.mkdir(raiz)
+    # A14: 8 MB al azar que ya están en el disco al arrancar: `leer_8mb_disco` los lee de verdad en frío.
+    with open(os.path.join(raiz, "previo.bin"), "wb") as f:
+        f.write(random.Random(14).randbytes(8 << 20))
     fs = os.path.join(t, "fs.img")
     with open(fs, "wb") as f:
         f.truncate(64 << 20)
@@ -229,6 +233,10 @@ def correr(imagen, salida_json, vueltas):
     todas = []
     for v in range(vueltas):
         texto = una_vuelta(imagen)
+        # MEDIR_TEXTO=fichero: guarda la salida entera de la última vuelta (para depurar).
+        if os.environ.get("MEDIR_TEXTO"):
+            with open(os.environ["MEDIR_TEXTO"], "w") as f:
+                f.write(texto)
         m = leer_salida(texto)
         bien = "[medir] fin" in texto
         print(f"vuelta {v + 1}: {len(m)} medidas" + ("" if bien else " (NO ACABÓ)"))

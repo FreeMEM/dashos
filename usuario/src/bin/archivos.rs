@@ -114,6 +114,14 @@ struct Disco {
     /// escrituras (el servicio los hace por orden), sin un viaje más. Un bloque soltado y vuelto a escribir antes se
     /// descarta y después se escribe.
     por_descartar: Vec<(u64, usize, usize)>,
+    /// A14, lectura anticipada: la lectura que va por delante en el anillo (bloque, desde dónde en la ventana, bytes,
+    /// y si ya no vale porque se escribió algo suyo). La ventana tiene dos mitades de `TRAMO`: una para lo que se lee
+    /// ahora y otra para lo siguiente.
+    adelanto: Option<(u64, usize, usize, bool)>,
+    /// Dónde acabó la última lectura del disco (en bloques): si la siguiente empieza ahí, se lee seguido.
+    fin_lectura: u64,
+    /// La ventana del disco tiene sitio para las dos mitades (128 KB o más).
+    dos_mitades: bool,
 }
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
@@ -192,20 +200,16 @@ impl Disco {
         }
     }
 
-    /// Manda por el anillo los tramos (bloque, bytes desde el principio de la ventana) y, si `vaciar`, un vaciado
-    /// detrás: el servicio los hace por orden, uno tras otro. Un aviso y una espera para todos.
-    /// Cada tramo, con su orden (escribir o descartar). Un descarte que falla no cuenta como error: es un aviso.
-    fn por_anillo(&mut self, tramos: &[(u32, u64, usize, usize)], vaciar: bool) -> Result<()> {
+    /// Pone en el anillo las entradas (orden, bloque, desde dónde en la ventana, bytes), con su número en el lote como
+    /// etiqueta, y avisa al servicio si duerme. No espera.
+    fn enviar(&mut self, entradas: &[(u32, u64, usize, usize)]) {
         use core::sync::atomic::{Ordering::*, fence};
-        let (lectura, mut sq, mut cq) = self.anillo.unwrap();
+        let (lectura, mut sq, cq) = self.anillo.unwrap();
         let palabra = |off: usize| unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) };
-        let total = tramos.len() as u32 + vaciar as u32;
-        debug_assert!(total <= ANILLO_ENTRADAS);
-        for (i, (orden, bloque, off, largo)) in tramos.iter().copied().chain(vaciar.then_some((DISCO_VACIAR, 0, 0, 0))).enumerate() {
+        for (i, &(orden, bloque, off, largo)) in entradas.iter().enumerate() {
             let e = 64 + 32 * (sq.wrapping_add(i as u32) % ANILLO_ENTRADAS) as usize;
-            let es_vaciar = vaciar && i == tramos.len();
             let primero = (INICIO + bloque * BLOCK_SIZE) / self.tam_sector;
-            palabra(e).store(if es_vaciar { DISCO_VACIAR } else { orden }, Relaxed);
+            palabra(e).store(orden, Relaxed);
             palabra(e + 4).store((largo as u64 / self.tam_sector) as u32, Relaxed);
             palabra(e + 8).store(primero as u32, Relaxed);
             palabra(e + 12).store((primero >> 32) as u32, Relaxed);
@@ -214,7 +218,7 @@ impl Disco {
         }
         // Que el disco vea lo escrito en la ventana y en el anillo antes que la nueva cola.
         unsafe { core::arch::asm!("dmb ish") };
-        sq = sq.wrapping_add(total);
+        sq = sq.wrapping_add(entradas.len() as u32);
         palabra(4).store(sq, Release);
         fence(SeqCst);
         if palabra(16).load(SeqCst) != 0 {
@@ -222,39 +226,123 @@ impl Disco {
             p[..4].copy_from_slice(&DISCO_MIRAR.to_le_bytes());
             dashos::canal_escribir(1, &p, &[]);
         }
+        self.anillo = Some((lectura, sq, cq));
+    }
+
+    /// Espera a las `cuantas` terminadas siguientes (el servicio las hace por orden) y las recoge: (etiqueta, estado)
+    /// de cada una, en `fuera`.
+    fn recoger(&mut self, cuantas: u32, fuera: &mut Vec<(u32, i32)>) -> Result<()> {
+        use core::sync::atomic::{Ordering::*, fence};
+        let (lectura, sq, mut cq) = self.anillo.unwrap();
+        let palabra = |off: usize| unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) };
         let mut buf = [0u8; 8];
         let mut ll = [0u32; 1];
         loop {
             palabra(20).store(1, SeqCst);
             fence(SeqCst);
-            if palabra(12).load(Acquire).wrapping_sub(cq) >= total {
+            if palabra(12).load(Acquire).wrapping_sub(cq) >= cuantas {
                 break;
             }
             if dashos::canal_leer(lectura, &mut buf, &mut ll).0 < 0 {
                 return Err(Error::new(EIO));
             }
         }
-        let mut bien = true;
-        for i in 0..total {
+        for i in 0..cuantas {
             let c = 2048 + 16 * (cq.wrapping_add(i) % ANILLO_ENTRADAS) as usize;
-            let aviso = tramos.get(palabra(c).load(Relaxed) as usize).is_some_and(|t| t.0 == DISCO_DESCARTAR);
-            bien &= aviso || palabra(c + 4).load(Relaxed) == 0;
+            fuera.push((palabra(c).load(Relaxed), palabra(c + 4).load(Relaxed) as i32));
         }
-        cq = cq.wrapping_add(total);
+        cq = cq.wrapping_add(cuantas);
         palabra(8).store(cq, Release);
         self.anillo = Some((lectura, sq, cq));
+        Ok(())
+    }
+
+    /// Recoge la lectura anticipada que vaya por delante, si la hay: su (bloque, desde dónde, bytes) si leyó bien y
+    /// aún vale.
+    fn recoger_adelanto(&mut self) -> Result<Option<(u64, usize, usize)>> {
+        let Some((bloque, off, largo, viejo)) = self.adelanto.take() else { return Ok(None) };
+        let mut t = Vec::new();
+        self.recoger(1, &mut t)?;
+        Ok((t[0].1 == 0 && !viejo).then_some((bloque, off, largo)))
+    }
+
+    /// Manda por el anillo los tramos (orden escribir o descartar, bloque, desde dónde en la ventana, bytes) y, si
+    /// `vaciar`, un vaciado detrás: el servicio los hace por orden, uno tras otro. Un aviso y una espera para todos. Un
+    /// descarte que falla no cuenta como error: es un aviso. Antes, recoge la lectura anticipada (A14): la ventana
+    /// es de los dos.
+    fn por_anillo(&mut self, tramos: &[(u32, u64, usize, usize)], vaciar: bool) -> Result<()> {
+        self.recoger_adelanto()?;
+        let mut entradas: Vec<(u32, u64, usize, usize)> = tramos.to_vec();
+        if vaciar {
+            entradas.push((DISCO_VACIAR, 0, 0, 0));
+        }
+        debug_assert!(entradas.len() as u32 <= ANILLO_ENTRADAS);
+        self.enviar(&entradas);
+        let mut hechas = Vec::with_capacity(entradas.len());
+        self.recoger(entradas.len() as u32, &mut hechas)?;
+        let bien = hechas.iter().all(|&(etiqueta, estado)| estado == 0 || tramos.get(etiqueta as usize).is_some_and(|t| t.0 == DISCO_DESCARTAR));
         if bien { Ok(()) } else { Err(Error::new(EIO)) }
+    }
+
+    /// A14: lee un tramo (hasta `TRAMO`) por el anillo. Si la lectura anticipada ya lo trae, de ahí. Si se lee seguido
+    /// (empieza donde acabó la anterior) y son datos de un fichero, deja pedido el tramo siguiente en la otra mitad de
+    /// la ventana: el disco lo lee mientras RedoxFS mira este.
+    fn leer_tramo_anillo(&mut self, bloque: u64, destino: &mut [u8]) -> Result<()> {
+        let n = destino.len();
+        let bloques = (n as u64) / BLOCK_SIZE;
+        let seguido = self.fin_lectura == bloque;
+        self.fin_lectura = bloque + bloques;
+        let (desde, mitad) = match self.recoger_adelanto()? {
+            Some((b, off, largo)) if b == bloque && largo >= n => (Some(off), off),
+            _ => (None, 0),
+        };
+        let siguiente = bloque + bloques;
+        let adelantar = self.dos_mitades
+            && self.datos
+            && seguido
+            && n == TRAMO
+            && (INICIO + (siguiente + bloques) * BLOCK_SIZE) <= self.sectores * self.tam_sector;
+        let otra = if desde.is_some() { mitad ^ TRAMO } else { TRAMO };
+        let mut entradas: Vec<(u32, u64, usize, usize)> = Vec::new();
+        if desde.is_none() {
+            entradas.push((DISCO_LEER, bloque, 0, n));
+        }
+        if adelantar {
+            entradas.push((DISCO_LEER, siguiente, otra, TRAMO));
+        }
+        if !entradas.is_empty() {
+            self.enviar(&entradas);
+        }
+        if desde.is_none() {
+            let mut t = Vec::new();
+            let r = self.recoger(1, &mut t);
+            if adelantar {
+                self.adelanto = Some((siguiente, otra, TRAMO, false));
+            }
+            r?;
+            if t[0].1 != 0 {
+                return Err(Error::new(EIO));
+            }
+        } else if adelantar {
+            self.adelanto = Some((siguiente, otra, TRAMO, false));
+        }
+        let off = desde.unwrap_or(0);
+        // La ventana es memoria normal sin caché: una copia normal (F9). Lo que escribió el disco ya está ahí: la
+        // terminada llegó después.
+        unsafe { core::ptr::copy_nonoverlapping((VA_DISCO + off) as *const u8, destino.as_mut_ptr(), n) };
+        Ok(())
     }
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None, llenando: false, datos: false, por_descartar: Vec::new() };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None, llenando: false, datos: false, por_descartar: Vec::new(), adelanto: None, fin_lectura: u64::MAX, dos_mitades: false };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
         }
         d.sectores = u64::from_le_bytes(r[8..16].try_into().unwrap());
         d.tam_sector = u32::from_le_bytes(r[16..20].try_into().unwrap()) as u64;
+        d.dos_mitades = u32::from_le_bytes(r[20..24].try_into().unwrap()) as usize >= 2 * TRAMO;
         if d.tam_sector == 0 || BLOCK_SIZE % d.tam_sector != 0 {
             return Err("tamaño de sector raro");
         }
@@ -292,9 +380,18 @@ impl Disk for Disco {
         }
         self.de_memoria = false;
         unsafe { self.leer_disco(block, buffer)? };
+        // Un bloque escrito y aún sin guardar manda sobre lo que hay en el disco (y sobre lo leído por adelantado):
+        // se toma de la caché y no se pisa.
+        for (i, b) in buffer.chunks_exact_mut(bs).enumerate() {
+            if self.cache.sucios.contains(&(block + i as u64)) {
+                self.cache.leer(block + i as u64, b);
+            }
+        }
         if !(self.llenando && self.datos) {
             for (i, b) in buffer.chunks_exact(bs).enumerate() {
-                self.cache.poner(block + i as u64, b, false);
+                if !self.cache.sucios.contains(&(block + i as u64)) {
+                    self.cache.poner(block + i as u64, b, false);
+                }
             }
         }
         Ok(buffer.len())
@@ -304,6 +401,13 @@ impl Disk for Disco {
     unsafe fn write_at(&mut self, block: u64, buffer: &[u8]) -> Result<usize> {
         if buffer.len() as u64 % BLOCK_SIZE != 0 {
             return Err(Error::new(EINVAL));
+        }
+        // Lo leído por adelantado de estos bloques ya no vale (A14).
+        if let Some((b, _, largo, viejo)) = self.adelanto.as_mut() {
+            let fin = *b + *largo as u64 / BLOCK_SIZE;
+            if block < fin && block + buffer.len() as u64 / BLOCK_SIZE > *b {
+                *viejo = true;
+            }
         }
         for (i, b) in buffer.chunks_exact(BLOCK_SIZE as usize).enumerate() {
             self.cache.poner(block + i as u64, b, true);
@@ -449,6 +553,14 @@ impl Disco {
 
     unsafe fn leer_disco_sin_medir(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
         let mut hecho = 0;
+        if self.anillo.is_some() {
+            while hecho < buffer.len() {
+                let n = (buffer.len() - hecho).min(TRAMO);
+                self.leer_tramo_anillo(block + hecho as u64 / BLOCK_SIZE, &mut buffer[hecho..hecho + n])?;
+                hecho += n;
+            }
+            return Ok(hecho);
+        }
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TRAMO);
             let primero = (INICIO + block * BLOCK_SIZE + hecho as u64) / self.tam_sector;

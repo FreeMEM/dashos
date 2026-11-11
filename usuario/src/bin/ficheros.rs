@@ -415,6 +415,33 @@ fn principal() -> u64 {
     };
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
     println!("  [ficheros] A14 fechas: {}{}", si(fecha), if h == 0 { " (sin hora)" } else { "" });
+    // A14, lectura anticipada: C/frio.bin (1 MB de xorshift, de la imagen: frío de verdad), leído a trozos de 64 KB
+    // mientras se escribe y se guarda otro fichero entre trozo y trozo (cada guardado recoge lo leído por adelantado y
+    // lo da por no válido). Tiene que salir entero y bien.
+    let frio = c.pedir(BUSCAR, 0, 0, 0, "C/frio.bin");
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let otro = c.pedir(CREAR, escrito.asa, 1, 0, "entre.bin");
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut adelanto = frio.estado == 0 && otro.estado == 0;
+    let mut off = 0u64;
+    while adelanto && off < 1 << 20 {
+        let r = c.pedir(LEER, frio.asa, off, 64 * 1024, "");
+        adelanto &= r.estado == 0 && r.a == 64 * 1024;
+        for &b in &c.ventana()[..r.a as usize] {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            adelanto &= b == x as u8;
+        }
+        off += r.a;
+        c.ventana_mut()[..4096].fill(off as u8);
+        adelanto &= c.pedir(ESCRIBIR, otro.asa, off, 4096, "").a == 4096 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    }
+    c.pedir(CERRAR, frio.asa, 0, 0, "");
+    c.pedir(CERRAR, otro.asa, 0, 0, "");
+    c.pedir(BORRAR, escrito.asa, 0, 0, "entre.bin");
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 lectura anticipada: {}", si(adelanto));
     // A14, TRIM: 256 KB que no se comprimen (xorshift), borrados y guardados. El disco los descarta; desde fuera,
     // `disco_archivos.py` comprueba que ya no están en la imagen.
     let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");

@@ -672,3 +672,21 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   En `ficheros`, 256 KB que no se comprimen, borrados y guardados; desde Linux, `disco_archivos.py` comprueba que no
   queda ni un trozo en la imagen. Sin `discard=unmap` en QEMU estaban los 64 trozos de 4 KB; con él, ninguno.
   `make arranque-virt` y `medir-fs` llevan ahora `discard=unmap`. RedoxFS: 147 pruebas bien.
+- A14, la lectura anticipada: `archivos` lee del disco por el anillo, y cuando una lectura de datos de un fichero
+  empieza donde acabó la anterior y es de un tramo entero (64 KB), deja pedido el tramo siguiente en la otra mitad de
+  la ventana del disco (que pasa de 64 a 128 KB): el disco lo lee mientras RedoxFS mira el actual. Lo leído por
+  adelantado deja de valer si se escribe algo suyo, y cada guardado lo recoge antes de usar la ventana. Además, al
+  leer del disco, un bloque escrito y sin guardar se toma de la caché y no se pisa (antes se podía pisar con lo del
+  disco si una lectura lo abarcaba; no se vio que pasara, RedoxFS no lo hace).
+- Medido: la prueba de siempre, "leer 8 MB por primera vez", casi no va al disco (el fichero se acaba de escribir y
+  sus bloques siguen en la caché de bloques: 24 lecturas de 64 KB de 128). Medida nueva, `leer_8mb_disco`: 8 MB que ya
+  estaban en el disco al arrancar (`previo.bin`, lo pone `tools/medir.py`), sin nada en ninguna caché. Con y sin, uno
+  tras otro, 5 arranques: 225 a 279 MB/s (+24 %, los rangos no se tocan). Lo demás, dentro del ruido. Linux no tiene
+  esta medida en el banco.
+- Visto al depurar: al abrir, RedoxFS lee el anillo de cabeceras bloque a bloque (256 lecturas de 4 KB, unos 25 ms en
+  QEMU en cada arranque). Siguiente candidato. `tools/medir.py` guarda la salida entera de una vuelta con
+  `MEDIR_TEXTO=fichero`.
+- Prueba (en `ficheros`): `C/frio.bin` (1 MB de xorshift, puesto en la imagen: frío de verdad) se lee a trozos de 64
+  KB escribiendo y guardando otro fichero entre trozo y trozo; sale entero y bien. Con una traza temporal: en esa
+  prueba la lectura anticipada se usa 13 veces y una vez se tira por un guardado. `disco` comprueba el nuevo borde de
+  la ventana (128 KB).
