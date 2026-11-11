@@ -1012,6 +1012,53 @@ pub mod zwp_linux_dmabuf_feedback_v1 {
     }
 }
 
+pub static EXT_IDLE_NOTIFIER_V1: Interface = Interface {
+    name: "ext_idle_notifier_v1",
+    version: 2,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "get_idle_notification", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("ext_idle_notification_v1") }, Arg { name: "timeout", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "seat", kind: Kind::Object, nullable: false, interface: Some("wl_seat") }] },
+        Message { name: "get_input_idle_notification", since: 2, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("ext_idle_notification_v1") }, Arg { name: "timeout", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "seat", kind: Kind::Object, nullable: false, interface: Some("wl_seat") }] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `ext_idle_notifier_v1`.
+pub mod ext_idle_notifier_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const GET_IDLE_NOTIFICATION: u16 = 1;
+        pub const GET_INPUT_IDLE_NOTIFICATION: u16 = 2;
+    }
+    pub mod ev {
+    }
+}
+
+pub static EXT_IDLE_NOTIFICATION_V1: Interface = Interface {
+    name: "ext_idle_notification_v1",
+    version: 2,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "idled", since: 1, destructor: false, args: &[] },
+        Message { name: "resumed", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `ext_idle_notification_v1`.
+pub mod ext_idle_notification_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+    }
+    pub mod ev {
+        pub const IDLED: u16 = 0;
+        pub const RESUMED: u16 = 1;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1048,4 +1095,6 @@ pub static INTERFACES: &[&Interface] = &[
     &ZWP_LINUX_DMABUF_V1,
     &ZWP_LINUX_BUFFER_PARAMS_V1,
     &ZWP_LINUX_DMABUF_FEEDBACK_V1,
+    &EXT_IDLE_NOTIFIER_V1,
+    &EXT_IDLE_NOTIFICATION_V1,
 ];

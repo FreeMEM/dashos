@@ -29,7 +29,8 @@ QEMU=$!
 # docs/REVISION_LOOP.md). Cuando la salida serie dice que está en pantalla, el cursor va a la esquina y de ahí a
 # (300, 300), donde solo está ella; un clic le da el teclado, y Super+Arriba la maximiza y Super+Abajo la devuelve.
 # Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
-# y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes.
+# y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
+# ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
@@ -101,6 +102,29 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 4
+        # Y el bloqueo por tiempo (U3): 3 s más de teclas tras pedir `guardian` el aviso, y luego nada hasta que bloquea;
+        # entonces, una contraseña mala y la de Ana.
+        if bloqueo == 4 and "[guardian] esperando " in texto:
+            bloqueo, quieto = 5, time.time() + 3
+        if bloqueo == 5 and time.time() >= quieto:
+            if texto.count("pantalla de bloqueo pintada") < 2:
+                time.sleep(0.25)
+                continue
+            bloqueo = 6
+            time.sleep(0.5)
+            antes = texto.count("contraseña mala en la pantalla de bloqueo")
+            teclear("mala")
+            for _ in range(40):
+                time.sleep(0.25)
+                if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
+                    break
+            time.sleep(0.3)
+            teclear("clave de Ana")
+        if bloqueo == 6:
+            if texto.count("[guardian] desbloqueado") < 2:
+                time.sleep(0.5)
+                continue
+            bloqueo = 7
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
             mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)

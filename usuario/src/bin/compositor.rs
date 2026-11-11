@@ -48,7 +48,7 @@ static GLOBALES: [Global; 6] = [
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 8] = [
+static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -57,10 +57,26 @@ static GLOBALES_ESCRITORIO: [Global; 8] = [
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
+    Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
 ];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
 /// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
 const ESCRITORIOS: &[&str] = &["guardian"];
+
+/// Mira los avisos de inactividad (U3) y manda los `idled` y `resumed` pendientes. Devuelve cuánto falta para el
+/// siguiente.
+fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) -> Option<u32> {
+    let falta = escena.revisar_inactividad();
+    for (cl, objeto, ocioso) in core::mem::take(&mut escena.avisos_inactividad) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_inactividad(&mut cli.con, objeto, ocioso);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    falta
+}
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
 /// no, la llave que trajera la respuesta (0 si ninguna).
@@ -359,15 +375,32 @@ fn principal() -> u64 {
     let mut vistas = 0;
     let mut buf = [0u8; canal::MAX_CANAL];
     let mut ll = [0u32; canal::MAX_LLAVES];
+    // Cuánto falta para el siguiente aviso de inactividad (U3): se espera un mensaje como mucho eso.
+    let mut falta: Option<u32> = None;
     loop {
         // Un mensaje que no vale no para el compositor (M6).
-        let (n, k, marca) = match dashos::servicio::recibir(ventanas, &mut buf, &mut ll) {
-            dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
-            dashos::servicio::Recibido::Cerrado => return 0,
-            dashos::servicio::Recibido::Nada => continue,
+        let (n, k, marca) = match falta {
+            None => match dashos::servicio::recibir(ventanas, &mut buf, &mut ll) {
+                dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
+                dashos::servicio::Recibido::Cerrado => return 0,
+                dashos::servicio::Recibido::Nada => continue,
+            },
+            Some(ms) => match dashos::canal_leer_plazo(ventanas, &mut buf, &mut ll, ms as u64 * 1000) {
+                (n, k, marca) if n >= 0 => (n as usize, k, marca),
+                (dashos::E_CERRADO, ..) => return 0,
+                (dashos::E_PLAZO, ..) => (usize::MAX, 0, 0),
+                _ => {
+                    dashos::dormir_us(1_000);
+                    continue;
+                }
+            },
         };
-        let llaves = &ll[..k];
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
+        if n == usize::MAX {
+            falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
+            continue;
+        }
+        let llaves = &ll[..k];
         // Un mensaje vacío no es nada; `buf` aún tiene el anterior (E1).
         if n == 0 {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
@@ -456,6 +489,8 @@ fn principal() -> u64 {
                 }
             }
         }
+        escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
+        falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
         // Los que no leían sus eventos (E8).
         for cl in core::mem::take(&mut caidos) {
             println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));

@@ -14,7 +14,7 @@ use crate::servidor::{Conexion, ErrorProtocolo, Servicio, INVALID_METHOD};
 use crate::shm::{Memorias, Shm, ARGB8888};
 use crate::tablas::{
     self, wl_buffer, wl_callback, zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
-    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_output, wl_subcompositor,
+    ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_output, wl_subcompositor,
     wl_subsurface, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 
@@ -425,6 +425,31 @@ pub struct Escena<M: Memorias> {
     /// La hora en milisegundos (la pone quien atiende, antes de cada mensaje) y la de la última tecla pulsada (S8).
     pub reloj_ms: u32,
     ultima_tecla_ms: Option<u32>,
+    /// Los avisos de inactividad (`ext_idle_notifier_v1`, U3): quién, su objeto, el plazo, desde cuándo cuenta y si
+    /// ya se avisó.
+    inactividad: Vec<Inactividad>,
+    /// Los eventos `idled` (true) y `resumed` (false) por mandar: quien atiende los manda con `avisar_inactividad`.
+    pub avisos_inactividad: Vec<(Cliente, u32, bool)>,
+}
+
+/// Un aviso de inactividad pedido (U3).
+struct Inactividad {
+    cliente: Cliente,
+    objeto: u32,
+    plazo_ms: u32,
+    desde_ms: u32,
+    avisado: bool,
+}
+
+/// Lo más que se guarda de avisos de inactividad, entre todos: más, y la petición es un error.
+pub const MAX_INACTIVIDAD: usize = 16;
+/// El error de una petición de aviso de más (no está en el XML: es de DashOS).
+pub const INACTIVIDAD_DEMASIADOS: u32 = 0;
+
+/// Manda un aviso de inactividad (U3): `idled` si `ocioso`, si no `resumed`.
+pub fn avisar_inactividad(con: &mut Conexion, objeto: u32, ocioso: bool) {
+    let ev = if ocioso { ext_idle_notification_v1::ev::IDLED } else { ext_idle_notification_v1::ev::RESUMED };
+    con.salida.empezar(objeto, ev).fin();
 }
 
 /// Tras una tecla, cuánto tiempo no se lleva el teclado una ventana nueva de otro programa (S8): así un programa no
@@ -456,6 +481,8 @@ impl<M: Memorias> Escena<M> {
             dispositivo: 0,
             reloj_ms: 0,
             ultima_tecla_ms: None,
+            inactividad: Vec::new(),
+            avisos_inactividad: Vec::new(),
         }
     }
 
@@ -465,9 +492,44 @@ impl<M: Memorias> Escena<M> {
         PorCliente { escena: self, cliente }
     }
 
+    /// Hubo entrada (U3): los avisos de inactividad vuelven a contar desde ahora, y a los que ya avisaron, `resumed`.
+    fn actividad(&mut self) {
+        let ahora = self.reloj_ms;
+        for i in &mut self.inactividad {
+            i.desde_ms = ahora;
+            if i.avisado {
+                i.avisado = false;
+                self.avisos_inactividad.push((i.cliente, i.objeto, false));
+            }
+        }
+    }
+
+    /// Mira los avisos de inactividad a la hora `reloj_ms` (U3): los vencidos dan `idled`. Devuelve cuántos
+    /// milisegundos faltan para el siguiente, si queda alguno por vencer.
+    pub fn revisar_inactividad(&mut self) -> Option<u32> {
+        let ahora = self.reloj_ms;
+        let mut falta: Option<u32> = None;
+        for i in &mut self.inactividad {
+            if i.avisado {
+                continue;
+            }
+            let pasado = ahora.wrapping_sub(i.desde_ms);
+            if pasado >= i.plazo_ms {
+                i.avisado = true;
+                self.avisos_inactividad.push((i.cliente, i.objeto, true));
+            } else {
+                let f = i.plazo_ms - pasado;
+                falta = Some(falta.map_or(f, |x| x.min(f)));
+            }
+        }
+        falta
+    }
+
     /// Un cliente se fue: suelta su memoria y sus superficies.
     pub fn adios(&mut self, cliente: Cliente) {
         self.sin_entrada(cliente);
+        self.inactividad.retain(|i| i.cliente != cliente);
+        self.avisos_inactividad.retain(|a| a.0 != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
             b.vivo = false;
@@ -891,6 +953,22 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 }
                 _ => {}
             },
+            "ext_idle_notifier_v1"
+                if matches!(orden, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION | ext_idle_notifier_v1::req::GET_INPUT_IDLE_NOTIFICATION) =>
+            {
+                // Sin inhibidores en DashOS, las dos piden lo mismo. El plazo cuenta desde ahora.
+                if escena.inactividad.len() >= MAX_INACTIVIDAD {
+                    return Err(ErrorProtocolo::new(objeto, INACTIVIDAD_DEMASIADOS, "demasiados avisos de inactividad"));
+                }
+                let cliente = self.cliente;
+                let desde_ms = escena.reloj_ms;
+                escena.inactividad.push(Inactividad { cliente, objeto: args[0].uint(), plazo_ms: args[1].uint(), desde_ms, avisado: false });
+            }
+            "ext_idle_notification_v1" if orden == ext_idle_notification_v1::req::DESTROY => {
+                let cliente = self.cliente;
+                escena.inactividad.retain(|i| !(i.cliente == cliente && i.objeto == objeto));
+                escena.avisos_inactividad.retain(|a| !(a.0 == cliente && a.1 == objeto));
+            }
             "ext_session_lock_manager_v1" if orden == ext_session_lock_manager_v1::req::LOCK => {
                 let id = args[0].uint();
                 let cliente = self.cliente;
@@ -1650,6 +1728,7 @@ impl<M: Memorias> Escena<M> {
     /// Un evento del ratón de arranque: movimiento relativo y botones (bit 0 izquierdo, 1 derecho, 2 central).
     pub fn raton(&mut self, dx: i32, dy: i32, botones: u8) -> Vec<(Cliente, Entrada)> {
         let mut out = Vec::new();
+        self.actividad();
         let antes = self.cursor;
         let (w, h) = self.medidas;
         if !self.con_cursor {
@@ -1705,6 +1784,7 @@ impl<M: Memorias> Escena<M> {
     pub fn tecla(&mut self, uso: u8, pulsada: bool) -> Vec<(Cliente, Entrada)> {
         let mut out = Vec::new();
         let codigo = crate::teclas::evdev(uso);
+        self.actividad();
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
         }

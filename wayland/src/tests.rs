@@ -575,7 +575,7 @@ mod ventanas {
         }
     }
 
-    fn globales() -> [Global; 8] {
+    fn globales() -> [Global; 10] {
         [
             Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
             Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
@@ -585,7 +585,80 @@ mod ventanas {
             Global { nombre: 6, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
             Global { nombre: 7, interfaz: &tablas::WL_OUTPUT, version: 4 },
             Global { nombre: 8, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
+            Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
+            Global { nombre: 10, interfaz: &tablas::WL_SEAT, version: 7 },
         ]
+    }
+
+    /// U3: avisos de inactividad. Cada uno cuenta desde que se pide; vence con su plazo (`idled`), una tecla o el
+    /// ratón dan `resumed` y vuelven a contar; destruir uno lo quita sin tocar los demás; de más es un error; y al irse
+    /// el cliente no queda nada.
+    #[test]
+    fn inactividad() {
+        use crate::tablas::{ext_idle_notification_v1, ext_idle_notifier_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut c = Conexion::new();
+        escena.reloj_ms = 1_000;
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(9).texto(Some("ext_idle_notifier_v1")).uint(2).uint(50).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(10).texto(Some("wl_seat")).uint(7).uint(51).fin();
+        e.empezar(50, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(52).uint(5_000).uint(51).fin();
+        e.empezar(50, ext_idle_notifier_v1::req::GET_INPUT_IDLE_NOTIFICATION).uint(53).uint(8_000).uint(51).fin();
+        mandar(&mut escena, &mut c, 4, &e);
+        assert!(c.roto.is_none(), "{:?}", c.roto);
+        // Antes de tiempo, nada; falta lo del primero.
+        escena.reloj_ms = 5_999;
+        assert_eq!(escena.revisar_inactividad(), Some(1));
+        assert!(escena.avisos_inactividad.is_empty());
+        escena.reloj_ms = 6_000;
+        assert_eq!(escena.revisar_inactividad(), Some(3_000));
+        assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(4, 52, true)]);
+        // Un idled no se repite.
+        escena.reloj_ms = 9_000;
+        assert_eq!(escena.revisar_inactividad(), None);
+        assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(4, 53, true)]);
+        assert_eq!(escena.revisar_inactividad(), None);
+        assert!(escena.avisos_inactividad.is_empty());
+        // Una tecla (aunque nadie tenga el teclado): resumed a los dos, y vuelven a contar desde ella.
+        escena.reloj_ms = 9_500;
+        escena.tecla(4, true);
+        assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(4, 52, false), (4, 53, false)]);
+        escena.reloj_ms = 14_499;
+        assert_eq!(escena.revisar_inactividad(), Some(1));
+        // El ratón también cuenta, y una segunda entrada sin idled entre medias no da otro resumed.
+        escena.raton(1, 0, 0);
+        escena.raton(1, 0, 0);
+        assert!(escena.avisos_inactividad.is_empty());
+        // Los eventos salen con su objeto.
+        avisar_inactividad(&mut c, 52, true);
+        avisar_inactividad(&mut c, 52, false);
+        let ev: Vec<_> = eventos(&c.sacar()).into_iter().map(|x| (x.0, x.1)).collect();
+        assert_eq!(ev, [(52, ext_idle_notification_v1::ev::IDLED), (52, ext_idle_notification_v1::ev::RESUMED)]);
+        // Destruir uno: el otro sigue.
+        let mut e = Escritor::new();
+        e.empezar(52, ext_idle_notification_v1::req::DESTROY).fin();
+        mandar(&mut escena, &mut c, 4, &e);
+        escena.reloj_ms = 30_000;
+        assert_eq!(escena.revisar_inactividad(), None);
+        assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(4, 53, true)]);
+        // Hostil: pedir de más da error, no memoria sin fin.
+        let mut h = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(9).texto(Some("ext_idle_notifier_v1")).uint(2).uint(50).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(10).texto(Some("wl_seat")).uint(7).uint(51).fin();
+        for i in 0..MAX_INACTIVIDAD as u32 {
+            e.empezar(50, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(60 + i).uint(0).uint(51).fin();
+        }
+        mandar(&mut escena, &mut h, 5, &e);
+        assert!(h.roto.is_some(), "pidió más de {MAX_INACTIVIDAD} y no dio error");
+        // Al irse los dos, no queda nada que vigilar.
+        escena.adios(5);
+        escena.adios(4);
+        escena.reloj_ms = 90_000;
+        assert_eq!(escena.revisar_inactividad(), None);
+        assert!(escena.avisos_inactividad.is_empty());
     }
 
     /// G5: un bloqueador. Objetos: 3 compositor, 4 shm, 39 pantalla, 40 manager, 41 lock, 42 superficie, 43 lock_surface, 44 pool,

@@ -36,7 +36,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas (falta bloquear con una tecla y por tiempo) |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador), A9, A10, A12 y A13 (NVMe) |
@@ -506,3 +506,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   procesos vivos de un grupo, solo con la llave del grupo (así se ven también los hijos sin ficha en `sesiones`, como
   pide S6b). Prueba en el lanzador (C43): cada prueba que lanza tiene número y está en la lista de su grupo, y con una
   llave del tipo que no es (un grupo como proceso, o al revés) da -6: 7 de 7.
+- U3, bloquear por tiempo: el compositor da `ext_idle_notifier_v1` (el protocolo de Wayland, MIT, en
+  `wayland/protocolos/`) a los clientes de escritorio, de momento solo `guardian`. Cada aviso cuenta desde que se pide;
+  una tecla o el ratón lo reinician y, si ya avisó, mandan `resumed`; al vencer, `idled`, una vez. El compositor espera
+  sus mensajes como mucho hasta el siguiente vencimiento. Como mucho 16 avisos entre todos: más es un error de
+  protocolo. Pruebas: en la escena (`inactividad`: plazos, sin repetir, reinicio por tecla y ratón, destruir uno, de
+  más, y nada tras irse el cliente); y en virt, `guardian` pide un aviso de 2 s tras entrar Ana, el guion sigue
+  tecleando 3 s y luego para: el aviso llega a los 5,5 s (sin reinicio llegaría a los 2), bloquea la sesión de Ana y se
+  desbloquea con una mala y la buena.
+- Un fallo intermitente que salió al probarlo (2 de 6 pasadas, con el PC cargado): el compositor soltaba a `guardian`
+  en la pantalla de entrada. Era un abrazo mortal: el cliente esperaba sitio en la cola del compositor sin leer la
+  suya, y el compositor esperaba a que leyera para seguir. Subir el margen a 1 s no lo arreglaba. Ahora el cliente
+  (`ventana_cliente`), mientras espera sitio, recoge lo que le llega: 8 de 8 pasadas bien.

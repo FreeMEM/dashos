@@ -26,7 +26,8 @@ use kit::teclado::{Tecla, Teclado};
 use kit::texto::Fuente;
 use ventana_cliente::*;
 use wayland::tablas::{
-    ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_compositor, wl_display, wl_keyboard,
+    ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1,
+    ext_session_lock_v1, wl_compositor, wl_display, wl_keyboard,
     wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
 };
 use wayland::Escritor;
@@ -156,7 +157,58 @@ fn principal() -> u64 {
     let bloqueo = por_bloquear.is_some_and(|u| pantalla(Some(&u)));
     // U3: y la pantalla de entrada (en la prueba, la usuaria escribe "Ana" y su contraseña).
     let entrada = pantalla(None);
-    if bien && retirado && admin && bloqueo && entrada { 0 } else { 1 }
+    // U3: y bloquear por tiempo. En la prueba se sigue tecleando 3 s tras pedir el aviso y luego nada: con un plazo de
+    // 2 s, si la entrada no reiniciara la cuenta, el aviso llegaría a los 2 s. Llega después de 5 y se bloquea la sesión
+    // de Ana, que acaba de entrar.
+    let por_tiempo = entrada
+        && match esperar_inactividad(2_000, 30_000_000) {
+            Some(ms) => {
+                let bien = ms >= 4_000;
+                println!("  [guardian] sin entrada durante 2 s: aviso tras {} ms, {}", ms, if bien { "bien" } else { "MAL" });
+                let desbloqueado = bien && pantalla(Some("Ana"));
+                println!("  [guardian] bloqueo por tiempo: {}", if desbloqueado { "bien" } else { "MAL" });
+                desbloqueado
+            }
+            None => {
+                println!("  [guardian] sin aviso de inactividad: MAL");
+                false
+            }
+        };
+    if bien && retirado && admin && bloqueo && entrada && por_tiempo { 0 } else { 1 }
+}
+
+/// U3: pide al compositor un aviso cuando nadie toque el teclado ni el ratón en `ms` milisegundos
+/// (`ext_idle_notifier_v1`) y lo espera, como mucho `max_us`. Devuelve cuánto tardó en llegar, en milisegundos.
+fn esperar_inactividad(ms: u32, max_us: u64) -> Option<u64> {
+    const AVISOS: u32 = 30;
+    const INACTIVO: u32 = 31;
+    let mut c = Cliente::conectar()?;
+    let globales = c.globales()?;
+    let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
+    let (Some(ga), Some(gi)) = (global("wl_seat"), global("ext_idle_notifier_v1")) else {
+        println!("  [guardian] el compositor no da avisos de inactividad");
+        return None;
+    };
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gi).texto(Some("ext_idle_notifier_v1")).uint(2).uint(AVISOS).fin();
+    e.empezar(AVISOS, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(INACTIVO).uint(ms).uint(ASIENTO).fin();
+    c.mandar(&e);
+    let desde = dashos::ahora_us();
+    println!("  [guardian] esperando {} ms sin entrada", ms);
+    let r = loop {
+        let pasado = dashos::ahora_us() - desde;
+        if pasado > max_us {
+            break None;
+        }
+        match c.evento_plazo(100_000) {
+            Ok(Some((o, ev, _))) if o == INACTIVO && ev == ext_idle_notification_v1::ev::IDLED => break Some(pasado / 1000),
+            Err(()) => break None,
+            _ => {}
+        }
+    };
+    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    r
 }
 
 /// Manda a `sesiones` la contraseña de la usuaria para comprobarla (VOLVER: sin tocar su volumen) y la borra. No

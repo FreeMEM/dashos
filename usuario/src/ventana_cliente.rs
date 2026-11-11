@@ -69,14 +69,34 @@ impl Cliente {
 
     pub fn mandar(&mut self, e: &Escritor) {
         for t in canal::trocear(e).expect("mensajes propios bien formados") {
-            // Con la cola llena, se espera un poco y se reintenta.
+            // Con la cola llena, se espera un poco y se reintenta. Mientras, se recoge lo que mande el compositor: si
+            // no, él puede estar esperando a que leamos para seguir leyendo su cola, y nosotros a que la lea para
+            // escribir; al segundo nos suelta (E8). Así se quedaba sin pantalla de entrada `guardian`, 1 de cada 3
+            // pasadas de la prueba con el PC cargado.
             for _ in 0..1000 {
                 if dashos::canal_escribir(VENTANAS, &t.bytes, &t.llaves) == 0 {
                     break;
                 }
-                dormir();
+                if !self.recoger() {
+                    dormir();
+                }
             }
         }
+    }
+
+    /// Lee un trozo que haya llegado, sin esperar, y lo guarda para `evento`. `false` si no había nada.
+    fn recoger(&mut self) -> bool {
+        let mut buf = [0u8; canal::MAX_CANAL];
+        let mut ll = [0u32; canal::MAX_LLAVES];
+        let (n, k, _) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, 1);
+        if n <= 0 {
+            return false;
+        }
+        if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_ok() {
+            return true;
+        }
+        ll[..k].iter().for_each(|&l| { dashos::cerrar(l); });
+        true
     }
 
     /// Como `evento`, esperando como mucho `us` microsegundos: `Ok(None)` si no llegó nada (U3: `guardian` espera a la
