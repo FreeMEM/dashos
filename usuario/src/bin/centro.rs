@@ -3,6 +3,7 @@
 //! - **Permisos** (Prefs de U6): lo que el usuario ha concedido a cada programa, y quitarlo, que lo revoca en el acto
 //!   (`sesiones`, RETIRAR).
 //! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
+//! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
 //! Si el mensaje trae una llave, cuando se cierra la ventana se contesta por ella (4 bytes a cero). Ver y quitar lo
@@ -46,8 +47,9 @@ const CANAL: u32 = 3;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
 /// Las categorías, por su nombre de enlace (lo que va tras "abrir") y el que se ve. Irán creciendo (S10c).
-const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad")];
+const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad"), ("acerca", "Acerca de")];
 const PERMISOS: usize = 0;
+const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
 const TECLA_ESC: u32 = 1;
 const TECLA_SUPR: u32 = 111;
@@ -155,6 +157,41 @@ fn registro() -> Vec<String> {
     lineas
 }
 
+/// Fecha y hora (UTC) de `ns` nanosegundos desde 1970: días a fecha civil, el algoritmo `civil_from_days` de Howard
+/// Hinnant (de dominio público).
+fn fecha(ns: u64) -> String {
+    let s = ns / 1_000_000_000;
+    let (dias, segundos) = ((s / 86_400) as i64, s % 86_400);
+    let z = dias + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z - era * 146_097;
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100);
+    let mp = (5 * doy + 2) / 153;
+    let d = doy - (153 * mp + 2) / 5 + 1;
+    let m = if mp < 10 { mp + 3 } else { mp - 9 };
+    let y = yoe + era * 400 + (m <= 2) as i64;
+    alloc::format!("{:04}-{:02}-{:02} {:02}:{:02} (UTC)", y, m, d, segundos / 3600, segundos % 3600 / 60)
+}
+
+/// Lo de "Acerca de": una línea por dato.
+fn acerca() -> Vec<String> {
+    let mut l = Vec::new();
+    l.push(alloc::format!("DashOS, versión {}", env!("CARGO_PKG_VERSION")));
+    let s = dashos::ahora_us() / 1_000_000;
+    l.push(alloc::format!("Encendido hace {} min {} s", s / 60, s % 60));
+    let ns = dashos::hora_ns();
+    l.push(if ns > 0 { alloc::format!("Fecha y hora: {}", fecha(ns)) } else { String::from("Fecha y hora: no se sabe") });
+    // Cuántos procesos: la cabecera de la primera página de `PROCESOS` (cuántos van y cuántos hay).
+    let mut p = [0u8; 12];
+    p[0..4].copy_from_slice(&s::PROCESOS.to_le_bytes());
+    let mut r = [0u8; MAX_DATOS];
+    if a_sesiones(&p, &mut r) >= 8 {
+        l.push(alloc::format!("Procesos en marcha: {}", u32::from_le_bytes(r[4..8].try_into().unwrap())));
+    }
+    l
+}
+
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 fn filas(lista: &[(String, String)]) -> String {
     let f: Vec<String> = lista.iter().map(|(p, s)| alloc::format!("{} · {}", p, s).replace('|', "¦")).collect();
@@ -210,8 +247,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
-        } else {
+        } else if cat == SEGURIDAD {
             ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
+        } else {
+            ("El sistema.", reg.join("|"))
         };
         i.arbol.poner(titulo, atr::TEXTO, Valor::Texto(CATEGORIAS[cat].1.into()));
         i.arbol.poner(explica, atr::TEXTO, Valor::Texto(explicacion.into()));
@@ -220,8 +259,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
         i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS));
     };
-    if cat != PERMISOS {
+    if cat == SEGURIDAD {
         lineas_registro = registro();
+    } else if cat != PERMISOS {
+        lineas_registro = acerca();
     }
     poner(&mut i, cat, &lista, &lineas_registro);
     i.colocar(Rect::new(0, 0, ANCHO, ALTO));
@@ -331,6 +372,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 if cat == PERMISOS {
                     lista = concedidos();
                     println!("  [centro] {}: {} concedidos", CATEGORIAS[cat].1, lista.len());
+                } else if cat != SEGURIDAD {
+                    lineas_registro = acerca();
+                    println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
                 } else {
                     lineas_registro = registro();
                     let hostil = lineas_registro.iter().any(|l| l.starts_with("hostil · "));

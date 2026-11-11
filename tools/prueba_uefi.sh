@@ -159,10 +159,25 @@ while time.time() - inicio < total:
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
-            centro = 3
+            centro = 6
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".seg.ppm")
+            time.sleep(0.5)
+            mandar("sendkey down")
+            reintento = time.time() + 4
+        # Y una más abajo, Acerca de; después, Esc.
+        if centro == 6:
+            if "[centro] Acerca de: " not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                time.sleep(0.25)
+                continue
+            centro = 3
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".acerca.ppm")
             time.sleep(0.5)
             mandar("sendkey esc")
             reintento = time.time() + 4

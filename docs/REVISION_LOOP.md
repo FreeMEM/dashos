@@ -857,3 +857,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   negativas del hostil: sí; 18 entradas". El hostil sigue sin poder leer el registro (su prueba de antes). Pendiente:
   con varias sesiones, que cada usuario vea solo lo suyo (hoy hay una sesión cada vez). Captura en
   `docs/capturas/s10c-centro-seguridad.png`.
+- S10c, C1, tercera categoría: **Acerca de** (como la de DMS): la versión, cuánto lleva encendido, la fecha y hora
+  (UTC, del reloj de la placa de A14, pasada a fecha con el algoritmo de días civiles de Howard Hinnant, de dominio
+  público) y cuántos procesos hay (la cabecera de `PROCESOS`). Solo se lee. Prueba en virt: una flecha abajo más tras
+  Seguridad; el centro dice "Acerca de: DashOS, versión 0.0.1; Encendido hace 0 min 54 s; Fecha y hora: 2026-11-11
+  23:50 (UTC); Procesos en marcha: 15". Captura en `docs/capturas/s10c-centro-acerca.png`.
