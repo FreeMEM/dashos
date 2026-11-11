@@ -2,7 +2,8 @@
 """Disco de prueba del NVMe (U6d, FS1): 8 MB.
 
 - Primer MB: lo de la prueba del servicio de disco (U6f): un texto y la firma 0x55AA en el sector 0, otro texto en
-  el 1. El cliente de U6f escribe el sector 2.
+  el 1. El cliente de U6f escribe el sector 2. En el sector 0, además, la tabla de particiones (MBR, A14): una sola
+  partición, la de DashOS (tipo 0x7F), desde el MB 1 hasta el final.
 - Desde el MB 1: un RedoxFS hecho con `redoxfs-ar` a partir de una carpeta con LEEME.txt, C/grande.txt (las líneas
   "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente. Y un volumen
   cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `redoxfs-volume`, que está al lado de
@@ -34,7 +35,8 @@ PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
-    desde = str(1 << 20)
+    # Por la tabla de particiones, con el mismo lector que el servicio de disco (A14).
+    desde = "tabla"
     arbol = subprocess.run([ver, disco, desde], check=True, capture_output=True, text=True).stdout.splitlines()
     esperado = [
         "C/ cajón",
@@ -185,6 +187,9 @@ with tempfile.TemporaryDirectory() as t:
     s0 = b"DashOS: sector 0 del disco NVMe"
     d[: len(s0)] = s0
     d[510:512] = b"\x55\xaa"
+    # A14: la entrada 1 de la tabla, la partición de DashOS: tipo 0x7F, desde el sector 2048, lo que ocupe el RedoxFS.
+    d[446 + 4] = 0x7F
+    d[446 + 8 : 446 + 16] = (2048).to_bytes(4, "little") + (os.path.getsize(fs) // 512).to_bytes(4, "little")
     s1 = b"DashOS: sector 1"
     d[512 : 512 + len(s1)] = s1
     with open(salida, "wb") as f:

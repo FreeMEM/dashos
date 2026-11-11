@@ -78,10 +78,12 @@ const ERROR_DEL_DISCO: i32 = -4;
 const SIN_SITIO: i32 = -5;
 /// Quien no tiene tramo del disco (A13): no se le abre.
 const SIN_PERMISO: i32 = -6;
-/// El tramo del disco de cada programa, en bytes, por el nombre que le da `inicio` (A13 de
-/// docs/REVISION_ARQUITECTURA.md: antes, quien tuviera la llave veía el disco entero). `disco`, la prueba del disco
-/// en bruto, el primer MB (donde estaría la tabla de particiones); el servicio de archivos, desde el MB 1. Nadie más.
-const TRAMOS: &[(&str, u64, u64)] = &[("disco", 0, 1 << 20), ("archivos", 1 << 20, u64::MAX)];
+/// Los programas con tramo del disco, por el nombre que les da `inicio` (A13 de docs/REVISION_ARQUITECTURA.md: antes,
+/// quien tuviera la llave veía el disco entero). Cada uno ve su tramo como si fuera su disco: su sector 0 es el primero
+/// del tramo y no puede ni nombrar lo de fuera (A14). `disco`, la prueba del disco en bruto: el primer MB, sin llegar a
+/// la primera partición, y nada si la tabla es GPT (la tabla ocupa ese sitio). El servicio de archivos: la partición de
+/// DashOS de la tabla de particiones (`dashos::particiones`); sin ella, nada. Nadie más.
+const NOMBRES: [&str; 2] = ["disco", "archivos"];
 const PEDIR_ANILLO: u32 = 3;
 // La orden 4, "mira mi anillo", va sin llave de respuesta y no se contesta: solo despierta al servicio.
 /// Vaciar la caché del disco (FS2): lo escrito antes queda guardado de verdad antes de lo que venga después. El sistema
@@ -385,7 +387,36 @@ fn principal() -> u64 {
     }
     println!("  [nvme] avisos {}", if n.avisos.is_some() { "por su interrupción" } else { "girando" });
     println!("  [nvme] descartar: {}", if DSM_BUS.load(core::sync::atomic::Ordering::Relaxed) != 0 { "sí" } else { "no" });
-    servir(&n, &mut es, sectores, tam_sector, disco)
+    // A14: la tabla de particiones, sector a sector por la página de datos.
+    let mut leer = |s: u64, b: &mut [u8]| {
+        n.orden(&mut es, O_LEER, 1, (datos, 0), [s as u32, (s >> 32) as u32, 0, 0, 0, 0]).is_ok() && {
+            for (i, x) in b.iter_mut().enumerate() {
+                *x = dma8(M_DATOS + i);
+            }
+            true
+        }
+    };
+    let tabla = dashos::particiones::leer_tabla(&mut leer, sectores, tam_sector);
+    use dashos::particiones::Clase;
+    let mb = (1u64 << 20) / tam_sector as u64;
+    let tramos = match tabla {
+        Ok(t) => {
+            let clase = if t.clase == Clase::Gpt { "GPT" } else { "MBR" };
+            match (t.clase, t.dashos) {
+                (Clase::Ninguna, _) => println!("  [nvme] sin tabla de particiones"),
+                (_, Some((a, b))) => println!("  [nvme] particiones: {}; DashOS, sectores {} a {}", clase, a, b - 1),
+                (_, None) => println!("  [nvme] particiones: {}; ninguna de DashOS", clase),
+            }
+            let disco = (t.clase != Clase::Gpt).then_some((0, mb.min(t.primera).min(sectores)));
+            [disco, t.dashos]
+        }
+        Err(e) => {
+            // Una tabla que no cuadra: no se adivina dónde está nada (ni siquiera la prueba en bruto, que escribe).
+            println!("  [nvme] la tabla de particiones no vale ({:?}): no se abre a nadie", e);
+            [None, None]
+        }
+    };
+    servir(&n, &mut es, tramos, tam_sector, disco)
 }
 
 /// Un cliente: su marca, su ventana (la llave y su dirección de bus) y, si lo pidió, su anillo (la llave de su
@@ -405,10 +436,10 @@ fn anillo(va: usize, off: usize) -> &'static core::sync::atomic::AtomicU32 {
 }
 
 /// Una lectura o escritura en la ventana de `c`, comprobada antes de llegar al disco: su estado.
-fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, sectores: u64, tam_sector: usize) -> i32 {
+fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, tam_sector: usize) -> i32 {
     if orden == PEDIR_LEER_SIN_ESPERA {
         n.sin_esperar.set(true);
-        let r = transferir(n, es, c, PEDIR_LEER, cuantos, primero, off, sectores, tam_sector);
+        let r = transferir(n, es, c, PEDIR_LEER, cuantos, primero, off, tam_sector);
         n.sin_esperar.set(false);
         return r;
     }
@@ -419,12 +450,11 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
     }
     if orden != PEDIR_LEER && orden != PEDIR_ESCRIBIR && orden != PEDIR_DESCARTAR {
         MAL_FORMADO
-    } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
+    } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > c.tramo.1 - c.tramo.0) {
+        // Fuera de su tramo, que para él es todo el disco (A13, A14).
         FUERA_DEL_DISCO
-    } else if primero < c.tramo.0 || primero + cuantos > c.tramo.1 {
-        // Fuera de su tramo (A13).
-        SIN_PERMISO
     } else if orden == PEDIR_DESCARTAR {
+        let primero = c.tramo.0 + primero;
         let lista = DSM_BUS.load(core::sync::atomic::Ordering::Relaxed);
         if lista == 0 {
             return 0;
@@ -438,6 +468,7 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
     } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) {
         FUERA_DE_LA_VENTANA
     } else {
+        let primero = c.tramo.0 + primero;
         let prp1 = c.bus + off as u64;
         let paginas = (off % 4096 + bytes).div_ceil(4096);
         let lista = LISTA_BUS.load(core::sync::atomic::Ordering::Relaxed);
@@ -464,7 +495,7 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
 
 /// Atiende lo que haya en el anillo de `c`: copia cada envío antes de mirarlo (el cliente puede cambiarlo a la vez),
 /// pone su terminada y, si el cliente espera, le avisa. Devuelve cuántos atendió. Si no caben más terminadas, para.
-fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, sectores: u64, tam_sector: usize) -> u32 {
+fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, tam_sector: usize) -> u32 {
     use core::sync::atomic::Ordering::*;
     let Some((_, va, aviso)) = c.anillo else { return 0 };
     let mut hechas = 0;
@@ -481,7 +512,7 @@ fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, sectores: u64, tam_secto
         }
         let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
         let primero = u32_en(8) as u64 | (u32_en(12) as u64) << 32;
-        let estado = transferir(n, es, c, u32_en(0), u32_en(4) as u64, primero, u32_en(16) as usize, sectores, tam_sector);
+        let estado = transferir(n, es, c, u32_en(0), u32_en(4) as u64, primero, u32_en(16) as usize, tam_sector);
         let t = va + A_CQ + 16 * (cq_cola % A_ENTRADAS) as usize;
         anillo(t, 0).store(u32_en(20), Relaxed);
         anillo(t, 4).store(estado as u32, Relaxed);
@@ -497,18 +528,17 @@ fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, sectores: u64, tam_secto
 }
 
 /// El tramo, en sectores, del cliente de la marca `marca`, por su nombre en el directorio (A13).
-fn tramo_de(nombres: &[(u64, [u8; 16])], marca: u64, tam_sector: usize) -> Option<(u64, u64)> {
+fn tramo_de(nombres: &[(u64, [u8; 16])], tramos: &[Option<(u64, u64)>; 2], marca: u64) -> Option<(u64, u64)> {
     let (_, n) = nombres.iter().find(|e| e.0 == marca && marca != 0)?;
     let nombre = &n[..n.iter().position(|&c| c == 0).unwrap_or(16)];
-    let &(_, desde, hasta) = TRAMOS.iter().find(|t| t.0.as_bytes() == nombre)?;
-    Some((desde / tam_sector as u64, hasta / tam_sector as u64))
+    tramos[NOMBRES.iter().position(|t| t.as_bytes() == nombre)?]
 }
 
 /// Sirve el disco por el canal de la llave `disco`. Cada petición son 24 bytes (orden, sectores, primer sector y
-/// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores del disco,
+/// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores de su tramo,
 /// tamaño del sector y de la ventana) y, al abrir, la ventana; al pedir el anillo, su memoria. Un mensaje de 24 bytes
 /// con la orden 4 y sin llave solo despierta al servicio para que mire los anillos.
-fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32) -> u64 {
+fn servir(n: &Nvme, es: &mut Cola, tramos: [Option<(u64, u64)>; 2], tam_sector: usize, disco: u32) -> u64 {
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
     // El directorio de `inicio` (marca y nombre de cada cliente): de él sale su tramo (A13).
     let mut nombres: [(u64, [u8; 16]); 8] = [(0, [0; 16]); 8];
@@ -525,7 +555,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         }
         core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         for c in clientes.iter().flatten() {
-            quedaba += atender_anillo(n, es, c, sectores, tam_sector);
+            quedaba += atender_anillo(n, es, c, tam_sector);
         }
         if quedaba > 0 {
             continue;
@@ -567,10 +597,10 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         // Sin marca no se sabe de quién es: solo los clientes que puso `inicio` (o a quienes ellos den su llave).
         let estado = if r != 24 || marca == 0 {
             MAL_FORMADO
-        } else if orden == PEDIR_ABRIR && tramo_de(&nombres, marca, tam_sector).is_none() {
+        } else if orden == PEDIR_ABRIR && tramo_de(&nombres, &tramos, marca).is_none() {
             SIN_PERMISO
         } else if orden == PEDIR_ABRIR {
-            let tramo = tramo_de(&nombres, marca, tam_sector).unwrap();
+            let tramo = tramo_de(&nombres, &tramos, marca).unwrap();
             let hueco = clientes.iter().position(|c| c.is_some_and(|c| c.marca == marca)).or_else(|| clientes.iter().position(|c| c.is_none()));
             match hueco {
                 Some(h) => {
@@ -596,7 +626,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR || orden == PEDIR_DESCARTAR || orden == PEDIR_LEER_SIN_ESPERA {
             match clientes.iter().flatten().find(|c| c.marca == marca) {
                 None => MAL_FORMADO,
-                Some(c) => transferir(n, es, c, orden, cuantos, primero, off, sectores, tam_sector),
+                Some(c) => transferir(n, es, c, orden, cuantos, primero, off, tam_sector),
             }
         } else if orden == PEDIR_ANILLO {
             // El anillo: una página nueva, proyectada aquí, y el canal de la respuesta se queda para despertarle.
@@ -635,7 +665,9 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         };
         let mut r = [0u8; 24];
         r[..4].copy_from_slice(&estado.to_le_bytes());
-        r[8..16].copy_from_slice(&sectores.to_le_bytes());
+        // Sus sectores: los de su tramo, que es lo que ve (A14).
+        let suyos = tramo_de(&nombres, &tramos, marca).map_or(0, |t| t.1 - t.0);
+        r[8..16].copy_from_slice(&suyos.to_le_bytes());
         r[16..20].copy_from_slice(&(tam_sector as u32).to_le_bytes());
         r[20..24].copy_from_slice(&(VENTANA as u32).to_le_bytes());
         let llaves: &[u32] = match &ventana {

@@ -8,7 +8,7 @@
                                              antes, tools/medir_linux/hacer.sh)
     tools/medir.py linux-fs JSON [-n N]      el banco de ficheros en Linux (Debian arm64, ext4 en NVMe, QEMU virt; paso F;
                                              antes, tools/medir_linux/hacer_fs.sh)
-    tools/medir.py disco-fs DISCO REDOXFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F)
+    tools/medir.py disco-fs DISCO REDOXFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F), en una partición (A14)
     tools/medir.py dashos-fs EFI DISCO JSON [-n N]  el banco de ficheros de DashOS en QEMU virt por UEFI (`make medir-fs`)
     tools/medir.py pi3 IMAGEN JSON [-n N]    lo mismo en QEMU raspi3b (P3, `make medir-pi3`)
     tools/medir.py comparar BASE NUEVO       compara dos JSON: dice "dentro del ruido" si la diferencia es menor que la
@@ -126,7 +126,12 @@ def disco_fs(salida, ar):
     duenos = os.path.join(RAIZ, "archivos/herramientas/target/release/duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     with open(salida, "wb") as f:
-        f.write(bytes(1 << 20))
+        # A14: el primer MB, con la tabla de particiones (MBR) y en ella la partición de DashOS (0x7F) desde el MB 1.
+        mbr = bytearray(1 << 20)
+        mbr[446 + 4] = 0x7F
+        mbr[446 + 8 : 446 + 16] = (2048).to_bytes(4, "little") + ((64 << 20) // 512).to_bytes(4, "little")
+        mbr[510:512] = b"\x55\xaa"
+        f.write(mbr)
         f.write(open(fs, "rb").read())
 
 

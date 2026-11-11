@@ -109,7 +109,15 @@ Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 ## NVMe (U6d)
 
 `usuario/src/bin/nvme.rs`. Llaves: 1 su permiso DMA, 2 sus registros (la BAR 0, que busca el kernel por la clase
-0x010802), 3 su interrupción si el kernel la sabe, y después el canal "disco". Al arrancar reconoce el disco (modelo, sectores) y lee los dos primeros sectores.
+0x010802), 3 su interrupción si el kernel la sabe, y después el canal "disco". Al arrancar reconoce el disco (modelo, sectores), lee los dos primeros sectores y la tabla de particiones.
+
+**Tramos y tabla de particiones** (A13, A14). Solo abren el disco los programas con tramo, por el nombre que les da
+`inicio`, y cada uno ve su tramo como su disco entero: su sector 0 es el primero del tramo, los sectores de la
+respuesta son los del tramo y no puede ni nombrar lo de fuera (-2, fuera del disco). `archivos` tiene la partición de
+DashOS: en un MBR, la entrada del tipo 0x7F; en una GPT, la del tipo d0a18dbf-bbf4-4b0e-8627-ce5006b50017. `disco`, la
+prueba en bruto, el primer MB sin llegar a la primera partición (con GPT, nada). El lector
+(`usuario/src/particiones.rs`, con sus pruebas en `archivos/herramientas`) no adivina: con entradas fuera del disco,
+pisadas, dos de DashOS o un CRC de la GPT que no casa, no da tramo a nadie. La copia de la GPT del final no se mira.
 
 Protocolo del canal "disco" (U6f). Petición, 24 bytes little-endian, con una llave: el extremo de escritura de un
 canal del cliente (con derecho a transferir), por el que vuelve la respuesta.
@@ -122,7 +130,7 @@ canal del cliente (con derecho a transferir), por el que vuelve la respuesta.
 | 16-19 | desplazamiento en la ventana (múltiplo de 4) |
 
 Respuesta, 24 bytes: estado (0 bien; -1 mal formado o sin marca, -2 fuera del disco, -3 fuera de la ventana, -4 error
-del disco, -5 sin sitio), en 8-15 los sectores del disco, en 16-19 el tamaño del sector y en 20-23 el de la ventana.
+del disco, -5 sin sitio, -6 sin tramo), en 8-15 los sectores de su tramo, en 16-19 el tamaño del sector y en 20-23 el de la ventana.
 Al abrir lleva además la llave de la **ventana**: 64 KB de memoria DMA (sin caché) del cliente, compartida con el
 servicio, donde el disco lee y escribe directamente. Cada cliente se reconoce por la marca de su llave (la pone
 `inicio`): un mensaje sin marca se rechaza, y abrir otra vez da la misma ventana. Hasta 4 clientes. Una transferencia
@@ -137,7 +145,7 @@ un disco con caché puede guardar la cabecera antes que los bloques a los que ap
 
 **Descartar** (orden 6, A14; TRIM): los sectores que se dan ya no guardan nada que importe y el disco puede soltarlos
 (en NVMe, Dataset Management con "deallocate"). Sin ventana; las mismas comprobaciones que leer y escribir (dentro del
-disco y de su tramo, al menos un sector). Es un aviso: si el disco no sabe descartar, contesta bien sin hacer nada.
+disco, que es su tramo, al menos un sector). Es un aviso: si el disco no sabe descartar, contesta bien sin hacer nada.
 Vale también en el anillo, por orden con lo demás: un descarte seguido de una escritura del mismo sector deja lo
 escrito. El servicio de archivos descarta lo que suelta cada guardado, en el envío del guardado siguiente.
 
@@ -154,8 +162,8 @@ Pendiente: varias colas de E/S del NVMe.
 
 ## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 
-`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": hoy, el que
-empieza en el MB 1 del disco NVMe de `virt`. Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
+`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": el de la
+partición de DashOS del disco NVMe de `virt` (en los discos de prueba, desde el MB 1; A14). Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
 orden que cambia algo es una transacción de RedoxFS que queda en el disco, con la caché vaciada, antes de la respuesta
 (FS4). Este protocolo es el de todos los sistemas de archivos de DashOS: los que vengan (FAT, ext4,
 los del Amiga) lo cumplen igual, y `dos.library` habla con todos de la misma forma.

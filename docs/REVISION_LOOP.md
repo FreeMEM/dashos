@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM y lectura anticipada |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -744,3 +744,24 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   quedaría es tener páginas ya a cero, preparadas por los núcleos ociosos: en esta medida ganaría como mucho un 13 % en
   la primera lectura, a cambio de tocar el repartidor del kernel. No se hace; en la placa, poner a cero 512 KB cuesta
   mucho menos que en QEMU, y habrá que medirlo allí.
+- A14, la tabla de particiones. Antes el sistema de archivos empezaba siempre en el MB 1. Ahora el servicio de disco
+  lee la tabla al arrancar (`usuario/src/particiones.rs`, nuevo): MBR (la partición de DashOS, tipo 0x7F) o GPT (tipo
+  d0a18dbf-bbf4-4b0e-8627-ce5006b50017, con los CRC de la cabecera y de la lista; la copia del final no se mira). De
+  ahí salen los tramos: `archivos`, la partición de DashOS; `disco`, el primer MB sin llegar a la primera partición
+  (con GPT, nada). Y cada cliente ve su tramo como su disco entero: el servicio suma el principio del tramo, la
+  respuesta da los sectores del tramo y no se puede ni nombrar lo de fuera (antes, -6 fuera del tramo; ahora, -2
+  fuera del disco). `archivos` ya no lleva el MB fijo (`INICIO` fuera). Los discos de prueba y de `medir-fs` llevan un
+  MBR con la partición desde el MB 1; `ver` acepta `tabla` en vez del desplazamiento y `--comprobar` lo usa.
+- Ante una tabla que no cuadra no se adivina: con entradas fuera del disco, de longitud cero, que tapan el sector 0,
+  que se pisan, dos de DashOS, más de 128 en uso, cabecera rara o CRC que no casa, nadie recibe tramo, ni la prueba en
+  bruto (que escribe). Con la lista estropeada, el fallo es el CRC aunque una entrada tampoco valga.
+- Pruebas hostiles: 8 en `archivos/herramientas` (`cargo test`, ahora en `make prueba`): MBR y GPT buenas (sectores de
+  512 y 4096, arranque FAT delante como en la Pi), 8 MBR rotos, 14 cabeceras GPT rotas con su CRC rehecho, entradas
+  fuera, pisadas y repetidas, un disco que no se deja leer y 20 000 tablas estropeadas al azar (nunca un pánico; lo que
+  se acepta cabe en el disco). Quitando una a una tres comprobaciones (CRC de la lista, pisadas, sector 0), cada vez
+  falla una prueba. En `disco`: ve 2048 sectores, el primero de `archivos` y uno que cruza dan -2, y también uno tan
+  grande que al sumarle el principio del tramo daría la vuelta. En QEMU, a mano, un disco con dos entradas pisadas: el
+  servicio dice "la tabla de particiones no vale (Pisadas): no se abre a nadie", `disco` y `archivos` no abren, el
+  sistema sigue (el compositor compone) y el disco sale igual que entró, byte a byte.
+- Rendimiento: no cambia el camino (una suma por orden); `make medir-fs VUELTAS=1` funciona con el disco nuevo y da lo
+  de siempre (leer del disco en frío 265 MB/s, en el ruido de 279).

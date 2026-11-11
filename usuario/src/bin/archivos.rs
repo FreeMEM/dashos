@@ -42,8 +42,6 @@ const DISCO_MIRAR: u32 = 4;
 const VA_ANILLO: usize = 0x60_1000_0000;
 /// Entradas del anillo (`A_ENTRADAS` en nvme.rs); el servicio deja de atender si no caben más terminadas.
 const ANILLO_ENTRADAS: u32 = 32;
-/// El sistema de archivos empieza en el primer MB del disco.
-const INICIO: u64 = 1 << 20;
 /// Lo que cabe en una transferencia del disco: la ventana entera, 64 KB (antes, 8 KB: el NVMe no usaba listas de
 /// páginas).
 const TRAMO: usize = 64 * 1024;
@@ -94,7 +92,8 @@ fn apuntar_disco(cual: usize, desde: u64) {
 
 // Tipos.
 
-/// El disco visto por RedoxFS: bloques de 4 KB desde `INICIO`, por el canal del servicio de disco.
+/// El disco visto por RedoxFS: bloques de 4 KB desde el principio de la partición de DashOS, que el servicio de disco
+/// da como si fuera el disco entero (A14), por su canal.
 struct Disco {
     lectura: u32,
     vuelta: u32,
@@ -208,7 +207,7 @@ impl Disco {
         let palabra = |off: usize| unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) };
         for (i, &(orden, bloque, off, largo)) in entradas.iter().enumerate() {
             let e = 64 + 32 * (sq.wrapping_add(i as u32) % ANILLO_ENTRADAS) as usize;
-            let primero = (INICIO + bloque * BLOCK_SIZE) / self.tam_sector;
+            let primero = (bloque * BLOCK_SIZE) / self.tam_sector;
             palabra(e).store(orden, Relaxed);
             palabra(e + 4).store((largo as u64 / self.tam_sector) as u32, Relaxed);
             palabra(e + 8).store(primero as u32, Relaxed);
@@ -301,7 +300,7 @@ impl Disco {
             && self.datos
             && seguido
             && n == TRAMO
-            && (INICIO + (siguiente + bloques) * BLOCK_SIZE) <= self.sectores * self.tam_sector;
+            && ((siguiente + bloques) * BLOCK_SIZE) <= self.sectores * self.tam_sector;
         let otra = if desde.is_some() { mitad ^ TRAMO } else { TRAMO };
         let mut entradas: Vec<(u32, u64, usize, usize)> = Vec::new();
         if desde.is_none() {
@@ -416,7 +415,7 @@ impl Disk for Disco {
     }
 
     fn size(&mut self) -> Result<u64> {
-        Ok(self.sectores * self.tam_sector - INICIO)
+        Ok(self.sectores * self.tam_sector)
     }
 
     fn last_read_from_memory(&self) -> bool {
@@ -448,7 +447,7 @@ impl Disk for Disco {
             self.por_descartar.extend(tramos);
         } else {
             for &(b, _, largo) in &tramos {
-                let primero = (INICIO + b * BLOCK_SIZE) / self.tam_sector;
+                let primero = (b * BLOCK_SIZE) / self.tam_sector;
                 fallos += !matches!(self.pedir(DISCO_DESCARTAR, (largo as u64 / self.tam_sector) as u32, primero), Some((0, _, _))) as u32;
             }
         }
@@ -563,7 +562,7 @@ impl Disco {
         }
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TRAMO);
-            let primero = (INICIO + block * BLOCK_SIZE + hecho as u64) / self.tam_sector;
+            let primero = (block * BLOCK_SIZE + hecho as u64) / self.tam_sector;
             match self.pedir(DISCO_LEER, (n as u64 / self.tam_sector) as u32, primero) {
                 Some((0, _, _)) => {}
                 _ => return Err(Error::new(EIO)),
@@ -586,7 +585,7 @@ impl Disco {
             unsafe { core::ptr::copy_nonoverlapping(buffer[hecho..hecho + n].as_ptr(), VA_DISCO as *mut u8, n) };
             // Que el disco vea lo escrito antes de la petición (que va por otro proceso y otro núcleo).
             unsafe { core::arch::asm!("dmb ish") };
-            let primero = (INICIO + block * BLOCK_SIZE + hecho as u64) / self.tam_sector;
+            let primero = (block * BLOCK_SIZE + hecho as u64) / self.tam_sector;
             match self.pedir(DISCO_ESCRIBIR, (n as u64 / self.tam_sector) as u32, primero) {
                 Some((0, _, _)) => {}
                 _ => return Err(Error::new(EIO)),

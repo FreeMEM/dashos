@@ -1,4 +1,5 @@
-//! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Sin RUTA,
+//! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Con `tabla` en
+//! vez de DESDE, el de la partición de DashOS de su tabla de particiones (A14, sectores de 512 bytes). Sin RUTA,
 //! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño, y los bits del Amiga y el comentario si los
 //! tiene); con RUTA, saca el fichero por la salida. Con `--comprobar` en vez de RUTA, comprueba el disco entero, datos
 //! incluidos (FS8), y dice "sin problemas" o uno por línea. Con `--fecha RUTA`, la fecha de creación y la de cambio de
@@ -10,6 +11,13 @@ use std::os::unix::fs::FileExt;
 
 use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
 use syscall::error::{EIO, EROFS, Error, Result};
+
+/// El mismo lector de la tabla que usa el servicio de disco.
+#[path = "../../../usuario/src/particiones.rs"]
+#[allow(dead_code)]
+mod particiones;
+#[cfg(test)]
+mod particiones_pruebas;
 
 struct Trozo {
     f: File,
@@ -63,8 +71,23 @@ fn main() {
         std::process::exit(2);
     }
     let f = File::open(&args[1]).expect("no se abre el disco");
-    let tam = f.metadata().unwrap().len();
-    let disco = Trozo { f, desde: args[2].parse().expect("DESDE no es un número"), tam };
+    let mut tam = f.metadata().unwrap().len();
+    let desde = if args[2] == "tabla" {
+        let mut leer = |s: u64, b: &mut [u8]| f.read_exact_at(b, s * 512).is_ok();
+        let t = particiones::leer_tabla(&mut leer, tam / 512, 512).unwrap_or_else(|e| {
+            eprintln!("la tabla de particiones no vale: {e:?}");
+            std::process::exit(1)
+        });
+        let Some((a, b)) = t.dashos else {
+            eprintln!("no hay partición de DashOS ({:?})", t.clase);
+            std::process::exit(1)
+        };
+        tam = b * 512;
+        a * 512
+    } else {
+        args[2].parse().expect("DESDE no es un número")
+    };
+    let disco = Trozo { f, desde, tam };
     // Sin `cleanup`: no escribe nada.
     let mut fs = FileSystem::open(disco, None, Some(0), false).expect("no es un RedoxFS");
     let r = fs.tx(|tx| match args.get(3) {

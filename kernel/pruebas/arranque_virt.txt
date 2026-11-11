@@ -28,8 +28,9 @@ DashOS en marcha con 4 núcleos.
 # U6i: el NVMe espera sus órdenes con su interrupción.
 ~│   [nvme] avisos por su interrupción
 ~│   [nvme] descartar: sí
+~│   [nvme] particiones: MBR; DashOS, sectores 2048 a 16383
 # U6f: el servicio de disco, con un cliente de prueba.
-~│   [disco] abierto: 16384 sectores de 512 bytes
+~│   [disco] abierto: 2048 sectores de 512 bytes
 ~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
 ~│   [disco] descartar: bien; rechazos al descartar: bien
 ~│   [disco] plazo vencido: bien; después sigue bien: bien

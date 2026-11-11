@@ -97,11 +97,13 @@ fn principal() -> u64 {
     let escrito = estado(ESCRIBIR, 1, 2, 4096) == 0 && estado(LEER, 1, 2, 8192) == 0 && (0..t).all(|i| byte(8192 + i) == byte(4096 + i));
     // 4 KB desde la mitad de una página: la segunda página va por PRP2.
     let cruzando = estado(LEER, (4096 / t) as u32, 0, 2048) == 0 && empieza(2048, b"DashOS: sector 0") && empieza(2048 + 2 * t, texto);
-    // Lo que se debe rechazar: fuera del disco (-2), fuera de la ventana (-3) y fuera de su tramo, que es el primer MB
-    // (-6, A13): ni el primer sector de archivos ni uno que empieza dentro y acaba fuera.
+    // Lo que se debe rechazar: fuera del disco (-2) y fuera de la ventana (-3). Su disco es su tramo, el primer MB hasta
+    // la partición de DashOS (A13; desde A14 lo ve como su disco entero): ni el primer sector de archivos ni uno que
+    // empieza dentro y acaba fuera, ni uno tan grande que, sumado al principio del tramo, daría la vuelta.
     let mb = (1u64 << 20) / t as u64;
-    let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (128 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3
-        && estado(LEER, 1, mb, 0) == -6 && estado(LEER, 2, mb - 1, 0) == -6;
+    let rechazos = a.sectores == mb && estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (128 * 1024 - t) as u32) == -3
+        && estado(LEER, 1, 0, 2) == -3 && estado(LEER, 1, mb, 0) == -2 && estado(LEER, 2, mb - 1, 0) == -2
+        && estado(LEER, 8, u64::MAX - 3, 0) == -2 && estado(LEER, 1, u64::MAX, 0) == -2;
     // Vaciar la caché del disco (FS2).
     let vaciado = estado(VACIAR, 0, 0, 0) == 0;
     let si = |b: bool| if b { "bien" } else { "MAL" };
@@ -114,7 +116,7 @@ fn principal() -> u64 {
         && estado(DESCARTAR, ocho, 8, 0) == 0
         && estado(LEER, ocho, 8, 8192) == 0
         && (0..4096).all(|i| byte(8192 + i) == 0);
-    let no_descarta = estado(DESCARTAR, 1, mb, 0) == -6 && estado(DESCARTAR, 2, mb - 1, 0) == -6 && estado(DESCARTAR, 0, 8, 0) == -2
+    let no_descarta = estado(DESCARTAR, 1, mb, 0) == -2 && estado(DESCARTAR, 2, mb - 1, 0) == -2 && estado(DESCARTAR, 0, 8, 0) == -2
         && estado(DESCARTAR, 1, a.sectores, 0) == -2 && estado(DESCARTAR, u32::MAX, 8, 0) == -2
         && estado(LEER, 2, 0, 0) == 0 && empieza(0, b"DashOS: sector 0");
     println!("  [disco] descartar: {}; rechazos al descartar: {}", si(descartado), si(no_descarta));
@@ -129,7 +131,7 @@ fn principal() -> u64 {
     }) && estado(ESCRIBIR, 1, 3, 4096) == 0
         && estado(LEER, 1, 3, 8192) == 0
         && empieza(8192, b"DashOS: sector 3, tras el plazo")
-        && estado(LEER_SIN_ESPERA, 1, mb, 0) == -6;
+        && estado(LEER_SIN_ESPERA, 1, mb, 0) == -2;
     // QEMU a veces acaba la lectura en el acto y el plazo no vence: basta con que venza una vez.
     println!("  [disco] plazo vencido: {}; después sigue bien: {}", si(vencidas > 0), si(sigue));
     println!("  [disco] (plazo vencido {} de 3 veces)", vencidas);

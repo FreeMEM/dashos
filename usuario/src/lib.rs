@@ -10,6 +10,7 @@ use core::fmt;
 
 pub mod graficos;
 pub mod hid;
+pub mod particiones;
 pub mod servicio;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
