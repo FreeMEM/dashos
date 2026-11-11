@@ -577,8 +577,12 @@ fn tipo(n: &Node) -> u8 {
 }
 
 
-/// La fecha que se pone a lo nuevo. Aún no hay reloj de la hora (`ahora_us` cuenta desde el arranque): se deja en 0.
-const AHORA: u64 = 0;
+/// La fecha que se pone a lo nuevo y a lo que cambia (A14): (segundos, nanosegundos) desde 1970, del kernel. Sin hora
+/// (la Pi 4 sin red), 0.
+fn ahora() -> (u64, u32) {
+    let ns = dashos::hora_ns();
+    (ns / 1_000_000_000, (ns % 1_000_000_000) as u32)
+}
 
 /// Un nombre de una sola parte, para crear, borrar o renombrar.
 fn un_nombre(b: &[u8]) -> Option<&str> {
@@ -1091,6 +1095,9 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
 }
 
 fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo_lectura: bool) -> Respuesta {
+    // Una hora por petición: lo que cambia una orden lleva toda la misma. Las que solo leen no la piden (una llamada
+    // al kernel menos).
+    let hora = if SOLO_LEEN.contains(&p.orden) { (0, 0) } else { ahora() };
     // Tras un guardado que falló, nada cambia el disco hasta que una comprobación lo dé por bueno (A2).
     if solo_lectura && !SOLO_LEEN.contains(&p.orden) && ![COMPROBAR, VACIAR].contains(&p.orden) {
         return mal(SOLO_LECTURA);
@@ -1348,7 +1355,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if cedida.map_or_else(|| sin_escritura(&ficha, nodo.data()), |d| d & W == 0) {
                     return Err(Error::new(EACCES));
                 }
-                let k = tx.write_node(n, p.a, &datos, AHORA, 0)?;
+                let k = tx.write_node(n, p.a, &datos, hora.0, hora.1)?;
                 Ok((k, tx.read_tree(n)?.data().size()))
             });
             match r {
@@ -1378,7 +1385,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if !puede(&ficha, cajon.data(), W | X) {
                     return Err(negado());
                 }
-                let n = tx.create_node(dir, nombre, modo, AHORA, 0)?;
+                let n = tx.create_node(dir, nombre, modo, hora.0, hora.1)?;
                 poner_dueno(tx, n.ptr(), &ficha, cajon.data())
             });
             match creado {
@@ -1409,9 +1416,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if !puede(&ficha, cajon.data(), W | X) {
                     return Err(negado());
                 }
-                let n = tx.create_node(dir, nombre, Node::MODE_FILE | 0o644, AHORA, 0)?;
+                let n = tx.create_node(dir, nombre, Node::MODE_FILE | 0o644, hora.0, hora.1)?;
                 let n = poner_dueno(tx, n.ptr(), &ficha, cajon.data())?;
-                let k = tx.write_node(n.ptr(), 0, &datos, AHORA, 0)?;
+                let k = tx.write_node(n.ptr(), 0, &datos, hora.0, hora.1)?;
                 Ok((k, tx.read_tree(n.ptr())?))
             });
             match r {
@@ -1491,7 +1498,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if sin_escritura(&ficha, nodo.data()) {
                     return Err(Error::new(EACCES));
                 }
-                tx.truncate_node(n, p.a, AHORA, 0)
+                tx.truncate_node(n, p.a, hora.0, hora.1)
             });
             match r {
                 Ok(()) => {
@@ -1607,7 +1614,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             let Some((vol, _)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Ok(nombre) = core::str::from_utf8(p.nombre) else { return mal(MAL_FORMADO) };
             let r = fs.tx_in(vol, |tx| match p.orden {
-                TOMAR => tx.create_snapshot(nombre, AHORA, 0),
+                TOMAR => tx.create_snapshot(nombre, hora.0, hora.1),
                 DESCARTAR => tx.delete_snapshot(nombre),
                 _ => tx.rollback_snapshot(nombre),
             });
@@ -1686,11 +1693,11 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 // Su raíz, de quien lo hace (R6), desde el principio.
                 let dueno = (ficha.uid, ficha.gid);
                 if p.a == 0 {
-                    return tx.create_volume_owned(nombre, AHORA, 0, dueno);
+                    return tx.create_volume_owned(nombre, hora.0, hora.1, dueno);
                 }
                 let master: [u8; 32] = llaves[..32].try_into().unwrap();
                 let salt: [u8; 16] = llaves[32..].try_into().unwrap();
-                tx.create_encrypted_volume_owned(nombre, AHORA, 0, &clave[..largo], &master, salt, coste, dueno)
+                tx.create_encrypted_volume_owned(nombre, hora.0, hora.1, &clave[..largo], &master, salt, coste, dueno)
             });
             clave.fill(0);
             llaves.fill(0);

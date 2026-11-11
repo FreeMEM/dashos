@@ -166,6 +166,11 @@ pub fn ahora_us() -> u64 {
     (t as u128 * 1_000_000 / f.max(1) as u128) as u64
 }
 
+/// A14: la hora del calendario, en nanosegundos desde 1970 (UTC); 0 si el sistema no la sabe (la Pi 4 no tiene reloj).
+pub fn hora_ns() -> u64 {
+    llamada(39, [0; 5]).0
+}
+
 /// Interrupción atendida: el kernel la vuelve a habilitar.
 pub fn interrupcion_terminar(llave: u32) -> i64 {
     llamada(11, [llave as u64, 0, 0, 0, 0]).0 as i64

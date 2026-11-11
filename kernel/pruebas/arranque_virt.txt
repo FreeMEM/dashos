@@ -3,6 +3,8 @@
 DashOS: fuera de los servicios de arranque
 DashOS 0.0.1
 Orden de bytes: little-endian
+# A14: la hora del calendario, del PL031 de virt.
+~Hora: del reloj de la placa
 Memoria física:
 DashOS en marcha con 4 núcleos.
 │   [inicio] consola lanzado en su grupo, con 2 llaves
@@ -47,6 +49,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
 ~│   [ficheros] A7 páginas prestadas: bien
 ~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
+~│   [ficheros] A14 fechas: bien
 ~│   [ficheros] FS8 comprobación: bien
 ~│   [ficheros] FS9 instantáneas: bien
 ~│   [ficheros] FS10 volúmenes: bien
@@ -91,6 +94,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [sonido] tono-b: flujo cerrado
 # R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
 # sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
+~│   [hostil] A14 hora: bien
 ~│   [hostil] archivos sigue: sí
 # R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
 ~│   [hostil] archivos, permisos: bien

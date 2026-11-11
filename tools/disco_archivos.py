@@ -23,6 +23,7 @@ no encuentra nada roto en él. Y que lo que DashOS escribió en el volumen cifra
 import gzip
 import os
 import subprocess
+import time
 import sys
 import tempfile
 
@@ -62,6 +63,12 @@ if sys.argv[1] == "--comprobar":
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
+    # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
+    # no de 1970 ni del futuro.
+    fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
+    ahora = int(time.time())
+    if len(fecha) != 2 or not all(ahora - 600 <= int(f) <= ahora for f in fecha):
+        fallos.append(f"Escrito/hola.txt con fecha {fecha} (ahora {ahora})")
     # U6: el registro de seguridad de `sesiones`, en su cajón: la cuenta (8 bytes) y un anillo de entradas de 40 (tipo,
     # estado, quién y qué). Tiene que tener los tres intentos del hostil (matar, la llave de un servicio y entrar).
     REGISTRO = "Estado/Servicios/sesiones/registro"

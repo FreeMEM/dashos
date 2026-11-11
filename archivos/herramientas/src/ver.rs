@@ -1,7 +1,8 @@
 //! `ver DISCO DESDE [RUTA]`: abre el RedoxFS que empieza en el byte DESDE de DISCO, sin escribir nada. Sin RUTA,
 //! lista todo el árbol (una línea por entrada: ruta, tipo y tamaño, y los bits del Amiga y el comentario si los
 //! tiene); con RUTA, saca el fichero por la salida. Con `--comprobar` en vez de RUTA, comprueba el disco entero, datos
-//! incluidos (FS8), y dice "sin problemas" o uno por línea.
+//! incluidos (FS8), y dice "sin problemas" o uno por línea. Con `--fecha RUTA`, la fecha de creación y la de cambio de
+//! la RUTA, en segundos desde 1970 (A14).
 
 use std::fs::File;
 use std::io::Write;
@@ -74,6 +75,13 @@ fn main() {
                 out.push("sin problemas".into());
             }
             Ok((out.join("\n") + "\n").into_bytes())
+        }
+        Some(o) if o == "--fecha" => {
+            let mut n = tx.read_tree(TreePtr::root())?;
+            for p in args.get(4).map(String::as_str).unwrap_or("").split('/') {
+                n = tx.find_node(n.ptr(), p)?;
+            }
+            Ok(format!("{} {}\n", n.data().ctime().0, n.data().mtime().0).into_bytes())
         }
         None => {
             let mut out = Vec::new();

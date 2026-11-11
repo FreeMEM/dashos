@@ -162,6 +162,12 @@ pub fn atender(marco: &mut Marco) {
         // justa con capacidad 0. Desde S3 pide una llave de permiso de plazo en a[0] (para volver a la justa, no).
         // E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
         28 => plazo(a[0] as u32, a[1], a[2]),
+        // A14: la hora del calendario en nanosegundos desde 1970 (UTC); 0 si no se sabe. a[0] = 0; los demás valores,
+        // reservados (ponerla pedirá una llave de permiso).
+        39 => match a[0] {
+            0 => crate::reloj::hora(),
+            _ => E_ARGUMENTO,
+        },
         // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
         34 => azar(marco, a[0], a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.

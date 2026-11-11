@@ -744,12 +744,23 @@ fn disco() -> bool {
     bien
 }
 
+/// A14: nadie pone la hora con la llamada de leerla (ni con otros valores), y la hora no va hacia atrás. En `virt`, la
+/// del reloj de la placa: creíble.
+fn hora() -> bool {
+    let antes = dashos::hora_ns();
+    let rechazos = [1u64, 2, u64::MAX, 1 << 63].iter().all(|&q| dashos::llamada(39, [q, 1_000_000_000, 0, 0, 0]).0 as i64 == -1);
+    let despues = dashos::hora_ns();
+    let creible = antes == 0 || antes / 1_000_000_000 >= 1_704_067_200;
+    rechazos && despues >= antes && creible && (antes == 0) == (despues == 0)
+}
+
 fn principal() -> u64 {
     // Se deja pasar a las demás pruebas del arranque: lo que sigue carga a los servicios.
     dormir_ms(2000);
     let disco_bien = disco();
     let memoria = dashos::memoria_crear(4096);
     let ses = sesiones(memoria);
+    println!("  [hostil] A14 hora: {}", if hora() { "bien" } else { "mal" });
     let a = archivos(memoria);
     println!("  [hostil] archivos sigue: {}", si(a));
     let s = sonido(memoria);

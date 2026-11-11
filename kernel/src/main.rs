@@ -106,6 +106,11 @@ pub fn kmain(dtb: usize) -> ! {
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();
     }
+    // A14: la hora del calendario, del reloj de la placa si lo hay.
+    match reloj::iniciar_hora(&d) {
+        Some(_) => kprintln!("Hora: del reloj de la placa"),
+        None => kprintln!("Hora: sin reloj de la placa"),
+    }
 
     // Los otros núcleos: por PSCI si el árbol lo trae (U3), si no con la tabla de espera de la Pi.
     let como = match d.por_nombre("psci").and_then(|p| d.propiedad(&p, "method")) {

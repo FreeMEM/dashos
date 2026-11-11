@@ -636,3 +636,19 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cuarentena deja el disco limpio. Las tres fallan sin el cambio. En `ficheros`, antes de FS8 se escribe y borra un
   fichero de 300 KB y se comprueba en seguida: bien. Que en ese momento la cuarentena tuviera algo es lo esperable,
   pero no está comprobado dentro de QEMU. RedoxFS: 146 pruebas bien.
+- A14, las fechas: el kernel sabe la hora del calendario. Al arrancar lee el reloj de la placa si hay uno que sepa
+  leer (hoy, el PL031 de QEMU `virt`; la Pi 4 no tiene) y la guarda como base del contador; antes de 2024 no se la
+  cree (reloj sin pila). La llamada 39 la da en nanosegundos desde 1970, 0 si no se sabe; con otros valores, error
+  (ponerla, cuando venga de la red, pedirá una llave). `archivos` pone esa hora a lo que crea, escribe, recorta, a
+  las instantáneas y a los volúmenes; una por petición, y solo en las que cambian algo. Ya no hay `AHORA = 0`.
+- Pruebas: en `ficheros`, un fichero nuevo lleva la hora de antes de pedirlo (hasta 2 s después); sin hora, 0. Hostil:
+  la llamada con otros valores no pone la hora, y la hora no va hacia atrás. Desde fuera: `ver --fecha` (nuevo) lee
+  en Linux la fecha de `Escrito/hola.txt` del disco de la prueba, y tiene que ser de los últimos 10 minutos. Antes
+  del cambio, 0.
+- Medido (`make medir-fs`, 5 arranques, medianas), con la llamada y sin ella, uno tras otro con el PC igual de
+  cargado: todo dentro del ruido, con subidas y bajadas de hasta un 5 %; escribir 8 MB en trozos de 64 KB, 79,1 a
+  76,8 MB/s (-3 %), y con guardado, 25,6 a 23,1 (-10 %, con los rangos solapados). Una llamada por escritura de 64 KB
+  pesa menos del 1 %. Comparado con las medidas de A7 bajaba hasta un 10 %, también en lecturas que no piden la hora:
+  era el PC (dos emuladores de otras sesiones a la vez).
+- Falta de A14: ponerla desde la red (con permiso), el controlador de la tarjeta SD, TRIM, la tabla de particiones y
+  la lectura anticipada.

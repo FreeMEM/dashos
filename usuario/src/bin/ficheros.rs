@@ -401,6 +401,20 @@ fn principal() -> u64 {
         c.pedir(BORRAR, escrito.asa, 0, 0, "a11.bin");
     }
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    // A14: lo creado lleva la hora del sistema (la de antes de pedirlo, o hasta 2 s después); sin hora, 0.
+    let h = dashos::hora_ns() / 1_000_000_000;
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let fecha = match hacer(&c, escrito.asa, "fecha.bin", 100, 0) {
+        Some(a) => {
+            let d = c.pedir(DATOS, a, 0, 0, "");
+            c.pedir(CERRAR, a, 0, 0, "");
+            c.pedir(BORRAR, escrito.asa, 0, 0, "fecha.bin");
+            d.estado == 0 && if h == 0 { d.b == 0 } else { d.b >= h && d.b <= h + 2 }
+        }
+        None => false,
+    };
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    println!("  [ficheros] A14 fechas: {}{}", si(fecha), if h == 0 { " (sin hora)" } else { "" });
     // FS8: el disco entero, datos incluidos, tras todo lo anterior: ni un problema, ni un bloque perdido.
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");
