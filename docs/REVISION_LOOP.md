@@ -765,3 +765,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sistema sigue (el compositor compone) y el disco sale igual que entró, byte a byte.
 - Rendimiento: no cambia el camino (una suma por orden); `make medir-fs VUELTAS=1` funciona con el disco nuevo y da lo
   de siempre (leer del disco en frío 265 MB/s, en el ruido de 279).
+- A7, la caché de páginas se crea al arrancar (lo decidió el usuario, 2026-11-11): `archivos` crea los 48 trozos de
+  512 KB (24 MB) antes de atender a nadie (`Paginas::crear_todos`); si no hay memoria para todos, los que falten se
+  crean según hagan falta, como antes. Cuesta 11 ms de arranque en QEMU (línea nueva en `arranque_virt.txt`). Medido
+  con `make medir-fs VUELTAS=3`, antes y después: leer en trozos de 1 MB, 541 a 749 MB/s (+38 %); leer 8 MB por primera
+  vez, 343 a 410 (+20 %, por encima de Linux, 401); del disco en frío, 277 a 300 (+8,5 %); lo demás, dentro de ±4 %,
+  el ruido. Panel de medidas al día (fila A7b y el grupo Ficheros con esta medida).

@@ -951,32 +951,49 @@ impl Paginas {
         unsafe { core::slice::from_raw_parts_mut((VA_PAGINAS + hueco * TROZO_PRESTADO) as *mut u8, TROZO_PRESTADO) }
     }
 
+    /// Crea al arrancar la memoria de todos los huecos (24 MB), libres. Crear un trozo cuesta sobre todo poner sus
+    /// páginas a cero (115 de 122 µs en QEMU), y hacerlo según hacía falta frenaba la primera lectura de cada fichero
+    /// grande (decidido con el usuario, 2026-11-11). Si no hay memoria para todos, los que falten se crean como antes.
+    fn crear_todos(&mut self) {
+        while self.huecos.len() < MAX_TROZOS {
+            let Some(h) = self.crear() else { break };
+            self.libres.push(h);
+        }
+        // Se sacan del final: que el primero en usarse sea el 0.
+        self.libres.reverse();
+    }
+
     /// Un hueco para un trozo nuevo: uno libre, uno nuevo o el del trozo menos usado que no esté prestado.
     fn hueco(&mut self) -> Option<usize> {
         if let Some(h) = self.libres.pop() {
             return Some(h);
         }
         if self.huecos.len() < MAX_TROZOS {
-            let llave = dashos::memoria_crear(TROZO_PRESTADO);
-            if (llave as i32) < 0 {
-                return None;
-            }
-            let h = self.huecos.len();
-            if dashos::memoria_proyectar(llave, VA_PAGINAS + h * TROZO_PRESTADO, true) != 0 {
-                dashos::cerrar(llave);
-                return None;
-            }
-            let solo_leer = dashos::llave_duplicar(llave, dashos::LEER | dashos::TRANSFERIR, 0);
-            if solo_leer < 0 {
-                dashos::memoria_quitar(VA_PAGINAS + h * TROZO_PRESTADO);
-                dashos::cerrar(llave);
-                return None;
-            }
-            self.huecos.push((llave, solo_leer as u32));
-            return Some(h);
+            return self.crear();
         }
         let (&clave, _) = self.trozos.iter().filter(|(_, t)| t.prestado == 0).min_by_key(|(_, t)| t.uso)?;
         self.trozos.remove(&clave).map(|t| t.hueco)
+    }
+
+    /// La memoria de un hueco nuevo, proyectada, con su copia solo de leer.
+    fn crear(&mut self) -> Option<usize> {
+        let llave = dashos::memoria_crear(TROZO_PRESTADO);
+        if (llave as i32) < 0 {
+            return None;
+        }
+        let h = self.huecos.len();
+        if dashos::memoria_proyectar(llave, VA_PAGINAS + h * TROZO_PRESTADO, true) != 0 {
+            dashos::cerrar(llave);
+            return None;
+        }
+        let solo_leer = dashos::llave_duplicar(llave, dashos::LEER | dashos::TRANSFERIR, 0);
+        if solo_leer < 0 {
+            dashos::memoria_quitar(VA_PAGINAS + h * TROZO_PRESTADO);
+            dashos::cerrar(llave);
+            return None;
+        }
+        self.huecos.push((llave, solo_leer as u32));
+        Some(h)
     }
 
     /// El hueco con el trozo `indice` de `nodo`, leyéndolo si no está. `None` si no hay sitio o no se puede leer.
@@ -2089,6 +2106,9 @@ fn principal() -> u64 {
     let mut altas: BTreeMap<u64, Ficha> = BTreeMap::new();
     let mut solo_lectura = solo_lectura_al_arrancar;
     let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new(), paginas: Paginas::nueva() };
+    let t_paginas = dashos::ahora_us();
+    recuerdos.paginas.crear_todos();
+    println!("  [archivos] caché de páginas: {} trozos de {} KB creados ({} µs)", recuerdos.paginas.huecos.len(), TROZO_PRESTADO / 1024, dashos::ahora_us() - t_paginas);
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
