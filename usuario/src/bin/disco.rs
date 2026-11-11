@@ -20,6 +20,7 @@ const LEER: u32 = 1;
 const ESCRIBIR: u32 = 2;
 const VACIAR: u32 = 5;
 const DESCARTAR: u32 = 6;
+const LEER_SIN_ESPERA: u32 = 7;
 
 struct Respuesta {
     estado: i32,
@@ -117,6 +118,19 @@ fn principal() -> u64 {
         && estado(DESCARTAR, 1, a.sectores, 0) == -2 && estado(DESCARTAR, u32::MAX, 8, 0) == -2
         && estado(LEER, 2, 0, 0) == 0 && empieza(0, b"DashOS: sector 0");
     println!("  [disco] descartar: {}; rechazos al descartar: {}", si(descartado), si(no_descarta));
+    // A16: tres lecturas que vencen su plazo (el servicio no espera su terminada; llega tarde, como de un disco que
+    // tropieza). Después, todo sigue bien: lecturas y escrituras con lo que toca. Antes, el disco quedaba inservible.
+    let vencidas = (0..3).filter(|_| estado(LEER_SIN_ESPERA, 8, 0, 32768) == -4).count();
+    poner(4096, &[0; 512]);
+    poner(4096, b"DashOS: sector 3, tras el plazo");
+    let sigue = (0..5).all(|_| {
+        poner(8192, &[0xEE; 1024]);
+        estado(LEER, 2, 0, 8192) == 0 && empieza(8192, b"DashOS: sector 0") && empieza(8192 + t, b"DashOS: sector 1")
+    }) && estado(ESCRIBIR, 1, 3, 4096) == 0
+        && estado(LEER, 1, 3, 8192) == 0
+        && empieza(8192, b"DashOS: sector 3, tras el plazo")
+        && estado(LEER_SIN_ESPERA, 1, mb, 0) == -6;
+    println!("  [disco] plazo vencido {} de 3 veces; después sigue bien: {}", vencidas, si(sigue && vencidas > 0));
     // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
     let (l2, v2) = dashos::canal_crear();
     let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {

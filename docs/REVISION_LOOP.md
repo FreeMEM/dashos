@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12 y A13 (NVMe) |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM y lectura anticipada |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -697,3 +697,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la suma mal: abre la buena más nueva, con todo. (Al escribirla salió que romper la cabecera más nueva cuando ya se
   guardó del todo no deja volver a la anterior: sus bloques soltados ya se descartaron. No es un caso de corte de luz:
   un corte durante su escritura sí vuelve a la anterior, y eso lo prueban `single_flush_*`.) RedoxFS: 148 pruebas.
+- Abrir RedoxFS, mirado más (traza temporal): de lo que queda, casi todo es la primera lectura del disco; no hay más
+  que rascar ahí por ahora.
+- A16, NVMe tras un plazo vencido: al esperar una terminada, si llega la de una orden anterior que venció su plazo (su
+  identificador no casa), se descarta y se sigue esperando la propia. Antes se tomaba por la de la orden en curso y
+  desde ahí todo daba error: un tropiezo del disco era definitivo. Prueba hostil (en `disco`): la orden 7, solo para
+  probar, lee como la 1 pero sin esperar la terminada (vence el plazo en el acto, y la terminada llega tarde). Tres
+  veces seguidas: las tres vencen, el servicio descarta las tres terminadas tardías (sale en el registro) y después
+  leer y escribir siguen dando lo que toca; fuera de su tramo, también rechazada. No se probó con el código de antes
+  (que con una terminada de otra orden devolvía error).

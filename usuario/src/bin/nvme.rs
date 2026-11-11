@@ -91,6 +91,9 @@ const PEDIR_VACIAR: u32 = 5;
 /// comprobaciones que leer y escribir, sin ventana. Si el disco no sabe descartar, no hace nada y contesta bien (es
 /// un aviso).
 const PEDIR_DESCARTAR: u32 = 6;
+/// A16, para probar: leer como la orden 1, pero sin esperar la terminada (vence el plazo, como un disco que tropieza).
+/// Solo a quien tiene tramo, y solo de lo suyo. Lo siguiente tiene que seguir yendo bien.
+const PEDIR_LEER_SIN_ESPERA: u32 = 7;
 /// La dirección de bus de la página para la lista de tramos de un descarte (la de los datos de Identify, que después
 /// no se usa); 0 si el disco no admite Dataset Management (ONCS, bit 2).
 static DSM_BUS: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
@@ -163,6 +166,8 @@ struct Nvme {
     avisos: Option<(u32, u32, u32)>,
     paso: usize, // la separación de los timbres (4 << CAP.DSTRD)
     espera_ms: u64,
+    /// A16, para probar: la orden siguiente no espera su terminada (vence su plazo en el acto).
+    sin_esperar: core::cell::Cell<bool>,
 }
 
 impl Nvme {
@@ -186,29 +191,37 @@ impl Nvme {
         unsafe { core::arch::asm!("dmb oshst") };
         c.cola = (c.cola + 1) % ENTRADAS;
         escribir(TIMBRES + (2 * c.id) * self.paso, c.cola as u32);
-        // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
-        let t = c.cq + 16 * c.cabeza;
-        let fase = c.fase;
-        let hecha = || (dma32(t + 12) >> 16) & 1 == fase;
-        let lista = match self.avisos {
-            None => esperar(self.espera_ms, hecha),
-            Some(a) => hecha() || esperar_aviso(a, self.espera_ms, &hecha),
-        };
-        if !lista {
-            return Err(u32::MAX);
+        let sin_esperar = self.sin_esperar.replace(false);
+        loop {
+            // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
+            let t = c.cq + 16 * c.cabeza;
+            let fase = c.fase;
+            let hecha = || (dma32(t + 12) >> 16) & 1 == fase;
+            let lista = match self.avisos {
+                _ if sin_esperar => hecha(),
+                None => esperar(self.espera_ms, hecha),
+                Some(a) => hecha() || esperar_aviso(a, self.espera_ms, &hecha),
+            };
+            if !lista {
+                // Se deja pendiente: su terminada, cuando llegue, se descarta (abajo).
+                return Err(u32::MAX);
+            }
+            unsafe { core::arch::asm!("dmb oshld") };
+            let (dw0, dw3) = (dma32(t), dma32(t + 12));
+            c.cabeza = (c.cabeza + 1) % ENTRADAS;
+            if c.cabeza == 0 {
+                c.fase ^= 1;
+            }
+            escribir(TIMBRES + (2 * c.id + 1) * self.paso, c.cabeza as u32);
+            // A16: la terminada de una orden anterior que venció su plazo. Antes se tomaba por la de esta, el
+            // identificador no casaba y desde ahí todo daba error. Se descarta y se sigue esperando la nuestra.
+            if dw3 & 0xffff != c.cid as u32 {
+                println!("  [nvme] terminada tardía descartada (orden {})", dw3 & 0xffff);
+                continue;
+            }
+            let estado = (dw3 >> 17) & 0x7fff;
+            return if estado != 0 { Err(estado) } else { Ok(dw0) };
         }
-        unsafe { core::arch::asm!("dmb oshld") };
-        let (dw0, dw3) = (dma32(t), dma32(t + 12));
-        c.cabeza = (c.cabeza + 1) % ENTRADAS;
-        if c.cabeza == 0 {
-            c.fase ^= 1;
-        }
-        escribir(TIMBRES + (2 * c.id + 1) * self.paso, c.cabeza as u32);
-        let estado = (dw3 >> 17) & 0x7fff;
-        if dw3 & 0xffff != c.cid as u32 || estado != 0 {
-            return Err(estado);
-        }
-        Ok(dw0)
     }
 }
 
@@ -285,7 +298,7 @@ fn principal() -> u64 {
     });
     let cap = (leer(CAP) as u64) | (leer(CAP + 4) as u64) << 32;
     let vs = leer(VS);
-    let n = Nvme { avisos, paso: 4 << ((cap >> 32) & 0xf), espera_ms: 500 * ((cap >> 24) & 0xff).max(1) };
+    let n = Nvme { avisos, paso: 4 << ((cap >> 32) & 0xf), espera_ms: 500 * ((cap >> 24) & 0xff).max(1), sin_esperar: core::cell::Cell::new(false) };
     if (cap >> 48) & 0xf != 0 {
         println!("  [nvme] no admite páginas de 4 KB");
         return 2;
@@ -393,6 +406,12 @@ fn anillo(va: usize, off: usize) -> &'static core::sync::atomic::AtomicU32 {
 
 /// Una lectura o escritura en la ventana de `c`, comprobada antes de llegar al disco: su estado.
 fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, primero: u64, off: usize, sectores: u64, tam_sector: usize) -> i32 {
+    if orden == PEDIR_LEER_SIN_ESPERA {
+        n.sin_esperar.set(true);
+        let r = transferir(n, es, c, PEDIR_LEER, cuantos, primero, off, sectores, tam_sector);
+        n.sin_esperar.set(false);
+        return r;
+    }
     let bytes = cuantos as usize * tam_sector;
     if orden == PEDIR_VACIAR {
         // Las órdenes van de una en una: todas las escrituras de antes ya terminaron.
@@ -574,7 +593,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
                 }
                 None => SIN_SITIO,
             }
-        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR || orden == PEDIR_DESCARTAR {
+        } else if orden == PEDIR_LEER || orden == PEDIR_ESCRIBIR || orden == PEDIR_VACIAR || orden == PEDIR_DESCARTAR || orden == PEDIR_LEER_SIN_ESPERA {
             match clientes.iter().flatten().find(|c| c.marca == marca) {
                 None => MAL_FORMADO,
                 Some(c) => transferir(n, es, c, orden, cuantos, primero, off, sectores, tam_sector),
