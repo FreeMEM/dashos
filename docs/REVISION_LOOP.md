@@ -834,3 +834,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   siguiente compensa). La prueba mide ahora desde el primer hueco (con el fallo de antes daría unos 9.000 µs). Si el
   "un tic tarde" (9.985 µs) visto antes venía de aquí no se ha podido ver: no se repitió. `make prueba` 5 veces bien
   (C14: 108 y 96 µs de desviación en las dos últimas), `make arranque-virt` bien.
+- El usuario pidió (2026-11-12) un centro de control tan potente como el de DMS (Dux Modular Shell), y capturas de
+  todo lo de la interfaz. Diseño en `docs/diseño/S10c-centro-de-control.md`. La pieza de R19 que quedaba, Prefs de
+  permisos, se hace como su primera fase (C1): la ventana de Ajustes con la categoría Permisos. Va la siguiente.
