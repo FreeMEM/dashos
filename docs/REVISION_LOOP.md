@@ -29,7 +29,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R5 | Clase de plazo con llave y admisión que cuenta a los dormidos | S3, K8 | hecho |
 | R6 | Archivos con ficha: dueño, grupo y modo, raíces, ceder, administrar | U1, A13 | hecho |
 | R7 | Banco fiable | B1 a B4 | hecho |
-| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
+| R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
@@ -385,3 +385,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   seguidas bien. Captura en `docs/capturas/u3-bloqueo.png`. Arrancar dos veces con el mismo disco probó también lo
   que faltaba de U6: `sesiones` leyó las 15 entradas del registro de la vez anterior. Falta: la pantalla de entrada,
   bloquear a mano (tecla o tiempo) y la usuaria de verdad de la sesión, no una fija.
+- A5, la otra mitad: `read_record_into` lee un registro entero sin comprimir directamente al destino (la ventana del
+  cliente), sin el búfer de registro puesto a ceros. Solo si se lee entero desde su principio, no está en la caché
+  de escritura, el volumen no está sellado y mide justo lo pedido; si no, el camino de siempre. Descifra el disco
+  cifrado y comprueba la suma igual que `read_block` (con la caché de comprobados de F4). Prueba (RedoxFS,
+  `tests_a5`): datos al azar (no se comprimen) se leen igual entero y a trozos; con un byte cambiado en el disco, EIO
+  por los dos caminos. Medido (7 arranques, contra el mismo banco justo antes): leer 8 MB a trozos de 1 MB, 734 a
+  882 MB/s (+20 %); lo demás, dentro del ruido (a trozos de 64 KB no cambia: el trozo es menor que un registro).

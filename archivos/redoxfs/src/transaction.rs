@@ -561,6 +561,42 @@ impl<'a, D: Disk> Transaction<'a, D> {
         }
     }
 
+    /// A5 (docs/REVISION_ARQUITECTURA.md): lee el registro `ptr` entero directamente en `buf`, sin el búfer intermedio
+    /// de `read_record`, si se puede: no es nulo ni comprimido, no está en la caché de escritura, el volumen no está
+    /// sellado (FS10c) y mide justo `buf`. Hace lo mismo que `read_block`: descifra (disco cifrado) y comprueba la suma
+    /// (salvo que ya estuviera comprobado y siga en memoria, F4). `Ok(false)` si no se puede: entonces, `read_record`.
+    pub(crate) unsafe fn read_record_into(&mut self, ptr: BlockPtr<RecordRaw>, buf: &mut [u8]) -> Result<bool> {
+        let addr = ptr.addr();
+        if ptr.is_null()
+            || addr.decomp_level().is_some()
+            || self.sealed
+            || addr.level().bytes() as usize != buf.len()
+            || self.write_cache.contains_key(&addr)
+        {
+            return Ok(false);
+        }
+        let count = unsafe { self.fs.disk.read_at(self.fs.block + addr.index(), buf)? };
+        if count != buf.len() {
+            return Err(Error::new(EIO));
+        }
+        let from_memory = self.fs.disk.last_read_from_memory();
+        self.fs.decrypt(buf, addr);
+        let key = (addr.raw(), ptr.hash());
+        if from_memory && self.fs.verified.contains(&key) {
+            return Ok(true);
+        }
+        if seahash::hash(buf) != ptr.hash() {
+            #[cfg(feature = "log")]
+            log::error!("READ_RECORD_INTO: INCORRECT HASH for block 0x{:X}", addr.index());
+            return Err(Error::new(EIO));
+        }
+        if self.fs.verified.len() >= VERIFIED_MAX {
+            self.fs.verified.clear();
+        }
+        self.fs.verified.insert(key);
+        Ok(true)
+    }
+
     pub(crate) unsafe fn read_record<T: BlockTrait + DerefMut<Target = [u8]>>(
         &mut self,
         mut ptr: BlockPtr<T>,
@@ -2181,6 +2217,12 @@ impl<'a, D: Disk> Transaction<'a, D> {
             // This is at most `record_level` due to the way `len` is computed.
             let level = BlockLevel::for_bytes((j + len) as u64);
 
+            // A5: un registro entero, sin comprimir, se lee directamente al destino (sin el búfer intermedio).
+            if j == 0 && unsafe { self.read_record_into(record_ptr, &mut buf[bytes_read..bytes_read + len])? } {
+                bytes_read += len;
+                offset += len as u64;
+                continue;
+            }
             let record = unsafe { self.read_record(record_ptr, level)? };
             buf[bytes_read..bytes_read + len].copy_from_slice(&record.data()[j..j + len]);
 

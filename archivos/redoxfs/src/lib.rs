@@ -104,3 +104,5 @@ mod tests_volume;
 mod tests_seal;
 #[cfg(all(feature = "std", test))]
 mod tests_deferred;
+#[cfg(all(feature = "std", test))]
+mod tests_a5;
