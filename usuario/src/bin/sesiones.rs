@@ -439,7 +439,7 @@ fn principal() -> u64 {
     // U4: lo que el usuario concedió (programa y servicio), las preguntas a `guardian` sin contestar (número, llave de
     // respuesta del programa, su marca, su nombre y el servicio) y por dónde se le pregunta.
     let mut concedidos: [Option<([u8; 16], usize)>; MAX_CONCEDIDOS] = [None; MAX_CONCEDIDOS];
-    let mut preguntas: [Option<(u32, u32, u64, [u8; 16], usize)>; MAX_PREGUNTAS] = [None; MAX_PREGUNTAS];
+    let mut preguntas: [Option<(u32, u32, u64, [u8; 16], usize, u64)>; MAX_PREGUNTAS] = [None; MAX_PREGUNTAS];
     let mut canal_guardian = 0u32;
     let mut siguiente_pregunta = 1u32;
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
@@ -745,7 +745,7 @@ fn principal() -> u64 {
                             q[24..24 + pedido.len().min(16)].copy_from_slice(&pedido.as_bytes()[..pedido.len().min(16)]);
                             if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
                                 let hueco = preguntas.iter().position(|p| p.is_none()).unwrap();
-                                preguntas[hueco] = Some((id, respuesta, marca, programa, s));
+                                preguntas[hueco] = Some((id, respuesta, marca, programa, s, 0));
                                 en_espera = true;
                                 BIEN
                             } else {
@@ -795,6 +795,7 @@ fn principal() -> u64 {
                     let pedida = m.get(12..12 + nl).unwrap_or(b"");
                     let programa = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     let accion = ACCIONES.iter().position(|a| a.as_bytes() == pedida);
+                    let objetivo = u64_en(12 + nl);
                     let hueco = preguntas.iter().position(|p| p.is_none());
                     match (accion, yo.is_some() && canal_guardian != 0, hueco) {
                         (Some(i), true, Some(h)) => {
@@ -807,7 +808,7 @@ fn principal() -> u64 {
                             q[24] = b'*';
                             q[25..25 + pedida.len().min(15)].copy_from_slice(&pedida[..pedida.len().min(15)]);
                             if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
-                                preguntas[h] = Some((id, respuesta, marca, programa, ACCION + i));
+                                preguntas[h] = Some((id, respuesta, marca, programa, ACCION + i, objetivo));
                                 println!("  [sesiones] {} pide la acción de administrador {}: se pregunta", nombre(&programa), ACCIONES[i]);
                                 continue;
                             }
@@ -826,7 +827,7 @@ fn principal() -> u64 {
                     let usuario = m.get(16..16 + lu).unwrap_or(b"");
                     let clave = m.get(16 + lu..16 + lu + lc).unwrap_or(b"");
                     if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= ACCION)) {
-                        let (_, a_quien, _, programa, accion) = preguntas[i].take().unwrap();
+                        let (_, a_quien, _, programa, accion, objetivo) = preguntas[i].take().unwrap();
                         let accion = accion - ACCION;
                         // Un administrador (del grupo `admin`) con su contraseña buena: la comprueba `sesiones` con su
                         // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
@@ -837,6 +838,17 @@ fn principal() -> u64 {
                                 let (e, _, problemas) = a.orden(dashos::protocolo::archivos::COMPROBAR, 0, 0, 0, b"");
                                 (e, problemas)
                             }
+                            // Matar a otro usuario o al sistema: su grupo entero, como `MATAR` con uno propio.
+                            (true, _) if ACCIONES[accion] == "matar" => match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
+                                Some(j) => {
+                                    let f = fichas[j].take().unwrap();
+                                    dashos::grupo_matar(f.grupo);
+                                    dashos::cerrar(f.grupo);
+                                    println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(&programa), nombre(&f.nombre), f.uid);
+                                    (BIEN, objetivo)
+                                }
+                                None => (NO_EXISTE, objetivo),
+                            },
                             _ => (PROTEGIDO, 0),
                         };
                         let quien_ = core::str::from_utf8(usuario).unwrap_or("?");
@@ -865,7 +877,7 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, si) = (u32_en(4), u32_en(8) == 1);
                     if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
-                        let (_, a_quien, de, programa, s) = preguntas[i].take().unwrap();
+                        let (_, a_quien, de, programa, s, _) = preguntas[i].take().unwrap();
                         let (estado, llave) = if si {
                             // Concedido: se apunta y se guarda, y no se vuelve a preguntar.
                             if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {

@@ -134,6 +134,36 @@ fn nombres() -> (bool, bool) {
     (t.len() == 2 + progdir as usize + home as usize && a && b && c && d && e && f && g && raices, progdir)
 }
 
+/// El número del primer proceso con ese nombre en la lista de `sesiones`, o 0.
+fn buscar_proceso(nombre: &[u8]) -> u64 {
+    use dashos::protocolo::sesiones::{FICHA, POR_PAGINA, PROCESOS};
+    let mut desde = 0u64;
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&PROCESOS.to_le_bytes());
+        p[4..12].copy_from_slice(&desde.to_le_bytes());
+        let (lect, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 8 + FICHA * POR_PAGINA];
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lect, &mut r, &mut [], 3_000_000).0 } else { -1 };
+        dashos::cerrar(lect);
+        if n < 8 {
+            return 0;
+        }
+        let van = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
+        for i in 0..van {
+            let f = &r[8 + FICHA * i..8 + FICHA * (i + 1)];
+            let nom = &f[16..32];
+            if &nom[..nom.iter().position(|&c| c == 0).unwrap_or(16)] == nombre {
+                return u64::from_le_bytes(f[0..8].try_into().unwrap());
+            }
+        }
+        if van < POR_PAGINA {
+            return 0;
+        }
+        desde += van as u64;
+    }
+}
+
 /// Una orden al servicio de archivos: (estado, asa).
 fn orden(lectura: u32, orden: u32, asa: u32, x: u64, nombre: &str) -> (i32, u32) {
     let mut p = [0u8; 96];
@@ -219,7 +249,21 @@ fn raices(t: &Nombres, home: bool) -> bool {
         let (e, problemas) = (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap()));
         let bien = n == 12 && e == 0 && problemas == 0;
         println!("  [pide] acción de administrador (comprobar el disco): {} con {} problemas: {}", e, problemas, if bien { "bien" } else { "MAL" });
-        bien
+        // Y matar a `eco`, un servicio del sistema (no es suyo): también es acción de administrador. `inicio` lo
+        // relanza (E6).
+        let eco = buscar_proceso(b"eco");
+        let mut p = [0u8; 25];
+        p[0..4].copy_from_slice(&ADMINISTRAR.to_le_bytes());
+        p[4..8].copy_from_slice(&5u32.to_le_bytes());
+        p[12..17].copy_from_slice(b"matar");
+        p[17..25].copy_from_slice(&eco.to_le_bytes());
+        let (lect, suyo) = dashos::canal_crear();
+        let n = if eco != 0 && dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lect, &mut r, &mut [], 10_000_000).0 } else { -1 };
+        dashos::cerrar(lect);
+        let matar = i32::from_le_bytes(r[0..4].try_into().unwrap());
+        let sigue = buscar_proceso(b"eco") == eco;
+        println!("  [pide] acción de administrador (matar a eco, proceso {}): {}, ya no está con ese número: {}", eco, matar, if n == 12 && matar == 0 && !sigue { "bien" } else { "MAL" });
+        bien && n == 12 && matar == 0 && !sigue
     };
     let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN && en_home && admin;
     println!("  [pide] raíces: PROGDIR:pide {}, Programas:hola {}, SYS:LEEME.txt {}; crear por SYS: {}, cerrarla {}: {}",

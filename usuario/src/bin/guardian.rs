@@ -95,7 +95,7 @@ fn principal() -> u64 {
     let (una, otra) = (pedir(&r, &[]), pedir(&r, &[]));
     let retirado = una == 0 && otra == -1;
     println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
-    let admin = admin_pide == 1 && admin_hostil == 2;
+    let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
     if bien && retirado && admin { 0 } else { 1 }
 }

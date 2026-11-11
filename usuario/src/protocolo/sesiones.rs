@@ -61,8 +61,9 @@ pub const ADMINISTRAR: u32 = 14;
 /// De `guardian`: la respuesta a una acción de administrador (orden, número u32, largo del usuario u32, largo de la
 /// contraseña u32, el usuario y la contraseña). Contesta 0. Con usuario vacío, el usuario dijo que no.
 pub const RESPUESTA_ADMIN: u32 = 15;
-/// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`).
-pub const ACCIONES: &[&str] = &["comprobar"];
+/// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`) y matar un proceso de otro usuario o
+/// del sistema (su número, u64, tras el nombre de la acción).
+pub const ACCIONES: &[&str] = &["comprobar", "matar"];
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
 /// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
 pub const PREGUNTA: usize = 40;

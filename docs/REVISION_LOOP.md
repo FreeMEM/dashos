@@ -366,4 +366,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cargo y queda en el registro. La contraseña se borra de la memoria al usarla. Prueba: `pide` lanzado como Carla
   la pide y `guardian` da la de Ana: 0, sin problemas en el disco; el hostil la pide dos veces y `guardian` da la de
   Ana mal escrita y la buena de Carla (no es administradora): -2 las dos. Falta: las demás acciones (instalar,
-  cuentas, grupos, dueños, volúmenes, matar a otro usuario, hora y red, claves) y la ventana de `guardian`.
+  cuentas, grupos, dueños, volúmenes, hora y red, claves) y la ventana de `guardian`.
+- U5: matar un proceso de otro usuario o del sistema es la acción "matar" (su número tras el nombre): con la
+  contraseña de un administrador, `sesiones` mata su grupo entero. Prueba: `pide` (como Carla) mata a `eco`, un
+  servicio del sistema, con la de Ana: 0, e `inicio` lo relanza (E6); el hostil intenta matar al compositor y
+  `guardian` da la de Carla: -2. `MATAR` a uno de otro usuario sigue dando -2 sin preguntar: quien quiera más pide
+  la acción.
