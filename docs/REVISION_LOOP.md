@@ -32,7 +32,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
-| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | S1 hecho; S2 en parte (falta trocear) |
+| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar y lanzar desde el disco |
@@ -293,5 +293,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   hostil (S2 en `pruebas.rs`, `hijo` con las órdenes 11 y 12): un proceso duerme 100 veces 500 µs en el núcleo 3
   mientras otro, en el mismo núcleo, crea y suelta 60 objetos de 4 MB. Retraso al despertar (mediana, p90, p99,
   máximo): antes 1.123, 1.176, 1.801 y 1.848 µs; después 90, 125, 253 y 631 (solo: 28, 49, 154 y 614). 976 cortes,
-  ninguno con cerrojo. Falta: `elf::cargar` (copia los segmentos y pone a cero hasta 4 MB) y `its.rs`, `encender`.
+  ninguno con cerrojo. Después, `elf::cargar_cortando` (`procesos::lanzar_en_llamada`, solo desde `proceso_crear`):
+  un corte cada 64 páginas de segmentos y pila. Sin prueba propia: los programas de las pruebas cargan menos de 64
+  páginas, así que ese corte no llega a abrirse en ellas. Queda `its.rs`, `encender` (solo al arrancar, en virt).
   Banco (7 arranques, frente a S1): todo dentro del ruido. `make prueba` y `make arranque-virt` pasan.

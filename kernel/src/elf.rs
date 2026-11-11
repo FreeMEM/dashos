@@ -102,6 +102,18 @@ fn al_azar(desde: u64, hasta: u64, alineacion: u64) -> u64 {
 
 /// Carga el ELF en el espacio, con su pila.
 pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
+    cargar_cortando(e, d, false)
+}
+
+/// Como `cargar`; con `cortar`, un punto de corte cada 64 páginas (S2). Solo desde una llamada sin cerrojos tomados.
+pub fn cargar_cortando(e: &mut Espacio, d: &[u8], cortar: bool) -> Result<Cargado, Error> {
+    let mut hechas = 0u32;
+    let mut corte = || {
+        hechas += 1;
+        if cortar && hechas % 64 == 0 {
+            crate::planificador::punto_de_corte();
+        }
+    };
     if d.len() < 64 || &d[0..4] != b"\x7fELF" {
         return Err(Error::NoEsElf);
     }
@@ -185,6 +197,7 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
             let (desde, hasta) = (p.max(va), (p + PAGINA).min(va + filesz));
             let origen = if desde < hasta { &d[(off + desde - va) as usize..(off + hasta - va) as usize] } else { &[] };
             e.pagina_nueva(p, permiso, origen, (desde - p) as usize)?;
+            corte();
             p += PAGINA;
         }
     }
@@ -195,6 +208,7 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
     let mut p = tope - tamano_pila;
     while p < tope {
         e.pagina_nueva(p, Permiso::Datos, &[], 0)?;
+        corte();
         p += PAGINA;
     }
     e.codigo_listo();

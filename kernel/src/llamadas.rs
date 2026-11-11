@@ -583,7 +583,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         Ok(v) => v,
         Err(e) => return e,
     };
-    match crate::procesos::lanzar(&binario, viajan, None, cupo) {
+    match crate::procesos::lanzar_en_llamada(&binario, viajan, None, cupo) {
         Ok((control, _)) => {
             let llave = objetos::Llave::nueva(Objeto::Proceso(control.clone()), objetos::TODOS);
             let instalada = proc_.llaves.tomar().instalar(llave);
