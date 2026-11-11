@@ -166,6 +166,7 @@ path = "src/bin/sesiones.rs"
 [[bin]]
 name = "guardian"
 path = "src/bin/guardian.rs"
+required-features = ["ventanas"]
 
 [[bin]]
 name = "presa"

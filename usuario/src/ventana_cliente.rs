@@ -79,6 +79,28 @@ impl Cliente {
         }
     }
 
+    /// Como `evento`, esperando como mucho `us` microsegundos: `Ok(None)` si no llegó nada (U3: `guardian` espera a la
+    /// vez a `sesiones` sin dejar de leer al compositor, que suelta a quien no lee).
+    pub fn evento_plazo(&mut self, us: u64) -> Result<Option<(u32, u16, Vec<u8>)>, ()> {
+        loop {
+            if let Ok(Some(m)) = self.juntador.siguiente() {
+                return Ok(Some((m.objeto, m.orden, m.cuerpo)));
+            }
+            let mut buf = [0u8; canal::MAX_CANAL];
+            let mut ll = [0u32; canal::MAX_LLAVES];
+            let (n, k, _) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, us.max(1));
+            if n == dashos::E_PLAZO {
+                return Ok(None);
+            }
+            if n <= 0 {
+                return Err(());
+            }
+            if buf[0] == TROZO_DATOS {
+                self.juntador.meter(&buf[1..n as usize], &ll[..k]).map_err(|_| ())?;
+            }
+        }
+    }
+
     /// El siguiente evento: objeto, orden y cuerpo.
     pub fn evento(&mut self) -> Option<(u32, u16, Vec<u8>)> {
         loop {

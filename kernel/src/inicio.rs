@@ -62,7 +62,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
     #[cfg(feature = "virt")]
-    ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["sesiones"]),
+    ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones"]),
     #[cfg(feature = "virt")]
     ("pide", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/pide"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]

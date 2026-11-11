@@ -58,9 +58,9 @@ static GLOBALES_ESCRITORIO: [Global; 8] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
 ];
-/// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. Ninguno todavía: el escritorio
-/// oficial (S10b) aún no existe.
-const ESCRITORIOS: &[&str] = &[];
+/// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
+/// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
+const ESCRITORIOS: &[&str] = &["guardian"];
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
 /// no, la llave que trajera la respuesta (0 si ninguna).

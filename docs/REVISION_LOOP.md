@@ -36,7 +36,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
@@ -372,3 +372,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   servicio del sistema, con la de Ana: 0, e `inicio` lo relanza (E6); el hostil intenta matar al compositor y
   `guardian` da la de Carla: -2. `MATAR` a uno de otro usuario sigue dando -2 sin preguntar: quien quiera más pide
   la acción.
+- U3, el bloqueo con su pantalla: `guardian` tiene el poder de escritorio en el compositor (solo él, por ahora) y, al
+  acabar sus preguntas, bloquea la sesión (G5) con una superficie de bloqueo dibujada con el kit: "Sesión
+  bloqueada", la frase que eligió la usuaria (S6b: así se sabe que es el sistema), su nombre, un punto por letra y
+  el aviso de contraseña mala. Lee el teclado con el mapa del kit y, con Intro, manda la contraseña a `sesiones`
+  (VOLVER) sin esperar: mientras llega la respuesta (tras una mala, `sesiones` tarda a propósito) sigue leyendo al
+  compositor, que suelta a quien deja de leer (E8). Pinta una vez por tanda de eventos (pintar tras cada tecla
+  llenaba la cola y el compositor lo soltaba). Con la buena, quita el bloqueo y espera un sync antes de seguir (si
+  no, el compositor podía soltarlo aún bloqueado: negro). `guardian` reintenta apuntarse en `sesiones`, que tarda en
+  arrancar. Prueba en virt: el guion de QEMU, al ver la pantalla, deja de teclear lo de siempre y escribe una
+  contraseña mala y la buena: desbloquea tras una mala y la captura final ve las ventanas otra vez; tres pasadas
+  seguidas bien. Captura en `docs/capturas/u3-bloqueo.png`. Arrancar dos veces con el mismo disco probó también lo
+  que faltaba de U6: `sesiones` leyó las 15 entradas del registro de la vez anterior. Falta: la pantalla de entrada,
+  bloquear a mano (tecla o tiempo) y la usuaria de verdad de la sesión, no una fija.

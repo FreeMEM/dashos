@@ -28,6 +28,8 @@ QEMU=$!
 # Ajustes sale cuando ya se está tecleando en otra ventana, así que no se lleva el teclado al salir (S8,
 # docs/REVISION_LOOP.md). Cuando la salida serie dice que está en pantalla, el cursor va a la esquina y de ahí a
 # (300, 300), donde solo está ella; un clic le da el teclado, y Super+Arriba la maximiza y Super+Abajo la devuelve.
+# Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
+# y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes.
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
@@ -36,6 +38,19 @@ inicio = time.time()
 time.sleep(3)
 paso = 0
 ajustes = False
+bloqueo = 0
+
+def teclear(texto):
+    ordenes = []
+    for ch in texto:
+        if ch == " ":
+            ordenes.append("sendkey spc")
+        elif ch.isupper():
+            ordenes.append("sendkey shift-" + ch.lower())
+        else:
+            ordenes.append("sendkey " + ch)
+    ordenes.append("sendkey ret")
+    mandar(*ordenes, pausa=0.08)
 
 def mandar(*ordenes, pausa=0.0):
     s = socket.socket(socket.AF_UNIX)
@@ -47,7 +62,19 @@ def mandar(*ordenes, pausa=0.0):
 
 while time.time() - inicio < total:
     try:
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in open(serie, errors="replace").read():
+        texto = open(serie, errors="replace").read()
+        if bloqueo == 0 and "[guardian] pantalla de bloqueo en pantalla" in texto:
+            bloqueo = 1
+            time.sleep(0.5)
+            teclear("mala")
+            time.sleep(1.5)
+            teclear("clave de Carla")
+        if bloqueo == 1:
+            if "[guardian] desbloqueado" not in texto:
+                time.sleep(0.5)
+                continue
+            bloqueo = 2
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
             mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
             mandar(*["mouse_move 100 100"] * 3, pausa=0.05)
@@ -85,6 +112,8 @@ while kill -0 "$QEMU" 2>/dev/null; do
     if todas; then
         sleep 0.5
         if [ -n "${CAPTURA:-}" ]; then
+            # Un segundo para que el compositor pinte lo último (tras desbloquear, U3, vuelve a componer todo).
+            sleep 1
             python3 -I -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(("screendump "+sys.argv[2]+"\n").encode()); time.sleep(1)' "$MONITOR" "$CAPTURA"
         fi
         kill "$QEMU" 2>/dev/null
