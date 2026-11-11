@@ -38,7 +38,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
-| R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
+| R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
@@ -358,3 +358,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   pedirlo otra vez). Prueba: `guardian`, al acabar, retira a `pide` el de `eco` (0) y otra vez (-1); el hostil lo
   intenta y recibe -2 (y queda en el registro); en el disco, `permisos` queda vacío. Sin probar: revocar una llave
   viva (en la prueba, `pide` ya la dejó). Para el usuario irá en `Prefs` (U6).
+- U5, acciones de administrador: orden 14, ADMINISTRAR, con una acción de la lista cerrada (`ACCIONES`; de momento
+  "comprobar", el disco, que hace `archivos`). `sesiones` pregunta a `guardian` (la acción va tras un "*" en la
+  pregunta) y espera, sin parar a nadie; `guardian` contesta con usuario y contraseña (orden 15). Vale si el
+  usuario es del grupo `admin` (`ADMIN`, provisional: Ana) y la contraseña es buena: la comprueba `sesiones` con
+  su volumen, sin abrirlo. Cada acción se confirma (sin plazo de gracia), la hace el servicio que la tiene a su
+  cargo y queda en el registro. La contraseña se borra de la memoria al usarla. Prueba: `pide` lanzado como Carla
+  la pide y `guardian` da la de Ana: 0, sin problemas en el disco; el hostil la pide dos veces y `guardian` da la de
+  Ana mal escrita y la buena de Carla (no es administradora): -2 las dos. Falta: las demás acciones (instalar,
+  cuentas, grupos, dueños, volúmenes, matar a otro usuario, hora y red, claves) y la ventana de `guardian`.

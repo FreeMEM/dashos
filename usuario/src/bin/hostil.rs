@@ -517,6 +517,27 @@ fn sesiones(memoria: u32) -> bool {
     if retirar != s::PROTEGIDO {
         println!("  [hostil] sesiones: retirar a pide su permiso da {} (tenía que dar -2)", retirar);
     }
+    // U5: una acción de administrador, dos veces: `guardian` contesta con una contraseña mala y luego con la de quien
+    // no es administradora. Las dos, -2.
+    let administrar = || {
+        let mut p = [0u8; 21];
+        p[0..4].copy_from_slice(&s::ADMINISTRAR.to_le_bytes());
+        p[4..8].copy_from_slice(&9u32.to_le_bytes());
+        p[12..21].copy_from_slice(b"comprobar");
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 12];
+        let e = if escribir(SESIONES, &p, &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 == 12 {
+            i32::from_le_bytes(r[0..4].try_into().unwrap())
+        } else {
+            i32::MIN
+        };
+        dashos::cerrar(lectura);
+        e
+    };
+    let (admin1, admin2) = (administrar(), administrar());
+    if admin1 != s::PROTEGIDO || admin2 != s::PROTEGIDO {
+        println!("  [hostil] sesiones: acciones de administrador {} y {} (tenían que dar -2)", admin1, admin2);
+    }
     // U6: leer el registro de seguridad, sin ser `guardian`.
     let mut p = [0u8; 12];
     p[0..4].copy_from_slice(&s::REGISTRO.to_le_bytes());
@@ -558,7 +579,8 @@ fn sesiones(memoria: u32) -> bool {
         println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);
     }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO;
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
+        && admin1 == s::PROTEGIDO && admin2 == s::PROTEGIDO;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

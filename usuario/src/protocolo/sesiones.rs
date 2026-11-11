@@ -54,7 +54,17 @@ pub const RESPUESTA: u32 = 12;
 /// `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que tenga ese programa. Contesta 0, o -1 si
 /// no estaba concedido; a otro que no sea `guardian`, -2.
 pub const RETIRAR: u32 = 13;
-/// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16).
+/// De un programa (U5): una acción de administrador de la lista cerrada (`ACCIONES`) (orden, largo, 0, la acción).
+/// `sesiones` le pregunta a `guardian`, que pide la contraseña de un administrador; si es buena, la hace el servicio
+/// que la tiene a su cargo. Contesta el estado y lo que dé la acción (i32 y u64). Sin `guardian`, -2.
+pub const ADMINISTRAR: u32 = 14;
+/// De `guardian`: la respuesta a una acción de administrador (orden, número u32, largo del usuario u32, largo de la
+/// contraseña u32, el usuario y la contraseña). Contesta 0. Con usuario vacío, el usuario dijo que no.
+pub const RESPUESTA_ADMIN: u32 = 15;
+/// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`).
+pub const ACCIONES: &[&str] = &["comprobar"];
+/// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
+/// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
 pub const PREGUNTA: usize = 40;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
@@ -64,6 +74,7 @@ pub const R_SERVICIO: u32 = 2;
 pub const R_ENTRAR: u32 = 3;
 pub const R_FALLO: u32 = 4;
 pub const R_LANZAR: u32 = 5;
+pub const R_ADMIN: u32 = 6;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

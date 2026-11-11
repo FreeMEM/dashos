@@ -9,7 +9,7 @@
 #![no_main]
 
 use dashos::println;
-use dashos::protocolo::sesiones::{PREGUNTA, PREGUNTAS, RESPUESTA, RETIRAR};
+use dashos::protocolo::sesiones::{PREGUNTA, PREGUNTAS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR};
 
 dashos::programa!(principal);
 
@@ -38,6 +38,9 @@ fn principal() -> u64 {
         return 1;
     }
     let (mut a_pide, mut a_otros) = (0, 0);
+    // U5: las acciones de administrador. A `pide` le da la contraseña buena de Ana (administradora); al hostil, la
+    // primera vez la de Ana mal escrita y la segunda la buena de Carla, que no es administradora.
+    let (mut admin_pide, mut admin_hostil) = (0, 0);
     // Atiende 40 s: lo que dura la prueba.
     let fin = dashos::ahora_us() + 40_000_000;
     while dashos::ahora_us() < fin {
@@ -49,6 +52,27 @@ fn principal() -> u64 {
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
+        if servicio.first() == Some(&b'*') {
+            let (usuario, clave): (&[u8], &[u8]) = match (programa, admin_hostil) {
+                (b"pide", _) => (b"Ana", b"clave de Ana"),
+                (b"hostil", 0) => (b"Ana", b"no es esta"),
+                (b"hostil", _) => (b"Carla", b"clave de Carla"),
+                _ => (b"", b""),
+            };
+            if programa == b"pide" { admin_pide += 1 } else { admin_hostil += 1 }
+            let mut r = [0u8; 64];
+            r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(usuario.len() as u32).to_le_bytes());
+            r[12..16].copy_from_slice(&(clave.len() as u32).to_le_bytes());
+            r[16..16 + usuario.len()].copy_from_slice(usuario);
+            r[16 + usuario.len()..16 + usuario.len() + clave.len()].copy_from_slice(clave);
+            pedir(&r[..16 + usuario.len() + clave.len()], &[]);
+            r.fill(0);
+            println!("  [guardian] {} pide {}: contesta como {}", core::str::from_utf8(programa).unwrap_or("?"),
+                core::str::from_utf8(&servicio[1..]).unwrap_or("?"), core::str::from_utf8(usuario).unwrap_or("?"));
+            continue;
+        }
         let si = programa == b"pide" && servicio == b"eco";
         if si { a_pide += 1 } else { a_otros += 1 }
         let mut r = [0u8; 12];
@@ -71,5 +95,7 @@ fn principal() -> u64 {
     let (una, otra) = (pedir(&r, &[]), pedir(&r, &[]));
     let retirado = una == 0 && otra == -1;
     println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
-    if bien && retirado { 0 } else { 1 }
+    let admin = admin_pide == 1 && admin_hostil == 2;
+    println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
+    if bien && retirado && admin { 0 } else { 1 }
 }

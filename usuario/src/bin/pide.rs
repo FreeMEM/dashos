@@ -205,7 +205,23 @@ fn raices(t: &Nombres, home: bool) -> bool {
     };
     dashos::cerrar(lectura);
     dashos::cerrar(ventana[0]);
-    let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN && en_home;
+    // U5: lanzado como Carla, pide una acción de administrador: comprobar el disco. `guardian` da la contraseña de Ana.
+    let admin = !home || {
+        use dashos::protocolo::sesiones::ADMINISTRAR;
+        let mut p = [0u8; 21];
+        p[0..4].copy_from_slice(&ADMINISTRAR.to_le_bytes());
+        p[4..8].copy_from_slice(&9u32.to_le_bytes());
+        p[12..21].copy_from_slice(b"comprobar");
+        let (lect, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 12];
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lect, &mut r, &mut [], 10_000_000).0 } else { -1 };
+        dashos::cerrar(lect);
+        let (e, problemas) = (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap()));
+        let bien = n == 12 && e == 0 && problemas == 0;
+        println!("  [pide] acción de administrador (comprobar el disco): {} con {} problemas: {}", e, problemas, if bien { "bien" } else { "MAL" });
+        bien
+    };
+    let bien = yo == a::BIEN && hola == a::BIEN && leeme == a::BIEN && crear == a::PROTEGIDO && cerrar != a::BIEN && en_home && admin;
     println!("  [pide] raíces: PROGDIR:pide {}, Programas:hola {}, SYS:LEEME.txt {}; crear por SYS: {}, cerrarla {}: {}",
         yo, hola, leeme, crear, cerrar, if bien { "bien" } else { "MAL" });
     bien

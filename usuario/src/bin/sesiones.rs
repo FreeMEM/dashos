@@ -297,6 +297,10 @@ struct Ficha {
 /// Las cuentas, provisionales (luego, `Estado:Cuentas/usuarios`): usuario y nombre, que es también el de su volumen
 /// cifrado y su `Home:`.
 const CUENTAS: &[(u32, &str)] = &[(1000, "Ana"), (1001, "Carla")];
+/// Los del grupo `admin` (U5), provisional como `CUENTAS`.
+const ADMIN: &[u32] = &[1000];
+/// En las preguntas pendientes, el "servicio" de una acción de administrador: `ACCION + i` (i en `ACCIONES`).
+const ACCION: usize = 1000;
 
 /// El alta en archivos (orden 100, sin marca) de lo que lanza: su usuario y su grupo, sin derechos, la raíz 0 en el
 /// cajón de donde sale y sus otras raíces: el disco para leer y, si tiene cuenta, su volumen para leer y escribir.
@@ -786,6 +790,67 @@ fn principal() -> u64 {
                         }
                     }
                 }
+                ADMINISTRAR => {
+                    let nl = u32_en(4) as usize;
+                    let pedida = m.get(12..12 + nl).unwrap_or(b"");
+                    let programa = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let accion = ACCIONES.iter().position(|a| a.as_bytes() == pedida);
+                    let hueco = preguntas.iter().position(|p| p.is_none());
+                    match (accion, yo.is_some() && canal_guardian != 0, hueco) {
+                        (Some(i), true, Some(h)) => {
+                            let id = siguiente_pregunta;
+                            siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                            let mut q = [0u8; PREGUNTA];
+                            q[0..4].copy_from_slice(&id.to_le_bytes());
+                            q[4..8].copy_from_slice(&yo.map_or(0, |f| f.uid).to_le_bytes());
+                            q[8..24].copy_from_slice(&programa);
+                            q[24] = b'*';
+                            q[25..25 + pedida.len().min(15)].copy_from_slice(&pedida[..pedida.len().min(15)]);
+                            if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                                preguntas[h] = Some((id, respuesta, marca, programa, ACCION + i));
+                                println!("  [sesiones] {} pide la acción de administrador {}: se pregunta", nombre(&programa), ACCIONES[i]);
+                                continue;
+                            }
+                            dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
+                        }
+                        (a, _, _) => {
+                            let estado = if a.is_none() { NO_EXISTE } else { PROTEGIDO };
+                            registro.apuntar(R_ADMIN, estado, &programa, pedida);
+                            dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                        }
+                    }
+                }
+                RESPUESTA_ADMIN if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                    dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
+                    let (id, lu, lc) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
+                    let usuario = m.get(16..16 + lu).unwrap_or(b"");
+                    let clave = m.get(16 + lu..16 + lu + lc).unwrap_or(b"");
+                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 >= ACCION)) {
+                        let (_, a_quien, _, programa, accion) = preguntas[i].take().unwrap();
+                        let accion = accion - ACCION;
+                        // Un administrador (del grupo `admin`) con su contraseña buena: la comprueba `sesiones` con su
+                        // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
+                        let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
+                        let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
+                        let (estado, dato) = match (clave_buena, &archivos) {
+                            (true, Some(a)) if ACCIONES[accion] == "comprobar" => {
+                                let (e, _, problemas) = a.orden(dashos::protocolo::archivos::COMPROBAR, 0, 0, 0, b"");
+                                (e, problemas)
+                            }
+                            _ => (PROTEGIDO, 0),
+                        };
+                        let quien_ = core::str::from_utf8(usuario).unwrap_or("?");
+                        println!("  [sesiones] {} hace {} con la contraseña de {}: {} ({})", nombre(&programa), ACCIONES[accion], if quien_.is_empty() { "nadie" } else { quien_ }, estado, dato);
+                        registro.apuntar(R_ADMIN, estado, &programa, ACCIONES[accion].as_bytes());
+                        let mut r = [0u8; 12];
+                        r[0..4].copy_from_slice(&estado.to_le_bytes());
+                        r[4..12].copy_from_slice(&dato.to_le_bytes());
+                        dashos::canal_escribir(a_quien, &r, &[]);
+                        dashos::cerrar(a_quien);
+                    }
+                    // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
+                    b.fill(0);
+                }
                 PREGUNTAS if k >= 2 && yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
                     // `guardian` atiende las preguntas al usuario (U4) por la llave que manda.
                     if canal_guardian != 0 {
@@ -799,7 +864,7 @@ fn principal() -> u64 {
                 RESPUESTA if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, si) = (u32_en(4), u32_en(8) == 1);
-                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id)) {
+                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
                         let (_, a_quien, de, programa, s) = preguntas[i].take().unwrap();
                         let (estado, llave) = if si {
                             // Concedido: se apunta y se guarda, y no se vuelve a preguntar.
