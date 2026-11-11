@@ -10,6 +10,8 @@
 //! 9: proyecta memoria, la quita y la lee: tiene que morir por fallo (C45);
 //! 10: proyecta la memoria de su llave 2, escribe 1 al principio y la lee sin parar: muere por fallo cuando la
 //! revocan (C45).
+//! 11, N: crea y suelta N objetos de memoria de 4 MB, uno tras otro, y sale con 0 (S2: llamadas largas).
+//! 12, N: duerme N veces 500 µs y sale con lo tarde que despertó, en µs: mediana, p90, p99 y máximo (S2).
 //! Si no le llega nada, se queda bloqueado leyendo (para matarlo bloqueado).
 
 #![no_std]
@@ -51,6 +53,37 @@ fn principal() -> u64 {
             0
         }
         7 => dashos::proceso_esperar(2).0 as u64,
+        12 => {
+            let reloj = || {
+                let t: u64;
+                unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) t) };
+                t
+            };
+            let fr: u64;
+            unsafe { core::arch::asm!("mrs {}, cntfrq_el0", out(reg) fr) };
+            let mut r = [0u64; 255];
+            let n = buf[1] as usize;
+            for x in r.iter_mut().take(n) {
+                let t = reloj();
+                dashos::dormir_us(500);
+                *x = ((reloj() - t) * 1_000_000 / fr).saturating_sub(500);
+            }
+            let r = &mut r[..n.max(1)];
+            r.sort_unstable();
+            let p = |q: usize| r[(r.len() - 1) * q / 100].min(0xffff);
+            // Mediana, percentil 90, percentil 99 y máximo, 16 bits cada uno.
+            p(50) | p(90) << 16 | p(99) << 32 | p(100) << 48
+        }
+        11 => {
+            for _ in 0..buf[1] {
+                let m = dashos::memoria_crear(4 << 20);
+                if (m as i32) < 0 {
+                    return 255;
+                }
+                dashos::cerrar(m);
+            }
+            0
+        }
         9 => {
             let va = 0x30_0000_0000usize;
             let m = dashos::memoria_crear(4096);

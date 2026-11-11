@@ -1103,6 +1103,24 @@ pub fn dormir_us(us: u64) {
     crate::cerrojo::restaurar_irq(estado);
 }
 
+/// Cuántas veces un punto de corte se encontró un cerrojo tomado (solo se cuenta en la imagen de pruebas).
+pub static CORTES_CON_CERROJO: AtomicU64 = AtomicU64::new(0);
+/// Cuántos puntos de corte se han abierto.
+pub static CORTES: AtomicU64 = AtomicU64::new(0);
+
+/// S2: dentro de una llamada larga, deja entrar un instante las interrupciones que esperan (el temporizador, sobre
+/// todo), que pueden expulsar al hilo. Solo vale donde no hay ningún cerrojo tomado ni una copia de usuario a medias
+/// (el espacio del proceso solo está puesto durante ellas): quien lo llama lo garantiza, y la imagen de pruebas lo
+/// comprueba con la cuenta de cerrojos de cada núcleo.
+pub fn punto_de_corte() {
+    if crate::cerrojo::tomados() != 0 {
+        CORTES_CON_CERROJO.fetch_add(1, Ordering::Relaxed);
+        return;
+    }
+    CORTES.fetch_add(1, Ordering::Relaxed);
+    unsafe { core::arch::asm!("msr daifclr, #2", "isb", "msr daifset, #2") };
+}
+
 /// Fija el hilo actual a su núcleo (`si`) o lo suelta (llamada 31): un hilo fijo no se roba (M4).
 pub fn fijar_actual(si: bool) {
     aqui(|nc| unsafe { (*nc.actual).fijo = si });

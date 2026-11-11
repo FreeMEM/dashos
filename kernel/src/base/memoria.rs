@@ -460,6 +460,39 @@ impl Memoria {
         Some(m)
     }
 
+    /// Como `nueva`, desde una llamada al sistema y sin cerrojos tomados: cada 64 páginas (256 KB a cero), un punto
+    /// de corte (S2). Un objeto de 4 MB ya no deja al núcleo sin interrupciones durante toda la llamada.
+    pub fn nueva_en_llamada(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        let n = tamano.div_ceil(PAGINA as usize);
+        let cargo = cupo.cobrar(n as u64 * PAGINA)?;
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
+        m.paginas.try_reserve_exact(n).ok()?;
+        for i in 0..n {
+            if i % 64 == 63 {
+                crate::planificador::punto_de_corte();
+            }
+            m.paginas.push(pagina_usuario()?);
+        }
+        Some(m)
+    }
+
+    /// Como `leer`, desde una llamada y sin cerrojos: un punto de corte cada 256 KB (S2).
+    pub fn leer_en_llamada(&self, desde: usize, buf: &mut [u8]) -> bool {
+        const TROZO: usize = 256 * 1024;
+        let mut hecho = 0;
+        while hecho < buf.len() {
+            let n = TROZO.min(buf.len() - hecho);
+            if !self.leer(desde + hecho, &mut buf[hecho..hecho + n]) {
+                return false;
+            }
+            hecho += n;
+            if hecho < buf.len() {
+                crate::planificador::punto_de_corte();
+            }
+        }
+        true
+    }
+
     /// Memoria para DMA (C46): `tamano` bytes seguidos de la `zona`, a cero y fuera de la caché, cuya dirección de bus
     /// es la física más `desplazamiento_bus`. `None` si no caben en el cupo o no hay un tramo seguido libre.
     pub fn nueva_dma(tamano: usize, permiso: &alloc::sync::Arc<PermisoDma>, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {

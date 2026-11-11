@@ -33,6 +33,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_recoger();
     prueba_sin_monton();
     prueba_coste();
+    prueba_cortes();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -589,6 +590,43 @@ fn prueba_coste() {
         n, tabla, total, crate::cupo::COSTE_PROCESO);
     let bien = n == objetos::MAX_TABLA && tabla as u64 <= crate::cupo::TABLA_LLENA && total <= crate::cupo::COSTE_PROCESO;
     kprintln!("S1: coste de un proceso {}", if bien { "bien" } else { "MAL" });
+}
+
+/// S2: lo que tarda de más en despertar un proceso que duerme 500 µs, en el núcleo 3, mientras otro proceso en ese
+/// mismo núcleo crea y suelta objetos de memoria de 4 MB (cada uno, 1.024 páginas a cero dentro de una llamada). Sin
+/// puntos de corte, la interrupción del temporizador espera a que acabe la llamada entera.
+fn prueba_cortes() {
+    let hijo = |orden: u8, n: u8| -> Option<alloc::sync::Arc<objetos::Control>> {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![orden, n], llaves: alloc::vec::Vec::new(), marca: 0 });
+        lanzar_elf_en(HIJO, alloc::vec![b], 3, crate::cupo::Cupo::raiz())
+    };
+    let esperar = |c: &alloc::sync::Arc<objetos::Control>| {
+        let inicio = reloj::tics();
+        while c.estado.tomar().fin.is_none() && reloj::tics() < inicio + 3000 {
+            esperar_tics(1);
+        }
+        c.estado.tomar().fin
+    };
+    let visibles = llamadas::SALIDAS_VISIBLES.swap(false, core::sync::atomic::Ordering::Relaxed);
+    let solo = hijo(12, 100).and_then(|c| esperar(&c));
+    let carga = hijo(11, 60);
+    let con = hijo(12, 100).and_then(|c| esperar(&c));
+    let fin_carga = carga.and_then(|c| esperar(&c));
+    llamadas::SALIDAS_VISIBLES.store(visibles, core::sync::atomic::Ordering::Relaxed);
+    let us = |f: Option<objetos::Fin>| match f {
+        Some(objetos::Fin::Salida(n)) => [n & 0xffff, n >> 16 & 0xffff, n >> 32 & 0xffff, n >> 48],
+        _ => [u64::MAX; 4],
+    };
+    let (a, b) = (us(solo), us(con));
+    kprintln!("  despertar tarde, 100 esperas de 500 µs (mediana, p90, p99, máximo): solo {:?} µs; con 60 memorias de 4 MB al lado {:?} µs ({:?})",
+        a, b, fin_carga);
+    let cortes = planificador::CORTES.load(core::sync::atomic::Ordering::Relaxed);
+    let malos = planificador::CORTES_CON_CERROJO.load(core::sync::atomic::Ordering::Relaxed);
+    kprintln!("  puntos de corte abiertos {}; con un cerrojo tomado {}", cortes, malos);
+    let bien = fin_carga == Some(objetos::Fin::Salida(0)) && b[1] < 1000 && cortes > 0 && malos == 0;
+    kprintln!("S2: llamadas largas troceadas {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.

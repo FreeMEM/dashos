@@ -383,7 +383,8 @@ fn memoria_crear(tamano: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(m) = objetos::Memoria::nueva(tamano as usize, &proc_.cupo) else { return E_MEMORIA };
+    // Sin cerrojos tomados aquí: puede cortar (S2).
+    let Some(m) = objetos::Memoria::nueva_en_llamada(tamano as usize, &proc_.cupo) else { return E_MEMORIA };
     let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
@@ -574,7 +575,7 @@ fn proceso_crear(h: u32, tamano: u64, llaves: u64, n_llaves: u64, grupo: u32) ->
         return E_MEMORIA;
     }
     binario.resize(tamano as usize, 0);
-    if !m.leer(0, &mut binario) {
+    if !m.leer_en_llamada(0, &mut binario) {
         return E_TAMANO;
     }
     let numeros = llaves_de_bytes(&tabla, proc_.big_endian);

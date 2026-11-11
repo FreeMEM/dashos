@@ -285,3 +285,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   reprogramaba su reloj a un tic entero y pisaba el despertar más próximo (un dormido, un plazo). Ahora programa el
   menor de los dos. Después: mediana de 27 a 32 µs y máximo por debajo de 600 en los cuatro núcleos. El banco no lo
   veía porque sus hijos van en los núcleos 0 y 1.
+- R11, S2 (puntos de corte): `planificador::punto_de_corte` abre un instante las interrupciones dentro de una llamada
+  larga, donde no hay cerrojos tomados ni una copia de usuario a medias; el temporizador puede entrar y expulsar al
+  hilo. La imagen de pruebas cuenta los cerrojos tomados por núcleo (`cerrojo::tomados`; en la normal no cuesta
+  nada) y un corte con alguno tomado no abre y se apunta. Cortes: `memoria_crear` cada 64 páginas
+  (`Memoria::nueva_en_llamada`) y la copia del binario en `proceso_crear` cada 256 KB (`leer_en_llamada`). Prueba
+  hostil (S2 en `pruebas.rs`, `hijo` con las órdenes 11 y 12): un proceso duerme 100 veces 500 µs en el núcleo 3
+  mientras otro, en el mismo núcleo, crea y suelta 60 objetos de 4 MB. Retraso al despertar (mediana, p90, p99,
+  máximo): antes 1.123, 1.176, 1.801 y 1.848 µs; después 90, 125, 253 y 631 (solo: 28, 49, 154 y 614). 976 cortes,
+  ninguno con cerrojo. Falta: `elf::cargar` (copia los segmentos y pone a cero hasta 4 MB) y `its.rs`, `encender`.
+  Banco (7 arranques, frente a S1): todo dentro del ruido. `make prueba` y `make arranque-virt` pasan.
