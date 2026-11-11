@@ -130,7 +130,9 @@ fn principal() -> u64 {
         && estado(LEER, 1, 3, 8192) == 0
         && empieza(8192, b"DashOS: sector 3, tras el plazo")
         && estado(LEER_SIN_ESPERA, 1, mb, 0) == -6;
-    println!("  [disco] plazo vencido {} de 3 veces; después sigue bien: {}", vencidas, si(sigue && vencidas > 0));
+    // QEMU a veces acaba la lectura en el acto y el plazo no vence: basta con que venza una vez.
+    println!("  [disco] plazo vencido: {}; después sigue bien: {}", si(vencidas > 0), si(sigue));
+    println!("  [disco] (plazo vencido {} de 3 veces)", vencidas);
     // El anillo, con su propio canal: por él llegan la respuesta y después los avisos de terminadas.
     let (l2, v2) = dashos::canal_crear();
     let Some(r) = pedir(l2, v2, ANILLO, 0, 0, 0).filter(|r| r.estado == 0) else {

@@ -729,3 +729,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - No se cambia: crear los trozos al arrancar quitaría ese coste a costa de 24 MB desde el arranque (hoy se crean
   según hacen falta) y unos 10 ms más de arranque en QEMU. Para decidir con el usuario. Otra vía: abaratar
   `memoria_crear` en el kernel (hoy pide las páginas de una en una, con el cerrojo del repartidor cada vez).
+- El fallo del paso 13 de `grupos`, mirado: era una carrera que ya estaba. Lo de un proceso que acaba se devuelve
+  cuando su núcleo recoge sus restos (`planificador::recoger`, en la siguiente llamada al kernel de ese núcleo o al
+  quedar ocioso), no al acabar; la prueba miraba el uso del grupo en el acto tras matarlo y, rara vez, el núcleo del
+  hijo aún no lo había recogido (con `dc zva` cambió el reparto de tiempos y salió). No es una fuga: la memoria sigue
+  ocupada de verdad hasta entonces. La prueba espera ahora hasta 200 ms a que vuelva a 0 (y falla si no). Sin cambios
+  en el kernel, 3 pasadas bien; con la prueba nueva, 2 más.
+- La prueba de A16 también fallaba a veces: QEMU a veces acaba la lectura en el acto y el plazo no vence (una vez
+  venció 1 de 3). La línea esperada pedía "3 de 3"; ahora basta con que venza una vez, y la cuenta va en otra línea.

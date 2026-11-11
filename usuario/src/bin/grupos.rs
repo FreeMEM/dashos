@@ -89,8 +89,19 @@ fn principal() -> u64 {
     if p <= 0 || proceso_esperar(p as u32) != (0, 0) || grupo_uso(g3 as u32).1 == 0 {
         return 12;
     }
-    if grupo_matar(g3 as u32) != 0 || grupo_uso(g3 as u32).1 != 0 {
+    // Lo del hijo, que ya acabó, se devuelve cuando su núcleo recoge sus restos (`planificador::recoger`, en la
+    // siguiente llamada o al quedar ocioso), no al acabar: se espera hasta 200 ms a que el grupo vuelva a 0. Antes se
+    // miraba en el acto y, rara vez, el núcleo del hijo aún no lo había recogido.
+    if grupo_matar(g3 as u32) != 0 {
         return 13;
+    }
+    let mut espera = 0;
+    while grupo_uso(g3 as u32).1 != 0 {
+        if espera >= 200 {
+            return 13;
+        }
+        dashos::dormir_us(1000);
+        espera += 1;
     }
     // 14: estrés de A2. Un proceso X gira; seis hijos, en otro grupo, esperan a X con copias de su llave. Se matan a
     // la vez los que esperan y X, diez veces. Si alguien despertara a un hilo ya liberado, el kernel caería.
