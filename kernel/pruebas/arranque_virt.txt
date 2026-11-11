@@ -101,9 +101,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [entrada] Carla: contraseña mala -12, buena 0, volver con mala -12 y con buena 0, salir 0: bien
 ~│   [sesiones] hostil pide entrar como Carla: -12
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
-~│   [sesiones] pide pide eco: 0
+~│   [sesiones] pide pide eco: el usuario dice sí (0)
 ~│   [pide] U4: bien
 ~│   [pide] llave de plazo: pedirla 0, entrar en la clase true, dejarla 0, después entra false: bien
+# U4: la pregunta, en una capa encima de todo; lo pulsado en el primer segundo no cuenta.
+~│   [guardian] ¿pide puede usar eco? El usuario dice sí
+~│   [guardian] tecla 's' antes de tiempo: no cuenta
 ~│   [guardian] preguntas: de pide 2, de otros 2: bien
 ~│   [guardian] retirar a pide el permiso de eco 0, otra vez -1: bien
 ~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien
@@ -137,7 +140,7 @@ DashOS en marcha con 4 núcleos.
 ~): bien
 ~│   [sesiones] hostil lanza Programas/hola: -2
 # Lo lanzado nace con su canal con `sesiones` (marcado con su número) y tiene baja al acabar.
-~│   [sesiones] pide pide eco: 0
+~│   [sesiones] pide pide eco: 
 ~│   [sesiones] baja de hola (proceso 65536, clase 0)
 ~│   [sesiones] baja de pide (proceso 65537, clase 0)
 ~│   [entrada] registro de seguridad: 

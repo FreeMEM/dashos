@@ -139,3 +139,107 @@ impl Juntador {
         self.llaves.pop_front()
     }
 }
+
+/// Lo más que se guarda para un cliente que no lee, en bytes (E8): más, y se le suelta.
+pub const MAX_COLA: usize = 64 * 1024;
+
+/// Lo que el compositor tiene por mandar a un cliente cuya cola de canal está llena (E8). En vez de esperarle (y parar
+/// a todos mientras), se guarda y se reintenta en cada vuelta; se le suelta si pasa de `MAX_COLA` o si lleva más de su
+/// plazo sin leer nada.
+#[derive(Debug, Default)]
+pub struct ColaSalida {
+    trozos: VecDeque<Trozo>,
+    bytes: usize,
+    /// Desde cuándo (ms) no ha leído nada, si hay algo esperando.
+    parado: Option<u32>,
+}
+
+impl ColaSalida {
+    pub fn meter(&mut self, trozos: Vec<Trozo>) {
+        for t in trozos {
+            self.bytes += t.bytes.len();
+            self.trozos.push_back(t);
+        }
+    }
+
+    pub fn pendiente(&self) -> bool {
+        !self.trozos.is_empty()
+    }
+
+    /// Manda lo que pueda, en orden, con `escribir` (que dice si cupo). `false` si hay que soltar al cliente: guarda
+    /// más de `MAX_COLA` o lleva `plazo_ms` sin leer.
+    pub fn vaciar(&mut self, ahora_ms: u32, plazo_ms: u32, mut escribir: impl FnMut(&Trozo) -> bool) -> bool {
+        let mut alguno = false;
+        while let Some(t) = self.trozos.front() {
+            if !escribir(t) {
+                break;
+            }
+            self.bytes -= t.bytes.len();
+            self.trozos.pop_front();
+            alguno = true;
+        }
+        if self.trozos.is_empty() {
+            self.parado = None;
+            return true;
+        }
+        if alguno || self.parado.is_none() {
+            self.parado = Some(ahora_ms);
+        }
+        self.bytes <= MAX_COLA && ahora_ms.wrapping_sub(self.parado.unwrap()) <= plazo_ms
+    }
+
+    /// Las llaves de lo que no llegó a mandarse (al soltar al cliente, para cerrarlas).
+    pub fn llaves(&mut self) -> impl Iterator<Item = u32> + '_ {
+        self.bytes = 0;
+        self.parado = None;
+        self.trozos.drain(..).flat_map(|t| t.llaves)
+    }
+}
+
+#[cfg(test)]
+mod tests_cola {
+    use super::*;
+    use alloc::vec;
+
+    fn trozo(n: usize, llave: Option<u32>) -> Trozo {
+        Trozo { bytes: vec![TROZO_DATOS; n], llaves: llave.into_iter().collect() }
+    }
+
+    /// E8: un cliente que lee tarde no para a nadie ni pierde nada: lo suyo espera en orden. Uno que lee poco a poco
+    /// sigue; uno que no lee nada en su plazo, o que deja más de `MAX_COLA`, se suelta, y sus llaves salen para
+    /// cerrarlas.
+    #[test]
+    fn cola_de_salida() {
+        let mut c = ColaSalida::default();
+        let mut llegado: Vec<usize> = Vec::new();
+        // Cabe todo: nada pendiente.
+        c.meter(vec![trozo(10, None), trozo(20, None)]);
+        assert!(c.vaciar(0, 100, |t| { llegado.push(t.bytes.len()); true }));
+        assert!(!c.pendiente());
+        // Cola llena: espera, y el orden se guarda.
+        c.meter(vec![trozo(30, Some(7)), trozo(40, None)]);
+        assert!(c.vaciar(10, 100, |_| false));
+        assert!(c.pendiente());
+        c.meter(vec![trozo(50, None)]);
+        // Lee uno de vez en cuando: no se le suelta aunque pase el plazo desde el principio.
+        let mut uno = true;
+        assert!(c.vaciar(90, 100, |t| { let r = uno; uno = false; if r { llegado.push(t.bytes.len()) } r }));
+        assert!(c.vaciar(180, 100, |_| false));
+        // Ya no lee: a los 100 ms de lo último, fuera.
+        assert!(c.vaciar(190, 100, |_| false));
+        assert!(!c.vaciar(191, 100, |_| false));
+        assert_eq!(llegado, [10, 20, 30]);
+        assert_eq!(c.llaves().count(), 0, "la llave 7 iba en el trozo que llegó");
+        assert!(!c.pendiente());
+        // Hostil: no lee nada y le llega mucho; al pasar de MAX_COLA, fuera, con sus llaves.
+        let mut c = ColaSalida::default();
+        c.meter(vec![trozo(100, Some(9))]);
+        let mut ok = true;
+        for _ in 0..(MAX_COLA / MAX_CANAL) {
+            c.meter(vec![trozo(MAX_CANAL, None)]);
+            ok = c.vaciar(0, 1_000_000, |_| false);
+        }
+        assert!(!ok);
+        assert_eq!(c.llaves().collect::<Vec<_>>(), [9]);
+    }
+}

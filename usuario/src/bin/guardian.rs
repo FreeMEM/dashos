@@ -1,7 +1,8 @@
 //! U4, de prueba: hace de `guardian` en lo de preguntar al usuario, solo en `virt`. Se apunta en `sesiones` para
-//! recibir las preguntas ("¿dejas a este programa usar este servicio?") y contesta como lo haría el usuario de la
-//! prueba: a `pide` le deja usar `eco`; a nadie más. Cuenta lo que le preguntan: a `pide`, una sola vez (lo concedido
-//! se guarda y no se vuelve a preguntar); y al hostil, que pide `eco` sin permiso, al menos una.
+//! recibir las preguntas ("¿dejas a este programa usar este servicio?") y se las hace al usuario en una capa encima de
+//! todo; en la prueba contesta el guion de QEMU: a `pide` que sí; a nadie más. Cuenta lo que le preguntan: a `pide`,
+//! una sola vez por servicio (lo concedido se guarda y no se vuelve a preguntar); y al hostil, que pide `eco` sin
+//! permiso, al menos una.
 //!
 //! U3: al acabar, bloquea la sesión en el compositor (G5) con su pantalla, que lleva la frase que eligió la usuaria
 //! (para saber que es el sistema y no un programa que lo imita), y espera su contraseña por el teclado; con la buena
@@ -28,7 +29,7 @@ use ventana_cliente::*;
 use wayland::tablas::{
     ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1,
     ext_session_lock_v1, wl_compositor, wl_display, wl_keyboard,
-    wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 use wayland::Escritor;
 
@@ -76,6 +77,8 @@ fn principal() -> u64 {
         return 1;
     }
     let (mut a_pide, mut a_otros) = (0, 0);
+    // Cuántas veces dijo que sí el usuario: a `pide`, a las dos; a los demás, a ninguna.
+    let (mut si_pide, mut si_otros) = (0, 0);
     // U5: las acciones de administrador. A `pide` le da la contraseña buena de Ana (administradora); al hostil, la
     // primera vez la de Ana mal escrita y la segunda la buena de Carla, que no es administradora.
     let (mut admin_pide, mut admin_hostil) = (0, 0);
@@ -121,19 +124,23 @@ fn principal() -> u64 {
                 core::str::from_utf8(&servicio[1..]).unwrap_or("?"), core::str::from_utf8(usuario).unwrap_or("?"));
             continue;
         }
-        let si = programa == b"pide" && (servicio == b"eco" || servicio == b"plazo");
-        if si { a_pide += 1 } else { a_otros += 1 }
+        // Se le pregunta al usuario (U4). En la prueba, el guion contesta que sí a `pide` y que no a los demás.
+        let (prog, serv) = (core::str::from_utf8(programa).unwrap_or("?"), core::str::from_utf8(servicio).unwrap_or("?"));
+        let si = preguntar(prog, serv);
+        if programa == b"pide" { a_pide += 1 } else { a_otros += 1 }
+        if si { if programa == b"pide" { si_pide += 1 } else { si_otros += 1 } }
         let mut r = [0u8; 12];
         r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
         r[4..8].copy_from_slice(&q[0..4]);
         r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
         pedir(&r, &[]);
-        println!("  [guardian] ¿{} puede usar {}? {}", core::str::from_utf8(programa).unwrap_or("?"),
-            core::str::from_utf8(servicio).unwrap_or("?"), if si { "sí" } else { "no" });
     }
     // A `pide`, dos preguntas (eco y plazo), una vez: lo concedido se guarda.
-    let bien = a_pide == 2 && a_otros >= 1;
+    let bien = a_pide == 2 && a_otros >= 1 && si_pide == 2 && si_otros == 0;
     println!("  [guardian] preguntas: de pide {}, de otros {}: {}", a_pide, a_otros, if bien { "bien" } else { "MAL" });
+    if si_pide != 2 || si_otros != 0 {
+        println!("  [guardian] el usuario dijo que sí a pide {} veces y a otros {}", si_pide, si_otros);
+    }
     // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada.
     let mut r = [0u8; 19];
     r[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
@@ -176,6 +183,139 @@ fn principal() -> u64 {
             }
         };
     if bien && retirado && admin && bloqueo && entrada && por_tiempo { 0 } else { 1 }
+}
+
+/// U4: pregunta al usuario si deja a `programa` usar `servicio`, en una capa encima de todo, en el centro, con el
+/// teclado (solo `guardian` puede poner capas: un programa no puede pintar una igual por encima). Sí con S y no con N;
+/// lo que se pulse en el primer segundo no cuenta (quien estaba escribiendo no contesta sin querer), y sin respuesta en
+/// 30 s, no.
+fn preguntar(programa: &str, servicio: &str) -> bool {
+    let mut memoria = 0;
+    let r = preguntar_dentro(programa, servicio, &mut memoria);
+    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    dashos::memoria_quitar(VA);
+    if memoria > 0 {
+        dashos::cerrar(memoria);
+    }
+    println!("  [guardian] ¿{} puede usar {}? El usuario dice {}", programa, servicio, if r { "sí" } else { "no" });
+    r
+}
+
+fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
+    const CAPAS: u32 = 20;
+    const CAPA: u32 = 21;
+    const ANCHO: i32 = 520;
+    const ALTO: i32 = 170;
+    const ESPERA_US: u64 = 1_000_000;
+    let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
+    let Some(mut c) = Cliente::conectar() else { return false };
+    let Some(globales) = c.globales() else { return false };
+    let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
+    let (Some(gc), Some(gs), Some(ga), Some(gl)) =
+        (global("wl_compositor"), global("wl_shm"), global("wl_seat"), global("zwlr_layer_shell_v1"))
+    else {
+        println!("  [guardian] el compositor no le da capas");
+        return false;
+    };
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
+    e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
+    // Encima de todo (3), sin anclas (en el centro), con el teclado en exclusiva (1).
+    e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA).uint(SUPERFICIE).uint(0).uint(3).texto(Some("guardian")).fin();
+    e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO as u32).uint(ALTO as u32).fin();
+    e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(1).fin();
+    e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+    let mut teclado = Teclado::new();
+    // Desde cuándo se ve (con el sync de su primer cuadro).
+    let mut vista: Option<u64> = None;
+    let fin = dashos::ahora_us() + 30_000_000;
+    loop {
+        if dashos::ahora_us() > fin {
+            return false;
+        }
+        let Ok(ev) = c.evento_plazo(100_000) else { return false };
+        let Some((o, orden, cuerpo)) = ev else { continue };
+        let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
+        match (o, orden) {
+            (CAPA, zwlr_layer_surface_v1::ev::CONFIGURE) if vista.is_none() => {
+                let tamano = (ANCHO * ALTO * 4) as usize;
+                let m = dashos::memoria_crear(tamano);
+                if (m as i32) <= 0 {
+                    return false;
+                }
+                *memoria = m as u32;
+                if dashos::memoria_proyectar(m as u32, VA, true) != 0 {
+                    return false;
+                }
+                let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
+                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut titulo);
+                let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
+                let mut e = Escritor::new();
+                e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
+                e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(0).fin();
+                e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+                e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
+                e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+                e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
+                c.mandar(&e);
+            }
+            (CAPA, zwlr_layer_surface_v1::ev::CONFIGURE) => {
+                let mut e = Escritor::new();
+                e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                c.mandar(&e);
+            }
+            (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => return false,
+            (SYNC, wayland::tablas::wl_callback::ev::DONE) if vista.is_none() => {
+                vista = Some(dashos::ahora_us());
+                println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio);
+            }
+            (TECLADO, wl_keyboard::ev::KEYMAP) => {
+                if let Some(l) = c.juntador.tomar_llave() {
+                    dashos::cerrar(l);
+                }
+            }
+            (TECLADO, wl_keyboard::ev::KEY) => {
+                let tecla = teclado.tecla(palabra(2), palabra(3) == 1);
+                let a_tiempo = vista.is_some_and(|v| dashos::ahora_us() - v >= ESPERA_US);
+                match tecla {
+                    Some(Tecla::Letra(ch)) if !a_tiempo => {
+                        println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
+                    }
+                    Some(Tecla::Letra('s' | 'S')) => return true,
+                    Some(Tecla::Letra('n' | 'N')) => return false,
+                    _ => {}
+                }
+            }
+            (1, wl_display::ev::ERROR) => {
+                println!("  [guardian] error de protocolo en la pregunta");
+                return false;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Pinta la pregunta de U4: una tarjeta con quién pide qué y las teclas para contestar.
+fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, titulo: &mut Fuente) {
+    let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
+    l.rellenar(Rect::new(0, 0, ancho, alto), 0xff0d_1320);
+    l.borde(Rect::new(0, 0, ancho, alto), 0, 2, 0xffff_9d3b);
+    let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
+    let cabeza = "Permiso";
+    let x = centrado(titulo, cabeza, 26);
+    titulo.dibujar(&mut l, x, 30, cabeza, 26, 0xffe7_ecf5);
+    let frase = alloc::format!("¿Dejas que \"{}\" use \"{}\"?", programa, servicio);
+    let x = centrado(fuente, &frase, 20);
+    fuente.dibujar(&mut l, x, 82, &frase, 20, 0xffe7_ecf5);
+    let teclas = "S: sí    N: no";
+    let x = centrado(fuente, teclas, 18);
+    fuente.dibujar(&mut l, x, 120, teclas, 18, 0xff9a_a7bf);
 }
 
 /// U3: pide al compositor un aviso cuando nadie toque el teclado ni el ratón en `ms` milisegundos
@@ -290,14 +430,18 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
 /// La pantalla de bloqueo de `usuaria` (U3), o la de entrada con `None`: primero el nombre, luego la contraseña. Al
 /// acabar se despide del compositor, para poder volver a conectarse. Devuelve quién entró o desbloqueó, si fue bien.
 fn pantalla(usuaria: Option<&str>) -> Option<String> {
-    let r = pantalla_dentro(usuaria);
+    let mut memoria = 0;
+    let r = pantalla_dentro(usuaria, &mut memoria);
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     // Y la memoria de la pantalla fuera de su sitio, para la siguiente.
     dashos::memoria_quitar(VA);
+    if memoria > 0 {
+        dashos::cerrar(memoria);
+    }
     r
 }
 
-fn pantalla_dentro(usuaria: Option<&str>) -> Option<String> {
+fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     let entrada = usuaria.is_none();
     let mut nombre = String::from(usuaria.unwrap_or(""));
     let mut en_nombre = entrada;
@@ -398,7 +542,10 @@ fn pantalla_dentro(usuaria: Option<&str>) -> Option<String> {
             (false, true) => c.evento_plazo(1),
             (false, false) => c.evento().ok_or(()).map(Some),
         };
-        let Ok(ev) = ev else { return None };
+        let Ok(ev) = ev else {
+            println!("  [guardian] se cortó la conexión con el compositor");
+            return None;
+        };
         if ev.is_none() && repintar && buf {
             repintar = false;
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
@@ -437,6 +584,9 @@ fn pantalla_dentro(usuaria: Option<&str>) -> Option<String> {
                     (ancho, alto) = (palabra(1) as i32, palabra(2) as i32);
                     let tamano = (ancho * alto * 4) as usize;
                     let m = dashos::memoria_crear(tamano);
+                    if (m as i32) > 0 {
+                        *memoria = m as u32;
+                    }
                     if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA, true) != 0 {
                         println!("  [guardian] sin memoria para la pantalla");
                         return None;

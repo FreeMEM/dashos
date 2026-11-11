@@ -37,6 +37,17 @@ pub struct Cliente {
     pub juntador: Juntador,
 }
 
+/// Al acabar, se cierran su canal y las llaves que llegaron sin usar: si no, quien se conecta muchas veces (`guardian`,
+/// una por pantalla y por pregunta) llena su tabla de llaves.
+impl Drop for Cliente {
+    fn drop(&mut self) {
+        while let Some(l) = self.juntador.tomar_llave() {
+            dashos::cerrar(l);
+        }
+        dashos::cerrar(self.respuesta);
+    }
+}
+
 impl Cliente {
     /// Se conecta al compositor por el canal "ventanas" (llave 1).
     pub fn conectar() -> Option<Cliente> {
@@ -113,10 +124,12 @@ impl Cliente {
                 return Ok(None);
             }
             if n <= 0 {
+                dashos::println!("  [ventanas] no se pudo leer del compositor: {}", n);
                 return Err(());
             }
-            if buf[0] == TROZO_DATOS {
-                self.juntador.meter(&buf[1..n as usize], &ll[..k]).map_err(|_| ())?;
+            if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_err() {
+                dashos::println!("  [ventanas] demasiado por juntar del compositor");
+                return Err(());
             }
         }
     }

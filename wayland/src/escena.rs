@@ -527,6 +527,8 @@ impl<M: Memorias> Escena<M> {
 
     /// Un cliente se fue: suelta su memoria y sus superficies.
     pub fn adios(&mut self, cliente: Cliente) {
+        // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4), vuelve a la ventana de arriba.
+        let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente && self.capas.contains(&t));
         self.sin_entrada(cliente);
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
@@ -551,6 +553,19 @@ impl<M: Memorias> Escena<M> {
             self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
             self.recalcular_area();
         }
+        if capa_con_teclado {
+            self.devolver_teclado();
+        }
+    }
+
+    /// Cuando se va una capa que tenía el teclado: a la ventana de arriba, si no hay bloqueo (U4).
+    fn devolver_teclado(&mut self) {
+        if self.bloqueo.is_none() && self.teclado.is_none()
+            && let Some(&v) = self.orden.last() {
+                let mut ev = Vec::new();
+                self.dar_teclado(v, &mut ev);
+                self.pendientes.extend(ev);
+            }
     }
 
     /// Aplica el estado `p` a la superficie `id`: búfer, daños y avisos. Después, a sus hijas, su sitio nuevo y, a las
@@ -629,6 +644,7 @@ impl<M: Memorias> Escena<M> {
                 self.capas.retain(|x| *x != (cliente, sup));
                 if self.teclado == Some((cliente, sup)) {
                     self.teclado = None;
+                    self.devolver_teclado();
                 }
             }
         }

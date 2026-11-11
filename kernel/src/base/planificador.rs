@@ -963,6 +963,13 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
 
         nucleo.desde = ahora;
         if siguiente == actual {
+            // Sigue el mismo. Puede que acabe de volver de la cola: se bloqueó con un plazo que ya había vencido (leer
+            // con 1 µs), los dormidos vencidos lo pusieron listo en la cola y se ha elegido a sí mismo. Vuelve a
+            // constar como corriendo: si siguiera "listo" y le echara el reloj, abajo no se le pondría en la cola (solo
+            // se encola al que corre) y se perdería para siempre. Le pasaba a `guardian` 1 de cada 8 arranques.
+            if actual != nucleo.ocioso {
+                unsafe { (*actual).estado = Estado::Corriendo };
+            }
             publicar_carga(n, nucleo);
             EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::SeqCst);
             if ocioso_sin_tic {

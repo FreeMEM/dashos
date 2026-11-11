@@ -494,7 +494,8 @@ fn sesiones(memoria: u32) -> bool {
     let (lectura, suyo) = dashos::canal_crear();
     let mut llave = [0u32; 1];
     let (servicio, k) = if escribir(SESIONES, &p[..15], &[suyo]) {
-        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r4, &mut llave, 2_000_000);
+        // Contesta el usuario (U4): hasta 30 s.
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r4, &mut llave, 35_000_000);
         (if n == 4 { i32::from_le_bytes(r4) } else { i32::MIN }, k)
     } else {
         (i32::MIN, 0)
@@ -566,7 +567,8 @@ fn sesiones(memoria: u32) -> bool {
     let (lectura, suyo) = dashos::canal_crear();
     let mut llave_plazo = [0u32; 1];
     let (plazo, kp) = if escribir(SESIONES, &p, &[suyo]) {
-        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r4, &mut llave_plazo, 2_000_000);
+        // Contesta el usuario (U4): hasta 30 s.
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r4, &mut llave_plazo, 35_000_000);
         (if n == 4 { i32::from_le_bytes(r4) } else { i32::MIN }, k)
     } else {
         (i32::MIN, 0)

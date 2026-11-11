@@ -63,6 +63,15 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
 /// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
 const ESCRITORIOS: &[&str] = &["guardian"];
 
+/// Reintenta lo pendiente de todos (E8); los que llevan demasiado sin leer, a `caidos`.
+fn vaciar_todos(clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) {
+    for (&cl, c) in clientes.iter_mut() {
+        if c.cola.pendiente() && !vaciar(c) && !caidos.contains(&cl) {
+            caidos.push(cl);
+        }
+    }
+}
+
 /// Mira los avisos de inactividad (U3) y manda los `idled` y `resumed` pendientes. Devuelve cuánto falta para el
 /// siguiente.
 fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) -> Option<u32> {
@@ -253,39 +262,29 @@ struct DeVentanas {
     respuesta: u32,
     /// Con el poder de escritorio (`guardian`): parte del sistema, se le espera más (ver `mandar`).
     del_sistema: bool,
+    /// Lo que aún no cupo en su cola (E8).
+    cola: canal::ColaSalida,
 }
 
-fn dormir() {
-    // Un milisegundo, sin crear canal ni temporizador en cada espera (E8).
-    dashos::dormir_us(1_000);
-}
-
-/// Manda lo que haya para el cliente. Falso si no se pudo (el cliente no lee): entonces se le suelta.
+/// Manda lo que haya para el cliente, o lo guarda si no cabe (ver `vaciar`). Falso si hay que soltarlo.
 fn mandar(c: &mut DeVentanas) -> bool {
     let e = c.con.sacar();
-    if e.bytes.is_empty() {
-        return true;
+    if !e.bytes.is_empty() {
+        let Ok(trozos) = canal::trocear(&e) else { return false };
+        c.cola.meter(trozos);
     }
-    let Ok(trozos) = canal::trocear(&e) else { return false };
-    for t in trozos {
-        let mut hecho = false;
-        // Con su cola llena se espera un poco, como mucho 5 ms (antes, 50): un cliente que no lee no puede parar a todos
-        // (E8). Si no, se le suelta: lo que ya se mandó a medias dejaría su conexión rota. A uno del sistema (`guardian`,
-        // con la pantalla de bloqueo), hasta 250: soltarlo deja la sesión bloqueada en negro, y en una máquina cargada
-        // puede quedarse sin CPU varios tics mientras se teclea (cada tecla es un mensaje, y caben 16). Con 50, 1 de
-        // cada 12 pasadas de la prueba lo soltaba.
-        for _ in 0..if c.del_sistema { 250 } else { 5 } {
-            if dashos::canal_escribir(c.respuesta, &t.bytes, &t.llaves) == 0 {
-                hecho = true;
-                break;
-            }
-            dormir();
-        }
-        if !hecho {
-            return false;
-        }
-    }
-    true
+    vaciar(c)
+}
+
+/// Manda lo que tenga pendiente un cliente, sin esperarle (E8): con su cola llena, lo suyo se guarda y se reintenta en
+/// cada vuelta del bucle, y los demás siguen. Antes se le esperaba (5 ms, y 250 a `guardian`) y se le soltaba; con el
+/// PC cargado, el procesador emulado de `guardian` podía pararse más que eso y se perdía la pantalla de entrada. Se le
+/// suelta si guarda más de 64 KB o si no lee nada en 1 s (5 s a uno del sistema: soltarlo deja la sesión bloqueada en
+/// negro).
+fn vaciar(c: &mut DeVentanas) -> bool {
+    let plazo = if c.del_sistema { 5_000 } else { 1_000 };
+    let respuesta = c.respuesta;
+    c.cola.vaciar((dashos::ahora_us() / 1000) as u32, plazo, |t| dashos::canal_escribir(respuesta, &t.bytes, &t.llaves) == 0)
 }
 
 /// Suelta a un cliente: su escena, sus llaves a medio juntar y su canal de respuesta.
@@ -300,6 +299,10 @@ fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Esc
             dashos::cerrar(l);
         }
         dashos::cerrar(cli.respuesta);
+        let mut cola = cli.cola;
+        for l in cola.llaves() {
+            dashos::cerrar(l);
+        }
     }
 }
 
@@ -379,7 +382,14 @@ fn principal() -> u64 {
     let mut falta: Option<u32> = None;
     loop {
         // Un mensaje que no vale no para el compositor (M6).
-        let (n, k, marca) = match falta {
+        // Con algo pendiente para un cliente que no leía, se vuelve a probar a los 2 ms (E8).
+        let pendiente = clientes.values().any(|c| c.cola.pendiente());
+        let espera = match (falta, pendiente) {
+            (Some(ms), true) => Some(ms.min(2)),
+            (None, true) => Some(2),
+            (f, false) => f,
+        };
+        let (n, k, marca) = match espera {
             None => match dashos::servicio::recibir(ventanas, &mut buf, &mut ll) {
                 dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
                 dashos::servicio::Recibido::Cerrado => return 0,
@@ -398,6 +408,11 @@ fn principal() -> u64 {
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         if n == usize::MAX {
             falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
+            vaciar_todos(&mut clientes, &mut caidos);
+            for cl in core::mem::take(&mut caidos) {
+                println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));
+                soltar_cliente(&mut clientes, &mut escena, &nombres, cl);
+            }
             continue;
         }
         let llaves = &ll[..k];
@@ -438,7 +453,7 @@ fn principal() -> u64 {
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
                 let del_sistema = nombres.get(&marca).is_some_and(|n| ESCRITORIOS.contains(&n.as_str()));
-                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema });
+                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
                 let cli = clientes.get_mut(&marca).unwrap();
@@ -491,6 +506,7 @@ fn principal() -> u64 {
         }
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
+        vaciar_todos(&mut clientes, &mut caidos);
         // Los que no leían sus eventos (E8).
         for cl in core::mem::take(&mut caidos) {
             println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));

@@ -35,6 +35,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_sin_monton();
     prueba_coste();
     prueba_cortes();
+    prueba_plazo_vencido();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -628,6 +629,43 @@ fn prueba_cortes() {
     kprintln!("  puntos de corte abiertos {}; con un cerrojo tomado {}", cortes, malos);
     let bien = fin_carga == Some(objetos::Fin::Salida(0)) && b[1] < 1000 && cortes > 0 && malos == 0;
     kprintln!("S2: llamadas largas troceadas {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Hilos que leen con un plazo de 1 µs, ya vencido al bloquearse, mientras el reloj los echa. Antes el planificador
+/// los sacaba de la cola de dormidos como listos, se elegían a sí mismos y seguían corriendo marcados "listo"; si el
+/// reloj los echaba entonces, no volvían a ninguna cola y se perdían (le pasaba a `guardian`, 1 de cada 8 arranques).
+static PLAZO_HECHOS: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+extern "C" fn leer_con_plazo_vencido(_: usize) {
+    let (a, _b) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&a);
+    // Como la llamada 35 con un plazo de 1 µs, y dormir 0 µs (un plazo de una cuenta del reloj): al planificar ya ha
+    // vencido, y el hilo sale de los dormidos y se elige a sí mismo. Después, 12 ms de cuenta (como `guardian`, que
+    // pintaba tras leer): más que un tic, así que el reloj lo echa ahí seguro.
+    let us = (reloj::frecuencia() / 1_000_000).max(1);
+    let ms = reloj::frecuencia() / 1_000;
+    for _ in 0..15 {
+        let _ = c.leer_hasta(lado, reloj::ahora() + us);
+        planificador::dormir_us(0);
+        let hasta = reloj::ahora() + 12 * ms;
+        while reloj::ahora() < hasta {
+            core::hint::spin_loop();
+        }
+    }
+    PLAZO_HECHOS.fetch_add(1, core::sync::atomic::Ordering::Release);
+}
+
+fn prueba_plazo_vencido() {
+    for i in 0..4 {
+        planificador::crear(leer_con_plazo_vencido, 0, i % 4);
+    }
+    let inicio = reloj::tics();
+    while PLAZO_HECHOS.load(core::sync::atomic::Ordering::Acquire) < 4 && reloj::tics() < inicio + 1_000 {
+        esperar_tics(1);
+    }
+    let hechos = PLAZO_HECHOS.load(core::sync::atomic::Ordering::Acquire);
+    kprintln!("  4 hilos, 15 esperas con plazo vencido y 12 ms de cuenta tras cada una: acaban {} en {} tics", hechos, reloj::tics() - inicio);
+    kprintln!("K11: plazo vencido al bloquearse {}", if hechos == 4 { "bien" } else { "MAL" });
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.

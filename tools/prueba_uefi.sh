@@ -28,13 +28,33 @@ QEMU=$!
 # Ajustes sale cuando ya se está tecleando en otra ventana, así que no se lleva el teclado al salir (S8,
 # docs/REVISION_LOOP.md). Cuando la salida serie dice que está en pantalla, el cursor va a la esquina y de ahí a
 # (300, 300), donde solo está ella; un clic le da el teclado, y Super+Arriba la maximiza y Super+Abajo la devuelve.
+# Cuando `guardian` pregunta por un permiso (U4), se contesta: a `pide`, sí; a otro, una "s" antes de tiempo, que no
+# debe contar, y después no.
 # Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
 # y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" <<'PY' >/dev/null 2>&1 &
+    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
-ruta, total, serie = sys.argv[1], float(sys.argv[2]), sys.argv[3]
+ruta, total, serie, captura_pregunta, diag_registros = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+diag_hecho = False
+
+def preguntar_monitor(orden):
+    s = socket.socket(socket.AF_UNIX)
+    s.connect(ruta)
+    s.settimeout(1.0)
+    s.sendall(orden.encode() + b"\n")
+    datos = b""
+    try:
+        while True:
+            t = s.recv(65536)
+            if not t:
+                break
+            datos += t
+    except OSError:
+        pass
+    s.close()
+    return datos.decode(errors="replace")
 inicio = time.time()
 time.sleep(3)
 paso = 0
@@ -61,9 +81,39 @@ def mandar(*ordenes, pausa=0.0):
         time.sleep(pausa)
     s.close()
 
+preguntas = 0
+
 while time.time() - inicio < total:
     try:
         texto = open(serie, errors="replace").read()
+        # Diagnóstico: con DIAG_REGISTROS=fichero, si el compositor suelta a alguien, los registros de los núcleos (tres
+        # veces, para ver si se mueven).
+        if diag_registros and not diag_hecho and "se le suelta" in texto:
+            diag_hecho = True
+            with open(diag_registros, "w") as f:
+                for _ in range(3):
+                    f.write(preguntar_monitor("info registers -a"))
+                    f.write("\n=====\n")
+                    time.sleep(0.5)
+        # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
+        # segundo no cuenta) y luego que no.
+        vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
+        if len(vistas) > preguntas:
+            linea = vistas[preguntas]
+            preguntas += 1
+            # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
+            if preguntas == 1 and captura_pregunta:
+                time.sleep(0.3)
+                mandar("screendump " + captura_pregunta)
+            if "¿pide " in linea:
+                time.sleep(1.3)
+                mandar("sendkey s")
+            else:
+                mandar("sendkey s")
+                time.sleep(1.3)
+                mandar("sendkey n")
+            time.sleep(0.5)
+            continue
         if bloqueo == 0 and "[guardian] pantalla de bloqueo pintada" in texto:
             bloqueo = 1
             time.sleep(0.5)

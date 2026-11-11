@@ -23,7 +23,8 @@ fn pedir(orden: u32, servicio: &str) -> (i32, u32) {
     let mut r = [0u8; 4];
     let mut ll = [0u32; 1];
     let (n, k, _) = if dashos::canal_escribir(SESIONES, &p[..12 + servicio.len()], &[suyo]) == 0 {
-        let (n, k, m) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 5_000_000);
+        // Si hace falta, contesta el usuario (U4): hasta 30 s.
+        let (n, k, m) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 35_000_000);
         (n, k, m)
     } else {
         (-1, 0, 0)

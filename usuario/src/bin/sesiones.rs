@@ -742,6 +742,15 @@ fn principal() -> u64 {
                         }
                         // Sin permiso: si `guardian` atiende preguntas, se le pregunta al usuario y la respuesta
                         // espera (sin parar a los demás).
+                        // Si ya se le está preguntando lo mismo (otra copia del programa), espera esa respuesta.
+                        (SERVICIO, Some(s))
+                            if let Some(id) = preguntas.iter().flatten().find(|p| p.3 == programa && p.4 == s).map(|p| p.0)
+                                && let Some(hueco) = preguntas.iter().position(|p| p.is_none()) =>
+                        {
+                            preguntas[hueco] = Some((id, respuesta, marca, programa, s, 0));
+                            en_espera = true;
+                            BIEN
+                        }
                         (SERVICIO, Some(s)) if yo.is_some() && canal_guardian != 0 && preguntas.iter().any(|p| p.is_none()) => {
                             let id = siguiente_pregunta;
                             siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
@@ -905,15 +914,21 @@ fn principal() -> u64 {
                 RESPUESTA if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, si) = (u32_en(4), u32_en(8) == 1);
-                    if let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
+                    // Todas las que esperaban esa respuesta (copias del mismo programa que pidieron lo mismo).
+                    let mut primera = true;
+                    while let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
                         let (_, a_quien, de, programa, s, _) = preguntas[i].take().unwrap();
+                        let ya = !primera;
+                        primera = false;
                         let (estado, llave) = if si {
-                            // Concedido: se apunta y se guarda, y no se vuelve a preguntar.
-                            if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
-                                *c = Some((programa, s));
-                            }
-                            if let Some(a) = &archivos {
-                                guardar_permiso(a, nombre(&programa), REPARTE[s].0);
+                            // Concedido: se apunta y se guarda (una vez), y no se vuelve a preguntar.
+                            if !ya {
+                                if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
+                                    *c = Some((programa, s));
+                                }
+                                if let Some(a) = &archivos {
+                                    guardar_permiso(a, nombre(&programa), REPARTE[s].0);
+                                }
                             }
                             dar_servicio(&mut dadas, s, de, &programa)
                         } else {

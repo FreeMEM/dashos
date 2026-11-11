@@ -33,11 +33,11 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 sin temporizador de cuadro) |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 con cola de salida por cliente; sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
-| R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
+| R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
@@ -528,3 +528,31 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (quitar la entrada del árbol de nombres, soltar los bloques del fichero), que agrupando no se ahorra. La estimación
   de la revisión (de 1.932 hacia 3.000 o 4.000 borrados/s) era del asignador de antes, que copiaba entero en cada
   transacción. No se hace; quedan las dos pruebas de medida.
+- U4, la pregunta al usuario: `guardian` ya no contesta solo. Pone una capa encima de todo (solo él puede: un programa
+  no puede pintar una igual por encima), en el centro, con el teclado: "¿Dejas que "pide" use "eco"?", S sí, N no. Lo
+  que se pulse en el primer segundo no cuenta (quien estaba escribiendo no contesta sin querer), y sin respuesta en
+  30 s es que no. Captura en `docs/capturas/u4-pregunta.png`. Prueba en virt: el guion de QEMU contesta que sí a
+  `pide`; al hostil le manda una "s" enseguida, que no cuenta, y luego "n": el hostil no recibe la llave. Al irse una
+  capa que tenía el teclado, vuelve a la ventana de arriba (antes se quedaba sin nadie).
+- `sesiones`: si ya se le está preguntando al usuario lo mismo (otra copia del programa pidió el mismo servicio), la
+  petición nueva espera esa respuesta en vez de preguntar otra vez. Se vio con tres copias de `pide` pidiendo `plazo` a
+  la vez: tres preguntas iguales. Y quien pide un servicio espera la respuesta hasta 35 s, no 2 (contesta una persona).
+- E8, cola de salida por cliente en el compositor: si la cola de canal de un cliente está llena, lo suyo se guarda
+  (`canal::ColaSalida`) y se reintenta en cada vuelta, sin esperar ni parar a los demás. Se le suelta si guarda más de
+  64 KB o si no lee nada en 1 s (5 s a `guardian`). Antes se le esperaba 5 ms (250 a `guardian`) con todo parado.
+  Prueba en el PC (`cola_de_salida`): orden, uno que lee poco a poco sigue, uno que no lee se suelta a su plazo, y uno
+  que recibe mucho, al pasar de 64 KB, con sus llaves fuera.
+- `ventana_cliente`: al acabar, cierra su canal y las llaves sin usar, y `guardian` cierra la memoria de cada pantalla y
+  de cada pregunta. Antes las dejaba abiertas: una pantalla o una pregunta más, unas llaves menos en su tabla.
+- Un fallo del planificador, de antes de esta revisión, que destapó la pregunta: un hilo que se bloquea con un plazo
+  que ya ha vencido al planificar (leer con 1 µs, dormir 0) sale de los dormidos como listo, se elige a sí mismo y sigue
+  corriendo, pero marcado "listo". Si en ese rato le echa el reloj, el planificador solo vuelve a encolar al que consta
+  como corriendo: el hilo no vuelve a ninguna cola y no corre nunca más. Le pasaba a `guardian` 1 de cada 8 arranques
+  (leía con 1 µs y luego pintaba, más que un tic); el compositor lo soltaba por no leer y la pantalla de entrada se
+  quedaba sin nadie. Se buscó con avisos temporales en el kernel (un hilo vigilado decía "listo en el núcleo 0 hace
+  47 s" sin estar en ninguna cola). Arreglo: si sigue el mismo, vuelve a constar como corriendo. Prueba hostil en
+  `make prueba` (K11): 4 hilos que esperan 15 veces con el plazo vencido y calculan 12 ms tras cada espera; sin el
+  arreglo no acaba ninguno, con él los 4. (No se nota en las medidas: solo pasaba cuando el reloj echaba al hilo justo
+  en ese rato, y quien entra en el planificador cada pocos µs retrasa el tic.)
+- `make arranque-virt`: límite de 80 a 110 s, por las preguntas (unos 8 s más) y el PC cargado. La pasada buena tarda
+  unos 72 s.
