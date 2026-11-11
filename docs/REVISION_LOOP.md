@@ -737,3 +737,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   en el kernel, 3 pasadas bien; con la prueba nueva, 2 más.
 - La prueba de A16 también fallaba a veces: QEMU a veces acaba la lectura en el acto y el plazo no vence (una vez
   venció 1 de 3). La línea esperada pedía "3 de 3"; ahora basta con que venza una vez, y la cuenta va en otra línea.
+- Por qué cuesta crear un trozo de 512 KB, medido dentro del kernel (traza temporal): 122 µs de mediana, de ellos 115
+  de poner las 128 páginas a cero. En QEMU cada escritura se emula, y `dc zva` no lo abarata (visto antes). Sacar las
+  páginas en tandas de 64 con una sola toma del cerrojo del repartidor: 164 µs frente a 161, nada; deshecho. (Probado
+  también sin poner a cero, solo para medir: `archivos` no abre RedoxFS, cuenta con memoria nueva a cero.) Lo que
+  quedaría es tener páginas ya a cero, preparadas por los núcleos ociosos: en esta medida ganaría como mucho un 13 % en
+  la primera lectura, a cambio de tocar el repartidor del kernel. No se hace; en la placa, poner a cero 512 KB cuesta
+  mucho menos que en QEMU, y habrá que medirlo allí.
