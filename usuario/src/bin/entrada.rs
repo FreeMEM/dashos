@@ -65,7 +65,9 @@ fn principal() -> u64 {
     };
     let (hola, pid) = lanzar("Programas/hola");
     let (texto, _) = lanzar("LEEME.txt");
-    let lanza = hola == 0 && pid >= 0x1_0000 && texto < 0;
+    // Uno que habla con `sesiones` por la llave con que nace: repite la prueba de U4.
+    let (pide, pid_pide) = lanzar("Programas/pide");
+    let lanza = hola == 0 && pid >= 0x1_0000 && texto < 0 && pide == 0 && pid_pide == pid + 1;
     println!("  [entrada] lanzar del disco: Programas/hola {} (proceso {}), un texto {}: {}", hola, pid, texto, if lanza { "bien" } else { "MAL" });
     // U6: el registro de seguridad tiene que acabar teniendo los tres intentos del hostil (matar al compositor, la llave
     // de `eco` y entrar como Carla). Se mira cada medio segundo, hasta 20 s.

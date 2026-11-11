@@ -239,5 +239,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   en un grupo propio de 4 MB (sale del cupo de `sesiones`, de 16), con ficha: número desde 0x10000, el usuario de
   quien lo pide y el nombre del fichero. El disco de pruebas trae `Programas/hola` (el `hola` que se construye).
   Prueba: `entrada` lanza `Programas/hola` (sale su "hola desde Rust") y un texto (-1); el hostil no puede (-2).
-  Falta: sus llaves al nacer (el canal con `sesiones` y los servicios concedidos), la baja al morir (su aviso de fin) y
-  la tabla de nombres.
+  Falta la tabla de nombres.
+- U2: lo que lanza `sesiones` nace con una llave, su canal con `sesiones` marcado con su número (S6b: "nace con una
+  llave"), y tiene baja con su aviso de fin. Para eso `inicio` da a `sesiones` su copia propia del canal sin marca.
+  El disco trae también `Programas/pide`: lanzado desde ahí, pide la llave de `eco` por el canal con que nació y
+  repite la prueba de U4 con su número nuevo (65537); llegan las bajas de `hola` (65536) y de `pide`.

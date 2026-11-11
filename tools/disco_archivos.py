@@ -28,6 +28,8 @@ import tempfile
 
 # U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
 HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
+# Y `pide`: lanzado desde el disco, nace con su canal con `sesiones` y repite la prueba de U4 con su número nuevo.
+PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
@@ -47,6 +49,7 @@ if sys.argv[1] == "--comprobar":
         "Prefs/fuente 8",
         "Programas/ cajón",
         f"Programas/hola {os.path.getsize(HOLA)}",
+        f"Programas/pide {os.path.getsize(PIDE)}",
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
@@ -91,6 +94,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "hola"), "wb") as f:
         f.write(open(HOLA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "hola"), 0o755)
+    with open(os.path.join(raiz, "Programas", "pide"), "wb") as f:
+        f.write(open(PIDE, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "pide"), 0o755)
     privado = os.path.join(raiz, "C", "Privado")
     os.makedirs(privado)
     with open(os.path.join(privado, "nota.txt"), "w") as f:

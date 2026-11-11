@@ -27,6 +27,9 @@ dashos::programa!(principal);
 /// van en el orden en que se nombran).
 const ARCHIVOS: u32 = 1;
 const CANAL: u32 = 3;
+/// Llave 4: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
+/// que lanza (marcada con su número) y su aviso de fin.
+const PROPIO: u32 = 4;
 /// Los servicios que reparte, con la llave sin marca de cada uno.
 const REPARTE: &[(&str, u32)] = &[("eco", 2)];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8) y de lo que diga el usuario.
@@ -225,7 +228,11 @@ fn principal() -> u64 {
             if let Some(i) = fichas.iter().position(|x| x.is_some_and(|x| x.marca == de)) {
                 let f = fichas[i].take().unwrap();
                 dashos::cerrar(f.grupo);
-                println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
+                if f.marca >= PRIMER_PID_PROPIO {
+                    println!("  [sesiones] baja de {} (proceso {}, clase {})", nombre(&f.nombre), f.marca, u64_en(0));
+                } else {
+                    println!("  [sesiones] baja de {} (clase {})", nombre(&f.nombre), u64_en(0));
+                }
                 if u64_en(0) == 2 {
                     registro.apuntar(R_FALLO, 2, &f.nombre, b"");
                 }
@@ -316,7 +323,14 @@ fn principal() -> u64 {
                             Ok((mem, tam)) => {
                                 // Su grupo sale del cupo de `sesiones` (16 MB): 4 MB para cada uno, de momento.
                                 let g = dashos::grupo_crear(PRESUPUESTO_LANZADO);
-                                let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, &[]) } else { g };
+                                // Nace con una llave: su canal con `sesiones`, marcado con su número (que viaja una vez).
+                                let pid = siguiente_pid;
+                                let canal_suyo = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
+                                let llaves: &[u32] = if canal_suyo > 0 { &[canal_suyo as u32] } else { &[] };
+                                let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, llaves) } else { g };
+                                if p <= 0 && canal_suyo > 0 {
+                                    dashos::cerrar(canal_suyo as u32);
+                                }
                                 dashos::cerrar(mem);
                                 if p <= 0 {
                                     if g > 0 {
@@ -324,9 +338,14 @@ fn principal() -> u64 {
                                     }
                                     (p as i32, 0)
                                 } else {
-                                    // Su ficha: el usuario de quien lo pide, y el nombre del fichero.
-                                    let pid = siguiente_pid;
+                                    // Su ficha: el usuario de quien lo pide, y el nombre del fichero. Y su baja, con el aviso
+                                    // de fin (K7) por su propio canal, marcado con el bit alto como los de `inicio`.
                                     siguiente_pid += 1;
+                                    let aviso = dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, (1 << 63) | pid);
+                                    if aviso > 0 {
+                                        dashos::proceso_avisar(p as u32, aviso as u32);
+                                        dashos::cerrar(aviso as u32);
+                                    }
                                     let corto = camino.rsplit(|&c| c == b'/').next().unwrap_or(camino);
                                     let mut n16 = [0u8; 16];
                                     n16[..corto.len().min(16)].copy_from_slice(&corto[..corto.len().min(16)]);

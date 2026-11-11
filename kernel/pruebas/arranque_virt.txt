@@ -112,6 +112,10 @@ DashOS en marcha con 4 núcleos.
 ~un texto -
 ~): bien
 ~│   [sesiones] hostil lanza Programas/hola: -2
+# Lo lanzado nace con su canal con `sesiones` (marcado con su número) y tiene baja al acabar.
+~│   [sesiones] pide pide eco: 0
+~│   [sesiones] baja de hola (proceso 65536, clase 0)
+~│   [sesiones] baja de pide (proceso 65537, clase 0)
 ~│   [entrada] registro de seguridad: 
 ~las del hostil (matar, servicio, entrar): bien
 ~│   [sesiones] hostil (usuario 1001) no puede matar a compositor (usuario 1)

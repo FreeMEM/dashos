@@ -247,7 +247,9 @@ fn principal() -> u64 {
         }
         for &b in &propios[..np] {
             if k < suyas.len() {
-                let copia = llave_duplicar(b, dashos::ESCRIBIR | dashos::TRANSFERIR, u64::MAX);
+                // A `sesiones`, sin marca (U2): con ella hace las copias marcadas que da a lo que lanza.
+                let marca_propia = if nombre(nombre_cab) == "sesiones" { 0 } else { u64::MAX };
+                let copia = llave_duplicar(b, dashos::ESCRIBIR | dashos::TRANSFERIR, marca_propia);
                 if copia > 0 {
                     suyas[k] = copia as u32;
                     k += 1;
