@@ -501,6 +501,32 @@ struct Cliente {
     tam: usize,
     /// Las asas que le cedieron (U1, U5) y con qué derechos (R, W): con ellas no se miran los permisos del fichero.
     cedidas: BTreeMap<u32, u16>,
+    /// Sus raíces 1 a 15 (S6b, capa 2; la 0 es la de su ficha): volumen, nodo y tope (R, o R y W). Las pone quien
+    /// tiene el derecho de repartir (CEDER a un hueco); el cliente no las cierra.
+    raices: [Option<(u64, TreePtr<Node>, u16)>; RAICES],
+    /// El tope de las asas que salen de una raíz con tope menor que R y W: lo heredan (lo que no está, R y W).
+    topes: BTreeMap<u32, u16>,
+}
+
+/// Las asas 0 a 15 son raíces; las demás empiezan aquí.
+const RAICES: usize = 16;
+
+/// El tope de la asa `asa` de `c`: lo más que deja hacer por ella, además de los permisos del fichero.
+fn tope(c: &Cliente, asa: u32) -> u16 {
+    match asa as usize {
+        0 => R | W,
+        k if k < RAICES => c.raices[k].map_or(0, |r| r.2),
+        _ => c.topes.get(&asa).copied().unwrap_or(R | W),
+    }
+}
+
+/// Volumen y nodo de la asa `asa` de `c`: la 0 es la raíz de su ficha (R6), de la 1 a la 15 sus otras raíces.
+fn nodo_de(c: &Cliente, asa: u32) -> Option<(u64, TreePtr<Node>)> {
+    match asa as usize {
+        0 => Some(c.ficha.raiz),
+        k if k < RAICES => c.raices[k].map(|r| (r.0, r.1)),
+        _ => c.asas.get(&asa).copied(),
+    }
 }
 
 impl Cliente {
@@ -593,15 +619,22 @@ fn ceder(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, p: &Peticion, 
     if c.ficha.derechos & D_REPARTIR == 0 {
         return mal(PROTEGIDO);
     }
-    let derechos = p.b as u16;
-    if derechos == 0 || derechos & !(R | W) != 0 {
+    // b: los derechos (R, W) y, en el segundo byte, el hueco de raíz (1 a 15) si se cede como raíz.
+    let derechos = (p.b & 0xff) as u16;
+    let hueco = (p.b >> 8) as usize;
+    if derechos == 0 || derechos & !(R | W) != 0 || hueco >= RAICES || p.b >> 16 != 0 {
         return mal(MAL_FORMADO);
     }
-    let asa_de = if p.asa == 0 { Some(c.ficha.raiz) } else { c.asas.get(&p.asa).copied() };
-    let Some((vol, n)) = asa_de else { return mal(ASA_MALA) };
+    let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+    // Nada pasa del tope de la asa de quien cede.
+    if derechos & !tope(c, p.asa) != 0 {
+        return mal(PROTEGIDO);
+    }
     let suyos = c.cedidas.get(&p.asa).copied();
     let ficha = c.ficha;
-    let Some(j) = clientes.iter().position(|x| x.as_ref().is_some_and(|x| x.marca == p.a)) else { return mal(NO_EXISTE) };
+    // La marca u64::MAX es "yo mismo": darse una raíz más estrecha (no puede pasar de lo que ya tiene).
+    let j = if p.a == u64::MAX { Some(i) } else { clientes.iter().position(|x| x.as_ref().is_some_and(|x| x.marca == p.a)) };
+    let Some(j) = j else { return mal(NO_EXISTE) };
     let nodo = match rec.nodo(fs, vol, n) {
         Ok(nodo) => nodo,
         Err(e) => return mal(estado_de(e)),
@@ -611,6 +644,17 @@ fn ceder(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, p: &Peticion, 
         return mal(PROTEGIDO);
     }
     let otro = clientes[j].as_mut().unwrap();
+    if hueco > 0 {
+        // Como raíz: en un hueco libre, con ese tope. El permiso es el del fichero y además el de la raíz.
+        if otro.raices[hueco].is_some() {
+            return mal(SIN_SITIO);
+        }
+        let cuenta = fs.node_usages.entry((vol << 32) | u64::from(nodo.id())).or_insert(0);
+        let Some(mas) = cuenta.checked_add(1) else { return mal(SIN_SITIO) };
+        *cuenta = mas;
+        otro.raices[hueco] = Some((vol, nodo.ptr(), derechos));
+        return Respuesta { estado: BIEN, asa: hueco as u32, ..Default::default() };
+    }
     let r = dar_asa(fs, otro, vol, &nodo);
     if r.estado == BIEN {
         otro.cedidas.insert(r.asa, derechos);
@@ -627,7 +671,7 @@ fn dar_asa(fs: &mut Fs, c: &mut Cliente, vol: u64, n: &TreeData<Node>) -> Respue
     let Some(mas) = cuenta.checked_add(1) else { return mal(SIN_SITIO) };
     *cuenta = mas;
     let asa = c.siguiente;
-    c.siguiente = c.siguiente.wrapping_add(1).max(1);
+    c.siguiente = c.siguiente.wrapping_add(1).max(RAICES as u32);
     c.asas.insert(asa, (vol, n.ptr()));
     datos(asa, n.data())
 }
@@ -783,6 +827,16 @@ impl Recuerdos {
 }
 
 fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo_lectura: bool) -> Respuesta {
+    // Lo que se abre desde una raíz con tope hereda el tope (S6b, capa 2).
+    let t = tope(c, p.asa);
+    let r = atender_orden(fs, c, p, rec, solo_lectura);
+    if matches!(p.orden, BUSCAR | CREAR) && r.estado == BIEN && t != R | W && r.asa as usize >= RAICES {
+        c.topes.insert(r.asa, t);
+    }
+    r
+}
+
+fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo_lectura: bool) -> Respuesta {
     // Tras un guardado que falló, nada cambia el disco hasta que una comprobación lo dé por bueno (A2).
     if solo_lectura && !SOLO_LEEN.contains(&p.orden) && ![COMPROBAR, VACIAR].contains(&p.orden) {
         return mal(SOLO_LECTURA);
@@ -791,10 +845,11 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
     if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
         rec.olvidar();
     }
-    // La asa 0 es la raíz del cliente, no la del disco (R6).
-    let nodo_de = |c: &Cliente, asa: u32| -> Option<(u64, TreePtr<Node>)> {
-        if asa == 0 { Some(c.ficha.raiz) } else { c.asas.get(&asa).copied() }
-    };
+    // Lo que cambia algo por una asa necesita la W de su tope (la de su raíz); renombrar, también en el destino.
+    let por_asa = matches!(p.orden, ESCRIBIR | CREAR | BORRAR | RENOMBRAR | TAMANO | COMENTAR | PROTEGER);
+    if por_asa && (tope(c, p.asa) & W == 0 || p.orden == RENOMBRAR && tope(c, p.b as u32) & W == 0) {
+        return mal(PROTEGIDO);
+    }
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
@@ -987,6 +1042,7 @@ fn atender(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos, solo
                 // GUARDAR. Si uno de esos guardados falló con algo suyo dentro, se le dice ahora (A2).
                 c.cambiadas.remove(&p.asa);
                 c.cedidas.remove(&p.asa);
+                c.topes.remove(&p.asa);
                 let estado = c.fallo.take().unwrap_or(BIEN);
                 Respuesta { estado, asa: p.asa, ..Default::default() }
             }
@@ -1471,7 +1527,7 @@ fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca:
                 }
                 return (SIN_SITIO, None, 0);
             }
-            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: 1, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new() });
+            clientes[i] = Some(Cliente { marca, ficha, respuesta, ventana: m, va, asas: BTreeMap::new(), cambiadas: alloc::collections::BTreeSet::new(), siguiente: RAICES as u32, pendiente: false, fallo: None, tam, cedidas: BTreeMap::new(), raices: [None; RAICES], topes: BTreeMap::new() });
             i
         }
     };
@@ -1485,6 +1541,9 @@ fn sesion(clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, Ficha>, marca:
 fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize) {
     if let Some(c) = clientes[i].take() {
         for (_, (vol, n)) in c.asas {
+            cerrar_nodo(fs, vol, n);
+        }
+        for (vol, n, _) in c.raices.into_iter().flatten() {
             cerrar_nodo(fs, vol, n);
         }
         dashos::cerrar(c.respuesta);
@@ -1631,6 +1690,11 @@ fn principal() -> u64 {
             if orden == VOLVER && r.estado == BIEN {
                 for c in clientes.iter_mut().flatten() {
                     c.asas.retain(|_, (vol, _)| *vol != r.a);
+                    for raiz in c.raices.iter_mut() {
+                        if raiz.is_some_and(|x| x.0 == r.a) {
+                            *raiz = None;
+                        }
+                    }
                 }
             }
             r

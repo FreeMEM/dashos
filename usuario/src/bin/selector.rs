@@ -49,6 +49,39 @@ fn principal() -> u64 {
         println!("  [selector] sin servicio de archivos");
         return 1;
     }
+    // S6b, capa 2: se cede a sí mismo `C` como raíz 1, solo para leer. Por su raíz 0 crea y borra en `C` (es suyo);
+    // por la 1, no: el tope de la raíz manda aunque el fichero lo permita. Ni por lo que abre desde ella.
+    let raices = {
+        let (e, c) = pedir(lectura, a::BUSCAR, 0, 0, 0, "C");
+        let cedida = if e == a::BIEN { pedir(lectura, a::CEDER, c, a::YO, 4 | 1 << 8, "").0 } else { e };
+        // Por la asa de `C` que sale de su raíz 0, sí crea.
+        let por_0 = pedir(lectura, a::CREAR, c, a::FICHERO as u64, 0, "raiz.txt");
+        if por_0.0 == a::BIEN {
+            pedir(lectura, a::CERRAR, por_0.1, 0, 0, "");
+        }
+        let por_1 = pedir(lectura, a::CREAR, 1, a::FICHERO as u64, 0, "raiz2.txt").0;
+        let (e_hijo, hijo) = pedir(lectura, a::BUSCAR, 1, 0, 0, "raiz.txt");
+        let escribir_hijo = pedir(lectura, a::ESCRIBIR, hijo, 0, 1, "").0;
+        let tope_heredado = hijo >= a::RAICES;
+        if e_hijo == a::BIEN {
+            pedir(lectura, a::CERRAR, hijo, 0, 0, "");
+        }
+        let borrar_1 = pedir(lectura, a::BORRAR, 1, 0, 0, "raiz.txt").0;
+        let cerrar_1 = pedir(lectura, a::CERRAR, 1, 0, 0, "").0;
+        let otra_vez = pedir(lectura, a::CEDER, c, a::YO, 4 | 1 << 8, "").0;
+        let borrar_0 = pedir(lectura, a::BORRAR, c, 0, 0, "raiz.txt").0;
+        if e == a::BIEN {
+            pedir(lectura, a::CERRAR, c, 0, 0, "");
+        }
+        let bien = cedida == a::BIEN && por_0.0 == a::BIEN && por_1 == a::PROTEGIDO && e_hijo == a::BIEN && tope_heredado
+            && escribir_hijo == a::PROTEGIDO && borrar_1 == a::PROTEGIDO && cerrar_1 != a::BIEN && otra_vez == a::SIN_SITIO && borrar_0 == a::BIEN;
+        if !bien {
+            println!("  [selector] raíces: ceder {}, crear por C {}, por la 1 {}, hijo {} ({}), escribirlo {}, borrar por la 1 {}, cerrarla {}, otra vez {}, borrar por C {}",
+                cedida, por_0.0, por_1, e_hijo, hijo, escribir_hijo, borrar_1, cerrar_1, otra_vez, borrar_0);
+        }
+        bien
+    };
+    println!("  [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: {}", if raices { "bien" } else { "MAL" });
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
     loop {
@@ -57,7 +90,16 @@ fn principal() -> u64 {
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
-        if marca != 0 && k >= 1 {
+        if marca != 0 && k >= 1 && buf.starts_with(b"raiz") {
+            // Ceder `C` como raíz 2, solo para leer.
+            let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, "C");
+            let (estado, hueco) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4 | 2 << 8, "") } else { (e, 0) };
+            if e == a::BIEN {
+                pedir(lectura, a::CERRAR, mia, 0, 0, "");
+            }
+            println!("  [selector] cede C como raíz solo para leer: {} (hueco {})", estado, hueco);
+            dashos::canal_escribir(ll[0], &(if estado == a::BIEN { hueco } else { 0 }).to_le_bytes(), &[]);
+        } else if marca != 0 && k >= 1 {
             let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, ELEGIDO);
             let (estado, suya) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4, "") } else { (e, 0) };
             if e == a::BIEN {

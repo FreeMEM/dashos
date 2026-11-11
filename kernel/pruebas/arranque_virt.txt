@@ -104,6 +104,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [pide] U4: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [sesiones] hostil pide eco: -2
+~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 ~│   [selector] cede C/Privado/nota.txt solo para leer: 0
 ~│   [hostil] selector: bien

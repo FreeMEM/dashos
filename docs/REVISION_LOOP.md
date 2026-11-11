@@ -308,3 +308,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   camino sin dos puntos no se resuelven. `hostil` (1001) recibe su tabla: `Home:` es Carla, no Ana. Falta: las
   raíces 0 a 15 en archivos (hoy una por cliente) para que cada nombre sea una raíz cedida, `RAM:T`, y las
   asignaciones con capas (S4b).
+- U1, capa 2 de S6b (las raíces): en `archivos`, las asas 1 a 15 son raíces con tope (R, o R y W), además de la 0 de
+  la ficha; las de buscar y crear empiezan en 16. CEDER con un hueco en el segundo byte de b pone la asa como raíz
+  de otro (hueco libre o `SIN_SITIO`), y la marca `YO` deja a quien cede darse una raíz más estrecha. Por una raíz
+  manda el permiso del fichero y además el tope; lo abierto desde ella lo hereda (`topes`); escribir, crear,
+  borrar, renombrar (también en el destino), recortar, comentar y proteger piden la W del tope. Las raíces no se
+  cierran, se sueltan con el cliente y al volver a una instantánea de su volumen. Prueba: `selector` (dueño del
+  disco) se da `C` como raíz 1 de solo leer: por la asa de `C` de su raíz 0 crea y borra; por la 1 no crea, no borra,
+  no escribe lo que abre desde ella (tope heredado) y no la cierra; una segunda cesión al mismo hueco, -6. `hostil`
+  recibe `C` como raíz 2 de solo leer: lista, no crea ni la cierra, un hueco vacío da -5, no se da raíces (sin el
+  derecho de repartir) y otra cesión no pisa la suya. Sin medir: una búsqueda de más por petición en un mapa casi
+  siempre vacío. Falta que `sesiones` ceda las raíces de cada nombre de la tabla al lanzar (el programa aún no tiene
+  sesión de archivos cuando nace).

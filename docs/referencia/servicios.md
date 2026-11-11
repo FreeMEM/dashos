@@ -162,6 +162,9 @@ como nombre, desde la raíz del volumen principal. Sin alta no hay sesión (-12)
 `usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
 
 - La asa 0 es la raíz del cliente, no la del disco. Por encima no se llega: no hay "cajón padre" ni se siguen enlaces.
+- Las asas 1 a 15 son más raíces, cada una con su tope (leer, o leer y escribir). Las pone quien tiene el derecho de
+  repartir con ceder (orden 30) a un hueco libre; el cliente no las cierra. Por una raíz se mira el permiso del
+  fichero y además su tope, y lo que se abre desde ella hereda el tope. Las asas de buscar y crear empiezan en 16.
 - Dueño, grupo y modo, como en Unix y sin paso libre para nadie (el usuario 0 es "sistema", sin privilegios): para
   pasar por un cajón al buscar hace falta su x; leer y listar, r; escribir y cambiar el tamaño, w; crear, guardar,
   borrar y renombrar, w y x en el cajón (o en los dos). En un cajón con el bit pegajoso solo borra o renombra el dueño

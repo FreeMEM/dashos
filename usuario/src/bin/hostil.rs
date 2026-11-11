@@ -167,6 +167,41 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
         return "abre el fichero por su nombre";
     }
     p(CERRAR, asa, 0, 0, "");
+    // S6b, capa 2: el selector le cede `C` como raíz 2, solo para leer. Por ella lista, pero no crea ni la cierra; un
+    // hueco de raíz vacío no lleva a nada; no puede darse raíces él (sin el derecho de repartir); y el hueco no se
+    // pisa con una segunda cesión.
+    let pedir_raiz = || {
+        let (sel_l, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let hueco = if escribir(SELECTOR, b"raiz", &[suyo]) && dashos::canal_leer_plazo(sel_l, &mut r, &mut [], 3_000_000).0 == 4 {
+            u32::from_le_bytes(r)
+        } else {
+            u32::MAX
+        };
+        dashos::cerrar(sel_l);
+        hueco
+    };
+    if pedir_raiz() != 2 {
+        return "el selector no le dio la raíz 2";
+    }
+    if p(LISTAR, 2, 0, 0, "").map(|r| r.0) != Some(BIEN) {
+        return "no lista por su raíz de leer";
+    }
+    if p(CREAR, 2, 1, 0, "mio.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "crea por una raíz de solo leer";
+    }
+    if p(CERRAR, 2, 0, 0, "").map(|r| r.0) == Some(BIEN) {
+        return "cierra una raíz";
+    }
+    if p(BUSCAR, 7, 0, 0, "grande.txt").map(|r| r.0) != Some(ASA_MALA) {
+        return "usa un hueco de raíz vacío";
+    }
+    if p(CEDER, 0, YO, 4 | 3 << 8, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "se da una raíz sin el derecho de repartir";
+    }
+    if pedir_raiz() != 0 {
+        return "una segunda raíz pisa la primera";
+    }
     "bien"
 }
 

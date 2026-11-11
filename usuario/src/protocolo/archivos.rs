@@ -44,7 +44,16 @@ pub const COMPROBAR_CLAVE: u32 = 29;
 /// que se tienen). Solo con el derecho de repartir (`selector`, `sesiones`, el escritorio). Contesta con el número de
 /// asa que tiene ahora el otro. Con una asa cedida se lee o escribe lo que se cedió, sin mirar los permisos del fichero:
 /// así un programa encerrado abre el fichero que el usuario eligió y nada más.
+///
+/// Como raíz (S6b, capa 2): con un hueco de 1 a 15 en el segundo byte de b, la asa va a ese hueco de raíz del otro,
+/// que tiene que estar libre (si no, `SIN_SITIO`). Ahí sí se miran los permisos del fichero, y además el tope de la
+/// raíz: sin su W no se escribe, crea, borra, renombra ni protege por ella ni por lo que se abra desde ella. El
+/// cliente no cierra sus raíces. La marca `YO` es quien cede: darse una raíz más estrecha.
 pub const CEDER: u32 = 30;
+/// Las asas 0 a 15 son raíces (0, la del alta); las que se dan al buscar o crear empiezan en 16.
+pub const RAICES: u32 = 16;
+/// Para `CEDER`: el propio cliente.
+pub const YO: u64 = u64::MAX;
 pub const ALTA: u32 = 100;
 pub const D_ADMINISTRAR: u32 = 1;
 /// Derecho de repartir: ceder asas (U1).
