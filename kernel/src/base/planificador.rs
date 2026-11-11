@@ -740,10 +740,13 @@ fn robar(n: usize, nc: &mut Nucleo, ocioso: bool, rotar: bool) {
 /// no lo viera ocioso al ganar carga (los dos miraron antes de que el otro escribiera): entonces este no duerme sin tic,
 /// sino hasta el siguiente, y en él roba. Sin esto, con cuatro hilos en cuatro núcleos, dos podían quedarse en uno y
 /// otro núcleo dormido un segundo (lo vio el banco con los hijos en Dash).
-fn vigilar_al_dormir(n: usize) {
+/// `proxima` es lo que ya se programó (un dormido, un plazo): no se retrasa. Antes se pisaba con el tic entero, y un
+/// hilo que dormía 500 µs en un núcleo ocioso despertaba a los 10 ms cuando otro núcleo tenía carga (S2, lo vio
+/// `prueba_cortes` en los núcleos 2 y 3).
+fn vigilar_al_dormir(n: usize, proxima: u64) {
     core::sync::atomic::fence(Ordering::SeqCst);
     if (0..MAX_NUCLEOS).any(|m| m != n && presente(m) && CARGA[m].load(Ordering::SeqCst) >= 2) {
-        reloj::programar(reloj::periodo());
+        reloj::programar(reloj::periodo().min(proxima.max(1)));
     }
 }
 
@@ -962,7 +965,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             publicar_carga(n, nucleo);
             EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::SeqCst);
             if ocioso_sin_tic {
-                vigilar_al_dormir(n);
+                vigilar_al_dormir(n, proxima);
             }
             return;
         }
@@ -997,7 +1000,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         publicar_carga(n, nucleo);
         EN_OCIOSO[n].store(siguiente == nucleo.ocioso, Ordering::SeqCst);
         if ocioso_sin_tic {
-            vigilar_al_dormir(n);
+            vigilar_al_dormir(n, proxima);
         }
         // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
         fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });

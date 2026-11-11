@@ -280,3 +280,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   tamaños de verdad, redondeados a las clases del montón: 59.320, por debajo de lo cobrado. El cupo de la raíz ya
   existía (la memoria libre para procesos menos la reserva del kernel, desde la fase 3): la revisión lo daba por
   pendiente. Sin medir: el crecimiento es el mismo que antes hasta 1.024 llaves.
+- Fallo encontrado al preparar S2: un proceso que dormía 500 µs en los núcleos 2 o 3 despertaba a los 10 ms (mediana
+  9.570 µs; en los núcleos 0 y 1, 30). Al quedarse ocioso un núcleo mientras otro tiene carga, `vigilar_al_dormir`
+  reprogramaba su reloj a un tic entero y pisaba el despertar más próximo (un dormido, un plazo). Ahora programa el
+  menor de los dos. Después: mediana de 27 a 32 µs y máximo por debajo de 600 en los cuatro núcleos. El banco no lo
+  veía porque sus hijos van en los núcleos 0 y 1.
