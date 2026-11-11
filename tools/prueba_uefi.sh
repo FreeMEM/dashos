@@ -50,7 +50,7 @@ def teclear(texto):
         else:
             ordenes.append("sendkey " + ch)
     ordenes.append("sendkey ret")
-    mandar(*ordenes, pausa=0.08)
+    mandar(*ordenes, pausa=0.15)
 
 def mandar(*ordenes, pausa=0.0):
     s = socket.socket(socket.AF_UNIX)
@@ -67,7 +67,12 @@ while time.time() - inicio < total:
             bloqueo = 1
             time.sleep(0.5)
             teclear("mala")
-            time.sleep(1.5)
+            # La segunda, cuando `guardian` ya dijo que la primera era mala (no a ciegas: se perdían teclas).
+            for _ in range(40):
+                time.sleep(0.25)
+                if "contraseña mala en la pantalla de bloqueo" in open(serie, errors="replace").read():
+                    break
+            time.sleep(0.3)
             teclear("clave de Carla")
         if bloqueo == 1:
             if "[guardian] desbloqueado" not in texto:

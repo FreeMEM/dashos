@@ -419,3 +419,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   comprueba que el daño se ve; al arrancar, "1 problemas; reparado, quedan 0" (20 ms en un disco de 7 MB) y la
   comprobación final desde Linux sale limpia. Falta: la reparación como acción de administrador con el servicio en
   marcha (hoy reconstruir el árbol con asas abiertas no es seguro) y medir lo que tarda con un disco grande.
+- U4, la llave de plazo: `sesiones` reparte también el permiso de la clase de plazo (S3), como un servicio más (se
+  pregunta, se guarda, se deja y se retira), sin entrada de directorio porque no es un canal (`PERMISOS_KERNEL`).
+  `inicio` le da ese permiso con el derecho de transferir (a los demás, sus permisos llegan sin él): sus llaves se
+  corren un puesto (plazo 1, archivos 2, eco 3, su canal 4, propio 5, archivos sin marca 6). Si mandar una llave
+  falla, `sesiones` contesta -1 en vez de nada (el programa esperaba hasta su plazo). Prueba: `pide` la pide (el
+  usuario dice que sí), entra con ella en la clase de plazo, la deja y ya no entra; el hostil la pide y recibe -2
+  sin llave; `guardian` retira al final los dos permisos de `pide`. El guion de la pantalla de bloqueo teclea la
+  segunda contraseña cuando `guardian` ya dijo que la primera era mala, y más despacio (una vez se perdió una
+  tecla); `guardian` dice cuántas letras le llegan. Tres pasadas seguidas bien.

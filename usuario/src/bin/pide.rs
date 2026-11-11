@@ -70,11 +70,23 @@ fn principal() -> u64 {
     if bien {
         println!("  [pide] U4: bien");
     }
+    // U4, la llave de plazo: un permiso del kernel que también reparte `sesiones`. Con ella entra en la clase de plazo;
+    // tras dejarla, ya no.
+    let (e_plazo, plazo) = pedir(SERVICIO, "plazo");
+    let entra = plazo != 0 && dashos::plazo(plazo, 1_000, 10_000) == 0;
+    if entra {
+        dashos::plazo(plazo, 0, 0);
+    }
+    let (dejar_plazo, _) = pedir(DEJAR, "plazo");
+    let despues = plazo != 0 && dashos::plazo(plazo, 1_000, 10_000) == 0;
+    let plazo_bien = e_plazo == 0 && entra && dejar_plazo == 0 && !despues;
+    println!("  [pide] llave de plazo: pedirla {}, entrar en la clase {}, dejarla {}, después entra {}: {}", e_plazo, entra, dejar_plazo, despues,
+        if plazo_bien { "bien" } else { "MAL" });
     let (nombres, progdir) = nombres();
     if nombres {
         println!("  [pide] U2, tabla de nombres {}: bien", if progdir { "con PROGDIR" } else { "sin PROGDIR (no salió del disco)" });
     }
-    if bien && nombres { 0 } else { 1 }
+    if bien && nombres && plazo_bien { 0 } else { 1 }
 }
 
 /// U2: su tabla de nombres. Usuario 1 (sin cuenta): sin `Home:`. Lanzado del disco por `entrada`, con `PROGDIR:` en

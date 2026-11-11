@@ -106,7 +106,7 @@ fn principal() -> u64 {
                 core::str::from_utf8(&servicio[1..]).unwrap_or("?"), core::str::from_utf8(usuario).unwrap_or("?"));
             continue;
         }
-        let si = programa == b"pide" && servicio == b"eco";
+        let si = programa == b"pide" && (servicio == b"eco" || servicio == b"plazo");
         if si { a_pide += 1 } else { a_otros += 1 }
         let mut r = [0u8; 12];
         r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
@@ -116,7 +116,8 @@ fn principal() -> u64 {
         println!("  [guardian] ¿{} puede usar {}? {}", core::str::from_utf8(programa).unwrap_or("?"),
             core::str::from_utf8(servicio).unwrap_or("?"), if si { "sí" } else { "no" });
     }
-    let bien = a_pide == 1 && a_otros >= 1;
+    // A `pide`, dos preguntas (eco y plazo), una vez: lo concedido se guarda.
+    let bien = a_pide == 2 && a_otros >= 1;
     println!("  [guardian] preguntas: de pide {}, de otros {}: {}", a_pide, a_otros, if bien { "bien" } else { "MAL" });
     // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada.
     let mut r = [0u8; 19];
@@ -126,7 +127,14 @@ fn principal() -> u64 {
     r[12..16].copy_from_slice(b"pide");
     r[16..19].copy_from_slice(b"eco");
     let (una, otra) = (pedir(&r, &[]), pedir(&r, &[]));
-    let retirado = una == 0 && otra == -1;
+    let mut p2 = [0u8; 21];
+    p2[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
+    p2[4..8].copy_from_slice(&4u32.to_le_bytes());
+    p2[8..12].copy_from_slice(&5u32.to_le_bytes());
+    p2[12..16].copy_from_slice(b"pide");
+    p2[16..21].copy_from_slice(b"plazo");
+    let el_plazo = pedir(&p2, &[]);
+    let retirado = una == 0 && otra == -1 && el_plazo == 0;
     println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
     let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
@@ -138,6 +146,8 @@ fn principal() -> u64 {
 /// espera: devuelve el canal por el que llegará la respuesta (tras una mala, `sesiones` tarda a propósito, y mientras
 /// tanto hay que seguir leyendo al compositor).
 fn volver(clave: &mut String) -> Option<u32> {
+    // Cuántas letras (no cuáles): para ver una tecla perdida en las pruebas.
+    println!("  [guardian] se comprueba una contraseña de {} letras", clave.chars().count());
     let mut m = [0u8; 160];
     let (u, c) = (USUARIA.as_bytes(), clave.as_bytes());
     let c = &c[..c.len().min(128)];

@@ -23,22 +23,27 @@ use dashos::protocolo::sesiones::*;
 
 dashos::programa!(principal);
 
-/// Llave 1: el canal del servicio de archivos; 2: el de `eco`, sin marca, para repartirlo (U4); 3: el suyo (los canales
-/// van en el orden en que se nombran).
-const ARCHIVOS: u32 = 1;
-const CANAL: u32 = 3;
-/// Llave 4: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
+/// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); van primero los permisos
+/// y después los canales, en el orden en que se nombran: 2 el del servicio de archivos, 3 el de `eco` (sin marca, para
+/// repartirlo) y 4 el suyo.
+const PLAZO: u32 = 1;
+const ARCHIVOS: u32 = 2;
+const CANAL: u32 = 4;
+/// Llave 5: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
 /// que lanza (marcada con su número) y su aviso de fin.
-const PROPIO: u32 = 4;
-/// Llave 5: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
+const PROPIO: u32 = 5;
+/// Llave 6: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
 /// marcada con su número.
-const ARCHIVOS_ALTAS: u32 = 5;
+const ARCHIVOS_ALTAS: u32 = 6;
 /// Las raíces con que nace lo que lanza: la 0, el cajón de donde salió (`PROGDIR:`); la 1, el disco para leer
 /// (`SYS:`, `Programas:`); la 2, el volumen de su usuario (`Home:`), si tiene cuenta.
 const RAIZ_SYS: u8 = 1;
 const RAIZ_HOME: u8 = 2;
-/// Los servicios que reparte, con la llave sin marca de cada uno.
-const REPARTE: &[(&str, u32)] = &[("eco", 2)];
+/// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
+/// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
+const REPARTE: &[(&str, u32)] = &[("eco", 3), ("plazo", PLAZO)];
+/// Cuáles de `REPARTE` son permisos, no canales.
+const PERMISOS_KERNEL: &[&str] = &["plazo"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
 /// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
 const PERMISOS: &[(&str, &str)] = &[];
@@ -339,11 +344,13 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
     match dadas.iter().position(|x| x.is_none()) {
         Some(i) if r > 0 => {
             dadas[i] = Some((marca, s, revocador));
-            // Su entrada en el directorio del servicio, como hace `inicio`.
-            let mut dir = [0u8; 24];
-            dir[..8].copy_from_slice(&marca.to_le_bytes());
-            dir[8..].copy_from_slice(programa);
-            dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
+            // Su entrada en el directorio del servicio, como hace `inicio` (un permiso del kernel no tiene directorio).
+            if !PERMISOS_KERNEL.contains(&REPARTE[s].0) {
+                let mut dir = [0u8; 24];
+                dir[..8].copy_from_slice(&marca.to_le_bytes());
+                dir[8..].copy_from_slice(programa);
+                dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
+            }
             (BIEN, Some(r as u32))
         }
         _ => {
@@ -782,7 +789,9 @@ fn principal() -> u64 {
                     match respuesta_llave {
                         Some(l) => {
                             if dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[l]) != 0 {
+                                // Sin poder mandarla (una llave que no se puede transferir): que no se quede esperando.
                                 dashos::cerrar(l);
+                                dashos::canal_escribir(respuesta, &(-1i32).to_le_bytes(), &[]);
                             }
                         }
                         None => {
@@ -896,6 +905,7 @@ fn principal() -> u64 {
                             Some(l) => {
                                 if dashos::canal_escribir(a_quien, &estado.to_le_bytes(), &[l]) != 0 {
                                     dashos::cerrar(l);
+                                    dashos::canal_escribir(a_quien, &(-1i32).to_le_bytes(), &[]);
                                 }
                             }
                             None => {

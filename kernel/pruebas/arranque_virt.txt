@@ -103,7 +103,8 @@ DashOS en marcha con 4 núcleos.
 # U4: la llave de un servicio solo con permiso; marcada, sin poder regalarla y revocable.
 ~│   [sesiones] pide pide eco: 0
 ~│   [pide] U4: bien
-~│   [guardian] preguntas: de pide 1, de otros 1: bien
+~│   [pide] llave de plazo: pedirla 0, entrar en la clase true, dejarla 0, después entra false: bien
+~│   [guardian] preguntas: de pide 2, de otros 2: bien
 ~│   [guardian] retirar a pide el permiso de eco 0, otra vez -1: bien
 ~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien
 ~│   [guardian] pantalla de bloqueo en pantalla

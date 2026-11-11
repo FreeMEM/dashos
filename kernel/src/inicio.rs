@@ -57,7 +57,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(feature = "virt")]
     ("eco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/eco"), &[], &["eco"]),
     #[cfg(feature = "virt")]
-    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[], &["archivos", "eco", "sesiones"]),
+    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.

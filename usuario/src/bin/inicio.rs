@@ -172,7 +172,10 @@ fn principal() -> u64 {
         for j in 0..8 {
             let a = unsafe { *((cab + 8 + j) as *const u8) } as usize;
             if a < n && k < suyas.len() {
-                let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7 | UNA_VEZ, 0);
+                // Con UNA_VEZ: llega sin el derecho de transferirla (S4). Salvo a `sesiones`, que reparte los permisos
+                // (U4, la llave de plazo): a él, con el derecho, para que pueda dar copias.
+                let una_vez = if nombre(nombre_cab) == "sesiones" { 0 } else { UNA_VEZ };
+                let copia = llave_duplicar(u32_en(aparatos + 24 * a + 20), 7 | una_vez, 0);
                 if copia > 0 {
                     suyas[k] = copia as u32;
                     k += 1;

@@ -555,6 +555,23 @@ fn sesiones(memoria: u32) -> bool {
     if admin3 != s::PROTEGIDO {
         println!("  [hostil] sesiones: matar al compositor como administrador da {} (tenía que dar -2)", admin3);
     }
+    // U4: la llave de plazo, sin permiso (`guardian` dice que no).
+    let mut p = [0u8; 17];
+    p[0..4].copy_from_slice(&s::SERVICIO.to_le_bytes());
+    p[4..8].copy_from_slice(&5u32.to_le_bytes());
+    p[12..17].copy_from_slice(b"plazo");
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut llave_plazo = [0u32; 1];
+    let (plazo, kp) = if escribir(SESIONES, &p, &[suyo]) {
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r4, &mut llave_plazo, 2_000_000);
+        (if n == 4 { i32::from_le_bytes(r4) } else { i32::MIN }, k)
+    } else {
+        (i32::MIN, 0)
+    };
+    dashos::cerrar(lectura);
+    if plazo != s::PROTEGIDO || kp != 0 {
+        println!("  [hostil] sesiones: la llave de plazo sin permiso da {} con {} llaves (tenía que dar -2 y ninguna)", plazo, kp);
+    }
     // U6: leer el registro de seguridad, sin ser `guardian`.
     let mut p = [0u8; 12];
     p[0..4].copy_from_slice(&s::REGISTRO.to_le_bytes());
@@ -597,7 +614,7 @@ fn sesiones(memoria: u32) -> bool {
     }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
         && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
-        && admin1 == s::PROTEGIDO && admin2 == s::PROTEGIDO && admin3 == s::PROTEGIDO;
+        && admin1 == s::PROTEGIDO && admin2 == s::PROTEGIDO && admin3 == s::PROTEGIDO && plazo == s::PROTEGIDO && kp == 0;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {
