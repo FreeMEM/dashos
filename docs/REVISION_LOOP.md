@@ -706,3 +706,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   veces seguidas: las tres vencen, el servicio descarta las tres terminadas tardías (sale en el registro) y después
   leer y escribir siguen dando lo que toca; fuera de su tramo, también rechazada. No se probó con el código de antes
   (que con una terminada de otra orden devolvía error).
+
+### 2026-11-11 (tras reiniciar shiva)
+
+- A15, los huecos del disco: mirado. Desde A13 solo abren el disco los programas con tramo (`disco` y `archivos`), y
+  `inicio` da a cada programa la misma marca al relanzarlo (su número más 1): vuelve a su hueco y no se pierden. Lo
+  que sí fallaba: el relanzado pedía su anillo y el servicio se lo negaba ("ya tiene uno"), así que iba sin anillo,
+  más lento. Ahora un anillo nuevo sustituye al viejo: se quita, con lo que tuviera a medias, y deja de atenderse.
+  Prueba hostil (en `disco`): pedir el anillo otra vez da uno nuevo con el que 16 lecturas van bien, y una lectura
+  puesta en el viejo, con aviso, no se atiende en 50 ms. Lo demás de A15 (varias órdenes NVMe a la vez, COMPROBAR
+  por trozos) sigue pendiente.

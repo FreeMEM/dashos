@@ -35,6 +35,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [disco] plazo vencido 3 de 3 veces; después sigue bien: bien
 # U6l: el anillo de peticiones en memoria compartida.
 ~│   [disco] anillo: 16 lecturas y un rechazo: bien
+~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".

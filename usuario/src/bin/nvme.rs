@@ -601,7 +601,19 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         } else if orden == PEDIR_ANILLO {
             // El anillo: una página nueva, proyectada aquí, y el canal de la respuesta se queda para despertarle.
             match clientes.iter().position(|c| c.is_some_and(|c| c.marca == marca)) {
-                Some(h) if clientes[h].is_some_and(|c| c.anillo.is_none()) => {
+                Some(h) => {
+                    // A15: si ya tenía uno, es un cliente relanzado (`inicio` le da la misma marca) o uno que empieza de
+                    // nuevo: el viejo se suelta, con lo que tuviera a medias, y deja de atenderse. Antes, el relanzado
+                    // se quedaba sin anillo.
+                    if let Some((m_viejo, va_viejo, aviso_viejo)) = clientes[h].and_then(|c| c.anillo) {
+                        dashos::memoria_quitar(va_viejo);
+                        dashos::cerrar(m_viejo);
+                        dashos::cerrar(aviso_viejo);
+                        if let Some(c) = clientes[h].as_mut() {
+                            c.anillo = None;
+                        }
+                        println!("  [nvme] anillo nuevo para un cliente que ya tenía uno: el viejo, fuera");
+                    }
                     let m = dashos::memoria_crear(4096);
                     let va = VA_ANILLOS + 4096 * h;
                     if m > 0 && dashos::memoria_proyectar(m as u32, va, true) == 0 {
@@ -616,7 +628,7 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
                         SIN_SITIO
                     }
                 }
-                _ => MAL_FORMADO, // sin abrir antes, o ya con anillo
+                None => MAL_FORMADO, // sin abrir antes
             }
         } else {
             MAL_FORMADO

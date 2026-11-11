@@ -144,11 +144,42 @@ fn principal() -> u64 {
     let (avisos, esperas, bien) = probar_anillo(l2);
     println!("  [disco] anillo: 16 lecturas y un rechazo: {}", si(bien));
     println!("  [disco] (anillo con {} avisos al servicio y {} esperas)", avisos, esperas);
+    // A15: pedir el anillo otra vez, como un cliente relanzado (con la misma marca). Antes se negaba; ahora se da uno
+    // nuevo, que va, y el viejo deja de atenderse.
+    let (l3, v3) = dashos::canal_crear();
+    let otro = pedir(l3, v3, ANILLO, 0, 0, 0).filter(|r| r.estado == 0).and_then(|r| r.ventana).is_some_and(|m| dashos::memoria_proyectar(m, VA_ANILLO2, true) == 0);
+    BASE.store(VA_ANILLO2, core::sync::atomic::Ordering::Relaxed);
+    poner(16384, &[0; 2048]);
+    let nuevo = otro && probar_anillo(l3).2;
+    BASE.store(VA_ANILLO, core::sync::atomic::Ordering::Relaxed);
+    {
+        use core::sync::atomic::Ordering::*;
+        // Una lectura más en el viejo, con aviso: nadie la atiende.
+        let e = 64 + 32 * (17 % 32);
+        palabra(e).store(LEER, Relaxed);
+        palabra(e + 4).store(1, Relaxed);
+        palabra(e + 8).store(0, Relaxed);
+        palabra(e + 12).store(0, Relaxed);
+        palabra(e + 16).store(0, Relaxed);
+        palabra(e + 20).store(7, Relaxed);
+        palabra(4).store(18, Release);
+        let mut p = [0u8; 24];
+        p[..4].copy_from_slice(&MIRAR.to_le_bytes());
+        dashos::canal_escribir(1, &p, &[]);
+    }
+    dashos::dormir_us(50_000);
+    let viejo_fuera = palabra(12).load(core::sync::atomic::Ordering::Acquire) == 17;
+    println!("  [disco] anillo otra vez: el nuevo va: {}; el viejo ya no se atiende: {}", si(nuevo), si(viejo_fuera));
     0
 }
 
+/// Dónde está proyectado el anillo que se usa (A15: después se pide otro).
+static BASE: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(VA_ANILLO);
+const VA_ANILLO2: usize = 0x42_0000_0000;
+
 fn palabra(off: usize) -> &'static core::sync::atomic::AtomicU32 {
-    unsafe { &*((VA_ANILLO + off) as *const core::sync::atomic::AtomicU32) }
+    let base = BASE.load(core::sync::atomic::Ordering::Relaxed);
+    unsafe { &*((base + off) as *const core::sync::atomic::AtomicU32) }
 }
 
 /// Pone en el anillo lecturas de los sectores `0..n` (más una fuera del disco si `malo`), avisa si el servicio
