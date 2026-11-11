@@ -33,10 +33,10 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo a petición con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A9, A10 y A12 |
@@ -450,3 +450,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   clientes cualquiera; `guardian` es del sistema, y soltarlo deja la sesión en negro. Ahora el compositor espera hasta
   50 ms a un cliente con el poder de escritorio (`del_sistema`); a los demás, 5 como antes. Ocho pasadas seguidas
   bien. Mejor aún sería juntar los eventos de un cliente en un mensaje (E8, pendiente).
+- E7 en `archivos` y `nvme`: mirados y no hace falta cambiarlos. Sus bucles ya cierran las llaves que sobran, duermen
+  si no pueden leer y acaban si se cierra el canal; pasarlos al módulo común sería solo cosmético (los dos tienen
+  algo propio en el bucle: el guardado con plazo y los anillos).
+- U3, bloquear a petición y para quien tiene la sesión: orden 16 de `sesiones`, BLOQUEAR. Solo de un programa cuyo
+  usuario tiene la sesión abierta; `sesiones` se lo pasa a `guardian` por su llave de preguntas ("*bloquear" con el
+  nombre del usuario). `guardian` bloquea con la frase y el nombre de ese usuario (antes, una usuaria fija), al
+  acabar su rato de preguntas (bloquear antes paraba las ventanas de otras pruebas). Prueba: `pide` sin cuenta (dos
+  veces) recibe -2; lanzado como Carla con su sesión abierta, 0, y `guardian` bloquea la de Carla y desbloquea con su
+  contraseña tras una mala. Además, `guardian` no se apuntaba alguna vez: al arrancar, las altas de `inicio` llenan la
+  cola de `sesiones` antes de que lea, y los reintentos se gastaban en el acto; ahora espera medio segundo entre
+  ellos, hasta 20 s. Cinco pasadas seguidas bien. Falta la tecla para bloquear (el escritorio) y bloquear por tiempo.

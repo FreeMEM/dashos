@@ -107,6 +107,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] preguntas: de pide 2, de otros 2: bien
 ~│   [guardian] retirar a pide el permiso de eco 0, otra vez -1: bien
 ~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien
+~│   [pide] bloquear sin tener sesión: -2
+~│   [pide] bloquear la sesión de Carla: 0
+~│   [guardian] se bloquea la sesión de Carla
 ~│   [guardian] pantalla de bloqueo en pantalla
 ~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
 ~│   [pide] acción de administrador (comprobar el disco): 0 con 0 problemas: bien

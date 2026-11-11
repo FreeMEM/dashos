@@ -872,6 +872,26 @@ fn principal() -> u64 {
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
                 }
+                BLOQUEAR => {
+                    // U3: bloquear la sesión de su usuario, si la tiene abierta; la pantalla la pone `guardian`.
+                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&c.0)));
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let estado = match cuenta {
+                        Some(&(uid, nombre_cuenta)) if canal_guardian != 0 => {
+                            let mut q = [0u8; PREGUNTA];
+                            q[4..8].copy_from_slice(&uid.to_le_bytes());
+                            q[8..8 + nombre_cuenta.len().min(16)].copy_from_slice(&nombre_cuenta.as_bytes()[..nombre_cuenta.len().min(16)]);
+                            q[24..33].copy_from_slice(b"*bloquear");
+                            if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 { BIEN } else { -1 }
+                        }
+                        _ => {
+                            registro.apuntar(R_ENTRAR, PROTEGIDO, &quien, b"bloquear");
+                            PROTEGIDO
+                        }
+                    };
+                    println!("  [sesiones] {} pide bloquear la sesión: {}", nombre(&quien), estado);
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
                 PREGUNTAS if k >= 2 && yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
                     // `guardian` atiende las preguntas al usuario (U4) por la llave que manda.
                     if canal_guardian != 0 {

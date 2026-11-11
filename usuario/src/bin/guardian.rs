@@ -35,9 +35,9 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const SESIONES: u32 = 2;
-/// La usuaria de la sesión que se bloquea en la prueba, y la frase que eligió al crear la cuenta (S6b).
-const USUARIA: &str = "Carla";
-const FRASE: &str = "Las gaviotas vuelven al puerto";
+/// La frase que eligió cada usuario al crear su cuenta (S6b): sale en su pantalla de bloqueo. Provisional, como las
+/// cuentas de `sesiones`.
+const FRASES: &[(&str, &str)] = &[("Carla", "Las gaviotas vuelven al puerto"), ("Ana", "El faro de la isla")];
 
 /// Una orden a `sesiones` con estas llaves de más (tras la de respuesta); el estado que conteste.
 fn pedir(m: &[u8], mas: &[u32]) -> i32 {
@@ -57,13 +57,17 @@ fn pedir(m: &[u8], mas: &[u32]) -> i32 {
 fn principal() -> u64 {
     let (preguntas, para_sesiones) = dashos::canal_crear();
     // `sesiones` puede tardar en arrancar (lee su registro y sus permisos del disco): se reintenta un rato.
+    // Al arrancar, la cola de `sesiones` puede estar llena (las altas de `inicio` llegan antes de que lea): medio
+    // segundo entre intentos, hasta 20 s.
     let mut apuntado = i32::MIN;
-    for _ in 0..10 {
+    for _ in 0..40 {
         let copia = dashos::llave_duplicar(para_sesiones, u64::MAX, 0);
         apuntado = pedir(&PREGUNTAS.to_le_bytes(), &[copia as u32]);
         if apuntado == 0 {
             break;
         }
+        // La copia no se cierra: si llegó a mandarse, ya no es suya (y el número podría ser ya de otra llave).
+        dashos::dormir_us(500_000);
     }
     dashos::cerrar(para_sesiones);
     if apuntado != 0 {
@@ -74,6 +78,9 @@ fn principal() -> u64 {
     // U5: las acciones de administrador. A `pide` le da la contraseña buena de Ana (administradora); al hostil, la
     // primera vez la de Ana mal escrita y la segunda la buena de Carla, que no es administradora.
     let (mut admin_pide, mut admin_hostil) = (0, 0);
+    // U3: a quién se pidió bloquear. Se bloquea al acabar el rato de preguntas: en la prueba, bloquear antes pararía
+    // las ventanas de las demás pruebas, que no reciben nada con la sesión bloqueada.
+    let mut por_bloquear: Option<alloc::string::String> = None;
     // Atiende 40 s: lo que dura la prueba.
     let fin = dashos::ahora_us() + 40_000_000;
     while dashos::ahora_us() < fin {
@@ -85,6 +92,13 @@ fn principal() -> u64 {
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
+        // U3: bloquear la sesión de un usuario (lo pide uno de sus programas a `sesiones`).
+        if servicio == b"*bloquear" {
+            let usuario = core::str::from_utf8(programa).unwrap_or("?");
+            println!("  [guardian] se bloquea la sesión de {}", usuario);
+            por_bloquear = Some(alloc::string::String::from(usuario));
+            continue;
+        }
         if servicio.first() == Some(&b'*') {
             let (usuario, clave): (&[u8], &[u8]) = match (programa, admin_hostil) {
                 (b"pide", _) => (b"Ana", b"clave de Ana"),
@@ -138,18 +152,19 @@ fn principal() -> u64 {
     println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
     let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
-    let bloqueo = bloquear();
+    // Si nadie pidió bloquear (U3), la prueba no lo vio: mal.
+    let bloqueo = por_bloquear.is_some_and(|u| bloquear(&u));
     if bien && retirado && admin && bloqueo { 0 } else { 1 }
 }
 
 /// Manda a `sesiones` la contraseña de la usuaria para comprobarla (VOLVER: sin tocar su volumen) y la borra. No
 /// espera: devuelve el canal por el que llegará la respuesta (tras una mala, `sesiones` tarda a propósito, y mientras
 /// tanto hay que seguir leyendo al compositor).
-fn volver(clave: &mut String) -> Option<u32> {
+fn volver(usuaria: &str, clave: &mut String) -> Option<u32> {
     // Cuántas letras (no cuáles): para ver una tecla perdida en las pruebas.
     println!("  [guardian] se comprueba una contraseña de {} letras", clave.chars().count());
     let mut m = [0u8; 160];
-    let (u, c) = (USUARIA.as_bytes(), clave.as_bytes());
+    let (u, c) = (usuaria.as_bytes(), clave.as_bytes());
     let c = &c[..c.len().min(128)];
     m[0..4].copy_from_slice(&VOLVER.to_le_bytes());
     m[4..8].copy_from_slice(&(u.len() as u32).to_le_bytes());
@@ -174,7 +189,7 @@ fn volver(clave: &mut String) -> Option<u32> {
 /// si la anterior fue mala, el aviso.
 /// Con `todo`, la pantalla entera; si no, solo la caja y el aviso (lo que cambia al teclear), que es mucho menos: el
 /// compositor suelta a quien tarda en leer (E8). Devuelve la zona pintada.
-fn pintar(px: &mut [u32], ancho: i32, alto: i32, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente) -> Rect {
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente) -> Rect {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     let y = alto / 2 - 90;
     let zona = if todo { Rect::new(0, 0, ancho, alto) } else { Rect::new(0, y + 116, ancho, 100) };
@@ -183,11 +198,12 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, letras: usize, mala: bool, todo
     if todo {
         let x = centrado(titulo, "Sesión bloqueada", 34);
         titulo.dibujar(&mut l, x, y, "Sesión bloqueada", 34, 0xffe7_ecf5);
-        let frase = alloc::format!("\"{}\"", FRASE);
+        let frase = FRASES.iter().find(|f| f.0 == usuaria).map_or("", |f| f.1);
+        let frase = alloc::format!("\"{}\"", frase);
         let x = centrado(fuente, &frase, 22);
         fuente.dibujar(&mut l, x, y + 48, &frase, 22, 0xffff_9d3b);
-        let x = centrado(fuente, USUARIA, 20);
-        fuente.dibujar(&mut l, x, y + 100, USUARIA, 20, 0xff9a_a7bf);
+        let x = centrado(fuente, usuaria, 20);
+        fuente.dibujar(&mut l, x, y + 100, usuaria, 20, 0xff9a_a7bf);
     }
     // La caja de la contraseña, con un punto por letra.
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
@@ -204,7 +220,7 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, letras: usize, mala: bool, todo
 
 /// U3: bloquea la sesión (G5) con su pantalla y espera la contraseña de la usuaria. Devuelve si desbloqueó con la
 /// buena después de una mala, como hace la prueba.
-fn bloquear() -> bool {
+fn bloquear(usuaria: &str) -> bool {
     const SALIDA: u32 = 20;
     const GESTOR: u32 = 21;
     const CERROJO: u32 = 22;
@@ -213,8 +229,8 @@ fn bloquear() -> bool {
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     {
         let mut prueba = alloc::vec![0u32; 800 * 600];
-        pintar(&mut prueba, 800, 600, 20, true, true, &mut fuente, &mut titulo);
-        pintar(&mut prueba, 800, 600, 20, false, true, &mut fuente, &mut titulo);
+        pintar(&mut prueba, 800, 600, usuaria, 20, true, true, &mut fuente, &mut titulo);
+        pintar(&mut prueba, 800, 600, usuaria, 20, false, true, &mut fuente, &mut titulo);
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
@@ -296,7 +312,7 @@ fn bloquear() -> bool {
             repintar = false;
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
             let primera = entera;
-            let z = pintar(px, ancho, alto, clave.chars().count(), ultima_mala, entera, &mut fuente, &mut titulo);
+            let z = pintar(px, ancho, alto, usuaria, clave.chars().count(), ultima_mala, entera, &mut fuente, &mut titulo);
             entera = false;
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
@@ -360,7 +376,7 @@ fn bloquear() -> bool {
                     repintar = true;
                 }
                 Some(Tecla::Intro) => {
-                    esperando = volver(&mut clave);
+                    esperando = volver(usuaria, &mut clave);
                     repintar = true;
                 }
                 _ => {}

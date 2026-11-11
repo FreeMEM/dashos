@@ -86,7 +86,42 @@ fn principal() -> u64 {
     if nombres {
         println!("  [pide] U2, tabla de nombres {}: bien", if progdir { "con PROGDIR" } else { "sin PROGDIR (no salió del disco)" });
     }
-    if bien && nombres && plazo_bien { 0 } else { 1 }
+    // U3: lanzado como Carla (con su sesión abierta), al acabar pide bloquear su sesión; la pantalla la pone `guardian`.
+    // Sin cuenta (el usuario 1, sin sesión), no puede: -2.
+    let con_sesion = nombres_home();
+    let bloquear = {
+        let (lect, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let n = if dashos::canal_escribir(SESIONES, &dashos::protocolo::sesiones::BLOQUEAR.to_le_bytes(), &[suyo]) == 0 {
+            dashos::canal_leer_plazo(lect, &mut r, &mut [], 5_000_000).0
+        } else {
+            -1
+        };
+        dashos::cerrar(lect);
+        let e = if n == 4 { i32::from_le_bytes(r) } else { i32::MIN };
+        if con_sesion {
+            println!("  [pide] bloquear la sesión de Carla: {}", e);
+        } else {
+            println!("  [pide] bloquear sin tener sesión: {}", e);
+        }
+        e == if con_sesion { 0 } else { -2 }
+    };
+    if bien && nombres && plazo_bien && bloquear { 0 } else { 1 }
+}
+
+/// Si su tabla de nombres trae `Home:` (lanzado como un usuario con cuenta).
+fn nombres_home() -> bool {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 256];
+    let n = if dashos::canal_escribir(SESIONES, &NOMBRES.to_le_bytes(), &[suyo]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0
+    } else {
+        -1
+    };
+    dashos::cerrar(lectura);
+    let t = Nombres::desde(&r[..n.max(0) as usize]);
+    let mut sal = [0u8; 64];
+    t.resolver("Home:", &mut sal).is_some()
 }
 
 /// U2: su tabla de nombres. Usuario 1 (sin cuenta): sin `Home:`. Lanzado del disco por `entrada`, con `PROGDIR:` en

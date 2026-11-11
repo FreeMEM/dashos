@@ -64,6 +64,10 @@ pub const RESPUESTA_ADMIN: u32 = 15;
 /// Las acciones de administrador que hay: comprobar el disco (la hace `archivos`) y matar un proceso de otro usuario o
 /// del sistema (su número, u64, tras el nombre de la acción).
 pub const ACCIONES: &[&str] = &["comprobar", "matar"];
+/// De un programa (U3): bloquear la sesión de su usuario (orden). Solo si su usuario tiene la sesión abierta; `sesiones`
+/// se lo pide a `guardian` (por su llave de preguntas, con "*bloquear" y el nombre del usuario en lugar del programa).
+/// Contesta 0, o -2.
+pub const BLOQUEAR: u32 = 16;
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
 /// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
 pub const PREGUNTA: usize = 40;
