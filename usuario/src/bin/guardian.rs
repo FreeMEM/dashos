@@ -154,18 +154,19 @@ fn principal() -> u64 {
     let admin = admin_pide == 2 && admin_hostil == 3;
     println!("  [guardian] acciones de administrador: de pide {}, del hostil {}: {}", admin_pide, admin_hostil, if admin { "bien" } else { "MAL" });
     // Si nadie pidió bloquear (U3), la prueba no lo vio: mal.
-    let bloqueo = por_bloquear.is_some_and(|u| pantalla(Some(&u)));
+    let bloqueo = por_bloquear.is_some_and(|u| pantalla(Some(&u)).is_some());
     // U3: y la pantalla de entrada (en la prueba, la usuaria escribe "Ana" y su contraseña).
-    let entrada = pantalla(None);
+    let quien = pantalla(None);
+    let entrada = quien.is_some();
     // U3: y bloquear por tiempo. En la prueba se sigue tecleando 3 s tras pedir el aviso y luego nada: con un plazo de
     // 2 s, si la entrada no reiniciara la cuenta, el aviso llegaría a los 2 s. Llega después de 5 y se bloquea la sesión
-    // de Ana, que acaba de entrar.
-    let por_tiempo = entrada
+    // de quien acaba de entrar (en la prueba, Ana).
+    let por_tiempo = quien.is_some()
         && match esperar_inactividad(2_000, 30_000_000) {
             Some(ms) => {
                 let bien = ms >= 4_000;
-                println!("  [guardian] sin entrada durante 2 s: aviso tras {} ms, {}", ms, if bien { "bien" } else { "MAL" });
-                let desbloqueado = bien && pantalla(Some("Ana"));
+                println!("  [guardian] sin entrada durante 2 s: aviso tras {} ms, {}; se bloquea la sesión de {}", ms, if bien { "bien" } else { "MAL" }, quien.as_deref().unwrap_or("?"));
+                let desbloqueado = bien && quien.as_deref().and_then(|q| pantalla(Some(q))).is_some();
                 println!("  [guardian] bloqueo por tiempo: {}", if desbloqueado { "bien" } else { "MAL" });
                 desbloqueado
             }
@@ -287,8 +288,8 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
 /// U3: bloquea la sesión (G5) con su pantalla y espera la contraseña de la usuaria. Devuelve si desbloqueó con la
 /// buena después de una mala, como hace la prueba.
 /// La pantalla de bloqueo de `usuaria` (U3), o la de entrada con `None`: primero el nombre, luego la contraseña. Al
-/// acabar se despide del compositor, para poder volver a conectarse.
-fn pantalla(usuaria: Option<&str>) -> bool {
+/// acabar se despide del compositor, para poder volver a conectarse. Devuelve quién entró o desbloqueó, si fue bien.
+fn pantalla(usuaria: Option<&str>) -> Option<String> {
     let r = pantalla_dentro(usuaria);
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     // Y la memoria de la pantalla fuera de su sitio, para la siguiente.
@@ -296,7 +297,7 @@ fn pantalla(usuaria: Option<&str>) -> bool {
     r
 }
 
-fn pantalla_dentro(usuaria: Option<&str>) -> bool {
+fn pantalla_dentro(usuaria: Option<&str>) -> Option<String> {
     let entrada = usuaria.is_none();
     let mut nombre = String::from(usuaria.unwrap_or(""));
     let mut en_nombre = entrada;
@@ -313,9 +314,9 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
-        return false;
+        return None;
     };
-    let Some(globales) = c.globales() else { return false };
+    let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
     let (Some(gc), Some(gs), Some(ga), Some(go), Some(gl)) = (
         global("wl_compositor"),
@@ -325,7 +326,7 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
         global("ext_session_lock_manager_v1"),
     ) else {
         println!("  [guardian] el compositor no le da el bloqueo");
-        return false;
+        return None;
     };
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
@@ -375,11 +376,11 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
                         // En la prueba, antes, un usuario que no existe: una mala.
                         let bien = malas == 1;
                         println!("  [guardian] entra {} tras {} intento malo: {}", nombre, malas, if bien { "bien" } else { "MAL" });
-                        return bien;
+                        return bien.then(|| nombre.clone());
                     }
                     let bien = malas == 1;
                     println!("  [guardian] desbloqueado con la contraseña buena tras {} mala: {}", malas, if bien { "bien" } else { "MAL" });
-                    return bien;
+                    return bien.then(|| nombre.clone());
                 }
                 malas += 1;
                 ultima_mala = true;
@@ -397,7 +398,7 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
             (false, true) => c.evento_plazo(1),
             (false, false) => c.evento().ok_or(()).map(Some),
         };
-        let Ok(ev) = ev else { return false };
+        let Ok(ev) = ev else { return None };
         if ev.is_none() && repintar && buf {
             repintar = false;
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
@@ -426,7 +427,7 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
             (CERROJO, ext_session_lock_v1::ev::LOCKED) => println!("  [guardian] sesión bloqueada"),
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
                 println!("  [guardian] el compositor no deja bloquear");
-                return false;
+                return None;
             }
             (SUP_BLOQUEO, ext_session_lock_surface_v1::ev::CONFIGURE) => {
                 let mut e = Escritor::new();
@@ -438,7 +439,7 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
                     let m = dashos::memoria_crear(tamano);
                     if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA, true) != 0 {
                         println!("  [guardian] sin memoria para la pantalla");
-                        return false;
+                        return None;
                     }
                     let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                     let mut e = Escritor::new();
@@ -484,7 +485,7 @@ fn pantalla_dentro(usuaria: Option<&str>) -> bool {
             },
             (1, wl_display::ev::ERROR) => {
                 println!("  [guardian] error de protocolo");
-                return false;
+                return None;
             }
             _ => {}
         }

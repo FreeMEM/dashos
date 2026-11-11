@@ -518,3 +518,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   en la pantalla de entrada. Era un abrazo mortal: el cliente esperaba sitio en la cola del compositor sin leer la
   suya, y el compositor esperaba a que leyera para seguir. Subir el margen a 1 s no lo arreglaba. Ahora el cliente
   (`ventana_cliente`), mientras espera sitio, recoge lo que le llega: 8 de 8 pasadas bien.
+- U3: la pantalla de `guardian` devuelve quién entró o desbloqueó, y el bloqueo por tiempo es para esa usuaria, no
+  para una fija. La tecla para bloquear queda para el escritorio (S10b): será él quien la atienda y pida BLOQUEAR.
