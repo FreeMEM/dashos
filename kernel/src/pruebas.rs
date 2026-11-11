@@ -474,10 +474,11 @@ fn prueba_plazo() {
     }
     let n = VECES.load(Ordering::Acquire).min(ACTIVACIONES);
     let periodo = reloj::frecuencia() / 100;
-    // Desviación entre activaciones seguidas respecto al periodo (de la segunda en adelante: la primera llega
-    // cuando se crea el hilo, a mitad de un periodo).
+    // Desviación entre activaciones seguidas respecto al periodo, desde la primera: al crearlo se avisa a su núcleo, que
+    // lo pone a correr en el acto. Antes lo cogía en su tic, a veces casi al final del primer periodo, y le tocaban
+    // dos turnos seguidos (el primer hueco, 1 ms en lugar de 10) y el tercero llegaba antes de tiempo.
     let mut retraso_max = 0u64;
-    for k in 2..n {
+    for k in 1..n {
         let d = MOMENTOS[k].load(Ordering::Relaxed) - MOMENTOS[k - 1].load(Ordering::Relaxed);
         retraso_max = retraso_max.max(d.abs_diff(periodo));
     }

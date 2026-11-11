@@ -575,6 +575,13 @@ pub fn crear_plazo(f: extern "C" fn(usize), arg: usize, nucleo: usize, capacidad
     if !puesto {
         nc.prometido -= parte;
     }
+    drop(g);
+    // Que su núcleo lo vea ya, aunque esté ocupado: si no, lo cogía en su siguiente tic (hasta 10 ms), casi al final
+    // de su primer periodo, y al renovarse le tocaban dos turnos seguidos y el tercero llegaba antes de tiempo. Es lo
+    // que hacía fallar C14 de vez en cuando (la desviación, de 455 a 948 µs con tope 1.000; medido, 2026-11-12).
+    if puesto && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
+        crate::gic::avisar(nucleo as u32, crate::gic::SGI_PLANIFICAR);
+    }
     Some(id)
 }
 

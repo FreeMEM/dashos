@@ -823,3 +823,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - En esas pasadas salieron dos fallos sueltos que no tocan el ITS: C14 (el de siempre, 1 de 4) y el paso 5 de
   `grupos`, la misma carrera que el 13 (lo de un proceso que acaba se devuelve al grupo cuando su núcleo lo recoge).
   El 5 espera ahora como el 13, hasta 200 ms (`vuelve_a_cero`).
+- C14, el fallo de vez en cuando, con causa: `crear_plazo` ponía el hilo de plazo en la cola de su núcleo (el 1, con
+  tres hilos justos ocupados) sin avisarle, y el núcleo no lo veía hasta su siguiente tic, hasta 10 ms después, casi
+  al final del primer periodo. Al acabar ese primer turno el periodo ya se había renovado, así que le tocaba otro en
+  el acto (primer hueco, 1 ms en lugar de 10) y el tercero llegaba antes de tiempo. La prueba se saltaba el primer
+  hueco, pero el segundo salía con 455 a 948 µs de desviación, al borde del tope de 1.000. Medido con una traza
+  temporal (C14 repetida 30 veces en un arranque): antes, el primer hueco de 1 ms en las 29 rondas limpias y la peor
+  desviación de 455 a 948 µs; con el aviso (`gic::avisar` con `SGI_PLANIFICAR` al crear), primer hueco de 10 ms y peor
+  desviación de 11 a 507 µs (casi todas por debajo de 50; las de 300 a 500 son retrasos sueltos de QEMU que el
+  siguiente compensa). La prueba mide ahora desde el primer hueco (con el fallo de antes daría unos 9.000 µs). Si el
+  "un tic tarde" (9.985 µs) visto antes venía de aquí no se ha podido ver: no se repitió. `make prueba` 5 veces bien
+  (C14: 108 y 96 µs de desviación en las dos últimas), `make arranque-virt` bien.
