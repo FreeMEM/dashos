@@ -24,6 +24,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_reloj();
     kprintln!("C9: {} núcleos más en marcha: {}", nucleos, if nucleos == 3 { "bien" } else { "MAL" });
     prueba_mapa();
+    prueba_arranque();
     prueba_dma();
     prueba_hilos();
     prueba_procesos();
@@ -911,6 +912,44 @@ fn prueba_mapa() {
     }
     drop(pila);
     kprintln!("C34: mapa del kernel con W^X y guardas {}", if bien { "bien" } else { "MAL" });
+}
+
+/// S6: el arranque endurecido. WXN puesto en SCTLR (la CPU no ejecuta nada que se pueda escribir), y la memoria
+/// que se da al montón y a las pilas llega a cero: se ensucian una pila y un bloque grande, se sueltan, y lo que se
+/// pide después (casi siempre las mismas páginas) no trae nada.
+fn prueba_arranque() {
+    let (sctlr, _, _) = mmu::estado();
+    let wxn = sctlr & (1 << 19) != 0;
+    let mut sucias = 0usize;
+    let mut mismas = 0;
+    for _ in 0..2 {
+        let pila = mapa::pila_nueva();
+        let Some(p) = pila.as_ref() else { break };
+        let fis = mapa::traducir_fisica(p.tope() - 8);
+        let abajo = p.tope() - mapa::PILA;
+        unsafe { core::ptr::write_bytes(abajo as *mut u8, 0xAA, mapa::PILA) };
+        drop(pila);
+        let otra = mapa::pila_nueva();
+        if let Some(q) = otra.as_ref() {
+            mismas += (mapa::traducir_fisica(q.tope() - 8) == fis) as usize;
+            let s = unsafe { core::slice::from_raw_parts((q.tope() - mapa::PILA) as *const u8, mapa::PILA) };
+            sucias += s.iter().filter(|&&b| b != 0).count();
+        }
+    }
+    let mut grande = alloc::vec![0xAAu8; 64 * 1024];
+    let antes = grande.as_ptr() as usize;
+    grande.fill(0x55);
+    drop(grande);
+    let l = core::alloc::Layout::from_size_align(64 * 1024, 1).unwrap();
+    let otra = unsafe { alloc::alloc::alloc(l) };
+    let misma_grande = otra as usize == antes;
+    if !otra.is_null() {
+        sucias += unsafe { core::slice::from_raw_parts(otra, l.size()) }.iter().filter(|&&b| b != 0).count();
+        unsafe { alloc::alloc::dealloc(otra, l) };
+    }
+    kprintln!("  WXN {}; pilas con las mismas páginas {} de 2, bloque grande el mismo {}; bytes sucios {}",
+        if wxn { "puesto" } else { "sin poner" }, mismas, misma_grande, sucias);
+    kprintln!("S6: arranque endurecido {}", if wxn && sucias == 0 { "bien" } else { "MAL" });
 }
 
 /// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y

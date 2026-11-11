@@ -26,6 +26,7 @@ R10: azar con ChaCha20 bien
 C8: interrupciones bien
 C9: 3 núcleos más en marcha: bien
 C34: mapa del kernel con W^X y guardas bien
+S6: arranque endurecido bien
 C38: el kernel y los procesos, fuera del alcance del DMA: bien
 C10: hilos bien
   proceso con ASID 1 en el núcleo 2

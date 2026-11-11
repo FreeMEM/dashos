@@ -245,6 +245,8 @@ pub fn pila_nueva() -> Option<Pila> {
             }
             return None;
         };
+        // S6: a cero; si no, el hilo nuevo podría leer en su pila lo que dejó el anterior.
+        unsafe { core::ptr::write_bytes(mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
         pila.paginas[i] = p;
     }
     for (i, &p) in pila.paginas.iter().enumerate() {
@@ -283,7 +285,8 @@ pub fn activar() {
     let ttbr1: u64;
     unsafe { core::arch::asm!("mrs {}, ttbr1_el1", out(reg) ttbr1) };
     if ttbr1 & DIRECCION == l1 {
-        return; // ya está (los núcleos 1 a 3 cambian en arranque.s)
+        wxn(); // ya está (los núcleos 1 a 3 cambian en arranque.s)
+        return;
     }
     let vacia = crate::espacio::vacia_fisica();
     let arranque = mmu::fisica(unsafe { va(&__tabla_l1) }) as u64;
@@ -298,6 +301,25 @@ pub fn activar() {
     } else {
         unsafe { cambiar_ttbr1(l1, vacia, arranque) };
     }
+    wxn();
+}
+
+/// S6: con el mapa del kernel puesto (ya sin bloques del arranque que se escriben y ejecutan), la CPU hace cumplir
+/// W^X ella misma: con SCTLR_EL1.WXN, lo que se puede escribir nunca se ejecuta, en EL1 ni en EL0, aunque una
+/// entrada de las tablas se equivoque. El bit puede guardarse en la TLB: se vacía.
+fn wxn() {
+    unsafe {
+        core::arch::asm!(
+            "mrs {t}, sctlr_el1",
+            "orr {t}, {t}, #(1 << 19)",
+            "msr sctlr_el1, {t}",
+            "isb",
+            "tlbi vmalle1",
+            "dsb nsh",
+            "isb",
+            t = out(reg) _,
+        )
+    };
 }
 
 /// Con los cuatro núcleos ya en el mapa nuevo, borra las tablas del arranque: la proyección identidad deja de existir

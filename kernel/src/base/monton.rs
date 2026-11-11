@@ -42,6 +42,8 @@ unsafe impl GlobalAlloc for Asignador {
                 let Some(fis) = paginas().pagina(Zona::Normal) else { return ptr::null_mut() };
                 m.paginas_pequenas += 1;
                 let base = mmu::virt(fis as usize);
+                // S6: la página entra a cero; si no, un bloque recién dado podría traer datos de otro dueño.
+                unsafe { ptr::write_bytes(base as *mut u8, 0, PAGINA as usize) };
                 let bloque = MINIMO << c;
                 // Encadenar los bloques de la página nueva.
                 let mut off = 0;
@@ -59,10 +61,23 @@ unsafe impl GlobalAlloc for Asignador {
             let n = l.size().div_ceil(PAGINA as usize);
             let alin = (l.align() / PAGINA as usize).max(1);
             match paginas().reservar(Zona::Normal, n, alin) {
-                Some(fis) => mmu::virt(fis as usize) as *mut u8,
+                Some(fis) => {
+                    let p = mmu::virt(fis as usize) as *mut u8;
+                    unsafe { ptr::write_bytes(p, 0, n * PAGINA as usize) }; // S6, como arriba
+                    p
+                }
                 None => ptr::null_mut(),
             }
         }
+    }
+
+    unsafe fn alloc_zeroed(&self, l: Layout) -> *mut u8 {
+        // Lo grande ya sale a cero de `alloc`: no ponerlo a cero dos veces.
+        let p = unsafe { self.alloc(l) };
+        if !p.is_null() && l.size().max(l.align()) <= MAXIMO {
+            unsafe { ptr::write_bytes(p, 0, l.size()) };
+        }
+        p
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {

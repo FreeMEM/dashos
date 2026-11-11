@@ -31,15 +31,15 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R7 | Banco fiable | B1 a B4 | hecho |
 | R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho (A5, la mitad: falta copiar sin búfer intermedio) |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
-| R10 | Azar de la placa y arranque endurecido | S5, S6 | azar hecho (falta RNG200 y arranque) |
+| R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
 | R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | en parte (ver bitácora) |
-| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | E6, E9 y casi todo E8 (E7, pendiente) |
+| R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E7 sin archivos ni NVMe; E8 sin temporizador de cuadro) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar y lanzar desde el disco |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | primera parte (entrar y salir con el volumen del usuario) |
 | R16 | Permisos por aplicación | U4 | primera parte (repartir y revocar llaves de servicios) |
 | R17 | `guardian` y `selector` | U5 | primera parte (ceder asas; selector de prueba) |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | pendiente |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -244,3 +244,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   llave"), y tiene baja con su aviso de fin. Para eso `inicio` da a `sesiones` su copia propia del canal sin marca.
   El disco trae también `Programas/pide`: lanzado desde ahí, pide la llave de `eco` por el canal con que nació y
   repite la prueba de U4 con su número nuevo (65537); llegan las bajas de `hola` (65536) y de `pide`.
+- R10, segunda parte (S6, arranque endurecido): al bajar de EL2, `CPTR_EL2` queda solo con sus bits RES1 y
+  `MDCR_EL2` a cero salvo HPMN (nada atrapa hacia EL2, donde no hay quien atienda); si el firmware entra ya en EL1,
+  SCTLR_EL1 se pone al valor conocido, no se hereda. Con el mapa del kernel puesto, cada núcleo enciende
+  SCTLR_EL1.WXN: la CPU no ejecuta nada que se pueda escribir, en EL1 ni en EL0 (antes no se puede: los bloques del
+  arranque se escriben y ejecutan). El montón pone a cero cada página nueva y cada bloque grande, y las pilas nuevas
+  salen a cero; `alloc_zeroed` no repite el borrado de lo grande. Prueba hostil (S6 en `pruebas.rs`): ensucia dos
+  pilas y un bloque de 64 KB, los suelta y pide otra vez; vuelven las mismas páginas (2 de 2 y el mismo bloque) y
+  sin un byte sucio; WXN puesto. Sin medir: el coste es un borrado de 4 KB por página nueva del montón y uno por
+  página de pila nueva, fuera de los caminos que se miden. Falta probarlo en la placa (con el firmware real).

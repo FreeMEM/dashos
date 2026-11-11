@@ -32,6 +32,14 @@
     msr     S3_4_C12_C9_5, x2
     isb
 8:
+    // S6: no fiarse de lo que deje el firmware en EL2. CPTR_EL2 solo con sus bits RES1: ni la coma flotante ni los
+    // registros de control atrapan hacia EL2, donde no hay quien atienda. MDCR_EL2 a cero salvo HPMN (todos los
+    // contadores de rendimiento para EL1): la depuración y los contadores no atrapan hacia EL2.
+    mov     x2, #0x33ff
+    msr     cptr_el2, x2
+    mrs     x2, pmcr_el0
+    ubfx    x2, x2, #11, #5             // PMCR_EL0.N
+    msr     mdcr_el2, x2
 
     ldr     x2, =0x30D00800             // SCTLR_EL1: bits RES1, little-endian; MMU y cachés apagadas
     msr     sctlr_el1, x2
@@ -42,8 +50,7 @@
     msr     elr_el2, x2
     eret
 
-9:  mrs     x2, sctlr_el1               // el firmware ya nos dejó en EL1: little-endian aquí
-    bic     x2, x2, #(3 << 24)
+9:  ldr     x2, =0x30D00800             // el firmware ya nos dejó en EL1: SCTLR conocido, no el suyo (S6)
     msr     sctlr_el1, x2
     isb
     b       \destino
