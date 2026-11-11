@@ -1553,11 +1553,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         COMPROBAR => {
             // FS8: a & 1, leer también los datos. Los problemas, uno por línea, van a la ventana hasta que se llene.
             let opciones = redoxfs::check::Options { data: p.a & 1 != 0 };
-            // Lo que está en cuarentena (paso B) se vería como bloques perdidos: primero, al disco.
-            let e = guardar(fs);
-            if e != BIEN {
-                return mal(e);
-            }
+            // Lo que está en cuarentena (paso B) el comprobador lo cuenta como libre pendiente (A11): sin guardar antes.
             match fs.tx(|tx| redoxfs::check::check(tx, opciones, true)) {
                 Ok(informe) => {
                     let v = c.ventana();

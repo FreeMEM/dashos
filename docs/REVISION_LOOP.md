@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -625,3 +625,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (dentro del ruido). Panel al día (paso A7).
 - Falta: leer sin viaje entre dos lecturas que no caben en 8 trozos (hoy, un programa que relee 8 MB pide otra vez);
   proyectar ficheros (mmap) sobre esto; y medirlo en la placa.
+- A11, el comprobador y la cuarentena: con el guardado diferido, lo soltado espera en cuarentena hasta guardar y
+  `check` lo contaba como perdido. Ahora lo cuenta como libre pendiente (la del sistema de archivos y la de la
+  transacción). Si la cuarentena miente, lo dice: un bloque en uso sale como "en uso pero libre", uno que el
+  asignador ya tiene libre sale con un problema nuevo (`QuarantineFree`, se liberaría dos veces) y uno fuera del
+  disco, como fuera. COMPROBAR ya no guarda antes. Y la reparación guarda antes de rehacer el asignador: sin eso, al
+  guardar después habría soltado otra vez lo de la cuarentena (en la prueba, 71 bloques libres dos veces).
+- Pruebas (`tests_deferred`): comprobar antes de guardar sale limpio y con los mismos usados y libres que después;
+  la cuarentena con un bloque en uso, uno ya libre y uno fuera del disco da cada vez su problema; reparar con
+  cuarentena deja el disco limpio. Las tres fallan sin el cambio. En `ficheros`, antes de FS8 se escribe y borra un
+  fichero de 300 KB y se comprueba en seguida: bien. Que en ese momento la cuarentena tuviera algo es lo esperable,
+  pero no está comprobado dentro de QEMU. RedoxFS: 146 pruebas bien.

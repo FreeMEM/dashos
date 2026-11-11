@@ -94,6 +94,9 @@ pub enum Problem {
     Leaked { count: u64 },
     /// Pointers to blocks, or free blocks, outside the file system.
     Outside { count: u64 },
+    /// DashOS, A11: blocks waiting in quarantine (deferred saving) that the allocator already has as free: saving
+    /// would free them twice.
+    QuarantineFree { count: u64, first: u64 },
     /// The list of snapshots, or a dead list, cannot be read.
     Snapshots,
     /// Part of the tree of a snapshot cannot be read.
@@ -165,6 +168,9 @@ impl fmt::Display for Problem {
             }
             Problem::Leaked { count } => write!(f, "{count} blocks lost"),
             Problem::Outside { count } => write!(f, "{count} blocks outside the file system"),
+            Problem::QuarantineFree { count, first } => {
+                write!(f, "{count} blocks in quarantine but free (first: {first})")
+            }
             Problem::Snapshots => write!(f, "list of snapshots unreadable"),
             Problem::Snapshot { name } => write!(f, "snapshot {name:?}: tree unreadable"),
             Problem::Dead { count } => {
@@ -1090,6 +1096,37 @@ impl<D: Disk> Checker<'_, '_, D> {
                     }
                 }
             }
+        }
+        // DashOS, A11: what waits in quarantine (deferred saving: freed, but the durable state on the disk still uses
+        // it) becomes free when saved. Pending free, not lost. In use as well is as bad as free and in use.
+        let mut quarantine_free = 0;
+        let mut first_twice = 0;
+        for addr in self.tx.fs.quarantine.iter().chain(self.tx.quarantine.iter()) {
+            for i in addr.index()..addr.index() + addr.level().blocks::<u64>() {
+                if !(FIRST_BLOCK..total).contains(&i) {
+                    outside += 1;
+                    continue;
+                }
+                let bit = 1 << (i % 64);
+                if free[(i / 64) as usize] & bit == 0 {
+                    free[(i / 64) as usize] |= bit;
+                    free_count += 1;
+                    if usage.is_set(i) {
+                        if used_but_free == 0 {
+                            first_used = i;
+                        }
+                        used_but_free += 1;
+                    }
+                } else {
+                    if quarantine_free == 0 {
+                        first_twice = i;
+                    }
+                    quarantine_free += 1;
+                }
+            }
+        }
+        if quarantine_free > 0 {
+            self.problems.push(Problem::QuarantineFree { count: quarantine_free, first: first_twice });
         }
         let mut leaked = 0;
         for i in FIRST_BLOCK..total {

@@ -520,3 +520,74 @@ fn perfil_partes() {
     }
     eprintln!("borrar {:?}", t.elapsed() / 500);
 }
+
+fn check_all<D: Disk>(fs: &mut FileSystem<D>) -> check::Report {
+    fs.tx(|tx| check::check(tx, Options { data: true }, true)).unwrap()
+}
+
+/// A11: what waits in quarantine is free pending, not lost. Checked before saving, the same as after.
+#[test]
+fn check_sees_the_quarantine_as_free() {
+    let mut fs = new_fs();
+    put(&mut fs, "a", &noise(300_000, 21));
+    put(&mut fs, "b", &noise(50_000, 22));
+    fs.deferred = true;
+    remove(&mut fs, "a");
+    put(&mut fs, "c", &noise(20_000, 23));
+    assert!(!fs.quarantine.is_empty());
+    let before = check_all(&mut fs);
+    assert!(before.is_clean(), "{:#?}", before.problems);
+    fs.durable().unwrap();
+    assert!(fs.quarantine.is_empty());
+    let after = check_all(&mut fs);
+    assert!(after.is_clean(), "{:#?}", after.problems);
+    assert_eq!((before.used, before.free), (after.used, after.free));
+}
+
+/// A11, hostile: a quarantine that lies (a block in use, one already free, one outside the disk) does not pass as
+/// free pending.
+#[test]
+fn check_with_a_bad_quarantine() {
+    use crate::check::Problem;
+    use crate::{BlockAddr, BlockLevel, BlockMeta};
+    let mut fs = new_fs();
+    put(&mut fs, "a", &noise(100_000, 31));
+    fs.deferred = true;
+    let report = check_all(&mut fs);
+    let first = check::FIRST_BLOCK;
+    let end = report.total + first;
+    let used = (first..end).find(|&i| report.is_used(i)).unwrap();
+    let free = *fs.allocator.levels().iter().find_map(|l| l.iter().next()).unwrap();
+    let at = |i| unsafe { BlockAddr::new(i, BlockMeta::new(BlockLevel(0))) };
+    for (addr, want) in [
+        (at(used), Problem::UsedButFree { count: 1, first: used }),
+        (at(free), Problem::QuarantineFree { count: 1, first: free }),
+        (at(end + 10), Problem::Outside { count: 1 }),
+    ] {
+        fs.quarantine.push(addr);
+        assert_eq!(check_all(&mut fs).problems, [want]);
+        fs.quarantine.clear();
+    }
+    assert!(check_all(&mut fs).is_clean());
+}
+
+/// A11: repairing with blocks in quarantine saves first; if not, the rebuilt allocator would have them free and
+/// saving would free them again.
+#[test]
+fn repair_with_quarantine() {
+    let mut fs = new_fs();
+    put(&mut fs, "a", &noise(200_000, 41));
+    put(&mut fs, "b", &noise(30_000, 42));
+    fs.deferred = true;
+    remove(&mut fs, "a");
+    assert!(!fs.quarantine.is_empty());
+    // A lost block, so that the repair rebuilds the allocator.
+    fs.allocator.allocate(crate::BlockMeta::default()).unwrap();
+    let (before, after) = crate::repair::repair(&mut fs, Options { data: true }, true, "Perdidos").unwrap();
+    assert!(matches!(before.problems[..], [check::Problem::Leaked { count: 1 }]), "{:#?}", before.problems);
+    let after = after.unwrap();
+    assert!(after.is_clean(), "{:#?}", after.problems);
+    fs.durable().unwrap();
+    assert!(check_all(&mut fs).is_clean());
+    assert_eq!(get(&mut fs, "b"), Some(noise(30_000, 42)));
+}

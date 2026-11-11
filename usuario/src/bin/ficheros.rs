@@ -393,6 +393,14 @@ fn principal() -> u64 {
         si(bits)
     );
 
+    // A11: lo recién borrado espera en cuarentena hasta guardar. COMPROBAR ya no guarda antes: lo cuenta como libre
+    // pendiente, no como perdido.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    if let Some(a) = hacer(&c, escrito.asa, "a11.bin", 300 * 1024, 3) {
+        c.pedir(CERRAR, a, 0, 0, "");
+        c.pedir(BORRAR, escrito.asa, 0, 0, "a11.bin");
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
     // FS8: el disco entero, datos incluidos, tras todo lo anterior: ni un problema, ni un bloque perdido.
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");

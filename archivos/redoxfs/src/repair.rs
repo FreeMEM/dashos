@@ -36,6 +36,9 @@ pub fn repair<D: Disk>(
     allocator_read: bool,
     lost: &str,
 ) -> Result<(Report, Option<Report>)> {
+    // DashOS, A11: the new allocator is made from what is in use; blocks still in quarantine would be freed again
+    // when saving. Saved first, the quarantine is empty.
+    fs.durable()?;
     let before = fs.tx(|tx| check::check(tx, opts, allocator_read))?;
     if before.is_clean() {
         return Ok((before, None));
@@ -217,6 +220,7 @@ fn fix<D: Disk>(tx: &mut Transaction<D>, report: &Report, lost: &str) -> Result<
             | Problem::UsedButFree { .. }
             | Problem::Leaked { .. }
             | Problem::Outside { .. }
+            | Problem::QuarantineFree { .. }
             | Problem::Snapshot { .. }
             | Problem::Dead { .. }
             | Problem::VolumesCopy
