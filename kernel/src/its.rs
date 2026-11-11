@@ -46,9 +46,20 @@ struct Its {
     aparatos: u64,
     siguiente: u32,
     rd_destino: u64,
+    /// Una orden no se leyó a tiempo, o la cola se paró: ya no se le manda nada (sus MSI se niegan).
+    roto: bool,
 }
 
+/// Lo más que se espera a que el ITS lea una orden, en µs. Se espera con el cerrojo y las interrupciones cerradas, y se
+/// llega desde un programa (asociar o soltar una interrupción): antes, hasta un millón de lecturas, unos 195 ms en QEMU
+/// (S2 de docs/REVISION_ARQUITECTURA.md). Un ITS lee sus órdenes en microsegundos.
+const PLAZO_US: u64 = 1_000;
+
 static ITS: Cerrojo<Option<Its>> = Cerrojo::new(None);
+
+/// Para la prueba de S2: la orden siguiente no se le da al ITS (no se mueve CWRITER), como un ITS que no la lee.
+#[cfg(feature = "pruebas")]
+pub static ATASCAR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
 impl Its {
     fn r(&self, off: usize) -> RegLe32 {
@@ -60,27 +71,42 @@ impl Its {
         self.r(off + 4).escribir((v >> 32) as u32);
     }
 
-    /// Pone una orden de 4 palabras de 64 bits en la cola y espera a que el ITS la lea.
+    /// Pone una orden de 4 palabras de 64 bits en la cola y espera a que el ITS la lea, como mucho `PLAZO_US`. Si no
+    /// la lee, el ITS queda por roto: no se sabe por dónde va su cola.
     fn orden(&mut self, palabras: [u64; 4]) -> bool {
+        if self.roto {
+            return false;
+        }
         let mut b = [0u8; 32];
         for (i, p) in palabras.iter().enumerate() {
             b[8 * i..8 * i + 8].copy_from_slice(&p.to_le_bytes());
         }
         memoria::escribir_fisica(self.cola + self.escrita, &b);
         self.escrita = (self.escrita + 32) % memoria::PAGINA;
-        self.r(GITS_CWRITER).escribir(self.escrita as u32);
-        for _ in 0..1_000_000 {
+        #[cfg(feature = "pruebas")]
+        let atascar = ATASCAR.load(core::sync::atomic::Ordering::Relaxed);
+        #[cfg(not(feature = "pruebas"))]
+        let atascar = false;
+        if !atascar {
+            self.r(GITS_CWRITER).escribir(self.escrita as u32);
+        }
+        let fin = crate::reloj::ahora() + PLAZO_US * crate::reloj::frecuencia() / 1_000_000;
+        loop {
             let leida = self.r(GITS_CREADR).leer();
             if leida & 1 != 0 {
-                kprintln!("its: la cola de órdenes se paró (CREADR {:#x})", leida);
+                kprintln!("its: la cola de órdenes se paró (CREADR {:#x}): no se usa más", leida);
+                self.roto = true;
                 return false;
             }
             if leida as u64 & 0xf_ffe0 == self.escrita {
                 return true;
             }
+            if crate::reloj::ahora() > fin {
+                kprintln!("its: la orden no se lee en {} µs: no se usa más", PLAZO_US);
+                self.roto = true;
+                return false;
+            }
         }
-        kprintln!("its: la orden no se lee");
-        false
     }
 
     fn sync(&mut self) -> bool {
@@ -111,14 +137,11 @@ pub fn iniciar(d: &Dtb) -> bool {
         return false;
     };
     let base = crate::mmu::virt(fisica as usize);
-    let mut its = Its { base, config, fisica, cola: 0, escrita: 0, itt: 0, aparatos: 0, siguiente: PRIMERA_LPI, rd_destino: 0 };
-    // Apagado y quieto antes de tocar sus tablas.
+    let mut its = Its { base, config, fisica, cola: 0, escrita: 0, itt: 0, aparatos: 0, siguiente: PRIMERA_LPI, rd_destino: 0, roto: false };
+    // Apagado y quieto antes de tocar sus tablas (al arrancar: hasta 10 ms).
     its.r(GITS_CTLR).escribir(0);
-    for _ in 0..1_000_000 {
-        if its.r(GITS_CTLR).leer() & CTLR_QUIETO != 0 {
-            break;
-        }
-    }
+    let fin = crate::reloj::ahora() + crate::reloj::frecuencia() / 100;
+    while its.r(GITS_CTLR).leer() & CTLR_QUIETO == 0 && crate::reloj::ahora() < fin {}
     let typer = its.r(GITS_TYPER).leer();
     // PTA (bit 19): la colección apunta al redistribuidor por su dirección física (en unidades de 64 KB) o por su
     // número de procesador.
@@ -170,7 +193,7 @@ pub fn encender(lpi: u32, si: bool) {
 pub fn msi(rid: u32) -> Option<(u64, u32, u32)> {
     let mut g = ITS.tomar();
     let its = g.as_mut()?;
-    if its.aparatos >= APARATOS_ITT || its.siguiente >= PRIMERA_LPI + crate::interrupciones::LPIS {
+    if its.roto || its.aparatos >= APARATOS_ITT || its.siguiente >= PRIMERA_LPI + crate::interrupciones::LPIS {
         return None;
     }
     let itt = its.itt + its.aparatos * TAM_ITT;

@@ -49,7 +49,38 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_lanzador();
     prueba_reparto();
     prueba_dma_proceso();
+    prueba_its();
     prueba_desborde();
+}
+
+/// S2 (R11): una orden que el ITS no lee no puede tener al núcleo esperando con el cerrojo y las interrupciones
+/// cerradas. Solo con GIC v3 (en `make prueba-virt`, que va con GIC=3); con el v2 no hay ITS y no sale nada.
+fn prueba_its() {
+    if !crate::gic::es_v3() {
+        return;
+    }
+    let Some(d) = dtb::Dtb::desde() else { return };
+    if !crate::its::iniciar(&d) {
+        kprintln!("S2 ITS: MAL, no arranca");
+        return;
+    }
+    let us = |c: u64| c * 1_000_000 / crate::reloj::frecuencia();
+    let lpi = crate::its::PRIMERA_LPI;
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, true);
+    let normal = us(crate::reloj::ahora() - t0);
+    crate::its::ATASCAR.store(true, core::sync::atomic::Ordering::Relaxed);
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, false);
+    let atascada = us(crate::reloj::ahora() - t0);
+    crate::its::ATASCAR.store(false, core::sync::atomic::Ordering::Relaxed);
+    let t0 = crate::reloj::ahora();
+    crate::its::encender(lpi, true);
+    let despues = us(crate::reloj::ahora() - t0);
+    let sin_msi = crate::its::msi(1).is_none();
+    let bien = atascada <= 2_000 && despues <= 100 && sin_msi;
+    kprintln!("S2 ITS: {}; una orden normal {} µs, una atascada vence en {} µs, después no espera ({} µs) ni da MSI: {}",
+        if bien { "bien" } else { "MAL" }, normal, atascada, despues, if sin_msi { "sí" } else { "no" });
 }
 
 /// C4: lo que el kernel necesita del árbol de dispositivos.

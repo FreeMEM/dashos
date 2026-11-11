@@ -32,7 +32,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R8 | Archivos, lo rápido: cerrar sin guardar, menos viajes | A1 a A6 | hecho |
 | R9 | Aviso de muerte y plazo al leer | K7 | hecho |
 | R10 | Azar de la placa y arranque endurecido | S5, S6 | hecho (falta RNG200 y probar en placa) |
-| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho (falta `its.rs` al arrancar) |
+| R11 | Kernel sin pánicos por memoria y llamadas largas troceadas | S1, S2 | hecho |
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8: cola de salida por cliente, medida de cuadros y sin daños repetidos) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
@@ -806,3 +806,20 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   e Intro. En virt, el guion: Intro sin nada, flecha abajo e Intro (entra en `C/Privado`), Fin e Intro (cede
   `nota.txt`); el hostil la lee y nada más. El doble clic con el ratón de verdad no se prueba en QEMU (el guion no
   sabe dónde queda la ventana). Captura nueva en `docs/capturas/u5-selector.png`.
+
+### 2026-11-12
+
+- R11 (S2), lo que quedaba: `its.rs`. Cada orden al ITS se esperaba con hasta un millón de lecturas, con su cerrojo y
+  las interrupciones cerradas, y se llega desde un programa (asociar o soltar una interrupción, `its::encender`).
+  Medido en QEMU con GIC v3 y una orden que el ITS no lee: 195 ms así. Ahora la espera tiene tope de 1 ms (`PLAZO_US`;
+  un ITS lee sus órdenes en microsegundos) y, si vence o la cola se para, el ITS queda por roto: no se le manda nada
+  más y sus MSI se niegan (`msi` da nada), en lugar de seguir con una cola de la que no se sabe por dónde va. La espera
+  de "quieto" al arrancar, con tope de 10 ms. Prueba hostil (`prueba_its`, solo con GIC v3): arranca el ITS, enciende
+  una LPI (unos 82 µs en QEMU), atasca la siguiente orden (no mueve CWRITER: `its::ATASCAR`, solo en la imagen de
+  pruebas) y mide: vence en 1.048 µs (antes, 195.127, y después seguía dando MSI con la cola descolocada); la
+  siguiente no espera (8 µs) y no hay MSI. `make prueba-virt` va ahora con GIC=3 (el v2 lo prueban `make prueba` y
+  `make arranque-virt`); 3 pasadas, todas con la línea bien. `make arranque-virt` también arranca con GIC=3 (probado a
+  mano antes del cambio: ITS, MSI-X de xHCI y NVMe y todo lo demás, salvo el sonido, que no se puso).
+- En esas pasadas salieron dos fallos sueltos que no tocan el ITS: C14 (el de siempre, 1 de 4) y el paso 5 de
+  `grupos`, la misma carrera que el 13 (lo de un proceso que acaba se devuelve al grupo cuando su núcleo lo recoge).
+  El 5 espera ahora como el 13, hasta 200 ms (`vuelve_a_cero`).

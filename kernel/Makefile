@@ -126,12 +126,13 @@ medir-pi3: usuario FORCE
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 
-# Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas.
+# Las pruebas del arranque en QEMU virt por UEFI (U3c): las que valen para las dos placas. Con GIC v3 (y su ITS): el
+# v2 ya lo prueban `make prueba` (la Pi) y `make arranque-virt`.
 prueba-virt: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas,virt
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS_VIRT)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(PRUEBAS_VIRT)) cargo build --release
-	QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_virt.txt 120
+	GIC=3 QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_virt.txt 120
 
 clean:
 	cargo clean

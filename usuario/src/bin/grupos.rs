@@ -53,8 +53,8 @@ fn principal() -> u64 {
     if clase != 0 || trozos == 0 || trozos >= 16 {
         return 4;
     }
-    // 5: al acabar el hijo, todo lo cobrado vuelve al grupo.
-    if grupo_uso(g).1 != 0 {
+    // 5: al acabar el hijo, todo lo cobrado vuelve al grupo (cuando su núcleo lo recoge: ver el paso 13).
+    if !vuelve_a_cero(g) {
         return 5;
     }
     // 6: dentro del grupo de 1 MB no cabe un subgrupo de 2 MB.
@@ -95,13 +95,8 @@ fn principal() -> u64 {
     if grupo_matar(g3 as u32) != 0 {
         return 13;
     }
-    let mut espera = 0;
-    while grupo_uso(g3 as u32).1 != 0 {
-        if espera >= 200 {
-            return 13;
-        }
-        dashos::dormir_us(1000);
-        espera += 1;
+    if !vuelve_a_cero(g3 as u32) {
+        return 13;
     }
     // 14: estrés de A2. Un proceso X gira; seis hijos, en otro grupo, esperan a X con copias de su llave. Se matan a
     // la vez los que esperan y X, diez veces. Si alguien despertara a un hilo ya liberado, el kernel caería.
@@ -163,4 +158,16 @@ fn principal() -> u64 {
     println!("  [grupos] cupo agotado en {} trozos de 64 KB, devuelto entero, y grupos que se matan", trozos);
     println!("  [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse");
     42
+}
+
+/// Si lo usado por el grupo `g` vuelve a 0 en 200 ms: lo de un proceso que acabó se devuelve cuando su núcleo recoge
+/// sus restos, no en el acto.
+fn vuelve_a_cero(g: u32) -> bool {
+    for _ in 0..200 {
+        if grupo_uso(g).1 == 0 {
+            return true;
+        }
+        dashos::dormir_us(1000);
+    }
+    grupo_uso(g).1 == 0
 }
