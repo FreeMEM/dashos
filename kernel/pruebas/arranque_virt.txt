@@ -147,9 +147,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] el registro de sesiones: abrirlo -12, listar su cajón -12: bien
 ~│   [selector] raíz de solo lectura: por ella no crea, ni escribe lo que abre, ni borra, ni la cierra: bien
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
-# U5: lo cedido lo elige el usuario en la ventana del selector (en la prueba, el guion: flecha abajo e Intro).
-~│   [selector] ventana de abrir en pantalla, para hostil: 1 ficheros
+# U5: lo cedido lo elige el usuario en la ventana del selector, que empieza en C y no enseña el nombre con '|' (en
+# la prueba, el guion: Intro sin nada, flecha abajo e Intro para entrar en Privado, y Fin e Intro para nota.txt).
+~│   [selector] ventana de abrir en pantalla, para hostil: C (1 nombres raros sin enseñar),
 ~│   [selector] Intro sin nada elegido: no abre nada
+~│   [selector] entra en C/Privado, 1 entradas
 ~│   [selector] el usuario elige C/Privado/nota.txt: se cede solo para leer: 0
 ~│   [hostil] selector: bien
 ~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien

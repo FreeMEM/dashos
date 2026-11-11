@@ -446,7 +446,13 @@ impl Clase for Lista {
             Tecla::Arriba => Self::elegir(attrs, (v - 1).max(0)),
             Tecla::Inicio => Self::elegir(attrs, 0),
             Tecla::Fin => Self::elegir(attrs, i64::MAX / 2),
-            Tecla::Intro => alloc::vec![(atr::CLIC, Valor::Bool(true)), (atr::CLIC, Valor::Bool(false))],
+            // Intro: como en MUI, también es el doble clic.
+            Tecla::Intro => alloc::vec![
+                (atr::CLIC, Valor::Bool(true)),
+                (atr::CLIC, Valor::Bool(false)),
+                (atr::DOBLE, Valor::Bool(true)),
+                (atr::DOBLE, Valor::Bool(false)),
+            ],
             _ => Vec::new(),
         }
     }
@@ -470,7 +476,14 @@ pub struct Interfaz {
     pulsado: Option<Obj>,
     pub foco: Option<Obj>,
     teclado: crate::teclado::Teclado,
+    /// La hora (ms) del evento del ratón que se está atendiendo, si se sabe (`raton_hora`).
+    hora: Option<u32>,
+    /// El último clic: objeto, su valor y cuándo; para el doble clic.
+    ultimo_clic: Option<(Obj, Option<Valor>, u32)>,
 }
+
+/// Lo más que separa los dos clics de un doble clic, en ms (lo de MUI y Workbench por defecto).
+pub const DOBLE_MS: u32 = 500;
 
 impl Interfaz {
     pub fn new(arbol: Arbol, raiz: Hijo, tema: Tema) -> Self {
@@ -483,6 +496,8 @@ impl Interfaz {
             pulsado: None,
             foco: None,
             teclado: crate::teclado::Teclado::new(),
+            hora: None,
+            ultimo_clic: None,
         }
     }
 
@@ -566,6 +581,14 @@ impl Interfaz {
         }
     }
 
+    /// Como `raton`, con la hora del evento en ms (la de Wayland, que da la vuelta): así hay doble clic (`atr::DOBLE`).
+    pub fn raton_hora(&mut self, x: i32, y: i32, pulsado: bool, ms: u32) -> bool {
+        self.hora = Some(ms);
+        let r = self.raton(x, y, pulsado);
+        self.hora = None;
+        r
+    }
+
     /// El ratón en (x, y) de la superficie, con el botón izquierdo pulsado o no. Devuelve si hay que dibujar.
     pub fn raton(&mut self, x: i32, y: i32, pulsado: bool) -> bool {
         let antes = (self.encima, self.pulsado, self.foco);
@@ -591,6 +614,15 @@ impl Interfaz {
                     let obj = self.arbol.objeto(o).unwrap();
                     let cambios = obj.clase.clic(&obj.attrs);
                     self.aplicar(o, cambios);
+                    if let Some(ms) = self.hora {
+                        let valor = self.arbol.leer(o, atr::VALOR).cloned();
+                        match self.ultimo_clic.take() {
+                            Some((u, v, t)) if u == o && v == valor && ms.wrapping_sub(t) <= DOBLE_MS => {
+                                self.aplicar(o, alloc::vec![(atr::DOBLE, Valor::Bool(true)), (atr::DOBLE, Valor::Bool(false))]);
+                            }
+                            _ => self.ultimo_clic = Some((o, valor, ms)),
+                        }
+                    }
                 }
             }
             (None, false) => {}
@@ -710,6 +742,50 @@ mod pruebas {
         i.dibujar(&mut l);
         assert_eq!(px[((r.y + 56 + 4) * 300 + r.x + r.w - 10) as usize], 0xffea_ddff);
         assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], 0xff67_50a4); // el borde del foco, de 2
+    }
+
+    #[test]
+    fn doble_clic_en_una_lista() {
+        let mut a = Arbol::new();
+        let lista = a.crear(Lista, &[(atr::OPCIONES, Valor::Texto("Uno|Dos|Tres".into())), (atr::FILAS, Valor::Int(3)), (atr::VALOR, Valor::Int(-1))]);
+        let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("".into()))]);
+        a.notificar(lista, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("doble".into())));
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(lista), Hijo::Obj(texto)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 300, 260));
+        let r = i.sitios[&lista];
+        // Si hubo doble clic (y se borra la marca), y en qué fila está la lista.
+        let doble = |i: &mut Interfaz| {
+            let d = i.arbol.leer(texto, atr::TEXTO) == Some(&Valor::Texto("doble".into()));
+            i.arbol.poner(texto, atr::TEXTO, Valor::Texto("".into()));
+            (d, i.arbol.leer(lista, atr::VALOR).cloned())
+        };
+        let clic_en = |i: &mut Interfaz, fila: i32, ms: u32| {
+            i.raton_hora(r.x + 20, r.y + 56 * fila + 20, true, ms);
+            i.raton_hora(r.x + 20, r.y + 56 * fila + 20, false, ms.wrapping_add(30));
+        };
+        // Sin hora (`raton`), dos clics no son doble clic.
+        clic(&mut i, (r.x + 20, r.y + 20));
+        clic(&mut i, (r.x + 20, r.y + 20));
+        assert_eq!(doble(&mut i), (false, Some(Valor::Int(0))));
+        // Dos clics en filas distintas, tampoco; ni en la misma con 600 ms entre ellos.
+        clic_en(&mut i, 0, 1000);
+        clic_en(&mut i, 1, 1100);
+        assert!(!doble(&mut i).0);
+        clic_en(&mut i, 1, 1700);
+        assert!(!doble(&mut i).0);
+        // En la misma, seguidos: sí.
+        clic_en(&mut i, 1, 1900);
+        assert_eq!(doble(&mut i), (true, Some(Valor::Int(1))));
+        // El tercero no hace otro doble con el segundo.
+        clic_en(&mut i, 1, 2100);
+        assert!(!doble(&mut i).0);
+        // Con la hora dando la vuelta entre los dos.
+        clic_en(&mut i, 2, u32::MAX - 100);
+        clic_en(&mut i, 2, 200);
+        assert_eq!(doble(&mut i), (true, Some(Valor::Int(2))));
+        // Intro también.
+        i.tecla(28, true);
+        assert_eq!(doble(&mut i), (true, Some(Valor::Int(2))));
     }
 
     #[test]

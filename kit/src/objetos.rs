@@ -42,6 +42,10 @@ pub mod atr {
     pub const PRIMERA: Atr = 11;
     /// Cuántas filas se ven de una lista (lo que mide de alto en filas).
     pub const FILAS: Atr = 12;
+    /// Doble clic (`MUIA_Listview_DoubleClick`): dos clics seguidos sobre el mismo objeto y con el mismo valor (en una
+    /// lista, la misma fila), o Intro en una lista. Como `CLIC`, pasa a sí y vuelve a no. El doble clic solo se ve con
+    /// `Interfaz::raton_hora`, que sabe cuándo fue cada clic.
+    pub const DOBLE: Atr = 13;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

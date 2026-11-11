@@ -1,6 +1,7 @@
 //! U5: `selector`, la ventana de "Abrir", de momento solo en `virt`. Quien le pide un fichero no elige: el selector
-//! enseña al usuario una ventana con lo que hay en `C/Privado` (que el que pide no puede ver), el usuario elige con las
-//! flechas e Intro, y solo eso se cede, para leer. Sin elegir (Cancelar, o un minuto sin nada), el que pide no recibe
+//! enseña al usuario una ventana con lo que hay en `C` (lo del usuario, que el que pide no puede ver), el usuario entra
+//! en los cajones y vuelve ("../"), elige con las flechas e Intro o con doble clic, y solo el fichero elegido se cede,
+//! para leer. No se sale de `C`, y se va por asas, no por caminos de texto. Sin elegir (Cancelar, o un minuto sin nada), el que pide no recibe
 //! nada. Con la asa cedida lee ese fichero aunque su ficha no le deje, y nada más. La ventana dice quién lo pide, por
 //! el nombre que da `inicio` a cada marca (no por lo que diga quien pide).
 //!
@@ -36,12 +37,14 @@ dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
 const CANAL: u32 = 3;
-/// La carpeta que enseña (en la prueba, la del usuario 1000 que el hostil no puede abrir).
-const CARPETA: &str = "C/Privado";
+/// Donde empieza y de donde no se sale (en la prueba, lo del usuario 1000; `C/Privado` el hostil no lo puede abrir).
+const RAIZ: &str = "C";
+/// La fila para volver al cajón de arriba.
+const SUBIR: &str = "../";
 /// Dónde se proyecta la ventana del servicio de archivos (la de Wayland va en `VA`).
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 const ANCHO: i32 = 360;
-const FILAS: usize = 4;
+const FILAS: usize = 5;
 /// Un minuto sin elegir: como cancelar.
 const ESPERA_US: u64 = 60_000_000;
 
@@ -72,13 +75,18 @@ fn pedir_todo(lectura: u32, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) 
     (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u64_en(8), u64_en(16), u64_en(24))
 }
 
-/// Los ficheros de la carpeta `CARPETA` (sin los cajones), en orden.
-fn ficheros_de_la_carpeta(lectura: u32) -> Vec<String> {
-    let mut nombres = Vec::new();
-    let (e, cajon) = pedir(lectura, a::BUSCAR, 0, 0, 0, CARPETA);
-    if e != a::BIEN {
-        return nombres;
-    }
+/// Una entrada de un cajón: su nombre y si es un cajón.
+struct Entrada {
+    nombre: String,
+    cajon: bool,
+}
+
+/// Lo que hay en el cajón de la asa `cajon`: los cajones primero y luego los ficheros, cada grupo por nombre. Sin los
+/// nombres que no se pueden enseñar ni buscar sin dudas: ".", "..", vacíos o con '/', ':' o '|' (un disco ajeno o roto
+/// podría tenerlos; '|' separa las filas de la lista, y correría las de después: se cedería otro fichero del que se ve).
+fn listar(lectura: u32, cajon: u32) -> (Vec<Entrada>, usize) {
+    let mut entradas = Vec::new();
+    let mut raros = 0;
     let mut desde = 0u64;
     loop {
         let (e, _, cuantos, siguiente, bytes) = pedir_todo(lectura, a::LISTAR, cajon, desde, 0, "");
@@ -96,9 +104,16 @@ fn ficheros_de_la_carpeta(lectura: u32) -> Vec<String> {
             if off + total > v.len() {
                 break;
             }
-            if tipo == a::FICHERO as u8 {
-                if let Ok(n) = core::str::from_utf8(&v[off + 24..off + 24 + largo]) {
-                    nombres.push(String::from(n));
+            if tipo == a::FICHERO as u8 || tipo == a::CAJON {
+                if let Ok(n) = core::str::from_utf8(&v[off + 24..off + 24 + largo])
+                    && !n.is_empty()
+                    && n != "."
+                    && n != ".."
+                    && !n.contains(['/', ':', '|'])
+                {
+                    entradas.push(Entrada { nombre: String::from(n), cajon: tipo == a::CAJON });
+                } else {
+                    raros += 1;
                 }
             }
             off += total.next_multiple_of(8);
@@ -108,21 +123,57 @@ fn ficheros_de_la_carpeta(lectura: u32) -> Vec<String> {
         }
         desde = siguiente;
     }
-    pedir(lectura, a::CERRAR, cajon, 0, 0, "");
-    nombres.sort();
-    nombres
+    entradas.sort_by(|x, y| y.cajon.cmp(&x.cajon).then_with(|| x.nombre.cmp(&y.nombre)));
+    (entradas, raros)
 }
 
-/// La ventana de "Abrir": la lista de `nombres`, y lo que elija el usuario (con las flechas e Intro), o nada si
-/// cancela o no elige en un minuto. Nada elegido de antemano: un Intro de quien estaba escribiendo no abre nada.
-fn elegir(nombres: &[String], quien: &str) -> Option<usize> {
-    let r = elegir_dentro(nombres, quien);
+/// Por dónde va el usuario: las asas de los cajones desde `RAIZ` (la primera) y sus nombres.
+struct Camino {
+    asas: Vec<u32>,
+    nombres: Vec<String>,
+}
+
+impl Camino {
+    fn texto(&self) -> String {
+        let mut t = String::from(RAIZ);
+        for n in &self.nombres {
+            t.push('/');
+            t.push_str(n);
+        }
+        t
+    }
+}
+
+/// La ventana de "Abrir", empezando en `RAIZ`: lo que elija el usuario (con las flechas e Intro, o con doble clic),
+/// como (asa del fichero, su camino), o nada si cancela o no elige en un minuto. Nada elegido de antemano: un Intro de
+/// quien estaba escribiendo no abre nada. Elegir un cajón entra en él, y "../" vuelve, sin pasar de `RAIZ`.
+fn elegir(lectura: u32, quien: &str) -> Option<(u32, String)> {
+    let (e, raiz) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
+    if e != a::BIEN {
+        return None;
+    }
+    let mut camino = Camino { asas: alloc::vec![raiz], nombres: Vec::new() };
+    let r = elegir_dentro(lectura, &mut camino, quien);
+    for &asa in &camino.asas {
+        pedir(lectura, a::CERRAR, asa, 0, 0, "");
+    }
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     dashos::memoria_quitar(VA);
     r
 }
 
-fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
+/// Las filas de la lista para lo que hay en el cajón: "../" si no es la raíz, y los cajones con su "/".
+fn filas(entradas: &[Entrada], en_raiz: bool) -> String {
+    let mut f: Vec<String> = Vec::new();
+    if !en_raiz {
+        f.push(String::from(SUBIR));
+    }
+    f.extend(entradas.iter().map(|e| if e.cajon { alloc::format!("{}/", e.nombre) } else { e.nombre.clone() }));
+    f.join("|")
+}
+
+fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32, String)> {
+    let (mut entradas, raros) = listar(lectura, camino.asas[0]);
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -131,17 +182,17 @@ fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
     else {
         return None;
     };
-    let filas = nombres.len().clamp(1, FILAS);
-    let alto = 56 * filas as i32 + 116;
+    let alto = 56 * FILAS as i32 + 148;
     let mut arbol = Arbol::new();
     let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" quiere abrir un fichero", quien)))]);
-    let opciones: Vec<&str> = nombres.iter().map(String::as_str).collect();
-    let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(opciones.join("|"))), (atr::FILAS, Valor::Int(filas as i64)), (atr::VALOR, Valor::Int(-1))]);
+    let donde = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(camino.texto()))]);
+    let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(filas(&entradas, true))), (atr::FILAS, Valor::Int(FILAS as i64)), (atr::VALOR, Valor::Int(-1))]);
     let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
-    arbol.notificar(lista, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("abrir".into())));
+    // Intro o doble clic (un clic solo marca la fila).
+    arbol.notificar(lista, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("abrir".into())));
     arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
-    let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(lista), Hijo::Fila(alloc::vec![Hijo::Obj(cancelar)])]);
+    let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(alloc::vec![Hijo::Obj(cancelar)])]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     i.foco = Some(lista);
     i.colocar(Rect::new(0, 0, ANCHO, alto));
@@ -207,7 +258,7 @@ fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
                     if !configurada {
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
-                        println!("  [selector] ventana de abrir en pantalla, para {}: {} ficheros", quien, nombres.len());
+                        println!("  [selector] ventana de abrir en pantalla, para {}: {} ({} nombres raros sin enseñar), {} entradas", quien, camino.texto(), raros, entradas.len());
                     }
                     false
                 }
@@ -217,11 +268,12 @@ fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
                 }
                 (PUNTERO, wl_pointer::ev::MOTION) => {
                     (x, y) = ((palabra(1) as i32) >> 8, (palabra(2) as i32) >> 8);
-                    i.raton(x, y, pulsado)
+                    i.raton_hora(x, y, pulsado, palabra(0))
                 }
+                // Con su hora, para el doble clic.
                 (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == 0x110 => {
                     pulsado = palabra(3) == 1;
-                    i.raton(x, y, pulsado)
+                    i.raton_hora(x, y, pulsado, palabra(1))
                 }
                 (PUNTERO, wl_pointer::ev::LEAVE) => {
                     pulsado = false;
@@ -243,13 +295,48 @@ fn elegir_dentro(nombres: &[String], quien: &str) -> Option<usize> {
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cancelar") => return None,
                 Some("abrir") => {
-                    let v = i.arbol.leer(lista, atr::VALOR).map_or(-1, Valor::int);
-                    if v >= 0 && (v as usize) < nombres.len() {
-                        return Some(v as usize);
-                    }
-                    // Intro sin nada elegido: no abre nada.
-                    println!("  [selector] Intro sin nada elegido: no abre nada");
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(lista, atr::VALOR).map_or(-1, Valor::int);
+                    let en_raiz = camino.asas.len() == 1;
+                    let k = v - (!en_raiz) as i64;
+                    if v < 0 {
+                        // Intro sin nada elegido: no abre nada.
+                        println!("  [selector] Intro sin nada elegido: no abre nada");
+                    } else if k < 0 {
+                        // "../": al cajón de arriba (nunca por encima de la raíz: en ella no hay esa fila).
+                        if let Some(asa) = camino.asas.pop() {
+                            pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                        }
+                        camino.nombres.pop();
+                        entradas = listar(lectura, *camino.asas.last()?).0;
+                        println!("  [selector] sube a {}, {} entradas", camino.texto(), entradas.len());
+                    } else if let Some(e) = entradas.get(k as usize) {
+                        // Se busca por la asa del cajón y su nombre (sin '/': un solo paso), y se mira lo que es ahora
+                        // (pudo cambiar desde que se listó).
+                        let (estado, asa, _, _, c) = pedir_todo(lectura, a::BUSCAR, *camino.asas.last()?, 0, 0, &e.nombre);
+                        let tipo = (c >> 16) as u8;
+                        if estado != a::BIEN {
+                            println!("  [selector] {} ya no se abre: {}", e.nombre, estado);
+                        } else if tipo == a::CAJON && e.cajon && camino.asas.len() < 32 {
+                            camino.asas.push(asa);
+                            camino.nombres.push(e.nombre.clone());
+                            entradas = listar(lectura, asa).0;
+                            println!("  [selector] entra en {}, {} entradas", camino.texto(), entradas.len());
+                        } else if tipo == a::FICHERO && !e.cajon {
+                            return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre)));
+                        } else {
+                            pedir(lectura, a::CERRAR, asa, 0, 0, "");
+                            println!("  [selector] {} cambió de tipo: no se abre", e.nombre);
+                        }
+                    }
+                    let en_raiz = camino.asas.len() == 1;
+                    i.arbol.poner(lista, atr::OPCIONES, Valor::Texto(filas(&entradas, en_raiz)));
+                    i.arbol.poner(lista, atr::VALOR, Valor::Int(-1));
+                    i.arbol.poner(lista, atr::PRIMERA, Valor::Int(0));
+                    i.arbol.poner(donde, atr::TEXTO, Valor::Texto(camino.texto()));
+                    if configurada {
+                        presentar(&mut c, &mut i, px, false);
+                    }
                 }
                 _ => {}
             }
@@ -344,16 +431,11 @@ fn principal() -> u64 {
             dashos::canal_escribir(ll[0], &(if estado == a::BIEN { hueco } else { 0 }).to_le_bytes(), &[]);
         } else if marca != 0 && k >= 1 {
             // Lo elige el usuario, no quien pide.
-            let nombres = ficheros_de_la_carpeta(lectura);
             let quien = quienes.get(&marca).map_or("un programa", String::as_str);
-            let respuesta = match elegir(&nombres, quien) {
-                Some(k) => {
-                    let camino = alloc::format!("{}/{}", CARPETA, nombres[k]);
-                    let (e, mia) = pedir(lectura, a::BUSCAR, 0, 0, 0, &camino);
-                    let (estado, suya) = if e == a::BIEN { pedir(lectura, a::CEDER, mia, marca, 4, "") } else { (e, 0) };
-                    if e == a::BIEN {
-                        pedir(lectura, a::CERRAR, mia, 0, 0, "");
-                    }
+            let respuesta = match elegir(lectura, quien) {
+                Some((mia, camino)) => {
+                    let (estado, suya) = pedir(lectura, a::CEDER, mia, marca, 4, "");
+                    pedir(lectura, a::CERRAR, mia, 0, 0, "");
                     println!("  [selector] el usuario elige {}: se cede solo para leer: {} (asa {})", camino, estado, suya);
                     if estado == a::BIEN { suya } else { 0 }
                 }

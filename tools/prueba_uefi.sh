@@ -116,13 +116,30 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             continue
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
-        # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo e Intro.
+        # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo (el primer cajón, Privado) e Intro para
+        # entrar; dentro, Fin (el último, nota.txt; el primero es "../") e Intro.
         if selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
             selector = 1
             time.sleep(0.5)
             mandar("sendkey ret")
             time.sleep(0.5)
             mandar("sendkey down")
+            time.sleep(0.3)
+            mandar("sendkey ret")
+            reintento = time.time() + 4
+        if selector == 1:
+            if "[selector] entra en C/Privado" not in texto:
+                # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez (Inicio: el primero).
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey home")
+                    time.sleep(0.3)
+                    mandar("sendkey ret")
+                time.sleep(0.25)
+                continue
+            selector = 2
+            time.sleep(0.5)
+            mandar("sendkey end")
             # Con CAPTURA_SELECTOR=fichero.ppm, la ventana con el fichero marcado.
             if captura_selector:
                 time.sleep(0.5)
@@ -130,17 +147,16 @@ while time.time() - inicio < total:
             time.sleep(0.3)
             mandar("sendkey ret")
             reintento = time.time() + 4
-        if selector == 1:
+        if selector == 2:
             if "[selector] el usuario " not in texto:
-                # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez.
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    mandar("sendkey down")
+                    mandar("sendkey end")
                     time.sleep(0.3)
                     mandar("sendkey ret")
                 time.sleep(0.25)
                 continue
-            selector = 2
+            selector = 3
         if bloqueo == 0 and "[guardian] pantalla de bloqueo pintada" in texto:
             bloqueo = 1
             time.sleep(0.5)

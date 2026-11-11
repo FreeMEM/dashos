@@ -38,7 +38,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
-| R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
+| R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario, con cajones y doble clic), acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
@@ -791,3 +791,18 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - De A15 queda COMPROBAR por trozos (un comprobador que se pueda parar entre vueltas del bucle sin perder la foto del
   disco; hoy son 19 ms al arrancar con 7 MB, y crecerá con el disco) y, de fondo, hilos en el servicio (fase 8). Los
   topes: `nvme` admite 4 clientes y solo hay dos con tramo; `archivos`, 64.
+- U5, lo que faltaba del selector: cajones y doble clic. La ventana empieza en `C` (lo del usuario) y enseña el camino
+  ("C/Privado"); elegir un cajón entra en él, "../" vuelve, y por encima de `C` no se sube (en `C` no hay esa fila).
+  Va por asas: cada cajón abierto se guarda, y lo elegido se busca por la asa de su cajón y su nombre, en un solo
+  paso, y se mira su tipo en ese momento (pudo cambiar desde que se listó): solo un fichero se cede. No se enseñan
+  los nombres ".", "..", vacíos o con '/', ':' o '|': '|' separa las filas de la lista del kit, y uno con ese
+  carácter correría las de después, con lo que se cedería otro fichero del que se ve (en el disco de prueba,
+  `C/raro|nombre.txt`; la ventana dice "1 nombres raros sin enseñar"). Hasta 32 cajones de hondo.
+- El doble clic, en el kit, como en MUI (`atr::DOBLE`, `MUIA_Listview_DoubleClick`): dos clics seguidos sobre el
+  mismo objeto y con el mismo valor (en una lista, la misma fila) en 500 ms, con la hora de los eventos de Wayland
+  (`Interfaz::raton_hora`); Intro en una lista también lo da. El selector abre con `DOBLE`: un clic solo marca la
+  fila. Prueba en el kit (`doble_clic_en_una_lista`, y las del kit van ahora en `make prueba`): sin hora no hay doble,
+  ni en filas distintas, ni con 600 ms; el tercer clic no hace otro con el segundo; vale con la hora dando la vuelta;
+  e Intro. En virt, el guion: Intro sin nada, flecha abajo e Intro (entra en `C/Privado`), Fin e Intro (cede
+  `nota.txt`); el hostil la lee y nada más. El doble clic con el ratón de verdad no se prueba en QEMU (el guion no
+  sabe dónde queda la ventana). Captura nueva en `docs/capturas/u5-selector.png`.

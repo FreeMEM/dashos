@@ -45,6 +45,7 @@ if sys.argv[1] == "--comprobar":
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",
+        "C/raro|nombre.txt 14",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
@@ -161,6 +162,9 @@ with tempfile.TemporaryDirectory() as t:
         f.write("privado de prueba\n")
     os.chmod(os.path.join(privado, "nota.txt"), 0o600)
     os.chmod(privado, 0o700)
+    # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
+    with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
+        f.write("no se enseña\n")
     fs = os.path.join(t, "fs.img")
     with open(fs, "wb") as f:
         f.truncate(7 << 20)
