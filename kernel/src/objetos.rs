@@ -240,7 +240,12 @@ pub fn forma_ciclo(l: &Llave, canal: &Arc<Canal>) -> bool {
 #[derive(Default)]
 pub struct Control {
     pub estado: Cerrojo<EstadoProceso>,
+    /// Su número de proceso en el kernel (U6): no se repite; 0 en los que no lanza `procesos::lanzar`.
+    pub pid: u64,
 }
+
+/// El siguiente número de proceso (U6). Empieza en 1: el 0 es "ninguno".
+pub static SIGUIENTE_PID: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(1);
 
 #[derive(Default)]
 pub struct EstadoProceso {

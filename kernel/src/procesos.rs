@@ -39,7 +39,8 @@ fn lanzar_con(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
     };
     // La pila del kernel del hilo, antes de tocar las llaves: sin ella no se puede seguir (M4).
     let Some(pila) = crate::mapa::pila_nueva() else { return Err((Error::SinMemoria, llaves)) };
-    let Ok(control) = Arc::try_new(Control::default()) else { return Err((Error::SinMemoria, llaves)) };
+    let pid = crate::objetos::SIGUIENTE_PID.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    let Ok(control) = Arc::try_new(Control { pid, ..Control::default() }) else { return Err((Error::SinMemoria, llaves)) };
     if !cupo.apuntar(&control) {
         return Err((Error::SinMemoria, llaves));
     }

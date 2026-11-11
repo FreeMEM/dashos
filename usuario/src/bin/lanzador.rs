@@ -74,6 +74,7 @@ fn principal() -> u64 {
     }
     let mut lanzadas = 0;
     let mut avisados = 0;
+    let mut con_pid = 0;
     let mut zona = 0;
     for i in 0..n {
         let cab = PAQUETE + 4 + CABECERA * i;
@@ -104,6 +105,18 @@ fn principal() -> u64 {
         let p = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if p <= 0 {
             return 100 + i as u64;
+        }
+        // U6: su número en el kernel, y la lista de su grupo (con la llave del grupo) lo trae. Con llaves del tipo que no
+        // es, error de tipo (-6).
+        let pid = dashos::proceso_numero(p as u32);
+        let mut lista = [0u64; 8];
+        let en_grupo = dashos::grupo_procesos(g as u32, &mut lista);
+        let pids_bien = pid > 0 && en_grupo >= 1 && lista[..(en_grupo as usize).min(8)].contains(&(pid as u64))
+            && dashos::proceso_numero(g as u32) == -6 && dashos::grupo_procesos(p as u32, &mut lista) == -6;
+        if pids_bien {
+            con_pid += 1;
+        } else {
+            println!("  [lanzador] {}: número {}, en su grupo {} {:?}", nombre, pid, en_grupo, &lista[..2]);
         }
         // K7: aviso de fin por un canal, pedido antes de acabar y después (ese sale al momento).
         let (av_a, av_b) = canal_crear();
@@ -141,5 +154,6 @@ fn principal() -> u64 {
     }
     println!("  [lanzador] {} pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero", lanzadas);
     println!("  [lanzador] avisos de fin por canal (K7): {} de {}", avisados, lanzadas);
+    println!("  [lanzador] números de proceso del kernel, en la lista de su grupo (U6): {} de {}", con_pid, lanzadas);
     43
 }

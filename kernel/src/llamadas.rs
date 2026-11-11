@@ -134,6 +134,8 @@ pub fn atender(marco: &mut Marco) {
         // plazo en microsegundos.
         35 => canal_leer(marco, a[0] as u32, a[1], a[2], a[3], a[4] & 0xffff, a[4] >> 16),
         36 => proceso_avisar(a[0] as u32, a[1] as u32),
+        37 => proceso_numero(a[0] as u32),
+        38 => grupo_procesos(a[0] as u32, a[1], a[2]),
         6 => cerrar(a[0] as u32),
         7 => memoria_crear(a[0]),
         8 => memoria_proyectar(a[0] as u32, a[1], a[2]),
@@ -623,6 +625,36 @@ fn proceso_matar(h: u32) -> u64 {
 
 /// K7: cuando acabe el proceso de la llave `hp` (con derecho de leer), escribir su fin por el canal `hc` (con derecho
 /// de escribir), con la marca de esa llave. Si ya acabó, el aviso sale ya. Hasta `MAX_AVISOS` por proceso.
+/// Llamada 37 (U6): el número del proceso de la llave `h` (con derecho de leer).
+fn proceso_numero(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Proceso(c) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    c.pid
+}
+
+/// Llamada 38 (U6): los números de los procesos vivos del grupo de la llave `h`, hasta `max` u64 en `ptr`. Devuelve
+/// cuántos hay (pueden ser más de los que caben). Solo con la llave del grupo: quien no la tiene no los ve.
+fn grupo_procesos(h: u32, ptr: u64, max: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::LEER == 0 {
+        return E_DERECHOS;
+    }
+    let max = (max as usize).min(64);
+    let mut v = Vec::new();
+    let total = g.pids(&mut v, max);
+    let bytes: Vec<u8> = v.iter().flat_map(|p| p.to_le_bytes()).collect();
+    if !bytes.is_empty() && !escribir_usuario(ptr, &bytes) {
+        return E_ARGUMENTO;
+    }
+    total as u64
+}
+
 fn proceso_avisar(hp: u32, hc: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let t = proc_.llaves.tomar();

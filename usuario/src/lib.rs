@@ -229,6 +229,16 @@ pub fn canal_leer_plazo(llave: u32, bufer: &mut [u8], llaves: &mut [u32], plazo_
 
 /// Cuando acabe el proceso de la llave `proceso`, el kernel escribe por `canal` 16 bytes: clase y código como en
 /// `proceso_esperar` (u64 little-endian), con la marca de esa llave (K7). Si ya acabó, al momento.
+/// El número del proceso de la llave `proceso` en el kernel (U6): no se repite.
+pub fn proceso_numero(proceso: u32) -> i64 {
+    llamada(37, [proceso as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// Los números de los procesos vivos del grupo `grupo` en `sal` (hasta 64); devuelve cuántos hay.
+pub fn grupo_procesos(grupo: u32, sal: &mut [u64]) -> i64 {
+    llamada(38, [grupo as u64, sal.as_mut_ptr() as u64, sal.len() as u64, 0, 0]).0 as i64
+}
+
 pub fn proceso_avisar(proceso: u32, canal: u32) -> i64 {
     llamada(36, [proceso as u64, canal as u64, 0, 0, 0]).0 as i64
 }

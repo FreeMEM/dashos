@@ -157,6 +157,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 34 | `azar` | `x0` búfer, `x1` bytes (hasta 256) | `x0` bytes; `x1` 1 si son de calidad (el kernel tuvo semilla del firmware), 0 si no |
 | 35 | `canal_leer_plazo` | Como 5, pero `x4` lleva en sus 16 bits bajos cuántas llaves caben y en el resto el plazo en µs (0: sin plazo) | Como 5, o `E_PLAZO` si vence sin mensaje (K7) |
 | 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
+| 37 | `proceso_numero` | `x0` proceso (con leer) | Su número de proceso en el kernel: no se repite, desde 1 (U6) |
+| 38 | `grupo_procesos` | `x0` grupo (con leer), `x1` dónde, `x2` cuántos caben (hasta 64) | Cuántos procesos vivos tiene el grupo; escribe sus números (u64) en `x1`. Solo con la llave del grupo (U6) |
 
 ### Detalles
 

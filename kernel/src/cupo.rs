@@ -86,6 +86,21 @@ impl Cupo {
         RAIZ.tomar().get_or_insert_with(|| Arc::new(Cupo::con(crate::memoria::paginas().bytes_para_procesos(), 0, None))).clone()
     }
 
+    /// Los números de los procesos vivos de este grupo (U6), hasta `max` (y cuántos hay).
+    pub fn pids(&self, sal: &mut Vec<u64>, max: usize) -> usize {
+        let m = self.miembros.tomar();
+        let mut total = 0;
+        for c in m.iter().filter_map(|w| w.upgrade()) {
+            if c.estado.tomar().fin.is_none() {
+                total += 1;
+                if sal.len() < max && sal.try_reserve(1).is_ok() {
+                    sal.push(c.pid);
+                }
+            }
+        }
+        total
+    }
+
     /// Un subgrupo con `limite` bytes, sacados de este (más `COSTE_GRUPO`). `None` si no caben, si este grupo está
     /// muerto o si ya hay `MAX_PROFUNDIDAD` niveles.
     pub fn hijo(self: &Arc<Self>, limite: u64) -> Option<Arc<Cupo>> {
