@@ -432,3 +432,91 @@ fn fragmentado() {
     let borrar = t.elapsed() / 500;
     eprintln!("A8 fragmentado: {trozos} trozos libres; crear y escribir {crear:?}, borrar {borrar:?}");
 }
+
+/// No es una comprobación (A8): lo que daría una transacción abierta entre peticiones. 500 ficheros creados y
+/// borrados en una transacción frente a 500 transacciones.
+#[test]
+#[ignore]
+fn perfil_agrupado() {
+    use std::time::{Duration, Instant};
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let data = noise(4096, 5);
+    let (mut sueltos, mut juntos, mut crear_s, mut crear_j) = (Duration::ZERO, Duration::ZERO, Duration::ZERO, Duration::ZERO);
+    for vuelta in 0..20 {
+        let agrupar = vuelta % 2 == 1;
+        let t = Instant::now();
+        if agrupar {
+            fs.tx(|tx| {
+                for i in 0..500 {
+                    let n = tx.create_node(TreePtr::root(), &format!("f{}", i), FILE, 0, 0)?;
+                    tx.write_node(n.ptr(), 0, &data, 0, 0)?;
+                }
+                Ok(())
+            }).unwrap();
+        } else {
+            for i in 0..500 {
+                put(&mut fs, &format!("f{}", i), &data);
+            }
+        }
+        fs.durable().unwrap();
+        if agrupar { crear_j += t.elapsed() } else { crear_s += t.elapsed() }
+        let t = Instant::now();
+        if agrupar {
+            fs.tx(|tx| {
+                for i in 0..500 {
+                    tx.remove_node(TreePtr::root(), &format!("f{}", i), Node::MODE_FILE)?;
+                }
+                Ok(())
+            }).unwrap();
+        } else {
+            for i in 0..500 {
+                remove(&mut fs, &format!("f{}", i));
+            }
+        }
+        fs.durable().unwrap();
+        if agrupar { juntos += t.elapsed() } else { sueltos += t.elapsed() }
+    }
+    eprintln!("crear y escribir: sueltos {:?}, juntos {:?}; borrar: sueltos {:?}, juntos {:?}", crear_s / 5000, crear_j / 5000, sueltos / 5000, juntos / 5000);
+    assert_clean(&mut fs);
+}
+
+/// No es una comprobación (A8): cuánto es buscar, cuánto cerrar la transacción de un cambio pequeño y cuánto borrar.
+#[test]
+#[ignore]
+fn perfil_partes() {
+    use std::time::Instant;
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let data = noise(4096, 5);
+    for i in 0..500 {
+        put(&mut fs, &format!("f{}", i), &data);
+    }
+    fs.durable().unwrap();
+    let t = Instant::now();
+    for _ in 0..10 {
+        for i in 0..500 {
+            fs.tx(|tx| tx.find_node(TreePtr::root(), &format!("f{}", i)).map(|_| ())).unwrap();
+        }
+    }
+    eprintln!("buscar {:?}", t.elapsed() / 5000);
+    let t = Instant::now();
+    for _ in 0..10 {
+        for i in 0..500 {
+            fs.tx(|tx| { let n = tx.find_node(TreePtr::root(), &format!("f{}", i))?; tx.sync_tree(n) }).unwrap();
+        }
+    }
+    eprintln!("buscar y reescribir el nodo (sin cambios) {:?}", t.elapsed() / 5000);
+    let t = Instant::now();
+    for _ in 0..10 {
+        for i in 0..500 {
+            fs.tx(|tx| { let mut n = tx.find_node(TreePtr::root(), &format!("f{}", i))?; n.data_mut().set_mtime(i as u64, 0); tx.sync_tree(n) }).unwrap();
+        }
+    }
+    eprintln!("buscar y cambiar el nodo {:?}", t.elapsed() / 5000);
+    let t = Instant::now();
+    for i in 0..500 {
+        remove(&mut fs, &format!("f{}", i));
+    }
+    eprintln!("borrar {:?}", t.elapsed() / 500);
+}

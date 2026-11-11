@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador), A9, A10, A12 y A13 (NVMe) |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -520,3 +520,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (`ventana_cliente`), mientras espera sitio, recoge lo que le llega: 8 de 8 pasadas bien.
 - U3: la pantalla de `guardian` devuelve quién entró o desbloqueó, y el bloqueo por tiempo es para esa usuaria, no
   para una fija. La tecla para bloquear queda para el escritorio (S10b): será él quien la atienda y pida BLOQUEAR.
+- A8, la transacción abierta entre peticiones: medida antes de hacerla, no compensa. En el PC (`perfil_agrupado`), 500
+  ficheros de 4 KB creados y borrados en una sola transacción frente a una por fichero: crear y escribir 47,9 frente a
+  48,2 µs (igual) y borrar 29,7 frente a 25,7 (-13 %). Por partes (`perfil_partes`): buscar un nombre en un cajón de
+  500 cuesta 6,8 µs, y buscar y cambiar un nodo 10,2: cerrar la transacción de un cambio pequeño, unos 3,5 µs (copiar
+  el camino del árbol, el diario del asignador y la cabecera). Borrar, 30 µs, es casi todo trabajo de la operación
+  (quitar la entrada del árbol de nombres, soltar los bloques del fichero), que agrupando no se ahorra. La estimación
+  de la revisión (de 1.932 hacia 3.000 o 4.000 borrados/s) era del asignador de antes, que copiaba entero en cada
+  transacción. No se hace; quedan las dos pruebas de medida.
