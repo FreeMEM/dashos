@@ -158,8 +158,11 @@ Cada cliente se reconoce por la marca de su llave (la pone `inicio`). Hasta 64 c
 **Fichas y permisos** (R6 de `docs/REVISION_LOOP.md`, U1 de `diseño/S6b-usuarios-y-permisos.md`). Antes que el
 cliente llega, sin marca (solo escribe sin marca quien reparte las llaves, hoy `inicio`), su **alta**, orden 100:
 derechos en la asa (bytes 4-7; 1 = administrar), su marca en a, usuario (16-19) y grupo (20-23) en b, y el cajón raíz
-como nombre, desde la raíz del volumen principal. Sin alta no hay sesión (-12). Las fichas provisionales están en
-`usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
+como nombre, desde la raíz del volumen principal. Tras el nombre pueden ir raíces de más (U2): hueco, tope (4 leer, 6
+leer y escribir), largo del volumen y del camino (un byte cada uno), el volumen (vacío, el principal) y el camino; se
+ponen al abrir la sesión. Sin alta no hay sesión (-12). Con la orden 101, **baja**, también sin marca (la manda
+`sesiones` cuando acaba algo que lanzó): se sueltan la sesión de esa marca (bytes 8-15), sus asas y raíces, y su alta.
+Las fichas provisionales están en `usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
 
 - La asa 0 es la raíz del cliente, no la del disco. Por encima no se llega: no hay "cajón padre" ni se siguen enlaces.
 - Las asas 1 a 15 son más raíces, cada una con su tope (leer, o leer y escribir). Las pone quien tiene el derecho de
@@ -260,6 +263,41 @@ el servicio se para antes, lo suelta al abrir el disco la vez siguiente.
 
 Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar escrituras (FS11), usuarios y permisos
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
+
+**Al arrancar** (A10), antes de atender a nadie, se comprueban los metadatos y, si hay algo mal, se repara en una
+transacción (`archivos/redoxfs/src/repair.rs`); si algo queda sin arreglar, el disco va de solo lectura.
+
+## Sesiones (U2 a U6)
+
+`usuario/src/bin/sesiones.rs` lleva las fichas de los procesos, los usuarios con la sesión abierta, los permisos de
+cada programa y el registro de seguridad. Diseño: `diseño/S6b-usuarios-y-permisos.md`; protocolo:
+`usuario/src/protocolo/sesiones.rs`. Llaves: 1 el permiso de la clase de plazo (para repartirlo), 2 su canal con
+archivos, 3 `eco` sin marca (para repartirlo), 4 su canal, 5 una copia sin marca de su canal (de ella salen las llaves
+con que nace lo que lanza) y 6 una copia sin marca del canal de archivos (las altas de lo que lanza). Su cajón,
+`Estado/Servicios/sesiones` (usuario 1, 0700): `registro` (la cuenta y un anillo de 1.024 entradas) y `permisos` (una
+línea "programa servicio" por permiso concedido). Cuentas y frases, provisionales en el código (`CUENTAS`, `ADMIN`).
+
+`inicio` da de alta cada programa (orden 1, sin marca: marca, usuario, grupo, nombre y la llave de su grupo) y pide
+su aviso de fin hacia `sesiones` (la baja llega con la marca y el bit alto puesto). Los programas piden, con una llave
+de respuesta:
+
+| Orden | Quién | Qué |
+|---|---|---|
+| 1 procesos | cualquiera | La lista, por páginas de 7 fichas de 32 bytes (marca, usuario, grupo, nombre) |
+| 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; de otro, -2 (para eso, la acción "matar") |
+| 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
+| 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian` |
+| 8 registro | `guardian` | El registro de seguridad, por páginas |
+| 9 lanzar | `guardian` | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces |
+| 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
+| 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
+| 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda); quitar uno concedido (se borra y se revocan sus llaves) |
+| 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian` |
+| 15 respuesta de administrador | `guardian` | Usuario y contraseña para esa acción; se comprueban con su volumen |
+| 16 bloquear | uno del usuario con sesión | `guardian` bloquea la sesión con su pantalla |
+
+Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
+el registro.
 
 ## Imágenes del Amiga (S20, fase 1)
 
