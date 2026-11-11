@@ -88,6 +88,86 @@ fn dato(i: u64) -> u8 {
     (i.wrapping_mul(2654435761) >> 13) as u8
 }
 
+const VA_PRESTADOS: usize = 0x41_0000_0000;
+
+/// Escribe `tam` bytes de `dato(i + sal)` en `nombre` del cajón `dir`; su asa.
+fn hacer(c: &Cliente, dir: u32, nombre: &str, tam: u64, sal: u64) -> Option<u32> {
+    let f = c.pedir(CREAR, dir, 1, 0, nombre);
+    if f.estado != 0 {
+        return None;
+    }
+    let mut off = 0;
+    while off < tam {
+        let n = (tam - off).min(64 * 1024);
+        for (i, b) in c.ventana_mut()[..n as usize].iter_mut().enumerate() {
+            *b = dato(off + i as u64 + sal);
+        }
+        if c.pedir(ESCRIBIR, f.asa, off, n, "").a != n {
+            return None;
+        }
+        off += n;
+    }
+    Some(f.asa)
+}
+
+/// Lee `asa` entero con lo prestado y lo compara con `dato(i + sal)` (con `cambio` puesto encima).
+fn igual(pr: &mut dashos::prestados::Prestados, lectura: u32, asa: u32, tam: u64, sal: u64, cambio: (u64, &[u8])) -> bool {
+    let mut b = [0u8; 4096];
+    let mut off = 0;
+    while off < tam {
+        let Some(n) = pr.leer(1, lectura, asa, off, &mut b[..]) else { return false };
+        if n == 0 {
+            return false;
+        }
+        for (i, &x) in b[..n].iter().enumerate() {
+            let j = off + i as u64;
+            let quiero = if j >= cambio.0 && j < cambio.0 + cambio.1.len() as u64 { cambio.1[(j - cambio.0) as usize] } else { dato(j + sal) };
+            if x != quiero {
+                println!("  [ficheros] A7: en {} hay {} y no {}", j, x, quiero);
+                return false;
+            }
+        }
+        off += n as u64;
+    }
+    off == tam
+}
+
+fn prestadas(c: &Cliente, dir: u32) -> bool {
+    const TAM: u64 = 600 * 1024;
+    let Some(asa) = hacer(c, dir, "presta.bin", TAM, 0) else { return false };
+    let mut pr = dashos::prestados::Prestados::nuevo(VA_PRESTADOS);
+    let mut partes = [false; 6];
+    partes[0] = igual(&mut pr, c.lectura, asa, TAM, 0, (0, &[])) && igual(&mut pr, c.lectura, asa, TAM, 0, (0, &[])) && pr.viajes == 1;
+    // Escribir por el protocolo: lo prestado ya lo tiene, sin otro viaje.
+    c.ventana_mut()[..10].copy_from_slice(b"0123456789");
+    partes[1] = c.pedir(ESCRIBIR, asa, 530_000, 10, "").a == 10 && igual(&mut pr, c.lectura, asa, TAM, 0, (530_000, b"0123456789")) && pr.viajes == 1;
+    // Recortar a 540.000: lo de después, ceros (aunque se lea con el tamaño de antes).
+    let mut b = [1u8; 64];
+    partes[2] = c.pedir(TAMANO, asa, 540_000, 0, "").estado == 0
+        && pr.leer(1, c.lectura, asa, 600_000, &mut b).is_some()
+        && b.iter().all(|&x| x == 0);
+    // Cerrar, borrar y hacer otro: lo nuevo, no lo de antes.
+    pr.cerrar_asa(asa);
+    let otro = c.pedir(CERRAR, asa, 0, 0, "").estado == 0 && c.pedir(BORRAR, dir, 0, 0, "presta.bin").estado == 0;
+    let nuevo = if otro { hacer(c, dir, "presta2.bin", TAM, 7) } else { None };
+    partes[3] = nuevo.is_some_and(|n| igual(&mut pr, c.lectura, n, TAM, 7, (0, &[])));
+    if let Some(n) = nuevo {
+        pr.cerrar_asa(n);
+        c.pedir(CERRAR, n, 0, 0, "");
+        c.pedir(BORRAR, dir, 0, 0, "presta2.bin");
+    }
+    // Uno pequeño no se presta: `None`, y se lee con LEER.
+    let h = c.pedir(BUSCAR, dir, 0, 0, "hola.txt");
+    partes[4] = h.estado == 0 && pr.leer(1, c.lectura, h.asa, 0, &mut b).is_none();
+    c.pedir(CERRAR, h.asa, 0, 0, "");
+    // Un cajón tampoco.
+    partes[5] = pr.leer(1, c.lectura, dir, 0, &mut b).is_none();
+    if !partes.iter().all(|&p| p) {
+        println!("  [ficheros] A7 por partes: {:?}", partes);
+    }
+    partes.iter().all(|&p| p)
+}
+
 fn principal() -> u64 {
     let (lectura, vuelta) = dashos::canal_crear();
     let mut c = Cliente { lectura, ventana: 0 };
@@ -258,6 +338,11 @@ fn principal() -> u64 {
         && c.pedir(BORRAR, dir.asa, 0, 0, "Sub").estado == 0
         && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
     println!("  [ficheros] hola.txt: {}; rechazos al escribir: {}", si(hola), si(rechazos));
+
+    // A7: páginas prestadas. Un fichero de 600 KB (dos trozos) se lee entero dos veces con un solo viaje; lo que se
+    // escribe después se ve sin viajar; al recortar, lo de después son ceros; un fichero nuevo que pueda tener el número
+    // de uno borrado no enseña lo viejo; y uno pequeño no se presta.
+    println!("  [ficheros] A7 páginas prestadas: {}", si(prestadas(&c, dir.asa)));
 
     // FS6: la raíz no distingue mayúsculas.
     let mayus = c.pedir(BUSCAR, 0, 0, 0, "leeme.TXT");

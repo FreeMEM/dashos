@@ -45,6 +45,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
 ~│   [ficheros] recortar: bien; renombrar y mover: bien; borrar abierto: bien
 ~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
+~│   [ficheros] A7 páginas prestadas: bien
 ~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
 ~│   [ficheros] FS8 comprobación: bien
 ~│   [ficheros] FS9 instantáneas: bien
@@ -93,6 +94,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] archivos sigue: sí
 # R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
 ~│   [hostil] archivos, permisos: bien
+~│   [hostil] A7 préstamos: bien
 ~│   [hostil] sonido sigue: sí
 ~│   [hostil] compositor sigue: sí
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.

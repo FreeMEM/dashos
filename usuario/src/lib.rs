@@ -18,6 +18,7 @@ pub mod protocolo {
 }
 #[cfg(feature = "monton")]
 pub mod monton;
+pub mod prestados;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.

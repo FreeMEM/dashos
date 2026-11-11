@@ -220,6 +220,96 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
     "bien"
 }
 
+const VA_PRESTADO: usize = 0x41_0000_0000;
+
+/// A7: pide prestado `asa` desde `desde`; (estado, llaves recibidas).
+fn prestar(lectura: u32, asa: u32, desde: u64) -> (i32, alloc::vec::Vec<u32>) {
+    let mut b = [0u8; 32];
+    let mut ll = [0u32; 8];
+    if !escribir(ARCHIVOS, &peticion_con(PRESTAR, asa, desde, 0, ""), &[]) {
+        return (i32::MIN, alloc::vec::Vec::new());
+    }
+    let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut b, &mut ll, PLAZO_US);
+    if n != 32 {
+        return (i32::MIN, ll[..k].to_vec());
+    }
+    (i32::from_le_bytes(b[0..4].try_into().unwrap()), ll[..k].to_vec())
+}
+
+/// A7, lo que no debe poder con las páginas prestadas: escribir en ellas, quedarse con más de `MAX_PRESTADOS`,
+/// seguir usándolas tras cerrar la asa, o pedirlas de un cajón, de un fichero pequeño o de una asa cerrada. Devuelve lo que falló, o "bien".
+fn prestamos(lectura: u32, copia: u32) -> &'static str {
+    let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
+    if prestar(lectura, 0, 0).0 != ES_CAJON {
+        return "presta un cajón";
+    }
+    // grande.txt (313.890 bytes) es pequeño para prestar: con LEER.
+    let Some((0, pequeno)) = p(BUSCAR, 0, 0, 0, "grande.txt") else { return "no abre grande.txt" };
+    let (estado, nada) = prestar(lectura, pequeno, 0);
+    p(CERRAR, pequeno, 0, 0, "");
+    if estado != SIN_SITIO || !nada.is_empty() {
+        return "presta un fichero pequeño";
+    }
+    // datos.bin mide 614.400 bytes, el byte i es (7i + 3) % 251: dos trozos.
+    const TAM: usize = 614_400;
+    let Some((0, grande)) = p(BUSCAR, 0, 0, 0, "datos.bin") else { return "no abre datos.bin" };
+    let (estado, primeras) = prestar(lectura, grande, 0);
+    if estado != BIEN || primeras.len() != 2 {
+        return "no presta datos.bin";
+    }
+    if dashos::memoria_proyectar(primeras[0], VA_PRESTADO, true) == 0 {
+        return "escribe en lo prestado";
+    }
+    if dashos::memoria_proyectar(primeras[0], VA_PRESTADO, false) != 0 {
+        return "no proyecta lo prestado";
+    }
+    // Se lee lo que es (y lo de después del final, en el último trozo, son ceros).
+    let trozo = unsafe { core::slice::from_raw_parts(VA_PRESTADO as *const u8, TROZO_PRESTADO) };
+    let bien = trozo.iter().enumerate().all(|(i, &b)| b as usize == (i * 7 + 3) % 251);
+    dashos::memoria_quitar(VA_PRESTADO);
+    if !bien {
+        return "lo prestado no es el fichero";
+    }
+    if dashos::memoria_proyectar(primeras[1], VA_PRESTADO, false) != 0 {
+        return "no proyecta el último trozo";
+    }
+    let cola = unsafe { core::slice::from_raw_parts((VA_PRESTADO + TAM - TROZO_PRESTADO) as *const u8, 2 * TROZO_PRESTADO - TAM) };
+    let ceros = cola.iter().all(|&b| b == 0);
+    dashos::memoria_quitar(VA_PRESTADO);
+    if !ceros {
+        return "tras el final del fichero hay algo";
+    }
+    // Pide y pide sin soltar: el servicio no le deja más de `MAX_PRESTADOS`; las primeras dejan de valer.
+    let mut todas = primeras.clone();
+    for _ in 0..6 {
+        let (e, mas) = prestar(lectura, grande, 0);
+        if e != BIEN {
+            return "deja de prestar a quien pide de más";
+        }
+        todas.extend(mas);
+    }
+    if dashos::memoria_proyectar(primeras[0], VA_PRESTADO, false) == 0 {
+        return "se queda con más de MAX_PRESTADOS";
+    }
+    let ultima = *todas.last().unwrap();
+    if dashos::memoria_proyectar(ultima, VA_PRESTADO, false) != 0 {
+        return "la última prestada no vale";
+    }
+    dashos::memoria_quitar(VA_PRESTADO);
+    // Cerrada la asa, nada de lo prestado vale; y con la asa cerrada no se presta.
+    p(CERRAR, grande, 0, 0, "");
+    if dashos::memoria_proyectar(ultima, VA_PRESTADO, false) == 0 {
+        return "lo prestado vale tras cerrar";
+    }
+    for l in todas {
+        dashos::cerrar(l);
+    }
+    if prestar(lectura, grande, 0).0 != ASA_MALA {
+        return "presta con una asa cerrada";
+    }
+    "bien"
+}
+
 /// Los permisos del servicio de archivos (R6). Devuelve lo que falló, o "bien".
 fn permisos(lectura: u32, copia: u32) -> &'static str {
     let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
@@ -308,6 +398,7 @@ fn archivos(memoria: u32) -> bool {
         let asa = u32::from_le_bytes(b[4..8].try_into().unwrap());
         pedir(lectura, copia, CERRAR, asa, 0, 0, "");
         println!("  [hostil] archivos, permisos: {}", permisos(lectura, copia));
+        println!("  [hostil] A7 préstamos: {}", prestamos(lectura, copia));
         println!("  [hostil] selector: {}", cedida(lectura, copia));
     }
     vivo

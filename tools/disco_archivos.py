@@ -39,6 +39,7 @@ if sys.argv[1] == "--comprobar":
         "C/ cajón",
         "C/Privado/ cajón",
         "C/Privado/nota.txt 18",
+        "C/datos.bin 614400",
         "C/grande.txt 313890",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
@@ -110,6 +111,9 @@ with tempfile.TemporaryDirectory() as t:
         f.write("DashOS lee RedoxFS\n")
     with open(os.path.join(raiz, "C", "grande.txt"), "w") as f:
         f.write("".join(f"línea {i}\n" for i in range(25000)))
+    # A7: 600 KB que todos leen, para que `hostil` pida páginas prestadas (dos trozos de 512 KB).
+    with open(os.path.join(raiz, "C", "datos.bin"), "wb") as f:
+        f.write(bytes((i * 7 + 3) % 251 for i in range(614400)))
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
     os.makedirs(os.path.join(raiz, "Programas"))

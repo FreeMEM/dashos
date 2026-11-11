@@ -104,6 +104,10 @@ struct Disco {
     /// El anillo del servicio de disco, si lo tiene (paso A2): el canal por el que avisa, y por dónde van los envíos y
     /// las terminadas (cuentas que solo crecen).
     anillo: Option<(u32, u32, u32)>,
+    /// A7: se está llenando un trozo de la caché de páginas. Lo que RedoxFS lee entonces como datos del fichero
+    /// (`datos`) no entra en esta caché: ya va a la otra, y estaría dos veces.
+    llenando: bool,
+    datos: bool,
 }
 
 /// Bloques en memoria (paso F de docs/MULTITAREA_LOOP.md): sin ella, cada bloque que mira RedoxFS (el árbol de un
@@ -120,10 +124,11 @@ struct Cache {
     sucios: alloc::collections::BTreeSet<u64>,
 }
 
-/// 40 MB: el grupo de este servicio tiene 64 MB (`inicio`, F9), y en él van también el programa, las ventanas y los
-/// nodos recordados (`Recuerdos`, 4 MB). Con un grupo de 16 MB y 16 MB de caché, se quedaba sin memoria (F2). La caché
-/// solo ocupa lo que se va leyendo.
-const MAX_BLOQUES: usize = 40 * 1024 * 1024 / BLOCK_SIZE as usize;
+/// 16 MB: el grupo de este servicio tiene 64 MB (`inicio`, F9), y en él van también el programa, las ventanas, los
+/// nodos recordados (`Recuerdos`, 4 MB) y la caché de páginas (`Paginas`, 24 MB; A7). Con un grupo de 16 MB y
+/// 16 MB de caché, se quedaba sin memoria (F2). La caché solo ocupa lo que se va leyendo. Desde A7 guarda los metadatos
+/// y los ficheros pequeños; los datos de los grandes, al leerlos, van solo a la de páginas.
+const MAX_BLOQUES: usize = 16 * 1024 * 1024 / BLOCK_SIZE as usize;
 
 impl Cache {
     fn leer(&mut self, bloque: u64, destino: &mut [u8]) -> bool {
@@ -235,7 +240,7 @@ impl Disco {
 
     fn abrir() -> core::result::Result<Self, &'static str> {
         let (lectura, vuelta) = dashos::canal_crear();
-        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None };
+        let mut d = Self { lectura, vuelta, tam_sector: 0, sectores: 0, cache: Cache { bloques: BTreeMap::new(), reloj: 0, sucios: alloc::collections::BTreeSet::new() }, de_memoria: false, anillo: None, llenando: false, datos: false };
         let Some((0, r, Some(v))) = d.pedir(DISCO_ABRIR, 0, 0) else { return Err("no se abre el disco") };
         if dashos::memoria_proyectar(v, VA_DISCO, true) != 0 {
             return Err("no se proyecta la ventana del disco");
@@ -279,8 +284,10 @@ impl Disk for Disco {
         }
         self.de_memoria = false;
         unsafe { self.leer_disco(block, buffer)? };
-        for (i, b) in buffer.chunks_exact(bs).enumerate() {
-            self.cache.poner(block + i as u64, b, false);
+        if !(self.llenando && self.datos) {
+            for (i, b) in buffer.chunks_exact(bs).enumerate() {
+                self.cache.poner(block + i as u64, b, false);
+            }
         }
         Ok(buffer.len())
     }
@@ -302,6 +309,10 @@ impl Disk for Disco {
 
     fn last_read_from_memory(&self) -> bool {
         self.de_memoria
+    }
+
+    fn reading_data(&mut self, data: bool) {
+        self.datos = data;
     }
 
     /// Bloques que nacieron y se soltaron entre dos guardados (paso B): fuera, sin escribirlos.
@@ -681,7 +692,7 @@ fn dar_asa(fs: &mut Fs, c: &mut Cliente, vol: u64, n: &TreeData<Node>) -> Respue
 /// La respuesta de buscar, crear y datos: tamaño, fecha, y modo | tipo << 16 | bits del Amiga << 32.
 fn datos(asa: u32, d: &Node) -> Respuesta {
     let c = d.mode() as u64 | (tipo(d) as u64) << 16 | (d.amiga_bits().bits() as u64) << 32;
-    Respuesta { estado: BIEN, asa, a: d.size(), b: d.mtime().0, c }
+    Respuesta { estado: BIEN, asa, a: d.size(), b: d.mtime().0, c, ..Default::default() }
 }
 
 /// Lo que no se deja escribir a la ficha `f`: sin su permiso de escritura (para el dueño, la W del Amiga) (R6).
@@ -720,10 +731,248 @@ struct Respuesta {
     a: u64,
     b: u64,
     c: u64,
+    /// Llaves que van con la respuesta (A7: lo prestado).
+    llaves: Vec<u32>,
 }
 
 fn mal(estado: i32) -> Respuesta {
     Respuesta { estado, ..Default::default() }
+}
+
+/// A7 (docs/REVISION_ARQUITECTURA.md): la caché de páginas. Los datos de los ficheros de `TROZO_PRESTADO` o más se
+/// guardan por fichero, ya descomprimidos y descifrados, en trozos de `TROZO_PRESTADO` (512 KB, cuatro registros): cada
+/// trozo es un objeto de memoria propio, que se puede prestar al cliente (`PRESTAR`), solo de leer, para que lea sin
+/// viajes. Esos datos ya no entran en la caché de bloques (`Disco::llenando`): no están dos veces.
+///
+/// Siempre al día: lo que se escribe (`ESCRIBIR`) se copia también al trozo, y al recortar se ponen ceros. Un número de
+/// nodo solo se vuelve a usar al crear, y entonces se olvidan sus trozos (`nacido`). Lo prestado deja de valer al
+/// cerrar la asa, al pasar el cliente de `MAX_PRESTADOS` (los suyos más viejos) y con las órdenes que cambian un
+/// volumen entero (`olvidar_todo`). Un trozo prestado no se quita de la caché.
+const MAX_TROZOS: usize = 24 * 1024 * 1024 / TROZO_PRESTADO;
+/// Lo prestado a la vez entre todos los clientes: un revocador cada uno, en la tabla de llaves de este proceso (1024).
+const MAX_PRESTADOS_TODOS: usize = 256;
+/// Donde se proyectan los trozos: `MAX_TROZOS` huecos seguidos.
+const VA_PAGINAS: usize = 0x62_0000_0000;
+const TROZO_U64: u64 = TROZO_PRESTADO as u64;
+
+
+/// (volumen, nodo, número de trozo).
+type ClaveTrozo = (u64, u32, u64);
+
+struct Trozo {
+    hueco: usize,
+    uso: u64,
+    prestado: u32,
+}
+
+struct Prestamo {
+    marca: u64,
+    asa: u32,
+    revocador: u32,
+    trozo: ClaveTrozo,
+}
+
+struct Paginas {
+    trozos: BTreeMap<ClaveTrozo, Trozo>,
+    /// Las llaves de la memoria de cada hueco (se crean según hacen falta): la de este proceso y una copia solo de leer
+    /// (y de pasar), de la que salen las prestadas. Y los huecos que no tienen trozo.
+    huecos: Vec<(u32, u32)>,
+    libres: Vec<usize>,
+    reloj: u64,
+    /// Lo prestado, en el orden en que se dio.
+    prestamos: alloc::collections::VecDeque<Prestamo>,
+}
+
+impl Paginas {
+    fn nueva() -> Self {
+        Self { trozos: BTreeMap::new(), huecos: Vec::new(), libres: Vec::new(), reloj: 0, prestamos: alloc::collections::VecDeque::new() }
+    }
+
+    fn memoria(hueco: usize) -> &'static mut [u8] {
+        // Cada hueco es una memoria de este proceso, proyectada al crearla y nunca quitada.
+        unsafe { core::slice::from_raw_parts_mut((VA_PAGINAS + hueco * TROZO_PRESTADO) as *mut u8, TROZO_PRESTADO) }
+    }
+
+    /// Un hueco para un trozo nuevo: uno libre, uno nuevo o el del trozo menos usado que no esté prestado.
+    fn hueco(&mut self) -> Option<usize> {
+        if let Some(h) = self.libres.pop() {
+            return Some(h);
+        }
+        if self.huecos.len() < MAX_TROZOS {
+            let llave = dashos::memoria_crear(TROZO_PRESTADO);
+            if (llave as i32) < 0 {
+                return None;
+            }
+            let h = self.huecos.len();
+            if dashos::memoria_proyectar(llave, VA_PAGINAS + h * TROZO_PRESTADO, true) != 0 {
+                dashos::cerrar(llave);
+                return None;
+            }
+            let solo_leer = dashos::llave_duplicar(llave, dashos::LEER | dashos::TRANSFERIR, 0);
+            if solo_leer < 0 {
+                dashos::memoria_quitar(VA_PAGINAS + h * TROZO_PRESTADO);
+                dashos::cerrar(llave);
+                return None;
+            }
+            self.huecos.push((llave, solo_leer as u32));
+            return Some(h);
+        }
+        let (&clave, _) = self.trozos.iter().filter(|(_, t)| t.prestado == 0).min_by_key(|(_, t)| t.uso)?;
+        self.trozos.remove(&clave).map(|t| t.hueco)
+    }
+
+    /// El hueco con el trozo `indice` de `nodo`, leyéndolo si no está. `None` si no hay sitio o no se puede leer.
+    fn trozo(&mut self, fs: &mut Fs, vol: u64, nodo: &TreeData<Node>, indice: u64) -> Option<usize> {
+        self.reloj += 1;
+        let clave = (vol, nodo.id(), indice);
+        if let Some(t) = self.trozos.get_mut(&clave) {
+            t.uso = self.reloj;
+            return Some(t.hueco);
+        }
+        let h = self.hueco()?;
+        let m = Self::memoria(h);
+        let desde = indice * TROZO_U64;
+        let cuanto = nodo.data().size().saturating_sub(desde).min(TROZO_U64) as usize;
+        fs.disk.llenando = true;
+        let r = fs.tx_in(vol, |tx| {
+            let mut hecho = 0;
+            while hecho < cuanto {
+                let k = tx.read_node_inner(nodo, desde + hecho as u64, &mut m[hecho..cuanto])?;
+                if k == 0 {
+                    break;
+                }
+                hecho += k;
+            }
+            Ok(hecho)
+        });
+        fs.disk.llenando = false;
+        let Ok(hecho) = r else {
+            self.libres.push(h);
+            return None;
+        };
+        // Lo que pasa del final, ceros: el hueco pudo tener otro fichero.
+        m[hecho..].fill(0);
+        self.trozos.insert(clave, Trozo { hueco: h, uso: self.reloj, prestado: 0 });
+        Some(h)
+    }
+
+    /// Lee de la caché (llenándola) desde `desde` lo que quepa en `destino`. `None` si no hay sitio: por RedoxFS.
+    fn leer(&mut self, fs: &mut Fs, vol: u64, nodo: &TreeData<Node>, desde: u64, destino: &mut [u8]) -> Option<usize> {
+        let tam = nodo.data().size();
+        let mut hecho = 0;
+        while hecho < destino.len() && desde + (hecho as u64) < tam {
+            let off = desde + hecho as u64;
+            let h = self.trozo(fs, vol, nodo, off / TROZO_U64)?;
+            let dentro = (off % TROZO_U64) as usize;
+            let cuanto = (destino.len() - hecho).min(TROZO_PRESTADO - dentro).min((tam - off) as usize);
+            destino[hecho..hecho + cuanto].copy_from_slice(&Self::memoria(h)[dentro..dentro + cuanto]);
+            hecho += cuanto;
+        }
+        Some(hecho)
+    }
+
+    /// Se escribió `datos` en el nodo desde `desde`: también en los trozos que estén.
+    fn escribir(&mut self, vol: u64, id: u32, desde: u64, datos: &[u8]) {
+        if datos.is_empty() {
+            return;
+        }
+        let fin = desde + datos.len() as u64;
+        for (&(_, _, i), t) in self.trozos.range_mut((vol, id, desde / TROZO_U64)..=(vol, id, (fin - 1) / TROZO_U64)) {
+            let a = (i * TROZO_U64).max(desde);
+            let b = ((i + 1) * TROZO_U64).min(fin);
+            let dentro = (a - i * TROZO_U64) as usize;
+            Self::memoria(t.hueco)[dentro..dentro + (b - a) as usize].copy_from_slice(&datos[(a - desde) as usize..(b - desde) as usize]);
+        }
+    }
+
+    /// El nodo mide ahora `tam`: ceros en los trozos desde ahí (al crecer después, lo nuevo son ceros).
+    fn recortar(&mut self, vol: u64, id: u32, tam: u64) {
+        for (&(_, _, i), t) in self.trozos.range_mut((vol, id, tam / TROZO_U64)..=(vol, id, u64::MAX)) {
+            let dentro = tam.saturating_sub(i * TROZO_U64) as usize;
+            Self::memoria(t.hueco)[dentro.min(TROZO_PRESTADO)..].fill(0);
+        }
+    }
+
+    fn revocar(&mut self, p: Prestamo) {
+        dashos::revocar(p.revocador);
+        dashos::cerrar(p.revocador);
+        if let Some(t) = self.trozos.get_mut(&p.trozo) {
+            t.prestado = t.prestado.saturating_sub(1);
+        }
+    }
+
+    /// Deja de valer lo prestado que cumpla `que`.
+    fn devolver(&mut self, que: impl Fn(&Prestamo) -> bool) {
+        let mut quedan = alloc::collections::VecDeque::new();
+        for p in core::mem::take(&mut self.prestamos) {
+            if que(&p) {
+                self.revocar(p);
+            } else {
+                quedan.push_back(p);
+            }
+        }
+        self.prestamos = quedan;
+    }
+
+    /// Fuera los trozos de un número de nodo que nace (CREAR, GUARDAR): los de un fichero borrado que tuvo ese número.
+    fn nacido(&mut self, vol: u64, id: u32) {
+        self.devolver(|p| p.trozo.0 == vol && p.trozo.1 == id);
+        let claves: Vec<ClaveTrozo> = self.trozos.range((vol, id, 0)..=(vol, id, u64::MAX)).map(|(k, _)| *k).collect();
+        for k in claves {
+            if let Some(t) = self.trozos.remove(&k) {
+                self.libres.push(t.hueco);
+            }
+        }
+    }
+
+    /// Fuera todo, con ceros (un volumen cifrado que se cierra no deja nada a la vista).
+    fn olvidar_todo(&mut self) {
+        self.devolver(|_| true);
+        for (_, t) in core::mem::take(&mut self.trozos) {
+            Self::memoria(t.hueco).fill(0);
+            self.libres.push(t.hueco);
+        }
+    }
+
+    /// `PRESTAR`: hasta `POR_PRESTAMO` trozos desde el de `desde`.
+    fn prestar(&mut self, fs: &mut Fs, marca: u64, asa: u32, vol: u64, nodo: &TreeData<Node>, desde: u64) -> Respuesta {
+        let tam = nodo.data().size();
+        if tam < TROZO_U64 {
+            return mal(SIN_SITIO);
+        }
+        let primero = desde / TROZO_U64;
+        let hay = tam.div_ceil(TROZO_U64).saturating_sub(primero) as usize;
+        if hay == 0 {
+            return Respuesta { estado: BIEN, asa, a: desde, b: tam, ..Default::default() };
+        }
+        let mut cuantos = hay.min(POR_PRESTAMO);
+        // Los suyos más viejos dejan de valer si pasa de `MAX_PRESTADOS`.
+        let mut suyos = self.prestamos.iter().filter(|p| p.marca == marca).count();
+        while suyos + cuantos > MAX_PRESTADOS {
+            let Some(i) = self.prestamos.iter().position(|p| p.marca == marca) else { break };
+            let p = self.prestamos.remove(i).unwrap();
+            self.revocar(p);
+            suyos -= 1;
+        }
+        cuantos = cuantos.min(MAX_PRESTADOS_TODOS.saturating_sub(self.prestamos.len()));
+        let mut llaves = Vec::new();
+        for k in 0..cuantos as u64 {
+            let clave = (vol, nodo.id(), primero + k);
+            let Some(h) = self.trozo(fs, vol, nodo, primero + k) else { break };
+            // Revocable, de la copia solo de leer: el servicio guarda el revocador.
+            let (prestada, revocador) = dashos::llave_revocable(self.huecos[h].1);
+            if prestada < 0 {
+                break;
+            }
+            self.trozos.get_mut(&clave).unwrap().prestado += 1;
+            self.prestamos.push_back(Prestamo { marca, asa, revocador, trozo: clave });
+            llaves.push(prestada as u32);
+        }
+        if llaves.is_empty() {
+            return mal(SIN_SITIO);
+        }
+        Respuesta { estado: BIEN, asa, a: primero * TROZO_U64, b: tam, c: llaves.len() as u64, llaves }
+    }
 }
 
 /// Lo que el servicio recuerda de lo leído (F2, docs/MULTITAREA_LOOP.md), como la caché de nombres y de nodos de
@@ -735,6 +984,8 @@ struct Recuerdos {
     nombres: BTreeMap<(u64, u32, Vec<u8>), u32>,
     /// (volumen, nodo) → sus datos (un bloque de 4 KB cada uno: hasta `MAX_RECUERDOS`, 4 MB).
     nodos: BTreeMap<(u64, u32), Box<TreeData<Node>>>,
+    /// La caché de páginas (A7). No se olvida con `olvidar`: se mantiene al día ella sola.
+    paginas: Paginas,
 }
 
 /// Las órdenes que no cambian nada en el disco ni en los nodos. Crear, borrar, escribir y recortar olvidan solo lo
@@ -762,6 +1013,7 @@ impl Recuerdos {
 
     /// Lo que recuerda un fichero nuevo `n` llamado `nombre` en el cajón `dir`.
     fn creado(&mut self, vol: u64, dir: u32, nombre: &str, n: &TreeData<Node>) {
+        self.paginas.nacido(vol, n.id());
         if self.nombres.len() < MAX_RECUERDOS * 4 {
             self.nombres.insert((vol, dir, Vec::from(nombre.as_bytes())), n.id());
         }
@@ -846,6 +1098,10 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
     if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
         rec.olvidar();
+    }
+    // Las que cambian un volumen entero (o pueden, al reparar), también la caché de páginas y lo prestado (A7).
+    if matches!(p.orden, VOLVER | DESCARTAR | QUITAR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR) {
+        rec.paginas.olvidar_todo();
     }
     // Lo que cambia algo por una asa necesita la W de su tope (la de su raíz); renombrar, también en el destino.
     let por_asa = matches!(p.orden, ESCRIBIR | CREAR | BORRAR | RENOMBRAR | TAMANO | COMENTAR | PROTEGER);
@@ -950,6 +1206,13 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok(nodo) => nodo,
                 Err(e) => return mal(estado_de(e)),
             };
+            // Un fichero grande, de la caché de páginas (A7).
+            let tam = nodo.data().size();
+            if !nodo.data().is_dir() && tam >= TROZO_PRESTADO as u64 && cedida.map_or_else(|| puede(&ficha, nodo.data(), R), |d| d & R != 0) {
+                if let Some(hecho) = rec.paginas.leer(fs, vol, &nodo, p.a, &mut v[..cuanto]) {
+                    return Respuesta { estado: BIEN, asa: p.asa, a: hecho as u64, b: tam, ..Default::default() };
+                }
+            }
             let r = fs.tx_in(vol, |tx| {
                 if nodo.data().is_dir() {
                     return Err(Error::new(EISDIR));
@@ -969,9 +1232,24 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok((hecho, nodo.data().size()))
             });
             match r {
-                Ok((hecho, tam)) => Respuesta { estado: BIEN, asa: p.asa, a: hecho as u64, b: tam, c: 0 },
+                Ok((hecho, tam)) => Respuesta { estado: BIEN, asa: p.asa, a: hecho as u64, b: tam, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
+        }
+        PRESTAR => {
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            let cedida = c.cedidas.get(&p.asa).copied();
+            let nodo = match rec.nodo(fs, vol, n) {
+                Ok(nodo) => nodo,
+                Err(e) => return mal(estado_de(e)),
+            };
+            if nodo.data().is_dir() {
+                return mal(ES_CAJON);
+            }
+            if !cedida.map_or_else(|| puede(&ficha, nodo.data(), R), |d| d & R != 0) {
+                return mal(estado_de(negado()));
+            }
+            rec.paginas.prestar(fs, c.marca, p.asa, vol, &nodo, p.a)
         }
         LISTAR => {
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
@@ -1032,12 +1310,15 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Ok((cuantos, siguiente, off))
             });
             match r {
-                Ok((cuantos, siguiente, bytes)) => Respuesta { estado: BIEN, asa: p.asa, a: cuantos, b: siguiente, c: bytes as u64 },
+                Ok((cuantos, siguiente, bytes)) => Respuesta { estado: BIEN, asa: p.asa, a: cuantos, b: siguiente, c: bytes as u64, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }
         CERRAR => match c.asas.remove(&p.asa) {
             Some((vol, n)) => {
+                // Lo prestado por ella deja de valer (A7).
+                let (marca, asa) = (c.marca, p.asa);
+                rec.paginas.devolver(|x| x.marca == marca && x.asa == asa);
                 // Si se borró mientras estaba abierto, ahora se suelta de verdad.
                 cerrar_nodo(fs, vol, n);
                 // Cerrar ya no espera al disco (A1): lo cambiado va con el guardado de cada segundo, o con VACIAR o
@@ -1073,7 +1354,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             match r {
                 Ok((k, tam)) => {
                     c.cambiadas.insert(p.asa);
-                    Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, c: 0 }
+                    // También en la caché de páginas (A7): lo prestado sigue al día.
+                    rec.paginas.escribir(vol, n.id(), p.a, &datos[..k.min(datos.len())]);
+                    Respuesta { estado: BIEN, asa: p.asa, a: k as u64, b: tam, ..Default::default() }
                 }
                 Err(e) => mal(estado_de(e)),
             }
@@ -1213,6 +1496,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             match r {
                 Ok(()) => {
                     c.cambiadas.insert(p.asa);
+                    rec.paginas.recortar(vol, n.id(), p.a);
                     Respuesta { estado: BIEN, asa: p.asa, a: p.a, ..Default::default() }
                 }
                 Err(e) => mal(estado_de(e)),
@@ -1574,8 +1858,9 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
 }
 
 /// Suelta al cliente que ya no escucha, con su ventana y sus asas.
-fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize) {
+fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, paginas: &mut Paginas) {
     if let Some(c) = clientes[i].take() {
+        paginas.devolver(|p| p.marca == c.marca);
         for (_, (vol, n)) in c.asas {
             cerrar_nodo(fs, vol, n);
         }
@@ -1645,7 +1930,7 @@ fn principal() -> u64 {
     let mut clientes: Vec<Option<Cliente>> = (0..MAX_CLIENTES).map(|_| None).collect();
     let mut altas: BTreeMap<u64, Ficha> = BTreeMap::new();
     let mut solo_lectura = solo_lectura_al_arrancar;
-    let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new() };
+    let mut recuerdos = Recuerdos { nombres: BTreeMap::new(), nodos: BTreeMap::new(), paginas: Paginas::nueva() };
     let mut buf = [0u8; 256];
     loop {
         let mut ll = [0u32; 8];
@@ -1680,7 +1965,7 @@ fn principal() -> u64 {
             // U2: el programa de esa marca acabó (lo dice `sesiones`): fuera su sesión, con sus asas y raíces, y su alta.
             let de = u64::from_le_bytes(buf[8..16].try_into().unwrap());
             if let Some(i) = clientes.iter().position(|c| c.as_ref().is_some_and(|c| c.marca == de)) {
-                soltar(&mut fs, &mut clientes, i);
+                soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
             }
             altas.remove(&de);
             for &l in &ll[..k] {
@@ -1718,7 +2003,7 @@ fn principal() -> u64 {
                     if let Some(v) = ventana {
                         dashos::cerrar(v);
                     }
-                    soltar(&mut fs, &mut clientes, i);
+                    soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
                 }
             } else {
                 contestar(ll[0], &r, &[]);
@@ -1772,8 +2057,12 @@ fn principal() -> u64 {
         tras_guardar(&mut clientes, &mut solo_lectura);
         al_disco(&fs, &mut plazo);
         let llave = clientes[i].as_ref().unwrap().respuesta;
-        if contestar(llave, &r, &[]) != 0 {
-            soltar(&mut fs, &mut clientes, i);
+        if contestar(llave, &r, &r.llaves) != 0 {
+            // Las prestadas no salieron: vuelven a la tabla. `soltar` las revoca; aquí se cierran.
+            for &l in &r.llaves {
+                dashos::cerrar(l);
+            }
+            soltar(&mut fs, &mut clientes, i, &mut recuerdos.paginas);
         }
     }
 }

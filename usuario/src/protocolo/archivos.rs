@@ -50,6 +50,22 @@ pub const COMPROBAR_CLAVE: u32 = 29;
 /// raíz: sin su W no se escribe, crea, borra, renombra ni protege por ella ni por lo que se abra desde ella. El
 /// cliente no cierra sus raíces. La marca `YO` es quien cede: darse una raíz más estrecha.
 pub const CEDER: u32 = 30;
+/// A7: pedir prestadas las páginas de la caché de un fichero abierto (a, el byte desde el que se quiere leer). Contesta
+/// con hasta `POR_PRESTAMO` llaves de memoria, solo de leer, de `TROZO_PRESTADO` bytes cada una: los trozos seguidos
+/// del fichero desde el byte a de la respuesta (múltiplo de `TROZO_PRESTADO`). En b, lo que mide el fichero; en c,
+/// cuántas llaves. Lo que pasa de su final, en el último trozo, son ceros.
+///
+/// Lo prestado se lee sin viajes y está al día: lo que se escribe en el fichero se escribe también ahí. Deja de valer
+/// (el servicio quita la proyección; leerla después es un fallo del programa): al cerrar la asa, cuando el cliente
+/// pasa de `MAX_PRESTADOS` (se quitan los más viejos, de todas sus asas), o al volver a una instantánea, comprobar,
+/// cerrar o quitar un volumen. Quien no tiene nunca más de `MAX_PRESTADOS - POR_PRESTAMO` antes de pedir está a salvo
+/// de lo segundo (`dashos::prestados` lo hace así).
+///
+/// `SIN_SITIO` si no se presta (un fichero de menos de `TROZO_PRESTADO`, o la caché llena de prestado): entonces, `LEER`.
+pub const PRESTAR: u32 = 31;
+pub const TROZO_PRESTADO: usize = 512 * 1024;
+pub const POR_PRESTAMO: usize = 4;
+pub const MAX_PRESTADOS: usize = 8;
 /// Las asas 0 a 15 son raíces (0, la del alta); las que se dan al buscar o crear empiezan en 16.
 pub const RAICES: u32 = 16;
 /// Para `CEDER`: el propio cliente.

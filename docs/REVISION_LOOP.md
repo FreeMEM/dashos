@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -593,3 +593,35 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   de plazo no se renovó más tarde que en las buenas. O sea, el reloj despierta a tiempo y el hilo pierde el turno por
   otra cosa (un núcleo ocupado con las interrupciones cerradas, o el reparto). Sin resolver; queda para cuando haya
   medidas en la placa (B5), donde un tic tarde importaría para el sonido.
+- A7, la caché de páginas compartida (el usuario eligió la opción "más limpia": rehacer la caché para poder prestarla,
+  sin tener los datos dos veces). `archivos` guarda los datos de los ficheros de 512 KB o más por fichero, ya
+  descomprimidos y descifrados, en trozos de 512 KB; cada trozo es un objeto de memoria propio (24 MB en total, 48
+  trozos, que se crean según hacen falta). Esos datos ya no entran en la caché de bloques (RedoxFS avisa al disco de
+  que lee datos de un fichero, `Disk::reading_data`; la caché de bloques baja de 40 a 16 MB y guarda metadatos y
+  ficheros pequeños): el servicio no pide más memoria que antes. LEER de un fichero grande sale de ahí. La orden nueva
+  PRESTAR (31) da al programa hasta 4 llaves revocables, solo de leer, de los trozos; el programa los proyecta y lee
+  sin viajes (`dashos::prestados`). Siguen al día: ESCRIBIR copia también al trozo y TAMANO pone ceros. Dejan de valer
+  al cerrar la asa, al pasar el programa de 8 prestados (los suyos más viejos; quien suelta antes de pedir, como
+  `prestados`, no lo nota) y al volver a una instantánea, comprobar, o quitar o cerrar un volumen. Al crear un nodo
+  se olvidan los trozos de su número (puede ser el de uno borrado). Un trozo prestado no se quita de la caché; si
+  todo está prestado, LEER va por RedoxFS como antes.
+- Pruebas: en `ficheros` (puede escribir), un fichero de 600 KB se lee entero dos veces con un viaje; lo escrito
+  después se ve sin viajar; tras recortar, lo de después son ceros; un fichero nuevo tras borrar el anterior no enseña
+  lo viejo; uno pequeño y un cajón no se prestan. Hostil (en `hostil`, con un `C/datos.bin` nuevo de 600 KB): no
+  proyecta lo prestado para escribir; lo prestado es el fichero y tras su final hay ceros; pidiendo sin soltar no se
+  queda con más de 8 (el primero deja de valer); tras cerrar la asa nada vale; ni cajón, ni fichero pequeño, ni asa
+  cerrada.
+- Kernel: al quitar una proyección de más de 4 páginas, una sola invalidación de la TLB de todo el proceso (antes, más
+  de 32). Con 32 avisos por trozo, quitar los 16 trozos de 8 MB costaba 8,8 ms en QEMU (cada aviso para a todos los
+  núcleos); con uno, 1,7 ms. En una placa la diferencia será mucho menor.
+- Tamaño del trozo, medido: con 128 KB lo prestado iba a 830-880 MB/s, como LEER; seis llamadas al kernel por trozo
+  (prestar, revocar, proyectar, quitar, cerrar...), unos 10 µs cada una en QEMU, pesaban más que copiar. Con 512 KB,
+  cuatro veces menos.
+- Medido (`make medir-fs`, 5 arranques, medianas, antes → después): leer 8 MB otra vez por LEER en trozos de 64 KB,
+  442 → 816 MB/s (+85 %); con lo prestado, copiando a un búfer de 64 KB como `read` en Linux, 1.477 MB/s (Linux,
+  1.652; 3,3 veces lo de antes), en 4 viajes; en trozos de 1 MB, 1.734. Peor: leer por LEER en trozos de 1 MB justo
+  después de escribir, 886 → 577 MB/s (-35 %): esa primera lectura llena la caché de páginas (una copia más y, la
+  primera vez, crear los objetos de memoria). Creo que pesa sobre todo lo segundo, sin comprobar. Lo demás, igual
+  (dentro del ruido). Panel al día (paso A7).
+- Falta: leer sin viaje entre dos lecturas que no caben en 8 trozos (hoy, un programa que relee 8 MB pide otra vez);
+  proyectar ficheros (mmap) sobre esto; y medirlo en la placa.

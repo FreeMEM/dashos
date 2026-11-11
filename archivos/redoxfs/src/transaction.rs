@@ -2274,13 +2274,25 @@ impl<'a, D: Disk> Transaction<'a, D> {
             // This is at most `record_level` due to the way `len` is computed.
             let level = BlockLevel::for_bytes((j + len) as u64);
 
+            // A7: lo que se lee ahora son datos del fichero (el árbol de punteros, `node_record_ptr`, ya está leído).
+            self.fs.disk.reading_data(true);
             // A5: un registro entero, sin comprimir, se lee directamente al destino (sin el búfer intermedio).
-            if j == 0 && unsafe { self.read_record_into(record_ptr, &mut buf[bytes_read..bytes_read + len])? } {
+            let directo = if j == 0 {
+                unsafe { self.read_record_into(record_ptr, &mut buf[bytes_read..bytes_read + len]) }
+            } else {
+                Ok(false)
+            };
+            let record = match directo {
+                Ok(false) => unsafe { self.read_record(record_ptr, level) }.map(Some),
+                Ok(true) => Ok(None),
+                Err(e) => Err(e),
+            };
+            self.fs.disk.reading_data(false);
+            let Some(record) = record? else {
                 bytes_read += len;
                 offset += len as u64;
                 continue;
-            }
-            let record = unsafe { self.read_record(record_ptr, level)? };
+            };
             buf[bytes_read..bytes_read + len].copy_from_slice(&record.data()[j..j + len]);
 
             bytes_read += len;

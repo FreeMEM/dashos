@@ -237,6 +237,7 @@ con VACIAR o GUARDAR, a los 8 MB pendientes o al segundo.
 ### Fase 7: lo grande
 
 **A7. Caché de páginas compartida** [S en la ganancia]
+- Hecho (2026-11-11): trozos de 512 KB prestados con PRESTAR; ver la bitácora en `REVISION_LOOP.md`.
 - Qué pasa hoy: aunque el dato esté en memoria, cada lectura es un viaje y una copia.
 - Arreglo: el servicio presta al cliente páginas de la caché, en solo lectura, como llaves de memoria. El cliente lee
   sin viaje mientras el fichero no cambie. Hace falta: caché por fichero y no por bloque de disco (lo descomprimido),

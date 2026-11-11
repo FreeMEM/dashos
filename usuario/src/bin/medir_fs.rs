@@ -96,6 +96,24 @@ fn rellenar() {
     }
 }
 
+const VA_PRESTADOS: usize = 0x41_0000_0000;
+
+/// Lee el fichero grande entero con lo prestado, por trozos de `trozo` a la ventana; falso si algo falla.
+fn leer_prestado(pr: &mut dashos::prestados::Prestados, lectura: u32, asa: u32, op: &str, trozo: u64) -> bool {
+    let viajes = pr.viajes;
+    let t0 = cuentas();
+    let mut off = 0;
+    while off < GRANDE {
+        match pr.leer(1, lectura, asa, off, &mut ventana()[..trozo as usize]) {
+            Some(n) if n > 0 => off += n as u64,
+            _ => return false,
+        }
+    }
+    dato(op, 1 << 20, GRANDE, cuentas() - t0, "MB/s");
+    println!("[medir] fs-viajes op={} viajes={}", op, pr.viajes - viajes);
+    true
+}
+
 fn principal() -> u64 {
     println!("[medir] empieza");
     let (lectura, vuelta) = dashos::canal_crear();
@@ -155,6 +173,11 @@ fn principal() -> u64 {
         }
         dato(op, mb, GRANDE, cuentas() - t0, "MB/s");
     }
+    // A7: lo mismo con las páginas prestadas, copiando cada trozo a un búfer como `read` en Linux (LEER no copia: lo
+    // deja en la ventana).
+    let mut pr = dashos::prestados::Prestados::nuevo(VA_PRESTADOS);
+    bien &= leer_prestado(&mut pr, c.lectura, grande, "leer_8mb_prestado", TROZO);
+    pr.cerrar_asa(grande);
     c.pedir(CERRAR, grande, 0, 0, b"");
 
     // Lo mismo con trozos de 1 MB (A4): 8 viajes en lugar de 128, y registros de 128 KB enteros al escribir.
@@ -179,6 +202,8 @@ fn principal() -> u64 {
         off += r.a;
     }
     dato("leer_8mb_1m", mb, GRANDE, cuentas() - t0, "MB/s");
+    bien &= leer_prestado(&mut pr, c.lectura, f.asa, "leer_8mb_1m_prestado", TROZO_GRANDE);
+    pr.cerrar_asa(f.asa);
     c.pedir(CERRAR, f.asa, 0, 0, b"");
     c.pedir(BORRAR, 0, 0, 0, b"grande1m");
 

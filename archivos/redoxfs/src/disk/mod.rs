@@ -72,6 +72,11 @@ pub trait Disk {
     /// The `count` blocks from `block` are free and nothing written there since the last `flush` needs to reach the
     /// disk (DashOS, step B: blocks born and freed between two `FileSystem::durable`). The default keeps them.
     fn forget(&mut self, _block: u64, _count: u64) {}
+
+    /// The reads that follow, until `reading_data(false)`, are the data of a file, not metadata (DashOS, A7). A disk
+    /// with a cache of blocks may keep them out of it when the file's data has a cache of its own. The default
+    /// ignores it.
+    fn reading_data(&mut self, _data: bool) {}
 }
 
 impl Disk for Box<dyn Disk> {
@@ -97,5 +102,13 @@ impl Disk for Box<dyn Disk> {
 
     fn last_read_from_memory(&self) -> bool {
         (**self).last_read_from_memory()
+    }
+
+    fn forget(&mut self, block: u64, count: u64) {
+        (**self).forget(block, count)
+    }
+
+    fn reading_data(&mut self, data: bool) {
+        (**self).reading_data(data)
     }
 }

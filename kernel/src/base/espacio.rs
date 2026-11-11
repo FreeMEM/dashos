@@ -79,8 +79,10 @@ pub enum Permiso {
 
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
 pub const VIAS: usize = 4;
-/// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3).
-const TLB_POR_PAGINA: u64 = 32;
+/// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3). Con más, una invalidación
+/// de todo el ASID: en QEMU cada aviso para a todos los núcleos, y con 32 quitar un trozo prestado de 512 KB costaba
+/// 140 µs (A7).
+const TLB_POR_PAGINA: u64 = 4;
 
 pub struct Espacio {
     l1: u64, // dirección física
