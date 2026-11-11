@@ -108,3 +108,5 @@ mod tests_deferred;
 mod tests_a5;
 #[cfg(all(feature = "std", test))]
 mod tests_a9;
+#[cfg(test)]
+mod tests_a8;

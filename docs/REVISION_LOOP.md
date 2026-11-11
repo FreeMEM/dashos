@@ -481,3 +481,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   como perdida, como dice A11; con o sin el cambio. Se comprueba tras guardar.) Medido en el PC: con 285 trozos
   libres (`perfil`), igual; con el disco fragmentado (`fragmentado`, 4.492 trozos libres), crear y escribir 144 a
   114 µs (-21 %) y borrar 97 a 71 µs (-27 %). Falta de A8: la transacción abierta entre peticiones.
+- A8, sin recorridos en el asignador: al liberar, el hermano se calcula (índice más o menos el tamaño del nivel) y se
+  mira si está libre, en vez de recorrer el nivel entero; al reservar un bloque concreto, el único candidato es el
+  último libre que empieza antes que él (`range`). Y `allocate_exact` con un nivel que no es 0 da `None` en vez de
+  `assert` (A9). Prueba (`tests_a8`): 50 secuencias de 3.000 reservas, liberaciones y reservas exactas al azar dan los
+  mismos niveles que el algoritmo de antes, operación a operación. Medido en el PC con el disco fragmentado (4.492
+  trozos libres): crear y escribir 114 a 53 µs, borrar 71 a 33; con el diario de antes, desde 144 y 97: -63 % y
+  -66 %. Con el disco poco troceado (`perfil`), igual.

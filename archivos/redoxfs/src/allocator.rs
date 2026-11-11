@@ -114,8 +114,11 @@ impl Allocator {
     ///
     /// Note that [`BlockAddr`] encodes the blocks location _and_ level.
     pub fn allocate_exact(&mut self, exact_addr: BlockAddr) -> Option<BlockAddr> {
-        // This function only supports level 0 right now
-        assert_eq!(exact_addr.level().0, 0);
+        // This function only supports level 0 right now. DashOS, A9: sin `assert` (el nivel puede venir del disco al
+        // abrirlo): con otro nivel, `None`, como si no se pudiera.
+        if exact_addr.level().0 != 0 {
+            return None;
+        }
         let exact_index = exact_addr.index();
 
         let mut index_opt = None;
@@ -130,15 +133,12 @@ impl Allocator {
                 self.levels[level].insert(index + level_size);
             }
 
-            // Look for matching block and remove it
-            for &start in self.levels[level].iter() {
-                if start <= exact_index {
-                    let end = start + level_size;
-                    if end > exact_index {
-                        self.levels[level].remove(&start);
-                        index_opt = Some(start);
-                        break;
-                    }
+            // Look for matching block and remove it. DashOS, A8: el único candidato es el último bloque libre de este
+            // nivel que empieza en o antes de él (antes se recorría el nivel entero).
+            if let Some(&start) = self.levels[level].range(..=exact_index).next_back() {
+                if start + level_size > exact_index {
+                    self.levels[level].remove(&start);
+                    index_opt = Some(start);
                 }
             }
         }
@@ -162,25 +162,13 @@ impl Allocator {
             let level_size = 1 << level;
             let next_size = level_size << 1;
 
-            let mut found = false;
-            // look at all free blocks in the current level...
-            for &level_index in self.levels[level].iter() {
-                // - the block we just freed aligns with the next largest block, and
-                // - the second block we're looking at is the right sibling of this block
-                if index % next_size == 0 && index + level_size == level_index {
-                    // "alloc" the next highest block, repeat deallocation process.
-                    self.levels[level].remove(&level_index);
-                    found = true;
-                    break;
-                // - the index of this block doesn't align with the next largest block, and
-                // - the block we're looking at is the left neighbor of this block
-                } else if level_index % next_size == 0 && level_index + level_size == index {
-                    // "alloc" the next highest block, repeat deallocation process.
-                    self.levels[level].remove(&level_index);
-                    index = level_index; // index moves to left block
-                    found = true;
-                    break;
-                }
+            // DashOS, A8: el hermano se calcula, no se busca recorriendo el nivel entero (crecía con la fragmentación).
+            // Si este bloque empieza un bloque del nivel siguiente, su hermano es el de la derecha; si no, el de la
+            // izquierda, y el bloque unido empieza en él.
+            let buddy = if index % next_size == 0 { index + level_size } else { index - level_size };
+            let found = self.levels[level].remove(&buddy);
+            if found && buddy < index {
+                index = buddy;
             }
 
             // We couldn't find a higher block,
