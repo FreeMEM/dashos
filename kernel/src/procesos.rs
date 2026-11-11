@@ -30,7 +30,7 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
     };
     // La pila del kernel del hilo, antes de tocar las llaves: sin ella no se puede seguir (M4).
     let Some(pila) = crate::mapa::pila_nueva() else { return Err((Error::SinMemoria, llaves)) };
-    let control = Arc::new(Control::default());
+    let Ok(control) = Arc::try_new(Control::default()) else { return Err((Error::SinMemoria, llaves)) };
     if !cupo.apuntar(&control) {
         return Err((Error::SinMemoria, llaves));
     }
@@ -42,7 +42,7 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         // Con sitio reservado y la tabla vacía, no falla.
         let _ = tabla.instalar(l.llegada());
     }
-    let p = Arc::new(Proceso {
+    let p = Arc::try_new(Proceso {
         ttbr0: e.ttbr0(),
         big_endian: cargado.big_endian,
         espacio: Cerrojo::new(e),
@@ -51,7 +51,12 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
         _cargo: cargo,
         control: control.clone(),
     });
+    // Sin memoria para el proceso o su hilo (S1), sus llaves ya están en su tabla y se cierran con él: es como un
+    // proceso que muere nada más nacer. Quien lo pidió recibe el error sin ellas.
+    let Ok(p) = p else { return Err((Error::SinMemoria, Vec::new())) };
     let n = nucleo.unwrap_or_else(planificador::nucleo_para_nuevo);
-    planificador::crear_proceso(p, cargado.entrada, cargado.pila, n, pila);
+    if planificador::crear_proceso(p, cargado.entrada, cargado.pila, n, pila).is_none() {
+        return Err((Error::SinMemoria, Vec::new()));
+    }
     Ok((control, cargado))
 }

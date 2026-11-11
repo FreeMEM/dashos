@@ -378,10 +378,11 @@ pub fn iniciar_nucleo() {
     unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
     // Sitio reservado de antemano: las colas crecen dentro del planificador, con las IRQ enmascaradas, y con el robo de
     // trabajo (M4) cualquier núcleo puede tener muchos hilos de procesos.
+    // Una página cada una (512 hilos): con eso no vuelven a crecer en la práctica (S1, `asegurar_colas`).
     let mut listos = Vec::new();
-    listos.reserve(64);
+    listos.reserve_exact(COLA_AL_CRECER);
     let mut muertos = Vec::new();
-    muertos.reserve(32);
+    muertos.reserve_exact(COLA_AL_CRECER);
     let dormidos = Dormidos::nueva();
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos, muertos, desde: reloj::ahora(), prometido: 0, min_virtual: 0, fp_dueno: core::ptr::null_mut(), dormidos });
     PRESENTES.fetch_or(1 << n, Ordering::AcqRel);
@@ -414,18 +415,52 @@ fn registros_el0() {
 /// # Seguridad
 /// `proceso` es 0 o un puntero de `Arc::<Proceso>::into_raw` cuya referencia pasa al hilo, que la suelta al morir.
 pub unsafe fn crear_en(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize) -> u64 {
-    unsafe { crear_hilo(f, arg, nucleo, proceso, None) }
+    // Solo los crea el arranque (y las pruebas): sin memoria para sus hilos no hay sistema.
+    unsafe { crear_hilo(f, arg, nucleo, proceso, None) }.expect("sin memoria para un hilo del kernel")
 }
 
 /// Como `crear_en`, y además apunta el hilo en la lista de hilos de `registrar` antes de que pueda correr (C39).
-unsafe fn crear_hilo(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>) -> u64 {
+unsafe fn crear_hilo(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>) -> Option<u64> {
     // Pila con guarda (C34). Los hilos del kernel los crea el arranque, que sin pilas no puede seguir; los de los
     // procesos traen la suya (`crear_proceso`).
     let pila = crate::mapa::pila_nueva().expect("sin pilas del kernel");
     unsafe { crear_hilo_con(f, arg, nucleo, proceso, registrar, pila) }
 }
 
-unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila) -> u64 {
+/// Cuántos hilos hay (sin los ociosos). Las colas `listos` y `muertos` de cada núcleo tienen siempre sitio para todos
+/// (S1): así el planificador, que mete hilos en ellas con las IRQ enmascaradas, nunca pide memoria.
+static HILOS: AtomicUsize = AtomicUsize::new(0);
+
+const COLA_AL_CRECER: usize = 512;
+
+/// Asegura sitio para `total` hilos en las colas de cada núcleo. Las colas no encogen nunca.
+fn asegurar_colas(total: usize) -> bool {
+    for c in NUCLEOS.iter() {
+        let mut g = c.tomar();
+        if let Some(nc) = g.as_mut() {
+            // Al crecer, de golpe a una página o más (512 hilos): así no salen de las clases pequeñas del montón ni
+            // cambian dónde caen los demás objetos del kernel (la ida y vuelta lo nota, ver bitácora de R11).
+            for cola in [&mut nc.listos, &mut nc.muertos] {
+                if cola.capacity() < total {
+                    let nueva = total.max(COLA_AL_CRECER);
+                    if cola.try_reserve_exact(nueva - cola.len()).is_err() {
+                        return false;
+                    }
+                }
+            }
+        }
+    }
+    true
+}
+
+/// `None` sin memoria para el hilo (S1); entonces la pila se suelta y `proceso` queda en manos de quien llama.
+unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila) -> Option<u64> {
+    let total = HILOS.fetch_add(1, Ordering::AcqRel) + 1;
+    let hay_sitio = asegurar_colas(total) && registrar.is_none_or(|c| c.estado.tomar().hilos.try_reserve(1).is_ok());
+    if !hay_sitio {
+        HILOS.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    }
     let tope = pila.tope();
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
     let mut contexto = Contexto::default();
@@ -437,7 +472,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
     let nc = cola.as_mut().expect("núcleo sin planificador");
     nc.actualizar_min();
     let minimo = nc.min_virtual;
-    let h = Box::into_raw(Box::new(Hilo {
+    let caja = Box::try_new(Hilo {
         id,
         contexto,
         estado: Estado::Listo,
@@ -459,7 +494,13 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         sig_dormido: core::ptr::null_mut(),
         fijo: false,
         consumido: 0,
-    }));
+    });
+    let Ok(caja) = caja else {
+        drop(cola);
+        HILOS.fetch_sub(1, Ordering::AcqRel);
+        return None;
+    };
+    let h = Box::into_raw(caja);
     nc.listos.push(h);
     publicar_carga(nucleo, nc);
     drop(cola);
@@ -479,7 +520,15 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         }
         e.hilos.push(HiloRef(h));
     }
-    id
+    Some(id)
+}
+
+impl Drop for Hilo {
+    fn drop(&mut self) {
+        if self.id != 0 {
+            HILOS.fetch_sub(1, Ordering::AcqRel);
+        }
+    }
 }
 
 /// Lo más que se promete a la clase de plazo en un núcleo, en milésimas (S2: no se promete lo que no hay).
@@ -1377,12 +1426,20 @@ extern "C" fn arrancar_proceso(a: usize) {
 /// queda con `p` y se apunta en su lista de hilos antes de poder correr.
 /// `pila_kernel` es la pila del kernel del hilo, que se pide antes (`mapa::pila_nueva`) para que esto no pueda
 /// fallar por falta de pilas cuando ya se han dado las llaves (M4).
-pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> u64 {
+/// `None` sin memoria (S1): el proceso no llega a correr y se suelta aquí.
+pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> Option<u64> {
     let control = p.control.clone();
+    let a = Box::into_raw(Box::try_new(Arranque { entrada, pila }).ok()?) as usize;
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
-    let a = Box::into_raw(Box::new(Arranque { entrada, pila })) as usize;
     // `ptr` es un Arc::into_raw cuya referencia pasa al hilo, como pide crear_hilo.
-    unsafe { crear_hilo_con(arrancar_proceso, a, nucleo % MAX_NUCLEOS, ptr, Some(&control), pila_kernel) }
+    let id = unsafe { crear_hilo_con(arrancar_proceso, a, nucleo % MAX_NUCLEOS, ptr, Some(&control), pila_kernel) };
+    if id.is_none() {
+        unsafe {
+            drop(Box::from_raw(a as *mut Arranque));
+            drop(alloc::sync::Arc::from_raw(ptr as *const crate::objetos::Proceso));
+        }
+    }
+    id
 }
 
 /// ¿Han matado al hilo actual?
@@ -1456,18 +1513,35 @@ pub fn fp_atrapado() {
     let actual = nucleo.actual;
     if nucleo.fp_dueno != actual {
         unsafe {
+            // Sin memoria para guardar sus registros (S1), el hilo muere en su vuelta a EL0 en vez de tumbar el kernel.
             let viejo = nucleo.fp_dueno;
             if !viejo.is_null() {
-                let e = (*viejo).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
-                fp_guardar(&mut **e);
+                match estado_fp(&mut (*viejo).fp) {
+                    Some(e) => fp_guardar(e),
+                    None => (*viejo).matar = true,
+                }
             }
-            let e = (*actual).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
-            fp_cargar(&**e);
+            match estado_fp(&mut (*actual).fp) {
+                Some(e) => fp_cargar(e),
+                None => {
+                    (*actual).matar = true;
+                    nucleo.fp_dueno = core::ptr::null_mut();
+                    return; // sin FPU: no vuelve a EL0 más que para morir
+                }
+            }
         }
         nucleo.fp_dueno = actual;
         FP_CAMBIOS.fetch_add(1, Ordering::Relaxed);
     }
     fpen(FPEN_LIBRE);
+}
+
+/// El sitio de los registros de FP/SIMD de un hilo; lo reserva la primera vez, y puede no haber memoria (S1).
+fn estado_fp(fp: &mut Option<Box<EstadoFp>>) -> Option<&mut EstadoFp> {
+    if fp.is_none() {
+        *fp = Some(Box::try_new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }).ok()?);
+    }
+    fp.as_deref_mut()
 }
 
 /// Cuántas veces ha cambiado de dueño la FPU de algún núcleo.

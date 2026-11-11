@@ -5,6 +5,8 @@
 
 #![no_std]
 #![no_main]
+// `Box::try_new` y `Arc::try_new`: reservar sin pánico lo que se alcanza desde un programa (S1).
+#![feature(allocator_ext)]
 // Parte de lo que solo usan las pruebas (o lo que usarán los servicios) sale como código muerto en la imagen normal.
 #![cfg_attr(not(feature = "pruebas"), allow(dead_code))]
 // Todo el código inseguro va en `base` (C37, S16 B). El resto del kernel no puede tener `unsafe`: lo que necesite

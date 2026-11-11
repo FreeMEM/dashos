@@ -34,6 +34,10 @@ pub struct Asignador;
 
 unsafe impl GlobalAlloc for Asignador {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        #[cfg(feature = "pruebas")]
+        if fallar_aqui() {
+            return ptr::null_mut();
+        }
         let tam = l.size().max(l.align());
         if tam <= MAXIMO {
             let c = clase(tam);
@@ -99,4 +103,38 @@ static ASIGNADOR: Asignador = Asignador;
 
 pub fn paginas_pequenas() -> usize {
     MONTON.tomar().paginas_pequenas
+}
+
+/// Pruebas de S1: hace fallar la reserva número `k` (desde 1) que se pida en este núcleo; 0 = ninguna. Solo este núcleo,
+/// para no tumbar lo que corre en los otros.
+#[cfg(feature = "pruebas")]
+static FALLAR: [core::sync::atomic::AtomicUsize; 4] = [const { core::sync::atomic::AtomicUsize::new(0) }; 4];
+
+#[cfg(feature = "pruebas")]
+fn fallar_aqui() -> bool {
+    use core::sync::atomic::Ordering::Relaxed;
+    let f = &FALLAR[crate::nucleos::numero() as usize % 4];
+    match f.load(Relaxed) {
+        0 => false,
+        1 => {
+            f.store(0, Relaxed);
+            true
+        }
+        k => {
+            f.store(k - 1, Relaxed);
+            false
+        }
+    }
+}
+
+/// Hace fallar la reserva número `k` de este núcleo desde ahora (0 = ninguna).
+#[cfg(feature = "pruebas")]
+pub fn fallar_reserva(k: usize) {
+    FALLAR[crate::nucleos::numero() as usize % 4].store(k, core::sync::atomic::Ordering::Relaxed);
+}
+
+/// Cuántas reservas faltan para la que fallará (0 = ya falló o no hay ninguna puesta).
+#[cfg(feature = "pruebas")]
+pub fn reserva_pendiente() -> usize {
+    FALLAR[crate::nucleos::numero() as usize % 4].load(core::sync::atomic::Ordering::Relaxed)
 }

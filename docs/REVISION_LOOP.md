@@ -253,3 +253,22 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   pilas y un bloque de 64 KB, los suelta y pide otra vez; vuelven las mismas páginas (2 de 2 y el mismo bloque) y
   sin un byte sucio; WXN puesto. Sin medir: el coste es un borrado de 4 KB por página nueva del montón y uno por
   página de pila nueva, fuera de los caminos que se miden. Falta probarlo en la placa (con el firmware real).
+- R11, S1 (segunda parte): crear un hilo o un proceso ya no hace pánico sin montón. El hilo se reserva con
+  `Box::try_new` (feature `allocator_ext`); las colas `listos` y `muertos` de cada núcleo tienen siempre sitio para
+  todos los hilos que existen (contador `HILOS`, `asegurar_colas` al crear; no encogen), así el planificador nunca
+  pide memoria con las IRQ enmascaradas; la lista de hilos del proceso se reserva antes. `procesos::lanzar` usa
+  `Arc::try_new` y, si el hilo no se puede crear, suelta el proceso y devuelve `SinMemoria` (las llaves ya estaban en
+  su tabla y se cierran con él). El estado de coma flotante, si no hay memoria para él, mata al hilo en su vuelta a
+  EL0 en vez de tumbar el kernel. Prueba hostil (S1 en `pruebas.rs`, con un interruptor de fallos del montón por
+  núcleo que solo existe en las pruebas): lanza `hijo` haciendo fallar la reserva 1, luego la 2..., hasta que ya
+  no falla ninguna. La primera vuelta encontró un pánico (en la propia prueba); ahora: 11 reservas, las 11 dan
+  `SinMemoria`, 0 páginas perdidas. Sin probar: la falta de memoria para la coma flotante (no se puede provocar a
+  voluntad desde la prueba). Falta de S1: cobrar el tamaño real de la tabla de llaves y cupo para la raíz.
+- Medidas de S6 y S1 (7 arranques cada una, todas seguidas y con la misma carga del PC; `046cd57` medido otra vez
+  como base): S6 sale igual (-1 a -3 %, ruido). La primera versión de S1 ponía la ida y vuelta un 4 a 7 % más
+  lenta (mediana), con el cálculo igual. Causa: `asegurar_colas` hacía crecer `listos` y `muertos` en las clases
+  pequeñas del montón, y eso cambiaba dónde caían los demás objetos del kernel. Con las colas de una página (512
+  hilos) desde el arranque, fuera de esas clases: -1 a -5 % frente a la base, dentro del ruido; el kernel ocupa
+  32 KB más (3.456 a 3.488 KB). Seguramente es lo mismo que hizo un 10 % más lenta la reserva del hilo antes de
+  dar las llaves (R11, primera parte): el banco es muy sensible a la colocación de los objetos calientes en QEMU.
+  Lo pendiente es saber por qué; en la Pi real puede no pasar.

@@ -31,6 +31,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_pantalla(dtb);
     prueba_avisos();
     prueba_recoger();
+    prueba_sin_monton();
     prueba_controlador(dtb);
     prueba_sd(dtb);
     prueba_usb();
@@ -516,6 +517,55 @@ fn prueba_avisos() {
     let con = medir_ida_y_vuelta(200);
     kprintln!("  ida y vuelta entre los núcleos 2 y 3: sin avisos {} µs, con avisos {} µs", sin, con);
     kprintln!("C17: avisos entre núcleos {}", if con > 0 && con * 10 < sin { "bien" } else { "MAL" });
+}
+
+/// S1: lanzar un proceso cuando falla cada una de las reservas del montón que hace por el camino, una a una (la 1.ª,
+/// luego la 2.ª...), hasta que ya ninguna falla. Ninguna puede tumbar el kernel: o se lanza igual, o vuelve
+/// `SinMemoria`. Y no se pierde memoria. El hijo recibe por su llave 1 la orden de salir con 0.
+fn prueba_sin_monton() {
+    use core::sync::atomic::Ordering::Relaxed;
+    let visibles = llamadas::SALIDAS_VISIBLES.swap(false, Relaxed);
+    let libres = || memoria::paginas().libres() + monton::paginas_pequenas();
+    let intento = |k: usize| -> (bool, bool) {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![1, 0], llaves: alloc::vec::Vec::new(), marca: 0 });
+        let llaves = alloc::vec![b];
+        let d = crate::cerrojo::enmascarar_irq();
+        monton::fallar_reserva(k);
+        let r = crate::procesos::lanzar(HIJO, llaves, Some(2), crate::cupo::Cupo::raiz());
+        let sin_fallo = k == 0 || monton::reserva_pendiente() != 0;
+        monton::fallar_reserva(0);
+        crate::cerrojo::restaurar_irq(d);
+        (r.is_ok(), sin_fallo)
+    };
+    for _ in 0..20 {
+        intento(0); // calentar: el montón se queda páginas para sus clases de tamaño
+    }
+    esperar_tics(30);
+    let antes = libres();
+    let (mut errores, mut lanzados, mut k) = (0, 0, 1);
+    loop {
+        let (ok, sin_fallo) = intento(k);
+        if sin_fallo {
+            break; // ya no hay una reserva número k: se han probado todas
+        }
+        if ok { lanzados += 1 } else { errores += 1 }
+        k += 1;
+        if k > 2000 {
+            break;
+        }
+        if k % 16 == 0 {
+            esperar_tics(2);
+        }
+    }
+    esperar_tics(30);
+    let despues = libres();
+    llamadas::SALIDAS_VISIBLES.store(visibles, Relaxed);
+    let perdidas = antes.saturating_sub(despues);
+    kprintln!("  {} reservas al lanzar; fallando cada una: {} veces SinMemoria, {} lanzado igual; páginas perdidas {}",
+        k - 1, errores, lanzados, perdidas);
+    kprintln!("S1: lanzar sin montón {}", if k > 1 && k <= 2000 && perdidas <= 4 { "bien" } else { "MAL" });
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.
