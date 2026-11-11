@@ -255,9 +255,10 @@ fn mandar(c: &mut DeVentanas) -> bool {
         let mut hecho = false;
         // Con su cola llena se espera un poco, como mucho 5 ms (antes, 50): un cliente que no lee no puede parar a todos
         // (E8). Si no, se le suelta: lo que ya se mandó a medias dejaría su conexión rota. A uno del sistema (`guardian`,
-        // con la pantalla de bloqueo), hasta 50: soltarlo deja la sesión bloqueada en negro, y en una máquina cargada
-        // basta con que se quede sin CPU un tic mientras se teclea (cada tecla es un mensaje, y caben 16).
-        for _ in 0..if c.del_sistema { 50 } else { 5 } {
+        // con la pantalla de bloqueo), hasta 250: soltarlo deja la sesión bloqueada en negro, y en una máquina cargada
+        // puede quedarse sin CPU varios tics mientras se teclea (cada tecla es un mensaje, y caben 16). Con 50, 1 de
+        // cada 12 pasadas de la prueba lo soltaba.
+        for _ in 0..if c.del_sistema { 250 } else { 5 } {
             if dashos::canal_escribir(c.respuesta, &t.bytes, &t.llaves) == 0 {
                 hecho = true;
                 break;

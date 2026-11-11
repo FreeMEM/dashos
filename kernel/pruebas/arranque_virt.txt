@@ -125,6 +125,7 @@ DashOS en marcha con 4 núcleos.
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 ~│   [selector] cede C/Privado/nota.txt solo para leer: 0
 ~│   [hostil] selector: bien
+~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien
 # U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.
 # U2: lanzar un programa del disco (solo `guardian`; el hostil no puede).
 ~│   [entrada] lanzar del disco: Programas/hola 0

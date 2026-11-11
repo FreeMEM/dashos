@@ -95,8 +95,11 @@ fn principal() -> u64 {
     let escrito = estado(ESCRIBIR, 1, 2, 4096) == 0 && estado(LEER, 1, 2, 8192) == 0 && (0..t).all(|i| byte(8192 + i) == byte(4096 + i));
     // 4 KB desde la mitad de una página: la segunda página va por PRP2.
     let cruzando = estado(LEER, (4096 / t) as u32, 0, 2048) == 0 && empieza(2048, b"DashOS: sector 0") && empieza(2048 + 2 * t, texto);
-    // Lo que se debe rechazar: fuera del disco (-2) y fuera de la ventana (-3).
-    let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (64 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3;
+    // Lo que se debe rechazar: fuera del disco (-2), fuera de la ventana (-3) y fuera de su tramo, que es el primer MB
+    // (-6, A13): ni el primer sector de archivos ni uno que empieza dentro y acaba fuera.
+    let mb = (1u64 << 20) / t as u64;
+    let rechazos = estado(LEER, 1, a.sectores, 0) == -2 && estado(LEER, 2, 0, (64 * 1024 - t) as u32) == -3 && estado(LEER, 1, 0, 2) == -3
+        && estado(LEER, 1, mb, 0) == -6 && estado(LEER, 2, mb - 1, 0) == -6;
     // Vaciar la caché del disco (FS2).
     let vaciado = estado(VACIAR, 0, 0, 0) == 0;
     let si = |b: bool| if b { "bien" } else { "MAL" };

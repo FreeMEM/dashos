@@ -32,10 +32,13 @@ dashos::monton!();
 // Las llaves van en el orden en que se nombra cada canal por primera vez en el arranque: ventanas, archivos,
 // sesiones (que va tras archivos, U3) y sonido.
 const VENTANAS: u32 = 1;
-const ARCHIVOS: u32 = 2;
-const SESIONES: u32 = 3;
-const SONIDO: u32 = 4;
-const SELECTOR: u32 = 5;
+/// El canal "disco" del NVMe (A13): no tiene tramo, no se le abre. Va el segundo: las llaves de los canales siguen el
+/// orden en que se nombran por primera vez en el paquete, y el disco se nombra antes que archivos.
+const DISCO: u32 = 2;
+const ARCHIVOS: u32 = 3;
+const SESIONES: u32 = 4;
+const SONIDO: u32 = 5;
+const SELECTOR: u32 = 6;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
 const ATAQUES: usize = 160;
@@ -623,9 +626,34 @@ fn sesiones(memoria: u32) -> bool {
     bien
 }
 
+/// A13: con la llave del disco NVMe pero sin tramo, ni se abre ni se lee el sector 0.
+fn disco() -> bool {
+    let pedir = |orden: u32, primero: u64| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut p = [0u8; 24];
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&1u32.to_le_bytes());
+        p[8..16].copy_from_slice(&primero.to_le_bytes());
+        let mut r = [0u8; 24];
+        let mut ll = [0u32; 1];
+        let e = if escribir(DISCO, &p, &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 2_000_000).0 == 24 {
+            i32::from_le_bytes(r[0..4].try_into().unwrap())
+        } else {
+            i32::MIN
+        };
+        dashos::cerrar(lectura);
+        e
+    };
+    let (abrir, leer) = (pedir(0, 0), pedir(1, 0));
+    let bien = abrir == -6 && leer != 0;
+    println!("  [hostil] disco NVMe sin tramo: abrir {}, leer el sector 0 {}: {}", abrir, leer, if bien { "bien" } else { "MAL" });
+    bien
+}
+
 fn principal() -> u64 {
     // Se deja pasar a las demás pruebas del arranque: lo que sigue carga a los servicios.
     dormir_ms(2000);
+    let disco_bien = disco();
     let memoria = dashos::memoria_crear(4096);
     let ses = sesiones(memoria);
     let a = archivos(memoria);
@@ -635,5 +663,5 @@ fn principal() -> u64 {
     let c = compositor(memoria);
     println!("  [hostil] compositor sigue: {}", si(c));
     let _ = E_LIMITE;
-    if a && s && c && ses { 0 } else { 1 }
+    if a && s && c && ses && disco_bien { 0 } else { 1 }
 }

@@ -72,6 +72,12 @@ const FUERA_DEL_DISCO: i32 = -2;
 const FUERA_DE_LA_VENTANA: i32 = -3;
 const ERROR_DEL_DISCO: i32 = -4;
 const SIN_SITIO: i32 = -5;
+/// Quien no tiene tramo del disco (A13): no se le abre.
+const SIN_PERMISO: i32 = -6;
+/// El tramo del disco de cada programa, en bytes, por el nombre que le da `inicio` (A13 de
+/// docs/REVISION_ARQUITECTURA.md: antes, quien tuviera la llave veía el disco entero). `disco`, la prueba del disco
+/// en bruto, el primer MB (donde estaría la tabla de particiones); el servicio de archivos, desde el MB 1. Nadie más.
+const TRAMOS: &[(&str, u64, u64)] = &[("disco", 0, 1 << 20), ("archivos", 1 << 20, u64::MAX)];
 const PEDIR_ANILLO: u32 = 3;
 // La orden 4, "mira mi anillo", va sin llave de respuesta y no se contesta: solo despierta al servicio.
 /// Vaciar la caché del disco (FS2): lo escrito antes queda guardado de verdad antes de lo que venga después. El sistema
@@ -361,6 +367,8 @@ struct Cliente {
     llave: u32,
     bus: u64,
     anillo: Option<(u32, usize, u32)>,
+    /// Sus sectores, [desde, hasta) (A13).
+    tramo: (u64, u64),
 }
 
 fn anillo(va: usize, off: usize) -> &'static core::sync::atomic::AtomicU32 {
@@ -378,6 +386,9 @@ fn transferir(n: &Nvme, es: &mut Cola, c: &Cliente, orden: u32, cuantos: u64, pr
         MAL_FORMADO
     } else if cuantos == 0 || primero.checked_add(cuantos).is_none_or(|f| f > sectores) {
         FUERA_DEL_DISCO
+    } else if primero < c.tramo.0 || primero + cuantos > c.tramo.1 {
+        // Fuera de su tramo (A13).
+        SIN_PERMISO
     } else if off % 4 != 0 || off.checked_add(bytes).is_none_or(|f| f > VENTANA) {
         FUERA_DE_LA_VENTANA
     } else {
@@ -439,12 +450,22 @@ fn atender_anillo(n: &Nvme, es: &mut Cola, c: &Cliente, sectores: u64, tam_secto
     hechas
 }
 
+/// El tramo, en sectores, del cliente de la marca `marca`, por su nombre en el directorio (A13).
+fn tramo_de(nombres: &[(u64, [u8; 16])], marca: u64, tam_sector: usize) -> Option<(u64, u64)> {
+    let (_, n) = nombres.iter().find(|e| e.0 == marca && marca != 0)?;
+    let nombre = &n[..n.iter().position(|&c| c == 0).unwrap_or(16)];
+    let &(_, desde, hasta) = TRAMOS.iter().find(|t| t.0.as_bytes() == nombre)?;
+    Some((desde / tam_sector as u64, hasta / tam_sector as u64))
+}
+
 /// Sirve el disco por el canal de la llave `disco`. Cada petición son 24 bytes (orden, sectores, primer sector y
 /// desplazamiento en la ventana) con una llave para la respuesta; la respuesta, 24 bytes (estado, sectores del disco,
 /// tamaño del sector y de la ventana) y, al abrir, la ventana; al pedir el anillo, su memoria. Un mensaje de 24 bytes
 /// con la orden 4 y sin llave solo despierta al servicio para que mire los anillos.
 fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32) -> u64 {
     let mut clientes: [Option<Cliente>; MAX_CLIENTES] = [None; MAX_CLIENTES];
+    // El directorio de `inicio` (marca y nombre de cada cliente): de él sale su tramo (A13).
+    let mut nombres: [(u64, [u8; 16]); 8] = [(0, [0; 16]); 8];
     let mut buf = [0u8; 256];
     let mut ll = [0u32; 8];
     loop {
@@ -483,6 +504,14 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         // "Mira mi anillo": sin respuesta (el anillo se atiende al dar la vuelta). Sin llave de respuesta no hay a quién
         // contestar (el directorio de `inicio` es así: no hace falta aquí).
         if k == 0 {
+            // Una entrada del directorio de `inicio`: 24 bytes sin marca (marca y nombre).
+            if r == 24 && marca == 0 {
+                let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
+                if let Some(e) = nombres.iter_mut().find(|e| e.0 == 0 || e.0 == m) {
+                    e.0 = m;
+                    e.1.copy_from_slice(&buf[8..24]);
+                }
+            }
             continue;
         }
         let respuesta = ll[0];
@@ -492,14 +521,17 @@ fn servir(n: &Nvme, es: &mut Cola, sectores: u64, tam_sector: usize, disco: u32)
         // Sin marca no se sabe de quién es: solo los clientes que puso `inicio` (o a quienes ellos den su llave).
         let estado = if r != 24 || marca == 0 {
             MAL_FORMADO
+        } else if orden == PEDIR_ABRIR && tramo_de(&nombres, marca, tam_sector).is_none() {
+            SIN_PERMISO
         } else if orden == PEDIR_ABRIR {
+            let tramo = tramo_de(&nombres, marca, tam_sector).unwrap();
             let hueco = clientes.iter().position(|c| c.is_some_and(|c| c.marca == marca)).or_else(|| clientes.iter().position(|c| c.is_none()));
             match hueco {
                 Some(h) => {
                     if clientes[h].is_none() {
                         let (m, bus) = dashos::memoria_dma(1, VENTANA);
                         if m > 0 {
-                            clientes[h] = Some(Cliente { marca, llave: m as u32, bus, anillo: None });
+                            clientes[h] = Some(Cliente { marca, llave: m as u32, bus, anillo: None, tramo });
                         }
                     }
                     match clientes[h] {

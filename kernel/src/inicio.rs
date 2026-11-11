@@ -110,7 +110,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector"]),
+    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco"]),
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("presa", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/presa"), &[], &["sesiones"]),

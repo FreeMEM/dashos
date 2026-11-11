@@ -73,12 +73,13 @@ fn principal() -> u64 {
     // U4, la llave de plazo: un permiso del kernel que también reparte `sesiones`. Con ella entra en la clase de plazo;
     // tras dejarla, ya no.
     let (e_plazo, plazo) = pedir(SERVICIO, "plazo");
-    let entra = plazo != 0 && dashos::plazo(plazo, 1_000, 10_000) == 0;
+    // Poco (un 1 %): lo prometido en un núcleo tiene tope, y los servicios de sonido pueden estar en el mismo.
+    let entra = plazo != 0 && dashos::plazo(plazo, 200, 20_000) == 0;
     if entra {
         dashos::plazo(plazo, 0, 0);
     }
     let (dejar_plazo, _) = pedir(DEJAR, "plazo");
-    let despues = plazo != 0 && dashos::plazo(plazo, 1_000, 10_000) == 0;
+    let despues = plazo != 0 && dashos::plazo(plazo, 200, 20_000) == 0;
     let plazo_bien = e_plazo == 0 && entra && dejar_plazo == 0 && !despues;
     println!("  [pide] llave de plazo: pedirla {}, entrar en la clase {}, dejarla {}, después entra {}: {}", e_plazo, entra, dejar_plazo, despues,
         if plazo_bien { "bien" } else { "MAL" });

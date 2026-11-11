@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas (falta bloquear con una tecla y por tiempo) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador), A9, A10 y A12 |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador), A9, A10, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -491,3 +491,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - A8, rehacer el diario del asignador (cada 1.024 generaciones, `sync_allocator` compara cada trozo con todo el
   diario: cuadrático): medido antes de tocarlo, con 4.492 trozos libres tarda 3,1 ms en el PC. No compensa cambiarlo.
   Se queda la prueba (`tests_a8`): tras rehacerlo con el disco fragmentado y reabrir, el asignador sale igual.
+- A13 en `nvme`: antes, quien tuviera su llave veía el disco entero. Ahora cada cliente tiene un tramo de sectores,
+  por el nombre que le da `inicio` en el directorio (que `nvme` ya recibía y no usaba): la prueba `disco`, el primer
+  MB; `archivos`, desde el MB 1; nadie más. Sin tramo no se abre (-6), y cada lectura o escritura, también por el
+  anillo, se mira contra el tramo. Pruebas: `disco` no lee el primer sector de archivos ni uno que empieza dentro y
+  acaba fuera (-6); `hostil`, con una llave del canal "disco", no lo abre (-6) ni lee el sector 0. (Las llaves de
+  `hostil` se corrieron: siguen el orden en que se nombra cada canal por primera vez, y el disco va antes que archivos:
+  ventanas 1, disco 2, archivos 3, sesiones 4, sonido 5, selector 6.)
+- Dos fallos intermitentes de las pruebas, arreglados: `pide` pedía un 10 % de la clase de plazo, y si caía en el
+  núcleo de los servicios de sonido no cabía (el tope de lo prometido); ahora un 1 %. Y el compositor aún soltaba a
+  `guardian` 1 de cada 12 pasadas con 50 ms: ahora le espera hasta 250 (solo a él). Seis pasadas seguidas bien.
