@@ -45,8 +45,8 @@ if sys.argv[1] == "--comprobar":
         "Estado/ cajón",
         "Estado/Servicios/ cajón",
         "Estado/Servicios/sesiones/ cajón",
-        # U4: lo que el usuario (`guardian`, en la prueba) concedió, guardado una vez.
-        "Estado/Servicios/sesiones/permisos 9",
+        # U4: lo que el usuario (`guardian`, en la prueba) concedió y luego retiró: el fichero queda vacío.
+        "Estado/Servicios/sesiones/permisos 0",
         "Imagenes/ cajón",
         "Imagenes/disquete.adf 901120",
         "LEEME.txt 19",
@@ -85,7 +85,7 @@ if sys.argv[1] == "--comprobar":
     if arbol != esperado:
         fallos.append(f"árbol: {arbol}")
     permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
-    if permisos != b"pide eco\n":
+    if permisos != b"":
         fallos.append(f"permisos concedidos: {permisos!r}")
     if hola != b"hola desde DashOS!\n":
         fallos.append(f"Escrito/hola.txt: {hola!r}")

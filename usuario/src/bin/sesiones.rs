@@ -381,6 +381,20 @@ fn leer_permisos(a: &Archivos, concedidos: &mut [Option<([u8; 16], usize)>]) {
     println!("  [sesiones] permisos concedidos en el disco: {}", van);
 }
 
+/// Reescribe el fichero de permisos con lo concedido que queda.
+fn reescribir_permisos(a: &Archivos, concedidos: &[Option<([u8; 16], usize)>]) {
+    use dashos::protocolo::archivos as x;
+    let (e, asa, _) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
+    if e != x::BIEN {
+        return;
+    }
+    a.orden(x::TAMANO, asa, 0, 0, b"");
+    a.orden(x::CERRAR, asa, 0, 0, b"");
+    for (p, s) in concedidos.iter().flatten() {
+        guardar_permiso(a, nombre(p), REPARTE[*s].0);
+    }
+}
+
 /// Añade al fichero de permisos lo que el usuario concedió.
 fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str) {
     use dashos::protocolo::archivos as x;
@@ -813,6 +827,46 @@ fn principal() -> u64 {
                         }
                         dashos::cerrar(a_quien);
                     }
+                }
+                RETIRAR => {
+                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let (lp, ls) = (u32_en(4) as usize, u32_en(8) as usize);
+                    let (prog, serv) = (m.get(12..12 + lp).unwrap_or(b""), m.get(12 + lp..12 + lp + ls).unwrap_or(b""));
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let estado = if !guardian {
+                        registro.apuntar(R_SERVICIO, PROTEGIDO, &quien, prog);
+                        PROTEGIDO
+                    } else {
+                        let s = REPARTE.iter().position(|r| r.0.as_bytes() == serv);
+                        let mut quitado = false;
+                        for c in concedidos.iter_mut() {
+                            if c.is_some_and(|c| Some(c.1) == s && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog) {
+                                *c = None;
+                                quitado = true;
+                            }
+                        }
+                        if quitado {
+                            // Las llaves que ya tenga dejan de servir: el permiso se retira ya, no al pedirlo otra vez.
+                            for x in dadas.iter_mut() {
+                                if let Some((mc, sv, rev)) = *x {
+                                    let de_el = fichas.iter().flatten().any(|f| f.marca == mc && nombre(&f.nombre).as_bytes() == prog);
+                                    if Some(sv) == s && de_el {
+                                        dashos::revocar(rev);
+                                        dashos::cerrar(rev);
+                                        *x = None;
+                                    }
+                                }
+                            }
+                            if let Some(a) = &archivos {
+                                reescribir_permisos(a, &concedidos);
+                            }
+                            BIEN
+                        } else {
+                            NO_EXISTE
+                        }
+                    };
+                    println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
                 MATAR => {
                     let objetivo = u64_en(4);

@@ -103,6 +103,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] pide pide eco: 0
 ~│   [pide] U4: bien
 ~│   [guardian] preguntas: de pide 1, de otros 1: bien
+~│   [guardian] retirar a pide el permiso de eco 0, otra vez -1: bien
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien
 ~│   [pide] Home: crea 0 y borra 0 en el volumen de Carla: bien

@@ -50,6 +50,10 @@ pub const SIN_RAIZ: u8 = 0xff;
 pub const PREGUNTAS: u32 = 11;
 /// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.
 pub const RESPUESTA: u32 = 12;
+/// De `guardian`: retirar lo concedido (orden, largo del programa u32, largo del servicio u32, programa, servicio).
+/// `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que tenga ese programa. Contesta 0, o -1 si
+/// no estaba concedido; a otro que no sea `guardian`, -2.
+pub const RETIRAR: u32 = 13;
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16).
 pub const PREGUNTA: usize = 40;
 pub const ENTRADA_REGISTRO: usize = 40;

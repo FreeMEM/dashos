@@ -500,6 +500,23 @@ fn sesiones(memoria: u32) -> bool {
     if servicio != s::PROTEGIDO || k != 0 {
         println!("  [hostil] sesiones: la llave de eco sin permiso da {} con {} llaves (tenía que dar -2 y ninguna)", servicio, k);
     }
+    // U4: retirar a otro un permiso, sin ser `guardian`.
+    let mut p = [0u8; 19];
+    p[0..4].copy_from_slice(&s::RETIRAR.to_le_bytes());
+    p[4..8].copy_from_slice(&4u32.to_le_bytes());
+    p[8..12].copy_from_slice(&3u32.to_le_bytes());
+    p[12..16].copy_from_slice(b"pide");
+    p[16..19].copy_from_slice(b"eco");
+    let (lectura, suyo) = dashos::canal_crear();
+    let retirar = if escribir(SESIONES, &p, &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 2_000_000).0 == 4 {
+        i32::from_le_bytes(r4)
+    } else {
+        i32::MIN
+    };
+    dashos::cerrar(lectura);
+    if retirar != s::PROTEGIDO {
+        println!("  [hostil] sesiones: retirar a pide su permiso da {} (tenía que dar -2)", retirar);
+    }
     // U6: leer el registro de seguridad, sin ser `guardian`.
     let mut p = [0u8; 12];
     p[0..4].copy_from_slice(&s::REGISTRO.to_le_bytes());
@@ -541,7 +558,7 @@ fn sesiones(memoria: u32) -> bool {
         println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);
     }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres;
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);
     } else {

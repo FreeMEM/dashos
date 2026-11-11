@@ -352,5 +352,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (`permisos`, una línea "programa servicio"), y se lee al arrancar: no se vuelve a preguntar. `PERMISOS` fijos,
   ahora vacío. Prueba: un `guardian` de prueba (programa nuevo en `virt`) contesta como el usuario: sí a `pide` con
   `eco`, no a lo demás. Se le pregunta una vez por `pide` (las otras dos veces que corre, ya concedido) y una por el
-  hostil, que recibe -2; en el disco, `permisos` es "pide eco". Falta: los permisos del paquete (S8), la ventana de
-  la pregunta (con el escritorio) y retirar un permiso concedido (Prefs, U6).
+  hostil, que recibe -2. Falta: los permisos del paquete (S8) y la ventana de la pregunta (con el escritorio).
+- U4, retirar: orden 13, RETIRAR (solo `guardian`): quita "programa servicio" de lo concedido, reescribe el fichero
+  (TAMANO a 0 y lo que queda) y revoca las llaves de ese servicio que tenga ese programa (el permiso se va ya, no al
+  pedirlo otra vez). Prueba: `guardian`, al acabar, retira a `pide` el de `eco` (0) y otra vez (-1); el hostil lo
+  intenta y recibe -2 (y queda en el registro); en el disco, `permisos` queda vacío. Sin probar: revocar una llave
+  viva (en la prueba, `pide` ya la dejó). Para el usuario irá en `Prefs` (U6).

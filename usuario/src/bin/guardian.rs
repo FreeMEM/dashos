@@ -9,7 +9,7 @@
 #![no_main]
 
 use dashos::println;
-use dashos::protocolo::sesiones::{PREGUNTA, PREGUNTAS, RESPUESTA};
+use dashos::protocolo::sesiones::{PREGUNTA, PREGUNTAS, RESPUESTA, RETIRAR};
 
 dashos::programa!(principal);
 
@@ -61,5 +61,15 @@ fn principal() -> u64 {
     }
     let bien = a_pide == 1 && a_otros >= 1;
     println!("  [guardian] preguntas: de pide {}, de otros {}: {}", a_pide, a_otros, if bien { "bien" } else { "MAL" });
-    if bien { 0 } else { 1 }
+    // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada.
+    let mut r = [0u8; 19];
+    r[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
+    r[4..8].copy_from_slice(&4u32.to_le_bytes());
+    r[8..12].copy_from_slice(&3u32.to_le_bytes());
+    r[12..16].copy_from_slice(b"pide");
+    r[16..19].copy_from_slice(b"eco");
+    let (una, otra) = (pedir(&r, &[]), pedir(&r, &[]));
+    let retirado = una == 0 && otra == -1;
+    println!("  [guardian] retirar a pide el permiso de eco {}, otra vez {}: {}", una, otra, if retirado { "bien" } else { "MAL" });
+    if bien && retirado { 0 } else { 1 }
 }
