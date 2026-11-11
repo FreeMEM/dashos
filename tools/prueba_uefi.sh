@@ -63,7 +63,7 @@ def mandar(*ordenes, pausa=0.0):
 while time.time() - inicio < total:
     try:
         texto = open(serie, errors="replace").read()
-        if bloqueo == 0 and "[guardian] pantalla de bloqueo en pantalla" in texto:
+        if bloqueo == 0 and "[guardian] pantalla de bloqueo pintada" in texto:
             bloqueo = 1
             time.sleep(0.5)
             teclear("mala")

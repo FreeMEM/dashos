@@ -9,6 +9,7 @@
 
 // Deja el núcleo en EL1, en little-endian, y salta a \destino. Vale tanto si el firmware entra en EL2 como en EL1.
 .macro A_EL1 destino
+    msr     tpidr_el1, xzr              // K1: el hilo actual, ninguno hasta que haya planificador
     mrs     x2, CurrentEL
     lsr     x2, x2, #2
     cmp     x2, #2

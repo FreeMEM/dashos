@@ -60,7 +60,7 @@ pub struct Hilo {
     /// un proceso no vea ni cambie el de otro (auditoría, hallazgo 5).
     tpidr: u64,
     /// Lo han matado (C39): muere en su siguiente vuelta a EL0, o al despertar si estaba bloqueado.
-    matar: bool,
+    matar: AtomicBool,
     /// Ya muerto y con su contexto guardado: el siguiente en la lista global de muertos (U3d).
     sig_muerto: *mut Hilo,
     /// Ha dejado de correr pero su núcleo aún no ha guardado su contexto (M4): no se puede llevar a otro núcleo. Lo
@@ -360,7 +360,7 @@ pub fn iniciar_nucleo() {
         _pila: None,
         fp: None,
         tpidr: 0,
-        matar: false,
+        matar: AtomicBool::new(false),
         sig_muerto: core::ptr::null_mut(),
         en_cambio: AtomicBool::new(false),
         listo_desde: 0,
@@ -384,6 +384,7 @@ pub fn iniciar_nucleo() {
     let mut muertos = Vec::new();
     muertos.reserve_exact(COLA_AL_CRECER);
     let dormidos = Dormidos::nueva();
+    poner_actual(ocioso);
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos, muertos, desde: reloj::ahora(), prometido: 0, min_virtual: 0, fp_dueno: core::ptr::null_mut(), dormidos });
     PRESENTES.fetch_or(1 << n, Ordering::AcqRel);
 }
@@ -485,7 +486,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         _pila: Some(pila),
         fp: None,
         tpidr: 0,
-        matar: false,
+        matar: AtomicBool::new(false),
         sig_muerto: core::ptr::null_mut(),
         en_cambio: AtomicBool::new(false),
         listo_desde: reloj::ahora(),
@@ -515,7 +516,7 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         if e.matado {
             let cola = NUCLEOS[nucleo].tomar();
             if cola.is_some() {
-                unsafe { (*h).matar = true };
+                unsafe { (*h).matar.store(true, Ordering::Release) };
             }
         }
         e.hilos.push(HiloRef(h));
@@ -785,7 +786,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         unsafe {
             // Un hilo marcado para morir no se bloquea: sigue y muere al volver (C39). Se mira con el cerrojo del núcleo,
             // el mismo que toma `matar_proceso`, así que no hay hueco entre marcarlo y bloquearse.
-            if bloquear && !(*actual).matar {
+            if bloquear && !(*actual).matar.load(Ordering::Acquire) {
                 (*actual).estado = Estado::Bloqueado;
                 // Duerme hasta un momento (M2b), en la lista de su núcleo.
                 if (*actual).despierta != 0 {
@@ -992,6 +993,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             }
         }
         nucleo.actual = siguiente;
+        poner_actual(siguiente);
         // Hasta que se guarde su contexto, el que sale no se puede llevar a otro núcleo (M4).
         if actual != nucleo.ocioso {
             unsafe { (*actual).en_cambio.store(true, Ordering::Release) };
@@ -1305,8 +1307,18 @@ pub fn proceso_actual_arc() -> Option<alloc::sync::Arc<crate::objetos::Proceso>>
 }
 
 /// El hilo que corre en este núcleo.
+/// El hilo que corre en este núcleo (K1): lo guarda el planificador en TPIDR_EL1 en cada cambio, así que se lee sin
+/// enmascarar ni tomar el cerrojo del núcleo. Aunque el hilo pase a otro núcleo justo después, el valor sigue siendo él
+/// (lo que corre en un núcleo es quien lee su TPIDR_EL1). 0 antes de que el núcleo tenga planificador.
 pub(super) fn actual() -> *mut Hilo {
-    aqui(|nc| nc.actual).unwrap_or(core::ptr::null_mut())
+    let h: usize;
+    unsafe { core::arch::asm!("mrs {}, tpidr_el1", out(reg) h) };
+    h as *mut Hilo
+}
+
+/// Apunta el hilo que va a correr en este núcleo (K1).
+fn poner_actual(h: *mut Hilo) {
+    unsafe { core::arch::asm!("msr tpidr_el1, {}", in(reg) h as usize) };
 }
 
 /// Algo de la cola del núcleo en que corre quien llama. Las IRQ se enmascaran antes de mirar el número: con ellas
@@ -1465,7 +1477,9 @@ pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64,
 
 /// ¿Han matado al hilo actual?
 pub fn debe_morir() -> bool {
-    aqui(|nc| unsafe { (*nc.actual).matar }).unwrap_or(false)
+    // K1: sin el cerrojo del núcleo; `matar` es atómico y el hilo actual no se puede soltar mientras corre.
+    let h = actual();
+    !h.is_null() && unsafe { (*h).matar.load(Ordering::Acquire) }
 }
 
 /// Mata un proceso: marca cada hilo suyo, despierta a los bloqueados y avisa a los núcleos donde estén corriendo.
@@ -1479,7 +1493,7 @@ pub fn matar_proceso(c: &crate::objetos::Control) {
         let (n, despertar_lo) = {
             let (n, mut g) = cola_de(h.0);
             let bloqueado = g.as_mut().is_some() && unsafe { (*h.0).estado == Estado::Bloqueado };
-            unsafe { (*h.0).matar = true };
+            unsafe { (*h.0).matar.store(true, Ordering::Release) };
             (n, bloqueado)
         };
         if despertar_lo {
@@ -1539,13 +1553,13 @@ pub fn fp_atrapado() {
             if !viejo.is_null() {
                 match estado_fp(&mut (*viejo).fp) {
                     Some(e) => fp_guardar(e),
-                    None => (*viejo).matar = true,
+                    None => (*viejo).matar.store(true, Ordering::Release),
                 }
             }
             match estado_fp(&mut (*actual).fp) {
                 Some(e) => fp_cargar(e),
                 None => {
-                    (*actual).matar = true;
+                    (*actual).matar.store(true, Ordering::Release);
                     nucleo.fp_dueno = core::ptr::null_mut();
                     return; // sin FPU: no vuelve a EL0 más que para morir
                 }

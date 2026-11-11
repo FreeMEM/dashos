@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | entrar y salir con el volumen, bloqueo con su pantalla (falta la pantalla de entrada) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K2 y K3; trozo de K1; K4 probado sin ganancia; A9, A10 y A12 |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A9, A10 y A12 |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -433,3 +433,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `proyectar_dispositivo` se niega a proyectar a un proceso una página que las toque, aunque una llave de registros
   la cubra. Prueba en el arranque (S4 en `pruebas.rs`): en un espacio de proceso, proyectar el distribuidor del GIC
   y una zona que lo pisa da error; el PL011, que es de un controlador, sí se proyecta.
+- K1, lo grande: el planificador guarda en TPIDR_EL1 el hilo que corre en cada núcleo (en cada cambio y al iniciar el
+  núcleo; a 0 en el arranque), así que `actual()`, `debe_morir()`, `ttbr0_actual()` y el proceso actual se leen sin
+  enmascarar ni tomar el cerrojo del núcleo. `matar` es atómico (se sigue poniendo con el cerrojo de la cola del
+  hilo). Medido (7 arranques, contra el mismo banco justo antes): ida y vuelta entre núcleos 62,6 a 55,5 µs (-11 %),
+  en el mismo núcleo 76,2 a 66,6 (-13 %), con 4 cargas en el mismo núcleo 109 a 96 (-12 %); varias fuera del ruido.
+  Lo que prueba que matar sigue funcionando sin cerrojo: C39 y C43 (matar a uno que gira en otro núcleo).
+- La pantalla de bloqueo de `guardian`, más robusta: los glifos se rasterizan antes de bloquear, al teclear solo se
+  repinta la caja y el aviso, y tras pintar la primera vez pide un sync y dice "pintada: tiene el teclado"; el guion
+  de QEMU empieza a teclear entonces (antes, a veces tecleaba cuando la pantalla aún no tenía el teclado). Queda un
+  fallo intermitente: alguna vez (1 de cada 10 pasadas, con K1 y sin él) el compositor suelta a `guardian` por la cola
+  llena más de 5 ms (E8) mientras se teclea, y la pantalla queda negra y bloqueada (lo que debe pasar si el
+  bloqueador muere). Pendiente de mirar por qué tarda en leer.
