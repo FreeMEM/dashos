@@ -1100,6 +1100,24 @@ mod ventanas {
         assert_eq!(escena.teclado, Some((3, 7)));
     }
 
+    /// U5: la ventana nueva de un cliente del sistema (el selector) sí se lleva el teclado mientras se escribe; al irse,
+    /// deja de serlo.
+    #[test]
+    fn ventana_del_sistema_toma_el_teclado() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        escena.reloj_ms = 1_000;
+        abrir(&mut escena, &mut a, 1, 70);
+        escena.tecla(4, true);
+        escena.tecla(4, false);
+        escena.reloj_ms = 1_200;
+        escena.del_sistema.push(2);
+        abrir(&mut escena, &mut b, 2, 71);
+        assert_eq!(escena.teclado, Some((2, 7)));
+        escena.adios(2);
+        assert!(escena.del_sistema.is_empty());
+    }
+
     #[test]
     fn dos_ventanas_en_cascada() {
         let mut escena = Escena::new(Mem::default(), 0);

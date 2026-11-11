@@ -62,6 +62,9 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
 /// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
 const ESCRITORIOS: &[&str] = &["guardian"];
+/// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
+/// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
+const SISTEMA: &[&str] = &["guardian", "selector"];
 
 /// Reintenta lo pendiente de todos (E8); los que llevan demasiado sin leer, a `caidos`.
 fn vaciar_todos(clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) {
@@ -452,7 +455,10 @@ fn principal() -> u64 {
         let mut soltar = false;
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
-                let del_sistema = nombres.get(&marca).is_some_and(|n| ESCRITORIOS.contains(&n.as_str()));
+                let del_sistema = nombres.get(&marca).is_some_and(|n| SISTEMA.contains(&n.as_str()));
+                if del_sistema && !escena.del_sistema.contains(&marca) {
+                    escena.del_sistema.push(marca);
+                }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {

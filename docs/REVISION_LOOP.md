@@ -38,7 +38,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
-| R17 | `guardian` y `selector` | U5 | ceder asas, selector de prueba, acciones de administrador |
+| R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario), acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A12 y A13 (NVMe) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco) y PID en el kernel |
 
@@ -556,3 +556,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   en ese rato, y quien entra en el planificador cada pocos µs retrasa el tic.)
 - `make arranque-virt`: límite de 80 a 110 s, por las preguntas (unos 8 s más) y el PC cargado. La pasada buena tarda
   unos 72 s.
+- U5, la ventana del selector: quien pide un fichero ya no recibe uno fijo. `selector` lista `C/Privado` (que el que
+  pide no puede ver) y enseña una ventana "Abrir" con el kit: la lista, sin nada elegido, y Cancelar. El usuario elige
+  con las flechas e Intro, o con el ratón; solo eso se cede, para leer. Un Intro sin nada elegido no abre nada (así un
+  Intro de quien estaba escribiendo no abre lo primero), y sin elegir en un minuto, o con Cancelar, no se cede nada.
+  Su ventana se lleva el teclado aunque se esté escribiendo: el compositor marca a `guardian` y a `selector` como del
+  sistema (por el nombre que da `inicio`; nadie más puede llamarse así), y la regla de S8 no los frena (prueba
+  `ventana_del_sistema_toma_el_teclado`). `selector` recibe ahora el canal "ventanas" (llave 1). Prueba en virt: el
+  guion pulsa Intro sin elegir (no pasa nada), flecha abajo e Intro; el hostil recibe la asa y lee `nota.txt`, sin
+  poder escribir ni ceder. Captura en `docs/capturas/u5-selector.png`. Falta: elegir carpeta (hoy solo `C/Privado`),
+  el doble clic, y decir en la ventana quién lo pide.

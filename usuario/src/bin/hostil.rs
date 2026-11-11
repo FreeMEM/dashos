@@ -148,7 +148,8 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
     let p = |orden, asa, a, b, nombre| pedir(lectura, copia, orden, asa, a, b, nombre);
     let (sel_l, suyo) = dashos::canal_crear();
     let mut r = [0u8; 4];
-    let asa = if escribir(SELECTOR, b"abrir", &[suyo]) && dashos::canal_leer_plazo(sel_l, &mut r, &mut [], 3_000_000).0 == 4 {
+    // Elige el usuario en la ventana del selector: se espera hasta 65 s (el selector cancela al minuto).
+    let asa = if escribir(SELECTOR, b"abrir", &[suyo]) && dashos::canal_leer_plazo(sel_l, &mut r, &mut [], 65_000_000).0 == 4 {
         u32::from_le_bytes(r)
     } else {
         0

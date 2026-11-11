@@ -430,6 +430,10 @@ pub struct Escena<M: Memorias> {
     inactividad: Vec<Inactividad>,
     /// Los eventos `idled` (true) y `resumed` (false) por mandar: quien atiende los manda con `avisar_inactividad`.
     pub avisos_inactividad: Vec<(Cliente, u32, bool)>,
+    /// Los clientes que son parte del sistema (`guardian`, `selector`), por el nombre que les da `inicio`: lo pone quien
+    /// atiende. Su ventana nueva se lleva el teclado aunque se esté escribiendo (U5: el selector de ficheros sale
+    /// porque el usuario pidió abrir algo).
+    pub del_sistema: Vec<Cliente>,
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -483,6 +487,7 @@ impl<M: Memorias> Escena<M> {
             ultima_tecla_ms: None,
             inactividad: Vec::new(),
             avisos_inactividad: Vec::new(),
+            del_sistema: Vec::new(),
         }
     }
 
@@ -532,6 +537,7 @@ impl<M: Memorias> Escena<M> {
         self.sin_entrada(cliente);
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
+        self.del_sistema.retain(|&c| c != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
             b.vivo = false;
@@ -1701,14 +1707,15 @@ impl<M: Memorias> Escena<M> {
     }
 
     /// Si una ventana nueva de `cliente` puede llevarse el teclado sin que nadie lo pida (S8): sí cuando nadie lo tiene,
-    /// cuando lo tiene el mismo programa, o cuando no se ha pulsado una tecla en `SIN_ROBAR_MS`.
+    /// cuando lo tiene el mismo programa, cuando es del sistema (`del_sistema`) o cuando no se ha pulsado una tecla en
+    /// `SIN_ROBAR_MS`.
     pub fn puede_tomar_teclado(&self, cliente: Cliente) -> bool {
         if self.bloqueo.is_some() {
             return false;
         }
         match self.teclado {
             None => true,
-            Some((c, _)) if c == cliente => true,
+            Some((c, _)) if c == cliente || self.del_sistema.contains(&cliente) => true,
             _ => self.ultima_tecla_ms.is_none_or(|t| self.reloj_ms.wrapping_sub(t) >= SIN_ROBAR_MS),
         }
     }

@@ -34,9 +34,9 @@ QEMU=$!
 # y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" <<'PY' >/dev/null 2>&1 &
+    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" <<'PY' >/dev/null 2>&1 &
 import socket, sys, time
-ruta, total, serie, captura_pregunta, diag_registros = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5]
+ruta, total, serie, captura_pregunta, diag_registros, captura_selector = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6]
 diag_hecho = False
 
 def preguntar_monitor(orden):
@@ -82,6 +82,7 @@ def mandar(*ordenes, pausa=0.0):
     s.close()
 
 preguntas = 0
+selector = 0
 
 while time.time() - inicio < total:
     try:
@@ -114,6 +115,32 @@ while time.time() - inicio < total:
                 mandar("sendkey n")
             time.sleep(0.5)
             continue
+        # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
+        # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo e Intro.
+        if selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
+            selector = 1
+            time.sleep(0.5)
+            mandar("sendkey ret")
+            time.sleep(0.5)
+            mandar("sendkey down")
+            # Con CAPTURA_SELECTOR=fichero.ppm, la ventana con el fichero marcado.
+            if captura_selector:
+                time.sleep(0.5)
+                mandar("screendump " + captura_selector)
+            time.sleep(0.3)
+            mandar("sendkey ret")
+            reintento = time.time() + 4
+        if selector == 1:
+            if "[selector] el usuario " not in texto:
+                # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez.
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                    time.sleep(0.3)
+                    mandar("sendkey ret")
+                time.sleep(0.25)
+                continue
+            selector = 2
         if bloqueo == 0 and "[guardian] pantalla de bloqueo pintada" in texto:
             bloqueo = 1
             time.sleep(0.5)
