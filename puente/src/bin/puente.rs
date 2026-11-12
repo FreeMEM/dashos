@@ -3,6 +3,11 @@
 //! lo pasa todo a DashOS por un solo transporte (`dashos_puente`, tramas).
 //!
 //!     puente WAYLAND_SOCKET TRANSPORTE
+//!     puente --hostil TRANSPORTE
+//!
+//! `TRANSPORTE` es un socket de Unix (en el PC) o `vsock:PUERTO` (en la caja Linux: el puerto de DashOS, CID 2).
+//! `--hostil` manda por el transporte tramas rotas, memorias que no existen, escrituras fuera y tamaños absurdos, y
+//! acaba: DashOS tiene que seguir como si nada (H9).
 //!
 //! Los mensajes pasan tal cual. Lo único que no puede cruzar son los descriptores:
 //! - **La memoria de `wl_shm`**: el puente proyecta el pool del programa y, en cada `wl_surface.commit`, copia al otro
@@ -27,10 +32,26 @@ struct Pool {
     base: *mut libc::c_void,
     tamano: usize,
     fd: RawFd,
+    /// La memoria del otro lado donde van los búferes nuevos.
     memoria: u32,
     /// La memoria de un búfer de dmabuf (G6): se suelta con su búfer.
     dmabuf: bool,
+    /// Lo que mide la memoria del otro lado (en DashOS, páginas enteras): un `resize` hasta ahí vale tal cual.
+    capacidad: usize,
+    /// El `wl_shm` del que salió (para crear su sucesor).
+    shm: u32,
+    /// Un objeto de memoria de DashOS no crece: si el programa agranda el pool por encima de su memoria, el puente
+    /// crea al otro lado un pool nuevo (con un número propio, `alias`) sobre una memoria más grande, y los búferes que
+    /// el programa crea después van a ese. Los de antes siguen en el viejo, con su memoria (`viejas`).
+    alias: Vec<u32>,
+    viejas: Vec<u32>,
+    /// Búferes vivos de este pool, y si el programa ya lo destruyó: sus memorias se sueltan cuando no quede ninguno.
+    vivos: usize,
+    destruido: bool,
 }
+
+/// Los números de objeto que pone el puente (los sucesores de los pools), desde arriba: el programa cuenta desde 1.
+const PRIMERO_PROPIO: u32 = 0xfeff_ffff;
 
 /// Desde aquí, los números de pool de los búferes de dmabuf (no chocan con objetos del programa).
 const POOL_DMABUF: u32 = 0x8000_0000;
@@ -39,7 +60,7 @@ const POOL_DMABUF: u32 = 0x8000_0000;
 fn esperar_tarjeta(fd: RawFd) {
     const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
     for flags in [1u64, 1 | 4] {
-        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC, &flags as *const u64) };
+        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC as _, &flags as *const u64) };
     }
 }
 
@@ -49,8 +70,10 @@ struct Programa {
     fds: VecDeque<RawFd>,
     objetos: HashMap<u32, &'static Interface>,
     pools: HashMap<u32, Pool>,
-    /// Búfer → (pool, desde, bytes, bytes por fila).
-    buferes: HashMap<u32, (u32, usize, usize, usize)>,
+    /// Búfer → (pool, desde, bytes, bytes por fila, memoria del otro lado).
+    buferes: HashMap<u32, (u32, usize, usize, usize, u32)>,
+    /// El siguiente número de objeto propio (cuenta hacia abajo desde `PRIMERO_PROPIO`).
+    propio: u32,
     /// Superficie → búfer puesto.
     superficies: HashMap<u32, u32>,
     /// Lo dañado de cada superficie: el pendiente (filas, del próximo commit) y la historia (cuadro, filas).
@@ -79,7 +102,7 @@ impl Programa {
     fn nuevo(sock: UnixStream) -> Self {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
-        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0 }
+        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
     }
 }
 
@@ -104,6 +127,19 @@ impl Puente {
         self.trama(p::MEMORIA_NUEVA, 0, &d);
     }
 
+    /// Suelta un pool: su proyección, su descriptor y sus memorias del otro lado.
+    fn soltar_pool(&mut self, pl: Pool) {
+        unsafe {
+            if pl.base != libc::MAP_FAILED {
+                libc::munmap(pl.base, pl.tamano.max(1));
+            }
+            libc::close(pl.fd);
+        }
+        for m in std::iter::once(pl.memoria).chain(pl.viejas) {
+            self.trama(p::MEMORIA_SOLTAR, 0, &m.to_le_bytes());
+        }
+    }
+
     /// Copia lo que tiene un descriptor cualquiera a una memoria nueva del otro lado, y lo cierra.
     fn copiar_descriptor(&mut self, fd: RawFd) -> u32 {
         let mut st: libc::stat = unsafe { std::mem::zeroed() };
@@ -124,8 +160,14 @@ impl Puente {
 fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
     let mut salida = Vec::new();
     let mut llaves = Vec::new();
+    let mut sueltas = Vec::new();
     while let Ok((objeto, orden, tam)) = leer_cabecera(&pr.entrada) {
-        let msg: Vec<u8> = pr.entrada.drain(..tam).collect();
+        let mut msg: Vec<u8> = pr.entrada.drain(..tam).collect();
+        // Mensajes que el puente añade detrás de este (destruir los sucesores de un pool), el que va en su lugar (el
+        // `create_pool` del sucesor) y otro objeto para él (un búfer que va al sucesor).
+        let mut extra: Vec<u8> = Vec::new();
+        let mut en_su_lugar: Option<Vec<u8>> = None;
+        let mut otro_objeto: Option<u32> = None;
         let Some(&iface) = pr.objetos.get(&objeto) else {
             salida.extend_from_slice(&msg); // un objeto que no conocemos: que lo rechace el compositor
             continue;
@@ -163,7 +205,8 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 let memoria = pu.memoria();
                 pu.memoria_nueva(memoria, tamano as u64);
                 if base != libc::MAP_FAILED {
-                    pr.pools.insert(id, Pool { base, tamano, fd: fds[0], memoria, dmabuf: false });
+                    let capacidad = tamano.max(1).next_multiple_of(4096);
+                    pr.pools.insert(id, Pool { base, tamano, fd: fds[0], memoria, dmabuf: false, capacidad, shm: objeto, alias: Vec::new(), viejas: Vec::new(), vivos: 0, destruido: false });
                 } else {
                     unsafe { libc::close(fds[0]) };
                 }
@@ -175,14 +218,57 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                     unsafe { libc::munmap(pool.base, pool.tamano.max(1)) };
                     pool.base = unsafe { libc::mmap(std::ptr::null_mut(), nuevo.max(1), libc::PROT_READ, libc::MAP_SHARED, pool.fd, 0) };
                     pool.tamano = nuevo;
-                    let mut d = pool.memoria.to_le_bytes().to_vec();
-                    d.extend_from_slice(&(nuevo as u64).to_le_bytes());
-                    pu.trama(p::MEMORIA_CRECER, 0, &d);
+                    if nuevo <= pool.capacidad {
+                        let mut d = pool.memoria.to_le_bytes().to_vec();
+                        d.extend_from_slice(&(nuevo as u64).to_le_bytes());
+                        pu.trama(p::MEMORIA_CRECER, 0, &d);
+                    } else {
+                        // No cabe: una memoria nueva con todo lo del pool y, en vez del `resize`, un `create_pool` sobre
+                        // ella con un número propio. El viejo sigue para los búferes que ya tenía.
+                        let memoria = pu.memoria();
+                        pu.memoria_nueva(memoria, nuevo as u64);
+                        if pool.base != libc::MAP_FAILED {
+                            let bytes = unsafe { std::slice::from_raw_parts(pool.base as *const u8, nuevo) };
+                            p::escribir_memoria(&mut pu.transporte, memoria, 0, bytes).expect("el transporte se cerró");
+                            pr.copiado += nuevo as u64;
+                        }
+                        let id = pr.propio;
+                        pr.propio -= 1;
+                        println!("puente: un pool crece de {} a {} bytes, más que su memoria: sigue en otro ({:#x})", pool.capacidad, nuevo, id);
+                        let mut m = Vec::with_capacity(16);
+                        for w in [pool.shm, 16 << 16 | wl_shm::req::CREATE_POOL as u32, id, nuevo as u32] {
+                            m.extend_from_slice(&w.to_le_bytes());
+                        }
+                        en_su_lugar = Some(m);
+                        suyas.push(memoria);
+                        pool.viejas.push(std::mem::replace(&mut pool.memoria, memoria));
+                        pool.alias.push(id);
+                        pool.capacidad = nuevo.next_multiple_of(4096);
+                    }
+                }
+            }
+            ("wl_shm_pool", wl_shm_pool::req::DESTROY) => {
+                if let Some(pool) = pr.pools.get_mut(&objeto) {
+                    for &a in &pool.alias {
+                        for w in [a, 8 << 16 | wl_shm_pool::req::DESTROY as u32] {
+                            extra.extend_from_slice(&w.to_le_bytes());
+                        }
+                    }
+                    pool.destruido = true;
+                    if pool.vivos == 0 {
+                        let pl = pr.pools.remove(&objeto).unwrap();
+                        pu.soltar_pool(pl);
+                    }
                 }
             }
             ("wl_shm_pool", wl_shm_pool::req::CREATE_BUFFER) if args.len() == 6 => {
                 let (alto, linea) = (args[3].uint() as usize, args[4].uint() as usize);
-                pr.buferes.insert(args[0].uint(), (objeto, args[1].uint() as usize, alto.saturating_mul(linea), linea));
+                if let Some(pool) = pr.pools.get_mut(&objeto) {
+                    pool.vivos += 1;
+                    pr.buferes.insert(args[0].uint(), (objeto, args[1].uint() as usize, alto.saturating_mul(linea), linea, pool.memoria));
+                    // Con sucesor, el búfer se crea en él (el último: el de la memoria grande).
+                    otro_objeto = pool.alias.last().copied();
+                }
                 pr.enviado.remove(&args[0].uint());
             }
             ("zwp_linux_buffer_params_v1", zwp_linux_buffer_params_v1::req::ADD) if fds.len() == 1 && args.len() == 6 => {
@@ -192,7 +278,7 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 let memoria = pu.memoria();
                 pu.memoria_nueva(memoria, tamano as u64);
                 if base != libc::MAP_FAILED && args[1].uint() == 0 {
-                    pr.pools.insert(POOL_DMABUF | memoria, Pool { base, tamano, fd: fds[0], memoria, dmabuf: true });
+                    pr.pools.insert(POOL_DMABUF | memoria, Pool { base, tamano, fd: fds[0], memoria, dmabuf: true, capacidad: tamano, shm: 0, alias: Vec::new(), viejas: Vec::new(), vivos: 0, destruido: false });
                     pr.planos.insert(objeto, (POOL_DMABUF | memoria, args[2].uint() as usize, args[3].uint() as usize));
                 } else {
                     if base != libc::MAP_FAILED {
@@ -205,19 +291,26 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
             ("zwp_linux_buffer_params_v1", zwp_linux_buffer_params_v1::req::CREATE_IMMED) if args.len() == 5 => {
                 if let Some((pool, desde, linea)) = pr.planos.remove(&objeto) {
                     let alto = args[2].uint() as usize;
-                    pr.buferes.insert(args[0].uint(), (pool, desde, alto.saturating_mul(linea), linea));
+                    let memoria = pr.pools.get(&pool).map_or(0, |pl| pl.memoria);
+                    pr.buferes.insert(args[0].uint(), (pool, desde, alto.saturating_mul(linea), linea, memoria));
                     pr.enviado.remove(&args[0].uint());
                 }
             }
             ("wl_buffer", wl_buffer::req::DESTROY) => {
-                // Un búfer de dmabuf se lleva su memoria.
-                if let Some((pool, ..)) = pr.buferes.remove(&objeto).filter(|b| b.0 & POOL_DMABUF != 0) {
-                    if let Some(pl) = pr.pools.remove(&pool) {
-                        unsafe {
-                            libc::munmap(pl.base, pl.tamano.max(1));
-                            libc::close(pl.fd);
+                // Un búfer de dmabuf se lleva su memoria; uno de wl_shm, la de su pool si era el último de un pool ya
+                // destruido.
+                if let Some((pool, ..)) = pr.buferes.remove(&objeto) {
+                    let soltar = match pr.pools.get_mut(&pool) {
+                        Some(pl) if pl.dmabuf => true,
+                        Some(pl) => {
+                            pl.vivos = pl.vivos.saturating_sub(1);
+                            pl.destruido && pl.vivos == 0
                         }
-                        pu.trama(p::MEMORIA_SOLTAR, 0, &pl.memoria.to_le_bytes());
+                        None => false,
+                    };
+                    if soltar {
+                        let pl = pr.pools.remove(&pool).unwrap();
+                        pu.soltar_pool(pl);
                     }
                 }
             }
@@ -247,7 +340,7 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                     d.historia.pop_front();
                 }
                 if let Some(&b) = pr.superficies.get(&objeto) {
-                    if let Some(&(pool, desde, largo, linea)) = pr.buferes.get(&b) {
+                    if let Some(&(pool, desde, largo, linea, memoria)) = pr.buferes.get(&b) {
                         let filas: Option<Vec<(usize, usize)>> = match pr.enviado.get(&b) {
                             Some(&ultimo) if d.historia.front().is_some_and(|h| h.0 <= ultimo + 1) => {
                                 let mut f = Vec::new();
@@ -282,7 +375,7 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                             for (ini, fin) in tramos {
                                 if ini < fin && pl.base != libc::MAP_FAILED {
                                     let bytes = unsafe { std::slice::from_raw_parts((pl.base as *const u8).add(ini), fin - ini) };
-                                    p::escribir_memoria(&mut pu.transporte, pl.memoria, ini as u64, bytes).expect("el transporte se cerró");
+                                    p::escribir_memoria(&mut pu.transporte, memoria, ini as u64, bytes).expect("el transporte se cerró");
                                     pr.copiado += bytes.len() as u64;
                                 }
                             }
@@ -294,28 +387,137 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
             }
             _ => {
                 for fd in fds {
-                    suyas.push(pu.copiar_descriptor(fd));
+                    let n = pu.copiar_descriptor(fd);
+                    sueltas.push(n);
+                    suyas.push(n);
                 }
             }
         }
+        drop(args);
+        if let Some(m) = en_su_lugar {
+            msg = m;
+        }
+        if let Some(a) = otro_objeto {
+            msg[0..4].copy_from_slice(&a.to_le_bytes());
+        }
         salida.extend_from_slice(&msg);
+        salida.extend_from_slice(&extra);
         llaves.extend(suyas);
     }
     if !salida.is_empty() {
         pu.trama(p::DATOS, conexion, &p::juntar_datos(&llaves, &salida));
     }
+    // Las copias de un descriptor cualquiera: el otro lado ya tiene la suya, con el mensaje.
+    for n in sueltas {
+        pu.trama(p::MEMORIA_SOLTAR, 0, &n.to_le_bytes());
+    }
+}
+
+/// Conecta con el transporte: `vsock:PUERTO` o la ruta de un socket de Unix.
+fn conectar(transporte: &str) -> std::io::Result<UnixStream> {
+    match transporte.strip_prefix("vsock:") {
+        Some(puerto) => p::vsock(puerto.parse().map_err(|_| std::io::Error::other("puerto de vsock que no vale"))?),
+        None => UnixStream::connect(transporte),
+    }
+}
+
+/// Lo de `--hostil`: cada tanda por una conexión nueva del transporte (las que rompen el flujo hacen que DashOS la
+/// corte). Cuenta las que DashOS cortó.
+fn hostil(transporte: &str) {
+    let mem = |tipo: u8, n: u32, a: u64, resto: &[u8]| {
+        let mut d = n.to_le_bytes().to_vec();
+        d.extend_from_slice(&a.to_le_bytes());
+        d.extend_from_slice(resto);
+        wayland::puente::trama(tipo, 0, &d)
+    };
+    let mut tandas: Vec<(&str, Vec<u8>)> = Vec::new();
+    // Memorias: que no existen, escrituras fuera, tamaños absurdos.
+    let mut t = mem(p::MEMORIA_ESCRIBIR, 4242, 0, b"no existe");
+    t.extend(mem(p::MEMORIA_NUEVA, 1, 4096, &[]));
+    t.extend(mem(p::MEMORIA_ESCRIBIR, 1, 4000, &[0xee; 200]));
+    t.extend(mem(p::MEMORIA_ESCRIBIR, 1, u64::MAX - 8, &[0xee; 16]));
+    t.extend(mem(p::MEMORIA_NUEVA, 2, u64::MAX, &[]));
+    t.extend(mem(p::MEMORIA_NUEVA, 3, 1 << 40, &[]));
+    for i in 0..300 {
+        t.extend(mem(p::MEMORIA_NUEVA, 100 + i, 1 << 20, &[]));
+    }
+    t.extend(mem(p::MEMORIA_CRECER, 1, 1 << 30, &[]));
+    tandas.push(("memorias", t));
+    // Clientes: datos de uno que no existe, números de memoria que no existen, uno repetido, un montón.
+    let mut t = wayland::puente::trama(p::DATOS, 99, &p::juntar_datos(&[], &[1, 2, 3, 4, 5, 6, 7, 8]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 1, &[]));
+    t.extend(wayland::puente::trama(p::DATOS, 1, &p::juntar_datos(&[7777, 8888], &[0xff; 64])));
+    t.extend(wayland::puente::trama(p::CONECTAR, 2, &[]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 2, &[]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 3, &[]));
+    // Wayland roto para el compositor: un objeto que no existe y un tamaño que no es múltiplo de 4.
+    t.extend(wayland::puente::trama(p::DATOS, 3, &p::juntar_datos(&[], &[9, 9, 9, 9, 7, 0, 0, 0, 1, 2, 3])));
+    t.extend(wayland::puente::trama(p::DATOS, 3, &[0xff, 0xff, 0xff, 0x7f]));
+    for c in 10..100 {
+        t.extend(wayland::puente::trama(p::CONECTAR, c, &[]));
+    }
+    tandas.push(("clientes", t));
+    // Tramas que rompen el flujo: un tipo que no existe, una de 4 GB, una de memoria sin su número.
+    tandas.push(("tipo", wayland::puente::trama(200, 0, &[0; 32])));
+    let mut t = vec![p::DATOS, 0, 0, 0, 0];
+    t.extend_from_slice(&u32::MAX.to_le_bytes());
+    t.extend_from_slice(&[0x55; 4096]);
+    tandas.push(("larga", t));
+    tandas.push(("corta", wayland::puente::trama(p::MEMORIA_ESCRIBIR, 0, &[1, 2, 3])));
+    let mut cortadas = 0;
+    for (nombre, t) in tandas {
+        let mut s = match conectar(transporte) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("puente hostil: {}: no conecta ({})", nombre, e);
+                continue;
+            }
+        };
+        let escrito = s.write_all(&t).is_ok();
+        // DashOS corta la conexión (o contesta ADIOS): se lee lo que diga durante un momento.
+        s.set_read_timeout(Some(std::time::Duration::from_millis(1500))).ok();
+        let mut b = [0u8; 4096];
+        let mut cortada = !escrito;
+        loop {
+            match std::io::Read::read(&mut s, &mut b) {
+                Ok(0) => {
+                    cortada = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        cortadas += cortada as u32;
+        println!("puente hostil: {}: {} bytes, {}", nombre, t.len(), if cortada { "DashOS cortó" } else { "sigue abierta" });
+    }
+    println!("puente hostil: hecho, {} conexiones cortadas por DashOS", cortadas);
 }
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--hostil") {
+        hostil(args.get(2).map_or("vsock:5000", String::as_str));
+        return;
+    }
     let (Some(ruta), Some(transporte)) = (args.get(1), args.get(2)) else {
-        eprintln!("uso: puente WAYLAND_SOCKET TRANSPORTE");
+        eprintln!("uso: puente WAYLAND_SOCKET TRANSPORTE | puente --hostil TRANSPORTE");
         std::process::exit(2);
     };
     let _ = std::fs::remove_file(ruta);
     let escucha = UnixListener::bind(ruta).expect("no se abre el socket de Wayland");
     escucha.set_nonblocking(true).unwrap();
-    let t = UnixStream::connect(transporte).expect("no hay transporte a DashOS");
+    // En la caja, el puente puede arrancar antes de que DashOS escuche: se reintenta un rato.
+    let mut t = conectar(transporte);
+    for _ in 0..50 {
+        if t.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        t = conectar(transporte);
+    }
+    let t = t.expect("no hay transporte a DashOS");
+    println!("puente: Wayland en {}, hacia DashOS por {}", ruta, transporte);
     // Bloqueante (la copia comparte el modo con la de escribir): se lee solo cuando `poll` dice que hay algo.
     let mut lectura = t.try_clone().unwrap();
     let mut pu = Puente { transporte: t, siguiente_memoria: 0 };
@@ -347,15 +549,13 @@ fn main() {
             atender(pr, c, &mut pu);
         }
         for c in fuera {
-            if let Some(pr) = programas.remove(&c) {
+            if let Some(mut pr) = programas.remove(&c) {
                 if pr.cuadros > 0 {
                     println!("puente: cliente {}: {} cuadros, {} bytes copiados, {} por cuadro", c, pr.cuadros, pr.copiado, pr.copiado / pr.cuadros);
                 }
-                for pl in pr.pools.values() {
-                    unsafe {
-                        libc::munmap(pl.base, pl.tamano.max(1));
-                        libc::close(pl.fd);
-                    }
+                // Sus memorias, fuera también al otro lado (si no, el tope de memoria de DashOS se llenaría).
+                for (_, pl) in pr.pools.drain() {
+                    pu.soltar_pool(pl);
                 }
                 pu.trama(p::ADIOS, c, &[]);
             }

@@ -37,7 +37,7 @@ Primero lo que se puede probar ya con programas reales en el PC; después lo que
 | Paso | Qué | Prueba | Estado |
 |---|---|---|---|
 | G0 | El compositor de `wayland/` en el PC, detrás de un socket de Unix (crate `puente/`, con std), que vuelca la pantalla a un PPM | Un cliente propio en C con libwayland pinta una ventana y la captura sale como debe | hecho |
-| G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | hecho (copia de wl_shm; vsock y QEMU, con la caja) |
+| G1 | El puente: socket de Wayland y descriptores en un lado, trozos de canal y llaves en el otro. `wl_shm` por copia de lo dañado al hacer `commit` (como Sommelier sin memoria compartida con la máquina virtual). El transporte, una interfaz: hoy un socket al compositor del PC, en la caja un `vsock` | El mismo cliente, por el puente, y el compositor de DashOS en QEMU recibiendo lo de un cliente del PC | hecho; en DashOS desde la caja Linux por vsock (H9, `make arranque-virt-wayland`) |
 | G2 | Mapa de teclado de xkb (`wl_keyboard.keymap`): texto del mapa en un objeto de memoria; el puente lo da como `memfd` | Los clientes de libwayland lo piden siempre: sin él, muchos no arrancan | hecho (mapa español; elegir en Prefs, después) |
 | G3 | Subsuperficies: `wl_subcompositor`, `wl_subsurface` (posición, orden, modo síncrono y no), y `wp_viewporter` si hace falta | Pruebas de PC del árbol de superficies; los bordes de `alacritty` | hecho (sin wp_viewporter) |
 | G4 | `zwlr_layer_shell_v1`: fondo, barras y avisos (capas, anclas, márgenes, zona exclusiva, teclado). Solo para clientes con el poder de escritorio (S10b: por la marca) | `swaybg` pinta el fondo; un cliente sin el poder recibe error | hecho (sin get_popup) |
@@ -123,3 +123,15 @@ código de compositores.
   búferes de dmabuf, directo y por el puente (590 KB por cuadro: alacritty daña la ventana entera). Pendiente: el
   global en el compositor de DashOS (cuando la caja exista: el puente tendrá que cambiar `main_device` por el
   dispositivo de la caja), `create` no inmediato por el puente (Mesa usa `create_immed`) y `wp_viewporter`.
+
+### 2026-11-12 (rama `caja-linux-wayland`)
+
+- G1 en DashOS: el puente corre dentro de Arch Linux ARM en la caja Linux y habla con DashOS por vsock (aparato nuevo en
+  `caja-linux/vmm`). El lado de DashOS es `wayland::puente` (sin `std`) en el servicio de la caja: cada cliente de Linux
+  es una subconexión del compositor (`canal::TROZO_SUB_*`, solo para "caja-linux", sin poderes) y cada memoria, un
+  objeto de memoria de DashOS. `ventana_wayland` (libwayland, wl_shm) y foot salen en el escritorio con teclado y
+  ratón. Detalle y medidas en `docs/bitacoras/caja-linux.md`.
+- Un objeto de memoria de DashOS no crece: el puente pasa un pool que crece más allá de su memoria a un pool sucesor
+  (número propio, memoria nueva) y crea ahí los búferes nuevos. Suelta las memorias de pools destruidos sin búferes.
+- `wl_data_device_manager` v3 anunciado (foot no arranca sin él), sin selecciones todavía.
+

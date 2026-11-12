@@ -39,7 +39,7 @@ const DEL_PUENTE: Cliente = 1 << 32;
 
 /// Con `zwp_linux_dmabuf_v1` (G6): búferes de la tarjeta gráfica, lineales, que se leen con la CPU. Solo en el PC
 /// por ahora: en DashOS llegará con el puente (los dmabuf de la caja pasan a memoria).
-static GLOBALES: [Global; 7] = [
+static GLOBALES: [Global; 8] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -47,9 +47,11 @@ static GLOBALES: [Global; 7] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
+    // Como en el compositor de DashOS: los objetos del portapapeles, sin copiar ni pegar todavía (foot no arranca sin él).
+    Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas. Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 9] = [
+static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -59,6 +61,7 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
+    Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
 ];
 
 /// Los descriptores que hacen de llaves, y lo que hay proyectado de cada uno.

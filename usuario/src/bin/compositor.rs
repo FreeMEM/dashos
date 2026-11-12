@@ -35,7 +35,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::pantallas as pp;
-use wayland::canal::{self, TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS};
+use wayland::canal::{self, TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS, TROZO_SUB_ADIOS, TROZO_SUB_CONECTAR, TROZO_SUB_DATOS};
 use wayland::escena::{self, Cliente, Escena, Rect, Salida};
 use wayland::servidor::{Conexion, Global};
 use wayland::shm::{Memorias, MAX_POOL};
@@ -53,7 +53,7 @@ const FONDO: u32 = 0xff20_4060;
 
 /// Los globales de cada tipo de cliente, sin los `wl_output`: esos van uno por salida (multimonitor), con los
 /// números `GLOBAL_SALIDAS` (el 6, el de siempre, es la principal).
-static GLOBALES: [Global; 6] = [
+static GLOBALES: [Global; 7] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -62,9 +62,11 @@ static GLOBALES: [Global; 6] = [
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
     // hechos (C3). Los `wl_output` van aparte, uno por pantalla (multimonitor).
     Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    // El portapapeles (H9): por ahora solo los objetos, sin copiar ni pegar entre programas (ver `PORTAPAPELES`).
+    PORTAPAPELES,
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 9] = [
+static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -74,10 +76,11 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    PORTAPAPELES,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
-static GLOBALES_CAPAS: [Global; 7] = [
+static GLOBALES_CAPAS: [Global; 8] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -85,7 +88,13 @@ static GLOBALES_CAPAS: [Global; 7] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    PORTAPAPELES,
 ];
+/// `wl_data_device_manager` (v3): muchos programas de Linux no arrancan sin él (foot: "no clipboard available"). Sus
+/// objetos (`wl_data_source`, `wl_data_device`) se crean y se destruyen, pero el compositor aún no guarda ninguna
+/// selección ni manda ofertas: copiar y pegar entre programas está pendiente. El número 14: tras los de las salidas.
+const PORTAPAPELES: Global = Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 };
+
 /// Los números de los globales de las salidas: el 6 (el de siempre) para la principal y del 11 en adelante para las
 /// demás.
 const GLOBAL_SALIDAS: [u32; pp::MAX_CABEZAS] = [6, 11, 12, 13];
@@ -113,6 +122,25 @@ const BARRAS: &[&str] = &["barra"];
 /// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
 /// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
 const SISTEMA: &[&str] = &["guardian", "selector"];
+
+/// Quién puede llevar subconexiones (`canal::TROZO_SUB_*`): varios clientes de Wayland con una sola marca. La caja
+/// Linux (H9), que pasa así los programas de Linux de su puente. Cada uno es un cliente aparte (su ventana, su teclado,
+/// sus errores) y ninguno tiene poderes: ven los globales de cualquier programa.
+const SUBCONEXIONES: &[&str] = &["caja-linux"];
+/// Subconexiones a la vez por marca.
+const MAX_SUBS: usize = 32;
+/// Las subconexiones son clientes con la marca en los 40 bits bajos y el número más 1 encima.
+const BITS_MARCA: u32 = 40;
+
+/// El cliente de la subconexión `sub` de `marca`, si los números caben.
+fn id_sub(marca: Cliente, sub: u32) -> Option<Cliente> {
+    (marca < 1 << BITS_MARCA && marca != 0 && sub < (1 << 23)).then(|| marca | ((sub as u64 + 1) << BITS_MARCA))
+}
+
+/// La marca de un cliente (la suya, o la de quien lleva la subconexión).
+fn marca_de(cl: Cliente) -> Cliente {
+    cl & ((1 << BITS_MARCA) - 1)
+}
 
 /// Reintenta lo pendiente de todos (E8); los que llevan demasiado sin leer, a `caidos`.
 fn vaciar_todos(clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) {
@@ -365,13 +393,19 @@ struct DeVentanas {
     del_sistema: bool,
     /// Lo que aún no cupo en su cola (E8).
     cola: canal::ColaSalida,
+    /// Si es una subconexión, su número (sus trozos lo llevan delante).
+    sub: Option<u32>,
 }
 
 /// Manda lo que haya para el cliente, o lo guarda si no cabe (ver `vaciar`). Falso si hay que soltarlo.
 fn mandar(c: &mut DeVentanas) -> bool {
     let e = c.con.sacar();
     if !e.bytes.is_empty() {
-        let Ok(trozos) = canal::trocear(&e) else { return false };
+        let trozos = match c.sub {
+            Some(n) => canal::trocear_con(&e, &canal::cabecera_sub(TROZO_SUB_DATOS, n)),
+            None => canal::trocear(&e),
+        };
+        let Ok(trozos) = trozos else { return false };
         c.cola.meter(trozos);
     }
     vaciar(c)
@@ -390,6 +424,7 @@ fn vaciar(c: &mut DeVentanas) -> bool {
 
 /// El nombre de un cliente para los mensajes: el que dio `inicio` o, si lo lanzó `sesiones`, el suyo (U6).
 fn nombre_de<'a>(nombres: &'a BTreeMap<u64, String>, lanzados: &'a BTreeMap<u64, String>, marca: Cliente) -> &'a str {
+    let marca = marca_de(marca);
     nombres.get(&marca).or_else(|| lanzados.get(&marca)).map_or("?", |s| s)
 }
 
@@ -400,6 +435,10 @@ fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Esc
             println!("  [compositor] error de protocolo de {}: {}", nombre, e.texto);
         }
         escena.adios(marca);
+        // Una subconexión: su canal de respuesta es de todas las de su marca; se le dice cuál se va.
+        if let Some(n) = cli.sub {
+            dashos::canal_escribir(cli.respuesta, &canal::cabecera_sub(TROZO_SUB_ADIOS, n), &[]);
+        }
         let mut j = cli.con;
         while let Some(l) = j.juntador.tomar_llave() {
             dashos::cerrar(l);
@@ -802,6 +841,7 @@ fn principal() -> u64 {
         }
         let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) && de_sesiones.is_none() && !de_gpu;
         let mut soltar = false;
+        let mut soltar_sub: Option<Cliente> = None;
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
                 let del_sistema = nombres.get(&marca).is_some_and(|n| SISTEMA.contains(&n.as_str()));
@@ -817,7 +857,7 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
                     escena.barras.push(marca);
                 }
-                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
+                clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default(), sub: None });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
                 let cli = clientes.get_mut(&marca).unwrap();
@@ -841,6 +881,41 @@ fn principal() -> u64 {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });
                 soltar = true;
             }
+            // Las subconexiones (la caja Linux): como las de siempre, con el número delante.
+            Some(t @ (TROZO_SUB_CONECTAR | TROZO_SUB_DATOS | TROZO_SUB_ADIOS)) => {
+                let permitido = nombres.get(&marca).is_some_and(|n| SUBCONEXIONES.contains(&n.as_str()));
+                let id = canal::partir_sub(&buf[..n]).filter(|_| permitido).and_then(|(sub, _)| id_sub(marca, sub).map(|id| (sub, id)));
+                match (t, id) {
+                    (TROZO_SUB_CONECTAR, Some((sub, id))) if k == 1 && !clientes.contains_key(&id) => {
+                        let suyas = clientes.keys().filter(|&&c| c != marca && marca_de(c) == marca).count();
+                        if suyas >= MAX_SUBS {
+                            println!("  [compositor] {} pide más de {} subconexiones: no", nombre_de(&nombres, &lanzados, marca), MAX_SUBS);
+                            // Se le dice que no, por el canal que dio.
+                            dashos::canal_escribir(llaves[0], &canal::cabecera_sub(TROZO_SUB_ADIOS, sub), &[]);
+                            dashos::cerrar(llaves[0]);
+                        } else {
+                            clientes.insert(id, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema: false, cola: Default::default(), sub: Some(sub) });
+                        }
+                    }
+                    (TROZO_SUB_DATOS, Some((_, id))) if clientes.contains_key(&id) => {
+                        let cli = clientes.get_mut(&id).unwrap();
+                        if cli.con.juntador.meter(&buf[canal::CABECERA_SUB..n], llaves).is_err() {
+                            llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+                            soltar_sub = Some(id);
+                        } else {
+                            cli.con.atender(&globales[0], &mut escena.de(id));
+                            if !mandar(cli) || cli.con.roto.is_some() {
+                                soltar_sub = Some(id);
+                            }
+                        }
+                    }
+                    (TROZO_SUB_ADIOS, Some((_, id))) => {
+                        llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+                        soltar_sub = Some(id);
+                    }
+                    _ => llaves.iter().for_each(|&l| { dashos::cerrar(l); }),
+                }
+            }
             _ if !de_ventanas => llaves.iter().filter(|_| de_sesiones.is_some()).for_each(|&l| { dashos::cerrar(l); }),
             _ => {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });
@@ -849,10 +924,14 @@ fn principal() -> u64 {
         if soltar {
             soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, marca), marca);
         }
+        if let Some(id) = soltar_sub {
+            soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, id), id);
+        }
 
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
-            println!("  [compositor] ventana de {} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+            let de_linux = if cl != marca_de(cl) { " (un programa de su puente de Wayland)" } else { "" };
+            println!("  [compositor] ventana de {}{} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
         }
         for (cl, i, x, y) in core::mem::take(&mut escena.movidas) {
             let salida = escena.salidas.get(i).map_or("?", |o| o.nombre.as_str());

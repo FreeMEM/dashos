@@ -1,0 +1,26 @@
+# Las ventanas de Linux en el escritorio de DashOS (`make arranque-virt-wayland`, H9): Arch Linux ARM en la caja, como
+# en `arranque_virt_arch.txt`, con vsock para el puente de Wayland. El puente de Arch (un servicio de systemd) conecta
+# por vsock; `puente --hostil` manda tramas rotas, memorias que no existen y tamaños absurdos (DashOS corta esas
+# conexiones y sigue); `ventana_wayland` (libwayland y wl_shm) abre su ventana en el escritorio de DashOS, recibe un
+# clic y una tecla y dice cuántos cuadros por segundo pinta; y foot, una terminal de Wayland de verdad, recibe "hola".
+Hipervisor: EL2 instalado en 4 núcleos
+~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
+~[caja-linux] linux: Welcome to Arch Linux ARM!
+~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] wayland: el puente de Linux conecta por vsock
+~[caja-linux] linux: active
+~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
+~[caja-linux] linux: puente hostil: hecho
+~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
+~[caja-linux] linux: ventana_wayland: primer cuadro en pantalla
+~[caja-linux] linux: ventana_wayland: tengo el teclado
+~[caja-linux] linux: ventana_wayland: clic del botón 272
+~[caja-linux] linux: ventana_wayland: tecla 30 pulsada
+~[caja-linux] linux: ventana_wayland: en marcha:
+~adiós
+~[caja-linux] linux: foot: lista
+~[caja-linux] linux: foot: leido hola
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~[caja-linux] wayland: 

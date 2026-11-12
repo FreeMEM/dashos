@@ -18,6 +18,13 @@ entra solo), hace clic en la ventana y teclea `uname -a`, `systemctl is-system-r
 (la dirección por DHCP), `date`, `pacman -Sy --noconfirm` (baja el índice de paquetes de Arch Linux ARM) y
 `ls /var/lib/pacman/sync`; captura la pantalla y apaga con `poweroff` (systemd para todo y apaga por PSCI).
 
+Con MODO "wayland" (`make arranque-virt-wayland`), lo mismo hasta el prompt de root y después las ventanas de Linux
+(H9, el puente de Wayland): mira que el puente está en marcha, lanza `puente --hostil` (tramas rotas por vsock: DashOS
+las corta y sigue), abre `ventana_wayland` (un cliente de libwayland con wl_shm), hace clic en su ventana y pulsa "a"
+(las dos cosas le llegan), espera su medida de cuadros por segundo, captura la pantalla (PREFIJO.png) y la cierra con
+"q". Después abre foot (una terminal de Wayland de verdad) con `prueba-foot`, teclea "hola" en su ventana (la shell
+de dentro lo escribe en hvc0), la captura (PREFIJO.foot.png) y apaga.
+
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
 """
@@ -57,7 +64,8 @@ def esperar(patron, segundos):
 
 
 # Teclado español: lo que hay que pulsar (nombres de `sendkey` de QEMU, posición de EE. UU.) para cada letra.
-ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7", "=": "shift-0", ":": "shift-dot"}
+ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7", "=": "shift-0", ":": "shift-dot",
+              "_": "shift-slash", "&": "shift-6"}
 
 
 def teclear(orden):
@@ -119,6 +127,57 @@ def capturar(nombre):
     time.sleep(1.5)
     a_png(nombre + ".ppm", nombre + ".png")
 
+
+def ventana_linux(n):
+    """Dónde puso el compositor la ventana número `n` (desde 1) de un programa de Linux."""
+    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    return (int(v[n - 1][0]), int(v[n - 1][1])) if len(v) >= n else None
+
+
+def clic(x, y):
+    ir_a(x, y)
+    mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+    time.sleep(0.5)
+
+
+if modo == "wayland":
+    if not esperar(r"login: root \(automatic login\)", total):
+        sys.exit(1)
+    time.sleep(5.0)
+    clic_en_ventana()
+    paso("systemctl is-active dashos-puente", r"linux: active\s*$|linux: active\n", 120)
+    paso("puente --hostil vsock:5000", r"puente hostil: hecho", 120)
+    # El programa de Linux: su ventana sale en el escritorio de DashOS.
+    teclear("ventana_wayland &")
+    if not esperar(r"ventana_wayland: primer cuadro en pantalla", 180):
+        sys.exit(1)
+    time.sleep(1.0)
+    v = ventana_linux(1)
+    if v:
+        clic(v[0] + 160, v[1] + 120)
+        esperar(r"ventana_wayland: clic del botón", 30)
+        mandar("sendkey a")
+        esperar(r"ventana_wayland: tecla 30 pulsada", 30)
+    esperar(r"ventana_wayland: en marcha", 60)
+    time.sleep(1.0)
+    capturar(prefijo)
+    mandar("sendkey q")
+    esperar(r"ventana_wayland: .* adiós", 30)
+    # foot, una terminal de Wayland de verdad: la primera vez hace la caché de letras de fontconfig.
+    clic_en_ventana()
+    teclear("prueba-foot &")
+    if esperar(r"foot: lista", 600):
+        time.sleep(3.0)
+        v = ventana_linux(2)
+        if v:
+            clic(v[0] + 100, v[1] + 100)
+            teclear("hola")
+            esperar(r"foot: leido hola", 60)
+            capturar(prefijo + ".foot")
+    time.sleep(4.0)
+    clic_en_ventana()
+    teclear("poweroff")
+    sys.exit(0)
 
 if modo == "arch":
     # systemd tarda: hasta que getty entra como root, lo que dé el plazo entero. El prompt no acaba en salto de línea:

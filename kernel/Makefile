@@ -9,6 +9,7 @@
 # make arranque-virt-vm  la caja Linux (H9): la imagen de virt en QEMU con virtualization=on (EL2)
 # make arranque-virt-linux  lo mismo, y la caja arranca Linux hasta busybox (LINUX=Image, INITRD=cpio.gz, fuera de git)
 # make arranque-virt-arch  lo mismo con Arch Linux ARM desde la partición de la caja en el NVMe (fuera de git)
+# make arranque-virt-wayland  lo mismo, con programas gráficos de Linux en ventanas de DashOS (el puente de Wayland)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -43,6 +44,7 @@ prueba: $(PRUEBAS)
 	cd ../amigados && cargo test --quiet --release
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
@@ -158,6 +160,27 @@ arranque-virt-arch: usuario $(DISCO_NVME) FORCE
 	grep -E "\[(caja-linux|nvme)\]" target/salida_virt_arch.txt | grep -vE "linux: (\[ |[0-9]+$$)" | grep -vE "hostil|invitado dice" || true
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-arch.png ../capturas-agente/caja-linux-arch.png 2>/dev/null || true
+
+# Las ventanas de Linux en el escritorio de DashOS (H9, el puente de Wayland; docs/bitacoras/caja-linux.md): lo mismo
+# que `arranque-virt-arch` (el mismo disco: `preparar-arch` mete en él el puente, `ventana_wayland` y foot), pero el
+# guion (modo wayland) abre programas gráficos de Linux: el puente de Arch los pasa por vsock a la caja y la caja al
+# compositor como subconexiones. Antes, `puente --hostil` manda tramas rotas por vsock. Capturas en capturas-agente/.
+arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
+	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): no va en git; tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	mkdir -p target/linux
+	cp "$(ARCH_IMAGE)" target/linux/Image
+	: > target/linux/initrd
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cargo build $(CARGO_PERFIL) --features virt,linux
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
+	rm -f target/caja-wayland*.ppm target/caja-wayland*.png
+	GUARDAR=$(abspath target/salida_virt_wayland.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-wayland) CAJA_MODO=wayland QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_wayland.txt 1800
+	grep -E "\[(caja-linux|compositor)\]" target/salida_virt_wayland.txt | grep -E "wayland|puente|foot|ventana" | grep -vE "linux: \[ " || true
+	@# Las capturas, fuera de git (capturas-agente/ está en .git/info/exclude).
+	mkdir -p ../capturas-agente && cp target/caja-wayland.png ../capturas-agente/caja-linux-wayland.png 2>/dev/null || true
+	cp target/caja-wayland.foot.png ../capturas-agente/caja-linux-wayland-foot.png 2>/dev/null || true
 
 # El multimonitor en QEMU virt: lo mismo que `arranque-virt` y, además, una virtio-gpu con dos cabezas (la 0 a 800x600,
 # como la ramfb; la 1, sin monitor, sale a 1024x768). Sin el guion de siempre: `tools/guion_multimonitor.py` (MULTI)

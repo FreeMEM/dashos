@@ -29,6 +29,31 @@ pub const TROZO_CONECTAR: u8 = 2;
 /// Cierra la conexión.
 pub const TROZO_ADIOS: u8 = 3;
 
+/// Subconexiones (la caja Linux, H9): un proceso con una sola marca lleva varios clientes de Wayland (los programas de
+/// Linux que pasan por su puente), cada uno con su número. Tras el byte de tipo, el número (u32 little-endian) y lo
+/// demás como en los trozos de siempre. Solo para los programas a los que el compositor se lo permite por su nombre.
+/// Abre la subconexión: una llave, el canal por el que contestar (puede ser el mismo para todas: las respuestas
+/// llevan también el número).
+pub const TROZO_SUB_CONECTAR: u8 = 4;
+/// Bytes de una subconexión (y sus llaves), en los dos sentidos.
+pub const TROZO_SUB_DATOS: u8 = 5;
+/// Cierra una subconexión. El compositor también lo manda por el canal de respuesta cuando la suelta.
+pub const TROZO_SUB_ADIOS: u8 = 6;
+/// Bytes de la cabecera de un trozo de subconexión: tipo y número.
+pub const CABECERA_SUB: usize = 5;
+
+/// La cabecera de los trozos de datos de la subconexión `sub`.
+pub fn cabecera_sub(tipo: u8, sub: u32) -> [u8; CABECERA_SUB] {
+    let n = sub.to_le_bytes();
+    [tipo, n[0], n[1], n[2], n[3]]
+}
+
+/// El número de subconexión de un trozo de subconexión, y lo que va detrás.
+pub fn partir_sub(trozo: &[u8]) -> Option<(u32, &[u8])> {
+    let n = u32::from_le_bytes(trozo.get(1..5)?.try_into().ok()?);
+    Some((n, &trozo[5..]))
+}
+
 /// Un trozo listo para mandar: sus bytes (con el tipo delante) y sus llaves.
 #[derive(Debug, PartialEq, Eq)]
 pub struct Trozo {
@@ -38,9 +63,16 @@ pub struct Trozo {
 
 /// Parte los mensajes de un `Escritor` en trozos, con las llaves de cada mensaje en su primer trozo.
 pub fn trocear(e: &Escritor) -> Result<Vec<Trozo>, Fallo> {
+    trocear_con(e, &[TROZO_DATOS])
+}
+
+/// Como `trocear`, con `cabecera` delante de cada trozo en vez del byte de tipo (las subconexiones llevan también su
+/// número).
+pub fn trocear_con(e: &Escritor, cabecera: &[u8]) -> Result<Vec<Trozo>, Fallo> {
     let bytes = &e.bytes[..];
     let mut trozos = Vec::new();
-    let mut actual = Trozo { bytes: alloc::vec![TROZO_DATOS], llaves: Vec::new() };
+    let nuevo = || Trozo { bytes: cabecera.to_vec(), llaves: Vec::new() };
+    let mut actual = nuevo();
     let mut llaves = e.llaves.iter().copied();
     let mut cuentas = e.cuentas.iter().copied();
     let mut i = 0;
@@ -53,20 +85,14 @@ pub fn trocear(e: &Escritor) -> Result<Vec<Trozo>, Fallo> {
         }
         // Entero en el trozo actual, si cabe; si no, en uno nuevo; si no cabe en ninguno, partido.
         if actual.bytes.len() + tam > MAX_CANAL || actual.llaves.len() + suyas.len() > MAX_LLAVES {
-            trozos.push(core::mem::replace(
-                &mut actual,
-                Trozo { bytes: alloc::vec![TROZO_DATOS], llaves: Vec::new() },
-            ));
+            trozos.push(core::mem::replace(&mut actual, nuevo()));
         }
         actual.llaves.extend(suyas);
         let mut resto = mensaje;
         while !resto.is_empty() {
             let cabe = MAX_CANAL - actual.bytes.len();
             if cabe == 0 {
-                trozos.push(core::mem::replace(
-                    &mut actual,
-                    Trozo { bytes: alloc::vec![TROZO_DATOS], llaves: Vec::new() },
-                ));
+                trozos.push(core::mem::replace(&mut actual, nuevo()));
                 continue;
             }
             let n = cabe.min(resto.len());
@@ -75,7 +101,7 @@ pub fn trocear(e: &Escritor) -> Result<Vec<Trozo>, Fallo> {
         }
         i += tam;
     }
-    if actual.bytes.len() > 1 || !actual.llaves.is_empty() {
+    if actual.bytes.len() > cabecera.len() || !actual.llaves.is_empty() {
         trozos.push(actual);
     }
     Ok(trozos)
