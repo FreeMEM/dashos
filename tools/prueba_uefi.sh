@@ -582,10 +582,11 @@ while time.time() - inicio < total:
         # de reintento caían allí como contraseñas vacías).
         def ultimo(t):
             return texto.rfind(t)
-        # Bloqueada desde cualquiera de sus avisos (también el bloqueo que pide `pide`: "se bloquea la sesión de ...") hasta
-        # que se desbloquea o entra alguien.
-        bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("[guardian] se bloquea la sesión de"),
-                            ultimo("pantalla de bloqueo pintada"), ultimo("pantalla de entrada pintada"))
+        # Bloqueada desde cualquiera de sus avisos hasta que se desbloquea o entra alguien. El bloqueo que pide `pide` ("se
+        # bloquea la sesión de ...") no cuenta hasta que se cumple: guardian lo deja pendiente hasta acabar sus 40 s de
+        # preguntas, y contarlo antes dejaba el selector un minuto sin teclas, encima del menú de Ajustes.
+        bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("pantalla de bloqueo pintada"),
+                            ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
         if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
             reintento = max(reintento, time.time() + 4)
@@ -866,13 +867,15 @@ while time.time() - inicio < total:
             time.sleep(1)
         # El desplegable de Ajustes, cuando su campo ya tiene su "a" (antes, un clic en él se llevaría las "a"): el cursor
         # a la esquina y al desplegable (donde lo dicen el compositor y Ajustes), un clic abre el menú; con
-        # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor vuelve a (300, 300).
+        # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor va después abajo a la
+        # derecha: desde (300, 300), los clics de siempre (+10, +5 cada medio segundo) caían en el desplegable, lo abrían
+        # y lo cerraban, y la captura final podía salir con el menú abierto.
         # Sin el centro de control encima (sale en (200, 200) y taparía el desplegable): antes de que se anuncie, o ya
-        # cerrado.
+        # cerrado. Tampoco con la ventana del selector esperando teclas: también lo taparía.
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
-        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and "[ajustes] el campo dice: DashOSa" in texto:
+        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
             import re
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
@@ -882,7 +885,7 @@ while time.time() - inicio < total:
                 menus_antes = texto.count("[ajustes] menú abierto; la segunda opción en (")
                 ir_a(int(v.group(1)) + int(d.group(1)), int(v.group(2)) + int(d.group(2)))
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-                ir_a(300, 300)
+                ir_a(790, 590)
         elif menu == 1 and not bloqueado_ahora:
             import re
             abiertos = re.findall(r"\[ajustes\] menú abierto; la segunda opción en \((\d+), (\d+)\)", texto)
@@ -893,7 +896,7 @@ while time.time() - inicio < total:
                     mandar("screendump " + os.environ["CAPTURA_MENU"])
                 ir_a(int(v.group(1)) + int(o[0]), int(v.group(2)) + int(o[1]))
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-                ir_a(300, 300)
+                ir_a(790, 590)
                 menu = 2
             elif time.time() - menu_desde > 6 and menu_intentos < 3:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
