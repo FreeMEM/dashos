@@ -469,6 +469,38 @@ pub struct Escena<M: Memorias> {
     /// Las capas que acaban de salir, con su sitio (S10: las pruebas del panel, bajo la barra): quien atiende lo dice y
     /// lo vacía.
     pub capas_colocadas: Vec<(Cliente, i32, i32)>,
+    /// U6, el cambio rápido de usuario (`docs/diseño/U6-cambio-rapido.md`): de qué persona es cada cliente (su usuario;
+    /// los del sistema no están) y las personas con su sesión abierta detrás. Lo dice `sesiones` (`aviso_de_sesiones`).
+    /// Un cliente de una sesión de detrás no se ve, no recibe teclado ni ratón y no se lleva el teclado; sus avisos de
+    /// `frame` salen a ritmo bajo (`RITMO_OCULTO_MS`).
+    pub personas: BTreeMap<Cliente, u32>,
+    pub detras: Vec<u32>,
+    /// Cuándo salieron los últimos avisos de frame de los ocultos.
+    ultimo_oculto_ms: u32,
+}
+
+/// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
+/// quedan esperando ni se les acumulan).
+pub const RITMO_OCULTO_MS: u32 = 1_000;
+/// U6: los avisos de `sesiones` al compositor, sin marca (los mismos números que `dashos::protocolo::sesiones`). Solo
+/// `inicio` y `sesiones` tienen una llave sin marca del canal del compositor: ningún cliente puede mandarlos.
+/// - De quién es un cliente: orden, usuario (u32; por debajo de 1000, del sistema; 0, que se olvide), marca (u64) y
+///   16 bytes de nombre: 32 bytes.
+/// - Las personas con su sesión detrás: orden, cuántas (u32) y `MAX_DETRAS` usuarios (u32): 40 bytes.
+pub const AVISO_PERSONA: u32 = 0x5536_0001;
+pub const AVISO_DETRAS: u32 = 0x5536_0002;
+pub const LARGO_AVISO_PERSONA: usize = 32;
+pub const LARGO_AVISO_DETRAS: usize = 40;
+pub const MAX_DETRAS: usize = 8;
+/// El primer usuario de una persona (los de debajo son del sistema).
+pub const PRIMERA_PERSONA: u32 = 1000;
+
+/// Lo que dijo `sesiones` (U6), para quien atiende: de quién es un cliente (con su nombre, para los mensajes) o quiénes
+/// están detrás.
+#[derive(Debug, PartialEq, Eq)]
+pub enum AvisoSesiones {
+    Persona { marca: Cliente, uid: u32, nombre: [u8; 16] },
+    Detras(Vec<u32>),
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -566,7 +598,87 @@ impl<M: Memorias> Escena<M> {
             titulo_dicho: alloc::string::String::new(),
             super_sola: false,
             capas_colocadas: Vec::new(),
+            personas: BTreeMap::new(),
+            detras: Vec::new(),
+            ultimo_oculto_ms: 0,
         }
+    }
+
+    /// U6: si `cliente` es de una persona con la sesión detrás.
+    pub fn oculto(&self, cliente: Cliente) -> bool {
+        self.personas.get(&cliente).is_some_and(|u| self.detras.contains(u))
+    }
+
+    /// U6: un mensaje sin marca que puede ser de `sesiones`. Con otra marca (la de un cliente), nada: nadie más decide
+    /// qué sesión está delante. Devuelve lo que se aplicó, o `None` si no era un aviso de sesiones.
+    pub fn aviso_de_sesiones(&mut self, marca: u64, m: &[u8]) -> Option<AvisoSesiones> {
+        if marca != 0 || m.len() < 8 {
+            return None;
+        }
+        let palabra = |i: usize| u32::from_le_bytes(m[i..i + 4].try_into().unwrap());
+        let aviso = match (palabra(0), m.len()) {
+            (AVISO_PERSONA, LARGO_AVISO_PERSONA) => {
+                let (uid, cliente) = (palabra(4), u64::from_le_bytes(m[8..16].try_into().unwrap()));
+                if uid >= PRIMERA_PERSONA {
+                    self.personas.insert(cliente, uid);
+                } else {
+                    self.personas.remove(&cliente);
+                }
+                AvisoSesiones::Persona { marca: cliente, uid, nombre: m[16..32].try_into().unwrap() }
+            }
+            (AVISO_DETRAS, LARGO_AVISO_DETRAS) => {
+                let n = (palabra(4) as usize).min(MAX_DETRAS);
+                self.detras = (0..n).map(|i| palabra(8 + 4 * i)).filter(|&u| u >= PRIMERA_PERSONA).collect();
+                AvisoSesiones::Detras(self.detras.clone())
+            }
+            _ => return None,
+        };
+        self.tras_cambio_de_sesion();
+        Some(aviso)
+    }
+
+    /// U6: tras cambiar quién está detrás, se recompone todo; quien se oculta pierde el teclado y el puntero, y el
+    /// teclado pasa a la ventana de arriba que se ve.
+    fn tras_cambio_de_sesion(&mut self) {
+        self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+        if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0)) {
+            self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
+            self.teclado = None;
+            self.devolver_teclado();
+        }
+        if let Some((c, s)) = self.puntero.filter(|p| self.oculto(p.0)) {
+            self.pendientes.push((c, Entrada::Sale { superficie: s }));
+            self.puntero = None;
+        }
+    }
+
+    /// La ventana de más arriba que se ve (U6: las de una sesión de detrás, no).
+    fn ventana_de_arriba(&self) -> Option<(Cliente, u32)> {
+        self.orden.iter().rev().find(|v| !self.oculto(v.0)).copied()
+    }
+
+    /// U6: los avisos de `frame` de las superficies ocultas, a ritmo bajo: si pasó `RITMO_OCULTO_MS` desde los
+    /// últimos, todos los que esperan (cliente y aviso). Quien atiende los manda con la hora `ms`.
+    pub fn avisos_ocultos(&mut self, ms: u32) -> Vec<(Cliente, u32)> {
+        let mut out = Vec::new();
+        if self.detras.is_empty() || ms.wrapping_sub(self.ultimo_oculto_ms) < RITMO_OCULTO_MS {
+            return out;
+        }
+        let ocultos: Vec<Cliente> = self.clientes.keys().copied().filter(|&c| self.oculto(c)).collect();
+        for c in ocultos {
+            for s in self.clientes.get_mut(&c).unwrap().superficies.values_mut() {
+                out.extend(s.avisos.drain(..).map(|a| (c, a)));
+            }
+        }
+        if !out.is_empty() {
+            self.ultimo_oculto_ms = ms;
+        }
+        out
+    }
+
+    /// U6: si alguna superficie oculta espera su aviso de `frame` (quien atiende no espera más de `RITMO_OCULTO_MS`).
+    pub fn hay_avisos_ocultos(&self) -> bool {
+        !self.detras.is_empty() && self.clientes.iter().any(|(&c, cli)| self.oculto(c) && cli.superficies.values().any(|s| !s.avisos.is_empty()))
     }
 
     /// Lo que atiende las peticiones de un cliente.
@@ -712,7 +824,7 @@ impl<M: Memorias> Escena<M> {
     /// Cuando se va una capa que tenía el teclado: a la ventana de arriba, si no hay bloqueo (U4).
     fn devolver_teclado(&mut self) {
         if self.bloqueo.is_none() && self.teclado.is_none()
-            && let Some(&v) = self.orden.last() {
+            && let Some(v) = self.ventana_de_arriba() {
                 let mut ev = Vec::new();
                 self.dar_teclado(v, &mut ev);
                 self.pendientes.extend(ev);
@@ -798,7 +910,7 @@ impl<M: Memorias> Escena<M> {
                 }
                 self.danos.extend(rect_de(yo, sup));
                 // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
-                if e.teclado == 1 && e.capa >= 2 && self.teclado != Some((cliente, sup)) {
+                if e.teclado == 1 && e.capa >= 2 && self.teclado != Some((cliente, sup)) && !self.oculto(cliente) {
                     let mut ev = Vec::new();
                     self.dar_teclado((cliente, sup), &mut ev);
                     self.pendientes.extend(ev);
@@ -842,7 +954,7 @@ impl<M: Memorias> Escena<M> {
                 }
             }
         self.teclado = None;
-        if let Some(&v) = self.orden.last() {
+        if let Some(v) = self.ventana_de_arriba() {
             let mut ev = Vec::new();
             self.dar_teclado(v, &mut ev);
             self.pendientes.extend(ev);
@@ -952,6 +1064,8 @@ impl<M: Memorias> Escena<M> {
         for nivel in [2, 3] {
             out.extend(self.capas.iter().filter(|x| capa_de(x) == Some(nivel)));
         }
+        // U6: lo de una sesión de detrás no se pinta (ni recibe el puntero, que va por aquí).
+        out.retain(|x| !self.oculto(x.0));
         out
     }
 
@@ -2036,7 +2150,8 @@ impl<M: Memorias> Escena<M> {
     /// cuando lo tiene el mismo programa, cuando es del sistema (`del_sistema`) o cuando no se ha pulsado una tecla en
     /// `SIN_ROBAR_MS`.
     pub fn puede_tomar_teclado(&self, cliente: Cliente) -> bool {
-        if self.bloqueo.is_some() {
+        // U6: ni bloqueada ni desde una sesión de detrás.
+        if self.bloqueo.is_some() || self.oculto(cliente) {
             return false;
         }
         match self.teclado {
@@ -2065,6 +2180,10 @@ impl<M: Memorias> Escena<M> {
 
     /// Le da el teclado sin cambiar el orden (una capa del escritorio no está entre las ventanas, G4).
     pub fn dar_teclado(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
+        // U6: nunca a una sesión de detrás.
+        if self.oculto(ventana.0) {
+            return;
+        }
         if self.teclado != Some(ventana) {
             if let Some((c, s)) = self.teclado {
                 out.push((c, Entrada::TecladoSale { superficie: s }));

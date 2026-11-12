@@ -217,6 +217,13 @@ path = "src/bin/selector.rs"
 test = false
 required-features = ["ventanas"]
 
+# U6: la prueba del cambio rápido de usuario (en el disco); desde el paso 2, con su ventana.
+[[bin]]
+name = "cambio"
+path = "src/bin/cambio.rs"
+test = false
+required-features = ["ventanas", "sonido"]
+
 [[bin]]
 name = "ventana-a"
 path = "src/bin/ventana_a.rs"

@@ -19,6 +19,11 @@
 //! **delante** (la del último que entró o volvió con su contraseña). Las de detrás siguen en marcha, pero sus programas
 //! no preguntan al usuario, no piden acciones de administrador ni bloquean (quien está delante es otra persona). Un
 //! programa solo ve y mata los procesos de su usuario y los del sistema: los de otra persona no existen para él.
+//!
+//! U6, paso 2: `sesiones` dice al compositor y al sonido (por las copias sin marca de sus canales que le da `inicio`)
+//! de qué persona es cada programa y qué sesiones están detrás: lo suyo no se ve, no recibe entrada y no suena. Lo que
+//! lanza nace también con su llave del compositor. Y lo que el usuario concede es por programa **y usuario**: lo que
+//! Ana deja a un programa no vale para el mismo programa de Carla.
 
 #![no_std]
 #![no_main]
@@ -52,12 +57,19 @@ const RAIZ_SYS: u8 = 1;
 const RAIZ_HOME: u8 = 2;
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
-const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO)];
+/// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
+const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO), ("sonido", SIN_NUMERO)];
+const SIN_NUMERO: u32 = 0;
+/// U6: los servicios que siguen las sesiones (el compositor y el sonido), por el nombre que da `inicio` a quien los
+/// sirve: no reciben entradas de directorio de lo que se reparte (un nombre así podría ser el de uno con poderes), sino
+/// `AVISO_PERSONA`.
+const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido"];
 /// Cuáles de `REPARTE` son permisos, no canales.
 const PERMISOS_KERNEL: &[&str] = &["plazo"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
 /// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
-const PERMISOS: &[(&str, &str)] = &[];
+/// U6: `cambio` (la prueba del cambio rápido de usuario) suena por el servicio de sonido.
+const PERMISOS: &[(&str, &str)] = &[("cambio", "sonido")];
 const CAMINO_PERMISOS: &[u8] = b"Estado/Servicios/sesiones/permisos";
 /// Permisos concedidos por el usuario, a la vez, y preguntas sin contestar.
 const MAX_CONCEDIDOS: usize = 32;
@@ -72,7 +84,8 @@ const MAX_PROGRAMA: usize = 4 << 20;
 /// Los números de proceso de lo que lanza `sesiones` empiezan aquí: los de `inicio` son el número del programa más 1.
 const PRIMER_PID_PROPIO: u64 = lanzables::PRIMER_PID_PROPIO;
 /// Lo que se da a cada programa que lanza (su grupo de recursos).
-const PRESUPUESTO_LANZADO: u64 = 4 << 20;
+/// U6, paso 2: 8 MB, que un programa con montón (sus trozos son de 4 MB) y una ventana cabe; antes, 4.
+const PRESUPUESTO_LANZADO: u64 = 8 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 /// Quién puede ver y retirar lo concedido (S10c): `guardian` y el centro de control. Nadie más se llama así (`inicio`).
@@ -392,8 +405,9 @@ fn acabar_admin(registro: &mut Registro, a_quien: u32, programa: &[u8; 16], acci
 
 /// Da a `marca` una llave del servicio `s` (U4): una copia marcada con su número, que viaja una vez (S4) y llega sin
 /// el derecho de transferirla (regla 2), y revocable. Apunta su revocador y su entrada en el directorio del servicio.
-fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, programa: &[u8; 16]) -> (i32, Option<u32>) {
-    let d = dashos::llave_duplicar(REPARTE[s].1, 7 | dashos::UNA_VEZ, marca);
+fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, programa: &[u8; 16], siguen: &Siguen) -> (i32, Option<u32>) {
+    let llave = siguen.llave(s);
+    let d = if llave == 0 { -1 } else { dashos::llave_duplicar(llave, 7 | dashos::UNA_VEZ, marca) };
     let (r, revocador) = if d > 0 { dashos::llave_revocable(d as u32) } else { (-1, 0) };
     if d > 0 {
         dashos::cerrar(d as u32);
@@ -401,12 +415,13 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
     match dadas.iter().position(|x| x.is_none()) {
         Some(i) if r > 0 => {
             dadas[i] = Some((marca, s, revocador));
-            // Su entrada en el directorio del servicio, como hace `inicio` (un permiso del kernel no tiene directorio).
-            if !PERMISOS_KERNEL.contains(&REPARTE[s].0) {
+            // Su entrada en el directorio del servicio, como hace `inicio` (un permiso del kernel no tiene directorio). A
+            // uno que sigue las sesiones, no: su nombre ya le llegó con `AVISO_PERSONA` al lanzarlo (U6).
+            if !PERMISOS_KERNEL.contains(&REPARTE[s].0) && !SIGUEN_SESIONES.contains(&REPARTE[s].0) {
                 let mut dir = [0u8; 24];
                 dir[..8].copy_from_slice(&marca.to_le_bytes());
                 dir[8..].copy_from_slice(programa);
-                dashos::canal_escribir(REPARTE[s].1, &dir, &[]);
+                dashos::canal_escribir(llave, &dir, &[]);
             }
             (BIEN, Some(r as u32))
         }
@@ -420,8 +435,12 @@ fn dar_servicio(dadas: &mut [Option<(u64, usize, u32)>], s: usize, marca: u64, p
     }
 }
 
-/// Lee los permisos concedidos (U4): una línea "programa servicio" por permiso, en el cajón de `sesiones`.
-fn leer_permisos(a: &Archivos, concedidos: &mut [Option<([u8; 16], usize)>]) {
+/// Lo concedido (U4): programa, servicio (en `REPARTE`) y, desde U6, el usuario para quien se concedió.
+type Concedido = ([u8; 16], usize, u32);
+
+/// Lee los permisos concedidos (U4): una línea "programa servicio usuario" por permiso, en el cajón de `sesiones`. Una
+/// sin usuario (de antes de U6) no vale: se pregunta otra vez.
+fn leer_permisos(a: &Archivos, concedidos: &mut [Option<Concedido>]) {
     use dashos::protocolo::archivos as x;
     let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
     if e != x::BIEN {
@@ -435,22 +454,23 @@ fn leer_permisos(a: &Archivos, concedidos: &mut [Option<([u8; 16], usize)>]) {
     let texto = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, n as usize) };
     let mut van = 0;
     for linea in texto.split(|&c| c == b'\n') {
-        let mut partes = linea.splitn(2, |&c| c == b' ');
-        let (Some(p), Some(sv)) = (partes.next(), partes.next()) else { continue };
+        let mut partes = linea.splitn(3, |&c| c == b' ');
+        let (Some(p), Some(sv), Some(u)) = (partes.next(), partes.next(), partes.next()) else { continue };
         let Some(s) = REPARTE.iter().position(|r| r.0.as_bytes() == sv) else { continue };
+        let Some(uid) = core::str::from_utf8(u).ok().and_then(|u| u.parse::<u32>().ok()) else { continue };
         if p.is_empty() || p.len() > 16 || van >= concedidos.len() {
             continue;
         }
         let mut nombre_ = [0u8; 16];
         nombre_[..p.len()].copy_from_slice(p);
-        concedidos[van] = Some((nombre_, s));
+        concedidos[van] = Some((nombre_, s, uid));
         van += 1;
     }
     println!("  [sesiones] permisos concedidos en el disco: {}", van);
 }
 
 /// Reescribe el fichero de permisos con lo concedido que queda.
-fn reescribir_permisos(a: &Archivos, concedidos: &[Option<([u8; 16], usize)>]) {
+fn reescribir_permisos(a: &Archivos, concedidos: &[Option<Concedido>]) {
     use dashos::protocolo::archivos as x;
     let (e, asa, _) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
     if e != x::BIEN {
@@ -458,13 +478,13 @@ fn reescribir_permisos(a: &Archivos, concedidos: &[Option<([u8; 16], usize)>]) {
     }
     a.orden(x::TAMANO, asa, 0, 0, b"");
     a.orden(x::CERRAR, asa, 0, 0, b"");
-    for (p, s) in concedidos.iter().flatten() {
-        guardar_permiso(a, nombre(p), REPARTE[*s].0);
+    for (p, s, uid) in concedidos.iter().flatten() {
+        guardar_permiso(a, nombre(p), REPARTE[*s].0, *uid);
     }
 }
 
-/// Añade al fichero de permisos lo que el usuario concedió.
-fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str) {
+/// Añade al fichero de permisos lo que el usuario concedió a `programa` como `uid`.
+fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str, uid: u32) {
     use dashos::protocolo::archivos as x;
     let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_PERMISOS);
     let (asa, tam) = if e == x::BIEN {
@@ -481,7 +501,18 @@ fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str) {
         }
         (asa, 0)
     };
-    let linea_ = [programa.as_bytes(), b" ", servicio.as_bytes(), b"\n"];
+    let mut num = [0u8; 10];
+    let mut i = num.len();
+    let mut u = uid;
+    loop {
+        i -= 1;
+        num[i] = b'0' + (u % 10) as u8;
+        u /= 10;
+        if u == 0 {
+            break;
+        }
+    }
+    let linea_ = [programa.as_bytes(), b" ", servicio.as_bytes(), b" ", &num[i..], b"\n"];
     let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA as *mut u8, 64) };
     let mut n = 0;
     for parte in linea_ {
@@ -490,6 +521,80 @@ fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str) {
     }
     a.orden(x::ESCRIBIR, asa, tam, n as u64, b"");
     a.orden(x::CERRAR, asa, 0, 0, b"");
+}
+
+/// U6: las llaves sin marca de los servicios que siguen las sesiones (0 hasta que lleguen de `inicio`).
+#[derive(Default)]
+struct Siguen {
+    compositor: u32,
+    sonido: u32,
+}
+
+impl Siguen {
+    fn todos(&self) -> [u32; 2] {
+        [self.compositor, self.sonido]
+    }
+
+    /// La llave del servicio `s` de `REPARTE`.
+    fn llave(&self, s: usize) -> u32 {
+        match REPARTE[s] {
+            ("sonido", _) => self.sonido,
+            (_, n) => n,
+        }
+    }
+}
+
+/// U6: un aviso al compositor o al sonido. Si su cola está llena, se reintenta un rato: sin él, uno de detrás se vería.
+fn avisar(canal: u32, m: &[u8]) {
+    if canal == 0 {
+        return;
+    }
+    for _ in 0..200 {
+        if dashos::canal_escribir(canal, m, &[]) == 0 {
+            return;
+        }
+        dashos::dormir_us(1_000);
+    }
+    println!("  [sesiones] un aviso de sesiones no cabe en su canal: se pierde");
+}
+
+/// U6: de quién es el programa `marca` (`AVISO_PERSONA`; con `uid` 0, que se olvide).
+fn aviso_persona(canal: u32, marca: u64, uid: u32, nombre_: &[u8; 16]) {
+    let mut m = [0u8; LARGO_AVISO_PERSONA];
+    m[0..4].copy_from_slice(&AVISO_PERSONA.to_le_bytes());
+    m[4..8].copy_from_slice(&uid.to_le_bytes());
+    m[8..16].copy_from_slice(&marca.to_le_bytes());
+    m[16..32].copy_from_slice(nombre_);
+    avisar(canal, &m);
+}
+
+/// U6: las personas con la sesión abierta detrás: las abiertas menos la de delante.
+fn detras_de(abiertas: &[u32; 8], activa: u32) -> [u32; MAX_DETRAS] {
+    let mut d = [0u32; MAX_DETRAS];
+    for (i, &u) in abiertas.iter().filter(|&&u| u != 0 && u != activa).enumerate().take(MAX_DETRAS) {
+        d[i] = u;
+    }
+    d
+}
+
+fn aviso_detras(canal: u32, detras: &[u32; MAX_DETRAS]) {
+    let mut m = [0u8; LARGO_AVISO_DETRAS];
+    m[0..4].copy_from_slice(&AVISO_DETRAS.to_le_bytes());
+    let n = detras.iter().filter(|&&u| u != 0).count();
+    m[4..8].copy_from_slice(&(n as u32).to_le_bytes());
+    for (i, &u) in detras.iter().filter(|&&u| u != 0).enumerate() {
+        m[8 + 4 * i..12 + 4 * i].copy_from_slice(&u.to_le_bytes());
+    }
+    avisar(canal, &m);
+}
+
+/// U6: lo que debe saber uno que sigue las sesiones (al llegar su llave o al volver tras caerse): de quién es cada
+/// programa de una persona o lanzado por `sesiones`, y quién está detrás.
+fn avisar_todo(canal: u32, fichas: &[Option<Ficha>], detras: &[u32; MAX_DETRAS]) {
+    for f in fichas.iter().flatten().filter(|f| f.uid >= PRIMERA_PERSONA || f.marca >= PRIMER_PID_PROPIO) {
+        aviso_persona(canal, f.marca, f.uid, &f.nombre);
+    }
+    aviso_detras(canal, detras);
 }
 
 fn nombre(n: &[u8; 16]) -> &str {
@@ -508,7 +613,7 @@ fn principal() -> u64 {
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
     // U4: lo que el usuario concedió (programa y servicio), las preguntas a `guardian` sin contestar (número, llave de
     // respuesta del programa, su marca, su nombre y el servicio) y por dónde se le pregunta.
-    let mut concedidos: [Option<([u8; 16], usize)>; MAX_CONCEDIDOS] = [None; MAX_CONCEDIDOS];
+    let mut concedidos: [Option<Concedido>; MAX_CONCEDIDOS] = [None; MAX_CONCEDIDOS];
     let mut preguntas: [Option<(u32, u32, u64, [u8; 16], usize, u64)>; MAX_PREGUNTAS] = [None; MAX_PREGUNTAS];
     // A15: la comprobación pedida al comprobador que aún no ha contestado: a quién contestar, qué programa la pidió,
     // con la contraseña de quién y desde cuándo (µs).
@@ -523,6 +628,9 @@ fn principal() -> u64 {
     let mut abiertas = [0u32; 8];
     // U6: el usuario de la sesión de delante (0: nadie).
     let mut activa = 0u32;
+    // U6, paso 2: las llaves de los que siguen las sesiones y lo último que se les dijo de quién está detrás.
+    let mut siguen = Siguen::default();
+    let mut detras_dicho = [0u32; MAX_DETRAS];
     let mut idos = [0u64; 8];
     let mut ido = 0;
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
@@ -594,6 +702,12 @@ fn principal() -> u64 {
                 if u64_en(0) == 2 {
                     registro.apuntar(R_FALLO, 2, &f.nombre, b"");
                 }
+                // U6: que el compositor y el sonido se olviden de él.
+                if f.uid >= PRIMERA_PERSONA || f.marca >= PRIMER_PID_PROPIO {
+                    for c in siguen.todos() {
+                        aviso_persona(c, f.marca, 0, &f.nombre);
+                    }
+                }
                 idos[ido % idos.len()] = f.marca;
                 ido += 1;
             }
@@ -608,12 +722,42 @@ fn principal() -> u64 {
                     if let Some(vieja) = fichas[i] {
                         dashos::cerrar(vieja.grupo);
                     }
-                    if let Some(j) = idos.iter().position(|&m| m == f.marca && m != 0) {
+                    let vuelve = idos.iter().position(|&m| m == f.marca && m != 0);
+                    if let Some(j) = vuelve {
                         idos[j] = 0;
                         println!("  [sesiones] vuelve {}, con su grupo nuevo", nombre(&f.nombre));
                     }
                     fichas[i] = Some(f);
                     usadas = 1;
+                    // U6: lo de una persona, al compositor y al sonido. Y si vuelve uno de ellos (relanzado por
+                    // `inicio`), empieza sin saber nada: todo otra vez.
+                    if f.uid >= PRIMERA_PERSONA {
+                        for c in siguen.todos() {
+                            aviso_persona(c, f.marca, f.uid, &f.nombre);
+                        }
+                    }
+                    if vuelve.is_some() {
+                        match nombre(&f.nombre) {
+                            "compositor" => avisar_todo(siguen.compositor, &fichas, &detras_dicho),
+                            "sonido" => avisar_todo(siguen.sonido, &fichas, &detras_dicho),
+                            _ => {}
+                        }
+                    }
+                }
+            } else if u32_en(0) == CANAL_SISTEMA && m.len() == 20 && k >= 1 {
+                // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
+                let mut quien = [0u8; 16];
+                quien.copy_from_slice(&m[4..20]);
+                let hueco = match nombre(&quien) {
+                    "compositor" => Some(&mut siguen.compositor),
+                    "sonido" => Some(&mut siguen.sonido),
+                    _ => None,
+                };
+                if let Some(h) = hueco.filter(|h| **h == 0) {
+                    *h = ll[0];
+                    usadas = 1;
+                    avisar_todo(ll[0], &fichas, &detras_dicho);
+                    println!("  [sesiones] avisará a {} de las sesiones", nombre(&quien));
                 }
             }
         } else if k >= 1 {
@@ -703,6 +847,15 @@ fn principal() -> u64 {
                                 let de = CUENTAS.iter().find(|c| c.0 == activa).map_or("nadie", |c| c.1);
                                 println!("  [sesiones] delante, la sesión de {}; detrás, {}", de, detras);
                             }
+                            // U6, paso 2: al compositor y al sonido, antes de contestar a `guardian` (que luego quita
+                            // el bloqueo: por el mismo canal, así no se ve un cuadro de la sesión de detrás).
+                            let d = detras_de(&abiertas, activa);
+                            if d != detras_dicho {
+                                detras_dicho = d;
+                                for c in siguen.todos() {
+                                    aviso_detras(c, &d);
+                                }
+                            }
                         }
                     }
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
@@ -730,7 +883,7 @@ fn principal() -> u64 {
                         (Some(a), true, Some(hueco)) => match a.leer_entero(camino) {
                             Err(e) => (e, 0),
                             Ok((mem, tam)) => {
-                                // Su grupo sale del cupo de `sesiones` (16 MB): 4 MB para cada uno, de momento.
+                                // Su grupo sale del cupo de `sesiones` (64 MB): 8 MB para cada uno, de momento.
                                 let g = dashos::grupo_crear(PRESUPUESTO_LANZADO);
                                 // Nace con una llave: su canal con `sesiones`, marcado con su número (que viaja una vez).
                                 let pid = siguiente_pid;
@@ -744,12 +897,30 @@ fn principal() -> u64 {
                                 alta_archivos(pid, uid, gid, dir, cuenta);
                                 // Y su llave de archivos, marcada con su número: va la segunda.
                                 let archivos_suyo = dashos::llave_duplicar(ARCHIVOS_ALTAS, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid);
-                                let todas = [canal_suyo as u32, archivos_suyo as u32];
-                                let llaves: &[u32] = match (canal_suyo > 0, archivos_suyo > 0) {
-                                    (true, true) => &todas,
-                                    (true, false) => &todas[..1],
-                                    _ => &[],
+                                // U6: la tercera, la del compositor, también con su número. Antes, el compositor y el
+                                // sonido saben de quién es (desde su primer mensaje, si es de detrás, no se ve ni suena).
+                                let corto16 = {
+                                    let mut n = [0u8; 16];
+                                    n[..corto_.len().min(16)].copy_from_slice(&corto_[..corto_.len().min(16)]);
+                                    n
                                 };
+                                for c in siguen.todos() {
+                                    aviso_persona(c, pid, uid, &corto16);
+                                }
+                                let ventanas_suyo = if siguen.compositor != 0 {
+                                    dashos::llave_duplicar(siguen.compositor, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, pid)
+                                } else {
+                                    -1
+                                };
+                                let todas = [canal_suyo as u32, archivos_suyo as u32, ventanas_suyo as u32];
+                                // Las que hay, en su sitio: si falta una, ninguna de las de detrás.
+                                let hay = [canal_suyo, archivos_suyo, ventanas_suyo].iter().take_while(|&&l| l > 0).count();
+                                for (j, &l) in [canal_suyo, archivos_suyo, ventanas_suyo].iter().enumerate().skip(hay) {
+                                    if l > 0 && j > hay {
+                                        dashos::cerrar(l as u32);
+                                    }
+                                }
+                                let llaves: &[u32] = &todas[..hay];
                                 let p = if g > 0 { dashos::proceso_crear_en(g as u32, mem, tam, llaves) } else { g };
                                 if p <= 0 {
                                     for &l in llaves {
@@ -848,13 +1019,13 @@ fn principal() -> u64 {
                     let programa = yo.map(|f| f.nombre).unwrap_or([0; 16]);
                     let permitido = yo.is_some()
                         && (PERMISOS.iter().any(|p| p.0 == nombre(&programa) && p.1 == pedido)
-                            || servicio.is_some_and(|s| concedidos.iter().flatten().any(|c| c.0 == programa && c.1 == s)));
+                            || servicio.is_some_and(|s| concedidos.iter().flatten().any(|c| c.0 == programa && c.1 == s && yo.is_some_and(|f| f.uid == c.2))));
                     let mut respuesta_llave = None;
                     let mut en_espera = false;
                     let estado = match (u32_en(0), servicio) {
                         (_, None) => NO_EXISTE,
                         (SERVICIO, Some(s)) if permitido => {
-                            let (e, l) = dar_servicio(&mut dadas, s, marca, &programa);
+                            let (e, l) = dar_servicio(&mut dadas, s, marca, &programa, &siguen);
                             respuesta_llave = l;
                             e
                         }
@@ -867,11 +1038,13 @@ fn principal() -> u64 {
                         // Sin permiso: si `guardian` atiende preguntas, se le pregunta al usuario y la respuesta
                         // espera (sin parar a los demás).
                         // Si ya se le está preguntando lo mismo (otra copia del programa), espera esa respuesta.
+                        // En la pregunta va el usuario de quien preguntó primero (en el último campo): lo que diga el
+                        // usuario se guarda para ese (U6).
                         (SERVICIO, Some(s))
-                            if let Some(id) = preguntas.iter().flatten().find(|p| p.3 == programa && p.4 == s).map(|p| p.0)
+                            if let Some((id, uid)) = preguntas.iter().flatten().find(|p| p.3 == programa && p.4 == s).map(|p| (p.0, p.5))
                                 && let Some(hueco) = preguntas.iter().position(|p| p.is_none()) =>
                         {
-                            preguntas[hueco] = Some((id, respuesta, marca, programa, s, 0));
+                            preguntas[hueco] = Some((id, respuesta, marca, programa, s, uid));
                             en_espera = true;
                             BIEN
                         }
@@ -885,7 +1058,7 @@ fn principal() -> u64 {
                             q[24..24 + pedido.len().min(16)].copy_from_slice(&pedido.as_bytes()[..pedido.len().min(16)]);
                             if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
                                 let hueco = preguntas.iter().position(|p| p.is_none()).unwrap();
-                                preguntas[hueco] = Some((id, respuesta, marca, programa, s, 0));
+                                preguntas[hueco] = Some((id, respuesta, marca, programa, s, yo.map_or(0, |f| f.uid) as u64));
                                 en_espera = true;
                                 BIEN
                             } else {
@@ -1051,20 +1224,22 @@ fn principal() -> u64 {
                     // Todas las que esperaban esa respuesta (copias del mismo programa que pidieron lo mismo).
                     let mut primera = true;
                     while let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
-                        let (_, a_quien, de, programa, s, _) = preguntas[i].take().unwrap();
+                        let (_, a_quien, de, programa, s, uid) = preguntas[i].take().unwrap();
                         let ya = !primera;
                         primera = false;
                         let (estado, llave) = if si {
                             // Concedido: se apunta y se guarda (una vez), y no se vuelve a preguntar.
+                            // Para el usuario de quien preguntó (U6); los demás que esperaban la misma respuesta
+                            // reciben la llave esta vez, y si son de otro usuario, la próxima se les pregunta.
                             if !ya {
                                 if let Some(c) = concedidos.iter_mut().find(|c| c.is_none()) {
-                                    *c = Some((programa, s));
+                                    *c = Some((programa, s, uid as u32));
                                 }
                                 if let Some(a) = &archivos {
-                                    guardar_permiso(a, nombre(&programa), REPARTE[s].0);
+                                    guardar_permiso(a, nombre(&programa), REPARTE[s].0, uid as u32);
                                 }
                             }
-                            dar_servicio(&mut dadas, s, de, &programa)
+                            dar_servicio(&mut dadas, s, de, &programa, &siguen)
                         } else {
                             registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, REPARTE[s].0.as_bytes());
                             (PROTEGIDO, None)
@@ -1093,10 +1268,12 @@ fn principal() -> u64 {
                         r[..4].copy_from_slice(&PROTEGIDO.to_le_bytes());
                         16
                     } else {
-                        let total = concedidos.iter().flatten().count();
+                        // U6: `guardian`, todo; el centro, lo de su usuario y lo del sistema (no lo de otras personas).
+                        let ve = |c: &&Concedido| yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)) || c.2 == f.uid || c.2 < PRIMERA_PERSONA);
+                        let total = concedidos.iter().flatten().filter(ve).count();
                         let desde = u32_en(4) as usize;
                         let mut van = 0;
-                        for (prog, sv) in concedidos.iter().flatten().skip(desde).take(POR_PAGINA_CONCEDIDOS) {
+                        for (prog, sv, _) in concedidos.iter().flatten().filter(ve).skip(desde).take(POR_PAGINA_CONCEDIDOS) {
                             let e = &mut r[16 + van * CONCEDIDO..16 + (van + 1) * CONCEDIDO];
                             e[..16].copy_from_slice(prog);
                             let serv = REPARTE.get(*sv).map_or("?", |x| x.0).as_bytes();
@@ -1120,8 +1297,11 @@ fn principal() -> u64 {
                     } else {
                         let s = REPARTE.iter().position(|r| r.0.as_bytes() == serv);
                         let mut quitado = false;
+                        // U6: como en `CONCEDIDOS`, el centro solo lo de su usuario y lo del sistema.
+                        let todo = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                        let suyo = yo.map_or(0, |f| f.uid);
                         for c in concedidos.iter_mut() {
-                            if c.is_some_and(|c| Some(c.1) == s && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog) {
+                            if c.is_some_and(|c| Some(c.1) == s && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog && (todo || c.2 == suyo || c.2 < PRIMERA_PERSONA)) {
                                 *c = None;
                                 quitado = true;
                             }

@@ -81,6 +81,21 @@ pub const POR_PAGINA_CONCEDIDOS: usize = 7;
 /// De un programa (U6, cambio rápido de usuario): si su sesión es la de delante (orden). Contesta un i32: 1 delante, 0
 /// abierta pero detrás (entró otra persona; sus programas siguen en marcha), -2 su usuario no tiene sesión.
 pub const ACTIVA: u32 = 18;
+/// De `inicio`, sin marca (U6, paso 2): la llave sin marca de un servicio que sigue las sesiones (el compositor y el
+/// sonido): orden y 16 bytes con el nombre del programa que lo sirve, con la llave. Con ella `sesiones` les avisa
+/// (`AVISO_PERSONA`, `AVISO_DETRAS`) y da a lo que lanza su llave marcada.
+pub const CANAL_SISTEMA: u32 = 19;
+/// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
+/// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
+/// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los
+/// mensajes: los poderes siguen siendo por el nombre que da `inicio`). 32 bytes. Los mismos números en `wayland::escena`.
+pub const AVISO_PERSONA: u32 = 0x5536_0001;
+pub const LARGO_AVISO_PERSONA: usize = 32;
+/// Las personas con su sesión abierta detrás: orden, cuántas (u32) y `MAX_DETRAS` usuarios (u32). 40 bytes. Lo suyo no
+/// se ve, no recibe entrada y no suena.
+pub const AVISO_DETRAS: u32 = 0x5536_0002;
+pub const LARGO_AVISO_DETRAS: usize = 40;
+pub const MAX_DETRAS: usize = 8;
 /// Las personas tienen el usuario 1000 o más (S6b); lo de debajo es del sistema. Un programa ve los procesos de su
 /// usuario y los del sistema, no los de otras personas (U6).
 pub const PRIMERA_PERSONA: u32 = 1000;
