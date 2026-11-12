@@ -237,6 +237,20 @@ fn discos() -> Vec<String> {
 /// La última fila de Discos.
 const COMPROBAR: &str = "Comprobar el disco (pide administrador)";
 
+/// Lo que se dice tras "Comprobar el disco", en llano (A15: lo hace el comprobador aparte, con los datos).
+fn resultado_comprobar(estado: i32, problemas: u64) -> String {
+    use dashos::protocolo::archivos::{EN_USO, LLENO, PROTEGIDO};
+    match estado {
+        0 if problemas == 0 => "Comprobado, datos incluidos: sin problemas".into(),
+        0 if problemas == 1 => "Comprobado: 1 problema".into(),
+        0 => alloc::format!("Comprobado: {} problemas", problemas),
+        EN_USO => "El disco está ocupado: inténtalo otra vez".into(),
+        LLENO => "Interrumpido: queda poco sitio en el disco".into(),
+        PROTEGIDO => "No se comprobó: hace falta un administrador".into(),
+        e => alloc::format!("No se comprobó ({})", e),
+    }
+}
+
 /// Comprobar el disco: la acción de administrador "comprobar" (U5) por `sesiones`, que se lo pregunta a `guardian`.
 /// El estado y cuántos problemas.
 fn comprobar_disco() -> (i32, u64) {
@@ -761,7 +775,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     if usize::try_from(v).ok().and_then(|v| lineas_registro.get(v)).is_some_and(|l| l == COMPROBAR) {
                         let (estado, problemas) = comprobar_disco();
                         println!("  [centro] Comprobar el disco: {}, {} problemas", estado, problemas);
-                        let linea = if estado == 0 { alloc::format!("Comprobado: {} problemas", problemas) } else { alloc::format!("No se comprobó ({})", estado) };
+                        let linea = resultado_comprobar(estado, problemas);
                         lineas_registro = discos();
                         lineas_registro.insert(lineas_registro.len() - 1, linea);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));

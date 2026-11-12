@@ -1110,3 +1110,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   después): "el comprobador no contesta en 20 s", y la respuesta tardía del comprobador va a un canal ya cerrado sin
   estorbar. Pendiente: durante esos 20 s `sesiones` no atiende a nadie; lo bueno sería no esperar (contestar a quien
   pidió cuando llegue la respuesta, como las preguntas pendientes).
+- S10c/A15: el centro dice el resultado de "Comprobar el disco" en llano: "Comprobado, datos incluidos: sin
+  problemas", "Comprobado: N problemas", "El disco está ocupado: inténtalo otra vez" (EN_USO, el plazo de `sesiones`),
+  "Interrumpido: queda poco sitio en el disco" (LLENO) y "No se comprobó: hace falta un administrador". Captura nueva.
