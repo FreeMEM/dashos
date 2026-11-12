@@ -1,5 +1,10 @@
 /* Un programa gráfico de Linux para la caja Linux de DashOS (H9): un cliente de Wayland con libwayland y wl_shm que
- * abre una ventana de xdg-shell de 320 x 240 y la pinta sin parar, un cuadro por cada aviso de frame. Corre dentro de
+ * abre una ventana de xdg-shell de 320 x 240 (o del tamaño que se le diga) y la pinta sin parar, un cuadro por cada
+ * aviso de frame.
+ *
+ *     ventana_wayland [ANCHO ALTO [SEGUNDOS]]
+ *
+ * Con SEGUNDOS, acaba sola ese tiempo después del primer cuadro (para medir). Corre dentro de
  * Arch Linux ARM; su ventana sale en el escritorio de DashOS por el puente (puente/, vsock y el compositor).
  *
  * Lo que pinta: un degradado que cambia de color con cada tecla, una banda blanca que baja un poco en cada cuadro y un
@@ -21,8 +26,7 @@
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
 
-#define ANCHO 320
-#define ALTO 240
+static int ANCHO = 320, ALTO = 240, segundos;
 
 static struct wl_compositor *compositor;
 static struct wl_shm *shm;
@@ -34,7 +38,7 @@ static uint32_t *pxs[2];
 static int configurada, acabar, cuadro, teclas, clics;
 static uint32_t tono = 0x3366cc;
 static int raton_x = -1, raton_y = -1, clic_x = -1, clic_y = -1;
-static long long t0, t_ultimo;
+static long long t0, t_ultimo, t_primero;
 static int cuadros_ultimo;
 
 static long long ms(void) {
@@ -156,11 +160,12 @@ static void hecho(void *d, struct wl_callback *cb, uint32_t t) {
     (void)d; (void)t;
     wl_callback_destroy(cb);
     if (cuadro == 0) {
-        printf("ventana_wayland: primer cuadro en pantalla a los %lld ms\n", ms() - t0);
-        t_ultimo = ms();
+        printf("ventana_wayland: primer cuadro en pantalla a los %lld ms (%d x %d)\n", ms() - t0, ANCHO, ALTO);
+        t_ultimo = t_primero = ms();
     }
     cuadro++;
     if (ms() - t_ultimo >= 5000) informe("en marcha");
+    if (segundos && ms() - t_primero >= segundos * 1000LL) acabar = 1;
     if (!acabar) siguiente();
 }
 static const struct wl_callback_listener oyente_frame = {hecho};
@@ -185,8 +190,14 @@ static void top_limites(void *d, struct xdg_toplevel *t, int32_t w, int32_t h) {
 static void top_capacidades(void *d, struct xdg_toplevel *t, struct wl_array *c) { (void)d; (void)t; (void)c; }
 static const struct xdg_toplevel_listener oyente_top = {top_configurar, top_cerrar, top_limites, top_capacidades};
 
-int main(void) {
+int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
+    if (argc >= 3) {
+        ANCHO = atoi(argv[1]);
+        ALTO = atoi(argv[2]);
+        if (ANCHO < 16 || ALTO < 16 || ANCHO > 1920 || ALTO > 1080) return 2;
+    }
+    if (argc >= 4) segundos = atoi(argv[3]);
     t0 = ms();
     struct wl_display *pantalla = wl_display_connect(NULL);
     if (!pantalla) {
@@ -227,6 +238,12 @@ int main(void) {
     while (!acabar && wl_display_dispatch(pantalla) != -1) {
     }
     informe("al acabar");
+    if (t_primero) {
+        long long dt = ms() - t_primero;
+        printf("ventana_wayland: medida de %d x %d: %d cuadros en %lld ms, %d.%d por segundo, %lld KB/s de búferes\n", ANCHO, ALTO, cuadro, dt,
+               dt ? (int)(cuadro * 1000LL / dt) : 0, dt ? (int)(cuadro * 10000LL / dt % 10) : 0,
+               dt ? (long long)cuadro * ANCHO * ALTO * 4 / dt * 1000 / 1024 : 0);
+    }
     printf("ventana_wayland: %d teclas y %d clics; adiós\n", teclas, clics);
     wl_display_disconnect(pantalla);
     return 0;

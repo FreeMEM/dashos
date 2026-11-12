@@ -3,6 +3,8 @@
 # por vsock; `puente --hostil` manda tramas rotas, memorias que no existen y tamaños absurdos (DashOS corta esas
 # conexiones y sigue); `ventana_wayland` (libwayland y wl_shm) abre su ventana en el escritorio de DashOS, recibe un
 # clic y una tecla y dice cuántos cuadros por segundo pinta; y foot, una terminal de Wayland de verdad, recibe "hola".
+# Sin copia: el puente da los pools de wl_shm por sus páginas físicas y el compositor los lee en la RAM del invitado
+# (vistas, llamada 50); `ventana_wayland` se mide sin copia y con copia, de 320 x 240 y de 1280 x 720.
 Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
 ~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
@@ -11,6 +13,7 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] wayland: el puente de Linux conecta por vsock
 ~[caja-linux] linux: active
 ~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
+~[caja-linux] linux: puente hostil: vistas:
 ~[caja-linux] linux: puente hostil: hecho
 ~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
 ~[caja-linux] linux: ventana_wayland: primer cuadro en pantalla
@@ -19,8 +22,13 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] linux: ventana_wayland: tecla 30 pulsada
 ~[caja-linux] linux: ventana_wayland: en marcha:
 ~adiós
+~[caja-linux] linux: ventana_wayland: medida de 320 x 240
+~[caja-linux] linux: ventana_wayland: medida de 1280 x 720
+~[caja-linux] linux: puente: DashOS lee los búferes sin copia
+~[caja-linux] linux: puente: cliente 1: primer cuadro sin copia
 ~[caja-linux] linux: foot: lista
 ~[caja-linux] linux: foot: leido hola
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
 ~[caja-linux] wayland: 
+~sin copia, vistas de la RAM del invitado

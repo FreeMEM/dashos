@@ -5,6 +5,12 @@
 //! `wayland::puente::Puente`: sus clientes son subconexiones del compositor (por la llave "ventanas" de la caja) y sus
 //! memorias, objetos de memoria de DashOS que el compositor lee con una copia de solo lectura de su llave.
 //!
+//! **Sin copia**: los pools de `wl_shm` que el puente de Linux da por sus páginas físicas (`MEMORIA_VISTA`) son vistas
+//! de la RAM del invitado (llamada 50): cada dirección se comprueba contra la RAM (alineada, dentro de los trozos de
+//! `TROZO` que tiene la máquina) y se pasa a número de página de esos trozos. El compositor solo puede leerla. Si el
+//! invitado cambia el búfer mientras se compone, solo se estropea su ventana; si nombra otras páginas suyas, ve en su
+//! ventana lo que ya era suyo.
+//!
 //! Los hilos: los de las vCPU llaman al aparato vsock con el cerrojo de la caja tomado, y él a `ExtremoPuente` (que toma
 //! el cerrojo del puente, `PUENTE`). Un hilo propio lee lo que contesta el compositor (un solo canal para todas las
 //! subconexiones), lo deja en el puente de su transporte (solo con `PUENTE`) y despierta a la vCPU 0 para que el
@@ -30,10 +36,16 @@ const VA_PUENTE: usize = 0x50_0000_0000;
 /// Dónde se lee una memoria que manda el compositor (el mapa de teclado).
 const VA_LEER: usize = 0x4f_0000_0000;
 const PILA_PUENTE: usize = 64 * 1024;
+/// Lo que mide cada objeto de memoria de la RAM del invitado.
+const TROZO: usize = 16 << 20;
 
 /// Lo que el puente pide al sistema, para el transporte del hueco `hueco`.
 struct SistemaCaja {
     hueco: usize,
+    /// La RAM del invitado: sus objetos de memoria (de `TROZO` bytes, seguidos) y la dirección física del invitado donde
+    /// empieza. Vacía si no hay vistas.
+    ram: Vec<u32>,
+    base_ram: u64,
     ventanas: u32,
     /// El extremo del canal de respuesta que se da al compositor (una copia por subconexión).
     respuesta: u32,
@@ -100,6 +112,21 @@ impl Sistema for SistemaCaja {
         (c > 0).then_some(c as u32)
     }
 
+    fn memoria_vista(&mut self, direcciones: &[u64]) -> Option<u32> {
+        let paginas_ram = (self.ram.len() * TROZO / 4096) as u64;
+        let mut numeros = Vec::new();
+        numeros.try_reserve_exact(direcciones.len()).ok()?;
+        for &d in direcciones {
+            let p = d.checked_sub(self.base_ram).filter(|p| p % 4096 == 0)? / 4096;
+            if p >= paginas_ram {
+                return None;
+            }
+            numeros.push(p as u32);
+        }
+        let l = dashos::memoria_vista(&self.ram, &numeros);
+        (l > 0).then_some(l as u32)
+    }
+
     fn copia_respuesta(&mut self) -> Option<u32> {
         let c = dashos::llave_duplicar(self.respuesta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
         (c > 0).then_some(c as u32)
@@ -133,6 +160,8 @@ struct Transporte {
 
 pub struct EstadoPuente {
     ventanas: u32,
+    ram: Vec<u32>,
+    base_ram: u64,
     respuesta: u32,
     huecos: [Option<Transporte>; MAX_TRANSPORTES],
     /// Conexiones que hay que cortar (el flujo no era de tramas).
@@ -180,6 +209,8 @@ fn sumar(a: &mut wayland::puente::Cuentas, b: &wayland::puente::Cuentas) {
     a.bytes_al_invitado += b.bytes_al_invitado;
     a.bytes_de_memoria += b.bytes_de_memoria;
     a.memorias += b.memorias;
+    a.vistas += b.vistas;
+    a.vistas_no += b.vistas_no;
     a.malas += b.malas;
     a.cerrados += b.cerrados;
 }
@@ -188,13 +219,16 @@ pub static PUENTE: Compartida<Option<EstadoPuente>> = Compartida::nueva(None);
 /// El extremo de lectura del canal de respuesta (para el hilo).
 static LECTURA: AtomicU32 = AtomicU32::new(0);
 
-/// Pone en marcha el lado de DashOS: el canal de respuesta y su hilo. Falso si no se pudo.
-pub fn abrir(ventanas: u32) -> bool {
+/// Pone en marcha el lado de DashOS: el canal de respuesta y su hilo. Falso si no se pudo. `ram` son los objetos de
+/// memoria de la RAM del invitado (de 16 MB, seguidos desde `base_ram`): con ellos, los búferes van sin copia.
+pub fn abrir(ventanas: u32, ram: &[u32], base_ram: u64) -> bool {
     let (lectura, respuesta) = dashos::canal_crear();
     LECTURA.store(lectura, Ordering::Release);
     PUENTE.con(|p| {
         *p = Some(EstadoPuente {
             ventanas,
+            ram: ram.to_vec(),
+            base_ram,
             respuesta,
             huecos: Default::default(),
             cortar: Vec::new(),
@@ -267,11 +301,16 @@ impl ExtremoVsock for ExtremoPuente {
                 println!("  [caja-linux] wayland: más de {} transportes a la vez: no", MAX_TRANSPORTES);
                 return false;
             };
-            let sis = SistemaCaja { hueco: i, ventanas: p.ventanas, respuesta: p.respuesta, proyectadas: BTreeMap::new(), libres: Vec::new(), siguiente: 0 };
+            let sis = SistemaCaja { hueco: i, ram: p.ram.clone(), base_ram: p.base_ram, ventanas: p.ventanas, respuesta: p.respuesta, proyectadas: BTreeMap::new(), libres: Vec::new(), siguiente: 0 };
             // El prefijo, distinto en cada transporte: el hueco más 8 por cada vuelta (no se repite pronto).
             p.transportes += 1;
             let prefijo = (i + MAX_TRANSPORTES * (p.transportes as usize % 15)) as u32;
-            p.huecos[i] = Some(Transporte { con, puente: Puente::nuevo(sis, prefijo) });
+            let vistas = !p.ram.is_empty();
+            let mut puente = Puente::nuevo(sis, prefijo);
+            if vistas {
+                puente.anunciar_vistas();
+            }
+            p.huecos[i] = Some(Transporte { con, puente });
             println!("  [caja-linux] wayland: el puente de Linux conecta por vsock (transporte {})", p.transportes);
             true
         })
@@ -299,8 +338,8 @@ impl ExtremoVsock for ExtremoPuente {
             let Some(p) = p.as_mut() else { return };
             if let Some(c) = p.quitar(con) {
                 println!(
-                    "  [caja-linux] wayland: el transporte se cierra: {} clientes, {} KB de Wayland al compositor y {} al invitado, {} KB de búferes copiados, {} tramas malas",
-                    c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.malas
+                    "  [caja-linux] wayland: el transporte se cierra: {} clientes, {} KB de Wayland al compositor y {} al invitado, {} KB de búferes copiados, {} memorias sin copia, {} tramas malas",
+                    c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.vistas, c.malas
                 );
             }
         })

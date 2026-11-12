@@ -1,0 +1,28 @@
+# Los gráficos de la caja Linux (`make arranque-virt-gpu`, S25): Arch Linux ARM en la caja, como en
+# `arranque_virt_wayland.txt`, con vsock para el puente de Wayland y una virtio-gpu en 2D. Un programa de GL de Linux
+# (`cuadros_gl`, con Mesa y llvmpipe) pinta por el puente de Wayland y por la pantalla de la virtio-gpu (KMS), que sale
+# en una ventana de DashOS; `es2gears_wayland` (de mesa-utils) y `vkcube` (Vulkan con lavapipe) pintan por el
+# puente. Cada uno dice sus cuadros por segundo. La terminal sigue viva al acabar.
+Hipervisor: EL2 instalado en 4 núcleos
+~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+~[caja-linux] gpu: virtio-gpu en 2D con una pantalla de 640x480
+~[caja-linux] linux: Welcome to Arch Linux ARM!
+~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] wayland: el puente de Linux conecta por vsock
+~[caja-linux] linux: active
+~card0
+~[caja-linux] linux: cuadros_gl: wayland: GL_RENDERER
+~[caja-linux] linux: cuadros_gl: wayland: primer cuadro
+~[caja-linux] linux: cuadros_gl: wayland: al acabar
+~frames in
+~[caja-linux] linux: real
+~[caja-linux] linux: cuadros_gl: kms: controlador virtio_gpu
+~[caja-linux] linux: cuadros_gl: kms: GL_RENDERER
+~[caja-linux] gpu: Linux muestra algo en su pantalla
+~[caja-linux] gpu: la pantalla de Linux, en una ventana de 640x480
+~[caja-linux] linux: cuadros_gl: kms: al acabar
+~[caja-linux] gpu: Linux apagó su pantalla; se quita su ventana
+~[caja-linux] linux: terminal viva
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~[caja-linux] gpu: 

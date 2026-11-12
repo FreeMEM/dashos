@@ -1604,3 +1604,45 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente: sin copias (objeto de memoria con páginas de otro), portapapeles, xdg-decoration, pools de más de
   64 MB, GPU/dmabuf, GTK4 y Firefox, `delete_id` de pools sucesores, un aviso visto una vez al acabar.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:00: búferes de Linux sin copia (llamada 50 `memoria_vista`), en revision
+- Fusionada `caja-linux-sincopia`: llamada 50 del kernel, objeto de memoria de solo lectura con páginas de otros
+  (mantiene vivos sus orígenes; sin vistas de vistas, DMA ni revocables; hasta 64 orígenes y 4096 páginas). El
+  puente de Arch fija el memfd del cliente y manda sus páginas físicas (pagemap); `puente_caja` las comprueba contra
+  la RAM del invitado y da la vista al compositor; si no, copia como antes.
+- Medidas (QEMU sin aceleración, PC cargado): 320×240 de 61 a 94 cuadros por segundo; 1280×720 de 10,8 a 34 (3,1
+  veces); CPU del puente por cuadro de 42 a 4,9 ms en la grande.
+- Hostil: paso 39 de `malo` (escribir o ejecutar por la vista, llaves falsas, tablas rotas, cupo, origen soltado con
+  la vista viva) y `puente --hostil` con vistas fuera de la RAM, sin alinear, de 1 TB, 300 vistas.
+- El disco de Arch con el puente nuevo hay que regenerarlo (`preparar-arch`); el de esta rama, en
+  `~/.cache/dashos-caja-linux-sincopia`.
+- `make prueba` BIEN; arranque-virt (el sonido salió MAL una vez con la carga del PC a 14; repetido, BIEN), -vm,
+  -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:45: GPU para la caja Linux (virtio-gpu 2D y estudio S25), en revision
+- Fusionada `caja-linux-gpu`: estudio `docs/diseño/S25-gpu-caja-linux.md` (para la Pi 4, V3D mediada: Linux usa su
+  v3d y Mesa sin cambios, DashOS atrapa la MMU del hub, el GMP y la energía y le da una tabla sombra que solo apunta a
+  su RAM, porque la BCM2711 no tiene IOMMU; debajo, virtio-gpu 2D; más tarde, contexto nativo; Venus/virgl
+  descartados). Aparato virtio-gpu 2D en `caja-linux/vmm` (pantalla del invitado en una ventana de DashOS,
+  `pantalla_caja.rs`) y la lógica de la tabla sombra probada en el PC (sin V3D real).
+- Medidas (QEMU, todo por CPU): `cuadros_gl` 640×480 por Wayland 9-12 cuadros/s, por la pantalla de virtio-gpu
+  17-20; `es2gears_wayland` 18-24; `vkcube` (lavapipe) 100 cuadros en 9,4 s. linux-dmabuf no se hizo: en QEMU Mesa
+  cae en llvmpipe con wl_shm; hace falta con la V3D en la Pi.
+- Hostil: órdenes rotas, recursos enormes, ids 0/repetidos/inexistentes, respaldos fuera de la RAM del invitado; tabla
+  sombra con entradas a 0 o fuera, MMU apagada, zonas sin traducir.
+- Kernel y disco de Arch para todo lo fusionado en `~/.cache/dashos-caja-linux-fusion` (pasar `ARCH_IMAGE` y
+  `ARCH_DISCO`, o rehacer `preparar-arch` en la caché compartida).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland y -gpu (nueva): BIEN.
+
+### 2026-11-13 01:10: Pi 5, la tarjeta del primer arranque, en revision
+- Fusionada `pi5`: el firmware de la EEPROM carga `kernel_2712.img` (sin UEFI de terceros). Diagnóstico en la
+  pantalla del firmware (buzón o simple-framebuffer): placa, MIDR, `ID_AA64MMFR0_EL1`, prueba real de big-endian en
+  EL0 (un programa big-endian lee 0x11 de 0x11223344 con E0E), memoria, núcleos y la caja Amiga con `saludo.exe`.
+  Segundo kernel con el escritorio en la pantalla del firmware, sin teclado ni ratón. `make tarjeta-pi5` hace
+  `~/.cache/dashos-pi5/dashos-pi5.img`; hoja para el usuario en `docs/PI5_PRIMER_ARRANQUE.md` (microSD, HDMI 0,
+  no grabar el SSD prestado, la EEPROM no se toca).
+- Arreglos de todas las placas: número de núcleo de Aff1 si MPIDR marca MT (Cortex-A76); la imagen se copia sola a
+  0x80000 si el firmware la deja más arriba; `Cupo::raiz()` se esperaba a sí mismo con el repartidor de páginas tomado.
+- Nada probado en una Pi 5 real (QEMU no la emula). El USB (RP1 tras PCIe) lo lleva la rama `pi5-usb`.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN;
+  `make tarjeta-pi5` sale.

@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::RawFd;
 
 // El formato de las tramas es el de `wayland::puente` (sin std): el mismo para los dos lados.
-pub use wayland::puente::{ADIOS, CONECTAR, DATOS, MAX_TRAMA, MEMORIA_CRECER, MEMORIA_ESCRIBIR, MEMORIA_NUEVA, MEMORIA_SOLTAR, juntar_datos, partir_datos};
+pub use wayland::puente::{ADIOS, CONECTAR, DATOS, MAX_TRAMA, MEMORIA_CRECER, MEMORIA_ESCRIBIR, MEMORIA_NUEVA, MEMORIA_SOLTAR, MEMORIA_VISTA, VISTA_NO, VISTAS, juntar_datos, partir_datos};
 
 pub struct Trama {
     pub tipo: u8,

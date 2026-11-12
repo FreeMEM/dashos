@@ -415,7 +415,8 @@ impl Espacio {
     /// en las TLB las que faltan), así que no hace falta vaciar las TLB.
     pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
         let tam = memoria.tamano();
-        if memoria.bus().is_some() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
+        // Ni memoria DMA ni una vista (llamada 50): el invitado escribiría en páginas que se dieron solo para leer.
+        if memoria.bus().is_some() || memoria.es_vista() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
             return Err(Error::Argumento);
         }
         let mut i = self.interior.tomar();

@@ -3,6 +3,7 @@
 pub mod bloque;
 pub mod cola;
 pub mod consola;
+pub mod gpu;
 pub mod mmio;
 pub mod red;
 pub mod vsock;

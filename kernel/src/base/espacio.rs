@@ -388,8 +388,8 @@ impl Espacio {
         if via.len() > VIAS {
             return Err(Error::Limite);
         }
-        // La memoria de DMA no se ejecuta nunca: la escribe un aparato.
-        if acceso == Acceso::Ejecutar && m.bus().is_some() {
+        // La memoria de DMA no se ejecuta nunca: la escribe un aparato. Una vista (llamada 50), solo se lee.
+        if acceso == Acceso::Ejecutar && m.bus().is_some() || acceso != Acceso::Leer && m.es_vista() {
             return Err(Error::Direccion);
         }
         if self.proyectados.len() >= MAX_PROYECCIONES {

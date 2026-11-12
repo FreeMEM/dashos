@@ -121,7 +121,8 @@ CONFIG_MODULES=n
 # cgroups, devtmpfs, inotify, signalfd, timerfd, epoll, fhandle, espacios de nombres, seccomp, autofs, ACL de tmpfs) y
 # lo que piden glibc y pacman (futex, flock, AIO, rseq, membarrier, SysV IPC; pacman 7 baja los paquetes en un sandbox
 # con Landlock). El disco es un ext4 (la partición de la caja en el NVMe de DashOS, por virtio-blk) y la hora sale del
-# PL031 que emula la caja. Sin módulos: los de Arch son de su propio kernel (linux-aarch64, una Image de 42 MB que
+# PL031 que emula la caja. Con la virtio-gpu de la caja (S25): DRM y su controlador, sin consola de fbdev (la pantalla
+# del invitado solo sale en DashOS cuando un programa la usa por KMS). Sin módulos: los de Arch son de su propio kernel (linux-aarch64, una Image de 42 MB que
 # necesita los suyos en un initramfs de 15 MB), que no se usa: con 57 MB entre los dos, sin probar, es dudoso que quepa en
 # el paquete de arranque de DashOS (la del defconfig, de 74 MB, no cabía). La de aquí mide 7 MB. Con vsock (virtio-vsock):
 # por ahí habla el puente de Wayland con DashOS.
@@ -187,6 +188,12 @@ CONFIG_LSM="landlock"
 CONFIG_VSOCKETS=y
 CONFIG_VIRTIO_VSOCKETS=y
 CONFIG_MEMFD_CREATE=y
+CONFIG_DRM=y
+CONFIG_DRM_VIRTIO_GPU=y
+CONFIG_DRM_VIRTIO_GPU_KMS=y
+CONFIG_DRM_FBDEV_EMULATION=n
+CONFIG_SYNC_FILE=y
+CONFIG_UDMABUF=y
 """
 
 INIT = r"""#!/bin/sh
@@ -488,7 +495,9 @@ ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.serv
                 "/etc/systemd/system/dashos-puente.service"}
 # Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
 # comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
-ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu"]
+# Con GL y Vulkan por software (Mesa: llvmpipe y lavapipe) y sus programas de prueba (es2gears_wayland, vkcube), para
+# medir los gráficos de la caja (S25).
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"]
 ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
 ARCH_REPOS = ["core", "extra", "alarm"]
 PAQUETES = ARCH / "paquetes"
@@ -797,6 +806,19 @@ def arch_ventana(sysroot):
     return sal
 
 
+def arch_cuadros(sysroot):
+    """El programa de GL de la medida (caja-linux/invitado/cuadros_gl.c, S25): por Wayland y por KMS."""
+    sal = ARCH / "cuadros_gl"
+    fuente = RAIZ / "caja-linux/invitado/cuadros_gl.c"
+    gen = ARCH / "gen"
+    lib = sysroot / "usr/lib"
+    run("clang", "--target=aarch64-linux-gnu", f"--sysroot={sysroot}", "-fuse-ld=lld", "-O2", "-Wall", "-nostdlib",
+        f"-I{gen}", f"-I{sysroot}/usr/include/libdrm", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente,
+        gen / "xdg-shell-protocol.c", "-lEGL", "-lGLESv2", "-lgbm", "-ldrm", "-lwayland-client", "-lwayland-egl", "-lm",
+        "-lc", lib / "crtn.o")
+    return sal
+
+
 def arch_puente():
     """El puente de Wayland (puente/, Rust) para aarch64, estático (musl)."""
     run("cargo", "build", "--release", "--quiet", "--offline", "--manifest-path", RAIZ / "puente/Cargo.toml",
@@ -812,10 +834,13 @@ def preparar_arch(_args):
     kernel_pequeno("Image-arch", FRAGMENTO_ARCH, "linux-build-arch")
     tar = arch_bajar()
     paquetes = arch_paquetes(tar)
-    ventana = arch_ventana(arch_sysroot(tar, paquetes))
+    sysroot = arch_sysroot(tar, paquetes)
+    ventana = arch_ventana(sysroot)
+    cuadros = arch_cuadros(sysroot)
     puente = arch_puente()
-    propios = [("./usr/local/bin/puente", puente), ("./usr/local/bin/ventana_wayland", ventana)]
-    fuentes = [tar, Path(__file__), puente, ventana, *paquetes]
+    propios = [("./usr/local/bin/puente", puente), ("./usr/local/bin/ventana_wayland", ventana),
+               ("./usr/local/bin/cuadros_gl", cuadros)]
+    fuentes = [tar, Path(__file__), puente, ventana, cuadros, *paquetes]
     if DISCO_ARCH.exists() and DISCO_ARCH.stat().st_mtime > max(f.stat().st_mtime for f in fuentes):
         print("ya está", DISCO_ARCH)
     else:
