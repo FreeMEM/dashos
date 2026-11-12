@@ -694,12 +694,15 @@ fn acerca() -> Vec<String> {
     }
     // La memoria: páginas de 4 KB en total y libres, y lo que ocupa el núcleo (los contadores 5, 6 y 7 de la llamada
     // 29, que no dicen nada de otros procesos).
-    let (total, libres, nucleo) = (dashos::llamada(29, [5, 0, 0, 0, 0]).0, dashos::llamada(29, [6, 0, 0, 0, 0]).0, dashos::llamada(29, [7, 0, 0, 0, 0]).0);
+    // También (12 y 13) las páginas del montón del kernel y las que no estaban libres al arrancar (la imagen del kernel,
+    // lo del firmware y su pantalla).
+    let c = |n: u64| dashos::llamada(29, [n, 0, 0, 0, 0]).0;
+    let (total, libres, nucleo, monton, arranque) = (c(5), c(6), c(7), c(12), c(13));
     if total > 0 && libres <= total {
         let mb = |paginas: u64| paginas * 4096 * 10 / (1 << 20);
-        let en_uso = mb(total - libres);
-        l.push(alloc::format!("Memoria en uso: {},{} MB de {} MB (el núcleo, {},{} MB)", en_uso / 10, en_uso % 10, mb(total) / 10,
-            nucleo * 10 / (1 << 20) / 10, nucleo * 10 / (1 << 20) % 10));
+        let d = |x: u64| alloc::format!("{},{}", x / 10, x % 10);
+        l.push(alloc::format!("Memoria en uso: {} MB de {} MB (el núcleo, {} MB, y su montón, {} MB; al arrancar ya había {} MB reservados)",
+            d(mb(total - libres)), mb(total) / 10, d(nucleo * 10 / (1 << 20)), d(mb(monton)), d(mb(arranque))));
     }
     // Lo que tiene cobrado el grupo de cada proceso que se ve (`MEMORIA`, por páginas): los tres que más, en la ventana;
     // la lista entera, en la consola.

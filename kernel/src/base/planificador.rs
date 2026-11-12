@@ -285,7 +285,8 @@ static CONTADORES: [Contadores; MAX_NUCLEOS] =
 
 /// Un contador del núcleo `n`: 1 = interrupciones, 2 = cambios de hilo, 3 = microsegundos en el hilo ocioso; 4 = hilos
 /// robados entre núcleos, de todos; 5, 6 y 7 = páginas de RAM, páginas libres y bytes del kernel; 8 a 11, las esperas
-/// de los que despiertan (M10). `None` si no hay.
+/// de los que despiertan (M10); 12 y 13, páginas del montón del kernel y las que no estaban libres al arrancar. `None` si
+/// no hay.
 pub fn contador(que: u64, n: usize) -> Option<u64> {
     let c = CONTADORES.get(n)?;
     match que {
@@ -297,6 +298,9 @@ pub fn contador(que: u64, n: usize) -> Option<u64> {
         9 => Some(DESPERTADOS_TARDE.load(Ordering::Relaxed)),
         10 => Some(DESPERTADOS_US.load(Ordering::Relaxed)),
         11 => Some(NO_ADELANTA.load(Ordering::Relaxed)),
+        // 12: páginas del montón del kernel; 13: las que no estaban libres al arrancar (imagen, firmware, árbol).
+        12 => Some(crate::monton::paginas_en_uso() as u64),
+        13 => Some(crate::memoria::reservadas_al_arrancar() as u64),
         // Memoria (R): páginas de RAM, páginas libres y bytes de la imagen del kernel (código, datos, bss y sus pilas).
         5 => Some(crate::memoria::paginas().total() as u64),
         6 => Some(crate::memoria::paginas().libres() as u64),

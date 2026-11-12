@@ -1385,3 +1385,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Medida: archivos 917 → 627 KB, compositor 670 → 435, centro 549 → 430; `.rodata` del kernel 9,08 → 7,26 MB; el
   núcleo en Acerca de, 9,4 → 7,6 MB; en uso, 102,9 MB (esta mañana, 160,8).
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:40: en qué se va la memoria, contado
+- Llamada 29: contador 12 (páginas del montón del kernel) y 13 (las que no estaban libres al arrancar: imagen del
+  kernel con sus pilas, firmware y su pantalla, árbol). El centro las enseña en Acerca de.
+- Arranque de pruebas: en uso 102,9 MB = 18,4 reservados al arrancar (de ellos, 7,6 la imagen del kernel) + 0,4 del
+  montón del kernel + 63,9 de los 24 procesos que ve el centro + unos 20 de lo que el centro no ve (`inicio`, que
+  guarda copias de los programas para relanzarlos, `sesiones`, y la sesión de Carla).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.

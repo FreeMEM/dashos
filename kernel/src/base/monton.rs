@@ -66,6 +66,7 @@ unsafe impl GlobalAlloc for Asignador {
             let alin = (l.align() / PAGINA as usize).max(1);
             match paginas().reservar(Zona::Normal, n, alin) {
                 Some(fis) => {
+                    GRANDES.fetch_add(n, core::sync::atomic::Ordering::Relaxed);
                     let p = mmu::virt(fis as usize) as *mut u8;
                     unsafe { ptr::write_bytes(p, 0, n * PAGINA as usize) }; // S6, como arriba
                     p
@@ -93,6 +94,7 @@ unsafe impl GlobalAlloc for Asignador {
             m.libres[c] = p as usize;
         } else {
             let n = l.size().div_ceil(PAGINA as usize);
+            GRANDES.fetch_sub(n, core::sync::atomic::Ordering::Relaxed);
             unsafe { paginas().liberar(mmu::fisica(p as usize) as u64, n) };
         }
     }
@@ -103,6 +105,14 @@ static ASIGNADOR: Asignador = Asignador;
 
 pub fn paginas_pequenas() -> usize {
     MONTON.tomar().paginas_pequenas
+}
+
+/// Páginas de lo grande (más de 2 KB) que hay pedidas ahora.
+static GRANDES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Todas las páginas del montón del kernel: las troceadas para lo pequeño (no se devuelven) y las de lo grande.
+pub fn paginas_en_uso() -> usize {
+    paginas_pequenas() + GRANDES.load(core::sync::atomic::Ordering::Relaxed)
 }
 
 /// Pruebas de S1: hace fallar la reserva número `k` (desde 1) que se pida en este núcleo; 0 = ninguna. Solo este núcleo,

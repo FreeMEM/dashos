@@ -235,6 +235,7 @@ impl Paginas {
             (self.libres - self.libres_bajo) as u64 * PAGINA >> 20,
             if self.piso > 0 { "solo para DMA" } else { "compartido: no hay memoria por encima" }
         );
+        RESERVADAS_AL_ARRANCAR.store(self.total - self.libres, core::sync::atomic::Ordering::Relaxed);
         kprintln!(
             "Memoria física: {} MB en total, {} MB libres; zonas DMA hasta {} MB y {} MB",
             self.total as u64 * PAGINA >> 20,
@@ -605,4 +606,12 @@ impl Drop for Memoria {
             unsafe { p.liberar(f, 1) };
         }
     }
+}
+
+/// Las páginas que no estaban libres al arrancar: la imagen del kernel con sus pilas, lo que reserva el firmware (su
+/// pantalla, sus tablas) y el árbol de dispositivos. Para contar en qué se va la memoria (llamada 29, contador 13).
+static RESERVADAS_AL_ARRANCAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+pub fn reservadas_al_arrancar() -> usize {
+    RESERVADAS_AL_ARRANCAR.load(core::sync::atomic::Ordering::Relaxed)
 }
