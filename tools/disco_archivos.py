@@ -41,7 +41,7 @@ if sys.argv[1] == "--comprobar":
     esperado = [
         "C/ cajón",
         "C/Prefs/ cajón",
-        "C/Prefs/apariencia 15",
+        "C/Prefs/apariencia 12",
         "C/Privado/ cajón",
         "C/Privado/nota.txt 18",
         "C/datos.bin 614400",
@@ -70,8 +70,8 @@ if sys.argv[1] == "--comprobar":
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
-    # S10c: lo que guardó el centro de control al elegir el modo oscuro.
-    if apariencia != b"oscuro violeta\n":
+    # S10c: lo que guardó el centro de control al elegir el modo oscuro y, con doble clic, el azul.
+    if apariencia != b"oscuro azul\n":
         fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
     # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
     # no de 1970 ni del futuro.

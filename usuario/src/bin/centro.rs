@@ -521,6 +521,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
                         println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
+                        // Dónde queda la lista de la derecha en la ventana (las pruebas del ratón la buscan).
+                        if let Some(r) = i.sitios.get(&permisos) {
+                            println!("  [centro] lista en ({}, {}), filas de 56", r.x, r.y);
+                        }
                     }
                     false
                 }

@@ -197,10 +197,33 @@ while time.time() - inicio < total:
             if "[centro] Apariencia: oscuro" not in texto:
                 time.sleep(0.25)
                 continue
-            centro = 7
+            centro = 10
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".apariencia.ppm")
+            # Con el ratón: doble clic en la cuarta fila (color azul). Dónde: lo dicen el compositor (la ventana) y el
+            # centro (su lista, dentro de la ventana). El puntero, a la esquina (0, 0) y de ahí, en pasos de 100 como
+            # mucho, al centro de la fila.
+            import re
+            v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+            l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
+            if v and l:
+                x, y = int(v.group(1)) + int(l.group(1)) + 60, int(v.group(2)) + int(l.group(2)) + 56 * 3 + 28
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            reintento = time.time() + 5
+        if centro == 10:
+            if "[centro] Apariencia: oscuro, color Azul" not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            centro = 7
             time.sleep(0.5)
             mandar("sendkey tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4

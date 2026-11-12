@@ -488,6 +488,10 @@ fn principal() -> u64 {
             soltar_cliente(&mut clientes, &mut escena, &nombres, marca);
         }
 
+        // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
+        for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
+            println!("  [compositor] ventana de {} en ({}, {})", nombres.get(&cl).map_or("?", |s| s), x, y);
+        }
         // La entrada que salió de las peticiones (el teclado a una ventana nueva).
         let ms = (dashos::ahora_us() / 1000) as u32;
         for (cl, ev) in core::mem::take(&mut escena.pendientes) {

@@ -140,6 +140,8 @@ DashOS en marcha con 4 núcleos.
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
 ~│   [centro] Apariencia: oscuro, color Violeta; guardada: 0 (15 bytes); releída: sí
+# Con el ratón: doble clic en "Color azul" (dos clics en la misma fila, en menos de 500 ms).
+~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
 ~│   [centro] cerrado

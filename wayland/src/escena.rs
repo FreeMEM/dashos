@@ -401,6 +401,9 @@ pub struct Escena<M: Memorias> {
     pub danos: Vec<Rect>,
     /// Cuántas ventanas se han colocado: la siguiente va en cascada.
     colocadas: i32,
+    /// Las ventanas que se acaban de colocar, con su sitio: quien atiende lo dice (las pruebas del ratón lo usan) y lo
+    /// vacía.
+    pub recien_colocadas: Vec<(Cliente, i32, i32)>,
     /// La entrada (W8): el cursor, los botones pulsados, quién tiene el puntero y el teclado, y los modificadores.
     pub cursor: (i32, i32),
     pub botones: u8,
@@ -471,6 +474,7 @@ impl<M: Memorias> Escena<M> {
             fondo,
             danos: todo,
             colocadas: 0,
+            recien_colocadas: Vec::new(),
             cursor: (0, 0),
             botones: 0,
             puntero: None,
@@ -1469,6 +1473,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             // En cascada dentro de lo que dejan las barras (G4).
                             let (ax, ay) = (escena.area.x, escena.area.y);
                             escena.colocar(cliente, objeto, ax + 40 + 32 * k, ay + 40 + 32 * k);
+                            escena.recien_colocadas.push((cliente, ax + 40 + 32 * k, ay + 40 + 32 * k));
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
                             // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();

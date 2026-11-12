@@ -891,3 +891,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   entiende; se queda la de serie"; al elegir el modo oscuro la guarda (15 bytes), la relee bien, y el disco leído en
   Linux tiene "oscuro violeta". El hostil (otro usuario, encerrado en `C`) no la abre (-12). El guion del selector
   baja dos veces para llegar a `Privado`: `Prefs` va antes.
+- El ratón, probado de verdad en virt: el compositor dice dónde coloca cada ventana nueva ("ventana de centro en
+  (168, 168)", `Escena::recien_colocadas`) y el centro dónde queda su lista ("lista en (136, 101)"). El guion lleva el
+  puntero a la esquina y de ahí, en pasos de 100, a la cuarta fila de Apariencia, y hace doble clic: "Apariencia:
+  oscuro, color Azul; guardada: 0 (12 bytes); releída: sí", y el disco acaba con "oscuro azul". Es el primer doble clic
+  con el ratón de QEMU (hasta ahora, solo Intro y la prueba del kit). Con esto se podrá probar también el doble clic
+  del selector y los botones (Quitar).
