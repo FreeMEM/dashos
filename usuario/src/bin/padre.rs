@@ -111,7 +111,17 @@ fn principal() -> u64 {
     if dashos::proceso_matar(p as u32) != 0 || dashos::proceso_esperar(p as u32).0 != 1 {
         return 17;
     }
-    if dashos::canal_escribir(a, b"x", &[]) != E_CERRADO {
+    // Su lado del canal se cierra cuando su núcleo recoge sus restos (`planificador::recoger`), no al acabar: hasta
+    // 200 ms (como en `grupos`). Antes se miraba en el acto y, rara vez (1 de unas 30 pasadas), aún no estaba cerrado.
+    let mut cerrado = false;
+    for _ in 0..200 {
+        if dashos::canal_escribir(a, b"x", &[]) == E_CERRADO {
+            cerrado = true;
+            break;
+        }
+        esperar_ms(1);
+    }
+    if !cerrado {
         return 18;
     }
     // 19-20: sin ciclos. Ni la pareja ni el propio lado por su canal.

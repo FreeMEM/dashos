@@ -942,3 +942,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   final enseña Ajustes en oscuro azul (la comprobación de la captura acepta ese esquema; los colores, del kit:
   superficie 0x111418, primario 0x9fcaff). Captura en `docs/capturas/s10c-tema-del-sistema.png`. Falta que lo sigan
   el selector y `guardian`, y los programas de Linux por el puente.
+- Un fallo suelto de `make prueba` al pasar lo del tema (no tiene que ver: 2 pasadas más, bien): `padre` salía con 18,
+  su paso 18 (matar a un hijo bloqueado leyendo, esperarlo y ver que su canal está cerrado). La misma carrera que el 5 y
+  el 13 de `grupos`: lo de un proceso muerto se suelta cuando su núcleo lo recoge, no al acabar. Ahora espera hasta
+  200 ms a que el canal esté cerrado. `make prueba` bien después. (El commit del tema se hizo con aquel fallo delante,
+  porque la orden siguió; queda dicho aquí.)
