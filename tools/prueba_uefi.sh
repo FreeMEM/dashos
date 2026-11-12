@@ -158,13 +158,17 @@ while time.time() - inicio < total:
                 mandar("sendkey n")
             time.sleep(0.5)
             continue
+        # Mientras el selector espera teclas, el centro no teclea: si los dos tecleaban a la vez, las teclas se las llevaba
+        # la ventana que tuviera el teclado y el selector caducaba al minuto. El selector va primero (caduca); el centro
+        # sigue después.
+        selector_espera = selector in (1, 2, 4, 5, 17, 18)
         # S10c: el centro de control. `guardian` avisa 3 s antes de pedirle que abra Permisos: se deja de teclear, para que
         # su ventana se lleve el teclado (S8: 2 s sin teclas). Dentro, flecha abajo (pide · eco) y Supr para quitarlo;
         # luego Tab (a la lista de categorías) y flecha abajo (Seguridad), y Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm,
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
-        if centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
+        if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
-        if centro == 1:
+        if not selector_espera and centro == 1:
             if "[centro] Permisos en pantalla" not in texto:
                 time.sleep(0.25)
                 continue
@@ -199,7 +203,7 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
                 mandar("sendkey delete")
             reintento = time.time() + 4
-        if centro == 2:
+        if not selector_espera and centro == 2:
             if "[centro] quita a " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -214,7 +218,7 @@ while time.time() - inicio < total:
             time.sleep(0.3)
             mandar("sendkey down")
             reintento = time.time() + 4
-        if centro == 5:
+        if not selector_espera and centro == 5:
             if "[centro] Seguridad, " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -231,7 +235,7 @@ while time.time() - inicio < total:
             mandar("sendkey down")
             reintento = time.time() + 4
         # Y una más abajo, Discos; otra, Acerca de; después, Esc.
-        if centro == 6:
+        if not selector_espera and centro == 6:
             if "[centro] Discos: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -243,7 +247,7 @@ while time.time() - inicio < total:
             # Comprobar el disco: Tab a la lista, Fin (la última fila) e Intro; `guardian` contesta como administradora.
             mandar("sendkey tab", "sendkey end", "sendkey ret", pausa=0.3)
             reintento = time.time() + 30
-        if centro == 14:
+        if not selector_espera and centro == 14:
             if "[centro] Comprobar el disco: " not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -255,7 +259,7 @@ while time.time() - inicio < total:
             mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         # Pantallas; y otra abajo, Apariencia.
-        if centro == 11:
+        if not selector_espera and centro == 11:
             if "[centro] Pantallas: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -267,7 +271,7 @@ while time.time() - inicio < total:
             mandar("sendkey down")
             reintento = time.time() + 4
         # Apariencia: Tab a su lista, dos abajo (modo oscuro) e Intro; luego Tab a las categorías y abajo.
-        if centro == 8:
+        if not selector_espera and centro == 8:
             if "[centro] Apariencia: Modo claro" not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -278,7 +282,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey tab", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
             reintento = time.time() + 4
-        if centro == 9:
+        if not selector_espera and centro == 9:
             if "[centro] Apariencia: oscuro" not in texto:
                 time.sleep(0.25)
                 continue
@@ -318,7 +322,7 @@ while time.time() - inicio < total:
             k = fila_apariencia(empieza)
             if k is not None:
                 mandar("sendkey home", *["sendkey down"] * k, "sendkey ret", pausa=0.2)
-        if centro == 10:
+        if not selector_espera and centro == 10:
             if "[centro] Apariencia: oscuro, color Azul" not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -326,7 +330,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             elegir_fila("Fondo: ondas.png")
             reintento = time.time() + 30
-        if centro == 15:
+        if not selector_espera and centro == 15:
             if "[centro] Fondo ondas.png: " not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -337,7 +341,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             elegir_fila("Color del fondo")
             reintento = time.time() + 30
-        if centro == 16:
+        if not selector_espera and centro == 16:
             if "[centro] Apariencia: oscuro, color Del fondo" not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -348,7 +352,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             elegir_fila("Fondo: rota.png")
             reintento = time.time() + 30
-        if centro == 17:
+        if not selector_espera and centro == 17:
             if "[centro] Fondo rota.png: " not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -356,7 +360,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             elegir_fila("Fondo: atardecer.png")
             reintento = time.time() + 30
-        if centro == 18:
+        if not selector_espera and centro == 18:
             if texto.count("[centro] Apariencia: oscuro, color Del fondo") < 2 and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -367,7 +371,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
-        if centro == 7:
+        if not selector_espera and centro == 7:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -382,7 +386,7 @@ while time.time() - inicio < total:
             # Super+Arriba la maximiza y Super+Abajo la devuelve; luego, Esc.
             mandar("sendkey meta_l-up")
             reintento = time.time() + 4
-        if centro == 12:
+        if not selector_espera and centro == 12:
             if "[centro] el compositor pide " not in texto:
                 time.sleep(0.25)
                 if time.time() < reintento:
@@ -394,7 +398,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey meta_l-down")
             reintento = time.time() + 4
-        if centro == 13:
+        if not selector_espera and centro == 13:
             if "[centro] vuelve a " not in texto:
                 time.sleep(0.25)
                 if time.time() < reintento:
@@ -403,7 +407,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey esc")
             reintento = time.time() + 4
-        if centro == 3:
+        if not selector_espera and centro == 3:
             if "[centro] cerrado" not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4

@@ -1265,3 +1265,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   estado del guion cada 5 s.
   (4) La línea esperada del lanzador exigía "3 programas" y el disco trae ya 4 (`cambio`): sin número.
   Con los cuatro, las cuatro vueltas pasan todo lo demás.
+- C14 (clase de plazo) fallaba a menudo con el PC cargado: la desviación máxima del periodo salía de 2 y 12 ms por un
+  parón del anfitrión, no del planificador (la mediana, 253 µs). Ahora mide máxima, mediana y cuántas pasan de 1 ms, y
+  admite hasta un 25 % fuera con la mediana por debajo de 1 ms (con 70 de carga salió un 14 %). Concesión a QEMU en un
+  PC cargado: en la Pi (B5), el criterio estricto.
+- Guion: mientras el selector espera teclas, los pasos del centro no teclean (en la rama del fondo, Apariencia dura
+  más y los dos tecleaban a la vez; el selector caducaba al minuto).
