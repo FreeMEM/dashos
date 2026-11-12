@@ -27,5 +27,11 @@
       <arg name="color" type="uint"/>
       <arg name="oscuro" type="uint"/>
     </event>
+
+    <event name="panel">
+      <description summary="abrir o cerrar el panel rápido">
+        Super+A (C2): solo a quien puede cambiar el tema (el centro de control). La tecla no llega a la ventana.
+      </description>
+    </event>
   </interface>
 </protocol>

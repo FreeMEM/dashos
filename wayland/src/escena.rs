@@ -119,6 +119,7 @@ use crate::Valor;
 const KEY_ARRIBA: u32 = 103;
 const KEY_ABAJO: u32 = 108;
 const KEY_L: u32 = 38;
+const KEY_A: u32 = 30;
 
 /// Un cliente es su marca de canal (S10b): la conexión.
 pub type Cliente = u64;
@@ -407,6 +408,8 @@ pub struct Escena<M: Memorias> {
     /// Quién está suscrito al tema (cliente y objeto) y a quién hay que decirle el nuevo (quien atiende lo manda).
     temas: Vec<(Cliente, u32)>,
     pub avisos_tema: Vec<(Cliente, u32)>,
+    /// Super+A (C2): a qué suscritos del tema hay que mandar `panel` (solo los que pueden ponerlo: el centro).
+    pub avisos_panel: Vec<(Cliente, u32)>,
     /// Quién puede cambiar el tema: lo pone quien atiende, por el nombre que da `inicio` (el centro de control).
     pub ponen_tema: Vec<Cliente>,
     /// Las ventanas que se acaban de colocar, con su sitio: quien atiende lo dice (las pruebas del ratón lo usan) y lo
@@ -481,6 +484,11 @@ pub fn avisar_tema(con: &mut Conexion, objeto: u32, (color, oscuro): (u32, bool)
     con.salida.empezar(objeto, dashos_tema_v1::ev::TEMA).uint(color).uint(oscuro as u32).fin();
 }
 
+/// Super+A (C2): que abra o cierre el panel rápido.
+pub fn avisar_panel(con: &mut Conexion, objeto: u32) {
+    con.salida.empezar(objeto, dashos_tema_v1::ev::PANEL).fin();
+}
+
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
         // Al empezar, la pantalla entera está por pintar.
@@ -496,6 +504,7 @@ impl<M: Memorias> Escena<M> {
             tema: (TEMA_DE_SERIE, false),
             temas: Vec::new(),
             avisos_tema: Vec::new(),
+            avisos_panel: Vec::new(),
             ponen_tema: Vec::new(),
             cursor: (0, 0),
             botones: 0,
@@ -545,6 +554,13 @@ impl<M: Memorias> Escena<M> {
         }
     }
 
+    /// Super+A (C2): el panel rápido, al centro de control (los suscritos al tema que pueden ponerlo).
+    pub fn pedir_panel(&mut self) {
+        let ponen = &self.ponen_tema;
+        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| ponen.contains(&t.0)).copied().collect();
+        self.avisos_panel.extend(suyos);
+    }
+
     /// Mira los avisos de inactividad a la hora `reloj_ms` (U3): los vencidos dan `idled`. Devuelve cuántos
     /// milisegundos faltan para el siguiente, si queda alguno por vencer.
     pub fn revisar_inactividad(&mut self) -> Option<u32> {
@@ -576,6 +592,7 @@ impl<M: Memorias> Escena<M> {
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
+        self.avisos_panel.retain(|t| t.0 != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
@@ -1907,6 +1924,9 @@ impl<M: Memorias> Escena<M> {
             if pulsada && codigo == KEY_L && self.mods & 64 != 0 && self.bloqueo.is_none() {
                 self.bloquear_ya();
             }
+            if pulsada && codigo == KEY_A && self.mods & 64 != 0 && self.bloqueo.is_none() {
+                self.pedir_panel();
+            }
             return out;
         };
         if codigo == 0 {
@@ -1925,6 +1945,13 @@ impl<M: Memorias> Escena<M> {
         if self.mods & 64 != 0 && codigo == KEY_L && self.bloqueo.is_none() {
             if pulsada {
                 self.bloquear_ya();
+            }
+            return out;
+        }
+        // Super+A (C2): el panel rápido del centro de control. Tampoco llega a la ventana.
+        if self.mods & 64 != 0 && codigo == KEY_A && self.bloqueo.is_none() {
+            if pulsada {
+                self.pedir_panel();
             }
             return out;
         }

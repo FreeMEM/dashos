@@ -1068,6 +1068,7 @@ pub static DASHOS_TEMA_V1: Interface = Interface {
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "panel", since: 1, destructor: false, args: &[] },
     ],
 };
 
@@ -1079,6 +1080,7 @@ pub mod dashos_tema_v1 {
     }
     pub mod ev {
         pub const TEMA: u16 = 0;
+        pub const PANEL: u16 = 1;
     }
 }
 

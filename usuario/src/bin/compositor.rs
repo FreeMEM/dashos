@@ -94,6 +94,15 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
             }
         }
     }
+    // Y Super+A (C2), al centro de control.
+    for (cl, objeto) in core::mem::take(&mut escena.avisos_panel) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_panel(&mut cli.con, objeto);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
     for (cl, objeto, ocioso) in core::mem::take(&mut escena.avisos_inactividad) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_inactividad(&mut cli.con, objeto, ocioso);

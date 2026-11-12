@@ -1396,6 +1396,42 @@ mod entrada {
         }
     }
 
+    /// C2: Super+A pide el panel rápido solo al centro de control (quien puede poner el tema), no a otro suscrito; la A
+    /// no llega a la ventana. Sin Super, es una A. Con o sin ventana con el teclado.
+    #[test]
+    fn super_a_pide_el_panel() {
+        for con_ventana in [true, false] {
+            let mut escena = Escena::new(Mem::default(), 0);
+            let mut v = Conexion::new();
+            if con_ventana {
+                abrir(&mut escena, &mut v, 1, 100, 100);
+            }
+            let (mut otro, mut centro) = (Conexion::new(), Conexion::new());
+            for (con, c) in [(&mut otro, 2), (&mut centro, 3)] {
+                let mut e = Escritor::new();
+                e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+                e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+                mandar(&mut escena, con, c, &e);
+            }
+            escena.ponen_tema.push(3);
+            escena.tecla(0xE3, true);
+            let ev = escena.tecla(0x04, true);
+            assert!(!ev.iter().any(|e| matches!(e.1, Entrada::Tecla { codigo: 30, .. })), "la A llegó a la ventana: {ev:?}");
+            assert_eq!(core::mem::take(&mut escena.avisos_panel), [(3, 60)], "con ventana: {con_ventana}");
+            escena.tecla(0x04, false);
+            escena.tecla(0xE3, false);
+            let ev = escena.tecla(0x04, true);
+            assert_eq!(ev.iter().any(|e| matches!(e.1, Entrada::Tecla { codigo: 30, .. })), con_ventana);
+            assert!(escena.avisos_panel.is_empty(), "sin Super no hay panel");
+            // Si el centro se va, nadie más lo recibe.
+            escena.adios(3);
+            escena.tecla(0x04, false);
+            escena.tecla(0xE3, true);
+            escena.tecla(0x04, true);
+            assert!(escena.avisos_panel.is_empty());
+        }
+    }
+
     /// Las flechas con Super no llegan a la ventana; sin Super, sí.
     #[test]
     fn maximizar_y_volver() {

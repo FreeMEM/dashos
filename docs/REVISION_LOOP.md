@@ -1126,3 +1126,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   nueva.
 - S10c: también la capa de las preguntas de permisos de `guardian` sigue el tema (llega al enlazar, antes que la
   configuración de la capa; con el borde en el primario). Captura nueva: en ese momento del arranque, el tema claro.
+- S10c, C2 primer paso: Super+A pide el panel rápido. Evento nuevo `panel` en `dashos_tema_v1`; el compositor lo manda
+  solo a los suscritos que pueden poner el tema (el centro), y la A no llega a la ventana (también sin ventana con el
+  teclado, como Super+L). Prueba hostil en la escena (`super_a_pide_el_panel`): otro suscrito no lo recibe, sin Super
+  es una A, y si el centro se va nadie lo recibe. El centro, de momento, lo apunta.
+  Hallado: el centro solo habla con el compositor mientras su ventana está abierta (espera en su canal hasta que
+  `guardian` le pide abrir una categoría). Para el panel hace falta alguien enlazado siempre: o el centro mantiene su
+  conexión con el compositor también cerrado, o un programa `panel` aparte en `PONEN_TEMA` (para el modo noche). Lo
+  segundo separa mejor (el panel no ve los permisos); es lo que haría salvo que el usuario diga otra cosa.

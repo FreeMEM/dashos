@@ -705,6 +705,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     }
                     false
                 }
+                // C2: Super+A, el panel rápido (el compositor solo se lo dice al centro). De momento, apuntarlo.
+                (TEMA_OBJ, dashos_tema_v1::ev::PANEL) => {
+                    println!("  [centro] panel rápido pedido (Super+A)");
+                    false
+                }
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_ESC => return Some(()),
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && cat == PERMISOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar-supr".into()));
