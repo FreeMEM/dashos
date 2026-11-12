@@ -833,9 +833,7 @@ entera: no se ha medido cada parte. En la Pi será otro número.
 
 ### Qué falta
 
-- **Sin copia**: que el compositor lea los búferes en la RAM del invitado. Necesita en el kernel un objeto de memoria
-  hecho de páginas de otro (las del `memfd`, que el puente de Linux tendría que encontrar) y decidir qué pasa si el
-  invitado las cambia mientras se compone. Con varias vCPU, la copia ya no para a las demás.
+- ~~**Sin copia**~~: hecho en la rama `caja-linux-sincopia` (sección siguiente).
 - **El portapapeles de verdad** (selección, ofertas, `wl_data_offer`) y la selección primaria; arrastrar y soltar.
 - **Pools de más de 64 MB** (el tope del compositor) o memorias de más de 16 MB (el de `memoria_crear`): foot va con
   `max-shm-pool-size-mb=0`; un programa que pida un pool así recibe un error de protocolo.
@@ -848,3 +846,130 @@ entera: no se ha medido cada parte. En la Pi será otro número.
   con `pacman -S` dentro de la caja hay que hacerlo a mano la primera vez.
 - Una vez, al acabar la prueba (con Linux ya apagado), el compositor soltó a caja-linux por no leer sus eventos; tras
   fusionar `revision` (fec71bf) no ha vuelto a pasar. Sin mirar.
+
+## 2026-11-12: búferes de Linux sin copia (rama `caja-linux-sincopia`)
+
+Rama `caja-linux-sincopia`, sacada de `revision` (0ce1f49). El compositor lee los búferes de `wl_shm` de los
+programas de Linux en la RAM del invitado, sin copiarlos. Sala limpia: la documentación de `/proc/self/pagemap`,
+`mlock(2)` y `fallocate(2)` (páginas de manual) y los XML de Wayland; nada de código de Linux, QEMU, crosvm,
+Firecracker ni Xen.
+
+### Resultado
+
+```
+[caja-linux] linux: puente: DashOS lee los búferes sin copia
+[caja-linux] linux: puente: cliente 1: primer cuadro sin copia
+[caja-linux] linux: ventana_wayland: medida de 320 x 240: 746 cuadros en 8003 ms, 93.2 por segundo, 27963 KB/s de búferes
+[caja-linux] linux: ventana_wayland: medida de 1280 x 720: 273 cuadros en 8025 ms, 34.0 por segundo, 122466 KB/s de búferes
+[caja-linux] linux: puente: cliente 4: 273 cuadros (273 sin copia), 0 bytes copiados, 0 por cuadro; CPU del puente 1335 ms, 4893 µs por cuadro
+[caja-linux] linux: puente: cliente 5: 87 cuadros (0 sin copia), 328089600 bytes copiados, 3771144 por cuadro; CPU del puente 3668 ms, 42166 µs por cuadro
+[caja-linux] wayland: 7 transportes (3 cortados por tramas malas), 41 clientes de Linux, ..., 468600 KB de búferes copiados, 297 memorias (265 sin copia, vistas de la RAM del invitado; 4 vistas no hechas), ...
+```
+
+Lo copiado (468 MB) es solo lo de las dos medidas con copia forzada: `ventana_wayland` y foot van sin copia.
+Captura (fuera de git): `capturas-agente/caja-linux-wayland-grande.png` (la ventana de 1280 × 720 sin copia, más
+grande que la pantalla de 800 × 600).
+
+### Cómo va
+
+```
+programa de Linux ── memfd ──▶ puente (Arch): fallocate + mlock + /proc/self/pagemap
+                                    │ MEMORIA_VISTA: n.º, tamaño y la dirección física de cada página
+                                    ▼
+                         puente_caja: cada dirección → (trozo de 16 MB, página) de la RAM del invitado
+                                    │ llamada 50, memoria_vista(trozos de la RAM, páginas)
+                                    ▼
+                         compositor: una memoria más, proyectada solo para leer
+```
+
+- **El kernel: la llamada 50, `memoria_vista`** (`docs/referencia/kernel.md`). Hace un objeto de memoria con las
+  páginas que se le piden de otros (los orígenes, llaves de memoria con derecho de leer), en ese orden; los números
+  de página cuentan seguidas las de los orígenes. La llave nueva solo lee y transfiere; la vista no se proyecta para
+  escribir ni ejecutar, el kernel no escribe por ella y no vale como RAM de una máquina. Guarda los orígenes vivos
+  (`Memoria::origenes`): sus páginas no vuelven al sistema hasta soltar la vista, así que nunca se ven páginas ya
+  dadas a otro. Ni vistas de vistas (no hay cadenas que soltar), ni memoria DMA (va sin caché), ni llaves revocables
+  (la vista seguiría viendo el objeto tras revocarla). Cobra solo su lista (256 bytes + 8 por página y por origen);
+  las páginas siguen cobradas a quien creó cada origen. Hasta 64 orígenes y 4096 páginas (16 MB). Sin `unsafe` fuera
+  de `kernel/src/base/`.
+- **Dentro de Linux: dónde está el pool.** Los pools los crea cada programa (libwayland, foot, los toolkits) con
+  `memfd_create`: el puente no decide dónde quedan. Reservar memoria que el invitado sepa seguida obligaría a cambiar
+  los programas (o a copiar dentro del invitado, otra copia), así que el puente averigua las páginas: proyecta el
+  pool, rellena los huecos del memfd sin cambiar su contenido (`fallocate` con `FALLOC_FL_KEEP_SIZE`), lo fija
+  (`mlock`: Linux ya no lo saca ni lo mueve) y lee `/proc/self/pagemap` (el número de página física solo se ve siendo
+  root; el puente es un servicio de systemd que corre como root). Las páginas no son seguidas: van como lista. Dos
+  páginas en la misma física (la página de ceros) o una que no se vea: con copia. El kernel de la caja (tinyconfig)
+  no tiene compactación ni swap; aun así, el puente pone `compact_unevictable_allowed` a 0 si existe y, en cada
+  commit, comprueba con `pagemap` que el búfer sigue en las páginas que mandó. Si no (Linux las movió), cierra el
+  programa: su ventana enseñaría lo que haya después en las viejas. Al crecer un pool, la proyección nueva se fija
+  antes de quitar la vieja.
+- **El protocolo** (`wayland/src/puente.rs`): `VISTAS` (DashOS → invitado, al conectar: se admiten vistas),
+  `MEMORIA_VISTA` (número, tamaño, n y n direcciones físicas del invitado) y `VISTA_NO` (no se pudo: en su lugar hay
+  una memoria normal del mismo tamaño, y el puente copia como antes). Sin `VISTAS` (el compositor del PC de G0/G1), el
+  puente copia. Una vista no se escribe y no cuenta en el tope de 24 MB de memoria copiada (no toma memoria nueva);
+  sí en el de 256 memorias por transporte.
+- **El lado de DashOS** (`usuario/src/puente_caja.rs`): `abrir` recibe las llaves de la RAM del invitado (los trozos
+  de 16 MB) y su dirección física. Cada dirección se comprueba: alineada, desde la base y dentro de la RAM; se pasa a
+  número de página de los trozos y se pide la vista. El compositor la recibe como cualquier memoria (una copia de su
+  llave de solo lectura) y no cambia nada.
+- **Seguridad.** El invitado solo puede nombrar páginas de su propia RAM (los orígenes son los trozos de su máquina):
+  si nombra otras, su ventana enseña lo que ya era suyo. El compositor solo puede leer. Si el invitado cambia el búfer
+  mientras se compone, solo se estropea su ventana (los píxeles son bytes cualesquiera; tamaños, formato y desplazamientos
+  van por el protocolo y el compositor ya los comprueba contra lo que mide la memoria). Una vista mantiene viva la
+  RAM del invitado hasta que el compositor la suelta (al irse el cliente): no se ve memoria liberada y reusada.
+- **Para medir**: con `/run/dashos-puente-copia`, los programas que conectan después van con copia.
+  `ventana_wayland ANCHO ALTO SEGUNDOS` pinta de ese tamaño y acaba sola, con una línea "medida". El guion mide las
+  cuatro combinaciones y saca con `journalctl` lo que dijo el puente, con su tiempo de CPU por cliente.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, la ventana entera dañada en cada cuadro, 8 s cada una, en la misma ejecución (el PC,
+cargado por otras sesiones). CPU del puente: la de su proceso (usuario y sistema) mientras estaba ese cliente.
+
+| Ventana | Con copia | Sin copia | Cambio |
+|---|---|---|---|
+| 320 × 240, cuadros por segundo | 61,4 (18 MB/s) | 93,2 y 94,6 (28 MB/s) | +52 % |
+| 320 × 240, CPU del puente por cuadro | 7,3 ms | 3,9 y 4,2 ms | −45 % |
+| 1280 × 720, cuadros por segundo | 10,8 (38 MB/s) | 34,0 (120 MB/s) | ×3,1 |
+| 1280 × 720, CPU del puente por cuadro | 42,2 ms | 4,9 ms | −88 % |
+
+Sin copia, la CPU del puente ya no depende del tamaño de la ventana: lo que queda es pasar los mensajes de Wayland y
+leer `pagemap` (unas pocas páginas por commit). Lo que limita ahora en QEMU es componer por CPU y pintar el propio
+programa. Antes (la bitácora anterior), 65-75 cuadros por segundo de 320 × 240 con copia.
+
+### Pruebas
+
+- `make prueba`: "H9: vistas de memoria con páginas de otro objeto, solo de lectura: bien" (del kernel: el orden de
+  las páginas; lo cobrado; páginas fuera, lista vacía o número enorme; una vista como origen; un cupo que no llega, sin
+  dejar nada cobrado; solo leer, ni escribir ni ejecutar; el origen soltado con la vista viva: las páginas libres no
+  cambian y la vista las sigue viendo; al soltar la vista vuelven las 3 páginas y el cupo queda a cero) y `malo`,
+  paso 39 (lo que ve un proceso: la vista lee en orden y ve lo que escribe el dueño; no se proyecta para escribir ni
+  pidiendo el derecho al duplicar, ni para ejecutar; páginas fuera; una llave que no existe, un canal, una sin derecho
+  de leer, una revocable y una vista de origen; tablas sin nada, de más, en memoria vacía, en el kernel o que
+  desbordan; la lista más larga, 4096 páginas y 64 orígenes; vistas de 16 MB sin cerrar hasta que el cupo o la tabla
+  dicen basta; y el origen soltado: la memoria que se pide después, llena de otra cosa, no cambia la vista). Su
+  grupo queda a cero (lo comprueba el lanzador). BIEN: esperado.txt y BIEN: cargador hunk.
+- `cargo test` en `wayland`: `puente::pruebas::vistas` (vistas buenas, fuera de la RAM, sin alinear o del kernel, que
+  dan memoria normal y `VISTA_NO`; mal hechas: tamaño 0 o de más, listas que no casan, cortas o de 4 mil millones; de
+  más de 256), y `a_lo_loco` con los tipos nuevos.
+- `puente --hostil vsock:5000` desde Arch, tanda "vistas": direcciones 0, al final del espacio, sin alinear y más
+  allá de la RAM (4 `VISTA_NO`), listas que no casan con el tamaño o enormes, 1 TB, 300 vistas de una página propia
+  (pasan las que caben), escribir en una vista y un cliente que la usa. La conexión sigue y el programa de verdad
+  funciona después.
+- `make arranque-virt-wayland` con las líneas nuevas (sin copia, primer cuadro sin copia, las medidas): BIEN.
+  Después, seguidos y a la primera: `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-arch`, `-2` y otra vez
+  `make prueba`: BIEN.
+
+El disco de Arch de esta rama va en `~/.cache/dashos-caja-linux-sincopia` (`DASHOS_CAJA_LINUX_CACHE`, con el rootfs y
+los paquetes enlazados a los de siempre), para no pisar el de otras sesiones: `make arranque-virt-wayland
+ARCH_DISCO=...`.
+
+### Qué falta
+
+- Lo mismo para los búferes de dmabuf (G6), que siguen con copia, y para lo que va del compositor al invitado (el
+  mapa de teclado, una vez).
+- Probarlo en la Pi 4 (cachés de verdad: el invitado escribe con su caché y el compositor lee con la suya, las dos
+  normales; debería ir, sin probar).
+- Si Linux moviera páginas de un pool (con otro kernel: compactación, CMA, memoria que se quita en caliente), hoy se
+  cierra el programa. Con un kernel que fije las páginas para siempre (como hacen los aparatos con DMA) no haría falta.
+- Las vistas no cuentan en el tope de memoria del transporte: el coste es de su lista (unos 33 KB por vista de 16 MB,
+  cobrados a caja-linux).
