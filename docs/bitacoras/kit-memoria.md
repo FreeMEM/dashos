@@ -73,7 +73,7 @@ Cobrado al grupo (MB), en `make arranque-virt`:
 
 En el total entran también `archivos` (34-36 MB, cambia de una pasada a otra), `comprobador` y `compositor`, que no
 se tocaron. Después, el workbench no pasa de 256 KB de montón en toda la prueba (antes, 16 MB al final) y el guardián
-de 4 MB (antes, 8).
+de 1,1 MB (antes, 8; 4 sin el cambio 4).
 
 Tiempo de pintar Ajustes entero (`i.dibujar`, 360 × 320; medido aparte, sin dejarlo en el código):
 
@@ -88,8 +88,8 @@ cifras orientativas.
 
 ### Pruebas
 
-- `make arranque-virt`: las cinco líneas BIEN (con todo; y también con 2 y 3 solos).
-- `make prueba`: ver abajo.
+- `make arranque-virt`: las cinco líneas BIEN, con el árbol final (y antes con 2 y 3 solos, y con todo menos el 4).
+- `make prueba`: BIEN: esperado.txt.
 - `cd kit && cargo test` (61) y `cd wayland && cargo test --lib` (49).
 - La referencia, sin cambios: `make arranque-virt` falló una vez en "[workbench] no abre Sistema/DeCarla: -12" (el
   workbench se quedó tras abrir la ventana de Sistema). La siguiente pasada, con solo los contadores, fue bien.
