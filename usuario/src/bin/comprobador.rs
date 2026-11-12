@@ -110,9 +110,10 @@ fn archivos(lectura: u32, orden: u32) -> i32 {
     i32::from_le_bytes(r[0..4].try_into().unwrap())
 }
 
-/// Las vueltas que se abre y recorre la foto mientras está sujeta. Sin sujetar, 200 aperturas seguidas fallaban en un
+/// Las vueltas que se abre y recorre la foto mientras está sujeta (50: con el PC cargado, 200 tardaron 31 s y hacían
+/// esperar de más a `ficheros`). Sin sujetar, 200 aperturas seguidas fallaban en un
 /// 2,5 % (el servicio reusaba bloques que la cabecera leída aún nombraba).
-const VUELTAS: u32 = 200;
+const VUELTAS: u32 = 50;
 
 const VA: usize = 0x43_0000_0000;
 const ABRIR: u32 = 0;

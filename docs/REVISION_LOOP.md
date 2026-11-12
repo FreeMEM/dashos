@@ -1180,3 +1180,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Falta: esquinas y sombra de las ventanas (en el compositor, tocando la composición por tramos de E8: medir), el
   centro maximizado deja un hueco arriba (el contenido va centrado), el panel rápido con estos tonos, y el foco del
   teclado en los botones.
+- Kit/S10c: el panel rápido con los tonos de Material 3: sobre el contenedor de superficie con esquinas de 28 (lo de
+  fuera, transparente: su búfer es ARGB y el lienzo premultiplica), título de 22, mosaicos de esquinas de 20, el
+  encendido en el primario y los demás en el contenedor alto. Captura de antes y después (oscuro y claro).
+  De paso: con el PC muy cargado por otras sesiones (media de 81), la prueba del comprobador del arranque pasó de 3 a
+  31 s y `ficheros`, que esperaba 10 s a que soltara el disco, daba MAL. Ahora 50 vueltas y 30 s de espera.
+  Con la carga alta, `make prueba` dio también C14, S2 y C32 MAL (miden tiempos); con la carga baja, bien. El pánico
+  de "pila del kernel desbordada" de ese registro es la prueba C34, a propósito.

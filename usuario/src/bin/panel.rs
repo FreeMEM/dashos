@@ -37,37 +37,40 @@ const CAPAS: u32 = 20;
 const CAPA: u32 = 21;
 const TEMA: u32 = 22;
 const ANCHO: i32 = 300;
-const ALTO: i32 = 296;
+const ALTO: i32 = 288;
 /// La distancia a los bordes de arriba y de la derecha.
 const MARGEN: i32 = 8;
 /// El mosaico del modo oscuro, dentro del panel.
-const MOSAICO: Rect = Rect { x: 16, y: 56, w: 268, h: 64 };
+const MOSAICO: Rect = Rect { x: 16, y: 64, w: 268, h: 64 };
 /// El de bloquear, debajo.
-const BLOQUEAR: Rect = Rect { x: 16, y: 132, w: 268, h: 64 };
+const BLOQUEAR: Rect = Rect { x: 16, y: 136, w: 268, h: 64 };
 /// El del volumen: la mitad izquierda baja, la derecha sube.
 const VOLUMEN: Rect = Rect { x: 16, y: 208, w: 268, h: 64 };
 const BOTON_IZQUIERDO: u32 = 0x110;
 
 fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, volumen: u32, fuente: &mut Fuente, titulo: &mut Fuente) {
+    // Material 3: el panel sobre el contenedor de superficie, con esquinas de 28 (fuera, transparente: el búfer es
+    // ARGB); los mosaicos con esquinas de 20, el encendido en el primario y los demás en el contenedor alto.
+    px.fill(0);
     let mut l = Lienzo::new(px, ANCHO, ALTO, ANCHO as usize);
-    l.rellenar(Rect::new(0, 0, ANCHO, ALTO), t.superficie);
-    l.borde(Rect::new(0, 0, ANCHO, ALTO), 0, 1, t.variante_contorno);
-    titulo.dibujar(&mut l, 16, 18, "Panel rápido", 20, t.sobre_superficie);
-    // Encendido, con el color del tema (Material 3: contenedor del primario); apagado, la superficie variante.
-    let (fondo, texto) = if oscuro { (t.contenedor_primario, t.sobre_contenedor_primario) } else { (t.variante_superficie, t.sobre_variante_superficie) };
-    l.redondeado(MOSAICO, 16, fondo);
-    fuente.dibujar(&mut l, MOSAICO.x + 20, MOSAICO.y + 14, "Modo oscuro", 18, texto);
-    fuente.dibujar(&mut l, MOSAICO.x + 20, MOSAICO.y + 38, if oscuro { "Encendido" } else { "Apagado" }, 14, texto);
-    l.redondeado(BLOQUEAR, 16, t.variante_superficie);
-    fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 14, "Bloquear", 18, t.sobre_variante_superficie);
-    fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 38, "Super+L", 14, t.sobre_variante_superficie);
-    l.redondeado(VOLUMEN, 16, t.variante_superficie);
-    let v = t.sobre_variante_superficie;
-    fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 14, "Volumen", 18, v);
-    fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 38, &alloc::format!("{} %", volumen), 14, v);
+    l.redondeado(Rect::new(0, 0, ANCHO, ALTO), 28, t.contenedor());
+    titulo.dibujar(&mut l, 24, 22, "Panel rápido", 22, t.sobre_superficie);
+    let mosaico = |l: &mut Lienzo, fuente: &mut Fuente, r: Rect, encendido: bool, arriba: &str, abajo: &str| {
+        let (fondo, texto, suave) = if encendido {
+            (t.primario, t.sobre_primario, t.sobre_primario)
+        } else {
+            (t.contenedor_alto(), t.sobre_superficie, t.sobre_variante_superficie)
+        };
+        l.redondeado(r, 20, fondo);
+        fuente.dibujar(l, r.x + 20, r.y + 12, arriba, 16, texto);
+        fuente.dibujar(l, r.x + 20, r.y + 36, abajo, 14, suave);
+    };
+    mosaico(&mut l, fuente, MOSAICO, oscuro, "Modo oscuro", if oscuro { "Encendido" } else { "Apagado" });
+    mosaico(&mut l, fuente, BLOQUEAR, false, "Bloquear", "Super+L");
+    mosaico(&mut l, fuente, VOLUMEN, false, "Volumen", &alloc::format!("{} %", volumen));
     // Un guion de los de siempre: la fuente no tiene el signo menos (U+2212).
-    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 94, VOLUMEN.y + 16, "-", 30, v);
-    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 44, VOLUMEN.y + 18, "+", 28, v);
+    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 94, VOLUMEN.y + 16, "-", 28, t.sobre_superficie);
+    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 44, VOLUMEN.y + 16, "+", 28, t.sobre_superficie);
 }
 
 /// El volumen general al servicio de sonido (sin respuesta).

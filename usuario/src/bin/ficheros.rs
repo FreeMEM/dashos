@@ -468,10 +468,11 @@ fn principal() -> u64 {
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
     // A15: sujetar el disco, escribir y borrar mientras tanto (lo borrado espera sin reusarse; comprobar lo cuenta como
     // libre pendiente) y soltar. Dos veces no se sujeta, ni se suelta lo que no se sujeta.
-    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta 10 s).
+    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta 30 s: con el PC cargado, su
+    // prueba del arranque pasó de 3 a 31 s).
     let sujetar = || {
         let mut e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
-        for _ in 0..1000 {
+        for _ in 0..3000 {
             if e != EN_USO {
                 break;
             }
