@@ -153,7 +153,7 @@ impl AparatoMmio for Pl011 {
     }
 
     fn leer(&mut self, desp: u64, _tam: u8, _mem: &mut dyn MemoriaInvitado) -> u64 {
-        if desp % 4 != 0 {
+        if !desp.is_multiple_of(4) {
             return 0;
         }
         let v = match desp {
@@ -181,7 +181,7 @@ impl AparatoMmio for Pl011 {
     }
 
     fn escribir(&mut self, desp: u64, _tam: u8, valor: u64, _mem: &mut dyn MemoriaInvitado) {
-        if desp % 4 != 0 {
+        if !desp.is_multiple_of(4) {
             return;
         }
         let v = valor as u32;

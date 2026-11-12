@@ -290,7 +290,7 @@ impl<A: AparatoVirtio> AparatoMmio for TransporteMmio<A> {
     }
 
     fn leer(&mut self, desp: u64, tam: u8, _mem: &mut dyn MemoriaInvitado) -> u64 {
-        if !tam_valido(tam) || desp % tam as u64 != 0 {
+        if !tam_valido(tam) || !desp.is_multiple_of(tam as u64) {
             return 0;
         }
         if desp >= R_CONFIG {
@@ -308,7 +308,7 @@ impl<A: AparatoVirtio> AparatoMmio for TransporteMmio<A> {
     }
 
     fn escribir(&mut self, desp: u64, tam: u8, valor: u64, mem: &mut dyn MemoriaInvitado) {
-        if !tam_valido(tam) || desp % tam as u64 != 0 {
+        if !tam_valido(tam) || !desp.is_multiple_of(tam as u64) {
             return;
         }
         if desp >= R_CONFIG {

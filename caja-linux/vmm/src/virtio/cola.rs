@@ -180,9 +180,9 @@ impl ColaPartida {
         self.tam != 0
             && self.tam <= tam_max
             && self.tam.is_power_of_two()
-            && self.desc % 16 == 0
-            && self.disponible % 2 == 0
-            && self.usado % 4 == 0
+            && self.desc.is_multiple_of(16)
+            && self.disponible.is_multiple_of(2)
+            && self.usado.is_multiple_of(4)
     }
 
     /// Hay cadenas nuevas en el anillo disponible.
@@ -253,7 +253,7 @@ impl ColaPartida {
         segs: &mut Vec<Segmento>,
         escritura_vista: &mut bool,
     ) -> Result<(), ErrorCola> {
-        if largo == 0 || largo % 16 != 0 || largo / 16 > MAX_INDIRECTOS {
+        if largo == 0 || !largo.is_multiple_of(16) || largo / 16 > MAX_INDIRECTOS {
             return Err(ErrorCola::IndirectaMala);
         }
         tabla.checked_add(largo as u64).ok_or(ErrorCola::Desborde)?;

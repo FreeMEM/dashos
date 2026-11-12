@@ -198,22 +198,20 @@ impl Distribuidor {
     fn bits(&self, cpu: usize, base: u32, f: impl Fn(&Irq) -> bool) -> u32 {
         let mut v = 0;
         for b in 0..32 {
-            if let Some(i) = self.irq_ref(cpu, base + b) {
-                if f(i) {
+            if let Some(i) = self.irq_ref(cpu, base + b)
+                && f(i) {
                     v |= 1 << b;
                 }
-            }
         }
         v
     }
 
     fn por_bits(&mut self, cpu: usize, base: u32, valor: u32, f: impl Fn(&mut Irq)) {
         for b in 0..32 {
-            if valor & (1 << b) != 0 {
-                if let Some(i) = self.irq(cpu, base + b) {
+            if valor & (1 << b) != 0
+                && let Some(i) = self.irq(cpu, base + b) {
                     f(i);
                 }
-            }
         }
     }
 
@@ -225,7 +223,7 @@ impl Distribuidor {
         }
         // Registros de un byte por interrupción: se aceptan accesos de 1 y de 4 bytes.
         if (IPRIORITYR..ITARGETSR + 0x400).contains(&desp) || (CPENDSGIR..SPENDSGIR + 0x10).contains(&desp) {
-            if !(tam == 1 || tam == 4) || desp % tam as u64 != 0 {
+            if !(tam == 1 || tam == 4) || !desp.is_multiple_of(tam as u64) {
                 return 0;
             }
             let mut v = 0u64;
@@ -234,7 +232,7 @@ impl Distribuidor {
             }
             return v;
         }
-        if tam != 4 || desp % 4 != 0 {
+        if tam != 4 || !desp.is_multiple_of(4) {
             return 0;
         }
         let palabra = |r: u64| ((desp - r) / 4) as u32 * 32;
@@ -287,7 +285,7 @@ impl Distribuidor {
             return;
         }
         if (IPRIORITYR..ITARGETSR + 0x400).contains(&desp) || (CPENDSGIR..SPENDSGIR + 0x10).contains(&desp) {
-            if !(tam == 1 || tam == 4) || desp % tam as u64 != 0 {
+            if !(tam == 1 || tam == 4) || !desp.is_multiple_of(tam as u64) {
                 return;
             }
             for k in 0..tam as u64 {
@@ -295,7 +293,7 @@ impl Distribuidor {
             }
             return;
         }
-        if tam != 4 || desp % 4 != 0 {
+        if tam != 4 || !desp.is_multiple_of(4) {
             return;
         }
         let v = valor as u32;
@@ -349,11 +347,10 @@ impl Distribuidor {
             }
             0x800..=0xbff => {
                 let id = (desp - ITARGETSR) as u32;
-                if id >= 32 {
-                    if let Some(i) = self.irq(cpu, id) {
+                if id >= 32
+                    && let Some(i) = self.irq(cpu, id) {
                         i.destino = b & ((1u16 << cpus) - 1) as u8;
                     }
-                }
             }
             0xf10..=0xf1f => {
                 let id = ((desp - CPENDSGIR) & 0xf) as usize;

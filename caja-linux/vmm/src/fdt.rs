@@ -30,7 +30,7 @@ impl EscritorFdt {
     }
 
     fn rellenar(&mut self) {
-        while self.estructura.len() % 4 != 0 {
+        while !self.estructura.len().is_multiple_of(4) {
             self.estructura.push(0);
         }
     }

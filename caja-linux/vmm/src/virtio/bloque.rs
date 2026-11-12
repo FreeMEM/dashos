@@ -151,7 +151,7 @@ impl Bloque {
     }
 
     fn rango_valido(&self, sector: u64, largo: u64) -> bool {
-        largo % SECTOR == 0
+        largo.is_multiple_of(SECTOR)
             && largo <= MAX_PETICION
             && sector.checked_add(largo / SECTOR).is_some_and(|fin| fin <= self.disco.sectores())
     }
