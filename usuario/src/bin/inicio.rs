@@ -14,6 +14,8 @@ dashos::programa!(principal);
 
 const PAQUETE: usize = 0x10_0000_0000;
 const COPIA: usize = 0x20_0000_0000;
+/// Donde se copian las cabeceras del paquete antes de soltarlo (antes de ponerlas en `PAQUETE`).
+const COPIA_CABECERAS: usize = 0x30_0000_0000;
 
 fn u32_en(p: usize) -> u32 {
     unsafe { core::ptr::read_volatile(p as *const u32) }
@@ -372,16 +374,40 @@ fn principal() -> u64 {
             alta_en_sesiones(sesiones, nombre_cab, i as u64 + 1, g as u32);
             baja_en_sesiones(sesiones, proceso as u32, i as u64 + 1);
         }
+        let mut vigilado = false;
         if lee != 0 && i < servicios.len() {
             let aviso = llave_duplicar(avisos_a, dashos::ESCRIBIR, i as u64 + 1).max(0) as u32;
             if aviso > 0 && dashos::proceso_avisar(proceso as u32, aviso) == 0 {
                 servicios[i] = Some(Servicio { cab: nombre_cab, m, tamano, guardadas, k, cupo, lee, aviso, proceso: proceso as u32, grupo: g as u32, veces: 0 });
+                vigilado = true;
             }
+        }
+        // La copia del ELF solo hace falta para relanzar un servicio: la de los demás se suelta (ya está cargado).
+        dashos::memoria_quitar(destino);
+        if !vigilado {
+            dashos::cerrar(m);
         }
         // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera.
         if k == 0 {
             let (clase, codigo) = proceso_esperar(proceso as u32);
             println!("  [inicio] {} acabó: clase {}, código {}", nombre(nombre_cab), clase, codigo);
+        }
+    }
+    // Lo lanzado ya no necesita los ELF del paquete (los servicios tienen su copia para relanzarlos): solo sus cabeceras
+    // (nombres, canales y aparatos, a los que apuntan `Servicio::cab` y `lector`). Se copian a un objeto pequeño que va
+    // a la misma dirección, y el paquete entero (los ELF de todos, varios MB) se suelta.
+    let largo = cabeceras + CABECERA * programas - PAQUETE;
+    let pequeno = memoria_crear(largo);
+    if (pequeno as i32) > 0 && memoria_proyectar(pequeno, COPIA_CABECERAS, true) == 0 {
+        unsafe { core::ptr::copy_nonoverlapping(PAQUETE as *const u8, COPIA_CABECERAS as *mut u8, largo) };
+        dashos::memoria_quitar(COPIA_CABECERAS);
+        dashos::memoria_quitar(PAQUETE);
+        if memoria_proyectar(pequeno, PAQUETE, false) == 0 {
+            dashos::cerrar(1);
+            println!("  [inicio] paquete de arranque suelto: quedan sus cabeceras ({} bytes)", largo);
+        } else {
+            // No debería pasar (la dirección acaba de quedar libre): el paquete otra vez, como estaba.
+            let _ = memoria_proyectar(1, PAQUETE, false);
         }
     }
     println!("  [inicio] todo lanzado; se queda vigilando los servicios");

@@ -1394,3 +1394,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   lo que el centro no ve (`inicio`, que guarda copias de los programas para relanzarlos, `sesiones`, y la sesión de
   Carla).
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:55: `inicio` suelta lo que no necesita de los programas
+- Los ELF del arranque estaban tres veces: en la imagen del kernel, en el paquete (llave 1 de `inicio`) y en la copia
+  que hace `inicio` de cada uno para lanzarlo. Ahora la copia se suelta en lo que no es un servicio vigilado (no se
+  relanza), y al acabar de lanzar, el paquete se cambia por un objeto pequeño con solo sus cabeceras (1768 bytes) en
+  la misma dirección (los nombres y canales a los que apuntan `Servicio::cab` y `lector`), y se cierra la llave 1.
+- Medida: en uso 102,9 → 92,8 MB. Relanzar sigue: `caida` y `eco` se relanzan después de soltar el paquete.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
