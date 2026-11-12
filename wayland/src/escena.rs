@@ -18,6 +18,14 @@ use crate::tablas::{
     wl_subsurface, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 
+// H9, rama `caja-linux-apps`: las decoraciones de DashOS, el portapapeles y los emergentes, cada uno en su fichero.
+#[path = "decoracion.rs"]
+pub mod decoracion;
+#[path = "emergentes.rs"]
+pub mod emergentes;
+#[path = "portapapeles.rs"]
+pub mod portapapeles;
+
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
 pub const DMABUF_PLANO: u32 = 1;
@@ -418,6 +426,15 @@ pub struct Xdg {
     pub configurada: bool,
     pub titulo: alloc::string::String,
     pub app: alloc::string::String,
+    /// Su `zxdg_toplevel_decoration_v1`, el último modo que se le dijo y si lleva la barra de DashOS (H9).
+    pub deco: Option<u32>,
+    pub deco_modo: Option<u32>,
+    pub ssd: bool,
+    /// Su geometría (`set_window_geometry`): la ventana de verdad dentro del búfer (sin la sombra que se pinta el
+    /// programa).
+    pub geometria: Option<Rect>,
+    /// Si es un emergente (`xdg_popup`).
+    pub emergente: Option<emergentes::Emergente>,
 }
 
 /// Lo de cada cliente.
@@ -440,6 +457,10 @@ pub struct DeCliente {
     pub params: BTreeMap<u32, Params>,
     /// Sus `wl_output` (multimonitor): objeto → global de la salida.
     pub salidas: BTreeMap<u32, u32>,
+    /// Su portapapeles (H9).
+    pub pp: portapapeles::DeCliente,
+    /// Sus `xdg_positioner` (H9).
+    pub posicionadores: BTreeMap<u32, emergentes::Posicionador>,
 }
 
 /// Todas las superficies de todos los clientes y el orden en que se apilan.
@@ -540,6 +561,16 @@ pub struct Escena<M: Memorias> {
     /// La ventana que se arrastra con Super y el botón izquierdo, dónde se cogió (respecto a su esquina) y en qué
     /// salida estaba.
     arrastre: Option<((Cliente, u32), i32, i32, usize)>,
+    /// H9: las dos selecciones del portapapeles (la de siempre y la primaria) y lo que hay que mandar a las fuentes
+    /// (quien atiende lo escribe con `portapapeles::escribir_aviso`).
+    selecciones: [Option<alloc::rc::Rc<portapapeles::Seleccion>>; 2],
+    pub avisos_portapapeles: Vec<(Cliente, portapapeles::Aviso)>,
+    /// H9: quien pinta las barras de DashOS (con el kit), y las barras pintadas de cada ventana.
+    pub pintor: Option<decoracion::Pintor>,
+    marcos: BTreeMap<(Cliente, u32), decoracion::Marco>,
+    /// H9: los emergentes con agarre (programa y su `xdg_surface`), de abajo arriba, y la ventana que se redimensiona.
+    agarres: Vec<(Cliente, u32)>,
+    redimension: Option<emergentes::Redimension>,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -685,6 +716,12 @@ impl<M: Memorias> Escena<M> {
             areas: Vec::new(),
             movidas: Vec::new(),
             arrastre: None,
+            selecciones: [None, None],
+            avisos_portapapeles: Vec::new(),
+            pintor: None,
+            marcos: BTreeMap::new(),
+            agarres: Vec::new(),
+            redimension: None,
         }
     }
 
@@ -1017,6 +1054,12 @@ impl<M: Memorias> Escena<M> {
         // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4), vuelve a la ventana de arriba.
         let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente && self.capas.contains(&t));
         self.sin_entrada(cliente);
+        // H9: sus selecciones del portapapeles, sus emergentes con agarre y lo que redimensionaba.
+        self.olvidar_fuente(cliente, None);
+        self.agarres.retain(|a| a.0 != cliente);
+        if self.redimension.is_some_and(|r| r.ventana.0 == cliente) {
+            self.redimension = None;
+        }
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
         self.del_sistema.retain(|&c| c != cliente);
@@ -1400,8 +1443,12 @@ impl<M: Memorias> Escena<M> {
             }];
             self.recalcular_area();
         }
+        // H9: las barras de DashOS que cambiaron, pintadas.
+        self.pintar_marcos();
         // Las superficies de cada ventana, con sus subsuperficies (G3), de abajo arriba, con su sitio en la pantalla.
         let mut capas: Vec<(Cliente, u32, i32, i32)> = Vec::new();
+        // H9: las barras de DashOS: antes de qué capa van (justo encima de la sombra de su ventana), dónde y de quién.
+        let mut barras: Vec<(usize, Rect, (Cliente, u32))> = Vec::new();
         // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada. Las
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
@@ -1409,12 +1456,21 @@ impl<M: Memorias> Escena<M> {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
             let de_fondo = cli.superficies.get(&id).and_then(|s| s.capa).and_then(|k| cli.capas.get(&k)).is_some_and(|k| k.actual.capa == 0);
+            // H9: la sombra rodea también la barra de DashOS; un programa que se pinta su sombra (su geometría es
+            // menor que su búfer: GTK) no lleva otra.
+            let geometria = cli.superficies.get(&id).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).and_then(|x| x.geometria);
+            let propia = geometria.zip(rect_de(cli, id)).is_some_and(|(g, r)| g.w < r.w || g.h < r.h);
             if self.sombras
                 && !de_fondo
+                && !propia
                 && self.bloqueo.is_none()
-                && let Some(r) = rect_de(cli, id)
+                && let Some(r) = decoracion::ventana_de(cli, id)
             {
-                sombras.push((capas.len(), r, radio_de(cli, id)));
+                let radio = if decoracion::con_barra(cli, id) { decoracion::RADIO_MARCO } else { radio_de(cli, id) };
+                sombras.push((capas.len(), r, radio));
+            }
+            if let Some(b) = decoracion::barra_de(cli, id) {
+                barras.push((capas.len(), b, (c, id)));
             }
             let mut a = Vec::new();
             arbol(cli, id, x, y, &mut a);
@@ -1478,7 +1534,14 @@ impl<M: Memorias> Escena<M> {
         // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut s_i = 0;
+        let mut b_i = 0;
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
+            // Las barras de DashOS van tras la sombra de su ventana (más abajo).
+            let mut barras_aqui = Vec::new();
+            while b_i < barras.len() && barras[b_i].0 == k {
+                barras_aqui.push(b_i);
+                b_i += 1;
+            }
             while s_i < sombras.len() && sombras[s_i].0 == k {
                 let (v, radio) = (sombras[s_i].1, sombras[s_i].2);
                 // Multimonitor: la sombra de una ventana que está en una sola salida no pasa a la de al lado.
@@ -1489,6 +1552,14 @@ impl<M: Memorias> Escena<M> {
                 }
                 con_bufer.push((fuera, 0, 0, &[], crate::shm::Bufer::default(), Some((v, radio))));
                 s_i += 1;
+            }
+            for bi in barras_aqui {
+                let (_, b, v) = barras[bi];
+                let Some(m) = self.marcos.get(&v) else { continue };
+                let bufer = crate::shm::Bufer { pool: 0, desplazamiento: 0, ancho: b.w as u32, alto: b.h as u32, linea: b.w as usize * 4, formato: ARGB8888 };
+                if m.px.len() >= bufer.linea * b.h as usize && m.rect == b {
+                    con_bufer.push((b, b.x, b.y, &m.px[..], bufer, None));
+                }
             }
             let cli = &self.clientes[&c];
             let Some(b) = cli.superficies[&id].bufer else { continue };
@@ -1680,6 +1751,16 @@ pub struct PorCliente<'a, M: Memorias> {
 impl<M: Memorias> Servicio for PorCliente<'_, M> {
     fn peticion(&mut self, con: &mut Conexion, objeto: u32, orden: u16, args: &[Valor]) -> Result<(), ErrorProtocolo> {
         let interfaz = con.interfaz(objeto).unwrap();
+        // H9: el portapapeles, las decoraciones y los emergentes, en sus ficheros.
+        if let Some(r) = self.portapapeles(con, interfaz.name, objeto, orden, args) {
+            return r;
+        }
+        if let Some(r) = self.decoraciones(con, interfaz.name, objeto, orden, args) {
+            return r;
+        }
+        if let Some(r) = self.emergentes(con, interfaz.name, objeto, orden, args) {
+            return r;
+        }
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
         let mem = &mut escena.memorias;
@@ -2104,13 +2185,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let x = yo.xdg.get_mut(&objeto).unwrap();
                 match orden {
                     xdg_surface::req::GET_TOPLEVEL => {
-                        if x.toplevel.is_some() {
+                        if x.toplevel.is_some() || x.emergente.is_some() {
                             return Err(ErrorProtocolo::new(objeto, ALREADY_CONSTRUCTED, "ya es una ventana"));
                         }
                         x.toplevel = Some(args[0].uint());
-                    }
-                    xdg_surface::req::GET_POPUP => {
-                        return Err(ErrorProtocolo::new(1, crate::servidor::IMPLEMENTATION, "sin menús emergentes"));
                     }
                     xdg_surface::req::ACK_CONFIGURE => {
                         let serie = args[0].uint();
@@ -2119,6 +2197,14 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         };
                         x.pedidos.drain(..=k);
                         x.configurada = true;
+                        // H9: redimensionando, el tamaño que esperaba a que confirmara el anterior.
+                        if x.pedidos.is_empty()
+                            && let Some(r) = escena.redimension.as_mut().filter(|r| r.ventana.0 == self.cliente && r.xdg == objeto)
+                            && let Some((w, h)) = r.pendiente.take()
+                        {
+                            r.ahora = (w, h);
+                            escena.pendientes.push((self.cliente, Entrada::Redimensiona { xdg: objeto, ancho: w, alto: h, acabado: false }));
+                        }
                     }
                     _ => {}
                 }
@@ -2180,17 +2266,35 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     if let Some(rol) = s.rol {
                         let pone_bufer = matches!(s.pendiente.bufer, Some(Some(_)));
                         let x = yo.xdg.get_mut(&rol).unwrap();
-                        let Some(toplevel) = x.toplevel else {
-                            return Err(ErrorProtocolo::new(rol, NOT_CONSTRUCTED, "commit sin papel completo"));
-                        };
-                        if !x.configurada && pone_bufer {
+                        if !x.configurada && pone_bufer && (x.toplevel.is_some() || x.emergente.is_some()) {
                             return Err(ErrorProtocolo::new(rol, UNCONFIGURED_BUFFER, "búfer antes de configure"));
                         }
-                        if !x.configurada && x.pedidos.is_empty() {
-                            let serie = con.serie_nueva();
-                            con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(0).int(0).array(&[]).fin();
-                            con.salida.empezar(rol, xdg_surface::ev::CONFIGURE).uint(serie).fin();
-                            x.pedidos.push(serie);
+                        // H9: un emergente, con su sitio respecto a la madre.
+                        if let Some(e) = x.emergente {
+                            if !x.configurada && x.pedidos.is_empty() {
+                                let serie = con.serie_nueva();
+                                con.salida.empezar(e.objeto, crate::tablas::xdg_popup::ev::CONFIGURE).int(e.sitio.x).int(e.sitio.y).int(e.sitio.w).int(e.sitio.h).fin();
+                                con.salida.empezar(rol, xdg_surface::ev::CONFIGURE).uint(serie).fin();
+                                x.pedidos.push(serie);
+                            }
+                        } else {
+                            let Some(toplevel) = x.toplevel else {
+                                return Err(ErrorProtocolo::new(rol, NOT_CONSTRUCTED, "commit sin papel completo"));
+                            };
+                            if !x.configurada && x.pedidos.is_empty() {
+                                // H9: con decoración y sin modo pedido, el de DashOS (su barra).
+                                if let Some(d) = x.deco
+                                    && x.deco_modo.is_none()
+                                {
+                                    con.salida.empezar(d, crate::tablas::zxdg_toplevel_decoration_v1::ev::CONFIGURE).uint(decoracion::MODO_SERVIDOR).fin();
+                                    x.deco_modo = Some(decoracion::MODO_SERVIDOR);
+                                    x.ssd = true;
+                                }
+                                let serie = con.serie_nueva();
+                                con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(0).int(0).array(&[]).fin();
+                                con.salida.empezar(rol, xdg_surface::ev::CONFIGURE).uint(serie).fin();
+                                x.pedidos.push(serie);
+                            }
                         }
                     }
                 }
@@ -2226,10 +2330,28 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         escena.aplicar(cliente, objeto, p, con);
                         escena.colocar_capa(cliente, objeto);
                         escena.colocar_bloqueo(cliente, objeto)?;
+                        escena.ajustar_redimension(cliente, objeto);
                         let yo = escena.clientes.get_mut(&cliente).unwrap();
                         let s = yo.superficies.get_mut(&objeto).unwrap();
+                        // H9: un emergente con búfer que aún no está en pantalla: en su sitio respecto a la madre, encima
+                        // de todo; con agarre, se lleva el teclado.
+                        let emergente = s.rol.and_then(|r| yo.xdg.get(&r)).and_then(|x| x.emergente.map(|e| (e, x.geometria)));
+                        if let Some((e, g)) = emergente
+                            && s.bufer.is_some()
+                            && s.sitio.is_none()
+                        {
+                            let Some((ox, oy)) = escena.origen_geometria(cliente, e.madre) else { return Ok(()) };
+                            let g = g.unwrap_or_default();
+                            escena.colocar(cliente, objeto, ox + e.sitio.x - g.x, oy + e.sitio.y - g.y);
+                            if e.agarre && !escena.oculto(cliente) {
+                                let mut ev = Vec::new();
+                                escena.dar_teclado((cliente, objeto), &mut ev);
+                                escena.pendientes.extend(ev);
+                            }
+                            return Ok(());
+                        }
                         // Una ventana con búfer que aún no está en pantalla: se coloca en cascada, encima de todo.
-                        if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() {
+                        if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() && emergente.is_none() {
                             let k = escena.colocadas % 8;
                             escena.colocadas += 1;
                             // En cascada dentro de lo que dejan las barras (G4), en la salida del cursor (multimonitor).
@@ -2238,7 +2360,13 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             let a = escena.area_de(i);
                             let cli = escena.clientes.get(&cliente).unwrap();
                             let tam = cli.superficies.get(&objeto).and_then(|s| s.bufer).and_then(|b| cli.shm.pixeles(b)).map_or((0, 0), |(_, b)| (b.ancho as i32, b.alto as i32));
-                            let (x, y) = en_cascada(a, k, tam);
+                            // H9: la geometría de la ventana (sin la sombra que se pinta el programa) y la barra de
+                            // DashOS, si la lleva, cuentan para colocarla.
+                            let x_ = cli.superficies.get(&objeto).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r));
+                            let g = x_.and_then(|x| x.geometria).unwrap_or(Rect { x: 0, y: 0, w: tam.0, h: tam.1 });
+                            let barra = if decoracion::con_barra(cli, objeto) { decoracion::ALTO_BARRA } else { 0 };
+                            let (x, y) = en_cascada(a, k, (g.w, g.h + barra));
+                            let (x, y) = (x - g.x, y + barra - g.y);
                             escena.colocar(cliente, objeto, x, y);
                             escena.recien_colocadas.push((cliente, x, y));
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
@@ -2309,6 +2437,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     }
 
     fn destruido(&mut self, _con: &mut Conexion, objeto: u32) {
+        // H9: lo del portapapeles, las decoraciones y los emergentes.
+        self.portapapeles_destruido(objeto);
+        self.decoracion_destruida(objeto);
+        self.emergente_destruido(objeto);
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
         // Un `wl_output` soltado (release).
@@ -2411,6 +2543,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if let Some(x) = yo.xdg.values_mut().find(|x| x.toplevel == Some(objeto)) {
             x.toplevel = None;
             x.configurada = false;
+            // La decoración que quede ya no tiene ventana (el programa debía destruirla antes: no se le corta).
+            x.deco = None;
+            x.ssd = false;
             quitar = Some(x.superficie);
         }
         if let Some(x) = yo.xdg.remove(&objeto) {
@@ -2524,6 +2659,15 @@ pub enum Entrada {
     /// `ext_session_lock_surface_v1`), porque cambió su salida.
     ConfiguraCapa { objeto: u32, ancho: i32, alto: i32 },
     ConfiguraBloqueo { objeto: u32, ancho: i32, alto: i32 },
+    /// H9: las ofertas del portapapeles pendientes del cliente (`portapapeles::DeCliente::por_ofrecer`), antes del
+    /// teclado.
+    Portapapeles,
+    /// H9: que la ventana (su `xdg_surface`) se cierre: el botón de la barra de DashOS.
+    Cerrar { xdg: u32 },
+    /// H9: un emergente con agarre se cierra (un clic fuera).
+    EmergenteHecho { xdg: u32 },
+    /// H9: otro tamaño mientras se redimensiona a petición del programa (`acabado`: el último, ya sin redimensionar).
+    Redimensiona { xdg: u32, ancho: i32, alto: i32, acabado: bool },
 }
 
 impl<M: Memorias> Escena<M> {
@@ -2564,9 +2708,30 @@ impl<M: Memorias> Escena<M> {
         if self.orden.last() != Some(&ventana) {
             self.orden.retain(|o| *o != ventana);
             self.orden.push(ventana);
-            if let Some(r) = rect_de(&self.clientes[&ventana.0], ventana.1) {
+            if let Some(r) = decoracion::ventana_de(&self.clientes[&ventana.0], ventana.1) {
                 self.danos.push(r);
             }
+        }
+        // H9: sus emergentes siguen encima.
+        self.subir_emergentes(ventana);
+    }
+
+    /// H9: si se está arrastrando una ventana (para medir los cuadros mientras tanto).
+    pub fn arrastrando(&self) -> bool {
+        self.arrastre.is_some() || self.redimension.is_some()
+    }
+
+    /// Quita una superficie de la pantalla (un emergente que se va): fuera del orden, sin sitio, y sin el puntero.
+    pub(crate) fn quitar_de_pantalla(&mut self, cliente: Cliente, sup: u32) {
+        if let Some(cli) = self.clientes.get_mut(&cliente) {
+            self.danos.extend(decoracion::ventana_de(cli, sup));
+            if let Some(s) = cli.superficies.get_mut(&sup) {
+                s.sitio = None;
+            }
+        }
+        self.orden.retain(|o| *o != (cliente, sup));
+        if self.puntero == Some((cliente, sup)) {
+            self.puntero = None;
         }
     }
 
@@ -2587,6 +2752,8 @@ impl<M: Memorias> Escena<M> {
                 out.push((c, Entrada::TecladoSale { superficie: s }));
             }
             self.teclado = Some(ventana);
+            // H9: la selección del portapapeles, justo antes del teclado (como pide `wl_data_device`).
+            self.ofrecer(ventana.0, out);
             out.push((ventana.0, Entrada::TecladoEntra { superficie: ventana.1 }));
         }
     }
@@ -2626,6 +2793,52 @@ impl<M: Memorias> Escena<M> {
             self.botones = botones;
             return out;
         }
+        // H9: redimensionando a petición del programa: el tamaño sigue al cursor hasta soltar el botón.
+        if let Some(r) = self.redimension {
+            if self.cursor != antes {
+                self.seguir_redimension(&mut out);
+            }
+            if botones & 1 == 0 {
+                let r = self.redimension.take().unwrap_or(r);
+                let (w, h) = r.pendiente.unwrap_or(r.ahora);
+                out.push((r.ventana.0, Entrada::Redimensiona { xdg: r.xdg, ancho: w, alto: h, acabado: true }));
+            }
+            self.botones = botones;
+            return out;
+        }
+        // H9: la barra de DashOS. Pulsar la coge para moverla (o, en su botón, se pide cerrarla). Sin botones pulsados
+        // desde una ventana (si no, la ventana no recibiría el soltar).
+        if self.botones == 0
+            && self.bloqueo.is_none()
+            && let Some(((c, s), zona)) = self.barra_bajo(self.cursor.0, self.cursor.1)
+        {
+            if let Some((pc, ps)) = self.puntero.take() {
+                out.push((pc, Entrada::Sale { superficie: ps }));
+            }
+            if botones & 1 != 0 {
+                self.super_sola = false;
+                self.cerrar_emergentes(Some((c, s)), &mut out);
+                self.activar((c, s), &mut out);
+                let cli = &self.clientes[&c];
+                let rol = cli.superficies.get(&s).and_then(|su| su.rol);
+                match zona {
+                    decoracion::Zona::Cerrar => {
+                        if let Some(xdg) = rol {
+                            out.push((c, Entrada::Cerrar { xdg }));
+                        }
+                    }
+                    decoracion::Zona::Barra => {
+                        let libre = rol.and_then(|r| cli.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_none());
+                        if let (true, Some((x, y))) = (libre, cli.superficies.get(&s).and_then(|su| su.sitio)) {
+                            let desde = decoracion::ventana_de(cli, s).map_or(0, |v| self.salida_de(v));
+                            self.arrastre = Some(((c, s), self.cursor.0 - x, self.cursor.1 - y, desde));
+                        }
+                    }
+                }
+            }
+            self.botones = botones;
+            return out;
+        }
         if botones & 1 != 0 && self.botones & 1 == 0 && self.mods & 64 != 0 && self.bloqueo.is_none()
             && let Some(((c, s), _, _)) = self.bajo(self.cursor.0, self.cursor.1) {
                 let cli = &self.clientes[&c];
@@ -2661,6 +2874,10 @@ impl<M: Memorias> Escena<M> {
             let pulsado = botones & (1 << bit) != 0;
             if pulsado {
                 self.super_sola = false;
+            }
+            // H9: un clic fuera de los emergentes con agarre los cierra.
+            if pulsado {
+                self.cerrar_emergentes(ahora, &mut out);
             }
             // Pulsar sobre una ventana la sube y le da el teclado.
             if pulsado
@@ -2781,16 +2998,27 @@ impl<M: Memorias> Escena<M> {
     /// Maximiza (o devuelve) la ventana que tiene el teclado: la pone en (0, 0) y le pide el tamaño de la pantalla, o
     /// la devuelve a su sitio y le deja elegir su tamaño. Se mueve ya; el tamaño llega con su búfer nuevo.
     pub fn maximizar(&mut self, si: bool, out: &mut Vec<(Cliente, Entrada)>) {
-        let Some((c, sup)) = self.teclado else { return };
+        let Some(v) = self.teclado else { return };
+        self.maximizar_esta(v, si, out);
+    }
+
+    /// Maximiza (o devuelve) la ventana `sup` de `c` (H9: también la que lo pide con `set_maximized`). Su geometría
+    /// (sin la sombra que se pinta) y la barra de DashOS, si la lleva, caben en lo que queda.
+    pub fn maximizar_esta(&mut self, (c, sup): (Cliente, u32), si: bool, out: &mut Vec<(Cliente, Entrada)>) {
         // Dentro de lo que dejan las barras (G4), en la salida de la ventana (multimonitor: la que más tapa).
         let i = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)).map_or(0, |r| self.salida_de(r));
         let a = self.area_de(i);
-        let (w, h) = (a.w, a.h);
-        let origen = (a.x, a.y);
         let Some(cli) = self.clientes.get_mut(&c) else { return };
+        let barra = if decoracion::con_barra(cli, sup) { decoracion::ALTO_BARRA } else { 0 };
         let Some(s) = cli.superficies.get(&sup) else { return };
         let (Some(rol), Some(sitio)) = (s.rol, s.sitio) else { return };
         let Some(x) = cli.xdg.get_mut(&rol) else { return };
+        if x.toplevel.is_none() {
+            return;
+        }
+        let g = x.geometria.unwrap_or_default();
+        let (w, h) = (a.w, a.h - barra);
+        let origen = (a.x - g.x, a.y + barra - g.y);
         let nuevo = match (si, x.antes_de_maximizar) {
             (true, None) => {
                 x.antes_de_maximizar = Some(sitio);
@@ -2802,12 +3030,12 @@ impl<M: Memorias> Escena<M> {
             }
             _ => return,
         };
-        if let Some(r) = rect_de(cli, sup) {
+        if let Some(r) = decoracion::ventana_de(cli, sup) {
             self.danos.push(r);
         }
         let cli = self.clientes.get_mut(&c).unwrap();
         cli.superficies.get_mut(&sup).unwrap().sitio = Some(nuevo);
-        if let Some(r) = rect_de(cli, sup) {
+        if let Some(r) = decoracion::ventana_de(cli, sup) {
             self.danos.push(r);
         }
         let (ancho, alto) = if si { (w, h) } else { (0, 0) };
@@ -2865,11 +3093,11 @@ impl<M: Memorias> Escena<M> {
     fn llevar_a(&mut self, c: Cliente, sup: u32, sitio: (i32, i32)) {
         let sitio = self.limitar(sitio.0, sitio.1);
         let Some(cli) = self.clientes.get_mut(&c) else { return };
-        let antes = rect_de(cli, sup);
+        let antes = decoracion::ventana_de(cli, sup);
         let Some(s) = cli.superficies.get_mut(&sup) else { return };
         s.sitio = Some(sitio);
         self.danos.extend(antes);
-        self.danos.extend(rect_de(&self.clientes[&c], sup));
+        self.danos.extend(decoracion::ventana_de(&self.clientes[&c], sup));
     }
 
     /// Tras mover una ventana: el puntero pudo quedar sobre otra.
@@ -2926,6 +3154,32 @@ pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms
             let mut estados = Vec::new();
             if maximizada {
                 estados.extend_from_slice(&1u32.to_le_bytes());
+            }
+            estados.extend_from_slice(&4u32.to_le_bytes());
+            let serie = con.serie_nueva();
+            con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(ancho).int(alto).array(&estados).fin();
+            con.salida.empezar(xdg, xdg_surface::ev::CONFIGURE).uint(serie).fin();
+            x.pedidos.push(serie);
+        }
+        // H9: el portapapeles, cerrar con la barra de DashOS, cerrar un emergente y redimensionar.
+        Entrada::Portapapeles => portapapeles::escribir_ofertas(con, &mut cli.pp),
+        Entrada::Cerrar { xdg } => {
+            if let Some(t) = cli.xdg.get(&xdg).and_then(|x| x.toplevel) {
+                con.salida.empezar(t, xdg_toplevel::ev::CLOSE).fin();
+            }
+        }
+        Entrada::EmergenteHecho { xdg } => {
+            if let Some(e) = cli.xdg.get(&xdg).and_then(|x| x.emergente) {
+                con.salida.empezar(e.objeto, crate::tablas::xdg_popup::ev::POPUP_DONE).fin();
+            }
+        }
+        Entrada::Redimensiona { xdg, ancho, alto, acabado } => {
+            let Some(x) = cli.xdg.get_mut(&xdg) else { return };
+            let Some(toplevel) = x.toplevel else { return };
+            // Estados: 3 redimensionando (mientras dura), 4 activa.
+            let mut estados = Vec::new();
+            if !acabado {
+                estados.extend_from_slice(&3u32.to_le_bytes());
             }
             estados.extend_from_slice(&4u32.to_le_bytes());
             let serie = con.serie_nueva();

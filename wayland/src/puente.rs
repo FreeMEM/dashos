@@ -33,6 +33,17 @@ pub const MEMORIA_ESCRIBIR: u8 = 5;
 pub const MEMORIA_SOLTAR: u8 = 6;
 /// Crecer una memoria: número (u32) y tamaño nuevo (u64).
 pub const MEMORIA_CRECER: u8 = 7;
+/// H9, el portapapeles: un tubo (lo que en Linux es una tubería y en DashOS un canal: bytes que van en un sentido hasta
+/// que se cierra). Número (u32). Lo manda el lado que tiene un extremo donde hay que escribir lo que llegue (en Linux,
+/// la tubería que un programa da en `wl_data_offer.receive`; en DashOS, el canal que da un programa nativo para pegar).
+/// El otro lado crea su par: da el extremo de escribir a su programa con el mensaje que lleva el número (como una
+/// memoria) y manda lo que lee de él en `TUBO_DATOS`, hasta `TUBO_FIN`.
+pub const TUBO_NUEVO: u8 = 8;
+/// Bytes de un tubo: número (u32) y los bytes.
+pub const TUBO_DATOS: u8 = 9;
+/// Fin de un tubo: número (u32). En los dos sentidos: se acabó lo que había que leer, o quien escribía ya no puede (su
+/// lector se fue) y el otro deja de leer.
+pub const TUBO_FIN: u8 = 10;
 
 pub const CABECERA: usize = 9;
 /// Lo más que mide el contenido de una trama de `MEMORIA_ESCRIBIR` (en el PC, un búfer de 4K a 32 bits cabe en unas
@@ -126,8 +137,8 @@ impl Lector {
                             self.resto = largo - 12;
                             continue;
                         }
-                        CONECTAR..=MEMORIA_CRECER if largo > MAX_CONTROL => return Err(FalloTrama::Larga),
-                        CONECTAR..=MEMORIA_CRECER => {
+                        CONECTAR..=TUBO_FIN if largo > MAX_CONTROL => return Err(FalloTrama::Larga),
+                        CONECTAR..=TUBO_FIN => {
                             self.resto = largo;
                             self.buf.clear();
                         }
@@ -181,6 +192,47 @@ pub trait Sistema {
     fn cerrar(&mut self, llave: u32);
     /// Manda un trozo al compositor. `Err(true)` si su cola está llena (se reintenta), `Err(false)` si se fue.
     fn al_compositor(&mut self, bytes: &[u8], llaves: &[u32]) -> Result<(), bool>;
+    /// H9, tubos: un canal nuevo: (el extremo que lee este lado, el que escribe, para darlo al compositor).
+    fn tubo_crear(&mut self) -> Option<(u32, u32)> {
+        None
+    }
+    /// Lee un mensaje del extremo `llave` sin esperar: `Ok(0)` si no hay nada; `Err` si el otro extremo se cerró y no
+    /// queda nada (el fin).
+    fn tubo_leer(&mut self, _llave: u32, _buf: &mut [u8]) -> Result<usize, ()> {
+        Err(())
+    }
+    /// Escribe un mensaje (como mucho `MAX_CANAL` bytes) en el extremo `llave`: cuántos tomó (0 si la cola está llena),
+    /// o `Err` si el otro extremo ya no está.
+    fn tubo_escribir(&mut self, _llave: u32, _datos: &[u8]) -> Result<usize, ()> {
+        Err(())
+    }
+    /// La hora en milisegundos (para el plazo de los tubos).
+    fn ahora_ms(&mut self) -> u64 {
+        0
+    }
+}
+
+/// Tubos a la vez por transporte (H9).
+pub const MAX_TUBOS: usize = 16;
+/// Lo más que pasa por un tubo: más, y se corta.
+pub const MAX_TUBO: u64 = 16 << 20;
+/// Lo que se guarda de un tubo sin poder escribirlo (quien lee no lee): más, y se corta.
+pub const MAX_TUBO_PENDIENTE: usize = 256 * 1024;
+/// Un tubo sin moverse este tiempo se corta (una fuente que no escribe ni cierra no se queda con el hueco).
+pub const PLAZO_TUBO_MS: u64 = 30_000;
+
+/// Un tubo vivo (H9).
+struct Tubo {
+    /// El extremo de este lado: uno de leer (lo de aquí va al invitado) o de escribir (lo del invitado va aquí).
+    llave: u32,
+    lee: bool,
+    /// El extremo de escribir que espera a ir al compositor con su mensaje (los tubos que pide el invitado).
+    para_compositor: Option<u32>,
+    pendiente: VecDeque<u8>,
+    /// El invitado dijo fin: se cierra al vaciar lo pendiente.
+    fin: bool,
+    bytes: u64,
+    ultimo_ms: u64,
 }
 
 /// Lo más que mide una memoria del invitado (el tope de `memoria_crear`).
@@ -215,6 +267,9 @@ pub struct Cuentas {
     /// Bytes de memoria (búferes) copiados del invitado.
     pub bytes_de_memoria: u64,
     pub memorias: u64,
+    /// Tubos del portapapeles (H9) y los bytes que pasaron por ellos.
+    pub tubos: u64,
+    pub bytes_de_tubos: u64,
     /// Lo que se tiró por no cuadrar: memorias o conexiones que no existen, escrituras fuera, tamaños de más.
     pub malas: u64,
     /// Clientes cerrados por algo suyo (una memoria que no existe, salida de más...).
@@ -240,6 +295,8 @@ pub struct Puente<S: Sistema> {
     /// puente y otro, o uno hostil) comparten el canal de respuesta sin chocar.
     prefijo: u32,
     pub cuentas: Cuentas,
+    /// Los tubos del portapapeles (H9), por número.
+    tubos: BTreeMap<u32, Tubo>,
 }
 
 impl<S: Sistema> Puente<S> {
@@ -257,6 +314,7 @@ impl<S: Sistema> Puente<S> {
             sin_compositor: false,
             prefijo,
             cuentas: Cuentas::default(),
+            tubos: BTreeMap::new(),
         }
     }
 
@@ -336,6 +394,11 @@ impl<S: Sistema> Puente<S> {
                 // llaves y sus mensajes ya no casarían en el compositor).
                 let mut llaves = Vec::with_capacity(numeros.len());
                 for n in &numeros {
+                    // H9: un tubo que pidió el invitado: su extremo de escribir va al compositor (una vez).
+                    if let Some(l) = self.tubos.get_mut(n).and_then(|t| t.para_compositor.take()) {
+                        llaves.push(l);
+                        continue;
+                    }
                     match self.memorias.get(n).and_then(|m| self.sis.copia_lectura(m.llave)) {
                         Some(l) => llaves.push(l),
                         None => {
@@ -408,8 +471,154 @@ impl<S: Sistema> Puente<S> {
                     }
                 }
             }
+            TUBO_NUEVO | TUBO_DATOS | TUBO_FIN => {
+                let Some(n) = Self::u32_en(d, 0) else {
+                    self.cuentas.malas += 1;
+                    return;
+                };
+                self.tubo_del_invitado(tipo, n, &d[4..]);
+            }
             _ => self.cuentas.malas += 1,
         }
+    }
+
+    /// Lo que el invitado dice de un tubo.
+    fn tubo_del_invitado(&mut self, tipo: u8, n: u32, d: &[u8]) {
+        let ahora = self.sis.ahora_ms();
+        match tipo {
+            TUBO_NUEVO => {
+                if self.tubos.contains_key(&n) || self.tubos.len() >= MAX_TUBOS {
+                    self.cuentas.malas += 1;
+                    self.al_invitado(TUBO_FIN, 0, &n.to_le_bytes());
+                    return;
+                }
+                let Some((lee, escribe)) = self.sis.tubo_crear() else {
+                    self.al_invitado(TUBO_FIN, 0, &n.to_le_bytes());
+                    return;
+                };
+                self.cuentas.tubos += 1;
+                self.tubos.insert(n, Tubo { llave: lee, lee: true, para_compositor: Some(escribe), pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora });
+            }
+            TUBO_DATOS => {
+                let Some(t) = self.tubos.get_mut(&n).filter(|t| !t.lee && !t.fin) else {
+                    self.cuentas.malas += 1;
+                    return;
+                };
+                t.bytes += d.len() as u64;
+                t.ultimo_ms = ahora;
+                self.cuentas.bytes_de_tubos += d.len() as u64;
+                if t.bytes > MAX_TUBO || t.pendiente.len() + d.len() > MAX_TUBO_PENDIENTE {
+                    self.cuentas.malas += 1;
+                    self.cortar_tubo(n, true);
+                    return;
+                }
+                t.pendiente.extend(d);
+                self.escribir_tubo(n);
+            }
+            _ => {
+                // TUBO_FIN: uno que leía aquí (el invitado ya no quiere), fuera; uno que escribe, al vaciar.
+                match self.tubos.get_mut(&n) {
+                    Some(t) if t.lee => self.cortar_tubo(n, false),
+                    Some(t) => {
+                        t.fin = true;
+                        self.escribir_tubo(n);
+                    }
+                    None => {}
+                }
+            }
+        }
+    }
+
+    /// Escribe lo pendiente de un tubo mientras quepa; si el invitado dijo fin y no queda nada, lo cierra.
+    fn escribir_tubo(&mut self, n: u32) {
+        let Some(t) = self.tubos.get_mut(&n) else { return };
+        while !t.pendiente.is_empty() {
+            let (a, _) = t.pendiente.as_slices();
+            let trozo = &a[..a.len().min(MAX_CANAL)];
+            match self.sis.tubo_escribir(t.llave, trozo) {
+                Ok(0) => return,
+                Ok(k) => {
+                    t.pendiente.drain(..k.min(trozo.len()));
+                }
+                Err(()) => {
+                    // Quien leía se fue: que el invitado deje de mandar.
+                    self.cortar_tubo(n, true);
+                    return;
+                }
+            }
+        }
+        if t.fin {
+            let t = self.tubos.remove(&n).unwrap();
+            self.sis.cerrar(t.llave);
+        }
+    }
+
+    /// Cierra un tubo de este lado (y, si `avisar`, se lo dice al invitado).
+    fn cortar_tubo(&mut self, n: u32, avisar: bool) {
+        if let Some(t) = self.tubos.remove(&n) {
+            self.sis.cerrar(t.llave);
+            if let Some(l) = t.para_compositor {
+                self.sis.cerrar(l);
+            }
+            if avisar {
+                self.al_invitado(TUBO_FIN, 0, &n.to_le_bytes());
+            }
+        }
+    }
+
+    /// Mueve los tubos (lo llama quien atiende cada poco): lo que haya para leer, al invitado; lo pendiente, a su canal;
+    /// los que llevan `PLAZO_TUBO_MS` sin moverse, fuera.
+    pub fn mover_tubos(&mut self) {
+        let ahora = self.sis.ahora_ms();
+        let numeros: Vec<u32> = self.tubos.keys().copied().collect();
+        let mut buf = [0u8; MAX_CANAL];
+        for n in numeros {
+            let Some(t) = self.tubos.get(&n) else { continue };
+            if ahora.saturating_sub(t.ultimo_ms) > PLAZO_TUBO_MS {
+                self.cuentas.malas += 1;
+                self.cortar_tubo(n, true);
+                continue;
+            }
+            if !t.lee {
+                self.escribir_tubo(n);
+                continue;
+            }
+            // Lo que se lee, al invitado en tramas de hasta 64 KB, sin pasar de la mitad de lo que se le guarda.
+            let mut datos = n.to_le_bytes().to_vec();
+            let mut acabado = false;
+            while datos.len() < 64 * 1024 && self.salida.len() + datos.len() < MAX_SALIDA / 2 {
+                let llave = self.tubos[&n].llave;
+                match self.sis.tubo_leer(llave, &mut buf) {
+                    Ok(0) => break,
+                    Ok(k) => datos.extend_from_slice(&buf[..k.min(MAX_CANAL)]),
+                    Err(()) => {
+                        acabado = true;
+                        break;
+                    }
+                }
+            }
+            let k = (datos.len() - 4) as u64;
+            if k > 0 {
+                let t = self.tubos.get_mut(&n).unwrap();
+                t.bytes += k;
+                t.ultimo_ms = ahora;
+                self.cuentas.bytes_de_tubos += k;
+                if t.bytes > MAX_TUBO {
+                    self.cuentas.malas += 1;
+                    self.cortar_tubo(n, true);
+                    continue;
+                }
+                self.al_invitado(TUBO_DATOS, 0, &datos);
+            }
+            if acabado {
+                self.cortar_tubo(n, true);
+            }
+        }
+    }
+
+    /// Tubos vivos (para las pruebas y el registro).
+    pub fn tubos_vivos(&self) -> usize {
+        self.tubos.len()
     }
 
     fn soltar_memoria(&mut self, n: u32) {
@@ -496,6 +705,25 @@ impl<S: Sistema> Puente<S> {
         }
         let mut numeros = Vec::new();
         for &l in llaves {
+            // H9: lo que no es una memoria es el extremo de un canal donde escribir (el portapapeles: `send`): un tubo.
+            // El invitado crea su tubería y nos manda lo que el programa escriba en ella.
+            if self.sis.memoria_tamano(l).is_none() {
+                self.siguiente_memoria = self.siguiente_memoria.wrapping_add(1);
+                let n = 0x8000_0000 | self.siguiente_memoria;
+                self.al_invitado(TUBO_NUEVO, 0, &n.to_le_bytes());
+                if self.tubos.len() >= MAX_TUBOS {
+                    // Sin sitio: el número va igual (los descriptores del mensaje casan) y el tubo nace acabado.
+                    self.sis.cerrar(l);
+                    self.cuentas.malas += 1;
+                    self.al_invitado(TUBO_FIN, 0, &n.to_le_bytes());
+                } else {
+                    let ahora = self.sis.ahora_ms();
+                    self.cuentas.tubos += 1;
+                    self.tubos.insert(n, Tubo { llave: l, lee: false, para_compositor: None, pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora });
+                }
+                numeros.push(n);
+                continue;
+            }
             let datos = self.sis.memoria_tamano(l).filter(|&t| t <= MAX_DEL_COMPOSITOR).and_then(|t| self.sis.memoria_leer(l, t as usize));
             self.sis.cerrar(l);
             let datos = datos.unwrap_or_default();
@@ -546,6 +774,10 @@ impl<S: Sistema> Puente<S> {
         for n in ns {
             self.soltar_memoria(n);
         }
+        let ts: Vec<u32> = self.tubos.keys().copied().collect();
+        for n in ts {
+            self.cortar_tubo(n, false);
+        }
         self.lector = Lector::default();
         self.salida.clear();
         self.vaciar();
@@ -570,6 +802,18 @@ mod pruebas {
         enviados: Vec<(Vec<u8>, Vec<u32>)>,
         lleno: bool,
         copias: BTreeMap<u32, u32>,
+        /// Canales de mentira (H9, tubos): llave → (mensajes que esperan, el otro extremo cerrado).
+        canales: BTreeMap<u32, (VecDeque<Vec<u8>>, bool)>,
+        /// Extremo → su par.
+        pares: BTreeMap<u32, u32>,
+        ahora: u64,
+    }
+
+    impl Falso {
+        /// Mete un mensaje en el canal que lee `llave` (lo que escribe un programa nativo en su extremo).
+        fn escribir_en(&mut self, llave: u32, d: &[u8]) {
+            self.canales.get_mut(&llave).unwrap().0.push_back(d.to_vec());
+        }
     }
 
     impl Sistema for Falso {
@@ -599,6 +843,47 @@ mod pruebas {
         }
         fn cerrar(&mut self, llave: u32) {
             self.cerradas.push(llave);
+            if let Some(par) = self.pares.get(&llave).copied()
+                && let Some(c) = self.canales.get_mut(&par)
+            {
+                c.1 = true;
+            }
+        }
+        fn tubo_crear(&mut self) -> Option<(u32, u32)> {
+            let (a, b) = (self.siguiente + 1, self.siguiente + 2);
+            self.siguiente += 2;
+            self.canales.insert(a, (VecDeque::new(), false));
+            self.canales.insert(b, (VecDeque::new(), false));
+            self.pares.insert(a, b);
+            self.pares.insert(b, a);
+            Some((a, b))
+        }
+        fn tubo_leer(&mut self, llave: u32, buf: &mut [u8]) -> Result<usize, ()> {
+            let c = self.canales.get_mut(&llave).ok_or(())?;
+            match c.0.pop_front() {
+                Some(m) => {
+                    buf[..m.len()].copy_from_slice(&m);
+                    Ok(m.len())
+                }
+                None if c.1 => Err(()),
+                None => Ok(0),
+            }
+        }
+        fn tubo_escribir(&mut self, llave: u32, datos: &[u8]) -> Result<usize, ()> {
+            assert!(datos.len() <= MAX_CANAL);
+            // Un extremo suelto (de un programa nativo): su lector es la llave + 1000.
+            let c = self.canales.entry(llave + 1000).or_insert((VecDeque::new(), false));
+            if c.1 {
+                return Err(());
+            }
+            if c.0.len() >= 16 {
+                return Ok(0);
+            }
+            c.0.push_back(datos.to_vec());
+            Ok(datos.len())
+        }
+        fn ahora_ms(&mut self) -> u64 {
+            self.ahora
         }
         fn al_compositor(&mut self, bytes: &[u8], llaves: &[u32]) -> Result<(), bool> {
             if self.lleno {
@@ -788,6 +1073,126 @@ mod pruebas {
         assert_eq!(&p.sis.enviados.last().unwrap().0[5..], b"bien");
     }
 
+    /// Las tramas que salieron hacia el invitado.
+    fn al_invitado(p: &mut Puente<Falso>) -> Vec<(u8, u32, Vec<u8>)> {
+        let mut salida = vec![0u8; 4 << 20];
+        let n = p.enviar(&mut salida);
+        let mut piezas = Vec::new();
+        Lector::default()
+            .empujar(&salida[..n], &mut |x| match x {
+                Pieza::Trama { tipo, conexion, datos } => piezas.push((tipo, conexion, datos.to_vec())),
+                Pieza::Memoria { bytes, .. } => piezas.push((MEMORIA_ESCRIBIR, 0, bytes.to_vec())),
+            })
+            .unwrap();
+        piezas
+    }
+
+    fn tubo(tipo: u8, n: u32, d: &[u8]) -> Vec<u8> {
+        let mut v = n.to_le_bytes().to_vec();
+        v.extend_from_slice(d);
+        trama(tipo, 0, &v)
+    }
+
+    /// H9, el portapapeles por tubos. Pegar en Linux (el invitado pide un tubo y lo manda con su `receive`): su extremo
+    /// de escribir va al compositor; lo que el programa nativo escribe en él llega al invitado en `TUBO_DATOS`, y al
+    /// cerrarlo, `TUBO_FIN`. Copiar desde Linux (el compositor manda un `send` con el canal donde escribir): sale
+    /// `TUBO_NUEVO` antes del mensaje, y lo que manda el invitado se escribe en ese canal hasta su `TUBO_FIN`.
+    #[test]
+    fn tubos() {
+        let mut p = Puente::nuevo(Falso::default(), 0);
+        let mut f = trama(CONECTAR, 1, &[]);
+        f.extend(tubo(TUBO_NUEVO, 7, &[]));
+        f.extend(trama(DATOS, 1, &juntar_datos(&[7], b"receive!")));
+        p.recibir(&f).unwrap();
+        let (bytes, llaves) = p.sis.enviados.last().unwrap().clone();
+        assert_eq!(&bytes[5..], b"receive!");
+        let escribe = llaves[0];
+        let lee = p.sis.pares[&escribe];
+        assert_eq!(p.tubos_vivos(), 1);
+        // El programa nativo escribe y cierra.
+        p.sis.escribir_en(lee, b"hola ");
+        p.sis.escribir_en(lee, b"desde DashOS");
+        p.mover_tubos();
+        p.sis.canales.get_mut(&lee).unwrap().1 = true;
+        p.mover_tubos();
+        let t = al_invitado(&mut p);
+        assert_eq!(t[0], (TUBO_DATOS, 0, [&7u32.to_le_bytes()[..], b"hola desde DashOS"].concat()));
+        assert_eq!(t[1], (TUBO_FIN, 0, 7u32.to_le_bytes().to_vec()));
+        assert_eq!(p.tubos_vivos(), 0);
+        assert!(p.sis.cerradas.contains(&lee));
+        // Al revés: un `send` del compositor con el canal donde escribe la fuente de Linux.
+        let mut t = canal::cabecera_sub(TROZO_SUB_DATOS, 1).to_vec();
+        t.extend_from_slice(b"send....");
+        p.del_compositor(&t, &[500]);
+        let piezas = al_invitado(&mut p);
+        assert_eq!(piezas[0].0, TUBO_NUEVO);
+        let n = u32::from_le_bytes(piezas[0].2[..4].try_into().unwrap());
+        let (nums, b) = partir_datos(&piezas[1].2).unwrap();
+        assert_eq!((nums, b), (vec![n], &b"send...."[..]));
+        p.recibir(&tubo(TUBO_DATOS, n, b"copiado en foot")).unwrap();
+        p.recibir(&tubo(TUBO_FIN, n, &[])).unwrap();
+        assert_eq!(p.sis.canales[&1500].0, [b"copiado en foot".to_vec()]);
+        assert!(p.sis.cerradas.contains(&500));
+        assert_eq!(p.tubos_vivos(), 0);
+        assert_eq!(p.cuentas.tubos, 2);
+    }
+
+    /// Hostiles de los tubos: números repetidos o de más (pasan `MAX_TUBOS`), datos de tubos que no existen o que leen
+    /// aquí, más de lo que cabe esperando (quien pega no lee), un tubo que no se mueve en `PLAZO_TUBO_MS`, un lector que
+    /// se va (se avisa al invitado) y un tubo usado dos veces en mensajes (cierra al cliente). Todo cortado; el puente
+    /// sigue y al cerrar el transporte no queda nada abierto.
+    #[test]
+    fn tubos_hostiles() {
+        let mut p = Puente::nuevo(Falso::default(), 0);
+        let mut f = trama(CONECTAR, 1, &[]);
+        for n in 0..(MAX_TUBOS as u32 + 4) {
+            f.extend(tubo(TUBO_NUEVO, n, &[]));
+        }
+        f.extend(tubo(TUBO_NUEVO, 0, &[]));
+        f.extend(tubo(TUBO_DATOS, 4242, b"de nadie"));
+        f.extend(tubo(TUBO_DATOS, 1, b"a uno que lee aqui"));
+        f.extend(trama(TUBO_FIN, 0, &[1]));
+        p.recibir(&f).unwrap();
+        assert_eq!(p.tubos_vivos(), MAX_TUBOS);
+        let fines = al_invitado(&mut p).iter().filter(|t| t.0 == TUBO_FIN).count();
+        assert_eq!(fines, 5);
+        // Un tubo dado dos veces en mensajes: la segunda no tiene extremo: fuera el cliente.
+        p.recibir(&trama(DATOS, 1, &juntar_datos(&[3], b"uno"))).unwrap();
+        p.recibir(&trama(DATOS, 1, &juntar_datos(&[3], b"dos"))).unwrap();
+        assert_eq!(p.vivos().0, 0);
+        // Quien pega desde DashOS no lee: lo de más se corta.
+        let mut p = Puente::nuevo(Falso::default(), 0);
+        p.recibir(&trama(CONECTAR, 1, &[])).unwrap();
+        let mut t = canal::cabecera_sub(TROZO_SUB_DATOS, 1).to_vec();
+        t.extend_from_slice(b"send....");
+        p.del_compositor(&t, &[600]);
+        let n = u32::from_le_bytes(al_invitado(&mut p)[0].2[..4].try_into().unwrap());
+        let mucho = vec![0x55u8; 60_000];
+        for _ in 0..6 {
+            p.recibir(&tubo(TUBO_DATOS, n, &mucho)).unwrap();
+        }
+        assert_eq!(p.tubos_vivos(), 0);
+        assert!(al_invitado(&mut p).iter().any(|t| t.0 == TUBO_FIN));
+        // Un lector que se va mientras se escribe: fin al invitado.
+        p.del_compositor(&t, &[700]);
+        let n = u32::from_le_bytes(al_invitado(&mut p)[0].2[..4].try_into().unwrap());
+        p.sis.canales.insert(1700, (VecDeque::new(), true));
+        p.recibir(&tubo(TUBO_DATOS, n, b"x")).unwrap();
+        assert_eq!(p.tubos_vivos(), 0);
+        assert!(al_invitado(&mut p).iter().any(|t| t.0 == TUBO_FIN));
+        // Un tubo que no se mueve: fuera al pasar el plazo.
+        p.recibir(&tubo(TUBO_NUEVO, 9, &[])).unwrap();
+        p.sis.ahora += PLAZO_TUBO_MS + 1;
+        p.mover_tubos();
+        assert_eq!(p.tubos_vivos(), 0);
+        // Al cerrar el transporte, todos los tubos cerrados.
+        p.recibir(&tubo(TUBO_NUEVO, 10, &[])).unwrap();
+        p.del_compositor(&t, &[800]);
+        p.cerrar_todo();
+        assert_eq!(p.tubos_vivos(), 0);
+        assert!(p.sis.cerradas.contains(&800));
+    }
+
     /// Basura al azar por el transporte: o error de trama (se corta) o nada; nunca pánico.
     #[test]
     fn a_lo_loco() {
@@ -802,7 +1207,7 @@ mod pruebas {
             let mut p = Puente::nuevo(Falso::default(), 0);
             for _ in 0..50 {
                 // Cabeceras casi buenas con contenido al azar.
-                let tipo = (azar() % 9) as u8;
+                let tipo = (azar() % 12) as u8;
                 let largo = (azar() % 64) as usize;
                 let d: Vec<u8> = (0..largo).map(|_| azar() as u8).collect();
                 let t = trama(tipo, (azar() % 4) as u32, &d);

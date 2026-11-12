@@ -1790,8 +1790,8 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
             if let Some(p) = p.as_ref() {
                 let c = p.cuentas();
                 println!(
-                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias, {} cosas malas tiradas, {} clientes cerrados",
-                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.malas, c.cerrados
+                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias, {} tubos del portapapeles ({} bytes), {} cosas malas tiradas, {} clientes cerrados",
+                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.tubos, c.bytes_de_tubos, c.malas, c.cerrados
                 );
             }
         });
