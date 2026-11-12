@@ -76,6 +76,12 @@ if [ -b /dev/vda ] && [ "$(cat /sys/block/vda/size)" -ge 16384 ]; then
   dd if=/dev/vda of=/dev/vda bs=65536 count=16 seek=64 conv=fsync 2>/dev/null && sync
   echo "caja-linux: copia hecha, md5 4M $(dd if=/dev/vda bs=65536 skip=64 count=16 2>/dev/null | md5sum | cut -d' ' -f1)"
 fi
+if [ -e /sys/class/net/eth0 ]; then
+  ifconfig lo 127.0.0.1 up
+  ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
+  echo "caja-linux: eth0 $(cat /sys/class/net/eth0/address) mtu $(cat /sys/class/net/eth0/mtu)"
+  echo "caja-linux: ping $(ping -c 3 -W 3 10.0.2.2 | grep packets)"
+fi
 grep -E 'GIC|virtio|uart|arch_timer' /proc/interrupts | sed 's/^/caja-linux: irq /'
 echo "caja-linux: psci $(dmesg | grep -o 'PSCIv[0-9.]* detected in firmware' | head -1)"
 echo "caja-linux: fin de la prueba"
@@ -181,7 +187,7 @@ def initramfs():
     entradas.append(("dev/console", 0o020600, b"", (5, 1)))
     entradas.append(("bin/busybox", 0o100755, bb, (0, 0)))
     for applet in ("sh", "mount", "echo", "cat", "ls", "grep", "head", "tr", "uname", "basename", "readlink",
-                   "sed", "dmesg", "poweroff", "md5sum", "dd", "sync", "cut"):
+                   "sed", "dmesg", "poweroff", "md5sum", "dd", "sync", "cut", "ifconfig", "ping"):
         entradas.append((f"bin/{applet}", 0o120777, b"busybox", (0, 0)))
     entradas.append(("init", 0o100755, INIT.encode(), (0, 0)))
     destino.write_bytes(gzip.compress(cpio_newc(entradas)))
@@ -211,7 +217,7 @@ def preparar(_args):
 QEMU_VIRT = {
     "gic": "v2:0x08000000:0x08010000",
     "uart": "0x09000000:1",
-    "virtio": ["0x0a003e00:47", "0x0a003c00:46"],
+    "virtio": ["0x0a003e00:47", "0x0a003c00:46", "0x0a003a00:45"],
 }
 
 
@@ -240,6 +246,8 @@ def probar(args, vhost=False):
     run("dtc", "-I", "dtb", "-O", "dts", "-o", sal / "invitado.dts", sal / "invitado.dtb")
     qemu = ["qemu-system-aarch64", "-M", "virt,gic-version=2", "-cpu", "cortex-a72", "-smp", str(args.cpus),
             "-m", f"{args.memoria}M", "-display", "none", "-monitor", "none", "-no-reboot",
+            # virtio-mmio moderno (versión 2), el mismo transporte que da caja-linux/vmm.
+            "-global", "virtio-mmio.force-legacy=false",
             "-serial", f"file:{sal / 'pl011.log'}",
             "-device", "virtio-serial-device", "-chardev", f"file,id=hvc,path={sal / 'hvc0.log'}",
             "-device", "virtconsole,chardev=hvc",
@@ -250,7 +258,10 @@ def probar(args, vhost=False):
         qemu[2] = "virt,gic-version=2,memory-backend=ram"
         qemu += ["-object", f"memory-backend-memfd,id=ram,size={args.memoria}M,share=on",
                  "-chardev", f"socket,id=vu,path={sal / 'vhost.sock'}",
-                 "-device", "vhost-user-blk,chardev=vu,num-queues=1"]
+                 "-device", "vhost-user-blk,chardev=vu,num-queues=1",
+                 "-chardev", f"socket,id=vn,path={sal / 'red.sock'}",
+                 "-netdev", "vhost-user,id=n0,chardev=vn",
+                 "-device", "virtio-net-device,netdev=n0,mac=52:54:00:12:34:56"]
         run("cargo", "build", "--release", "--quiet", "--manifest-path",
             RAIZ / "caja-linux/vhost-prueba/Cargo.toml")
         imagen = sal / "disco-vhost.img"
@@ -259,10 +270,11 @@ def probar(args, vhost=False):
         imagen.write_bytes(bloque[: 8 << 20])
         md5_original = hashlib.md5(imagen.read_bytes()).hexdigest()
         md5_primer_mib = hashlib.md5(imagen.read_bytes()[: 1 << 20]).hexdigest()
-        vhost_proc = subprocess.Popen([str(RAIZ / "caja-linux/vhost-prueba/target/release/vhost-blk"),
-                                       str(sal / "vhost.sock"), str(imagen)])
+        binario = str(RAIZ / "caja-linux/vhost-prueba/target/release/vhost-blk")
+        vhost_proc = [subprocess.Popen([binario, "blk", str(sal / "vhost.sock"), str(imagen)]),
+                      subprocess.Popen([binario, "red", str(sal / "red.sock")])]
         for _ in range(100):
-            if (sal / "vhost.sock").exists():
+            if (sal / "vhost.sock").exists() and (sal / "red.sock").exists():
                 break
             time.sleep(0.05)
     else:
@@ -276,11 +288,11 @@ def probar(args, vhost=False):
         subprocess.run([str(c) for c in qemu], timeout=args.tiempo, check=False)
     except subprocess.TimeoutExpired:
         print("QEMU no acabó en", args.tiempo, "s")
-    if vhost_proc:
+    for p in vhost_proc or []:
         try:
-            vhost_proc.wait(timeout=10)
+            p.wait(timeout=10)
         except subprocess.TimeoutExpired:
-            vhost_proc.kill()
+            p.kill()
     for nombre in ("pl011.log", "hvc0.log"):
         f = sal / nombre
         print(f"===== {nombre} =====")
@@ -299,7 +311,9 @@ def probar(args, vhost=False):
             and datos[4 << 20: 5 << 20] == datos[: 1 << 20])
     if not bien:
         raise SystemExit(f"PRUEBA MAL: se esperaba md5 {md5_original} del disco y {md5_primer_mib} de la copia")
-    print("PRUEBA BIEN: el controlador virtio-blk de Linux leyó y escribió el disco de caja-linux/vmm")
+    if "3 packets received" not in hvc:
+        raise SystemExit("PRUEBA MAL: el ping por la red del crate no volvió")
+    print("PRUEBA BIEN: los controladores virtio-blk y virtio-net de Linux usaron el disco y la red de caja-linux/vmm")
 
 
 def main():

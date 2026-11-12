@@ -35,8 +35,9 @@ QEMU, crosvm ni Firecracker. Las direcciones de la placa `virt` de QEMU salen de
 
 `src/bin/caja_vmm.rs` (`caja-vmm preparar ...`): saca el DTB, el plan de carga y un trampolín para probar en QEMU.
 
-**`caja-linux/vhost-prueba/`**: solo PC. Sirve el `Bloque` y la `ColaPartida` del crate a QEMU por vhost-user, para
-que los use el controlador virtio-blk de un Linux de verdad. Lleva `unsafe` (mmap, recvmsg, poll).
+**`caja-linux/vhost-prueba/`**: solo PC. Sirve el `Bloque` o la `Red` del crate, con su `ColaPartida`, a QEMU por
+vhost-user, para que los usen los controladores de un Linux de verdad. En la red, el otro lado es un "router" de
+juguete en 10.0.2.2 que contesta ARP y ping. Lleva `unsafe` (mmap, recvmsg, poll).
 
 **`tools/caja_linux_invitado.py`**: `preparar` baja Linux 6.18 (LTS de kernel.org) y lo compila con `LLVM=1`
 (defconfig + virtio, unos 5 minutos con 32 núcleos), compila busybox 1.37 estático con la toolchain musl de Bootlin y
@@ -80,10 +81,13 @@ hace el initramfs (cpio escrito en Python, sin root). Todo en `~/.cache/dashos-c
   ```
 
   Los aparatos que ve el invitado en esta prueba son los de QEMU: se prueban el DTB y la carga.
-- `tools/caja_linux_invitado.py probar-vhost`: lo mismo, pero el disco es el `Bloque` del crate servido por
-  vhost-user. Linux hace `md5sum` de los 8 MiB del disco y copia el primer MiB a los 4 MiB con `dd conv=fsync`; las
-  sumas cuadran con las del fichero y la copia está en el fichero al acabar. Así la cola partida y las peticiones IN,
-  OUT y FLUSH están probadas con el controlador de Linux (con tablas indirectas negociadas).
+- `tools/caja_linux_invitado.py probar-vhost`: lo mismo, pero el disco y la red son el `Bloque` y la `Red` del crate,
+  servidos por vhost-user (dos procesos de `vhost-prueba`). Linux hace `md5sum` de los 8 MiB del disco y copia el
+  primer MiB a los 4 MiB con `dd conv=fsync`; las sumas cuadran con las del fichero y la copia está en el fichero al
+  acabar. Después configura `eth0` y hace `ping -c 3 10.0.2.2`: `3 packets transmitted, 3 packets received`. Así la
+  cola partida (con tablas indirectas negociadas), las peticiones IN, OUT y FLUSH y la cabecera de red de virtio 1.x
+  están probadas con los controladores de Linux. En las dos pruebas QEMU da virtio-mmio moderno
+  (`-global virtio-mmio.force-legacy=false`), el mismo transporte que el del crate.
 
 ### Cómo se enchufa al servicio de la caja
 
@@ -149,5 +153,6 @@ Lo que el servicio necesita del hipervisor y lo que hace con el crate:
 - `virtio-gpu` 2D, si hiciera falta una consola gráfica sin Wayland.
 - VIRTIO_F_EVENT_IDX (menos avisos e interrupciones), consola con varios puertos.
 - GICv3 emulado (distribuidor y redistribuidores) para placas con GICv3; el DTB ya sabe describirlo.
-- La consola y la red no se han probado con el controlador de Linux (QEMU no tiene vhost-user para ellas); solo con
-  el invitado de mentira. El PL011 tampoco: en `probar` el que ve Linux es el de QEMU.
+- La consola no se ha probado con el controlador de Linux (QEMU no tiene vhost-user para ella), solo con el invitado
+  de mentira. El PL011 y el transporte virtio-mmio del crate tampoco: en estas pruebas los registros los lleva QEMU.
+  Eso llegará con el hipervisor de DashOS.
