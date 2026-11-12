@@ -1008,3 +1008,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   quedaba quieto o seguía leyendo bloques más altos (despacio o en bucle) hasta que la prueba acabó a los 110 s. Lo
   primero la próxima vez: trazar todas las lecturas (o contarlas) y el tiempo. Tras el anillo, `open` lee la
   cabecera elegida (`committed`) y después lo que haga falta del asignador.
+  Medido después, contando todas las lecturas: tras el anillo hace menos de 50 y se queda parado (no lee en bucle);
+  no da error ni acaba. Candidatos: una petición al servicio de disco que no se contesta (el comprobador espera sin
+  plazo) o algo de `committed`. Deshecho otra vez; para retomarlo, plazo en cada petición y traza en `committed`.
