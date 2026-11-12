@@ -266,6 +266,12 @@ path = "src/bin/virtio_sonido.rs"
 test = false
 
 # La red (S13): el controlador de virtio-net, el servicio con la pila y sus pruebas.
+# El multimonitor: el controlador de virtio-gpu, con varias cabezas.
+[[bin]]
+name = "virtio-gpu"
+path = "src/bin/virtio_gpu.rs"
+test = false
+
 [[bin]]
 name = "virtio-red"
 path = "src/bin/virtio_red.rs"

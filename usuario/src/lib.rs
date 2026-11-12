@@ -18,6 +18,7 @@ pub mod protocolo {
     pub mod archivos;
     pub mod avisos;
     pub mod comprobar;
+    pub mod pantallas;
     pub mod red;
     pub mod sesiones;
 }

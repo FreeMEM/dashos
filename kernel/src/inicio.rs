@@ -171,6 +171,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("workbench", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/workbench"), &[], &["ventanas", "archivos", "sesiones"]),
     ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
+    // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
+    // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
+    ("virtio-gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -519,6 +522,17 @@ pub fn lanzar() -> bool {
         }
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // La GPU de virtio (multimonitor): virtio 1.2, 4.1.2, el aparato 0x1040 más el tipo, 16; solo el moderno. Como el
+    // sonido: registros de la BAR 4 y su configuración, para leer las capacidades.
+    if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x1af4, 0x1050), 0x20, "virtio-gpu") {
+        apuntar(&mut llaves, "virtio-gpu", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        apuntar(&mut llaves, "vgpu-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
+        if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
+            apuntar(&mut llaves, "virtio-gpu", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
+        }
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+        apuntar(&mut llaves, "dma-vgpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
         if let Some((fisica, tamano, irq, _)) = aparato_pci(&d, Pci::Clase(clase), 0x10, nombre) {

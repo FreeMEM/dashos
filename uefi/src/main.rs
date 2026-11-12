@@ -620,6 +620,15 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
                 n += 1;
             }
         }
+        // La pantalla del firmware, también reservada (multimonitor): con virtio-gpu, la de UEFI sale de memoria de los
+        // servicios de arranque, que queda libre al salir; sin reservarla, el kernel podría dar a otro esa memoria
+        // mientras el compositor aún pinta en ella (hasta que llega el controlador de virtio-gpu).
+        if let Some(p) = pantalla.as_ref().filter(|p| p.tamano > 0)
+            && n < reservas.len() {
+                let desde = p.base & !(PAGINA as u64 - 1);
+                reservas[n] = (desde, (p.base + p.tamano).div_ceil(PAGINA as u64) * PAGINA as u64 - desde);
+                n += 1;
+            }
         let Some(nuevo) = copiar_arbol(arbol as *const u8, copia as *mut u8, capacidad, &reservas[..n], pantalla.as_ref()) else { break };
         if (bs.salir_servicios)(imagen, llave) == BIEN {
             // Desde aquí, sin firmware: solo el hardware.

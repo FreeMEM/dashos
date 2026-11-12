@@ -96,6 +96,23 @@ que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verd
 sin zona exclusiva propia se colocan dentro de lo que dejan las barras; las ventanas maximizadas se reajustan si la barra
 sale o se va.
 
+**Multimonitor.** Un `wl_output` por pantalla, cada uno con su global (6 la principal; 11, 12 y 13 las demás), su
+nombre (DASHOS-1, DASHOS-2...) y su sitio en el espacio común (`geometry`; las pantallas van una al lado de otra, de
+izquierda a derecha). Sin xdg-output: la escala es 1 y el tamaño lógico es el del modo. Si las pantallas cambian con
+clientes dentro (llega el controlador gráfico), sus registros reciben `global` y `global_remove` y sus `wl_output` lo
+nuevo con su `done`. Una capa o una pantalla de bloqueo van en la pantalla de su `wl_output`; sin él, o con uno que no
+lo es, en la principal. Una pantalla sin pantalla de bloqueo se queda en negro mientras dura el bloqueo. Las ventanas
+nuevas salen en la pantalla del cursor; Super+Mayúsculas+Izquierda/Derecha llevan la ventana con el teclado a la de al
+lado; maximizar llena la de la ventana.
+
+## Controlador de virtio-gpu (multimonitor)
+
+`usuario/src/bin/virtio_gpu.rs`. Llaves: 1 su permiso DMA, 2 sus registros (BAR 4), 3 su espacio de configuración del
+PCIe, 4 su interrupción si la hay, y después el canal "ventanas". Virtio 1.2 moderno, solo 2D. Hasta 4 cabezas; la que
+no tiene monitor (QEMU sin ventana) se usa a 1024 × 768. Cada cabeza va al compositor con su memoria por el canal
+"ventanas" (`usuario/src/protocolo/pantallas.rs`: `CABEZA`), y el compositor le pide por un canal suyo que vacíe lo que
+cambió (`VACIAR`). El compositor solo acepta cabezas de quien `inicio` llama "virtio-gpu".
+
 ## GPU (C50)
 
 `usuario/src/bin/gpu.rs`, con la biblioteca `dashos::graficos` (HVS, V3D, listas y búferes). Llaves: 1 el permiso DMA
