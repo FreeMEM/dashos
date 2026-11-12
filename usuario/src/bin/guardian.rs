@@ -727,14 +727,18 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     /// El tema del sistema (`dashos_tema_v1`, S10c): llega al enlazar y cada vez que cambia.
     const TEMA: u32 = 24;
     let mut tema = Tema::OSCURO;
-    // Los glifos, rasterizados antes de bloquear (la primera vez es lento, y mientras tanto no se lee al compositor).
+    // Los glifos, rasterizados antes de bloquear (la primera vez es lento, y mientras tanto no se lee al compositor). En
+    // un lienzo pequeño: las letras son del mismo tamaño en cualquier pantalla y se rasterizan aunque caigan fuera
+    // (kit-memoria: con 800 × 600 eran 1,9 MB de montón que se quedaban reservados).
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     {
-        let mut prueba = alloc::vec![0u32; 800 * 600];
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, false, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, false, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        const W: i32 = 400;
+        const H: i32 = 300;
+        let mut prueba = alloc::vec![0u32; (W * H) as usize];
+        pintar(&mut prueba, W, H, usuaria.unwrap_or("Ana"), entrada, false, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        pintar(&mut prueba, W, H, usuaria.unwrap_or("Carla"), entrada, false, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
         if !entrada {
-            pintar(&mut prueba, 800, 600, "Carla", false, true, usize::MAX, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+            pintar(&mut prueba, W, H, "Carla", false, true, usize::MAX, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
         }
     }
     let Some(mut c) = Cliente::conectar() else {
