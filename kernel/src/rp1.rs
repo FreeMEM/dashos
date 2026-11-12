@@ -163,7 +163,7 @@ pub fn examinar(bus: &mut dyn Bus, d: &Datos, s: &mut dyn Salida) -> Option<Resu
     let mut texto_enlace = Texto::new();
     match enlace {
         Some((v, a, vm, am)) => {
-            let _ = fmt::write(&mut texto_enlace, format_args!("Gen{} x{} (de Gen{} x{})", v, a, vm, am));
+            let _ = fmt::write(&mut texto_enlace, format_args!("Gen{} x{} (máx. Gen{} x{})", v, a, vm, am));
         }
         None => {
             let _ = fmt::write(&mut texto_enlace, format_args!("sin capacidad PCIe"));
@@ -173,7 +173,7 @@ pub fn examinar(bus: &mut dyn Bus, d: &Datos, s: &mut dyn Salida) -> Option<Resu
         P_PCIE,
         Some(modo_rc),
         format_args!(
-            "PCIe del RP1: enlace ARRIBA, {}; rev {:#x}; puerto raíz {:04x}:{:04x}, bus {}; estado {:#x}{}",
+            "PCIe del RP1: enlace ARRIBA {}; rev {:#x}; raíz {:04x}:{:04x}; bus {}; estado {:#x}{}",
             texto_enlace.as_str(),
             revision,
             id_rc & 0xffff,
@@ -215,10 +215,10 @@ pub fn examinar(bus: &mut dyn Bus, d: &Datos, s: &mut dyn Salida) -> Option<Resu
         P_VENTANAS,
         Some(salida_bien && entrada_bien),
         format_args!(
-            "Ventanas: salida CPU {:#x} -> PCI {:#x} ({}); entrada PCI {:#x}, {} ({}); DMA = física + {:#x}",
+            "Ventanas: salida {:#x}->PCI {:#x} {}; entrada PCI {:#x} {} {}; DMA +{:#x}",
             w_base,
             w_pci,
-            if salida_bien { "bien" } else { "NO cuadra con el árbol" },
+            if salida_bien { "bien" } else { "NO cuadra" },
             b2_pci,
             Tam(b2_tam),
             if entrada_bien { "bien" } else { "NO cuadra" },
@@ -275,12 +275,12 @@ pub fn examinar(bus: &mut dyn Bus, d: &Datos, s: &mut dyn Salida) -> Option<Resu
         P_RP1,
         Some(lee && orden2 & 6 == 6),
         format_args!(
-            "RP1: {:04x}:{:04x} en el bus {}, orden {:#x}{}; BAR1 {:#x} -> CPU {:#x}; sysinfo {}",
+            "RP1: {:04x}:{:04x}, bus {}, orden {:#x}{}; BAR1 {:#x} = CPU {:#x}; sysinfo {}",
             id & 0xffff,
             id >> 16,
             secundario,
             orden2 & 0xffff,
-            if encendida { " (memoria y bus maestro, puestos por DashOS)" } else { "" },
+            if encendida { " (puesta por DashOS)" } else { " (del firmware)" },
             bar1,
             base_rp1,
             Hex(sysinfo)
@@ -517,7 +517,10 @@ mod pruebas {
         }
         assert!(p.panel[&P_PCIE].1.contains("Gen2 x4"), "{}", p.panel[&P_PCIE].1);
         assert!(p.panel[&P_RP1].1.contains("1de4:0001"), "{}", p.panel[&P_RP1].1);
-        assert!(p.panel[&P_RP1].1.contains("puestos por DashOS"), "{}", p.panel[&P_RP1].1);
+        assert!(p.panel[&P_RP1].1.contains("puesta por DashOS"), "{}", p.panel[&P_RP1].1);
+        for l in p.panel.values() {
+            assert!(l.1.chars().count() <= 104, "línea larga para el panel: {}", l.1);
+        }
         assert!(p.panel[&P_USB0].1.contains("xHCI 1.10, 2 puertos, 64 bits, scratch 0"), "{}", p.panel[&P_USB0].1);
         assert!(p.panel[&P_USB0].1.contains("p1 vacío p2 algo"), "{}", p.panel[&P_USB0].1);
         // Solo se escribió el índice y la orden del RP1 (memoria y bus maestro).

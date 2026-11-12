@@ -468,7 +468,7 @@ fn principal() -> u64 {
     decir!("versión {:x}.{:02x}, {} puertos; HID de arranque: {} teclado y {} ratón", version >> 8, version & 0xff, puertos, teclados, ratones);
     // Los eventos se miran al llegar la interrupción (o cada 10 ms sin ella): los informes que llegan van al
     // compositor y se pide el siguiente.
-    let mut entrada = dashos::hid::Entrada::nueva(canal, "xhci");
+    let mut entrada = dashos::hid::Entrada::nueva(canal, NOMBRE);
     let (a, b) = dashos::canal_crear();
     let irq = irq.filter(|&i| dashos::interrupcion_asociar(i, b) == 0);
     if irq.is_none() && dashos::temporizador_crear(b, 10_000, 10_000) <= 0 {
