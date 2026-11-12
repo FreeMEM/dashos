@@ -41,6 +41,7 @@ mod pantalla;
 mod pcie;
 mod procesos;
 mod registro;
+mod rp1;
 mod reloj;
 mod serie;
 mod temporizadores;

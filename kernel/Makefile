@@ -14,6 +14,7 @@
 # make pi5     la imagen para la Raspberry Pi 5 (target/kernel_2712.img), con el diagnóstico en pantalla
 # make tarjeta-pi5  esa imagen en una tarjeta para grabar (~/.cache/dashos-pi5/dashos-pi5.img, tools/preparar_pi5.py)
 # make arranque-virt-diag  el diagnóstico de la Pi 5 en QEMU virt (pantalla del firmware de UEFI): sus líneas y una captura
+# make pi5-usb  la imagen del USB de la Pi 5 (target/dashos-usb.img); make arranque-virt-usb, su prueba en QEMU virt
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -50,6 +51,7 @@ prueba: $(PRUEBAS)
 	cd ../kit && cargo test --quiet
 	cd ../caja-linux/vmm && cargo test --quiet
 	$(MAKE) -C ../caja/pruebas_hunk
+	mkdir -p target && rustc --edition 2024 --test src/rp1.rs -o target/rp1_pruebas && ./target/rp1_pruebas -q
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
@@ -290,8 +292,8 @@ pi5: usuario FORCE
 # La tarjeta (o el SSD) para la Pi 5: una imagen de disco con la partición FAT de arranque (config.txt, la imagen y los
 # árboles oficiales de la Pi 5, bajados de github.com/raspberrypi/firmware; nada de eso va en git). Fuera de git.
 TARJETA_PI5 ?= $(HOME)/.cache/dashos-pi5/dashos-pi5.img
-tarjeta-pi5: pi5-escritorio pi5
-	python3 ../tools/preparar_pi5.py $(PI5) $(TARJETA_PI5) $(PI5_ESCRITORIO)
+tarjeta-pi5: pi5-escritorio pi5-usb pi5
+	python3 ../tools/preparar_pi5.py $(PI5) $(TARJETA_PI5) $(PI5_ESCRITORIO) $(PI5_USB)
 
 # El diagnóstico de la Pi 5 en QEMU virt: la misma consola en pantalla, con la pantalla que deja EDK2 (ramfb) en lugar
 # de la del buzón, y los mismos programas. Comprueba sus líneas en el puerto serie (pruebas/arranque_virt_diag.txt) y
@@ -311,7 +313,7 @@ arranque-virt-diag: usuario FORCE
 # `arranque-virt-escritorio`: la pantalla pasa de la consola del kernel al compositor y la caja Amiga abre su ventana.
 PI5_ESCRITORIO := target/dashos-escritorio.img
 pi5-escritorio: usuario FORCE
-	cargo build $(CARGO_PERFIL) --features pi5,escritorio
+	cargo build $(CARGO_PERFIL) --features pi5,escritorio,usb
 	$(OBJCOPY) -O binary $(ELF) $(PI5_ESCRITORIO)
 	@ls -l $(PI5_ESCRITORIO)
 
@@ -323,6 +325,25 @@ arranque-virt-escritorio: usuario FORCE
 	rm -f target/escritorio.ppm
 	GUARDAR=$(abspath target/salida_virt_escritorio.txt) CAPTURA=$(abspath target/escritorio.ppm) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_escritorio.txt 120
 	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/escritorio.ppm ../capturas-agente/pi5-escritorio-virt.png 2>/dev/null || true
+
+# El teclado y el ratón USB de la Pi 5 (docs/bitacoras/pi5.md, "el RP1"): `make pi5-usb` saca target/dashos-usb.img, el
+# diagnóstico con el PCIe del RP1, el RP1 y sus dos xHCI en el panel, y cada tecla en pantalla (`rp1.rs`, `xhci0`,
+# `xhci1`). `tarjeta-pi5` lo mete en la tarjeta (se elige en config.txt). En QEMU virt, `arranque-virt-usb`: sin RP1 (el
+# panel lo dice y sigue), con el xHCI de QEMU como `xhci0`, un teclado y un ratón, y teclas mandadas por el monitor.
+PI5_USB := target/dashos-usb.img
+pi5-usb: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features pi5,usb
+	$(OBJCOPY) -O binary $(ELF) $(PI5_USB)
+	@ls -l $(PI5_USB)
+
+VIRT_USB := target/kernel8-virt-usb.img
+arranque-virt-usb: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,usb
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_USB)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_USB)) cargo build --release
+	rm -f target/usb.ppm
+	GUARDAR=$(abspath target/salida_virt_usb.txt) CAPTURA=$(abspath target/usb.ppm) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb $(USB_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_usb.txt 120
+	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/usb.ppm ../capturas-agente/pi5-usb-virt.png 2>/dev/null || true
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

@@ -370,6 +370,16 @@ path = "src/bin/xhci.rs"
 test = false
 
 [[bin]]
+name = "xhci0"
+path = "src/bin/xhci0.rs"
+test = false
+
+[[bin]]
+name = "xhci1"
+path = "src/bin/xhci1.rs"
+test = false
+
+[[bin]]
 name = "archivos"
 path = "src/bin/archivos.rs"
 test = false

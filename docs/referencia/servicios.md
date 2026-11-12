@@ -132,6 +132,12 @@ kernel), 3 su INTx si el kernel la sabe (del `interrupt-map` del árbol), y desp
 a los teclados y ratones de arranque, les lee los informes y los manda como eventos, con el mismo formato que `usb`.
 Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 
+El código está en `usuario/src/xhci_comun.rs`: `xhci`, `xhci0` y `xhci1` son el mismo controlador con otro nombre en el
+registro. En la Pi 5 (opción `usb` del kernel), `xhci0` y `xhci1` llevan los dos xHCI del RP1: llave 1 su permiso DMA
+(bus = física + 0x10_0000_0000, el `dma-ranges` del PCIe del RP1), 2 sus registros (64 KB), sin interrupción, y el canal
+"ventanas" si hay compositor. Sin canal, escribe cada tecla y cada movimiento del ratón en el registro. Pide los búferes
+de trabajo que diga el controlador (scratchpad, hasta 32) y, con PPC, da corriente a los puertos.
+
 ## NVMe (U6d)
 
 `usuario/src/bin/nvme.rs`. Llaves: 1 su permiso DMA, 2 sus registros (la BAR 0, que busca el kernel por la clase

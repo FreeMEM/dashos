@@ -484,7 +484,7 @@ impl Espacio {
     /// ventana de periféricos: nunca memoria normal, aunque alguien le pase una.
     pub fn proyectar_dispositivo(&mut self, va: u64, fisica: u64, tamano: u64) -> Result<(), Error> {
         let fin = fisica.checked_add(tamano).ok_or(Error::Direccion)?;
-        if !super::placa::es_periferico(fisica) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
+        if !super::placa::es_periferico(fisica) || !super::placa::es_periferico(fin.saturating_sub(1).max(fisica)) || fin > super::placa::PERIFERICOS.1 || fisica % PAGINA != 0 {
             return Err(Error::Direccion);
         }
         // Lo que usa el kernel (el GIC, el ITS...), nunca (S4).

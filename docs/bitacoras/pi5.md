@@ -147,3 +147,96 @@ deja preparado ese firmware al salir de los servicios de arranque.
   controlador de PCIe que el RP1).
 - La GPU (V3D 7.1) y la pantalla por el HVS sin el firmware.
 - La RAM por encima de 4 GB (el mapa lineal del kernel llega hasta 4 GB; lo mismo que en la Pi 4 de 8 GB).
+
+
+## 2026-11-13: el teclado y el ratón por el RP1 (rama `pi5-usb`)
+
+Para la prueba de mañana, sin Pi 5 a mano: código que se diagnostica solo. Un tercer kernel en la tarjeta,
+`dashos-usb.img` (`make pi5-usb`, opciones `pi5,usb`), que se elige en `config.txt`; el diagnóstico de siempre
+(`kernel_2712.img`) no cambia. El escritorio (`dashos-escritorio.img`) lleva ahora también el USB, con el teclado y el
+ratón al compositor.
+
+### Fuentes (sala limpia)
+
+- El árbol oficial `bcm2712-rpi-5-b.dtb` (y el `d0`, igual en esto): el controlador `pcie@1000120000` (registros en
+  0x10_0012_0000), su `ranges` (memoria de 32 bits: PCI 0 → CPU 0x1F_0000_0000, casi 4 GB), su `dma-ranges` (PCI
+  0x10_0000_0000 → RAM 0, 64 GB; y PCI 0xFF_FFFF_F000 → el MIP de las MSI), el nodo `rp1` (`ranges`: 0xC0_4000_0000 del
+  RP1 → PCI 0, 0x410000) y sus `usb@200000` y `usb@300000` (`snps,dwc3`, `dr_mode = "host"`, interrupciones 31 y 36 del
+  RP1).
+- "RP1 Peripherals" (Raspberry Pi, pública; `~/.cache/dashos-pi5/docs/rp1-peripherals.pdf`, fuera de git): los
+  periféricos se ven por la BAR 1 y la SRAM por la BAR 2 (2.3.1); el USB son dos xHCI DWC3 v3.30b, xHCI 1.2, dos puertos
+  cada uno (uno USB 2 y uno USB 3), en 0x4020_0000 y 0x4030_0000 (cap. 5); el bloque `pcie` (MSI-X) en 0x4010_8000.
+- La documentación de `config.txt`: `pciex4_reset=0` hace que el firmware no reinicie el PCIe del RP1 y deje su
+  configuración al sistema que arranca. Es lo que usa DashOS: no hay que levantar el enlace (eso solo está documentado
+  en código de Linux).
+- `docs/spec/hw/pcie.md` (el controlador de la 2711) para los registros MISC_*, `EXT_CFG_*` y `RGR1_SW_INIT_1`.
+  **Supuesto**: que la 2712 los tiene en los mismos sitios (el `reg` mide 0x9310 en las dos).
+- La norma PCI/PCIe (cabecera, capacidades, estado del enlace, orden), la de xHCI 1.2, y la referencia pública de
+  registros del DWC3 de la Zynq UltraScale+ (UG1087) para GSNPSID (0xC120) y GCTL (0xC110), que solo se leen.
+- Huecos que solo se cerrarían con código de Linux, y que la Pi dirá: dónde están los MISC_* en la 2712, el valor de
+  `EXT_CFG_INDEX` que deja el firmware, el número de aparato del RP1 (el fabricante, 0x1DE4, es de la lista pública de
+  la PCI-SIG), si el firmware deja la ventana de entrada abierta y el bus maestro puesto, la corriente de los puertos
+  (sus patillas VBUS van por el banco 1 de GPIO del RP1, "reservado" en la hoja: no se toca) y lo que pida el DWC3 más
+  allá de la norma xHCI.
+
+### Lo hecho
+
+- **El mapa**: la ventana del RP1 (el GB 124, 0x1F_0000_0000) entra en los periféricos de la Pi 5 (`placa.rs`: ahora
+  una lista de zonas, `es_periferico` mira las dos; `mapa.rs` proyecta como dispositivo solo los GB de esas zonas). Las
+  llaves de registros ya no pueden cruzar el hueco de en medio (`proyectar_dispositivo` mira el principio y el final).
+- **`kernel/src/rp1.rs`**, sin dependencias, con pruebas en el PC (`make prueba` las corre, `rustc --test`): mira, sin
+  tocar nada, el controlador (revisión, `MISC_PCIE_STATUS`: modo RC y enlace), el puerto raíz (su número, su bus
+  secundario, Gen y anchura del enlace por la capacidad PCIe), la ventana de salida 0 y la de entrada 2 contra el árbol.
+  Si el enlace está arriba y `EXT_CFG_INDEX` tiene forma de índice, escribe en él el bus del RP1 y lee su cabecera: si
+  es de Raspberry Pi, enciende memoria y bus maestro en su orden si faltan (las únicas dos escrituras). Después lee del
+  RP1 por la ventana de salida (la primera palabra de `sysinfo`) y los registros de capacidad de los dos xHCI, sus
+  puertos (PORTSC) y el núcleo DWC3. Si la BAR 1 no está donde dice el árbol, usa la de verdad. El modelo falso de las
+  pruebas: el caso bueno, enlace caído (no escribe nada), controlador que no contesta, índice raro y otro aparato (no se
+  toca), ventana de entrada cerrada (lo dice y sigue) y la BAR 1 en otro sitio.
+- **El panel** (`pantalla.rs`, con `usb`: 21 líneas): en lugar de la caja Amiga, cinco líneas (PCIe, ventanas, RP1,
+  USB0, USB1), "Teclado y ratón" con la última tecla o movimiento, y debajo lo que importa de `xhci0`/`xhci1`.
+  Cada línea del RP1 cabe en las 104 columnas de una pantalla de 1920 (lo comprueba la prueba).
+- **Las llaves** (`inicio.rs`, `diagnostico::usb_pi5`): de cada xHCI que contesta, 64 KB de registros y un permiso DMA
+  con el desplazamiento del `dma-ranges` (bus = física + 64 GB). Sin interrupciones: se sondea cada 10 ms (las MSI del
+  RP1 y su MIP, para más adelante: el MIP solo está descrito en código de Linux).
+- **El xHCI** (`usuario/src/xhci_comun.rs`; `xhci`, `xhci0` y `xhci1` solo cambian el nombre): dice la versión, los
+  puertos, las ranuras, si es de 64 bits, los búferes de trabajo que pide (y se los da: scratchpad, hasta 32 páginas;
+  el de QEMU no pide ninguno, un DWC3 puede pedirlos), PPC; prueba el DMA con una orden vacía ("DMA bien" o "MAL ... HSE:
+  el DMA no llega"); da corriente a los puertos si PPC; espera hasta 1,5 s a que algo se conecte (tras el reinicio un
+  aparato tarda); escribe el PORTSC de cada puerto, y de cada aparato su fabricante:producto, su clase y su primera
+  interfaz; si uno no se configura, en qué paso y con qué código. Vigila el HSE mientras corre. Sin compositor, cada tecla
+  y cada movimiento salen en el registro.
+- **La tarjeta**: `dashos-usb.img` dentro, y `pciex4_reset=0` en `config.txt` (no persiste, solo vale ese arranque).
+
+### Pruebas
+
+- `make arranque-virt-usb` (nueva, `pruebas/arranque_virt_usb.txt`): la imagen `virt,usb` en QEMU con el xHCI de QEMU
+  como `xhci0`, un concentrador, un teclado y un ratón. El panel dice "sin PCIe de la BCM2712 en el árbol (no es una Pi
+  5)" y sigue; `xhci0` dice "DMA bien", los aparatos (0409:55aa el concentrador, 0627:0001 el teclado y el ratón) y las
+  teclas que manda el monitor. Captura en `capturas-agente/pi5-usb-virt.png`.
+- `rp1.rs` en el PC: 8 pruebas, bien.
+- Tras fusionar `revision` (7b7e5a7) en la rama: `make prueba` ("BIEN: esperado.txt" y "BIEN: cargador hunk", y las
+  pruebas de `rp1.rs`), `make arranque-virt` (las cinco BIEN), `arranque-virt-vm`, `arranque-virt-2`,
+  `arranque-virt-diag`, `arranque-virt-escritorio` y `arranque-virt-usb`: todas BIEN.
+- `make tarjeta-pi5`: la tarjeta lleva `kernel_2712.img`, `dashos-usb.img` y `dashos-escritorio.img` (este, ahora con
+  `usb`), y `pciex4_reset=0` en `config.txt`; el `dashos-usb.img` de la FAT es igual al de `target/`.
+- Sin probar en una Pi 5: todo lo del RP1. Ni el escritorio con `usb` en QEMU (allí no hay RP1; la imagen `virt` del
+  escritorio no lleva `usb`).
+
+### Qué mirar en la foto de `dashos-usb.img`
+
+1. "PCIe del RP1": si dice enlace CAÍDO, el firmware reinició el PCIe (¿se perdió `pciex4_reset=0`?) y no se sigue.
+2. "Ventanas": si la de entrada no cuadra, el DMA no llegará (lo confirmará `xhci0`: "MAL ... HSE").
+3. "RP1": `1de4:xxxx` y un `sysinfo` que no sea "fallo de bus". Si en su lugar sale "EXT_CFG_INDEX vale ..." o "no
+   Raspberry Pi", los registros de configuración de la 2712 no están donde en la 2711: apuntar el valor.
+4. "USB0" y "USB1": versión, 64 bits, scratch, y qué puerto tiene "algo".
+5. Debajo: "DMA bien" de cada uno, los aparatos con fabricante:producto y "HID de arranque: 1 teclado y 1 ratón".
+6. "Teclado y ratón": la última tecla.
+
+### Lo que queda
+
+- Las interrupciones del RP1 (sus MSI-X por el bloque `pcie` del RP1 y el MIP de la BCM2712 hacia el GIC, SPI 128 a
+  191 según el árbol): hoy se sondea cada 10 ms. El MIP solo está descrito en código de Linux: hará falta una
+  especificación de analista o probarlo en la Pi.
+- Levantar el enlace sin el firmware (si algún día `pciex4_reset=0` no basta): también solo en código de Linux.
+- La corriente de los puertos USB (VBUS) si el firmware no la deja puesta.

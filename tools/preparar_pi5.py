@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """La tarjeta (o el SSD) para el primer arranque de DashOS en una Raspberry Pi 5 (docs/PI5_PRIMER_ARRANQUE.md).
 
-    tools/preparar_pi5.py IMAGEN_DEL_KERNEL SALIDA.img [ESCRITORIO]   (lo llama `make -C kernel tarjeta-pi5`)
+    tools/preparar_pi5.py IMAGEN_DEL_KERNEL SALIDA.img [ESCRITORIO [USB]]   (lo llama `make -C kernel tarjeta-pi5`)
 
 Hace SALIDA.img, una imagen de disco para grabar tal cual (dd, Raspberry Pi Imager con "Use custom", balenaEtcher): una
 tabla MBR con una partición FAT32 de arranque de 64 MB y en ella:
@@ -10,7 +10,9 @@ tabla MBR con una partición FAT32 de arranque de 64 MB y en ella:
   UART de depuración y el registro del firmware por él;
 - kernel_2712.img: DashOS con el diagnóstico en pantalla (`make -C kernel pi5`);
 - dashos-escritorio.img, si se da: DashOS con el escritorio en la pantalla del firmware (`make -C kernel pi5-escritorio`).
-  Para probarlo, en config.txt se cambia la línea `kernel=`;
+  Para probarlo, en config.txt se cambia la línea `kernel=`; con teclado y ratón USB, si el USB va;
+- dashos-usb.img, si se da: DashOS con el diagnóstico del USB (el PCIe del RP1, el RP1, sus dos xHCI, los aparatos y
+  las teclas) en pantalla (`make -C kernel pi5-usb`). También se elige con la línea `kernel=`;
 - los árboles de dispositivos oficiales de la Pi 5 (bcm2712-rpi-5-b.dtb y, para las placas con el chip D0,
   bcm2712d0-rpi-5-b.dtb), bajados de github.com/raspberrypi/firmware (rama stable). No van en git: se bajan aquí, a
   ~/.cache/dashos-pi5/firmware-stable. El firmware de la Pi 5 está en su EEPROM: en la tarjeta no hace falta start*.elf;
@@ -34,7 +36,9 @@ CONFIG = """\
 # DashOS: primer arranque en la Raspberry Pi 5 (docs/PI5_PRIMER_ARRANQUE.md del repositorio de DashOS).
 # El firmware de la EEPROM lee este fichero; nada de aquí cambia la EEPROM.
 [pi5]
-# El diagnóstico (lo primero). Para probar el escritorio (sin teclado ni ratón), cambiar esta línea por
+# El diagnóstico (lo primero). Para el diagnóstico del USB (teclado y ratón), cambiar esta línea por
+# kernel=dashos-usb.img
+# y para el escritorio, por
 # kernel=dashos-escritorio.img
 kernel=kernel_2712.img
 arm_64bit=1
@@ -50,6 +54,9 @@ uart_2ndstage=1
 # en decir que está.
 disable_fw_kms_setup=1
 hdmi_force_hotplug=1
+# Que el firmware no reinicie el PCIe del RP1 (el chip del USB) al saltar a DashOS: DashOS usa el enlace y las ventanas
+# que dejó el firmware (documentado en config.txt de Raspberry Pi, "pciex4_reset"). No persiste: solo vale esta vez.
+pciex4_reset=0
 [all]
 """
 
@@ -60,8 +67,10 @@ Esta tarjeta no tiene Linux. El firmware de la Pi 5 carga kernel_2712.img (DashO
 el que esta junto a la toma de corriente USB-C) lo que ve de la maquina: CPU, si admite big-endian, memoria y la caja
 Amiga. Hacer una foto de la pantalla entera.
 
-Para probar el escritorio (sin teclado ni raton): en config.txt, kernel=dashos-escritorio.img en lugar de
-kernel=kernel_2712.img.
+Para el diagnostico del USB (teclado y raton): en config.txt, kernel=dashos-usb.img en lugar de
+kernel=kernel_2712.img. Con un teclado y un raton USB enchufados. Foto de la pantalla; luego pulsar teclas y otra foto.
+
+Para probar el escritorio: en config.txt, kernel=dashos-escritorio.img.
 
 Nada de esto cambia la EEPROM de la Pi. Para volver a lo de antes, quitar la tarjeta.
 Los .dtb son los oficiales de Raspberry Pi (github.com/raspberrypi/firmware).
@@ -81,12 +90,15 @@ def bajar(nombre):
 
 
 def main():
-    if len(sys.argv) not in (3, 4):
+    if len(sys.argv) not in (3, 4, 5):
         sys.exit(__doc__)
     kernel, salida = sys.argv[1], os.path.expanduser(sys.argv[2])
-    escritorio = sys.argv[3] if len(sys.argv) == 4 else None
+    escritorio = sys.argv[3] if len(sys.argv) >= 4 else None
+    usb = sys.argv[4] if len(sys.argv) == 5 else None
     if escritorio and not os.path.exists(escritorio):
         sys.exit(f"falta {escritorio}: make -C kernel pi5-escritorio")
+    if usb and not os.path.exists(usb):
+        sys.exit(f"falta {usb}: make -C kernel pi5-usb")
     if not os.path.exists(kernel):
         sys.exit(f"falta {kernel}: make -C kernel pi5")
     for programa in ("mkfs.fat", "mcopy", "sfdisk"):
@@ -106,6 +118,9 @@ def main():
         if escritorio:
             shutil.copyfile(escritorio, os.path.join(tmp, "dashos-escritorio.img"))
             ficheros.append(os.path.join(tmp, "dashos-escritorio.img"))
+        if usb:
+            shutil.copyfile(usb, os.path.join(tmp, "dashos-usb.img"))
+            ficheros.append(os.path.join(tmp, "dashos-usb.img"))
         subprocess.run(["mcopy", "-i", fat] + ficheros + ["::"], check=True)
         # El disco: 1 MB para la tabla y la FAT detrás, de tipo 0x0c (FAT32 con LBA) y marcada de arranque.
         parcial = salida + ".parte"

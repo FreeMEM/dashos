@@ -171,10 +171,11 @@ pub fn construir() {
             }
         }
     }
-    // Los periféricos por encima de los 4 GB (la Pi 5, placa.rs): bloques de 1 GB de dispositivo, fuera del mapa lineal.
+    // Los periféricos por encima de los 4 GB (la Pi 5, placa.rs: los GB 64, 65 y 124): bloques de 1 GB de dispositivo,
+    // fuera del mapa lineal.
     let mut g = PERIFERICOS.0 / GB;
     while g < PERIFERICOS.1.div_ceil(GB) {
-        if g >= 4 {
+        if g >= 4 && es_periferico(g * GB) {
             poner(l1, g as usize, (g * GB) | BLOQUE | atributos(Tipo::Dispositivo));
         }
         g += 1;
