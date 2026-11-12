@@ -166,8 +166,22 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey down")
             reintento = time.time() + 4
-        # Y una más abajo, Acerca de; después, Esc.
+        # Y una más abajo, Discos; otra, Acerca de; después, Esc.
         if centro == 6:
+            if "[centro] Discos: " not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                time.sleep(0.25)
+                continue
+            centro = 7
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".discos.ppm")
+            time.sleep(0.5)
+            mandar("sendkey down")
+            reintento = time.time() + 4
+        if centro == 7:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4

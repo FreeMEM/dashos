@@ -862,3 +862,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   público) y cuántos procesos hay (la cabecera de `PROCESOS`). Solo se lee. Prueba en virt: una flecha abajo más tras
   Seguridad; el centro dice "Acerca de: DashOS, versión 0.0.1; Encendido hace 0 min 54 s; Fecha y hora: 2026-11-11
   23:50 (UTC); Procesos en marcha: 15". Captura en `docs/capturas/s10c-centro-acerca.png`.
+- S10c, C1, cuarta categoría: **Discos**, de solo lectura: cuánto mide el disco del sistema, cuánto está ocupado y
+  cuánto libre (INFO de `archivos`). El centro recibe el canal "archivos" con una ficha mínima (usuario 1000, sin
+  derechos, encerrado en `C`); comprobar el disco y las instantáneas, que piden administrador, quedan para cuando la
+  prueba no tenga a `guardian` esperando al centro (las dos cosas se esperarían). Ojo, lo que costó un arranque: las
+  llaves de un programa van en el orden en que se nombró cada canal en todo el sistema, no en el de su lista; con
+  "archivos", las del centro pasan a ser ventanas 1, archivos 2, sesiones 3 y centro 4. Prueba en virt: "Discos:
+  Disco del sistema: 7,0 MB; Ocupado: 2,5 MB (36 %); Libre: 4,4 MB". Captura en `docs/capturas/s10c-centro-discos.png`.

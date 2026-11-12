@@ -65,7 +65,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // que abra una categoría (en la prueba, `guardian`). Va antes que él: el
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "centro"]),
+    ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "centro", "archivos"]),
     #[cfg(feature = "virt")]
     ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones", "centro"]),
     #[cfg(feature = "virt")]

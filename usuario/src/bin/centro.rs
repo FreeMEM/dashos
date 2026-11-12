@@ -3,6 +3,8 @@
 //! - **Permisos** (Prefs de U6): lo que el usuario ha concedido a cada programa, y quitarlo, que lo revoca en el acto
 //!   (`sesiones`, RETIRAR).
 //! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
+//! - **Discos**: cuánto mide el disco del sistema, cuánto está ocupado y cuánto libre (INFO de `archivos`). Solo se
+//!   lee; su sesión con `archivos` no tiene derechos y está encerrada en `C`.
 //! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
@@ -12,7 +14,8 @@
 //! Teclado: flechas para elegir, Tab para pasar de la lista de categorías a la de la derecha, Supr para quitar, Esc para
 //! cerrar. Ratón: elegir y el botón Quitar o Cerrar.
 //!
-//! Llaves: 1 el canal "ventanas", 2 el canal "sesiones", 3 su canal "centro".
+//! Llaves (en el orden en que se nombró cada canal en el sistema): 1 "ventanas", 2 "archivos", 3 "sesiones" y 4 su
+//! canal "centro".
 
 #![no_std]
 #![no_main]
@@ -42,12 +45,14 @@ use wayland::Escritor;
 dashos::programa!(principal);
 dashos::monton!();
 
-const SESIONES: u32 = 2;
-const CANAL: u32 = 3;
+const ARCHIVOS: u32 = 2;
+const SESIONES: u32 = 3;
+const CANAL: u32 = 4;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
 /// Las categorías, por su nombre de enlace (lo que va tras "abrir") y el que se ve. Irán creciendo (S10c).
-const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad"), ("acerca", "Acerca de")];
+const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad"), ("discos", "Discos"), ("acerca", "Acerca de")];
+const DISCOS: usize = 2;
 const PERMISOS: usize = 0;
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
@@ -174,6 +179,44 @@ fn fecha(ns: u64) -> String {
     alloc::format!("{:04}-{:02}-{:02} {:02}:{:02} (UTC)", y, m, d, segundos / 3600, segundos % 3600 / 60)
 }
 
+/// Megas con un decimal, en castellano ("7,0 MB").
+fn megas(b: u64) -> String {
+    let d = b * 10 / (1 << 20);
+    alloc::format!("{},{} MB", d / 10, d % 10)
+}
+
+/// Lo de "Discos": una sesión con `archivos` y su INFO (tamaño y libre).
+fn discos() -> Vec<String> {
+    use dashos::protocolo::archivos as a;
+    let mut l = Vec::new();
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut cab = [0u8; a::CABECERA];
+    cab[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+    let mut r = [0u8; 32];
+    let mut ll = [0u32; 1];
+    let sesion = dashos::canal_escribir(ARCHIVOS, &cab, &[suyo]) == 0 && dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 2_000_000).0 == 32;
+    if sesion {
+        // La ventana de la sesión no hace falta para INFO.
+        dashos::cerrar(ll[0]);
+        let mut p = [0u8; a::CABECERA];
+        p[0..4].copy_from_slice(&a::INFO.to_le_bytes());
+        let info = dashos::canal_escribir(ARCHIVOS, &p, &[]) == 0 && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 == 32;
+        let u64_en = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+        if info && i32::from_le_bytes(r[0..4].try_into().unwrap()) == a::BIEN {
+            let (tam, libre) = (u64_en(8), u64_en(16));
+            let ocupado = tam.saturating_sub(libre);
+            l.push(alloc::format!("Disco del sistema: {}", megas(tam)));
+            l.push(alloc::format!("Ocupado: {} ({} %)", megas(ocupado), ocupado * 100 / tam.max(1)));
+            l.push(alloc::format!("Libre: {}", megas(libre)));
+        }
+    }
+    dashos::cerrar(lectura);
+    if l.is_empty() {
+        l.push(String::from("El servicio de archivos no contesta"));
+    }
+    l
+}
+
 /// Lo de "Acerca de": una línea por dato.
 fn acerca() -> Vec<String> {
     let mut l = Vec::new();
@@ -249,6 +292,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
         } else if cat == SEGURIDAD {
             ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
+        } else if cat == DISCOS {
+            ("Cuánto ocupa lo guardado.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
@@ -261,6 +306,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
+    } else if cat == DISCOS {
+        lineas_registro = discos();
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -373,7 +420,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     lista = concedidos();
                     println!("  [centro] {}: {} concedidos", CATEGORIAS[cat].1, lista.len());
                 } else if cat != SEGURIDAD {
-                    lineas_registro = acerca();
+                    lineas_registro = if cat == DISCOS { discos() } else { acerca() };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
                 } else {
                     lineas_registro = registro();
