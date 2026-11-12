@@ -1,21 +1,30 @@
 //! Lo que cambia de una placa a otra (U3): la Pi 4 y QEMU `virt` (el camino de UEFI). Se elige al compilar, con la
 //! característica `virt`: el kernel está enlazado para una dirección física fija, distinta en cada una. La Pi 3, con `pi3`
-//! (P3): la misma dirección que la Pi 4, otros periféricos.
+//! (P3): la misma dirección que la Pi 4, otros periféricos. La Pi 5, con `pi5`: la misma dirección de carga, los
+//! periféricos de la BCM2712 por encima de 64 GB.
 
 /// La ventana de periféricos, como [inicio, fin) físicos: memoria de dispositivo, nunca memoria normal.
-#[cfg(not(any(feature = "virt", feature = "pi3")))]
+#[cfg(not(any(feature = "virt", feature = "pi3", feature = "pi5")))]
 pub const PERIFERICOS: (u64, u64) = (0xFC00_0000, 0x1_0000_0000);
 /// La Pi 3 (P3): los periféricos de la BCM2837 desde 0x3F000000 y, justo después, los locales de los núcleos (el
 /// controlador de interrupciones de la QA7, en 0x40000000). En bloques de 2 MB.
 #[cfg(feature = "pi3")]
 pub const PERIFERICOS: (u64, u64) = (0x3F00_0000, 0x4020_0000);
+/// La Pi 5: el bus "soc" del árbol (`ranges` = 0 → 0x10_0000_0000, 2 GB): el buzón, el UART de depuración, el
+/// GIC-400 (0x10_7FFF_9000), la SD... Los GB 64 y 65 enteros, en bloques de 1 GB (arranque.s y mapa.rs). El RP1 (USB,
+/// Ethernet, GPIO), detrás del PCIe, queda fuera por ahora.
+#[cfg(feature = "pi5")]
+pub const PERIFERICOS: (u64, u64) = (0x10_0000_0000, 0x10_8000_0000);
 /// En `virt` todo el primer GB son aparatos (flash, GIC, PL011, virtio, ventanas del PCIe); la RAM empieza en 1 GB.
 #[cfg(feature = "virt")]
 pub const PERIFERICOS: (u64, u64) = (0, 0x4000_0000);
 
 /// El PL011 que usa el kernel para escribir antes de leer el árbol (y la consola hasta C48).
-#[cfg(not(any(feature = "virt", feature = "pi3")))]
+#[cfg(not(any(feature = "virt", feature = "pi3", feature = "pi5")))]
 pub const SERIE: usize = 0xFE20_1000;
+/// La Pi 5: el UART10 de la BCM2712, el del conector de depuración de 3 patillas (no el del RP1).
+#[cfg(feature = "pi5")]
+pub const SERIE: usize = 0x10_7D00_1000;
 #[cfg(feature = "pi3")]
 pub const SERIE: usize = 0x3F20_1000;
 #[cfg(feature = "virt")]

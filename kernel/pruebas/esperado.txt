@@ -29,6 +29,7 @@ C34: mapa del kernel con W^X y guardas bien
 S6: arranque endurecido bien
 S4: el GIC del kernel bien
 H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: bien
+H9: vistas de memoria con páginas de otro objeto, solo de lectura: bien
 C38: el kernel y los procesos, fuera del alcance del DMA: bien
 C10: hilos bien
   proceso con ASID 1 en el núcleo 2
@@ -112,6 +113,7 @@ C32: registros de EL0 bien
   [lanzador] padre: clase 0, código 39
   [malo] JIT: se escribe por una dirección y se ejecuta por otra; escribir y ejecutar a la vez, rechazado
   [malo] página 0: sin permiso, ni la llamada 49 ni los primeros 64 KB, tampoco de solo lectura
+  [malo] vistas: solo de lectura, páginas fuera, llaves ajenas o sin derecho, tablas malas y 
   [malo] escape: ?[31m
 │ C99: imitado por un programa
   [malo] memoria agotada en

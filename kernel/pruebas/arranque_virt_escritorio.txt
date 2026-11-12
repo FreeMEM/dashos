@@ -1,0 +1,11 @@
+# El escritorio de la Pi 5 en QEMU virt (`make arranque-virt-escritorio`, docs/bitacoras/pi5.md, paso 4): el kernel pinta
+# su diagnóstico y da la pantalla al compositor; dos clientes de Wayland, Ajustes y la caja Amiga con su ventana.
+DashOS 0.0.1
+Diagnóstico: big-endian en EL0: BIEN
+pantalla de la consola del kernel, al compositor:
+~[compositor] pantalla de UEFI de
+~[ventana-a] 30 cuadros: bien
+~[ventana-b] 30 cuadros: bien
+~[caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+~[caja-amiga] ventana: abierta (328x163, dentro 320x150), dibujada; espera IDCMP_CLOSEWINDOW
+~[compositor] ventana de caja-amiga en (

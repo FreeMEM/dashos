@@ -22,6 +22,8 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 mod azar;
 mod bcm2836;
 mod cupo;
+#[cfg(feature = "diagnostico")]
+mod diagnostico;
 mod dtb;
 mod elf;
 mod espera;
@@ -34,6 +36,8 @@ mod llamadas;
 mod lz4;
 mod maquinas;
 mod objetos;
+#[cfg(feature = "diagnostico")]
+mod pantalla;
 mod pcie;
 mod procesos;
 mod registro;
@@ -63,6 +67,9 @@ pub fn kmain(dtb: usize) -> ! {
     let Some(d) = dtb::Dtb::desde() else {
         panic!("árbol de dispositivos no válido en {:#x}", dtb);
     };
+    // Una placa nueva (la Pi 5): la pantalla y lo que se sabe ya, antes de nada que pueda pararse.
+    #[cfg(feature = "diagnostico")]
+    diagnostico::al_empezar(&d);
     // La semilla del azar, antes de copiar el árbol: se borra del original (R10).
     let semilla = azar::sembrar(&d);
     if azar::de_calidad() {
@@ -73,10 +80,14 @@ pub fn kmain(dtb: usize) -> ! {
     // Antes de que nada viva por encima del primer GB: que el PCIe no llegue ahí (C51).
     pcie::cerrar_ventana(&d);
     memoria::paginas().iniciar(&d, dtb);
+    #[cfg(feature = "diagnostico")]
+    diagnostico::tras_memoria(&d);
     mapa::construir();
     mapa::activar();
     base::copiar_arbol();
-    // El hipervisor (caja Linux, H9): con la imagen ya en su sitio, la tabla de EL2 de verdad.
+    // El hipervisor (caja Linux, H9): con la imagen ya en su sitio, la tabla de EL2 de verdad. En la Pi 5, aún no: el
+    // primer arranque no lo necesita (no hay caja Linux) y así hay una cosa menos que pueda pararlo.
+    #[cfg(not(feature = "pi5"))]
     base::hiper::iniciar();
     if base::hiper::hay() {
         kprintln!("Hipervisor: el kernel arrancó en EL2; la caja Linux puede crear máquinas virtuales");
@@ -143,6 +154,8 @@ pub fn kmain(dtb: usize) -> ! {
     };
     let n = nucleos::despertar(como);
     interrupciones::iniciar();
+    #[cfg(feature = "diagnostico")]
+    diagnostico::tras_nucleos(n);
 
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(dtb, n);
@@ -154,6 +167,8 @@ pub fn kmain(dtb: usize) -> ! {
     kprintln!("DashOS en marcha con {} núcleos. (a los {} ms del encendido)", n + 1,
         (base::cpu::contador() as u128 * 1000 / base::cpu::frecuencia().max(1) as u128) as u64);
     // La imagen normal pasa el sistema al programa de inicio (C47). La de pruebas no: ahí mandan las pruebas.
+    #[cfg(feature = "diagnostico")]
+    diagnostico::big_endian_el0();
     #[cfg(not(feature = "pruebas"))]
     if !inicio::lanzar() {
         kprintln!("sin programa de inicio: el sistema se queda parado");
@@ -164,6 +179,8 @@ pub fn kmain(dtb: usize) -> ! {
 #[panic_handler]
 fn panico(info: &PanicInfo) -> ! {
     serie::imprimir_directo(format_args!("PÁNICO: {}\n", info));
+    #[cfg(feature = "diagnostico")]
+    pantalla::panico(info);
     base::cpu::parar()
 }
 

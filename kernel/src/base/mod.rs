@@ -17,17 +17,20 @@ pub mod mmio;
 pub mod mmu;
 pub mod monton;
 pub mod nucleos;
+pub mod pantalla;
 pub mod planificador;
 pub mod usuario;
 
 pub mod placa;
 // Para arranque.s, en el mismo bloque: qué tablas de arranque se hacen (placa.rs).
-#[cfg(not(any(feature = "virt", feature = "pi3")))]
-core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", include_str!("arranque.s"));
+#[cfg(not(any(feature = "virt", feature = "pi3", feature = "pi5")))]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
 #[cfg(feature = "virt")]
-core::arch::global_asm!(".equ PLACA_VIRT, 1", ".equ PLACA_PI3, 0", include_str!("arranque.s"));
+core::arch::global_asm!(".equ PLACA_VIRT, 1", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
 #[cfg(feature = "pi3")]
-core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 1", include_str!("arranque.s"));
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 1", ".equ PLACA_PI5, 0", include_str!("arranque.s"));
+#[cfg(feature = "pi5")]
+core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 0", ".equ PLACA_PI5, 1", include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("copia.s"));
 

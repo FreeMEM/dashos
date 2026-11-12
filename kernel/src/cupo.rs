@@ -85,8 +85,16 @@ impl Cupo {
 
     /// El grupo raíz. Su límite es la memoria libre para procesos al crearlo, menos la reserva del kernel: así la
     /// suma de todos los presupuestos no pasa de la memoria que hay (auditoría de la fase 3, M4).
+    ///
+    /// Los bytes se leen antes de crear el grupo: con el repartidor de páginas tomado, `Arc::new` se quedaba esperándolo
+    /// para sí mismo si el montón necesitaba una página nueva (el diagnóstico de la Pi 5 lo llamaba el primero).
     pub fn raiz() -> Arc<Cupo> {
-        RAIZ.tomar().get_or_insert_with(|| Arc::new(Cupo::con(crate::memoria::paginas().bytes_para_procesos(), 0, None))).clone()
+        let mut r = RAIZ.tomar();
+        if r.is_none() {
+            let bytes = crate::memoria::paginas().bytes_para_procesos();
+            *r = Some(Arc::new(Cupo::con(bytes, 0, None)));
+        }
+        r.as_ref().map(Arc::clone).expect("el grupo raíz se acaba de poner")
     }
 
     /// Los números de los procesos vivos de este grupo (U6), hasta `max` (y cuántos hay).

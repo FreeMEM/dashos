@@ -52,6 +52,8 @@ mod portapapeles_cliente;
 #[path = "../terminal.rs"]
 #[allow(dead_code)]
 mod terminal;
+#[path = "../pantalla_caja.rs"]
+mod pantalla_caja;
 #[path = "../puente_caja.rs"]
 mod puente_caja;
 
@@ -1694,9 +1696,16 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     // Con Arch y el compositor: vsock, para el puente de Wayland (los programas gráficos de Linux, en ventanas de
     // DashOS). Va en el transporte siguiente al último.
     let n_virtio = if con_red { 3 } else { 2 };
-    let wayland = arch && l.ventanas.is_some_and(puente_caja::abrir);
+    // Con la RAM del invitado, el compositor lee sus búferes sin copia (vistas, llamada 50).
+    let wayland = arch && l.ventanas.is_some_and(|v| puente_caja::abrir(v, &mems, disposicion::RAM));
     let v3 = disposicion::virtio(n_virtio);
     let puestos = puestos && (!wayland || maq.añadir(v3.base, v3.spi, Box::new(TransporteMmio::nuevo(Vsock::nuevo(Box::new(puente_caja::ExtremoPuente))))).is_ok());
+    let n_virtio = n_virtio + wayland as u32;
+    // Con el compositor, también una virtio-gpu en 2D (S25): la pantalla del invitado, que sale en una ventana de DashOS
+    // cuando un programa de Linux la usa (por KMS).
+    let v4 = disposicion::virtio(n_virtio);
+    let gpu = caja_vmm::virtio::gpu::Gpu::nueva(Box::new(pantalla_caja::ExtremoPantalla), &[(pantalla_caja::ANCHO, pantalla_caja::ALTO)], pantalla_caja::TOPE_RECURSOS);
+    let puestos = puestos && (!wayland || maq.añadir(v4.base, v4.spi, Box::new(TransporteMmio::nuevo(gpu))).is_ok());
     let n_virtio = n_virtio + wayland as u32;
     let bootargs = match (arch, terminal) {
         (true, _) => String::from(BOOTARGS_ARCH),
@@ -1746,6 +1755,7 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     );
     if wayland {
         println!("  [caja-linux] wayland: vsock en el puerto {} para el puente de Wayland de Linux (CID 3)", puente_caja::PUERTO);
+        println!("  [caja-linux] gpu: virtio-gpu en 2D con una pantalla de {}x{} y {} MB para recursos", pantalla_caja::ANCHO, pantalla_caja::ALTO, pantalla_caja::TOPE_RECURSOS >> 20);
     }
     let t0 = dashos::ahora_us();
     CAJA.poner(Caja::nueva(&llaves, maq, &config.memoria, true));
@@ -1792,11 +1802,14 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
             if let Some(p) = p.as_ref() {
                 let c = p.cuentas();
                 println!(
-                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias, {} tubos del portapapeles ({} bytes), {} cosas malas tiradas, {} clientes cerrados",
-                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.tubos, c.bytes_de_tubos, c.malas, c.cerrados
+                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias ({} sin copia, vistas de la RAM del invitado; {} vistas no hechas), {} tubos del portapapeles ({} bytes), {} cosas malas tiradas, {} clientes cerrados",
+                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.vistas, c.vistas_no, c.tubos, c.bytes_de_tubos, c.malas, c.cerrados
                 );
             }
         });
+    }
+    if wayland {
+        pantalla_caja::informe();
     }
     if con_red {
         let r = cuentas_red.borrow();
@@ -2003,15 +2016,21 @@ fn terminal() -> u64 {
     let fila_en = |(_, y): (i32, i32)| (((y - BORDE).max(0) / ch) as usize).min(FILAS - 1);
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), FONDO);
+    // La pantalla de la virtio-gpu (S25) va en esta misma conexión, como otra ventana.
+    let mut pantalla = pantalla_caja::VentanaPantalla::nueva();
     loop {
-        let ev = match c.evento_plazo(if pp.ocupado() { 5_000 } else if esperando != 0 { 100_000 } else { 15_000 }) {
+        pantalla.tic(&mut c);
+        let plazo = if pantalla.pendiente() { 2_000 } else if pp.ocupado() { 5_000 } else if esperando != 0 { 100_000 } else { 15_000 };
+        let ev = match c.evento_plazo(plazo) {
             Ok(ev) => ev,
             Err(()) => {
                 println!("  [caja-linux] terminal: el compositor cerró la conexión");
                 return 1;
             }
         };
-        if let Some((o, orden, cuerpo)) = ev {
+        if let Some((o, orden, cuerpo)) = ev
+            && !pantalla.evento(&mut c, o, orden, &cuerpo)
+        {
             let palabra = |i: usize| cuerpo.get(4 * i..4 * i + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
             match (o, orden) {
                 (XDG, xdg_wm_base::ev::PING) => {

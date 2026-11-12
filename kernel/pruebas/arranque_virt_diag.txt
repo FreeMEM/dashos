@@ -1,0 +1,17 @@
+# El diagnóstico de la Pi 5 en QEMU virt (`make arranque-virt-diag`, docs/bitacoras/pi5.md): la consola del kernel en la
+# pantalla que deja EDK2 (ramfb, por el simple-framebuffer que pone el cargador UEFI), el panel con la CPU y la prueba
+# de big-endian en EL0, y solo la consola y la caja Amiga como programas.
+DashOS 0.0.1
+~por el simple-framebuffer del árbol
+CPU: fabricante 0x41
+Memoria física:
+DashOS en marcha con 4 núcleos.
+Diagnóstico: un programa big-endian en EL0
+~hola desde Rust en EL0 (DashOS, big-endian)
+Diagnóstico: big-endian en EL0: BIEN
+~[inicio] consola lanzado
+# La caja Amiga sin compositor ni archivos: el JIT, exec y dos nativas y saludo.exe van; ventana.exe y hostil.exe no.
+~[caja-amiga] suma de 1 a 100000 en el 68k: 705082704
+~[caja-amiga] hunk: hola desde un ejecutable de AmigaOS (m68k-amigaos-gcc)
+~[caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+~[inicio] caja-amiga acabó

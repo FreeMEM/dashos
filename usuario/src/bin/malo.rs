@@ -244,6 +244,14 @@ fn principal() -> u64 {
         println!("  [malo] página 0: falla el paso {}", paso);
         return 38;
     }
+    // 39 (H9, vistas de memoria para el compositor): la llamada 50 con páginas fuera, llaves que no son suyas o no son
+    // de memoria, sin derecho de leer, revocables, vistas de vistas, tablas malas y listas enormes; solo se lee; y el
+    // origen soltado con la vista viva no se reparte a otro.
+    let paso = vista();
+    if paso != 0 {
+        println!("  [malo] vistas: falla el paso {}", paso);
+        return 39;
+    }
     // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
     let local = 0u64;
     if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {
@@ -337,5 +345,136 @@ fn pagina_cero() -> u32 {
         dashos::cerrar(l);
     }
     println!("  [malo] página 0: sin permiso, ni la llamada 49 ni los primeros 64 KB, tampoco de solo lectura");
+    0
+}
+
+/// El paso 39: vistas de memoria (llamada 50, H9). 0 si todo va bien; si no, qué falló.
+fn vista() -> u32 {
+    const ORIGEN_EN: usize = 0x32_0000_0000;
+    const VISTA_EN: usize = 0x33_0000_0000;
+    const OTRA_EN: usize = 0x34_0000_0000;
+    let vista = |o: &[u32], p: &[u32]| dashos::memoria_vista(o, p);
+    let m = dashos::memoria_crear(3 * 4096);
+    if dashos::memoria_proyectar(m, ORIGEN_EN, true) != 0 {
+        return 1;
+    }
+    // Cada página empieza por su número.
+    for p in 0..3 {
+        unsafe { ((ORIGEN_EN + p * 4096) as *mut u64).write_volatile(0x5649_5354_0000 + p as u64) };
+    }
+    // Una vista con las páginas 2 y 0: se lee en ese orden, y mide dos páginas.
+    let v = vista(&[m], &[2, 0]);
+    if v <= 0 || dashos::memoria_tamano(v as u32) != 8192 || dashos::memoria_proyectar(v as u32, VISTA_EN, false) != 0 {
+        return 2;
+    }
+    let v = v as u32;
+    let leer = |va: usize| unsafe { (va as *const u64).read_volatile() };
+    if leer(VISTA_EN) != 0x5649_5354_0002 || leer(VISTA_EN + 4096) != 0x5649_5354_0000 {
+        return 3;
+    }
+    // Lo que escribe el dueño se ve por la vista, sin copias.
+    unsafe { ((ORIGEN_EN + 2 * 4096 + 8) as *mut u64).write_volatile(0x1234) };
+    if leer(VISTA_EN + 8) != 0x1234 {
+        return 4;
+    }
+    // Solo lectura: ni escribir (la llave no tiene el derecho, ni pidiéndolo al duplicar) ni ejecutar.
+    let mas = dashos::llave_duplicar(v, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    if dashos::memoria_proyectar(v, OTRA_EN, true) != E_DERECHOS
+        || mas <= 0
+        || dashos::memoria_proyectar(mas as u32, OTRA_EN, true) != E_DERECHOS
+        || dashos::memoria_proyectar_codigo(v, OTRA_EN) != E_ARGUMENTO
+    {
+        return 5;
+    }
+    dashos::cerrar(mas as u32);
+    // Páginas fuera del origen.
+    if vista(&[m], &[3]) != E_ARGUMENTO || vista(&[m], &[0, u32::MAX]) != E_ARGUMENTO {
+        return 6;
+    }
+    // Llaves que no son suyas, que no son de memoria, sin derecho de leer, revocables, o una vista como origen.
+    let (a, b) = dashos::canal_crear();
+    let sin_leer = dashos::llave_duplicar(m, dashos::TRANSFERIR, 0) as u32;
+    let (revocable, revocador) = dashos::llave_revocable(m);
+    if vista(&[999], &[0]) != E_LLAVE
+        || vista(&[a], &[0]) != E_TIPO
+        || vista(&[sin_leer], &[0]) != E_DERECHOS
+        || vista(&[m, sin_leer], &[0]) != E_DERECHOS
+        || revocable <= 0
+        || vista(&[revocable as u32], &[0]) != E_ARGUMENTO
+        || vista(&[v], &[0]) != E_ARGUMENTO
+    {
+        return 7;
+    }
+    for l in [a, b, sin_leer, revocable as u32, revocador] {
+        dashos::cerrar(l);
+    }
+    // Tablas malas y listas enormes: sin orígenes o sin páginas, de más, en memoria vacía, en el kernel o que desbordan.
+    let paginas = [0u32; 4097];
+    let origenes = [m; 65];
+    let mal = [
+        (x0(50, [origenes.as_ptr() as u64, 0, paginas.as_ptr() as u64, 1, 0]), E_TAMANO),
+        (x0(50, [origenes.as_ptr() as u64, 1, paginas.as_ptr() as u64, 0, 0]), E_TAMANO),
+        (x0(50, [origenes.as_ptr() as u64, 65, paginas.as_ptr() as u64, 1, 0]), E_TAMANO),
+        (x0(50, [origenes.as_ptr() as u64, 1, paginas.as_ptr() as u64, 4097, 0]), E_TAMANO),
+        (x0(50, [origenes.as_ptr() as u64, 1, paginas.as_ptr() as u64, u64::MAX / 2, 0]), E_TAMANO),
+        (x0(50, [VACIA, 1, paginas.as_ptr() as u64, 1, 0]), E_ARGUMENTO),
+        (x0(50, [origenes.as_ptr() as u64, 1, VACIA, 1, 0]), E_ARGUMENTO),
+        (x0(50, [KERNEL, 1, paginas.as_ptr() as u64, 1, 0]), E_ARGUMENTO),
+        (x0(50, [origenes.as_ptr() as u64, 1, u64::MAX - 8, 4, 0]), E_ARGUMENTO),
+    ];
+    if mal.iter().any(|(r, e)| r != e) {
+        return 8;
+    }
+    // La lista más larga (16 MB de vista, la misma página 4096 veces) y 64 orígenes iguales sí valen.
+    let grande = x0(50, [origenes.as_ptr() as u64, 64, paginas.as_ptr() as u64, 4096, 0]);
+    if grande <= 0 || dashos::memoria_tamano(grande as u32) != 16 << 20 {
+        return 9;
+    }
+    dashos::cerrar(grande as u32);
+    // Muchas vistas sin cerrar: el cupo o la tabla las cortan (sin pánico), y al cerrarlas vuelve todo.
+    let mut hechas = [0u32; 1100];
+    let mut cuantas = 0;
+    loop {
+        let l = vista(&[m], &paginas[..4096]);
+        if l < 0 {
+            if l != E_MEMORIA && l != E_LIMITE {
+                return 10;
+            }
+            break;
+        }
+        if cuantas == hechas.len() {
+            return 11;
+        }
+        hechas[cuantas] = l as u32;
+        cuantas += 1;
+    }
+    for &l in &hechas[..cuantas] {
+        dashos::cerrar(l);
+    }
+    // El origen se suelta con la vista viva: sus páginas siguen siendo suyas. La memoria que se pide después no las
+    // recibe (se llena entera de otra cosa y la vista no cambia).
+    dashos::memoria_quitar(ORIGEN_EN);
+    dashos::cerrar(m);
+    let mut nuevas = [0u32; 16];
+    for (i, nueva) in nuevas.iter_mut().enumerate() {
+        let n = dashos::memoria_crear(64 * 1024);
+        if dashos::memoria_proyectar(n, OTRA_EN + i * 0x10_0000, true) != 0 {
+            return 12;
+        }
+        for k in (0..64 * 1024).step_by(8) {
+            unsafe { ((OTRA_EN + i * 0x10_0000 + k) as *mut u64).write_volatile(0xeeee_eeee_eeee_eeee) };
+        }
+        *nueva = n;
+    }
+    if leer(VISTA_EN) != 0x5649_5354_0002 || leer(VISTA_EN + 8) != 0x1234 || leer(VISTA_EN + 4096) != 0x5649_5354_0000 {
+        return 13;
+    }
+    for (i, &n) in nuevas.iter().enumerate() {
+        dashos::memoria_quitar(OTRA_EN + i * 0x10_0000);
+        dashos::cerrar(n);
+    }
+    dashos::memoria_quitar(VISTA_EN);
+    dashos::cerrar(v);
+    println!("  [malo] vistas: solo de lectura, páginas fuera, llaves ajenas o sin derecho, tablas malas y {} vistas de 16 MB: rechazado lo que no vale; el origen suelto no se reparte", cuantas);
     0
 }

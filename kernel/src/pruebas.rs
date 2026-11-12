@@ -27,6 +27,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_arranque();
     prueba_gic_del_kernel();
     prueba_pagina_cero();
+    prueba_vista();
     prueba_dma();
     prueba_hilos();
     prueba_procesos();
@@ -1236,6 +1237,72 @@ fn prueba_pagina_cero() {
         if otra { "no" } else { "SÍ" });
     let bien = grande && normal && hecha && permisos == Some((true, false, false)) && otra && resto && copia && quitada;
     kprintln!("H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: {}", if bien { "bien" } else { "MAL" });
+}
+
+/// H9: las vistas de memoria (llamada 50), para que el compositor lea sin copia los búferes de un invitado. Una vista
+/// ve las páginas que se le piden de sus orígenes, en ese orden; un número fuera, una lista vacía o una vista como
+/// origen no valen; se cobra solo su lista, y si no cabe en el cupo, no se hace; soltar el origen con la vista viva no
+/// devuelve sus páginas (siguen viéndose, y nadie más las recibe) hasta soltar la vista, y entonces el cupo vuelve a
+/// cero; y solo se proyecta para leer. Lo que ve un proceso de la llamada (derechos, llaves, tablas malas) lo prueba
+/// `malo` (paso 39).
+fn prueba_vista() {
+    use alloc::sync::Arc;
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(c) = raiz.hijo(1 << 20) else { return };
+    let (Some(a), Some(b)) = (memoria::Memoria::nueva(3 * 4096, &c), memoria::Memoria::nueva(2 * 4096, &c)) else { return };
+    // Cada página empieza por su nombre: a0, a1, a2, b0, b1.
+    for (i, m) in [(0u8, &a), (1, &b)] {
+        for p in 0..m.paginas() {
+            m.escribir(p * 4096, &[b'a' + i, b'0' + p as u8]);
+        }
+    }
+    let (a, b) = (Arc::new(a), Arc::new(b));
+    let uso_origenes = c.uso().1;
+    let nombre = |m: &memoria::Memoria, p: usize| {
+        let mut n = [0u8; 2];
+        m.leer(p * 4096, &mut n);
+        n
+    };
+    let v = memoria::Memoria::vista(&[a.clone(), b.clone()], &[4, 0, 2, 2], &c);
+    let vista_bien = v.as_ref().is_ok_and(|v| {
+        v.es_vista() && v.paginas() == 4 && [*b"b1", *b"a0", *b"a2", *b"a2"].iter().enumerate().all(|(i, n)| nombre(v, i) == *n)
+    });
+    let Ok(v) = v else {
+        kprintln!("H9: vistas de memoria: MAL (no se hizo)");
+        return;
+    };
+    let cobrado = c.uso().1 == uso_origenes + memoria::coste_vista(4, 2);
+    let fuera = memoria::Memoria::vista(&[a.clone(), b.clone()], &[5], &c).err() == Some(memoria::FalloVista::Fuera)
+        && memoria::Memoria::vista(&[a.clone()], &[], &c).err() == Some(memoria::FalloVista::Fuera)
+        && memoria::Memoria::vista(&[a.clone()], &[u32::MAX], &c).err() == Some(memoria::FalloVista::Fuera);
+    let v = Arc::new(v);
+    let de_vista = memoria::Memoria::vista(&[v.clone()], &[0], &c).err() == Some(memoria::FalloVista::Origen);
+    // Un cupo que no llega a la lista: no se hace, y no queda nada cobrado.
+    let corto = c.hijo(300).is_some_and(|h| memoria::Memoria::vista(&[a.clone()], &[0; 16], &h).err() == Some(memoria::FalloVista::Memoria) && h.uso().1 == 0);
+    // Solo para leer.
+    let mut proyeccion = false;
+    if let Some(mut e) = espacio::Espacio::nuevo(raiz.clone()) {
+        let va = 0x7_0000_0000;
+        proyeccion = e.proyectar_memoria(va, &v, espacio::Acceso::Escribir, &[]).is_err()
+            && e.proyectar_memoria(va, &v, espacio::Acceso::Ejecutar, &[]).is_err()
+            && e.proyectar_memoria(va, &v, espacio::Acceso::Leer, &[]).is_ok()
+            && e.permisos_el0(va) == Some((true, false, false))
+            && e.quitar_proyeccion(va, None, None);
+    }
+    // El origen se suelta con la vista viva: sus páginas no vuelven al repartidor y la vista las sigue viendo.
+    let antes = memoria::paginas().libres();
+    drop(a);
+    let sigue = memoria::paginas().libres() == antes && nombre(&v, 1) == *b"a0" && nombre(&v, 2) == *b"a2";
+    // Al soltar la vista, vuelven las 3 páginas de `a` y lo cobrado por los dos.
+    drop(v);
+    let vuelven = memoria::paginas().libres() == antes + 3;
+    let uso_b = c.uso().1 == 2 * 4096;
+    drop(b);
+    let cero = c.uso().1 == 0;
+    kprintln!("  vistas: orden {}, cobro {}, fuera {}, de una vista {}, sin cupo {}, solo leer {}, origen suelto {}, páginas devueltas {}, cupo a cero {}",
+        vista_bien, cobrado, fuera, de_vista, corto, proyeccion, sigue, vuelven, uso_b && cero);
+    let bien = vista_bien && cobrado && fuera && de_vista && corto && proyeccion && sigue && vuelven && uso_b && cero;
+    kprintln!("H9: vistas de memoria con páginas de otro objeto, solo de lectura: {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y

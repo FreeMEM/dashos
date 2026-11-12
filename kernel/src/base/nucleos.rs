@@ -14,10 +14,19 @@ unsafe extern "C" {
     static _secundario: u8;
 }
 
+/// El número de este núcleo: Aff0 de MPIDR_EL1, o Aff1 si la CPU marca MT (el bit 24), como el Cortex-A76 de la Pi 5,
+/// cuyos núcleos son 0x000, 0x100, 0x200 y 0x300 (arranque.s hace lo mismo).
 pub fn numero() -> u32 {
     let mpidr: u64;
     unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
-    (mpidr & 0xff) as u32
+    if mpidr & (1 << 24) != 0 { ((mpidr >> 8) & 0xff) as u32 } else { (mpidr & 0xff) as u32 }
+}
+
+/// La afinidad que pide PSCI para encender el núcleo `n`: como la de este, con `n` donde va el número.
+fn afinidad(n: u64) -> u64 {
+    let mpidr: u64;
+    unsafe { core::arch::asm!("mrs {}, mpidr_el1", out(reg) mpidr) };
+    if mpidr & (1 << 24) != 0 { n << 8 } else { n }
 }
 
 /// Cómo se encienden los otros núcleos: con la tabla de espera de la Pi, o con PSCI (U3: QEMU `virt` y las máquinas
@@ -64,7 +73,7 @@ pub fn despertar(como: Encendido) -> u32 {
         // Las tablas de arranque las leen sin caché: que estén en la memoria (dsb), y a encenderlos uno a uno.
         unsafe { core::arch::asm!("dsb sy") };
         for n in 1..4u64 {
-            let r = psci_cpu_on(como, n, entrada);
+            let r = psci_cpu_on(como, afinidad(n), entrada);
             if r != 0 {
                 kprintln!("  PSCI no enciende el núcleo {}: {}", n, r);
             }

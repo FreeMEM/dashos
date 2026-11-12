@@ -197,6 +197,7 @@ pub fn atender(marco: &mut Marco) {
         48 => maquina_estado(a[0] as u32, a[1], a[2], a[3], a[4]),
         // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
         49 => pagina_cero(a[0] as u32, a[1] as u32),
+        50 => memoria_vista(a[0], a[1], a[2], a[3]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -505,6 +506,59 @@ fn pagina_cero(permiso: u32, h: u32) -> u64 {
     match proc_.espacio.tomar().proyectar_pagina_cero(&m) {
         Ok(()) => 0,
         Err(e) => error_espacio(e),
+    }
+}
+
+/// Orígenes de una vista, como mucho (la RAM de un invitado de 1 GB en trozos de 16 MB).
+const MAX_ORIGENES: u64 = 64;
+
+/// La llamada 50: una vista, un objeto de memoria hecho con páginas de otros (`origenes`, una tabla de llaves de
+/// memoria con derecho de leer) sin copiarlas. `paginas` es una tabla de números de página de 32 bits que cuentan
+/// seguidas las páginas de los orígenes en su orden; en el orden de bytes del proceso, como las de llaves. La llave
+/// nueva solo puede leer y transferir; la vista no se proyecta para escribir ni ejecutar, ni vale como RAM de una
+/// máquina. Mantiene vivos sus orígenes. Para que el compositor lea sin copia los búferes de un invitado (H9).
+fn memoria_vista(origenes: u64, n_origenes: u64, paginas: u64, n_paginas: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if n_origenes == 0 || n_origenes > MAX_ORIGENES || n_paginas == 0 || n_paginas > MAX_MEMORIA / crate::memoria::PAGINA {
+        return E_TAMANO;
+    }
+    let (Some(tabla), Some(lista)) = (leer_usuario(origenes, 4 * n_origenes as usize), leer_usuario(paginas, 4 * n_paginas as usize))
+    else {
+        return E_ARGUMENTO;
+    };
+    let numeros = llaves_de_bytes(&tabla, proc_.big_endian);
+    let paginas = llaves_de_bytes(&lista, proc_.big_endian);
+    let mut fuentes = Vec::new();
+    if fuentes.try_reserve_exact(numeros.len()).is_err() {
+        return E_MEMORIA;
+    }
+    {
+        let t = proc_.llaves.tomar();
+        for &n in &numeros {
+            let Some((l, por)) = t.ver_con_intermediarios(n) else { return E_LLAVE };
+            // Una llave revocable no vale: la vista seguiría viendo el objeto después de revocarla.
+            if !por.is_empty() {
+                return E_ARGUMENTO;
+            }
+            let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+            if l.derechos & objetos::LEER == 0 {
+                return E_DERECHOS;
+            }
+            fuentes.push(m);
+        }
+        if t.huecos() == 0 {
+            return E_LIMITE;
+        }
+    }
+    let m = match objetos::Memoria::vista(&fuentes, &paginas, &proc_.cupo) {
+        Ok(m) => m,
+        Err(crate::memoria::FalloVista::Memoria) => return E_MEMORIA,
+        Err(_) => return E_ARGUMENTO,
+    };
+    let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER | objetos::TRANSFERIR);
+    match proc_.llaves.tomar().instalar(llave) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
     }
 }
 

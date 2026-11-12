@@ -245,6 +245,15 @@ impl Paginas {
         );
     }
 
+    /// Aparta un tramo para que no se reparta (la pantalla del firmware, si cae en RAM del árbol). Justo tras `iniciar`.
+    /// Queda también como reserva: así se puede dar como memoria del firmware (`proyectar_firmware`).
+    pub fn apartar(&mut self, dir: u64, tam: u64) {
+        self.marcar_tramo(dir, tam, true);
+        if let Some(r) = self.reservadas.iter_mut().find(|r| r.1 == 0) {
+            *r = (dir, tam);
+        }
+    }
+
     /// Los tramos de RAM del árbol (física, tamaño); los huecos van a (0, 0). Para la traducción de EL2 (hiper.rs).
     pub(super) fn tramos_ram(&self) -> [(u64, u64); MAX_TRAMOS] {
         self.ram
@@ -445,6 +454,27 @@ pub struct Memoria {
     permiso: Option<alloc::sync::Arc<PermisoDma>>,
     /// Lo cobrado a su grupo (C42); se devuelve al soltarse, o al salir de la cuarentena si es DMA (M7).
     cargo: Option<crate::cupo::Cargo>,
+    /// Si es una vista (llamada 50): los objetos de los que salen sus páginas. Los mantiene vivos mientras ella viva,
+    /// así que sus páginas no vuelven al repartidor ni se dan a otro mientras alguien las vea por la vista. Una vista
+    /// no devuelve páginas al soltarse: lo hacen sus orígenes, cuando se suelta el último que los tiene.
+    origenes: alloc::vec::Vec<alloc::sync::Arc<Memoria>>,
+}
+
+/// Lo que no deja hacer una vista (llamada 50).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FalloVista {
+    /// Un origen es memoria DMA o es otra vista.
+    Origen,
+    /// Un número de página que no está en los orígenes.
+    Fuera,
+    /// No cabe en el cupo o en el montón.
+    Memoria,
+}
+
+/// Lo que cuesta una vista en el cupo de quien la pide: lo fijo, más su lista de páginas (8 bytes cada una) y de
+/// orígenes. No toma páginas nuevas.
+pub fn coste_vista(paginas: usize, origenes: usize) -> u64 {
+    256 + 8 * paginas as u64 + 8 * origenes as u64
 }
 
 impl Memoria {
@@ -458,7 +488,7 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
             m.paginas.push(pagina_usuario()?);
@@ -471,7 +501,7 @@ impl Memoria {
     pub fn nueva_en_llamada(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
         m.paginas.try_reserve_exact(n).ok()?;
         for i in 0..n {
             if i % 64 == 63 {
@@ -531,7 +561,48 @@ impl Memoria {
         for i in 0..n as u64 {
             paginas.push(base + i * PAGINA);
         }
-        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), cargo: Some(cargo) })
+        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), cargo: Some(cargo), origenes: alloc::vec::Vec::new() })
+    }
+
+    /// Una vista (llamada 50): un objeto de memoria hecho con páginas de otros, sin copiarlas. `numeros` dice cuáles,
+    /// contando seguidas las páginas de los `origenes` en su orden (la 0 es la primera del primero). Una página puede
+    /// salir varias veces. Los orígenes no pueden ser memoria DMA (se proyecta sin caché) ni otras vistas (así no hay
+    /// cadenas que soltar). Solo se cobra lo que mide la lista ([`coste_vista`]); las páginas siguen cobradas al grupo
+    /// de quien creó cada origen, hasta que se suelte el último que lo tiene, la vista también.
+    pub fn vista(origenes: &[alloc::sync::Arc<Memoria>], numeros: &[u32], cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Result<Self, FalloVista> {
+        if origenes.iter().any(|o| o.bus.is_some() || o.es_vista()) {
+            return Err(FalloVista::Origen);
+        }
+        if numeros.is_empty() {
+            return Err(FalloVista::Fuera);
+        }
+        // Sin repetir orígenes: el mismo objeto dos veces solo cuenta una en la lista que se guarda.
+        let mut propios: alloc::vec::Vec<alloc::sync::Arc<Memoria>> = alloc::vec::Vec::new();
+        propios.try_reserve_exact(origenes.len()).map_err(|_| FalloVista::Memoria)?;
+        let mut paginas = alloc::vec::Vec::new();
+        paginas.try_reserve_exact(numeros.len()).map_err(|_| FalloVista::Memoria)?;
+        for &n in numeros {
+            let mut n = n as usize;
+            let mut fisica = None;
+            for o in origenes {
+                if n < o.paginas.len() {
+                    fisica = Some(o.paginas[n]);
+                    if !propios.iter().any(|p| alloc::sync::Arc::ptr_eq(p, o)) {
+                        propios.push(o.clone());
+                    }
+                    break;
+                }
+                n -= o.paginas.len();
+            }
+            paginas.push(fisica.ok_or(FalloVista::Fuera)?);
+        }
+        let cargo = cupo.cobrar(coste_vista(numeros.len(), propios.len())).ok_or(FalloVista::Memoria)?;
+        Ok(Self { paginas, bus: None, permiso: None, cargo: Some(cargo), origenes: propios })
+    }
+
+    /// Si es una vista: solo se proyecta para leer, y no vale como RAM de un invitado.
+    pub fn es_vista(&self) -> bool {
+        !self.origenes.is_empty()
     }
 
     /// La dirección de bus si es memoria DMA.
@@ -549,8 +620,12 @@ impl Memoria {
         self.copiar(desde, buf.len(), |pagina, en_buf, n| buf[en_buf..en_buf + n].copy_from_slice(&pagina[..n]))
     }
 
-    /// Escribe `datos` desde el byte `desde`. Falso si se sale del objeto.
+    /// Escribe `datos` desde el byte `desde`. Falso si se sale del objeto o es una vista.
     pub fn escribir(&self, desde: usize, datos: &[u8]) -> bool {
+        // Una vista es para leer (llamada 50): ni el kernel escribe por ella.
+        if self.es_vista() {
+            return false;
+        }
         self.copiar_mut(desde, datos.len(), |pagina, en_datos, n| pagina[..n].copy_from_slice(&datos[en_datos..en_datos + n]))
     }
 
@@ -594,6 +669,10 @@ impl Memoria {
 
 impl Drop for Memoria {
     fn drop(&mut self) {
+        if self.es_vista() {
+            // Sus páginas son de sus orígenes, que se sueltan después (con ellos, si era lo último que los tenía).
+            return;
+        }
         if let Some(permiso) = self.permiso.take() {
             // Memoria DMA: a la cuarentena de su permiso (M5). Son seguidas. Si no hay memoria para apuntarlas, se
             // quedan sin devolver: mejor perderlas que dárselas a otro con el aparato escribiendo.

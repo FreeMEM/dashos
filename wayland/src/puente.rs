@@ -7,6 +7,11 @@
 //! rellena (`MEMORIA_NUEVA`, `MEMORIA_ESCRIBIR`), y los mensajes de Wayland llevan esos números como llaves. El lado
 //! del invitado es `puente/` (con `std`, para Linux).
 //!
+//! **Sin copia** (`VISTAS`, `MEMORIA_VISTA`): si este lado lo anuncia, el invitado puede dar una memoria como la lista
+//! de páginas físicas de su RAM donde está (un pool de `wl_shm` fijado en memoria), y este lado hace con ellas una
+//! vista de solo lectura (llamada 50 del kernel) en vez de un objeto nuevo que llenar. Las páginas se comprueban
+//! contra la RAM del invitado; si no valen o no se puede, hay una memoria normal y se le dice (`VISTA_NO`): copia.
+//!
 //! **El lado de DashOS** ([`Puente`]): cada conexión del invitado es una subconexión del compositor
 //! (`canal::TROZO_SUB_*`, por la llave "ventanas" de la caja), y cada memoria, un objeto de memoria de DashOS que el
 //! compositor lee con una copia de solo lectura de su llave. Lo que llega del invitado no se cree: tramas que no
@@ -33,6 +38,14 @@ pub const MEMORIA_ESCRIBIR: u8 = 5;
 pub const MEMORIA_SOLTAR: u8 = 6;
 /// Crecer una memoria: número (u32) y tamaño nuevo (u64).
 pub const MEMORIA_CRECER: u8 = 7;
+/// Una memoria que ya está en la RAM del invitado, sin copia: número (u32), tamaño (u64), n (u32) y n direcciones
+/// físicas del invitado (u64, de página entera), una por página, en orden. Solo tras `VISTAS`.
+pub const MEMORIA_VISTA: u8 = 8;
+/// De DashOS al invitado, al conectar: se admiten `MEMORIA_VISTA`.
+pub const VISTAS: u8 = 9;
+/// De DashOS al invitado: la vista de esa memoria (número, u32) no se hizo; en su lugar hay una memoria normal del
+/// mismo tamaño, que se llena con `MEMORIA_ESCRIBIR` como siempre.
+pub const VISTA_NO: u8 = 10;
 /// H9, el portapapeles (del 12 en adelante: del 8 al 10 son las vistas sin copia de caja-linux-sincopia): un tubo (lo que en Linux es una tubería y en DashOS un canal: bytes que van en un sentido hasta
 /// que se cierra). Número (u32). Lo manda el lado que tiene un extremo donde hay que escribir lo que llegue (en Linux,
 /// la tubería que un programa da en `wl_data_offer.receive`; en DashOS, el canal que da un programa nativo para pegar).
@@ -193,6 +206,11 @@ pub trait Sistema {
     fn memoria_tamano(&mut self, llave: u32) -> Option<u64>;
     /// Una copia de solo lectura de la llave, para dársela al compositor.
     fn copia_lectura(&mut self, llave: u32) -> Option<u32>;
+    /// Una vista de solo lectura de la RAM del invitado: las páginas que empiezan en esas direcciones físicas suyas, en
+    /// orden. `None` si no se puede (sin vistas, o direcciones que no son de su RAM): el invitado copiará.
+    fn memoria_vista(&mut self, _direcciones: &[u64]) -> Option<u32> {
+        None
+    }
     /// Una copia del canal por el que contesta el compositor.
     fn copia_respuesta(&mut self) -> Option<u32>;
     fn cerrar(&mut self, llave: u32);
@@ -263,6 +281,8 @@ pub const MAX_DEL_COMPOSITOR: u64 = 1 << 20;
 struct Memoria {
     llave: u32,
     tam: u64,
+    /// Una vista de la RAM del invitado: no se escribe, y no cuenta en `MAX_MEMORIA_TOTAL` (no toma memoria nueva).
+    vista: bool,
 }
 
 /// Cuentas para el registro y las pruebas.
@@ -278,6 +298,10 @@ pub struct Cuentas {
     /// Tubos del portapapeles (H9) y los bytes que pasaron por ellos.
     pub tubos: u64,
     pub bytes_de_tubos: u64,
+    /// De ellas, vistas de la RAM del invitado (sin copia).
+    pub vistas: u64,
+    /// Vistas que se pidieron y no se hicieron (el invitado copia en su lugar).
+    pub vistas_no: u64,
     /// Lo que se tiró por no cuadrar: memorias o conexiones que no existen, escrituras fuera, tamaños de más.
     pub malas: u64,
     /// Clientes cerrados por algo suyo (una memoria que no existe, salida de más...).
@@ -343,7 +367,7 @@ impl<S: Sistema> Puente<S> {
     fn pieza(&mut self, p: Pieza) {
         match p {
             Pieza::Memoria { numero, desde, bytes } => match self.memorias.get(&numero) {
-                Some(m) if desde.checked_add(bytes.len() as u64).is_some_and(|f| f <= m.tam) => {
+                Some(m) if !m.vista && desde.checked_add(bytes.len() as u64).is_some_and(|f| f <= m.tam) => {
                     let llave = m.llave;
                     self.sis.memoria_escribir(llave, desde, bytes);
                     self.cuentas.bytes_de_memoria += bytes.len() as u64;
@@ -365,6 +389,11 @@ impl<S: Sistema> Puente<S> {
     /// El número de subconexión del cliente `c` del invitado.
     fn sub(&self, c: u32) -> u32 {
         self.prefijo << 16 | c
+    }
+
+    /// Dice al invitado que este lado hace vistas (`MEMORIA_VISTA`): su `Sistema` sabe hacerlas.
+    pub fn anunciar_vistas(&mut self) {
+        self.al_invitado(VISTAS, 0, &[]);
     }
 
     /// El prefijo de este transporte (para repartir lo que llega del compositor).
@@ -451,12 +480,42 @@ impl<S: Sistema> Puente<S> {
                 }
                 match self.sis.memoria_nueva(tam) {
                     Some(llave) => {
-                        self.memorias.insert(n, Memoria { llave, tam });
+                        self.memorias.insert(n, Memoria { llave, tam, vista: false });
                         self.total += tam;
                         self.cuentas.memorias += 1;
                     }
                     None => self.cuentas.malas += 1,
                 }
+            }
+            MEMORIA_VISTA => {
+                let (Some(n), Some(tam), Some(k)) = (Self::u32_en(d, 0), Self::u64_en(d, 4), Self::u32_en(d, 12)) else {
+                    self.cuentas.malas += 1;
+                    return;
+                };
+                self.soltar_memoria(n);
+                // Una página por cada 4 KB del tamaño, ni una más; tantas como dice; y como mucho `MAX_MEMORIA`.
+                let k = k as usize;
+                if tam == 0 || tam > MAX_MEMORIA || k as u64 != tam.div_ceil(4096) || d.len() != 16 + 8 * k || self.memorias.len() >= MAX_MEMORIAS {
+                    self.cuentas.malas += 1;
+                    return;
+                }
+                let direcciones: Vec<u64> = d[16..].chunks_exact(8).map(|b| u64::from_le_bytes(b.try_into().unwrap())).collect();
+                if let Some(llave) = self.sis.memoria_vista(&direcciones) {
+                    self.memorias.insert(n, Memoria { llave, tam, vista: true });
+                    self.cuentas.memorias += 1;
+                    self.cuentas.vistas += 1;
+                    return;
+                }
+                // No se pudo: una memoria normal y que copie. Si tampoco cabe, no hay memoria (como `MEMORIA_NUEVA`).
+                self.cuentas.vistas_no += 1;
+                if self.total + tam <= MAX_MEMORIA_TOTAL
+                    && let Some(llave) = self.sis.memoria_nueva(tam)
+                {
+                    self.memorias.insert(n, Memoria { llave, tam, vista: false });
+                    self.total += tam;
+                    self.cuentas.memorias += 1;
+                }
+                self.al_invitado(VISTA_NO, 0, &n.to_le_bytes());
             }
             MEMORIA_SOLTAR => match Self::u32_en(d, 0) {
                 Some(n) => self.soltar_memoria(n),
@@ -472,7 +531,9 @@ impl<S: Sistema> Puente<S> {
                 if let Some(m) = self.memorias.get_mut(&n) {
                     let cabe = m.tam.next_multiple_of(4096);
                     if tam <= cabe {
-                        self.total = self.total - m.tam + tam.max(1);
+                        if !m.vista {
+                            self.total = self.total - m.tam + tam.max(1);
+                        }
                         m.tam = tam.max(1);
                     } else {
                         self.cuentas.malas += 1;
@@ -653,7 +714,9 @@ impl<S: Sistema> Puente<S> {
 
     fn soltar_memoria(&mut self, n: u32) {
         if let Some(m) = self.memorias.remove(&n) {
-            self.total -= m.tam;
+            if !m.vista {
+                self.total -= m.tam;
+            }
             self.sis.cerrar(m.llave);
         }
     }
@@ -832,6 +895,8 @@ mod pruebas {
         enviados: Vec<(Vec<u8>, Vec<u32>)>,
         lleno: bool,
         copias: BTreeMap<u32, u32>,
+        /// Vistas hechas: llave → direcciones.
+        vistas: BTreeMap<u32, Vec<u64>>,
         /// Canales de mentira (H9, tubos): llave → (mensajes que esperan, el otro extremo cerrado).
         canales: BTreeMap<u32, (VecDeque<Vec<u8>>, bool)>,
         /// Extremo → su par.
@@ -845,6 +910,9 @@ mod pruebas {
             self.canales.get_mut(&llave).unwrap().0.push_back(d.to_vec());
         }
     }
+
+    /// La RAM del invitado de mentira: 64 MB desde 1 GB.
+    const RAM: u64 = 0x4000_0000;
 
     impl Sistema for Falso {
         fn memoria_nueva(&mut self, tam: u64) -> Option<u32> {
@@ -869,6 +937,15 @@ mod pruebas {
         }
         fn copia_respuesta(&mut self) -> Option<u32> {
             self.siguiente += 1;
+            Some(self.siguiente)
+        }
+        fn memoria_vista(&mut self, direcciones: &[u64]) -> Option<u32> {
+            if !direcciones.iter().all(|&d| d % 4096 == 0 && (RAM..RAM + (64 << 20)).contains(&d)) {
+                return None;
+            }
+            self.siguiente += 1;
+            self.vistas.insert(self.siguiente, direcciones.to_vec());
+            self.memorias.insert(self.siguiente, vec![0; direcciones.len() * 4096]);
             Some(self.siguiente)
         }
         fn cerrar(&mut self, llave: u32) {
@@ -936,6 +1013,96 @@ mod pruebas {
         d.extend_from_slice(&desde.to_le_bytes());
         d.extend_from_slice(b);
         trama(MEMORIA_ESCRIBIR, 0, &d)
+    }
+
+    fn mem_vista(n: u32, tam: u64, dirs: &[u64]) -> Vec<u8> {
+        let mut d = n.to_le_bytes().to_vec();
+        d.extend_from_slice(&tam.to_le_bytes());
+        d.extend_from_slice(&(dirs.len() as u32).to_le_bytes());
+        for x in dirs {
+            d.extend_from_slice(&x.to_le_bytes());
+        }
+        trama(MEMORIA_VISTA, 0, &d)
+    }
+
+    /// Las tramas para el invitado, partidas a mano (`VISTAS` y `VISTA_NO` no las lee el `Lector` de este lado).
+    fn tramas_al_invitado<S: Sistema>(p: &mut Puente<S>) -> Vec<(u8, u32, Vec<u8>)> {
+        let mut salida = vec![0u8; 1 << 16];
+        let n = p.enviar(&mut salida);
+        let mut piezas = Vec::new();
+        let mut i = 0;
+        while i + CABECERA <= n {
+            let largo = u32::from_le_bytes(salida[i + 5..i + 9].try_into().unwrap()) as usize;
+            piezas.push((salida[i], u32::from_le_bytes(salida[i + 1..i + 5].try_into().unwrap()), salida[i + 9..i + 9 + largo].to_vec()));
+            i += CABECERA + largo;
+        }
+        piezas
+    }
+
+    /// Sin copia: el puente anuncia las vistas; una memoria del invitado dada por sus páginas físicas es una vista, que
+    /// va al compositor como cualquier memoria, no se escribe y no cuenta en el total. Unas páginas que no son de su
+    /// RAM dan una memoria normal y `VISTA_NO` (el invitado copia). Las tramas mal hechas no hacen nada.
+    #[test]
+    fn vistas() {
+        let mut p = Puente::nuevo(Falso::default(), 0);
+        p.anunciar_vistas();
+        assert_eq!(tramas_al_invitado(&mut p), vec![(VISTAS, 0, vec![])]);
+        let mut f = trama(CONECTAR, 1, &[]);
+        f.extend(mem_vista(5, 3 * 4096 - 100, &[RAM + 0x5000, RAM, RAM + 0x5000]));
+        f.extend(mem_escribir(5, 0, b"no se escribe en una vista"));
+        f.extend(trama(DATOS, 1, &juntar_datos(&[5], b"pool")));
+        p.recibir(&f).unwrap();
+        let llave = p.sis.copias[&p.sis.enviados[1].1[0]];
+        assert_eq!(p.sis.vistas[&llave], vec![RAM + 0x5000, RAM, RAM + 0x5000]);
+        assert!(p.sis.memorias[&llave].iter().all(|&b| b == 0));
+        assert_eq!(p.vivos(), (1, 1, 0), "una vista no cuenta en el total");
+        assert_eq!((p.cuentas.vistas, p.cuentas.malas), (1, 1));
+        assert!(tramas_al_invitado(&mut p).is_empty());
+        // Crecer dentro de sus páginas vale; soltarla, también, y el total sigue a cero.
+        let mut d = 5u32.to_le_bytes().to_vec();
+        d.extend_from_slice(&(3 * 4096u64).to_le_bytes());
+        p.recibir(&trama(MEMORIA_CRECER, 0, &d)).unwrap();
+        p.recibir(&trama(MEMORIA_SOLTAR, 0, &5u32.to_le_bytes())).unwrap();
+        assert_eq!(p.vivos(), (1, 0, 0));
+        // Páginas fuera de su RAM, sin alinear o del kernel: memoria normal, VISTA_NO, y se copia como siempre.
+        for (n, dirs) in [(6u32, vec![0u64]), (7, vec![RAM + 1]), (8, vec![u64::MAX & !0xfff])] {
+            p.recibir(&mem_vista(n, 4096, &dirs)).unwrap();
+            assert_eq!(tramas_al_invitado(&mut p), vec![(VISTA_NO, 0, n.to_le_bytes().to_vec())]);
+        }
+        assert_eq!(p.vivos(), (1, 3, 3 * 4096));
+        p.recibir(&mem_escribir(6, 0, b"copiado")).unwrap();
+        p.recibir(&trama(DATOS, 1, &juntar_datos(&[6], b"pool"))).unwrap();
+        let llave = p.sis.copias[&p.sis.enviados.last().unwrap().1[0]];
+        assert_eq!(&p.sis.memorias[&llave][..7], b"copiado");
+        assert_eq!(p.cuentas.vistas_no, 3);
+        // Mal hechas: tamaño 0 o de más, páginas que no casan con el tamaño, una lista más corta o más larga de lo que
+        // dice, un número de páginas enorme. Ninguna hace memoria.
+        let antes = p.vivos();
+        let malas = p.cuentas.malas;
+        let mut f = mem_vista(20, 0, &[]);
+        f.extend(mem_vista(21, MAX_MEMORIA + 4096, &vec![RAM; 4097]));
+        f.extend(mem_vista(22, 8192, &[RAM]));
+        f.extend(mem_vista(23, 4096, &[RAM, RAM]));
+        let mut corta = mem_vista(24, 8192, &[RAM, RAM]);
+        corta.truncate(corta.len() - 8);
+        let largo = (corta.len() - CABECERA) as u32;
+        corta[5..9].copy_from_slice(&largo.to_le_bytes());
+        f.extend(corta);
+        let mut enorme = 25u32.to_le_bytes().to_vec();
+        enorme.extend_from_slice(&4096u64.to_le_bytes());
+        enorme.extend_from_slice(&u32::MAX.to_le_bytes());
+        f.extend(trama(MEMORIA_VISTA, 0, &enorme));
+        f.extend(trama(MEMORIA_VISTA, 0, &[1, 2, 3]));
+        p.recibir(&f).unwrap();
+        assert_eq!(p.vivos(), antes);
+        assert_eq!(p.cuentas.malas, malas + 7);
+        // Más vistas que `MAX_MEMORIAS`: las de más no se hacen.
+        let mut f = Vec::new();
+        for i in 0..MAX_MEMORIAS as u32 + 10 {
+            f.extend(mem_vista(1000 + i, 4096, &[RAM]));
+        }
+        p.recibir(&f).unwrap();
+        assert_eq!(p.vivos().1, MAX_MEMORIAS);
     }
 
     /// Las tramas sacadas a trozos de cualquier tamaño dan lo mismo que de una vez; la memoria sale según llega.

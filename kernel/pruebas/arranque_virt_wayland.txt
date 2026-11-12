@@ -6,6 +6,8 @@
 # terminal de la caja (la de siempre y la primaria) y pega lo que se copia en ella. Hostiles de Linux: decoraciones y
 # tipos rotos (el compositor los corta), una fuente que escribe sin fin (se le corta) y otra que nunca cierra (se deja de
 # esperar). Después, otra ventana de Linux sale como siempre, y GTK4 (gtk4-widget-factory) abre su ventana.
+# Sin copia: el puente da los pools de wl_shm por sus páginas físicas y el compositor los lee en la RAM del invitado
+# (vistas, llamada 50); `ventana_wayland` se mide sin copia y con copia, de 320 x 240 y de 1280 x 720.
 Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] arch: la partición de la caja Linux, 6135 MB, como disco del invitado
 ~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
@@ -16,6 +18,7 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] wayland: el puente de Linux conecta por vsock
 ~[caja-linux] linux: active
 ~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
+~[caja-linux] linux: puente hostil: vistas:
 ~[caja-linux] linux: puente hostil: hecho
 ~ventana_wayland: decoración del compositor
 ~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
@@ -27,6 +30,10 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[compositor] arrastre:
 ~ventana_wayland: el compositor pide cerrar
 ~adiós
+~ventana_wayland: medida de 320 x 240
+~ventana_wayland: medida de 1280 x 720
+~puente: DashOS lee los búferes sin copia
+~puente: cliente 1: primer cuadro sin copia
 ~foot: lista
 ~[caja-linux] linux: Hola desde foot, en Arch Linux ARM, en DashOS
 ~[caja-linux] linux: primaria: Hola desde foot, en Arch Linux ARM, en DashOS
@@ -45,4 +52,5 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[compositor] emergente de caja-linux en
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
-~[caja-linux] wayland:
+~[caja-linux] wayland: 
+~sin copia, vistas de la RAM del invitado

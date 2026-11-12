@@ -121,6 +121,13 @@ pub fn memoria_quitar(direccion: usize) -> i64 {
     llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64
 }
 
+/// Una vista (llamada 50): un objeto de memoria con páginas de otros, sin copiarlas. `paginas` son números de página
+/// que cuentan seguidas las de `origenes` (llaves de memoria con derecho de leer) en su orden. La llave nueva solo lee
+/// y transfiere, y mantiene vivos los orígenes. Devuelve la llave o un error negativo.
+pub fn memoria_vista(origenes: &[u32], paginas: &[u32]) -> i64 {
+    llamada(50, [origenes.as_ptr() as u64, origenes.len() as u64, paginas.as_ptr() as u64, paginas.len() as u64, 0]).0 as i64
+}
+
 /// Proyecta los registros de un aparato (llave de registros) en `direccion` (C20).
 pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
     llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64
@@ -279,8 +286,9 @@ pub mod maquina {
 
     /// Lo que necesita el servicio de la caja Linux además de la RAM de su invitado: las tablas de la etapa 2, su
     /// montón (el disco del invitado, la ventana de la terminal), las pilas de sus hilos y las memorias del puente de
-    /// Wayland (los búferes de los programas gráficos de Linux, hasta `wayland::puente::MAX_MEMORIA_TOTAL`, 24 MB).
-    pub const MARGEN_SERVICIO: u64 = 56 << 20;
+    /// Wayland (los búferes de los programas gráficos de Linux, hasta `wayland::puente::MAX_MEMORIA_TOTAL`, 24 MB) y
+    /// la virtio-gpu de la caja (S25: 8 MB de recursos y 1,2 MB de la ventana de su pantalla).
+    pub const MARGEN_SERVICIO: u64 = 66 << 20;
 
     /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisión del usuario del
     /// 2026-11-12): 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con menos. La caja pide eso más

@@ -11,8 +11,14 @@
 //!
 //! Los mensajes pasan tal cual. Lo único que no puede cruzar son los descriptores:
 //! - **La memoria de `wl_shm`**: el puente proyecta el pool del programa y, en cada `wl_surface.commit`, copia al otro
-//!   lado el búfer que se va a ver. Así no hace falta memoria compartida entre la máquina virtual y DashOS (llegará
-//!   con virtio, y entonces sin copia).
+//!   lado lo dañado del búfer que se va a ver.
+//! - **Sin copia**, si DashOS lo dice (`VISTAS`): el puente fija el pool en memoria (`mlock`: Linux ya no lo saca ni
+//!   lo mueve), busca en `/proc/self/pagemap` en qué páginas físicas del invitado está (hace falta ser root) y se las
+//!   manda (`MEMORIA_VISTA`); DashOS hace con ellas una vista de solo lectura de la RAM del invitado y el compositor lee
+//!   el búfer ahí mismo. En cada commit se comprueba que siguen siendo esas páginas (si Linux las hubiera movido, la
+//!   ventana enseñaría lo que haya ahora en las viejas: se cierra el programa). Si algo falla (sin permiso, DashOS dice
+//!   `VISTA_NO`...), se copia como siempre. Con `/run/dashos-puente-copia`, los programas que conecten después van con
+//!   copia (para medir las dos cosas en la misma prueba).
 //! - **Los búferes de dmabuf** (G6, los de Mesa): igual que un pool de `wl_shm`, uno por búfer; antes de copiar se
 //!   espera a que la tarjeta acabe de pintar (`DMA_BUF_IOCTL_SYNC`). Solo con `create_immed`, que es lo que usa Mesa.
 //! - **Otros descriptores** (un mapa de teclado, por ejemplo): se copia lo que tienen, una vez.
@@ -80,6 +86,16 @@ fn esperar_tarjeta(fd: RawFd) {
 
 struct Programa {
     sock: UnixStream,
+    /// Con copia aunque DashOS admita vistas (`FORZAR_COPIA`).
+    copia: bool,
+    /// Memorias del otro lado que son vistas (sin copia) → las páginas físicas del invitado que se mandaron.
+    vistas: HashMap<u32, Vec<u64>>,
+    /// Cuadros que se vieron sin copiar nada.
+    sin_copia: u64,
+    /// Tiempo de CPU del puente (µs) cuando conectó, para medir lo que gasta con él.
+    cpu0: u64,
+    /// Hay que cerrarlo (sus páginas se movieron).
+    cerrar: bool,
     entrada: Vec<u8>,
     /// Lo que llegó de DashOS para él y aún no es un mensaje entero (para seguir los objetos que crea el compositor).
     eventos: Vec<u8>,
@@ -118,7 +134,8 @@ impl Programa {
     fn nuevo(sock: UnixStream) -> Self {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
-        Self { sock, entrada: Vec::new(), eventos: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
+        let copia = std::path::Path::new(FORZAR_COPIA).exists();
+        Self { sock, copia, vistas: HashMap::new(), sin_copia: 0, cpu0: cpu_us(), cerrar: false, entrada: Vec::new(), eventos: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
     }
 }
 
@@ -127,8 +144,40 @@ struct Puente {
     siguiente_memoria: u32,
     /// Los tubos del portapapeles (H9).
     tubos: p::tubos::Tubos,
+    /// DashOS admite vistas (dijo `VISTAS`).
+    vistas: bool,
+    /// `/proc/self/pagemap`, para saber las páginas físicas de un pool.
+    pagemap: Option<std::fs::File>,
 }
 
+/// Si existe este fichero, los programas que conecten van con copia aunque DashOS admita vistas.
+const FORZAR_COPIA: &str = "/run/dashos-puente-copia";
+/// Lo más que mide una vista (el tope de una memoria de DashOS).
+const MAX_VISTA: usize = 16 << 20;
+
+/// Tiempo de CPU del puente (de usuario y de sistema), en µs.
+fn cpu_us() -> u64 {
+    let mut r: libc::rusage = unsafe { std::mem::zeroed() };
+    unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut r) };
+    let us = |t: libc::timeval| t.tv_sec as u64 * 1_000_000 + t.tv_usec as u64;
+    us(r.ru_utime) + us(r.ru_stime)
+}
+
+/// Las direcciones físicas de las `n` páginas proyectadas desde `base`, por `/proc/self/pagemap` (64 bits por página:
+/// el 63, presente; del 0 al 54, el número de página física, que solo se ve siendo root). `None` si alguna no está o
+/// no se ve.
+fn leer_pagemap(pagemap: &std::fs::File, base: usize, n: usize) -> Option<Vec<u64>> {
+    use std::os::unix::fs::FileExt;
+    let mut b = vec![0u8; n * 8];
+    pagemap.read_exact_at(&mut b, (base / 4096 * 8) as u64).ok()?;
+    b.chunks_exact(8)
+        .map(|e| {
+            let e = u64::from_le_bytes(e.try_into().unwrap());
+            let pfn = e & ((1 << 55) - 1);
+            (e >> 63 == 1 && pfn != 0).then_some(pfn << 12)
+        })
+        .collect()
+}
 impl Puente {
     fn memoria(&mut self) -> u32 {
         self.siguiente_memoria += 1;
@@ -150,6 +199,39 @@ impl Puente {
         let mut d = numero.to_le_bytes().to_vec();
         d.extend_from_slice(&tamano.to_le_bytes());
         self.trama(p::MEMORIA_NUEVA, 0, &d);
+    }
+
+    fn memoria_vista(&mut self, numero: u32, tamano: u64, paginas: &[u64]) {
+        let mut d = numero.to_le_bytes().to_vec();
+        d.extend_from_slice(&tamano.to_le_bytes());
+        d.extend_from_slice(&(paginas.len() as u32).to_le_bytes());
+        for x in paginas {
+            d.extend_from_slice(&x.to_le_bytes());
+        }
+        self.trama(p::MEMORIA_VISTA, 0, &d);
+    }
+
+    /// Las páginas físicas del invitado de los `tamano` bytes del pool `fd`, proyectado en `base`, fijadas en memoria
+    /// (`mlock`) para que Linux no las saque ni las mueva mientras la proyección viva. `None` si no se puede (DashOS no
+    /// admite vistas, sin permiso para verlas, más de `MAX_VISTA`...): entonces se copia.
+    fn fisicas(&self, fd: RawFd, base: *mut libc::c_void, tamano: usize) -> Option<Vec<u64>> {
+        let pagemap = self.pagemap.as_ref().filter(|_| self.vistas)?;
+        if base == libc::MAP_FAILED || tamano == 0 || tamano > MAX_VISTA {
+            return None;
+        }
+        // Páginas de verdad en los huecos del memfd (sin cambiar lo que tiene), y fijadas: así cada página del pool es
+        // una página física suya y no se va a otra.
+        unsafe { libc::fallocate(fd, libc::FALLOC_FL_KEEP_SIZE, 0, tamano as libc::off_t) };
+        if unsafe { libc::mlock(base, tamano) } != 0 {
+            return None;
+        }
+        let n = tamano.div_ceil(4096);
+        let paginas = leer_pagemap(pagemap, base as usize, n)?;
+        // Dos páginas del pool en la misma física sería la página de ceros compartida, no la del memfd: con copia.
+        let mut vistas = paginas.clone();
+        vistas.sort_unstable();
+        vistas.dedup();
+        (vistas.len() == n).then_some(paginas)
     }
 
     /// Suelta un pool: su proyección, su descriptor y sus memorias del otro lado.
@@ -228,7 +310,13 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                 let (id, tamano) = (args[0].uint(), args[2].uint() as usize);
                 let base = unsafe { libc::mmap(std::ptr::null_mut(), tamano.max(1), libc::PROT_READ, libc::MAP_SHARED, fds[0], 0) };
                 let memoria = pu.memoria();
-                pu.memoria_nueva(memoria, tamano as u64);
+                match (!pr.copia).then(|| pu.fisicas(fds[0], base, tamano)).flatten() {
+                    Some(paginas) => {
+                        pu.memoria_vista(memoria, tamano as u64, &paginas);
+                        pr.vistas.insert(memoria, paginas);
+                    }
+                    None => pu.memoria_nueva(memoria, tamano as u64),
+                }
                 if base != libc::MAP_FAILED {
                     let capacidad = tamano.max(1).next_multiple_of(4096);
                     pr.pools.insert(id, Pool { base, tamano, fd: fds[0], memoria, dmabuf: false, capacidad, shm: objeto, alias: Vec::new(), viejas: Vec::new(), vivos: 0, destruido: false });
@@ -240,8 +328,14 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
             ("wl_shm_pool", wl_shm_pool::req::RESIZE) if !args.is_empty() => {
                 if let Some(pool) = pr.pools.get_mut(&objeto) {
                     let nuevo = args[0].uint() as usize;
+                    // La proyección nueva antes de quitar la vieja: las páginas de una vista no quedan sin fijar ni un
+                    // momento.
+                    let base = unsafe { libc::mmap(std::ptr::null_mut(), nuevo.max(1), libc::PROT_READ, libc::MAP_SHARED, pool.fd, 0) };
+                    if base != libc::MAP_FAILED && pr.vistas.contains_key(&pool.memoria) {
+                        unsafe { libc::mlock(base, nuevo.max(1)) };
+                    }
                     unsafe { libc::munmap(pool.base, pool.tamano.max(1)) };
-                    pool.base = unsafe { libc::mmap(std::ptr::null_mut(), nuevo.max(1), libc::PROT_READ, libc::MAP_SHARED, pool.fd, 0) };
+                    pool.base = base;
                     pool.tamano = nuevo;
                     if nuevo <= pool.capacidad {
                         let mut d = pool.memoria.to_le_bytes().to_vec();
@@ -251,11 +345,19 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                         // No cabe: una memoria nueva con todo lo del pool y, en vez del `resize`, un `create_pool` sobre
                         // ella con un número propio. El viejo sigue para los búferes que ya tenía.
                         let memoria = pu.memoria();
-                        pu.memoria_nueva(memoria, nuevo as u64);
-                        if pool.base != libc::MAP_FAILED {
-                            let bytes = unsafe { std::slice::from_raw_parts(pool.base as *const u8, nuevo) };
-                            p::escribir_memoria(&mut pu.transporte, memoria, 0, bytes).expect("el transporte se cerró");
-                            pr.copiado += nuevo as u64;
+                        match (!pr.copia).then(|| pu.fisicas(pool.fd, pool.base, nuevo)).flatten() {
+                            Some(paginas) => {
+                                pu.memoria_vista(memoria, nuevo as u64, &paginas);
+                                pr.vistas.insert(memoria, paginas);
+                            }
+                            None => {
+                                pu.memoria_nueva(memoria, nuevo as u64);
+                                if pool.base != libc::MAP_FAILED {
+                                    let bytes = unsafe { std::slice::from_raw_parts(pool.base as *const u8, nuevo) };
+                                    p::escribir_memoria(&mut pu.transporte, memoria, 0, bytes).expect("el transporte se cerró");
+                                    pr.copiado += nuevo as u64;
+                                }
+                            }
                         }
                         let id = pr.propio;
                         pr.propio -= 1;
@@ -379,7 +481,24 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                             }
                             _ => None,
                         };
-                        if let Some(pl) = pr.pools.get(&pool) {
+                        if let (Some(pl), Some(paginas)) = (pr.pools.get(&pool), pr.vistas.get(&memoria)) {
+                            // Sin copia: el compositor lo lee en la RAM del invitado. Solo se comprueba que el búfer
+                            // sigue en las páginas que se mandaron.
+                            let (a, z) = (desde / 4096, (desde + largo).div_ceil(4096).min(paginas.len()));
+                            let iguales = a < z
+                                && pl.base != libc::MAP_FAILED
+                                && pu.pagemap.as_ref().and_then(|f| leer_pagemap(f, pl.base as usize + a * 4096, z - a)).is_some_and(|v| v[..] == paginas[a..z]);
+                            if iguales {
+                                pr.sin_copia += 1;
+                                pr.cuadros += 1;
+                                if pr.sin_copia == 1 {
+                                    println!("puente: cliente {}: primer cuadro sin copia", conexion);
+                                }
+                            } else {
+                                println!("puente: cliente {}: Linux movió las páginas de un búfer sin copia: se cierra", conexion);
+                                pr.cerrar = true;
+                            }
+                        } else if let Some(pl) = pr.pools.get(&pool) {
                             if pl.dmabuf {
                                 esperar_tarjeta(pl.fd);
                             }
@@ -518,6 +637,41 @@ fn hostil(transporte: &str) {
         t.extend(wayland::puente::trama(p::CONECTAR, c, &[]));
     }
     tandas.push(("clientes", t));
+    // Vistas (sin copia): páginas fuera de la RAM del invitado, sin alinear, listas que no casan con el tamaño o enormes,
+    // tamaños absurdos, más de las que caben, escribir en una vista y un cliente que la usa. Y una buena: una página
+    // propia, fijada, con su dirección física de verdad (si se ve).
+    let vista = |n: u32, tam: u64, k: u32, dirs: &[u64]| {
+        let mut d = n.to_le_bytes().to_vec();
+        d.extend_from_slice(&tam.to_le_bytes());
+        d.extend_from_slice(&k.to_le_bytes());
+        for x in dirs {
+            d.extend_from_slice(&x.to_le_bytes());
+        }
+        wayland::puente::trama(p::MEMORIA_VISTA, 0, &d)
+    };
+    let propia = unsafe { libc::mmap(std::ptr::null_mut(), 4096, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANONYMOUS, -1, 0) };
+    let fisica = (propia != libc::MAP_FAILED && unsafe { libc::mlock(propia, 4096) } == 0)
+        .then(|| std::fs::File::open("/proc/self/pagemap").ok().and_then(|f| leer_pagemap(&f, propia as usize, 1)))
+        .flatten()
+        .map(|v| v[0]);
+    let mut t = vista(1, 4096, 1, &[0]);
+    t.extend(vista(2, 4096, 1, &[u64::MAX & !0xfff]));
+    t.extend(vista(3, 4096, 1, &[0x4000_0001]));
+    t.extend(vista(4, 4096, 1, &[0x4000_0000 + (1 << 40)]));
+    t.extend(vista(5, 8192, 1, &[0x4000_0000]));
+    t.extend(vista(6, 4096, u32::MAX, &[0x4000_0000]));
+    t.extend(vista(7, 1 << 40, 1, &[0x4000_0000]));
+    t.extend(vista(8, 0, 0, &[]));
+    for i in 0..300 {
+        t.extend(vista(100 + i, 4096, 1, &[fisica.unwrap_or(0x4000_0000)]));
+    }
+    if let Some(f) = fisica {
+        t.extend(vista(9, 4096, 1, &[f]));
+        t.extend(mem(p::MEMORIA_ESCRIBIR, 9, 0, b"en una vista no se escribe"));
+        t.extend(wayland::puente::trama(p::CONECTAR, 1, &[]));
+        t.extend(wayland::puente::trama(p::DATOS, 1, &p::juntar_datos(&[9, 9], &[1, 0, 0, 0, 1, 0, 12, 0])));
+    }
+    tandas.push(("vistas", t));
     // Tramas que rompen el flujo: un tipo que no existe, una de 4 GB, una de memoria sin su número.
     tandas.push(("tipo", wayland::puente::trama(200, 0, &[0; 32])));
     let mut t = vec![p::DATOS, 0, 0, 0, 0];
@@ -539,18 +693,27 @@ fn hostil(transporte: &str) {
         s.set_read_timeout(Some(std::time::Duration::from_millis(1500))).ok();
         let mut b = [0u8; 4096];
         let mut cortada = !escrito;
+        let mut recibido = Vec::new();
         loop {
             match std::io::Read::read(&mut s, &mut b) {
                 Ok(0) => {
                     cortada = true;
                     break;
                 }
-                Ok(_) => continue,
+                Ok(n) => recibido.extend_from_slice(&b[..n]),
                 Err(_) => break,
             }
         }
         cortadas += cortada as u32;
-        println!("puente hostil: {}: {} bytes, {}", nombre, t.len(), if cortada { "DashOS cortó" } else { "sigue abierta" });
+        let tramas = p::sacar_tramas(&mut recibido).unwrap_or_default();
+        let vistas_no = tramas.iter().filter(|t| t.tipo == p::VISTA_NO).count();
+        println!(
+            "puente hostil: {}: {} bytes, {}{}",
+            nombre,
+            t.len(),
+            if cortada { "DashOS cortó" } else { "sigue abierta" },
+            if nombre == "vistas" { format!(" ({} VISTA_NO; la vista de una página propia {})", vistas_no, if fisica.is_some() { "pedida" } else { "no se pudo pedir" }) } else { String::new() }
+        );
     }
     println!("puente hostil: hecho, {} conexiones cortadas por DashOS", cortadas);
 }
@@ -586,7 +749,10 @@ fn main() {
     println!("puente: Wayland en {}, hacia DashOS por {}", ruta, transporte);
     // Bloqueante (la copia comparte el modo con la de escribir): se lee solo cuando `poll` dice que hay algo.
     let mut lectura = t.try_clone().unwrap();
-    let mut pu = Puente { transporte: t, siguiente_memoria: 0, tubos: p::tubos::Tubos::default() };
+    // Sin compactación de páginas fijadas (si el kernel la tiene): las de un pool sin copia no se mueven.
+    let _ = std::fs::write("/proc/sys/vm/compact_unevictable_allowed", "0");
+    let pagemap = std::fs::File::open("/proc/self/pagemap").ok();
+    let mut pu = Puente { transporte: t, siguiente_memoria: 0, vistas: false, pagemap, tubos: p::tubos::Tubos::default() };
     let mut programas: HashMap<u32, Programa> = HashMap::new();
     let mut siguiente = 0u32;
     // Las memorias que manda DashOS: número → memfd.
@@ -618,11 +784,18 @@ fn main() {
             }
             pr.fds.extend(fds);
             atender(pr, c, &mut pu);
+            if pr.cerrar {
+                fuera.push(c);
+            }
         }
         for c in fuera {
             if let Some(mut pr) = programas.remove(&c) {
                 if pr.cuadros > 0 {
-                    println!("puente: cliente {}: {} cuadros, {} bytes copiados, {} por cuadro", c, pr.cuadros, pr.copiado, pr.copiado / pr.cuadros);
+                    let cpu = cpu_us() - pr.cpu0;
+                    println!(
+                        "puente: cliente {}: {} cuadros ({} sin copia), {} bytes copiados, {} por cuadro; CPU del puente {} ms, {} µs por cuadro",
+                        c, pr.cuadros, pr.sin_copia, pr.copiado, pr.copiado / pr.cuadros, cpu / 1000, cpu / pr.cuadros
+                    );
                 }
                 // Sus memorias, fuera también al otro lado (si no, el tope de memoria de DashOS se llenaría).
                 for (_, pl) in pr.pools.drain() {
@@ -680,6 +853,23 @@ fn main() {
                 }
                 p::ADIOS => {
                     programas.remove(&t.conexion);
+                }
+                p::VISTAS => {
+                    pu.vistas = pu.pagemap.is_some();
+                    println!("puente: DashOS lee los búferes sin copia{}", if pu.vistas { "" } else { " (pero aquí no se ve /proc/self/pagemap: con copia)" });
+                }
+                p::VISTA_NO if t.datos.len() == 4 => {
+                    // Esa memoria es normal: los búferes que la usan se copian enteros en su próximo commit.
+                    let n = u32::from_le_bytes(t.datos[0..4].try_into().unwrap());
+                    for pr in programas.values_mut() {
+                        if pr.vistas.remove(&n).is_some() {
+                            let suyos: Vec<u32> = pr.buferes.iter().filter(|(_, b)| b.4 == n).map(|(&b, _)| b).collect();
+                            for b in suyos {
+                                pr.enviado.remove(&b);
+                            }
+                            println!("puente: DashOS no hizo la vista de la memoria {}: con copia", n);
+                        }
+                    }
                 }
                 _ => {}
             }

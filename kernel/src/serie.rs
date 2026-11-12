@@ -17,7 +17,22 @@ const ICR: RegLe32 = RegLe32::new(BASE + 0x44);
 
 const FR_TXFF: u32 = 1 << 5;
 
+/// La Pi 5: si el firmware dejó el UART10 encendido (`enable_uart=1` o `uart_2ndstage=1` en config.txt), tal cual. Si
+/// no, 115200 baudios con su reloj de 9,216 MHz (`clk_uart` del árbol): divisor 5, sin fracción.
+#[cfg(feature = "pi5")]
+pub fn iniciar() {
+    if CR.leer() & 1 != 0 {
+        return;
+    }
+    ICR.escribir(0x7ff);
+    IBRD.escribir(5);
+    FBRD.escribir(0);
+    LCRH.escribir((1 << 4) | (3 << 5)); // FIFO y 8 bits
+    CR.escribir((1 << 0) | (1 << 8) | (1 << 9)); // UART, TX y RX
+}
+
 /// 115200 baudios con el reloj de 48 MHz que pone el firmware de la Pi 4.
+#[cfg(not(feature = "pi5"))]
 pub fn iniciar() {
     CR.escribir(0);
     ICR.escribir(0x7ff);
@@ -80,6 +95,9 @@ static A_PRINCIPIO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicB
 
 fn salida(s: &str, kernel: bool) {
     crate::registro::poner(s.as_bytes(), kernel);
+    // La consola en pantalla (diagnóstico de una placa nueva): todo lo del registro, también lo de los programas.
+    #[cfg(feature = "diagnostico")]
+    crate::pantalla::escribir(s);
     if crate::registro::directo() {
         let _ = fmt::Write::write_str(&mut Serie, s);
     }

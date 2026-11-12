@@ -833,9 +833,7 @@ entera: no se ha medido cada parte. En la Pi será otro número.
 
 ### Qué falta
 
-- **Sin copia**: que el compositor lea los búferes en la RAM del invitado. Necesita en el kernel un objeto de memoria
-  hecho de páginas de otro (las del `memfd`, que el puente de Linux tendría que encontrar) y decidir qué pasa si el
-  invitado las cambia mientras se compone. Con varias vCPU, la copia ya no para a las demás.
+- ~~**Sin copia**~~: hecho en la rama `caja-linux-sincopia` (sección siguiente).
 - **El portapapeles de verdad** (selección, ofertas, `wl_data_offer`) y la selección primaria; arrastrar y soltar.
 - **Pools de más de 64 MB** (el tope del compositor) o memorias de más de 16 MB (el de `memoria_crear`): foot va con
   `max-shm-pool-size-mb=0`; un programa que pida un pool así recibe un error de protocolo.
@@ -849,6 +847,261 @@ entera: no se ha medido cada parte. En la Pi será otro número.
 - Una vez, al acabar la prueba (con Linux ya apagado), el compositor soltó a caja-linux por no leer sus eventos; tras
   fusionar `revision` (fec71bf) no ha vuelto a pasar. Sin mirar.
 
+## 2026-11-12: búferes de Linux sin copia (rama `caja-linux-sincopia`)
+
+Rama `caja-linux-sincopia`, sacada de `revision` (0ce1f49). El compositor lee los búferes de `wl_shm` de los
+programas de Linux en la RAM del invitado, sin copiarlos. Sala limpia: la documentación de `/proc/self/pagemap`,
+`mlock(2)` y `fallocate(2)` (páginas de manual) y los XML de Wayland; nada de código de Linux, QEMU, crosvm,
+Firecracker ni Xen.
+
+### Resultado
+
+```
+[caja-linux] linux: puente: DashOS lee los búferes sin copia
+[caja-linux] linux: puente: cliente 1: primer cuadro sin copia
+[caja-linux] linux: ventana_wayland: medida de 320 x 240: 746 cuadros en 8003 ms, 93.2 por segundo, 27963 KB/s de búferes
+[caja-linux] linux: ventana_wayland: medida de 1280 x 720: 273 cuadros en 8025 ms, 34.0 por segundo, 122466 KB/s de búferes
+[caja-linux] linux: puente: cliente 4: 273 cuadros (273 sin copia), 0 bytes copiados, 0 por cuadro; CPU del puente 1335 ms, 4893 µs por cuadro
+[caja-linux] linux: puente: cliente 5: 87 cuadros (0 sin copia), 328089600 bytes copiados, 3771144 por cuadro; CPU del puente 3668 ms, 42166 µs por cuadro
+[caja-linux] wayland: 7 transportes (3 cortados por tramas malas), 41 clientes de Linux, ..., 468600 KB de búferes copiados, 297 memorias (265 sin copia, vistas de la RAM del invitado; 4 vistas no hechas), ...
+```
+
+Lo copiado (468 MB) es solo lo de las dos medidas con copia forzada: `ventana_wayland` y foot van sin copia.
+Captura (fuera de git): `capturas-agente/caja-linux-wayland-grande.png` (la ventana de 1280 × 720 sin copia, más
+grande que la pantalla de 800 × 600).
+
+## 2026-11-12: la tarjeta gráfica para la caja (rama `caja-linux-gpu`)
+
+Rama `caja-linux-gpu`, sacada de `revision` (0ce1f49). El usuario pidió "usar la tarjeta gráfica" para los programas de
+Linux. Primero un estudio (`docs/diseño/S25-gpu-caja-linux.md`) y después el primer paso que se prueba en QEMU. Sala
+limpia: virtio 1.2 (§5.7), los XML de Wayland, las interfaces públicas de EGL, GBM y libdrm para el programa de prueba y
+`docs/spec/hw/v3d.md`; nada de código de Linux, Mesa, QEMU, crosvm ni virglrenderer.
+
+### El estudio, en corto
+
+- **Hoy no hay GPU en ningún lado**: el invitado pinta con llvmpipe/lavapipe, DashOS no tiene Mesa, el servicio `gpu`
+  (V3D) nunca se ha probado y QEMU no emula la V3D.
+- **Recomendado para la Pi 4: la V3D mediada.** El invitado usa el controlador v3d de Linux y el Mesa de Arch tal
+  cual; sus accesos a los registros de la V3D salen a DashOS, que le deja todo menos la MMU, el GMP y la energía. La
+  V3D ve siempre una tabla de páginas sombra, hecha por DashOS con solo páginas de la RAM de esa caja (sin IOMMU en la
+  BCM2711 es lo único que la confina). La meta, cuando DashOS tenga su servicio de v3d: contexto nativo por
+  virtio-gpu (falta el lado de Mesa, que no existe para v3d). Venus/virgl necesitan Mesa portado a DashOS; el paso
+  directo sin trampas, nunca.
+- Lo que pide al kernel y al servicio `gpu`, y lo que solo se puede ver en una Pi 4: en S25.
+
+### Resultado
+
+`make arranque-virt-gpu` (nueva; con `ARCH_IMAGE` y `ARCH_DISCO` de `preparar-arch`): la caja tiene una virtio-gpu en
+2D además de vsock. Linux la ve (`virtio_gpu`, `/dev/dri/card0` y `renderD128`). Un programa de GL de Linux pinta por
+el puente de Wayland y por la pantalla de la virtio-gpu, que sale en una ventana de DashOS ("Linux (pantalla de la
+caja)") mientras Linux la usa y se quita cuando la apaga.
+
+```
+[caja-linux] gpu: virtio-gpu en 2D con una pantalla de 640x480 y 8 MB para recursos
+[caja-linux] linux: [    1.608179] [drm] Initialized virtio_gpu 0.1.0 for a000800.virtio on minor 0
+[caja-linux] linux: cuadros_gl: wayland: GL_RENDERER llvmpipe (LLVM 23.1.4, 128 bits), GL_VERSION OpenGL ES 3.2 Mesa 26.2.6-arch1.1
+[caja-linux] linux: cuadros_gl: wayland: al acabar: 189 cuadros en 20051 ms, 9.4 por segundo; adiós
+[caja-linux] linux: cuadros_gl: wayland: al acabar: 191 cuadros en 15095 ms, 12.7 por segundo; adiós      (intervalo 0)
+[caja-linux] linux: 118 frames in 5.0 seconds = 23.572 FPS                                                (es2gears_wayland)
+[caja-linux] linux: real	0m9.459s                                                                      (vkcube, 100 cuadros)
+[caja-linux] gpu: Linux muestra algo en su pantalla (640x480 desde (0, 0), formato 2)
+[caja-linux] gpu: la pantalla de Linux, en una ventana de 640x480
+[caja-linux] linux: cuadros_gl: kms: al acabar: 387 cuadros en 20780 ms, 18.6 por segundo; adiós
+[caja-linux] gpu: Linux apagó su pantalla; se quita su ventana
+[caja-linux] gpu: 1170 órdenes (0 con error, 0 malas), 2 recursos creados, 387 transferencias (464400 KB), 387 vaciados a la pantalla (18 por segundo mientras pintó), 388 cuadros en la ventana
+```
+
+Capturas (fuera de git): `capturas-agente/caja-linux-gpu-wayland.png` (`cuadros_gl` por Wayland),
+`caja-linux-gpu-gears.png` (`es2gears_wayland`, con los bordes de libdecor) y `caja-linux-gpu-kms.png` (el mismo
+programa por KMS, en la ventana de la pantalla de la caja).
+
+### Cómo va
+
+```
+programa de Linux ── memfd ──▶ puente (Arch): fallocate + mlock + /proc/self/pagemap
+                                    │ MEMORIA_VISTA: n.º, tamaño y la dirección física de cada página
+                                    ▼
+                         puente_caja: cada dirección → (trozo de 16 MB, página) de la RAM del invitado
+                                    │ llamada 50, memoria_vista(trozos de la RAM, páginas)
+                                    ▼
+                         compositor: una memoria más, proyectada solo para leer
+```
+
+- **El kernel: la llamada 50, `memoria_vista`** (`docs/referencia/kernel.md`). Hace un objeto de memoria con las
+  páginas que se le piden de otros (los orígenes, llaves de memoria con derecho de leer), en ese orden; los números
+  de página cuentan seguidas las de los orígenes. La llave nueva solo lee y transfiere; la vista no se proyecta para
+  escribir ni ejecutar, el kernel no escribe por ella y no vale como RAM de una máquina. Guarda los orígenes vivos
+  (`Memoria::origenes`): sus páginas no vuelven al sistema hasta soltar la vista, así que nunca se ven páginas ya
+  dadas a otro. Ni vistas de vistas (no hay cadenas que soltar), ni memoria DMA (va sin caché), ni llaves revocables
+  (la vista seguiría viendo el objeto tras revocarla). Cobra solo su lista (256 bytes + 8 por página y por origen);
+  las páginas siguen cobradas a quien creó cada origen. Hasta 64 orígenes y 4096 páginas (16 MB). Sin `unsafe` fuera
+  de `kernel/src/base/`.
+- **Dentro de Linux: dónde está el pool.** Los pools los crea cada programa (libwayland, foot, los toolkits) con
+  `memfd_create`: el puente no decide dónde quedan. Reservar memoria que el invitado sepa seguida obligaría a cambiar
+  los programas (o a copiar dentro del invitado, otra copia), así que el puente averigua las páginas: proyecta el
+  pool, rellena los huecos del memfd sin cambiar su contenido (`fallocate` con `FALLOC_FL_KEEP_SIZE`), lo fija
+  (`mlock`: Linux ya no lo saca ni lo mueve) y lee `/proc/self/pagemap` (el número de página física solo se ve siendo
+  root; el puente es un servicio de systemd que corre como root). Las páginas no son seguidas: van como lista. Dos
+  páginas en la misma física (la página de ceros) o una que no se vea: con copia. El kernel de la caja (tinyconfig)
+  no tiene compactación ni swap; aun así, el puente pone `compact_unevictable_allowed` a 0 si existe y, en cada
+  commit, comprueba con `pagemap` que el búfer sigue en las páginas que mandó. Si no (Linux las movió), cierra el
+  programa: su ventana enseñaría lo que haya después en las viejas. Al crecer un pool, la proyección nueva se fija
+  antes de quitar la vieja.
+- **El protocolo** (`wayland/src/puente.rs`): `VISTAS` (DashOS → invitado, al conectar: se admiten vistas),
+  `MEMORIA_VISTA` (número, tamaño, n y n direcciones físicas del invitado) y `VISTA_NO` (no se pudo: en su lugar hay
+  una memoria normal del mismo tamaño, y el puente copia como antes). Sin `VISTAS` (el compositor del PC de G0/G1), el
+  puente copia. Una vista no se escribe y no cuenta en el tope de 24 MB de memoria copiada (no toma memoria nueva);
+  sí en el de 256 memorias por transporte.
+- **El lado de DashOS** (`usuario/src/puente_caja.rs`): `abrir` recibe las llaves de la RAM del invitado (los trozos
+  de 16 MB) y su dirección física. Cada dirección se comprueba: alineada, desde la base y dentro de la RAM; se pasa a
+  número de página de los trozos y se pide la vista. El compositor la recibe como cualquier memoria (una copia de su
+  llave de solo lectura) y no cambia nada.
+- **Seguridad.** El invitado solo puede nombrar páginas de su propia RAM (los orígenes son los trozos de su máquina):
+  si nombra otras, su ventana enseña lo que ya era suyo. El compositor solo puede leer. Si el invitado cambia el búfer
+  mientras se compone, solo se estropea su ventana (los píxeles son bytes cualesquiera; tamaños, formato y desplazamientos
+  van por el protocolo y el compositor ya los comprueba contra lo que mide la memoria). Una vista mantiene viva la
+  RAM del invitado hasta que el compositor la suelta (al irse el cliente): no se ve memoria liberada y reusada.
+- **Para medir**: con `/run/dashos-puente-copia`, los programas que conectan después van con copia.
+  `ventana_wayland ANCHO ALTO SEGUNDOS` pinta de ese tamaño y acaba sola, con una línea "medida". El guion mide las
+  cuatro combinaciones y saca con `journalctl` lo que dijo el puente, con su tiempo de CPU por cliente.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, la ventana entera dañada en cada cuadro, 8 s cada una, en la misma ejecución (el PC,
+cargado por otras sesiones). CPU del puente: la de su proceso (usuario y sistema) mientras estaba ese cliente.
+
+| Ventana | Con copia | Sin copia | Cambio |
+|---|---|---|---|
+| 320 × 240, cuadros por segundo | 61,4 (18 MB/s) | 93,2 y 94,6 (28 MB/s) | +52 % |
+| 320 × 240, CPU del puente por cuadro | 7,3 ms | 3,9 y 4,2 ms | −45 % |
+| 1280 × 720, cuadros por segundo | 10,8 (38 MB/s) | 34,0 (120 MB/s) | ×3,1 |
+| 1280 × 720, CPU del puente por cuadro | 42,2 ms | 4,9 ms | −88 % |
+
+Sin copia, la CPU del puente ya no depende del tamaño de la ventana: lo que queda es pasar los mensajes de Wayland y
+leer `pagemap` (unas pocas páginas por commit). Lo que limita ahora en QEMU es componer por CPU y pintar el propio
+programa. Antes (la bitácora anterior), 65-75 cuadros por segundo de 320 × 240 con copia.
+
+### Pruebas
+
+- `make prueba`: "H9: vistas de memoria con páginas de otro objeto, solo de lectura: bien" (del kernel: el orden de
+  las páginas; lo cobrado; páginas fuera, lista vacía o número enorme; una vista como origen; un cupo que no llega, sin
+  dejar nada cobrado; solo leer, ni escribir ni ejecutar; el origen soltado con la vista viva: las páginas libres no
+  cambian y la vista las sigue viendo; al soltar la vista vuelven las 3 páginas y el cupo queda a cero) y `malo`,
+  paso 39 (lo que ve un proceso: la vista lee en orden y ve lo que escribe el dueño; no se proyecta para escribir ni
+  pidiendo el derecho al duplicar, ni para ejecutar; páginas fuera; una llave que no existe, un canal, una sin derecho
+  de leer, una revocable y una vista de origen; tablas sin nada, de más, en memoria vacía, en el kernel o que
+  desbordan; la lista más larga, 4096 páginas y 64 orígenes; vistas de 16 MB sin cerrar hasta que el cupo o la tabla
+  dicen basta; y el origen soltado: la memoria que se pide después, llena de otra cosa, no cambia la vista). Su
+  grupo queda a cero (lo comprueba el lanzador). BIEN: esperado.txt y BIEN: cargador hunk.
+- `cargo test` en `wayland`: `puente::pruebas::vistas` (vistas buenas, fuera de la RAM, sin alinear o del kernel, que
+  dan memoria normal y `VISTA_NO`; mal hechas: tamaño 0 o de más, listas que no casan, cortas o de 4 mil millones; de
+  más de 256), y `a_lo_loco` con los tipos nuevos.
+- `puente --hostil vsock:5000` desde Arch, tanda "vistas": direcciones 0, al final del espacio, sin alinear y más
+  allá de la RAM (4 `VISTA_NO`), listas que no casan con el tamaño o enormes, 1 TB, 300 vistas de una página propia
+  (pasan las que caben), escribir en una vista y un cliente que la usa. La conexión sigue y el programa de verdad
+  funciona después.
+- `make arranque-virt-wayland` con las líneas nuevas (sin copia, primer cuadro sin copia, las medidas): BIEN.
+  Después, seguidos y a la primera: `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-arch`, `-2` y otra vez
+  `make prueba`: BIEN.
+
+El disco de Arch de esta rama va en `~/.cache/dashos-caja-linux-sincopia` (`DASHOS_CAJA_LINUX_CACHE`, con el rootfs y
+los paquetes enlazados a los de siempre), para no pisar el de otras sesiones: `make arranque-virt-wayland
+ARCH_DISCO=...`.
+
+### Qué falta
+
+- Lo mismo para los búferes de dmabuf (G6), que siguen con copia, y para lo que va del compositor al invitado (el
+  mapa de teclado, una vez).
+- Probarlo en la Pi 4 (cachés de verdad: el invitado escribe con su caché y el compositor lee con la suya, las dos
+  normales; debería ir, sin probar).
+- Si Linux moviera páginas de un pool (con otro kernel: compactación, CMA, memoria que se quita en caliente), hoy se
+  cierra el programa. Con un kernel que fije las páginas para siempre (como hacen los aparatos con DMA) no haría falta.
+- Las vistas no cuentan en el tope de memoria del transporte: el coste es de su lista (unos 33 KB por vista de 16 MB,
+  cobrados a caja-linux).
+
+cuadros_gl kms ──GBM/EGL (llvmpipe)──▶ búfer "dumb" de virtio_gpu (páginas del invitado)
+      │ drmModePageFlip                       │ TRANSFER_TO_HOST_2D + RESOURCE_FLUSH
+      ▼                                       ▼
+ controlador virtio_gpu de Linux ──virtio-mmio──▶ aparato Gpu (caja-linux/vmm) ──▶ ExtremoPantalla ──▶ ventana de DashOS
+```
+
+- **El aparato** (`caja-linux/vmm/src/virtio/gpu.rs`, sin `unsafe`): dos colas (control y cursor), una pantalla,
+  recursos 2D en la memoria de la caja con un presupuesto (8 MB, `MARGEN_SERVICIO` sube de 56 a 66 MB), respaldo
+  (`ATTACH_BACKING`, como mucho 16384 trozos, cada uno comprobado en la RAM del invitado), transferencias, `SET_SCANOUT`
+  y `RESOURCE_FLUSH`, que pasa lo cambiado a un `ExtremoGpu`. Vallas: se contesta al acabar cada orden, con la valla
+  repetida. No se ofrece 3D, EDID ni *blob*. Cualquier orden mala contesta su error y se cuenta; solo una cola mal hecha
+  deja el aparato en DEVICE_NEEDS_RESET (como los demás).
+- **La ventana** (`usuario/src/pantalla_caja.rs`): el vaciado convierte lo dañado a XRGB en la memoria de un búfer de
+  `wl_shm` y apunta el daño; la ventana va en la misma conexión que la terminal de la caja (su hilo la atiende en cada
+  vuelta: un `commit` por cada aviso de frame, con los vaciados de en medio juntos).
+- **En Arch** (`tools/caja_linux_invitado.py`): `Image-arch` con DRM y `virtio_gpu` (sin consola de fbdev: la ventana
+  solo sale cuando un programa usa la pantalla), `UDMABUF` y `SYNC_FILE`; los paquetes `mesa-utils`, `vulkan-swrast` y
+  `vulkan-tools` (47 con lo que piden, 350 MB) y `cuadros_gl` (`caja-linux/invitado/cuadros_gl.c`: GLES2, 640 × 480,
+  por Wayland o por KMS con GBM y `drmModePageFlip`).
+- **La tabla sombra de la V3D** (`caja-linux/vmm/src/v3d.rs`): la lógica del camino de la Pi, probada en el PC. La
+  página de la MMU del hub (con sus zonas sin traducir, `MMU_BYPASS_*`) y el GMP no se dejan tocar; el invitado ve sus
+  valores y la V3D los seguros (MMU encendida, abortos, relleno de verdad). Al vaciar, la tabla del invitado se lee una
+  vez y cada entrada válida se traduce a una página física de su RAM o queda no válida; sin bits de página grande.
+
+### Lo que se vio por el camino
+
+- **Dos conexiones directas al compositor desde un mismo programa se mezclan.** La primera versión abría la ventana de
+  la pantalla con su propio `Cliente`; el compositor distingue a los clientes por la marca de la llave "ventanas", así
+  que los mensajes de los dos se juntaron y mató a la terminal ("número de objeto nuevo malo"). Ahora la ventana es
+  otra superficie de la conexión de la terminal.
+- **Mesa por software no da búferes de dmabuf.** Con el Mesa del PC (26.2.6, el mismo que el de Arch Linux ARM),
+  `es2gears_wayland` con llvmpipe usa `wl_shm` aunque el compositor anuncie `zwp_linux_dmabuf_v1`. Y con una
+  virtio-gpu sin 3D, Mesa prueba virgl y zink, falla y cae en llvmpipe. Así que `linux-dmabuf` para búferes de
+  virtio-gpu no lo usaría ningún programa de Mesa en QEMU: **no se hizo**. Sirve en la Pi con la V3D (Mesa v3d da
+  dmabuf; el puente ya los acepta, G6), y entonces el compositor de DashOS tiene que anunciarlo a la caja.
+- **Desgarro**: la ventana de la pantalla tiene un solo búfer y el aparato lo escribe mientras el compositor compone;
+  a veces se ve medio cuadro (en la captura de KMS, el borde del triángulo).
+
+### Pruebas
+
+- `cargo test` en `caja-linux/vmm` (dentro de `make prueba`): `tests/gpu.rs` (12: camino normal, vallas, trozos con
+  desplazamiento, formatos, quitar un recurso en pantalla, reinicio, cursor, y hostiles: ids 0, repetidos o que no
+  existen en cada orden, recursos de 16384² y 65536², desbordes de u32, el presupuesto lleno, respaldos fuera de la
+  RAM, que desbordan, de largo 0 o con más entradas de las que trae la orden, transferencias que se salen del respaldo
+  o del recurso, desplazamientos de 64 bits que desbordan, órdenes cortas, de 3D o que no existen, sin sitio para la
+  respuesta, y a lo loco: 20 × 400 órdenes al azar sin romper el aparato) y `v3d::pruebas` (7: la V3D siempre ve la
+  sombra; entradas a la dirección física 0, fuera de la RAM, con bits desconocidos o de página grande; no puede apagar
+  la MMU ni tocar las zonas sin traducir, el tope, el derribo ni la tabla del GMP; tablas fuera de su RAM; cambiar la
+  tabla sin vaciar no llega a la V3D; solo se escriben las entradas que cambian; y a lo loco).
+- Seguidas, sobre 49e42ab, todas BIEN a la primera: `make arranque-virt-gpu`, `make prueba` (esperado.txt y cargador
+  hunk), `arranque-virt` (las cinco), `-vm`, `-linux`, `-2`, `-arch` y `-wayland`. Las tres de Arch, con la Image y
+  el disco de esta rama (`preparar-arch` con `DASHOS_CAJA_LINUX_CACHE=~/.cache/dashos-caja-linux-gpu`: el kernel con
+  `virtio_gpu` y Mesa en el disco); en `-wayland`, la virtio-gpu está y nadie la usa.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, el PC cargado por otras sesiones (carga 7 a 9). Tres vueltas de `make arranque-virt-gpu`.
+
+| Medida | Valor |
+|---|---|
+| `cuadros_gl` 640 × 480 por Wayland (hoy: `wl_shm` por el puente y vsock, esperando el aviso de frame) | 9,4, 10,7 y 12,0 cuadros por segundo |
+| Lo mismo sin esperar al compositor (`eglSwapInterval` 0) | 12,7 |
+| `cuadros_gl` 640 × 480 por la pantalla de la virtio-gpu (KMS) | 17,3, 18,6 y 20,2 |
+| `es2gears_wayland` (300 × 300, por el puente) | 18 a 24 |
+| `vkcube --wsi wayland --c 100` (500 × 500, lavapipe), con su arranque | 9,4 s |
+| Por cuadro de KMS | 3 órdenes, 1,2 MB transferidos |
+
+El mismo programa va 1,5 a 2 veces más deprisa por la pantalla de la virtio-gpu que por Wayland: por KMS hay una copia
+(de las páginas del invitado al recurso, hecha por DashOS) y una conversión a la ventana, sin vsock ni salidas por cada
+paquete; por Wayland, llvmpipe copia a `wl_shm`, el puente al socket de vsock y la caja a la memoria del compositor.
+Pinta lo mismo la CPU del invitado (llvmpipe): ninguno de los dos caminos usa una GPU, que no la hay en QEMU.
+
+### Qué falta
+
+- **Todo lo de la V3D, en una Pi 4** (S25, camino C): dar la V3D a la caja desde el servicio `gpu`, los registros
+  atrapados con `v3d::Mediador`, las páginas físicas de la RAM del invitado (una llamada del kernel, la 51 o siguiente),
+  la interrupción, el plazo y el reinicio, el nodo del árbol para el controlador v3d de Linux y `CONFIG_DRM_V3D`. Y
+  medir `vkcube` y `es2gears_wayland` con la V3D.
+- **Sin copia en la pantalla**: con `memoria_vista` (llamada 50, de `caja-linux-sincopia`) y recursos *blob*
+  (`VIRTIO_GPU_F_RESOURCE_BLOB`), la ventana podría leer las páginas del invitado sin copiar.
+- `zwp_linux_dmabuf_v1` para la caja en el compositor de DashOS (con el `main_device` del invitado): para la V3D.
+- Teclado y ratón en la ventana de la pantalla (virtio-input); otro tamaño de pantalla (el aparato ya avisa con
+  `EVENTO_PANTALLA`, falta que la ventana se pueda cambiar de tamaño); doble búfer contra el desgarro.
 ## 2026-11-13: barra de DashOS, portapapeles y programas grandes (rama `caja-linux-apps`)
 
 Rama `caja-linux-apps`, sacada de `revision` (0ce1f49). Lo que faltaba para que los programas de Linux se usen como los
