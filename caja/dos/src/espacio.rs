@@ -344,7 +344,14 @@ impl<F: SistemaArchivos> Dos<F> {
         Self::e32(c, dl + doslist::DOL_NAME, bstr >> 2)?;
         self.nombres.insert(
             k.clone(),
-            Nombre::Asignacion(Asignacion { nombre: n, destino: d, doslist: dl, bstr, listas: Vec::new(), cadena: (0, 0) }),
+            Nombre::Asignacion(Asignacion {
+                nombre: n,
+                destino: d,
+                doslist: dl,
+                bstr,
+                listas: Vec::new(),
+                cadena: (0, 0),
+            }),
         );
         self.reflejar_asignacion(c, &k)?;
         self.enlazar(c)?;
@@ -407,7 +414,8 @@ impl<F: SistemaArchivos> Dos<F> {
                 }
             }
             Destino::Tarde(r) | Destino::Ruta(r) => {
-                let tipo = if matches!(a.destino, Destino::Tarde(_)) { doslist::DLT_LATE } else { doslist::DLT_NONBINDING };
+                let tipo =
+                    if matches!(a.destino, Destino::Tarde(_)) { doslist::DLT_LATE } else { doslist::DLT_NONBINDING };
                 Self::e32(c, dl + doslist::DOL_TYPE, tipo)?;
                 let largo = r.len() as u32 + 1;
                 let s = self.reservar_fijo(c, largo)?;
@@ -531,7 +539,9 @@ impl<F: SistemaArchivos> Dos<F> {
             Some(Nombre::Asignacion(a)) => a.destino.clone(),
         };
         match destino {
-            Destino::Cerrojos(v) => Ok(v.iter().filter_map(|l| self.cerrojos.get(l)).map(|x| x.sitio.clone()).collect()),
+            Destino::Cerrojos(v) => {
+                Ok(v.iter().filter_map(|l| self.cerrojos.get(l)).map(|x| x.sitio.clone()).collect())
+            }
             Destino::Ruta(r) => self.sitios_n(c, &r, prof + 1),
             Destino::Tarde(r) => {
                 // La primera vez que se usa, se convierte en un cerrojo del primer sitio que exista.

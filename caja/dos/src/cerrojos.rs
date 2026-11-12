@@ -45,8 +45,20 @@ pub fn proteccion_de(modo: u16, amiga: u16) -> u32 {
         p |= fibf::HOLD;
     }
     for (r, w, x, nb, (fr, fw, fx, fd)) in [
-        (0o040, 0o020, 0o010, bits::NO_BORRAR_GRUPO, (fibf::GRP_READ, fibf::GRP_WRITE, fibf::GRP_EXECUTE, fibf::GRP_DELETE)),
-        (0o004, 0o002, 0o001, bits::NO_BORRAR_OTROS, (fibf::OTR_READ, fibf::OTR_WRITE, fibf::OTR_EXECUTE, fibf::OTR_DELETE)),
+        (
+            0o040,
+            0o020,
+            0o010,
+            bits::NO_BORRAR_GRUPO,
+            (fibf::GRP_READ, fibf::GRP_WRITE, fibf::GRP_EXECUTE, fibf::GRP_DELETE),
+        ),
+        (
+            0o004,
+            0o002,
+            0o001,
+            bits::NO_BORRAR_OTROS,
+            (fibf::OTR_READ, fibf::OTR_WRITE, fibf::OTR_EXECUTE, fibf::OTR_DELETE),
+        ),
     ] {
         if modo & r != 0 {
             p |= fr;

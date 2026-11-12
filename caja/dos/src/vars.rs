@@ -35,7 +35,8 @@ impl<F: SistemaArchivos> Dos<F> {
         if buf == 0 {
             return self.delete_var(c, nombre, marcas);
         }
-        let v = if tam as i32 == -1 { Self::cadena(c, buf)? } else { Self::bytes(c, buf, tam.min(MAX_VARIABLE as u32))? };
+        let v =
+            if tam as i32 == -1 { Self::cadena(c, buf)? } else { Self::bytes(c, buf, tam.min(MAX_VARIABLE as u32))? };
         let tipo = marcas & 0xFF & !gvf::LVF_IGNORE;
         if marcas & gvf::GLOBAL_ONLY != 0 && tipo == gvf::LV_VAR {
             self.escribir_entero(c, &Self::ruta_de_variable(b"ENV:", &n), &v)?;
@@ -90,8 +91,7 @@ impl<F: SistemaArchivos> Dos<F> {
     pub(crate) fn delete_var<C: Caja>(&mut self, c: &mut C, nombre: u32, marcas: u32) -> R<()> {
         let n = Self::nombre_de_variable(c, nombre)?;
         let tipo = marcas & 0xFF & !gvf::LVF_IGNORE;
-        if marcas & gvf::GLOBAL_ONLY == 0
-            && self.locales.remove(&(c.tarea_actual(), tipo, clave_latin1(&n))).is_some()
+        if marcas & gvf::GLOBAL_ONLY == 0 && self.locales.remove(&(c.tarea_actual(), tipo, clave_latin1(&n))).is_some()
         {
             return Ok(());
         }

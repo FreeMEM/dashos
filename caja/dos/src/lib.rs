@@ -46,14 +46,14 @@ use alloc::collections::BTreeMap;
 use alloc::string::String;
 use alloc::vec::Vec;
 
+pub use cerrojos::{de_proteccion, proteccion_de};
 use errores::*;
+pub use espacio::CapasS4b;
 use estructuras::*;
 pub use fs::{Asa, SistemaArchivos};
 pub use memfs::MemFs;
 pub use memoria::{Memoria, MemoriaVec};
-pub use espacio::CapasS4b;
 pub use registros::Registros;
-pub use cerrojos::{de_proteccion, proteccion_de};
 
 /// Lo que dos necesita de la caja, además de su memoria. En DashOS lo da exec (reservar, la tarea en marcha) y el
 /// proceso de la caja (la hora, la consola).
@@ -524,7 +524,7 @@ impl<F: SistemaArchivos> Dos<F> {
     /// La tarea en marcha, si es un proceso (`NT_PROCESS`).
     pub(crate) fn proceso<C: Caja>(c: &C) -> Option<u32> {
         let t = c.tarea_actual();
-        if t < PAGINA_CERO || t >= LIMITE - process::TAMANO {
+        if !(PAGINA_CERO..LIMITE - process::TAMANO).contains(&t) {
             return None;
         }
         match c.leer8(t + process::LN_TYPE) {
@@ -566,17 +566,12 @@ impl<F: SistemaArchivos> Dos<F> {
     /// Una tarea ha acabado (o exec la ha matado): dos suelta sus cerrojos, cierra sus ficheros y libera sus
     /// argumentos. Exec suelta después su memoria.
     pub fn acabar_tarea<C: Caja>(&mut self, c: &mut C, tarea: u32) {
-        let ficheros: Vec<u32> =
-            self.ficheros.iter().filter(|(_, f)| f.dueno == tarea).map(|(d, _)| *d).collect();
+        let ficheros: Vec<u32> = self.ficheros.iter().filter(|(_, f)| f.dueno == tarea).map(|(d, _)| *d).collect();
         for d in ficheros {
             let _ = self.cerrar_fichero(c, d);
         }
-        let cerrojos: Vec<u32> = self
-            .cerrojos
-            .iter()
-            .filter(|(_, l)| l.dueno == tarea && !l.de_asignacion)
-            .map(|(d, _)| *d)
-            .collect();
+        let cerrojos: Vec<u32> =
+            self.cerrojos.iter().filter(|(_, l)| l.dueno == tarea && !l.de_asignacion).map(|(d, _)| *d).collect();
         for d in cerrojos {
             self.soltar_cerrojo(c, d);
         }

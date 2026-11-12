@@ -69,19 +69,23 @@ pub fn nombre_valido(b: &[u8]) -> bool {
     !(b.is_empty() || b.len() > LARGO_NOMBRE || b == b"." || b == b".." || b.contains(&0))
 }
 
-/// Parte una ruta. Un `:` de más o un nombre que no vale dan `Err(())` (`ERROR_INVALID_COMPONENT_NAME`).
-pub fn partir(ruta: &[u8]) -> Result<Ruta, ()> {
+/// Una ruta que no vale: un `:` de más o un nombre que no puede ser (`ERROR_INVALID_COMPONENT_NAME`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct RutaMala;
+
+/// Parte una ruta.
+pub fn partir(ruta: &[u8]) -> Result<Ruta, RutaMala> {
     let (dispositivo, resto) = match ruta.iter().position(|&c| c == b':') {
         Some(i) => (Some(ruta[..i].to_vec()), &ruta[i + 1..]),
         None => (None, ruta),
     };
     if resto.contains(&b':') {
-        return Err(());
+        return Err(RutaMala);
     }
     if let Some(d) = &dispositivo
         && d.contains(&b'/')
     {
-        return Err(());
+        return Err(RutaMala);
     }
     let partes: Vec<&[u8]> = resto.split(|&c| c == b'/').collect();
     let mut pasos = Vec::new();
@@ -94,7 +98,7 @@ pub fn partir(ruta: &[u8]) -> Result<Ruta, ()> {
         } else if nombre_valido(p) {
             pasos.push(Paso::Nombre(a_utf8(p)));
         } else {
-            return Err(());
+            return Err(RutaMala);
         }
     }
     Ok(Ruta { dispositivo, pasos })
