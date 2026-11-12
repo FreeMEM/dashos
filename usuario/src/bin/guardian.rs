@@ -257,6 +257,9 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     const ANCHO: i32 = 520;
     const ALTO: i32 = 170;
     const ESPERA_US: u64 = 1_000_000;
+    /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
+    const TEMA: u32 = 22;
+    let mut tema = Tema::OSCURO;
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     let Some(mut c) = Cliente::conectar() else { return false };
     let Some(globales) = c.globales() else { return false };
@@ -272,6 +275,9 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
+    if let Some(gt) = global("dashos_tema_v1") {
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+    }
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
     // Encima de todo (3), sin anclas (en el centro), con el teclado en exclusiva (1).
@@ -303,7 +309,7 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
                     return false;
                 }
                 let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut titulo);
+                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut titulo, &tema);
                 let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
@@ -321,6 +327,7 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
                 c.mandar(&e);
             }
             (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => return false,
+            (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0),
             (SYNC, wayland::tablas::wl_callback::ev::DONE) if vista.is_none() => {
                 vista = Some(dashos::ahora_us());
                 println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio);
@@ -352,20 +359,21 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
 }
 
 /// Pinta la pregunta de U4: una tarjeta con quién pide qué y las teclas para contestar.
-fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, titulo: &mut Fuente) {
+/// Con los colores del tema del sistema (S10c), con el borde en el primario.
+fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
-    l.rellenar(Rect::new(0, 0, ancho, alto), 0xff0d_1320);
-    l.borde(Rect::new(0, 0, ancho, alto), 0, 2, 0xffff_9d3b);
+    l.rellenar(Rect::new(0, 0, ancho, alto), t.superficie);
+    l.borde(Rect::new(0, 0, ancho, alto), 0, 2, t.primario);
     let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
     let cabeza = "Permiso";
     let x = centrado(titulo, cabeza, 26);
-    titulo.dibujar(&mut l, x, 30, cabeza, 26, 0xffe7_ecf5);
+    titulo.dibujar(&mut l, x, 30, cabeza, 26, t.sobre_superficie);
     let frase = alloc::format!("¿Dejas que \"{}\" use \"{}\"?", programa, servicio);
     let x = centrado(fuente, &frase, 20);
-    fuente.dibujar(&mut l, x, 82, &frase, 20, 0xffe7_ecf5);
+    fuente.dibujar(&mut l, x, 82, &frase, 20, t.sobre_superficie);
     let teclas = "S: sí    N: no";
     let x = centrado(fuente, teclas, 18);
-    fuente.dibujar(&mut l, x, 120, teclas, 18, 0xff9a_a7bf);
+    fuente.dibujar(&mut l, x, 120, teclas, 18, t.sobre_variante_superficie);
 }
 
 /// U3: pide al compositor un aviso cuando nadie toque el teclado ni el ratón en `ms` milisegundos

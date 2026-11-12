@@ -1123,4 +1123,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (solo para leerlo; ponerlo sigue siendo cosa del centro) y repinta al cambiar. Superficie, texto, primario para la
   frase de quien entra, contorno en la caja y el rojo de error de Material 3 para claro u oscuro. Antes, colores
   fijos. `CAPTURA_BLOQUEO=fichero.ppm` en `tools/prueba_uefi.sh` saca la primera pantalla de `guardian`. Captura
-  nueva. Falta la capa de las preguntas de permisos, que sigue con sus colores.
+  nueva.
+- S10c: también la capa de las preguntas de permisos de `guardian` sigue el tema (llega al enlazar, antes que la
+  configuración de la capa; con el borde en el primario). Captura nueva: en ese momento del arranque, el tema claro.
