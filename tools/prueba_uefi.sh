@@ -174,12 +174,35 @@ while time.time() - inicio < total:
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
-            centro = 7
+            centro = 8
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".discos.ppm")
             time.sleep(0.5)
             mandar("sendkey down")
+            reintento = time.time() + 4
+        # Apariencia: Tab a su lista, dos abajo (modo oscuro) e Intro; luego Tab a las categorías y abajo.
+        if centro == 8:
+            if "[centro] Apariencia: Modo claro" not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                time.sleep(0.25)
+                continue
+            centro = 9
+            time.sleep(0.5)
+            mandar("sendkey tab", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
+            reintento = time.time() + 4
+        if centro == 9:
+            if "[centro] Apariencia: oscuro" not in texto:
+                time.sleep(0.25)
+                continue
+            centro = 7
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".apariencia.ppm")
+            time.sleep(0.5)
+            mandar("sendkey tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         if centro == 7:
             if "[centro] Acerca de: " not in texto:

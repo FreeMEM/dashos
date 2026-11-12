@@ -5,6 +5,9 @@
 //! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
 //! - **Discos**: cuánto mide el disco del sistema, cuánto está ocupado y cuánto libre (INFO de `archivos`). Solo se
 //!   lee; su sesión con `archivos` no tiene derechos y está encerrada en `C`.
+//! - **Apariencia** (S10c, C3, el principio): modo claro u oscuro y color de acento; el esquema sale del color con
+//!   `Tema::desde_color` (Material 3). Se elige con Intro o doble clic y se ve en el acto, de momento en la ventana del
+//!   propio centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio en Prefs.
 //! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
@@ -51,8 +54,17 @@ const CANAL: u32 = 4;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
 /// Las categorías, por su nombre de enlace (lo que va tras "abrir") y el que se ve. Irán creciendo (S10c).
-const CATEGORIAS: &[(&str, &str)] = &[("permisos", "Permisos"), ("seguridad", "Seguridad"), ("discos", "Discos"), ("acerca", "Acerca de")];
+const CATEGORIAS: &[(&str, &str)] = &[
+    ("permisos", "Permisos"),
+    ("seguridad", "Seguridad"),
+    ("discos", "Discos"),
+    ("apariencia", "Apariencia"),
+    ("acerca", "Acerca de"),
+];
 const DISCOS: usize = 2;
+const APARIENCIA: usize = 3;
+/// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
+const COLORES: &[(&str, u32)] = &[("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
 const PERMISOS: usize = 0;
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
@@ -217,6 +229,14 @@ fn discos() -> Vec<String> {
     l
 }
 
+/// Las filas de Apariencia: los dos modos y los colores, con una marca en lo elegido.
+fn apariencia(oscuro: bool, color: usize) -> Vec<String> {
+    let marca = |si: bool| if si { " · elegido" } else { "" };
+    let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!oscuro)), alloc::format!("Modo oscuro{}", marca(oscuro))];
+    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color {}{}", c.0.to_lowercase(), marca(k == color))));
+    l
+}
+
 /// Lo de "Acerca de": una línea por dato.
 fn acerca() -> Vec<String> {
     let mut l = Vec::new();
@@ -274,6 +294,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(quitar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("quitar".into())));
+    arbol.notificar(permisos, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("elegir".into())));
     arbol.notificar(cerrar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cerrar".into())));
     let derecha = Hijo::Columna(alloc::vec![
         Hijo::Obj(titulo),
@@ -286,6 +307,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
+    let (mut oscuro, mut color) = (false, 0usize);
     let mut lineas_registro: Vec<String> = Vec::new();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
@@ -294,6 +316,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             ("Lo que se ha negado y los fallos, lo último primero.", reg.join("|"))
         } else if cat == DISCOS {
             ("Cuánto ocupa lo guardado.", reg.join("|"))
+        } else if cat == APARIENCIA {
+            ("Modo y color. Intro o doble clic para elegir.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
@@ -308,6 +332,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         lineas_registro = registro();
     } else if cat == DISCOS {
         lineas_registro = discos();
+    } else if cat == APARIENCIA {
+        lineas_registro = apariencia(oscuro, color);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -420,7 +446,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     lista = concedidos();
                     println!("  [centro] {}: {} concedidos", CATEGORIAS[cat].1, lista.len());
                 } else if cat != SEGURIDAD {
-                    lineas_registro = if cat == DISCOS { discos() } else { acerca() };
+                    lineas_registro = match cat {
+                        DISCOS => discos(),
+                        APARIENCIA => apariencia(oscuro, color),
+                        _ => acerca(),
+                    };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
                 } else {
                     lineas_registro = registro();
@@ -432,6 +462,25 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cerrar") => return Some(()),
+                Some("elegir") if cat == APARIENCIA => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    match v {
+                        0 | 1 => oscuro = v == 1,
+                        k if (2..2 + COLORES.len() as i64).contains(&k) => color = (k - 2) as usize,
+                        _ => {}
+                    }
+                    if v >= 0 {
+                        i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
+                        lineas_registro = apariencia(oscuro, color);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        println!("  [centro] Apariencia: {}, color {}", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0);
+                        cambio = true;
+                    }
+                }
+                Some("elegir") => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                }
                 Some("quitar") if cat != PERMISOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                 }

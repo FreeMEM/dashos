@@ -135,6 +135,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Seguridad, con negativas del hostil: sí;
 # Discos: el disco de pruebas, 7 MB (sin derechos: solo INFO).
 ~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
+# Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
+~│   [centro] Apariencia: Modo claro · elegido
+~│   [centro] Apariencia: oscuro, color Violeta
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
 ~│   [centro] cerrado

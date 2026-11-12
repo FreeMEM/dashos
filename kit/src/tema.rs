@@ -158,6 +158,47 @@ mod pruebas {
         }
     }
 
+    /// Contraste WCAG 2 entre dos colores (de 1 a 21): luminancia relativa en sRGB lineal.
+    fn contraste(a: Color, b: Color) -> f64 {
+        let lum = |c: Color| {
+            let canal = |k: u32| {
+                let v = ((c >> (8 * k)) & 0xff) as f64 / 255.0;
+                if v <= 0.040_45 { v / 12.92 } else { libm::pow((v + 0.055) / 1.055, 2.4) }
+            };
+            0.2126 * canal(2) + 0.7152 * canal(1) + 0.0722 * canal(0)
+        };
+        let (x, y) = (lum(a), lum(b));
+        (x.max(y) + 0.05) / (x.min(y) + 0.05)
+    }
+
+    /// S10c (C3): con cualquier color de acento, en claro y en oscuro, el texto se lee sobre su fondo (4,5:1 como
+    /// mínimo, lo de WCAG AA para texto normal). Los de la ventana de Apariencia del centro de control y 300 al azar.
+    #[test]
+    fn contraste_con_cualquier_color() {
+        let mut semillas = alloc::vec![0xff67_50a4u32, 0xff00_61a4, 0xff38_6a20, 0xff8b_5000, 0xffb3_261e, 0xff00_0000, 0xffff_ffff, 0xffff_ff00];
+        let mut x = 0x2545_f491_4f6c_dd1du64;
+        for _ in 0..300 {
+            x ^= x << 13;
+            x ^= x >> 7;
+            x ^= x << 17;
+            semillas.push(0xff00_0000 | (x as u32 & 0xff_ffff));
+        }
+        for &c in &semillas {
+            for oscuro in [false, true] {
+                let t = Tema::desde_color(c, oscuro);
+                for (nombre, texto, fondo) in [
+                    ("sobre_superficie", t.sobre_superficie, t.superficie),
+                    ("sobre_primario", t.sobre_primario, t.primario),
+                    ("sobre_contenedor_primario", t.sobre_contenedor_primario, t.contenedor_primario),
+                    ("sobre_variante_superficie", t.sobre_variante_superficie, t.variante_superficie),
+                ] {
+                    let k = contraste(texto, fondo);
+                    assert!(k >= 4.5, "{c:08x} oscuro {oscuro}: {nombre} {k:.2}");
+                }
+            }
+        }
+    }
+
     /// El esquema de referencia de Material 3 es el del violeta 0x6750A4: el claro y el oscuro salen de él.
     #[test]
     fn la_referencia_sale_del_violeta() {

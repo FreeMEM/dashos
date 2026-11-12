@@ -875,3 +875,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cada uno con su llave de vuelta, una inundación de 160 mensajes con 8 llaves cada uno y otro pedido malo después.
   El centro contesta -1 a todos sin abrir ventana (antes contestaba 0 a cualquiera con llave) y sigue contestando
   tras la inundación; de los pedidos malos solo dice los tres primeros. Después, `guardian` lo abre bien, como antes.
+- S10c, el principio de C3: **Apariencia** en el centro. Modo claro u oscuro y color de acento (violeta, azul, verde,
+  naranja); el esquema sale del color con `Tema::desde_color` del kit (Material 3) y se elige con Intro o doble clic
+  (`atr::DOBLE` en la lista de la derecha; en Permisos, Intro ya no quita nada: eso es Supr). Se ve en el acto, de
+  momento solo en la ventana del centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio
+  en Prefs. Prueba en el kit (`contraste_con_cualquier_color`, en `make prueba`): con 8 colores escogidos (negro,
+  blanco y amarillo puro incluidos) y 300 al azar, en claro y en oscuro, cada texto sobre su fondo da 4,5:1 o más
+  (WCAG AA). En virt: Tab a la lista, dos abajo e Intro; "Apariencia: oscuro, color Violeta" y la ventana se repinta
+  oscura. Captura en `docs/capturas/s10c-centro-apariencia.png`.
