@@ -1564,3 +1564,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente: `pacman -S` (pide `pacman-key --init`), lo escrito tras reiniciar, la memoria de 512 MB (en QEMU virt
   DashOS ve 3 GB), la Pi 4. Dos decisiones del usuario: entrar como root o como usuario; quitar el kernel de Arch.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 20:25: Linux con 4 vCPU, en revision
+- Fusionada `caja-linux-vcpu`: cada llave de máquina es una vCPU (su GIC virtual, temporizador y FPU) y comparten la
+  memoria del invitado; operaciones 4 a 7 de `maquina_estado` (crear vCPU, reiniciarla para CPU_ON, patearla, parar
+  la máquina). El servicio lleva un hilo por vCPU, PSCI CPU_ON/CPU_OFF/AFFINITY_INFO y SGI entre vCPU. Linux sube
+  4 CPU; 4 trabajos a la vez van 3,5 veces más rápido que seguidos. El WFI duerme el hilo en el kernel.
+- Hostil (`usuario/invitados/smp.s`): CPU_ON a una vCPU que no existe o dos veces, rechazado; tormenta de SGI y vCPU
+  en bucle con todo enmascarado: la máquina se para con ella dentro y los hilos terminan.
+- Choques resueltos con la rama de Arch: Arch arranca también con 4 vCPU.
+- Pendiente: la tormenta de SGI frena 100-240 veces a la vCPU que la recibe; un solo cerrojo en el servicio;
+  CPU_SUSPEND contesta en el acto; FPU de cada vCPU sin cobrarse al grupo; número fijo de vCPU; la Pi 4.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
