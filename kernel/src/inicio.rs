@@ -133,6 +133,19 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("presa", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/presa"), &[], &["sesiones"]),
+    // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee); el controlador de
+    // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
+    // uno sin la llave. La llave del canal "red" es el permiso de red: hoy la da `inicio`; más adelante, `sesiones`.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red"), &[], &["red"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("virtio-red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("red-gloton", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red-gloton"), &[], &["red"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("red-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red-prueba"), &[], &["red"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("sin-red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sin-red"), &[], &[]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(feature = "virt")]
     ("caida", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/caida"), &[], &["caida"]),
@@ -475,6 +488,20 @@ pub fn lanzar() -> bool {
         }
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vsonido", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+    }
+    // La red de virtio (S13): virtio 1.2, 4.1.2, el aparato 0x1040 más el tipo, 1; solo el moderno (en QEMU,
+    // `disable-legacy=on`). Como el sonido: registros de la BAR 4 y su configuración, para leer las capacidades.
+    if let Some((fisica, tamano, irq, cfg)) = aparato_pci(&d, Pci::Id(0x1af4, 0x1041), 0x20, "virtio-red") {
+        apuntar(&mut llaves, "virtio-red", REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
+        apuntar(&mut llaves, "vred-cfg", REGISTROS, Llave::nueva(Objeto::Registros { fisica: cfg, tamano: memoria::PAGINA }, DERECHOS));
+        match irq.and_then(interrupciones::Interrupcion::nueva) {
+            Some(irq) => apuntar(&mut llaves, "virtio-red", INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS)),
+            // La INTx compartida con otro aparato ya tiene dueño: el controlador mira sus colas con un temporizador.
+            None if irq.is_some() => kprintln!("virtio-red: su INTx ya es de otro; irá con un temporizador"),
+            None => {}
+        }
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+        apuntar(&mut llaves, "dma-vred", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
         if let Some((fisica, tamano, irq, _)) = aparato_pci(&d, Pci::Clase(clase), 0x10, nombre) {

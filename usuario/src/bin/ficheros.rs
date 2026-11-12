@@ -31,6 +31,9 @@ struct R {
     c: u64,
 }
 
+/// Si ya se dijo que el servicio no admitía una petición (una vez basta).
+static AVISADO_LLENO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 struct Cliente {
     lectura: u32,
     ventana: usize,
@@ -57,8 +60,22 @@ impl Cliente {
         p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
         p[32..32 + nombre.len()].copy_from_slice(nombre.as_bytes());
         let malo = R { estado: i32::MIN, asa: 0, a: 0, b: 0, c: 0 };
-        if dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]) != 0 {
-            return malo;
+        // Con el servicio atareado (el PC cargado), su cola puede estar llena: se reintenta un rato en vez de dar la
+        // petición por fallida (si no, la siguiente respuesta que llega es de otra y todo se desacompasa).
+        let mut intentos = 0;
+        loop {
+            let e = dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]);
+            if e == 0 {
+                break;
+            }
+            if e == dashos::E_CERRADO || intentos >= 2000 {
+                return malo;
+            }
+            if intentos == 0 && !AVISADO_LLENO.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                println!("  [ficheros] el servicio de archivos no admite la petición ({}): se reintenta", e);
+            }
+            intentos += 1;
+            dashos::dormir_us(1_000);
         }
         self.leer_respuesta(&mut []).map_or(malo, |r| r.0)
     }
@@ -514,8 +531,13 @@ fn principal() -> u64 {
     let mut lleno = sujetar() == 0;
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
     let mut rondas = 0;
+    // El primer paso que falla y su estado, para el mensaje.
+    let mut fallo: Option<(&str, i64)> = None;
     while lleno && rondas < 64 {
         let f = c.pedir(CREAR, escrito.asa, 1, 0, "a15b.bin");
+        if f.estado != 0 && fallo.is_none() {
+            fallo = Some(("crear", f.estado as i64));
+        }
         lleno &= f.estado == 0;
         for off in (0..256 * 1024u64).step_by(64 * 1024) {
             for b in c.ventana_mut()[..64 * 1024].iter_mut() {
@@ -524,19 +546,32 @@ fn principal() -> u64 {
                 x ^= x << 17;
                 *b = x as u8;
             }
-            lleno &= c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "").a == 64 * 1024;
+            let w = c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "");
+            if w.a != 64 * 1024 && fallo.is_none() {
+                fallo = Some(("escribir", w.estado as i64));
+            }
+            lleno &= w.a == 64 * 1024;
         }
         // Guardado antes de borrarlo: si no, sus bloques son nuevos (ninguna foto los nombra) y se reusan sin esperar.
-        lleno &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        let v = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if v != 0 && fallo.is_none() {
+            fallo = Some(("guardar", v as i64));
+        }
+        lleno &= v == 0;
         c.pedir(CERRAR, f.asa, 0, 0, "");
-        lleno &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        let b = c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado;
+        let v2 = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if (b != 0 || v2 != 0) && fallo.is_none() {
+            fallo = Some(("borrar y guardar", (b as i64) << 32 | (v2 as u32 as i64)));
+        }
+        lleno &= b == 0 && v2 == 0;
         rondas += 1;
     }
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
     let soltar = c.pedir(SOLTAR, 0, 0, 0, "").estado;
     let lleno = lleno && soltar == LLENO && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
     if !lleno {
-        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}", rondas, soltar);
+        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}, primer fallo {:?}", rondas, soltar, fallo);
     }
     println!("  [ficheros] A15 sujetar sin soltar: {}", si(lleno));
 

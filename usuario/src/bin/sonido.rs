@@ -12,6 +12,11 @@
 //!   (`usuario/src/sonido_cliente.rs`); `VOLUMEN` y `CERRAR`. Un flujo por programa.
 //! - `GENERAL` (f32): el volumen general, sobre la mezcla entera. Solo del panel rápido (C2 de S10c); de otro, nada.
 //!
+//! U6, el cambio rápido de usuario (`docs/diseño/U6-cambio-rapido.md`): `sesiones` manda, sin marca (`AVISO_PERSONA`,
+//! `AVISO_DETRAS` de `dashos::protocolo::sesiones`), de qué persona es cada programa y qué sesiones están detrás. Un
+//! flujo de una sesión de detrás sigue leyéndose a su ritmo (al programa no se le llena el anillo ni se le cuelga),
+//! pero se mezcla con volumen 0: no suena. Al volver delante, otra vez con su volumen.
+//!
 //! Cuando el anillo de un programa baja de la mitad, se le despierta por su canal. Si el canal está cerrado, el
 //! programa murió: su flujo sale con el fundido del mezclador (A5).
 
@@ -61,6 +66,11 @@ fn poner(va: usize, i: usize, v: u32) {
 
 struct Cliente {
     nombre: String,
+    /// El volumen que pidió el programa (U6: se guarda mientras suena en silencio).
+    volumen: (f32, f32),
+    /// U6: en silencio porque su sesión está detrás, y lo que se leyó de su anillo así (bytes).
+    silencio: bool,
+    leido_en_silencio: u64,
     id: u32,
     va: usize,
     tam: u32,
@@ -100,12 +110,34 @@ fn recoger(m: &mut Mezclador, c: &mut Cliente, tmp: &mut Vec<u8>) {
     }
     let usados = m.escribir(c.id, tmp);
     poner(c.va, 1, cola.wrapping_add(usados as u32));
+    if c.silencio {
+        c.leido_en_silencio += usados as u64;
+    }
 }
 
 /// La clase de plazo (S2, A6): hasta 3 ms de CPU cada período de 5,3 ms. Con la mezcla en coma fija (E9), un período
 /// de dos flujos cuesta unos 20 µs en QEMU (antes, en coma flotante por software, 320 de media y hasta 1 ms): sobra
 /// plazo, que se deja hasta medir en placa.
 const PLAZO_US: (u64, u64) = (3_000, 5_333);
+
+/// U6: pone cada flujo en silencio o con su volumen según su sesión esté detrás o no, y lo dice si cambia.
+fn seguir_sesiones(m: &mut Mezclador, clientes: &mut BTreeMap<u64, Cliente>, personas: &BTreeMap<u64, u32>, detras: &[u32]) {
+    for (mc, c) in clientes.iter_mut() {
+        let silencio = personas.get(mc).is_some_and(|u| detras.contains(u));
+        if silencio == c.silencio || c.cerrando {
+            continue;
+        }
+        c.silencio = silencio;
+        if silencio {
+            m.volumen(c.id, 0.0, 0.0);
+            c.leido_en_silencio = 0;
+            println!("  [sonido] {}: en silencio, su sesión está detrás", c.nombre);
+        } else {
+            m.volumen(c.id, c.volumen.0, c.volumen.1);
+            println!("  [sonido] {}: suena otra vez; en silencio se leyeron {} KB de su anillo", c.nombre, c.leido_en_silencio / 1024);
+        }
+    }
+}
 
 fn principal() -> u64 {
     // Llaves: 1 el permiso de la clase de plazo (S3) y 2 el canal "sonido".
@@ -115,6 +147,11 @@ fn principal() -> u64 {
     }
     let mut m = Mezclador::nuevo(48_000);
     let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
+    // U6: de qué persona es cada programa, sus nombres (los de lo que lanza `sesiones`, solo para los mensajes) y las
+    // personas con la sesión detrás.
+    let mut personas: BTreeMap<u64, u32> = BTreeMap::new();
+    let mut lanzados: BTreeMap<u64, String> = BTreeMap::new();
+    let mut detras: Vec<u32> = Vec::new();
     let mut clientes: BTreeMap<u64, Cliente> = BTreeMap::new();
     let mut salida: Option<Salida> = None;
     let mut huecos: u64 = 0;
@@ -134,10 +171,31 @@ fn principal() -> u64 {
         let llaves: Vec<u32> = ll[..k].to_vec();
         let cerrar_llaves = |ll: &[u32]| ll.iter().for_each(|&l| { dashos::cerrar(l); });
         if marca == 0 {
+            use dashos::protocolo::sesiones as s;
+            let w = |i: usize| u32::from_le_bytes(buf[i..i + 4].try_into().unwrap());
             if n == 24 {
                 let mm = u64::from_le_bytes(buf[..8].try_into().unwrap());
                 let fin = buf[8..24].iter().position(|&b| b == 0).unwrap_or(16);
                 nombres.insert(mm, String::from(core::str::from_utf8(&buf[8..8 + fin]).unwrap_or("?")));
+            } else if n == s::LARGO_AVISO_PERSONA && w(0) == s::AVISO_PERSONA {
+                // U6: de quién es un programa (de `sesiones`; solo él e `inicio` escriben sin marca).
+                let (uid, mm) = (w(4), u64::from_le_bytes(buf[8..16].try_into().unwrap()));
+                let fin = buf[16..32].iter().position(|&b| b == 0).unwrap_or(16);
+                if uid >= s::PRIMERA_PERSONA {
+                    personas.insert(mm, uid);
+                } else {
+                    personas.remove(&mm);
+                }
+                if uid == 0 {
+                    lanzados.remove(&mm);
+                } else if !nombres.contains_key(&mm) {
+                    lanzados.insert(mm, String::from(core::str::from_utf8(&buf[16..16 + fin]).unwrap_or("?")));
+                }
+                seguir_sesiones(&mut m, &mut clientes, &personas, &detras);
+            } else if n == s::LARGO_AVISO_DETRAS && w(0) == s::AVISO_DETRAS {
+                let cuantas = (w(4) as usize).min(s::MAX_DETRAS);
+                detras = (0..cuantas).map(|i| w(8 + 4 * i)).filter(|&u| u >= s::PRIMERA_PERSONA).collect();
+                seguir_sesiones(&mut m, &mut clientes, &personas, &detras);
             }
             cerrar_llaves(&llaves);
             continue;
@@ -147,7 +205,9 @@ fn principal() -> u64 {
             continue;
         }
         let w = |i: usize| u32::from_le_bytes(buf[4 * i..4 * i + 4].try_into().unwrap());
+        // Los poderes (el volumen general, ser el controlador), solo por el nombre que da `inicio`.
         let nombre = nombres.get(&marca).cloned().unwrap_or_else(|| String::from("?"));
+        let para_mensajes = nombres.get(&marca).or_else(|| lanzados.get(&marca)).cloned().unwrap_or_else(|| String::from("?"));
         match w(0) {
             SALIDA if n == 16 && k == 1 && nombre == "virtio-sonido" && salida.is_none() => {
                 let (ranuras, cuadros, ritmo) = (w(1), w(2), w(3));
@@ -249,7 +309,7 @@ fn principal() -> u64 {
                     && dashos::memoria_proyectar(llaves[0], va, true) == 0;
                 let tam = if ok { palabra(va, 2) } else { 0 };
                 if !ok || !tam.is_power_of_two() || tam as i64 + DATOS as i64 > tamano {
-                    println!("  [sonido] {} pide un flujo que no vale", nombre);
+                    println!("  [sonido] {} pide un flujo que no vale", para_mensajes);
                     if ok {
                         dashos::memoria_quitar(va);
                     }
@@ -259,13 +319,33 @@ fn principal() -> u64 {
                 let f = f.unwrap();
                 let id = m.abrir(f).unwrap();
                 huecos |= 1 << hueco.unwrap();
-                println!("  [sonido] {} abre un flujo: {:?}, {} canales, {} Hz", nombre, f.muestra, f.canales, f.frecuencia);
-                clientes.insert(marca, Cliente { nombre, id, va, tam, aviso: llaves[1], memoria: llaves[0], avisado: false, ultima: 0, cerrando: false, faltas: 0 });
+                println!("  [sonido] {} abre un flujo: {:?}, {} canales, {} Hz", para_mensajes, f.muestra, f.canales, f.frecuencia);
+                clientes.insert(marca, Cliente {
+                    nombre: para_mensajes,
+                    volumen: (1.0, 1.0),
+                    silencio: false,
+                    leido_en_silencio: 0,
+                    id,
+                    va,
+                    tam,
+                    aviso: llaves[1],
+                    memoria: llaves[0],
+                    avisado: false,
+                    ultima: 0,
+                    cerrando: false,
+                    faltas: 0,
+                });
+                // U6: si su sesión está detrás, en silencio desde el principio.
+                seguir_sesiones(&mut m, &mut clientes, &personas, &detras);
             }
             VOLUMEN if n == 12 => {
                 cerrar_llaves(&llaves);
-                if let Some(c) = clientes.get(&marca) {
-                    m.volumen(c.id, f32::from_bits(w(1)), f32::from_bits(w(2)));
+                if let Some(c) = clientes.get_mut(&marca) {
+                    c.volumen = (f32::from_bits(w(1)), f32::from_bits(w(2)));
+                    // U6: en silencio, se guarda para cuando vuelva delante.
+                    if !c.silencio {
+                        m.volumen(c.id, c.volumen.0, c.volumen.1);
+                    }
                 }
             }
             GENERAL if n == 8 => {

@@ -37,6 +37,8 @@ QEMU=$!
 # U6, el cambio rápido de usuario: tras entrar Ana, en las dos pantallas de bloqueo siguientes, Esc y otra persona
 # (Carla, y luego otra vez Ana) con su contraseña. Con CAPTURA_CAMBIO=fichero.ppm, la primera de esas dos pantallas
 # (fichero.ppm) y la de "Cambiar de usuario" con el nombre ya puesto (fichero.nombre.ppm).
+# U6, paso 2: con CAPTURA_U6=prefijo, la pantalla con la ventana de `cambio` de Ana delante (prefijo.ana.ppm) y la de la
+# sesión de Carla, con Ana detrás (prefijo.carla.ppm): ahí no tiene que estar (lo mira `tools/captura_cambio.py`).
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
 import os, socket, sys, time
@@ -99,12 +101,14 @@ menu = 0
 preguntas = 0
 selector = 0
 entradas_antes = 0
+menu_intentos = 0
 espera_carpeta = 0
 centro = 0
 panel = 0
 barra = 0
 bloqueo_capturado = False
 cambio = 0
+captura_u6_hecha = 0
 
 while time.time() - inicio < total:
     try:
@@ -124,6 +128,17 @@ while time.time() - inicio < total:
             bloqueo_capturado = True
             time.sleep(0.5)
             mandar("screendump " + os.environ["CAPTURA_BLOQUEO"])
+        # U6, paso 2: las dos capturas de la ventana de `cambio` (no mandan teclas).
+        captura_u6 = os.environ.get("CAPTURA_U6")
+        if captura_u6 and captura_u6_hecha == 0 and "[cambio] Ana: ventana en pantalla: true" in texto:
+            captura_u6_hecha = 1
+            time.sleep(0.3)
+            mandar("screendump " + captura_u6 + ".ana.ppm")
+        # La de Carla, al acabar la espía: `guardian` deja la sesión de Carla 3 s más sin bloquear.
+        if captura_u6 and captura_u6_hecha == 1 and "[cambio] Carla delante (" in texto:
+            captura_u6_hecha = 2
+            time.sleep(0.3)
+            mandar("screendump " + captura_u6 + ".carla.ppm")
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
         # segundo no cuenta) y luego que no.
         vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
@@ -810,6 +825,10 @@ while time.time() - inicio < total:
                     ir_a(int(v.group(1)) + int(o.group(1)), int(v.group(2)) + int(o.group(2)))
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
                     time.sleep(0.5)
+                elif menu_intentos < 3:
+                    # No se abrió (algo lo tapaba, o el PC va lento): otra vez más tarde, hasta tres.
+                    menu_intentos += 1
+                    menu = 0
                 ir_a(300, 300)
         paso += 1
         ordenes = ["mouse_move 10 5"]

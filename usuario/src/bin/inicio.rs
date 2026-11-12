@@ -45,6 +45,29 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
 const REPARTE: &[&str] = &["eco"];
 
+/// Los servicios que siguen las sesiones (U6, paso 2): de su canal, `sesiones` recibe una copia sin marca para
+/// avisarles de quién es cada programa y qué sesión está detrás, y para dar a lo que lanza su llave marcada.
+const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido"];
+
+/// Manda a `sesiones` (por `canal`, sin marca) una copia sin marca del canal `extremo`, que sirve `nombre_cab`.
+fn canal_a_sesiones(canal: u32, extremo: u32, nombre_cab: usize) {
+    let copia = llave_duplicar(extremo, 7, 0);
+    if copia <= 0 {
+        return;
+    }
+    let mut m = [0u8; 20];
+    m[0..4].copy_from_slice(&dashos::protocolo::sesiones::CANAL_SISTEMA.to_le_bytes());
+    m[4..20].copy_from_slice(unsafe { core::slice::from_raw_parts(nombre_cab as *const u8, 16) });
+    // Hasta 5 s: sin ella, las ventanas de una sesión de detrás se verían.
+    for _ in 0..500 {
+        if dashos::canal_escribir(canal, &m, &[copia as u32]) == 0 {
+            return;
+        }
+        dormir_un_tic();
+    }
+    dashos::cerrar(copia as u32);
+}
+
 /// La orden de alta del servicio de archivos.
 const ALTA: u32 = 100;
 
@@ -158,7 +181,9 @@ fn principal() -> u64 {
     let mut lector = [0usize; 32];
     // E6: los servicios (los que leen algún canal), para relanzarlos si acaban. Sus avisos de fin (K7) llegan por
     // `avisos`, con la marca del número del programa más 1.
-    let mut servicios: [Option<Servicio>; 32] = Default::default();
+    // Uno por programa: con más de 32 (desde la red, S13), los últimos se quedaban sin vigilar. Las marcas de los
+    // clientes (`clientes_de`) llegan a 64.
+    let mut servicios: [Option<Servicio>; 64] = core::array::from_fn(|_| None);
     // Los clientes de cada canal (bit = número del programa), para darle otra vez a su servicio, si se relanza, sus
     // entradas del directorio y, al de archivos, sus altas.
     let mut clientes_de = [0u64; 32];
@@ -202,6 +227,11 @@ fn principal() -> u64 {
                     let (a, b) = canal_crear();
                     pendientes[c] = b;
                     lector[c] = cab;
+                    // U6: si lo sirve uno que sigue las sesiones y `sesiones` ya está, su copia sin marca (si no, se la
+                    // da al lanzarlo).
+                    if sesiones != 0 && SIGUEN_SESIONES.contains(&nombre(nombre_cab)) {
+                        canal_a_sesiones(sesiones, b, nombre_cab);
+                    }
                     lee |= 1 << c;
                     suyas[k] = a;
                     k += 1;
@@ -290,7 +320,8 @@ fn principal() -> u64 {
         unsafe { core::ptr::copy_nonoverlapping(origen as *const u8, destino as *mut u8, tamano) };
         // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
         // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
-        let cupo = if nombre(nombre_cab) == "archivos" { 64 << 20 } else { 16 << 20 };
+        // U6: `sesiones`, también 64: de su cupo salen los grupos de lo que lanza (8 MB cada uno).
+        let cupo = if matches!(nombre(nombre_cab), "archivos" | "sesiones") { 64 << 20 } else { 16 << 20 };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
         let mut guardadas = [0u32; 8];
         if lee != 0 {
@@ -309,6 +340,9 @@ fn principal() -> u64 {
         if nombre(nombre_cab) == "sesiones" {
             if let Some(c) = (0..32).find(|&c| lee & (1 << c) != 0) {
                 sesiones = pendientes[c];
+            }
+            for c in (0..32).filter(|&c| pendientes[c] != 0 && SIGUEN_SESIONES.contains(&nombre(lector[c] + 16))) {
+                canal_a_sesiones(sesiones, pendientes[c], lector[c] + 16);
             }
             for &(cab, marca, grupo, p) in &antes[..n_antes] {
                 alta_en_sesiones(sesiones, cab, marca, grupo);

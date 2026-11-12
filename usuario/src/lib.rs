@@ -16,12 +16,14 @@ pub mod servicio;
 pub mod protocolo {
     pub mod archivos;
     pub mod comprobar;
+    pub mod red;
     pub mod sesiones;
 }
 #[cfg(feature = "monton")]
 pub mod monton;
 pub mod prestados;
 pub mod hilos;
+pub mod red_cliente;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.

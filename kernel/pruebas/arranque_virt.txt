@@ -143,7 +143,8 @@ DashOS en marcha con 4 núcleos.
 # U4: la pregunta, en una capa encima de todo; lo pulsado en el primer segundo no cuenta.
 ~│   [guardian] ¿pide puede usar eco? El usuario dice sí
 ~│   [guardian] tecla 's' antes de tiempo: no cuenta
-~│   [guardian] preguntas: de pide 2, de otros 2: bien
+# U6, paso 2: lo concedido es por programa y usuario: a `pide` se le pregunta una vez por servicio y usuario.
+~│   [guardian] preguntas de pide, una por servicio y usuario: bien
 ~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
 # S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
 # La apariencia guardada está en basura: se queda la de serie.
@@ -226,18 +227,39 @@ DashOS en marcha con 4 núcleos.
 # ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
 # procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
 # sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
+# U6, paso 2: el `cambio` de Ana abre una ventana (la captura el guion: `tools/captura_cambio.py`), suena por el
+# servicio de sonido y pide el permiso de plazo, que Ana le concede (en la prueba contesta `guardian`).
+~│   [cambio] Ana: ventana en pantalla: true
+~│   [cambio] Ana: suena por el servicio de sonido: true (0)
+~│   [cambio] Ana: pide plazo 0 (se pregunta a Ana), lo deja 0
 ~│   [guardian] cambio de usuario: entra Carla (0 intentos malos); Ana sigue detrás
+# Con Carla delante, el compositor no enseña ni da entrada a lo de Ana, y su tono suena en silencio.
+~│   [compositor] sesiones de detrás: [1000]
+~│   [sonido] cambio: en silencio, su sesión está detrás
 ~│   [sesiones] delante, la sesión de Carla; detrás, 1
 ~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
 ~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
 ~0 muertos, 0 dicen que existen: bien
 ~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
 ~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
+# El permiso que Ana concedió a `cambio` no vale para el de Carla: se le pregunta a ella (y dice que no).
+~│   [cambio] Carla: pide plazo (concedido a cambio como Ana) -2: bien
 ~│   [cambio] Carla delante (1), con Ana detrás: nada de Ana a su alcance: bien
 ~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
 ~│   [sesiones] delante, la sesión de Ana; detrás, 1
+# Detrás, a la ventana de Ana no le llegó nada del teclado ni del ratón (el guion tecleaba y pulsaba en la sesión de
+# Carla), sus avisos de frame llegaron a ritmo bajo, y su tono se siguió leyendo sin sonar.
+~su ventana, 0 teclas, 0 del ratón, 0 veces el foco y 
+~ KB escritos: bien
+~│   [sonido] cambio: suena otra vez; en silencio se leyeron 
+~│   [compositor] sesiones de detrás: [1001]
 ~│   [cambio] Ana vuelve delante: su fichero sigue, con lo escrito detrás: bien
+~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
 ~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
+~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
+# Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
+~│   [cambio] lanzado del disco como panel: 
+~, 0 de escritorio; pedir el bloqueo da error: true: bien
 # U3: bloquear por tiempo: el compositor avisa cuando nadie toca teclado ni ratón (ext_idle_notifier_v1).
 ~│   [guardian] esperando 2000 ms sin entrada
 ~│   [guardian] sin entrada durante 2 s: aviso tras
@@ -299,3 +321,24 @@ DashOS en marcha con 4 núcleos.
 ~│   [caida] relanzado, con 1 cliente en el directorio; cae a propósito
 ~│   [inicio] caida acabó (clase 0, código 3): se relanza (vez 3)
 ~│   [inicio] caida acabó (clase 0, código 3): se deja tras 3 relanzados
+# S13: la red con cable. El controlador de virtio-net (en un concentrador con la red de usuario de QEMU y con
+# `tools/red_basura.py`), el servicio con smoltcp y su dirección por DHCP.
+~virtio-red: en el PCIe 0:
+~│   [virtio-red] MAC 52:54:00:12:34:56; colas de 128 y 64; avisos 
+~│   [red] DHCP: 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3
+# Lo que no le toca a un programa con permiso (decir que es el controlador, tocar conexiones ajenas, mal formados), se
+# rechaza.
+~│   [red-prueba] hacerse pasar por el controlador o tocar lo ajeno: 
+~[-1, -1, -7]: bien
+# Un glotón abre conexiones sin fin: el servicio le da 8 y después "límite"; mientras, el eco de 4 MB al azar con el PC
+# (`tools/red_eco.py`) vuelve igual. Caudal y tiempo de ida y vuelta, en la línea "caudal" y en la de "ida y vuelta".
+~│   [red-gloton] tope en 8 conexiones; 50 intentos más dan -3: bien
+~│   [red-prueba] eco de 4 MB al azar: vuelve igual: bien
+~│   [red-prueba] con el glotón en su tope (
+~conexiones abiertas): bien
+~│   [red-gloton] cerradas las 8; otra vez abre: bien
+~│   [red-prueba] puerto cerrado: rechazada: bien
+# El PC manda basura (cortas, largas, enormes, IPv4 y ARP rotas): el controlador y el servicio siguen.
+~│   [red-prueba] basura del PC tirada; eco después: bien
+# Sin la llave del canal "red" no hay red.
+~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien

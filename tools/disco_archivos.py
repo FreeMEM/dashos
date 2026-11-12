@@ -67,6 +67,7 @@ if sys.argv[1] == "--comprobar":
         "Programas/ cajón",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
+        f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
@@ -177,6 +178,10 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)
+    # U6, paso 2, prueba hostil: una copia de `cambio` con el nombre del panel rápido; lanzada del disco no tiene sus poderes.
+    with open(os.path.join(raiz, "Programas", "panel"), "wb") as f:
+        f.write(open(CAMBIO, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "panel"), 0o755)
     privado = os.path.join(raiz, "C", "Privado")
     os.makedirs(privado)
     with open(os.path.join(privado, "nota.txt"), "w") as f:

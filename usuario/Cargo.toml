@@ -14,6 +14,8 @@ ventanas = ["monton", "dep:wayland", "dep:kit"]
 sonido = ["monton", "dep:sonido", "dep:audiodevice"]
 # Las imágenes de disco del Amiga (S20): el servicio que monta un ADF.
 imagenes = ["monton", "dep:amigados"]
+# El servicio de red (S13): la pila TCP/IP smoltcp (0BSD), solo con lo que usa.
+red = ["monton", "dep:smoltcp"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -24,6 +26,7 @@ kit = { package = "dashos-kit", path = "../kit", optional = true }
 sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
+smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
 
 [lib]
 name = "dashos"
@@ -217,6 +220,13 @@ path = "src/bin/selector.rs"
 test = false
 required-features = ["ventanas"]
 
+# U6: la prueba del cambio rápido de usuario (en el disco); desde el paso 2, con su ventana.
+[[bin]]
+name = "cambio"
+path = "src/bin/cambio.rs"
+test = false
+required-features = ["ventanas", "sonido"]
+
 [[bin]]
 name = "ventana-a"
 path = "src/bin/ventana_a.rs"
@@ -226,6 +236,33 @@ required-features = ["ventanas"]
 [[bin]]
 name = "virtio-sonido"
 path = "src/bin/virtio_sonido.rs"
+test = false
+
+# La red (S13): el controlador de virtio-net, el servicio con la pila y sus pruebas.
+[[bin]]
+name = "virtio-red"
+path = "src/bin/virtio_red.rs"
+test = false
+
+[[bin]]
+name = "red"
+path = "src/bin/red.rs"
+test = false
+required-features = ["red"]
+
+[[bin]]
+name = "red-prueba"
+path = "src/bin/red_prueba.rs"
+test = false
+
+[[bin]]
+name = "red-gloton"
+path = "src/bin/red_gloton.rs"
+test = false
+
+[[bin]]
+name = "sin-red"
+path = "src/bin/sin_red.rs"
 test = false
 
 [[bin]]
