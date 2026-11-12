@@ -1105,3 +1105,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `sesiones` es la 3 y las demás se corren (eco 4, la suya 5). Con los números mal, `sesiones` no atendía a nadie.
   Pendiente: `sesiones` espera la respuesta sin plazo (si el comprobador tarda, como hasta 10 s esperando a sujetar,
   `sesiones` no atiende entretanto); y que el centro enseñe los KB y los problemas.
+- A15: `sesiones` espera al comprobador con plazo, 20 s (hasta 10 s esperando a que otro suelte el disco, y el
+  recorrido); si vence, contesta EN_USO y sigue. Probado con el comprobador retrasado 25 s a propósito (quitado
+  después): "el comprobador no contesta en 20 s", y la respuesta tardía del comprobador va a un canal ya cerrado sin
+  estorbar. Pendiente: durante esos 20 s `sesiones` no atiende a nadie; lo bueno sería no esperar (contestar a quien
+  pidió cuando llegue la respuesta, como las preguntas pendientes).

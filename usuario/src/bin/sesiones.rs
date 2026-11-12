@@ -337,6 +337,9 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
 }
 
+/// A15: lo más que se espera al comprobador: hasta 10 s a que otro suelte el disco y el recorrido.
+const PLAZO_COMPROBAR_US: u64 = 20_000_000;
+
 /// A15: pide al comprobador aparte (llave `COMPROBADOR`) que recorra el disco con los datos: estado y problemas.
 fn comprobar_aparte() -> (i32, u64) {
     use dashos::protocolo::comprobar::{COMPROBAR, CON_DATOS};
@@ -345,8 +348,16 @@ fn comprobar_aparte() -> (i32, u64) {
     p[0..4].copy_from_slice(&COMPROBAR.to_le_bytes());
     p[4..8].copy_from_slice(&CON_DATOS.to_le_bytes());
     let mut r = [0u8; 24];
+    // Con plazo: si el comprobador se atasca, `sesiones` no se queda sin atender a nadie (EN_USO; se puede repetir).
     let leido = if dashos::canal_escribir(COMPROBADOR, &p, &[escritura]) == 0 {
-        dashos::canal_leer(lectura, &mut r, &mut []).0
+        match dashos::canal_leer_plazo(lectura, &mut r, &mut [], PLAZO_COMPROBAR_US).0 {
+            dashos::E_PLAZO => {
+                dashos::cerrar(lectura);
+                println!("  [sesiones] el comprobador no contesta en {} s", PLAZO_COMPROBAR_US / 1_000_000);
+                return (dashos::protocolo::archivos::EN_USO, 0);
+            }
+            n => n,
+        }
     } else {
         dashos::cerrar(escritura);
         -1
