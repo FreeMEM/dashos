@@ -40,6 +40,7 @@ prueba: $(PRUEBAS)
 	cd ../amigados && cargo test --quiet --release
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	$(MAKE) -C ../caja/pruebas_hunk
 	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q

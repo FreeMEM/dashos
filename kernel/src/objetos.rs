@@ -52,6 +52,10 @@ pub enum Objeto {
     /// Permiso para pedir la clase de plazo (S3): con escribir, la llamada 28. Solo lo da el kernel, y `inicio` lo
     /// reparte al sonido (y, cuando lo use, al compositor).
     PermisoPlazo,
+    /// Permiso para tener página 0 (H4, S3): con escribir, la llamada 45 proyecta un objeto de una página en la dirección
+    /// 0, de solo lectura (ExecBase en la dirección 4 de la caja Amiga). Solo lo da el kernel, y `inicio` lo da a la
+    /// caja Amiga y a nadie más.
+    PermisoPaginaCero,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.

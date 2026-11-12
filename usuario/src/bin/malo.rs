@@ -236,6 +236,14 @@ fn principal() -> u64 {
         println!("  [malo] JIT: falla el paso {}", paso);
         return 37;
     }
+    // 38 (H4, la página 0 de la caja Amiga): sin el permiso de página 0, la llamada 45 no proyecta nada (una llave que
+    // no existe, una de memoria en su lugar, un canal); y por `memoria_proyectar`, ni la dirección 0 ni nada de los
+    // primeros 64 KB, tampoco de solo lectura.
+    let paso = pagina_cero();
+    if paso != 0 {
+        println!("  [malo] página 0: falla el paso {}", paso);
+        return 38;
+    }
     // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
     let local = 0u64;
     if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {
@@ -303,5 +311,31 @@ fn jit() -> u32 {
         return 5;
     }
     println!("  [malo] JIT: se escribe por una dirección y se ejecuta por otra; escribir y ejecutar a la vez, rechazado");
+    0
+}
+
+/// El paso 38: la página 0 (H4). 0 si todo va bien; si no, qué falló.
+fn pagina_cero() -> u32 {
+    let m = dashos::memoria_crear(4096);
+    let (a, b) = dashos::canal_crear();
+    if x0(45, [999, m as u64, 0, 0, 0]) != E_LLAVE {
+        return 1;
+    }
+    if x0(45, [m as u64, m as u64, 0, 0, 0]) != E_TIPO || x0(45, [a as u64, m as u64, 0, 0, 0]) != E_TIPO {
+        return 2;
+    }
+    for va in [0usize, 0x1000, 0x8000, 0xf000] {
+        if dashos::memoria_proyectar(m, va, false) != E_ARGUMENTO || dashos::memoria_proyectar_codigo(m, va) != E_ARGUMENTO {
+            return 3;
+        }
+    }
+    // Nada quedó proyectado en la dirección 0.
+    if dashos::memoria_quitar(0) != E_ARGUMENTO {
+        return 4;
+    }
+    for l in [m, a, b] {
+        dashos::cerrar(l);
+    }
+    println!("  [malo] página 0: sin permiso, ni la llamada 45 ni los primeros 64 KB, tampoco de solo lectura");
     0
 }

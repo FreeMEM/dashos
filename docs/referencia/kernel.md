@@ -55,7 +55,11 @@ Reglas comunes:
 
 ### Mapa de direcciones de un proceso
 
-El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca. Hoy está así:
+El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca, con una excepción:
+un proceso con el permiso de página 0 (la caja Amiga, H4) puede proyectar con la llamada 45 una página de solo lectura
+en la dirección 0 (ExecBase en la dirección 4); el resto de los 64 KB sigue cerrado también para él, y el kernel no
+copia nunca desde la página 0 ni hacia ella. Sin PAN (la A72 no lo tiene), un puntero nulo del kernel mientras corre la
+caja leería esa página en vez de fallar; escribir en ella, no. Hoy está así:
 
 | Tramo | Uso |
 |---|---|
@@ -173,6 +177,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
 | 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
 | 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
+| 45 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
 
@@ -384,6 +389,7 @@ Tipos de objeto:
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
+| Permiso de página 0 | Solo el kernel (`inicio` lo da a la caja Amiga, H4) | Proyectar la página 0 de solo lectura (escribir; llamada 45) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 

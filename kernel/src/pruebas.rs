@@ -26,6 +26,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_mapa();
     prueba_arranque();
     prueba_gic_del_kernel();
+    prueba_pagina_cero();
     prueba_dma();
     prueba_hilos();
     prueba_procesos();
@@ -1210,6 +1211,31 @@ fn prueba_gic_del_kernel() {
     kprintln!("  GIC en {:#x}: proyectarlo {}, una zona que lo pisa {}, el PL011 {}", gic,
         if al_gic { "no" } else { "SÍ" }, if pisando { "no" } else { "SÍ" }, if serie { "sí" } else { "no" });
     kprintln!("S4: el GIC del kernel {}", if al_gic && pisando && serie { "bien" } else { "MAL" });
+}
+
+/// H4 (S3): la página 0 de la caja Amiga. Un objeto de una página se proyecta en la dirección 0 solo de lectura y sin
+/// ejecutar; uno más grande, no; dos veces, no; y por el camino normal (`proyectar_memoria`) la dirección 0 y el resto
+/// de los primeros 64 KB siguen cerrados. El kernel no copia desde la página 0 (`para_copiar`). Quién puede pedirla (el
+/// permiso de la llamada 45) lo prueba `malo` (paso 38); que el 68k la lea y no pueda escribirla, la caja en
+/// `arranque-virt`.
+fn prueba_pagina_cero() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(mut e) = espacio::Espacio::nuevo(raiz.clone()) else { return };
+    let (Some(una), Some(dos)) = (memoria::Memoria::nueva(4096, &raiz), memoria::Memoria::nueva(8192, &raiz)) else { return };
+    let (una, dos) = (alloc::sync::Arc::new(una), alloc::sync::Arc::new(dos));
+    let grande = e.proyectar_pagina_cero(&dos).is_err();
+    let normal = (0..16).all(|i| e.proyectar_memoria(i * 0x1000, &una, espacio::Acceso::Leer, &[]).is_err());
+    let hecha = e.proyectar_pagina_cero(&una).is_ok();
+    let permisos = e.permisos_el0(0);
+    let otra = e.proyectar_pagina_cero(&una).is_err();
+    let resto = (1..16).all(|i| e.permisos_el0(i * 0x1000).is_none());
+    let copia = matches!(e.para_copiar(4, false), espacio::Copia::Falla);
+    let quitada = e.quitar_proyeccion(0, None, None) && e.permisos_el0(0).is_none();
+    kprintln!("  página 0: de dos páginas {}, por la vía normal {}, proyectada {}, permisos EL0 {:?}, otra vez {}",
+        if grande { "no" } else { "SÍ" }, if normal { "no" } else { "SÍ" }, if hecha { "sí" } else { "no" }, permisos,
+        if otra { "no" } else { "SÍ" });
+    let bien = grande && normal && hecha && permisos == Some((true, false, false)) && otra && resto && copia && quitada;
+    kprintln!("H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: {}", if bien { "bien" } else { "MAL" });
 }
 
 /// C38: con memoria por encima del primer GB, nada del kernel ni de los procesos queda al alcance del DMA de la SD y

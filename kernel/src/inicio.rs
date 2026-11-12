@@ -183,10 +183,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
     ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     // H4: la caja Amiga, primer paso (`caja/`): el JIT de Emu68 en un proceso big-endian, con programas 68k que
-    // escriben por una dos.library nativa (línea A) y otros hostiles; el último la mata. Sin llaves: `inicio` la
-    // espera. Al final, para no cambiar las marcas de los demás.
+    // escriben por una dos.library nativa (línea A) y otros hostiles; el último la mata. Su llave 1, el permiso de
+    // página 0 (ExecBase en la dirección 4); `inicio` la espera igual (`SE_ESPERAN`). Al final, para no cambiar las
+    // marcas de los demás.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-amiga", programa!("caja-amiga"), &[], &[]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -202,6 +203,8 @@ const FIRMWARE: u32 = 5;
 const DATOS: u32 = 6;
 /// El permiso de la clase de plazo (S3).
 const PLAZO: u32 = 7;
+/// El permiso de página 0 (H4, S3): solo para la caja Amiga.
+const PAGINA_CERO: u32 = 8;
 /// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
 /// corren un puesto).
 const OPCIONAL: u32 = 0x100;
@@ -557,6 +560,9 @@ pub fn lanzar() -> bool {
             apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
         }
     }
+    // H4 (S3): el permiso de página 0, para la caja Amiga (ExecBase en la dirección 4). El último: así no cambia el
+    // número de las llaves de antes.
+    apuntar(&mut llaves, "pagina0", PAGINA_CERO, Llave::nueva(Objeto::PermisoPaginaCero, DERECHOS));
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS
         .iter()

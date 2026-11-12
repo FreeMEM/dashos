@@ -440,5 +440,17 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] funcion 999 rechazada; el programa 68k sigue
 ~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
 ~vueltas (vector 31): bien
-~(FAR 0xdead0000); se termina
+# Segundo paso: la página 0, de solo lectura, con ExecBase en la dirección 4 (el permiso de página 0, llamada 45); un
+# ejecutable hunk de AmigaOS hecho con m68k-amigaos-gcc, cargado con sus reubicaciones, que abre la dos.library con
+# OpenLibrary (exec mínima y provisional) y escribe; el mismo fichero cortado y estropeado no rompe la caja; y escribir
+# en la dirección 4 mata la caja.
+~│   [caja-amiga] página 0: ExecBase en la dirección 4 ($106000), solo de lectura; otra vez o en los primeros 64 KB, rechazada: bien
+~│   [caja-amiga] saludo.exe: 3 hunks (código 612, datos 32, BSS 1008 bytes) en $150008
+~│   [caja-amiga] hunk: hola desde un ejecutable de AmigaOS (m68k-amigaos-gcc)
+~│   [caja-amiga] hunk: 168 primos por debajo de 1000, el ultimo 997 (tres hunks)
+~│   [caja-amiga] hunk: tabla 31415926, dos.library abierta (v36 o mas: 1)
+~│   [caja-amiga] hunk: Write() en Output(): bien
+~│   [caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
+~0 pierden memoria: bien
+~(FAR 0x4); se termina
 ~│   [inicio] caja-amiga acabó: clase 2, código 0

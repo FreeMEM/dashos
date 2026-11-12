@@ -20,3 +20,5 @@ jit-host/ppc/pruebas/t[5-9].*
 jit-host/ppc/pruebas/__pycache__/
 jit-host/ppc/pruebas/p3.elf
 caja/build/
+caja/build-pc/
+caja/pruebas68k/*.o

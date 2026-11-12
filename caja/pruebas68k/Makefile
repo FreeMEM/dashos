@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: hola.bin lineaa.bin bucle.bin mala.bin
+all: hola.bin lineaa.bin bucle.bin mala.bin saludo.exe
 
 hola.bin: BASE := 0x110000
 lineaa.bin: BASE := 0x120000
@@ -15,5 +15,14 @@ mala.bin: BASE := 0x140000
 	$(A)ld $*.o -o $*.exe
 	python3 $(HUNK2BIN) $*.exe $@ $(BASE)
 	rm -f $*.o $*.exe
+
+# Un ejecutable hunk de verdad (no un binario plano): lo carga la caja con su cargador (../hunk.c). Con -g, para que
+# lleve también HUNK_DEBUG y HUNK_SYMBOL. Va en git, como los .bin.
+CFLAGS_68K := -m68020 -O2 -g -ffreestanding -fno-builtin -nostdlib -nostartfiles -fomit-frame-pointer -Wall
+LIBGCC = -L$(dir $(shell $(A)gcc -m68020 -print-libgcc-file-name)) -lgcc
+saludo.exe: saludo_entrada.s saludo.c
+	$(A)as -m68020 --register-prefix-optional saludo_entrada.s -o saludo_entrada.o
+	$(A)gcc $(CFLAGS_68K) saludo_entrada.o saludo.c -o $@ $(LIBGCC)
+	rm -f saludo_entrada.o
 
 .PHONY: all

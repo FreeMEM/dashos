@@ -32,7 +32,7 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/entrada.o $(B)/programas.o
+	$(B)/caja.o $(B)/hunk.o $(B)/exec_minima.o $(B)/entrada.o $(B)/programas.o
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -53,9 +53,13 @@ $(B)/emu68_context.o: ../jit-host/emu68_context.c | $(B)
 	$(CC) $(CFLAGS) $(M68K_FIXED) -c $< -o $@
 $(B)/caja.o: caja.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/hunk.o: hunk.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
+$(B)/exec_minima.o: exec_minima.c | $(B)
+	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/entrada.o: entrada.S | $(B)
 	$(CC) $(COMMON) -c $< -o $@
-$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin | $(B)
+$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
 $(B)/caja-amiga: $(OBJS) enlace.ld
@@ -67,6 +71,10 @@ $(B):
 
 -include $(OBJS:.o=.d)
 
+# El cargador hunk, en el PC (con ASan y UBSan).
+pruebas-pc:
+	$(MAKE) -C pruebas_hunk
+
 clean:
-	rm -rf $(B)
-.PHONY: all clean
+	rm -rf $(B) build-pc
+.PHONY: all clean pruebas-pc
