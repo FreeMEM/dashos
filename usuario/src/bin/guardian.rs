@@ -569,7 +569,22 @@ fn esperar_inactividad(ms: u32, max_us: u64) -> Option<u64> {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gi).texto(Some("ext_idle_notifier_v1")).uint(2).uint(AVISOS).fin();
     e.empezar(AVISOS, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(INACTIVO).uint(ms).uint(ASIENTO).fin();
+    // Un sync: hasta su respuesta, el compositor no ha creado el aviso. Antes de eso, un Super+L no tenía a quién
+    // avisar y se perdía (le pasaba a la prueba con el PC cargado).
+    const LISTO: u32 = 32;
+    e.empezar(1, wl_display::req::SYNC).uint(LISTO).fin();
     c.mandar(&e);
+    let desde = dashos::ahora_us();
+    loop {
+        match c.evento_plazo(100_000) {
+            Ok(Some((o, ev, _))) if o == LISTO && ev == wayland::tablas::wl_callback::ev::DONE => break,
+            Ok(_) if dashos::ahora_us() - desde < max_us => {}
+            _ => {
+                dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+                return None;
+            }
+        }
+    }
     let desde = dashos::ahora_us();
     println!("  [guardian] esperando {} ms sin entrada", ms);
     let r = loop {
