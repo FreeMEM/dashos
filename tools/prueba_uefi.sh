@@ -341,6 +341,24 @@ while time.time() - inicio < total:
                     mandar("sendkey ret")
                 time.sleep(0.25)
                 continue
+            # Dentro, Retroceso sube a C; y otra vez abajo, abajo e Intro para volver a entrar.
+            if selector == 1 and "[selector] sube a C," not in texto:
+                time.sleep(0.5)
+                mandar("sendkey backspace")
+                selector = 17
+                reintento = time.time() + 4
+        if selector == 17:
+            if "[selector] sube a C," not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            time.sleep(0.5)
+            mandar("sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
+            selector = 18
+            reintento = time.time() + 4
+        if selector == 18:
+            if texto.count("[selector] entra en C/Privado") < 2 and time.time() < reintento:
+                time.sleep(0.25)
+                continue
             selector = 2
             time.sleep(0.5)
             # Dentro, con el ratón: doble clic en la segunda fila (nota.txt; la primera es "../"). Dónde: lo dicen el

@@ -192,6 +192,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] ventana de abrir en pantalla, para hostil: C (1 nombres raros sin enseñar),
 ~│   [selector] Intro sin nada elegido: no abre nada
 ~│   [selector] entra en C/Privado, 1 entradas
+# Retroceso sube a C, y se vuelve a entrar.
+~│   [selector] sube a C, 
+~│   [selector] entra en C/Privado, 1 entradas
 ~│   [selector] el usuario elige C/Privado/nota.txt con doble clic: se cede solo para leer: 0
 ~│   [hostil] selector: bien
 ~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien

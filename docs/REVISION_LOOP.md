@@ -997,3 +997,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la cabecera (firma DashFS), intenta escribirla encima y descartarla, y la vuelve a leer igual. Prueba en virt:
   "14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien" (sin la comprobación, escribir daría 0).
   Siguiente: que recorra una instantánea con la biblioteca de RedoxFS y que `archivos` le pase el trabajo.
+- U5: en el selector, Retroceso sube al cajón de arriba (como elegir "../"; en la raíz no hace nada: no hay arriba).
+  Prueba en virt: dentro de `C/Privado`, Retroceso ("sube a C, 5 entradas") y se vuelve a entrar.

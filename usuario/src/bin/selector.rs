@@ -36,6 +36,8 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
+/// La tecla de Linux de Retroceso.
+const TECLA_RETROCESO: u32 = 14;
 /// El objeto del tema del sistema (`dashos_tema_v1`, S10c), tras los de `ventana_cliente`.
 const TEMA: u32 = 43;
 const CANAL: u32 = 3;
@@ -302,6 +304,13 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                     if let Some(l) = c.juntador.tomar_llave() {
                         dashos::cerrar(l);
                     }
+                    false
+                }
+                // Retroceso: al cajón de arriba, como elegir "../" (en la raíz no hay arriba).
+                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_RETROCESO && camino.asas.len() > 1 => {
+                    con_raton = false;
+                    i.arbol.poner(lista, atr::VALOR, Valor::Int(0));
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto("abrir".into()));
                     false
                 }
                 (TECLADO, wl_keyboard::ev::KEY) => {
