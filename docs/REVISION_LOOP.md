@@ -927,3 +927,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   compositor: nombre, tamaño, frecuencia y escala. El nombre se corta a lo que trae el mensaje (y a 32 letras). Prueba
   en virt: "Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1". Elegir la resolución, el
   brillo y el modo noche (DMS) esperan a la pantalla de verdad (HVS, G7).
+- S10c, el centro cambia de tamaño: con Super+Arriba el compositor le pide la pantalla entera, y el centro hace un
+  búfer nuevo de esa medida (en la otra dirección, sin soltar el que se ve hasta tenerlo; tope 1920 × 1200) y vuelve a
+  colocar; con Super+Abajo, a su tamaño. Como Ajustes (K7). La barra lateral tiene ya una fila por categoría (con
+  cinco filas, la sexta empujaba a Permisos fuera de la vista). Prueba en virt: "el compositor pide 800x600" y "vuelve
+  a 560x420". Capturas en `docs/capturas/s10c-centro-maximizado.png` y `s10c-centro-apariencia.png`.

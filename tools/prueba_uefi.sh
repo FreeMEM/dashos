@@ -268,10 +268,32 @@ while time.time() - inicio < total:
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
-            centro = 3
+            centro = 12
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".acerca.ppm")
+            time.sleep(0.5)
+            # Super+Arriba la maximiza y Super+Abajo la devuelve; luego, Esc.
+            mandar("sendkey meta_l-up")
+            reintento = time.time() + 4
+        if centro == 12:
+            if "[centro] el compositor pide " not in texto:
+                time.sleep(0.25)
+                if time.time() < reintento:
+                    continue
+            centro = 13
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".max.ppm")
+            time.sleep(0.5)
+            mandar("sendkey meta_l-down")
+            reintento = time.time() + 4
+        if centro == 13:
+            if "[centro] vuelve a " not in texto:
+                time.sleep(0.25)
+                if time.time() < reintento:
+                    continue
+            centro = 3
             time.sleep(0.5)
             mandar("sendkey esc")
             reintento = time.time() + 4

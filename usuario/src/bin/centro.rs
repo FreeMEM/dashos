@@ -42,7 +42,7 @@ use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
 use ventana_cliente::*;
 use wayland::tablas::{
-    wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland::Escritor;
@@ -55,6 +55,13 @@ const SESIONES: u32 = 3;
 const CANAL: u32 = 4;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
+/// Lo más que se pide de memoria para la ventana maximizada (una pantalla de 1920 × 1200).
+const MAX_ANCHO: i32 = 1920;
+const MAX_ALTO: i32 = 1200;
+/// La segunda dirección del búfer, para cambiar de tamaño sin soltar el que se ve; y sus números de pool y búfer.
+const VA_2: usize = 0x44_0000_0000;
+const POOL_2: u32 = 41;
+const BUFER_2: u32 = 42;
 /// Las categorías, por su nombre de enlace (lo que va tras "abrir") y el que se ve. Irán creciendo (S10c).
 const CATEGORIAS: &[(&str, &str)] = &[
     ("permisos", "Permisos"),
@@ -407,6 +414,7 @@ fn ventana(categoria: usize) {
     ventana_dentro(categoria);
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     dashos::memoria_quitar(VA);
+    dashos::memoria_quitar(VA_2);
     println!("  [centro] cerrado");
 }
 
@@ -426,7 +434,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let nombres: Vec<&str> = CATEGORIAS.iter().map(|c| c.1).collect();
     let lado = arbol.crear(Lista, &[
         (atr::OPCIONES, Valor::Texto(nombres.join("|"))),
-        (atr::FILAS, Valor::Int(5)),
+        (atr::FILAS, Valor::Int(CATEGORIAS.len() as i64)),
         (atr::VALOR, Valor::Int(categoria as i64)),
         (atr::PESO, Valor::Int(40)),
     ]);
@@ -499,7 +507,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     i.colocar(Rect::new(0, 0, ANCHO, ALTO));
 
     let tamano = (ANCHO * ALTO * 4) as usize;
-    let m = dashos::memoria_crear(tamano);
+    let mut m = dashos::memoria_crear(tamano);
     if (m as i32) <= 0 {
         return None;
     }
@@ -508,7 +516,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             return None;
         }
         let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
-        let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ANCHO * ALTO) as usize) };
+        let mut px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ANCHO * ALTO) as usize) };
+        // Lo de cambiar de tamaño (Super+Arriba maximiza): la medida, dónde está el búfer, cuál es y lo que se pide.
+        let (mut medida, mut va, mut bufer, mut pool, mut pedida) = ((ANCHO, ALTO), VA, BUFER, POOL, (0i32, 0i32));
         let mut e = Escritor::new();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
@@ -527,14 +537,14 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Centro de control")).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
-        let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], adjuntar: bool| {
-            let mut l = Lienzo::new(px, ANCHO, ALTO, ANCHO as usize);
+        let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], (w, h): (i32, i32), adjuntar: Option<u32>| {
+            let mut l = Lienzo::new(&mut px[..(w * h) as usize], w, h, w as usize);
             i.dibujar(&mut l);
             let mut e = Escritor::new();
-            if adjuntar {
-                e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+            if let Some(b) = adjuntar {
+                e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(b).int(0).int(0).fin();
             }
-            e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
+            e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(w).int(h).fin();
             e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
             c.mandar(&e);
         };
@@ -550,13 +560,53 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     c.mandar(&e);
                     false
                 }
+                // El tamaño que pide el compositor llega antes que el configure de la superficie, que lo cierra.
+                (VENTANA, xdg_toplevel::ev::CONFIGURE) => {
+                    pedida = (palabra(0) as i32, palabra(1) as i32);
+                    false
+                }
+                (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) if configurada => {
+                    let mut e = Escritor::new();
+                    e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                    // 0 × 0: el tamaño propio; si no, el pedido, sin pasar del tope.
+                    let nueva = if pedida.0 > 0 && pedida.1 > 0 { (pedida.0.min(MAX_ANCHO), pedida.1.min(MAX_ALTO)) } else { (ANCHO, ALTO) };
+                    let otra_va = if va == VA { VA_2 } else { VA };
+                    let m2 = if nueva != medida { dashos::memoria_crear((nueva.0 * nueva.1 * 4) as usize) } else { 0 };
+                    if (m2 as i32) > 0 && dashos::memoria_proyectar(m2, otra_va, true) == 0 {
+                        // Pool y búfer nuevos con los otros números; los viejos se destruyen y su memoria se suelta.
+                        let copia2 = dashos::llave_duplicar(m2, dashos::LEER | dashos::TRANSFERIR, 0);
+                        let (otro_pool, otro) = if bufer == BUFER { (POOL_2, BUFER_2) } else { (POOL, BUFER) };
+                        e.empezar(bufer, wl_buffer::req::DESTROY).fin();
+                        e.empezar(pool, wl_shm_pool::req::DESTROY).fin();
+                        e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(otro_pool).llave(copia2 as u32).int(nueva.0 * nueva.1 * 4).fin();
+                        e.empezar(otro_pool, wl_shm_pool::req::CREATE_BUFFER).uint(otro).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::XRGB8888).fin();
+                        c.mandar(&e);
+                        dashos::memoria_quitar(va);
+                        dashos::cerrar(m);
+                        px = unsafe { core::slice::from_raw_parts_mut(otra_va as *mut u32, (nueva.0 * nueva.1) as usize) };
+                        (m, va, bufer, pool, medida) = (m2, otra_va, otro, otro_pool, nueva);
+                        i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                        presentar(&mut c, &mut i, px, medida, Some(bufer));
+                        if pedida.0 > 0 {
+                            println!("  [centro] el compositor pide {}x{}", medida.0, medida.1);
+                        } else {
+                            println!("  [centro] vuelve a {}x{}", medida.0, medida.1);
+                        }
+                    } else {
+                        if (m2 as i32) > 0 {
+                            dashos::cerrar(m2);
+                        }
+                        c.mandar(&e);
+                    }
+                    false
+                }
                 (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) => {
                     let mut e = Escritor::new();
                     e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                     c.mandar(&e);
                     if !configurada {
                         configurada = true;
-                        presentar(&mut c, &mut i, px, true);
+                        presentar(&mut c, &mut i, px, medida, Some(bufer));
                         println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
                         // Dónde queda la lista de la derecha en la ventana (las pruebas del ratón la buscan).
                         if let Some(r) = i.sitios.get(&permisos) {
@@ -686,7 +736,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 _ => {}
             }
             if cambio && configurada {
-                presentar(&mut c, &mut i, px, false);
+                presentar(&mut c, &mut i, px, medida, None);
             }
         }
     })();
