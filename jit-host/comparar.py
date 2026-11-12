@@ -12,6 +12,10 @@
                                       # (0001-0003 y 0008), compilado con
                                       # make EMU68=<clon sin U7> B=build-ref
     python3 comparar.py --solo-be     # solo el punto 2
+    python3 comparar.py ... t4 t5     # solo esos programas
+
+La referencia de ahora sale de Emu68 con 0001-0003, 0008 y el arreglo de 0013 en su versión sin U7
+(pruebas68k/ref/0013-sin-u7.patch): 0013 cambia el código de los modos indirectos en memoria también en big-endian.
 """
 import re
 import resource
@@ -95,8 +99,11 @@ def main():
     TMP.mkdir(parents=True, exist_ok=True)
     REF.mkdir(exist_ok=True)
     fallos = 0
+    nombres = [a for a in sys.argv[1:] if not a.startswith("--")]
     for prog in sorted(PRUEBAS.glob("*.bin")):
         nombre = prog.stem
+        if nombres and nombre not in nombres:
+            continue
         if guardar:
             rc_be, be = ejecutar("ref", prog, TMP / f"{nombre}.be.vol")
             (REF / f"{nombre}.vol").write_bytes((TMP / f"{nombre}.be.vol").read_bytes())

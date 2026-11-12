@@ -47,6 +47,7 @@ static long sys6(long n, long a, long b, long c, long d, long e, long f)
 #define SYS_mmap         222
 #define SYS_ftruncate    46
 #define SYS_memfd_create 279
+#define SYS_clock_gettime 113
 
 #define PROT_READ   1
 #define PROT_WRITE  2
@@ -248,6 +249,14 @@ static void ejecuta(struct M68KState *m68k)
                      "v18", "v27", "v28", "v29", "v30", "v31", "memory", "cc");
 }
 
+/* Reloj monótono en nanosegundos (U7: para medir el programa de fuera) */
+static uint64_t ahora_ns(void)
+{
+    struct { long s, ns; } t;
+    sys6(SYS_clock_gettime, 1, (long)&t, 0, 0, 0, 0);
+    return (uint64_t)t.s * 1000000000ULL + (uint64_t)t.ns;
+}
+
 /* Carga un fichero en la memoria del 68k; devuelve su tamaño, o -1. */
 static long carga(const char *ruta, uintptr_t donde, size_t max)
 {
@@ -374,7 +383,11 @@ void host_main(uint64_t *pila)
             m68k.A[7].u32 = m68k.ISP.u32;
             kprintf("[HOST] Programa %s (%d bytes)\n", argv[1], (int)n);
             flush_out();
+            uint64_t n0 = m68k.INSN_COUNT, t0 = ahora_ns();
             ejecuta(&m68k);
+            uint64_t t1 = ahora_ns();
+            /* sin "[" delante: comparar.py no lo mira (cambia de una vez a otra) */
+            kprintf("    medida: %d instrucciones 68k en %d us\n", (int)(m68k.INSN_COUNT - n0), (int)((t1 - t0) / 1000));
             M68K_PrintContext(&m68k);
             kprintf("[JIT]");
             for (int i = 0; i < 8; i++) kprintf(" FP%d=%08x%08x", i, (uint32_t)(m68k.FP[i].u64 >> 32), (uint32_t)m68k.FP[i].u64);
