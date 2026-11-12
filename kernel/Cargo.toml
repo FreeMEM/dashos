@@ -17,6 +17,13 @@ virt = []
 # La Raspberry Pi 3 (P3, docs/MULTITAREA_LOOP.md): periféricos en 0x3F000000 y el controlador de interrupciones de la
 # BCM2836 (QA7) en lugar del GIC. Sin `virt`.
 pi3 = []
+# La Raspberry Pi 5 (docs/bitacoras/pi5.md): la imagen que carga su firmware (kernel_2712.img), periféricos de la BCM2712
+# por encima de 64 GB, el UART10 de depuración. Lleva el diagnóstico en pantalla.
+pi5 = ["diagnostico"]
+# La consola del kernel en la pantalla del firmware (buzón de la VideoCore o `simple-framebuffer` del árbol) con el
+# diagnóstico del primer arranque en una placa nueva, y solo la consola y la caja Amiga como programas
+# (`make pi5`, `make arranque-virt-diag`).
+diagnostico = []
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).

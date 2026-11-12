@@ -32,8 +32,19 @@ macro_rules! programa {
 
 static INICIO: &[u8] = programa!("inicio");
 
+/// El diagnóstico de una placa nueva (opción `diagnostico`, la Pi 5): solo la consola por el puerto serie y la caja Amiga,
+/// sin escritorio, ni USB, ni disco. La caja no tiene "ventanas" ni "archivos": se queda sin compositor y sin SYS:, y
+/// prueba lo suyo (el JIT, exec y dos nativas, saludo.exe); ventana.exe y hostil.exe, que necesitan el compositor, salen
+/// mal, como se espera.
+#[cfg(feature = "diagnostico")]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
+];
+
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno. Lo que ve cada servicio de los demás está en `docs/referencia/servicios.md`.
+#[cfg(not(feature = "diagnostico"))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("buzon", programa!("buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),

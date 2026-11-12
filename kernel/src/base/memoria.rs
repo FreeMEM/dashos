@@ -245,6 +245,11 @@ impl Paginas {
         );
     }
 
+    /// Aparta un tramo para que no se reparta (la pantalla del firmware, si cae en RAM del árbol). Justo tras `iniciar`.
+    pub fn apartar(&mut self, dir: u64, tam: u64) {
+        self.marcar_tramo(dir, tam, true);
+    }
+
     /// Los tramos de RAM del árbol (física, tamaño); los huecos van a (0, 0). Para la traducción de EL2 (hiper.rs).
     pub(super) fn tramos_ram(&self) -> [(u64, u64); MAX_TRAMOS] {
         self.ram
