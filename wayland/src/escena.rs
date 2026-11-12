@@ -1905,9 +1905,15 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             let k = escena.colocadas % 8;
                             escena.colocadas += 1;
                             // En cascada dentro de lo que dejan las barras (G4).
-                            let (ax, ay) = (escena.area.x, escena.area.y);
-                            escena.colocar(cliente, objeto, ax + 40 + 32 * k, ay + 40 + 32 * k);
-                            escena.recien_colocadas.push((cliente, ax + 40 + 32 * k, ay + 40 + 32 * k));
+                            // La que no cabe por la derecha o por abajo se mete dentro (S10: la Información del
+                            // Workbench salía con sus botones fuera de la pantalla); si es más grande, pegada arriba a
+                            // la izquierda.
+                            let a = escena.area;
+                            let (bw, bh) = s.bufer.and_then(|b| yo.shm.pixeles(b)).map_or((0, 0), |(_, b)| (b.ancho as i32, b.alto as i32));
+                            let x = (a.x + 40 + 32 * k).min(a.x + a.w - bw).max(a.x);
+                            let y = (a.y + 40 + 32 * k).min(a.y + a.h - bh).max(a.y);
+                            escena.colocar(cliente, objeto, x, y);
+                            escena.recien_colocadas.push((cliente, x, y));
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
                             // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();

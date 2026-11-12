@@ -110,6 +110,8 @@ panel = 0
 barra = 0
 avisos_paso = 0
 reintento_avisos = 0
+wb = 0
+wb_ventana = {}
 bloqueo_capturado = False
 cambio = 0
 captura_u6_hecha = 0
@@ -687,6 +689,193 @@ while time.time() - inicio < total:
         bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("pantalla de bloqueo pintada"),
                             ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
+        # S10: el Workbench, al final (tras la barra), con la sesión de Ana delante y sin bloquear. Doble clic en el icono
+        # de Sistema (abre su ventana), en DeCarla (no se abre: es de Carla) y en Programas (otra ventana); doble clic en
+        # hola (lo lanza `sesiones`) y botón derecho en hola (su Información, que no se puede cambiar: Cerrar). Luego el
+        # icono de Home, Privado, el botón Lista, un clic en nota.txt e Información: en su campo, "nota de Ana", la casilla
+        # Archivado y Guardar. Los sitios los dicen el compositor (dónde salió cada ventana: la n-ésima "ventana de
+        # workbench", y la capa) y el Workbench (dentro de cada una). Con CAPTURA_WORKBENCH=fichero.ppm: el escritorio
+        # con las ventanas de Sistema y Programas (fichero.ppm), Privado como lista (fichero.lista.ppm), la Información
+        # (fichero.info.ppm) y la
+        # Información con el comentario escrito (fichero.comentario.ppm). Al final, Cerrar en cada ventana.
+        if wb == 0 and barra == 8 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
+            wb = 1
+            reintento = 0
+        if 1 <= wb <= 17:
+            import re
+            captura_wb = os.environ.get("CAPTURA_WORKBENCH")
+            def ultima_wb(patron):
+                t = re.findall(patron, texto)
+                return t[-1] if t else None
+            def ir_wb(x, y):
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+            def doble():
+                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            def clic():
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            def capa_wb():
+                c = ultima_wb(r"\[compositor\] capa de workbench en \((\d+), (\d+)\)")
+                return (int(c[0]), int(c[1])) if c else (0, 40)
+            def icono_wb(nombre):
+                c = ultima_wb(r"\[workbench\] (?:en pantalla: \d+x\d+, )?icono de " + nombre + r" en \((\d+), (\d+)\)")
+                cx, cy = capa_wb()
+                return (cx + int(c[0]), cy + int(c[1])) if c else None
+            def origen(n):
+                # La n-ésima ventana del Workbench que coloca el compositor.
+                t = re.findall(r"\[compositor\] ventana de workbench en \((\d+), (\d+)\)", texto)
+                return (int(t[n - 1][0]), int(t[n - 1][1])) if len(t) >= n else None
+            def en_ventana(clave, que):
+                # Dónde está `que` (una entrada o un botón) en la ventana de `clave`, en la pantalla.
+                n = wb_ventana.get(clave)
+                o = origen(n) if n else None
+                if not o:
+                    return None
+                g = ultima_wb(r"\[workbench\] ventana " + str(n) + r"[^\n]*?(?:: |; |, )" + re.escape(que) + r" en \((\d+), (\d+)\)")
+                return (o[0] + int(g[0]), o[1] + int(g[1])) if g else None
+            def ventana_de(ruta):
+                g = ultima_wb(r"\[workbench\] ventana (\d+) de " + re.escape(ruta) + r" en pantalla")
+                return int(g) if g else None
+            espera = {1: ventana_de("Sistema") and origen(ventana_de("Sistema")),
+                      2: "[workbench] no abre Sistema/DeCarla" in texto,
+                      3: ventana_de("Sistema/Programas") and origen(ventana_de("Sistema/Programas")),
+                      4: "[workbench] lanza Programas/hola" in texto,
+                      5: ventana_de("Información de Sistema/Programas/hola") and origen(ventana_de("Información de Sistema/Programas/hola")),
+                      6: "[workbench] cierra la ventana " + str(ventana_de("Información de Sistema/Programas/hola")) in texto,
+                      7: ventana_de("Home") and origen(ventana_de("Home")),
+                      8: ventana_de("Home/Privado") and origen(ventana_de("Home/Privado")),
+                      9: "[workbench] Home/Privado como lista" in texto,
+                      10: ventana_de("Información de Home/Privado/nota.txt") and origen(ventana_de("Información de Home/Privado/nota.txt")),
+                      11: True,
+                      12: "[workbench] guarda Home/Privado/nota.txt" in texto,
+                      13: "[workbench] cierra la ventana " + str(wb_ventana.get("Home/Privado")) in texto,
+                      14: "[workbench] cierra la ventana " + str(wb_ventana.get("Home")) in texto,
+                      15: "[workbench] cierra la ventana " + str(wb_ventana.get("Sistema/Programas")) in texto,
+                      16: "[workbench] sin ventanas abiertas" in texto}
+            if wb > 1 and not espera[wb - 1]:
+                if time.time() > reintento:
+                    # No llegó: se deja (las líneas que falten lo dirán).
+                    wb = 99
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            for clave in ("Sistema", "Sistema/Programas", "Información de Sistema/Programas/hola", "Home", "Home/Privado", "Información de Home/Privado/nota.txt"):
+                if ventana_de(clave):
+                    wb_ventana[clave] = ventana_de(clave)
+            sitio = None
+            if wb == 1:
+                sitio = icono_wb("Sistema")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 2:
+                sitio = en_ventana("Sistema", "DeCarla")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 3:
+                sitio = en_ventana("Sistema", "Programas")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 4:
+                if captura_wb:
+                    mandar("screendump " + captura_wb)
+                    time.sleep(0.5)
+                sitio = en_ventana("Sistema/Programas", "hola")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 5:
+                sitio = en_ventana("Sistema/Programas", "hola")
+                if sitio:
+                    ir_wb(*sitio)
+                    mandar("mouse_button 2", "mouse_button 0", pausa=0.08)
+            elif wb == 6:
+                sitio = en_ventana("Información de Sistema/Programas/hola", "Cerrar")
+                if sitio:
+                    ir_wb(*sitio)
+                    clic()
+            elif wb == 7:
+                sitio = icono_wb("Home")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 8:
+                sitio = en_ventana("Home", "Privado")
+                if sitio:
+                    ir_wb(*sitio)
+                    doble()
+            elif wb == 9:
+                sitio = en_ventana("Home/Privado", "Lista o Iconos")
+                if sitio:
+                    ir_wb(*sitio)
+                    clic()
+            elif wb == 10:
+                if captura_wb:
+                    mandar("screendump " + captura_wb[:-4] + ".lista.ppm")
+                    time.sleep(0.5)
+                sitio = en_ventana("Home/Privado", "nota.txt")
+                boton = en_ventana("Home/Privado", "Información")
+                if sitio and boton:
+                    ir_wb(*sitio)
+                    clic()
+                    time.sleep(0.5)
+                    ir_wb(*boton)
+                    clic()
+            elif wb == 11:
+                if captura_wb:
+                    mandar("screendump " + captura_wb[:-4] + ".info.ppm")
+                    time.sleep(0.5)
+                sitio = en_ventana("Información de Home/Privado/nota.txt", "campo")
+                if sitio:
+                    ir_wb(*sitio)
+                    clic()
+                    time.sleep(0.5)
+                    teclear("nota de Ana")
+                    time.sleep(0.5)
+                    archivado = en_ventana("Información de Home/Privado/nota.txt", "Archivado")
+                    if archivado:
+                        ir_wb(*archivado)
+                        clic()
+            elif wb == 12:
+                if captura_wb:
+                    time.sleep(0.5)
+                    mandar("screendump " + captura_wb[:-4] + ".comentario.ppm")
+                    time.sleep(0.5)
+                sitio = en_ventana("Información de Home/Privado/nota.txt", "Guardar")
+                if sitio:
+                    ir_wb(*sitio)
+                    clic()
+            elif 13 <= wb <= 16:
+                # Al final, se cierran todas (la captura de `captura_ventanas.py` mira lo de debajo).
+                clave = ("Home/Privado", "Home", "Sistema/Programas", "Sistema")[wb - 13]
+                sitio = en_ventana(clave, "Cerrar")
+                if sitio:
+                    ir_wb(*sitio)
+                    clic()
+            elif wb == 17:
+                sitio = True
+            if sitio is None:
+                # No se sabe dónde: se deja.
+                wb = 99
+                continue
+            wb += 1
+            reintento = time.time() + 15
+            continue
+        # Si el selector ya se rindió (un minuto sin elegir: con el PC cargado, la sesión siguió bloqueada todo ese rato),
+        # el guion no le espera más: si no, sus pasos hacían `continue` para siempre y no llegaba ni a Super+L. Sus líneas
+        # faltarán y lo dirán.
+        if selector in (1, 2, 17, 18) and "[selector] el usuario no elige nada" in texto:
+            selector, espera_carpeta = 3, time.time() + 15
+        if selector in (4, 5) and "[selector] el usuario no elige carpeta" in texto:
+            selector = 6
         if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
             reintento = max(reintento, time.time() + 4)
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un

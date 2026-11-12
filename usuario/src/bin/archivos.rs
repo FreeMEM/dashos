@@ -1185,7 +1185,7 @@ struct Recuerdos {
 /// Las órdenes que no cambian nada en el disco ni en los nodos. Crear, borrar, escribir y recortar olvidan solo lo
 /// suyo: el nodo que cambia (y, al crear o borrar, su cajón y el nombre). CERRAR puede soltar un nodo borrado, pero a ese ya no
 /// se llega por su nombre (borrarlo lo olvidó todo) y, si su número se vuelve a usar, será al crear, que también.
-const SOLO_LEEN: &[u32] = &[BUSCAR, LEER, LISTAR, DATOS, CERRAR, INFO, COMENTARIO, INSTANTANEAS, VOLUMENES, PERFIL, LEER_NOMBRE];
+const SOLO_LEEN: &[u32] = &[BUSCAR, LEER, LISTAR, DATOS, DUENO, CERRAR, INFO, COMENTARIO, INSTANTANEAS, VOLUMENES, PERFIL, LEER_NOMBRE];
 const MAX_RECUERDOS: usize = 1024;
 
 /// Una copia de un nodo leído (`Node` no es `Clone`: es un bloque de bytes).
@@ -1390,6 +1390,14 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             match rec.nodo(fs, vol, n) {
                 Ok(n) => datos(p.asa, n.data()),
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        // S10: dueño y grupo de una asa, y quién pregunta (para la Información del Workbench).
+        DUENO => {
+            let Some((vol, n)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
+            match rec.nodo(fs, vol, n) {
+                Ok(n) => Respuesta { estado: BIEN, asa: p.asa, a: n.data().uid() as u64, b: n.data().gid() as u64, c: ficha.uid as u64, ..Default::default() },
                 Err(e) => mal(estado_de(e)),
             }
         }

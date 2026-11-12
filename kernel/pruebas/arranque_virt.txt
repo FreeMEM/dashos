@@ -47,7 +47,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (6 entradas, fin bien): C/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
+~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -196,6 +196,33 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanzador cerrado
+# S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
+# de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
+# '|' o ':' no salen.
+~│   [workbench] raíces: Sistema solo para leer 0, Home para leer y escribir 0
+~│   [workbench] lo ajeno: listar el cajón de sesiones -12, abrir su registro -12; listar DeCarla -12, abrir su fichero -12; crear por Sistema -12; ".." desde Home no se abre: bien
+~│   [workbench] nombres raros: 1 sin enseñar en Home, 1 en Sistema/Imagenes; "..", "a/b", "x:y" no se buscan: bien
+# Sus iconos, en una capa de abajo (una columna a la derecha, bajo la barra); el de Home, con la sesión de Ana abierta.
+~│   [compositor] capa de workbench en (696, 40)
+~│   [workbench] en pantalla: 104x560, icono de Sistema en (
+~│   [workbench] icono de Home en (
+# Con el ratón (el guion, al final): doble clic en Sistema, en DeCarla (no se abre), en Programas y en hola (lo lanza
+# `sesiones`, como Ana); botón derecho en hola (su Información: por Sistema no se cambia).
+~ de Sistema en pantalla: 
+~│   [workbench] no abre Sistema/DeCarla: -12
+~ de Sistema/Programas en pantalla: 
+~│   [sesiones] workbench lanza Programas/hola: 0 (proceso 
+~│   [workbench] lanza Programas/hola: 0 (proceso 
+~│   [workbench] Información de Sistema/Programas/hola (ventana 
+~, dueño 1000 (tú), grupo 1000, modo 755, bits 0x0, comentario ""; se puede cambiar: no
+# Home, Privado, como lista, la Información de nota.txt: comentario nuevo y el bit de archivado (el disco lo comprueba).
+~ de Home/Privado en pantalla: 1 elemento (0 nombres raros sin enseñar): nota.txt
+~│   [workbench] Home/Privado como lista: nota.txt 18 bytes 
+~│   [workbench] Información de Home/Privado/nota.txt (ventana 
+~): Fichero · 18 bytes, dueño 1000 (tú), grupo 1000, modo 600, bits 0x0, comentario ""; se puede cambiar: sí
+~│   [workbench] guarda Home/Privado/nota.txt: comentario "nota de Ana": 0, protección bits 0x1 modo 600: 0
+# Y se cierran todas sus ventanas (la captura final mira lo de debajo).
+~│   [workbench] sin ventanas abiertas
 # El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
 ~│   [barra] pide el panel rápido
 ~│   [panel] abierto por 2.ª vez
