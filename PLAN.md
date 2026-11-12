@@ -305,6 +305,12 @@ resumido, en `docs/diseño/RESUMEN.md`.
   (`ID_AA64MMFR0_EL1`, campos `BigEnd` y `BigEndEL0`). Si no, la caja necesita el modo del JIT que da la vuelta a
   los bytes (decisión del 2026-11-04); el resto del sistema va igual. Lo mismo para cualquier otra placa ARM y para
   los Snapdragon X de los portátiles (sin comprobar).
+  - Dato del 2026-11-12 (lo buscó la sesión "telegram" a petición del usuario): el manual técnico del Cortex-A76
+    (Arm, doc 100798, registro `ID_AA64MMFR0_EL1`) da `BigEnd` = 1, mixed-endian con `SCTLR_ELx.EE` y
+    `SCTLR_EL1.E0E` configurables, y `BigEndEL0` = 0, que con `BigEnd` = 1 no quita el big-endian en EL0. Así que
+    la caja Amiga big-endian debería ir en la Pi 5 sin el modo que da la vuelta a los bytes. Falta leerlo en una
+    Pi 5 real: la línea "CPU: ..." del arranque ya dice si hay big-endian en EL0. Fuente:
+    https://support.arm.com/documentation/100798/0401/AArch64-System-registers/ID-AA64MMFR0-EL1--AArch64-Memory-Model-Feature-Register-0--EL1
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas
