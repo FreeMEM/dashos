@@ -955,6 +955,53 @@ mod ventanas {
         assert_eq!(escena.raices().last(), Some(&(9, 31)));
     }
 
+    /// C3: el fondo de escritorio en franjas (capas de fondo pegadas arriba, cada una con su margen). No echan sombra:
+    /// la de abajo no oscurece el final de la de arriba.
+    #[test]
+    fn franjas_de_fondo_sin_sombra() {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        escena.sombras = true;
+        let mut pantalla = vec![0u32; 200 * 40];
+        escena.componer(&mut pantalla, 200, 40, 200, 0, &mut |_, _, _| {});
+        let mut fondo = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+        for k in 0..2u32 {
+            let (sup, capa) = (31 + 10 * k, 32 + 10 * k);
+            e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(sup).fin();
+            e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(capa).uint(sup).uint(0).uint(0).texto(Some("fondo")).fin();
+            e.empezar(capa, zwlr_layer_surface_v1::req::SET_SIZE).uint(0).uint(20).fin();
+            e.empezar(capa, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(ARRIBA | IZQUIERDA | DERECHA).fin();
+            e.empezar(capa, zwlr_layer_surface_v1::req::SET_MARGIN).int(20 * k as i32).int(0).int(0).int(0).fin();
+            e.empezar(capa, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(-1).fin();
+            e.empezar(sup, wl_surface::req::COMMIT).fin();
+        }
+        let ev = mandar(&mut escena, &mut fondo, 9, &e);
+        let mut e = Escritor::new();
+        for k in 0..2u32 {
+            let (sup, capa, pool, bufer) = (31 + 10 * k, 32 + 10 * k, 33 + 10 * k, 34 + 10 * k);
+            let conf = ev.iter().find(|x| (x.0, x.1) == (capa, zwlr_layer_surface_v1::ev::CONFIGURE)).expect("sin configure");
+            e.empezar(capa, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(u32::from_le_bytes(conf.2[..4].try_into().unwrap())).fin();
+            e.empezar(4, wl_shm::req::CREATE_POOL).uint(pool).llave(72 + k).int(200 * 20 * 4).fin();
+            e.empezar(pool, wl_shm_pool::req::CREATE_BUFFER).uint(bufer).int(0).int(200).int(20).int(800).uint(XRGB8888).fin();
+            e.empezar(sup, wl_surface::req::ATTACH).uint(bufer).int(0).int(0).fin();
+            e.empezar(sup, wl_surface::req::DAMAGE).int(0).int(0).int(200).int(20).fin();
+            e.empezar(sup, wl_surface::req::COMMIT).fin();
+        }
+        mandar(&mut escena, &mut fondo, 9, &e);
+        assert!(fondo.roto.is_none(), "{:?}", fondo.roto);
+        assert_eq!(escena.clientes[&9].superficies[&41].sitio, Some((0, 20)));
+        escena.componer(&mut pantalla, 200, 40, 200, 0, &mut |_, _, _| {});
+        // Todo del color de las franjas (0x11 en la memoria de prueba), también junto a la raya entre las dos.
+        for y in [0, 17, 18, 19, 20, 21, 39] {
+            assert_eq!(pantalla[y * 200 + 100] & 0xff_ffff, 0x11_1111, "en y = {y}");
+        }
+    }
+
     /// Una capa de la barra: cliente `c`, objetos 30 a 34, con tamaño, anclas, zona y márgenes; si cabe en la memoria
     /// de prueba, con su búfer. Devuelve el tamaño de su configure.
     fn capa(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, tam: (u32, u32), anclas: u32, zona: i32, margenes: [i32; 4]) -> (u32, u32) {
@@ -1503,7 +1550,7 @@ mod entrada {
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
             Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
         ]
     }
 
@@ -1579,7 +1626,7 @@ mod entrada {
         assert!(centro.roto.is_none(), "{:?}", centro.roto);
         assert_eq!(escena.tema, (0xff00_61a4, true));
         assert_eq!(core::mem::take(&mut escena.avisos_tema), [(1, 60), (2, 60), (3, 60)]);
-        avisar_tema(&mut a, 60, escena.tema);
+        avisar_tema(&mut a, 60, escena.tema, None);
         let ev = eventos(&a.sacar());
         assert_eq!(ev.last().map(|x| (x.0, x.1, x.2.clone())), Some((60, dashos_tema_v1::ev::TEMA, [0xff00_61a4u32.to_le_bytes(), 1u32.to_le_bytes()].concat())));
         // Al irse, fuera de la lista: otro cambio ya no lo cuenta.
@@ -1590,6 +1637,72 @@ mod entrada {
         centro.juntador.meter(&e.bytes, &e.llaves).unwrap();
         centro.atender(&globales(), &mut escena.de(3));
         assert_eq!(core::mem::take(&mut escena.avisos_tema), [(3, 60)]);
+    }
+
+    /// C3: los esquemas ya hechos. Solo el centro los da, de 26 colores justos; llegan antes del tema a quien enlazó la
+    /// versión 2 y el color es el suyo, y no a quien enlazó la 1 (ni con otro color).
+    #[test]
+    fn esquemas_del_centro() {
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, version: u32| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(version).uint(60).fin();
+            con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+            con.atender(&globales(), &mut escena.de(c));
+            eventos(&con.sacar())
+        };
+        let (mut v1, mut v2, mut centro, mut h) = (Conexion::new(), Conexion::new(), Conexion::new(), Conexion::new());
+        suscribir(&mut escena, &mut v1, 1, 1);
+        suscribir(&mut escena, &mut v2, 2, 2);
+        suscribir(&mut escena, &mut centro, 3, 2);
+        suscribir(&mut escena, &mut h, 4, 2);
+        escena.ponen_tema.push(3);
+        let colores: Vec<u8> = (0..26u32).flat_map(|i| (0xff00_0000 | i).to_le_bytes()).collect();
+        // Un cualquiera no puede; el centro, con 25 colores, tampoco.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESQUEMA).uint(0xff3a_6b8c).array(&colores).fin();
+        h.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        h.atender(&globales(), &mut escena.de(4));
+        assert!(h.roto.is_some() && escena.esquema.is_none());
+        let mut corto = Conexion::new();
+        suscribir(&mut escena, &mut corto, 5, 2);
+        escena.ponen_tema.push(5);
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESQUEMA).uint(0xff3a_6b8c).array(&colores[..100]).fin();
+        corto.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        corto.atender(&globales(), &mut escena.de(5));
+        assert!(corto.roto.is_some() && escena.esquema.is_none());
+        // El centro: esquema y tema.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESQUEMA).uint(0x3a_6b8c).array(&colores).fin();
+        e.empezar(60, dashos_tema_v1::req::PONER).uint(0x3a_6b8c).uint(1).fin();
+        centro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        centro.atender(&globales(), &mut escena.de(3));
+        assert!(centro.roto.is_none(), "{:?}", centro.roto);
+        assert_eq!(escena.esquema.map(|e| (e.0, e.1[19])), Some((0xff3a_6b8c, 0xff00_0013)));
+        for (cl, objeto) in core::mem::take(&mut escena.avisos_tema) {
+            let con = match cl {
+                1 => &mut v1,
+                2 => &mut v2,
+                _ => continue,
+            };
+            avisar_tema(con, objeto, escena.tema, escena.esquema.as_ref());
+        }
+        let ev2 = eventos(&v2.sacar());
+        let esquema = [0xff3a_6b8cu32.to_le_bytes().to_vec(), 104u32.to_le_bytes().to_vec(), colores.clone()].concat();
+        assert_eq!(ev2.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), [(60, dashos_tema_v1::ev::ESQUEMA), (60, dashos_tema_v1::ev::TEMA)]);
+        assert_eq!(ev2[0].2, esquema);
+        let ev1 = eventos(&v1.sacar());
+        assert_eq!(ev1.iter().map(|x| (x.0, x.1)).collect::<Vec<_>>(), [(60, dashos_tema_v1::ev::TEMA)]);
+        // Otro color: sin esquema (el guardado es de otro).
+        avisar_tema(&mut v2, 60, (0xff00_61a4, false), escena.esquema.as_ref());
+        assert_eq!(eventos(&v2.sacar()).iter().map(|x| x.1).collect::<Vec<_>>(), [dashos_tema_v1::ev::TEMA]);
+        // Quien enlaza después lo recibe también al enlazar.
+        let mut nuevo = Conexion::new();
+        let ev = suscribir(&mut escena, &mut nuevo, 6, 2);
+        assert_eq!(ev.iter().filter(|x| x.0 == 60).map(|x| x.1).collect::<Vec<_>>(), [dashos_tema_v1::ev::ESQUEMA, dashos_tema_v1::ev::TEMA]);
     }
 
     #[test]

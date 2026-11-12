@@ -410,6 +410,8 @@ pub struct Escena<M: Memorias> {
     colocadas: i32,
     /// El tema del sistema (S10c, `dashos_tema_v1`): color de acento (ARGB) y si es oscuro.
     pub tema: (u32, bool),
+    /// C3: los esquemas ya hechos de un color (claro y oscuro, diez colores cada uno), los últimos que dio el centro.
+    pub esquema: Option<(u32, [u32; ESQUEMA_COLORES])>,
     /// Quién está suscrito al tema (cliente y objeto) y a quién hay que decirle el nuevo (quien atiende lo manda).
     temas: Vec<(Cliente, u32)>,
     pub avisos_tema: Vec<(Cliente, u32)>,
@@ -532,8 +534,23 @@ pub const TEMA_DE_SERIE: u32 = 0xff67_50a4;
 /// Suscripciones al tema, entre todos: más, y enlazar es un error.
 pub const MAX_TEMAS: usize = 64;
 
-/// Manda el tema (S10c) al objeto `objeto` de `dashos_tema_v1`.
-pub fn avisar_tema(con: &mut Conexion, objeto: u32, (color, oscuro): (u32, bool)) {
+/// Manda el tema (S10c) al objeto `objeto` de `dashos_tema_v1`. Antes, si el objeto es de la versión 2 y el centro dio
+/// los esquemas de ese color (C3), los esquemas: así no los calcula quien lo sigue.
+/// Los colores de los esquemas ya hechos que da el centro (C3): 13 por modo, los dos modos (`kit::tema::ESQUEMAS`).
+pub const ESQUEMA_COLORES: usize = 26;
+
+pub fn avisar_tema(con: &mut Conexion, objeto: u32, (color, oscuro): (u32, bool), esquema: Option<&(u32, [u32; ESQUEMA_COLORES])>) {
+    let version = con.objetos.get(&objeto).map_or(1, |o| o.version);
+    if let Some((c, colores)) = esquema
+        && *c == color
+        && version >= 2
+    {
+        let mut bytes = [0u8; 4 * ESQUEMA_COLORES];
+        for (i, v) in colores.iter().enumerate() {
+            bytes[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+        }
+        con.salida.empezar(objeto, dashos_tema_v1::ev::ESQUEMA).uint(color).array(&bytes).fin();
+    }
     con.salida.empezar(objeto, dashos_tema_v1::ev::TEMA).uint(color).uint(oscuro as u32).fin();
 }
 
@@ -568,6 +585,7 @@ impl<M: Memorias> Escena<M> {
             colocadas: 0,
             recien_colocadas: Vec::new(),
             tema: (TEMA_DE_SERIE, false),
+            esquema: None,
             temas: Vec::new(),
             avisos_tema: Vec::new(),
             avisos_panel: Vec::new(),
@@ -1099,12 +1117,15 @@ impl<M: Memorias> Escena<M> {
         }
         // Las superficies de cada ventana, con sus subsuperficies (G3), de abajo arriba, con su sitio en la pantalla.
         let mut capas: Vec<(Cliente, u32, i32, i32)> = Vec::new();
-        // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada.
+        // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada. Las
+        // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
+            let de_fondo = cli.superficies.get(&id).and_then(|s| s.capa).and_then(|k| cli.capas.get(&k)).is_some_and(|k| k.actual.capa == 0);
             if self.sombras
+                && !de_fondo
                 && self.bloqueo.is_none()
                 && let Some(r) = rect_de(cli, id)
             {
@@ -1395,6 +1416,18 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 if escena.bloqueo.is_none() {
                     escena.pedir_panel();
                 }
+            }
+            // C3: los esquemas ya hechos de un color, para repartirlos con él. Solo el centro, y de 26 colores justos.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::ESQUEMA => {
+                if !escena.ponen_tema.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo el centro de control da esquemas"));
+                }
+                let Valor::Array(bytes) = args[1] else { return Err(ErrorProtocolo::new(objeto, 0, "esquema sin colores")) };
+                if bytes.len() != 4 * ESQUEMA_COLORES {
+                    return Err(ErrorProtocolo::new(objeto, 0, "un esquema son 26 colores"));
+                }
+                let colores: [u32; ESQUEMA_COLORES] = core::array::from_fn(|i| u32::from_le_bytes(bytes[4 * i..4 * i + 4].try_into().unwrap()));
+                escena.esquema = Some((args[0].uint() | 0xff00_0000, colores));
             }
             // C2: bloquear ya, como Super+L; solo el panel rápido.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::BLOQUEAR => {
@@ -1897,7 +1930,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     fn enlazado(&mut self, con: &mut Conexion, global: &crate::servidor::Global, id: u32) {
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
-            avisar_tema(con, id, self.escena.tema);
+            avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
             if self.escena.temas.len() < MAX_TEMAS {
                 self.escena.temas.push((self.cliente, id));
                 // A la barra, también el título de ahora (S10).

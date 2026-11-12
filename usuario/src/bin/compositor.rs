@@ -51,8 +51,9 @@ static GLOBALES: [Global; 7] = [
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
-    // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control.
-    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
+    // hechos (C3).
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
 static GLOBALES_ESCRITORIO: [Global; 10] = [
@@ -65,7 +66,7 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
@@ -83,9 +84,9 @@ static GLOBALES_CAPAS: [Global; 8] = [
 const PONEN_TEMA: &[&str] = &["centro"];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca (solo esos nombres valen: uno
 /// lanzado desde el disco no debe poder llamarse así): `guardian`, con todo, por el bloqueo de la sesión (U3); y, solo
-/// con las capas, el panel rápido (C2) y la barra con su lanzador (S10).
+/// con las capas, el panel rápido (C2), la barra con su lanzador (S10) y el fondo de escritorio (C3, una capa de fondo).
 const ESCRITORIOS: &[&str] = &["guardian"];
-const CON_CAPAS: &[&str] = &["panel", "barra"];
+const CON_CAPAS: &[&str] = &["panel", "barra", "fondo"];
 /// Quién recibe Super+A (C2 de S10c): el panel rápido.
 const ABREN_PANEL: &[&str] = &["panel"];
 /// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la
@@ -109,10 +110,10 @@ fn vaciar_todos(clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<C
 fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) -> Option<u32> {
     let falta = escena.revisar_inactividad();
     // Y el tema nuevo (S10c), a cada suscrito.
-    let tema = escena.tema;
+    let (tema, esquema) = (escena.tema, escena.esquema);
     for (cl, objeto) in core::mem::take(&mut escena.avisos_tema) {
         if let Some(cli) = clientes.get_mut(&cl) {
-            escena::avisar_tema(&mut cli.con, objeto, tema);
+            escena::avisar_tema(&mut cli.con, objeto, tema, esquema.as_ref());
             if !mandar(cli) {
                 caidos.push(cl);
             }

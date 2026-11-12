@@ -129,8 +129,10 @@ fn principal() -> u64 {
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
     // S10c: el tema del sistema (lo cambia el centro de control); llega al enlazar y cada vez que cambia.
+    // Con la versión 2, los esquemas de un color que no está en la tabla (el del fondo, C3) llegan hechos por el centro.
     if let Some(gt) = global("dashos_tema_v1") {
-        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+        let version = globales.iter().find(|g| g.1 == "dashos_tema_v1").map_or(1, |g| g.2.min(2));
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(version).uint(TEMA).fin();
     }
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia).int(tamano as i32).fin();
     e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::ARGB8888).fin();
@@ -183,6 +185,10 @@ fn principal() -> u64 {
             }
             // El tamaño que pide el compositor llega antes que el configure de la superficie, que lo cierra.
             (VENTANA, xdg_toplevel::ev::CONFIGURE) => pedida = (palabra(0) as i32, palabra(1) as i32),
+            // C3: los esquemas ya hechos de un color; llegan antes de su `tema`.
+            (TEMA, wayland::tablas::dashos_tema_v1::ev::ESQUEMA) => {
+                kit::tema::recordar_evento_esquema(&cuerpo);
+            }
             (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
                 let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
                 if (color, oscuro) != tema_actual {
@@ -190,7 +196,17 @@ fn principal() -> u64 {
                     let t0 = dashos::ahora_us();
                     i.ctx.tema = Tema::del_sistema(color, oscuro);
                     let us = dashos::ahora_us() - t0;
-                    println!("  [ajustes] tema del sistema: {}, color {:06x} ({} µs)", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff, us);
+                    let hecho = if kit::tema::recibido(color) { ", esquema del centro" } else { "" };
+                    let t = &i.ctx.tema;
+                    println!(
+                        "  [ajustes] tema del sistema: {}, color {:06x}{} ({} µs); superficie {:06x}, primario {:06x}",
+                        if oscuro { "oscuro" } else { "claro" },
+                        color & 0xff_ffff,
+                        hecho,
+                        us,
+                        t.superficie & 0xff_ffff,
+                        t.primario & 0xff_ffff
+                    );
                     cambio = true;
                 }
             }

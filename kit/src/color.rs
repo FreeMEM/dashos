@@ -110,9 +110,18 @@ pub struct Hct {
 
 impl Hct {
     pub fn desde(color: Color) -> Hct {
+        Hct::desde_con(color, &vision())
+    }
+
+    /// Los de muchos colores: las condiciones de visión se calculan una vez (sin FPU cuestan lo que un color).
+    pub fn de_varios(colores: &[Color]) -> alloc::vec::Vec<Hct> {
+        let v = vision();
+        colores.iter().map(|&c| Hct::desde_con(c, &v)).collect()
+    }
+
+    fn desde_con(color: Color, v: &Vision) -> Hct {
         let lin = [lineal((color >> 16) & 0xff), lineal((color >> 8) & 0xff), lineal(color & 0xff)];
         let xyz = por(&SRGB_A_XYZ, lin);
-        let v = vision();
         let rgb_c = por(&XYZ_A_CAM16, xyz);
         let rgb_a = [0, 1, 2].map(|i| {
             let d = v.rgb_d[i] * rgb_c[i];

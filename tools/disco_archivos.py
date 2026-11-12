@@ -28,6 +28,9 @@ import time
 import sys
 import tempfile
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import fondos_prueba  # noqa: E402
+
 # U2: un programa en el disco, para que `sesiones` lo lance desde ahí (el mismo `hola` que se construye).
 HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
 # Y `pide`: lanzado desde el disco, nace con su canal con `sesiones` y repite la prueba de U4 con su número nuevo.
@@ -37,14 +40,22 @@ CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
+    FONDOS = os.path.join(os.path.dirname(os.path.abspath(disco)), "fondos-prueba")
     # Por la tabla de particiones, con el mismo lector que el servicio de disco (A14).
     desde = "tabla"
     arbol = subprocess.run([ver, disco, desde], check=True, capture_output=True, text=True).stdout.splitlines()
+    apariencia = subprocess.run([ver, disco, desde, "C/Prefs/apariencia"], check=True, capture_output=True).stdout
+    fondo = subprocess.run([ver, disco, desde, "C/Prefs/fondo"], capture_output=True).stdout
     esperado = [
         "C/ cajón",
+        # C3: los fondos de escritorio de prueba (`tools/fondos_prueba.py`).
+        "C/Fondos/ cajón",
+        *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
         "C/Prefs/ cajón",
-        "C/Prefs/apariencia 12",
+        f"C/Prefs/apariencia {len(apariencia)}",
         # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
+        # C3: el fondo que se quedó, el último que se puso desde el centro.
+        "C/Prefs/fondo 14",
         "C/Prefs/panel 24",
         "C/Privado/ cajón",
         "C/Privado/nota.txt 18",
@@ -72,14 +83,17 @@ if sys.argv[1] == "--comprobar":
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
-    apariencia = subprocess.run([ver, disco, desde, "C/Prefs/apariencia"], check=True, capture_output=True).stdout
     panel = subprocess.run([ver, disco, desde, "C/Prefs/panel"], check=True, capture_output=True).stdout
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
-    # S10c: lo que guardó el centro de control al elegir el modo oscuro y, con doble clic, el azul.
-    if apariencia != b"oscuro azul\n":
+    # S10c: lo que guardó el centro de control al elegir el modo oscuro, con doble clic el azul y después el color del
+    # fondo (C3), con el atardecer: su semilla y los veinte colores de sus esquemas, calculados una vez.
+    partes = apariencia.decode(errors="replace").rstrip("\n").split(" ")
+    if partes[:3] != ["oscuro", "fondo", "c44e68"] or len(partes) != 23 or not all(len(p) == 6 for p in partes[2:]):
         fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
+    if fondo != b"atardecer.png\n":
+        fallos.append(f"C/Prefs/fondo: {fondo!r}")
     # C2: los mosaicos del panel. Rotos al empezar; el panel quitó Bloquear y lo volvió a poner en su sitio: los de serie.
     if panel != b"oscuro bloquear volumen\n":
         fallos.append(f"C/Prefs/panel: {panel!r}")
@@ -201,6 +215,19 @@ with tempfile.TemporaryDirectory() as t:
         f.write(b"volumen volumen nube\n")
     os.chmod(os.path.join(prefs, "panel"), 0o600)
     os.chmod(prefs, 0o700)
+    # C3: los fondos de escritorio de prueba, hechos aquí (`tools/fondos_prueba.py`, guardados junto al disco para no
+    # rehacerlos): ondas.png y atardecer.png, que se ven; rota.png (un byte cambiado: su CRC no cuadra) y enorme.png
+    # (40000 × 40000). El guardado es el enorme: el fondo no lo pone y se queda el color liso hasta que el centro pone
+    # otro.
+    hechos = os.path.join(os.path.dirname(os.path.abspath(salida)), "fondos-prueba")
+    fondos_prueba.fondos(hechos)
+    os.makedirs(os.path.join(raiz, "C", "Fondos"))
+    for n in fondos_prueba.FONDOS:
+        with open(os.path.join(raiz, "C", "Fondos", n), "wb") as f:
+            f.write(open(os.path.join(hechos, n), "rb").read())
+    with open(os.path.join(prefs, "fondo"), "w") as f:
+        f.write("enorme.png\n")
+    os.chmod(os.path.join(prefs, "fondo"), 0o600)
     # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
     with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
         f.write("no se enseña\n")

@@ -304,11 +304,66 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
                 mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
             reintento = time.time() + 5
+        # C3: los fondos y el color del fondo. Con el teclado en la lista de Apariencia (Inicio, abajo hasta la fila,
+        # Intro): poner ondas.png (en el disco, el guardado es el enorme, que no se pone), elegir "Color del fondo",
+        # poner rota.png (no se pone: se quedan el fondo y el tema) y poner atardecer.png (el tema sale del nuevo).
+        # Las filas, de lo que dice el centro al entrar en Apariencia. Con CAPTURA_CENTRO, fichero.fondo-ondas.ppm,
+        # fichero.fondo-color.ppm y fichero.fondo-atardecer.ppm.
+        def fila_apariencia(empieza):
+            import re
+            m = re.search(r"\[centro\] Apariencia: (Modo claro[^\n]*)", texto)
+            filas = m.group(1).split("; ") if m else []
+            return next((k for k, f in enumerate(filas) if f.startswith(empieza)), None)
+        def elegir_fila(empieza):
+            k = fila_apariencia(empieza)
+            if k is not None:
+                mandar("sendkey home", *["sendkey down"] * k, "sendkey ret", pausa=0.2)
         if centro == 10:
             if "[centro] Apariencia: oscuro, color Azul" not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
+            centro = 15
+            time.sleep(0.5)
+            elegir_fila("Fondo: ondas.png")
+            reintento = time.time() + 30
+        if centro == 15:
+            if "[centro] Fondo ondas.png: " not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            centro = 16
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".fondo-ondas.ppm")
+            time.sleep(0.5)
+            elegir_fila("Color del fondo")
+            reintento = time.time() + 30
+        if centro == 16:
+            if "[centro] Apariencia: oscuro, color Del fondo" not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            centro = 17
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".fondo-color.ppm")
+            time.sleep(0.5)
+            elegir_fila("Fondo: rota.png")
+            reintento = time.time() + 30
+        if centro == 17:
+            if "[centro] Fondo rota.png: " not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            centro = 18
+            time.sleep(0.5)
+            elegir_fila("Fondo: atardecer.png")
+            reintento = time.time() + 30
+        if centro == 18:
+            if texto.count("[centro] Apariencia: oscuro, color Del fondo") < 2 and time.time() < reintento:
+                time.sleep(0.25)
+                continue
             centro = 7
+            if captura_centro:
+                time.sleep(0.8)
+                mandar("screendump " + captura_centro + ".fondo-atardecer.ppm")
             time.sleep(0.5)
             mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
@@ -525,14 +580,16 @@ while time.time() - inicio < total:
         if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
             reintento = max(reintento, time.time() + 4)
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
-        # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo (el primer cajón, Privado) e Intro para
+        # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo hasta Privado (el tercer cajón) e Intro para
         # entrar; dentro, Fin (el último, nota.txt; el primero es "../") e Intro.
         if not bloqueado_ahora and selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
             selector = 1
             time.sleep(0.5)
             mandar("sendkey ret")
             time.sleep(0.5)
-            # Dos abajo: los cajones van primero, y `Prefs` (S10c) va antes que `Privado`.
+            # Tres abajo: los cajones van primero, y `Fondos` (C3) y `Prefs` (S10c) van antes que `Privado`.
+            mandar("sendkey down")
+            time.sleep(0.3)
             mandar("sendkey down")
             time.sleep(0.3)
             mandar("sendkey down")
@@ -546,7 +603,7 @@ while time.time() - inicio < total:
                     reintento = time.time() + 4
                     mandar("sendkey home")
                     time.sleep(0.3)
-                    mandar("sendkey down")
+                    mandar("sendkey down", "sendkey down", pausa=0.3)
                     time.sleep(0.3)
                     mandar("sendkey ret")
                 time.sleep(0.25)
@@ -562,7 +619,7 @@ while time.time() - inicio < total:
                 time.sleep(0.25)
                 continue
             time.sleep(0.5)
-            mandar("sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
+            mandar("sendkey down", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
             selector = 18
             reintento = time.time() + 4
         if not bloqueado_ahora and selector == 18:
@@ -609,7 +666,7 @@ while time.time() - inicio < total:
                 continue
             selector = 3
             espera_carpeta = time.time() + 15
-        # U5: la carpeta para guardar (el hostil pide "carpeta"): abajo dos veces (Privado), Intro para entrar y, ya
+        # U5: la carpeta para guardar (el hostil pide "carpeta"): abajo tres veces (Privado, tras Fondos y Prefs), Intro para entrar y, ya
         # dentro, clic en "Elegir esta carpeta" (los botones del kit no toman el teclado).
         # El hostil la pide justo después de lo de antes: hasta que sale, nada de lo de siempre (un clic caería en Cancelar).
         if not bloqueado_ahora and selector == 3 and "[selector] ventana de elegir carpeta en pantalla" not in texto and time.time() < espera_carpeta:
@@ -620,9 +677,7 @@ while time.time() - inicio < total:
             # Las veces que ya entró en C/Privado (el flujo de antes también entra): hace falta una más.
             entradas_antes = texto.count("[selector] entra en C/Privado")
             time.sleep(0.5)
-            mandar("sendkey down")
-            time.sleep(0.3)
-            mandar("sendkey down")
+            mandar("sendkey down", "sendkey down", "sendkey down", pausa=0.3)
             time.sleep(0.3)
             mandar("sendkey ret")
             reintento = time.time() + 4
