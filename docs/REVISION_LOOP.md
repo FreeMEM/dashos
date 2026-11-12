@@ -1553,3 +1553,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Captura mandada al usuario. Choque en `kernel/src/inicio.rs` (la llave de la página 0 de la caja Amiga): resuelto.
 - `make prueba` BIEN; arranque-virt en dos vueltas BIEN; arranque-virt-vm, arranque-virt-linux (uname -a desde la
   terminal) y arranque-virt-2 BIEN.
+
+### 2026-11-12 20:15: Arch Linux ARM en la caja Linux, en revision
+- Fusionada `caja-linux-arch`: el rootfs oficial de Arch Linux ARM (firma comprobada) en una partición propia del NVMe
+  con un tipo nuevo (la caja nunca ve una partición de Linux cualquiera), hecho sin root con `mke2fs -d`; kernel propio
+  de 7 MB (`Image-arch`, con lo que piden systemd, glibc y pacman: Landlock); un PL031 en el crate para la hora.
+  systemd 261 en marcha, root entra en la terminal del escritorio a los 16 s, red por DHCP (10.0.2.16) y
+  `pacman -Sy` baja los cuatro índices (`make arranque-virt-arch`; antes `tools/caja_linux_invitado.py preparar-arch`).
+  Captura mandada al usuario.
+- Pendiente: `pacman -S` (pide `pacman-key --init`), lo escrito tras reiniciar, la memoria de 512 MB (en QEMU virt
+  DashOS ve 3 GB), la Pi 4. Dos decisiones del usuario: entrar como root o como usuario; quitar el kernel de Arch.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
