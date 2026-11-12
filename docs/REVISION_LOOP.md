@@ -1283,3 +1283,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   2048, el núcleo 8,4 MB. Sin reparto por programa todavía.
 - Cargador: con DASHOS_PANTALLA=ANCHOxALTO al compilar pide ese modo al GOP. El firmware de QEMU (ramfb) solo da
   640x480, 800x600 y 1024x768; Full HD tendrá que ir por virtio-gpu (rama multimonitor).
+
+### 2026-11-12 13:50: fondo (C3), avisos (S10) y Workbench (S10) en revision
+- Juntados en `fusion-fondo` y avanzada `revision` hasta 967289a. Choques: `CON_CAPAS` = panel, barra, workbench, fondo;
+  `inicio` lanza fondo y workbench; el disco de pruebas lleva los fondos y `DeCarla/`; el guion, los pasos de los dos.
+- Pruebas que hubo que poner al día: la apariencia guardada pasa a 202 bytes y 29 campos (13 colores por modo), y el
+  punto de "restos" de la captura va a (640, 500), fuera de la columna de iconos del Workbench (de 696 a la derecha).
+- `make prueba` BIEN; wayland 49 y kit 60 bien; `make arranque-virt` en tres vueltas a la vez: todo BIEN.
+- Decisiones provisionales de las dos ramas, para el usuario: docs/bitacoras/avisos.md y docs/bitacoras/workbench.md
+  (capa de iconos en una columna a la derecha, Home = cajón C, orden DUENO 34 en archivos, el compositor no pone
+  ventanas medio fuera, avisos de una sesión de detrás solo en el historial).
