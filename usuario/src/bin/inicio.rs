@@ -339,6 +339,8 @@ fn principal() -> u64 {
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,
+            // H4: la caja Amiga, con su ejecutable de 3 MB, 4 MB de código traducido, 4 de montón y 1 del 68k.
+            "caja-amiga" => 32 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

@@ -77,6 +77,17 @@ pub enum Permiso {
     SoloLecturaSinCache,
 }
 
+/// Cómo se proyecta un objeto de memoria (`proyectar_memoria`).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub enum Acceso {
+    /// Solo leer.
+    Leer,
+    /// Leer y escribir; nunca se ejecuta.
+    Escribir,
+    /// Leer y ejecutar; nunca se escribe por esta dirección (H4, el JIT de la caja Amiga).
+    Ejecutar,
+}
+
 /// Intermediarios revocables por proyección, como mucho: los que puede haber uno dentro de otro (objetos.rs).
 pub const VIAS: usize = 4;
 /// Hasta cuántas páginas se invalida la TLB página a página al quitar una proyección (M3). Con más, una invalidación
@@ -342,26 +353,40 @@ impl Espacio {
         Ok(())
     }
 
-    /// Proyecta un objeto de memoria entero desde `va`, de lectura y escritura o de solo lectura; nunca se ejecuta.
+    /// Proyecta un objeto de memoria entero desde `va`: de solo lectura, de lectura y escritura o (H4, el JIT de la
+    /// caja Amiga) de lectura y ejecución, nunca de escritura y ejecución a la vez. El mismo objeto puede estar
+    /// proyectado para escribir en una dirección y para ejecutar en otra: así escribe su código un JIT (S3).
     /// Primero comprueba el tramo entero y crea sus tablas, así que o se proyecta todo o nada. El espacio guarda el
     /// objeto mientras exista (C18).
-    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, escribir: bool, via: &[usize]) -> Result<(), Error> {
+    pub fn proyectar_memoria(&mut self, va: u64, m: &alloc::sync::Arc<super::memoria::Memoria>, acceso: Acceso, via: &[usize]) -> Result<(), Error> {
         if via.len() > VIAS {
             return Err(Error::Limite);
+        }
+        // La memoria de DMA no se ejecuta nunca: la escribe un aparato.
+        if acceso == Acceso::Ejecutar && m.bus().is_some() {
+            return Err(Error::Direccion);
         }
         if self.proyectados.len() >= MAX_PROYECCIONES {
             return Err(Error::Limite);
         }
         self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
         self.preparar(va, m.paginas() as u64)?;
-        let permiso = match (escribir, m.bus().is_some()) {
-            (true, true) => Permiso::DatosSinCache,
-            (true, false) => Permiso::Datos,
-            (false, true) => Permiso::SoloLecturaSinCache,
-            (false, false) => Permiso::SoloLectura,
+        let permiso = match (acceso, m.bus().is_some()) {
+            (Acceso::Escribir, true) => Permiso::DatosSinCache,
+            (Acceso::Escribir, false) => Permiso::Datos,
+            (Acceso::Leer, true) => Permiso::SoloLecturaSinCache,
+            (Acceso::Leer, false) => Permiso::SoloLectura,
+            (Acceso::Ejecutar, _) => Permiso::Codigo,
         };
         for (i, &p) in m.fisicas().iter().enumerate() {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
+        }
+        // Las páginas del objeto ya están limpias hasta la RAM (`limpiar_cache` al crearlo) y lo que escriba después
+        // el proceso lo limpia él (SCTLR_EL1.UCI, `mapa::wxn`); aquí solo se quita de la caché de instrucciones lo
+        // que quedara de otro uso de esas páginas físicas.
+        if acceso == Acceso::Ejecutar {
+            self.codigo_pendiente = true;
+            self.codigo_listo();
         }
         let mut vias = [0usize; VIAS];
         vias[..via.len()].copy_from_slice(via);
