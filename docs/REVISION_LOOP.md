@@ -1564,3 +1564,29 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente: `pacman -S` (pide `pacman-key --init`), lo escrito tras reiniciar, la memoria de 512 MB (en QEMU virt
   DashOS ve 3 GB), la Pi 4. Dos decisiones del usuario: entrar como root o como usuario; quitar el kernel de Arch.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 20:25: Linux con 4 vCPU, en revision
+- Fusionada `caja-linux-vcpu`: cada llave de máquina es una vCPU (su GIC virtual, temporizador y FPU) y comparten la
+  memoria del invitado; operaciones 4 a 7 de `maquina_estado` (crear vCPU, reiniciarla para CPU_ON, patearla, parar
+  la máquina). El servicio lleva un hilo por vCPU, PSCI CPU_ON/CPU_OFF/AFFINITY_INFO y SGI entre vCPU. Linux sube
+  4 CPU; 4 trabajos a la vez van 3,5 veces más rápido que seguidos. El WFI duerme el hilo en el kernel.
+- Hostil (`usuario/invitados/smp.s`): CPU_ON a una vCPU que no existe o dos veces, rechazado; tormenta de SGI y vCPU
+  en bucle con todo enmascarado: la máquina se para con ella dentro y los hilos terminan.
+- Choques resueltos con la rama de Arch: Arch arranca también con 4 vCPU.
+- Pendiente: la tormenta de SGI frena 100-240 veces a la vCPU que la recibe; un solo cerrojo en el servicio;
+  CPU_SUSPEND contesta en el acto; FPU de cada vCPU sin cobrarse al grupo; número fijo de vCPU; la Pi 4.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 22:45: caja Amiga con exec, dos, graphics e intuition de Rust y una ventana, en revision
+- Fusionada `caja-amiga-union`: las bibliotecas de Rust enchufadas a la caja por `caja/pegamento/` (la caja sigue en
+  C por los registros del 68k que reserva el JIT); fuera `exec_minima.c`. Cada programa es un proceso de exec y la
+  caja suelta lo que deje. dos va sobre `archivos` (`SYS:`, solo lectura). `ventana.exe` (m68k-amigaos-gcc) abre su
+  ventana con `OpenWindowTags` como una ventana más del compositor, dibuja, lee `SYS:LEEME.txt` y recibe
+  `IDCMP_CLOSEWINDOW` por un clic de verdad. Captura mandada al usuario.
+- Hostil: `hostil.exe`, 67 llamadas nativas malas, 54 avisos; la caja y el compositor siguen. El JIT ya olvida lo
+  traducido entre programas cargados en la misma dirección. Oráculo FS-UAE: misma salida (la ventana 1 píxel más alta
+  allí por topaz/9).
+- Fuera de la caja: carrera del compositor con la zona de la barra y el primer configure del Workbench; la caja va
+  la última en `inicio`; guiones con el clic en el gadget.
+- Siete decisiones del usuario en `docs/bitacoras/caja-amiga.md` (fuente, varias tareas 68k, SetFunction, LoadSeg...).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.

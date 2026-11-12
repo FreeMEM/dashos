@@ -1139,9 +1139,13 @@ impl<M: Memorias> Escena<M> {
                 let r = if e.zona == 0 { area } else { pantalla };
                 let (x, y) = sitio_capa(&e, r.w, r.h, bw, bh);
                 let (x, y) = (r.x.saturating_add(x), r.y.saturating_add(y));
+                let movida = s.sitio.is_some_and(|p| p != (x, y));
                 s.sitio = Some((x, y));
                 if !self.capas.contains(&(cliente, sup)) {
                     self.capas.push((cliente, sup));
+                    self.capas_colocadas.push((cliente, x, y));
+                } else if movida {
+                    // Otro sitio (H5: el área cambió tras su primer configure): se dice otra vez dónde.
                     self.capas_colocadas.push((cliente, x, y));
                 }
                 self.danos.extend(rect_de(yo, sup));
@@ -1253,6 +1257,17 @@ impl<M: Memorias> Escena<M> {
         self.areas = areas;
         if self.areas != antes {
             self.reajustar_maximizadas();
+            // Las capas sin zona propia que ya tuvieron configure con el área de antes: otro configure con la nueva y,
+            // las que se ven, a su sitio. Sin esto, una capa que pidió su tamaño antes de que la barra pusiera su zona
+            // (dos programas que arrancan a la vez) se quedaba con el de la pantalla entera, mal colocada.
+            let capas: Vec<(Cliente, u32)> =
+                self.clientes.iter().flat_map(|(&c, cli)| cli.capas.values().filter(|k| k.actual.zona == 0).map(move |k| (c, k.superficie))).collect();
+            for (c, sup) in capas {
+                self.reconfigurar_capa(c, sup);
+                if self.capas.contains(&(c, sup)) {
+                    self.colocar_capa(c, sup);
+                }
+            }
         }
     }
 

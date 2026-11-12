@@ -50,6 +50,8 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),
+    // H5: la caja Amiga, de Ana (1000), para su volumen `SYS:` (de solo lectura en dos.library): la raíz del disco.
+    ("caja-amiga", 1000, 1000, 0, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -376,7 +378,9 @@ fn principal() -> u64 {
             // 32 MB.
             "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado(ram) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
-            // H4: la caja Amiga, con su ejecutable de 3 MB, 4 MB de código traducido, 4 de montón y 1 del 68k.
+            // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
+            // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
+            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas.
             "caja-amiga" => 32 << 20,
             _ => 16 << 20,
         };

@@ -82,7 +82,11 @@ def teclear(orden):
 
 
 def paso(orden, patron, segundos=20):
-    for _ in range(3):
+    for vez in range(3):
+        # Al repetir, antes otro clic en la terminal: una ventana que sale después (la de la caja Amiga, que `inicio`
+        # lanza tras la caja Linux) se lleva el teclado al salir.
+        if vez > 0:
+            clic_en_ventana()
         teclear(orden)
         if esperar(patron, segundos):
             return True

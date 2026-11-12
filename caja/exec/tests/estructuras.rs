@@ -214,3 +214,51 @@ fn una_caja_solo_con_chip() {
     assert_eq!(e.nodos(e.base() + execbase::MEMLIST).unwrap().len(), 1);
     assert_eq!(e.avail_mem(memf::FAST).unwrap(), 0);
 }
+
+/// La memoria de la caja de DashOS: la página 0 y, aparte, `[1 MB, 9 MB)`. Lo de en medio no existe.
+struct MemoriaDeCaja {
+    pagina0: Vec<u8>,
+    ram: Vec<u8>,
+}
+
+const RAM: u32 = 0x10_0000;
+
+impl Memoria for MemoriaDeCaja {
+    fn trozo(&self, dir: u32, largo: u32) -> Option<&[u8]> {
+        let fin = dir.checked_add(largo)?;
+        if fin <= 0x1000 {
+            return self.pagina0.get(dir as usize..fin as usize);
+        }
+        let i = dir.checked_sub(RAM)? as usize;
+        self.ram.get(i..i + largo as usize)
+    }
+    fn trozo_mut(&mut self, dir: u32, largo: u32) -> Option<&mut [u8]> {
+        let fin = dir.checked_add(largo)?;
+        if fin <= 0x1000 {
+            return self.pagina0.get_mut(dir as usize..fin as usize);
+        }
+        let i = dir.checked_sub(RAM)? as usize;
+        self.ram.get_mut(i..i + largo as usize)
+    }
+}
+
+#[test]
+fn arranque_con_la_memoria_de_la_caja() {
+    let m = MemoriaDeCaja { pagina0: vec![0; 0x1000], ram: vec![0; 8 << 20] };
+    let c = Config::caja((0x10_2000, 0x11_0000), 0x15_0000, 0x90_0000);
+    let mut e = Exec::arrancar(m, c).unwrap();
+    let b = e.base();
+    assert!((0x10_2000..0x11_0000).contains(&b));
+    assert_eq!(e.mem.leer32(4).unwrap(), b);
+    // Lo repartible empieza donde se pidió: nada entre la zona del sistema y 0x150000.
+    let p = e.alloc_mem(64, memf::CHIP).unwrap();
+    assert!((0x15_0000..0x20_0000).contains(&p));
+    let q = e.alloc_mem(64, memf::FAST).unwrap();
+    assert!((0x20_0000..0x90_0000).contains(&q));
+    assert_eq!(e.alloc_abs(16, 0x14_0000).unwrap(), 0);
+    // Una zona del sistema en la página 0, o que no está en memoria, no vale.
+    let m = MemoriaDeCaja { pagina0: vec![0; 0x1000], ram: vec![0; 8 << 20] };
+    assert_eq!(Exec::arrancar(m, Config::caja((0, 0x4000), 0x15_0000, 0x90_0000)).err(), Some(Fallo::SinSitio));
+    let m = MemoriaDeCaja { pagina0: vec![0; 0x1000], ram: vec![0; 8 << 20] };
+    assert_eq!(Exec::arrancar(m, Config::caja((0x1000, 0x4000), 0x15_0000, 0x90_0000)).err(), Some(Fallo::SinSitio));
+}

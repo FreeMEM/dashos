@@ -1,5 +1,6 @@
-# DashOS, H4: la caja Amiga, primer paso. El JIT de Emu68 (como en jit-host/) en un programa de usuario de DashOS,
-# big-endian y sin libc: build/caja-amiga, un ET_EXEC que `inicio` lanza en `make -C kernel arranque-virt`.
+# DashOS, H4: la caja Amiga. El JIT de Emu68 (como en jit-host/) en un programa de usuario de DashOS, big-endian y sin
+# libc, con las bibliotecas nativas en Rust (pegamento/: exec, dos, graphics e intuition): build/caja-amiga, un
+# ET_EXEC que `inicio` lanza en `make -C kernel arranque-virt`.
 TC      ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin/aarch64_be-linux-
 CC      := $(TC)gcc
 CXX     := $(TC)g++
@@ -32,7 +33,7 @@ MATH := $(basename $(notdir $(wildcard $(EMU68)/src/math/*.c)))
 
 OBJS := $(JIT_C:%=$(B)/%.o) $(JIT_CXX:%=$(B)/%.o) $(MATH:%=$(B)/math_%.o) \
 	$(B)/RegisterAllocator64.o $(B)/ExecutionLoop.o $(B)/emu68_context.o \
-	$(B)/caja.o $(B)/hunk.o $(B)/exec_minima.o $(B)/entrada.o $(B)/programas.o
+	$(B)/caja.o $(B)/hunk.o $(B)/entrada.o $(B)/programas.o
 
 # La pila del ELF (64 KB, la de siempre) solo se usa al empezar: entrada.S pasa enseguida a una por encima de 4 GB.
 all: $(B)/caja-amiga
@@ -55,16 +56,23 @@ $(B)/caja.o: caja.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/hunk.o: hunk.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
-$(B)/exec_minima.o: exec_minima.c | $(B)
-	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/entrada.o: entrada.S | $(B)
 	$(CC) $(COMMON) -c $< -o $@
-$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe | $(B)
+$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
-$(B)/caja-amiga: $(OBJS) enlace.ld
+# Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
+# compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).
+RUST_A := pegamento/target/aarch64_be-unknown-none-softfloat/release/libcaja_pegamento.a
+$(B)/pegamento.a: FORCE | $(B)
+	cd pegamento && cargo build --release --quiet
+	$(TC)objcopy --localize-symbol=memcpy --localize-symbol=memset --localize-symbol=memmove $(RUST_A) $@.tmp
+	cmp -s $@.tmp $@ || mv $@.tmp $@
+	rm -f $@.tmp
+
+$(B)/caja-amiga: $(OBJS) $(B)/pegamento.a enlace.ld
 	$(CXX) -mbig-endian -static -nostdlib -nostartfiles -Wl,-EB -Wl,--build-id=none -Wl,-z,noexecstack \
-		-Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@ $(OBJS)
+		-Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@ $(OBJS) $(B)/pegamento.a
 
 $(B):
 	mkdir -p $(B)
@@ -76,5 +84,6 @@ pruebas-pc:
 	$(MAKE) -C pruebas_hunk
 
 clean:
-	rm -rf $(B) build-pc
-.PHONY: all clean pruebas-pc
+	rm -rf $(B) build-pc pegamento/target
+.PHONY: all clean pruebas-pc FORCE
+FORCE:

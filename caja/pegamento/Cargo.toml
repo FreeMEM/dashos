@@ -1,0 +1,29 @@
+[package]
+name = "dashos-caja-pegamento"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "El pegamento de la caja Amiga: exec, dos, graphics e intuition (crates de caja/) enchufadas en el proceso de la caja, con la memoria del 68k, el servicio de archivos y el compositor de DashOS"
+
+[lib]
+name = "caja_pegamento"
+path = "src/lib.rs"
+crate-type = ["staticlib"]
+test = false
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }
+caja_dos = { package = "dashos-caja-dos", path = "../dos" }
+caja_intuition = { package = "dashos-caja-intuition", path = "../intuition" }
+dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false }
+wayland = { package = "dashos-wayland", path = "../../wayland" }
+
+[profile.release]
+panic = "abort"
+opt-level = 2
+codegen-units = 1
+lto = true
+debug = false
+
+[profile.dev]
+panic = "abort"

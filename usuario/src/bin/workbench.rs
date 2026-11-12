@@ -892,7 +892,8 @@ impl App {
         let mut e = Escritor::new();
         e.empezar(CAPA_ESC, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(serie).fin();
         let (w, h) = (w.clamp(1, 3840), h.clamp(1, 2400));
-        if (w, h) != (self.esc.w, self.esc.h) {
+        let otro_tamano = (w, h) != (self.esc.w, self.esc.h);
+        if otro_tamano {
             if self.esc.mem != 0 {
                 e.empezar(self.esc.bufer, wl_buffer::req::DESTROY).fin();
                 e.empezar(self.esc.pool, wl_shm_pool::req::DESTROY).fin();
@@ -920,11 +921,15 @@ impl App {
         }
         self.c.mandar(&e);
         self.pintar_escritorio();
-        if !self.esc_configurado {
+        // La primera vez, y si el compositor le da otro tamaño (H5: la barra puso su zona después de su primer configure).
+        if !self.esc_configurado || otro_tamano {
+            let primera = !self.esc_configurado;
             self.esc_configurado = true;
             let s = &self.esc.iconos[0].r;
             println!("  [workbench] en pantalla: {}x{}, icono de Sistema en ({}, {})", w, h, s.x + s.w / 2, s.y + 36);
-            self.avisar_home();
+            if primera {
+                self.avisar_home();
+            }
         }
     }
 

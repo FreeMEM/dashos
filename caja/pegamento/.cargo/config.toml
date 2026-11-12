@@ -1,0 +1,10 @@
+# La caja Amiga es big-endian, como el 68k. Se enlaza con el C de la caja (../Makefile), así que sin `mem` de
+# compiler_builtins: memcpy, memset y memmove son los de Emu68 (src/support.c), y memcmp y bcmp los de caja.c.
+[build]
+target = "aarch64_be-unknown-none-softfloat"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+
+[target.aarch64_be-unknown-none-softfloat]
+rustflags = ["-C", "relocation-model=static"]

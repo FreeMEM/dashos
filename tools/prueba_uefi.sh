@@ -115,6 +115,9 @@ wb_ventana = {}
 bloqueo_capturado = False
 cambio = 0
 captura_u6_hecha = 0
+amiga = 0
+amiga_desde = 0
+v_amiga = None
 
 while time.time() - inicio < total:
     try:
@@ -1160,6 +1163,37 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 10
+        # H5: la ventana Amiga de la caja (`caja/pruebas68k/ventana.c`). Cuando la caja dice que está en pantalla y el
+        # compositor dónde, con CAPTURA_AMIGA=fichero.ppm la pantalla así (sin preguntas encima), y después un clic en su
+        # gadget de cerrar, que Intuition dibuja dentro del búfer, arriba a la izquierda (20 x 11: se pulsa en (10, 5)):
+        # la ventana recibe IDCMP_CLOSEWINDOW de verdad. Después el cursor vuelve a donde lo tenían los pasos de siempre. Nunca con una
+        # pregunta de `guardian` en pantalla, y antes, a que se conteste la de `pide` (sale mientras la ventana está
+        # abierta): el clic le quitaría el teclado y su "s" no llegaría. Si no se contesta en 30 s, sin esperarla (la
+        # ventana se cierra sola a los 40). Tampoco con el menú de Ajustes abriéndose. Sin esperar dentro de la vuelta.
+        pregunta_abierta = texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ")
+        libre_para_amiga = not bloqueado_ahora and menu != 1 and not pregunta_abierta
+        if amiga == 0 and "[caja-amiga] ventana Amiga en pantalla" in texto and not pregunta_abierta:
+            import re
+            v_amiga = re.search(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto)
+            if v_amiga:
+                amiga, amiga_desde = 1, time.time()
+                # La captura, enseguida: luego sale Ajustes encima.
+                if os.environ.get("CAPTURA_AMIGA"):
+                    time.sleep(0.3)
+                    mandar("screendump " + os.environ["CAPTURA_AMIGA"])
+        elif amiga == 1 and libre_para_amiga and (
+                "¿pide puede usar eco? El usuario dice" in texto or time.time() - amiga_desde > 30):
+            import re
+            amiga = 2
+            ir_a(int(v_amiga.group(1)) + 10, int(v_amiga.group(2)) + 5)
+            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+            w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+            if menu == 2:
+                ir_a(790, 590)
+            elif ajustes and w:
+                ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
+            else:
+                ir_a(10 * paso, 5 * paso)
         # Mientras el selector espera teclas, no: el clic en Ajustes le quitaría el teclado y sus teclas irían a
         # Ajustes (con el PC lento, Ajustes sale después del selector).
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18):

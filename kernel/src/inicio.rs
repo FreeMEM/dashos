@@ -189,12 +189,6 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
     ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
-    // H4: la caja Amiga, primer paso (`caja/`): el JIT de Emu68 en un proceso big-endian, con programas 68k que
-    // escriben por una dos.library nativa (línea A) y otros hostiles; el último la mata. Su llave 1, el permiso de
-    // página 0 (ExecBase en la dirección 4); `inicio` la espera igual (`SE_ESPERAN`). Al final, para no cambiar las
-    // marcas de los demás.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
     // La caja Linux (H9): el servicio que crea y corre las máquinas virtuales y un programa sin el permiso que prueba a
     // crearlas. Al final, para no cambiar las marcas de los de antes. Los dos reciben "sistema" (la RAM de la máquina y
     // si hay hipervisor). El permiso se lo pide a `sesiones`, que se lo da sin preguntar por ser la caja del sistema
@@ -210,6 +204,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // da `inicio`.
     #[cfg(all(not(feature = "virt"), not(feature = "pi3")))]
     ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("hipervisor", MAQUINAS)], &[]),
+    // H4 y H5: la caja Amiga (`caja/`): el JIT de Emu68 en un proceso big-endian, con exec, dos, graphics e intuition
+    // nativas (en Rust); programas 68k que escriben, leen un fichero, abren una ventana en el escritorio y otros
+    // hostiles; el último la mata. Sus llaves: 1 el permiso de página 0 (ExecBase en la dirección 4), 2 "ventanas" (el
+    // compositor) y 3 "archivos" (su ficha, en `FICHAS` de `inicio`). `inicio` la espera (`SE_ESPERAN`): va la última,
+    // para que su ventana (abierta hasta 40 s si nadie la cierra) no retrase a nadie (antes iba delante de la caja
+    // Linux, y `sin-maquina` llegaba tarde a su pregunta).
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]

@@ -536,3 +536,20 @@ servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2
 
 Los invitados de prueba de `usuario/invitados/*.s` y sus hostiles siguen corriendo antes de Linux. Bitácora:
 `docs/bitacoras/caja-linux.md`.
+
+## Caja Amiga (H4, H5)
+
+`caja/` (C, con el JIT de Emu68, y `caja/pegamento/`, Rust): un proceso big-endian que ejecuta programas 68k con exec,
+dos, graphics e intuition nativas. Solo en `virt`. Llaves, de `inicio`: 1 el permiso de página 0 (ExecBase en la
+dirección 4; llamada 49 de `kernel.md`), 2 el canal "ventanas" y 3 el canal "archivos". No sirve nada: es cliente de
+los dos.
+
+- **Archivos**: su ficha en `inicio` (`FICHAS`) es la de Ana (1000), con la raíz del disco. dos.library la monta como
+  `SYS:`, de solo lectura: el adaptador de la caja no manda al servicio nada que escriba (la ficha dejaría). La ventana del servicio va por encima de
+  4 GB, donde el 68k no llega.
+- **Ventanas**: un cliente de Wayland como los demás. Cada ventana de Intuition es un `xdg_toplevel` con un búfer
+  `wl_shm` XRGB8888 del tamaño de la ventana entera; los bordes y gadgets de Intuition van dentro del búfer. El
+  compositor la coloca en cascada y la nombra "caja-amiga". El tamaño de la pantalla de Workbench es el modo actual
+  del primer `wl_output`.
+
+Bitácora: `docs/bitacoras/caja-amiga.md`.
