@@ -1086,3 +1086,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   el disco mientras está sujeto y `archivos` lo suelta por falta de sitio, como se diseñó: 56 de 200 vueltas limpias y
   luego EIO. El comprobador lo dice ahora como "interrumpido por falta de sitio" (SOLTAR da LLENO), no como un fallo
   del disco, y hace la comprobación con datos lo primero. `tools/medir.py` guarda la salida entera con MEDIR_SALIDA.
+- A15: el comprobador lee por delante: lo pequeño (un bloque, casi siempre) sale de 64 KB leídos de una vez desde ahí,
+  guardados mientras dura esa apertura (lo que nombra la cabecera abierta ya está escrito y no cambia mientras se
+  sujeta). Medido en el disco de medir-fs, con los datos: antes 94 MB/s (una medida), ahora 110 y 132 MB/s (dos); de
+  un 17 a un 40 % más. Dentro de `archivos`, 160 a 220.
+  Pero el recorrido sin datos (las 200 vueltas del arranque) pasó de 3.139 a 4.106 ms, un 30 % más lento: los
+  metadatos saltan de un sitio a otro y cada bloque traía 64 KB. Probado leer por delante solo los bloques de datos
+  (con el aviso `reading_data` puesto en `check`): no gana nada (88 y 91 MB/s), lo ganado era en los metadatos de la
+  pasada con datos. Queda así: por delante solo en la pasada con los datos (120 y 128 MB/s) y no en el recorrido sin
+  datos; RedoxFS sin tocar.

@@ -26,10 +26,48 @@ struct Lector {
     lectura: u32,
     vuelta: u32,
     sectores: u64,
+    /// Lo leído por delante: desde qué bloque y los bytes (hasta `TROZO`). Vale mientras dure este `Lector`, que es una
+    /// apertura: todo lo que nombra la cabecera que se abrió ya estaba escrito y no cambia mientras se sujeta.
+    delante: (u64, alloc::vec::Vec<u8>),
+    /// Leer por delante, solo en la pasada con los datos: ahí va de 94 a 110-132 MB/s (medir-fs). En el recorrido sin
+    /// datos, que salta de un sitio a otro, leer 64 KB por cada bloque lo hacía un 30 % más lento. (Solo con los
+    /// bloques de datos, avisados con `Disk::reading_data`, no se ganaba nada: lo ganado era en los metadatos.)
+    por_delante: bool,
+}
+
+impl Lector {
+    fn nuevo(lectura: u32, vuelta: u32, sectores: u64, por_delante: bool) -> Lector {
+        Lector { lectura, vuelta, sectores, delante: (0, alloc::vec::Vec::new()), por_delante }
+    }
 }
 
 impl Disk for Lector {
     unsafe fn read_at(&mut self, block: u64, buffer: &mut [u8]) -> Result<usize> {
+        // Lo pequeño (un bloque, casi siempre) sale de lo leído por delante, o se lee `TROZO` de una vez desde ahí.
+        let bloques = self.sectores * 512 / BLOCK_SIZE;
+        if self.por_delante && buffer.len() < TROZO && block < bloques {
+            let (desde, datos) = &self.delante;
+            let dentro = |d: &alloc::vec::Vec<u8>, desde: u64| {
+                block >= desde && (block - desde) * BLOCK_SIZE + buffer.len() as u64 <= d.len() as u64
+            };
+            if !dentro(datos, *desde) {
+                let n = ((bloques - block) * BLOCK_SIZE).min(TROZO as u64) as usize;
+                if pedir(self.lectura, self.vuelta, LEER, (n / 512) as u32, block * BLOCK_SIZE / 512, 0).map(|r| r.0) != Some(0) {
+                    return Err(Error::new(EIO));
+                }
+                let mut d = alloc::vec![0u8; n];
+                for (i, b) in d.iter_mut().enumerate() {
+                    *b = unsafe { core::ptr::read_volatile((VA + i) as *const u8) };
+                }
+                self.delante = (block, d);
+            }
+            let (desde, datos) = &self.delante;
+            if dentro(datos, *desde) {
+                let o = ((block - desde) * BLOCK_SIZE) as usize;
+                buffer.copy_from_slice(&datos[o..o + buffer.len()]);
+                return Ok(buffer.len());
+            }
+        }
         let mut hecho = 0;
         while hecho < buffer.len() {
             let n = (buffer.len() - hecho).min(TROZO);
@@ -172,7 +210,7 @@ fn principal() -> u64 {
     }
     // Primero, una vez con los datos (FS8: cada bloque de datos leído y su resumen comprobado), medido por MB ocupado.
     let t0 = dashos::ahora_us();
-    let datos = FileSystem::open(Lector { lectura, vuelta, sectores }, None, Some(0), false)
+    let datos = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, true), None, Some(0), false)
         .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)));
     let us = (dashos::ahora_us() - t0).max(1);
     match &datos {
@@ -188,7 +226,7 @@ fn principal() -> u64 {
     let mut nodos = 0;
     let mut problema = None;
     for _ in 0..VUELTAS {
-        let informe = FileSystem::open(Lector { lectura, vuelta, sectores }, None, Some(0), false)
+        let informe = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, false), None, Some(0), false)
             .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: false }, true)));
         match informe {
             Ok(i) if i.is_clean() => {
