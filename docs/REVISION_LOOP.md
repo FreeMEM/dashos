@@ -1240,3 +1240,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `escritorio` arregló de paso un fallo de seguridad: `sesiones` reconocía a guardian, entrada y centro por el nombre de
   su ficha, y lo lanzado desde el disco se llama como su fichero; ahora esos nombres solo valen si los da `inicio`.
   Pruebas de `lanzables.rs` en `make prueba`. Con todo: `make prueba` y `make arranque-virt` bien.
+- Fusionadas `u6-paso2` (compositor y sonido por sesiones, permisos por programa y usuario; docs/bitacoras/u6-paso2.md)
+  y `red` (red con cable en virt: virtio-net, servicio con smoltcp, DHCP, TCP, protocolo; docs/bitacoras/red.md). Al
+  fusionar u6-paso2, dos comprobaciones de guardian por nombre volvieron a la forma insegura: pasadas a `es()` (solo el
+  nombre que da `inicio`). El paso del desplegable de Ajustes en el guion lo intenta hasta tres veces.
+  ESTADO AL PARAR (cupo al 98 %, PC con media de 45 por otra sesión): `make prueba` bien; `make arranque-virt` sobre
+  aa21966 + el reintento, dos vueltas, cada una con un fallo distinto: (1) "[ficheros] A15 sujetar sin soltar": 53
+  rondas y SOLTAR sin respuesta (i32::MIN; `archivos` no cayó y sí soltó por falta de sitio: mirar por qué se pierde la
+  respuesta); (2) el menú de Ajustes no se abrió y "[guardian] Super+L no bloqueó". La última vuelta entera en verde fue
+  la de la fusión de `escritorio` (antes de u6-paso2 y red). Lo primero al retomar: repetir con el PC sin carga y, si
+  sigue, buscar el choque entre ramas (la barra y el lanzador, las sesiones del compositor y Super+L).
+  Sin fusionar, en sus ramas: `fondo-c3` (fondo con PNG y colores del fondo, protocolo del tema v2; choca con
+  `escritorio` en el guion y en captura_ventanas.py: en (5, 60) usar `fondo_en`), `workbench` y `avisos` (solo diseño en
+  sus bitácoras: pararon por el cupo antes del código).

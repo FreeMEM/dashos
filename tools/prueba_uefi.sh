@@ -101,6 +101,7 @@ menu = 0
 preguntas = 0
 selector = 0
 entradas_antes = 0
+menu_intentos = 0
 espera_carpeta = 0
 centro = 0
 panel = 0
@@ -824,6 +825,10 @@ while time.time() - inicio < total:
                     ir_a(int(v.group(1)) + int(o.group(1)), int(v.group(2)) + int(o.group(2)))
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
                     time.sleep(0.5)
+                elif menu_intentos < 3:
+                    # No se abrió (algo lo tapaba, o el PC va lento): otra vez más tarde, hasta tres.
+                    menu_intentos += 1
+                    menu = 0
                 ir_a(300, 300)
         paso += 1
         ordenes = ["mouse_move 10 5"]
