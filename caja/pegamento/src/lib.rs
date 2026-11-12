@@ -1,5 +1,5 @@
-//! El pegamento de la caja Amiga: exec (`caja/exec`), dos (`caja/dos`), graphics e intuition (`caja/intuition`),
-//! enchufadas en el proceso de la caja (`caja/caja.c`).
+//! El pegamento de la caja Amiga: exec (`caja/exec`), dos (`caja/dos`), graphics e intuition (`caja/intuition`) y
+//! utility (`caja/utility`) y timer.device (`caja/timer`), enchufadas en el proceso de la caja (`caja/caja.c`).
 //!
 //! La caja sigue en C: el JIT de Emu68 necesita sus registros fijos (x12 a x29 y v19 a v26) y el C que lo rodea
 //! (`MainLoop`, el vigilante, la entrada) se compila con esas reservas, que rustc no sabe hacer. Lo de Rust se llama
@@ -29,6 +29,8 @@ use core::cell::UnsafeCell;
 use caja_exec::estructuras::{memf, msgport, node, nt, task};
 use caja_exec::{Accion, Config, Destino, Exec, Memoria, Registros, lvo};
 use caja_intuition::{CajaGrafica, Numeros};
+use caja_timer::{Reloj, Temporizador};
+use caja_utility::Utilidad;
 
 use archivos::FsDashos;
 use compositor::CompositorWayland;
@@ -68,8 +70,11 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 // --- El estado de la caja ---
 
 /// Dónde empiezan los números nativos de dos: `0x100 + entrada` (la 5, Open, es la 0x105). Exec usa del 1 al 255,
-/// graphics desde 0x400 e intuition desde 0x600 (`caja_intuition::Numeros`): no chocan.
+/// graphics desde 0x400 e intuition desde 0x600 (`caja_intuition::Numeros`), utility desde 0x800 y timer.device
+/// desde 0x880: no chocan.
 const N_DOS: u16 = 0x100;
+const N_UTILITY: u16 = 0x800;
+const N_TIMER: u16 = 0x880;
 /// Llaves de la caja (`kernel/src/inicio.rs`): 1 el permiso de página 0, 2 el canal "ventanas", 3 "archivos".
 const LLAVE_VENTANAS: u32 = 2;
 const LLAVE_ARCHIVOS: u32 = 3;
@@ -80,8 +85,11 @@ const AVISOS_A_LA_VISTA: u32 = 6;
 
 struct Caja {
     ex: Exec<MemoriaCaja>,
+    consola: Consola,
     dos: caja_dos::Dos<FsDashos>,
     gr: CajaGrafica<CompositorWayland>,
+    util: Utilidad,
+    timer: Temporizador,
     dos_base: u32,
     /// Hay dibujo sin mandar al compositor.
     sucio: bool,
@@ -111,6 +119,15 @@ fn di(texto: &str) {
 
 struct CajaDos<'a> {
     ex: &'a mut Exec<MemoriaCaja>,
+    consola: &'a mut Consola,
+}
+
+/// Lo que escriben los programas en la consola: con un prefijo al principio de cada línea si la caja lo pide (los
+/// programas de Dash escriben líneas sueltas; con el prefijo se ve de quién son y las pruebas las encuentran).
+#[derive(Default)]
+struct Consola {
+    prefijo: Vec<u8>,
+    linea_nueva: bool,
 }
 
 impl caja_dos::Memoria for CajaDos<'_> {
@@ -145,7 +162,22 @@ impl caja_dos::Caja for CajaDos<'_> {
         (ns / 1_000_000_000, ((ns % 1_000_000_000) / 1000) as u32)
     }
     fn consola_escribir(&mut self, datos: &[u8]) -> usize {
-        escribir_latin1(datos);
+        if self.consola.prefijo.is_empty() {
+            escribir_latin1(datos);
+            return datos.len();
+        }
+        let mut v = Vec::with_capacity(datos.len() + 64);
+        for &b in datos {
+            if self.consola.linea_nueva {
+                v.extend_from_slice(&self.consola.prefijo);
+                self.consola.linea_nueva = false;
+            }
+            v.push(b);
+            if b == b'\n' {
+                self.consola.linea_nueva = true;
+            }
+        }
+        escribir_latin1(&v);
         datos.len()
     }
     fn senales(&mut self, mascara: u32) -> u32 {
@@ -179,7 +211,14 @@ fn escribir_latin1(datos: &[u8]) {
 /// `[ram, ram + largo)` tiene que estar proyectado para leer y escribir, y `pagina0` ser una página de 4 KB proyectada
 /// para escribir; las dos, para siempre.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_rust_arrancar(ram: u32, largo: u32, pagina0: u64, sistema: u32, fin_sistema: u32, chip: u32) -> u32 {
+pub unsafe extern "C" fn caja_rust_arrancar(
+    ram: u32,
+    largo: u32,
+    pagina0: u64,
+    sistema: u32,
+    fin_sistema: u32,
+    chip: u32,
+) -> u32 {
     let mem = MemoriaCaja::nueva(ram, largo, pagina0 as usize);
     let config = Config::caja((sistema, fin_sistema), chip, ram + largo);
     let mut ex = match Exec::arrancar(mem, config) {
@@ -202,8 +241,9 @@ pub unsafe extern "C" fn caja_rust_arrancar(ram: u32, largo: u32, pagina0: u64, 
     let hay_fs = fs.is_some();
     let mut dos = caja_dos::Dos::nuevo(fs.unwrap_or_else(FsDashos::sin_servicio));
     let mut vol = String::from("sin servicio de archivos");
+    let mut consola = Consola::default();
     if hay_fs {
-        let mut cd = CajaDos { ex: &mut ex };
+        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola };
         match dos.montar(&mut cd, "SYS", 0, true) {
             Ok(()) => vol = String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
             Err(e) => vol = format!("SYS: no se monta (error {})", e),
@@ -218,6 +258,20 @@ pub unsafe extern "C" fn caja_rust_arrancar(ram: u32, largo: u32, pagina0: u64, 
             return 0;
         }
     };
+    let util = match Utilidad::instalar(&mut ex, N_UTILITY) {
+        Ok(u) => u,
+        Err(f) => {
+            di(&format!("utility.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    let timer = match Temporizador::instalar(&mut ex, N_TIMER) {
+        Ok(t) => t,
+        Err(f) => {
+            di(&format!("timer.device no se crea: {:?}", f));
+            return 0;
+        }
+    };
     let (an, al) = caja_intuition::Compositor::tamano_escritorio(&gr.comp);
     let base = ex.base();
     di(&format!(
@@ -227,6 +281,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(ram: u32, largo: u32, pagina0: u64, 
         gr.gfx_base(),
         gr.intuition_base()
     ));
+    di(&format!("utility.library y timer.device nativos (Rust): ${:x} y ${:x}", util.base(), timer.base()));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -234,7 +289,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(ram: u32, largo: u32, pagina0: u64, 
         an,
         al
     ));
-    let mut c = Caja { ex, dos, gr, dos_base, sucio: false, avisos: 0, avisos_dichos: 0 };
+    let mut c = Caja { ex, consola, dos, gr, util, timer, dos_base, sucio: false, avisos: 0, avisos_dichos: 0 };
     decir_compositor(&mut c);
     // SEGURIDAD: ver `caja()`; aquí se pone el valor por primera vez.
     unsafe {
@@ -284,19 +339,29 @@ pub extern "C" fn caja_bloques(dueno: u32) -> u32 {
 // --- Tareas ---
 
 /// Crea un proceso de AmigaOS (`struct Process`, NT_PROCESS) llamado `nombre`, con una pila de `pila` bytes, que
-/// empieza en `pc` y, al volver de su función, salta a `vuelta`; le da la consola como entrada y salida y `args`
-/// como argumentos, y le pasa el testigo. Devuelve la tarea y deja en `*sp` su pila para A7; 0 si no pudo.
+/// empieza en `pc` y, al volver de su función, salta a `vuelta`; le da la consola como entrada y salida, `args`
+/// como argumentos y una CLI (como un programa lanzado desde el Shell, con `seglist` como `cli_Module`), y le pasa
+/// el testigo. Devuelve la tarea y deja en `*sp` su pila para A7; 0 si no pudo.
 ///
 /// # Safety
 /// `nombre` tiene que apuntar a `largo` bytes y `sp` a un `u32` donde escribir.
 #[unsafe(no_mangle)]
-pub unsafe extern "C" fn caja_tarea_nueva(nombre: *const u8, largo: usize, pila: u32, pc: u32, vuelta: u32, args: u32, sp: *mut u32) -> u32 {
+pub unsafe extern "C" fn caja_tarea_nueva(
+    nombre: *const u8,
+    largo: usize,
+    pila: u32,
+    pc: u32,
+    vuelta: u32,
+    args: u32,
+    seglist: u32,
+    sp: *mut u32,
+) -> u32 {
     let Some(c) = caja() else { return 0 };
     // SEGURIDAD: lo garantiza quien llama (caja.c, con una cadena suya).
     let nombre = unsafe { core::slice::from_raw_parts(nombre, largo) };
     c.avisos = 0;
     c.avisos_dichos = 0;
-    match crear_proceso(c, nombre, pila, pc, vuelta, args) {
+    match crear_proceso(c, nombre, pila, pc, vuelta, args, seglist) {
         Ok((t, s)) => {
             // SEGURIDAD: lo garantiza quien llama.
             unsafe { *sp = s };
@@ -309,7 +374,22 @@ pub unsafe extern "C" fn caja_tarea_nueva(nombre: *const u8, largo: usize, pila:
     }
 }
 
-fn crear_proceso(c: &mut Caja, nombre: &[u8], pila: u32, pc: u32, vuelta: u32, args: u32) -> Result<(u32, u32), caja_exec::Fallo> {
+/// La CLI de un proceso (`struct CommandLineInterface`) y sus tres BSTR, en un solo bloque: la CLI, el nombre del
+/// programa (`cli_CommandName`), el directorio (`cli_SetName`) y el indicador (`cli_Prompt`).
+const CLI_NOMBRE: u32 = 64;
+const CLI_DIR: u32 = CLI_NOMBRE + 256;
+const CLI_INDICADOR: u32 = CLI_DIR + 256;
+const CLI_TAMANO: u32 = CLI_INDICADOR + 64;
+
+fn crear_proceso(
+    c: &mut Caja,
+    nombre: &[u8],
+    pila: u32,
+    pc: u32,
+    vuelta: u32,
+    args: u32,
+    seglist: u32,
+) -> Result<(u32, u32), caja_exec::Fallo> {
     use caja_dos::estructuras::process as pr;
     let ex = &mut c.ex;
     let largo_t = pr::TAMANO + nombre.len() as u32 + 1;
@@ -345,13 +425,61 @@ fn crear_proceso(c: &mut Caja, nombre: &[u8], pila: u32, pc: u32, vuelta: u32, a
         return Err(caja_exec::Fallo::TareaDesconocida { dir: t });
     }
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
-    let mut cd = CajaDos { ex: &mut c.ex };
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
     let consola = c.dos.abrir_consola(&mut cd).unwrap_or(0);
     let ex = &mut c.ex;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
     ex.mem.escribir32(t + pr::PR_COS, consola)?;
+    // La CLI: los programas de C (libnix, el runtime de Dash) miran `pr_CLI` para saber que no vienen del Workbench
+    // (si no, esperan su mensaje), y `cli_Module` para saber dónde está su código.
+    use caja_dos::estructuras::cli;
+    let d = ex.alloc_mem(CLI_TAMANO, memf::PUBLIC | memf::CLEAR)?;
+    if d != 0 {
+        ex.cambiar_dueno(d, t);
+        let bstr = |ex: &mut Exec<MemoriaCaja>, en: u32, texto: &[u8]| -> Result<(), caja_exec::Fallo> {
+            let n = texto.len().min(255) as u32;
+            ex.mem.escribir8(en, n as u8)?;
+            ex.mem.leer_mut(en + 1, n)?.copy_from_slice(&texto[..n as usize]);
+            Ok(())
+        };
+        bstr(ex, d + CLI_NOMBRE, nombre)?;
+        bstr(ex, d + CLI_DIR, b"SYS:")?;
+        bstr(ex, d + CLI_INDICADOR, b"%N> ")?;
+        for (campo, v) in [
+            (cli::CLI_SETNAME, (d + CLI_DIR) >> 2),
+            (cli::CLI_COMMANDNAME, (d + CLI_NOMBRE) >> 2),
+            (cli::CLI_FAILLEVEL, 10),
+            (cli::CLI_PROMPT, (d + CLI_INDICADOR) >> 2),
+            (cli::CLI_STANDARDINPUT, consola),
+            (cli::CLI_CURRENTINPUT, consola),
+            (cli::CLI_INTERACTIVE, u32::MAX),
+            (cli::CLI_CURRENTOUTPUT, consola),
+            (cli::CLI_DEFAULTSTACK, pila / 4),
+            (cli::CLI_STANDARDOUTPUT, consola),
+            (cli::CLI_MODULE, seglist),
+        ] {
+            ex.mem.escribir32(d + campo, v)?;
+        }
+        ex.mem.escribir32(t + pr::PR_CLI, d >> 2)?;
+    }
     let sp = ex.mem.leer32(t + task::TC_SPREG)?;
     Ok((t, sp))
+}
+
+/// Lo que escriba en la consola el programa que va a correr, con `prefijo` al principio de cada línea (vacío: sin
+/// prefijo, como hasta ahora).
+///
+/// # Safety
+/// `prefijo` tiene que apuntar a `largo` bytes (o `largo` ser 0).
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_consola_prefijo(prefijo: *const u8, largo: usize) {
+    let Some(c) = caja() else { return };
+    c.consola.prefijo.clear();
+    if largo > 0 && !prefijo.is_null() {
+        // SEGURIDAD: lo garantiza quien llama (caja.c, con una cadena suya).
+        c.consola.prefijo.extend_from_slice(unsafe { core::slice::from_raw_parts(prefijo, largo.min(128)) });
+    }
+    c.consola.linea_nueva = true;
 }
 
 /// La tarea `t` ha acabado (volvió de su función, o el 68k la cortó por una excepción): dos cierra sus ficheros,
@@ -362,12 +490,17 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let Some(c) = caja() else { return 0 };
     let ventanas = c.gr.ventanas().len();
     {
-        let mut cd = CajaDos { ex: &mut c.ex };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
         c.dos.acabar_tarea(&mut cd, t);
     }
     c.gr.tarea_muerta(&mut c.ex, t);
-    let bloques = c.ex.bloques_de(t).len() as u32;
+    // Lo suyo que no es del programa: su estructura, su pila y su CLI.
+    let pila = c.ex.mem.leer32(t + task::TC_SPLOWER).unwrap_or(0);
+    let cli = c.ex.mem.leer32(t + caja_dos::estructuras::process::PR_CLI).unwrap_or(0) << 2;
+    let bloques = c.ex.bloques_de(t).iter().filter(|(d, _)| *d != t && *d != pila && *d != cli).count() as u32;
+    c.timer.tarea_muerta(t);
     let _ = c.ex.matar_tarea(t);
+    c.util.tarea_muerta(&c.ex);
     let _ = c.ex.elegir_siguiente();
     recoger_avisos(c);
     if c.avisos > c.avisos_dichos {
@@ -378,7 +511,7 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     }
     let _ = c.ex.tomar_quitadas();
     atender(c);
-    bloques.saturating_sub(2)
+    bloques
 }
 
 /// Cuántos avisos del Enforcer ha dado la última tarea.
@@ -413,13 +546,20 @@ const C_SEGUIR: i32 = 0;
 const C_RECHAZADA: i32 = 1;
 const C_ACABAR: i32 = 2;
 
-/// Una función nativa que no es de exec: de dos, de graphics o de intuition.
+/// Una función nativa que no es de exec: de dos, de graphics, de intuition o de utility.
 fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
+    if c.util.es_mia(n) {
+        return de_accion(c.util.llamar(&mut c.ex, n, r));
+    }
+    if c.timer.es_mio(n) {
+        let reloj = reloj();
+        return de_accion(c.timer.llamar(&mut c.ex, n, r, reloj));
+    }
     if (N_DOS + caja_dos::lvo::PRIMERA..=N_DOS + caja_dos::lvo::ULTIMA).contains(&n)
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
     {
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
-        let mut cd = CajaDos { ex: &mut c.ex };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
         (r.d, r.a) = (rd.d, rd.a);
         return match a {
@@ -454,7 +594,8 @@ fn llamar(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         match a {
             Accion::Llamar { destino: Destino::Nativa(m), regs, tras } => {
                 let mut rr = regs;
-                let _ = if m <= lvo::ULTIMO_DE_EXEC { de_accion(c.ex.llamar(m, &mut rr)) } else { ajena(c, m, &mut rr) };
+                let _ =
+                    if m <= lvo::ULTIMO_DE_EXEC { de_accion(c.ex.llamar(m, &mut rr)) } else { ajena(c, m, &mut rr) };
                 a = c.ex.continuar(tras, &rr, r);
             }
             Accion::Llamar { destino: Destino::Codigo68k(d), tras, .. } => {
@@ -482,6 +623,12 @@ fn recoger_avisos(c: &mut Caja) {
     for a in c.gr.tomar_avisos() {
         textos.push(format!("{} (graphics/intuition): {:?}", a.funcion, a.fallo));
     }
+    for a in c.util.tomar_avisos() {
+        textos.push(format!("{} (utility): {:?}", a.funcion, a.fallo));
+    }
+    for a in c.timer.tomar_avisos() {
+        textos.push(format!("{} (timer.device): {:?}", a.funcion, a.fallo));
+    }
     for t in textos {
         c.avisos += 1;
         if c.avisos_dichos < AVISOS_A_LA_VISTA {
@@ -501,13 +648,30 @@ fn decir_compositor(c: &mut Caja) {
 
 /// La hora de intuition (segundos y microsegundos desde 1978).
 fn poner_hora(c: &mut Caja) {
-    let cd = CajaDos { ex: &mut c.ex };
+    let cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
     let (s, us) = caja_dos::Caja::hora(&cd);
     c.gr.poner_hora(s.saturating_sub(DE_1970_A_1978) as u32, us);
 }
 
-/// Atiende al compositor: sus eventos pasan a mensajes IDCMP y lo dibujado se manda.
+/// El reloj de timer.device: el de DashOS, y la hora desde 1978 (sin reloj de la hora, el 1 de enero de 1978 más lo
+/// que lleva encendida, como `CajaDos::hora`).
+fn reloj() -> Reloj {
+    let monotono_us = dashos::ahora_us();
+    let ns = dashos::hora_ns();
+    let sistema_us = if ns == 0 { monotono_us } else { (ns / 1000).saturating_sub(DE_1970_A_1978 * 1_000_000) };
+    Reloj { monotono_us, sistema_us }
+}
+
+/// Las esperas de timer.device que ya vencieron vuelven a su puerto (y despiertan a su tarea).
+fn revisar_temporizador(c: &mut Caja) {
+    if c.timer.pendientes() > 0 {
+        let _ = c.timer.vencidos(&mut c.ex, reloj());
+    }
+}
+
+/// Atiende al compositor: sus eventos pasan a mensajes IDCMP y lo dibujado se manda; y a timer.device.
 fn atender(c: &mut Caja) {
+    revisar_temporizador(c);
     poner_hora(c);
     c.gr.atender(&mut c.ex);
     c.sucio = false;
@@ -518,11 +682,15 @@ fn atender(c: &mut Caja) {
 /// `true` cuando vuelve a tener el testigo; `false` si pasó demasiado tiempo.
 fn esperar(c: &mut Caja, t: u32) -> bool {
     let _ = c.ex.elegir_siguiente();
-    let hasta = dashos::ahora_us() + ESPERA_MAXIMA_US;
+    let mut hasta = dashos::ahora_us() + ESPERA_MAXIMA_US;
     loop {
         atender(c);
         if c.ex.elegir_siguiente() == Some(t) {
             return true;
+        }
+        // Con una espera de timer.device en marcha, algo la va a despertar: el plazo cuenta desde que venza.
+        if let Some(p) = c.timer.proximo() {
+            hasta = hasta.max(p.saturating_add(ESPERA_MAXIMA_US));
         }
         if dashos::ahora_us() > hasta {
             return false;
@@ -555,8 +723,11 @@ pub unsafe extern "C" fn caja_llamada(regs: *mut u64, n: u32) -> i32 {
     let Some(c) = caja() else { return C_RECHAZADA };
     // SEGURIDAD: lo garantiza quien llama (el parche 0002 deja la copia en la pila del JIT).
     let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
-    let Some(mut r) = Registros::desde_jit(x) else { return C_RECHAZADA };
+    let Some(mut r) = Registros::desde_jit(x) else {
+        return C_RECHAZADA;
+    };
     let n = n as u16;
+    revisar_temporizador(c);
     let antes = r;
     let t = c.ex.tarea_actual();
     let mut res = C_SEGUIR;
@@ -573,7 +744,10 @@ pub unsafe extern "C" fn caja_llamada(regs: *mut u64, n: u32) -> i32 {
                     r = antes;
                     continue;
                 }
-                di(&format!("la tarea lleva {} s esperando sin que llegue nada: se corta", ESPERA_MAXIMA_US / 1_000_000));
+                di(&format!(
+                    "la tarea lleva {} s esperando sin que llegue nada: se corta",
+                    ESPERA_MAXIMA_US / 1_000_000
+                ));
                 res = C_ACABAR;
             }
             Fin::Terminar => res = C_ACABAR,

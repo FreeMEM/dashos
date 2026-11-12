@@ -118,6 +118,7 @@ captura_u6_hecha = 0
 amiga = 0
 amiga_desde = 0
 v_amiga = None
+dash_amiga = 0
 
 while time.time() - inicio < total:
     try:
@@ -1194,6 +1195,31 @@ while time.time() - inicio < total:
                 ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
             else:
                 ir_a(10 * paso, 5 * paso)
+        # La ventana del programa de Dash (`caja/pruebas68k/dash/caja_ventana.dash`), después de la de ventana.exe y de
+        # hola.exe: cuando dice que está dibujada, la captura (CAPTURA_DASH=fichero.ppm) y un clic en su gadget de cerrar,
+        # que el programa mira con window_check_close() cada décima de segundo. Dónde está: lo último que dice el
+        # compositor de una ventana de la caja desde que acabó hola.exe.
+        if amiga == 2 and dash_amiga == 0 and libre_para_amiga:
+            import re
+            corte = texto.find("[caja-amiga] Dash hola.exe acabó")
+            if corte >= 0 and "[caja-amiga] dash: ventana abierta y dibujada" in texto[corte:]:
+                v_dash = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if v_dash:
+                    dash_amiga = 1
+                    x, y = int(v_dash[-1].group(1)), int(v_dash[-1].group(2))
+                    if os.environ.get("CAPTURA_DASH"):
+                        time.sleep(0.5)
+                        mandar("screendump " + os.environ["CAPTURA_DASH"])
+                        time.sleep(0.5)
+                    ir_a(x + 10, y + 5)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                    w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+                    if menu == 2:
+                        ir_a(790, 590)
+                    elif ajustes and w:
+                        ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
+                    else:
+                        ir_a(10 * paso, 5 * paso)
         # Mientras el selector espera teclas, no: el clic en Ajustes le quitaría el teclado y sus teclas irían a
         # Ajustes (con el PC lento, Ajustes sale después del selector).
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18):

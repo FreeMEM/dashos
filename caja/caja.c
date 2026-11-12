@@ -253,6 +253,12 @@ extern const uint8_t prog_mala[], prog_mala_fin[];
 extern const uint8_t prog_saludo[], prog_saludo_fin[];
 extern const uint8_t prog_ventana[], prog_ventana_fin[];
 extern const uint8_t prog_hostil[], prog_hostil_fin[];
+extern const uint8_t prog_dash_hola[], prog_dash_hola_fin[];
+extern const uint8_t prog_dash_texto[], prog_dash_texto_fin[];
+extern const uint8_t prog_dash_texto_gcc[], prog_dash_texto_gcc_fin[];
+extern const uint8_t prog_dash_ventana[], prog_dash_ventana_fin[];
+extern const uint8_t prog_dash_interp[], prog_dash_interp_fin[];
+extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
 
 /* Las trampas: el vector i escribe i en MARCA y salta a COMUN, que pone la pila y vuelve a la dirección 0, donde
    MainLoop termina. Así un programa que provoca una excepción del 68k acaba sin tumbar la caja. Al volver de su
@@ -305,13 +311,13 @@ static size_t largo_de(const char *s) { size_t n = 0; while (s[n]) n++; return n
    desde el CLI). Al acabar, la caja suelta lo que el programa dejara (ficheros, ventanas, memoria): en *sobras,
    cuántos bloques de memoria no soltó él. Devuelve el vector por el que acabó, -1 si con su RTS, o -2 si no se pudo
    crear el proceso. */
-static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t *sobras)
+static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t seglist, uint32_t *sobras)
 {
     static const char args[] = "\n";
     uint32_t args68k = caja_alloc_mem(sizeof(args), 0);
     if (args68k) for (unsigned i = 0; i < sizeof(args); i++) pon8(args68k + i, (uint8_t)args[i]);
     uint32_t sp = 0;
-    uint32_t t = caja_tarea_nueva(nombre, largo_de(nombre), 16384, pc, (uint32_t)COMUN, args68k, &sp);
+    uint32_t t = caja_tarea_nueva(nombre, largo_de(nombre), 16384, pc, (uint32_t)COMUN, args68k, seglist, &sp);
     if (!t) { if (args68k) caja_free_mem(args68k, sizeof(args)); return -2; }
     int v = arranca(pc, sp, a6, args68k, sizeof(args) - 1);
     uint32_t s = caja_tarea_fin(t);
@@ -347,7 +353,7 @@ static int ejecuta(const char *nombre, const uint8_t *desde, const uint8_t *hast
     uint8_t *d = (uint8_t *)donde;
     for (const uint8_t *s = desde; s < hasta; ) *d++ = *s++;
     jit_olvidar();
-    return ejecuta_tarea(nombre, (uint32_t)donde, caja_dosbase(), NULL);
+    return ejecuta_tarea(nombre, (uint32_t)donde, caja_dosbase(), 0, NULL);
 }
 
 /* --- Ejecutables hunk (hunk.c): su memoria, de AllocMem de exec --- */
@@ -424,7 +430,7 @@ static int ejecuta_hunk(const char *nombre, const uint8_t *datos, size_t largo, 
        c.entrada, c.relocs);
     llamadas_nativas = 0;
     jit_olvidar();
-    int v = ejecuta_tarea(nombre, c.entrada, execbase, sobras);
+    int v = ejecuta_tarea(nombre, c.entrada, execbase, c.seglist, sobras);
     *d0 = m68k.D[0].u32;
     *llamadas = llamadas_nativas;
     hunk_soltar(&hunks_ops, &c);
@@ -634,11 +640,41 @@ int caja_main(void)
            "caja), el compositor contesta con %d ventanas de la caja abiertas: %s\n", (int)d0, llamadas, caja_avisos(),
            sobras, abiertas, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 8. Programas de Dash, el lenguaje de FreeMEMLang (compilados con `dash` al hacer la caja; ver el Makefile):
+           lo que escriben sale con "  [caja-amiga] dash: " delante. Tienen que acabar con 0, sin avisos del Enforcer y
+           sin dejar memoria. */
+        static const struct { const char *nombre; const uint8_t *desde, *hasta; } dash[] = {
+            { "texto.exe", prog_dash_texto, prog_dash_texto_fin },
+            { "texto_gcc.exe", prog_dash_texto_gcc, prog_dash_texto_gcc_fin },
+            { "test_interp_comillas", prog_dash_interp, prog_dash_interp_fin },
+            { "test_lista_listas_literal", prog_dash_listas, prog_dash_listas_fin },
+            { "hola.exe", prog_dash_hola, prog_dash_hola_fin },
+            { "ventana.exe", prog_dash_ventana, prog_dash_ventana_fin },
+        };
+        static const char prefijo[] = "  [caja-amiga] dash: ";
+        for (unsigned i = 0; i < sizeof(dash) / sizeof(dash[0]); i++) {
+            size_t n = (size_t)(dash[i].hasta - dash[i].desde);
+            if (n == 0) {
+                di("Dash %s: no está (la caja se compiló sin ~/Projects/FreeMEMLang/dash, o no compiló)\n", dash[i].nombre);
+                continue;
+            }
+            caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
+            t0 = ahora_us();
+            v = ejecuta_hunk(dash[i].nombre, dash[i].desde, n, execbase, &d0, &llamadas, &sobras);
+            t1 = ahora_us();
+            caja_consola_prefijo(NULL, 0);
+            bien = v == -1 && d0 == 0 && caja_avisos() == 0 && sobras == 0 && caja_bloques(0) == sistema;
+            di("Dash %s acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+               dash[i].nombre, (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras,
+               bien ? "bien" : "MAL");
+            if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        }
     }
 
     if (fallos) return 10 + fallos;
 
-    /* 8. Hostil: el 68k escribe en la dirección 4, en la página 0 de solo lectura. El kernel termina la caja (sin el
+    /* 9. Hostil: el 68k escribe en la dirección 4, en la página 0 de solo lectura. El kernel termina la caja (sin el
        Enforcer, que aún no está: ver la bitácora); si sigue viva, mal. */
     di("el 68k escribe en la dirección 4 (ExecBase), en la página 0 de solo lectura: la caja tiene que morir\n");
     v = ejecuta("mala", prog_mala, prog_mala_fin, 0x00140000);

@@ -108,6 +108,10 @@ impl<M: Memoria> Exec<M> {
     }
 
     /// Si el mensaje está enlazado en la cola de algún puerto.
+    pub(crate) fn mensaje_en_cola(&self, m: u32) -> bool {
+        self.en_cola(m)
+    }
+
     fn en_cola(&self, m: u32) -> bool {
         let (Ok(s), Ok(a)) = (self.lp(m + node::LN_SUCC), self.lp(m + node::LN_PRED)) else { return false };
         s != 0 && a != 0 && self.l32(a + node::LN_SUCC) == Ok(m) && self.l32(s + node::LN_PRED) == Ok(m)

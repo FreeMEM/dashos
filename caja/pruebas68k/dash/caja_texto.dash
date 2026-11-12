@@ -1,0 +1,78 @@
+# H4: un programa de Dash (el lenguaje de FreeMEMLang) en la caja Amiga de DashOS, solo con texto: cuentas, textos,
+# listas, diccionarios, structs y el reloj. Lo compila caja/Makefile con ~/Projects/FreeMEMLang/dash, por los dos caminos (directo
+# y --gcc); la salida esperada está en kernel/pruebas/arranque_virt.txt y es la misma en FS-UAE (el oráculo).
+
+struct Punto
+    x: Int = 0
+    y: Int = 0
+
+    func mover(dx: Int, dy: Int)
+        self.x = self.x + dx
+        self.y = self.y + dy
+    end
+
+    func texto() -> String
+        return "(#{self.x}, #{self.y})"
+    end
+end
+
+func fib(n: Int) -> Int
+    if n < 2
+        return n
+    end
+    return fib(n - 1) + fib(n - 2)
+end
+
+func por_largo(a: String, b: String) -> Int
+    return a.length - b.length
+end
+
+Main
+    Print "hola desde Dash"
+    # Cuentas: multiplicar, dividir y el resto van por el runtime en un 68000
+    s = 0
+    for i in (1..1000)
+        s = s + i * i
+    end
+    Print "suma de cuadrados #{s}, fib(20) #{fib(20)}, #{100000 / 7} y #{100000 % 7}, #{-17 / 5}"
+    # Textos
+    nombre = "DashOS"
+    t = "hola, " + nombre
+    Print "#{t} (#{t.length} letras), trozo [#{t[6:]}], busca #{str_find(t, "Dash")}"
+    Print str_replace("a.b.c", ".", "-") + " " + str_upper("amiga") + " " + str_from_int(255, 16)
+    # Listas
+    l = [5, 3, 9, 1]
+    l.push(7)
+    total = 0
+    for x in l
+        total = total + x
+    end
+    var palabras: [String] = []
+    palabras.push("tres")
+    palabras.push("uno")
+    palabras.push("cinco")
+    palabras.sort(por_largo)
+    Print "lista #{l.length}, suma #{total}, ultima #{l.pop()}, palabras #{palabras[0]} #{palabras[1]} #{palabras[2]}"
+    # Diccionario
+    d = {"uno": 1, "dos": 2}
+    d["tres"] = 3
+    Print "dicc #{d.length}: #{d["dos"]} #{d["tres"]} #{d.has("cuatro")}"
+    # Structs con métodos
+    p = Punto(3, 4)
+    p.mover(10, -1)
+    var puntos: [Punto] = []
+    for k in (1..50)
+        puntos.push(Punto(k, k * 2))
+    end
+    Print "punto #{p.texto()}, #{puntos.length} puntos, el ultimo #{puntos[49].texto()}"
+    # El reloj: time_ms() va por timer.device (ReadEClock); time_delay(10) es Delay de dos, 10/50 s
+    t0 = time_ms()
+    time_delay(10)
+    dt = time_ms() - t0
+    if dt >= 150 and dt < 1000
+        Print "reloj: time_delay(10) tarda unos 200 ms"
+    else
+        Print "reloj: MAL, #{dt} ms"
+    end
+    Print "adios desde Dash"
+end

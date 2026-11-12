@@ -212,3 +212,25 @@ fn fallo_por_la_tabla_da_aviso_y_d0_cero() {
     assert_eq!(avisos_de(&e, "RemHead"), 1);
     assert_eq!(e.avisos()[0].fallo, Fallo::PaginaCero { dir: 0x20 });
 }
+
+#[test]
+fn lista_en_circulo_se_nota_enseguida() {
+    // Un programa deja una lista que vuelve sobre sí misma (a -> b -> c -> a): FindName, Enqueue y los recorridos lo
+    // notan en unos pasos, sin dar un millón de vueltas en cada llamada.
+    let mut e = caja();
+    let l = lista(&mut e);
+    let (a, b, c) = (nodo(&mut e, "a", 0), nodo(&mut e, "b", 0), nodo(&mut e, "c", 0));
+    for x in [a, b, c] {
+        e.add_tail(l, x).unwrap();
+    }
+    e.mem.escribir32(c + node::LN_SUCC, a).unwrap();
+    let t = std::time::Instant::now();
+    for _ in 0..1000 {
+        assert!(matches!(e.find_name(l, b"x"), Err(Fallo::ListaRota { .. })));
+        assert!(matches!(e.nodos(l), Err(Fallo::ListaRota { .. })));
+        let n = nodo(&mut e, "nuevo", -5);
+        assert!(e.enqueue(l, n).is_err());
+        e.free_mem(n, node::TAMANO).unwrap();
+    }
+    assert!(t.elapsed().as_secs() < 5, "{:?}", t.elapsed());
+}

@@ -17,6 +17,34 @@ use crate::{Exec, Fallo, MAX_VUELTAS, Memoria};
 const SUCC: u32 = node::LN_SUCC;
 const PRED: u32 = node::LN_PRED;
 
+/// Detector de vueltas en círculo (el de Brent): una lista estropeada que vuelve sobre sí misma se nota en unos pocos
+/// pasos más que su largo, sin recorrer `MAX_VUELTAS` nodos (con el tope solo, cada búsqueda en una lista así
+/// costaba un millón de lecturas).
+pub(crate) struct Circulo {
+    tortuga: u32,
+    potencia: u32,
+    pasos: u32,
+}
+
+impl Circulo {
+    pub(crate) fn nuevo(inicio: u32) -> Circulo {
+        Circulo { tortuga: inicio, potencia: 1, pasos: 0 }
+    }
+    /// `true` si `n`, el siguiente nodo, ya se había visto: la lista da vueltas.
+    pub(crate) fn visto(&mut self, n: u32) -> bool {
+        if n == self.tortuga {
+            return true;
+        }
+        self.pasos += 1;
+        if self.pasos == self.potencia {
+            self.tortuga = n;
+            self.potencia = self.potencia.saturating_mul(2);
+            self.pasos = 0;
+        }
+        false
+    }
+}
+
 impl<M: Memoria> Exec<M> {
     /// `NewList`: deja la lista vacía y con su tipo.
     pub fn new_list(&mut self, l: u32, tipo: u8) -> Result<(), Fallo> {
@@ -142,6 +170,7 @@ impl<M: Memoria> Exec<M> {
         let pri = self.l8(n + node::LN_PRI)? as i8;
         let mut p = self.lp(l + list::LH_HEAD)?;
         let mut vueltas = 0;
+        let mut circulo = Circulo::nuevo(p);
         loop {
             let sig = self.lp(p + SUCC)?;
             if sig == 0 || (self.l8(p + node::LN_PRI)? as i8) < pri {
@@ -149,7 +178,7 @@ impl<M: Memoria> Exec<M> {
             }
             p = sig;
             vueltas += 1;
-            if vueltas > MAX_VUELTAS {
+            if vueltas > MAX_VUELTAS || circulo.visto(p) {
                 return Err(Fallo::ListaRota { dir: l });
             }
         }
@@ -170,6 +199,7 @@ impl<M: Memoria> Exec<M> {
         self.comprobar_nodo(inicio)?;
         let mut n = self.lp(inicio + SUCC)?;
         let mut vueltas = 0;
+        let mut circulo = Circulo::nuevo(n);
         loop {
             let sig = self.lp(n + SUCC)?;
             if sig == 0 {
@@ -181,7 +211,7 @@ impl<M: Memoria> Exec<M> {
             }
             n = sig;
             vueltas += 1;
-            if vueltas > MAX_VUELTAS {
+            if vueltas > MAX_VUELTAS || circulo.visto(n) {
                 return Err(Fallo::ListaRota { dir: inicio });
             }
         }
@@ -192,6 +222,7 @@ impl<M: Memoria> Exec<M> {
         self.comprobar_nodo(l)?;
         let mut v = Vec::new();
         let mut n = self.lp(l + list::LH_HEAD)?;
+        let mut circulo = Circulo::nuevo(n);
         loop {
             let sig = self.lp(n + SUCC)?;
             if sig == 0 {
@@ -199,7 +230,7 @@ impl<M: Memoria> Exec<M> {
             }
             v.push(n);
             n = sig;
-            if v.len() as u32 > MAX_VUELTAS {
+            if v.len() as u32 > MAX_VUELTAS || circulo.visto(n) {
                 return Err(Fallo::ListaRota { dir: l });
             }
         }

@@ -433,3 +433,178 @@ relevo de `emu_run`, no el programa.)
   de la caja Linux.
 - `cargo test` en `caja/exec` (96), `caja/dos` (53), `caja/intuition` (47) y `wayland` (61): todas bien.
 
+
+## 2026-11-12: programas de Dash en la caja
+
+Rama `caja-amiga-dash`, desde `revision` (fec71bf).
+
+### Qué funciona (`make -C kernel arranque-virt`)
+
+Tras los programas de antes, la caja ejecuta seis programas de Dash, el lenguaje de FreeMEMLang, compilados con
+`~/Projects/FreeMEMLang/dash` al hacer la caja:
+
+1. **`texto.exe`** (`caja/pruebas68k/dash/caja_texto.dash`, por el camino directo de `dash`): cuentas (multiplicar,
+   dividir y el resto van por el runtime de Dash en un 68000), textos (unir, trozos, buscar, cambiar, mayúsculas,
+   hexadecimal), listas (`push`, `pop`, `sort` con una función), un diccionario, structs con métodos y 50 objetos en
+   una lista, y el reloj (`time_ms`, que va por timer.device y `ReadEClock`, alrededor de un `time_delay(10)`).
+2. **`texto_gcc.exe`**: el mismo con `dash --gcc` (por C, con m68k-amigaos-gcc y libnix). libnix abre
+   utility.library al arrancar y hace las multiplicaciones y divisiones de 32 bits con `SMult32` y `UDivMod32`: unas
+   6.800 llamadas nativas frente a 60 del directo.
+3. **`hola.exe`** (`examples/hola.dash` de FreeMEMLang, tal cual): una ventana con `OpenWindowTags`, `Delay` de 5 s y
+   texto.
+4. **`ventana.exe`** (`caja_ventana.dash`): abre su ventana, dibuja con las plumas del Workbench (`RectFill`,
+   `Move`/`Draw`, `WritePixel`, `Text`) y espera en un `EventLoop` con `On Close` y `On Timer 100` (timer.device, como
+   mucho 40 s). El guion de la prueba captura la pantalla (`CAPTURA_DASH`) y pulsa su gadget de cerrar.
+5. **`test_interp_comillas`** y **`test_lista_listas_literal`**: dos pruebas de `tests/` de FreeMEMLang, tal cual.
+   Su salida es la de sus líneas `# expect-out` (las que FreeMEMLang comprueba en FS-UAE).
+
+Cada uno acaba con 0, sin avisos del Enforcer y sin dejar memoria. Lo que escriben sale con "dash: " delante (la caja
+pone un prefijo a cada línea de la consola mientras corren).
+
+```
+│   [caja-amiga] utility.library y timer.device nativos (Rust): $... y $...
+...
+│   [caja-amiga] texto.exe: 3 hunks (código 17864, datos 852, BSS 1500 bytes) en $202c48, 717 reubicaciones
+│   [caja-amiga] dash: hola desde Dash
+│   [caja-amiga] dash: suma de cuadrados 333833500, fib(20) 6765, 14285 y 5, -3
+│   [caja-amiga] dash: hola, DashOS (12 letras), trozo [DashOS], busca 6
+│   [caja-amiga] dash: a-b-c AMIGA ff
+│   [caja-amiga] dash: lista 5, suma 25, ultima 7, palabras uno tres cinco
+│   [caja-amiga] dash: dicc 3: 2 3 false
+│   [caja-amiga] dash: punto (13, 3), 50 puntos, el ultimo (50, 100)
+│   [caja-amiga] dash: reloj: time_delay(10) tarda unos 200 ms
+│   [caja-amiga] dash: adios desde Dash
+│   [caja-amiga] Dash texto.exe acabó con 0 (vector -1), 62 llamadas nativas, en 249 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] texto_gcc.exe: 3 hunks (código 15672, datos 392, BSS 920 bytes) en $202c48, 503 reubicaciones
+│   (las mismas nueve líneas)
+│   [caja-amiga] Dash texto_gcc.exe acabó con 0 (vector -1), 6862 llamadas nativas, en 252 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] dash: Starting Dash...
+│   [caja-amiga] dash: Window 'Hola Dash' opened.
+│   [caja-amiga] ventana Amiga en pantalla (400x150): Hola Dash
+│   [compositor] ventana de caja-amiga en (232, 272)
+│   [caja-amiga] dash: Closing window and exiting.
+│   [caja-amiga] Dash hola.exe acabó con 0 (vector -1), 25 llamadas nativas, en 5016 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] dash: ventana abierta y dibujada; espera a que la cierren
+│   [caja-amiga] ventana Amiga en pantalla (360x170): Dash en DashOS
+│   [compositor] ventana de caja-amiga en (264, 304)
+│   [caja-amiga] dash: cerrada con su gadget
+│   [caja-amiga] Dash ventana.exe acabó con 0 (vector -1), 238 llamadas nativas, en 3044 ms, 0 avisos, 0 bloques sin soltar: bien
+```
+
+### Lo que pedía Dash y se hizo
+
+Primero se ejecutó tal cual: `hola.exe` ya funcionaba; `texto.exe` se quedaba sin memoria (`CreatePool` no estaba: el
+runtime de Dash saca textos, listas y structs de un charco de exec) y `texto_gcc.exe` no arrancaba (libnix no
+encontraba utility.library). Lo que se añadió:
+
+- **El proceso, como desde el Shell** (`caja/pegamento/`): cada programa lleva una CLI (`pr_CLI`): sin ella, el
+  runtime de Dash (y libnix) creen que vienen del Workbench y esperan su mensaje. `cli_Module` es su lista de
+  segmentos (el runtime de Dash la usa para decir en qué hunk falló), `cli_CommandName` su nombre y la entrada y
+  salida, la consola. La CLI y sus tres BSTR van en un bloque suyo, que la caja suelta con lo demás.
+- **exec** (`caja/exec`):
+  - Charcos (`charcos.rs`): `CreatePool`, `DeletePool`, `AllocPooled`, `FreePooled`. Lo que ve el 68k es lo de exec
+    40: la cabecera empieza con una `MinList` de charcos, cada charco un `MemHeader` con su lista de trozos libres y 8
+    bytes sin usar detrás (el runtime de Dash escribe un 0 ahí, por un fallo del `FreePooled` de la ROM 3.1). Por
+    debajo, una tabla nativa con cada trozo y su tamaño: soltar lo que no es del charco, con otro tamaño o dos veces da
+    un aviso y no toca nada; un `MemHeader` estropeado (límites cambiados, lista que apunta fuera) se nota antes de
+    repartir. Los bloques son de quien creó el charco: si muere, se van con lo suyo.
+  - Semáforos (`semaforos.rs`): `InitSemaphore`, `ObtainSemaphore`, `ObtainSemaphoreShared`, `AttemptSemaphore`,
+    `AttemptSemaphoreShared`, `ReleaseSemaphore`, `AddSemaphore`, `RemSemaphore`, `FindSemaphore`. El de otra tarea
+    hace esperar con `SIGF_SINGLE` y repetir; la cola de espera es nativa. Si el dueño murió con él cogido, quien lo
+    pide se lo queda (con un aviso).
+  - `SetExcept` (apunta las señales en `tc_SigExcept`; ver abajo) y `StackSwap` (la pila de Main de Dash, como el
+    `swapstack` de libnix): la dirección de vuelta pasa a la pila nueva; un `stk_Pointer` fuera de sus límites o de la
+    memoria no cambia nada.
+  - Dispositivos (`dispositivos.rs`): `OpenDevice`, `CloseDevice`, `DoIO`, `SendIO`, `CheckIO`, `WaitIO`, `AbortIO`,
+    `AddDevice`, `CreateIORequest`, `DeleteIORequest`, y `crear_dispositivo_nativo`. El `Open` y el `BeginIO` de un
+    dispositivo nativo se llaman con `Accion::Llamar`, como el `Open` de una biblioteca. Si `DoIO` tiene que esperar,
+    la tarea se bloquea y la caja repite la llamada: exec apunta qué peticiones ya salieron para no mandarlas dos
+    veces. Los dispositivos van también en una tabla nativa: así no se recorre `DeviceList` en cada petición.
+  - **Listas en círculo**: el fuzzer de `tests/hostil.rs` pasó de 1 s a 160 s con las funciones nuevas (una semilla
+    dejaba una lista del sistema en círculo, y cada `FindName` o `Enqueue` daba un millón de vueltas antes de
+    rendirse). `FindName`, `Enqueue` y los recorridos llevan ahora el detector de Brent: una lista que vuelve sobre sí
+    misma se nota en unos pasos más que su largo. El fuzzer, 0,4 s.
+- **utility.library** (crate nuevo, `caja/utility`): `SMult32`, `UMult32`, `SDivMod32`, `UDivMod32`, `SMult64`,
+  `UMult64`; etiquetas (`NextTagItem` con `TAG_MORE`, `TAG_SKIP` y `TAG_IGNORE`, `FindTagItem`, `GetTagData`,
+  `TagInArray`, `PackBoolTags`, `FilterTagItems`, `ApplyTagChanges`, `AllocateTagItems`, `CloneTagItems`,
+  `FreeTagItems`, `RefreshTagItemClones`); `Stricmp`, `Strnicmp`, `ToUpper`, `ToLower` (Latin-1); `Amiga2Date`,
+  `Date2Amiga`, `CheckDate`; `GetUniqueID`. Una lista de etiquetas en círculo, una división entre 0 o un
+  `FreeTagItems` de lo que no dio dan un aviso. Sin hacer: `CallHookPkt` (ejecutar 68k desde lo nativo), los objetos
+  con nombre, `MapTags`, `FilterTagChanges`, `PackStructureTags` y `UnpackStructureTags`.
+- **timer.device** (crate nuevo, `caja/timer`): las cinco unidades sobre el reloj de DashOS; `TR_ADDREQUEST`,
+  `TR_GETSYSTIME`, `TR_SETSYSTIME`, `AbortIO`; `AddTime`, `SubTime`, `CmpTime`, `ReadEClock` (709.379 Hz) y
+  `GetSysTime`. Las esperas van en una tabla nativa; la caja devuelve las vencidas a su puerto en cada llamada nativa
+  y mientras la tarea espera (cada 5 ms). Mientras hay una espera de timer.device, el plazo de 60 s de la caja para
+  una tarea que no despierta cuenta desde que venza.
+- **La consola con prefijo** (`caja_consola_prefijo`): mientras corre un programa de Dash, cada línea suya sale con
+  "  [caja-amiga] dash: " delante.
+- **El build** (`caja/Makefile`): con `~/Projects/FreeMEMLang/dash` (o `DASH=...`), los cuatro ejecutables se compilan
+  en `caja/build/dash/` (fuera de git). Sin `dash`, o si no compila, un fichero vacío y un aviso: la caja dice que no
+  está y sigue. Las fuentes propias, en `caja/pruebas68k/dash/`, se llaman `caja_*`: `dash --gcc` deja su C en
+  `build/` de FreeMEMLang con el nombre de la fuente (y así no pisa el de nadie).
+- **El guion** (`tools/prueba_uefi.sh`): tras la ventana de `ventana.exe`, cuando el programa de Dash dice que la suya
+  está dibujada, la captura (`CAPTURA_DASH`, `target/dash.ppm`) y un clic en su gadget de cerrar.
+- **`WFLG_GIMMEZEROZERO`** (intuition): las ventanas de Dash lo piden y dibujan en su `RPort` desde (0, 0). La caja
+  aceptaba la marca pero dibujaba desde la esquina de la ventana: el marco del programa salía encima de la barra de
+  título (se vio comparando la captura con la del oráculo). Ahora la capa del `RPort` de una ventana así es la de
+  dentro: su (0, 0) es la esquina de dentro de los bordes (`graphics`: un origen por capa, que el pintor, `ReadPixel`
+  y `ClipBlit` suman) y no se puede pintar fuera; al cambiar de tamaño, la capa sigue a los bordes. Prueba nueva en
+  `intuition/tests/ventanas.rs`. Sin `BorderRPort` (para pintar en los bordes de una ventana así) todavía.
+
+Pruebas nuevas de `cargo test`: `exec/tests/charcos.rs` (12: charcos, semáforos, `SetExcept`, `StackSwap`, con sus
+hostiles), la lista en círculo en `exec/tests/listas.rs`, `utility/tests/utility.rs` (7) y `timer/tests/timer.rs` (7:
+abrir y cerrar, `SendIO` y vuelta al puerto, `WaitIO` y `DoIO` que bloquean sin mandar dos veces, `AbortIO`, las
+unidades, las funciones y una hostil: punteros malos a todo, mandar dos veces, soltar la petición mientras espera,
+tiempos absurdos, la tarea que muere, `DeleteIORequest` dos veces o con otro tamaño). El fuzzer de exec prueba también
+las funciones nuevas (todas las de la tabla, con registros al azar).
+
+### El oráculo
+
+Los cuatro ejecutables, los mismos ficheros, en FS-UAE con el Kickstart 3.1 del usuario (`kick40068.A1200`) y el
+Workbench 3.1 de `DASH_EMU_SYS`, por `~/Projects/FreeMEMLang/tools/emu_run.py` con el cerrojo del emulador (la orden,
+en el apartado de antes). La salida de `texto`, `texto_gcc`, `hola` y `ventana` es la misma, línea a línea, que la de
+la caja (sin el "dash: "); `ventana`, con "nadie la cerro en 40 s" (allí nadie pulsa). La captura del emulador a los
+30 s (`--screenshot`) sí pilla la ventana de Dash: misma disposición que en la caja, con topaz/9 en vez de topaz/8 (el
+texto largo se corta allí por la derecha). Con esa comparación salió el fallo de `WFLG_GIMMEZEROZERO`.
+
+### Lo que falta y decisiones pendientes
+
+1. **`tc_TrapCode`**: el runtime de Dash pone su manejador de excepciones de la CPU en la tarea (dirección impar,
+   instrucción ilegal...) para dar un mensaje y limpiar. En la caja, una excepción del 68k sigue acabando el programa
+   por la trampa de la caja, sin pasar por él: el programa acaba sin su mensaje (la caja suelta lo suyo igual). Los
+   errores que detecta el runtime solo (un campo de `nil`, dividir entre 0) sí salen bien: se vio "Error: campo de nil"
+   antes de que hubiera charcos.
+2. **`SetExcept` no lanza nada**: apunta las señales, pero la caja no llama a `tc_ExceptCode` (ejecutar 68k desde lo
+   nativo). Ctrl-C en los bucles de Dash no corta el programa (la caja no manda Ctrl-C a nadie todavía).
+3. **GadTools, ReAction, MUI, asl, diskfont, layers**: no hay. Los programas de Dash que los piden no abren la
+   biblioteca y acaban con su error (el runtime lo comprueba). Es lo siguiente para más programas de Dash (GadTools
+   primero: `On Gadget`).
+4. **`BorderRPort`** de las ventanas `WFLG_GIMMEZEROZERO`: 0. Pintar en sus bordes no se puede.
+5. **timer.device** mide todas las unidades con el reloj de DashOS y despierta con 5 ms de margen (la vuelta de la
+   caja mientras espera). Para vídeo o sonido con el EClock puede quedarse corto.
+6. **La espera de semáforos** entre tareas está probada con `cargo test`, no con dos tareas 68k (la caja corre una).
+7. **El build depende de FreeMEMLang**: sin `~/Projects/FreeMEMLang/dash` la caja se compila igual (avisa), pero las
+   líneas de Dash de `arranque_virt.txt` faltan y la prueba falla. ¿Deberían ir esas líneas aparte, en un fichero que
+   solo se mire si está `dash`? De momento, en el de siempre (la opción más pequeña).
+8. **`dash --gcc` escribe en `build/` de FreeMEMLang** (`caja_texto.c` y su `.lock`: es donde lo deja siempre, y está
+   en su `.gitignore`). No se toca nada más de ese repositorio.
+9. **El prefijo "dash: "** es de la caja, no del programa: si un programa escribe media línea y otro programa
+   escribiera después, el prefijo sale donde empieza cada línea de la consola (hoy hay un solo programa a la vez).
+
+### Pruebas
+
+- `cargo test` en `caja/exec` (110, con las 13 de `charcos.rs` y la de la lista en círculo), `caja/utility` (7),
+  `caja/timer` (7), `caja/intuition` (48, con la de `WFLG_GIMMEZEROZERO`) y `caja/dos` (53): todas bien. clippy
+  limpio en los cuatro primeros.
+- `make -C kernel prueba`: "BIEN: cargador hunk (0 fallos)" y "BIEN: esperado.txt".
+- `make -C kernel arranque-virt`: las cinco BIEN en tres vueltas seguidas (con Dash, con `WFLG_GIMMEZEROZERO` y con
+  las dos pruebas de FreeMEMLang). Una vuelta anterior salió con un error de sintaxis del guion: lo había editado
+  mientras corría (bash lee el guion a trozos).
+- `arranque-virt-vm`, `-linux` y `-2`: BIEN. En esas la prueba acaba antes de que la caja llegue a los programas de
+  Dash (va la última y la ventana de `ventana.exe` espera 40 s sin el clic del guion): no los retrasan.
+- `arranque-virt-arch`: todo bien salvo tres líneas del tamaño del disco ("la caja Linux: sectores 16384 a 8386559
+  (4087 MB)" y las dos que lo repiten): el disco de Arch de `~/.cache/dashos-caja-linux/arch/disco-arch.img`, que es
+  compartido, lo agrandó a 6 GB otra rama mientras tanto (`caja-linux-apps` ya espera 6135 MB). Arch arranca, teclea y
+  se apaga como siempre. No es de la caja Amiga; al juntar con esa rama, desaparece.
+- La captura: `capturas-agente/caja-dash-ventana.png` (la pantalla con la ventana de Dash, a 800x600) y
+  `caja-dash-ventana-detalle.png` (la ventana, al doble); la del oráculo, `oraculo-fsuae-dash-ventana.png`.

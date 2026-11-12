@@ -13,8 +13,8 @@
 //! parches, como en MorphOS.
 
 use crate::estructuras::{library, memf, node, nt};
-use crate::lvo;
 use crate::{Accion, Continuacion, Destino, Exec, Fallo, MAX_VUELTAS, Memoria, Registros, execbase};
+use crate::{io, lvo};
 
 /// La instrucción de línea A de las entradas nativas.
 pub const LINEA_A_NATIVA: u16 = 0xA0FF;
@@ -99,6 +99,24 @@ impl<M: Memoria> Exec<M> {
                 }
             }
             Continuacion::CerrarBiblioteca { .. } | Continuacion::IniciarBiblioteca | Continuacion::Devolver => {}
+            Continuacion::AbrirDispositivo { dev, io } => {
+                if let Err(f) = self.tras_abrir_dispositivo(dev, io, r) {
+                    self.avisar("OpenDevice", f);
+                    r.d[0] = io::IOERR_OPENFAIL as i32 as u32;
+                }
+            }
+            Continuacion::CerrarDispositivo { io } => {
+                if let Err(f) = self.tras_cerrar_dispositivo(io) {
+                    self.avisar("CloseDevice", f);
+                }
+            }
+            Continuacion::HacerIO { io } => match self.tras_doio(io, r) {
+                Ok(a) => return a,
+                Err(f) => {
+                    self.avisar("DoIO", f);
+                    r.d[0] = io::IOERR_NOCMD as i32 as u32;
+                }
+            },
         }
         Accion::Seguir
     }
@@ -178,7 +196,7 @@ impl<M: Memoria> Exec<M> {
     }
 
     /// Borra una apertura de `lib` de la cuenta de su tarea (de la actual si la tiene; si no, de cualquiera).
-    fn olvidar_apertura(&mut self, lib: u32) {
+    pub(crate) fn olvidar_apertura(&mut self, lib: u32) {
         let t = self.tarea_actual();
         let quien = if self.tareas.get(&t).is_some_and(|i| i.bibliotecas.contains(&lib)) {
             Some(t)
@@ -381,7 +399,23 @@ impl<M: Memoria> Exec<M> {
         numeros: &[u16],
         tamano_datos: u32,
     ) -> Result<u32, Fallo> {
-        if numeros.iter().any(|&n| n <= lvo::ULTIMO_DE_EXEC || self.ajenas.contains_key(&n)) {
+        self.crear_nativa(nombre, version, revision, None, numeros, tamano_datos, false)
+    }
+
+    /// Lo de `crear_biblioteca_nativa` para una biblioteca o un dispositivo (en `DeviceList`, con su `Open` propio:
+    /// el número nativo `abrir`).
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn crear_nativa(
+        &mut self,
+        nombre: &str,
+        version: u16,
+        revision: u16,
+        abrir: Option<u16>,
+        numeros: &[u16],
+        tamano_datos: u32,
+        dispositivo: bool,
+    ) -> Result<u32, Fallo> {
+        if numeros.iter().chain(abrir.iter()).any(|&n| n <= lvo::ULTIMO_DE_EXEC || self.ajenas.contains_key(&n)) {
             return Err(Fallo::TablaMala { dir: 0 });
         }
         let total_n = 4 + numeros.len() as u32;
@@ -396,6 +430,10 @@ impl<M: Memoria> Exec<M> {
         let lib = m + neg;
         for i in 1..=4u16 {
             self.escribir_entrada_nativa(lib - 6 * i as u32, i)?;
+        }
+        if let Some(n) = abrir {
+            self.escribir_entrada_nativa(lib - 6, n)?;
+            self.ajenas.insert(n, (lib, -6));
         }
         for (i, &n) in numeros.iter().enumerate() {
             let k = 5 + i as u32;
@@ -415,7 +453,11 @@ impl<M: Memoria> Exec<M> {
         self.e16(lib + library::LIB_VERSION, version)?;
         self.e16(lib + library::LIB_REVISION, revision)?;
         self.e32(lib + library::LIB_IDSTRING, pn)?;
-        self.add_library(lib)?;
+        if dispositivo {
+            self.add_device(lib)?;
+        } else {
+            self.add_library(lib)?;
+        }
         Ok(lib)
     }
 
