@@ -201,32 +201,145 @@ fn megas(b: u64) -> String {
 fn discos() -> Vec<String> {
     use dashos::protocolo::archivos as a;
     let mut l = Vec::new();
-    let (lectura, suyo) = dashos::canal_crear();
-    let mut cab = [0u8; a::CABECERA];
-    cab[0..4].copy_from_slice(&a::SESION.to_le_bytes());
-    let mut r = [0u8; 32];
-    let mut ll = [0u32; 1];
-    let sesion = dashos::canal_escribir(ARCHIVOS, &cab, &[suyo]) == 0 && dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 2_000_000).0 == 32;
-    if sesion {
-        // La ventana de la sesión no hace falta para INFO.
-        dashos::cerrar(ll[0]);
-        let mut p = [0u8; a::CABECERA];
-        p[0..4].copy_from_slice(&a::INFO.to_le_bytes());
-        let info = dashos::canal_escribir(ARCHIVOS, &p, &[]) == 0 && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 == 32;
-        let u64_en = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
-        if info && i32::from_le_bytes(r[0..4].try_into().unwrap()) == a::BIEN {
-            let (tam, libre) = (u64_en(8), u64_en(16));
+    if let Some(ses) = Sesion::abrir() {
+        let (e, _, tam, libre, _) = ses.pedir(a::INFO, 0, 0, 0, "");
+        if e == a::BIEN {
             let ocupado = tam.saturating_sub(libre);
             l.push(alloc::format!("Disco del sistema: {}", megas(tam)));
             l.push(alloc::format!("Ocupado: {} ({} %)", megas(ocupado), ocupado * 100 / tam.max(1)));
             l.push(alloc::format!("Libre: {}", megas(libre)));
         }
     }
-    dashos::cerrar(lectura);
     if l.is_empty() {
         l.push(String::from("El servicio de archivos no contesta"));
     }
     l
+}
+
+/// Donde se proyecta la ventana de la sesión con `archivos` (la de Wayland va en `VA`).
+const VA_ARCHIVOS: usize = 0x50_0000_0000;
+/// Dónde se guarda la apariencia, desde su raíz (`C`, lo del usuario): un cajón 0700 y un fichero 0600.
+const PREFS: &str = "Prefs";
+const FICHERO_APARIENCIA: &str = "apariencia";
+
+/// Una sesión con el servicio de archivos, con su ventana proyectada (se quita al soltarla).
+struct Sesion {
+    lectura: u32,
+}
+
+impl Sesion {
+    fn abrir() -> Option<Sesion> {
+        use dashos::protocolo::archivos as a;
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut cab = [0u8; a::CABECERA];
+        cab[0..4].copy_from_slice(&a::SESION.to_le_bytes());
+        let mut r = [0u8; 32];
+        let mut ll = [0u32; 1];
+        let (n, k, _) = if dashos::canal_escribir(ARCHIVOS, &cab, &[suyo]) == 0 {
+            dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 2_000_000)
+        } else {
+            (-1, 0, 0)
+        };
+        if n != 32 || k != 1 || dashos::memoria_proyectar(ll[0], VA_ARCHIVOS, true) != 0 {
+            if k == 1 {
+                dashos::cerrar(ll[0]);
+            }
+            dashos::cerrar(lectura);
+            return None;
+        }
+        dashos::cerrar(ll[0]);
+        Some(Sesion { lectura })
+    }
+
+    /// Una orden: (estado, asa, a, b, c) de la respuesta.
+    fn pedir(&self, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) -> (i32, u32, u64, u64, u64) {
+        let mut p = [0u8; 128];
+        let n = nombre.len().min(96);
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&asa.to_le_bytes());
+        p[8..16].copy_from_slice(&x.to_le_bytes());
+        p[16..24].copy_from_slice(&y.to_le_bytes());
+        p[24..28].copy_from_slice(&(n as u32).to_le_bytes());
+        p[32..32 + n].copy_from_slice(&nombre.as_bytes()[..n]);
+        let mut r = [0u8; 32];
+        if dashos::canal_escribir(ARCHIVOS, &p[..32 + n], &[]) != 0 || dashos::canal_leer_plazo(self.lectura, &mut r, &mut [], 2_000_000).0 != 32 {
+            return (-1, 0, 0, 0, 0);
+        }
+        let u64_en = |i: usize| u64::from_le_bytes(r[i..i + 8].try_into().unwrap());
+        (i32::from_le_bytes(r[0..4].try_into().unwrap()), u32::from_le_bytes(r[4..8].try_into().unwrap()), u64_en(8), u64_en(16), u64_en(24))
+    }
+
+    fn ventana(&self) -> &'static mut [u8] {
+        unsafe { core::slice::from_raw_parts_mut(VA_ARCHIVOS as *mut u8, dashos::protocolo::archivos::VENTANA) }
+    }
+}
+
+impl Drop for Sesion {
+    fn drop(&mut self) {
+        dashos::memoria_quitar(VA_ARCHIVOS);
+        dashos::cerrar(self.lectura);
+    }
+}
+
+/// La apariencia guardada: (oscuro, color). `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
+/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta").
+fn leer_apariencia() -> Result<(bool, usize), &'static str> {
+    use dashos::protocolo::archivos as a;
+    let ses = Sesion::abrir().ok_or("sin servicio de archivos")?;
+    let (e, asa, tam, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, "Prefs/apariencia");
+    if e != a::BIEN {
+        return Err("no hay");
+    }
+    let (e, _, leidos, _, _) = ses.pedir(a::LEER, asa, 0, tam.min(64), "");
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    if e != a::BIEN || tam > 64 {
+        return Err("no se entiende");
+    }
+    let texto = core::str::from_utf8(&ses.ventana()[..leidos.min(64) as usize]).map_err(|_| "no se entiende")?;
+    let mut partes = texto.trim_end_matches('\n').split(' ');
+    let oscuro = match partes.next() {
+        Some("claro") => false,
+        Some("oscuro") => true,
+        _ => return Err("no se entiende"),
+    };
+    let color = partes.next().and_then(|c| COLORES.iter().position(|x| x.0.to_lowercase() == c)).ok_or("no se entiende")?;
+    if partes.next().is_some() {
+        return Err("no se entiende");
+    }
+    Ok((oscuro, color))
+}
+
+/// Guarda la apariencia en `Prefs/apariencia` (lo crea, cajón 0700 y fichero 0600, si no está). El estado y los bytes.
+fn guardar_apariencia(oscuro: bool, color: usize) -> (i32, usize) {
+    use dashos::protocolo::archivos as a;
+    let Some(ses) = Sesion::abrir() else { return (-1, 0) };
+    let texto = alloc::format!("{} {}\n", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0.to_lowercase());
+    let (mut e, mut asa, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, "Prefs/apariencia");
+    if e == a::NO_EXISTE {
+        let (e1, mut dir, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, PREFS);
+        if e1 == a::NO_EXISTE {
+            let r = ses.pedir(a::CREAR, 0, a::CAJON as u64, 0, PREFS);
+            dir = r.1;
+            if r.0 == a::BIEN {
+                ses.pedir(a::PROTEGER, dir, 0, 0o700, "");
+            }
+        }
+        let r = ses.pedir(a::CREAR, dir, a::FICHERO as u64, 0, FICHERO_APARIENCIA);
+        (e, asa) = (r.0, r.1);
+        if e == a::BIEN {
+            ses.pedir(a::PROTEGER, asa, 0, 0o600, "");
+        }
+        ses.pedir(a::CERRAR, dir, 0, 0, "");
+    }
+    if e != a::BIEN {
+        return (e, 0);
+    }
+    ses.ventana()[..texto.len()].copy_from_slice(texto.as_bytes());
+    let recorta = ses.pedir(a::TAMANO, asa, 0, 0, "").0;
+    let (escribe, _, escritos, _, _) = ses.pedir(a::ESCRIBIR, asa, 0, texto.len() as u64, "");
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    let estado = if recorta != a::BIEN { recorta } else { escribe };
+    (estado, escritos as usize)
 }
 
 /// Las filas de Apariencia: los dos modos y los colores, con una marca en lo elegido.
@@ -307,7 +420,18 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
-    let (mut oscuro, mut color) = (false, 0usize);
+    // La apariencia guardada; si no hay o no se entiende, la de serie (claro, violeta).
+    let (mut oscuro, mut color) = match leer_apariencia() {
+        Ok(g) => {
+            println!("  [centro] apariencia guardada: {}, color {}", if g.0 { "oscuro" } else { "claro" }, COLORES[g.1].0);
+            g
+        }
+        Err(porque) => {
+            println!("  [centro] apariencia guardada: {}; se queda la de serie", porque);
+            (false, 0)
+        }
+    };
+    i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
     let mut lineas_registro: Vec<String> = Vec::new();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
@@ -474,7 +598,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
                         lineas_registro = apariencia(oscuro, color);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
-                        println!("  [centro] Apariencia: {}, color {}", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0);
+                        let (guardado, bytes) = guardar_apariencia(oscuro, color);
+                        // Y se relee, como al abrir la próxima vez.
+                        let releida = leer_apariencia() == Ok((oscuro, color));
+                        println!("  [centro] Apariencia: {}, color {}; guardada: {} ({} bytes); releída: {}", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0, guardado, bytes, if releida { "sí" } else { "no" });
                         cambio = true;
                     }
                 }

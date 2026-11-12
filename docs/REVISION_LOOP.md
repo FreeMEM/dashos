@@ -883,3 +883,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   blanco y amarillo puro incluidos) y 300 al azar, en claro y en oscuro, cada texto sobre su fondo da 4,5:1 o más
   (WCAG AA). En virt: Tab a la lista, dos abajo e Intro; "Apariencia: oscuro, color Violeta" y la ventana se repinta
   oscura. Captura en `docs/capturas/s10c-centro-apariencia.png`.
+- S10c, la apariencia se guarda: en `Prefs/apariencia` desde la raíz del centro (`C/Prefs/apariencia` en el disco), una
+  línea como "oscuro violeta". Si no están, el centro crea el cajón (0700) y el fichero (0600). Se lee al abrir la
+  ventana; si no está o no se entiende (no es UTF-8, otro modo, un color que no existe, algo de más, más de 64 bytes),
+  se queda la de serie. La sesión con `archivos` va en `Sesion`, con su ventana proyectada mientras dura. Pruebas: el
+  disco de prueba trae la preferencia en basura (bytes que no son UTF-8 y "magenta"), y el centro dice "no se
+  entiende; se queda la de serie"; al elegir el modo oscuro la guarda (15 bytes), la relee bien, y el disco leído en
+  Linux tiene "oscuro violeta". El hostil (otro usuario, encerrado en `C`) no la abre (-12). El guion del selector
+  baja dos veces para llegar a `Privado`: `Prefs` va antes.

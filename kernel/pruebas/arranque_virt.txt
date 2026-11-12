@@ -129,6 +129,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] preguntas: de pide 2, de otros 2: bien
 ~│   [guardian] retirar a pide el permiso de plazo 0, otra vez -1: bien
 # S10c, C1: el centro de control abre Permisos (lo pide `guardian`, como un clic); el usuario quita el de eco de pide.
+# La apariencia guardada está en basura: se queda la de serie.
+~│   [centro] apariencia guardada: no se entiende; se queda la de serie
 ~│   [centro] Permisos en pantalla: 1 concedidos
 ~│   [centro] quita a pide el permiso de eco: 0; quedan 0
 # Y Seguridad: el registro de sesiones, con lo que se le negó al hostil.
@@ -137,7 +139,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
-~│   [centro] Apariencia: oscuro, color Violeta
+~│   [centro] Apariencia: oscuro, color Violeta; guardada: 0 (15 bytes); releída: sí
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
 ~│   [centro] cerrado

@@ -172,6 +172,10 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
     if p(BUSCAR, 0, 0, 0, "Privado/nota.txt").map(|r| r.0) != Some(PROTEGIDO) {
         return "abre el fichero por su nombre";
     }
+    // S10c: la apariencia que guarda el centro de control para el usuario 1000 (cajón 0700), tampoco.
+    if p(BUSCAR, 0, 0, 0, "Prefs/apariencia").map(|r| r.0) != Some(PROTEGIDO) {
+        return "abre la apariencia guardada de otro usuario";
+    }
     p(CERRAR, asa, 0, 0, "");
     // S6b, capa 2: el selector le cede `C` como raíz 2, solo para leer. Por ella lista, pero no crea ni la cierra; un
     // hueco de raíz vacío no lleva a nada; no puede darse raíces él (sin el derecho de repartir); y el hueco no se

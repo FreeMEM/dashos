@@ -234,6 +234,9 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             mandar("sendkey ret")
             time.sleep(0.5)
+            # Dos abajo: los cajones van primero, y `Prefs` (S10c) va antes que `Privado`.
+            mandar("sendkey down")
+            time.sleep(0.3)
             mandar("sendkey down")
             time.sleep(0.3)
             mandar("sendkey ret")
@@ -244,6 +247,8 @@ while time.time() - inicio < total:
                 if time.time() > reintento:
                     reintento = time.time() + 4
                     mandar("sendkey home")
+                    time.sleep(0.3)
+                    mandar("sendkey down")
                     time.sleep(0.3)
                     mandar("sendkey ret")
                 time.sleep(0.25)

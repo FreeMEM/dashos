@@ -40,6 +40,8 @@ if sys.argv[1] == "--comprobar":
     arbol = subprocess.run([ver, disco, desde], check=True, capture_output=True, text=True).stdout.splitlines()
     esperado = [
         "C/ cajón",
+        "C/Prefs/ cajón",
+        "C/Prefs/apariencia 15",
         "C/Privado/ cajón",
         "C/Privado/nota.txt 18",
         "C/datos.bin 614400",
@@ -64,9 +66,13 @@ if sys.argv[1] == "--comprobar":
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
+    apariencia = subprocess.run([ver, disco, desde, "C/Prefs/apariencia"], check=True, capture_output=True).stdout
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
+    # S10c: lo que guardó el centro de control al elegir el modo oscuro.
+    if apariencia != b"oscuro violeta\n":
+        fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
     # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
     # no de 1970 ni del futuro.
     fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
@@ -162,6 +168,14 @@ with tempfile.TemporaryDirectory() as t:
         f.write("privado de prueba\n")
     os.chmod(os.path.join(privado, "nota.txt"), 0o600)
     os.chmod(privado, 0o700)
+    # S10c: la apariencia guardada del centro de control, en basura (bytes que no son UTF-8 y un color que no existe): el
+    # centro se queda con la de serie, y al elegir otra la reescribe. Cajón 0700 y fichero 0600: el hostil no la ve.
+    prefs = os.path.join(raiz, "C", "Prefs")
+    os.makedirs(prefs)
+    with open(os.path.join(prefs, "apariencia"), "wb") as f:
+        f.write(b"\xff\xfeoscuro magenta\x00")
+    os.chmod(os.path.join(prefs, "apariencia"), 0o600)
+    os.chmod(prefs, 0o700)
     # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
     with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
         f.write("no se enseña\n")
