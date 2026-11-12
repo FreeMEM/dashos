@@ -31,6 +31,7 @@ struct R {
     estado: i32,
     asa: u32,
     a: u64,
+    b: u64,
 }
 
 struct Cliente {
@@ -46,7 +47,7 @@ impl Cliente {
         }
         let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
         let u64_en = |i: usize| u64::from_le_bytes(b[i..i + 8].try_into().unwrap());
-        Some((R { estado: u32_en(0) as i32, asa: u32_en(4), a: u64_en(8) }, k))
+        Some((R { estado: u32_en(0) as i32, asa: u32_en(4), a: u64_en(8), b: u64_en(16) }, k))
     }
 
     fn pedir(&self, orden: u32, asa: u32, a: u64, b: u64, nombre: &[u8]) -> R {
@@ -57,7 +58,7 @@ impl Cliente {
         p[16..24].copy_from_slice(&b.to_le_bytes());
         p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
         p[32..32 + nombre.len()].copy_from_slice(nombre);
-        let malo = R { estado: i32::MIN, asa: 0, a: 0 };
+        let malo = R { estado: i32::MIN, asa: 0, a: 0, b: 0 };
         if dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]) != 0 {
             return malo;
         }
@@ -266,6 +267,18 @@ fn principal() -> u64 {
     let l = c.pedir(LISTAR, dir.asa, 0, 0, b"");
     dato("listar_500", 1, 1, cuentas() - t0, "listados/s");
     let listados = l.a;
+    // A15: COMPROBAR, sin y con los datos, por MB ocupado: mientras dura, el servicio no atiende a nadie más. Con
+    // esto se ve cuánto tardaría en un disco de verdad.
+    let info = c.pedir(INFO, 0, 0, 0, b"");
+    let ocupado = info.a.saturating_sub(info.b);
+    for (op, datos) in [("comprobar", 0u64), ("comprobar_datos", 1)] {
+        let t0 = cuentas();
+        let r = c.pedir(COMPROBAR, 0, datos, 0, b"");
+        let t = cuentas() - t0;
+        bien &= r.estado == 0 && r.a == 0;
+        dato(op, 1 << 20, ocupado, t, "MB/s");
+        println!("[medir] fs-comprobar op={} ms={} ocupado_kb={}", op, a_us(t) / 1000, ocupado / 1024);
+    }
     let borrar = |op: &str, cada_vez: bool, bien: &mut bool, nb: &mut [u8; 5]| {
         let t0 = cuentas();
         for i in 0..PEQUENOS {

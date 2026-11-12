@@ -916,3 +916,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Super+L sin ninguna ventana con el teclado: antes no hacía nada (no se miraban los modificadores). Ahora se llevan
   también entonces y Super+L bloquea igual. Prueba en el compositor (`super_l_bloquea_ya`, con y sin ventana): un aviso
   de 60 s pedido sale en el acto con Super+L, la L no llega a la ventana, y una L sin Super es una L y no bloquea.
+- A15, COMPROBAR medido (en `medir-fs`, 3 arranques, sobre los 29 MB ocupados del disco del banco): sin los datos,
+  1.655 MB/s (la estructura: depende más de cuántos ficheros que de los MB); con los datos, 160 MB/s, 182 ms. Mientras
+  dura, `archivos` no atiende a nadie. Echando cuentas: una tarjeta de 64 GB con 20 GB ocupados tardaría unos 2 min en
+  QEMU, y en la Pi, leyendo la SD a 40-90 MB/s, de 4 a 8 min con todo el sistema de ficheros parado. Así que COMPROBAR
+  con datos tiene que ir por trozos (o en otro proceso, sobre una instantánea) antes de que se use con discos de verdad;
+  sin datos, aguanta. Solo cambia `medir-fs` (no está en las imágenes de `make prueba` ni de `make arranque-virt`, que
+  no se han pasado en este paso).
