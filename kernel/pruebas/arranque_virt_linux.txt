@@ -25,6 +25,14 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] hostil (tormenta del temporizador): no la reconoce nunca; el reloj lo sacó
 ~[caja-linux] hostil (registro de EL2): trampa en
 ~[caja-linux] interrupciones del invitado: bien
+# Varias vCPU (invitados/smp.s, cada vCPU en un hilo del servicio): PSCI y SGI entre ellas, y dos hostiles que acaban
+# con una vCPU aún dentro (una tormenta de SGI y un bucle sin fin con todo enmascarado): se paran y los hilos se unen.
+~[caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU:
+~[caja-linux] hostil (tormenta de SGI):
+~se para con la tormenta dentro, 2 hilos unidos: bien
+~[caja-linux] hostil (una vCPU en bucle): la otra trabaja
+~y apaga la máquina con ella dentro; 2 hilos unidos: bien
+~[caja-linux] varias vCPU: bien
 ~[sin-maquina] pedir el permiso a sesiones: -2 (negado)
 ~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien
 ~[caja-linux] linux: Image de

@@ -59,6 +59,7 @@ dashos::monton!();
 
 core::arch::global_asm!(include_str!("../../invitados/pruebas.s"));
 core::arch::global_asm!(include_str!("../../invitados/interrupciones.s"));
+core::arch::global_asm!(include_str!("../../invitados/smp.s"));
 
 unsafe extern "C" {
     static invitado_hola: u8;
@@ -83,6 +84,8 @@ unsafe extern "C" {
     static invitado_tormenta_fin: u8;
     static invitado_el2: u8;
     static invitado_el2_fin: u8;
+    static invitado_smp: u8;
+    static invitado_smp_fin: u8;
 }
 
 /// El permiso de máquinas virtuales: lo da `sesiones` (en `virt`) o `inicio` (en la Pi 4, que aún no tiene `sesiones`).
@@ -109,6 +112,11 @@ fn codigo(inicio: &'static u8, fin: &'static u8) -> &'static [u8] {
 
 /// Una máquina con `codigo` al principio de su RAM: la llave, o el error de `maquina_crear`.
 fn maquina(codigo: &[u8]) -> Result<u32, i64> {
+    maquina_x0(codigo, 0)
+}
+
+/// Como `maquina`, con `x0` en el x0 de su vCPU 0.
+fn maquina_x0(codigo: &[u8], x0: u64) -> Result<u32, i64> {
     let mem = dashos::memoria_crear(RAM) as i32;
     if mem <= 0 {
         return Err(mem as i64);
@@ -121,7 +129,7 @@ fn maquina(codigo: &[u8]) -> Result<u32, i64> {
     // SAFETY: recién proyectada aquí, RAM bytes, y el invitado aún no existe.
     let ram = unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, RAM) };
     ram[..codigo.len()].copy_from_slice(codigo);
-    let r = dashos::maquina_crear(permiso(), mem, RAM_IPA, RAM_IPA, 0);
+    let r = dashos::maquina_crear(permiso(), mem, RAM_IPA, RAM_IPA, x0);
     // La máquina sujeta su memoria: el servicio ya no la necesita.
     dashos::memoria_quitar(VA);
     dashos::cerrar(mem);
@@ -290,6 +298,11 @@ const TIMBRE: u64 = 0x0a00_0000;
 /// La RAM del invitado vista desde el servicio, con la barrera de verdad (las colas de virtio se comparten con él).
 struct RamCaja(Ram<&'static mut [u8]>);
 
+/// Una RAM vacía, para los invitados de prueba que el servicio no lee.
+fn ram_vacia() -> RamCaja {
+    RamCaja(Ram { base: RAM_IPA, datos: &mut [] })
+}
+
 impl MemoriaInvitado for RamCaja {
     fn leer(&self, dir: u64, buf: &mut [u8]) -> Result<(), FueraDeMemoria> {
         self.0.leer(dir, buf)
@@ -302,8 +315,8 @@ impl MemoriaInvitado for RamCaja {
     }
 }
 
-/// Cuántas veces salió el invitado, y por qué.
-#[derive(Default)]
+/// Cuántas veces salió el invitado, y por qué (sumando todas sus vCPU).
+#[derive(Default, Clone, Copy)]
 struct Cuentas {
     salidas: u64,
     aparatos: u64,
@@ -314,13 +327,16 @@ struct Cuentas {
     interrumpido: u64,
     registros: u64,
     psci: u64,
+    /// Patadas a otras vCPU (algo nuevo para ellas en el distribuidor).
+    patadas: u64,
 }
 
 /// Cómo acabó una máquina corrida con sus aparatos.
+#[derive(Clone, Copy)]
 enum FinCaja {
     /// HVC #n (no de PSCI) con x0..x3.
     Hvc(u64, [u64; 4]),
-    /// PSCI SYSTEM_OFF o CPU_OFF de su única vCPU.
+    /// PSCI SYSTEM_OFF, o CPU_OFF de la última vCPU encendida.
     Apagada,
     Reinicio,
     Plazo,
@@ -328,165 +344,396 @@ enum FinCaja {
     Error(i64),
 }
 
-/// Una máquina con sus aparatos (`caja_vmm::maquina::Maquina`), su PSCI y sus registros de lista. Una vCPU.
+/// Cuántas vCPU puede tener una máquina de la caja.
+const MAX_VCPUS: usize = m::MAX_VCPUS;
+
+/// Un dato que comparten los hilos de la caja, con su cerrojo.
+struct Compartida<T> {
+    cerrojo: dashos::hilos::Cerrojo,
+    dato: UnsafeCell<T>,
+}
+
+// SAFETY: `dato` solo se toca con el cerrojo tomado (`con`), y `con` no se anida.
+unsafe impl<T> Sync for Compartida<T> {}
+
+impl<T> Compartida<T> {
+    const fn nueva(t: T) -> Self {
+        Self { cerrojo: dashos::hilos::Cerrojo::nuevo(), dato: UnsafeCell::new(t) }
+    }
+
+    fn con<R>(&self, f: impl FnOnce(&mut T) -> R) -> R {
+        self.cerrojo.tomar();
+        // SAFETY: con el cerrojo tomado nadie más lo toca.
+        let r = f(unsafe { &mut *self.dato.get() });
+        self.cerrojo.soltar();
+        r
+    }
+}
+
+/// Una máquina con sus aparatos (`caja_vmm::maquina::Maquina`), su PSCI y sus vCPU. La comparten los hilos de sus vCPU
+/// (cada una corre en el suyo): todo lo que tocan los aparatos y el distribuidor va con el cerrojo de `Sistema::caja`.
 struct Caja<M: MemoriaInvitado> {
-    vm: u32,
     maq: Vmm<M>,
     psci: Psci,
-    irq: m::Interrupciones,
-    /// La interrupción que hay en cada registro de lista del servicio.
-    cargadas: [Option<u32>; m::LRS],
+    /// Un HVC #0 es una llamada de PSCI (DEN 0022); si no, acaba la máquina como cualquier otro HVC.
+    con_psci: bool,
+    /// Las llaves de sus vCPU (`n`).
+    llaves: [u32; MAX_VCPUS],
+    n: usize,
+    /// Se le dio una patada por algo nuevo en el distribuidor y aún no ha llenado sus registros de lista: no hace falta
+    /// otra.
+    pateada: [bool; MAX_VCPUS],
+    /// Lo que pidió PSCI CPU_ON para cada vCPU apagada: (entrada, contexto).
+    arranques: [Option<(u64, u64)>; MAX_VCPUS],
     cuentas: Cuentas,
+    fin: Option<FinCaja>,
 }
 
 impl<M: MemoriaInvitado> Caja<M> {
-    fn nueva(vm: u32, maq: Vmm<M>, ram: &[(u64, u64)]) -> Self {
-        Self { vm, maq, psci: Psci::nuevo(1, ram), irq: m::Interrupciones::default(), cargadas: [None; m::LRS], cuentas: Cuentas::default() }
+    /// `llaves`: la vCPU 0 (la que da `maquina_crear`) y las demás (`maquina_vcpu`).
+    fn nueva(llaves: &[u32], maq: Vmm<M>, ram: &[(u64, u64)], con_psci: bool) -> Self {
+        let n = llaves.len().clamp(1, MAX_VCPUS);
+        let mut ll = [0; MAX_VCPUS];
+        ll[..n].copy_from_slice(&llaves[..n]);
+        Self {
+            maq,
+            psci: Psci::nuevo(n, ram),
+            con_psci,
+            llaves: ll,
+            n,
+            pateada: [false; MAX_VCPUS],
+            arranques: [None; MAX_VCPUS],
+            cuentas: Cuentas::default(),
+            fin: None,
+        }
     }
 
-    /// Los registros de lista que el invitado ya terminó, al distribuidor; los libres, con lo que tenga pendiente; y
-    /// cómo tiene el temporizador virtual, para el kernel.
-    fn llenar_lrs(&mut self) {
-        let n = (self.irq.lrs as usize).min(m::LRS);
+    /// Los registros de lista que el invitado ya terminó, al distribuidor; los libres, con lo que tenga pendiente para
+    /// esta vCPU; y cómo tiene el temporizador virtual, para el kernel (y que sus WFI esperen allí).
+    fn llenar_lrs(&mut self, v: &mut VcpuCaja) {
+        let n = (v.irq.lrs as usize).min(m::LRS);
         for i in 0..n {
-            if let Some(id) = self.cargadas[i]
-                && gic::lr_libre(self.irq.lr[i] as u32)
+            if let Some(id) = v.cargadas[i]
+                && gic::lr_libre(v.irq.lr[i] as u32)
             {
-                self.maq.gic.terminada(0, id);
-                self.cargadas[i] = None;
-                self.irq.lr[i] = 0;
+                self.maq.gic.terminada(v.num, id);
+                v.cargadas[i] = None;
+                v.irq.lr[i] = 0;
             }
         }
-        let mut pendientes = self.maq.gic.pendientes(0).into_iter();
+        let mut pendientes = self.maq.gic.pendientes(v.num).into_iter();
         for i in 0..n {
-            if self.cargadas[i].is_none() {
+            if v.cargadas[i].is_none() {
                 let Some(e) = pendientes.next() else { break };
                 // Con EOI: cuando el invitado la termina, el GIC da la interrupción de mantenimiento, que lo saca, y el
                 // servicio vuelve a mirar la línea (las de los aparatos son por nivel).
-                self.irq.lr[i] = gic::lr_v2(&e, true) as u64;
-                self.maq.gic.cargada(0, &e);
-                self.cargadas[i] = Some(e.intid);
+                v.irq.lr[i] = gic::lr_v2(&e, true) as u64;
+                self.maq.gic.cargada(v.num, &e);
+                v.cargadas[i] = Some(e.intid);
                 self.cuentas.inyectadas += 1;
             }
         }
-        self.irq.temporizador = match self.maq.gic.privada(0, INTID_TEMPORIZADOR) {
-            Some((true, p, g1)) => 1 | (p as u64) << 8 | (g1 as u64) << 16,
-            _ => 0,
-        };
+        self.pateada[v.num] = false;
+        v.irq.temporizador = m::ESPERAR_WFI
+            | match self.maq.gic.privada(v.num, INTID_TEMPORIZADOR) {
+                Some((true, p, g1)) => 1 | (p as u64) << 8 | (g1 as u64) << 16,
+                _ => 0,
+            };
     }
 
-    fn poner_x0(&self, v: u64) {
-        let mut r = [0u64; m::REGISTROS];
-        if dashos::maquina_registros(self.vm, &mut r) == 0 {
-            r[0] = v;
-            dashos::maquina_poner_registros(self.vm, &r);
+    /// Las interrupciones que estaban en los registros de lista de una vCPU que se apaga vuelven al distribuidor
+    /// (terminadas: una por nivel volverá a estar pendiente si su línea sigue arriba).
+    fn soltar_lrs(&mut self, v: &mut VcpuCaja) {
+        for i in 0..m::LRS {
+            if let Some(id) = v.cargadas[i].take() {
+                self.maq.gic.terminada(v.num, id);
+            }
+            v.irq.lr[i] = 0;
         }
     }
 
-    /// Un WFI: si no hay nada para el invitado, el servicio duerme hasta el plazo de su temporizador (como mucho 10 ms), o
-    /// hasta que llega algo para él (una tecla de la terminal, una trama de la red: `COMPARTIDO.timbre`).
-    fn esperar(&mut self, inf: &Informe) {
-        let visto = COMPARTIDO.timbre.load(Ordering::Acquire);
-        self.mirar_entradas();
-        if inf.senales & m::PENDIENTE != 0 || self.maq.gic.hay_para(0) {
-            return;
+    /// Las vCPU (menos `yo`) que tienen algo nuevo en el distribuidor y aún no se han enterado: hay que patearlas (una
+    /// máscara). Se apuntan como pateadas.
+    fn por_patear(&mut self, yo: usize, encendidas: &[AtomicU32; MAX_VCPUS]) -> u32 {
+        let mut mascara = 0u32;
+        for j in 0..self.n {
+            if j != yo && !self.pateada[j] && encendidas[j].load(Ordering::Acquire) != 0 && self.maq.gic.hay_para(j) {
+                self.pateada[j] = true;
+                mascara |= 1 << j;
+            }
         }
-        let ahora = contador();
-        let us = if inf.plazo == u64::MAX {
-            10_000
-        } else if inf.plazo <= ahora {
-            return;
-        } else {
-            ((inf.plazo - ahora) as u128 * 1_000_000 / frecuencia() as u128).min(10_000) as u64
-        };
-        if us >= 100 {
-            let t0 = dashos::ahora_us();
-            dashos::hilos::esperar(&COMPARTIDO.timbre, visto, us);
-            self.cuentas.dormido_us += dashos::ahora_us() - t0;
-            self.mirar_entradas();
-        }
+        self.cuentas.patadas += mascara.count_ones() as u64;
+        mascara
     }
 
     /// Si llegó algo de fuera (teclas de la terminal, tramas de la red), los aparatos lo pasan al invitado y suben su
     /// línea de interrupción.
-    fn mirar_entradas(&mut self) {
+    fn mirar_entradas(&mut self) -> bool {
         if COMPARTIDO.aviso.swap(false, Ordering::AcqRel) {
             self.maq.sondear();
+            return true;
+        }
+        false
+    }
+}
+
+/// Lo de cada vCPU que solo toca su hilo.
+struct VcpuCaja {
+    num: usize,
+    irq: m::Interrupciones,
+    /// La interrupción que hay en cada registro de lista del servicio.
+    cargadas: [Option<u32>; m::LRS],
+}
+
+/// La caja en marcha: la máquina con su cerrojo y lo que los hilos de sus vCPU miran sin él.
+struct Sistema {
+    caja: Compartida<Option<Caja<RamCaja>>>,
+    /// Por vCPU: 0 apagada (su hilo espera aquí), 1 encendida o a punto.
+    encendidas: [AtomicU32; MAX_VCPUS],
+    /// Se acabó la máquina: los hilos de las vCPU vuelven.
+    acabada: AtomicBool,
+}
+
+/// La caja de las pruebas y de Linux (una cada vez).
+static CAJA: Sistema = Sistema {
+    caja: Compartida::nueva(None),
+    encendidas: [const { AtomicU32::new(0) }; MAX_VCPUS],
+    acabada: AtomicBool::new(false),
+};
+
+/// Lo que hace el hilo de una vCPU después de una salida, decidido con el cerrojo tomado.
+enum Paso {
+    Seguir(u64),
+    Abortar,
+    PonerX0(u64),
+    Apagarse,
+    Acabar(FinCaja),
+}
+
+impl Sistema {
+    fn con<R>(&self, f: impl FnOnce(&mut Caja<RamCaja>) -> R) -> R {
+        self.caja.con(|c| f(c.as_mut().expect("la caja está puesta")))
+    }
+
+    /// Pone `caja` para correrla: la vCPU 0 encendida, las demás apagadas.
+    fn poner(&self, caja: Caja<RamCaja>) {
+        self.acabada.store(false, Ordering::Release);
+        for (i, e) in self.encendidas.iter().enumerate() {
+            e.store((i == 0) as u32, Ordering::Release);
+        }
+        self.caja.con(|c| *c = Some(caja));
+    }
+
+    /// Quita la caja (ya acabada, con sus hilos unidos).
+    fn quitar(&self) -> Option<Caja<RamCaja>> {
+        self.caja.con(|c| c.take())
+    }
+
+    /// Acaba la máquina (la primera razón manda): para todas sus vCPU y despierta a las apagadas.
+    fn acabar(&self, llave: u32, fin: FinCaja) {
+        self.con(|c| {
+            if c.fin.is_none() {
+                c.fin = Some(fin);
+            }
+        });
+        self.acabada.store(true, Ordering::Release);
+        dashos::maquina_parar(llave);
+        for e in &self.encendidas {
+            dashos::hilos::despertar(e, 8);
         }
     }
 
-    /// Corre la vCPU hasta que acaba o pasa el plazo. Con `psci`, un HVC #0 es una llamada de PSCI (DEN 0022).
-    fn correr(&mut self, plazo_us: u64, psci: bool) -> FinCaja {
+    /// El hilo de la vCPU `num`: la corre hasta que acaba la máquina o pasa el plazo (desde `t0`). Apagada (las
+    /// secundarias al empezar, o tras CPU_OFF), espera a que otra la encienda con CPU_ON.
+    fn correr_vcpu(&self, num: usize, t0: u64, plazo_us: u64) {
+        let llave = self.con(|c| c.llaves[num]);
+        let llaves = self.con(|c| c.llaves);
+        let mut v = VcpuCaja { num, irq: m::Interrupciones::default(), cargadas: [None; m::LRS] };
         let mut inf = Informe::default();
         let mut valor = 0;
-        let t0 = dashos::ahora_us();
         loop {
-            self.llenar_lrs();
-            let r = dashos::maquina_correr_irq(self.vm, &mut inf, valor, &mut self.irq);
-            valor = 0;
-            self.cuentas.salidas += 1;
-            match r {
-                m::LECTURA | m::ESCRITURA => {
-                    self.cuentas.aparatos += 1;
-                    let op = if r == m::LECTURA { Operacion::Leer } else { Operacion::Escribir(inf.valor) };
-                    match self.maq.mmio(0, inf.direccion, inf.tamano as u8, op) {
-                        SalidaMmio::Leido(v) => valor = v,
-                        SalidaMmio::Escrito => {}
-                        // Nada en esa dirección: un aborto externo, como el de un bus de verdad.
-                        SalidaMmio::SinAparato => {
-                            self.cuentas.abortos += 1;
-                            dashos::maquina_aborto(self.vm);
-                        }
-                    }
-                }
-                m::HVC if psci && inf.tamano == 0 => {
-                    self.cuentas.psci += 1;
-                    match self.psci.atender(0, [inf.valor, inf.x1, inf.x2, inf.x3]) {
-                        AccionPsci::Responder(v) => self.poner_x0(v),
-                        AccionPsci::Suspender => self.poner_x0(0),
-                        // Con una vCPU no hay otra que encender.
-                        AccionPsci::Encender { .. } => self.poner_x0(psci::NO_ADMITIDA as i64 as u64),
-                        AccionPsci::ApagarEsta | AccionPsci::ApagarMaquina => return FinCaja::Apagada,
-                        AccionPsci::ReiniciarMaquina => return FinCaja::Reinicio,
-                    }
-                }
-                m::HVC => return FinCaja::Hvc(inf.tamano, [inf.valor, inf.x1, inf.x2, inf.x3]),
-                m::REGISTRO => {
-                    // Depuración y contadores de rendimiento: de solo cero.
-                    self.cuentas.registros += 1;
-                    valor = 0;
-                }
-                m::WFI => {
-                    self.cuentas.wfi += 1;
-                    self.esperar(&inf);
-                }
-                m::INTERRUMPIDO => {
-                    self.cuentas.interrumpido += 1;
-                    self.mirar_entradas();
-                }
-                m::FALLO => return FinCaja::Fallo(inf.esr, inf.pc),
-                e => return FinCaja::Error(e),
+            if self.acabada.load(Ordering::Acquire) {
+                return;
             }
             if dashos::ahora_us() - t0 > plazo_us {
-                return FinCaja::Plazo;
+                self.acabar(llave, FinCaja::Plazo);
+                return;
+            }
+            if self.encendidas[num].load(Ordering::Acquire) == 0 {
+                dashos::hilos::esperar(&self.encendidas[num], 0, 100_000);
+                continue;
+            }
+            // Recién encendida por CPU_ON: como nueva, en su entrada y con su contexto.
+            if let Some((entrada, contexto)) = self.con(|c| c.arranques[num].take()) {
+                v.irq = m::Interrupciones::default();
+                v.cargadas = [None; m::LRS];
+                valor = 0;
+                if dashos::maquina_reiniciar(llave, entrada, contexto) != 0 {
+                    self.acabar(llave, FinCaja::Error(-1));
+                    return;
+                }
+                self.con(|c| c.psci.encendida(num));
+            }
+            self.con(|c| c.llenar_lrs(&mut v));
+            let r = dashos::maquina_correr_irq(llave, &mut inf, valor, &mut v.irq);
+            valor = 0;
+            if r == dashos::E_CERRADO || self.acabada.load(Ordering::Acquire) {
+                // Parada desde otro hilo (o muerta en un fallo de otra vCPU).
+                if !self.acabada.load(Ordering::Acquire) {
+                    self.acabar(llave, FinCaja::Error(r));
+                }
+                return;
+            }
+            let encendidas = &self.encendidas;
+            let (paso, patear) = self.con(|c| {
+                c.cuentas.salidas += 1;
+                c.cuentas.dormido_us += inf.dormido_us;
+                let mut cambio = false;
+                let paso = match r {
+                    m::LECTURA | m::ESCRITURA => {
+                        c.cuentas.aparatos += 1;
+                        let op = if r == m::LECTURA { Operacion::Leer } else { Operacion::Escribir(inf.valor) };
+                        cambio = r == m::ESCRITURA;
+                        match c.maq.mmio(num, inf.direccion, inf.tamano as u8, op) {
+                            SalidaMmio::Leido(v) => Paso::Seguir(v),
+                            SalidaMmio::Escrito => Paso::Seguir(0),
+                            // Nada en esa dirección: un aborto externo, como el de un bus de verdad.
+                            SalidaMmio::SinAparato => {
+                                c.cuentas.abortos += 1;
+                                Paso::Abortar
+                            }
+                        }
+                    }
+                    m::HVC if c.con_psci && inf.tamano == 0 => {
+                        c.cuentas.psci += 1;
+                        match c.psci.atender(num, [inf.valor, inf.x1, inf.x2, inf.x3]) {
+                            AccionPsci::Responder(v) => Paso::PonerX0(v),
+                            AccionPsci::Suspender => Paso::PonerX0(0),
+                            AccionPsci::Encender { cpu, entrada, contexto } if cpu < c.n => {
+                                c.arranques[cpu] = Some((entrada, contexto));
+                                encendidas[cpu].store(1, Ordering::Release);
+                                dashos::hilos::despertar(&encendidas[cpu], 1);
+                                Paso::PonerX0(0)
+                            }
+                            AccionPsci::Encender { .. } => Paso::PonerX0(psci::PARAMETROS_MALOS as i64 as u64),
+                            AccionPsci::ApagarEsta => {
+                                c.soltar_lrs(&mut v);
+                                encendidas[num].store(0, Ordering::Release);
+                                if (0..c.n).all(|j| c.psci.estado(j) == Some(psci::EstadoCpu::Apagada)) {
+                                    Paso::Acabar(FinCaja::Apagada)
+                                } else {
+                                    Paso::Apagarse
+                                }
+                            }
+                            AccionPsci::ApagarMaquina => Paso::Acabar(FinCaja::Apagada),
+                            AccionPsci::ReiniciarMaquina => Paso::Acabar(FinCaja::Reinicio),
+                        }
+                    }
+                    m::HVC => Paso::Acabar(FinCaja::Hvc(inf.tamano, [inf.valor, inf.x1, inf.x2, inf.x3])),
+                    m::REGISTRO => {
+                        // Depuración y contadores de rendimiento: de solo cero.
+                        c.cuentas.registros += 1;
+                        Paso::Seguir(0)
+                    }
+                    m::WFI | m::INTERRUMPIDO => {
+                        if r == m::WFI {
+                            c.cuentas.wfi += 1;
+                        } else {
+                            c.cuentas.interrumpido += 1;
+                        }
+                        cambio = c.mirar_entradas();
+                        Paso::Seguir(0)
+                    }
+                    m::FALLO => Paso::Acabar(FinCaja::Fallo(inf.esr, inf.pc)),
+                    e => Paso::Acabar(FinCaja::Error(e)),
+                };
+                let patear = if cambio { c.por_patear(num, encendidas) } else { 0 };
+                (paso, patear)
+            });
+            for (j, &l) in llaves.iter().enumerate() {
+                if patear & (1 << j) != 0 {
+                    dashos::maquina_patear(l);
+                }
+            }
+            match paso {
+                Paso::Seguir(x) => valor = x,
+                Paso::Abortar => {
+                    dashos::maquina_aborto(llave);
+                }
+                Paso::PonerX0(x) => {
+                    let mut r = [0u64; m::REGISTROS];
+                    if dashos::maquina_registros(llave, &mut r) == 0 {
+                        r[0] = x;
+                        dashos::maquina_poner_registros(llave, &r);
+                    }
+                }
+                Paso::Apagarse => {}
+                Paso::Acabar(fin) => {
+                    self.acabar(llave, fin);
+                    return;
+                }
             }
         }
     }
+
+    /// Corre la máquina que hay puesta: la vCPU 0 en este hilo y cada una de las demás en uno suyo (con su pila del
+    /// montón). Vuelve cuando acaba la máquina o pasa `plazo_us`, con todos sus hilos ya unidos: ninguno se queda
+    /// colgando. Devuelve cómo acabó y cuántos hilos se unieron bien.
+    fn correr(&'static self, plazo_us: u64) -> (FinCaja, usize) {
+        let n = self.con(|c| c.n);
+        let t0 = dashos::ahora_us();
+        PLAZO.store(plazo_us, Ordering::Relaxed);
+        T0.store(t0, Ordering::Relaxed);
+        let mut pilas: Vec<Vec<u8>> = Vec::new();
+        let mut hilos = [0u64; MAX_VCPUS];
+        for (j, h) in hilos.iter_mut().enumerate().take(n).skip(1) {
+            pilas.push(alloc::vec![0u8; PILA_VCPU]);
+            let p = pilas.last_mut().map(|p| p.as_mut_slice()).unwrap_or(&mut []);
+            let r = dashos::hilos::crear(hilo_vcpu, j as u64, p, 0);
+            if r < 0 {
+                println!("  [caja-linux] no se pudo crear el hilo de la vCPU {} ({})", j, r);
+            } else {
+                *h = r as u64;
+            }
+        }
+        self.correr_vcpu(0, t0, plazo_us);
+        // La vCPU 0 acabó: la máquina también (si no, la para), y los demás hilos salen.
+        let llave = self.con(|c| c.llaves[0]);
+        if !self.acabada.load(Ordering::Acquire) {
+            self.acabar(llave, FinCaja::Error(0));
+        }
+        let mut unidos = 1;
+        for &h in &hilos[1..n] {
+            if h != 0 && dashos::hilos::unir(h).0 == 0 {
+                unidos += 1;
+            }
+        }
+        drop(pilas);
+        (self.con(|c| c.fin.unwrap_or(FinCaja::Error(0))), unidos)
+    }
+}
+
+/// La pila del hilo de cada vCPU secundaria.
+const PILA_VCPU: usize = 128 * 1024;
+static PLAZO: AtomicU64 = AtomicU64::new(0);
+static T0: AtomicU64 = AtomicU64::new(0);
+
+fn hilo_vcpu(num: u64) -> u64 {
+    CAJA.correr_vcpu(num as usize, T0.load(Ordering::Relaxed), PLAZO.load(Ordering::Relaxed));
+    0
 }
 
 /// El temporizador virtual del invitado: PPI 11, INTID 27 (el kernel lo pone en su registro de lista).
 const INTID_TEMPORIZADOR: u32 = 27;
 
-fn contador() -> u64 {
-    let c: u64;
-    // SAFETY: CNTVCT_EL0 se lee desde EL0.
-    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) c) };
-    c
-}
-
 /// Una máquina de prueba con su GICV. `None` (y lo dice) si no se puede.
 fn maquina_gic(nombre: &str, codigo: &[u8]) -> Option<u32> {
-    let vm = match maquina(codigo) {
+    maquina_gic_x0(nombre, codigo, 0)
+}
+
+/// Como `maquina_gic`, con `x0` en el x0 de su vCPU 0.
+fn maquina_gic_x0(nombre: &str, codigo: &[u8], x0: u64) -> Option<u32> {
+    let vm = match maquina_x0(codigo, x0) {
         Ok(v) => v,
         Err(e) => {
             println!("  [caja-linux] {}: no se pudo crear la máquina ({}); MAL", nombre, e);
@@ -560,11 +807,12 @@ fn prueba_interrupciones(codigo: &[u8]) -> bool {
 fn prueba_gic_hostil(al_azar: &[u8], tormenta: &[u8], el2: &[u8]) -> bool {
     let mut bien = true;
     if let Some(vm) = maquina_gic("hostil (GIC al azar)", al_azar) {
-        let maq = Vmm::nueva(Ram::nueva(RAM_IPA, 0), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
-        let mut caja = Caja::nueva(vm, maq, &[(RAM_IPA, RAM as u64)]);
-        let fin = caja.correr(5_000_000, false);
+        let maq = Vmm::nueva(ram_vacia(), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
+        CAJA.poner(Caja::nueva(&[vm], maq, &[(RAM_IPA, RAM as u64)], false));
+        let (fin, _) = CAJA.correr(5_000_000);
+        let cuentas = CAJA.quitar().map(|c| c.cuentas).unwrap_or_default();
         dashos::cerrar(vm);
-        let ok = matches!(fin, FinCaja::Hvc(0, [2, ..])) && caja.cuentas.abortos == 2;
+        let ok = matches!(fin, FinCaja::Hvc(0, [2, ..])) && cuentas.abortos == 2;
         let que = match fin {
             FinCaja::Hvc(0, x) => texto(format_args!("acaba con {} abortos externos", x[0])),
             FinCaja::Hvc(n, _) => texto(format_args!("HVC #{}: una excepción inesperada", n)),
@@ -574,7 +822,7 @@ fn prueba_gic_hostil(al_azar: &[u8], tormenta: &[u8], el2: &[u8]) -> bool {
         };
         println!(
             "  [caja-linux] hostil (GIC al azar): 4096 escrituras en su GICV y 4096 en su distribuidor, {} de ellas al servicio; toca la GICH del anfitrión: {}; {}",
-            caja.cuentas.aparatos, que.as_str(), if ok { "bien" } else { "MAL" }
+            cuentas.aparatos, que.as_str(), if ok { "bien" } else { "MAL" }
         );
         bien &= ok;
     } else {
@@ -610,6 +858,73 @@ fn prueba_gic_hostil(al_azar: &[u8], tormenta: &[u8], el2: &[u8]) -> bool {
     bien
 }
 
+/// Varias vCPU (`invitados/smp.s`, dos vCPU, cada una en su hilo): PSCI (CPU_ON a una que no existe y dos veces a la
+/// misma, AFFINITY_INFO), lo que tarda una SGI de una vCPU a otra y vuelta, y dos hostiles: una tormenta de SGI sin fin
+/// (modo 0) y una vCPU en un bucle sin fin con todo enmascarado (modo 1), las dos mientras la otra trabaja. Las dos
+/// máquinas acaban con una vCPU aún dentro de su invitado: se paran y sus hilos se unen.
+fn prueba_smp(codigo: &[u8], modo: u64) -> bool {
+    let nombre = if modo == 0 { "varias vCPU" } else { "hostil (una vCPU en bucle)" };
+    let Some(vm) = maquina_gic_x0(nombre, codigo, modo) else { return false };
+    let otra = dashos::maquina_vcpu(vm, 1, 0, 0);
+    // Una vCPU con un número que ya está, o fuera de rango: no.
+    let repetida = dashos::maquina_vcpu(vm, 1, 0, 0);
+    let fuera = dashos::maquina_vcpu(vm, m::MAX_VCPUS as u64, 0, 0);
+    if otra <= 0 || repetida != dashos::E_ARGUMENTO || fuera != dashos::E_ARGUMENTO {
+        println!("  [caja-linux] {}: la vCPU 1 da {}, otra vez {}, la {} da {}; MAL", nombre, otra, repetida, m::MAX_VCPUS, fuera);
+        dashos::cerrar(vm);
+        if otra > 0 {
+            dashos::cerrar(otra as u32);
+        }
+        return false;
+    }
+    let otra = otra as u32;
+    let maq = Vmm::nueva(ram_vacia(), Distribuidor::nuevo(2, disposicion::NUM_SPIS), disposicion::GICD);
+    CAJA.poner(Caja::nueva(&[vm, otra], maq, &[(RAM_IPA, RAM as u64)], true));
+    let (fin, unidos) = CAJA.correr(20_000_000);
+    let cuentas = CAJA.quitar().map(|c| c.cuentas).unwrap_or_default();
+    let mut r = [0u64; m::REGISTROS];
+    dashos::maquina_registros(vm, &mut r);
+    // Parada: ya no entra ninguna.
+    let parada = dashos::maquina_correr(otra, &mut Informe::default(), 0) == dashos::E_CERRADO;
+    dashos::cerrar(otra);
+    dashos::cerrar(vm);
+    let us = |c: u64| (c as u128 * 1_000_000 / frecuencia() as u128) as u64;
+    let (sola, con_otra) = (us(r[4]), us(r[5]));
+    let bien = match (modo, fin) {
+        (0, FinCaja::Hvc(1, [suma, 100, 0, tormenta])) if tormenta > 0 && unidos == 2 && parada => {
+            println!(
+                "  [caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU: {} µs de media",
+                us(suma) / 100
+            );
+            println!(
+                "  [caja-linux] hostil (tormenta de SGI): {} recibidas mientras trabaja (el trabajo, {} µs sola y {} µs con la tormenta); {} patadas; se para con la tormenta dentro, {} hilos unidos: bien",
+                tormenta, sola, con_otra, cuentas.patadas, unidos
+            );
+            true
+        }
+        (1, FinCaja::Apagada) if unidos == 2 && parada => {
+            println!(
+                "  [caja-linux] hostil (una vCPU en bucle): la otra trabaja ({} µs sola, {} µs con ella en bucle) y apaga la máquina con ella dentro; {} hilos unidos: bien",
+                sola, con_otra, unidos
+            );
+            true
+        }
+        _ => {
+            let que = match fin {
+                FinCaja::Hvc(n, x) => texto(format_args!("HVC #{} con {:?}", n, x)),
+                FinCaja::Apagada => texto(format_args!("apagada")),
+                FinCaja::Plazo => texto(format_args!("no acaba")),
+                FinCaja::Fallo(esr, pc) => texto(format_args!("trampa en {:#x} (ESR {:#x})", pc, esr)),
+                FinCaja::Reinicio => texto(format_args!("reinicio")),
+                FinCaja::Error(e) => texto(format_args!("error {}", e)),
+            };
+            println!("  [caja-linux] {}: {}, {} hilos unidos, parada: {}; MAL", nombre, que.as_str(), unidos, parada);
+            false
+        }
+    };
+    bien
+}
+
 // --- Linux ---
 
 /// Lo que comparten el hilo de la vCPU y el de la ventana de la terminal (y, con la red, el de las tramas).
@@ -620,8 +935,8 @@ struct Compartido {
     entrada: Tubo,
     /// Hay algo nuevo para el invitado: los aparatos tienen que mirar (`Maquina::sondear`).
     aviso: AtomicBool,
-    /// La palabra en la que duerme la vCPU en un WFI: quien deja algo para el invitado la cambia y la despierta.
-    timbre: AtomicU32,
+    /// La llave de la vCPU 0 (0 si no hay máquina): quien deja algo para el invitado la patea, y ella lo mira.
+    vcpu0: AtomicU32,
     /// La ventana: 0 aún no, 1 en pantalla, 2 no pudo.
     ventana: AtomicU32,
     /// Se apagó la máquina: la ventana dice que ha acabado.
@@ -632,17 +947,20 @@ static COMPARTIDO: Compartido = Compartido {
     salida: Tubo::nuevo(256 * 1024),
     entrada: Tubo::nuevo(4096),
     aviso: AtomicBool::new(false),
-    timbre: AtomicU32::new(0),
+    vcpu0: AtomicU32::new(0),
     ventana: AtomicU32::new(0),
     acabada: AtomicBool::new(false),
 };
 
 impl Compartido {
-    /// Algo nuevo para el invitado: que lo miren los aparatos y que despierte la vCPU si duerme en un WFI.
+    /// Algo nuevo para el invitado: que lo miren los aparatos, y la vCPU 0 que salga a mirarlo (duerma en un WFI o
+    /// esté dentro del invitado). Ella pasa la interrupción a la vCPU que toque.
     fn avisar(&self) {
         self.aviso.store(true, Ordering::Release);
-        self.timbre.fetch_add(1, Ordering::AcqRel);
-        dashos::hilos::despertar(&self.timbre, 1);
+        let v = self.vcpu0.load(Ordering::Acquire);
+        if v != 0 {
+            dashos::maquina_patear(v);
+        }
     }
 }
 
@@ -712,7 +1030,9 @@ const MAX_TROZOS: usize = 32;
 const RAM_MINIMA: usize = 64 << 20;
 /// La consola temprana por el PL011; la de verdad, virtio-console (hvc0). `caja.escribir` pide al /init de prueba que
 /// escriba en el disco; `caja.terminal`, que deje una shell en hvc0 (hay ventana de terminal).
-const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 panic=-1 caja.escribir";
+const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 panic=-1 caja.escribir caja.paralelo";
+/// Las vCPU del invitado de Linux.
+const VCPUS_LINUX: usize = 4;
 /// El disco: 1 MB en memoria, con esto al principio. El /init escribe `ESCRITO` en el sector 8.
 const MARCA_DISCO: &[u8] = b"DISCO-CAJA-LINUX";
 const ESCRITO: &[u8] = b"ESCRITO-POR-LINUX";
@@ -1133,7 +1453,7 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let mut disco = alloc::vec![0u8; TAM_DISCO];
     disco[..MARCA_DISCO.len()].copy_from_slice(MARCA_DISCO);
     let disco = Rc::new(RefCell::new(disco));
-    let mut maq = Vmm::nueva(RamCaja(Ram { base: disposicion::RAM, datos: ram }), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
+    let mut maq = Vmm::nueva(RamCaja(Ram { base: disposicion::RAM, datos: ram }), Distribuidor::nuevo(VCPUS_LINUX, disposicion::NUM_SPIS), disposicion::GICD);
     let (v0, v1, v2) = (disposicion::virtio(0), disposicion::virtio(1), disposicion::virtio(2));
     // La red, si el servicio de red da un puerto: una MAC local al azar (02:da:...).
     let cuentas_red = Rc::new(RefCell::new((0u64, 0u64, 0u64, 0u64)));
@@ -1150,7 +1470,7 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let con_red = red.is_some();
     let puestos = puestos && red.is_none_or(|r| maq.añadir(v2.base, v2.spi, Box::new(TransporteMmio::nuevo(caja_vmm::virtio::red::Red::nueva(Box::new(r), mac)))).is_ok());
     let bootargs = if terminal { alloc::format!("{} caja.terminal", BOOTARGS) } else { String::from(BOOTARGS) };
-    let mut config = disposicion::config(tam_ram as u64, 1, if con_red { 3 } else { 2 }, bootargs, plan.initrd);
+    let mut config = disposicion::config(tam_ram as u64, VCPUS_LINUX as u32, if con_red { 3 } else { 2 }, bootargs, plan.initrd);
     let mut semilla = [0u8; 32];
     if dashos::azar(&mut semilla).is_some() {
         config.semilla = Some(semilla);
@@ -1172,22 +1492,37 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
         bien &= vm > 0 && dashos::maquina_memoria(vm as u32, mm, disposicion::RAM + (i * TROZO) as u64) == 0;
     }
     bien &= vm > 0 && dashos::maquina_gicv(vm as u32, GICC) == 0;
+    // Las vCPU secundarias, apagadas hasta que Linux las encienda por PSCI (CPU_ON).
+    let mut llaves = [0u32; VCPUS_LINUX];
+    llaves[0] = vm as u32;
+    for (j, l) in llaves.iter_mut().enumerate().skip(1) {
+        let r = if bien { dashos::maquina_vcpu(vm as u32, j as u64, 0, 0) } else { -1 };
+        bien &= r > 0;
+        *l = r.max(0) as u32;
+    }
     if !bien {
         println!("  [caja-linux] linux: no se pudo crear la máquina ({}); MAL", vm);
         return false;
     }
     let vm = vm as u32;
+    COMPARTIDO.vcpu0.store(vm, Ordering::Release);
     println!(
-        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, PL011, virtio-console, virtio-blk de {} KB{}; arranca",
-        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, TAM_DISCO / 1024,
+        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, {} vCPU, PL011, virtio-console, virtio-blk de {} KB{}; arranca",
+        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, VCPUS_LINUX, TAM_DISCO / 1024,
         if con_red { " y virtio-net por el servicio de red" } else { "" }
     );
     let t0 = dashos::ahora_us();
-    let mut caja = Caja::nueva(vm, maq, &config.memoria);
+    CAJA.poner(Caja::nueva(&llaves, maq, &config.memoria, true));
     let plazo_s = if terminal { 600 } else { 240 };
-    let fin = caja.correr(plazo_s * 1_000_000, true);
+    let (fin, unidos) = CAJA.correr(plazo_s * 1_000_000);
     let ms = (dashos::ahora_us() - t0) / 1000;
-    dashos::cerrar(vm);
+    COMPARTIDO.vcpu0.store(0, Ordering::Release);
+    let caja = CAJA.quitar();
+    let cuentas = caja.as_ref().map(|c| c.cuentas).unwrap_or_default();
+    drop(caja);
+    for &l in &llaves {
+        dashos::cerrar(l);
+    }
     COMPARTIDO.acabada.store(true, Ordering::Release);
     let que = match fin {
         FinCaja::Apagada => texto(format_args!("Linux apagó la máquina por PSCI")),
@@ -1197,16 +1532,17 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
         FinCaja::Fallo(esr, pc) => texto(format_args!("trampa en {:#x} (ESR {:#x}, clase {:#x})", pc, esr, esr >> 26)),
         FinCaja::Error(e) => texto(format_args!("error {}", e)),
     };
-    let c = &caja.cuentas;
+    let c = &cuentas;
     println!("  [caja-linux] linux: se para la máquina a los {} ms: {}", ms, que.as_str());
     println!(
-        "  [caja-linux] linux: {} salidas: {} a aparatos ({} abortos), {} PSCI, {} WFI ({} ms dormido), {} por el reloj, {} registros; {} interrupciones inyectadas",
-        c.salidas, c.aparatos, c.abortos, c.psci, c.wfi, c.dormido_us / 1000, c.interrumpido, c.registros, c.inyectadas
+        "  [caja-linux] linux: {} salidas: {} a aparatos ({} abortos), {} PSCI, {} WFI ({} ms dormido), {} por el reloj u otra vCPU, {} registros; {} interrupciones inyectadas, {} patadas entre vCPU",
+        c.salidas, c.aparatos, c.abortos, c.psci, c.wfi, c.dormido_us / 1000, c.interrumpido, c.registros, c.inyectadas, c.patadas
     );
+    println!("  [caja-linux] linux: hilos de las {} vCPU unidos al acabar: {}", VCPUS_LINUX, unidos);
     let e = estado.borrow();
     let d = disco.borrow();
     let escrito = &d[4096..4096 + ESCRITO.len()] == ESCRITO;
-    let ok = matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito && (!terminal || e.terminal);
+    let ok = matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito && (!terminal || e.terminal) && unidos == VCPUS_LINUX;
     if e.sin_sacar > 0 {
         println!("  [caja-linux] linux: ({} líneas sin sacar al registro: demasiadas seguidas)", e.sin_sacar);
     }
@@ -1631,6 +1967,12 @@ fn principal() -> u64 {
     let tercero = prueba_interrupciones(irq) & prueba_gic_hostil(gic_hostil, tormenta, el2);
     println!("  [caja-linux] interrupciones del invitado: {}", if tercero { "bien" } else { "MAL" });
     bien &= tercero;
+    // Varias vCPU.
+    // SAFETY: etiquetas de smp.s.
+    let smp = unsafe { codigo(&invitado_smp, &invitado_smp_fin) };
+    let cuarto = prueba_smp(smp, 0) & prueba_smp(smp, 1);
+    println!("  [caja-linux] varias vCPU: {}", if cuarto { "bien" } else { "MAL" });
+    bien &= cuarto;
     // Con la Image de un kernel de Linux, Linux hasta busybox (y, con ventana, una terminal con su shell).
     if l.linux.is_some() {
         let invitado = dashos::maquina::memoria_invitado(ram) as usize;
