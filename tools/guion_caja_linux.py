@@ -22,7 +22,9 @@ Con MODO "wayland" (`make arranque-virt-wayland`), lo mismo hasta el prompt de r
 (H9, el puente de Wayland): mira que el puente está en marcha, lanza `puente --hostil` (tramas rotas por vsock: DashOS
 las corta y sigue), abre `ventana_wayland` (un cliente de libwayland con wl_shm), hace clic en su ventana y pulsa "a"
 (las dos cosas le llegan), espera su medida de cuadros por segundo, captura la pantalla (PREFIJO.png) y la cierra con
-"q". Después abre foot (una terminal de Wayland de verdad) con `prueba-foot`, teclea "hola" en su ventana (la shell
+"q". Mide después cuadros por segundo sin copia y con copia (`/run/dashos-puente-copia`), de 320 x 240 y de
+1280 x 720, 8 s cada una, captura la grande (PREFIJO.grande.png) y saca lo que dijo el puente (`journalctl`, con lo
+que gastó de CPU). Después abre foot (una terminal de Wayland de verdad) con `prueba-foot`, teclea "hola" en su ventana (la shell
 de dentro lo escribe en hvc0), la captura (PREFIJO.foot.png) y apaga.
 
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
@@ -52,6 +54,16 @@ def texto():
         return open(serie, errors="replace").read()
     except OSError:
         return ""
+
+
+def esperar_n(patron, n, segundos):
+    """Espera a que `patron` salga `n` veces."""
+    hasta = time.time() + segundos
+    while time.time() < hasta and time.time() - inicio < total:
+        if len(re.findall(patron, texto())) >= n:
+            return True
+        time.sleep(0.25)
+    return False
 
 
 def esperar(patron, segundos):
@@ -163,6 +175,25 @@ if modo == "wayland":
     capturar(prefijo)
     mandar("sendkey q")
     esperar(r"ventana_wayland: .* adiós", 30)
+    # Medidas: sin copia y con copia (el puente copia a los programas que conectan con el fichero puesto), de 320 x 240
+    # y de 1280 x 720, 8 s cada una.
+    for copia, ancho, alto in [(False, 320, 240), (True, 320, 240), (False, 1280, 720), (True, 1280, 720)]:
+        clic_en_ventana()
+        teclear("touch /run/dashos-puente-copia" if copia else "rm -f /run/dashos-puente-copia")
+        time.sleep(1.0)
+        antes = len(re.findall(rf"ventana_wayland: medida de {ancho} x {alto}", texto()))
+        teclear(f"ventana_wayland {ancho} {alto} 8")
+        if ancho == 1280 and not copia and esperar_n(r"primer cuadro en pantalla .*\(1280 x 720\)", 1, 180):
+            time.sleep(4.0)
+            capturar(prefijo + ".grande")
+        esperar_n(rf"ventana_wayland: medida de {ancho} x {alto}", antes + 1, 180)
+        time.sleep(1.0)
+    clic_en_ventana()
+    teclear("rm -f /run/dashos-puente-copia")
+    time.sleep(1.0)
+    clic_en_ventana()
+    teclear("journalctl -u dashos-puente -o cat --no-pager")
+    esperar_n(r"CPU del puente", 5, 60)
     # foot, una terminal de Wayland de verdad: la primera vez hace la caché de letras de fontconfig.
     clic_en_ventana()
     teclear("prueba-foot &")
