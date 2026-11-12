@@ -1253,3 +1253,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Sin fusionar, en sus ramas: `fondo-c3` (fondo con PNG y colores del fondo, protocolo del tema v2; choca con
   `escritorio` en el guion y en captura_ventanas.py: en (5, 60) usar `fondo_en`), `workbench` y `avisos` (solo diseño en
   sus bitácoras: pararon por el cupo antes del código).
+- Fallos del arranque tras las fusiones, buscados con cuatro arranques a la vez (uno en `revision` y tres en worktrees
+  `prueba1..3` con el mismo commit), con el PC cargado por otra sesión:
+  (1) `ficheros`: con el servicio atareado, su cola se llenaba y la petición se daba por fallida; las respuestas se
+  desacompasaban (A15 "sujetar" y "sin soltar" con i32::MIN). Ahora reintenta la escritura (3aac5ff).
+  (2) `guardian` anunciaba "esperando" antes de que el compositor creara el aviso de inactividad: un Super+L temprano
+  se perdía. Ahora un sync antes (d900c04).
+  (3) El guion: con el PC lento, Ajustes salía después del selector y el clic del paso de Ajustes le quitaba el
+  teclado al selector; sus teclas iban a Ajustes y el paso del selector esperaba sin fin, sin dejar pasar a los de
+  detrás (el menú, Super+L a tiempo). Ahora el paso de Ajustes espera al selector (cb7941b). Se vio apuntando el
+  estado del guion cada 5 s.
+  (4) La línea esperada del lanzador exigía "3 programas" y el disco trae ya 4 (`cambio`): sin número.
+  Con los cuatro, las cuatro vueltas pasan todo lo demás.
