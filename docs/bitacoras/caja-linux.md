@@ -718,7 +718,14 @@ shell.
 [caja-linux] linux: ventana_wayland: tengo el teclado
 [caja-linux] linux: ventana_wayland: clic del botón 272 en (160, 120)
 [caja-linux] linux: ventana_wayland: tecla 30 pulsada
-[caja-linux] linux: ventana_wayland: en marcha: 333 cuadros en 5101 ms, 65.2 por segundo
+[caja-linux] linux: ventana_wayland: en marcha: 353 cuadros en 5009 ms, 70.4 por segundo
+[caja-linux] linux: ventana_wayland: al acabar: 201 cuadros en 2679 ms, 75.0 por segundo
+[caja-linux] linux: ventana_wayland: 2 teclas y 1 clics; adiós
+[caja-linux] linux: foot: lista
+[compositor] ventana de caja-linux (un programa de su puente de Wayland) en (107, 132)
+[caja-linux] linux: foot: leido hola
+[caja-linux] linux: se para la máquina a los 62485 ms: Linux apagó la máquina por PSCI
+[caja-linux] wayland: 6 transportes (3 cortados por tramas malas), 36 clientes de Linux, 38 KB de Wayland al compositor y 19 KB al invitado, 170846 KB de búferes copiados, 33 memorias, 346 cosas malas tiradas, 2 clientes cerrados
 ```
 
 Capturas (fuera de git): `capturas-agente/caja-linux-wayland.png` (la ventana de `ventana_wayland` encima de la
@@ -770,6 +777,18 @@ programa de Linux ──libwayland──▶ puente (Arch, /run/wayland-0) ──
 
 ### Lo que hubo que arreglar por el camino
 
+- **Un objeto de memoria de DashOS no crece.** Un pool de `wl_shm` puede crecer (`wl_shm_pool.resize`; lo hace
+  libwayland-cursor con los cursores, y foot). Si cabe en las páginas de su memoria, pasa tal cual. Si no, el puente de
+  Linux no manda el `resize`: crea al otro lado una memoria nueva con todo lo del pool y un `wl_shm.create_pool` sobre
+  ella con un número de objeto propio (desde 0xfeffffff hacia abajo; el programa cuenta desde 1), y los búferes que el
+  programa cree después en ese pool van al nuevo. Los de antes siguen en el viejo, con su memoria; al destruir el pool
+  se destruyen también sus sucesores. `ventana_wayland` empieza con un pool de 4 KB que crece (lo prueba siempre).
+  Al destruir un sucesor, el programa puede recibir un `delete_id` de un número que no conoce; en las pruebas no ha
+  dado problemas, pero el puente aún no lo filtra.
+- **Memorias que no se soltaban.** El puente de G1 no soltaba nunca la memoria de un pool de `wl_shm` (con el tope de
+  memoria de la caja, se habría llenado). Ahora la suelta cuando el pool está destruido y no le quedan búferes (un
+  búfer vive más que su pool), cuando el programa se va y, para las copias de otros descriptores, en cuanto el mensaje
+  ha salido.
 - **El portapapeles.** foot no arranca sin `wl_data_device_manager` ("no clipboard available"). El compositor lo
   anuncia ahora (v3, número 14) con sus objetos, pero sin guardar selecciones ni mandar ofertas: copiar y pegar entre
   programas sigue pendiente.
@@ -804,4 +823,27 @@ QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
 |---|---|
 | `ventana_wayland` (320 × 240, la ventana entera dañada en cada cuadro: 300 KB por cuadro por vsock) | 65 a 75 cuadros por segundo, unos 20 MB/s de búferes |
 | Del arranque del programa a su primer cuadro en pantalla | 50 ms |
-| El puente de Linux, en el PC con alacritty (G6) o el cliente de G1 | lo de `GRAFICOS_LOOP.md` |
+| Lo copiado en la prueba entera (`ventana_wayland` 554 cuadros y foot) | 167 MB de búferes, 38 KB de Wayland hacia el compositor y 19 KB hacia Linux |
+| `make arranque-virt-wayland` entera, de la primera instrucción de Linux a `poweroff` | 62 s |
+
+Lo que limita los cuadros por segundo en QEMU es la copia (de la memoria del programa al socket de vsock en Linux, y
+del anillo a la memoria del compositor), las salidas de la vCPU por cada aviso de vsock y componer por CPU la ventana
+entera: no se ha medido cada parte. En la Pi será otro número.
+
+### Qué falta
+
+- **Sin copia**: que el compositor lea los búferes en la RAM del invitado. Necesita en el kernel un objeto de memoria
+  hecho de páginas de otro (las del `memfd`, que el puente de Linux tendría que encontrar) y decidir qué pasa si el
+  invitado las cambia mientras se compone. Con varias vCPU, la copia ya no para a las demás.
+- **El portapapeles de verdad** (selección, ofertas, `wl_data_offer`) y la selección primaria; arrastrar y soltar.
+- **Pools de más de 64 MB** (el tope del compositor) o memorias de más de 16 MB (el de `memoria_crear`): foot va con
+  `max-shm-pool-size-mb=0`; un programa que pida un pool así recibe un error de protocolo.
+- **Decoraciones**: foot se pinta las suyas (CSD); `ventana_wayland` sale sin borde. Falta `xdg-decoration` para que
+  el compositor ponga las de DashOS.
+- **GPU**: los programas de Mesa pintan por software (no hay `linux-dmabuf` en el compositor de DashOS ni virtio-gpu
+  en la caja).
+- **Más programas de verdad**: no se ha probado GTK4 ni Firefox (mucho para QEMU sin aceleración y 256 MB).
+- `pacman-key --init` y `--populate` no van en la imagen: los paquetes se meten ya instalados desde el PC. Para instalar
+  con `pacman -S` dentro de la caja hay que hacerlo a mano la primera vez.
+- Al acabar la prueba, el compositor suelta a caja-linux por no leer sus eventos (tras apagarse Linux); no se ha
+  mirado si pasaba ya antes de esta rama.
