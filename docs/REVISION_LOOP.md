@@ -1618,3 +1618,18 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `~/.cache/dashos-caja-linux-sincopia`.
 - `make prueba` BIEN; arranque-virt (el sonido salió MAL una vez con la carga del PC a 14; repetido, BIEN), -vm,
   -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:45: GPU para la caja Linux (virtio-gpu 2D y estudio S25), en revision
+- Fusionada `caja-linux-gpu`: estudio `docs/diseño/S25-gpu-caja-linux.md` (para la Pi 4, V3D mediada: Linux usa su
+  v3d y Mesa sin cambios, DashOS atrapa la MMU del hub, el GMP y la energía y le da una tabla sombra que solo apunta a
+  su RAM, porque la BCM2711 no tiene IOMMU; debajo, virtio-gpu 2D; más tarde, contexto nativo; Venus/virgl
+  descartados). Aparato virtio-gpu 2D en `caja-linux/vmm` (pantalla del invitado en una ventana de DashOS,
+  `pantalla_caja.rs`) y la lógica de la tabla sombra probada en el PC (sin V3D real).
+- Medidas (QEMU, todo por CPU): `cuadros_gl` 640×480 por Wayland 9-12 cuadros/s, por la pantalla de virtio-gpu
+  17-20; `es2gears_wayland` 18-24; `vkcube` (lavapipe) 100 cuadros en 9,4 s. linux-dmabuf no se hizo: en QEMU Mesa
+  cae en llvmpipe con wl_shm; hace falta con la V3D en la Pi.
+- Hostil: órdenes rotas, recursos enormes, ids 0/repetidos/inexistentes, respaldos fuera de la RAM del invitado; tabla
+  sombra con entradas a 0 o fuera, MMU apagada, zonas sin traducir.
+- Kernel y disco de Arch para todo lo fusionado en `~/.cache/dashos-caja-linux-fusion` (pasar `ARCH_IMAGE` y
+  `ARCH_DISCO`, o rehacer `preparar-arch` en la caché compartida).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland y -gpu (nueva): BIEN.
