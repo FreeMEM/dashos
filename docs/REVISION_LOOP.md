@@ -979,3 +979,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `docs/capturas/s10c-centro-discos.png`.
 - Tanda de estabilidad con todo lo de la noche (centro de control, tema del sistema, Super+L, discos por tabla, NVMe a
   la vez): `make prueba` 3 de 3 y `make arranque-virt` 2 de 2, bien.
+- A15, cómo hacer COMPROBAR sin parar a todos (solo plan; con datos va a 160 MB/s y en una SD grande serían minutos):
+  1. **Dentro de `archivos`, a trozos.** Una instantánea interna fija la cabecera de ese momento (sus bloques no se
+     reusan mientras viva) y el comprobador recorre esa foto con una pila propia en vez de recursión, unos cientos de
+     nodos por vuelta del bucle; entre trozo y trozo, el servicio atiende a los demás. Lo que se escribe mientras
+     tanto no estorba: es otra foto. Pide reescribir el recorrido de `redoxfs::check` como iterador.
+  2. **En otro proceso, `comprobador`.** `archivos` hace la instantánea y le da un tramo del disco solo para leer
+     (el servicio de disco necesitaría tramos de solo lectura); el comprobador lee con la biblioteca de RedoxFS, como
+     `ver`, en otro núcleo, y contesta con el informe. `archivos` no se para nada y, si el comprobador cae o tarda,
+     no arrastra a nadie (como el lector de discos ajenos, R13).
+  Recomendación: la 2 para los datos (es lo lento: lectura y CRC, que van mejor en otro núcleo, y el servicio de disco
+  ya atiende varias órdenes a la vez), y dejar la comprobación de la estructura dentro, que va a 1.655 MB/s. Antes:
+  tramos de solo lectura en el servicio de disco (con su prueba hostil: escribir por ellos da -6).
