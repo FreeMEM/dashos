@@ -10,6 +10,9 @@
 //! y hostiles con el GIC), y un kernel de Linux con su initramfs, con los aparatos del crate `caja-linux/vmm`, hasta
 //! busybox.
 //!
+//! Cuarto paso: Arch Linux ARM (`make arranque-virt-arch`): sin initramfs, el disco del invitado es la partición de la
+//! caja en el NVMe, por el servicio de disco ("disco"), y Linux arranca su systemd desde ella.
+//!
 //! Llave 1: el permiso de máquinas virtuales, que le da `inicio`. Llaves 2 y 3, si las hay: la Image de Linux y su
 //! initramfs.
 
@@ -29,6 +32,7 @@ use caja_vmm::gic::{self, Distribuidor};
 use caja_vmm::maquina::{Maquina as Vmm, Operacion, SalidaMmio};
 use caja_vmm::memoria::{FueraDeMemoria, MemoriaInvitado, Ram};
 use caja_vmm::pl011::Pl011;
+use caja_vmm::pl031::{Pl031, Reloj};
 use caja_vmm::psci::{self, AccionPsci, Psci};
 use caja_vmm::virtio::bloque::{Bloque, Bloques, ErrorBloques};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
@@ -699,7 +703,8 @@ impl Tubo {
 
 /// Llave 1: "sistema" (la RAM y si hay hipervisor). Después, en `virt`: la Image de un kernel de Linux para arm64 y su
 /// initramfs (busybox), si los hay (`make arranque-virt-linux`), solo de lectura; y los canales "ventanas" (la
-/// terminal), "sesiones" (el permiso) y "red". En la Pi 4: el permiso, que da `inicio`.
+/// terminal), "disco" (el disco de Arch), "sesiones" (el permiso) y "red", en ese orden (el de `inicio`). En la Pi 4: el
+/// permiso, que da `inicio`.
 const SISTEMA: u32 = 1;
 const VA_SISTEMA: usize = 0x1800_0000;
 const VA_IMAGEN: usize = 0x2000_0000;
@@ -713,6 +718,8 @@ const RAM_MINIMA: usize = 64 << 20;
 /// La consola temprana por el PL011; la de verdad, virtio-console (hvc0). `caja.escribir` pide al /init de prueba que
 /// escriba en el disco; `caja.terminal`, que deje una shell en hvc0 (hay ventana de terminal).
 const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 panic=-1 caja.escribir";
+/// Con Arch Linux ARM: la raíz es el disco virtio (la partición de la caja) y el init, el de Arch (systemd).
+const BOOTARGS_ARCH: &str = "earlycon=pl011,0x09000000 console=hvc0 root=/dev/vda rw rootwait panic=-1";
 /// El disco: 1 MB en memoria, con esto al principio. El /init escribe `ESCRITO` en el sector 8.
 const MARCA_DISCO: &[u8] = b"DISCO-CAJA-LINUX";
 const ESCRITO: &[u8] = b"ESCRITO-POR-LINUX";
@@ -732,6 +739,8 @@ struct Llaves {
     ventanas: Option<u32>,
     sesiones: Option<u32>,
     red: Option<u32>,
+    /// El servicio de disco (la partición de la caja Linux: el disco de Arch).
+    disco: Option<u32>,
     /// El permiso, en la Pi 4 (lo da `inicio`).
     permiso: Option<u32>,
 }
@@ -746,7 +755,7 @@ fn existe(k: u32) -> bool {
 }
 
 /// Mira qué llaves tiene: tras "sistema", las de datos (Linux y su initramfs); después, o el permiso (en la Pi, y nada
-/// más) o los tres canales (en `virt`).
+/// más) o los cuatro canales (en `virt`).
 fn llaves() -> Llaves {
     let mut l = Llaves::default();
     let mut k = 2;
@@ -758,7 +767,14 @@ fn llaves() -> Llaves {
             k += 1;
         }
     }
-    if existe(k + 1) {
+    // Los canales llegan en el orden en que `inicio` los crea (el de su primer nombre en su lista, no el de la lista de
+    // la caja): "ventanas" (el compositor), "disco" (el servicio de disco), "sesiones" y "red".
+    if existe(k + 3) {
+        l.ventanas = Some(k);
+        l.disco = Some(k + 1);
+        l.sesiones = Some(k + 2);
+        l.red = Some(k + 3);
+    } else if existe(k + 1) {
         l.ventanas = Some(k);
         l.sesiones = Some(k + 1);
         l.red = existe(k + 2).then_some(k + 2);
@@ -812,6 +828,10 @@ struct EstadoConsola {
     fin: bool,
     /// La shell de la terminal está lista (`caja-linux: terminal lista`).
     terminal: bool,
+    /// Arch Linux ARM: systemd da la bienvenida, getty entra como root y sale el prompt de su shell.
+    arch: bool,
+    login: bool,
+    prompt: bool,
     /// Para no inundar el registro: lo que queda de la ráfaga, cuándo se repuso y cuántas líneas no salieron.
     cupo: u64,
     repuesto_us: u64,
@@ -826,7 +846,9 @@ struct Registro {
     linea: Vec<u8>,
     estado: Rc<RefCell<EstadoConsola>>,
     terminal: bool,
-    /// Dentro de una secuencia de escape (para el registro): 1 tras ESC, 2 dentro de una CSI.
+    /// Dentro de una secuencia de escape (para el registro): 1 tras ESC, 2 dentro de una CSI, 3 dentro de una cadena de
+    /// control (OSC, DCS, SOS, PM o APC de ECMA-48, hasta BEL o ESC \: systemd manda OSC 3008 y una DCS al arrancar) y
+    /// 4 tras un ESC dentro de ella.
     escape: u8,
 }
 
@@ -842,6 +864,9 @@ impl Registro {
         e.busybox |= t.contains("BusyBox v");
         e.fin |= t.contains("caja-linux: fin de la prueba");
         e.terminal |= t.contains("caja-linux: terminal lista");
+        e.arch |= t.contains("Welcome to Arch Linux ARM");
+        e.login |= t.contains("login: root (automatic login)");
+        e.prompt |= t.contains("[root@caja ");
         // La ráfaga se repone a `POR_SEGUNDO` líneas por segundo.
         let ahora = dashos::ahora_us();
         if e.lineas == 1 {
@@ -881,9 +906,15 @@ impl ExtremoConsola for Registro {
             match (self.escape, c) {
                 (0, 0x1b) => self.escape = 1,
                 (1, b'[') => self.escape = 2,
+                (1, b']' | b'P' | b'X' | b'^' | b'_') => self.escape = 3,
                 (1, _) => self.escape = 0,
                 (2, 0x40..=0x7e) => self.escape = 0,
                 (2, _) => {}
+                (3, 0x07) => self.escape = 0,
+                (3, 0x1b) => self.escape = 4,
+                (3, _) => {}
+                (4, b'\\') => self.escape = 0,
+                (4, _) => self.escape = 3,
                 (_, b'\n') => self.sacar(),
                 (_, 0x08) => {
                     self.linea.pop();
@@ -924,6 +955,162 @@ impl Bloques for Disco {
         let ini = (sector as usize).checked_mul(512).ok_or(ErrorBloques)?;
         d.get_mut(ini..ini.checked_add(datos.len()).ok_or(ErrorBloques)?).ok_or(ErrorBloques)?.copy_from_slice(datos);
         Ok(())
+    }
+}
+
+// --- El disco de Arch: la partición de la caja Linux en el NVMe, por el servicio de disco ---
+//
+// El servicio de disco (`nvme`, protocolo en `docs/referencia/servicios.md`) da a la caja, por su nombre, la partición
+// de la caja Linux de la tabla GPT (`dashos::particiones`), como si fuera un disco entero: su sector 0 es el primero de
+// la partición y no puede nombrar nada de fuera. Al abrir, da una ventana de memoria DMA de 128 KB que comparten los dos;
+// cada lectura o escritura es una petición por el canal con los sectores y el sitio en la ventana, y el disco lee o
+// escribe ahí sin copias. La caja copia entre la ventana y la RAM del invitado. Las peticiones van de una en una, con la
+// vCPU parada en su escritura a QueueNotify (una vCPU: el invitado no hace nada mientras tanto).
+
+const VA_VENTANA_DISCO: usize = 0x32_0000_0000;
+/// Lo que se pide al disco de una vez (la mitad de la ventana; la otra es para lo que el servicio lee por adelantado).
+const PIEZA_DISCO: usize = 64 * 1024;
+const D_ABRIR: u32 = 0;
+const D_LEER: u32 = 1;
+const D_ESCRIBIR: u32 = 2;
+const D_VACIAR: u32 = 5;
+/// Lo que se espera una respuesta del servicio de disco: al abrir, puede estar arrancando todavía.
+const PLAZO_ABRIR_US: u64 = 30_000_000;
+const PLAZO_DISCO_US: u64 = 10_000_000;
+
+/// Lecturas, escrituras (peticiones al servicio y KB) y errores del disco de Arch.
+#[derive(Default, Clone, Copy)]
+struct CuentasDisco {
+    lecturas: u64,
+    kb_leidos: u64,
+    escrituras: u64,
+    kb_escritos: u64,
+    vaciados: u64,
+    errores: u64,
+}
+
+struct DiscoNvme {
+    canal: u32,
+    lectura: u32,
+    vuelta: u32,
+    sectores: u64,
+    cuentas: Rc<RefCell<CuentasDisco>>,
+}
+
+impl DiscoNvme {
+    /// Una petición y su respuesta: (estado, sectores de su tramo, tamaño del sector, la llave que venga).
+    fn pedir(&self, orden: u32, cuantos: u32, primero: u64, plazo_us: u64) -> Option<(i32, u64, u32, Option<u32>)> {
+        let mut p = [0u8; 24];
+        p[0..4].copy_from_slice(&orden.to_le_bytes());
+        p[4..8].copy_from_slice(&cuantos.to_le_bytes());
+        p[8..16].copy_from_slice(&primero.to_le_bytes());
+        let copia = dashos::llave_duplicar(self.vuelta, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+        if copia <= 0 {
+            return None;
+        }
+        if dashos::canal_escribir(self.canal, &p, &[copia as u32]) != 0 {
+            dashos::cerrar(copia as u32);
+            return None;
+        }
+        let mut r = [0u8; 24];
+        let mut ll = [0u32; 1];
+        let (n, k, _) = dashos::canal_leer_plazo(self.lectura, &mut r, &mut ll, plazo_us);
+        if n != 24 {
+            if k > 0 {
+                dashos::cerrar(ll[0]);
+            }
+            return None;
+        }
+        let u32_en = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+        Some((u32_en(0) as i32, u32_en(8) as u64 | (u32_en(12) as u64) << 32, u32_en(16), (k > 0).then_some(ll[0])))
+    }
+
+    /// Abre la partición de la caja: el disco, o por qué no.
+    fn abrir(canal: u32, cuentas: &Rc<RefCell<CuentasDisco>>) -> Result<Self, String> {
+        let (lectura, vuelta) = dashos::canal_crear();
+        let d = DiscoNvme { canal, lectura, vuelta, sectores: 0, cuentas: cuentas.clone() };
+        let Some((estado, sectores, tam_sector, ventana)) = d.pedir(D_ABRIR, 0, 0, PLAZO_ABRIR_US) else {
+            return Err(String::from("el servicio de disco no contesta"));
+        };
+        let Some(v) = ventana.filter(|_| estado == 0) else {
+            // -6: sin tramo (no hay partición de la caja Linux en el disco).
+            return Err(alloc::format!("el servicio de disco no lo abre (estado {})", estado));
+        };
+        if tam_sector != 512 || sectores == 0 {
+            return Err(alloc::format!("sectores de {} bytes (se esperan de 512)", tam_sector));
+        }
+        if dashos::memoria_tamano(v) < 2 * PIEZA_DISCO as i64 || dashos::memoria_proyectar(v, VA_VENTANA_DISCO, true) != 0 {
+            return Err(String::from("su ventana no se proyecta"));
+        }
+        Ok(DiscoNvme { sectores, ..d })
+    }
+
+    /// Lee o escribe `n` sectores desde `sector` por la ventana (de pieza en pieza). Para escribir, `copiar` pone los
+    /// datos en la ventana antes; para leer, los saca después.
+    fn mover(&mut self, orden: u32, sector: u64, buf_len: usize, mut copiar: impl FnMut(usize, &mut [u8])) -> Result<(), ErrorBloques> {
+        let mut hecho = 0;
+        while hecho < buf_len {
+            let k = (buf_len - hecho).min(PIEZA_DISCO);
+            // SAFETY: la ventana del servicio de disco, proyectada en `VA_VENTANA_DISCO` (al menos 128 KB); solo la
+            // tocan el servicio (cuando se le pide) y este hilo.
+            let ventana = unsafe { core::slice::from_raw_parts_mut(VA_VENTANA_DISCO as *mut u8, k) };
+            if orden == D_ESCRIBIR {
+                copiar(hecho, ventana);
+                dashos::barrera();
+            }
+            let r = self.pedir(orden, (k / 512) as u32, sector + (hecho / 512) as u64, PLAZO_DISCO_US);
+            let mut c = self.cuentas.borrow_mut();
+            if !matches!(r, Some((0, ..))) {
+                c.errores += 1;
+                return Err(ErrorBloques);
+            }
+            if orden == D_LEER {
+                dashos::barrera();
+                copiar(hecho, ventana);
+                c.lecturas += 1;
+                c.kb_leidos += k as u64 / 1024;
+            } else {
+                c.escrituras += 1;
+                c.kb_escritos += k as u64 / 1024;
+            }
+            hecho += k;
+        }
+        Ok(())
+    }
+}
+
+impl Bloques for DiscoNvme {
+    fn sectores(&self) -> u64 {
+        self.sectores
+    }
+    fn leer(&mut self, sector: u64, buf: &mut [u8]) -> Result<(), ErrorBloques> {
+        let n = buf.len();
+        self.mover(D_LEER, sector, n, |o, v| buf[o..o + v.len()].copy_from_slice(v))
+    }
+    fn escribir(&mut self, sector: u64, datos: &[u8]) -> Result<(), ErrorBloques> {
+        self.mover(D_ESCRIBIR, sector, datos.len(), |o, v| v.copy_from_slice(&datos[o..o + v.len()]))
+    }
+    fn vaciar(&mut self) -> Result<(), ErrorBloques> {
+        self.cuentas.borrow_mut().vaciados += 1;
+        match self.pedir(D_VACIAR, 0, 0, PLAZO_DISCO_US) {
+            Some((0, ..)) => Ok(()),
+            _ => {
+                self.cuentas.borrow_mut().errores += 1;
+                Err(ErrorBloques)
+            }
+        }
+    }
+    fn id(&self) -> [u8; 20] {
+        *b"dashos-caja-arch\0\0\0\0"
+    }
+}
+
+/// La hora del calendario de DashOS para el PL031 del invitado.
+struct RelojDashOS;
+
+impl Reloj for RelojDashOS {
+    fn segundos(&self) -> u64 {
+        dashos::hora_ns() / 1_000_000_000
     }
 }
 
@@ -1079,15 +1266,39 @@ fn datos(llave: u32, va: usize) -> Option<&'static [u8]> {
 }
 
 /// Arranca la Image de `l.linux` con el initramfs de `l.initrd` en una máquina con hasta `ram_invitado` bytes de RAM y
-/// los aparatos del crate (PL011, virtio-console, virtio-blk), hasta que Linux la apaga por PSCI o pasan 4 minutos
-/// (10 con terminal). Con la llave de "ventanas", la consola sale también en una ventana de terminal, y lo que se teclea
-/// en ella llega a hvc0.
+/// los aparatos del crate (PL011, PL031, virtio-console, virtio-blk), hasta que Linux la apaga por PSCI o pasan 4
+/// minutos (10 con terminal). Con la llave de "ventanas", la consola sale también en una ventana de terminal, y lo que
+/// se teclea en ella llega a hvc0.
+///
+/// Sin initramfs, Arch Linux ARM: el disco virtio es la partición de la caja en el NVMe (por "disco") y Linux arranca el
+/// systemd de Arch desde ella; la prueba acaba cuando alguien lo apaga (`poweroff`) o a los 25 minutos.
 fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let Some(imagen) = l.linux.and_then(|k| datos(k, VA_IMAGEN)) else {
         println!("  [caja-linux] linux: sin la Image; MAL");
         return false;
     };
     let initrd = l.initrd.and_then(|k| datos(k, VA_INITRD));
+    // Sin initramfs: Arch Linux ARM, con su disco en el NVMe.
+    let cuentas_disco = Rc::new(RefCell::new(CuentasDisco::default()));
+    let disco_arch = if initrd.is_none() {
+        let Some(d) = l.disco else {
+            println!("  [caja-linux] linux: sin initramfs ni servicio de disco: nada que arrancar; MAL");
+            return false;
+        };
+        match DiscoNvme::abrir(d, &cuentas_disco) {
+            Ok(d) => {
+                println!("  [caja-linux] arch: la partición de la caja Linux, {} MB, como disco del invitado", d.sectores >> 11);
+                Some(d)
+            }
+            Err(e) => {
+                println!("  [caja-linux] arch: sin disco para Arch Linux ARM: {}; MAL", e);
+                return false;
+            }
+        }
+    } else {
+        None
+    };
+    let arch = disco_arch.is_some();
     // La RAM: la que le toca, en trozos de 16 MB; si el cupo no da para tanto, lo que quepa dejando un trozo libre para
     // las tablas de la etapa 2 y el montón.
     let quiere = (ram_invitado / TROZO).clamp(1, MAX_TROZOS);
@@ -1144,12 +1355,22 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let red = l.red.and_then(|r| abrir_red(r, mac, &cuentas_red));
     let mut consola = Consola::nueva(Registro::nuevo(&estado, true));
     consola.tamaño(COLUMNAS as u16, FILAS as u16);
+    let bloques: Box<dyn Bloques> = match disco_arch {
+        Some(d) => Box::new(d),
+        None => Box::new(Disco(disco.clone())),
+    };
+    let tam_disco_kb = bloques.sectores() / 2;
     let puestos = maq.añadir(disposicion::UART, disposicion::SPI_UART, Box::new(Pl011::nuevo(Registro::nuevo(&estado, false)))).is_ok()
+        && maq.añadir(disposicion::RTC, disposicion::SPI_RTC, Box::new(Pl031::nuevo(Box::new(RelojDashOS)))).is_ok()
         && maq.añadir(v0.base, v0.spi, Box::new(TransporteMmio::nuevo(consola))).is_ok()
-        && maq.añadir(v1.base, v1.spi, Box::new(TransporteMmio::nuevo(Bloque::nuevo(Box::new(Disco(disco.clone())))))).is_ok();
+        && maq.añadir(v1.base, v1.spi, Box::new(TransporteMmio::nuevo(Bloque::nuevo(bloques)))).is_ok();
     let con_red = red.is_some();
     let puestos = puestos && red.is_none_or(|r| maq.añadir(v2.base, v2.spi, Box::new(TransporteMmio::nuevo(caja_vmm::virtio::red::Red::nueva(Box::new(r), mac)))).is_ok());
-    let bootargs = if terminal { alloc::format!("{} caja.terminal", BOOTARGS) } else { String::from(BOOTARGS) };
+    let bootargs = match (arch, terminal) {
+        (true, _) => String::from(BOOTARGS_ARCH),
+        (false, true) => alloc::format!("{} caja.terminal", BOOTARGS),
+        (false, false) => String::from(BOOTARGS),
+    };
     let mut config = disposicion::config(tam_ram as u64, 1, if con_red { 3 } else { 2 }, bootargs, plan.initrd);
     let mut semilla = [0u8; 32];
     if dashos::azar(&mut semilla).is_some() {
@@ -1178,13 +1399,13 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     }
     let vm = vm as u32;
     println!(
-        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, PL011, virtio-console, virtio-blk de {} KB{}; arranca",
-        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, TAM_DISCO / 1024,
+        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, PL011, PL031, virtio-console, virtio-blk de {} KB{}; arranca",
+        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, tam_disco_kb,
         if con_red { " y virtio-net por el servicio de red" } else { "" }
     );
     let t0 = dashos::ahora_us();
     let mut caja = Caja::nueva(vm, maq, &config.memoria);
-    let plazo_s = if terminal { 600 } else { 240 };
+    let plazo_s = if arch { 1500 } else if terminal { 600 } else { 240 };
     let fin = caja.correr(plazo_s * 1_000_000, true);
     let ms = (dashos::ahora_us() - t0) / 1000;
     dashos::cerrar(vm);
@@ -1206,7 +1427,11 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let e = estado.borrow();
     let d = disco.borrow();
     let escrito = &d[4096..4096 + ESCRITO.len()] == ESCRITO;
-    let ok = matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito && (!terminal || e.terminal);
+    let ok = if arch {
+        matches!(fin, FinCaja::Apagada) && e.arch && e.login && e.prompt
+    } else {
+        matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito && (!terminal || e.terminal)
+    };
     if e.sin_sacar > 0 {
         println!("  [caja-linux] linux: ({} líneas sin sacar al registro: demasiadas seguidas)", e.sin_sacar);
     }
@@ -1220,10 +1445,23 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
             COMPARTIDO.salida.perdidos.load(Ordering::Relaxed), COMPARTIDO.entrada.perdidos.load(Ordering::Relaxed)
         );
     }
-    println!(
-        "  [caja-linux] linux: {} líneas por la consola, busybox en marcha: {}, el disco escrito por Linux: {}: {}",
-        e.lineas, if e.busybox { "sí" } else { "no" }, if escrito { "sí" } else { "no" }, if ok { "bien" } else { "MAL" }
-    );
+    let si = |b: bool| if b { "sí" } else { "no" };
+    if arch {
+        let c = cuentas_disco.borrow();
+        println!(
+            "  [caja-linux] arch: disco: {} lecturas ({} KB), {} escrituras ({} KB), {} vaciados, {} errores",
+            c.lecturas, c.kb_leidos, c.escrituras, c.kb_escritos, c.vaciados, c.errores
+        );
+        println!(
+            "  [caja-linux] arch: {} líneas por la consola; systemd de Arch Linux ARM: {}, root entra en hvc0: {}, su shell: {}: {}",
+            e.lineas, si(e.arch), si(e.login), si(e.prompt), if ok { "bien" } else { "MAL" }
+        );
+    } else {
+        println!(
+            "  [caja-linux] linux: {} líneas por la consola, busybox en marcha: {}, el disco escrito por Linux: {}: {}",
+            e.lineas, si(e.busybox), si(escrito), if ok { "bien" } else { "MAL" }
+        );
+    }
     for &mm in mems {
         dashos::cerrar(mm);
     }

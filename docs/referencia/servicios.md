@@ -141,7 +141,9 @@ Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 `inicio`, y cada uno ve su tramo como su disco entero: su sector 0 es el primero del tramo, los sectores de la
 respuesta son los del tramo y no puede ni nombrar lo de fuera (-2, fuera del disco). `archivos` tiene la partición de
 DashOS: en un MBR, la entrada del tipo 0x7F; en una GPT, la del tipo d0a18dbf-bbf4-4b0e-8627-ce5006b50017. `disco`, la
-prueba en bruto, el primer MB sin llegar a la primera partición (con GPT, nada). El lector
+prueba en bruto, el primer MB sin llegar a la primera partición (con GPT, nada). `caja-linux` (H9), la partición de
+la caja Linux, solo en GPT, del tipo d0a18dbf-bbf4-4b0e-8627-ce5006b50018: el disco de su invitado (Arch Linux ARM).
+Nunca una partición de Linux cualquiera. Dos de la caja Linux son un error, como dos de DashOS. El lector
 (`usuario/src/particiones.rs`, con sus pruebas en `archivos/herramientas`) no adivina: con entradas fuera del disco,
 pisadas, dos de DashOS o un CRC de la GPT que no casa, no da tramo a nadie. La copia de la GPT del final no se mira.
 
@@ -503,8 +505,9 @@ El servicio `caja-linux` crea y corre máquinas virtuales (llamadas 45 a 48 de `
 kernel arrancó en EL2 (en QEMU, `virtualization=on`; `make arranque-virt-vm`).
 
 **Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina y si hay hipervisor, 16 bytes), 2 y 3 la Image de Linux y su
-initramfs si los hay (`make arranque-virt-linux`), y después los canales "ventanas" (su terminal), "sesiones" (el
-permiso) y "red" (la red del invitado). En la Pi 4: "sistema" y el permiso, que da `inicio` (allí aún no hay
+initramfs si los hay (`make arranque-virt-linux`), y después los canales "ventanas" (su terminal), "disco" (la
+partición de la caja Linux, el disco de Arch), "sesiones" (el permiso) y "red" (la red del invitado), en el orden en
+que `inicio` crea los canales. En la Pi 4: "sistema" y el permiso, que da `inicio` (allí aún no hay
 `sesiones`); solo prueba que un invitado arranca y acaba.
 
 **El permiso** de máquinas virtuales lo reparte `sesiones` ("maquinas", decisión del usuario del 2026-11-12):
@@ -516,8 +519,11 @@ registro de seguridad; a cualquier otro se le pregunta a quien está delante. `s
 GB de RAM, 256 MB con 2 GB y 512 MB con 4 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
 invitado, y así hasta 64 MB.
 
-**Aparatos del invitado** (crate `caja-linux/vmm`): PL011 (consola temprana), virtio-console (hvc0, 80x25),
-virtio-blk de 1 MB en memoria y, si el servicio de red le da un puerto, virtio-net. Con el canal "ventanas", hvc0 sale
+**Aparatos del invitado** (crate `caja-linux/vmm`): PL011 (consola temprana), PL031 (la hora de DashOS; si el invitado
+la cambia, cambia solo la suya), virtio-console (hvc0, 80x25), virtio-blk y, si el servicio de red le da un puerto,
+virtio-net. El disco: con initramfs (busybox), 1 MB en memoria; sin él (Arch Linux ARM, `make arranque-virt-arch`), la
+partición de la caja Linux que le da el servicio de disco, leída y escrita por su ventana de 128 KB en piezas de 64 KB,
+con la vCPU parada mientras tanto. Con el canal "ventanas", hvc0 sale
 en una ventana de terminal (un hilo del servicio, `usuario/src/terminal.rs` y Roboto Mono) y lo tecleado va a hvc0. Al
 registro de DashOS va cada línea de la consola, sin secuencias de escape y callando si Linux escribe más de 100 líneas
 por segundo seguidas (luego dice cuántas calló).
@@ -525,7 +531,8 @@ por segundo seguidas (luego dice cuántas calló).
 **La red del invitado.** El servicio de red le da un puerto (`PUERTO`, solo a "caja-linux"): un puente de tramas hacia
 la tarjeta de verdad, con una MAC propia (02:da:50:...). Llegan al invitado las tramas para su MAC y las de difusión;
 del invitado solo salen las que llevan su MAC de origen. Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
-el invitado es 10.0.2.16 y su puerta de enlace 10.0.2.2.
+el invitado es 10.0.2.16 y su puerta de enlace 10.0.2.2 (busybox, con dirección fija; Arch la pide por DHCP al
+servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2.16).
 
 Los invitados de prueba de `usuario/invitados/*.s` y sus hostiles siguen corriendo antes de Linux. Bitácora:
 `docs/bitacoras/caja-linux.md`.

@@ -1,7 +1,7 @@
 //! Pruebas del lector de la tabla de particiones (A14, `usuario/src/particiones.rs`): tablas buenas y, sobre todo,
 //! rotas a propósito. Van aquí porque el crate de usuario es `no_std` y sin pruebas en el PC.
 
-use super::particiones::{Clase, Fallo, TIPO_GPT, TIPO_MBR, Tabla, crc32, leer_tabla};
+use super::particiones::{Clase, Fallo, TIPO_GPT, TIPO_GPT_CAJA_LINUX, TIPO_MBR, Tabla, crc32, leer_tabla};
 
 const EFI: [u8; 16] = [0x28, 0x73, 0x2a, 0xc1, 0x1f, 0xf8, 0xd2, 0x11, 0xba, 0x4b, 0x00, 0xa0, 0xc9, 0x3e, 0xc9, 0x3b];
 
@@ -95,19 +95,19 @@ fn crc_conocido() {
 #[test]
 fn sin_tabla() {
     let d = vec![0u8; 64 * 512];
-    assert_eq!(leer(&d, 512, 64), Ok(Tabla { clase: Clase::Ninguna, dashos: None, primera: 64 }));
+    assert_eq!(leer(&d, 512, 64), Ok(Tabla { clase: Clase::Ninguna, dashos: None, linux: None, primera: 64 }));
 }
 
 #[test]
 fn mbr_bueno() {
     // Como la tarjeta de la Pi: arranque en FAT y luego DashOS.
     let d = mbr(16384, &[(0x0C, 2048, 2048), (TIPO_MBR, 4096, 12288)]);
-    assert_eq!(leer(&d, 512, 16384), Ok(Tabla { clase: Clase::Mbr, dashos: Some((4096, 16384)), primera: 2048 }));
+    assert_eq!(leer(&d, 512, 16384), Ok(Tabla { clase: Clase::Mbr, dashos: Some((4096, 16384)), linux: None, primera: 2048 }));
     let d = mbr(16384, &[(0x83, 2048, 1000)]);
-    assert_eq!(leer(&d, 512, 16384), Ok(Tabla { clase: Clase::Mbr, dashos: None, primera: 2048 }));
+    assert_eq!(leer(&d, 512, 16384), Ok(Tabla { clase: Clase::Mbr, dashos: None, linux: None, primera: 2048 }));
     // Firma sin entradas: un sector 0 cualquiera con la firma (el de la prueba de U6d).
     let d = mbr(64, &[]);
-    assert_eq!(leer(&d, 512, 64), Ok(Tabla { clase: Clase::Mbr, dashos: None, primera: 64 }));
+    assert_eq!(leer(&d, 512, 64), Ok(Tabla { clase: Clase::Mbr, dashos: None, linux: None, primera: 64 }));
 }
 
 #[test]
@@ -132,10 +132,25 @@ fn gpt_buena() {
     for ts in [512, 4096] {
         let s = if ts == 512 { 16384 } else { 2048 };
         let d = gpt(s, ts, &[(EFI, 100, 199), (TIPO_GPT, 200, s - 40)]);
-        assert_eq!(leer(&d, ts, s), Ok(Tabla { clase: Clase::Gpt, dashos: Some((200, s - 39)), primera: 1 }), "ts {ts}");
+        assert_eq!(leer(&d, ts, s), Ok(Tabla { clase: Clase::Gpt, dashos: Some((200, s - 39)), linux: None, primera: 1 }), "ts {ts}");
     }
     let d = gpt(16384, 512, &[(EFI, 100, 199)]);
     assert_eq!(leer(&d, 512, 16384).unwrap().dashos, None);
+}
+
+/// H9: la partición de la caja Linux, sola o junto a la de DashOS; una de Linux cualquiera no cuenta; dos, error.
+#[test]
+fn gpt_caja_linux() {
+    const LINUX: [u8; 16] = [0xaf, 0x3d, 0xc6, 0x0f, 0x83, 0x84, 0x72, 0x47, 0x8e, 0x79, 0x3d, 0x69, 0xd8, 0x47, 0x7d, 0xe4];
+    let s = 16384;
+    let d = gpt(s, 512, &[(TIPO_GPT_CAJA_LINUX, 2048, s - 40)]);
+    assert_eq!(leer(&d, 512, s), Ok(Tabla { clase: Clase::Gpt, dashos: None, linux: Some((2048, s - 39)), primera: 1 }));
+    let d = gpt(s, 512, &[(TIPO_GPT, 100, 999), (TIPO_GPT_CAJA_LINUX, 1000, s - 40)]);
+    assert_eq!(leer(&d, 512, s), Ok(Tabla { clase: Clase::Gpt, dashos: Some((100, 1000)), linux: Some((1000, s - 39)), primera: 1 }));
+    let d = gpt(s, 512, &[(LINUX, 100, 999), (TIPO_GPT, 1000, s - 40)]);
+    assert_eq!(leer(&d, 512, s).unwrap().linux, None);
+    let d = gpt(s, 512, &[(TIPO_GPT_CAJA_LINUX, 100, 999), (TIPO_GPT_CAJA_LINUX, 1000, s - 40)]);
+    assert_eq!(leer(&d, 512, s), Err(Fallo::DosDeDashOS));
 }
 
 #[test]

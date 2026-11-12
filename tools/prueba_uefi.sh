@@ -1247,9 +1247,9 @@ if [ -n "${MULTI:-}" ]; then
     MULTI_PID=$!
 fi
 # La terminal de la caja Linux (H9): con CAJA_LINUX=prefijo, `tools/guion_caja_linux.py` teclea en ella (y la captura
-# en prefijo.ppm y prefijo.png).
+# en prefijo.ppm y prefijo.png). CAJA_MODO=arch: el guion de Arch Linux ARM (systemd, red por DHCP, pacman).
 if [ -n "${CAJA_LINUX:-}" ]; then
-    python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" >/dev/null 2>&1 &
+    python3 -I "$(dirname "$0")/guion_caja_linux.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$CAJA_LINUX" "${CAJA_MODO:-busybox}" >/dev/null 2>&1 &
     CAJA_PID=$!
 fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
