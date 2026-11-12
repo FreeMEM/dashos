@@ -39,13 +39,17 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] linux: [    0.000000] Booting Linux on physical CPU 0x0000000000
 ~[caja-linux] linux: [    0.000000] psci: PSCIv1.0 detected in firmware.
 ~arch_timer: cp15 timer running at
+# Cuatro vCPU, cada una en un hilo del servicio: Linux las enciende por PSCI CPU_ON y las usa todas.
+~smp: Brought up 1 node, 4 CPUs
 ~[caja-linux] linux: caja-linux: init en marcha
 ~[caja-linux] linux: caja-linux: BusyBox v
+~[caja-linux] linux: caja-linux: cpus 4, nproc 4, en línea 0-3
 ~[caja-linux] linux: caja-linux: vda 2048 sectores, primeros bytes: DISCO-CAJA-LINUX
 ~[caja-linux] linux: caja-linux: escrito en vda: ESCRITO-POR-LINUX
 ~[red] puerto para la caja Linux con MAC
 ~[caja-linux] linux: caja-linux: eth0 02:da:50:
 ~[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
+~[caja-linux] linux: caja-linux: paralelo 4 trabajos: seguidos
 ~[caja-linux] linux: caja-linux: fin de la prueba
 # La terminal: una ventana en el escritorio con hvc0; el guion (tools/guion_caja_linux.py) teclea en ella, la inunda
 # con `seq 1 30000` y sigue contestando, y apaga con `poweroff -f`.
@@ -58,4 +62,5 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] linux: 2 packets transmitted, 2 packets received
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
+~[caja-linux] linux: hilos de las 4 vCPU unidos al acabar: 4
 ~busybox en marcha: sí, el disco escrito por Linux: sí: bien

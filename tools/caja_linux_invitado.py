@@ -125,7 +125,7 @@ hostname caja
 echo "caja-linux: init en marcha"
 echo "caja-linux: $(busybox | head -1)"
 echo "caja-linux: kernel $(uname -r) $(uname -m)"
-echo "caja-linux: cpus $(grep -c ^processor /proc/cpuinfo)"
+echo "caja-linux: cpus $(grep -c ^processor /proc/cpuinfo), nproc $(nproc), en línea $(cat /sys/devices/system/cpu/online)"
 echo "caja-linux: memoria $(grep MemTotal /proc/meminfo)"
 echo "caja-linux: virtio $(ls /sys/bus/virtio/devices | tr '\n' ' ')"
 for d in /sys/bus/virtio/devices/*; do echo "caja-linux:   $(basename $d) id=$(cat $d/device) $(basename $(readlink $d/driver) 2>/dev/null)"; done
@@ -150,7 +150,20 @@ if [ -e /sys/class/net/eth0 ]; then
   echo "caja-linux: eth0 $(cat /sys/class/net/eth0/address) mtu $(cat /sys/class/net/eth0/mtu)"
   echo "caja-linux: ping $(ping -c 3 -W 3 10.0.2.2 | grep packets)"
 fi
-grep -E 'GIC|virtio|uart|arch_timer' /proc/interrupts | sed 's/^/caja-linux: irq /'
+# Varias vCPU (caja.paralelo en la línea de órdenes): el mismo trabajo de CPU tantas veces como CPU haya, seguidas y
+# a la vez, con lo que tarda cada tanda (reloj del invitado) y el tiempo de usuario que se llevó cada CPU.
+if grep -q caja.paralelo /proc/cmdline; then
+  n=$(nproc)
+  trabajo() { i=0; while [ $i -lt 20000 ]; do i=$((i+1)); done; }
+  t0=$(cut -d' ' -f1 /proc/uptime)
+  k=0; while [ $k -lt $n ]; do trabajo; k=$((k+1)); done
+  t1=$(cut -d' ' -f1 /proc/uptime)
+  k=0; while [ $k -lt $n ]; do trabajo & k=$((k+1)); done; wait
+  t2=$(cut -d' ' -f1 /proc/uptime)
+  echo "caja-linux: paralelo $n trabajos: seguidos $(awk "BEGIN{print $t1-$t0}") s, a la vez $(awk "BEGIN{print $t2-$t1}") s"
+  echo "caja-linux: usuario por cpu (tics): $(grep '^cpu[0-9]' /proc/stat | awk '{printf "%s %s ", $1, $2}')"
+fi
+grep -E 'GIC|virtio|uart|arch_timer|IPI[01]:' /proc/interrupts | sed 's/^/caja-linux: irq /'
 echo "caja-linux: psci $(dmesg | grep -o 'PSCIv[0-9.]* detected in firmware' | head -1)"
 echo "caja-linux: fin de la prueba"
 # Con una ventana de terminal en DashOS (caja.terminal): una shell interactiva en hvc0, con su terminal de control,
