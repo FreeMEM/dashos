@@ -1,8 +1,8 @@
-//! El árbol de dispositivos que ve el invitado: memoria, CPU, PSCI por HVC, temporizador, GIC, el PL011, los
+//! El árbol de dispositivos que ve el invitado: memoria, CPU, PSCI por HVC, temporizador, GIC, el PL011, el PL031, los
 //! transportes virtio-mmio y `/chosen` con la línea de órdenes y el initrd.
 //!
 //! Sigue las vinculaciones de Devicetree que Linux documenta en `Documentation/devicetree/bindings` (leídas como
-//! especificación: `arm,gic`, `arm,armv8-timer`, `arm,psci`, `arm,pl011`, `virtio,mmio`, `fixed-clock`, `chosen`).
+//! especificación: `arm,gic`, `arm,armv8-timer`, `arm,psci`, `arm,pl011`, `arm,pl031`, `virtio,mmio`, `fixed-clock`, `chosen`).
 
 use alloc::format;
 use alloc::string::String;
@@ -38,6 +38,8 @@ pub struct ConfigInvitado {
     pub cpus: u32,
     pub gic: Gic,
     pub uart: Option<Aparato>,
+    /// El reloj de calendario (PL031).
+    pub rtc: Option<Aparato>,
     pub virtio: Vec<Aparato>,
     pub bootargs: String,
     /// Inicio y fin (exclusivo) del initrd en la memoria del invitado.
@@ -167,6 +169,16 @@ pub fn generar_dtb(c: &ConfigInvitado) -> Vec<u8> {
         f.fin_nodo();
     }
 
+    if let Some(r) = &c.rtc {
+        f.nodo(&nombre("rtc", r.base));
+        f.prop_textos("compatible", &["arm,pl031", "arm,primecell"]);
+        f.prop_reg("reg", &[(r.base, r.tam)]);
+        f.prop_celdas("interrupts", &[SPI, r.spi, NIVEL_ALTO]);
+        f.prop_celdas("clocks", &[ph_reloj]);
+        f.prop_textos("clock-names", &["apb_pclk"]);
+        f.fin_nodo();
+    }
+
     for v in &c.virtio {
         f.nodo(&nombre("virtio", v.base));
         f.prop_textos("compatible", &["virtio,mmio"]);
@@ -193,6 +205,7 @@ mod pruebas {
             cpus: 2,
             gic: Gic::V2 { distribuidor: 0x0800_0000, cpu: 0x0801_0000, tam_cpu: 0x2000 },
             uart: Some(Aparato { base: 0x0900_0000, tam: 0x1000, spi: 1 }),
+            rtc: Some(Aparato { base: 0x0901_0000, tam: 0x1000, spi: 2 }),
             virtio: vec![Aparato { base: 0x0a00_0000, tam: 0x200, spi: 16 }],
             bootargs: "console=hvc0".into(),
             initrd: Some((0x5000_0000, 0x5010_0000)),
@@ -219,6 +232,8 @@ mod pruebas {
         assert_eq!(&timer[8..12], &0x304u32.to_be_bytes());
         let v = prop(&t, "virtio@a000000", "interrupts");
         assert_eq!(v, [0, 0, 0, 0, 0, 0, 0, 16, 0, 0, 0, 4]);
+        assert_eq!(prop(&t, "rtc@9010000", "compatible"), b"arm,pl031\0arm,primecell\0");
+        assert_eq!(prop(&t, "rtc@9010000", "interrupts"), [0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 4]);
         // phandle del GIC = interrupt-parent de la raíz.
         assert_eq!(prop(&t, "/", "interrupt-parent"), prop(&t, "interrupt-controller@8000000", "phandle"));
         // Mapa de reservas: una entrada y la de cierre.

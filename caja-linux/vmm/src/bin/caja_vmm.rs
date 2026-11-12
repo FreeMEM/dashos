@@ -28,7 +28,7 @@ fn fallo(m: &str) -> ! {
 fn uso() -> ! {
     fallo(
         "uso: caja-vmm preparar --kernel Image [--initrd f] --memoria base:tam [--cpus n] \
-         --gic v2:dist:cpu|v3:dist:redist [--uart base:spi] [--virtio base:spi]... [--bootargs t] --salida dir",
+         --gic v2:dist:cpu|v3:dist:redist [--uart base:spi] [--rtc base:spi] [--virtio base:spi]... [--bootargs t] --salida dir",
     )
 }
 
@@ -43,6 +43,7 @@ fn main() {
     let mut cpus = 1u32;
     let mut gic = None;
     let mut uart = None;
+    let mut rtc = None;
     let mut virtio = Vec::new();
     let mut bootargs = String::from("console=hvc0 earlycon");
     let mut salida = None;
@@ -66,6 +67,10 @@ fn main() {
             "--uart" => {
                 let (b, s) = par(&valor());
                 uart = Some(Aparato { base: b, tam: caja_vmm::pl011::TAM_REGION, spi: s as u32 });
+            }
+            "--rtc" => {
+                let (b, s) = par(&valor());
+                rtc = Some(Aparato { base: b, tam: caja_vmm::pl031::TAM_REGION, spi: s as u32 });
             }
             "--virtio" => {
                 let (b, s) = par(&valor());
@@ -95,6 +100,7 @@ fn main() {
         cpus,
         gic,
         uart,
+        rtc,
         virtio,
         bootargs,
         initrd: plan.initrd,

@@ -269,7 +269,9 @@ impl Terminal {
                 self.n_params = 0;
                 self.privada = false;
             }
-            b']' => self.estado = Estado::Osc,
+            // OSC y las otras cadenas de control de ECMA-48 (DCS, SOS, PM, APC), que se saltan enteras: systemd manda
+            // OSC 3008 (contexto) y una DCS XTGETTCAP al arrancar.
+            b']' | b'P' | b'X' | b'^' | b'_' => self.estado = Estado::Osc,
             b'(' | b')' => self.estado = Estado::Juego,
             b'7' => self.guardado = (self.x, self.y),
             b'8' => (self.x, self.y) = self.guardado,
@@ -601,6 +603,12 @@ mod pruebas {
     #[test]
     fn osc_y_privados() {
         let t = t(b"\x1b]0;titulo\x07a\x1b[?25lb\x1b(Bc");
+        assert_eq!(t.linea(0), "abc");
+    }
+
+    #[test]
+    fn cadenas_de_control() {
+        let t = t(b"\x1bP+q6E616D65\x1b\\a\x1b]3008;start=x;user=root\x1b\\b\x1b_apc\x1b\\c");
         assert_eq!(t.linea(0), "abc");
     }
 }

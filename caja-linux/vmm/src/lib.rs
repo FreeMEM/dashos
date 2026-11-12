@@ -12,7 +12,7 @@
 //! DEVICE_NEEDS_RESET), nunca un pánico.
 //!
 //! Especificaciones seguidas: OASIS virtio 1.2 (§2.7 colas partidas, §4.2 transporte MMIO, §5.2 bloque, §5.3
-//! consola), Arm PL011 TRM (DDI 0183), Arm GICv2 (IHI 0048B), Arm PSCI (DEN 0022), Devicetree 0.4 y
+//! consola), Arm PL011 TRM (DDI 0183), Arm PL031 TRM (DDI 0224), Arm GICv2 (IHI 0048B), Arm PSCI (DEN 0022), Devicetree 0.4 y
 //! `Documentation/arch/arm64/booting.rst` de Linux (como especificación del protocolo de arranque).
 
 #![cfg_attr(not(test), no_std)]
@@ -29,5 +29,6 @@ pub mod maquina;
 pub mod memoria;
 pub mod mmio;
 pub mod pl011;
+pub mod pl031;
 pub mod psci;
 pub mod virtio;

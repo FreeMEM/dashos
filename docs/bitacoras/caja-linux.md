@@ -408,3 +408,150 @@ pruebas (`make prueba`) no lanza `inicio`: no cambia.
   a la tarjeta).
 - `make arranque` (la imagen normal en `raspi4b`) ya no casaba con `pruebas/arranque.txt` antes de esta rama (las
   llaves de `inicio` cambiaron con el plazo y el hipervisor).
+
+## 2026-11-12: Arch Linux ARM en la caja (rama `caja-linux-arch`)
+
+Rama `caja-linux-arch`, sacada de `fusion-fondo` (be30e2b), con todo lo de las cajas. El usuario preguntó si los paquetes
+de Arch Linux iban a funcionar: la caja de verdad lleva un Arch Linux ARM completo, no busybox. Sala limpia como antes:
+especificaciones (Arm PL031 TRM DDI 0224, la GPT de UEFI, el README de systemd con lo que pide al kernel); nada de código
+de Linux, KVM, QEMU, crosvm, Firecracker ni Xen. Kernels, imágenes y rootfs, fuera de git (`~/.cache/dashos-caja-linux`).
+
+### Resultado
+
+`make arranque-virt-arch`: DashOS arranca, el servicio de disco da a la caja la partición de la caja Linux del NVMe y
+la caja arranca dentro un Linux 6.18 que monta esa partición como raíz y ejecuta el systemd 261 de Arch Linux ARM.
+getty entra como root en hvc0 (la ventana de terminal del escritorio), la red sale por DHCP y `pacman -Sy` baja el
+índice de paquetes de los servidores de Arch Linux ARM. El guion lo apaga con `poweroff`: systemd para todo y apaga la
+máquina por PSCI. De la primera instrucción del invitado a `poweroff`, 49 s (con QEMU sin aceleración); root entra a
+los 16 s.
+
+```
+[nvme] particiones: GPT; DashOS, sectores 2048 a 16383
+[nvme] la caja Linux: sectores 16384 a 8386559 (4087 MB)
+[archivos] RedoxFS abierto: 7168 KB, 4084 KB libres
+[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+[caja-linux] linux: Image de 7288 KB en 0x40000000, initramfs de 0 KB, árbol de 2058 bytes en 0x4fe00000, 256 MB de RAM, PL011, PL031, virtio-console, virtio-blk de 4185088 KB y virtio-net por el servicio de red; arranca
+[caja-linux] linux: [    0.701815] rtc-pl031 9010000.rtc: setting system clock to 2026-11-12T18:44:21 UTC (1794509061)
+[caja-linux] linux: [    0.872244] EXT4-fs (vda): mounted filesystem a60c4dff-... r/w with ordered data mode.
+[caja-linux] linux: [    0.902033] Run /sbin/init as init process
+[caja-linux] linux: [    1.915844] systemd[1]: systemd 261.2-1-arch running in system mode (+PAM +AUDIT ...)
+[caja-linux] linux: Welcome to Arch Linux ARM!
+[caja-linux] linux: Arch Linux ARM 6.18.63-caja (hvc0)
+[caja-linux] linux: caja login: root (automatic login)
+[caja-linux] linux: [root@caja ~]# uname -a
+[caja-linux] linux: Linux caja 6.18.63-caja #2 SMP Thu Nov 12 19:34:13 CET 2026 aarch64 GNU/Linux
+[caja-linux] linux: [root@caja ~]# systemctl is-system-running --wait
+[caja-linux] linux: running
+[caja-linux] linux: [root@caja ~]# ip -4 addr show eth0
+[caja-linux] linux:     inet 10.0.2.16/24 metric 1024 brd 10.0.2.255 scope global dynamic eth0
+[caja-linux] linux: [root@caja ~]# date
+[caja-linux] linux: Thu Nov 12 18:54:43 UTC 2026
+[caja-linux] linux: [root@caja ~]# pacman -Sy --noconfirm
+[caja-linux] linux: :: Synchronizing package databases...
+[caja-linux] linux: [root@caja ~]# ls /var/lib/pacman/sync
+[caja-linux] linux: alarm.db  aur.db  core.db  extra.db
+[caja-linux] linux: se para la máquina a los 48885 ms: Linux apagó la máquina por PSCI
+[caja-linux] linux: 42988 salidas: 29618 a aparatos (0 abortos), 7 PSCI, 3175 WFI (25326 ms dormido), 10184 por el reloj, 4 registros; 2963 interrupciones inyectadas
+[caja-linux] red: 485 tramas del invitado a la red, 8038 de la red al invitado; 0 perdidas sin sitio, 0 malas del servicio
+[caja-linux] arch: disco: 2679 lecturas (98303 KB), 1399 escrituras (71940 KB), 52 vaciados, 0 errores
+[caja-linux] arch: 495 líneas por la consola; systemd de Arch Linux ARM: sí, root entra en hvc0: sí, su shell: sí: bien
+```
+
+La captura de la terminal queda en `capturas-agente/caja-linux-arch.png` (fuera de git).
+
+### Lo elegido y por qué
+
+- **La imagen.** El rootfs oficial, `ArchLinuxARM-aarch64-latest.tar.gz` (790 MB, del 2026-08-05), de
+  os.archlinuxarm.org. Se comprueba su MD5 y su firma: la hizo la clave de compilación de Arch Linux ARM, cuya huella
+  (68B3537F39A313B3E574D06777193F152BDBE6A6) es la que publica archlinuxarm.org; la clave pública sale del propio
+  rootfs, así que lo que cuenta es que la huella case. `tools/caja_linux_invitado.py preparar-arch` lo baja, lo
+  comprueba y hace el disco sin root: reescribe el tar con Python (`tarfile`, conserva dueños, permisos y los atributos
+  `security.capability`) y `mke2fs -d fichero.tar` hace el ext4 desde él (e2fsprogs 1.47.1 o más; el `mke2fs` del SDK de
+  Android, si va antes en el PATH, no sabe leer un tar: se usa el de `/usr/bin`). Lo cambiado en el rootfs:
+  - `/etc/hostname` (caja) y `/etc/fstab` (la raíz, sin fsck);
+  - getty entra solo como root en hvc0 (`serial-getty@hvc0.service.d/autologin.conf`). La contraseña de root sigue
+    siendo la de serie de Arch Linux ARM ("root");
+  - apagados (máscara a `/dev/null`): `systemd-timesyncd` (iría a servidores de NTP de fuera; la hora la da el PL031),
+    `systemd-firstboot` (pediría idioma y contraseña por la consola), `sshd` y `sshdgenkeys` (genera sus claves en el
+    primer arranque, y nadie entra por SSH a la caja);
+  - `/etc/.updated` y `/var/.updated` con la fecha de `/usr`: sin ldconfig, hwdb ni catálogo en el primer arranque (el
+    rootfs ya los trae hechos).
+- **El kernel.** El de Arch (`linux-aarch64`, 7.1.6) es una Image de 42 MB que necesita sus módulos en un initramfs de
+  15 MB; la del defconfig (74 MB) ya no cabía en el paquete de arranque de DashOS. Así que es el propio: `Image-arch`,
+  tinyconfig con lo de `Image-caja` y lo que pide systemd en su README (cgroups v2 con memoria, pids, cpu y BPF;
+  devtmpfs, inotify, signalfd, timerfd, epoll, fhandle, autofs, espacios de nombres, seccomp, ACL y xattr de tmpfs y
+  ext4), lo que piden glibc y pacman (flock, AIO, io_uring, rseq, membarrier, SysV IPC) e IPv6, PL031 y Landlock: pacman 7
+  baja los paquetes en un sandbox con Landlock y sin él falla ("restricting filesystem access failed because Landlock
+  is not supported by the kernel"). 7 MB, sin módulos. `tools/caja_linux_invitado.py probar-arch` lo arranca con el
+  disco en `qemu-system-aarch64 -M virt` con el DTB y la carga del crate (como `probar`): así se ajustó, en minutos,
+  antes de llevarlo a DashOS.
+- **El disco grande.** Una partición del NVMe de DashOS, no un segundo disco: es como quedaría un DashOS instalado con
+  su caja Linux, y el servicio de disco ya sabe dar tramos (A13, A14). `dashos::particiones` conoce un tipo nuevo de
+  GPT, el de la caja Linux (d0a18dbf-bbf4-4b0e-8627-ce5006b50018, el de DashOS con el último byte en 0x18), y el
+  servicio de disco se lo da a "caja-linux" como si fuera su disco entero. Nunca una partición de Linux cualquiera: en un
+  PC con otro sistema, la caja no debe ver el Linux de verdad del usuario. Dos de la caja son un error, como dos de
+  DashOS (con su prueba en `archivos/herramientas`). En la caja, `DiscoNvme` hace de `Bloques` del virtio-blk del crate:
+  abre su tramo, proyecta la ventana de 128 KB y pide lecturas y escrituras de 64 KB como mucho (y "vaciar" en cada
+  FLUSH), con la vCPU parada mientras tanto. El crate copia ahora en trozos de 64 KB (antes 4 KB: cada trozo es una
+  petición al servicio). El disco es de 4 GB: la partición de DashOS (MB 1 a 8, con el RedoxFS de las pruebas, que
+  `poner-dashos` copia antes de cada prueba) y la de la caja (el resto, 4087 MB). QEMU lo usa con `snapshot=on`: nada de
+  lo que escriben DashOS o Arch se queda.
+- **La hora.** Un PL031 en el crate (`caja-linux/vmm/src/pl031.rs`, con pruebas): cuenta la hora de DashOS
+  (`hora_ns`, la del PL031 de `virt`) más un desfase que cambia si el invitado carga el contador; la alarma, con su
+  interrupción. Va en el árbol (`rtc@9010000`, SPI 2) en los dos invitados.
+- **La red.** DHCP en el invitado: `systemd-networkd` de Arch ya lo pide en `eth*`. Funciona por el puente de tramas
+  sin cambios: la petición sale por la tarjeta con la MAC del invitado y el servidor DHCP de QEMU contesta a esa MAC,
+  que el servicio de red manda al puerto. Le da la 10.0.2.16 (DashOS tiene la 15) y el DNS de QEMU. `pacman -Sy` baja
+  core, extra, alarm y aur (unos 21 MB) por HTTP: 8038 tramas hacia el invitado, ninguna perdida.
+- **La memoria.** 256 MB para el invitado, con `MEMORIA=3G` en QEMU. Con `-m 4G` (y `highmem` encendido sin ECAM ni
+  MMIO altos) DashOS sigue viendo 3072 MB: su mapa lineal acaba en los 4 GB de direcciones físicas y la RAM de `virt`
+  empieza en el GB 1, así que nunca llega a los "4 GB o más" de la decisión del usuario (512 MB). Arch con systemd va
+  bien con 256 MB.
+
+### Lo que hubo que arreglar por el camino
+
+- **El orden de las llaves de la caja.** `inicio` da los canales en el orden en que se nombran por primera vez en su
+  lista, no en el de la lista de cada programa. "disco" lo nombra antes el servicio de disco, así que va antes que
+  "sesiones": la caja mandaba la petición del permiso al servicio de disco y `sesiones` no la veía (el primer intento
+  acabó en "sesiones no le da el permiso (-5)"). `llaves()` lo sabe ahora: ventanas, disco, sesiones, red.
+- **Sin partición de DashOS** (el primer disco solo tenía la de la caja), `archivos` acaba en el acto, `inicio` lo
+  relanza tres veces y `sesiones`, que lo espera cada vez, no contesta en un minuto: tampoco llegaba el permiso. Con la
+  partición de DashOS en el disco, todo va como en `arranque-virt`.
+- **Las cadenas de control.** systemd manda a la consola OSC 3008 (contexto de cada sesión) y una DCS XTGETTCAP
+  (`ESC P + q ...`). La terminal (`usuario/src/terminal.rs`) y el registro de la caja se saltan ahora OSC, DCS, SOS, PM y
+  APC enteras (con prueba). Antes salía "+q6E616D65" en la pantalla.
+- **El clic del guion.** En esta imagen, Ajustes y las ventanas de prueba salen encima de la terminal; un clic en su
+  centro daba el teclado a otra. El guion de Arch hace clic abajo a la izquierda de la ventana.
+
+### Pruebas
+
+- `make arranque-virt-arch` (nueva): BIEN, con `kernel/pruebas/arranque_virt_arch.txt` (las particiones, la partición
+  de la caja abierta, el PL031, ext4 montado, systemd, getty, uname, `running`, la dirección por DHCP, la hora,
+  `pacman -Sy` y el apagado por PSCI).
+- `cargo test` en `caja-linux/vmm`: 5 pruebas nuevas del PL031 y el `rtc@9010000` del árbol. `archivos/herramientas`:
+  `gpt_caja_linux` (la partición de la caja sola, con la de DashOS, una de Linux cualquiera que no cuenta, y dos).
+  `usuario/src/terminal.rs`: `cadenas_de_control`.
+- `make prueba` (BIEN: esperado.txt y BIEN: cargador hunk), `make arranque-virt`, `make arranque-virt-vm`,
+  `make arranque-virt-linux` y `make arranque-virt-2`: BIEN como estaban, seguidos y con el PC cargado por otras
+  sesiones.
+
+### Qué falta
+
+- **Instalar paquetes**: solo se probó `pacman -Sy` (el índice). Para `pacman -S` hace falta antes `pacman-key --init` y
+  `pacman-key --populate archlinuxarm` (las claves de los paquetes), sin probar en la caja. Y `pacman -Syu` actualizaría
+  `linux-aarch64`, que aquí no arranca: habría que ponerlo en `IgnorePkg` o quitarlo del disco.
+- **512 MB para el invitado**: con QEMU `virt` no se llega (arriba). Hace falta que el kernel de DashOS use la RAM por
+  encima de los 4 GB de direcciones físicas.
+- **Que lo escrito se quede**: la prueba usa el disco con `snapshot=on`. Falta una prueba de dos arranques seguidos en
+  los que Arch vea lo que escribió en el primero.
+- **El disco va de una en una**: cada petición del invitado para la vCPU hasta que el servicio de disco contesta. Con
+  varias vCPU (no hechas) haría falta un hilo de E/S y el anillo del servicio de disco (U6l), que ya existe.
+- **La entrada como root sin contraseña** en la terminal de la caja: decisión para el usuario (¿un usuario normal con
+  `sudo`, o pedir contraseña?).
+- La Pi 4: no tiene servicio de disco NVMe; ni probado.
+
+### Decisiones para el usuario
+
+1. ¿La terminal de la caja entra sola como root (como ahora), como un usuario normal, o pide contraseña?
+2. ¿Se quita `linux-aarch64` (y sus 57 MB de Image, initramfs y módulos) del disco de la caja, ya que la caja usa su
+   propio kernel?

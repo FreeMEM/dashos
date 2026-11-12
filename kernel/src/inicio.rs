@@ -199,9 +199,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // crearlas. Al final, para no cambiar las marcas de los de antes. Los dos reciben "sistema" (la RAM de la máquina y
     // si hay hipervisor). El permiso se lo pide a `sesiones`, que se lo da sin preguntar por ser la caja del sistema
     // (decisión del usuario del 2026-11-12); `sin-maquina` también lo pide, y no se le da. La caja tiene además su
-    // ventana de terminal ("ventanas") y la red del invitado ("red").
+    // ventana de terminal ("ventanas"), la red del invitado ("red") y el disco de Arch Linux ARM ("disco": el servicio de
+    // disco le da la partición de la caja Linux, si la hay).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red"]),
+    ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
     // En la Pi 4 (decisión del usuario del 2026-11-12: no en la Pi 3, sin virtualización): la caja, que solo hace algo

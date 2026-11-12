@@ -8,6 +8,7 @@
 # make arranque-virt-2  lo mismo con dos monitores (virtio-gpu con dos cabezas)
 # make arranque-virt-vm  la caja Linux (H9): la imagen de virt en QEMU con virtualization=on (EL2)
 # make arranque-virt-linux  lo mismo, y la caja arranca Linux hasta busybox (LINUX=Image, INITRD=cpio.gz, fuera de git)
+# make arranque-virt-arch  lo mismo con Arch Linux ARM desde la partición de la caja en el NVMe (fuera de git)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -128,6 +129,35 @@ arranque-virt-linux: usuario FORCE
 	grep -E "\[(caja-linux|sin-maquina)\]|Hipervisor" target/salida_virt_linux.txt | grep -vE "linux: (\[ |[0-9]+$$)" || true
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-terminal.png ../capturas-agente/caja-linux-terminal.png 2>/dev/null || true
+
+# Arch Linux ARM en la caja Linux (H9, docs/bitacoras/caja-linux.md): la Image de Image-arch (tinyconfig con lo que
+# pide systemd), sin initramfs, y el disco de Arch como NVMe: una GPT con la partición de DashOS (en ella, el RedoxFS de
+# $(DISCO_NVME), copiado en cada prueba) y la de la caja Linux, con un ext4 con el rootfs oficial de Arch Linux ARM
+# para aarch64 (con lo mínimo cambiado: getty entra como root en hvc0, sin
+# timesyncd ni sshd). `tools/caja_linux_invitado.py preparar-arch` deja los dos en ~/.cache/dashos-caja-linux (fuera
+# de git). El servicio de disco da esa partición a `caja-linux`, que la ofrece al invitado como virtio-blk; el invitado
+# arranca el systemd de Arch, toma dirección por DHCP (por el puente de tramas del servicio de red) y el guion
+# (`tools/guion_caja_linux.py`, modo arch) teclea en su terminal: uname, systemctl, ip, date, `pacman -Sy` y poweroff.
+# El disco va con snapshot=on: lo que escribe Arch no se guarda. Con 3 GB, el invitado tiene 256 MB: el kernel de DashOS
+# solo usa la RAM por debajo de los 4 GB de direcciones físicas (su mapa lineal), y en `virt` empieza en el GB 1.
+ARCH_IMAGE ?= $(HOME)/.cache/dashos-caja-linux/Image-arch
+ARCH_DISCO ?= $(HOME)/.cache/dashos-caja-linux/arch/disco-arch.img
+VIRT_ARCH := target/kernel8-virt-arch.img
+arranque-virt-arch: usuario $(DISCO_NVME) FORCE
+	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): no va en git; tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	mkdir -p target/linux
+	cp "$(ARCH_IMAGE)" target/linux/Image
+	: > target/linux/initrd
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cargo build $(CARGO_PERFIL) --features virt,linux
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
+	rm -f target/caja-arch.ppm target/caja-arch.png
+	GUARDAR=$(abspath target/salida_virt_arch.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-arch) CAJA_MODO=arch QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_arch.txt 1800
+	grep -E "\[(caja-linux|nvme)\]" target/salida_virt_arch.txt | grep -vE "linux: (\[ |[0-9]+$$)" | grep -vE "hostil|invitado dice" || true
+	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
+	mkdir -p ../capturas-agente && cp target/caja-arch.png ../capturas-agente/caja-linux-arch.png 2>/dev/null || true
 
 # El multimonitor en QEMU virt: lo mismo que `arranque-virt` y, además, una virtio-gpu con dos cabezas (la 0 a 800x600,
 # como la ramfb; la 1, sin monitor, sale a 1024x768). Sin el guion de siempre: `tools/guion_multimonitor.py` (MULTI)

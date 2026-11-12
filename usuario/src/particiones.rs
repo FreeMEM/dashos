@@ -8,6 +8,10 @@
 //! - GPT: un MBR protector (tipo 0xEE) y la cabecera en el sector 1, con sus dos CRC. La de DashOS, del tipo
 //!   d0a18dbf-bbf4-4b0e-8627-ce5006b50017. La copia del final del disco no se mira.
 //!
+//! - La de la caja Linux (H9): el disco del invitado de la caja (Arch Linux ARM), solo en GPT, del tipo
+//!   d0a18dbf-bbf4-4b0e-8627-ce5006b50018 (el de DashOS con el último byte en 0x18). No se da nunca una partición de
+//!   Linux cualquiera: en un PC con otro sistema, la caja no debe ver el Linux de verdad del usuario.
+//!
 //! Desconfía de todo: entradas fuera del disco, que se pisan, de longitud cero, que tapan la tabla, dos de DashOS,
 //! cabeceras o listas con el CRC mal, tamaños de entrada raros. Ante cualquiera, error: no se adivina.
 
@@ -15,6 +19,8 @@
 pub const TIPO_MBR: u8 = 0x7F;
 /// El de una GPT, como está en el disco (los tres primeros campos al revés).
 pub const TIPO_GPT: [u8; 16] = [0xbf, 0x8d, 0xa1, 0xd0, 0xf4, 0xbb, 0x0e, 0x4b, 0x86, 0x27, 0xce, 0x50, 0x06, 0xb5, 0x00, 0x17];
+/// El de la partición de la caja Linux (solo GPT).
+pub const TIPO_GPT_CAJA_LINUX: [u8; 16] = [0xbf, 0x8d, 0xa1, 0xd0, 0xf4, 0xbb, 0x0e, 0x4b, 0x86, 0x27, 0xce, 0x50, 0x06, 0xb5, 0x00, 0x18];
 /// El sector más grande que se lee.
 pub const MAX_SECTOR: usize = 4096;
 /// Más entradas de GPT que estas, no (lo normal son 128).
@@ -35,6 +41,8 @@ pub struct Tabla {
     pub clase: Clase,
     /// La partición de DashOS, en sectores: [desde, hasta).
     pub dashos: Option<(u64, u64)>,
+    /// La partición de la caja Linux, en sectores: [desde, hasta).
+    pub linux: Option<(u64, u64)>,
     /// Dónde empieza la primera partición (o la GPT, que va desde el sector 1); `sectores` si no hay ninguna.
     pub primera: u64,
 }
@@ -52,7 +60,7 @@ pub enum Fallo {
     Pisadas,
     /// Más particiones en la GPT de las que se miran.
     Demasiadas,
-    /// Más de una partición de DashOS: no se elige.
+    /// Más de una partición de DashOS (o de la caja Linux): no se elige.
     DosDeDashOS,
     /// La cabecera de la GPT no vale (firma, tamaño, sus sectores).
     Cabecera,
@@ -97,7 +105,7 @@ pub fn leer_tabla(leer: &mut dyn FnMut(u64, &mut [u8]) -> bool, sectores: u64, t
         return Err(Fallo::Lectura);
     }
     if s0[510] != 0x55 || s0[511] != 0xAA {
-        return Ok(Tabla { clase: Clase::Ninguna, dashos: None, primera: sectores });
+        return Ok(Tabla { clase: Clase::Ninguna, dashos: None, linux: None, primera: sectores });
     }
     let mut entradas = [(0u8, 0u64, 0u64); 4];
     for (k, e) in entradas.iter_mut().enumerate() {
@@ -107,7 +115,7 @@ pub fn leer_tabla(leer: &mut dyn FnMut(u64, &mut [u8]) -> bool, sectores: u64, t
     if entradas.iter().any(|e| e.0 == 0xEE) {
         return gpt(leer, sectores, tam_sector, &mut buf);
     }
-    let mut tabla = Tabla { clase: Clase::Mbr, dashos: None, primera: sectores };
+    let mut tabla = Tabla { clase: Clase::Mbr, dashos: None, linux: None, primera: sectores };
     for (k, &(tipo, desde, cuantos)) in entradas.iter().enumerate() {
         if tipo == 0 {
             continue;
@@ -167,7 +175,7 @@ fn gpt(leer: &mut dyn FnMut(u64, &mut [u8]) -> bool, sectores: u64, ts: usize, b
     // otro (su tamaño es potencia de dos y no mayor que el sector).
     let por_sector = ts / tam_e as usize;
     let mut crc = 0;
-    let mut tabla = Tabla { clase: Clase::Gpt, dashos: None, primera: 1 };
+    let mut tabla = Tabla { clase: Clase::Gpt, dashos: None, linux: None, primera: 1 };
     let mut usadas = [(0u64, 0u64); MAX_USADAS];
     let mut nu = 0;
     // Si una entrada no vale, se sigue leyendo para el CRC: con la lista estropeada, el fallo es el CRC.
@@ -217,6 +225,12 @@ fn mirar_entrada(e: &[u8], primer_util: u64, ultimo_util: u64, usadas: &mut [(u6
             return Err(Fallo::DosDeDashOS);
         }
         tabla.dashos = Some(t);
+    }
+    if e[..16] == TIPO_GPT_CAJA_LINUX {
+        if tabla.linux.is_some() {
+            return Err(Fallo::DosDeDashOS);
+        }
+        tabla.linux = Some(t);
     }
     Ok(())
 }

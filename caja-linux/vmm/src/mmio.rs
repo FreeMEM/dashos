@@ -7,6 +7,7 @@ use crate::memoria::MemoriaInvitado;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Clase {
     Pl011,
+    Pl031,
     VirtioMmio,
 }
 
