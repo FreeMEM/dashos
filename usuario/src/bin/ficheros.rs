@@ -31,6 +31,9 @@ struct R {
     c: u64,
 }
 
+/// Si ya se dijo que el servicio no admitía una petición (una vez basta).
+static AVISADO_LLENO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 struct Cliente {
     lectura: u32,
     ventana: usize,
@@ -57,8 +60,22 @@ impl Cliente {
         p[24..28].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
         p[32..32 + nombre.len()].copy_from_slice(nombre.as_bytes());
         let malo = R { estado: i32::MIN, asa: 0, a: 0, b: 0, c: 0 };
-        if dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]) != 0 {
-            return malo;
+        // Con el servicio atareado (el PC cargado), su cola puede estar llena: se reintenta un rato en vez de dar la
+        // petición por fallida (si no, la siguiente respuesta que llega es de otra y todo se desacompasa).
+        let mut intentos = 0;
+        loop {
+            let e = dashos::canal_escribir(1, &p[..32 + nombre.len()], &[]);
+            if e == 0 {
+                break;
+            }
+            if e == dashos::E_CERRADO || intentos >= 2000 {
+                return malo;
+            }
+            if intentos == 0 && !AVISADO_LLENO.swap(true, core::sync::atomic::Ordering::Relaxed) {
+                println!("  [ficheros] el servicio de archivos no admite la petición ({}): se reintenta", e);
+            }
+            intentos += 1;
+            dashos::dormir_us(1_000);
         }
         self.leer_respuesta(&mut []).map_or(malo, |r| r.0)
     }
