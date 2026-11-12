@@ -896,5 +896,15 @@ fn centro(memoria: u32) -> bool {
     if !bien {
         println!("  [hostil] centro: rechazos {:?}, tras la inundación {}", rechazos, despues);
     }
-    bien
+    // C2: los mosaicos del panel rápido, tampoco: ni leerlos ni guardarlos (con uno que vale, con uno que no existe,
+    // repetidos o vacío). A todo, -1, y el centro no toca el disco (la comprobación del disco tras la prueba mira que
+    // `C/Prefs/panel` acaba como lo dejó el panel).
+    let panel: [&[u8]; 6] = [b"panel leer", b"panel guardar volumen", b"panel guardar ", b"panel guardar nube", b"panel guardar oscuro oscuro", b"panel guardar"];
+    let rechazos_panel: [i32; 6] = core::array::from_fn(|k| pedir(panel[k]));
+    let panel_bien = rechazos_panel.iter().all(|&e| e == -1);
+    println!("  [hostil] centro: los mosaicos del panel sin ser el panel: {}", if panel_bien { "-1 y nada" } else { "MAL" });
+    if !panel_bien {
+        println!("  [hostil] centro: a los mosaicos del panel, {:?}", rechazos_panel);
+    }
+    bien && panel_bien
 }

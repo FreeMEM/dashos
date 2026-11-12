@@ -122,6 +122,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
+# C2: los mosaicos del panel rápido solo los lee y los guarda el panel: al hostil, -1 a todo.
+~│   [hostil] centro: los mosaicos del panel sin ser el panel: -1 y nada
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
@@ -150,6 +152,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] centro pide comprobar: contesta como Ana
 # S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, azul).
 ~│   [guardian] tema del sistema: oscuro, color 0061a4
+# C2: los mosaicos guardados del panel están rotos en el disco (uno repetido y otro que no existe): el centro y el
+# panel se quedan los de serie.
+~│   [centro] panel guardado: un mosaico repetido; se queda el de serie
+~│   [panel] mosaicos: oscuro bloquear volumen (el centro: 2)
 # C2: el panel rápido. Super+A lo abre; un clic en el mosaico apaga el modo oscuro y otro lo enciende (lo pone y lo
 # guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
 ~│   [panel] abierto; mosaico a
@@ -157,6 +163,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
 ~│   [sonido] volumen general: 90 % (lo pide panel)
 ~│   [sonido] volumen general: 100 % (lo pide panel)
+# C2, el modo de edición del panel: quitar Bloquear y Hecho (lo guarda el centro, que lo relee; el panel ya no lo
+# enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba. El disco acaba con los de serie.
+~│   [panel] quita bloquear
+~│   [centro] panel: oscuro volumen (lo pide el panel), guardado: 0; releído: sí
+~│   [panel] se ven: oscuro volumen;
+~│   [panel] pone bloquear
+~│   [panel] sube bloquear
+~│   [centro] panel: oscuro bloquear volumen (lo pide el panel), guardado: 0; releído: sí
 ~│   [sonido] hostil pide el volumen general: no le toca
 ~│   [panel] cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas

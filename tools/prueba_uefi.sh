@@ -325,14 +325,17 @@ while time.time() - inicio < total:
                 continue
             centro = 4
         # C2: el panel rápido. Cuando `guardian` acaba sus bloqueos (con la sesión bloqueada, Super+A no hace nada): Super+A lo abre; un clic en el mosaico apaga el modo oscuro y
-        # otro lo vuelve a encender (lo pone el centro, que lo guarda); "−" y "+" del volumen; Super+A lo cierra. La pantalla mide 800 de ancho.
-        # Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro) y fichero.panel-claro.ppm.
+        # otro lo vuelve a encender (lo pone el centro, que lo guarda); "−" y "+" del volumen. Luego el modo de edición: Editar, quitar Bloquear, Hecho (el
+        # centro lo guarda y el panel ya no lo enseña); otra vez Editar, ponerlo (va al final), subirlo y Hecho: como estaba (el disco acaba con los de serie).
+        # Super+A lo cierra. La pantalla mide 800 de ancho; los sitios los dice el panel, desde la esquina de arriba a la derecha.
+        # Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro), fichero.panel-claro.ppm, fichero.panel-edicion.ppm (en edición, Bloquear quitado)
+        # y fichero.panel-sin.ppm (sin Bloquear).
         if panel == 0 and "[guardian] bloqueo con la tecla: " in texto:
             panel = 1
             time.sleep(0.5)
             mandar("sendkey meta_l-a")
             reintento = time.time() + 6
-        if panel in (1, 2, 3, 4, 5, 6):
+        if 1 <= panel <= 13:
             import re
             def ir_panel(x, y):
                 mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
@@ -344,15 +347,41 @@ while time.time() - inicio < total:
                 mandar(*pasos, pausa=0.05)
                 time.sleep(0.3)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            def ultima(patron):
+                todas_ = re.findall(patron, texto)
+                return todas_[-1] if todas_ else None
+            def clic_en(sitio):
+                if sitio:
+                    ir_panel(800 - int(sitio[0]), int(sitio[1]))
             m = re.search(r"\[panel\] abierto; mosaico a \((\d+), (\d+)\)", texto)
             vol = re.search(r"\[panel\] volumen: menos a \((\d+), (\d+)\), más a \((\d+), (\d+)\)", texto)
+            editar = ultima(r"\[panel\] se ven: [a-z ]+; editar a \((\d+), (\d+)\)")
+            # Cada vez que pinta en edición, el panel dice dónde está cada botón, una línea por fila con el número de la vez.
+            veces = [(int(k), l) for k, l in re.findall(r"\[panel\] edición (\d+): (.*)", texto)]
+            edicion = sorted({k for k, _ in veces})
+            QUITAR_BLOQUEAR = r"bloquear: subir \(\d+, \d+\) bajar \(\d+, \d+\) quitar"
+            def en_edicion(que):
+                ultima_vez = "\n".join(l for k, l in veces if edicion and k == edicion[-1])
+                g = re.search(que + r" \((\d+), (\d+)\)", ultima_vez)
+                return g.groups() if g else None
             espera = {1: m is not None and vol is not None, 2: "[centro] modo claro (lo pide el panel)" in texto,
                       3: "[centro] modo oscuro (lo pide el panel)" in texto,
                       4: "[sonido] volumen general: 90 % (lo pide panel)" in texto,
-                      5: "[sonido] volumen general: 100 % (lo pide panel)" in texto, 6: "[panel] cerrado" in texto}[panel]
+                      5: "[sonido] volumen general: 100 % (lo pide panel)" in texto,
+                      6: len(edicion) >= 1 and en_edicion(QUITAR_BLOQUEAR) is not None,
+                      7: "[panel] quita bloquear" in texto and len(edicion) >= 2 and en_edicion("bloquear: poner") is not None,
+                      8: "[panel] se ven: oscuro volumen;" in texto,
+                      9: len(edicion) >= 3 and en_edicion("bloquear: poner") is not None,
+                      10: "[panel] pone bloquear" in texto and len(edicion) >= 4 and en_edicion("bloquear: subir") is not None,
+                      11: "[panel] sube bloquear" in texto and len(edicion) >= 5 and en_edicion("volumen: subir") is not None,
+                      12: texto.count("[panel] se ven: oscuro bloquear volumen;") >= 2,
+                      13: "[panel] cerrado" in texto}[panel]
             if not espera:
-                if time.time() > reintento:
-                    panel = 5  # no llegó: las líneas que falten lo dirán
+                if time.time() > reintento and panel < 13:
+                    # No llegó: se cierra el panel (las líneas que falten lo dirán).
+                    mandar("sendkey meta_l-a")
+                    panel = 13
+                    reintento = time.time() + 6
                 time.sleep(0.25)
                 continue
             if panel in (1, 2) and m:
@@ -365,7 +394,25 @@ while time.time() - inicio < total:
                 ir_panel(800 - int(vol.group(1)), int(vol.group(2)))
             elif panel == 4:
                 ir_panel(800 - int(vol.group(3)), int(vol.group(4)))
-            elif panel == 5:
+            elif panel in (5, 8):
+                if panel == 8 and captura_centro:
+                    time.sleep(0.6)
+                    mandar("screendump " + captura_centro + ".panel-sin.ppm")
+                clic_en(editar)
+            elif panel == 6:
+                clic_en(en_edicion(QUITAR_BLOQUEAR))
+            elif panel == 7:
+                if captura_centro:
+                    time.sleep(0.6)
+                    mandar("screendump " + captura_centro + ".panel-edicion.ppm")
+                clic_en(en_edicion("hecho"))
+            elif panel == 9:
+                clic_en(en_edicion("bloquear: poner"))
+            elif panel == 10:
+                clic_en(en_edicion("bloquear: subir"))
+            elif panel == 11:
+                clic_en(en_edicion("hecho"))
+            elif panel == 12:
                 time.sleep(0.5)
                 mandar("sendkey meta_l-a")
             panel += 1

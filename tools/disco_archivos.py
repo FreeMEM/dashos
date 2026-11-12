@@ -42,6 +42,8 @@ if sys.argv[1] == "--comprobar":
         "C/ cajón",
         "C/Prefs/ cajón",
         "C/Prefs/apariencia 12",
+        # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
+        "C/Prefs/panel 24",
         "C/Privado/ cajón",
         "C/Privado/nota.txt 18",
         "C/datos.bin 614400",
@@ -67,12 +69,16 @@ if sys.argv[1] == "--comprobar":
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
     apariencia = subprocess.run([ver, disco, desde, "C/Prefs/apariencia"], check=True, capture_output=True).stdout
+    panel = subprocess.run([ver, disco, desde, "C/Prefs/panel"], check=True, capture_output=True).stdout
     # FS8: y nada roto, ni un bloque perdido.
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
     # S10c: lo que guardó el centro de control al elegir el modo oscuro y, con doble clic, el azul.
     if apariencia != b"oscuro azul\n":
         fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
+    # C2: los mosaicos del panel. Rotos al empezar; el panel quitó Bloquear y lo volvió a poner en su sitio: los de serie.
+    if panel != b"oscuro bloquear volumen\n":
+        fallos.append(f"C/Prefs/panel: {panel!r}")
     # A14: lo que DashOS escribió lleva la hora del reloj de la placa (en QEMU, la de este PC, en UTC): de esta prueba,
     # no de 1970 ni del futuro.
     fecha = subprocess.run([ver, disco, desde, "--fecha", "Escrito/hola.txt"], capture_output=True, text=True).stdout.split()
@@ -175,6 +181,11 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(prefs, "apariencia"), "wb") as f:
         f.write(b"\xff\xfeoscuro magenta\x00")
     os.chmod(os.path.join(prefs, "apariencia"), 0o600)
+    # C2: los mosaicos del panel rápido, rotos: uno repetido y uno que no existe (la basura, en las pruebas de PC). El centro y el
+    # panel se quedan los de serie; al guardar, el centro lo reescribe.
+    with open(os.path.join(prefs, "panel"), "wb") as f:
+        f.write(b"volumen volumen nube\n")
+    os.chmod(os.path.join(prefs, "panel"), 0o600)
     os.chmod(prefs, 0o700)
     # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
     with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
