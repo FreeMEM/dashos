@@ -65,7 +65,8 @@ fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, volumen: u32, fuente: &mut Fue
     let v = t.sobre_variante_superficie;
     fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 14, "Volumen", 18, v);
     fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 38, &alloc::format!("{} %", volumen), 14, v);
-    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 96, VOLUMEN.y + 18, "−", 28, v);
+    // Un guion de los de siempre: la fuente no tiene el signo menos (U+2212).
+    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 94, VOLUMEN.y + 16, "-", 30, v);
     fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 44, VOLUMEN.y + 18, "+", 28, v);
 }
 
