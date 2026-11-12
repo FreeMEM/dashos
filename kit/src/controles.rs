@@ -1,6 +1,7 @@
 //! Los controles (K5) con el aspecto de Material 3, y la `Interfaz` que los junta: los objetos, cómo se colocan, el
 //! tema y el ratón. Medidas de la especificación de Material 3: botón de 40 de alto con 24 de relleno a los lados y
-//! esquinas redondas; casilla de 18 dentro de una zona de 40; deslizador con carril de 4 y agarre de 20.
+//! esquinas redondas; casilla de 18 dentro de una zona de 40; deslizador con carril de 16 y agarre de 4 × 44; menú
+//! desplegable con contorno, de 56. Con el foco del teclado, el anillo de Material 3 (3 de grosor, 2 por fuera).
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -107,7 +108,7 @@ impl Clase for Boton {
         let base = r.y + (r.h - m.alto()) / 2 + m.sube;
         ctx.medium.dibujar(l, r.x + (r.w - m.ancho) / 2, base, &texto, tam, tinta);
         // Con el foco del teclado, el anillo de Material 3: 3 de grosor, 2 por fuera.
-        if e.foco && !e.desactivado {
+        if e.anillo && !e.desactivado {
             l.borde(r.dentro(-5), radio + 5, 3, t.primario);
         }
     }
@@ -134,7 +135,8 @@ impl Clase for Boton {
     }
 }
 
-/// Una casilla de Material 3: un cuadrado de 18 con esquinas de 2, relleno y con su marca si `VALOR` es sí.
+/// Una casilla de Material 3: un cuadrado de 18 con esquinas de 2, con contorno de 2 sin marcar, y relleno del primario
+/// con su marca si `VALOR` es sí. Con el foco, el espacio la cambia.
 pub struct Casilla;
 
 impl Clase for Casilla {
@@ -149,30 +151,53 @@ impl Clase for Casilla {
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
         let t = &ctx.tema;
         let marcada = attrs.get(&atr::VALOR).is_some_and(Valor::bool);
-        let caja = Rect::new(r.x + (r.w - 18) / 2, r.y + (r.h - 18) / 2, 18, 18);
-        // La capa de estado es un círculo de 40 alrededor.
-        if let Some(c) = tema::capa(e, if marcada { t.primario } else { t.sobre_superficie }) {
-            l.redondeado(Rect::new(r.x + (r.w - 40) / 2, r.y + (r.h - 40) / 2, 40, 40), 20, c);
+        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        let caja = Rect::new(cx - 9, cy - 9, 18, 18);
+        // La capa de estado es un círculo de 40 alrededor: del primario encima o con el foco de una marcada, y al
+        // pulsar una sin marcar (va a quedar marcada); del texto en lo demás.
+        let capa = if marcada != e.pulsado { t.primario } else { t.sobre_superficie };
+        if let Some(c) = tema::capa(e, capa) {
+            l.redondeado(Rect::new(cx - 20, cy - 20, 40, 40), 20, c);
         }
         if marcada {
             let fondo = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.primario };
             l.redondeado(caja, 2, fondo);
-            // La marca: dos trazos de 2 píxeles.
+            // La marca (el icono "check" en 18): dos trazos de 2, suavizados, en octavos de píxel.
             let tinta = if e.desactivado { t.superficie } else { t.sobre_primario };
-            for i in 0..4 {
-                l.rellenar(Rect::new(caja.x + 4 + i, caja.y + 8 + i, 2, 2), tinta);
-            }
-            for i in 0..7 {
-                l.rellenar(Rect::new(caja.x + 7 + i, caja.y + 11 - i, 2, 2), tinta);
-            }
+            let p = |x: i32, y: i32| (caja.x * 8 + x, caja.y * 8 + y);
+            l.trazo(p(30, 74), p(58, 102), 16, tinta);
+            l.trazo(p(58, 102), p(115, 45), 16, tinta);
         } else {
-            let borde = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_variante_superficie };
+            // El contorno de 2: más oscuro (el del texto) encima, con el foco o pulsada.
+            let borde = if e.desactivado {
+                tema::apagado(t.sobre_superficie)
+            } else if e.encima || e.anillo || e.pulsado {
+                t.sobre_superficie
+            } else {
+                t.sobre_variante_superficie
+            };
             l.borde(caja, 2, 2, borde);
+        }
+        // Con el foco del teclado, el anillo de Material 3 alrededor de la capa: 3 de grosor, 2 por fuera.
+        if e.anillo && !e.desactivado {
+            l.borde(Rect::new(cx - 25, cy - 25, 50, 50), 25, 3, t.primario);
         }
     }
 
     fn pulsable(&self) -> bool {
         true
+    }
+
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    /// Con el foco, el espacio la marca o la desmarca.
+    fn escribir(&self, attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        match tecla {
+            crate::teclado::Tecla::Letra(' ') => self.clic(attrs),
+            _ => Vec::new(),
+        }
     }
 
     fn clic(&self, attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
@@ -181,7 +206,10 @@ impl Clase for Casilla {
     }
 }
 
-/// Un deslizador de Material 3: carril de 4 (activo hasta el valor) y agarre redondo de 20.
+/// Un deslizador de Material 3 (el de 2024): carril de 16 de alto y esquinas redondas, el tramo activo en el primario
+/// y el otro en el contenedor secundario, separados 6 del agarre, que es una barra de 4 × 44 (de 2 al pulsar o con el
+/// foco); al final del tramo inactivo, un punto de 4 (la parada). Desactivado: el activo y el agarre al 38 % y el
+/// inactivo al 12 %, del color del texto. Con el foco, las flechas lo mueven de 1 en 1 e Inicio y Fin a los extremos.
 pub struct Deslizador;
 
 impl Deslizador {
@@ -189,6 +217,11 @@ impl Deslizador {
         let min = attrs.get(&atr::MINIMO).map_or(0, Valor::int);
         let max = attrs.get(&atr::MAXIMO).map_or(100, Valor::int).max(min + 1);
         (min, max)
+    }
+
+    /// Por dónde va el centro del agarre: desde dónde y cuánto (el agarre, de 4, no se sale de `r`).
+    fn carril(r: Rect) -> (i32, i32) {
+        (r.x + 2, (r.w - 4).max(1))
     }
 }
 
@@ -202,32 +235,70 @@ impl Clase for Deslizador {
     }
 
     fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut Contexto) -> Medida {
-        Medida { min: (120, 40), max: (SIN_MAX, 40), peso: 100 }
+        Medida { min: (120, 44), max: (SIN_MAX, 44), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
         let t = &ctx.tema;
         let (min, max) = Self::rango(attrs);
-        let v = attrs.get(&atr::VALOR).map_or(min, Valor::int);
-        let (x0, ancho) = (r.x + 10, r.w - 20);
+        let v = attrs.get(&atr::VALOR).map_or(min, Valor::int).clamp(min, max);
+        let (x0, ancho) = Self::carril(r);
         let x = x0 + ((v - min) * ancho as i64 / (max - min)) as i32;
         let cy = r.y + r.h / 2;
-        let activo = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.primario };
-        l.redondeado(Rect::new(x0, cy - 2, ancho, 4), 2, t.variante_superficie);
-        l.redondeado(Rect::new(x0, cy - 2, x - x0, 4), 2, activo);
-        if let Some(c) = tema::capa(e, t.primario) {
-            l.redondeado(Rect::new(x - 20, cy - 20, 40, 40), 20, c);
+        let (activo, inactivo, agarre) = if e.desactivado {
+            let apagado = tema::apagado(t.sobre_superficie);
+            (apagado, tema::fondo_apagado(t.sobre_superficie), apagado)
+        } else {
+            (t.primario, t.contenedor_secundario(), t.primario)
+        };
+        // Los dos tramos: redondos por fuera (8) y casi rectos (2) junto al agarre.
+        let fin = r.x + r.w;
+        let (hasta, desde) = (x - 2 - 6, x + 2 + 6);
+        if hasta > r.x {
+            l.redondeado_lados(Rect::new(r.x, cy - 8, hasta - r.x, 16), 8, 2, activo);
         }
-        l.redondeado(Rect::new(x - 10, cy - 10, 20, 20), 10, activo);
+        if desde < fin {
+            l.redondeado_lados(Rect::new(desde, cy - 8, fin - desde, 16), 2, 8, inactivo);
+            // La parada: un punto de 4, a 6 del final.
+            if desde + 4 < fin - 10 {
+                l.redondeado(Rect::new(fin - 10, cy - 2, 4, 4), 2, if e.desactivado { activo } else { t.primario });
+            }
+        }
+        // El agarre: de 4, o de 2 al pulsarlo o con el foco.
+        let ancho_agarre = if (e.pulsado || e.anillo) && !e.desactivado { 2 } else { 4 };
+        let barra = Rect::new(x - ancho_agarre / 2, cy - 22, ancho_agarre, 44);
+        l.redondeado(barra, 2, agarre);
+        // Con el foco del teclado, el anillo de Material 3 alrededor del agarre: 3 de grosor, 2 por fuera.
+        if e.anillo && !e.desactivado {
+            l.borde(barra.dentro(-5), 6, 3, t.primario);
+        }
     }
 
     fn pulsable(&self) -> bool {
         true
     }
 
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    fn escribir(&self, attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        use crate::teclado::Tecla;
+        let (min, max) = Self::rango(attrs);
+        let v = attrs.get(&atr::VALOR).map_or(min, Valor::int);
+        let nuevo = match tecla {
+            Tecla::Izquierda | Tecla::Abajo => v - 1,
+            Tecla::Derecha | Tecla::Arriba => v + 1,
+            Tecla::Inicio => min,
+            Tecla::Fin => max,
+            _ => return Vec::new(),
+        };
+        alloc::vec![(atr::VALOR, Valor::Int(nuevo))]
+    }
+
     fn arrastrar(&self, attrs: &BTreeMap<Atr, Valor>, r: Rect, x: i32, _y: i32) -> Vec<(Atr, Valor)> {
         let (min, max) = Self::rango(attrs);
-        let (x0, ancho) = (r.x + 10, (r.w - 20).max(1));
+        let (x0, ancho) = Self::carril(r);
         let v = min + ((x - x0).clamp(0, ancho) as i64 * (max - min) + ancho as i64 / 2) / ancho as i64;
         alloc::vec![(atr::VALOR, Valor::Int(v))]
     }
@@ -324,8 +395,11 @@ impl Clase for Campo {
 }
 
 /// Un ciclo (`Cycle` de MUI): enseña una de sus `OPCIONES` (la de `VALOR`, desde 0) y cada clic pasa a la siguiente,
-/// y de la última a la primera. Con Material 3 es un botón con contorno y una flecha abajo, del ancho de su opción
-/// más larga.
+/// y de la última a la primera. Con Material 3 es un menú desplegable con contorno (el campo de texto con contorno, que
+/// no se escribe, y la flecha abajo a la derecha): 56 de alto, esquinas de 4, texto de 16 con 16 de relleno, la flecha
+/// en el color suave en su hueco de 24 a 12 del borde, y del ancho de su opción más larga. Contorno de 1 (del texto,
+/// encima), de 2 y del primario con el foco. Con el foco, abajo, a la derecha, espacio o Intro pasan a la siguiente, y
+/// arriba o a la izquierda a la anterior.
 pub struct Ciclo;
 
 impl Ciclo {
@@ -354,36 +428,64 @@ impl Clase for Ciclo {
     }
 
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
-        let tam = ctx.tema.letra_etiqueta;
-        let ancho = Self::opciones(attrs).iter().map(|o| ctx.medium.medir(o, tam).ancho).max().unwrap_or(0);
-        // 24 de relleno a cada lado, y 24 para la flecha.
-        Medida { min: (ancho + 48 + 24, 40), max: (SIN_MAX, 40), peso: 100 }
+        let tam = ctx.tema.letra_texto;
+        let ancho = Self::opciones(attrs).iter().map(|o| ctx.regular.medir(o, tam).ancho).max().unwrap_or(0);
+        // 16 de relleno delante, 16 hasta la flecha, su hueco de 24 y 12 hasta el borde.
+        Medida { min: (ancho + 16 + 16 + 24 + 12, 56), max: (SIN_MAX, 56), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
         let t = &ctx.tema;
-        let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.primario };
-        let radio = t.radio_boton.min(r.h / 2);
-        if let Some(c) = tema::capa(e, t.primario) {
-            l.redondeado(r, radio, c);
-        }
-        l.borde(r, radio, 1, if e.desactivado { tema::fondo_apagado(t.sobre_superficie) } else { t.contorno });
+        let (borde, grosor) = if e.desactivado {
+            (tema::fondo_apagado(t.sobre_superficie), 1)
+        } else if e.foco {
+            (t.primario, 2)
+        } else if e.encima || e.pulsado {
+            (t.sobre_superficie, 1)
+        } else {
+            (t.contorno, 1)
+        };
+        l.borde(r, 4, grosor, borde);
+        let (tinta, flecha) = if e.desactivado {
+            (tema::apagado(t.sobre_superficie), tema::apagado(t.sobre_superficie))
+        } else {
+            (t.sobre_superficie, t.sobre_variante_superficie)
+        };
         let opciones = Self::opciones(attrs);
         let v = attrs.get(&atr::VALOR).map_or(0, Valor::int) as usize;
         let texto = opciones.get(v).cloned().unwrap_or_default();
-        let tam = t.letra_etiqueta;
-        let m = ctx.medium.medir(&texto, tam);
+        let tam = t.letra_texto;
+        let m = ctx.regular.medir(&texto, tam);
         let base = r.y + (r.h - m.alto()) / 2 + m.sube;
-        ctx.medium.dibujar(l, r.x + 24, base, &texto, tam, tinta);
-        // La flecha: un triángulo de 10 de ancho y 5 de alto.
-        let (fx, fy) = (r.x + r.w - 24 - 5, r.y + r.h / 2 - 2);
+        l.recortar(r.dentro(grosor).cruce(l.recorte()));
+        ctx.regular.dibujar(l, r.x + 16, base, &texto, tam, tinta);
+        l.soltar_recorte();
+        // La flecha (el icono "arrow_drop_down" en su hueco de 24): un triángulo de 10 × 5, con los lados de 45°
+        // suavizados (el píxel de cada punta, a medias).
+        let (fx, fy) = (r.x + r.w - 12 - 24 + 7, r.y + (r.h - 24) / 2 + 10);
         for i in 0..5 {
-            l.rellenar(Rect::new(fx + i, fy + i, 10 - 2 * i, 1), tinta);
+            l.rellenar(Rect::new(fx + i + 1, fy + i, 8 - 2 * i, 1), flecha);
+            l.punto(fx + i, fy + i, flecha, 128);
+            l.punto(fx + 9 - i, fy + i, flecha, 128);
         }
     }
 
     fn pulsable(&self) -> bool {
         true
+    }
+
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    fn escribir(&self, attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        use crate::teclado::Tecla;
+        let v = attrs.get(&atr::VALOR).map_or(0, Valor::int);
+        match tecla {
+            Tecla::Abajo | Tecla::Derecha | Tecla::Intro | Tecla::Letra(' ') => alloc::vec![(atr::VALOR, Valor::Int(v + 1))],
+            Tecla::Arriba | Tecla::Izquierda => alloc::vec![(atr::VALOR, Valor::Int(v - 1))],
+            _ => Vec::new(),
+        }
     }
 
     fn clic(&self, attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
@@ -513,6 +615,8 @@ pub struct Interfaz {
     encima: Option<Obj>,
     pulsado: Option<Obj>,
     pub foco: Option<Obj>,
+    /// El foco vino del teclado (Tab, o una tecla que hizo algo): se dibuja su anillo. Un clic lo quita.
+    pub foco_teclado: bool,
     teclado: crate::teclado::Teclado,
     /// La hora (ms) del evento del ratón que se está atendiendo, si se sabe (`raton_hora`).
     hora: Option<u32>,
@@ -536,6 +640,7 @@ impl Interfaz {
             encima: None,
             pulsado: None,
             foco: None,
+            foco_teclado: false,
             teclado: crate::teclado::Teclado::new(),
             hora: None,
             ultimo_clic: None,
@@ -593,6 +698,7 @@ impl Interfaz {
         Estado {
             encima: self.encima == Some(o),
             foco: self.foco == Some(o),
+            anillo: self.foco == Some(o) && self.foco_teclado,
             pulsado: self.pulsado == Some(o),
             desactivado: desactivado(&obj.attrs),
         }
@@ -634,7 +740,7 @@ impl Interfaz {
 
     /// El ratón en (x, y) de la superficie, con el botón izquierdo pulsado o no. Devuelve si hay que dibujar.
     pub fn raton(&mut self, x: i32, y: i32, pulsado: bool) -> bool {
-        let antes = (self.encima, self.pulsado, self.foco);
+        let antes = (self.encima, self.pulsado, self.foco, self.foco_teclado);
         let bajo = self.bajo(x, y).filter(|o| {
             let obj = self.arbol.objeto(*o).unwrap();
             obj.clase.pulsable() && !desactivado(&obj.attrs)
@@ -645,6 +751,7 @@ impl Interfaz {
                 if let Some(o) = bajo {
                     self.pulsado = Some(o);
                     self.foco = Some(o);
+                    self.foco_teclado = false;
                     self.arbol.poner(o, atr::PULSADO, Valor::Bool(true));
                     self.arrastre(o, x, y);
                 }
@@ -670,7 +777,7 @@ impl Interfaz {
             }
             (None, false) => {}
         }
-        antes != (self.encima, self.pulsado, self.foco) || !self.arbol.sucios_sin_limpiar().is_empty()
+        antes != (self.encima, self.pulsado, self.foco, self.foco_teclado) || !self.arbol.sucios_sin_limpiar().is_empty()
     }
 
     /// Una tecla de Linux (lo que manda el compositor): va al objeto con el foco si usa el teclado; el tabulador pasa
@@ -694,6 +801,7 @@ impl Interfaz {
             let n = usan.len();
             let i = self.foco.and_then(|f| usan.iter().position(|&o| o == f)).map_or(0, |i| if atras { (i + n - 1) % n } else { (i + 1) % n });
             self.foco = Some(usan[i]);
+            self.foco_teclado = true;
             return true;
         }
         let Some(o) = self.foco else { return false };
@@ -702,6 +810,10 @@ impl Interfaz {
             return false;
         }
         let cambios = obj.clase.escribir(&obj.attrs, t);
+        // Una tecla que hace algo enseña el anillo; otra (una letra en un botón), no.
+        if !cambios.is_empty() {
+            self.foco_teclado = true;
+        }
         self.aplicar(o, cambios);
         true
     }
@@ -811,6 +923,81 @@ mod pruebas {
         assert_eq!(i.foco, Some(lista));
     }
 
+    /// Material 3: la casilla y el deslizador, con sus colores por papel, el teclado y el anillo de foco.
+    #[test]
+    fn casilla_y_deslizador() {
+        let mut a = Arbol::new();
+        let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false))]);
+        let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(50))]);
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(casilla), Hijo::Obj(desl)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 300, 200));
+        let (rc, rd) = (i.sitios[&casilla], i.sitios[&desl]);
+        assert_eq!((rc.h, rd.h), (40, 44));
+        let t = Tema::CLARO;
+        let mut px = vec![0u32; 300 * 200];
+        let pintar = |i: &mut Interfaz, px: &mut [u32]| {
+            let mut l = Lienzo::new(px, 300, 200, 300);
+            i.dibujar(&mut l);
+        };
+        let en = |px: &[u32], x: i32, y: i32| px[(y * 300 + x) as usize];
+        let (cx, cy) = (rc.x + rc.w / 2, rc.y + rc.h / 2);
+        // Sin marcar: el contorno de 2 en el color suave, y dentro la superficie.
+        pintar(&mut i, &mut px);
+        assert_eq!(en(&px, cx - 9, cy), t.sobre_variante_superficie);
+        assert_eq!(en(&px, cx, cy), t.superficie);
+        // Un clic le da el foco, pero sin anillo (Material 3: solo con el teclado); la marca y se desmarca.
+        clic(&mut i, (cx, cy));
+        clic(&mut i, (cx, cy));
+        i.raton(-1, -1, false);
+        assert_eq!(i.foco, Some(casilla));
+        pintar(&mut i, &mut px);
+        assert_eq!(en(&px, cx - 24, cy), t.superficie);
+        // Una tecla que no hace nada en ella tampoco lo enseña.
+        i.tecla(30, true);
+        pintar(&mut i, &mut px);
+        assert_eq!(en(&px, cx - 24, cy), t.superficie);
+        i.foco = None;
+        // Tab le da el foco: el anillo del primario a 22 del centro (de 22 a 25), y el espacio la marca.
+        i.tecla(15, true);
+        assert_eq!(i.foco, Some(casilla));
+        i.tecla(57, true);
+        assert_eq!(i.arbol.leer(casilla, atr::VALOR), Some(&Valor::Bool(true)));
+        pintar(&mut i, &mut px);
+        assert_eq!(en(&px, cx - 24, cy), t.primario);
+        assert_ne!(en(&px, cx - 21, cy), t.primario);
+        // Marcada: el primario, con la marca del color sobre el primario (en el vértice de abajo).
+        assert_eq!(en(&px, cx - 7, cy - 7), t.primario);
+        assert_eq!(en(&px, cx - 2, cy + 3), t.sobre_primario);
+        // El deslizador, al 50 %: el tramo activo del primario, el agarre en el centro, y el inactivo del contenedor
+        // secundario, con la parada del primario a 8 del final.
+        let (x, my) = (rd.x + 2 + (rd.w - 4) / 2, rd.y + rd.h / 2);
+        assert_eq!(en(&px, rd.x + 20, my), t.primario);
+        assert_eq!(en(&px, x, rd.y + 2), t.primario);
+        assert_eq!(en(&px, x - 5, my), t.superficie);
+        assert_eq!(en(&px, x + 20, my), t.contenedor_secundario());
+        assert_eq!(en(&px, rd.x + rd.w - 8, my), t.primario);
+        // Con el foco, las flechas lo mueven de 1 en 1, Fin e Inicio a los extremos.
+        i.tecla(15, true);
+        assert_eq!(i.foco, Some(desl));
+        i.tecla(106, true);
+        assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(51)));
+        i.tecla(105, true);
+        i.tecla(105, true);
+        assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(49)));
+        i.tecla(107, true);
+        assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(100)));
+        i.tecla(106, true);
+        assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(100)));
+        i.tecla(102, true);
+        assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(0)));
+        // Desactivado, del color del texto y translúcido: el tramo inactivo, de una pasada (igual cerca del agarre
+        // que lejos, sin zonas más oscuras).
+        i.arbol.poner(desl, atr::DESACTIVADO, Valor::Bool(true));
+        pintar(&mut i, &mut px);
+        assert_eq!(en(&px, rd.x + 30, my), en(&px, rd.x + 120, my));
+        assert_ne!(en(&px, rd.x + 30, my), t.superficie);
+    }
+
     #[test]
     fn doble_clic_en_una_lista() {
         let mut a = Arbol::new();
@@ -862,10 +1049,10 @@ mod pruebas {
         let texto = a.crear(Texto, &[]);
         a.notificar(ciclo, atr::VALOR, Cuando::Igual(Valor::Int(1)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("noche".into())));
         let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(ciclo), Hijo::Obj(texto)]), Tema::CLARO);
-        // Del ancho de la opción más larga, más el relleno y la flecha.
-        let largo = i.ctx.medium.medir("Automático", 14).ancho;
+        // Del ancho de la opción más larga (texto de 16), más el relleno y la flecha; 56 de alto, como un campo.
+        let largo = i.ctx.regular.medir("Automático", 16).ancho;
         let obj = i.arbol.objeto(ciclo).unwrap();
-        assert_eq!(obj.clase.medida(&obj.attrs, &mut i.ctx).min, (largo + 72, 40));
+        assert_eq!(obj.clase.medida(&obj.attrs, &mut i.ctx).min, (largo + 68, 56));
         i.colocar(Rect::new(0, 0, 300, 150));
         let c = centro(&i, ciclo);
         clic(&mut i, c);
@@ -877,14 +1064,37 @@ mod pruebas {
         assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(0)));
         i.arbol.poner(ciclo, atr::VALOR, Valor::Int(-1));
         assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(2)));
-        // Se dibuja: el contorno, y dentro la flecha del primario.
+        // Se dibuja: el contorno (sin foco, el del tema; esquinas de 4), y dentro la flecha en el color suave: su
+        // fila de arriba, 8 píxeles enteros y uno a medias en cada punta.
+        i.foco = None;
+        i.raton(-1, -1, false);
         let mut px = vec![0u32; 300 * 150];
-        let mut l = Lienzo::new(&mut px, 300, 150, 300);
-        i.dibujar(&mut l);
+        let pintar = |i: &mut Interfaz, px: &mut [u32]| {
+            let mut l = Lienzo::new(px, 300, 150, 300);
+            i.dibujar(&mut l);
+        };
+        pintar(&mut i, &mut px);
         let r = i.sitios[&ciclo];
-        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], 0xff79_747e);
-        let flecha = (r.x + r.w - 29..r.x + r.w - 19).filter(|&x| px[((r.y + r.h / 2 - 2) * 300 + x) as usize] == 0xff67_50a4).count();
-        assert_eq!(flecha, 10);
+        let t = Tema::CLARO;
+        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], t.contorno);
+        let fila = r.y + 26;
+        let flecha = (r.x + r.w - 29..r.x + r.w - 19).filter(|&x| px[(fila * 300 + x) as usize] == t.sobre_variante_superficie).count();
+        assert_eq!(flecha, 8);
+        // Encima, el contorno del texto; con el foco, de 2 y del primario.
+        i.raton(r.x + 30, r.y + 20, false);
+        pintar(&mut i, &mut px);
+        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], t.sobre_superficie);
+        i.raton(-1, -1, false);
+        i.foco = Some(ciclo);
+        pintar(&mut i, &mut px);
+        assert_eq!((px[((r.y + 20) * 300 + r.x) as usize], px[((r.y + 20) * 300 + r.x + 1) as usize]), (t.primario, t.primario));
+        // Con el foco, abajo pasa a la siguiente (de la última, a la primera) y arriba a la anterior.
+        i.tecla(108, true);
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(0)));
+        i.tecla(103, true);
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(2)));
+        i.tecla(57, true);
+        assert_eq!(i.arbol.leer(ciclo, atr::VALOR), Some(&Valor::Int(0)));
     }
 
     #[test]
@@ -934,8 +1144,9 @@ mod pruebas {
     fn una_ventana_que_responde() {
         let (mut i, [texto, desl, casilla, _cancelar, aceptar]) = ventana();
         let m = i.medida();
-        // 16 de margen arriba y abajo, el texto (19 a 16 píxeles), y dos filas de 40, con 8 entre cada cosa.
-        assert_eq!(m.min.1, 32 + 19 + 8 + 40 + 8 + 40, "{m:?}");
+        // 16 de margen arriba y abajo, el texto (19 a 16 píxeles), la fila del deslizador (44) y la de los botones (40),
+        // con 8 entre cada cosa.
+        assert_eq!(m.min.1, 32 + 19 + 8 + 44 + 8 + 40, "{m:?}");
         assert!(m.min.0 >= 200 && m.max.1 >= m.min.1, "{m:?}");
         let (w, h) = (400, 200);
         i.colocar(Rect::new(0, 0, w, h));
@@ -983,9 +1194,9 @@ mod pruebas {
         i.raton(rd.x - 50, rd.y + 20, false);
         assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(0)));
         assert_eq!(i.arbol.leer(texto, atr::TEXTO), Some(&Valor::Texto("Volumen: 0".into())));
-        // Y hasta tres cuartos de su carril: 75.
-        i.raton(rd.x + 10 + (rd.w - 20) * 3 / 4, rd.y + 20, true);
-        i.raton(rd.x + 10 + (rd.w - 20) * 3 / 4, rd.y + 20, false);
+        // Y hasta tres cuartos de su carril (el centro del agarre va de 2 a 2 del borde): 75.
+        i.raton(rd.x + 2 + (rd.w - 4) * 3 / 4, rd.y + 20, true);
+        i.raton(rd.x + 2 + (rd.w - 4) * 3 / 4, rd.y + 20, false);
         assert_eq!(i.arbol.leer(desl, atr::VALOR), Some(&Valor::Int(75)));
         // Pulsar fuera y soltar dentro no es un clic.
         i.raton(1, 1, true);

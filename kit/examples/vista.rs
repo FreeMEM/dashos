@@ -1,7 +1,7 @@
 //! Dibuja una ventana de prueba del kit en un PPM, para mirarla en el PC: `cargo run --example vista -- salida.ppm`.
 //! Con `oscuro` detrás, en el tema oscuro.
 
-use kit::controles::{Boton, Casilla, Deslizador, Hijo, Interfaz, Texto};
+use kit::controles::{Boton, Campo, Casilla, Deslizador, Hijo, Interfaz, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
@@ -15,21 +15,33 @@ fn main() {
         None if oscuro => Tema::OSCURO,
         None => Tema::CLARO,
     };
+    // La misma ventana que Ajustes (usuario/src/bin/ajustes.rs), con su tamaño.
     let mut a = Arbol::new();
-    let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into()))]);
+    let titulo = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Ajustes".into())), (atr::ESTILO, Valor::Int(1))]);
+    let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into())), (atr::ESTILO, Valor::Int(2))]);
     let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(60))]);
     let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(true))]);
-    let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::DESACTIVADO, Valor::Bool(true))]);
+    let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into()))]);
+    let hueco = a.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let aceptar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Aceptar".into()))]);
     a.notificar(desl, atr::VALOR, Cuando::Siempre, texto, atr::TEXTO, Que::Formato("Volumen: {}".into()));
     let raiz = Hijo::Columna(vec![
+        Hijo::Obj(titulo),
         Hijo::Obj(texto),
         Hijo::Fila(vec![Hijo::Obj(desl), Hijo::Obj(casilla)]),
-        Hijo::Fila(vec![Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
+        Hijo::Obj(nombre),
+        Hijo::Fila(vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, tema);
-    let (w, h) = (360, 180);
+    i.esquinas = 16;
+    i.foco = Some(nombre);
+    let (w, h) = (360, 250);
+    eprintln!("medida: {:?}", i.medida());
     i.colocar(Rect::new(0, 0, w, h));
+    for (n, o) in [("título", titulo), ("texto", texto), ("deslizador", desl), ("casilla", casilla), ("campo", nombre), ("cancelar", cancelar), ("aceptar", aceptar)] {
+        eprintln!("{n}: {:?}", i.sitios[&o]);
+    }
     // El ratón encima de Aceptar, para ver su capa.
     let r = i.sitios[&aceptar];
     i.raton(r.x + 10, r.y + 10, false);

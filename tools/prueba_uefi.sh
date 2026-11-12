@@ -27,7 +27,8 @@ QEMU=$!
 # ventana de prueba de arriba, que se lleva el teclado sin cambiar el orden de las ventanas.
 # Ajustes sale cuando ya se está tecleando en otra ventana, así que no se lleva el teclado al salir (S8,
 # docs/REVISION_LOOP.md). Cuando la salida serie dice que está en pantalla, el cursor va a la esquina y de ahí a
-# (300, 300), donde solo está ella; un clic le da el teclado, y Super+Arriba la maximiza y Super+Abajo la devuelve.
+# (400, 130), donde solo está ella (junto a su título); un clic le da el teclado, el cursor sigue en (300, 300), y
+# Super+Arriba la maximiza y Super+Abajo la devuelve.
 # Cuando `guardian` pregunta por un permiso (U4), se contesta: a `pide`, sí; a otro, una "s" antes de tiempo, que no
 # debe contar, y después no.
 # Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
@@ -595,9 +596,13 @@ while time.time() - inicio < total:
             bloqueo = 10
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
+            # El clic, en (400, 130): a la derecha del título de Ajustes, donde no hay nada que pulsar (el foco sigue en su
+            # campo; en (300, 300) ahora está su Cancelar). Después, el cursor vuelve a (300, 300), como antes.
+            mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+            mandar("mouse_move 100 100", *["mouse_move 100 10"] * 3, pausa=0.05)
+            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
             mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
             mandar(*["mouse_move 100 100"] * 3, pausa=0.05)
-            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
             time.sleep(0.5)
             mandar("sendkey meta_l-up")
             time.sleep(2)
