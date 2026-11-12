@@ -49,6 +49,15 @@ pub mod atr {
     /// El estilo (Material 3). En un botón: 0 relleno (la acción principal), 1 tonal, 2 de texto (las secundarias, como
     /// Cancelar). En un texto: 0 cuerpo, 1 título, 2 secundario (más pequeño y más suave).
     pub const ESTILO: Atr = 14;
+    /// Un desplegable con su menú abierto. Lo abre un clic, Intro, el espacio o Alt+abajo; lo cierra elegir, Esc o un
+    /// clic fuera. Un programa también puede abrirlo o cerrarlo.
+    pub const ABIERTO: Atr = 15;
+    /// La etiqueta de un campo (Material 3): dentro mientras está vacío y sin foco; si no, arriba, sobre el borde.
+    pub const ETIQUETA: Atr = 16;
+    /// El texto de ayuda bajo un campo. Si un campo tiene `AYUDA` o `ERROR` (aunque vacíos), reserva su línea.
+    pub const AYUDA: Atr = 17;
+    /// El error de un campo: si no está vacío, va en lugar de la ayuda, y el campo y su etiqueta en el color de error.
+    pub const ERROR: Atr = 18;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

@@ -1,6 +1,6 @@
 //! Una aplicación de prueba del kit de interfaz (K7): la ventana de `kit/examples/vista.rs` (un título, un texto
-//! secundario, un deslizador, una casilla, un campo de texto y dos botones de Material 3, atados con avisos) como
-//! cliente de Wayland. Como un diálogo de Material 3: Aceptar relleno y Cancelar de texto, al final de su fila.
+//! secundario, un deslizador, una casilla, un campo de texto con etiqueta, un desplegable con su menú y dos botones de
+//! Material 3, atados con avisos) como cliente de Wayland. Como un diálogo de Material 3: Aceptar relleno y Cancelar de texto, al final de su fila.
 //! Responde al ratón y al teclado que le manda el compositor; el foco empieza en el campo. Espera dos segundos antes de
 //! conectarse, para salir la tercera en la cascada de la prueba (W7). Cambia de tamaño cuando el compositor se lo pide
 //! (Super+Arriba la maximiza; Super+Abajo la devuelve): una memoria, un pool y un búfer nuevos de ese tamaño (los viejos
@@ -16,7 +16,7 @@ mod ventana_cliente;
 
 use alloc::vec;
 use dashos::println;
-use kit::controles::{Boton, Campo, Casilla, Deslizador, Hijo, Interfaz, Texto};
+use kit::controles::{Boton, Campo, Casilla, Ciclo, Deslizador, Hijo, Interfaz, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
@@ -31,7 +31,7 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const ANCHO: i32 = 360;
-const ALTO: i32 = 250;
+const ALTO: i32 = 320;
 /// Lo más grande que se acepta.
 const MAX_ANCHO: i32 = 1920;
 const MAX_ALTO: i32 = 1200;
@@ -89,7 +89,13 @@ fn principal() -> u64 {
     let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false))]);
     let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let aceptar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Aceptar".into()))]);
-    let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into()))]);
+    let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into())), (atr::ETIQUETA, Valor::Texto("Nombre".into()))]);
+    // Un desplegable de Material 3 (el menú lo pinta el kit, dentro de la ventana).
+    let aviso = a.crear(Ciclo, &[
+        (atr::OPCIONES, Valor::Texto("Pitido|Destello|Ninguno".into())),
+        (atr::VALOR, Valor::Int(0)),
+        (atr::ETIQUETA, Valor::Texto("Aviso".into())),
+    ]);
     a.notificar(nombre, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("Nombre guardado".into())));
     a.notificar(desl, atr::VALOR, Cuando::Siempre, texto, atr::TEXTO, Que::Formato("Volumen: {}".into()));
     a.notificar(casilla, atr::VALOR, Cuando::Siempre, aceptar, atr::DESACTIVADO, Que::Disparo);
@@ -102,6 +108,7 @@ fn principal() -> u64 {
         Hijo::Obj(texto),
         Hijo::Fila(vec![Hijo::Obj(desl), Hijo::Obj(casilla)]),
         Hijo::Obj(nombre),
+        Hijo::Obj(aviso),
         Hijo::Fila(vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, Tema::CLARO);
@@ -160,6 +167,10 @@ fn principal() -> u64 {
     // El de serie, el claro de referencia (el violeta de Material 3).
     let mut tema_actual = (0xff67_50a4u32, false);
     let mut nombre_antes = alloc::string::String::from("DashOS");
+    // El menú del desplegable, abierto o no, y cuántas veces se ha dicho que se abre (las tres primeras).
+    let mut menu_antes = false;
+    let mut menus_dichos = 0;
+    let mut aviso_antes = 0i64;
     loop {
         let Some((o, orden, cuerpo)) = c.evento() else { return 0 };
         let palabra = |k: usize| u32::from_le_bytes(cuerpo[4 * k..4 * k + 4].try_into().unwrap());
@@ -191,6 +202,9 @@ fn principal() -> u64 {
                 pintar(&mut i, px, medida);
                 presentar(&mut c, Some(bufer), medida);
                 println!("  [ajustes] ventana del kit en pantalla ({}x{})", ANCHO, ALTO);
+                // Para la prueba del ratón: dónde está el desplegable.
+                let r = i.sitios[&aviso];
+                println!("  [ajustes] desplegable en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
             }
             (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) => {
                 let mut e = Escritor::new();
@@ -274,6 +288,21 @@ fn principal() -> u64 {
                     println!("  [ajustes] el campo dice: {}", n);
                 }
                 nombre_antes = n;
+            }
+            let abierto = i.menu_abierto().is_some();
+            if abierto && !menu_antes && menus_dichos < 3 {
+                menus_dichos += 1;
+                // Para la prueba: dónde cae la segunda opción.
+                if let Some(o) = i.sitio_opcion_menu(1) {
+                    println!("  [ajustes] menú abierto; la segunda opción en ({}, {})", o.x + o.w / 2, o.y + o.h / 2);
+                }
+            }
+            menu_antes = abierto;
+            let v = i.arbol.leer(aviso, atr::VALOR).map_or(0, Valor::int);
+            if v != aviso_antes {
+                aviso_antes = v;
+                let o = i.arbol.leer(aviso, atr::OPCIONES).map(Valor::texto).unwrap_or_default();
+                println!("  [ajustes] el desplegable dice: {}", o.split('|').nth(v as usize).unwrap_or("?"));
             }
         }
     }

@@ -19,6 +19,11 @@ pub enum Tecla {
     Tabulador,
     /// Mayúsculas+Tab: el foco, hacia atrás.
     TabuladorAtras,
+    /// Esc: cerrar un menú sin elegir.
+    Escape,
+    /// Alt+abajo y Alt+arriba: abrir un desplegable, y cerrarlo eligiendo.
+    AltAbajo,
+    AltArriba,
 }
 
 /// Una tecla de un mapa: su código, (normal, con mayúsculas, con AltGr) con `N` si no da nada, y qué niveles son
@@ -144,6 +149,8 @@ pub struct Teclado {
     mapa: &'static Mapa,
     mayus: u8,
     altgr: bool,
+    /// El Alt de la izquierda (el de la derecha es AltGr).
+    alt: bool,
     bloq_mayus: bool,
     muerta: Option<char>,
 }
@@ -161,7 +168,7 @@ impl Teclado {
     }
 
     pub fn con(mapa: &'static Mapa) -> Self {
-        Teclado { mapa, mayus: 0, altgr: false, bloq_mayus: false, muerta: None }
+        Teclado { mapa, mayus: 0, altgr: false, alt: false, bloq_mayus: false, muerta: None }
     }
 
     pub fn mapa(&self) -> &'static Mapa {
@@ -185,6 +192,10 @@ impl Teclado {
                 self.altgr = pulsada;
                 return None;
             }
+            56 => {
+                self.alt = pulsada;
+                return None;
+            }
             58 if pulsada => {
                 self.bloq_mayus = !self.bloq_mayus;
                 return None;
@@ -197,6 +208,9 @@ impl Teclado {
         let especial = match codigo {
             14 => Some(Tecla::Retroceso),
             111 => Some(Tecla::Suprimir),
+            1 => Some(Tecla::Escape),
+            108 if self.alt => Some(Tecla::AltAbajo),
+            103 if self.alt => Some(Tecla::AltArriba),
             105 => Some(Tecla::Izquierda),
             106 => Some(Tecla::Derecha),
             103 => Some(Tecla::Arriba),
@@ -341,5 +355,14 @@ mod pruebas {
         assert_eq!(t.tecla(105, true), Some(Tecla::Izquierda));
         assert_eq!(t.tecla(28, true), Some(Tecla::Intro));
         assert_eq!(t.tecla(30, false), None);
+        // Esc; Alt (el de la izquierda) con las flechas de arriba y abajo; soltado, las flechas solas. AltGr no cuenta.
+        assert_eq!(t.tecla(1, true), Some(Tecla::Escape));
+        assert_eq!(t.tecla(56, true), None);
+        assert_eq!(t.tecla(108, true), Some(Tecla::AltAbajo));
+        assert_eq!(t.tecla(103, true), Some(Tecla::AltArriba));
+        assert_eq!(t.tecla(56, false), None);
+        assert_eq!(t.tecla(108, true), Some(Tecla::Abajo));
+        t.tecla(100, true);
+        assert_eq!(t.tecla(103, true), Some(Tecla::Arriba));
     }
 }

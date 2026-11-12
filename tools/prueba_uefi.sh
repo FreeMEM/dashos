@@ -85,6 +85,17 @@ def mandar(*ordenes, pausa=0.0):
         time.sleep(pausa)
     s.close()
 
+def ir_a(x, y):
+    # El cursor a (x, y) de la pantalla: primero a la esquina, y de ahí en pasos de 100 como mucho.
+    mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+    pasos = []
+    while x > 0 or y > 0:
+        dx, dy = min(x, 100), min(y, 100)
+        pasos.append(f"mouse_move {dx} {dy}")
+        x, y = x - dx, y - dy
+    mandar(*pasos, pausa=0.05)
+
+menu = 0
 preguntas = 0
 selector = 0
 entradas_antes = 0
@@ -693,6 +704,35 @@ while time.time() - inicio < total:
             time.sleep(2)
             mandar("sendkey meta_l-down")
             time.sleep(1)
+        # El desplegable de Ajustes, cuando su campo ya tiene su "a" (antes, un clic en él se llevaría las "a"): el cursor
+        # a la esquina y al desplegable (donde lo dicen el compositor y Ajustes), un clic abre el menú; con
+        # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor vuelve a (300, 300).
+        # Sin el centro de control encima (sale en (200, 200) y taparía el desplegable): antes de que se anuncie, o ya
+        # cerrado.
+        sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
+        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and "[ajustes] el campo dice: DashOSa" in texto:
+            import re
+            v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+            d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
+            if v and d:
+                menu = 1
+                ir_a(int(v.group(1)) + int(d.group(1)), int(v.group(2)) + int(d.group(2)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                for _ in range(40):
+                    time.sleep(0.25)
+                    texto = open(serie, errors="replace").read()
+                    o = re.search(r"\[ajustes\] menú abierto; la segunda opción en \((\d+), (\d+)\)", texto)
+                    if o:
+                        break
+                if o:
+                    time.sleep(0.5)
+                    if os.environ.get("CAPTURA_MENU"):
+                        mandar("screendump " + os.environ["CAPTURA_MENU"])
+                        time.sleep(0.5)
+                    ir_a(int(v.group(1)) + int(o.group(1)), int(v.group(2)) + int(o.group(2)))
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                    time.sleep(0.5)
+                ir_a(300, 300)
         paso += 1
         ordenes = ["mouse_move 10 5"]
         if paso >= 15:
