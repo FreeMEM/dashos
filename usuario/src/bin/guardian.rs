@@ -472,8 +472,11 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
     }
     // La caja de la contraseña, con un punto por letra.
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
-    l.redondeado(caja, 24, t.variante_superficie);
-    l.borde(caja, 24, 2, if mala { error } else { t.contorno });
+    // Material 3: la caja en el contenedor alto, sin marco; con error, el borde rojo.
+    l.redondeado(caja, 24, t.contenedor_alto());
+    if mala {
+        l.borde(caja, 24, 2, error);
+    }
     for i in 0..if letras == usize::MAX { 0 } else { letras.min(20) } as i32 {
         l.redondeado(Rect::new(caja.x + 24 + i * 14, caja.y + 19, 10, 10), 5, t.sobre_superficie);
     }

@@ -1211,3 +1211,4 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   guion, los Tab que volvían de la lista de la derecha del centro a las categorías son ahora Mayúsculas+Tab (con los
   botones en medio, Tab iría a Quitar). `captura_ventanas.py` acepta dos sombras sumadas cerca de las dos ventanas de
   prueba (según el orden en que salgan, un punto queda bajo las dos).
+- Guardian: la caja de la contraseña en el contenedor alto de Material 3, sin marco (con error, borde rojo). Captura.
