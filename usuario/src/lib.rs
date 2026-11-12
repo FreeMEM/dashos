@@ -121,6 +121,13 @@ pub fn memoria_quitar(direccion: usize) -> i64 {
     llamada(21, [direccion as u64, 0, 0, 0, 0]).0 as i64
 }
 
+/// Una vista (llamada 50): un objeto de memoria con páginas de otros, sin copiarlas. `paginas` son números de página
+/// que cuentan seguidas las de `origenes` (llaves de memoria con derecho de leer) en su orden. La llave nueva solo lee
+/// y transfiere, y mantiene vivos los orígenes. Devuelve la llave o un error negativo.
+pub fn memoria_vista(origenes: &[u32], paginas: &[u32]) -> i64 {
+    llamada(50, [origenes.as_ptr() as u64, origenes.len() as u64, paginas.as_ptr() as u64, paginas.len() as u64, 0]).0 as i64
+}
+
 /// Proyecta los registros de un aparato (llave de registros) en `direccion` (C20).
 pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
     llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64

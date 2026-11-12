@@ -182,6 +182,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 46 | `maquina_correr` | `x0` vCPU (con escribir), `x1` informe (104 bytes), `x2` respuesta a una lectura pendiente, `x3` bloque de interrupciones (80 bytes) o 0 | El motivo de la salida (1 a 7); el informe, en `x1`; el bloque, al día. `E_CERRADO` con la máquina parada o muerta |
 | 47 | `maquina_memoria` | `x0` vCPU (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria (todas sus vCPU, aunque estén corriendo). `E_ARGUMENTO` si pisa otra |
 | 48 | `maquina_estado` | `x0` vCPU (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV, 4 otra vCPU, 5 reiniciarla, 6 patearla, 7 parar la máquina), `x2` dirección de 33 u64 (0 y 1), física del invitado (3), número de vCPU (4) o entrada (5), `x3` entrada (4) o x0 (5), `x4` x0 (4) | 0, la llave de la vCPU nueva (4) o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar o el número de vCPU no vale, `E_NO_HAY` sin GIC virtual |
+| 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -215,6 +216,26 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   cierran y el otro lado se entera. Lo mismo pasa con un extremo que va dentro de un mensaje que ya nadie leerá.
 - **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos. Los últimos
   32 MB libres son del kernel: al llegar ahí devuelve `E_MEMORIA`.
+- **50, `memoria_vista`** (H9). Una vista: un objeto de memoria hecho con páginas de otros, en el orden que se pide,
+  para que el compositor lea sin copia los búferes de un invitado de la caja Linux (están en páginas sueltas de su
+  RAM).
+  - Los números de página cuentan seguidas las páginas de los orígenes, en el orden de la tabla: la 0 es la primera
+    del primero; tras la última del primero viene la primera del segundo. Una página puede salir varias veces. Las dos
+    tablas van en el orden de bytes del proceso.
+  - La llave nueva tiene leer y transferir, nada más: la vista se proyecta solo para leer (escribir da `E_DERECHOS`;
+    ejecutar, `E_ARGUMENTO`, también con otra llave), el kernel no escribe por ella y no vale como RAM de una máquina
+    (`maquina_crear` y `maquina_memoria` dan `E_ARGUMENTO`). Lo que se escriba en los orígenes se ve en ella al
+    momento.
+  - Mantiene vivos sus orígenes: aunque se suelten todas sus llaves y proyecciones, sus páginas no vuelven al sistema
+    (ni se dan a otro) hasta que se suelta la vista.
+  - Cupo: la vista cobra a quien la pide 256 bytes, más 8 por página y 8 por origen (su lista en el kernel). Las
+    páginas siguen cobradas al grupo de quien creó cada origen hasta que se suelte lo último que lo tiene, la vista
+    también.
+  - Errores: `E_TAMANO` con 0 orígenes o más de 64, o 0 páginas o más de 4096 (16 MB); `E_ARGUMENTO` si una tabla no
+    se puede leer, un número de página no está en los orígenes, o un origen es memoria DMA, otra vista o una llave
+    revocable (la vista seguiría viendo el objeto después de revocarla); `E_LLAVE`, `E_TIPO` (no es memoria) y
+    `E_DERECHOS` (sin leer) por cada origen; `E_MEMORIA` si no cabe en el cupo; `E_LIMITE` con la tabla de llaves
+    llena.
 - **8, `memoria_proyectar`.**
   - Proyecta el objeto entero a partir de la dirección. Si alguna página del tramo ya tiene algo, no proyecta nada y
     devuelve `E_ARGUMENTO`.
@@ -440,7 +461,7 @@ Tipos de objeto:
 | Objeto | Se crea con | Para |
 |---|---|---|
 | Extremo de canal | `canal_crear` | Mensajes y paso de llaves |
-| Memoria | `memoria_crear` | Proyectar y compartir |
+| Memoria | `memoria_crear`; `memoria_vista` (una vista: páginas de otras, solo para leer) | Proyectar y compartir |
 | Registros | Solo el kernel | Controladores fuera del kernel |
 | Memoria del firmware | Solo el kernel | La de la VideoCore, para el buzón, que da al compositor solo la pantalla (C50) |
 | Interrupción | Solo el kernel | Controladores fuera del kernel |
