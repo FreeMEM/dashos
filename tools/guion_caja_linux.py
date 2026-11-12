@@ -372,27 +372,29 @@ if modo == "wayland":
             gx, gy, gw, gh = geo if geo else (0, 0, 600, 400)
             # Arriba otra vez (un clic en su barra, sin moverla).
             time.sleep(15.0)
-            clic(x + gx + gw // 2, y + gy + 12)
+            clic(x + gx + 200, y + gy + 12)
             time.sleep(5.0)
             capturar(prefijo + ".gtk")
-            # Su menú principal (arriba a la derecha de la barra que se pinta): un emergente.
-            clic(x + gx + gw - 30, y + gy + 24)
-            time.sleep(8.0)
-            capturar(prefijo + ".gtk-menu")
+            # La lista de la primera caja combinada (la flecha, a la derecha del primer campo): un emergente.
+            clic(x + gx + 370, y + gy + 73)
+            if esperar(r"\[compositor\] emergente de caja-linux", 120):
+                time.sleep(8.0)
+                capturar(prefijo + ".gtk-menu")
             mandar("sendkey esc")
             time.sleep(3.0)
-            # Moverla por su barra (xdg_toplevel.move) y agrandarla por la esquina (resize): los cuadros.
-            arrastrar((x + gx + gw // 3, y + gy + 20), 30, (3, 2))
+            # Moverla por su barra (xdg_toplevel.move): los cuadros mientras se arrastra.
+            antes = len(re.findall(r"\[compositor\] arrastre: ", texto()))
+            arrastrar((x + gx + 200, y + gy + 20), 30, (3, 2))
             movidas[len(ventanas_linux()) - 1] = (90, 60)
-            esperar(r"(\[compositor\] arrastre: (.|\n)*){2}", 30)
+            esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1), 30)
             time.sleep(2.0)
-            # Movida 30 × (3, 2).
+            # Agrandarla por su borde izquierdo (resize; es más grande que la pantalla, la derecha no se ve).
             x2, y2 = x + 90, y + 60
-            arrastrar((x2 + gx + gw + 4, y2 + gy + gh + 4), 20, (4, 3))
-            esperar(r"(\[compositor\] arrastre: (.|\n)*){3}", 30)
-            time.sleep(5.0)
+            arrastrar((x2 + gx - 3, y2 + gy + 300), 20, (-3, 0))
+            esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 2), 30)
+            time.sleep(8.0)
             capturar(prefijo + ".gtk-grande")
-        clic_en_ventana()
+        a_la_terminal()
         teclear("pkill -f gtk4-widget-factory")
         time.sleep(3.0)
     # 5. Firefox, si cabe: su primera ventana, una captura y fuera.

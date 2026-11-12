@@ -1794,6 +1794,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             return r;
         }
         let escena = &mut *self.escena;
+        // H9: lo que hay para una ventana nueva (en la salida del cursor), para `configure_bounds`.
+        let limites = escena.area_de(escena.salida_en(escena.cursor.0, escena.cursor.1).unwrap_or(0));
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
         let mem = &mut escena.memorias;
         match interfaz.name {
@@ -2321,6 +2323,12 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                                     con.salida.empezar(d, crate::tablas::zxdg_toplevel_decoration_v1::ev::CONFIGURE).uint(decoracion::MODO_SERVIDOR).fin();
                                     x.deco_modo = Some(decoracion::MODO_SERVIDOR);
                                     x.ssd = true;
+                                }
+                                // Desde la versión 4, lo que cabe (H9: GTK no abre más grande que la pantalla), sin la
+                                // barra de DashOS si la lleva.
+                                if con.objetos.get(&toplevel).is_some_and(|o| o.version >= 4) && limites.w < MAX_LADO {
+                                    let barra = if x.ssd { decoracion::ALTO_BARRA } else { 0 };
+                                    con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE_BOUNDS).int(limites.w).int(limites.h - barra).fin();
                                 }
                                 let serie = con.serie_nueva();
                                 con.salida.empezar(toplevel, xdg_toplevel::ev::CONFIGURE).int(0).int(0).array(&[]).fin();

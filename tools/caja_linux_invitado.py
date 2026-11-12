@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -482,7 +483,7 @@ ARCH_FICHEROS.update({
 ARCH_GUIONES = {
     "./usr/local/bin/prueba-foot":
         "#!/bin/sh\n# Una terminal de Wayland de verdad (foot) en una ventana de DashOS; lo que se teclea en ella sale por hvc0.\n"
-        "export LANG=C.UTF-8\nexec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
+        "export LANG=C.UTF-8\nexec foot -W 50x8 -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
         "read x; echo \"foot: leido $x\" > /dev/hvc0; echo \"leido: $x\"; sleep 3'\n",
 }
 # H9 (caja-linux-apps): un programa grande de GTK4 y Firefox, dibujados por la CPU (sin GPU en la caja), sin D-Bus ni
@@ -616,9 +617,16 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
             if not d.is_symlink():
                 d.symlink_to(m.linkname)
 
+    # Los paquetes que ponen al día uno del rootfs: sus ficheros pisan los de él, y su entrada vieja no va.
+    pisar, viejos = set(), []
+    for pk in paquetes:
+        if str(pk) in ACTUALIZAR:
+            viejos.append(re.compile(r"^\./var/lib/pacman/local/" + re.escape(ACTUALIZAR[str(pk)]) + r"-[0-9]"))
+            with tarfile.open(pk) as t:
+                pisar.update("./" + m.name.lstrip("./").rstrip("/") for m in t if not m.isdir())
     with tarfile.open(origen, "r:gz") as ent, tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as sal:
         for m in ent:
-            if m.name in ARCH_QUITAR:
+            if m.name in ARCH_QUITAR or (not m.isdir() and m.name in pisar) or any(v.match(m.name) for v in viejos):
                 continue
             if m.name == "./usr":
                 mtime_usr = m.mtime
@@ -814,18 +822,91 @@ def arch_instalados(tar):
     return hay
 
 
+def _segmentos(v):
+    return re.findall(r"\d+|[a-zA-Z]+", v)
+
+
+def vercmp(a, b):
+    """Compara versiones de pacman (época:versión-revisión), como su `vercmp`: -1, 0 o 1."""
+    def partes(v):
+        e, _, resto = v.rpartition(":") if ":" in v else ("0", "", v)
+        ver, _, rel = resto.partition("-")
+        return int(e or 0), ver, rel
+    def cmp(x, y):
+        sx, sy = _segmentos(x), _segmentos(y)
+        for p, q in zip(sx, sy):
+            if p.isdigit() and q.isdigit():
+                d = (int(p) > int(q)) - (int(p) < int(q))
+            elif p.isdigit() != q.isdigit():
+                d = 1 if p.isdigit() else -1
+            else:
+                d = (p > q) - (p < q)
+            if d:
+                return d
+        return (len(sx) > len(sy)) - (len(sx) < len(sy))
+    (ea, va, ra), (eb, vb, rb) = partes(a), partes(b)
+    if ea != eb:
+        return (ea > eb) - (ea < eb)
+    d = cmp(va, vb)
+    if d or not ra or not rb:
+        return d
+    return cmp(ra, rb)
+
+
+def arch_versiones(tar):
+    """Las versiones de los paquetes que trae el rootfs: nombre → versión."""
+    cache = ARCH / "versiones.json"
+    if cache.exists() and cache.stat().st_mtime > tar.stat().st_mtime:
+        return json.loads(cache.read_text())
+    v = {}
+    with tarfile.open(tar, "r:gz") as t:
+        for m in t:
+            if m.name.startswith("./var/lib/pacman/local/") and m.name.endswith("/desc"):
+                campos, clave = {}, None
+                for l in t.extractfile(m).read().decode().splitlines():
+                    if l.startswith("%") and l.endswith("%"):
+                        clave = l.strip("%")
+                    elif l and clave:
+                        campos.setdefault(clave, []).append(l)
+                if "NAME" in campos and "VERSION" in campos:
+                    v[campos["NAME"][0]] = campos["VERSION"][0]
+    cache.write_text(json.dumps(v))
+    return v
+
+
+# Los paquetes del rootfs que hay que poner al día porque lo nuevo los necesita y el repositorio los tiene más nuevos
+# (GTK4 pide un glib2 más nuevo que el del rootfs): fichero → nombre. Sus ficheros pisan los del rootfs y su entrada vieja en la base de
+# pacman no se copia (lo hace `arch_tar`).
+ACTUALIZAR = {}
+# Lo que no se pone al día así: el arranque y los programas de base (con sus bibliotecas nuevas siguen funcionando).
+NO_ACTUALIZAR = {"systemd", "dbus", "bash", "coreutils", "pam", "util-linux", "kmod", "cryptsetup", "device-mapper",
+                 "linux-api-headers", "hwdata", "tzdata", "glibc"}
+
+
 def arch_paquetes(tar):
     """Baja `ARCH_PAQUETES` y lo que necesiten que no traiga el rootfs, con su suma y su firma comprobadas (la firma,
     con el anillo de claves de Arch Linux ARM que trae el propio rootfs). Devuelve los ficheros, en orden."""
     por_nombre, da = arch_bases()
     hay = arch_instalados(tar)
+    versiones = arch_versiones(tar)
     quiero, cola = [], list(ARCH_PAQUETES)
+    actualizar = set()
     while cola:
         dep = cola.pop(0)
         nombre = dep
         for op in (">=", "<=", "=", ">", "<"):
             nombre = nombre.split(op)[0]
         if nombre in hay:
+            # Del rootfs, pero quizá viejo: Arch Linux ARM no dice en sus dependencias qué versión hace falta (se pone
+            # todo al día a la vez), así que lo que piden los paquetes nuevos y en el repositorio es más nuevo, se pone al
+            # día (GTK 4.24 necesita el glib2 2.90 del repositorio; el rootfs trae el 2.88).
+            if nombre not in versiones or nombre not in por_nombre or nombre in actualizar or nombre in NO_ACTUALIZAR:
+                continue
+            if vercmp(por_nombre[nombre][1]["VERSION"][0], versiones[nombre]) <= 0:
+                continue
+            actualizar.add(nombre)
+            quiero.append(nombre)
+            cola.extend(por_nombre[nombre][1].get("DEPENDS", []))
             continue
         real = nombre if nombre in por_nombre else da.get(nombre)
         if real is None:
@@ -836,6 +917,8 @@ def arch_paquetes(tar):
         hay.add(real)
         cola.extend(por_nombre[real][1].get("DEPENDS", []))
     print("paquetes de Arch Linux ARM para la imagen:", " ".join(quiero), flush=True)
+    if actualizar:
+        print("del rootfs, puestos al día:", " ".join(sorted(f"{n} {versiones[n]} → {por_nombre[n][1]['VERSION'][0]}" for n in actualizar)), flush=True)
     with tempfile.TemporaryDirectory() as gpg:
         entorno = dict(os.environ, GNUPGHOME=gpg)
         with tarfile.open(tar) as t:
@@ -857,6 +940,8 @@ def arch_paquetes(tar):
             if not firma or firma[0] in revocadas:
                 raise SystemExit(f"la firma de {f.name} no es de una clave de Arch Linux ARM:\n{r.stdout}{r.stderr}")
             ficheros.append(f)
+            if n in actualizar:
+                ACTUALIZAR[str(f)] = n
     print(f"{len(ficheros)} paquetes: suma y firma bien", flush=True)
     return ficheros
 
