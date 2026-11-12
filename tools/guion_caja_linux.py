@@ -27,6 +27,12 @@ las corta y sigue), abre `ventana_wayland` (un cliente de libwayland con wl_shm)
 que gastó de CPU). Después abre foot (una terminal de Wayland de verdad) con `prueba-foot`, teclea "hola" en su ventana (la shell
 de dentro lo escribe en hvc0), la captura (PREFIJO.foot.png) y apaga.
 
+Con MODO "gpu" (`make arranque-virt-gpu`, S25), lo mismo hasta el prompt de root y después programas de GL de Linux
+(Mesa con llvmpipe): `cuadros_gl wayland 20` (por el puente: búferes de wl_shm copiados por vsock; después 15 s sin
+esperar al compositor entre cuadros), `es2gears_wayland`
+20 s, `time vkcube --wsi wayland --c 100` (Vulkan con lavapipe) y `cuadros_gl kms 20` (por la virtio-gpu de la caja: su pantalla sale en una ventana de DashOS). Captura cada uno
+(PREFIJO.wayland.png, PREFIJO.gears.png, PREFIJO.kms.png), espera sus cuadros por segundo y apaga.
+
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
 """
@@ -206,6 +212,50 @@ if modo == "wayland":
             esperar(r"foot: leido hola", 60)
             capturar(prefijo + ".foot")
     time.sleep(4.0)
+    clic_en_ventana()
+    teclear("poweroff")
+    sys.exit(0)
+
+if modo == "gpu":
+    if not esperar(r"login: root \(automatic login\)", total):
+        sys.exit(1)
+    time.sleep(5.0)
+    clic_en_ventana()
+    paso("systemctl is-active dashos-puente", r"linux: active\s*$|linux: active\n", 120)
+    paso("ls /dev/dri", r"linux: .*card0", 60)
+    # Hoy: GL por Wayland, con los búferes de wl_shm por el puente.
+    teclear("cuadros_gl wayland 20")
+    if esperar(r"cuadros_gl: wayland: primer cuadro", 300):
+        time.sleep(8.0)
+        capturar(prefijo + ".wayland")
+    esperar(r"cuadros_gl: wayland: al acabar", 120)
+    time.sleep(2.0)
+    # Lo mismo sin esperar al compositor entre cuadros: lo que cuestan pintar y copiar.
+    clic_en_ventana()
+    teclear("cuadros_gl wayland 15 0")
+    esperar(r"cuadros_gl: wayland: al acabar.*\n(.|\n)*cuadros_gl: wayland: al acabar", 200)
+    time.sleep(2.0)
+    clic_en_ventana()
+    teclear("timeout 20 es2gears_wayland")
+    if esperar(r"linux: \d+ frames in", 300):
+        time.sleep(3.0)
+        capturar(prefijo + ".gears")
+    time.sleep(15.0)
+    # Vulkan por software (lavapipe) por Wayland: vkcube no dice sus cuadros; 100 cuadros con `time`.
+    clic_en_ventana()
+    teclear("time vkcube --wsi wayland --c 100")
+    if esperar(r"linux: real\s+\d+m[\d.]+s", 300):
+        time.sleep(1.0)
+    # Por la virtio-gpu: la pantalla del invitado en una ventana de DashOS.
+    clic_en_ventana()
+    teclear("cuadros_gl kms 20")
+    if esperar(r"cuadros_gl: kms: primer cuadro", 300):
+        time.sleep(8.0)
+        capturar(prefijo + ".kms")
+    esperar(r"cuadros_gl: kms: al acabar", 120)
+    time.sleep(3.0)
+    # La terminal sigue viva (comparte conexión con la ventana de la pantalla).
+    paso("echo terminal viva", r"linux: terminal viva", 60)
     clic_en_ventana()
     teclear("poweroff")
     sys.exit(0)

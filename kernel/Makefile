@@ -10,6 +10,7 @@
 # make arranque-virt-linux  lo mismo, y la caja arranca Linux hasta busybox (LINUX=Image, INITRD=cpio.gz, fuera de git)
 # make arranque-virt-arch  lo mismo con Arch Linux ARM desde la partición de la caja en el NVMe (fuera de git)
 # make arranque-virt-wayland  lo mismo, con programas gráficos de Linux en ventanas de DashOS (el puente de Wayland)
+# make arranque-virt-gpu  lo mismo, con programas de GL de Linux por Wayland y por la virtio-gpu de la caja (S25)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -182,6 +183,28 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 	mkdir -p ../capturas-agente && cp target/caja-wayland.png ../capturas-agente/caja-linux-wayland.png 2>/dev/null || true
 	cp target/caja-wayland.foot.png ../capturas-agente/caja-linux-wayland-foot.png 2>/dev/null || true
 	cp target/caja-wayland.grande.png ../capturas-agente/caja-linux-wayland-grande.png 2>/dev/null || true
+
+# Los gráficos de la caja Linux (S25, docs/diseño/S25-gpu-caja-linux.md): lo mismo que `arranque-virt-wayland` (el mismo
+# disco, con Mesa, mesa-utils, vulkan-swrast y `cuadros_gl` de `preparar-arch`), pero el guion (modo gpu) mide
+# programas de GL de Linux: `cuadros_gl wayland` y `es2gears_wayland` por el puente de Wayland (búferes de wl_shm por
+# vsock) y `cuadros_gl kms` por la virtio-gpu de la caja (su pantalla sale en una ventana de DashOS). Capturas en
+# capturas-agente/.
+arranque-virt-gpu: usuario $(DISCO_NVME) FORCE
+	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): no va en git; tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	mkdir -p target/linux
+	cp "$(ARCH_IMAGE)" target/linux/Image
+	: > target/linux/initrd
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cargo build $(CARGO_PERFIL) --features virt,linux
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
+	rm -f target/caja-gpu*.ppm target/caja-gpu*.png
+	GUARDAR=$(abspath target/salida_virt_gpu.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-gpu) CAJA_MODO=gpu QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_gpu.txt 1800
+	grep -E "\[(caja-linux|compositor)\]" target/salida_virt_gpu.txt | grep -E "gpu|cuadros_gl|FPS|frames|ventana" | grep -vE "linux: \[ " || true
+	@# Las capturas, fuera de git (capturas-agente/ está en .git/info/exclude).
+	mkdir -p ../capturas-agente
+	for c in wayland gears kms; do cp target/caja-gpu.$$c.png ../capturas-agente/caja-linux-gpu-$$c.png 2>/dev/null || true; done
 
 # El multimonitor en QEMU virt: lo mismo que `arranque-virt` y, además, una virtio-gpu con dos cabezas (la 0 a 800x600,
 # como la ramfb; la 1, sin monitor, sale a 1024x768). Sin el guion de siempre: `tools/guion_multimonitor.py` (MULTI)
