@@ -1367,3 +1367,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Decisiones del usuario pendientes de las dos ramas, en sus bitácoras (cabeza sin monitor a 1024 × 768, segunda
   pantalla en negro al bloquear, la cascada mete dentro las ventanas, el clic que quita el teclado a la pregunta de
   permisos, el rasterizador propio en vez de `fontdue`, las líneas del montón en la consola).
+
+### 2026-11-12 15:10: el fondo pinta por franjas, sin la pantalla entera en el montón
+- `kit::imagen`: `cubrir_filas` (las filas desde y0 que caben en el destino) y `para_cubrir` (la reducción de una
+  imagen muy grande, una vez); `cubrir` pasa por ellas. Prueba nueva `por_filas_igual_que_entera` (también con una
+  imagen que se reduce y un último trozo más corto).
+- `fondo` pinta cada franja en la memoria que va al compositor: ya no tiene la pantalla entera en el montón (que no
+  devuelve memoria).
+- Medida (lo cobrado al grupo de `fondo`): a 800 × 600, 8,8 → 6,6 MB (total de los procesos que ve el centro, 66,2 →
+  63,9); a 1920 × 1080, 20,7 → 12,7 MB.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; a 1920 × 1080, sin fallos de memoria.

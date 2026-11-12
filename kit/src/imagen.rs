@@ -62,10 +62,32 @@ impl Imagen {
         if ancho == 0 || alto == 0 || self.ancho == 0 || self.alto == 0 {
             return;
         }
+        match self.para_cubrir(ancho, alto, fondo) {
+            Some(r) => r.cubrir_filas(ancho, alto, fondo, 0, destino),
+            None => self.cubrir_filas(ancho, alto, fondo, 0, destino),
+        }
+    }
+
+    /// Si la imagen es dos o más veces la pantalla, reducida (una vez) para cubrirla: con ella, `cubrir_filas` no
+    /// reduce en cada trozo. `None` si no hace falta.
+    pub fn para_cubrir(&self, ancho: usize, alto: usize, fondo: Color) -> Option<Imagen> {
+        if ancho == 0 || alto == 0 || self.ancho == 0 || self.alto == 0 {
+            return None;
+        }
         let (_, _, px, py) = encuadre(self.ancho, self.alto, ancho, alto);
         let k = (px.min(py) >> 16) as usize;
-        if k >= 2 {
-            return self.reducir(k, fondo).cubrir(ancho, alto, fondo, destino);
+        (k >= 2).then(|| self.reducir(k, fondo))
+    }
+
+    /// Como `cubrir`, solo las filas desde `y0` que caben en `destino` (de `ancho` píxeles cada una): para pintar a
+    /// trozos sin tener la pantalla entera en memoria (el programa `fondo`, por franjas). Una imagen de dos o más veces
+    /// la pantalla se reduce aquí cada vez: mejor pasar antes por `para_cubrir`.
+    pub fn cubrir_filas(&self, ancho: usize, alto: usize, fondo: Color, y0: usize, destino: &mut [u32]) {
+        if ancho == 0 || alto == 0 || self.ancho == 0 || self.alto == 0 {
+            return;
+        }
+        if let Some(r) = self.para_cubrir(ancho, alto, fondo) {
+            return r.cubrir_filas(ancho, alto, fondo, y0, destino);
         }
         let (ox, oy, px, py) = encuadre(self.ancho, self.alto, ancho, alto);
         let (sw, sh) = (self.ancho as i64, self.alto as i64);
@@ -78,12 +100,14 @@ impl Imagen {
             })
             .collect();
         let en = |x: usize, y: usize| sobre(self.px[y * self.ancho + x], fondo);
-        for y in 0..alto {
+        let filas = (destino.len() / ancho).min(alto.saturating_sub(y0));
+        for f in 0..filas {
+            let y = y0 + f;
             let s = (oy + y as i64 * py + py / 2 - 32768).clamp(0, (sh - 1) << 16);
             let y0 = (s >> 16) as usize;
             let y1 = (y0 + 1).min(sh as usize - 1);
             let fy = ((s >> 8) & 0xff) as u32;
-            let fila = &mut destino[y * ancho..(y + 1) * ancho];
+            let fila = &mut destino[f * ancho..(f + 1) * ancho];
             for (d, &(x0, x1, fx)) in fila.iter_mut().zip(&columnas) {
                 let (a, b, c, e) = (en(x0, y0), en(x1, y0), en(x0, y1), en(x1, y1));
                 let canal = |s: u32| {
@@ -104,6 +128,27 @@ mod pruebas {
 
     fn lisa(w: usize, h: usize, c: u32) -> Imagen {
         Imagen { ancho: w, alto: h, px: alloc::vec![c; w * h] }
+    }
+
+    /// Por trozos de filas (como el programa `fondo`, por franjas) sale lo mismo que de una vez, también con una imagen
+    /// que hay que reducir y con un último trozo más corto.
+    #[test]
+    fn por_filas_igual_que_entera() {
+        for (iw, ih) in [(37usize, 23usize), (500, 300)] {
+            let px: Vec<u32> = (0..iw * ih).map(|i| 0xff00_0000 | (i as u32).wrapping_mul(2654435761) & 0xff_ffff).collect();
+            let img = Imagen { ancho: iw, alto: ih, px };
+            let (w, h) = (64, 41);
+            let mut entera = alloc::vec![0u32; w * h];
+            img.cubrir(w, h, 0xff20_4060, &mut entera);
+            let lista = img.para_cubrir(w, h, 0xff20_4060);
+            let usar = lista.as_ref().unwrap_or(&img);
+            let mut trozos = alloc::vec![0u32; w * h];
+            for y0 in (0..h).step_by(16) {
+                let n = 16.min(h - y0);
+                usar.cubrir_filas(w, h, 0xff20_4060, y0, &mut trozos[y0 * w..(y0 + n) * w]);
+            }
+            assert_eq!(entera, trozos, "imagen {}x{}", iw, ih);
+        }
     }
 
     #[test]

@@ -263,12 +263,10 @@ impl Pantalla {
     /// (esperando su configure). Lo que se veía se suelta después. `false` si algo falla (y se queda lo de antes).
     fn pintar(&mut self, img: &Imagen) -> bool {
         let (w, h) = (self.ancho as usize, self.alto as usize);
-        let mut todo = Vec::new();
-        if todo.try_reserve_exact(w * h).is_err() {
-            return false;
-        }
-        todo.resize(w * h, 0u32);
-        img.cubrir(w, h, COLOR_LISO, &mut todo);
+        // La imagen se pinta franja a franja en la memoria que va al compositor, sin la pantalla entera en el montón
+        // (8 MB a 1920 × 1080, que el montón no devuelve): solo se reduce antes, una vez, si es muy grande.
+        let reducida = img.para_cubrir(w, h, COLOR_LISO);
+        let img = reducida.as_ref().unwrap_or(img);
         let franjas = self.franjas();
         if franjas.len() > MAX_FRANJAS {
             return false;
@@ -326,7 +324,7 @@ impl Pantalla {
                 return false;
             }
             let px = unsafe { core::slice::from_raw_parts_mut(va as *mut u32, w * alto as usize) };
-            px.copy_from_slice(&todo[y as usize * w..(y + alto) as usize * w]);
+            img.cubrir_filas(w, h, COLOR_LISO, y as usize, px);
             dashos::memoria_quitar(va);
             let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
             let (pool, bufer) = (self.nuevo_objeto(), self.nuevo_objeto());
