@@ -34,8 +34,8 @@ Lo medido (QEMU `virt`, 4 núcleos, TCG, con el PC cargado por otros agentes, ca
 
 | Medida | Valor |
 |---|---|
-| Caudal del eco, 4 MB, anillos de 64 KB | 15 a 60 MB/s de ida, y lo mismo de vuelta (60 con el PC menos cargado) |
-| Ida y vuelta, 64 bytes, 50 veces | mediana 0,3 a 3,1 ms; mínimo 0,2 a 0,8 ms; máximo 8 a 35 ms |
+| Caudal del eco, 4 MB, anillos de 64 KB | 37 a 63 MB/s con el PC poco cargado; 15 a 29 con carga de 20 a 76. Lo mismo de vuelta |
+| Ida y vuelta, 64 bytes, 50 veces | mediana 0,3 a 0,5 ms con el PC poco cargado (hasta 3,1 con mucha carga); mínimo 0,2 a 0,8 ms; máximo 7 a 35 ms |
 | DHCP | 10.0.2.15/24, puerta 10.0.2.2, DNS 10.0.2.3, en menos de un segundo tras arrancar el servicio |
 
 El caudal empezó en 2,75 MB/s. Dos cambios lo subieron a 19: no retrasar los ACK (smoltcp los retrasa 10 ms de serie)
@@ -56,8 +56,12 @@ Decisiones:
 Las pruebas que no son de la red y fallan a ratos: en 8 vueltas de `make arranque-virt` con la red, 4 pasaron enteras y
 4 no, cada vez por una distinta: Ajustes maximizada con Super+Arriba (la pregunta de `guardian` sale justo cuando el
 guion pulsa), el doble clic del selector, A15 "sujetar sin soltar" y A7 "préstamos" del hostil. Las de la red pasaron
-en todas. Con la basura del PC durante toda la vuelta fallaba más la de Ajustes; ahora dura 20 s. Ver la vuelta de
-referencia sin la red, abajo.
+en todas. Esas vueltas fueron con el PC muy cargado (carga 20 a 76) y casi todas con la basura del PC durante toda
+la vuelta; ahora dura 20 s.
+
+Vuelta de referencia, con el PC menos cargado (carga 6 a 14): la base de la rama (3b11fd4, sin la red) pasó 2 de 2, y
+la rama con la red, 4 de 4 seguidas desde que la basura dura 20 s. No se puede descartar del todo que la red, al
+cargar la CPU al arrancar, mueva el ritmo de esas pruebas con el PC muy cargado; con carga normal no se vio.
 
 Pendiente:
 
