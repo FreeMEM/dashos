@@ -848,3 +848,73 @@ entera: no se ha medido cada parte. En la Pi será otro número.
   con `pacman -S` dentro de la caja hay que hacerlo a mano la primera vez.
 - Una vez, al acabar la prueba (con Linux ya apagado), el compositor soltó a caja-linux por no leer sus eventos; tras
   fusionar `revision` (fec71bf) no ha vuelto a pasar. Sin mirar.
+
+## 2026-11-13: barra de DashOS, portapapeles y programas grandes (rama `caja-linux-apps`)
+
+Rama `caja-linux-apps`, sacada de `revision` (0ce1f49). Lo que faltaba para que los programas de Linux se usen como los
+de DashOS: la barra del compositor para los que no se pintan la suya, copiar y pegar entre Linux y DashOS, y un programa
+grande de verdad (GTK4, y Firefox si cabe). Sala limpia: los XML de Wayland (`xdg-decoration-unstable-v1`,
+`primary-selection-unstable-v1`, `xdg-shell`); nada de Weston, wlroots, Mutter, KWin ni sommelier.
+
+### Resultado
+
+RESULTADO_PENDIENTE
+
+### La barra de DashOS (`xdg-decoration`)
+
+- `zxdg_decoration_manager_v1` (v1) para todos los clientes (`wayland/src/decoracion.rs`). El programa pide el modo;
+  DashOS da el que pide, y si le da igual (`unset_mode`, o crea la decoración y no dice nada), el suyo. Contesta con
+  `configure` y un `xdg_surface.configure`. Errores: modo que no existe, dos decoraciones para una ventana, decoración de
+  una ventana con búfer (v1).
+- La barra la pinta el compositor con el kit (Material 3): 40 px, el contenedor de superficie (alto si la ventana tiene
+  el teclado), el título en Roboto Medium 14 recortado con "…", y la X de cerrar; esquinas de 12 arriba y, al componer,
+  también abajo (la superficie del programa se recorta en sus esquinas). La sombra rodea las dos. Se repinta solo si
+  cambia el título, el ancho, el teclado o el tema; lo que la letra no tiene sale como "?" (su caché no crece).
+- Pulsar en la barra coge la ventana para moverla; en la X, `xdg_toplevel.close`. La ventana nueva se coloca en cascada
+  contando la barra, y maximizada deja sitio para ella.
+
+### El portapapeles
+
+- `wl_data_device` de verdad y la selección primaria (`zwp_primary_selection_device_v1`), igual las dos
+  (`wayland/src/portapapeles.rs`). Solo pone la selección quien tiene el teclado (a otro se le cancela la fuente); la
+  oferta va a quien recibe el teclado justo antes de `enter`, y otra vez si cambia mientras lo tiene. El compositor no
+  toca los datos: en DashOS el descriptor de `receive` y `send` es la llave de un extremo de canal, y la pasa de quien
+  pega a quien copió. Arrastrar y soltar no está (`start_drag` cancela la fuente).
+- Topes: 32 tipos por fuente (más largos de 255 bytes, repetidos o de más se ignoran), 32 ofertas vivas por programa
+  (uno que no las destruye deja de recibirlas), 32 fuentes. Un `receive` de una oferta vieja o de un tipo que no se
+  ofreció cierra la llave sin molestar a la fuente.
+- **Por el puente**: los descriptores del portapapeles son tuberías en Linux y canales en DashOS, y van como **tubos**
+  (tramas `TUBO_NUEVO`, `TUBO_DATOS`, `TUBO_FIN` y `TUBO_LEIDO`, del 12 al 15: del 8 al 10 son las vistas sin copia de
+  `caja-linux-sincopia`). El lado que tiene un extremo donde hay que escribir lo anuncia; el otro crea su par, da el
+  extremo de escribir a su programa con el mensaje y manda lo que lee. `TUBO_LEIDO` es una ventana de 128 KB: quien pega
+  despacio frena al que copia (sin ella, 4 MB a un lector lento llenaban lo pendiente y se cortaba el tubo). Topes por
+  transporte: 16 tubos, 16 MB por tubo, 256 KB pendientes, 30 s sin moverse. En Linux, `dashos_puente::tubos` (el mismo
+  código en el puente y en el compositor del PC); el puente sigue además los objetos que crea el compositor en sus
+  eventos (las ofertas), para saber qué descriptores llevan sus peticiones.
+- **La terminal de la caja** (nativa) usa `usuario/src/portapapeles_cliente.rs`: selecciona con el ratón (al soltar va a
+  la primaria), Control+Mayúsculas+C copia, Control+Mayúsculas+V pega y el botón central pega la primaria. Pega como
+  mucho 4 KB y espera como mucho 10 s.
+
+### Emergentes y lo que piden los programas grandes
+
+`wayland/src/emergentes.rs`: `xdg_positioner` y `xdg_popup` (ancla, gravedad, desplazamiento, dar la vuelta y deslizar
+si no cabe; agarre con el teclado; un clic fuera manda `popup_done`; `reposition`), `set_window_geometry` (la sombra que
+se pinta GTK no cuenta para colocar ni lleva otra del compositor), `move` y `resize` a petición del programa (solo con
+un botón pulsado sobre la ventana; al redimensionar, un configure con el estado "redimensionando" sin pisar uno sin
+confirmar) y `set_maximized`. Y `configure_bounds` (v4) con lo que cabe en la salida.
+
+### Lo que hubo que arreglar por el camino
+
+ARREGLOS_PENDIENTE
+
+### Pruebas
+
+PRUEBAS_PENDIENTE
+
+### Medidas
+
+MEDIDAS_PENDIENTE
+
+### Qué falta
+
+FALTA_PENDIENTE

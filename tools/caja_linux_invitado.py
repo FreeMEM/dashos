@@ -492,7 +492,8 @@ ARCH_GUIONES = {
 ARCH_GUIONES.update({
     "./usr/local/bin/prueba-gtk":
         "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
-        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "# Sin la caja de bwrap para los cargadores de imágenes (glycin): en la caja, su cargador de SVG acaba sin decir nada.\n"
+        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1\n"
         "echo \"gtk: empieza\" > /dev/hvc0\n"
         "exec \"${@:-gtk4-widget-factory}\"\n",
     "./usr/local/bin/prueba-firefox":
