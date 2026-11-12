@@ -1494,3 +1494,20 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la prueba de préstamos (A7) leyendo lo prestado ("excepción de clase 0x24 ... FAR 0x41_0007_6d9b"): a mitad de leer
   se le retira el préstamo. No fue la vuelta a instantánea de `ficheros` (ya había acabado); queda por ver quién lo
   retira (¿Comprobar el disco del centro, `olvidar_todo`?). Pendiente.
+
+### 2026-11-12 18:00: las cajas, en revision (pedido del usuario: "ponte con la caja Amiga y la de Linux")
+- Caja Amiga, primer paso de H4 (rama `caja-amiga`): el JIT de Emu68 en un proceso de usuario big-endian (`caja/`, C
+  sin libc); un programa 68k suma de 1 a 100.000 y escribe en la consola por una dos.library mínima llamada por línea
+  A (`$A0FF <n> RTS`). Hostiles: función que no existe rechazada, línea A desconocida, bucle sin fin cortado a los
+  300 ms, escritura fuera de su memoria (el kernel mata solo la caja). Kernel: proyectar para ejecutar (permiso 4),
+  nunca escribir y ejecutar a la vez, doble proyección del mismo objeto; `malo` 37 lo prueba. Se compila solo si está
+  el clon de `third_party/Emu68` (no va en git), y ya está copiado en los worktrees que compilan.
+- U7 (rama `caja-amiga-u7`): parches 0012 (dos fallos del giro) y 0013 (el indirecto con desplazamiento negativo
+  salía de los 4 GB, también en big-endian), aplicados a los clones; pruebas t4 y t5; los 7 programas dan lo mismo en
+  los dos órdenes; coste en little-endian de 0 a 21 % más instrucciones ARM.
+- exec.library nativa (rama `caja-amiga-exec`): crate `caja/exec/`, 95 pruebas, sin enchufar aún.
+- Caja Linux (rama `caja-linux-virtio`): crate `caja-linux/vmm/` (virtio-mmio, consola, disco, red, PL011, GIC,
+  PSCI, DTB y cargador), 34 pruebas; Linux 6.18 arranca en QEMU con ese DTB y esa carga (invitado fuera de git).
+- Decisiones del usuario pendientes: cinco de la caja Amiga (docs/bitacoras/caja-amiga.md), las de exec, U7 y la
+  caja Linux en sus bitácoras.
+- `make prueba` BIEN; arranque-virt en cuatro vueltas BIEN; arranque-virt-2 BIEN; jit-host comparar BIEN.
