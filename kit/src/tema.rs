@@ -62,15 +62,48 @@ impl Tema {
     };
 }
 
+/// Los colores de acento que ofrece el centro de control (S10c); el primero, el violeta de referencia.
+pub const ACENTOS: [(&str, Color); 4] = [("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
+
+/// Los esquemas de los `ACENTOS`, ya calculados con `desde_color` (en el PC; la prueba `tabla_igual_que_el_calculo`
+/// lo comprueba): color, oscuro, y primario, sobre primario, contenedor primario, sobre contenedor primario,
+/// superficie, sobre superficie, variante de superficie, sobre variante, contorno y variante de contorno.
+const TABLA: [(Color, bool, [Color; 10]); 8] = [
+    (0xff6750a4, false, [0xff6750a4, 0xffffffff, 0xffe9ddff, 0xff22005d, 0xfffdf7ff, 0xff1d1b20, 0xffe7e0eb, 0xff49454e, 0xff7a757f, 0xffcac4cf]), // violeta
+    (0xff6750a4, true, [0xffcfbcff, 0xff381e72, 0xff4f378a, 0xffe9ddff, 0xff141218, 0xffe6e0e9, 0xff49454e, 0xffcac4cf, 0xff948f99, 0xff49454e]), // violeta
+    (0xff0061a4, false, [0xff0061a4, 0xffffffff, 0xffd1e4ff, 0xff001d36, 0xfff8f9ff, 0xff191c20, 0xffdfe2eb, 0xff43474e, 0xff73777f, 0xffc3c6cf]), // azul
+    (0xff0061a4, true, [0xff9fcaff, 0xff003259, 0xff00497d, 0xffd1e4ff, 0xff111418, 0xffe1e2e8, 0xff43474e, 0xffc3c6cf, 0xff8d9199, 0xff43474e]), // azul
+    (0xff386a20, false, [0xff386a1f, 0xffffffff, 0xffb8f397, 0xff062100, 0xfff8faf0, 0xff191d16, 0xffdfe4d7, 0xff43483e, 0xff74796d, 0xffc3c8bb]), // verde
+    (0xff386a20, true, [0xff9cd67e, 0xff103800, 0xff205107, 0xffb8f397, 0xff11140e, 0xffe1e4d9, 0xff43483e, 0xffc3c8bb, 0xff8d9286, 0xff43483e]), // verde
+    (0xff8b5000, false, [0xff8b5000, 0xffffffff, 0xffffdcbe, 0xff2d1600, 0xfffff8f5, 0xff211a14, 0xfff2dfd1, 0xff51453a, 0xff837468, 0xffd5c3b5]), // naranja
+    (0xff8b5000, true, [0xffffb871, 0xff4a2800, 0xff6a3c00, 0xffffdcbe, 0xff19120c, 0xffefe0d5, 0xff51453a, 0xffd5c3b5, 0xff9e8e81, 0xff51453a]), // naranja
+];
+
 impl Tema {
     /// El esquema del tema del sistema (S10c): el de referencia, ya hecho, para el violeta de serie; si no,
     /// `desde_color`. Sin FPU (DashOS compila sin ella), `desde_color` cuesta de 180 a 340 ms en QEMU: un programa que
     /// lo calcula al abrir su ventana tarda en atender la entrada.
     pub fn del_sistema(color: Color, oscuro: bool) -> Tema {
-        if color | 0xff00_0000 == 0xff67_50a4 {
-            if oscuro { Tema::OSCURO } else { Tema::CLARO }
-        } else {
-            Tema::desde_color(color, oscuro)
+        let color = color | 0xff00_0000;
+        if color == 0xff67_50a4 {
+            return if oscuro { Tema::OSCURO } else { Tema::CLARO };
+        }
+        // Los acentos del centro de control, de la tabla; cualquier otro, calculado.
+        match TABLA.iter().find(|t| t.0 == color && t.1 == oscuro) {
+            Some(&(_, _, r)) => Tema {
+                primario: r[0],
+                sobre_primario: r[1],
+                contenedor_primario: r[2],
+                sobre_contenedor_primario: r[3],
+                superficie: r[4],
+                sobre_superficie: r[5],
+                variante_superficie: r[6],
+                sobre_variante_superficie: r[7],
+                contorno: r[8],
+                variante_contorno: r[9],
+                ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
+            },
+            None => Tema::desde_color(color, oscuro),
         }
     }
 
@@ -208,6 +241,19 @@ mod pruebas {
                 }
             }
         }
+    }
+
+    /// La tabla de los acentos da lo mismo que calcularlo (si `desde_color` cambia, la tabla se rehace).
+    #[test]
+    fn tabla_igual_que_el_calculo() {
+        for &(_, c) in ACENTOS.iter().skip(1) {
+            for oscuro in [false, true] {
+                igual_que(Tema::del_sistema(c, oscuro), Tema::desde_color(c, oscuro));
+                assert_eq!(Tema::del_sistema(c, oscuro).primario, Tema::desde_color(c, oscuro).primario);
+            }
+        }
+        // Un color que no está en la tabla, calculado.
+        assert_eq!(Tema::del_sistema(0xff12_3456, true).superficie, Tema::desde_color(0xff12_3456, true).superficie);
     }
 
     /// El esquema de referencia de Material 3 es el del violeta 0x6750A4: el claro y el oscuro salen de él.

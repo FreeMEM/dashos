@@ -965,3 +965,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   referencia ya hecho para el violeta de serie (90 µs) y calcula los demás. Con eso el selector sigue el tema y la
   prueba pasa (2 arranques). Queda que un color que no sea el de serie sigue costando unos 330 ms al cambiarlo; si
   molesta, el centro podría mandar el esquema calculado en vez del color, o el cálculo pasar a enteros.
+- S10c, el tema de cualquiera de los acentos del centro, al momento: el kit lleva la tabla de los cuatro acentos
+  (`ACENTOS`) en claro y oscuro, calculada en el PC con `desde_color`; `Tema::del_sistema` la usa (y calcula los demás
+  colores). La prueba `tabla_igual_que_el_calculo` la compara con el cálculo (si `desde_color` cambia, falla y la tabla
+  se rehace). El centro toma los acentos del kit. Medido en Ajustes, cambiar al azul oscuro: de 331.914 µs a 68 µs.

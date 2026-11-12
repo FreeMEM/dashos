@@ -79,7 +79,7 @@ const SALIDA: u32 = 40;
 /// El objeto del tema del sistema (`dashos_tema_v1`).
 const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
-const COLORES: &[(&str, u32)] = &[("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
+const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
 const PERMISOS: usize = 0;
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
