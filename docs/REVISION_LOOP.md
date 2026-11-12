@@ -1011,3 +1011,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Medido después, contando todas las lecturas: tras el anillo hace menos de 50 y se queda parado (no lee en bucle);
   no da error ni acaba. Candidatos: una petición al servicio de disco que no se contesta (el comprobador espera sin
   plazo) o algo de `committed`. Deshecho otra vez; para retomarlo, plazo en cada petición y traza en `committed`.
+  Pista importante: con un `println!` en cada lectura del comprobador, `FileSystem::open` termina (3 lecturas: la
+  cabecera, el anillo y un bloque de la última transacción, y la raíz se lee bien); sin él, se queda parado 2 de 2,
+  y ninguna petición al disco vence su plazo de 2 s. Depende del tiempo: huele a carrera, quizá en el servicio de
+  disco al intercalar las peticiones por canal de este cliente con los lotes del anillo de `archivos` (A15), o en el
+  propio comprobador. Deshecho; retomarlo con eso.
