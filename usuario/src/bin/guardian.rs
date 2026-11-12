@@ -188,7 +188,22 @@ fn principal() -> u64 {
                 false
             }
         };
-    if bien && retirado && admin && bloqueo && entrada && por_tiempo { 0 } else { 1 }
+    // U3: y bloquear con la tecla, Super+L: un aviso de 60 s que llega antes porque el compositor lo da en el acto. En
+    // la prueba, el guion pulsa Super+L al ver la espera y después escribe la contraseña.
+    let con_tecla = por_tiempo
+        && match esperar_inactividad(60_000, 30_000_000) {
+            Some(ms) if ms < 60_000 => {
+                println!("  [guardian] Super+L: se bloquea la sesión de {} tras {} ms", quien.as_deref().unwrap_or("?"), ms);
+                let desbloqueado = quien.as_deref().and_then(|q| pantalla(Some(q))).is_some();
+                println!("  [guardian] bloqueo con la tecla: {}", if desbloqueado { "bien" } else { "MAL" });
+                desbloqueado
+            }
+            _ => {
+                println!("  [guardian] Super+L no bloqueó: MAL");
+                false
+            }
+        };
+    if bien && retirado && admin && bloqueo && entrada && por_tiempo && con_tecla { 0 } else { 1 }
 }
 
 /// U4: pregunta al usuario si deja a `programa` usar `servicio`, en una capa encima de todo, en el centro, con el

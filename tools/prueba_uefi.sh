@@ -398,6 +398,31 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 7
+        # U3: bloquear con la tecla. `guardian` espera un aviso de 60 s; Super+L lo da ya. Con la pantalla de bloqueo,
+        # una mala y la de Ana (y nada de las teclas de siempre, que irían a ella).
+        if bloqueo == 7 and "[guardian] esperando 60000 ms" in texto:
+            bloqueo = 8
+            time.sleep(1)
+            mandar("sendkey meta_l-l")
+        if bloqueo == 8:
+            if texto.count("pantalla de bloqueo pintada") < 3:
+                time.sleep(0.25)
+                continue
+            bloqueo = 9
+            time.sleep(0.5)
+            antes = texto.count("contraseña mala en la pantalla de bloqueo")
+            teclear("mala")
+            for _ in range(40):
+                time.sleep(0.25)
+                if open(serie, errors="replace").read().count("contraseña mala en la pantalla de bloqueo") > antes:
+                    break
+            time.sleep(0.3)
+            teclear("clave de Ana")
+        if bloqueo == 9:
+            if texto.count("[guardian] desbloqueado") < 3:
+                time.sleep(0.5)
+                continue
+            bloqueo = 10
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
             mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)

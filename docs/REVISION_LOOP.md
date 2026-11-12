@@ -36,7 +36,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R12 | Supervisión de servicios y biblioteca común | E6 a E9 | hecho (E8: cola de salida por cliente, medida de cuadros y sin daños repetidos) |
 | R13 | Discos ajenos en un proceso lector aparte | S6b regla 4 | hecho para ADF (FAT y ext4, cuando existan) |
 | R14 | `sesiones`: cuentas, fichas, lanzar desde disco, procesos | U2 | fichas, procesos, matar, lanzar desde el disco y tabla de nombres |
-| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo (falta bloquear con una tecla) |
+| R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo y con Super+L |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario, con cajones y doble clic), acciones de administrador |
 | R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones |
@@ -906,3 +906,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - S10c, los botones con el ratón: el centro dice dónde queda el botón Quitar y, al quitar, si fue "con el botón" o
   "con Supr". El guion hace clic en la fila de `pide · eco` y luego en Quitar: "quita a pide el permiso de eco con el
   botón: 0; quedan 0" (si el ratón fallara, acaba con Supr y la línea no casaría).
+- U3, lo que faltaba: bloquear con una tecla, Super+L. El compositor la atiende él (no llega a la ventana) y da en el
+  acto los avisos de inactividad pendientes (`Escena::bloquear_ya`), como si hubiera vencido su plazo; `guardian`, que
+  espera el suyo, bloquea igual que por tiempo. Con la sesión bloqueada no hace nada. Prueba en virt: tras el bloqueo
+  por tiempo, `guardian` pide un aviso de 60 s; el guion pulsa Super+L y el aviso llega a los 1,6 s; pantalla de
+  bloqueo, una contraseña mala y la de Ana: "bloqueo con la tecla: bien". Un programa no puede fingir Super+L: la
+  entrada solo llega del USB, y la tecla no se reparte. Sin ventana con el teclado no se miran los modificadores, así
+  que entonces Super+L no hace nada (casi nunca: siempre hay una con el teclado); queda apuntado.

@@ -157,6 +157,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] esperando 2000 ms sin entrada
 ~│   [guardian] sin entrada durante 2 s: aviso tras
 ~│   [guardian] bloqueo por tiempo: bien
+# U3: bloquear con la tecla: Super+L da el aviso de inactividad en el acto (uno de 60 s llega en uno o dos).
+~│   [guardian] esperando 60000 ms sin entrada
+~│   [guardian] Super+L: se bloquea la sesión de Ana tras
+~│   [guardian] bloqueo con la tecla: bien
 ~│   [pide] acción de administrador (comprobar el disco): 0 con 0 problemas: bien
 ~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien

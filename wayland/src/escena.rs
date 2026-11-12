@@ -118,6 +118,7 @@ use crate::Valor;
 /// Las flechas de evdev que usan los atajos del compositor.
 const KEY_ARRIBA: u32 = 103;
 const KEY_ABAJO: u32 = 108;
+const KEY_L: u32 = 38;
 
 /// Un cliente es su marca de canal (S10b): la conexión.
 pub type Cliente = u64;
@@ -509,6 +510,16 @@ impl<M: Memorias> Escena<M> {
             if i.avisado {
                 i.avisado = false;
                 self.avisos_inactividad.push((i.cliente, i.objeto, false));
+            }
+        }
+    }
+
+    /// Super+L (U3): los avisos de inactividad pendientes dan `idled` ya, sin esperar su plazo.
+    pub fn bloquear_ya(&mut self) {
+        for i in &mut self.inactividad {
+            if !i.avisado {
+                i.avisado = true;
+                self.avisos_inactividad.push((i.cliente, i.objeto, true));
             }
         }
     }
@@ -1845,6 +1856,14 @@ impl<M: Memorias> Escena<M> {
         if self.mods & 64 != 0 && matches!(codigo, KEY_ARRIBA | KEY_ABAJO) && self.bloqueo.is_none() {
             if pulsada {
                 self.maximizar(codigo == KEY_ARRIBA, &mut out);
+            }
+            return out;
+        }
+        // Super+L (U3): bloquear ya. Quien bloquea (`guardian`) espera su aviso de inactividad; se le da en el acto, como
+        // si hubiera vencido el plazo. La tecla no llega a la ventana.
+        if self.mods & 64 != 0 && codigo == KEY_L && self.bloqueo.is_none() {
+            if pulsada {
+                self.bloquear_ya();
             }
             return out;
         }
