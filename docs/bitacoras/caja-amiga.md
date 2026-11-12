@@ -348,6 +348,8 @@ permisos de `pide` (ver abajo).
   (`CAPTURA_AMIGA`) y un clic en el gadget de cerrar (en (10, 5) de la ventana). Después el cursor vuelve a donde lo
   dejaban los pasos de siempre. Al principio pulsaba enseguida: si la pregunta de `pide` salía en ese momento, el clic
   le quitaba el teclado, su "s" no llegaba y `pide` se quedaba sin permiso.
+- **`tools/guion_caja_linux.py`** (`arranque-virt-linux`): al repetir una orden, otro clic en la terminal antes. La
+  ventana de la caja Amiga sale después de la terminal y se lleva el teclado (como toda ventana nueva).
 - **`tools/captura_ventanas.py`**: Ajustes ya no es la tercera de la cascada (la ventana Amiga sale antes y ocupa un
   sitio): sus comprobaciones van donde dice el compositor que está.
 
