@@ -24,6 +24,7 @@ mod bcm2836;
 mod cupo;
 mod dtb;
 mod elf;
+mod espera;
 mod gic;
 #[cfg(not(feature = "pruebas"))]
 mod inicio;

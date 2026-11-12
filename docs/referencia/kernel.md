@@ -70,8 +70,11 @@ El programa decide dónde proyecta su memoria. El kernel no le busca sitio.
 
 ### Fin de un proceso
 
-- `salir(código)` termina el hilo, y con él el proceso.
-- Una excepción del programa termina el proceso, no el sistema. Por ejemplo, un fallo de página, una instrucción
+- `salir(código)` termina el hilo que llama. El proceso acaba con su último hilo, con el código de ese.
+- `proceso_salir(código)` (44) termina el proceso entero, con todos sus hilos.
+- Hilos de usuario: `docs/diseño/hilos-de-usuario.md`. Un hilo creado con `hilo_crear` cuesta 20 KB al grupo hasta
+  que alguien se une a él (o acaba el proceso).
+- Una excepción del programa, en cualquiera de sus hilos, termina el proceso entero, no el sistema. Por ejemplo, un fallo de página, una instrucción
   ilegal o una alineación incorrecta. El kernel escribe en la consola la clase de la excepción, la dirección de la
   instrucción y la dirección del fallo.
 - Al morir el último hilo se liberan la tabla de llaves, el espacio de direcciones y las páginas que solo usaba ese
@@ -159,6 +162,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 36 | `proceso_avisar` | `x0` proceso (con leer), `x1` canal (con escribir) | 0. Cuando el proceso acabe (o ya, si acabó), el kernel escribe por el canal 16 bytes: clase y código como en `proceso_esperar` (u64 little-endian), con la marca de la llave del canal. Hasta 16 por proceso (`E_LIMITE`); con la cola llena, el aviso se pierde (K7) |
 | 37 | `proceso_numero` | `x0` proceso (con leer) | Su número de proceso en el kernel: no se repite, desde 1 (U6) |
 | 38 | `grupo_procesos` | `x0` grupo (con leer), `x1` dónde, `x2` cuántos caben (hasta 64) | Cuántos procesos vivos tiene el grupo; escribe sus números (u64) en `x1`. Solo con la llave del grupo (U6) |
+| 40 | `hilo_crear` | `x0` entrada, `x1` pila (alineada a 16), `x2` argumento, `x3` TLS | El número del hilo. Baja a EL0 en la entrada con SP = pila, x0 = argumento y TPIDR_EL0 = TLS. `E_ARGUMENTO` si la entrada no es código del proceso o la pila no es memoria suya que se pueda escribir; `E_MEMORIA` si no cabe en el grupo; `E_LIMITE` con 256 hilos sin unir; `E_CERRADO` si el proceso se está acabando |
+| 41 | `hilo_unir` | `x0` número de hilo | `x0` clase y `x1` código, como `proceso_esperar`, cuando acaba. Solo hilos de `hilo_crear` del mismo proceso, una vez: si no, `E_ARGUMENTO` |
+| 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
+| 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
+| 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
 
 ### Detalles
 
@@ -323,6 +331,7 @@ Son límites de forma, aparte del cupo de cada grupo.
 | Llaves en la tabla de un proceso | 1024 |
 | Mensajes esperando en un lado de un canal | 16 |
 | Proyecciones de objetos de memoria por proceso | 1024 |
+| Hilos de `hilo_crear` vivos o sin unir por proceso | 256 |
 | Memoria libre que solo usa el kernel | 32 MB |
 
 Con la cola llena, `canal_escribir` devuelve `E_LIMITE` y las llaves vuelven a sus números. Una interrupción que
@@ -371,7 +380,8 @@ Tipos de objeto:
 
 `usuario/src/lib.rs` (crate `dashos`) envuelve las llamadas: `escribir`, `salir`, `canal_crear`, `canal_escribir`,
 `canal_leer`, `memoria_crear`, `memoria_proyectar`, `registros_proyectar`, `interrupcion_asociar` e
-`interrupcion_terminar`. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
+`interrupcion_terminar`. `dashos::hilos` tiene las de hilos (`crear`, `unir`, `esperar`, `despertar`,
+`proceso_salir`) y un `Cerrojo` hecho con la espera. También tiene `println!` y la macro `programa!(principal)`, que pone `_start` y el
 manejador de pánico.
 
 Los objetivos de compilación son dos:
@@ -383,7 +393,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 
 ### Registros que ve un proceso
 
-- `TPIDR_EL0` es de cada hilo: empieza a 0 y el kernel lo guarda y lo repone. `TPIDRRO_EL0` vale 0.
+- `TPIDR_EL0` es de cada hilo: empieza a 0 (o al TLS de `hilo_crear`) y el kernel lo guarda y lo repone. `TPIDRRO_EL0` vale 0.
 - Puede leer el contador virtual (`CNTVCT_EL0`) y su frecuencia. El temporizador físico, los demás temporizadores y
   los contadores de rendimiento terminan el proceso.
 - Saltar a una dirección del kernel termina el proceso.
@@ -407,6 +417,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
   mientras el aparato sigue en marcha.
 - El PCIe (C51): el VL805 alcanza todo el primer GB, también la memoria de la VideoCore; la llave de los registros
   del controlador PCIe no se da a ningún proceso.
-- Un proceso tiene un solo hilo, y no hay llamada para crear hilos.
+- Hilos de usuario sin "soltar" (detach), sin prioridad ni afinidad por hilo, y la CPU se reparte por hilo, no por
+  proceso.
 - El azar de los PIE sale del contador del sistema y no es criptográfico. En la Pi 4 habrá que sembrarlo con el
   generador por hardware (RNG200).

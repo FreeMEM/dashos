@@ -128,5 +128,12 @@ C43: pruebas de usuario lanzadas por un proceso bien
 C51: temporizadores repartidos por grupos bien
   [dma] 64 KB seguidos con dirección de bus 0x
 C46: memoria DMA con permiso bien
+~  [hilos] víctima con 4 hilos: dos esperando, uno unido a otro y uno que gira
+  [hilos] 4 hilos suman 80000 con un cerrojo: 80000
+  [hilos] entradas, pilas, uniones y esperas que no valen: todas rechazadas
+  [hilos] hilos sin fin:
+  [hilos] el cupo del grupo corta los hilos, y unirse devuelve lo cobrado
+  [hilos] medidas
+C52: hilos de usuario bien
 PÁNICO: panicked at src/base/excepciones.rs
 pila del kernel desbordada

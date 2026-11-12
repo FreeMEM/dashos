@@ -38,17 +38,18 @@ hilo_entrada:
 1:  wfe
     b       1b
 
-// entrar_el0(pc, sp): baja a EL0 en "pc" con la pila de usuario "sp", con las IRQ y los SError habilitados (C11).
+// entrar_el0(pc, sp, x0): baja a EL0 en "pc" con la pila de usuario "sp" y "x0" en x0 (el argumento de un hilo de
+// usuario, 0 para el primero de un proceso), con las IRQ y los SError habilitados (C11).
 // La pila del kernel del hilo (SP_EL1) se queda como está: ahí llegarán sus excepciones.
     .globl  entrar_el0
 entrar_el0:
     msr     daifset, #3                 // sin IRQ hasta el eret: una IRQ aquí pisaría ELR y SPSR (auditoría, N4)
     msr     elr_el1, x0
     msr     sp_el0, x1
+    mov     x0, x2                      // lo único que pasa a EL0; los demás, a cero
     mov     x2, #(1 << 6)               // EL0t con FIQ enmascaradas: DashOS no las usa (auditoría, hallazgo 11)
     msr     spsr_el1, x2
-    mov     x0, xzr                     // no dejar datos del kernel en los registros
-    mov     x1, xzr
+    mov     x1, xzr                     // no dejar datos del kernel en los registros
     mov     x2, xzr
     mov     x3, xzr
     mov     x4, xzr
