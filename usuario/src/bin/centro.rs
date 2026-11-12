@@ -42,7 +42,7 @@ use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
 use ventana_cliente::*;
 use wayland::tablas::{
-    wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland::Escritor;
@@ -76,6 +76,8 @@ const PANTALLAS: usize = 3;
 const APARIENCIA: usize = 4;
 /// El objeto de la pantalla (`wl_output`), tras los de `ventana_cliente`.
 const SALIDA: u32 = 40;
+/// El objeto del tema del sistema (`dashos_tema_v1`).
+const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
 const COLORES: &[(&str, u32)] = &[("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
 const PERMISOS: usize = 0;
@@ -428,6 +430,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         return None;
     };
     let gp = global("wl_output");
+    let gt = global("dashos_tema_v1");
     let mut pantalla = Pantalla::default();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
@@ -526,6 +529,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
         if let Some(gp) = gp {
             e.empezar(REGISTRO, wl_registry::req::BIND).uint(gp).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
+        }
+        // S10c: el tema del sistema. El centro lo pone (el compositor solo se lo deja a él): el guardado, al abrir.
+        if let Some(gt) = gt {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA_OBJ).fin();
+            e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
         }
         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
@@ -706,6 +714,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
                         lineas_registro = apariencia(oscuro, color);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        if gt.is_some() {
+                            let mut e = Escritor::new();
+                            e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
+                            c.mandar(&e);
+                        }
                         let (guardado, bytes) = guardar_apariencia(oscuro, color);
                         // Y se relee, como al abrir la próxima vez.
                         let releida = leer_apariencia() == Ok((oscuro, color));

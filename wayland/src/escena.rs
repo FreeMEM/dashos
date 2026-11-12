@@ -14,7 +14,7 @@ use crate::servidor::{Conexion, ErrorProtocolo, Servicio, INVALID_METHOD};
 use crate::shm::{Memorias, Shm, ARGB8888};
 use crate::tablas::{
     self, wl_buffer, wl_callback, zwp_linux_buffer_params_v1, zwp_linux_dmabuf_feedback_v1, zwp_linux_dmabuf_v1, wl_compositor, wl_keyboard, wl_pointer, wl_region, wl_seat, wl_shm, wl_shm_pool,
-    ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_output, wl_subcompositor,
+    dashos_tema_v1, ext_idle_notification_v1, ext_idle_notifier_v1, ext_session_lock_manager_v1, ext_session_lock_surface_v1, ext_session_lock_v1, wl_output, wl_subcompositor,
     wl_subsurface, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 
@@ -402,6 +402,13 @@ pub struct Escena<M: Memorias> {
     pub danos: Vec<Rect>,
     /// Cuántas ventanas se han colocado: la siguiente va en cascada.
     colocadas: i32,
+    /// El tema del sistema (S10c, `dashos_tema_v1`): color de acento (ARGB) y si es oscuro.
+    pub tema: (u32, bool),
+    /// Quién está suscrito al tema (cliente y objeto) y a quién hay que decirle el nuevo (quien atiende lo manda).
+    temas: Vec<(Cliente, u32)>,
+    pub avisos_tema: Vec<(Cliente, u32)>,
+    /// Quién puede cambiar el tema: lo pone quien atiende, por el nombre que da `inicio` (el centro de control).
+    pub ponen_tema: Vec<Cliente>,
     /// Las ventanas que se acaban de colocar, con su sitio: quien atiende lo dice (las pruebas del ratón lo usan) y lo
     /// vacía.
     pub recien_colocadas: Vec<(Cliente, i32, i32)>,
@@ -464,6 +471,16 @@ pub fn avisar_inactividad(con: &mut Conexion, objeto: u32, ocioso: bool) {
 /// abre una ventana justo cuando se escribe una contraseña para quedarse con lo que se teclea.
 pub const SIN_ROBAR_MS: u32 = 2_000;
 
+/// El color de serie del tema: el violeta de referencia de Material 3.
+pub const TEMA_DE_SERIE: u32 = 0xff67_50a4;
+/// Suscripciones al tema, entre todos: más, y enlazar es un error.
+pub const MAX_TEMAS: usize = 64;
+
+/// Manda el tema (S10c) al objeto `objeto` de `dashos_tema_v1`.
+pub fn avisar_tema(con: &mut Conexion, objeto: u32, (color, oscuro): (u32, bool)) {
+    con.salida.empezar(objeto, dashos_tema_v1::ev::TEMA).uint(color).uint(oscuro as u32).fin();
+}
+
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
         // Al empezar, la pantalla entera está por pintar.
@@ -476,6 +493,10 @@ impl<M: Memorias> Escena<M> {
             danos: todo,
             colocadas: 0,
             recien_colocadas: Vec::new(),
+            tema: (TEMA_DE_SERIE, false),
+            temas: Vec::new(),
+            avisos_tema: Vec::new(),
+            ponen_tema: Vec::new(),
             cursor: (0, 0),
             botones: 0,
             puntero: None,
@@ -553,6 +574,9 @@ impl<M: Memorias> Escena<M> {
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
         self.del_sistema.retain(|&c| c != cliente);
+        self.temas.retain(|t| t.0 != cliente);
+        self.avisos_tema.retain(|t| t.0 != cliente);
+        self.ponen_tema.retain(|&c| c != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
             b.vivo = false;
@@ -1020,6 +1044,20 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let cliente = self.cliente;
                 let desde_ms = escena.reloj_ms;
                 escena.inactividad.push(Inactividad { cliente, objeto: args[0].uint(), plazo_ms: args[1].uint(), desde_ms, avisado: false });
+            }
+            // S10c: el tema. Solo quien puede (el centro de control) lo cambia; se dice a todos los suscritos.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::PONER => {
+                if !escena.ponen_tema.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo el centro de control cambia el tema"));
+                }
+                escena.tema = (args[0].uint() | 0xff00_0000, args[1].uint() != 0);
+                let todos: Vec<(Cliente, u32)> = escena.temas.clone();
+                escena.avisos_tema.extend(todos);
+            }
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::DESTROY => {
+                let cliente = self.cliente;
+                escena.temas.retain(|t| !(t.0 == cliente && t.1 == objeto));
+                escena.avisos_tema.retain(|t| !(t.0 == cliente && t.1 == objeto));
             }
             "ext_idle_notification_v1" if orden == ext_idle_notification_v1::req::DESTROY => {
                 let cliente = self.cliente;
@@ -1505,6 +1543,13 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     }
 
     fn enlazado(&mut self, con: &mut Conexion, global: &crate::servidor::Global, id: u32) {
+        if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
+            // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
+            avisar_tema(con, id, self.escena.tema);
+            if self.escena.temas.len() < MAX_TEMAS {
+                self.escena.temas.push((self.cliente, id));
+            }
+        }
         if core::ptr::eq(global.interfaz, &tablas::WL_SEAT) {
             // Puntero y teclado (1 | 2), y su nombre (desde la versión 2).
             con.salida.empezar(id, wl_seat::ev::CAPABILITIES).uint(3).fin();

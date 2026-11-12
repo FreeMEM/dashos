@@ -102,8 +102,11 @@ def main():
     # La aplicación del kit (K7), tercera en la cascada, en (104, 104): su superficie (Material 3, claro) abajo a la
     # derecha, donde no llega ninguna de las otras (un clic puede subir una de ellas encima), y el primario de sus
     # botones (al menos un botón entero de 40 de alto).
+    # S10c: o con el tema del sistema que puso el centro de control en la prueba (oscuro, azul): Ajustes lo sigue.
     SUPERFICIE = (0xFE, 0xF7, 0xFF)
     PRIMARIO = (0x67, 0x50, 0xA4)
+    if casi(en(450, 270), (0x11, 0x14, 0x18)):
+        SUPERFICIE, PRIMARIO = (0x11, 0x14, 0x18), (0x9F, 0xCA, 0xFF)
     if not casi(en(450, 270), SUPERFICIE):
         fallos.append(f"la ventana del kit: superficie en (450, 270): {en(450, 270)}")
     # Abajo a la derecha, lejos de todas las ventanas, el fondo: si no, se ha quedado pintado algo que ya no está

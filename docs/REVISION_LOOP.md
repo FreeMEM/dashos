@@ -932,3 +932,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   colocar; con Super+Abajo, a su tamaño. Como Ajustes (K7). La barra lateral tiene ya una fila por categoría (con
   cinco filas, la sexta empujaba a Permisos fuera de la vista). Prueba en virt: "el compositor pide 800x600" y "vuelve
   a 560x420". Capturas en `docs/capturas/s10c-centro-maximizado.png` y `s10c-centro-apariencia.png`.
+- S10c (C3), el tema llega a todos los programas: protocolo propio `dashos_tema_v1` (`wayland/protocolos/
+  dashos-tema-v1.xml`, tablas regeneradas). El compositor guarda el tema (color y modo), lo dice al enlazar y, cuando
+  cambia, a todos los suscritos (`Escena::avisos_tema`, con tope de 64); cambiarlo (`poner`) solo lo deja al cliente que
+  `inicio` llama "centro" (`PONEN_TEMA`); a otro, error de protocolo y nada cambia. El centro lo pone al abrir (el
+  guardado) y al elegir; Ajustes (K7) lo sigue y se repinta. Pruebas: en el compositor, `el_tema_del_sistema` (llega
+  al enlazar; un cliente cualquiera que pone da error y no cambia nada; el centro lo cambia y llega a los tres
+  suscritos; al irse, fuera de la lista). En virt: "[ajustes] tema del sistema: oscuro, color 0061a4", y la captura
+  final enseña Ajustes en oscuro azul (la comprobación de la captura acepta ese esquema; los colores, del kit:
+  superficie 0x111418, primario 0x9fcaff). Captura en `docs/capturas/s10c-tema-del-sistema.png`. Falta que lo sigan
+  el selector y `guardian`, y los programas de Linux por el puente.

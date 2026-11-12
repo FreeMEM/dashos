@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<protocol name="dashos_tema_v1">
+  <copyright>
+    Protocolo propio de DashOS (S10c, C3). Licencia MPL-2.0, como el resto de DashOS.
+  </copyright>
+
+  <interface name="dashos_tema_v1" version="1">
+    <description summary="el tema del sistema: color de acento y modo">
+      El compositor guarda el tema y se lo dice a cada programa que se suscribe: al enlazar y cada vez que cambia.
+      Solo el centro de control lo cambia; a otro, poner es un error de protocolo.
+    </description>
+
+    <enum name="error">
+      <entry name="no_permitido" value="0" summary="solo el centro de control cambia el tema"/>
+    </enum>
+
+    <request name="destroy" type="destructor"/>
+
+    <request name="poner">
+      <description summary="cambiar el tema">Un color de acento (ARGB) y el modo (0 claro, 1 oscuro).</description>
+      <arg name="color" type="uint"/>
+      <arg name="oscuro" type="uint"/>
+    </request>
+
+    <event name="tema">
+      <description summary="el tema de ahora">Al enlazar y cada vez que cambia.</description>
+      <arg name="color" type="uint"/>
+      <arg name="oscuro" type="uint"/>
+    </event>
+  </interface>
+</protocol>

@@ -41,6 +41,9 @@ const BUFER_2: u32 = 16;
 const VA_2: usize = VA + 0x1000_0000;
 
 /// Memoria para un búfer de `w`×`h`, proyectada en `va`: su llave, una copia para el compositor y los píxeles.
+/// El objeto del tema del sistema (`dashos_tema_v1`, S10c), tras los de `ventana_cliente`.
+const TEMA: u32 = 43;
+
 fn memoria(va: usize, (w, h): (i32, i32)) -> Option<(u32, u32, &'static mut [u32])> {
     let tamano = (w * h * 4) as usize;
     let m = dashos::memoria_crear(tamano);
@@ -111,6 +114,10 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    // S10c: el tema del sistema (lo cambia el centro de control); llega al enlazar y cada vez que cambia.
+    if let Some(gt) = global("dashos_tema_v1") {
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+    }
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia).int(tamano as i32).fin();
     e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -143,6 +150,8 @@ fn principal() -> u64 {
     let (mut x, mut y, mut pulsado) = (0i32, 0i32, false);
     let mut configurada = false;
     let mut texto_antes = alloc::string::String::new();
+    // El de serie, el claro de referencia (el violeta de Material 3).
+    let mut tema_actual = (0xff67_50a4u32, false);
     let mut nombre_antes = alloc::string::String::from("DashOS");
     loop {
         let Some((o, orden, cuerpo)) = c.evento() else { return 0 };
@@ -156,6 +165,15 @@ fn principal() -> u64 {
             }
             // El tamaño que pide el compositor llega antes que el configure de la superficie, que lo cierra.
             (VENTANA, xdg_toplevel::ev::CONFIGURE) => pedida = (palabra(0) as i32, palabra(1) as i32),
+            (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
+                let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
+                if (color, oscuro) != tema_actual {
+                    tema_actual = (color, oscuro);
+                    i.ctx.tema = Tema::desde_color(color, oscuro);
+                    println!("  [ajustes] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
+                    cambio = true;
+                }
+            }
             (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) if !configurada => {
                 configurada = true;
                 let mut e = Escritor::new();

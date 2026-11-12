@@ -1059,6 +1059,29 @@ pub mod ext_idle_notification_v1 {
     }
 }
 
+pub static DASHOS_TEMA_V1: Interface = Interface {
+    name: "dashos_tema_v1",
+    version: 1,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+    events: &[
+        Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `dashos_tema_v1`.
+pub mod dashos_tema_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const PONER: u16 = 1;
+    }
+    pub mod ev {
+        pub const TEMA: u16 = 0;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1097,4 +1120,5 @@ pub static INTERFACES: &[&Interface] = &[
     &ZWP_LINUX_DMABUF_FEEDBACK_V1,
     &EXT_IDLE_NOTIFIER_V1,
     &EXT_IDLE_NOTIFICATION_V1,
+    &DASHOS_TEMA_V1,
 ];

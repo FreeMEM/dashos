@@ -1264,13 +1264,14 @@ mod entrada {
         }
     }
 
-    fn globales() -> [Global; 5] {
+    fn globales() -> [Global; 6] {
         [
             Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
             Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
             Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
+            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
         ]
     }
 
@@ -1310,6 +1311,55 @@ mod entrada {
 
     /// Super+Arriba maximiza la ventana que tiene el teclado: a (0, 0), con un configure del tamaño de la pantalla y
     /// el estado "maximizada"; el cliente lo confirma. Super+Abajo la devuelve a su sitio con un configure de 0 × 0.
+    /// S10c: el tema. Al enlazar llega el de ahora; poner sin permiso es un error de protocolo y no cambia nada; el
+    /// centro (permitido) lo cambia y les llega a todos los suscritos; al irse, nada queda apuntado.
+    #[test]
+    fn el_tema_del_sistema() {
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+            con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+            con.atender(&globales(), &mut escena.de(c));
+            eventos(&con.sacar())
+        };
+        let (mut a, mut h, mut centro) = (Conexion::new(), Conexion::new(), Conexion::new());
+        let ev = suscribir(&mut escena, &mut a, 1);
+        assert!(ev.iter().any(|x| x.0 == 60 && x.1 == dashos_tema_v1::ev::TEMA && x.2[..4] == TEMA_DE_SERIE.to_le_bytes()));
+        suscribir(&mut escena, &mut h, 2);
+        suscribir(&mut escena, &mut centro, 3);
+        escena.ponen_tema.push(3);
+        // Hostil: el 2 no puede.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::PONER).uint(0xff00_0000).uint(1).fin();
+        h.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        h.atender(&globales(), &mut escena.de(2));
+        assert!(h.roto.is_some(), "un programa cualquiera cambió el tema");
+        assert_eq!(escena.tema, (TEMA_DE_SERIE, false));
+        assert!(escena.avisos_tema.is_empty());
+        // El centro, sí: a los tres suscritos.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::PONER).uint(0x0061_a4).uint(1).fin();
+        centro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        centro.atender(&globales(), &mut escena.de(3));
+        assert!(centro.roto.is_none(), "{:?}", centro.roto);
+        assert_eq!(escena.tema, (0xff00_61a4, true));
+        assert_eq!(core::mem::take(&mut escena.avisos_tema), [(1, 60), (2, 60), (3, 60)]);
+        avisar_tema(&mut a, 60, escena.tema);
+        let ev = eventos(&a.sacar());
+        assert_eq!(ev.last().map(|x| (x.0, x.1, x.2.clone())), Some((60, dashos_tema_v1::ev::TEMA, [0xff00_61a4u32.to_le_bytes(), 1u32.to_le_bytes()].concat())));
+        // Al irse, fuera de la lista: otro cambio ya no lo cuenta.
+        escena.adios(1);
+        escena.adios(2);
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::PONER).uint(0xff38_6a20).uint(0).fin();
+        centro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        centro.atender(&globales(), &mut escena.de(3));
+        assert_eq!(core::mem::take(&mut escena.avisos_tema), [(3, 60)]);
+    }
+
     #[test]
     fn super_l_bloquea_ya() {
         use crate::tablas::ext_idle_notifier_v1;

@@ -144,6 +144,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Apariencia: oscuro, color Violeta; guardada: 0 (15 bytes); releída: sí
 # Con el ratón: doble clic en "Color azul" (dos clics en la misma fila, en menos de 500 ms).
 ~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
+# Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
+~│   [ajustes] tema del sistema: oscuro, color 0061a4
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
 # Super+Arriba la maximiza (un búfer nuevo de la pantalla entera) y Super+Abajo la devuelve.

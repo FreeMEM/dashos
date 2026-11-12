@@ -39,16 +39,18 @@ const ALTO: u32 = 480;
 const VA_CLIENTES: usize = 0x70_0000_0000;
 const FONDO: u32 = 0xff20_4060;
 
-static GLOBALES: [Global; 6] = [
+static GLOBALES: [Global; 7] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
+    // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control.
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 9] = [
+static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -58,7 +60,10 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
 ];
+/// Quién puede cambiar el tema del sistema (S10c): el centro de control.
+const PONEN_TEMA: &[&str] = &["centro"];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
 /// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
 const ESCRITORIOS: &[&str] = &["guardian"];
@@ -79,6 +84,16 @@ fn vaciar_todos(clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<C
 /// siguiente.
 fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) -> Option<u32> {
     let falta = escena.revisar_inactividad();
+    // Y el tema nuevo (S10c), a cada suscrito.
+    let tema = escena.tema;
+    for (cl, objeto) in core::mem::take(&mut escena.avisos_tema) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_tema(&mut cli.con, objeto, tema);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
     for (cl, objeto, ocioso) in core::mem::take(&mut escena.avisos_inactividad) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_inactividad(&mut cli.con, objeto, ocioso);
@@ -460,6 +475,9 @@ fn principal() -> u64 {
                 let del_sistema = nombres.get(&marca).is_some_and(|n| SISTEMA.contains(&n.as_str()));
                 if del_sistema && !escena.del_sistema.contains(&marca) {
                     escena.del_sistema.push(marca);
+                }
+                if nombres.get(&marca).is_some_and(|n| PONEN_TEMA.contains(&n.as_str())) && !escena.ponen_tema.contains(&marca) {
+                    escena.ponen_tema.push(marca);
                 }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
             }
