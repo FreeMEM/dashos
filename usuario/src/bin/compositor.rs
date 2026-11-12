@@ -983,10 +983,13 @@ fn principal() -> u64 {
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
             let de_linux = if cl != marca_de(cl) { " (un programa de su puente de Wayland)" } else { "" };
             // H9: la geometría (la ventana de verdad dentro de su búfer), si la dio: las pruebas apuntan con ella.
-            let geometria = escena.clientes.get(&cl).and_then(|c| {
-                c.xdg.values().find(|v| c.superficies.get(&v.superficie).and_then(|s| s.sitio) == Some((x, y))).and_then(|v| v.geometria)
-            });
-            let geometria = geometria.map_or(String::new(), |g| alloc::format!(" geometría ({}, {}, {}, {})", g.x, g.y, g.w, g.h));
+            let xdg = escena.clientes.get(&cl).and_then(|c| c.xdg.values().find(|v| c.superficies.get(&v.superficie).and_then(|s| s.sitio) == Some((x, y))).map(|v| (c, v)));
+            let geometria = xdg.and_then(|(_, v)| v.geometria).map_or(String::new(), |g| alloc::format!(" geometría ({}, {}, {}, {})", g.x, g.y, g.w, g.h));
+            // Y lo que mide (con la barra de DashOS si la lleva).
+            let geometria = match xdg.and_then(|(c, v)| escena::decoracion::ventana_de(c, v.superficie)) {
+                Some(r) => alloc::format!("{} de {}x{}", geometria, r.w, r.h),
+                None => geometria,
+            };
             println!("  [compositor] ventana de {}{} en ({}, {}){}{}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, geometria, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
         }
         for (cl, x, y) in core::mem::take(&mut escena.emergentes_colocados) {

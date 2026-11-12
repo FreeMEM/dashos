@@ -17,30 +17,30 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] linux: active
 ~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
 ~[caja-linux] linux: puente hostil: hecho
-~[caja-linux] linux: ventana_wayland: decoración del compositor
+~ventana_wayland: decoración del compositor
 ~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
-~[caja-linux] linux: ventana_wayland: primer cuadro en pantalla
-~[caja-linux] linux: ventana_wayland: tengo el teclado
-~[caja-linux] linux: ventana_wayland: clic del botón 272
-~[caja-linux] linux: ventana_wayland: tecla 30 pulsada
-~[caja-linux] linux: ventana_wayland: en marcha:
+~ventana_wayland: primer cuadro en pantalla
+~ventana_wayland: tengo el teclado
+~ventana_wayland: clic del botón 272
+~ventana_wayland: tecla 30 pulsada
+~ventana_wayland: en marcha:
 ~[compositor] arrastre:
-~[caja-linux] linux: ventana_wayland: el compositor pide cerrar
+~ventana_wayland: el compositor pide cerrar
 ~adiós
-~[caja-linux] linux: foot: lista
+~foot: lista
 ~[caja-linux] linux: Hola desde foot, en Arch Linux ARM, en DashOS
 ~[caja-linux] linux: primaria: Hola desde foot, en Arch Linux ARM, en DashOS
 ~[caja-linux] terminal: seleccionado "pegame-en-foot"
 ~[caja-linux] terminal: copiado "pegame-en-foot"
-~[caja-linux] linux: foot: leido pegame-en-foot
-~[caja-linux] linux: cliente hostil: modo de decoración que no existe: el compositor lo cortó
-~[caja-linux] linux: cliente hostil: dos decoraciones para una ventana: el compositor lo cortó
-~[caja-linux] linux: cliente hostil: tipo del portapapeles que no es UTF-8: el compositor lo cortó
+~foot: leido pegame-en-foot
+~cliente hostil: modo de decoración que no existe: el compositor lo cortó
+~cliente hostil: dos decoraciones para una ventana: el compositor lo cortó
+~cliente hostil: tipo del portapapeles que no es UTF-8: el compositor lo cortó
 ~[compositor] error de protocolo de caja-linux: modo que no existe
-~[caja-linux] linux: cliente hostil: sin-fin: le cortaron la tubería
+~cliente hostil: sin-fin: le cortaron la tubería
 ~[caja-linux] terminal: pegado (4096 bytes)
 ~[caja-linux] terminal: pegado (0 bytes)
-~[caja-linux] linux: gtk: empieza
+~gtk: empieza
 ~[caja-linux] linux: guion: gtk4 en pantalla
 ~[compositor] emergente de caja-linux en
 ~[caja-linux] linux: se para la máquina a los

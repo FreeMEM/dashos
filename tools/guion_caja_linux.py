@@ -66,7 +66,7 @@ def esperar(patron, segundos):
 
 # Teclado español: lo que hay que pulsar (nombres de `sendkey` de QEMU, posición de EE. UU.) para cada letra.
 ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7", "=": "shift-0", ":": "shift-dot",
-              "_": "shift-slash", "&": "shift-6"}
+              "_": "shift-slash", "&": "shift-6", ";": "shift-comma"}
 
 
 def teclear(orden):
@@ -115,10 +115,23 @@ def a_png(ppm, png):
 
 def clic_en_ventana():
     # Abajo a la izquierda de la ventana (656x416): las que salen después (Ajustes) caen 32 px más a la derecha y abajo
-    # y pueden tapar el centro; un clic en otra le daría el teclado.
+    # y pueden tapar el centro; un clic en otra le daría el teclado. Con ventanas de Linux encima (H9), el primer sitio
+    # de la terminal que no tapa ninguna.
     v = re.search(r"\[compositor\] ventana de caja-linux en \((\d+), (\d+)\)", texto())
     if v:
-        ir_a(int(v.group(1)) + 12, int(v.group(2)) + 380)
+        tx, ty = int(v.group(1)), int(v.group(2))
+        sitio = (tx + 12, ty + 380)
+        encima = tapan()
+        for dy in (380, 300, 200, 100, 12):
+            for dx in (12, 150, 300, 450, 600, 640):
+                px, py = tx + dx, ty + dy
+                if not any(x <= px < x + w and y <= py < y + h for x, y, w, h in encima):
+                    sitio = (px, py)
+                    break
+            else:
+                continue
+            break
+        ir_a(*sitio)
         mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
         time.sleep(0.5)
 
@@ -159,7 +172,23 @@ def teclear_sin_intro(orden):
     mandar(*teclas, pausa=0.12)
 
 
-VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?"
+VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?(?: de (\d+)x(\d+))?"
+# Lo que tapa cada ventana de Linux (x, y, ancho, alto; con la barra de DashOS), y lo que se movió (las que arrastra el
+# guion): para hacer clic en la terminal de la caja donde no haya otra encima.
+movidas = {}
+
+
+def tapan():
+    out = []
+    for i, w in enumerate(re.findall(VENTANA_LINUX, texto())):
+        x, y = int(w[0]), int(w[1])
+        if w[6]:
+            ancho, alto = int(w[6]), int(w[7])
+            # La barra va encima de la superficie: lo que mide ya la cuenta.
+            barra = 40 if not w[2] and alto > 40 else 0
+            dx, dy = movidas.get(i, (0, 0))
+            out.append((x + dx, y + dy - barra, ancho + 60, alto + 60))
+    return out
 
 
 def ventanas_linux():
@@ -186,6 +215,14 @@ def arrastrar(desde, pasos, paso):
     mandar(*[f"mouse_move {paso[0]} {paso[1]}" for _ in range(pasos)], pausa=0.05)
     mandar("mouse_button 0", pausa=0.1)
     time.sleep(0.5)
+
+
+def a_la_terminal():
+    """Un clic en la terminal de la caja y Control+C: la línea de la shell, vacía (si algo se quedó a medias, como un
+    pegado con comillas, no se arrastra a lo siguiente)."""
+    clic_en_ventana()
+    mandar("sendkey ctrl-c")
+    time.sleep(1.0)
 
 
 def terminal_dashos():
@@ -222,6 +259,7 @@ if modo == "wayland":
         capturar(prefijo)
         # Moverla por su barra (la medida de cuadros al arrastrar) y cerrarla con su botón.
         arrastrar((x + 100, y - 20), 40, (4, 2))
+        movidas[len(ventanas_linux()) - 1] = (160, 80)
         esperar(r"\[compositor\] arrastre: ", 20)
         clic(x + 160 + 320 - 4 - 16, y + 80 - 20)
         if not esperar(r"ventana_wayland: el compositor pide cerrar", 30):
@@ -245,7 +283,7 @@ if modo == "wayland":
             mandar("sendkey ctrl-shift-c")
             time.sleep(1.0)
             # Pegar en la terminal de DashOS (nativa): echo y lo pegado.
-            clic_en_ventana()
+            a_la_terminal()
             teclear_sin_intro("echo ")
             mandar("sendkey ctrl-shift-v")
             esperar(r"terminal: pegado \(", 30)
@@ -263,6 +301,7 @@ if modo == "wayland":
             if esperar(r"linux: primaria: Hola desde foot", 30):
                 apuntar("primaria: de foot a DashOS, bien")
             # De DashOS a foot: se selecciona con el ratón en la terminal nativa y Control+Mayúsculas+C.
+            a_la_terminal()
             paso("clear; echo pegame-en-foot", r"linux: pegame-en-foot\s*$|linux: pegame-en-foot\n", 30)
             time.sleep(1.0)
             fila = ty + borde + ch // 2
@@ -280,7 +319,7 @@ if modo == "wayland":
             capturar(prefijo + ".foot")
     time.sleep(4.0)
     # 3. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.
-    clic_en_ventana()
+    a_la_terminal()
     paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
     # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
     n = len(ventanas_linux())
@@ -308,7 +347,7 @@ if modo == "wayland":
         mandar("sendkey ctrl-shift-v")
         esperar(r"terminal: pegado \(0 bytes\)", 40)
     # Después, todo sigue: otra ventana de Linux sale y se cierra.
-    clic_en_ventana()
+    a_la_terminal()
     n = len(ventanas_linux())
     teclear("ventana_wayland &")
     v = esperar_ventana(n, 120)
@@ -318,7 +357,7 @@ if modo == "wayland":
         mandar("sendkey q")
         esperar(r"(ventana_wayland: .* adiós(.|\n)*){2}", 30)
     # 4. Un programa grande: GTK4 (gtk4-widget-factory), dibujado por la CPU.
-    clic_en_ventana()
+    a_la_terminal()
     n = len(ventanas_linux())
     teclear("prueba-gtk &")
     if esperar(r"gtk: empieza", 120):
@@ -344,6 +383,7 @@ if modo == "wayland":
             time.sleep(3.0)
             # Moverla por su barra (xdg_toplevel.move) y agrandarla por la esquina (resize): los cuadros.
             arrastrar((x + gx + gw // 3, y + gy + 20), 30, (3, 2))
+            movidas[len(ventanas_linux()) - 1] = (90, 60)
             esperar(r"(\[compositor\] arrastre: (.|\n)*){2}", 30)
             time.sleep(2.0)
             # Movida 30 × (3, 2).
@@ -357,7 +397,7 @@ if modo == "wayland":
         time.sleep(3.0)
     # 5. Firefox, si cabe: su primera ventana, una captura y fuera.
     if os.environ.get("CAJA_FIREFOX") != "0":
-        clic_en_ventana()
+        a_la_terminal()
         n = len(ventanas_linux())
         teclear("prueba-firefox &")
         if esperar(r"firefox: empieza", 120):
@@ -377,7 +417,7 @@ if modo == "wayland":
             teclear("pkill firefox")
             time.sleep(5.0)
     time.sleep(2.0)
-    clic_en_ventana()
+    a_la_terminal()
     teclear("poweroff")
     sys.exit(0)
 

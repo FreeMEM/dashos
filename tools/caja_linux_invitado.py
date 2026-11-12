@@ -482,7 +482,7 @@ ARCH_FICHEROS.update({
 ARCH_GUIONES = {
     "./usr/local/bin/prueba-foot":
         "#!/bin/sh\n# Una terminal de Wayland de verdad (foot) en una ventana de DashOS; lo que se teclea en ella sale por hvc0.\n"
-        "exec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
+        "export LANG=C.UTF-8\nexec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
         "read x; echo \"foot: leido $x\" > /dev/hvc0; echo \"leido: $x\"; sleep 3'\n",
 }
 # H9 (caja-linux-apps): un programa grande de GTK4 y Firefox, dibujados por la CPU (sin GPU en la caja), sin D-Bus ni
@@ -491,7 +491,7 @@ ARCH_GUIONES = {
 ARCH_GUIONES.update({
     "./usr/local/bin/prueba-gtk":
         "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
-        "export GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1\n"
         "echo \"gtk: empieza\" > /dev/hvc0\n"
         "exec \"${@:-gtk4-widget-factory}\"\n",
     "./usr/local/bin/prueba-firefox":
@@ -510,7 +510,7 @@ ARCH_GUIONES.update({
         "user_pref(\"app.update.enabled\", false);\n"
         "user_pref(\"browser.tabs.remote.autostart\", true);\n"
         "FIN\n"
-        "export MOZ_ENABLE_WAYLAND=1 GDK_BACKEND=wayland GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "export LANG=C.UTF-8 MOZ_ENABLE_WAYLAND=1 GDK_BACKEND=wayland GTK_A11Y=none NO_AT_BRIDGE=1\n"
         "echo \"firefox: empieza\" > /dev/hvc0\n"
         "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
 })
