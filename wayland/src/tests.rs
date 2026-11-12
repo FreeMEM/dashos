@@ -1102,6 +1102,34 @@ mod ventanas {
         assert!(escena.pendientes.contains(&(1, Entrada::Configura { xdg: 9, ancho: 200, alto: 150, maximizada: true })));
     }
 
+    /// H5: una capa sin zona propia que tuvo su configure antes de que la barra pusiera la suya (dos programas que
+    /// arrancan a la vez: el escritorio del Workbench y la barra) recibe otro con lo que queda, y se coloca debajo.
+    #[test]
+    fn la_barra_tardia_reconfigura_las_capas() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 200 * 150];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        // Una columna a la derecha, de arriba abajo, sin zona: con la pantalla entera, antes de la barra.
+        let mut con = Conexion::new();
+        assert_eq!(capa(&mut escena, &mut con, 4, (20, 0), ARRIBA | ABAJO | DERECHA, 0, [0; 4]), (20, 150));
+        assert_eq!(escena.clientes[&4].superficies[&31].sitio, Some((180, 0)));
+        escena.pendientes.clear();
+        escena.capas_colocadas.clear();
+        assert_eq!(capa(&mut escena, &mut Conexion::new(), 9, (0, 20), ARRIBA | IZQUIERDA | DERECHA, 20, [0; 4]), (200, 20));
+        assert!(escena.pendientes.contains(&(4, Entrada::ConfiguraCapa { objeto: 32, ancho: 20, alto: 130 })), "{:?}", escena.pendientes);
+        // Con su búfer nuevo, en su sitio, y se dice otra vez dónde. (Aquí sin ack_configure: las pendientes no pasan
+        // por la conexión, que es quien numera los configure.)
+        let mut e = Escritor::new();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(35).llave(90).int(20 * 130 * 4).fin();
+        e.empezar(35, wl_shm_pool::req::CREATE_BUFFER).uint(36).int(0).int(20).int(130).int(80).uint(XRGB8888).fin();
+        e.empezar(31, wl_surface::req::ATTACH).uint(36).int(0).int(0).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 4, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        assert_eq!(escena.clientes[&4].superficies[&31].sitio, Some((180, 20)));
+        assert!(escena.capas_colocadas.contains(&(4, 180, 20)), "{:?}", escena.capas_colocadas);
+    }
+
     /// S10: el lanzador (una capa con el teclado en exclusiva) se lo lleva al salir; al destruirlo, vuelve a la ventana
     /// de arriba, y se sigue escribiendo donde se estaba.
     #[test]
