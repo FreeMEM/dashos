@@ -143,9 +143,10 @@ def main():
     if not casi(en(450, 270), SUPERFICIE):
         fallos.append(f"la ventana del kit: superficie en (450, 270): {en(450, 270)}")
     # Abajo a la derecha, lejos de todas las ventanas, el fondo: si no, se ha quedado pintado algo que ya no está
-    # (Ajustes, maximizada y devuelta, dejaba su parte de 800x600).
-    if not casi(en(700, 500), fondo_en(700, 500)):
-        fallos.append(f"restos de una ventana en (700, 500): {en(700, 500)}, y el fondo es {fondo_en(700, 500)}")
+    # (Ajustes, maximizada y devuelta, dejaba su parte de 800x600). En (640, 500): de 696 a la derecha está la columna de
+    # iconos del Workbench (S10), una capa translúcida sobre el fondo.
+    if not casi(en(640, 500), fondo_en(640, 500)):
+        fallos.append(f"restos de una ventana en (640, 500): {en(640, 500)}, y el fondo es {fondo_en(640, 500)}")
     primario = sum(1 for y in range(104, 104 + 320) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
     if primario < 2000:
         fallos.append(f"la ventana del kit: {primario} píxeles del primario")

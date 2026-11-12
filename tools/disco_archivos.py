@@ -97,9 +97,9 @@ if sys.argv[1] == "--comprobar":
     comprobado = subprocess.run([ver, disco, desde, "--comprobar"], capture_output=True, text=True).stdout
     fallos = []
     # S10c: lo que guardó el centro de control al elegir el modo oscuro, con doble clic el azul y después el color del
-    # fondo (C3), con el atardecer: su semilla y los veinte colores de sus esquemas, calculados una vez.
+    # fondo (C3), con el atardecer: su semilla y los 26 colores de sus esquemas (13 por modo), calculados una vez.
     partes = apariencia.decode(errors="replace").rstrip("\n").split(" ")
-    if partes[:3] != ["oscuro", "fondo", "c44e68"] or len(partes) != 23 or not all(len(p) == 6 for p in partes[2:]):
+    if partes[:3] != ["oscuro", "fondo", "c44e68"] or len(partes) != 29 or not all(len(p) == 6 for p in partes[2:]):
         fallos.append(f"C/Prefs/apariencia: {apariencia!r}")
     if fondo != b"atardecer.png\n":
         fallos.append(f"C/Prefs/fondo: {fondo!r}")

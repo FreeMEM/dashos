@@ -274,7 +274,7 @@ DashOS en marcha con 4 núcleos.
 # "Color del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
 # compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
 ~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
-~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (160 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí
 ~│   [ajustes] tema del sistema: oscuro, color 3d6f88, esquema del centro (
 # Hostil: una imagen rota (su CRC no cuadra) no tumba a nadie: se quedan el fondo y el tema de antes.
 ~│   [fondo] rota.png: un trozo está roto (su CRC no cuadra); se queda ondas.png
