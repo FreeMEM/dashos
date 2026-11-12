@@ -1,0 +1,273 @@
+#!/usr/bin/env python3
+"""El invitado de prueba de la caja Linux, en el PC.
+
+Nada de lo que baja o compila va a git: se queda en ~/.cache/dashos-caja-linux/.
+
+    tools/caja_linux_invitado.py preparar   # baja y compila Linux (arm64) y un initramfs con busybox estático
+    tools/caja_linux_invitado.py probar     # arranca ese Linux en qemu-system-aarch64 -M virt con el DTB y la carga
+                                            # que saca caja-linux/vmm (no los de QEMU)
+
+"probar" no usa -kernel ni -dtb de QEMU. El crate coloca la Image, el DTB y el initrd según el protocolo de arranque
+de arm64 y escribe un trampolín de seis instrucciones que pone x0 = DTB, x1..x3 = 0 y salta al kernel. QEMU solo
+carga esos ficheros en sus direcciones (-device loader) y empieza en el trampolín, en EL1 con la MMU apagada.
+Así se prueban el DTB y la carga tal como los usará el hipervisor de DashOS.
+
+Las direcciones de los aparatos son las de la placa virt de QEMU (GIC, PL011, transportes virtio-mmio), porque los
+aparatos que ve el invitado en esta prueba son los de QEMU. Se sacaron de su DTB (-M virt,dumpdtb), sin mirar su
+código.
+"""
+
+import argparse
+import gzip
+import io
+import json
+import os
+import shutil
+import subprocess
+import sys
+import tarfile
+import urllib.request
+from pathlib import Path
+
+RAIZ = Path(__file__).resolve().parent.parent
+CACHE = Path(os.environ.get("DASHOS_CAJA_LINUX_CACHE", Path.home() / ".cache" / "dashos-caja-linux"))
+TOOLCHAIN = Path.home() / ".local/opt/toolchains/aarch64--musl--stable-2026.08-1/bin/aarch64-buildroot-linux-musl-"
+BUSYBOX = "1.37.0"
+NUCLEOS = os.cpu_count() or 8
+
+# Lo que se añade al defconfig de arm64 (ya trae virtio-mmio, virtio-blk, virtio-console y el PL011): nada de
+# módulos que hagan falta para arrancar.
+FRAGMENTO = """
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_MMIO_CMDLINE_DEVICES=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_VIRTIO_NET=y
+CONFIG_HVC_DRIVER=y
+CONFIG_SERIAL_AMBA_PL011=y
+CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_EXT4_FS=y
+CONFIG_MODULES=n
+"""
+
+INIT = r"""#!/bin/sh
+mount -t proc proc /proc
+mount -t sysfs sys /sys
+mount -t devtmpfs dev /dev 2>/dev/null
+echo "caja-linux: init en marcha"
+echo "caja-linux: kernel $(uname -r) $(uname -m)"
+echo "caja-linux: cpus $(grep -c ^processor /proc/cpuinfo)"
+echo "caja-linux: memoria $(grep MemTotal /proc/meminfo)"
+echo "caja-linux: virtio $(ls /sys/bus/virtio/devices | tr '\n' ' ')"
+for d in /sys/bus/virtio/devices/*; do echo "caja-linux:   $(basename $d) id=$(cat $d/device) $(basename $(readlink $d/driver) 2>/dev/null)"; done
+echo "caja-linux: consola $(cat /sys/class/tty/console/active)"
+if [ -b /dev/vda ]; then echo "caja-linux: vda $(cat /sys/block/vda/size) sectores, primeros bytes: $(head -c 16 /dev/vda)"; fi
+grep -E 'GIC|virtio|uart|arch_timer' /proc/interrupts | sed 's/^/caja-linux: irq /'
+echo "caja-linux: psci $(dmesg | grep -o 'PSCIv[0-9.]* detected in firmware' | head -1)"
+echo "caja-linux: fin de la prueba"
+poweroff -f
+"""
+
+
+def run(*cmd, **kw):
+    print("+", " ".join(str(c) for c in cmd), flush=True)
+    subprocess.run([str(c) for c in cmd], check=True, **kw)
+
+
+def bajar(url, destino):
+    if destino.exists():
+        return
+    print("bajando", url, flush=True)
+    tmp = destino.with_suffix(destino.suffix + ".part")
+    with urllib.request.urlopen(url) as r, open(tmp, "wb") as f:
+        shutil.copyfileobj(r, f)
+    tmp.rename(destino)
+
+
+def version_linux():
+    with urllib.request.urlopen("https://www.kernel.org/releases.json") as r:
+        datos = json.load(r)
+    for rel in datos["releases"]:
+        if rel["moniker"] == "longterm" and rel["version"].startswith("6.18."):
+            return rel["version"]
+    raise SystemExit("no encuentro la 6.18 en kernel.org")
+
+
+def kernel():
+    imagen = CACHE / "Image"
+    if imagen.exists():
+        print("ya está", imagen)
+        return
+    v = version_linux()
+    tar = CACHE / f"linux-{v}.tar.xz"
+    bajar(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{v}.tar.xz", tar)
+    fuente = CACHE / f"linux-{v}"
+    if not fuente.exists():
+        run("tar", "-xf", tar, "-C", CACHE)
+    salida = CACHE / "linux-build"
+    salida.mkdir(exist_ok=True)
+    mk = ["make", "-C", fuente, f"O={salida}", "ARCH=arm64", "LLVM=1", f"-j{NUCLEOS}"]
+    run(*mk, "defconfig")
+    (salida / "caja.config").write_text(FRAGMENTO)
+    run(fuente / "scripts/kconfig/merge_config.sh", "-m", "-O", salida, salida / ".config", salida / "caja.config",
+        cwd=fuente)
+    run(*mk, "olddefconfig")
+    run(*mk, "Image")
+    shutil.copy(salida / "arch/arm64/boot/Image", imagen)
+
+
+def busybox():
+    binario = CACHE / "busybox"
+    if binario.exists():
+        print("ya está", binario)
+        return
+    tar = CACHE / f"busybox-{BUSYBOX}.tar.bz2"
+    bajar(f"https://busybox.net/downloads/busybox-{BUSYBOX}.tar.bz2", tar)
+    fuente = CACHE / f"busybox-{BUSYBOX}"
+    if not fuente.exists():
+        run("tar", "-xf", tar, "-C", CACHE)
+    mk = ["make", "-C", fuente, f"CROSS_COMPILE={TOOLCHAIN}", f"-j{NUCLEOS}"]
+    run(*mk, "defconfig")
+    cfg = fuente / ".config"
+    texto = cfg.read_text()
+    # Estático; tc no compila con las cabeceras nuevas del kernel.
+    texto = texto.replace("# CONFIG_STATIC is not set", "CONFIG_STATIC=y")
+    texto = texto.replace("CONFIG_TC=y", "# CONFIG_TC is not set")
+    # La aceleración de SHA de 1.37 solo compila en x86.
+    texto = texto.replace("CONFIG_SHA1_HWACCEL=y", "# CONFIG_SHA1_HWACCEL is not set")
+    texto = texto.replace("CONFIG_SHA256_HWACCEL=y", "# CONFIG_SHA256_HWACCEL is not set")
+    cfg.write_text(texto)
+    run(*mk, "oldconfig", input=b"\n" * 200)
+    run(*mk, "busybox")
+    shutil.copy(fuente / "busybox", binario)
+
+
+def cpio_newc(entradas):
+    """Un archivo cpio "newc" (el que lee el kernel para el initramfs). entradas: (nombre, modo, datos, rdev)."""
+    out = io.BytesIO()
+    ino = 1
+    for nombre, modo, datos, rdev in entradas + [("TRAILER!!!", 0, b"", (0, 0))]:
+        nb = nombre.encode() + b"\0"
+        cab = "070701" + "".join(f"{x:08x}" for x in (
+            ino, modo, 0, 0, 1, 0, len(datos), 0, 0, rdev[0], rdev[1], len(nb), 0))
+        out.write(cab.encode() + nb)
+        out.write(b"\0" * (-(110 + len(nb)) % 4))
+        out.write(datos)
+        out.write(b"\0" * (-len(datos) % 4))
+        ino += 1
+    return out.getvalue()
+
+
+def initramfs():
+    destino = CACHE / "initramfs.cpio.gz"
+    bb = (CACHE / "busybox").read_bytes()
+    entradas = []
+    for d in ("bin", "sbin", "dev", "proc", "sys", "etc", "tmp", "usr", "usr/bin", "usr/sbin"):
+        entradas.append((d, 0o040755, b"", (0, 0)))
+    entradas.append(("dev/console", 0o020600, b"", (5, 1)))
+    entradas.append(("bin/busybox", 0o100755, bb, (0, 0)))
+    for applet in ("sh", "mount", "echo", "cat", "ls", "grep", "head", "tr", "uname", "basename", "readlink",
+                   "sed", "dmesg", "poweroff"):
+        entradas.append((f"bin/{applet}", 0o120777, b"busybox", (0, 0)))
+    entradas.append(("init", 0o100755, INIT.encode(), (0, 0)))
+    destino.write_bytes(gzip.compress(cpio_newc(entradas)))
+    print("initramfs:", destino, destino.stat().st_size, "bytes")
+
+
+def disco():
+    """Un disco de prueba de 1 MiB con un texto conocido al principio."""
+    destino = CACHE / "disco.img"
+    datos = bytearray(1 << 20)
+    marca = b"DISCO-CAJA-LINUX"
+    datos[: len(marca)] = marca
+    destino.write_bytes(bytes(datos))
+
+
+def preparar(_args):
+    CACHE.mkdir(parents=True, exist_ok=True)
+    busybox()
+    initramfs()
+    disco()
+    kernel()
+
+
+# La placa virt de QEMU, sacada de su DTB (qemu-system-aarch64 -M virt,dumpdtb=x.dtb): GICv2 en 0x08000000 (CPU en
+# 0x08010000), PL011 en 0x09000000 con la SPI 1, transportes virtio-mmio en 0x0a000000 + 0x200·i con la SPI 16+i.
+# Con -device virtio-*-device QEMU ocupa primero el transporte de número más alto.
+QEMU_VIRT = {
+    "gic": "v2:0x08000000:0x08010000",
+    "uart": "0x09000000:1",
+    "virtio": ["0x0a003e00:47", "0x0a003c00:46"],
+}
+
+
+def probar(args):
+    for f in ("Image", "initramfs.cpio.gz", "disco.img"):
+        if not (CACHE / f).exists():
+            raise SystemExit(f"falta {CACHE / f}: ejecuta antes 'preparar'")
+    run("cargo", "build", "--release", "--quiet", "--manifest-path", RAIZ / "caja-linux/vmm/Cargo.toml",
+        "--bin", "caja-vmm")
+    herramienta = RAIZ / "caja-linux/vmm/target/release/caja-vmm"
+    sal = CACHE / "prueba"
+    if sal.exists():
+        shutil.rmtree(sal)
+    sal.mkdir()
+    # QEMU sin -kernel deja su propio DTB en el primer MiB de la RAM: al invitado se le dan los 2 MiB siguientes en
+    # adelante (el DTB nuestro dice que la RAM empieza ahí).
+    base = 0x4000_0000 + (2 << 20)
+    memoria = args.memoria * (1 << 20) - (2 << 20)
+    cmd = [herramienta, "preparar", "--kernel", CACHE / "Image", "--initrd", CACHE / "initramfs.cpio.gz",
+           "--memoria", f"{base:#x}:{memoria:#x}", "--cpus", str(args.cpus), "--gic", QEMU_VIRT["gic"],
+           "--uart", QEMU_VIRT["uart"], "--bootargs", args.bootargs, "--salida", sal]
+    for v in QEMU_VIRT["virtio"]:
+        cmd += ["--virtio", v]
+    run(*cmd)
+    plan = json.loads((sal / "plan.json").read_text())
+    run("dtc", "-I", "dtb", "-O", "dts", "-o", sal / "invitado.dts", sal / "invitado.dtb")
+    qemu = ["qemu-system-aarch64", "-M", "virt,gic-version=2", "-cpu", "cortex-a72", "-smp", str(args.cpus),
+            "-m", f"{args.memoria}M", "-display", "none", "-monitor", "none", "-no-reboot",
+            "-serial", f"file:{sal / 'pl011.log'}",
+            "-device", "virtio-serial-device", "-chardev", f"file,id=hvc,path={sal / 'hvc0.log'}",
+            "-device", "virtconsole,chardev=hvc",
+            "-drive", f"if=none,id=d0,format=raw,file={CACHE / 'disco.img'},readonly=on",
+            "-device", "virtio-blk-device,drive=d0"]
+    for trozo in plan["trozos"]:
+        qemu += ["-device", f"loader,file={sal / trozo['fichero']},addr={trozo['direccion']:#x},force-raw=on"]
+    qemu += ["-device", f"loader,addr={plan['pc']:#x},cpu-num=0"]
+    print("+", " ".join(str(c) for c in qemu), flush=True)
+    try:
+        subprocess.run([str(c) for c in qemu], timeout=args.tiempo, check=False)
+    except subprocess.TimeoutExpired:
+        print("QEMU no acabó en", args.tiempo, "s")
+    for nombre in ("pl011.log", "hvc0.log"):
+        f = sal / nombre
+        print(f"===== {nombre} =====")
+        if f.exists():
+            print(f.read_text(errors="replace"))
+    hvc = (sal / "hvc0.log").read_text(errors="replace") if (sal / "hvc0.log").exists() else ""
+    if "caja-linux: fin de la prueba" in hvc and "DISCO-CAJA-LINUX" in hvc:
+        print("PRUEBA BIEN: Linux arrancó con el DTB y la carga de caja-linux/vmm")
+    else:
+        raise SystemExit("PRUEBA MAL: no llegó al final de init")
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    sub = p.add_subparsers(dest="orden", required=True)
+    sub.add_parser("preparar").set_defaults(f=preparar)
+    pr = sub.add_parser("probar")
+    pr.add_argument("--cpus", type=int, default=2)
+    pr.add_argument("--memoria", type=int, default=512, help="MiB")
+    pr.add_argument("--tiempo", type=int, default=120, help="segundos antes de cortar QEMU")
+    pr.add_argument("--bootargs", default="console=hvc0 earlycon panic=-1")
+    pr.set_defaults(f=probar)
+    a = p.parse_args()
+    a.f(a)
+
+
+if __name__ == "__main__":
+    main()
