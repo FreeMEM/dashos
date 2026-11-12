@@ -47,6 +47,18 @@ pub const ESTADO: u32 = 4;
 /// Solo del controlador.
 pub const TARJETA: u32 = 100;
 pub const TRAMAS: u32 = 101;
+/// Solo de la caja Linux (H9; el que `inicio` llama "caja-linux"): un puerto del conmutador para la tarjeta de su
+/// invitado, que sale a la red de la tarjeta de verdad con su propia MAC (un puente de tramas). Datos: la MAC (6 bytes
+/// tras la orden; de unidifusión). Llave: el extremo de escritura de un canal suyo. El servicio contesta por él
+/// `R_PUERTO` (orden, estado) con la memoria de las tramas, que crea él: cabecera de palabras `T_*` y ranuras de
+/// `RANURA` bytes desde el byte 64, primero las de recibir (`RANURAS_PUERTO`, tramas para el invitado: las escribe el
+/// servicio) y después las de enviar (`RANURAS_PUERTO`, del invitado: las escribe la caja). Después, por ese canal,
+/// `TRAMAS_PUERTO` cuando pone tramas para el invitado; la caja le manda `TRAMAS_PUERTO` cuando pone tramas para enviar.
+/// Al puerto solo pasan las tramas para su MAC y las de difusión; del puerto, solo las que llevan su MAC de origen.
+pub const PUERTO: u32 = 102;
+pub const TRAMAS_PUERTO: u32 = 103;
+pub const R_PUERTO: u32 = 6;
+pub const RANURAS_PUERTO: u32 = 64;
 
 // Lo que manda el servicio por el canal del programa.
 pub const R_CONECTAR: u32 = 1;

@@ -18,6 +18,9 @@ use crate::lienzo::{Color, Lienzo};
 
 static REGULAR: &[u8] = include_bytes!("../fuentes/Roboto-Regular.ttf");
 static MEDIUM: &[u8] = include_bytes!("../fuentes/Roboto-Medium.ttf");
+/// Roboto Mono (OFL 1.1, `fuentes/OFL-RobotoMono.txt`): la de ancho fijo, para una terminal (la caja Linux, H9). Solo
+/// entra en los programas que la usan.
+static MONO: &[u8] = include_bytes!("../fuentes/RobotoMono-Regular.ttf");
 
 /// Lo que mide una línea: ancho, y la altura de encima y de debajo de la línea base (todo en píxeles).
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -186,6 +189,16 @@ impl Fuente {
     /// Roboto Medium: las etiquetas de los botones y los títulos de Material.
     pub fn medium() -> Self {
         Self::de(MEDIUM)
+    }
+
+    /// Roboto Mono: todas las letras miden lo mismo (una terminal).
+    pub fn mono() -> Self {
+        Self::de(MONO)
+    }
+
+    /// Lo que avanza la pluma con `c` a `tam` píxeles (en una de ancho fijo, el ancho de cualquier letra).
+    pub fn avance(&mut self, c: char, tam: u32) -> f32 {
+        self.glifo(c, tam).avance
     }
 
     /// El glifo de `c`, el 0 (la caja vacía) si la fuente no la tiene.

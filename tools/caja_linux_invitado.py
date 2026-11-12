@@ -110,6 +110,9 @@ CONFIG_NET=y
 CONFIG_INET=y
 CONFIG_UNIX=y
 CONFIG_PACKET=y
+CONFIG_NETDEVICES=y
+CONFIG_NET_CORE=y
+CONFIG_VIRTIO_NET=y
 CONFIG_MODULES=n
 """
 
@@ -117,6 +120,8 @@ INIT = r"""#!/bin/sh
 mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev 2>/dev/null
+busybox --install -s /bin 2>/dev/null
+hostname caja
 echo "caja-linux: init en marcha"
 echo "caja-linux: $(busybox | head -1)"
 echo "caja-linux: kernel $(uname -r) $(uname -m)"
@@ -137,15 +142,24 @@ if [ -b /dev/vda ] && [ "$(cat /sys/block/vda/size)" -ge 16384 ]; then
   dd if=/dev/vda of=/dev/vda bs=65536 count=16 seek=64 conv=fsync 2>/dev/null && sync
   echo "caja-linux: copia hecha, md5 4M $(dd if=/dev/vda bs=65536 skip=64 count=16 2>/dev/null | md5sum | cut -d' ' -f1)"
 fi
+# La red: en QEMU, 10.0.2.15 es la de quien tenga la tarjeta; en la caja de DashOS, DashOS. El invitado, la 16.
 if [ -e /sys/class/net/eth0 ]; then
   ifconfig lo 127.0.0.1 up
-  ifconfig eth0 10.0.2.15 netmask 255.255.255.0 up
+  ifconfig eth0 10.0.2.16 netmask 255.255.255.0 up
+  route add default gw 10.0.2.2 2>/dev/null
   echo "caja-linux: eth0 $(cat /sys/class/net/eth0/address) mtu $(cat /sys/class/net/eth0/mtu)"
   echo "caja-linux: ping $(ping -c 3 -W 3 10.0.2.2 | grep packets)"
 fi
 grep -E 'GIC|virtio|uart|arch_timer' /proc/interrupts | sed 's/^/caja-linux: irq /'
 echo "caja-linux: psci $(dmesg | grep -o 'PSCIv[0-9.]* detected in firmware' | head -1)"
 echo "caja-linux: fin de la prueba"
+# Con una ventana de terminal en DashOS (caja.terminal): una shell interactiva en hvc0, con su terminal de control,
+# hasta que se sale de ella (exit o poweroff -f).
+if grep -q caja.terminal /proc/cmdline; then
+  export HOME=/ TERM=vt102 PS1='caja:\w# '
+  echo "caja-linux: terminal lista"
+  (setsid cttyhack sh)
+fi
 poweroff -f
 """
 
@@ -200,7 +214,10 @@ def kernel():
 def kernel_caja():
     """Image-caja: la de tinyconfig con FRAGMENTO_CAJA, para el paquete de arranque de DashOS."""
     imagen = CACHE / "Image-caja"
-    if imagen.exists():
+    salida = CACHE / "linux-build-caja"
+    # La configuración con que se hizo la Image: si cambia el fragmento, se vuelve a compilar (sobre lo ya compilado).
+    hecha = salida / "caja.config.hecha"
+    if imagen.exists() and hecha.exists() and hecha.read_text() == FRAGMENTO_CAJA:
         print("ya está", imagen)
         return
     v = version_linux()
@@ -223,6 +240,7 @@ def kernel_caja():
         print("aviso: no quedaron en la configuración:", " ".join(faltan))
     run(*mk, "Image")
     shutil.copy(salida / "arch/arm64/boot/Image", imagen)
+    hecha.write_text(FRAGMENTO_CAJA)
 
 
 def busybox():

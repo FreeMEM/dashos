@@ -266,6 +266,32 @@ pub mod maquina {
 
     /// x0..x30, PC y PSTATE de una vCPU.
     pub const REGISTROS: usize = 33;
+
+    /// Lo que necesita el servicio de la caja Linux además de la RAM de su invitado: las tablas de la etapa 2, su
+    /// montón (el disco del invitado, la ventana de la terminal) y las pilas de sus hilos.
+    pub const MARGEN_SERVICIO: u64 = 32 << 20;
+
+    /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisión del usuario del
+    /// 2026-11-12): 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con menos. La caja pide eso más
+    /// `MARGEN_SERVICIO`. Con algo de holgura por debajo de cada umbral: el kernel no cuenta lo que se queda el
+    /// firmware.
+    pub fn memoria_invitado(ram: u64) -> u64 {
+        const HOLGURA: u64 = 128 << 20;
+        if ram + HOLGURA >= 4 << 30 {
+            512 << 20
+        } else if ram + HOLGURA >= 2 << 30 {
+            256 << 20
+        } else {
+            128 << 20
+        }
+    }
+
+    /// Lo que dice el objeto "sistema" del paquete de arranque: la RAM de la máquina en bytes y si hay hipervisor.
+    pub fn sistema(datos: &[u8]) -> Option<(u64, bool)> {
+        let ram = u64::from_le_bytes(datos.get(0..8)?.try_into().ok()?);
+        let hiper = u64::from_le_bytes(datos.get(8..16)?.try_into().ok()?);
+        Some((ram, hiper != 0))
+    }
 }
 
 /// Entra en el invitado de la máquina `llave` hasta que sale; `valor` contesta a una lectura pendiente. Devuelve el

@@ -33,9 +33,26 @@ use caja_vmm::psci::{self, AccionPsci, Psci};
 use caja_vmm::virtio::bloque::{Bloque, Bloques, ErrorBloques};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
 use caja_vmm::virtio::mmio::TransporteMmio;
-use core::cell::RefCell;
+use core::cell::{RefCell, UnsafeCell};
+use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use dashos::maquina::{self as m, Informe};
 use dashos::println;
+use dashos::protocolo::red as rp;
+
+#[path = "../ventana_cliente.rs"]
+#[allow(dead_code)]
+mod ventana_cliente;
+#[path = "../terminal.rs"]
+#[allow(dead_code)]
+mod terminal;
+
+use kit::lienzo::{Lienzo, Rect};
+use kit::teclado::{Tecla, Teclado};
+use kit::texto::Fuente;
+use terminal::Terminal;
+use ventana_cliente::*;
+use wayland::Escritor;
+use wayland::tablas::{wl_callback, wl_compositor, wl_display, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -68,7 +85,12 @@ unsafe extern "C" {
     static invitado_el2_fin: u8;
 }
 
-const PERMISO: u32 = 1;
+/// El permiso de máquinas virtuales: lo da `sesiones` (en `virt`) o `inicio` (en la Pi 4, que aún no tiene `sesiones`).
+static PERMISO: AtomicU32 = AtomicU32::new(0);
+
+fn permiso() -> u32 {
+    PERMISO.load(Ordering::Relaxed)
+}
 /// Dónde ve el invitado su RAM, y cuánta tiene.
 const RAM_IPA: u64 = 0x4000_0000;
 const RAM: usize = 64 * 1024;
@@ -99,7 +121,7 @@ fn maquina(codigo: &[u8]) -> Result<u32, i64> {
     // SAFETY: recién proyectada aquí, RAM bytes, y el invitado aún no existe.
     let ram = unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, RAM) };
     ram[..codigo.len()].copy_from_slice(codigo);
-    let r = dashos::maquina_crear(PERMISO, mem, RAM_IPA, RAM_IPA, 0);
+    let r = dashos::maquina_crear(permiso(), mem, RAM_IPA, RAM_IPA, 0);
     // La máquina sujeta su memoria: el servicio ya no la necesita.
     dashos::memoria_quitar(VA);
     dashos::cerrar(mem);
@@ -361,8 +383,11 @@ impl<M: MemoriaInvitado> Caja<M> {
         }
     }
 
-    /// Un WFI: si no hay nada para el invitado, el servicio duerme hasta el plazo de su temporizador (como mucho 10 ms).
+    /// Un WFI: si no hay nada para el invitado, el servicio duerme hasta el plazo de su temporizador (como mucho 10 ms), o
+    /// hasta que llega algo para él (una tecla de la terminal, una trama de la red: `COMPARTIDO.timbre`).
     fn esperar(&mut self, inf: &Informe) {
+        let visto = COMPARTIDO.timbre.load(Ordering::Acquire);
+        self.mirar_entradas();
         if inf.senales & m::PENDIENTE != 0 || self.maq.gic.hay_para(0) {
             return;
         }
@@ -375,8 +400,18 @@ impl<M: MemoriaInvitado> Caja<M> {
             ((inf.plazo - ahora) as u128 * 1_000_000 / frecuencia() as u128).min(10_000) as u64
         };
         if us >= 100 {
-            dashos::dormir_us(us);
-            self.cuentas.dormido_us += us;
+            let t0 = dashos::ahora_us();
+            dashos::hilos::esperar(&COMPARTIDO.timbre, visto, us);
+            self.cuentas.dormido_us += dashos::ahora_us() - t0;
+            self.mirar_entradas();
+        }
+    }
+
+    /// Si llegó algo de fuera (teclas de la terminal, tramas de la red), los aparatos lo pasan al invitado y suben su
+    /// línea de interrupción.
+    fn mirar_entradas(&mut self) {
+        if COMPARTIDO.aviso.swap(false, Ordering::AcqRel) {
+            self.maq.sondear();
         }
     }
 
@@ -425,7 +460,10 @@ impl<M: MemoriaInvitado> Caja<M> {
                     self.cuentas.wfi += 1;
                     self.esperar(&inf);
                 }
-                m::INTERRUMPIDO => self.cuentas.interrumpido += 1,
+                m::INTERRUMPIDO => {
+                    self.cuentas.interrumpido += 1;
+                    self.mirar_entradas();
+                }
                 m::FALLO => return FinCaja::Fallo(inf.esr, inf.pc),
                 e => return FinCaja::Error(e),
             }
@@ -574,45 +612,227 @@ fn prueba_gic_hostil(al_azar: &[u8], tormenta: &[u8], el2: &[u8]) -> bool {
 
 // --- Linux ---
 
-/// Llave 2, si la hay (`make arranque-virt-linux`): la Image de un kernel de Linux para arm64, solo de lectura. Llave 3:
-/// su initramfs (busybox).
-const LINUX: u32 = 2;
-const INITRD: u32 = 3;
+/// Lo que comparten el hilo de la vCPU y el de la ventana de la terminal (y, con la red, el de las tramas).
+struct Compartido {
+    /// Lo que escribe Linux por hvc0, para la ventana.
+    salida: Tubo,
+    /// Lo que se teclea en la ventana, para hvc0.
+    entrada: Tubo,
+    /// Hay algo nuevo para el invitado: los aparatos tienen que mirar (`Maquina::sondear`).
+    aviso: AtomicBool,
+    /// La palabra en la que duerme la vCPU en un WFI: quien deja algo para el invitado la cambia y la despierta.
+    timbre: AtomicU32,
+    /// La ventana: 0 aún no, 1 en pantalla, 2 no pudo.
+    ventana: AtomicU32,
+    /// Se apagó la máquina: la ventana dice que ha acabado.
+    acabada: AtomicBool,
+}
+
+static COMPARTIDO: Compartido = Compartido {
+    salida: Tubo::nuevo(256 * 1024),
+    entrada: Tubo::nuevo(4096),
+    aviso: AtomicBool::new(false),
+    timbre: AtomicU32::new(0),
+    ventana: AtomicU32::new(0),
+    acabada: AtomicBool::new(false),
+};
+
+impl Compartido {
+    /// Algo nuevo para el invitado: que lo miren los aparatos y que despierte la vCPU si duerme en un WFI.
+    fn avisar(&self) {
+        self.aviso.store(true, Ordering::Release);
+        self.timbre.fetch_add(1, Ordering::AcqRel);
+        dashos::hilos::despertar(&self.timbre, 1);
+    }
+}
+
+/// Bytes de un hilo a otro, con tope: lo que no cabe se pierde (y se cuenta). Así un invitado que inunda su consola no
+/// hace crecer el montón del servicio.
+struct Tubo {
+    cerrojo: dashos::hilos::Cerrojo,
+    datos: UnsafeCell<alloc::collections::VecDeque<u8>>,
+    tope: usize,
+    perdidos: AtomicU64,
+}
+
+// SAFETY: `datos` solo se toca con el cerrojo tomado.
+unsafe impl Sync for Tubo {}
+
+impl Tubo {
+    const fn nuevo(tope: usize) -> Self {
+        Self { cerrojo: dashos::hilos::Cerrojo::nuevo(), datos: UnsafeCell::new(alloc::collections::VecDeque::new()), tope, perdidos: AtomicU64::new(0) }
+    }
+
+    fn con<R>(&self, f: impl FnOnce(&mut alloc::collections::VecDeque<u8>) -> R) -> R {
+        self.cerrojo.tomar();
+        // SAFETY: con el cerrojo tomado, nadie más lo toca.
+        let r = f(unsafe { &mut *self.datos.get() });
+        self.cerrojo.soltar();
+        r
+    }
+
+    fn meter(&self, d: &[u8]) {
+        let perdidos = self.con(|q| {
+            let n = d.len().min(self.tope.saturating_sub(q.len()));
+            q.extend(&d[..n]);
+            d.len() - n
+        });
+        if perdidos > 0 {
+            self.perdidos.fetch_add(perdidos as u64, Ordering::Relaxed);
+        }
+    }
+
+    fn sacar(&self, buf: &mut [u8]) -> usize {
+        self.con(|q| {
+            let n = buf.len().min(q.len());
+            for (b, x) in buf.iter_mut().zip(q.drain(..n)) {
+                *b = x;
+            }
+            n
+        })
+    }
+
+    fn hay(&self) -> bool {
+        self.con(|q| !q.is_empty())
+    }
+}
+
+/// Llave 1: "sistema" (la RAM y si hay hipervisor). Después, en `virt`: la Image de un kernel de Linux para arm64 y su
+/// initramfs (busybox), si los hay (`make arranque-virt-linux`), solo de lectura; y los canales "ventanas" (la
+/// terminal), "sesiones" (el permiso) y "red". En la Pi 4: el permiso, que da `inicio`.
+const SISTEMA: u32 = 1;
+const VA_SISTEMA: usize = 0x1800_0000;
 const VA_IMAGEN: usize = 0x2000_0000;
 const VA_INITRD: usize = 0x3800_0000;
-/// La RAM del invitado de Linux: 256 MB (lo de serie con 2 GB), en objetos de 16 MB (el tope de `memoria_crear`),
-/// proyectados seguidos aquí.
-const VA_RAM_LINUX: usize = 0x4000_0000;
+/// La RAM del invitado de Linux, en objetos de 16 MB (el tope de `memoria_crear`), proyectados seguidos aquí.
+const VA_RAM_LINUX: usize = 0x40_0000_0000;
 const TROZO: usize = 16 << 20;
-const RAM_LINUX: usize = 256 << 20;
-const TROZOS: usize = RAM_LINUX / TROZO;
-const RAM_MINIMA: usize = 128 << 20;
+/// Lo más que se le da: 512 MB (lo de serie con 4 GB o más).
+const MAX_TROZOS: usize = 32;
+const RAM_MINIMA: usize = 64 << 20;
 /// La consola temprana por el PL011; la de verdad, virtio-console (hvc0). `caja.escribir` pide al /init de prueba que
-/// escriba en el disco.
+/// escriba en el disco; `caja.terminal`, que deje una shell en hvc0 (hay ventana de terminal).
 const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 panic=-1 caja.escribir";
 /// El disco: 1 MB en memoria, con esto al principio. El /init escribe `ESCRITO` en el sector 8.
 const MARCA_DISCO: &[u8] = b"DISCO-CAJA-LINUX";
 const ESCRITO: &[u8] = b"ESCRITO-POR-LINUX";
 const TAM_DISCO: usize = 1 << 20;
-/// Como mucho se sacan tantas líneas de Linux por el registro.
-const MAX_LINEAS: u64 = 2000;
+/// Lo que se saca de la consola de Linux por el registro de DashOS: como mucho `RAFAGA` líneas seguidas, a
+/// `POR_SEGUNDO` por segundo. Si se pasa, calla hasta que Linux pase `CALMA_US` sin escribir líneas, y entonces dice
+/// cuántas se calló. La ventana lo enseña todo.
+const RAFAGA: u64 = 400;
+const POR_SEGUNDO: u64 = 100;
+const CALMA_US: u64 = 500_000;
+
+/// Las llaves que tiene la caja, según dónde corre.
+#[derive(Default)]
+struct Llaves {
+    linux: Option<u32>,
+    initrd: Option<u32>,
+    ventanas: Option<u32>,
+    sesiones: Option<u32>,
+    red: Option<u32>,
+    /// El permiso, en la Pi 4 (lo da `inicio`).
+    permiso: Option<u32>,
+}
+
+/// Si existe la llave `k` (una copia sin derechos, que se cierra en el acto).
+fn existe(k: u32) -> bool {
+    let c = dashos::llave_duplicar(k, 0, 0);
+    if c > 0 {
+        dashos::cerrar(c as u32);
+    }
+    c > 0
+}
+
+/// Mira qué llaves tiene: tras "sistema", las de datos (Linux y su initramfs); después, o el permiso (en la Pi, y nada
+/// más) o los tres canales (en `virt`).
+fn llaves() -> Llaves {
+    let mut l = Llaves::default();
+    let mut k = 2;
+    if dashos::memoria_tamano(k) > 0 {
+        l.linux = Some(k);
+        k += 1;
+        if dashos::memoria_tamano(k) > 0 {
+            l.initrd = Some(k);
+            k += 1;
+        }
+    }
+    if existe(k + 1) {
+        l.ventanas = Some(k);
+        l.sesiones = Some(k + 1);
+        l.red = existe(k + 2).then_some(k + 2);
+    } else if existe(k) {
+        l.permiso = Some(k);
+    }
+    l
+}
+
+/// Pide a `sesiones` el permiso de máquinas virtuales. Al arrancar, `sesiones` puede tardar (espera al servicio de
+/// archivos hasta 15 s): se reintenta hasta 60 s. La llave, o el estado.
+fn pedir_permiso(sesiones: u32) -> Result<u32, i64> {
+    let nombre = b"maquinas";
+    let mut m = [0u8; 20];
+    m[0..4].copy_from_slice(&dashos::protocolo::sesiones::SERVICIO.to_le_bytes());
+    m[4..8].copy_from_slice(&(nombre.len() as u32).to_le_bytes());
+    m[12..20].copy_from_slice(nombre);
+    let hasta = dashos::ahora_us() + 60_000_000;
+    let mut ultimo = -1;
+    while dashos::ahora_us() < hasta {
+        let (lectura, suyo) = dashos::canal_crear();
+        if dashos::canal_escribir(sesiones, &m, &[suyo]) != 0 {
+            dashos::cerrar(lectura);
+            dashos::cerrar(suyo);
+            dashos::dormir_us(200_000);
+            continue;
+        }
+        let mut r = [0u8; 4];
+        let mut ll = [0u32; 1];
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 5_000_000);
+        dashos::cerrar(lectura);
+        if n == 4 && k == 1 && i32::from_le_bytes(r) == 0 {
+            return Ok(ll[0]);
+        }
+        if k == 1 {
+            dashos::cerrar(ll[0]);
+        }
+        ultimo = if n == 4 { i32::from_le_bytes(r) as i64 } else { n };
+        // Un "no" de verdad no cambia por insistir.
+        if ultimo == -2 {
+            break;
+        }
+    }
+    Err(ultimo)
+}
 
 #[derive(Default)]
 struct EstadoConsola {
     lineas: u64,
     busybox: bool,
     fin: bool,
+    /// La shell de la terminal está lista (`caja-linux: terminal lista`).
+    terminal: bool,
+    /// Para no inundar el registro: lo que queda de la ráfaga, cuándo se repuso y cuántas líneas no salieron.
+    cupo: u64,
+    repuesto_us: u64,
+    sin_sacar: u64,
+    callado: bool,
+    ultima_us: u64,
 }
 
-/// Un extremo de consola (PL011 o virtio-console) hacia el registro de DashOS: cada línea, con "linux: " delante.
+/// Un extremo de consola (PL011 o virtio-console) hacia el registro de DashOS: cada línea, con "linux: " delante y sin
+/// las secuencias de escape. hvc0 va además a la ventana de la terminal, si la hay.
 struct Registro {
     linea: Vec<u8>,
     estado: Rc<RefCell<EstadoConsola>>,
+    terminal: bool,
+    /// Dentro de una secuencia de escape (para el registro): 1 tras ESC, 2 dentro de una CSI.
+    escape: u8,
 }
 
 impl Registro {
-    fn nuevo(estado: &Rc<RefCell<EstadoConsola>>) -> Box<Self> {
-        Box::new(Self { linea: Vec::new(), estado: estado.clone() })
+    fn nuevo(estado: &Rc<RefCell<EstadoConsola>>, terminal: bool) -> Box<Self> {
+        Box::new(Self { linea: Vec::new(), estado: estado.clone(), terminal, escape: 0 })
     }
 
     fn sacar(&mut self) {
@@ -621,7 +841,31 @@ impl Registro {
         e.lineas += 1;
         e.busybox |= t.contains("BusyBox v");
         e.fin |= t.contains("caja-linux: fin de la prueba");
-        if e.lineas <= MAX_LINEAS {
+        e.terminal |= t.contains("caja-linux: terminal lista");
+        // La ráfaga se repone a `POR_SEGUNDO` líneas por segundo.
+        let ahora = dashos::ahora_us();
+        if e.lineas == 1 {
+            e.cupo = RAFAGA;
+            e.repuesto_us = ahora;
+        }
+        let nuevas = (ahora - e.repuesto_us) * POR_SEGUNDO / 1_000_000;
+        if nuevas > 0 {
+            e.cupo = (e.cupo + nuevas).min(RAFAGA);
+            e.repuesto_us = ahora;
+        }
+        if e.callado && ahora - e.ultima_us > CALMA_US {
+            e.callado = false;
+            println!("  [caja-linux] linux: ({} líneas sin sacar al registro: demasiadas seguidas)", e.sin_sacar);
+            e.sin_sacar = 0;
+        }
+        e.ultima_us = ahora;
+        if e.cupo == 0 {
+            e.callado = true;
+        }
+        if e.callado {
+            e.sin_sacar += 1;
+        } else {
+            e.cupo -= 1;
             println!("  [caja-linux] linux: {}", t);
         }
         self.linea.clear();
@@ -630,22 +874,35 @@ impl Registro {
 
 impl ExtremoConsola for Registro {
     fn salida(&mut self, datos: &[u8]) {
+        if self.terminal && COMPARTIDO.ventana.load(Ordering::Acquire) == 1 {
+            COMPARTIDO.salida.meter(datos);
+        }
         for &c in datos {
-            if c == b'\n' {
-                self.sacar();
-            } else if c != b'\r' {
-                self.linea.push(c);
-                if self.linea.len() >= 200 {
-                    self.sacar();
+            match (self.escape, c) {
+                (0, 0x1b) => self.escape = 1,
+                (1, b'[') => self.escape = 2,
+                (1, _) => self.escape = 0,
+                (2, 0x40..=0x7e) => self.escape = 0,
+                (2, _) => {}
+                (_, b'\n') => self.sacar(),
+                (_, 0x08) => {
+                    self.linea.pop();
                 }
+                (_, c) if c >= 0x20 || c == b'\t' => {
+                    self.linea.push(c);
+                    if self.linea.len() >= 200 {
+                        self.sacar();
+                    }
+                }
+                _ => {}
             }
         }
     }
     fn hay_entrada(&self) -> bool {
-        false
+        self.terminal && COMPARTIDO.entrada.hay()
     }
-    fn entrada(&mut self, _buf: &mut [u8]) -> usize {
-        0
+    fn entrada(&mut self, buf: &mut [u8]) -> usize {
+        if self.terminal { COMPARTIDO.entrada.sacar(buf) } else { 0 }
     }
 }
 
@@ -670,6 +927,147 @@ impl Bloques for Disco {
     }
 }
 
+// --- La red del invitado: un puerto del servicio de red (H9, `protocolo::red::PUERTO`) ---
+//
+// La tarjeta virtio-net del invitado tiene su propia MAC y sale a la red por la tarjeta de verdad de DashOS: el servicio
+// de red hace de puente (lo que llega para esa MAC o de difusión va al puerto; lo que sale del puerto, con esa MAC de
+// origen, a la tarjeta). Las tramas van por una memoria que crea el servicio: ranuras de recibir (las escribe él) y de
+// enviar (las escribe la caja). Un hilo espera en el canal sus avisos y despierta a la vCPU.
+
+const VA_RED: usize = 0x31_0000_0000;
+const PILA_RED: usize = 64 * 1024;
+
+/// El lado de la caja del puerto: el `ExtremoRed` de la virtio-net del invitado.
+struct RedCaja {
+    red: u32,
+    rx: u32,
+    tx: u32,
+    /// Tramas del invitado que no cupieron, y tramas del servicio con un largo imposible.
+    perdidas: Rc<RefCell<(u64, u64, u64, u64)>>,
+}
+
+fn red_palabra(i: usize) -> u32 {
+    // SAFETY: la memoria del puerto, proyectada en `VA_RED` mientras vive la caja; las palabras de la cabecera.
+    unsafe { core::ptr::read_volatile((VA_RED + 4 * i) as *const u32) }
+}
+
+fn red_poner(i: usize, v: u32) {
+    // SAFETY: como `red_palabra`.
+    unsafe { core::ptr::write_volatile((VA_RED + 4 * i) as *mut u32, v) }
+}
+
+impl caja_vmm::virtio::red::ExtremoRed for RedCaja {
+    fn enviar(&mut self, trama: &[u8]) {
+        let escritas = red_palabra(rp::T_TX_ESCRITAS);
+        let mut c = self.perdidas.borrow_mut();
+        if escritas.wrapping_sub(red_palabra(rp::T_TX_LEIDAS)) >= self.tx || trama.len() > rp::MAX_TRAMA {
+            c.0 += 1;
+            return;
+        }
+        let ranura = VA_RED + 64 + (self.rx + escritas % self.tx) as usize * rp::RANURA;
+        // SAFETY: una ranura de enviar del puerto, dentro de su memoria; la trama cabe (`MAX_TRAMA` < `RANURA` - 16).
+        unsafe {
+            core::ptr::copy_nonoverlapping(trama.as_ptr(), (ranura + rp::RANURA_DATOS) as *mut u8, trama.len());
+            core::ptr::write_volatile(ranura as *mut u32, trama.len() as u32);
+        }
+        dashos::barrera();
+        red_poner(rp::T_TX_ESCRITAS, escritas.wrapping_add(1));
+        c.2 += 1;
+        let m = rp::TRAMAS_PUERTO.to_le_bytes();
+        dashos::canal_escribir(self.red, &m, &[]);
+    }
+
+    fn hay_trama(&self) -> bool {
+        red_palabra(rp::T_RX_ESCRITAS) != red_palabra(rp::T_RX_LEIDAS)
+    }
+
+    fn recibir(&mut self) -> Option<Vec<u8>> {
+        let (escritas, leidas) = (red_palabra(rp::T_RX_ESCRITAS), red_palabra(rp::T_RX_LEIDAS));
+        if escritas == leidas {
+            return None;
+        }
+        let mut c = self.perdidas.borrow_mut();
+        // El servicio no puede tener más llenas que ranuras: si lo dice, se tira todo.
+        if escritas.wrapping_sub(leidas) > self.rx {
+            c.1 += 1;
+            red_poner(rp::T_RX_LEIDAS, escritas);
+            return None;
+        }
+        dashos::barrera();
+        let ranura = VA_RED + 64 + (leidas % self.rx) as usize * rp::RANURA;
+        // SAFETY: una ranura de recibir del puerto.
+        let n = unsafe { core::ptr::read_volatile(ranura as *const u32) } as usize;
+        let t = (rp::MIN_TRAMA..=rp::MAX_TRAMA).contains(&n).then(|| {
+            let mut v = alloc::vec![0u8; n];
+            // SAFETY: como arriba; `n` cabe en la ranura.
+            unsafe { core::ptr::copy_nonoverlapping((ranura + rp::RANURA_DATOS) as *const u8, v.as_mut_ptr(), n) };
+            v
+        });
+        dashos::barrera();
+        red_poner(rp::T_RX_LEIDAS, leidas.wrapping_add(1));
+        match t {
+            Some(t) => {
+                c.3 += 1;
+                Some(t)
+            }
+            None => {
+                c.1 += 1;
+                // Una trama vacía: el aparato devuelve el búfer sin nada.
+                Some(Vec::new())
+            }
+        }
+    }
+}
+
+/// Pide al servicio de red un puerto para la MAC `mac` (5 s como mucho) y lanza el hilo que espera sus avisos.
+fn abrir_red(red: u32, mac: [u8; 6], perdidas: &Rc<RefCell<(u64, u64, u64, u64)>>) -> Option<RedCaja> {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut m = [0u8; 10];
+    m[0..4].copy_from_slice(&rp::PUERTO.to_le_bytes());
+    m[4..10].copy_from_slice(&mac);
+    if dashos::canal_escribir(red, &m, &[suyo]) != 0 {
+        dashos::cerrar(lectura);
+        dashos::cerrar(suyo);
+        return None;
+    }
+    let mut r = [0u8; 8];
+    let mut ll = [0u32; 1];
+    let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, 5_000_000);
+    let estado = if n == 8 { i32::from_le_bytes(r[4..8].try_into().unwrap()) } else { n as i32 };
+    if n != 8 || k != 1 || estado != 0 || dashos::memoria_proyectar(ll[0], VA_RED, true) != 0 {
+        println!("  [caja-linux] red: el servicio de red no da un puerto ({}): sin red", estado);
+        dashos::cerrar(lectura);
+        return None;
+    }
+    let (rx, tx) = (red_palabra(rp::T_RANURAS_RX), red_palabra(rp::T_RANURAS_TX));
+    let tam = dashos::memoria_tamano(ll[0]);
+    if !(1..=256).contains(&rx) || !(1..=256).contains(&tx) || 64 + (rx + tx) as i64 * rp::RANURA as i64 > tam {
+        println!("  [caja-linux] red: el puerto no cuadra ({} y {} ranuras en {} bytes): sin red", rx, tx, tam);
+        return None;
+    }
+    let pila: &'static mut [u8] = Box::leak(alloc::vec![0u8; PILA_RED].into_boxed_slice());
+    if dashos::hilos::crear(hilo_red, lectura as u64, pila, 0) < 0 {
+        return None;
+    }
+    Some(RedCaja { red, rx, tx, perdidas: perdidas.clone() })
+}
+
+/// Espera los avisos del servicio de red (tramas para el invitado) y despierta a la vCPU.
+fn hilo_red(lectura: u64) -> u64 {
+    let mut b = [0u8; 16];
+    let mut ll = [0u32; 4];
+    loop {
+        let (n, k) = dashos::canal_leer(lectura as u32, &mut b, &mut ll);
+        for &l in &ll[..k.min(4)] {
+            dashos::cerrar(l);
+        }
+        if n < 0 {
+            return 0;
+        }
+        COMPARTIDO.avisar();
+    }
+}
+
 /// Un objeto de datos (llave `llave`) proyectado en `va`, solo de lectura.
 fn datos(llave: u32, va: usize) -> Option<&'static [u8]> {
     let tam = dashos::memoria_tamano(llave);
@@ -680,19 +1078,22 @@ fn datos(llave: u32, va: usize) -> Option<&'static [u8]> {
     Some(unsafe { core::slice::from_raw_parts(va as *const u8, tam as usize) })
 }
 
-/// Arranca la Image de la llave `LINUX` con el initramfs de la llave `INITRD` en una máquina de 256 MB con los aparatos
-/// del crate (PL011, virtio-console, virtio-blk), hasta que Linux la apaga por PSCI o pasan 4 minutos.
-fn linux() -> bool {
-    let Some(imagen) = datos(LINUX, VA_IMAGEN) else {
+/// Arranca la Image de `l.linux` con el initramfs de `l.initrd` en una máquina con hasta `ram_invitado` bytes de RAM y
+/// los aparatos del crate (PL011, virtio-console, virtio-blk), hasta que Linux la apaga por PSCI o pasan 4 minutos
+/// (10 con terminal). Con la llave de "ventanas", la consola sale también en una ventana de terminal, y lo que se teclea
+/// en ella llega a hvc0.
+fn linux(l: &Llaves, ram_invitado: usize) -> bool {
+    let Some(imagen) = l.linux.and_then(|k| datos(k, VA_IMAGEN)) else {
         println!("  [caja-linux] linux: sin la Image; MAL");
         return false;
     };
-    let initrd = datos(INITRD, VA_INITRD);
-    // La RAM: hasta 256 MB, en trozos de 16 MB; si el cupo no da para tanto, lo que quepa dejando un trozo libre para
-    // las tablas de la etapa 2 y el montón (con 128 MB como poco).
-    let mut mems = [0u32; TROZOS];
+    let initrd = l.initrd.and_then(|k| datos(k, VA_INITRD));
+    // La RAM: la que le toca, en trozos de 16 MB; si el cupo no da para tanto, lo que quepa dejando un trozo libre para
+    // las tablas de la etapa 2 y el montón.
+    let quiere = (ram_invitado / TROZO).clamp(1, MAX_TROZOS);
+    let mut mems = [0u32; MAX_TROZOS];
     let mut n = 0;
-    while n < TROZOS {
+    while n < quiere {
         let l = dashos::memoria_crear(TROZO) as i32;
         if l <= 0 {
             break;
@@ -704,7 +1105,7 @@ fn linux() -> bool {
         mems[n] = l as u32;
         n += 1;
     }
-    if n < TROZOS && n > 0 {
+    if n < quiere && n > 0 {
         n -= 1;
         dashos::memoria_quitar(VA_RAM_LINUX + n * TROZO);
         dashos::cerrar(mems[n]);
@@ -724,6 +1125,8 @@ fn linux() -> bool {
             return false;
         }
     };
+    // La ventana de la terminal, en su hilo, antes de arrancar: así no se pierde nada de hvc0.
+    let terminal = l.ventanas.is_some_and(|v| abrir_terminal(v));
     // SAFETY: los objetos, proyectados seguidos aquí; solo los toca esta `Ram` (y el invitado).
     let ram = unsafe { core::slice::from_raw_parts_mut(VA_RAM_LINUX as *mut u8, tam_ram) };
     let estado = Rc::new(RefCell::new(EstadoConsola::default()));
@@ -731,11 +1134,23 @@ fn linux() -> bool {
     disco[..MARCA_DISCO.len()].copy_from_slice(MARCA_DISCO);
     let disco = Rc::new(RefCell::new(disco));
     let mut maq = Vmm::nueva(RamCaja(Ram { base: disposicion::RAM, datos: ram }), Distribuidor::nuevo(1, disposicion::NUM_SPIS), disposicion::GICD);
-    let (v0, v1) = (disposicion::virtio(0), disposicion::virtio(1));
-    let puestos = maq.añadir(disposicion::UART, disposicion::SPI_UART, Box::new(Pl011::nuevo(Registro::nuevo(&estado)))).is_ok()
-        && maq.añadir(v0.base, v0.spi, Box::new(TransporteMmio::nuevo(Consola::nueva(Registro::nuevo(&estado))))).is_ok()
+    let (v0, v1, v2) = (disposicion::virtio(0), disposicion::virtio(1), disposicion::virtio(2));
+    // La red, si el servicio de red da un puerto: una MAC local al azar (02:da:...).
+    let cuentas_red = Rc::new(RefCell::new((0u64, 0u64, 0u64, 0u64)));
+    let mut mac = [0x02, 0xda, 0x50, 0, 0, 0];
+    let mut azar = [0u8; 3];
+    let _ = dashos::azar(&mut azar);
+    mac[3..].copy_from_slice(&azar);
+    let red = l.red.and_then(|r| abrir_red(r, mac, &cuentas_red));
+    let mut consola = Consola::nueva(Registro::nuevo(&estado, true));
+    consola.tamaño(COLUMNAS as u16, FILAS as u16);
+    let puestos = maq.añadir(disposicion::UART, disposicion::SPI_UART, Box::new(Pl011::nuevo(Registro::nuevo(&estado, false)))).is_ok()
+        && maq.añadir(v0.base, v0.spi, Box::new(TransporteMmio::nuevo(consola))).is_ok()
         && maq.añadir(v1.base, v1.spi, Box::new(TransporteMmio::nuevo(Bloque::nuevo(Box::new(Disco(disco.clone())))))).is_ok();
-    let mut config = disposicion::config(tam_ram as u64, 1, 2, String::from(BOOTARGS), plan.initrd);
+    let con_red = red.is_some();
+    let puestos = puestos && red.is_none_or(|r| maq.añadir(v2.base, v2.spi, Box::new(TransporteMmio::nuevo(caja_vmm::virtio::red::Red::nueva(Box::new(r), mac)))).is_ok());
+    let bootargs = if terminal { alloc::format!("{} caja.terminal", BOOTARGS) } else { String::from(BOOTARGS) };
+    let mut config = disposicion::config(tam_ram as u64, 1, if con_red { 3 } else { 2 }, bootargs, plan.initrd);
     let mut semilla = [0u8; 32];
     if dashos::azar(&mut semilla).is_some() {
         config.semilla = Some(semilla);
@@ -751,7 +1166,7 @@ fn linux() -> bool {
         return false;
     }
     let regs = arranque::registros(&plan);
-    let vm = dashos::maquina_crear(PERMISO, mems[0], disposicion::RAM, regs.pc, regs.x[0]);
+    let vm = dashos::maquina_crear(permiso(), mems[0], disposicion::RAM, regs.pc, regs.x[0]);
     let mut bien = vm > 0;
     for (i, &mm) in mems.iter().enumerate().skip(1) {
         bien &= vm > 0 && dashos::maquina_memoria(vm as u32, mm, disposicion::RAM + (i * TROZO) as u64) == 0;
@@ -763,18 +1178,21 @@ fn linux() -> bool {
     }
     let vm = vm as u32;
     println!(
-        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, PL011, virtio-console y virtio-blk de {} KB; arranca",
-        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, TAM_DISCO / 1024
+        "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, PL011, virtio-console, virtio-blk de {} KB{}; arranca",
+        imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, TAM_DISCO / 1024,
+        if con_red { " y virtio-net por el servicio de red" } else { "" }
     );
     let t0 = dashos::ahora_us();
     let mut caja = Caja::nueva(vm, maq, &config.memoria);
-    let fin = caja.correr(240_000_000, true);
+    let plazo_s = if terminal { 600 } else { 240 };
+    let fin = caja.correr(plazo_s * 1_000_000, true);
     let ms = (dashos::ahora_us() - t0) / 1000;
     dashos::cerrar(vm);
+    COMPARTIDO.acabada.store(true, Ordering::Release);
     let que = match fin {
         FinCaja::Apagada => texto(format_args!("Linux apagó la máquina por PSCI")),
         FinCaja::Reinicio => texto(format_args!("Linux pidió reiniciar")),
-        FinCaja::Plazo => texto(format_args!("sigue en marcha a los 240 s")),
+        FinCaja::Plazo => texto(format_args!("sigue en marcha a los {} s", plazo_s)),
         FinCaja::Hvc(n, x) => texto(format_args!("HVC #{} con x0 = {:#x}", n, x[0])),
         FinCaja::Fallo(esr, pc) => texto(format_args!("trampa en {:#x} (ESR {:#x}, clase {:#x})", pc, esr, esr >> 26)),
         FinCaja::Error(e) => texto(format_args!("error {}", e)),
@@ -788,7 +1206,20 @@ fn linux() -> bool {
     let e = estado.borrow();
     let d = disco.borrow();
     let escrito = &d[4096..4096 + ESCRITO.len()] == ESCRITO;
-    let ok = matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito;
+    let ok = matches!(fin, FinCaja::Apagada) && e.busybox && e.fin && escrito && (!terminal || e.terminal);
+    if e.sin_sacar > 0 {
+        println!("  [caja-linux] linux: ({} líneas sin sacar al registro: demasiadas seguidas)", e.sin_sacar);
+    }
+    if con_red {
+        let r = cuentas_red.borrow();
+        println!("  [caja-linux] red: {} tramas del invitado a la red, {} de la red al invitado; {} perdidas sin sitio, {} malas del servicio", r.2, r.3, r.0, r.1);
+    }
+    if terminal {
+        println!(
+            "  [caja-linux] terminal: {} bytes de la consola no cupieron en la ventana; {} teclas no cupieron hacia Linux",
+            COMPARTIDO.salida.perdidos.load(Ordering::Relaxed), COMPARTIDO.entrada.perdidos.load(Ordering::Relaxed)
+        );
+    }
     println!(
         "  [caja-linux] linux: {} líneas por la consola, busybox en marcha: {}, el disco escrito por Linux: {}: {}",
         e.lineas, if e.busybox { "sí" } else { "no" }, if escrito { "sí" } else { "no" }, if ok { "bien" } else { "MAL" }
@@ -799,9 +1230,294 @@ fn linux() -> bool {
     ok
 }
 
+// --- La terminal: una ventana con la consola del invitado ---
+//
+// Un hilo del servicio con su propio cliente de Wayland (por el canal "ventanas"). Lo que escribe Linux por hvc0 le
+// llega por `COMPARTIDO.salida`; lo mete en una `Terminal` (usuario/src/terminal.rs) y pinta las filas que cambian, una
+// vez por cuadro como mucho. Lo que se teclea va a `COMPARTIDO.entrada` y despierta a la vCPU.
+
+const COLUMNAS: usize = 80;
+const FILAS: usize = 25;
+/// El tamaño de la letra (Roboto Mono) y el borde alrededor de la rejilla, en píxeles.
+const LETRA: u32 = 13;
+const BORDE: i32 = 8;
+/// El fondo, la letra y el cursor (del tema oscuro del kit), y los 16 colores de la terminal.
+const FONDO: u32 = 0xff14_1218;
+const LETRA_COLOR: u32 = 0xffe6_e0e9;
+const PALETA: [u32; 16] = [
+    0xff1d1b20, 0xffd0605e, 0xff7fb36d, 0xffd9b85c, 0xff6f9bd6, 0xffb48ad9, 0xff5fb8b8, 0xffcac4cf, 0xff6b6670, 0xfff2898a,
+    0xffa6d68f, 0xfff0d58a, 0xff9cbdf0, 0xffd0b0f0, 0xff8ad8d8, 0xffffffff,
+];
+const VA_TERMINAL: usize = 0x30_0000_0000;
+const PILA_TERMINAL: usize = 256 * 1024;
+
+/// Abre la ventana de la terminal en un hilo y espera a que esté en pantalla (como mucho 10 s). Falso si no pudo.
+fn abrir_terminal(ventanas: u32) -> bool {
+    ventana_cliente::usar_llave(ventanas);
+    let pila: &'static mut [u8] = Box::leak(alloc::vec![0u8; PILA_TERMINAL].into_boxed_slice());
+    if dashos::hilos::crear(hilo_terminal, 0, pila, 0) < 0 {
+        println!("  [caja-linux] terminal: no se pudo crear su hilo");
+        return false;
+    }
+    let hasta = dashos::ahora_us() + 10_000_000;
+    while COMPARTIDO.ventana.load(Ordering::Acquire) == 0 && dashos::ahora_us() < hasta {
+        dashos::dormir_us(10_000);
+    }
+    COMPARTIDO.ventana.load(Ordering::Acquire) == 1
+}
+
+fn hilo_terminal(_: u64) -> u64 {
+    let r = terminal();
+    if COMPARTIDO.ventana.load(Ordering::Acquire) == 0 {
+        COMPARTIDO.ventana.store(2, Ordering::Release);
+    }
+    r
+}
+
+/// Lo que mandan las teclas a Linux (como un VT100: Intro es un retorno de carro, el retroceso es DEL).
+fn bytes_tecla(t: Tecla, control: bool, sal: &mut Vec<u8>) {
+    match t {
+        Tecla::Letra(c) if control && c.is_ascii_alphabetic() => sal.push(c.to_ascii_lowercase() as u8 & 0x1f),
+        Tecla::Letra(c) => {
+            let mut b = [0u8; 4];
+            sal.extend_from_slice(c.encode_utf8(&mut b).as_bytes());
+        }
+        Tecla::Intro => sal.push(b'\r'),
+        Tecla::Retroceso => sal.push(0x7f),
+        Tecla::Tabulador | Tecla::TabuladorAtras => sal.push(b'\t'),
+        Tecla::Escape => sal.push(0x1b),
+        Tecla::Suprimir => sal.extend_from_slice(b"\x1b[3~"),
+        Tecla::Arriba | Tecla::AltArriba => sal.extend_from_slice(b"\x1b[A"),
+        Tecla::Abajo | Tecla::AltAbajo => sal.extend_from_slice(b"\x1b[B"),
+        Tecla::Derecha => sal.extend_from_slice(b"\x1b[C"),
+        Tecla::Izquierda => sal.extend_from_slice(b"\x1b[D"),
+        Tecla::Inicio => sal.extend_from_slice(b"\x1b[H"),
+        Tecla::Fin => sal.extend_from_slice(b"\x1b[F"),
+    }
+}
+
+/// Pinta las filas `sucias` de la terminal (y la del cursor).
+fn pintar(l: &mut Lienzo, t: &Terminal, f: &mut Fuente, celda: (i32, i32, i32), sucias: u64) {
+    let (cw, ch, base) = celda;
+    let (cx, cy) = t.cursor();
+    for y in 0..t.filas {
+        if sucias & (1 << y.min(63)) == 0 {
+            continue;
+        }
+        let py = BORDE + y as i32 * ch;
+        l.borrar(Rect::new(0, py, l.ancho, ch), FONDO);
+        for x in 0..t.columnas {
+            let c = t.celda(x, y);
+            let mut color = if c.color == terminal::DE_SERIE { LETRA_COLOR } else { PALETA[c.color as usize & 15] };
+            let px = BORDE + x as i32 * cw;
+            let inverso = (c.estilo & terminal::INVERSO != 0) != (x == cx && y == cy && !COMPARTIDO.acabada.load(Ordering::Relaxed));
+            if inverso {
+                l.borrar(Rect::new(px, py, cw, ch), color);
+                color = FONDO;
+            }
+            if c.c != ' ' {
+                // Lo que la fuente no tiene sale como "?": así la caché de letras no crece sin fin.
+                let letra = if f.tiene(c.c) { c.c } else { '?' };
+                let mut b = [0u8; 4];
+                f.dibujar(l, px, py + base, letra.encode_utf8(&mut b), LETRA, color);
+            }
+        }
+    }
+}
+
+fn terminal() -> u64 {
+    let mut fuente = Fuente::mono();
+    let m = fuente.medir("M", LETRA);
+    let cw = libm_ceil(fuente.avance('M', LETRA));
+    // Filas juntas (la caja de la fuente deja mucho aire): la línea base a 3/4 de la celda.
+    let ch = LETRA as i32 + 3;
+    let base = (ch * 3 + 3) / 4;
+    let _ = m;
+    let (ancho, alto) = (COLUMNAS as i32 * cw + 2 * BORDE, FILAS as i32 * ch + 2 * BORDE);
+    let Some(mut c) = Cliente::conectar() else {
+        println!("  [caja-linux] terminal: no se puede conectar al compositor");
+        return 1;
+    };
+    let Some(globales) = c.globales() else { return 1 };
+    let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
+    let (Some(gc), Some(gs), Some(gx), Some(ga)) = (global("wl_compositor"), global("wl_shm"), global("xdg_wm_base"), global("wl_seat")) else {
+        println!("  [caja-linux] terminal: faltan globales");
+        return 1;
+    };
+    let tamano = (ancho * alto * 4) as usize;
+    let mem = dashos::memoria_crear(tamano);
+    if (mem as i32) <= 0 || dashos::memoria_proyectar(mem, VA_TERMINAL, true) != 0 {
+        println!("  [caja-linux] terminal: sin memoria");
+        return 1;
+    }
+    // SAFETY: recién proyectada aquí, `tamano` bytes; solo la pinta este hilo.
+    let px = unsafe { core::slice::from_raw_parts_mut(VA_TERMINAL as *mut u32, (ancho * alto) as usize) };
+    let copia = dashos::llave_duplicar(mem, dashos::LEER | dashos::TRANSFERIR, 0);
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gx).texto(Some("xdg_wm_base")).uint(6).uint(XDG).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+    e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
+    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ancho).int(alto).int(ancho * 4).uint(wayland::shm::XRGB8888).fin();
+    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
+    e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
+    e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
+    e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Linux (caja)")).fin();
+    e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+
+    let mut t = Terminal::nueva(COLUMNAS, FILAS);
+    let mut teclado = Teclado::new();
+    let mut control = 0u8;
+    let mut configurada = false;
+    // El aviso de frame que se espera (0: ninguno): no se pinta otra vez hasta que llega.
+    let mut esperando = 0u32;
+    let mut siguiente_aviso = AVISO;
+    let mut buf = alloc::vec![0u8; 16 * 1024];
+    let mut teclas = 0u64;
+    let mut acabada_pintada = false;
+    // La fila donde estaba el cursor la última vez que se pintó.
+    let mut fila_cursor = 0usize;
+    let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
+    l.borrar(Rect::new(0, 0, ancho, alto), FONDO);
+    loop {
+        let ev = match c.evento_plazo(if esperando != 0 { 100_000 } else { 15_000 }) {
+            Ok(ev) => ev,
+            Err(()) => {
+                println!("  [caja-linux] terminal: el compositor cerró la conexión");
+                return 1;
+            }
+        };
+        if let Some((o, orden, cuerpo)) = ev {
+            let palabra = |i: usize| cuerpo.get(4 * i..4 * i + 4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+            match (o, orden) {
+                (XDG, xdg_wm_base::ev::PING) => {
+                    let mut e = Escritor::new();
+                    e.empezar(XDG, xdg_wm_base::req::PONG).uint(palabra(0)).fin();
+                    c.mandar(&e);
+                }
+                (XDG_SUPERFICIE, xdg_surface::ev::CONFIGURE) => {
+                    let mut e = Escritor::new();
+                    e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                    if !configurada {
+                        configurada = true;
+                        pintar(&mut l, &t, &mut fuente, (cw, ch, base), u64::MAX);
+                        t.tomar_sucias();
+                        e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho).int(alto).fin();
+                        e.empezar(SUPERFICIE, wl_surface::req::FRAME).uint(siguiente_aviso).fin();
+                        esperando = siguiente_aviso;
+                        siguiente_aviso += 1;
+                        e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+                        println!("  [caja-linux] terminal: ventana en pantalla ({}x{} letras, {}x{} px)", COLUMNAS, FILAS, ancho, alto);
+                        COMPARTIDO.ventana.store(1, Ordering::Release);
+                    }
+                    c.mandar(&e);
+                }
+                (aviso, wl_callback::ev::DONE) if aviso == esperando => esperando = 0,
+                (TECLADO, wl_keyboard::ev::KEYMAP) => {
+                    if let Some(l) = c.juntador.tomar_llave() {
+                        dashos::cerrar(l);
+                    }
+                }
+                (TECLADO, wl_keyboard::ev::KEY) => {
+                    let (codigo, pulsada) = (palabra(2), palabra(3) == 1);
+                    if codigo == 29 || codigo == 97 {
+                        control = if pulsada { control.saturating_add(1) } else { control.saturating_sub(1) };
+                    } else if let Some(tk) = teclado.tecla(codigo, pulsada) {
+                        let mut b = Vec::new();
+                        bytes_tecla(tk, control > 0, &mut b);
+                        if !b.is_empty() && !COMPARTIDO.acabada.load(Ordering::Relaxed) {
+                            teclas += 1;
+                            if teclas == 1 {
+                                println!("  [caja-linux] terminal: primera tecla para Linux");
+                            }
+                            COMPARTIDO.entrada.meter(&b);
+                            COMPARTIDO.avisar();
+                        }
+                    }
+                }
+                (TECLADO, wl_keyboard::ev::LEAVE) => control = 0,
+                (1, wl_display::ev::ERROR) => {
+                    println!("  [caja-linux] terminal: error de protocolo");
+                    return 1;
+                }
+                _ => {}
+            }
+        }
+        // Lo nuevo de Linux, a la rejilla (como mucho 16 KB por vuelta: con una inundación, la ventana sigue viva).
+        let n = COMPARTIDO.salida.sacar(&mut buf);
+        if n > 0 {
+            t.meter(&buf[..n]);
+            if !t.respuesta.is_empty() {
+                COMPARTIDO.entrada.meter(&core::mem::take(&mut t.respuesta));
+                COMPARTIDO.avisar();
+            }
+        }
+        let acabada = COMPARTIDO.acabada.load(Ordering::Relaxed);
+        if acabada && !acabada_pintada {
+            acabada_pintada = true;
+            t.meter("\r\n\x1b[7m La máquina se ha apagado \x1b[0m".as_bytes());
+            let mut e = Escritor::new();
+            e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Linux (caja, apagada)")).fin();
+            c.mandar(&e);
+        }
+        if configurada && esperando == 0 && t.sucia() {
+            // La fila del cursor de antes y la de ahora también, para mover el cursor.
+            let sucias = t.tomar_sucias() | 1 << t.cursor().1.min(63) | 1 << fila_cursor.min(63);
+            fila_cursor = t.cursor().1;
+            pintar(&mut l, &t, &mut fuente, (cw, ch, base), sucias);
+            let mut e = Escritor::new();
+            e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho).int(alto).fin();
+            e.empezar(SUPERFICIE, wl_surface::req::FRAME).uint(siguiente_aviso).fin();
+            e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
+            esperando = siguiente_aviso;
+            siguiente_aviso += 1;
+            c.mandar(&e);
+        }
+    }
+}
+
+fn libm_ceil(x: f32) -> i32 {
+    let i = x as i32;
+    if (i as f32) < x { i + 1 } else { i }
+}
+
 fn principal() -> u64 {
-    // Las llaves de Linux se miran antes de nada: luego las ocupan los objetos que crea el servicio (su montón).
-    let hay_linux = dashos::memoria_tamano(LINUX) > 0;
+    // Las llaves se miran antes de nada: luego las ocupan los objetos que crea el servicio (su montón).
+    let l = llaves();
+    // SAFETY: recién proyectado aquí, solo de lectura; el objeto mide una página.
+    let sistema = (dashos::memoria_proyectar(SISTEMA, VA_SISTEMA, false) == 0)
+        .then(|| dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(VA_SISTEMA as *const u8, 16) }))
+        .flatten();
+    let Some((ram, hiper)) = sistema else {
+        println!("  [caja-linux] sin los datos del sistema; MAL");
+        return 1;
+    };
+    if !hiper {
+        println!("  [caja-linux] no hay hipervisor: DashOS no arrancó en EL2 (en QEMU, falta virtualization=on); sin máquinas virtuales");
+        return 0;
+    }
+    // El permiso: en `virt`, de `sesiones` (sin preguntar: es la caja del sistema); en la Pi, de `inicio`.
+    match (l.permiso, l.sesiones) {
+        (Some(p), _) => PERMISO.store(p, Ordering::Relaxed),
+        (None, Some(s)) => match pedir_permiso(s) {
+            Ok(p) => {
+                println!("  [caja-linux] sesiones le da el permiso de máquinas virtuales");
+                PERMISO.store(p, Ordering::Relaxed);
+            }
+            Err(e) => {
+                println!("  [caja-linux] sesiones no le da el permiso de máquinas virtuales ({}); MAL", e);
+                return 1;
+            }
+        },
+        (None, None) => {
+            println!("  [caja-linux] sin el permiso de máquinas virtuales ni a quién pedirlo; MAL");
+            return 1;
+        }
+    }
     // SAFETY: etiquetas de pruebas.s.
     let (hola, eco, lee, escribe, bucle, apaga, reloj) = unsafe {
         (
@@ -814,6 +1530,19 @@ fn principal() -> u64 {
             codigo(&invitado_reloj, &invitado_reloj_fin),
         )
     };
+    // En la Pi (sin `sesiones`, con el permiso de `inicio`): que el hipervisor funciona, con un invitado que saluda.
+    if l.permiso.is_some() {
+        let bien = match maquina(hola) {
+            Ok(vm) => {
+                let r = matches!(correr(vm, &prueba(1_000_000)), Fin::Hvc(0, 0));
+                dashos::cerrar(vm);
+                r
+            }
+            Err(_) => false,
+        };
+        println!("  [caja-linux] hipervisor en marcha: un invitado saluda y acaba: {}", if bien { "bien" } else { "MAL" });
+        return if bien { 0 } else { 1 };
+    }
     // Una llave que no es el permiso no crea máquinas, aunque sea de memoria.
     let mem = dashos::memoria_crear(RAM);
     let tipo = dashos::maquina_crear(mem, mem, RAM_IPA, RAM_IPA, 0);
@@ -824,10 +1553,6 @@ fn principal() -> u64 {
 
     let vm = match maquina(hola) {
         Ok(v) => v,
-        Err(dashos::E_NO_HAY) => {
-            println!("  [caja-linux] no hay hipervisor: DashOS no arrancó en EL2 (en QEMU, falta virtualization=on); sin máquinas virtuales");
-            return 0;
-        }
         Err(e) => {
             println!("  [caja-linux] no se pudo crear la máquina: {}", e);
             return 1;
@@ -906,9 +1631,12 @@ fn principal() -> u64 {
     let tercero = prueba_interrupciones(irq) & prueba_gic_hostil(gic_hostil, tormenta, el2);
     println!("  [caja-linux] interrupciones del invitado: {}", if tercero { "bien" } else { "MAL" });
     bien &= tercero;
-    // Con la Image de un kernel de Linux (llave 2), Linux hasta busybox.
-    if hay_linux {
-        bien &= linux();
+    // Con la Image de un kernel de Linux, Linux hasta busybox (y, con ventana, una terminal con su shell).
+    if l.linux.is_some() {
+        let invitado = dashos::maquina::memoria_invitado(ram) as usize;
+        println!("  [caja-linux] linux: la máquina tiene {} MB de RAM: hasta {} MB para el invitado", ram >> 20, invitado >> 20);
+        bien &= linux(&l, invitado);
     }
-    if bien { 0 } else { 1 }
+    // Hecho: el hilo de la terminal sigue con su ventana; el proceso acaba entero.
+    dashos::hilos::proceso_salir(if bien { 0 } else { 1 })
 }
