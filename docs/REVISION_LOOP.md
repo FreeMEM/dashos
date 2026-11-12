@@ -1071,3 +1071,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la misma en los dos). Probado con el comprobador cayéndose a propósito (pila de 64 KB): `ficheros` sujeta bien
   después de su baja; antes esperaba 10 s y daba MAL.
   Siguiente: COMPROBAR con datos (FS8) por el comprobador, con el informe de vuelta a quien lo pide (el centro).
+- A15, medido: el comprobador recorre la foto con los datos (cada bloque leído y su resumen comprobado) en el disco
+  del arranque: 1.580 KB ocupados en 23 ms, 65 MB/s. No se puede comparar con los 160 MB/s de COMPROBAR dentro de
+  `archivos` (medir-fs, otro disco con mucho más dato): aquí casi todo es abrir (unos 15 ms de las 200 vueltas sin
+  datos). Además, cada bloque de 4 KB es una petición al servicio de disco: leer por delante (ventanas de 64 KB) es lo
+  primero si al medir en un disco grande sale lento. Pendiente: medirlo en el disco de medir-fs, y llevar el
+  COMPROBAR con datos del centro al comprobador, con el informe de vuelta.

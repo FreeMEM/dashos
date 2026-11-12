@@ -176,6 +176,17 @@ fn principal() -> u64 {
         }
     }
     let ms = (dashos::ahora_us() - desde) / 1000;
+    // Y una vez con los datos (FS8: cada bloque de datos leído y su resumen comprobado), medido por MB ocupado.
+    let t0 = dashos::ahora_us();
+    let datos = FileSystem::open(Lector { lectura, vuelta, sectores }, None, Some(0), false)
+        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)));
+    let us = (dashos::ahora_us() - t0).max(1);
+    match &datos {
+        Ok(i) => println!("  [comprobador] A15 con los datos: {}, {} KB ocupados en {} ms, {} MB/s",
+            if i.is_clean() { "limpio" } else { "con problemas" }, i.used * 4, us / 1000, i.used * 4 * 1_000_000 / 1024 / us),
+        Err(e) => println!("  [comprobador] A15 con los datos: error {}", e.errno),
+    }
+    let limpias = if datos.is_ok_and(|i| i.is_clean()) { limpias } else { 0 };
     let soltar = archivos(al, SOLTAR);
     let bien = limpias == VUELTAS && soltar == 0;
     if let Some(p) = problema.filter(|_| !bien) {
