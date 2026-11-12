@@ -1377,3 +1377,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Medida (lo cobrado al grupo de `fondo`): a 800 × 600, 8,8 → 6,6 MB (total de los procesos que ve el centro, 66,2 →
   63,9); a 1920 × 1080, 20,7 → 12,7 MB.
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; a 1920 × 1080, sin fallos de memoria.
+
+### 2026-11-12 15:25: programas sin tabla de símbolos (la imagen del kernel, 1,8 MB menos)
+- De los 9,4 MB del kernel en memoria, 9 eran `.rodata`: los ELF de los programas del paquete de arranque de `inicio`
+  (`include_bytes!`), cada uno con su tabla de símbolos, que nada lee al cargarlos (buscado en el kernel, `usuario` y
+  `tools`). `usuario/Cargo.toml`: `strip = "symbols"` en release.
+- Medida: archivos 917 → 627 KB, compositor 670 → 435, centro 549 → 430; `.rodata` del kernel 9,08 → 7,26 MB; el
+  núcleo en Acerca de, 9,4 → 7,6 MB; en uso, 102,9 MB (esta mañana, 160,8).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.

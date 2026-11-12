@@ -66,6 +66,9 @@ test = false
 [profile.release]
 panic = "abort"
 opt-level = "s"
+# Sin tabla de símbolos: los programas van dentro de la imagen del kernel (el paquete de arranque de `inicio`) y nada
+# la lee al cargarlos; con ella, la imagen pasaba de 9 MB.
+strip = "symbols"
 # Las dependencias (RedoxFS, seahash, lz4 del servicio de archivos), para ir rápido: con "s", crear un fichero costaba
 # en DashOS cuatro veces lo que el mismo RedoxFS bajo QEMU en modo usuario (paso F10 de docs/MULTITAREA_LOOP.md).
 [profile.release.package."*"]
