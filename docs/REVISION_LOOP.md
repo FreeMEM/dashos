@@ -1604,3 +1604,17 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente: sin copias (objeto de memoria con páginas de otro), portapapeles, xdg-decoration, pools de más de
   64 MB, GPU/dmabuf, GTK4 y Firefox, `delete_id` de pools sucesores, un aviso visto una vez al acabar.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2 y -wayland: BIEN.
+
+### 2026-11-13 00:00: búferes de Linux sin copia (llamada 50 `memoria_vista`), en revision
+- Fusionada `caja-linux-sincopia`: llamada 50 del kernel, objeto de memoria de solo lectura con páginas de otros
+  (mantiene vivos sus orígenes; sin vistas de vistas, DMA ni revocables; hasta 64 orígenes y 4096 páginas). El
+  puente de Arch fija el memfd del cliente y manda sus páginas físicas (pagemap); `puente_caja` las comprueba contra
+  la RAM del invitado y da la vista al compositor; si no, copia como antes.
+- Medidas (QEMU sin aceleración, PC cargado): 320×240 de 61 a 94 cuadros por segundo; 1280×720 de 10,8 a 34 (3,1
+  veces); CPU del puente por cuadro de 42 a 4,9 ms en la grande.
+- Hostil: paso 39 de `malo` (escribir o ejecutar por la vista, llaves falsas, tablas rotas, cupo, origen soltado con
+  la vista viva) y `puente --hostil` con vistas fuera de la RAM, sin alinear, de 1 TB, 300 vistas.
+- El disco de Arch con el puente nuevo hay que regenerarlo (`preparar-arch`); el de esta rama, en
+  `~/.cache/dashos-caja-linux-sincopia`.
+- `make prueba` BIEN; arranque-virt (el sonido salió MAL una vez con la carga del PC a 14; repetido, BIEN), -vm,
+  -linux, -arch, -2 y -wayland: BIEN.
