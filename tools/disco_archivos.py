@@ -47,11 +47,15 @@ if sys.argv[1] == "--comprobar":
         # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
         "C/Prefs/panel 24",
         "C/Privado/ cajón",
-        "C/Privado/nota.txt 18",
+        # S10: el comentario y el bit de archivado que puso el Workbench (Información, como Ana).
+        "C/Privado/nota.txt 18 bits=0x1 : nota de Ana",
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",
         "C/raro|nombre.txt 14",
+        # S10: el cajón de otra persona (Carla, 0700), que el Workbench de Ana no lista ni abre.
+        "DeCarla/ cajón",
+        "DeCarla/carta.txt 17",
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
@@ -61,6 +65,8 @@ if sys.argv[1] == "--comprobar":
         "Estado/Servicios/sesiones/permisos 0",
         "Imagenes/ cajón",
         "Imagenes/disquete.adf 901120",
+        # S10: un nombre con un tabulador (RedoxFS no admite ":"), que el Workbench no enseña.
+        "Imagenes/raro\tdos.txt 14",
         "LEEME.txt 19",
         "Prefs/ cajón",
         "Prefs/fuente 8",
@@ -201,6 +207,17 @@ with tempfile.TemporaryDirectory() as t:
         f.write(b"volumen volumen nube\n")
     os.chmod(os.path.join(prefs, "panel"), 0o600)
     os.chmod(prefs, 0o700)
+    # S10: el cajón de otra persona, de Carla y solo suyo (el dueño se pone abajo, con `duenos`), y un nombre con un
+    # tabulador en Imagenes (RedoxFS no admite ':'): el Workbench de Ana no abre lo primero ni enseña lo segundo. En la
+    # raíz y en Imagenes, no en `C`: así no cambia lo que ven el selector y el hostil.
+    carla = os.path.join(raiz, "DeCarla")
+    os.makedirs(carla)
+    with open(os.path.join(carla, "carta.txt"), "w") as f:
+        f.write("solo para Carla.\n")
+    os.chmod(os.path.join(carla, "carta.txt"), 0o600)
+    os.chmod(carla, 0o700)
+    with open(os.path.join(raiz, "Imagenes", "raro\tdos.txt"), "w") as f:
+        f.write("no se enseña\n")
     # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
     with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
         f.write("no se enseña\n")
@@ -218,6 +235,7 @@ with tempfile.TemporaryDirectory() as t:
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
+    subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

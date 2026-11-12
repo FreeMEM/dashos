@@ -83,9 +83,9 @@ static GLOBALES_CAPAS: [Global; 8] = [
 const PONEN_TEMA: &[&str] = &["centro"];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca (solo esos nombres valen: uno
 /// lanzado desde el disco no debe poder llamarse así): `guardian`, con todo, por el bloqueo de la sesión (U3); y, solo
-/// con las capas, el panel rápido (C2) y la barra con su lanzador (S10).
+/// con las capas, el panel rápido (C2), la barra con su lanzador y el Workbench con los iconos del escritorio (S10).
 const ESCRITORIOS: &[&str] = &["guardian"];
-const CON_CAPAS: &[&str] = &["panel", "barra"];
+const CON_CAPAS: &[&str] = &["panel", "barra", "workbench"];
 /// Quién recibe Super+A (C2 de S10c): el panel rápido.
 const ABREN_PANEL: &[&str] = &["panel"];
 /// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la

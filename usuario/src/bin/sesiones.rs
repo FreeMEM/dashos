@@ -90,8 +90,9 @@ const PRESUPUESTO_LANZADO: u64 = 8 << 20;
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 /// Quién puede ver y retirar lo concedido (S10c): `guardian` y el centro de control. Nadie más se llama así (`inicio`).
 const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
-/// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador.
-const LANZADORES: &[&str] = &["barra"];
+/// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador, y el
+/// Workbench (doble clic en un programa de `Programas`).
+const LANZADORES: &[&str] = &["barra", "workbench"];
 
 /// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
 /// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.

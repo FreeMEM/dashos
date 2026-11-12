@@ -783,10 +783,16 @@ pub const DOBLE_MS: u32 = 500;
 
 impl Interfaz {
     pub fn new(arbol: Arbol, raiz: Hijo, tema: Tema) -> Self {
+        Self::con_contexto(arbol, raiz, Contexto::new(tema))
+    }
+
+    /// Como `new`, con un contexto ya hecho: el de una ventana que se cerró. Leer Roboto pide memoria (las dos
+    /// fuentes, unos megas) y tiempo; quien abre y cierra muchas ventanas (el Workbench) las reusa.
+    pub fn con_contexto(arbol: Arbol, raiz: Hijo, ctx: Contexto) -> Self {
         Self {
             arbol,
             raiz,
-            ctx: Contexto::new(tema),
+            ctx,
             sitios: BTreeMap::new(),
             encima: None,
             pulsado: None,
@@ -1820,6 +1826,26 @@ mod pruebas {
         pintar(&mut i, &mut px);
         assert_eq!(en(&px, r.x, r.y + 28), t.contorno);
         assert!(cuenta(&px, Rect::new(r.x + 16, r.y + 60, 150, 16), t.sobre_variante_superficie) > 10);
+    }
+
+    #[test]
+    fn con_un_contexto_de_antes() {
+        // El contexto de una interfaz que ya no está (con su tema y su caché de letras) sirve para otra: mide y dibuja
+        // igual que una nueva.
+        let (mut vieja, _) = ventana();
+        vieja.colocar(Rect::new(0, 0, 400, 200));
+        let mut px = vec![0u32; 400 * 200];
+        vieja.dibujar(&mut Lienzo::new(&mut px, 400, 200, 400));
+        let ctx = vieja.ctx;
+        let (mut nueva, _) = ventana();
+        let (arbol, raiz) = (core::mem::replace(&mut nueva.arbol, Arbol::new()), core::mem::replace(&mut nueva.raiz, Hijo::Fila(Vec::new())));
+        let mut reusada = Interfaz::con_contexto(arbol, raiz, ctx);
+        assert_eq!(reusada.medida(), ventana().0.medida());
+        assert_eq!(reusada.ctx.tema, Tema::CLARO);
+        let mut px2 = vec![0u32; 400 * 200];
+        reusada.colocar(Rect::new(0, 0, 400, 200));
+        reusada.dibujar(&mut Lienzo::new(&mut px2, 400, 200, 400));
+        assert_eq!(px, px2);
     }
 
     #[test]

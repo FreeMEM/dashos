@@ -37,6 +37,10 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // S10: la barra, para listar los programas de su lanzador: del sistema, sin derechos y encerrada en `Programas`.
     // Lanzar no lo hace ella: lo hace `sesiones`, como la persona que está delante.
     ("barra", 1, 1, 0, "Programas"),
+    // S10: el Workbench, de Ana (1000), con el derecho de repartir, como el selector: al empezar se cede a sí mismo el
+    // disco solo para leer (raíz 1, "Sistema") y `C` para leer y escribir (raíz 2, "Home" provisional), y solo va por
+    // ellas.
+    ("workbench", 1000, 1000, 2, ""),
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),
@@ -321,7 +325,12 @@ fn principal() -> u64 {
         // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
         // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
         // U6: `sesiones`, también 64: de su cupo salen los grupos de lo que lanza (8 MB cada uno).
-        let cupo = if matches!(nombre(nombre_cab), "archivos" | "sesiones") { 64 << 20 } else { 16 << 20 };
+        // S10: el Workbench, 48: cada ventana suya lleva su búfer y las dos fuentes del kit (unos megas).
+        let cupo = match nombre(nombre_cab) {
+            "archivos" | "sesiones" => 64 << 20,
+            "workbench" => 48 << 20,
+            _ => 16 << 20,
+        };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
         let mut guardadas = [0u32; 8];
         if lee != 0 {

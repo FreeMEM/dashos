@@ -1408,6 +1408,23 @@ mod ventanas {
         assert_eq!(pantalla[41 * 200 + 41], 0);
     }
 
+    /// S10: una ventana que en cascada se saldría por la derecha o por abajo se mete dentro de lo que dejan las barras
+    /// (la Información del Workbench salía con sus botones fuera). La pantalla, 50 x 50; las ventanas, 16 x 16.
+    #[test]
+    fn la_cascada_no_saca_ventanas_de_la_pantalla() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 50 * 50];
+        escena.componer(&mut pantalla, 50, 50, 50, 0, &mut |_, _, _| {});
+        let (mut a, mut b) = (Conexion::new(), Conexion::new());
+        abrir(&mut escena, &mut a, 1, 70);
+        abrir(&mut escena, &mut b, 2, 71);
+        let sitio = |e: &Escena<Mem>, c: Cliente| e.clientes[&c].superficies[&7].sitio;
+        // La primera iría en (40, 40) y la segunda en (72, 72): las dos, pegadas abajo a la derecha.
+        assert_eq!(sitio(&escena, 1), Some((34, 34)));
+        assert_eq!(sitio(&escena, 2), Some((34, 34)));
+        assert_eq!(escena.recien_colocadas.last(), Some(&(2, 34, 34)));
+    }
+
     fn error(preparar_mas: &dyn Fn(&mut Escritor)) -> (u32, u32) {
         let mut escena = Escena::new(Mem::default(), 0);
         let mut con = Conexion::new();

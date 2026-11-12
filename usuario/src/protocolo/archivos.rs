@@ -70,6 +70,9 @@ pub const PRESTAR: u32 = 31;
 pub const SUJETAR: u32 = 32;
 /// A15: soltar lo sujetado. `NO_EXISTE` si no sujetaba; `LLENO` si se soltó antes por falta de sitio.
 pub const SOLTAR: u32 = 33;
+/// S10: el dueño (a) y el grupo (b) de lo que tiene la asa, y el usuario de quien pregunta (c). Para la Información
+/// del Workbench: decir de quién es y si se puede cambiar (comentar y proteger, solo el dueño).
+pub const DUENO: u32 = 34;
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;
