@@ -1223,3 +1223,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sale. Las pruebas de `panel_mosaicos.rs` van en `make prueba`. `ficheros` dice qué paso falla de "A15 sujetar"
   cuando sale MAL (a veces, con el PC cargado). Con los QEMU de los agentes la media llega a 30 y C14 y S2 fallan
   por tiempo: repetido con algo menos de carga, bien.
+- Fusionadas `hilos` (hilos de usuario: llamadas 40 a 44, espera tipo futex, C52; docs/bitacoras/hilos.md),
+  `kit-material` (casilla, deslizador y desplegable de Material 3, anillo de foco solo con teclado, Ajustes como
+  diálogo; docs/bitacoras/kit-material.md) y `usuarios-u6` (cambio rápido de usuario, paso 1, con prueba hostil;
+  docs/bitacoras/usuarios-u6.md). Decisiones de las tres, pendientes del usuario, en sus diseños.
+  La prueba hostil del tema exigía el de serie y, con el PC cargado, el centro ya había puesto el suyo: ahora solo
+  exige que no sea el del hostil. El arranque de virt pasa a 200 s de tope (el guion para antes si todo sale): con
+  otra sesión moviendo nueve Amiberry, la media pasó de 90 y no llegaba al panel.

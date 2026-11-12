@@ -575,7 +575,7 @@ fn tema_ajeno() -> bool {
     t.extend_from_slice(&e.bytes);
     escribir(VENTANAS, &t, &[]);
     let error = esperar(lectura, copia, 1, wl_display::ev::ERROR).is_some_and(|a| a.len() >= 8 && u32::from_le_bytes(a[0..4].try_into().unwrap()) == 60);
-    // Otra conexión: el tema de ahora, el de serie (el centro aún no ha puesto el suyo).
+    // Otra conexión: el tema de ahora, que no es el del hostil.
     let Some((lectura, copia)) = conectar() else { return false };
     let mut e = Escritor::new();
     suscribir(&mut e);
@@ -584,7 +584,9 @@ fn tema_ajeno() -> bool {
     escribir(VENTANAS, &t, &[]);
     let tema = esperar(lectura, copia, 60, dashos_tema_v1::ev::TEMA);
     escribir(VENTANAS, &[TROZO_ADIOS], &[]);
-    let intacto = tema.as_deref().is_some_and(|a| a.len() >= 8 && a[0..4] == 0xff67_50a4u32.to_le_bytes() && a[4..8] == 0u32.to_le_bytes());
+    // No el que intentó poner el hostil (negro y oscuro). No se exige el de serie: con el PC cargado, el centro puede
+    // haber puesto ya el suyo (era una carrera de la prueba).
+    let intacto = tema.as_deref().is_some_and(|a| a.len() >= 8 && !(a[0..4] == 0xff00_0000u32.to_le_bytes() && a[4..8] == 1u32.to_le_bytes()));
     println!("  [hostil] compositor: poner el tema sin ser el centro da error: {}; el tema sigue: {}", si(error), si(intacto));
     error && intacto
 }
