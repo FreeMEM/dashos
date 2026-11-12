@@ -1060,3 +1060,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (ninguna foto lo nombra) y se reusa enseguida, como debe.
   Siguiente: el comprobador con su alta en `archivos` (derecho de administrar), que sujeta, abre la foto con RedoxFS
   por su tramo de solo lectura, la recorre y suelta.
+- A15: el comprobador aparte lee una foto sujeta. Tiene alta en `archivos` (usuario 1, derecho de administrar,
+  encerrado en `C`) y se lanza tras `archivos`, que sirve ese canal. Sujeta (si otro sujeta, espera hasta 10 s), abre
+  la foto con RedoxFS por su tramo de solo lectura, la recorre entera (estructura, sin los datos) 200 veces mientras el
+  servicio sigue, y suelta. Antes, sin sujetar, 200 aperturas fallaban un 2,5 %; ahora, 200 de 200 limpias.
+  `ficheros` espera también si el comprobador tiene el disco sujeto.
+  Dos fallos encontrados por el camino: (1) RedoxFS no cabe en 64 KB de pila (cayó al cerrar la transacción con una
+  falta de página bajo la pila): 1 MB, como `archivos`. (2) Al caerse el comprobador, el disco seguía sujeto: `sesiones`
+  solo avisaba a `archivos` de la muerte de lo que lanza ella, no de lo de `inicio`. Ahora avisa de todos (la marca es
+  la misma en los dos). Probado con el comprobador cayéndose a propósito (pila de 64 KB): `ficheros` sujeta bien
+  después de su baja; antes esperaba 10 s y daba MAL.
+  Siguiente: COMPROBAR con datos (FS8) por el comprobador, con el informe de vuelta a quien lo pide (el centro).

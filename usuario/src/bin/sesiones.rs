@@ -489,13 +489,13 @@ fn principal() -> u64 {
             if let Some(i) = fichas.iter().position(|x| x.is_some_and(|x| x.marca == de)) {
                 let f = fichas[i].take().unwrap();
                 dashos::cerrar(f.grupo);
-                // Lo que lanzó `sesiones` tenía alta en archivos: que la suelte, con lo que dejara abierto.
-                if f.marca >= PRIMER_PID_PROPIO {
-                    let mut b = [0u8; dashos::protocolo::archivos::CABECERA];
-                    b[0..4].copy_from_slice(&dashos::protocolo::archivos::BAJA.to_le_bytes());
-                    b[8..16].copy_from_slice(&f.marca.to_le_bytes());
-                    dashos::canal_escribir(ARCHIVOS_ALTAS, &b, &[]);
-                }
+                // Que archivos suelte su alta, con lo que dejara abierto o sujeto: lo que lanzó `sesiones` y también lo
+                // de `inicio` (misma marca en los dos; A15: si no, un comprobador caído dejaba el disco sujeto). Sin
+                // alta, archivos no hace nada.
+                let mut b = [0u8; dashos::protocolo::archivos::CABECERA];
+                b[0..4].copy_from_slice(&dashos::protocolo::archivos::BAJA.to_le_bytes());
+                b[8..16].copy_from_slice(&f.marca.to_le_bytes());
+                dashos::canal_escribir(ARCHIVOS_ALTAS, &b, &[]);
                 if f.marca >= PRIMER_PID_PROPIO {
                     println!("  [sesiones] baja de {} (proceso {}, clase {})", nombre(&f.nombre), f.marca, u64_en(0));
                 } else {

@@ -188,6 +188,7 @@ path = "src/bin/pide.rs"
 name = "comprobador"
 path = "src/bin/comprobador.rs"
 test = false
+required-features = ["archivos"]
 
 [[bin]]
 name = "centro"

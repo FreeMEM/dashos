@@ -468,7 +468,19 @@ fn principal() -> u64 {
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
     // A15: sujetar el disco, escribir y borrar mientras tanto (lo borrado espera sin reusarse; comprobar lo cuenta como
     // libre pendiente) y soltar. Dos veces no se sujeta, ni se suelta lo que no se sujeta.
-    let mut sujeto = c.pedir(SUJETAR, 0, 0, 0, "").estado == 0 && c.pedir(SUJETAR, 0, 0, 0, "").estado == EN_USO;
+    // Si lo tiene sujeto el comprobador (otro proceso), se espera a que suelte (hasta 10 s).
+    let sujetar = || {
+        let mut e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+        for _ in 0..1000 {
+            if e != EN_USO {
+                break;
+            }
+            dashos::dormir_us(10_000);
+            e = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+        }
+        e
+    };
+    let mut sujeto = sujetar() == 0 && c.pedir(SUJETAR, 0, 0, 0, "").estado == EN_USO;
     let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
     for vuelta in 0..3 {
         if let Some(a) = hacer(&c, escrito.asa, "a15.bin", 200 * 1024, vuelta) {
@@ -488,7 +500,7 @@ fn principal() -> u64 {
     // A15, hostil: sujetar y no soltar mientras se escribe, guarda y borra mucho más de lo que cabe. El servicio suelta solo al
     // quedar poco sitio: ninguna escritura se queda sin sitio y el SOLTAR de después dice LLENO.
     let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
-    let mut lleno = c.pedir(SUJETAR, 0, 0, 0, "").estado == 0;
+    let mut lleno = sujetar() == 0;
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
     let mut rondas = 0;
     while lleno && rondas < 64 {

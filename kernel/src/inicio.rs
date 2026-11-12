@@ -46,13 +46,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
     #[cfg(feature = "virt")]
     ("disco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/disco"), &[], &["disco"]),
-    // A15: el comprobador aparte, de momento solo su primer paso: la partición de DashOS solo para leer.
-    #[cfg(feature = "virt")]
-    ("comprobador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/comprobador"), &[], &["disco"]),
     // El servicio de archivos (FS1, S5): sirve el RedoxFS del mismo disco por el canal "archivos" (FS3), con un
     // cliente de prueba. Solo en `virt`, como la prueba de arriba.
     #[cfg(feature = "virt")]
     ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
+    // A15: el comprobador aparte: la partición de DashOS solo para leer, y archivos para sujetar el disco mientras la
+    // recorre. Tras archivos, que es quien sirve ese canal.
+    #[cfg(feature = "virt")]
+    ("comprobador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/comprobador"), &[], &["disco", "archivos"]),
     // Las fichas de los procesos (U2) y la entrada de los usuarios (U3), solo en `virt` por ahora. Va tras archivos,
     // del que es cliente (abre y cierra el volumen de cada usuario); `inicio` le da de alta también lo lanzado antes.
     // Sus llaves: 1 archivos, 2 su canal "sesiones" (los canales van en el orden en que se nombran).

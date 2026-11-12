@@ -64,6 +64,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [ficheros] A14 lectura anticipada: bien
 ~│   [ficheros] A14 descarte: bien
 ~│   [ficheros] FS8 comprobación: bien
+~│   [comprobador] A15 la foto: bien
 ~│   [ficheros] A15 sujetar: bien
 ~│   [archivos] queda poco sitio: se suelta el disco sujeto
 ~│   [ficheros] A15 sujetar sin soltar: bien
