@@ -15,7 +15,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [compositor] 2 salidas del controlador gráfico: DASHOS-1 800x600 en (0, 0), DASHOS-2 1024x768 en (800, 0)
 # El escritorio de siempre, en la principal (sin el guion de siempre: nadie teclea en él).
 ~│   [compositor] Wayland: 2 ventanas en pantalla
-~│   [ajustes] ventana del kit en pantalla (360x320)
+~│   [ajustes] ventana del kit en pantalla (360x408)
 ~│   [barra] en pantalla: 800x40, zona exclusiva 40
 # El cursor pasa a la segunda; Super+Mayúsculas+Derecha lleva Ajustes allí; maximizada llena la segunda (sin barra:
 # 1024x768); Super+Mayúsculas+Izquierda la trae.

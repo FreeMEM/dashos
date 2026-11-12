@@ -90,14 +90,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [ventana-b] 30 cuadros: bien
 ~│   [compositor] Wayland: 2 ventanas en pantalla
 # K7: una aplicación con el kit de interfaz, la tercera en la cascada.
-~│   [ajustes] ventana del kit en pantalla (360x320)
+~│   [ajustes] ventana del kit en pantalla (360x408)
 # Sale cuando ya se teclea en otra ventana, así que no se lleva el teclado al salir (S8); lo coge con un clic, con el
 # foco en su campo: las "a" de la prueba van al campo.
 ~│   [ajustes] el campo dice: DashOSa
 # El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño. Con la
 # barra de la pantalla (S10, 40 de alto con su zona exclusiva), maximizada queda debajo: 800x560.
 ~│   [ajustes] el compositor pide 800x560
-~│   [ajustes] vuelve a 360x320
+~│   [ajustes] vuelve a 360x408
 # El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
 ~│   [ajustes] menú abierto; la segunda opción en (
 ~│   [ajustes] el desplegable dice: Destello

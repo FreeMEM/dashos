@@ -236,7 +236,8 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     else {
         return None;
     };
-    let alto = 56 * FILAS as i32 + 148;
+    // 24 de margen arriba y abajo, el título (32), el camino (20), la lista, los botones (40) y 8 entre cada cosa.
+    let alto = 56 * FILAS as i32 + 164;
     let mut arbol = Arbol::new();
     let pide = if carpeta { "quiere guardar en una carpeta" } else { "quiere abrir un fichero" };
     // Material 3: el pedido como título, el camino como texto secundario; Cancelar, botón de texto.
@@ -257,6 +258,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
     i.esquinas = 16;
+    i.margen = 24;
     i.foco = Some(lista);
     i.colocar(Rect::new(0, 0, ANCHO, alto));
 

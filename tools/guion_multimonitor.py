@@ -134,7 +134,7 @@ def principal():
     # Antes de cada tecla, el clic en Ajustes: una pregunta o el selector pueden haberle quitado el teclado.
     if paso("sendkey meta_l-up", "[ajustes] el compositor pide 1024x768", antes=lambda: a_ajustes(texto())):
         capturar("max")
-    paso("sendkey meta_l-down", "[ajustes] vuelve a 360x320", antes=lambda: a_ajustes(texto()))
+    paso("sendkey meta_l-down", "[ajustes] vuelve a 360x408", antes=lambda: a_ajustes(texto()))
     time.sleep(0.5)
     paso("sendkey meta_l-shift-left", "[compositor] ventana de ajustes a DASHOS-1", antes=lambda: a_ajustes(texto()))
     capturar("vuelta")

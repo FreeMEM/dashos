@@ -31,7 +31,8 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const ANCHO: i32 = 360;
-const ALTO: i32 = 320;
+/// Con los márgenes de un diálogo de Material 3 (24) y los controles en columna: 408 de alto.
+const ALTO: i32 = 408;
 /// Lo más grande que se acepta.
 const MAX_ANCHO: i32 = 1920;
 const MAX_ALTO: i32 = 1200;
@@ -87,7 +88,8 @@ fn principal() -> u64 {
     let titulo = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Ajustes".into())), (atr::ESTILO, Valor::Int(1))]);
     let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into())), (atr::ESTILO, Valor::Int(2))]);
     let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(60))]);
-    let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false))]);
+    // Con su etiqueta: Material 3 no tiene casillas sueltas sin texto (la fila entera se pulsa).
+    let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false)), (atr::ETIQUETA, Valor::Texto("Desactivar Aceptar".into()))]);
     let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let aceptar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Aceptar".into()))]);
     let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into())), (atr::ETIQUETA, Valor::Texto("Nombre".into()))]);
@@ -104,15 +106,21 @@ fn principal() -> u64 {
     a.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("Cancelado".into())));
     // Un hueco delante: los botones, al final de la fila (Material 3).
     let hueco = a.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::string::String::new()))]);
+    // Material 3, como un diálogo: 24 de margen, 16 entre el título y lo demás, 8 entre controles y 24 antes de los
+    // botones. El texto que cambia ("Volumen: 60") hace de rótulo del deslizador, encima de él.
     let raiz = Hijo::Columna(vec![
         Hijo::Obj(titulo),
+        Hijo::Espacio(0),
         Hijo::Obj(texto),
-        Hijo::Fila(vec![Hijo::Obj(desl), Hijo::Obj(casilla)]),
+        Hijo::Obj(desl),
+        Hijo::Obj(casilla),
         Hijo::Obj(nombre),
         Hijo::Obj(aviso),
+        Hijo::Espacio(8),
         Hijo::Fila(vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, Tema::CLARO);
+    i.margen = 24;
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
     i.esquinas = 16;
     i.foco = Some(nombre);

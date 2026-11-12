@@ -20,7 +20,7 @@ fn main() {
     let titulo = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Ajustes".into())), (atr::ESTILO, Valor::Int(1))]);
     let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into())), (atr::ESTILO, Valor::Int(2))]);
     let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(60))]);
-    let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(true))]);
+    let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(true)), (atr::ETIQUETA, Valor::Texto("Desactivar Aceptar".into()))]);
     let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into())), (atr::ETIQUETA, Valor::Texto("Nombre".into()))]);
     let aviso = a.crear(Ciclo, &[
         (atr::OPCIONES, Valor::Texto("Pitido|Destello|Ninguno".into())),
@@ -33,16 +33,20 @@ fn main() {
     a.notificar(desl, atr::VALOR, Cuando::Siempre, texto, atr::TEXTO, Que::Formato("Volumen: {}".into()));
     let raiz = Hijo::Columna(vec![
         Hijo::Obj(titulo),
+        Hijo::Espacio(0),
         Hijo::Obj(texto),
-        Hijo::Fila(vec![Hijo::Obj(desl), Hijo::Obj(casilla)]),
+        Hijo::Obj(desl),
+        Hijo::Obj(casilla),
         Hijo::Obj(nombre),
         Hijo::Obj(aviso),
+        Hijo::Espacio(8),
         Hijo::Fila(vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, tema);
     i.esquinas = 16;
+    i.margen = 24;
     i.foco = Some(nombre);
-    let (w, h) = (360, 320);
+    let (w, h) = (360, 408);
     eprintln!("medida: {:?}", i.medida());
     i.colocar(Rect::new(0, 0, w, h));
     for (n, o) in [("título", titulo), ("texto", texto), ("deslizador", desl), ("casilla", casilla), ("campo", nombre), ("aviso", aviso), ("cancelar", cancelar), ("aceptar", aceptar)] {

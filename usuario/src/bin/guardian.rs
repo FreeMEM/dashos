@@ -432,13 +432,14 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
 fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     const CAPAS: u32 = 20;
     const CAPA: u32 = 21;
-    const ANCHO: i32 = 520;
-    const ALTO: i32 = 170;
+    // El diálogo; su sombra la pone el compositor, como a las demás capas.
+    const ANCHO: i32 = DIALOGO.0;
+    const ALTO: i32 = DIALOGO.1;
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
     let mut tema = Tema::OSCURO;
-    let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
+    let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
     let Some(mut c) = Cliente::conectar() else { return false };
     let Some(globales) = c.globales() else { return false };
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -487,7 +488,7 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
                     return false;
                 }
                 let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut titulo, &tema);
+                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut medio, &tema);
                 let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
@@ -536,22 +537,45 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     }
 }
 
-/// Pinta la pregunta de U4: una tarjeta con quién pide qué y las teclas para contestar.
-/// Con los colores del tema del sistema (S10c), con el borde en el primario.
-fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) {
+/// Lo que mide el diálogo de la pregunta (Material 3: de 280 a 560 de ancho).
+const DIALOGO: (i32, i32) = (440, 208);
+
+/// Pinta la pregunta de U4 como un diálogo de Material 3, con los colores del tema del sistema (S10c): el contenedor
+/// alto con esquinas de 28 (fuera, transparente; la sombra, del compositor), 24 de relleno, el título (headline small, 24), el texto (body
+/// medium, 14, en el color suave) y abajo a la derecha las respuestas. No se pulsan (`guardian` solo atiende al
+/// teclado): cada una lleva su tecla en una tecla dibujada, con contorno, y su nombre en el primario.
+fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
-    l.rellenar(Rect::new(0, 0, ancho, alto), t.superficie);
-    l.borde(Rect::new(0, 0, ancho, alto), 0, 2, t.primario);
-    let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
-    let cabeza = "Permiso";
-    let x = centrado(titulo, cabeza, 26);
-    titulo.dibujar(&mut l, x, 30, cabeza, 26, t.sobre_superficie);
-    let frase = alloc::format!("¿Dejas que \"{}\" use \"{}\"?", programa, servicio);
-    let x = centrado(fuente, &frase, 20);
-    fuente.dibujar(&mut l, x, 82, &frase, 20, t.sobre_superficie);
-    let teclas = "S: sí    N: no";
-    let x = centrado(fuente, teclas, 18);
-    fuente.dibujar(&mut l, x, 120, teclas, 18, t.sobre_variante_superficie);
+    l.borrar(Rect::new(0, 0, ancho, alto), 0);
+    let caja = Rect::new(0, 0, ancho, alto);
+    l.redondeado(caja, 28, t.contenedor_alto());
+    let x = caja.x + 24;
+    let ancho_texto = caja.w - 48;
+    // El título: la pregunta. Si el nombre es largo y no cabe a 24, a 22 y luego a 20.
+    let titulo = alloc::format!("¿Dar permiso a \"{}\"?", programa);
+    let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
+    l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
+    fuente.dibujar(&mut l, x, caja.y + 24 + 24, &titulo, tam, t.sobre_superficie);
+    // El texto, a 16 del título (de 32 de alto); líneas de 20.
+    let y = caja.y + 24 + 32 + 16;
+    let frase = alloc::format!("Quiere usar \"{}\".", servicio);
+    fuente.dibujar(&mut l, x, y + 15, &frase, 14, t.sobre_variante_superficie);
+    fuente.dibujar(&mut l, x, y + 20 + 15, "Contesta con el teclado.", 14, t.sobre_variante_superficie);
+    l.soltar_recorte();
+    // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: "N No" y "S Sí".
+    let fila = caja.y + caja.h - 24 - 40;
+    let mut derecha = caja.x + caja.w - 24;
+    for (tecla, nombre) in [("S", "Sí"), ("N", "No")] {
+        let mn = medio.medir(nombre, 14);
+        let ancho_resp = 12 + 24 + 8 + mn.ancho + 12;
+        let r = Rect::new(derecha - ancho_resp, fila, ancho_resp, 40);
+        let k = Rect::new(r.x + 12, fila + 8, 24, 24);
+        l.borde(k, 6, 1, t.contorno);
+        let mk = medio.medir(tecla, 14);
+        medio.dibujar(&mut l, k.x + (k.w - mk.ancho) / 2, k.y + (k.h - mk.alto()) / 2 + mk.sube, tecla, 14, t.sobre_superficie);
+        medio.dibujar(&mut l, k.x + k.w + 8, fila + (40 - mn.alto()) / 2 + mn.sube, nombre, 14, t.primario);
+        derecha = r.x - 8;
+    }
 }
 
 /// U3: pide al compositor un aviso cuando nadie toque el teclado ni el ratón en `ms` milisegundos
