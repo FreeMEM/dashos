@@ -85,6 +85,12 @@ pub const ACTIVA: u32 = 18;
 /// sonido): orden y 16 bytes con el nombre del programa que lo sirve, con la llave. Con ella `sesiones` les avisa
 /// (`AVISO_PERSONA`, `AVISO_DETRAS`) y da a lo que lanza su llave marcada.
 pub const CANAL_SISTEMA: u32 = 19;
+/// De un programa: la memoria de cada proceso desde la ficha que se diga (u64), por páginas de `POR_PAGINA`, con la
+/// misma vista que `PROCESOS` (los de su usuario y los del sistema; `guardian`, todos). Contesta cuántas van (u32),
+/// cuántas hay (u32) y entradas de `ENTRADA_MEMORIA` bytes: nombre (16), usuario (u32), el límite de su grupo en KB
+/// (u32) y lo que su grupo tiene cobrado en bytes (u64): páginas, canales y lo que crea, lo que el kernel le cobra.
+pub const MEMORIA: u32 = 20;
+pub const ENTRADA_MEMORIA: usize = 32;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los

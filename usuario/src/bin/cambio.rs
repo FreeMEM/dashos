@@ -633,6 +633,29 @@ fn espia(arch: &Archivos, home: u8) -> bool {
             break;
         }
     }
+    // La memoria de cada proceso (`MEMORIA`): la misma vista, ninguno de otra persona.
+    let mut en_memoria = 0;
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&s::MEMORIA.to_le_bytes());
+        p[4..12].copy_from_slice(&(en_memoria as u64).to_le_bytes());
+        let mut r = [0u8; 8 + s::ENTRADA_MEMORIA * s::POR_PAGINA];
+        let (n, _) = pedir(&p, &mut r, 3_000_000);
+        if n < 8 {
+            break;
+        }
+        let van = (u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize).min(s::POR_PAGINA);
+        for i in 0..van {
+            let uid = u32::from_le_bytes(r[8 + s::ENTRADA_MEMORIA * i + 16..8 + s::ENTRADA_MEMORIA * i + 20].try_into().unwrap());
+            if uid >= s::PRIMERA_PERSONA && uid != 1001 {
+                ajenos += 1;
+            }
+        }
+        en_memoria += van;
+        if van == 0 || en_memoria >= 256 {
+            break;
+        }
+    }
     // Matar a ciegas lo que no ve: los números de `inicio` y los de lo que lanza `sesiones` (ahí está el de Ana). Nada
     // muere, y todo da "no existe": ni se sabe qué hay.
     let (mut probados, mut muertos, mut revelados) = (0, 0, 0);
@@ -651,9 +674,9 @@ fn espia(arch: &Archivos, home: u8) -> bool {
             revelados += 1;
         }
     }
-    let procesos = cuantos > 0 && ajenos == 0 && muertos == 0 && revelados == 0;
-    println!("  [cambio] Carla: ve {} procesos, {} de otra persona; matar a ciegas {}: {} muertos, {} dicen que existen: {}",
-        cuantos, ajenos, probados, muertos, revelados, if procesos { "bien" } else { "MAL" });
+    let procesos = cuantos > 0 && en_memoria == cuantos && ajenos == 0 && muertos == 0 && revelados == 0;
+    println!("  [cambio] Carla: ve {} procesos ({} con su memoria), {} de otra persona; matar a ciegas {}: {} muertos, {} dicen que existen: {}",
+        cuantos, en_memoria, ajenos, probados, muertos, revelados, if procesos { "bien" } else { "MAL" });
     // Ser Ana ante `sesiones`: solo `guardian` puede.
     let entrar = con_textos(s::ENTRAR, b"Ana", b"clave de Ana");
     let volver = con_textos(s::VOLVER, b"Ana", b"clave de Ana");

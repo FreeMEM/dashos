@@ -284,8 +284,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Fondo atardecer.png: en pantalla (640 × 480, 
 ~│   [centro] colores del fondo: semilla c44e68, esquemas claro y oscuro en 
 ~│   [ajustes] tema del sistema: oscuro, color c44e68, esquema del centro (
-# Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
+# Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14), procesos, memoria en uso y lo que más gasta
+# (la orden MEMORIA de `sesiones`; la lista entera, en la consola).
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
+~; Lo que más gasta: 
+~│   [centro] memoria por proceso (
+# Carla (`cambio`, con Ana detrás) no ve nada de Ana, tampoco en MEMORIA: todos los que ve, con su memoria.
+~), 0 de otra persona; matar a ciegas 
+~ muertos, 0 dicen que existen: bien
 # Super+Arriba la maximiza (un búfer nuevo de lo que deja la barra) y Super+Abajo la devuelve.
 ~│   [centro] el compositor pide 800x560
 ~│   [centro] vuelve a 560x420

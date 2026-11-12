@@ -676,6 +676,35 @@ fn acerca() -> Vec<String> {
         l.push(alloc::format!("Memoria en uso: {},{} MB de {} MB (el núcleo, {},{} MB)", en_uso / 10, en_uso % 10, mb(total) / 10,
             nucleo * 10 / (1 << 20) / 10, nucleo * 10 / (1 << 20) % 10));
     }
+    // Lo que tiene cobrado el grupo de cada proceso que se ve (`MEMORIA`, por páginas): los tres que más, en la ventana;
+    // la lista entera, en la consola.
+    let mut gasto: Vec<(String, u64)> = Vec::new();
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&s::MEMORIA.to_le_bytes());
+        p[4..12].copy_from_slice(&(gasto.len() as u64).to_le_bytes());
+        if a_sesiones(&p, &mut r) < 8 {
+            break;
+        }
+        let van = (u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize).min(s::POR_PAGINA);
+        for i in 0..van {
+            let e = &r[8 + s::ENTRADA_MEMORIA * i..8 + s::ENTRADA_MEMORIA * (i + 1)];
+            let fin = e[..16].iter().position(|&c| c == 0).unwrap_or(16);
+            gasto.push((String::from(core::str::from_utf8(&e[..fin]).unwrap_or("?")), u64::from_le_bytes(e[24..32].try_into().unwrap())));
+        }
+        if van == 0 || gasto.len() >= 256 {
+            break;
+        }
+    }
+    gasto.sort_by(|a, b| b.1.cmp(&a.1));
+    let mb = |b: u64| { let d = b * 10 / (1 << 20); alloc::format!("{},{} MB", d / 10, d % 10) };
+    if !gasto.is_empty() {
+        let tres: Vec<String> = gasto.iter().take(3).map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
+        l.push(alloc::format!("Lo que más gasta: {}", tres.join(", ")));
+        let todo: Vec<String> = gasto.iter().map(|(n, b)| alloc::format!("{} {}", n, mb(*b))).collect();
+        let suma: u64 = gasto.iter().map(|g| g.1).sum();
+        println!("  [centro] memoria por proceso ({} procesos, {} en total): {}", gasto.len(), mb(suma), todo.join("; "));
+    }
     l
 }
 

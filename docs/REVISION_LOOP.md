@@ -1293,3 +1293,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Decisiones provisionales de las dos ramas, para el usuario: docs/bitacoras/avisos.md y docs/bitacoras/workbench.md
   (capa de iconos en una columna a la derecha, Home = cajón C, orden DUENO 34 en archivos, el compositor no pone
   ventanas medio fuera, avisos de una sesión de detrás solo en el historial).
+
+### 2026-11-12 14:05: memoria por proceso (orden MEMORIA de `sesiones`)
+- `sesiones` contesta MEMORIA (20): por cada proceso que se ve (la misma vista que PROCESOS), nombre, usuario, límite
+  de su grupo en KB y lo que tiene cobrado. El centro enseña en Acerca de los tres que más gastan y la lista entera en
+  la consola.
+- Hostil: Carla (`cambio`, con Ana detrás) ve 20 procesos, los 20 con su memoria, 0 de otra persona.
+- Medida, arranque de pruebas: en uso 160,8 MB (núcleo 9,4); los 24 procesos que ve el centro, 114,4 MB: archivos
+  34,2 (su caché de páginas, 24 MB), fondo 10,1, barra 6,4 y el resto de los que tienen ventana entre 4,2 y 5,5 MB.
+- Causa de los 4 MB: el montón (`usuario/src/monton.rs`) pide trozos de 4 MB, y el kernel da todas las páginas de un
+  objeto de memoria al crearlo. Un programa que usa 200 KB gasta 4 MB. Siguiente: trozos que crecen (256 KB, y doblando).
+- `make prueba` BIEN; `make arranque-virt` tres vueltas a la vez, todo BIEN.

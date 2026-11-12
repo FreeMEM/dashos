@@ -797,6 +797,27 @@ fn principal() -> u64 {
                     r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
                     dashos::canal_escribir(respuesta, &r[..8 + 32 * i], &[]);
                 }
+                MEMORIA => {
+                    let desde = u64_en(4) as usize;
+                    // Como `PROCESOS`: lo de otra persona ni sale.
+                    let todos = yo.is_some_and(|f| es(&f, GUARDIANES));
+                    let ve = |f: &&Ficha| todos || f.uid < PRIMERA_PERSONA || yo.is_some_and(|y| y.uid == f.uid);
+                    let total = fichas.iter().flatten().filter(ve).count();
+                    let mut r = [0u8; 8 + ENTRADA_MEMORIA * POR_PAGINA];
+                    let mut i = 0;
+                    for f in fichas.iter().flatten().filter(ve).skip(desde).take(POR_PAGINA) {
+                        let (limite, usado) = dashos::grupo_uso(f.grupo);
+                        let o = 8 + ENTRADA_MEMORIA * i;
+                        r[o..o + 16].copy_from_slice(&f.nombre);
+                        r[o + 16..o + 20].copy_from_slice(&f.uid.to_le_bytes());
+                        r[o + 20..o + 24].copy_from_slice(&((limite.max(0) as u64 / 1024).min(u32::MAX as u64) as u32).to_le_bytes());
+                        r[o + 24..o + 32].copy_from_slice(&(if limite < 0 { 0 } else { usado }).to_le_bytes());
+                        i += 1;
+                    }
+                    r[0..4].copy_from_slice(&(i as u32).to_le_bytes());
+                    r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+                    dashos::canal_escribir(respuesta, &r[..8 + ENTRADA_MEMORIA * i], &[]);
+                }
                 ENTRAR | SALIR | VOLVER => {
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
                     let guardian = yo.is_some_and(|f| es(&f, GUARDIANES));
