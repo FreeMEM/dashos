@@ -114,6 +114,8 @@ big-endian en EL0.
 - Prueba: `make arranque-virt-escritorio` (QEMU virt, la ramfb pasa de la consola al compositor): BIEN; captura en
   `capturas-agente/pi5-escritorio-virt.png` (las dos ventanas de prueba, Ajustes y la ventana Amiga). En la Pi 5, sin
   probar.
+- Tras el paso 4, otra vez `make prueba`, `arranque-virt` (las cinco), `arranque-virt-vm` y `arranque-virt-2`: BIEN.
+  Y `arranque-virt-diag` y `tarjeta-pi5` de nuevo (la tarjeta ya lleva las dos imágenes).
 
 ### Lo siguiente: teclado y ratón (el RP1)
 
