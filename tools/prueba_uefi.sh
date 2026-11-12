@@ -527,7 +527,11 @@ while time.time() - inicio < total:
         # de reintento caían allí como contraseñas vacías).
         def ultimo(t):
             return texto.rfind(t)
-        bloqueado_ahora = ultimo("[guardian] sesión bloqueada") > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
+        # Bloqueada desde cualquiera de sus avisos (también el bloqueo que pide `pide`: "se bloquea la sesión de ...") hasta
+        # que se desbloquea o entra alguien.
+        bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("[guardian] se bloquea la sesión de"),
+                            ultimo("pantalla de bloqueo pintada"), ultimo("pantalla de entrada pintada"))
+        bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
         if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
             reintento = max(reintento, time.time() + 4)
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
