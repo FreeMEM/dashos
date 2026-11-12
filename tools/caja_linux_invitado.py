@@ -6,6 +6,8 @@ Nada de lo que baja o compila va a git: se queda en ~/.cache/dashos-caja-linux/.
     tools/caja_linux_invitado.py preparar   # baja y compila Linux (arm64) y un initramfs con busybox estático
     tools/caja_linux_invitado.py probar     # arranca ese Linux en qemu-system-aarch64 -M virt con el DTB y la carga
                                             # que saca caja-linux/vmm (no los de QEMU)
+    tools/caja_linux_invitado.py probar-vhost  # lo mismo, con el disco virtio-blk del crate (cola y peticiones)
+                                               # servido a QEMU por vhost-user: lo usa el controlador de Linux
 
 "probar" no usa -kernel ni -dtb de QEMU. El crate coloca la Image, el DTB y el initrd según el protocolo de arranque
 de arm64 y escribe un trampolín de seis instrucciones que pone x0 = DTB, x1..x3 = 0 y salta al kernel. QEMU solo
@@ -19,6 +21,7 @@ código.
 
 import argparse
 import gzip
+import hashlib
 import io
 import json
 import os
@@ -26,6 +29,7 @@ import shutil
 import subprocess
 import sys
 import tarfile
+import time
 import urllib.request
 from pathlib import Path
 
@@ -66,6 +70,12 @@ echo "caja-linux: virtio $(ls /sys/bus/virtio/devices | tr '\n' ' ')"
 for d in /sys/bus/virtio/devices/*; do echo "caja-linux:   $(basename $d) id=$(cat $d/device) $(basename $(readlink $d/driver) 2>/dev/null)"; done
 echo "caja-linux: consola $(cat /sys/class/tty/console/active)"
 if [ -b /dev/vda ]; then echo "caja-linux: vda $(cat /sys/block/vda/size) sectores, primeros bytes: $(head -c 16 /dev/vda)"; fi
+# Con un disco de 8 MiB o más (el de probar-vhost): suma de todo, y copia del primer MiB a los 4 MiB.
+if [ -b /dev/vda ] && [ "$(cat /sys/block/vda/size)" -ge 16384 ]; then
+  echo "caja-linux: md5 vda $(md5sum /dev/vda | cut -d' ' -f1)"
+  dd if=/dev/vda of=/dev/vda bs=65536 count=16 seek=64 conv=fsync 2>/dev/null && sync
+  echo "caja-linux: copia hecha, md5 4M $(dd if=/dev/vda bs=65536 skip=64 count=16 2>/dev/null | md5sum | cut -d' ' -f1)"
+fi
 grep -E 'GIC|virtio|uart|arch_timer' /proc/interrupts | sed 's/^/caja-linux: irq /'
 echo "caja-linux: psci $(dmesg | grep -o 'PSCIv[0-9.]* detected in firmware' | head -1)"
 echo "caja-linux: fin de la prueba"
@@ -171,7 +181,7 @@ def initramfs():
     entradas.append(("dev/console", 0o020600, b"", (5, 1)))
     entradas.append(("bin/busybox", 0o100755, bb, (0, 0)))
     for applet in ("sh", "mount", "echo", "cat", "ls", "grep", "head", "tr", "uname", "basename", "readlink",
-                   "sed", "dmesg", "poweroff"):
+                   "sed", "dmesg", "poweroff", "md5sum", "dd", "sync", "cut"):
         entradas.append((f"bin/{applet}", 0o120777, b"busybox", (0, 0)))
     entradas.append(("init", 0o100755, INIT.encode(), (0, 0)))
     destino.write_bytes(gzip.compress(cpio_newc(entradas)))
@@ -205,7 +215,7 @@ QEMU_VIRT = {
 }
 
 
-def probar(args):
+def probar(args, vhost=False):
     for f in ("Image", "initramfs.cpio.gz", "disco.img"):
         if not (CACHE / f).exists():
             raise SystemExit(f"falta {CACHE / f}: ejecuta antes 'preparar'")
@@ -233,8 +243,31 @@ def probar(args):
             "-serial", f"file:{sal / 'pl011.log'}",
             "-device", "virtio-serial-device", "-chardev", f"file,id=hvc,path={sal / 'hvc0.log'}",
             "-device", "virtconsole,chardev=hvc",
-            "-drive", f"if=none,id=d0,format=raw,file={CACHE / 'disco.img'},readonly=on",
-            "-device", "virtio-blk-device,drive=d0"]
+            ]
+    vhost_proc = None
+    if vhost:
+        # Memoria compartida para que el proceso de vhost-user vea la del invitado.
+        qemu[2] = "virt,gic-version=2,memory-backend=ram"
+        qemu += ["-object", f"memory-backend-memfd,id=ram,size={args.memoria}M,share=on",
+                 "-chardev", f"socket,id=vu,path={sal / 'vhost.sock'}",
+                 "-device", "vhost-user-blk,chardev=vu,num-queues=1"]
+        run("cargo", "build", "--release", "--quiet", "--manifest-path",
+            RAIZ / "caja-linux/vhost-prueba/Cargo.toml")
+        imagen = sal / "disco-vhost.img"
+        # 8 MiB de bytes conocidos (seudoaleatorios, repetibles).
+        bloque = hashlib.sha256(b"caja-linux").digest() * (8 << 20 >> 5)
+        imagen.write_bytes(bloque[: 8 << 20])
+        md5_original = hashlib.md5(imagen.read_bytes()).hexdigest()
+        md5_primer_mib = hashlib.md5(imagen.read_bytes()[: 1 << 20]).hexdigest()
+        vhost_proc = subprocess.Popen([str(RAIZ / "caja-linux/vhost-prueba/target/release/vhost-blk"),
+                                       str(sal / "vhost.sock"), str(imagen)])
+        for _ in range(100):
+            if (sal / "vhost.sock").exists():
+                break
+            time.sleep(0.05)
+    else:
+        qemu += ["-drive", f"if=none,id=d0,format=raw,file={CACHE / 'disco.img'},readonly=on",
+                 "-device", "virtio-blk-device,drive=d0"]
     for trozo in plan["trozos"]:
         qemu += ["-device", f"loader,file={sal / trozo['fichero']},addr={trozo['direccion']:#x},force-raw=on"]
     qemu += ["-device", f"loader,addr={plan['pc']:#x},cpu-num=0"]
@@ -243,16 +276,30 @@ def probar(args):
         subprocess.run([str(c) for c in qemu], timeout=args.tiempo, check=False)
     except subprocess.TimeoutExpired:
         print("QEMU no acabó en", args.tiempo, "s")
+    if vhost_proc:
+        try:
+            vhost_proc.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            vhost_proc.kill()
     for nombre in ("pl011.log", "hvc0.log"):
         f = sal / nombre
         print(f"===== {nombre} =====")
         if f.exists():
             print(f.read_text(errors="replace"))
     hvc = (sal / "hvc0.log").read_text(errors="replace") if (sal / "hvc0.log").exists() else ""
-    if "caja-linux: fin de la prueba" in hvc and "DISCO-CAJA-LINUX" in hvc:
-        print("PRUEBA BIEN: Linux arrancó con el DTB y la carga de caja-linux/vmm")
-    else:
+    if "caja-linux: fin de la prueba" not in hvc:
         raise SystemExit("PRUEBA MAL: no llegó al final de init")
+    if not vhost:
+        if "DISCO-CAJA-LINUX" not in hvc:
+            raise SystemExit("PRUEBA MAL: no leyó el disco")
+        print("PRUEBA BIEN: Linux arrancó con el DTB y la carga de caja-linux/vmm")
+        return
+    datos = imagen.read_bytes()
+    bien = (f"md5 vda {md5_original}" in hvc and f"md5 4M {md5_primer_mib}" in hvc
+            and datos[4 << 20: 5 << 20] == datos[: 1 << 20])
+    if not bien:
+        raise SystemExit(f"PRUEBA MAL: se esperaba md5 {md5_original} del disco y {md5_primer_mib} de la copia")
+    print("PRUEBA BIEN: el controlador virtio-blk de Linux leyó y escribió el disco de caja-linux/vmm")
 
 
 def main():
@@ -265,6 +312,10 @@ def main():
     pr.add_argument("--tiempo", type=int, default=120, help="segundos antes de cortar QEMU")
     pr.add_argument("--bootargs", default="console=hvc0 earlycon panic=-1")
     pr.set_defaults(f=probar)
+    pv = sub.add_parser("probar-vhost")
+    for a in pr._actions[1:]:
+        pv._add_action(a)
+    pv.set_defaults(f=lambda a: probar(a, vhost=True))
     a = p.parse_args()
     a.f(a)
 

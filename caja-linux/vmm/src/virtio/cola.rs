@@ -175,6 +175,17 @@ impl ColaPartida {
         *self = ColaPartida::default();
     }
 
+    /// Retoma una cola en un punto dado: el siguiente índice disponible que tomar y el índice usado (al restaurar una
+    /// máquina guardada, o cuando otro lado lleva el transporte, como vhost-user en las pruebas del PC).
+    pub fn reanudar(&mut self, ultimo_disponible: u16, indice_usado: u16) {
+        self.ultimo_disponible = ultimo_disponible;
+        self.indice_usado = indice_usado;
+    }
+
+    pub fn ultimo_disponible(&self) -> u16 {
+        self.ultimo_disponible
+    }
+
     /// Comprueba lo que el invitado puso antes de QueueReady (§2.7: tamaño potencia de 2, alineaciones 16, 2 y 4).
     pub fn valida(&self, tam_max: u16) -> bool {
         self.tam != 0
