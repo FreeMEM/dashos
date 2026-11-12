@@ -1481,3 +1481,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Prueba en el PC (`radio_de_las_esquinas`): esquinas de 12, 16 y 28 dibujadas píxel a píxel, medidas a 2 como mucho;
   sin esquina, 0. Captura del panel: esquinas limpias.
 - `make prueba` BIEN; wayland 60 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 17:30: la fila bajo el ratón, la CPU al arrancar y S24
+- Kit: `atr::ENCIMA` (la fila visible de una lista con el ratón encima, la pone `Interfaz`) y la capa de estado de
+  Material 3 (8 % del color del texto) en esa fila. Prueba del kit: encima de la segunda fila, 1; fuera, -1 (64 bien).
+- Kernel: al arrancar dice qué CPU es y si admite big-endian en EL0 y páginas de 4 KB (`MIDR_EL1`,
+  `ID_AA64MMFR0_EL1`). En QEMU virt: "CPU: fabricante 0x41, pieza 0xd08 Cortex-A72; big-endian en EL0: sí (y en EL1);
+  páginas de 4 KB: sí".
+- `docs/diseño/S24-ordenadores-arm.md`: CM5, RTX Spark, portátiles Snapdragon X y Mac (pedido del usuario), con lo
+  que hay, lo que falta y el orden recomendado; tres decisiones para el usuario.
+- `make prueba` BIEN; arranque-virt: revision BIEN dos veces; prueba1 falló dos veces por lo mismo: `hostil` muere en
+  la prueba de préstamos (A7) leyendo lo prestado ("excepción de clase 0x24 ... FAR 0x41_0007_6d9b"): a mitad de leer
+  se le retira el préstamo. No fue la vuelta a instantánea de `ficheros` (ya había acabado); queda por ver quién lo
+  retira (¿Comprobar el disco del centro, `olvidar_todo`?). Pendiente.

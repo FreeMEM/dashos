@@ -9,6 +9,20 @@ pub fn nivel_excepcion() -> u64 {
     (el >> 2) & 3
 }
 
+/// MIDR_EL1: quién hizo la CPU y qué modelo es (implementador en los bits 31-24, pieza en los 15-4).
+pub fn midr() -> u64 {
+    let v: u64;
+    unsafe { asm!("mrs {}, midr_el1", out(reg) v) };
+    v
+}
+
+/// ID_AA64MMFR0_EL1: lo que admite la MMU (tamaños de página, orden de bytes...).
+pub fn mmfr0() -> u64 {
+    let v: u64;
+    unsafe { asm!("mrs {}, id_aa64mmfr0_el1", out(reg) v) };
+    v
+}
+
 /// Frecuencia del contador del sistema (CNTFRQ_EL0).
 pub fn frecuencia() -> u64 {
     let f: u64;
