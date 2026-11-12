@@ -1269,7 +1269,7 @@ fn principal() -> u64 {
                         16
                     } else {
                         // U6: `guardian`, todo; el centro, lo de su usuario y lo del sistema (no lo de otras personas).
-                        let ve = |c: &&Concedido| yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)) || c.2 == f.uid || c.2 < PRIMERA_PERSONA);
+                        let ve = |c: &&Concedido| yo.is_some_and(|f| es(&f, GUARDIANES) || c.2 == f.uid || c.2 < PRIMERA_PERSONA);
                         let total = concedidos.iter().flatten().filter(ve).count();
                         let desde = u32_en(4) as usize;
                         let mut van = 0;
@@ -1298,7 +1298,7 @@ fn principal() -> u64 {
                         let s = REPARTE.iter().position(|r| r.0.as_bytes() == serv);
                         let mut quitado = false;
                         // U6: como en `CONCEDIDOS`, el centro solo lo de su usuario y lo del sistema.
-                        let todo = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                        let todo = yo.is_some_and(|f| es(&f, GUARDIANES));
                         let suyo = yo.map_or(0, |f| f.uid);
                         for c in concedidos.iter_mut() {
                             if c.is_some_and(|c| Some(c.1) == s && &c.0[..c.0.iter().position(|&x| x == 0).unwrap_or(16)] == prog && (todo || c.2 == suyo || c.2 < PRIMERA_PERSONA)) {

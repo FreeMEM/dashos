@@ -51,6 +51,9 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 | sonido | permiso de plazo (S3) | "sonido" (es quien lee) |
 | virtio-sonido | su permiso DMA, registros y configuración del aparato, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
+| red (solo `virt`) | — | "red" (es quien lee) |
+| virtio-red (solo `virt`) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
+| red-prueba, red-gloton (pruebas, solo `virt`) | — | "red" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
 1) del otro extremo, y el servidor, un mensaje sin marca por cliente con su marca (8 bytes) y su nombre (16). Solo
@@ -391,3 +394,43 @@ servicio la cola. El servicio no se fía de la cabecera: lo disponible no pasa d
 Cuando el anillo baja de la mitad, el servicio escribe 4 bytes en el canal del programa para despertarlo (una vez
 hasta que la cabeza se mueva). Si ese canal está cerrado, el programa murió: su flujo sale con un fundido de 5 ms. Al
 `CERRAR`, el servicio suena lo que quede en el anillo y quita el flujo.
+
+## Red (S13, primera versión)
+
+`usuario/src/bin/red.rs` es el servicio: la pila TCP/IP (smoltcp 0.14, 0BSD) en su proceso. `usuario/src/bin/virtio_red.rs`
+es el controlador de virtio-net (PCI moderno; en QEMU, `disable-legacy=on`). El protocolo está en
+`usuario/src/protocolo/red.rs` y el lado del programa en `usuario/src/red_cliente.rs` (`Conexion`: conectar, enviar,
+recibir, esperar y cerrar; `estado`).
+
+**El permiso.** Solo llega a la red quien tiene una llave del canal "red". Hoy la da `inicio`, por nombre, a quien la
+pide en `PROGRAMAS`; más adelante la repartirá `sesiones`. El servicio sabe de quién es cada marca por `inicio` y no
+atiende marcas que no conoce. Un programa solo toca sus conexiones.
+
+**El controlador.** Llaves: 1 su permiso DMA, 2 sus registros (BAR 4), 3 su configuración del PCIe, 4 su interrupción
+(INTx; opcional, sin ella mira cada 2 ms) y después el canal "red". Funciones: VERSION_1 y MAC; sin sumas por el
+aparato ni TSO. Una cola de recibir de 128 búferes de 2 KB y una de enviar de 64. Manda `TARJETA` (la MAC, una memoria
+con 128 ranuras de recibir y 64 de enviar, y un canal suyo) y después `TRAMAS` cuando mueve algo; el servicio le manda
+`TRAMAS` cuando pone algo para enviar. Copia cada trama entre la DMA y las ranuras: el servicio no toca los
+descriptores. Tira y cuenta lo corto (menos de 14 bytes), lo largo (más de 1518), lo que no cabe en las ranuras y los
+descriptores que el aparato devuelve sin tenerlos.
+
+**Los programas.** Mensajes de palabras de 32 bits:
+
+| Orden | Datos | Llaves | Respuesta |
+|---|---|---|---|
+| 1 `CONECTAR` | familia (4), puerto, tamaño de cada anillo (4 KB a 64 KB, potencia de dos), dirección IPv4 | un extremo de escritura para contestar | `R_CONECTAR` (1): conexión y estado; con `BIEN`, la llave de la memoria |
+| 2 `AVISO` | conexión | | ninguna |
+| 3 `CERRAR` | conexión | | ninguna; se manda lo que quede y se cierra |
+| 4 `ESTADO` | | un extremo de escritura | `R_ESTADO` (4): dirección, puerta, DNS, conexiones, tramas y rechazos |
+
+Estados: 0 bien, -1 mal formado, -2 sin dirección, -3 límite, -4 rechazada, -5 cortada, -6 no existe, -7 familia que no
+se sabe (IPv6). Como mucho 8 conexiones por programa y 32 en total; la novena da -3, las de los demás siguen.
+
+**La memoria de una conexión** la crea el servicio (cuenta en su cupo) y el programa recibe una copia que no puede
+pasar. Así no puede dar una memoria revocable y quitársela al servicio con él dentro. Cabecera de palabras (cabeza y
+cola del anillo de envío, cabeza y cola del de recepción, fase, "el programa duerme", "el servicio espera") y los dos
+anillos desde el byte 64. Lo que mueve el servicio lo guarda él, no lo lee de la memoria. Cuando el programa duerme y
+algo cambia, el servicio le manda `EVENTO`; cuando el servicio espera al programa, este le manda `AVISO`. Cada 2 s sin
+mensajes, un `LATIDO`: si su canal está cerrado, el programa acabó y la conexión se corta.
+
+**Cortafuegos.** Nada escucha: lo que llega sin pedirlo, la pila lo rechaza. Escuchar queda para después.

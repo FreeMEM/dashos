@@ -1,5 +1,10 @@
 # S13. Red
 
+> **2026-11-12, primera versión (rama `red`, `docs/bitacoras/red.md`).** smoltcp como pila, provisional (la pregunta
+> abierta 1). Su CUBIC no compila sin `std` (usa `f64::powi` y `mul_add`): va con Reno hasta que se le dé una raíz y
+> una potencia propias. La memoria de cada conexión la pone el servicio, no el programa: una memoria del programa
+> podría ser revocable y quitársela al servicio con él dentro.
+
 > **2026-11-10.** Los controladores de Linux con LKL, y el Wi-Fi y las mejoras de red, en [S12b](S12b-controladores-de-linux.md).
 
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
