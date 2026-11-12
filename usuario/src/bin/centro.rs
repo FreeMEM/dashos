@@ -472,7 +472,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             (false, 0)
         }
     };
-    i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
+    i.ctx.tema = Tema::del_sistema(COLORES[color].1, oscuro);
     let mut lineas_registro: Vec<String> = Vec::new();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
@@ -711,7 +711,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         _ => {}
                     }
                     if v >= 0 {
-                        i.ctx.tema = Tema::desde_color(COLORES[color].1, oscuro);
+                        i.ctx.tema = Tema::del_sistema(COLORES[color].1, oscuro);
                         lineas_registro = apariencia(oscuro, color);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         if gt.is_some() {

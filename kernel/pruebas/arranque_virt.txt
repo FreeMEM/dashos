@@ -182,6 +182,8 @@ DashOS en marcha con 4 núcleos.
 # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
 # U5: lo cedido lo elige el usuario en la ventana del selector, que empieza en C y no enseña el nombre con '|' (en
 # la prueba, el guion: Intro sin nada, flecha abajo e Intro para entrar en Privado, y Fin e Intro para nota.txt).
+# S10c: el selector también sigue el tema del sistema (aquí, aún el de serie).
+~│   [selector] tema del sistema: claro, color 6750a4
 ~│   [selector] ventana de abrir en pantalla, para hostil: C (1 nombres raros sin enseñar),
 ~│   [selector] Intro sin nada elegido: no abre nada
 ~│   [selector] entra en C/Privado, 1 entradas

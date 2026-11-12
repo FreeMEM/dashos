@@ -169,8 +169,10 @@ fn principal() -> u64 {
                 let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
                 if (color, oscuro) != tema_actual {
                     tema_actual = (color, oscuro);
-                    i.ctx.tema = Tema::desde_color(color, oscuro);
-                    println!("  [ajustes] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
+                    let t0 = dashos::ahora_us();
+                    i.ctx.tema = Tema::del_sistema(color, oscuro);
+                    let us = dashos::ahora_us() - t0;
+                    println!("  [ajustes] tema del sistema: {}, color {:06x} ({} µs)", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff, us);
                     cambio = true;
                 }
             }

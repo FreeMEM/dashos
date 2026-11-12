@@ -63,6 +63,17 @@ impl Tema {
 }
 
 impl Tema {
+    /// El esquema del tema del sistema (S10c): el de referencia, ya hecho, para el violeta de serie; si no,
+    /// `desde_color`. Sin FPU (DashOS compila sin ella), `desde_color` cuesta de 180 a 340 ms en QEMU: un programa que
+    /// lo calcula al abrir su ventana tarda en atender la entrada.
+    pub fn del_sistema(color: Color, oscuro: bool) -> Tema {
+        if color | 0xff00_0000 == 0xff67_50a4 {
+            if oscuro { Tema::OSCURO } else { Tema::CLARO }
+        } else {
+            Tema::desde_color(color, oscuro)
+        }
+    }
+
     /// El esquema de un color base: cada papel es un tono de una paleta (Material 3: primario 40 en claro y 80 en
     /// oscuro, superficie 98 y 6...).
     pub fn desde_color(base: Color, oscuro: bool) -> Tema {

@@ -36,6 +36,8 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
+/// El objeto del tema del sistema (`dashos_tema_v1`, S10c), tras los de `ventana_cliente`.
+const TEMA: u32 = 43;
 const CANAL: u32 = 3;
 /// Donde empieza y de donde no se sale (en la prueba, lo del usuario 1000; `C/Privado` el hostil no lo puede abrir).
 const RAIZ: &str = "C";
@@ -215,6 +217,10 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+        // S10c: el tema del sistema (lo pone el centro de control): llega al enlazar y cada vez que cambia.
+        if let Some(gt) = global("dashos_tema_v1") {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+        }
         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
         e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(alto).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -285,6 +291,12 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                 (PUNTERO, wl_pointer::ev::LEAVE) => {
                     pulsado = false;
                     i.raton(-1, -1, false)
+                }
+                (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
+                    let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
+                    i.ctx.tema = Tema::del_sistema(color, oscuro);
+                    println!("  [selector] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
+                    true
                 }
                 (TECLADO, wl_keyboard::ev::KEYMAP) => {
                     if let Some(l) = c.juntador.tomar_llave() {

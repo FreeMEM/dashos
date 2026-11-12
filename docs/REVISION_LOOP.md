@@ -958,3 +958,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   errores de protocolo (no hay). Sospecha: algo del orden de los eventos al abrir la ventana del selector (el tema llega
   antes del configure) que deja la entrada del compositor desfasada para lo que viene detrás. Sin investigar más:
   el cambio, guardado en `docs/medidas/selector_tema.diff`, no entra. El selector sale con el tema de serie.
+- El fallo abierto del selector con el tema, resuelto: la causa era el tiempo. El usuario de DashOS se compila sin
+  FPU (`softfloat`) y `Tema::desde_color` (paletas HCT, potencias en coma flotante) cuesta en QEMU de 178 a 336 ms
+  (medido en Ajustes). El selector lo calculaba al abrir su ventana, con el tema que llega al enlazar, y en ese rato no
+  atendía: se perdía el primer Intro y lo de después se desfasaba. Ahora `Tema::del_sistema` da el esquema de
+  referencia ya hecho para el violeta de serie (90 µs) y calcula los demás. Con eso el selector sigue el tema y la
+  prueba pasa (2 arranques). Queda que un color que no sea el de serie sigue costando unos 330 ms al cambiarlo; si
+  molesta, el centro podría mandar el esquema calculado en vez del color, o el cálculo pasar a enteros.
