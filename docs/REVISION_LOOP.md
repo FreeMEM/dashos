@@ -977,3 +977,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Fin e Intro; "centro pide comprobar: contesta como Ana" y "Comprobar el disco: 0, 0 problemas". Las negativas
   (contraseña mala, de quien no es administradora) ya las prueba el hostil por la misma acción. Captura nueva en
   `docs/capturas/s10c-centro-discos.png`.
+- Tanda de estabilidad con todo lo de la noche (centro de control, tema del sistema, Super+L, discos por tabla, NVMe a
+  la vez): `make prueba` 3 de 3 y `make arranque-virt` 2 de 2, bien.
