@@ -119,7 +119,7 @@ def main():
     # (Ajustes, maximizada y devuelta, dejaba su parte de 800x600).
     if not casi(en(700, 500), FONDO):
         fallos.append(f"restos de una ventana en (700, 500): {en(700, 500)}")
-    primario = sum(1 for y in range(104, 104 + 250) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
+    primario = sum(1 for y in range(104, 104 + 320) for x in range(104, 104 + 360) if casi(en(x, y), PRIMARIO))
     if primario < 2000:
         fallos.append(f"la ventana del kit: {primario} píxeles del primario")
     if fallos:

@@ -21,6 +21,12 @@ pub struct Tema {
     pub sobre_variante_superficie: Color,
     pub contorno: Color,
     pub variante_contorno: Color,
+    /// El secundario (el anillo de foco de Material 3) y el contenedor terciario con su texto (lo elegido en un menú).
+    pub secundario: Color,
+    pub contenedor_terciario: Color,
+    pub sobre_contenedor_terciario: Color,
+    /// El color de error (un campo con error); el mismo con cualquier acento (Material 3: matiz 25, croma 84).
+    pub error: Color,
     /// Radio de las esquinas de los botones (Material 3: completamente redondos, la mitad del alto).
     pub radio_boton: i32,
     /// Tamaño de letra de las etiquetas (label large: 14) y del texto (body large: 16).
@@ -40,6 +46,10 @@ impl Tema {
         sobre_variante_superficie: 0xff49_454f,
         contorno: 0xff79_747e,
         variante_contorno: 0xffca_c4d0,
+        secundario: 0xff62_5b71,
+        contenedor_terciario: 0xffff_d8e4,
+        sobre_contenedor_terciario: 0xff31_111d,
+        error: 0xffb3_261e,
         radio_boton: 20,
         letra_etiqueta: 14,
         letra_texto: 16,
@@ -56,6 +66,10 @@ impl Tema {
         sobre_variante_superficie: 0xffca_c4d0,
         contorno: 0xff93_8f99,
         variante_contorno: 0xff49_454f,
+        secundario: 0xffcc_c2dc,
+        contenedor_terciario: 0xff63_3b48,
+        sobre_contenedor_terciario: 0xffff_d8e4,
+        error: 0xfff2_b8b5,
         radio_boton: 20,
         letra_etiqueta: 14,
         letra_texto: 16,
@@ -79,6 +93,28 @@ const TABLA: [(Color, bool, [Color; 10]); 8] = [
     (0xff8b5000, true, [0xffffb871, 0xff4a2800, 0xff6a3c00, 0xffffdcbe, 0xff19120c, 0xffefe0d5, 0xff51453a, 0xffd5c3b5, 0xff9e8e81, 0xff51453a]), // naranja
 ];
 
+/// Los papeles que se añadieron después a los esquemas de los `ACENTOS` (sin el violeta, que es la referencia), aparte
+/// de `TABLA` para no rehacerla: color, oscuro, y secundario, contenedor terciario y sobre contenedor terciario. También
+/// los comprueba `tabla_igual_que_el_calculo`.
+const TABLA_OTROS: [(Color, bool, [Color; 3]); 6] = [
+    (0xff0061a4, false, [0xff535f70, 0xfff3daff, 0xff251431]), // azul
+    (0xff0061a4, true, [0xffbbc7db, 0xff523f5f, 0xfff3daff]), // azul
+    (0xff386a20, false, [0xff55624c, 0xffbbebec, 0xff002020]), // verde
+    (0xff386a20, true, [0xffbdcbb0, 0xff1e4e4f, 0xffbbebec]), // verde
+    (0xff8b5000, false, [0xff735a42, 0xffdce8b4, 0xff161e00]), // naranja
+    (0xff8b5000, true, [0xffe1c1a4, 0xff414b24, 0xffdce8b4]), // naranja
+];
+
+fn tabla_otros(color: Color, oscuro: bool) -> [Color; 3] {
+    TABLA_OTROS.iter().find(|t| t.0 == color && t.1 == oscuro).map_or_else(
+        || {
+            let t = Tema::desde_color(color, oscuro);
+            [t.secundario, t.contenedor_terciario, t.sobre_contenedor_terciario]
+        },
+        |t| t.2,
+    )
+}
+
 impl Tema {
     /// El esquema del tema del sistema (S10c): el de referencia, ya hecho, para el violeta de serie; si no,
     /// `desde_color`. Sin FPU (DashOS compila sin ella), `desde_color` cuesta de 180 a 340 ms en QEMU: un programa que
@@ -101,6 +137,9 @@ impl Tema {
                 sobre_variante_superficie: r[7],
                 contorno: r[8],
                 variante_contorno: r[9],
+                secundario: tabla_otros(color, oscuro)[0],
+                contenedor_terciario: tabla_otros(color, oscuro)[1],
+                sobre_contenedor_terciario: tabla_otros(color, oscuro)[2],
                 ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
             },
             None => Tema::desde_color(color, oscuro),
@@ -124,6 +163,9 @@ impl Tema {
             sobre_variante_superficie: nv.tono(t(30.0, 80.0)),
             contorno: nv.tono(t(50.0, 60.0)),
             variante_contorno: nv.tono(t(80.0, 30.0)),
+            secundario: p.secundaria.tono(t(40.0, 80.0)),
+            contenedor_terciario: p.terciaria.tono(t(90.0, 30.0)),
+            sobre_contenedor_terciario: p.terciaria.tono(t(10.0, 90.0)),
             ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
         }
     }
@@ -237,6 +279,10 @@ mod pruebas {
             ("sobre_variante_superficie", t.sobre_variante_superficie, r.sobre_variante_superficie),
             ("contorno", t.contorno, r.contorno),
             ("variante_contorno", t.variante_contorno, r.variante_contorno),
+            ("secundario", t.secundario, r.secundario),
+            ("contenedor_terciario", t.contenedor_terciario, r.contenedor_terciario),
+            ("sobre_contenedor_terciario", t.sobre_contenedor_terciario, r.sobre_contenedor_terciario),
+            ("error", t.error, r.error),
         ];
         for (nombre, a, b) in pares {
             assert!(cerca(a, b), "{nombre}: {a:08x} y la referencia {b:08x}");
@@ -276,10 +322,30 @@ mod pruebas {
                     ("sobre_primario", t.sobre_primario, t.primario),
                     ("sobre_contenedor_primario", t.sobre_contenedor_primario, t.contenedor_primario),
                     ("sobre_variante_superficie", t.sobre_variante_superficie, t.variante_superficie),
+                    ("sobre_contenedor_terciario", t.sobre_contenedor_terciario, t.contenedor_terciario),
                 ] {
                     let k = contraste(texto, fondo);
                     assert!(k >= 4.5, "{c:08x} oscuro {oscuro}: {nombre} {k:.2}");
                 }
+            }
+        }
+    }
+
+    /// Para rehacer `TABLA_OTROS`: `cargo test -- --nocapture imprimir_tabla_otros --ignored`.
+    #[test]
+    #[ignore]
+    fn imprimir_tabla_otros() {
+        extern crate std;
+        for &(nombre, c) in ACENTOS.iter().skip(1) {
+            for oscuro in [false, true] {
+                let t = Tema::desde_color(c, oscuro);
+                std::println!(
+                    "    (0x{c:08x}, {oscuro}, [0x{:08x}, 0x{:08x}, 0x{:08x}]), // {}",
+                    t.secundario,
+                    t.contenedor_terciario,
+                    t.sobre_contenedor_terciario,
+                    nombre.to_lowercase()
+                );
             }
         }
     }
