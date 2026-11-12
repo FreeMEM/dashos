@@ -1292,14 +1292,6 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     if solo_lectura && !SOLO_LEEN.contains(&p.orden) && ![COMPROBAR, VACIAR].contains(&p.orden) {
         return mal(SOLO_LECTURA);
     }
-    // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
-    if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
-        rec.olvidar();
-    }
-    // Las que cambian un volumen entero (o pueden, al reparar), también la caché de páginas y lo prestado (A7).
-    if matches!(p.orden, VOLVER | DESCARTAR | QUITAR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR) {
-        rec.paginas.olvidar_todo();
-    }
     // Lo que cambia algo por una asa necesita la W de su tope (la de su raíz); renombrar, también en el destino.
     let por_asa = matches!(p.orden, ESCRIBIR | CREAR | BORRAR | RENOMBRAR | TAMANO | COMENTAR | PROTEGER);
     if por_asa && (tope(c, p.asa) & W == 0 || p.orden == RENOMBRAR && tope(c, p.b as u32) & W == 0) {
@@ -1312,6 +1304,17 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
+    }
+    // Crear, borrar, escribir y recortar olvidan solo lo que tocan (en su brazo); las demás que cambian algo, todo.
+    // Después de mirar el derecho de administrar: antes, una orden de administrar que se rechazaba (la de un programa
+    // cualquiera) ya había vaciado la caché y retirado lo prestado a todos (a `hostil` le quitaban el trozo a media
+    // lectura y moría).
+    if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
+        rec.olvidar();
+    }
+    // Las que cambian un volumen entero (o pueden, al reparar), también la caché de páginas y lo prestado (A7).
+    if matches!(p.orden, VOLVER | DESCARTAR | QUITAR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR) {
+        rec.paginas.olvidar_todo();
     }
     match p.orden {
         PERFIL => {

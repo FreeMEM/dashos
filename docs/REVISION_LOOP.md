@@ -1511,3 +1511,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Decisiones del usuario pendientes: cinco de la caja Amiga (docs/bitacoras/caja-amiga.md), las de exec, U7 y la
   caja Linux en sus bitácoras.
 - `make prueba` BIEN; arranque-virt en cuatro vueltas BIEN; arranque-virt-2 BIEN; jit-host comparar BIEN.
+
+### 2026-11-12 18:20: archivos ya no vacía lo de todos por una orden rechazada
+- Causa de la muerte de `hostil` en la prueba de préstamos: en `atender_orden`, las órdenes que cambian un volumen
+  entero (VOLVER, DESCARTAR, QUITAR_VOLUMEN, CERRAR_VOLUMEN, COMPROBAR) vaciaban la caché de páginas y retiraban lo
+  prestado a todos, y la de nodos se olvidaba, antes de mirar el derecho de administrar. Un programa cualquiera que
+  pedía COMPROBAR (y se le rechazaba) dejaba a los demás sin sus trozos prestados a media lectura: un fallo de
+  seguridad (de denegación de servicio), no solo de la prueba. Ahora las dos limpiezas van tras esa comprobación.
+- Hostil: con lo prestado proyectado, `hostil` pide COMPROBAR sin el derecho (PROTEGIDO) y después lee el trozo
+  entero; antes moría ahí ("excepción de clase 0x24" en lo prestado).
+- `make prueba` BIEN; arranque-virt en dos vueltas BIEN, con "A7 préstamos: bien" y `hostil` acabando con clase 0.

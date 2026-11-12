@@ -292,6 +292,11 @@ fn prestamos(lectura: u32, copia: u32) -> &'static str {
     if dashos::memoria_proyectar(primeras[0], VA_PRESTADO, false) != 0 {
         return "no proyecta lo prestado";
     }
+    // Una orden de administrar que el servicio rechaza (este programa no tiene el derecho) no toca lo prestado: antes
+    // vaciaba la caché de páginas y retiraba lo prestado a todos, y la lectura de abajo moría a medias.
+    if p(COMPROBAR, 0, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "comprueba el disco sin el derecho";
+    }
     // Se lee lo que es (y lo de después del final, en el último trozo, son ceros).
     let trozo = unsafe { core::slice::from_raw_parts(VA_PRESTADO as *const u8, TROZO_PRESTADO) };
     let bien = trozo.iter().enumerate().all(|(i, &b)| b as usize == (i * 7 + 3) % 251);
