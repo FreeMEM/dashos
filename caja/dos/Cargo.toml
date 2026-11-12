@@ -1,0 +1,12 @@
+[package]
+name = "dashos-caja-dos"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "dos.library nativa de la caja Amiga (S4, S4b): ficheros, cerrojos, asignaciones y rutas del Amiga sobre el servicio de archivos de DashOS"
+
+[lib]
+name = "caja_dos"
+path = "src/lib.rs"
+
+[dependencies]
