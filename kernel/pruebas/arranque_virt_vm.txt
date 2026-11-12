@@ -12,7 +12,7 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] hostil (escribir en el kernel): escribe fuera de su memoria (0x40200000); se para su máquina: bien
 ~[caja-linux] hostil (bucle sin fin): no acaba: el reloj lo sacó
 ~[caja-linux] hostil (apagar por SMC): trampa en
-~[caja-linux] hostil (temporizador del kernel): trampa en
+~[caja-linux] hostil (temporizador del kernel): escribe en un registro del sistema atrapado (codificación 0x32f804); se para su máquina: bien
 ~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
 ~[caja-linux] primer paso de la caja Linux: bien
 ~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien

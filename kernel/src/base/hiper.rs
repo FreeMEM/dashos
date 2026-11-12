@@ -171,6 +171,7 @@ const S_ESR: usize = C + 6;
 const S_FAR: usize = C + 7;
 const S_TIPO: usize = C + 8;
 const S_HPFAR: usize = C + 9;
+const C_VMPIDR: usize = C + 10;
 
 /// Por qué volvió el invitado (lo que dejó hiper.s).
 #[derive(Clone, Copy, Debug)]
@@ -226,38 +227,80 @@ pub struct Vcpu {
     /// Las páginas de la etapa 2: la primera es el nivel 1.
     tablas: Vec<u64>,
     vmid: u16,
-    memoria: Arc<Memoria>,
-    _cargo: crate::cupo::Cargo,
+    /// Lo que ve el invitado: (desde dónde, cuánto, el objeto). Sujetan las páginas hasta después de olvidar el VMID.
+    memorias: Vec<(u64, u64, Arc<Memoria>)>,
+    /// Lo cobrado al grupo: el mundo y el nivel 1, y las tablas de cada memoria.
+    cargos: Vec<crate::cupo::Cargo>,
 }
 
 impl Vcpu {
     /// Una vCPU que ve `memoria` desde la dirección `ipa` (física del invitado, alineada a 4 KB) y empieza en
-    /// `entrada`, en EL1, con la MMU y las interrupciones apagadas. Las páginas del mundo y de las tablas se cobran a
-    /// `cupo`. La memoria se lleva a la RAM (punto de coherencia): el invitado, con su MMU apagada, la lee sin caché.
-    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, Error> {
+    /// `entrada`, en EL1, con la MMU y las interrupciones apagadas y `x0` en su x0 (el árbol de dispositivos, para un
+    /// kernel de Linux). Se ve como el núcleo 0 (MPIDR). Las páginas del mundo y de las tablas se cobran a `cupo`.
+    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, Error> {
         if !hay() {
             return Err(Error::NoHay);
         }
+        let cargo = cupo.cobrar(2 * PAGINA).ok_or(Error::Memoria)?;
+        let vmid = tomar_vmid().ok_or(Error::Limite)?;
+        let mut v = Vcpu { mundo: 0, tablas: Vec::new(), vmid, memorias: Vec::new(), cargos: Vec::new() };
+        v.cargos.try_reserve(8).map_err(|_| Error::Memoria)?;
+        v.cargos.push(cargo);
+        v.tablas.try_reserve(8).map_err(|_| Error::Memoria)?;
+        v.mundo = memoria::pagina_usuario().ok_or(Error::Memoria)?;
+        let l1 = memoria::pagina_usuario().ok_or(Error::Memoria)?;
+        v.tablas.push(l1);
+        v.anadir(memoria, ipa, cupo)?;
+
+        let pmcr: u64;
+        // SAFETY: PMCR_EL0 se lee desde EL1 (el kernel no atrapa sus contadores hacia EL2).
+        unsafe { core::arch::asm!("mrs {}, pmcr_el0", out(reg) pmcr) };
+        // MDCR_EL2: HPMN = los contadores que hay, y atrapados la depuración (TDA, TDOSA, TDRA) y los contadores (TPM,
+        // TPMCR).
+        let mdcr = (pmcr >> 11) & 0x1f | 1 << 5 | 1 << 6 | 1 << 9 | 1 << 10 | 1 << 11;
+        v.poner(0, x0);
+        v.poner(I_PC, entrada);
+        v.poner(I_PSTATE, 0x3c5); // EL1h, con D, A, I y F enmascaradas
+        v.poner(I_SCTLR, 0x30D0_0800); // RES1, little-endian, MMU y cachés apagadas
+        v.poner(C_VTTBR, (vmid as u64) << 48 | l1);
+        v.poner(C_HCR, HCR_INVITADO);
+        v.poner(C_MDCR, mdcr);
+        v.poner(C_CPTR, CPTR_INVITADO);
+        v.poner(C_CNTHCTL, CNTHCTL_INVITADO);
+        v.poner(C_VTCR, VTCR);
+        v.poner(C_VMPIDR, 1 << 31); // núcleo 0 (afinidades a 0; el bit 31 es RES1)
+        // SAFETY: barrera: el mundo, escrito antes de que lo lea EL2.
+        unsafe { core::arch::asm!("dsb ish") };
+        Ok(v)
+    }
+
+    /// Añade `memoria` a lo que ve el invitado, desde `ipa` (alineada a 4 KB, sin pisar otra). Lo que cuestan sus
+    /// tablas se cobra a `cupo`. La memoria se lleva a la RAM (punto de coherencia): el invitado, con su MMU apagada,
+    /// la lee sin caché. Solo con la vCPU parada (`&mut self`); como solo se añaden entradas que no había, no hace falta
+    /// vaciar las TLB.
+    pub fn anadir(&mut self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
         let tam = memoria.tamano();
         if memoria.bus().is_some() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
+            return Err(Error::Argumento);
+        }
+        if self.memorias.iter().any(|(i, t, _)| ipa < i + t && *i < ipa + tam) {
             return Err(Error::Argumento);
         }
         let ultima = ipa + tam - 1;
         let n_l2 = (ultima / GB - ipa / GB + 1) as usize;
         let n_l3 = (ultima / MB2 - ipa / MB2 + 1) as usize;
-        let paginas = 2 + n_l2 + n_l3;
-        let cargo = cupo.cobrar(paginas as u64 * PAGINA).ok_or(Error::Memoria)?;
-        let vmid = tomar_vmid().ok_or(Error::Limite)?;
-        let mut v = Vcpu { mundo: 0, tablas: Vec::new(), vmid, memoria, _cargo: cargo };
-        v.tablas.try_reserve_exact(paginas - 1).map_err(|_| Error::Memoria)?;
-        v.mundo = memoria::pagina_usuario().ok_or(Error::Memoria)?;
-        let l1 = memoria::pagina_usuario().ok_or(Error::Memoria)?;
-        v.tablas.push(l1);
-        let fisicas: Vec<u64> = v.memoria.fisicas().to_vec();
-        for (i, &f) in fisicas.iter().enumerate() {
+        let cargo = cupo.cobrar((n_l2 + n_l3) as u64 * PAGINA).ok_or(Error::Memoria)?;
+        self.memorias.try_reserve(1).map_err(|_| Error::Memoria)?;
+        self.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        self.tablas.try_reserve(n_l2 + n_l3).map_err(|_| Error::Memoria)?;
+        self.cargos.push(cargo);
+        // Apuntada antes de proyectarla: si algo falla a medias, sus páginas siguen sujetas mientras estén en la etapa 2.
+        self.memorias.push((ipa, tam, memoria.clone()));
+        let l1 = self.tablas[0];
+        for (i, &f) in memoria.fisicas().iter().enumerate() {
             let a = ipa + i as u64 * PAGINA;
-            let l2 = v.siguiente(l1, (a >> 30) as usize)?;
-            let l3 = v.siguiente(l2, ((a >> 21) & 511) as usize)?;
+            let l2 = self.siguiente(l1, (a >> 30) as usize)?;
+            let l3 = self.siguiente(l2, ((a >> 21) & 511) as usize)?;
             poner(l3, ((a >> 12) & 511) as usize, f | S2_PAGINA);
         }
         // La memoria del invitado, hasta la RAM, y fuera de la caché de instrucciones.
@@ -265,7 +308,7 @@ impl Vcpu {
         let ctr: u64;
         unsafe { core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr) };
         let linea = 4usize << ((ctr >> 16) & 0xf);
-        for &f in &fisicas {
+        for &f in memoria.fisicas() {
             let k = mmu::virt(f as usize);
             let mut a = k;
             while a < k + PAGINA as usize {
@@ -276,25 +319,7 @@ impl Vcpu {
         }
         // SAFETY: barreras y la caché de instrucciones.
         unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
-
-        let pmcr: u64;
-        // SAFETY: PMCR_EL0 se lee desde EL1 (el kernel no atrapa sus contadores hacia EL2).
-        unsafe { core::arch::asm!("mrs {}, pmcr_el0", out(reg) pmcr) };
-        // MDCR_EL2: HPMN = los contadores que hay, y atrapados la depuración (TDA, TDOSA, TDRA) y los contadores (TPM,
-        // TPMCR).
-        let mdcr = (pmcr >> 11) & 0x1f | 1 << 5 | 1 << 6 | 1 << 9 | 1 << 10 | 1 << 11;
-        v.poner(I_PC, entrada);
-        v.poner(I_PSTATE, 0x3c5); // EL1h, con D, A, I y F enmascaradas
-        v.poner(I_SCTLR, 0x30D0_0800); // RES1, little-endian, MMU y cachés apagadas
-        v.poner(C_VTTBR, (vmid as u64) << 48 | l1);
-        v.poner(C_HCR, HCR_INVITADO);
-        v.poner(C_MDCR, mdcr);
-        v.poner(C_CPTR, CPTR_INVITADO);
-        v.poner(C_CNTHCTL, CNTHCTL_INVITADO);
-        v.poner(C_VTCR, VTCR);
-        // SAFETY: barrera: las tablas, escritas antes de que las lea la MMU.
-        unsafe { core::arch::asm!("dsb ish") };
-        Ok(v)
+        Ok(())
     }
 
     /// La tabla a la que apunta la entrada `i` de `tabla`; si no hay, una nueva.
@@ -304,6 +329,11 @@ impl Vcpu {
             return Ok(d & 0x0000_ffff_ffff_f000);
         }
         let t = memoria::pagina_usuario().ok_or(Error::Memoria)?;
+        if self.tablas.try_reserve(1).is_err() {
+            // SAFETY: recién sacada, nadie más la tiene.
+            unsafe { memoria::paginas().liberar(t, 1) };
+            return Err(Error::Memoria);
+        }
         self.tablas.push(t);
         poner(tabla, i, t | TABLA);
         Ok(t)

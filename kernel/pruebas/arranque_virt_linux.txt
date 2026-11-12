@@ -1,0 +1,20 @@
+# El segundo paso de la caja Linux (`make arranque-virt-linux`): lo de `arranque_virt_vm.txt` y, con la Image de un
+# kernel de Linux para arm64 (fuera de git), sus primeras líneas por el PL011 emulado.
+Nivel de excepción: EL1
+Hipervisor: el kernel arrancó en EL2
+Hipervisor: EL2 instalado en 4 núcleos
+DashOS en marcha con 4 núcleos
+~[caja-linux] el invitado dice: Hola desde el invitado, por el UART emulado
+~[caja-linux] el invitado acaba con HVC #0: bien
+~[caja-linux] ida y vuelta al invitado:
+~[caja-linux] hostil (leer fuera): lee fuera de su memoria (0x70000000); se para su máquina: bien
+~[caja-linux] hostil (escribir en el kernel): escribe fuera de su memoria (0x40200000); se para su máquina: bien
+~[caja-linux] hostil (bucle sin fin): no acaba: el reloj lo sacó
+~[caja-linux] hostil (apagar por SMC): trampa en
+~[caja-linux] hostil (temporizador del kernel): escribe en un registro del sistema atrapado (codificación 0x32f804); se para su máquina: bien
+~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
+~[caja-linux] primer paso de la caja Linux: bien
+~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien
+~[caja-linux] linux: Image de
+~[caja-linux] linux: [    0.000000] Booting Linux on physical CPU 0x0000000000
+~[caja-linux] linux: se para la máquina

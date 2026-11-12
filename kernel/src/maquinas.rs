@@ -23,9 +23,13 @@ pub const ESCRITURA: u64 = 3;
 pub const WFI: u64 = 4;
 /// Una interrupción del anfitrión lo sacó (el reloj, un aparato): no ha pasado nada suyo.
 pub const INTERRUMPIDO: u64 = 5;
-/// Una trampa o un fallo que el kernel no sabe pasar al servicio de otra forma (SMC, un registro atrapado, la coma
-/// flotante, un fallo de la etapa 2 sin datos, un SError): la máquina queda muerta.
+/// Una trampa o un fallo que el kernel no sabe pasar al servicio de otra forma (SMC, la coma flotante, un fallo de la
+/// etapa 2 sin datos, un SError): la máquina queda muerta.
 pub const FALLO: u64 = 6;
+/// Tocó un registro del sistema atrapado (depuración, contadores de rendimiento, el temporizador físico...): en la
+/// dirección, su codificación (op0, op1, CRn, CRm y op2, como en el ESR, sin el registro de destino ni el sentido);
+/// en x1, 1 si lee (el valor de la siguiente vuelta va a su registro) y 0 si escribe (el valor, en el informe).
+pub const REGISTRO: u64 = 7;
 
 /// Palabras del informe: motivo, PC de la instrucción, dirección (física del invitado), valor, tamaño en bytes (o el
 /// número del HVC), ESR, x1 y x2 (en un HVC) y las cuentas del contador que pasó la CPU fuera del kernel (ida y vuelta
@@ -42,8 +46,9 @@ pub enum Error {
 
 struct Estado {
     vcpu: Vcpu,
-    /// Una lectura de aparato a medias: el registro (31 = xzr) y el tamaño en bytes.
-    lectura: Option<(usize, u32)>,
+    /// Una lectura de aparato a medias: el registro (31 = xzr), el tamaño en bytes, si se extiende el signo (SSE) y si
+    /// el registro es de 64 bits (SF).
+    lectura: Option<(usize, u32, bool, bool)>,
     muerta: bool,
 }
 
@@ -52,9 +57,15 @@ pub struct Maquina {
 }
 
 impl Maquina {
-    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
-        let vcpu = Vcpu::nueva(memoria, ipa, entrada, cupo)?;
+    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
+        let vcpu = Vcpu::nueva(memoria, ipa, entrada, x0, cupo)?;
         Ok(Self { estado: Cerrojo::new(Estado { vcpu, lectura: None, muerta: false }) })
+    }
+
+    /// Más memoria para el invitado, desde `ipa`. `None` si otro hilo la está corriendo.
+    pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Option<Result<(), hiper::Error>> {
+        let mut e = self.estado.intentar()?;
+        Some(e.vcpu.anadir(memoria, ipa, cupo))
     }
 
     /// Entra en el invitado. `valor` es la respuesta a una lectura de aparato pendiente (si no la hay, no se usa).
@@ -64,9 +75,16 @@ impl Maquina {
         if e.muerta {
             return Err(Error::Muerta);
         }
-        if let Some((r, bytes)) = e.lectura.take() {
-            let mascara = if bytes >= 8 { u64::MAX } else { (1u64 << (8 * bytes)) - 1 };
-            e.vcpu.poner_x(r, valor & mascara);
+        if let Some((r, bytes, signo, x64)) = e.lectura.take() {
+            let bits = 8 * bytes.min(8);
+            let mut v = if bits >= 64 { valor } else { valor & ((1u64 << bits) - 1) };
+            if signo && bits < 64 && v & (1 << (bits - 1)) != 0 {
+                v |= u64::MAX << bits;
+            }
+            if !x64 {
+                v &= 0xffff_ffff;
+            }
+            e.vcpu.poner_x(r, v);
         }
         let antes = crate::reloj::ahora();
         let Some(s) = e.vcpu.correr() else { return Err(Error::NoHay) };
@@ -116,7 +134,21 @@ impl Maquina {
                     inf[3] = if r == 31 { 0 } else { e.vcpu.x(r) & mascara };
                 } else {
                     inf[0] = LECTURA;
-                    e.lectura = Some((r, bytes));
+                    e.lectura = Some((r, bytes, iss & (1 << 21) != 0, iss & (1 << 15) != 0));
+                }
+                e.vcpu.poner_pc(pc + 4);
+            }
+            // MSR o MRS de un registro atrapado: lo decide el servicio.
+            0x18 => {
+                let r = ((iss >> 5) & 31) as usize;
+                inf[0] = REGISTRO;
+                inf[2] = iss & 0x3f_fc1e;
+                inf[4] = 8;
+                if iss & 1 != 0 {
+                    inf[6] = 1;
+                    e.lectura = Some((r, 8, false, true));
+                } else {
+                    inf[3] = if r == 31 { 0 } else { e.vcpu.x(r) };
                 }
                 e.vcpu.poner_pc(pc + 4);
             }

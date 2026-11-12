@@ -7,6 +7,7 @@
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
 # make arranque-virt-2  lo mismo con dos monitores (virtio-gpu con dos cabezas)
 # make arranque-virt-vm  la caja Linux (H9): la imagen de virt en QEMU con virtualization=on (EL2)
+# make arranque-virt-linux  lo mismo, y la caja arranca un kernel de Linux (LINUX=Image, fuera de git)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -94,6 +95,22 @@ arranque-virt-vm: virt
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
 	GUARDAR=$(abspath target/salida_virt_vm.txt) MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_vm.txt 120
 	grep -E "\[(caja-linux|sin-maquina)\]|Hipervisor" target/salida_virt_vm.txt
+
+# Segundo paso de la caja Linux: lo mismo con un kernel de Linux de verdad para arm64 (su Image), que no va en git: se
+# pasa con LINUX=fichero (por defecto, el de Debian que usan las pruebas de Linux en virt). Entra en el paquete de
+# arranque (opción `linux`) y `caja-linux` lo arranca en una máquina de 64 MB con un árbol de dispositivos propio,
+# hasta sus primeras líneas por el PL011 emulado.
+LINUX ?= $(HOME)/.cache/dashos-linux/virt/linux
+VIRT_LINUX := target/kernel8-virt-linux.img
+arranque-virt-linux: usuario FORCE
+	@test -f "$(LINUX)" || { echo "Falta el kernel de Linux (LINUX=$(LINUX)): no va en git; se descarga o se compila aparte"; exit 1; }
+	mkdir -p target/linux
+	cp "$(LINUX)" target/linux/Image
+	cargo build $(CARGO_PERFIL) --features virt,linux
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_LINUX)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_LINUX)) cargo build --release
+	GUARDAR=$(abspath target/salida_virt_linux.txt) MAQUINA=highmem=off,virtualization=on QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_linux.txt 300
+	grep -E "\[caja-linux\]|Hipervisor" target/salida_virt_linux.txt
 
 # El multimonitor en QEMU virt: lo mismo que `arranque-virt` y, además, una virtio-gpu con dos cabezas (la 0 a 800x600,
 # como la ramfb; la 1, sin monitor, sale a 1024x768). Sin el guion de siempre: `tools/guion_multimonitor.py` (MULTI)

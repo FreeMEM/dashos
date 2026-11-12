@@ -190,10 +190,15 @@ pub fn hora_ns() -> u64 {
 pub const E_NO_HAY: i64 = -10;
 
 /// Una máquina virtual (caja Linux, H9) con el permiso `permiso` y el objeto de memoria `memoria` como su RAM, que el
-/// invitado ve desde la dirección física `ipa`; empieza en `entrada`, en EL1 y con la MMU apagada. Devuelve su llave o
-/// un error negativo (`E_NO_HAY` sin hipervisor). Se para y se suelta al cerrar la llave.
-pub fn maquina_crear(permiso: u32, memoria: u32, ipa: u64, entrada: u64) -> i64 {
-    llamada(45, [permiso as u64, memoria as u64, ipa, entrada, 0]).0 as i64
+/// invitado ve desde la dirección física `ipa`; empieza en `entrada`, en EL1, con la MMU apagada y `x0` en su x0.
+/// Devuelve su llave o un error negativo (`E_NO_HAY` sin hipervisor). Se para y se suelta al cerrar la llave.
+pub fn maquina_crear(permiso: u32, memoria: u32, ipa: u64, entrada: u64, x0: u64) -> i64 {
+    llamada(45, [permiso as u64, memoria as u64, ipa, entrada, x0]).0 as i64
+}
+
+/// Más RAM para el invitado de la máquina `llave`: el objeto de memoria `memoria`, desde `ipa`. 0 o un error negativo.
+pub fn maquina_memoria(llave: u32, memoria: u32, ipa: u64) -> i64 {
+    llamada(47, [llave as u64, memoria as u64, ipa, 0, 0]).0 as i64
 }
 
 /// Lo que dice `maquina_correr` de por qué volvió el invitado (`kernel/src/maquinas.rs`).
@@ -204,6 +209,8 @@ pub mod maquina {
     pub const WFI: i64 = 4;
     pub const INTERRUMPIDO: i64 = 5;
     pub const FALLO: i64 = 6;
+    /// Un registro del sistema atrapado: en `direccion`, su codificación; `x1` = 1 si lee.
+    pub const REGISTRO: i64 = 7;
 
     /// El informe de una salida: motivo, PC, dirección física del invitado, valor, tamaño (o número del HVC), ESR,
     /// x1 y x2 (en un HVC) y las cuentas del contador que pasó fuera del kernel.

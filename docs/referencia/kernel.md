@@ -168,8 +168,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
 | 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
 | 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
-| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada | Llave de la máquina virtual (H9). `E_NO_HAY` sin hipervisor |
-| 46 | `maquina_correr` | `x0` máquina (con escribir), `x1` informe (72 bytes), `x2` respuesta a una lectura pendiente | El motivo de la salida (1 a 6); el informe, en `x1` |
+| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada, `x4` el x0 del invitado | Llave de la máquina virtual (H9). `E_NO_HAY` sin hipervisor |
+| 46 | `maquina_correr` | `x0` máquina (con escribir), `x1` informe (72 bytes), `x2` respuesta a una lectura pendiente | El motivo de la salida (1 a 7); el informe, en `x1` |
+| 47 | `maquina_memoria` | `x0` máquina (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria. `E_ARGUMENTO` si pisa otra; `E_LIMITE` si la máquina está corriendo |
 
 ### Detalles
 
@@ -309,8 +310,10 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **45 y 46, máquinas virtuales** (caja Linux, H9; `kernel/src/maquinas.rs`, `base/hiper.rs`). Solo si el kernel
   arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. El kernel deja en EL2 un
   trozo pequeño que cambia de mundo, y sigue en EL1.
-  - `maquina_crear`: una vCPU en EL1, con la MMU y las interrupciones apagadas, que empieza en `x3` y ve el objeto de
-    memoria entero desde `x2` (hasta 4 GB de direcciones del invitado). La memoria se sigue pudiendo proyectar en el
+  - `maquina_crear`: una vCPU en EL1, con la MMU y las interrupciones apagadas, que empieza en `x3` con `x4` en su x0
+    (el árbol de dispositivos de un kernel de Linux) y ve el objeto de memoria entero desde `x2` (hasta 4 GB de
+    direcciones del invitado). Se ve como el núcleo 0 (MPIDR 0x80000000). Con `maquina_memoria` ve más objetos, cada
+    uno desde su dirección (así pasa de los 16 MB de `memoria_crear`). La memoria se sigue pudiendo proyectar en el
     proceso (así se carga el invitado), pero el invitado la lee sin caché mientras tenga la MMU apagada: lo escrito
     después de crear la máquina puede no verlo. Ni memoria DMA ni una llave revocable (`E_ARGUMENTO`). Su vCPU y sus
     tablas de la etapa 2 se cobran al grupo (unas 4 páginas para 64 KB). Como mucho 255 máquinas a la vez
@@ -322,6 +325,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     4 WFI; 5 lo sacó una interrupción del anfitrión (el reloj lo hace cada tic: un invitado no se queda con el
     núcleo); 6 una trampa o un fallo (ESR, PC y dirección): SMC, el temporizador físico, la depuración, la coma
     flotante, un acceso que no se describe solo. Tras un 6 la máquina está muerta y `maquina_correr` da `E_CERRADO`.
+    7: tocó un registro del sistema atrapado (depuración, contadores de rendimiento, el temporizador físico): dirección
+    = su codificación (los bits de op0, op2, op1, CRn y CRm del ESR), x1 = 1 si lee (el `x2` de la siguiente llamada
+    es lo que lee) o 0 si escribe (valor). Lo escrito nunca llega al registro de verdad.
     Si otro hilo la está corriendo, `E_LIMITE`. En 2 y 3 el PC ya está en la instrucción siguiente.
 
 ### Errores
@@ -398,7 +404,7 @@ Tipos de objeto:
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 | Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
-| Máquina virtual | `maquina_crear` | Correrla (escribir); se para al cerrarla |
+| Máquina virtual | `maquina_crear` | Correrla y darle más memoria (escribir); se para al cerrarla |
 
 ## Biblioteca de usuario en Rust
 

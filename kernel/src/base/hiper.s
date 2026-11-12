@@ -17,8 +17,10 @@
 //
 // El mundo (una página; mismo orden que hiper.rs):
 //   0x000 invitado: x0..x30, PC (ELR_EL2), PSTATE (SPSR_EL2) y sus 26 registros de EL1 (SIS); ESCR en 0x1E0
-//   0x200 anfitrión: x18..x30, ELR_EL2, SPSR_EL2, SP_EL2, MDCR_EL2, CPTR_EL2, CNTHCTL_EL2, HCR_EL2 y sus SIS
-//   0x400 configuración del invitado (VTTBR, HCR, MDCR, CPTR, CNTHCTL, VTCR) y la salida (ESR, FAR, tipo, HPFAR)
+//   0x200 anfitrión: x18..x30, ELR_EL2, SPSR_EL2, SP_EL2, MDCR_EL2, CPTR_EL2, CNTHCTL_EL2, HCR_EL2, sus SIS y
+//         VMPIDR_EL2 (lo que lee el kernel como MPIDR_EL1: su número de núcleo)
+//   0x400 configuración del invitado (VTTBR, HCR, MDCR, CPTR, CNTHCTL, VTCR), la salida (ESR, FAR, tipo, HPFAR) y
+//         el MPIDR que ve el invitado
 
 .equ HV_INSTALAR, 1
 .equ HV_CORRER, 2
@@ -34,12 +36,14 @@
 .equ A_MDCR, 0x80
 .equ A_CNTHCTL, 0x90
 .equ A_SIS, 0xa0
+.equ A_VMPIDR, 0x170
 .equ CFG, 0x400
 .equ C_VTTBR, 0x00
 .equ C_MDCR, 0x10
 .equ C_CNTHCTL, 0x20
 .equ S_ESR, 0x30
 .equ S_TIPO, 0x40
+.equ C_VMPIDR, 0x50
 
 // Tipos de salida (S_TIPO): por qué volvió el invitado.
 .equ SALIDA_SINCRONA, 1
@@ -285,6 +289,8 @@ correr:
     mrs     x3, hcr_el2
     stp     x2, x3, [x9, #A_CNTHCTL]
     GUARDAR_EL1 x9, A_SIS
+    mrs     x2, vmpidr_el2
+    str     x2, [x9, #A_VMPIDR]
 
     // El modo del invitado: su etapa 2 y su VMID, lo que se atrapa (HCR, MDCR, CPTR) y sin el temporizador físico.
     ldp     x2, x3, [x10, #C_VTTBR]
@@ -296,6 +302,8 @@ correr:
     ldp     x2, x3, [x10, #C_CNTHCTL]
     msr     cnthctl_el2, x2
     msr     vtcr_el2, x3
+    ldr     x2, [x10, #C_VMPIDR]
+    msr     vmpidr_el2, x2
     CARGAR_EL1 x1, I_SIS
     ldp     x2, x3, [x1, #I_PC]
     msr     elr_el2, x2
@@ -361,6 +369,8 @@ salida:
     ldp     x2, x3, [x9, #A_CNTHCTL]
     msr     cnthctl_el2, x2
     msr     hcr_el2, x3
+    ldr     x2, [x9, #A_VMPIDR]
+    msr     vmpidr_el2, x2
     CARGAR_EL1 x9, A_SIS
     ldp     x2, x3, [x9, #A_ELR]
     msr     elr_el2, x2

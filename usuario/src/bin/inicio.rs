@@ -341,6 +341,8 @@ fn principal() -> u64 {
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,
+            // La caja Linux (H9): la RAM de su invitado de Linux (64 MB) sale de su cupo.
+            "caja-linux" => 96 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

@@ -66,25 +66,73 @@ QEMU `virt`, TCG, 4 núcleos, con el PC cargado por otras sesiones. Son números
 
 | Medida | Valor |
 |---|---|
-| Ida y vuelta servicio → invitado (HVC) → servicio, con la llamada al sistema, 2000 vueltas | 30 µs de media |
-| De ellas, dentro del `hvc` del kernel (EL2, cambio de mundo y el invitado) | 18 µs de media |
+| Ida y vuelta servicio → invitado (HVC) → servicio, con la llamada al sistema, 2000 vueltas | 30 µs de media con el PC poco cargado; 51 a 121 µs con carga de 9 a 17 |
+| De ellas, dentro del `hvc` del kernel (EL2, cambio de mundo y el invitado) | 18 µs; 30 a 66 µs con carga (siempre algo más de la mitad) |
+| Linux hasta su línea 40 por la consola (Image de 36 MB, 64 MB de RAM) | 0,5 s desde la primera entrada en el invitado |
 
 En TCG cada `msr`/`mrs` de un registro del sistema es caro; el cambio de mundo guarda y carga unos 60. Falta medirlo
 en la Pi.
 
 ### Qué falta
 
-- Interrupciones para el invitado: ni GIC virtual ni temporizador virtual entregado. Si el invitado arma su
+- Interrupciones para el invitado: ni GIC virtual ni temporizador virtual entregado (por eso Linux se para en
+  `time_init`). Si el invitado arma su
   temporizador virtual, su interrupción sale al anfitrión una y otra vez (el servicio lo ve como "interrumpido").
 - La coma flotante del invitado: hoy se atrapa y mata la máquina. Hay que guardar la del hilo que lo corre (o la del
   dueño perezoso de la FPU en ese núcleo, C28) y dar al invitado la suya.
-- Varias vCPU por máquina, y varios objetos de memoria por máquina (hoy uno, de hasta 16 MB).
+- Varias vCPU por máquina.
 - Con GICv3, el invitado puede tocar los registros del sistema de la interfaz de CPU (los virtuales, con IMO/FMO);
   falta atrapar ICC_SRE_EL1 (ICC_SRE_EL2.Enable a 0 mientras corre).
 - La memoria del invitado se lleva a la RAM al crear la máquina: lo que escriba el servicio después, con el invitado
   sin MMU, puede no verlo en la Pi (QEMU no tiene cachés).
 - virtio (consola, disco, red, vsock, virtio-fs, virtio-gpu), el globo, Arch Linux ARM, el puente de Wayland.
 - Probarlo en la Pi 4.
+
+### Segundo paso: un kernel de Linux de verdad
+
+`make arranque-virt-linux` (LINUX=Image; por defecto `~/.cache/dashos-linux/virt/linux`, el kernel 6.12 de Debian
+para arm64 que ya usan otras pruebas; no va en git). La Image entra en el paquete de arranque con la opción `linux`
+del kernel y llega a `caja-linux` como datos (su llave 2). El servicio:
+
+- crea 64 MB de RAM en cuatro objetos de 16 MB (el tope de `memoria_crear`); la llamada nueva `maquina_memoria` (47)
+  añade cada uno a lo que ve el invitado;
+- escribe un árbol de dispositivos mínimo propio (memoria, una CPU, `bootargs` con `earlycon=pl011,0x09000000`; sin
+  GIC ni temporizador), pone la Image en RAM + 2 MB y la vCPU empieza ahí con x0 = el árbol (`maquina_crear` lleva
+  ahora el x0 del invitado en x4);
+- atiende los registros del sistema que se atrapan (depuración y contadores de rendimiento, que Linux toca al
+  arrancar) como de solo cero: motivo nuevo 7, `REGISTRO`, con la codificación del registro. El hostil del
+  temporizador físico sale ahora por ahí, y el servicio para la máquina.
+
+La vCPU se ve como el núcleo 0 (VMPIDR_EL2, que EL2 guarda y repone: el kernel lee de ahí su número de núcleo).
+
+Resultado: Linux escribe sus primeras líneas por el PL011 emulado (las 40 primeras, en medio segundo):
+`Booting Linux on physical CPU 0x0000000000 [0x410fd083]`, `Linux version 6.12.107+deb13-arm64`, `Machine model:
+DashOS, caja Linux`, la consola temprana, las zonas de memoria, las erratas de la Cortex-A72, la línea de órdenes...
+Sigue hasta `time_init`, unas 68 líneas, y ahí se para con `Kernel panic - not syncing: Unable to initialise
+architected timer`: el árbol no tiene temporizador ni GIC (no hay interrupciones para el invitado). Con `panic=-1`
+intenta reiniciar, no puede (sin PSCI) y se queda parado; a los 10 s el servicio para la máquina. Lo esperado está en
+`kernel/pruebas/arranque_virt_linux.txt`.
+
+### Lo que le falta a esta interfaz para el crate `caja-linux/vmm` (rama `caja-linux-virtio`)
+
+El crate trae virtio-mmio (consola, disco, red), el PL011, el distribuidor GICv2 emulado, PSCI, el DTB y la carga de la
+Image. Para enchufarlo en `caja-linux`:
+
+1. **Escribir registros del invitado.** Para contestar a PSCI (x0 tras el HVC) y arrancar otra vCPU hace falta una
+   llamada que lea y escriba x0..x30, PC y PSTATE de una vCPU parada. Hoy solo se escribe el registro de una lectura de
+   aparato o de registro pendiente.
+2. ~~Extensión de signo en las lecturas de aparato~~: hecha (SSE y SF).
+3. **Inyectar un aborto externo** (`SalidaMmio::SinAparato`): no hay forma; solo leer 0 y seguir.
+4. **Varias vCPU** por máquina, con su VMPIDR cada una (hoy una, siempre el núcleo 0), y que cada una pueda correr en
+   su hilo del servicio.
+5. **Interrupciones**: el GIC virtual del GIC-400 (GICH) guardado y repuesto en EL2 con cada cambio de mundo, la GICV
+   proyectada en la etapa 2 en la IPA del GICC del invitado, los LR escritos desde el servicio (o desde el kernel con
+   lo que diga el servicio), la interrupción de mantenimiento y el temporizador virtual (PPI 27, con HW = 1). Nada de
+   eso está hecho: el invitado no recibe ninguna interrupción.
+6. **Sacar a una vCPU que corre** (por una interrupción de otro núcleo) cuando llega algo por un canal (teclas, red),
+   y un WFI que espere de verdad hasta que haya algo para la vCPU, en vez de volver al servicio.
+7. Una barrera `dmb ish` en la biblioteca `dashos` para `MemoriaInvitado::barrera`.
+8. CNTVOFF_EL2 está a 0 para todas (vale); CNTFRQ_EL0 ya lo pone el firmware.
 
 ### Decisiones para el usuario
 

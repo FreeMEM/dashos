@@ -36,8 +36,9 @@
 //! | 42 | esperar(dirección, valor, plazo µs) -> 0 despertado, 1 la palabra no valía eso |
 //! | 43 | despertar(dirección, cuántos) -> cuántos despertó |
 //! | 44 | proceso_salir(código): acaba el proceso entero |
-//! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada) -> llave de máquina virtual (H9) |
+//! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada, x0) -> llave de máquina virtual (H9) |
 //! | 46 | maquina_correr(máquina, informe, valor) -> motivo: entra en el invitado hasta que sale |
+//! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -189,8 +190,9 @@ pub fn atender(marco: &mut Marco) {
         43 => despertar(a[0], a[1]),
         44 => proceso_salir(a[0]),
         // La caja Linux (H9): máquinas virtuales.
-        45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3]),
+        45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
         46 => maquina_correr(a[0] as u32, a[1], a[2]),
+        47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1095,9 +1097,10 @@ fn proceso_salir(codigo: u64) -> u64 {
 }
 
 /// Una máquina virtual (H9) con el permiso `hp` (escribir) y el objeto de memoria `hm` (leer y escribir; ni DMA ni
-/// revocable) como su RAM, que el invitado ve desde `ipa`; empieza en `entrada`, en EL1 y con la MMU apagada. Lo que
+/// revocable) como su RAM, que el invitado ve desde `ipa`; empieza en `entrada`, en EL1, con la MMU apagada y `x0` en
+/// su x0 (el árbol de dispositivos de un kernel de Linux). Lo que
 /// cuestan su vCPU y sus tablas se cobra al grupo. Sin hipervisor, `E_NO_HAY`.
-fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64) -> u64 {
+fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let (permiso, memoria) = {
         let t = proc_.llaves.tomar();
@@ -1126,7 +1129,7 @@ fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let maquina = match crate::maquinas::Maquina::nueva(m, ipa, entrada, &proc_.cupo) {
+    let maquina = match crate::maquinas::Maquina::nueva(m, ipa, entrada, x0, &proc_.cupo) {
         Ok(v) => v,
         Err(crate::base::hiper::Error::NoHay) => return E_NO_HAY,
         Err(crate::base::hiper::Error::Argumento) => return E_ARGUMENTO,
@@ -1168,5 +1171,39 @@ fn maquina_correr(h: u32, informe: u64, valor: u64) -> u64 {
         Err(crate::maquinas::Error::NoHay) => E_NO_HAY,
         Err(crate::maquinas::Error::Ocupada) => E_LIMITE,
         Err(crate::maquinas::Error::Muerta) => E_CERRADO,
+    }
+}
+
+/// Más RAM para el invitado de la máquina `h` (escribir): el objeto de memoria `hm` (leer y escribir; ni DMA ni
+/// revocable), visto desde `ipa`, sin pisar lo que ya ve. Para un invitado de más de 16 MB, el tope de `memoria_crear`.
+fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (l, memoria) = {
+        let t = proc_.llaves.tomar();
+        let Some(l) = t.ver(h) else { return E_LLAVE };
+        let Some(m) = t.ver_con_intermediarios(hm) else { return E_LLAVE };
+        (l, m)
+    };
+    let Objeto::Maquina(maquina) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let (m, por) = memoria;
+    if !por.is_empty() {
+        return E_ARGUMENTO;
+    }
+    let derechos = m.derechos;
+    let Objeto::Memoria(m) = m.objeto else { return E_TIPO };
+    let rw = objetos::LEER | objetos::ESCRIBIR;
+    if derechos & rw != rw {
+        return E_DERECHOS;
+    }
+    match maquina.anadir(m, ipa, &proc_.cupo) {
+        None => E_LIMITE,
+        Some(Ok(())) => 0,
+        Some(Err(crate::base::hiper::Error::NoHay)) => E_NO_HAY,
+        Some(Err(crate::base::hiper::Error::Argumento)) => E_ARGUMENTO,
+        Some(Err(crate::base::hiper::Error::Memoria)) => E_MEMORIA,
+        Some(Err(crate::base::hiper::Error::Limite)) => E_LIMITE,
     }
 }
