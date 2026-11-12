@@ -712,6 +712,25 @@ fn pantalla(usuaria: Option<&str>) -> Option<String> {
     r
 }
 
+/// Las superficies de bloqueo de las demás salidas: cuántas y la memoria de cada una, que se suelta al acabar.
+#[derive(Default)]
+struct Otras {
+    n: usize,
+    memoria: [u32; 3],
+    va: [usize; 3],
+}
+
+impl Drop for Otras {
+    fn drop(&mut self) {
+        for k in 0..3 {
+            if self.memoria[k] != 0 {
+                dashos::memoria_quitar(self.va[k]);
+                dashos::cerrar(self.memoria[k]);
+            }
+        }
+    }
+}
+
 fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     let entrada = usuaria.is_none();
     let mut nombre = String::from(usuaria.unwrap_or(""));
@@ -726,6 +745,16 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     const SUP_BLOQUEO: u32 = 23;
     /// El tema del sistema (`dashos_tema_v1`, S10c): llega al enlazar y cada vez que cambia.
     const TEMA: u32 = 24;
+    // Multimonitor: las demás salidas, cada una con su superficie de bloqueo (ext-session-lock pide una por salida). En
+    // ellas solo el color de la superficie del tema: lo de escribir va en la principal.
+    const OTRAS: usize = 3;
+    const SALIDA_OTRA: u32 = 40;
+    const SUP_OTRA: u32 = 44;
+    const BLOQ_OTRA: u32 = 48;
+    const POOL_OTRA: u32 = 52;
+    const BUFER_OTRA: u32 = 56;
+    const VA_OTRAS: usize = 0x45_0000_0000;
+    let mut otras = Otras::default();
     let mut tema = Tema::OSCURO;
     // Los glifos, rasterizados antes de bloquear (la primera vez es lento, y mientras tanto no se lee al compositor). En
     // un lienzo pequeño: las letras son del mismo tamaño en cualquier pantalla y se rasterizan aunque caigan fuera
@@ -770,6 +799,13 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     e.empezar(GESTOR, ext_session_lock_manager_v1::req::LOCK).uint(CERROJO).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
     e.empezar(CERROJO, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(SUP_BLOQUEO).uint(SUPERFICIE).uint(SALIDA).fin();
+    for (k, g) in globales.iter().filter(|g| g.1 == "wl_output" && g.0 != go).map(|g| g.0).take(OTRAS).enumerate() {
+        let k = k as u32;
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(g).texto(Some("wl_output")).uint(4).uint(SALIDA_OTRA + k).fin();
+        e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_OTRA + k).fin();
+        e.empezar(CERROJO, ext_session_lock_v1::req::GET_LOCK_SURFACE).uint(BLOQ_OTRA + k).uint(SUP_OTRA + k).uint(SALIDA_OTRA + k).fin();
+        otras.n += 1;
+    }
     c.mandar(&e);
     let mut teclado = Teclado::new();
     let mut entera = true;
@@ -794,6 +830,10 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                     let mut e = Escritor::new();
                     e.empezar(SUP_BLOQUEO, ext_session_lock_surface_v1::req::DESTROY).fin();
                     e.empezar(SUPERFICIE, wl_surface::req::DESTROY).fin();
+                    for k in 0..otras.n as u32 {
+                        e.empezar(BLOQ_OTRA + k, ext_session_lock_surface_v1::req::DESTROY).fin();
+                        e.empezar(SUP_OTRA + k, wl_surface::req::DESTROY).fin();
+                    }
                     e.empezar(CERROJO, ext_session_lock_v1::req::UNLOCK_AND_DESTROY).fin();
                     // Y un sync: hasta que llegue su respuesta, el compositor no ha hecho lo de antes. Si se dejara de
                     // leer antes, podría soltarlo con el bloqueo puesto (y quedaría en negro, como debe).
@@ -876,6 +916,37 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
                 println!("  [guardian] el compositor no deja bloquear");
                 return None;
+            }
+            (o, ext_session_lock_surface_v1::ev::CONFIGURE) if (BLOQ_OTRA..BLOQ_OTRA + otras.n as u32).contains(&o) => {
+                let k = (o - BLOQ_OTRA) as usize;
+                let mut e = Escritor::new();
+                e.empezar(o, ext_session_lock_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                let (w, h) = (palabra(1) as i32, palabra(2) as i32);
+                if otras.memoria[k] == 0 && w > 0 && h > 0 {
+                    let tamano = (w * h * 4) as usize;
+                    let va = VA_OTRAS + k * (32 << 20);
+                    let m = dashos::memoria_crear(tamano);
+                    if (m as i32) > 0 && dashos::memoria_proyectar(m as u32, va, true) == 0 {
+                        otras.memoria[k] = m as u32;
+                        otras.va[k] = va;
+                        let px = unsafe { core::slice::from_raw_parts_mut(va as *mut u32, (w * h) as usize) };
+                        px.fill(tema.superficie);
+                        let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
+                        let (pool, bufer, sup) = (POOL_OTRA + k as u32, BUFER_OTRA + k as u32, SUP_OTRA + k as u32);
+                        e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(pool).llave(copia as u32).int(tamano as i32).fin();
+                        e.empezar(pool, wl_shm_pool::req::CREATE_BUFFER).uint(bufer).int(0).int(w).int(h).int(w * 4).uint(0).fin();
+                        e.empezar(sup, wl_surface::req::ATTACH).uint(bufer).int(0).int(0).fin();
+                        e.empezar(sup, wl_surface::req::DAMAGE).int(0).int(0).int(w).int(h).fin();
+                        e.empezar(sup, wl_surface::req::COMMIT).fin();
+                        println!("  [guardian] pantalla de bloqueo también en la otra salida {} ({}x{})", k + 1, w, h);
+                    } else {
+                        if (m as i32) > 0 {
+                            dashos::cerrar(m as u32);
+                        }
+                        println!("  [guardian] sin memoria para la otra salida {}", k + 1);
+                    }
+                }
+                c.mandar(&e);
             }
             (SUP_BLOQUEO, ext_session_lock_surface_v1::ev::CONFIGURE) => {
                 let mut e = Escritor::new();

@@ -135,7 +135,8 @@ dan el orden, no la décima.
 
 - La Pi 4: las dos HDMI por el HVS, con su controlador, en la placa.
 - Una barra por monitor (hoy, la barra, el panel y el lanzador van en la principal).
-- La pantalla de bloqueo en cada salida (que `guardian` pida una por `wl_output`).
+- ~~La pantalla de bloqueo en cada salida~~: hecho en revision (2026-11-12): las demás, del color de la superficie del
+  tema. Falta la de una salida que aparezca con la sesión ya bloqueada.
 - Orden, sitio y salida principal desde el centro; escala por monitor (S9); xdg-output cuando haya escalas.
 - Avisos de cambio de monitores del aparato (`VIRTIO_GPU_EVENT_DISPLAY`) y EDID: el controlador no los mira.
 - `wl_surface.enter`/`leave` de las salidas: no se mandan.

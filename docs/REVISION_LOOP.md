@@ -1447,3 +1447,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   salió una vez sin respuesta: 13 rechazos en vez de 14).
 - `make prueba` BIEN; arranque-virt, cuatro vueltas BIEN (una antes del arreglo de `red_prueba` falló por eso);
   arranque-virt-2 BIEN.
+
+### 2026-11-12 16:45: el bloqueo en todas las pantallas
+- `guardian` pide una superficie de bloqueo por cada `wl_output` (ext-session-lock la pide por salida): la principal
+  con la pantalla de siempre y las demás (hasta 3) del color de la superficie del tema; al desbloquear se destruyen y
+  su memoria se suelta (también si sale por otro camino: `Otras` la suelta al acabar). Antes la segunda quedaba en negro.
+- Prueba: `make arranque-virt-2` espera "pantalla de bloqueo también en la otra salida 1 (1024x768)" al bloquearse la
+  sesión. Falta una salida que aparezca con la sesión ya bloqueada.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+- Pendiente apuntado: el controlador de virtio-gpu sigue sin su interrupción (habría que leer su registro ISR, la
+  capacidad 3); solo es de QEMU.

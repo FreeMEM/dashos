@@ -27,3 +27,6 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600, a la izquierda; Pantalla DASHOS-2: 1024 × 768, a la derecha; Frecuencia: 60,000 Hz; Escala: 1
 # Y los hostiles no lo tumban.
 ~│   [hostil] compositor sigue: sí
+# Al bloquearse la sesión (por estar quieta: `guardian` pide el aviso de inactividad), la otra pantalla también tiene su
+# superficie de bloqueo (ext-session-lock pide una por salida), del color de la superficie del tema.
+~│   [guardian] pantalla de bloqueo también en la otra salida 1 (1024x768)
