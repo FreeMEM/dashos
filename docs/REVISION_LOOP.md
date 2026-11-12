@@ -1113,3 +1113,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - S10c/A15: el centro dice el resultado de "Comprobar el disco" en llano: "Comprobado, datos incluidos: sin
   problemas", "Comprobado: N problemas", "El disco está ocupado: inténtalo otra vez" (EN_USO, el plazo de `sesiones`),
   "Interrumpido: queda poco sitio en el disco" (LLENO) y "No se comprobó: hace falta un administrador". Captura nueva.
+- A15: `sesiones` ya no espera al comprobador. Le pide la comprobación con una llave de vuelta a su propio canal
+  (marca 1 << 62, que no tiene ningún programa) y sigue atendiendo; cuando llega la respuesta, contesta a quien la
+  pidió (con el registro, como antes). Una a la vez (otra mientras tanto, EN_USO). Un temporizador (marca 1 << 62 | 1)
+  la despierta a los 20 s si no ha llegado: EN_USO a quien la pidió, y lo que conteste el comprobador después se tira.
+  Probado con el comprobador retrasado 25 s a propósito (quitado después): mientras esperaba, `sesiones` atendió
+  "matar a eco" de `pide`, y a los 20 s contestó EN_USO por el temporizador.

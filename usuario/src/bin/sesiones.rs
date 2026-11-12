@@ -337,36 +337,46 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
 }
 
-/// A15: lo más que se espera al comprobador: hasta 10 s a que otro suelte el disco y el recorrido.
+/// A15: lo más que se espera al comprobador: hasta 10 s a que otro suelte el disco y el recorrido. Pasado, quien
+/// pidió recibe EN_USO (se puede repetir).
 const PLAZO_COMPROBAR_US: u64 = 20_000_000;
+/// A15: la marca de la llave por la que contesta el comprobador, en el canal propio de `sesiones`. Ningún programa
+/// tiene una así (las suyas son su número), y la del aviso de fin lleva el bit 63.
+const MARCA_COMPROBADOR: u64 = 1 << 62;
+/// A15: la del temporizador que despierta a `sesiones` cuando vence ese plazo.
+const MARCA_PLAZO_COMPROBAR: u64 = MARCA_COMPROBADOR | 1;
 
-/// A15: pide al comprobador aparte (llave `COMPROBADOR`) que recorra el disco con los datos: estado y problemas.
-fn comprobar_aparte() -> (i32, u64) {
+/// A15: pide al comprobador aparte (llave `COMPROBADOR`) que recorra el disco con los datos, sin esperar: la respuesta
+/// llega luego por el canal propio, con `MARCA_COMPROBADOR`. Devuelve la llave del temporizador del plazo (0 si no se
+/// pudo crear: entonces el plazo se mira con el siguiente mensaje), o None si no se pudo pedir.
+fn pedir_comprobar() -> Option<u32> {
     use dashos::protocolo::comprobar::{COMPROBAR, CON_DATOS};
-    let (lectura, escritura) = dashos::canal_crear();
+    let Ok(vuelta) = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, MARCA_COMPROBADOR)) else {
+        return None;
+    };
     let mut p = [0u8; 8];
     p[0..4].copy_from_slice(&COMPROBAR.to_le_bytes());
     p[4..8].copy_from_slice(&CON_DATOS.to_le_bytes());
-    let mut r = [0u8; 24];
-    // Con plazo: si el comprobador se atasca, `sesiones` no se queda sin atender a nadie (EN_USO; se puede repetir).
-    let leido = if dashos::canal_escribir(COMPROBADOR, &p, &[escritura]) == 0 {
-        match dashos::canal_leer_plazo(lectura, &mut r, &mut [], PLAZO_COMPROBAR_US).0 {
-            dashos::E_PLAZO => {
-                dashos::cerrar(lectura);
-                println!("  [sesiones] el comprobador no contesta en {} s", PLAZO_COMPROBAR_US / 1_000_000);
-                return (dashos::protocolo::archivos::EN_USO, 0);
-            }
-            n => n,
-        }
-    } else {
-        dashos::cerrar(escritura);
-        -1
-    };
-    dashos::cerrar(lectura);
-    if leido != 24 {
-        return (dashos::protocolo::archivos::ERROR_DEL_DISCO, 0);
+    if dashos::canal_escribir(COMPROBADOR, &p, &[vuelta]) != 0 {
+        dashos::cerrar(vuelta);
+        return None;
     }
-    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()))
+    let Ok(aviso) = u32::try_from(dashos::llave_duplicar(PROPIO, dashos::ESCRIBIR, MARCA_PLAZO_COMPROBAR)) else { return Some(0) };
+    let t = dashos::temporizador_crear(aviso, PLAZO_COMPROBAR_US + 50_000, 0);
+    dashos::cerrar(aviso);
+    Some(u32::try_from(t).unwrap_or(0))
+}
+
+/// El final de una acción de administrador: al registro y a quien la pidió (estado y dato), y su llave cerrada.
+fn acabar_admin(registro: &mut Registro, a_quien: u32, programa: &[u8; 16], accion: &str, quien: &[u8], estado: i32, dato: u64) {
+    let quien_ = core::str::from_utf8(quien).unwrap_or("?");
+    println!("  [sesiones] {} hace {} con la contraseña de {}: {} ({})", nombre(programa), accion, if quien_.is_empty() { "nadie" } else { quien_ }, estado, dato);
+    registro.apuntar(R_ADMIN, estado, programa, accion.as_bytes());
+    let mut r = [0u8; 12];
+    r[0..4].copy_from_slice(&estado.to_le_bytes());
+    r[4..12].copy_from_slice(&dato.to_le_bytes());
+    dashos::canal_escribir(a_quien, &r, &[]);
+    dashos::cerrar(a_quien);
 }
 
 /// Da a `marca` una llave del servicio `s` (U4): una copia marcada con su número, que viaja una vez (S4) y llega sin
@@ -483,6 +493,10 @@ fn principal() -> u64 {
     // respuesta del programa, su marca, su nombre y el servicio) y por dónde se le pregunta.
     let mut concedidos: [Option<([u8; 16], usize)>; MAX_CONCEDIDOS] = [None; MAX_CONCEDIDOS];
     let mut preguntas: [Option<(u32, u32, u64, [u8; 16], usize, u64)>; MAX_PREGUNTAS] = [None; MAX_PREGUNTAS];
+    // A15: la comprobación pedida al comprobador que aún no ha contestado: a quién contestar, qué programa la pidió,
+    // con la contraseña de quién y desde cuándo (µs).
+    // Y la llave del temporizador de su plazo.
+    let mut comprobando: Option<(u32, [u8; 16], [u8; 16], u64, u32)> = None;
     let mut canal_guardian = 0u32;
     let mut siguiente_pregunta = 1u32;
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
@@ -515,6 +529,29 @@ fn principal() -> u64 {
         let m = &b[..n];
         let u32_en = |i: usize| m.get(i..i + 4).map_or(0, |x| u32::from_le_bytes(x.try_into().unwrap()));
         let u64_en = |i: usize| m.get(i..i + 8).map_or(0, |x| u64::from_le_bytes(x.try_into().unwrap()));
+        // A15: la respuesta del comprobador, a quien la pidió; o, pasado el plazo, EN_USO (lo que conteste luego se tira).
+        let vencido = comprobando.is_some_and(|c| dashos::ahora_us().saturating_sub(c.3) > PLAZO_COMPROBAR_US);
+        if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR || vencido {
+            let llego = marca == MARCA_COMPROBADOR && n == 24;
+            if let Some((a_quien, programa, quien, _, temporizador)) = comprobando.filter(|_| llego || vencido) {
+                comprobando = None;
+                if temporizador != 0 {
+                    dashos::cerrar(temporizador);
+                }
+                let (estado, dato) = if llego { (u32_en(0) as i32, u64_en(8)) } else { (dashos::protocolo::archivos::EN_USO, 0) };
+                if !llego {
+                    println!("  [sesiones] el comprobador no contesta en {} s", PLAZO_COMPROBAR_US / 1_000_000);
+                }
+                let largo = quien.iter().position(|&c| c == 0).unwrap_or(16);
+                acabar_admin(&mut registro, a_quien, &programa, "comprobar", &quien[..largo], estado, dato);
+            }
+            if marca == MARCA_COMPROBADOR || marca == MARCA_PLAZO_COMPROBAR {
+                for &l in &ll[..k] {
+                    dashos::cerrar(l);
+                }
+                continue;
+            }
+        }
         // Las llaves que sobren se cierran siempre (E2).
         let mut usadas = 0;
         if marca >> 63 == 1 && k == 0 && n == 16 {
@@ -887,9 +924,21 @@ fn principal() -> u64 {
                         // volumen, sin abrirlo. Sin plazo de gracia: cada acción, la suya.
                         let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
                         let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
-                        let (estado, dato) = match (clave_buena, &archivos) {
-                            // A15: lo hace el comprobador aparte, con los datos, sin parar al servicio de archivos.
-                            (true, Some(_)) if ACCIONES[accion] == "comprobar" => comprobar_aparte(),
+                        let hecho = match (clave_buena, &archivos) {
+                            // A15: lo hace el comprobador aparte, con los datos, sin parar al servicio de archivos ni a
+                            // `sesiones`: la respuesta llega luego (`MARCA_COMPROBADOR`). Una a la vez.
+                            (true, Some(_)) if ACCIONES[accion] == "comprobar" => {
+                                if comprobando.is_some() {
+                                    Some((dashos::protocolo::archivos::EN_USO, 0))
+                                } else if let Some(temporizador) = pedir_comprobar() {
+                                    let mut quien = [0u8; 16];
+                                    quien[..usuario.len().min(16)].copy_from_slice(&usuario[..usuario.len().min(16)]);
+                                    comprobando = Some((a_quien, programa, quien, dashos::ahora_us(), temporizador));
+                                    None
+                                } else {
+                                    Some((dashos::protocolo::archivos::ERROR_DEL_DISCO, 0))
+                                }
+                            }
                             // Matar a otro usuario o al sistema: su grupo entero, como `MATAR` con uno propio.
                             (true, _) if ACCIONES[accion] == "matar" => match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
                                 Some(j) => {
@@ -897,20 +946,15 @@ fn principal() -> u64 {
                                     dashos::grupo_matar(f.grupo);
                                     dashos::cerrar(f.grupo);
                                     println!("  [sesiones] {} mata a {} (usuario {}), con permiso de administrador", nombre(&programa), nombre(&f.nombre), f.uid);
-                                    (BIEN, objetivo)
+                                    Some((BIEN, objetivo))
                                 }
-                                None => (NO_EXISTE, objetivo),
+                                None => Some((NO_EXISTE, objetivo)),
                             },
-                            _ => (PROTEGIDO, 0),
+                            _ => Some((PROTEGIDO, 0)),
                         };
-                        let quien_ = core::str::from_utf8(usuario).unwrap_or("?");
-                        println!("  [sesiones] {} hace {} con la contraseña de {}: {} ({})", nombre(&programa), ACCIONES[accion], if quien_.is_empty() { "nadie" } else { quien_ }, estado, dato);
-                        registro.apuntar(R_ADMIN, estado, &programa, ACCIONES[accion].as_bytes());
-                        let mut r = [0u8; 12];
-                        r[0..4].copy_from_slice(&estado.to_le_bytes());
-                        r[4..12].copy_from_slice(&dato.to_le_bytes());
-                        dashos::canal_escribir(a_quien, &r, &[]);
-                        dashos::cerrar(a_quien);
+                        if let Some((estado, dato)) = hecho {
+                            acabar_admin(&mut registro, a_quien, &programa, ACCIONES[accion], usuario, estado, dato);
+                        }
                     }
                     // La contraseña, fuera de la memoria en cuanto se usa (S6b, regla 9).
                     b.fill(0);
