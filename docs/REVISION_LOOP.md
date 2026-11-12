@@ -1026,3 +1026,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   da vueltas; lo próximo, trazas por fases dentro de `open_inner` (anillo, `committed`, `reset_allocator`).
 - S10c: Permisos sin nada concedido dice "Ningún programa tiene permisos concedidos" en vez de una lista vacía (Quitar
   sobre esa fila no hace nada). Prueba en virt: tras quitar el último, "lo que se ve" es ese texto.
+- U5: el selector enseña el tamaño de cada fichero ("nota.txt · 18 bytes"; KB y MB según el tamaño, del campo
+  tamaño de cada entrada de LISTAR) y dice lo que enseña al entrar en un cajón. Captura nueva.

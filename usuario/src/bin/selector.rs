@@ -83,6 +83,17 @@ fn pedir_todo(lectura: u32, orden: u32, asa: u32, x: u64, y: u64, nombre: &str) 
 struct Entrada {
     nombre: String,
     cajon: bool,
+    /// Bytes (de un fichero).
+    tam: u64,
+}
+
+/// El tamaño para la lista: bytes, KB o MB.
+fn tamano(b: u64) -> String {
+    match b {
+        0..1024 => alloc::format!("{} bytes", b),
+        1024..1_048_576 => alloc::format!("{} KB", b.div_ceil(1024)),
+        _ => alloc::format!("{},{} MB", b / 1_048_576, b % 1_048_576 * 10 / 1_048_576),
+    }
 }
 
 /// Lo que hay en el cajón de la asa `cajon`: los cajones primero y luego los ficheros, cada grupo por nombre. Sin los
@@ -115,7 +126,8 @@ fn listar(lectura: u32, cajon: u32) -> (Vec<Entrada>, usize) {
                     && n != ".."
                     && !n.contains(['/', ':', '|'])
                 {
-                    entradas.push(Entrada { nombre: String::from(n), cajon: tipo == a::CAJON });
+                    let tam = u64::from_le_bytes(v[off..off + 8].try_into().unwrap());
+                    entradas.push(Entrada { nombre: String::from(n), cajon: tipo == a::CAJON, tam });
                 } else {
                     raros += 1;
                 }
@@ -172,7 +184,7 @@ fn filas(entradas: &[Entrada], en_raiz: bool) -> String {
     if !en_raiz {
         f.push(String::from(SUBIR));
     }
-    f.extend(entradas.iter().map(|e| if e.cajon { alloc::format!("{}/", e.nombre) } else { e.nombre.clone() }));
+    f.extend(entradas.iter().map(|e| if e.cajon { alloc::format!("{}/", e.nombre) } else { alloc::format!("{}  ·  {}", e.nombre, tamano(e.tam)) }));
     f.join("|")
 }
 
@@ -352,7 +364,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                             camino.asas.push(asa);
                             camino.nombres.push(e.nombre.clone());
                             entradas = listar(lectura, asa).0;
-                            println!("  [selector] entra en {}, {} entradas", camino.texto(), entradas.len());
+                            println!("  [selector] entra en {}, {} entradas: {}", camino.texto(), entradas.len(), filas(&entradas, false).replace('|', "; "));
                         } else if tipo == a::FICHERO && !e.cajon {
                             return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre), con_raton));
                         } else {
