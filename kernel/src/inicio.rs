@@ -53,15 +53,16 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // A15: el comprobador aparte: la partición de DashOS solo para leer, y archivos para sujetar el disco mientras la
     // recorre. Tras archivos, que es quien sirve ese canal.
     #[cfg(feature = "virt")]
-    ("comprobador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/comprobador"), &[], &["disco", "archivos"]),
+    ("comprobador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/comprobador"), &[], &["disco", "archivos", "comprobar"]),
     // Las fichas de los procesos (U2) y la entrada de los usuarios (U3), solo en `virt` por ahora. Va tras archivos,
     // del que es cliente (abre y cierra el volumen de cada usuario); `inicio` le da de alta también lo lanzado antes.
-    // Sus llaves: 1 archivos, 2 su canal "sesiones" (los canales van en el orden en que se nombran).
+    // Sus llaves: 1 plazo, 2 archivos, 3 comprobar, 4 eco y 5 su canal "sesiones" (los canales van en el orden en que
+    // aparecen por primera vez en esta lista, no en el de la lista de cada programa).
     // Un servicio de prueba que contesta lo que le llega (U4): solo se llega a él con la llave que reparte `sesiones`.
     #[cfg(feature = "virt")]
     ("eco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/eco"), &[], &["eco"]),
     #[cfg(feature = "virt")]
-    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones"]),
+    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones", "comprobar"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.

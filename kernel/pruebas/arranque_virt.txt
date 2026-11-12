@@ -181,6 +181,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] Super+L: se bloquea la sesión de Ana tras
 ~│   [guardian] bloqueo con la tecla: bien
 ~│   [pide] acción de administrador (comprobar el disco): 0 con 0 problemas: bien
+# A15: la hace el comprobador aparte, con los datos, sin parar al servicio de archivos.
+~│   [comprobador] pedido con los datos: 0 (0 problemas
 ~│   [sesiones] pide mata a eco (usuario 1), con permiso de administrador
 ~│   [pide] raíces: PROGDIR:pide 0, Programas:hola 0, SYS:LEEME.txt 0; crear por SYS: -12, cerrarla -5: bien
 ~│   [pide] U2, tabla de nombres con PROGDIR: bien

@@ -15,6 +15,7 @@ pub mod servicio;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
     pub mod archivos;
+    pub mod comprobar;
     pub mod sesiones;
 }
 #[cfg(feature = "monton")]

@@ -1095,3 +1095,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (con el aviso `reading_data` puesto en `check`): no gana nada (88 y 91 MB/s), lo ganado era en los metadatos de la
   pasada con datos. Queda así: por delante solo en la pasada con los datos (120 y 128 MB/s) y no en el recorrido sin
   datos; RedoxFS sin tocar.
+- A15: "Comprobar el disco" (la acción de administrador, desde el centro o `pide`) la hace ya el comprobador aparte,
+  con los datos, sin parar al servicio de archivos. El comprobador, tras su prueba del arranque, sirve el canal
+  "comprobar" (`dashos::protocolo::comprobar`; solo `sesiones` tiene llave): sujeta, recorre la foto, suelta y contesta
+  estado, problemas y KB ocupados (LLENO si el servicio soltó a medias). En virt: 0 problemas, 1.660 KB en 52 ms, por
+  `pide` y por el centro. Antes era COMPROBAR dentro de `archivos` y sin los datos.
+  Tropiezo: `inicio` da las llaves de canal en el orden en que cada canal aparece por primera vez en la lista de
+  `kernel/src/inicio.rs`, no en el de la lista del programa. "comprobar" sale antes que "eco" y "sesiones", así que en
+  `sesiones` es la 3 y las demás se corren (eco 4, la suya 5). Con los números mal, `sesiones` no atendía a nadie.
+  Pendiente: `sesiones` espera la respuesta sin plazo (si el comprobador tarda, como hasta 10 s esperando a sujetar,
+  `sesiones` no atiende entretanto); y que el centro enseñe los KB y los problemas.

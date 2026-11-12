@@ -24,24 +24,26 @@ use dashos::protocolo::sesiones::*;
 dashos::programa!(principal);
 
 /// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); van primero los permisos
-/// y después los canales, en el orden en que se nombran: 2 el del servicio de archivos, 3 el de `eco` (sin marca, para
-/// repartirlo) y 4 el suyo.
+/// y después los canales, en el orden en que aparecen por primera vez en la lista de `kernel/src/inicio.rs` (no en el
+/// de la lista de cada programa): 2 el del servicio de archivos, 3 el del comprobador aparte (A15: la acción de
+/// administrador "comprobar"), 4 el de `eco` (sin marca, para repartirlo) y 5 el suyo.
 const PLAZO: u32 = 1;
 const ARCHIVOS: u32 = 2;
-const CANAL: u32 = 4;
-/// Llave 5: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
+const COMPROBADOR: u32 = 3;
+const CANAL: u32 = 5;
+/// Llave 6: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
 /// que lanza (marcada con su número) y su aviso de fin.
-const PROPIO: u32 = 5;
-/// Llave 6: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
+const PROPIO: u32 = 6;
+/// Llave 7: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
 /// marcada con su número.
-const ARCHIVOS_ALTAS: u32 = 6;
+const ARCHIVOS_ALTAS: u32 = 7;
 /// Las raíces con que nace lo que lanza: la 0, el cajón de donde salió (`PROGDIR:`); la 1, el disco para leer
 /// (`SYS:`, `Programas:`); la 2, el volumen de su usuario (`Home:`), si tiene cuenta.
 const RAIZ_SYS: u8 = 1;
 const RAIZ_HOME: u8 = 2;
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
-const REPARTE: &[(&str, u32)] = &[("eco", 3), ("plazo", PLAZO)];
+const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO)];
 /// Cuáles de `REPARTE` son permisos, no canales.
 const PERMISOS_KERNEL: &[&str] = &["plazo"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
@@ -333,6 +335,27 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
         raiz(RAIZ_HOME, 6, &c[..c.len().min(16)], b"");
     }
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
+}
+
+/// A15: pide al comprobador aparte (llave `COMPROBADOR`) que recorra el disco con los datos: estado y problemas.
+fn comprobar_aparte() -> (i32, u64) {
+    use dashos::protocolo::comprobar::{COMPROBAR, CON_DATOS};
+    let (lectura, escritura) = dashos::canal_crear();
+    let mut p = [0u8; 8];
+    p[0..4].copy_from_slice(&COMPROBAR.to_le_bytes());
+    p[4..8].copy_from_slice(&CON_DATOS.to_le_bytes());
+    let mut r = [0u8; 24];
+    let leido = if dashos::canal_escribir(COMPROBADOR, &p, &[escritura]) == 0 {
+        dashos::canal_leer(lectura, &mut r, &mut []).0
+    } else {
+        dashos::cerrar(escritura);
+        -1
+    };
+    dashos::cerrar(lectura);
+    if leido != 24 {
+        return (dashos::protocolo::archivos::ERROR_DEL_DISCO, 0);
+    }
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[8..16].try_into().unwrap()))
 }
 
 /// Da a `marca` una llave del servicio `s` (U4): una copia marcada con su número, que viaja una vez (S4) y llega sin
@@ -854,10 +877,8 @@ fn principal() -> u64 {
                         let admin = CUENTAS.iter().find(|c| c.1.as_bytes() == usuario).is_some_and(|c| ADMIN.contains(&c.0));
                         let clave_buena = admin && archivos.as_ref().is_some_and(|a| a.abrir_volumen(usuario, clave, true) == BIEN);
                         let (estado, dato) = match (clave_buena, &archivos) {
-                            (true, Some(a)) if ACCIONES[accion] == "comprobar" => {
-                                let (e, _, problemas) = a.orden(dashos::protocolo::archivos::COMPROBAR, 0, 0, 0, b"");
-                                (e, problemas)
-                            }
+                            // A15: lo hace el comprobador aparte, con los datos, sin parar al servicio de archivos.
+                            (true, Some(_)) if ACCIONES[accion] == "comprobar" => comprobar_aparte(),
                             // Matar a otro usuario o al sistema: su grupo entero, como `MATAR` con uno propio.
                             (true, _) if ACCIONES[accion] == "matar" => match fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo)) {
                                 Some(j) => {

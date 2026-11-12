@@ -1,9 +1,11 @@
 //! A15, el comprobador aparte (plan en `docs/REVISION_LOOP.md`): un programa con la partición de DashOS solo para
 //! leer. Primero comprueba que escribir y descartar se le niegan (-6) y que la cabecera sigue igual. Después pide al
 //! servicio de archivos que sujete el disco (`SUJETAR`), abre la foto con la biblioteca de RedoxFS, como `ver`, y la
-//! recorre entera mientras el servicio sigue escribiendo, y la suelta.
+//! recorre entera mientras el servicio sigue escribiendo, y la suelta. Luego atiende el canal "comprobar"
+//! (`dashos::protocolo::comprobar`): las comprobaciones que pide un administrador desde el centro, por `sesiones`.
 //!
-//! Llaves: 1 el canal "disco", 2 el canal "archivos" (con el derecho de administrar, para sujetar).
+//! Llaves: 1 el canal "disco", 2 el canal "archivos" (con el derecho de administrar, para sujetar), 3 el canal
+//! "comprobar", que sirve.
 
 #![no_std]
 #![no_main]
@@ -11,7 +13,7 @@
 extern crate alloc;
 
 use dashos::println;
-use dashos::protocolo::archivos::{EN_USO, LLENO, SESION, SOLTAR, SUJETAR};
+use dashos::protocolo::archivos::{BIEN, EN_USO, ERROR_DEL_DISCO, LLENO, MAL_FORMADO, SESION, SOLTAR, SUJETAR};
 use redoxfs::{BLOCK_SIZE, Disk, FileSystem};
 use syscall::error::{EIO, EROFS, Error, Result};
 
@@ -195,15 +197,7 @@ fn principal() -> u64 {
         println!("  [comprobador] sin sesión en archivos");
         return 4;
     }
-    // Sujetar; si otro lo tiene sujeto, esperar (hasta 10 s).
-    let mut sujetar = archivos(al, SUJETAR);
-    for _ in 0..1000 {
-        if sujetar != EN_USO {
-            break;
-        }
-        dashos::dormir_us(10_000);
-        sujetar = archivos(al, SUJETAR);
-    }
+    let sujetar = sujetar(al);
     if sujetar != 0 {
         println!("  [comprobador] no se sujeta el disco: {}", sujetar);
         return 5;
@@ -243,14 +237,87 @@ fn principal() -> u64 {
     // disco, es una comprobación interrumpida, y se dice así.
     if soltar == LLENO {
         println!("  [comprobador] A15 interrumpido: el servicio soltó el disco por falta de sitio ({} de {} vueltas limpias)", limpias, VUELTAS);
-        return 7;
+    } else {
+        let bien = limpias == VUELTAS && datos_limpios && soltar == 0;
+        if let Some(p) = problema.filter(|_| !bien) {
+            println!("  [comprobador] la foto: {}", p);
+        }
+        println!("  [comprobador] A15 la foto sujeta, abierta y recorrida {} veces: {} limpias ({} nodos), soltar {}, {} ms",
+            VUELTAS, limpias, nodos, soltar, ms);
+        println!("  [comprobador] A15 la foto: {}", if bien { "bien" } else { "MAL" });
     }
-    let bien = limpias == VUELTAS && datos_limpios && soltar == 0;
-    if let Some(p) = problema.filter(|_| !bien) {
-        println!("  [comprobador] la foto: {}", p);
+    servir(lectura, vuelta, sectores, al)
+}
+
+/// Sujetar el disco; si otro lo tiene sujeto, esperar (hasta 10 s). El estado.
+fn sujetar(al: u32) -> i32 {
+    let mut e = archivos(al, SUJETAR);
+    for _ in 0..1000 {
+        if e != EN_USO {
+            break;
+        }
+        dashos::dormir_us(10_000);
+        e = archivos(al, SUJETAR);
     }
-    println!("  [comprobador] A15 la foto sujeta, abierta y recorrida {} veces: {} limpias ({} nodos), soltar {}, {} ms",
-        VUELTAS, limpias, nodos, soltar, ms);
-    println!("  [comprobador] A15 la foto: {}", if bien { "bien" } else { "MAL" });
-    if bien { 0 } else { 6 }
+    e
+}
+
+/// Una comprobación pedida: sujetar, recorrer la foto (con los datos si `datos`) y soltar. Estado, problemas y KB.
+fn comprobar(lectura: u32, vuelta: u32, sectores: u64, al: u32, datos: bool) -> (i32, u64, u64) {
+    let e = sujetar(al);
+    if e != BIEN {
+        return (e, 0, 0);
+    }
+    let informe = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, datos), None, Some(0), false)
+        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: datos }, true)));
+    // Soltado antes por falta de sitio: lo leído desde entonces no vale.
+    if archivos(al, SOLTAR) == LLENO {
+        return (LLENO, 0, 0);
+    }
+    match informe {
+        Ok(i) => (BIEN, i.problems.len() as u64, i.used * 4),
+        Err(_) => (ERROR_DEL_DISCO, 0, 0),
+    }
+}
+
+/// Atiende el canal "comprobar" (llave 3) hasta que nadie pueda escribir en él.
+fn servir(lectura: u32, vuelta: u32, sectores: u64, al: u32) -> u64 {
+    use dashos::protocolo::comprobar::{COMPROBAR, CON_DATOS};
+    use dashos::servicio::{MAX_DATOS, MAX_LLAVES, Recibido, recibir};
+    let mut b = [0u8; MAX_DATOS];
+    let mut ll = [0u32; MAX_LLAVES];
+    loop {
+        let (n, k, marca) = match recibir(3, &mut b, &mut ll) {
+            Recibido::Mensaje { n, k, marca } => (n, k, marca),
+            Recibido::Cerrado => return 0,
+            Recibido::Nada => continue,
+        };
+        for &l in ll.iter().take(k).skip(1) {
+            dashos::cerrar(l);
+        }
+        // Sin marca (los avisos de `inicio` de cada cliente) o sin llave por donde contestar: nada que hacer.
+        if marca == 0 || k == 0 {
+            if k > 0 {
+                dashos::cerrar(ll[0]);
+            }
+            continue;
+        }
+        let u32_en = |i: usize| u32::from_le_bytes(b[i..i + 4].try_into().unwrap());
+        let mut r = [0u8; 24];
+        let estado = if n >= 8 && u32_en(0) == COMPROBAR {
+            let datos = u32_en(4) & CON_DATOS != 0;
+            let t0 = dashos::ahora_us();
+            let (e, problemas, kb) = comprobar(lectura, vuelta, sectores, al, datos);
+            println!("  [comprobador] pedido{}: {} ({} problemas, {} KB, {} ms)", if datos { " con los datos" } else { "" }, e, problemas, kb,
+                (dashos::ahora_us() - t0) / 1000);
+            r[8..16].copy_from_slice(&problemas.to_le_bytes());
+            r[16..24].copy_from_slice(&kb.to_le_bytes());
+            e
+        } else {
+            MAL_FORMADO
+        };
+        r[0..4].copy_from_slice(&estado.to_le_bytes());
+        dashos::canal_escribir(ll[0], &r, &[]);
+        dashos::cerrar(ll[0]);
+    }
 }
