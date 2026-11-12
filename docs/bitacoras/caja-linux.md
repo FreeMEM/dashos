@@ -946,7 +946,10 @@ cuadros_gl kms ──GBM/EGL (llvmpipe)──▶ búfer "dumb" de virtio_gpu (p�
   sombra; entradas a la dirección física 0, fuera de la RAM, con bits desconocidos o de página grande; no puede apagar
   la MMU ni tocar las zonas sin traducir, el tope, el derribo ni la tabla del GMP; tablas fuera de su RAM; cambiar la
   tabla sin vaciar no llega a la V3D; solo se escriben las entradas que cambian; y a lo loco).
-- `make arranque-virt-gpu` (nueva): BIEN. Resultados de las demás, al final de esta entrada.
+- Seguidas, sobre 49e42ab, todas BIEN a la primera: `make arranque-virt-gpu`, `make prueba` (esperado.txt y cargador
+  hunk), `arranque-virt` (las cinco), `-vm`, `-linux`, `-2`, `-arch` y `-wayland`. Las tres de Arch, con la Image y
+  el disco de esta rama (`preparar-arch` con `DASHOS_CAJA_LINUX_CACHE=~/.cache/dashos-caja-linux-gpu`: el kernel con
+  `virtio_gpu` y Mesa en el disco); en `-wayland`, la virtio-gpu está y nadie la usa.
 
 ### Medidas
 
