@@ -34,6 +34,8 @@ HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario",
 PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 # U6: `cambio`, la prueba del cambio rápido de usuario (lo lanza `guardian`, como Ana y como Carla).
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
+# S10: un programa del disco que avisa (lo lanza la barra).
+AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
@@ -65,6 +67,7 @@ if sys.argv[1] == "--comprobar":
         "Prefs/ cajón",
         "Prefs/fuente 8",
         "Programas/ cajón",
+        f"Programas/avisa {os.path.getsize(AVISA)}",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
@@ -175,6 +178,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "pide"), "wb") as f:
         f.write(open(PIDE, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "pide"), 0o755)
+    with open(os.path.join(raiz, "Programas", "avisa"), "wb") as f:
+        f.write(open(AVISA, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "avisa"), 0o755)
     with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)

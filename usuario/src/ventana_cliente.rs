@@ -35,6 +35,9 @@ pub const AVISO: u32 = 100;
 pub struct Cliente {
     respuesta: u32,
     pub juntador: Juntador,
+    /// S10: la marca de la puerta (0, sin puerta) y cuántos mensajes han llegado por ella sin atender.
+    puerta: u64,
+    pub timbres: u32,
 }
 
 /// Al acabar, se cierran su canal y las llaves que llegaron sin usar: si no, quien se conecta muchas veces (`guardian`,
@@ -51,11 +54,30 @@ impl Drop for Cliente {
 impl Cliente {
     /// Se conecta al compositor por el canal "ventanas" (llave 1).
     pub fn conectar() -> Option<Cliente> {
+        Self::conectar_con_puerta(0).map(|(c, _)| c)
+    }
+
+    /// S10: como `conectar`, y además una "puerta": una copia del extremo por el que escribe el compositor, marcada con
+    /// `marca` (que no sea 0), para que otro servicio (los avisos, con la barra) toque el timbre en el mismo canal que
+    /// se espera. Un proceso solo espera en un canal. Lo que llega con esa marca no se mezcla con lo del compositor:
+    /// se cuenta en `timbres`, y `evento_plazo` vuelve al llegar. La copia viaja una vez y solo sirve para escribir.
+    pub fn conectar_con_puerta(marca: u64) -> Option<(Cliente, u32)> {
         let (mio, suyo) = dashos::canal_crear();
+        let puerta = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca) } else { 0 };
         if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
             return None;
         }
-        Some(Cliente { respuesta: mio, juntador: Juntador::new() })
+        Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0 }, puerta.max(0) as u32))
+    }
+
+    /// Si lo leído con la marca `marca` llegó por la puerta: se cuenta y se cierran sus llaves.
+    fn por_la_puerta(&mut self, marca: u64, llaves: &[u32]) -> bool {
+        if self.puerta == 0 || marca != self.puerta {
+            return false;
+        }
+        self.timbres = self.timbres.saturating_add(1);
+        llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+        true
     }
 
     /// Los globales del compositor (nombre, interfaz, versión), con un sync.
@@ -100,8 +122,14 @@ impl Cliente {
     pub fn recoger(&mut self) -> bool {
         let mut buf = [0u8; canal::MAX_CANAL];
         let mut ll = [0u32; canal::MAX_LLAVES];
-        let (n, k, _) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, 1);
-        if n <= 0 {
+        let (n, k, marca) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, 1);
+        if n < 0 {
+            return false;
+        }
+        if self.por_la_puerta(marca, &ll[..k]) {
+            return true;
+        }
+        if n == 0 {
             return false;
         }
         if buf[0] == TROZO_DATOS && self.juntador.meter(&buf[1..n as usize], &ll[..k]).is_ok() {
@@ -120,8 +148,11 @@ impl Cliente {
             }
             let mut buf = [0u8; canal::MAX_CANAL];
             let mut ll = [0u32; canal::MAX_LLAVES];
-            let (n, k, _) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, us.max(1));
+            let (n, k, marca) = dashos::canal_leer_plazo(self.respuesta, &mut buf, &mut ll, us.max(1));
             if n == dashos::E_PLAZO {
+                return Ok(None);
+            }
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
                 return Ok(None);
             }
             if n <= 0 {
@@ -143,7 +174,10 @@ impl Cliente {
             }
             let mut buf = [0u8; canal::MAX_CANAL];
             let mut ll = [0u32; canal::MAX_LLAVES];
-            let (n, k) = dashos::canal_leer(self.respuesta, &mut buf, &mut ll);
+            let (n, k, marca) = dashos::canal_leer_marca(self.respuesta, &mut buf, &mut ll);
+            if n >= 0 && self.por_la_puerta(marca, &ll[..k]) {
+                continue;
+            }
             if n <= 0 {
                 return None;
             }

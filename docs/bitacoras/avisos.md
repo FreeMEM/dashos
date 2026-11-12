@@ -3,63 +3,101 @@
 Rama `avisos`, sacada de `revision`. Diseño en `docs/diseño/S10-escritorio.md` ("Lanzador, notificaciones y
 Commodities") y `docs/diseño/U6-cambio-rapido.md`.
 
-## 2026-11-12: cortada al empezar (cupo de uso)
+## 2026-11-12, primera tanda: cortada al empezar
 
-Se paró por el cupo semanal antes de escribir código. Solo hay esto:
+Se paró por el cupo semanal antes de escribir código. Quedó el diseño (abajo, ya hecho).
 
-- La rama avanzó a `revision` (755875c, con `u6-paso2` dentro), porque `u6-paso2` cambia `sesiones`, `inicio` y el
-  compositor, que son las piezas que usan los avisos.
-- El diseño, ya pensado tras leer el código. Sin probar nada.
+## 2026-11-12, segunda tanda: primera versión
 
-### Diseño previsto
+Antes, `git merge revision` (la red y los arreglos de `sesiones`), y a mano los dos últimos de `revision` (cb7941b,
+el paso de Ajustes espera al selector; 5952ac7, la línea del lanzador sin número): se juntarán al fusionar.
 
-**Quién es quién.** Igual que el compositor y el sonido en U6 paso 2:
+### El servicio `avisos`
 
-- `avisos` entra en `SIGUEN_SESIONES` de `usuario/src/bin/inicio.rs` y de `sesiones.rs`. Así `inicio` da a
-  `sesiones` una copia sin marca de su canal (`CANAL_SISTEMA`), y `sesiones` le manda `AVISO_PERSONA` (marca, usuario,
-  nombre) y `AVISO_DETRAS`.
-- Los programas de `inicio` llegan con su entrada de directorio (24 bytes, sin marca: marca y nombre).
-- Solo cuenta lo que llega con marca 0 (de `inicio` o `sesiones`). Un programa que mande, con su marca, algo con
-  forma de entrada de directorio o de `AVISO_PERSONA` no cambia su nombre: es la prueba hostil del nombre.
-- El aviso no lleva campo "de quién": el servicio pone el nombre de la marca. Cada entrada guarda si es del sistema
-  (marca de `inicio`) o lanzado del disco (se enseña con su nombre de fichero).
-- Lo lanzado por `sesiones` pide la llave con `SERVICIO "avisos"` (`REPARTE`, con la llave de `CANAL_SISTEMA`, sin
-  entrada de directorio).
+- Proceso propio, `usuario/src/bin/avisos.rs`. Lo lanza `inicio` (solo en virt), antes de la barra, con su canal
+  "avisos" (llave 1).
+- Protocolo e historial en `usuario/src/protocolo/avisos.rs`, sin `alloc` ni nada de DashOS. Para los programas,
+  `dashos::avisos_cliente::avisar`.
+- `AVISAR`: urgencia (baja, normal, urgente), título (hasta 48 bytes) y texto (hasta 160), en un mensaje. Contesta
+  estado, número y el nombre que puso el servicio.
+- El aviso no lleva "de quién": lo pone el servicio por la marca. El nombre le llega solo sin marca: la entrada de
+  directorio de `inicio` (24 bytes) y `AVISO_PERSONA` de `sesiones`. Lo que mande un programa con esa forma, con su marca,
+  no cambia nada. Un programa sin nombre conocido no avisa (-2).
+- Textos: lo que no es UTF-8 y las letras de control pasan a "?" (un salto de línea, a espacio). Largos que no cuadran
+  con el mensaje, o mayores que el tope: -1, y el servicio sigue.
+- Historial de 50, como mucho 8 de un mismo programa: uno que inunda solo se pisa a sí mismo. Ritmo: 10 avisos por
+  minuto por programa; los demás, -3 (y lo dice una vez). Todo de tamaño fijo: inundar no le gasta memoria.
+- Solo la barra (el nombre `barra` que da `inicio`) se suscribe, lee, marca como leídos y borra. A otro, -2.
+- El timbre: la barra le da al suscribirse una copia marcada del extremo por el que le escribe el compositor (un
+  proceso solo espera en un canal). Un solo timbre pendiente hasta que la barra pida algo: no llena esa cola.
 
-**Protocolo** (`usuario/src/protocolo/avisos.rs`, sin `alloc`, probado con `rustc --test` en `make prueba`):
+### Sesiones (U6)
 
-- `AVISAR`: urgencia, largo del título (hasta 48 bytes), largo del texto (hasta 160) y los textos, en un mensaje de
-  256. Contesta estado, número del aviso y el nombre que puso el servicio (así el programa de prueba comprueba que no
-  se puede hacer pasar por otro). Largos que no cuadran con el mensaje: error, y el servicio sigue. Bytes no válidos o
-  de control: se cambian por "?" (y la barra vuelve a limpiar al pintar).
-- Solo para la barra (nombre `barra` de `inicio`, con `lanzables::del_sistema`): `SUSCRIBIR` (con una llave para el
-  timbre), `LEER` (un aviso por mensaje, desde un número), `LEIDOS` y `BORRAR_TODO`.
-- El `Historial` va en el mismo fichero: 50 avisos, como mucho 8 por programa (un programa que inunda solo se pisa a
-  sí mismo), un ritmo por programa (más de N por minuto: rechazado) y una tabla de remitentes acotada.
+- `avisos` entra en `SIGUEN_SESIONES` de `inicio` y de `sesiones`, como el compositor y el sonido: `sesiones` le dice
+  de quién es cada programa y qué sesiones están detrás.
+- Un aviso de una persona con la sesión detrás se guarda sin tocar el timbre y no sale en el historial de la de
+  delante. Al volver ella, sale en su historial, sin leer y marcado como retenido: la barra no lo enseña como toast.
+- `sesiones` reparte la llave de `avisos` como la del sonido (`REPARTE`, sin entrada de directorio). Permisos fijos:
+  `cambio` y `avisa` (en `PERMISOS`, por nombre de fichero, como el de `cambio` para el sonido).
 
-**La barra.** Un proceso solo espera en un canal. El servicio escribe el timbre en el mismo canal por el que la barra
-lee al compositor, con una copia de ese extremo marcada (hace falta un `Cliente::conectar_con_puerta(marca)` en
-`usuario/src/ventana_cliente.rs`, que guarde aparte los mensajes con esa marca en vez de tirarlos). Un solo timbre
-pendiente hasta que la barra pida algo: no llena la cola del compositor. Al sonar, la barra pide lo nuevo y enseña un
-"toast" (capa arriba a la derecha bajo la barra, unos 4 s, se cierra con un clic), una campana con punto si hay sin
-leer y, al pulsarla, el historial en una capa como el panel, con "Borrar todo".
+### La barra
 
-**Sesiones de detrás.** Los avisos de una persona con su sesión detrás se guardan y no salen a la de delante ni en su
-historial. Al volver su dueña, salen en el historial con la campana marcada, sin toast. Lo del sistema sale a quien
-esté delante.
+- `usuario/src/ventana_cliente.rs`: `Cliente::conectar_con_puerta(marca)`. Lo que llega con esa marca se cuenta en
+  `timbres` y no se mezcla con el compositor; `evento_plazo` vuelve al llegar.
+- La campana, entre la hora y el botón del panel: tonal, llena con el historial abierto, y con la insignia pequeña de
+  Material 3 (punto del color de error) si hay avisos sin leer.
+- Toast: capa arriba a la derecha, a 8 bajo la barra, sin teclado. Tarjeta de 344 × 80 en el contenedor alto,
+  esquinas de 16 y sombra de elevación 3. Círculo con la inicial (urgente: color de error), "de · hora", título y texto. 5 s, o un
+  clic lo cierra. Al abrir el historial, se cierra.
+- Historial: capa como el panel rápido, esquinas de 28, "Avisos" y el botón de texto "Borrar todo". Hasta 5 filas;
+  con más, la rueda mueve la lista y el pie dice cuáles se ven ("1–5 de 10"). Abrirlo los marca como leídos; los que no
+  se habían leído llevan fondo alto y un punto del primario mientras está abierto. Tras "Borrar todo", la capa encoge
+  a "No hay avisos".
+- Lo lanzado del disco sale como "nombre (programa)"; lo del sistema, con el nombre de `inicio`.
+- `kernel/src/inicio.rs`: el servicio, el canal "avisos" de la barra (su llave 4) y el programa de prueba `avisador`.
 
-**Pruebas previstas en virt.** `avisador` (de `inicio`, canal "avisos"): un aviso bueno, el intento de cambiarse el
-nombre, largos falsos, bytes malos y una inundación. `Programas/avisa` lanzado desde el lanzador como Ana (permiso fijo
-"avisa avisos"): sale su toast (captura), punto en la campana, se abre el historial, y lo de `avisa` sigue ahí tras la
-inundación. `cambio`, con Ana detrás, avisa: no sale a Carla y sí al volver Ana. "No molestar" en el panel, al final
-del guion.
+### Pruebas
 
-### Pendiente: todo
+- PC: `rustc --edition 2024 --test usuario/src/protocolo/avisos.rs` (7), en `make prueba`.
+- Virt (`tools/prueba_uefi.sh`, tras la barra):
+  - `avisador` (de `inicio`, con la llave): un aviso bueno; entrada de directorio y `AVISO_PERSONA` falsos y un aviso
+    que dice ser de guardian, y sale como `avisador`; seis mensajes mal hechos rechazados; bytes raros guardados
+    limpios; 100 avisos seguidos topan con el ritmo y el servicio sigue.
+  - Un programa sin la llave no puede ni escribir en el canal: no hay a quién mandar nada. Lo que se prueba es que
+    `sesiones` no la da sin permiso (como `eco`).
+  - `cambio` de Ana avisa con su sesión detrás: se guarda; al volver Ana, sale en su historial.
+  - El guion lanza `Programas/avisa` desde el lanzador (como Ana): sale el toast con punto en la campana, un clic lo
+    cierra, la campana abre el historial (avisa, cambio y avisador: la inundación no tapa a los demás), "Borrar todo"
+    lo vacía y la campana lo cierra.
+- Capturas en `capturas-agente/` (fuera de git), con `CAPTURA_AVISOS=fichero.ppm`: `avisos.png` (el toast, con el punto
+  en la campana), `avisos.hist.png` (el historial: avisa, cambio y cinco de los ocho que quedan del avisador) y
+  `avisos.vacio.png` (tras "Borrar todo").
 
-- Servicio `usuario/src/bin/avisos.rs`, protocolo e historial con sus pruebas de PC en `kernel/Makefile`.
-- Líneas de `kernel/src/inicio.rs` (el servicio antes de la barra; el canal "avisos" a la barra y a `avisador`).
-- `inicio.rs` y `sesiones.rs` de usuario (`SIGUEN_SESIONES`, `REPARTE`, `PERMISOS`).
-- La barra (timbre, toast, campana, historial) y el cambio en `ventana_cliente.rs`.
-- Programas de prueba, disco (`tools/disco_archivos.py`), guion y esperados; "no molestar" (opcional).
+### Cambios en el guion que no son de los avisos
 
-No se ejecutó ninguna prueba: no hay código nuevo.
+- Con dos programas más en el arranque, Ajustes y el selector salían más juntos: el clic del paso de Ajustes caía
+  justo después de salir el selector, le quitaba el teclado y el paso del selector esperaba sin fin (sin dejar pasar a
+  los de detrás: el menú, Super+L). Es el fallo (3) de `docs/REVISION_LOOP.md` con el otro orden. Ahora el paso del
+  selector pulsa antes en su cabecera, a la derecha, donde Ajustes no llega.
+- Al acabar el paso de los avisos, el cursor va abajo a la derecha: los clics de siempre, desde la campana, volvían a
+  abrir el historial y el panel, y la captura final salía con ellos.
+- `ESTADO_GUION=fichero`: el estado del guion cada 2 s. Con él se vio en qué paso se quedaba.
+
+### Resultado
+
+- `make prueba`: BIEN (una vuelta, antes de la última, falló en C14 y S2, que miden tiempos, con el PC cargado).
+- `make arranque-virt`: tres vueltas fallaron por el selector (arriba), una con el historial abierto en la captura
+  final; la séptima, todo BIEN (arranque, disco, captura, sonido y la ventana de Ana). No se repitió más veces.
+
+### Decisiones provisionales (a confirmar por el usuario)
+
+- Los avisos de una sesión de detrás salen al volver solo en el historial, sin toast.
+- Lo lanzado del disco sale con su nombre de fichero y "(programa)": no es del sistema.
+- Se tocaron las líneas de la tabla de `kernel/src/inicio.rs`: el servicio, el canal de la barra y `avisador`.
+
+### Pendiente
+
+- "No molestar" en el panel rápido (mosaico): no se hizo.
+- Los permisos fijos por nombre de fichero (`avisa`, `cambio`) son de prueba; con paquetes (S8), del paquete.
+- Avisos con acciones (botones), iconos de los programas, agrupar por programa, y el puente de freedesktop y del Amiga.
+- La hora es UTC, como la de la barra.

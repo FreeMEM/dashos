@@ -198,6 +198,22 @@ path = "src/bin/entrada.rs"
 name = "eco"
 path = "src/bin/eco.rs"
 
+# S10: el servicio de avisos (las notificaciones), su prueba hostil y un programa del disco que avisa.
+[[bin]]
+name = "avisos"
+path = "src/bin/avisos.rs"
+test = false
+
+[[bin]]
+name = "avisador"
+path = "src/bin/avisador.rs"
+test = false
+
+[[bin]]
+name = "avisa"
+path = "src/bin/avisa.rs"
+test = false
+
 [[bin]]
 name = "pide"
 path = "src/bin/pide.rs"

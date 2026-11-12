@@ -58,18 +58,21 @@ const RAIZ_HOME: u8 = 2;
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
-const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO), ("sonido", SIN_NUMERO)];
+/// S10: también `avisos` (las notificaciones), igual que el sonido.
+const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO)];
 const SIN_NUMERO: u32 = 0;
 /// U6: los servicios que siguen las sesiones (el compositor y el sonido), por el nombre que da `inicio` a quien los
 /// sirve: no reciben entradas de directorio de lo que se reparte (un nombre así podría ser el de uno con poderes), sino
 /// `AVISO_PERSONA`.
-const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido"];
+const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// Cuáles de `REPARTE` son permisos, no canales.
 const PERMISOS_KERNEL: &[&str] = &["plazo"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
 /// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
 /// U6: `cambio` (la prueba del cambio rápido de usuario) suena por el servicio de sonido.
-const PERMISOS: &[(&str, &str)] = &[("cambio", "sonido")];
+/// S10: `cambio` avisa desde la sesión de detrás, y `avisa` (`Programas/avisa`) es la prueba de un programa del disco que
+/// avisa.
+const PERMISOS: &[(&str, &str)] = &[("cambio", "sonido"), ("cambio", "avisos"), ("avisa", "avisos")];
 const CAMINO_PERMISOS: &[u8] = b"Estado/Servicios/sesiones/permisos";
 /// Permisos concedidos por el usuario, a la vez, y preguntas sin contestar.
 const MAX_CONCEDIDOS: usize = 32;
@@ -528,17 +531,20 @@ fn guardar_permiso(a: &Archivos, programa: &str, servicio: &str, uid: u32) {
 struct Siguen {
     compositor: u32,
     sonido: u32,
+    /// S10: el servicio de avisos, para que lo de una sesión de detrás no salga a la de delante.
+    avisos: u32,
 }
 
 impl Siguen {
-    fn todos(&self) -> [u32; 2] {
-        [self.compositor, self.sonido]
+    fn todos(&self) -> [u32; 3] {
+        [self.compositor, self.sonido, self.avisos]
     }
 
     /// La llave del servicio `s` de `REPARTE`.
     fn llave(&self, s: usize) -> u32 {
         match REPARTE[s] {
             ("sonido", _) => self.sonido,
+            ("avisos", _) => self.avisos,
             (_, n) => n,
         }
     }
@@ -740,6 +746,7 @@ fn principal() -> u64 {
                         match nombre(&f.nombre) {
                             "compositor" => avisar_todo(siguen.compositor, &fichas, &detras_dicho),
                             "sonido" => avisar_todo(siguen.sonido, &fichas, &detras_dicho),
+                            "avisos" => avisar_todo(siguen.avisos, &fichas, &detras_dicho),
                             _ => {}
                         }
                     }
@@ -751,6 +758,7 @@ fn principal() -> u64 {
                 let hueco = match nombre(&quien) {
                     "compositor" => Some(&mut siguen.compositor),
                     "sonido" => Some(&mut siguen.sonido),
+                    "avisos" => Some(&mut siguen.avisos),
                     _ => None,
                 };
                 if let Some(h) = hueco.filter(|h| **h == 0) {

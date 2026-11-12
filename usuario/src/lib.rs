@@ -12,9 +12,11 @@ pub mod graficos;
 pub mod hid;
 pub mod particiones;
 pub mod servicio;
+pub mod avisos_cliente;
 /// Los protocolos de los servicios, compartidos con sus clientes (E7).
 pub mod protocolo {
     pub mod archivos;
+    pub mod avisos;
     pub mod comprobar;
     pub mod red;
     pub mod sesiones;
