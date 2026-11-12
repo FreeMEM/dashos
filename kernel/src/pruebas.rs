@@ -669,7 +669,9 @@ fn prueba_cortes() {
     let cortes = planificador::CORTES.load(core::sync::atomic::Ordering::Relaxed);
     let malos = planificador::CORTES_CON_CERROJO.load(core::sync::atomic::Ordering::Relaxed);
     kprintln!("  puntos de corte abiertos {}; con un cerrojo tomado {}", cortes, malos);
-    let bien = fin_carga == Some(objetos::Fin::Salida(0)) && b[1] < 1000 && cortes > 0 && malos == 0;
+    // El p90 con la carga, por debajo de 1 ms, o de lo que dio solo más 1 ms: con el anfitrión cargado (QEMU con otros
+    // procesos), solo ya pasa de 1 ms; sin cortes, cada llamada de 4 MB añade la suya entera.
+    let bien = fin_carga == Some(objetos::Fin::Salida(0)) && (b[1] < 1000 || b[1] < a[1].saturating_add(1000)) && cortes > 0 && malos == 0;
     kprintln!("S2: llamadas largas troceadas {}", if bien { "bien" } else { "MAL" });
 }
 

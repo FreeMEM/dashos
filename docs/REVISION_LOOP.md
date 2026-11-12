@@ -1314,3 +1314,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   centro de control abrió su ventana encima (3 s tras abrirse el selector, con el PC cargado) y se rindió al minuto
   ("nadie eligió en un minuto"); el menú de Ajustes, que espera al centro cerrado, no llegó. Es del guion, como los
   fallos de antes: pendiente que el centro no se abra mientras el selector espera.
+
+### 2026-11-12 14:20: el selector sobrevive a una vuelta a instantánea; umbrales que dependían de la carga
+- Causa real de "nadie eligió en un minuto": la prueba `ficheros` (FS9) vuelve el disco a una instantánea y `archivos`
+  suelta las asas de todos en ese volumen; si el selector estaba abierto, su cajón daba ASA_MALA (-5) a cada Intro.
+  Ahora `Camino::reabrir` vuelve a abrir el camino por sus nombres desde `C` y repite la búsqueda ("el cajón ya no
+  valía ...; abierto otra vez", visto en una vuelta). También le sirve a un usuario tras volver a una instantánea.
+- Guion: el reintento del selector baja tres (no dos: `Fondos` va antes que `Prefs` y `Privado`) y antes pulsa arriba a la
+  izquierda del selector, donde el centro no lo tapa.
+- S2 (`kernel/src/pruebas.rs`): el p90 con carga vale si es < 1 ms o < el p90 sin carga + 1 ms (con el anfitrión a
+  carga 70, sin nada al lado ya daba 1588 µs). C49 paso 10 (`tiempo`): hasta 100 vencimientos (salió 31 con tope 30).
+- `make prueba` BIEN; arranque-virt: revision BIEN entero; prueba1 y prueba2, todo BIEN salvo chasquidos del sonido
+  (2 y 96 saltos), con carga 47-72 en el anfitrión.

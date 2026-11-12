@@ -908,12 +908,22 @@ while time.time() - inicio < total:
             reintento = time.time() + 4
         if not bloqueado_ahora and selector == 1:
             if "[selector] entra en C/Privado" not in texto:
-                # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez (Inicio: el primero).
+                # Si una pregunta de `guardian` (que toma el teclado) o la ventana del centro de control (sale en (168, 180),
+                # encima) se llevó las teclas, otra vez: antes, un clic arriba a la izquierda del selector, que el centro
+                # no tapa (empieza 32 más a la derecha), para devolverle el teclado; Inicio (el primero) y tres abajo
+                # hasta Privado (van antes `Fondos` y `Prefs`).
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    import re
+                    vs = re.search(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                    if vs:
+                        ir_a(int(vs.group(1)) + 20, int(vs.group(2)) + 30)
+                        time.sleep(0.3)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                        time.sleep(0.3)
                     mandar("sendkey home")
                     time.sleep(0.3)
-                    mandar("sendkey down", "sendkey down", pausa=0.3)
+                    mandar("sendkey down", "sendkey down", "sendkey down", pausa=0.3)
                     time.sleep(0.3)
                     mandar("sendkey ret")
                 time.sleep(0.25)

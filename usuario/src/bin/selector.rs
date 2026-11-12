@@ -153,6 +153,32 @@ struct Camino {
 }
 
 impl Camino {
+    /// Vuelve a abrir el camino por sus nombres, desde `RAIZ`: tras volver el disco a una instantánea, `archivos` suelta
+    /// las asas de todos en ese volumen (dan `ASA_MALA`). Falso si algún cajón ya no está: entonces el camino no cambia.
+    fn reabrir(&mut self, lectura: u32) -> bool {
+        let (e, raiz) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
+        if e != a::BIEN {
+            return false;
+        }
+        let mut asas = alloc::vec![raiz];
+        for n in &self.nombres {
+            let (e, asa) = pedir(lectura, a::BUSCAR, *asas.last().unwrap(), 0, 0, n);
+            if e != a::BIEN {
+                for &x in &asas {
+                    pedir(lectura, a::CERRAR, x, 0, 0, "");
+                }
+                return false;
+            }
+            asas.push(asa);
+        }
+        // Las de antes ya no valen; se cierran por si alguna sí (no pasa nada si no).
+        for &x in &self.asas {
+            pedir(lectura, a::CERRAR, x, 0, 0, "");
+        }
+        self.asas = asas;
+        true
+    }
+
     fn texto(&self) -> String {
         let mut t = String::from(RAIZ);
         for n in &self.nombres {
@@ -388,7 +414,11 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                     } else if let Some(e) = entradas.get(k as usize) {
                         // Se busca por la asa del cajón y su nombre (sin '/': un solo paso), y se mira lo que es ahora
                         // (pudo cambiar desde que se listó).
-                        let (estado, asa, _, _, c) = pedir_todo(lectura, a::BUSCAR, *camino.asas.last()?, 0, 0, &e.nombre);
+                        let (mut estado, mut asa, _, _, mut c) = pedir_todo(lectura, a::BUSCAR, *camino.asas.last()?, 0, 0, &e.nombre);
+                        if estado == a::ASA_MALA && camino.reabrir(lectura) {
+                            println!("  [selector] {}: el cajón ya no valía (el disco volvió a una instantánea); abierto otra vez", camino.texto());
+                            (estado, asa, _, _, c) = pedir_todo(lectura, a::BUSCAR, *camino.asas.last()?, 0, 0, &e.nombre);
+                        }
                         let tipo = (c >> 16) as u8;
                         if estado != a::BIEN {
                             println!("  [selector] {} ya no se abre: {}", e.nombre, estado);
