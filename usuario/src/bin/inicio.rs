@@ -155,7 +155,9 @@ fn principal() -> u64 {
     let mut lector = [0usize; 32];
     // E6: los servicios (los que leen algún canal), para relanzarlos si acaban. Sus avisos de fin (K7) llegan por
     // `avisos`, con la marca del número del programa más 1.
-    let mut servicios: [Option<Servicio>; 32] = Default::default();
+    // Uno por programa: con más de 32 (desde la red, S13), los últimos se quedaban sin vigilar. Las marcas de los
+    // clientes (`clientes_de`) llegan a 64.
+    let mut servicios: [Option<Servicio>; 64] = core::array::from_fn(|_| None);
     // Los clientes de cada canal (bit = número del programa), para darle otra vez a su servicio, si se relanza, sus
     // entradas del directorio y, al de archivos, sus altas.
     let mut clientes_de = [0u64; 32];
