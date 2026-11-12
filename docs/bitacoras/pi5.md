@@ -215,3 +215,28 @@ ratón al compositor.
   5)" y sigue; `xhci0` dice "DMA bien", los aparatos (0409:55aa el concentrador, 0627:0001 el teclado y el ratón) y las
   teclas que manda el monitor. Captura en `capturas-agente/pi5-usb-virt.png`.
 - `rp1.rs` en el PC: 8 pruebas, bien.
+- Tras fusionar `revision` (7b7e5a7) en la rama: `make prueba` ("BIEN: esperado.txt" y "BIEN: cargador hunk", y las
+  pruebas de `rp1.rs`), `make arranque-virt` (las cinco BIEN), `arranque-virt-vm`, `arranque-virt-2`,
+  `arranque-virt-diag`, `arranque-virt-escritorio` y `arranque-virt-usb`: todas BIEN.
+- `make tarjeta-pi5`: la tarjeta lleva `kernel_2712.img`, `dashos-usb.img` y `dashos-escritorio.img` (este, ahora con
+  `usb`), y `pciex4_reset=0` en `config.txt`; el `dashos-usb.img` de la FAT es igual al de `target/`.
+- Sin probar en una Pi 5: todo lo del RP1. Ni el escritorio con `usb` en QEMU (allí no hay RP1; la imagen `virt` del
+  escritorio no lleva `usb`).
+
+### Qué mirar en la foto de `dashos-usb.img`
+
+1. "PCIe del RP1": si dice enlace CAÍDO, el firmware reinició el PCIe (¿se perdió `pciex4_reset=0`?) y no se sigue.
+2. "Ventanas": si la de entrada no cuadra, el DMA no llegará (lo confirmará `xhci0`: "MAL ... HSE").
+3. "RP1": `1de4:xxxx` y un `sysinfo` que no sea "fallo de bus". Si en su lugar sale "EXT_CFG_INDEX vale ..." o "no
+   Raspberry Pi", los registros de configuración de la 2712 no están donde en la 2711: apuntar el valor.
+4. "USB0" y "USB1": versión, 64 bits, scratch, y qué puerto tiene "algo".
+5. Debajo: "DMA bien" de cada uno, los aparatos con fabricante:producto y "HID de arranque: 1 teclado y 1 ratón".
+6. "Teclado y ratón": la última tecla.
+
+### Lo que queda
+
+- Las interrupciones del RP1 (sus MSI-X por el bloque `pcie` del RP1 y el MIP de la BCM2712 hacia el GIC, SPI 128 a
+  191 según el árbol): hoy se sondea cada 10 ms. El MIP solo está descrito en código de Linux: hará falta una
+  especificación de analista o probarlo en la Pi.
+- Levantar el enlace sin el firmware (si algún día `pciex4_reset=0` no basta): también solo en código de Linux.
+- La corriente de los puertos USB (VBUS) si el firmware no la deja puesta.
