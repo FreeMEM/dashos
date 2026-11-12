@@ -53,7 +53,7 @@ use kit::tema::{con_opacidad, Tema};
 use kit::texto::Fuente;
 use ventana_cliente::*;
 use wayland::tablas::{
-    self, dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    self, dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm_pool, wl_surface,
     zwlr_layer_shell_v1, zwlr_layer_surface_v1,
 };
 use wayland::{leer_args, Escritor, Valor};
@@ -81,6 +81,10 @@ const BUFER_AVISO: u32 = 28;
 const SUP_HIST: u32 = 29;
 const CAPA_HIST: u32 = 30;
 const BUFER_HIST: u32 = 31;
+// Los pools del lanzador, del aviso y del historial: cada uno con su memoria, solo mientras se ve (kit-memoria).
+const POOL_L: u32 = 32;
+const POOL_A: u32 = 33;
+const POOL_H: u32 = 34;
 /// Dónde se ve la ventana del servicio de archivos.
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 
@@ -95,8 +99,6 @@ const FILAS: usize = 6;
 const ALTO_FILA: i32 = 48;
 const BUSCADOR: Rect = Rect { x: 12, y: 12, w: ANCHO_L - 24, h: 48 };
 const Y_FILAS: i32 = 72;
-/// Lo más alto que se hace (la memoria es para esto); al abrirlo, mide lo que piden sus programas (`alto_lanzador`).
-const ALTO_L_MAX: i32 = Y_FILAS + FILAS as i32 * ALTO_FILA + 12;
 /// Lo que se escribe en el buscador, como mucho (en letras).
 const MAX_BUSCA: usize = 30;
 /// El toast: una tarjeta de 344 × 80 con su sombra, a 8 de la barra, en un búfer con margen; dura `DURA_AVISO_US`.
@@ -110,11 +112,12 @@ const ALTO_FILA_H: i32 = 76;
 const Y_FILAS_H: i32 = 64;
 const PIE_H: i32 = 40;
 const ALTO_H_MAX: i32 = Y_FILAS_H + FILAS_H as i32 * ALTO_FILA_H + PIE_H;
-/// La memoria: la barra (lo más ancha que se pinta) y, detrás, el lanzador, el toast y el historial.
-const OFF_L: usize = (ANCHO_MAX * ALTO * 4) as usize;
-const OFF_A: usize = OFF_L + (ANCHO_L * ALTO_L_MAX * 4) as usize;
-const OFF_H: usize = OFF_A + (ANCHO_A * ALTO_A * 4) as usize;
-const TAMANO: usize = OFF_H + (ANCHO_H * ALTO_H_MAX * 4) as usize;
+/// Dónde se ven las memorias de los búferes: la barra en `VA`, del ancho que tiene; el lanzador, el toast y el historial,
+/// cada uno en la suya, que se pide al abrirlo y se suelta al cerrarlo (kit-memoria: antes, 2,1 MB siempre, con la barra
+/// a 3840 de ancho).
+const VA_L: usize = VA + (1 << 32);
+const VA_A: usize = VA + (2 << 32);
+const VA_H: usize = VA + (3 << 32);
 const BOTON_IZQUIERDO: u32 = 0x110;
 const KEY_ESC: u32 = 1;
 /// Lo que se espera a `sesiones` y a archivos, como mucho.
@@ -168,6 +171,8 @@ struct Lanzador {
     fallo: Option<&'static str>,
     /// Lo que mide de alto (lo fija al abrirse).
     alto: i32,
+    /// La memoria de su búfer, mientras está abierto.
+    hoja: Option<Lamina>,
 }
 
 impl Lanzador {
@@ -655,11 +660,14 @@ struct Avisos {
     hist: Option<Historial>,
     hist_listo: bool,
     visto_hasta: u32,
+    /// Las memorias del toast y del historial, mientras se ven.
+    hoja_a: Option<Lamina>,
+    hoja_h: Option<Lamina>,
 }
 
-fn pantalla_toast(c: &mut Cliente, a: &av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
-    let px = unsafe { core::slice::from_raw_parts_mut((VA + OFF_A) as *mut u32, (ANCHO_A * ALTO_A) as usize) };
-    pintar_toast(px, a, t, fuente, medio);
+fn pantalla_toast(c: &mut Cliente, hoja: &mut Option<Lamina>, a: &av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let Some(hoja) = hoja else { return };
+    pintar_toast(hoja.px((ANCHO_A * ALTO_A) as usize), a, t, fuente, medio);
     let mut e = Escritor::new();
     e.empezar(SUP_AVISO, wl_surface::req::ATTACH).uint(BUFER_AVISO).int(0).int(0).fin();
     e.empezar(SUP_AVISO, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_A).int(ALTO_A).fin();
@@ -667,9 +675,9 @@ fn pantalla_toast(c: &mut Cliente, a: &av::Aviso, t: &Tema, fuente: &mut Fuente,
     c.mandar(&e);
 }
 
-fn pantalla_historial(c: &mut Cliente, h: &Historial, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
-    let px = unsafe { core::slice::from_raw_parts_mut((VA + OFF_H) as *mut u32, (ANCHO_H * h.alto) as usize) };
-    pintar_historial(px, h, t, fuente, medio);
+fn pantalla_historial(c: &mut Cliente, hoja: &mut Option<Lamina>, h: &Historial, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let Some(hoja) = hoja else { return };
+    pintar_historial(hoja.px((ANCHO_H * h.alto) as usize), h, t, fuente, medio);
     let mut e = Escritor::new();
     e.empezar(SUP_HIST, wl_surface::req::ATTACH).uint(BUFER_HIST).int(0).int(0).fin();
     e.empezar(SUP_HIST, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_H).int(h.alto).fin();
@@ -683,14 +691,19 @@ fn abrir_toast(c: &mut Cliente, avs: &mut Avisos, a: av::Aviso, t: &Tema, fuente
     if avs.toast.is_some() {
         avs.toast = Some((a, hasta));
         if avs.toast_listo {
-            pantalla_toast(c, &a, t, fuente, medio);
+            pantalla_toast(c, &mut avs.hoja_a, &a, t, fuente, medio);
         }
         return;
     }
+    let mut e = Escritor::new();
+    let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_A * ALTO_A * 4) as usize, VA_A, POOL_A) else {
+        println!("  [barra] sin memoria para el aviso");
+        return;
+    };
+    avs.hoja_a = Some(hoja);
     avs.toast = Some((a, hasta));
     avs.toast_listo = false;
-    let mut e = Escritor::new();
-    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_AVISO).int(OFF_A as i32).int(ANCHO_A).int(ALTO_A).int(ANCHO_A * 4).uint(0).fin();
+    e.empezar(POOL_A, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_AVISO).int(0).int(ANCHO_A).int(ALTO_A).int(ANCHO_A * 4).uint(0).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_AVISO).fin();
     e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_AVISO).uint(SUP_AVISO).uint(0).uint(2).texto(Some("aviso")).fin();
     e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_A as u32).uint(ALTO_A as u32).fin();
@@ -708,6 +721,9 @@ fn cerrar_toast(c: &mut Cliente, avs: &mut Avisos, porque: &str) {
     e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::DESTROY).fin();
     e.empezar(SUP_AVISO, wl_surface::req::DESTROY).fin();
     e.empezar(BUFER_AVISO, wl_buffer::req::DESTROY).fin();
+    if let Some(h) = avs.hoja_a.take() {
+        h.soltar(&mut e);
+    }
     c.mandar(&e);
     avs.toast_listo = false;
     println!("  [barra] aviso cerrado: {}", porque);
@@ -734,12 +750,18 @@ fn abrir_historial(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos, medio: &mut
     let rb = zona_borrar(medio);
     println!("  [barra] historial abierto: {} avisos, {} sin leer; de {}; Borrar todo en ({}, {})", avisos.len(), sin,
         if quienes.is_empty() { String::from("nadie") } else { quienes.join(", ") }, rb.x + rb.w / 2, rb.y + rb.h / 2);
+    // Su memoria, para lo más alto que se hace: al borrar todo, se queda más bajo en la misma.
+    let mut e = Escritor::new();
+    let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_H * ALTO_H_MAX * 4) as usize, VA_H, POOL_H) else {
+        println!("  [barra] sin memoria para el historial");
+        return;
+    };
+    avs.hoja_h = Some(hoja);
     avs.hist = Some(Historial { avisos, primero: 0, alto, encima_borrar: false });
     avs.hist_listo = false;
     b.historial_abierto = true;
     // Arriba a la derecha, bajo su botón (sin zona propia: el compositor la pone bajo la barra), sin teclado.
-    let mut e = Escritor::new();
-    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(OFF_H as i32).int(ANCHO_H).int(alto).int(ANCHO_H * 4).uint(0).fin();
+    e.empezar(POOL_H, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(0).int(ANCHO_H).int(alto).int(ANCHO_H * 4).uint(0).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_HIST).fin();
     e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_HIST).uint(SUP_HIST).uint(0).uint(2).texto(Some("avisos")).fin();
     e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_H as u32).uint(alto as u32).fin();
@@ -758,6 +780,9 @@ fn cerrar_historial(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos) {
     e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::DESTROY).fin();
     e.empezar(SUP_HIST, wl_surface::req::DESTROY).fin();
     e.empezar(BUFER_HIST, wl_buffer::req::DESTROY).fin();
+    if let Some(h) = avs.hoja_h.take() {
+        h.soltar(&mut e);
+    }
     c.mandar(&e);
     avs.hist_listo = false;
     b.historial_abierto = false;
@@ -782,7 +807,7 @@ fn al_timbre(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos, fuente: &mut Fuen
             b.sin_leer = sin;
         }
         if avs.hist_listo && let Some(h) = &avs.hist {
-            pantalla_historial(c, h, &b.tema, fuente, medio);
+            pantalla_historial(c, &mut avs.hoja_h, h, &b.tema, fuente, medio);
         }
     } else if let Some(a) = nuevo.filter(|a| a.numero > avs.visto_hasta && !a.leido && !a.retenido) {
         println!("  [barra] aviso de {}: \"{}\" (urgencia {}); campana {}", a.de(), a.titulo(), a.urgencia,
@@ -810,6 +835,7 @@ fn hasta_el_minuto() -> u64 {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"barra");
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
     let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_TIMBRE) else {
         println!("  [barra] sin compositor");
@@ -823,12 +849,6 @@ fn principal() -> u64 {
         println!("  [barra] el compositor no le da capas o tema");
         return 3;
     };
-    let m = dashos::memoria_crear(TAMANO);
-    if (m as i32) <= 0 || dashos::memoria_proyectar(m as u32, VA, true) != 0 {
-        println!("  [barra] sin memoria");
-        return 4;
-    }
-    let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
@@ -837,7 +857,6 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
-    e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(TAMANO as i32).fin();
     // La barra: arriba (anclas 1 arriba, 4 izquierda, 8 derecha), a todo lo ancho, en la capa de arriba (2), con su
     // zona exclusiva y sin teclado.
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -851,7 +870,7 @@ fn principal() -> u64 {
 
     let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false };
     // Los avisos: se suscribe con la puerta. Lo que ya hubiera no sale como toast, solo cuenta para la campana.
-    let mut avs = Avisos { activo: false, toast: None, toast_listo: false, hist: None, hist_listo: false, visto_hasta: 0 };
+    let mut avs = Avisos { activo: false, toast: None, toast_listo: false, hist: None, hist_listo: false, visto_hasta: 0, hoja_a: None, hoja_h: None };
     if puerta != 0 {
         match pedir_avisos(&mut c, &orden_avisos(av::SUSCRIBIR, 0), &[puerta]) {
             Some((av::BIEN, sin, total, _)) => {
@@ -865,9 +884,10 @@ fn principal() -> u64 {
             r => println!("  [barra] sin servicio de avisos ({})", r.map_or(i32::MIN, |x| x.0)),
         }
     }
-    let mut la = Lanzador { programas: Vec::new(), busca: String::new(), vistos: Vec::new(), elegido: 0, primero: 0, encima: None, fallo: None, alto: 0 };
-    // El búfer de la barra: su ancho (0 si aún no está hecho).
+    let mut la = Lanzador { programas: Vec::new(), busca: String::new(), vistos: Vec::new(), elegido: 0, primero: 0, encima: None, fallo: None, alto: 0, hoja: None };
+    // El búfer de la barra: su ancho (0 si aún no está hecho) y su memoria, de ese ancho.
     let mut bufer_ancho = 0i32;
+    let mut hoja_barra: Option<Lamina> = None;
     let mut lanzador_configurado = false;
     let mut teclado = Teclado::new();
     // Dónde está el puntero: en qué superficie y en qué punto.
@@ -885,9 +905,10 @@ fn principal() -> u64 {
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
     };
-    let pantalla_lanzador = |c: &mut Cliente, la: &Lanzador, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente| {
-        let px = unsafe { core::slice::from_raw_parts_mut((VA + OFF_L) as *mut u32, (ANCHO_L * la.alto) as usize) };
-        pintar_lanzador(px, la, t, fuente, medio);
+    let pantalla_lanzador = |c: &mut Cliente, la: &mut Lanzador, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente| {
+        let Some(mut hoja) = la.hoja.take() else { return };
+        pintar_lanzador(hoja.px((ANCHO_L * la.alto) as usize), la, t, fuente, medio);
+        la.hoja = Some(hoja);
         let mut e = Escritor::new();
         e.empezar(SUP_LANZADOR, wl_surface::req::ATTACH).uint(BUFER_LANZADOR).int(0).int(0).fin();
         e.empezar(SUP_LANZADOR, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_L).int(la.alto).fin();
@@ -937,6 +958,10 @@ fn principal() -> u64 {
             if b.lanzador_abierto {
                 e.empezar(CAPA_LANZADOR, zwlr_layer_surface_v1::req::DESTROY).fin();
                 e.empezar(SUP_LANZADOR, wl_surface::req::DESTROY).fin();
+                e.empezar(BUFER_LANZADOR, wl_buffer::req::DESTROY).fin();
+                if let Some(h) = la.hoja.take() {
+                    h.soltar(&mut e);
+                }
                 c.mandar(&e);
                 b.lanzador_abierto = false;
                 *configurado = false;
@@ -952,12 +977,14 @@ fn principal() -> u64 {
                 }
                 la.busca.clear();
                 la.filtrar();
-                // Su búfer, del alto que piden sus programas (el de la vez anterior, fuera).
-                if la.alto != 0 {
-                    e.empezar(BUFER_LANZADOR, wl_buffer::req::DESTROY).fin();
-                }
+                // Su búfer, del alto que piden sus programas, en una memoria suya mientras se ve.
                 la.alto = alto_lanzador(la.programas.len());
-                e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_LANZADOR).int(OFF_L as i32).int(ANCHO_L).int(la.alto).int(ANCHO_L * 4).uint(0).fin();
+                let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_L * la.alto * 4) as usize, VA_L, POOL_L) else {
+                    println!("  [barra] sin memoria para el lanzador");
+                    return;
+                };
+                la.hoja = Some(hoja);
+                e.empezar(POOL_L, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_LANZADOR).int(0).int(ANCHO_L).int(la.alto).int(ANCHO_L * 4).uint(0).fin();
                 // Arriba a la izquierda, bajo su botón (sin zona propia: el compositor la pone bajo la barra), en la capa
                 // de arriba, con el teclado mientras se vea (exclusivo, 1).
                 e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_LANZADOR).fin();
@@ -986,13 +1013,13 @@ fn principal() -> u64 {
                 b.tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0);
                 pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
                 if b.lanzador_abierto && lanzador_configurado {
-                    pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
+                    pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
                 }
                 if avs.toast_listo && let Some((a, _)) = avs.toast {
-                    pantalla_toast(&mut c, &a, &b.tema, &mut fuente, &mut medio);
+                    pantalla_toast(&mut c, &mut avs.hoja_a, &a, &b.tema, &mut fuente, &mut medio);
                 }
                 if avs.hist_listo && let Some(h) = &avs.hist {
-                    pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                    pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                 }
             }
             (TEMA, dashos_tema_v1::ev::TITULO) => {
@@ -1018,6 +1045,14 @@ fn principal() -> u64 {
                     if bufer_ancho != 0 {
                         e.empezar(BUFER, wl_buffer::req::DESTROY).fin();
                     }
+                    if let Some(h) = hoja_barra.take() {
+                        h.soltar(&mut e);
+                    }
+                    let Some(hoja) = Lamina::nueva(&mut e, (ancho * ALTO * 4) as usize, VA, POOL) else {
+                        println!("  [barra] sin memoria");
+                        return 4;
+                    };
+                    hoja_barra = Some(hoja);
                     e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ancho).int(ALTO).int(ancho * 4).uint(0).fin();
                     bufer_ancho = ancho;
                 }
@@ -1046,7 +1081,7 @@ fn principal() -> u64 {
                 e.empezar(CAPA_LANZADOR, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
                 lanzador_configurado = true;
-                pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
+                pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
             }
             (CAPA_AVISO, zwlr_layer_surface_v1::ev::CONFIGURE) if avs.toast.is_some() => {
                 let mut e = Escritor::new();
@@ -1054,7 +1089,7 @@ fn principal() -> u64 {
                 c.mandar(&e);
                 avs.toast_listo = true;
                 if let Some((a, _)) = avs.toast {
-                    pantalla_toast(&mut c, &a, &b.tema, &mut fuente, &mut medio);
+                    pantalla_toast(&mut c, &mut avs.hoja_a, &a, &b.tema, &mut fuente, &mut medio);
                 }
             }
             (CAPA_AVISO, zwlr_layer_surface_v1::ev::CLOSED) => cerrar_toast(&mut c, &mut avs, "lo cerró el compositor"),
@@ -1064,7 +1099,7 @@ fn principal() -> u64 {
                 c.mandar(&e);
                 avs.hist_listo = true;
                 if let Some(h) = &avs.hist {
-                    pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                    pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                 }
             }
             (CAPA_HIST, zwlr_layer_surface_v1::ev::CLOSED) => {
@@ -1112,7 +1147,7 @@ fn principal() -> u64 {
                     println!("  [barra] busca \"{}\": {}", la.busca, la.nombres());
                 }
                 if lanzador_configurado {
-                    pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
+                    pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
                 }
             }
             (PUNTERO, wl_pointer::ev::ENTER | wl_pointer::ev::LEAVE | wl_pointer::ev::MOTION) => {
@@ -1141,13 +1176,13 @@ fn principal() -> u64 {
                 if let Some(h) = avs.hist.as_mut().filter(|h| h.encima_borrar != borrar) {
                     h.encima_borrar = borrar;
                     if avs.hist_listo {
-                        pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                        pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                     }
                 }
                 if fila_encima != la.encima {
                     la.encima = fila_encima;
                     if b.lanzador_abierto && lanzador_configurado {
-                        pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
+                        pantalla_lanzador(&mut c, &mut la, &b.tema, &mut fuente, &mut medio);
                     }
                 }
             }
@@ -1182,12 +1217,12 @@ fn principal() -> u64 {
                             h.alto = alto_historial(0);
                             let mut e = Escritor::new();
                             e.empezar(BUFER_HIST, wl_buffer::req::DESTROY).fin();
-                            e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(OFF_H as i32).int(ANCHO_H).int(h.alto).int(ANCHO_H * 4).uint(0).fin();
+                            e.empezar(POOL_H, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(0).int(ANCHO_H).int(h.alto).int(ANCHO_H * 4).uint(0).fin();
                             e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_H as u32).uint(h.alto as u32).fin();
                             c.mandar(&e);
                         }
                         if avs.hist_listo && let Some(h) = &avs.hist {
-                            pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                            pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                         }
                     }
                 } else if sobre == SUP_LANZADOR && b.lanzador_abierto {
@@ -1208,7 +1243,7 @@ fn principal() -> u64 {
                     if nuevo != h.primero {
                         h.primero = nuevo;
                         if avs.hist_listo {
-                            pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                            pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                         }
                     }
                 }

@@ -1250,6 +1250,7 @@ fn aplicar_modo(oscuro: bool) -> i32 {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"centro");
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
     let mut malos = 0u64;

@@ -65,18 +65,25 @@ impl Cliente {
         let (mio, suyo) = dashos::canal_crear();
         let puerta = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca) } else { 0 };
         // Con el compositor atareado (al arrancar, con muchos clientes a la vez y una pantalla grande), su cola puede
-        // estar llena: se reintenta hasta 5 s en vez de rendirse.
+        // estar llena: se reintenta hasta 5 s en vez de rendirse. Si no, se dice por qué y se sueltan las llaves.
         let mut intentos = 0;
-        loop {
+        let r = loop {
             let e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
-            if e == 0 {
-                break;
-            }
-            if e == dashos::E_CERRADO || intentos >= 5_000 {
-                return None;
+            if e == 0 || e == dashos::E_CERRADO || intentos >= 5_000 {
+                break e;
             }
             intentos += 1;
             dashos::dormir_us(1_000);
+        };
+        if r != 0 {
+            dashos::println!("  [ventanas] no se puede conectar al compositor: {}", r);
+            for l in [mio, suyo] {
+                dashos::cerrar(l);
+            }
+            if puerta > 0 {
+                dashos::cerrar(puerta as u32);
+            }
+            return None;
         }
         Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0 }, puerta.max(0) as u32))
     }
@@ -196,6 +203,51 @@ impl Cliente {
                 self.juntador.meter(&buf[1..n as usize], &ll[..k]).ok()?;
             }
         }
+    }
+}
+
+/// Memoria para los búferes de una superficie, con su `wl_shm_pool`, proyectada en `va`. Para lo que se abre y se cierra
+/// (el lanzador, un aviso): se pide al abrirlo y se suelta al cerrarlo, en vez de tenerla siempre (kit-memoria: la
+/// barra tenía 2,1 MB para la barra a 3840 de ancho, el lanzador, el aviso y el historial, se vieran o no).
+pub struct Lamina {
+    llave: u32,
+    va: usize,
+    pub pool: u32,
+    pub tamano: usize,
+}
+
+impl Lamina {
+    /// Crea `tamano` bytes, los proyecta en `va` y pone en `e` el `create_pool` del objeto `pool` (el compositor lee con
+    /// una copia de solo lectura de la llave).
+    pub fn nueva(e: &mut Escritor, tamano: usize, va: usize, pool: u32) -> Option<Lamina> {
+        let m = dashos::memoria_crear(tamano);
+        if (m as i32) <= 0 {
+            return None;
+        }
+        let copia = dashos::llave_duplicar(m, dashos::LEER | dashos::TRANSFERIR, 0);
+        if dashos::memoria_proyectar(m, va, true) != 0 || copia <= 0 {
+            if copia > 0 {
+                dashos::cerrar(copia as u32);
+            }
+            dashos::memoria_quitar(va);
+            dashos::cerrar(m);
+            return None;
+        }
+        e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(pool).llave(copia as u32).int(tamano as i32).fin();
+        Some(Lamina { llave: m, va, pool, tamano })
+    }
+
+    /// Los primeros `n` puntos (como mucho, los que caben).
+    pub fn px(&mut self, n: usize) -> &mut [u32] {
+        unsafe { core::slice::from_raw_parts_mut(self.va as *mut u32, n.min(self.tamano / 4)) }
+    }
+
+    /// Pone en `e` el `destroy` del pool y suelta la memoria: sus páginas vuelven cuando el compositor suelte también su
+    /// copia (al destruirse el pool y sus búferes).
+    pub fn soltar(self, e: &mut Escritor) {
+        e.empezar(self.pool, wl_shm_pool::req::DESTROY).fin();
+        dashos::memoria_quitar(self.va);
+        dashos::cerrar(self.llave);
     }
 }
 

@@ -16,7 +16,11 @@ tono, tipografía y espaciado de Material; claro y oscuro). El kit dibuja en sup
   normal y Medium; licencia SIL OFL 1.1 (ya no Apache), que deja llevarla en el repositorio con su licencia
   (`kit/fuentes/OFL.txt`).
 - **Rasterizar TrueType con `fontdue`** (MIT o Apache 2.0, sin std), en vez de escribir un rasterizador: es lo más
-  grande del kit y está resuelto.
+  grande del kit y está resuelto. **Cambiado en kit-memoria (2026-11-12):** `fontdue` convierte en líneas los
+  contornos de todas las letras al cargar la fuente: 1 MB de montón por fuente, 2 MB por programa del kit (4 MB con el
+  montón doblando). Ahora `kit/src/texto.rs` lee cada contorno con `ttf-parser` (el que ya usaba `fontdue`) cuando
+  hace falta la letra y la rasteriza con un acumulador de área propio. Mismos anchos; la cobertura cambia como mucho
+  en 1/255 de media (`docs/bitacoras/kit-memoria.md`).
 - **Rust primero** (S11 dice Dash para las aplicaciones; Dash nativo para ARM es A7, que va aparte). La API del kit
   se piensa para que los builtins de MUI de Dash la puedan usar después tal cual.
 

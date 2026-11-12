@@ -1636,6 +1636,7 @@ fn comprobar_lo_ajeno(ar: &Archivos, c: &mut Cliente) {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"workbench");
     // Arranca de los últimos, con el compositor atendiendo a muchos: si su cola está llena, se reintenta un rato.
     let mut cliente = None;
     for _ in 0..100 {

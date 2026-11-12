@@ -71,6 +71,7 @@ fn esperar(us: u64) {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"ajustes");
     esperar(2_000_000);
     let Some(mut c) = Cliente::conectar() else { return 1 };
     let Some(globales) = c.globales() else { return 1 };
