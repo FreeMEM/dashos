@@ -83,6 +83,8 @@ def mandar(*ordenes, pausa=0.0):
 
 preguntas = 0
 selector = 0
+entradas_antes = 0
+espera_carpeta = 0
 centro = 0
 panel = 0
 bloqueo_capturado = False
@@ -454,6 +456,57 @@ while time.time() - inicio < total:
                 time.sleep(0.25)
                 continue
             selector = 3
+            espera_carpeta = time.time() + 15
+        # U5: la carpeta para guardar (el hostil pide "carpeta"): abajo dos veces (Privado), Intro para entrar y, ya
+        # dentro, clic en "Elegir esta carpeta" (los botones del kit no toman el teclado).
+        # El hostil la pide justo después de lo de antes: hasta que sale, nada de lo de siempre (un clic caería en Cancelar).
+        if selector == 3 and "[selector] ventana de elegir carpeta en pantalla" not in texto and time.time() < espera_carpeta:
+            time.sleep(0.25)
+            continue
+        if selector == 3 and "[selector] ventana de elegir carpeta en pantalla" in texto:
+            selector = 4
+            # Las veces que ya entró en C/Privado (el flujo de antes también entra): hace falta una más.
+            entradas_antes = texto.count("[selector] entra en C/Privado")
+            time.sleep(0.5)
+            mandar("sendkey down")
+            time.sleep(0.3)
+            mandar("sendkey down")
+            time.sleep(0.3)
+            mandar("sendkey ret")
+            reintento = time.time() + 4
+        if selector == 4:
+            if texto.count("[selector] entra en C/Privado") <= entradas_antes:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey ret")
+                time.sleep(0.25)
+                continue
+            selector = 5
+            import re
+            v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            b = re.search(r"\[selector\] botón Elegir en \((\d+), (\d+)\)", texto)
+            if v and b:
+                x, y = int(v[-1][0]) + int(b.group(1)), int(v[-1][1]) + int(b.group(2))
+                time.sleep(0.5)
+                if captura_selector:
+                    mandar("screendump " + captura_selector + ".carpeta.ppm")
+                    time.sleep(0.5)
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            reintento = time.time() + 4
+        if selector == 5:
+            if "[selector] el usuario elige la carpeta" not in texto and "[selector] el usuario no elige carpeta" not in texto:
+                time.sleep(0.25)
+                if time.time() < reintento:
+                    continue
+            selector = 6
         if bloqueo == 0 and "[guardian] pantalla de bloqueo pintada" in texto:
             bloqueo = 1
             time.sleep(0.5)

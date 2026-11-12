@@ -1161,3 +1161,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   acepta la orden nueva `GENERAL` (13) solo de `panel`; `hostil` la manda a 0 y recibe "no le toca" (si colara, la
   prueba del sonido del arranque lo vería). En virt: "−" (90 %) y "+" (100 %). El panel va ahora tras el servicio de
   sonido en `inicio` (puesto antes, se quedaba él de servidor del canal "sonido" y no había sonido). Captura nueva.
+- U5: elegir carpeta en el selector. Con el pedido "carpeta", la misma ventana ("Elegir carpeta") enseña solo los
+  cajones y un botón "Elegir esta carpeta"; la elegida se cede como raíz 3, para leer y escribir (para guardar ahí).
+  En una raíz siguen valiendo los permisos del fichero y su tope. Prueba en virt: el hostil pide carpeta, el guion
+  entra en C/Privado y pulsa el botón con el ratón; llega el hueco 3, y como Privado es 0700 de Ana y el hostil es otro
+  usuario, por ella no lista, no ve `nota.txt`, no crea, ni sube con "../". Sin probar en virt: un programa del mismo
+  usuario guardando por ahí (ninguno de la prueba tiene a la vez el selector y el usuario 1000).
+  Hallado: los botones del kit no toman el teclado (Tab no llega a ellos); con teclado, el selector solo se maneja por
+  la lista. Pendiente del kit: el foco del teclado también en los botones. Y en el guion: el hostil pide la carpeta
+  justo tras el primer flujo; hasta que sale la ventana, nada de la actividad de fondo (sus clics caían en Cancelar).

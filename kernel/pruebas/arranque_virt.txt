@@ -214,6 +214,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] sube a C, 
 ~│   [selector] entra en C/Privado, 1 entradas: ../; nota.txt  ·  18 bytes
 ~│   [selector] el usuario elige C/Privado/nota.txt con doble clic: se cede solo para leer: 0
+# U5: la carpeta para guardar, elegida por el usuario: raíz 3 para leer y escribir; el hostil crea y borra ahí y no
+# sube por encima (lo comprueba antes de decir "selector: bien").
+~│   [selector] ventana de elegir carpeta en pantalla
+~│   [selector] el usuario elige la carpeta C/Privado: se cede para leer y escribir: 0 (hueco 3)
 ~│   [hostil] selector: bien
 ~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien
 # U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.

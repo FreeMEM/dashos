@@ -5,6 +5,9 @@
 //! nada. Con la asa cedida lee ese fichero aunque su ficha no le deje, y nada más. La ventana dice quién lo pide, por
 //! el nombre que da `inicio` a cada marca (no por lo que diga quien pide).
 //!
+//! Con el pedido "carpeta", la misma ventana enseña solo los cajones y un botón "Elegir esta carpeta": la carpeta
+//! elegida se cede como raíz 3, para leer y escribir (lo eligió el usuario: para guardar ahí), y nada por encima de ella.
+//!
 //! Llaves: 1 el canal "ventanas", 2 el canal "archivos" (con el derecho de repartir), 3 su canal "selector".
 
 #![no_std]
@@ -163,13 +166,13 @@ impl Camino {
 /// La ventana de "Abrir", empezando en `RAIZ`: lo que elija el usuario (con las flechas e Intro, o con doble clic),
 /// como (asa del fichero, su camino), o nada si cancela o no elige en un minuto. Nada elegido de antemano: un Intro de
 /// quien estaba escribiendo no abre nada. Elegir un cajón entra en él, y "../" vuelve, sin pasar de `RAIZ`.
-fn elegir(lectura: u32, quien: &str) -> Option<(u32, String, bool)> {
+fn elegir(lectura: u32, quien: &str, carpeta: bool) -> Option<(u32, String, bool)> {
     let (e, raiz) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
     if e != a::BIEN {
         return None;
     }
     let mut camino = Camino { asas: alloc::vec![raiz], nombres: Vec::new() };
-    let r = elegir_dentro(lectura, &mut camino, quien);
+    let r = elegir_dentro(lectura, &mut camino, quien, carpeta);
     for &asa in &camino.asas {
         pedir(lectura, a::CERRAR, asa, 0, 0, "");
     }
@@ -188,8 +191,17 @@ fn filas(entradas: &[Entrada], en_raiz: bool) -> String {
     f.join("|")
 }
 
-fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32, String, bool)> {
-    let (mut entradas, raros) = listar(lectura, camino.asas[0]);
+/// Lo que se enseña de un cajón: todo, o solo los cajones si se elige carpeta.
+fn listar_para(lectura: u32, asa: u32, carpeta: bool) -> (Vec<Entrada>, usize) {
+    let (mut e, raros) = listar(lectura, asa);
+    if carpeta {
+        e.retain(|x| x.cajon);
+    }
+    (e, raros)
+}
+
+fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) -> Option<(u32, String, bool)> {
+    let (mut entradas, raros) = listar_para(lectura, camino.asas[0], carpeta);
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
@@ -200,15 +212,19 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
     };
     let alto = 56 * FILAS as i32 + 148;
     let mut arbol = Arbol::new();
-    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" quiere abrir un fichero", quien)))]);
+    let pide = if carpeta { "quiere guardar en una carpeta" } else { "quiere abrir un fichero" };
+    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" {}", quien, pide)))]);
     let donde = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(camino.texto()))]);
     let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(filas(&entradas, true))), (atr::FILAS, Valor::Int(FILAS as i64)), (atr::VALOR, Valor::Int(-1))]);
     let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into()))]);
+    let esta = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Elegir esta carpeta".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    arbol.notificar(esta, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("esta".into())));
     // Intro o doble clic (un clic solo marca la fila).
     arbol.notificar(lista, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("abrir".into())));
     arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
-    let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(alloc::vec![Hijo::Obj(cancelar)])]);
+    let botones = if carpeta { alloc::vec![Hijo::Obj(cancelar), Hijo::Obj(esta)] } else { alloc::vec![Hijo::Obj(cancelar)] };
+    let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     i.foco = Some(lista);
     i.colocar(Rect::new(0, 0, ANCHO, alto));
@@ -240,7 +256,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
-        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Abrir")).fin();
+        e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some(if carpeta { "Elegir carpeta" } else { "Abrir" })).fin();
         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
         c.mandar(&e);
         let presentar = |c: &mut Cliente, i: &mut Interfaz, px: &mut [u32], adjuntar: bool| {
@@ -280,10 +296,15 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                     if !configurada {
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
-                        println!("  [selector] ventana de abrir en pantalla, para {}: {} ({} nombres raros sin enseñar), {} entradas", quien, camino.texto(), raros, entradas.len());
+                        println!("  [selector] ventana de {} en pantalla, para {}: {} ({} nombres raros sin enseñar), {} entradas",
+                            if carpeta { "elegir carpeta" } else { "abrir" }, quien, camino.texto(), raros, entradas.len());
                         // Dónde queda la lista en la ventana (las pruebas del ratón la buscan).
                         if let Some(r) = i.sitios.get(&lista) {
                             println!("  [selector] lista en ({}, {}), filas de 56", r.x, r.y);
+                        }
+                        // El botón de elegir carpeta (con el ratón: los botones del kit no toman el teclado).
+                        if let Some(r) = i.sitios.get(&esta).filter(|_| carpeta) {
+                            println!("  [selector] botón Elegir en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
                         }
                     }
                     false
@@ -337,6 +358,12 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
             };
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cancelar") => return None,
+                // La carpeta en la que se está: su asa sale del camino (las demás se cierran al volver).
+                Some("esta") if carpeta => {
+                    let texto = camino.texto();
+                    let asa = camino.asas.pop()?;
+                    return Some((asa, texto, con_raton));
+                }
                 Some("abrir") => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(lista, atr::VALOR).map_or(-1, Valor::int);
@@ -351,7 +378,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                             pedir(lectura, a::CERRAR, asa, 0, 0, "");
                         }
                         camino.nombres.pop();
-                        entradas = listar(lectura, *camino.asas.last()?).0;
+                        entradas = listar_para(lectura, *camino.asas.last()?, carpeta).0;
                         println!("  [selector] sube a {}, {} entradas", camino.texto(), entradas.len());
                     } else if let Some(e) = entradas.get(k as usize) {
                         // Se busca por la asa del cajón y su nombre (sin '/': un solo paso), y se mira lo que es ahora
@@ -363,7 +390,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                         } else if tipo == a::CAJON && e.cajon && camino.asas.len() < 32 {
                             camino.asas.push(asa);
                             camino.nombres.push(e.nombre.clone());
-                            entradas = listar(lectura, asa).0;
+                            entradas = listar_para(lectura, asa, carpeta).0;
                             println!("  [selector] entra en {}, {} entradas: {}", camino.texto(), entradas.len(), filas(&entradas, false).replace('|', "; "));
                         } else if tipo == a::FICHERO && !e.cajon {
                             return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre), con_raton));
@@ -472,10 +499,26 @@ fn principal() -> u64 {
             }
             println!("  [selector] cede C como raíz solo para leer: {} (hueco {})", estado, hueco);
             dashos::canal_escribir(ll[0], &(if estado == a::BIEN { hueco } else { 0 }).to_le_bytes(), &[]);
+        } else if marca != 0 && k >= 1 && &buf[..n] == b"carpeta" {
+            // Una carpeta para guardar: la elige el usuario y se cede como raíz 3, para leer y escribir.
+            let quien = quienes.get(&marca).map_or("un programa", String::as_str);
+            let respuesta = match elegir(lectura, quien, true) {
+                Some((mia, camino, _)) => {
+                    let (estado, hueco) = pedir(lectura, a::CEDER, mia, marca, 4 | 2 | 3 << 8, "");
+                    pedir(lectura, a::CERRAR, mia, 0, 0, "");
+                    println!("  [selector] el usuario elige la carpeta {}: se cede para leer y escribir: {} (hueco {})", camino, estado, hueco);
+                    if estado == a::BIEN { hueco } else { 0 }
+                }
+                None => {
+                    println!("  [selector] el usuario no elige carpeta: no se cede nada");
+                    0
+                }
+            };
+            dashos::canal_escribir(ll[0], &respuesta.to_le_bytes(), &[]);
         } else if marca != 0 && k >= 1 {
             // Lo elige el usuario, no quien pide.
             let quien = quienes.get(&marca).map_or("un programa", String::as_str);
-            let respuesta = match elegir(lectura, quien) {
+            let respuesta = match elegir(lectura, quien, false) {
                 Some((mia, camino, con_raton)) => {
                     let (estado, suya) = pedir(lectura, a::CEDER, mia, marca, 4, "");
                     pedir(lectura, a::CERRAR, mia, 0, 0, "");

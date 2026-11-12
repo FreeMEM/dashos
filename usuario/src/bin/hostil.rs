@@ -223,6 +223,29 @@ fn cedida(lectura: u32, copia: u32) -> &'static str {
     if pedir_raiz() != 0 {
         return "una segunda raíz pisa la primera";
     }
+    // U5: una carpeta para guardar, que elige el usuario (en la prueba, C/Privado): llega como raíz 3, para leer y
+    // escribir. En una raíz siguen valiendo los permisos del fichero, y Privado es 0700 de Ana: el hostil (otro usuario)
+    // no ve ni crea nada dentro; tampoco sube por encima (".." no es un nombre).
+    let (sel_l, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let hueco = if escribir(SELECTOR, b"carpeta", &[suyo]) && dashos::canal_leer_plazo(sel_l, &mut r, &mut [], 65_000_000).0 == 4 {
+        u32::from_le_bytes(r)
+    } else {
+        u32::MAX
+    };
+    dashos::cerrar(sel_l);
+    if hueco != 3 {
+        return "el selector no le dio la carpeta como raíz 3";
+    }
+    if p(BUSCAR, 3, 0, 0, "nota.txt").map(|r| r.0) != Some(PROTEGIDO) || p(LISTAR, 3, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "ve lo de una carpeta 0700 de otro usuario";
+    }
+    if p(CREAR, 3, 1, 0, "del_hostil.txt").map(|r| r.0) != Some(PROTEGIDO) {
+        return "crea en una carpeta 0700 de otro usuario";
+    }
+    if p(BUSCAR, 3, 0, 0, "../grande.txt").map(|r| r.0) == Some(BIEN) || p(BUSCAR, 3, 0, 0, "../Prefs/apariencia").map(|r| r.0) == Some(BIEN) {
+        return "sube por encima de la carpeta elegida";
+    }
     "bien"
 }
 
