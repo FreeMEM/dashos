@@ -101,12 +101,16 @@ fn tratar(marco: &mut Marco, tipo: u64) {
         let iar = crate::gic::reconocer();
         let intid = crate::gic::numero(iar);
         if intid != crate::gic::FALSA {
+            // Las del GIC virtual (el temporizador de un invitado, el mantenimiento) ya hicieron su trabajo al sacar al
+            // invitado (H9): solo se terminan.
+            let del_invitado = super::hiper::interrupcion(intid);
             // Software (otro núcleo pide que se replanifique, C17) o el reloj: los dos acaban en el planificador.
             // Las de aparatos con dueño fuera del kernel van al repartidor (C20), y también se replanifica.
-            let planificar = intid == crate::gic::SGI_PLANIFICAR
-                || crate::reloj::interrupcion(intid)
-                || crate::interrupciones::atender(intid);
-            if !planificar {
+            let planificar = !del_invitado
+                && (intid == crate::gic::SGI_PLANIFICAR
+                    || crate::reloj::interrupcion(intid)
+                    || crate::interrupciones::atender(intid));
+            if !planificar && !del_invitado {
                 kprintln!("IRQ {} sin dueño", intid);
             }
             // Terminar antes de cambiar de hilo: si no, la interrupción seguiría activa hasta volver a este hilo.

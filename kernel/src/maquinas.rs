@@ -32,9 +32,20 @@ pub const FALLO: u64 = 6;
 pub const REGISTRO: u64 = 7;
 
 /// Palabras del informe: motivo, PC de la instrucción, dirección (física del invitado), valor, tamaño en bytes (o el
-/// número del HVC), ESR, x1 y x2 (en un HVC) y las cuentas del contador que pasó la CPU fuera del kernel (ida y vuelta
-/// por EL2 con el invitado).
-pub const PALABRAS: usize = 9;
+/// número del HVC), ESR, x1 y x2 (en un HVC), las cuentas del contador que pasó la CPU fuera del kernel (ida y vuelta
+/// por EL2 con el invitado), x3 (en un HVC), el plazo del temporizador virtual del invitado (CNTV_CVAL, si está
+/// encendido y sin enmascarar; si no, `u64::MAX`) y señales: bit 0, hay una interrupción pendiente en sus registros de
+/// lista (un WFI no tiene que esperar).
+pub const PALABRAS: usize = 12;
+
+/// Registros de lista del servicio en el bloque de interrupciones.
+pub const IRQ_LRS: usize = 8;
+/// El bloque de interrupciones que va y viene con `maquina_correr` (palabras de 64 bits): [0] cuántos registros de
+/// lista puede llenar el servicio (lo escribe el kernel; 0 sin GIC virtual), [1] cómo tiene el invitado el temporizador
+/// virtual en su distribuidor (lo escribe el servicio: bit 0 habilitado, [15:8] prioridad, bit 16 grupo 1) y desde [2]
+/// los registros de lista (GICH_LRn del GICv2, sin el bit HW): los pone el servicio y vuelven como los dejó el
+/// invitado.
+pub const IRQ_PALABRAS: usize = 2 + IRQ_LRS;
 
 pub enum Error {
     NoHay,
@@ -49,6 +60,9 @@ struct Estado {
     /// Una lectura de aparato a medias: el registro (31 = xzr), el tamaño en bytes, si se extiende el signo (SSE) y si
     /// el registro es de 64 bits (SF).
     lectura: Option<(usize, u32, bool, bool)>,
+    /// El último acceso a un aparato, para inyectar un aborto en su lugar: PC de la instrucción, dirección virtual y si
+    /// escribía. Solo hasta la siguiente vuelta.
+    acceso: Option<(u64, u64, bool)>,
     muerta: bool,
 }
 
@@ -59,7 +73,7 @@ pub struct Maquina {
 impl Maquina {
     pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
         let vcpu = Vcpu::nueva(memoria, ipa, entrada, x0, cupo)?;
-        Ok(Self { estado: Cerrojo::new(Estado { vcpu, lectura: None, muerta: false }) })
+        Ok(Self { estado: Cerrojo::new(Estado { vcpu, lectura: None, acceso: None, muerta: false }) })
     }
 
     /// Más memoria para el invitado, desde `ipa`. `None` si otro hilo la está corriendo.
@@ -69,12 +83,14 @@ impl Maquina {
     }
 
     /// Entra en el invitado. `valor` es la respuesta a una lectura de aparato pendiente (si no la hay, no se usa).
-    pub fn correr(&self, valor: u64) -> Result<[u64; PALABRAS], Error> {
+    /// `irq`, el bloque de interrupciones del servicio (`IRQ_PALABRAS`), si lo da.
+    pub fn correr(&self, valor: u64, mut irq: Option<&mut [u64; IRQ_PALABRAS]>) -> Result<[u64; PALABRAS], Error> {
         // Sin esperar: dos hilos no corren a la vez la misma vCPU.
         let Some(mut e) = self.estado.intentar() else { return Err(Error::Ocupada) };
         if e.muerta {
             return Err(Error::Muerta);
         }
+        e.acceso = None;
         if let Some((r, bytes, signo, x64)) = e.lectura.take() {
             let bits = 8 * bytes.min(8);
             let mut v = if bits >= 64 { valor } else { valor & ((1u64 << bits) - 1) };
@@ -86,12 +102,35 @@ impl Maquina {
             }
             e.vcpu.poner_x(r, v);
         }
+        let lrs = hiper::lrs_servicio().min(IRQ_LRS);
+        if let Some(b) = irq.as_deref() {
+            let t = b[1];
+            e.vcpu.poner_temporizador((t & 1 != 0).then_some(((t >> 8) as u8, t & 1 << 16 != 0)));
+            for i in 0..lrs {
+                e.vcpu.poner_lr(i, b[2 + i] as u32);
+            }
+        }
         let antes = crate::reloj::ahora();
-        let Some(s) = e.vcpu.correr() else { return Err(Error::NoHay) };
+        let s = loop {
+            let Some(s) = e.vcpu.correr() else { return Err(Error::NoHay) };
+            // La primera vez que usa la FPU: desde ahora tiene la suya, y se repite la instrucción.
+            if s.tipo == hiper::SALIDA_SINCRONA && s.esr >> 26 == 0x07 && !e.vcpu.tiene_fp() && e.vcpu.usar_fp() {
+                continue;
+            }
+            break s;
+        };
         let cuentas = crate::reloj::ahora().wrapping_sub(antes);
+        if let Some(b) = irq.as_deref_mut() {
+            b[0] = lrs as u64;
+            for i in 0..IRQ_LRS {
+                b[2 + i] = if i < lrs { e.vcpu.lr(i) as u64 } else { 0 };
+            }
+        }
         let mut inf = [0u64; PALABRAS];
         inf[8] = cuentas;
         inf[5] = s.esr;
+        inf[10] = e.vcpu.plazo_temporizador().unwrap_or(u64::MAX);
+        inf[11] = e.vcpu.lr_pendiente() as u64;
         let pc = e.vcpu.pc();
         inf[1] = pc;
         if s.tipo == hiper::SALIDA_IRQ || s.tipo == hiper::SALIDA_FIQ {
@@ -114,6 +153,7 @@ impl Maquina {
                 inf[4] = iss & 0xffff;
                 inf[6] = e.vcpu.x(1);
                 inf[7] = e.vcpu.x(2);
+                inf[9] = e.vcpu.x(3);
             }
             // WFI o WFE.
             0x01 => {
@@ -136,6 +176,7 @@ impl Maquina {
                     inf[0] = LECTURA;
                     e.lectura = Some((r, bytes, iss & (1 << 21) != 0, iss & (1 << 15) != 0));
                 }
+                e.acceso = Some((pc, s.far, iss & (1 << 6) != 0));
                 e.vcpu.poner_pc(pc + 4);
             }
             // MSR o MRS de un registro atrapado: lo decide el servicio.
@@ -160,5 +201,42 @@ impl Maquina {
             }
         }
         Ok(inf)
+    }
+
+    /// x0..x30, PC y PSTATE de la vCPU parada.
+    pub fn registros(&self) -> Result<[u64; hiper::REGISTROS], Error> {
+        let e = self.estado.intentar().ok_or(Error::Ocupada)?;
+        Ok(e.vcpu.registros())
+    }
+
+    /// Cambia x0..x30, PC y PSTATE de la vCPU parada (PSTATE, saneado: ver `Vcpu::poner_registros`). Una lectura de
+    /// aparato pendiente se olvida: lo que diga el servicio manda.
+    pub fn poner_registros(&self, r: &[u64; hiper::REGISTROS]) -> Result<(), Error> {
+        let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
+        if e.muerta {
+            return Err(Error::Muerta);
+        }
+        e.lectura = None;
+        e.vcpu.poner_registros(r);
+        Ok(())
+    }
+
+    /// En lugar del último acceso a un aparato (el de la última salida), un aborto externo para el invitado: no hay
+    /// nada en esa dirección. Falso si la última salida no fue un acceso.
+    pub fn aborto(&self) -> Result<bool, Error> {
+        let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
+        if e.muerta {
+            return Err(Error::Muerta);
+        }
+        let Some((pc, far, escritura)) = e.acceso.take() else { return Ok(false) };
+        e.lectura = None;
+        e.vcpu.inyectar_aborto(pc, far, escritura);
+        Ok(true)
+    }
+
+    /// Proyecta la GICV del GIC virtual donde el invitado espera la interfaz de CPU de su GIC.
+    pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Result<(), hiper::Error>, Error> {
+        let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
+        Ok(e.vcpu.proyectar_gicv(ipa, cupo))
     }
 }

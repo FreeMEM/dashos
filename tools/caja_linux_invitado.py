@@ -63,6 +63,7 @@ mount -t proc proc /proc
 mount -t sysfs sys /sys
 mount -t devtmpfs dev /dev 2>/dev/null
 echo "caja-linux: init en marcha"
+echo "caja-linux: $(busybox | head -1)"
 echo "caja-linux: kernel $(uname -r) $(uname -m)"
 echo "caja-linux: cpus $(grep -c ^processor /proc/cpuinfo)"
 echo "caja-linux: memoria $(grep MemTotal /proc/meminfo)"
@@ -70,6 +71,11 @@ echo "caja-linux: virtio $(ls /sys/bus/virtio/devices | tr '\n' ' ')"
 for d in /sys/bus/virtio/devices/*; do echo "caja-linux:   $(basename $d) id=$(cat $d/device) $(basename $(readlink $d/driver) 2>/dev/null)"; done
 echo "caja-linux: consola $(cat /sys/class/tty/console/active)"
 if [ -b /dev/vda ]; then echo "caja-linux: vda $(cat /sys/block/vda/size) sectores, primeros bytes: $(head -c 16 /dev/vda)"; fi
+# En la caja de DashOS (caja.escribir en la línea de órdenes): escribe en el sector 8, y el servicio lo mira al acabar.
+if grep -q caja.escribir /proc/cmdline && [ -b /dev/vda ]; then
+  echo -n ESCRITO-POR-LINUX | dd of=/dev/vda bs=512 seek=8 conv=fsync 2>/dev/null && sync
+  echo "caja-linux: escrito en vda: $(dd if=/dev/vda bs=512 skip=8 count=1 2>/dev/null | head -c 17)"
+fi
 # Con un disco de 8 MiB o más (el de probar-vhost): suma de todo, y copia del primer MiB a los 4 MiB.
 if [ -b /dev/vda ] && [ "$(cat /sys/block/vda/size)" -ge 16384 ]; then
   echo "caja-linux: md5 vda $(md5sum /dev/vda | cut -d' ' -f1)"

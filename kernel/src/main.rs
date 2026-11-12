@@ -111,6 +111,20 @@ pub fn kmain(dtb: usize) -> ! {
     placa::reservar_kernel(cpu, tam_cpu);
     let ppi = d.propiedad(&t, "interrupts").map(|(datos, _)| d.celda(datos, 4)).unwrap_or(14);
     gic::iniciar(version, dist, cpu);
+    // H9: el GIC virtual del GICv2 (sus regiones 3 y 4, GICH y GICV, y la interrupción de mantenimiento), si el árbol
+    // lo trae y hay hipervisor: las interrupciones de los invitados de la caja Linux. Son del kernel, como el resto.
+    if let (gic::Version::V2, Some((gich, tam_gich)), Some((gicv, tam_gicv))) = (version, d.reg_cpu(&g, 2), d.reg_cpu(&g, 3)) {
+        placa::reservar_kernel(gich, tam_gich);
+        placa::reservar_kernel(gicv, tam_gicv);
+        let mant = match d.propiedad(&g, "interrupts") {
+            Some((datos, largo)) if largo >= 12 && d.celda(datos, 0) == 1 => 16 + d.celda(datos, 1),
+            _ => u32::MAX,
+        };
+        base::hiper::gic_virtual(gich, gicv, mant);
+        if base::hiper::hay_gic_virtual() {
+            kprintln!("Hipervisor: GIC virtual con {} registros de lista; mantenimiento en la {}", base::hiper::lrs_servicio() + 1, mant);
+        }
+    }
     planificador::iniciar_nucleo();
     reloj::iniciar(ppi, 100);
     reloj::habilitar_irq();

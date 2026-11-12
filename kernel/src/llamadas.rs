@@ -37,8 +37,9 @@
 //! | 43 | despertar(dirección, cuántos) -> cuántos despertó |
 //! | 44 | proceso_salir(código): acaba el proceso entero |
 //! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada, x0) -> llave de máquina virtual (H9) |
-//! | 46 | maquina_correr(máquina, informe, valor) -> motivo: entra en el invitado hasta que sale |
+//! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
+//! | 48 | maquina_estado(máquina, operación, argumento): registros, aborto externo, GICV de una vCPU parada |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -191,8 +192,9 @@ pub fn atender(marco: &mut Marco) {
         44 => proceso_salir(a[0]),
         // La caja Linux (H9): máquinas virtuales.
         45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
-        46 => maquina_correr(a[0] as u32, a[1], a[2]),
+        46 => maquina_correr(a[0] as u32, a[1], a[2], a[3]),
         47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
+        48 => maquina_estado(a[0] as u32, a[1], a[2]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1156,9 +1158,11 @@ fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
     }
 }
 
-/// Corre la máquina `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (9 u64 en
-/// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. Devuelve el motivo.
-fn maquina_correr(h: u32, informe: u64, valor: u64) -> u64 {
+/// Corre la máquina `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (12 u64 en
+/// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. `irq`, si no es 0, es el
+/// bloque de interrupciones (`maquinas::IRQ_PALABRAS` u64): se lee antes de entrar y se escribe al volver. Devuelve el
+/// motivo.
+fn maquina_correr(h: u32, informe: u64, valor: u64, irq: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
@@ -1170,7 +1174,14 @@ fn maquina_correr(h: u32, informe: u64, valor: u64) -> u64 {
     if !escribir_usuario(informe, &vacio) {
         return E_ARGUMENTO;
     }
-    match m.correr(valor) {
+    let mut bloque = [0u64; crate::maquinas::IRQ_PALABRAS];
+    if irq != 0 {
+        let Some(b) = leer_usuario(irq, 8 * crate::maquinas::IRQ_PALABRAS) else { return E_ARGUMENTO };
+        for (i, v) in bloque.iter_mut().enumerate() {
+            *v = u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap_or([0; 8]));
+        }
+    }
+    match m.correr(valor, (irq != 0).then_some(&mut bloque)) {
         Ok(inf) => {
             let mut b = [0u8; 8 * crate::maquinas::PALABRAS];
             for (i, v) in inf.iter().enumerate() {
@@ -1179,11 +1190,77 @@ fn maquina_correr(h: u32, informe: u64, valor: u64) -> u64 {
             if !escribir_usuario(informe, &b) {
                 return E_ARGUMENTO;
             }
+            if irq != 0 {
+                let mut b = [0u8; 8 * crate::maquinas::IRQ_PALABRAS];
+                for (i, v) in bloque.iter().enumerate() {
+                    b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+                }
+                if !escribir_usuario(irq, &b) {
+                    return E_ARGUMENTO;
+                }
+            }
             inf[0]
         }
         Err(crate::maquinas::Error::NoHay) => E_NO_HAY,
         Err(crate::maquinas::Error::Ocupada) => E_LIMITE,
         Err(crate::maquinas::Error::Muerta) => E_CERRADO,
+    }
+}
+
+/// Operaciones sobre la vCPU parada de la máquina `h` (escribir):
+///   0 leer sus registros (x0..x30, PC y PSTATE: 33 u64 en little-endian) en `arg`;
+///   1 escribirlos desde `arg` (PSTATE saneado: AArch64, EL0 o EL1);
+///   2 un aborto externo para el invitado en lugar del último acceso a un aparato (`E_ARGUMENTO` si no lo hubo);
+///   3 proyectar la GICV del GIC virtual en la dirección física del invitado `arg` (`E_NO_HAY` sin GIC virtual).
+fn maquina_estado(h: u32, op: u64, arg: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    const N: usize = crate::base::hiper::REGISTROS;
+    let error = |e| match e {
+        crate::maquinas::Error::NoHay => E_NO_HAY,
+        crate::maquinas::Error::Ocupada => E_LIMITE,
+        crate::maquinas::Error::Muerta => E_CERRADO,
+    };
+    match op {
+        0 => match m.registros() {
+            Ok(r) => {
+                let mut b = [0u8; 8 * N];
+                for (i, v) in r.iter().enumerate() {
+                    b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+                }
+                if escribir_usuario(arg, &b) { 0 } else { E_ARGUMENTO }
+            }
+            Err(e) => error(e),
+        },
+        1 => {
+            let Some(b) = leer_usuario(arg, 8 * N) else { return E_ARGUMENTO };
+            let mut r = [0u64; N];
+            for (i, v) in r.iter_mut().enumerate() {
+                *v = u64::from_le_bytes(b[8 * i..8 * i + 8].try_into().unwrap_or([0; 8]));
+            }
+            match m.poner_registros(&r) {
+                Ok(()) => 0,
+                Err(e) => error(e),
+            }
+        }
+        2 => match m.aborto() {
+            Ok(true) => 0,
+            Ok(false) => E_ARGUMENTO,
+            Err(e) => error(e),
+        },
+        3 => match m.proyectar_gicv(arg, &proc_.cupo) {
+            Ok(Ok(())) => 0,
+            Ok(Err(crate::base::hiper::Error::NoHay)) => E_NO_HAY,
+            Ok(Err(crate::base::hiper::Error::Argumento)) => E_ARGUMENTO,
+            Ok(Err(crate::base::hiper::Error::Memoria)) => E_MEMORIA,
+            Ok(Err(crate::base::hiper::Error::Limite)) => E_LIMITE,
+            Err(e) => error(e),
+        },
+        _ => E_ARGUMENTO,
     }
 }
 

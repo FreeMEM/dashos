@@ -15,4 +15,10 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] hostil (temporizador del kernel): escribe en un registro del sistema atrapado (codificación 0x32f804); se para su máquina: bien
 ~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
 ~[caja-linux] primer paso de la caja Linux: bien
+~[caja-linux] interrupciones: el temporizador virtual 3 veces, la SPI 48 del servicio 1 (su registro de lista, libre al terminarla: sí), PSCI 1.0 en x0
+~[caja-linux] hostil (GIC al azar): 4096 escrituras en su GICV
+~toca la GICH del anfitrión: acaba con 2 abortos externos; bien
+~[caja-linux] hostil (tormenta del temporizador): no la reconoce nunca; el reloj lo sacó
+~[caja-linux] hostil (registro de EL2): trampa en
+~[caja-linux] interrupciones del invitado: bien
 ~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien

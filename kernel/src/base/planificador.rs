@@ -82,12 +82,28 @@ pub struct Hilo {
     consumido: u64,
 }
 
-/// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
+/// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR. También el de la vCPU de una máquina virtual (H9).
 #[repr(C, align(16))]
-struct EstadoFp {
+pub(crate) struct EstadoFp {
     q: [u128; 32],
     fpcr: u64,
     fpsr: u64,
+}
+
+impl EstadoFp {
+    pub(crate) const CERO: EstadoFp = EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 };
+
+    /// Guarda aquí los registros de la FPU de este núcleo.
+    pub(crate) fn guardar(&mut self) {
+        // SAFETY: 528 bytes alineados a 16, nuestros; EL1 usa la FPU sin trampa (FPEN atrapa solo EL0).
+        unsafe { fp_guardar(self) }
+    }
+
+    /// Carga estos registros en la FPU de este núcleo. Quien la tuviera ya los guardó (`fp_soltar`).
+    pub(crate) fn cargar(&self) {
+        // SAFETY: como `guardar`.
+        unsafe { fp_cargar(self) }
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -1723,6 +1739,28 @@ pub fn fp_atrapado() {
         FP_CAMBIOS.fetch_add(1, Ordering::Relaxed);
     }
     fpen(FPEN_LIBRE);
+}
+
+/// La FPU de este núcleo se queda sin dueño, con los registros del que lo era ya guardados: otro la va a usar un rato
+/// (la vCPU de una máquina virtual, H9). EL0 la vuelve a pedir con una excepción (`fp_atrapado`). Sin memoria para
+/// guardar los del dueño (S1), el dueño muere en su vuelta a EL0, como en `fp_atrapado`.
+pub fn fp_soltar() {
+    let n = nucleos::numero() as usize;
+    let mut g = NUCLEOS[n].tomar();
+    let Some(nucleo) = g.as_mut() else { return };
+    let viejo = nucleo.fp_dueno;
+    if !viejo.is_null() {
+        // SAFETY: el dueño es un hilo de este núcleo, vivo mientras lo sea (al liberarse deja de serlo).
+        unsafe {
+            match estado_fp(&mut (*viejo).fp) {
+                Some(e) => fp_guardar(e),
+                None => (*viejo).matar.store(true, Ordering::Release),
+            }
+        }
+        nucleo.fp_dueno = core::ptr::null_mut();
+        FP_CAMBIOS.fetch_add(1, Ordering::Relaxed);
+    }
+    fpen(FPEN_ATRAPAR);
 }
 
 /// El sitio de los registros de FP/SIMD de un hilo; lo reserva la primera vez, y puede no haber memoria (S1).

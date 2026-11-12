@@ -220,8 +220,10 @@ pub mod maquina {
     pub const REGISTRO: i64 = 7;
 
     /// El informe de una salida: motivo, PC, dirección física del invitado, valor, tamaño (o número del HVC), ESR,
-    /// x1 y x2 (en un HVC) y las cuentas del contador que pasó fuera del kernel.
-    #[derive(Default, Clone, Copy)]
+    /// x1 y x2 (en un HVC), las cuentas del contador que pasó fuera del kernel, x3 (en un HVC), el plazo del
+    /// temporizador virtual del invitado (en cuentas del contador; `u64::MAX` si está apagado o enmascarado) y señales
+    /// (`PENDIENTE`).
+    #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct Informe {
         pub motivo: u64,
@@ -233,13 +235,75 @@ pub mod maquina {
         pub x1: u64,
         pub x2: u64,
         pub cuentas: u64,
+        pub x3: u64,
+        pub plazo: u64,
+        pub senales: u64,
     }
+
+    impl Default for Informe {
+        fn default() -> Self {
+            Self { motivo: 0, pc: 0, direccion: 0, valor: 0, tamano: 0, esr: 0, x1: 0, x2: 0, cuentas: 0, x3: 0, plazo: u64::MAX, senales: 0 }
+        }
+    }
+
+    /// En `Informe::senales`: hay una interrupción pendiente en los registros de lista (un WFI no tiene que esperar).
+    pub const PENDIENTE: u64 = 1;
+
+    /// Registros de lista del servicio en el bloque de interrupciones.
+    pub const LRS: usize = 8;
+
+    /// El bloque de interrupciones de `maquina_correr_irq` (`kernel/src/maquinas.rs`): `lrs` lo pone el kernel (cuántos
+    /// registros de lista puede llenar el servicio; 0 sin GIC virtual); `temporizador` lo pone el servicio (bit 0
+    /// habilitado, [15:8] prioridad, bit 16 grupo 1: como tiene el invitado la PPI 27 en su distribuidor); `lr`, los
+    /// registros de lista del GICv2 (sin el bit HW): los pone el servicio y vuelven como los dejó el invitado.
+    #[derive(Default, Clone, Copy)]
+    #[repr(C)]
+    pub struct Interrupciones {
+        pub lrs: u64,
+        pub temporizador: u64,
+        pub lr: [u64; LRS],
+    }
+
+    /// x0..x30, PC y PSTATE de una vCPU.
+    pub const REGISTROS: usize = 33;
 }
 
 /// Entra en el invitado de la máquina `llave` hasta que sale; `valor` contesta a una lectura pendiente. Devuelve el
 /// motivo (`maquina::*`) o un error negativo.
 pub fn maquina_correr(llave: u32, informe: &mut maquina::Informe, valor: u64) -> i64 {
     llamada(46, [llave as u64, informe as *mut maquina::Informe as u64, valor, 0, 0]).0 as i64
+}
+
+/// Como `maquina_correr`, con el bloque de interrupciones (el GIC virtual del invitado).
+pub fn maquina_correr_irq(llave: u32, informe: &mut maquina::Informe, valor: u64, irq: &mut maquina::Interrupciones) -> i64 {
+    llamada(46, [llave as u64, informe as *mut maquina::Informe as u64, valor, irq as *mut maquina::Interrupciones as u64, 0]).0 as i64
+}
+
+/// x0..x30, PC y PSTATE de la vCPU parada de la máquina `llave`. 0 o un error negativo.
+pub fn maquina_registros(llave: u32, r: &mut [u64; maquina::REGISTROS]) -> i64 {
+    llamada(48, [llave as u64, 0, r.as_mut_ptr() as u64, 0, 0]).0 as i64
+}
+
+/// Cambia x0..x30, PC y PSTATE de la vCPU parada (PSTATE: AArch64, EL0 o EL1; el kernel lo sanea).
+pub fn maquina_poner_registros(llave: u32, r: &[u64; maquina::REGISTROS]) -> i64 {
+    llamada(48, [llave as u64, 1, r.as_ptr() as u64, 0, 0]).0 as i64
+}
+
+/// Un aborto externo para el invitado en lugar de su último acceso a un aparato (no hay nada en esa dirección).
+pub fn maquina_aborto(llave: u32) -> i64 {
+    llamada(48, [llave as u64, 2, 0, 0, 0]).0 as i64
+}
+
+/// Proyecta la GICV del GIC virtual en la dirección física del invitado `ipa` (donde espera la interfaz de CPU de su
+/// GIC). `E_NO_HAY` sin GIC virtual.
+pub fn maquina_gicv(llave: u32, ipa: u64) -> i64 {
+    llamada(48, [llave as u64, 3, ipa, 0, 0]).0 as i64
+}
+
+/// Barrera de memoria entre núcleos (`dmb ish`): lo escrito antes lo ven los demás antes que lo escrito después. Para
+/// la memoria que se comparte con un invitado (sus colas de virtio).
+pub fn barrera() {
+    unsafe { asm!("dmb ish", options(nostack, preserves_flags)) };
 }
 
 /// Interrupción atendida: el kernel la vuelve a habilitar.

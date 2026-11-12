@@ -191,7 +191,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // La caja Linux (H9): el servicio que crea y corre las máquinas virtuales, con el permiso, y un programa sin él que
     // prueba a crearlas. Solo en `virt` por ahora; al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-linux", programa!("caja-linux"), &[("hipervisor", MAQUINAS), ("linux", DATOS | OPCIONAL)], &[]),
+    ("caja-linux", programa!("caja-linux"), &[("hipervisor", MAQUINAS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &[]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("sin-maquina", programa!("sin-maquina"), &[], &[]),
     #[cfg(feature = "medir_fs")]
@@ -505,6 +505,14 @@ pub fn lanzar() -> bool {
         if let Some(m) = memoria::Memoria::nueva(LINUX.len(), &crate::cupo::Cupo::raiz()) {
             m.escribir(0, LINUX);
             apuntar(&mut llaves, "linux", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
+        }
+        // Su initramfs (busybox), de target/linux/initrd: vacío si no hay.
+        static INITRD: &[u8] = include_bytes!("../target/linux/initrd");
+        if !INITRD.is_empty()
+            && let Some(m) = memoria::Memoria::nueva(INITRD.len(), &crate::cupo::Cupo::raiz())
+        {
+            m.escribir(0, INITRD);
+            apuntar(&mut llaves, "initrd", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
         }
     }
     // La V3D (C50): solo si su puente contesta. QEMU no la emula, y leer su ventana daría un fallo de bus: se sondea.

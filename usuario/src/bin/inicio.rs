@@ -341,8 +341,9 @@ fn principal() -> u64 {
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,
-            // La caja Linux (H9): la RAM de su invitado de Linux (64 MB) sale de su cupo.
-            "caja-linux" => 96 << 20,
+            // La caja Linux (H9): la RAM de su invitado de Linux (256 MB, lo de serie con 2 GB) sale de su cupo, más 32 MB
+            // del servicio (tablas de la etapa 2, su montón con el disco del invitado).
+            "caja-linux" => (256 + 32) << 20,
             // H4: la caja Amiga, con su ejecutable de 3 MB, 4 MB de código traducido, 4 de montón y 1 del 68k.
             "caja-amiga" => 32 << 20,
             _ => 16 << 20,
@@ -354,7 +355,18 @@ fn principal() -> u64 {
                 guardadas[j] = llave_duplicar(suyas[j], u64::MAX, 0).max(0) as u32;
             }
         }
-        let g = grupo_crear(cupo);
+        let mut g = grupo_crear(cupo);
+        // La caja Linux pide 256 MB para su invitado; si no caben (2 GB de RAM y el primer GB solo para DMA, como en
+        // QEMU con highmem=off), menos: el servicio usa para el invitado lo que le quepa (H9).
+        if g <= 0 && nombre(nombre_cab) == "caja-linux" {
+            for menos in [(128 + 32) << 20, 96 << 20] {
+                g = grupo_crear(menos);
+                if g > 0 {
+                    println!("  [inicio] caja-linux: sin sitio para {} MB; con {} MB", cupo >> 20, menos >> 20);
+                    break;
+                }
+            }
+        }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
             println!("  [inicio] {}: no se pudo lanzar ({})", nombre(nombre_cab), proceso);

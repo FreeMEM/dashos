@@ -16,6 +16,8 @@ sonido = ["monton", "dep:sonido", "dep:audiodevice"]
 imagenes = ["monton", "dep:amigados"]
 # El servicio de red (S13): la pila TCP/IP smoltcp (0BSD), solo con lo que usa.
 red = ["monton", "dep:smoltcp"]
+# La caja Linux (H9): los aparatos de la máquina virtual (virtio, PL011, distribuidor del GIC, PSCI, DTB).
+caja = ["monton", "dep:caja-vmm"]
 
 [dependencies]
 linked_list_allocator = { version = "0.10.6", default-features = false, optional = true }
@@ -26,6 +28,7 @@ kit = { package = "dashos-kit", path = "../kit", optional = true }
 sonido = { package = "dashos-sonido", path = "../sonido", optional = true }
 audiodevice = { package = "dashos-audiodevice", path = "../audiodevice", optional = true }
 amigados = { package = "dashos-amigados", path = "../amigados", optional = true }
+caja-vmm = { package = "dashos-caja-vmm", path = "../caja-linux/vmm", optional = true }
 smoltcp = { version = "0.14.0", default-features = false, optional = true, features = ["alloc", "medium-ethernet", "proto-ipv4", "proto-dhcpv4", "socket-tcp", "socket-tcp-reno", "socket-dhcpv4"] }
 
 [lib]
@@ -306,6 +309,7 @@ test = false
 name = "caja-linux"
 path = "src/bin/caja_linux.rs"
 test = false
+required-features = ["caja"]
 
 [[bin]]
 name = "sin-maquina"
