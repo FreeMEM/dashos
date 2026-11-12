@@ -41,21 +41,34 @@ impl Clase for Texto {
     }
 
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
-        let tam = ctx.tema.letra_texto;
-        let m = ctx.regular.medir(&texto_de(attrs), tam);
+        let (tam, titulo, _) = estilo_texto(attrs, &ctx.tema);
+        let f = if titulo { &mut ctx.medium } else { &mut ctx.regular };
+        let m = f.medir(&texto_de(attrs), tam);
         Medida { min: (m.ancho, m.alto()), max: (SIN_MAX, m.alto()), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, _e: Estado) {
-        let tam = ctx.tema.letra_texto;
+        let (tam, titulo, tinta) = estilo_texto(attrs, &ctx.tema);
+        let f = if titulo { &mut ctx.medium } else { &mut ctx.regular };
         let t = texto_de(attrs);
-        let m = ctx.regular.medir(&t, tam);
+        let m = f.medir(&t, tam);
         let base = r.y + (r.h - m.alto()) / 2 + m.sube;
-        ctx.regular.dibujar(l, r.x, base, &t, tam, ctx.tema.sobre_superficie);
+        f.dibujar(l, r.x, base, &t, tam, tinta);
     }
 }
 
-/// Un botón relleno de Material 3. Su `CLIC` pasa a sí y vuelve a no con cada clic (para avisos con `Igual(sí)`).
+/// El tamaño, si va en medium (título) y el color de un texto según su `ESTILO` (Material 3: título 22, cuerpo 16,
+/// secundario 14 en el color suave).
+fn estilo_texto(attrs: &BTreeMap<Atr, Valor>, t: &Tema) -> (u32, bool, crate::lienzo::Color) {
+    match attrs.get(&atr::ESTILO).map_or(0, Valor::int) {
+        1 => (22, true, t.sobre_superficie),
+        2 => (14, false, t.sobre_variante_superficie),
+        _ => (t.letra_texto, false, t.sobre_superficie),
+    }
+}
+
+/// Un botón de Material 3: relleno (de serie), tonal o de texto, según su `ESTILO`. Su `CLIC` pasa a sí y vuelve a no
+/// con cada clic (para avisos con `Igual(sí)`).
 pub struct Boton;
 
 impl Clase for Boton {
@@ -64,19 +77,27 @@ impl Clase for Boton {
     }
 
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
+        // Material 3: a su medida (24 de relleno a cada lado, 12 en los de texto), sin estirarse; con un hueco delante,
+        // quedan al final de la fila.
+        let relleno = if attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 2 { 24 } else { 48 };
         let m = ctx.medium.medir(&texto_de(attrs), ctx.tema.letra_etiqueta);
-        Medida { min: (m.ancho + 48, 40), max: (SIN_MAX, 40), peso: 100 }
+        Medida { min: (m.ancho + relleno, 40), max: (m.ancho + relleno, 40), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
         let t = &ctx.tema;
-        let (fondo, tinta) = if e.desactivado {
-            (tema::fondo_apagado(t.sobre_superficie), tema::apagado(t.sobre_superficie))
-        } else {
-            (t.primario, t.sobre_primario)
+        let estilo = attrs.get(&atr::ESTILO).map_or(0, Valor::int);
+        let (fondo, tinta) = match (e.desactivado, estilo) {
+            (true, 2) => (None, tema::apagado(t.sobre_superficie)),
+            (true, _) => (Some(tema::fondo_apagado(t.sobre_superficie)), tema::apagado(t.sobre_superficie)),
+            (false, 1) => (Some(t.contenedor_secundario()), t.sobre_contenedor_secundario()),
+            (false, 2) => (None, t.primario),
+            (false, _) => (Some(t.primario), t.sobre_primario),
         };
         let radio = t.radio_boton.min(r.h / 2);
-        l.redondeado(r, radio, fondo);
+        if let Some(fondo) = fondo {
+            l.redondeado(r, radio, fondo);
+        }
         if let Some(c) = tema::capa(e, tinta) {
             l.redondeado(r, radio, c);
         }
@@ -398,25 +419,25 @@ impl Clase for Lista {
         let elegida = attrs.get(&atr::VALOR).map_or(-1, Valor::int);
         let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int).max(0) as usize;
         let tam = t.letra_texto;
+        // Material 3: la lista sobre un contenedor de esquinas de 12, sin marco; la fila elegida, en el contenedor
+        // secundario, redondeada y separada 4 del borde.
+        l.redondeado(r, 12, t.contenedor_bajo());
         l.recortar(r);
         for (k, o) in opciones.iter().enumerate().skip(primera).take(Self::filas(attrs) as usize) {
             let fila = Rect::new(r.x, r.y + (k - primera) as i32 * FILA, r.w, FILA);
             if k as i64 == elegida {
-                l.rellenar(fila, t.contenedor_primario);
+                l.redondeado(fila.dentro(4), 12, t.contenedor_secundario());
             }
             let tinta = if e.desactivado {
                 tema::apagado(t.sobre_superficie)
             } else if k as i64 == elegida {
-                t.sobre_contenedor_primario
+                t.sobre_contenedor_secundario()
             } else {
                 t.sobre_superficie
             };
             let m = ctx.regular.medir(o, tam);
             let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
             ctx.regular.dibujar(l, fila.x + 16, base, o, tam, tinta);
-        }
-        if e.foco {
-            l.borde(r, 0, 2, t.primario);
         }
         l.soltar_recorte();
     }
@@ -735,13 +756,14 @@ mod pruebas {
         assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(5)));
         i.tecla(102, true);
         assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(0)));
-        // Se dibuja la elegida con el contenedor del primario.
+        // Material 3: la lista sobre el contenedor bajo, sin marco; la elegida, en el contenedor secundario.
         i.tecla(108, true);
         let mut px = vec![0u32; 300 * 260];
         let mut l = Lienzo::new(&mut px, 300, 260, 300);
         i.dibujar(&mut l);
-        assert_eq!(px[((r.y + 56 + 4) * 300 + r.x + r.w - 10) as usize], 0xffea_ddff);
-        assert_eq!(px[((r.y + 20) * 300 + r.x) as usize], 0xff67_50a4); // el borde del foco, de 2
+        let t = Tema::CLARO;
+        assert_eq!(px[((r.y + 56 + 28) * 300 + r.x + r.w - 20) as usize], t.contenedor_secundario());
+        assert_eq!(px[((r.y + 20) * 300 + r.x + 2) as usize], t.contenedor_bajo());
     }
 
     #[test]

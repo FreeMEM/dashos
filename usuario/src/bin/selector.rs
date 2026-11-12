@@ -50,7 +50,7 @@ const RAIZ: &str = "C";
 const SUBIR: &str = "../";
 /// Dónde se proyecta la ventana del servicio de archivos (la de Wayland va en `VA`).
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
-const ANCHO: i32 = 360;
+const ANCHO: i32 = 460;
 const FILAS: usize = 5;
 /// Un minuto sin elegir: como cancelar.
 const ESPERA_US: u64 = 60_000_000;
@@ -213,17 +213,20 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     let alto = 56 * FILAS as i32 + 148;
     let mut arbol = Arbol::new();
     let pide = if carpeta { "quiere guardar en una carpeta" } else { "quiere abrir un fichero" };
-    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" {}", quien, pide)))]);
-    let donde = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(camino.texto()))]);
+    // Material 3: el pedido como título, el camino como texto secundario; Cancelar, botón de texto.
+    let texto = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::format!("\"{}\" {}", quien, pide))), (atr::ESTILO, Valor::Int(1))]);
+    let donde = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(camino.texto())), (atr::ESTILO, Valor::Int(2))]);
     let lista = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(filas(&entradas, true))), (atr::FILAS, Valor::Int(FILAS as i64)), (atr::VALOR, Valor::Int(-1))]);
-    let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into()))]);
+    let cancelar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let esta = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Elegir esta carpeta".into()))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(esta, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("esta".into())));
     // Intro o doble clic (un clic solo marca la fila).
     arbol.notificar(lista, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("abrir".into())));
     arbol.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cancelar".into())));
-    let botones = if carpeta { alloc::vec![Hijo::Obj(cancelar), Hijo::Obj(esta)] } else { alloc::vec![Hijo::Obj(cancelar)] };
+    // Un hueco delante: los botones, al final de la fila (Material 3).
+    let hueco = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    let botones = if carpeta { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(esta)] } else { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar)] };
     let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     i.foco = Some(lista);

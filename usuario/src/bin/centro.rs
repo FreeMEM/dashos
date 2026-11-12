@@ -484,20 +484,23 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         (atr::VALOR, Valor::Int(categoria as i64)),
         (atr::PESO, Valor::Int(40)),
     ]);
-    let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
-    let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
+    // Material 3: la categoría como título y su explicación como texto secundario; Quitar, tonal; Cerrar, de texto.
+    let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
+    let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
     let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
-    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into()))]);
-    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into()))]);
+    let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into())), (atr::ESTILO, Valor::Int(1))]);
+    let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     arbol.notificar(quitar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("quitar".into())));
     arbol.notificar(permisos, atr::DOBLE, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("elegir".into())));
     arbol.notificar(cerrar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), marca, atr::TEXTO, Que::Fijo(Valor::Texto("cerrar".into())));
+    // Un hueco delante: los botones, al final de la fila (Material 3).
+    let hueco = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);
     let derecha = Hijo::Columna(alloc::vec![
         Hijo::Obj(titulo),
         Hijo::Obj(explica),
         Hijo::Obj(permisos),
-        Hijo::Fila(alloc::vec![Hijo::Obj(quitar), Hijo::Obj(cerrar)]),
+        Hijo::Fila(alloc::vec![Hijo::Obj(hueco), Hijo::Obj(quitar), Hijo::Obj(cerrar)]),
     ]);
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);

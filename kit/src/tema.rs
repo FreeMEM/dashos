@@ -139,6 +139,44 @@ pub struct Estado {
 }
 
 /// `color` con su opacidad multiplicada por `opacidad` (de 0 a 255).
+/// `a` con un `cuanto` (de 255) de `b`, canal a canal: los tonos intermedios entre dos papeles del esquema.
+pub fn mezcla(a: Color, b: Color, cuanto: u32) -> Color {
+    let canal = |s: u32| {
+        let (x, y) = ((a >> s) & 0xff, (b >> s) & 0xff);
+        ((x * (255 - cuanto) + y * cuanto + 127) / 255) << s
+    };
+    0xff00_0000 | canal(16) | canal(8) | canal(0)
+}
+
+impl Tema {
+    fn oscuro(&self) -> bool {
+        (self.superficie >> 8 & 0xff) < 0x80
+    }
+
+    /// Los contenedores de superficie de Material 3 (bajo, normal y alto: tonos 96, 94 y 92 en claro; 10, 12 y 17 en
+    /// oscuro), sacados de la superficie hacia su texto, así guardan el matiz del acento sin otra paleta.
+    pub fn contenedor_bajo(&self) -> Color {
+        mezcla(self.superficie, self.sobre_superficie, if self.oscuro() { 12 } else { 6 })
+    }
+
+    pub fn contenedor(&self) -> Color {
+        mezcla(self.superficie, self.sobre_superficie, if self.oscuro() { 18 } else { 12 })
+    }
+
+    pub fn contenedor_alto(&self) -> Color {
+        mezcla(self.superficie, self.sobre_superficie, if self.oscuro() { 33 } else { 18 })
+    }
+
+    /// El contenedor secundario (lo elegido en una lista, un botón tonal): la superficie con algo del primario.
+    pub fn contenedor_secundario(&self) -> Color {
+        mezcla(self.superficie, self.primario, if self.oscuro() { 80 } else { 40 })
+    }
+
+    pub fn sobre_contenedor_secundario(&self) -> Color {
+        self.sobre_superficie
+    }
+}
+
 pub fn con_opacidad(color: Color, opacidad: u32) -> Color {
     let a = (color >> 24) * opacidad / 255;
     a << 24 | (color & 0x00ff_ffff)

@@ -1170,3 +1170,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Hallado: los botones del kit no toman el teclado (Tab no llega a ellos); con teclado, el selector solo se maneja por
   la lista. Pendiente del kit: el foco del teclado también en los botones. Y en el guion: el hostil pide la carpeta
   justo tras el primer flujo; hasta que sale la ventana, nada de la actividad de fondo (sus clics caían en Cancelar).
+- Kit, Material 3 de verdad (el usuario, 2026-11-12: "los botones y ventanas ... que se supone que son material se ven
+  horribles"). Primer arreglo, en el kit para que mejore todo: tonos de contenedor de superficie (bajo, normal, alto)
+  y contenedor secundario, sacados de la superficie hacia su texto (guardan el matiz del acento, sin más tabla);
+  `atr::ESTILO`: botón relleno, tonal o de texto, y texto de título (22, medium) o secundario (14, suave); la lista
+  sobre un contenedor de esquinas de 12, sin marco, y la elegida en el contenedor secundario redondeado; los botones a
+  su medida (no se estiran) y, con un hueco delante, al final de la fila. Selector (460 de ancho, Cancelar de texto) y
+  centro (título, explicación, Quitar tonal, Cerrar de texto) los usan. Capturas de antes y después.
+  Falta: esquinas y sombra de las ventanas (en el compositor, tocando la composición por tramos de E8: medir), el
+  centro maximizado deja un hueco arriba (el contenido va centrado), el panel rápido con estos tonos, y el foco del
+  teclado en los botones.

@@ -46,6 +46,9 @@ pub mod atr {
     /// lista, la misma fila), o Intro en una lista. Como `CLIC`, pasa a sí y vuelve a no. El doble clic solo se ve con
     /// `Interfaz::raton_hora`, que sabe cuándo fue cada clic.
     pub const DOBLE: Atr = 13;
+    /// El estilo (Material 3). En un botón: 0 relleno (la acción principal), 1 tonal, 2 de texto (las secundarias, como
+    /// Cancelar). En un texto: 0 cuerpo, 1 título, 2 secundario (más pequeño y más suave).
+    pub const ESTILO: Atr = 14;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
