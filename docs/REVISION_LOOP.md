@@ -1344,3 +1344,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Su cupo pasa de 16 a 32 MB: la pantalla de bloqueo y de entrada es de pantalla entera (8,3 MB) y no cabía con su
   montón y la capa de las preguntas. A 1920 × 1080 ya pinta ("pantalla de bloqueo en pantalla (1920x1080)").
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 14:50: los colores del fondo, unas 4 veces más rápido
+- `kit/src/color.rs`: lo que no cambia en las bisecciones sale de ellas (seno, coseno y p1 de cada matiz; las dos
+  potencias fijas de la visión), las condiciones de visión se calculan una vez por esquema (`Visto`) y las bisecciones
+  dan 36 pasos en J (antes 60) y 14 en el croma (antes 30).
+- Comprobado en el PC: los mismos 1560 colores (60 colores base, claro y oscuro, 13 por esquema), con 3,2 veces menos
+  evaluaciones (876 600 → 274 248). Con 32 y 12 pasos ya cambian dos colores en una unidad: hay margen.
+- En virt (el centro, "esquemas claro y oscuro en"): ondas 936 → 194-236 ms, atardecer 822-828 → 188-208 ms.
+- `make prueba` BIEN; kit 60 bien; arranque-virt en dos vueltas, todo BIEN.

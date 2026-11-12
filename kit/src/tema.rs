@@ -6,7 +6,7 @@
 //! Estados: encima, foco y pulsado ponen una capa del color del contenido con 8 %, 10 % y 10 % de opacidad; un
 //! control desactivado enseña su contenido al 38 % y su fondo al 12 %.
 
-use crate::color::Paletas;
+use crate::color::{Paletas, Visto};
 use crate::lienzo::Color;
 use core::sync::atomic::{AtomicU32, Ordering};
 
@@ -186,22 +186,24 @@ impl Tema {
     /// oscuro, superficie 98 y 6...).
     pub fn desde_color(base: Color, oscuro: bool) -> Tema {
         let p = Paletas::desde(base);
-        let (pr, nv, ne) = (p.primaria, p.neutra_variante, p.neutra);
+        let (pr, nv, ne) = (&p.primaria, &p.neutra_variante, &p.neutra);
+        // Las condiciones de visión, una vez para los trece colores.
+        let v = Visto::nuevo();
         let t = |claro: f64, os: f64| if oscuro { os } else { claro };
         Tema {
-            primario: pr.tono(t(40.0, 80.0)),
-            sobre_primario: pr.tono(t(100.0, 20.0)),
-            contenedor_primario: pr.tono(t(90.0, 30.0)),
-            sobre_contenedor_primario: pr.tono(t(10.0, 90.0)),
-            superficie: ne.tono(t(98.0, 6.0)),
-            sobre_superficie: ne.tono(t(10.0, 90.0)),
-            variante_superficie: nv.tono(t(90.0, 30.0)),
-            sobre_variante_superficie: nv.tono(t(30.0, 80.0)),
-            contorno: nv.tono(t(50.0, 60.0)),
-            variante_contorno: nv.tono(t(80.0, 30.0)),
-            secundario: p.secundaria.tono(t(40.0, 80.0)),
-            contenedor_terciario: p.terciaria.tono(t(90.0, 30.0)),
-            sobre_contenedor_terciario: p.terciaria.tono(t(10.0, 90.0)),
+            primario: v.tono(pr, t(40.0, 80.0)),
+            sobre_primario: v.tono(pr, t(100.0, 20.0)),
+            contenedor_primario: v.tono(pr, t(90.0, 30.0)),
+            sobre_contenedor_primario: v.tono(pr, t(10.0, 90.0)),
+            superficie: v.tono(ne, t(98.0, 6.0)),
+            sobre_superficie: v.tono(ne, t(10.0, 90.0)),
+            variante_superficie: v.tono(nv, t(90.0, 30.0)),
+            sobre_variante_superficie: v.tono(nv, t(30.0, 80.0)),
+            contorno: v.tono(nv, t(50.0, 60.0)),
+            variante_contorno: v.tono(nv, t(80.0, 30.0)),
+            secundario: v.tono(&p.secundaria, t(40.0, 80.0)),
+            contenedor_terciario: v.tono(&p.terciaria, t(90.0, 30.0)),
+            sobre_contenedor_terciario: v.tono(&p.terciaria, t(10.0, 90.0)),
             ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
         }
     }
