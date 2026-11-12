@@ -32,6 +32,8 @@ import tempfile
 HOLA = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "usuario", "target", "aarch64-unknown-none-softfloat", "release", "hola")
 # Y `pide`: lanzado desde el disco, nace con su canal con `sesiones` y repite la prueba de U4 con su número nuevo.
 PIDE = os.path.join(os.path.dirname(HOLA), "pide")
+# U6: `cambio`, la prueba del cambio rápido de usuario (lo lanza `guardian`, como Ana y como Carla).
+CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
@@ -61,6 +63,7 @@ if sys.argv[1] == "--comprobar":
         "Prefs/ cajón",
         "Prefs/fuente 8",
         "Programas/ cajón",
+        f"Programas/cambio {os.path.getsize(CAMBIO)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
     ]
@@ -95,7 +98,10 @@ if sys.argv[1] == "--comprobar":
             fallos.append(f"registro: {total} entradas, las del hostil son de los tipos {sorted(tipos)}")
     # FS10: el nombre y el contenido de lo que DashOS escribió en "Ana" no están en claro.
     crudo = open(disco, "rb").read()
-    for secreto in (b"secreto.txt", b"solo para Ana"):
+    # U6: y lo que escribió `cambio` como Ana en su volumen, delante y detrás (letras que calcula al correr, para que no
+    # estén en claro en el programa, que está en el disco).
+    testigo = [bytes(ord("a") + (7 * i + semilla) % 26 for i in range(48)) for semilla in (0, 3)]
+    for secreto in (b"secreto.txt", b"solo para Ana", *testigo):
         if secreto in crudo:
             fallos.append(f"{secreto!r} en claro en el disco")
     if comprobado != "sin problemas\n":
@@ -162,6 +168,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "pide"), "wb") as f:
         f.write(open(PIDE, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "pide"), 0o755)
+    with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
+        f.write(open(CAMBIO, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)
     privado = os.path.join(raiz, "C", "Privado")
     os.makedirs(privado)
     with open(os.path.join(privado, "nota.txt"), "w") as f:

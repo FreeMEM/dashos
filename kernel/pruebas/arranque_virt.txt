@@ -183,6 +183,22 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] pantalla de bloqueo en pantalla
 ~│   [guardian] desbloqueado con la contraseña buena tras 1 mala: bien
 ~│   [guardian] entra Ana tras 1 intento malo: bien
+# U6: el cambio rápido de usuario (docs/diseño/U6-cambio-rapido.md). Con Ana dentro, `guardian` lanza `cambio` como
+# ella y bloquea su sesión; en la pantalla, Esc, y entra Carla con Ana detrás. El `cambio` de Carla no ve ni mata los
+# procesos de Ana, no es Ana ante `sesiones` y no llega a su volumen ni a su fichero. El de Ana sigue en marcha detrás,
+# sin preguntar ni bloquear. Vuelve Ana (Esc en el bloqueo de Carla) y su fichero tiene todo.
+~│   [guardian] cambio de usuario: entra Carla (0 intentos malos); Ana sigue detrás
+~│   [sesiones] delante, la sesión de Carla; detrás, 1
+~│   [sesiones] cambio pide eco desde una sesión de detrás: no se pregunta
+~│   [cambio] Ana, detrás: escribe true, pedir eco -2, bloquear -2: bien
+~0 muertos, 0 dicen que existen: bien
+~│   [cambio] Carla, como Ana: entrar -12, volver -12, salir -12, lanzar -2: bien
+~│   [cambio] Carla, lo de Ana: abrir su volumen -12, verlo -12, cerrarlo -12; su fichero, por 0 caminos: bien
+~│   [cambio] Carla delante (1), con Ana detrás: nada de Ana a su alcance: bien
+~│   [guardian] cambio de usuario: entra Ana (0 intentos malos); Carla sigue detrás
+~│   [sesiones] delante, la sesión de Ana; detrás, 1
+~│   [cambio] Ana vuelve delante: su fichero sigue, con lo escrito detrás: bien
+~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
 # U3: bloquear por tiempo: el compositor avisa cuando nadie toca teclado ni ratón (ext_idle_notifier_v1).
 ~│   [guardian] esperando 2000 ms sin entrada
 ~│   [guardian] sin entrada durante 2 s: aviso tras

@@ -14,6 +14,11 @@
 //!
 //! Solo se mata lo del mismo usuario (más adelante, lo de otro con una acción de administrador, U5). El usuario es el
 //! de la ficha de quien pide, que sale de la marca: ningún programa puede decir que es otro.
+//!
+//! U6, cambio rápido de usuario (`docs/diseño/U6-cambio-rapido.md`): puede haber varias sesiones abiertas, y una está
+//! **delante** (la del último que entró o volvió con su contraseña). Las de detrás siguen en marcha, pero sus programas
+//! no preguntan al usuario, no piden acciones de administrador ni bloquean (quien está delante es otra persona). Un
+//! programa solo ve y mata los procesos de su usuario y los del sistema: los de otra persona no existen para él.
 
 #![no_std]
 #![no_main]
@@ -504,6 +509,8 @@ fn principal() -> u64 {
     // Las últimas bajas, para decir cuándo vuelve un servicio relanzado por `inicio`.
     // Los usuarios con la sesión abierta (U2/U3): solo como ellos puede `guardian` lanzar algo.
     let mut abiertas = [0u32; 8];
+    // U6: el usuario de la sesión de delante (0: nadie).
+    let mut activa = 0u32;
     let mut idos = [0u64; 8];
     let mut ido = 0;
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
@@ -602,13 +609,18 @@ fn principal() -> u64 {
             let respuesta = ll[0];
             usadas = 1;
             let yo = fichas.iter().flatten().find(|f| f.marca == marca).copied();
+            // U6: si quien pide es de una persona con la sesión abierta pero detrás (otra está delante).
+            let yo_detras = yo.is_some_and(|f| f.uid >= PRIMERA_PERSONA && abiertas.contains(&f.uid) && activa != f.uid);
             match u32_en(0) {
                 PROCESOS => {
                     let desde = u64_en(4) as usize;
-                    let total = fichas.iter().flatten().count();
+                    // U6: los de su usuario y los del sistema; los de otras personas, no. `guardian`, todos.
+                    let todos = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let ve = |f: &&Ficha| todos || f.uid < PRIMERA_PERSONA || yo.is_some_and(|y| y.uid == f.uid);
+                    let total = fichas.iter().flatten().filter(ve).count();
                     let mut r = [0u8; 8 + 32 * POR_PAGINA];
                     let mut i = 0;
-                    for f in fichas.iter().flatten().skip(desde).take(POR_PAGINA) {
+                    for f in fichas.iter().flatten().filter(ve).skip(desde).take(POR_PAGINA) {
                         let o = 8 + 32 * i;
                         r[o..o + 8].copy_from_slice(&f.marca.to_le_bytes());
                         r[o + 8..o + 12].copy_from_slice(&f.uid.to_le_bytes());
@@ -624,9 +636,13 @@ fn principal() -> u64 {
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
                     let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
+                    // U6: entrar en una sesión que ya está abierta (detrás) es volver a ella: la contraseña se comprueba
+                    // sin tocar el volumen.
+                    let ya_dentro = u32_en(0) == ENTRAR
+                        && m.get(12..12 + nl).and_then(|u| CUENTAS.iter().find(|c| c.1.as_bytes() == u)).is_some_and(|c| abiertas.contains(&c.0));
                     let estado = match (&archivos, guardian, m.get(12..12 + nl), m.get(12 + nl..12 + nl + cl)) {
                         (_, false, ..) => dashos::protocolo::archivos::PROTEGIDO,
-                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave, false),
+                        (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == ENTRAR => a.abrir_volumen(usuario, clave, ya_dentro),
                         (Some(a), true, Some(usuario), Some(clave)) if u32_en(0) == VOLVER => a.abrir_volumen(usuario, clave, true),
                         // Salir con programas suyos aún vivos (los que lanzó `sesiones` como él), no: -13, como con
                         // algo abierto en su volumen.
@@ -661,6 +677,19 @@ fn principal() -> u64 {
                                 }
                                 SALIR => abiertas.iter_mut().filter(|x| **x == uid).for_each(|x| *x = 0),
                                 _ => {}
+                            }
+                            // U6: quién está delante. Entrar o volver con la contraseña buena pone delante esa sesión (si
+                            // está abierta); salir de la de delante deja a nadie.
+                            let antes = activa;
+                            match u32_en(0) {
+                                ENTRAR | VOLVER if abiertas.contains(&uid) => activa = uid,
+                                SALIR if activa == uid => activa = 0,
+                                _ => {}
+                            }
+                            if activa != antes {
+                                let detras = abiertas.iter().filter(|&&x| x != 0 && x != activa).count();
+                                let de = CUENTAS.iter().find(|c| c.0 == activa).map_or("nadie", |c| c.1);
+                                println!("  [sesiones] delante, la sesión de {}; detrás, {}", de, detras);
                             }
                         }
                     }
@@ -813,6 +842,12 @@ fn principal() -> u64 {
                             respuesta_llave = l;
                             e
                         }
+                        // U6: de una sesión de detrás no se pregunta: quien está delante es otra persona.
+                        (SERVICIO, Some(_)) if yo_detras => {
+                            println!("  [sesiones] {} pide {} desde una sesión de detrás: no se pregunta", nombre(&programa), pedido);
+                            registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, pedido.as_bytes());
+                            PROTEGIDO
+                        }
                         // Sin permiso: si `guardian` atiende preguntas, se le pregunta al usuario y la respuesta
                         // espera (sin parar a los demás).
                         // Si ya se le está preguntando lo mismo (otra copia del programa), espera esa respuesta.
@@ -888,7 +923,11 @@ fn principal() -> u64 {
                     let accion = ACCIONES.iter().position(|a| a.as_bytes() == pedida);
                     let objetivo = u64_en(12 + nl);
                     let hueco = preguntas.iter().position(|p| p.is_none());
-                    match (accion, yo.is_some() && canal_guardian != 0, hueco) {
+                    // U6: tampoco se pide una acción de administrador desde una sesión de detrás.
+                    if yo_detras {
+                        println!("  [sesiones] {} pide una acción de administrador desde una sesión de detrás: no", nombre(&programa));
+                    }
+                    match (accion, yo.is_some() && canal_guardian != 0 && !yo_detras, hueco) {
                         (Some(i), true, Some(h)) => {
                             let id = siguiente_pregunta;
                             siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
@@ -961,7 +1000,8 @@ fn principal() -> u64 {
                 }
                 BLOQUEAR => {
                     // U3: bloquear la sesión de su usuario, si la tiene abierta; la pantalla la pone `guardian`.
-                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&c.0)));
+                    // U6: y solo la de delante (la de detrás ya está bloqueada; si no, su pantalla saldría encima de otra).
+                    let cuenta = yo.and_then(|f| CUENTAS.iter().find(|c| c.0 == f.uid && abiertas.contains(&c.0) && activa == c.0));
                     let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
                     let estado = match cuenta {
                         Some(&(uid, nombre_cuenta)) if canal_guardian != 0 => {
@@ -1093,6 +1133,15 @@ fn principal() -> u64 {
                     println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
+                ACTIVA => {
+                    // U6: si su sesión es la de delante (1), si está detrás (0) o si no tiene (-2).
+                    let r: i32 = match yo {
+                        Some(f) if f.uid != 0 && f.uid == activa => 1,
+                        Some(f) if f.uid != 0 && abiertas.contains(&f.uid) => 0,
+                        _ => PROTEGIDO,
+                    };
+                    dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
+                }
                 MATAR => {
                     let objetivo = u64_en(4);
                     let i = fichas.iter().position(|x| x.is_some_and(|x| x.marca == objetivo));
@@ -1101,7 +1150,13 @@ fn principal() -> u64 {
                         (None, _) => PROTEGIDO,
                         (Some(yo), Some(i)) => {
                             let f = fichas[i].unwrap();
-                            if f.uid != yo.uid {
+                            // U6: uno de otra persona no sale en su lista; aquí tampoco existe.
+                            let ajeno = f.uid >= PRIMERA_PERSONA && f.uid != yo.uid && !GUARDIANES.contains(&nombre(&yo.nombre));
+                            if ajeno {
+                                println!("  [sesiones] {} (usuario {}) intenta matar a un proceso de otra persona: no existe para él", nombre(&yo.nombre), yo.uid);
+                                registro.apuntar(R_MATAR, NO_EXISTE, &yo.nombre, &f.nombre);
+                                NO_EXISTE
+                            } else if f.uid != yo.uid {
                                 println!("  [sesiones] {} (usuario {}) no puede matar a {} (usuario {})", nombre(&yo.nombre), yo.uid, nombre(&f.nombre), f.uid);
                                 registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);
                                 PROTEGIDO
