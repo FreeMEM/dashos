@@ -947,3 +947,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   el 13 de `grupos`: lo de un proceso muerto se suelta cuando su núcleo lo recoge, no al acabar. Ahora espera hasta
   200 ms a que el canal esté cerrado. `make prueba` bien después. (El commit del tema se hizo con aquel fallo delante,
   porque la orden siguió; queda dicho aquí.)
+- S10c, el ataque al tema en virt: el hostil se suscribe a `dashos_tema_v1` y pone un tema; el compositor le manda el
+  error de protocolo (sobre el objeto del tema) y lo suelta; por otra conexión, el tema sigue siendo el de serie.
+  "poner el tema sin ser el centro da error: sí; el tema sigue: sí". (Primero falló por la prueba: el hostil tenía
+  abierta la conexión anterior y el compositor solo atiende una por programa; la cierra antes.)

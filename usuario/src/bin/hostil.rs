@@ -504,7 +504,58 @@ fn compositor(memoria: u32) -> bool {
     // Esta conexión ya no vale: se cierra y se abre otra.
     escribir(VENTANAS, &[TROZO_ADIOS], &[]);
     let Some((lectura, copia)) = conectar() else { return false };
-    compositor_contesta(lectura, copia, 53)
+    compositor_contesta(lectura, copia, 53) && tema_ajeno()
+}
+
+/// S10c: el tema del sistema solo lo cambia el centro de control. El hostil se suscribe (`dashos_tema_v1`, el global
+/// 7 de un cliente normal) e intenta ponerlo: el compositor contesta con un error de protocolo y le cierra la
+/// conexión. Por otra conexión, el tema sigue siendo el de serie.
+fn tema_ajeno() -> bool {
+    use wayland::tablas::{dashos_tema_v1, wl_registry};
+    // Lo que llega por `lectura` hasta encontrar (objeto, orden): sus argumentos.
+    let esperar = |lectura: u32, copia: u32, objeto: u32, orden: u16| -> Option<alloc::vec::Vec<u8>> {
+        let mut b = [0u8; 256];
+        let mut flujo = alloc::vec::Vec::new();
+        while let Some(n) = leer_con_plazo(lectura, copia, &mut b) {
+            if b[0] != TROZO_DATOS {
+                continue;
+            }
+            flujo.extend_from_slice(&b[1..n]);
+            while let Ok((o, ord, tam)) = leer_cabecera(&flujo) {
+                if o == objeto && ord == orden {
+                    return Some(flujo[8..tam].to_vec());
+                }
+                flujo.drain(..tam);
+            }
+        }
+        None
+    };
+    let suscribir = |e: &mut Escritor| {
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+    };
+    // La conexión de antes, fuera: el compositor solo atiende una por programa.
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    let Some((lectura, copia)) = conectar() else { return false };
+    let mut e = Escritor::new();
+    suscribir(&mut e);
+    e.empezar(60, dashos_tema_v1::req::PONER).uint(0xff00_0000).uint(1).fin();
+    let mut t = alloc::vec![TROZO_DATOS];
+    t.extend_from_slice(&e.bytes);
+    escribir(VENTANAS, &t, &[]);
+    let error = esperar(lectura, copia, 1, wl_display::ev::ERROR).is_some_and(|a| a.len() >= 8 && u32::from_le_bytes(a[0..4].try_into().unwrap()) == 60);
+    // Otra conexión: el tema de ahora, el de serie (el centro aún no ha puesto el suyo).
+    let Some((lectura, copia)) = conectar() else { return false };
+    let mut e = Escritor::new();
+    suscribir(&mut e);
+    let mut t = alloc::vec![TROZO_DATOS];
+    t.extend_from_slice(&e.bytes);
+    escribir(VENTANAS, &t, &[]);
+    let tema = esperar(lectura, copia, 60, dashos_tema_v1::ev::TEMA);
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    let intacto = tema.as_deref().is_some_and(|a| a.len() >= 8 && a[0..4] == 0xff67_50a4u32.to_le_bytes() && a[4..8] == 0u32.to_le_bytes());
+    println!("  [hostil] compositor: poner el tema sin ser el centro da error: {}; el tema sigue: {}", si(error), si(intacto));
+    error && intacto
 }
 
 fn si(b: bool) -> &'static str {

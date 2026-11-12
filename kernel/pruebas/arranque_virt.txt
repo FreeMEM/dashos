@@ -111,6 +111,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] archivos, permisos: bien
 ~│   [hostil] A7 préstamos: bien
 ~│   [hostil] sonido sigue: sí
+# S10c: el tema del sistema no lo cambia cualquiera.
+~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
