@@ -358,6 +358,8 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
                     pulsado = false;
                     i.raton(-1, -1, false)
                 }
+                // La rueda (eje vertical, 0): desplaza la lista de debajo.
+                (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => i.rueda(x, y, kit::controles::pasos_rueda(palabra(2))),
                 (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
                     let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
                     i.ctx.tema = Tema::del_sistema(color, oscuro);

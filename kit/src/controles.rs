@@ -690,6 +690,14 @@ impl Clase for Lista {
         true
     }
 
+    /// La rueda desplaza la lista (`PRIMERA`) sin cambiar la elegida, sin pasar del principio ni del final.
+    fn rueda(&self, attrs: &BTreeMap<Atr, Valor>, pasos: i32) -> Vec<(Atr, Valor)> {
+        let n = Ciclo::opciones(attrs).len() as i64;
+        let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int);
+        let nueva = (primera + pasos as i64).clamp(0, (n - Self::filas(attrs)).max(0));
+        if nueva == primera { Vec::new() } else { alloc::vec![(atr::PRIMERA, Valor::Int(nueva))] }
+    }
+
     fn arrastrar(&self, attrs: &BTreeMap<Atr, Valor>, r: Rect, _x: i32, y: i32) -> Vec<(Atr, Valor)> {
         let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int);
         let k = primera + ((y - r.y).max(0) / FILA) as i64;
@@ -903,6 +911,27 @@ impl Interfaz {
         let r = self.raton(x, y, pulsado);
         self.hora = None;
         r
+    }
+
+    /// La rueda del ratón en (x, y): al primer objeto de debajo que se mueve con ella (una lista). Con un menú
+    /// abierto, nada. Devuelve si hay que dibujar.
+    pub fn rueda(&mut self, x: i32, y: i32, pasos: i32) -> bool {
+        if self.menu.is_some() || pasos == 0 {
+            return false;
+        }
+        let debajo: Vec<Obj> = self.sitios.iter().filter(|(_, r)| r.contiene(x, y)).map(|(o, _)| *o).collect();
+        for o in debajo {
+            let obj = self.arbol.objeto(o).unwrap();
+            if desactivado(&obj.attrs) {
+                continue;
+            }
+            let cambios = obj.clase.rueda(&obj.attrs, pasos);
+            if !cambios.is_empty() {
+                self.aplicar(o, cambios);
+                return true;
+            }
+        }
+        false
     }
 
     /// El ratón en (x, y) de la superficie, con el botón izquierdo pulsado o no. Devuelve si hay que dibujar.
@@ -1306,6 +1335,22 @@ mod pruebas {
         assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(5)));
         i.tecla(102, true);
         assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(0)));
+        // La rueda desplaza sin elegir: dos abajo; hacia arriba no pasa de la primera ni hacia abajo de la última que
+        // deja llena la lista (8 opciones, 3 filas: hasta la 5); fuera de la lista, nada.
+        let elegida = i.arbol.leer(lista, atr::VALOR).cloned();
+        assert!(i.rueda(r.x + 20, r.y + 20, 2));
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(2)));
+        assert_eq!(i.arbol.leer(lista, atr::VALOR).cloned(), elegida);
+        assert!(i.rueda(r.x + 20, r.y + 20, -10));
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(0)));
+        assert!(!i.rueda(r.x + 20, r.y + 20, -1));
+        assert!(i.rueda(r.x + 20, r.y + 20, 100));
+        assert_eq!(i.arbol.leer(lista, atr::PRIMERA), Some(&Valor::Int(5)));
+        assert!(!i.rueda(-50, -50, -3));
+        i.rueda(r.x + 20, r.y + 20, -100);
+        assert_eq!(super::pasos_rueda(15 * 256), 1);
+        assert_eq!(super::pasos_rueda((-30i32 * 256) as u32), -2);
+        assert_eq!(super::pasos_rueda(10), 1);
         // Material 3: la lista sobre el contenedor bajo, sin marco; la elegida, en el contenedor secundario. Tras un
         // clic (sin el anillo del teclado), solo eso.
         clic(&mut i, (r.x + 20, r.y + 56 + 20));
@@ -1912,4 +1957,10 @@ mod pruebas {
         i.raton(rc.x + 20, rc.y + 20, false);
         assert_eq!(i.arbol.leer(casilla, atr::VALOR), Some(&Valor::Bool(true)));
     }
+}
+
+/// Los pasos de un `wl_pointer.axis` (eje vertical, en 24.8): 15 por paso, como libinput; menos de un paso cuenta uno.
+pub fn pasos_rueda(valor: u32) -> i32 {
+    let v = valor as i32;
+    if v.abs() >= 15 * 256 { v / (15 * 256) } else { v.signum() }
 }

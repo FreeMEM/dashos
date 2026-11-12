@@ -149,6 +149,10 @@ pub trait Clase {
     fn pulsable(&self) -> bool {
         false
     }
+    /// La rueda del ratón sobre él: `pasos` hacia abajo (positivo) o hacia arriba. Lo que cambia; por defecto, nada.
+    fn rueda(&self, _attrs: &BTreeMap<Atr, Valor>, _pasos: i32) -> Vec<(Atr, Valor)> {
+        Vec::new()
+    }
     /// El ratón pulsado o arrastrado en (x, y) de su rectángulo `r`: los atributos que cambian.
     fn arrastrar(&self, _attrs: &BTreeMap<Atr, Valor>, _r: crate::lienzo::Rect, _x: i32, _y: i32) -> Vec<(Atr, Valor)> {
         Vec::new()

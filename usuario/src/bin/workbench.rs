@@ -1770,6 +1770,16 @@ fn principal() -> u64 {
                     }
                 }
             }
+            // La rueda (eje vertical, 0) sobre una ventana: desplaza su lista.
+            (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => {
+                let (x, y) = (app.x, app.y);
+                if let Some(k) = app.ventana_de(app.sobre)
+                    && app.ventanas[k].i.rueda(x, y, kit::controles::pasos_rueda(palabra(2)))
+                    && app.ventanas[k].configurada
+                {
+                    app.presentar(k, false);
+                }
+            }
             (PUNTERO, wl_pointer::ev::BUTTON) => {
                 let (ms, boton, pulsado) = (palabra(1), palabra(2), palabra(3) == 1);
                 if app.sobre == SUP_ESC {

@@ -1022,6 +1022,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     pulsado = false;
                     i.raton(-1, -1, false)
                 }
+                // La rueda (eje vertical, 0): desplaza la lista de debajo.
+                (PUNTERO, wl_pointer::ev::AXIS) if palabra(1) == 0 => i.rueda(x, y, kit::controles::pasos_rueda(palabra(2))),
                 (TECLADO, wl_keyboard::ev::KEYMAP) => {
                     if let Some(l) = c.juntador.tomar_llave() {
                         dashos::cerrar(l);

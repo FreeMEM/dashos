@@ -1424,3 +1424,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   valor fuera de lo normal se queda en 127. En virt, el guion la gira sobre el historial de avisos (10): "la rueda lo
   lleva a la fila 2, 3, 2, 1" (en el monitor de QEMU, `dz` negativo es hacia abajo).
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:25: la rueda en las listas del kit
+- `Clase::rueda` (por defecto, nada); la lista desplaza `PRIMERA` sin cambiar la elegida, sin pasar del principio ni
+  del final. `Interfaz::rueda(x, y, pasos)`: al primer objeto de debajo que se mueve (con un menú abierto, nada).
+  `kit::controles::pasos_rueda`: los pasos de un `wl_pointer.axis` (15 por paso). Centro, selector y Workbench se la
+  pasan.
+- Prueba del kit (62 bien): dos abajo sin cambiar la elegida; arriba se queda en la primera; abajo, en la última que
+  deja llena la lista; fuera de la lista, nada. En virt no la gira el guion sobre estas listas (sí sobre el historial
+  de la barra): sin probar ahí.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
