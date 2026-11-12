@@ -1134,3 +1134,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `guardian` le pide abrir una categoría). Para el panel hace falta alguien enlazado siempre: o el centro mantiene su
   conexión con el compositor también cerrado, o un programa `panel` aparte en `PONEN_TEMA` (para el modo noche). Lo
   segundo separa mejor (el panel no ve los permisos); es lo que haría salvo que el usuario diga otra cosa.
+- S10c, C2 segundo paso: el estado del tema sigue siendo del centro. Por su canal acepta "modo oscuro" y "modo claro"
+  solo de `panel` (por el nombre que da el directorio de `inicio`, que ahora apunta), también con la ventana cerrada:
+  guarda la apariencia con el color que hubiera y la pone en el compositor con una conexión de un momento (hasta su
+  sync). Hostil: pedir "modo oscuro" da -1 y no cambia nada. Siguiente: el programa `panel` (capa en una esquina, con
+  Super+A; `abren_panel` en el compositor en vez de `ponen_tema`).

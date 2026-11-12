@@ -860,8 +860,9 @@ fn centro(memoria: u32) -> bool {
         dashos::cerrar(lectura);
         e
     };
-    let malos: [&[u8]; 6] = [b"abrir ../../Estado", b"abrir", b"", &[0xff; 200], b"abrir permisos\0x", b"abrir Permisos"];
-    let rechazos: [i32; 6] = core::array::from_fn(|k| pedir(malos[k]));
+    // C2: el modo solo lo pide el panel rápido; al hostil, -1.
+    let malos: [&[u8]; 7] = [b"abrir ../../Estado", b"abrir", b"", &[0xff; 200], b"abrir permisos\0x", b"abrir Permisos", b"modo oscuro"];
+    let rechazos: [i32; 7] = core::array::from_fn(|k| pedir(malos[k]));
     inundar(CENTRO, memoria, b"abrir nada");
     let despues = pedir(b"cerrar todo");
     let bien = rechazos.iter().all(|&e| e == -1) && despues == -1;

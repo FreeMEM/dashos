@@ -821,20 +821,70 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     r
 }
 
+/// C2: quién puede pedir "modo oscuro" o "modo claro" por el canal del centro: el panel rápido.
+const PIDEN_MODO: &[&str] = &["panel"];
+
+/// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se guarda y se pone en el
+/// compositor (una conexión de un momento). El estado: 0, o -1 si no se pudo poner.
+fn aplicar_modo(oscuro: bool) -> i32 {
+    let color = leer_apariencia().map_or(0, |g| g.1);
+    let (guardado, _) = guardar_apariencia(oscuro, color);
+    let Some(mut c) = Cliente::conectar() else { return -1 };
+    let Some(globales) = c.globales() else { return -1 };
+    let Some(gt) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| g.0) else { return -1 };
+    const SYNC: u32 = 44;
+    let mut e = Escritor::new();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA_OBJ).fin();
+    e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
+    c.mandar(&e);
+    // Hasta que el compositor conteste al sync, no ha hecho lo de antes; un error de protocolo corta la conexión.
+    while let Some((o, orden, _)) = c.evento() {
+        if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
+            println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
+            return 0;
+        }
+    }
+    -1
+}
+
 fn principal() -> u64 {
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
     let mut malos = 0u64;
+    // El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
+    let mut nombres: alloc::collections::BTreeMap<u64, alloc::string::String> = alloc::collections::BTreeMap::new();
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
-        // Sin marca: las entradas del directorio de `inicio`; aquí no hacen falta.
+        // Sin marca: las entradas del directorio de `inicio` (8 bytes de marca y 16 de nombre), para saber quién es quién.
+        if marca == 0 && n == 24 && nombres.len() < 64 {
+            let de = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            let nombre = &buf[8..24];
+            let nombre = core::str::from_utf8(&nombre[..nombre.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("");
+            nombres.insert(de, nombre.into());
+        }
         if marca != 0 {
             let pedido = core::str::from_utf8(&buf[..n]).unwrap_or("");
             let categoria = pedido.strip_prefix("abrir ").and_then(|c| CATEGORIAS.iter().position(|x| x.0 == c));
+            // C2: el modo, solo del panel rápido.
+            let modo = match pedido {
+                "modo oscuro" => Some(true),
+                "modo claro" => Some(false),
+                _ => None,
+            }
+            .filter(|_| nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str())));
+            if let Some(oscuro) = modo {
+                let estado = aplicar_modo(oscuro);
+                if k >= 1 {
+                    dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+                }
+                cerrar_llaves(&ll[..k]);
+                continue;
+            }
             let abierto = categoria.is_some();
             match categoria {
                 Some(cat) => {
