@@ -40,6 +40,8 @@ dashos::monton!();
 const CANAL: u32 = 1;
 const VA_TRAMAS: usize = 0x40_0000_0000;
 const VA_CONEX: usize = 0x41_0000_0000;
+/// La memoria del puerto de la caja Linux (H9).
+const VA_PUERTO: usize = 0x42_0000_0000;
 /// Sitio de la memoria de cada conexión: 64 bytes y dos anillos de hasta 64 KB, con holgura.
 const HUECO: usize = 2 << 20;
 /// Los búferes de cada conexión en la pila.
@@ -71,6 +73,69 @@ struct Tarjeta {
     perdidas: u64,
     malas: u64,
     recibidas: u64,
+    /// El puerto de la caja Linux, si lo hay (H9): un puente de tramas hacia su invitado.
+    puerto: Option<Puerto>,
+}
+
+/// Un puerto del conmutador para el invitado de la caja Linux (H9, `protocolo::red::PUERTO`). Lo que mueve el servicio
+/// (lo escrito en las ranuras de recibir y lo leído de las de enviar) se guarda aquí: no se lee de la memoria compartida,
+/// que la caja puede cambiar cuando quiera.
+struct Puerto {
+    mac: [u8; 6],
+    memoria: u32,
+    aviso: u32,
+    rx_escritas: u32,
+    tx_leidas: u32,
+    /// Hay tramas nuevas para el invitado desde el último aviso.
+    avisar: bool,
+    /// Tramas que pasaron hacia el invitado y desde él; perdidas por falta de sitio; las que traían otra MAC de origen
+    /// o un largo imposible.
+    al_invitado: u64,
+    del_invitado: u64,
+    sin_sitio: u64,
+    falsas: u64,
+}
+
+fn puerto_palabra(i: usize) -> u32 {
+    unsafe { read_volatile((VA_PUERTO + 4 * i) as *const u32) }
+}
+
+fn puerto_poner(i: usize, v: u32) {
+    unsafe { write_volatile((VA_PUERTO + 4 * i) as *mut u32, v) }
+}
+
+impl Puerto {
+    /// Si una trama que llega de la red es para el invitado: la suya o de difusión (y multidifusión).
+    fn para_el(&self, t: &[u8]) -> bool {
+        t.len() >= p::MIN_TRAMA && (t[0..6] == self.mac || t[0] & 1 == 1)
+    }
+
+    /// Una trama para el invitado, si hay sitio (si no, se pierde: la red no espera).
+    fn meter(&mut self, t: &[u8]) {
+        let rx = p::RANURAS_PUERTO;
+        // Lo leído lo dice la caja: si dice más de lo escrito, o que hay más llenas que ranuras, no hay sitio.
+        let leidas = puerto_palabra(p::T_RX_LEIDAS);
+        if self.rx_escritas.wrapping_sub(leidas) >= rx {
+            self.sin_sitio += 1;
+            return;
+        }
+        let ranura = VA_PUERTO + 64 + (self.rx_escritas % rx) as usize * p::RANURA;
+        let n = t.len().min(p::MAX_TRAMA);
+        unsafe {
+            core::ptr::copy_nonoverlapping(t.as_ptr(), (ranura + p::RANURA_DATOS) as *mut u8, n);
+            write_volatile(ranura as *mut u32, n as u32);
+        }
+        fence(Ordering::SeqCst);
+        self.rx_escritas = self.rx_escritas.wrapping_add(1);
+        puerto_poner(p::T_RX_ESCRITAS, self.rx_escritas);
+        self.al_invitado += 1;
+        self.avisar = true;
+    }
+
+    /// Si la caja tiene tramas puestas para enviar.
+    fn hay_para_enviar(&self) -> bool {
+        puerto_palabra(p::T_TX_ESCRITAS) != self.tx_leidas
+    }
 }
 
 fn tramas(i: usize) -> u32 {
@@ -129,6 +194,59 @@ impl phy::TxToken for Tx<'_> {
     }
 }
 
+impl Tarjeta {
+    /// H9: las tramas que puso para enviar el invitado de la caja Linux, a la tarjeta (como mucho una vuelta del anillo).
+    /// Solo las que llevan su MAC de origen. Si la tarjeta no tiene sitio, esperan en el puerto.
+    fn bombear_puerto(&mut self) {
+        let Some(pu) = self.puerto.as_mut() else { return };
+        let tx = p::RANURAS_PUERTO;
+        for _ in 0..tx {
+            let escritas = puerto_palabra(p::T_TX_ESCRITAS);
+            let hay = escritas.wrapping_sub(pu.tx_leidas);
+            if hay == 0 {
+                break;
+            }
+            // La caja dice más llenas que ranuras: se tira todo.
+            if hay > tx {
+                pu.falsas += 1;
+                pu.tx_leidas = escritas;
+                puerto_poner(p::T_TX_LEIDAS, pu.tx_leidas);
+                break;
+            }
+            if !((tramas(p::T_TX_ESCRITAS).wrapping_sub(tramas(p::T_TX_LEIDAS))) < self.tx) {
+                self.llena = true;
+                break;
+            }
+            fence(Ordering::SeqCst);
+            let ranura = VA_PUERTO + 64 + (tx + pu.tx_leidas % tx) as usize * p::RANURA;
+            let mut b = [0u8; p::MAX_TRAMA];
+            let n = (unsafe { read_volatile(ranura as *const u32) } as usize).min(p::RANURA - p::RANURA_DATOS);
+            let valida = (p::MIN_TRAMA..=p::MAX_TRAMA).contains(&n);
+            if valida {
+                // Se copia antes de mirarla: la caja ya no puede cambiarla.
+                unsafe { core::ptr::copy_nonoverlapping((ranura + p::RANURA_DATOS) as *const u8, b.as_mut_ptr(), n) };
+            }
+            fence(Ordering::SeqCst);
+            pu.tx_leidas = pu.tx_leidas.wrapping_add(1);
+            puerto_poner(p::T_TX_LEIDAS, pu.tx_leidas);
+            if !valida || b[6..12] != pu.mac {
+                pu.falsas += 1;
+                continue;
+            }
+            let escritas = tramas(p::T_TX_ESCRITAS);
+            let destino = VA_TRAMAS + 64 + (self.rx + escritas % self.tx) as usize * p::RANURA;
+            unsafe {
+                core::ptr::copy_nonoverlapping(b.as_ptr(), (destino + p::RANURA_DATOS) as *mut u8, n);
+                write_volatile(destino as *mut u32, n as u32);
+            }
+            fence(Ordering::SeqCst);
+            poner_tramas(p::T_TX_ESCRITAS, escritas.wrapping_add(1));
+            self.enviadas = true;
+            pu.del_invitado += 1;
+        }
+    }
+}
+
 impl Device for Tarjeta {
     type RxToken<'a> = Rx;
     type TxToken<'a> = Tx<'a>;
@@ -158,6 +276,15 @@ impl Device for Tarjeta {
                 continue;
             }
             self.recibidas += 1;
+            // H9: lo que es del invitado de la caja Linux va a su puerto; lo de difusión, también a la pila.
+            if let Some(pu) = self.puerto.as_mut()
+                && pu.para_el(&rx.buf[..rx.n])
+            {
+                pu.meter(&rx.buf[..rx.n]);
+                if rx.buf[0] & 1 == 0 {
+                    continue;
+                }
+            }
             return Some((rx, Tx { t: self }));
         }
     }
@@ -438,6 +565,19 @@ fn principal() -> u64 {
                         }
                         cerrar_llaves(&llaves);
                     }
+                    p::PUERTO | p::TRAMAS_PUERTO if quien != Some("caja-linux") => {
+                        rechazos += 1;
+                        cerrar_llaves(&llaves);
+                    }
+                    p::PUERTO if k == 1 && n >= 10 => {
+                        let estado = puerto_nuevo(&mut red, &buf[4..10], llaves[0]);
+                        if estado != p::BIEN {
+                            dashos::canal_escribir(llaves[0], palabras(&[p::R_PUERTO, estado as u32]), &[]);
+                            cerrar_llaves(&llaves);
+                        }
+                    }
+                    // La caja puso tramas para enviar: se miran en la vuelta de abajo.
+                    p::TRAMAS_PUERTO => cerrar_llaves(&llaves),
                     p::ESTADO if k >= 1 => {
                         let mut e = [0u32; p::E_PALABRAS];
                         e[0] = p::R_ESTADO;
@@ -494,6 +634,23 @@ fn principal() -> u64 {
                 }
             }
             r.iface.poll(ahora(), &mut r.tarjeta, &mut r.sockets);
+            r.tarjeta.bombear_puerto();
+            if let Some(pu) = r.tarjeta.puerto.as_mut()
+                && pu.avisar
+            {
+                pu.avisar = false;
+                // Si la caja ya no está (su canal cerrado), el puerto se suelta.
+                if dashos::canal_escribir(pu.aviso, palabras(&[p::TRAMAS_PUERTO]), &[]) == E_CERRADO {
+                    println!(
+                        "  [red] la caja Linux se fue: se suelta su puerto ({} tramas al invitado, {} de él, {} sin sitio, {} falsas)",
+                        pu.al_invitado, pu.del_invitado, pu.sin_sitio, pu.falsas
+                    );
+                    dashos::memoria_quitar(VA_PUERTO);
+                    dashos::cerrar(pu.memoria);
+                    dashos::cerrar(pu.aviso);
+                    r.tarjeta.puerto = None;
+                }
+            }
             if r.tarjeta.enviadas {
                 r.tarjeta.enviadas = false;
                 dashos::canal_escribir(r.aviso, &p::TRAMAS.to_le_bytes(), &[]);
@@ -510,10 +667,46 @@ fn principal() -> u64 {
         if r.tarjeta.llena {
             plazo = plazo.min(2_000);
         }
-        if r.tarjeta.hay_recibidas() {
+        if r.tarjeta.hay_recibidas() || r.tarjeta.puerto.as_ref().is_some_and(|pu| pu.hay_para_enviar() && !r.tarjeta.llena) {
             plazo = 1;
         }
     }
+}
+
+/// H9: el puerto de la caja Linux (`PUERTO`): su memoria de tramas, con una copia para la caja, y la respuesta. Uno
+/// solo, y solo con tarjeta. El estado si no se pudo (la respuesta de error la manda quien llama).
+fn puerto_nuevo(red: &mut Option<Red>, mac: &[u8], aviso: u32) -> i32 {
+    let Some(r) = red.as_mut() else { return p::SIN_DIRECCION };
+    if r.tarjeta.puerto.is_some() {
+        return p::LIMITE;
+    }
+    let mac: [u8; 6] = mac.try_into().unwrap_or([0; 6]);
+    // De unidifusión, no la de la tarjeta, y no todo ceros.
+    if mac[0] & 1 == 1 || mac == [0; 6] || EthernetAddress(mac) == EthernetAddress::from_bytes(&r.iface.hardware_addr().as_bytes()[..6]) {
+        return p::MAL_FORMADO;
+    }
+    let tam = 64 + 2 * p::RANURAS_PUERTO as usize * p::RANURA;
+    let memoria = dashos::memoria_crear(tam);
+    if (memoria as i32) <= 0 || dashos::memoria_proyectar(memoria, VA_PUERTO, true) != 0 {
+        if (memoria as i32) > 0 {
+            dashos::cerrar(memoria);
+        }
+        return p::LIMITE;
+    }
+    puerto_poner(p::T_RANURAS_RX, p::RANURAS_PUERTO);
+    puerto_poner(p::T_RANURAS_TX, p::RANURAS_PUERTO);
+    let copia = dashos::llave_duplicar(memoria, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, 0);
+    if copia <= 0 || dashos::canal_escribir(aviso, palabras(&[p::R_PUERTO, p::BIEN as u32]), &[copia as u32]) != 0 {
+        if copia > 0 {
+            dashos::cerrar(copia as u32);
+        }
+        dashos::memoria_quitar(VA_PUERTO);
+        dashos::cerrar(memoria);
+        return p::LIMITE;
+    }
+    println!("  [red] puerto para la caja Linux con MAC {}: un puente de tramas hacia la tarjeta", EthernetAddress(mac));
+    r.tarjeta.puerto = Some(Puerto { mac, memoria, aviso, rx_escritas: 0, tx_leidas: 0, avisar: false, al_invitado: 0, del_invitado: 0, sin_sitio: 0, falsas: 0 });
+    p::BIEN
 }
 
 /// Con la tarjeta: proyecta sus ranuras, crea la interfaz y pide la dirección por DHCP.
@@ -529,7 +722,7 @@ fn tarjeta_nueva(mac: &[u8], memoria: u32, aviso: u32) -> Option<Red> {
         dashos::memoria_quitar(VA_TRAMAS);
         return None;
     }
-    let mut tarjeta = Tarjeta { rx, tx, enviadas: false, llena: false, perdidas: 0, malas: 0, recibidas: 0 };
+    let mut tarjeta = Tarjeta { rx, tx, enviadas: false, llena: false, perdidas: 0, malas: 0, recibidas: 0, puerto: None };
     let mac = EthernetAddress([mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]]);
     let mut config = Config::new(mac.into());
     let mut semilla = [0u8; 8];

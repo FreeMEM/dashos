@@ -37,20 +37,22 @@ mod lanzables;
 
 dashos::programa!(principal);
 
-/// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); van primero los permisos
-/// y después los canales, en el orden en que aparecen por primera vez en la lista de `kernel/src/inicio.rs` (no en el
-/// de la lista de cada programa): 2 el del servicio de archivos, 3 el del comprobador aparte (A15: la acción de
-/// administrador "comprobar"), 4 el de `eco` (sin marca, para repartirlo) y 5 el suyo.
+/// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); llave 2: el de máquinas
+/// virtuales (caja Linux, H9; decisión del usuario del 2026-11-12). Van primero los permisos y después los canales, en
+/// el orden en que aparecen por primera vez en la lista de `kernel/src/inicio.rs` (no en el de la lista de cada
+/// programa): 3 el del servicio de archivos, 4 el del comprobador aparte (A15: la acción de administrador
+/// "comprobar"), 5 el de `eco` (sin marca, para repartirlo) y 6 el suyo.
 const PLAZO: u32 = 1;
-const ARCHIVOS: u32 = 2;
-const COMPROBADOR: u32 = 3;
-const CANAL: u32 = 5;
-/// Llave 6: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
+const MAQUINAS: u32 = 2;
+const ARCHIVOS: u32 = 3;
+const COMPROBADOR: u32 = 4;
+const CANAL: u32 = 6;
+/// Llave 7: una copia sin marca de su propio canal, para escribir en él (U2): de ella salen la llave con que nace lo
 /// que lanza (marcada con su número) y su aviso de fin.
-const PROPIO: u32 = 6;
-/// Llave 7: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
+const PROPIO: u32 = 7;
+/// Llave 8: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
 /// marcada con su número.
-const ARCHIVOS_ALTAS: u32 = 7;
+const ARCHIVOS_ALTAS: u32 = 8;
 /// Las raíces con que nace lo que lanza: la 0, el cajón de donde salió (`PROGDIR:`); la 1, el disco para leer
 /// (`SYS:`, `Programas:`); la 2, el volumen de su usuario (`Home:`), si tiene cuenta.
 const RAIZ_SYS: u8 = 1;
@@ -59,14 +61,22 @@ const RAIZ_HOME: u8 = 2;
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
 /// S10: también `avisos` (las notificaciones), igual que el sonido.
-const REPARTE: &[(&str, u32)] = &[("eco", 4), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO)];
+/// H9: también el permiso de máquinas virtuales ("maquinas").
+const REPARTE: &[(&str, u32)] = &[("eco", 5), ("plazo", PLAZO), ("sonido", SIN_NUMERO), ("avisos", SIN_NUMERO), ("maquinas", MAQUINAS)];
 const SIN_NUMERO: u32 = 0;
 /// U6: los servicios que siguen las sesiones (el compositor y el sonido), por el nombre que da `inicio` a quien los
 /// sirve: no reciben entradas de directorio de lo que se reparte (un nombre así podría ser el de uno con poderes), sino
 /// `AVISO_PERSONA`.
 const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// Cuáles de `REPARTE` son permisos, no canales.
-const PERMISOS_KERNEL: &[&str] = &["plazo"];
+const PERMISOS_KERNEL: &[&str] = &["plazo", "maquinas"];
+/// H9 (decisión del usuario del 2026-11-12): lo que se concede sin preguntar a un programa del sistema (por el nombre
+/// que da `inicio`): el permiso de máquinas virtuales a la caja Linux. Se apunta como concedido (sale en el centro de
+/// control, que lo puede quitar) y en el registro de seguridad. Si quien está delante lo quita, la próxima vez se le
+/// pregunta (hasta que se reinicie: lo quitado no se guarda aún en el disco).
+const SIN_PREGUNTAR: &[(&str, &str)] = &[("caja-linux", "maquinas")];
+/// Los permisos cuya concesión se apunta también en el registro de seguridad (no solo las negativas).
+const SE_APUNTA: &[&str] = &["maquinas"];
 /// Los permisos de cada programa (U4), provisionales hasta que salgan del paquete (S8). Lo que no esté aquí se le
 /// pregunta a `guardian`, si atiende preguntas, y lo que diga que sí se guarda (`CAMINO_PERMISOS`).
 /// U6: `cambio` (la prueba del cambio rápido de usuario) suena por el servicio de sonido.
@@ -215,6 +225,9 @@ struct Archivos {
     lectura: u32,
 }
 
+/// Lo que espera `sesiones` a que conteste el servicio de archivos al arrancar.
+const PLAZO_ARCHIVOS_US: u64 = 15_000_000;
+
 impl Archivos {
     fn abrir() -> Option<Archivos> {
         use dashos::protocolo::archivos as a;
@@ -226,7 +239,15 @@ impl Archivos {
         }
         let mut r = [0u8; 32];
         let mut ll = [0u32; 1];
-        let (n, k) = dashos::canal_leer(lectura, &mut r, &mut ll);
+        // Sin disco, el servicio de archivos no contesta nunca (espera a su disco): sin plazo, `sesiones` no atendía a
+        // nadie (H9: la caja Linux le pide su permiso en `make arranque-virt-vm`, que no tiene disco). Con disco contesta
+        // en menos de un segundo.
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut r, &mut ll, PLAZO_ARCHIVOS_US);
+        if n == dashos::E_PLAZO {
+            println!("  [sesiones] el servicio de archivos no contesta en {} s", PLAZO_ARCHIVOS_US / 1_000_000);
+            dashos::cerrar(lectura);
+            return None;
+        }
         if n != 32 || k != 1 || i32::from_le_bytes(r[0..4].try_into().unwrap()) != 0 || dashos::memoria_proyectar(ll[0], VA_VENTANA, true) != 0 {
             return None;
         }
@@ -482,7 +503,8 @@ fn reescribir_permisos(a: &Archivos, concedidos: &[Option<Concedido>]) {
     }
     a.orden(x::TAMANO, asa, 0, 0, b"");
     a.orden(x::CERRAR, asa, 0, 0, b"");
-    for (p, s, uid) in concedidos.iter().flatten() {
+    // Lo de serie (H9, `SIN_PREGUNTAR`) no se guarda: vuelve solo al arrancar.
+    for (p, s, uid) in concedidos.iter().flatten().filter(|(p, s, _)| !SIN_PREGUNTAR.iter().any(|&(q, sv)| q == nombre(p) && sv == REPARTE[*s].0)) {
         guardar_permiso(a, nombre(p), REPARTE[*s].0, *uid);
     }
 }
@@ -627,6 +649,8 @@ fn principal() -> u64 {
     // Y la llave del temporizador de su plazo.
     let mut comprobando: Option<(u32, [u8; 16], [u8; 16], u64, u32)> = None;
     let mut canal_guardian = 0u32;
+    // H9: lo de `SIN_PREGUNTAR` (por su servicio en `REPARTE`) que quien está delante quitó en el centro de control.
+    let mut sin_preguntar_quitado = [false; 8];
     let mut siguiente_pregunta = 1u32;
     let mut registro = Registro { entradas: [[0; ENTRADA_REGISTRO]; REGISTRO_MAX], total: 0, pendientes: 0, asa: 0 };
     let mut siguiente_pid = PRIMER_PID_PROPIO;
@@ -1050,13 +1074,30 @@ fn principal() -> u64 {
                     let permitido = yo.is_some()
                         && (PERMISOS.iter().any(|p| p.0 == nombre(&programa) && p.1 == pedido)
                             || servicio.is_some_and(|s| concedidos.iter().flatten().any(|c| c.0 == programa && c.1 == s && yo.is_some_and(|f| f.uid == c.2))));
+                    // H9: lo que se da sin preguntar a un programa del sistema (la caja Linux), si quien está delante no
+                    // lo quitó.
+                    let sin_preguntar = !permitido
+                        && servicio.is_some()
+                        && !sin_preguntar_quitado.get(servicio.unwrap()).copied().unwrap_or(true)
+                        && yo.is_some_and(|f| SIN_PREGUNTAR.iter().any(|&(p, sv)| sv == pedido && es(&f, &[p])));
                     let mut respuesta_llave = None;
                     let mut en_espera = false;
                     let estado = match (u32_en(0), servicio) {
                         (_, None) => NO_EXISTE,
-                        (SERVICIO, Some(s)) if permitido => {
+                        (SERVICIO, Some(s)) if permitido || sin_preguntar => {
                             let (e, l) = dar_servicio(&mut dadas, s, marca, &programa, &siguen);
                             respuesta_llave = l;
+                            if e == BIEN && SE_APUNTA.contains(&pedido) {
+                                registro.apuntar(R_SERVICIO, BIEN, &programa, pedido.as_bytes());
+                            }
+                            // Se apunta como concedido (para el usuario del programa), desde el final: lo que concede el
+                            // usuario va delante. No va al disco: es de serie.
+                            if e == BIEN && sin_preguntar {
+                                if let Some(c) = concedidos.iter_mut().rev().find(|c| c.is_none()) {
+                                    *c = Some((programa, s, yo.map_or(0, |f| f.uid)));
+                                }
+                                println!("  [sesiones] {} es del sistema: {} sin preguntar", nombre(&programa), pedido);
+                            }
                             e
                         }
                         // U6: de una sesión de detrás no se pregunta: quien está delante es otra persona.
@@ -1269,6 +1310,9 @@ fn principal() -> u64 {
                                     guardar_permiso(a, nombre(&programa), REPARTE[s].0, uid as u32);
                                 }
                             }
+                            if SE_APUNTA.contains(&REPARTE[s].0) {
+                                registro.apuntar(R_SERVICIO, BIEN, &programa, REPARTE[s].0.as_bytes());
+                            }
                             dar_servicio(&mut dadas, s, de, &programa, &siguen)
                         } else {
                             registro.apuntar(R_SERVICIO, PROTEGIDO, &programa, REPARTE[s].0.as_bytes());
@@ -1337,6 +1381,12 @@ fn principal() -> u64 {
                             }
                         }
                         if quitado {
+                            // H9: lo que se daba sin preguntar, a partir de ahora se pregunta.
+                            if let Some(s) = s.filter(|&s| SIN_PREGUNTAR.iter().any(|&(p, sv)| sv == REPARTE[s].0 && p.as_bytes() == prog)) {
+                                if let Some(q) = sin_preguntar_quitado.get_mut(s) {
+                                    *q = true;
+                                }
+                            }
                             // Las llaves que ya tenga dejan de servir: el permiso se retira ya, no al pedirlo otra vez.
                             for x in dadas.iter_mut() {
                                 if let Some((mc, sv, rev)) = *x {

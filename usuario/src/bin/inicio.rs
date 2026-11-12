@@ -16,6 +16,8 @@ const PAQUETE: usize = 0x10_0000_0000;
 const COPIA: usize = 0x20_0000_0000;
 /// Donde se copian las cabeceras del paquete antes de soltarlo (antes de ponerlas en `PAQUETE`).
 const COPIA_CABECERAS: usize = 0x30_0000_0000;
+/// Donde se mira un momento el objeto "sistema" (la RAM de la máquina).
+const SISTEMA: usize = 0x38_0000_0000;
 
 fn u32_en(p: usize) -> u32 {
     unsafe { core::ptr::read_volatile(p as *const u32) }
@@ -137,6 +139,15 @@ fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
     Some((m, 32 + raiz.len()))
 }
 
+/// Si al programa de la cabecera `cab` le toca el aparato `quien` (por su nombre en la lista de `aparatos`, que tiene
+/// `n`).
+fn tiene_aparato(cab: usize, aparatos: usize, n: usize, quien: &str) -> bool {
+    (0..8).any(|j| {
+        let a = unsafe { *((cab + 8 + j) as *const u8) } as usize;
+        a < n && nombre(aparatos + 24 * a) == quien
+    })
+}
+
 fn nombre(p: usize) -> &'static str {
     let b = unsafe { core::slice::from_raw_parts(p as *const u8, 16) };
     core::str::from_utf8(&b[..b.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
@@ -181,6 +192,19 @@ fn principal() -> u64 {
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
         p += 24;
     }
+    // Lo que dice el kernel de la máquina ("sistema"): la RAM, para la memoria de la caja Linux (H9).
+    let (ram, _) = (0..n)
+        .find(|&i| nombre(aparatos + 24 * i) == "sistema" && u32_en(aparatos + 24 * i + 16) == 6)
+        .and_then(|i| {
+            let llave = u32_en(aparatos + 24 * i + 20);
+            if memoria_proyectar(llave, SISTEMA, false) != 0 {
+                return None;
+            }
+            let r = dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(SISTEMA as *const u8, 16) });
+            dashos::memoria_quitar(SISTEMA);
+            r
+        })
+        .unwrap_or((0, false));
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
@@ -341,9 +365,12 @@ fn principal() -> u64 {
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,
-            // La caja Linux (H9): la RAM de su invitado de Linux (256 MB, lo de serie con 2 GB) sale de su cupo, más 32 MB
-            // del servicio (tablas de la etapa 2, su montón con el disco del invitado).
-            "caja-linux" => (256 + 32) << 20,
+            // La caja Linux (H9): la RAM de su invitado de Linux sale de su cupo, más 32 MB del servicio (tablas de la etapa
+            // 2, su montón con el disco del invitado y la terminal). Se calcula con la RAM de la máquina (decisión del
+            // usuario del 2026-11-12): 256 MB con 2 GB, 512 con 4 o más. Sin Linux que arrancar (sin su Image), solo los
+            // 32 MB.
+            "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado(ram) + dashos::maquina::MARGEN_SERVICIO,
+            "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4: la caja Amiga, con su ejecutable de 3 MB, 4 MB de código traducido, 4 de montón y 1 del 68k.
             "caja-amiga" => 32 << 20,
             _ => 16 << 20,
@@ -356,15 +383,19 @@ fn principal() -> u64 {
             }
         }
         let mut g = grupo_crear(cupo);
-        // La caja Linux pide 256 MB para su invitado; si no caben (2 GB de RAM y el primer GB solo para DMA, como en
-        // QEMU con highmem=off), menos: el servicio usa para el invitado lo que le quepa (H9).
-        if g <= 0 && nombre(nombre_cab) == "caja-linux" {
-            for menos in [(128 + 32) << 20, 96 << 20] {
-                g = grupo_crear(menos);
+        // Si no cabe lo de la caja Linux (2 GB de RAM y el primer GB solo para DMA, como en QEMU con highmem=off), con
+        // la mitad para el invitado, y así hasta 64 MB: el servicio usa para el invitado lo que le quepa (H9).
+        if nombre(nombre_cab) == "caja-linux" && cupo > dashos::maquina::MARGEN_SERVICIO {
+            let mut invitado = cupo - dashos::maquina::MARGEN_SERVICIO;
+            while g <= 0 && invitado > 64 << 20 {
+                invitado /= 2;
+                g = grupo_crear(invitado + dashos::maquina::MARGEN_SERVICIO);
                 if g > 0 {
-                    println!("  [inicio] caja-linux: sin sitio para {} MB; con {} MB", cupo >> 20, menos >> 20);
-                    break;
+                    println!("  [inicio] caja-linux: sin sitio para {} MB; con {} MB", cupo >> 20, (invitado + dashos::maquina::MARGEN_SERVICIO) >> 20);
                 }
+            }
+            if g > 0 {
+                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, (dashos::maquina::memoria_invitado(ram)) >> 20);
             }
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };

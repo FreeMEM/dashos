@@ -280,3 +280,131 @@ QEMU `virt`, TCG, con el PC cargado (carga 20 en 32 núcleos):
 4. La memoria de la caja, calculada (invitado + unos 32 MB; 256 MB de invitado con 2 GB, 512 con 4 GB o más): **en
    parte**: el cupo pide 256 + 32 MB, y si no caben, menos; el servicio usa lo que quepa. Falta calcularlo con la RAM
    de la máquina (y los 512 MB con 4 GB).
+
+## 2026-11-12: el permiso por `sesiones`, la memoria calculada, la Pi 4, una terminal y la red (rama `caja-linux-3`)
+
+Rama `caja-linux-3`, sacada de `revision` con la caja hasta busybox ya fusionada (b33354d). Sala limpia como antes:
+especificaciones (ECMA-48 y el VT100 para la terminal; virtio 1.2 para la red); nada de código de Linux, KVM, QEMU,
+crosvm, Firecracker ni Xen.
+
+### Las decisiones del usuario, hechas
+
+1. **El permiso lo reparte `sesiones`.** `inicio` solo da el permiso de máquinas virtuales a `sesiones` (su llave 2;
+   las demás corren un puesto: archivos 3, comprobar 4, eco 5, su canal 6, su copia 7 y la de archivos 8, justo las 8
+   que caben). En `REPARTE` es "maquinas", un permiso del kernel como el de plazo. `SIN_PREGUNTAR` dice lo que se da
+   sin preguntar a un programa del sistema (por el nombre que da `inicio`, no el de un fichero del disco): "maquinas" a
+   `caja-linux`. Se apunta como concedido desde el final de la tabla (lo que concede el usuario va delante, y la
+   prueba del centro de control quita la primera fila), no se guarda en el disco (es de serie) y sale en el centro de
+   control; si alguien lo quita, la próxima vez se pregunta (hasta reiniciar: lo quitado aún no se guarda). Toda
+   concesión de "maquinas" (sin preguntar o porque el usuario dijo que sí) va al registro de seguridad, no solo las
+   negativas. `caja-linux` lo pide al arrancar (hasta 60 s: `sesiones` puede tardar); `sin-maquina` lo pide también y
+   no lo recibe (con `guardian`, se le pregunta a quien está delante; sin él, -2 en el acto). Solo se pide si hay
+   hipervisor: en `make arranque-virt` (sin EL2) nada cambia en el centro ni en las preguntas.
+   - `sesiones` no atendía a nadie sin disco: esperaba sin plazo al servicio de archivos, que sin disco no contesta.
+     Ahora espera 15 s (con disco contesta en menos de uno) y sigue sin archivos. Por eso, en `arranque-virt-vm` y
+     `arranque-virt-linux` (sin disco) ya hay `sesiones`.
+2. **La memoria, calculada.** El kernel da a `inicio` un objeto "sistema" (la RAM que conoce y si hay hipervisor).
+   `dashos::maquina::memoria_invitado`: 512 MB con 4 GB o más, 256 MB con 2 GB o más, 128 MB con menos (con 128 MB de
+   holgura en cada umbral: el kernel no cuenta lo del firmware). El cupo de la caja es eso más 32 MB
+   (`MARGEN_SERVICIO`) si tiene la Image de Linux; sin ella, 32 MB. Si no cabe, la mitad para el invitado, hasta 64 MB.
+   La caja lee el mismo objeto y pide esa RAM en trozos de 16 MB (hasta 32). Con `MEMORIA=3G`: `[inicio] caja-linux:
+   3072 MB de RAM en la máquina; el invitado, hasta 256 MB`.
+3. **La Pi 4.** `caja-linux` va en la imagen de la Pi 4 (no en la de la Pi 3): llaves "sistema" y el permiso, que da
+   `inicio` (en la Pi aún no hay `sesiones`, que es solo de `virt`: excepción a la decisión 1 hasta que lo haya). Si no
+   hay hipervisor, lo dice y acaba; si lo hay, corre un invitado que saluda y acaba. Nada más (ni los hostiles ni
+   Linux). En QEMU `raspi4b`, `make prueba` sigue igual.
+
+### La terminal
+
+`caja-linux` tiene ahora el canal "ventanas". Con la Image de Linux, antes de arrancarlo abre una ventana de terminal
+en un hilo suyo (`hilos::crear`): un cliente de Wayland con la llave de "ventanas" que le toca (`ventana_cliente::
+usar_llave`; era siempre la 1), 80x25 letras de Roboto Mono a 13 px (añadida al kit, `Fuente::mono`, OFL) en una
+ventana de 656x416. Lo que escribe Linux por hvc0 pasa por un `Tubo` (cola con cerrojo y tope de 256 KB; lo que no cabe
+se pierde y se cuenta) a una `Terminal` (`usuario/src/terminal.rs`, un VT100 sencillo: UTF-8, ajuste de línea, CSI de
+mover, borrar, insertar y quitar, colores SGR, DSR 6; acotada en todo y con pruebas en el PC, también con 200 000 bytes
+al azar). Pinta solo las filas que cambian, una vez por cuadro (espera el `frame` del compositor). Las teclas van por
+el `Teclado` del kit (mapa español) y Control+letra; salen como las de un VT100 (Intro = CR, retroceso = DEL, flechas
+CSI) a otro `Tubo` hacia virtio-console. Para que la vCPU las vea: el hilo marca `aviso` y cambia `timbre`; la vCPU, en
+cada salida por el reloj y en cada WFI, llama a `Maquina::sondear` si hay aviso, y en un WFI duerme en `timbre`
+(`hilos::esperar`) en vez de `dormir_us`, así una tecla la despierta en el acto.
+
+El `/init` (`tools/caja_linux_invitado.py`), con `caja.terminal` en la línea de órdenes, deja tras la prueba una shell
+con terminal de control en hvc0 (`(setsid cttyhack sh)`) y apaga al salir de ella. Hace también `busybox --install` y
+`hostname caja`.
+
+Al registro de DashOS sigue yendo cada línea de la consola (sin las secuencias de escape), pero con tope: 400 seguidas y
+100 por segundo; si se pasa, calla hasta que Linux lleva medio segundo sin líneas y dice cuántas calló.
+
+`make arranque-virt-linux` lleva ahora teclado y ratón USB y la red de QEMU, y `tools/guion_caja_linux.py` (con
+`CAJA_LINUX=prefijo` en `prueba_uefi.sh`): clic en la ventana, `uname -a`, `echo hola desde DashOS`, captura,
+`seq 1 30000` (la inundación), `echo sigue viva`, `ping -c 2 10.0.2.2` y `poweroff -f`. La captura queda en
+`target/caja-terminal.png` y en `capturas-agente/` (fuera de git). En esta imagen (`linux`) no van `guardian` ni las
+pruebas que lo usan (pide, entrada, hostil y presa, selector): sus preguntas y su pantalla de entrada se llevarían el
+teclado.
+
+### La red del invitado
+
+Un puente de tramas en el servicio de red: la orden `PUERTO` (solo de "caja-linux") crea una memoria de tramas como la
+de la tarjeta (64 ranuras para el invitado, 64 de él) y le da una copia a la caja. Lo que llega por la tarjeta para la
+MAC del invitado va solo al puerto; lo de difusión, al puerto y a smoltcp. Lo que pone el invitado sale por la tarjeta
+si lleva su MAC de origen (si no, se tira y se cuenta). El servicio guarda lo que mueve él y no se fía de lo que dice
+la caja. Avisos por `TRAMAS_PUERTO` en los dos sentidos; un hilo de la caja espera los del servicio y despierta a la
+vCPU. Si la caja se va, el puerto se suelta. En la caja, la virtio-net del crate (tercer transporte) con una MAC local
+al azar (02:da:50:...). Linux sale con 10.0.2.16 (DashOS tiene la 15 por DHCP) y QEMU (slirp) contesta el ping a
+10.0.2.2: `caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss`.
+
+### Resultado de `make arranque-virt-linux`
+
+```
+[inicio] caja-linux: 3072 MB de RAM en la máquina; el invitado, hasta 256 MB
+[sesiones] caja-linux es del sistema: maquinas sin preguntar
+[sesiones] sin-maquina pide maquinas: -2
+[sin-maquina] pedir el permiso a sesiones: -2 (negado)
+[caja-linux] terminal: ventana en pantalla (80x25 letras, 656x416 px)
+[red] puerto para la caja Linux con MAC 02-da-50-38-57-fc: un puente de tramas hacia la tarjeta
+[caja-linux] linux: caja-linux: eth0 02:da:50:38:57:fc mtu 1500
+[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
+[caja-linux] linux: caja:~# uname -a
+[caja-linux] linux: Linux caja 6.18.63 #2 SMP Thu Nov 12 18:56:07 CET 2026 aarch64 GNU/Linux
+[caja-linux] linux: hola desde DashOS
+[caja-linux] linux: (29563 líneas sin sacar al registro: demasiadas seguidas)
+[caja-linux] linux: sigue viva
+[caja-linux] linux: 2 packets transmitted, 2 packets received, 0% packet loss
+[caja-linux] linux: se para la máquina a los 143280 ms: Linux apagó la máquina por PSCI
+[caja-linux] red: 13 tramas del invitado a la red, 7 de la red al invitado; 0 perdidas sin sitio, 0 malas del servicio
+[caja-linux] terminal: 0 bytes de la consola no cupieron en la ventana; 0 teclas no cupieron hacia Linux
+```
+
+La inundación (`seq 1 30000`, 170 KB) no tumba a la caja ni al compositor: la ventana la enseña entera, el registro
+calla y la shell contesta después.
+
+En `make arranque-virt-vm` (con `guardian`), `sin-maquina` sale en una pregunta a quien está delante; nadie contesta,
+la pregunta caduca y se le niega: `[guardian] ¿sin-maquina puede usar maquinas? El usuario dice no`.
+
+En la imagen normal de la Pi en QEMU `raspi4b` (que entra en EL2): `[caja-linux] el invitado dice: Hola desde el
+invitado, por el UART emulado` y `[caja-linux] hipervisor en marcha: un invitado saluda y acaba: bien`. La imagen de
+pruebas (`make prueba`) no lanza `inicio`: no cambia.
+
+### Pruebas
+
+- `make prueba` (BIEN: esperado.txt, con las pruebas de `usuario/src/terminal.rs` en el PC), `make arranque-virt`,
+  `make arranque-virt-vm`, `make arranque-virt-linux` y `make arranque-virt-2`: BIEN.
+- Hostiles: `sin-maquina` pide el permiso a `sesiones` y no lo recibe, y no crea máquinas con ninguna de sus 1024
+  llaves; la inundación de la consola (arriba); la terminal con 200 000 bytes al azar (en el PC); el puerto de red no se
+  fía de los índices de la caja y tira las tramas con otra MAC de origen.
+
+### Qué falta
+
+- Varias vCPU (PSCI CPU_ON, una vCPU por hilo): no empezado. Hace falta en el kernel una vCPU por objeto (con su
+  VMPIDR, su página de mundo y su estado del GIC virtual) y sacar a una vCPU que corre desde otro núcleo.
+- Lo quitado de `SIN_PREGUNTAR` en el centro de control no se guarda: al reiniciar se da otra vez sin preguntar.
+- Retirar el permiso revoca la llave, pero las máquinas ya creadas siguen en marcha (el kernel solo mira el permiso al
+  crear).
+- En la Pi no hay `sesiones`: `inicio` da el permiso directamente a la caja.
+- La terminal no cambia de tamaño, no tiene historial hacia atrás, ni ratón, ni copiar y pegar; las letras que no tiene
+  Roboto Mono salen como "?". Cerrar la ventana no hace nada.
+- La red: sin prueba de un invitado que inunde la red o falsee su MAC (el servicio lo tira y lo cuenta, pero no se ha
+  probado desde Linux); sin DHCP en el invitado (dirección fija 10.0.2.16); el invitado no llega a DashOS mismo (solo
+  a la tarjeta).
+- `make arranque` (la imagen normal en `raspi4b`) ya no casaba con `pruebas/arranque.txt` antes de esta rama (las
+  llaves de `inicio` cambiaron con el plazo y el hipervisor).
