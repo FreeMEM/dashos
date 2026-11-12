@@ -35,6 +35,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_sin_monton();
     prueba_coste();
     prueba_cortes();
+    prueba_lz4();
     prueba_plazo_vencido();
     prueba_controlador(dtb);
     prueba_sd(dtb);
@@ -634,6 +635,54 @@ fn prueba_coste() {
         n, tabla, total, crate::cupo::COSTE_PROCESO);
     let bien = n == objetos::MAX_TABLA && tabla as u64 <= crate::cupo::TABLA_LLENA && total <= crate::cupo::COSTE_PROCESO;
     kprintln!("S1: coste de un proceso {}", if bien { "bien" } else { "MAL" });
+}
+
+/// Los programas comprimidos del paquete de arranque (`crate::lz4`): todos se descomprimen y dan su huella, y una
+/// entrada rota (cortada, con un byte cambiado, con un salto a antes del principio o con un largo enorme) da `None`,
+/// sin pánico.
+fn prueba_lz4() {
+    // Tres de los que comprime `build.rs` (los nombra `src/inicio.rs`, que no va en esta imagen).
+    let todos: [(&str, &[u8]); 3] = [
+        ("buzon", include_bytes!(concat!(env!("OUT_DIR"), "/buzon.lz4"))),
+        ("compositor", include_bytes!(concat!(env!("OUT_DIR"), "/compositor.lz4"))),
+        ("hola", include_bytes!(concat!(env!("OUT_DIR"), "/hola.lz4"))),
+    ];
+    let (mut bien, mut bytes, mut comprimidos) = (0, 0usize, 0usize);
+    for (_, c) in &todos {
+        if let Some(e) = crate::lz4::programa(c) {
+            bien += 1;
+            bytes += e.len();
+            comprimidos += c.len();
+        }
+    }
+    let c = todos.iter().map(|t| t.1).max_by_key(|c| c.len()).unwrap_or(&[]);
+    let mut rotos = 0;
+    let mut probados = 0;
+    // Cortado, por varios sitios.
+    for corte in [0, 3, 12, 13, c.len() / 2, c.len().saturating_sub(1)] {
+        probados += 1;
+        rotos += crate::lz4::programa(c.get(..corte).unwrap_or(&[])).is_none() as usize;
+    }
+    // Un byte cambiado en el bloque: o no cuadra el formato o no cuadra la huella.
+    for sitio in [12, 40, c.len() / 3, c.len() - 2] {
+        if let Some(b) = c.get(sitio) {
+            let mut x = c.to_vec();
+            x[sitio] = b ^ 0x5a;
+            probados += 1;
+            rotos += crate::lz4::programa(&x).is_none() as usize;
+        }
+    }
+    // A mano: un salto a antes del principio, un largo de 255 que no acaba, un tamaño que no es el dicho.
+    for (bloque, tam) in [(&[0x10u8, b'a', 0x09, 0x00][..], 10usize), (&[0xf0u8, 255, 255, 255][..], 100), (&[0x30u8, b'a', b'b', b'c'][..], 4)] {
+        probados += 1;
+        rotos += crate::lz4::bloque(bloque, tam).is_none() as usize;
+    }
+    // Y uno bueno con copia solapada: "ab" y repetir 6 desde 2 atrás = "abababab".
+    let solapada = crate::lz4::bloque(&[0x22, b'a', b'b', 0x02, 0x00, 0x00], 8);
+    kprintln!("  {} programas comprimidos: {} se descomprimen con su huella, {} → {} KB; rotos rechazados {} de {}",
+        todos.len(), bien, bytes / 1024, comprimidos / 1024, rotos, probados);
+    let ok = bien == todos.len() && !todos.is_empty() && rotos == probados && solapada.as_deref() == Some(&b"abababab"[..]);
+    kprintln!("S20: programas comprimidos con LZ4 {}", if ok { "bien" } else { "MAL" });
 }
 
 /// S2: lo que tarda de más en despertar un proceso que duerme 500 µs, en el núcleo 3, mientras otro proceso en ese

@@ -31,6 +31,7 @@ mod inicio;
 mod interrupciones;
 mod its;
 mod llamadas;
+mod lz4;
 mod objetos;
 mod pcie;
 mod procesos;

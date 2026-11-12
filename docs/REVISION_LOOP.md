@@ -1402,3 +1402,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la misma dirección (los nombres y canales a los que apuntan `Servicio::cab` y `lector`), y se cierra la llave 1.
 - Medida: en uso 102,9 → 92,8 MB. Relanzar sigue: `caida` y `eco` se relanzan después de soltar el paquete.
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:05: los programas del arranque, comprimidos en la imagen del kernel (S20)
+- `kernel/build.rs` comprime con LZ4 (formato de bloque, `lz4_flex` solo en el build) cada programa que nombra
+  `src/inicio.rs` con `programa!("...")`: tamaño, huella FNV-1a de 64 bits y bloque. `src/lz4.rs` los descomprime al
+  montar el paquete de arranque: escrito aquí desde la descripción del formato, sin `unsafe`, mirando cada límite;
+  una entrada rota da `None`. Si un programa no se descomprime o no da su huella, el arranque lo dice y no sigue.
+- Hostil (S20, `make prueba`): tres programas se descomprimen con su huella; cortados por seis sitios, con un byte
+  cambiado en cuatro, con un salto a antes del principio, un largo de 255 sin fin y un tamaño que no es el dicho: todos
+  rechazados, sin pánico; una copia solapada da lo que debe.
+- Medida: `.rodata` del kernel 7,26 → 3,16 MB; el núcleo en Acerca de 7,6 → 3,7 MB; reservado al arrancar 18,4 → 14,5;
+  en uso 92,8 → 84,8 MB (esta mañana, 160,8).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.

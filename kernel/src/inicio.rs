@@ -21,163 +21,171 @@ use crate::objetos::{Llave, Objeto, LEER};
 use crate::{interrupciones, kprintln, memoria};
 use alloc::vec::Vec;
 
-static INICIO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/inicio");
+/// Un programa del paquete de arranque, comprimido con LZ4 por `build.rs` (su tamaño, su huella y el bloque; ver
+/// `crate::lz4`): la imagen del kernel no lleva los ELF enteros.
+macro_rules! programa {
+    ($n:literal) => {
+        include_bytes!(concat!(env!("OUT_DIR"), "/", $n, ".lz4"))
+    };
+}
+
+static INICIO: &[u8] = programa!("inicio");
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno. Lo que ve cada servicio de los demás está en `docs/referencia/servicios.md`.
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
-    ("consola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
-    ("buzon", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
+    ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
+    ("buzon", programa!("buzon"), &[("dma-buzon", PERMISO_DMA), ("buzon", REGISTROS), ("vc", FIRMWARE)], &["buzon"]),
     // El compositor nombra "ventanas" antes que los controladores de USB y que los clientes de Wayland: el primero que
     // nombra un canal es quien lee (el servidor), y los demás le escriben con copias marcadas (U6, W7). Un proceso solo
     // espera en un canal, así que por él le llega todo.
     #[cfg(not(feature = "virt"))]
-    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[], &["buzon", "ventanas"]),
+    ("compositor", programa!("compositor"), &[], &["buzon", "ventanas"]),
     // En QEMU `virt` (U4) no hay buzón: la pantalla es la del firmware de UEFI, que llega en el árbol.
     #[cfg(feature = "virt")]
-    ("compositor", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
-    ("usb", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["ventanas"]),
+    ("compositor", programa!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
+    ("usb", programa!("usb"), &[("dma", PERMISO_DMA), ("usb", REGISTROS), ("usb", INTERRUPCION)], &["ventanas"]),
     // El USB por xHCI (U6): el de los portátiles y el de QEMU `virt` (y, en la Pi 4, el VL805, por el PCIe).
     // Su interrupción (INTx) es opcional: con ACPI no se sabe cuál es (va en el AML) y mira los eventos con un
     // temporizador.
-    ("xhci", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    ("xhci", programa!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
-    ("nvme", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
+    ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
     #[cfg(feature = "virt")]
-    ("disco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/disco"), &[], &["disco"]),
+    ("disco", programa!("disco"), &[], &["disco"]),
     // El servicio de archivos (FS1, S5): sirve el RedoxFS del mismo disco por el canal "archivos" (FS3), con un
     // cliente de prueba. Solo en `virt`, como la prueba de arriba.
     #[cfg(feature = "virt")]
-    ("archivos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/archivos"), &[], &["disco", "archivos"]),
+    ("archivos", programa!("archivos"), &[], &["disco", "archivos"]),
     // A15: el comprobador aparte: la partición de DashOS solo para leer, y archivos para sujetar el disco mientras la
     // recorre. Tras archivos, que es quien sirve ese canal.
     #[cfg(feature = "virt")]
-    ("comprobador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/comprobador"), &[], &["disco", "archivos", "comprobar"]),
+    ("comprobador", programa!("comprobador"), &[], &["disco", "archivos", "comprobar"]),
     // Las fichas de los procesos (U2) y la entrada de los usuarios (U3), solo en `virt` por ahora. Va tras archivos,
     // del que es cliente (abre y cierra el volumen de cada usuario); `inicio` le da de alta también lo lanzado antes.
     // Sus llaves: 1 plazo, 2 archivos, 3 comprobar, 4 eco y 5 su canal "sesiones" (los canales van en el orden en que
     // aparecen por primera vez en esta lista, no en el de la lista de cada programa).
     // Un servicio de prueba que contesta lo que le llega (U4): solo se llega a él con la llave que reparte `sesiones`.
     #[cfg(feature = "virt")]
-    ("eco", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/eco"), &[], &["eco"]),
+    ("eco", programa!("eco"), &[], &["eco"]),
     #[cfg(feature = "virt")]
-    ("sesiones", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones", "comprobar"]),
+    ("sesiones", programa!("sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones", "comprobar"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
     // C3: el fondo de escritorio, una capa de fondo con la imagen de `C/Fondos` (poder de escritorio). Nombra "fondo" antes
     // que el centro, que le dice cuál poner: es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("fondo", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/fondo"), &[], &["ventanas", "archivos", "fondo"]),
+    ("fondo", programa!("fondo"), &[], &["ventanas", "archivos", "fondo"]),
     // El centro de control (S10c, C1): la ventana de Ajustes, con la categoría Permisos. Por "centro" solo se le pide
     // que abra una categoría (en la prueba, `guardian`). Va antes que él: el
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
+    ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
     #[cfg(feature = "virt")]
-    ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones", "centro"]),
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
     #[cfg(feature = "virt")]
-    ("pide", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/pide"), &[], &["sesiones"]),
+    ("pide", programa!("pide"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
-    ("entrada", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/entrada"), &[], &["sesiones"]),
+    ("entrada", programa!("entrada"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
-    ("ficheros", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ficheros"), &[], &["archivos"]),
+    ("ficheros", programa!("ficheros"), &[], &["archivos"]),
     // Un ADF montado como volumen (S20, fase 1): el servicio lo lee por "archivos" y lo sirve por "imagen", con
     // un cliente de prueba.
     #[cfg(feature = "virt")]
-    ("imagen", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/imagen"), &[], &["archivos", "imagen"]),
+    ("imagen", programa!("imagen"), &[], &["archivos", "imagen"]),
     #[cfg(feature = "virt")]
-    ("adf-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/adf-prueba"), &[], &["imagen"]),
-    ("gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
+    ("adf-prueba", programa!("adf-prueba"), &[], &["imagen"]),
+    ("gpu", programa!("gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
-    ("ventana-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-a"), &[], &["ventanas"]),
-    ("ventana-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ventana-b"), &[], &["ventanas"]),
+    ("ventana-a", programa!("ventana-a"), &[], &["ventanas"]),
+    ("ventana-b", programa!("ventana-b"), &[], &["ventanas"]),
     // Una aplicación con el kit de interfaz (K7): Material 3, con el ratón.
-    ("ajustes", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/ajustes"), &[], &["ventanas"]),
+    ("ajustes", programa!("ajustes"), &[], &["ventanas"]),
     // El sonido (S19): el servicio, que nombra "sonido" antes que nadie (A4), y el controlador de virtio-sound (A3),
     // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
     // Los dos, con el permiso de la clase de plazo (S3).
-    ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[("plazo", PLAZO)], &["sonido"]),
+    ("sonido", programa!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
     // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
     // el del sonido para el volumen general. Tras el servicio de sonido, que es quien sirve ese canal.
     #[cfg(feature = "virt")]
-    ("panel", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/panel"), &[], &["ventanas", "centro", "sonido"]),
+    ("panel", programa!("panel"), &[], &["ventanas", "centro", "sonido"]),
     // S10: el servicio de avisos (las notificaciones), que nombra "avisos" antes que nadie. Sigue las sesiones (`inicio`
     // da a `sesiones` una copia sin marca de su canal). Antes que la barra, que se suscribe a él.
     #[cfg(feature = "virt")]
-    ("avisos", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/avisos"), &[], &["avisos"]),
+    ("avisos", programa!("avisos"), &[], &["avisos"]),
     // S10: la barra de la pantalla y su lanzador. El poder de escritorio (capas) por su nombre; "sesiones" para lanzar
     // (como quien está delante, solo de `Programas/`) y "archivos" para listar `Programas`. Tras el panel: su botón lo abre.
     // "avisos" para enseñar las notificaciones (S10).
     #[cfg(feature = "virt")]
-    ("barra", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/barra"), &[], &["ventanas", "sesiones", "archivos", "avisos"]),
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "avisos"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("avisador", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/avisador"), &[], &["avisos"]),
-    ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
+    ("avisador", programa!("avisador"), &[], &["avisos"]),
+    ("virtio-sonido", programa!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
     #[cfg(all(feature = "virt", not(feature = "paula")))]
-    ("tono-a", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-a"), &[], &["sonido"]),
+    ("tono-a", programa!("tono-a"), &[], &["sonido"]),
     #[cfg(all(feature = "virt", not(feature = "paula")))]
-    ("tono-b", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tono-b"), &[], &["sonido"]),
+    ("tono-b", programa!("tono-b"), &[], &["sonido"]),
     // audio.device nativo (S19, fase 2), en lugar de los tonos: `make sonido-paula`.
     #[cfg(all(feature = "virt", feature = "paula"))]
-    ("paula-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/paula-prueba"), &[], &["sonido"]),
+    ("paula-prueba", programa!("paula-prueba"), &[], &["sonido"]),
     // Cuatro programas que esperan medio segundo y giran sin parar 6 s, detrás de los tonos: los cortes del sonido con los núcleos ocupados (A6).
     #[cfg(all(feature = "virt", feature = "carga"))]
-    ("carga-1", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    ("carga-1", programa!("carga"), &[], &[]),
     #[cfg(all(feature = "virt", feature = "carga"))]
-    ("carga-2", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    ("carga-2", programa!("carga"), &[], &[]),
     #[cfg(all(feature = "virt", feature = "carga"))]
-    ("carga-3", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    ("carga-3", programa!("carga"), &[], &[]),
     #[cfg(all(feature = "virt", feature = "carga"))]
-    ("carga-4", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/carga"), &[], &[]),
+    ("carga-4", programa!("carga"), &[], &[]),
     // El selector (U5): enseña al usuario una ventana para elegir un fichero y cede a quien se lo pidió la lectura de lo
     // elegido, aunque su ficha no le deje. Va tras el sonido: así, en el hostil, su canal es la llave 5 y las demás no
     // cambian.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("selector", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/selector"), &[], &["ventanas", "archivos", "selector"]),
+    ("selector", programa!("selector"), &[], &["ventanas", "archivos", "selector"]),
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("hostil", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco", "centro"]),
+    ("hostil", programa!("hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco", "centro"]),
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("presa", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/presa"), &[], &["sesiones"]),
+    ("presa", programa!("presa"), &[], &["sesiones"]),
     // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee); el controlador de
     // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
     // uno sin la llave. La llave del canal "red" es el permiso de red: hoy la da `inicio`; más adelante, `sesiones`.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red"), &[], &["red"]),
+    ("red", programa!("red"), &[], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("virtio-red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("red-gloton", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red-gloton"), &[], &["red"]),
+    ("red-gloton", programa!("red-gloton"), &[], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("red-prueba", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/red-prueba"), &[], &["red"]),
+    ("red-prueba", programa!("red-prueba"), &[], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("sin-red", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sin-red"), &[], &[]),
+    ("sin-red", programa!("sin-red"), &[], &[]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(feature = "virt")]
-    ("caida", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/caida"), &[], &["caida"]),
+    ("caida", programa!("caida"), &[], &["caida"]),
     // Un cliente suyo (el programa de saludo, que acaba solo): al relanzar a `caida`, `inicio` le vuelve a dar su
     // entrada del directorio.
     #[cfg(feature = "virt")]
-    ("caida-cliente", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &["caida"]),
+    ("caida-cliente", programa!("hola"), &[], &["caida"]),
     // S10: el Workbench, con los iconos de los volúmenes en el escritorio (capa de abajo, por su nombre) y las ventanas
     // de cajón. "archivos" para ver los cajones (como Ana) y "sesiones" para lanzar de `Programas/` y saber si su sesión
     // está abierta. Al final, para no cambiar el número de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("workbench", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/workbench"), &[], &["ventanas", "archivos", "sesiones"]),
-    ("hola", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/hola"), &[], &[]),
+    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones"]),
+    ("hola", programa!("hola"), &[], &[]),
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
-    ("virtio-gpu", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     #[cfg(feature = "medir_fs")]
-    ("medir-fs", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir-fs"), &[], &["archivos"]),
+    ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
-    ("medir", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/medir"), &[("medir", DATOS)], &[]),
+    ("medir", programa!("medir"), &[("medir", DATOS)], &[]),
 ];
 
 const REGISTROS: u32 = 1;
@@ -583,22 +591,31 @@ pub fn lanzar() -> bool {
             });
             de_canales |= 1 << i;
         }
-        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        // El tamaño del ELF sin comprimir: lo primero que guarda `build.rs`.
+        paquete.extend_from_slice(elf.get(0..4).unwrap_or(&[0; 4]));
         paquete.extend_from_slice(&de_canales.to_le_bytes());
         paquete.extend_from_slice(&suyos_aparatos);
         paquete.extend_from_slice(&nombre16(nombre));
     }
-    for (_, elf, _, _) in lanzables.iter() {
+    for (nombre, elf, _, _) in lanzables.iter() {
         while paquete.len() % 8 != 0 {
             paquete.push(0);
         }
-        paquete.extend_from_slice(elf);
+        let Some(elf) = crate::lz4::programa(elf) else {
+            kprintln!("inicio: {} no se descomprime (o no da su huella)", nombre);
+            return false;
+        };
+        paquete.extend_from_slice(&elf);
     }
     let raiz = crate::cupo::Cupo::raiz();
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return false };
     m.escribir(0, &paquete);
     llaves.insert(0, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER));
-    match crate::procesos::lanzar(INICIO, llaves, Some(1), raiz) {
+    let Some(inicio) = crate::lz4::programa(INICIO) else {
+        kprintln!("inicio no se descomprime (o no da su huella)");
+        return false;
+    };
+    match crate::procesos::lanzar(&inicio, llaves, Some(1), raiz) {
         Ok(_) => true,
         Err((e, _)) => {
             kprintln!("no se pudo lanzar inicio: {:?}", e);
