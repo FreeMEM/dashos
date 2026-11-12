@@ -1434,3 +1434,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   deja llena la lista; fuera de la lista, nada. En virt no la gira el guion sobre estas listas (sí sobre el historial
   de la barra): sin probar ahí.
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 16:35: lo grande del montón vuelve al kernel
+- `usuario/src/monton.rs`: un pedido de 256 KB a 16 MB (alineado como mucho a 4 KB) va en su propio objeto de memoria,
+  en una de 1024 ranuras de 16 MB desde 0x78_0000_0000; al soltarlo se quita, se cierra la llave y vuelve al kernel.
+  Sin ranura o sin memoria del kernel, va al montón como antes. El montón sigue sin devolver lo pequeño.
+- Hostil (`hostil`): tres bloques de unos 3 MB van aparte, se leen enteros, uno pequeño sigue en el montón, y al
+  soltarlos lo reservado vuelve a lo de antes.
+- Medida: en uso 84,8 → 77,3 MB; fondo 6,6 → 2,6, comprobador 5,7 → 2,1; los procesos que ve el centro, 63,9 → 56,4.
+  El compositor sigue en 2,6 MB (no pide lo grande por cuadro). Sin medida de antes del tiempo de componer.
+- `red_prueba`: la petición mal formada tras la ráfaga reintenta si la cola del servicio está llena (con el PC cargado
+  salió una vez sin respuesta: 13 rechazos en vez de 14).
+- `make prueba` BIEN; arranque-virt, cuatro vueltas BIEN (una antes del arreglo de `red_prueba` falló por eso);
+  arranque-virt-2 BIEN.

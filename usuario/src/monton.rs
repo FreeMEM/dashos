@@ -28,6 +28,15 @@ const TROZO_MAX: usize = 4 << 20;
 /// Tope: 256 MB.
 const TOPE: usize = 256 << 20;
 
+/// Lo grande (desde `GRANDE` hasta 16 MB) no va al montón: cada pedido es su propio objeto de memoria, en una ranura de
+/// 16 MB desde `BASE_GRANDES`, y al soltarlo vuelve al kernel. El montón no devuelve nunca nada: una imagen de 8 MB
+/// que se decodificaba una vez dejaba al programa con 8 MB para siempre.
+const GRANDE: usize = 256 << 10;
+const RANURA: usize = 16 << 20;
+const RANURAS: usize = 1024;
+/// En lo libre del espacio de usuario (que acaba en 512 GB): de 480 a 496 GB.
+const BASE_GRANDES: usize = 0x78_0000_0000;
+
 /// Tamaños de las listas: 16, 32... 4096 bytes.
 const CLASES: usize = 9;
 const MIN_CLASE: usize = 16;
@@ -35,6 +44,8 @@ const MAX_CLASE: usize = 4096;
 
 pub struct Monton {
     cerrojo: AtomicBool,
+    /// La llave de cada ranura de lo grande (0, libre).
+    grandes: UnsafeCell<[u32; RANURAS]>,
     pila: UnsafeCell<(Heap, usize)>, // la lista libre y cuántos bytes tiene
     /// La cabeza de la lista de cada tamaño: bloques sueltos, enlazados por su primera palabra.
     libres: UnsafeCell<[*mut u8; CLASES]>,
@@ -100,7 +111,12 @@ unsafe impl Sync for Monton {}
 
 impl Monton {
     pub const fn nuevo() -> Self {
-        Self { cerrojo: AtomicBool::new(false), pila: UnsafeCell::new((Heap::empty(), 0)), libres: UnsafeCell::new([ptr::null_mut(); CLASES]) }
+        Self {
+            cerrojo: AtomicBool::new(false),
+            grandes: UnsafeCell::new([0; RANURAS]),
+            pila: UnsafeCell::new((Heap::empty(), 0)),
+            libres: UnsafeCell::new([ptr::null_mut(); CLASES]),
+        }
     }
 
     fn con<R>(&self, f: impl FnOnce(&mut Heap, &mut usize, &mut [*mut u8; CLASES]) -> R) -> R {
@@ -131,8 +147,60 @@ fn trozo(hay: usize, tamano: usize) -> bool {
     (llave as i32) > 0 && crate::memoria_proyectar(llave, BASE + hay, true) == 0
 }
 
+impl Monton {
+    /// Lo grande en su ranura: un objeto de memoria a medida. Nulo si no hay ranura o el kernel no lo da (entonces va
+    /// al montón).
+    fn alloc_grande(&self, l: Layout) -> *mut u8 {
+        let tam = l.size().div_ceil(4096) * 4096;
+        self.con(|_, _, _| {
+            let grandes = unsafe { &mut *self.grandes.get() };
+            let Some(i) = grandes.iter().position(|&k| k == 0) else { return ptr::null_mut() };
+            let llave = crate::memoria_crear(tam);
+            if (llave as i32) <= 0 {
+                return ptr::null_mut();
+            }
+            let va = BASE_GRANDES + i * RANURA;
+            if crate::memoria_proyectar(llave, va, true) != 0 {
+                crate::cerrar(llave);
+                return ptr::null_mut();
+            }
+            grandes[i] = llave;
+            sumar(tam);
+            RESERVADO.store(RESERVADO.load(Ordering::Relaxed) + tam, Ordering::Relaxed);
+            va as *mut u8
+        })
+    }
+
+    /// Suelta lo grande de `p` si es de una ranura (y lo devuelve al kernel); falso si no lo es.
+    fn dealloc_grande(&self, p: *mut u8, l: Layout) -> bool {
+        let a = p as usize;
+        if !(BASE_GRANDES..BASE_GRANDES + RANURAS * RANURA).contains(&a) || (a - BASE_GRANDES) % RANURA != 0 {
+            return false;
+        }
+        let i = (a - BASE_GRANDES) / RANURA;
+        let tam = l.size().div_ceil(4096) * 4096;
+        self.con(|_, _, _| {
+            let grandes = unsafe { &mut *self.grandes.get() };
+            if grandes[i] != 0 {
+                crate::memoria_quitar(a);
+                crate::cerrar(grandes[i]);
+                grandes[i] = 0;
+                EN_USO.store(EN_USO.load(Ordering::Relaxed) - tam, Ordering::Relaxed);
+                RESERVADO.store(RESERVADO.load(Ordering::Relaxed) - tam, Ordering::Relaxed);
+            }
+        });
+        true
+    }
+}
+
 unsafe impl GlobalAlloc for Monton {
     unsafe fn alloc(&self, l: Layout) -> *mut u8 {
+        if l.size() >= GRANDE && l.size() <= RANURA && l.align() <= 4096 {
+            let p = self.alloc_grande(l);
+            if !p.is_null() {
+                return p;
+            }
+        }
         let c = clase(&l);
         // Con su tamaño de lista: uno suelto de esa lista, o uno nuevo de ese tamaño.
         let l = match c {
@@ -161,7 +229,7 @@ unsafe impl GlobalAlloc for Monton {
             if !trozo(*n, t) {
                 return ptr::null_mut();
             }
-            RESERVADO.store(*n + t, Ordering::Relaxed);
+            RESERVADO.fetch_add(t, Ordering::Relaxed);
             let nombre = NOMBRE.load(Ordering::Relaxed);
             if !nombre.is_null() {
                 let u = uso();
@@ -178,6 +246,9 @@ unsafe impl GlobalAlloc for Monton {
     }
 
     unsafe fn dealloc(&self, p: *mut u8, l: Layout) {
+        if l.size() >= GRANDE && self.dealloc_grande(p, l) {
+            return;
+        }
         if let Some(p) = NonNull::new(p) {
             match clase(&l) {
                 // A la lista de su tamaño, para la próxima vez (no vuelve al montón).

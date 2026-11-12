@@ -940,8 +940,34 @@ fn principal() -> u64 {
     println!("  [hostil] compositor sigue: {}", si(c));
     let ce = centro(memoria);
     println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
+    let m = monton_grande();
+    println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: {}", if m { "bien" } else { "MAL" });
     let _ = E_LIMITE;
-    if a && s && c && ses && disco_bien && ce { 0 } else { 1 }
+    if a && s && c && ses && disco_bien && ce && m { 0 } else { 1 }
+}
+
+/// Lo grande del montón (desde 256 KB) va en su objeto, fuera del montón, y al soltarlo se devuelve: lo reservado
+/// vuelve a lo de antes. Tres a la vez, escritos y leídos enteros, y uno pequeño que sigue en el montón.
+fn monton_grande() -> bool {
+    let antes = dashos::monton::uso().reservado;
+    let mut bloques: alloc::vec::Vec<alloc::vec::Vec<u8>> = alloc::vec::Vec::new();
+    for k in 0..3u8 {
+        bloques.push(alloc::vec![k ^ 0x5a; (3 << 20) + 4097 * k as usize]);
+    }
+    let pequeno = alloc::vec![1u8; 1000];
+    let aparte = bloques.iter().all(|b| (0x78_0000_0000..0x7c_0000_0000).contains(&(b.as_ptr() as usize)));
+    let enteros = bloques.iter().enumerate().all(|(k, b)| b.iter().all(|&x| x == k as u8 ^ 0x5a));
+    let durante = dashos::monton::uso().reservado;
+    let en_monton = !(0x78_0000_0000..0x7c_0000_0000).contains(&(pequeno.as_ptr() as usize));
+    drop(bloques);
+    drop(pequeno);
+    let despues = dashos::monton::uso().reservado;
+    let bien = aparte && enteros && en_monton && durante >= antes + (9 << 20) && despues == antes;
+    if !bien {
+        println!("  [hostil] montón: aparte {} enteros {} pequeño en el montón {}; reservado {} → {} → {} KB", aparte, enteros, en_monton,
+            antes >> 10, durante >> 10, despues >> 10);
+    }
+    bien
 }
 
 /// S10c: al centro de control solo se le pide abrir una categoría. Pedidos que no valen (categoría que no existe,

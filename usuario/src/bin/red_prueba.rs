@@ -149,7 +149,14 @@ fn principal() -> u64 {
         let ee = dashos::llave_duplicar(escribe, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
         let pet = [p::CONECTAR, familia, PUERTO_ECO as u32, tam, u32::from_le_bytes(ECO), 0, 0, 0];
         let bytes = unsafe { core::slice::from_raw_parts(pet.as_ptr() as *const u8, 32) };
-        dashos::canal_escribir(SERVICIO, bytes, &[ee as u32]);
+        // Tras la ráfaga de arriba, la cola del servicio puede estar llena (con el PC cargado): se reintenta un rato,
+        // en vez de dar por perdida la petición (salía 1, sin respuesta, en vez de MAL_FORMADO).
+        for _ in 0..2000 {
+            if dashos::canal_escribir(SERVICIO, bytes, &[ee as u32]) != -8 {
+                break;
+            }
+            dashos::dormir_us(1_000);
+        }
         let mut r = [0u8; 16];
         let mut ll = [0u32; 8];
         let (n, _, _) = dashos::canal_leer_plazo(lee, &mut r, &mut ll, 2_000_000);

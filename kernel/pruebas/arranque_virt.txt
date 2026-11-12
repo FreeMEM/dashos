@@ -117,6 +117,7 @@ DashOS en marcha con 4 núcleos.
 # R1 (docs/REVISION_LOOP.md): un cliente hostil manda mensajes vacíos y cientos de mensajes con 8 llaves a archivos, al
 # sonido y al compositor; cada uno tiene que seguir contestando a una petición normal.
 ~│   [hostil] A14 hora: bien
+~│   [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: bien
 ~│   [hostil] archivos sigue: sí
 # R6: el hostil es otro usuario (1001), encerrado en C/: no sale, no entra en C/Privado, no escribe lo ajeno.
 ~│   [hostil] archivos, permisos: bien
