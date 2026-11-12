@@ -869,3 +869,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   llaves de un programa van en el orden en que se nombró cada canal en todo el sistema, no en el de su lista; con
   "archivos", las del centro pasan a ser ventanas 1, archivos 2, sesiones 3 y centro 4. Prueba en virt: "Discos:
   Disco del sistema: 7,0 MB; Ocupado: 2,5 MB (36 %); Libre: 4,4 MB". Captura en `docs/capturas/s10c-centro-discos.png`.
+- S10c, la prueba hostil del propio centro: el cliente hostil recibe el canal "centro" (su llave 5; las de sonido y
+  selector pasan a 6 y 7, por el orden en que se nombran los canales) y le manda seis pedidos que no valen (una
+  categoría con camino, "abrir" solo, vacío, 200 bytes de basura, la buena con algo detrás, la buena con mayúscula),
+  cada uno con su llave de vuelta, una inundación de 160 mensajes con 8 llaves cada uno y otro pedido malo después.
+  El centro contesta -1 a todos sin abrir ventana (antes contestaba 0 a cualquiera con llave) y sigue contestando
+  tras la inundación; de los pedidos malos solo dice los tres primeros. Después, `guardian` lo abre bien, como antes.

@@ -462,6 +462,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
 fn principal() -> u64 {
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
+    let mut malos = 0u64;
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
@@ -471,15 +472,25 @@ fn principal() -> u64 {
         // Sin marca: las entradas del directorio de `inicio`; aquí no hacen falta.
         if marca != 0 {
             let pedido = core::str::from_utf8(&buf[..n]).unwrap_or("");
-            match pedido.strip_prefix("abrir ").and_then(|c| CATEGORIAS.iter().position(|x| x.0 == c)) {
+            let categoria = pedido.strip_prefix("abrir ").and_then(|c| CATEGORIAS.iter().position(|x| x.0 == c));
+            let abierto = categoria.is_some();
+            match categoria {
                 Some(cat) => {
                     println!("  [centro] abre {}", CATEGORIAS[cat].1);
                     ventana(cat);
                 }
-                None => println!("  [centro] pedido que no se entiende ({} bytes): nada", n),
+                None => {
+                    // Los tres primeros se dicen; los demás (una inundación) solo se cuentan.
+                    malos += 1;
+                    if malos <= 3 {
+                        println!("  [centro] pedido que no se entiende ({} bytes): nada", n);
+                    }
+                }
             }
+            // Si trae llave, se contesta: 0 tras cerrar la ventana, -1 si el pedido no valía (y no se abrió nada).
             if k >= 1 {
-                dashos::canal_escribir(ll[0], &[0; 4], &[]);
+                let estado: i32 = if abierto { 0 } else { -1 };
+                dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
             }
         }
         cerrar_llaves(&ll[..k]);

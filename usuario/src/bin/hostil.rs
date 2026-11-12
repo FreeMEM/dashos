@@ -37,8 +37,10 @@ const VENTANAS: u32 = 1;
 const DISCO: u32 = 2;
 const ARCHIVOS: u32 = 3;
 const SESIONES: u32 = 4;
-const SONIDO: u32 = 5;
-const SELECTOR: u32 = 6;
+/// El canal del centro de control (S10c): se nombra tras "sesiones" y antes que "sonido".
+const CENTRO: u32 = 5;
+const SONIDO: u32 = 6;
+const SELECTOR: u32 = 7;
 const E_LIMITE: i64 = -8;
 /// Mensajes con 8 llaves por ataque: más que la tabla de llaves de un proceso (1.024).
 const ATAQUES: usize = 160;
@@ -778,6 +780,34 @@ fn principal() -> u64 {
     println!("  [hostil] sonido sigue: {}", si(s));
     let c = compositor(memoria);
     println!("  [hostil] compositor sigue: {}", si(c));
+    let ce = centro(memoria);
+    println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
     let _ = E_LIMITE;
-    if a && s && c && ses && disco_bien { 0 } else { 1 }
+    if a && s && c && ses && disco_bien && ce { 0 } else { 1 }
+}
+
+/// S10c: al centro de control solo se le pide abrir una categoría. Pedidos que no valen (categoría que no existe,
+/// caminos, vacío, basura, la buena con algo detrás) se contestan -1 sin abrir ventana; tras una inundación con 8
+/// llaves por mensaje, sigue contestando.
+fn centro(memoria: u32) -> bool {
+    let pedir = |p: &[u8]| -> i32 {
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let e = if escribir(CENTRO, p, &[suyo]) && dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 == 4 {
+            i32::from_le_bytes(r)
+        } else {
+            i32::MIN
+        };
+        dashos::cerrar(lectura);
+        e
+    };
+    let malos: [&[u8]; 6] = [b"abrir ../../Estado", b"abrir", b"", &[0xff; 200], b"abrir permisos\0x", b"abrir Permisos"];
+    let rechazos: [i32; 6] = core::array::from_fn(|k| pedir(malos[k]));
+    inundar(CENTRO, memoria, b"abrir nada");
+    let despues = pedir(b"cerrar todo");
+    let bien = rechazos.iter().all(|&e| e == -1) && despues == -1;
+    if !bien {
+        println!("  [hostil] centro: rechazos {:?}, tras la inundación {}", rechazos, despues);
+    }
+    bien
 }

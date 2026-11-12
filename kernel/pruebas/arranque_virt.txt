@@ -112,6 +112,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] A7 préstamos: bien
 ~│   [hostil] sonido sigue: sí
 ~│   [hostil] compositor sigue: sí
+# S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
+~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
 # U2: sesiones, primera parte. Un programa del usuario 1001 no mata a uno del 1000, y sí a uno suyo.
 ~│   [sesiones] en marcha, con el servicio de archivos
 # U3: entrar abre el volumen cifrado del usuario y salir lo cierra; solo puede pedirlo `guardian` (aquí, `entrada`).
