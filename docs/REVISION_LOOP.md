@@ -1465,3 +1465,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `inicio` acaba de lanzar a los 6329 y el primer cuadro con ventanas sale a los 6405: DashOS tarda 0,36 s desde que
   entra el kernel hasta el escritorio, con las pruebas del arranque (que `inicio` espera una a una) dentro.
 - `make prueba` BIEN; arranque-virt BIEN.
+
+### 2026-11-12 17:05: pulido de Material 3 (rama `kit-pulido`) en revision
+- Escala de tipos de Material 3 (título 24 normal), diálogos con margen 24 y huecos fijos, casilla con etiqueta, lista
+  de navegación (centro), la pregunta de permiso de `guardian` como diálogo de M3 (440 × 208, esquinas 28, las
+  respuestas con su tecla). Detalle y capturas en docs/bitacoras/kit-pulido.md.
+- Pendiente del usuario: el deslizador (M3 de 2024, barra con raya; o el de 2022, con bola).
+- `make prueba` BIEN; kit 64 y wayland 59 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN; a 1920 ×
+  1080 sin fallos.
