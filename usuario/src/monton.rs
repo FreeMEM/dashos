@@ -4,8 +4,11 @@
 //! crece por arriba: cuando una petición no cabe, pide otro trozo y alarga la lista libre de
 //! `linked_list_allocator`. Nunca devuelve memoria al kernel. Lo usa el programa que llama a `dashos::monton!()`.
 //!
-//! Los trozos crecen: 128 KB, otros 128, y luego tanto como lo que ya hay, hasta 4 MB. El kernel da todas las páginas
-//! de un objeto al crearlo; con trozos fijos de 4 MB, un programa que usaba 200 KB gastaba 4 MB.
+//! Los trozos crecen: 128 KB las tres primeras veces, y luego la mitad de lo que ya hay (en múltiplos de 64 KB), hasta
+//! 4 MB. El kernel da todas las páginas de un objeto al crearlo; con trozos fijos de 4 MB, un programa que usaba 200 KB
+//! gastaba 4 MB. Al principio se doblaba (tanto como lo que ya había): uno que usaba 2,1 MB tenía 4 MB, casi el doble;
+//! con la mitad, lo reservado pasa como mucho en un 50 % de lo que hace falta (kit-memoria). Un pedido mayor que el
+//! trozo que toca se pide entero en uno (hasta 4 MB).
 //!
 //! Delante, listas por tamaño (paso F de docs/MULTITAREA_LOOP.md): lo pequeño (hasta 4 KB, alineado como mucho a 16)
 //! se pide en tamaños de potencia de dos, y lo que se suelta se guarda en la lista de su tamaño para la siguiente vez.
@@ -112,9 +115,11 @@ impl Monton {
     }
 }
 
-/// El tamaño del trozo siguiente, con `hay` bytes ya: tanto como lo que hay, entre 128 KB y 4 MB.
+/// El tamaño del trozo siguiente, con `hay` bytes ya: la mitad de lo que hay, en múltiplos de 64 KB, entre 128 KB y
+/// 4 MB.
 fn siguiente(hay: usize) -> usize {
-    hay.clamp(TROZO_MIN, TROZO_MAX)
+    const PASO: usize = 64 << 10;
+    (hay / 2).div_ceil(PASO).saturating_mul(PASO).clamp(TROZO_MIN, TROZO_MAX)
 }
 
 /// Proyecta un trozo de `tamano` bytes tras los `hay` que ya tiene; falso si el kernel no da más.
@@ -150,7 +155,9 @@ unsafe impl GlobalAlloc for Monton {
                     return p.as_ptr();
                 }
             }
-            let t = siguiente(*n);
+            // Lo que pide, si es más que el trozo que toca, de una vez: si no, para 1,9 MB con 300 KB se pedían seis
+            // trozos, 4,6 MB en total.
+            let t = siguiente(*n).max((l.size() + l.align()).div_ceil(64 << 10).saturating_mul(64 << 10).min(TROZO_MAX));
             if !trozo(*n, t) {
                 return ptr::null_mut();
             }
