@@ -96,3 +96,13 @@ guardan con la apariencia y los reparte el compositor. En el PC (con FPU): leer 
 - Al fusionar con `escritorio` (la barra de arriba): `captura_ventanas.py` mira el fondo en (5, 60); allí también hay
   que usar `fondo_en`. El fondo ya pide zona exclusiva -1, así que va también bajo la barra.
 - "Automático" (claro u oscuro por la hora), letras y movimiento, el resto de C3.
+
+### Estado al cerrar (cupo de uso al 98 %)
+
+- `make prueba`: BIEN. `cargo test` del kit (54) y de wayland: bien.
+- `make arranque-virt`: BIEN en la segunda vuelta (las cuatro líneas: esperados, disco, captura con el atardecer y
+  sonido). En la última, con el PC más cargado (todo iba al doble de lento), faltó
+  "[hostil] centro: pedidos malos rechazados ...": los dos primeros pedidos del hostil al centro no tuvieron
+  respuesta a tiempo. Es de tiempos: con los pasos nuevos de Apariencia, la ventana del centro está abierta más rato
+  (10 a 20 s), y el centro no lee su canal mientras tiene la ventana abierta. Arreglo pendiente: que el hostil espere
+  más o reintente, o que el centro atienda su canal con la ventana abierta. Repetir la prueba antes de fusionar.
