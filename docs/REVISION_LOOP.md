@@ -1633,3 +1633,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Kernel y disco de Arch para todo lo fusionado en `~/.cache/dashos-caja-linux-fusion` (pasar `ARCH_IMAGE` y
   `ARCH_DISCO`, o rehacer `preparar-arch` en la caché compartida).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland y -gpu (nueva): BIEN.
+
+### 2026-11-13 01:10: Pi 5, la tarjeta del primer arranque, en revision
+- Fusionada `pi5`: el firmware de la EEPROM carga `kernel_2712.img` (sin UEFI de terceros). Diagnóstico en la
+  pantalla del firmware (buzón o simple-framebuffer): placa, MIDR, `ID_AA64MMFR0_EL1`, prueba real de big-endian en
+  EL0 (un programa big-endian lee 0x11 de 0x11223344 con E0E), memoria, núcleos y la caja Amiga con `saludo.exe`.
+  Segundo kernel con el escritorio en la pantalla del firmware, sin teclado ni ratón. `make tarjeta-pi5` hace
+  `~/.cache/dashos-pi5/dashos-pi5.img`; hoja para el usuario en `docs/PI5_PRIMER_ARRANQUE.md` (microSD, HDMI 0,
+  no grabar el SSD prestado, la EEPROM no se toca).
+- Arreglos de todas las placas: número de núcleo de Aff1 si MPIDR marca MT (Cortex-A76); la imagen se copia sola a
+  0x80000 si el firmware la deja más arriba; `Cupo::raiz()` se esperaba a sí mismo con el repartidor de páginas tomado.
+- Nada probado en una Pi 5 real (QEMU no la emula). El USB (RP1 tras PCIe) lo lleva la rama `pi5-usb`.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN;
+  `make tarjeta-pi5` sale.
