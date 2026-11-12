@@ -1203,3 +1203,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   del kit, ARGB por sus esquinas, no contaban como opacas y se pintaba debajo, sombra incluida, toda su superficie.
   Ahora un tramo ARGB del todo opaco también tapa: de 45 a 54 µs por kilopíxel, como sin sombra (dentro del ruido).
   `captura_ventanas.py` acepta el color oscurecido por una sombra (hasta alfa 70) cerca de los bordes.
+- Kit: en una fila, lo alto (más de una línea: una lista, una columna) va arriba; lo de una línea (hasta 64), centrado
+  como antes (alinea textos y botones). Al maximizar el centro, la lista y su columna bajaban al medio y dejaban un
+  hueco arriba. Prueba `lo_alto_de_una_fila_arriba`. Capturas del centro maximizado y en tamaño normal.

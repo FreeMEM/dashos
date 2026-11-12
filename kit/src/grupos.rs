@@ -98,6 +98,9 @@ pub fn repartir(total: i32, mins: &[i32], maxs: &[i32], pesos: &[u32]) -> Vec<i3
 }
 
 /// Coloca un nodo en `r`; deja en `out` el rectángulo de cada hoja, en orden.
+/// Lo más alto que se centra en una fila: un control de una línea (Material 3: 56 una fila de lista, 40 un botón).
+const ALTO_DE_LINEA: i32 = 64;
+
 pub fn colocar(n: &Nodo, r: Rect, out: &mut Vec<Rect>) {
     match n {
         Nodo::Hoja(_) => out.push(r),
@@ -114,9 +117,11 @@ pub fn colocar(n: &Nodo, r: Rect, out: &mut Vec<Rect>) {
             let tams = repartir(largo - huecos, &mins, &maxs, &pesos);
             let mut pos = 0;
             for ((hijo, m), t) in hijos.iter().zip(&ms).zip(&tams) {
-                // A lo ancho: todo lo que haya hasta su máximo, centrado.
+                // A lo ancho: todo lo que haya hasta su máximo, centrado; salvo en una fila lo alto (más de una línea:
+                // una lista, una columna), que va arriba (si no, al maximizar, bajaba al medio y dejaba un hueco
+                // encima).
                 let a = ancho.min(cruz(m.max)).max(cruz(m.min));
-                let off = (ancho - a) / 2;
+                let off = if *horizontal && a > ALTO_DE_LINEA { 0 } else { (ancho - a) / 2 };
                 let rh = if *horizontal {
                     Rect::new(dentro.x + pos, dentro.y + off, *t, a)
                 } else {
@@ -179,6 +184,13 @@ mod pruebas {
         // Un botón de altura fija en una fila más alta: centrado.
         let n = Nodo::Grupo { horizontal: true, espacio: 0, margen: 0, hijos: vec![Nodo::Hoja(Medida { min: (50, 20), max: (SIN_MAX, 20), peso: 100 })] };
         assert_eq!(colocados(&n, Rect::new(0, 0, 100, 60)), [Rect::new(0, 20, 100, 20)]);
+    }
+
+    #[test]
+    fn lo_alto_de_una_fila_arriba() {
+        // Una lista de 200 de alto en una fila de 500: arriba, sin hueco encima.
+        let n = Nodo::Grupo { horizontal: true, espacio: 0, margen: 0, hijos: vec![Nodo::Hoja(Medida { min: (50, 200), max: (SIN_MAX, 200), peso: 100 })] };
+        assert_eq!(colocados(&n, Rect::new(0, 0, 100, 500)), [Rect::new(0, 0, 100, 200)]);
     }
 
     #[test]
