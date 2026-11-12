@@ -1339,3 +1339,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   - Fondo: imagen en el montón más dos juegos de franjas, unos 27 MB: su cupo pasa de 16 a 48 MB.
 - Queda: `guardian` "sin memoria para la pantalla" a 1920 × 1080 (su cupo, 16 MB). Capturas mandadas al usuario.
 - `make prueba` BIEN; arranque-virt (800 × 600) en dos vueltas, todo BIEN.
+
+### 2026-11-12 14:40: `guardian` a 1920 × 1080
+- Su cupo pasa de 16 a 32 MB: la pantalla de bloqueo y de entrada es de pantalla entera (8,3 MB) y no cabía con su
+  montón y la capa de las preguntas. A 1920 × 1080 ya pinta ("pantalla de bloqueo en pantalla (1920x1080)").
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN.
