@@ -21,7 +21,8 @@ fn comprimir_programas(dir: &str) {
     nombres.sort();
     nombres.dedup();
     for nombre in nombres {
-        let ruta = format!("{}/{}", usuario, nombre);
+        // H4: la caja Amiga es un programa de C aparte (`caja/`), no de `usuario/`.
+        let ruta = if nombre == "caja-amiga" { format!("{}/../caja/build/{}", dir, nombre) } else { format!("{}/{}", usuario, nombre) };
         println!("cargo:rerun-if-changed={}", ruta);
         let Ok(datos) = std::fs::read(&ruta) else { continue };
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;

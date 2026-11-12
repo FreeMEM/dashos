@@ -182,6 +182,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
     ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
+    // H4: la caja Amiga, primer paso (`caja/`): el JIT de Emu68 en un proceso big-endian, con programas 68k que
+    // escriben por una dos.library nativa (línea A) y otros hostiles; el último la mata. Sin llaves: `inicio` la
+    // espera. Al final, para no cambiar las marcas de los demás.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("caja-amiga", programa!("caja-amiga"), &[], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]

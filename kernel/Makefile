@@ -26,6 +26,8 @@ usuario: FORCE
 	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
+	@# H4: la caja Amiga (caja/), con el JIT de Emu68: solo si está el clon de third_party/Emu68 (toolchains/LEEME.md).
+	if [ -d ../third_party/Emu68/src ]; then $(MAKE) -C ../caja; else echo "Sin third_party/Emu68: la caja Amiga no se compila"; fi
 
 $(PRUEBAS): usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas
