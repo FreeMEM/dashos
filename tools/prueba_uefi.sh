@@ -917,7 +917,9 @@ while time.time() - inicio < total:
             time.sleep(1)
         # El desplegable de Ajustes, cuando su campo ya tiene su "a" (antes, un clic en él se llevaría las "a"): el cursor
         # a la esquina y al desplegable (donde lo dicen el compositor y Ajustes), un clic abre el menú; con
-        # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor vuelve a (300, 300).
+        # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor va después abajo a la
+        # derecha: desde (300, 300), los clics de siempre (+10, +5 cada medio segundo) caían en el desplegable, lo abrían
+        # y lo cerraban, y la captura final podía salir con el menú abierto.
         # Sin el centro de control encima (sale en (200, 200) y taparía el desplegable): antes de que se anuncie, o ya
         # cerrado.
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
@@ -933,7 +935,7 @@ while time.time() - inicio < total:
                 menus_antes = texto.count("[ajustes] menú abierto; la segunda opción en (")
                 ir_a(int(v.group(1)) + int(d.group(1)), int(v.group(2)) + int(d.group(2)))
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-                ir_a(300, 300)
+                ir_a(790, 590)
         elif menu == 1 and not bloqueado_ahora:
             import re
             abiertos = re.findall(r"\[ajustes\] menú abierto; la segunda opción en \((\d+), (\d+)\)", texto)
@@ -944,7 +946,7 @@ while time.time() - inicio < total:
                     mandar("screendump " + os.environ["CAPTURA_MENU"])
                 ir_a(int(v.group(1)) + int(o[0]), int(v.group(2)) + int(o[1]))
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-                ir_a(300, 300)
+                ir_a(790, 590)
                 menu = 2
             elif time.time() - menu_desde > 6 and menu_intentos < 3:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.

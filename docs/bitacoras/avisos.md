@@ -82,12 +82,17 @@ el paso de Ajustes espera al selector; 5952ac7, la línea del lanzador sin núme
 - Al acabar el paso de los avisos, el cursor va abajo a la derecha: los clics de siempre, desde la campana, volvían a
   abrir el historial y el panel, y la captura final salía con ellos.
 - `ESTADO_GUION=fichero`: el estado del guion cada 2 s. Con él se vio en qué paso se quedaba.
+- Tras fusionar `revision` (34f4e4f: el paso del menú de Ajustes ya no espera dentro de la vuelta), el cursor volvía a
+  (300, 300) mientras se esperaba el menú, y los clics de siempre (+10, +5) caían en el desplegable: lo cerraban antes
+  de elegir o lo dejaban abierto en la captura final. Ahora va abajo a la derecha. Conviene llevarlo a `revision`.
 
 ### Resultado
 
 - `make prueba`: BIEN (una vuelta, antes de la última, falló en C14 y S2, que miden tiempos, con el PC cargado).
 - `make arranque-virt`: tres vueltas fallaron por el selector (arriba), una con el historial abierto en la captura
   final; la séptima, todo BIEN (arranque, disco, captura, sonido y la ventana de Ana). No se repitió más veces.
+- Tras fusionar `revision` otra vez: una vuelta con la captura final mal (el menú, arriba), otra con el selector sin
+  sus teclas (PC con carga 66) y la siguiente, todo BIEN.
 
 ### Decisiones provisionales (a confirmar por el usuario)
 
