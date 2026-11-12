@@ -33,21 +33,21 @@ pub const MEMORIA_ESCRIBIR: u8 = 5;
 pub const MEMORIA_SOLTAR: u8 = 6;
 /// Crecer una memoria: número (u32) y tamaño nuevo (u64).
 pub const MEMORIA_CRECER: u8 = 7;
-/// H9, el portapapeles: un tubo (lo que en Linux es una tubería y en DashOS un canal: bytes que van en un sentido hasta
+/// H9, el portapapeles (del 12 en adelante: del 8 al 10 son las vistas sin copia de caja-linux-sincopia): un tubo (lo que en Linux es una tubería y en DashOS un canal: bytes que van en un sentido hasta
 /// que se cierra). Número (u32). Lo manda el lado que tiene un extremo donde hay que escribir lo que llegue (en Linux,
 /// la tubería que un programa da en `wl_data_offer.receive`; en DashOS, el canal que da un programa nativo para pegar).
 /// El otro lado crea su par: da el extremo de escribir a su programa con el mensaje que lleva el número (como una
 /// memoria) y manda lo que lee de él en `TUBO_DATOS`, hasta `TUBO_FIN`.
-pub const TUBO_NUEVO: u8 = 8;
+pub const TUBO_NUEVO: u8 = 12;
 /// Bytes de un tubo: número (u32) y los bytes.
-pub const TUBO_DATOS: u8 = 9;
+pub const TUBO_DATOS: u8 = 13;
 /// Fin de un tubo: número (u32). En los dos sentidos: se acabó lo que había que leer, o quien escribía ya no puede (su
 /// lector se fue) y el otro deja de leer.
-pub const TUBO_FIN: u8 = 10;
+pub const TUBO_FIN: u8 = 14;
 /// Lo ya escrito en el destino de un tubo: número (u32) y cuántos bytes (u32). Quien lee de su extremo y lo manda en
 /// `TUBO_DATOS` no deja más de `VENTANA_TUBO` bytes sin confirmar: así uno que pega despacio frena al que copia, en vez
 /// de llenar lo que espera (y cortar el tubo).
-pub const TUBO_LEIDO: u8 = 11;
+pub const TUBO_LEIDO: u8 = 15;
 /// Bytes de un tubo sin confirmar, como mucho.
 pub const VENTANA_TUBO: u64 = 128 * 1024;
 
@@ -1268,7 +1268,7 @@ mod pruebas {
             let mut p = Puente::nuevo(Falso::default(), 0);
             for _ in 0..50 {
                 // Cabeceras casi buenas con contenido al azar.
-                let tipo = (azar() % 12) as u8;
+                let tipo = (azar() % 17) as u8;
                 let largo = (azar() % 64) as usize;
                 let d: Vec<u8> = (0..largo).map(|_| azar() as u8).collect();
                 let t = trama(tipo, (azar() % 4) as u32, &d);
