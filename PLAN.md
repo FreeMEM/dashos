@@ -375,3 +375,20 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
   programas de pago de DashOS se venden ahí.
 
+
+## Decisiones del usuario del 2026-11-12 (caja Linux)
+
+Las cuatro que dejó abiertas el primer paso de la caja Linux (`docs/bitacoras/caja-linux.md`, rama `caja-linux`), como
+se recomendaban:
+
+- **El permiso de máquinas virtuales lo reparte `sesiones`** como permiso de aplicación (S6b): se ve y se quita en el
+  centro de control y queda en el registro de seguridad. `inicio` solo se lo da a `sesiones`. A la caja Linux del
+  sistema se le concede sin preguntar; a cualquier otro programa, se le pregunta a quien está delante.
+- **La caja Linux va en la imagen de la Pi 4, no en la de la Pi 3.** La Cortex-A72 y el GIC-400 de la Pi 4 tienen
+  virtualización; la Pi 3 tiene otro controlador de interrupciones (QA7) sin ella, y 1 GB. En la Pi 4 solo se activa
+  si el firmware entra en EL2.
+- **El hipervisor no se apaga.** Sin invitados no debe atrapar nada ni costar; se mide en la Pi y, si cuesta, se
+  vuelve a mirar.
+- **La memoria de la caja Linux se calcula:** la del invitado más unos 32 MB del servicio. La del invitado se puede
+  cambiar; de serie, 256 MB con 2 GB de RAM y 512 MB con 4 GB o más (Firefox pedirá más: `maquina_memoria` la añade).
+  Los 96 MB de hoy valen hasta entonces.
