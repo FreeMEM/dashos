@@ -12,6 +12,10 @@
 //! de usuario" (nombre y contraseña). En la prueba, tras entrar Ana, lanza `Programas/cambio` como ella, bloquea y
 //! entra Carla con Ana detrás; lanza `cambio` como Carla, que intenta llegar a lo de Ana; y vuelve Ana.
 //!
+//! U6, paso 2: en la prueba contesta él mismo (como hace con las acciones de administrador) a lo que pide `cambio`: el
+//! permiso de plazo, que sí si es de Ana y que no si es de Carla (lo que Ana concede no vale para Carla). Al acabar,
+//! retira lo concedido para que el disco quede como estaba.
+//!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio), 2 el canal "sesiones".
 
 #![no_std]
@@ -86,6 +90,10 @@ fn principal() -> u64 {
         return 1;
     }
     let (mut a_pide, mut a_otros) = (0, 0);
+    // U6: lo concedido es por programa y usuario: a `pide` se le pregunta una vez por servicio y usuario (servicio y
+    // usuario de cada pregunta, y si se repitió alguna).
+    let mut vistas: alloc::vec::Vec<(alloc::vec::Vec<u8>, u32)> = alloc::vec::Vec::new();
+    let mut repetida = false;
     // Cuántas veces dijo que sí el usuario: a `pide`, a las dos; a los demás, a ninguna.
     let (mut si_pide, mut si_otros) = (0, 0);
     // U5: las acciones de administrador. A `pide` le da la contraseña buena de Ana (administradora); al hostil, la
@@ -136,7 +144,14 @@ fn principal() -> u64 {
         // Se le pregunta al usuario (U4). En la prueba, el guion contesta que sí a `pide` y que no a los demás.
         let (prog, serv) = (core::str::from_utf8(programa).unwrap_or("?"), core::str::from_utf8(servicio).unwrap_or("?"));
         let si = preguntar(prog, serv);
-        if programa == b"pide" { a_pide += 1 } else { a_otros += 1 }
+        if programa == b"pide" {
+            a_pide += 1;
+            let uid = u32::from_le_bytes(q[4..8].try_into().unwrap());
+            repetida |= vistas.iter().any(|v| v.0 == servicio && v.1 == uid);
+            vistas.push((servicio.to_vec(), uid));
+        } else {
+            a_otros += 1
+        }
         if si { if programa == b"pide" { si_pide += 1 } else { si_otros += 1 } }
         let mut r = [0u8; 12];
         r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
@@ -144,10 +159,13 @@ fn principal() -> u64 {
         r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
         pedir(&r, &[]);
     }
-    // A `pide`, dos preguntas (eco y plazo), una vez: lo concedido se guarda.
-    let bien = a_pide == 2 && a_otros >= 1 && si_pide == 2 && si_otros == 0;
-    println!("  [guardian] preguntas: de pide {}, de otros {}: {}", a_pide, a_otros, if bien { "bien" } else { "MAL" });
-    if si_pide != 2 || si_otros != 0 {
+    // A `pide`, por eco y por plazo, una vez por usuario: lo concedido se guarda (U6: para ese usuario; las copias de
+    // `pide` de otro usuario que esperaban la misma pregunta reciben la llave esa vez, y si piden otra vez, se les
+    // pregunta).
+    let ambas = [&b"eco"[..], b"plazo"].iter().all(|sv| vistas.iter().any(|v| v.0 == *sv));
+    let bien = ambas && !repetida && a_otros >= 1 && si_pide == a_pide && si_otros == 0;
+    println!("  [guardian] preguntas de pide, una por servicio y usuario: {} ({}; y {} de otros)", if bien { "bien" } else { "MAL" }, a_pide, a_otros);
+    if si_pide != a_pide || si_otros != 0 {
         println!("  [guardian] el usuario dijo que sí a pide {} veces y a otros {}", si_pide, si_otros);
     }
     // Y al final, el usuario se lo retira: se borra de lo guardado. Retirarlo otra vez ya no encuentra nada. El de
@@ -207,7 +225,17 @@ fn principal() -> u64 {
     let quien = pantalla(None);
     let entrada = quien.is_some();
     // U6: el cambio rápido de usuario, con Ana dentro.
-    let cambio = quien.as_deref() == Some("Ana") && cambio_rapido();
+    let cambio = quien.as_deref() == Some("Ana") && cambio_rapido(preguntas);
+    // U6: lo concedido en la prueba, fuera (el de `cambio`, de Ana; y el de eco de `pide`, por si quedó el de otro
+    // usuario: el centro solo quita lo de Ana y lo del sistema).
+    let quitado = retirar("cambio", "plazo");
+    println!("  [guardian] U6: retirar a cambio el permiso de plazo: {}; a pide el de eco: {}", quitado, retirar("pide", "eco"));
+    let cambio = cambio && quitado == 0;
+    // U6, paso 2, prueba hostil: `Programas/panel` (una copia de `cambio`), lanzado del disco con el nombre del panel
+    // rápido, no tiene sus poderes en el compositor (lo comprueba él). Se lanza como `guardian` (sin `Home:`).
+    let (e_panel, p_panel) = lanzar_como("Programas/panel", 0);
+    let impostor = e_panel == 0 && esperar_fin(p_panel, 20_000_000);
+    println!("  [guardian] U6: lanza Programas/panel: {}, acaba: {}", e_panel, impostor);
     // U3: y bloquear por tiempo. En la prueba se sigue tecleando 3 s tras pedir el aviso y luego nada: con un plazo de
     // 2 s, si la entrada no reiniciara la cuenta, el aviso llegaría a los 2 s. Llega después de 5 y se bloquea la sesión
     // de quien acaba de entrar (en la prueba, Ana).
@@ -241,6 +269,53 @@ fn principal() -> u64 {
             }
         };
     if bien && retirado && admin && bloqueo && entrada && cambio && por_tiempo && con_tecla { 0 } else { 1 }
+}
+
+/// Retira a `programa` el permiso de `servicio` (para todos los usuarios: `guardian` ve todo).
+fn retirar(programa: &str, servicio: &str) -> i32 {
+    let mut p = [0u8; 48];
+    p[0..4].copy_from_slice(&RETIRAR.to_le_bytes());
+    p[4..8].copy_from_slice(&(programa.len() as u32).to_le_bytes());
+    p[8..12].copy_from_slice(&(servicio.len() as u32).to_le_bytes());
+    p[12..12 + programa.len()].copy_from_slice(programa.as_bytes());
+    p[12 + programa.len()..12 + programa.len() + servicio.len()].copy_from_slice(servicio.as_bytes());
+    pedir(&p[..12 + programa.len() + servicio.len()], &[])
+}
+
+/// U6, paso 2: atiende las preguntas de `cambio` durante `max_us` o hasta que conteste `hasta_n`: el permiso de plazo,
+/// sí a la de Ana (1000) y no a la de Carla (1001). Lo demás se niega. Devuelve cuántas contestó de cada una.
+fn contestar_a_cambio(preguntas: u32, max_us: u64, hasta: impl Fn((u32, u32)) -> bool) -> (u32, u32) {
+    let fin = dashos::ahora_us() + max_us;
+    let mut cuentas = (0, 0);
+    while dashos::ahora_us() < fin && !hasta(cuentas) {
+        let mut q = [0u8; PREGUNTA];
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 200_000).0 as usize != PREGUNTA {
+            continue;
+        }
+        let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+        let (programa, servicio) = (&q[8..8 + campo(&q[8..24])], &q[24..24 + campo(&q[24..40])]);
+        let uid = u32::from_le_bytes(q[4..8].try_into().unwrap());
+        let si = programa == b"cambio" && servicio == b"plazo" && uid == 1000;
+        if programa == b"cambio" && servicio == b"plazo" {
+            if uid == 1000 { cuentas.0 += 1 } else { cuentas.1 += 1 }
+        }
+        println!("  [guardian] U6: ¿{} puede usar {} (usuario {})? Contesta {}", core::str::from_utf8(programa).unwrap_or("?"),
+            core::str::from_utf8(servicio).unwrap_or("?"), uid, if si { "sí" } else { "no" });
+        // Una acción de administrador no se pregunta aquí: se contesta con nada (sesiones la da por negada).
+        let mut r = [0u8; 16];
+        let largo = if servicio.first() == Some(&b'*') {
+            r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            16
+        } else {
+            r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
+            12
+        };
+        pedir(&r[..largo], &[]);
+    }
+    cuentas
 }
 
 /// U6: lanza el programa del disco `camino` como el usuario `como` (que tiene que haber entrado): (estado, número).
@@ -298,22 +373,38 @@ fn esperar_fin(pid: u64, max_us: u64) -> bool {
 /// bloquea su sesión y, en la pantalla, la usuaria pulsa Esc y entra Carla (en la prueba, el guion). Con Ana detrás, se
 /// lanza `cambio` como Carla (la espía) y se espera a que acabe; se bloquea la sesión de Carla, Esc, y vuelve Ana. El
 /// testigo, que siguió en marcha detrás, acaba al ver que vuelve a estar delante.
-fn cambio_rapido() -> bool {
+fn cambio_rapido(preguntas: u32) -> bool {
     let (e_ana, ana) = lanzar_como("Programas/cambio", 1000);
     println!("  [guardian] U6: lanza cambio como Ana: {} (proceso {})", e_ana, ana);
-    // Que el testigo empiece delante.
+    // Paso 2: el testigo pide el permiso de plazo (Ana dice que sí); luego, que empiece delante un rato (con su ventana
+    // en pantalla para la captura del guion).
+    let (si_ana, _) = contestar_a_cambio(preguntas, 30_000_000, |c| c.0 >= 1);
     dashos::dormir_us(2_000_000);
     println!("  [guardian] U6: se bloquea la sesión de Ana; Esc para cambiar de usuario");
     let a_carla = pantalla(Some("Ana"));
     let carla = a_carla.as_deref() == Some("Carla");
     let (e_carla, espia) = if carla { lanzar_como("Programas/cambio", 1001) } else { (i32::MIN, 0) };
     println!("  [guardian] U6: lanza cambio como Carla: {} (proceso {})", e_carla, espia);
-    let espia_acaba = e_carla == 0 && esperar_fin(espia, 30_000_000);
+    // Paso 2: la espía pide el mismo permiso de plazo; Carla no lo concedió (dice que no). Mientras, se espera a que acabe.
+    let mut no_carla = 0;
+    let hasta = dashos::ahora_us() + 30_000_000;
+    let mut espia_acaba = false;
+    while e_carla == 0 && dashos::ahora_us() < hasta {
+        no_carla += contestar_a_cambio(preguntas, 500_000, |_| false).1;
+        if !vivo(espia) {
+            espia_acaba = true;
+            break;
+        }
+    }
+    // Carla sigue un rato con su sesión (el guion teclea y pulsa, y captura la pantalla: la ventana de Ana no está).
+    dashos::dormir_us(3_000_000);
     println!("  [guardian] U6: se bloquea la sesión de Carla; Esc para volver a la de Ana");
     let a_ana = pantalla(Some("Carla"));
     let vuelve = a_ana.as_deref() == Some("Ana");
     let testigo_acaba = e_ana == 0 && esperar_fin(ana, 30_000_000);
-    let bien = carla && espia_acaba && vuelve && testigo_acaba;
+    let permisos = si_ana == 1 && no_carla == 1;
+    println!("  [guardian] U6: el permiso de plazo de cambio, preguntado como Ana {} y como Carla {}: {}", si_ana, no_carla, if permisos { "bien" } else { "MAL" });
+    let bien = carla && espia_acaba && vuelve && testigo_acaba && permisos;
     println!("  [guardian] cambio rápido: Ana, Carla y otra vez Ana: {}", if bien { "bien" } else { "MAL" });
     if !bien {
         println!("  [guardian] U6: entra Carla {}, la espía acaba {}, vuelve Ana {}, el testigo acaba {}", carla, espia_acaba, vuelve, testigo_acaba);

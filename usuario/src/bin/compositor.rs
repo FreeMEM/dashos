@@ -9,6 +9,11 @@
 //! (S10b: se sabe quién es por la marca, no por lo que diga). El protocolo va en `wayland/` (W1 a W6): aquí solo está
 //! lo de DashOS. Las proyecciones de la memoria de los clientes (solo para leer), la pantalla y el bucle.
 //!
+//! U6, el cambio rápido de usuario (`docs/diseño/U6-cambio-rapido.md`): `sesiones` manda también, sin marca, de qué
+//! persona es cada cliente y qué sesiones están detrás (`Escena::aviso_de_sesiones`). Lo de una sesión de detrás no se
+//! pinta ni recibe entrada; sus avisos de `frame` salen a ritmo bajo. Los nombres de lo que lanza `sesiones` sirven
+//! solo para los mensajes: los poderes (escritorio, tema, panel, sistema) siguen siendo por el nombre que da `inicio`.
+//!
 //! Se compone por CPU en un búfer propio y se copia a la pantalla lo dañado. Con dos búferes (el buzón de la Pi) se
 //! pinta en el que no se ve y se cambia con el desplazamiento virtual; como cada búfer se vio hace dos cuadros, se
 //! copian los daños de este cuadro y los del anterior.
@@ -114,6 +119,19 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
         }
     }
     falta
+}
+
+/// U6: los avisos de `frame` de las ventanas de una sesión de detrás, a ritmo bajo (`escena::RITMO_OCULTO_MS`).
+fn avisar_ocultos(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap<Cliente, DeVentanas>, caidos: &mut Vec<Cliente>) {
+    let ms = (dashos::ahora_us() / 1000) as u32;
+    for (cl, aviso) in escena.avisos_ocultos(ms) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_frame(&mut cli.con, aviso, ms);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
 }
 
 /// Un mensaje al buzón (llave 1): palabras en el orden de la CPU; vuelve con la respuesta. `None` si no la aceptó; si
@@ -316,11 +334,16 @@ fn vaciar(c: &mut DeVentanas) -> bool {
     c.cola.vaciar((dashos::ahora_us() / 1000) as u32, plazo, |t| dashos::canal_escribir(respuesta, &t.bytes, &t.llaves) == 0)
 }
 
+/// El nombre de un cliente para los mensajes: el que dio `inicio` o, si lo lanzó `sesiones`, el suyo (U6).
+fn nombre_de<'a>(nombres: &'a BTreeMap<u64, String>, lanzados: &'a BTreeMap<u64, String>, marca: Cliente) -> &'a str {
+    nombres.get(&marca).or_else(|| lanzados.get(&marca)).map_or("?", |s| s)
+}
+
 /// Suelta a un cliente: su escena, sus llaves a medio juntar y su canal de respuesta.
-fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Escena<Proyecciones>, nombres: &BTreeMap<u64, String>, marca: Cliente) {
+fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Escena<Proyecciones>, nombre: &str, marca: Cliente) {
     if let Some(cli) = clientes.remove(&marca) {
         if let Some(e) = &cli.con.roto {
-            println!("  [compositor] error de protocolo de {}: {}", nombres.get(&marca).map_or("?", |s| s), e.texto);
+            println!("  [compositor] error de protocolo de {}: {}", nombre, e.texto);
         }
         escena.adios(marca);
         let mut j = cli.con;
@@ -404,6 +427,8 @@ fn principal() -> u64 {
 
     // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
     let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
+    // U6: los de lo que lanza `sesiones`, solo para los mensajes.
+    let mut lanzados: BTreeMap<u64, String> = BTreeMap::new();
     let mut clientes: BTreeMap<Cliente, DeVentanas> = BTreeMap::new();
     let mut caidos: Vec<Cliente> = Vec::new();
     let mut vistas = 0;
@@ -422,6 +447,8 @@ fn principal() -> u64 {
             (None, true) => Some(2),
             (f, false) => f,
         };
+        // U6: las ventanas de una sesión de detrás que esperan su aviso de frame, a ritmo bajo.
+        let espera = if escena.hay_avisos_ocultos() { Some(espera.map_or(escena::RITMO_OCULTO_MS, |e| e.min(escena::RITMO_OCULTO_MS))) } else { espera };
         let (n, k, marca) = match espera {
             None => match dashos::servicio::recibir(ventanas, &mut buf, &mut ll) {
                 dashos::servicio::Recibido::Mensaje { n, k, marca } => (n, k, marca),
@@ -441,10 +468,11 @@ fn principal() -> u64 {
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         if n == usize::MAX {
             falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
+            avisar_ocultos(&mut escena, &mut clientes, &mut caidos);
             vaciar_todos(&mut clientes, &mut caidos);
             for cl in core::mem::take(&mut caidos) {
-                println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));
-                soltar_cliente(&mut clientes, &mut escena, &nombres, cl);
+                println!("  [compositor] {} no lee sus eventos: se le suelta", nombre_de(&nombres, &lanzados, cl));
+                soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, cl), cl);
             }
             continue;
         }
@@ -454,7 +482,24 @@ fn principal() -> u64 {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             continue;
         }
-        if marca == 0 {
+        // U6: lo que dice `sesiones` (sin marca). Tras ello se compone como tras cualquier mensaje.
+        let de_sesiones = escena.aviso_de_sesiones(marca, &buf[..n]);
+        match &de_sesiones {
+            Some(escena::AvisoSesiones::Persona { marca: m, uid, nombre }) => {
+                let fin = nombre.iter().position(|&b| b == 0).unwrap_or(16);
+                if *uid == 0 {
+                    lanzados.remove(m);
+                } else if !nombres.contains_key(m) {
+                    lanzados.insert(*m, String::from(core::str::from_utf8(&nombre[..fin]).unwrap_or("?")));
+                }
+            }
+            Some(escena::AvisoSesiones::Detras(uids)) => {
+                let ocultos = clientes.keys().filter(|&&c| escena.oculto(c)).count();
+                println!("  [compositor] sesiones de detrás: {:?}; {} clientes sin pantalla ni entrada", uids, ocultos);
+            }
+            None => {}
+        }
+        if marca == 0 && de_sesiones.is_none() {
             if n == 24 {
                 let m = u64::from_le_bytes(buf[..8].try_into().unwrap());
                 let fin = buf[8..24].iter().position(|&b| b == 0).unwrap_or(16);
@@ -481,7 +526,7 @@ fn principal() -> u64 {
                 }
             }
         }
-        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci"));
+        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) && de_sesiones.is_none();
         let mut soltar = false;
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
@@ -513,18 +558,18 @@ fn principal() -> u64 {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });
                 soltar = true;
             }
-            _ if !de_ventanas => {}
+            _ if !de_ventanas => llaves.iter().filter(|_| de_sesiones.is_some()).for_each(|&l| { dashos::cerrar(l); }),
             _ => {
                 llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             }
         }
         if soltar {
-            soltar_cliente(&mut clientes, &mut escena, &nombres, marca);
+            soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, marca), marca);
         }
 
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
-            println!("  [compositor] ventana de {} en ({}, {})", nombres.get(&cl).map_or("?", |s| s), x, y);
+            println!("  [compositor] ventana de {} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
         }
         // La entrada que salió de las peticiones (el teclado a una ventana nueva).
         let ms = (dashos::ahora_us() / 1000) as u32;
@@ -563,13 +608,14 @@ fn principal() -> u64 {
                 }
             }
         }
+        avisar_ocultos(&mut escena, &mut clientes, &mut caidos);
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
         vaciar_todos(&mut clientes, &mut caidos);
         // Los que no leían sus eventos (E8).
         for cl in core::mem::take(&mut caidos) {
-            println!("  [compositor] {} no lee sus eventos: se le suelta", nombres.get(&cl).map_or("?", |s| s));
-            soltar_cliente(&mut clientes, &mut escena, &nombres, cl);
+            println!("  [compositor] {} no lee sus eventos: se le suelta", nombre_de(&nombres, &lanzados, cl));
+            soltar_cliente(&mut clientes, &mut escena, nombre_de(&nombres, &lanzados, cl), cl);
         }
         if escena.orden.len() != vistas {
             vistas = escena.orden.len();

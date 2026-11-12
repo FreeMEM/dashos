@@ -1174,6 +1174,107 @@ mod ventanas {
         assert!(escena.del_sistema.is_empty());
     }
 
+    /// U6, el cambio rápido de usuario: con la sesión de Ana (1000) detrás, su ventana no se pinta, no recibe teclas ni
+    /// clics, no se lleva el teclado y sus avisos de frame salen a ritmo bajo; al volver Ana, se ve otra vez. Quién está
+    /// detrás solo lo dice un mensaje sin marca (de `sesiones`): con la marca de un cliente, nada.
+    #[test]
+    fn sesion_de_detras() {
+        use crate::escena::{AvisoSesiones, Entrada, AVISO_DETRAS, AVISO_PERSONA, RITMO_OCULTO_MS};
+        let persona = |marca: u64, uid: u32| -> Vec<u8> {
+            let mut m = vec![0u8; 32];
+            m[0..4].copy_from_slice(&AVISO_PERSONA.to_le_bytes());
+            m[4..8].copy_from_slice(&uid.to_le_bytes());
+            m[8..16].copy_from_slice(&marca.to_le_bytes());
+            m[16..19].copy_from_slice(b"ana");
+            m
+        };
+        let detras = |uids: &[u32]| -> Vec<u8> {
+            let mut m = vec![0u8; 40];
+            m[0..4].copy_from_slice(&AVISO_DETRAS.to_le_bytes());
+            m[4..8].copy_from_slice(&(uids.len() as u32).to_le_bytes());
+            for (i, u) in uids.iter().enumerate() {
+                m[8 + 4 * i..12 + 4 * i].copy_from_slice(&u.to_le_bytes());
+            }
+            m
+        };
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut ana, mut carla) = (Conexion::new(), Conexion::new());
+        let mut pantalla = vec![0u32; 200 * 150];
+        // De quién es cada cliente: Ana el 1, Carla el 2. Un cliente no puede decirlo.
+        assert_eq!(escena.aviso_de_sesiones(1, &persona(1, 1001)), None);
+        assert!(escena.personas.is_empty());
+        assert!(matches!(escena.aviso_de_sesiones(0, &persona(1, 1000)), Some(AvisoSesiones::Persona { marca: 1, uid: 1000, .. })));
+        escena.aviso_de_sesiones(0, &persona(2, 1001));
+        abrir(&mut escena, &mut ana, 1, 70);
+        abrir(&mut escena, &mut carla, 2, 71);
+        // La de Carla, de otro color: (40, 40) es Ana, (72, 72) Carla.
+        escena.memorias.0.get_mut(&71).unwrap().fill(0x22);
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::DAMAGE).int(0).int(0).int(16).int(16).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut carla, 2, &e);
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!((pantalla[41 * 200 + 41], pantalla[73 * 200 + 73]), (0xFF11_1111, 0xFF22_2222));
+        // Un clic en la de Ana le da el teclado.
+        escena.raton(41, 41, 1);
+        escena.raton(0, 0, 0);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        // El cursor, lejos (se pinta encima de todo); vuelve sobre la de Ana para los clics.
+        escena.raton(100, 100, 0);
+        // Carla (su marca) quiere dejar a Ana detrás: no puede.
+        assert_eq!(escena.aviso_de_sesiones(2, &detras(&[1000])), None);
+        assert!(escena.detras.is_empty() && !escena.oculto(1));
+        // `sesiones`: Carla delante, Ana detrás. Ana pierde el teclado (que pasa a Carla) y el puntero.
+        escena.pendientes.clear();
+        assert_eq!(escena.aviso_de_sesiones(0, &detras(&[1000])), Some(AvisoSesiones::Detras(vec![1000])));
+        assert!(escena.oculto(1) && !escena.oculto(2));
+        assert_eq!(escena.teclado, Some((2, 7)));
+        assert!(escena.pendientes.contains(&(1, Entrada::TecladoSale { superficie: 7 })));
+        assert_eq!(escena.puntero, None);
+        // No se pinta: donde estaba, el fondo; la de Carla sigue.
+        let mut vistos = Vec::new();
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |c, _, _| vistos.push(c));
+        assert_eq!((pantalla[41 * 200 + 41], pantalla[73 * 200 + 73]), (0, 0xFF22_2222));
+        assert!(!escena.raices().iter().any(|r| r.0 == 1));
+        // Ni teclas ni clics: el puntero sobre ella no la encuentra.
+        let teclas = escena.tecla(4, true);
+        assert!(!teclas.is_empty() && teclas.iter().all(|t| t.0 == 2), "{teclas:?}");
+        escena.tecla(4, false);
+        let clics = [escena.raton(-100, -100, 0), escena.raton(1, 1, 1), escena.raton(0, 0, 0), escena.raton(100, 100, 1), escena.raton(0, 0, 0)].concat();
+        assert!(clics.iter().all(|c| c.0 != 1), "{clics:?}");
+        assert_eq!(escena.teclado, Some((2, 7)));
+        // Ni se lleva el teclado con una ventana nueva, aunque nadie escriba.
+        escena.reloj_ms = 100_000;
+        assert!(!escena.puede_tomar_teclado(1));
+        // Sus avisos de frame, a ritmo bajo: al componer, no; pasado el ritmo, sí, y luego otra vez a esperar.
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::FRAME).uint(50).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut ana, 1, &e);
+        assert!(escena.hay_avisos_ocultos());
+        let mut avisados = Vec::new();
+        escena.componer(&mut pantalla, 200, 150, 200, 10, &mut |c, a, _| avisados.push((c, a)));
+        assert!(avisados.is_empty());
+        let t = RITMO_OCULTO_MS * 3;
+        assert_eq!(escena.avisos_ocultos(t), [(1, 50)]);
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::FRAME).uint(51).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut ana, 1, &e);
+        assert!(escena.avisos_ocultos(t + RITMO_OCULTO_MS / 2).is_empty());
+        assert_eq!(escena.avisos_ocultos(t + RITMO_OCULTO_MS), [(1, 51)]);
+        // Vuelve Ana (Carla detrás): se ve otra vez, y la de Carla no.
+        escena.aviso_de_sesiones(0, &detras(&[1001]));
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        assert_eq!((pantalla[41 * 200 + 41], pantalla[73 * 200 + 73]), (0xFF11_1111, 0));
+        assert_eq!(escena.teclado, Some((1, 7)));
+        // Que el 1 sea del sistema (usuario por debajo de 1000): se ve siempre.
+        escena.aviso_de_sesiones(0, &detras(&[1000, 1001]));
+        assert!(escena.oculto(1));
+        escena.aviso_de_sesiones(0, &persona(1, 1));
+        assert!(!escena.oculto(1) && escena.oculto(2));
+    }
+
     #[test]
     fn dos_ventanas_en_cascada() {
         let mut escena = Escena::new(Mem::default(), 0);
