@@ -1193,3 +1193,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   transparencia: medido en el arranque, de 46 a 48 µs por kilopíxel compuesto, frente a 39 a 60 en arranques de antes
   (dentro del ruido, con el PC cargado). Captura. Falta la sombra (en el compositor): sin ella, dos ventanas del mismo
   color se funden al solaparse.
+- Compositor: sombra bajo cada ventana (Material 3, elevación baja: 4 abajo, 14 de difuminado, esquinas de 16, alfa
+  70 bajo la ventana). Es una capa más en la composición por tramos (E8), justo debajo de su ventana, nunca opaca; el
+  alfa sale de la distancia al rectángulo redondeado con raíz entera (sin FPU). Para no dejar restos sin tocar cada
+  sitio que daña una ventana, la escena recuerda dónde pintó sombras y daña lo que cambia. `Escena::sombras` (las
+  pruebas de colores exactos, sin; el compositor, con). Prueba `la_sombra_de_una_ventana`: oscurece justo debajo,
+  nada lejos, y al irse la ventana vuelve el fondo.
+  Medido: la primera versión hacía componer un 70 % más caro (80 a 100 µs por kilopíxel frente a 47): las ventanas
+  del kit, ARGB por sus esquinas, no contaban como opacas y se pintaba debajo, sombra incluida, toda su superficie.
+  Ahora un tramo ARGB del todo opaco también tapa: de 45 a 54 µs por kilopíxel, como sin sombra (dentro del ruido).
+  `captura_ventanas.py` acepta el color oscurecido por una sombra (hasta alfa 70) cerca de los bordes.

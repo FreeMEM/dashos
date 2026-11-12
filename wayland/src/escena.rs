@@ -399,6 +399,11 @@ pub struct Escena<M: Memorias> {
     pub orden: Vec<(Cliente, u32)>,
     /// El color del fondo (XRGB).
     pub fondo: u32,
+    /// Dónde se pintaron sombras en el último cuadro: si una aparece, se mueve o se va, se daña donde estaba y donde
+    /// está (así no quedan restos sin tocar cada sitio que daña una ventana).
+    sombras_antes: Vec<Rect>,
+    /// Si las ventanas echan sombra (el compositor, sí; las pruebas de colores exactos, no).
+    pub sombras: bool,
     /// Daños de la pantalla que aún no se han compuesto (en coordenadas de la pantalla).
     pub danos: Vec<Rect>,
     /// Cuántas ventanas se han colocado: la siguiente va en cascada.
@@ -507,6 +512,8 @@ impl<M: Memorias> Escena<M> {
             temas: Vec::new(),
             avisos_tema: Vec::new(),
             avisos_panel: Vec::new(),
+            sombras_antes: Vec::new(),
+            sombras: false,
             abren_panel: Vec::new(),
             ponen_tema: Vec::new(),
             cursor: (0, 0),
@@ -869,13 +876,33 @@ impl<M: Memorias> Escena<M> {
         }
         // Las superficies de cada ventana, con sus subsuperficies (G3), de abajo arriba, con su sitio en la pantalla.
         let mut capas: Vec<(Cliente, u32, i32, i32)> = Vec::new();
+        // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada.
+        let mut sombras: Vec<(usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
+            if self.sombras
+                && self.bloqueo.is_none()
+                && let Some(r) = rect_de(cli, id)
+            {
+                sombras.push((capas.len(), r));
+            }
             let mut a = Vec::new();
             arbol(cli, id, x, y, &mut a);
             capas.extend(a.into_iter().map(|(s, x, y)| (c, s, x, y)));
         }
+        let ahora: Vec<Rect> = sombras.iter().map(|s| sombra_fuera(s.1)).collect();
+        for r in &self.sombras_antes {
+            if !ahora.contains(r) {
+                self.danos.push(*r);
+            }
+        }
+        for r in &ahora {
+            if !self.sombras_antes.contains(r) {
+                self.danos.push(*r);
+            }
+        }
+        self.sombras_antes = ahora;
         // Los daños de cada superficie, pasados a la pantalla.
         for &(c, id, x, y) in &capas {
             if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
@@ -911,13 +938,20 @@ impl<M: Memorias> Escena<M> {
                 }
             }
         }
-        // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer).
-        let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer)> = Vec::new();
-        for &(c, id, x, y) in &capas {
+        // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer, sombra). Una sombra va como
+        // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
+        let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<Rect>)> = Vec::new();
+        let mut s_i = 0;
+        for (k, &(c, id, x, y)) in capas.iter().enumerate() {
+            while s_i < sombras.len() && sombras[s_i].0 == k {
+                let v = sombras[s_i].1;
+                con_bufer.push((sombra_fuera(v), 0, 0, &[], crate::shm::Bufer::default(), Some(v)));
+                s_i += 1;
+            }
             let cli = &self.clientes[&c];
             let Some(b) = cli.superficies[&id].bufer else { continue };
             let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
-            con_bufer.push((Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }, x, y, px, bufer));
+            con_bufer.push((Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }, x, y, px, bufer, None));
         }
         // E8: por cada fila dañada, tramos entre los bordes de las capas. En cada tramo se empieza por la capa opaca
         // (XRGB) más alta que lo cubre, o por el fondo si no hay: lo que queda debajo de una opaca no se pinta.
@@ -945,13 +979,35 @@ impl<M: Memorias> Escena<M> {
                         let r = &con_bufer[*k].0;
                         r.x <= a && r.x + r.w >= b
                     };
-                    let desde = activas.iter().rposition(|k| cubre(k) && con_bufer[*k].4.formato != ARGB8888);
+                    // Un tramo ARGB del todo opaco también tapa (las ventanas del kit son ARGB por sus esquinas
+                    // redondeadas: si no, se pintaría debajo, sombra incluida, toda su superficie).
+                    let opaco_en = |k: usize| {
+                        let (_, x, y, px, bufer, sombra) = &con_bufer[k];
+                        if sombra.is_some() {
+                            return false;
+                        }
+                        if bufer.formato != ARGB8888 {
+                            return true;
+                        }
+                        let origen = (fila - y) as usize * bufer.linea + (a - x) as usize * 4;
+                        px[origen..origen + 4 * (b - a) as usize].chunks_exact(4).all(|o| o[3] == 255)
+                    };
+                    let desde = activas.iter().rposition(|k| cubre(k) && opaco_en(*k));
                     let destino = &mut pantalla[base_fila + a as usize..base_fila + b as usize];
                     if desde.is_none() {
                         destino.fill(fondo);
                     }
                     for k in activas[desde.unwrap_or(0)..].iter().filter(|k| cubre(k)) {
-                        let (_, x, y, px, bufer) = &con_bufer[*k];
+                        if let Some(v) = con_bufer[*k].5 {
+                            for (j, d) in destino.iter_mut().enumerate() {
+                                let al = alfa_sombra(v, a + j as i32, fila);
+                                if al > 0 {
+                                    *d = mezclar(al << 24, *d);
+                                }
+                            }
+                            continue;
+                        }
+                        let (_, x, y, px, bufer, _) = &con_bufer[*k];
                         let origen = (fila - y) as usize * bufer.linea + (a - x) as usize * 4;
                         let de = &px[origen..origen + 4 * destino.len()];
                         // Un tramo ARGB del todo opaco (en una ventana, casi siempre) se copia; si no, se mezcla entero,
@@ -991,6 +1047,39 @@ impl<M: Memorias> Escena<M> {
         }
         danos
     }
+}
+
+/// La sombra de una ventana (Material 3, elevación baja): 4 abajo, difuminada en `SOMBRA_BORROSA`, con las esquinas de
+/// las ventanas del kit (16).
+const SOMBRA_BAJA: i32 = 4;
+const SOMBRA_BORROSA: i32 = 14;
+const SOMBRA_RADIO: i32 = 16;
+/// Lo más oscura (de 255), bajo la ventana.
+const SOMBRA_ALFA: u32 = 70;
+
+/// Lo que ocupa la sombra de la ventana `v` en la pantalla.
+fn sombra_fuera(v: Rect) -> Rect {
+    Rect { x: v.x - SOMBRA_BORROSA, y: v.y + SOMBRA_BAJA - SOMBRA_BORROSA, w: v.w + 2 * SOMBRA_BORROSA, h: v.h + 2 * SOMBRA_BORROSA }
+}
+
+/// El alfa de la sombra de `v` en (x, y): por la distancia al rectángulo redondeado (bajado `SOMBRA_BAJA`), cayendo
+/// en cuadrado. Sin coma flotante (el compositor no tiene FPU): la raíz, entera.
+fn alfa_sombra(v: Rect, x: i32, y: i32) -> u32 {
+    let r = SOMBRA_RADIO.min(v.w / 2).min(v.h / 2);
+    let (x0, y0, x1, y1) = (v.x + r, v.y + SOMBRA_BAJA + r, v.x + v.w - r, v.y + SOMBRA_BAJA + v.h - r);
+    let dx = if x < x0 { x0 - x } else if x >= x1 { x - x1 + 1 } else { 0 };
+    let dy = if y < y0 { y0 - y } else if y >= y1 { y - y1 + 1 } else { 0 };
+    let q = (dx * dx + dy * dy) as u32;
+    let lejos = (r + SOMBRA_BORROSA) as u32;
+    if q >= lejos * lejos {
+        return 0;
+    }
+    let dist = q.isqrt() as i32 - r;
+    if dist <= 0 {
+        return SOMBRA_ALFA;
+    }
+    let f = (SOMBRA_BORROSA - dist).max(0) as u32;
+    SOMBRA_ALFA * f * f / (SOMBRA_BORROSA * SOMBRA_BORROSA) as u32
 }
 
 /// Un píxel ARGB premultiplicado (como manda Wayland) sobre el fondo.

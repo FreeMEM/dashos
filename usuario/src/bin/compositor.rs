@@ -393,6 +393,8 @@ fn principal() -> u64 {
     let (ancho, alto) = (p.ancho as i32, p.alto as i32);
     let mut c = Compositor { marco: vec![0; (p.ancho * p.alto) as usize], p, visible: 0, danos_previos: Vec::new() };
     let mut escena = Escena::new(Proyecciones::default(), FONDO);
+    // Material 3: las ventanas echan sombra.
+    escena.sombras = true;
     let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
     c.presentar(&danos);
     if c.p.doble {

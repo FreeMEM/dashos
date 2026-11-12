@@ -58,7 +58,7 @@ struct Pool {
     dmabuf: bool,
 }
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Bufer {
     pub pool: u32,
     pub desplazamiento: usize,

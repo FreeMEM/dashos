@@ -55,6 +55,10 @@ def main():
     def casi(a, b):
         return all(abs(x - y) <= 2 for x, y in zip(a, b))
 
+    def casi_o_sombra(a, b):
+        """El color, o el mismo oscurecido por la sombra de una ventana (Material 3: alfa de 70 como mucho)."""
+        return casi(a, b) or all(y * 185 // 255 - 3 <= x <= y + 2 for x, y in zip(a, b))
+
     fallos = []
     if not casi(en(5, 5), FONDO):
         fallos.append(f"fondo en (5, 5): {en(5, 5)}")
@@ -95,7 +99,8 @@ def main():
         ((75, 72 + 115), BLANCO),
     ]
     ordenes = (orden1, orden2, orden3, orden4)
-    vale = [all(casi(en(x, y), c) for (x, y), c in o) for o in ordenes]
+    # Con sombras, los puntos cerca de un borde o bajo lo semitransparente pueden salir oscurecidos.
+    vale = [all(casi_o_sombra(en(x, y), c) for (x, y), c in o) for o in ordenes]
     if not any(vale):
         detalle = ", ".join(f"({x}, {y}) = {en(x, y)}" for (x, y), _ in orden1 + orden2 + orden3 + orden4)
         fallos.append(f"las ventanas no están donde deben: {detalle}")

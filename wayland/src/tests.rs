@@ -454,6 +454,29 @@ mod composicion {
         assert!(con.roto.is_none(), "{:?}", con.roto);
     }
 
+    /// Material 3: con sombras, una ventana oscurece el fondo justo debajo de ella y nada lejos; al irse, su sombra
+    /// también (sin restos).
+    #[test]
+    fn la_sombra_de_una_ventana() {
+        let mut escena = Escena::new(Compartida::default(), 0xFF80_8080);
+        escena.sombras = true;
+        let mut a = Conexion::new();
+        cliente(&mut escena, &mut a, 1, 70, 20, 10, 0xFFFF_0000, XRGB8888);
+        escena.colocar(1, 7, 30, 30);
+        let (w, h) = (100, 80);
+        let mut pantalla = vec![0u32; (w * h) as usize];
+        escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+        let px = |p: &[u32], x: i32, y: i32| p[(y * w + x) as usize];
+        assert_eq!(px(&pantalla, 35, 35), 0xFFFF_0000, "la ventana");
+        let bajo = px(&pantalla, 40, 42);
+        assert!(bajo & 0xff < 0x80, "justo debajo, más oscuro: {bajo:08x}");
+        assert_eq!(px(&pantalla, 5, 5), 0xFF80_8080, "lejos, el fondo");
+        // Se va: donde estaba la sombra vuelve el fondo.
+        escena.adios(1);
+        escena.componer(&mut pantalla, w, h, w as usize, 0, &mut |_, _, _| {});
+        assert_eq!(px(&pantalla, 40, 42), 0xFF80_8080, "quedó un resto de la sombra");
+    }
+
     #[test]
     fn dos_ventanas_apiladas_y_avisos() {
         let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);
