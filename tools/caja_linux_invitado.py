@@ -123,7 +123,8 @@ CONFIG_MODULES=n
 # con Landlock). El disco es un ext4 (la partición de la caja en el NVMe de DashOS, por virtio-blk) y la hora sale del
 # PL031 que emula la caja. Sin módulos: los de Arch son de su propio kernel (linux-aarch64, una Image de 42 MB que
 # necesita los suyos en un initramfs de 15 MB), que no se usa: con 57 MB entre los dos, sin probar, es dudoso que quepa en
-# el paquete de arranque de DashOS (la del defconfig, de 74 MB, no cabía). La de aquí mide 7 MB.
+# el paquete de arranque de DashOS (la del defconfig, de 74 MB, no cabía). La de aquí mide 7 MB. Con vsock (virtio-vsock):
+# por ahí habla el puente de Wayland con DashOS.
 FRAGMENTO_ARCH = FRAGMENTO_CAJA + """
 CONFIG_LOCALVERSION="-caja"
 CONFIG_SYSVIPC=y
@@ -183,6 +184,9 @@ CONFIG_MAGIC_SYSRQ=y
 CONFIG_SECURITY=y
 CONFIG_SECURITY_LANDLOCK=y
 CONFIG_LSM="landlock"
+CONFIG_VSOCKETS=y
+CONFIG_VIRTIO_VSOCKETS=y
+CONFIG_MEMFD_CREATE=y
 """
 
 INIT = r"""#!/bin/sh
@@ -457,6 +461,36 @@ ARCH_QUITAR = {"./etc/systemd/system/sysinit.target.wants/systemd-timesyncd.serv
                "./etc/systemd/system/dbus-org.freedesktop.timesync1.service"}
 
 
+# El puente de Wayland (H9): el servicio que lo arranca solo (con el socket en /run/wayland-0) y WAYLAND_DISPLAY para
+# las shells. Los programas de Linux se conectan a él como a cualquier compositor; él lo pasa a DashOS por vsock.
+ARCH_FICHEROS.update({
+    "./etc/systemd/system/dashos-puente.service":
+        "[Unit]\nDescription=Puente de Wayland de DashOS: las ventanas de Linux, en el escritorio de DashOS (vsock)\n\n"
+        "[Service]\nExecStart=/usr/local/bin/puente /run/wayland-0 vsock:5000\nRestart=always\nRestartSec=1\n\n"
+        "[Install]\nWantedBy=multi-user.target\n",
+    "./etc/profile.d/dashos-wayland.sh":
+        "# La caja Linux de DashOS: los programas gráficos van al puente de Wayland (sus ventanas salen en DashOS).\n"
+        "export WAYLAND_DISPLAY=/run/wayland-0\n",
+})
+# La prueba de foot (`make arranque-virt-wayland`): abre foot con una shell que dice por hvc0 (la terminal de la caja,
+# que va al registro de DashOS) que está lista y lo que se teclee en su ventana.
+ARCH_GUIONES = {
+    "./usr/local/bin/prueba-foot":
+        "#!/bin/sh\n# Una terminal de Wayland de verdad (foot) en una ventana de DashOS; lo que se teclea en ella sale por hvc0.\n"
+        "exec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
+        "read x; echo \"foot: leido $x\" > /dev/hvc0; echo \"leido: $x\"; sleep 3'\n",
+}
+ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.service":
+                "/etc/systemd/system/dashos-puente.service"}
+# Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
+# comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu"]
+ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
+ARCH_REPOS = ["core", "extra", "alarm"]
+PAQUETES = ARCH / "paquetes"
+SYSROOT = ARCH / "sysroot"
+
+
 def arch_bajar():
     ARCH.mkdir(parents=True, exist_ok=True)
     tar = ARCH / "ArchLinuxARM-aarch64-latest.tar.gz"
@@ -485,9 +519,12 @@ def arch_bajar():
     return tar
 
 
-def arch_tar(origen, destino):
-    """El tar del rootfs con los cambios de ARCH_FICHEROS, ARCH_MASCARAS y ARCH_QUITAR; sin comprimir, para mke2fs."""
+def arch_tar(origen, destino, paquetes=(), propios=()):
+    """El tar del rootfs con los cambios de ARCH_FICHEROS, ARCH_MASCARAS y ARCH_QUITAR, los paquetes de `paquetes`
+    (instalados a mano: sus ficheros y su entrada en la base de pacman) y los ficheros `propios` (ruta del invitado,
+    fichero del PC); sin comprimir, para mke2fs."""
     hecho = set()
+    nombres = set()
     mtime_usr = 0
     tmp = destino.with_suffix(".part")
     with tarfile.open(origen, "r:gz") as ent, tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as sal:
@@ -496,6 +533,7 @@ def arch_tar(origen, destino):
                 continue
             if m.name == "./usr":
                 mtime_usr = m.mtime
+            nombres.add(m.name.rstrip("/"))
             if m.name in ARCH_FICHEROS:
                 datos = ARCH_FICHEROS[m.name].encode()
                 m.size = len(datos)
@@ -514,12 +552,52 @@ def arch_tar(origen, destino):
         nuevos = [n for n in ARCH_FICHEROS if n not in hecho]
         carpetas = sorted({n.rsplit("/", 1)[0] for n in nuevos})
         for c in carpetas:
-            if c not in ("./etc", "./etc/systemd", "./etc/systemd/system"):
+            if c not in nombres and c not in ("./etc", "./etc/systemd", "./etc/systemd/system"):
                 poner(c, tarfile.DIRTYPE, modo=0o755)
         for n in nuevos:
             poner(n, datos=ARCH_FICHEROS[n].encode())
         for s in ARCH_MASCARAS:
             poner(f"./etc/systemd/system/{s}", tarfile.SYMTYPE, enlace="/dev/null", modo=0o777)
+        for n, e in ARCH_ENLACES.items():
+            poner(n, tarfile.SYMTYPE, enlace=e, modo=0o777)
+        for n, d in ARCH_GUIONES.items():
+            poner(n, datos=d.encode(), modo=0o755)
+        # Los paquetes: sus ficheros (sin repetir lo que ya hay) y su entrada en /var/lib/pacman/local.
+        for pk in paquetes:
+            with tarfile.open(pk) as t:
+                info = {}
+                ficheros = []
+                for m in t:
+                    if m.name in (".PKGINFO", ".BUILDINFO", ".MTREE", ".INSTALL", ".CHANGELOG"):
+                        if m.name == ".PKGINFO":
+                            for l in t.extractfile(m).read().decode().splitlines():
+                                if " = " in l and not l.startswith("#"):
+                                    k, v = l.split(" = ", 1)
+                                    info.setdefault(k, []).append(v)
+                        continue
+                    nombre = "./" + m.name.lstrip("./").rstrip("/")
+                    ficheros.append(m.name.rstrip("/") + ("/" if m.isdir() else ""))
+                    if nombre in nombres:
+                        continue
+                    nombres.add(nombre)
+                    m.name = nombre
+                    m.uid = m.gid = 0
+                    m.uname = m.gname = "root"
+                    sal.addfile(m, t.extractfile(m) if m.isreg() else None)
+            nv = f"{info['pkgname'][0]}-{info['pkgver'][0]}"
+            desc = [("NAME", info["pkgname"]), ("VERSION", info["pkgver"]), ("BASE", info.get("pkgbase", [])),
+                    ("DESC", info.get("pkgdesc", [])), ("URL", info.get("url", [])), ("ARCH", info.get("arch", [])),
+                    ("BUILDDATE", info.get("builddate", [])), ("INSTALLDATE", [str(ahora)]),
+                    ("PACKAGER", info.get("packager", [])), ("SIZE", info.get("size", [])), ("REASON", ["1"]),
+                    ("LICENSE", info.get("license", [])), ("DEPENDS", info.get("depend", [])),
+                    ("PROVIDES", info.get("provides", []))]
+            texto = "".join(f"%{k}%\n" + "".join(x + "\n" for x in v) + "\n" for k, v in desc if v)
+            poner(f"./var/lib/pacman/local/{nv}", tarfile.DIRTYPE, modo=0o755)
+            poner(f"./var/lib/pacman/local/{nv}/desc", datos=texto.encode())
+            poner(f"./var/lib/pacman/local/{nv}/files",
+                  datos=("%FILES%\n" + "".join(f + "\n" for f in sorted(ficheros)) + "\n").encode())
+        for destino_inv, fichero in propios:
+            poner(destino_inv, datos=Path(fichero).read_bytes(), modo=0o755)
         # /etc y /var al día respecto de /usr (ConditionNeedsUpdate): sin ldconfig, hwdb ni catálogo en el primer
         # arranque (el rootfs ya los trae hechos).
         marca = (f"TIMESTAMP_NSEC={mtime_usr * 1_000_000_000}\n").encode()
@@ -528,11 +606,17 @@ def arch_tar(origen, destino):
     tmp.rename(destino)
 
 
-def arch_disco(tar):
+def arch_disco(tar, paquetes=(), propios=()):
     raiz = ARCH / "raiz.tar"
-    if not raiz.exists() or raiz.stat().st_mtime < tar.stat().st_mtime:
+    # Se rehace si cambia lo que lleva (los paquetes, lo propio, este fichero) o el rootfs.
+    huella = hashlib.sha256(json.dumps([str(tar), tar.stat().st_mtime, [str(p) for p in paquetes],
+                                        [(d, str(f), Path(f).stat().st_mtime) for d, f in propios],
+                                        Path(__file__).read_text()]).encode()).hexdigest()
+    marca = raiz.with_suffix(".huella")
+    if not raiz.exists() or not marca.exists() or marca.read_text() != huella:
         print("haciendo", raiz, flush=True)
-        arch_tar(tar, raiz)
+        arch_tar(tar, raiz, paquetes, propios)
+        marca.write_text(huella)
     tmp = DISCO_ARCH.with_suffix(".part")
     if tmp.exists():
         tmp.unlink()
@@ -566,15 +650,167 @@ def poner_dashos(args):
     print(f"RedoxFS de {nvme} en la partición de DashOS de {disco}")
 
 
+def arch_bases():
+    """Las bases de datos de los repositorios de Arch Linux ARM: nombre → (repo, desc) y lo que da cada paquete."""
+    PAQUETES.mkdir(parents=True, exist_ok=True)
+    por_nombre, da = {}, {}
+    for repo in ARCH_REPOS:
+        db = PAQUETES / f"{repo}.db"
+        # Las bases cambian a diario: se bajan si tienen más de un día.
+        if db.exists() and time.time() - db.stat().st_mtime > 86400:
+            db.unlink()
+        bajar(f"{ARCH_REPO}/{repo}/{repo}.db", db)
+        # Cada paquete es una carpeta con `desc` y, en algunas bases, `depends` aparte: se juntan.
+        carpetas = {}
+        with tarfile.open(db) as t:
+            for m in t:
+                if not m.isreg() or "/" not in m.name:
+                    continue
+                campos, clave = carpetas.setdefault(m.name.rsplit("/", 1)[0], {}), None
+                for l in t.extractfile(m).read().decode().splitlines():
+                    if l.startswith("%") and l.endswith("%"):
+                        clave = l.strip("%")
+                        campos[clave] = []
+                    elif l and clave:
+                        campos[clave].append(l)
+        for campos in carpetas.values():
+            if "NAME" in campos:
+                nombre = campos["NAME"][0]
+                por_nombre.setdefault(nombre, (repo, campos))
+                for x in campos.get("PROVIDES", []):
+                    da.setdefault(x.split("=")[0], nombre)
+    return por_nombre, da
+
+
+def arch_instalados(tar):
+    """Lo que ya trae el rootfs: nombres de paquete y lo que dan."""
+    cache = ARCH / "instalados.json"
+    if cache.exists() and cache.stat().st_mtime > tar.stat().st_mtime:
+        return set(json.loads(cache.read_text()))
+    hay = set()
+    with tarfile.open(tar, "r:gz") as t:
+        for m in t:
+            if m.name.startswith("./var/lib/pacman/local/") and m.name.endswith("/desc"):
+                clave = None
+                for l in t.extractfile(m).read().decode().splitlines():
+                    if l.startswith("%") and l.endswith("%"):
+                        clave = l.strip("%")
+                    elif l and clave in ("NAME", "PROVIDES"):
+                        hay.add(l.split("=")[0])
+    cache.write_text(json.dumps(sorted(hay)))
+    return hay
+
+
+def arch_paquetes(tar):
+    """Baja `ARCH_PAQUETES` y lo que necesiten que no traiga el rootfs, con su suma y su firma comprobadas (la firma,
+    con el anillo de claves de Arch Linux ARM que trae el propio rootfs). Devuelve los ficheros, en orden."""
+    por_nombre, da = arch_bases()
+    hay = arch_instalados(tar)
+    quiero, cola = [], list(ARCH_PAQUETES)
+    while cola:
+        dep = cola.pop(0)
+        nombre = dep
+        for op in (">=", "<=", "=", ">", "<"):
+            nombre = nombre.split(op)[0]
+        if nombre in hay:
+            continue
+        real = nombre if nombre in por_nombre else da.get(nombre)
+        if real is None:
+            raise SystemExit(f"el paquete {nombre} no está en {ARCH_REPOS}")
+        if real in quiero:
+            continue
+        quiero.append(real)
+        hay.add(real)
+        cola.extend(por_nombre[real][1].get("DEPENDS", []))
+    print("paquetes de Arch Linux ARM para la imagen:", " ".join(quiero), flush=True)
+    with tempfile.TemporaryDirectory() as gpg:
+        entorno = dict(os.environ, GNUPGHOME=gpg)
+        with tarfile.open(tar) as t:
+            (Path(gpg) / "anillo.gpg").write_bytes(t.extractfile("./usr/share/pacman/keyrings/archlinuxarm.gpg").read())
+            revocadas = t.extractfile("./usr/share/pacman/keyrings/archlinuxarm-revoked").read().decode().split()
+        subprocess.run(["gpg", "-q", "--import", Path(gpg) / "anillo.gpg"], env=entorno, check=True, capture_output=True)
+        ficheros = []
+        for n in quiero:
+            repo, d = por_nombre[n]
+            f = PAQUETES / d["FILENAME"][0]
+            bajar(f"{ARCH_REPO}/{repo}/{f.name}", f)
+            bajar(f"{ARCH_REPO}/{repo}/{f.name}.sig", Path(str(f) + ".sig"))
+            if hashlib.sha256(f.read_bytes()).hexdigest() != d["SHA256SUM"][0]:
+                f.unlink()
+                raise SystemExit(f"la suma de {f.name} no casa con la de la base de {repo}: borrado, vuelve a probar")
+            r = subprocess.run(["gpg", "--status-fd", "1", "--verify", str(f) + ".sig", f], env=entorno,
+                               capture_output=True, text=True)
+            firma = [l.split()[2] for l in r.stdout.splitlines() if l.startswith("[GNUPG:] VALIDSIG")]
+            if not firma or firma[0] in revocadas:
+                raise SystemExit(f"la firma de {f.name} no es de una clave de Arch Linux ARM:\n{r.stdout}{r.stderr}")
+            ficheros.append(f)
+    print(f"{len(ficheros)} paquetes: suma y firma bien", flush=True)
+    return ficheros
+
+
+def arch_sysroot(tar, paquetes):
+    """Lo justo para compilar en el PC un programa de C para Arch Linux ARM: las cabeceras y las bibliotecas de
+    /usr/lib del rootfs y de los paquetes."""
+    hecho = SYSROOT / ".hecho"
+    if hecho.exists() and hecho.stat().st_mtime > tar.stat().st_mtime:
+        return SYSROOT
+    if SYSROOT.exists():
+        shutil.rmtree(SYSROOT)
+    SYSROOT.mkdir(parents=True)
+
+    def sirve(nombre):
+        n = nombre.lstrip("./")
+        return n.startswith("usr/include/") or (n.startswith("usr/lib/") and "/" not in n[len("usr/lib/"):])
+
+    for origen in [tar, *paquetes]:
+        with tarfile.open(origen) as t:
+            t.extractall(SYSROOT, members=[m for m in t if sirve(m.name) and (m.isreg() or m.issym() or m.isdir())],
+                         filter="tar")
+    # Como en Arch: /lib es /usr/lib (así sirve también para probar con qemu-aarch64 -L).
+    (SYSROOT / "lib").symlink_to("usr/lib")
+    hecho.write_text("")
+    return SYSROOT
+
+
+def arch_ventana(sysroot):
+    """El cliente de prueba (caja-linux/invitado/ventana_wayland.c), para aarch64 con el libwayland de Arch."""
+    sal = ARCH / "ventana_wayland"
+    fuente = RAIZ / "caja-linux/invitado/ventana_wayland.c"
+    gen = ARCH / "gen"
+    gen.mkdir(exist_ok=True)
+    xml = "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
+    run("wayland-scanner", "client-header", xml, gen / "xdg-shell-client-protocol.h")
+    run("wayland-scanner", "private-code", xml, gen / "xdg-shell-protocol.c")
+    lib = sysroot / "usr/lib"
+    run("clang", "--target=aarch64-linux-gnu", f"--sysroot={sysroot}", "-fuse-ld=lld", "-O2", "-Wall", "-nostdlib",
+        f"-I{gen}", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente, gen / "xdg-shell-protocol.c",
+        "-lwayland-client", "-lc", lib / "crtn.o")
+    return sal
+
+
+def arch_puente():
+    """El puente de Wayland (puente/, Rust) para aarch64, estático (musl)."""
+    run("cargo", "build", "--release", "--quiet", "--offline", "--manifest-path", RAIZ / "puente/Cargo.toml",
+        "--target", "aarch64-unknown-linux-musl", "--bin", "puente",
+        env=dict(os.environ, CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER="rust-lld"))
+    return RAIZ / "puente/target/aarch64-unknown-linux-musl/release/puente"
+
+
 def preparar_arch(_args):
-    """Image-arch (el kernel) y el disco de Arch Linux ARM, en ~/.cache/dashos-caja-linux."""
+    """Image-arch (el kernel) y el disco de Arch Linux ARM, en ~/.cache/dashos-caja-linux, con el puente de Wayland,
+    el cliente de prueba y los paquetes de `ARCH_PAQUETES` ya dentro."""
     CACHE.mkdir(parents=True, exist_ok=True)
     kernel_pequeno("Image-arch", FRAGMENTO_ARCH, "linux-build-arch")
     tar = arch_bajar()
-    if DISCO_ARCH.exists() and DISCO_ARCH.stat().st_mtime > max(tar.stat().st_mtime, Path(__file__).stat().st_mtime):
+    paquetes = arch_paquetes(tar)
+    ventana = arch_ventana(arch_sysroot(tar, paquetes))
+    puente = arch_puente()
+    propios = [("./usr/local/bin/puente", puente), ("./usr/local/bin/ventana_wayland", ventana)]
+    fuentes = [tar, Path(__file__), puente, ventana, *paquetes]
+    if DISCO_ARCH.exists() and DISCO_ARCH.stat().st_mtime > max(f.stat().st_mtime for f in fuentes):
         print("ya está", DISCO_ARCH)
     else:
-        arch_disco(tar)
+        arch_disco(tar, paquetes, propios)
 
 
 # La placa virt de QEMU, sacada de su DTB (qemu-system-aarch64 -M virt,dumpdtb=x.dtb): GICv2 en 0x08000000 (CPU en

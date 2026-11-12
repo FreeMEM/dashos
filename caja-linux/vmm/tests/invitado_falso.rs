@@ -888,9 +888,16 @@ fn vsock_conexion() {
     // Datos del invitado (la conexión es la 2: el número 1 fue el intento al puerto 7).
     b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 5), b"hola!");
     assert_eq!(b.enchufes.0.borrow().llegado[&2], b"hola!");
-    // Le llega el crédito liberado.
+    // Con tan poco, no hace falta decirle el crédito: no le llega nada.
+    assert!(b.vs_recibido(&mut v, &bufs).is_empty());
+    // Con 70 000 bytes más (en paquetes de 10 000), sí: lo que se liberó.
+    for _ in 0..7 {
+        b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 10_000), &[3u8; 10_000]);
+    }
     let r = b.vs_recibido(&mut v, &bufs);
-    assert_eq!((r[0].0.op, r[0].0.fwd_cnt), (vsock::OP_CREDIT_UPDATE, 5));
+    assert_eq!(r.len(), 1);
+    assert_eq!((r[0].0.op, r[0].0.fwd_cnt), (vsock::OP_CREDIT_UPDATE, 70_005));
+    v.libre = BUF + 0x2_0000;
     // Datos de DashOS: 10 000 bytes en búferes de 4096 (con cabecera, 4052 por paquete).
     b.enchufes.0.borrow_mut().salen.get_mut(&2).unwrap().extend((0..10_000).map(|i| i as u8));
     b.m.sondear();
@@ -925,23 +932,31 @@ fn vsock_conexion() {
     assert!(!b.necesita_reinicio(VSOCK));
 }
 
-/// El extremo toma poco a poco: lo que no toma espera en el aparato, y el crédito se anuncia según lo toma.
+/// El extremo toma poco a poco: lo que no toma espera en el aparato (sin perderse) y, cuando el invitado ya casi no
+/// tiene crédito, se le anuncia el que se libera.
 #[test]
 fn vsock_extremo_lento() {
     let mut b = banco();
     let mut v = b.vsock();
     let bufs = b.vs_buferes(&mut v, 16, 4096);
     b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 1025, 5000, 0), &[]);
+    assert_eq!(b.vs_recibido(&mut v, &bufs)[0].0.op, vsock::OP_RESPONSE);
     b.enchufes.0.borrow_mut().toma = Some(0);
-    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 3000), &[9u8; 3000]);
+    // Casi todo su crédito (250 000 de 262 144), sin que el extremo tome nada.
+    for i in 0..5u8 {
+        b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 50_000), &[i; 50_000]);
+        v.libre = BUF + 0x1_0000;
+    }
     assert!(b.enchufes.0.borrow().llegado[&1].is_empty());
+    assert!(b.vs_recibido(&mut v, &bufs).is_empty());
+    // Toma de 1000 en 1000 (el aparato le da todo lo que espera, a trozos): el invitado sabe que tiene sitio.
     b.enchufes.0.borrow_mut().toma = Some(1000);
     b.m.sondear();
-    b.m.sondear();
-    b.m.sondear();
-    assert_eq!(b.enchufes.0.borrow().llegado[&1].len(), 3000);
     let r = b.vs_recibido(&mut v, &bufs);
-    assert_eq!(r.last().unwrap().0.fwd_cnt, 3000);
+    assert_eq!((r[0].0.op, r[0].0.fwd_cnt), (vsock::OP_CREDIT_UPDATE, 250_000));
+    let llegado = b.enchufes.0.borrow().llegado[&1].clone();
+    assert_eq!(llegado.len(), 250_000);
+    assert!(llegado.chunks(50_000).enumerate().all(|(i, c)| c.iter().all(|&x| x == i as u8)), "en orden");
 }
 
 /// Hostiles: CID falso, tipo que no es de flujo, cabecera corta, largo mayor que lo que trae o que un paquete, datos

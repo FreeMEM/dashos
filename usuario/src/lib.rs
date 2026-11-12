@@ -278,8 +278,9 @@ pub mod maquina {
     pub const REGISTROS: usize = 33;
 
     /// Lo que necesita el servicio de la caja Linux además de la RAM de su invitado: las tablas de la etapa 2, su
-    /// montón (el disco del invitado, la ventana de la terminal) y las pilas de sus hilos.
-    pub const MARGEN_SERVICIO: u64 = 32 << 20;
+    /// montón (el disco del invitado, la ventana de la terminal), las pilas de sus hilos y las memorias del puente de
+    /// Wayland (los búferes de los programas gráficos de Linux, hasta `wayland::puente::MAX_MEMORIA_TOTAL`, 24 MB).
+    pub const MARGEN_SERVICIO: u64 = 56 << 20;
 
     /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisión del usuario del
     /// 2026-11-12): 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con menos. La caja pide eso más

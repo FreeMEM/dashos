@@ -37,6 +37,7 @@ use caja_vmm::psci::{self, AccionPsci, Psci};
 use caja_vmm::virtio::bloque::{Bloque, Bloques, ErrorBloques};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
 use caja_vmm::virtio::mmio::TransporteMmio;
+use caja_vmm::virtio::vsock::Vsock;
 use core::cell::{RefCell, UnsafeCell};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 use dashos::maquina::{self as m, Informe};
@@ -49,6 +50,8 @@ mod ventana_cliente;
 #[path = "../terminal.rs"]
 #[allow(dead_code)]
 mod terminal;
+#[path = "../puente_caja.rs"]
+mod puente_caja;
 
 use kit::lienzo::{Lienzo, Rect};
 use kit::teclado::{Tecla, Teclado};
@@ -1686,12 +1689,19 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
         && maq.añadir(v1.base, v1.spi, Box::new(TransporteMmio::nuevo(Bloque::nuevo(bloques)))).is_ok();
     let con_red = red.is_some();
     let puestos = puestos && red.is_none_or(|r| maq.añadir(v2.base, v2.spi, Box::new(TransporteMmio::nuevo(caja_vmm::virtio::red::Red::nueva(Box::new(r), mac)))).is_ok());
+    // Con Arch y el compositor: vsock, para el puente de Wayland (los programas gráficos de Linux, en ventanas de
+    // DashOS). Va en el transporte siguiente al último.
+    let n_virtio = if con_red { 3 } else { 2 };
+    let wayland = arch && l.ventanas.is_some_and(puente_caja::abrir);
+    let v3 = disposicion::virtio(n_virtio);
+    let puestos = puestos && (!wayland || maq.añadir(v3.base, v3.spi, Box::new(TransporteMmio::nuevo(Vsock::nuevo(Box::new(puente_caja::ExtremoPuente))))).is_ok());
+    let n_virtio = n_virtio + wayland as u32;
     let bootargs = match (arch, terminal) {
         (true, _) => String::from(BOOTARGS_ARCH),
         (false, true) => alloc::format!("{} caja.terminal", BOOTARGS),
         (false, false) => String::from(BOOTARGS),
     };
-    let mut config = disposicion::config(tam_ram as u64, VCPUS_LINUX as u32, if con_red { 3 } else { 2 }, bootargs, plan.initrd);
+    let mut config = disposicion::config(tam_ram as u64, VCPUS_LINUX as u32, n_virtio, bootargs, plan.initrd);
     let mut semilla = [0u8; 32];
     if dashos::azar(&mut semilla).is_some() {
         config.semilla = Some(semilla);
@@ -1732,6 +1742,9 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
         imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, VCPUS_LINUX, tam_disco_kb,
         if con_red { " y virtio-net por el servicio de red" } else { "" }
     );
+    if wayland {
+        println!("  [caja-linux] wayland: vsock en el puerto {} para el puente de Wayland de Linux (CID 3)", puente_caja::PUERTO);
+    }
     let t0 = dashos::ahora_us();
     CAJA.poner(Caja::nueva(&llaves, maq, &config.memoria, true));
     let plazo_s = if arch { 1500 } else if terminal { 600 } else { 240 };
@@ -1771,6 +1784,17 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
         };
     if e.sin_sacar > 0 {
         println!("  [caja-linux] linux: ({} líneas sin sacar al registro: demasiadas seguidas)", e.sin_sacar);
+    }
+    if wayland {
+        puente_caja::PUENTE.con(|p| {
+            if let Some(p) = p.as_ref() {
+                let c = p.cuentas();
+                println!(
+                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias, {} cosas malas tiradas, {} clientes cerrados",
+                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.malas, c.cerrados
+                );
+            }
+        });
     }
     if con_red {
         let r = cuentas_red.borrow();

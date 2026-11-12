@@ -210,10 +210,11 @@ impl Vsock {
                 c.pendiente.drain(..n);
                 c.consumido = c.consumido.wrapping_add(n as u32);
             }
-            // El crédito liberado se dice si es mucho o si ya no queda nada pendiente (el invitado puede estar
-            // esperándolo para seguir).
+            // El crédito liberado se dice si es mucho, o si el invitado cree que le queda poco sitio (puede estar
+            // esperándolo para seguir). Así no va un paquete de crédito por cada paquete de datos.
             let libre = c.consumido.wrapping_sub(c.anunciado);
-            if libre >= BUF_ALLOC / 4 || (libre > 0 && c.pendiente.is_empty()) {
+            let en_vuelo = libre as usize + c.pendiente.len();
+            if libre >= BUF_ALLOC / 4 || (libre > 0 && en_vuelo + (BUF_ALLOC / 4) as usize >= BUF_ALLOC as usize) {
                 anunciar.push(*clave);
             }
         }

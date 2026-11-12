@@ -3,6 +3,11 @@
 //! lo pasa todo a DashOS por un solo transporte (`dashos_puente`, tramas).
 //!
 //!     puente WAYLAND_SOCKET TRANSPORTE
+//!     puente --hostil TRANSPORTE
+//!
+//! `TRANSPORTE` es un socket de Unix (en el PC) o `vsock:PUERTO` (en la caja Linux: el puerto de DashOS, CID 2).
+//! `--hostil` manda por el transporte tramas rotas, memorias que no existen, escrituras fuera y tamaños absurdos, y
+//! acaba: DashOS tiene que seguir como si nada (H9).
 //!
 //! Los mensajes pasan tal cual. Lo único que no puede cruzar son los descriptores:
 //! - **La memoria de `wl_shm`**: el puente proyecta el pool del programa y, en cada `wl_surface.commit`, copia al otro
@@ -39,7 +44,7 @@ const POOL_DMABUF: u32 = 0x8000_0000;
 fn esperar_tarjeta(fd: RawFd) {
     const DMA_BUF_IOCTL_SYNC: libc::c_ulong = 0x4008_6200;
     for flags in [1u64, 1 | 4] {
-        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC, &flags as *const u64) };
+        unsafe { libc::ioctl(fd, DMA_BUF_IOCTL_SYNC as _, &flags as *const u64) };
     }
 }
 
@@ -306,16 +311,111 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
     }
 }
 
+/// Conecta con el transporte: `vsock:PUERTO` o la ruta de un socket de Unix.
+fn conectar(transporte: &str) -> std::io::Result<UnixStream> {
+    match transporte.strip_prefix("vsock:") {
+        Some(puerto) => p::vsock(puerto.parse().map_err(|_| std::io::Error::other("puerto de vsock que no vale"))?),
+        None => UnixStream::connect(transporte),
+    }
+}
+
+/// Lo de `--hostil`: cada tanda por una conexión nueva del transporte (las que rompen el flujo hacen que DashOS la
+/// corte). Cuenta las que DashOS cortó.
+fn hostil(transporte: &str) {
+    let mem = |tipo: u8, n: u32, a: u64, resto: &[u8]| {
+        let mut d = n.to_le_bytes().to_vec();
+        d.extend_from_slice(&a.to_le_bytes());
+        d.extend_from_slice(resto);
+        wayland::puente::trama(tipo, 0, &d)
+    };
+    let mut tandas: Vec<(&str, Vec<u8>)> = Vec::new();
+    // Memorias: que no existen, escrituras fuera, tamaños absurdos.
+    let mut t = mem(p::MEMORIA_ESCRIBIR, 4242, 0, b"no existe");
+    t.extend(mem(p::MEMORIA_NUEVA, 1, 4096, &[]));
+    t.extend(mem(p::MEMORIA_ESCRIBIR, 1, 4000, &[0xee; 200]));
+    t.extend(mem(p::MEMORIA_ESCRIBIR, 1, u64::MAX - 8, &[0xee; 16]));
+    t.extend(mem(p::MEMORIA_NUEVA, 2, u64::MAX, &[]));
+    t.extend(mem(p::MEMORIA_NUEVA, 3, 1 << 40, &[]));
+    for i in 0..300 {
+        t.extend(mem(p::MEMORIA_NUEVA, 100 + i, 1 << 20, &[]));
+    }
+    t.extend(mem(p::MEMORIA_CRECER, 1, 1 << 30, &[]));
+    tandas.push(("memorias", t));
+    // Clientes: datos de uno que no existe, números de memoria que no existen, uno repetido, un montón.
+    let mut t = wayland::puente::trama(p::DATOS, 99, &p::juntar_datos(&[], &[1, 2, 3, 4, 5, 6, 7, 8]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 1, &[]));
+    t.extend(wayland::puente::trama(p::DATOS, 1, &p::juntar_datos(&[7777, 8888], &[0xff; 64])));
+    t.extend(wayland::puente::trama(p::CONECTAR, 2, &[]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 2, &[]));
+    t.extend(wayland::puente::trama(p::CONECTAR, 3, &[]));
+    // Wayland roto para el compositor: un objeto que no existe y un tamaño que no es múltiplo de 4.
+    t.extend(wayland::puente::trama(p::DATOS, 3, &p::juntar_datos(&[], &[9, 9, 9, 9, 7, 0, 0, 0, 1, 2, 3])));
+    t.extend(wayland::puente::trama(p::DATOS, 3, &[0xff, 0xff, 0xff, 0x7f]));
+    for c in 10..100 {
+        t.extend(wayland::puente::trama(p::CONECTAR, c, &[]));
+    }
+    tandas.push(("clientes", t));
+    // Tramas que rompen el flujo: un tipo que no existe, una de 4 GB, una de memoria sin su número.
+    tandas.push(("tipo", wayland::puente::trama(200, 0, &[0; 32])));
+    let mut t = vec![p::DATOS, 0, 0, 0, 0];
+    t.extend_from_slice(&u32::MAX.to_le_bytes());
+    t.extend_from_slice(&[0x55; 4096]);
+    tandas.push(("larga", t));
+    tandas.push(("corta", wayland::puente::trama(p::MEMORIA_ESCRIBIR, 0, &[1, 2, 3])));
+    let mut cortadas = 0;
+    for (nombre, t) in tandas {
+        let mut s = match conectar(transporte) {
+            Ok(s) => s,
+            Err(e) => {
+                println!("puente hostil: {}: no conecta ({})", nombre, e);
+                continue;
+            }
+        };
+        let escrito = s.write_all(&t).is_ok();
+        // DashOS corta la conexión (o contesta ADIOS): se lee lo que diga durante un momento.
+        s.set_read_timeout(Some(std::time::Duration::from_millis(1500))).ok();
+        let mut b = [0u8; 4096];
+        let mut cortada = !escrito;
+        loop {
+            match std::io::Read::read(&mut s, &mut b) {
+                Ok(0) => {
+                    cortada = true;
+                    break;
+                }
+                Ok(_) => continue,
+                Err(_) => break,
+            }
+        }
+        cortadas += cortada as u32;
+        println!("puente hostil: {}: {} bytes, {}", nombre, t.len(), if cortada { "DashOS cortó" } else { "sigue abierta" });
+    }
+    println!("puente hostil: hecho, {} conexiones cortadas por DashOS", cortadas);
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--hostil") {
+        hostil(args.get(2).map_or("vsock:5000", String::as_str));
+        return;
+    }
     let (Some(ruta), Some(transporte)) = (args.get(1), args.get(2)) else {
-        eprintln!("uso: puente WAYLAND_SOCKET TRANSPORTE");
+        eprintln!("uso: puente WAYLAND_SOCKET TRANSPORTE | puente --hostil TRANSPORTE");
         std::process::exit(2);
     };
     let _ = std::fs::remove_file(ruta);
     let escucha = UnixListener::bind(ruta).expect("no se abre el socket de Wayland");
     escucha.set_nonblocking(true).unwrap();
-    let t = UnixStream::connect(transporte).expect("no hay transporte a DashOS");
+    // En la caja, el puente puede arrancar antes de que DashOS escuche: se reintenta un rato.
+    let mut t = conectar(transporte);
+    for _ in 0..50 {
+        if t.is_ok() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        t = conectar(transporte);
+    }
+    let t = t.expect("no hay transporte a DashOS");
+    println!("puente: Wayland en {}, hacia DashOS por {}", ruta, transporte);
     // Bloqueante (la copia comparte el modo con la de escribir): se lee solo cuando `poll` dice que hay algo.
     let mut lectura = t.try_clone().unwrap();
     let mut pu = Puente { transporte: t, siguiente_memoria: 0 };

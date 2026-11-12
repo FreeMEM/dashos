@@ -20,6 +20,7 @@ pub static MAPA_TECLADO: &[u8] = concat!(include_str!("../teclados/es.xkb"), "\0
 
 pub mod canal;
 pub mod escena;
+pub mod puente;
 pub mod servidor;
 pub mod shm;
 pub mod tablas;

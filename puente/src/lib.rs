@@ -1,7 +1,7 @@
 //! Lo común del puente de Wayland (G1 de `docs/GRAFICOS_LOOP.md`) y del compositor del PC (G0): sockets de Unix con
 //! descriptores, y las tramas del transporte entre la caja Linux y DashOS.
 //!
-//! **El transporte** es un flujo de bytes (hoy un socket de Unix; en la caja Linux, `vsock`) con tramas:
+//! **El transporte** es un flujo de bytes (en el PC, un socket de Unix; en la caja Linux, `vsock`) con tramas:
 //! tipo (1 byte), conexión (u32), largo (u32) y el contenido, todo en little-endian. Una conexión es un cliente de
 //! Wayland de la caja. Los descriptores no cruzan: en su lugar viajan memorias con número, que el otro lado crea y
 //! rellena (`MEMORIA_NUEVA`, `MEMORIA_ESCRIBIR`), y los mensajes de Wayland llevan esos números como llaves.
@@ -9,23 +9,8 @@
 use std::io::{self, Read, Write};
 use std::os::fd::RawFd;
 
-/// Un cliente nuevo.
-pub const CONECTAR: u8 = 1;
-/// Bytes de Wayland: n (u32), n números de memoria (u32) y los bytes.
-pub const DATOS: u8 = 2;
-/// El cliente se fue.
-pub const ADIOS: u8 = 3;
-/// Una memoria nueva: número (u32) y tamaño (u64).
-pub const MEMORIA_NUEVA: u8 = 4;
-/// Escribir en una memoria: número (u32), desde (u64) y los bytes.
-pub const MEMORIA_ESCRIBIR: u8 = 5;
-/// Soltar una memoria: número (u32).
-pub const MEMORIA_SOLTAR: u8 = 6;
-/// Crecer una memoria: número (u32) y tamaño nuevo (u64).
-pub const MEMORIA_CRECER: u8 = 7;
-
-/// Lo más que mide el contenido de una trama: un búfer de 4K a 32 bits cabe en unas pocas.
-pub const MAX_TRAMA: usize = 4 << 20;
+// El formato de las tramas es el de `wayland::puente` (sin std): el mismo para los dos lados.
+pub use wayland::puente::{ADIOS, CONECTAR, DATOS, MAX_TRAMA, MEMORIA_CRECER, MEMORIA_ESCRIBIR, MEMORIA_NUEVA, MEMORIA_SOLTAR, juntar_datos, partir_datos};
 
 pub struct Trama {
     pub tipo: u8,
@@ -87,23 +72,6 @@ pub fn leer_transporte(r: &mut impl Read, buf: &mut Vec<u8>) -> Option<()> {
         Err(e) if e.kind() == io::ErrorKind::WouldBlock => Some(()),
         Err(_) => None,
     }
-}
-
-/// Los datos de una trama `DATOS`: (números de memoria, bytes de Wayland).
-pub fn partir_datos(d: &[u8]) -> Option<(Vec<u32>, &[u8])> {
-    let n = u32::from_le_bytes(d.get(0..4)?.try_into().ok()?) as usize;
-    let llaves = (0..n).map(|i| d.get(4 + 4 * i..8 + 4 * i).map(|b| u32::from_le_bytes(b.try_into().unwrap()))).collect::<Option<Vec<_>>>()?;
-    Some((llaves, d.get(4 + 4 * n..)?))
-}
-
-pub fn juntar_datos(llaves: &[u32], bytes: &[u8]) -> Vec<u8> {
-    let mut d = Vec::with_capacity(4 + 4 * llaves.len() + bytes.len());
-    d.extend_from_slice(&(llaves.len() as u32).to_le_bytes());
-    for l in llaves {
-        d.extend_from_slice(&l.to_le_bytes());
-    }
-    d.extend_from_slice(bytes);
-    d
 }
 
 /// Lee lo que haya en un socket de Unix: bytes y descriptores (SCM_RIGHTS). `None` si se cerró.
@@ -187,4 +155,27 @@ pub fn memfd(nombre: &std::ffi::CStr, tamano: u64) -> Option<RawFd> {
         return None;
     }
     Some(fd)
+}
+
+/// Conecta por vsock con el puerto `puerto` del anfitrión (CID 2: DashOS, visto desde la caja Linux). El descriptor
+/// vale como un socket de flujo cualquiera.
+pub fn vsock(puerto: u32) -> io::Result<std::os::unix::net::UnixStream> {
+    use std::os::fd::FromRawFd;
+    let fd = unsafe { libc::socket(libc::AF_VSOCK, libc::SOCK_STREAM | libc::SOCK_CLOEXEC, 0) };
+    if fd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let mut dir: libc::sockaddr_vm = unsafe { std::mem::zeroed() };
+    dir.svm_family = libc::AF_VSOCK as _;
+    dir.svm_cid = 2;
+    dir.svm_port = puerto;
+    let r = unsafe { libc::connect(fd, (&dir as *const libc::sockaddr_vm).cast(), size_of::<libc::sockaddr_vm>() as u32) };
+    if r < 0 {
+        let e = io::Error::last_os_error();
+        unsafe { libc::close(fd) };
+        return Err(e);
+    }
+    // SAFETY: `fd` es un socket de flujo conectado y solo nuestro: el `UnixStream` lo cierra al soltarse (read, write
+    // y shutdown no miran la familia del socket).
+    Ok(unsafe { std::os::unix::net::UnixStream::from_raw_fd(fd) })
 }
