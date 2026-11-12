@@ -24,8 +24,24 @@ dependencies = [
  "dashos-caja-dos",
  "dashos-caja-exec",
  "dashos-caja-intuition",
+ "dashos-caja-timer",
+ "dashos-caja-utility",
  "dashos-usuario",
  "dashos-wayland",
+]
+
+[[package]]
+name = "dashos-caja-timer"
+version = "0.0.1"
+dependencies = [
+ "dashos-caja-exec",
+]
+
+[[package]]
+name = "dashos-caja-utility"
+version = "0.0.1"
+dependencies = [
+ "dashos-caja-exec",
 ]
 
 [[package]]

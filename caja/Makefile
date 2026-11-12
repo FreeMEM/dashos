@@ -58,8 +58,32 @@ $(B)/hunk.o: hunk.c | $(B)
 	$(CC) $(CFLAGS) -c $< -o $@
 $(B)/entrada.o: entrada.S | $(B)
 	$(CC) $(COMMON) -c $< -o $@
-$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe | $(B)
+
+# Programas de Dash (el lenguaje de ~/Projects/FreeMEMLang): sus ejecutables hunk no van en git; se compilan aquí con
+# `dash`, por los dos caminos (directo, y --gcc por C con m68k-amigaos-gcc). Sin `dash`, un fichero vacío y un aviso:
+# la caja lo dice al arrancar y no los ejecuta. Las fuentes propias van en pruebas68k/dash/; hola.dash es de los
+# ejemplos de FreeMEMLang. `dash --gcc` deja su C en build/ de FreeMEMLang (con el nombre de la fuente: por eso las
+# nuestras se llaman caja_*).
+DASH    ?= $(HOME)/Projects/FreeMEMLang/dash
+DASH_EJ := $(dir $(DASH))examples
+DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe
+$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe $(DASH_EXES) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
+
+define compila_dash
+	@mkdir -p $(B)/dash
+	@if [ -x $(DASH) ]; then echo "dash $(2) $(1)"; $(DASH) $(2) $(1) -o $@.tmp >$@.log 2>&1 && mv $@.tmp $@ \
+		|| { cat $@.log; echo "AVISO: $(notdir $@) no compila: vacío"; : > $@; }; \
+		 else echo "AVISO: sin $(DASH): $(notdir $@) vacío (la caja no ejecuta programas de Dash)"; : > $@; fi
+endef
+$(B)/dash/hola.exe: $(wildcard $(DASH_EJ)/hola.dash) | $(B)
+	$(call compila_dash,$(DASH_EJ)/hola.dash,)
+$(B)/dash/texto.exe: pruebas68k/dash/caja_texto.dash | $(B)
+	$(call compila_dash,$<,)
+$(B)/dash/texto_gcc.exe: pruebas68k/dash/caja_texto.dash | $(B)
+	$(call compila_dash,$<,--gcc)
+$(B)/dash/ventana.exe: pruebas68k/dash/caja_ventana.dash | $(B)
+	$(call compila_dash,$<,)
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).

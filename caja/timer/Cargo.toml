@@ -1,0 +1,13 @@
+[package]
+name = "dashos-caja-timer"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "timer.device nativo de la caja Amiga (S4): esperas (TR_ADDREQUEST), la hora del sistema y el EClock de AmigaOS 3.1, sobre el reloj de DashOS"
+
+[lib]
+name = "caja_timer"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }

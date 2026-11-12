@@ -32,9 +32,12 @@ pub mod registros;
 
 mod asignador;
 mod bibliotecas;
+mod charcos;
 mod despacho;
+mod dispositivos;
 mod listas;
 mod puertos;
+mod semaforos;
 mod tareas;
 
 use alloc::collections::BTreeMap;
@@ -42,6 +45,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 
 pub use bibliotecas::{Entrada, LINEA_A_NATIVA};
+pub use dispositivos::io;
 use estructuras::*;
 pub use memoria::{Memoria, MemoriaVec};
 pub use registros::Registros;
@@ -67,6 +71,8 @@ pub enum Fallo {
     TamanoDistinto { dir: u32, reservado: u32, pedido: u32 },
     /// `FreeVec` de un bloque de `AllocMem`.
     NoEsDeAllocVec { dir: u32 },
+    /// Un charco (`AllocPooled`, `FreePooled`, `DeletePool`) que no dio `CreatePool`, o ya borrado.
+    NoEsCharco { dir: u32 },
     /// Liberar memoria que ya está libre en la lista de un `MemHeader`.
     YaLibre { dir: u32 },
     /// Memoria fuera del `MemHeader` en que se libera.
@@ -155,6 +161,12 @@ pub enum Continuacion {
     IniciarBiblioteca,
     /// Pasar D0 tal cual.
     Devolver,
+    /// Volvió el `Open` de un dispositivo (`OpenDevice`): su error está en `io_Error`.
+    AbrirDispositivo { dev: u32, io: u32 },
+    /// Volvió el `Close` de un dispositivo.
+    CerrarDispositivo { io: u32 },
+    /// Volvió el `BeginIO` de `DoIO`: si no acabó en el acto, hay que esperar.
+    HacerIO { io: u32 },
 }
 
 /// Un trozo de memoria para el reparto: `[inicio, fin)` con sus atributos (`MEMF_CHIP`...).
@@ -296,6 +308,15 @@ pub struct Exec<M: Memoria> {
     fin_de_tarea: u32,
     /// Dónde acaba la zona del sistema: las regiones repartibles empiezan después.
     fin_sistema: u32,
+    /// Los charcos de memoria (`CreatePool`): cabecera → lo que exec sabe de él.
+    charcos: BTreeMap<u32, charcos::Charco>,
+    /// Quién espera qué semáforo: (semáforo, tarea), por orden de llegada.
+    esperas_semaforo: Vec<(u32, u32)>,
+    /// Peticiones de `DoIO` que ya salieron y esperan su vuelta (la caja repite la llamada al despertar).
+    doio_en_espera: Vec<u32>,
+    /// Los dispositivos de `AddDevice` (y los nativos): así no hay que recorrer `DeviceList`, que un programa puede
+    /// haber estropeado, en cada petición.
+    dispositivos: alloc::collections::BTreeSet<u32>,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -321,6 +342,10 @@ impl<M: Memoria> Exec<M> {
             codigo_cambiado: Vec::new(),
             fin_de_tarea: 0,
             fin_sistema: FIN_ZONA_SISTEMA,
+            charcos: BTreeMap::new(),
+            esperas_semaforo: Vec::new(),
+            doio_en_espera: Vec::new(),
+            dispositivos: alloc::collections::BTreeSet::new(),
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;

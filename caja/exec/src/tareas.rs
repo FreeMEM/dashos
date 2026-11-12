@@ -42,7 +42,7 @@ impl<M: Memoria> Exec<M> {
         Ok(())
     }
 
-    fn actual_o_fallo(&self) -> Result<u32, Fallo> {
+    pub(crate) fn actual_o_fallo(&self) -> Result<u32, Fallo> {
         let t = self.tarea_actual();
         if t == 0 || !self.tareas.contains_key(&t) {
             return Err(Fallo::SinTarea);
@@ -340,6 +340,8 @@ impl<M: Memoria> Exec<M> {
             self.cerrar_a_la_fuerza(lib);
         }
         let accion = self.rem_task(t)?;
+        self.olvidar_charcos(t);
+        self.olvidar_esperas(t);
         let suyos: Vec<(u32, u32)> =
             self.bloques.iter().filter(|(_, b)| b.dueno == t).map(|(d, b)| (*d, b.largo)).collect();
         let b = self.base;
@@ -361,6 +363,9 @@ impl<M: Memoria> Exec<M> {
                 self.avisar("(matar tarea)", f);
             }
         }
+        // Las peticiones de DoIO que esperaban en su memoria ya no existen.
+        let vivas: Vec<u32> = self.doio_en_espera.iter().copied().filter(|&x| self.memoria_viva(x, 32)).collect();
+        self.doio_en_espera = vivas;
         Ok(accion)
     }
 

@@ -433,3 +433,119 @@ relevo de `emu_run`, no el programa.)
   de la caja Linux.
 - `cargo test` en `caja/exec` (96), `caja/dos` (53), `caja/intuition` (47) y `wayland` (61): todas bien.
 
+
+## 2026-11-12: programas de Dash en la caja
+
+Rama `caja-amiga-dash`, desde `revision` (fec71bf).
+
+### Qué funciona (`make -C kernel arranque-virt`)
+
+Tras los programas de antes, la caja ejecuta cuatro programas de Dash, el lenguaje de FreeMEMLang, compilados con
+`~/Projects/FreeMEMLang/dash` al hacer la caja:
+
+1. **`texto.exe`** (`caja/pruebas68k/dash/caja_texto.dash`, por el camino directo de `dash`): cuentas (multiplicar,
+   dividir y el resto van por el runtime de Dash en un 68000), textos (unir, trozos, buscar, cambiar, mayúsculas,
+   hexadecimal), listas (`push`, `pop`, `sort` con una función), un diccionario, structs con métodos y 50 objetos en
+   una lista, y el reloj (`time_ms`, que va por timer.device y `ReadEClock`, alrededor de un `time_delay(10)`).
+2. **`texto_gcc.exe`**: el mismo con `dash --gcc` (por C, con m68k-amigaos-gcc y libnix). libnix abre
+   utility.library al arrancar y hace las multiplicaciones y divisiones de 32 bits con `SMult32` y `UDivMod32`: unas
+   6.800 llamadas nativas frente a 60 del directo.
+3. **`hola.exe`** (`examples/hola.dash` de FreeMEMLang, tal cual): una ventana con `OpenWindowTags`, `Delay` de 5 s y
+   texto.
+4. **`ventana.exe`** (`caja_ventana.dash`): abre su ventana, dibuja con las plumas del Workbench (`RectFill`,
+   `Move`/`Draw`, `WritePixel`, `Text`) y espera en un `EventLoop` con `On Close` y `On Timer 100` (timer.device, como
+   mucho 40 s). El guion de la prueba captura la pantalla (`CAPTURA_DASH`) y pulsa su gadget de cerrar.
+
+Cada uno acaba con 0, sin avisos del Enforcer y sin dejar memoria. Lo que escriben sale con "dash: " delante (la caja
+pone un prefijo a cada línea de la consola mientras corren).
+
+```
+│   [caja-amiga] utility.library y timer.device nativos (Rust): $... y $...
+...
+│   [caja-amiga] texto.exe: 3 hunks (código 17864, datos 852, BSS 1500 bytes) en $202c48, 717 reubicaciones
+│   [caja-amiga] dash: hola desde Dash
+│   [caja-amiga] dash: suma de cuadrados 333833500, fib(20) 6765, 14285 y 5, -3
+│   [caja-amiga] dash: hola, DashOS (12 letras), trozo [DashOS], busca 6
+│   [caja-amiga] dash: a-b-c AMIGA ff
+│   [caja-amiga] dash: lista 5, suma 25, ultima 7, palabras uno tres cinco
+│   [caja-amiga] dash: dicc 3: 2 3 false
+│   [caja-amiga] dash: punto (13, 3), 50 puntos, el ultimo (50, 100)
+│   [caja-amiga] dash: reloj: time_delay(10) tarda unos 200 ms
+│   [caja-amiga] dash: adios desde Dash
+│   [caja-amiga] Dash texto.exe acabó con 0 (vector -1), 62 llamadas nativas, en 249 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] texto_gcc.exe: 3 hunks (código 15672, datos 392, BSS 920 bytes) en $202c48, 503 reubicaciones
+│   (las mismas nueve líneas)
+│   [caja-amiga] Dash texto_gcc.exe acabó con 0 (vector -1), 6862 llamadas nativas, en 252 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] dash: Starting Dash...
+│   [caja-amiga] dash: Window 'Hola Dash' opened.
+│   [caja-amiga] ventana Amiga en pantalla (400x150): Hola Dash
+│   [compositor] ventana de caja-amiga en (232, 272)
+│   [caja-amiga] dash: Closing window and exiting.
+│   [caja-amiga] Dash hola.exe acabó con 0 (vector -1), 25 llamadas nativas, en 5016 ms, 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] dash: ventana abierta y dibujada; espera a que la cierren
+│   [caja-amiga] ventana Amiga en pantalla (360x170): Dash en DashOS
+│   [compositor] ventana de caja-amiga en (264, 304)
+│   [caja-amiga] dash: cerrada con su gadget
+│   [caja-amiga] Dash ventana.exe acabó con 0 (vector -1), 238 llamadas nativas, en 3044 ms, 0 avisos, 0 bloques sin soltar: bien
+```
+
+### Lo que pedía Dash y se hizo
+
+Primero se ejecutó tal cual: `hola.exe` ya funcionaba; `texto.exe` se quedaba sin memoria (`CreatePool` no estaba: el
+runtime de Dash saca textos, listas y structs de un charco de exec) y `texto_gcc.exe` no arrancaba (libnix no
+encontraba utility.library). Lo que se añadió:
+
+- **El proceso, como desde el Shell** (`caja/pegamento/`): cada programa lleva una CLI (`pr_CLI`): sin ella, el
+  runtime de Dash (y libnix) creen que vienen del Workbench y esperan su mensaje. `cli_Module` es su lista de
+  segmentos (el runtime de Dash la usa para decir en qué hunk falló), `cli_CommandName` su nombre y la entrada y
+  salida, la consola. La CLI y sus tres BSTR van en un bloque suyo, que la caja suelta con lo demás.
+- **exec** (`caja/exec`):
+  - Charcos (`charcos.rs`): `CreatePool`, `DeletePool`, `AllocPooled`, `FreePooled`. Lo que ve el 68k es lo de exec
+    40: la cabecera empieza con una `MinList` de charcos, cada charco un `MemHeader` con su lista de trozos libres y 8
+    bytes sin usar detrás (el runtime de Dash escribe un 0 ahí, por un fallo del `FreePooled` de la ROM 3.1). Por
+    debajo, una tabla nativa con cada trozo y su tamaño: soltar lo que no es del charco, con otro tamaño o dos veces da
+    un aviso y no toca nada; un `MemHeader` estropeado (límites cambiados, lista que apunta fuera) se nota antes de
+    repartir. Los bloques son de quien creó el charco: si muere, se van con lo suyo.
+  - Semáforos (`semaforos.rs`): `InitSemaphore`, `ObtainSemaphore`, `ObtainSemaphoreShared`, `AttemptSemaphore`,
+    `AttemptSemaphoreShared`, `ReleaseSemaphore`, `AddSemaphore`, `RemSemaphore`, `FindSemaphore`. El de otra tarea
+    hace esperar con `SIGF_SINGLE` y repetir; la cola de espera es nativa. Si el dueño murió con él cogido, quien lo
+    pide se lo queda (con un aviso).
+  - `SetExcept` (apunta las señales en `tc_SigExcept`; ver abajo) y `StackSwap` (la pila de Main de Dash, como el
+    `swapstack` de libnix): la dirección de vuelta pasa a la pila nueva; un `stk_Pointer` fuera de sus límites o de la
+    memoria no cambia nada.
+  - Dispositivos (`dispositivos.rs`): `OpenDevice`, `CloseDevice`, `DoIO`, `SendIO`, `CheckIO`, `WaitIO`, `AbortIO`,
+    `AddDevice`, `CreateIORequest`, `DeleteIORequest`, y `crear_dispositivo_nativo`. El `Open` y el `BeginIO` de un
+    dispositivo nativo se llaman con `Accion::Llamar`, como el `Open` de una biblioteca. Si `DoIO` tiene que esperar,
+    la tarea se bloquea y la caja repite la llamada: exec apunta qué peticiones ya salieron para no mandarlas dos
+    veces. Los dispositivos van también en una tabla nativa: así no se recorre `DeviceList` en cada petición.
+  - **Listas en círculo**: el fuzzer de `tests/hostil.rs` pasó de 1 s a 160 s con las funciones nuevas (una semilla
+    dejaba una lista del sistema en círculo, y cada `FindName` o `Enqueue` daba un millón de vueltas antes de
+    rendirse). `FindName`, `Enqueue` y los recorridos llevan ahora el detector de Brent: una lista que vuelve sobre sí
+    misma se nota en unos pasos más que su largo. El fuzzer, 0,4 s.
+- **utility.library** (crate nuevo, `caja/utility`): `SMult32`, `UMult32`, `SDivMod32`, `UDivMod32`, `SMult64`,
+  `UMult64`; etiquetas (`NextTagItem` con `TAG_MORE`, `TAG_SKIP` y `TAG_IGNORE`, `FindTagItem`, `GetTagData`,
+  `TagInArray`, `PackBoolTags`, `FilterTagItems`, `ApplyTagChanges`, `AllocateTagItems`, `CloneTagItems`,
+  `FreeTagItems`, `RefreshTagItemClones`); `Stricmp`, `Strnicmp`, `ToUpper`, `ToLower` (Latin-1); `Amiga2Date`,
+  `Date2Amiga`, `CheckDate`; `GetUniqueID`. Una lista de etiquetas en círculo, una división entre 0 o un
+  `FreeTagItems` de lo que no dio dan un aviso. Sin hacer: `CallHookPkt` (ejecutar 68k desde lo nativo), los objetos
+  con nombre, `MapTags`, `FilterTagChanges`, `PackStructureTags` y `UnpackStructureTags`.
+- **timer.device** (crate nuevo, `caja/timer`): las cinco unidades sobre el reloj de DashOS; `TR_ADDREQUEST`,
+  `TR_GETSYSTIME`, `TR_SETSYSTIME`, `AbortIO`; `AddTime`, `SubTime`, `CmpTime`, `ReadEClock` (709.379 Hz) y
+  `GetSysTime`. Las esperas van en una tabla nativa; la caja devuelve las vencidas a su puerto en cada llamada nativa
+  y mientras la tarea espera (cada 5 ms). Mientras hay una espera de timer.device, el plazo de 60 s de la caja para
+  una tarea que no despierta cuenta desde que venza.
+- **La consola con prefijo** (`caja_consola_prefijo`): mientras corre un programa de Dash, cada línea suya sale con
+  "  [caja-amiga] dash: " delante.
+- **El build** (`caja/Makefile`): con `~/Projects/FreeMEMLang/dash` (o `DASH=...`), los cuatro ejecutables se compilan
+  en `caja/build/dash/` (fuera de git). Sin `dash`, o si no compila, un fichero vacío y un aviso: la caja dice que no
+  está y sigue. Las fuentes propias, en `caja/pruebas68k/dash/`, se llaman `caja_*`: `dash --gcc` deja su C en
+  `build/` de FreeMEMLang con el nombre de la fuente (y así no pisa el de nadie).
+- **El guion** (`tools/prueba_uefi.sh`): tras la ventana de `ventana.exe`, cuando el programa de Dash dice que la suya
+  está dibujada, la captura (`CAPTURA_DASH`, `target/dash.ppm`) y un clic en su gadget de cerrar.
+
+Pruebas nuevas de `cargo test`: `exec/tests/charcos.rs` (12: charcos, semáforos, `SetExcept`, `StackSwap`, con sus
+hostiles), la lista en círculo en `exec/tests/listas.rs`, `utility/tests/utility.rs` (7) y `timer/tests/timer.rs` (7:
+abrir y cerrar, `SendIO` y vuelta al puerto, `WaitIO` y `DoIO` que bloquean sin mandar dos veces, `AbortIO`, las
+unidades, las funciones y una hostil: punteros malos a todo, mandar dos veces, soltar la petición mientras espera,
+tiempos absurdos, la tarea que muere, `DeleteIORequest` dos veces o con otro tamaño). El fuzzer de exec prueba también
+las funciones nuevas (todas las de la tabla, con registros al azar).

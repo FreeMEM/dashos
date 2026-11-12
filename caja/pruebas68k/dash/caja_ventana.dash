@@ -1,0 +1,49 @@
+# H5: un programa de Dash con ventana en la caja Amiga de DashOS. Abre su ventana (una ventana más del escritorio),
+# dibuja con las plumas del Workbench y espera a que la cierren con su gadget (el guion de la prueba lo pulsa), como
+# mucho 40 s (On Timer, con timer.device).
+
+Window Ventana
+    title "Dash en DashOS"
+    width 360
+    height 170
+end
+
+Main
+    Ventana.open
+    # Rectángulos con las plumas 1, 2 y 3 del Workbench (negro, blanco y azul)
+    for i in (0..2)
+        gfx_pen(i + 1)
+        gfx_rect(10 + i * 70, 10, 70 + i * 70, 60)
+    end
+    gfx_pen(1)
+    gfx_box(5, 5, 225, 65)
+    gfx_line(5, 70, 335, 70)
+    for x in (0..32)
+        gfx_pixel(240 + x * 3, 30 + (x % 4) * 6)
+    end
+    gfx_pen(2)
+    gfx_text_at(12, 95, "Hola desde Dash")
+    gfx_pen(1)
+    gfx_text_at(12, 115, "un programa de FreeMEMLang en DashOS")
+    Print "ventana abierta y dibujada; espera a que la cierren"
+    # Un EventLoop de verdad: On Close (IDCMP_CLOSEWINDOW) y On Timer (timer.device) para no esperar más de 40 s
+    decimas = 0
+    cerrada = false
+    EventLoop
+        On Timer 100
+            decimas = decimas + 1
+            if decimas >= 400
+                Stop
+            end
+        end
+        On Close
+            cerrada = true
+            Stop
+        end
+    end
+    if cerrada
+        Print "cerrada con su gadget"
+    else
+        Print "nadie la cerro en 40 s; se cierra sola"
+    end
+end

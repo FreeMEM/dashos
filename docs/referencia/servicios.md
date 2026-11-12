@@ -540,7 +540,8 @@ Los invitados de prueba de `usuario/invitados/*.s` y sus hostiles siguen corrien
 ## Caja Amiga (H4, H5)
 
 `caja/` (C, con el JIT de Emu68, y `caja/pegamento/`, Rust): un proceso big-endian que ejecuta programas 68k con exec,
-dos, graphics e intuition nativas. Solo en `virt`. Llaves, de `inicio`: 1 el permiso de página 0 (ExecBase en la
+dos, graphics, intuition, utility y timer.device nativos. Corre programas de Dash (FreeMEMLang), por los dos caminos del
+compilador. Solo en `virt`. Llaves, de `inicio`: 1 el permiso de página 0 (ExecBase en la
 dirección 4; llamada 49 de `kernel.md`), 2 el canal "ventanas" y 3 el canal "archivos". No sirve nada: es cliente de
 los dos.
 

@@ -1,0 +1,13 @@
+[package]
+name = "dashos-caja-utility"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "utility.library nativa de la caja Amiga (S4): cuentas de 32 y 64 bits, etiquetas (TagItem), textos sin mayúsculas y fechas de AmigaOS 3.1"
+
+[lib]
+name = "caja_utility"
+path = "src/lib.rs"
+
+[dependencies]
+caja_exec = { package = "dashos-caja-exec", path = "../exec" }

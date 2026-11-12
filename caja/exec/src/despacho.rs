@@ -177,6 +177,11 @@ impl<M: Memoria> Exec<M> {
                 let v = self.set_signal(d[0], d[1])?;
                 d0(r, v)
             }
+            // SetExcept(newSignals, signalSet)(d0/d1)
+            52 => {
+                let v = self.set_except(d[0], d[1])?;
+                d0(r, v)
+            }
             53 => {
                 let e = self.wait(d[0])?;
                 Ok(espera(e, r))
@@ -236,8 +241,55 @@ impl<M: Memoria> Exec<M> {
                 let v = self.type_of_mem(a[1])?;
                 d0(r, v)
             }
+            // AddDevice(device)(a1)
+            72 => {
+                self.add_device(a[1])?;
+                Ok(Accion::Seguir)
+            }
+            // OpenDevice(devName, unit, ioRequest, flags)(a0/d0/a1/d1)
+            74 => self.open_device(a[0], d[0], a[1], d[1], r),
+            // CloseDevice, DoIO, SendIO, CheckIO, WaitIO y AbortIO(ioRequest)(a1)
+            75 => self.close_device(a[1], r),
+            76 => self.do_io(a[1], r),
+            77 => self.send_io(a[1], r),
+            78 => {
+                let v = self.check_io(a[1])?;
+                d0(r, v)
+            }
+            79 => {
+                let e = self.wait_io(a[1])?;
+                Ok(espera(e, r))
+            }
+            80 => self.abort_io(a[1], r),
             // OpenLibrary(libName, version)(a1/d0)
             92 => self.open_library(a[1], d[0], r),
+            // InitSemaphore, ObtainSemaphore, ReleaseSemaphore y AttemptSemaphore(sigSem)(a0)
+            93 => {
+                self.init_semaphore(a[0])?;
+                Ok(Accion::Seguir)
+            }
+            94 => {
+                let e = self.obtain_semaphore(a[0], false)?;
+                Ok(espera(e, r))
+            }
+            95 => self.release_semaphore(a[0]),
+            96 => {
+                let v = self.attempt_semaphore(a[0], false)?;
+                d0(r, v)
+            }
+            // FindSemaphore(name)(a1), AddSemaphore y RemSemaphore(sigSem)(a1)
+            99 => {
+                let v = self.find_semaphore(a[1])?;
+                d0(r, v)
+            }
+            100 => {
+                self.add_semaphore(a[1])?;
+                Ok(Accion::Seguir)
+            }
+            101 => {
+                self.rem_semaphore(a[1])?;
+                Ok(Accion::Seguir)
+            }
             // CopyMem / CopyMemQuick(source, dest, size)(a0/a1/d0)
             104 | 105 => {
                 self.copy_mem(a[0], a[1], d[0])?;
@@ -250,6 +302,15 @@ impl<M: Memoria> Exec<M> {
             }
             107 => {
                 self.codigo_cambiado.push((a[0], a[0].saturating_add(d[0])));
+                Ok(Accion::Seguir)
+            }
+            // CreateIORequest(ioReplyPort, size)(a0/d0) y DeleteIORequest(ioReq)(a0)
+            109 => {
+                let v = self.create_io_request(a[0], d[0])?;
+                d0(r, v)
+            }
+            110 => {
+                self.delete_io_request(a[0])?;
                 Ok(Accion::Seguir)
             }
             111 => {
@@ -267,6 +328,40 @@ impl<M: Memoria> Exec<M> {
             }
             115 => {
                 self.free_vec(a[1])?;
+                Ok(Accion::Seguir)
+            }
+            // ObtainSemaphoreShared(sigSem)(a0)
+            113 => {
+                let e = self.obtain_semaphore(a[0], true)?;
+                Ok(espera(e, r))
+            }
+            // CreatePool(memFlags, puddleSize, threshSize)(d0/d1/d2)
+            116 => {
+                let v = self.create_pool(d[0], d[1], d[2])?;
+                d0(r, v)
+            }
+            117 => {
+                self.delete_pool(a[0])?;
+                Ok(Accion::Seguir)
+            }
+            // AllocPooled(poolHeader, memSize)(a0/d0)
+            118 => {
+                let v = self.alloc_pooled(a[0], d[0])?;
+                d0(r, v)
+            }
+            // FreePooled(poolHeader, memory, memSize)(a0/a1/d0)
+            119 => {
+                self.free_pooled(a[0], a[1], d[0])?;
+                Ok(Accion::Seguir)
+            }
+            // AttemptSemaphoreShared(sigSem)(a0)
+            120 => {
+                let v = self.attempt_semaphore(a[0], true)?;
+                d0(r, v)
+            }
+            // StackSwap(newStack)(a0)
+            122 => {
+                self.stack_swap(a[0], r)?;
                 Ok(Accion::Seguir)
             }
             FIN_DE_TAREA => self.rem_task(0),

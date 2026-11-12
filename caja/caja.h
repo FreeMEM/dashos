@@ -53,9 +53,12 @@ int caja_llamada(uint64_t *regs, uint32_t n);
 uint32_t caja_alloc_mem(uint32_t bytes, uint32_t atributos);
 void caja_free_mem(uint32_t dir, uint32_t bytes);
 uint32_t caja_bloques(uint32_t dueno);
-/* Un proceso de AmigaOS que empieza en `pc` y al volver salta a `vuelta`; su pila para A7, en *sp. 0 si no. */
+/* Un proceso de AmigaOS que empieza en `pc` y al volver salta a `vuelta`, con una CLI (`seglist`, su cli_Module); su
+   pila para A7, en *sp. 0 si no. */
 uint32_t caja_tarea_nueva(const char *nombre, size_t largo, uint32_t pila, uint32_t pc, uint32_t vuelta, uint32_t args,
-                          uint32_t *sp);
+                          uint32_t seglist, uint32_t *sp);
+/* Lo que escriba el programa en la consola, con `prefijo` al principio de cada línea (largo 0: sin prefijo). */
+void caja_consola_prefijo(const char *prefijo, size_t largo);
 /* La tarea acabó: se suelta todo lo suyo. Devuelve los bloques que el programa no soltó. */
 uint32_t caja_tarea_fin(uint32_t t);
 uint32_t caja_avisos(void);
