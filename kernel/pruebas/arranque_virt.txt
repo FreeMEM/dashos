@@ -150,6 +150,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] centro pide comprobar: contesta como Ana
 # S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, azul).
 ~│   [guardian] tema del sistema: oscuro, color 0061a4
+# C2: el panel rápido. Super+A lo abre; un clic en el mosaico apaga el modo oscuro y otro lo enciende (lo pone y lo
+# guarda el centro, que solo se lo acepta al panel); Super+A lo cierra.
+~│   [panel] abierto; mosaico a
+~│   [centro] modo claro (lo pide el panel), guardado: 0
+~│   [centro] modo oscuro (lo pide el panel), guardado: 0
+~│   [panel] cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1

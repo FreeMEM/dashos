@@ -73,6 +73,9 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "centro", "archivos"]),
     #[cfg(feature = "virt")]
     ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones", "centro"]),
+    // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa y el canal del centro para el modo.
+    #[cfg(feature = "virt")]
+    ("panel", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/panel"), &[], &["ventanas", "centro"]),
     #[cfg(feature = "virt")]
     ("pide", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/pide"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]

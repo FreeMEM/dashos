@@ -1139,3 +1139,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   guarda la apariencia con el color que hubiera y la pone en el compositor con una conexión de un momento (hasta su
   sync). Hostil: pedir "modo oscuro" da -1 y no cambia nada. Siguiente: el programa `panel` (capa en una esquina, con
   Super+A; `abren_panel` en el compositor en vez de `ponen_tema`).
+- S10c, C2 tercer paso: el programa `panel` (usuario/src/bin/panel.rs). Con Super+A (el compositor se lo dice solo a
+  él: `abren_panel`, por nombre, en vez del centro) abre una capa arriba a la derecha, en la capa de encima, con el
+  teclado a demanda (no se lo quita a nadie sin un clic, S8), y la cierra con otro Super+A. Un mosaico: el modo oscuro.
+  No pone el tema él: se lo pide al centro, que lo pone y lo guarda. Sigue el tema del sistema. Prueba en virt (al
+  final, cuando `guardian` acaba sus bloqueos: con la sesión bloqueada Super+A no hace nada): abre, clic en el
+  mosaico (claro), otro (oscuro), cierra; el disco acaba con "oscuro azul". Capturas nuevas.
+  Hallado por el camino: (1) el centro guardaba el modo antes de ponerlo; si poner fallaba, el disco decía una cosa y
+  la pantalla otra. Ahora pone primero y guarda solo si se puso. (2) Una conexión del centro al compositor justo
+  después de cerrar otra a veces no entra (el compositor aún no ha soltado la anterior): unos intentos. (3) El guion
+  para la máquina en cuanto ve todas las líneas esperadas: lo nuevo necesita las suyas. El arranque de virt pasa a
+  130 s de tope.
+  Falta de C2: más mosaicos (volumen, brillo, no molestar, bloquear, salir) y el modo de edición.

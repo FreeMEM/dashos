@@ -705,11 +705,6 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     }
                     false
                 }
-                // C2: Super+A, el panel rápido (el compositor solo se lo dice al centro). De momento, apuntarlo.
-                (TEMA_OBJ, dashos_tema_v1::ev::PANEL) => {
-                    println!("  [centro] panel rápido pedido (Super+A)");
-                    false
-                }
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_ESC => return Some(()),
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && cat == PERMISOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar-supr".into()));
@@ -824,13 +819,23 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
 /// C2: quién puede pedir "modo oscuro" o "modo claro" por el canal del centro: el panel rápido.
 const PIDEN_MODO: &[&str] = &["panel"];
 
-/// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se guarda y se pone en el
-/// compositor (una conexión de un momento). El estado: 0, o -1 si no se pudo poner.
+/// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se pone en el compositor
+/// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
+/// estado: 0, o -1 si no se pudo poner.
 fn aplicar_modo(oscuro: bool) -> i32 {
     let color = leer_apariencia().map_or(0, |g| g.1);
-    let (guardado, _) = guardar_apariencia(oscuro, color);
-    let Some(mut c) = Cliente::conectar() else { return -1 };
-    let Some(globales) = c.globales() else { return -1 };
+    // Recién cerrada la conexión anterior, el compositor puede no haberla soltado aún: unos intentos.
+    let mut conexion = None;
+    for _ in 0..20 {
+        if let Some(mut c) = Cliente::conectar() {
+            if let Some(g) = c.globales() {
+                conexion = Some((c, g));
+                break;
+            }
+        }
+        dashos::dormir_us(50_000);
+    }
+    let Some((mut c, globales)) = conexion else { return -1 };
     let Some(gt) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| g.0) else { return -1 };
     const SYNC: u32 = 44;
     let mut e = Escritor::new();
@@ -841,6 +846,7 @@ fn aplicar_modo(oscuro: bool) -> i32 {
     // Hasta que el compositor conteste al sync, no ha hecho lo de antes; un error de protocolo corta la conexión.
     while let Some((o, orden, _)) = c.evento() {
         if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
+            let (guardado, _) = guardar_apariencia(oscuro, color);
             println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
             return 0;
         }

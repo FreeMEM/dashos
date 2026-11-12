@@ -1396,7 +1396,7 @@ mod entrada {
         }
     }
 
-    /// C2: Super+A pide el panel rápido solo al centro de control (quien puede poner el tema), no a otro suscrito; la A
+    /// C2: Super+A pide el panel rápido solo al panel (`abren_panel`), no a otro suscrito, ni al centro; la A
     /// no llega a la ventana. Sin Super, es una A. Con o sin ventana con el teclado.
     #[test]
     fn super_a_pide_el_panel() {
@@ -1413,7 +1413,9 @@ mod entrada {
                 e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
                 mandar(&mut escena, con, c, &e);
             }
-            escena.ponen_tema.push(3);
+            escena.abren_panel.push(3);
+            // El centro (que pone el tema) no es el panel: no lo recibe.
+            escena.ponen_tema.push(2);
             escena.tecla(0xE3, true);
             let ev = escena.tecla(0x04, true);
             assert!(!ev.iter().any(|e| matches!(e.1, Entrada::Tecla { codigo: 30, .. })), "la A llegó a la ventana: {ev:?}");

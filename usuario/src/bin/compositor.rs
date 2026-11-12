@@ -66,7 +66,9 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
 const PONEN_TEMA: &[&str] = &["centro"];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
 /// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
-const ESCRITORIOS: &[&str] = &["guardian"];
+const ESCRITORIOS: &[&str] = &["guardian", "panel"];
+/// Quién recibe Super+A (C2 de S10c): el panel rápido.
+const ABREN_PANEL: &[&str] = &["panel"];
 /// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
 /// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
 const SISTEMA: &[&str] = &["guardian", "selector"];
@@ -487,6 +489,9 @@ fn principal() -> u64 {
                 }
                 if nombres.get(&marca).is_some_and(|n| PONEN_TEMA.contains(&n.as_str())) && !escena.ponen_tema.contains(&marca) {
                     escena.ponen_tema.push(marca);
+                }
+                if nombres.get(&marca).is_some_and(|n| ABREN_PANEL.contains(&n.as_str())) && !escena.abren_panel.contains(&marca) {
+                    escena.abren_panel.push(marca);
                 }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
             }

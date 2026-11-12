@@ -408,8 +408,10 @@ pub struct Escena<M: Memorias> {
     /// Quién está suscrito al tema (cliente y objeto) y a quién hay que decirle el nuevo (quien atiende lo manda).
     temas: Vec<(Cliente, u32)>,
     pub avisos_tema: Vec<(Cliente, u32)>,
-    /// Super+A (C2): a qué suscritos del tema hay que mandar `panel` (solo los que pueden ponerlo: el centro).
+    /// Super+A (C2): a qué suscritos del tema hay que mandar `panel` (los de `abren_panel`).
     pub avisos_panel: Vec<(Cliente, u32)>,
+    /// Quién recibe Super+A: lo pone quien atiende, por el nombre que da `inicio` (el panel rápido).
+    pub abren_panel: Vec<Cliente>,
     /// Quién puede cambiar el tema: lo pone quien atiende, por el nombre que da `inicio` (el centro de control).
     pub ponen_tema: Vec<Cliente>,
     /// Las ventanas que se acaban de colocar, con su sitio: quien atiende lo dice (las pruebas del ratón lo usan) y lo
@@ -505,6 +507,7 @@ impl<M: Memorias> Escena<M> {
             temas: Vec::new(),
             avisos_tema: Vec::new(),
             avisos_panel: Vec::new(),
+            abren_panel: Vec::new(),
             ponen_tema: Vec::new(),
             cursor: (0, 0),
             botones: 0,
@@ -554,10 +557,10 @@ impl<M: Memorias> Escena<M> {
         }
     }
 
-    /// Super+A (C2): el panel rápido, al centro de control (los suscritos al tema que pueden ponerlo).
+    /// Super+A (C2): el panel rápido (los suscritos al tema que están en `abren_panel`).
     pub fn pedir_panel(&mut self) {
-        let ponen = &self.ponen_tema;
-        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| ponen.contains(&t.0)).copied().collect();
+        let abren = &self.abren_panel;
+        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| abren.contains(&t.0)).copied().collect();
         self.avisos_panel.extend(suyos);
     }
 
@@ -593,6 +596,7 @@ impl<M: Memorias> Escena<M> {
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
         self.avisos_panel.retain(|t| t.0 != cliente);
+        self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
