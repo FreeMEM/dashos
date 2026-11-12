@@ -203,7 +203,15 @@ Las mutaciones que cargan son las que tocan bytes de código, datos o depuració
 
 ### El oráculo
 
-Pendiente: el emulador lo tenía ocupado otra sesión (cerrojo `dash-emu-red.lock`).
+Pendiente. Tres intentos (5, 25 y 40 minutos de espera) se quedaron esperando el cerrojo del emulador
+(`/run/user/1000/dash-emu-red.lock`), que tenían otras sesiones con tandas largas. La orden, para cuando esté libre
+(salida esperada: las cuatro líneas "hunk:" de la caja, iguales):
+
+```
+cp caja/pruebas68k/saludo.exe /tmp/saludo
+cd ~/Projects/FreeMEMLang && flock /run/user/1000/dash-emu-red.lock \
+    env DASH_KICKSTART="$HOME/Descargas/Telegram Desktop/kick40068.A1200" python3 tools/emu_run.py /tmp/saludo
+```
 
 ### Lo que falta y decisiones pendientes
 
