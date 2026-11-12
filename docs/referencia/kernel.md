@@ -102,7 +102,8 @@ las únicas que da el kernel:
 
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
-- Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, la memoria de la VideoCore y, para
+- Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
+  virtuales (H9), la memoria de la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
 
@@ -167,6 +168,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
 | 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
 | 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
+| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada | Llave de la máquina virtual (H9). `E_NO_HAY` sin hipervisor |
+| 46 | `maquina_correr` | `x0` máquina (con escribir), `x1` informe (72 bytes), `x2` respuesta a una lectura pendiente | El motivo de la salida (1 a 6); el informe, en `x1` |
 
 ### Detalles
 
@@ -303,6 +306,24 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Si ya había acabado, contesta al momento, todas las veces que se pregunte.
   - La llave de proceso no mantiene viva la memoria del proceso: se libera cuando acaba.
 
+- **45 y 46, máquinas virtuales** (caja Linux, H9; `kernel/src/maquinas.rs`, `base/hiper.rs`). Solo si el kernel
+  arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. El kernel deja en EL2 un
+  trozo pequeño que cambia de mundo, y sigue en EL1.
+  - `maquina_crear`: una vCPU en EL1, con la MMU y las interrupciones apagadas, que empieza en `x3` y ve el objeto de
+    memoria entero desde `x2` (hasta 4 GB de direcciones del invitado). La memoria se sigue pudiendo proyectar en el
+    proceso (así se carga el invitado), pero el invitado la lee sin caché mientras tenga la MMU apagada: lo escrito
+    después de crear la máquina puede no verlo. Ni memoria DMA ni una llave revocable (`E_ARGUMENTO`). Su vCPU y sus
+    tablas de la etapa 2 se cobran al grupo (unas 4 páginas para 64 KB). Como mucho 255 máquinas a la vez
+    (`E_LIMITE`). Se para y se suelta al cerrar su última llave.
+  - `maquina_correr`: entra en el invitado hasta que sale. El informe son 9 u64 en little-endian: motivo, PC,
+    dirección, valor, tamaño, ESR, x1, x2 y las cuentas del contador que pasó fuera del kernel. Motivos:
+    1 HVC (valor = x0, tamaño = el número del HVC, y x1 y x2); 2 lectura en una dirección que no es su memoria
+    (dirección y tamaño; el `x2` de la siguiente llamada es lo que lee); 3 escritura ahí (dirección, valor y tamaño);
+    4 WFI; 5 lo sacó una interrupción del anfitrión (el reloj lo hace cada tic: un invitado no se queda con el
+    núcleo); 6 una trampa o un fallo (ESR, PC y dirección): SMC, el temporizador físico, la depuración, la coma
+    flotante, un acceso que no se describe solo. Tras un 6 la máquina está muerta y `maquina_correr` da `E_CERRADO`.
+    Si otro hilo la está corriendo, `E_LIMITE`. En 2 y 3 el PC ya está en la instrucción siguiente.
+
 ### Errores
 
 | Valor | Nombre | Cuándo |
@@ -316,6 +337,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
 | −9 | `E_PLAZO` | Venció el plazo de `canal_leer_plazo` sin mensaje (K7). `canal_leer` ya no dice `E_CERRADO` por falta de memoria: `E_MEMORIA` |
+| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2 (`maquina_crear`, `maquina_correr`) |
 
 ### Topes de trabajo
 
@@ -375,6 +397,8 @@ Tipos de objeto:
 | Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
+| Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
+| Máquina virtual | `maquina_crear` | Correrla (escribir); se para al cerrarla |
 
 ## Biblioteca de usuario en Rust
 

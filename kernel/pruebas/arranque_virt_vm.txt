@@ -1,0 +1,18 @@
+# La caja Linux (H9), primer paso: la imagen de `virt` en QEMU virt con virtualization=on (`make arranque-virt-vm`).
+# EDK2 y el cargador entran en EL2; el kernel deja ahí el trozo del hipervisor y baja a EL1 como siempre. El servicio
+# `caja-linux` corre invitados de prueba (usuario/invitados/pruebas.s) y los hostiles; `sin-maquina`, sin el permiso.
+Nivel de excepción: EL1
+Hipervisor: el kernel arrancó en EL2
+Hipervisor: EL2 instalado en 4 núcleos
+DashOS en marcha con 4 núcleos
+~[caja-linux] el invitado dice: Hola desde el invitado, por el UART emulado
+~[caja-linux] el invitado acaba con HVC #0: bien
+~[caja-linux] ida y vuelta al invitado:
+~[caja-linux] hostil (leer fuera): lee fuera de su memoria (0x70000000); se para su máquina: bien
+~[caja-linux] hostil (escribir en el kernel): escribe fuera de su memoria (0x40200000); se para su máquina: bien
+~[caja-linux] hostil (bucle sin fin): no acaba: el reloj lo sacó
+~[caja-linux] hostil (apagar por SMC): trampa en
+~[caja-linux] hostil (temporizador del kernel): trampa en
+~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
+~[caja-linux] primer paso de la caja Linux: bien
+~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien

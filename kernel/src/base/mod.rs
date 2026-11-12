@@ -10,6 +10,7 @@ pub mod cerrojo;
 pub mod cpu;
 pub mod espacio;
 pub mod excepciones;
+pub mod hiper;
 pub mod mapa;
 pub mod memoria;
 pub mod mmio;
@@ -30,10 +31,12 @@ core::arch::global_asm!(".equ PLACA_VIRT, 0", ".equ PLACA_PI3, 1", include_str!(
 core::arch::global_asm!(include_str!("contexto.s"));
 core::arch::global_asm!(include_str!("copia.s"));
 
-/// Entrada desde arranque.s en el núcleo 0, con la dirección física del árbol de dispositivos que dejó el firmware.
+/// Entrada desde arranque.s en el núcleo 0, con la dirección física del árbol de dispositivos que dejó el firmware y
+/// si arrancó en EL2 (el hipervisor, H9).
 #[unsafe(no_mangle)]
-extern "C" fn kmain(dtb: usize) -> ! {
+extern "C" fn kmain(dtb: usize, el2: u64) -> ! {
     ARBOL.store(dtb, core::sync::atomic::Ordering::Relaxed);
+    hiper::arranco_en(0, el2);
     crate::kmain(dtb)
 }
 

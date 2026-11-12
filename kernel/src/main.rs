@@ -32,6 +32,7 @@ mod interrupciones;
 mod its;
 mod llamadas;
 mod lz4;
+mod maquinas;
 mod objetos;
 mod pcie;
 mod procesos;
@@ -74,6 +75,11 @@ pub fn kmain(dtb: usize) -> ! {
     mapa::construir();
     mapa::activar();
     base::copiar_arbol();
+    // El hipervisor (caja Linux, H9): con la imagen ya en su sitio, la tabla de EL2 de verdad.
+    base::hiper::iniciar();
+    if base::hiper::hay() {
+        kprintln!("Hipervisor: el kernel arrancó en EL2; la caja Linux puede crear máquinas virtuales");
+    }
 
     // La Pi 3 (P3): sin GIC, los controladores de la BCM2836 y la BCM2835, con los números del GIC.
     if let (Some(l), Some(a)) = (d.compatible("brcm,bcm2836-l1-intc"), d.compatible("brcm,bcm2836-armctrl-ic")) {
@@ -127,6 +133,9 @@ pub fn kmain(dtb: usize) -> ! {
     pruebas::ejecutar(dtb, n);
 
     // Con el tiempo desde que se encendió la máquina (el contador empieza ahí: en QEMU incluye el firmware).
+    if base::hiper::hay() {
+        kprintln!("Hipervisor: EL2 instalado en {} núcleos", base::hiper::nucleos());
+    }
     kprintln!("DashOS en marcha con {} núcleos. (a los {} ms del encendido)", n + 1,
         (base::cpu::contador() as u128 * 1000 / base::cpu::frecuencia().max(1) as u128) as u64);
     // La imagen normal pasa el sistema al programa de inicio (C47). La de pruebas no: ahí mandan las pruebas.

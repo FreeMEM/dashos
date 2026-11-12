@@ -174,6 +174,8 @@ fn principal() -> u64 {
             4 => "registro",
             5 => "memoria del firmware",
             6 => "datos",
+            7 => "permiso de plazo",
+            8 => "permiso de máquinas virtuales",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));

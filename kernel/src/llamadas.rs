@@ -36,6 +36,8 @@
 //! | 42 | esperar(dirección, valor, plazo µs) -> 0 despertado, 1 la palabra no valía eso |
 //! | 43 | despertar(dirección, cuántos) -> cuántos despertó |
 //! | 44 | proceso_salir(código): acaba el proceso entero |
+//! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada) -> llave de máquina virtual (H9) |
+//! | 46 | maquina_correr(máquina, informe, valor) -> motivo: entra en el invitado hasta que sale |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -63,6 +65,8 @@ const E_MEMORIA: u64 = -7i64 as u64;
 const E_LIMITE: u64 = -8i64 as u64;
 /// Venció el plazo de una lectura (K7).
 const E_PLAZO: u64 = -9i64 as u64;
+/// Sin hipervisor (H9): el kernel no arrancó en EL2, así que no hay máquinas virtuales.
+const E_NO_HAY: u64 = -10i64 as u64;
 /// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
 /// lleva menos de un milisegundo en la Pi 4; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
 /// la consola como servicio).
@@ -184,6 +188,9 @@ pub fn atender(marco: &mut Marco) {
         42 => esperar(a[0], a[1], a[2]),
         43 => despertar(a[0], a[1]),
         44 => proceso_salir(a[0]),
+        // La caja Linux (H9): máquinas virtuales.
+        45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3]),
+        46 => maquina_correr(a[0] as u32, a[1], a[2]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1085,4 +1092,81 @@ fn proceso_salir(codigo: u64) -> u64 {
     }
     SALIDAS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     planificador::terminar_actual(objetos::Fin::Salida(codigo));
+}
+
+/// Una máquina virtual (H9) con el permiso `hp` (escribir) y el objeto de memoria `hm` (leer y escribir; ni DMA ni
+/// revocable) como su RAM, que el invitado ve desde `ipa`; empieza en `entrada`, en EL1 y con la MMU apagada. Lo que
+/// cuestan su vCPU y sus tablas se cobra al grupo. Sin hipervisor, `E_NO_HAY`.
+fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (permiso, memoria) = {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(hp) else { return E_LLAVE };
+        let Some(m) = t.ver_con_intermediarios(hm) else { return E_LLAVE };
+        (p, m)
+    };
+    let Objeto::PermisoMaquina = permiso.objeto else { return E_TIPO };
+    if permiso.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    let (m, por) = memoria;
+    let derechos = m.derechos;
+    // Revocar quita las proyecciones, no la etapa 2 de un invitado: una llave revocable no vale.
+    if !por.is_empty() {
+        return E_ARGUMENTO;
+    }
+    let Objeto::Memoria(m) = m.objeto else { return E_TIPO };
+    let rw = objetos::LEER | objetos::ESCRIBIR;
+    if derechos & rw != rw {
+        return E_DERECHOS;
+    }
+    if !crate::base::hiper::hay() {
+        return E_NO_HAY;
+    }
+    if proc_.llaves.tomar().huecos() == 0 {
+        return E_LIMITE;
+    }
+    let maquina = match crate::maquinas::Maquina::nueva(m, ipa, entrada, &proc_.cupo) {
+        Ok(v) => v,
+        Err(crate::base::hiper::Error::NoHay) => return E_NO_HAY,
+        Err(crate::base::hiper::Error::Argumento) => return E_ARGUMENTO,
+        Err(crate::base::hiper::Error::Memoria) => return E_MEMORIA,
+        Err(crate::base::hiper::Error::Limite) => return E_LIMITE,
+    };
+    let Ok(maquina) = alloc::sync::Arc::try_new(maquina) else { return E_MEMORIA };
+    match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Maquina(maquina), objetos::TODOS)) {
+        Ok(n) => n as u64,
+        Err(_) => E_LIMITE,
+    }
+}
+
+/// Corre la máquina `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (9 u64 en
+/// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. Devuelve el motivo.
+fn maquina_correr(h: u32, informe: u64, valor: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    // Antes de entrar, que se pueda escribir el informe: si no, lo que dijo el invitado se perdería.
+    let vacio = [0u8; 8 * crate::maquinas::PALABRAS];
+    if !escribir_usuario(informe, &vacio) {
+        return E_ARGUMENTO;
+    }
+    match m.correr(valor) {
+        Ok(inf) => {
+            let mut b = [0u8; 8 * crate::maquinas::PALABRAS];
+            for (i, v) in inf.iter().enumerate() {
+                b[8 * i..8 * i + 8].copy_from_slice(&v.to_le_bytes());
+            }
+            if !escribir_usuario(informe, &b) {
+                return E_ARGUMENTO;
+            }
+            inf[0]
+        }
+        Err(crate::maquinas::Error::NoHay) => E_NO_HAY,
+        Err(crate::maquinas::Error::Ocupada) => E_LIMITE,
+        Err(crate::maquinas::Error::Muerta) => E_CERRADO,
+    }
 }

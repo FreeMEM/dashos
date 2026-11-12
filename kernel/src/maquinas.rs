@@ -1,0 +1,132 @@
+//! Las máquinas virtuales de la caja Linux (H9, `docs/bitacoras/caja-linux.md`), vistas como objetos con llave.
+//!
+//! Crear una pide el permiso de máquinas virtuales (lo da el kernel a `inicio`, y `inicio` al servicio `caja-linux`) y
+//! un objeto de memoria del cupo de quien la pide, que es la RAM del invitado. "Correr" entra en el invitado hasta que
+//! sale y dice por qué, ya interpretado (`Informe`): una llamada al hipervisor (HVC), un acceso a una dirección que no
+//! es su memoria (los aparatos que emula el servicio, o un fallo, según el servicio), un WFI, una interrupción del
+//! anfitrión (el reloj saca al invitado cada tic: nunca se queda con el núcleo) o un fallo. El kernel no emula nada:
+//! eso es del servicio.
+//!
+//! Lo que toca el hardware (EL2, la etapa 2, el cambio de mundo) está en `base::hiper`.
+
+use crate::base::hiper::{self, Vcpu};
+use crate::cerrojo::Cerrojo;
+use crate::memoria::Memoria;
+use alloc::sync::Arc;
+
+/// Por qué volvió el invitado (el primer número del informe; lo devuelve también la llamada).
+pub const HVC: u64 = 1;
+/// Leyó en una dirección que no es su memoria: el valor que dé el servicio en la siguiente vuelta va a su registro.
+pub const LECTURA: u64 = 2;
+/// Escribió en una dirección que no es su memoria.
+pub const ESCRITURA: u64 = 3;
+pub const WFI: u64 = 4;
+/// Una interrupción del anfitrión lo sacó (el reloj, un aparato): no ha pasado nada suyo.
+pub const INTERRUMPIDO: u64 = 5;
+/// Una trampa o un fallo que el kernel no sabe pasar al servicio de otra forma (SMC, un registro atrapado, la coma
+/// flotante, un fallo de la etapa 2 sin datos, un SError): la máquina queda muerta.
+pub const FALLO: u64 = 6;
+
+/// Palabras del informe: motivo, PC de la instrucción, dirección (física del invitado), valor, tamaño en bytes (o el
+/// número del HVC), ESR, x1 y x2 (en un HVC) y las cuentas del contador que pasó la CPU fuera del kernel (ida y vuelta
+/// por EL2 con el invitado).
+pub const PALABRAS: usize = 9;
+
+pub enum Error {
+    NoHay,
+    /// Otro hilo la está corriendo.
+    Ocupada,
+    /// Murió en un fallo.
+    Muerta,
+}
+
+struct Estado {
+    vcpu: Vcpu,
+    /// Una lectura de aparato a medias: el registro (31 = xzr) y el tamaño en bytes.
+    lectura: Option<(usize, u32)>,
+    muerta: bool,
+}
+
+pub struct Maquina {
+    estado: Cerrojo<Estado>,
+}
+
+impl Maquina {
+    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
+        let vcpu = Vcpu::nueva(memoria, ipa, entrada, cupo)?;
+        Ok(Self { estado: Cerrojo::new(Estado { vcpu, lectura: None, muerta: false }) })
+    }
+
+    /// Entra en el invitado. `valor` es la respuesta a una lectura de aparato pendiente (si no la hay, no se usa).
+    pub fn correr(&self, valor: u64) -> Result<[u64; PALABRAS], Error> {
+        // Sin esperar: dos hilos no corren a la vez la misma vCPU.
+        let Some(mut e) = self.estado.intentar() else { return Err(Error::Ocupada) };
+        if e.muerta {
+            return Err(Error::Muerta);
+        }
+        if let Some((r, bytes)) = e.lectura.take() {
+            let mascara = if bytes >= 8 { u64::MAX } else { (1u64 << (8 * bytes)) - 1 };
+            e.vcpu.poner_x(r, valor & mascara);
+        }
+        let antes = crate::reloj::ahora();
+        let Some(s) = e.vcpu.correr() else { return Err(Error::NoHay) };
+        let cuentas = crate::reloj::ahora().wrapping_sub(antes);
+        let mut inf = [0u64; PALABRAS];
+        inf[8] = cuentas;
+        inf[5] = s.esr;
+        let pc = e.vcpu.pc();
+        inf[1] = pc;
+        if s.tipo == hiper::SALIDA_IRQ || s.tipo == hiper::SALIDA_FIQ {
+            inf[0] = INTERRUMPIDO;
+            return Ok(inf);
+        }
+        if s.tipo != hiper::SALIDA_SINCRONA {
+            e.muerta = true;
+            inf[0] = FALLO;
+            return Ok(inf);
+        }
+        let clase = s.esr >> 26;
+        let iss = s.esr & 0x1ff_ffff;
+        match clase {
+            // HVC de 64 bits: el PC ya apunta a la siguiente.
+            0x16 => {
+                inf[0] = HVC;
+                inf[1] = pc.wrapping_sub(4);
+                inf[3] = e.vcpu.x(0);
+                inf[4] = iss & 0xffff;
+                inf[6] = e.vcpu.x(1);
+                inf[7] = e.vcpu.x(2);
+            }
+            // WFI o WFE.
+            0x01 => {
+                inf[0] = WFI;
+                e.vcpu.poner_pc(pc + 4);
+            }
+            // Fallo de datos desde el invitado. Con ISV (la instrucción se describe sola), en la etapa 2, sin ser al
+            // recorrer sus tablas y siendo de traducción: un acceso a una dirección que no es su memoria.
+            0x24 if iss & (1 << 24) != 0 && iss & (1 << 7) == 0 && iss & 0x3c == 0x04 => {
+                let ipa = ((s.hpfar >> 4) << 12) | (s.far & 0xfff);
+                let bytes = 1u32 << ((iss >> 22) & 3);
+                let r = ((iss >> 16) & 31) as usize;
+                inf[2] = ipa;
+                inf[4] = bytes as u64;
+                if iss & (1 << 6) != 0 {
+                    let mascara = if bytes >= 8 { u64::MAX } else { (1u64 << (8 * bytes)) - 1 };
+                    inf[0] = ESCRITURA;
+                    inf[3] = if r == 31 { 0 } else { e.vcpu.x(r) & mascara };
+                } else {
+                    inf[0] = LECTURA;
+                    e.lectura = Some((r, bytes));
+                }
+                e.vcpu.poner_pc(pc + 4);
+            }
+            _ => {
+                inf[0] = FALLO;
+                // En un fallo de la etapa 2 (de instrucción o de datos), la dirección física del invitado.
+                inf[2] = if clase == 0x20 || clase == 0x24 { ((s.hpfar >> 4) << 12) | (s.far & 0xfff) } else { s.far };
+                e.muerta = true;
+            }
+        }
+        Ok(inf)
+    }
+}

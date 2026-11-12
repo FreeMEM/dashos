@@ -186,6 +186,48 @@ pub fn hora_ns() -> u64 {
     llamada(39, [0; 5]).0
 }
 
+/// Sin hipervisor (H9): el kernel no arrancó en EL2.
+pub const E_NO_HAY: i64 = -10;
+
+/// Una máquina virtual (caja Linux, H9) con el permiso `permiso` y el objeto de memoria `memoria` como su RAM, que el
+/// invitado ve desde la dirección física `ipa`; empieza en `entrada`, en EL1 y con la MMU apagada. Devuelve su llave o
+/// un error negativo (`E_NO_HAY` sin hipervisor). Se para y se suelta al cerrar la llave.
+pub fn maquina_crear(permiso: u32, memoria: u32, ipa: u64, entrada: u64) -> i64 {
+    llamada(45, [permiso as u64, memoria as u64, ipa, entrada, 0]).0 as i64
+}
+
+/// Lo que dice `maquina_correr` de por qué volvió el invitado (`kernel/src/maquinas.rs`).
+pub mod maquina {
+    pub const HVC: i64 = 1;
+    pub const LECTURA: i64 = 2;
+    pub const ESCRITURA: i64 = 3;
+    pub const WFI: i64 = 4;
+    pub const INTERRUMPIDO: i64 = 5;
+    pub const FALLO: i64 = 6;
+
+    /// El informe de una salida: motivo, PC, dirección física del invitado, valor, tamaño (o número del HVC), ESR,
+    /// x1 y x2 (en un HVC) y las cuentas del contador que pasó fuera del kernel.
+    #[derive(Default, Clone, Copy)]
+    #[repr(C)]
+    pub struct Informe {
+        pub motivo: u64,
+        pub pc: u64,
+        pub direccion: u64,
+        pub valor: u64,
+        pub tamano: u64,
+        pub esr: u64,
+        pub x1: u64,
+        pub x2: u64,
+        pub cuentas: u64,
+    }
+}
+
+/// Entra en el invitado de la máquina `llave` hasta que sale; `valor` contesta a una lectura pendiente. Devuelve el
+/// motivo (`maquina::*`) o un error negativo.
+pub fn maquina_correr(llave: u32, informe: &mut maquina::Informe, valor: u64) -> i64 {
+    llamada(46, [llave as u64, informe as *mut maquina::Informe as u64, valor, 0, 0]).0 as i64
+}
+
 /// Interrupción atendida: el kernel la vuelve a habilitar.
 pub fn interrupcion_terminar(llave: u32) -> i64 {
     llamada(11, [llave as u64, 0, 0, 0, 0]).0 as i64

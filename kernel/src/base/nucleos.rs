@@ -85,8 +85,10 @@ pub fn despertar(como: Encendido) -> u32 {
 }
 
 #[unsafe(no_mangle)]
-extern "C" fn kmain_secundario(nucleo: u64) -> ! {
+extern "C" fn kmain_secundario(nucleo: u64, el2: u64) -> ! {
+    super::hiper::arranco_en(nucleo as u32, el2);
     crate::mapa::activar();
+    super::hiper::instalar_nucleo();
     excepciones::iniciar();
     gic::iniciar_cpu();
     crate::planificador::iniciar_nucleo();

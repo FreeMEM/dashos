@@ -245,6 +245,11 @@ impl Paginas {
         );
     }
 
+    /// Los tramos de RAM del árbol (física, tamaño); los huecos van a (0, 0). Para la traducción de EL2 (hiper.rs).
+    pub(super) fn tramos_ram(&self) -> [(u64, u64); MAX_TRAMOS] {
+        self.ram
+    }
+
     /// ¿El tramo cae entero fuera de la RAM que conoce el kernel? Para la memoria del firmware (C50).
     pub fn fuera_de_la_ram(&self, fisica: u64, tamano: u64) -> bool {
         let Some(fin) = fisica.checked_add(tamano) else { return false };

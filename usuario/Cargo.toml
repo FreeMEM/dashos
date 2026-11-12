@@ -301,6 +301,17 @@ name = "sin-red"
 path = "src/bin/sin_red.rs"
 test = false
 
+# La caja Linux (H9): el servicio de las máquinas virtuales y un programa sin su permiso.
+[[bin]]
+name = "caja-linux"
+path = "src/bin/caja_linux.rs"
+test = false
+
+[[bin]]
+name = "sin-maquina"
+path = "src/bin/sin_maquina.rs"
+test = false
+
 [[bin]]
 name = "sonido"
 path = "src/bin/sonido.rs"

@@ -45,13 +45,22 @@
     ldr     x2, =0x30D00800             // SCTLR_EL1: bits RES1, little-endian; MMU y cachés apagadas
     msr     sctlr_el1, x2
 
+    // El hipervisor (caja Linux, H9): una tabla de vectores de EL2 que solo sabe instalar la de verdad (hiper.s), y
+    // el VMID 0 para el kernel. x21 = 1 le dice a Rust que este núcleo arrancó en EL2.
+    adrp    x2, vectores_el2_arranque
+    add     x2, x2, :lo12:vectores_el2_arranque
+    msr     vbar_el2, x2
+    msr     vttbr_el2, xzr
+    mov     x21, #1
+
     mov     x2, #0x3c5                  // SPSR_EL2: EL1h con D, A, I y F enmascaradas
     msr     spsr_el2, x2
     adr     x2, \destino
     msr     elr_el2, x2
     eret
 
-9:  ldr     x2, =0x30D00800             // el firmware ya nos dejó en EL1: SCTLR conocido, no el suyo (S6)
+9:  mov     x21, #0                     // sin EL2: sin hipervisor
+    ldr     x2, =0x30D00800             // el firmware ya nos dejó en EL1: SCTLR conocido, no el suyo (S6)
     msr     sctlr_el1, x2
     isb
     b       \destino
@@ -182,6 +191,7 @@ en_alto:
     b       2b
 
 3:  mov     x0, x20                     // árbol de dispositivos (dirección física)
+    mov     x1, x21                     // 1 si arrancó en EL2
     bl      kmain
 4:  wfe
     b       4b
@@ -306,6 +316,7 @@ sec_alto:
     sub     x1, x1, x2
     mov     sp, x1
     mov     x0, x19
+    mov     x1, x21                     // 1 si arrancó en EL2
     bl      kmain_secundario
 7:  wfe
     b       7b
