@@ -1646,3 +1646,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Nada probado en una Pi 5 real (QEMU no la emula). El USB (RP1 tras PCIe) lo lleva la rama `pi5-usb`.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN;
   `make tarjeta-pi5` sale.
+
+### 2026-11-13 01:30: programas de Dash en la caja Amiga, en revision
+- Fusionada `caja-amiga-dash`: corren seis programas de Dash (FreeMEMLang), por el camino directo y por `--gcc`:
+  `caja/pruebas68k/dash/caja_texto.dash`, dos tests de FreeMEMLang tal cual, `examples/hola.dash` y
+  `caja_ventana.dash` (EventLoop con On Close y On Timer, clic en su gadget). Todos acaban con 0, sin avisos ni
+  memoria perdida. Los compila `caja/Makefile` si está `~/Projects/FreeMEMLang/dash` (no van en git). Captura
+  mandada al usuario; oráculo FS-UAE igual en las primeras versiones (las finales, sin pasar: cerrojo ocupado).
+- Añadido: `pr_CLI` en cada proceso; exec con charcos, semáforos, SetExcept, StackSwap y dispositivos; crates
+  `caja/utility` y `caja/timer` (timer.device); intuition con GimmeZeroZero; detector de listas en círculo.
+- Pendiente: excepciones del 68k sin el manejador de Dash, Ctrl-C en bucles (código 68k desde una función nativa),
+  GadTools/ReAction/MUI/asl/diskfont/layers, `BorderRPort`. Decisión del usuario: las líneas de Dash en
+  `arranque_virt.txt` piden FreeMEMLang instalado (o un fichero aparte).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN.
