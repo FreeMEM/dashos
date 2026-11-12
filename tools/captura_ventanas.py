@@ -61,8 +61,11 @@ def main():
         return casi(a, b) or all(y * 134 // 255 - 3 <= x <= y + 2 for x, y in zip(a, b))
 
     fallos = []
-    if not casi(en(5, 5), FONDO):
-        fallos.append(f"fondo en (5, 5): {en(5, 5)}")
+    # S10: arriba, la barra de la pantalla (40 de alto, con su sombra debajo): ahí no se ve el fondo; más abajo, sí.
+    if not casi(en(5, 60), FONDO):
+        fallos.append(f"fondo en (5, 60): {en(5, 60)}")
+    if casi(en(5, 5), FONDO) or casi(en(400, 20), FONDO):
+        fallos.append(f"sin barra arriba: (5, 5) = {en(5, 5)}, (400, 20) = {en(400, 20)}")
     # Orden 1: ventana-a en (40, 40) debajo y ventana-b en (72, 72) encima.
     orden1 = [
         ((45, 45), ROJO),

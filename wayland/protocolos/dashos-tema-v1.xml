@@ -28,6 +28,12 @@
       </description>
     </request>
 
+    <request name="panel">
+      <description summary="abrir o cerrar el panel rápido">
+        Como Super+A (S10: el botón de la barra). Solo la barra; a otro, error de protocolo.
+      </description>
+    </request>
+
     <event name="tema">
       <description summary="el tema de ahora">Al enlazar y cada vez que cambia.</description>
       <arg name="color" type="uint"/>
@@ -38,6 +44,20 @@
       <description summary="abrir o cerrar el panel rápido">
         Super+A (C2): solo al panel rápido. La tecla no llega a la ventana.
       </description>
+    </event>
+
+    <event name="lanzador">
+      <description summary="abrir o cerrar el lanzador">
+        Super sola, pulsada y soltada sin otra tecla ni botón por medio (S10): solo a la barra.
+      </description>
+    </event>
+
+    <event name="titulo">
+      <description summary="el título de la ventana con el teclado">
+        Solo a la barra, al suscribirse y cada vez que cambia. Vacío si ninguna ventana tiene el teclado o si la sesión
+        está bloqueada. Es el de la ventana en la que escribe quien está delante: nunca el de otra.
+      </description>
+      <arg name="titulo" type="string"/>
     </event>
   </interface>
 </protocol>

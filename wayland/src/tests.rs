@@ -955,6 +955,114 @@ mod ventanas {
         assert_eq!(escena.raices().last(), Some(&(9, 31)));
     }
 
+    /// Una capa de la barra: cliente `c`, objetos 30 a 34, con tamaño, anclas, zona y márgenes; si cabe en la memoria
+    /// de prueba, con su búfer. Devuelve el tamaño de su configure.
+    fn capa(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, tam: (u32, u32), anclas: u32, zona: i32, margenes: [i32; 4]) -> (u32, u32) {
+        capa_con_teclado(escena, con, c, tam, anclas, zona, margenes, 0)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn capa_con_teclado(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, tam: (u32, u32), anclas: u32, zona: i32, margenes: [i32; 4], teclado: u32) -> (u32, u32) {
+        use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(1).texto(Some("wl_compositor")).uint(6).uint(3).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(2).texto(Some("wl_shm")).uint(1).uint(4).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(30).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(31).fin();
+        e.empezar(30, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(32).uint(31).uint(0).uint(2).texto(Some("capa")).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_SIZE).uint(tam.0).uint(tam.1).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(anclas).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(zona).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_MARGIN).int(margenes[0]).int(margenes[1]).int(margenes[2]).int(margenes[3]).fin();
+        e.empezar(32, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(teclado).fin();
+        e.empezar(31, wl_surface::req::COMMIT).fin();
+        let ev = mandar(escena, con, c, &e);
+        let conf = ev.iter().find(|x| (x.0, x.1) == (32, zwlr_layer_surface_v1::ev::CONFIGURE)).expect("sin configure");
+        let serie = u32::from_le_bytes(conf.2[..4].try_into().unwrap());
+        let (w, h) = (u32::from_le_bytes(conf.2[4..8].try_into().unwrap()), u32::from_le_bytes(conf.2[8..12].try_into().unwrap()));
+        if w * h * 4 <= 1 << 16 {
+            let mut e = Escritor::new();
+            e.empezar(32, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(serie).fin();
+            e.empezar(4, wl_shm::req::CREATE_POOL).uint(33).llave(80 + c as u32).int((w * h * 4) as i32).fin();
+            e.empezar(33, wl_shm_pool::req::CREATE_BUFFER).uint(34).int(0).int(w as i32).int(h as i32).int(w as i32 * 4).uint(XRGB8888).fin();
+            e.empezar(31, wl_surface::req::ATTACH).uint(34).int(0).int(0).fin();
+            e.empezar(31, wl_surface::req::COMMIT).fin();
+            mandar(escena, con, c, &e);
+        }
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        (w, h)
+    }
+
+    /// S10: la barra llega con una ventana ya maximizada: la ventana baja a lo que queda y se le pide ese tamaño. Una
+    /// capa sin zona propia (el panel rápido) sale debajo de la barra, y su tamaño 0 es lo que queda; con -1 (un fondo),
+    /// la pantalla entera. Maximizar con la barra puesta, también debajo. Y si la barra se va, la ventana vuelve a
+    /// ocupar toda la pantalla.
+    #[test]
+    fn la_barra_aparta_ventanas_maximizadas_y_capas() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 200 * 150];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        let mut v = Conexion::new();
+        abrir(&mut escena, &mut v, 1, 70);
+        let mut out = Vec::new();
+        escena.maximizar(true, &mut out);
+        assert_eq!(out[0], (1, Entrada::Configura { xdg: 9, ancho: 200, alto: 150, maximizada: true }));
+        assert_eq!(escena.clientes[&1].superficies[&7].sitio, Some((0, 0)));
+        escena.pendientes.clear();
+        // La barra: 20 de alto, a todo lo ancho.
+        let mut barra = Conexion::new();
+        assert_eq!(capa(&mut escena, &mut barra, 9, (0, 20), ARRIBA | IZQUIERDA | DERECHA, 20, [0; 4]), (200, 20));
+        assert_eq!(escena.area, Rect { x: 0, y: 20, w: 200, h: 130 });
+        assert_eq!(escena.clientes[&1].superficies[&7].sitio, Some((0, 20)));
+        assert_eq!(escena.pendientes, [(1, Entrada::Configura { xdg: 9, ancho: 200, alto: 130, maximizada: true })]);
+        escena.pendientes.clear();
+        // El panel rápido: arriba a la derecha, con 8 de margen, debajo de la barra.
+        let mut panel = Conexion::new();
+        assert_eq!(capa(&mut escena, &mut panel, 3, (50, 30), ARRIBA | DERECHA, 0, [8, 8, 0, 0]), (50, 30));
+        assert_eq!(escena.clientes[&3].superficies[&31].sitio, Some((142, 28)));
+        // Sin tamaño y con las cuatro anclas: sin zona, lo que queda; con -1, toda la pantalla.
+        let todas = ARRIBA | ABAJO | IZQUIERDA | DERECHA;
+        assert_eq!(capa(&mut escena, &mut Conexion::new(), 4, (0, 0), todas, 0, [0; 4]), (200, 130));
+        assert_eq!(capa(&mut escena, &mut Conexion::new(), 5, (0, 0), todas, -1, [0; 4]), (200, 150));
+        // Volver y maximizar otra vez: debajo de la barra.
+        let mut out = Vec::new();
+        escena.maximizar(false, &mut out);
+        out.clear();
+        escena.maximizar(true, &mut out);
+        assert_eq!(out[0], (1, Entrada::Configura { xdg: 9, ancho: 200, alto: 130, maximizada: true }));
+        assert_eq!(escena.clientes[&1].superficies[&7].sitio, Some((0, 20)));
+        // Se va la barra: la maximizada vuelve a toda la pantalla.
+        escena.pendientes.clear();
+        escena.adios(9);
+        assert_eq!(escena.area, Rect { x: 0, y: 0, w: 200, h: 150 });
+        assert_eq!(escena.clientes[&1].superficies[&7].sitio, Some((0, 0)));
+        assert!(escena.pendientes.contains(&(1, Entrada::Configura { xdg: 9, ancho: 200, alto: 150, maximizada: true })));
+    }
+
+    /// S10: el lanzador (una capa con el teclado en exclusiva) se lo lleva al salir; al destruirlo, vuelve a la ventana
+    /// de arriba, y se sigue escribiendo donde se estaba.
+    #[test]
+    fn el_teclado_vuelve_al_cerrar_una_capa() {
+        use crate::tablas::zwlr_layer_surface_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut pantalla = vec![0u32; 200 * 150];
+        escena.componer(&mut pantalla, 200, 150, 200, 0, &mut |_, _, _| {});
+        let mut v = Conexion::new();
+        abrir(&mut escena, &mut v, 1, 70);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        let mut lanzador = Conexion::new();
+        capa_con_teclado(&mut escena, &mut lanzador, 9, (40, 30), ARRIBA | IZQUIERDA, 0, [0; 4], 1);
+        assert_eq!(escena.teclado, Some((9, 31)));
+        escena.pendientes.clear();
+        let mut e = Escritor::new();
+        e.empezar(32, zwlr_layer_surface_v1::req::DESTROY).fin();
+        e.empezar(31, wl_surface::req::DESTROY).fin();
+        mandar(&mut escena, &mut lanzador, 9, &e);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        assert!(escena.pendientes.contains(&(1, Entrada::TecladoEntra { superficie: 7 })));
+    }
+
     #[test]
     fn errores_de_capas() {
         use crate::tablas::{zwlr_layer_shell_v1, zwlr_layer_surface_v1};
@@ -1455,6 +1563,89 @@ mod entrada {
             escena.tecla(0x04, true);
             assert!(escena.avisos_panel.is_empty());
         }
+    }
+
+    /// S10: la barra. Pide el panel rápido con su botón (a otro programa, error de protocolo y nada); Super sola le
+    /// pide el lanzador (no si va con otra tecla, con un botón del ratón, con otro modificador o con la sesión
+    /// bloqueada); y recibe el título de la ventana con el teclado (al suscribirse y cuando cambia), que no recibe nadie
+    /// más. Bloqueada, título vacío.
+    #[test]
+    fn la_barra_panel_lanzador_y_titulo() {
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut v = Conexion::new();
+        abrir(&mut escena, &mut v, 1, 100, 100);
+        let mut e = Escritor::new();
+        e.empezar(10, xdg_toplevel::req::SET_TITLE).texto(Some("Notas · ñandú")).fin();
+        mandar(&mut escena, &mut v, 1, &e);
+        escena.barras.push(5);
+        escena.abren_panel.push(3);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+            mandar(escena, con, c, &e)
+        };
+        let (mut otro, mut panel, mut barra) = (Conexion::new(), Conexion::new(), Conexion::new());
+        suscribir(&mut escena, &mut otro, 2);
+        suscribir(&mut escena, &mut panel, 3);
+        // Al suscribirse, la barra recibe el tema y el título de ahora (aún ninguno dicho).
+        let ev = suscribir(&mut escena, &mut barra, 5);
+        let suyos: Vec<_> = ev.iter().filter(|x| x.0 == 60).map(|x| (x.0, x.1)).collect();
+        assert_eq!(suyos, [(60, dashos_tema_v1::ev::TEMA), (60, dashos_tema_v1::ev::TITULO)]);
+        escena.revisar_titulo();
+        assert_eq!(core::mem::take(&mut escena.avisos_titulo), [(5, 60, alloc::string::String::from("Notas · ñandú"))]);
+        escena.revisar_titulo();
+        assert!(escena.avisos_titulo.is_empty(), "el mismo título dos veces");
+        // Cómo le llega.
+        avisar_titulo(&mut barra, 60, "Notas · ñandú");
+        let ev = eventos(&barra.sacar());
+        let a = leer_args(&tablas::DASHOS_TEMA_V1.events[dashos_tema_v1::ev::TITULO as usize], &ev[0].2, &mut [].into_iter()).unwrap();
+        assert_eq!(a, [Valor::Str(Some("Notas · ñandú"))]);
+
+        // El botón del panel: a otro programa, error; a la barra, el panel lo recibe.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::PANEL).fin();
+        otro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        otro.atender(&globales(), &mut escena.de(2));
+        assert!(otro.roto.is_some(), "un programa cualquiera pidió el panel");
+        assert!(escena.avisos_panel.is_empty());
+        mandar(&mut escena, &mut barra, 5, &e);
+        assert_eq!(core::mem::take(&mut escena.avisos_panel), [(3, 60)]);
+
+        // Super sola: el lanzador, solo a la barra. La tecla sigue llegando a la ventana.
+        let ev = escena.tecla(0xE3, true);
+        assert!(ev.contains(&(1, Entrada::Tecla { codigo: 125, pulsada: true })));
+        escena.tecla(0xE3, false);
+        assert_eq!(core::mem::take(&mut escena.avisos_lanzador), [(5, 60)]);
+        // Con otra tecla por medio (Super+A), no; con un clic, tampoco; con Mayúsculas pulsada, tampoco.
+        escena.tecla(0xE3, true);
+        escena.tecla(0x04, true);
+        escena.tecla(0x04, false);
+        escena.tecla(0xE3, false);
+        assert_eq!(core::mem::take(&mut escena.avisos_panel), [(3, 60)]);
+        escena.tecla(0xE3, true);
+        escena.raton(0, 0, 1);
+        escena.raton(0, 0, 0);
+        escena.tecla(0xE3, false);
+        escena.tecla(0xE1, true);
+        escena.tecla(0xE3, true);
+        escena.tecla(0xE3, false);
+        escena.tecla(0xE1, false);
+        assert!(escena.avisos_lanzador.is_empty());
+
+        // Bloqueada: título vacío y Super sola no hace nada.
+        escena.bloqueo = Some(Bloqueo { cliente: 9, objeto: 1, vivo: true, superficies: Vec::new() });
+        escena.revisar_titulo();
+        assert_eq!(core::mem::take(&mut escena.avisos_titulo), [(5, 60, alloc::string::String::new())]);
+        escena.tecla(0xE3, true);
+        escena.tecla(0xE3, false);
+        assert!(escena.avisos_lanzador.is_empty());
+        // Si la barra se va, nada queda apuntado para ella.
+        escena.bloqueo = None;
+        escena.revisar_titulo();
+        escena.adios(5);
+        assert!(escena.avisos_titulo.is_empty() && escena.barras.is_empty());
     }
 
     /// C2: la petición `bloquear` de `dashos_tema_v1` hace lo de Super+L (el aviso de inactividad pendiente, ya), solo

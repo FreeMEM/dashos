@@ -179,6 +179,11 @@ path = "src/bin/panel.rs"
 required-features = ["ventanas"]
 
 [[bin]]
+name = "barra"
+path = "src/bin/barra.rs"
+required-features = ["ventanas"]
+
+[[bin]]
 name = "presa"
 path = "src/bin/presa.rs"
 

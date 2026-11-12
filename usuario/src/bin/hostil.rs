@@ -535,7 +535,77 @@ fn compositor(memoria: u32) -> bool {
     // Esta conexión ya no vale: se cierra y se abre otra.
     escribir(VENTANAS, &[TROZO_ADIOS], &[]);
     let Some((lectura, copia)) = conectar() else { return false };
-    compositor_contesta(lectura, copia, 53) && tema_ajeno()
+    compositor_contesta(lectura, copia, 53) && tema_ajeno() && barra_ajena()
+}
+
+/// S10: ponerse de barra. Sin el poder de escritorio (que el compositor da por el nombre que pone `inicio`), las capas
+/// no se anuncian, y enlazarlas igual es un error de protocolo; pedir el panel rápido como lo pide el botón de la barra,
+/// también.
+fn barra_ajena() -> bool {
+    use wayland::tablas::{dashos_tema_v1, wl_registry, WL_REGISTRY};
+    // Lo que llega por `lectura` hasta un sync (id 70): los globales anunciados y si hubo error en el objeto `objeto`.
+    let leer = |lectura: u32, copia: u32, objeto: u32| -> (alloc::vec::Vec<alloc::string::String>, bool) {
+        let mut b = [0u8; 256];
+        let mut flujo = alloc::vec::Vec::new();
+        let mut globales = alloc::vec::Vec::new();
+        while let Some(n) = leer_con_plazo(lectura, copia, &mut b) {
+            if b[0] != TROZO_DATOS {
+                continue;
+            }
+            flujo.extend_from_slice(&b[1..n]);
+            while let Ok((o, ord, tam)) = leer_cabecera(&flujo) {
+                if o == 2 && ord == wl_registry::ev::GLOBAL
+                    && let Ok(a) = wayland::leer_args(&WL_REGISTRY.events[0], &flujo[8..tam], &mut core::iter::empty())
+                {
+                    globales.push(alloc::string::String::from(a[1].texto()));
+                }
+                if o == 1 && ord == wl_display::ev::ERROR && flujo.get(8..12).is_some_and(|x| u32::from_le_bytes(x.try_into().unwrap()) == objeto) {
+                    return (globales, true);
+                }
+                if o == 70 && ord == wl_callback::ev::DONE {
+                    return (globales, false);
+                }
+                flujo.drain(..tam);
+            }
+        }
+        (globales, false)
+    };
+    let mandar = |e: &Escritor| {
+        let mut t = alloc::vec![TROZO_DATOS];
+        t.extend_from_slice(&e.bytes);
+        escribir(VENTANAS, &t, &[]);
+    };
+    // Los globales, y enlazar la capa con el número del último que se ve más uno y con el del tema.
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    let Some((lectura, copia)) = conectar() else { return false };
+    let mut e = Escritor::new();
+    e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+    mandar(&e);
+    let (globales, _) = leer(lectura, copia, 0);
+    let sin_capas = !globales.is_empty() && !globales.iter().any(|g| g == "zwlr_layer_shell_v1" || g == "ext_session_lock_manager_v1");
+    let mut e = Escritor::new();
+    e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(60).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+    mandar(&e);
+    let (_, capa_negada) = leer(lectura, copia, 2);
+    // Otra conexión: el tema, y pedir el panel rápido.
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    let Some((lectura, copia)) = conectar() else { return false };
+    let mut e = Escritor::new();
+    e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+    e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+    e.empezar(60, dashos_tema_v1::req::PANEL).fin();
+    e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+    mandar(&e);
+    let (_, panel_negado) = leer(lectura, copia, 60);
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    println!(
+        "  [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): {}; pedir el panel rápido da error: {}",
+        si(sin_capas && capa_negada),
+        si(panel_negado)
+    );
+    sin_capas && capa_negada && panel_negado
 }
 
 /// S10c: el tema del sistema solo lo cambia el centro de control. El hostil se suscribe (`dashos_tema_v1`, el global

@@ -34,6 +34,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     ("selector", 1000, 1000, 2, ""),
     // S10c: el centro de control, para ver cuánto ocupa el disco (INFO): sin derechos y encerrado en `C`.
     ("centro", 1000, 1000, 0, "C"),
+    // S10: la barra, para listar los programas de su lanzador: del sistema, sin derechos y encerrada en `Programas`.
+    // Lanzar no lo hace ella: lo hace `sesiones`, como la persona que está delante.
+    ("barra", 1, 1, 0, "Programas"),
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),

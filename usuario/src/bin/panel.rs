@@ -443,6 +443,8 @@ fn principal() -> u64 {
     println!("  [panel] en marcha: Super+A lo abre");
     let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: 100, orden, editando: false };
     let mut abierto = false;
+    // Cuántas veces se abrió (con Super+A o con el botón de la barra): para las pruebas.
+    let mut veces_abierto = 0u32;
     // Lo configurado por el compositor (la altura de la capa) y el pedido; 0 si aún nada.
     let (mut configurado, mut pedido) = (0i32, 0i32);
     // Los dos búferes: su altura (0 si no está hecho) y cuál se ve.
@@ -533,7 +535,10 @@ fn principal() -> u64 {
                     cargado = estado >= 0;
                 }
                 // Arriba a la derecha (anclas 1 arriba y 8 derecha), en la capa de encima (2), con el teclado a demanda (2).
+                // Sin zona propia: el compositor lo pone bajo la barra, si la hay (S10).
                 abierto = true;
+                veces_abierto += 1;
+                println!("  [panel] abierto por {}.ª vez", veces_abierto);
                 (configurado, pedido) = (0, disponer(&est.orden, false).alto.min(ALTO_MAX));
                 por_decir = (true, true);
                 let mut e = Escritor::new();
