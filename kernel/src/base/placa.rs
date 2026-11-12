@@ -11,10 +11,16 @@ pub const PERIFERICOS: (u64, u64) = (0xFC00_0000, 0x1_0000_0000);
 #[cfg(feature = "pi3")]
 pub const PERIFERICOS: (u64, u64) = (0x3F00_0000, 0x4020_0000);
 /// La Pi 5: el bus "soc" del árbol (`ranges` = 0 → 0x10_0000_0000, 2 GB): el buzón, el UART de depuración, el
-/// GIC-400 (0x10_7FFF_9000), la SD... Los GB 64 y 65 enteros, en bloques de 1 GB (arranque.s y mapa.rs). El RP1 (USB,
-/// Ethernet, GPIO), detrás del PCIe, queda fuera por ahora.
+/// GIC-400 (0x10_7FFF_9000), el controlador del PCIe del RP1 (0x10_0012_0000), la SD... Los GB 64 y 65 enteros, en
+/// bloques de 1 GB (arranque.s y mapa.rs). Y el GB 124 (0x1F_0000_0000): la ventana de salida del PCIe del RP1 (USB,
+/// Ethernet, GPIO), según el `ranges` de `pcie@1000120000` en el árbol oficial. Entre medias, nada: `ZONAS` dice qué
+/// partes de la ventana son de verdad periféricos.
 #[cfg(feature = "pi5")]
-pub const PERIFERICOS: (u64, u64) = (0x10_0000_0000, 0x10_8000_0000);
+pub const PERIFERICOS: (u64, u64) = (0x10_0000_0000, 0x1F_4000_0000);
+#[cfg(feature = "pi5")]
+const ZONAS: &[(u64, u64)] = &[(0x10_0000_0000, 0x10_8000_0000), (0x1F_0000_0000, 0x1F_4000_0000)];
+#[cfg(not(feature = "pi5"))]
+const ZONAS: &[(u64, u64)] = &[PERIFERICOS];
 /// En `virt` todo el primer GB son aparatos (flash, GIC, PL011, virtio, ventanas del PCIe); la RAM empieza en 1 GB.
 #[cfg(feature = "virt")]
 pub const PERIFERICOS: (u64, u64) = (0, 0x4000_0000);
@@ -39,7 +45,14 @@ pub const LIMITE_DMA: u64 = 1 << 30;
 pub const LIMITE_DMA: u64 = 2 << 30;
 
 pub const fn es_periferico(fisica: u64) -> bool {
-    fisica >= PERIFERICOS.0 && fisica < PERIFERICOS.1
+    let mut i = 0;
+    while i < ZONAS.len() {
+        if fisica >= ZONAS[i].0 && fisica < ZONAS[i].1 {
+            return true;
+        }
+        i += 1;
+    }
+    false
 }
 
 /// Zonas de la ventana de periféricos que usa el kernel (S4): el GIC, el ITS, el controlador local de la Pi 3. Nunca se

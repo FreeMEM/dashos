@@ -28,6 +28,11 @@ diagnostico = []
 # docs/bitacoras/pi5.md): el compositor, dos ventanas de prueba, Ajustes y la caja Amiga con su ventana. El kernel pinta su
 # diagnóstico hasta que da la pantalla al compositor.
 escritorio = ["diagnostico"]
+# Con `diagnostico`: el teclado y el ratón USB de la Pi 5 (docs/bitacoras/pi5.md, "el RP1"): el kernel mira el PCIe del
+# RP1 tal como lo dejó el firmware (`pciex4_reset=0`), el RP1 y sus dos xHCI, lo cuenta en el panel (`rp1.rs`) y da sus
+# registros a `xhci0` y `xhci1`. Sin `escritorio`, solo esos dos y la consola (`make pi5-usb`): cada tecla sale en
+# pantalla. Con `escritorio`, las teclas y el ratón van al compositor.
+usb = ["diagnostico"]
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).
