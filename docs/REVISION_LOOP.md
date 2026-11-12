@@ -1234,3 +1234,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cargado, Ana se bloqueaba mientras esperaba la ventana de elegir carpeta, y los Intro de reintento del guion para el
   selector caían en la pantalla de bloqueo. Ahora, con una sesión bloqueada, los pasos del selector del guion no
   mandan teclas y esperan. Con todo fusionado: `make prueba` y `make arranque-virt` bien (media de 30 a 50).
+- Fusionadas `kit-menus` (menú del desplegable, fila actual en la lista, campo con etiqueta, ayuda y error, papel
+  secundario; docs/bitacoras/kit-menus.md) y `escritorio` (la barra de la pantalla con zona exclusiva, título, hora y
+  botón del panel, y el lanzador con búsqueda que lanza por `sesiones`; docs/bitacoras/escritorio.md). La rama
+  `escritorio` arregló de paso un fallo de seguridad: `sesiones` reconocía a guardian, entrada y centro por el nombre de
+  su ficha, y lo lanzado desde el disco se llama como su fichero; ahora esos nombres solo valen si los da `inicio`.
+  Pruebas de `lanzables.rs` en `make prueba`. Con todo: `make prueba` y `make arranque-virt` bien.
