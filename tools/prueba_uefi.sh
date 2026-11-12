@@ -35,7 +35,7 @@ QEMU=$!
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
-import socket, sys, time
+import os, socket, sys, time
 ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
 diag_hecho = False
 
@@ -90,8 +90,9 @@ while time.time() - inicio < total:
         texto = open(serie, errors="replace").read()
         # Diagnóstico: con DIAG_REGISTROS=fichero, si el compositor suelta a alguien, los registros de los núcleos (tres
         # veces, para ver si se mueven).
-        if diag_registros and not diag_hecho and "se le suelta" in texto:
+        if diag_registros and not diag_hecho and os.environ.get("DIAG_TEXTO", "se le suelta") in texto:
             diag_hecho = True
+            time.sleep(float(os.environ.get("DIAG_ESPERA", "0")))
             with open(diag_registros, "w") as f:
                 for _ in range(3):
                     f.write(preguntar_monitor("info registers -a"))

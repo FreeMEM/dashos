@@ -1033,3 +1033,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   una espera perdida (kernel: el canal o el temporizador del plazo; o el servicio de disco al intercalar canal y
   anillo). No se tapa con la pausa: es lo primero que hay que mirar al retomar A15, con una traza en memoria (sin
   imprimir, que cambia el ritmo) de cada petición y su respuesta.
+  Y luego: con solo un aviso antes de abrir (sin pausas), esta vez abrió. No es determinista; la pausa solo cambiaba
+  la suerte. Apunta más a leer mientras `archivos` escribe, sin instantánea (lo que el plan ya pide), que a una espera
+  perdida; sin demostrar. El guion acepta ahora `DIAG_TEXTO` y `DIAG_ESPERA` para volcar los registros de las CPU
+  (QEMU, `info registers -a`) cuando sale una línea dada: con eso se verá dónde está el comprobador cuando se pare.
