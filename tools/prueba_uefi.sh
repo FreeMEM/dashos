@@ -84,6 +84,7 @@ def mandar(*ordenes, pausa=0.0):
 preguntas = 0
 selector = 0
 centro = 0
+bloqueo_capturado = False
 
 while time.time() - inicio < total:
     try:
@@ -98,6 +99,11 @@ while time.time() - inicio < total:
                     f.write(preguntar_monitor("info registers -a"))
                     f.write("\n=====\n")
                     time.sleep(0.5)
+        # Con CAPTURA_BLOQUEO=fichero.ppm, la primera pantalla de bloqueo o de entrada de `guardian`, ya pintada.
+        if os.environ.get("CAPTURA_BLOQUEO") and not bloqueo_capturado and "[guardian] pantalla de " in texto:
+            bloqueo_capturado = True
+            time.sleep(0.5)
+            mandar("screendump " + os.environ["CAPTURA_BLOQUEO"])
         # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
         # segundo no cuenta) y luego que no.
         vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]

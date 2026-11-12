@@ -39,7 +39,7 @@ no depende de nada), luego lo grande. Las medidas de rendimiento esperan a tener
 | R15 | Entrada, bloqueo y volumen cifrado por usuario | U3 | hecho en pruebas, también por tiempo y con Super+L |
 | R16 | Permisos por aplicación | U4 | repartir y revocar, preguntar al usuario (en una capa encima de todo) y guardar lo concedido |
 | R17 | `guardian` y `selector` | U5 | ceder asas, ventana del selector (elige el usuario, con cajones y doble clic), acciones de administrador |
-| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones |
+| R18 | Camino caliente del kernel; archivos, lo grande | K1 a K5, A7 a A14 | K1, K2 y K3; K4 probado sin ganancia; A7 (caché de páginas prestada); A8 (el asignador; la transacción abierta, medida, no compensa), A9, A10, A11, A12, A13 y A16 (NVMe); de A14, fechas, TRIM, lectura anticipada y tabla de particiones; A15 (varias órdenes NVMe a la vez y comprobar aparte, sobre una foto sujeta, sin parar el servicio) |
 | R19 | `Prefs` de usuarios, registro de seguridad, PID en el kernel | U6 | registro de seguridad (en memoria y en el disco), PID en el kernel y Permisos en el centro de control (S10c, C1) |
 
 K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
@@ -1119,3 +1119,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la despierta a los 20 s si no ha llegado: EN_USO a quien la pidió, y lo que conteste el comprobador después se tira.
   Probado con el comprobador retrasado 25 s a propósito (quitado después): mientras esperaba, `sesiones` atendió
   "matar a eco" de `pide`, y a los 20 s contestó EN_USO por el temporizador.
+- S10c: `guardian` sigue el tema del sistema en las pantallas de bloqueo y de entrada: se enlaza a `dashos_tema_v1`
+  (solo para leerlo; ponerlo sigue siendo cosa del centro) y repinta al cambiar. Superficie, texto, primario para la
+  frase de quien entra, contorno en la caja y el rojo de error de Material 3 para claro u oscuro. Antes, colores
+  fijos. `CAPTURA_BLOQUEO=fichero.ppm` en `tools/prueba_uefi.sh` saca la primera pantalla de `guardian`. Captura
+  nueva. Falta la capa de las preguntas de permisos, que sigue con sus colores.

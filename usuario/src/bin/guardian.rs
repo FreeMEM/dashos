@@ -23,6 +23,7 @@ use alloc::string::String;
 use dashos::println;
 use dashos::protocolo::sesiones::{ENTRAR, PREGUNTA, PREGUNTAS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
+use kit::tema::Tema;
 use kit::teclado::{Tecla, Teclado};
 use kit::texto::Fuente;
 use ventana_cliente::*;
@@ -433,8 +434,12 @@ fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
 /// si la anterior fue mala, el aviso.
 /// Con `todo`, la pantalla entera; si no, solo la caja y el aviso (lo que cambia al teclear), que es mucho menos: el
 /// compositor suelta a quien tarda en leer (E8). Devuelve la zona pintada.
-fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente) -> Rect {
+/// Con los colores del tema del sistema (S10c: `dashos_tema_v1`, el que pone el centro de control); el rojo del error
+/// es el de Material 3 para el fondo claro u oscuro.
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) -> Rect {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
+    let oscuro = (t.superficie >> 8 & 0xff) < 0x80;
+    let error = if oscuro { 0xfff2_b8b5 } else { 0xffb3_261e };
     let y = alto / 2 - 90;
     // Al teclear, solo la franja que cambia: la caja y el aviso; en la de entrada, también la frase y el nombre.
     let zona = match (todo, entrada) {
@@ -442,27 +447,27 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
         (false, false) => Rect::new(0, y + 116, ancho, 100),
         (false, true) => Rect::new(0, y + 20, ancho, 196),
     };
-    l.rellenar(zona, 0xff0d_1320);
+    l.rellenar(zona, t.superficie);
     let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
     if todo {
         let cabeza = if entrada { "Entrar en DashOS" } else { "Sesión bloqueada" };
         let x = centrado(titulo, cabeza, 34);
-        titulo.dibujar(&mut l, x, y, cabeza, 34, 0xffe7_ecf5);
+        titulo.dibujar(&mut l, x, y, cabeza, 34, t.sobre_superficie);
     }
     if todo || entrada {
         // La frase de quien entra, en cuanto se sabe quién es (S6b: así se sabe que es el sistema).
         let frase = FRASES.iter().find(|f| f.0 == usuaria).map_or(alloc::string::String::new(), |f| alloc::format!("\"{}\"", f.1));
         let x = centrado(fuente, &frase, 22);
-        fuente.dibujar(&mut l, x, y + 48, &frase, 22, 0xffff_9d3b);
+        fuente.dibujar(&mut l, x, y + 48, &frase, 22, t.primario);
         let x = centrado(fuente, usuaria, 20);
-        fuente.dibujar(&mut l, x, y + 100, usuaria, 20, 0xff9a_a7bf);
+        fuente.dibujar(&mut l, x, y + 100, usuaria, 20, t.sobre_variante_superficie);
     }
     // La caja de la contraseña, con un punto por letra.
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
-    l.redondeado(caja, 24, 0xff16_1f31);
-    l.borde(caja, 24, 2, if mala { 0xffe0_5050 } else { 0xff2a_3754 });
+    l.redondeado(caja, 24, t.variante_superficie);
+    l.borde(caja, 24, 2, if mala { error } else { t.contorno });
     for i in 0..if letras == usize::MAX { 0 } else { letras.min(20) } as i32 {
-        l.redondeado(Rect::new(caja.x + 24 + i * 14, caja.y + 19, 10, 10), 5, 0xffe7_ecf5);
+        l.redondeado(Rect::new(caja.x + 24 + i * 14, caja.y + 19, 10, 10), 5, t.sobre_superficie);
     }
     let aviso = match (mala, entrada && letras == usize::MAX) {
         (true, _) => "Contraseña incorrecta",
@@ -470,7 +475,7 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
         (false, false) => "Escribe tu contraseña y pulsa Intro",
     };
     let x = centrado(fuente, aviso, 16);
-    fuente.dibujar(&mut l, x, y + 200, aviso, 16, if mala { 0xffe0_5050 } else { 0xff9a_a7bf });
+    fuente.dibujar(&mut l, x, y + 200, aviso, 16, if mala { error } else { t.sobre_variante_superficie });
     zona
 }
 
@@ -498,12 +503,15 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     const GESTOR: u32 = 21;
     const CERROJO: u32 = 22;
     const SUP_BLOQUEO: u32 = 23;
+    /// El tema del sistema (`dashos_tema_v1`, S10c): llega al enlazar y cada vez que cambia.
+    const TEMA: u32 = 24;
+    let mut tema = Tema::OSCURO;
     // Los glifos, rasterizados antes de bloquear (la primera vez es lento, y mientras tanto no se lee al compositor).
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     {
         let mut prueba = alloc::vec![0u32; 800 * 600];
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, 20, true, true, &mut fuente, &mut titulo);
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, 20, false, true, &mut fuente, &mut titulo);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
@@ -527,6 +535,9 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(go).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("ext_session_lock_manager_v1")).uint(1).uint(GESTOR).fin();
+    if let Some(gt) = global("dashos_tema_v1") {
+        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+    }
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
     e.empezar(GESTOR, ext_session_lock_manager_v1::req::LOCK).uint(CERROJO).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -600,7 +611,7 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
             let primera = entera;
             let letras = if en_nombre { usize::MAX } else { clave.chars().count() };
-            let z = pintar(px, ancho, alto, &nombre, entrada, letras, ultima_mala, entera, &mut fuente, &mut titulo);
+            let z = pintar(px, ancho, alto, &nombre, entrada, letras, ultima_mala, entera, &mut fuente, &mut titulo, &tema);
             entera = false;
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
@@ -621,6 +632,13 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                 println!("  [guardian] pantalla de {} pintada: tiene el teclado", if entrada { "entrada" } else { "bloqueo" })
             }
             (CERROJO, ext_session_lock_v1::ev::LOCKED) => println!("  [guardian] sesión bloqueada"),
+            (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
+                let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
+                tema = Tema::del_sistema(color, oscuro);
+                println!("  [guardian] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
+                entera = true;
+                repintar = true;
+            }
             (CERROJO, ext_session_lock_v1::ev::FINISHED) => {
                 println!("  [guardian] el compositor no deja bloquear");
                 return None;
