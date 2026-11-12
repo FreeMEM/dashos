@@ -555,3 +555,139 @@ La captura de la terminal queda en `capturas-agente/caja-linux-arch.png` (fuera 
 1. ¿La terminal de la caja entra sola como root (como ahora), como un usuario normal, o pide contraseña?
 2. ¿Se quita `linux-aarch64` (y sus 57 MB de Image, initramfs y módulos) del disco de la caja, ya que la caja usa su
    propio kernel?
+
+## 2026-11-12: varias vCPU (rama `caja-linux-vcpu`)
+
+Rama `caja-linux-vcpu`, sacada de `fusion-fondo` (be30e2b), con todo lo de las cajas. Sala limpia: especificaciones de
+Arm (GICv2 IHI 0048B, cap. 4 y 5; PSCI DEN 0022, CPU_ON, CPU_OFF y AFFINITY_INFO; el Arm ARM para HCR_EL2.FB, las
+TLB y VMPIDR_EL2). Nada de código de Linux, KVM, QEMU, crosvm, Firecracker ni Xen.
+
+### Resultado
+
+`make arranque-virt-linux`: el invitado tiene 4 vCPU, Linux las enciende por PSCI y las usa todas.
+
+```
+[caja-linux] linux: [    0.137281] CPU1: Booted secondary processor 0x0000000001 [0x410fd083]
+[caja-linux] linux: [    0.142137] CPU2: Booted secondary processor 0x0000000002 [0x410fd083]
+[caja-linux] linux: [    0.145041] CPU3: Booted secondary processor 0x0000000003 [0x410fd083]
+[caja-linux] linux: [    0.145854] smp: Brought up 1 node, 4 CPUs
+[caja-linux] linux: caja-linux: cpus 4, nproc 4, en línea 0-3
+[caja-linux] linux: caja-linux: paralelo 4 trabajos: seguidos 1.18 s, a la vez 0.35 s
+[caja-linux] linux: caja-linux: irq IPI0:        29         29         26         32       Rescheduling interrupts
+[caja-linux] linux: caja-linux: irq IPI1:       631        120         88        624       Function call interrupts
+[caja-linux] linux: se para la máquina a los 145703 ms: Linux apagó la máquina por PSCI
+[caja-linux] linux: 134901 salidas: 99081 a aparatos (0 abortos), 10 PSCI, 17056 WFI (563047 ms dormido), 18738 por el reloj u otra vCPU, 16 registros; 14682 interrupciones inyectadas, 12207 patadas entre vCPU
+[caja-linux] linux: hilos de las 4 vCPU unidos al acabar: 4
+```
+
+Los 563 s dormidos en 146 s de máquina son las 4 vCPU paradas en WFI casi todo el rato (la shell espera teclas): los
+hilos duermen en el kernel, no giran.
+
+### El kernel
+
+- **La vCPU, objeto aparte** (`base/hiper.rs`). Lo que era una `Vcpu` con todo se parte en dos:
+  - `Espacio`: la etapa 2 (sus tablas sobre los objetos de memoria), el VMID, la GICV proyectada y lo cobrado. Lo
+    comparten todas las vCPU de una máquina (`Arc`) y se suelta con la última (entonces OLVIDAR y se libera el VMID).
+    `anadir` y `proyectar_gicv` van con su cerrojo y valen con las vCPU en marcha: solo se añaden entradas que no
+    había (una tabla nueva se enlaza ya a cero, tras una barrera).
+  - `Vcpu`: su mundo (una página), su MPIDR (Aff0 = su número, de 0 a 7: lo que direcciona el GICv2), su GIC virtual
+    (LR, VMCR, APR), su temporizador virtual (en el mundo) y su FPU. `reiniciar` la deja como recién encendida por
+    CPU_ON: en su entrada, con x0 = el contexto, EL1h con DAIF enmascarado, la MMU apagada, los registros de EL1 a cero
+    y sin FPU propia.
+- **Dos vCPU de la misma máquina en el mismo núcleo** comparten etiquetas en la TLB (mismo VMID). Cada núcleo apunta la
+  última vCPU que corrió en él; si ahora corre otra de la misma máquina, EL2 hace `tlbi vmalls12e1` local antes de
+  entrar (una palabra nueva en el mundo, `C_LIMPIAR`). Lo que invalida el invitado ya va a todos los núcleos
+  (HCR_EL2.FB).
+- **Llaves** (`maquinas.rs`). Cada llave de máquina es una vCPU: `maquina_crear` da la 0 y `maquina_estado` 4 da las
+  demás (número, entrada, x0), con la memoria y la etapa 2 compartidas. `Comun` (la parte de la máquina) lleva si está
+  muerta y la lista de vCPU vivas para sacarlas a todas. Un fallo de una vCPU mata la máquina entera.
+- **Sacar a una vCPU que corre en otro núcleo** (`Patada`). Patear (`maquina_estado` 6) pone "sal en cuanto puedas" y
+  mira en qué núcleo está dentro del invitado; si está, le manda la SGI 2 (`gic::SGI_VCPU`, nueva: el kernel solo la
+  termina), que la saca por IMO. Si duerme en un WFI, la despierta. La vCPU, antes de entrar, apunta su núcleo y luego
+  mira la petición (con orden total, `SeqCst`): o ve la petición y no entra, o el que patea ve su núcleo; y como las
+  interrupciones del kernel están enmascaradas desde ahí hasta el `eret`, una SGI que llegue en medio queda pendiente y
+  la saca nada más entrar. Parar (`maquina_estado` 7) marca la máquina muerta y patea a todas.
+- **Un WFI que espera de verdad**: con `ESPERAR_WFI` en el bloque de interrupciones, un WFI sin nada pendiente en los
+  registros de lista duerme el hilo en el kernel (`bloquear_soltando_hasta`, sin el cerrojo de la vCPU) hasta el plazo
+  de su temporizador virtual (si su distribuidor lo deja pasar), una patada o 100 ms. Si venció el temporizador, entra
+  otra vez sin pasar por el servicio (lo inyecta el kernel con su bit HW). El informe crece a 13 palabras: lo que
+  durmió.
+
+### El servicio
+
+- `Caja` es ahora de todas las vCPU: la máquina del crate (aparatos y distribuidor), PSCI, las llaves, las cuentas y
+  cómo acabó, dentro de un cerrojo (`Compartida`, con el `hilos::Cerrojo` de futex). Cada vCPU corre en su hilo
+  (`Sistema::correr_vcpu`; la 0 en el del servicio), con lo suyo aparte (`VcpuCaja`: su bloque de interrupciones y qué
+  hay en cada registro de lista).
+- PSCI: CPU_ON apunta la entrada y el contexto y despierta el hilo de esa vCPU, que la reinicia y la corre; CPU_OFF
+  devuelve sus registros de lista al distribuidor y el hilo se queda esperando otro CPU_ON; AFFINITY_INFO, del crate.
+  Una CPU_ON a una vCPU que no existe da INVALID_PARAMETERS; dos veces, ALREADY_ON u ON_PENDING. Si se apagan todas, la
+  máquina acaba.
+- Las SGI entre vCPU y las SPI dirigidas: tras cada escritura en un aparato o en el distribuidor (GICD_SGIR,
+  ITARGETSR...) y tras sondear los aparatos, se mira qué otras vCPU tienen algo nuevo y se patean (una vez: hasta que
+  llenan sus registros de lista no se las vuelve a patear). Las teclas y las tramas de la red patean a la vCPU 0, que
+  sondea los aparatos.
+- El árbol de dispositivos con 4 CPU (`enable-method = "psci"`) y el distribuidor para 4.
+- Al acabar (SYSTEM_OFF, un fallo, el plazo), se para la máquina, los hilos de las vCPU salen y se unen
+  (`hilos::unir`): ninguno se queda colgando, y sus pilas vuelven al montón.
+
+### Pruebas nuevas
+
+En `arranque-virt-vm` (y `arranque-virt-linux`), `usuario/invitados/smp.s`, dos vCPU sin sistema:
+
+- **PSCI y SGI**: CPU_ON a una vCPU que no existe (rechazada), a la 1 y otra vez a la 1 (rechazada), AFFINITY_INFO,
+  y cien idas y vueltas de SGI (la 0 manda la SGI 1, la 1 contesta con la 2).
+- **Hostil, tormenta de SGI**: la 1 manda la SGI 3 a la 0 sin parar mientras la 0 trabaja; la 0 acaba con HVC y la
+  máquina se para con la tormenta dentro. Los dos hilos se unen y la vCPU 1 ya no entra (`E_CERRADO`).
+- **Hostil, una vCPU en bucle**: la 1 en un bucle sin fin con todo enmascarado; la 0 trabaja lo mismo que sola y apaga
+  la máquina por SYSTEM_OFF con la 1 dentro.
+- `maquina_vcpu` con un número que ya está o fuera de rango: `E_ARGUMENTO`.
+
+```
+[caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU: 212 µs de media
+[caja-linux] hostil (tormenta de SGI): 6841 recibidas mientras trabaja (el trabajo, 3946 µs sola y 440593 µs con la tormenta); 364 patadas; se para con la tormenta dentro, 2 hilos unidos: bien
+[caja-linux] hostil (una vCPU en bucle): la otra trabaja (3992 µs sola, 4133 µs con ella en bucle) y apaga la máquina con ella dentro; 2 hilos unidos: bien
+```
+
+En Linux, el `/init` (`tools/caja_linux_invitado.py`) dice ahora `nproc` y las CPU en línea, y con `caja.paralelo` en
+la línea de órdenes (la caja lo pone) corre un bucle de la shell (20 000 vueltas) cuatro veces seguidas y cuatro a la
+vez, con lo que tarda cada tanda por el reloj del invitado. `arranque_virt_linux.txt` solo pide `cpus 4`, que vale
+también con el initramfs de antes; para ver el trabajo en paralelo hay que rehacerlo
+(`DASHOS_CAJA_LINUX_CACHE=... tools/caja_linux_invitado.py`, función `initramfs`; yo usé
+`~/.cache/dashos-caja-linux-vcpu`, para no pisar el de la rama de Arch).
+
+### Medidas
+
+QEMU `virt`, TCG, 4 núcleos, con el PC compartido con otras sesiones. Orientativas: en la Pi serán otras.
+
+| Medida | Valor |
+|---|---|
+| Ida y vuelta de una SGI entre dos vCPU (la 0 a la 1 y la 1 a la 0), 100 veces | 209 a 242 µs con el PC tranquilo (carga 3 a 4, cinco tandas); 1,2 ms en una tanda; 5,2 y 6,3 ms con carga 6 a 7 |
+| De una patada a que el hilo de la vCPU dormida en un WFI vuelve a correr (medido en el kernel, una tanda) | 10 µs de media, 48 µs como mucho, 200 patadas |
+| Linux: el mismo trabajo 4 veces seguidas y 4 a la vez, con 4 vCPU | 1,18 s y 0,35 s (3,4 veces); 1,2 s y 0,33 s (3,6 veces) |
+| La 0 trabaja sola o con la 1 en un bucle sin fin con todo enmascarado | 3,9 a 4,2 ms en los dos casos |
+| La 0 trabaja sola o bajo una tormenta de SGI de la 1 | 4 ms sola; 0,44 a 0,97 s con la tormenta (unos 65 µs por SGI recibida) |
+| Linux, hasta apagar (con la terminal y el guion) | unos 146 s, como con una vCPU; los 4 hilos, casi todo el rato dormidos en WFI |
+
+Cada SGI cuesta varias salidas: la escritura en GICD_SGIR de quien la manda, la patada a la otra, su vuelta para
+llenar los registros de lista y la interrupción de mantenimiento cuando la termina. Por eso una tormenta frena mucho a
+la vCPU que la recibe, aunque no la para ni a ella ni al sistema.
+
+### Pruebas
+
+- `make prueba` (BIEN: esperado.txt y el cargador hunk), `make arranque-virt`, `make arranque-virt-2`,
+  `make arranque-virt-vm` y `make arranque-virt-linux` (con el initramfs compartido de siempre y con el nuevo): BIEN.
+
+### Qué falta
+
+- Una tormenta de SGI frena a la vCPU que la recibe de 100 a 240 veces (unos 65 µs por SGI). Se podría quitar la interrupción
+  de mantenimiento de las SGI (mirar sus LR solo en la siguiente salida) o entregar varias fuentes de una vez.
+- El servicio lleva todo el distribuidor y los aparatos bajo un solo cerrojo: con muchas salidas a aparatos desde
+  varias vCPU a la vez, se esperan unas a otras. Para la consola temprana y virtio no se ha notado.
+- CPU_SUSPEND contesta en el acto (no espera como un WFI); Linux no lo usa con este árbol (sin estados de reposo).
+- `maquina_memoria` y la GICV con vCPU corriendo están hechas para no necesitar vaciar las TLB, pero no hay una prueba
+  que añada memoria con el invitado en marcha.
+- La FPU de cada vCPU (528 bytes) sigue sin cobrarse al grupo; ahora es una por vCPU.
+- La Pi 4: nada de esto se ha probado en hardware (la SGI 2 y el vaciado de la TLB son los mismos en el GIC-400).
+- El número de vCPU del invitado es fijo (4); habría que sacarlo de los núcleos de la máquina (como la memoria) y
+  dejar que lo elija el usuario.
