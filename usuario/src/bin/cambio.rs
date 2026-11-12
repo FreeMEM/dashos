@@ -538,6 +538,8 @@ fn testigo(arch: &Archivos, home: u8) -> bool {
     let vista = ventana.as_ref().is_some_and(|v| v.cuenta.cuadros > 0);
     println!("  [cambio] Ana: ventana en pantalla: {}", vista);
     let (e_sonido, llave_sonido) = servicio(s::SERVICIO, b"sonido");
+    // S10: la llave de los avisos (permiso fijo), para avisar desde detrás.
+    let (_, llave_avisos) = servicio(s::SERVICIO, b"avisos");
     tono = if llave_sonido != 0 { Tono::abrir(llave_sonido) } else { None };
     de_fondo(&mut ventana, &mut tono, 300_000);
     println!("  [cambio] Ana: suena por el servicio de sonido: {} ({})", tono.is_some(), e_sonido);
@@ -566,6 +568,11 @@ fn testigo(arch: &Archivos, home: u8) -> bool {
     let bloquear = estado(&s::BLOQUEAR.to_le_bytes());
     let detras = escribe && eco == s::PROTEGIDO && bloquear == s::PROTEGIDO;
     println!("  [cambio] Ana, detrás: escribe {}, pedir eco {}, bloquear {}: {}", escribe, eco, bloquear, if detras { "bien" } else { "MAL" });
+    // S10: un aviso desde detrás: el servicio lo guarda sin enseñárselo a Carla, y sale en el historial de Ana al volver.
+    if llave_avisos != 0 {
+        let r = dashos::avisos_cliente::avisar(llave_avisos, dashos::protocolo::avisos::NORMAL, "Tarea acabada detrás", "Lo que dejó Ana en marcha ya terminó");
+        println!("  [cambio] Ana, detrás: avisa {}", r.map_or(i32::MIN, |r| r.estado));
+    }
     let mut ultimo = (antes, desde);
     if !esperar_activa(1, 120_000_000, &mut ventana, &mut tono, &mut ultimo) {
         println!("  [cambio] Ana: no vuelve delante: MAL");

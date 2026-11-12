@@ -49,7 +49,8 @@ const REPARTE: &[&str] = &["eco"];
 
 /// Los servicios que siguen las sesiones (U6, paso 2): de su canal, `sesiones` recibe una copia sin marca para
 /// avisarles de quién es cada programa y qué sesión está detrás, y para dar a lo que lanza su llave marcada.
-const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido"];
+/// S10: también `avisos`: lo de una sesión de detrás se guarda sin salir a la de delante.
+const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 
 /// Manda a `sesiones` (por `canal`, sin marca) una copia sin marca del canal `extremo`, que sirve `nombre_cab`.
 fn canal_a_sesiones(canal: u32, extremo: u32, nombre_cab: usize) {

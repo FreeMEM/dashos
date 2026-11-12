@@ -461,3 +461,16 @@ algo cambia, el servicio le manda `EVENTO`; cuando el servicio espera al program
 mensajes, un `LATIDO`: si su canal está cerrado, el programa acabó y la conexión se corta.
 
 **Cortafuegos.** Nada escucha: lo que llega sin pedirlo, la pila lo rechaza. Escuchar queda para después.
+
+## Avisos (S10)
+
+El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el protocolo, en
+`usuario/src/protocolo/avisos.rs`, y para mandar uno, `dashos::avisos_cliente::avisar(llave, urgencia, título, texto)`.
+
+- La llave la da `inicio` (en las pruebas) o `sesiones` con el permiso "avisos" (`SERVICIO`), como la del sonido.
+- `AVISAR`: urgencia (0 baja, 1 normal, 2 urgente), título (hasta 48 bytes) y texto (hasta 160). Contesta estado,
+  número y el nombre con que sale. El nombre lo pone el servicio por la marca: el que da `inicio`, o el del fichero si
+  lo lanzó `sesiones`. Estados: 0 bien, -1 mal hecho, -2 el servicio no sabe quién es, -3 demasiados seguidos (más de
+  10 por minuto).
+- Guarda 50, como mucho 8 de cada programa. Lo de una persona con su sesión detrás no sale hasta que vuelve.
+- Leer, marcar como leídos y borrar: solo la barra.

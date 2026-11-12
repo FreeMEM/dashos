@@ -108,6 +108,8 @@ espera_carpeta = 0
 centro = 0
 panel = 0
 barra = 0
+avisos_paso = 0
+reintento_avisos = 0
 bloqueo_capturado = False
 cambio = 0
 captura_u6_hecha = 0
@@ -115,6 +117,11 @@ captura_u6_hecha = 0
 while time.time() - inicio < total:
     try:
         texto = open(serie, errors="replace").read()
+        # Con ESTADO_GUION=fichero: el estado del guion cada 2 s (para ver en qué paso se queda).
+        if os.environ.get("ESTADO_GUION") and time.time() - globals().get("estado_dicho", 0) > 2:
+            estado_dicho = time.time()
+            with open(os.environ["ESTADO_GUION"], "a") as f:
+                f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso}\n")
         # Diagnóstico: con DIAG_REGISTROS=fichero, si el compositor suelta a alguien, los registros de los núcleos (tres
         # veces, para ver si se mueven).
         if diag_registros and not diag_hecho and os.environ.get("DIAG_TEXTO", "se le suelta") in texto:
@@ -578,6 +585,98 @@ while time.time() - inicio < total:
             barra += 1
             reintento = time.time() + 8
             continue
+        # S10: los avisos, tras la barra (con Ana delante). Se abre el lanzador y se lanza `avisa`, que avisa: sale el toast
+        # (arriba a la derecha) y un clic lo cierra. La campana abre el historial; "Borrar todo" lo vacía y la campana lo
+        # cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra y el compositor (dónde sale cada capa).
+        # Con CAPTURA_AVISOS=fichero.ppm: el toast (fichero.ppm), el historial (fichero.hist.ppm) y vacío
+        # (fichero.vacio.ppm).
+        if avisos_paso == 0 and barra == 8 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
+            avisos_paso = 1
+            reintento_avisos = time.time() + 10
+        if 1 <= avisos_paso <= 8:
+            import re
+            def ultimo_a(t):
+                return texto.rfind(t)
+            if ultimo_a("[guardian] sesión bloqueada") > max(ultimo_a("[guardian] desbloqueado"), ultimo_a("[guardian] entra ")):
+                time.sleep(0.25)
+                reintento_avisos = time.time() + 10
+                continue
+            captura_avisos = os.environ.get("CAPTURA_AVISOS")
+            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+            ca = re.search(r"\[barra\] campana en \((\d+), (\d+)\)", texto)
+            # El compositor dice dónde sale cada capa con el nombre de su cliente (la barra): la del toast es la primera tras
+            # su línea, y la del historial, igual.
+            def capa_tras(marca):
+                i = texto.rfind(marca)
+                return re.findall(r"\[compositor\] capa de barra en \((\d+), (\d+)\)", texto[i:]) if i >= 0 else []
+            capa_aviso = capa_tras('[barra] aviso de avisa: "Copia terminada"')
+            capa_hist = capa_tras("[barra] historial abierto")
+            borrar = re.findall(r"\[barra\] historial abierto: .*Borrar todo en \((\d+), (\d+)\)", texto)
+            def clic_en(x, y):
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            # Lo que se espera antes de cada paso: 1 nada; 2 el lanzador abierto; 3 la búsqueda; 4 el toast de `avisa`, en
+            # pantalla; 5 cerrado con el clic; 6 el historial en pantalla; 7 borrado; 8 cerrado.
+            espera = {1: True,
+                      2: texto.count("[barra] lanzador abierto") >= 3,
+                      3: '[barra] busca "avisa": avisa' in texto,
+                      4: '[barra] aviso de avisa: "Copia terminada"' in texto and len(capa_aviso) >= 1,
+                      5: "[barra] aviso cerrado: con un clic" in texto,
+                      6: "[barra] historial abierto" in texto and len(capa_hist) >= 1 and len(borrar) >= 1,
+                      7: "[barra] borrar todo: " in texto,
+                      8: "[barra] historial cerrado" in texto}[avisos_paso]
+            if not espera:
+                if time.time() > reintento_avisos:
+                    # No llegó: se deja (las líneas que falten lo dirán).
+                    avisos_paso = 99
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            if avisos_paso == 1:
+                clic_en(int(bb.group(1)), int(bb.group(2)))
+            elif avisos_paso == 2:
+                mandar("sendkey a", "sendkey v", "sendkey i", "sendkey s", "sendkey a", pausa=0.3)
+            elif avisos_paso == 3:
+                mandar("sendkey ret")
+            elif avisos_paso == 4:
+                time.sleep(0.4)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos)
+                    time.sleep(0.5)
+                x, y = capa_aviso[0]
+                clic_en(int(x) + 180, int(y) + 44)
+            elif avisos_paso == 5:
+                clic_en(int(ca.group(1)), int(ca.group(2)))
+            elif avisos_paso == 6:
+                time.sleep(0.4)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos[:-4] + ".hist.ppm")
+                    time.sleep(0.5)
+                x, y = capa_hist[0]
+                bx, by = borrar[-1]
+                clic_en(int(x) + int(bx), int(y) + int(by))
+            elif avisos_paso == 7:
+                time.sleep(0.4)
+                if captura_avisos:
+                    mandar("screendump " + captura_avisos[:-4] + ".vacio.ppm")
+                    time.sleep(0.5)
+                clic_en(int(ca.group(1)), int(ca.group(2)))
+            elif avisos_paso == 8:
+                # El cursor, abajo a la derecha, donde los clics de siempre (que siguen, hacia abajo a la derecha) no dan
+                # en nada: desde la campana volverían a abrir el historial y el panel.
+                ir_a(790, 590)
+                avisos_paso = 99
+                continue
+            avisos_paso += 1
+            reintento_avisos = time.time() + 10
+            continue
         # Con una sesión bloqueada, el teclado es de la pantalla de bloqueo: lo del selector espera (si no, sus Intro
         # de reintento caían allí como contraseñas vacías).
         def ultimo(t):
@@ -596,6 +695,17 @@ while time.time() - inicio < total:
         if not bloqueado_ahora and selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
             selector = 1
             time.sleep(0.5)
+            # Antes, un clic en su cabecera, a la derecha (donde no hay nada que pulsar y Ajustes, que puede estar encima,
+            # no llega: el selector mide 460 de ancho), para que tenga el teclado: si el paso de Ajustes pulsó en Ajustes
+            # justo después de salir el selector, se lo quitó. Con más programas en el arranque (los avisos), Ajustes y
+            # el selector salen más juntos.
+            import re
+            vs = re.search(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            if vs:
+                ir_a(int(vs.group(1)) + 440, int(vs.group(2)) + 20)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                time.sleep(0.5)
             mandar("sendkey ret")
             time.sleep(0.5)
             # Tres abajo: los cajones van primero, y `Fondos` (C3) y `Prefs` (S10c) van antes que `Privado`.

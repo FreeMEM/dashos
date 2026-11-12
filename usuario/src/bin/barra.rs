@@ -19,7 +19,15 @@
 //! icono tonales (el del lanzador, lleno mientras está abierto), y el lanzador como el panel, con esquinas de 28, el
 //! buscador en el contenedor alto y lo elegido en el contenedor secundario.
 //!
-//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos" y 3 el canal "sesiones".
+//! Los avisos (las notificaciones, S10): la barra se suscribe al servicio `avisos` con una "puerta" (una copia marcada
+//! del extremo por el que le escribe el compositor: un proceso solo espera en un canal), por la que el servicio toca el
+//! timbre cuando hay uno nuevo. La barra lo pide y lo enseña como un toast: una capa arriba a la derecha, bajo la barra,
+//! unos segundos, que se cierra sola o con un clic. La campana (a la izquierda de la hora) lleva un punto si hay alguno
+//! sin leer; al pulsarla, el historial, en una capa como el panel rápido, con "Borrar todo". Lo que llega retenido (de
+//! una sesión que estaba detrás, U6) sale en el historial, no como toast.
+//!
+//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos", 3 el canal "sesiones" y 4 el
+//! canal "avisos".
 
 #![no_std]
 #![no_main]
@@ -37,6 +45,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::archivos as a;
+use dashos::protocolo::avisos as av;
 use dashos::protocolo::sesiones as s;
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::teclado::{Tecla, Teclado};
@@ -56,6 +65,9 @@ dashos::monton!();
 // de la lista de la barra: "archivos" se nombra antes que "sesiones".
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
+const AVISOS: u32 = 4;
+/// La marca de la puerta por la que el servicio de avisos toca el timbre.
+const MARCA_TIMBRE: u64 = 0x4156_4953_0000_0001;
 // Los objetos propios (los de `ventana_cliente` van del 2 al 14).
 const CAPAS: u32 = 20;
 const CAPA_BARRA: u32 = 21;
@@ -63,6 +75,12 @@ const TEMA: u32 = 22;
 const SUP_LANZADOR: u32 = 23;
 const CAPA_LANZADOR: u32 = 24;
 const BUFER_LANZADOR: u32 = 25;
+const SUP_AVISO: u32 = 26;
+const CAPA_AVISO: u32 = 27;
+const BUFER_AVISO: u32 = 28;
+const SUP_HIST: u32 = 29;
+const CAPA_HIST: u32 = 30;
+const BUFER_HIST: u32 = 31;
 /// Dónde se ve la ventana del servicio de archivos.
 const VA_ARCHIVOS: usize = 0x50_0000_0000;
 
@@ -81,19 +99,34 @@ const Y_FILAS: i32 = 72;
 const ALTO_L_MAX: i32 = Y_FILAS + FILAS as i32 * ALTO_FILA + 12;
 /// Lo que se escribe en el buscador, como mucho (en letras).
 const MAX_BUSCA: usize = 30;
-/// La memoria: la barra (lo más ancha que se pinta) y, detrás, el lanzador.
+/// El toast: una tarjeta de 344 × 80 con su sombra, a 8 de la barra, en un búfer con margen; dura `DURA_AVISO_US`.
+const ANCHO_A: i32 = 360;
+const ALTO_A: i32 = 100;
+const DURA_AVISO_US: u64 = 5_000_000;
+/// El historial: la cabecera, hasta `FILAS_H` avisos y el pie.
+const ANCHO_H: i32 = 380;
+const FILAS_H: usize = 5;
+const ALTO_FILA_H: i32 = 76;
+const Y_FILAS_H: i32 = 64;
+const PIE_H: i32 = 40;
+const ALTO_H_MAX: i32 = Y_FILAS_H + FILAS_H as i32 * ALTO_FILA_H + PIE_H;
+/// La memoria: la barra (lo más ancha que se pinta) y, detrás, el lanzador, el toast y el historial.
 const OFF_L: usize = (ANCHO_MAX * ALTO * 4) as usize;
-const TAMANO: usize = OFF_L + (ANCHO_L * ALTO_L_MAX * 4) as usize;
+const OFF_A: usize = OFF_L + (ANCHO_L * ALTO_L_MAX * 4) as usize;
+const OFF_H: usize = OFF_A + (ANCHO_A * ALTO_A * 4) as usize;
+const TAMANO: usize = OFF_H + (ANCHO_H * ALTO_H_MAX * 4) as usize;
 const BOTON_IZQUIERDO: u32 = 0x110;
 const KEY_ESC: u32 = 1;
 /// Lo que se espera a `sesiones` y a archivos, como mucho.
 const PLAZO_LANZAR_US: u64 = 5_000_000;
 const PLAZO_ARCHIVOS_US: u64 = 1_000_000;
+const PLAZO_AVISOS_US: u64 = 1_000_000;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 enum Boton {
     Lanzador,
     Panel,
+    Campana,
 }
 
 fn zona_lanzador() -> Rect {
@@ -104,6 +137,11 @@ fn zona_panel(ancho: i32) -> Rect {
     Rect::new(ancho - LADO - BOTON, (ALTO - BOTON) / 2, BOTON, BOTON)
 }
 
+/// La campana de los avisos, a la izquierda del botón del panel.
+fn zona_campana(ancho: i32) -> Rect {
+    Rect::new(ancho - LADO - 2 * BOTON - 4, (ALTO - BOTON) / 2, BOTON, BOTON)
+}
+
 struct Barra {
     tema: Tema,
     ancho: i32,
@@ -112,6 +150,9 @@ struct Barra {
     hora: Option<(u64, u64)>,
     encima: Option<Boton>,
     lanzador_abierto: bool,
+    /// Los avisos sin leer (la campana lleva un punto) y si el historial está abierto.
+    sin_leer: u32,
+    historial_abierto: bool,
 }
 
 struct Lanzador {
@@ -259,7 +300,19 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
         l.redondeado(r, BOTON / 2, con_opacidad(t.sobre_contenedor_secundario(), 20));
     }
     icono_ajustes(&mut l, r, t.sobre_contenedor_secundario());
-    // La hora, a la izquierda del botón del panel.
+    // La campana: tonal; con el historial abierto, llena. Con avisos sin leer, un punto del color de error arriba a la
+    // derecha (la insignia pequeña de Material 3).
+    let r = zona_campana(w);
+    let (fondo, tinta) = if b.historial_abierto { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
+    l.redondeado(r, BOTON / 2, fondo);
+    if b.encima == Some(Boton::Campana) {
+        l.redondeado(r, BOTON / 2, con_opacidad(tinta, 20));
+    }
+    icono_campana(&mut l, r, tinta);
+    if b.sin_leer > 0 {
+        punto(&mut l, 2 * (r.x + r.w - 7), 2 * (r.y + 7), 8, t.error);
+    }
+    // La hora, a la izquierda de la campana.
     let hora = match b.hora {
         Some((h, m)) => alloc::format!("{:02}:{:02}", h, m),
         None => String::from("--:--"),
@@ -279,6 +332,165 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
     let ancho = f.medir(&texto, 14).ancho;
     let x = ((w - ancho) / 2).clamp(izquierda, (derecha - ancho).max(izquierda));
     f.dibujar(&mut l, x, 25, &texto, 14, color);
+}
+
+/// La campana de los avisos (18), centrada en `r`: la cúpula, el borde y el badajo.
+fn icono_campana(l: &mut Lienzo, r: Rect, color: Color) {
+    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+    l.redondeado_esquinas(Rect::new(cx - 6, cy - 7, 12, 11), [6, 6, 1, 1], color);
+    l.redondeado(Rect::new(cx - 8, cy + 3, 16, 2), 1, color);
+    punto(l, 2 * cx, 2 * cy + 13, 4, color);
+}
+
+/// La hora (UTC) de `ns`, como "hh:mm"; sin hora, vacío.
+fn hora_de(ns: u64) -> String {
+    if ns == 0 {
+        return String::new();
+    }
+    let min = ns / 60_000_000_000 % 1440;
+    alloc::format!("{:02}:{:02}", min / 60, min % 60)
+}
+
+/// Un aviso en una fila o en el toast: el círculo con la inicial de quien avisa (urgente: en el color de error), "de ·
+/// hora" en pequeño, el título y el texto, cada uno en una línea.
+fn pintar_aviso(l: &mut Lienzo, r: Rect, a: &av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let avatar = Rect::new(r.x + 16, r.y + (r.h - 40) / 2, 40, 40);
+    let (fondo, tinta) = if a.urgencia == av::URGENTE { (t.error, 0xffff_ffff) } else { (t.contenedor_primario, t.sobre_contenedor_primario) };
+    l.redondeado(avatar, 20, fondo);
+    let inicial: String = a.de().chars().next().map(|c| c.to_uppercase().collect()).unwrap_or_default();
+    centrado(medio, l, avatar, avatar.y + 26, &inicial, 16, tinta);
+    let x = avatar.x + avatar.w + 16;
+    let ancho = r.x + r.w - 16 - x;
+    let hora = hora_de(a.hora);
+    // Lo lanzado del disco lleva su nombre de fichero; lo del sistema, el que le dio `inicio`.
+    let de = if a.sistema { String::from(a.de()) } else { alloc::format!("{} (programa)", a.de()) };
+    let cabeza = if hora.is_empty() { de } else { alloc::format!("{} · {}", de, hora) };
+    let y = r.y + (r.h - 60) / 2;
+    let cabeza = que_quepa(fuente, &cabeza, 12, ancho);
+    fuente.dibujar(l, x, y + 13, &cabeza, 12, t.sobre_variante_superficie);
+    let titulo = que_quepa(medio, a.titulo(), 14, ancho);
+    medio.dibujar(l, x, y + 34, &titulo, 14, t.sobre_superficie);
+    if a.lx > 0 {
+        let texto = que_quepa(fuente, a.texto(), 14, ancho);
+        fuente.dibujar(l, x, y + 54, &texto, 14, t.sobre_variante_superficie);
+    }
+}
+
+/// El toast: una tarjeta en el contenedor alto, con su sombra (elevación 3), dentro de un búfer con margen.
+fn pintar_toast(px: &mut [u32], a: &av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    px.fill(0);
+    let mut l = Lienzo::new(px, ANCHO_A, ALTO_A, ANCHO_A as usize);
+    let tarjeta = tarjeta_toast();
+    l.sombra(tarjeta, 16, 3, 0, 8, 60);
+    l.redondeado(tarjeta, 16, t.contenedor_alto());
+    pintar_aviso(&mut l, tarjeta, a, t, fuente, medio);
+}
+
+fn tarjeta_toast() -> Rect {
+    Rect::new(8, 8, ANCHO_A - 16, ALTO_A - 20)
+}
+
+/// Lo que mide el historial con `n` avisos.
+fn alto_historial(n: usize) -> i32 {
+    Y_FILAS_H + n.clamp(1, FILAS_H) as i32 * ALTO_FILA_H + PIE_H
+}
+
+fn fila_h(k: usize) -> Rect {
+    Rect::new(8, Y_FILAS_H + k as i32 * ALTO_FILA_H, ANCHO_H - 16, ALTO_FILA_H)
+}
+
+/// El botón de texto "Borrar todo", arriba a la derecha del historial.
+fn zona_borrar(medio: &mut Fuente) -> Rect {
+    let w = medio.medir("Borrar todo", 14).ancho + 24;
+    Rect::new(ANCHO_H - 16 - w, 12, w, 40)
+}
+
+/// El historial, como el panel rápido: esquinas de 28 en el contenedor, "Avisos" y "Borrar todo" arriba y los avisos del
+/// más nuevo al más viejo. Los que no se habían leído al abrirlo llevan un punto del primario.
+fn pintar_historial(px: &mut [u32], h: &Historial, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    px.fill(0);
+    let mut l = Lienzo::new(px, ANCHO_H, h.alto, ANCHO_H as usize);
+    l.redondeado(Rect::new(0, 0, ANCHO_H, h.alto), 28, t.contenedor());
+    fuente.dibujar(&mut l, 24, 40, "Avisos", 22, t.sobre_superficie);
+    let rb = zona_borrar(medio);
+    let hay = !h.avisos.is_empty();
+    if hay && h.encima_borrar {
+        l.redondeado(rb, rb.h / 2, con_opacidad(t.primario, 20));
+    }
+    let color = if hay { t.primario } else { con_opacidad(t.sobre_superficie, 97) };
+    centrado(medio, &mut l, rb, rb.y + 25, "Borrar todo", 14, color);
+    for (k, a) in h.avisos.iter().enumerate().skip(h.primero).take(FILAS_H) {
+        // Cada fila, con 4 de separación (las sin leer llevan fondo, y no deben tocarse).
+        let r = fila_h(k - h.primero).dentro(2);
+        if !a.leido {
+            l.redondeado(r, 16, t.contenedor_alto());
+            punto(&mut l, 2 * (r.x + r.w - 14), 2 * (r.y + r.h / 2), 8, t.primario);
+        }
+        pintar_aviso(&mut l, Rect::new(r.x, r.y, r.w - 16, r.h), a, t, fuente, medio);
+    }
+    if !hay {
+        centrado(fuente, &mut l, Rect::new(0, Y_FILAS_H, ANCHO_H, ALTO_FILA_H), Y_FILAS_H + 42, "No hay avisos", 14, t.sobre_variante_superficie);
+    } else if h.avisos.len() > FILAS_H {
+        let raya = if fuente.tiene('–') { "–" } else { "-" };
+        let pie = alloc::format!("{}{}{} de {} · la rueda mueve la lista", h.primero + 1, raya, (h.primero + FILAS_H).min(h.avisos.len()), h.avisos.len());
+        centrado(fuente, &mut l, Rect::new(0, h.alto - PIE_H, ANCHO_H, PIE_H), h.alto - PIE_H + 26, &pie, 12, t.sobre_variante_superficie);
+    }
+}
+
+/// El historial abierto: los avisos que se ven (del más nuevo al más viejo) y lo que mide.
+struct Historial {
+    avisos: Vec<av::Aviso>,
+    primero: usize,
+    alto: i32,
+    encima_borrar: bool,
+}
+
+/// Una petición al servicio de avisos (con `extra`, llaves que van tras la de la respuesta): estado, sin leer, visibles
+/// y el aviso, si trae. `None` si no contesta.
+fn pedir_avisos(c: &mut Cliente, m: &[u8], extra: &[u32]) -> Option<(i32, u32, u32, Option<av::Aviso>)> {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut llaves = Vec::with_capacity(1 + extra.len());
+    llaves.push(suyo);
+    llaves.extend_from_slice(extra);
+    let mut r = [0u8; 256];
+    let n = if dashos::canal_escribir(AVISOS, m, &llaves) == 0 {
+        esperar(c, lectura, &mut r, PLAZO_AVISOS_US)
+    } else {
+        llaves.iter().for_each(|&l| { dashos::cerrar(l); });
+        -1
+    };
+    dashos::cerrar(lectura);
+    if n < av::CABECERA_LEER as i64 {
+        return None;
+    }
+    let u = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+    let aviso = if n as usize > av::CABECERA_LEER { av::Aviso::leer(&r[av::CABECERA_LEER..n as usize]) } else { None };
+    Some((u(0) as i32, u(4), u(8), aviso))
+}
+
+fn orden_avisos(orden: u32, arg: u32) -> [u8; 8] {
+    let mut m = [0u8; 8];
+    m[0..4].copy_from_slice(&orden.to_le_bytes());
+    m[4..8].copy_from_slice(&arg.to_le_bytes());
+    m
+}
+
+/// Todos los avisos que se ven, del más nuevo al más viejo, y cuántos sin leer.
+fn leer_historial(c: &mut Cliente) -> (Vec<av::Aviso>, u32) {
+    let mut v = Vec::new();
+    let mut antes = u32::MAX;
+    let mut sin = 0;
+    while v.len() < av::MAX_HISTORIAL {
+        match pedir_avisos(c, &orden_avisos(av::LEER, antes), &[]) {
+            Some((av::BIEN, s, _, Some(a))) if a.numero < antes => {
+                sin = s;
+                antes = a.numero;
+                v.push(a);
+            }
+            _ => break,
+        }
+    }
+    (v, sin)
 }
 
 fn pintar_lanzador(px: &mut [u32], la: &Lanzador, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
@@ -434,6 +646,154 @@ fn lanzar(c: &mut Cliente, nombre: &str) -> (i32, u64) {
     if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
 }
 
+/// Los avisos en la barra: el toast que se ve (y hasta cuándo), el historial abierto y el último aviso que ya se enseñó o
+/// se sabía (los de número mayor son nuevos).
+struct Avisos {
+    activo: bool,
+    toast: Option<(av::Aviso, u64)>,
+    toast_listo: bool,
+    hist: Option<Historial>,
+    hist_listo: bool,
+    visto_hasta: u32,
+}
+
+fn pantalla_toast(c: &mut Cliente, a: &av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let px = unsafe { core::slice::from_raw_parts_mut((VA + OFF_A) as *mut u32, (ANCHO_A * ALTO_A) as usize) };
+    pintar_toast(px, a, t, fuente, medio);
+    let mut e = Escritor::new();
+    e.empezar(SUP_AVISO, wl_surface::req::ATTACH).uint(BUFER_AVISO).int(0).int(0).fin();
+    e.empezar(SUP_AVISO, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_A).int(ALTO_A).fin();
+    e.empezar(SUP_AVISO, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+}
+
+fn pantalla_historial(c: &mut Cliente, h: &Historial, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let px = unsafe { core::slice::from_raw_parts_mut((VA + OFF_H) as *mut u32, (ANCHO_H * h.alto) as usize) };
+    pintar_historial(px, h, t, fuente, medio);
+    let mut e = Escritor::new();
+    e.empezar(SUP_HIST, wl_surface::req::ATTACH).uint(BUFER_HIST).int(0).int(0).fin();
+    e.empezar(SUP_HIST, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_H).int(h.alto).fin();
+    e.empezar(SUP_HIST, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+}
+
+/// Enseña `a` como toast: crea su capa (arriba a la derecha, bajo la barra, sin teclado) o, si ya hay uno, lo cambia.
+fn abrir_toast(c: &mut Cliente, avs: &mut Avisos, a: av::Aviso, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
+    let hasta = dashos::ahora_us() + DURA_AVISO_US;
+    if avs.toast.is_some() {
+        avs.toast = Some((a, hasta));
+        if avs.toast_listo {
+            pantalla_toast(c, &a, t, fuente, medio);
+        }
+        return;
+    }
+    avs.toast = Some((a, hasta));
+    avs.toast_listo = false;
+    let mut e = Escritor::new();
+    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_AVISO).int(OFF_A as i32).int(ANCHO_A).int(ALTO_A).int(ANCHO_A * 4).uint(0).fin();
+    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_AVISO).fin();
+    e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_AVISO).uint(SUP_AVISO).uint(0).uint(2).texto(Some("aviso")).fin();
+    e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_A as u32).uint(ALTO_A as u32).fin();
+    e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(1 | 8).fin();
+    e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
+    e.empezar(SUP_AVISO, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+}
+
+fn cerrar_toast(c: &mut Cliente, avs: &mut Avisos, porque: &str) {
+    if avs.toast.take().is_none() {
+        return;
+    }
+    let mut e = Escritor::new();
+    e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::DESTROY).fin();
+    e.empezar(SUP_AVISO, wl_surface::req::DESTROY).fin();
+    e.empezar(BUFER_AVISO, wl_buffer::req::DESTROY).fin();
+    c.mandar(&e);
+    avs.toast_listo = false;
+    println!("  [barra] aviso cerrado: {}", porque);
+}
+
+/// Abre el historial: lee los avisos que se ven y los marca como leídos en el servicio (en la lista, el punto de los que
+/// no se habían leído sigue hasta cerrarla).
+fn abrir_historial(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos, medio: &mut Fuente) {
+    let (avisos, _) = leer_historial(c);
+    let alto = alto_historial(avisos.len());
+    if let Some((_, sin, _, _)) = pedir_avisos(c, &orden_avisos(av::LEIDOS, 0), &[]) {
+        b.sin_leer = sin;
+    }
+    if let Some(a) = avisos.first() {
+        avs.visto_hasta = avs.visto_hasta.max(a.numero);
+    }
+    let sin = avisos.iter().filter(|a| !a.leido).count();
+    let mut quienes: Vec<&str> = Vec::new();
+    for a in &avisos {
+        if !quienes.contains(&a.de()) {
+            quienes.push(a.de());
+        }
+    }
+    let rb = zona_borrar(medio);
+    println!("  [barra] historial abierto: {} avisos, {} sin leer; de {}; Borrar todo en ({}, {})", avisos.len(), sin,
+        if quienes.is_empty() { String::from("nadie") } else { quienes.join(", ") }, rb.x + rb.w / 2, rb.y + rb.h / 2);
+    avs.hist = Some(Historial { avisos, primero: 0, alto, encima_borrar: false });
+    avs.hist_listo = false;
+    b.historial_abierto = true;
+    // Arriba a la derecha, bajo su botón (sin zona propia: el compositor la pone bajo la barra), sin teclado.
+    let mut e = Escritor::new();
+    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(OFF_H as i32).int(ANCHO_H).int(alto).int(ANCHO_H * 4).uint(0).fin();
+    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_HIST).fin();
+    e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_HIST).uint(SUP_HIST).uint(0).uint(2).texto(Some("avisos")).fin();
+    e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_H as u32).uint(alto as u32).fin();
+    e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(1 | 8).fin();
+    e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_MARGIN).int(LADO).int(LADO).int(0).int(0).fin();
+    e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
+    e.empezar(SUP_HIST, wl_surface::req::COMMIT).fin();
+    c.mandar(&e);
+}
+
+fn cerrar_historial(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos) {
+    if avs.hist.take().is_none() {
+        return;
+    }
+    let mut e = Escritor::new();
+    e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::DESTROY).fin();
+    e.empezar(SUP_HIST, wl_surface::req::DESTROY).fin();
+    e.empezar(BUFER_HIST, wl_buffer::req::DESTROY).fin();
+    c.mandar(&e);
+    avs.hist_listo = false;
+    b.historial_abierto = false;
+    println!("  [barra] historial cerrado");
+}
+
+/// El servicio tocó el timbre: lo nuevo. Con el historial abierto, se relee; si no, el más nuevo sale como toast si no se
+/// había visto, no se ha leído y no llega retenido (de una sesión que estaba detrás).
+fn al_timbre(c: &mut Cliente, b: &mut Barra, avs: &mut Avisos, fuente: &mut Fuente, medio: &mut Fuente) {
+    let Some((_, sin, _, nuevo)) = pedir_avisos(c, &orden_avisos(av::LEER, u32::MAX), &[]) else { return };
+    if (sin > 0) != (b.sin_leer > 0) {
+        println!("  [barra] campana: {}", if sin > 0 { alloc::format!("con punto ({} sin leer)", sin) } else { String::from("sin punto") });
+    }
+    b.sin_leer = sin;
+    if avs.hist.is_some() {
+        let (avisos, _) = leer_historial(c);
+        if let Some(h) = avs.hist.as_mut() {
+            h.primero = h.primero.min(avisos.len().saturating_sub(1));
+            h.avisos = avisos;
+        }
+        if let Some((_, sin, _, _)) = pedir_avisos(c, &orden_avisos(av::LEIDOS, 0), &[]) {
+            b.sin_leer = sin;
+        }
+        if avs.hist_listo && let Some(h) = &avs.hist {
+            pantalla_historial(c, h, &b.tema, fuente, medio);
+        }
+    } else if let Some(a) = nuevo.filter(|a| a.numero > avs.visto_hasta && !a.leido && !a.retenido) {
+        println!("  [barra] aviso de {}: \"{}\" (urgencia {}); campana {}", a.de(), a.titulo(), a.urgencia,
+            if sin > 0 { alloc::format!("con punto ({} sin leer)", sin) } else { String::from("sin punto") });
+        abrir_toast(c, avs, a, &b.tema, fuente, medio);
+    }
+    if let Some(a) = nuevo {
+        avs.visto_hasta = avs.visto_hasta.max(a.numero);
+    }
+}
+
 /// La hora y los minutos de ahora (UTC), si se sabe la hora.
 fn hora_ahora() -> Option<(u64, u64)> {
     let ns = dashos::hora_ns();
@@ -451,7 +811,7 @@ fn hasta_el_minuto() -> u64 {
 
 fn principal() -> u64 {
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
-    let Some(mut c) = Cliente::conectar() else {
+    let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_TIMBRE) else {
         println!("  [barra] sin compositor");
         return 1;
     };
@@ -489,7 +849,22 @@ fn principal() -> u64 {
     e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
 
-    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false };
+    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false };
+    // Los avisos: se suscribe con la puerta. Lo que ya hubiera no sale como toast, solo cuenta para la campana.
+    let mut avs = Avisos { activo: false, toast: None, toast_listo: false, hist: None, hist_listo: false, visto_hasta: 0 };
+    if puerta != 0 {
+        match pedir_avisos(&mut c, &orden_avisos(av::SUSCRIBIR, 0), &[puerta]) {
+            Some((av::BIEN, sin, total, _)) => {
+                avs.activo = true;
+                b.sin_leer = sin;
+                if let Some((_, _, _, Some(a))) = pedir_avisos(&mut c, &orden_avisos(av::LEER, u32::MAX), &[]) {
+                    avs.visto_hasta = a.numero;
+                }
+                println!("  [barra] avisos: suscrita; {} avisos, {} sin leer", total, sin);
+            }
+            r => println!("  [barra] sin servicio de avisos ({})", r.map_or(i32::MIN, |x| x.0)),
+        }
+    }
     let mut la = Lanzador { programas: Vec::new(), busca: String::new(), vistos: Vec::new(), elegido: 0, primero: 0, encima: None, fallo: None, alto: 0 };
     // El búfer de la barra: su ancho (0 si aún no está hecho).
     let mut bufer_ancho = 0i32;
@@ -520,7 +895,11 @@ fn principal() -> u64 {
         c.mandar(&e);
     };
     loop {
-        let ev = match c.evento_plazo(hasta_el_minuto()) {
+        let plazo = match avs.toast {
+            Some((_, hasta)) => hasta_el_minuto().min(hasta.saturating_sub(dashos::ahora_us()).max(1)),
+            None => hasta_el_minuto(),
+        };
+        let ev = match c.evento_plazo(plazo) {
             Err(()) => {
                 println!("  [barra] se cortó la conexión con el compositor");
                 return 5;
@@ -535,6 +914,20 @@ fn principal() -> u64 {
             }
             b.hora = ahora;
             pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+        }
+        // El toast, fuera al acabar su tiempo; y el timbre de los avisos.
+        if avs.toast.is_some_and(|(_, hasta)| dashos::ahora_us() >= hasta) {
+            cerrar_toast(&mut c, &mut avs, "se acabó su tiempo");
+        }
+        if c.timbres > 0 {
+            c.timbres = 0;
+            if avs.activo {
+                let antes = b.sin_leer;
+                al_timbre(&mut c, &mut b, &mut avs, &mut fuente, &mut medio);
+                if b.sin_leer != antes {
+                    pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                }
+            }
         }
         let Some((o, orden, cuerpo)) = ev else { continue };
         let palabra = |i: usize| cuerpo.get(4 * i..4 * i + 4).map_or(0, |p| u32::from_le_bytes(p.try_into().unwrap()));
@@ -595,6 +988,12 @@ fn principal() -> u64 {
                 if b.lanzador_abierto && lanzador_configurado {
                     pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
                 }
+                if avs.toast_listo && let Some((a, _)) = avs.toast {
+                    pantalla_toast(&mut c, &a, &b.tema, &mut fuente, &mut medio);
+                }
+                if avs.hist_listo && let Some(h) = &avs.hist {
+                    pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                }
             }
             (TEMA, dashos_tema_v1::ev::TITULO) => {
                 let m = &tablas::DASHOS_TEMA_V1.events[dashos_tema_v1::ev::TITULO as usize];
@@ -630,6 +1029,8 @@ fn principal() -> u64 {
                     println!("  [barra] en pantalla: {}x{}, zona exclusiva {}", ancho, ALTO, ALTO);
                     let (l, p) = (zona_lanzador(), zona_panel(ancho));
                     println!("  [barra] botones: lanzador en ({}, {}), panel en ({}, {})", l.x + l.w / 2, l.y + l.h / 2, p.x + p.w / 2, p.y + p.h / 2);
+                    let ca = zona_campana(ancho);
+                    println!("  [barra] campana en ({}, {})", ca.x + ca.w / 2, ca.y + ca.h / 2);
                     match b.hora {
                         Some((h, m)) => println!("  [barra] hora: {:02}:{:02} (UTC)", h, m),
                         None => println!("  [barra] hora: no se sabe"),
@@ -646,6 +1047,29 @@ fn principal() -> u64 {
                 c.mandar(&e);
                 lanzador_configurado = true;
                 pantalla_lanzador(&mut c, &la, &b.tema, &mut fuente, &mut medio);
+            }
+            (CAPA_AVISO, zwlr_layer_surface_v1::ev::CONFIGURE) if avs.toast.is_some() => {
+                let mut e = Escritor::new();
+                e.empezar(CAPA_AVISO, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                c.mandar(&e);
+                avs.toast_listo = true;
+                if let Some((a, _)) = avs.toast {
+                    pantalla_toast(&mut c, &a, &b.tema, &mut fuente, &mut medio);
+                }
+            }
+            (CAPA_AVISO, zwlr_layer_surface_v1::ev::CLOSED) => cerrar_toast(&mut c, &mut avs, "lo cerró el compositor"),
+            (CAPA_HIST, zwlr_layer_surface_v1::ev::CONFIGURE) if avs.hist.is_some() => {
+                let mut e = Escritor::new();
+                e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                c.mandar(&e);
+                avs.hist_listo = true;
+                if let Some(h) = &avs.hist {
+                    pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                }
+            }
+            (CAPA_HIST, zwlr_layer_surface_v1::ev::CLOSED) => {
+                cerrar_historial(&mut c, &mut b, &mut avs);
+                pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
             }
             (CAPA_LANZADOR, zwlr_layer_surface_v1::ev::CLOSED) => {
                 b.lanzador_abierto = false;
@@ -701,6 +1125,7 @@ fn principal() -> u64 {
                 let encima = match sobre {
                     SUPERFICIE if b.ancho > 0 && zona_lanzador().contiene(x, y) => Some(Boton::Lanzador),
                     SUPERFICIE if b.ancho > 0 && zona_panel(b.ancho).contiene(x, y) => Some(Boton::Panel),
+                    SUPERFICIE if b.ancho > 0 && zona_campana(b.ancho).contiene(x, y) => Some(Boton::Campana),
                     _ => None,
                 };
                 if encima != b.encima {
@@ -712,6 +1137,13 @@ fn principal() -> u64 {
                 } else {
                     None
                 };
+                let borrar = sobre == SUP_HIST && zona_borrar(&mut medio).contiene(x, y);
+                if let Some(h) = avs.hist.as_mut().filter(|h| h.encima_borrar != borrar) {
+                    h.encima_borrar = borrar;
+                    if avs.hist_listo {
+                        pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                    }
+                }
                 if fila_encima != la.encima {
                     la.encima = fila_encima;
                     if b.lanzador_abierto && lanzador_configurado {
@@ -728,6 +1160,35 @@ fn principal() -> u64 {
                         e.empezar(TEMA, dashos_tema_v1::req::PANEL).fin();
                         c.mandar(&e);
                         println!("  [barra] pide el panel rápido");
+                    } else if zona_campana(b.ancho).contiene(x, y) && avs.activo {
+                        if avs.hist.is_some() {
+                            cerrar_historial(&mut c, &mut b, &mut avs);
+                        } else {
+                            cerrar_toast(&mut c, &mut avs, "se abre el historial");
+                            abrir_historial(&mut c, &mut b, &mut avs, &mut medio);
+                        }
+                        pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                    }
+                } else if sobre == SUP_AVISO {
+                    cerrar_toast(&mut c, &mut avs, "con un clic");
+                } else if sobre == SUP_HIST && zona_borrar(&mut medio).contiene(x, y) {
+                    if avs.hist.as_ref().is_some_and(|h| !h.avisos.is_empty()) {
+                        let r = pedir_avisos(&mut c, &orden_avisos(av::BORRAR_TODO, 0), &[]);
+                        println!("  [barra] borrar todo: {}, quedan {}", r.map_or(i32::MIN, |x| x.0), r.map_or(0, |x| x.2));
+                        if let Some(h) = avs.hist.as_mut() {
+                            h.avisos.clear();
+                            h.primero = 0;
+                            // Más bajo: solo cabe "No hay avisos". Un búfer nuevo, del tamaño nuevo.
+                            h.alto = alto_historial(0);
+                            let mut e = Escritor::new();
+                            e.empezar(BUFER_HIST, wl_buffer::req::DESTROY).fin();
+                            e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_HIST).int(OFF_H as i32).int(ANCHO_H).int(h.alto).int(ANCHO_H * 4).uint(0).fin();
+                            e.empezar(CAPA_HIST, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_H as u32).uint(h.alto as u32).fin();
+                            c.mandar(&e);
+                        }
+                        if avs.hist_listo && let Some(h) = &avs.hist {
+                            pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                        }
                     }
                 } else if sobre == SUP_LANZADOR && b.lanzador_abierto {
                     let k = (0..la.filas()).find(|&k| fila(k).contiene(x, y)).map(|k| k + la.primero);
@@ -737,6 +1198,20 @@ fn principal() -> u64 {
                     }
                 }
                 continue;
+            }
+            // La rueda sobre el historial: una fila por paso.
+            (PUNTERO, wl_pointer::ev::AXIS) if sobre == SUP_HIST && palabra(1) == 0 => {
+                if let Some(h) = avs.hist.as_mut() {
+                    let paso = (palabra(2) as i32).signum();
+                    let max = h.avisos.len().saturating_sub(FILAS_H);
+                    let nuevo = (h.primero as i32 + paso).clamp(0, max as i32) as usize;
+                    if nuevo != h.primero {
+                        h.primero = nuevo;
+                        if avs.hist_listo {
+                            pantalla_historial(&mut c, h, &b.tema, &mut fuente, &mut medio);
+                        }
+                    }
+                }
             }
             (1, wl_display::ev::ERROR) => {
                 println!("  [barra] error de protocolo en el objeto {}", palabra(0));

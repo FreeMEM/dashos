@@ -199,6 +199,34 @@ DashOS en marcha con 4 núcleos.
 # El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
 ~│   [barra] pide el panel rápido
 ~│   [panel] abierto por 2.ª vez
+# S10: los avisos. El servicio guarda 50, como mucho 8 de un programa y 10 por minuto de cada uno; la barra se suscribe.
+~│   [avisos] en marcha: historial de 50, 8 por programa, 10 por minuto
+~│   [avisos] la barra se suscribe:
+~│   [barra] avisos: suscrita;
+# Un programa cualquiera con la llave: avisa con su nombre de verdad (aunque mande una entrada de directorio o un
+# AVISO_PERSONA falsos o diga ser guardian), los mensajes mal hechos se rechazan, los bytes raros se limpian, y al
+# inundar topa con su ritmo. El servicio sigue.
+~│   [avisador] un aviso: 0 (sale como avisador): bien
+~│   [avisador] hacerse pasar por guardian o Sistema: sale como avisador: bien
+~│   [avisador] mal hechos rechazados 6 de 6, bytes raros guardados limpios, y sigue: bien
+~│   [avisos] avisador: demasiados avisos seguidos; los siguientes no se guardan
+~│   [avisador] inundar: 100 mandados,
+~demasiados: bien
+# U6: el `cambio` de Ana avisa con su sesión detrás: se guarda sin salir a Carla, y vuelve con ella.
+~│   [cambio] Ana, detrás: avisa 0
+~│   [avisos] cambio avisa con su sesión detrás (usuario
+~│   [avisos] vuelve delante el usuario
+# Un programa del disco, lanzado desde la barra como Ana, con permiso fijo para avisar: sale el toast, con punto en la
+# campana, y un clic lo cierra. La campana abre el historial (lo de avisa, lo de cambio guardado y lo del avisador, que
+# no tapa a los demás); "Borrar todo" lo vacía y la campana lo cierra.
+~│   [sesiones] barra lanza Programas/avisa: 0
+~│   [avisa] avisa: 0 (número
+~sale como avisa)
+~│   [barra] aviso de avisa: "Copia terminada" (urgencia 1); campana con punto
+~│   [barra] aviso cerrado: con un clic
+~sin leer; de avisa, cambio, avisador; Borrar todo en
+~│   [barra] borrar todo: 0, quedan 0
+~│   [barra] historial cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
