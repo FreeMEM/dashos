@@ -1016,3 +1016,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   y ninguna petición al disco vence su plazo de 2 s. Depende del tiempo: huele a carrera, quizá en el servicio de
   disco al intercalar las peticiones por canal de este cliente con los lotes del anillo de `archivos` (A15), o en el
   propio comprobador. Deshecho; retomarlo con eso.
+  Hipótesis (sin comprobar): en modo rápido se para con menos de 50 lecturas y sin que venza ninguna petición, así
+  que da vueltas sin leer. Encaja con un bucle sin fin al recorrer la cadena del asignador sobre una vista a medio
+  escribir (`archivos` escribe a la vez y el comprobador no tiene instantánea): un ciclo en la cadena. Si es así, es
+  también un fallo de robustez ante discos rotos: la apertura debería poner tope a la cadena. Probarlo con un disco
+  con la cadena en ciclo a propósito (`estropear`, en archivos/herramientas) y `ver`.
