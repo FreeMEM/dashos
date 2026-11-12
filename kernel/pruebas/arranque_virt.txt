@@ -191,7 +191,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] título: (ninguno)
 # El lanzador: su botón lo abre con los programas de Programas/; "ho" deja hola, e Intro lo lanza por `sesiones`, como
 # la persona que está delante (Ana). Super sola lo abre otra vez y Esc lo cierra.
-~│   [barra] lanzador abierto: 3 programas
+~│   [barra] lanzador abierto: 
 ~│   [barra] busca "ho": hola
 ~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanza Programas/hola: 0 (proceso 
