@@ -481,22 +481,32 @@ fn principal() -> u64 {
         }
         e
     };
-    let mut sujeto = sujetar() == 0 && c.pedir(SUJETAR, 0, 0, 0, "").estado == EN_USO;
+    let primero = sujetar();
+    let segundo = c.pedir(SUJETAR, 0, 0, 0, "").estado;
+    let mut sujeto = primero == 0 && segundo == EN_USO;
+    let mut escribir_bien = true;
     let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
     for vuelta in 0..3 {
         if let Some(a) = hacer(&c, escrito.asa, "a15.bin", 200 * 1024, vuelta) {
             // Guardado antes de borrar, para que lo borrado quede sujeto.
-            sujeto &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+            escribir_bien &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
             c.pedir(CERRAR, a, 0, 0, "");
+        } else {
+            escribir_bien = false;
         }
-        sujeto &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        escribir_bien &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
     }
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
-    sujeto = sujeto
-        && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0
-        && c.pedir(SOLTAR, 0, 0, 0, "").estado == 0
-        && c.pedir(SOLTAR, 0, 0, 0, "").estado == NO_EXISTE
-        && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
+    let comprobar_1 = c.pedir(COMPROBAR, 0, 0, 0, "");
+    let soltar_1 = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let soltar_2 = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let comprobar_2 = c.pedir(COMPROBAR, 0, 0, 0, "");
+    sujeto = sujeto && escribir_bien && comprobar_1.a == 0 && soltar_1 == 0 && soltar_2 == NO_EXISTE && comprobar_2.a == 0;
+    if !sujeto {
+        // Para saber cuál falla (sale a veces con el PC cargado).
+        println!("  [ficheros] A15 sujetar: sujetar {} y {}, escribir {}, comprobar {} ({} problemas), soltar {} y {}, comprobar {} ({})",
+            primero, segundo, escribir_bien, comprobar_1.estado, comprobar_1.a, soltar_1, soltar_2, comprobar_2.estado, comprobar_2.a);
+    }
     println!("  [ficheros] A15 sujetar: {}", si(sujeto));
     // A15, hostil: sujetar y no soltar mientras se escribe, guarda y borra mucho más de lo que cabe. El servicio suelta solo al
     // quedar poco sitio: ninguna escritura se queda sin sitio y el SOLTAR de después dice LLENO.

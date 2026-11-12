@@ -1216,3 +1216,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   cada una en su worktree desde c1ec269: `kit-material` (resto de controles con Material 3 y Ajustes), `panel-c2`
   (modo de edición del panel rápido), `usuarios-u6` (cambio rápido de usuario) y `hilos` (hilos de usuario en el
   kernel). Cada una apunta en docs/bitacoras/<rama>.md; se fusionan aquí cuando pasan las pruebas.
+- Fusionada `panel-c2` (modo de edición del panel rápido, guardado por el centro en C/Prefs/panel; detalle en
+  docs/bitacoras/panel-c2.md). Arreglado de paso lo que destapó: el centro abría una conexión de un momento con el
+  compositor para poner el modo y no se despedía; la siguiente le llegaba como la misma y el compositor la cortaba
+  ("número de objeto nuevo malo"); mis reintentos lo tapaban. Ahora manda `TROZO_ADIOS` al acabar: el error ya no
+  sale. Las pruebas de `panel_mosaicos.rs` van en `make prueba`. `ficheros` dice qué paso falla de "A15 sujetar"
+  cuando sale MAL (a veces, con el PC cargado). Con los QEMU de los agentes la media llega a 30 y C14 y S2 fallan
+  por tiempo: repetido con algo menos de carga, bien.

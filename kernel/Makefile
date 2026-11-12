@@ -37,6 +37,7 @@ prueba: $(PRUEBAS)
 	cd ../amigados && cargo test --quiet --release
 	cd ../archivos/herramientas && cargo test --quiet --release
 	cd ../kit && cargo test --quiet
+	cd ../usuario && mkdir -p target && rustc --edition 2024 --test src/panel_mosaicos.rs -o target/panel_mosaicos_pruebas && ./target/panel_mosaicos_pruebas -q
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
 	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh

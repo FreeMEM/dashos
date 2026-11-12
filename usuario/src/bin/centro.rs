@@ -905,7 +905,15 @@ fn aplicar_modo(oscuro: bool) -> i32 {
         dashos::dormir_us(50_000);
     }
     let Some((mut c, globales)) = conexion else { return -1 };
-    let Some(gt) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| g.0) else { return -1 };
+    // Al acabar, adiós al compositor: si no, la conexión siguiente le llega como la misma y rechaza sus objetos
+    // ("número de objeto nuevo malo"); los reintentos lo tapaban.
+    let adios = || {
+        dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    };
+    let Some(gt) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| g.0) else {
+        adios();
+        return -1;
+    };
     const SYNC: u32 = 44;
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA_OBJ).fin();
@@ -915,11 +923,13 @@ fn aplicar_modo(oscuro: bool) -> i32 {
     // Hasta que el compositor conteste al sync, no ha hecho lo de antes; un error de protocolo corta la conexión.
     while let Some((o, orden, _)) = c.evento() {
         if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
+            adios();
             let (guardado, _) = guardar_apariencia(oscuro, color);
             println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
             return 0;
         }
     }
+    adios();
     -1
 }
 
