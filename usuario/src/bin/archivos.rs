@@ -1119,6 +1119,18 @@ impl Paginas {
         }
     }
 
+    /// Fuera lo de un volumen, con ceros: lo prestado de él deja de valer y sus trozos se borran.
+    fn olvidar_volumen(&mut self, vol: u64) {
+        self.devolver(|p| p.trozo.0 == vol);
+        let claves: Vec<ClaveTrozo> = self.trozos.keys().filter(|k| k.0 == vol).copied().collect();
+        for k in claves {
+            if let Some(t) = self.trozos.remove(&k) {
+                Self::memoria(t.hueco).fill(0);
+                self.libres.push(t.hueco);
+            }
+        }
+    }
+
     /// Fuera todo, con ceros (un volumen cifrado que se cierra no deja nada a la vista).
     fn olvidar_todo(&mut self) {
         self.devolver(|_| true);
@@ -1312,10 +1324,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     if !SOLO_LEEN.contains(&p.orden) && ![CREAR, BORRAR, ESCRIBIR, TAMANO, GUARDAR].contains(&p.orden) {
         rec.olvidar();
     }
-    // Las que cambian un volumen entero (o pueden, al reparar), también la caché de páginas y lo prestado (A7).
-    if matches!(p.orden, VOLVER | DESCARTAR | QUITAR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR) {
-        rec.paginas.olvidar_todo();
-    }
+    // La caché de páginas y lo prestado (A7) los olvidan, al acabar bien, las órdenes que cambian un volumen entero, y
+    // solo los de ese volumen: VOLVER, QUITAR_VOLUMEN y CERRAR_VOLUMEN; COMPROBAR, todo, si reparó algo. Antes los
+    // olvidaban todas antes de hacerse: cerrar el volumen de Carla dejaba sin sus trozos a quien leía del sistema.
     match p.orden {
         PERFIL => {
             let mut t = String::new();
@@ -1801,6 +1812,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                         v[n..n + linea.len()].copy_from_slice(linea.as_bytes());
                         n += linea.len();
                     }
+                    if !informe.problems.is_empty() {
+                        rec.paginas.olvidar_todo();
+                    }
                     Respuesta {
                         estado: BIEN,
                         a: informe.problems.len() as u64,
@@ -1848,7 +1862,12 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             });
             match r {
                 // `a`: el volumen, para que el bucle principal suelte sus asas tras volver.
-                Ok(()) => Respuesta { estado: BIEN, a: vol, ..Default::default() },
+                Ok(()) => {
+                    if p.orden == VOLVER {
+                        rec.paginas.olvidar_volumen(vol);
+                    }
+                    Respuesta { estado: BIEN, a: vol, ..Default::default() }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -1939,9 +1958,12 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             match fs.tx(|tx| {
                 let id = tx.find_volume(nombre)?;
-                tx.delete_volume(id)
+                tx.delete_volume(id).map(|_| id)
             }) {
-                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Ok(id) => {
+                    rec.paginas.olvidar_volumen(id as u64);
+                    Respuesta { estado: BIEN, ..Default::default() }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }
@@ -1973,9 +1995,12 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
             match fs.tx(|tx| {
                 let id = tx.find_volume(nombre)?;
-                tx.lock_volume(id)
+                tx.lock_volume(id).map(|_| id)
             }) {
-                Ok(()) => Respuesta { estado: BIEN, ..Default::default() },
+                Ok(id) => {
+                    rec.paginas.olvidar_volumen(id as u64);
+                    Respuesta { estado: BIEN, ..Default::default() }
+                }
                 Err(e) => mal(estado_de(e)),
             }
         }

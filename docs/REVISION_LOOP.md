@@ -1521,3 +1521,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Hostil: con lo prestado proyectado, `hostil` pide COMPROBAR sin el derecho (PROTEGIDO) y después lee el trozo
   entero; antes moría ahí ("excepción de clase 0x24" en lo prestado).
 - `make prueba` BIEN; arranque-virt en dos vueltas BIEN, con "A7 préstamos: bien" y `hostil` acabando con clase 0.
+
+### 2026-11-12 19:10: la caja Linux hasta busybox, en revision; archivos olvida solo el volumen que cambia
+- Fusionada `caja-linux-2`: hipervisor en EL2, máquinas virtuales con llave (llamadas 45 a 48), GIC virtual y
+  temporizador virtual del invitado, PSCI, el crate `caja-linux/vmm` en el servicio; Linux 6.18 (tinyconfig, fuera de
+  git) arranca hasta busybox, lee y escribe su disco virtio-blk y apaga por PSCI (`make arranque-virt-linux`).
+  Detalle en docs/bitacoras/caja-linux.md.
+- Archivos: VOLVER, QUITAR_VOLUMEN y CERRAR_VOLUMEN olvidan la caché de páginas y lo prestado solo de su volumen, y
+  después de hacerse bien; COMPROBAR, todo, solo si reparó algo; DESCARTAR (borrar una instantánea) nada. Antes, que
+  Carla cerrara su volumen (o el centro comprobara el disco) dejaba sin sus trozos a quien leía del sistema: `hostil`
+  fallaba en "no proyecta lo prestado".
+- `make prueba` BIEN; arranque-virt en tres vueltas BIEN; arranque-virt-vm, arranque-virt-linux y arranque-virt-2 BIEN.
