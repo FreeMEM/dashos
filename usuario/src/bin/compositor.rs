@@ -653,6 +653,7 @@ fn principal() -> u64 {
     // Cuánto falta para el siguiente aviso de inactividad (U3): se espera un mensaje como mucho eso.
     let mut falta: Option<u32> = None;
     // E8: cuadros, microsegundos componiendo, píxeles dañados y desde cuándo se cuenta.
+    let mut primera_ventana = false;
     let mut medida = (0u64, 0u64, 0u64, dashos::ahora_us());
     loop {
         // Un mensaje que no vale no para el compositor (M6).
@@ -877,6 +878,11 @@ fn principal() -> u64 {
             avisos.push((cl, aviso, ms));
         });
         c.presentar(&danos);
+        // Lo que tarda el arranque: el primer cuadro con alguna ventana, desde el encendido (una vez).
+        if !primera_ventana && !danos.is_empty() && !escena.orden.is_empty() {
+            primera_ventana = true;
+            println!("  [compositor] primer cuadro con ventanas a los {} ms del encendido", dashos::ahora_us() / 1000);
+        }
         // E8, la medida: cuántos cuadros (composiciones con daño) y cuánto tiempo en ellos, cada 10 s.
         if !danos.is_empty() {
             medida.0 += 1;

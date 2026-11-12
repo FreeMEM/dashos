@@ -1457,3 +1457,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
 - Pendiente apuntado: el controlador de virtio-gpu sigue sin su interrupción (habría que leer su registro ISR, la
   capacidad 3); solo es de QEMU.
+
+### 2026-11-12 16:55: cuánto tarda el arranque
+- Marcas desde el encendido: el kernel ("DashOS en marcha ... (a los N ms del encendido)"), `inicio` ("todo lanzado")
+  y el compositor ("primer cuadro con ventanas"), una vez cada una.
+- En QEMU `virt` (TCG, con el PC poco cargado): el kernel empieza a los 6049 ms (todo eso es el firmware EDK2),
+  `inicio` acaba de lanzar a los 6329 y el primer cuadro con ventanas sale a los 6405: DashOS tarda 0,36 s desde que
+  entra el kernel hasta el escritorio, con las pruebas del arranque (que `inicio` espera una a una) dentro.
+- `make prueba` BIEN; arranque-virt BIEN.

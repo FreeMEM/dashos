@@ -126,7 +126,9 @@ pub fn kmain(dtb: usize) -> ! {
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(dtb, n);
 
-    kprintln!("DashOS en marcha con {} núcleos.", n + 1);
+    // Con el tiempo desde que se encendió la máquina (el contador empieza ahí: en QEMU incluye el firmware).
+    kprintln!("DashOS en marcha con {} núcleos. (a los {} ms del encendido)", n + 1,
+        (base::cpu::contador() as u128 * 1000 / base::cpu::frecuencia().max(1) as u128) as u64);
     // La imagen normal pasa el sistema al programa de inicio (C47). La de pruebas no: ahí mandan las pruebas.
     #[cfg(not(feature = "pruebas"))]
     if !inicio::lanzar() {

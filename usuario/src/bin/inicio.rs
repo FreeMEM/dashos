@@ -410,7 +410,7 @@ fn principal() -> u64 {
             let _ = memoria_proyectar(1, PAQUETE, false);
         }
     }
-    println!("  [inicio] todo lanzado; se queda vigilando los servicios");
+    println!("  [inicio] todo lanzado; se queda vigilando los servicios (a los {} ms del encendido)", dashos::ahora_us() / 1000);
     // E6: un servicio que acaba se relanza con las mismas llaves, tras 100, 200 y 400 ms; a la cuarta, se deja. Su
     // canal sigue siendo el mismo (inicio guarda una copia de su extremo): sus clientes no lo pierden.
     let mut buf = [0u8; 16];
