@@ -456,11 +456,27 @@ fn asegurar_colas(total: usize) -> bool {
 
 /// `None` sin memoria para el hilo (S1); entonces la pila se suelta y `proceso` queda en manos de quien llama.
 unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila) -> Option<u64> {
+    unsafe { crear_hilo_registrado(f, arg, nucleo, proceso, registrar, pila, None) }
+}
+
+/// Como `crear_hilo_con`. Con `cargo` (un hilo creado por la llamada 40), además apunta el hilo en el registro de su
+/// proceso, para unirse a él, con lo que costó: se devuelve al unirse o al acabar el proceso.
+/// El hilo entra en la lista de su proceso antes que en la cola de su núcleo, con el cerrojo del proceso tomado: si no,
+/// podría correr y morir antes de estar en ella, y la lista guardaría un hilo ya liberado.
+unsafe fn crear_hilo_registrado(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila, cargo: Option<crate::cupo::Cargo>) -> Option<u64> {
     let total = HILOS.fetch_add(1, Ordering::AcqRel) + 1;
-    let hay_sitio = asegurar_colas(total) && registrar.is_none_or(|c| c.estado.tomar().hilos.try_reserve(1).is_ok());
-    if !hay_sitio {
+    if !asegurar_colas(total) {
         HILOS.fetch_sub(1, Ordering::AcqRel);
         return None;
+    }
+    // Antes que el cerrojo del núcleo, como en `matar_proceso`.
+    let mut estado = registrar.map(|c| c.estado.tomar());
+    if let Some(e) = estado.as_mut() {
+        if e.hilos.try_reserve(1).is_err() || (cargo.is_some() && e.registro.try_reserve(1).is_err()) {
+            drop(estado);
+            HILOS.fetch_sub(1, Ordering::AcqRel);
+            return None;
+        }
     }
     let tope = pila.tope();
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
@@ -496,30 +512,32 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         fijo: false,
         consumido: 0,
     });
+    // Sin memoria, el hilo que no llegó a la caja ya se ha soltado, y con él su pila y su cuenta en `HILOS` (`Drop`).
     let Ok(caja) = caja else {
         drop(cola);
-        HILOS.fetch_sub(1, Ordering::AcqRel);
+        drop(estado);
         return None;
     };
     let h = Box::into_raw(caja);
+    if let Some(e) = estado.as_mut() {
+        // Si ya lo mataron mientras se creaba (M2), el hilo nace marcado: morirá antes de bajar a EL0.
+        if e.matado {
+            unsafe { (*h).matar.store(true, Ordering::Release) };
+        }
+        // Con sitio reservado arriba, con el cerrojo tomado: no piden memoria.
+        e.hilos.push(HiloRef(h));
+        if let Some(cargo) = cargo {
+            e.registro.push(crate::objetos::RegistroHilo { id, fin: None, _cargo: cargo });
+        }
+    }
     nc.listos.push(h);
     publicar_carga(nucleo, nc);
     drop(cola);
+    drop(estado);
     avisar_ocioso(nucleo);
     // Su núcleo puede estar en el ocioso sin tic (M5): que lo vea ya.
     if nucleo != nucleos::numero() as usize && EN_OCIOSO[nucleo].load(Ordering::Relaxed) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
         crate::gic::avisar(nucleo as u32, crate::gic::SGI_PLANIFICAR);
-    }
-    if let Some(c) = registrar {
-        let mut e = c.estado.tomar();
-        // Si ya lo mataron mientras se creaba (M2), el hilo nace marcado: morirá antes de bajar a EL0.
-        if e.matado {
-            let cola = NUCLEOS[nucleo].tomar();
-            if cola.is_some() {
-                unsafe { (*h).matar.store(true, Ordering::Release) };
-            }
-        }
-        e.hilos.push(HiloRef(h));
     }
     Some(id)
 }
@@ -1308,6 +1326,68 @@ impl ColaEspera {
     }
 }
 
+/// Hilos que esperan en palabras de memoria (llamadas 42 y 43), cada uno con la clave de su palabra. Como `ColaEspera`:
+/// va dentro de un cerrojo y solo se toca con él; un hilo de la cola está vivo, porque para morir tiene que volver y
+/// quitarse con ese cerrojo tomado.
+pub struct ColaClaves {
+    hilos: Vec<(usize, HiloRef)>,
+}
+
+impl ColaClaves {
+    pub const fn nueva() -> Self {
+        Self { hilos: Vec::new() }
+    }
+
+    /// Apunta al hilo actual en la palabra `clave`. Falso si no hay memoria.
+    pub fn apuntarme(&mut self, clave: usize) -> bool {
+        if self.hilos.try_reserve(1).is_err() {
+            return false;
+        }
+        self.hilos.push((clave, HiloRef(actual())));
+        true
+    }
+
+    /// Quita al hilo actual. Verdad si seguía apuntado: entonces no lo despertó `despertar`, sino el plazo o que lo
+    /// matan.
+    pub fn quitarme(&mut self) -> bool {
+        let yo = HiloRef(actual());
+        match self.hilos.iter().position(|&(_, h)| h == yo) {
+            Some(i) => {
+                // En orden: los que esperan en la misma palabra se despiertan por orden de llegada.
+                self.hilos.remove(i);
+                self.encoger();
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Vacía, devuelve su sitio si creció: si no, una tanda de esperas dejaría una página del kernel en la cola para
+    /// siempre.
+    fn encoger(&mut self) {
+        if self.hilos.is_empty() && self.hilos.capacity() > 16 {
+            self.hilos = Vec::new();
+        }
+    }
+
+    /// Despierta, por orden de llegada, hasta `n` hilos que esperan en `clave`, y los quita de la cola. Cuántos.
+    pub fn despertar(&mut self, clave: usize, n: usize) -> usize {
+        let mut hechos = 0;
+        let mut i = 0;
+        while i < self.hilos.len() && hechos < n {
+            if self.hilos[i].0 == clave {
+                let (_, h) = self.hilos.remove(i);
+                despertar(h.0);
+                hechos += 1;
+            } else {
+                i += 1;
+            }
+        }
+        self.encoger();
+        hechos
+    }
+}
+
 /// El proceso del hilo actual. Mientras corre, el hilo tiene su referencia; aquí se da otra.
 pub fn proceso_actual_arc() -> Option<alloc::sync::Arc<crate::objetos::Proceso>> {
     let p = proceso_actual() as *const crate::objetos::Proceso;
@@ -1389,18 +1469,38 @@ pub fn terminar_actual(fin: crate::objetos::Fin) -> ! {
         // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: se apunta cómo y se despierta a
         // quien esperaba.
         let yo = HiloRef(actual());
-        let avisos = {
+        let id = unsafe { (*yo.0).id };
+        let mut matar_resto = false;
+        let (avisos, registro, fin) = {
             let mut e = p.control.estado.tomar();
             e.hilos.retain(|&h| h != yo);
             if e.hilos.is_empty() && e.fin.is_none() {
+                // Si lo terminó `proceso_salir` o un fallo de otro hilo, acaba como dijo aquel, no como este (que
+                // muere marcado).
+                let fin = e.fin_pendiente.unwrap_or(fin);
                 e.fin = Some(fin);
                 // Con el cerrojo tomado: los que esperan siguen vivos mientras lo tengamos (A2).
                 e.esperando.despertar_todos();
-                core::mem::take(&mut e.avisos)
+                // Los registros de hilos sin unir, con lo cobrado, se sueltan fuera del cerrojo.
+                (core::mem::take(&mut e.avisos), core::mem::take(&mut e.registro), fin)
             } else {
-                alloc::vec::Vec::new()
+                // Quedan otros hilos (hilos de usuario): su código, para quien se una a este.
+                if let Some(r) = e.registro.iter_mut().find(|r| r.id == id) {
+                    r.fin = Some(fin);
+                }
+                e.unen.despertar_todos();
+                // Un fallo en un hilo acaba con el proceso entero (docs/diseño/hilos-de-usuario.md).
+                if fin == crate::objetos::Fin::Fallo && e.fin_pendiente.is_none() {
+                    e.fin_pendiente = Some(fin);
+                    matar_resto = true;
+                }
+                (alloc::vec::Vec::new(), alloc::vec::Vec::new(), fin)
             }
         };
+        drop(registro);
+        if matar_resto {
+            matar_proceso(&p.control);
+        }
         // Los avisos de fin (K7), fuera del cerrojo del proceso: escribir en un canal despierta hilos.
         for a in avisos {
             a.mandar(fin);
@@ -1441,8 +1541,16 @@ pub fn ttbr0_actual() -> u64 {
 /// # Seguridad
 /// `ttbr0` tiene que ser el de un espacio vivo del proceso de este hilo (`Espacio::ttbr0`).
 pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
+    unsafe { bajar_a_el0_con(ttbr0, pc, sp, 0) }
+}
+
+/// Como `bajar_a_el0`, con `x0` = `arg` al llegar (el argumento de un hilo de usuario, llamada 40).
+///
+/// # Seguridad
+/// Como `bajar_a_el0`.
+unsafe fn bajar_a_el0_con(ttbr0: u64, pc: u64, sp: u64, arg: u64) -> ! {
     unsafe extern "C" {
-        fn entrar_el0(pc: u64, sp: u64) -> !;
+        fn entrar_el0(pc: u64, sp: u64, x0: u64) -> !;
     }
     crate::cerrojo::enmascarar_irq();
     if debe_morir() {
@@ -1453,20 +1561,48 @@ pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
         unsafe { (*nucleo.actual).ttbr0 = ttbr0 };
     }
     crate::espacio::activar(ttbr0);
-    unsafe { entrar_el0(pc, sp) }
+    unsafe { entrar_el0(pc, sp, arg) }
 }
 
 /// Lo que necesita un hilo nuevo de proceso para bajar a EL0.
 struct Arranque {
     entrada: u64,
     pila: u64,
+    /// x0 al llegar a EL0 y TPIDR_EL0 (los hilos de la llamada 40; el primero de un proceso, 0 y 0).
+    arg: u64,
+    tls: u64,
 }
 
 extern "C" fn arrancar_proceso(a: usize) {
     let a = unsafe { Box::from_raw(a as *mut Arranque) };
     let ttbr0 = proceso_actual_arc().map(|p| p.ttbr0).unwrap_or(0);
+    let (entrada, pila, arg, tls) = (a.entrada, a.pila, a.arg, a.tls);
+    drop(a);
+    // Su TLS: el planificador guarda y repone TPIDR_EL0 en cada cambio, así que basta con ponerlo aquí.
+    unsafe { core::arch::asm!("msr tpidr_el0, {}", in(reg) tls) };
     // El espacio es el del proceso de este hilo, que lo tiene vivo.
-    unsafe { bajar_a_el0(ttbr0, a.entrada, a.pila) };
+    unsafe { bajar_a_el0_con(ttbr0, entrada, pila, arg) };
+}
+
+/// Un hilo más del proceso del hilo actual (llamada 40): bajará a EL0 en `entrada` con la pila `pila`, x0 = `arg` y
+/// TPIDR_EL0 = `tls`, en el núcleo de menos carga. Quien llama ya comprobó la entrada y la pila, cobró `cargo` al grupo
+/// y pidió `pila_kernel`. Queda en el registro del proceso hasta que alguien se una a él. `None` sin memoria, o si el
+/// hilo actual no es de un proceso.
+pub fn crear_hilo_usuario(entrada: u64, pila: u64, arg: u64, tls: u64, pila_kernel: crate::mapa::Pila, cargo: crate::cupo::Cargo) -> Option<u64> {
+    let p = proceso_actual_arc()?;
+    let control = p.control.clone();
+    let a = Box::into_raw(Box::try_new(Arranque { entrada, pila, arg, tls }).ok()?) as usize;
+    let ptr = alloc::sync::Arc::into_raw(p) as usize;
+    let nucleo = nucleo_para_nuevo();
+    // `ptr` es un Arc::into_raw cuya referencia pasa al hilo.
+    let id = unsafe { crear_hilo_registrado(arrancar_proceso, a, nucleo, ptr, Some(&control), pila_kernel, Some(cargo)) };
+    if id.is_none() {
+        unsafe {
+            drop(Box::from_raw(a as *mut Arranque));
+            drop(alloc::sync::Arc::from_raw(ptr as *const crate::objetos::Proceso));
+        }
+    }
+    id
 }
 
 /// Arranca el primer hilo de un proceso en `nucleo`: bajará a EL0 en `entrada` con la pila `pila` (C39). El hilo se
@@ -1476,7 +1612,7 @@ extern "C" fn arrancar_proceso(a: usize) {
 /// `None` sin memoria (S1): el proceso no llega a correr y se suelta aquí.
 pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> Option<u64> {
     let control = p.control.clone();
-    let a = Box::into_raw(Box::try_new(Arranque { entrada, pila }).ok()?) as usize;
+    let a = Box::into_raw(Box::try_new(Arranque { entrada, pila, arg: 0, tls: 0 }).ok()?) as usize;
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
     // `ptr` es un Arc::into_raw cuya referencia pasa al hilo, como pide crear_hilo.
     let id = unsafe { crear_hilo_con(arrancar_proceso, a, nucleo % MAX_NUCLEOS, ptr, Some(&control), pila_kernel) };

@@ -25,6 +25,9 @@ pub const TABLA_LLENA: u64 = ((MAX_TABLA + 1) * core::mem::size_of::<Option<crat
 /// el hilo, su estado de coma flotante, el proceso, su control y lo que redondea el montón (`prueba_coste` en
 /// `pruebas.rs` comprueba que alcanza).
 pub const COSTE_PROCESO: u64 = TABLA_LLENA + crate::mapa::PILA as u64 + 8 * 1024;
+/// Lo que cuesta un hilo de usuario (llamada 40): su pila del kernel y 4 KB para el hilo, su estado de coma flotante,
+/// su arranque, su registro en el proceso y su sitio en las colas (`prueba_coste` comprueba que alcanza).
+pub const COSTE_HILO: u64 = crate::mapa::PILA as u64 + 4 * 1024;
 /// Lo que cuesta un grupo en sí (C43).
 pub const COSTE_GRUPO: u64 = 512;
 /// Lo que cuesta un intermediario de llave revocable (C43).

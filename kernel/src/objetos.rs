@@ -260,7 +260,27 @@ pub struct EstadoProceso {
     pub matado: bool,
     /// Canales a los que avisar cuando acabe (K7, `proceso_avisar`).
     pub avisos: Vec<AvisoFin>,
+    /// Los hilos creados con `hilo_crear` (llamada 40), vivos o acabados, hasta que alguien se une a ellos.
+    pub registro: Vec<RegistroHilo>,
+    /// Hilos bloqueados en `hilo_unir` (llamada 41). Se despiertan cada vez que acaba un hilo del proceso.
+    pub unen: ColaEspera,
+    /// Cómo acabará el proceso cuando muera su último hilo, si lo decidió antes otro hilo: `proceso_salir` (44) o un
+    /// fallo. Sin esto, el último hilo, que muere marcado, diría "matado".
+    pub fin_pendiente: Option<Fin>,
 }
+
+/// Un hilo creado con `hilo_crear` (docs/diseño/hilos-de-usuario.md): su número, cómo acabó y lo que costó al grupo.
+/// El coste se devuelve al unirse a él o al acabar el proceso, no al acabar el hilo: así un programa que crea hilos sin
+/// unirse a ellos topa con su cupo.
+pub struct RegistroHilo {
+    pub id: u64,
+    pub fin: Option<Fin>,
+    pub _cargo: crate::cupo::Cargo,
+}
+
+/// Hilos vivos o sin unir por proceso, como mucho (llamada 40): un tope de forma, como `MAX_TABLA`. Lo que cuestan lo
+/// para además el cupo del grupo.
+pub const MAX_HILOS: usize = 256;
 
 /// Los bytes de un aviso del kernel (interrupción, temporizador, fin de proceso), o `None` si no queda montón (S1):
 /// quien avisa lo reintenta o lo pierde, pero no hay pánico.

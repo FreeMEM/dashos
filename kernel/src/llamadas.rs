@@ -31,6 +31,11 @@
 //! | 24 | temporizador_crear(llave de canal, primer plazo µs, periodo µs) -> llave |
 //! | 25 | registros_recortar(llave de registros o del firmware, desde, tamaño) -> llave |
 //! | 26 | dma_liberar(permiso DMA) -> páginas devueltas de su cuarentena |
+//! | 40 | hilo_crear(entrada, pila, argumento, tls) -> número del hilo |
+//! | 41 | hilo_unir(número) -> (clase, código), como proceso_esperar |
+//! | 42 | esperar(dirección, valor, plazo µs) -> 0 despertado, 1 la palabra no valía eso |
+//! | 43 | despertar(dirección, cuántos) -> cuántos despertó |
+//! | 44 | proceso_salir(código): acaba el proceso entero |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -170,6 +175,12 @@ pub fn atender(marco: &mut Marco) {
         },
         // R10 (S5): hasta 256 bytes al azar en a[0], a[1] bytes; x1 = 1 si vienen de una semilla de verdad.
         34 => azar(marco, a[0], a[1]),
+        // Hilos de usuario (docs/diseño/hilos-de-usuario.md).
+        40 => hilo_crear(a[0], a[1], a[2], a[3]),
+        41 => hilo_unir(marco, a[0]),
+        42 => esperar(a[0], a[1], a[2]),
+        43 => despertar(a[0], a[1]),
+        44 => proceso_salir(a[0]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -959,4 +970,116 @@ fn registro_leer(h: u32, buf: u64, cap: u64) -> u64 {
         return E_ARGUMENTO;
     }
     n as u64
+}
+
+/// Llamada 40: un hilo más en el proceso (docs/diseño/hilos-de-usuario.md). Baja a EL0 en `entrada` con SP = `pila`,
+/// x0 = `arg` y TPIDR_EL0 = `tls`. La entrada tiene que ser código del proceso y la pila, memoria suya que se puede
+/// escribir: si no, error, no un hilo que muere al nacer. Se cobra `COSTE_HILO` al grupo hasta que alguien se una a él.
+fn hilo_crear(entrada: u64, pila: u64, arg: u64, tls: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if entrada % 4 != 0 || pila % 16 != 0 || pila < 16 {
+        return E_ARGUMENTO;
+    }
+    {
+        let e = proc_.espacio.tomar();
+        if !e.ejecutable(entrada) || !matches!(e.para_copiar(pila - 16, true), crate::espacio::Copia::Directa(_)) {
+            return E_ARGUMENTO;
+        }
+    }
+    {
+        let e = proc_.control.estado.tomar();
+        if e.matado || e.fin_pendiente.is_some() {
+            return E_CERRADO;
+        }
+        if e.registro.len() >= objetos::MAX_HILOS {
+            return E_LIMITE;
+        }
+    }
+    let Some(cargo) = proc_.cupo.cobrar(crate::cupo::COSTE_HILO) else { return E_MEMORIA };
+    let Some(pila_kernel) = crate::mapa::pila_nueva() else { return E_MEMORIA };
+    drop(proc_);
+    planificador::crear_hilo_usuario(entrada, pila, arg, tls, pila_kernel, cargo).unwrap_or(E_MEMORIA)
+}
+
+/// Llamada 41: espera a que acabe el hilo `id`, creado con `hilo_crear` en este mismo proceso, y da cómo acabó: clase
+/// en x0 y código en x1, como `proceso_esperar`. Un número que no está en el registro del proceso (de otro proceso, del
+/// kernel, ya unido, el propio) es un error: nunca se espera a un hilo ajeno.
+fn hilo_unir(marco: &mut Marco, id: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if id == planificador::actual_id() {
+        return E_ARGUMENTO;
+    }
+    let c = proc_.control.clone();
+    drop(proc_);
+    loop {
+        let mut e = c.estado.tomar();
+        // Si lo despertaron para matarlo, nadie lo quitó de la cola: se quita él.
+        e.unen.quitarme();
+        let Some(i) = e.registro.iter().position(|r| r.id == id) else { return E_ARGUMENTO };
+        if let Some(fin) = e.registro[i].fin {
+            // Fuera del registro, y con él lo cobrado, que se devuelve al soltarlo (fuera del cerrojo).
+            let r = e.registro.swap_remove(i);
+            drop(e);
+            drop(r);
+            let (clase, codigo) = fin.valores();
+            marco.poner_x1(codigo);
+            return clase;
+        }
+        if planificador::debe_morir() {
+            return E_CERRADO;
+        }
+        if !e.unen.apuntarme() {
+            return E_MEMORIA;
+        }
+        // Las IRQ están enmascaradas en toda llamada: se puede bloquear soltando el cerrojo.
+        planificador::bloquear_soltando(e);
+    }
+}
+
+/// Llamada 42: duerme mientras la palabra de 32 bits de `va` valga `valor`, como mucho `plazo_us` (0: sin plazo; como
+/// mucho una hora). 0 si lo despertaron; 1 si la palabra no valía eso (no ha dormido).
+fn esperar(va: u64, valor: u64, plazo_us: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if valor > u32::MAX as u64 {
+        return E_ARGUMENTO;
+    }
+    match crate::espera::esperar(&proc_, va, valor as u32, plazo_us.min(3_600_000_000)) {
+        crate::espera::Resultado::Despertado => 0,
+        crate::espera::Resultado::OtroValor => 1,
+        crate::espera::Resultado::Plazo => E_PLAZO,
+        crate::espera::Resultado::Matado => E_CERRADO,
+        crate::espera::Resultado::SinMemoria => E_MEMORIA,
+        crate::espera::Resultado::Direccion => E_ARGUMENTO,
+    }
+}
+
+/// Llamada 43: despierta hasta `n` hilos que esperan en la palabra de `va`. Cuántos.
+fn despertar(va: u64, n: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    match crate::espera::despertar(&proc_, va, n.min(usize::MAX as u64) as usize) {
+        Some(k) => k as u64,
+        None => E_ARGUMENTO,
+    }
+}
+
+/// Llamada 44: acaba el proceso entero con `codigo`. Los demás hilos mueren como al matarlo, pero el proceso acaba
+/// como "salió con este código".
+fn proceso_salir(codigo: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let control = proc_.control.clone();
+    // Sin referencias de más al proceso: este hilo no vuelve, y lo que no suelte aquí no se soltaría nunca.
+    drop(proc_);
+    {
+        let mut e = control.estado.tomar();
+        if e.fin_pendiente.is_none() {
+            e.fin_pendiente = Some(objetos::Fin::Salida(codigo));
+        }
+    }
+    planificador::matar_proceso(&control);
+    drop(control);
+    if codigo != 0 || SALIDAS_VISIBLES.load(core::sync::atomic::Ordering::Relaxed) {
+        kprintln!("  [hilo {}] acaba su proceso con código {}", planificador::actual_id(), codigo);
+    }
+    SALIDAS.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+    planificador::terminar_actual(objetos::Fin::Salida(codigo));
 }

@@ -244,6 +244,33 @@ impl Espacio {
         Copia::Directa((mmu::virt((v & DIRECCION) as usize) + (va % PAGINA) as usize) as *mut u8)
     }
 
+    /// ¿Puede EL0 ejecutar en `va`? Para la entrada de un hilo nuevo (llamada 40): mejor un error al crearlo que un
+    /// hilo que muere al nacer y se lleva el proceso.
+    pub fn ejecutable(&self, va: u64) -> bool {
+        if !(VA_MINIMA..VA_LIMITE).contains(&va) {
+            return false;
+        }
+        let Some(e) = self.hoja(va) else { return false };
+        // SAFETY: `hoja` da una entrada de una tabla de este espacio, que vive mientras lo tengamos tomado.
+        let v = unsafe { e.read_volatile() };
+        v & VALIDO == VALIDO && v & AF != 0 && v & AP_EL0 != 0 && v & UXN == 0
+    }
+
+    /// La palabra de 32 bits de `va` para la espera de hilos (llamadas 42 y 43): su valor, leído de una vez, y una
+    /// clave que la nombra: su dirección en el mapa directo del kernel, la misma para dos procesos que comparten la
+    /// página. `None` si no está alineada a 4, EL0 no puede leerla o no es memoria normal con caché. Hay que tener el
+    /// espacio tomado: así la página no se puede quitar mientras se lee.
+    pub fn palabra(&self, va: u64) -> Option<(u32, usize)> {
+        if va % 4 != 0 {
+            return None;
+        }
+        let Copia::Directa(k) = self.para_copiar(va, false) else { return None };
+        // SAFETY: `k` está en el mapa directo, dentro de una página proyectada en este espacio (que tenemos tomado),
+        // alineada a 4. Una carga atómica: la escriben a la vez los hilos del proceso.
+        let v = unsafe { (*(k as *const core::sync::atomic::AtomicU32)).load(core::sync::atomic::Ordering::SeqCst) };
+        Some((v, k as usize))
+    }
+
     /// La entrada de nivel 3 de `va`, creando las tablas que falten.
     fn hoja_o_crear(&mut self, va: u64) -> Result<*mut u64, Error> {
         if !(VA_MINIMA..VA_LIMITE).contains(&va) {

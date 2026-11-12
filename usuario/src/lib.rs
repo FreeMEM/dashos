@@ -21,6 +21,7 @@ pub mod protocolo {
 #[cfg(feature = "monton")]
 pub mod monton;
 pub mod prestados;
+pub mod hilos;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
@@ -166,6 +167,13 @@ pub fn ahora_us() -> u64 {
     let (t, f): (u64, u64);
     unsafe { asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
     (t as u128 * 1_000_000 / f.max(1) as u128) as u64
+}
+
+/// Nanosegundos desde que arrancó la máquina, con el contador de la CPU (para medir cosas de pocos µs).
+pub fn ahora_ns() -> u64 {
+    let (t, f): (u64, u64);
+    unsafe { asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
+    (t as u128 * 1_000_000_000 / f.max(1) as u128) as u64
 }
 
 /// A14: la hora del calendario, en nanosegundos desde 1970 (UTC); 0 si el sistema no la sabe (la Pi 4 no tiene reloj).
