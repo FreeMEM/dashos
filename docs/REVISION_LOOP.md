@@ -903,3 +903,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   así que un clic no abre) y, casi un segundo después, doble clic. "El usuario elige C/Privado/nota.txt con doble
   clic". Si el ratón fallara, el guion acaba con Fin e Intro y la línea diría "con Intro": la prueba lo vería.
   Captura nueva en `docs/capturas/u5-selector.png`.
+- S10c, los botones con el ratón: el centro dice dónde queda el botón Quitar y, al quitar, si fue "con el botón" o
+  "con Supr". El guion hace clic en la fila de `pide · eco` y luego en Quitar: "quita a pide el permiso de eco con el
+  botón: 0; quedan 0" (si el ratón fallara, acaba con Supr y la línea no casaría).

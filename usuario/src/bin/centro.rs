@@ -525,6 +525,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         if let Some(r) = i.sitios.get(&permisos) {
                             println!("  [centro] lista en ({}, {}), filas de 56", r.x, r.y);
                         }
+                        if let Some(r) = i.sitios.get(&quitar) {
+                            println!("  [centro] botón Quitar en ({}, {})", r.x + r.w / 2, r.y + r.h / 2);
+                        }
                     }
                     false
                 }
@@ -553,7 +556,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 }
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_ESC => return Some(()),
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && cat == PERMISOS => {
-                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar".into()));
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar-supr".into()));
                     false
                 }
                 (TECLADO, wl_keyboard::ev::KEY) => i.tecla(palabra(2), palabra(3) == 1),
@@ -612,16 +615,17 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 Some("elegir") => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                 }
-                Some("quitar") if cat != PERMISOS => {
+                Some("quitar") | Some("quitar-supr") if cat != PERMISOS => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                 }
-                Some("quitar") => {
+                Some(como @ ("quitar" | "quitar-supr")) => {
+                    let como = if como == "quitar" { "con el botón" } else { "con Supr" };
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
                     if let Some((prog, serv)) = usize::try_from(v).ok().and_then(|v| lista.get(v)).cloned() {
                         let estado = retirar(&prog, &serv);
                         lista = concedidos();
-                        println!("  [centro] quita a {} el permiso de {}: {}; quedan {}", prog, serv, estado, lista.len());
+                        println!("  [centro] quita a {} el permiso de {} {}: {}; quedan {}", prog, serv, como, estado, lista.len());
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(filas(&lista)));
                         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
                         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));

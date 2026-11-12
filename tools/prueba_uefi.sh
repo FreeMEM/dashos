@@ -128,12 +128,34 @@ while time.time() - inicio < total:
                 continue
             centro = 2
             time.sleep(0.5)
-            mandar("sendkey down")
-            if captura_centro:
-                time.sleep(0.5)
-                mandar("screendump " + captura_centro)
-            time.sleep(0.3)
-            mandar("sendkey delete")
+            # Con el ratón: clic en la primera fila (pide · eco) y en el botón Quitar. Si no se sabe dónde, Supr.
+            import re
+            v = re.search(r"\[compositor\] ventana de centro en \((\d+), (\d+)\)", texto)
+            l = re.search(r"\[centro\] lista en \((\d+), (\d+)\)", texto)
+            b = re.search(r"\[centro\] botón Quitar en \((\d+), (\d+)\)", texto)
+            def ir(x, y):
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+            if v and l and b:
+                vx, vy = int(v.group(1)), int(v.group(2))
+                ir(vx + int(l.group(1)) + 60, vy + int(l.group(2)) + 28)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                if captura_centro:
+                    time.sleep(0.6)
+                    mandar("screendump " + captura_centro)
+                time.sleep(0.6)
+                ir(vx + int(b.group(1)), vy + int(b.group(2)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            else:
+                mandar("sendkey down")
+                time.sleep(0.3)
+                mandar("sendkey delete")
             reintento = time.time() + 4
         if centro == 2:
             if "[centro] quita a " not in texto:

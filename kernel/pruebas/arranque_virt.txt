@@ -132,7 +132,7 @@ DashOS en marcha con 4 núcleos.
 # La apariencia guardada está en basura: se queda la de serie.
 ~│   [centro] apariencia guardada: no se entiende; se queda la de serie
 ~│   [centro] Permisos en pantalla: 1 concedidos
-~│   [centro] quita a pide el permiso de eco: 0; quedan 0
+~│   [centro] quita a pide el permiso de eco con el botón: 0; quedan 0
 # Y Seguridad: el registro de sesiones, con lo que se le negó al hostil.
 ~│   [centro] Seguridad, con negativas del hostil: sí;
 # Discos: el disco de pruebas, 7 MB (sin derechos: solo INFO).
