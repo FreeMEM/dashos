@@ -1590,3 +1590,17 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la última en `inicio`; guiones con el clic en el gadget.
 - Siete decisiones del usuario en `docs/bitacoras/caja-amiga.md` (fuente, varias tareas 68k, SetFunction, LoadSeg...).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 23:20: ventanas de Linux en el escritorio de DashOS (H9), en revision
+- Fusionada `caja-linux-wayland`: virtio-vsock en `caja-linux/vmm` (bajo el cerrojo de la caja, vale con 4 vCPU);
+  el `puente` de G1, estático para aarch64, corre en Arch como servicio de systemd en `/run/wayland-0`; en DashOS,
+  `wayland/src/puente.rs` y `usuario/src/puente_caja.rs`: cada programa de Linux es una subconexión del compositor
+  (solo de "caja-linux", hasta 32, sin capas ni bloqueo). Se copian las filas dañadas de los búferes del invitado.
+- `ventana_wayland` (cliente propio con wl_shm) y foot (de los paquetes de Arch) salen como ventanas, con teclado y
+  ratón: `make arranque-virt-wayland`. 65-75 cuadros por segundo de 320×240 enteros dañados (QEMU sin aceleración),
+  primer cuadro a los 50 ms. Captura de foot mandada al usuario. `preparar-arch` mete 14 paquetes ya instalados.
+- Hostil: vsock con cabeceras, tamaños, créditos y órdenes falsos; puente con memorias falsas, de 16 EB o 1 TB,
+  300 memorias (pasan 24), 90 clientes (pasan 32), Wayland roto y tramas basura: todo cortado y luego funciona.
+- Pendiente: sin copias (objeto de memoria con páginas de otro), portapapeles, xdg-decoration, pools de más de
+  64 MB, GPU/dmabuf, GTK4 y Firefox, `delete_id` de pools sucesores, un aviso visto una vez al acabar.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2 y -wayland: BIEN.
