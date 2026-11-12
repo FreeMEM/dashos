@@ -1075,6 +1075,15 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let todos: Vec<(Cliente, u32)> = escena.temas.clone();
                 escena.avisos_tema.extend(todos);
             }
+            // C2: bloquear ya, como Super+L; solo el panel rápido.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::BLOQUEAR => {
+                if !escena.abren_panel.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo el panel rápido bloquea"));
+                }
+                if escena.bloqueo.is_none() {
+                    escena.bloquear_ya();
+                }
+            }
             "dashos_tema_v1" if orden == dashos_tema_v1::req::DESTROY => {
                 let cliente = self.cliente;
                 escena.temas.retain(|t| !(t.0 == cliente && t.1 == objeto));

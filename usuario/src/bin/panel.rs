@@ -1,6 +1,7 @@
 //! C2 de S10c: el panel rápido. Se abre y se cierra con Super+A (el compositor solo se lo dice a él, por el evento
 //! `panel` de `dashos_tema_v1`) en una capa arriba a la derecha, y no se lleva el teclado de otra ventana sin un clic
-//! (teclado "a demanda"). De momento, un mosaico: el modo oscuro. No pone el tema él: se lo pide al centro de control
+//! (teclado "a demanda"). De momento, dos mosaicos: el modo oscuro y bloquear (como Super+L, por la petición `bloquear`
+//! de `dashos_tema_v1`, que el compositor solo le acepta a él). No pone el tema él: se lo pide al centro de control
 //! ("modo oscuro" o "modo claro" por su canal, que solo se lo acepta a `panel`), que es quien lo guarda. Sigue el tema
 //! del sistema, como lo demás.
 //!
@@ -31,11 +32,13 @@ const CAPAS: u32 = 20;
 const CAPA: u32 = 21;
 const TEMA: u32 = 22;
 const ANCHO: i32 = 300;
-const ALTO: i32 = 150;
+const ALTO: i32 = 220;
 /// La distancia a los bordes de arriba y de la derecha.
 const MARGEN: i32 = 8;
 /// El mosaico del modo oscuro, dentro del panel.
 const MOSAICO: Rect = Rect { x: 16, y: 56, w: 268, h: 64 };
+/// El de bloquear, debajo.
+const BLOQUEAR: Rect = Rect { x: 16, y: 132, w: 268, h: 64 };
 const BOTON_IZQUIERDO: u32 = 0x110;
 
 fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, fuente: &mut Fuente, titulo: &mut Fuente) {
@@ -48,6 +51,9 @@ fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, fuente: &mut Fuente, titulo: &
     l.redondeado(MOSAICO, 16, fondo);
     fuente.dibujar(&mut l, MOSAICO.x + 20, MOSAICO.y + 14, "Modo oscuro", 18, texto);
     fuente.dibujar(&mut l, MOSAICO.x + 20, MOSAICO.y + 38, if oscuro { "Encendido" } else { "Apagado" }, 14, texto);
+    l.redondeado(BLOQUEAR, 16, t.variante_superficie);
+    fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 14, "Bloquear", 18, t.sobre_variante_superficie);
+    fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 38, "Super+L", 14, t.sobre_variante_superficie);
 }
 
 /// Pide el modo al centro de control; su estado (0 si lo puso).
@@ -167,6 +173,15 @@ fn principal() -> u64 {
                 if MOSAICO.contiene(x, y) {
                     let estado = pedir_modo(!oscuro);
                     println!("  [panel] modo oscuro {}: {}", if oscuro { "apagado" } else { "encendido" }, estado);
+                } else if BLOQUEAR.contiene(x, y) {
+                    // Se cierra el panel y se pide el bloqueo: lo hace quien bloquea (`guardian`), como con Super+L.
+                    abierto = false;
+                    let mut e = Escritor::new();
+                    e.empezar(CAPA, zwlr_layer_surface_v1::req::DESTROY).fin();
+                    e.empezar(SUPERFICIE, wl_surface::req::DESTROY).fin();
+                    e.empezar(TEMA, dashos_tema_v1::req::BLOQUEAR).fin();
+                    c.mandar(&e);
+                    println!("  [panel] bloquear");
                 }
             }
             (1, wl_display::ev::ERROR) => {

@@ -1065,6 +1065,7 @@ pub static DASHOS_TEMA_V1: Interface = Interface {
     requests: &[
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "bloquear", since: 1, destructor: false, args: &[] },
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
@@ -1077,6 +1078,7 @@ pub mod dashos_tema_v1 {
     pub mod req {
         pub const DESTROY: u16 = 0;
         pub const PONER: u16 = 1;
+        pub const BLOQUEAR: u16 = 2;
     }
     pub mod ev {
         pub const TEMA: u16 = 0;

@@ -1434,6 +1434,43 @@ mod entrada {
         }
     }
 
+    /// C2: la petición `bloquear` de `dashos_tema_v1` hace lo de Super+L (el aviso de inactividad pendiente, ya), solo
+    /// para el panel rápido; a otro programa, error de protocolo y nada.
+    #[test]
+    fn bloquear_desde_el_panel() {
+        use crate::tablas::{dashos_tema_v1, ext_idle_notifier_v1};
+        let mut escena = Escena::new(Mem::default(), 0);
+        escena.reloj_ms = 1_000;
+        // Quien bloquea (guardian) pide su aviso de inactividad de 60 s.
+        let mut g = Conexion::new();
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("ext_idle_notifier_v1")).uint(2).uint(50).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_seat")).uint(7).uint(51).fin();
+        e.empezar(50, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(52).uint(60_000).uint(51).fin();
+        mandar(&mut escena, &mut g, 9, &e);
+        escena.avisos_inactividad.clear();
+        let (mut otro, mut panel) = (Conexion::new(), Conexion::new());
+        for (con, c) in [(&mut otro, 2), (&mut panel, 3)] {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(1).uint(60).fin();
+            mandar(&mut escena, con, c, &e);
+        }
+        escena.abren_panel.push(3);
+        // Hostil: otro programa no bloquea.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::BLOQUEAR).fin();
+        otro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        otro.atender(&globales(), &mut escena.de(2));
+        assert!(otro.roto.is_some(), "un programa cualquiera bloqueó");
+        assert!(escena.avisos_inactividad.is_empty());
+        // El panel, sí.
+        mandar(&mut escena, &mut panel, 3, &e);
+        assert!(panel.roto.is_none(), "{:?}", panel.roto);
+        assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(9, 52, true)]);
+    }
+
     /// Las flechas con Super no llegan a la ventana; sin Super, sí.
     #[test]
     fn maximizar_y_volver() {

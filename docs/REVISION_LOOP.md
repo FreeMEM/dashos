@@ -1151,3 +1151,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   para la máquina en cuanto ve todas las líneas esperadas: lo nuevo necesita las suyas. El arranque de virt pasa a
   130 s de tope.
   Falta de C2: más mosaicos (volumen, brillo, no molestar, bloquear, salir) y el modo de edición.
+- S10c, C2: el mosaico Bloquear del panel. Petición nueva `bloquear` en `dashos_tema_v1`: hace lo de Super+L (el
+  aviso de inactividad pendiente, ya) y el compositor solo se la acepta al panel (`abren_panel`); a otro, error de
+  protocolo y nada (prueba `bloquear_desde_el_panel` en la escena). El panel se cierra y la pide. En virt no se pulsa:
+  cuando se prueba el panel, `guardian` ya acabó y no hay quién bloquee. Captura nueva.

@@ -22,6 +22,12 @@
       <arg name="oscuro" type="uint"/>
     </request>
 
+    <request name="bloquear">
+      <description summary="bloquear la sesión ya">
+        Como Super+L (C2: el mosaico de bloquear del panel rápido). Solo el panel; a otro, error de protocolo.
+      </description>
+    </request>
+
     <event name="tema">
       <description summary="el tema de ahora">Al enlazar y cada vez que cambia.</description>
       <arg name="color" type="uint"/>
