@@ -848,3 +848,132 @@ entera: no se ha medido cada parte. En la Pi será otro número.
   con `pacman -S` dentro de la caja hay que hacerlo a mano la primera vez.
 - Una vez, al acabar la prueba (con Linux ya apagado), el compositor soltó a caja-linux por no leer sus eventos; tras
   fusionar `revision` (fec71bf) no ha vuelto a pasar. Sin mirar.
+
+## 2026-11-12: la tarjeta gráfica para la caja (rama `caja-linux-gpu`)
+
+Rama `caja-linux-gpu`, sacada de `revision` (0ce1f49). El usuario pidió "usar la tarjeta gráfica" para los programas de
+Linux. Primero un estudio (`docs/diseño/S25-gpu-caja-linux.md`) y después el primer paso que se prueba en QEMU. Sala
+limpia: virtio 1.2 (§5.7), los XML de Wayland, las interfaces públicas de EGL, GBM y libdrm para el programa de prueba y
+`docs/spec/hw/v3d.md`; nada de código de Linux, Mesa, QEMU, crosvm ni virglrenderer.
+
+### El estudio, en corto
+
+- **Hoy no hay GPU en ningún lado**: el invitado pinta con llvmpipe/lavapipe, DashOS no tiene Mesa, el servicio `gpu`
+  (V3D) nunca se ha probado y QEMU no emula la V3D.
+- **Recomendado para la Pi 4: la V3D mediada.** El invitado usa el controlador v3d de Linux y el Mesa de Arch tal
+  cual; sus accesos a los registros de la V3D salen a DashOS, que le deja todo menos la MMU, el GMP y la energía. La
+  V3D ve siempre una tabla de páginas sombra, hecha por DashOS con solo páginas de la RAM de esa caja (sin IOMMU en la
+  BCM2711 es lo único que la confina). La meta, cuando DashOS tenga su servicio de v3d: contexto nativo por
+  virtio-gpu (falta el lado de Mesa, que no existe para v3d). Venus/virgl necesitan Mesa portado a DashOS; el paso
+  directo sin trampas, nunca.
+- Lo que pide al kernel y al servicio `gpu`, y lo que solo se puede ver en una Pi 4: en S25.
+
+### Resultado
+
+`make arranque-virt-gpu` (nueva; con `ARCH_IMAGE` y `ARCH_DISCO` de `preparar-arch`): la caja tiene una virtio-gpu en
+2D además de vsock. Linux la ve (`virtio_gpu`, `/dev/dri/card0` y `renderD128`). Un programa de GL de Linux pinta por
+el puente de Wayland y por la pantalla de la virtio-gpu, que sale en una ventana de DashOS ("Linux (pantalla de la
+caja)") mientras Linux la usa y se quita cuando la apaga.
+
+```
+[caja-linux] gpu: virtio-gpu en 2D con una pantalla de 640x480 y 8 MB para recursos
+[caja-linux] linux: [    1.608179] [drm] Initialized virtio_gpu 0.1.0 for a000800.virtio on minor 0
+[caja-linux] linux: cuadros_gl: wayland: GL_RENDERER llvmpipe (LLVM 23.1.4, 128 bits), GL_VERSION OpenGL ES 3.2 Mesa 26.2.6-arch1.1
+[caja-linux] linux: cuadros_gl: wayland: al acabar: 189 cuadros en 20051 ms, 9.4 por segundo; adiós
+[caja-linux] linux: cuadros_gl: wayland: al acabar: 191 cuadros en 15095 ms, 12.7 por segundo; adiós      (intervalo 0)
+[caja-linux] linux: 118 frames in 5.0 seconds = 23.572 FPS                                                (es2gears_wayland)
+[caja-linux] linux: real	0m9.459s                                                                      (vkcube, 100 cuadros)
+[caja-linux] gpu: Linux muestra algo en su pantalla (640x480 desde (0, 0), formato 2)
+[caja-linux] gpu: la pantalla de Linux, en una ventana de 640x480
+[caja-linux] linux: cuadros_gl: kms: al acabar: 387 cuadros en 20780 ms, 18.6 por segundo; adiós
+[caja-linux] gpu: Linux apagó su pantalla; se quita su ventana
+[caja-linux] gpu: 1170 órdenes (0 con error, 0 malas), 2 recursos creados, 387 transferencias (464400 KB), 387 vaciados a la pantalla (18 por segundo mientras pintó), 388 cuadros en la ventana
+```
+
+Capturas (fuera de git): `capturas-agente/caja-linux-gpu-wayland.png` (`cuadros_gl` por Wayland),
+`caja-linux-gpu-gears.png` (`es2gears_wayland`, con los bordes de libdecor) y `caja-linux-gpu-kms.png` (el mismo
+programa por KMS, en la ventana de la pantalla de la caja).
+
+### Cómo va
+
+```
+cuadros_gl kms ──GBM/EGL (llvmpipe)──▶ búfer "dumb" de virtio_gpu (páginas del invitado)
+      │ drmModePageFlip                       │ TRANSFER_TO_HOST_2D + RESOURCE_FLUSH
+      ▼                                       ▼
+ controlador virtio_gpu de Linux ──virtio-mmio──▶ aparato Gpu (caja-linux/vmm) ──▶ ExtremoPantalla ──▶ ventana de DashOS
+```
+
+- **El aparato** (`caja-linux/vmm/src/virtio/gpu.rs`, sin `unsafe`): dos colas (control y cursor), una pantalla,
+  recursos 2D en la memoria de la caja con un presupuesto (8 MB, `MARGEN_SERVICIO` sube de 56 a 66 MB), respaldo
+  (`ATTACH_BACKING`, como mucho 16384 trozos, cada uno comprobado en la RAM del invitado), transferencias, `SET_SCANOUT`
+  y `RESOURCE_FLUSH`, que pasa lo cambiado a un `ExtremoGpu`. Vallas: se contesta al acabar cada orden, con la valla
+  repetida. No se ofrece 3D, EDID ni *blob*. Cualquier orden mala contesta su error y se cuenta; solo una cola mal hecha
+  deja el aparato en DEVICE_NEEDS_RESET (como los demás).
+- **La ventana** (`usuario/src/pantalla_caja.rs`): el vaciado convierte lo dañado a XRGB en la memoria de un búfer de
+  `wl_shm` y apunta el daño; la ventana va en la misma conexión que la terminal de la caja (su hilo la atiende en cada
+  vuelta: un `commit` por cada aviso de frame, con los vaciados de en medio juntos).
+- **En Arch** (`tools/caja_linux_invitado.py`): `Image-arch` con DRM y `virtio_gpu` (sin consola de fbdev: la ventana
+  solo sale cuando un programa usa la pantalla), `UDMABUF` y `SYNC_FILE`; los paquetes `mesa-utils`, `vulkan-swrast` y
+  `vulkan-tools` (47 con lo que piden, 350 MB) y `cuadros_gl` (`caja-linux/invitado/cuadros_gl.c`: GLES2, 640 × 480,
+  por Wayland o por KMS con GBM y `drmModePageFlip`).
+- **La tabla sombra de la V3D** (`caja-linux/vmm/src/v3d.rs`): la lógica del camino de la Pi, probada en el PC. La
+  página de la MMU del hub (con sus zonas sin traducir, `MMU_BYPASS_*`) y el GMP no se dejan tocar; el invitado ve sus
+  valores y la V3D los seguros (MMU encendida, abortos, relleno de verdad). Al vaciar, la tabla del invitado se lee una
+  vez y cada entrada válida se traduce a una página física de su RAM o queda no válida; sin bits de página grande.
+
+### Lo que se vio por el camino
+
+- **Dos conexiones directas al compositor desde un mismo programa se mezclan.** La primera versión abría la ventana de
+  la pantalla con su propio `Cliente`; el compositor distingue a los clientes por la marca de la llave "ventanas", así
+  que los mensajes de los dos se juntaron y mató a la terminal ("número de objeto nuevo malo"). Ahora la ventana es
+  otra superficie de la conexión de la terminal.
+- **Mesa por software no da búferes de dmabuf.** Con el Mesa del PC (26.2.6, el mismo que el de Arch Linux ARM),
+  `es2gears_wayland` con llvmpipe usa `wl_shm` aunque el compositor anuncie `zwp_linux_dmabuf_v1`. Y con una
+  virtio-gpu sin 3D, Mesa prueba virgl y zink, falla y cae en llvmpipe. Así que `linux-dmabuf` para búferes de
+  virtio-gpu no lo usaría ningún programa de Mesa en QEMU: **no se hizo**. Sirve en la Pi con la V3D (Mesa v3d da
+  dmabuf; el puente ya los acepta, G6), y entonces el compositor de DashOS tiene que anunciarlo a la caja.
+- **Desgarro**: la ventana de la pantalla tiene un solo búfer y el aparato lo escribe mientras el compositor compone;
+  a veces se ve medio cuadro (en la captura de KMS, el borde del triángulo).
+
+### Pruebas
+
+- `cargo test` en `caja-linux/vmm` (dentro de `make prueba`): `tests/gpu.rs` (12: camino normal, vallas, trozos con
+  desplazamiento, formatos, quitar un recurso en pantalla, reinicio, cursor, y hostiles: ids 0, repetidos o que no
+  existen en cada orden, recursos de 16384² y 65536², desbordes de u32, el presupuesto lleno, respaldos fuera de la
+  RAM, que desbordan, de largo 0 o con más entradas de las que trae la orden, transferencias que se salen del respaldo
+  o del recurso, desplazamientos de 64 bits que desbordan, órdenes cortas, de 3D o que no existen, sin sitio para la
+  respuesta, y a lo loco: 20 × 400 órdenes al azar sin romper el aparato) y `v3d::pruebas` (7: la V3D siempre ve la
+  sombra; entradas a la dirección física 0, fuera de la RAM, con bits desconocidos o de página grande; no puede apagar
+  la MMU ni tocar las zonas sin traducir, el tope, el derribo ni la tabla del GMP; tablas fuera de su RAM; cambiar la
+  tabla sin vaciar no llega a la V3D; solo se escriben las entradas que cambian; y a lo loco).
+- `make arranque-virt-gpu` (nueva): BIEN. Resultados de las demás, al final de esta entrada.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, el PC cargado por otras sesiones (carga 7 a 9). Tres vueltas de `make arranque-virt-gpu`.
+
+| Medida | Valor |
+|---|---|
+| `cuadros_gl` 640 × 480 por Wayland (hoy: `wl_shm` por el puente y vsock, esperando el aviso de frame) | 9,4, 10,7 y 12,0 cuadros por segundo |
+| Lo mismo sin esperar al compositor (`eglSwapInterval` 0) | 12,7 |
+| `cuadros_gl` 640 × 480 por la pantalla de la virtio-gpu (KMS) | 17,3, 18,6 y 20,2 |
+| `es2gears_wayland` (300 × 300, por el puente) | 18 a 24 |
+| `vkcube --wsi wayland --c 100` (500 × 500, lavapipe), con su arranque | 9,4 s |
+| Por cuadro de KMS | 3 órdenes, 1,2 MB transferidos |
+
+El mismo programa va 1,5 a 2 veces más deprisa por la pantalla de la virtio-gpu que por Wayland: por KMS hay una copia
+(de las páginas del invitado al recurso, hecha por DashOS) y una conversión a la ventana, sin vsock ni salidas por cada
+paquete; por Wayland, llvmpipe copia a `wl_shm`, el puente al socket de vsock y la caja a la memoria del compositor.
+Pinta lo mismo la CPU del invitado (llvmpipe): ninguno de los dos caminos usa una GPU, que no la hay en QEMU.
+
+### Qué falta
+
+- **Todo lo de la V3D, en una Pi 4** (S25, camino C): dar la V3D a la caja desde el servicio `gpu`, los registros
+  atrapados con `v3d::Mediador`, las páginas físicas de la RAM del invitado (una llamada del kernel, la 51 o siguiente),
+  la interrupción, el plazo y el reinicio, el nodo del árbol para el controlador v3d de Linux y `CONFIG_DRM_V3D`. Y
+  medir `vkcube` y `es2gears_wayland` con la V3D.
+- **Sin copia en la pantalla**: con `memoria_vista` (llamada 50, de `caja-linux-sincopia`) y recursos *blob*
+  (`VIRTIO_GPU_F_RESOURCE_BLOB`), la ventana podría leer las páginas del invitado sin copiar.
+- `zwp_linux_dmabuf_v1` para la caja en el compositor de DashOS (con el `main_device` del invitado): para la V3D.
+- Teclado y ratón en la ventana de la pantalla (virtio-input); otro tamaño de pantalla (el aparato ya avisa con
+  `EVENTO_PANTALLA`, falta que la ventana se pueda cambiar de tamaño); doble búfer contra el desgarro.

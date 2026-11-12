@@ -79,7 +79,8 @@ después de probar el otro.
 
 - **Hipervisor en el kernel de DashOS**: un trozo pequeño en EL2 y la gestión en un proceso, como crosvm en ChromeOS.
 - **Dispositivos virtio**: disco, red, consola, `vsock` para hablar con DashOS, `virtio-fs` para compartir ficheros y
-  `virtio-gpu` en modo de dibujo por CPU.
+  `virtio-gpu` en modo de dibujo por CPU (hecho en 2D; la GPU de verdad para el invitado, en S25: la V3D mediada en
+  la Pi 4).
 - **Ventanas**: dentro de la máquina virtual corre un compositor intermediario, como Sommelier en ChromeOS. Reenvía
   cada ventana de Wayland al compositor de DashOS, que la muestra como una ventana más, con mosaico y escritorios
   virtuales (S10). Para programas de X11, XWayland dentro de la caja.
