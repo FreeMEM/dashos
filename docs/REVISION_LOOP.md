@@ -1544,3 +1544,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   arranque-virt-linux y arranque-virt-2 BIEN.
 - Pendiente del usuario: el Enforcer que avisa y sigue (hoy una dirección prohibida mata la caja) y que la A72 no tenga
   PAN. El oráculo con FS-UAE, cuando el emulador quede libre.
+
+### 2026-11-12 19:25: la caja Linux, paso 3, en revision
+- Fusionada `caja-linux-3`: el permiso de máquinas lo reparte `sesiones` (a la caja del sistema sin preguntar; en la Pi
+  4, sin `sesiones`, aún lo da `inicio`), la memoria de la caja se calcula con la RAM (objeto "sistema"), la caja va en
+  la imagen de la Pi 4; una ventana de terminal de 80 × 25 (Roboto Mono, emulador en `usuario/src/terminal.rs`) con
+  hvc0 donde se teclea; la red del invitado por un puente de tramas del servicio de red (su MAC, 10.0.2.16).
+  Captura mandada al usuario. Choque en `kernel/src/inicio.rs` (la llave de la página 0 de la caja Amiga): resuelto.
+- `make prueba` BIEN; arranque-virt en dos vueltas BIEN; arranque-virt-vm, arranque-virt-linux (uname -a desde la
+  terminal) y arranque-virt-2 BIEN.
