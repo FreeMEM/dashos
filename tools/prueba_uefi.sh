@@ -278,13 +278,32 @@ while time.time() - inicio < total:
                 continue
             selector = 2
             time.sleep(0.5)
-            mandar("sendkey end")
-            # Con CAPTURA_SELECTOR=fichero.ppm, la ventana con el fichero marcado.
-            if captura_selector:
-                time.sleep(0.5)
-                mandar("screendump " + captura_selector)
-            time.sleep(0.3)
-            mandar("sendkey ret")
+            # Dentro, con el ratón: doble clic en la segunda fila (nota.txt; la primera es "../"). Dónde: lo dicen el
+            # compositor (la ventana) y el selector (su lista). Si no se sabe, con el teclado: Fin e Intro.
+            import re
+            v = re.search(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            l = re.search(r"\[selector\] lista en \((\d+), (\d+)\)", texto)
+            if v and l:
+                x, y = int(v.group(1)) + int(l.group(1)) + 60, int(v.group(2)) + int(l.group(2)) + 56 + 28
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                # Un clic solo marca la fila; con la captura, la ventana así.
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                if captura_selector:
+                    time.sleep(0.7)
+                    mandar("screendump " + captura_selector)
+                time.sleep(0.8)
+                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            else:
+                mandar("sendkey end")
+                time.sleep(0.3)
+                mandar("sendkey ret")
             reintento = time.time() + 4
         if selector == 2:
             if "[selector] el usuario " not in texto:

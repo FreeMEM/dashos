@@ -897,3 +897,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   oscuro, color Azul; guardada: 0 (12 bytes); releída: sí", y el disco acaba con "oscuro azul". Es el primer doble clic
   con el ratón de QEMU (hasta ahora, solo Intro y la prueba del kit). Con esto se podrá probar también el doble clic
   del selector y los botones (Quitar).
+- U5, el doble clic del selector con el ratón de QEMU: el selector dice dónde queda su lista y, al ceder, si se eligió
+  "con doble clic" o "con Intro" (lo último que llegó, botón o tecla). El guion entra en `C/Privado` con el teclado y
+  dentro lleva el puntero a `nota.txt`: un clic (la captura se hace entonces: la fila marcada y la ventana aún abierta,
+  así que un clic no abre) y, casi un segundo después, doble clic. "El usuario elige C/Privado/nota.txt con doble
+  clic". Si el ratón fallara, el guion acaba con Fin e Intro y la línea diría "con Intro": la prueba lo vería.
+  Captura nueva en `docs/capturas/u5-selector.png`.

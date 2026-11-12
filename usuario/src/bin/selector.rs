@@ -147,7 +147,7 @@ impl Camino {
 /// La ventana de "Abrir", empezando en `RAIZ`: lo que elija el usuario (con las flechas e Intro, o con doble clic),
 /// como (asa del fichero, su camino), o nada si cancela o no elige en un minuto. Nada elegido de antemano: un Intro de
 /// quien estaba escribiendo no abre nada. Elegir un cajón entra en él, y "../" vuelve, sin pasar de `RAIZ`.
-fn elegir(lectura: u32, quien: &str) -> Option<(u32, String)> {
+fn elegir(lectura: u32, quien: &str) -> Option<(u32, String, bool)> {
     let (e, raiz) = pedir(lectura, a::BUSCAR, 0, 0, 0, RAIZ);
     if e != a::BIEN {
         return None;
@@ -172,7 +172,7 @@ fn filas(entradas: &[Entrada], en_raiz: bool) -> String {
     f.join("|")
 }
 
-fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32, String)> {
+fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32, String, bool)> {
     let (mut entradas, raros) = listar(lectura, camino.asas[0]);
     let mut c = Cliente::conectar()?;
     let globales = c.globales()?;
@@ -236,6 +236,8 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
         };
         let fin = dashos::ahora_us() + ESPERA_US;
         let (mut x, mut y, mut pulsado, mut configurada) = (0i32, 0i32, false, false);
+        // Si lo último que llegó fue un botón del ratón (doble clic) o una tecla (Intro): para decir cómo se eligió.
+        let mut con_raton = false;
         loop {
             if dashos::ahora_us() > fin {
                 println!("  [selector] nadie eligió en un minuto");
@@ -259,6 +261,10 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                         configurada = true;
                         presentar(&mut c, &mut i, px, true);
                         println!("  [selector] ventana de abrir en pantalla, para {}: {} ({} nombres raros sin enseñar), {} entradas", quien, camino.texto(), raros, entradas.len());
+                        // Dónde queda la lista en la ventana (las pruebas del ratón la buscan).
+                        if let Some(r) = i.sitios.get(&lista) {
+                            println!("  [selector] lista en ({}, {}), filas de 56", r.x, r.y);
+                        }
                     }
                     false
                 }
@@ -272,6 +278,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                 }
                 // Con su hora, para el doble clic.
                 (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == 0x110 => {
+                    con_raton = true;
                     pulsado = palabra(3) == 1;
                     i.raton_hora(x, y, pulsado, palabra(1))
                 }
@@ -285,7 +292,10 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                     }
                     false
                 }
-                (TECLADO, wl_keyboard::ev::KEY) => i.tecla(palabra(2), palabra(3) == 1),
+                (TECLADO, wl_keyboard::ev::KEY) => {
+                    con_raton = false;
+                    i.tecla(palabra(2), palabra(3) == 1)
+                }
                 (1, wl_display::ev::ERROR) => {
                     println!("  [selector] error de protocolo");
                     return None;
@@ -323,7 +333,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
                             entradas = listar(lectura, asa).0;
                             println!("  [selector] entra en {}, {} entradas", camino.texto(), entradas.len());
                         } else if tipo == a::FICHERO && !e.cajon {
-                            return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre)));
+                            return Some((asa, alloc::format!("{}/{}", camino.texto(), e.nombre), con_raton));
                         } else {
                             pedir(lectura, a::CERRAR, asa, 0, 0, "");
                             println!("  [selector] {} cambió de tipo: no se abre", e.nombre);
@@ -433,10 +443,10 @@ fn principal() -> u64 {
             // Lo elige el usuario, no quien pide.
             let quien = quienes.get(&marca).map_or("un programa", String::as_str);
             let respuesta = match elegir(lectura, quien) {
-                Some((mia, camino)) => {
+                Some((mia, camino, con_raton)) => {
                     let (estado, suya) = pedir(lectura, a::CEDER, mia, marca, 4, "");
                     pedir(lectura, a::CERRAR, mia, 0, 0, "");
-                    println!("  [selector] el usuario elige {}: se cede solo para leer: {} (asa {})", camino, estado, suya);
+                    println!("  [selector] el usuario elige {} {}: se cede solo para leer: {} (asa {})", camino, if con_raton { "con doble clic" } else { "con Intro" }, estado, suya);
                     if estado == a::BIEN { suya } else { 0 }
                 }
                 None => {
