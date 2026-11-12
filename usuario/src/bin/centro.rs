@@ -81,6 +81,7 @@ const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
 const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
 const PERMISOS: usize = 0;
+const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
 /// Teclas de Linux que mira el centro antes que el kit.
 const TECLA_ESC: u32 = 1;
@@ -430,7 +431,11 @@ fn acerca() -> Vec<String> {
 }
 
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
+/// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
+    if lista.is_empty() {
+        return String::from(NADA_CONCEDIDO);
+    }
     let f: Vec<String> = lista.iter().map(|(p, s)| alloc::format!("{} · {}", p, s).replace('|', "¦")).collect();
     f.join("|")
 }
@@ -779,6 +784,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         let estado = retirar(&prog, &serv);
                         lista = concedidos();
                         println!("  [centro] quita a {} el permiso de {} {}: {}; quedan {}", prog, serv, como, estado, lista.len());
+                        println!("  [centro] Permisos, lo que se ve: {}", filas(&lista));
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(filas(&lista)));
                         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
                         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));

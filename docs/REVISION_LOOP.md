@@ -1024,3 +1024,5 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Mirado después: cada salto de la cadena comprueba el resumen (seahash) del bloque al que apunta (`read_block`), así
   que un ciclo no se forma sin que esa comprobación falle: la hipótesis queda casi descartada. Sigue sin saberse dónde
   da vueltas; lo próximo, trazas por fases dentro de `open_inner` (anillo, `committed`, `reset_allocator`).
+- S10c: Permisos sin nada concedido dice "Ningún programa tiene permisos concedidos" en vez de una lista vacía (Quitar
+  sobre esa fila no hace nada). Prueba en virt: tras quitar el último, "lo que se ve" es ese texto.
