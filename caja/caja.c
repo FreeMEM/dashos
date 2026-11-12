@@ -257,6 +257,8 @@ extern const uint8_t prog_dash_hola[], prog_dash_hola_fin[];
 extern const uint8_t prog_dash_texto[], prog_dash_texto_fin[];
 extern const uint8_t prog_dash_texto_gcc[], prog_dash_texto_gcc_fin[];
 extern const uint8_t prog_dash_ventana[], prog_dash_ventana_fin[];
+extern const uint8_t prog_dash_interp[], prog_dash_interp_fin[];
+extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
 
 /* Las trampas: el vector i escribe i en MARCA y salta a COMUN, que pone la pila y vuelve a la dirección 0, donde
    MainLoop termina. Así un programa que provoca una excepción del 68k acaba sin tumbar la caja. Al volver de su
@@ -645,6 +647,8 @@ int caja_main(void)
         static const struct { const char *nombre; const uint8_t *desde, *hasta; } dash[] = {
             { "texto.exe", prog_dash_texto, prog_dash_texto_fin },
             { "texto_gcc.exe", prog_dash_texto_gcc, prog_dash_texto_gcc_fin },
+            { "test_interp_comillas", prog_dash_interp, prog_dash_interp_fin },
+            { "test_lista_listas_literal", prog_dash_listas, prog_dash_listas_fin },
             { "hola.exe", prog_dash_hola, prog_dash_hola_fin },
             { "ventana.exe", prog_dash_ventana, prog_dash_ventana_fin },
         };

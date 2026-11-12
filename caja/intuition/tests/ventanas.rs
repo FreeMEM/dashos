@@ -576,3 +576,49 @@ fn captura() {
     }
     let _ = Registros::default();
 }
+
+#[test]
+fn gimme_zero_zero_dibuja_dentro_de_los_bordes() {
+    // WFLG_GIMMEZEROZERO (el `Window` de Dash): el (0, 0) del `RPort` es la esquina de dentro de los bordes, y lo
+    // que se pinta no sale de ahí (los bordes los dibuja intuition).
+    let mut c = caja();
+    let w = abrir(&mut c, wflg::GIMMEZEROZERO | wflg::CLOSEGADGET | wflg::DRAGBAR);
+    let rp = l32(&c, w + win::RPORT);
+    let bm = l32(&c, rp + rastport::BITMAP);
+    let (bi, ba) = (l8(&c, w + win::BORDERLEFT) as i32, l8(&c, w + win::BORDERTOP) as i32);
+    let (bd, bb) = (l8(&c, w + win::BORDERRIGHT) as i32, l8(&c, w + win::BORDERBOTTOM) as i32);
+    assert!(bi > 0 && ba > 0);
+    assert_eq!(l16(&c, w + win::GZZWIDTH) as i32, 200 - bi - bd);
+    let capa = l32(&c, w + win::WLAYER);
+    assert_eq!(l16(&c, capa + layer::BOUNDS) as i32, bi);
+    let marco: Vec<u32> = {
+        let l = c.1.lienzo(bm).unwrap();
+        (0..200).map(|x| l.pixel(x, 0)).chain((0..100).map(|y| l.pixel(0, y))).collect()
+    };
+    pen(&mut c, rp, 2);
+    rect(&mut c, rp, 0, 0, 9, 4);
+    // Fuera por arriba y por la izquierda: nada (no se pisa el marco).
+    rect(&mut c, rp, -20, -20, -1, 50);
+    mover(&mut c, rp, -5, -5);
+    draw(&mut c, rp, 300, -5);
+    let l = c.1.lienzo(bm).unwrap();
+    let blanco = l.pixel(bi, ba);
+    assert_eq!(l.pixel(bi + 9, ba + 4), blanco);
+    assert_ne!(l.pixel(bi + 10, ba + 5), blanco);
+    let marco2: Vec<u32> = (0..200).map(|x| l.pixel(x, 0)).chain((0..100).map(|y| l.pixel(0, y))).collect();
+    assert_eq!(marco, marco2, "el marco sigue igual");
+    // ReadPixel, en las mismas coordenadas.
+    assert_eq!(pluma(&mut c, rp, 0, 0), 2);
+    assert_eq!(pluma(&mut c, rp, -1, 0), -1);
+    assert_eq!(pluma(&mut c, rp, 200 - bi - bd, 0), -1, "a la derecha, fuera");
+    // Al cambiar de tamaño, la capa interior sigue a los bordes.
+    let s = c.1.superficie(w).unwrap();
+    c.1.comp.meter(s, Evento::Tamano { ancho: 300, alto: 150 });
+    c.1.atender(&mut c.0);
+    assert_eq!(l16(&c, w + win::GZZWIDTH) as i32, 300 - bi - bd);
+    assert_eq!(pluma(&mut c, rp, 300 - bi - bd - 1, 150 - ba - bb - 1), 0);
+    assert_eq!(pluma(&mut c, rp, 300 - bi - bd, 0), -1);
+    mensajes(&mut c, w);
+    i(&mut c, "CloseWindow", &[], &[w]);
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+}

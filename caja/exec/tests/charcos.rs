@@ -354,3 +354,20 @@ fn hostil_stack_swap() {
     llamar(&mut e, "StackSwap", &mut r);
     assert_eq!(r.a[7], 0xFFFF_FFFE);
 }
+
+#[test]
+fn muchos_trozos_vivos_sin_ir_lento() {
+    // Un programa de Dash tiene miles de textos y objetos vivos en su charco: repartir y soltar no puede costar más
+    // cuantos más hay (antes se copiaba la tabla de trozos en cada llamada).
+    let (mut e, _) = caja_con_tarea();
+    let p = e.create_pool(0, 16384, 4096).unwrap();
+    let t = std::time::Instant::now();
+    let v: Vec<u32> = (0..10_000).map(|i| e.alloc_pooled(p, 16 + (i % 5) * 8).unwrap()).collect();
+    assert!(v.iter().all(|&x| x != 0));
+    for (i, &x) in v.iter().enumerate().rev() {
+        e.free_pooled(p, x, 16 + (i as u32 % 5) * 8).unwrap();
+    }
+    assert!(t.elapsed().as_secs() < 10, "{:?}", t.elapsed());
+    assert!(e.avisos().is_empty());
+    e.delete_pool(p).unwrap();
+}

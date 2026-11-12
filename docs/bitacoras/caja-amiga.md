@@ -440,7 +440,7 @@ Rama `caja-amiga-dash`, desde `revision` (fec71bf).
 
 ### Qué funciona (`make -C kernel arranque-virt`)
 
-Tras los programas de antes, la caja ejecuta cuatro programas de Dash, el lenguaje de FreeMEMLang, compilados con
+Tras los programas de antes, la caja ejecuta seis programas de Dash, el lenguaje de FreeMEMLang, compilados con
 `~/Projects/FreeMEMLang/dash` al hacer la caja:
 
 1. **`texto.exe`** (`caja/pruebas68k/dash/caja_texto.dash`, por el camino directo de `dash`): cuentas (multiplicar,
@@ -455,6 +455,8 @@ Tras los programas de antes, la caja ejecuta cuatro programas de Dash, el lengua
 4. **`ventana.exe`** (`caja_ventana.dash`): abre su ventana, dibuja con las plumas del Workbench (`RectFill`,
    `Move`/`Draw`, `WritePixel`, `Text`) y espera en un `EventLoop` con `On Close` y `On Timer 100` (timer.device, como
    mucho 40 s). El guion de la prueba captura la pantalla (`CAPTURA_DASH`) y pulsa su gadget de cerrar.
+5. **`test_interp_comillas`** y **`test_lista_listas_literal`**: dos pruebas de `tests/` de FreeMEMLang, tal cual.
+   Su salida es la de sus líneas `# expect-out` (las que FreeMEMLang comprueba en FS-UAE).
 
 Cada uno acaba con 0, sin avisos del Enforcer y sin dejar memoria. Lo que escriben sale con "dash: " delante (la caja
 pone un prefijo a cada línea de la consola mientras corren).
@@ -542,6 +544,12 @@ encontraba utility.library). Lo que se añadió:
   `build/` de FreeMEMLang con el nombre de la fuente (y así no pisa el de nadie).
 - **El guion** (`tools/prueba_uefi.sh`): tras la ventana de `ventana.exe`, cuando el programa de Dash dice que la suya
   está dibujada, la captura (`CAPTURA_DASH`, `target/dash.ppm`) y un clic en su gadget de cerrar.
+- **`WFLG_GIMMEZEROZERO`** (intuition): las ventanas de Dash lo piden y dibujan en su `RPort` desde (0, 0). La caja
+  aceptaba la marca pero dibujaba desde la esquina de la ventana: el marco del programa salía encima de la barra de
+  título (se vio comparando la captura con la del oráculo). Ahora la capa del `RPort` de una ventana así es la de
+  dentro: su (0, 0) es la esquina de dentro de los bordes (`graphics`: un origen por capa, que el pintor, `ReadPixel`
+  y `ClipBlit` suman) y no se puede pintar fuera; al cambiar de tamaño, la capa sigue a los bordes. Prueba nueva en
+  `intuition/tests/ventanas.rs`. Sin `BorderRPort` (para pintar en los bordes de una ventana así) todavía.
 
 Pruebas nuevas de `cargo test`: `exec/tests/charcos.rs` (12: charcos, semáforos, `SetExcept`, `StackSwap`, con sus
 hostiles), la lista en círculo en `exec/tests/listas.rs`, `utility/tests/utility.rs` (7) y `timer/tests/timer.rs` (7:
@@ -549,3 +557,36 @@ abrir y cerrar, `SendIO` y vuelta al puerto, `WaitIO` y `DoIO` que bloquean sin 
 unidades, las funciones y una hostil: punteros malos a todo, mandar dos veces, soltar la petición mientras espera,
 tiempos absurdos, la tarea que muere, `DeleteIORequest` dos veces o con otro tamaño). El fuzzer de exec prueba también
 las funciones nuevas (todas las de la tabla, con registros al azar).
+
+### El oráculo
+
+Los cuatro ejecutables, los mismos ficheros, en FS-UAE con el Kickstart 3.1 del usuario (`kick40068.A1200`) y el
+Workbench 3.1 de `DASH_EMU_SYS`, por `~/Projects/FreeMEMLang/tools/emu_run.py` con el cerrojo del emulador (la orden,
+en el apartado de antes). La salida de `texto`, `texto_gcc`, `hola` y `ventana` es la misma, línea a línea, que la de
+la caja (sin el "dash: "); `ventana`, con "nadie la cerro en 40 s" (allí nadie pulsa). La captura del emulador a los
+30 s (`--screenshot`) sí pilla la ventana de Dash: misma disposición que en la caja, con topaz/9 en vez de topaz/8 (el
+texto largo se corta allí por la derecha). Con esa comparación salió el fallo de `WFLG_GIMMEZEROZERO`.
+
+### Lo que falta y decisiones pendientes
+
+1. **`tc_TrapCode`**: el runtime de Dash pone su manejador de excepciones de la CPU en la tarea (dirección impar,
+   instrucción ilegal...) para dar un mensaje y limpiar. En la caja, una excepción del 68k sigue acabando el programa
+   por la trampa de la caja, sin pasar por él: el programa acaba sin su mensaje (la caja suelta lo suyo igual). Los
+   errores que detecta el runtime solo (un campo de `nil`, dividir entre 0) sí salen bien: se vio "Error: campo de nil"
+   antes de que hubiera charcos.
+2. **`SetExcept` no lanza nada**: apunta las señales, pero la caja no llama a `tc_ExceptCode` (ejecutar 68k desde lo
+   nativo). Ctrl-C en los bucles de Dash no corta el programa (la caja no manda Ctrl-C a nadie todavía).
+3. **GadTools, ReAction, MUI, asl, diskfont, layers**: no hay. Los programas de Dash que los piden no abren la
+   biblioteca y acaban con su error (el runtime lo comprueba). Es lo siguiente para más programas de Dash (GadTools
+   primero: `On Gadget`).
+4. **`BorderRPort`** de las ventanas `WFLG_GIMMEZEROZERO`: 0. Pintar en sus bordes no se puede.
+5. **timer.device** mide todas las unidades con el reloj de DashOS y despierta con 5 ms de margen (la vuelta de la
+   caja mientras espera). Para vídeo o sonido con el EClock puede quedarse corto.
+6. **La espera de semáforos** entre tareas está probada con `cargo test`, no con dos tareas 68k (la caja corre una).
+7. **El build depende de FreeMEMLang**: sin `~/Projects/FreeMEMLang/dash` la caja se compila igual (avisa), pero las
+   líneas de Dash de `arranque_virt.txt` faltan y la prueba falla. ¿Deberían ir esas líneas aparte, en un fichero que
+   solo se mire si está `dash`? De momento, en el de siempre (la opción más pequeña).
+8. **`dash --gcc` escribe en `build/` de FreeMEMLang** (`caja_texto.c` y su `.lock`: es donde lo deja siempre, y está
+   en su `.gitignore`). No se toca nada más de ese repositorio.
+9. **El prefijo "dash: "** es de la caja, no del programa: si un programa escribe media línea y otro programa
+   escribiera después, el prefijo sale donde empieza cada línea de la consola (hoy hay un solo programa a la vez).

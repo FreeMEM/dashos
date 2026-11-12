@@ -482,7 +482,8 @@ impl<C: Compositor> CajaGrafica<C> {
             capa + layer::FLAGS,
             if p.flags & wflg::SIMPLE_REFRESH != 0 { layer::LAYERSIMPLE } else { layer::LAYERSMART },
         )?;
-        self.poner_capa(ex, capa, an, al)?;
+        let gzz = (p.flags & wflg::GIMMEZEROZERO != 0).then_some(bordes);
+        self.poner_capa(ex, capa, an, al, gzz)?;
         let plumas = self.intui.wb.plumas;
         let detalle = if p.detalle == 0xFF { plumas[dri::DETAILPEN] as u8 } else { p.detalle };
         let bloque = if p.bloque == 0xFF { plumas[dri::BLOCKPEN] as u8 } else { p.bloque };
@@ -584,16 +585,34 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(())
     }
 
-    /// Los límites de la capa de una ventana: en la memoria del 68k y en la tabla de recortes.
-    fn poner_capa<M: Memoria>(&mut self, ex: &mut Exec<M>, capa: u32, an: i32, al: i32) -> Result<(), Fallo> {
+    /// Los límites de la capa de una ventana: en la memoria del 68k y en la tabla de recortes. En una ventana
+    /// `WFLG_GIMMEZEROZERO` (con sus `bordes`), la capa del `RPort` es la de dentro: su (0, 0) es la esquina de
+    /// dentro de los bordes y no se puede pintar fuera (los bordes los dibuja intuition).
+    fn poner_capa<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        capa: u32,
+        an: i32,
+        al: i32,
+        gzz: Option<[i32; 4]>,
+    ) -> Result<(), Fallo> {
+        let r = match gzz {
+            Some([bi, ba, bd, bb]) => Rect::nuevo(bi, ba, an - bd - 1, al - bb - 1),
+            None => Rect::de_tamano(an as u32, al as u32),
+        };
         let b = capa + layer::BOUNDS;
-        ex.e16(b + rectangle::MINX, 0)?;
-        ex.e16(b + rectangle::MINY, 0)?;
-        ex.e16(b + rectangle::MAXX, (an - 1) as u16)?;
-        ex.e16(b + rectangle::MAXY, (al - 1) as u16)?;
-        ex.e16(capa + layer::WIDTH, an as u16)?;
-        ex.e16(capa + layer::HEIGHT, al as u16)?;
-        self.gfx.capas.insert(capa, Rect::de_tamano(an as u32, al as u32));
+        ex.e16(b + rectangle::MINX, r.x0 as u16)?;
+        ex.e16(b + rectangle::MINY, r.y0 as u16)?;
+        ex.e16(b + rectangle::MAXX, r.x1 as u16)?;
+        ex.e16(b + rectangle::MAXY, r.y1 as u16)?;
+        ex.e16(capa + layer::WIDTH, r.ancho() as u16)?;
+        ex.e16(capa + layer::HEIGHT, r.alto() as u16)?;
+        self.gfx.capas.insert(capa, r);
+        if gzz.is_some() {
+            self.gfx.origenes.insert(capa, (r.x0, r.y0));
+        } else {
+            self.gfx.origenes.remove(&capa);
+        }
         Ok(())
     }
 
@@ -661,6 +680,7 @@ impl<C: Compositor> CajaGrafica<C> {
         self.intui.por_superficie.remove(&v.superficie);
         self.gfx.lienzos.remove(&v.bm);
         self.gfx.capas.remove(&v.capa);
+        self.gfx.origenes.remove(&v.capa);
         if v.pendientes.is_empty() {
             self.liberar(ex, &v)?;
         } else {
@@ -707,6 +727,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         self.gfx.lienzos.remove(&v.bm);
         self.gfx.capas.remove(&v.capa);
+        self.gfx.origenes.remove(&v.capa);
         self.liberar(ex, &v)
     }
 
@@ -1021,8 +1042,9 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         ex.e16(bm + crate::estructuras::bitmap::BYTESPERROW, (an as u32).div_ceil(16) as u16 * 2)?;
         ex.e16(bm + crate::estructuras::bitmap::ROWS, al as u16)?;
-        self.poner_capa(ex, capa, an, al)?;
         let bordes = g.bordes;
+        let gzz = (ex.l32(w + win::FLAGS)? & wflg::GIMMEZEROZERO != 0).then_some(bordes);
+        self.poner_capa(ex, capa, an, al, gzz)?;
         self.escribir_tamano(ex, w, an, al, bordes)?;
         let simple = ex.l32(w + win::FLAGS)? & wflg::SIMPLE_REFRESH != 0;
         if let Some(v) = self.intui.ventanas.get_mut(&w) {

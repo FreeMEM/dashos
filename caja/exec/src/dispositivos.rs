@@ -277,7 +277,7 @@ impl<M: Memoria> Exec<M> {
     /// `CreateIORequest(ioReplyPort, size)`: una petición a cero con su puerto de vuelta y su tamaño; 0 sin puerto,
     /// con un tamaño menor que un `Message` o sin memoria.
     pub fn create_io_request(&mut self, p: u32, tamano: u32) -> Result<u32, Fallo> {
-        if p == 0 || tamano < message::TAMANO || tamano > 0x1_0000 {
+        if p == 0 || !(message::TAMANO..=0x1_0000).contains(&tamano) {
             return Ok(0);
         }
         let d = self.alloc_mem(tamano, crate::estructuras::memf::PUBLIC | crate::estructuras::memf::CLEAR)?;

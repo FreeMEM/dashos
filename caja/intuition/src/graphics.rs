@@ -34,6 +34,8 @@ pub(crate) struct Estado {
     pub cm_wb: u32,
     /// Las capas de las ventanas: `Layer` → su recorte, en coordenadas de su mapa.
     pub capas: Tabla<Rect>,
+    /// Las capas cuyo (0, 0) no es el del mapa: la interior de una ventana `WFLG_GIMMEZEROZERO`.
+    pub origenes: Tabla<(i32, i32)>,
     /// Lo reservado por `AllocBitMap`: `BitMap` → bloques (dirección, largo), la estructura incluida.
     pub reservados: Tabla<Vec<(u32, u32)>>,
 }
@@ -231,6 +233,11 @@ impl<C: Compositor> CajaGrafica<C> {
         if capa == 0 { None } else { self.gfx.capas.get(&capa).copied() }
     }
 
+    /// Dónde cae el (0, 0) de un `RastPort` en su mapa (el de su capa; (0, 0) casi siempre).
+    fn origen_capa(&self, capa: u32) -> (i32, i32) {
+        if capa == 0 { (0, 0) } else { self.gfx.origenes.get(&capa).copied().unwrap_or((0, 0)) }
+    }
+
     /// Un pintor sobre el mapa de un `RastPort`, con sus plumas, su modo y su recorte.
     pub(crate) fn pintor<'a, M: Memoria>(
         &'a mut self,
@@ -239,7 +246,12 @@ impl<C: Compositor> CajaGrafica<C> {
     ) -> Result<Pintor<'a, M>, Fallo> {
         let mapa = self.mapa(ex, i.bm)?;
         let capa = self.recorte_capa(i.capa);
-        self.pintor_mapa(ex, i.bm, mapa, capa, i.fg, i.bg, i.modo, i.mascara)
+        let (dx, dy) = self.origen_capa(i.capa);
+        let mut p = self.pintor_mapa(ex, i.bm, mapa, capa, i.fg, i.bg, i.modo, i.mascara)?;
+        if (dx, dy) != (0, 0) {
+            p.trasladar(dx, dy);
+        }
+        Ok(p)
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -264,7 +276,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 if let Some(c) = capa {
                     clip = clip.interseccion(&c);
                 }
-                Ok(Pintor { sup: Sup::Nativa(l), clip, a, b, modo, mascara })
+                Ok(Pintor { sup: Sup::Nativa(l), clip, a, b, modo, mascara, dx: 0, dy: 0 })
             }
             Mapa::Planar(p) => {
                 let mut clip = p.rect();
@@ -273,7 +285,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 let a = Tinta { pen: fg, argb: 0 };
                 let b = Tinta { pen: bg, argb: 0 };
-                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, a, b, modo, mascara })
+                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, a, b, modo, mascara, dx: 0, dy: 0 })
             }
         }
     }
@@ -425,6 +437,8 @@ impl<C: Compositor> CajaGrafica<C> {
         if let Some(c) = self.recorte_capa(i.capa) {
             clip = clip.interseccion(&c);
         }
+        let (dx, dy) = self.origen_capa(i.capa);
+        let (x, y) = (x.saturating_add(dx), y.saturating_add(dy));
         if !clip.contiene(x, y) {
             return Ok(-1);
         }
@@ -659,9 +673,17 @@ impl<C: Compositor> CajaGrafica<C> {
         alto: i32,
         m: u8,
     ) -> Result<(), Fallo> {
-        let bm_o = if origen_es_rp { self.leer_rp(ex, origen)?.bm } else { origen };
+        let (bm_o, (ox, oy)) = if origen_es_rp {
+            let o = self.leer_rp(ex, origen)?;
+            (o.bm, self.origen_capa(o.capa))
+        } else {
+            (origen, (0, 0))
+        };
         let d = self.leer_rp(ex, destino_rp)?;
         let capa = self.recorte_capa(d.capa);
+        let (dx, dy) = self.origen_capa(d.capa);
+        let (xs, ys) = (xs.saturating_add(ox), ys.saturating_add(oy));
+        let (xd, yd) = (xd.saturating_add(dx), yd.saturating_add(dy));
         self.copiar(ex, bm_o, xs, ys, d.bm, xd, yd, ancho, alto, m, d.mascara, capa)?;
         Ok(())
     }

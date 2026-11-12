@@ -94,6 +94,10 @@ pub(crate) struct Pintor<'a, M: Memoria> {
     pub modo: u8,
     /// `rp_Mask`: los planos que se escriben (solo en los planares).
     pub mascara: u8,
+    /// Dónde cae el (0, 0) del `RastPort` en su mapa: el de la capa interior de una ventana `WFLG_GIMMEZEROZERO`
+    /// es la esquina de dentro de los bordes. Las coordenadas del pintor (y `clip`) son las del `RastPort`.
+    pub dx: i32,
+    pub dy: i32,
 }
 
 impl<M: Memoria> Pintor<'_, M> {
@@ -101,12 +105,21 @@ impl<M: Memoria> Pintor<'_, M> {
         matches!(self.sup, Sup::Nativa(_))
     }
 
-    /// Los límites del mapa (sin el recorte de la capa).
+    /// Los límites del mapa (sin el recorte de la capa), en coordenadas del `RastPort`.
     pub fn limites(&self) -> Rect {
-        match &self.sup {
+        let r = match &self.sup {
             Sup::Nativa(l) => l.rect(),
             Sup::Planar(_, p) => p.rect(),
-        }
+        };
+        Rect::nuevo(r.x0 - self.dx, r.y0 - self.dy, r.x1 - self.dx, r.y1 - self.dy)
+    }
+
+    /// Pone el (0, 0) del `RastPort` en `(dx, dy)` del mapa (el recorte pasa a coordenadas del `RastPort`).
+    pub fn trasladar(&mut self, dx: i32, dy: i32) {
+        let c = self.clip;
+        self.clip = Rect::nuevo(c.x0 - dx, c.y0 - dy, c.x1 - dx, c.y1 - dy);
+        self.dx = dx;
+        self.dy = dy;
     }
 
     /// El valor crudo de un punto: el color ARGB en los nativos, la pluma en los planares. 0 fuera del mapa.
@@ -114,6 +127,7 @@ impl<M: Memoria> Pintor<'_, M> {
         if !self.limites().contiene(x, y) {
             return 0;
         }
+        let (x, y) = (x + self.dx, y + self.dy);
         match &self.sup {
             Sup::Nativa(l) => l.pixel(x, y),
             Sup::Planar(mem, p) => p.leer(&**mem, x, y) as u32,
@@ -125,6 +139,7 @@ impl<M: Memoria> Pintor<'_, M> {
         if !self.clip.contiene(x, y) {
             return;
         }
+        let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
         match &mut self.sup {
             Sup::Nativa(l) => l.poner(x, y, v),
@@ -143,6 +158,7 @@ impl<M: Memoria> Pintor<'_, M> {
         if !self.clip.contiene(x, y) {
             return;
         }
+        let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
         match &mut self.sup {
             Sup::Nativa(l) => {

@@ -168,7 +168,7 @@ pub fn minuscula(c: u8) -> u8 {
 // --- Fechas: segundos desde el 1 de enero de 1978 (un domingo) ---
 
 fn bisiesto(a: u32) -> bool {
-    (a % 4 == 0 && a % 100 != 0) || a % 400 == 0
+    (a.is_multiple_of(4) && !a.is_multiple_of(100)) || a.is_multiple_of(400)
 }
 
 fn dias_del_mes(mes: u32, a: u32) -> u32 {

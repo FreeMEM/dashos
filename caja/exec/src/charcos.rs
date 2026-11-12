@@ -50,6 +50,21 @@ pub(crate) struct Charco {
     vivos: BTreeMap<u32, u32>,
 }
 
+impl Charco {
+    /// Una copia sin las tablas de trozos y bloques grandes (lo que cuesta copiar).
+    fn sin_trozos(&self) -> Charco {
+        Charco {
+            flags: self.flags,
+            puddle: self.puddle,
+            thresh: self.thresh,
+            dueno: self.dueno,
+            charcos: self.charcos.clone(),
+            grandes: BTreeMap::new(),
+            vivos: BTreeMap::new(),
+        }
+    }
+}
+
 impl<M: Memoria> Exec<M> {
     fn charco(&self, pool: u32) -> Result<&Charco, Fallo> {
         if pool == 0 {
@@ -109,17 +124,18 @@ impl<M: Memoria> Exec<M> {
 
     /// `AllocPooled(poolHeader, memSize)`: 0 si no hay sitio o el tamaño es 0.
     pub fn alloc_pooled(&mut self, pool: u32, tamano: u32) -> Result<u32, Fallo> {
-        let ch = self.charco(pool)?.clone();
+        // Sin copiar la tabla de trozos (un programa de Dash tiene miles vivos): lo de la cabecera y los charcos.
+        let ch = self.charco(pool)?.sin_trozos();
         if tamano == 0 || tamano > MAXIMO {
             return Ok(0);
         }
         let limpiar = ch.flags & memf::CLEAR != 0;
         if tamano > ch.thresh {
             let d = self.reservar(tamano, ch.flags, ch.dueno)?;
-            if d != 0 {
-                if let Some(c) = self.charcos.get_mut(&pool) {
-                    c.grandes.insert(d, tamano);
-                }
+            if d != 0
+                && let Some(c) = self.charcos.get_mut(&pool)
+            {
+                c.grandes.insert(d, tamano);
             }
             return Ok(d);
         }
@@ -177,11 +193,13 @@ impl<M: Memoria> Exec<M> {
     /// `FreePooled(poolHeader, memory, memSize)`. Un charco que se queda vacío se devuelve al sistema (salvo el
     /// último que queda).
     pub fn free_pooled(&mut self, pool: u32, dir: u32, tamano: u32) -> Result<(), Fallo> {
-        let ch = self.charco(pool)?.clone();
+        let original = self.charco(pool)?;
+        let (grande, vivo) = (original.grandes.get(&dir).copied(), original.vivos.get(&dir).copied());
+        let ch = original.sin_trozos();
         if dir == 0 {
             return Ok(());
         }
-        if let Some(&l) = ch.grandes.get(&dir) {
+        if let Some(l) = grande {
             if redondear(tamano) != redondear(l) {
                 return Err(Fallo::TamanoDistinto { dir, reservado: l, pedido: tamano });
             }
@@ -191,7 +209,7 @@ impl<M: Memoria> Exec<M> {
             }
             return Ok(());
         }
-        let Some(&l) = ch.vivos.get(&dir) else { return Err(Fallo::NoReservado { dir }) };
+        let Some(l) = vivo else { return Err(Fallo::NoReservado { dir }) };
         if redondear(tamano) != Some(l) {
             return Err(Fallo::TamanoDistinto { dir, reservado: l, pedido: tamano });
         }
@@ -200,11 +218,12 @@ impl<M: Memoria> Exec<M> {
         };
         self.charco_sano(mh, inicio, fin)?;
         self.deallocate(mh, dir, l)?;
+        let mut vacio = false;
         if let Some(c) = self.charcos.get_mut(&pool) {
             c.vivos.remove(&dir);
+            // Vacío según la tabla de exec (no según `mh_Free`, que el programa puede estropear).
+            vacio = c.vivos.range(inicio..fin).next().is_none();
         }
-        // Vacío según la tabla de exec (no según `mh_Free`, que el programa puede estropear).
-        let vacio = !ch.vivos.range(inicio..fin).any(|(&d, _)| d != dir);
         if ch.charcos.len() > 1 && vacio {
             self.remove(mh)?;
             self.free_mem(mh, fin - mh)?;

@@ -486,6 +486,19 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] Dash texto.exe acabó con 0 (vector -1)
 ~0 avisos, 0 bloques sin soltar: bien
 ~│   [caja-amiga] Dash texto_gcc.exe acabó con 0 (vector -1)
+# Dos pruebas de FreeMEMLang tal cual (tests/test_interp_comillas.dash y test_lista_listas_literal.dash): su salida es
+# la de sus líneas "# expect-out", las que comprueba FreeMEMLang en FS-UAE.
+~│   [caja-amiga] dash: a xyxy b 2 c
+~│   [caja-amiga] dash: llaves {1: 2} y "comillas"
+~│   [caja-amiga] dash: 33 # y #
+~│   [caja-amiga] dash: fin
+~│   [caja-amiga] Dash test_interp_comillas acabó con 0 (vector -1)
+~│   [caja-amiga] dash: a 40
+~│   [caja-amiga] dash: b 47
+~│   [caja-amiga] dash: b igual
+~│   [caja-amiga] dash: 7 x
+~│   [caja-amiga] dash: suma 9
+~│   [caja-amiga] Dash test_lista_listas_literal acabó con 0 (vector -1)
 ~│   [caja-amiga] dash: Starting Dash...
 ~│   [caja-amiga] dash: Window 'Hola Dash' opened.
 ~│   [caja-amiga] ventana Amiga en pantalla (400x150): Hola Dash

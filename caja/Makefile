@@ -66,7 +66,9 @@ $(B)/entrada.o: entrada.S | $(B)
 # nuestras se llaman caja_*).
 DASH    ?= $(HOME)/Projects/FreeMEMLang/dash
 DASH_EJ := $(dir $(DASH))examples
-DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe
+DASH_TESTS := $(dir $(DASH))tests
+DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe \
+	$(B)/dash/interp.exe $(B)/dash/listas.exe
 $(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe $(DASH_EXES) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
@@ -84,6 +86,11 @@ $(B)/dash/texto_gcc.exe: pruebas68k/dash/caja_texto.dash | $(B)
 	$(call compila_dash,$<,--gcc)
 $(B)/dash/ventana.exe: pruebas68k/dash/caja_ventana.dash | $(B)
 	$(call compila_dash,$<,)
+# Dos pruebas de texto de FreeMEMLang, tal cual (su salida esperada, la de sus líneas "# expect-out").
+$(B)/dash/interp.exe: $(wildcard $(DASH_TESTS)/test_interp_comillas.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_interp_comillas.dash,)
+$(B)/dash/listas.exe: $(wildcard $(DASH_TESTS)/test_lista_listas_literal.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_lista_listas_literal.dash,)
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).

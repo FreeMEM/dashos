@@ -20,3 +20,5 @@ prog_\nombre\()_fin:
         programa dash_texto, "build/dash/texto.exe"
         programa dash_texto_gcc, "build/dash/texto_gcc.exe"
         programa dash_ventana, "build/dash/ventana.exe"
+        programa dash_interp, "build/dash/interp.exe"
+        programa dash_listas, "build/dash/listas.exe"
