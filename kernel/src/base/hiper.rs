@@ -5,9 +5,11 @@
 //! la especificación de ARM). Al arrancar en EL2, `arranque.s` deja ahí una tabla que solo sabe instalar la de verdad;
 //! `iniciar` hace la traducción de EL2 (la RAM en identidad, bloques de 2 MB) y cada núcleo la instala.
 //!
-//! Una máquina virtual tiene aquí una vCPU (`Vcpu`): su "mundo" (una página con sus registros, los del kernel mientras
-//! corre ella y lo que pasó al salir), sus tablas de la etapa 2 sobre un objeto de memoria y un VMID. Qué se hace con
-//! cada salida lo decide `maquinas.rs`, y lo que se emula, el servicio `caja-linux`.
+//! Una máquina virtual tiene aquí un `Espacio` (sus tablas de la etapa 2 sobre objetos de memoria y un VMID) y una o
+//! varias `Vcpu` que lo comparten, cada una con su "mundo" (una página con sus registros, los del kernel mientras corre
+//! ella y lo que pasó al salir), su MPIDR, su GIC virtual y su temporizador. Varias vCPU de una máquina pueden correr a
+//! la vez en núcleos distintos. Qué se hace con cada salida lo decide `maquinas.rs`, y lo que se emula, el servicio
+//! `caja-linux`.
 //!
 //! Lo que el invitado no puede hacer, porque se atrapa en EL2 (HCR_EL2 y compañía): tocar memoria fuera de su objeto
 //! (la etapa 2), las interrupciones físicas (IMO/FMO/AMO: van a EL2 y sacan al invitado), SMC (TSC: sin esto, un
@@ -18,6 +20,7 @@
 //!
 //! Las interrupciones del invitado (paso 3): el GIC virtual del GICv2 (abajo, `gic_virtual`) y su temporizador virtual.
 
+use super::cerrojo::Cerrojo;
 use super::planificador::{self, EstadoFp};
 use crate::memoria::{self, Memoria, PAGINA};
 use crate::mmio::RegLe32;
@@ -231,10 +234,11 @@ pub fn gic_nucleo() {
     }
 }
 
-/// ¿Es una interrupción del GIC virtual (la PPI 27 de un invitado o la de mantenimiento)? Ya hizo su trabajo al sacar
-/// al invitado: el kernel solo la termina.
+/// ¿Es una interrupción del GIC virtual (la PPI 27 de un invitado o la de mantenimiento) o el aviso que saca a una vCPU
+/// de su invitado (`gic::SGI_VCPU`)? Ya hizo su trabajo al sacar al invitado: el kernel solo la termina.
 pub fn interrupcion(intid: u32) -> bool {
-    GICH.load(Ordering::Relaxed) != 0 && (intid == INTID_TEMPORIZADOR || intid == MANTENIMIENTO.load(Ordering::Relaxed))
+    GICH.load(Ordering::Relaxed) != 0
+        && (intid == INTID_TEMPORIZADOR || intid == MANTENIMIENTO.load(Ordering::Relaxed) || intid == crate::gic::SGI_VCPU)
 }
 
 /// ¿Hay GIC virtual?
@@ -300,6 +304,10 @@ const S_FAR: usize = C + 7;
 const S_TIPO: usize = C + 8;
 const S_HPFAR: usize = C + 9;
 const C_VMPIDR: usize = C + 10;
+/// 1: vaciar de la TLB de este núcleo lo del VMID del invitado antes de entrar (otra vCPU suya corrió aquí antes).
+const C_LIMPIAR: usize = C + 11;
+/// Donde empieza lo del anfitrión en el mundo: lo de antes es del invitado.
+const ANF: usize = 0x200;
 
 /// Por qué volvió el invitado (lo que dejó hiper.s).
 #[derive(Clone, Copy, Debug)]
@@ -327,6 +335,7 @@ pub enum Error {
     Limite,
 }
 
+
 /// Los VMID en uso (8 bits; el 0 es del kernel).
 static VMIDS: [AtomicU64; 4] = [const { AtomicU64::new(1) }, const { AtomicU64::new(0) }, const { AtomicU64::new(0) }, const { AtomicU64::new(0) }];
 
@@ -348,112 +357,83 @@ fn soltar_vmid(id: u16) {
     VMIDS[id as usize / 64].fetch_and(!(1 << (id % 64)), Ordering::AcqRel);
 }
 
-/// Una vCPU con su memoria. Solo la usa quien la tiene en exclusiva (`&mut self` para correr).
-pub struct Vcpu {
-    /// Física de su mundo (una página), o 0 mientras se hace.
-    mundo: u64,
-    /// Las páginas de la etapa 2: la primera es el nivel 1.
-    tablas: Vec<u64>,
+/// La memoria de una máquina virtual tal como la ven sus vCPU: la etapa 2 (sus tablas, sobre objetos de memoria) y su
+/// VMID. La comparten todas sus vCPU, que pueden correr a la vez en núcleos distintos con el mismo VTTBR; se suelta con
+/// la última.
+pub struct Espacio {
+    /// El nivel 1 de la etapa 2 (física): no cambia mientras viva.
+    l1: u64,
     vmid: u16,
-    /// Lo que ve el invitado: (desde dónde, cuánto, el objeto). Sujetan las páginas hasta después de olvidar el VMID.
-    memorias: Vec<(u64, u64, Arc<Memoria>)>,
-    /// Lo cobrado al grupo: el mundo y el nivel 1, y las tablas de cada memoria.
-    cargos: Vec<crate::cupo::Cargo>,
-    /// Su GIC virtual: GICH_VMCR, GICH_APR y los registros de lista, guardados mientras no corre.
-    vmcr: u32,
-    apr: u32,
-    lr: [u32; MAX_LRS],
-    /// Cómo tiene el invitado el temporizador virtual en su distribuidor (prioridad y grupo 1), si lo tiene habilitado:
-    /// lo dice el servicio, que emula el distribuidor.
-    temporizador: Option<(u8, bool)>,
-    /// Dónde ve el invitado la GICV, si se le proyectó.
-    gicv: Option<u64>,
-    /// Sus registros de FP/SIMD, desde que la usó por primera vez.
-    fp: Option<Box<EstadoFp>>,
+    interior: Cerrojo<Interior>,
 }
 
-impl Vcpu {
-    /// Una vCPU que ve `memoria` desde la dirección `ipa` (física del invitado, alineada a 4 KB) y empieza en
-    /// `entrada`, en EL1, con la MMU y las interrupciones apagadas y `x0` en su x0 (el árbol de dispositivos, para un
-    /// kernel de Linux). Se ve como el núcleo 0 (MPIDR). Las páginas del mundo y de las tablas se cobran a `cupo`.
-    pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, Error> {
+struct Interior {
+    /// Las páginas de la etapa 2: la primera es el nivel 1.
+    tablas: Vec<u64>,
+    /// Lo que ve el invitado: (desde dónde, cuánto, el objeto). Sujetan las páginas hasta después de olvidar el VMID.
+    memorias: Vec<(u64, u64, Arc<Memoria>)>,
+    /// Lo cobrado al grupo: el nivel 1, y las tablas de cada memoria y de la GICV.
+    cargos: Vec<crate::cupo::Cargo>,
+    /// Dónde ve el invitado la GICV, si se le proyectó.
+    gicv: Option<u64>,
+}
+
+impl Espacio {
+    /// Un espacio vacío, con su VMID. Lo que cuesta el nivel 1 se cobra a `cupo`.
+    pub fn nuevo(cupo: &Arc<crate::cupo::Cupo>) -> Result<Arc<Self>, Error> {
         if !hay() {
             return Err(Error::NoHay);
         }
-        let cargo = cupo.cobrar(2 * PAGINA).ok_or(Error::Memoria)?;
+        let cargo = cupo.cobrar(PAGINA).ok_or(Error::Memoria)?;
+        let mut interior = Interior { tablas: Vec::new(), memorias: Vec::new(), cargos: Vec::new(), gicv: None };
+        interior.cargos.try_reserve(8).map_err(|_| Error::Memoria)?;
+        interior.tablas.try_reserve(8).map_err(|_| Error::Memoria)?;
+        interior.cargos.push(cargo);
         let vmid = tomar_vmid().ok_or(Error::Limite)?;
-        let mut v = Vcpu {
-            mundo: 0,
-            tablas: Vec::new(),
-            vmid,
-            memorias: Vec::new(),
-            cargos: Vec::new(),
-            vmcr: 0,
-            apr: 0,
-            lr: [0; MAX_LRS],
-            temporizador: None,
-            gicv: None,
-            fp: None,
+        let Some(l1) = memoria::pagina_usuario() else {
+            soltar_vmid(vmid);
+            return Err(Error::Memoria);
         };
-        v.cargos.try_reserve(8).map_err(|_| Error::Memoria)?;
-        v.cargos.push(cargo);
-        v.tablas.try_reserve(8).map_err(|_| Error::Memoria)?;
-        v.mundo = memoria::pagina_usuario().ok_or(Error::Memoria)?;
-        let l1 = memoria::pagina_usuario().ok_or(Error::Memoria)?;
-        v.tablas.push(l1);
-        v.anadir(memoria, ipa, cupo)?;
+        interior.tablas.push(l1);
+        // Si no cabe el `Arc`, el `Drop` del espacio suelta la página y el VMID.
+        Arc::try_new(Espacio { l1, vmid, interior: Cerrojo::new(interior) }).map_err(|_| Error::Memoria)
+    }
 
-        let pmcr: u64;
-        // SAFETY: PMCR_EL0 se lee desde EL1 (el kernel no atrapa sus contadores hacia EL2).
-        unsafe { core::arch::asm!("mrs {}, pmcr_el0", out(reg) pmcr) };
-        // MDCR_EL2: HPMN = los contadores que hay, y atrapados la depuración (TDA, TDOSA, TDRA) y los contadores (TPM,
-        // TPMCR).
-        let mdcr = (pmcr >> 11) & 0x1f | 1 << 5 | 1 << 6 | 1 << 9 | 1 << 10 | 1 << 11;
-        v.poner(0, x0);
-        v.poner(I_PC, entrada);
-        v.poner(I_PSTATE, 0x3c5); // EL1h, con D, A, I y F enmascaradas
-        v.poner(I_SCTLR, 0x30D0_0800); // RES1, little-endian, MMU y cachés apagadas
-        v.poner(C_VTTBR, (vmid as u64) << 48 | l1);
-        v.poner(C_HCR, HCR_INVITADO);
-        v.poner(C_MDCR, mdcr);
-        v.poner(C_CPTR, CPTR_INVITADO);
-        v.poner(C_CNTHCTL, CNTHCTL_INVITADO);
-        v.poner(C_VTCR, VTCR);
-        v.poner(C_VMPIDR, 1 << 31); // núcleo 0 (afinidades a 0; el bit 31 es RES1)
-        // SAFETY: barrera: el mundo, escrito antes de que lo lea EL2.
-        unsafe { core::arch::asm!("dsb ish") };
-        Ok(v)
+    /// VTTBR_EL2 de sus vCPU: el VMID y el nivel 1.
+    fn vttbr(&self) -> u64 {
+        (self.vmid as u64) << 48 | self.l1
     }
 
     /// Añade `memoria` a lo que ve el invitado, desde `ipa` (alineada a 4 KB, sin pisar otra). Lo que cuestan sus
     /// tablas se cobra a `cupo`. La memoria se lleva a la RAM (punto de coherencia): el invitado, con su MMU apagada,
-    /// la lee sin caché. Solo con la vCPU parada (`&mut self`); como solo se añaden entradas que no había, no hace falta
-    /// vaciar las TLB.
-    pub fn anadir(&mut self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+    /// la lee sin caché. Puede ser con sus vCPU en marcha: solo se añaden entradas que no había (y la etapa 2 no guarda
+    /// en las TLB las que faltan), así que no hace falta vaciar las TLB.
+    pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
         let tam = memoria.tamano();
         if memoria.bus().is_some() || tam == 0 || ipa % PAGINA != 0 || ipa.checked_add(tam).is_none_or(|f| f > IPA_MAX) {
             return Err(Error::Argumento);
         }
-        if self.memorias.iter().any(|(i, t, _)| ipa < i + t && *i < ipa + tam) || self.gicv.is_some_and(|g| ipa < g + TAM_GICV && g < ipa + tam) {
+        let mut i = self.interior.tomar();
+        if i.memorias.iter().any(|(b, t, _)| ipa < b + t && *b < ipa + tam) || i.gicv.is_some_and(|g| ipa < g + TAM_GICV && g < ipa + tam) {
             return Err(Error::Argumento);
         }
         let ultima = ipa + tam - 1;
         let n_l2 = (ultima / GB - ipa / GB + 1) as usize;
         let n_l3 = (ultima / MB2 - ipa / MB2 + 1) as usize;
         let cargo = cupo.cobrar((n_l2 + n_l3) as u64 * PAGINA).ok_or(Error::Memoria)?;
-        self.memorias.try_reserve(1).map_err(|_| Error::Memoria)?;
-        self.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
-        self.tablas.try_reserve(n_l2 + n_l3).map_err(|_| Error::Memoria)?;
-        self.cargos.push(cargo);
+        i.memorias.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.tablas.try_reserve(n_l2 + n_l3).map_err(|_| Error::Memoria)?;
+        i.cargos.push(cargo);
         // Apuntada antes de proyectarla: si algo falla a medias, sus páginas siguen sujetas mientras estén en la etapa 2.
-        self.memorias.push((ipa, tam, memoria.clone()));
-        let l1 = self.tablas[0];
-        for (i, &f) in memoria.fisicas().iter().enumerate() {
-            let a = ipa + i as u64 * PAGINA;
-            let l2 = self.siguiente(l1, (a >> 30) as usize)?;
-            let l3 = self.siguiente(l2, ((a >> 21) & 511) as usize)?;
+        i.memorias.push((ipa, tam, memoria.clone()));
+        for (k, &f) in memoria.fisicas().iter().enumerate() {
+            let a = ipa + k as u64 * PAGINA;
+            let l2 = i.siguiente(self.l1, (a >> 30) as usize)?;
+            let l3 = i.siguiente(l2, ((a >> 21) & 511) as usize)?;
             poner(l3, ((a >> 12) & 511) as usize, f | S2_PAGINA);
         }
+        drop(i);
         // La memoria del invitado, hasta la RAM, y fuera de la caché de instrucciones.
         // SAFETY: CTR_EL0 se lee siempre.
         let ctr: u64;
@@ -473,7 +453,41 @@ impl Vcpu {
         Ok(())
     }
 
-    /// La tabla a la que apunta la entrada `i` de `tabla`; si no hay, una nueva.
+    /// Proyecta la GICV del GIC virtual en `ipa` (alineada a 4 KB, sin pisar su memoria): ahí espera el invitado la
+    /// interfaz de CPU de su GIC. Cada núcleo ve en esa dirección física su propia interfaz virtual, así que una sola
+    /// proyección vale para todas las vCPU. Lo que cuestan las tablas se cobra a `cupo`.
+    pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
+        let gicv = GICV.load(Ordering::Relaxed);
+        if !hay_gic_virtual() || gicv == 0 {
+            return Err(Error::NoHay);
+        }
+        let mut i = self.interior.tomar();
+        if i.gicv.is_some()
+            || ipa % PAGINA != 0
+            || ipa.checked_add(TAM_GICV).is_none_or(|f| f > IPA_MAX)
+            || i.memorias.iter().any(|(b, t, _)| ipa < b + t && *b < ipa + TAM_GICV)
+        {
+            return Err(Error::Argumento);
+        }
+        let cargo = cupo.cobrar(2 * PAGINA).ok_or(Error::Memoria)?;
+        i.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
+        i.cargos.push(cargo);
+        for p in 0..TAM_GICV / PAGINA {
+            let a = ipa + p * PAGINA;
+            let l2 = i.siguiente(self.l1, (a >> 30) as usize)?;
+            let l3 = i.siguiente(l2, ((a >> 21) & 511) as usize)?;
+            poner(l3, ((a >> 12) & 511) as usize, (gicv + p * PAGINA) | S2_APARATO);
+        }
+        i.gicv = Some(ipa);
+        // SAFETY: barrera: las tablas, escritas antes de que las recorra la etapa 2.
+        unsafe { core::arch::asm!("dsb ish") };
+        Ok(())
+    }
+}
+
+impl Interior {
+    /// La tabla a la que apunta la entrada `i` de `tabla`; si no hay, una nueva (a cero: con sus vCPU en marcha, la
+    /// etapa 2 ve una tabla vacía hasta que se llena, nunca basura).
     fn siguiente(&mut self, tabla: u64, i: usize) -> Result<u64, Error> {
         let d = leer(tabla, i);
         if d & TABLA == TABLA {
@@ -486,8 +500,125 @@ impl Vcpu {
             return Err(Error::Memoria);
         }
         self.tablas.push(t);
+        // SAFETY: barrera: la tabla nueva, a cero en la RAM antes de que la enlace la entrada.
+        unsafe { core::arch::asm!("dsb ish") };
         poner(tabla, i, t | TABLA);
         Ok(t)
+    }
+}
+
+impl Drop for Espacio {
+    fn drop(&mut self) {
+        // Fuera de las TLB lo que quedara de este VMID, en todos los núcleos, antes de soltar sus tablas y su memoria.
+        // Si este núcleo no puede (no tiene EL2), el VMID no se vuelve a dar.
+        let mut olvidado = false;
+        if en_este_nucleo() {
+            let vttbr = (self.vmid as u64) << 48;
+            // SAFETY: la orden OLVIDAR de hiper.s.
+            unsafe { core::arch::asm!("hvc #0", inlateout("x0") HV_OLVIDAR => _, inlateout("x1") vttbr => _, options(nostack)) };
+            olvidado = true;
+        }
+        let i = self.interior.get_mut();
+        let mut p = memoria::paginas();
+        for &t in &i.tablas {
+            // SAFETY: páginas sacadas por este espacio, que ya no usa nadie: el VMID está olvidado y no queda vCPU.
+            unsafe { p.liberar(t, 1) };
+        }
+        drop(p);
+        if olvidado {
+            soltar_vmid(self.vmid);
+        }
+    }
+}
+
+/// La última vCPU que corrió en cada núcleo: su VMID (en [63:48]) y su mundo. Si en un núcleo corre otra vCPU de la
+/// misma máquina, se vacía antes lo de ese VMID de las TLB de ese núcleo: dos vCPU del mismo VMID comparten etiquetas en
+/// la TLB, y lo que dejó una (con otras tablas de etapa 1 o en otro momento) no vale para la otra. Las invalidaciones
+/// del invitado ya van a todos los núcleos (HCR_EL2.FB).
+static ULTIMA: [AtomicU64; 4] = [const { AtomicU64::new(0) }; 4];
+
+/// Una vCPU de una máquina: su "mundo" (una página con sus registros, los del kernel mientras corre ella y lo que pasó
+/// al salir), su GIC virtual, su temporizador y su FPU. Comparte el `Espacio` con las demás de su máquina. Solo la usa
+/// quien la tiene en exclusiva (`&mut self` para correr).
+pub struct Vcpu {
+    /// Física de su mundo (una página).
+    mundo: u64,
+    espacio: Arc<Espacio>,
+    /// Lo cobrado al grupo: el mundo.
+    _cargo: crate::cupo::Cargo,
+    /// Su GIC virtual: GICH_VMCR, GICH_APR y los registros de lista, guardados mientras no corre.
+    vmcr: u32,
+    apr: u32,
+    lr: [u32; MAX_LRS],
+    /// Cómo tiene el invitado el temporizador virtual en su distribuidor (prioridad y grupo 1), si lo tiene habilitado:
+    /// lo dice el servicio, que emula el distribuidor.
+    temporizador: Option<(u8, bool)>,
+    /// Sus registros de FP/SIMD, desde que la usó por primera vez.
+    fp: Option<Box<EstadoFp>>,
+}
+
+/// Cuántas vCPU puede tener una máquina: lo que direcciona el GICv2 (8 interfaces de CPU).
+pub const MAX_VCPUS: u8 = 8;
+
+impl Vcpu {
+    /// La vCPU `numero` (su MPIDR: Aff0 = `numero`, el resto a 0) de la máquina de `espacio`. Empieza en `entrada`, en
+    /// EL1, con la MMU y las interrupciones apagadas y `x0` en su x0 (el árbol de dispositivos, para un kernel de
+    /// Linux). La página del mundo se cobra a `cupo`.
+    pub fn nueva(espacio: &Arc<Espacio>, numero: u8, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, Error> {
+        if !hay() {
+            return Err(Error::NoHay);
+        }
+        if numero >= MAX_VCPUS {
+            return Err(Error::Argumento);
+        }
+        let cargo = cupo.cobrar(PAGINA).ok_or(Error::Memoria)?;
+        let mundo = memoria::pagina_usuario().ok_or(Error::Memoria)?;
+        let mut v = Vcpu {
+            mundo,
+            espacio: espacio.clone(),
+            _cargo: cargo,
+            vmcr: 0,
+            apr: 0,
+            lr: [0; MAX_LRS],
+            temporizador: None,
+            fp: None,
+        };
+        let pmcr: u64;
+        // SAFETY: PMCR_EL0 se lee desde EL1 (el kernel no atrapa sus contadores hacia EL2).
+        unsafe { core::arch::asm!("mrs {}, pmcr_el0", out(reg) pmcr) };
+        // MDCR_EL2: HPMN = los contadores que hay, y atrapados la depuración (TDA, TDOSA, TDRA) y los contadores (TPM,
+        // TPMCR).
+        let mdcr = (pmcr >> 11) & 0x1f | 1 << 5 | 1 << 6 | 1 << 9 | 1 << 10 | 1 << 11;
+        v.poner(C_VTTBR, espacio.vttbr());
+        v.poner(C_HCR, HCR_INVITADO);
+        v.poner(C_MDCR, mdcr);
+        v.poner(C_CNTHCTL, CNTHCTL_INVITADO);
+        v.poner(C_VTCR, VTCR);
+        // Afinidades: Aff0 = su número, Aff1..3 a 0; el bit 31 es RES1 y el 30 (U, monoprocesador) queda a 0.
+        v.poner(C_VMPIDR, 1 << 31 | numero as u64);
+        v.reiniciar(entrada, x0);
+        Ok(v)
+    }
+
+    /// Como recién encendida (PSCI CPU_ON, Arm DEN 0022 §6.4): en `entrada`, en EL1h con D, A, I y F enmascaradas, la
+    /// MMU y las cachés apagadas, `x0` en su x0 y lo demás a cero: sus registros y los de EL1, el temporizador virtual
+    /// apagado, su GIC virtual vacío y sin FPU propia (se le da otra, a cero, la primera vez que la use).
+    pub fn reiniciar(&mut self, entrada: u64, x0: u64) {
+        for i in 0..ANF / 8 {
+            self.poner(i, 0);
+        }
+        self.poner(0, x0);
+        self.poner(I_PC, entrada);
+        self.poner(I_PSTATE, 0x3c5);
+        self.poner(I_SCTLR, 0x30D0_0800); // RES1, little-endian, MMU y cachés apagadas
+        self.poner(C_CPTR, CPTR_INVITADO);
+        self.fp = None;
+        self.vmcr = 0;
+        self.apr = 0;
+        self.lr = [0; MAX_LRS];
+        self.temporizador = None;
+        // SAFETY: barrera: el mundo, escrito antes de que lo lea EL2 (en otro núcleo, quizá).
+        unsafe { core::arch::asm!("dsb ish") };
     }
 
     fn palabra(&self, i: usize) -> u64 {
@@ -505,6 +636,11 @@ impl Vcpu {
         if !en_este_nucleo() {
             return None;
         }
+        let nucleo = crate::nucleos::numero() as usize;
+        // Otra vCPU de la misma máquina fue la última en este núcleo: sus restos en la TLB, fuera (lo hace EL2).
+        let yo = self.espacio.vttbr() & (0xffff << 48) | self.mundo;
+        let antes = ULTIMA[nucleo].swap(yo, Ordering::Relaxed);
+        self.poner(C_LIMPIAR, (antes != yo && antes >> 48 == yo >> 48) as u64);
         let n = if hay_gic_virtual() { N_LRS.load(Ordering::Relaxed) as usize } else { 0 };
         if n > 0 {
             self.preparar_temporizador(n);
@@ -602,36 +738,6 @@ impl Vcpu {
         self.fp.is_some()
     }
 
-    /// Proyecta la GICV del GIC virtual en `ipa` (alineada a 4 KB, sin pisar su memoria): ahí espera el invitado la
-    /// interfaz de CPU de su GIC. Lo que cuestan las tablas se cobra a `cupo`.
-    pub fn proyectar_gicv(&mut self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), Error> {
-        let gicv = GICV.load(Ordering::Relaxed);
-        if !hay_gic_virtual() || gicv == 0 {
-            return Err(Error::NoHay);
-        }
-        if self.gicv.is_some()
-            || ipa % PAGINA != 0
-            || ipa.checked_add(TAM_GICV).is_none_or(|f| f > IPA_MAX)
-            || self.memorias.iter().any(|(i, t, _)| ipa < i + t && *i < ipa + TAM_GICV)
-        {
-            return Err(Error::Argumento);
-        }
-        let cargo = cupo.cobrar(2 * PAGINA).ok_or(Error::Memoria)?;
-        self.cargos.try_reserve(1).map_err(|_| Error::Memoria)?;
-        self.cargos.push(cargo);
-        let l1 = self.tablas[0];
-        for p in 0..TAM_GICV / PAGINA {
-            let a = ipa + p * PAGINA;
-            let l2 = self.siguiente(l1, (a >> 30) as usize)?;
-            let l3 = self.siguiente(l2, ((a >> 21) & 511) as usize)?;
-            poner(l3, ((a >> 12) & 511) as usize, (gicv + p * PAGINA) | S2_APARATO);
-        }
-        self.gicv = Some(ipa);
-        // SAFETY: barrera: las tablas, escritas antes de que las recorra la etapa 2.
-        unsafe { core::arch::asm!("dsb ish") };
-        Ok(())
-    }
-
     /// x0..x30, PC y PSTATE.
     pub fn registros(&self) -> [u64; REGISTROS] {
         let mut r = [0; REGISTROS];
@@ -700,25 +806,8 @@ impl Vcpu {
 
 impl Drop for Vcpu {
     fn drop(&mut self) {
-        // Fuera de las TLB lo que quedara de este VMID, en todos los núcleos, antes de soltar sus tablas y su memoria.
-        // Si este núcleo no puede (no tiene EL2), el VMID no se vuelve a dar.
-        let mut olvidado = false;
-        if en_este_nucleo() {
-            let vttbr = (self.vmid as u64) << 48;
-            // SAFETY: la orden OLVIDAR de hiper.s.
-            unsafe { core::arch::asm!("hvc #0", inlateout("x0") HV_OLVIDAR => _, inlateout("x1") vttbr => _, options(nostack)) };
-            olvidado = true;
-        }
-        let mut p = memoria::paginas();
-        for &t in self.tablas.iter().chain(core::iter::once(&self.mundo)) {
-            if t != 0 {
-                // SAFETY: páginas sacadas por esta vCPU, que ya no usa nadie: el VMID está olvidado y nadie la corre.
-                unsafe { p.liberar(t, 1) };
-            }
-        }
-        drop(p);
-        if olvidado {
-            soltar_vmid(self.vmid);
-        }
+        // SAFETY: la página del mundo es solo de esta vCPU, que ya no corre nadie (`&mut self`). La TLB no la guarda:
+        // EL2 la ve por su traducción, que no cambia.
+        unsafe { memoria::paginas().liberar(self.mundo, 1) };
     }
 }

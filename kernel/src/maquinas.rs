@@ -1,18 +1,29 @@
 //! Las máquinas virtuales de la caja Linux (H9, `docs/bitacoras/caja-linux.md`), vistas como objetos con llave.
 //!
-//! Crear una pide el permiso de máquinas virtuales (lo da el kernel a `inicio`, y `inicio` al servicio `caja-linux`) y
-//! un objeto de memoria del cupo de quien la pide, que es la RAM del invitado. "Correr" entra en el invitado hasta que
-//! sale y dice por qué, ya interpretado (`Informe`): una llamada al hipervisor (HVC), un acceso a una dirección que no
-//! es su memoria (los aparatos que emula el servicio, o un fallo, según el servicio), un WFI, una interrupción del
-//! anfitrión (el reloj saca al invitado cada tic: nunca se queda con el núcleo) o un fallo. El kernel no emula nada:
-//! eso es del servicio.
+//! Crear una pide el permiso de máquinas virtuales (lo reparte `sesiones`) y un objeto de memoria del cupo de quien la
+//! pide, que es la RAM del invitado. Cada llave es una vCPU: la de `maquina_crear` es la 0, y con ella se piden las
+//! demás (hasta 8, cada una con su número en el MPIDR), que comparten la memoria y la etapa 2 de la máquina. Cada vCPU
+//! se corre desde un hilo del servicio, y varias a la vez en núcleos distintos.
+//!
+//! "Correr" entra en el invitado hasta que sale y dice por qué, ya interpretado (`Informe`): una llamada al hipervisor
+//! (HVC), un acceso a una dirección que no es su memoria (los aparatos que emula el servicio, o un fallo, según el
+//! servicio), un WFI, una interrupción del anfitrión (el reloj saca al invitado cada tic: nunca se queda con el núcleo;
+//! o la patada de otro hilo) o un fallo. El kernel no emula nada: eso es del servicio.
+//!
+//! "Patear" una vCPU la saca de su invitado en cuanto puede: si corre en otro núcleo, con una interrupción por software
+//! a ese núcleo (`gic::SGI_VCPU`); si duerme en un WFI, despertándola; si no, la siguiente vez que vaya a entrar vuelve
+//! sin entrar. Es lo que hace el servicio cuando deja algo para ella (una SGI de otra vCPU, una interrupción de un
+//! aparato). "Parar" la máquina la mata entera: todas sus vCPU salen y ya no vuelven a entrar.
 //!
 //! Lo que toca el hardware (EL2, la etapa 2, el cambio de mundo) está en `base::hiper`.
 
-use crate::base::hiper::{self, Vcpu};
+use crate::base::hiper::{self, Espacio, Vcpu};
 use crate::cerrojo::Cerrojo;
 use crate::memoria::Memoria;
+use crate::planificador::{self, ColaEspera};
 use alloc::sync::Arc;
+use alloc::vec::Vec;
+use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// Por qué volvió el invitado (el primer número del informe; lo devuelve también la llamada).
 pub const HVC: u64 = 1;
@@ -20,11 +31,13 @@ pub const HVC: u64 = 1;
 pub const LECTURA: u64 = 2;
 /// Escribió en una dirección que no es su memoria.
 pub const ESCRITURA: u64 = 3;
+/// Un WFI (o WFE). Con `ESPERAR_WFI`, el kernel ya esperó lo que tocaba: hasta el plazo de su temporizador, como mucho
+/// `TOPE_WFI_US`, o hasta que alguien la pateó.
 pub const WFI: u64 = 4;
-/// Una interrupción del anfitrión lo sacó (el reloj, un aparato): no ha pasado nada suyo.
+/// Una interrupción del anfitrión lo sacó (el reloj, un aparato, la patada de otro hilo): no ha pasado nada suyo.
 pub const INTERRUMPIDO: u64 = 5;
 /// Una trampa o un fallo que el kernel no sabe pasar al servicio de otra forma (SMC, la coma flotante, un fallo de la
-/// etapa 2 sin datos, un SError): la máquina queda muerta.
+/// etapa 2 sin datos, un SError): la máquina queda muerta, con todas sus vCPU.
 pub const FALLO: u64 = 6;
 /// Tocó un registro del sistema atrapado (depuración, contadores de rendimiento, el temporizador físico...): en la
 /// dirección, su codificación (op0, op1, CRn, CRm y op2, como en el ESR, sin el registro de destino ni el sentido);
@@ -34,25 +47,78 @@ pub const REGISTRO: u64 = 7;
 /// Palabras del informe: motivo, PC de la instrucción, dirección (física del invitado), valor, tamaño en bytes (o el
 /// número del HVC), ESR, x1 y x2 (en un HVC), las cuentas del contador que pasó la CPU fuera del kernel (ida y vuelta
 /// por EL2 con el invitado), x3 (en un HVC), el plazo del temporizador virtual del invitado (CNTV_CVAL, si está
-/// encendido y sin enmascarar; si no, `u64::MAX`) y señales: bit 0, hay una interrupción pendiente en sus registros de
-/// lista (un WFI no tiene que esperar).
-pub const PALABRAS: usize = 12;
+/// encendido y sin enmascarar; si no, `u64::MAX`), señales (bit 0, hay una interrupción pendiente en sus registros de
+/// lista: un WFI no tiene que esperar) y los microsegundos que durmió en el kernel en sus WFI.
+pub const PALABRAS: usize = 13;
 
 /// Registros de lista del servicio en el bloque de interrupciones.
 pub const IRQ_LRS: usize = 8;
 /// El bloque de interrupciones que va y viene con `maquina_correr` (palabras de 64 bits): [0] cuántos registros de
-/// lista puede llenar el servicio (lo escribe el kernel; 0 sin GIC virtual), [1] cómo tiene el invitado el temporizador
-/// virtual en su distribuidor (lo escribe el servicio: bit 0 habilitado, [15:8] prioridad, bit 16 grupo 1) y desde [2]
-/// los registros de lista (GICH_LRn del GICv2, sin el bit HW): los pone el servicio y vuelven como los dejó el
-/// invitado.
+/// lista puede llenar el servicio (lo escribe el kernel; 0 sin GIC virtual), [1] lo escribe el servicio: cómo tiene el
+/// invitado el temporizador virtual en su distribuidor (bit 0 habilitado, [15:8] prioridad, bit 16 grupo 1) y, en el
+/// bit 17 (`ESPERAR_WFI`), que los WFI esperen en el kernel; y desde [2] los registros de lista (GICH_LRn del GICv2,
+/// sin el bit HW): los pone el servicio y vuelven como los dejó el invitado.
 pub const IRQ_PALABRAS: usize = 2 + IRQ_LRS;
+/// En la palabra 1 del bloque: un WFI sin nada pendiente duerme el hilo en el kernel (hasta el plazo del temporizador
+/// del invitado, una patada o `TOPE_WFI_US`) en vez de volver al servicio. Si venció el temporizador, vuelve a entrar
+/// sin pasar por el servicio.
+pub const ESPERAR_WFI: u64 = 1 << 17;
+/// Lo más que espera un WFI en el kernel antes de volver al servicio (que así mira su plazo y lo demás).
+pub const TOPE_WFI_US: u64 = 100_000;
 
 pub enum Error {
     NoHay,
     /// Otro hilo la está corriendo.
     Ocupada,
-    /// Murió en un fallo.
+    /// Murió en un fallo o la pararon.
     Muerta,
+}
+
+/// Ningún núcleo: la vCPU no está dentro de su invitado.
+const NINGUNO: u32 = u32::MAX;
+
+/// Lo que hace falta para sacar a una vCPU de su invitado desde otro hilo, sin tocar su estado.
+struct Patada {
+    /// Que salga en cuanto pueda (o que no entre la próxima vez).
+    salir: AtomicBool,
+    /// El núcleo donde está dentro del invitado, o `NINGUNO`.
+    nucleo: AtomicU32,
+    /// Su hilo, si duerme en un WFI.
+    cola: Cerrojo<ColaEspera>,
+}
+
+impl Patada {
+    fn dar(&self) {
+        // Primero la petición y luego mirar el núcleo; la vCPU, al revés (`Maquina::correr_una`): con orden total, o
+        // ella ve la petición y no entra, o aquí se ve su núcleo y se le manda el aviso.
+        self.salir.store(true, Ordering::SeqCst);
+        let n = self.nucleo.load(Ordering::SeqCst);
+        if n != NINGUNO && n != crate::nucleos::numero() {
+            let sgi = if hiper::hay_gic_virtual() { crate::gic::SGI_VCPU } else { crate::gic::SGI_PLANIFICAR };
+            crate::gic::avisar(n, sgi);
+        }
+        self.cola.tomar().despertar_todos();
+    }
+}
+
+/// Lo que comparten las vCPU de una máquina.
+struct Comun {
+    espacio: Arc<Espacio>,
+    /// Murió en un fallo o la pararon: ninguna vCPU vuelve a entrar.
+    muerta: AtomicBool,
+    /// Las vCPU vivas, para sacarlas a todas.
+    vcpus: Cerrojo<Vec<Arc<Patada>>>,
+    /// Los números de vCPU en uso (un bit cada uno).
+    numeros: AtomicU32,
+}
+
+impl Comun {
+    fn parar(&self) {
+        self.muerta.store(true, Ordering::SeqCst);
+        for p in self.vcpus.tomar().iter() {
+            p.dar();
+        }
+    }
 }
 
 struct Estado {
@@ -63,31 +129,148 @@ struct Estado {
     /// El último acceso a un aparato, para inyectar un aborto en su lugar: PC de la instrucción, dirección virtual y si
     /// escribía. Solo hasta la siguiente vuelta.
     acceso: Option<(u64, u64, bool)>,
-    muerta: bool,
 }
 
+/// Una vCPU de una máquina virtual (lo que hay detrás de una llave de máquina).
 pub struct Maquina {
+    comun: Arc<Comun>,
+    patada: Arc<Patada>,
+    numero: u8,
     estado: Cerrojo<Estado>,
 }
 
+/// Cómo acabó la espera de un WFI.
+enum Despertar {
+    /// Llegó al momento pedido.
+    Vencido,
+    /// Una patada, la máquina parada o el hilo muriendo: hay que volver al servicio.
+    Pateada,
+}
+
 impl Maquina {
+    /// Una máquina nueva con su vCPU 0, que empieza en `entrada` con `x0`, y `memoria` vista desde `ipa`.
     pub fn nueva(memoria: Arc<Memoria>, ipa: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
-        let vcpu = Vcpu::nueva(memoria, ipa, entrada, x0, cupo)?;
-        Ok(Self { estado: Cerrojo::new(Estado { vcpu, lectura: None, acceso: None, muerta: false }) })
+        let espacio = Espacio::nuevo(cupo)?;
+        espacio.anadir(memoria, ipa, cupo)?;
+        let comun = Arc::try_new(Comun { espacio, muerta: AtomicBool::new(false), vcpus: Cerrojo::new(Vec::new()), numeros: AtomicU32::new(1) })
+            .map_err(|_| hiper::Error::Memoria)?;
+        Self::con(comun, 0, entrada, x0, cupo)
     }
 
-    /// Más memoria para el invitado, desde `ipa`. `None` si otro hilo la está corriendo.
-    pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Option<Result<(), hiper::Error>> {
-        let mut e = self.estado.intentar()?;
-        Some(e.vcpu.anadir(memoria, ipa, cupo))
+    /// La vCPU `numero` de `comun`, con el número ya apartado; si falla, lo devuelve.
+    fn con(comun: Arc<Comun>, numero: u8, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
+        let hecha = (|| {
+            let vcpu = Vcpu::nueva(&comun.espacio, numero, entrada, x0, cupo)?;
+            let patada = Arc::try_new(Patada { salir: AtomicBool::new(false), nucleo: AtomicU32::new(NINGUNO), cola: Cerrojo::new(ColaEspera::nueva()) })
+                .map_err(|_| hiper::Error::Memoria)?;
+            let mut l = comun.vcpus.tomar();
+            l.try_reserve(1).map_err(|_| hiper::Error::Memoria)?;
+            l.push(patada.clone());
+            Ok((vcpu, patada))
+        })();
+        match hecha {
+            Ok((vcpu, patada)) => Ok(Self { comun, patada, numero, estado: Cerrojo::new(Estado { vcpu, lectura: None, acceso: None }) }),
+            Err(e) => {
+                comun.numeros.fetch_and(!(1 << numero), Ordering::AcqRel);
+                Err(e)
+            }
+        }
+    }
+
+    /// Otra vCPU de la misma máquina, con el número `numero` (su Aff0 en el MPIDR, menor que `hiper::MAX_VCPUS` y que no
+    /// tenga ya otra), que empieza en `entrada` con `x0`. Comparte la memoria, la etapa 2 y el VMID.
+    pub fn otra(&self, numero: u64, entrada: u64, x0: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Self, hiper::Error> {
+        if numero >= hiper::MAX_VCPUS as u64 || self.comun.muerta.load(Ordering::Acquire) {
+            return Err(hiper::Error::Argumento);
+        }
+        let bit = 1u32 << numero;
+        if self.comun.numeros.fetch_or(bit, Ordering::AcqRel) & bit != 0 {
+            return Err(hiper::Error::Argumento);
+        }
+        Self::con(self.comun.clone(), numero as u8, entrada, x0, cupo)
+    }
+
+    /// Más memoria para el invitado, desde `ipa`. Puede ser con sus vCPU en marcha.
+    pub fn anadir(&self, memoria: Arc<Memoria>, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
+        self.comun.espacio.anadir(memoria, ipa, cupo)
+    }
+
+    /// Proyecta la GICV del GIC virtual donde el invitado espera la interfaz de CPU de su GIC (para todas sus vCPU).
+    pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
+        self.comun.espacio.proyectar_gicv(ipa, cupo)
+    }
+
+    /// Saca a esta vCPU de su invitado en cuanto pueda (ver arriba).
+    pub fn patear(&self) {
+        self.patada.dar();
+    }
+
+    /// Mata la máquina entera: todas sus vCPU salen y no vuelven a entrar (`Error::Muerta`).
+    pub fn parar(&self) {
+        self.comun.parar();
     }
 
     /// Entra en el invitado. `valor` es la respuesta a una lectura de aparato pendiente (si no la hay, no se usa).
-    /// `irq`, el bloque de interrupciones del servicio (`IRQ_PALABRAS`), si lo da.
+    /// `irq`, el bloque de interrupciones del servicio (`IRQ_PALABRAS`), si lo da. Con `ESPERAR_WFI` en él, un WFI sin
+    /// nada pendiente duerme aquí (ver `ESPERAR_WFI`).
     pub fn correr(&self, valor: u64, mut irq: Option<&mut [u64; IRQ_PALABRAS]>) -> Result<[u64; PALABRAS], Error> {
+        let esperar = irq.as_deref().is_some_and(|b| b[1] & ESPERAR_WFI != 0);
+        let temporizador = irq.as_deref().is_some_and(|b| b[1] & 1 != 0);
+        let mut valor = valor;
+        let mut dormido = 0u64;
+        let fr = crate::reloj::frecuencia().max(1);
+        let tope = TOPE_WFI_US * fr / 1_000_000;
+        loop {
+            let mut inf = self.correr_una(valor, irq.as_deref_mut())?;
+            valor = 0;
+            inf[12] = (dormido as u128 * 1_000_000 / fr as u128) as u64;
+            if !esperar || inf[0] != WFI || inf[11] & 1 != 0 {
+                return Ok(inf);
+            }
+            // Un WFI sin nada en sus registros de lista: hasta el plazo de su temporizador (si se lo entregan), como mucho
+            // el tope. Si ya venció, vuelve al servicio: puede que el invitado no acepte la interrupción ahora.
+            let ahora = crate::reloj::ahora();
+            let plazo = if temporizador { inf[10] } else { u64::MAX };
+            if plazo <= ahora || dormido >= tope {
+                return Ok(inf);
+            }
+            let hasta = plazo.min(ahora.saturating_add(tope - dormido));
+            let d = self.dormir(hasta, fr);
+            dormido += crate::reloj::ahora().saturating_sub(ahora);
+            inf[12] = (dormido as u128 * 1_000_000 / fr as u128) as u64;
+            match d {
+                // Venció su temporizador: otra vuelta, que lo lleva en su registro de lista.
+                Despertar::Vencido if hasta == plazo => continue,
+                _ => return Ok(inf),
+            }
+        }
+    }
+
+    /// Duerme el hilo hasta `hasta` (cuentas del contador) o una patada. Sin cerrojos tomados (el de la vCPU ya se
+    /// soltó: mientras tanto se pueden leer sus registros).
+    fn dormir(&self, hasta: u64, fr: u64) -> Despertar {
+        let p = &self.patada;
+        let mut g = p.cola.tomar();
+        if p.salir.swap(false, Ordering::SeqCst) || self.comun.muerta.load(Ordering::SeqCst) || planificador::debe_morir() {
+            return Despertar::Pateada;
+        }
+        if !g.apuntarme() {
+            return Despertar::Pateada;
+        }
+        let us = (hasta.saturating_sub(crate::reloj::ahora()) as u128 * 1_000_000 / fr as u128) as u64;
+        planificador::bloquear_soltando_hasta(g, us.max(1));
+        p.cola.tomar().quitarme();
+        if p.salir.swap(false, Ordering::SeqCst) || self.comun.muerta.load(Ordering::SeqCst) || planificador::debe_morir() {
+            return Despertar::Pateada;
+        }
+        if crate::reloj::ahora() >= hasta { Despertar::Vencido } else { Despertar::Pateada }
+    }
+
+    /// Una vuelta: entra en el invitado y vuelve con lo que pasó.
+    fn correr_una(&self, valor: u64, mut irq: Option<&mut [u64; IRQ_PALABRAS]>) -> Result<[u64; PALABRAS], Error> {
         // Sin esperar: dos hilos no corren a la vez la misma vCPU.
         let Some(mut e) = self.estado.intentar() else { return Err(Error::Ocupada) };
-        if e.muerta {
+        if self.comun.muerta.load(Ordering::Acquire) {
             return Err(Error::Muerta);
         }
         e.acceso = None;
@@ -111,14 +294,29 @@ impl Maquina {
             }
         }
         let antes = crate::reloj::ahora();
+        // Las interrupciones del kernel siguen enmascaradas (es una llamada al sistema): el hilo no cambia de núcleo y
+        // una patada que llegue desde ahora queda pendiente y lo saca nada más entrar.
+        let yo = crate::nucleos::numero();
         let s = loop {
-            let Some(s) = e.vcpu.correr() else { return Err(Error::NoHay) };
+            self.patada.nucleo.store(yo, Ordering::SeqCst);
+            if self.patada.salir.swap(false, Ordering::SeqCst) || self.comun.muerta.load(Ordering::SeqCst) {
+                self.patada.nucleo.store(NINGUNO, Ordering::SeqCst);
+                break None;
+            }
+            let s = e.vcpu.correr();
+            self.patada.nucleo.store(NINGUNO, Ordering::SeqCst);
+            let Some(s) = s else { return Err(Error::NoHay) };
             // La primera vez que usa la FPU: desde ahora tiene la suya, y se repite la instrucción.
             if s.tipo == hiper::SALIDA_SINCRONA && s.esr >> 26 == 0x07 && !e.vcpu.tiene_fp() && e.vcpu.usar_fp() {
                 continue;
             }
-            break s;
+            break Some(s);
         };
+        // Sale por lo que sea: una patada de antes ya está atendida (el servicio mira todo antes de volver a entrar).
+        self.patada.salir.store(false, Ordering::SeqCst);
+        if self.comun.muerta.load(Ordering::Acquire) {
+            return Err(Error::Muerta);
+        }
         let cuentas = crate::reloj::ahora().wrapping_sub(antes);
         if let Some(b) = irq.as_deref_mut() {
             b[0] = lrs as u64;
@@ -128,18 +326,23 @@ impl Maquina {
         }
         let mut inf = [0u64; PALABRAS];
         inf[8] = cuentas;
-        inf[5] = s.esr;
         inf[10] = e.vcpu.plazo_temporizador().unwrap_or(u64::MAX);
         inf[11] = e.vcpu.lr_pendiente() as u64;
         let pc = e.vcpu.pc();
         inf[1] = pc;
+        let Some(s) = s else {
+            inf[0] = INTERRUMPIDO;
+            return Ok(inf);
+        };
+        inf[5] = s.esr;
         if s.tipo == hiper::SALIDA_IRQ || s.tipo == hiper::SALIDA_FIQ {
             inf[0] = INTERRUMPIDO;
             return Ok(inf);
         }
         if s.tipo != hiper::SALIDA_SINCRONA {
-            e.muerta = true;
             inf[0] = FALLO;
+            drop(e);
+            self.comun.parar();
             return Ok(inf);
         }
         let clase = s.esr >> 26;
@@ -197,7 +400,8 @@ impl Maquina {
                 inf[0] = FALLO;
                 // En un fallo de la etapa 2 (de instrucción o de datos), la dirección física del invitado.
                 inf[2] = if clase == 0x20 || clase == 0x24 { ((s.hpfar >> 4) << 12) | (s.far & 0xfff) } else { s.far };
-                e.muerta = true;
+                drop(e);
+                self.comun.parar();
             }
         }
         Ok(inf)
@@ -213,7 +417,7 @@ impl Maquina {
     /// aparato pendiente se olvida: lo que diga el servicio manda.
     pub fn poner_registros(&self, r: &[u64; hiper::REGISTROS]) -> Result<(), Error> {
         let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
-        if e.muerta {
+        if self.comun.muerta.load(Ordering::Acquire) {
             return Err(Error::Muerta);
         }
         e.lectura = None;
@@ -221,11 +425,23 @@ impl Maquina {
         Ok(())
     }
 
+    /// La vCPU parada, como recién encendida en `entrada` con `x0` (PSCI CPU_ON: ver `Vcpu::reiniciar`).
+    pub fn reiniciar(&self, entrada: u64, x0: u64) -> Result<(), Error> {
+        let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
+        if self.comun.muerta.load(Ordering::Acquire) {
+            return Err(Error::Muerta);
+        }
+        e.lectura = None;
+        e.acceso = None;
+        e.vcpu.reiniciar(entrada, x0);
+        Ok(())
+    }
+
     /// En lugar del último acceso a un aparato (el de la última salida), un aborto externo para el invitado: no hay
     /// nada en esa dirección. Falso si la última salida no fue un acceso.
     pub fn aborto(&self) -> Result<bool, Error> {
         let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
-        if e.muerta {
+        if self.comun.muerta.load(Ordering::Acquire) {
             return Err(Error::Muerta);
         }
         let Some((pc, far, escritura)) = e.acceso.take() else { return Ok(false) };
@@ -233,10 +449,13 @@ impl Maquina {
         e.vcpu.inyectar_aborto(pc, far, escritura);
         Ok(true)
     }
+}
 
-    /// Proyecta la GICV del GIC virtual donde el invitado espera la interfaz de CPU de su GIC.
-    pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<Result<(), hiper::Error>, Error> {
-        let mut e = self.estado.intentar().ok_or(Error::Ocupada)?;
-        Ok(e.vcpu.proyectar_gicv(ipa, cupo))
+impl Drop for Maquina {
+    fn drop(&mut self) {
+        // Nadie la corre (era la última referencia): fuera de la lista y su número, libre.
+        let p = Arc::as_ptr(&self.patada);
+        self.comun.vcpus.tomar().retain(|q| Arc::as_ptr(q) != p);
+        self.comun.numeros.fetch_and(!(1 << self.numero), Ordering::AcqRel);
     }
 }

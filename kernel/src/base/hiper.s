@@ -19,8 +19,8 @@
 //   0x000 invitado: x0..x30, PC (ELR_EL2), PSTATE (SPSR_EL2) y sus 26 registros de EL1 (SIS); ESCR en 0x1E0
 //   0x200 anfitrión: x18..x30, ELR_EL2, SPSR_EL2, SP_EL2, MDCR_EL2, CPTR_EL2, CNTHCTL_EL2, HCR_EL2, sus SIS y
 //         VMPIDR_EL2 (lo que lee el kernel como MPIDR_EL1: su número de núcleo)
-//   0x400 configuración del invitado (VTTBR, HCR, MDCR, CPTR, CNTHCTL, VTCR), la salida (ESR, FAR, tipo, HPFAR) y
-//         el MPIDR que ve el invitado
+//   0x400 configuración del invitado (VTTBR, HCR, MDCR, CPTR, CNTHCTL, VTCR), la salida (ESR, FAR, tipo, HPFAR),
+//         el MPIDR que ve el invitado y si hay que vaciar la TLB de este núcleo para su VMID antes de entrar
 
 .equ HV_INSTALAR, 1
 .equ HV_CORRER, 2
@@ -44,6 +44,7 @@
 .equ S_ESR, 0x30
 .equ S_TIPO, 0x40
 .equ C_VMPIDR, 0x50
+.equ C_LIMPIAR, 0x58
 
 // Tipos de salida (S_TIPO): por qué volvió el invitado.
 .equ SALIDA_SINCRONA, 1
@@ -304,6 +305,13 @@ correr:
     msr     vtcr_el2, x3
     ldr     x2, [x10, #C_VMPIDR]
     msr     vmpidr_el2, x2
+    // Otra vCPU de la misma máquina corrió antes en este núcleo: lo de su VMID, fuera de la TLB de este núcleo.
+    ldr     x2, [x10, #C_LIMPIAR]
+    cbz     x2, 1f
+    isb
+    tlbi    vmalls12e1
+    dsb     nsh
+1:
     CARGAR_EL1 x1, I_SIS
     ldp     x2, x3, [x1, #I_PC]
     msr     elr_el2, x2
