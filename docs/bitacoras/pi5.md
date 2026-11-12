@@ -99,3 +99,49 @@ mensaje del buzón vaya con la dirección física; que el UART10 esté encendido
 MPIDR 0x100...; que el GIC-400 y el temporizador vayan como en la Pi 4; y, sobre todo, lo que dirá la CPU del
 big-endian en EL0.
 
+
+## 2026-11-13: el escritorio en la pantalla del firmware (paso 4)
+
+- Característica `escritorio` (con `diagnostico`): `inicio` lanza la consola, el compositor, `ventana-a`, `ventana-b`,
+  Ajustes y la caja Amiga, ahora con el canal "ventanas". El compositor recibe la pantalla que tenía la consola del
+  kernel (`pantalla_del_kernel` en `inicio.rs`, como la de UEFI: la memoria como objeto del firmware y sus medidas),
+  y la consola deja de pintar (`pantalla::ceder`). Para que el compositor pueda proyectarla aunque caiga en RAM del
+  árbol, la pantalla apartada queda también como reserva (`Paginas::apartar`).
+- Sin `sesiones` ni `archivos`: nada de fondo, barra, centro ni SYS:. La caja abre su ventana Amiga (ventana.exe) en el
+  escritorio; sin teclado ni ratón, se cierra sola a los 40 s.
+- `make pi5-escritorio` saca `target/dashos-escritorio.img`; `make tarjeta-pi5` lo mete en la tarjeta, y se elige en
+  `config.txt` (la línea `kernel=`). Lo que arranca por defecto sigue siendo el diagnóstico.
+- Prueba: `make arranque-virt-escritorio` (QEMU virt, la ramfb pasa de la consola al compositor): BIEN; captura en
+  `capturas-agente/pi5-escritorio-virt.png` (las dos ventanas de prueba, Ajustes y la ventana Amiga). En la Pi 5, sin
+  probar.
+
+### Lo siguiente: teclado y ratón (el RP1)
+
+En la Pi 5, el USB (dos xHCI), la Ethernet, los GPIO y los UART de la cabecera están en el RP1, un chip aparte detrás
+del PCIe (el `pcie@1000120000` del árbol, `rp1_target`; el conector PCIe de fuera, donde va el SSD, es otro, el
+`pcie@1000110000`). Para el teclado y el ratón hace falta:
+
+1. **El controlador PCIe de la BCM2712** (Broadcom, de la familia del de la Pi 4: `docs/spec/hw/pcie.md` sirve de
+   punto de partida, pero no es igual). El firmware deja el enlace del RP1 entrenado (lo usa para sus UART); falta
+   saber si deja también las ventanas de salida y de entrada como hacen falta, o hay que programarlas. Sus
+   interrupciones van por un controlador de MSI propio (`msi-controller@...` en el árbol), no por el GIC directamente.
+2. **El RP1 por dentro**: su BAR con todos los periféricos (el árbol los describe bajo `rp1`, en la ventana
+   0x1F_0000_0000 de la CPU), su controlador de interrupciones propio (que pasa sus fuentes a MSI hacia la BCM2712) y
+   encender sus relojes. Raspberry Pi publica el "RP1 peripherals" (documentación pública) con los registros.
+3. **Los xHCI del RP1**: son DWC3 de Synopsys en modo anfitrión, que se manejan como un xHCI normal: el controlador
+   `xhci` de DashOS debería valer tal cual, con sus registros y su interrupción.
+4. La ventana del RP1 en el mapa del kernel (`placa.rs` y `arranque.s`: el GB 124) y la llave de sus registros para
+   los servicios.
+
+Es la parte grande: un controlador de PCIe nuevo y el de las interrupciones del RP1, sin poder probarlos en QEMU. El
+otro camino es el UEFI de la comunidad (`rpi5-uefi`), que ya trae el PCIe y el USB del RP1 en marcha, con el cargador
+UEFI de DashOS: haría falta un kernel para la Pi 5 que entre por UEFI (otra variante de `placa.rs`), y saber qué
+deja preparado ese firmware al salir de los servicios de arranque.
+
+### Otras cosas pendientes en la Pi 5
+
+- El hipervisor (caja Linux): apagado en `pi5` hasta ver el primer arranque.
+- La tarjeta SD (controlador `brcm,bcm2712-sdhci`) y el SSD (el NVMe del conector PCIe externo, que pide el mismo
+  controlador de PCIe que el RP1).
+- La GPU (V3D 7.1) y la pantalla por el HVS sin el firmware.
+- La RAM por encima de 4 GB (el mapa lineal del kernel llega hasta 4 GB; lo mismo que en la Pi 4 de 8 GB).

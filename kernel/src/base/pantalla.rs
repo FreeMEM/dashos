@@ -48,9 +48,14 @@ pub fn medidas() -> Option<(u64, u32, u32, u32)> {
     (f != 0).then(|| (f, ANCHO.load(Ordering::Relaxed), ALTO.load(Ordering::Relaxed), PASO.load(Ordering::Relaxed)))
 }
 
-/// La deja de usar el kernel (un servicio la toma).
+/// La deja de usar el kernel (un servicio la toma): desde aquí no pinta nada más.
 pub fn soltar() {
     FISICA.store(0, Ordering::Release);
+}
+
+/// Si va en a8b8g8r8 (rojo y azul cambiados).
+pub fn bgr() -> bool {
+    BGR.load(Ordering::Relaxed)
 }
 
 fn color(rgb: u32) -> u32 {

@@ -75,6 +75,15 @@ algo se para, la foto dice hasta dónde llegó: también vale.
 
 Si se puede, una segunda foto unos segundos más tarde, por si cambió algo.
 
+## Después, si hay tiempo: el escritorio
+
+En la misma tarjeta va también `dashos-escritorio.img`: el escritorio de DashOS en la pantalla del firmware, sin
+teclado ni ratón (solo para verlo). Para probarlo, en un PC, abrir `config.txt` de la tarjeta y cambiar la línea
+`kernel=kernel_2712.img` por `kernel=dashos-escritorio.img`. Arranca con el panel del diagnóstico un momento y luego
+sale el escritorio: dos ventanas de prueba, Ajustes y una ventana Amiga ("Ventana Amiga: 68k en DashOS", hecha por un
+programa 68k en la caja Amiga). La ventana Amiga se cierra sola a los 40 s: la foto, antes. Para volver al
+diagnóstico, dejar la línea como estaba.
+
 ## Si la pantalla se queda negra
 
 - **Antes de DashOS**, la Pi 5 enseña su pantalla de diagnóstico (versión de la EEPROM, orden de arranque, errores).

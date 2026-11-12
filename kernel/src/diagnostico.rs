@@ -102,7 +102,11 @@ impl core::fmt::Display for Temperatura {
 pub fn tras_memoria(d: &Dtb) {
     if let Some((f, _, al, paso)) = pantalla::medidas() {
         let tam = paso as u64 * al as u64;
-        if !memoria::paginas().fuera_de_la_ram(f, tam) {
+        let (fuera, reservada) = {
+            let p = memoria::paginas();
+            (p.fuera_de_la_ram(f, tam), p.dentro_de_una_reserva(f, tam))
+        };
+        if !fuera && !reservada {
             memoria::paginas().apartar(f, tam);
             kprintln!("Pantalla: cae en RAM del árbol; apartada");
         }

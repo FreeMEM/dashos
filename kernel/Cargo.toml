@@ -24,6 +24,10 @@ pi5 = ["diagnostico"]
 # diagnóstico del primer arranque en una placa nueva, y solo la consola y la caja Amiga como programas
 # (`make pi5`, `make arranque-virt-diag`).
 diagnostico = []
+# Con `diagnostico`: el escritorio en la pantalla del firmware, sin GPU ni teclado (la Pi 5, paso 4 de
+# docs/bitacoras/pi5.md): el compositor, dos ventanas de prueba, Ajustes y la caja Amiga con su ventana. El kernel pinta su
+# diagnóstico hasta que da la pantalla al compositor.
+escritorio = ["diagnostico"]
 # Con `virt`: cuatro programas que ocupan los cuatro núcleos mientras suena el sonido (S19, A6; `make sonido-carga`).
 carga = []
 # Con `virt`: audio.device nativo en lugar de los dos tonos (S19, fase 2; `make sonido-paula`).

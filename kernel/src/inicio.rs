@@ -36,10 +36,24 @@ static INICIO: &[u8] = programa!("inicio");
 /// sin escritorio, ni USB, ni disco. La caja no tiene "ventanas" ni "archivos": se queda sin compositor y sin SYS:, y
 /// prueba lo suyo (el JIT, exec y dos nativas, saludo.exe); ventana.exe y hostil.exe, que necesitan el compositor, salen
 /// mal, como se espera.
-#[cfg(feature = "diagnostico")]
+#[cfg(all(feature = "diagnostico", not(feature = "escritorio")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
+];
+
+/// Con `escritorio` (la Pi 5, paso 4): el escritorio en la pantalla que tenía la consola del kernel (`pantalla_del_kernel`),
+/// sin GPU, teclado ni ratón. El compositor, dos clientes de Wayland, Ajustes y la caja Amiga, ahora con "ventanas": su
+/// ventana.exe abre una ventana Amiga en el escritorio (sin SYS:, que no hay servicio de archivos). Sin `sesiones` ni
+/// `archivos`: nada de fondo, barra ni centro.
+#[cfg(feature = "escritorio")]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
+    ("compositor", programa!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
+    ("ventana-a", programa!("ventana-a"), &[], &["ventanas"]),
+    ("ventana-b", programa!("ventana-b"), &[], &["ventanas"]),
+    ("ajustes", programa!("ajustes"), &[], &["ventanas"]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas"]),
 ];
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
@@ -472,6 +486,24 @@ fn pantalla_del_firmware(d: &Dtb) -> Option<(Objeto, Objeto)> {
 }
 
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
+/// La pantalla de la consola del kernel, para el compositor (`escritorio`): la consola deja de pintar en ella. Mismo
+/// formato que `pantalla_del_firmware`.
+#[cfg(feature = "escritorio")]
+fn pantalla_del_kernel() -> Option<(Objeto, Objeto)> {
+    let (fisica, ancho, alto, paso, bgr) = crate::pantalla::ceder()?;
+    let tamano = paso as u64 * alto as u64;
+    let pagina = fisica & !(memoria::PAGINA - 1);
+    let fin = (fisica + tamano).div_ceil(memoria::PAGINA) * memoria::PAGINA;
+    kprintln!("pantalla de la consola del kernel, al compositor: {}x{} en {:#x}", ancho, alto, fisica);
+    let info = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz())?;
+    let mut datos = [0u8; 20];
+    for (i, v) in [ancho, alto, paso, bgr as u32, (fisica - pagina) as u32].iter().enumerate() {
+        datos[4 * i..4 * i + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    info.escribir(0, &datos);
+    Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
+}
+
 pub fn lanzar() -> bool {
     let Some(d) = Dtb::desde() else { return false };
     let mut llaves: Vec<Llave> = Vec::new();
@@ -516,7 +548,12 @@ pub fn lanzar() -> bool {
     // La pantalla que dejó el firmware (U4): un nodo `simple-framebuffer` del árbol, que pone el cargador UEFI. Su
     // memoria, como memoria del firmware (está fuera de la RAM o en una zona reservada), y sus medidas en un objeto de
     // memoria: ancho, alto, bytes por línea, formato (0 a8r8g8b8, 1 a8b8g8r8) y desplazamiento dentro de la página.
-    if let Some((pantalla, info)) = pantalla_del_firmware(&d) {
+    // Con `escritorio`, la pantalla de la consola del kernel (la del buzón en la Pi 5); si no, la del árbol.
+    #[cfg(feature = "escritorio")]
+    let del_firmware = pantalla_del_kernel().or_else(|| pantalla_del_firmware(&d));
+    #[cfg(not(feature = "escritorio"))]
+    let del_firmware = pantalla_del_firmware(&d);
+    if let Some((pantalla, info)) = del_firmware {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
         apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
     }

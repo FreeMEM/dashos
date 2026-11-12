@@ -266,8 +266,8 @@ pi5: usuario FORCE
 # La tarjeta (o el SSD) para la Pi 5: una imagen de disco con la partición FAT de arranque (config.txt, la imagen y los
 # árboles oficiales de la Pi 5, bajados de github.com/raspberrypi/firmware; nada de eso va en git). Fuera de git.
 TARJETA_PI5 ?= $(HOME)/.cache/dashos-pi5/dashos-pi5.img
-tarjeta-pi5: pi5
-	python3 ../tools/preparar_pi5.py $(PI5) $(TARJETA_PI5)
+tarjeta-pi5: pi5-escritorio pi5
+	python3 ../tools/preparar_pi5.py $(PI5) $(TARJETA_PI5) $(PI5_ESCRITORIO)
 
 # El diagnóstico de la Pi 5 en QEMU virt: la misma consola en pantalla, con la pantalla que deja EDK2 (ramfb) en lugar
 # de la del buzón, y los mismos programas. Comprueba sus líneas en el puerto serie (pruebas/arranque_virt_diag.txt) y
@@ -281,6 +281,24 @@ arranque-virt-diag: usuario FORCE
 	GUARDAR=$(abspath target/salida_virt_diag.txt) CAPTURA=$(abspath target/diag.ppm) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_diag.txt 120
 	python3 ../tools/captura_diag.py target/diag.ppm
 	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/diag.ppm ../capturas-agente/pi5-diag-virt.png 2>/dev/null || true
+
+# El paso 4 (docs/bitacoras/pi5.md): el escritorio en la pantalla del firmware, sin GPU ni teclado. `make pi5-escritorio`
+# saca target/dashos-escritorio.img, que `tarjeta-pi5` mete también en la tarjeta (se elige en config.txt). En QEMU virt,
+# `arranque-virt-escritorio`: la pantalla pasa de la consola del kernel al compositor y la caja Amiga abre su ventana.
+PI5_ESCRITORIO := target/dashos-escritorio.img
+pi5-escritorio: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features pi5,escritorio
+	$(OBJCOPY) -O binary $(ELF) $(PI5_ESCRITORIO)
+	@ls -l $(PI5_ESCRITORIO)
+
+VIRT_ESCRITORIO := target/kernel8-virt-escritorio.img
+arranque-virt-escritorio: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,escritorio
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ESCRITORIO)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ESCRITORIO)) cargo build --release
+	rm -f target/escritorio.ppm
+	GUARDAR=$(abspath target/salida_virt_escritorio.txt) CAPTURA=$(abspath target/escritorio.ppm) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_escritorio.txt 120
+	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/escritorio.ppm ../capturas-agente/pi5-escritorio-virt.png 2>/dev/null || true
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

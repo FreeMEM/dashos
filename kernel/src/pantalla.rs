@@ -413,6 +413,17 @@ pub fn panico(info: &core::panic::PanicInfo) {
     e.pintar_panel(LINEAS_PANEL - 1);
 }
 
+/// Da la pantalla a un servicio (el compositor, con `escritorio`): la consola deja de pintar. Devuelve la pantalla
+/// (física, ancho, alto, bytes por fila, si va en a8b8g8r8).
+pub fn ceder() -> Option<(u64, u32, u32, u32, bool)> {
+    let mut e = ESTADO.tomar();
+    let (f, an, al, paso) = hw::medidas()?;
+    e.activa = false;
+    let bgr = hw::bgr();
+    hw::soltar();
+    Some((f, an, al, paso, bgr))
+}
+
 /// La pantalla, si la hay: (física, ancho, alto, bytes por fila) y el tamaño que se pidió al firmware (ancho, alto).
 pub fn medidas() -> Option<(u64, u32, u32, u32)> {
     hw::medidas()
