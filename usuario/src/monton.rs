@@ -4,6 +4,9 @@
 //! crece por arriba: cuando una petición no cabe, pide otro trozo y alarga la lista libre de
 //! `linked_list_allocator`. Nunca devuelve memoria al kernel. Lo usa el programa que llama a `dashos::monton!()`.
 //!
+//! Los trozos crecen: 128 KB, otros 128, y luego tanto como lo que ya hay, hasta 4 MB. El kernel da todas las páginas
+//! de un objeto al crearlo; con trozos fijos de 4 MB, un programa que usaba 200 KB gastaba 4 MB.
+//!
 //! Delante, listas por tamaño (paso F de docs/MULTITAREA_LOOP.md): lo pequeño (hasta 4 KB, alineado como mucho a 16)
 //! se pide en tamaños de potencia de dos, y lo que se suelta se guarda en la lista de su tamaño para la siguiente vez.
 //! `linked_list_allocator` busca un hueco recorriendo su lista libre, que crece con la fragmentación: el servicio de
@@ -17,9 +20,10 @@ use linked_list_allocator::Heap;
 
 /// Dónde empieza el montón: a 64 GB, en el tramo libre desde 4 GB (`docs/referencia/kernel.md`).
 pub const BASE: usize = 0x10_0000_0000;
-const TROZO: usize = 4 << 20;
+const TROZO_MIN: usize = 128 << 10;
+const TROZO_MAX: usize = 4 << 20;
 /// Tope: 256 MB.
-const TROZOS_MAX: usize = 64;
+const TOPE: usize = 256 << 20;
 
 /// Tamaños de las listas: 16, 32... 4096 bytes.
 const CLASES: usize = 9;
@@ -28,7 +32,7 @@ const MAX_CLASE: usize = 4096;
 
 pub struct Monton {
     cerrojo: AtomicBool,
-    pila: UnsafeCell<(Heap, usize)>, // la lista libre y cuántos trozos tiene
+    pila: UnsafeCell<(Heap, usize)>, // la lista libre y cuántos bytes tiene
     /// La cabeza de la lista de cada tamaño: bloques sueltos, enlazados por su primera palabra.
     libres: UnsafeCell<[*mut u8; CLASES]>,
 }
@@ -62,13 +66,18 @@ impl Monton {
     }
 }
 
-/// Proyecta el trozo número `i`; falso si el kernel no da más.
-fn trozo(i: usize) -> bool {
-    if i >= TROZOS_MAX {
+/// El tamaño del trozo siguiente, con `hay` bytes ya: tanto como lo que hay, entre 128 KB y 4 MB.
+fn siguiente(hay: usize) -> usize {
+    hay.clamp(TROZO_MIN, TROZO_MAX)
+}
+
+/// Proyecta un trozo de `tamano` bytes tras los `hay` que ya tiene; falso si el kernel no da más.
+fn trozo(hay: usize, tamano: usize) -> bool {
+    if hay + tamano > TOPE {
         return false;
     }
-    let llave = crate::memoria_crear(TROZO);
-    (llave as i32) > 0 && crate::memoria_proyectar(llave, BASE + i * TROZO, true) == 0
+    let llave = crate::memoria_crear(tamano);
+    (llave as i32) > 0 && crate::memoria_proyectar(llave, BASE + hay, true) == 0
 }
 
 unsafe impl GlobalAlloc for Monton {
@@ -92,15 +101,16 @@ unsafe impl GlobalAlloc for Monton {
                     return p.as_ptr();
                 }
             }
-            if !trozo(*n) {
+            let t = siguiente(*n);
+            if !trozo(*n, t) {
                 return ptr::null_mut();
             }
             if *n == 0 {
-                unsafe { h.init(BASE as *mut u8, TROZO) };
+                unsafe { h.init(BASE as *mut u8, t) };
             } else {
-                unsafe { h.extend(TROZO) };
+                unsafe { h.extend(t) };
             }
-            *n += 1;
+            *n += t;
         })
     }
 

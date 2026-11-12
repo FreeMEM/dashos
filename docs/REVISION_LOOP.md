@@ -1304,3 +1304,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Causa de los 4 MB: el montón (`usuario/src/monton.rs`) pide trozos de 4 MB, y el kernel da todas las páginas de un
   objeto de memoria al crearlo. Un programa que usa 200 KB gasta 4 MB. Siguiente: trozos que crecen (256 KB, y doblando).
 - `make prueba` BIEN; `make arranque-virt` tres vueltas a la vez, todo BIEN.
+
+### 2026-11-12 14:25: el montón crece por trozos de 128 KB a 4 MB
+- `usuario/src/monton.rs`: el trozo siguiente es tan grande como lo que ya hay, entre 128 KB y 4 MB (tope, 256 MB).
+- Medida (arranque de pruebas, igual en las tres vueltas): en uso 160,8 → 139,3 MB; los 24 procesos que ve el centro,
+  114,4 → 92,9 MB. Bajan los que usaban poco: ventana-a 4,3 → 0,4, sonido 4,2 → 0,3, compositor 4,6 → 2,6, red 4,2 →
+  2,2. Los del kit siguen en 4,4-6,4 MB: gastan de verdad (siguiente, mirar en qué).
+- `make prueba` BIEN; arranque-virt, dos de tres vueltas BIEN. La otra: el selector se quedó sin teclas cuando el
+  centro de control abrió su ventana encima (3 s tras abrirse el selector, con el PC cargado) y se rindió al minuto
+  ("nadie eligió en un minuto"); el menú de Ajustes, que espera al centro cerrado, no llegó. Es del guion, como los
+  fallos de antes: pendiente que el centro no se abra mientras el selector espera.
