@@ -46,7 +46,8 @@ impl Clase for Texto {
         let (tam, titulo, _) = estilo_texto(attrs, &ctx.tema);
         let f = if titulo { &mut ctx.medium } else { &mut ctx.regular };
         let m = f.medir(&texto_de(attrs), tam);
-        Medida { min: (m.ancho, m.alto()), max: (SIN_MAX, m.alto()), peso: 100 }
+        let alto = alto_de_linea(tam).max(m.alto());
+        Medida { min: (m.ancho, alto), max: (SIN_MAX, alto), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, _e: Estado) {
@@ -59,12 +60,28 @@ impl Clase for Texto {
     }
 }
 
-/// El tamaño, si va en medium (título) y el color de un texto según su `ESTILO` (Material 3: título 22, cuerpo 16,
-/// secundario 14 en el color suave).
+/// El alto de línea de Material 3 para cada tamaño de su escala de tipos (headline small 24/32, title large 22/28,
+/// body large 16/24, body medium y label large 14/20, body small 12/16).
+pub fn alto_de_linea(tam: u32) -> i32 {
+    match tam {
+        24 => 32,
+        22 => 28,
+        16 => 24,
+        14 => 20,
+        12 => 16,
+        t => (t * 4 / 3) as i32,
+    }
+}
+
+/// El tamaño, si va en medium y el color de un texto según su `ESTILO`, con la escala de tipos de Material 3:
+/// 1, el título de un diálogo o de una ventana (headline small: 24, regular); 2, el texto secundario (body medium: 14,
+/// en el color suave); 3, el rótulo de un grupo de controles (title small: 14, medium, en el color suave); si no, el
+/// cuerpo (body large: 16).
 fn estilo_texto(attrs: &BTreeMap<Atr, Valor>, t: &Tema) -> (u32, bool, crate::lienzo::Color) {
     match attrs.get(&atr::ESTILO).map_or(0, Valor::int) {
-        1 => (22, true, t.sobre_superficie),
+        1 => (24, false, t.sobre_superficie),
         2 => (14, false, t.sobre_variante_superficie),
+        3 => (14, true, t.sobre_variante_superficie),
         _ => (t.letra_texto, false, t.sobre_superficie),
     }
 }
@@ -137,22 +154,41 @@ impl Clase for Boton {
 }
 
 /// Una casilla de Material 3: un cuadrado de 18 con esquinas de 2, con contorno de 2 sin marcar, y relleno del primario
-/// con su marca si `VALOR` es sí. Con el foco, el espacio la cambia.
+/// con su marca si `VALOR` es sí. Con el foco, el espacio la cambia. Con `ETIQUETA`, su texto a la derecha (body large,
+/// 16), y toda la fila se pulsa (Material 3: la etiqueta es parte del control); sin ella, es una casilla suelta de 40.
 pub struct Casilla;
+
+/// Donde empieza la etiqueta de una casilla: tras la zona de 40 de la casilla, 12 más (el anillo de foco llega a 45).
+const CASILLA_ETIQUETA: i32 = 52;
 
 impl Clase for Casilla {
     fn nombre(&self) -> &'static str {
         "casilla"
     }
 
-    fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut Contexto) -> Medida {
-        Medida::fija(40, 40)
+    fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
+        let etiqueta = attrs.get(&atr::ETIQUETA).map(Valor::texto).unwrap_or_default();
+        if etiqueta.is_empty() {
+            return Medida::fija(40, 40);
+        }
+        let m = ctx.regular.medir(&etiqueta, ctx.tema.letra_texto);
+        Medida { min: (CASILLA_ETIQUETA + m.ancho + 8, 40), max: (SIN_MAX, 40), peso: 100 }
     }
 
     fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
         let t = &ctx.tema;
         let marcada = attrs.get(&atr::VALOR).is_some_and(Valor::bool);
-        let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+        let etiqueta = attrs.get(&atr::ETIQUETA).map(Valor::texto).unwrap_or_default();
+        // Con etiqueta, la casilla a la izquierda (su zona de 40) y el texto detrás; sin ella, en el centro.
+        let cx = if etiqueta.is_empty() { r.x + r.w / 2 } else { r.x + 20 };
+        let cy = r.y + r.h / 2;
+        if !etiqueta.is_empty() {
+            let tam = t.letra_texto;
+            let m = ctx.regular.medir(&etiqueta, tam);
+            let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_superficie };
+            ctx.regular.dibujar(l, r.x + CASILLA_ETIQUETA, r.y + (r.h - m.alto()) / 2 + m.sube, &etiqueta, tam, tinta);
+        }
+        let t = &ctx.tema;
         let caja = Rect::new(cx - 9, cy - 9, 18, 18);
         // La capa de estado es un círculo de 40 alrededor: del primario encima o con el foco de una marcada, y al
         // pulsar una sin marcar (va a quedar marcada); del texto en lo demás.
@@ -605,6 +641,9 @@ impl Clase for Ciclo {
 /// La fila actual (la del foco del teclado) es la elegida o, sin elegida, la primera que se ve. Con el foco del
 /// teclado se ve: la capa de foco (10 % del texto) y el anillo del secundario por dentro de la fila (3 de grosor). La
 /// elegida va en el contenedor secundario; así una fila puede ser actual sin estar elegida. El espacio elige la actual.
+/// Con `ESTILO` 1, la de navegación (el cajón de navegación de Material 3, para elegir la sección de una ventana): sin
+/// contenedor, el texto de etiqueta (14, medium) en el color suave, y la elegida en una píldora (esquinas de 28) del
+/// contenedor secundario, con su texto.
 pub struct Lista;
 
 const FILA: i32 = 56;
@@ -641,8 +680,9 @@ impl Clase for Lista {
     }
 
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
-        let tam = ctx.tema.letra_texto;
-        let ancho = Ciclo::opciones(attrs).iter().map(|o| ctx.regular.medir(o, tam).ancho).max().unwrap_or(0);
+        let navegacion = attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 1;
+        let (tam, f) = if navegacion { (ctx.tema.letra_etiqueta, &mut ctx.medium) } else { (ctx.tema.letra_texto, &mut ctx.regular) };
+        let ancho = Ciclo::opciones(attrs).iter().map(|o| f.medir(o, tam).ancho).max().unwrap_or(0);
         let alto = Self::filas(attrs) as i32 * FILA;
         Medida { min: (ancho + 32, alto), max: (SIN_MAX, alto), peso: 100 }
     }
@@ -653,31 +693,38 @@ impl Clase for Lista {
         let elegida = attrs.get(&atr::VALOR).map_or(-1, Valor::int);
         let actual = if e.anillo && !e.desactivado { Self::actual(attrs) } else { -1 };
         let primera = attrs.get(&atr::PRIMERA).map_or(0, Valor::int).max(0) as usize;
-        let tam = t.letra_texto;
+        let navegacion = attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 1;
+        let (tam, f) = if navegacion { (t.letra_etiqueta, &mut ctx.medium) } else { (t.letra_texto, &mut ctx.regular) };
         // Material 3: la lista sobre un contenedor de esquinas de 12, sin marco; la fila elegida, en el contenedor
-        // secundario, redondeada y separada 4 del borde.
-        l.redondeado(r, 12, t.contenedor_bajo());
+        // secundario, redondeada y separada 4 del borde. La de navegación, sin contenedor y con píldoras enteras.
+        let (dentro, radio) = if navegacion { (0, FILA / 2) } else { (4, 12) };
+        if !navegacion {
+            l.redondeado(r, 12, t.contenedor_bajo());
+        }
         l.recortar(r);
         for (k, o) in opciones.iter().enumerate().skip(primera).take(Self::filas(attrs) as usize) {
             let fila = Rect::new(r.x, r.y + (k - primera) as i32 * FILA, r.w, FILA);
             if k as i64 == elegida {
-                l.redondeado(fila.dentro(4), 12, t.contenedor_secundario());
+                let fondo = if e.desactivado { tema::fondo_apagado(t.sobre_superficie) } else { t.contenedor_secundario() };
+                l.redondeado(fila.dentro(dentro), radio, fondo);
             }
             let tinta = if e.desactivado {
                 tema::apagado(t.sobre_superficie)
             } else if k as i64 == elegida {
                 t.sobre_contenedor_secundario()
+            } else if navegacion {
+                t.sobre_variante_superficie
             } else {
                 t.sobre_superficie
             };
             // La actual, con el foco del teclado: la capa de foco del color de su texto y el anillo por dentro.
             if k as i64 == actual {
-                l.redondeado(fila.dentro(4), 12, tema::con_opacidad(tinta, 26));
-                l.borde(fila.dentro(4), 12, 3, t.secundario);
+                l.redondeado(fila.dentro(dentro), radio, tema::con_opacidad(tinta, 26));
+                l.borde(fila.dentro(dentro), radio, 3, t.secundario);
             }
-            let m = ctx.regular.medir(o, tam);
+            let m = f.medir(o, tam);
             let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
-            ctx.regular.dibujar(l, fila.x + 16, base, o, tam, tinta);
+            f.dibujar(l, fila.x + 16, base, o, tam, tinta);
         }
         l.soltar_recorte();
     }
@@ -731,11 +778,14 @@ impl Clase for Lista {
     }
 }
 
-/// Cómo se colocan los objetos: en filas y columnas, como los grupos de MUI.
+/// Cómo se colocan los objetos: en filas y columnas, como los grupos de MUI. `Espacio(n)`: un hueco fijo de `n` (más
+/// los 8 de siempre entre hijos), para los espacios de Material 3 que no son de 8 (16 bajo el título de un diálogo, 24
+/// antes de sus botones).
 pub enum Hijo {
     Obj(Obj),
     Fila(Vec<Hijo>),
     Columna(Vec<Hijo>),
+    Espacio(i32),
 }
 
 /// El menú de un desplegable, abierto: de qué objeto, la opción actual (la del teclado, o la que tiene el ratón
@@ -778,6 +828,8 @@ pub struct Interfaz {
     /// El radio de las esquinas de la ventana (Material 3): fuera, transparente; el búfer tiene que ser ARGB. 0, en
     /// ángulo recto (maximizada, o XRGB).
     pub esquinas: i32,
+    /// El margen alrededor de todo: 16 de serie; 24 en un diálogo (Material 3).
+    pub margen: i32,
     /// Todo lo que ocupa la interfaz (lo último que se pasó a `colocar`): un menú no sale de ahí.
     area: Rect,
     /// El menú abierto, si hay (el kit no tiene subsuperficies: va dentro de la ventana, encima de todo).
@@ -810,13 +862,15 @@ impl Interfaz {
             hora: None,
             ultimo_clic: None,
             esquinas: 0,
+            margen: 16,
             area: Rect::default(),
             menu: None,
             tragar: false,
         }
     }
 
-    fn nodo(&mut self, h: &Hijo) -> (Nodo, Vec<Obj>) {
+    /// El nodo de `h` y los objetos de sus hojas, en orden (un `Espacio` es una hoja sin objeto).
+    fn nodo(&mut self, h: &Hijo) -> (Nodo, Vec<Option<Obj>>) {
         match h {
             Hijo::Obj(o) => {
                 let obj = self.arbol.objeto(*o).unwrap();
@@ -824,8 +878,9 @@ impl Interfaz {
                 if let Some(p) = obj.attrs.get(&atr::PESO) {
                     m.peso = p.int().max(0) as u32;
                 }
-                (Nodo::Hoja(m), alloc::vec![*o])
+                (Nodo::Hoja(m), alloc::vec![Some(*o)])
             }
+            Hijo::Espacio(n) => (Nodo::Hoja(Medida::fija(*n, *n)), alloc::vec![None]),
             Hijo::Fila(hs) | Hijo::Columna(hs) => {
                 let mut hijos = Vec::new();
                 let mut objs = Vec::new();
@@ -841,24 +896,25 @@ impl Interfaz {
         }
     }
 
-    /// Lo mínimo que mide, con 16 de margen alrededor.
+    /// Lo mínimo que mide, con el `margen` alrededor.
     pub fn medida(&mut self) -> Medida {
         let raiz = core::mem::replace(&mut self.raiz, Hijo::Fila(Vec::new()));
         let (n, _) = self.nodo(&raiz);
         self.raiz = raiz;
         let m = grupos::medir(&n);
-        let mas = |v: i32| v.saturating_add(32).min(SIN_MAX);
-        Medida { min: (m.min.0 + 32, m.min.1 + 32), max: (mas(m.max.0), mas(m.max.1)), peso: m.peso }
+        let dos = 2 * self.margen;
+        let mas = |v: i32| v.saturating_add(dos).min(SIN_MAX);
+        Medida { min: (m.min.0 + dos, m.min.1 + dos), max: (mas(m.max.0), mas(m.max.1)), peso: m.peso }
     }
 
-    /// Coloca los objetos en `r` (con 16 de margen).
+    /// Coloca los objetos en `r` (con el `margen` alrededor).
     pub fn colocar(&mut self, r: Rect) {
         let raiz = core::mem::replace(&mut self.raiz, Hijo::Fila(Vec::new()));
         let (n, objs) = self.nodo(&raiz);
         self.raiz = raiz;
         let mut rects = Vec::new();
-        grupos::colocar(&n, r.dentro(16), &mut rects);
-        self.sitios = objs.into_iter().zip(rects).collect();
+        grupos::colocar(&n, r.dentro(self.margen), &mut rects);
+        self.sitios = objs.into_iter().zip(rects).filter_map(|(o, r)| Some((o?, r))).collect();
         self.area = r;
         // El menú, si hay, se vuelve a colocar con su desplegable: que se siga viendo la opción actual.
         if let Some(m) = self.menu {
@@ -1423,6 +1479,66 @@ mod pruebas {
         assert_eq!(i.arbol.leer(lista, atr::VALOR), Some(&Valor::Int(1)));
     }
 
+    /// kit-pulido: el margen de la interfaz, los `Espacio` (huecos sin objeto, que no descuadran los sitios), la
+    /// casilla con etiqueta (toda la fila se pulsa, y el texto va detrás de la casilla) y la escala de tipos (el título
+    /// de un diálogo, 24 regular en una línea de 32).
+    #[test]
+    fn margen_espacios_y_casilla_con_etiqueta() {
+        let mut a = Arbol::new();
+        let titulo = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Ajustes".into())), (atr::ESTILO, Valor::Int(1))]);
+        let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false)), (atr::ETIQUETA, Valor::Texto("Sonido".into()))]);
+        let boton = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Vale".into()))]);
+        let raiz = Hijo::Columna(vec![Hijo::Obj(titulo), Hijo::Espacio(0), Hijo::Obj(casilla), Hijo::Espacio(8), Hijo::Obj(boton)]);
+        let mut i = Interfaz::new(a, raiz, Tema::CLARO);
+        i.margen = 24;
+        // 24 + 32 (título) + 8 + 0 + 8 + 40 (casilla) + 8 + 8 + 8 + 40 (botón) + 24.
+        assert_eq!(i.medida().min.1, 24 + 32 + 16 + 40 + 24 + 40 + 24);
+        i.colocar(Rect::new(0, 0, 300, 400));
+        assert_eq!(i.sitios.len(), 3);
+        assert_eq!(i.sitios[&titulo], Rect::new(24, 24, 252, 32));
+        let r = i.sitios[&casilla];
+        assert_eq!((r.x, r.y, r.w, r.h), (24, 24 + 32 + 16, 252, 40));
+        assert_eq!(i.sitios[&boton].y, r.y + 40 + 24);
+        // Un clic en el texto, lejos de la casilla, la marca.
+        i.raton(r.x + 120, r.y + 20, true);
+        i.raton(r.x + 120, r.y + 20, false);
+        assert_eq!(i.arbol.leer(casilla, atr::VALOR), Some(&Valor::Bool(true)));
+        // La casilla, a la izquierda (centro en x + 20), y algo del texto detrás de la zona de 40.
+        let mut px = vec![0u32; 300 * 400];
+        let mut l = Lienzo::new(&mut px, 300, 400, 300);
+        i.dibujar(&mut l);
+        let en = |x: i32, y: i32| px[(y * 300 + x) as usize];
+        assert_eq!(en(r.x + 14, r.y + 13), Tema::CLARO.primario);
+        assert!((r.x + 52..r.x + 110).any(|x| (r.y..r.y + 40).any(|y| en(x, y) != Tema::CLARO.superficie)));
+        assert!((r.x + 41..r.x + 52).all(|x| (r.y..r.y + 40).all(|y| en(x, y) == Tema::CLARO.superficie)));
+    }
+
+    /// La lista de navegación (`ESTILO` 1): sin contenedor, la elegida en una píldora del contenedor secundario.
+    #[test]
+    fn lista_de_navegacion() {
+        let mut a = Arbol::new();
+        let lista = a.crear(Lista, &[
+            (atr::OPCIONES, Valor::Texto("Uno|Dos".into())),
+            (atr::FILAS, Valor::Int(2)),
+            (atr::VALOR, Valor::Int(1)),
+            (atr::ESTILO, Valor::Int(1)),
+        ]);
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(lista)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 200, 150));
+        let r = i.sitios[&lista];
+        let mut px = vec![0u32; 200 * 150];
+        let mut l = Lienzo::new(&mut px, 200, 150, 200);
+        i.dibujar(&mut l);
+        let t = Tema::CLARO;
+        let en = |x: i32, y: i32| px[(y * 200 + x) as usize];
+        // Sin contenedor: en la primera fila, la superficie de la ventana.
+        assert_eq!(en(r.x + 2, r.y + 28), t.superficie);
+        // La elegida: píldora (en la esquina de la fila no llega; en el medio del borde izquierdo, sí).
+        assert_eq!(en(r.x + 1, r.y + 56 + 28), t.contenedor_secundario());
+        assert_eq!(en(r.x + 1, r.y + 56 + 1), t.superficie);
+        assert_eq!(en(r.x + r.w / 2, r.y + 56 + 4), t.contenedor_secundario());
+    }
+
     /// Tab llega también a los botones; Intro o espacio los pulsan; Mayúsculas+Tab vuelve atrás.
     #[test]
     fn botones_con_el_teclado() {
@@ -1897,9 +2013,9 @@ mod pruebas {
     fn una_ventana_que_responde() {
         let (mut i, [texto, desl, casilla, _cancelar, aceptar]) = ventana();
         let m = i.medida();
-        // 16 de margen arriba y abajo, el texto (19 a 16 píxeles), la fila del deslizador (44) y la de los botones (40),
-        // con 8 entre cada cosa.
-        assert_eq!(m.min.1, 32 + 19 + 8 + 44 + 8 + 40, "{m:?}");
+        // 16 de margen arriba y abajo, el texto (body large: línea de 24), la fila del deslizador (44) y la de los
+        // botones (40), con 8 entre cada cosa.
+        assert_eq!(m.min.1, 32 + 24 + 8 + 44 + 8 + 40, "{m:?}");
         assert!(m.min.0 >= 200 && m.max.1 >= m.min.1, "{m:?}");
         let (w, h) = (400, 200);
         i.colocar(Rect::new(0, 0, w, h));

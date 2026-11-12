@@ -57,6 +57,7 @@ fn main() {
         (Box::new(Boton), attrs(&[(atr::TEXTO, texto("Cancelar")), (atr::ESTILO, Valor::Int(2))]), (100, 40)),
         (Box::new(Casilla), attrs(&[(atr::VALOR, Valor::Bool(false))]), (40, 40)),
         (Box::new(Casilla), attrs(&[(atr::VALOR, Valor::Bool(true))]), (40, 40)),
+        (Box::new(Casilla), attrs(&[(atr::VALOR, Valor::Bool(false)), (atr::ETIQUETA, texto("Sonido"))]), (130, 40)),
         (Box::new(Deslizador), attrs(&[(atr::VALOR, Valor::Int(60))]), (130, 44)),
         (Box::new(Deslizador), attrs(&[(atr::VALOR, Valor::Int(0))]), (130, 44)),
         (Box::new(Ciclo), attrs(&[(atr::OPCIONES, texto("Claro|Oscuro"))]), (130, 56)),
@@ -68,6 +69,8 @@ fn main() {
         // La lista: con una elegida (con el foco del teclado, la actual es ella) y sin elegida (la actual, la primera).
         (Box::new(Lista), attrs(&[(atr::OPCIONES, texto("Uno|Dos")), (atr::FILAS, Valor::Int(2)), (atr::VALOR, Valor::Int(1))]), (140, 112)),
         (Box::new(Lista), attrs(&[(atr::OPCIONES, texto("Uno|Dos")), (atr::FILAS, Valor::Int(2)), (atr::VALOR, Valor::Int(-1))]), (140, 112)),
+        // La de navegación (ESTILO 1), con la segunda elegida.
+        (Box::new(Lista), attrs(&[(atr::OPCIONES, texto("Permisos|Discos")), (atr::FILAS, Valor::Int(2)), (atr::VALOR, Valor::Int(1)), (atr::ESTILO, Valor::Int(1))]), (140, 112)),
     ];
     let col = 160;
     let alto_fila = |ch: i32| ch + 32;

@@ -778,6 +778,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         (atr::FILAS, Valor::Int(CATEGORIAS.len() as i64)),
         (atr::VALOR, Valor::Int(categoria as i64)),
         (atr::PESO, Valor::Int(40)),
+        // La de navegación de Material 3: sin contenedor y la categoría elegida en una píldora.
+        (atr::ESTILO, Valor::Int(1)),
     ]);
     // Material 3: la categoría como título y su explicación como texto secundario; Quitar, tonal; Cerrar, de texto.
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
@@ -799,8 +801,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     ]);
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
-    // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
+    // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto. 24 de margen.
     i.esquinas = 16;
+    i.margen = 24;
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;

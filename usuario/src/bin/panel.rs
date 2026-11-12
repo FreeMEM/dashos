@@ -237,7 +237,7 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
     px[..(ANCHO * alto) as usize].fill(0);
     let mut l = Lienzo::new(px, ANCHO, alto, ANCHO as usize);
     l.redondeado(Rect::new(0, 0, ANCHO, alto), 28, t.contenedor());
-    medio.dibujar(&mut l, 24, 40, if e.editando { "Editar panel" } else { "Panel rápido" }, 22, t.sobre_superficie);
+    fuente.dibujar(&mut l, 24, 40, if e.editando { "Editar panel" } else { "Panel rápido" }, 22, t.sobre_superficie);
     // Editar: botón tonal; Hecho: lleno (lo que se espera que se pulse).
     let (fondo, texto) = if e.editando { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
     l.redondeado(BOTON_CABECERA, BOTON_CABECERA.h / 2, fondo);
