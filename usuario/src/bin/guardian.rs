@@ -161,7 +161,35 @@ fn principal() -> u64 {
     let (lectura, suyo) = dashos::canal_crear();
     let mandado = dashos::canal_escribir(CENTRO, b"abrir permisos", &[suyo]);
     let mut r4 = [0u8; 4];
-    let cerrado = mandado == 0 && dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 60_000_000).0 == 4;
+    // Mientras está abierto, se siguen atendiendo las acciones de administrador (el centro comprueba el disco desde
+    // Discos): en la prueba, a "centro" se le da la contraseña de Ana, como a `pide`.
+    let mut cerrado = false;
+    let hasta = dashos::ahora_us() + 60_000_000;
+    while mandado == 0 && dashos::ahora_us() < hasta {
+        if dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 200_000).0 == 4 {
+            cerrado = true;
+            break;
+        }
+        let mut q = [0u8; PREGUNTA];
+        if dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 1_000).0 as usize != PREGUNTA {
+            continue;
+        }
+        let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+        let (programa, servicio) = (&q[8..8 + campo(&q[8..24])], &q[24..24 + campo(&q[24..40])]);
+        if programa == b"centro" && servicio.first() == Some(&b'*') {
+            let (usuario, clave): (&[u8], &[u8]) = (b"Ana", b"clave de Ana");
+            let mut r = [0u8; 64];
+            r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(usuario.len() as u32).to_le_bytes());
+            r[12..16].copy_from_slice(&(clave.len() as u32).to_le_bytes());
+            r[16..16 + usuario.len()].copy_from_slice(usuario);
+            r[16 + usuario.len()..16 + usuario.len() + clave.len()].copy_from_slice(clave);
+            pedir(&r[..16 + usuario.len() + clave.len()], &[]);
+            r.fill(0);
+            println!("  [guardian] centro pide {}: contesta como Ana", core::str::from_utf8(&servicio[1..]).unwrap_or("?"));
+        }
+    }
     dashos::cerrar(lectura);
     println!("  [guardian] pide al centro abrir Permisos: {}, y se cerró: {}", mandado, if cerrado { "sí" } else { "no" });
     let admin = admin_pide == 2 && admin_hostil == 3;

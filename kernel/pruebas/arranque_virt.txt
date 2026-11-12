@@ -139,6 +139,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Seguridad, con negativas del hostil: sí;
 # Discos: el disco de pruebas, 7 MB (sin derechos: solo INFO).
 ~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
+# Y comprobar el disco desde ahí: acción de administrador; `guardian` contesta (en la prueba, como Ana).
+~│   [guardian] centro pide comprobar: contesta como Ana
+~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.

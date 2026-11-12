@@ -228,7 +228,31 @@ fn discos() -> Vec<String> {
     if l.is_empty() {
         l.push(String::from("El servicio de archivos no contesta"));
     }
+    // La acción (con Intro o doble clic): la hace `archivos` si `guardian` da por buena una contraseña de administrador.
+    l.push(String::from(COMPROBAR));
     l
+}
+
+/// La última fila de Discos.
+const COMPROBAR: &str = "Comprobar el disco (pide administrador)";
+
+/// Comprobar el disco: la acción de administrador "comprobar" (U5) por `sesiones`, que se lo pregunta a `guardian`.
+/// El estado y cuántos problemas.
+fn comprobar_disco() -> (i32, u64) {
+    let accion = b"comprobar";
+    let mut p = [0u8; 12 + 9];
+    p[0..4].copy_from_slice(&s::ADMINISTRAR.to_le_bytes());
+    p[4..8].copy_from_slice(&(accion.len() as u32).to_le_bytes());
+    p[12..].copy_from_slice(accion);
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 12];
+    // Hasta que el usuario conteste y se compruebe: 30 s.
+    let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 30_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n != 12 {
+        return (i32::MIN, 0);
+    }
+    (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap()))
 }
 
 /// Donde se proyecta la ventana de la sesión con `archivos` (la de Wayland va en `VA`).
@@ -723,6 +747,21 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         // Y se relee, como al abrir la próxima vez.
                         let releida = leer_apariencia() == Ok((oscuro, color));
                         println!("  [centro] Apariencia: {}, color {}; guardada: {} ({} bytes); releída: {}", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0, guardado, bytes, if releida { "sí" } else { "no" });
+                        cambio = true;
+                    }
+                }
+                Some("elegir") if cat == DISCOS => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if usize::try_from(v).ok().and_then(|v| lineas_registro.get(v)).is_some_and(|l| l == COMPROBAR) {
+                        let (estado, problemas) = comprobar_disco();
+                        println!("  [centro] Comprobar el disco: {}, {} problemas", estado, problemas);
+                        let linea = if estado == 0 { alloc::format!("Comprobado: {} problemas", problemas) } else { alloc::format!("No se comprobó ({})", estado) };
+                        lineas_registro = discos();
+                        lineas_registro.insert(lineas_registro.len() - 1, linea);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
+                        i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
                         cambio = true;
                     }
                 }

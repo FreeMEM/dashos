@@ -196,12 +196,21 @@ while time.time() - inicio < total:
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
+            centro = 14
+            time.sleep(0.5)
+            # Comprobar el disco: Tab a la lista, Fin (la última fila) e Intro; `guardian` contesta como administradora.
+            mandar("sendkey tab", "sendkey end", "sendkey ret", pausa=0.3)
+            reintento = time.time() + 30
+        if centro == 14:
+            if "[centro] Comprobar el disco: " not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
             centro = 11
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".discos.ppm")
             time.sleep(0.5)
-            mandar("sendkey down")
+            mandar("sendkey tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         # Pantallas; y otra abajo, Apariencia.
         if centro == 11:

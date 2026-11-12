@@ -969,3 +969,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   (`ACENTOS`) en claro y oscuro, calculada en el PC con `desde_color`; `Tema::del_sistema` la usa (y calcula los demás
   colores). La prueba `tabla_igual_que_el_calculo` la compara con el cálculo (si `desde_color` cambia, falla y la tabla
   se rehace). El centro toma los acentos del kit. Medido en Ajustes, cambiar al azul oscuro: de 331.914 µs a 68 µs.
+- S10c, C1 completo: en Discos, "Comprobar el disco (pide administrador)". Con Intro o doble clic el centro pide a
+  `sesiones` la acción de administrador "comprobar" (U5); `sesiones` se la pregunta a `guardian`, que pide la
+  contraseña de un administrador, y la hace `archivos`. El centro enseña "Comprobado: N problemas". Lo que lo impedía
+  en la prueba: `guardian` esperaba, bloqueado, a que se cerrara el centro; ahora, mientras espera, sigue atendiendo
+  las acciones de administrador (en la prueba, a "centro" le contesta como Ana, como a `pide`). Prueba en virt: Tab,
+  Fin e Intro; "centro pide comprobar: contesta como Ana" y "Comprobar el disco: 0, 0 problemas". Las negativas
+  (contraseña mala, de quien no es administradora) ya las prueba el hostil por la misma acción. Captura nueva en
+  `docs/capturas/s10c-centro-discos.png`.
