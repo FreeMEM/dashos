@@ -167,6 +167,9 @@ pub struct Mezclador {
     flujos: Vec<Flujo>,
     siguiente: u32,
     mezcla: Vec<Cuadro>,
+    /// El volumen general (C2: el del panel rápido), pedido y aplicado al final del último período, con 1,0 = 65.536.
+    general: i64,
+    general_actual: i64,
 }
 
 /// Un volumen de 0 a 4 (o NaN, que es 0) a coma fija.
@@ -177,7 +180,7 @@ fn a_volumen(v: f32) -> i64 {
 impl Mezclador {
     /// Un mezclador cuya salida va a `frecuencia` cuadros por segundo.
     pub fn nuevo(frecuencia: u32) -> Mezclador {
-        Mezclador { frecuencia, flujos: Vec::new(), siguiente: 1, mezcla: Vec::new() }
+        Mezclador { frecuencia, flujos: Vec::new(), siguiente: 1, mezcla: Vec::new(), general: UNO_VOL, general_actual: UNO_VOL }
     }
 
     pub fn frecuencia(&self) -> u32 {
@@ -246,6 +249,12 @@ impl Mezclador {
         true
     }
 
+    /// El volumen general, de 0 a 1 (más de 1 amplifica, hasta 4), sobre la mezcla entera; cambia con una rampa a lo largo
+    /// del período siguiente, como el de cada flujo.
+    pub fn volumen_general(&mut self, v: f32) {
+        self.general = a_volumen(v);
+    }
+
     /// Reajusta el ritmo del flujo, en partes por millón (de -10.000 a 10.000): positivo gasta la entrada más deprisa.
     pub fn ajustar(&mut self, id: u32, ppm: i32) -> bool {
         let Some(f) = self.flujo(id) else { return false };
@@ -305,6 +314,15 @@ impl Mezclador {
             }
         }
         self.flujos.retain(|f| f.estado != Estado::Saliendo(0));
+        // El volumen general, con su rampa; a 1 y sin cambiar, nada que hacer.
+        if self.general != UNO_VOL || self.general_actual != UNO_VOL {
+            let (a, b) = (self.general_actual, self.general);
+            for (i, s) in salida.iter_mut().enumerate() {
+                let g = a + (b - a) * (i as i64 + 1) / n;
+                *s = s.map(|x| ((x as i64 * g) >> 16).clamp(i32::MIN as i64, i32::MAX as i64) as i32);
+            }
+            self.general_actual = b;
+        }
     }
 
     /// Mezcla un período en estéreo de 16 bits entrelazado (izquierda, derecha): `salida` tiene dos muestras por

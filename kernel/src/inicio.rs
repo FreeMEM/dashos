@@ -73,9 +73,6 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "centro", "archivos"]),
     #[cfg(feature = "virt")]
     ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones", "centro"]),
-    // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa y el canal del centro para el modo.
-    #[cfg(feature = "virt")]
-    ("panel", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/panel"), &[], &["ventanas", "centro"]),
     #[cfg(feature = "virt")]
     ("pide", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/pide"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
@@ -98,6 +95,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
     // Los dos, con el permiso de la clase de plazo (S3).
     ("sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/sonido"), &[("plazo", PLAZO)], &["sonido"]),
+    // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
+    // el del sonido para el volumen general. Tras el servicio de sonido, que es quien sirve ese canal.
+    #[cfg(feature = "virt")]
+    ("panel", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/panel"), &[], &["ventanas", "centro", "sonido"]),
     ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
     #[cfg(all(feature = "virt", not(feature = "paula")))]

@@ -417,6 +417,10 @@ fn archivos(memoria: u32) -> bool {
 /// Sonido: ataques y, después, abrir un flujo tiene que dar el aviso de "pide muestras".
 fn sonido(memoria: u32) -> bool {
     escribir(SONIDO, &[], &[]);
+    // C2: el volumen general a 0 (solo lo pone el panel rápido). Si colara, la prueba del sonido lo vería en silencio.
+    let general: [u32; 2] = [13, 0.0f32.to_bits()];
+    let bytes: alloc::vec::Vec<u8> = general.iter().flat_map(|w| w.to_le_bytes()).collect();
+    escribir(SONIDO, &bytes, &[]);
     // VOLUMEN sin flujo abierto, con 8 llaves.
     let volumen: [u32; 3] = [11, 0, 0];
     let bytes: alloc::vec::Vec<u8> = volumen.iter().flat_map(|w| w.to_le_bytes()).collect();

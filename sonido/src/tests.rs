@@ -137,6 +137,25 @@ fn volumen_sin_escalon() {
     assert_eq!(pico(&despues[256..]), 0.0);
 }
 
+/// C2: el volumen general baja la mezcla entera sin escalón, y a 1 la deja igual.
+#[test]
+fn volumen_general() {
+    let mut m = Mezclador::nuevo(SALIDA);
+    let a = m.abrir(Formato { muestra: Muestra::I16, canales: 1, frecuencia: SALIDA }).unwrap();
+    m.escribir(a, &i16_mono(SALIDA, 100.0, 0.9, 0.5));
+    let antes = mezclar(&mut m, 512);
+    let limite = salto(&antes[256..]);
+    let pico_antes = pico(&antes[256..]);
+    m.volumen_general(0.25);
+    let despues = mezclar(&mut m, 512);
+    assert!(salto(&despues) <= limite * 1.05, "escalón al bajar");
+    let otra = mezclar(&mut m, 512);
+    assert!((pico(&otra) - pico_antes * 0.25).abs() < 0.01, "{} frente a {}", pico(&otra), pico_antes * 0.25);
+    m.volumen_general(0.0);
+    mezclar(&mut m, 512);
+    assert_eq!(pico(&mezclar(&mut m, 512)), 0.0);
+}
+
 /// Quedarse sin muestras a mitad cuenta como falta; un flujo que aún no empezó, no.
 #[test]
 fn faltas() {

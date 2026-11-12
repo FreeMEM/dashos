@@ -155,6 +155,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [panel] abierto; mosaico a
 ~│   [centro] modo claro (lo pide el panel), guardado: 0
 ~│   [centro] modo oscuro (lo pide el panel), guardado: 0
+~│   [sonido] volumen general: 90 % (lo pide panel)
+~│   [sonido] volumen general: 100 % (lo pide panel)
+~│   [sonido] hostil pide el volumen general: no le toca
 ~│   [panel] cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).

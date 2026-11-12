@@ -1155,3 +1155,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   aviso de inactividad pendiente, ya) y el compositor solo se la acepta al panel (`abren_panel`); a otro, error de
   protocolo y nada (prueba `bloquear_desde_el_panel` en la escena). El panel se cierra y la pide. En virt no se pulsa:
   cuando se prueba el panel, `guardian` ya acabó y no hay quién bloquee. Captura nueva.
+- S10c, C2: el mosaico del volumen en el panel ("−" y "+" de 10 en 10 %). El mezclador tiene un volumen general sobre
+  la mezcla entera, con rampa a lo largo del período como el de cada flujo; a 100 % y sin cambiar no hace nada (un
+  `if` por período). Prueba en `sonido`: baja sin escalón, al 25 % da un cuarto del pico, a 0 silencio. El servicio
+  acepta la orden nueva `GENERAL` (13) solo de `panel`; `hostil` la manda a 0 y recibe "no le toca" (si colara, la
+  prueba del sonido del arranque lo vería). En virt: "−" (90 %) y "+" (100 %). El panel va ahora tras el servicio de
+  sonido en `inicio` (puesto antes, se quedaba él de servidor del canal "sonido" y no había sonido). Captura nueva.

@@ -323,14 +323,14 @@ while time.time() - inicio < total:
                 continue
             centro = 4
         # C2: el panel rápido. Cuando `guardian` acaba sus bloqueos (con la sesión bloqueada, Super+A no hace nada): Super+A lo abre; un clic en el mosaico apaga el modo oscuro y
-        # otro lo vuelve a encender (lo pone el centro, que lo guarda); Super+A lo cierra. La pantalla mide 800 de ancho.
+        # otro lo vuelve a encender (lo pone el centro, que lo guarda); "−" y "+" del volumen; Super+A lo cierra. La pantalla mide 800 de ancho.
         # Con CAPTURA_CENTRO, también fichero.panel.ppm (abierto, en oscuro) y fichero.panel-claro.ppm.
         if panel == 0 and "[guardian] bloqueo con la tecla: " in texto:
             panel = 1
             time.sleep(0.5)
             mandar("sendkey meta_l-a")
             reintento = time.time() + 6
-        if panel in (1, 2, 3, 4):
+        if panel in (1, 2, 3, 4, 5, 6):
             import re
             def ir_panel(x, y):
                 mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
@@ -343,8 +343,11 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
             m = re.search(r"\[panel\] abierto; mosaico a \((\d+), (\d+)\)", texto)
-            espera = {1: m is not None, 2: "[centro] modo claro (lo pide el panel)" in texto,
-                      3: "[centro] modo oscuro (lo pide el panel)" in texto, 4: "[panel] cerrado" in texto}[panel]
+            vol = re.search(r"\[panel\] volumen: menos a \((\d+), (\d+)\), más a \((\d+), (\d+)\)", texto)
+            espera = {1: m is not None and vol is not None, 2: "[centro] modo claro (lo pide el panel)" in texto,
+                      3: "[centro] modo oscuro (lo pide el panel)" in texto,
+                      4: "[sonido] volumen general: 90 % (lo pide panel)" in texto,
+                      5: "[sonido] volumen general: 100 % (lo pide panel)" in texto, 6: "[panel] cerrado" in texto}[panel]
             if not espera:
                 if time.time() > reintento:
                     panel = 5  # no llegó: las líneas que falten lo dirán
@@ -356,6 +359,11 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_centro + (".panel.ppm" if panel == 1 else ".panel-claro.ppm"))
                 ir_panel(800 - int(m.group(1)), int(m.group(2)))
             elif panel == 3:
+                # El volumen general: "−" (90 %) y luego "+" (100 %, como estaba).
+                ir_panel(800 - int(vol.group(1)), int(vol.group(2)))
+            elif panel == 4:
+                ir_panel(800 - int(vol.group(3)), int(vol.group(4)))
+            elif panel == 5:
                 time.sleep(0.5)
                 mandar("sendkey meta_l-a")
             panel += 1

@@ -5,7 +5,10 @@
 //! ("modo oscuro" o "modo claro" por su canal, que solo se lo acepta a `panel`), que es quien lo guarda. Sigue el tema
 //! del sistema, como lo demás.
 //!
-//! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 el canal "centro".
+//! Y el volumen general: "−" y "+" de 10 en 10 %, por la orden `GENERAL` del servicio de sonido (solo se la acepta a
+//! él).
+//!
+//! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 el canal "centro", 3 el canal "sonido".
 
 #![no_std]
 #![no_main]
@@ -28,20 +31,24 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const CENTRO: u32 = 2;
+const SONIDO: u32 = 3;
+const GENERAL: u32 = 13;
 const CAPAS: u32 = 20;
 const CAPA: u32 = 21;
 const TEMA: u32 = 22;
 const ANCHO: i32 = 300;
-const ALTO: i32 = 220;
+const ALTO: i32 = 296;
 /// La distancia a los bordes de arriba y de la derecha.
 const MARGEN: i32 = 8;
 /// El mosaico del modo oscuro, dentro del panel.
 const MOSAICO: Rect = Rect { x: 16, y: 56, w: 268, h: 64 };
 /// El de bloquear, debajo.
 const BLOQUEAR: Rect = Rect { x: 16, y: 132, w: 268, h: 64 };
+/// El del volumen: la mitad izquierda baja, la derecha sube.
+const VOLUMEN: Rect = Rect { x: 16, y: 208, w: 268, h: 64 };
 const BOTON_IZQUIERDO: u32 = 0x110;
 
-fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, fuente: &mut Fuente, titulo: &mut Fuente) {
+fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, volumen: u32, fuente: &mut Fuente, titulo: &mut Fuente) {
     let mut l = Lienzo::new(px, ANCHO, ALTO, ANCHO as usize);
     l.rellenar(Rect::new(0, 0, ANCHO, ALTO), t.superficie);
     l.borde(Rect::new(0, 0, ANCHO, ALTO), 0, 1, t.variante_contorno);
@@ -54,6 +61,19 @@ fn pintar(px: &mut [u32], t: &Tema, oscuro: bool, fuente: &mut Fuente, titulo: &
     l.redondeado(BLOQUEAR, 16, t.variante_superficie);
     fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 14, "Bloquear", 18, t.sobre_variante_superficie);
     fuente.dibujar(&mut l, BLOQUEAR.x + 20, BLOQUEAR.y + 38, "Super+L", 14, t.sobre_variante_superficie);
+    l.redondeado(VOLUMEN, 16, t.variante_superficie);
+    let v = t.sobre_variante_superficie;
+    fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 14, "Volumen", 18, v);
+    fuente.dibujar(&mut l, VOLUMEN.x + 20, VOLUMEN.y + 38, &alloc::format!("{} %", volumen), 14, v);
+    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 96, VOLUMEN.y + 18, "−", 28, v);
+    fuente.dibujar(&mut l, VOLUMEN.x + VOLUMEN.w - 44, VOLUMEN.y + 18, "+", 28, v);
+}
+
+/// El volumen general al servicio de sonido (sin respuesta).
+fn pedir_volumen(por_ciento: u32) {
+    let p: [u32; 2] = [GENERAL, (por_ciento as f32 / 100.0).to_bits()];
+    let b: alloc::vec::Vec<u8> = p.iter().flat_map(|w| w.to_le_bytes()).collect();
+    dashos::canal_escribir(SONIDO, &b, &[]);
 }
 
 /// Pide el modo al centro de control; su estado (0 si lo puso).
@@ -108,10 +128,11 @@ fn principal() -> u64 {
     let mut tema = Tema::CLARO;
     let mut oscuro = false;
     let mut abierto = false;
+    let mut volumen = 100u32;
     let (mut x, mut y, mut dentro) = (0i32, 0i32, false);
-    let pintar_y_mandar = |c: &mut Cliente, tema: &Tema, oscuro: bool, fuente: &mut Fuente, titulo: &mut Fuente| {
+    let pintar_y_mandar = |c: &mut Cliente, tema: &Tema, oscuro: bool, volumen: u32, fuente: &mut Fuente, titulo: &mut Fuente| {
         let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-        pintar(px, tema, oscuro, fuente, titulo);
+        pintar(px, tema, oscuro, volumen, fuente, titulo);
         let mut e = Escritor::new();
         e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
         e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
@@ -129,7 +150,7 @@ fn principal() -> u64 {
                 oscuro = palabra(1) != 0;
                 tema = Tema::del_sistema(palabra(0) | 0xff00_0000, oscuro);
                 if abierto {
-                    pintar_y_mandar(&mut c, &tema, oscuro, &mut fuente, &mut titulo);
+                    pintar_y_mandar(&mut c, &tema, oscuro, volumen, &mut fuente, &mut titulo);
                 }
             }
             (TEMA, dashos_tema_v1::ev::PANEL) if abierto => {
@@ -157,10 +178,13 @@ fn principal() -> u64 {
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
-                pintar_y_mandar(&mut c, &tema, oscuro, &mut fuente, &mut titulo);
-                // Para las pruebas: dónde queda el mosaico, desde la esquina de arriba a la derecha de la pantalla.
+                pintar_y_mandar(&mut c, &tema, oscuro, volumen, &mut fuente, &mut titulo);
+                // Para las pruebas: dónde quedan los mosaicos, desde la esquina de arriba a la derecha de la pantalla.
                 println!("  [panel] abierto; mosaico a ({}, {}) de la esquina de arriba a la derecha",
                     MARGEN + ANCHO - MOSAICO.x - MOSAICO.w / 2, MARGEN + MOSAICO.y + MOSAICO.h / 2);
+                println!("  [panel] volumen: menos a ({}, {}), más a ({}, {})",
+                    MARGEN + ANCHO - VOLUMEN.x - VOLUMEN.w / 4, MARGEN + VOLUMEN.y + VOLUMEN.h / 2,
+                    MARGEN + ANCHO - VOLUMEN.x - 3 * VOLUMEN.w / 4, MARGEN + VOLUMEN.y + VOLUMEN.h / 2);
             }
             (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => abierto = false,
             (PUNTERO, wl_pointer::ev::ENTER) => {
@@ -173,6 +197,10 @@ fn principal() -> u64 {
                 if MOSAICO.contiene(x, y) {
                     let estado = pedir_modo(!oscuro);
                     println!("  [panel] modo oscuro {}: {}", if oscuro { "apagado" } else { "encendido" }, estado);
+                } else if VOLUMEN.contiene(x, y) {
+                    volumen = if x < VOLUMEN.x + VOLUMEN.w / 2 { volumen.saturating_sub(10) } else { (volumen + 10).min(100) };
+                    pedir_volumen(volumen);
+                    pintar_y_mandar(&mut c, &tema, oscuro, volumen, &mut fuente, &mut titulo);
                 } else if BLOQUEAR.contiene(x, y) {
                     // Se cierra el panel y se pide el bloqueo: lo hace quien bloquea (`guardian`), como con Super+L.
                     abierto = false;

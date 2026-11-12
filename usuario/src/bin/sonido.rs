@@ -10,6 +10,7 @@
 //!   tic, el servicio mezcla hasta tener `ADELANTE` períodos listos.
 //! - Un programa manda `ABRIR` (formato) con la memoria de su anillo y el extremo de escritura de un canal suyo
 //!   (`usuario/src/sonido_cliente.rs`); `VOLUMEN` y `CERRAR`. Un flujo por programa.
+//! - `GENERAL` (f32): el volumen general, sobre la mezcla entera. Solo del panel rápido (C2 de S10c); de otro, nada.
 //!
 //! Cuando el anillo de un programa baja de la mitad, se le despierta por su canal. Si el canal está cerrado, el
 //! programa murió: su flujo sale con el fundido del mezclador (A5).
@@ -35,6 +36,9 @@ const TIC: u32 = 2;
 const ABRIR: u32 = 10;
 const VOLUMEN: u32 = 11;
 const CERRAR: u32 = 12;
+const GENERAL: u32 = 13;
+/// Quién puede cambiar el volumen general, por el nombre que da `inicio`.
+const PONEN_GENERAL: &[&str] = &["panel"];
 const E_CERRADO: i64 = -4;
 
 const VA_SALIDA: usize = 0x40_0000_0000;
@@ -262,6 +266,16 @@ fn principal() -> u64 {
                 cerrar_llaves(&llaves);
                 if let Some(c) = clientes.get(&marca) {
                     m.volumen(c.id, f32::from_bits(w(1)), f32::from_bits(w(2)));
+                }
+            }
+            GENERAL if n == 8 => {
+                cerrar_llaves(&llaves);
+                if PONEN_GENERAL.contains(&nombre.as_str()) {
+                    let v = f32::from_bits(w(1));
+                    m.volumen_general(v);
+                    println!("  [sonido] volumen general: {} % (lo pide {})", (v.clamp(0.0, 4.0) * 100.0 + 0.5) as u32, nombre);
+                } else {
+                    println!("  [sonido] {} pide el volumen general: no le toca", nombre);
                 }
             }
             CERRAR => {
