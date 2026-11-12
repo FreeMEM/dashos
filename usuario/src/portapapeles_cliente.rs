@@ -25,13 +25,15 @@ pub const PLAZO_US: u64 = 10_000_000;
 /// Los tipos de texto, del preferido al último.
 pub const TIPOS: [&str; 5] = ["text/plain;charset=utf-8", "UTF8_STRING", "text/plain", "TEXT", "STRING"];
 
-/// Los números de objeto (por encima de los de `ventana_cliente`).
-const GESTOR: u32 = 40;
-const DISPOSITIVO: u32 = 41;
-const GESTOR_PRIMARIA: u32 = 42;
-const DISPOSITIVO_PRIMARIA: u32 = 43;
-/// Desde aquí, las fuentes (una por copia).
-const PRIMERA_FUENTE: u32 = 0x1000;
+/// Los números de objeto: por encima de los de `ventana_cliente` (hasta 14) y de los de la pantalla de la caja (40 a 44),
+/// y por debajo de los avisos de frame de la terminal (desde 100).
+const GESTOR: u32 = 60;
+const DISPOSITIVO: u32 = 61;
+const GESTOR_PRIMARIA: u32 = 62;
+const DISPOSITIVO_PRIMARIA: u32 = 63;
+/// Desde aquí, las fuentes (una por copia): lejos de los avisos de frame, que van subiendo desde 100 (y de los de la
+/// pantalla, desde 0x0100_0000).
+const PRIMERA_FUENTE: u32 = 0x2000_0000;
 
 /// Una selección (0, la de siempre; 1, la primaria).
 #[derive(Default)]

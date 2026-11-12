@@ -314,18 +314,18 @@ if modo == "wayland":
         tx, ty, cw, ch, borde = t
         if fv:
             fx, fy, _ = fv
-            # Arriba del todo, por su barra: la terminal de la caja (casi toda la pantalla) la taparía entera al tener el
-            # teclado, y así siempre se ve la franja de arriba de foot.
-            sube = (fy - 80) // 8
-            arrastrar((fx + 200, fy - 20), sube, (0, -8))
-            fy -= sube * 8
-            movidas[len(ventanas_linux()) - 1] = (0, -sube * 8)
             # Tres clics en su primera línea: la selecciona (y va a la selección primaria); Control+Mayúsculas+C la copia.
             ir_a(fx + 40, fy + 10)
             mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.06)
             time.sleep(1.0)
             mandar("sendkey ctrl-shift-c")
             time.sleep(1.0)
+            # Arriba del todo, por su barra: la terminal de la caja (casi toda la pantalla) la taparía entera al tener el
+            # teclado, y así siempre se ve la franja de arriba de foot.
+            sube = (fy - 80) // 8
+            arrastrar((fx + 200, fy - 20), sube, (0, -8))
+            fy -= sube * 8
+            movidas[len(ventanas_linux()) - 1] = (0, -sube * 8)
             # Pegar en la terminal de DashOS (nativa): echo y lo pegado.
             a_la_terminal()
             teclear_sin_intro("echo ")
