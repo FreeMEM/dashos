@@ -79,8 +79,10 @@ Probado en QEMU `virt` con una virtio-gpu de dos cabezas. La Pi 4, con sus dos H
 
 ### El centro de control
 
-- Pantallas enseña todas: con una, como antes; con varias, una línea por pantalla con su sitio, y la frecuencia y la
-  escala. Enlaza los `wl_output` que hay al abrir y los que llegan con la ventana abierta.
+- Pantallas enseña todas: con una, como antes; con varias, una línea por pantalla con su tamaño y dónde está dicho en
+  palabras (a la izquierda, a la derecha), y la frecuencia y la escala. Un dibujo de los monitores, como el de GNOME,
+  queda para cuando se puedan mover desde ahí. Enlaza los `wl_output` que hay al abrir y los que llegan con la ventana
+  abierta.
 
 ### Pruebas
 
@@ -103,8 +105,9 @@ dan el orden, no la décima.
 | Vuelta | Cuadros | Componiendo | Píxeles | Por mil píxeles | Quieto (≈1 Mpx en 10 s) |
 |---|---|---|---|---|---|
 | `arranque-virt` en `revision`, sin tocar (media 54) | 528 | 9272 ms | 72 Mpx | 129 µs | 90 a 106 ms |
-| `arranque-virt` en la rama, una salida (media 30) | 559 | 6200 ms | 75 Mpx | 83 µs | 73 µs/kpx |
-| `arranque-virt-2`, dos salidas por virtio-gpu | 442 | 2234 ms | 50 Mpx | 45 µs | 22 ms |
+| `arranque-virt` en la rama, una salida (media 20 a 40) | 798 | 5194 ms | 73 Mpx | 71 µs | (acabó antes) |
+| `arranque-virt-2`, dos salidas, con el guion de siempre | 442 | 2234 ms | 50 Mpx | 45 µs | 22 ms |
+| `arranque-virt-2`, con su guion (94 s) | 224 | 718 ms | 30 Mpx | 24 µs | (acabó antes) |
 
 - Con una salida, componer no cuesta más; sale algo menos (la copia a la pantalla va por filas, sin índices por píxel),
   pero la carga del PC era distinta.

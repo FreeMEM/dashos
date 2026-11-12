@@ -447,8 +447,8 @@ struct Pantalla {
 }
 
 /// Lo de "Pantallas". Con una, su nombre y tamaño, su frecuencia y su escala. Con varias (multimonitor), una línea por
-/// pantalla con su sitio en el escritorio, de izquierda a derecha, y después la frecuencia y la escala (las de todas, si
-/// son iguales).
+/// pantalla, de izquierda a derecha, con dónde está dicho en palabras (a la izquierda, en medio, a la derecha), y
+/// después la frecuencia y la escala (las de todas, si son iguales).
 fn pantallas(ps: &[Pantalla]) -> Vec<String> {
     let mut ps: Vec<&Pantalla> = ps.iter().filter(|p| p.ancho > 0).collect();
     if ps.is_empty() {
@@ -459,7 +459,9 @@ fn pantallas(ps: &[Pantalla]) -> Vec<String> {
     let mut l: Vec<String> = if ps.len() == 1 {
         alloc::vec![alloc::format!("Pantalla {}: {} × {}", ps[0].nombre, ps[0].ancho, ps[0].alto)]
     } else {
-        ps.iter().map(|p| alloc::format!("Pantalla {}: {} × {} en ({}, {})", p.nombre, p.ancho, p.alto, p.x, p.y)).collect()
+        let n = ps.len();
+        let sitio = |k: usize| if k == 0 { "a la izquierda" } else if k + 1 == n { "a la derecha" } else { "en medio" };
+        ps.iter().enumerate().map(|(k, p)| alloc::format!("Pantalla {}: {} × {}, {}", p.nombre, p.ancho, p.alto, sitio(k))).collect()
     };
     if ps.iter().all(|p| p.mhz == ps[0].mhz) {
         l.push(alloc::format!("Frecuencia: {}", hz(ps[0].mhz)));
@@ -581,7 +583,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         } else if cat == APARIENCIA {
             ("Modo y color. Intro o doble clic para elegir.", reg.join("|"))
         } else if cat == PANTALLAS {
-            ("Lo que dice el compositor de la pantalla.", reg.join("|"))
+            ("Lo que dice el compositor de cada pantalla.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
