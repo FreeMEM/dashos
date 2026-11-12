@@ -676,3 +676,125 @@ fn header_ring_hostile() {
     }
     assert_clean(&mut fs);
 }
+
+/// A15: the header ring as it is on the disk now (what a reader outside would open).
+fn ring(disk: &mut DiskMemory, block: u64) -> Vec<u8> {
+    let mut r = vec![0; (crate::HEADER_RING * BLOCK_SIZE) as usize];
+    unsafe { disk.read_at(block, &mut r).unwrap() };
+    r
+}
+
+/// A15: open the live disk as a reader outside that read the header ring at `hold` and the rest now.
+fn photo(fs: &mut Fs, old_ring: &[u8]) -> FileSystem<DiskMemory> {
+    let size = fs.disk.disk.size().unwrap();
+    let mut copy = DiskMemory::new(size);
+    let mut buf = vec![0; 1024 * 1024];
+    let mut at = 0;
+    while at < size {
+        let n = (size - at).min(buf.len() as u64) as usize;
+        unsafe {
+            fs.disk.disk.read_at(at / BLOCK_SIZE, &mut buf[..n]).unwrap();
+            copy.write_at(at / BLOCK_SIZE, &buf[..n]).unwrap();
+        }
+        at += n as u64;
+    }
+    unsafe { copy.write_at(fs.block, old_ring).unwrap() };
+    reopen(copy, fs.block)
+}
+
+/// Writes that free and reuse many blocks, each made durable.
+fn churn(fs: &mut Fs, rounds: u64) {
+    for i in 0..rounds {
+        remove(fs, "c");
+        put(fs, "c", &noise(90_000, 100 + i));
+        put(fs, "d", &noise(3000, 200 + i));
+        remove(fs, "d");
+        fs.durable().unwrap();
+    }
+}
+
+fn setup_held() -> (Fs, Vec<u8>, Vec<u8>) {
+    let mut fs = new_fs();
+    fs.deferred = true;
+    let a = noise(150_000, 7);
+    put(&mut fs, "a", &a);
+    put(&mut fs, "c", &noise(90_000, 8));
+    fs.durable().unwrap();
+    let block = fs.block;
+    let old = ring(&mut fs.disk.disk, block);
+    (fs, old, a)
+}
+
+/// Hostile: while held, the photo taken at `hold` stays whole however much is written, freed and reused after.
+#[test]
+fn hold_keeps_the_photo() {
+    let (mut fs, _, a) = setup_held();
+    fs.hold().unwrap();
+    let block = fs.block;
+    let old = ring(&mut fs.disk.disk, block);
+    churn(&mut fs, 40);
+    let mut seen = photo(&mut fs, &old);
+    assert_eq!(get(&mut seen, "a").as_deref(), Some(&a[..]));
+    assert_eq!(get(&mut seen, "c"), Some(noise(90_000, 8)));
+    assert_clean(&mut seen);
+    // Twice is refused; the file system goes on as before.
+    assert_eq!(fs.hold().map_err(|e| e.errno), Err(syscall::error::EBUSY));
+    assert_eq!(get(&mut fs, "c"), Some(noise(90_000, 139)));
+    assert_clean(&mut fs);
+}
+
+/// Without `hold` the same writes reuse the blocks of the old photo: what the reader outside saw before A15.
+#[test]
+fn without_hold_the_photo_breaks() {
+    let (mut fs, old, _) = setup_held();
+    churn(&mut fs, 40);
+    let size = fs.disk.disk.size().unwrap();
+    let mut copy = DiskMemory::new(size);
+    let mut buf = vec![0; size as usize];
+    unsafe {
+        fs.disk.disk.read_at(0, &mut buf).unwrap();
+        copy.write_at(0, &buf).unwrap();
+        copy.write_at(fs.block, &old).unwrap();
+    }
+    let broken = match FileSystem::open(copy, None, Some(fs.block), false) {
+        Err(_) => true,
+        Ok(mut seen) => {
+            let report = seen.tx(|tx| check::check(tx, Options { data: true }, true));
+            !report.map(|r| r.is_clean()).unwrap_or(false) || get(&mut seen, "c") != Some(noise(90_000, 8))
+        }
+    };
+    assert!(broken, "the old photo survived without hold: the test proves nothing");
+}
+
+/// `release` gives the kept blocks back: the free space is that of not holding, and the disk may drop them.
+#[test]
+fn release_gives_back() {
+    // The same writes without holding: the free space to come back to.
+    let (mut plain, _, _) = setup_held();
+    churn(&mut plain, 10);
+    let free_before = plain.allocator.free();
+    let (mut fs, _, _) = setup_held();
+    fs.hold().unwrap();
+    churn(&mut fs, 10);
+    let while_held = fs.allocator.free();
+    assert!(while_held < free_before, "nothing kept: {while_held} >= {free_before}");
+    let discarded = fs.disk.discarded;
+    fs.release();
+    assert!(!fs.holding());
+    assert!(fs.disk.discarded > discarded);
+    assert_eq!(fs.allocator.free(), free_before);
+    assert_clean(&mut fs);
+    // And the log on the disk agrees: reopened, the same free space.
+    fs.durable().unwrap();
+    let block = fs.block;
+    let mut again = reopen(fs.disk.cut(false), block);
+    assert_eq!(again.allocator.free(), free_before);
+    assert_clean(&mut again);
+}
+
+/// Holding needs `deferred`.
+#[test]
+fn hold_needs_deferred() {
+    let mut fs = new_fs();
+    assert_eq!(fs.hold().map_err(|e| e.errno), Err(syscall::error::EINVAL));
+}

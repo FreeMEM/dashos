@@ -1037,3 +1037,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   la suerte. Apunta más a leer mientras `archivos` escribe, sin instantánea (lo que el plan ya pide), que a una espera
   perdida; sin demostrar. El guion acepta ahora `DIAG_TEXTO` y `DIAG_ESPERA` para volcar los registros de las CPU
   (QEMU, `info registers -a`) cuando sale una línea dada: con eso se verá dónde está el comprobador cuando se pare.
+- A15, la causa de los fallos del comprobador: 1.000 aperturas de RedoxFS desde el comprobador (5 arranques de 200
+  seguidas) no se pararon ni una vez; el 2,5 % dieron EIO, y no del servicio de disco (ninguna lectura falló), sino de
+  `reset_allocator` ("bloque que no está libre"): el comprobador lee la cadena del asignador de una cabecera mientras
+  `archivos` ya ha reusado bloques que esa cabecera aún nombra. Es leer sin instantánea, como decía el plan.
+  Hecho: `FileSystem::hold` y `release` en RedoxFS. Mientras se sujeta, lo que `durable` devolvería al asignador
+  espera aparte (`held`), así que cualquier cabecera hecha durable desde `hold` sigue entera en el disco por mucho
+  que se escriba; `release` lo devuelve y deja al disco olvidarlo (A14). Solo en modo diferido; sujetar dos veces da
+  EBUSY. El compactado del registro del asignador espera a que no haya nada sujeto, y `check` cuenta lo sujeto como
+  libre pendiente, igual que la cuarentena. Pruebas: la foto aguanta 40 rondas de borrar, escribir y hacer durable;
+  sin `hold` esas mismas rondas la rompen (la prueba sirve); soltar deja el mismo espacio libre que no haber sujetado,
+  también al reabrir; sin modo diferido da EINVAL. 152 pruebas de RedoxFS bien.
+  Siguiente: las órdenes SUJETAR y SOLTAR en `archivos` (solo administrar; se suelta sola si el cliente se va o si el
+  espacio libre baja mucho, para que sujetar no llene el disco) y el comprobador con su alta, que abre la foto.

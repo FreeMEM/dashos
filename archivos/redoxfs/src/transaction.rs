@@ -300,7 +300,8 @@ impl<'a, D: Disk> Transaction<'a, D> {
         let should_gc = self.header.generation() % ALLOC_GC_THRESHOLD == 0
             && self.header.generation() >= ALLOC_GC_THRESHOLD
             && self.allocator.as_ref().unwrap_or(&self.fs.allocator).free() > 0
-            && self.fs.quarantine.is_empty();
+            && self.fs.quarantine.is_empty()
+            && self.fs.held.as_ref().is_none_or(|h| h.is_empty());
         if force_squash || should_gc {
             // Clear and rebuild alloc log
             self.allocator_log.clear();

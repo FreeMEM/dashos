@@ -50,6 +50,9 @@ pub struct FileSystem<D: Disk> {
     /// Blocks allocated since the last `durable` (index and count): the header on disk does not use them, so when
     /// freed they are reused at once and what was written to them is forgotten.
     pub(crate) fresh: alloc::collections::BTreeSet<(u64, u64)>,
+    /// DashOS, A15: while `Some`, a reader outside (the checker) may be reading any header made durable since `hold`,
+    /// so the blocks they use are not reused: what `durable` would give back waits here until `release`.
+    pub(crate) held: Option<Vec<BlockAddr>>,
 }
 
 impl<D: Disk> FileSystem<D> {
@@ -151,6 +154,7 @@ impl<D: Disk> FileSystem<D> {
                 header_dirty: false,
                 quarantine: Vec::new(),
                 fresh: alloc::collections::BTreeSet::new(),
+                held: None,
             };
 
             let allocator_read = match unsafe { fs.reset_allocator() } {
@@ -247,6 +251,7 @@ impl<D: Disk> FileSystem<D> {
             header_dirty: false,
             quarantine: Vec::new(),
             fresh: alloc::collections::BTreeSet::new(),
+            held: None,
         };
 
         // Write header generation zero
@@ -368,28 +373,69 @@ impl<D: Disk> FileSystem<D> {
         }
         self.disk.flush()?;
         self.header_dirty = false;
-        // DashOS, A14: the disk may drop them now (TRIM), runs of neighbours together.
-        if !self.quarantine.is_empty() {
-            let mut runs: Vec<(u64, u64)> = self
-                .quarantine
-                .iter()
-                .map(|a| (a.index(), a.level().blocks::<u64>()))
-                .collect();
-            runs.sort_unstable();
-            let mut ranges: Vec<(u64, u64)> = Vec::with_capacity(runs.len());
-            for (start, count) in runs {
-                match ranges.last_mut() {
-                    Some((s, c)) if *s + *c >= start => *c = (*c).max(start + count - *s),
-                    _ => ranges.push((start, count)),
-                }
-            }
-            self.disk.discard(&ranges);
+        // A15: someone reads a photo of the disk; nothing it may use goes back to the allocator yet.
+        if let Some(held) = self.held.as_mut() {
+            held.append(&mut self.quarantine);
+            self.fresh.clear();
+            return Ok(());
         }
-        for addr in self.quarantine.drain(..) {
+        // DashOS, A14: the disk may drop them now (TRIM), runs of neighbours together.
+        let quarantine = core::mem::take(&mut self.quarantine);
+        self.discard_blocks(&quarantine);
+        for addr in quarantine {
             self.allocator.deallocate(addr);
         }
         self.fresh.clear();
         Ok(())
+    }
+
+    /// DashOS, A15: make everything durable and keep, until `release`, every block that a header on the disk uses from
+    /// now on, so that a reader outside can open the disk and walk it while this file system goes on writing. Only
+    /// while `deferred` (otherwise freed blocks are reused at once). Holding twice is an error (EBUSY).
+    pub fn hold(&mut self) -> Result<()> {
+        if !self.deferred {
+            return Err(Error::new(syscall::error::EINVAL));
+        }
+        if self.held.is_some() {
+            return Err(Error::new(syscall::error::EBUSY));
+        }
+        self.durable()?;
+        self.held = Some(Vec::new());
+        Ok(())
+    }
+
+    /// Whether a photo is held (`hold`).
+    pub fn holding(&self) -> bool {
+        self.held.is_some()
+    }
+
+    /// End `hold`: the blocks kept go back to the allocator (and the disk may drop them). They had already been freed
+    /// in the log on the disk, so nothing is written.
+    pub fn release(&mut self) {
+        let Some(held) = self.held.take() else {
+            return;
+        };
+        self.discard_blocks(&held);
+        for addr in held {
+            self.allocator.deallocate(addr);
+        }
+    }
+
+    /// The disk may drop these blocks (A14), runs of neighbours together.
+    fn discard_blocks(&mut self, addrs: &[BlockAddr]) {
+        if addrs.is_empty() {
+            return;
+        }
+        let mut runs: Vec<(u64, u64)> = addrs.iter().map(|a| (a.index(), a.level().blocks::<u64>())).collect();
+        runs.sort_unstable();
+        let mut ranges: Vec<(u64, u64)> = Vec::with_capacity(runs.len());
+        for (start, count) in runs {
+            match ranges.last_mut() {
+                Some((s, c)) if *s + *c >= start => *c = (*c).max(start + count - *s),
+                _ => ranges.push((start, count)),
+            }
+        }
+        self.disk.discard(&ranges);
     }
 
     /// start a filesystem transaction, required for making any changes

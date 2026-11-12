@@ -1101,7 +1101,9 @@ impl<D: Disk> Checker<'_, '_, D> {
         // it) becomes free when saved. Pending free, not lost. In use as well is as bad as free and in use.
         let mut quarantine_free = 0;
         let mut first_twice = 0;
-        for addr in self.tx.fs.quarantine.iter().chain(self.tx.quarantine.iter()) {
+        // A15: and so does what a held photo keeps (`FileSystem::hold`), when released.
+        let held = self.tx.fs.held.as_deref().unwrap_or(&[]);
+        for addr in self.tx.fs.quarantine.iter().chain(self.tx.quarantine.iter()).chain(held.iter()) {
             for i in addr.index()..addr.index() + addr.level().blocks::<u64>() {
                 if !(FIRST_BLOCK..total).contains(&i) {
                     outside += 1;
