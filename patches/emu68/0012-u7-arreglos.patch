@@ -1,0 +1,29 @@
+diff --git a/src/M68k_EA.c b/src/M68k_EA.c
+index 57ff4d5..a558335 100644
+--- a/src/M68k_EA.c
++++ b/src/M68k_EA.c
+@@ -1646,9 +1646,10 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                                     EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
+                                     RA_FreeARMRegister(ctx, t);
+                                 }
+-                                else
++                                else {
+                                     EMIT(ctx, ldr_regoffset(base_reg, bd_reg, bd_reg, UXTW, 0));
+                                     EMIT_LoadBE(ctx, 4, bd_reg, BE_UNSIGNED);   /* DashOS (U7) */
++                                }
+                             }
+                         }
+                         else
+diff --git a/src/M68k_SR.c b/src/M68k_SR.c
+index 6b6ec5c..2d32744 100644
+--- a/src/M68k_SR.c
++++ b/src/M68k_SR.c
+@@ -1077,7 +1077,7 @@ uint8_t M68K_GetSRMask(uint16_t *insn_stream)
+             }
+             else if ((opcode & 0xf0f8) == 0x50c8)
+             {
+-                int32_t branch_offset = (int16_t)(insn_stream[1]);
++                int32_t branch_offset = (int16_t)BE16(insn_stream[1]);   /* DashOS (U7): el código del 68k es big-endian */
+                 uint16_t *insn_stream_2 = insn_stream + 2;
+ 
+                 // Mark the flags which conditional jump needs by itself
