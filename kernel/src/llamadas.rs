@@ -66,7 +66,10 @@ const E_PLAZO: u64 = -9i64 as u64;
 /// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
 /// lleva menos de un milisegundo en la Pi 4; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
 /// la consola como servicio).
-const MAX_MEMORIA: u64 = 4 << 20;
+/// Un objeto de memoria, hasta 16 MB (una pantalla de 2560 × 1440 a 32 bits): crearlo tiene puntos de corte cada
+/// 256 KB (S2), así que el tamaño no alarga lo que se pasa con las IRQ enmascaradas. La de DMA, 4 MB seguidos.
+const MAX_MEMORIA: u64 = 16 << 20;
+const MAX_DMA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
 
 fn error_espacio(e: crate::espacio::Error) -> u64 {
@@ -882,7 +885,7 @@ fn memoria_dma(marco: &mut Marco, h: u32, tamano: u64) -> u64 {
     if l.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }
-    if tamano == 0 || tamano > MAX_MEMORIA {
+    if tamano == 0 || tamano > MAX_DMA {
         return E_TAMANO;
     }
     if proc_.llaves.tomar().huecos() == 0 {

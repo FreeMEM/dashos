@@ -329,9 +329,11 @@ fn principal() -> u64 {
         // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
         // U6: `sesiones`, también 64: de su cupo salen los grupos de lo que lanza (8 MB cada uno).
         // S10: el Workbench, 48: cada ventana suya lleva su búfer y las dos fuentes del kit (unos megas).
+        // C3: el fondo, 48: la imagen a pantalla entera en el montón y dos juegos de franjas (el que se ve y el nuevo); a
+        // 1920 × 1080, unos 8 MB cada cosa.
         let cupo = match nombre(nombre_cab) {
             "archivos" | "sesiones" => 64 << 20,
-            "workbench" => 48 << 20,
+            "workbench" | "fondo" => 48 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

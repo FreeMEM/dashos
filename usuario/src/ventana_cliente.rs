@@ -64,8 +64,19 @@ impl Cliente {
     pub fn conectar_con_puerta(marca: u64) -> Option<(Cliente, u32)> {
         let (mio, suyo) = dashos::canal_crear();
         let puerta = if marca != 0 { dashos::llave_duplicar(suyo, dashos::ESCRIBIR | dashos::TRANSFERIR | dashos::UNA_VEZ, marca) } else { 0 };
-        if dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]) != 0 {
-            return None;
+        // Con el compositor atareado (al arrancar, con muchos clientes a la vez y una pantalla grande), su cola puede
+        // estar llena: se reintenta hasta 5 s en vez de rendirse.
+        let mut intentos = 0;
+        loop {
+            let e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+            if e == 0 {
+                break;
+            }
+            if e == dashos::E_CERRADO || intentos >= 5_000 {
+                return None;
+            }
+            intentos += 1;
+            dashos::dormir_us(1_000);
         }
         Some((Cliente { respuesta: mio, juntador: Juntador::new(), puerta: if puerta > 0 { marca } else { 0 }, timbres: 0 }, puerta.max(0) as u32))
     }

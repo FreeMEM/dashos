@@ -131,7 +131,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 4 | `canal_escribir` | `x0` llave, `x1` datos, `x2` longitud, `x3` tabla de llaves, `x4` cuántas | 0 |
 | 5 | `canal_leer` | `x0` llave, `x1` búfer, `x2` capacidad, `x3` tabla de llaves, `x4` capacidad de la tabla | `x0` bytes, `x1` llaves recibidas |
 | 6 | `cerrar` | `x0` llave | 0 |
-| 7 | `memoria_crear` | `x0` tamaño (hasta 4 MB) | Llave de un objeto de memoria |
+| 7 | `memoria_crear` | `x0` tamaño (hasta 16 MB) | Llave de un objeto de memoria |
 | 8 | `memoria_proyectar` | `x0` llave, `x1` dirección (alineada a 4 KB), `x2` permisos: 1 leer, 2 escribir | 0 |
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
@@ -311,7 +311,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −2 | `E_LLAVE` | La llave no existe en la tabla |
 | −3 | `E_DERECHOS` | Falta un derecho: leer, escribir o transferir |
 | −4 | `E_CERRADO` | El otro extremo del canal está cerrado |
-| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0 o más de 4 MB |
+| −5 | `E_TAMANO` | Demasiados datos o llaves, tamaño 0 o más de 16 MB (4 MB en `memoria_dma`) |
 | −6 | `E_TIPO` | La llave es de otro tipo de objeto |
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
@@ -320,7 +320,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 ### Topes de trabajo
 
 Una llamada corre entera sin que el kernel se interrumpa, así que cada una tiene un tope (desde C35):
-`memoria_crear` pide como mucho 4 MB y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
+`memoria_crear` pide como mucho 16 MB (con puntos de corte cada 256 KB) y `escribir` toma como mucho 256 bytes. Para más, se llama varias veces.
 
 ### Límites
 

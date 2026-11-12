@@ -132,6 +132,75 @@ struct Pantalla {
     formato: u32,
 }
 
+/// fw_cfg de QEMU `virt` (docs/specs/fw_cfg.rst de QEMU): datos (+0), selector (+8, 16 bits) y DMA (+16, 64 bits), en
+/// big-endian.
+const FW_CFG: usize = 0x0902_0000;
+
+/// Solo para ver el escritorio a otro tamaño en QEMU (DASHOS_PANTALLA): la ramfb (fichero "etc/ramfb" de fw_cfg) a
+/// `ancho` x `alto`, XRGB8888, sobre páginas reservadas (van al árbol como zona reservada, como las del firmware).
+/// `None` si no hay ramfb o no se puede.
+fn ramfb(bs: &ServiciosArranque, c: &mut Consola, ancho: u32, alto: u32) -> Option<Pantalla> {
+    let selector = |s: u16| unsafe { core::ptr::write_volatile((FW_CFG + 8) as *mut u16, s.to_be()) };
+    let byte = || unsafe { core::ptr::read_volatile(FW_CFG as *const u8) };
+    // El directorio de ficheros (selector 0x19): cuántos (32 bits) y entradas de 64 bytes (tamaño 32, selector 16,
+    // reservado 16, nombre 56).
+    selector(0x19);
+    let mut n = [0u8; 4];
+    n.iter_mut().for_each(|b| *b = byte());
+    let mut sel = None;
+    for _ in 0..u32::from_be_bytes(n).min(512) {
+        let mut e = [0u8; 64];
+        e.iter_mut().for_each(|b| *b = byte());
+        let fin = e[8..].iter().position(|&x| x == 0).unwrap_or(56);
+        if &e[8..8 + fin] == b"etc/ramfb" {
+            sel = Some(u16::from_be_bytes([e[4], e[5]]));
+        }
+    }
+    let sel = sel?;
+    let tamano = ancho as u64 * alto as u64 * 4;
+    let mut base = 0u64;
+    // Tipo 0 (cualquier sitio), memoria 0 (reservada).
+    if (bs.reservar_paginas)(0, 0, tamano.div_ceil(4096) as usize, &mut base) != BIEN {
+        return None;
+    }
+    unsafe { core::ptr::write_bytes(base as *mut u8, 0, tamano as usize) };
+    // RAMFBCfg: dirección (64), formato (XR24), flags, ancho, alto y bytes por línea (32 cada uno).
+    #[repr(C, align(8))]
+    struct Cfg([u8; 28]);
+    let mut cfg = Cfg([0; 28]);
+    cfg.0[0..8].copy_from_slice(&base.to_be_bytes());
+    cfg.0[8..12].copy_from_slice(&0x3432_5258u32.to_be_bytes());
+    cfg.0[16..20].copy_from_slice(&ancho.to_be_bytes());
+    cfg.0[20..24].copy_from_slice(&alto.to_be_bytes());
+    cfg.0[24..28].copy_from_slice(&(ancho * 4).to_be_bytes());
+    // FWCfgDmaAccess: control (selector << 16, elegir 0x08 y escribir 0x10), largo y dirección. Se manda al escribir
+    // la mitad baja de su dirección.
+    #[repr(C, align(16))]
+    struct Dma {
+        control: u32,
+        largo: u32,
+        dir: u64,
+    }
+    let dma = Dma { control: ((sel as u32) << 16 | 0x18).to_be(), largo: 28u32.to_be(), dir: (&cfg as *const Cfg as u64).to_be() };
+    let p = &dma as *const Dma as u64;
+    unsafe {
+        core::ptr::write_volatile((FW_CFG + 16) as *mut u32, ((p >> 32) as u32).to_be());
+        core::ptr::write_volatile((FW_CFG + 20) as *mut u32, (p as u32).to_be());
+    }
+    for _ in 0..10_000_000 {
+        let control = u32::from_be(unsafe { core::ptr::read_volatile(&dma.control) });
+        if control & !1 == 0 {
+            if control & 1 != 0 {
+                break;
+            }
+            let _ = writeln!(c, "DashOS: ramfb a {}x{} en {:#x}", ancho, alto, base);
+            return Some(Pantalla { base, tamano, ancho, alto, por_linea: ancho, formato: 1 });
+        }
+    }
+    let _ = writeln!(c, "DashOS: la ramfb no acepta {}x{}", ancho, alto);
+    None
+}
+
 fn buscar_pantalla(bs: &ServiciosArranque, c: &mut Consola) -> Option<Pantalla> {
     let mut gop: *const Gop = core::ptr::null();
     if (bs.localizar_protocolo)(&GUID_GOP, core::ptr::null(), &mut gop) != BIEN || gop.is_null() {
@@ -152,6 +221,14 @@ fn buscar_pantalla(bs: &ServiciosArranque, c: &mut Consola) -> Option<Pantalla> 
                     let _ = writeln!(c, "DashOS: modo {} de {} ({}x{}) pedido: {}", m, max, ancho, alto, if e == BIEN { "puesto" } else { "rechazado" });
                     break;
                 }
+            }
+        }
+        // Sin ese modo en el firmware (el de QEMU, por ramfb, solo da 640x480, 800x600 y 1024x768): en `virt`, se
+        // programa la ramfb a ese tamaño por fw_cfg, con memoria propia.
+        let actual = unsafe { &*(*(*gop).modo).info };
+        if (actual.ancho, actual.alto) != (ancho, alto) {
+            if let Some(p) = ramfb(bs, c, ancho, alto) {
+                return Some(p);
             }
         }
     }

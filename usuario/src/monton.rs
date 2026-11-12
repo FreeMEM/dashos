@@ -1,6 +1,6 @@
 //! Montón de un programa de usuario (FS1): `alloc` (Box, Vec...) sobre objetos de memoria del kernel.
 //!
-//! El kernel da objetos de 4 MB como mucho (`MAX_MEMORIA`). El montón los proyecta seguidos desde `BASE`, así que
+//! Los trozos son de 4 MB como mucho (el kernel da hasta 16, `MAX_MEMORIA`). El montón los proyecta seguidos desde `BASE`, así que
 //! crece por arriba: cuando una petición no cabe, pide otro trozo y alarga la lista libre de
 //! `linked_list_allocator`. Nunca devuelve memoria al kernel. Lo usa el programa que llama a `dashos::monton!()`.
 //!

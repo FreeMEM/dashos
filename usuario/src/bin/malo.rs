@@ -111,8 +111,8 @@ fn principal() -> u64 {
         return 20;
     }
     let _ = d;
-    // 21-22: comerse la memoria a trozos de 4 MB, el tope por llamada desde C35. Tiene que acabar en E_MEMORIA, no
-    // en pánico; y al soltarla, se puede volver a pedir. 28: más de 4 MB de una vez da E_TAMANO.
+    // 21-22: comerse la memoria a trozos de 4 MB (el tope por objeto era 4 MB desde C35; ahora 16). Tiene que acabar en
+    // E_MEMORIA, no en pánico; y al soltarla, se puede volver a pedir. 28: más de 16 MB de una vez da E_TAMANO; 16, no.
     let mut trozos = [0u32; 900];
     let mut n = 0;
     let fin = loop {
@@ -129,9 +129,14 @@ fn principal() -> u64 {
     for &k in &trozos[..n] {
         x0(6, [k as u64, 0, 0, 0, 0]);
     }
-    if x0(7, [8 << 20, 0, 0, 0, 0]) != E_TAMANO {
+    if x0(7, [(16 << 20) + 4096, 0, 0, 0, 0]) != E_TAMANO {
         return 28;
     }
+    let k = x0(7, [16 << 20, 0, 0, 0, 0]);
+    if k < 0 {
+        return 28;
+    }
+    x0(6, [k as u64, 0, 0, 0, 0]);
     let k = x0(7, [4 << 20, 0, 0, 0, 0]);
     if k < 0 {
         return 22;

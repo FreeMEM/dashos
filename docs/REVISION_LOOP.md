@@ -1326,3 +1326,16 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   carga 70, sin nada al lado ya daba 1588 µs). C49 paso 10 (`tiempo`): hasta 100 vencimientos (salió 31 con tope 30).
 - `make prueba` BIEN; arranque-virt: revision BIEN entero; prueba1 y prueba2, todo BIEN salvo chasquidos del sonido
   (2 y 96 saltos), con carga 47-72 en el anfitrión.
+
+### 2026-11-12 14:30: el escritorio a 1920 × 1080 en QEMU
+- Cargador: con DASHOS_PANTALLA=ANCHOxALTO al compilar, pide ese modo al GOP; si el firmware no lo tiene (el de QEMU
+  solo da 640x480, 800x600 y 1024x768), programa la ramfb por fw_cfg (fichero "etc/ramfb", por DMA) sobre páginas
+  reservadas. Solo para ver el escritorio a otro tamaño; sin la variable, nada cambia.
+- Lo que fallaba a 1920 × 1080 y se arregló:
+  - Un objeto de memoria podía tener 4 MB; una pantalla son 8,3. El tope pasa a 16 MB (crear tiene puntos de corte
+    desde S2); el de DMA sigue en 4. Hostil `malo` 28: 16 MB + 4 KB da E_TAMANO y 16 MB justos se dan.
+  - Barra y panel: "sin compositor" (su cola llena al arrancar, el compositor tarda más en componer): conectar
+    reintenta 5 s.
+  - Fondo: imagen en el montón más dos juegos de franjas, unos 27 MB: su cupo pasa de 16 a 48 MB.
+- Queda: `guardian` "sin memoria para la pantalla" a 1920 × 1080 (su cupo, 16 MB). Capturas mandadas al usuario.
+- `make prueba` BIEN; arranque-virt (800 × 600) en dos vueltas, todo BIEN.
