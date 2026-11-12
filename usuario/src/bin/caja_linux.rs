@@ -1692,7 +1692,8 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     // Con Arch y el compositor: vsock, para el puente de Wayland (los programas gráficos de Linux, en ventanas de
     // DashOS). Va en el transporte siguiente al último.
     let n_virtio = if con_red { 3 } else { 2 };
-    let wayland = arch && l.ventanas.is_some_and(puente_caja::abrir);
+    // Con la RAM del invitado, el compositor lee sus búferes sin copia (vistas, llamada 50).
+    let wayland = arch && l.ventanas.is_some_and(|v| puente_caja::abrir(v, &mems, disposicion::RAM));
     let v3 = disposicion::virtio(n_virtio);
     let puestos = puestos && (!wayland || maq.añadir(v3.base, v3.spi, Box::new(TransporteMmio::nuevo(Vsock::nuevo(Box::new(puente_caja::ExtremoPuente))))).is_ok());
     let n_virtio = n_virtio + wayland as u32;
@@ -1790,8 +1791,8 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
             if let Some(p) = p.as_ref() {
                 let c = p.cuentas();
                 println!(
-                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias, {} cosas malas tiradas, {} clientes cerrados",
-                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.malas, c.cerrados
+                    "  [caja-linux] wayland: {} transportes ({} cortados por tramas malas), {} clientes de Linux, {} KB de Wayland al compositor y {} KB al invitado, {} KB de búferes copiados, {} memorias ({} sin copia, vistas de la RAM del invitado; {} vistas no hechas), {} cosas malas tiradas, {} clientes cerrados",
+                    p.transportes, p.cortados, c.clientes, c.bytes_al_compositor / 1024, c.bytes_al_invitado / 1024, c.bytes_de_memoria / 1024, c.memorias, c.vistas, c.vistas_no, c.malas, c.cerrados
                 );
             }
         });
