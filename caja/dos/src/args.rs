@@ -275,7 +275,8 @@ impl<F: SistemaArchivos> Dos<F> {
                 if (largo as i32) < 0 || cur > largo || largo > MAX_CADENA * 16 {
                     return Err(E::Io(ERROR_LINE_TOO_LONG));
                 }
-                linea = Self::bytes(c, buf + cur, largo - cur)?;
+                let desde = buf.checked_add(cur).ok_or(Fallo::FueraDeMemoria { dir: buf, largo })?;
+                linea = Self::bytes(c, desde, largo - cur)?;
                 de_csource = true;
             }
         }

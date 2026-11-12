@@ -14,10 +14,27 @@ use crate::*;
 /// Lo que devuelve en D0 cada función al fallar.
 fn valor_de_fallo(n: u16) -> u32 {
     match n {
-        READ | WRITE | SEEK | SET_FILE_SIZE | FGET_C | FPUT_C | FPUTS | VFPRINTF | VFWRITEF | VPRINTF | PUT_STR
-        | WRITE_CHARS | GET_VAR | SPLIT_NAME | STR_TO_LONG | FIND_ARG | SAME_LOCK | SYSTEM_TAG_LIST | RUN_COMMAND => {
-            u32::MAX
-        }
+        READ
+        | WRITE
+        | SEEK
+        | SET_FILE_SIZE
+        | FGET_C
+        | FPUT_C
+        | FPUTS
+        | VFPRINTF
+        | VFWRITEF
+        | VPRINTF
+        | PUT_STR
+        | WRITE_CHARS
+        | GET_VAR
+        | SPLIT_NAME
+        | STR_TO_LONG
+        | FIND_ARG
+        | SAME_LOCK
+        | SYSTEM_TAG_LIST
+        | RUN_COMMAND
+        | PARSE_PATTERN
+        | PARSE_PATTERN_NO_CASE => u32::MAX,
         _ => 0,
     }
 }
@@ -365,11 +382,23 @@ impl<F: SistemaArchivos> Dos<F> {
                 let b = self.sitio_de_cerrojo(d[2])?;
                 d0(if a.vol == b.vol { DOSTRUE } else { DOSFALSE })
             }
+            EXALL => d0(self.ex_all(c, d[1], d[2], d[3], d[4], d[5])?),
+            EXALL_END => {
+                Self::ex_all_end(c, d[5])?;
+                d0(DOSTRUE)
+            }
+            PARSE_PATTERN | PARSE_PATTERN_NO_CASE => {
+                d0(Self::parse_pattern(c, d[1], d[2], d[3], n == PARSE_PATTERN_NO_CASE)?)
+            }
+            MATCH_PATTERN | MATCH_PATTERN_NO_CASE => {
+                d0(Self::match_pattern(c, d[1], d[2], n == MATCH_PATTERN_NO_CASE)?)
+            }
             _ => Err(Fallo::NoImplementada { n }.into()),
         }
     }
 
     fn fecha_en_tics<C: Caja>(c: &C, ds: u32) -> R<(u32, u32, u32)> {
+        Self::comprobar(ds, datestamp::TAMANO)?;
         Ok((
             Self::l32(c, ds + datestamp::DS_DAYS)?,
             Self::l32(c, ds + datestamp::DS_MINUTE)?,
@@ -490,6 +519,7 @@ impl<F: SistemaArchivos> Dos<F> {
             Self::e8(c, buf, 0)?;
             return Ok(DOSFALSE);
         }
+        Self::comprobar(cli, cli::TAMANO)?;
         let b = Self::baddr(Self::l32(c, cli + campo)?)?;
         let t = if b == 0 { alloc::vec::Vec::new() } else { Self::bytes(c, b + 1, Self::l8(c, b)? as u32)? };
         if !Self::poner_cadena(c, buf, largo, &t)? {

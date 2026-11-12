@@ -87,11 +87,24 @@ fn preparar() -> (Banco, Vec<u32>, Vec<u32>) {
 
 #[test]
 fn registros_al_azar() {
-    for semilla in 1..=6u64 {
+    // Más semillas con DOS_FUZZ=n (por ejemplo, en `cargo test --release`).
+    let semillas: u64 = std::env::var("DOS_FUZZ").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
+    for semilla in 1..=semillas {
         let (mut b, cadenas, huecos) = preparar();
         let mut az = Azar(0x9E37_79B9_7F4A_7C15 ^ semilla);
         let mut bptrs: Vec<u32> = vec![0, 1, 0x3FFF_FFFF, 0x4000_0000, u32::MAX];
-        let mut dirs: Vec<u32> = vec![0, 4, 0xFFF, 0x1000, TAM_MEMORIA as u32 - 2, 0xFFFF_0000, u32::MAX];
+        let mut dirs: Vec<u32> = vec![
+            0,
+            4,
+            0xFFF,
+            0x1000,
+            TAM_MEMORIA as u32 - 2,
+            TAM_MEMORIA as u32 - 260,
+            0xFFFE_FFF0,
+            0xFFFF_0000,
+            0xFFFF_FFFC,
+            u32::MAX,
+        ];
         dirs.extend(&huecos);
         let estropear = semilla % 2 == 0;
         let mut bien = 0u32;
@@ -141,11 +154,13 @@ fn registros_al_azar() {
         }
         // Que no todo haya fallado: algo de lo que se probó llegó lejos.
         assert!(bien > 2_000, "semilla {semilla}: solo {bien} llamadas con D0 de éxito");
-        eprintln!(
-            "semilla {semilla}: {bien} con éxito, {} cerrojos y {} ficheros abiertos",
-            b.dos.cerrojos_abiertos(),
-            b.dos.ficheros_abiertos()
-        );
+        if semillas <= 6 {
+            eprintln!(
+                "semilla {semilla}: {bien} con éxito, {} cerrojos y {} ficheros abiertos",
+                b.dos.cerrojos_abiertos(),
+                b.dos.ficheros_abiertos()
+            );
+        }
         b.sin_faltas();
         // Al acabar la tarea no queda nada suyo.
         let t = b.proceso;

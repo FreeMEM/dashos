@@ -38,7 +38,9 @@ mod cambios;
 mod cerrojos;
 mod despacho;
 mod espacio;
+pub mod exall;
 mod ficheros;
+mod patrones;
 mod texto;
 mod vars;
 
@@ -591,6 +593,7 @@ impl<F: SistemaArchivos> Dos<F> {
 
     /// Lee un `DateStamp` de la caja como segundos desde 1970.
     pub(crate) fn leer_fecha<C: Caja>(c: &C, ds: u32) -> R<u64> {
+        Self::comprobar(ds, datestamp::TAMANO)?;
         let dias = Self::l32(c, ds + datestamp::DS_DAYS)? as u64;
         let min = Self::l32(c, ds + datestamp::DS_MINUTE)? as u64;
         let tic = Self::l32(c, ds + datestamp::DS_TICK)? as u64;
