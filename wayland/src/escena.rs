@@ -1847,7 +1847,23 @@ impl<M: Memorias> Escena<M> {
         if pulsada {
             self.ultima_tecla_ms = Some(self.reloj_ms);
         }
-        let Some((c, _)) = self.teclado else { return out };
+        let mascara = match uso {
+            0xE1 | 0xE5 => 1,
+            0xE0 | 0xE4 => 4,
+            0xE2 | 0xE6 => 8,
+            0xE3 | 0xE7 => 64,
+            _ => 0,
+        };
+        let Some((c, _)) = self.teclado else {
+            // Sin ventana con el teclado los modificadores se siguen llevando, y Super+L (U3) bloquea igual.
+            if mascara != 0 {
+                if pulsada { self.mods |= mascara } else { self.mods &= !mascara }
+            }
+            if pulsada && codigo == KEY_L && self.mods & 64 != 0 && self.bloqueo.is_none() {
+                self.bloquear_ya();
+            }
+            return out;
+        };
         if codigo == 0 {
             return out;
         }
@@ -1868,13 +1884,6 @@ impl<M: Memorias> Escena<M> {
             return out;
         }
         out.push((c, Entrada::Tecla { codigo, pulsada }));
-        let mascara = match uso {
-            0xE1 | 0xE5 => 1,
-            0xE0 | 0xE4 => 4,
-            0xE2 | 0xE6 => 8,
-            0xE3 | 0xE7 => 64,
-            _ => 0,
-        };
         if mascara != 0 {
             if pulsada {
                 self.mods |= mascara;

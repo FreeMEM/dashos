@@ -1264,12 +1264,13 @@ mod entrada {
         }
     }
 
-    fn globales() -> [Global; 4] {
+    fn globales() -> [Global; 5] {
         [
             Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
             Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+            Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
         ]
     }
 
@@ -1309,6 +1310,42 @@ mod entrada {
 
     /// Super+Arriba maximiza la ventana que tiene el teclado: a (0, 0), con un configure del tamaño de la pantalla y
     /// el estado "maximizada"; el cliente lo confirma. Super+Abajo la devuelve a su sitio con un configure de 0 × 0.
+    #[test]
+    fn super_l_bloquea_ya() {
+        use crate::tablas::ext_idle_notifier_v1;
+        // U3: con un aviso de inactividad de 60 s pedido, Super+L lo da en el acto; la L no llega a la ventana. Y lo mismo
+        // sin ninguna ventana con el teclado.
+        for con_ventana in [true, false] {
+            let mut escena = Escena::new(Mem::default(), 0);
+            let mut c = Conexion::new();
+            escena.reloj_ms = 1_000;
+            if con_ventana {
+                abrir(&mut escena, &mut c, 1, 100, 100);
+            }
+            let mut g = Conexion::new();
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(5).texto(Some("ext_idle_notifier_v1")).uint(2).uint(50).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_seat")).uint(7).uint(51).fin();
+            e.empezar(50, ext_idle_notifier_v1::req::GET_IDLE_NOTIFICATION).uint(52).uint(60_000).uint(51).fin();
+            mandar(&mut escena, &mut g, 9, &e);
+            assert_eq!(escena.teclado.is_some(), con_ventana);
+            escena.pendientes.clear();
+            escena.avisos_inactividad.clear();
+            escena.tecla(0xE3, true);
+            let ev = escena.tecla(0x0F, true);
+            assert!(!ev.iter().any(|e| matches!(e.1, Entrada::Tecla { codigo: 38, .. })), "la L llegó a la ventana: {ev:?}");
+            assert_eq!(core::mem::take(&mut escena.avisos_inactividad), [(9, 52, true)], "con ventana: {con_ventana}");
+            // Una L sin Super es una L, y da actividad (resumed), no otro aviso.
+            escena.tecla(0x0F, false);
+            escena.tecla(0xE3, false);
+            escena.avisos_inactividad.clear();
+            let ev = escena.tecla(0x0F, true);
+            assert_eq!(ev.iter().any(|e| matches!(e.1, Entrada::Tecla { codigo: 38, .. })), con_ventana);
+            assert!(!escena.avisos_inactividad.iter().any(|a| a.2), "sin Super no bloquea");
+        }
+    }
+
     /// Las flechas con Super no llegan a la ventana; sin Super, sí.
     #[test]
     fn maximizar_y_volver() {

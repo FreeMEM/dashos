@@ -913,3 +913,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   bloqueo, una contraseña mala y la de Ana: "bloqueo con la tecla: bien". Un programa no puede fingir Super+L: la
   entrada solo llega del USB, y la tecla no se reparte. Sin ventana con el teclado no se miran los modificadores, así
   que entonces Super+L no hace nada (casi nunca: siempre hay una con el teclado); queda apuntado.
+- Super+L sin ninguna ventana con el teclado: antes no hacía nada (no se miraban los modificadores). Ahora se llevan
+  también entonces y Super+L bloquea igual. Prueba en el compositor (`super_l_bloquea_ya`, con y sin ventana): un aviso
+  de 60 s pedido sale en el acto con Super+L, la L no llega a la ventana, y una L sin Super es una L y no bloquea.
