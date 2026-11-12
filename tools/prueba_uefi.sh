@@ -772,7 +772,9 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 10
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
+        # Mientras el selector espera teclas, no: el clic en Ajustes le quitaría el teclado y sus teclas irían a
+        # Ajustes (con el PC lento, Ajustes sale después del selector).
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18):
             ajustes = True
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
             # título, donde no hay nada que pulsar (el foco sigue en su campo; a (196, 196) está su Cancelar). Después, el
