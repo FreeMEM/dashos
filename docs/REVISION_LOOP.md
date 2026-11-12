@@ -1212,3 +1212,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   botones en medio, Tab iría a Quitar). `captura_ventanas.py` acepta dos sombras sumadas cerca de las dos ventanas de
   prueba (según el orden en que salgan, un punto queda bajo las dos).
 - Guardian: la caja de la contraseña en el contenedor alto de Material 3, sin marco (con error, borde rojo). Captura.
+- 2026-11-12, 09:40: el usuario quita el tope del 90 % esta semana y pide más velocidad. Cuatro ramas en paralelo,
+  cada una en su worktree desde c1ec269: `kit-material` (resto de controles con Material 3 y Ajustes), `panel-c2`
+  (modo de edición del panel rápido), `usuarios-u6` (cambio rápido de usuario) y `hilos` (hilos de usuario en el
+  kernel). Cada una apunta en docs/bitacoras/<rama>.md; se fusionan aquí cuando pasan las pruebas.
