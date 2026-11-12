@@ -766,12 +766,31 @@ fn cerrar_nodo(fs: &mut Fs, vol: u64, n: TreePtr<Node>) {
 static FALLO_GUARDADO: AtomicI32 = AtomicI32::new(0);
 /// Hubo un guardado bueno: lo de todos los clientes está en el disco.
 static GUARDADO: AtomicBool = AtomicBool::new(false);
+/// A15: la marca de quien sujeta el disco (`SUJETAR`), 0 si nadie; y la de quien lo tenía cuando se soltó por falta
+/// de sitio, para decírselo en su `SOLTAR`.
+static SUJETA: AtomicU64 = AtomicU64::new(0);
+static SOLTADA_POR_SITIO: AtomicU64 = AtomicU64::new(0);
+
+/// A15: sujetar no puede llenar el disco: con menos de 1/16 libre, se suelta.
+fn vigilar_sujecion(fs: &mut Fs) {
+    if !fs.holding() {
+        return;
+    }
+    let total = fs.header.size() / redoxfs::BLOCK_SIZE;
+    if fs.allocator().free() < total / 16 {
+        fs.release();
+        let quien = SUJETA.swap(0, Ordering::Relaxed);
+        SOLTADA_POR_SITIO.store(quien, Ordering::Relaxed);
+        println!("  [archivos] queda poco sitio: se suelta el disco sujeto");
+    }
+}
 
 /// Que todo lo confirmado esté en el disco (paso B): el estado para contestar.
 fn guardar(fs: &mut Fs) -> i32 {
     match fs.durable() {
         Ok(()) => {
             GUARDADO.store(true, Ordering::Relaxed);
+            vigilar_sujecion(fs);
             BIEN
         }
         Err(e) => {
@@ -1289,7 +1308,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
     let ficha = c.ficha;
     // Las órdenes de volúmenes, instantáneas y comprobación, solo con el derecho de administrar (A13). Pedir la raíz
     // propia (VOLUMEN sin nombre) no lo necesita.
-    let de_administrar = matches!(p.orden, COMPROBAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
+    let de_administrar = matches!(p.orden, COMPROBAR | SUJETAR | SOLTAR | INSTANTANEAS | TOMAR | DESCARTAR | VOLVER | VOLUMENES | HACER_VOLUMEN | QUITAR_VOLUMEN | ABRIR_VOLUMEN | CERRAR_VOLUMEN | COMPROBAR_CLAVE)
         || (p.orden == VOLUMEN && !p.nombre.is_empty());
     if de_administrar && ficha.derechos & D_ADMINISTRAR == 0 {
         return mal(PROTEGIDO);
@@ -1728,6 +1747,33 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 Err(e) => mal(estado_de(e)),
             }
         }
+        SUJETAR => {
+            if fs.holding() {
+                return mal(EN_USO);
+            }
+            match fs.hold() {
+                Ok(()) => {
+                    SUJETA.store(c.marca, Ordering::Relaxed);
+                    if SOLTADA_POR_SITIO.load(Ordering::Relaxed) == c.marca {
+                        SOLTADA_POR_SITIO.store(0, Ordering::Relaxed);
+                    }
+                    Respuesta { estado: BIEN, ..Default::default() }
+                }
+                Err(e) => mal(estado_de(e)),
+            }
+        }
+        SOLTAR => {
+            if SUJETA.load(Ordering::Relaxed) == c.marca && fs.holding() {
+                fs.release();
+                SUJETA.store(0, Ordering::Relaxed);
+                Respuesta { estado: BIEN, ..Default::default() }
+            } else if SOLTADA_POR_SITIO.load(Ordering::Relaxed) == c.marca {
+                SOLTADA_POR_SITIO.store(0, Ordering::Relaxed);
+                mal(LLENO)
+            } else {
+                mal(NO_EXISTE)
+            }
+        }
         COMPROBAR => {
             // FS8: a & 1, leer también los datos. Los problemas, uno por línea, van a la ventana hasta que se llene.
             let opciones = redoxfs::check::Options { data: p.a & 1 != 0 };
@@ -2034,6 +2080,14 @@ fn sesion(fs: &mut Fs, clientes: &mut [Option<Cliente>], altas: &BTreeMap<u64, F
 /// Suelta al cliente que ya no escucha, con su ventana y sus asas.
 fn soltar(fs: &mut Fs, clientes: &mut [Option<Cliente>], i: usize, paginas: &mut Paginas) {
     if let Some(c) = clientes[i].take() {
+        // A15: si sujetaba el disco, se suelta.
+        if SUJETA.load(Ordering::Relaxed) == c.marca {
+            fs.release();
+            SUJETA.store(0, Ordering::Relaxed);
+        }
+        if SOLTADA_POR_SITIO.load(Ordering::Relaxed) == c.marca {
+            SOLTADA_POR_SITIO.store(0, Ordering::Relaxed);
+        }
         paginas.devolver(|p| p.marca == c.marca);
         for (_, (vol, n)) in c.asas {
             cerrar_nodo(fs, vol, n);

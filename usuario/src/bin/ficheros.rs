@@ -466,6 +466,56 @@ fn principal() -> u64 {
     let k = c.pedir(COMPROBAR, 0, 1, 0, "");
     let texto = core::str::from_utf8(&c.ventana()[..k.b as usize]).unwrap_or("?");
     println!("  [ficheros] FS8 comprobación: {}{}", si(k.estado == 0 && k.a == 0 && k.c > 0), texto.trim_end());
+    // A15: sujetar el disco, escribir y borrar mientras tanto (lo borrado espera sin reusarse; comprobar lo cuenta como
+    // libre pendiente) y soltar. Dos veces no se sujeta, ni se suelta lo que no se sujeta.
+    let mut sujeto = c.pedir(SUJETAR, 0, 0, 0, "").estado == 0 && c.pedir(SUJETAR, 0, 0, 0, "").estado == EN_USO;
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    for vuelta in 0..3 {
+        if let Some(a) = hacer(&c, escrito.asa, "a15.bin", 200 * 1024, vuelta) {
+            // Guardado antes de borrar, para que lo borrado quede sujeto.
+            sujeto &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+            c.pedir(CERRAR, a, 0, 0, "");
+        }
+        sujeto &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    sujeto = sujeto
+        && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0
+        && c.pedir(SOLTAR, 0, 0, 0, "").estado == 0
+        && c.pedir(SOLTAR, 0, 0, 0, "").estado == NO_EXISTE
+        && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
+    println!("  [ficheros] A15 sujetar: {}", si(sujeto));
+    // A15, hostil: sujetar y no soltar mientras se escribe, guarda y borra mucho más de lo que cabe. El servicio suelta solo al
+    // quedar poco sitio: ninguna escritura se queda sin sitio y el SOLTAR de después dice LLENO.
+    let escrito = c.pedir(BUSCAR, 0, 0, 0, "Escrito");
+    let mut lleno = c.pedir(SUJETAR, 0, 0, 0, "").estado == 0;
+    let mut x: u64 = 0x2545_F491_4F6C_DD1D;
+    let mut rondas = 0;
+    while lleno && rondas < 64 {
+        let f = c.pedir(CREAR, escrito.asa, 1, 0, "a15b.bin");
+        lleno &= f.estado == 0;
+        for off in (0..256 * 1024u64).step_by(64 * 1024) {
+            for b in c.ventana_mut()[..64 * 1024].iter_mut() {
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                *b = x as u8;
+            }
+            lleno &= c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "").a == 64 * 1024;
+        }
+        // Guardado antes de borrarlo: si no, sus bloques son nuevos (ninguna foto los nombra) y se reusan sin esperar.
+        lleno &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        c.pedir(CERRAR, f.asa, 0, 0, "");
+        lleno &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        rondas += 1;
+    }
+    c.pedir(CERRAR, escrito.asa, 0, 0, "");
+    let soltar = c.pedir(SOLTAR, 0, 0, 0, "").estado;
+    let lleno = lleno && soltar == LLENO && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
+    if !lleno {
+        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}", rondas, soltar);
+    }
+    println!("  [ficheros] A15 sujetar sin soltar: {}", si(lleno));
 
     // FS9: una instantánea, un fichero nuevo, volver a ella (el fichero ya no está y las asas de antes no valen) y
     // descartarla. El disco queda como estaba, sin un problema.

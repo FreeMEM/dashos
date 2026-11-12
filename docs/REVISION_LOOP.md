@@ -1050,3 +1050,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   también al reabrir; sin modo diferido da EINVAL. 152 pruebas de RedoxFS bien.
   Siguiente: las órdenes SUJETAR y SOLTAR en `archivos` (solo administrar; se suelta sola si el cliente se va o si el
   espacio libre baja mucho, para que sujetar no llene el disco) y el comprobador con su alta, que abre la foto.
+- A15: las órdenes SUJETAR (32) y SOLTAR (33) en `archivos`, solo con el derecho de administrar y una a la vez
+  (EN_USO). Se suelta sola si quien sujeta se va, y si el espacio libre baja de 1/16 del disco: entonces su SOLTAR da
+  LLENO (lo que leyó después puede no valer). Pruebas en virt: `ficheros` sujeta, escribe, guarda y borra, comprueba
+  (limpio: lo sujeto cuenta como libre pendiente), suelta, y soltar otra vez da NO_EXISTE. Hostil: sujetar y no soltar
+  mientras se escriben, guardan y borran 64 ficheros de 256 KB sin comprimir (16 MB en una partición de 7 MB): el
+  servicio suelta solo, ninguna escritura se queda sin sitio y SOLTAR da LLENO; `hostil` (sin administrar) recibe
+  PROTEGIDO al sujetar y al soltar. Aprendido al hacer la prueba: lo creado y borrado entre dos guardados no se sujeta
+  (ninguna foto lo nombra) y se reusa enseguida, como debe.
+  Siguiente: el comprobador con su alta en `archivos` (derecho de administrar), que sujeta, abre la foto con RedoxFS
+  por su tramo de solo lectura, la recorre y suelta.

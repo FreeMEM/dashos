@@ -351,6 +351,10 @@ fn permisos(lectura: u32, copia: u32) -> &'static str {
     if p(VOLUMENES, 0, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) || p(VOLUMEN, 0, 0, 0, "Ana").map(|r| r.0) != Some(PROTEGIDO) {
         return "administra volúmenes";
     }
+    // A15: sujetar el disco dejaría sin reusar lo que se borra hasta llenarlo.
+    if p(SUJETAR, 0, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) || p(SOLTAR, 0, 0, 0, "").map(|r| r.0) != Some(PROTEGIDO) {
+        return "sujeta el disco";
+    }
     "bien"
 }
 

@@ -63,6 +63,13 @@ pub const CEDER: u32 = 30;
 ///
 /// `SIN_SITIO` si no se presta (un fichero de menos de `TROZO_PRESTADO`, o la caché llena de prestado): entonces, `LEER`.
 pub const PRESTAR: u32 = 31;
+/// A15: guardar todo y sujetar el disco para que el comprobador (otro proceso) lea una foto entera mientras el servicio
+/// sigue: los bloques que se liberen no se reusan hasta `SOLTAR`. Solo con el derecho de administrar; uno a la vez
+/// (`EN_USO` si ya hay alguien). Se suelta solo si quien sujeta se va o si el espacio libre baja de 1/16 del disco
+/// (para que sujetar no llene el disco); entonces su `SOLTAR` da `LLENO` y lo que leyó después puede no valer.
+pub const SUJETAR: u32 = 32;
+/// A15: soltar lo sujetado. `NO_EXISTE` si no sujetaba; `LLENO` si se soltó antes por falta de sitio.
+pub const SOLTAR: u32 = 33;
 pub const TROZO_PRESTADO: usize = 512 * 1024;
 pub const POR_PRESTAMO: usize = 4;
 pub const MAX_PRESTADOS: usize = 8;
