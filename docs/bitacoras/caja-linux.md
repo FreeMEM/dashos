@@ -813,7 +813,8 @@ programa de Linux ──libwayland──▶ puente (Arch, /run/wayland-0) ──
     (pasan 32), Wayland roto para el compositor (que lo corta: "error de protocolo de caja-linux: mensaje mal
     formado"), y tres conexiones con tramas que no son tramas (tipo, 4 GB, de memoria sin número), que la caja corta.
     Después el programa de verdad funciona.
-- `make prueba`, `arranque-virt`, `-vm`, `-linux`, `-arch` y `-2`: ver abajo.
+- Tras fusionar `revision` (fec71bf), seguidos: `make prueba` (BIEN: esperado.txt y BIEN: cargador hunk),
+  `arranque-virt-wayland`, `arranque-virt`, `-vm`, `-linux`, `-arch` y `-2`: BIEN, a la primera.
 
 ### Medidas
 
@@ -845,5 +846,5 @@ entera: no se ha medido cada parte. En la Pi será otro número.
 - **Más programas de verdad**: no se ha probado GTK4 ni Firefox (mucho para QEMU sin aceleración y 256 MB).
 - `pacman-key --init` y `--populate` no van en la imagen: los paquetes se meten ya instalados desde el PC. Para instalar
   con `pacman -S` dentro de la caja hay que hacerlo a mano la primera vez.
-- Al acabar la prueba, el compositor suelta a caja-linux por no leer sus eventos (tras apagarse Linux); no se ha
-  mirado si pasaba ya antes de esta rama.
+- Una vez, al acabar la prueba (con Linux ya apagado), el compositor soltó a caja-linux por no leer sus eventos; tras
+  fusionar `revision` (fec71bf) no ha vuelto a pasar. Sin mirar.
