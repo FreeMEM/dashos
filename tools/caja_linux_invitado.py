@@ -787,12 +787,16 @@ def arch_ventana(sysroot):
     fuente = RAIZ / "caja-linux/invitado/ventana_wayland.c"
     gen = ARCH / "gen"
     gen.mkdir(exist_ok=True)
-    xml = "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
-    run("wayland-scanner", "client-header", xml, gen / "xdg-shell-client-protocol.h")
-    run("wayland-scanner", "private-code", xml, gen / "xdg-shell-protocol.c")
+    # Los XML, los del repositorio (wayland/protocolos): xdg-shell y la decoración del compositor (H9).
+    codigo = []
+    for xml in ["xdg-shell", "xdg-decoration-unstable-v1"]:
+        x = RAIZ / "wayland/protocolos" / f"{xml}.xml"
+        run("wayland-scanner", "client-header", x, gen / f"{xml}-client-protocol.h")
+        run("wayland-scanner", "private-code", x, gen / f"{xml}-protocol.c")
+        codigo.append(gen / f"{xml}-protocol.c")
     lib = sysroot / "usr/lib"
     run("clang", "--target=aarch64-linux-gnu", f"--sysroot={sysroot}", "-fuse-ld=lld", "-O2", "-Wall", "-nostdlib",
-        f"-I{gen}", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente, gen / "xdg-shell-protocol.c",
+        f"-I{gen}", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente, *codigo,
         "-lwayland-client", "-lc", lib / "crtn.o")
     return sal
 

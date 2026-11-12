@@ -209,6 +209,7 @@ impl<M: Memorias> PorCliente<'_, M> {
                 }
                 let Some((&rol, x)) = yo.xdg.iter_mut().find(|(_, x)| x.deco == Some(objeto)) else { return Some(Ok(())) };
                 x.ssd = modo == MODO_SERVIDOR;
+                x.deco_modo = Some(modo);
                 con.salida.empezar(objeto, zxdg_toplevel_decoration_v1::ev::CONFIGURE).uint(modo).fin();
                 // Ya configurada (o esperando su primer ack): un configure más con el modo nuevo. Si no, va con el
                 // primero, tras su primer commit.

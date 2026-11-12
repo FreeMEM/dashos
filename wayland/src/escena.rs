@@ -1533,6 +1533,7 @@ impl<M: Memorias> Escena<M> {
         // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer, sombra). Una sombra va como
         // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
+        let mut esquinas: Vec<Option<Rect>> = Vec::new();
         let mut s_i = 0;
         let mut b_i = 0;
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
@@ -1564,8 +1565,26 @@ impl<M: Memorias> Escena<M> {
             let cli = &self.clientes[&c];
             let Some(b) = cli.superficies[&id].bufer else { continue };
             let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
-            con_bufer.push((Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 }, x, y, px, bufer, None));
+            let r = Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 };
+            // H9: una ventana con la barra de DashOS lleva también redondeadas las esquinas de abajo.
+            while esquinas.len() < con_bufer.len() {
+                esquinas.push(None);
+            }
+            esquinas.push(decoracion::con_barra(cli, id).then_some(r));
+            con_bufer.push((r, x, y, px, bufer, None));
         }
+        esquinas.resize(con_bufer.len(), None);
+        // Lo que se queda fuera de las esquinas de abajo en la fila `fila` de la ventana `r` (0: nada; fuera de esas
+        // filas, `None`).
+        let radio_abajo = |r: Rect, fila: i32| -> Option<i32> {
+            let rr = decoracion::RADIO_MARCO.min(r.w / 2).min(r.h / 2);
+            let j = r.y + r.h - 1 - fila;
+            if j < 0 || j >= rr {
+                return None;
+            }
+            let d = 2 * (rr - j) - 1;
+            Some(rr - ((4 * rr * rr - d * d) as u32 / 4).isqrt() as i32)
+        };
         // E8: por cada fila dañada, tramos entre los bordes de las capas. En cada tramo se empieza por la capa opaca
         // (XRGB) más alta que lo cubre, o por el fondo si no hay: lo que queda debajo de una opaca no se pinta.
         let mut bordes: Vec<i32> = Vec::new();
@@ -1596,7 +1615,7 @@ impl<M: Memorias> Escena<M> {
                     // redondeadas: si no, se pintaría debajo, sombra incluida, toda su superficie).
                     let opaco_en = |k: usize| {
                         let (_, x, y, px, bufer, sombra) = &con_bufer[k];
-                        if sombra.is_some() {
+                        if sombra.is_some() || esquinas[k].and_then(|r| radio_abajo(r, fila)).is_some() {
                             return false;
                         }
                         if bufer.formato != ARGB8888 {
@@ -1623,6 +1642,16 @@ impl<M: Memorias> Escena<M> {
                         let (_, x, y, px, bufer, _) = &con_bufer[*k];
                         let origen = (fila - y) as usize * bufer.linea + (a - x) as usize * 4;
                         let de = &px[origen..origen + 4 * destino.len()];
+                        // H9: en las filas de las esquinas de abajo, solo lo de dentro.
+                        if let Some((r, fuera)) = esquinas[*k].and_then(|r| radio_abajo(r, fila).map(|f| (r, f))) {
+                            for (j, (d, o)) in destino.iter_mut().zip(de.chunks_exact(4)).enumerate() {
+                                let xx = a + j as i32;
+                                if xx >= r.x + fuera && xx < r.x + r.w - fuera {
+                                    *d = mezclar(u32::from_le_bytes([o[0], o[1], o[2], o[3]]) | if bufer.formato != ARGB8888 { 0xFF00_0000 } else { 0 }, *d);
+                                }
+                            }
+                            continue;
+                        }
                         // Un tramo ARGB del todo opaco (en una ventana, casi siempre) se copia; si no, se mezcla entero,
                         // sin saltos por píxel.
                         let opaco = bufer.formato != ARGB8888 || de.chunks_exact(4).all(|o| o[3] == 255);

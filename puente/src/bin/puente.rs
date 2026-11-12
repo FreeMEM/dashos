@@ -18,6 +18,17 @@
 //! - **Otros descriptores** (un mapa de teclado, por ejemplo): se copia lo que tienen, una vez.
 //! - **Lo que viene de DashOS** con memorias (el mapa de teclado que da el compositor): el puente crea un `memfd`
 //!   con su contenido y se lo da al programa.
+//! - **Las tuberías del portapapeles** (H9): las que da un programa para pegar (`wl_data_offer.receive`) y las que
+//!   pide DashOS para que un programa de Linux escriba lo copiado (`wl_data_source.send`) van como tubos
+//!   (`dashos_puente::tubos`): bytes que pasan según llegan, hasta el fin.
+//!
+//! Para saber qué descriptores lleva cada mensaje, el puente sigue los objetos: los que crea el programa y los que crea
+//! el compositor en sus eventos (las ofertas del portapapeles).
+//!
+//!     puente --cliente-hostil WAYLAND_SOCKET
+//!
+//! Un programa de Linux hostil (H9): decoraciones rotas, tipos del portapapeles de más, enormes o repetidos, una fuente
+//! que escribe sin fin y otra que nunca cierra. El compositor y el puente siguen; las demás ventanas, también.
 
 use std::collections::{HashMap, VecDeque};
 use std::io::Write;
@@ -67,6 +78,8 @@ fn esperar_tarjeta(fd: RawFd) {
 struct Programa {
     sock: UnixStream,
     entrada: Vec<u8>,
+    /// Lo que llegó de DashOS para él y aún no es un mensaje entero (para seguir los objetos que crea el compositor).
+    eventos: Vec<u8>,
     fds: VecDeque<RawFd>,
     objetos: HashMap<u32, &'static Interface>,
     pools: HashMap<u32, Pool>,
@@ -102,13 +115,15 @@ impl Programa {
     fn nuevo(sock: UnixStream) -> Self {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
-        Self { sock, entrada: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
+        Self { sock, entrada: Vec::new(), eventos: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
     }
 }
 
 struct Puente {
     transporte: UnixStream,
     siguiente_memoria: u32,
+    /// Los tubos del portapapeles (H9).
+    tubos: p::tubos::Tubos,
 }
 
 impl Puente {
@@ -119,6 +134,13 @@ impl Puente {
 
     fn trama(&mut self, tipo: u8, conexion: u32, datos: &[u8]) {
         p::escribir_trama(&mut self.transporte, tipo, conexion, datos).expect("el transporte se cerró");
+    }
+
+    /// Manda las tramas que dejaron los tubos.
+    fn tramas(&mut self, t: Vec<(u8, Vec<u8>)>) {
+        for (tipo, d) in t {
+            self.trama(tipo, 0, &d);
+        }
     }
 
     fn memoria_nueva(&mut self, numero: u32, tamano: u64) {
@@ -387,6 +409,15 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
             }
             _ => {
                 for fd in fds {
+                    // H9: una tubería (para pegar: `receive`) es un tubo; lo demás se copia una vez.
+                    if p::tubos::es_tuberia(fd) {
+                        let n = pu.memoria();
+                        let mut t = Vec::new();
+                        pu.tubos.escritor(n, fd, &mut t);
+                        pu.tramas(t);
+                        suyas.push(n);
+                        continue;
+                    }
                     let n = pu.copiar_descriptor(fd);
                     sueltas.push(n);
                     suyas.push(n);
@@ -410,6 +441,33 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
     // Las copias de un descriptor cualquiera: el otro lado ya tiene la suya, con el mensaje.
     for n in sueltas {
         pu.trama(p::MEMORIA_SOLTAR, 0, &n.to_le_bytes());
+    }
+}
+
+/// Sigue los eventos que manda DashOS a un programa: los objetos que crea el compositor (las ofertas del portapapeles)
+/// pasan a la tabla del programa, para saber qué descriptores llevan sus peticiones.
+fn seguir_eventos(pr: &mut Programa, bytes: &[u8]) {
+    pr.eventos.extend_from_slice(bytes);
+    let mut hecho = 0;
+    while let Ok((objeto, orden, tam)) = leer_cabecera(&pr.eventos[hecho..]) {
+        let msg = &pr.eventos[hecho + 8..hecho + tam];
+        if let Some(m) = pr.objetos.get(&objeto).and_then(|i| i.events.get(orden as usize)) {
+            if let Ok(args) = leer_args(m, msg, &mut std::iter::repeat(0)) {
+                for (a, v) in m.args.iter().zip(args.iter()) {
+                    if let (Valor::NewId(id), Some(nombre)) = (v, a.interface)
+                        && let Some(i) = wayland::interfaz(nombre)
+                    {
+                        pr.objetos.insert(*id, i);
+                    }
+                }
+            }
+        }
+        hecho += tam;
+    }
+    pr.eventos.drain(..hecho);
+    // Un evento que no cuadra (más de lo que puede medir uno): se deja de seguir.
+    if pr.eventos.len() > 1 << 16 {
+        pr.eventos.clear();
     }
 }
 
@@ -520,7 +578,7 @@ fn main() {
     println!("puente: Wayland en {}, hacia DashOS por {}", ruta, transporte);
     // Bloqueante (la copia comparte el modo con la de escribir): se lee solo cuando `poll` dice que hay algo.
     let mut lectura = t.try_clone().unwrap();
-    let mut pu = Puente { transporte: t, siguiente_memoria: 0 };
+    let mut pu = Puente { transporte: t, siguiente_memoria: 0, tubos: p::tubos::Tubos::default() };
     let mut programas: HashMap<u32, Programa> = HashMap::new();
     let mut siguiente = 0u32;
     // Las memorias que manda DashOS: número → memfd.
@@ -530,7 +588,12 @@ fn main() {
         let mut pfd = vec![libc::pollfd { fd: escucha.as_raw_fd(), events: libc::POLLIN, revents: 0 }, libc::pollfd { fd: lectura.as_raw_fd(), events: libc::POLLIN, revents: 0 }];
         let orden: Vec<u32> = programas.keys().copied().collect();
         pfd.extend(orden.iter().map(|c| libc::pollfd { fd: programas[c].sock.as_raw_fd(), events: libc::POLLIN, revents: 0 }));
+        // H9: los tubos del portapapeles.
+        pfd.extend(pu.tubos.vigilar().into_iter().map(|(fd, ev, _)| libc::pollfd { fd, events: ev, revents: 0 }));
         unsafe { libc::poll(pfd.as_mut_ptr(), pfd.len() as _, 100) };
+        let mut t = Vec::new();
+        pu.tubos.mover(&mut t);
+        pu.tramas(t);
         if let Ok((sock, _)) = escucha.accept() {
             sock.set_nonblocking(true).unwrap();
             siguiente += 1;
@@ -581,11 +644,24 @@ fn main() {
                         unsafe { libc::pwrite(fd, t.datos[12..].as_ptr().cast(), t.datos.len() - 12, desde as libc::off_t) };
                     }
                 }
+                p::TUBO_NUEVO if t.datos.len() == 4 => pu.tubos.anunciado(u32::from_le_bytes(t.datos[..4].try_into().unwrap())),
+                p::TUBO_DATOS | p::TUBO_FIN if t.datos.len() >= 4 => {
+                    let n = u32::from_le_bytes(t.datos[..4].try_into().unwrap());
+                    let mut v = Vec::new();
+                    if t.tipo == p::TUBO_DATOS {
+                        pu.tubos.datos(n, &t.datos[4..], &mut v);
+                    } else {
+                        pu.tubos.fin(n, &mut v);
+                    }
+                    pu.tramas(v);
+                }
                 p::DATOS => {
                     let Some((llaves, bytes)) = p::partir_datos(&t.datos) else { continue };
-                    let fds: Vec<RawFd> = llaves.iter().filter_map(|n| de_dashos.remove(n)).collect();
-                    if let Some(pr) = programas.get(&t.conexion) {
+                    // Cada número, una memoria (un memfd) o un tubo anunciado (el extremo de escribir de su tubería).
+                    let fds: Vec<RawFd> = llaves.iter().filter_map(|n| de_dashos.remove(n).or_else(|| pu.tubos.dar(*n))).collect();
+                    if let Some(pr) = programas.get_mut(&t.conexion) {
                         p::mandar(pr.sock.as_raw_fd(), bytes, &fds);
+                        seguir_eventos(pr, bytes);
                     }
                     for fd in fds {
                         unsafe { libc::close(fd) };
