@@ -1028,3 +1028,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   sobre esa fila no hace nada). Prueba en virt: tras quitar el último, "lo que se ve" es ese texto.
 - U5: el selector enseña el tamaño de cada fichero ("nota.txt · 18 bytes"; KB y MB según el tamaño, del campo
   tamaño de cada entrada de LISTAR) y dice lo que enseña al entrar en un cajón. Captura nueva.
+  Acotado: con una pausa de 0,5 ms antes de cada lectura (en vez del aviso) también abre, en 22 ms. Sin pausa, se
+  para, y ninguna petición vence su plazo. Es el ritmo: peticiones seguidas sin respiro dejan algo atascado. Puede ser
+  una espera perdida (kernel: el canal o el temporizador del plazo; o el servicio de disco al intercalar canal y
+  anillo). No se tapa con la pausa: es lo primero que hay que mirar al retomar A15, con una traza en memoria (sin
+  imprimir, que cambia el ritmo) de cada petición y su respuesta.
