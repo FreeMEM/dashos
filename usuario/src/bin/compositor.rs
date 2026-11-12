@@ -62,13 +62,30 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
 ];
+/// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
+/// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
+static GLOBALES_CAPAS: [Global; 8] = [
+    Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
+    Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
+    Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
+    Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
+    Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
+    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
+    Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+];
 /// Quién puede cambiar el tema del sistema (S10c): el centro de control.
 const PONEN_TEMA: &[&str] = &["centro"];
-/// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca. De momento solo `guardian`, por
-/// el bloqueo de la sesión (U3); el escritorio oficial (S10b) aún no existe.
-const ESCRITORIOS: &[&str] = &["guardian", "panel"];
+/// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca (solo esos nombres valen: uno
+/// lanzado desde el disco no debe poder llamarse así): `guardian`, con todo, por el bloqueo de la sesión (U3); y, solo
+/// con las capas, el panel rápido (C2) y la barra con su lanzador (S10).
+const ESCRITORIOS: &[&str] = &["guardian"];
+const CON_CAPAS: &[&str] = &["panel", "barra"];
 /// Quién recibe Super+A (C2 de S10c): el panel rápido.
 const ABREN_PANEL: &[&str] = &["panel"];
+/// La barra de la pantalla (S10): pide el panel con su botón, y recibe Super sola (el lanzador) y el título de la
+/// ventana con el teclado.
+const BARRAS: &[&str] = &["barra"];
 /// Los clientes que son parte del sistema: se les espera más (E8) y su ventana nueva se lleva el teclado aunque se esté
 /// escribiendo (U5: el selector de ficheros sale porque el usuario pidió abrir algo).
 const SISTEMA: &[&str] = &["guardian", "selector"];
@@ -100,6 +117,24 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, objeto) in core::mem::take(&mut escena.avisos_panel) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_panel(&mut cli.con, objeto);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // Y a la barra (S10): Super sola y el título de la ventana con el teclado, si cambió.
+    escena.revisar_titulo();
+    for (cl, objeto) in core::mem::take(&mut escena.avisos_lanzador) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_lanzador(&mut cli.con, objeto);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    for (cl, objeto, titulo) in core::mem::take(&mut escena.avisos_titulo) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_titulo(&mut cli.con, objeto, &titulo);
             if !mandar(cli) {
                 caidos.push(cl);
             }
@@ -495,6 +530,9 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| ABREN_PANEL.contains(&n.as_str())) && !escena.abren_panel.contains(&marca) {
                     escena.abren_panel.push(marca);
                 }
+                if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
+                    escena.barras.push(marca);
+                }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default() });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
@@ -503,8 +541,14 @@ fn principal() -> u64 {
                     llaves.iter().for_each(|&l| { dashos::cerrar(l); });
                     soltar = true;
                 } else {
-                    let escritorio = nombres.get(&marca).is_some_and(|n| ESCRITORIOS.contains(&n.as_str()));
-                    let globales: &[Global] = if escritorio { &GLOBALES_ESCRITORIO } else { &GLOBALES };
+                    let nombre = nombres.get(&marca).map_or("", String::as_str);
+                    let globales: &[Global] = if ESCRITORIOS.contains(&nombre) {
+                        &GLOBALES_ESCRITORIO
+                    } else if CON_CAPAS.contains(&nombre) {
+                        &GLOBALES_CAPAS
+                    } else {
+                        &GLOBALES
+                    };
                     cli.con.atender(globales, &mut escena.de(marca));
                     soltar = !mandar(cli) || cli.con.roto.is_some();
                 }
@@ -525,6 +569,9 @@ fn principal() -> u64 {
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
             println!("  [compositor] ventana de {} en ({}, {})", nombres.get(&cl).map_or("?", |s| s), x, y);
+        }
+        for (cl, x, y) in core::mem::take(&mut escena.capas_colocadas) {
+            println!("  [compositor] capa de {} en ({}, {})", nombres.get(&cl).map_or("?", |s| s), x, y);
         }
         // La entrada que salió de las peticiones (el teclado a una ventana nueva).
         let ms = (dashos::ahora_us() / 1000) as u32;

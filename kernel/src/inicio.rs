@@ -99,6 +99,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // el del sonido para el volumen general. Tras el servicio de sonido, que es quien sirve ese canal.
     #[cfg(feature = "virt")]
     ("panel", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/panel"), &[], &["ventanas", "centro", "sonido"]),
+    // S10: la barra de la pantalla y su lanzador. El poder de escritorio (capas) por su nombre; "sesiones" para lanzar
+    // (como quien está delante, solo de `Programas/`) y "archivos" para listar `Programas`. Tras el panel: su botón lo abre.
+    #[cfg(feature = "virt")]
+    ("barra", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/barra"), &[], &["ventanas", "sesiones", "archivos"]),
     ("virtio-sonido", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
     #[cfg(all(feature = "virt", not(feature = "paula")))]

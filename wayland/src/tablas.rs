@@ -1066,10 +1066,13 @@ pub static DASHOS_TEMA_V1: Interface = Interface {
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "bloquear", since: 1, destructor: false, args: &[] },
+        Message { name: "panel", since: 1, destructor: false, args: &[] },
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "panel", since: 1, destructor: false, args: &[] },
+        Message { name: "lanzador", since: 1, destructor: false, args: &[] },
+        Message { name: "titulo", since: 1, destructor: false, args: &[Arg { name: "titulo", kind: Kind::Str, nullable: false, interface: None }] },
     ],
 };
 
@@ -1079,10 +1082,13 @@ pub mod dashos_tema_v1 {
         pub const DESTROY: u16 = 0;
         pub const PONER: u16 = 1;
         pub const BLOQUEAR: u16 = 2;
+        pub const PANEL: u16 = 3;
     }
     pub mod ev {
         pub const TEMA: u16 = 0;
         pub const PANEL: u16 = 1;
+        pub const LANZADOR: u16 = 2;
+        pub const TITULO: u16 = 3;
     }
 }
 

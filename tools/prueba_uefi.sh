@@ -102,6 +102,7 @@ entradas_antes = 0
 espera_carpeta = 0
 centro = 0
 panel = 0
+barra = 0
 bloqueo_capturado = False
 cambio = 0
 
@@ -354,6 +355,10 @@ while time.time() - inicio < total:
         if 1 <= panel <= 13:
             import re
             def ir_panel(x, y):
+                # El panel dice sus sitios como si estuviera a 8 del borde de arriba; con la barra (S10) sale más abajo:
+                # dónde, lo dice el compositor.
+                capa = re.findall(r"\[compositor\] capa de panel en \((\d+), (\d+)\)", texto)
+                y += int(capa[-1][1]) - 8 if capa else 0
                 mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
                 pasos = []
                 while x > 0 or y > 0:
@@ -380,7 +385,7 @@ while time.time() - inicio < total:
                 ultima_vez = "\n".join(l for k, l in veces if edicion and k == edicion[-1])
                 g = re.search(que + r" \((\d+), (\d+)\)", ultima_vez)
                 return g.groups() if g else None
-            espera = {1: m is not None and vol is not None, 2: "[centro] modo claro (lo pide el panel)" in texto,
+            espera = {1: m is not None and vol is not None and "[compositor] capa de panel en" in texto, 2: "[centro] modo claro (lo pide el panel)" in texto,
                       3: "[centro] modo oscuro (lo pide el panel)" in texto,
                       4: "[sonido] volumen general: 90 % (lo pide panel)" in texto,
                       5: "[sonido] volumen general: 100 % (lo pide panel)" in texto,
@@ -434,6 +439,68 @@ while time.time() - inicio < total:
             panel += 1
             reintento = time.time() + 6
             # Sin lo de siempre (un clic de más daría otra vuelta al modo) hasta acabar.
+            continue
+        # S10: la barra y el lanzador, tras el panel (con la sesión de Ana delante, desbloqueada). Un clic en el botón del
+        # lanzador lo abre; "ho" busca (queda hola) e Intro lo lanza por `sesiones`. Super sola lo vuelve a abrir y Esc lo
+        # cierra. El botón del panel lo abre (la segunda vez que se abre) y otro clic lo cierra. Los botones los dice la
+        # barra, que está en (0, 0). Con CAPTURA_BARRA=fichero.ppm: el lanzador abierto (fichero.ppm), con la búsqueda
+        # (fichero.busca.ppm) y la barra con el panel (fichero.panel.ppm).
+        if barra == 0 and panel == 14 and "[barra] botones: " in texto:
+            barra = 1
+            import re
+            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\), panel en \((\d+), (\d+)\)", texto)
+            def ir_barra(x, y):
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            time.sleep(0.5)
+            ir_barra(int(bb.group(1)), int(bb.group(2)))
+            reintento = time.time() + 8
+        if 1 <= barra <= 7:
+            captura_barra = os.environ.get("CAPTURA_BARRA")
+            espera = {1: texto.count("[barra] lanzador abierto") >= 1,
+                      2: '[barra] busca "ho": hola' in texto,
+                      3: "[sesiones] barra lanza Programas/hola: 0" in texto,
+                      4: texto.count("[barra] lanzador abierto") >= 2,
+                      5: texto.count("[barra] lanzador cerrado") >= 2,
+                      6: "[panel] abierto por 2.ª vez" in texto and texto.count("[compositor] capa de panel en") >= 2,
+                      7: texto.count("[panel] cerrado") >= 2}[barra]
+            if not espera:
+                if time.time() > reintento:
+                    # No llegó: se deja (las líneas que falten lo dirán).
+                    barra = 8
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            if barra == 1:
+                if captura_barra:
+                    mandar("screendump " + captura_barra)
+                    time.sleep(0.5)
+                mandar("sendkey h", "sendkey o", pausa=0.3)
+            elif barra == 2:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".busca.ppm")
+                    time.sleep(0.5)
+                mandar("sendkey ret")
+            elif barra == 3:
+                mandar("sendkey meta_l")
+            elif barra == 4:
+                mandar("sendkey esc")
+            elif barra == 5:
+                ir_barra(int(bb.group(3)), int(bb.group(4)))
+            elif barra == 6:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".panel.ppm")
+                    time.sleep(0.5)
+                ir_barra(int(bb.group(3)), int(bb.group(4)))
+            barra += 1
+            reintento = time.time() + 8
             continue
         # Con una sesión bloqueada, el teclado es de la pantalla de bloqueo: lo del selector espera (si no, sus Intro
         # de reintento caían allí como contraseñas vacías).
@@ -692,13 +759,24 @@ while time.time() - inicio < total:
             bloqueo = 10
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto:
             ajustes = True
-            # El clic, en (400, 130): a la derecha del título de Ajustes, donde no hay nada que pulsar (el foco sigue en su
-            # campo; en (300, 300) ahora está su Cancelar). Después, el cursor vuelve a (300, 300), como antes.
-            mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
-            mandar("mouse_move 100 100", *["mouse_move 100 10"] * 3, pausa=0.05)
+            # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
+            # título, donde no hay nada que pulsar (el foco sigue en su campo; a (196, 196) está su Cancelar). Después, el
+            # cursor vuelve a (196, 196) de su esquina, como antes. Dónde está la ventana lo dice el compositor (con la
+            # barra de la pantalla, S10, la cascada empieza más abajo).
+            import re
+            v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+            vx, vy = (int(v.group(1)), int(v.group(2))) if v else (104, 104)
+            def ir_a(x, y):
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+            ir_a(vx + 296, vy + 26)
             mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-            mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
-            mandar(*["mouse_move 100 100"] * 3, pausa=0.05)
+            ir_a(vx + 196, vy + 196)
             time.sleep(0.5)
             mandar("sendkey meta_l-up")
             time.sleep(2)

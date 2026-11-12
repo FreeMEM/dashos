@@ -455,6 +455,20 @@ pub struct Escena<M: Memorias> {
     /// atiende. Su ventana nueva se lleva el teclado aunque se esté escribiendo (U5: el selector de ficheros sale
     /// porque el usuario pidió abrir algo).
     pub del_sistema: Vec<Cliente>,
+    /// S10: la barra de la pantalla, por el nombre que le da `inicio` (lo pone quien atiende). Pide el panel rápido, y
+    /// a ella van Super sola (el lanzador) y el título de la ventana con el teclado.
+    pub barras: Vec<Cliente>,
+    /// Super sola (S10): a qué suscritos del tema que son barra hay que mandar `lanzador`.
+    pub avisos_lanzador: Vec<(Cliente, u32)>,
+    /// El título por decir a cada barra (S10): barra, objeto y título. Quien atiende lo manda con `avisar_titulo`.
+    pub avisos_titulo: Vec<(Cliente, u32, alloc::string::String)>,
+    /// El último título que se dijo a las barras.
+    titulo_dicho: alloc::string::String,
+    /// Super está pulsada sin otra tecla ni botón por medio: al soltarla, el lanzador (S10).
+    super_sola: bool,
+    /// Las capas que acaban de salir, con su sitio (S10: las pruebas del panel, bajo la barra): quien atiende lo dice y
+    /// lo vacía.
+    pub capas_colocadas: Vec<(Cliente, i32, i32)>,
 }
 
 /// Un aviso de inactividad pedido (U3).
@@ -496,6 +510,19 @@ pub fn avisar_panel(con: &mut Conexion, objeto: u32) {
     con.salida.empezar(objeto, dashos_tema_v1::ev::PANEL).fin();
 }
 
+/// Super sola (S10): que la barra abra o cierre el lanzador.
+pub fn avisar_lanzador(con: &mut Conexion, objeto: u32) {
+    con.salida.empezar(objeto, dashos_tema_v1::ev::LANZADOR).fin();
+}
+
+/// S10: el título de la ventana con el teclado, a la barra.
+pub fn avisar_titulo(con: &mut Conexion, objeto: u32, titulo: &str) {
+    con.salida.empezar(objeto, dashos_tema_v1::ev::TITULO).texto(Some(titulo)).fin();
+}
+
+/// Lo más largo que se dice de un título (S10), en bytes: lo que cabe en la barra.
+pub const MAX_TITULO: usize = 96;
+
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
         // Al empezar, la pantalla entera está por pintar.
@@ -533,6 +560,12 @@ impl<M: Memorias> Escena<M> {
             inactividad: Vec::new(),
             avisos_inactividad: Vec::new(),
             del_sistema: Vec::new(),
+            barras: Vec::new(),
+            avisos_lanzador: Vec::new(),
+            avisos_titulo: Vec::new(),
+            titulo_dicho: alloc::string::String::new(),
+            super_sola: false,
+            capas_colocadas: Vec::new(),
         }
     }
 
@@ -571,6 +604,48 @@ impl<M: Memorias> Escena<M> {
         self.avisos_panel.extend(suyos);
     }
 
+    /// Super sola (S10): el lanzador de la barra (los suscritos al tema que están en `barras`).
+    pub fn pedir_lanzador(&mut self) {
+        let barras = &self.barras;
+        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+        self.avisos_lanzador.extend(suyos);
+    }
+
+    /// S10: el título de la ventana en la que se escribe, para la barra. Vacío si no hay ninguna o si la sesión está
+    /// bloqueada. Si el teclado lo tiene una capa (el lanzador, el panel), el de la ventana de arriba, que es la que lo
+    /// recupera al cerrarse. Así la barra solo sabe el título de lo que tiene delante quien está sentado.
+    pub fn titulo_activo(&self) -> &str {
+        if self.bloqueo.is_some() {
+            return "";
+        }
+        let ventana = match self.teclado {
+            Some(t) if self.capas.contains(&t) => self.orden.last().copied(),
+            t => t,
+        };
+        let Some((c, sup)) = ventana else { return "" };
+        let Some(cli) = self.clientes.get(&c) else { return "" };
+        cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).map_or("", |x| x.titulo.as_str())
+    }
+
+    /// S10: si cambió el título de la ventana con el teclado, se dice a cada barra (cortado a `MAX_TITULO` bytes, por
+    /// una frontera de letra). Quien atiende lo llama tras cada mensaje.
+    pub fn revisar_titulo(&mut self) {
+        let t = self.titulo_activo();
+        let mut fin = t.len().min(MAX_TITULO);
+        while !t.is_char_boundary(fin) {
+            fin -= 1;
+        }
+        if t[..fin] == self.titulo_dicho {
+            return;
+        }
+        self.titulo_dicho = alloc::string::String::from(&t[..fin]);
+        let barras = &self.barras;
+        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+        for (c, o) in suyos {
+            self.avisos_titulo.push((c, o, self.titulo_dicho.clone()));
+        }
+    }
+
     /// Mira los avisos de inactividad a la hora `reloj_ms` (U3): los vencidos dan `idled`. Devuelve cuántos
     /// milisegundos faltan para el siguiente, si queda alguno por vencer.
     pub fn revisar_inactividad(&mut self) -> Option<u32> {
@@ -605,6 +680,9 @@ impl<M: Memorias> Escena<M> {
         self.avisos_panel.retain(|t| t.0 != cliente);
         self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
+        self.barras.retain(|&c| c != cliente);
+        self.avisos_lanzador.retain(|t| t.0 != cliente);
+        self.avisos_titulo.retain(|t| t.0 != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
             b.vivo = false;
@@ -699,6 +777,7 @@ impl<M: Memorias> Escena<M> {
     /// Tras el commit de una capa del escritorio: si tiene búfer, en su sitio según sus anclas; si no, fuera (G4).
     fn colocar_capa(&mut self, cliente: Cliente, sup: u32) {
         let (w, h) = self.medidas;
+        let area = self.area;
         let Some(yo) = self.clientes.get_mut(&cliente) else { return };
         let Some(id) = yo.superficies.get(&sup).and_then(|s| s.capa) else { return };
         let e = yo.capas[&id].actual;
@@ -708,9 +787,14 @@ impl<M: Memorias> Escena<M> {
         let s = yo.superficies.get_mut(&sup).unwrap();
         match medida {
             Some((bw, bh)) => {
-                s.sitio = Some(sitio_capa(&e, w, h, bw, bh));
+                // Sin zona propia (0), dentro de lo que dejan las barras: se aparta de sus zonas exclusivas (como pide
+                // wlr-layer-shell; el panel rápido sale debajo de la barra). Con zona o con -1, en toda la pantalla.
+                let r = if e.zona == 0 { area } else { Rect { x: 0, y: 0, w, h } };
+                let (x, y) = sitio_capa(&e, r.w, r.h, bw, bh);
+                s.sitio = Some((r.x + x, r.y + y));
                 if !self.capas.contains(&(cliente, sup)) {
                     self.capas.push((cliente, sup));
+                    self.capas_colocadas.push((cliente, r.x + x, r.y + y));
                 }
                 self.danos.extend(rect_de(yo, sup));
                 // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
@@ -795,6 +879,7 @@ impl<M: Memorias> Escena<M> {
 
     /// Lo que queda para las ventanas: la pantalla menos la zona exclusiva de cada capa pegada a un borde (G4).
     pub fn recalcular_area(&mut self) {
+        let antes = self.area;
         let (w, h) = self.medidas;
         let mut a = Rect { x: 0, y: 0, w, h };
         for &(c, sup) in &self.capas {
@@ -822,6 +907,30 @@ impl<M: Memorias> Escena<M> {
         a.w = a.w.max(1);
         a.h = a.h.max(1);
         self.area = a;
+        if a != antes {
+            self.reajustar_maximizadas();
+        }
+    }
+
+    /// Las ventanas maximizadas, otra vez a lo que queda (S10: si la barra sale, o se va, después de maximizar una, no
+    /// se queda debajo). Se mueven ya; el tamaño nuevo se pide con su configure.
+    fn reajustar_maximizadas(&mut self) {
+        let a = self.area;
+        let mut cambian = Vec::new();
+        for (&c, cli) in &self.clientes {
+            for (&rol, x) in &cli.xdg {
+                if x.antes_de_maximizar.is_some() && cli.superficies.get(&x.superficie).is_some_and(|s| s.sitio.is_some()) {
+                    cambian.push((c, rol, x.superficie));
+                }
+            }
+        }
+        for (c, rol, sup) in cambian {
+            let cli = self.clientes.get_mut(&c).unwrap();
+            self.danos.extend(rect_de(cli, sup));
+            cli.superficies.get_mut(&sup).unwrap().sitio = Some((a.x, a.y));
+            self.danos.extend(rect_de(cli, sup));
+            self.pendientes.push((c, Entrada::Configura { xdg: rol, ancho: a.w, alto: a.h, maximizada: true }));
+        }
     }
 
     /// Lo que se pinta, de abajo arriba: capas de fondo y de abajo, las ventanas, y las capas de arriba y de encima.
@@ -1163,6 +1272,15 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 escena.tema = (args[0].uint() | 0xff00_0000, args[1].uint() != 0);
                 let todos: Vec<(Cliente, u32)> = escena.temas.clone();
                 escena.avisos_tema.extend(todos);
+            }
+            // S10: el botón del panel rápido de la barra, como Super+A; solo la barra.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::PANEL => {
+                if !escena.barras.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo la barra pide el panel rápido"));
+                }
+                if escena.bloqueo.is_none() {
+                    escena.pedir_panel();
+                }
             }
             // C2: bloquear ya, como Super+L; solo el panel rápido.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::BLOQUEAR => {
@@ -1560,9 +1678,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 if orden == wl_surface::req::COMMIT
                     && let Some(id) = yo.superficies[&objeto].capa {
                         let pone_bufer = matches!(yo.superficies[&objeto].pendiente.bufer, Some(Some(_)));
-                        let (w, h) = escena.medidas;
                         let c = yo.capas.get_mut(&id).unwrap();
                         let e = c.pendiente;
+                        // Sin zona propia, lo que dejan las barras (como al colocarla).
+                        let (w, h) = if e.zona == 0 { (escena.area.w, escena.area.h) } else { escena.medidas };
                         if (e.ancho == 0 && e.anclas & (IZQUIERDA | DERECHA) != IZQUIERDA | DERECHA)
                             || (e.alto == 0 && e.anclas & (ARRIBA | ABAJO) != ARRIBA | ABAJO)
                         {
@@ -1667,6 +1786,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             avisar_tema(con, id, self.escena.tema);
             if self.escena.temas.len() < MAX_TEMAS {
                 self.escena.temas.push((self.cliente, id));
+                // A la barra, también el título de ahora (S10).
+                if self.escena.barras.contains(&self.cliente) {
+                    avisar_titulo(con, id, &self.escena.titulo_dicho);
+                }
             }
         }
         if core::ptr::eq(global.interfaz, &tablas::WL_SEAT) {
@@ -1765,7 +1888,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let cliente = self.cliente;
                 escena.capas.retain(|x| *x != (cliente, c.superficie));
                 if escena.teclado == Some((cliente, c.superficie)) {
+                    // A la ventana de arriba, como al irse el cliente (S10: tras cerrar el lanzador se sigue escribiendo
+                    // donde se estaba).
                     escena.teclado = None;
+                    escena.devolver_teclado();
                 }
                 escena.recalcular_area();
             }
@@ -1982,6 +2108,9 @@ impl<M: Memorias> Escena<M> {
                 continue;
             }
             let pulsado = botones & (1 << bit) != 0;
+            if pulsado {
+                self.super_sola = false;
+            }
             // Pulsar sobre una ventana la sube y le da el teclado.
             if pulsado
                 && let Some(v) = ahora {
@@ -2018,6 +2147,13 @@ impl<M: Memorias> Escena<M> {
             0xE3 | 0xE7 => 64,
             _ => 0,
         };
+        // S10: Super sola abre el lanzador de la barra: pulsada sin otro modificador y soltada sin otra tecla ni botón
+        // por medio (con otra, es un atajo: Super+A, Super+L, Super+flechas). Llega también a la ventana, como antes.
+        if pulsada {
+            self.super_sola = mascara == 64 && self.mods & !64 == 0;
+        } else if mascara == 64 && core::mem::take(&mut self.super_sola) && self.bloqueo.is_none() {
+            self.pedir_lanzador();
+        }
         let Some((c, _)) = self.teclado else {
             // Sin ventana con el teclado los modificadores se siguen llevando, y Super+L (U3) bloquea igual.
             if mascara != 0 {

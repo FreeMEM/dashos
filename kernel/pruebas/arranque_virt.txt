@@ -93,8 +93,9 @@ DashOS en marcha con 4 núcleos.
 # Sale cuando ya se teclea en otra ventana, así que no se lleva el teclado al salir (S8); lo coge con un clic, con el
 # foco en su campo: las "a" de la prueba van al campo.
 ~│   [ajustes] el campo dice: DashOSa
-# El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño.
-~│   [ajustes] el compositor pide 800x600
+# El compositor maximiza Ajustes (Super+Arriba) y la devuelve (Super+Abajo): la ventana del kit cambia de tamaño. Con la
+# barra de la pantalla (S10, 40 de alto con su zona exclusiva), maximizada queda debajo: 800x560.
+~│   [ajustes] el compositor pide 800x560
 ~│   [ajustes] vuelve a 360x320
 # El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
 ~│   [ajustes] menú abierto; la segunda opción en (
@@ -122,6 +123,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
+# S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
+# panel rápido.
+~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
@@ -176,6 +180,24 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] panel: oscuro bloquear volumen (lo pide el panel), guardado: 0; releído: sí
 ~│   [sonido] hostil pide el volumen general: no le toca
 ~│   [panel] cerrado
+# S10: la barra de la pantalla, arriba a todo lo ancho con su zona exclusiva (las ventanas, debajo). La hora se mueve
+# (la prueba dura más de un minuto).
+~│   [barra] en pantalla: 800x40, zona exclusiva 40
+~│   [barra] la hora se mueve: 
+# En medio, el título de la ventana con el teclado (el compositor solo se lo dice a la barra); con la sesión bloqueada,
+# ninguno.
+~│   [barra] título: Centro de control
+~│   [barra] título: (ninguno)
+# El lanzador: su botón lo abre con los programas de Programas/; "ho" deja hola, e Intro lo lanza por `sesiones`, como
+# la persona que está delante (Ana). Super sola lo abre otra vez y Esc lo cierra.
+~│   [barra] lanzador abierto: 3 programas
+~│   [barra] busca "ho": hola
+~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
+~│   [barra] lanza Programas/hola: 0 (proceso 
+~│   [barra] lanzador cerrado
+# El botón del panel rápido lo abre, como Super+A (el compositor solo se lo acepta a la barra).
+~│   [barra] pide el panel rápido
+~│   [panel] abierto por 2.ª vez
 ~│   [centro] Comprobar el disco: 0, 0 problemas
 # Pantallas: lo que dice el compositor de la de virt (ramfb, 800x600).
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
@@ -188,8 +210,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
-# Super+Arriba la maximiza (un búfer nuevo de la pantalla entera) y Super+Abajo la devuelve.
-~│   [centro] el compositor pide 800x600
+# Super+Arriba la maximiza (un búfer nuevo de lo que deja la barra) y Super+Abajo la devuelve.
+~│   [centro] el compositor pide 800x560
 ~│   [centro] vuelve a 560x420
 ~│   [centro] cerrado
 ~│   [guardian] pide al centro abrir Permisos: 0, y se cerró: sí

@@ -26,6 +26,10 @@
 use dashos::println;
 use dashos::protocolo::sesiones::*;
 
+#[path = "../lanzables.rs"]
+#[allow(dead_code)]
+mod lanzables;
+
 dashos::programa!(principal);
 
 /// Llave 1: el permiso de la clase de plazo (S3), para repartirlo (U4: la "llave de plazo"); van primero los permisos
@@ -66,13 +70,15 @@ const VA_PROGRAMA: usize = 0x48_0000_0000;
 /// Lo más que mide un programa que se lanza desde el disco (lo que admite `proceso_crear`).
 const MAX_PROGRAMA: usize = 4 << 20;
 /// Los números de proceso de lo que lanza `sesiones` empiezan aquí: los de `inicio` son el número del programa más 1.
-const PRIMER_PID_PROPIO: u64 = 0x1_0000;
+const PRIMER_PID_PROPIO: u64 = lanzables::PRIMER_PID_PROPIO;
 /// Lo que se da a cada programa que lanza (su grupo de recursos).
 const PRESUPUESTO_LANZADO: u64 = 4 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 /// Quién puede ver y retirar lo concedido (S10c): `guardian` y el centro de control. Nadie más se llama así (`inicio`).
 const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
+/// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador.
+const LANZADORES: &[&str] = &["barra"];
 
 /// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
 /// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.
@@ -490,6 +496,12 @@ fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
 
+/// Si la ficha es de uno de los programas del sistema `nombres` (S10): solo con el nombre que da `inicio`. Lo lanzado
+/// desde el disco se llama como su fichero, y un `Programas/guardian` lanzado por la barra no es `guardian`.
+fn es(f: &Ficha, nombres: &[&str]) -> bool {
+    lanzables::del_sistema(f.marca, nombre(&f.nombre), nombres)
+}
+
 fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
@@ -615,7 +627,7 @@ fn principal() -> u64 {
                 PROCESOS => {
                     let desde = u64_en(4) as usize;
                     // U6: los de su usuario y los del sistema; los de otras personas, no. `guardian`, todos.
-                    let todos = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let todos = yo.is_some_and(|f| es(&f, GUARDIANES));
                     let ve = |f: &&Ficha| todos || f.uid < PRIMERA_PERSONA || yo.is_some_and(|y| y.uid == f.uid);
                     let total = fichas.iter().flatten().filter(ve).count();
                     let mut r = [0u8; 8 + 32 * POR_PAGINA];
@@ -634,7 +646,7 @@ fn principal() -> u64 {
                 }
                 ENTRAR | SALIR | VOLVER => {
                     // Solo de `guardian` (U3): nadie más abre ni cierra el volumen de un usuario.
-                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre)));
+                    let guardian = yo.is_some_and(|f| es(&f, GUARDIANES));
                     let (nl, cl) = (u32_en(4) as usize, u32_en(8) as usize);
                     // U6: entrar en una sesión que ya está abierta (detrás) es volver a ella: la contraseña se comprueba
                     // sin tocar el volumen.
@@ -700,10 +712,14 @@ fn principal() -> u64 {
                 LANZAR => {
                     // Como quién (bytes 8 a 11): 0, como quien pide; si no, ese usuario, que tiene que haber entrado.
                     let como = u32_en(8);
-                    let guardian = yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) && (como == 0 || abiertas.contains(&como));
                     let nl = u32_en(4) as usize;
                     let camino = m.get(12..12 + nl).unwrap_or(b"");
+                    // S10: la barra lanza solo de `Programas/`, como la persona que está delante (nunca como sistema, ni
+                    // como otra), y solo si hay alguien delante.
+                    let barra = yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::de_programas(camino);
+                    let guardian = barra || (yo.is_some_and(|f| es(&f, GUARDIANES)) && (como == 0 || abiertas.contains(&como)));
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let como = if barra { activa } else { como };
                     let yo = if como == 0 { yo } else { yo.map(|f| Ficha { uid: como, gid: como, ..f }) };
                     let (estado, pid) = match (&archivos, guardian, fichas.iter().position(|x| x.is_none())) {
                         (_, false, _) => {
@@ -809,7 +825,7 @@ fn principal() -> u64 {
                 }
                 REGISTRO => {
                     // Solo `guardian` y el centro de control leen el registro (U6, S10c).
-                    if !yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre))) {
+                    if !yo.is_some_and(|f| es(&f, VEN_PERMISOS)) {
                         dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
                     } else {
                         let desde = u64_en(4) as usize;
@@ -951,7 +967,7 @@ fn principal() -> u64 {
                         }
                     }
                 }
-                RESPUESTA_ADMIN if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                RESPUESTA_ADMIN if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, lu, lc) = (u32_en(4), u32_en(8) as usize, u32_en(12) as usize);
                     let usuario = m.get(16..16 + lu).unwrap_or(b"");
@@ -1019,7 +1035,7 @@ fn principal() -> u64 {
                     println!("  [sesiones] {} pide bloquear la sesión: {}", nombre(&quien), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
-                PREGUNTAS if k >= 2 && yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                PREGUNTAS if k >= 2 && yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     // `guardian` atiende las preguntas al usuario (U4) por la llave que manda.
                     if canal_guardian != 0 {
                         dashos::cerrar(canal_guardian);
@@ -1029,7 +1045,7 @@ fn principal() -> u64 {
                     println!("  [sesiones] {} atiende las preguntas al usuario", nombre(&yo.unwrap().nombre));
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                 }
-                RESPUESTA if yo.is_some_and(|f| GUARDIANES.contains(&nombre(&f.nombre))) => {
+                RESPUESTA if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, si) = (u32_en(4), u32_en(8) == 1);
                     // Todas las que esperaban esa respuesta (copias del mismo programa que pidieron lo mismo).
@@ -1069,7 +1085,7 @@ fn principal() -> u64 {
                     }
                 }
                 CONCEDIDOS => {
-                    let puede = yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre)));
+                    let puede = yo.is_some_and(|f| es(&f, VEN_PERMISOS));
                     let mut r = [0u8; 16 + POR_PAGINA_CONCEDIDOS * CONCEDIDO];
                     let largo = if !puede {
                         let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
@@ -1094,7 +1110,7 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &r[..largo], &[]);
                 }
                 RETIRAR => {
-                    let guardian = yo.is_some_and(|f| VEN_PERMISOS.contains(&nombre(&f.nombre)));
+                    let guardian = yo.is_some_and(|f| es(&f, VEN_PERMISOS));
                     let (lp, ls) = (u32_en(4) as usize, u32_en(8) as usize);
                     let (prog, serv) = (m.get(12..12 + lp).unwrap_or(b""), m.get(12 + lp..12 + lp + ls).unwrap_or(b""));
                     let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
@@ -1151,7 +1167,7 @@ fn principal() -> u64 {
                         (Some(yo), Some(i)) => {
                             let f = fichas[i].unwrap();
                             // U6: uno de otra persona no sale en su lista; aquí tampoco existe.
-                            let ajeno = f.uid >= PRIMERA_PERSONA && f.uid != yo.uid && !GUARDIANES.contains(&nombre(&yo.nombre));
+                            let ajeno = f.uid >= PRIMERA_PERSONA && f.uid != yo.uid && !es(&yo, GUARDIANES);
                             if ajeno {
                                 println!("  [sesiones] {} (usuario {}) intenta matar a un proceso de otra persona: no existe para él", nombre(&yo.nombre), yo.uid);
                                 registro.apuntar(R_MATAR, NO_EXISTE, &yo.nombre, &f.nombre);

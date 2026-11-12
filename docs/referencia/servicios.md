@@ -87,6 +87,12 @@ como una llave que solo cubre su memoria.
 Pide al firmware una pantalla de 640 × 480 a 32 bits con dos búferes, pinta el fondo y una ventana, y repinta solo lo
 que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verdad hablará Wayland (S9).
 
+`dashos_tema_v1` (protocolo propio, `wayland/protocolos/dashos-tema-v1.xml`), además del tema: Super+A al panel rápido
+(evento `panel`); para la barra (S10), la petición `panel` (como Super+A; a otro, error de protocolo), Super sola
+(evento `lanzador`) y el título de la ventana con el teclado (evento `titulo`, vacío con la sesión bloqueada). Las capas
+sin zona exclusiva propia se colocan dentro de lo que dejan las barras; las ventanas maximizadas se reajustan si la barra
+sale o se va.
+
 ## GPU (C50)
 
 `usuario/src/bin/gpu.rs`, con la biblioteca `dashos::graficos` (HVS, V3D, listas y búferes). Llaves: 1 el permiso DMA
@@ -309,7 +315,7 @@ de respuesta:
 | 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
 | 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6) |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
-| 9 lanzar | `guardian` | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces |
+| 9 lanzar | `guardian`; la barra (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces. La barra solo lanza de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
 | 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
 | 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda); quitar uno concedido (se borra y se revocan sus llaves) |
@@ -320,6 +326,9 @@ de respuesta:
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
 el registro.
+
+Quién es `guardian`, el centro o la barra lo dice el nombre que da `inicio` (S10): lo lanzado desde el disco se llama
+como su fichero, y un `Programas/guardian` no tiene los poderes de `guardian`.
 
 Cambio rápido de usuario (U6, `diseño/U6-cambio-rapido.md`): puede haber hasta 8 sesiones abiertas y una está
 **delante**, la del último que entró o volvió. Las de detrás siguen en marcha con su volumen abierto, sin preguntar al
