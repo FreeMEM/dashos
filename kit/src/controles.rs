@@ -106,10 +106,27 @@ impl Clase for Boton {
         let m = ctx.medium.medir(&texto, tam);
         let base = r.y + (r.h - m.alto()) / 2 + m.sube;
         ctx.medium.dibujar(l, r.x + (r.w - m.ancho) / 2, base, &texto, tam, tinta);
+        // Con el foco del teclado, el anillo de Material 3: 3 de grosor, 2 por fuera.
+        if e.foco && !e.desactivado {
+            l.borde(r.dentro(-5), radio + 5, 3, t.primario);
+        }
     }
 
     fn pulsable(&self) -> bool {
         true
+    }
+
+    fn usa_teclado(&self) -> bool {
+        true
+    }
+
+    /// Con el foco, Intro o espacio lo pulsan.
+    fn escribir(&self, _attrs: &BTreeMap<Atr, Valor>, tecla: crate::teclado::Tecla) -> Vec<(Atr, Valor)> {
+        use crate::teclado::Tecla;
+        match tecla {
+            Tecla::Intro | Tecla::Letra(' ') => alloc::vec![(atr::CLIC, Valor::Bool(true)), (atr::CLIC, Valor::Bool(false))],
+            _ => Vec::new(),
+        }
     }
 
     fn clic(&self, _attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
@@ -660,7 +677,7 @@ impl Interfaz {
     /// el foco al siguiente que lo use. Devuelve si hay que dibujar.
     pub fn tecla(&mut self, codigo: u32, pulsada: bool) -> bool {
         let Some(t) = self.teclado.tecla(codigo, pulsada) else { return false };
-        if t == crate::teclado::Tecla::Tabulador {
+        if t == crate::teclado::Tecla::Tabulador || t == crate::teclado::Tecla::TabuladorAtras {
             let usan: Vec<Obj> = self
                 .sitios
                 .keys()
@@ -673,7 +690,9 @@ impl Interfaz {
             if usan.is_empty() {
                 return false;
             }
-            let i = self.foco.and_then(|f| usan.iter().position(|&o| o == f)).map_or(0, |i| (i + 1) % usan.len());
+            let atras = t == crate::teclado::Tecla::TabuladorAtras;
+            let n = usan.len();
+            let i = self.foco.and_then(|f| usan.iter().position(|&o| o == f)).map_or(0, |i| if atras { (i + n - 1) % n } else { (i + 1) % n });
             self.foco = Some(usan[i]);
             return true;
         }
@@ -769,6 +788,27 @@ mod pruebas {
         let t = Tema::CLARO;
         assert_eq!(px[((r.y + 56 + 28) * 300 + r.x + r.w - 20) as usize], t.contenedor_secundario());
         assert_eq!(px[((r.y + 20) * 300 + r.x + 2) as usize], t.contenedor_bajo());
+    }
+
+    /// Tab llega también a los botones; Intro o espacio los pulsan; Mayúsculas+Tab vuelve atrás.
+    #[test]
+    fn botones_con_el_teclado() {
+        let mut a = Arbol::new();
+        let lista = a.crear(Lista, &[(atr::OPCIONES, Valor::Texto("Uno|Dos".into())), (atr::FILAS, Valor::Int(2))]);
+        let boton = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Vale".into()))]);
+        let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("".into()))]);
+        a.notificar(boton, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("pulsado".into())));
+        let mut i = Interfaz::new(a, Hijo::Columna(vec![Hijo::Obj(lista), Hijo::Obj(boton), Hijo::Obj(texto)]), Tema::CLARO);
+        i.colocar(Rect::new(0, 0, 300, 260));
+        i.foco = Some(lista);
+        i.tecla(15, true);
+        assert_eq!(i.foco, Some(boton));
+        i.tecla(28, true);
+        assert_eq!(i.arbol.leer(texto, atr::TEXTO), Some(&Valor::Texto("pulsado".into())));
+        i.tecla(42, true);
+        i.tecla(15, true);
+        i.tecla(42, false);
+        assert_eq!(i.foco, Some(lista));
     }
 
     #[test]

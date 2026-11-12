@@ -17,6 +17,8 @@ pub enum Tecla {
     Fin,
     Intro,
     Tabulador,
+    /// Mayúsculas+Tab: el foco, hacia atrás.
+    TabuladorAtras,
 }
 
 /// Una tecla de un mapa: su código, (normal, con mayúsculas, con AltGr) con `N` si no da nada, y qué niveles son
@@ -202,6 +204,7 @@ impl Teclado {
             102 => Some(Tecla::Inicio),
             107 => Some(Tecla::Fin),
             28 => Some(Tecla::Intro),
+            15 if self.mayus > 0 => Some(Tecla::TabuladorAtras),
             15 => Some(Tecla::Tabulador),
             _ => None,
         };

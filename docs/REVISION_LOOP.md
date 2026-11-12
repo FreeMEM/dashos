@@ -1206,3 +1206,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Kit: en una fila, lo alto (más de una línea: una lista, una columna) va arriba; lo de una línea (hasta 64), centrado
   como antes (alinea textos y botones). Al maximizar el centro, la lista y su columna bajaban al medio y dejaban un
   hueco arriba. Prueba `lo_alto_de_una_fila_arriba`. Capturas del centro maximizado y en tamaño normal.
+- Kit: los botones toman el foco del teclado (Tab llega a ellos; Intro o espacio los pulsan; anillo de foco de
+  Material 3, 3 de grosor y 2 por fuera) y Mayúsculas+Tab va hacia atrás. Prueba `botones_con_el_teclado`. En el
+  guion, los Tab que volvían de la lista de la derecha del centro a las categorías son ahora Mayúsculas+Tab (con los
+  botones en medio, Tab iría a Quitar). `captura_ventanas.py` acepta dos sombras sumadas cerca de las dos ventanas de
+  prueba (según el orden en que salgan, un punto queda bajo las dos).

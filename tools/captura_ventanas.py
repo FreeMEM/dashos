@@ -56,8 +56,9 @@ def main():
         return all(abs(x - y) <= 2 for x, y in zip(a, b))
 
     def casi_o_sombra(a, b):
-        """El color, o el mismo oscurecido por la sombra de una ventana (Material 3: alfa de 70 como mucho)."""
-        return casi(a, b) or all(y * 185 // 255 - 3 <= x <= y + 2 for x, y in zip(a, b))
+        """El color, o el mismo oscurecido por sombras (Material 3: alfa de 70 cada una; cerca de las dos ventanas de
+        prueba se suman dos, hasta un 47 % más oscuro)."""
+        return casi(a, b) or all(y * 134 // 255 - 3 <= x <= y + 2 for x, y in zip(a, b))
 
     fallos = []
     if not casi(en(5, 5), FONDO):

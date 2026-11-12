@@ -178,7 +178,7 @@ while time.time() - inicio < total:
                 continue
             centro = 5
             time.sleep(0.5)
-            mandar("sendkey tab")
+            mandar("sendkey shift-tab")
             time.sleep(0.3)
             mandar("sendkey down")
             reintento = time.time() + 4
@@ -186,7 +186,7 @@ while time.time() - inicio < total:
             if "[centro] Seguridad, " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    mandar("sendkey tab")
+                    mandar("sendkey shift-tab")
                     time.sleep(0.3)
                     mandar("sendkey down")
                 time.sleep(0.25)
@@ -220,7 +220,7 @@ while time.time() - inicio < total:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".discos.ppm")
             time.sleep(0.5)
-            mandar("sendkey tab", "sendkey down", pausa=0.3)
+            mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         # Pantallas; y otra abajo, Apariencia.
         if centro == 11:
@@ -278,7 +278,7 @@ while time.time() - inicio < total:
                 continue
             centro = 7
             time.sleep(0.5)
-            mandar("sendkey tab", "sendkey down", pausa=0.3)
+            mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         if centro == 7:
             if "[centro] Acerca de: " not in texto:
