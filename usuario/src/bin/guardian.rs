@@ -70,6 +70,7 @@ fn pedir(m: &[u8], mas: &[u32]) -> i32 {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"guardian");
     let (preguntas, para_sesiones) = dashos::canal_crear();
     // `sesiones` puede tardar en arrancar (lee su registro y sus permisos del disco): se reintenta un rato.
     // Al arrancar, la cola de `sesiones` puede estar llena (las altas de `inicio` llegan antes de que lea): medio

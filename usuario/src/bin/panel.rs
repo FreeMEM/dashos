@@ -396,6 +396,7 @@ fn decir_sitios(e: &Estado, d: &Disposicion, abierto_ahora: bool) {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"panel");
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
     // Los mosaicos guardados, antes de nada (al arrancar no hay prisa: nadie ha pulsado aún Super+A).
     let mut orden = Orden::de_serie();

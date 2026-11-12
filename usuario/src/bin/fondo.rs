@@ -446,6 +446,7 @@ fn contestar(llave: u32, (estado, semilla, w, h, ms): (i32, u32, u32, u32, u32),
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"fondo");
     let mut pantalla: Option<Pantalla> = None;
     // El que se ve: nombre, semilla, ancho y alto.
     let mut actual: Option<(String, u32, u32, u32)> = None;

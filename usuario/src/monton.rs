@@ -15,7 +15,7 @@
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
 use core::ptr::{self, NonNull};
-use core::sync::atomic::{AtomicBool, Ordering};
+use core::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 use linked_list_allocator::Heap;
 
 /// Dónde empieza el montón: a 64 GB, en el tramo libre desde 4 GB (`docs/referencia/kernel.md`).
@@ -44,6 +44,52 @@ fn clase(l: &Layout) -> Option<usize> {
     }
     let t = l.size().max(MIN_CLASE).next_power_of_two();
     Some(t.trailing_zeros() as usize - MIN_CLASE.trailing_zeros() as usize)
+}
+
+/// Lo que se ve del montón (kit-memoria): bytes en uso (con el redondeo de las listas), lo más que ha habido en uso,
+/// lo pedido al kernel y lo que espera en las listas por tamaño. Se cuentan dentro del cerrojo.
+#[derive(Clone, Copy, Debug)]
+pub struct Uso {
+    pub en_uso: usize,
+    pub maximo: usize,
+    pub reservado: usize,
+    pub en_listas: usize,
+}
+
+static EN_USO: AtomicUsize = AtomicUsize::new(0);
+static MAXIMO: AtomicUsize = AtomicUsize::new(0);
+static RESERVADO: AtomicUsize = AtomicUsize::new(0);
+static EN_LISTAS: AtomicUsize = AtomicUsize::new(0);
+/// Si tiene nombre (`con_nombre`), el montón lo dice en la consola cada vez que pide un trozo.
+static NOMBRE: core::sync::atomic::AtomicPtr<&'static str> = core::sync::atomic::AtomicPtr::new(ptr::null_mut());
+
+pub fn uso() -> Uso {
+    Uso {
+        en_uso: EN_USO.load(Ordering::Relaxed),
+        maximo: MAXIMO.load(Ordering::Relaxed),
+        reservado: RESERVADO.load(Ordering::Relaxed),
+        en_listas: EN_LISTAS.load(Ordering::Relaxed),
+    }
+}
+
+/// Da nombre al montón: desde aquí dice en la consola cada trozo que pide.
+pub fn con_nombre(nombre: &'static &'static str) {
+    NOMBRE.store(nombre as *const _ as *mut _, Ordering::Relaxed);
+}
+
+/// Una línea con el uso del montón, con `nombre` delante.
+pub fn informe(nombre: &str) {
+    let u = uso();
+    crate::println!("  [{}] montón: en uso {} KB (máximo {} KB), reservado {} KB, en listas {} KB", nombre, u.en_uso >> 10,
+        u.maximo >> 10, u.reservado >> 10, u.en_listas >> 10);
+}
+
+fn sumar(t: usize) {
+    let v = EN_USO.load(Ordering::Relaxed) + t;
+    EN_USO.store(v, Ordering::Relaxed);
+    if v > MAXIMO.load(Ordering::Relaxed) {
+        MAXIMO.store(v, Ordering::Relaxed);
+    }
 }
 
 // El cerrojo protege `pila`.
@@ -93,17 +139,27 @@ unsafe impl GlobalAlloc for Monton {
                 let p = libres[c];
                 if !p.is_null() {
                     libres[c] = unsafe { *(p as *mut *mut u8) };
+                    EN_LISTAS.store(EN_LISTAS.load(Ordering::Relaxed) - l.size(), Ordering::Relaxed);
+                    sumar(l.size());
                     return p;
                 }
             }
             if *n > 0 {
                 if let Ok(p) = h.allocate_first_fit(l) {
+                    sumar(l.size());
                     return p.as_ptr();
                 }
             }
             let t = siguiente(*n);
             if !trozo(*n, t) {
                 return ptr::null_mut();
+            }
+            RESERVADO.store(*n + t, Ordering::Relaxed);
+            let nombre = NOMBRE.load(Ordering::Relaxed);
+            if !nombre.is_null() {
+                let u = uso();
+                crate::println!("  [{}] montón: trozo de {} KB por {} bytes; reservado {} KB, en uso {} KB (máximo {} KB), en listas {} KB",
+                    unsafe { *nombre }, t >> 10, l.size(), (*n + t) >> 10, u.en_uso >> 10, u.maximo >> 10, u.en_listas >> 10);
             }
             if *n == 0 {
                 unsafe { h.init(BASE as *mut u8, t) };
@@ -121,8 +177,13 @@ unsafe impl GlobalAlloc for Monton {
                 Some(c) => self.con(|_, _, libres| unsafe {
                     *(p.as_ptr() as *mut *mut u8) = libres[c];
                     libres[c] = p.as_ptr();
+                    EN_USO.store(EN_USO.load(Ordering::Relaxed) - (MIN_CLASE << c), Ordering::Relaxed);
+                    EN_LISTAS.store(EN_LISTAS.load(Ordering::Relaxed) + (MIN_CLASE << c), Ordering::Relaxed);
                 }),
-                None => self.con(|h, _, _| unsafe { h.deallocate(p, l) }),
+                None => self.con(|h, _, _| unsafe {
+                    h.deallocate(p, l);
+                    EN_USO.store(EN_USO.load(Ordering::Relaxed) - l.size(), Ordering::Relaxed);
+                }),
             }
         }
     }

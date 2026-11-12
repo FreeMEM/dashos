@@ -810,6 +810,7 @@ fn hasta_el_minuto() -> u64 {
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"barra");
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
     let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_TIMBRE) else {
         println!("  [barra] sin compositor");

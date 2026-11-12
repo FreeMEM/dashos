@@ -425,6 +425,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
 }
 
 fn principal() -> u64 {
+    dashos::monton::con_nombre(&"selector");
     // La sesión con el servicio de archivos.
     let (lectura, suyo) = dashos::canal_crear();
     let mut s = [0u8; a::CABECERA];
