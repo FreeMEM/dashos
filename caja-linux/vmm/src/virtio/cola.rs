@@ -291,6 +291,12 @@ impl ColaPartida {
         }
     }
 
+    /// Deja la última cadena sacada con `siguiente` (sin devolver) para la próxima vez: el aparato la miró y no tenía
+    /// nada que poner en ella.
+    pub fn retroceder(&mut self) {
+        self.ultimo_disponible = self.ultimo_disponible.wrapping_sub(1);
+    }
+
     /// Devuelve una cadena al anillo usado, con los bytes que el aparato escribió en ella.
     pub fn devolver(&mut self, mem: &mut dyn MemoriaInvitado, cabeza: u16, escritos: u32) -> Result<(), ErrorCola> {
         if !self.lista {

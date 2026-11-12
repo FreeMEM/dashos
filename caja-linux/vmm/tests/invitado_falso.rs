@@ -14,6 +14,7 @@ use caja_vmm::virtio::cola::{DESC_F_INDIRECT, DESC_F_NEXT, DESC_F_WRITE};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
 use caja_vmm::virtio::mmio::*;
 use caja_vmm::virtio::red::{self, ExtremoRed, Red};
+use caja_vmm::virtio::vsock::{self, Cabecera, ExtremoVsock, Vsock};
 use caja_vmm::virtio::{F_INDIRECT_DESC, F_VERSION_1};
 
 const RAM: u64 = 0x4000_0000;
@@ -27,6 +28,60 @@ const SPI_CONSOLA: u32 = 16;
 const SPI_DISCO: u32 = 17;
 const RED: u64 = 0x0a00_0400;
 const SPI_RED: u32 = 18;
+const VSOCK: u64 = 0x0a00_0600;
+const SPI_VSOCK: u32 = 19;
+
+/// El lado de DashOS de vsock en las pruebas: escucha en el puerto 5000, guarda lo que llega por cada conexión (con un
+/// tope para probar la espera) y tiene una cola de salida por conexión.
+#[derive(Default)]
+struct Enchufes {
+    llegado: std::collections::BTreeMap<u32, Vec<u8>>,
+    salen: std::collections::BTreeMap<u32, VecDeque<u8>>,
+    cerradas: Vec<u32>,
+    cerrar: Vec<u32>,
+    /// Cuánto toma de cada vez (None: todo).
+    toma: Option<usize>,
+}
+
+#[derive(Clone, Default)]
+struct ExtremoEnchufes(Rc<RefCell<Enchufes>>);
+
+impl ExtremoVsock for ExtremoEnchufes {
+    fn conectar(&mut self, con: u32, puerto: u32) -> bool {
+        if puerto != 5000 {
+            return false;
+        }
+        let mut e = self.0.borrow_mut();
+        e.llegado.insert(con, Vec::new());
+        e.salen.insert(con, VecDeque::new());
+        true
+    }
+    fn recibir(&mut self, con: u32, datos: &[u8]) -> usize {
+        let mut e = self.0.borrow_mut();
+        let n = e.toma.map_or(datos.len(), |t| t.min(datos.len()));
+        e.llegado.get_mut(&con).unwrap().extend_from_slice(&datos[..n]);
+        n
+    }
+    fn cerrada(&mut self, con: u32) {
+        self.0.borrow_mut().cerradas.push(con);
+    }
+    fn enviar(&mut self, con: u32, buf: &mut [u8]) -> usize {
+        let mut e = self.0.borrow_mut();
+        let Some(q) = e.salen.get_mut(&con) else { return 0 };
+        let n = buf.len().min(q.len());
+        for b in buf.iter_mut().take(n) {
+            *b = q.pop_front().unwrap();
+        }
+        n
+    }
+    fn hay_algo(&self) -> bool {
+        let e = self.0.borrow();
+        e.salen.values().any(|q| !q.is_empty()) || !e.cerrar.is_empty()
+    }
+    fn cerrar(&mut self) -> Option<u32> {
+        self.0.borrow_mut().cerrar.pop()
+    }
+}
 
 #[derive(Default)]
 struct Cable {
@@ -99,6 +154,7 @@ struct Banco {
     uart: Extremo,
     disco: Disco,
     cable: ExtremoCable,
+    enchufes: ExtremoEnchufes,
 }
 
 fn banco_con(solo_lectura: bool) -> Banco {
@@ -113,10 +169,12 @@ fn banco_con(solo_lectura: bool) -> Banco {
     let cable = ExtremoCable::default();
     let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
     m.añadir(RED, SPI_RED, Box::new(TransporteMmio::nuevo(Red::nueva(Box::new(cable.clone()), mac)))).unwrap();
+    let enchufes = ExtremoEnchufes::default();
+    m.añadir(VSOCK, SPI_VSOCK, Box::new(TransporteMmio::nuevo(Vsock::nuevo(Box::new(enchufes.clone()))))).unwrap();
     // El GIC encendido, con las SPI de los aparatos habilitadas, como lo deja Linux.
     m.mmio(0, GICD + gic::CTLR, 4, Operacion::Escribir(1));
     m.mmio(0, GICD + gic::ISENABLER + 4, 4, Operacion::Escribir(u32::MAX as u64));
-    Banco { m, consola, uart, disco, cable }
+    Banco { m, consola, uart, disco, cable, enchufes }
 }
 
 fn banco() -> Banco {
@@ -627,7 +685,7 @@ fn maquina_direcciones() {
     assert!(b.m.añadir(0x1000, 500, p()).is_err());
     assert!(b.m.añadir(u64::MAX - 10, 5, p()).is_err());
     assert!(b.m.añadir(0x1000, 5, p()).is_ok());
-    assert_eq!(b.m.aparatos().len(), 5);
+    assert_eq!(b.m.aparatos().len(), 6);
 }
 
 /// Accesos al azar a todo (registros de los aparatos y del GIC, memoria del invitado con colas apuntando a sitios
@@ -651,11 +709,13 @@ fn a_lo_loco() {
             b.arrancar(DISCO, &[q]);
             b.arrancar(CONSOLA, &[Cola::en(RAM + 0x2000, 16), Cola::en(RAM + 0x3000, 16)]);
             b.arrancar(RED, &[Cola::en(RAM + 0x2800, 8), Cola::en(RAM + 0x3800, 8)]);
+            b.arrancar(VSOCK, &[Cola::en(RAM + 0x1800, 8), Cola::en(RAM + 0x3c00, 8), Cola::en(RAM + 0x2c00, 4)]);
+            b.enchufes.0.borrow_mut().salen.insert(1, VecDeque::from(vec![7u8; 3000]));
             b.cable.0.borrow_mut().entran.extend((0..50).map(|i| vec![i as u8; i * 40]));
         }
         for _ in 0..20_000 {
             let r = azar();
-            let base = [UART, CONSOLA, DISCO, GICD, RAM, RED][(r % 6) as usize];
+            let base = [UART, CONSOLA, DISCO, GICD, RAM, RED, VSOCK][(r % 7) as usize];
             let desp = if r & 0x100 != 0 { (r >> 16) & 0x1fc } else { (r >> 16) & 0xfff };
             let tam = [1u8, 2, 4, 8, 3][((r >> 8) % 5) as usize];
             let v = azar();
@@ -672,7 +732,7 @@ fn a_lo_loco() {
                     let _ = b.m.mem.escribir_u64(dir & !7, azar() & 0x0000_0000_407f_ffff | (azar() & 0xf000));
                 }
                 6 => {
-                    let base = [DISCO, CONSOLA, RED][(r % 3) as usize];
+                    let base = [DISCO, CONSOLA, RED, VSOCK][(r % 4) as usize];
                     b.m.mmio(0, base + R_QUEUE_NOTIFY, 4, Operacion::Escribir(v % 3));
                 }
                 _ => b.m.sondear(),
@@ -716,4 +776,242 @@ fn red_enviar_y_recibir() {
     assert_eq!(b.mem().leer_u16(BUF + 0x2000 + 10), Ok(1)); // num_buffers
     assert_eq!(b.mem().leer_u32(BUF + 0x2000 + 12), Ok(0x1111_1111));
     assert!(b.pendiente_en_gic(SPI_RED));
+}
+
+/// Una cabecera de vsock del invitado hacia DashOS.
+fn cab(op: u16, su: u32, mio: u32, len: u32) -> Cabecera {
+    Cabecera {
+        src_cid: vsock::CID_INVITADO,
+        dst_cid: vsock::CID_ANFITRION,
+        src_port: su,
+        dst_port: mio,
+        len,
+        tipo: vsock::TIPO_STREAM,
+        op,
+        flags: 0,
+        buf_alloc: 64 * 1024,
+        fwd_cnt: 0,
+    }
+}
+
+struct Vs {
+    rx: Cola,
+    tx: Cola,
+    /// Siguiente sitio libre para búferes.
+    libre: u64,
+    /// Cabeza de cada búfer de recibir → su dirección.
+    buferes: std::collections::BTreeMap<u16, u64>,
+}
+
+impl Banco {
+    fn vsock(&mut self) -> Vs {
+        let rx = Cola::en(RAM + 0x1000, 64);
+        let tx = Cola::en(RAM + 0x2000, 64);
+        let ev = Cola::en(RAM + 0x3000, 4);
+        let f = self.arrancar(VSOCK, &[rx, tx, ev]);
+        assert!(f & F_VERSION_1 != 0);
+        assert_eq!(self.r(VSOCK + R_DEVICE_ID), vsock::ID_VSOCK);
+        assert_eq!(self.r(VSOCK + R_CONFIG), 3, "el CID del invitado");
+        Vs { rx, tx, libre: BUF, buferes: Default::default() }
+    }
+
+    /// Manda un paquete (cabecera y datos en dos segmentos) y avisa.
+    fn vs_mandar(&mut self, v: &mut Vs, h: &Cabecera, datos: &[u8]) {
+        let (dc, dd) = (v.libre, v.libre + 0x40);
+        v.libre += 0x40 + (datos.len() as u64).next_multiple_of(0x40).max(0x40);
+        self.mem().escribir(dc, &h.bytes()).unwrap();
+        self.mem().escribir(dd, datos).unwrap();
+        let mut tx = v.tx;
+        if datos.is_empty() {
+            self.poner(&mut tx, &[(dc, 44, false)]);
+        } else {
+            self.poner(&mut tx, &[(dc, 44, false), (dd, datos.len() as u32, false)]);
+        }
+        v.tx = tx;
+        self.w(VSOCK + R_QUEUE_NOTIFY, 1);
+    }
+
+    /// Pone `n` búferes de recibir de `tam` bytes.
+    fn vs_buferes(&mut self, v: &mut Vs, n: usize, tam: u32) -> Vec<(u16, u64)> {
+        let mut rx = v.rx;
+        let mut out = Vec::new();
+        for _ in 0..n {
+            let d = v.libre;
+            v.libre += tam as u64;
+            let c = self.poner(&mut rx, &[(d, tam, true)]);
+            v.buferes.insert(c, d);
+            out.push((c, d));
+        }
+        v.rx = rx;
+        self.w(VSOCK + R_QUEUE_NOTIFY, 0);
+        out
+    }
+
+    /// Lo que llegó al invitado: (cabecera, datos), en orden.
+    fn vs_recibido(&mut self, v: &mut Vs, _buferes: &[(u16, u64)]) -> Vec<(Cabecera, Vec<u8>)> {
+        let mut rx = v.rx;
+        let usados = self.usados(&mut rx);
+        v.rx = rx;
+        usados
+            .into_iter()
+            .map(|(c, n)| {
+                let d = v.buferes[&(c as u16)];
+                let mut h = [0u8; 44];
+                self.mem().leer(d, &mut h).unwrap();
+                let mut datos = vec![0u8; (n as usize).saturating_sub(44)];
+                self.mem().leer(d + 44, &mut datos).unwrap();
+                (Cabecera::leer(&h), datos)
+            })
+            .collect()
+    }
+}
+
+/// vsock de punta a punta: conectar, datos en los dos sentidos, crédito, cierre por el invitado y por DashOS, y un
+/// puerto sin nadie.
+#[test]
+fn vsock_conexion() {
+    let mut b = banco();
+    let mut v = b.vsock();
+    let bufs = b.vs_buferes(&mut v, 8, 4096);
+    // Un puerto en el que no escucha nadie: RST.
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 1024, 7, 0), &[]);
+    let r = b.vs_recibido(&mut v, &bufs);
+    assert_eq!(r.len(), 1);
+    assert_eq!((r[0].0.op, r[0].0.dst_port, r[0].0.src_port), (vsock::OP_RST, 1024, 7));
+    // El 5000: RESPONSE, con el crédito de DashOS.
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 1025, 5000, 0), &[]);
+    let r = b.vs_recibido(&mut v, &bufs);
+    assert_eq!(r[0].0.op, vsock::OP_RESPONSE);
+    assert_eq!((r[0].0.src_cid, r[0].0.dst_cid), (2, 3));
+    assert_eq!(r[0].0.buf_alloc, vsock::BUF_ALLOC);
+    assert!(b.pendiente_en_gic(SPI_VSOCK));
+    // Datos del invitado (la conexión es la 2: el número 1 fue el intento al puerto 7).
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 5), b"hola!");
+    assert_eq!(b.enchufes.0.borrow().llegado[&2], b"hola!");
+    // Le llega el crédito liberado.
+    let r = b.vs_recibido(&mut v, &bufs);
+    assert_eq!((r[0].0.op, r[0].0.fwd_cnt), (vsock::OP_CREDIT_UPDATE, 5));
+    // Datos de DashOS: 10 000 bytes en búferes de 4096 (con cabecera, 4052 por paquete).
+    b.enchufes.0.borrow_mut().salen.get_mut(&2).unwrap().extend((0..10_000).map(|i| i as u8));
+    b.m.sondear();
+    let r = b.vs_recibido(&mut v, &bufs);
+    let todo: Vec<u8> = r.iter().flat_map(|(h, d)| {
+        assert_eq!((h.op, h.len as usize), (vsock::OP_RW, d.len()));
+        d.clone()
+    }).collect();
+    assert_eq!(todo, (0..10_000).map(|i| i as u8).collect::<Vec<_>>());
+    // Crédito del invitado: dijo 64 KB. Con 70 000 bytes, pasan 64 KB y el resto espera a su CREDIT_UPDATE.
+    let bufs = b.vs_buferes(&mut v, 30, 4096);
+    b.enchufes.0.borrow_mut().salen.get_mut(&2).unwrap().extend(std::iter::repeat_n(1u8, 70_000));
+    b.m.sondear();
+    let n: usize = b.vs_recibido(&mut v, &bufs).iter().map(|(_, d)| d.len()).sum();
+    assert_eq!(n, 64 * 1024 - 10_000);
+    let mut h = cab(vsock::OP_CREDIT_UPDATE, 1025, 5000, 0);
+    h.fwd_cnt = 64 * 1024;
+    b.vs_mandar(&mut v, &h, &[]);
+    let n: usize = b.vs_recibido(&mut v, &bufs).iter().map(|(_, d)| d.len()).sum();
+    assert_eq!(n, 70_000 - (64 * 1024 - 10_000));
+    // El invitado cierra: el extremo se entera y le llega RST.
+    let bufs = b.vs_buferes(&mut v, 4, 4096);
+    b.vs_mandar(&mut v, &cab(vsock::OP_SHUTDOWN, 1025, 5000, 0), &[]);
+    assert_eq!(b.enchufes.0.borrow().cerradas, vec![2]);
+    assert_eq!(b.vs_recibido(&mut v, &bufs)[0].0.op, vsock::OP_RST);
+    // Otra conexión, que cierra DashOS.
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 1026, 5000, 0), &[]);
+    b.enchufes.0.borrow_mut().cerrar.push(3);
+    b.m.sondear();
+    let r = b.vs_recibido(&mut v, &bufs);
+    assert_eq!(r.iter().map(|x| x.0.op).collect::<Vec<_>>(), vec![vsock::OP_RESPONSE, vsock::OP_RST]);
+    assert!(!b.necesita_reinicio(VSOCK));
+}
+
+/// El extremo toma poco a poco: lo que no toma espera en el aparato, y el crédito se anuncia según lo toma.
+#[test]
+fn vsock_extremo_lento() {
+    let mut b = banco();
+    let mut v = b.vsock();
+    let bufs = b.vs_buferes(&mut v, 16, 4096);
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 1025, 5000, 0), &[]);
+    b.enchufes.0.borrow_mut().toma = Some(0);
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 1025, 5000, 3000), &[9u8; 3000]);
+    assert!(b.enchufes.0.borrow().llegado[&1].is_empty());
+    b.enchufes.0.borrow_mut().toma = Some(1000);
+    b.m.sondear();
+    b.m.sondear();
+    b.m.sondear();
+    assert_eq!(b.enchufes.0.borrow().llegado[&1].len(), 3000);
+    let r = b.vs_recibido(&mut v, &bufs);
+    assert_eq!(r.last().unwrap().0.fwd_cnt, 3000);
+}
+
+/// Hostiles: CID falso, tipo que no es de flujo, cabecera corta, largo mayor que lo que trae o que un paquete, datos
+/// sin conexión, pasarse del crédito, órdenes que no existen, conexiones de más y un búfer de recibir donde no cabe la
+/// cabecera. El aparato sigue (sin DEVICE_NEEDS_RESET) y una conexión buena funciona después.
+#[test]
+fn vsock_hostil() {
+    let mut b = banco();
+    let mut v = b.vsock();
+    let bufs = b.vs_buferes(&mut v, 60, 128);
+    let mut h = cab(vsock::OP_REQUEST, 1, 5000, 0);
+    h.src_cid = 2; // se hace pasar por DashOS
+    b.vs_mandar(&mut v, &h, &[]);
+    let mut h = cab(vsock::OP_REQUEST, 1, 5000, 0);
+    h.tipo = 2; // seqpacket, no negociado
+    b.vs_mandar(&mut v, &h, &[]);
+    // Cabecera corta.
+    let mut tx = v.tx;
+    b.poner(&mut tx, &[(BUF, 20, false)]);
+    v.tx = tx;
+    b.w(VSOCK + R_QUEUE_NOTIFY, 1);
+    assert_eq!(b.enchufes.0.borrow().llegado.len(), 0);
+    // Una conexión que se porta mal de varias formas.
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 2, 5000, 0), &[]);
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 2, 5000, 1000), &[1; 10]); // dice 1000 y trae 10
+    assert!(b.enchufes.0.borrow().cerradas.contains(&1));
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 3, 5000, 0), &[]);
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 3, 5000, u32::MAX), &[]); // largo absurdo
+    assert!(b.enchufes.0.borrow().cerradas.contains(&2));
+    // Datos sin conexión, y una orden que no existe.
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 77, 5000, 4), b"nada");
+    b.vs_mandar(&mut v, &cab(99, 78, 5000, 0), &[]);
+    // Pasarse del crédito: el extremo no toma nada y el invitado manda más de BUF_ALLOC.
+    b.enchufes.0.borrow_mut().toma = Some(0);
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 4, 5000, 0), &[]);
+    let trozo = vec![5u8; 60_000];
+    for _ in 0..5 {
+        b.vs_mandar(&mut v, &cab(vsock::OP_RW, 4, 5000, trozo.len() as u32), &trozo);
+    }
+    assert!(b.enchufes.0.borrow().cerradas.contains(&3), "pasarse del crédito corta la conexión");
+    b.enchufes.0.borrow_mut().toma = None;
+    // Pedir dos veces la misma conexión la corta.
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 5, 5000, 0), &[]);
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 5, 5000, 0), &[]);
+    assert!(b.enchufes.0.borrow().cerradas.contains(&4));
+    // Un búfer de recibir donde no cabe la cabecera: vuelve vacío.
+    let mut rx = v.rx;
+    b.poner(&mut rx, &[(BUF + 0x8_0000, 10, true)]);
+    v.rx = rx;
+    b.w(VSOCK + R_QUEUE_NOTIFY, 0);
+    let _ = b.vs_recibido(&mut v, &bufs);
+    assert!(!b.necesita_reinicio(VSOCK));
+    // Más conexiones de las que caben: las de más, RST.
+    for p in 100..100 + vsock::MAX_CONEXIONES as u32 + 5 {
+        b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, p, 5000, 0), &[]);
+        if p % 8 == 0 {
+            v.libre = BUF + 0x10_0000; // reusar memoria para no salirse de la RAM
+        }
+    }
+    {
+        let e = b.enchufes.0.borrow();
+        assert_eq!(e.llegado.len() - e.cerradas.len(), vsock::MAX_CONEXIONES);
+    }
+    // Tras todo, una buena: sus datos llegan.
+    for p in 100..100 + vsock::MAX_CONEXIONES as u32 {
+        b.vs_mandar(&mut v, &cab(vsock::OP_RST, p, 5000, 0), &[]);
+    }
+    b.vs_mandar(&mut v, &cab(vsock::OP_REQUEST, 9, 5000, 0), &[]);
+    b.vs_mandar(&mut v, &cab(vsock::OP_RW, 9, 5000, 4), b"bien");
+    let ultima = *b.enchufes.0.borrow().llegado.keys().last().unwrap();
+    assert_eq!(b.enchufes.0.borrow().llegado[&ultima], b"bien");
+    assert!(!b.necesita_reinicio(VSOCK));
 }
