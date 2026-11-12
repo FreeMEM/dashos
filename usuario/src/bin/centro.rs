@@ -5,8 +5,8 @@
 //! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
 //! - **Discos**: cuánto mide el disco del sistema, cuánto está ocupado y cuánto libre (INFO de `archivos`). Solo se
 //!   lee; su sesión con `archivos` no tiene derechos y está encerrada en `C`.
-//! - **Pantallas**: lo que el compositor dice de la pantalla (`wl_output`): nombre, tamaño, frecuencia y escala. Solo se
-//!   lee.
+//! - **Pantallas**: lo que el compositor dice de cada pantalla (un `wl_output` por monitor): nombre, tamaño, sitio,
+//!   frecuencia y escala. Solo se lee.
 //! - **Apariencia** (S10c, C3, el principio): modo claro u oscuro y color de acento; el esquema sale del color con
 //!   `Tema::desde_color` (Material 3). Se elige con Intro o doble clic y se ve en el acto, de momento en la ventana del
 //!   propio centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio en Prefs.
@@ -78,8 +78,11 @@ const CATEGORIAS: &[(&str, &str)] = &[
 const DISCOS: usize = 2;
 const PANTALLAS: usize = 3;
 const APARIENCIA: usize = 4;
-/// El objeto de la pantalla (`wl_output`), tras los de `ventana_cliente`.
+/// El objeto de la primera pantalla (`wl_output`), tras los de `ventana_cliente`; las demás, desde `SALIDAS_MAS`.
 const SALIDA: u32 = 40;
+const SALIDAS_MAS: u32 = 50;
+/// Lo más de pantallas que se miran.
+const MAX_PANTALLAS: usize = 8;
 /// El objeto del tema del sistema (`dashos_tema_v1`).
 const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
@@ -429,26 +432,46 @@ fn apariencia(oscuro: bool, color: usize) -> Vec<String> {
     l
 }
 
-/// Lo que se sabe de la pantalla (de `wl_output`): nombre, ancho, alto, frecuencia en mHz y escala.
+/// Lo que se sabe de una pantalla (de su `wl_output`): su objeto, nombre, sitio, ancho, alto, frecuencia en mHz y
+/// escala.
 #[derive(Default, Clone)]
 struct Pantalla {
+    objeto: u32,
     nombre: String,
+    x: i32,
+    y: i32,
     ancho: i32,
     alto: i32,
     mhz: i32,
     escala: i32,
 }
 
-/// Lo de "Pantallas".
-fn pantallas(p: &Pantalla) -> Vec<String> {
-    if p.ancho == 0 {
+/// Lo de "Pantallas". Con una, su nombre y tamaño, su frecuencia y su escala. Con varias (multimonitor), una línea por
+/// pantalla con su sitio en el escritorio, de izquierda a derecha, y después la frecuencia y la escala (las de todas, si
+/// son iguales).
+fn pantallas(ps: &[Pantalla]) -> Vec<String> {
+    let mut ps: Vec<&Pantalla> = ps.iter().filter(|p| p.ancho > 0).collect();
+    if ps.is_empty() {
         return alloc::vec![String::from("El compositor no ha dicho nada de la pantalla")];
     }
-    alloc::vec![
-        alloc::format!("Pantalla {}: {} × {}", p.nombre, p.ancho, p.alto),
-        alloc::format!("Frecuencia: {},{:03} Hz", p.mhz / 1000, p.mhz % 1000),
-        alloc::format!("Escala: {}", p.escala.max(1)),
-    ]
+    ps.sort_by_key(|p| (p.x, p.y));
+    let hz = |mhz: i32| alloc::format!("{},{:03} Hz", mhz / 1000, mhz % 1000);
+    let mut l: Vec<String> = if ps.len() == 1 {
+        alloc::vec![alloc::format!("Pantalla {}: {} × {}", ps[0].nombre, ps[0].ancho, ps[0].alto)]
+    } else {
+        ps.iter().map(|p| alloc::format!("Pantalla {}: {} × {} en ({}, {})", p.nombre, p.ancho, p.alto, p.x, p.y)).collect()
+    };
+    if ps.iter().all(|p| p.mhz == ps[0].mhz) {
+        l.push(alloc::format!("Frecuencia: {}", hz(ps[0].mhz)));
+    } else {
+        l.push(alloc::format!("Frecuencias: {}", ps.iter().map(|p| hz(p.mhz)).collect::<Vec<_>>().join(", ")));
+    }
+    if ps.iter().all(|p| p.escala == ps[0].escala) {
+        l.push(alloc::format!("Escala: {}", ps[0].escala.max(1)));
+    } else {
+        l.push(alloc::format!("Escalas: {}", ps.iter().map(|p| alloc::format!("{}", p.escala.max(1))).collect::<Vec<_>>().join(", ")));
+    }
+    l
 }
 
 /// Lo de "Acerca de": una línea por dato.
@@ -497,9 +520,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     else {
         return None;
     };
-    let gp = global("wl_output");
+    // Todas las pantallas (multimonitor): un `wl_output` por cada una.
+    let gps: Vec<u32> = globales.iter().filter(|g| g.1 == "wl_output").map(|g| g.0).take(MAX_PANTALLAS).collect();
     let gt = global("dashos_tema_v1");
-    let mut pantalla = Pantalla::default();
+    let mut pantalla: Vec<Pantalla> = Vec::new();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
     let nombres: Vec<&str> = CATEGORIAS.iter().map(|c| c.1).collect();
@@ -600,8 +624,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gx).texto(Some("xdg_wm_base")).uint(6).uint(XDG).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
-        if let Some(gp) = gp {
-            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gp).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
+        for (k, &gp) in gps.iter().enumerate() {
+            let objeto = if k == 0 { SALIDA } else { SALIDAS_MAS + k as u32 - 1 };
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gp).texto(Some("wl_output")).uint(4).uint(objeto).fin();
+            pantalla.push(Pantalla { objeto, ..Default::default() });
         }
         // S10c: el tema del sistema. El centro lo pone (el compositor solo se lo deja a él): el guardado, al abrir.
         if let Some(gt) = gt {
@@ -701,17 +727,35 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     false
                 }
                 (VENTANA, xdg_toplevel::ev::CLOSE) => return Some(()),
-                (SALIDA, wl_output::ev::MODE) => {
-                    (pantalla.ancho, pantalla.alto, pantalla.mhz) = (palabra(1) as i32, palabra(2) as i32, palabra(3) as i32);
+                (o, wl_output::ev::GEOMETRY) if pantalla.iter().any(|p| p.objeto == o) => {
+                    let p = pantalla.iter_mut().find(|p| p.objeto == o).unwrap();
+                    (p.x, p.y) = (palabra(0) as i32, palabra(1) as i32);
                     false
                 }
-                (SALIDA, wl_output::ev::SCALE) => {
-                    pantalla.escala = palabra(0) as i32;
+                (o, wl_output::ev::MODE) if pantalla.iter().any(|p| p.objeto == o) => {
+                    let p = pantalla.iter_mut().find(|p| p.objeto == o).unwrap();
+                    (p.ancho, p.alto, p.mhz) = (palabra(1) as i32, palabra(2) as i32, palabra(3) as i32);
                     false
                 }
-                (SALIDA, wl_output::ev::NAME) => {
+                (o, wl_output::ev::SCALE) if pantalla.iter().any(|p| p.objeto == o) => {
+                    pantalla.iter_mut().find(|p| p.objeto == o).unwrap().escala = palabra(0) as i32;
+                    false
+                }
+                (o, wl_output::ev::NAME) if pantalla.iter().any(|p| p.objeto == o) => {
                     let n = (palabra(0) as usize).saturating_sub(1).min(cuerpo.len().saturating_sub(4)).min(32);
-                    pantalla.nombre = String::from(core::str::from_utf8(&cuerpo[4..4 + n]).unwrap_or("?"));
+                    pantalla.iter_mut().find(|p| p.objeto == o).unwrap().nombre = String::from(core::str::from_utf8(&cuerpo[4..4 + n]).unwrap_or("?"));
+                    false
+                }
+                // Una pantalla que llega con la ventana abierta (multimonitor): se enlaza también.
+                (REGISTRO, wl_registry::ev::GLOBAL) if pantalla.len() < MAX_PANTALLAS => {
+                    let n = (palabra(1) as usize).saturating_sub(1).min(cuerpo.len().saturating_sub(8));
+                    if cuerpo.get(8..8 + n) == Some(b"wl_output".as_slice()) {
+                        let objeto = if pantalla.is_empty() { SALIDA } else { SALIDAS_MAS + pantalla.len() as u32 - 1 };
+                        let mut e = Escritor::new();
+                        e.empezar(REGISTRO, wl_registry::req::BIND).uint(palabra(0)).texto(Some("wl_output")).uint(4).uint(objeto).fin();
+                        c.mandar(&e);
+                        pantalla.push(Pantalla { objeto, ..Default::default() });
+                    }
                     false
                 }
                 (PUNTERO, wl_pointer::ev::ENTER) => {

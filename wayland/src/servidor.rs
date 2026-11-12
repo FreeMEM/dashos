@@ -84,7 +84,13 @@ pub struct Conexion {
     pub roto: Option<ErrorProtocolo>,
     siguiente_propio: u32,
     pub serie: u32,
+    /// Sus `wl_registry` (multimonitor): a ellos se anuncian los globales que llegan o se van después (una salida
+    /// nueva). Con tope: un cliente que pide registros sin parar no hace crecer esto.
+    pub registros: Vec<u32>,
 }
+
+/// Lo más de `wl_registry` que se apuntan por conexión.
+pub const MAX_REGISTROS: usize = 8;
 
 impl Default for Conexion {
     fn default() -> Self {
@@ -97,6 +103,7 @@ impl Default for Conexion {
             roto: None,
             siguiente_propio: PRIMERO_DEL_SERVIDOR,
             serie: 0,
+            registros: Vec::new(),
         }
     }
 }
@@ -192,6 +199,9 @@ impl Conexion {
                 _ => {
                     // get_registry: los globales, uno por evento.
                     let id = args[0].uint();
+                    if self.registros.len() < MAX_REGISTROS {
+                        self.registros.push(id);
+                    }
                     for g in globales {
                         self.salida
                             .empezar(id, wl_registry::ev::GLOBAL)
@@ -247,6 +257,24 @@ impl Conexion {
     pub fn quitar(&mut self, id: u32) {
         if self.objetos.remove(&id).is_some() && id < PRIMERO_DEL_SERVIDOR {
             self.salida.empezar(1, wl_display::ev::DELETE_ID).uint(id).fin();
+        }
+    }
+
+    /// Un global nuevo (multimonitor: una salida que llega), a cada registro del cliente.
+    pub fn anunciar_global(&mut self, g: &Global) {
+        for &r in &self.registros {
+            if self.objetos.contains_key(&r) {
+                self.salida.empezar(r, wl_registry::ev::GLOBAL).uint(g.nombre).texto(Some(g.interfaz.name)).uint(g.version).fin();
+            }
+        }
+    }
+
+    /// Un global que se va (una salida que se desconecta), a cada registro del cliente.
+    pub fn retirar_global(&mut self, nombre: u32) {
+        for &r in &self.registros {
+            if self.objetos.contains_key(&r) {
+                self.salida.empezar(r, wl_registry::ev::GLOBAL_REMOVE).uint(nombre).fin();
+            }
         }
     }
 

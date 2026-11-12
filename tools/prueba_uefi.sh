@@ -528,8 +528,12 @@ while time.time() - inicio < total:
         def ultimo(t):
             return texto.rfind(t)
         # Bloqueada desde cualquiera de sus avisos (también el bloqueo que pide `pide`: "se bloquea la sesión de ...") hasta
-        # que se desbloquea o entra alguien.
-        bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("[guardian] se bloquea la sesión de"),
+        # que se desbloquea o entra alguien. El que pide `pide` lo deja `guardian` para cuando se cierre el centro de
+        # control: hasta que lo dice ("pide al centro abrir Permisos"), no cuenta. Si contaba, el selector esperaba al
+        # bloqueo, el centro al selector y el bloqueo al centro, hasta que el selector caducaba al minuto (con el PC
+        # cargado, `pide` pedía el bloqueo antes de abrirse el centro: lo vio la rama multimonitor).
+        pendiente = ultimo("[guardian] se bloquea la sesión de") if "[guardian] pide al centro abrir Permisos" in texto else -1
+        bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), pendiente,
                             ultimo("pantalla de bloqueo pintada"), ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
         if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
@@ -552,8 +556,16 @@ while time.time() - inicio < total:
         if not bloqueado_ahora and selector == 1:
             if "[selector] entra en C/Privado" not in texto:
                 # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez (Inicio: el primero).
+                # Y si el clic del paso de Ajustes, dado mientras salía el selector, le quitó el teclado: un clic a la
+                # derecha de su título (mide 460 de ancho; ahí no hay nada que pulsar) se lo devuelve.
                 if time.time() > reintento:
                     reintento = time.time() + 4
+                    import re
+                    v = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+                    if v:
+                        ir_a(int(v[-1][0]) + 300, int(v[-1][1]) + 22)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                        time.sleep(0.3)
                     mandar("sendkey home")
                     time.sleep(0.3)
                     mandar("sendkey down")
@@ -856,6 +868,12 @@ while time.time() - inicio < total:
 PY
     TECLAS_PID=$!
 fi
+# Multimonitor: con MULTI=prefijo, `tools/guion_multimonitor.py` (las teclas y el ratón de `make arranque-virt-2`, sin
+# el guion de arriba).
+if [ -n "${MULTI:-}" ]; then
+    python3 -I "$(dirname "$0")/guion_multimonitor.py" "$MONITOR" "$SEGUNDOS" "$SALIDA" "$MULTI" >/dev/null 2>&1 &
+    MULTI_PID=$!
+fi
 # Se para en cuanto han salido todas las líneas esperadas, en cualquier orden (o al acabar el tiempo); el orden se
 # mira después. Antes se paraba en la última del fichero, y con procesos que acaban a su ritmo (W8, K7) la última en
 # el fichero no siempre es la última en salir. Con CAPTURA=fichero.ppm, antes guarda la pantalla (U4).
@@ -883,6 +901,7 @@ while kill -0 "$QEMU" 2>/dev/null; do
 done
 wait "$QEMU" 2>/dev/null
 [ -n "${TECLAS_PID:-}" ] && kill "$TECLAS_PID" 2>/dev/null
+[ -n "${MULTI_PID:-}" ] && kill "$MULTI_PID" 2>/dev/null
 # Lo que escribe EDK2 lleva secuencias de escape de terminal: fuera, para comparar el texto.
 sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA" > "$SALIDA.txt"
 

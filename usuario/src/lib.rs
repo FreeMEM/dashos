@@ -16,6 +16,7 @@ pub mod servicio;
 pub mod protocolo {
     pub mod archivos;
     pub mod comprobar;
+    pub mod pantallas;
     pub mod red;
     pub mod sesiones;
 }

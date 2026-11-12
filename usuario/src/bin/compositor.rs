@@ -17,6 +17,12 @@
 //! Se compone por CPU en un búfer propio y se copia a la pantalla lo dañado. Con dos búferes (el buzón de la Pi) se
 //! pinta en el que no se ve y se cambia con el desplazamiento virtual; como cada búfer se vio hace dos cuadros, se
 //! copian los daños de este cuadro y los del anterior.
+//!
+//! Multimonitor: si hay un controlador de tarjeta gráfica (hoy, el de virtio-gpu, `protocolo::pantallas`), da sus
+//! cabezas, cada una con su memoria, y el compositor deja la pantalla de UEFI. Las salidas van una al lado de otra, de
+//! izquierda a derecha y arriba del todo, en un espacio común; el búfer propio mide lo justo para todas. La escena parte
+//! cada daño por salidas y cada uno se copia a la suya; a la del controlador, además, se le pide que lo vacíe. Cada
+//! salida es un `wl_output` (DASHOS-1, DASHOS-2...); los clientes que ya estaban reciben el global nuevo.
 
 #![no_std]
 #![no_main]
@@ -28,8 +34,9 @@ use alloc::string::String;
 use alloc::vec;
 use alloc::vec::Vec;
 use dashos::println;
+use dashos::protocolo::pantallas as pp;
 use wayland::canal::{self, TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS};
-use wayland::escena::{self, Cliente, Escena, Rect};
+use wayland::escena::{self, Cliente, Escena, Rect, Salida};
 use wayland::servidor::{Conexion, Global};
 use wayland::shm::{Memorias, MAX_POOL};
 use wayland::tablas;
@@ -44,24 +51,24 @@ const ALTO: u32 = 480;
 const VA_CLIENTES: usize = 0x70_0000_0000;
 const FONDO: u32 = 0xff20_4060;
 
-static GLOBALES: [Global; 7] = [
+/// Los globales de cada tipo de cliente, sin los `wl_output`: esos van uno por salida (multimonitor), con los
+/// números `GLOBAL_SALIDAS` (el 6, el de siempre, es la principal).
+static GLOBALES: [Global; 6] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
-    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control.
     Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 10] = [
+static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
-    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
@@ -69,16 +76,26 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
-static GLOBALES_CAPAS: [Global; 8] = [
+static GLOBALES_CAPAS: [Global; 7] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
-    Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
 ];
+/// Los números de los globales de las salidas: el 6 (el de siempre) para la principal y del 11 en adelante para las
+/// demás.
+const GLOBAL_SALIDAS: [u32; pp::MAX_CABEZAS] = [6, 11, 12, 13];
+
+/// Los globales de un cliente según su poder, con un `wl_output` por salida.
+fn globales_con(base: &[Global], salidas: &[Salida]) -> Vec<Global> {
+    let mut g: Vec<Global> = base.to_vec();
+    g.extend(salidas.iter().map(|o| Global { nombre: o.global, interfaz: &tablas::WL_OUTPUT, version: 4 }));
+    g
+}
+
 /// Quién puede cambiar el tema del sistema (S10c): el centro de control.
 const PONEN_TEMA: &[&str] = &["centro"];
 /// Los programas con el poder de escritorio, por el nombre que da `inicio` a su marca (solo esos nombres valen: uno
@@ -393,41 +410,188 @@ fn soltar_cliente(clientes: &mut BTreeMap<Cliente, DeVentanas>, escena: &mut Esc
     }
 }
 
-struct Compositor {
+/// Una salida física: dónde está en el espacio común y adónde se copia. `cabeza`: la del controlador gráfico (y su
+/// memoria es normal: se copia por filas enteras); `None`, la pantalla del firmware o del buzón.
+struct Fisica {
+    rect: Rect,
     p: Pantalla,
+    cabeza: Option<u32>,
+}
+
+/// Lo de un controlador gráfico (multimonitor): su canal y lo que falta por pedirle que vacíe, por cabeza.
+struct Gpu {
+    canal: u32,
+    pendiente: Vec<Vec<Rect>>,
+}
+
+struct Compositor {
+    fisicas: Vec<Fisica>,
+    /// El búfer propio: lo justo para todas las salidas (`ancho` píxeles por línea).
     marco: Vec<u32>,
+    ancho: u32,
+    alto: u32,
     visible: u32,
     danos_previos: Vec<Rect>,
+    gpu: Option<Gpu>,
 }
 
 impl Compositor {
-    /// Copia lo dañado del marco a la pantalla y la presenta.
+    /// Copia lo dañado del marco a cada salida y la presenta. Cada daño está entero en una salida (lo parte la escena).
     fn presentar(&mut self, danos: &[Rect]) {
         if danos.is_empty() {
+            self.vaciar_gpu();
             return;
         }
-        let bufer = if self.p.doble { 1 - self.visible } else { 0 };
-        let mut zonas: Vec<Rect> = danos.to_vec();
-        if self.p.doble {
-            zonas.extend(self.danos_previos.iter().copied());
-        }
-        let fila0 = bufer * self.p.alto;
-        for r in &zonas {
-            for y in r.y..r.y + r.h {
-                let linea = self.p.base + ((fila0 + y as u32) * self.p.paso) as usize;
-                let origen = y as usize * self.p.ancho as usize;
-                for x in r.x..r.x + r.w {
-                    let c = self.marco[origen + x as usize] & 0x00ff_ffff;
-                    let c = if self.p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
-                    unsafe { ((linea + x as usize * 4) as *mut u32).write_volatile(c.to_le()) };
+        for f in &self.fisicas {
+            let p = &f.p;
+            let bufer = if p.doble { 1 - self.visible } else { 0 };
+            let mut zonas: Vec<Rect> = danos.iter().copied().filter(|d| f.rect.cruce(*d) == *d).collect();
+            if p.doble {
+                zonas.extend(self.danos_previos.iter().copied());
+            }
+            let fila0 = bufer * p.alto;
+            for r in &zonas {
+                let (dx, dy) = ((r.x - f.rect.x) as usize, (r.y - f.rect.y) as u32);
+                for fila in 0..r.h as u32 {
+                    let linea = p.base + ((fila0 + dy + fila) * p.paso) as usize;
+                    let origen = (r.y as u32 + fila) as usize * self.ancho as usize + r.x as usize;
+                    let de = &self.marco[origen..origen + r.w as usize];
+                    if f.cabeza.is_some() {
+                        // Memoria normal sin caché (la del controlador): la fila de una vez. El byte alto no lo mira.
+                        unsafe { core::ptr::copy_nonoverlapping(de.as_ptr(), (linea + dx * 4) as *mut u32, de.len()) };
+                        continue;
+                    }
+                    for (x, &c) in de.iter().enumerate() {
+                        let c = c & 0x00ff_ffff;
+                        let c = if p.rb { (c & 0xff00) | (c >> 16 & 0xff) | (c & 0xff) << 16 } else { c };
+                        unsafe { ((linea + (dx + x) * 4) as *mut u32).write_volatile(c.to_le()) };
+                    }
                 }
             }
+            if let (Some(k), Some(g)) = (f.cabeza, self.gpu.as_mut()) {
+                g.pendiente[k as usize].extend(zonas.iter().map(|r| Rect { x: r.x - f.rect.x, y: r.y - f.rect.y, w: r.w, h: r.h }));
+            }
+            if p.doble {
+                self.danos_previos = danos.to_vec();
+                desplazar(bufer * p.alto);
+                self.visible = bufer;
+            }
         }
-        if self.p.doble {
-            self.danos_previos = danos.to_vec();
-            desplazar(bufer * self.p.alto);
-            self.visible = bufer;
+        self.vaciar_gpu();
+    }
+
+    /// Pide al controlador que vacíe lo pendiente de cada cabeza (`protocolo::pantallas`, `VACIAR`). Si su canal está
+    /// lleno, lo de esa cabeza se junta en un rectángulo y se reintenta en otra vuelta: nunca se espera.
+    fn vaciar_gpu(&mut self) {
+        let Some(g) = self.gpu.as_mut() else { return };
+        for (k, pend) in g.pendiente.iter_mut().enumerate() {
+            while !pend.is_empty() {
+                let n = pend.len().min(pp::MAX_RECTS);
+                let mut m = [0u8; 12 + 8 * pp::MAX_RECTS];
+                m[0..4].copy_from_slice(&pp::VACIAR.to_le_bytes());
+                m[4..8].copy_from_slice(&(k as u32).to_le_bytes());
+                m[8..12].copy_from_slice(&(n as u32).to_le_bytes());
+                for (i, r) in pend[..n].iter().enumerate() {
+                    for (j, v) in [r.x, r.y, r.w, r.h].iter().enumerate() {
+                        m[12 + 8 * i + 2 * j..14 + 8 * i + 2 * j].copy_from_slice(&(*v as u16).to_le_bytes());
+                    }
+                }
+                if dashos::canal_escribir(g.canal, &m[..12 + 8 * n], &[]) != 0 {
+                    let todo = pend.drain(..).reduce(cubrir).unwrap();
+                    pend.push(todo);
+                    break;
+                }
+                pend.drain(..n);
+            }
         }
+    }
+
+    /// Si queda algo por pedir al controlador.
+    fn gpu_pendiente(&self) -> bool {
+        self.gpu.as_ref().is_some_and(|g| g.pendiente.iter().any(|p| !p.is_empty()))
+    }
+}
+
+/// El rectángulo que cubre los dos.
+fn cubrir(a: Rect, b: Rect) -> Rect {
+    let (x0, y0) = (a.x.min(b.x), a.y.min(b.y));
+    let (x1, y1) = ((a.x + a.w).max(b.x + b.w), (a.y + a.h).max(b.y + b.h));
+    Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+}
+
+/// Las cabezas del controlador gráfico que van llegando (multimonitor): por cada una, su tamaño, sus bytes por línea y
+/// las llaves de su memoria. Cuando están todas, se pasa a ellas.
+#[derive(Default)]
+struct Cabezas {
+    total: usize,
+    canal: Option<u32>,
+    llegadas: Vec<Option<(u32, u32, u32, Vec<u32>, bool)>>,
+}
+
+/// Dónde se proyecta la memoria de cada cabeza: una cada 64 MB desde aquí.
+const VA_CABEZAS: usize = 0x64_0000_0000;
+
+impl Cabezas {
+    /// Un mensaje `CABEZA` del controlador. Devuelve las salidas físicas cuando ya están todas (las llaves que no
+    /// sirven se cierran). Lo que no cuadra se tira entero: el controlador no se cree.
+    fn llega(&mut self, m: &[u8], llaves: &[u32]) -> Option<Vec<(Rect, Pantalla, bool)>> {
+        let w = |i: usize| u32::from_le_bytes(m[4 * i..4 * i + 4].try_into().unwrap());
+        let cerrar = |ll: &[u32]| ll.iter().for_each(|&l| { dashos::cerrar(l); });
+        if m.len() != pp::LARGO_CABEZA || w(0) != pp::CABEZA {
+            cerrar(llaves);
+            return None;
+        }
+        let (k, total, ancho, alto, paso, trozos, conectada) = (w(1) as usize, w(2) as usize, w(3), w(4), w(5), w(6) as usize, w(7) != 0);
+        let con_canal = k == 0;
+        let bien = (1..=pp::MAX_CABEZAS).contains(&total)
+            && k < total
+            && (1..=pp::MAX_LADO).contains(&ancho)
+            && (1..=pp::MAX_LADO).contains(&alto)
+            && paso >= ancho * 4
+            && (1..=pp::MAX_TROZOS).contains(&trozos)
+            && llaves.len() == trozos + con_canal as usize
+            && (self.total == 0 || self.total == total)
+            && (trozos * pp::TROZO) as u64 >= paso as u64 * alto as u64
+            && llaves[..trozos].iter().enumerate().all(|(i, &l)| dashos::memoria_tamano(l) >= if i + 1 < trozos { pp::TROZO as i64 } else { 1 });
+        if !bien {
+            println!("  [compositor] cabeza {} del controlador gráfico que no cuadra: se tira", k);
+            cerrar(llaves);
+            return None;
+        }
+        if self.total == 0 {
+            self.total = total;
+            self.llegadas = (0..total).map(|_| None).collect();
+        }
+        if con_canal {
+            if let Some(viejo) = self.canal.replace(llaves[trozos]) {
+                dashos::cerrar(viejo);
+            }
+        }
+        if let Some((.., viejas, _)) = self.llegadas[k].replace((ancho, alto, paso, llaves[..trozos].to_vec(), conectada)) {
+            cerrar(&viejas);
+        }
+        if self.llegadas.iter().any(|l| l.is_none()) || self.canal.is_none() {
+            return None;
+        }
+        // Todas: cada una, proyectada en su hueco, al lado de la anterior.
+        let mut out = Vec::new();
+        let mut x = 0;
+        for (i, l) in self.llegadas.iter().enumerate() {
+            let (ancho, alto, paso, llaves, _) = l.as_ref().unwrap();
+            let base = VA_CABEZAS + i * (64 << 20);
+            for (t, &ll) in llaves.iter().enumerate() {
+                // Si el controlador se relanzó, aquí estaba la memoria de antes: fuera primero.
+                dashos::memoria_quitar(base + t * pp::TROZO);
+                if dashos::memoria_proyectar(ll, base + t * pp::TROZO, true) != 0 {
+                    println!("  [compositor] no se puede proyectar la memoria de la cabeza {}", i);
+                    return None;
+                }
+            }
+            let p = Pantalla { ancho: *ancho, alto: *alto, paso: *paso, base, doble: false, rb: false };
+            out.push((Rect { x, y: 0, w: *ancho as i32, h: *alto as i32 }, p, true));
+            x += *ancho as i32;
+        }
+        Some(out)
     }
 }
 
@@ -448,17 +612,32 @@ fn principal() -> u64 {
     } else {
         println!("  [compositor] pantalla de UEFI de {}x{} a 32 bits, un búfer", p.ancho, p.alto);
     }
-    let (ancho, alto) = (p.ancho as i32, p.alto as i32);
-    let mut c = Compositor { marco: vec![0; (p.ancho * p.alto) as usize], p, visible: 0, danos_previos: Vec::new() };
+    let (mut ancho, mut alto) = (p.ancho as i32, p.alto as i32);
+    let rect = Rect { x: 0, y: 0, w: ancho, h: alto };
+    let doble = p.doble;
+    let mut c = Compositor {
+        marco: vec![0; (p.ancho * p.alto) as usize],
+        ancho: p.ancho,
+        alto: p.alto,
+        fisicas: vec![Fisica { rect, p, cabeza: None }],
+        visible: 0,
+        danos_previos: Vec::new(),
+        gpu: None,
+    };
     let mut escena = Escena::new(Proyecciones::default(), FONDO);
     // Material 3: las ventanas echan sombra.
     escena.sombras = true;
+    escena.poner_salidas(vec![Salida { global: GLOBAL_SALIDAS[0], nombre: "DASHOS-1".into(), descripcion: "Pantalla de DashOS".into(), rect, mhz: 60_000 }]);
     let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
     c.presentar(&danos);
-    if c.p.doble {
+    if doble {
         // El otro búfer, también con el fondo.
         c.presentar(&danos);
     }
+    // Los globales de cada tipo de cliente, con las salidas de ahora.
+    let mut globales = [globales_con(&GLOBALES, &escena.salidas), globales_con(&GLOBALES_CAPAS, &escena.salidas), globales_con(&GLOBALES_ESCRITORIO, &escena.salidas)];
+    let mut cabezas = Cabezas::default();
+    let mut salida_cursor = Some(0);
 
     // Quién es cada marca: lo dice `inicio`, sin marca, con 8 bytes de marca y 16 de nombre.
     let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
@@ -476,7 +655,7 @@ fn principal() -> u64 {
     loop {
         // Un mensaje que no vale no para el compositor (M6).
         // Con algo pendiente para un cliente que no leía, se vuelve a probar a los 2 ms (E8).
-        let pendiente = clientes.values().any(|c| c.cola.pendiente());
+        let pendiente = clientes.values().any(|c| c.cola.pendiente()) || c.gpu_pendiente();
         let espera = match (falta, pendiente) {
             (Some(ms), true) => Some(ms.min(2)),
             (None, true) => Some(2),
@@ -502,6 +681,7 @@ fn principal() -> u64 {
         };
         escena.reloj_ms = (dashos::ahora_us() / 1000) as u32;
         if n == usize::MAX {
+            c.vaciar_gpu();
             falta = avisar_inactividad(&mut escena, &mut clientes, &mut caidos);
             avisar_ocultos(&mut escena, &mut clientes, &mut caidos);
             vaciar_todos(&mut clientes, &mut caidos);
@@ -543,6 +723,52 @@ fn principal() -> u64 {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             continue;
         }
+        // Multimonitor: las cabezas del controlador gráfico (solo el que `inicio` llama "virtio-gpu").
+        let de_gpu = nombres.get(&marca).map(String::as_str) == Some("virtio-gpu");
+        if de_gpu {
+            if let Some(nuevas) = cabezas.llega(&buf[..n], llaves) {
+                let canal = cabezas.canal.unwrap();
+                let total = nuevas.len();
+                let w: i32 = nuevas.iter().map(|f| f.0.x + f.0.w).max().unwrap_or(1);
+                let h: i32 = nuevas.iter().map(|f| f.0.h).max().unwrap_or(1);
+                let salidas: Vec<Salida> = nuevas
+                    .iter()
+                    .enumerate()
+                    .map(|(i, f)| Salida {
+                        global: GLOBAL_SALIDAS[i],
+                        nombre: alloc::format!("DASHOS-{}", i + 1),
+                        descripcion: alloc::format!("virtio-gpu, cabeza {}", i),
+                        rect: f.0,
+                        mhz: 60_000,
+                    })
+                    .collect();
+                let antes: Vec<u32> = escena.salidas.iter().map(|o| o.global).collect();
+                (ancho, alto) = (w, h);
+                c.marco = vec![0; (w * h) as usize];
+                (c.ancho, c.alto) = (w as u32, h as u32);
+                c.fisicas = nuevas.into_iter().enumerate().map(|(i, (rect, p, _))| Fisica { rect, p, cabeza: Some(i as u32) }).collect();
+                c.gpu = Some(Gpu { canal, pendiente: (0..total).map(|_| Vec::new()).collect() });
+                escena.poner_salidas(salidas);
+                globales = [globales_con(&GLOBALES, &escena.salidas), globales_con(&GLOBALES_CAPAS, &escena.salidas), globales_con(&GLOBALES_ESCRITORIO, &escena.salidas)];
+                // A los clientes: las salidas nuevas (y las que se van) en sus registros, y lo nuevo de las que tenían.
+                for (&cl, cli) in clientes.iter_mut() {
+                    for o in escena.salidas.iter().filter(|o| !antes.contains(&o.global)) {
+                        cli.con.anunciar_global(&Global { nombre: o.global, interfaz: &tablas::WL_OUTPUT, version: 4 });
+                    }
+                    for g in antes.iter().filter(|g| !escena.salidas.iter().any(|o| o.global == **g)) {
+                        cli.con.retirar_global(*g);
+                    }
+                    if let Some(de) = escena.clientes.get(&cl) {
+                        escena::avisar_salidas(&mut cli.con, de, &escena.salidas);
+                    }
+                    if !mandar(cli) {
+                        caidos.push(cl);
+                    }
+                }
+                let lista: Vec<String> = escena.salidas.iter().map(|o| alloc::format!("{} {}x{} en ({}, {})", o.nombre, o.rect.w, o.rect.h, o.rect.x, o.rect.y)).collect();
+                println!("  [compositor] {} salidas del controlador gráfico: {}", total, lista.join(", "));
+            }
+        }
         // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y).
         if matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
@@ -551,6 +777,12 @@ fn principal() -> u64 {
                 (8, 2) => escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]),
                 _ => Vec::new(),
             };
+            // Multimonitor: cuando el cursor pasa a otra salida, se dice (las pruebas lo miran).
+            let ahora = escena.salida_en(escena.cursor.0, escena.cursor.1);
+            if ahora != salida_cursor && escena.salidas.len() > 1 {
+                println!("  [compositor] el cursor pasa a {}", ahora.and_then(|i| escena.salidas.get(i)).map_or("?", |o| o.nombre.as_str()));
+            }
+            salida_cursor = ahora;
             let ms = (dashos::ahora_us() / 1000) as u32;
             for (cl, ev) in entrada {
                 if let (Some(cli), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
@@ -561,7 +793,7 @@ fn principal() -> u64 {
                 }
             }
         }
-        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) && de_sesiones.is_none();
+        let de_ventanas = !matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) && de_sesiones.is_none() && !de_gpu;
         let mut soltar = false;
         match buf.first().copied().filter(|_| de_ventanas) {
             Some(TROZO_CONECTAR) if k == 1 && !clientes.contains_key(&marca) => {
@@ -588,11 +820,11 @@ fn principal() -> u64 {
                 } else {
                     let nombre = nombres.get(&marca).map_or("", String::as_str);
                     let globales: &[Global] = if ESCRITORIOS.contains(&nombre) {
-                        &GLOBALES_ESCRITORIO
+                        &globales[2]
                     } else if CON_CAPAS.contains(&nombre) {
-                        &GLOBALES_CAPAS
+                        &globales[1]
                     } else {
-                        &GLOBALES
+                        &globales[0]
                     };
                     cli.con.atender(globales, &mut escena.de(marca));
                     soltar = !mandar(cli) || cli.con.roto.is_some();
@@ -614,6 +846,10 @@ fn principal() -> u64 {
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
             println!("  [compositor] ventana de {} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+        }
+        for (cl, i, x, y) in core::mem::take(&mut escena.movidas) {
+            let salida = escena.salidas.get(i).map_or("?", |o| o.nombre.as_str());
+            println!("  [compositor] ventana de {} a {} en ({}, {})", nombre_de(&nombres, &lanzados, cl), salida, x, y);
         }
         for (cl, x, y) in core::mem::take(&mut escena.capas_colocadas) {
             println!("  [compositor] capa de {} en ({}, {})", nombres.get(&cl).map_or("?", |s| s), x, y);

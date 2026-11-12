@@ -5,6 +5,7 @@
 # make arranque  la imagen normal en QEMU: tiene que llegar a "DashOS en marcha"
 # make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
+# make arranque-virt-2  lo mismo con dos monitores (virtio-gpu con dos cabezas)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -82,6 +83,21 @@ arranque-virt: virt $(DISCO_NVME)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
 	python3 ../tools/sonido_wav.py target/sonido.wav
 	python3 ../tools/captura_cambio.py target/u6.ana.ppm target/u6.carla.ppm
+
+# El multimonitor en QEMU virt: lo mismo que `arranque-virt` y, además, una virtio-gpu con dos cabezas (la 0 a 800x600,
+# como la ramfb; la 1, sin monitor, sale a 1024x768). Sin el guion de siempre: `tools/guion_multimonitor.py` (MULTI)
+# lleva el cursor de una a otra, pasa Ajustes a la segunda con Super+Mayúsculas+Derecha, la maximiza allí, la devuelve
+# y la trae, baja el centro de control a Pantallas y captura cada cabeza (target/multi.*.ppm);
+# `tools/captura_multimonitor.py` las mira. Para en cuanto salen las líneas de `pruebas/arranque_virt_2.txt`.
+arranque-virt-2: virt $(DISCO_NVME)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
+	rm -f target/multi.*.ppm $(RED)/qemu.sock $(RED)/pc.sock
+	mkdir -p $(RED)
+	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
+	GUARDAR=$(abspath target/salida_virt_2.txt) MULTI=$(abspath target/multi) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device virtio-gpu-pci,id=vgpu,max_outputs=2,xres=800,yres=600 -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev none,id=snd0 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_2.txt 200; \
+	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
+	python3 ../tools/captura_multimonitor.py target/multi
+	grep "en 10 s" target/salida_virt_2.txt | tail -5
 
 # Los cortes del sonido con los cuatro núcleos ocupados (S19, A6): la imagen de virt con cuatro programas de carga,
 # sin disco ni USB. Mide; el WAV se comprueba, pero un fallo de la comprobación no para la orden.

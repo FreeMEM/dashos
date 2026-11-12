@@ -79,9 +79,14 @@ pub struct Bloqueo {
 #[derive(Debug, Default)]
 pub struct SupBloqueo {
     pub superficie: u32,
-    pedidos: Vec<u32>,
+    /// Los configure mandados sin confirmar, cada uno con su tamaño.
+    pedidos: Vec<(u32, (i32, i32))>,
     configurada: bool,
     enviado: (i32, i32),
+    /// El tamaño del último configure confirmado: el que tiene que tener el búfer.
+    acordado: (i32, i32),
+    /// La salida que tapa (el global de su `wl_output`; si no se sabe, la principal).
+    pub salida: Option<u32>,
 }
 
 /// Errores de `zwlr_layer_shell_v1` y `zwlr_layer_surface_v1` (de `wlr-layer-shell-unstable-v1.xml`, G4).
@@ -118,6 +123,8 @@ use crate::Valor;
 /// Las flechas de evdev que usan los atajos del compositor.
 const KEY_ARRIBA: u32 = 103;
 const KEY_ABAJO: u32 = 108;
+const KEY_IZQUIERDA: u32 = 105;
+const KEY_DERECHA: u32 = 106;
 const KEY_L: u32 = 38;
 const KEY_A: u32 = 30;
 
@@ -133,21 +140,60 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// Lo que tienen en común. En 64 bits: los números pueden venir de un cliente (multimonitor: coordenadas
+    /// absurdas no desbordan).
     pub fn cruce(self, o: Rect) -> Rect {
-        let x0 = self.x.max(o.x);
-        let y0 = self.y.max(o.y);
-        let x1 = (self.x + self.w).min(o.x + o.w);
-        let y1 = (self.y + self.h).min(o.y + o.h);
+        let x0 = (self.x as i64).max(o.x as i64);
+        let y0 = (self.y as i64).max(o.y as i64);
+        let x1 = (self.x as i64 + self.w as i64).min(o.x as i64 + o.w as i64);
+        let y1 = (self.y as i64 + self.h as i64).min(o.y as i64 + o.h as i64);
         if x1 <= x0 || y1 <= y0 {
             Rect::default()
         } else {
-            Rect { x: x0, y: y0, w: x1 - x0, h: y1 - y0 }
+            Rect { x: x0 as i32, y: y0 as i32, w: (x1 - x0) as i32, h: (y1 - y0) as i32 }
         }
+    }
+
+    /// Si (x, y) está dentro.
+    pub fn tiene(self, x: i32, y: i32) -> bool {
+        x >= self.x && y >= self.y && (x as i64) < self.x as i64 + self.w as i64 && (y as i64) < self.y as i64 + self.h as i64
     }
 
     pub fn vacio(self) -> bool {
         self.w <= 0 || self.h <= 0
     }
+}
+
+/// Una salida (un monitor) en el espacio común de la escena (multimonitor): el número de su global de `wl_output`, su
+/// nombre, lo que se dice de ella, dónde está y su frecuencia en mHz. Las salidas no se pisan; la primera es la
+/// principal (la barra, si no pide otra, va en ella).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Salida {
+    pub global: u32,
+    pub nombre: alloc::string::String,
+    pub descripcion: alloc::string::String,
+    pub rect: Rect,
+    pub mhz: i32,
+}
+
+/// Lo más de salidas.
+pub const MAX_SALIDAS: usize = 8;
+/// Lo más que mide una salida por lado, y hasta dónde llega una coordenada del espacio común.
+pub const MAX_LADO: i32 = 16384;
+
+/// La salida con el global `global` (la principal si no está) y lo que queda en ella para las ventanas: para quien no
+/// puede pedírselo a la escena entera (tiene prestado a un cliente).
+fn salida_y_area(salidas: &[Salida], areas: &[Rect], medidas: (i32, i32), global: Option<u32>) -> (Rect, Rect) {
+    let i = global.and_then(|g| salidas.iter().position(|o| o.global == g)).unwrap_or(0);
+    let r = salidas.get(i).map_or(Rect { x: 0, y: 0, w: medidas.0, h: medidas.1 }, |o| o.rect);
+    (r, areas.get(i).copied().unwrap_or(r))
+}
+
+/// El sitio de la ventana `k` de la cascada, de `tam`, en lo que queda `a`: 40 + 32 × k desde la esquina; si no cabe,
+/// arrimada para no salirse, y si es más grande que `a`, en su esquina.
+fn en_cascada(a: Rect, k: i32, tam: (i32, i32)) -> (i32, i32) {
+    let cabe = |desde: i32, mide: i32, t: i32| (desde + 40 + 32 * k).min(desde + mide - t).max(desde);
+    (cabe(a.x, a.w, tam.0), cabe(a.y, a.h, tam.1))
 }
 
 /// Lo más de rectángulos dañados que guarda una superficie entre dos `commit` (E3).
@@ -233,29 +279,32 @@ pub struct Capa {
     configurada: bool,
     /// El tamaño del último configure.
     enviado: Option<(i32, i32)>,
+    /// La salida que pidió (el global de su `wl_output`); sin ella, o si ya no existe, la principal.
+    pub salida: Option<u32>,
 }
 
 /// El tamaño de una capa en una pantalla de `w` x `h`: el pedido, o lo que haya entre sus anclas.
 fn tamano_capa(e: &EstadoCapa, w: i32, h: i32) -> (i32, i32) {
-    let [ar, de, ab, iz] = e.margenes;
-    let ancho = if e.ancho == 0 { (w - iz - de).max(1) } else { e.ancho as i32 };
-    let alto = if e.alto == 0 { (h - ar - ab).max(1) } else { e.alto as i32 };
+    let [ar, de, ab, iz] = e.margenes.map(|m| m.clamp(-MAX_LADO, MAX_LADO));
+    let ancho = if e.ancho == 0 { (w - iz - de).clamp(1, MAX_LADO) } else { e.ancho.min(MAX_LADO as u32) as i32 };
+    let alto = if e.alto == 0 { (h - ar - ab).clamp(1, MAX_LADO) } else { e.alto.min(MAX_LADO as u32) as i32 };
     (ancho, alto)
 }
 
 /// Dónde va una capa de `bw` x `bh` en una pantalla de `w` x `h`: pegada a sus anclas con sus márgenes, y centrada
 /// en el eje en que no tiene ancla o tiene las dos.
 fn sitio_capa(e: &EstadoCapa, w: i32, h: i32, bw: i32, bh: i32) -> (i32, i32) {
-    let [ar, de, ab, iz] = e.margenes;
+    // Los márgenes los pone el cliente: con tope, para que nada desborde (multimonitor, hostiles).
+    let [ar, de, ab, iz] = e.margenes.map(|m| m.clamp(-MAX_LADO, MAX_LADO));
     let x = match (e.anclas & IZQUIERDA != 0, e.anclas & DERECHA != 0) {
         (true, false) => iz,
-        (false, true) => w - bw - de,
-        _ => (w - bw) / 2,
+        (false, true) => w.saturating_sub(bw).saturating_sub(de),
+        _ => w.saturating_sub(bw) / 2,
     };
     let y = match (e.anclas & ARRIBA != 0, e.anclas & ABAJO != 0) {
         (true, false) => ar,
-        (false, true) => h - bh - ab,
-        _ => (h - bh) / 2,
+        (false, true) => h.saturating_sub(bh).saturating_sub(ab),
+        _ => h.saturating_sub(bh) / 2,
     };
     (x, y)
 }
@@ -389,6 +438,8 @@ pub struct DeCliente {
     pub bloqueos: BTreeMap<u32, SupBloqueo>,
     /// Por número de `zwp_linux_buffer_params_v1` (G6).
     pub params: BTreeMap<u32, Params>,
+    /// Sus `wl_output` (multimonitor): objeto → global de la salida.
+    pub salidas: BTreeMap<u32, u32>,
 }
 
 /// Todas las superficies de todos los clientes y el orden en que se apilan.
@@ -477,6 +528,16 @@ pub struct Escena<M: Memorias> {
     pub detras: Vec<u32>,
     /// Cuándo salieron los últimos avisos de frame de los ocultos.
     ultimo_oculto_ms: u32,
+    /// Multimonitor: las salidas, en el espacio común. Sin `poner_salidas`, una sola del tamaño que da `componer`.
+    pub salidas: Vec<Salida>,
+    salidas_propias: bool,
+    /// Lo que queda para las ventanas en cada salida (`area` es el de la principal).
+    pub areas: Vec<Rect>,
+    /// Las ventanas que se acaban de mover a otra salida (cliente, salida, sitio): quien atiende lo dice y lo vacía.
+    pub movidas: Vec<(Cliente, usize, i32, i32)>,
+    /// La ventana que se arrastra con Super y el botón izquierdo, dónde se cogió (respecto a su esquina) y en qué
+    /// salida estaba.
+    arrastre: Option<((Cliente, u32), i32, i32, usize)>,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -601,7 +662,161 @@ impl<M: Memorias> Escena<M> {
             personas: BTreeMap::new(),
             detras: Vec::new(),
             ultimo_oculto_ms: 0,
+            salidas: Vec::new(),
+            salidas_propias: false,
+            areas: Vec::new(),
+            movidas: Vec::new(),
+            arrastre: None,
         }
+    }
+
+    /// Multimonitor: pone las salidas del espacio común (la primera, la principal). Se quedan las que tienen tamaño, no
+    /// se pisan con otra anterior ni salen del espacio (hasta `MAX_SALIDAS`); sin ninguna que valga, no cambia nada.
+    /// Se recompone todo; las capas y las pantallas de bloqueo que cambian de tamaño reciben su configure (por
+    /// `pendientes`); las ventanas que quedan fuera de todas pasan a la principal; el cursor, a una salida.
+    pub fn poner_salidas(&mut self, nuevas: Vec<Salida>) {
+        let mut buenas: Vec<Salida> = Vec::new();
+        for o in nuevas {
+            let r = o.rect;
+            let dentro = r.x >= 0 && r.y >= 0 && (1..=MAX_LADO).contains(&r.w) && (1..=MAX_LADO).contains(&r.h)
+                && r.x <= MAX_LADO && r.y <= MAX_LADO;
+            if dentro && buenas.len() < MAX_SALIDAS && buenas.iter().all(|b| b.rect.cruce(r).vacio() && b.global != o.global) {
+                buenas.push(o);
+            }
+        }
+        if buenas.is_empty() {
+            return;
+        }
+        let w = buenas.iter().map(|o| o.rect.x + o.rect.w).max().unwrap_or(1);
+        let h = buenas.iter().map(|o| o.rect.y + o.rect.h).max().unwrap_or(1);
+        self.salidas = buenas;
+        self.salidas_propias = true;
+        self.medidas = (w, h);
+        self.tras_cambio_de_salidas();
+    }
+
+    /// Lo que mide el espacio común: lo justo para todas las salidas.
+    pub fn medidas(&self) -> (i32, i32) {
+        self.medidas
+    }
+
+    /// Tras cambiar las salidas (o el tamaño de la única): áreas, capas, bloqueo, ventanas perdidas y cursor.
+    fn tras_cambio_de_salidas(&mut self) {
+        self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+        self.recalcular_area();
+        // Las capas: a su sitio en su salida, y si cambia su tamaño, un configure.
+        let capas: Vec<(Cliente, u32)> = self.clientes.iter().flat_map(|(&c, cli)| cli.capas.values().map(move |k| (c, k.superficie))).collect();
+        for (c, sup) in capas {
+            self.reconfigurar_capa(c, sup);
+            if self.capas.contains(&(c, sup)) {
+                self.colocar_capa(c, sup);
+            }
+        }
+        // Las pantallas de bloqueo: del tamaño de su salida, en su sitio.
+        let bloqueos: Vec<(Cliente, u32)> = self.clientes.iter().flat_map(|(&c, cli)| cli.bloqueos.keys().map(move |&k| (c, k))).collect();
+        for (c, id) in bloqueos {
+            let s = self.indice_salida(self.clientes[&c].bloqueos[&id].salida);
+            let r = self.salidas[s].rect;
+            let cli = self.clientes.get_mut(&c).unwrap();
+            let b = cli.bloqueos.get_mut(&id).unwrap();
+            let sup = b.superficie;
+            if b.enviado != (r.w, r.h) {
+                self.pendientes.push((c, Entrada::ConfiguraBloqueo { objeto: id, ancho: r.w, alto: r.h }));
+            }
+            if let Some(su) = cli.superficies.get_mut(&sup).filter(|su| su.sitio.is_some()) {
+                su.sitio = Some((r.x, r.y));
+            }
+        }
+        // Las ventanas que ya no tocan ninguna salida, a la principal (en cascada; si estaba maximizada, maximizada).
+        let mut perdidas = Vec::new();
+        for &(c, sup) in &self.orden {
+            if let Some(r) = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup))
+                && self.salidas.iter().all(|o| o.rect.cruce(r).vacio()) {
+                    perdidas.push((c, sup));
+                }
+        }
+        for (c, sup) in perdidas {
+            let a = self.areas[0];
+            let k = self.colocadas % 8;
+            self.colocadas += 1;
+            let cli = self.clientes.get_mut(&c).unwrap();
+            let tam = rect_de(cli, sup).map_or((0, 0), |r| (r.w, r.h));
+            let (cx, cy) = en_cascada(a, k, tam);
+            let maximizada = cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r).map(|x| (r, x.antes_de_maximizar.is_some())));
+            let sitio = match maximizada {
+                Some((rol, true)) => {
+                    cli.xdg.get_mut(&rol).unwrap().antes_de_maximizar = Some((cx, cy));
+                    self.pendientes.push((c, Entrada::Configura { xdg: rol, ancho: a.w, alto: a.h, maximizada: true }));
+                    (a.x, a.y)
+                }
+                _ => (cx, cy),
+            };
+            cli.superficies.get_mut(&sup).unwrap().sitio = Some(sitio);
+            self.movidas.push((c, 0, sitio.0, sitio.1));
+        }
+        self.cursor = self.limitar(self.cursor.0, self.cursor.1);
+    }
+
+    /// El número de la salida con el global `global` (la principal si no hay o ya no existe).
+    pub fn indice_salida(&self, global: Option<u32>) -> usize {
+        global.and_then(|g| self.salidas.iter().position(|o| o.global == g)).unwrap_or(0)
+    }
+
+    /// La salida en la que está el punto (x, y), si alguna.
+    pub fn salida_en(&self, x: i32, y: i32) -> Option<usize> {
+        self.salidas.iter().position(|o| o.rect.tiene(x, y))
+    }
+
+    /// La salida de un rectángulo (una ventana): la que más tapa; si no toca ninguna, la principal.
+    pub fn salida_de(&self, r: Rect) -> usize {
+        let mut mejor = (0usize, 0i64);
+        for (i, o) in self.salidas.iter().enumerate() {
+            let c = o.rect.cruce(r);
+            let a = if c.vacio() { 0 } else { c.w as i64 * c.h as i64 };
+            if a > mejor.1 {
+                mejor = (i, a);
+            }
+        }
+        mejor.0
+    }
+
+    /// (x, y) dentro de alguna salida: si no está en ninguna, el punto más cercano de la más cercana. Así el cursor
+    /// pasa de una a otra por donde se tocan y no se pierde en el hueco entre salidas de distinto alto.
+    pub fn limitar(&self, x: i32, y: i32) -> (i32, i32) {
+        self.limitar_desde(x, y, None)
+    }
+
+    /// Como `limitar`, pero si (x, y) no está en ninguna, se queda en el borde de la salida `desde` (donde estaba el
+    /// cursor): así no salta a otra salida por una esquina.
+    fn limitar_desde(&self, x: i32, y: i32, desde: Option<usize>) -> (i32, i32) {
+        if self.salidas.is_empty() {
+            let (w, h) = self.medidas;
+            return (x.clamp(0, w - 1), y.clamp(0, h - 1));
+        }
+        if self.salida_en(x, y).is_some() {
+            return (x, y);
+        }
+        if let Some(r) = desde.and_then(|i| self.salidas.get(i)).map(|o| o.rect) {
+            // Primero se recorta un eje y se mira si así cae en alguna (al ir en diagonal hacia una esquina donde se tocan
+            // dos salidas, sigue por la otra); si no, en el borde de la suya.
+            let (cx, cy) = (x.clamp(r.x, r.x + r.w - 1), y.clamp(r.y, r.y + r.h - 1));
+            for (px, py) in [(x, cy), (cx, y)] {
+                if self.salida_en(px, py).is_some() {
+                    return (px, py);
+                }
+            }
+            return (cx, cy);
+        }
+        let mut mejor = ((0, 0), i64::MAX);
+        for o in &self.salidas {
+            let r = o.rect;
+            let (cx, cy) = (x.clamp(r.x, r.x + r.w - 1), y.clamp(r.y, r.y + r.h - 1));
+            let d = (cx as i64 - x as i64).pow(2) + (cy as i64 - y as i64).pow(2);
+            if d < mejor.1 {
+                mejor = ((cx, cy), d);
+            }
+        }
+        mejor.0
     }
 
     /// U6: si `cliente` es de una persona con la sesión detrás.
@@ -888,10 +1103,12 @@ impl<M: Memorias> Escena<M> {
 
     /// Tras el commit de una capa del escritorio: si tiene búfer, en su sitio según sus anclas; si no, fuera (G4).
     fn colocar_capa(&mut self, cliente: Cliente, sup: u32) {
-        let (w, h) = self.medidas;
-        let area = self.area;
-        let Some(yo) = self.clientes.get_mut(&cliente) else { return };
-        let Some(id) = yo.superficies.get(&sup).and_then(|s| s.capa) else { return };
+        let Some(id) = self.clientes.get(&cliente).and_then(|yo| yo.superficies.get(&sup)).and_then(|s| s.capa) else { return };
+        // En su salida (multimonitor): la que pidió o la principal.
+        let i = self.indice_salida(self.clientes[&cliente].capas[&id].salida);
+        let pantalla = self.rect_salida(i);
+        let area = self.area_de(i);
+        let yo = self.clientes.get_mut(&cliente).unwrap();
         let e = yo.capas[&id].actual;
         let antes = rect_de(yo, sup);
         self.danos.extend(antes);
@@ -901,12 +1118,13 @@ impl<M: Memorias> Escena<M> {
             Some((bw, bh)) => {
                 // Sin zona propia (0), dentro de lo que dejan las barras: se aparta de sus zonas exclusivas (como pide
                 // wlr-layer-shell; el panel rápido sale debajo de la barra). Con zona o con -1, en toda la pantalla.
-                let r = if e.zona == 0 { area } else { Rect { x: 0, y: 0, w, h } };
+                let r = if e.zona == 0 { area } else { pantalla };
                 let (x, y) = sitio_capa(&e, r.w, r.h, bw, bh);
-                s.sitio = Some((r.x + x, r.y + y));
+                let (x, y) = (r.x.saturating_add(x), r.y.saturating_add(y));
+                s.sitio = Some((x, y));
                 if !self.capas.contains(&(cliente, sup)) {
                     self.capas.push((cliente, sup));
-                    self.capas_colocadas.push((cliente, r.x + x, r.y + y));
+                    self.capas_colocadas.push((cliente, x, y));
                 }
                 self.danos.extend(rect_de(yo, sup));
                 // Teclado exclusivo en las capas de arriba: se lo lleva mientras se vea (una pantalla de entrada).
@@ -928,10 +1146,25 @@ impl<M: Memorias> Escena<M> {
         self.recalcular_area();
     }
 
+    /// Multimonitor: si la capa de la superficie `sup` ya tuvo configure y su salida le da ahora otro tamaño, otro
+    /// configure (por `pendientes`).
+    fn reconfigurar_capa(&mut self, cliente: Cliente, sup: u32) {
+        let Some(cli) = self.clientes.get(&cliente) else { return };
+        let Some((id, k)) = cli.superficies.get(&sup).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id).map(|k| (id, k))) else { return };
+        let Some(antes) = k.enviado else { return };
+        let (r, a) = salida_y_area(&self.salidas, &self.areas, self.medidas, k.salida);
+        let (w, h) = if k.actual.zona == 0 { (a.w, a.h) } else { (r.w, r.h) };
+        let t = tamano_capa(&k.actual, w, h);
+        if t != antes {
+            self.pendientes.push((cliente, Entrada::ConfiguraCapa { objeto: id, ancho: t.0, alto: t.1 }));
+        }
+    }
+
     /// Bloquea la sesión (G5): se deja de ver todo al momento, y nadie tiene el teclado ni el puntero hasta que salga
     /// la pantalla de bloqueo.
     fn bloquear(&mut self, cliente: Cliente, objeto: u32) {
         self.bloqueo = Some(Bloqueo { cliente, objeto, vivo: true, superficies: Vec::new() });
+        self.arrastre = None;
         if let Some((c, s)) = self.teclado.take() {
             self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
         }
@@ -968,17 +1201,21 @@ impl<M: Memorias> Escena<M> {
         let Some(id) = yo.superficies.get(&sup).and_then(|s| s.bloqueo) else { return Ok(()) };
         let medida = yo.superficies[&sup].bufer.and_then(|b| yo.shm.pixeles(b)).map(|(_, b)| (b.ancho as i32, b.alto as i32));
         let Some(m) = medida else { return Ok(()) };
-        if m != yo.bloqueos[&id].enviado {
+        if m != yo.bloqueos[&id].acordado {
             return Err(ErrorProtocolo::new(id, BLOQUEO_TAMANO, "búfer de otro tamaño que la pantalla"));
         }
-        yo.superficies.get_mut(&sup).unwrap().sitio = Some((0, 0));
+        // En su salida (multimonitor).
+        let salida = yo.bloqueos[&id].salida;
+        let r = self.rect_salida(self.indice_salida(salida));
+        let yo = self.clientes.get_mut(&cliente).unwrap();
+        yo.superficies.get_mut(&sup).unwrap().sitio = Some((r.x, r.y));
         let activo = self.bloqueo.as_ref().is_some_and(|b| b.cliente == cliente);
         if activo {
             let b = self.bloqueo.as_mut().unwrap();
             // Entera, la primera vez; después, lo que diga el cliente (E8).
             if !b.superficies.contains(&sup) {
                 b.superficies.push(sup);
-                self.danos.push(Rect { x: 0, y: 0, w: m.0, h: m.1 });
+                self.danos.push(Rect { x: r.x, y: r.y, w: m.0, h: m.1 });
             }
             if self.teclado != Some((cliente, sup)) {
                 let mut ev = Vec::new();
@@ -991,15 +1228,40 @@ impl<M: Memorias> Escena<M> {
 
     /// Lo que queda para las ventanas: la pantalla menos la zona exclusiva de cada capa pegada a un borde (G4).
     pub fn recalcular_area(&mut self) {
-        let antes = self.area;
-        let (w, h) = self.medidas;
-        let mut a = Rect { x: 0, y: 0, w, h };
+        let antes = self.areas.clone();
+        let n = self.salidas.len().max(1);
+        let areas: Vec<Rect> = (0..n).map(|i| self.area_calculada(i)).collect();
+        self.area = areas[0];
+        self.areas = areas;
+        if self.areas != antes {
+            self.reajustar_maximizadas();
+        }
+    }
+
+    /// Lo que mide la salida `i` (sin salidas, todo el espacio).
+    pub fn rect_salida(&self, i: usize) -> Rect {
+        match self.salidas.get(i) {
+            Some(o) => o.rect,
+            None => Rect { x: 0, y: 0, w: self.medidas.0, h: self.medidas.1 },
+        }
+    }
+
+    /// Lo que queda para las ventanas en la salida `i`.
+    pub fn area_de(&self, i: usize) -> Rect {
+        self.areas.get(i).copied().unwrap_or_else(|| self.rect_salida(i))
+    }
+
+    /// La salida `i` menos la zona exclusiva de cada capa suya pegada a un borde.
+    fn area_calculada(&self, i: usize) -> Rect {
+        let mut a = self.rect_salida(i);
         for &(c, sup) in &self.capas {
             let Some(cli) = self.clientes.get(&c) else { continue };
-            let Some(e) = cli.superficies.get(&sup).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)).map(|c| c.actual) else { continue };
-            if e.zona <= 0 {
+            let Some(k) = cli.superficies.get(&sup).and_then(|s| s.capa).and_then(|id| cli.capas.get(&id)) else { continue };
+            let e = k.actual;
+            if e.zona <= 0 || self.indice_salida(k.salida) != i {
                 continue;
             }
+            let e = EstadoCapa { zona: e.zona.min(MAX_LADO), margenes: e.margenes.map(|m| m.clamp(-MAX_LADO, MAX_LADO)), ..e };
             let (ar, ab, iz, de) = (e.anclas & ARRIBA != 0, e.anclas & ABAJO != 0, e.anclas & IZQUIERDA != 0, e.anclas & DERECHA != 0);
             let [m_ar, m_de, m_ab, m_iz] = e.margenes;
             if ar && !ab && iz == de {
@@ -1018,25 +1280,25 @@ impl<M: Memorias> Escena<M> {
         }
         a.w = a.w.max(1);
         a.h = a.h.max(1);
-        self.area = a;
-        if a != antes {
-            self.reajustar_maximizadas();
-        }
+        a
     }
 
     /// Las ventanas maximizadas, otra vez a lo que queda (S10: si la barra sale, o se va, después de maximizar una, no
     /// se queda debajo). Se mueven ya; el tamaño nuevo se pide con su configure.
     fn reajustar_maximizadas(&mut self) {
-        let a = self.area;
         let mut cambian = Vec::new();
         for (&c, cli) in &self.clientes {
             for (&rol, x) in &cli.xdg {
                 if x.antes_de_maximizar.is_some() && cli.superficies.get(&x.superficie).is_some_and(|s| s.sitio.is_some()) {
-                    cambian.push((c, rol, x.superficie));
+                    // Su salida: la de su esquina (maximizada, está en el origen del área de su salida).
+                    let (sx, sy) = cli.superficies[&x.superficie].sitio.unwrap();
+                    let i = self.salida_en(sx, sy).unwrap_or_else(|| rect_de(cli, x.superficie).map_or(0, |r| self.salida_de(r)));
+                    cambian.push((c, rol, x.superficie, i));
                 }
             }
         }
-        for (c, rol, sup) in cambian {
+        for (c, rol, sup, i) in cambian {
+            let a = self.area_de(i);
             let cli = self.clientes.get_mut(&c).unwrap();
             self.danos.extend(rect_de(cli, sup));
             cli.superficies.get_mut(&sup).unwrap().sitio = Some((a.x, a.y));
@@ -1093,8 +1355,16 @@ impl<M: Memorias> Escena<M> {
         avisar: &mut impl FnMut(Cliente, u32, u32),
     ) -> Vec<Rect> {
         let todo = Rect { x: 0, y: 0, w: ancho, h: alto };
-        if self.medidas != (ancho, alto) {
+        // Sin salidas puestas (`poner_salidas`), una sola: la pantalla entera.
+        if !self.salidas_propias && (self.medidas != (ancho, alto) || self.salidas.is_empty()) {
             self.medidas = (ancho, alto);
+            self.salidas = alloc::vec![Salida {
+                global: 0,
+                nombre: "DASHOS-1".into(),
+                descripcion: "Pantalla de DashOS".into(),
+                rect: todo,
+                mhz: 60_000,
+            }];
             self.recalcular_area();
         }
         // Las superficies de cada ventana, con sus subsuperficies (G3), de abajo arriba, con su sitio en la pantalla.
@@ -1130,16 +1400,23 @@ impl<M: Memorias> Escena<M> {
         for &(c, id, x, y) in &capas {
             if let Some(s) = self.clientes.get_mut(&c).and_then(|cli| cli.superficies.get_mut(&id)) {
                 for d in s.danos.drain(..) {
-                    self.danos.push(Rect { x: x + d.x, y: y + d.y, w: d.w, h: d.h });
+                    self.danos.push(Rect { x: x.saturating_add(d.x), y: y.saturating_add(d.y), w: d.w, h: d.h });
                 }
             }
         }
         let fondo = if self.bloqueo.is_some() { 0xFF00_0000 } else { self.fondo };
-        let mut danos: Vec<Rect> = core::mem::take(&mut self.danos)
-            .into_iter()
-            .map(|d| d.cruce(todo))
-            .filter(|d| !d.vacio())
-            .collect();
+        // Multimonitor: cada daño, partido por salidas. Lo que no cae en ninguna (el hueco entre salidas de distinto
+        // tamaño) no se compone, y cada daño que sale está entero en una salida: quien atiende lo copia a la suya.
+        let zonas: Vec<Rect> = self.salidas.iter().map(|o| o.rect.cruce(todo)).filter(|z| !z.vacio()).collect();
+        let mut danos: Vec<Rect> = Vec::new();
+        for d in core::mem::take(&mut self.danos) {
+            for z in &zonas {
+                let c = d.cruce(*z);
+                if !c.vacio() {
+                    danos.push(c);
+                }
+            }
+        }
         // Uno dentro de otro no se compone dos veces (E8).
         let dentro = |a: &Rect, b: &Rect| a.x >= b.x && a.y >= b.y && a.x + a.w <= b.x + b.w && a.y + a.h <= b.y + b.h;
         let mut k = 0;
@@ -1168,7 +1445,13 @@ impl<M: Memorias> Escena<M> {
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
             while s_i < sombras.len() && sombras[s_i].0 == k {
                 let v = sombras[s_i].1;
-                con_bufer.push((sombra_fuera(v), 0, 0, &[], crate::shm::Bufer::default(), Some(v)));
+                // Multimonitor: la sombra de una ventana que está en una sola salida no pasa a la de al lado.
+                let mut fuera = sombra_fuera(v);
+                let mut suyas = self.salidas.iter().map(|o| o.rect).filter(|r| !r.cruce(v).vacio());
+                if let (Some(r), None) = (suyas.next(), suyas.next()) {
+                    fuera = fuera.cruce(r);
+                }
+                con_bufer.push((fuera, 0, 0, &[], crate::shm::Bufer::default(), Some(v)));
                 s_i += 1;
             }
             let cli = &self.clientes[&c];
@@ -1432,6 +1715,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 match orden {
                     ext_session_lock_v1::req::GET_LOCK_SURFACE if activo => {
                         let (id, sup) = (args[0].uint(), args[1].uint());
+                        // Su salida (multimonitor): la de ese `wl_output`; uno que no lo es, o de una salida que ya no
+                        // está, tapa la principal.
+                        let salida = yo.salidas.get(&args[2].uint()).copied();
+                        let (r, _) = salida_y_area(&escena.salidas, &escena.areas, escena.medidas, salida);
+                        let i_salida = salida.and_then(|g| escena.salidas.iter().position(|o| o.global == g)).unwrap_or(0);
                         let Some(s) = yo.superficies.get_mut(&sup) else {
                             return Err(ErrorProtocolo::new(objeto, BLOQUEO_ROL, "no es una superficie"));
                         };
@@ -1441,14 +1729,16 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         if s.bufer.is_some() {
                             return Err(ErrorProtocolo::new(objeto, BLOQUEO_YA_HECHO, "la superficie ya tiene búfer"));
                         }
-                        if !yo.bloqueos.is_empty() {
+                        let salidas = &escena.salidas;
+                        let de_salida = |g: Option<u32>| g.and_then(|g| salidas.iter().position(|o| o.global == g)).unwrap_or(0);
+                        if yo.bloqueos.values().any(|b| de_salida(b.salida) == i_salida) {
                             return Err(ErrorProtocolo::new(objeto, BLOQUEO_PANTALLA_REPETIDA, "ya hay una para esta pantalla"));
                         }
                         s.bloqueo = Some(id);
-                        let (w, h) = escena.medidas;
+                        let (w, h) = (r.w, r.h);
                         let serie = con.serie_nueva();
                         con.salida.empezar(id, ext_session_lock_surface_v1::ev::CONFIGURE).uint(serie).uint(w as u32).uint(h as u32).fin();
-                        yo.bloqueos.insert(id, SupBloqueo { superficie: sup, pedidos: alloc::vec![serie], configurada: false, enviado: (w, h) });
+                        yo.bloqueos.insert(id, SupBloqueo { superficie: sup, pedidos: alloc::vec![(serie, (w, h))], configurada: false, enviado: (w, h), acordado: (0, 0), salida });
                     }
                     ext_session_lock_v1::req::UNLOCK_AND_DESTROY if activo => escena.desbloquear(),
                     ext_session_lock_v1::req::DESTROY if activo => {
@@ -1460,9 +1750,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             "ext_session_lock_surface_v1" if orden == ext_session_lock_surface_v1::req::ACK_CONFIGURE => {
                 let Some(b) = yo.bloqueos.get_mut(&objeto) else { return Ok(()) };
                 let serie = args[0].uint();
-                let Some(i) = b.pedidos.iter().position(|&x| x == serie) else {
+                let Some(i) = b.pedidos.iter().position(|x| x.0 == serie) else {
                     return Err(ErrorProtocolo::new(objeto, BLOQUEO_SERIE, "configure que no se mandó"));
                 };
+                b.acordado = b.pedidos[i].1;
                 b.pedidos.drain(..=i);
                 b.configurada = true;
             }
@@ -1482,7 +1773,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 }
                 s.capa = Some(id);
                 let pendiente = EstadoCapa { capa, ..Default::default() };
-                yo.capas.insert(id, Capa { superficie: sup, pendiente, ..Default::default() });
+                // Su salida (multimonitor): la de ese `wl_output`; sin él (o con uno que no lo es), la principal.
+                let salida = yo.salidas.get(&args[2].uint()).copied();
+                yo.capas.insert(id, Capa { superficie: sup, pendiente, salida, ..Default::default() });
             }
             "zwlr_layer_surface_v1" => {
                 let Some(c) = yo.capas.get_mut(&objeto) else { return Ok(()) };
@@ -1794,8 +2087,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         let pone_bufer = matches!(yo.superficies[&objeto].pendiente.bufer, Some(Some(_)));
                         let c = yo.capas.get_mut(&id).unwrap();
                         let e = c.pendiente;
-                        // Sin zona propia, lo que dejan las barras (como al colocarla).
-                        let (w, h) = if e.zona == 0 { (escena.area.w, escena.area.h) } else { escena.medidas };
+                        // Sin zona propia, lo que dejan las barras (como al colocarla), en su salida.
+                        let (r, a) = salida_y_area(&escena.salidas, &escena.areas, escena.medidas, c.salida);
+                        let (w, h) = if e.zona == 0 { (a.w, a.h) } else { (r.w, r.h) };
                         if (e.ancho == 0 && e.anclas & (IZQUIERDA | DERECHA) != IZQUIERDA | DERECHA)
                             || (e.alto == 0 && e.anclas & (ARRIBA | ABAJO) != ARRIBA | ABAJO)
                         {
@@ -1871,10 +2165,15 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         if s.rol.is_some() && s.bufer.is_some() && s.sitio.is_none() {
                             let k = escena.colocadas % 8;
                             escena.colocadas += 1;
-                            // En cascada dentro de lo que dejan las barras (G4).
-                            let (ax, ay) = (escena.area.x, escena.area.y);
-                            escena.colocar(cliente, objeto, ax + 40 + 32 * k, ay + 40 + 32 * k);
-                            escena.recien_colocadas.push((cliente, ax + 40 + 32 * k, ay + 40 + 32 * k));
+                            // En cascada dentro de lo que dejan las barras (G4), en la salida del cursor (multimonitor).
+                            // Si no cabe, se arrima para que no se salga (y si es más grande, en la esquina).
+                            let i = escena.salida_en(escena.cursor.0, escena.cursor.1).unwrap_or(0);
+                            let a = escena.area_de(i);
+                            let cli = escena.clientes.get(&cliente).unwrap();
+                            let tam = cli.superficies.get(&objeto).and_then(|s| s.bufer).and_then(|b| cli.shm.pixeles(b)).map_or((0, 0), |(_, b)| (b.ancho as i32, b.alto as i32));
+                            let (x, y) = en_cascada(a, k, tam);
+                            escena.colocar(cliente, objeto, x, y);
+                            escena.recien_colocadas.push((cliente, x, y));
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
                             // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();
@@ -1914,21 +2213,13 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             }
         }
         if core::ptr::eq(global.interfaz, &tablas::WL_OUTPUT) {
-            // Una sola pantalla, la de la escena (G4: las capas y el bloqueo la piden).
-            let (w, h) = self.escena.medidas;
-            let v = con.objetos[&id].version;
-            con.salida.empezar(id, wl_output::ev::GEOMETRY).int(0).int(0).int(0).int(0).int(0).texto(Some("DashOS")).texto(Some("pantalla")).int(0).fin();
-            con.salida.empezar(id, wl_output::ev::MODE).uint(3).int(w).int(h).int(60_000).fin();
-            if v >= 2 {
-                con.salida.empezar(id, wl_output::ev::SCALE).int(1).fin();
-            }
-            if v >= 4 {
-                con.salida.empezar(id, wl_output::ev::NAME).texto(Some("DASHOS-1")).fin();
-                con.salida.empezar(id, wl_output::ev::DESCRIPTION).texto(Some("Pantalla de DashOS")).fin();
-            }
-            if v >= 2 {
-                con.salida.empezar(id, wl_output::ev::DONE).fin();
-            }
+            // Multimonitor: la salida de ese global (G4: las capas y el bloqueo la piden). Se apunta para decirle los
+            // cambios y para saber qué salida piden con ella.
+            let escena = &mut *self.escena;
+            let yo = escena.clientes.get_mut(&self.cliente).unwrap();
+            yo.salidas.insert(id, global.nombre);
+            let i = escena.indice_salida(Some(global.nombre));
+            avisar_salida(con, id, escena.salidas.get(i), escena.medidas);
         }
         if core::ptr::eq(global.interfaz, &tablas::ZWP_LINUX_DMABUF_V1) {
             // Antes de la versión 4 no hay tabla: los formatos van en eventos (y desde la 3, con su modificador).
@@ -1953,6 +2244,8 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
     fn destruido(&mut self, _con: &mut Conexion, objeto: u32) {
         let escena = &mut *self.escena;
         let yo = escena.clientes.get_mut(&self.cliente).unwrap();
+        // Un `wl_output` soltado (release).
+        yo.salidas.remove(&objeto);
         // Unos params sin usar: sus memorias se sueltan (G6).
         if let Some(p) = yo.params.remove(&objeto) {
             for (l, ..) in p.planos.into_iter().flatten() {
@@ -2080,6 +2373,38 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
 }
 
 /// Manda el aviso de un `frame` (lo usa quien compone, con la conexión del cliente).
+/// Lo que se dice de una salida a un `wl_output` (`objeto`): sitio en el espacio común, modo, escala, nombre y `done`.
+/// Sin salida (aún no hay ninguna), el espacio entero como DASHOS-1.
+pub fn avisar_salida(con: &mut Conexion, objeto: u32, salida: Option<&Salida>, medidas: (i32, i32)) {
+    let Some(v) = con.objetos.get(&objeto).map(|o| o.version) else { return };
+    let r = salida.map_or(Rect { x: 0, y: 0, w: medidas.0, h: medidas.1 }, |o| o.rect);
+    let nombre = salida.map_or("DASHOS-1", |o| o.nombre.as_str());
+    let descripcion = salida.map_or("Pantalla de DashOS", |o| o.descripcion.as_str());
+    let mhz = salida.map_or(60_000, |o| o.mhz);
+    con.salida.empezar(objeto, wl_output::ev::GEOMETRY).int(r.x).int(r.y).int(0).int(0).int(0).texto(Some("DashOS")).texto(Some(nombre)).int(0).fin();
+    con.salida.empezar(objeto, wl_output::ev::MODE).uint(3).int(r.w).int(r.h).int(mhz).fin();
+    if v >= 2 {
+        con.salida.empezar(objeto, wl_output::ev::SCALE).int(1).fin();
+    }
+    if v >= 4 {
+        con.salida.empezar(objeto, wl_output::ev::NAME).texto(Some(nombre)).fin();
+        con.salida.empezar(objeto, wl_output::ev::DESCRIPTION).texto(Some(descripcion)).fin();
+    }
+    if v >= 2 {
+        con.salida.empezar(objeto, wl_output::ev::DONE).fin();
+    }
+}
+
+/// Multimonitor: a cada `wl_output` de un cliente, lo de su salida otra vez (tras `poner_salidas`). Los de una salida
+/// que ya no está no reciben nada (su global se retira).
+pub fn avisar_salidas(con: &mut Conexion, cli: &DeCliente, salidas: &[Salida]) {
+    for (&objeto, &g) in &cli.salidas {
+        if let Some(o) = salidas.iter().find(|o| o.global == g).or_else(|| salidas.first().filter(|o| o.global == 0)) {
+            avisar_salida(con, objeto, Some(o), (0, 0));
+        }
+    }
+}
+
 pub fn avisar_frame(con: &mut Conexion, aviso: u32, ms: u32) {
     if con.objetos.contains_key(&aviso) {
         con.salida.empezar(aviso, wl_callback::ev::DONE).uint(ms).fin();
@@ -2126,6 +2451,10 @@ pub enum Entrada {
     Mods { pulsados: u32 },
     /// El compositor pide a una ventana (su `xdg_surface`) otro tamaño; 0 × 0: el que quiera ella.
     Configura { xdg: u32, ancho: i32, alto: i32, maximizada: bool },
+    /// Multimonitor: otro tamaño para una capa (su `zwlr_layer_surface_v1`) o una pantalla de bloqueo (su
+    /// `ext_session_lock_surface_v1`), porque cambió su salida.
+    ConfiguraCapa { objeto: u32, ancho: i32, alto: i32 },
+    ConfiguraBloqueo { objeto: u32, ancho: i32, alto: i32 },
 }
 
 impl<M: Memorias> Escena<M> {
@@ -2198,16 +2527,50 @@ impl<M: Memorias> Escena<M> {
         let mut out = Vec::new();
         self.actividad();
         let antes = self.cursor;
-        let (w, h) = self.medidas;
         if !self.con_cursor {
             self.con_cursor = true;
             self.danos.push(cursor_rect(antes));
         }
-        self.cursor = ((antes.0 + dx).clamp(0, w - 1), (antes.1 + dy).clamp(0, h - 1));
+        // Dentro de alguna salida (multimonitor: pasa de una a otra por donde se tocan).
+        self.cursor = self.limitar_desde(antes.0.saturating_add(dx), antes.1.saturating_add(dy), self.salida_en(antes.0, antes.1));
         if self.cursor != antes {
             self.danos.push(cursor_rect(antes));
             self.danos.push(cursor_rect(self.cursor));
         }
+        // Arrastrando una ventana (Super y el botón izquierdo): va con el cursor, también de una salida a otra. Al
+        // soltar, si cambió de salida, se dice. Mientras, los botones no llegan a nadie.
+        if let Some(((c, sup), ox, oy, desde)) = self.arrastre {
+            if self.cursor != antes {
+                self.llevar_a(c, sup, (self.cursor.0 - ox, self.cursor.1 - oy));
+            }
+            if botones & 1 == 0 {
+                self.arrastre = None;
+                if let Some(r) = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)) {
+                    let i = self.salida_de(r);
+                    if i != desde {
+                        self.movidas.push((c, i, r.x, r.y));
+                    }
+                }
+                self.botones = botones;
+                return out;
+            }
+            self.botones = botones;
+            return out;
+        }
+        if botones & 1 != 0 && self.botones & 1 == 0 && self.mods & 64 != 0 && self.bloqueo.is_none()
+            && let Some(((c, s), _, _)) = self.bajo(self.cursor.0, self.cursor.1) {
+                let cli = &self.clientes[&c];
+                let r = raiz(cli, s);
+                let ventana = cli.superficies.get(&r).and_then(|su| su.rol).and_then(|rol| cli.xdg.get(&rol)).filter(|x| x.antes_de_maximizar.is_none());
+                if let (Some(_), Some((x, y))) = (ventana, cli.superficies.get(&r).and_then(|su| su.sitio)) {
+                    let desde = rect_de(cli, r).map_or(0, |v| self.salida_de(v));
+                    self.super_sola = false;
+                    self.activar((c, r), &mut out);
+                    self.arrastre = Some(((c, r), self.cursor.0 - x, self.cursor.1 - y, desde));
+                    self.botones = botones;
+                    return out;
+                }
+            }
         let bajo = self.bajo(self.cursor.0, self.cursor.1);
         let ahora = bajo.map(|b| b.0);
         if ahora != self.puntero {
@@ -2297,6 +2660,13 @@ impl<M: Memorias> Escena<M> {
             }
             return out;
         }
+        // Multimonitor: Super+Mayúsculas+Izquierda/Derecha llevan la ventana a la salida de al lado.
+        if self.mods & 65 == 65 && matches!(codigo, KEY_IZQUIERDA | KEY_DERECHA) && self.bloqueo.is_none() {
+            if pulsada {
+                self.mover_a_salida(codigo == KEY_DERECHA, &mut out);
+            }
+            return out;
+        }
         // Super+L (U3): bloquear ya. Quien bloquea (`guardian`) espera su aviso de inactividad; se le da en el acto, como
         // si hubiera vencido el plazo. La tecla no llega a la ventana.
         if self.mods & 64 != 0 && codigo == KEY_L && self.bloqueo.is_none() {
@@ -2328,9 +2698,11 @@ impl<M: Memorias> Escena<M> {
     /// la devuelve a su sitio y le deja elegir su tamaño. Se mueve ya; el tamaño llega con su búfer nuevo.
     pub fn maximizar(&mut self, si: bool, out: &mut Vec<(Cliente, Entrada)>) {
         let Some((c, sup)) = self.teclado else { return };
-        // Dentro de lo que dejan las barras (G4).
-        let (w, h) = (self.area.w, self.area.h);
-        let origen = (self.area.x, self.area.y);
+        // Dentro de lo que dejan las barras (G4), en la salida de la ventana (multimonitor: la que más tapa).
+        let i = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)).map_or(0, |r| self.salida_de(r));
+        let a = self.area_de(i);
+        let (w, h) = (a.w, a.h);
+        let origen = (a.x, a.y);
         let Some(cli) = self.clientes.get_mut(&c) else { return };
         let Some(s) = cli.superficies.get(&sup) else { return };
         let (Some(rol), Some(sitio)) = (s.rol, s.sitio) else { return };
@@ -2356,7 +2728,68 @@ impl<M: Memorias> Escena<M> {
         }
         let (ancho, alto) = if si { (w, h) } else { (0, 0) };
         out.push((c, Entrada::Configura { xdg: rol, ancho, alto, maximizada: si }));
-        // El puntero pudo quedar sobre otra ventana.
+        self.revisar_puntero(out);
+    }
+
+    /// Multimonitor: lleva la ventana que tiene el teclado a la salida de al lado (`derecha`, o a la izquierda), por
+    /// orden de izquierda a derecha. Guarda su sitio dentro de lo que queda para las ventanas (sin salirse si cabe);
+    /// maximizada, sigue maximizada en la nueva, con su tamaño. Sin salida a ese lado, nada.
+    pub fn mover_a_salida(&mut self, derecha: bool, out: &mut Vec<(Cliente, Entrada)>) {
+        let Some((c, sup)) = self.teclado else { return };
+        let Some(r) = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)) else { return };
+        let Some(rol) = self.clientes[&c].superficies.get(&sup).and_then(|s| s.rol) else { return };
+        let i = self.salida_de(r);
+        // Las salidas de izquierda a derecha (y de arriba abajo en la misma columna).
+        let mut orden: Vec<usize> = (0..self.salidas.len()).collect();
+        orden.sort_by_key(|&k| (self.salidas[k].rect.x, self.salidas[k].rect.y));
+        let Some(p) = orden.iter().position(|&k| k == i) else { return };
+        let j = match (derecha, p) {
+            (true, p) if p + 1 < orden.len() => orden[p + 1],
+            (false, p) if p > 0 => orden[p - 1],
+            _ => return,
+        };
+        let (de, a) = (self.area_de(i), self.area_de(j));
+        // El mismo sitio respecto a lo que queda, recortado para que quepa.
+        let cabe = |v: i32, desde: i32, mide: i32, tam: i32| v.clamp(desde, (desde + mide - tam).max(desde));
+        let llevar = |(x, y): (i32, i32), (w, h): (i32, i32)| {
+            (cabe(a.x + (x - de.x), a.x, a.w, w), cabe(a.y + (y - de.y), a.y, a.h, h))
+        };
+        let cli = self.clientes.get_mut(&c).unwrap();
+        let Some(x) = cli.xdg.get_mut(&rol) else { return };
+        let maximizada = x.antes_de_maximizar.is_some();
+        let nuevo = if maximizada {
+            x.antes_de_maximizar = x.antes_de_maximizar.map(|antes| llevar(antes, (r.w.min(a.w), r.h.min(a.h))));
+            (a.x, a.y)
+        } else {
+            llevar((r.x, r.y), (r.w, r.h))
+        };
+        self.danos.push(r);
+        let cli = self.clientes.get_mut(&c).unwrap();
+        cli.superficies.get_mut(&sup).unwrap().sitio = Some(nuevo);
+        if let Some(r) = rect_de(cli, sup) {
+            self.danos.push(r);
+        }
+        if maximizada {
+            out.push((c, Entrada::Configura { xdg: rol, ancho: a.w, alto: a.h, maximizada: true }));
+        }
+        self.movidas.push((c, j, nuevo.0, nuevo.1));
+        self.revisar_puntero(out);
+    }
+
+    /// Pone la ventana `sup` de `c` en `sitio` (sin salirse del todo del espacio: la esquina, dentro de alguna salida),
+    /// dañando donde estaba y donde va.
+    fn llevar_a(&mut self, c: Cliente, sup: u32, sitio: (i32, i32)) {
+        let sitio = self.limitar(sitio.0, sitio.1);
+        let Some(cli) = self.clientes.get_mut(&c) else { return };
+        let antes = rect_de(cli, sup);
+        let Some(s) = cli.superficies.get_mut(&sup) else { return };
+        s.sitio = Some(sitio);
+        self.danos.extend(antes);
+        self.danos.extend(rect_de(&self.clientes[&c], sup));
+    }
+
+    /// Tras mover una ventana: el puntero pudo quedar sobre otra.
+    fn revisar_puntero(&mut self, out: &mut Vec<(Cliente, Entrada)>) {
         let bajo = self.bajo(self.cursor.0, self.cursor.1);
         let ahora = bajo.map(|b| b.0);
         if ahora != self.puntero {
@@ -2372,6 +2805,9 @@ impl<M: Memorias> Escena<M> {
 
     /// Un cliente se fue: la entrada deja de apuntarle.
     pub fn sin_entrada(&mut self, cliente: Cliente) {
+        if self.arrastre.is_some_and(|a| a.0.0 == cliente) {
+            self.arrastre = None;
+        }
         if self.puntero.is_some_and(|p| p.0 == cliente) {
             self.puntero = None;
         }
@@ -2385,6 +2821,20 @@ impl<M: Memorias> Escena<M> {
 pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms: u32) {
     let fixed = |v: i32| v.wrapping_mul(256) as u32;
     match ev {
+        Entrada::ConfiguraCapa { objeto, ancho, alto } => {
+            let Some(c) = cli.capas.get_mut(&objeto) else { return };
+            let serie = con.serie_nueva();
+            con.salida.empezar(objeto, zwlr_layer_surface_v1::ev::CONFIGURE).uint(serie).uint(ancho as u32).uint(alto as u32).fin();
+            c.pedidos.push(serie);
+            c.enviado = Some((ancho, alto));
+        }
+        Entrada::ConfiguraBloqueo { objeto, ancho, alto } => {
+            let Some(b) = cli.bloqueos.get_mut(&objeto) else { return };
+            let serie = con.serie_nueva();
+            con.salida.empezar(objeto, ext_session_lock_surface_v1::ev::CONFIGURE).uint(serie).uint(ancho as u32).uint(alto as u32).fin();
+            b.pedidos.push((serie, (ancho, alto)));
+            b.enviado = (ancho, alto);
+        }
         Entrada::Configura { xdg, ancho, alto, maximizada } => {
             let Some(x) = cli.xdg.get_mut(&xdg) else { return };
             let Some(toplevel) = x.toplevel else { return };
