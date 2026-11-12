@@ -999,3 +999,8 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Siguiente: que recorra una instantánea con la biblioteca de RedoxFS y que `archivos` le pase el trabajo.
 - U5: en el selector, Retroceso sube al cajón de arriba (como elegir "../"; en la raíz no hace nada: no hay arriba).
   Prueba en virt: dentro de `C/Privado`, Retroceso ("sube a C, 5 entradas") y se vuelve a entrar.
+- A15, segundo paso del comprobador, intentado y deshecho: abrir RedoxFS en su proceso, solo para leer (un `Disk` sobre
+  el servicio de disco, como `ver`). Lee el anillo de cabeceras (16 lecturas de 64 KB, bien) y se queda dentro de
+  `FileSystem::open` sin error ni salida. No es la memoria (con 64 MB de grupo, igual). Sin mirar: si es por abrir
+  mientras `archivos` escribe (en `ver` el disco está quieto) o algo de la apertura sin `cleanup`. Para la próxima:
+  probarlo con el disco quieto (al final de la prueba) y con trazas dentro de `FileSystem::open`.
