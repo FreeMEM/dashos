@@ -1473,3 +1473,11 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente del usuario: el deslizador (M3 de 2024, barra con raya; o el de 2022, con bola).
 - `make prueba` BIEN; kit 64 y wayland 59 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN; a 1920 ×
   1080 sin fallos.
+
+### 2026-11-12 17:20: la sombra con las esquinas de cada superficie
+- El compositor pintaba todas las sombras con esquinas de 16; las capas del pulido (panel, avisos, la pregunta) tienen
+  28 y por sus esquinas asomaba la sombra. Ahora `radio_de` mide el radio en la diagonal de la esquina de arriba a la
+  izquierda de cada superficie con alfa (lo transparente es ≈ 0,293 · r); las opacas siguen con 16.
+- Prueba en el PC (`radio_de_las_esquinas`): esquinas de 12, 16 y 28 dibujadas píxel a píxel, medidas a 2 como mucho;
+  sin esquina, 0. Captura del panel: esquinas limpias.
+- `make prueba` BIEN; wayland 60 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN.
