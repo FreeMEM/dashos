@@ -22,6 +22,7 @@ extern crate alloc;
 
 pub mod arbol;
 pub mod arranque;
+pub mod disposicion;
 pub mod fdt;
 pub mod gic;
 pub mod maquina;
