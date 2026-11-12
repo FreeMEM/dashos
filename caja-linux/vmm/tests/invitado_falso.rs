@@ -13,6 +13,7 @@ use caja_vmm::virtio::bloque::{self, Bloque, Bloques, DiscoEnMemoria, ErrorBloqu
 use caja_vmm::virtio::cola::{DESC_F_INDIRECT, DESC_F_NEXT, DESC_F_WRITE};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
 use caja_vmm::virtio::mmio::*;
+use caja_vmm::virtio::red::{self, ExtremoRed, Red};
 use caja_vmm::virtio::{F_INDIRECT_DESC, F_VERSION_1};
 
 const RAM: u64 = 0x4000_0000;
@@ -24,6 +25,29 @@ const DISCO: u64 = 0x0a00_0200;
 const SPI_UART: u32 = 1;
 const SPI_CONSOLA: u32 = 16;
 const SPI_DISCO: u32 = 17;
+const RED: u64 = 0x0a00_0400;
+const SPI_RED: u32 = 18;
+
+#[derive(Default)]
+struct Cable {
+    salieron: Vec<Vec<u8>>,
+    entran: VecDeque<Vec<u8>>,
+}
+
+#[derive(Clone, Default)]
+struct ExtremoCable(Rc<RefCell<Cable>>);
+
+impl ExtremoRed for ExtremoCable {
+    fn enviar(&mut self, t: &[u8]) {
+        self.0.borrow_mut().salieron.push(t.to_vec());
+    }
+    fn hay_trama(&self) -> bool {
+        !self.0.borrow().entran.is_empty()
+    }
+    fn recibir(&mut self) -> Option<Vec<u8>> {
+        self.0.borrow_mut().entran.pop_front()
+    }
+}
 
 #[derive(Default)]
 struct Terminal {
@@ -74,6 +98,7 @@ struct Banco {
     consola: Extremo,
     uart: Extremo,
     disco: Disco,
+    cable: ExtremoCable,
 }
 
 fn banco_con(solo_lectura: bool) -> Banco {
@@ -85,10 +110,13 @@ fn banco_con(solo_lectura: bool) -> Banco {
     m.añadir(CONSOLA, SPI_CONSOLA, Box::new(TransporteMmio::nuevo(Consola::nueva(Box::new(consola.clone())))))
         .unwrap();
     m.añadir(DISCO, SPI_DISCO, Box::new(TransporteMmio::nuevo(Bloque::nuevo(Box::new(disco.clone()))))).unwrap();
+    let cable = ExtremoCable::default();
+    let mac = [0x52, 0x54, 0x00, 0x12, 0x34, 0x56];
+    m.añadir(RED, SPI_RED, Box::new(TransporteMmio::nuevo(Red::nueva(Box::new(cable.clone()), mac)))).unwrap();
     // El GIC encendido, con las SPI de los aparatos habilitadas, como lo deja Linux.
     m.mmio(0, GICD + gic::CTLR, 4, Operacion::Escribir(1));
     m.mmio(0, GICD + gic::ISENABLER + 4, 4, Operacion::Escribir(u32::MAX as u64));
-    Banco { m, consola, uart, disco }
+    Banco { m, consola, uart, disco, cable }
 }
 
 fn banco() -> Banco {
@@ -599,7 +627,7 @@ fn maquina_direcciones() {
     assert!(b.m.añadir(0x1000, 500, p()).is_err());
     assert!(b.m.añadir(u64::MAX - 10, 5, p()).is_err());
     assert!(b.m.añadir(0x1000, 5, p()).is_ok());
-    assert_eq!(b.m.aparatos().len(), 4);
+    assert_eq!(b.m.aparatos().len(), 5);
 }
 
 /// Accesos al azar a todo (registros de los aparatos y del GIC, memoria del invitado con colas apuntando a sitios
@@ -622,10 +650,12 @@ fn a_lo_loco() {
             let q = Cola::en(RAM + 0x1000, 16);
             b.arrancar(DISCO, &[q]);
             b.arrancar(CONSOLA, &[Cola::en(RAM + 0x2000, 16), Cola::en(RAM + 0x3000, 16)]);
+            b.arrancar(RED, &[Cola::en(RAM + 0x2800, 8), Cola::en(RAM + 0x3800, 8)]);
+            b.cable.0.borrow_mut().entran.extend((0..50).map(|i| vec![i as u8; i * 40]));
         }
         for _ in 0..20_000 {
             let r = azar();
-            let base = [UART, CONSOLA, DISCO, GICD, RAM][(r % 5) as usize];
+            let base = [UART, CONSOLA, DISCO, GICD, RAM, RED][(r % 6) as usize];
             let desp = if r & 0x100 != 0 { (r >> 16) & 0x1fc } else { (r >> 16) & 0xfff };
             let tam = [1u8, 2, 4, 8, 3][((r >> 8) % 5) as usize];
             let v = azar();
@@ -642,7 +672,7 @@ fn a_lo_loco() {
                     let _ = b.m.mem.escribir_u64(dir & !7, azar() & 0x0000_0000_407f_ffff | (azar() & 0xf000));
                 }
                 6 => {
-                    let base = if r & 1 == 0 { DISCO } else { CONSOLA };
+                    let base = [DISCO, CONSOLA, RED][(r % 3) as usize];
                     b.m.mmio(0, base + R_QUEUE_NOTIFY, 4, Operacion::Escribir(v % 3));
                 }
                 _ => b.m.sondear(),
@@ -655,4 +685,35 @@ fn a_lo_loco() {
             }
         }
     }
+}
+
+#[test]
+fn red_enviar_y_recibir() {
+    let mut b = banco();
+    let mut rx = Cola::en(RAM + 0x1000, 8);
+    let mut tx = Cola::en(RAM + 0x2000, 8);
+    let f = b.arrancar(RED, &[rx, tx]);
+    assert!(f & red::F_MAC != 0);
+    assert_eq!(b.r(RED + R_CONFIG), 0x1200_5452);
+    assert_eq!(b.m.mmio(0, RED + R_CONFIG + 6, 2, Operacion::Leer), SalidaMmio::Leido(1)); // enlace arriba
+    // Enviar: cabecera de 12 bytes y trama, en dos segmentos.
+    b.mem().escribir(BUF, &[0; 12]).unwrap();
+    b.mem().escribir(BUF + 0x100, &[0xab; 60]).unwrap();
+    b.poner(&mut tx, &[(BUF, 12, false), (BUF + 0x100, 60, false)]);
+    // Una sin cabecera completa y otra enorme: se descartan sin romper nada.
+    b.poner(&mut tx, &[(BUF, 8, false)]);
+    b.poner(&mut tx, &[(BUF, 12, false), (BUF + 0x1000, 9000, false)]);
+    b.w(RED + R_QUEUE_NOTIFY, 1);
+    assert_eq!(b.cable.0.borrow().salieron, vec![vec![0xab; 60]]);
+    assert_eq!(b.usados(&mut tx).len(), 3);
+    assert!(!b.necesita_reinicio(RED));
+    // Recibir: una que cabe y otra que no cabe en su búfer.
+    let c1 = b.poner(&mut rx, &[(BUF + 0x2000, 1526, true)]);
+    let c2 = b.poner(&mut rx, &[(BUF + 0x3000, 100, true)]);
+    b.cable.0.borrow_mut().entran.extend([vec![0x11; 64], vec![0x22; 200]]);
+    b.m.sondear();
+    assert_eq!(b.usados(&mut rx), vec![(c1 as u32, 76), (c2 as u32, 0)]);
+    assert_eq!(b.mem().leer_u16(BUF + 0x2000 + 10), Ok(1)); // num_buffers
+    assert_eq!(b.mem().leer_u32(BUF + 0x2000 + 12), Ok(0x1111_1111));
+    assert!(b.pendiente_en_gic(SPI_RED));
 }

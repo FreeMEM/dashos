@@ -4,7 +4,7 @@ pub mod bloque;
 pub mod cola;
 pub mod consola;
 pub mod mmio;
-
+pub mod red;
 
 use crate::memoria::MemoriaInvitado;
 use cola::{ColaPartida, ErrorCola};
