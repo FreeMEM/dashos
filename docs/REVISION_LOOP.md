@@ -1532,3 +1532,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Carla cerrara su volumen (o el centro comprobara el disco) dejaba sin sus trozos a quien leía del sistema: `hostil`
   fallaba en "no proyecta lo prestado".
 - `make prueba` BIEN; arranque-virt en tres vueltas BIEN; arranque-virt-vm, arranque-virt-linux y arranque-virt-2 BIEN.
+
+### 2026-11-12 19:20: la caja Amiga carga ejecutables hunk de verdad, en revision
+- Fusionada `caja-amiga-hunk`: cargador hunk (`caja/hunk.c`, de la documentación pública; 39 ficheros hostiles,
+  9216 cortes y 200.000 mutaciones sin fugas, con ASan y UBSan en el PC), la página 0 de solo lectura con ExecBase en 4
+  (permiso de página 0, solo para la caja), una exec provisional (`caja/exec_minima.c`) y `saludo.exe`, compilado con
+  `m68k-amigaos-gcc`: tres hunks, 21 reubicaciones, OpenLibrary de dos, primos y una tabla, en 6 ms.
+- Choque con la caja Linux: las dos usaban la llamada 45 y el tipo de llave 8. La página 0 pasa a la llamada 49 y al
+  tipo 9 (caja, `malo`, pruebas, referencia y bitácora al día).
+- `make prueba` BIEN (y "BIEN: cargador hunk"); arranque-virt en dos vueltas BIEN; arranque-virt-vm,
+  arranque-virt-linux y arranque-virt-2 BIEN.
+- Pendiente del usuario: el Enforcer que avisa y sigue (hoy una dirección prohibida mata la caja) y que la A72 no tenga
+  PAN. El oráculo con FS-UAE, cuando el emulador quede libre.

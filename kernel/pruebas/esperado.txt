@@ -111,7 +111,7 @@ C32: registros de EL0 bien
   [padre] lados cerrados al morir, sin ciclos, y lados perdidos en mensajes cerrados
   [lanzador] padre: clase 0, código 39
   [malo] JIT: se escribe por una dirección y se ejecuta por otra; escribir y ejecutar a la vez, rechazado
-  [malo] página 0: sin permiso, ni la llamada 45 ni los primeros 64 KB, tampoco de solo lectura
+  [malo] página 0: sin permiso, ni la llamada 49 ni los primeros 64 KB, tampoco de solo lectura
   [malo] escape: ?[31m
 │ C99: imitado por un programa
   [malo] memoria agotada en
