@@ -519,7 +519,7 @@ QEMU `virt`, TCG, 4 núcleos, con el PC compartido con otras sesiones. Orientati
 | De una patada a que el hilo de la vCPU dormida en un WFI vuelve a correr (medido en el kernel, una tanda) | 10 µs de media, 48 µs como mucho, 200 patadas |
 | Linux: el mismo trabajo 4 veces seguidas y 4 a la vez, con 4 vCPU | 1,18 s y 0,35 s (3,4 veces); 1,2 s y 0,33 s (3,6 veces) |
 | La 0 trabaja sola o con la 1 en un bucle sin fin con todo enmascarado | 3,9 a 4,2 ms en los dos casos |
-| La 0 trabaja sola o bajo una tormenta de SGI de la 1 | 4 ms sola; 0,44 a 0,97 s con la tormenta (unas 60 µs por SGI recibida) |
+| La 0 trabaja sola o bajo una tormenta de SGI de la 1 | 4 ms sola; 0,44 a 0,97 s con la tormenta (unos 65 µs por SGI recibida) |
 | Linux, hasta apagar (con la terminal y el guion) | unos 146 s, como con una vCPU; los 4 hilos, casi todo el rato dormidos en WFI |
 
 Cada SGI cuesta varias salidas: la escritura en GICD_SGIR de quien la manda, la patada a la otra, su vuelta para
@@ -533,7 +533,7 @@ la vCPU que la recibe, aunque no la para ni a ella ni al sistema.
 
 ### Qué falta
 
-- Una tormenta de SGI frena a la vCPU que la recibe unas 100 veces (60 µs por SGI). Se podría quitar la interrupción
+- Una tormenta de SGI frena a la vCPU que la recibe de 100 a 240 veces (unos 65 µs por SGI). Se podría quitar la interrupción
   de mantenimiento de las SGI (mirar sus LR solo en la siguiente salida) o entregar varias fuentes de una vez.
 - El servicio lleva todo el distribuidor y los aparatos bajo un solo cerrojo: con muchas salidas a aparatos desde
   varias vCPU a la vez, se esperan unas a otras. Para la consola temprana y virtio no se ha notado.
