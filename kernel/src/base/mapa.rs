@@ -307,11 +307,18 @@ pub fn activar() {
 /// S6: con el mapa del kernel puesto (ya sin bloques del arranque que se escriben y ejecutan), la CPU hace cumplir
 /// W^X ella misma: con SCTLR_EL1.WXN, lo que se puede escribir nunca se ejecuta, en EL1 ni en EL0, aunque una
 /// entrada de las tablas se equivoque. El bit puede guardarse en la TLB: se vacía.
+///
+/// H4: también UCT (bit 15) y UCI (bit 26), para el JIT de la caja Amiga, que escribe su código en una dirección y lo
+/// ejecuta en otra: EL0 puede leer CTR_EL0 (el tamaño de las líneas de caché) y limpiar o invalidar por dirección
+/// virtual (`dc cvau`, `dc civac`, `ic ivau`), como en Linux. Pasan por la MMU con los permisos de EL0: solo sobre su
+/// propia memoria. `dc ivac` (tirar datos sin escribirlos) sigue prohibido en EL0.
 fn wxn() {
     unsafe {
         core::arch::asm!(
             "mrs {t}, sctlr_el1",
             "orr {t}, {t}, #(1 << 19)",
+            "orr {t}, {t}, #(1 << 15)",
+            "orr {t}, {t}, #(1 << 26)",
             "msr sctlr_el1, {t}",
             "isb",
             "tlbi vmalle1",

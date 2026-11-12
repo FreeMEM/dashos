@@ -53,6 +53,7 @@ pub fn kmain(dtb: usize) -> ! {
     kprintln!();
     kprintln!("DashOS {}", env!("CARGO_PKG_VERSION"));
     kprintln!("Nivel de excepción: EL{}", base::cpu::nivel_excepcion());
+    cpu_y_orden_de_bytes();
     kprintln!("Árbol de dispositivos en {:#x}", dtb);
     let (sctlr, tcr, _) = mmu::estado();
     kprintln!("MMU: {} (SCTLR={:#x}, TCR={:#x}); kmain en {:#x}", if sctlr & 1 != 0 { "encendida" } else { "apagada" }, sctlr, tcr, kmain as *const () as usize);
@@ -150,4 +151,34 @@ pub fn kmain(dtb: usize) -> ! {
 fn panico(info: &PanicInfo) -> ! {
     serie::imprimir_directo(format_args!("PÁNICO: {}\n", info));
     base::cpu::parar()
+}
+
+/// Qué CPU es y si admite big-endian (para la caja Amiga): en cada máquina nueva, lo primero que hay que saber (PLAN,
+/// preguntas abiertas; docs/diseño/S24-ordenadores-arm.md). ID_AA64MMFR0_EL1: BigEnd (bits 11-8) dice si hay
+/// big-endian en EL0 y EL1; si no, BigEndEL0 (19-16), solo en EL0. TGran4 (31-28) = 0xF: sin páginas de 4 KB.
+fn cpu_y_orden_de_bytes() {
+    let (midr, m) = (base::cpu::midr(), base::cpu::mmfr0());
+    let (fab, pieza) = ((midr >> 24) & 0xff, (midr >> 4) & 0xfff);
+    let nombre = match (fab, pieza) {
+        (0x41, 0xd03) => "Cortex-A53",
+        (0x41, 0xd08) => "Cortex-A72",
+        (0x41, 0xd0b) => "Cortex-A76",
+        (0x41, 0xd87) => "Cortex-A725",
+        (0x41, 0xd85) => "Cortex-X925",
+        (0x41, _) => "de Arm",
+        (0x51, _) => "de Qualcomm",
+        (0x61, _) => "de Apple",
+        (0x4e, _) => "de NVIDIA",
+        _ => "",
+    };
+    let big = (m >> 8) & 0xf != 0;
+    let big_el0 = big || (m >> 16) & 0xf != 0;
+    let pag4 = (m >> 28) & 0xf != 0xf;
+    kprintln!(
+        "CPU: fabricante {:#x}, pieza {:#x} {}; big-endian en EL0: {}{}; páginas de 4 KB: {}",
+        fab, pieza, nombre,
+        if big_el0 { "sí" } else { "no (la caja Amiga necesitará dar la vuelta a los bytes, U7)" },
+        if big { " (y en EL1)" } else { "" },
+        if pag4 { "sí" } else { "no" }
+    );
 }

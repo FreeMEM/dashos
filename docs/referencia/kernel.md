@@ -86,6 +86,12 @@ Cada hilo tiene sus propios registros de coma flotante y SIMD: `q0`–`q31`, `FP
 y `FPCR` = 0, es decir, redondeo al más cercano y sin excepciones de coma flotante. El kernel los guarda solo cuando
 otro hilo del mismo núcleo usa la FPU (C28). No hay SVE.
 
+### Cachés
+
+Desde H4, EL0 puede leer `CTR_EL0` y limpiar o invalidar las cachés por dirección virtual (`dc cvau`, `dc cvac`,
+`dc civac`, `ic ivau`; `SCTLR_EL1.UCT` y `UCI`), como en Linux. La MMU lo comprueba con los permisos del proceso.
+Lo usa un JIT (ver la llamada 8). `dc ivac` y las operaciones por conjunto y vía siguen prohibidas: el proceso muere.
+
 ### Planificación
 
 Los procesos de usuario van en la clase justa: reparto por tiempo virtual, con un tic de 10 ms. Un hilo que despierta
@@ -133,7 +139,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 5 | `canal_leer` | `x0` llave, `x1` búfer, `x2` capacidad, `x3` tabla de llaves, `x4` capacidad de la tabla | `x0` bytes, `x1` llaves recibidas |
 | 6 | `cerrar` | `x0` llave | 0 |
 | 7 | `memoria_crear` | `x0` tamaño (hasta 16 MB) | Llave de un objeto de memoria |
-| 8 | `memoria_proyectar` | `x0` llave, `x1` dirección (alineada a 4 KB), `x2` permisos: 1 leer, 2 escribir | 0 |
+| 8 | `memoria_proyectar` | `x0` llave, `x1` dirección (alineada a 4 KB), `x2` permisos: 1 leer, 2 escribir, 4 ejecutar | 0 |
 | 9 | `registros_proyectar` | `x0` llave de registros, `x1` dirección (alineada a 4 KB) | 0 |
 | 10 | `interrupcion_asociar` | `x0` llave de interrupción, `x1` llave de un extremo de canal | 0 |
 | 11 | `interrupcion_terminar` | `x0` llave de interrupción | 0 |
@@ -207,6 +213,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - Proyecta el objeto entero a partir de la dirección. Si alguna página del tramo ya tiene algo, no proyecta nada y
     devuelve `E_ARGUMENTO`.
   - Permiso 3 es lectura y escritura, y nunca se ejecuta.
+  - Permiso 5 (o 4) es lectura y ejecución, nunca escritura (H4, para un JIT como el de la caja Amiga). Escribir y
+    ejecutar por la misma dirección (2 y 4 juntos) da `E_ARGUMENTO`. Un JIT proyecta el mismo objeto dos veces: para
+    escribir en una dirección y para ejecutar en otra. Tras escribir código, limpia la caché de datos por la dirección
+    de escribir (`dc cvau`) e invalida la de instrucciones por la de ejecutar (`ic ivau`), con `dsb ish` e `isb`.
+    La memoria de DMA no se ejecuta nunca (`E_ARGUMENTO`).
   - El mismo objeto proyectado en dos procesos es memoria compartida.
   - Sus páginas vuelven al sistema cuando no queda ninguna llave ni ninguna proyección.
 - **9, `registros_proyectar`.**

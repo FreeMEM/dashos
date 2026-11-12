@@ -228,6 +228,14 @@ fn principal() -> u64 {
     }
     dashos::cerrar(a);
     dashos::cerrar(b);
+    // 37 (H4, el JIT de la caja Amiga): escribir y ejecutar por la misma dirección se rechaza, con cualquier
+    // combinación de bits; el mismo objeto, escrito por una dirección y ejecutado por otra, funciona, también después
+    // de reescribirlo; y el kernel no escribe por el proceso en la dirección de ejecutar.
+    let paso = jit();
+    if paso != 0 {
+        println!("  [malo] JIT: falla el paso {}", paso);
+        return 37;
+    }
     // 27: PAN por software (C34). Dentro del kernel, fuera de las copias, la memoria del proceso no se ve.
     let local = 0u64;
     if x0(99, [&local as *const u64 as u64, 0, 0, 0, 0]) != 0 {
@@ -243,4 +251,57 @@ fn principal() -> u64 {
     println!("  [malo] memoria agotada en {} trozos de 4 MB, tabla llena en {} canales y cadena de {} canales, sin pánico", n, canales, largo);
     println!("  [malo] punteros malos, llaves repetidas y canales cerrados: todo rechazado sin perder nada");
     31
+}
+
+/// El paso 37: W^X con un JIT (H4). 0 si todo va bien; si no, qué falló.
+fn jit() -> u32 {
+    const ESCRIBIR_EN: usize = 0x30_0000_0000; // 192 GB: lo de antes usa 128 GB
+    const EJECUTAR_EN: usize = 0x31_0000_0000;
+    let m = dashos::memoria_crear(4096);
+    // Escribir y ejecutar a la vez: ni 6 ni 7; y nada queda proyectado.
+    for p in [6u64, 7, 0xff] {
+        if x0(8, [m as u64, EJECUTAR_EN as u64, p, 0, 0]) != E_ARGUMENTO {
+            return 1;
+        }
+    }
+    if dashos::memoria_proyectar(m, ESCRIBIR_EN, true) != 0 || dashos::memoria_proyectar_codigo(m, EJECUTAR_EN) != 0 {
+        return 2;
+    }
+    // Con una llave de solo leer también se puede ejecutar (lo que se puede leer ya se puede copiar a otro sitio).
+    let solo_leer = dashos::llave_duplicar(m, dashos::LEER, 0);
+    if solo_leer <= 0 || dashos::memoria_proyectar_codigo(solo_leer as u32, EJECUTAR_EN + 0x10_0000) != 0 {
+        return 3;
+    }
+    // "mov x0, #n; ret", escrito por una dirección y ejecutado por la otra, dos veces con n distinto.
+    for n in [42u32, 43] {
+        let codigo = [0xd280_0000 | (n << 5), 0xd65f_03c0u32];
+        // Lo mínimo para un JIT: escribir las instrucciones (siempre little-endian), limpiar y saltar a ellas.
+        let r = unsafe {
+            for (i, w) in codigo.iter().enumerate() {
+                ((ESCRIBIR_EN + 4 * i) as *mut u32).write_volatile(w.to_le());
+            }
+            core::arch::asm!("dc cvau, {e}", "dsb ish", "ic ivau, {x}", "dsb ish", "isb", e = in(reg) ESCRIBIR_EN, x = in(reg) EJECUTAR_EN);
+            let f: extern "C" fn() -> u64 = core::mem::transmute(EJECUTAR_EN);
+            f()
+        };
+        if r != n as u64 {
+            return 4;
+        }
+    }
+    // El kernel escribe con los permisos de EL0: por la dirección de ejecutar, no.
+    let (a, b) = dashos::canal_crear();
+    dashos::canal_escribir(a, b"codigo", &[]);
+    let r = x0(5, [b as u64, EJECUTAR_EN as u64, 16, 0, 0]);
+    for l in [a, b, solo_leer as u32] {
+        dashos::cerrar(l);
+    }
+    dashos::memoria_quitar(ESCRIBIR_EN);
+    dashos::memoria_quitar(EJECUTAR_EN);
+    dashos::memoria_quitar(EJECUTAR_EN + 0x10_0000);
+    dashos::cerrar(m);
+    if r != E_ARGUMENTO {
+        return 5;
+    }
+    println!("  [malo] JIT: se escribe por una dirección y se ejecuta por otra; escribir y ejecutar a la vez, rechazado");
+    0
 }

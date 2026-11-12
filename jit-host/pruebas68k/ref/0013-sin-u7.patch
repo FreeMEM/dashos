@@ -1,0 +1,49 @@
+diff --git a/src/M68k_EA.c b/src/M68k_EA.c
+index 1f8e248..2ccb8e6 100644
+--- a/src/M68k_EA.c
++++ b/src/M68k_EA.c
+@@ -846,7 +846,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                         if (base_reg == 0xff)
+                             EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                         else
+-                            EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                            EMIT(ctx, add_reg(bd_reg, base_reg, bd_reg, LSL, 0), ldr_offset(bd_reg, bd_reg, 0));   /* DashOS: suma de 32 bits (con UXTW, un bd negativo salía de los 4 GB) */
+                         
+                         if (outer_reg != 0xff)
+                             EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -1088,7 +1088,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                             if (base_reg == 0xff)
+                                 EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                             else
+-                                EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                                EMIT(ctx, add_reg(bd_reg, base_reg, bd_reg, LSL, 0), ldr_offset(bd_reg, bd_reg, 0));   /* DashOS: suma de 32 bits (con UXTW, un bd negativo salía de los 4 GB) */
+ 
+                             if (outer_reg != 0xff)
+                                 EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -1115,7 +1115,7 @@ void EMIT_LoadFromEffectiveAddress(struct TranslatorContext *ctx, uint8_t size,
+                                         RA_FreeARMRegister(ctx, t);
+                                     }
+                                     else {
+-                                        EMIT(ctx, ldr_regoffset(base_reg, bd_reg, bd_reg, UXTW, 0));
++                                        EMIT(ctx, add_reg(bd_reg, base_reg, bd_reg, LSL, 0), ldr_offset(bd_reg, bd_reg, 0));   /* DashOS: suma de 32 bits (con UXTW, un bd negativo salía de los 4 GB) */
+                                     }
+                                 }
+                             }
+@@ -1582,7 +1582,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                         if (base_reg == 0xff)
+                             EMIT(ctx, ldr_offset(bd_reg, bd_reg, 0));
+                         else
+-                            EMIT(ctx, ldr_regoffset(bd_reg, bd_reg, base_reg, UXTW, 0));
++                            EMIT(ctx, add_reg(bd_reg, base_reg, bd_reg, LSL, 0), ldr_offset(bd_reg, bd_reg, 0));   /* DashOS: suma de 32 bits (con UXTW, un bd negativo salía de los 4 GB) */
+                         
+                         if (outer_reg != 0xff)
+                             EMIT(ctx, add_reg(bd_reg, bd_reg, outer_reg, LSL, 0));
+@@ -1610,7 +1610,7 @@ void EMIT_StoreToEffectiveAddress(struct TranslatorContext *ctx, uint8_t size, u
+                                     RA_FreeARMRegister(ctx, t);
+                                 }
+                                 else
+-                                    EMIT(ctx, ldr_regoffset(base_reg, bd_reg, bd_reg, UXTW, 0));
++                                    EMIT(ctx, add_reg(bd_reg, base_reg, bd_reg, LSL, 0), ldr_offset(bd_reg, bd_reg, 0));   /* DashOS: suma de 32 bits (con UXTW, un bd negativo salía de los 4 GB) */
+                             }
+                         }
+                         else

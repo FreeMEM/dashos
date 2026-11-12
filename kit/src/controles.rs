@@ -717,6 +717,10 @@ impl Clase for Lista {
             } else {
                 t.sobre_superficie
             };
+            // Con el ratón encima: la capa de estado (8 % del color de su texto, Material 3).
+            if !e.desactivado && attrs.get(&atr::ENCIMA).map_or(-1, Valor::int) == (k - primera) as i64 {
+                l.redondeado(fila.dentro(dentro), radio, tema::con_opacidad(tinta, 20));
+            }
             // La actual, con el foco del teclado: la capa de foco del color de su texto y el anillo por dentro.
             if k as i64 == actual {
                 l.redondeado(fila.dentro(dentro), radio, tema::con_opacidad(tinta, 26));
@@ -1004,6 +1008,21 @@ impl Interfaz {
         self.sincronizar_menu() || r
     }
 
+    /// La fila de lista bajo el ratón (`atr::ENCIMA`): en la lista de debajo, la fila visible de `y`; en las demás
+    /// listas, ninguna.
+    fn fila_encima(&mut self, bajo: Option<Obj>, y: i32) {
+        let listas: Vec<(Obj, Rect)> = self.sitios.iter().filter(|(o, _)| self.arbol.objeto(**o).is_some_and(|ob| ob.clase.nombre() == "lista")).map(|(o, r)| (*o, *r)).collect();
+        for (o, r) in listas {
+            let n = self.arbol.objeto(o).map_or(0, |ob| Ciclo::opciones(&ob.attrs).len() as i64);
+            let primera = self.arbol.leer(o, atr::PRIMERA).map_or(0, Valor::int);
+            let fila = ((y - r.y) / FILA) as i64;
+            let nueva = if bajo == Some(o) && y >= r.y && primera + fila < n { fila } else { -1 };
+            if self.arbol.leer(o, atr::ENCIMA).map_or(-1, Valor::int) != nueva {
+                self.arbol.poner(o, atr::ENCIMA, Valor::Int(nueva));
+            }
+        }
+    }
+
     fn raton_sin_menu(&mut self, x: i32, y: i32, pulsado: bool) -> bool {
         let antes = (self.encima, self.pulsado, self.foco, self.foco_teclado);
         let bajo = self.bajo(x, y).filter(|o| {
@@ -1011,6 +1030,7 @@ impl Interfaz {
             obj.clase.pulsable() && !desactivado(&obj.attrs)
         });
         self.encima = bajo;
+        self.fila_encima(bajo, y);
         match (self.pulsado, pulsado) {
             (None, true) => {
                 if let Some(o) = bajo {
@@ -1407,6 +1427,11 @@ mod pruebas {
         assert_eq!(super::pasos_rueda(15 * 256), 1);
         assert_eq!(super::pasos_rueda((-30i32 * 256) as u32), -2);
         assert_eq!(super::pasos_rueda(10), 1);
+        // Con el ratón encima de la segunda fila visible, la lista lo sabe (capa de estado); fuera, ninguna.
+        i.raton(r.x + 20, r.y + 56 + 20, false);
+        assert_eq!(i.arbol.leer(lista, atr::ENCIMA), Some(&Valor::Int(1)));
+        i.raton(-1, -1, false);
+        assert_eq!(i.arbol.leer(lista, atr::ENCIMA), Some(&Valor::Int(-1)));
         // Material 3: la lista sobre el contenedor bajo, sin marco; la elegida, en el contenedor secundario. Tras un
         // clic (sin el anillo del teclado), solo eso.
         clic(&mut i, (r.x + 20, r.y + 56 + 20));

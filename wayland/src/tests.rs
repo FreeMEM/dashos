@@ -477,6 +477,21 @@ mod composicion {
         assert_eq!(px(&pantalla, 40, 42), 0xFF80_8080, "quedó un resto de la sombra");
     }
 
+    /// El radio de las esquinas, por la diagonal (la sombra lo usa): con esquinas de 12, 16 y 28 (un círculo, píxel a
+    /// píxel), sale a 2 como mucho; sin esquina, 0.
+    #[test]
+    fn radio_de_las_esquinas() {
+        for r in [12i32, 16, 28] {
+            let alfas = (0..24).map(|n| {
+                let c = r as f64 - (n as f64 + 0.5);
+                if 2.0 * c * c > (r * r) as f64 && (n as f64 + 0.5) < r as f64 { 0u8 } else { 255 }
+            });
+            let medido = crate::escena::radio_por_diagonal(alfas);
+            assert!((medido - r).abs() <= 2, "esquina de {r}: medido {medido}");
+        }
+        assert_eq!(crate::escena::radio_por_diagonal([255u8; 24].into_iter()), 0);
+    }
+
     #[test]
     fn dos_ventanas_apiladas_y_avisos() {
         let mut escena = Escena::new(Compartida::default(), 0xFF20_4060);

@@ -343,6 +343,8 @@ fn principal() -> u64 {
             "guardian" => 32 << 20,
             // La caja Linux (H9): la RAM de su invitado de Linux (64 MB) sale de su cupo.
             "caja-linux" => 96 << 20,
+            // H4: la caja Amiga, con su ejecutable de 3 MB, 4 MB de código traducido, 4 de montón y 1 del 68k.
+            "caja-amiga" => 32 << 20,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

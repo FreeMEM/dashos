@@ -58,6 +58,9 @@ pub mod atr {
     pub const AYUDA: Atr = 17;
     /// El error de un campo: si no está vacío, va en lugar de la ayuda, y el campo y su etiqueta en el color de error.
     pub const ERROR: Atr = 18;
+    /// La fila visible de una lista que tiene el ratón encima (-1 o sin poner, ninguna; 0, la primera que se ve): ahí va
+    /// la capa de estado de Material 3. La pone `Interfaz` al mover el ratón.
+    pub const ENCIMA: Atr = 19;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

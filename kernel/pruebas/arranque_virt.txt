@@ -427,3 +427,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [red-prueba] basura del PC tirada; eco después: bien
 # Sin la llave del canal "red" no hay red.
 ~│   [sin-red] sin la llave: 1024 llaves probadas, llegan 0; por un canal propio sí: bien
+# H4, primer paso de la caja Amiga (`caja/`, docs/bitacoras/caja-amiga.md): el JIT de Emu68 en un proceso big-endian.
+# Un programa 68k suma de 1 a 100.000 y escribe por una dos.library nativa (PutStr, VPrintf, Output y Write, cada una
+# una línea A $A0FF en su tabla de saltos); la caja comprueba la suma.
+~│   [caja-amiga] hola desde un programa 68k, por la dos.library nativa
+~│   [caja-amiga] suma de 1 a 100000 en el 68k: 705082704
+~│   [caja-amiga] Write() en Output(): bien
+~│   [caja-amiga] el 68k dio 705082704 (esperado 705082704) con 4 llamadas nativas
+# Hostiles: una función nativa que no existe se rechaza y el programa sigue; una línea A que no es una llamada acaba
+# el programa por su excepción; un bucle sin fin lo corta el vigilante de la caja (el sistema sigue mientras); y
+# escribir fuera de la memoria del 68k mata la caja, y nada más.
+~│   [caja-amiga] funcion 999 rechazada; el programa 68k sigue
+~│   [caja-amiga] línea A desconocida: excepción 10 del 68k, 1 rechazada, 1 llamada buena: bien
+~vueltas (vector 31): bien
+~(FAR 0xdead0000); se termina
+~│   [inicio] caja-amiga acabó: clase 2, código 0

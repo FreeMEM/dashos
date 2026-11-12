@@ -1473,3 +1473,41 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Pendiente del usuario: el deslizador (M3 de 2024, barra con raya; o el de 2022, con bola).
 - `make prueba` BIEN; kit 64 y wayland 59 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN; a 1920 ×
   1080 sin fallos.
+
+### 2026-11-12 17:20: la sombra con las esquinas de cada superficie
+- El compositor pintaba todas las sombras con esquinas de 16; las capas del pulido (panel, avisos, la pregunta) tienen
+  28 y por sus esquinas asomaba la sombra. Ahora `radio_de` mide el radio en la diagonal de la esquina de arriba a la
+  izquierda de cada superficie con alfa (lo transparente es ≈ 0,293 · r); las opacas siguen con 16.
+- Prueba en el PC (`radio_de_las_esquinas`): esquinas de 12, 16 y 28 dibujadas píxel a píxel, medidas a 2 como mucho;
+  sin esquina, 0. Captura del panel: esquinas limpias.
+- `make prueba` BIEN; wayland 60 bien; arranque-virt en dos vueltas BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 17:30: la fila bajo el ratón, la CPU al arrancar y S24
+- Kit: `atr::ENCIMA` (la fila visible de una lista con el ratón encima, la pone `Interfaz`) y la capa de estado de
+  Material 3 (8 % del color del texto) en esa fila. Prueba del kit: encima de la segunda fila, 1; fuera, -1 (64 bien).
+- Kernel: al arrancar dice qué CPU es y si admite big-endian en EL0 y páginas de 4 KB (`MIDR_EL1`,
+  `ID_AA64MMFR0_EL1`). En QEMU virt: "CPU: fabricante 0x41, pieza 0xd08 Cortex-A72; big-endian en EL0: sí (y en EL1);
+  páginas de 4 KB: sí".
+- `docs/diseño/S24-ordenadores-arm.md`: CM5, RTX Spark, portátiles Snapdragon X y Mac (pedido del usuario), con lo
+  que hay, lo que falta y el orden recomendado; tres decisiones para el usuario.
+- `make prueba` BIEN; arranque-virt: revision BIEN dos veces; prueba1 falló dos veces por lo mismo: `hostil` muere en
+  la prueba de préstamos (A7) leyendo lo prestado ("excepción de clase 0x24 ... FAR 0x41_0007_6d9b"): a mitad de leer
+  se le retira el préstamo. No fue la vuelta a instantánea de `ficheros` (ya había acabado); queda por ver quién lo
+  retira (¿Comprobar el disco del centro, `olvidar_todo`?). Pendiente.
+
+### 2026-11-12 18:00: las cajas, en revision (pedido del usuario: "ponte con la caja Amiga y la de Linux")
+- Caja Amiga, primer paso de H4 (rama `caja-amiga`): el JIT de Emu68 en un proceso de usuario big-endian (`caja/`, C
+  sin libc); un programa 68k suma de 1 a 100.000 y escribe en la consola por una dos.library mínima llamada por línea
+  A (`$A0FF <n> RTS`). Hostiles: función que no existe rechazada, línea A desconocida, bucle sin fin cortado a los
+  300 ms, escritura fuera de su memoria (el kernel mata solo la caja). Kernel: proyectar para ejecutar (permiso 4),
+  nunca escribir y ejecutar a la vez, doble proyección del mismo objeto; `malo` 37 lo prueba. Se compila solo si está
+  el clon de `third_party/Emu68` (no va en git), y ya está copiado en los worktrees que compilan.
+- U7 (rama `caja-amiga-u7`): parches 0012 (dos fallos del giro) y 0013 (el indirecto con desplazamiento negativo
+  salía de los 4 GB, también en big-endian), aplicados a los clones; pruebas t4 y t5; los 7 programas dan lo mismo en
+  los dos órdenes; coste en little-endian de 0 a 21 % más instrucciones ARM.
+- exec.library nativa (rama `caja-amiga-exec`): crate `caja/exec/`, 95 pruebas, sin enchufar aún.
+- Caja Linux (rama `caja-linux-virtio`): crate `caja-linux/vmm/` (virtio-mmio, consola, disco, red, PL011, GIC,
+  PSCI, DTB y cargador), 34 pruebas; Linux 6.18 arranca en QEMU con ese DTB y esa carga (invitado fuera de git).
+- Decisiones del usuario pendientes: cinco de la caja Amiga (docs/bitacoras/caja-amiga.md), las de exec, U7 y la
+  caja Linux en sus bitácoras.
+- `make prueba` BIEN; arranque-virt en cuatro vueltas BIEN; arranque-virt-2 BIEN; jit-host comparar BIEN.

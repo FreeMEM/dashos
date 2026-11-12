@@ -1389,7 +1389,7 @@ impl<M: Memorias> Escena<M> {
         let mut capas: Vec<(Cliente, u32, i32, i32)> = Vec::new();
         // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada. Las
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
-        let mut sombras: Vec<(usize, Rect)> = Vec::new();
+        let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
         for (c, id) in self.raices() {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
@@ -1399,7 +1399,7 @@ impl<M: Memorias> Escena<M> {
                 && self.bloqueo.is_none()
                 && let Some(r) = rect_de(cli, id)
             {
-                sombras.push((capas.len(), r));
+                sombras.push((capas.len(), r, radio_de(cli, id)));
             }
             let mut a = Vec::new();
             arbol(cli, id, x, y, &mut a);
@@ -1461,18 +1461,18 @@ impl<M: Memorias> Escena<M> {
         }
         // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer, sombra). Una sombra va como
         // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
-        let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<Rect>)> = Vec::new();
+        let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut s_i = 0;
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
             while s_i < sombras.len() && sombras[s_i].0 == k {
-                let v = sombras[s_i].1;
+                let (v, radio) = (sombras[s_i].1, sombras[s_i].2);
                 // Multimonitor: la sombra de una ventana que está en una sola salida no pasa a la de al lado.
                 let mut fuera = sombra_fuera(v);
                 let mut suyas = self.salidas.iter().map(|o| o.rect).filter(|r| !r.cruce(v).vacio());
                 if let (Some(r), None) = (suyas.next(), suyas.next()) {
                     fuera = fuera.cruce(r);
                 }
-                con_bufer.push((fuera, 0, 0, &[], crate::shm::Bufer::default(), Some(v)));
+                con_bufer.push((fuera, 0, 0, &[], crate::shm::Bufer::default(), Some((v, radio))));
                 s_i += 1;
             }
             let cli = &self.clientes[&c];
@@ -1525,9 +1525,9 @@ impl<M: Memorias> Escena<M> {
                         destino.fill(fondo);
                     }
                     for k in activas[desde.unwrap_or(0)..].iter().filter(|k| cubre(k)) {
-                        if let Some(v) = con_bufer[*k].5 {
+                        if let Some((v, radio)) = con_bufer[*k].5 {
                             for (j, d) in destino.iter_mut().enumerate() {
-                                let al = alfa_sombra(v, a + j as i32, fila);
+                                let al = alfa_sombra(v, radio, a + j as i32, fila);
                                 if al > 0 {
                                     *d = mezclar(al << 24, *d);
                                 }
@@ -1577,7 +1577,7 @@ impl<M: Memorias> Escena<M> {
 }
 
 /// La sombra de una ventana (Material 3, elevación baja): 4 abajo, difuminada en `SOMBRA_BORROSA`, con las esquinas de
-/// las ventanas del kit (16).
+/// la ventana (`radio_de`; 16 si es opaca, como las de antes del kit).
 const SOMBRA_BAJA: i32 = 4;
 const SOMBRA_BORROSA: i32 = 14;
 const SOMBRA_RADIO: i32 = 16;
@@ -1591,8 +1591,8 @@ fn sombra_fuera(v: Rect) -> Rect {
 
 /// El alfa de la sombra de `v` en (x, y): por la distancia al rectángulo redondeado (bajado `SOMBRA_BAJA`), cayendo
 /// en cuadrado. Sin coma flotante (el compositor no tiene FPU): la raíz, entera.
-fn alfa_sombra(v: Rect, x: i32, y: i32) -> u32 {
-    let r = SOMBRA_RADIO.min(v.w / 2).min(v.h / 2);
+fn alfa_sombra(v: Rect, radio: i32, x: i32, y: i32) -> u32 {
+    let r = radio.max(0).min(v.w / 2).min(v.h / 2);
     let (x0, y0, x1, y1) = (v.x + r, v.y + SOMBRA_BAJA + r, v.x + v.w - r, v.y + SOMBRA_BAJA + v.h - r);
     let dx = if x < x0 { x0 - x } else if x >= x1 { x - x1 + 1 } else { 0 };
     let dy = if y < y0 { y0 - y } else if y >= y1 { y - y1 + 1 } else { 0 };
@@ -1628,6 +1628,25 @@ pub(crate) fn mezclar(p: u32, fondo: u32) -> u32 {
     let s_rb = (s_rb | (ov_rb - (ov_rb >> 8))) & 0x00FF_00FF;
     let s_g = (s_g | (ov_g - (ov_g >> 8))) & 0x0000_FF00;
     0xFF00_0000 | s_rb | s_g
+}
+
+/// El radio de las esquinas de una superficie con alfa: lo transparente (alfa < 128) en la diagonal desde su esquina de
+/// arriba a la izquierda. Un círculo de radio r deja fuera r · (1 − 1/√2) ≈ 0,293 · r de esa diagonal. Las esquinas del
+/// kit van de 12 a 28 (Material 3); las capas redondeadas del pulido, 28. Una opaca (XRGB) o sin búfer, `SOMBRA_RADIO`.
+fn radio_de(c: &DeCliente, id: u32) -> i32 {
+    let Some((px, b)) = c.superficies.get(&id).and_then(|s| s.bufer).and_then(|bu| c.shm.pixeles(bu)) else { return SOMBRA_RADIO };
+    if b.formato != ARGB8888 {
+        return SOMBRA_RADIO;
+    }
+    let lado = (b.ancho.min(b.alto) as usize).min(24);
+    let diagonal = (0..lado).map_while(|n| px.get(n * b.linea + n * 4 + 3).copied());
+    radio_por_diagonal(diagonal)
+}
+
+/// El radio de una esquina por los alfas de su diagonal desde el vértice: cuántos transparentes (< 128) hay seguidos.
+pub(crate) fn radio_por_diagonal(alfas: impl Iterator<Item = u8>) -> i32 {
+    let n = alfas.take_while(|&a| a < 128).count() as i32;
+    (n * 1000 + 146) / 293
 }
 
 fn rect_de(c: &DeCliente, id: u32) -> Option<Rect> {

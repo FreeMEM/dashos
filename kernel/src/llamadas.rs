@@ -428,9 +428,22 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
     let Some((l, por)) = proc_.llaves.tomar().ver_con_intermediarios(h) else { return E_LLAVE };
     let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
     let escribir = permisos & 2 != 0;
+    // H4: el bit 2 es ejecutar (lo pide el JIT de la caja Amiga). Escribir y ejecutar por la misma dirección, nunca
+    // (W^X): para eso se proyecta el mismo objeto dos veces.
+    let ejecutar = permisos & 4 != 0;
+    if escribir && ejecutar {
+        return E_ARGUMENTO;
+    }
     if escribir && l.derechos & objetos::ESCRIBIR == 0 || l.derechos & objetos::LEER == 0 {
         return E_DERECHOS;
     }
+    let acceso = if ejecutar {
+        crate::espacio::Acceso::Ejecutar
+    } else if escribir {
+        crate::espacio::Acceso::Escribir
+    } else {
+        crate::espacio::Acceso::Leer
+    };
     // Si la llave es revocable, la proyección se apunta en sus intermediarios antes de hacerla, y después se mira si
     // la revocaron entre medias: así o la ve quien revoca, o la quitamos aquí (C45).
     // Se apunta como pendiente; al acabar, hecha o retirada (A4).
@@ -443,7 +456,7 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         }
     }
     let via: Vec<usize> = por.iter().map(|r| r.id()).collect();
-    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, escribir, &via) {
+    if let Err(err) = proc_.espacio.tomar().proyectar_memoria(va, &m, acceso, &via) {
         for r in &por {
             r.retirar_proyeccion(&proc_, va);
         }
