@@ -1,0 +1,41 @@
+# Arch Linux ARM en la caja Linux (`make arranque-virt-arch`): lo de `arranque_virt_vm.txt` y, con Image-arch (un Linux
+# 6.18 con lo que pide systemd) sin initramfs y el disco de Arch en el NVMe (los dos fuera de git), el servicio de disco
+# da a la caja la partición de la caja Linux, la caja se la ofrece al invitado como virtio-blk y el invitado arranca el
+# systemd de Arch Linux ARM desde ella, con la hora del PL031 y la red por DHCP; getty entra como root en hvc0 (la
+# ventana de terminal) y el guion (tools/guion_caja_linux.py, modo arch) teclea en ella hasta `poweroff`.
+Nivel de excepción: EL1
+Hipervisor: el kernel arrancó en EL2
+Hipervisor: EL2 instalado en 4 núcleos
+DashOS en marcha con 4 núcleos
+~[nvme] particiones: GPT; DashOS, sectores 2048 a 16383
+~[nvme] la caja Linux: sectores 16384 a 8386559 (4087 MB)
+~[archivos] RedoxFS abierto
+~[caja-linux] sesiones le da el permiso de máquinas virtuales
+~[caja-linux] primer paso de la caja Linux: bien
+~[caja-linux] interrupciones del invitado: bien
+~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+~[caja-linux] terminal: ventana en pantalla (80x25 letras
+~[red] puerto para la caja Linux con MAC
+~[caja-linux] linux: Image de
+~virtio-blk de 4185088 KB y virtio-net por el servicio de red; arranca
+~[caja-linux] linux: [    0.000000] Linux version 6.18
+~[caja-linux] linux: [    0.000000] Kernel command line: earlycon=pl011,0x09000000 console=hvc0 root=/dev/vda rw rootwait
+~rtc-pl031 9010000.rtc: setting system clock to 20
+~EXT4-fs (vda): mounted filesystem
+~Run /sbin/init as init process
+~[caja-linux] linux: Welcome to Arch Linux ARM!
+~[caja-linux] linux: Arch Linux ARM 6.18
+~[caja-linux] linux: caja login: root (automatic login)
+# El guion: lo que contesta la shell de root de Arch.
+~[caja-linux] terminal: primera tecla para Linux
+~[caja-linux] linux: Linux caja 6.18
+~-caja #
+~[caja-linux] linux: running
+~inet 10.0.2.
+~UTC 20
+~[caja-linux] linux: :: Synchronizing package databases...
+~extra.db
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~[caja-linux] arch: disco:
+~systemd de Arch Linux ARM: sí, root entra en hvc0: sí, su shell: sí: bien

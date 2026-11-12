@@ -141,7 +141,9 @@ Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 `inicio`, y cada uno ve su tramo como su disco entero: su sector 0 es el primero del tramo, los sectores de la
 respuesta son los del tramo y no puede ni nombrar lo de fuera (-2, fuera del disco). `archivos` tiene la partición de
 DashOS: en un MBR, la entrada del tipo 0x7F; en una GPT, la del tipo d0a18dbf-bbf4-4b0e-8627-ce5006b50017. `disco`, la
-prueba en bruto, el primer MB sin llegar a la primera partición (con GPT, nada). El lector
+prueba en bruto, el primer MB sin llegar a la primera partición (con GPT, nada). `caja-linux` (H9), la partición de
+la caja Linux, solo en GPT, del tipo d0a18dbf-bbf4-4b0e-8627-ce5006b50018: el disco de su invitado (Arch Linux ARM).
+Nunca una partición de Linux cualquiera. Dos de la caja Linux son un error, como dos de DashOS. El lector
 (`usuario/src/particiones.rs`, con sus pruebas en `archivos/herramientas`) no adivina: con entradas fuera del disco,
 pisadas, dos de DashOS o un CRC de la GPT que no casa, no da tramo a nadie. La copia de la GPT del final no se mira.
 
@@ -459,6 +461,10 @@ con 128 ranuras de recibir y 64 de enviar, y un canal suyo) y después `TRAMAS` 
 descriptores. Tira y cuenta lo corto (menos de 14 bytes), lo largo (más de 1518), lo que no cabe en las ranuras y los
 descriptores que el aparato devuelve sin tenerlos.
 
+**El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
+tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se
+suelta.
+
 **Los programas.** Mensajes de palabras de 32 bits:
 
 | Orden | Datos | Llaves | Respuesta |
@@ -493,14 +499,43 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
 - Guarda 50, como mucho 8 de cada programa. Lo de una persona con su sesión detrás no sale hasta que vuelve.
 - Leer, marcar como leídos y borrar: solo la barra.
 
-## Caja Linux (H9, primer paso)
+## Caja Linux (H9)
 
-El servicio `caja-linux` crea y corre máquinas virtuales con el permiso de máquinas virtuales (su llave 1, de `inicio`;
-llamadas 45 y 46 de `kernel.md`). Solo en `virt`, y solo hay hipervisor si el kernel arrancó en EL2 (en QEMU,
-`virtualization=on`; `make arranque-virt-vm`). Hoy no tiene canal: corre los invitados de prueba de
-`usuario/invitados/pruebas.s` y emula para ellos un PL011 en 0x09000000 (DR en 0x00 y FR en 0x18, siempre con sitio).
-Una máquina que lee o escribe fuera de su memoria y de ese UART, que no acaba en 100 ms o que cae en una trampa se para.
-Bitácora: `docs/bitacoras/caja-linux.md`.
+El servicio `caja-linux` crea y corre máquinas virtuales (llamadas 45 a 48 de `kernel.md`). Solo hay hipervisor si el
+kernel arrancó en EL2 (en QEMU, `virtualization=on`; `make arranque-virt-vm`).
+
+**Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina y si hay hipervisor, 16 bytes), 2 y 3 la Image de Linux y su
+initramfs si los hay (`make arranque-virt-linux`), y después los canales "ventanas" (su terminal), "disco" (la
+partición de la caja Linux, el disco de Arch), "sesiones" (el permiso) y "red" (la red del invitado), en el orden en
+que `inicio` crea los canales. En la Pi 4: "sistema" y el permiso, que da `inicio` (allí aún no hay
+`sesiones`); solo prueba que un invitado arranca y acaba.
+
+**El permiso** de máquinas virtuales lo reparte `sesiones` ("maquinas", decisión del usuario del 2026-11-12):
+`inicio` solo se lo da a él. A la caja del sistema (el `caja-linux` de `inicio`) se lo da sin preguntar, lo apunta
+como concedido (sale en el centro de control, que lo puede quitar; quitado, la próxima vez se pregunta) y en el
+registro de seguridad; a cualquier otro se le pregunta a quien está delante. `sin-maquina` lo pide y no lo recibe.
+
+**La memoria.** `inicio` le da la del invitado más 32 MB (`dashos::maquina::memoria_invitado`: 128 MB con menos de 2
+GB de RAM, 256 MB con 2 GB y 512 MB con 4 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
+invitado, y así hasta 64 MB.
+
+**Aparatos del invitado** (crate `caja-linux/vmm`): PL011 (consola temprana), PL031 (la hora de DashOS; si el invitado
+la cambia, cambia solo la suya), virtio-console (hvc0, 80x25), virtio-blk y, si el servicio de red le da un puerto,
+virtio-net. El disco: con initramfs (busybox), 1 MB en memoria; sin él (Arch Linux ARM, `make arranque-virt-arch`), la
+partición de la caja Linux que le da el servicio de disco, leída y escrita por su ventana de 128 KB en piezas de 64 KB,
+con la vCPU parada mientras tanto. Con el canal "ventanas", hvc0 sale
+en una ventana de terminal (un hilo del servicio, `usuario/src/terminal.rs` y Roboto Mono) y lo tecleado va a hvc0. Al
+registro de DashOS va cada línea de la consola, sin secuencias de escape y callando si Linux escribe más de 100 líneas
+por segundo seguidas (luego dice cuántas calló).
+
+**La red del invitado.** El servicio de red le da un puerto (`PUERTO`, solo a "caja-linux"): un puente de tramas hacia
+la tarjeta de verdad, con una MAC propia (02:da:50:...). Llegan al invitado las tramas para su MAC y las de difusión;
+del invitado solo salen las que llevan su MAC de origen. Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
+el invitado es 10.0.2.16 y su puerta de enlace 10.0.2.2 (busybox, con dirección fija; Arch la pide por DHCP al
+servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2.16).
+
+Los invitados de prueba de `usuario/invitados/*.s` y sus hostiles siguen corriendo antes de Linux. Bitácora:
+`docs/bitacoras/caja-linux.md`.
 
 ## Caja Amiga (H4, H5)
 

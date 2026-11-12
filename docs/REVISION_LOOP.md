@@ -1544,3 +1544,35 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   arranque-virt-linux y arranque-virt-2 BIEN.
 - Pendiente del usuario: el Enforcer que avisa y sigue (hoy una dirección prohibida mata la caja) y que la A72 no tenga
   PAN. El oráculo con FS-UAE, cuando el emulador quede libre.
+
+### 2026-11-12 19:25: la caja Linux, paso 3, en revision
+- Fusionada `caja-linux-3`: el permiso de máquinas lo reparte `sesiones` (a la caja del sistema sin preguntar; en la Pi
+  4, sin `sesiones`, aún lo da `inicio`), la memoria de la caja se calcula con la RAM (objeto "sistema"), la caja va en
+  la imagen de la Pi 4; una ventana de terminal de 80 × 25 (Roboto Mono, emulador en `usuario/src/terminal.rs`) con
+  hvc0 donde se teclea; la red del invitado por un puente de tramas del servicio de red (su MAC, 10.0.2.16).
+  Captura mandada al usuario. Choque en `kernel/src/inicio.rs` (la llave de la página 0 de la caja Amiga): resuelto.
+- `make prueba` BIEN; arranque-virt en dos vueltas BIEN; arranque-virt-vm, arranque-virt-linux (uname -a desde la
+  terminal) y arranque-virt-2 BIEN.
+
+### 2026-11-12 20:15: Arch Linux ARM en la caja Linux, en revision
+- Fusionada `caja-linux-arch`: el rootfs oficial de Arch Linux ARM (firma comprobada) en una partición propia del NVMe
+  con un tipo nuevo (la caja nunca ve una partición de Linux cualquiera), hecho sin root con `mke2fs -d`; kernel propio
+  de 7 MB (`Image-arch`, con lo que piden systemd, glibc y pacman: Landlock); un PL031 en el crate para la hora.
+  systemd 261 en marcha, root entra en la terminal del escritorio a los 16 s, red por DHCP (10.0.2.16) y
+  `pacman -Sy` baja los cuatro índices (`make arranque-virt-arch`; antes `tools/caja_linux_invitado.py preparar-arch`).
+  Captura mandada al usuario.
+- Pendiente: `pacman -S` (pide `pacman-key --init`), lo escrito tras reiniciar, la memoria de 512 MB (en QEMU virt
+  DashOS ve 3 GB), la Pi 4. Dos decisiones del usuario: entrar como root o como usuario; quitar el kernel de Arch.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.
+
+### 2026-11-12 20:25: Linux con 4 vCPU, en revision
+- Fusionada `caja-linux-vcpu`: cada llave de máquina es una vCPU (su GIC virtual, temporizador y FPU) y comparten la
+  memoria del invitado; operaciones 4 a 7 de `maquina_estado` (crear vCPU, reiniciarla para CPU_ON, patearla, parar
+  la máquina). El servicio lleva un hilo por vCPU, PSCI CPU_ON/CPU_OFF/AFFINITY_INFO y SGI entre vCPU. Linux sube
+  4 CPU; 4 trabajos a la vez van 3,5 veces más rápido que seguidos. El WFI duerme el hilo en el kernel.
+- Hostil (`usuario/invitados/smp.s`): CPU_ON a una vCPU que no existe o dos veces, rechazado; tormenta de SGI y vCPU
+  en bucle con todo enmascarado: la máquina se para con ella dentro y los hilos terminan.
+- Choques resueltos con la rama de Arch: Arch arranca también con 4 vCPU.
+- Pendiente: la tormenta de SGI frena 100-240 veces a la vCPU que la recibe; un solo cerrojo en el servicio;
+  CPU_SUSPEND contesta en el acto; FPU de cada vCPU sin cobrarse al grupo; número fijo de vCPU; la Pi 4.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch y -2: BIEN.

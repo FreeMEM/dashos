@@ -70,8 +70,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un servicio de prueba que contesta lo que le llega (U4): solo se llega a él con la llave que reparte `sesiones`.
     #[cfg(feature = "virt")]
     ("eco", programa!("eco"), &[], &["eco"]),
+    // El permiso de máquinas virtuales (caja Linux, H9) también lo reparte `sesiones` (decisión del usuario del
+    // 2026-11-12): `inicio` solo se lo da a él. Sus llaves pasan a ser 1 plazo, 2 máquinas, 3 archivos, 4 comprobar, 5
+    // eco y 6 su canal.
     #[cfg(feature = "virt")]
-    ("sesiones", programa!("sesiones"), &[("plazo", PLAZO)], &["archivos", "eco", "sesiones", "comprobar"]),
+    ("sesiones", programa!("sesiones"), &[("plazo", PLAZO), ("hipervisor", MAQUINAS)], &["archivos", "eco", "sesiones", "comprobar"]),
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
@@ -84,11 +87,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("centro", programa!("centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
-    #[cfg(feature = "virt")]
+    // Con `linux` (`make arranque-virt-linux`), sin `guardian` ni las pruebas que lo necesitan (pide, entrada, el hostil
+    // y su presa, el selector): sus preguntas y sus pantallas de bloqueo se llevarían el teclado de la terminal de la
+    // caja Linux.
+    #[cfg(all(feature = "virt", not(feature = "linux")))]
     ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "linux")))]
     ("pide", programa!("pide"), &[], &["sesiones"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "linux")))]
     ("entrada", programa!("entrada"), &[], &["sesiones"]),
     #[cfg(feature = "virt")]
     ("ficheros", programa!("ficheros"), &[], &["archivos"]),
@@ -145,14 +151,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El selector (U5): enseña al usuario una ventana para elegir un fichero y cede a quien se lo pidió la lectura de lo
     // elegido, aunque su ficha no le deje. Va tras el sonido: así, en el hostil, su canal es la llave 5 y las demás no
     // cambian.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
     ("selector", programa!("selector"), &[], &["ventanas", "archivos", "selector"]),
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
     ("hostil", programa!("hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco", "centro"]),
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
     ("presa", programa!("presa"), &[], &["sesiones"]),
     // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee); el controlador de
     // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
@@ -191,12 +197,21 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // presupuesto. Al final de los demás, para no cambiar sus marcas.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
-    // La caja Linux (H9): el servicio que crea y corre las máquinas virtuales, con el permiso, y un programa sin él que
-    // prueba a crearlas. Solo en `virt` por ahora; al final, para no cambiar las marcas de los de antes.
+    // La caja Linux (H9): el servicio que crea y corre las máquinas virtuales y un programa sin el permiso que prueba a
+    // crearlas. Al final, para no cambiar las marcas de los de antes. Los dos reciben "sistema" (la RAM de la máquina y
+    // si hay hipervisor). El permiso se lo pide a `sesiones`, que se lo da sin preguntar por ser la caja del sistema
+    // (decisión del usuario del 2026-11-12); `sin-maquina` también lo pide, y no se le da. La caja tiene además su
+    // ventana de terminal ("ventanas"), la red del invitado ("red") y el disco de Arch Linux ARM ("disco": el servicio de
+    // disco le da la partición de la caja Linux, si la hay).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-linux", programa!("caja-linux"), &[("hipervisor", MAQUINAS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &[]),
+    ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("sin-maquina", programa!("sin-maquina"), &[], &[]),
+    ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
+    // En la Pi 4 (decisión del usuario del 2026-11-12: no en la Pi 3, sin virtualización): la caja, que solo hace algo
+    // si el firmware entró en EL2. Allí aún no hay `sesiones` (es solo de `virt`): hasta que lo haya, el permiso se lo
+    // da `inicio`.
+    #[cfg(all(not(feature = "virt"), not(feature = "pi3")))]
+    ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("hipervisor", MAQUINAS)], &[]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -502,6 +517,15 @@ pub fn lanzar() -> bool {
             m.escribir(0, PAQUETE_MEDIR);
             apuntar(&mut llaves, "medir", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
         }
+    }
+    // Lo que se sabe de la máquina, para quien lo necesite (la caja Linux, H9): la RAM que conoce el kernel en bytes
+    // (u64) y si hay hipervisor (u64, 1 o 0). Solo de lectura.
+    if let Some(m) = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz()) {
+        let mut datos = [0u8; 16];
+        datos[0..8].copy_from_slice(&(memoria::paginas().total() as u64 * memoria::PAGINA).to_le_bytes());
+        datos[8..16].copy_from_slice(&(crate::base::hiper::hay() as u64).to_le_bytes());
+        m.escribir(0, &datos);
+        apuntar(&mut llaves, "sistema", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
     }
     // La caja Linux (H9) con un kernel de Linux de verdad: su Image, en un objeto de memoria solo de lectura.
     #[cfg(feature = "linux")]

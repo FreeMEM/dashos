@@ -36,7 +36,8 @@ pub const S_UNSUPP: u8 = 2;
 pub const SECTOR: u64 = 512;
 /// Datos como mucho en una petición (lo que se anuncia en size_max × seg_max queda por debajo).
 pub const MAX_PETICION: u64 = 4 << 20;
-pub const TROZO: usize = 4096;
+/// 64 KiB: en DashOS cada trozo es una petición al servicio de disco (con 4 KiB, Arch tardaba mucho más en arrancar).
+pub const TROZO: usize = 64 * 1024;
 const TAM_COLA: u16 = 256;
 /// Segmentos de datos como mucho (seg_max). Con size_max da 4 MiB, lo mismo que MAX_PETICION.
 const SEG_MAX: u32 = 64;

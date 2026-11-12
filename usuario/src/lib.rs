@@ -221,8 +221,8 @@ pub mod maquina {
 
     /// El informe de una salida: motivo, PC, dirección física del invitado, valor, tamaño (o número del HVC), ESR,
     /// x1 y x2 (en un HVC), las cuentas del contador que pasó fuera del kernel, x3 (en un HVC), el plazo del
-    /// temporizador virtual del invitado (en cuentas del contador; `u64::MAX` si está apagado o enmascarado) y señales
-    /// (`PENDIENTE`).
+    /// temporizador virtual del invitado (en cuentas del contador; `u64::MAX` si está apagado o enmascarado), señales
+    /// (`PENDIENTE`) y los microsegundos que durmió en el kernel en sus WFI (con `ESPERAR_WFI`).
     #[derive(Clone, Copy)]
     #[repr(C)]
     pub struct Informe {
@@ -238,23 +238,33 @@ pub mod maquina {
         pub x3: u64,
         pub plazo: u64,
         pub senales: u64,
+        pub dormido_us: u64,
     }
 
     impl Default for Informe {
         fn default() -> Self {
-            Self { motivo: 0, pc: 0, direccion: 0, valor: 0, tamano: 0, esr: 0, x1: 0, x2: 0, cuentas: 0, x3: 0, plazo: u64::MAX, senales: 0 }
+            Self { motivo: 0, pc: 0, direccion: 0, valor: 0, tamano: 0, esr: 0, x1: 0, x2: 0, cuentas: 0, x3: 0, plazo: u64::MAX, senales: 0, dormido_us: 0 }
         }
     }
 
     /// En `Informe::senales`: hay una interrupción pendiente en los registros de lista (un WFI no tiene que esperar).
     pub const PENDIENTE: u64 = 1;
 
+    /// En `Interrupciones::temporizador`: un WFI sin nada pendiente duerme el hilo en el kernel hasta el plazo del
+    /// temporizador del invitado (y entonces vuelve a entrar él solo), una patada (`maquina_patear`) o 100 ms, en vez de
+    /// volver al servicio.
+    pub const ESPERAR_WFI: u64 = 1 << 17;
+
+    /// Cuántas vCPU puede tener una máquina (las interfaces de CPU del GICv2).
+    pub const MAX_VCPUS: usize = 8;
+
     /// Registros de lista del servicio en el bloque de interrupciones.
     pub const LRS: usize = 8;
 
     /// El bloque de interrupciones de `maquina_correr_irq` (`kernel/src/maquinas.rs`): `lrs` lo pone el kernel (cuántos
     /// registros de lista puede llenar el servicio; 0 sin GIC virtual); `temporizador` lo pone el servicio (bit 0
-    /// habilitado, [15:8] prioridad, bit 16 grupo 1: como tiene el invitado la PPI 27 en su distribuidor); `lr`, los
+    /// habilitado, [15:8] prioridad, bit 16 grupo 1: como tiene el invitado la PPI 27 en su distribuidor; bit 17,
+    /// `ESPERAR_WFI`); `lr`, los
     /// registros de lista del GICv2 (sin el bit HW): los pone el servicio y vuelven como los dejó el invitado.
     #[derive(Default, Clone, Copy)]
     #[repr(C)]
@@ -266,6 +276,32 @@ pub mod maquina {
 
     /// x0..x30, PC y PSTATE de una vCPU.
     pub const REGISTROS: usize = 33;
+
+    /// Lo que necesita el servicio de la caja Linux además de la RAM de su invitado: las tablas de la etapa 2, su
+    /// montón (el disco del invitado, la ventana de la terminal) y las pilas de sus hilos.
+    pub const MARGEN_SERVICIO: u64 = 32 << 20;
+
+    /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisión del usuario del
+    /// 2026-11-12): 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con menos. La caja pide eso más
+    /// `MARGEN_SERVICIO`. Con algo de holgura por debajo de cada umbral: el kernel no cuenta lo que se queda el
+    /// firmware.
+    pub fn memoria_invitado(ram: u64) -> u64 {
+        const HOLGURA: u64 = 128 << 20;
+        if ram + HOLGURA >= 4 << 30 {
+            512 << 20
+        } else if ram + HOLGURA >= 2 << 30 {
+            256 << 20
+        } else {
+            128 << 20
+        }
+    }
+
+    /// Lo que dice el objeto "sistema" del paquete de arranque: la RAM de la máquina en bytes y si hay hipervisor.
+    pub fn sistema(datos: &[u8]) -> Option<(u64, bool)> {
+        let ram = u64::from_le_bytes(datos.get(0..8)?.try_into().ok()?);
+        let hiper = u64::from_le_bytes(datos.get(8..16)?.try_into().ok()?);
+        Some((ram, hiper != 0))
+    }
 }
 
 /// Entra en el invitado de la máquina `llave` hasta que sale; `valor` contesta a una lectura pendiente. Devuelve el
@@ -298,6 +334,28 @@ pub fn maquina_aborto(llave: u32) -> i64 {
 /// GIC). `E_NO_HAY` sin GIC virtual.
 pub fn maquina_gicv(llave: u32, ipa: u64) -> i64 {
     llamada(48, [llave as u64, 3, ipa, 0, 0]).0 as i64
+}
+
+/// Otra vCPU de la máquina de la vCPU `llave`: la número `numero` (su MPIDR; menos de `maquina::MAX_VCPUS` y que no
+/// esté ya), que empieza en `entrada` con `x0`. Comparte la memoria del invitado. Su llave o un error negativo.
+pub fn maquina_vcpu(llave: u32, numero: u64, entrada: u64, x0: u64) -> i64 {
+    llamada(48, [llave as u64, 4, numero, entrada, x0]).0 as i64
+}
+
+/// La vCPU parada `llave`, como recién encendida (PSCI CPU_ON): en `entrada`, con `x0`, la MMU apagada y lo demás a 0.
+pub fn maquina_reiniciar(llave: u32, entrada: u64, x0: u64) -> i64 {
+    llamada(48, [llave as u64, 5, entrada, x0, 0]).0 as i64
+}
+
+/// Saca a la vCPU `llave` de su invitado en cuanto pueda (corra en otro núcleo o duerma en un WFI); si no corre, la
+/// próxima vez vuelve sin entrar. Para cuando se deja algo para ella.
+pub fn maquina_patear(llave: u32) -> i64 {
+    llamada(48, [llave as u64, 6, 0, 0, 0]).0 as i64
+}
+
+/// Para la máquina entera de la vCPU `llave`: todas sus vCPU salen y ya no vuelven a entrar (`E_CERRADO`).
+pub fn maquina_parar(llave: u32) -> i64 {
+    llamada(48, [llave as u64, 7, 0, 0, 0]).0 as i64
 }
 
 /// Barrera de memoria entre núcleos (`dmb ish`): lo escrito antes lo ven los demás antes que lo escrito después. Para
@@ -349,6 +407,8 @@ pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
 
 /// Venció el plazo de `canal_leer_plazo` (K7).
 pub const E_PLAZO: i64 = -9;
+/// Un argumento que no vale.
+pub const E_ARGUMENTO: i64 = -1;
 /// El otro lado del canal ya no está.
 pub const E_CERRADO: i64 = -4;
 

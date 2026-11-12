@@ -12,6 +12,17 @@ use wayland::tablas::{
 use wayland::{Escritor, leer_args};
 
 pub const VENTANAS: u32 = 1;
+/// La llave del canal "ventanas" que usa `Cliente`: la 1, salvo que el programa diga otra (`usar_llave`; la caja Linux,
+/// que tiene antes sus datos).
+static LLAVE: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(VENTANAS);
+
+pub fn usar_llave(llave: u32) {
+    LLAVE.store(llave, core::sync::atomic::Ordering::Relaxed);
+}
+
+fn llave() -> u32 {
+    LLAVE.load(core::sync::atomic::Ordering::Relaxed)
+}
 pub const VA: usize = 0x40_0000_0000;
 pub const CUADROS: u32 = 30;
 
@@ -68,7 +79,7 @@ impl Cliente {
         // estar llena: se reintenta hasta 5 s en vez de rendirse. Si no, se dice por qué y se sueltan las llaves.
         let mut intentos = 0;
         let r = loop {
-            let e = dashos::canal_escribir(VENTANAS, &[TROZO_CONECTAR], &[suyo]);
+            let e = dashos::canal_escribir(llave(), &[TROZO_CONECTAR], &[suyo]);
             if e == 0 || e == dashos::E_CERRADO || intentos >= 5_000 {
                 break e;
             }
@@ -125,7 +136,7 @@ impl Cliente {
             // escribir; al segundo nos suelta (E8). Así se quedaba sin pantalla de entrada `guardian`, 1 de cada 3
             // pasadas de la prueba con el PC cargado.
             for _ in 0..1000 {
-                if dashos::canal_escribir(VENTANAS, &t.bytes, &t.llaves) == 0 {
+                if dashos::canal_escribir(llave(), &t.bytes, &t.llaves) == 0 {
                     break;
                 }
                 if !self.recoger() {

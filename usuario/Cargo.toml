@@ -309,7 +309,7 @@ test = false
 name = "caja-linux"
 path = "src/bin/caja_linux.rs"
 test = false
-required-features = ["caja"]
+required-features = ["caja", "ventanas"]
 
 [[bin]]
 name = "sin-maquina"

@@ -163,6 +163,7 @@ pub fn iniciar_cpu() {
         return;
     }
     habilitar(SGI_PLANIFICAR, 0x80);
+    habilitar(SGI_VCPU, 0x80);
     c(GICC_PMR).escribir(MASCARA_PRIORIDAD as u32);
     c(GICC_BPR).escribir(0);
     c(GICC_CTLR).escribir(1);
@@ -305,6 +306,9 @@ pub fn terminar(iar: u32) {
 
 /// Interrupción por software que pide a un núcleo que vuelva a planificar (C17).
 pub const SGI_PLANIFICAR: u32 = 1;
+/// Interrupción por software que saca de su invitado a una vCPU que corre en ese núcleo (H9, varias vCPU): solo eso;
+/// el kernel la termina sin más. Solo con el GIC virtual (GICv2): sin él, se usa la de planificar.
+pub const SGI_VCPU: u32 = 2;
 
 /// Manda una interrupción por software (SGI) a un núcleo.
 pub fn avisar(nucleo: u32, sgi: u32) {

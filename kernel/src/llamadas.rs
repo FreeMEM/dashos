@@ -39,7 +39,7 @@
 //! | 45 | maquina_crear(permiso, memoria, dirección física del invitado, entrada, x0) -> llave de máquina virtual (H9) |
 //! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
-//! | 48 | maquina_estado(máquina, operación, argumento): registros, aborto externo, GICV de una vCPU parada |
+//! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -194,7 +194,7 @@ pub fn atender(marco: &mut Marco) {
         45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
         46 => maquina_correr(a[0] as u32, a[1], a[2], a[3]),
         47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
-        48 => maquina_estado(a[0] as u32, a[1], a[2]),
+        48 => maquina_estado(a[0] as u32, a[1], a[2], a[3], a[4]),
         // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
         49 => pagina_cero(a[0] as u32, a[1] as u32),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
@@ -1180,10 +1180,7 @@ fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
     }
     let maquina = match crate::maquinas::Maquina::nueva(m, ipa, entrada, x0, &proc_.cupo) {
         Ok(v) => v,
-        Err(crate::base::hiper::Error::NoHay) => return E_NO_HAY,
-        Err(crate::base::hiper::Error::Argumento) => return E_ARGUMENTO,
-        Err(crate::base::hiper::Error::Memoria) => return E_MEMORIA,
-        Err(crate::base::hiper::Error::Limite) => return E_LIMITE,
+        Err(e) => return error_hiper(e),
     };
     let Ok(maquina) = alloc::sync::Arc::try_new(maquina) else { return E_MEMORIA };
     match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Maquina(maquina), objetos::TODOS)) {
@@ -1192,7 +1189,7 @@ fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
     }
 }
 
-/// Corre la máquina `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (12 u64 en
+/// Corre la vCPU `h` (escribir) hasta que el invitado sale, y escribe el informe en `informe` (13 u64 en
 /// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. `irq`, si no es 0, es el
 /// bloque de interrupciones (`maquinas::IRQ_PALABRAS` u64): se lee antes de entrar y se escribe al volver. Devuelve el
 /// motivo.
@@ -1241,12 +1238,18 @@ fn maquina_correr(h: u32, informe: u64, valor: u64, irq: u64) -> u64 {
     }
 }
 
-/// Operaciones sobre la vCPU parada de la máquina `h` (escribir):
-///   0 leer sus registros (x0..x30, PC y PSTATE: 33 u64 en little-endian) en `arg`;
-///   1 escribirlos desde `arg` (PSTATE saneado: AArch64, EL0 o EL1);
+/// Operaciones sobre la vCPU `h` (escribir) y su máquina:
+///   0 leer sus registros (x0..x30, PC y PSTATE: 33 u64 en little-endian) en `arg`, con ella parada;
+///   1 escribirlos desde `arg` (PSTATE saneado: AArch64, EL0 o EL1), con ella parada;
 ///   2 un aborto externo para el invitado en lugar del último acceso a un aparato (`E_ARGUMENTO` si no lo hubo);
-///   3 proyectar la GICV del GIC virtual en la dirección física del invitado `arg` (`E_NO_HAY` sin GIC virtual).
-fn maquina_estado(h: u32, op: u64, arg: u64) -> u64 {
+///   3 proyectar la GICV del GIC virtual en la dirección física del invitado `arg`, para todas sus vCPU (`E_NO_HAY` sin
+///     GIC virtual);
+///   4 otra vCPU de la misma máquina: la número `arg` (su Aff0 en el MPIDR, menos de 8 y sin otra con ese número), que
+///     empieza en `a` con x0 = `b`; devuelve su llave (`E_ARGUMENTO` si el número no vale o ya está);
+///   5 reiniciarla, parada, como recién encendida en `arg` con x0 = `a` (PSCI CPU_ON);
+///   6 patearla: que salga de su invitado en cuanto pueda (desde otro hilo; si no corre, la próxima vez no entra);
+///   7 parar la máquina entera: todas sus vCPU salen y ya no entran (`E_CERRADO`).
+fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
     let Objeto::Maquina(m) = l.objeto else { return E_TIPO };
@@ -1287,13 +1290,35 @@ fn maquina_estado(h: u32, op: u64, arg: u64) -> u64 {
             Err(e) => error(e),
         },
         3 => match m.proyectar_gicv(arg, &proc_.cupo) {
-            Ok(Ok(())) => 0,
-            Ok(Err(crate::base::hiper::Error::NoHay)) => E_NO_HAY,
-            Ok(Err(crate::base::hiper::Error::Argumento)) => E_ARGUMENTO,
-            Ok(Err(crate::base::hiper::Error::Memoria)) => E_MEMORIA,
-            Ok(Err(crate::base::hiper::Error::Limite)) => E_LIMITE,
+            Ok(()) => 0,
+            Err(e) => error_hiper(e),
+        },
+        4 => {
+            if proc_.llaves.tomar().huecos() == 0 {
+                return E_LIMITE;
+            }
+            let otra = match m.otra(arg, a, b, &proc_.cupo) {
+                Ok(v) => v,
+                Err(e) => return error_hiper(e),
+            };
+            let Ok(otra) = alloc::sync::Arc::try_new(otra) else { return E_MEMORIA };
+            match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Maquina(otra), objetos::TODOS)) {
+                Ok(n) => n as u64,
+                Err(_) => E_LIMITE,
+            }
+        }
+        5 => match m.reiniciar(arg, a) {
+            Ok(()) => 0,
             Err(e) => error(e),
         },
+        6 => {
+            m.patear();
+            0
+        }
+        7 => {
+            m.parar();
+            0
+        }
         _ => E_ARGUMENTO,
     }
 }
@@ -1323,11 +1348,16 @@ fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
         return E_DERECHOS;
     }
     match maquina.anadir(m, ipa, &proc_.cupo) {
-        None => E_LIMITE,
-        Some(Ok(())) => 0,
-        Some(Err(crate::base::hiper::Error::NoHay)) => E_NO_HAY,
-        Some(Err(crate::base::hiper::Error::Argumento)) => E_ARGUMENTO,
-        Some(Err(crate::base::hiper::Error::Memoria)) => E_MEMORIA,
-        Some(Err(crate::base::hiper::Error::Limite)) => E_LIMITE,
+        Ok(()) => 0,
+        Err(e) => error_hiper(e),
+    }
+}
+
+fn error_hiper(e: crate::base::hiper::Error) -> u64 {
+    match e {
+        crate::base::hiper::Error::NoHay => E_NO_HAY,
+        crate::base::hiper::Error::Argumento => E_ARGUMENTO,
+        crate::base::hiper::Error::Memoria => E_MEMORIA,
+        crate::base::hiper::Error::Limite => E_LIMITE,
     }
 }

@@ -280,3 +280,414 @@ QEMU `virt`, TCG, con el PC cargado (carga 20 en 32 núcleos):
 4. La memoria de la caja, calculada (invitado + unos 32 MB; 256 MB de invitado con 2 GB, 512 con 4 GB o más): **en
    parte**: el cupo pide 256 + 32 MB, y si no caben, menos; el servicio usa lo que quepa. Falta calcularlo con la RAM
    de la máquina (y los 512 MB con 4 GB).
+
+## 2026-11-12: el permiso por `sesiones`, la memoria calculada, la Pi 4, una terminal y la red (rama `caja-linux-3`)
+
+Rama `caja-linux-3`, sacada de `revision` con la caja hasta busybox ya fusionada (b33354d). Sala limpia como antes:
+especificaciones (ECMA-48 y el VT100 para la terminal; virtio 1.2 para la red); nada de código de Linux, KVM, QEMU,
+crosvm, Firecracker ni Xen.
+
+### Las decisiones del usuario, hechas
+
+1. **El permiso lo reparte `sesiones`.** `inicio` solo da el permiso de máquinas virtuales a `sesiones` (su llave 2;
+   las demás corren un puesto: archivos 3, comprobar 4, eco 5, su canal 6, su copia 7 y la de archivos 8, justo las 8
+   que caben). En `REPARTE` es "maquinas", un permiso del kernel como el de plazo. `SIN_PREGUNTAR` dice lo que se da
+   sin preguntar a un programa del sistema (por el nombre que da `inicio`, no el de un fichero del disco): "maquinas" a
+   `caja-linux`. Se apunta como concedido desde el final de la tabla (lo que concede el usuario va delante, y la
+   prueba del centro de control quita la primera fila), no se guarda en el disco (es de serie) y sale en el centro de
+   control; si alguien lo quita, la próxima vez se pregunta (hasta reiniciar: lo quitado aún no se guarda). Toda
+   concesión de "maquinas" (sin preguntar o porque el usuario dijo que sí) va al registro de seguridad, no solo las
+   negativas. `caja-linux` lo pide al arrancar (hasta 60 s: `sesiones` puede tardar); `sin-maquina` lo pide también y
+   no lo recibe (con `guardian`, se le pregunta a quien está delante; sin él, -2 en el acto). Solo se pide si hay
+   hipervisor: en `make arranque-virt` (sin EL2) nada cambia en el centro ni en las preguntas.
+   - `sesiones` no atendía a nadie sin disco: esperaba sin plazo al servicio de archivos, que sin disco no contesta.
+     Ahora espera 15 s (con disco contesta en menos de uno) y sigue sin archivos. Por eso, en `arranque-virt-vm` y
+     `arranque-virt-linux` (sin disco) ya hay `sesiones`.
+2. **La memoria, calculada.** El kernel da a `inicio` un objeto "sistema" (la RAM que conoce y si hay hipervisor).
+   `dashos::maquina::memoria_invitado`: 512 MB con 4 GB o más, 256 MB con 2 GB o más, 128 MB con menos (con 128 MB de
+   holgura en cada umbral: el kernel no cuenta lo del firmware). El cupo de la caja es eso más 32 MB
+   (`MARGEN_SERVICIO`) si tiene la Image de Linux; sin ella, 32 MB. Si no cabe, la mitad para el invitado, hasta 64 MB.
+   La caja lee el mismo objeto y pide esa RAM en trozos de 16 MB (hasta 32). Con `MEMORIA=3G`: `[inicio] caja-linux:
+   3072 MB de RAM en la máquina; el invitado, hasta 256 MB`.
+3. **La Pi 4.** `caja-linux` va en la imagen de la Pi 4 (no en la de la Pi 3): llaves "sistema" y el permiso, que da
+   `inicio` (en la Pi aún no hay `sesiones`, que es solo de `virt`: excepción a la decisión 1 hasta que lo haya). Si no
+   hay hipervisor, lo dice y acaba; si lo hay, corre un invitado que saluda y acaba. Nada más (ni los hostiles ni
+   Linux). En QEMU `raspi4b`, `make prueba` sigue igual.
+
+### La terminal
+
+`caja-linux` tiene ahora el canal "ventanas". Con la Image de Linux, antes de arrancarlo abre una ventana de terminal
+en un hilo suyo (`hilos::crear`): un cliente de Wayland con la llave de "ventanas" que le toca (`ventana_cliente::
+usar_llave`; era siempre la 1), 80x25 letras de Roboto Mono a 13 px (añadida al kit, `Fuente::mono`, OFL) en una
+ventana de 656x416. Lo que escribe Linux por hvc0 pasa por un `Tubo` (cola con cerrojo y tope de 256 KB; lo que no cabe
+se pierde y se cuenta) a una `Terminal` (`usuario/src/terminal.rs`, un VT100 sencillo: UTF-8, ajuste de línea, CSI de
+mover, borrar, insertar y quitar, colores SGR, DSR 6; acotada en todo y con pruebas en el PC, también con 200 000 bytes
+al azar). Pinta solo las filas que cambian, una vez por cuadro (espera el `frame` del compositor). Las teclas van por
+el `Teclado` del kit (mapa español) y Control+letra; salen como las de un VT100 (Intro = CR, retroceso = DEL, flechas
+CSI) a otro `Tubo` hacia virtio-console. Para que la vCPU las vea: el hilo marca `aviso` y cambia `timbre`; la vCPU, en
+cada salida por el reloj y en cada WFI, llama a `Maquina::sondear` si hay aviso, y en un WFI duerme en `timbre`
+(`hilos::esperar`) en vez de `dormir_us`, así una tecla la despierta en el acto.
+
+El `/init` (`tools/caja_linux_invitado.py`), con `caja.terminal` en la línea de órdenes, deja tras la prueba una shell
+con terminal de control en hvc0 (`(setsid cttyhack sh)`) y apaga al salir de ella. Hace también `busybox --install` y
+`hostname caja`.
+
+Al registro de DashOS sigue yendo cada línea de la consola (sin las secuencias de escape), pero con tope: 400 seguidas y
+100 por segundo; si se pasa, calla hasta que Linux lleva medio segundo sin líneas y dice cuántas calló.
+
+`make arranque-virt-linux` lleva ahora teclado y ratón USB y la red de QEMU, y `tools/guion_caja_linux.py` (con
+`CAJA_LINUX=prefijo` en `prueba_uefi.sh`): clic en la ventana, `uname -a`, `echo hola desde DashOS`, captura,
+`seq 1 30000` (la inundación), `echo sigue viva`, `ping -c 2 10.0.2.2` y `poweroff -f`. La captura queda en
+`target/caja-terminal.png` y en `capturas-agente/` (fuera de git). En esta imagen (`linux`) no van `guardian` ni las
+pruebas que lo usan (pide, entrada, hostil y presa, selector): sus preguntas y su pantalla de entrada se llevarían el
+teclado.
+
+### La red del invitado
+
+Un puente de tramas en el servicio de red: la orden `PUERTO` (solo de "caja-linux") crea una memoria de tramas como la
+de la tarjeta (64 ranuras para el invitado, 64 de él) y le da una copia a la caja. Lo que llega por la tarjeta para la
+MAC del invitado va solo al puerto; lo de difusión, al puerto y a smoltcp. Lo que pone el invitado sale por la tarjeta
+si lleva su MAC de origen (si no, se tira y se cuenta). El servicio guarda lo que mueve él y no se fía de lo que dice
+la caja. Avisos por `TRAMAS_PUERTO` en los dos sentidos; un hilo de la caja espera los del servicio y despierta a la
+vCPU. Si la caja se va, el puerto se suelta. En la caja, la virtio-net del crate (tercer transporte) con una MAC local
+al azar (02:da:50:...). Linux sale con 10.0.2.16 (DashOS tiene la 15 por DHCP) y QEMU (slirp) contesta el ping a
+10.0.2.2: `caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss`.
+
+### Resultado de `make arranque-virt-linux`
+
+```
+[inicio] caja-linux: 3072 MB de RAM en la máquina; el invitado, hasta 256 MB
+[sesiones] caja-linux es del sistema: maquinas sin preguntar
+[sesiones] sin-maquina pide maquinas: -2
+[sin-maquina] pedir el permiso a sesiones: -2 (negado)
+[caja-linux] terminal: ventana en pantalla (80x25 letras, 656x416 px)
+[red] puerto para la caja Linux con MAC 02-da-50-38-57-fc: un puente de tramas hacia la tarjeta
+[caja-linux] linux: caja-linux: eth0 02:da:50:38:57:fc mtu 1500
+[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
+[caja-linux] linux: caja:~# uname -a
+[caja-linux] linux: Linux caja 6.18.63 #2 SMP Thu Nov 12 18:56:07 CET 2026 aarch64 GNU/Linux
+[caja-linux] linux: hola desde DashOS
+[caja-linux] linux: (29563 líneas sin sacar al registro: demasiadas seguidas)
+[caja-linux] linux: sigue viva
+[caja-linux] linux: 2 packets transmitted, 2 packets received, 0% packet loss
+[caja-linux] linux: se para la máquina a los 143280 ms: Linux apagó la máquina por PSCI
+[caja-linux] red: 13 tramas del invitado a la red, 7 de la red al invitado; 0 perdidas sin sitio, 0 malas del servicio
+[caja-linux] terminal: 0 bytes de la consola no cupieron en la ventana; 0 teclas no cupieron hacia Linux
+```
+
+La inundación (`seq 1 30000`, 170 KB) no tumba a la caja ni al compositor: la ventana la enseña entera, el registro
+calla y la shell contesta después.
+
+En `make arranque-virt-vm` (con `guardian`), `sin-maquina` sale en una pregunta a quien está delante; nadie contesta,
+la pregunta caduca y se le niega: `[guardian] ¿sin-maquina puede usar maquinas? El usuario dice no`.
+
+En la imagen normal de la Pi en QEMU `raspi4b` (que entra en EL2): `[caja-linux] el invitado dice: Hola desde el
+invitado, por el UART emulado` y `[caja-linux] hipervisor en marcha: un invitado saluda y acaba: bien`. La imagen de
+pruebas (`make prueba`) no lanza `inicio`: no cambia.
+
+### Pruebas
+
+- `make prueba` (BIEN: esperado.txt, con las pruebas de `usuario/src/terminal.rs` en el PC), `make arranque-virt`,
+  `make arranque-virt-vm`, `make arranque-virt-linux` y `make arranque-virt-2`: BIEN.
+- Hostiles: `sin-maquina` pide el permiso a `sesiones` y no lo recibe, y no crea máquinas con ninguna de sus 1024
+  llaves; la inundación de la consola (arriba); la terminal con 200 000 bytes al azar (en el PC); el puerto de red no se
+  fía de los índices de la caja y tira las tramas con otra MAC de origen.
+
+### Qué falta
+
+- Varias vCPU (PSCI CPU_ON, una vCPU por hilo): no empezado. Hace falta en el kernel una vCPU por objeto (con su
+  VMPIDR, su página de mundo y su estado del GIC virtual) y sacar a una vCPU que corre desde otro núcleo.
+- Lo quitado de `SIN_PREGUNTAR` en el centro de control no se guarda: al reiniciar se da otra vez sin preguntar.
+- Retirar el permiso revoca la llave, pero las máquinas ya creadas siguen en marcha (el kernel solo mira el permiso al
+  crear).
+- En la Pi no hay `sesiones`: `inicio` da el permiso directamente a la caja.
+- La terminal no cambia de tamaño, no tiene historial hacia atrás, ni ratón, ni copiar y pegar; las letras que no tiene
+  Roboto Mono salen como "?". Cerrar la ventana no hace nada.
+- La red: sin prueba de un invitado que inunde la red o falsee su MAC (el servicio lo tira y lo cuenta, pero no se ha
+  probado desde Linux); sin DHCP en el invitado (dirección fija 10.0.2.16); el invitado no llega a DashOS mismo (solo
+  a la tarjeta).
+- `make arranque` (la imagen normal en `raspi4b`) ya no casaba con `pruebas/arranque.txt` antes de esta rama (las
+  llaves de `inicio` cambiaron con el plazo y el hipervisor).
+
+## 2026-11-12: Arch Linux ARM en la caja (rama `caja-linux-arch`)
+
+Rama `caja-linux-arch`, sacada de `fusion-fondo` (be30e2b), con todo lo de las cajas. El usuario preguntó si los paquetes
+de Arch Linux iban a funcionar: la caja de verdad lleva un Arch Linux ARM completo, no busybox. Sala limpia como antes:
+especificaciones (Arm PL031 TRM DDI 0224, la GPT de UEFI, el README de systemd con lo que pide al kernel); nada de código
+de Linux, KVM, QEMU, crosvm, Firecracker ni Xen. Kernels, imágenes y rootfs, fuera de git (`~/.cache/dashos-caja-linux`).
+
+### Resultado
+
+`make arranque-virt-arch`: DashOS arranca, el servicio de disco da a la caja la partición de la caja Linux del NVMe y
+la caja arranca dentro un Linux 6.18 que monta esa partición como raíz y ejecuta el systemd 261 de Arch Linux ARM.
+getty entra como root en hvc0 (la ventana de terminal del escritorio), la red sale por DHCP y `pacman -Sy` baja el
+índice de paquetes de los servidores de Arch Linux ARM. El guion lo apaga con `poweroff`: systemd para todo y apaga la
+máquina por PSCI. De la primera instrucción del invitado a `poweroff`, 49 s (con QEMU sin aceleración); root entra a
+los 16 s.
+
+```
+[nvme] particiones: GPT; DashOS, sectores 2048 a 16383
+[nvme] la caja Linux: sectores 16384 a 8386559 (4087 MB)
+[archivos] RedoxFS abierto: 7168 KB, 4084 KB libres
+[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+[caja-linux] linux: Image de 7288 KB en 0x40000000, initramfs de 0 KB, árbol de 2058 bytes en 0x4fe00000, 256 MB de RAM, PL011, PL031, virtio-console, virtio-blk de 4185088 KB y virtio-net por el servicio de red; arranca
+[caja-linux] linux: [    0.701815] rtc-pl031 9010000.rtc: setting system clock to 2026-11-12T18:44:21 UTC (1794509061)
+[caja-linux] linux: [    0.872244] EXT4-fs (vda): mounted filesystem a60c4dff-... r/w with ordered data mode.
+[caja-linux] linux: [    0.902033] Run /sbin/init as init process
+[caja-linux] linux: [    1.915844] systemd[1]: systemd 261.2-1-arch running in system mode (+PAM +AUDIT ...)
+[caja-linux] linux: Welcome to Arch Linux ARM!
+[caja-linux] linux: Arch Linux ARM 6.18.63-caja (hvc0)
+[caja-linux] linux: caja login: root (automatic login)
+[caja-linux] linux: [root@caja ~]# uname -a
+[caja-linux] linux: Linux caja 6.18.63-caja #2 SMP Thu Nov 12 19:34:13 CET 2026 aarch64 GNU/Linux
+[caja-linux] linux: [root@caja ~]# systemctl is-system-running --wait
+[caja-linux] linux: running
+[caja-linux] linux: [root@caja ~]# ip -4 addr show eth0
+[caja-linux] linux:     inet 10.0.2.16/24 metric 1024 brd 10.0.2.255 scope global dynamic eth0
+[caja-linux] linux: [root@caja ~]# date
+[caja-linux] linux: Thu Nov 12 18:54:43 UTC 2026
+[caja-linux] linux: [root@caja ~]# pacman -Sy --noconfirm
+[caja-linux] linux: :: Synchronizing package databases...
+[caja-linux] linux: [root@caja ~]# ls /var/lib/pacman/sync
+[caja-linux] linux: alarm.db  aur.db  core.db  extra.db
+[caja-linux] linux: se para la máquina a los 48885 ms: Linux apagó la máquina por PSCI
+[caja-linux] linux: 42988 salidas: 29618 a aparatos (0 abortos), 7 PSCI, 3175 WFI (25326 ms dormido), 10184 por el reloj, 4 registros; 2963 interrupciones inyectadas
+[caja-linux] red: 485 tramas del invitado a la red, 8038 de la red al invitado; 0 perdidas sin sitio, 0 malas del servicio
+[caja-linux] arch: disco: 2679 lecturas (98303 KB), 1399 escrituras (71940 KB), 52 vaciados, 0 errores
+[caja-linux] arch: 495 líneas por la consola; systemd de Arch Linux ARM: sí, root entra en hvc0: sí, su shell: sí: bien
+```
+
+La captura de la terminal queda en `capturas-agente/caja-linux-arch.png` (fuera de git).
+
+### Lo elegido y por qué
+
+- **La imagen.** El rootfs oficial, `ArchLinuxARM-aarch64-latest.tar.gz` (790 MB, del 2026-08-05), de
+  os.archlinuxarm.org. Se comprueba su MD5 y su firma: la hizo la clave de compilación de Arch Linux ARM, cuya huella
+  (68B3537F39A313B3E574D06777193F152BDBE6A6) es la que publica archlinuxarm.org; la clave pública sale del propio
+  rootfs, así que lo que cuenta es que la huella case. `tools/caja_linux_invitado.py preparar-arch` lo baja, lo
+  comprueba y hace el disco sin root: reescribe el tar con Python (`tarfile`, conserva dueños, permisos y los atributos
+  `security.capability`) y `mke2fs -d fichero.tar` hace el ext4 desde él (e2fsprogs 1.47.1 o más; el `mke2fs` del SDK de
+  Android, si va antes en el PATH, no sabe leer un tar: se usa el de `/usr/bin`). Lo cambiado en el rootfs:
+  - `/etc/hostname` (caja) y `/etc/fstab` (la raíz, sin fsck);
+  - getty entra solo como root en hvc0 (`serial-getty@hvc0.service.d/autologin.conf`). La contraseña de root sigue
+    siendo la de serie de Arch Linux ARM ("root");
+  - apagados (máscara a `/dev/null`): `systemd-timesyncd` (iría a servidores de NTP de fuera; la hora la da el PL031),
+    `systemd-firstboot` (pediría idioma y contraseña por la consola), `sshd` y `sshdgenkeys` (genera sus claves en el
+    primer arranque, y nadie entra por SSH a la caja);
+  - `/etc/.updated` y `/var/.updated` con la fecha de `/usr`: sin ldconfig, hwdb ni catálogo en el primer arranque (el
+    rootfs ya los trae hechos).
+- **El kernel.** El de Arch (`linux-aarch64`, 7.1.6) es una Image de 42 MB que necesita sus módulos en un initramfs de
+  15 MB; la del defconfig (74 MB) ya no cabía en el paquete de arranque de DashOS. Así que es el propio: `Image-arch`,
+  tinyconfig con lo de `Image-caja` y lo que pide systemd en su README (cgroups v2 con memoria, pids, cpu y BPF;
+  devtmpfs, inotify, signalfd, timerfd, epoll, fhandle, autofs, espacios de nombres, seccomp, ACL y xattr de tmpfs y
+  ext4), lo que piden glibc y pacman (flock, AIO, io_uring, rseq, membarrier, SysV IPC) e IPv6, PL031 y Landlock: pacman 7
+  baja los paquetes en un sandbox con Landlock y sin él falla ("restricting filesystem access failed because Landlock
+  is not supported by the kernel"). 7 MB, sin módulos. `tools/caja_linux_invitado.py probar-arch` lo arranca con el
+  disco en `qemu-system-aarch64 -M virt` con el DTB y la carga del crate (como `probar`): así se ajustó, en minutos,
+  antes de llevarlo a DashOS.
+- **El disco grande.** Una partición del NVMe de DashOS, no un segundo disco: es como quedaría un DashOS instalado con
+  su caja Linux, y el servicio de disco ya sabe dar tramos (A13, A14). `dashos::particiones` conoce un tipo nuevo de
+  GPT, el de la caja Linux (d0a18dbf-bbf4-4b0e-8627-ce5006b50018, el de DashOS con el último byte en 0x18), y el
+  servicio de disco se lo da a "caja-linux" como si fuera su disco entero. Nunca una partición de Linux cualquiera: en un
+  PC con otro sistema, la caja no debe ver el Linux de verdad del usuario. Dos de la caja son un error, como dos de
+  DashOS (con su prueba en `archivos/herramientas`). En la caja, `DiscoNvme` hace de `Bloques` del virtio-blk del crate:
+  abre su tramo, proyecta la ventana de 128 KB y pide lecturas y escrituras de 64 KB como mucho (y "vaciar" en cada
+  FLUSH), con la vCPU parada mientras tanto. El crate copia ahora en trozos de 64 KB (antes 4 KB: cada trozo es una
+  petición al servicio). El disco es de 4 GB: la partición de DashOS (MB 1 a 8, con el RedoxFS de las pruebas, que
+  `poner-dashos` copia antes de cada prueba) y la de la caja (el resto, 4087 MB). QEMU lo usa con `snapshot=on`: nada de
+  lo que escriben DashOS o Arch se queda.
+- **La hora.** Un PL031 en el crate (`caja-linux/vmm/src/pl031.rs`, con pruebas): cuenta la hora de DashOS
+  (`hora_ns`, la del PL031 de `virt`) más un desfase que cambia si el invitado carga el contador; la alarma, con su
+  interrupción. Va en el árbol (`rtc@9010000`, SPI 2) en los dos invitados.
+- **La red.** DHCP en el invitado: `systemd-networkd` de Arch ya lo pide en `eth*`. Funciona por el puente de tramas
+  sin cambios: la petición sale por la tarjeta con la MAC del invitado y el servidor DHCP de QEMU contesta a esa MAC,
+  que el servicio de red manda al puerto. Le da la 10.0.2.16 (DashOS tiene la 15) y el DNS de QEMU. `pacman -Sy` baja
+  core, extra, alarm y aur (unos 21 MB) por HTTP: 8038 tramas hacia el invitado, ninguna perdida.
+- **La memoria.** 256 MB para el invitado, con `MEMORIA=3G` en QEMU. Con `-m 4G` (y `highmem` encendido sin ECAM ni
+  MMIO altos) DashOS sigue viendo 3072 MB: su mapa lineal acaba en los 4 GB de direcciones físicas y la RAM de `virt`
+  empieza en el GB 1, así que nunca llega a los "4 GB o más" de la decisión del usuario (512 MB). Arch con systemd va
+  bien con 256 MB.
+
+### Lo que hubo que arreglar por el camino
+
+- **El orden de las llaves de la caja.** `inicio` da los canales en el orden en que se nombran por primera vez en su
+  lista, no en el de la lista de cada programa. "disco" lo nombra antes el servicio de disco, así que va antes que
+  "sesiones": la caja mandaba la petición del permiso al servicio de disco y `sesiones` no la veía (el primer intento
+  acabó en "sesiones no le da el permiso (-5)"). `llaves()` lo sabe ahora: ventanas, disco, sesiones, red.
+- **Sin partición de DashOS** (el primer disco solo tenía la de la caja), `archivos` acaba en el acto, `inicio` lo
+  relanza tres veces y `sesiones`, que lo espera cada vez, no contesta en un minuto: tampoco llegaba el permiso. Con la
+  partición de DashOS en el disco, todo va como en `arranque-virt`.
+- **Las cadenas de control.** systemd manda a la consola OSC 3008 (contexto de cada sesión) y una DCS XTGETTCAP
+  (`ESC P + q ...`). La terminal (`usuario/src/terminal.rs`) y el registro de la caja se saltan ahora OSC, DCS, SOS, PM y
+  APC enteras (con prueba). Antes salía "+q6E616D65" en la pantalla.
+- **El clic del guion.** En esta imagen, Ajustes y las ventanas de prueba salen encima de la terminal; un clic en su
+  centro daba el teclado a otra. El guion de Arch hace clic abajo a la izquierda de la ventana.
+
+### Pruebas
+
+- `make arranque-virt-arch` (nueva): BIEN, con `kernel/pruebas/arranque_virt_arch.txt` (las particiones, la partición
+  de la caja abierta, el PL031, ext4 montado, systemd, getty, uname, `running`, la dirección por DHCP, la hora,
+  `pacman -Sy` y el apagado por PSCI).
+- `cargo test` en `caja-linux/vmm`: 5 pruebas nuevas del PL031 y el `rtc@9010000` del árbol. `archivos/herramientas`:
+  `gpt_caja_linux` (la partición de la caja sola, con la de DashOS, una de Linux cualquiera que no cuenta, y dos).
+  `usuario/src/terminal.rs`: `cadenas_de_control`.
+- `make prueba` (BIEN: esperado.txt y BIEN: cargador hunk), `make arranque-virt`, `make arranque-virt-vm`,
+  `make arranque-virt-linux` y `make arranque-virt-2`: BIEN como estaban, seguidos y con el PC cargado por otras
+  sesiones.
+
+### Qué falta
+
+- **Instalar paquetes**: solo se probó `pacman -Sy` (el índice). Para `pacman -S` hace falta antes `pacman-key --init` y
+  `pacman-key --populate archlinuxarm` (las claves de los paquetes), sin probar en la caja. Y `pacman -Syu` actualizaría
+  `linux-aarch64`, que aquí no arranca: habría que ponerlo en `IgnorePkg` o quitarlo del disco.
+- **512 MB para el invitado**: con QEMU `virt` no se llega (arriba). Hace falta que el kernel de DashOS use la RAM por
+  encima de los 4 GB de direcciones físicas.
+- **Que lo escrito se quede**: la prueba usa el disco con `snapshot=on`. Falta una prueba de dos arranques seguidos en
+  los que Arch vea lo que escribió en el primero.
+- **El disco va de una en una**: cada petición del invitado para la vCPU hasta que el servicio de disco contesta. Con
+  varias vCPU (no hechas) haría falta un hilo de E/S y el anillo del servicio de disco (U6l), que ya existe.
+- **La entrada como root sin contraseña** en la terminal de la caja: decisión para el usuario (¿un usuario normal con
+  `sudo`, o pedir contraseña?).
+- La Pi 4: no tiene servicio de disco NVMe; ni probado.
+
+### Decisiones para el usuario
+
+1. ¿La terminal de la caja entra sola como root (como ahora), como un usuario normal, o pide contraseña?
+2. ¿Se quita `linux-aarch64` (y sus 57 MB de Image, initramfs y módulos) del disco de la caja, ya que la caja usa su
+   propio kernel?
+
+## 2026-11-12: varias vCPU (rama `caja-linux-vcpu`)
+
+Rama `caja-linux-vcpu`, sacada de `fusion-fondo` (be30e2b), con todo lo de las cajas. Sala limpia: especificaciones de
+Arm (GICv2 IHI 0048B, cap. 4 y 5; PSCI DEN 0022, CPU_ON, CPU_OFF y AFFINITY_INFO; el Arm ARM para HCR_EL2.FB, las
+TLB y VMPIDR_EL2). Nada de código de Linux, KVM, QEMU, crosvm, Firecracker ni Xen.
+
+### Resultado
+
+`make arranque-virt-linux`: el invitado tiene 4 vCPU, Linux las enciende por PSCI y las usa todas.
+
+```
+[caja-linux] linux: [    0.137281] CPU1: Booted secondary processor 0x0000000001 [0x410fd083]
+[caja-linux] linux: [    0.142137] CPU2: Booted secondary processor 0x0000000002 [0x410fd083]
+[caja-linux] linux: [    0.145041] CPU3: Booted secondary processor 0x0000000003 [0x410fd083]
+[caja-linux] linux: [    0.145854] smp: Brought up 1 node, 4 CPUs
+[caja-linux] linux: caja-linux: cpus 4, nproc 4, en línea 0-3
+[caja-linux] linux: caja-linux: paralelo 4 trabajos: seguidos 1.18 s, a la vez 0.35 s
+[caja-linux] linux: caja-linux: irq IPI0:        29         29         26         32       Rescheduling interrupts
+[caja-linux] linux: caja-linux: irq IPI1:       631        120         88        624       Function call interrupts
+[caja-linux] linux: se para la máquina a los 145703 ms: Linux apagó la máquina por PSCI
+[caja-linux] linux: 134901 salidas: 99081 a aparatos (0 abortos), 10 PSCI, 17056 WFI (563047 ms dormido), 18738 por el reloj u otra vCPU, 16 registros; 14682 interrupciones inyectadas, 12207 patadas entre vCPU
+[caja-linux] linux: hilos de las 4 vCPU unidos al acabar: 4
+```
+
+Los 563 s dormidos en 146 s de máquina son las 4 vCPU paradas en WFI casi todo el rato (la shell espera teclas): los
+hilos duermen en el kernel, no giran.
+
+### El kernel
+
+- **La vCPU, objeto aparte** (`base/hiper.rs`). Lo que era una `Vcpu` con todo se parte en dos:
+  - `Espacio`: la etapa 2 (sus tablas sobre los objetos de memoria), el VMID, la GICV proyectada y lo cobrado. Lo
+    comparten todas las vCPU de una máquina (`Arc`) y se suelta con la última (entonces OLVIDAR y se libera el VMID).
+    `anadir` y `proyectar_gicv` van con su cerrojo y valen con las vCPU en marcha: solo se añaden entradas que no
+    había (una tabla nueva se enlaza ya a cero, tras una barrera).
+  - `Vcpu`: su mundo (una página), su MPIDR (Aff0 = su número, de 0 a 7: lo que direcciona el GICv2), su GIC virtual
+    (LR, VMCR, APR), su temporizador virtual (en el mundo) y su FPU. `reiniciar` la deja como recién encendida por
+    CPU_ON: en su entrada, con x0 = el contexto, EL1h con DAIF enmascarado, la MMU apagada, los registros de EL1 a cero
+    y sin FPU propia.
+- **Dos vCPU de la misma máquina en el mismo núcleo** comparten etiquetas en la TLB (mismo VMID). Cada núcleo apunta la
+  última vCPU que corrió en él; si ahora corre otra de la misma máquina, EL2 hace `tlbi vmalls12e1` local antes de
+  entrar (una palabra nueva en el mundo, `C_LIMPIAR`). Lo que invalida el invitado ya va a todos los núcleos
+  (HCR_EL2.FB).
+- **Llaves** (`maquinas.rs`). Cada llave de máquina es una vCPU: `maquina_crear` da la 0 y `maquina_estado` 4 da las
+  demás (número, entrada, x0), con la memoria y la etapa 2 compartidas. `Comun` (la parte de la máquina) lleva si está
+  muerta y la lista de vCPU vivas para sacarlas a todas. Un fallo de una vCPU mata la máquina entera.
+- **Sacar a una vCPU que corre en otro núcleo** (`Patada`). Patear (`maquina_estado` 6) pone "sal en cuanto puedas" y
+  mira en qué núcleo está dentro del invitado; si está, le manda la SGI 2 (`gic::SGI_VCPU`, nueva: el kernel solo la
+  termina), que la saca por IMO. Si duerme en un WFI, la despierta. La vCPU, antes de entrar, apunta su núcleo y luego
+  mira la petición (con orden total, `SeqCst`): o ve la petición y no entra, o el que patea ve su núcleo; y como las
+  interrupciones del kernel están enmascaradas desde ahí hasta el `eret`, una SGI que llegue en medio queda pendiente y
+  la saca nada más entrar. Parar (`maquina_estado` 7) marca la máquina muerta y patea a todas.
+- **Un WFI que espera de verdad**: con `ESPERAR_WFI` en el bloque de interrupciones, un WFI sin nada pendiente en los
+  registros de lista duerme el hilo en el kernel (`bloquear_soltando_hasta`, sin el cerrojo de la vCPU) hasta el plazo
+  de su temporizador virtual (si su distribuidor lo deja pasar), una patada o 100 ms. Si venció el temporizador, entra
+  otra vez sin pasar por el servicio (lo inyecta el kernel con su bit HW). El informe crece a 13 palabras: lo que
+  durmió.
+
+### El servicio
+
+- `Caja` es ahora de todas las vCPU: la máquina del crate (aparatos y distribuidor), PSCI, las llaves, las cuentas y
+  cómo acabó, dentro de un cerrojo (`Compartida`, con el `hilos::Cerrojo` de futex). Cada vCPU corre en su hilo
+  (`Sistema::correr_vcpu`; la 0 en el del servicio), con lo suyo aparte (`VcpuCaja`: su bloque de interrupciones y qué
+  hay en cada registro de lista).
+- PSCI: CPU_ON apunta la entrada y el contexto y despierta el hilo de esa vCPU, que la reinicia y la corre; CPU_OFF
+  devuelve sus registros de lista al distribuidor y el hilo se queda esperando otro CPU_ON; AFFINITY_INFO, del crate.
+  Una CPU_ON a una vCPU que no existe da INVALID_PARAMETERS; dos veces, ALREADY_ON u ON_PENDING. Si se apagan todas, la
+  máquina acaba.
+- Las SGI entre vCPU y las SPI dirigidas: tras cada escritura en un aparato o en el distribuidor (GICD_SGIR,
+  ITARGETSR...) y tras sondear los aparatos, se mira qué otras vCPU tienen algo nuevo y se patean (una vez: hasta que
+  llenan sus registros de lista no se las vuelve a patear). Las teclas y las tramas de la red patean a la vCPU 0, que
+  sondea los aparatos.
+- El árbol de dispositivos con 4 CPU (`enable-method = "psci"`) y el distribuidor para 4.
+- Al acabar (SYSTEM_OFF, un fallo, el plazo), se para la máquina, los hilos de las vCPU salen y se unen
+  (`hilos::unir`): ninguno se queda colgando, y sus pilas vuelven al montón.
+
+### Pruebas nuevas
+
+En `arranque-virt-vm` (y `arranque-virt-linux`), `usuario/invitados/smp.s`, dos vCPU sin sistema:
+
+- **PSCI y SGI**: CPU_ON a una vCPU que no existe (rechazada), a la 1 y otra vez a la 1 (rechazada), AFFINITY_INFO,
+  y cien idas y vueltas de SGI (la 0 manda la SGI 1, la 1 contesta con la 2).
+- **Hostil, tormenta de SGI**: la 1 manda la SGI 3 a la 0 sin parar mientras la 0 trabaja; la 0 acaba con HVC y la
+  máquina se para con la tormenta dentro. Los dos hilos se unen y la vCPU 1 ya no entra (`E_CERRADO`).
+- **Hostil, una vCPU en bucle**: la 1 en un bucle sin fin con todo enmascarado; la 0 trabaja lo mismo que sola y apaga
+  la máquina por SYSTEM_OFF con la 1 dentro.
+- `maquina_vcpu` con un número que ya está o fuera de rango: `E_ARGUMENTO`.
+
+```
+[caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU: 212 µs de media
+[caja-linux] hostil (tormenta de SGI): 6841 recibidas mientras trabaja (el trabajo, 3946 µs sola y 440593 µs con la tormenta); 364 patadas; se para con la tormenta dentro, 2 hilos unidos: bien
+[caja-linux] hostil (una vCPU en bucle): la otra trabaja (3992 µs sola, 4133 µs con ella en bucle) y apaga la máquina con ella dentro; 2 hilos unidos: bien
+```
+
+En Linux, el `/init` (`tools/caja_linux_invitado.py`) dice ahora `nproc` y las CPU en línea, y con `caja.paralelo` en
+la línea de órdenes (la caja lo pone) corre un bucle de la shell (20 000 vueltas) cuatro veces seguidas y cuatro a la
+vez, con lo que tarda cada tanda por el reloj del invitado. `arranque_virt_linux.txt` solo pide `cpus 4`, que vale
+también con el initramfs de antes; para ver el trabajo en paralelo hay que rehacerlo
+(`DASHOS_CAJA_LINUX_CACHE=... tools/caja_linux_invitado.py`, función `initramfs`; yo usé
+`~/.cache/dashos-caja-linux-vcpu`, para no pisar el de la rama de Arch).
+
+### Medidas
+
+QEMU `virt`, TCG, 4 núcleos, con el PC compartido con otras sesiones. Orientativas: en la Pi serán otras.
+
+| Medida | Valor |
+|---|---|
+| Ida y vuelta de una SGI entre dos vCPU (la 0 a la 1 y la 1 a la 0), 100 veces | 209 a 242 µs con el PC tranquilo (carga 3 a 4, cinco tandas); 1,2 ms en una tanda; 5,2 y 6,3 ms con carga 6 a 7 |
+| De una patada a que el hilo de la vCPU dormida en un WFI vuelve a correr (medido en el kernel, una tanda) | 10 µs de media, 48 µs como mucho, 200 patadas |
+| Linux: el mismo trabajo 4 veces seguidas y 4 a la vez, con 4 vCPU | 1,18 s y 0,35 s (3,4 veces); 1,2 s y 0,33 s (3,6 veces) |
+| La 0 trabaja sola o con la 1 en un bucle sin fin con todo enmascarado | 3,9 a 4,2 ms en los dos casos |
+| La 0 trabaja sola o bajo una tormenta de SGI de la 1 | 4 ms sola; 0,44 a 0,97 s con la tormenta (unos 65 µs por SGI recibida) |
+| Linux, hasta apagar (con la terminal y el guion) | unos 146 s, como con una vCPU; los 4 hilos, casi todo el rato dormidos en WFI |
+
+Cada SGI cuesta varias salidas: la escritura en GICD_SGIR de quien la manda, la patada a la otra, su vuelta para
+llenar los registros de lista y la interrupción de mantenimiento cuando la termina. Por eso una tormenta frena mucho a
+la vCPU que la recibe, aunque no la para ni a ella ni al sistema.
+
+### Pruebas
+
+- `make prueba` (BIEN: esperado.txt y el cargador hunk), `make arranque-virt`, `make arranque-virt-2`,
+  `make arranque-virt-vm` y `make arranque-virt-linux` (con el initramfs compartido de siempre y con el nuevo): BIEN.
+
+### Qué falta
+
+- Una tormenta de SGI frena a la vCPU que la recibe de 100 a 240 veces (unos 65 µs por SGI). Se podría quitar la interrupción
+  de mantenimiento de las SGI (mirar sus LR solo en la siguiente salida) o entregar varias fuentes de una vez.
+- El servicio lleva todo el distribuidor y los aparatos bajo un solo cerrojo: con muchas salidas a aparatos desde
+  varias vCPU a la vez, se esperan unas a otras. Para la consola temprana y virtio no se ha notado.
+- CPU_SUSPEND contesta en el acto (no espera como un WFI); Linux no lo usa con este árbol (sin estados de reposo).
+- `maquina_memoria` y la GICV con vCPU corriendo están hechas para no necesitar vaciar las TLB, pero no hay una prueba
+  que añada memoria con el invitado en marcha.
+- La FPU de cada vCPU (528 bytes) sigue sin cobrarse al grupo; ahora es una por vCPU.
+- La Pi 4: nada de esto se ha probado en hardware (la SGI 2 y el vaciado de la TLB son los mismos en el GIC-400).
+- El número de vCPU del invitado es fijo (4); habría que sacarlo de los núcleos de la máquina (como la memoria) y
+  dejar que lo elija el usuario.

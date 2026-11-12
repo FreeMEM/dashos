@@ -178,10 +178,10 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 42 | `esperar` | `x0` palabra de 32 bits (alineada a 4), `x1` valor, `x2` plazo en µs (0: sin plazo) | 0 si lo despertaron; 1 si la palabra no valía eso (no duerme); `E_PLAZO`; `E_ARGUMENTO` si la palabra no es memoria normal que pueda leer |
 | 43 | `despertar` | `x0` palabra, `x1` cuántos como mucho | Cuántos despertó |
 | 44 | `proceso_salir` | `x0` código | No vuelve: acaba el proceso entero, con todos sus hilos |
-| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada, `x4` el x0 del invitado | Llave de la máquina virtual (H9). `E_NO_HAY` sin hipervisor |
-| 46 | `maquina_correr` | `x0` máquina (con escribir), `x1` informe (96 bytes), `x2` respuesta a una lectura pendiente, `x3` bloque de interrupciones (80 bytes) o 0 | El motivo de la salida (1 a 7); el informe, en `x1`; el bloque, al día |
-| 47 | `maquina_memoria` | `x0` máquina (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria. `E_ARGUMENTO` si pisa otra; `E_LIMITE` si la máquina está corriendo |
-| 48 | `maquina_estado` | `x0` máquina (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV), `x2` dirección de 33 u64 (0 y 1) o física del invitado (3) | 0 o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar, `E_NO_HAY` sin GIC virtual |
+| 45 | `maquina_crear` | `x0` permiso de máquinas virtuales (con escribir), `x1` llave de memoria (leer y escribir) con la RAM del invitado, `x2` dirección física del invitado donde empieza (alineada a 4 KB), `x3` entrada, `x4` el x0 del invitado | Llave de la vCPU 0 de una máquina virtual nueva (H9). `E_NO_HAY` sin hipervisor |
+| 46 | `maquina_correr` | `x0` vCPU (con escribir), `x1` informe (104 bytes), `x2` respuesta a una lectura pendiente, `x3` bloque de interrupciones (80 bytes) o 0 | El motivo de la salida (1 a 7); el informe, en `x1`; el bloque, al día. `E_CERRADO` con la máquina parada o muerta |
+| 47 | `maquina_memoria` | `x0` vCPU (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria (todas sus vCPU, aunque estén corriendo). `E_ARGUMENTO` si pisa otra |
+| 48 | `maquina_estado` | `x0` vCPU (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV, 4 otra vCPU, 5 reiniciarla, 6 patearla, 7 parar la máquina), `x2` dirección de 33 u64 (0 y 1), física del invitado (3), número de vCPU (4) o entrada (5), `x3` entrada (4) o x0 (5), `x4` x0 (4) | 0, la llave de la vCPU nueva (4) o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar o el número de vCPU no vale, `E_NO_HAY` sin GIC virtual |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -327,23 +327,29 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **45 a 48, máquinas virtuales** (caja Linux, H9; `kernel/src/maquinas.rs`, `base/hiper.rs`). Solo si el kernel
   arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. El kernel deja en EL2 un
   trozo pequeño que cambia de mundo, y sigue en EL1.
-  - `maquina_crear`: una vCPU en EL1, con la MMU y las interrupciones apagadas, que empieza en `x3` con `x4` en su x0
-    (el árbol de dispositivos de un kernel de Linux) y ve el objeto de memoria entero desde `x2` (hasta 4 GB de
-    direcciones del invitado). Se ve como el núcleo 0 (MPIDR 0x80000000). Con `maquina_memoria` ve más objetos, cada
+  - Cada llave de máquina es una vCPU. Las de una máquina comparten su memoria, la etapa 2 y el VMID; cada una tiene
+    su MPIDR, sus registros, su GIC virtual (LR, VMCR, APR), su temporizador virtual y su FPU, y se corre desde un
+    hilo, a la vez que las demás en otros núcleos. Si en un núcleo corre una vCPU distinta de la última que corrió ahí
+    de la misma máquina, EL2 vacía antes lo de ese VMID de la TLB de ese núcleo.
+  - `maquina_crear`: la vCPU 0 de una máquina nueva, en EL1, con la MMU y las interrupciones apagadas, que empieza en
+    `x3` con `x4` en su x0 (el árbol de dispositivos de un kernel de Linux) y ve el objeto de memoria entero desde `x2`
+    (hasta 4 GB de direcciones del invitado). Se ve como el núcleo 0 (MPIDR 0x80000000). Con `maquina_memoria` ve más objetos, cada
     uno desde su dirección (así pasa de los 16 MB de `memoria_crear`). La memoria se sigue pudiendo proyectar en el
     proceso (así se carga el invitado), pero el invitado la lee sin caché mientras tenga la MMU apagada: lo escrito
     después de crear la máquina puede no verlo. Ni memoria DMA ni una llave revocable (`E_ARGUMENTO`). Su vCPU y sus
     tablas de la etapa 2 se cobran al grupo (unas 4 páginas para 64 KB). Como mucho 255 máquinas a la vez
-    (`E_LIMITE`). Se para y se suelta al cerrar su última llave.
-  - `maquina_correr`: entra en el invitado hasta que sale. El informe son 12 u64 en little-endian: motivo, PC,
+    (`E_LIMITE`). Se para y se suelta al cerrar su última llave (la de su última vCPU).
+  - `maquina_correr`: entra en el invitado hasta que sale. El informe son 13 u64 en little-endian: motivo, PC,
     dirección, valor, tamaño, ESR, x1, x2, las cuentas del contador que pasó fuera del kernel, x3, el plazo del
-    temporizador virtual del invitado (CNTV_CVAL si está encendido y sin enmascarar; si no, todo unos) y señales
-    (bit 0: hay una interrupción pendiente en sus registros de lista: un WFI no tiene que esperar). Motivos:
+    temporizador virtual del invitado (CNTV_CVAL si está encendido y sin enmascarar; si no, todo unos), señales
+    (bit 0: hay una interrupción pendiente en sus registros de lista: un WFI no tiene que esperar) y los µs que durmió
+    en el kernel en sus WFI. Motivos:
     1 HVC (valor = x0, tamaño = el número del HVC, y x1, x2 y x3; el PC ya está en la siguiente); 2 lectura en una dirección que no es su memoria
     (dirección y tamaño; el `x2` de la siguiente llamada es lo que lee); 3 escritura ahí (dirección, valor y tamaño);
     4 WFI; 5 lo sacó una interrupción del anfitrión (el reloj lo hace cada tic: un invitado no se queda con el
-    núcleo); 6 una trampa o un fallo (ESR, PC y dirección): SMC, el temporizador físico, la depuración, la coma
-    flotante, un acceso que no se describe solo. Tras un 6 la máquina está muerta y `maquina_correr` da `E_CERRADO`.
+    núcleo) o una patada; 6 una trampa o un fallo (ESR, PC y dirección): SMC, el temporizador físico, la depuración, la coma
+    flotante, un acceso que no se describe solo. Tras un 6 la máquina entera está muerta (todas sus vCPU salen) y
+    `maquina_correr` da `E_CERRADO`.
     7: tocó un registro del sistema atrapado (depuración, contadores de rendimiento, el temporizador físico): dirección
     = su codificación (los bits de op0, op2, op1, CRn y CRm del ESR), x1 = 1 si lee (el `x2` de la siguiente llamada
     es lo que lee) o 0 si escribe (valor). Lo escrito nunca llega al registro de verdad.
@@ -351,7 +357,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
     El bloque de interrupciones (10 u64, con un GICv2 con extensiones de virtualización: el GIC-400 de la Pi 4, QEMU
     `virt` con `virtualization=on`): [0] cuántos registros de lista llena el servicio (lo pone el kernel: todos menos
     el último, que es del temporizador virtual; 0 sin GIC virtual), [1] cómo tiene el invitado la PPI 27 en su
-    distribuidor (lo pone el servicio: bit 0 habilitada, [15:8] prioridad, bit 16 grupo 1) y desde [2] hasta 8
+    distribuidor (lo pone el servicio: bit 0 habilitada, [15:8] prioridad, bit 16 grupo 1; bit 17, `ESPERAR_WFI`: un
+    WFI sin nada pendiente duerme el hilo en el kernel hasta el plazo del temporizador del invitado, y entonces vuelve
+    a entrar sin pasar por el servicio, hasta una patada o como mucho 100 ms) y desde [2] hasta 8
     registros de lista (GICH_LRn): los pone el servicio y vuelven como los dejó el invitado. El kernel quita el bit
     HW y los bits reservados, y deja a 0 uno sin estado. El temporizador virtual lo inyecta el kernel en su LR, con
     HW y la PPI 27 física activa mientras está ahí: el EOI del invitado la desactiva. Con un LR con el bit EOI, la
@@ -361,7 +369,14 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - `maquina_estado`: con la vCPU parada. 0 y 1 leen y escriben x0..x30, PC y PSTATE (de PSTATE, NZCV, DAIF y el
     modo, que tiene que ser EL0t, EL1t o EL1h de AArch64; si no, EL1h). 2 cambia el último acceso a un aparato por un
     aborto externo síncrono de datos en el vector de EL1 del invitado (ESR_EL1 con DFSC 0x10, FAR_EL1, ELR_EL1,
-    SPSR_EL1). 3 proyecta la GICV (8 KB, como aparato) en esa dirección del invitado, sin pisar su memoria.
+    SPSR_EL1). 3 proyecta la GICV (8 KB, como aparato) en esa dirección del invitado, sin pisar su memoria (una vez
+    para todas sus vCPU: cada núcleo ve ahí su interfaz virtual). 4 da otra vCPU de la misma máquina: número `x2`
+    (su Aff0, menos de 8 y sin otra con ese número), que empieza en `x3` con `x4` en su x0. 5 deja la vCPU parada como
+    recién encendida (PSCI CPU_ON): en `x2`, con `x3` en x0, EL1h con DAIF enmascarado, la MMU apagada, los registros
+    de EL1, el temporizador y el GIC virtual a cero y sin FPU propia. 6 la patea: si corre en otro núcleo, una SGI
+    (la 2) a ese núcleo la saca; si duerme en un WFI, la despierta; si no, la próxima vez vuelve sin entrar (motivo 5).
+    7 para la máquina entera: todas sus vCPU salen y ya no entran (`E_CERRADO`). 6 y 7, desde cualquier hilo y con la
+    vCPU corriendo.
 
 ### Errores
 
@@ -438,7 +453,7 @@ Tipos de objeto:
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 | Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
-| Máquina virtual | `maquina_crear` | Correrla y darle más memoria (escribir); se para al cerrarla |
+| vCPU de una máquina virtual | `maquina_crear` (la 0), `maquina_estado` 4 (las demás) | Correrla, darle más memoria a su máquina, patearla, pararla (escribir); la máquina se para al cerrar su última vCPU |
 
 ## Biblioteca de usuario en Rust
 
