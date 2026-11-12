@@ -691,3 +691,117 @@ la vCPU que la recibe, aunque no la para ni a ella ni al sistema.
 - La Pi 4: nada de esto se ha probado en hardware (la SGI 2 y el vaciado de la TLB son los mismos en el GIC-400).
 - El número de vCPU del invitado es fijo (4); habría que sacarlo de los núcleos de la máquina (como la memoria) y
   dejar que lo elija el usuario.
+
+## 2026-11-12: ventanas de Linux en el escritorio de DashOS (rama `caja-linux-wayland`)
+
+Rama `caja-linux-wayland`, sacada de `revision` (1e899c4), con `revision` fusionada después (las 4 vCPU, 69fb1ac). El
+hito H9 pedía también "ventanas por un intermediario de Wayland": que un programa gráfico de Linux salga como ventana
+del escritorio de DashOS. Sala limpia: la especificación de virtio 1.2 (§5.10, vsock) y los XML de Wayland; nada de
+código de Linux, QEMU, crosvm (ni su sommelier ni virtio-wl), Firecracker ni Xen.
+
+### Resultado
+
+`make arranque-virt-wayland`: Arch Linux ARM arranca en la caja como en `arranque-virt-arch`; el puente de Wayland
+(un servicio de systemd) conecta con DashOS por vsock; un programa de Linux con libwayland (`ventana_wayland`) abre su
+ventana, que sale en el escritorio de DashOS con lo que pinta, y le llegan un clic y una tecla. Después, foot (una
+terminal de Wayland de verdad, de los paquetes de Arch Linux ARM) abre la suya y lo que se teclea en ella llega a su
+shell.
+
+```
+[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
+[caja-linux] linux: [  OK  ] Started Puente de Wayland de DashO…en el escritorio de DashOS (vsock).
+[caja-linux] wayland: el puente de Linux conecta por vsock (transporte 1)
+[caja-linux] linux: ventana_wayland: conectada a /run/wayland-0
+[compositor] ventana de caja-linux (un programa de su puente de Wayland) en (168, 208)
+[caja-linux] linux: ventana_wayland: mapa de teclado xkb de 73092 bytes
+[caja-linux] linux: ventana_wayland: primer cuadro en pantalla a los 50 ms
+[caja-linux] linux: ventana_wayland: tengo el teclado
+[caja-linux] linux: ventana_wayland: clic del botón 272 en (160, 120)
+[caja-linux] linux: ventana_wayland: tecla 30 pulsada
+[caja-linux] linux: ventana_wayland: en marcha: 333 cuadros en 5101 ms, 65.2 por segundo
+```
+
+Capturas (fuera de git): `capturas-agente/caja-linux-wayland.png` (la ventana de `ventana_wayland` encima de la
+terminal de la caja, con el cuadrado amarillo del clic y el color cambiado por la tecla; la barra de DashOS dice su
+título, "Hola desde Linux") y `capturas-agente/caja-linux-wayland-foot.png` (foot).
+
+### Cómo va
+
+```
+programa de Linux ──libwayland──▶ puente (Arch, /run/wayland-0) ──vsock──▶ aparato vsock (caja) ──▶ puente_caja
+      ▲  memfd de wl_shm                 │ copia lo dañado                                   │ subconexiones
+      └──────────── eventos ◀────────────┴──────────────── canal de respuesta ◀──────── compositor de DashOS
+```
+
+- **El transporte: virtio-vsock** (`caja-linux/vmm/src/virtio/vsock.rs`). Es lo que la norma tiene para hablar con el
+  anfitrión sin red, Linux lo trae (`CONFIG_VIRTIO_VSOCKETS`, añadido a `Image-arch`) y el puente lo usa como un socket
+  de flujo cualquiera. El aparato: tres colas, cabecera de 44 bytes, solo flujo, solo conecta el invitado (CID 3) a
+  DashOS (CID 2), crédito como dice la norma (256 KB por conexión; el crédito liberado se anuncia cuando es mucho o
+  cuando el invitado ya casi no tiene, no tras cada paquete) y hasta 64 conexiones. Lo que el invitado manda sin
+  crédito, con un CID falso, un tipo que no es de flujo, un largo mayor que lo que trae o que 64 KB, o una orden que no
+  existe, corta su conexión (RST) o se tira y se cuenta; el aparato nunca pasa a DEVICE_NEEDS_RESET por eso. Va bajo el
+  cerrojo de la caja, como los demás aparatos: lo pueden tocar las 4 vCPU.
+- **Por qué copiar y no compartir la memoria.** Los búferes de `wl_shm` son `memfd` del programa, páginas sueltas de
+  la RAM del invitado, y el compositor lee un pool como un objeto de memoria de DashOS seguido. Para no copiar habría
+  que darle al compositor una vista de páginas sueltas de la RAM del invitado (un objeto de memoria hecho de trozos de
+  otro), que el kernel no tiene, y fiarse de un invitado que puede cambiar esas páginas mientras se componen. Así que
+  el puente de Linux (`puente/src/bin/puente.rs`, el de G1) sigue copiando en cada `commit` solo las filas dañadas
+  desde la última vez que mandó ese búfer, y la caja las escribe directamente en el objeto de memoria del pool, al
+  vuelo (sin juntar la trama entera): del anillo de vsock a la memoria del compositor hay una copia.
+- **El lado de DashOS** (`wayland/src/puente.rs`, sin `std`, con sus pruebas en el PC; y `usuario/src/puente_caja.rs`,
+  lo del sistema). Cada conexión de vsock al puerto 5000 es un `Puente`. Sus clientes de Wayland son **subconexiones**
+  del compositor: trozos nuevos (`canal::TROZO_SUB_CONECTAR`, `_DATOS`, `_ADIOS`) con el número del cliente delante,
+  por la llave "ventanas" de la caja. El compositor solo las admite de "caja-linux" (por el nombre que da `inicio`),
+  hasta 32 por marca, y cada una es un cliente aparte (su ventana, su teclado, sus errores) **sin ningún poder**: ve
+  los globales de un programa cualquiera, nunca las capas ni el bloqueo. Las respuestas vuelven todas por un canal de
+  la caja con el número delante; un hilo de la caja las lee y despierta a la vCPU 0 para que el aparato las pase al
+  invitado. Cada memoria del puente de Linux es un objeto de memoria de DashOS (hasta 16 MB cada uno, 256 y 24 MB en
+  total por transporte; `MARGEN_SERVICIO` sube a 56 MB) del que el compositor recibe una copia de solo lectura; las que
+  da el compositor (el mapa de teclado) se copian al invitado como memorias nuevas, y el puente de Linux las convierte
+  en `memfd`.
+- **Dentro de Arch** (`tools/caja_linux_invitado.py preparar-arch`): el puente, compilado en el PC para
+  `aarch64-unknown-linux-musl` (estático, 800 KB), en `/usr/local/bin`, con `dashos-puente.service` (systemd lo
+  arranca y lo relanza) y `WAYLAND_DISPLAY=/run/wayland-0` en `/etc/profile.d`. `ventana_wayland`
+  (`caja-linux/invitado/ventana_wayland.c`) se compila en el PC con clang contra el libwayland del paquete de Arch.
+  Los paquetes (wayland, foot, ttf-dejavu y lo que piden: 14) se bajan de los servidores de Arch Linux ARM en el PC,
+  con su suma (la de la base del repositorio) y su firma comprobadas con el anillo de claves que trae el rootfs, y se
+  meten en la imagen con su entrada en la base de pacman (`pacman -Q` los ve). Más rápido que `pacman -S` en QEMU sin
+  aceleración, y sin necesitar `pacman-key --init` en la prueba.
+
+### Lo que hubo que arreglar por el camino
+
+- **El portapapeles.** foot no arranca sin `wl_data_device_manager` ("no clipboard available"). El compositor lo
+  anuncia ahora (v3, número 14) con sus objetos, pero sin guardar selecciones ni mandar ofertas: copiar y pegar entre
+  programas sigue pendiente.
+- **Los pools enormes de foot.** foot desplaza el texto con un pool de 512 MB; el compositor no admite pools de más de
+  64 MB ni el puente memorias de más de 16 MB, así que el cliente moría con "tamaño de pool malo". En la imagen va
+  `/etc/xdg/foot/foot.ini` con `max-shm-pool-size-mb=0` (un búfer por cuadro, como cualquier programa).
+- **El guion** no sabía teclear "_" ni "&" con el teclado español.
+
+### Pruebas
+
+- `make arranque-virt-wayland` (nueva), con `kernel/pruebas/arranque_virt_wayland.txt`.
+- Hostiles:
+  - `cargo test` en `caja-linux/vmm` (ahora dentro de `make prueba`): `vsock_conexion`, `vsock_extremo_lento` y
+    `vsock_hostil` (CID falso, tipo de paquete, cabecera corta, largos falsos o absurdos, datos sin conexión, pasarse
+    del crédito, órdenes que no existen, conexiones repetidas y de más, búferes donde no cabe la cabecera; una conexión
+    buena funciona después), y vsock en `a_lo_loco`.
+  - `cargo test` en `wayland` (`puente::pruebas`): tramas a trozos de cualquier tamaño, compositor lleno, y hostiles:
+    memorias que no existen, escrituras fuera o que desbordan, tamaños de más, demasiadas memorias y clientes, números
+    de memoria que no existen en un mensaje (cierra ese cliente), basura del compositor y del transporte al azar.
+  - En DashOS, `puente --hostil vsock:5000` desde Arch: escrituras a memorias que no existen y fuera, memorias de 16
+    EB y 1 TB, 300 memorias de 1 MB (pasan 24), un cliente con números de memoria falsos, uno repetido, 90 clientes
+    (pasan 32), Wayland roto para el compositor (que lo corta: "error de protocolo de caja-linux: mensaje mal
+    formado"), y tres conexiones con tramas que no son tramas (tipo, 4 GB, de memoria sin número), que la caja corta.
+    Después el programa de verdad funciona.
+- `make prueba`, `arranque-virt`, `-vm`, `-linux`, `-arch` y `-2`: ver abajo.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
+
+| Medida | Valor |
+|---|---|
+| `ventana_wayland` (320 × 240, la ventana entera dañada en cada cuadro: 300 KB por cuadro por vsock) | 65 a 75 cuadros por segundo, unos 20 MB/s de búferes |
+| Del arranque del programa a su primer cuadro en pantalla | 50 ms |
+| El puente de Linux, en el PC con alacritty (G6) o el cliente de G1 | lo de `GRAFICOS_LOOP.md` |

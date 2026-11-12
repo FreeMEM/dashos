@@ -471,6 +471,10 @@ ARCH_FICHEROS.update({
     "./etc/profile.d/dashos-wayland.sh":
         "# La caja Linux de DashOS: los programas gráficos van al puente de Wayland (sus ventanas salen en DashOS).\n"
         "export WAYLAND_DISPLAY=/run/wayland-0\n",
+    # foot: sin el "pool" de 512 MB con que desplaza el texto (el compositor de DashOS no admite pools de más de 64 MB,
+    # ni el puente memorias de más de 16 MB): con 0, un búfer por cuadro, como cualquier programa.
+    "./etc/xdg/foot/foot.ini":
+        "# La caja Linux de DashOS.\n[main]\nfont=DejaVu Sans Mono:size=11\n\n[tweak]\nmax-shm-pool-size-mb=0\n",
 })
 # La prueba de foot (`make arranque-virt-wayland`): abre foot con una shell que dice por hvc0 (la terminal de la caja,
 # que va al registro de DashOS) que está lista y lo que se teclee en su ventana.
@@ -548,11 +552,16 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
             i.type, i.mode, i.mtime, i.uid, i.gid, i.uname, i.gname = tipo, modo, ahora, 0, 0, "root", "root"
             i.linkname, i.size = enlace, len(datos)
             sal.addfile(i, io.BytesIO(datos) if tipo == tarfile.REGTYPE else None)
+            nombres.add(nombre)
 
         nuevos = [n for n in ARCH_FICHEROS if n not in hecho]
-        carpetas = sorted({n.rsplit("/", 1)[0] for n in nuevos})
-        for c in carpetas:
-            if c not in nombres and c not in ("./etc", "./etc/systemd", "./etc/systemd/system"):
+        # Las carpetas que no traiga el rootfs, de arriba abajo.
+        carpetas = set()
+        for n in nuevos:
+            partes = n.split("/")
+            carpetas.update("/".join(partes[:k]) for k in range(2, len(partes)))
+        for c in sorted(carpetas, key=lambda c: c.count("/")):
+            if c not in nombres:
                 poner(c, tarfile.DIRTYPE, modo=0o755)
         for n in nuevos:
             poner(n, datos=ARCH_FICHEROS[n].encode())

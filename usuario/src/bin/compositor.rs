@@ -53,7 +53,7 @@ const FONDO: u32 = 0xff20_4060;
 
 /// Los globales de cada tipo de cliente, sin los `wl_output`: esos van uno por salida (multimonitor), con los
 /// números `GLOBAL_SALIDAS` (el 6, el de siempre, es la principal).
-static GLOBALES: [Global; 6] = [
+static GLOBALES: [Global; 7] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -62,9 +62,11 @@ static GLOBALES: [Global; 6] = [
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
     // hechos (C3). Los `wl_output` van aparte, uno por pantalla (multimonitor).
     Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    // El portapapeles (H9): por ahora solo los objetos, sin copiar ni pegar entre programas (ver `PORTAPAPELES`).
+    PORTAPAPELES,
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 9] = [
+static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -74,10 +76,11 @@ static GLOBALES_ESCRITORIO: [Global; 9] = [
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    PORTAPAPELES,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
-static GLOBALES_CAPAS: [Global; 7] = [
+static GLOBALES_CAPAS: [Global; 8] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -85,7 +88,13 @@ static GLOBALES_CAPAS: [Global; 7] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    PORTAPAPELES,
 ];
+/// `wl_data_device_manager` (v3): muchos programas de Linux no arrancan sin él (foot: "no clipboard available"). Sus
+/// objetos (`wl_data_source`, `wl_data_device`) se crean y se destruyen, pero el compositor aún no guarda ninguna
+/// selección ni manda ofertas: copiar y pegar entre programas está pendiente. El número 14: tras los de las salidas.
+const PORTAPAPELES: Global = Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 };
+
 /// Los números de los globales de las salidas: el 6 (el de siempre) para la principal y del 11 en adelante para las
 /// demás.
 const GLOBAL_SALIDAS: [u32; pp::MAX_CABEZAS] = [6, 11, 12, 13];

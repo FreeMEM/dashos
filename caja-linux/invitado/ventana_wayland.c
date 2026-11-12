@@ -208,7 +208,10 @@ int main(void) {
     if (fd < 0 || ftruncate(fd, 2 * tam) < 0) return 1;
     uint32_t *px = mmap(NULL, 2 * tam, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (px == MAP_FAILED) return 1;
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 2 * tam);
+    /* El pool empieza pequeño y crece después, como el de los cursores de libwayland-cursor: en DashOS un objeto de
+     * memoria no crece, y el puente tiene que pasar a otro sin que se note. */
+    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 4096);
+    wl_shm_pool_resize(pool, 2 * tam);
     for (int i = 0; i < 2; i++) {
         buferes[i] = wl_shm_pool_create_buffer(pool, i * tam, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
         pxs[i] = px + i * ANCHO * ALTO;
