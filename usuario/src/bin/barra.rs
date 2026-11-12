@@ -1242,6 +1242,7 @@ fn principal() -> u64 {
                     let nuevo = (h.primero as i32 + paso).clamp(0, max as i32) as usize;
                     if nuevo != h.primero {
                         h.primero = nuevo;
+                        println!("  [barra] historial: la rueda lo lleva a la fila {} de {}", nuevo + 1, h.avisos.len());
                         if avs.hist_listo {
                             pantalla_historial(&mut c, &mut avs.hoja_h, h, &b.tema, &mut fuente, &mut medio);
                         }

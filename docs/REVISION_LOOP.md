@@ -1414,3 +1414,13 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
 - Medida: `.rodata` del kernel 7,26 → 3,16 MB; el núcleo en Acerca de 7,6 → 3,7 MB; reservado al arrancar 18,4 → 14,5;
   en uso 92,8 → 84,8 MB (esta mañana, 160,8).
 - `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.
+
+### 2026-11-12 16:15: la rueda del ratón
+- El controlador USB ya pasaba la rueda (cuarto byte del informe, `hid.rs`), pero el compositor la tiraba: ahora
+  `Escena::rueda` la manda a quien tiene el puntero (no arrastrando una ventana) como `wl_pointer.axis` en el eje
+  vertical (15 por paso), con `axis_source` y `axis_discrete` (o `axis_value120` desde la versión 8) antes. En HID la
+  rueda hacia delante es positiva y en Wayland el eje crece hacia abajo: se cambia el signo.
+- Pruebas: en el PC, sin nada bajo el cursor no llega a nadie, llega a la ventana de debajo con el signo de Wayland y un
+  valor fuera de lo normal se queda en 127. En virt, el guion la gira sobre el historial de avisos (10): "la rueda lo
+  lleva a la fila 2, 3, 2, 1" (en el monitor de QEMU, `dz` negativo es hacia abajo).
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN.

@@ -1999,7 +1999,8 @@ mod entrada {
         let mut pantalla = vec![0u32; 300 * 300];
         escena.componer(&mut pantalla, 300, 300, 300, 0, &mut |_, _, _| {});
 
-        // El cursor empieza en (0, 0): fuera de todo. Entra en a por (50, 50).
+        // El cursor empieza en (0, 0): fuera de todo; la rueda ahí no llega a nadie. Entra en a por (50, 50).
+        assert!(escena.rueda(1).is_empty());
         assert_eq!(escena.raton(50, 50, 0), [(1, Entrada::Entra { superficie: 7, x: 10, y: 10 })]);
         assert_eq!(escena.raton(5, 0, 0), [(1, Entrada::Mueve { x: 15, y: 10 })]);
         // A (80, 80): b está encima.
@@ -2014,6 +2015,12 @@ mod entrada {
         // Pulsar sobre b: ya tenía el teclado; solo le llega el botón.
         assert_eq!(escena.raton(0, 0, 1), [(2, Entrada::Boton { boton: 0x110, pulsado: true })]);
         escena.raton(0, 0, 0);
+        // La rueda va a quien tiene el puntero, con el sentido de Wayland (hacia delante en HID es hacia arriba, negativo);
+        // sin girar, nada; un valor fuera de lo normal se queda en 127 pasos.
+        assert_eq!(escena.rueda(1), [(2, Entrada::Rueda { pasos: -1 })]);
+        assert_eq!(escena.rueda(-2), [(2, Entrada::Rueda { pasos: 2 })]);
+        assert!(escena.rueda(0).is_empty());
+        assert_eq!(escena.rueda(-128), [(2, Entrada::Rueda { pasos: 127 })]);
         // La a de un teclado HID (0x04) es la tecla 30; Mayúsculas, el modificador 1.
         assert_eq!(escena.tecla(0x04, true), [(2, Entrada::Tecla { codigo: 30, pulsada: true })]);
         assert_eq!(

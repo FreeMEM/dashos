@@ -2476,6 +2476,8 @@ pub enum Entrada {
     Mueve { x: i32, y: i32 },
     /// Un botón de evdev (`teclas::BOTONES`).
     Boton { boton: u32, pulsado: bool },
+    /// La rueda: pasos hacia abajo (positivo) o hacia arriba (negativo), como el eje vertical de `wl_pointer`.
+    Rueda { pasos: i32 },
     TecladoEntra { superficie: u32 },
     TecladoSale { superficie: u32 },
     /// Una tecla de evdev.
@@ -2644,6 +2646,21 @@ impl<M: Memorias> Escena<M> {
             }
         }
         self.botones = botones;
+        out
+    }
+
+    /// La rueda del ratón de arranque (el cuarto byte del informe: positivo, hacia arriba, como en HID). Va a quien
+    /// tiene el puntero, salvo arrastrando una ventana.
+    pub fn rueda(&mut self, hid: i32) -> Vec<(Cliente, Entrada)> {
+        let mut out = Vec::new();
+        if hid == 0 || self.arrastre.is_some() {
+            return out;
+        }
+        self.actividad();
+        if let Some((c, _)) = self.puntero {
+            // En Wayland el eje vertical crece hacia abajo; en HID, la rueda hacia delante (arriba) es positiva.
+            out.push((c, Entrada::Rueda { pasos: -hid.clamp(-127, 127) }));
+        }
         out
     }
 
@@ -2882,7 +2899,7 @@ pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms
             con.salida.empezar(xdg, xdg_surface::ev::CONFIGURE).uint(serie).fin();
             x.pedidos.push(serie);
         }
-        Entrada::Entra { .. } | Entrada::Sale { .. } | Entrada::Mueve { .. } | Entrada::Boton { .. } => {
+        Entrada::Entra { .. } | Entrada::Sale { .. } | Entrada::Mueve { .. } | Entrada::Boton { .. } | Entrada::Rueda { .. } => {
             let serie = con.serie_nueva();
             for &p in &cli.punteros {
                 match ev {
@@ -2893,6 +2910,20 @@ pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms
                     Entrada::Mueve { x, y } => con.salida.empezar(p, wl_pointer::ev::MOTION).uint(ms).uint(fixed(x)).uint(fixed(y)).fin(),
                     Entrada::Boton { boton, pulsado } => {
                         con.salida.empezar(p, wl_pointer::ev::BUTTON).uint(serie).uint(ms).uint(boton).uint(pulsado as u32).fin()
+                    }
+                    // Eje vertical (0), 15 por paso como libinput; desde la versión 5, antes la fuente (rueda, 0) y el
+                    // paso entero (hasta la 7; desde la 8, en 120 avos).
+                    Entrada::Rueda { pasos } => {
+                        let v = con.objetos.get(&p).map_or(1, |o| o.version);
+                        if v >= 5 {
+                            con.salida.empezar(p, wl_pointer::ev::AXIS_SOURCE).uint(0).fin();
+                            if v >= 8 {
+                                con.salida.empezar(p, wl_pointer::ev::AXIS_VALUE120).uint(0).int(pasos * 120).fin();
+                            } else {
+                                con.salida.empezar(p, wl_pointer::ev::AXIS_DISCRETE).uint(0).int(pasos).fin();
+                            }
+                        }
+                        con.salida.empezar(p, wl_pointer::ev::AXIS).uint(ms).uint(0).uint(fixed(pasos * 15)).fin()
                     }
                     _ => {}
                 }

@@ -771,12 +771,16 @@ fn principal() -> u64 {
                 println!("  [compositor] {} salidas del controlador gráfico: {}", total, lista.join(", "));
             }
         }
-        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y).
+        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y, rueda).
         if matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             let entrada = match (n, buf[0]) {
                 (8, 1) => escena.tecla(buf[1], buf[2] != 0),
-                (8, 2) => escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]),
+                (8, 2) => {
+                    let mut e = escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]);
+                    e.extend(escena.rueda(buf[4] as i8 as i32));
+                    e
+                }
                 _ => Vec::new(),
             };
             // Multimonitor: cuando el cursor pasa a otra salida, se dice (las pruebas lo miran).

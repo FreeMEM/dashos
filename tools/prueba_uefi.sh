@@ -662,6 +662,19 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_avisos[:-4] + ".hist.ppm")
                     time.sleep(0.5)
                 x, y = capa_hist[0]
+                # La rueda sobre la lista (a media altura del historial): dos pasos en un sentido y dos en el otro (el signo
+                # de `dz` en el monitor de QEMU no está claro): en algún momento la lista pasa por la fila 3.
+                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                px, py = int(x) + 150, int(y) + 200
+                pasos = []
+                while px > 0 or py > 0:
+                    dx, dy = min(px, 100), min(py, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    px, py = px - dx, py - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_move 0 0 -1", "mouse_move 0 0 -1", "mouse_move 0 0 1", "mouse_move 0 0 1", pausa=0.3)
+                time.sleep(0.5)
                 bx, by = borrar[-1]
                 clic_en(int(x) + int(bx), int(y) + int(by))
             elif avisos_paso == 7:

@@ -253,6 +253,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] aviso de avisa: "Copia terminada" (urgencia 1); campana con punto
 ~│   [barra] aviso cerrado: con un clic
 ~sin leer; de avisa, cambio, avisador; Borrar todo en
+# La rueda del ratón (USB, por el compositor como `wl_pointer.axis`) mueve la lista del historial.
+~│   [barra] historial: la rueda lo lleva a la fila 3 de
 ~│   [barra] borrar todo: 0, quedan 0
 ~│   [barra] historial cerrado
 ~│   [centro] Comprobar el disco: 0, 0 problemas
