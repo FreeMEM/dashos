@@ -34,6 +34,9 @@ QEMU=$!
 # Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
 # y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
+# U6, el cambio rápido de usuario: tras entrar Ana, en las dos pantallas de bloqueo siguientes, Esc y otra persona
+# (Carla, y luego otra vez Ana) con su contraseña. Con CAPTURA_CAMBIO=fichero.ppm, la primera de esas dos pantallas
+# (fichero.ppm) y la de "Cambiar de usuario" con el nombre ya puesto (fichero.nombre.ppm).
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
 import os, socket, sys, time
@@ -89,6 +92,7 @@ espera_carpeta = 0
 centro = 0
 panel = 0
 bloqueo_capturado = False
+cambio = 0
 
 while time.time() - inicio < total:
     try:
@@ -593,12 +597,39 @@ while time.time() - inicio < total:
                 time.sleep(0.5)
                 continue
             bloqueo = 4
+        # U6: el cambio rápido de usuario. Tras entrar Ana, `guardian` bloquea su sesión: Esc, "Carla" y su contraseña
+        # (entra Carla con Ana detrás). Luego bloquea la de Carla: Esc, "Ana" y la suya (vuelve Ana). Mientras se teclea
+        # y hasta que entra, nada de lo de siempre.
+        if cambio in (0, 1) and bloqueo == 4 and texto.count("pantalla de bloqueo pintada") >= 2 + cambio:
+            quien, clave = (("Carla", "clave de Carla"), ("Ana", "clave de Ana"))[cambio]
+            captura_cambio = os.environ.get("CAPTURA_CAMBIO") if cambio == 0 else None
+            time.sleep(0.5)
+            if captura_cambio:
+                mandar("screendump " + captura_cambio)
+                time.sleep(0.5)
+            mandar("sendkey esc")
+            for _ in range(40):
+                time.sleep(0.25)
+                if open(serie, errors="replace").read().count("[guardian] cambio de usuario: se pide el nombre") > cambio:
+                    break
+            time.sleep(0.3)
+            teclear(quien)
+            time.sleep(0.8)
+            if captura_cambio:
+                mandar("screendump " + captura_cambio[:-4] + ".nombre.ppm")
+                time.sleep(0.5)
+            teclear(clave)
+            cambio += 1
+        if cambio in (1, 2) and texto.count("[guardian] cambio de usuario: entra ") < cambio:
+            time.sleep(0.25)
+            continue
         # Y el bloqueo por tiempo (U3): 3 s más de teclas tras pedir `guardian` el aviso, y luego nada hasta que bloquea;
         # entonces, una contraseña mala y la de Ana.
         if bloqueo == 4 and "[guardian] esperando " in texto:
             bloqueo, quieto = 5, time.time() + 3
         if bloqueo == 5 and time.time() >= quieto:
-            if texto.count("pantalla de bloqueo pintada") < 2:
+            # La cuarta: antes, la de Carla y las dos del cambio de usuario (U6).
+            if texto.count("pantalla de bloqueo pintada") < 4:
                 time.sleep(0.25)
                 continue
             bloqueo = 6
@@ -623,7 +654,7 @@ while time.time() - inicio < total:
             time.sleep(1)
             mandar("sendkey meta_l-l")
         if bloqueo == 8:
-            if texto.count("pantalla de bloqueo pintada") < 3:
+            if texto.count("pantalla de bloqueo pintada") < 5:
                 time.sleep(0.25)
                 continue
             bloqueo = 9

@@ -4,9 +4,11 @@
 /// De `inicio`, sin marca: el alta de un programa (marca u64, uid u32, gid u32, 16 bytes de nombre; con la llave de
 /// su grupo).
 pub const ALTA: u32 = 1;
-/// De un programa: la lista de procesos desde la ficha que se diga (u64), por páginas de `POR_PAGINA`.
+/// De un programa: la lista de procesos desde la ficha que se diga (u64), por páginas de `POR_PAGINA`. Solo los de su
+/// usuario y los del sistema (U6); `guardian`, todos.
 pub const PROCESOS: u32 = 1;
-/// De un programa: matar al de la marca que se diga (u64). Solo si es del mismo usuario.
+/// De un programa: matar al de la marca que se diga (u64). Solo si es del mismo usuario. Uno de otra persona da
+/// `NO_EXISTE`, como si no estuviera (U6: tampoco sale en su lista).
 pub const MATAR: u32 = 2;
 /// Fichas por respuesta de `PROCESOS`: 8 + 7 × 32 = 232 bytes, dentro de los 256 de un mensaje.
 pub const POR_PAGINA: usize = 7;
@@ -21,7 +23,8 @@ pub const ENTRAR: u32 = 3;
 /// algo suyo sigue abierto.
 pub const SALIR: u32 = 4;
 /// De `guardian`: volver de un bloqueo (como `ENTRAR`). Comprueba la contraseña sin tocar el volumen, que sigue
-/// abierto. Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
+/// abierto. Con la buena, su sesión pasa a ser la de delante (U6); `ENTRAR` con una sesión ya abierta hace lo mismo.
+/// Tras una mala, `sesiones` tarda un poco en contestar (contra probar contraseñas a ciegas).
 pub const VOLVER: u32 = 5;
 /// De un programa (U4): la llave de un servicio (orden, largo del nombre, 0, el nombre). Si su ficha tiene el permiso,
 /// contesta 0 con la llave: marcada con su número, revocable y sin derecho de transferirla; si no, -2.
@@ -74,6 +77,12 @@ pub const BLOQUEAR: u32 = 16;
 pub const CONCEDIDOS: u32 = 17;
 pub const CONCEDIDO: usize = 32;
 pub const POR_PAGINA_CONCEDIDOS: usize = 7;
+/// De un programa (U6, cambio rápido de usuario): si su sesión es la de delante (orden). Contesta un i32: 1 delante, 0
+/// abierta pero detrás (entró otra persona; sus programas siguen en marcha), -2 su usuario no tiene sesión.
+pub const ACTIVA: u32 = 18;
+/// Las personas tienen el usuario 1000 o más (S6b); lo de debajo es del sistema. Un programa ve los procesos de su
+/// usuario y los del sistema, no los de otras personas (U6).
+pub const PRIMERA_PERSONA: u32 = 1000;
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
 /// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
 pub const PREGUNTA: usize = 40;

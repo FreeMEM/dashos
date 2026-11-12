@@ -8,6 +8,10 @@
 //! (para saber que es el sistema y no un programa que lo imita), y espera su contraseña por el teclado; con la buena
 //! (la comprueba `sesiones`, VOLVER), desbloquea.
 //!
+//! U6, cambio rápido de usuario (`docs/diseño/U6-cambio-rapido.md`): en la pantalla de bloqueo, Esc pasa a "Cambiar
+//! de usuario" (nombre y contraseña). En la prueba, tras entrar Ana, lanza `Programas/cambio` como ella, bloquea y
+//! entra Carla con Ana detrás; lanza `cambio` como Carla, que intenta llegar a lo de Ana; y vuelve Ana.
+//!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio), 2 el canal "sesiones".
 
 #![no_std]
@@ -21,7 +25,7 @@ mod ventana_cliente;
 
 use alloc::string::String;
 use dashos::println;
-use dashos::protocolo::sesiones::{ENTRAR, PREGUNTA, PREGUNTAS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
+use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
 use kit::tema::Tema;
 use kit::teclado::{Tecla, Teclado};
@@ -43,6 +47,8 @@ const CENTRO: u32 = 3;
 /// La frase que eligió cada usuario al crear su cuenta (S6b): sale en su pantalla de bloqueo. Provisional, como las
 /// cuentas de `sesiones`.
 const FRASES: &[(&str, &str)] = &[("Carla", "Las gaviotas vuelven al puerto"), ("Ana", "El faro de la isla")];
+/// El código de Esc en `wl_keyboard` (el del kit no la da): en la pantalla de bloqueo, cambiar de usuario (U6).
+const TECLA_ESC: u32 = 1;
 
 /// Una orden a `sesiones` con estas llaves de más (tras la de respuesta); el estado que conteste.
 fn pedir(m: &[u8], mas: &[u32]) -> i32 {
@@ -200,6 +206,8 @@ fn principal() -> u64 {
     // U3: y la pantalla de entrada (en la prueba, la usuaria escribe "Ana" y su contraseña).
     let quien = pantalla(None);
     let entrada = quien.is_some();
+    // U6: el cambio rápido de usuario, con Ana dentro.
+    let cambio = quien.as_deref() == Some("Ana") && cambio_rapido();
     // U3: y bloquear por tiempo. En la prueba se sigue tecleando 3 s tras pedir el aviso y luego nada: con un plazo de
     // 2 s, si la entrada no reiniciara la cuenta, el aviso llegaría a los 2 s. Llega después de 5 y se bloquea la sesión
     // de quien acaba de entrar (en la prueba, Ana).
@@ -232,7 +240,85 @@ fn principal() -> u64 {
                 false
             }
         };
-    if bien && retirado && admin && bloqueo && entrada && por_tiempo && con_tecla { 0 } else { 1 }
+    if bien && retirado && admin && bloqueo && entrada && cambio && por_tiempo && con_tecla { 0 } else { 1 }
+}
+
+/// U6: lanza el programa del disco `camino` como el usuario `como` (que tiene que haber entrado): (estado, número).
+fn lanzar_como(camino: &str, como: u32) -> (i32, u64) {
+    let mut p = [0u8; 64];
+    p[0..4].copy_from_slice(&LANZAR.to_le_bytes());
+    p[4..8].copy_from_slice(&(camino.len() as u32).to_le_bytes());
+    p[8..12].copy_from_slice(&como.to_le_bytes());
+    p[12..12 + camino.len()].copy_from_slice(camino.as_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 12];
+    let n = if dashos::canal_escribir(SESIONES, &p[..12 + camino.len()], &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 5_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 12 { (i32::from_le_bytes(r[0..4].try_into().unwrap()), u64::from_le_bytes(r[4..12].try_into().unwrap())) } else { (i32::MIN, 0) }
+}
+
+/// U6: si el proceso `pid` sigue en la lista de `sesiones` (`guardian` los ve todos).
+fn vivo(pid: u64) -> bool {
+    let mut desde = 0u64;
+    loop {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&PROCESOS.to_le_bytes());
+        p[4..12].copy_from_slice(&desde.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 8 + FICHA * POR_PAGINA];
+        let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 3_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n < 8 {
+            return false;
+        }
+        let van = u32::from_le_bytes(r[0..4].try_into().unwrap()) as usize;
+        if (0..van.min(POR_PAGINA)).any(|i| r[8 + FICHA * i..8 + FICHA * i + 8] == pid.to_le_bytes()) {
+            return true;
+        }
+        if van < POR_PAGINA {
+            return false;
+        }
+        desde += van as u64;
+    }
+}
+
+/// U6: espera hasta `max_us` a que acabe el proceso `pid`.
+fn esperar_fin(pid: u64, max_us: u64) -> bool {
+    let hasta = dashos::ahora_us() + max_us;
+    while dashos::ahora_us() < hasta {
+        if !vivo(pid) {
+            return true;
+        }
+        dashos::dormir_us(500_000);
+    }
+    false
+}
+
+/// U6, el cambio rápido de usuario, de punta a punta. Ana está dentro: se lanza `cambio` como ella (el testigo), se
+/// bloquea su sesión y, en la pantalla, la usuaria pulsa Esc y entra Carla (en la prueba, el guion). Con Ana detrás, se
+/// lanza `cambio` como Carla (la espía) y se espera a que acabe; se bloquea la sesión de Carla, Esc, y vuelve Ana. El
+/// testigo, que siguió en marcha detrás, acaba al ver que vuelve a estar delante.
+fn cambio_rapido() -> bool {
+    let (e_ana, ana) = lanzar_como("Programas/cambio", 1000);
+    println!("  [guardian] U6: lanza cambio como Ana: {} (proceso {})", e_ana, ana);
+    // Que el testigo empiece delante.
+    dashos::dormir_us(2_000_000);
+    println!("  [guardian] U6: se bloquea la sesión de Ana; Esc para cambiar de usuario");
+    let a_carla = pantalla(Some("Ana"));
+    let carla = a_carla.as_deref() == Some("Carla");
+    let (e_carla, espia) = if carla { lanzar_como("Programas/cambio", 1001) } else { (i32::MIN, 0) };
+    println!("  [guardian] U6: lanza cambio como Carla: {} (proceso {})", e_carla, espia);
+    let espia_acaba = e_carla == 0 && esperar_fin(espia, 30_000_000);
+    println!("  [guardian] U6: se bloquea la sesión de Carla; Esc para volver a la de Ana");
+    let a_ana = pantalla(Some("Carla"));
+    let vuelve = a_ana.as_deref() == Some("Ana");
+    let testigo_acaba = e_ana == 0 && esperar_fin(ana, 30_000_000);
+    let bien = carla && espia_acaba && vuelve && testigo_acaba;
+    println!("  [guardian] cambio rápido: Ana, Carla y otra vez Ana: {}", if bien { "bien" } else { "MAL" });
+    if !bien {
+        println!("  [guardian] U6: entra Carla {}, la espía acaba {}, vuelve Ana {}, el testigo acaba {}", carla, espia_acaba, vuelve, testigo_acaba);
+    }
+    bien
 }
 
 /// U4: pregunta al usuario si deja a `programa` usar `servicio`, en una capa encima de todo, en el centro, con el
@@ -444,7 +530,12 @@ fn comprobar(orden: u32, usuaria: &str, clave: &mut String) -> Option<u32> {
 /// compositor suelta a quien tarda en leer (E8). Devuelve la zona pintada.
 /// Con los colores del tema del sistema (S10c: `dashos_tema_v1`, el que pone el centro de control); el rojo del error
 /// es el de Material 3 para el fondo claro u oscuro.
-fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) -> Rect {
+///
+/// U6: con `cambio`, la de "Cambiar de usuario" (como la de entrada, sobre una sesión bloqueada). En la de bloqueo, al
+/// pie, cómo cambiar de usuario (Esc); en la de cambio, cómo volver.
+fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, cambio: bool, letras: usize, mala: bool, todo: bool, fuente: &mut Fuente, titulo: &mut Fuente, t: &Tema) -> Rect {
+    let bloqueo = !entrada;
+    let entrada = entrada || cambio;
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     let oscuro = (t.superficie >> 8 & 0xff) < 0x80;
     let error = if oscuro { 0xfff2_b8b5 } else { 0xffb3_261e };
@@ -458,7 +549,7 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
     l.rellenar(zona, t.superficie);
     let centrado = |f: &mut Fuente, t: &str, tam: u32| (ancho - f.medir(t, tam).ancho) / 2;
     if todo {
-        let cabeza = if entrada { "Entrar en DashOS" } else { "Sesión bloqueada" };
+        let cabeza = if cambio { "Cambiar de usuario" } else if entrada { "Entrar en DashOS" } else { "Sesión bloqueada" };
         let x = centrado(titulo, cabeza, 34);
         titulo.dibujar(&mut l, x, y, cabeza, 34, t.sobre_superficie);
     }
@@ -487,6 +578,14 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, l
     };
     let x = centrado(fuente, aviso, 16);
     fuente.dibujar(&mut l, x, y + 200, aviso, 16, if mala { error } else { t.sobre_variante_superficie });
+    // U6: al pie, en una pastilla del contenedor (Material 3), la tecla para cambiar de usuario o para volver.
+    if todo && bloqueo {
+        let pie = if cambio { "Esc: volver a la sesión bloqueada" } else { "Esc: cambiar de usuario" };
+        let m = fuente.medir(pie, 15);
+        let pastilla = Rect::new((ancho - m.ancho - 40) / 2, y + 236, m.ancho + 40, 36);
+        l.redondeado(pastilla, 18, t.contenedor());
+        fuente.dibujar(&mut l, pastilla.x + 20, pastilla.y + (36 + m.sube - m.baja) / 2, pie, 15, t.sobre_variante_superficie);
+    }
     zona
 }
 
@@ -510,6 +609,10 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     let entrada = usuaria.is_none();
     let mut nombre = String::from(usuaria.unwrap_or(""));
     let mut en_nombre = entrada;
+    // U6: en "Cambiar de usuario" (Esc en la de bloqueo); quien estaba bloqueado sigue detrás.
+    let mut cambiando = false;
+    // Si ya dijo que la pantalla está pintada y tiene el teclado.
+    let mut pintada = false;
     const SALIDA: u32 = 20;
     const GESTOR: u32 = 21;
     const CERROJO: u32 = 22;
@@ -521,8 +624,11 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
     let (mut fuente, mut titulo) = (Fuente::regular(), Fuente::medium());
     {
         let mut prueba = alloc::vec![0u32; 800 * 600];
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
-        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Ana"), entrada, false, 20, true, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        pintar(&mut prueba, 800, 600, usuaria.unwrap_or("Carla"), entrada, false, 20, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        if !entrada {
+            pintar(&mut prueba, 800, 600, "Carla", false, true, usize::MAX, false, true, &mut fuente, &mut titulo, &Tema::OSCURO);
+        }
     }
     let Some(mut c) = Cliente::conectar() else {
         println!("  [guardian] sin compositor");
@@ -587,6 +693,10 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                             break;
                         }
                     }
+                    if cambiando {
+                        println!("  [guardian] cambio de usuario: entra {} ({} intentos malos); {} sigue detrás", nombre, malas, usuaria.unwrap_or("?"));
+                        return Some(nombre.clone());
+                    }
                     if entrada {
                         // En la prueba, antes, un usuario que no existe: una mala.
                         let bien = malas == 1;
@@ -599,8 +709,8 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                 }
                 malas += 1;
                 ultima_mala = true;
-                // En la de entrada, se vuelve a pedir el nombre.
-                if entrada {
+                // En la de entrada (y en la de cambio), se vuelve a pedir el nombre.
+                if entrada || cambiando {
                     nombre.clear();
                     en_nombre = true;
                 }
@@ -622,7 +732,7 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, (ancho * alto) as usize) };
             let primera = entera;
             let letras = if en_nombre { usize::MAX } else { clave.chars().count() };
-            let z = pintar(px, ancho, alto, &nombre, entrada, letras, ultima_mala, entera, &mut fuente, &mut titulo, &tema);
+            let z = pintar(px, ancho, alto, &nombre, entrada, cambiando, letras, ultima_mala, entera, &mut fuente, &mut titulo, &tema);
             entera = false;
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
@@ -639,7 +749,9 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
         let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
         match (o, orden) {
             (0, _) => {}
-            (SYNC, wayland::tablas::wl_callback::ev::DONE) => {
+            // Una vez: al repintar entera (Esc en el bloqueo, U6) llega otro sync, y el guion cuenta estas líneas.
+            (SYNC, wayland::tablas::wl_callback::ev::DONE) if !pintada => {
+                pintada = true;
                 println!("  [guardian] pantalla de {} pintada: tiene el teclado", if entrada { "entrada" } else { "bloqueo" })
             }
             (CERROJO, ext_session_lock_v1::ev::LOCKED) => println!("  [guardian] sesión bloqueada"),
@@ -688,6 +800,24 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
             (TECLADO, wl_keyboard::ev::KEY) if esperando.is_some() => {
                 teclado.tecla(palabra(2), palabra(3) == 1);
             }
+            // U6: Esc en la de bloqueo pasa a "Cambiar de usuario"; otra vez, vuelve. Lo tecleado se olvida.
+            (TECLADO, wl_keyboard::ev::KEY) if !entrada && palabra(2) == TECLA_ESC => {
+                if palabra(3) == 1 {
+                    cambiando = !cambiando;
+                    unsafe { clave.as_bytes_mut().fill(0) };
+                    clave.clear();
+                    nombre = String::from(if cambiando { "" } else { usuaria.unwrap_or("") });
+                    en_nombre = cambiando;
+                    ultima_mala = false;
+                    entera = true;
+                    repintar = true;
+                    if cambiando {
+                        println!("  [guardian] cambio de usuario: se pide el nombre");
+                    } else {
+                        println!("  [guardian] cambio de usuario: vuelve al bloqueo de {}", usuaria.unwrap_or("?"));
+                    }
+                }
+            }
             (TECLADO, wl_keyboard::ev::KEY) => match teclado.tecla(palabra(2), palabra(3) == 1) {
                 Some(Tecla::Letra(ch)) if en_nombre && nombre.len() < 16 => {
                     nombre.push(ch);
@@ -706,7 +836,7 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                     repintar = true;
                 }
                 Some(Tecla::Intro) => {
-                    esperando = comprobar(if entrada { ENTRAR } else { VOLVER }, &nombre, &mut clave);
+                    esperando = comprobar(if entrada || cambiando { ENTRAR } else { VOLVER }, &nombre, &mut clave);
                     repintar = true;
                 }
                 _ => {}

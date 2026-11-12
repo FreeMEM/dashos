@@ -304,21 +304,26 @@ de respuesta:
 
 | Orden | Quién | Qué |
 |---|---|---|
-| 1 procesos | cualquiera | La lista, por páginas de 7 fichas de 32 bytes (marca, usuario, grupo, nombre) |
-| 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; de otro, -2 (para eso, la acción "matar") |
-| 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
-| 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian` |
+| 1 procesos | cualquiera | La lista, por páginas de 7 fichas de 32 bytes (marca, usuario, grupo, nombre). Solo los de su usuario y los del sistema (usuario por debajo de 1000); `guardian`, todos (U6) |
+| 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; uno del sistema, -2 (para eso, la acción "matar"); uno de otra persona, -1, como si no existiera (U6) |
+| 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
+| 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6) |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
 | 9 lanzar | `guardian` | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
 | 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
 | 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda); quitar uno concedido (se borra y se revocan sus llaves) |
-| 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian` |
+| 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian`. Desde una sesión de detrás, -2 (U6) |
 | 15 respuesta de administrador | `guardian` | Usuario y contraseña para esa acción; se comprueban con su volumen |
-| 16 bloquear | uno del usuario con sesión | `guardian` bloquea la sesión con su pantalla |
+| 16 bloquear | uno del usuario con la sesión delante | `guardian` bloquea la sesión con su pantalla |
+| 18 activa | cualquiera | Si su sesión está delante (1), detrás (0) o no tiene (-2). U6: cambio rápido de usuario |
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
 el registro.
+
+Cambio rápido de usuario (U6, `diseño/U6-cambio-rapido.md`): puede haber hasta 8 sesiones abiertas y una está
+**delante**, la del último que entró o volvió. Las de detrás siguen en marcha con su volumen abierto, sin preguntar al
+usuario, sin acciones de administrador y sin bloquear.
 
 ## Imágenes del Amiga (S20, fase 1)
 
