@@ -492,3 +492,12 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
   10 por minuto).
 - Guarda 50, como mucho 8 de cada programa. Lo de una persona con su sesión detrás no sale hasta que vuelve.
 - Leer, marcar como leídos y borrar: solo la barra.
+
+## Caja Linux (H9, primer paso)
+
+El servicio `caja-linux` crea y corre máquinas virtuales con el permiso de máquinas virtuales (su llave 1, de `inicio`;
+llamadas 45 y 46 de `kernel.md`). Solo en `virt`, y solo hay hipervisor si el kernel arrancó en EL2 (en QEMU,
+`virtualization=on`; `make arranque-virt-vm`). Hoy no tiene canal: corre los invitados de prueba de
+`usuario/invitados/pruebas.s` y emula para ellos un PL011 en 0x09000000 (DR en 0x00 y FR en 0x18, siempre con sitio).
+Una máquina que lee o escribe fuera de su memoria y de ese UART, que no acaba en 100 ms o que cae en una trampa se para.
+Bitácora: `docs/bitacoras/caja-linux.md`.

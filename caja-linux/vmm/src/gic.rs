@@ -190,6 +190,17 @@ impl Distribuidor {
         }
     }
 
+    /// Cómo tiene el invitado una interrupción privada de `cpu` (habilitada, prioridad, grupo 1). Para las que el
+    /// hipervisor entrega sin pasar por aquí, como el temporizador virtual (PPI 27, con el bit HW del LR).
+    pub fn privada(&self, cpu: usize, intid: u32) -> Option<(bool, u8, bool)> {
+        if intid >= 32 || self.ctlr & 3 == 0 {
+            return None;
+        }
+        let i = self.privadas.get(cpu)?[intid as usize];
+        let grupo_on = if i.grupo1 { self.ctlr & 2 != 0 } else { self.ctlr & 1 != 0 };
+        Some((i.habilitada && grupo_on, i.prioridad, i.grupo1))
+    }
+
     /// Alguna interrupción pendiente para `cpu`: el hipervisor puede despertar un vCPU parado en WFI.
     pub fn hay_para(&self, cpu: usize) -> bool {
         !self.pendientes(cpu).is_empty()
@@ -382,9 +393,51 @@ impl Distribuidor {
     }
 }
 
+/// Un registro de lista del GICv2 (GICH_LRn, IHI 0048B §5.3.11) para una entrega, sin el bit HW: ID virtual en
+/// [9:0], para una SGI la CPU de origen en [12:10], EOI en [19] (el GIC da la interrupción de mantenimiento cuando el
+/// invitado la termina), estado pendiente (01) en [29:28], prioridad[7:3] en [27:23] y grupo 1 en [30].
+pub fn lr_v2(e: &Entrega, eoi: bool) -> u32 {
+    let origen = if e.intid < 16 { e.origen.unwrap_or(0) as u32 & 7 } else { 0 };
+    (e.intid & 0x3ff) | origen << 10 | (eoi as u32) << 19 | ((e.prioridad as u32) >> 3) << 23 | 1 << 28 | (e.grupo1 as u32) << 30
+}
+
+/// El ID virtual de un registro de lista.
+pub fn lr_intid(lr: u32) -> u32 {
+    lr & 0x3ff
+}
+
+/// El registro de lista está libre (estado "invalid": el invitado ya la terminó, o nunca tuvo nada).
+pub fn lr_libre(lr: u32) -> bool {
+    (lr >> 28) & 3 == 0
+}
+
 #[cfg(test)]
 mod pruebas {
     use super::*;
+
+    #[test]
+    fn registro_de_lista() {
+        let e = Entrega { intid: 48, prioridad: 0xa0, grupo1: false, origen: None };
+        let lr = lr_v2(&e, true);
+        assert_eq!(lr, 48 | 1 << 19 | (0xa0 >> 3) << 23 | 1 << 28);
+        assert_eq!(lr_intid(lr), 48);
+        assert!(!lr_libre(lr));
+        assert!(lr_libre(lr & !(3 << 28)));
+        let s = Entrega { intid: 3, prioridad: 0, grupo1: true, origen: Some(2) };
+        assert_eq!(lr_v2(&s, false), 3 | 2 << 10 | 1 << 28 | 1 << 30);
+    }
+
+    #[test]
+    fn privada_del_temporizador() {
+        let mut g = Distribuidor::nuevo(1, 32);
+        assert_eq!(g.privada(0, 27), None, "con el distribuidor apagado");
+        g.escribir(0, CTLR, 4, 1);
+        g.escribir(0, ISENABLER, 4, 1 << 27);
+        g.escribir(0, IPRIORITYR + 27, 1, 0xa0);
+        assert_eq!(g.privada(0, 27), Some((true, 0xa0, false)));
+        assert_eq!(g.privada(0, 40), None);
+        assert_eq!(g.privada(5, 27), None);
+    }
 
     #[test]
     fn spi_por_nivel() {

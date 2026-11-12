@@ -35,6 +35,8 @@ const GICD_CTLR: usize = 0x000;
 const GICD_IGROUPR: usize = 0x080;
 const GICD_ISENABLER: usize = 0x100;
 const GICD_ICENABLER: usize = 0x180;
+const GICD_ISACTIVER: usize = 0x300;
+const GICD_ICACTIVER: usize = 0x380;
 const GICD_IPRIORITYR: usize = 0x400;
 const GICD_ITARGETSR: usize = 0x800;
 const GICD_ICFGR: usize = 0xC00;
@@ -164,6 +166,8 @@ pub fn iniciar_cpu() {
     c(GICC_PMR).escribir(MASCARA_PRIORIDAD as u32);
     c(GICC_BPR).escribir(0);
     c(GICC_CTLR).escribir(1);
+    // H9: las del GIC virtual de este núcleo (el temporizador del invitado y el mantenimiento), si lo hay.
+    crate::base::hiper::gic_nucleo();
 }
 
 /// Dónde están los registros de una interrupción: las privadas (0 a 31), en el redistribuidor de este núcleo con el
@@ -235,6 +239,18 @@ pub fn numero(iar: u32) -> u32 {
         return iar;
     }
     if V3.load(Ordering::Relaxed) { iar & 0xff_ffff } else { iar & 0x3ff }
+}
+
+/// Pone o quita el estado activo de una interrupción (GICD_ISACTIVER / GICD_ICACTIVER). Para el temporizador virtual
+/// de un invitado (H9): activa mientras su interrupción virtual, con el bit HW, está en un registro de lista; el EOI
+/// del invitado la desactiva. Las privadas son las de este núcleo.
+pub fn activa(intid: u32, si: bool) {
+    if BCM2836.load(Ordering::Relaxed) {
+        return;
+    }
+    let i = intid as usize;
+    let r = if si { GICD_ISACTIVER } else { GICD_ICACTIVER };
+    RegLe32::new(base_de(intid) + r + 4 * (i / 32)).escribir(1 << (i % 32));
 }
 
 pub fn es_v3() -> bool {

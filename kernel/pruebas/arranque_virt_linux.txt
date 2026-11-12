@@ -1,0 +1,36 @@
+# La caja Linux con un Linux de verdad (`make arranque-virt-linux`): lo de `arranque_virt_vm.txt` y, con la Image de
+# un kernel de Linux 6.18 para arm64 y su initramfs con busybox (fuera de git), Linux hasta el /init de busybox, que
+# lee y escribe el disco virtio y apaga la máquina por PSCI.
+Nivel de excepción: EL1
+Hipervisor: el kernel arrancó en EL2
+Hipervisor: EL2 instalado en 4 núcleos
+DashOS en marcha con 4 núcleos
+~[caja-linux] el invitado dice: Hola desde el invitado, por el UART emulado
+~[caja-linux] el invitado acaba con HVC #0: bien
+~[caja-linux] ida y vuelta al invitado:
+~[caja-linux] hostil (leer fuera): lee fuera de su memoria (0x70000000); se para su máquina: bien
+~[caja-linux] hostil (escribir en el kernel): escribe fuera de su memoria (0x40200000); se para su máquina: bien
+~[caja-linux] hostil (bucle sin fin): no acaba: el reloj lo sacó
+~[caja-linux] hostil (apagar por SMC): trampa en
+~[caja-linux] hostil (temporizador del kernel): escribe en un registro del sistema atrapado (codificación 0x32f804); se para su máquina: bien
+~[caja-linux] tras los hostiles, una máquina nueva sigue en marcha: bien
+~[caja-linux] primer paso de la caja Linux: bien
+~[caja-linux] interrupciones: el temporizador virtual 3 veces, la SPI 48 del servicio 1 (su registro de lista, libre al terminarla: sí), PSCI 1.0 en x0
+~[caja-linux] hostil (GIC al azar): 4096 escrituras en su GICV
+~toca la GICH del anfitrión: acaba con 2 abortos externos; bien
+~[caja-linux] hostil (tormenta del temporizador): no la reconoce nunca; el reloj lo sacó
+~[caja-linux] hostil (registro de EL2): trampa en
+~[caja-linux] interrupciones del invitado: bien
+~[sin-maquina] sin el permiso: 1024 llaves probadas, crean una máquina 0; con su memoria por permiso, -6: bien
+~[caja-linux] linux: Image de
+~[caja-linux] linux: [    0.000000] Booting Linux on physical CPU 0x0000000000
+~[caja-linux] linux: [    0.000000] psci: PSCIv1.0 detected in firmware.
+~arch_timer: cp15 timer running at
+~[caja-linux] linux: caja-linux: init en marcha
+~[caja-linux] linux: caja-linux: BusyBox v
+~[caja-linux] linux: caja-linux: vda 2048 sectores, primeros bytes: DISCO-CAJA-LINUX
+~[caja-linux] linux: caja-linux: escrito en vda: ESCRITO-POR-LINUX
+~[caja-linux] linux: caja-linux: fin de la prueba
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI
+~busybox en marcha: sí, el disco escrito por Linux: sí: bien

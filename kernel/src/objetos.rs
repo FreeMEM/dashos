@@ -54,6 +54,11 @@ pub enum Objeto {
     PermisoPlazo,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
+    /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a
+    /// `inicio`, que lo da al servicio `caja-linux`.
+    PermisoMaquina,
+    /// Una máquina virtual (H9): con escribir se corre (llamada 46). Se para y se suelta al cerrar su última llave.
+    Maquina(Arc<crate::maquinas::Maquina>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
     Revocable(Arc<Revocable>),
     /// La llave con la que se revoca: vacía el intermediario, y todas las llaves que pasan por él dejan de valer.
