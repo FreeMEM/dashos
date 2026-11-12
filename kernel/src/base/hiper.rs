@@ -133,6 +133,11 @@ pub fn instalar_nucleo() {
     }
 }
 
+/// ¿Entró el núcleo 0 en EL2 (lo que dejó el firmware)?
+pub fn hay_el2_al_entrar() -> bool {
+    EN_EL2.load(Ordering::Acquire) & 1 != 0
+}
+
 /// ¿Hay hipervisor? El núcleo 0 arrancó en EL2 y lo tiene instalado.
 pub fn hay() -> bool {
     INSTALADO.load(Ordering::Acquire) & 1 != 0

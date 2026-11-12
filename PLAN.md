@@ -311,6 +311,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
     la caja Amiga big-endian debería ir en la Pi 5 sin el modo que da la vuelta a los bytes. Falta leerlo en una
     Pi 5 real: la línea "CPU: ..." del arranque ya dice si hay big-endian en EL0. Fuente:
     https://support.arm.com/documentation/100798/0401/AArch64-System-registers/ID-AA64MMFR0-EL1--AArch64-Memory-Model-Feature-Register-0--EL1
+  - Para leerlo (2026-11-12, rama `pi5`): una imagen para la Pi 5 que lo pinta en la pantalla y lo prueba de verdad
+    con un programa big-endian en EL0, y corre la caja Amiga (`docs/PI5_PRIMER_ARRANQUE.md`, `docs/bitacoras/pi5.md`).
 - Comprobar que "DashOS" no choca con otro proyecto conocido antes de publicar.
 
 ## Herramientas

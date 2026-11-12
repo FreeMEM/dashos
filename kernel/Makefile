@@ -11,6 +11,9 @@
 # make arranque-virt-arch  lo mismo con Arch Linux ARM desde la partición de la caja en el NVMe (fuera de git)
 # make arranque-virt-wayland  lo mismo, con programas gráficos de Linux en ventanas de DashOS (el puente de Wayland)
 # make arranque-virt-gpu  lo mismo, con programas de GL de Linux por Wayland y por la virtio-gpu de la caja (S25)
+# make pi5     la imagen para la Raspberry Pi 5 (target/kernel_2712.img), con el diagnóstico en pantalla
+# make tarjeta-pi5  esa imagen en una tarjeta para grabar (~/.cache/dashos-pi5/dashos-pi5.img, tools/preparar_pi5.py)
+# make arranque-virt-diag  el diagnóstico de la Pi 5 en QEMU virt (pantalla del firmware de UEFI): sus líneas y una captura
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -274,6 +277,52 @@ medir-pi3: usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pi3,medir
 	$(OBJCOPY) -O binary $(ELF) $(MEDIR_PI3)
 	python3 ../tools/medir.py pi3 $(MEDIR_PI3) target/medir-pi3.json -n $(VUELTAS)
+
+# La Raspberry Pi 5 (docs/bitacoras/pi5.md, docs/PI5_PRIMER_ARRANQUE.md): la imagen que carga su firmware, con la consola
+# y el diagnóstico en la pantalla (la pide al firmware por el buzón) y solo la consola y la caja Amiga como programas.
+# QEMU no emula la Pi 5: se prueba en una de verdad; lo que se puede probar aquí, con `arranque-virt-diag`.
+PI5 := target/kernel_2712.img
+pi5: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features pi5
+	$(OBJCOPY) -O binary $(ELF) $(PI5)
+	@ls -l $(PI5)
+
+# La tarjeta (o el SSD) para la Pi 5: una imagen de disco con la partición FAT de arranque (config.txt, la imagen y los
+# árboles oficiales de la Pi 5, bajados de github.com/raspberrypi/firmware; nada de eso va en git). Fuera de git.
+TARJETA_PI5 ?= $(HOME)/.cache/dashos-pi5/dashos-pi5.img
+tarjeta-pi5: pi5-escritorio pi5
+	python3 ../tools/preparar_pi5.py $(PI5) $(TARJETA_PI5) $(PI5_ESCRITORIO)
+
+# El diagnóstico de la Pi 5 en QEMU virt: la misma consola en pantalla, con la pantalla que deja EDK2 (ramfb) en lugar
+# de la del buzón, y los mismos programas. Comprueba sus líneas en el puerto serie (pruebas/arranque_virt_diag.txt) y
+# deja la captura de la pantalla en target/diag.ppm (y en capturas-agente/pi5-diag-virt.png).
+VIRT_DIAG := target/kernel8-virt-diag.img
+arranque-virt-diag: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,diagnostico
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_DIAG)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_DIAG)) cargo build --release
+	rm -f target/diag.ppm
+	GUARDAR=$(abspath target/salida_virt_diag.txt) CAPTURA=$(abspath target/diag.ppm) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_diag.txt 120
+	python3 ../tools/captura_diag.py target/diag.ppm
+	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/diag.ppm ../capturas-agente/pi5-diag-virt.png 2>/dev/null || true
+
+# El paso 4 (docs/bitacoras/pi5.md): el escritorio en la pantalla del firmware, sin GPU ni teclado. `make pi5-escritorio`
+# saca target/dashos-escritorio.img, que `tarjeta-pi5` mete también en la tarjeta (se elige en config.txt). En QEMU virt,
+# `arranque-virt-escritorio`: la pantalla pasa de la consola del kernel al compositor y la caja Amiga abre su ventana.
+PI5_ESCRITORIO := target/dashos-escritorio.img
+pi5-escritorio: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features pi5,escritorio
+	$(OBJCOPY) -O binary $(ELF) $(PI5_ESCRITORIO)
+	@ls -l $(PI5_ESCRITORIO)
+
+VIRT_ESCRITORIO := target/kernel8-virt-escritorio.img
+arranque-virt-escritorio: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,escritorio
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ESCRITORIO)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ESCRITORIO)) cargo build --release
+	rm -f target/escritorio.ppm
+	GUARDAR=$(abspath target/salida_virt_escritorio.txt) CAPTURA=$(abspath target/escritorio.ppm) MAQUINA=highmem=off QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_escritorio.txt 120
+	mkdir -p ../capturas-agente && python3 -c 'import sys; from PIL import Image; Image.open(sys.argv[1]).save(sys.argv[2])' target/escritorio.ppm ../capturas-agente/pi5-escritorio-virt.png 2>/dev/null || true
 
 PRUEBAS_VIRT := target/kernel8-pruebas-virt.img
 

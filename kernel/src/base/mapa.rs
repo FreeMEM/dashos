@@ -171,6 +171,14 @@ pub fn construir() {
             }
         }
     }
+    // Los periféricos por encima de los 4 GB (la Pi 5, placa.rs): bloques de 1 GB de dispositivo, fuera del mapa lineal.
+    let mut g = PERIFERICOS.0 / GB;
+    while g < PERIFERICOS.1.div_ceil(GB) {
+        if g >= 4 {
+            poner(l1, g as usize, (g * GB) | BLOQUE | atributos(Tipo::Dispositivo));
+        }
+        g += 1;
+    }
     // Zona de las pilas de los hilos: el GB 256 de la mitad alta, con su nivel 2. Los niveles 3 se hacen al usarlos.
     let l2 = tabla_nueva();
     poner(l1, INDICE_PILAS, l2 | TABLA);
