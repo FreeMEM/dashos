@@ -380,7 +380,7 @@ fn principal() -> u64 {
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
-            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas. Con más no cabe la caja Linux detrás.
+            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas.
             "caja-amiga" => 32 << 20,
             _ => 16 << 20,
         };
