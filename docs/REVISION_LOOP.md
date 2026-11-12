@@ -1021,3 +1021,6 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   escribir (`archivos` escribe a la vez y el comprobador no tiene instantánea): un ciclo en la cadena. Si es así, es
   también un fallo de robustez ante discos rotos: la apertura debería poner tope a la cadena. Probarlo con un disco
   con la cadena en ciclo a propósito (`estropear`, en archivos/herramientas) y `ver`.
+  Mirado después: cada salto de la cadena comprueba el resumen (seahash) del bloque al que apunta (`read_block`), así
+  que un ciclo no se forma sin que esa comprobación falle: la hipótesis queda casi descartada. Sigue sin saberse dónde
+  da vueltas; lo próximo, trazas por fases dentro de `open_inner` (anillo, `committed`, `reset_allocator`).
