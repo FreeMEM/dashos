@@ -100,6 +100,8 @@ fn principal() -> u64 {
         Hijo::Fila(vec![Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, Tema::CLARO);
+    // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
+    i.esquinas = 16;
     i.foco = Some(nombre);
     i.colocar(Rect::new(0, 0, ANCHO, ALTO));
 
@@ -119,7 +121,7 @@ fn principal() -> u64 {
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
     }
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia).int(tamano as i32).fin();
-    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
+    e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::ARGB8888).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
     e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
     e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
@@ -201,7 +203,7 @@ fn principal() -> u64 {
                     e.empezar(bufer, wl_buffer::req::DESTROY).fin();
                     e.empezar(pool, wl_shm_pool::req::DESTROY).fin();
                     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(otro_pool).llave(copia2).int(nueva.0 * nueva.1 * 4).fin();
-                    e.empezar(otro_pool, wl_shm_pool::req::CREATE_BUFFER).uint(otro).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::XRGB8888).fin();
+                    e.empezar(otro_pool, wl_shm_pool::req::CREATE_BUFFER).uint(otro).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::ARGB8888).fin();
                     c.mandar(&e);
                     dashos::memoria_quitar(va);
                     dashos::cerrar(m);
@@ -210,6 +212,7 @@ fn principal() -> u64 {
                     pool = otro_pool;
                     medida = nueva;
                     i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                    i.esquinas = if pedida.0 > 0 { 0 } else { 16 };
                     pintar(&mut i, px, medida);
                     presentar(&mut c, Some(bufer), medida);
                     if pedida.0 > 0 {

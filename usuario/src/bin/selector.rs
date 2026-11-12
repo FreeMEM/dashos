@@ -229,6 +229,8 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     let botones = if carpeta { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(esta)] } else { alloc::vec![Hijo::Obj(hueco), Hijo::Obj(cancelar)] };
     let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
+    // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
+    i.esquinas = 16;
     i.foco = Some(lista);
     i.colocar(Rect::new(0, 0, ANCHO, alto));
 
@@ -255,7 +257,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
             e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
         }
         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
-        e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(alto).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
+        e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(alto).int(ANCHO * 4).uint(wayland::shm::ARGB8888).fin();
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();

@@ -1187,3 +1187,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   31 s y `ficheros`, que esperaba 10 s a que soltara el disco, daba MAL. Ahora 50 vueltas y 30 s de espera.
   Con la carga alta, `make prueba` dio también C14, S2 y C32 MAL (miden tiempos); con la carga baja, bien. El pánico
   de "pila del kernel desbordada" de ese registro es la prueba C34, a propósito.
+- Kit: ventanas con esquinas redondeadas (16). `Interfaz::esquinas` deja transparentes, con el borde suavizado, las
+  esquinas por fuera del redondeo (`Lienzo::esquinas_transparentes`, premultiplicado); centro, Ajustes y selector
+  pasan a búferes ARGB y lo usan, y maximizados van en ángulo recto. El compositor mezcla solo los tramos con
+  transparencia: medido en el arranque, de 46 a 48 µs por kilopíxel compuesto, frente a 39 a 60 en arranques de antes
+  (dentro del ruido, con el PC cargado). Captura. Falta la sombra (en el compositor): sin ella, dos ventanas del mismo
+  color se funden al solaparse.

@@ -501,6 +501,9 @@ pub struct Interfaz {
     hora: Option<u32>,
     /// El último clic: objeto, su valor y cuándo; para el doble clic.
     ultimo_clic: Option<(Obj, Option<Valor>, u32)>,
+    /// El radio de las esquinas de la ventana (Material 3): fuera, transparente; el búfer tiene que ser ARGB. 0, en
+    /// ángulo recto (maximizada, o XRGB).
+    pub esquinas: i32,
 }
 
 /// Lo más que separa los dos clics de un doble clic, en ms (lo de MUI y Workbench por defecto).
@@ -519,6 +522,7 @@ impl Interfaz {
             teclado: crate::teclado::Teclado::new(),
             hora: None,
             ultimo_clic: None,
+            esquinas: 0,
         }
     }
 
@@ -589,6 +593,7 @@ impl Interfaz {
             obj.clase.dibujar(&obj.attrs, l, r, &mut self.ctx, estado);
             l.soltar_recorte();
         }
+        l.esquinas_transparentes(todo, self.esquinas);
         self.arbol.sucios();
     }
 

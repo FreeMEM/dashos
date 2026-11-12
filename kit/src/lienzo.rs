@@ -135,6 +135,31 @@ impl<'a> Lienzo<'a> {
         }
     }
 
+    /// Deja transparentes las esquinas de `r` por fuera de un redondeo de `radio`, con el borde suavizado: cada píxel de
+    /// la esquina (premultiplicado) se escala por la parte que queda dentro. Para ventanas con esquinas redondeadas en
+    /// un búfer ARGB.
+    pub fn esquinas_transparentes(&mut self, r: Rect, radio: i32) {
+        let radio = radio.min(r.w / 2).min(r.h / 2).max(0);
+        if radio == 0 {
+            return;
+        }
+        let rc = r.cruce(self.recorte());
+        let esquinas = [(r.x, r.y), (r.x + r.w - radio, r.y), (r.x, r.y + r.h - radio), (r.x + r.w - radio, r.y + r.h - radio)];
+        for (ex, ey) in esquinas {
+            for y in ey.max(rc.y)..(ey + radio).min(rc.y + rc.h) {
+                for x in ex.max(rc.x)..(ex + radio).min(rc.x + rc.w) {
+                    let cob = cobertura(r, radio, x, y);
+                    if cob < 255 {
+                        let i = y as usize * self.linea + x as usize;
+                        let p = self.px[i];
+                        let escala = |s: u32| ((((p >> s) & 0xff) * cob + 127) / 255) << s;
+                        self.px[i] = escala(24) | escala(16) | escala(8) | escala(0);
+                    }
+                }
+            }
+        }
+    }
+
     /// El borde de un rectángulo redondeado, de `grosor` píxeles hacia dentro.
     pub fn borde(&mut self, r: Rect, radio: i32, grosor: i32, color: Color) {
         let radio = radio.min(r.w / 2).min(r.h / 2).max(0);

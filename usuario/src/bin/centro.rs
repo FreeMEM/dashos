@@ -504,6 +504,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     ]);
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
+    // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
+    i.esquinas = 16;
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
@@ -584,7 +586,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
-        e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
+        e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(wayland::shm::ARGB8888).fin();
         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
         e.empezar(XDG, xdg_wm_base::req::GET_XDG_SURFACE).uint(XDG_SUPERFICIE).uint(SUPERFICIE).fin();
         e.empezar(XDG_SUPERFICIE, xdg_surface::req::GET_TOPLEVEL).uint(VENTANA).fin();
@@ -633,13 +635,14 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         e.empezar(bufer, wl_buffer::req::DESTROY).fin();
                         e.empezar(pool, wl_shm_pool::req::DESTROY).fin();
                         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(otro_pool).llave(copia2 as u32).int(nueva.0 * nueva.1 * 4).fin();
-                        e.empezar(otro_pool, wl_shm_pool::req::CREATE_BUFFER).uint(otro).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::XRGB8888).fin();
+                        e.empezar(otro_pool, wl_shm_pool::req::CREATE_BUFFER).uint(otro).int(0).int(nueva.0).int(nueva.1).int(nueva.0 * 4).uint(wayland::shm::ARGB8888).fin();
                         c.mandar(&e);
                         dashos::memoria_quitar(va);
                         dashos::cerrar(m);
                         px = unsafe { core::slice::from_raw_parts_mut(otra_va as *mut u32, (nueva.0 * nueva.1) as usize) };
                         (m, va, bufer, pool, medida) = (m2, otra_va, otro, otro_pool, nueva);
                         i.colocar(Rect::new(0, 0, medida.0, medida.1));
+                        i.esquinas = if pedida.0 > 0 { 0 } else { 16 };
                         presentar(&mut c, &mut i, px, medida, Some(bufer));
                         if pedida.0 > 0 {
                             println!("  [centro] el compositor pide {}x{}", medida.0, medida.1);
