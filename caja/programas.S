@@ -1,5 +1,5 @@
 // DashOS, H4: los programas 68k de prueba de la caja: binarios planos (pruebas68k/, cada uno enlazado en su dirección)
-// y un ejecutable hunk de AmigaOS (saludo.exe), que carga hunk.c.
+// y ejecutables hunk de AmigaOS (saludo.exe, ventana.exe y hostil.exe), que carga hunk.c.
         .section .rodata
         .macro  programa nombre, fichero
         .balign 4
@@ -13,3 +13,5 @@ prog_\nombre\()_fin:
         programa bucle, "pruebas68k/bucle.bin"
         programa mala, "pruebas68k/mala.bin"
         programa saludo, "pruebas68k/saludo.exe"
+        programa ventana, "pruebas68k/ventana.exe"
+        programa hostil, "pruebas68k/hostil.exe"

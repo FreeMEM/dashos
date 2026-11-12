@@ -170,6 +170,10 @@ pub struct Region {
 /// Cómo arrancar exec.
 #[derive(Clone, Debug)]
 pub struct Config {
+    /// La zona del sistema: `[inicio, fin)`, donde van ExecBase, su tabla de saltos, los trampolines y las cadenas de
+    /// exec. Nunca se reparte. En las pruebas, `ZONA_SISTEMA..FIN_ZONA_SISTEMA`; en la caja de DashOS, dentro de la
+    /// memoria del 68k (el kernel no proyecta nada por debajo de 64 KB, salvo la página 0).
+    pub sistema: (u32, u32),
     pub regiones: Vec<Region>,
     pub attn_flags: u16,
     pub vblank: u8,
@@ -177,7 +181,7 @@ pub struct Config {
 }
 
 /// Lo que va antes de la memoria repartible: la página 0 y la zona del sistema (ExecBase, su tabla de saltos y
-/// los trampolines de las funciones nativas).
+/// los trampolines de las funciones nativas). Estos son los de `Config::para`; `Config::sistema` los cambia.
 pub const PAGINA_CERO: u32 = 0x1000;
 pub const ZONA_SISTEMA: u32 = 0x1000;
 pub const FIN_ZONA_SISTEMA: u32 = 0x4000;
@@ -210,6 +214,7 @@ impl Config {
             });
         }
         Config {
+            sistema: (ZONA_SISTEMA, FIN_ZONA_SISTEMA),
             regiones,
             attn_flags: execbase::AFF_68010
                 | execbase::AFF_68020
@@ -221,6 +226,18 @@ impl Config {
             vblank: 50,
             eclock: 709_379,
         }
+    }
+
+    /// La de la caja de DashOS: la memoria del 68k es `[desde, hasta)`, no empieza en 0. La zona del sistema va en
+    /// `sistema`; la memoria "chip", de `chip` a los 2 MB (o a `hasta`), y la "fast", el resto.
+    pub fn caja(sistema: (u32, u32), chip: u32, hasta: u32) -> Config {
+        let mut c = Config::para(hasta);
+        c.sistema = sistema;
+        for r in &mut c.regiones {
+            r.inicio = r.inicio.max(chip);
+        }
+        c.regiones.retain(|r| r.inicio < r.fin);
+        c
     }
 }
 
@@ -277,6 +294,8 @@ pub struct Exec<M: Memoria> {
     /// Tramos de código cambiados (`SetFunction`, `MakeFunctions`...) que el JIT debe olvidar. `(0, 0)` es todo.
     codigo_cambiado: Vec<(u32, u32)>,
     fin_de_tarea: u32,
+    /// Dónde acaba la zona del sistema: las regiones repartibles empiezan después.
+    fin_sistema: u32,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -289,7 +308,7 @@ impl<M: Memoria> Exec<M> {
         let mut e = Exec {
             mem,
             base: 0,
-            sistema: (ZONA_SISTEMA, FIN_ZONA_SISTEMA),
+            sistema: config.sistema,
             bloques: BTreeMap::new(),
             regiones: Vec::new(),
             tareas: BTreeMap::new(),
@@ -301,10 +320,16 @@ impl<M: Memoria> Exec<M> {
             quitadas: Vec::new(),
             codigo_cambiado: Vec::new(),
             fin_de_tarea: 0,
+            fin_sistema: FIN_ZONA_SISTEMA,
         };
-        // La zona del sistema tiene que existir entera.
-        e.mem.leer(ZONA_SISTEMA, FIN_ZONA_SISTEMA - ZONA_SISTEMA).map_err(|_| Fallo::SinSitio)?;
-        e.cero(ZONA_SISTEMA, FIN_ZONA_SISTEMA - ZONA_SISTEMA)?;
+        // La zona del sistema tiene que existir entera, fuera de la página 0.
+        let (zs, fz) = config.sistema;
+        if zs < PAGINA_CERO || fz <= zs {
+            return Err(Fallo::SinSitio);
+        }
+        e.mem.leer(zs, fz - zs).map_err(|_| Fallo::SinSitio)?;
+        e.cero(zs, fz - zs)?;
+        e.fin_sistema = fz;
 
         let tabla = e.de_sistema(NEGSIZE_EXEC + execbase::TAMANO)?;
         let b = tabla + NEGSIZE_EXEC;
@@ -381,7 +406,7 @@ impl<M: Memoria> Exec<M> {
     }
 
     fn anadir_region(&mut self, r: &Region) -> Result<(), Fallo> {
-        let inicio = (r.inicio.max(FIN_ZONA_SISTEMA) + 7) & !7;
+        let inicio = (r.inicio.max(self.fin_sistema) + 7) & !7;
         let fin = r.fin & !7;
         let nombre = self.cadena_de_sistema(r.nombre)?;
         let primero = inicio + memheader::TAMANO;

@@ -183,12 +183,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
     ("virtio-gpu", programa!("virtio-gpu"), &[("dma-vgpu", PERMISO_DMA), ("virtio-gpu", REGISTROS), ("vgpu-cfg", REGISTROS), ("virtio-gpu", INTERRUPCION | OPCIONAL)], &["ventanas"]),
-    // H4: la caja Amiga, primer paso (`caja/`): el JIT de Emu68 en un proceso big-endian, con programas 68k que
-    // escriben por una dos.library nativa (línea A) y otros hostiles; el último la mata. Su llave 1, el permiso de
-    // página 0 (ExecBase en la dirección 4); `inicio` la espera igual (`SE_ESPERAN`). Al final, para no cambiar las
-    // marcas de los demás.
+    // H4 y H5: la caja Amiga (`caja/`): el JIT de Emu68 en un proceso big-endian, con exec, dos, graphics e intuition
+    // nativas (en Rust); programas 68k que escriben, leen un fichero, abren una ventana en el escritorio y otros
+    // hostiles; el último la mata. Sus llaves: 1 el permiso de página 0 (ExecBase en la dirección 4), 2 "ventanas" (el
+    // compositor) y 3 "archivos" (su ficha, en `FICHAS` de `inicio`). `inicio` la espera (`SE_ESPERAN`): mientras, no
+    // lanza la caja Linux (su ventana está abierta hasta 40 s). Va antes que ella, como en H4: tras ella no le queda
+    // presupuesto. Al final de los demás, para no cambiar sus marcas.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
     // La caja Linux (H9): el servicio que crea y corre las máquinas virtuales, con el permiso, y un programa sin él que
     // prueba a crearlas. Solo en `virt` por ahora; al final, para no cambiar las marcas de los de antes.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
