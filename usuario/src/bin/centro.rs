@@ -30,6 +30,9 @@ extern crate alloc;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
+#[path = "../panel_mosaicos.rs"]
+#[allow(dead_code)]
+mod panel_mosaicos;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -40,6 +43,7 @@ use kit::controles::{Boton, Hijo, Interfaz, Lista, Texto};
 use kit::lienzo::{Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
+use panel_mosaicos::Orden;
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
@@ -275,6 +279,8 @@ const VA_ARCHIVOS: usize = 0x50_0000_0000;
 /// Dónde se guarda la apariencia, desde su raíz (`C`, lo del usuario): un cajón 0700 y un fichero 0600.
 const PREFS: &str = "Prefs";
 const FICHERO_APARIENCIA: &str = "apariencia";
+/// C2: los mosaicos del panel rápido (cuáles y en qué orden), al lado.
+const FICHERO_PANEL: &str = "panel";
 
 /// Una sesión con el servicio de archivos, con su ventana proyectada (se quita al soltarla).
 struct Sesion {
@@ -335,21 +341,59 @@ impl Drop for Sesion {
     }
 }
 
-/// La apariencia guardada: (oscuro, color). `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
-/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta").
-fn leer_apariencia() -> Result<(bool, usize), &'static str> {
+/// Lee `Prefs/<fichero>` (como mucho `max` bytes). `Err` con el porqué si no hay, no se lee o es más largo.
+fn leer_prefs(fichero: &str, max: u64) -> Result<Vec<u8>, &'static str> {
     use dashos::protocolo::archivos as a;
     let ses = Sesion::abrir().ok_or("sin servicio de archivos")?;
-    let (e, asa, tam, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, "Prefs/apariencia");
+    let (e, asa, tam, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, &alloc::format!("{}/{}", PREFS, fichero));
     if e != a::BIEN {
         return Err("no hay");
     }
-    let (e, _, leidos, _, _) = ses.pedir(a::LEER, asa, 0, tam.min(64), "");
+    let (e, _, leidos, _, _) = ses.pedir(a::LEER, asa, 0, tam.min(max), "");
     ses.pedir(a::CERRAR, asa, 0, 0, "");
-    if e != a::BIEN || tam > 64 {
+    if e != a::BIEN || tam > max {
         return Err("no se entiende");
     }
-    let texto = core::str::from_utf8(&ses.ventana()[..leidos.min(64) as usize]).map_err(|_| "no se entiende")?;
+    Ok(ses.ventana()[..leidos.min(max) as usize].to_vec())
+}
+
+/// Guarda `bytes` en `Prefs/<fichero>` (lo crea, cajón 0700 y fichero 0600, si no está). El estado y los bytes.
+fn guardar_prefs(fichero: &str, bytes: &[u8]) -> (i32, usize) {
+    use dashos::protocolo::archivos as a;
+    let Some(ses) = Sesion::abrir() else { return (-1, 0) };
+    let (mut e, mut asa, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, &alloc::format!("{}/{}", PREFS, fichero));
+    if e == a::NO_EXISTE {
+        let (e1, mut dir, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, PREFS);
+        if e1 == a::NO_EXISTE {
+            let r = ses.pedir(a::CREAR, 0, a::CAJON as u64, 0, PREFS);
+            dir = r.1;
+            if r.0 == a::BIEN {
+                ses.pedir(a::PROTEGER, dir, 0, 0o700, "");
+            }
+        }
+        let r = ses.pedir(a::CREAR, dir, a::FICHERO as u64, 0, fichero);
+        (e, asa) = (r.0, r.1);
+        if e == a::BIEN {
+            ses.pedir(a::PROTEGER, asa, 0, 0o600, "");
+        }
+        ses.pedir(a::CERRAR, dir, 0, 0, "");
+    }
+    if e != a::BIEN {
+        return (e, 0);
+    }
+    ses.ventana()[..bytes.len()].copy_from_slice(bytes);
+    let recorta = ses.pedir(a::TAMANO, asa, 0, 0, "").0;
+    let (escribe, _, escritos, _, _) = ses.pedir(a::ESCRIBIR, asa, 0, bytes.len() as u64, "");
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    let estado = if recorta != a::BIEN { recorta } else { escribe };
+    (estado, escritos as usize)
+}
+
+/// La apariencia guardada: (oscuro, color). `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
+/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta").
+fn leer_apariencia() -> Result<(bool, usize), &'static str> {
+    let bytes = leer_prefs(FICHERO_APARIENCIA, 64)?;
+    let texto = core::str::from_utf8(&bytes).map_err(|_| "no se entiende")?;
     let mut partes = texto.trim_end_matches('\n').split(' ');
     let oscuro = match partes.next() {
         Some("claro") => false,
@@ -363,37 +407,18 @@ fn leer_apariencia() -> Result<(bool, usize), &'static str> {
     Ok((oscuro, color))
 }
 
-/// Guarda la apariencia en `Prefs/apariencia` (lo crea, cajón 0700 y fichero 0600, si no está). El estado y los bytes.
+/// Guarda la apariencia en `Prefs/apariencia`. El estado y los bytes.
 fn guardar_apariencia(oscuro: bool, color: usize) -> (i32, usize) {
-    use dashos::protocolo::archivos as a;
-    let Some(ses) = Sesion::abrir() else { return (-1, 0) };
     let texto = alloc::format!("{} {}\n", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0.to_lowercase());
-    let (mut e, mut asa, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, "Prefs/apariencia");
-    if e == a::NO_EXISTE {
-        let (e1, mut dir, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, PREFS);
-        if e1 == a::NO_EXISTE {
-            let r = ses.pedir(a::CREAR, 0, a::CAJON as u64, 0, PREFS);
-            dir = r.1;
-            if r.0 == a::BIEN {
-                ses.pedir(a::PROTEGER, dir, 0, 0o700, "");
-            }
-        }
-        let r = ses.pedir(a::CREAR, dir, a::FICHERO as u64, 0, FICHERO_APARIENCIA);
-        (e, asa) = (r.0, r.1);
-        if e == a::BIEN {
-            ses.pedir(a::PROTEGER, asa, 0, 0o600, "");
-        }
-        ses.pedir(a::CERRAR, dir, 0, 0, "");
-    }
-    if e != a::BIEN {
-        return (e, 0);
-    }
-    ses.ventana()[..texto.len()].copy_from_slice(texto.as_bytes());
-    let recorta = ses.pedir(a::TAMANO, asa, 0, 0, "").0;
-    let (escribe, _, escritos, _, _) = ses.pedir(a::ESCRIBIR, asa, 0, texto.len() as u64, "");
-    ses.pedir(a::CERRAR, asa, 0, 0, "");
-    let estado = if recorta != a::BIEN { recorta } else { escribe };
-    (estado, escritos as usize)
+    guardar_prefs(FICHERO_APARIENCIA, texto.as_bytes())
+}
+
+/// C2: los mosaicos del panel rápido guardados en `Prefs/panel`. `Err` con el porqué si no hay o no se entiende (y
+/// entonces, los de serie). Lo que vale lo dice `panel_mosaicos`, el mismo que usa el panel.
+fn leer_panel() -> Result<Orden, &'static str> {
+    // Uno más de lo que vale: si llega a tanto, `entender` dice que es largo (y no se lee un fichero enorme).
+    let bytes = leer_prefs(FICHERO_PANEL, panel_mosaicos::MAX_TEXTO as u64 + 1).map_err(|e| if e == "no se entiende" { "demasiado largo" } else { e })?;
+    Orden::entender(&bytes)
 }
 
 /// Las filas de Apariencia: los dos modos y los colores, con una marca en lo elegido.
@@ -822,8 +847,46 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     r
 }
 
-/// C2: quién puede pedir "modo oscuro" o "modo claro" por el canal del centro: el panel rápido.
+/// C2: quién puede pedir "modo oscuro" o "modo claro" por el canal del centro, y leer o guardar los mosaicos del panel
+/// ("panel leer", "panel guardar ..."): el panel rápido.
 const PIDEN_MODO: &[&str] = &["panel"];
+
+/// C2: "panel leer". La respuesta: el estado (0 guardado; 1 no hay y 2 no se entiende, y van los de serie; -2 sin
+/// servicio de archivos, y también van los de serie) y la línea de los mosaicos.
+fn contestar_panel_leer(llave: u32) {
+    let (estado, orden) = match leer_panel() {
+        Ok(o) => (0, o),
+        Err(porque) => {
+            println!("  [centro] panel guardado: {}; se queda el de serie", porque);
+            (match porque { "no hay" => 1, "sin servicio de archivos" => -2, _ => 2 }, Orden::de_serie())
+        }
+    };
+    let mut r = [0u8; 4 + panel_mosaicos::MAX_TEXTO];
+    r[..4].copy_from_slice(&(estado as i32).to_le_bytes());
+    let mut linea = [0u8; panel_mosaicos::MAX_TEXTO];
+    let n = orden.escribir(&mut linea);
+    r[4..4 + n].copy_from_slice(&linea[..n]);
+    dashos::canal_escribir(llave, &r[..4 + n], &[]);
+}
+
+/// C2: "panel guardar <línea>". Si la línea no vale, -1 y el disco no se toca. Si vale, se guarda y se relee; el
+/// estado de guardar (0 si bien), o -3 si al releer no sale lo mismo.
+fn panel_guardar(linea: &[u8]) -> i32 {
+    let o = match Orden::entender(linea) {
+        Ok(o) => o,
+        Err(porque) => {
+            println!("  [centro] panel: {} (lo pide el panel): nada", porque);
+            return -1;
+        }
+    };
+    let mut texto = [0u8; panel_mosaicos::MAX_TEXTO];
+    let n = o.escribir(&mut texto);
+    let (guardado, _) = guardar_prefs(FICHERO_PANEL, &texto[..n]);
+    let releido = leer_panel() == Ok(o);
+    let vistos: Vec<&str> = o.vistos().map(|m| panel_mosaicos::MOSAICOS[m].0).collect();
+    println!("  [centro] panel: {} (lo pide el panel), guardado: {}; releído: {}", vistos.join(" "), guardado, if releido { "sí" } else { "no" });
+    if guardado != 0 { guardado } else if releido { 0 } else { -3 }
+}
 
 /// C2: el modo pedido por el panel, aunque la ventana esté cerrada: con el color guardado, se pone en el compositor
 /// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
@@ -889,6 +952,23 @@ fn principal() -> u64 {
                 _ => None,
             }
             .filter(|_| nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str())));
+            // C2: los mosaicos del panel, también solo del panel rápido. A otro, lo de un pedido que no vale (-1).
+            let del_panel = nombres.get(&marca).is_some_and(|n| PIDEN_MODO.contains(&n.as_str()));
+            if del_panel && &buf[..n] == b"panel leer" {
+                if k >= 1 {
+                    contestar_panel_leer(ll[0]);
+                }
+                cerrar_llaves(&ll[..k]);
+                continue;
+            }
+            if del_panel && let Some(linea) = buf[..n].strip_prefix(b"panel guardar ") {
+                let estado = panel_guardar(linea);
+                if k >= 1 {
+                    dashos::canal_escribir(ll[0], &estado.to_le_bytes(), &[]);
+                }
+                cerrar_llaves(&ll[..k]);
+                continue;
+            }
             if let Some(oscuro) = modo {
                 let estado = aplicar_modo(oscuro);
                 if k >= 1 {
