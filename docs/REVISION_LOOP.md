@@ -951,3 +951,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   error de protocolo (sobre el objeto del tema) y lo suelta; por otra conexión, el tema sigue siendo el de serie.
   "poner el tema sin ser el centro da error: sí; el tema sigue: sí". (Primero falló por la prueba: el hostil tenía
   abierta la conexión anterior y el compositor solo atiende una por programa; la cierra antes.)
+- Fallo abierto (S10c): que el selector siga el tema del sistema (enlazar `dashos_tema_v1` y repintarse al recibirlo,
+  como Ajustes) rompe la prueba de arranque 3 de 3 veces, y sin el cambio pasa: se pierde el primer Intro del selector
+  ("Intro sin nada elegido" no sale), su doble clic acaba "con Intro" y, después, el clic y las teclas de Ajustes caen
+  en otro sitio (sale "Cancelado" y falta "el campo dice: DashOSa"). No es el número de objeto (43 o 60, lo mismo), ni
+  errores de protocolo (no hay). Sospecha: algo del orden de los eventos al abrir la ventana del selector (el tema llega
+  antes del configure) que deja la entrada del compositor desfasada para lo que viene detrás. Sin investigar más:
+  el cambio, guardado en `docs/medidas/selector_tema.diff`, no entra. El selector sale con el tema de serie.

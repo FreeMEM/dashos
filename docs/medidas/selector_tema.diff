@@ -1,0 +1,50 @@
+diff --git a/kernel/pruebas/arranque_virt.txt b/kernel/pruebas/arranque_virt.txt
+index 7b93e68..5a40303 100644
+--- a/kernel/pruebas/arranque_virt.txt
++++ b/kernel/pruebas/arranque_virt.txt
+@@ -182,6 +182,8 @@ DashOS en marcha con 4 núcleos.
+ # U5: el selector cede la lectura de un fichero; con esa asa se lee y nada más.
+ # U5: lo cedido lo elige el usuario en la ventana del selector, que empieza en C y no enseña el nombre con '|' (en
+ # la prueba, el guion: Intro sin nada, flecha abajo e Intro para entrar en Privado, y Fin e Intro para nota.txt).
++# S10c: el selector también sigue el tema del sistema (aquí, aún el de serie).
++~│   [selector] tema del sistema: claro, color 6750a4
+ ~│   [selector] ventana de abrir en pantalla, para hostil: C (1 nombres raros sin enseñar),
+ ~│   [selector] Intro sin nada elegido: no abre nada
+ ~│   [selector] entra en C/Privado, 1 entradas
+diff --git a/usuario/src/bin/selector.rs b/usuario/src/bin/selector.rs
+index cfda351..0fd7d09 100644
+--- a/usuario/src/bin/selector.rs
++++ b/usuario/src/bin/selector.rs
+@@ -36,6 +36,8 @@ dashos::programa!(principal);
+ dashos::monton!();
+ 
+ const ARCHIVOS: u32 = 2;
++/// El objeto del tema del sistema (`dashos_tema_v1`, S10c), tras los de `ventana_cliente`.
++const TEMA: u32 = 43;
+ const CANAL: u32 = 3;
+ /// Donde empieza y de donde no se sale (en la prueba, lo del usuario 1000; `C/Privado` el hostil no lo puede abrir).
+ const RAIZ: &str = "C";
+@@ -215,6 +217,10 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
+         e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
+         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
++        // S10c: el tema del sistema (lo pone el centro de control): llega al enlazar y cada vez que cambia.
++        if let Some(gt) = global("dashos_tema_v1") {
++            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
++        }
+         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
+         e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(alto).int(ANCHO * 4).uint(wayland::shm::XRGB8888).fin();
+         e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
+@@ -286,6 +292,12 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str) -> Option<(u32,
+                     pulsado = false;
+                     i.raton(-1, -1, false)
+                 }
++                (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => {
++                    let (color, oscuro) = (palabra(0) | 0xff00_0000, palabra(1) != 0);
++                    i.ctx.tema = Tema::desde_color(color, oscuro);
++                    println!("  [selector] tema del sistema: {}, color {:06x}", if oscuro { "oscuro" } else { "claro" }, color & 0xff_ffff);
++                    true
++                }
+                 (TECLADO, wl_keyboard::ev::KEYMAP) => {
+                     if let Some(l) = c.juntador.tomar_llave() {
+                         dashos::cerrar(l);
