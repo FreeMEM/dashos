@@ -196,10 +196,22 @@ while time.time() - inicio < total:
                     mandar("sendkey down")
                 time.sleep(0.25)
                 continue
-            centro = 8
+            centro = 11
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".discos.ppm")
+            time.sleep(0.5)
+            mandar("sendkey down")
+            reintento = time.time() + 4
+        # Pantallas; y otra abajo, Apariencia.
+        if centro == 11:
+            if "[centro] Pantallas: " not in texto:
+                if time.time() > reintento:
+                    reintento = time.time() + 4
+                    mandar("sendkey down")
+                time.sleep(0.25)
+                continue
+            centro = 8
             time.sleep(0.5)
             mandar("sendkey down")
             reintento = time.time() + 4

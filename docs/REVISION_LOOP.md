@@ -923,3 +923,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   con datos tiene que ir por trozos (o en otro proceso, sobre una instantánea) antes de que se use con discos de verdad;
   sin datos, aguanta. Solo cambia `medir-fs` (no está en las imágenes de `make prueba` ni de `make arranque-virt`, que
   no se han pasado en este paso).
+- S10c, categoría **Pantallas** (solo de lectura): el centro se suscribe a `wl_output` y enseña lo que dice el
+  compositor: nombre, tamaño, frecuencia y escala. El nombre se corta a lo que trae el mensaje (y a 32 letras). Prueba
+  en virt: "Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1". Elegir la resolución, el
+  brillo y el modo noche (DMS) esperan a la pantalla de verdad (HVS, G7).

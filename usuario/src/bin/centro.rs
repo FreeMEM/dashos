@@ -5,6 +5,8 @@
 //! - **Seguridad** (U6): el registro de `sesiones` (negativas y fallos), lo último primero. Solo se lee.
 //! - **Discos**: cuánto mide el disco del sistema, cuánto está ocupado y cuánto libre (INFO de `archivos`). Solo se
 //!   lee; su sesión con `archivos` no tiene derechos y está encerrada en `C`.
+//! - **Pantallas**: lo que el compositor dice de la pantalla (`wl_output`): nombre, tamaño, frecuencia y escala. Solo se
+//!   lee.
 //! - **Apariencia** (S10c, C3, el principio): modo claro u oscuro y color de acento; el esquema sale del color con
 //!   `Tema::desde_color` (Material 3). Se elige con Intro o doble clic y se ve en el acto, de momento en la ventana del
 //!   propio centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio en Prefs.
@@ -40,7 +42,7 @@ use kit::objetos::{atr, Arbol, Cuando, Que, Valor};
 use kit::tema::Tema;
 use ventana_cliente::*;
 use wayland::tablas::{
-    wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
+    wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland::Escritor;
@@ -58,11 +60,15 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("permisos", "Permisos"),
     ("seguridad", "Seguridad"),
     ("discos", "Discos"),
+    ("pantallas", "Pantallas"),
     ("apariencia", "Apariencia"),
     ("acerca", "Acerca de"),
 ];
 const DISCOS: usize = 2;
-const APARIENCIA: usize = 3;
+const PANTALLAS: usize = 3;
+const APARIENCIA: usize = 4;
+/// El objeto de la pantalla (`wl_output`), tras los de `ventana_cliente`.
+const SALIDA: u32 = 40;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
 const COLORES: &[(&str, u32)] = &[("Violeta", 0xff67_50a4), ("Azul", 0xff00_61a4), ("Verde", 0xff38_6a20), ("Naranja", 0xff8b_5000)];
 const PERMISOS: usize = 0;
@@ -350,6 +356,28 @@ fn apariencia(oscuro: bool, color: usize) -> Vec<String> {
     l
 }
 
+/// Lo que se sabe de la pantalla (de `wl_output`): nombre, ancho, alto, frecuencia en mHz y escala.
+#[derive(Default, Clone)]
+struct Pantalla {
+    nombre: String,
+    ancho: i32,
+    alto: i32,
+    mhz: i32,
+    escala: i32,
+}
+
+/// Lo de "Pantallas".
+fn pantallas(p: &Pantalla) -> Vec<String> {
+    if p.ancho == 0 {
+        return alloc::vec![String::from("El compositor no ha dicho nada de la pantalla")];
+    }
+    alloc::vec![
+        alloc::format!("Pantalla {}: {} × {}", p.nombre, p.ancho, p.alto),
+        alloc::format!("Frecuencia: {},{:03} Hz", p.mhz / 1000, p.mhz % 1000),
+        alloc::format!("Escala: {}", p.escala.max(1)),
+    ]
+}
+
 /// Lo de "Acerca de": una línea por dato.
 fn acerca() -> Vec<String> {
     let mut l = Vec::new();
@@ -391,6 +419,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     else {
         return None;
     };
+    let gp = global("wl_output");
+    let mut pantalla = Pantalla::default();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
     let nombres: Vec<&str> = CATEGORIAS.iter().map(|c| c.1).collect();
@@ -442,6 +472,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             ("Cuánto ocupa lo guardado.", reg.join("|"))
         } else if cat == APARIENCIA {
             ("Modo y color. Intro o doble clic para elegir.", reg.join("|"))
+        } else if cat == PANTALLAS {
+            ("Lo que dice el compositor de la pantalla.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
@@ -458,6 +490,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         lineas_registro = discos();
     } else if cat == APARIENCIA {
         lineas_registro = apariencia(oscuro, color);
+    } else if cat == PANTALLAS {
+        lineas_registro = pantallas(&pantalla);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -480,6 +514,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gx).texto(Some("xdg_wm_base")).uint(6).uint(XDG).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
+        if let Some(gp) = gp {
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gp).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
+        }
         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
         e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
@@ -532,6 +569,19 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     false
                 }
                 (VENTANA, xdg_toplevel::ev::CLOSE) => return Some(()),
+                (SALIDA, wl_output::ev::MODE) => {
+                    (pantalla.ancho, pantalla.alto, pantalla.mhz) = (palabra(1) as i32, palabra(2) as i32, palabra(3) as i32);
+                    false
+                }
+                (SALIDA, wl_output::ev::SCALE) => {
+                    pantalla.escala = palabra(0) as i32;
+                    false
+                }
+                (SALIDA, wl_output::ev::NAME) => {
+                    let n = (palabra(0) as usize).saturating_sub(1).min(cuerpo.len().saturating_sub(4)).min(32);
+                    pantalla.nombre = String::from(core::str::from_utf8(&cuerpo[4..4 + n]).unwrap_or("?"));
+                    false
+                }
                 (PUNTERO, wl_pointer::ev::ENTER) => {
                     (x, y) = ((palabra(2) as i32) >> 8, (palabra(3) as i32) >> 8);
                     i.raton(x, y, pulsado)
@@ -579,6 +629,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 } else if cat != SEGURIDAD {
                     lineas_registro = match cat {
                         DISCOS => discos(),
+                        PANTALLAS => pantallas(&pantalla),
                         APARIENCIA => apariencia(oscuro, color),
                         _ => acerca(),
                     };
