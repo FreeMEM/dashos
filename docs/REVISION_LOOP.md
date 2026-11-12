@@ -1077,3 +1077,12 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   datos). Además, cada bloque de 4 KB es una petición al servicio de disco: leer por delante (ventanas de 64 KB) es lo
   primero si al medir en un disco grande sale lento. Pendiente: medirlo en el disco de medir-fs, y llevar el
   COMPROBAR con datos del centro al comprobador, con el informe de vuelta.
+- A15, medido en el disco de medir-fs (8 MB al azar al arrancar), con el comprobador metido a mano en ese arranque
+  (no se queda: sujetar a la vez altera las medidas): con los datos, 8.224 KB en 84 ms, 94 MB/s; dentro de `archivos`,
+  160 a 220 MB/s. Más lento porque pide cada bloque de 4 KB por separado (leer por delante lo mejoraría), pero no para
+  al servicio, que era lo que se buscaba.
+  Hallado al medir: (1) el disco de medir-fs no tiene `C` y sin raíz no hay alta: el comprobador va con la raíz del
+  disco (no lee nada por `archivos`) y reintenta la sesión 2 s, porque el alta llega por otro canal. (2) medir-fs llena
+  el disco mientras está sujeto y `archivos` lo suelta por falta de sitio, como se diseñó: 56 de 200 vueltas limpias y
+  luego EIO. El comprobador lo dice ahora como "interrumpido por falta de sitio" (SOLTAR da LLENO), no como un fallo
+  del disco, y hace la comprobación con datos lo primero. `tools/medir.py` guarda la salida entera con MEDIR_SALIDA.

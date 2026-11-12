@@ -11,7 +11,7 @@
 extern crate alloc;
 
 use dashos::println;
-use dashos::protocolo::archivos::{EN_USO, SESION, SOLTAR, SUJETAR};
+use dashos::protocolo::archivos::{EN_USO, LLENO, SESION, SOLTAR, SUJETAR};
 use redoxfs::{BLOCK_SIZE, Disk, FileSystem};
 use syscall::error::{EIO, EROFS, Error, Result};
 
@@ -140,7 +140,20 @@ fn principal() -> u64 {
     p[0..4].copy_from_slice(&SESION.to_le_bytes());
     let mut r = [0u8; 32];
     let mut ll = [0u32; 1];
-    if dashos::canal_escribir(2, &p, &[av]) != 0 || dashos::canal_leer(al, &mut r, &mut ll).0 != 32 || r[0..4] != [0; 4] {
+    // El alta la manda `inicio` por otro canal y puede llegar después que esto: sin ella, PROTEGIDO; se reintenta (2 s).
+    let mut sesion = false;
+    for _ in 0..200 {
+        let Ok(copia) = u32::try_from(dashos::llave_duplicar(av, dashos::ESCRIBIR | dashos::TRANSFERIR, 0)) else { break };
+        if dashos::canal_escribir(2, &p, &[copia]) != 0 || dashos::canal_leer(al, &mut r, &mut ll).0 != 32 {
+            break;
+        }
+        if r[0..4] == [0; 4] {
+            sesion = true;
+            break;
+        }
+        dashos::dormir_us(10_000);
+    }
+    if !sesion {
         println!("  [comprobador] sin sesión en archivos");
         return 4;
     }
@@ -157,7 +170,18 @@ fn principal() -> u64 {
         println!("  [comprobador] no se sujeta el disco: {}", sujetar);
         return 5;
     }
-    // Mientras está sujeta, la foto se abre y se recorre entera (estructura, sin los datos) una y otra vez, con el
+    // Primero, una vez con los datos (FS8: cada bloque de datos leído y su resumen comprobado), medido por MB ocupado.
+    let t0 = dashos::ahora_us();
+    let datos = FileSystem::open(Lector { lectura, vuelta, sectores }, None, Some(0), false)
+        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)));
+    let us = (dashos::ahora_us() - t0).max(1);
+    match &datos {
+        Ok(i) => println!("  [comprobador] A15 con los datos: {}, {} KB ocupados en {} ms, {} MB/s",
+            if i.is_clean() { "limpio" } else { "con problemas" }, i.used * 4, us / 1000, i.used * 4 * 1_000_000 / 1024 / us),
+        Err(e) => println!("  [comprobador] A15 con los datos: error {}", e.errno),
+    }
+    let datos_limpios = datos.is_ok_and(|i| i.is_clean());
+    // Después, la foto se abre y se recorre entera (estructura, sin los datos) una y otra vez, con el
     // servicio escribiendo a la vez: tiene que salir limpia todas las veces.
     let desde = dashos::ahora_us();
     let mut limpias = 0;
@@ -176,19 +200,14 @@ fn principal() -> u64 {
         }
     }
     let ms = (dashos::ahora_us() - desde) / 1000;
-    // Y una vez con los datos (FS8: cada bloque de datos leído y su resumen comprobado), medido por MB ocupado.
-    let t0 = dashos::ahora_us();
-    let datos = FileSystem::open(Lector { lectura, vuelta, sectores }, None, Some(0), false)
-        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)));
-    let us = (dashos::ahora_us() - t0).max(1);
-    match &datos {
-        Ok(i) => println!("  [comprobador] A15 con los datos: {}, {} KB ocupados en {} ms, {} MB/s",
-            if i.is_clean() { "limpio" } else { "con problemas" }, i.used * 4, us / 1000, i.used * 4 * 1_000_000 / 1024 / us),
-        Err(e) => println!("  [comprobador] A15 con los datos: error {}", e.errno),
-    }
-    let limpias = if datos.is_ok_and(|i| i.is_clean()) { limpias } else { 0 };
     let soltar = archivos(al, SOLTAR);
-    let bien = limpias == VUELTAS && soltar == 0;
+    // Si el servicio soltó antes por falta de sitio (LLENO), lo leído desde entonces no vale: no es un problema del
+    // disco, es una comprobación interrumpida, y se dice así.
+    if soltar == LLENO {
+        println!("  [comprobador] A15 interrumpido: el servicio soltó el disco por falta de sitio ({} de {} vueltas limpias)", limpias, VUELTAS);
+        return 7;
+    }
+    let bien = limpias == VUELTAS && datos_limpios && soltar == 0;
     if let Some(p) = problema.filter(|_| !bien) {
         println!("  [comprobador] la foto: {}", p);
     }

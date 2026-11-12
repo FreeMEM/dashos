@@ -228,7 +228,11 @@ def una_vuelta(imagen, segundos=300):
     finally:
         q.kill()
         q.wait()
-    return datos.decode("utf-8", errors="replace").replace("\r", "")
+    texto = datos.decode("utf-8", errors="replace").replace("\r", "")
+    # Con MEDIR_SALIDA=fichero, la salida entera de la última vuelta, para ver lo que no es una medida.
+    if os.environ.get("MEDIR_SALIDA"):
+        open(os.environ["MEDIR_SALIDA"], "w").write(texto)
+    return texto
 
 
 CARGA_PC = []
