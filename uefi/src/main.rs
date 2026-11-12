@@ -91,8 +91,8 @@ struct ServiciosArranque {
 /// EFI_GRAPHICS_OUTPUT_PROTOCOL (UEFI 2.10, 12.9): solo lo que hace falta para saber dónde está la pantalla.
 #[repr(C)]
 struct Gop {
-    _consultar_modo: Reservado,
-    _poner_modo: Reservado,
+    consultar_modo: extern "efiapi" fn(*const Gop, u32, *mut usize, *mut *const InfoGop) -> Estado,
+    poner_modo: extern "efiapi" fn(*const Gop, u32) -> Estado,
     _blt: Reservado,
     modo: *const ModoGop,
 }
@@ -132,10 +132,28 @@ struct Pantalla {
     formato: u32,
 }
 
-fn buscar_pantalla(bs: &ServiciosArranque) -> Option<Pantalla> {
+fn buscar_pantalla(bs: &ServiciosArranque, c: &mut Consola) -> Option<Pantalla> {
     let mut gop: *const Gop = core::ptr::null();
     if (bs.localizar_protocolo)(&GUID_GOP, core::ptr::null(), &mut gop) != BIEN || gop.is_null() {
         return None;
+    }
+    // Con DASHOS_PANTALLA=ANCHOxALTO al compilar, se pide ese modo si el firmware lo tiene (para ver el escritorio a
+    // otro tamaño; las pruebas cuentan con el de serie, 800 × 600 en QEMU).
+    if let Some((ancho, alto)) = option_env!("DASHOS_PANTALLA").and_then(|t| t.split_once('x')).and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?))) {
+        let max = unsafe { (*(*gop).modo).max_modo };
+        let _ = writeln!(c, "DashOS: el firmware da {} modos de pantalla", max);
+        for m in 0..max {
+            let mut tam = 0usize;
+            let mut info: *const InfoGop = core::ptr::null();
+            if (unsafe { (*gop).consultar_modo })(gop, m, &mut tam, &mut info) == BIEN && !info.is_null() {
+                let i = unsafe { &*info };
+                if i.ancho == ancho && i.alto == alto {
+                    let e = (unsafe { (*gop).poner_modo })(gop, m);
+                    let _ = writeln!(c, "DashOS: modo {} de {} ({}x{}) pedido: {}", m, max, ancho, alto, if e == BIEN { "puesto" } else { "rechazado" });
+                    break;
+                }
+            }
+        }
     }
     let modo = unsafe { &*(*gop).modo };
     let info = unsafe { &*modo.info };
@@ -473,7 +491,7 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
         }
     };
     let _ = writeln!(c, "DashOS: árbol de dispositivos en {:#x}, {} bytes", arbol, tam_arbol);
-    let pantalla = buscar_pantalla(bs);
+    let pantalla = buscar_pantalla(bs, &mut c);
     match pantalla {
         Some(p) => {
             let _ = writeln!(c, "DashOS: pantalla del firmware de {}x{} ({} por línea, formato {}) en {:#x}, {} KB", p.ancho, p.alto, p.por_linea, p.formato, p.base, p.tamano / 1024);

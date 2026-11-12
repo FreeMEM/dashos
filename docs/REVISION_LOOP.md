@@ -1271,3 +1271,15 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   PC cargado: en la Pi (B5), el criterio estricto.
 - Guion: mientras el selector espera teclas, los pasos del centro no teclean (en la rama del fondo, Apariencia dura
   más y los dos tecleaban a la vez; el selector caducaba al minuto).
+
+### 2026-11-12 13:30: el fallo de "Destello", arreglado en el guion
+- Causa (la vio el agente del Workbench): `guardian` deja pendiente el bloqueo que pide `pide` ("se bloquea la sesión de
+  Carla") hasta acabar sus 40 s de preguntas. Desde cf29d2e el guion lo contaba como bloqueo ya, no tecleaba al selector
+  y su ventana se quedaba un minuto encima del menú de Ajustes.
+- Arreglo: el bloqueo cuenta cuando se cumple ("sesión bloqueada" o la pantalla pintada); el paso del menú espera a que
+  el selector acabe; tras el menú, el cursor va abajo a la derecha (de la rama `avisos`, 000496e).
+- Tres arranques a la vez (revision, prueba1, prueba2): los tres BIEN enteros.
+- Centro, "Acerca de": "Memoria en uso" (llamada 29, contadores 5, 6 y 7). Con el arranque de pruebas: 141,7 MB de
+  2048, el núcleo 8,4 MB. Sin reparto por programa todavía.
+- Cargador: con DASHOS_PANTALLA=ANCHOxALTO al compilar pide ese modo al GOP. El firmware de QEMU (ramfb) solo da
+  640x480, 800x600 y 1024x768; Full HD tendrá que ir por virtio-gpu (rama multimonitor).

@@ -466,6 +466,15 @@ fn acerca() -> Vec<String> {
     if a_sesiones(&p, &mut r) >= 8 {
         l.push(alloc::format!("Procesos en marcha: {}", u32::from_le_bytes(r[4..8].try_into().unwrap())));
     }
+    // La memoria: páginas de 4 KB en total y libres, y lo que ocupa el núcleo (los contadores 5, 6 y 7 de la llamada
+    // 29, que no dicen nada de otros procesos).
+    let (total, libres, nucleo) = (dashos::llamada(29, [5, 0, 0, 0, 0]).0, dashos::llamada(29, [6, 0, 0, 0, 0]).0, dashos::llamada(29, [7, 0, 0, 0, 0]).0);
+    if total > 0 && libres <= total {
+        let mb = |paginas: u64| paginas * 4096 * 10 / (1 << 20);
+        let en_uso = mb(total - libres);
+        l.push(alloc::format!("Memoria en uso: {},{} MB de {} MB (el núcleo, {},{} MB)", en_uso / 10, en_uso % 10, mb(total) / 10,
+            nucleo * 10 / (1 << 20) / 10, nucleo * 10 / (1 << 20) % 10));
+    }
     l
 }
 
