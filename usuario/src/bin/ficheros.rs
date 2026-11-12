@@ -514,8 +514,13 @@ fn principal() -> u64 {
     let mut lleno = sujetar() == 0;
     let mut x: u64 = 0x2545_F491_4F6C_DD1D;
     let mut rondas = 0;
+    // El primer paso que falla y su estado, para el mensaje.
+    let mut fallo: Option<(&str, i64)> = None;
     while lleno && rondas < 64 {
         let f = c.pedir(CREAR, escrito.asa, 1, 0, "a15b.bin");
+        if f.estado != 0 && fallo.is_none() {
+            fallo = Some(("crear", f.estado as i64));
+        }
         lleno &= f.estado == 0;
         for off in (0..256 * 1024u64).step_by(64 * 1024) {
             for b in c.ventana_mut()[..64 * 1024].iter_mut() {
@@ -524,19 +529,32 @@ fn principal() -> u64 {
                 x ^= x << 17;
                 *b = x as u8;
             }
-            lleno &= c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "").a == 64 * 1024;
+            let w = c.pedir(ESCRIBIR, f.asa, off, 64 * 1024, "");
+            if w.a != 64 * 1024 && fallo.is_none() {
+                fallo = Some(("escribir", w.estado as i64));
+            }
+            lleno &= w.a == 64 * 1024;
         }
         // Guardado antes de borrarlo: si no, sus bloques son nuevos (ninguna foto los nombra) y se reusan sin esperar.
-        lleno &= c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        let v = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if v != 0 && fallo.is_none() {
+            fallo = Some(("guardar", v as i64));
+        }
+        lleno &= v == 0;
         c.pedir(CERRAR, f.asa, 0, 0, "");
-        lleno &= c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado == 0 && c.pedir(VACIAR, 0, 0, 0, "").estado == 0;
+        let b = c.pedir(BORRAR, escrito.asa, 0, 0, "a15b.bin").estado;
+        let v2 = c.pedir(VACIAR, 0, 0, 0, "").estado;
+        if (b != 0 || v2 != 0) && fallo.is_none() {
+            fallo = Some(("borrar y guardar", (b as i64) << 32 | (v2 as u32 as i64)));
+        }
+        lleno &= b == 0 && v2 == 0;
         rondas += 1;
     }
     c.pedir(CERRAR, escrito.asa, 0, 0, "");
     let soltar = c.pedir(SOLTAR, 0, 0, 0, "").estado;
     let lleno = lleno && soltar == LLENO && c.pedir(COMPROBAR, 0, 0, 0, "").a == 0;
     if !lleno {
-        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}", rondas, soltar);
+        println!("  [ficheros] A15 sujetar sin soltar: {} rondas, soltar {}, primer fallo {:?}", rondas, soltar, fallo);
     }
     println!("  [ficheros] A15 sujetar sin soltar: {}", si(lleno));
 
