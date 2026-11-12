@@ -899,6 +899,10 @@ while time.time() - inicio < total:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
                 menu_intentos += 1
                 menu = 0
+            if menu == 1:
+                # Con el menú abierto o por abrirse, nada de lo de siempre: un clic fuera lo cierra sin elegir.
+                time.sleep(0.25)
+                continue
         paso += 1
         ordenes = ["mouse_move 10 5"]
         if paso >= 15:
