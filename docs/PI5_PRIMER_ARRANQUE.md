@@ -54,7 +54,8 @@ PC). Arranca si la EEPROM tiene el 6 en `BOOT_ORDER`.
 3. Encender el monitor antes que la Pi.
 4. La corriente (el cargador oficial de 27 W, mejor).
 
-Teclado y ratón no hacen falta: DashOS todavía no los lee en la Pi 5 (van por el chip RP1, aún sin controlador).
+Para la primera prueba, teclado y ratón no hacen falta. Para la del USB (abajo), un teclado y un ratón USB normales,
+enchufados antes de encender (mejor en los puertos negros, los de USB 2).
 
 ## Qué foto hacer
 
@@ -75,13 +76,27 @@ algo se para, la foto dice hasta dónde llegó: también vale.
 
 Si se puede, una segunda foto unos segundos más tarde, por si cambió algo.
 
+## Después: el teclado y el ratón (el USB)
+
+**Segundo kernel que probar: `dashos-usb.img`** (en `config.txt`, cambiar `kernel=kernel_2712.img` por
+`kernel=dashos-usb.img`), con teclado y ratón enchufados. **Foto del panel de arriba a los 15 s; luego pulsar unas
+teclas y mover el ratón, y otra foto** (la línea "Teclado y ratón" debe cambiar).
+
+Qué dice el panel, de arriba abajo (verde bien, magenta mal): el enlace PCIe con el chip RP1 (donde está el USB), sus
+ventanas, el RP1 (su número, `1de4:...`), los dos controladores USB y sus puertos ("algo" si hay algo enchufado), la
+última tecla o movimiento del ratón y, debajo, lo que cuentan los controladores: "DMA bien", cada aparato con su
+fabricante y producto, y cuántos teclados y ratones de arranque encontró. Si algo sale en magenta, la foto dice dónde
+se paró. La tarjeta lleva `pciex4_reset=0` en `config.txt`: el firmware deja el RP1 configurado para DashOS (no cambia
+la EEPROM).
+
 ## Después, si hay tiempo: el escritorio
 
 En la misma tarjeta va también `dashos-escritorio.img`: el escritorio de DashOS en la pantalla del firmware, sin
 teclado ni ratón (solo para verlo). Para probarlo, en un PC, abrir `config.txt` de la tarjeta y cambiar la línea
 `kernel=kernel_2712.img` por `kernel=dashos-escritorio.img`. Arranca con el panel del diagnóstico un momento y luego
 sale el escritorio: dos ventanas de prueba, Ajustes y una ventana Amiga ("Ventana Amiga: 68k en DashOS", hecha por un
-programa 68k en la caja Amiga). La ventana Amiga se cierra sola a los 40 s: la foto, antes. Para volver al
+programa 68k en la caja Amiga). La ventana Amiga se cierra sola a los 40 s: la foto, antes. Si el USB de
+`dashos-usb.img` fue bien, aquí el ratón mueve el cursor y el teclado escribe en la ventana que lo tenga. Para volver al
 diagnóstico, dejar la línea como estaba.
 
 ## Si la pantalla se queda negra
@@ -99,7 +114,9 @@ diagnóstico, dejar la línea como estaba.
 
 ## Lo que no está comprobado
 
-Nada de esto se ha probado en una Pi 5 de verdad: QEMU no la emula. En QEMU (máquina `virt`) se probó la misma consola
+Nada de esto se ha probado en una Pi 5 de verdad: QEMU no la emula. El USB tampoco: QEMU no tiene RP1; allí se probó
+el controlador USB con el xHCI de QEMU (`make -C kernel arranque-virt-usb`) y la lectura del PCIe y del RP1 con un modelo
+falso en el PC. En QEMU (máquina `virt`) se probó la misma consola
 y el mismo diagnóstico, con otra pantalla (`make -C kernel arranque-virt-diag`). Lo propio de la Pi 5 (pedir la
 pantalla al firmware por el buzón, las direcciones de la BCM2712, el puerto serie de depuración, encender los núcleos
 con el MPIDR del Cortex-A76, cargar la imagen en 0x80000) está escrito con el árbol de dispositivos oficial y la
