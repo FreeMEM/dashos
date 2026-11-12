@@ -432,7 +432,8 @@ ARCH_HUELLA = "68B3537F39A313B3E574D06777193F152BDBE6A6"
 TIPO_CAJA_LINUX = "d0a18dbf-bbf4-4b0e-8627-ce5006b50018"
 TIPO_DASHOS = "d0a18dbf-bbf4-4b0e-8627-ce5006b50017"
 DISCO_ARCH = ARCH / "disco-arch.img"
-TAM_DISCO_ARCH = 4 << 30
+# 6 GB (H9, caja-linux-apps: GTK4 y Firefox con lo que piden ocupan 1,2 GB más).
+TAM_DISCO_ARCH = 6 << 30
 # La partición de DashOS: del MB 1 al 8, lo mismo que el RedoxFS del disco de las pruebas (`nvme.img`, 8 MB).
 INICIO_DASHOS = 1 << 20
 TAM_DASHOS = 7 << 20
@@ -484,11 +485,48 @@ ARCH_GUIONES = {
         "exec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
         "read x; echo \"foot: leido $x\" > /dev/hvc0; echo \"leido: $x\"; sleep 3'\n",
 }
+# H9 (caja-linux-apps): un programa grande de GTK4 y Firefox, dibujados por la CPU (sin GPU en la caja), sin D-Bus ni
+# accesibilidad (sin sesión de D-Bus, at-spi esperaría su bus). Cada uno dice por hvc0 cuándo empieza (el guion mide
+# desde ahí hasta su primera ventana en DashOS).
+ARCH_GUIONES.update({
+    "./usr/local/bin/prueba-gtk":
+        "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
+        "export GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "echo \"gtk: empieza\" > /dev/hvc0\n"
+        "exec \"${@:-gtk4-widget-factory}\"\n",
+    "./usr/local/bin/prueba-firefox":
+        "#!/bin/sh\n# Firefox en una ventana de DashOS, por Wayland y sin GPU (WebRender por software), con un solo proceso de\n"
+        "# contenido y algo de intercambio (la caja tiene poca RAM).\n"
+        "if ! grep -q /swap /proc/swaps; then fallocate -l 768M /swap && chmod 600 /swap && mkswap -q /swap && swapon /swap; fi\n"
+        "mkdir -p /tmp/ff\n"
+        "cat > /tmp/ff/user.js <<'FIN'\n"
+        "user_pref(\"dom.ipc.processCount\", 1);\n"
+        "user_pref(\"fission.autostart\", false);\n"
+        "user_pref(\"browser.shell.checkDefaultBrowser\", false);\n"
+        "user_pref(\"browser.startup.homepage_override.mstone\", \"ignore\");\n"
+        "user_pref(\"browser.aboutwelcome.enabled\", false);\n"
+        "user_pref(\"datareporting.policy.dataSubmissionEnabled\", false);\n"
+        "user_pref(\"toolkit.telemetry.reportingpolicy.firstRun\", false);\n"
+        "user_pref(\"app.update.enabled\", false);\n"
+        "user_pref(\"browser.tabs.remote.autostart\", true);\n"
+        "FIN\n"
+        "export MOZ_ENABLE_WAYLAND=1 GDK_BACKEND=wayland GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "echo \"firefox: empieza\" > /dev/hvc0\n"
+        "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
+})
+ARCH_FICHEROS.update({
+    "./usr/local/share/dashos/hola.html":
+        "<!doctype html><meta charset=utf-8><title>Firefox en DashOS</title>"
+        "<body style='font-family:sans-serif;background:#f3edf7;color:#1d1b20;margin:32px'>"
+        "<h1>Hola desde Firefox</h1><p>Arch Linux ARM en la caja Linux de DashOS, por Wayland.</p>"
+        "<p><input value='texto para copiar'></p></body>\n",
+})
 ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.service":
                 "/etc/systemd/system/dashos-puente.service"}
 # Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
 # comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
-ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu"]
+# H9 (caja-linux-apps): GTK4 con sus demos (gtk4-demo, gtk4-widget-factory) y Firefox.
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "gtk4-demos", "firefox"]
 ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
 ARCH_REPOS = ["core", "extra", "alarm"]
 PAQUETES = ARCH / "paquetes"
@@ -523,14 +561,61 @@ def arch_bajar():
     return tar
 
 
+# Lo que hacen los ganchos de pacman al instalar y aquí se hace en el PC (los paquetes se meten sin pacman): las
+# cachés que los programas grandes (GTK4, H9) necesitan o tardan en hacer en QEMU sin aceleración. Las carpetas de
+# donde salen, que se copian aparte al hacer el tar.
+CACHES = ("./usr/share/glib-2.0/schemas/", "./usr/share/fonts/", "./etc/fonts/", "./usr/share/fontconfig/",
+          "./usr/share/mime/packages/")
+
+
+def arch_caches(dentro, poner):
+    """Con lo copiado de `CACHES` en `dentro`: los esquemas de GSettings compilados (sin ellos, GTK aborta), la caché
+    de fontconfig (con --sysroot: los nombres, los del invitado; el formato, el mismo en aarch64 y x86_64, little-endian
+    de 64 bits) y la base de tipos MIME. `poner(ruta, datos)` los mete en el tar."""
+    esquemas = dentro / "usr/share/glib-2.0/schemas"
+    if esquemas.is_dir():
+        run("glib-compile-schemas", f"--targetdir={dentro}", esquemas)
+        poner("./usr/share/glib-2.0/schemas/gschemas.compiled", (dentro / "gschemas.compiled").read_bytes())
+    if (dentro / "etc/fonts/fonts.conf").exists():
+        subprocess.run(["fc-cache", "-s", "-f", f"--sysroot={dentro}"], check=False, capture_output=True)
+        for f in sorted((dentro / "var/cache/fontconfig").glob("*")):
+            poner(f"./var/cache/fontconfig/{f.name}", f.read_bytes())
+    mime = dentro / "usr/share/mime"
+    if (mime / "packages").is_dir() and shutil.which("update-mime-database"):
+        subprocess.run(["update-mime-database", mime], check=False, capture_output=True,
+                       env=dict(os.environ, PKGSYSTEM_ENABLE_FSYNC="0"))
+        for f in sorted(mime.glob("*")):
+            if f.is_file():
+                poner(f"./usr/share/mime/{f.name}", f.read_bytes())
+
+
 def arch_tar(origen, destino, paquetes=(), propios=()):
     """El tar del rootfs con los cambios de ARCH_FICHEROS, ARCH_MASCARAS y ARCH_QUITAR, los paquetes de `paquetes`
     (instalados a mano: sus ficheros y su entrada en la base de pacman) y los ficheros `propios` (ruta del invitado,
-    fichero del PC); sin comprimir, para mke2fs."""
+    fichero del PC); sin comprimir, para mke2fs. Con las cachés de `arch_caches`."""
     hecho = set()
     nombres = set()
     mtime_usr = 0
     tmp = destino.with_suffix(".part")
+    copia = Path(tempfile.mkdtemp(prefix="caja-caches-"))
+    mtimes = {}
+
+    def copiar(m, f):
+        """Copia en `copia` lo que va a las cachés (con la hora de su carpeta: fontconfig la mira)."""
+        if not m.name.startswith(CACHES) and m.name.rstrip("/") + "/" not in CACHES:
+            return
+        d = copia / m.name.lstrip("./")
+        if m.isdir():
+            d.mkdir(parents=True, exist_ok=True)
+            mtimes[d] = m.mtime
+        elif m.isreg():
+            d.parent.mkdir(parents=True, exist_ok=True)
+            d.write_bytes(f.read())
+        elif m.issym():
+            d.parent.mkdir(parents=True, exist_ok=True)
+            if not d.is_symlink():
+                d.symlink_to(m.linkname)
+
     with tarfile.open(origen, "r:gz") as ent, tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as sal:
         for m in ent:
             if m.name in ARCH_QUITAR:
@@ -544,6 +629,12 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                 sal.addfile(m, io.BytesIO(datos))
                 hecho.add(m.name)
                 continue
+            if m.isreg() and m.name.startswith(CACHES):
+                datos = ent.extractfile(m).read()
+                copiar(m, io.BytesIO(datos))
+                sal.addfile(m, io.BytesIO(datos))
+                continue
+            copiar(m, None)
             sal.addfile(m, ent.extractfile(m) if m.isreg() else None)
         ahora = int(time.time())
 
@@ -592,6 +683,12 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                     m.name = nombre
                     m.uid = m.gid = 0
                     m.uname = m.gname = "root"
+                    if m.isreg() and nombre.startswith(CACHES):
+                        datos = t.extractfile(m).read()
+                        copiar(m, io.BytesIO(datos))
+                        sal.addfile(m, io.BytesIO(datos))
+                        continue
+                    copiar(m, None)
                     sal.addfile(m, t.extractfile(m) if m.isreg() else None)
             nv = f"{info['pkgname'][0]}-{info['pkgver'][0]}"
             desc = [("NAME", info["pkgname"]), ("VERSION", info["pkgver"]), ("BASE", info.get("pkgbase", [])),
@@ -607,6 +704,13 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                   datos=("%FILES%\n" + "".join(f + "\n" for f in sorted(ficheros)) + "\n").encode())
         for destino_inv, fichero in propios:
             poner(destino_inv, datos=Path(fichero).read_bytes(), modo=0o755)
+        # Las cachés (H9): las carpetas copiadas, con la hora que tienen en el tar.
+        for d, t in sorted(mtimes.items(), key=lambda x: -len(str(x[0]))):
+            os.utime(d, (t, t))
+        if "./var/cache/fontconfig" not in nombres:
+            poner("./var/cache/fontconfig", tarfile.DIRTYPE, modo=0o755)
+        arch_caches(copia, lambda ruta, datos: poner(ruta, datos=datos))
+        shutil.rmtree(copia, ignore_errors=True)
         # /etc y /var al día respecto de /usr (ConditionNeedsUpdate): sin ldconfig, hwdb ni catálogo en el primer
         # arranque (el rootfs ya los trae hechos).
         marca = (f"TIMESTAMP_NSEC={mtime_usr * 1_000_000_000}\n").encode()

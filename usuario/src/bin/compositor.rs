@@ -982,7 +982,15 @@ fn principal() -> u64 {
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
             let de_linux = if cl != marca_de(cl) { " (un programa de su puente de Wayland)" } else { "" };
-            println!("  [compositor] ventana de {}{} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+            // H9: la geometría (la ventana de verdad dentro de su búfer), si la dio: las pruebas apuntan con ella.
+            let geometria = escena.clientes.get(&cl).and_then(|c| {
+                c.xdg.values().find(|v| c.superficies.get(&v.superficie).and_then(|s| s.sitio) == Some((x, y))).and_then(|v| v.geometria)
+            });
+            let geometria = geometria.map_or(String::new(), |g| alloc::format!(" geometría ({}, {}, {}, {})", g.x, g.y, g.w, g.h));
+            println!("  [compositor] ventana de {}{} en ({}, {}){}{}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, geometria, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+        }
+        for (cl, x, y) in core::mem::take(&mut escena.emergentes_colocados) {
+            println!("  [compositor] emergente de {} en ({}, {})", nombre_de(&nombres, &lanzados, cl), x, y);
         }
         for (cl, i, x, y) in core::mem::take(&mut escena.movidas) {
             let salida = escena.salidas.get(i).map_or("?", |o| o.nombre.as_str());

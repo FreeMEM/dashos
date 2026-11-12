@@ -8,12 +8,12 @@ Hipervisor: el kernel arrancó en EL2
 Hipervisor: EL2 instalado en 4 núcleos
 DashOS en marcha con 4 núcleos
 ~[nvme] particiones: GPT; DashOS, sectores 2048 a 16383
-~[nvme] la caja Linux: sectores 16384 a 8386559 (4087 MB)
+~[nvme] la caja Linux: sectores 16384 a 12580863 (6135 MB)
 ~[archivos] RedoxFS abierto
 ~[caja-linux] sesiones le da el permiso de máquinas virtuales
 ~[caja-linux] primer paso de la caja Linux: bien
 ~[caja-linux] interrupciones del invitado: bien
-~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+~[caja-linux] arch: la partición de la caja Linux, 6135 MB, como disco del invitado
 ~[caja-linux] terminal: ventana en pantalla (80x25 letras
 ~[red] puerto para la caja Linux con MAC
 ~[caja-linux] linux: Image de

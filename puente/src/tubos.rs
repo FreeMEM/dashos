@@ -15,7 +15,7 @@ use std::collections::{HashMap, HashSet};
 use std::os::fd::RawFd;
 use std::time::{Duration, Instant};
 
-use wayland::puente::{MAX_TUBO, MAX_TUBOS, TUBO_DATOS, TUBO_FIN, TUBO_NUEVO};
+use wayland::puente::{MAX_TUBO, MAX_TUBOS, TUBO_DATOS, TUBO_FIN, TUBO_LEIDO, TUBO_NUEVO, VENTANA_TUBO};
 
 /// Lo que espera a escribirse en un tubo: más, y se corta.
 pub const MAX_PENDIENTE: usize = 1 << 20;
@@ -30,6 +30,8 @@ struct Tubo {
     fin: bool,
     bytes: u64,
     ultimo: Instant,
+    /// Si lee: lo mandado sin confirmar (`TUBO_LEIDO`). Si escribe: lo escrito que aún no se dijo.
+    en_vuelo: u64,
 }
 
 /// Los tubos de un transporte.
@@ -72,7 +74,7 @@ impl Tubos {
         }
         sin_esperar(fd);
         self.cuantos += 1;
-        self.tubos.insert(n, Tubo { fd, escribe: true, pendiente: Vec::new(), fin: false, bytes: 0, ultimo: Instant::now() });
+        self.tubos.insert(n, Tubo { fd, escribe: true, pendiente: Vec::new(), fin: false, bytes: 0, ultimo: Instant::now(), en_vuelo: 0 });
     }
 
     /// El otro lado anuncia un tubo.
@@ -104,7 +106,7 @@ impl Tubos {
         } else {
             sin_esperar(p[0]);
             self.cuantos += 1;
-            self.tubos.insert(n, Tubo { fd: p[0], escribe: false, pendiente: Vec::new(), fin: false, bytes: 0, ultimo: Instant::now() });
+            self.tubos.insert(n, Tubo { fd: p[0], escribe: false, pendiente: Vec::new(), fin: false, bytes: 0, ultimo: Instant::now(), en_vuelo: 0 });
         }
         Some(p[1])
     }
@@ -125,6 +127,17 @@ impl Tubos {
         }
         t.pendiente.extend_from_slice(d);
         self.escribir(n, tramas);
+    }
+
+    /// El otro lado ya escribió `k` bytes del tubo `n` en su destino.
+    pub fn leido(&mut self, n: u32, k: u32) {
+        match self.tubos.get_mut(&n).filter(|t| !t.escribe) {
+            Some(t) => {
+                t.en_vuelo = t.en_vuelo.saturating_sub(k as u64);
+                t.ultimo = Instant::now();
+            }
+            None => self.malos += 1,
+        }
     }
 
     /// El otro lado dice fin del tubo `n`.
@@ -149,6 +162,7 @@ impl Tubos {
             let k = unsafe { libc::write(t.fd, t.pendiente.as_ptr().cast(), t.pendiente.len()) };
             if k > 0 {
                 t.pendiente.drain(..k as usize);
+                t.en_vuelo += k as u64;
                 continue;
             }
             if k < 0 && std::io::Error::last_os_error().kind() == std::io::ErrorKind::WouldBlock {
@@ -157,6 +171,12 @@ impl Tubos {
             // Quien leía se fue (EPIPE): que el otro lado deje de mandar.
             self.cortar(n, Some(tramas));
             return;
+        }
+        if t.en_vuelo > 0 {
+            let mut d = n.to_le_bytes().to_vec();
+            d.extend_from_slice(&(t.en_vuelo.min(u32::MAX as u64) as u32).to_le_bytes());
+            t.en_vuelo = 0;
+            tramas.push((TUBO_LEIDO, d));
         }
         if t.fin {
             let t = self.tubos.remove(&n).unwrap();
@@ -178,7 +198,7 @@ impl Tubos {
     pub fn vigilar(&self) -> Vec<(RawFd, i16, u32)> {
         self.tubos
             .iter()
-            .filter(|(_, t)| !t.escribe || !t.pendiente.is_empty())
+            .filter(|(_, t)| (!t.escribe && t.en_vuelo < VENTANA_TUBO) || !t.pendiente.is_empty())
             .map(|(&n, t)| (t.fd, if t.escribe { libc::POLLOUT } else { libc::POLLIN }, n))
             .collect()
     }
@@ -199,9 +219,15 @@ impl Tubos {
                 self.escribir(n, tramas);
                 continue;
             }
-            let k = unsafe { libc::read(t.fd, buf.as_mut_ptr().cast(), buf.len()) };
+            // Sin pasar de la ventana: el otro lado frena al que escribe.
+            let cabe = VENTANA_TUBO.saturating_sub(t.en_vuelo) as usize;
+            if cabe == 0 {
+                continue;
+            }
+            let k = unsafe { libc::read(t.fd, buf.as_mut_ptr().cast(), buf.len().min(cabe)) };
             if k > 0 {
                 t.bytes += k as u64;
+                t.en_vuelo += k as u64;
                 t.ultimo = Instant::now();
                 self.bytes += k as u64;
                 if t.bytes > MAX_TUBO {

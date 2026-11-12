@@ -1,26 +1,48 @@
 # Las ventanas de Linux en el escritorio de DashOS (`make arranque-virt-wayland`, H9): Arch Linux ARM en la caja, como
 # en `arranque_virt_arch.txt`, con vsock para el puente de Wayland. El puente de Arch (un servicio de systemd) conecta
 # por vsock; `puente --hostil` manda tramas rotas, memorias que no existen y tamaños absurdos (DashOS corta esas
-# conexiones y sigue); `ventana_wayland` (libwayland y wl_shm) abre su ventana en el escritorio de DashOS, recibe un
-# clic y una tecla y dice cuántos cuadros por segundo pinta; y foot, una terminal de Wayland de verdad, recibe "hola".
+# conexiones y sigue); `ventana_wayland` (libwayland y wl_shm) abre su ventana con la barra de DashOS (xdg-decoration),
+# recibe un clic y una tecla, se mueve por su barra y se cierra con su botón; foot copia una línea que se pega en la
+# terminal de la caja (la de siempre y la primaria) y pega lo que se copia en ella. Hostiles de Linux: decoraciones y
+# tipos rotos (el compositor los corta), una fuente que escribe sin fin (se le corta) y otra que nunca cierra (se deja de
+# esperar). Después, otra ventana de Linux sale como siempre, y GTK4 (gtk4-widget-factory) abre su ventana.
 Hipervisor: EL2 instalado en 4 núcleos
-~[caja-linux] arch: la partición de la caja Linux, 4087 MB, como disco del invitado
+~[caja-linux] arch: la partición de la caja Linux, 6135 MB, como disco del invitado
 ~[caja-linux] wayland: vsock en el puerto 5000 para el puente de Wayland de Linux (CID 3)
 ~[caja-linux] linux: Welcome to Arch Linux ARM!
 ~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] terminal: ventana en pantalla (80x25 letras
+~, con portapapeles
 ~[caja-linux] wayland: el puente de Linux conecta por vsock
 ~[caja-linux] linux: active
 ~[caja-linux] wayland: el puente de Linux manda algo que no son tramas
 ~[caja-linux] linux: puente hostil: hecho
+~[caja-linux] linux: ventana_wayland: decoración del compositor
 ~[compositor] ventana de caja-linux (un programa de su puente de Wayland) en
 ~[caja-linux] linux: ventana_wayland: primer cuadro en pantalla
 ~[caja-linux] linux: ventana_wayland: tengo el teclado
 ~[caja-linux] linux: ventana_wayland: clic del botón 272
 ~[caja-linux] linux: ventana_wayland: tecla 30 pulsada
 ~[caja-linux] linux: ventana_wayland: en marcha:
+~[compositor] arrastre:
+~[caja-linux] linux: ventana_wayland: el compositor pide cerrar
 ~adiós
 ~[caja-linux] linux: foot: lista
-~[caja-linux] linux: foot: leido hola
+~[caja-linux] linux: Hola desde foot, en Arch Linux ARM, en DashOS
+~[caja-linux] linux: primaria: Hola desde foot, en Arch Linux ARM, en DashOS
+~[caja-linux] terminal: seleccionado "pegame-en-foot"
+~[caja-linux] terminal: copiado "pegame-en-foot"
+~[caja-linux] linux: foot: leido pegame-en-foot
+~[caja-linux] linux: cliente hostil: modo de decoración que no existe: el compositor lo cortó
+~[caja-linux] linux: cliente hostil: dos decoraciones para una ventana: el compositor lo cortó
+~[caja-linux] linux: cliente hostil: tipo del portapapeles que no es UTF-8: el compositor lo cortó
+~[compositor] error de protocolo de caja-linux: modo que no existe
+~[caja-linux] linux: cliente hostil: sin-fin: le cortaron la tubería
+~[caja-linux] terminal: pegado (4096 bytes)
+~[caja-linux] terminal: pegado (0 bytes)
+~[caja-linux] linux: gtk: empieza
+~[caja-linux] linux: guion: gtk4 en pantalla
+~[compositor] emergente de caja-linux en
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
-~[caja-linux] wayland: 
+~[caja-linux] wayland:

@@ -571,6 +571,8 @@ pub struct Escena<M: Memorias> {
     /// H9: los emergentes con agarre (programa y su `xdg_surface`), de abajo arriba, y la ventana que se redimensiona.
     agarres: Vec<(Cliente, u32)>,
     redimension: Option<emergentes::Redimension>,
+    /// H9: los emergentes que acaban de salir (quien atiende lo dice y lo vacía).
+    pub emergentes_colocados: Vec<(Cliente, i32, i32)>,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -722,6 +724,7 @@ impl<M: Memorias> Escena<M> {
             marcos: BTreeMap::new(),
             agarres: Vec::new(),
             redimension: None,
+            emergentes_colocados: Vec::new(),
         }
     }
 
@@ -2372,6 +2375,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             let Some((ox, oy)) = escena.origen_geometria(cliente, e.madre) else { return Ok(()) };
                             let g = g.unwrap_or_default();
                             escena.colocar(cliente, objeto, ox + e.sitio.x - g.x, oy + e.sitio.y - g.y);
+                            escena.emergentes_colocados.push((cliente, ox + e.sitio.x - g.x, oy + e.sitio.y - g.y));
                             if e.agarre && !escena.oculto(cliente) {
                                 let mut ev = Vec::new();
                                 escena.dar_teclado((cliente, objeto), &mut ev);

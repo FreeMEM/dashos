@@ -47,6 +47,8 @@ use dashos::protocolo::red as rp;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
+#[path = "../portapapeles_cliente.rs"]
+mod portapapeles_cliente;
 #[path = "../terminal.rs"]
 #[allow(dead_code)]
 mod terminal;
@@ -59,7 +61,7 @@ use kit::texto::Fuente;
 use terminal::Terminal;
 use ventana_cliente::*;
 use wayland::Escritor;
-use wayland::tablas::{wl_callback, wl_compositor, wl_display, wl_keyboard, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
+use wayland::tablas::{wl_callback, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base};
 
 dashos::programa!(principal);
 dashos::monton!();
@@ -1895,8 +1897,14 @@ fn bytes_tecla(t: Tecla, control: bool, sal: &mut Vec<u8>) {
     }
 }
 
-/// Pinta las filas `sucias` de la terminal (y la del cursor).
-fn pintar(l: &mut Lienzo, t: &Terminal, f: &mut Fuente, celda: (i32, i32, i32), sucias: u64) {
+/// Las filas de una selección (bits, como `Terminal::tomar_sucias`).
+fn filas_de(sel: Option<((usize, usize), (usize, usize))>) -> u64 {
+    let Some((a, b)) = sel else { return 0 };
+    (a.1.min(b.1)..=a.1.max(b.1)).fold(0, |m, y| m | 1 << y.min(63))
+}
+
+/// Pinta las filas `sucias` de la terminal (y la del cursor). Lo seleccionado (H9, el portapapeles), al revés.
+fn pintar(l: &mut Lienzo, t: &Terminal, f: &mut Fuente, celda: (i32, i32, i32), sucias: u64, sel: Option<((usize, usize), (usize, usize))>) {
     let (cw, ch, base) = celda;
     let (cx, cy) = t.cursor();
     for y in 0..t.filas {
@@ -1910,6 +1918,7 @@ fn pintar(l: &mut Lienzo, t: &Terminal, f: &mut Fuente, celda: (i32, i32, i32), 
             let mut color = if c.color == terminal::DE_SERIE { LETRA_COLOR } else { PALETA[c.color as usize & 15] };
             let px = BORDE + x as i32 * cw;
             let inverso = (c.estilo & terminal::INVERSO != 0) != (x == cx && y == cy && !COMPARTIDO.acabada.load(Ordering::Relaxed));
+            let inverso = inverso != sel.is_some_and(|(a, b)| Terminal::entre(x, y, a, b));
             if inverso {
                 l.borrar(Rect::new(px, py, cw, ch), color);
                 color = FONDO;
@@ -1958,6 +1967,10 @@ fn terminal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gx).texto(Some("xdg_wm_base")).uint(6).uint(XDG).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
+    // H9: el ratón (para seleccionar) y el portapapeles (copiar y pegar con los programas de Linux).
+    e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
+    let mut pp = portapapeles_cliente::Portapapeles::default();
+    let con_portapapeles = pp.enlazar(&mut e, &globales, REGISTRO, ASIENTO);
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ancho).int(alto).int(ancho * 4).uint(wayland::shm::XRGB8888).fin();
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -1979,10 +1992,19 @@ fn terminal() -> u64 {
     let mut acabada_pintada = false;
     // La fila donde estaba el cursor la última vez que se pintó.
     let mut fila_cursor = 0usize;
+    // H9: la selección (de dónde a dónde, en celdas), si se está arrastrando, las filas que hay que repintar por ella,
+    // el ratón, mayúsculas y la serie del último evento (para poner la selección).
+    let mut sel: Option<((usize, usize), (usize, usize))> = None;
+    let mut arrastrando = false;
+    let mut sucias_sel = 0u64;
+    let mut raton = (0i32, 0i32);
+    let mut mayusculas = 0u8;
+    let celda_en = |(x, _): (i32, i32)| (((x - BORDE).max(0) / cw) as usize).min(COLUMNAS - 1);
+    let fila_en = |(_, y): (i32, i32)| (((y - BORDE).max(0) / ch) as usize).min(FILAS - 1);
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), FONDO);
     loop {
-        let ev = match c.evento_plazo(if esperando != 0 { 100_000 } else { 15_000 }) {
+        let ev = match c.evento_plazo(if pp.ocupado() { 5_000 } else if esperando != 0 { 100_000 } else { 15_000 }) {
             Ok(ev) => ev,
             Err(()) => {
                 println!("  [caja-linux] terminal: el compositor cerró la conexión");
@@ -2002,7 +2024,7 @@ fn terminal() -> u64 {
                     e.empezar(XDG_SUPERFICIE, xdg_surface::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                     if !configurada {
                         configurada = true;
-                        pintar(&mut l, &t, &mut fuente, (cw, ch, base), u64::MAX);
+                        pintar(&mut l, &t, &mut fuente, (cw, ch, base), u64::MAX, None);
                         t.tomar_sucias();
                         e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
                         e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho).int(alto).fin();
@@ -2010,7 +2032,7 @@ fn terminal() -> u64 {
                         esperando = siguiente_aviso;
                         siguiente_aviso += 1;
                         e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
-                        println!("  [caja-linux] terminal: ventana en pantalla ({}x{} letras, {}x{} px)", COLUMNAS, FILAS, ancho, alto);
+                        println!("  [caja-linux] terminal: ventana en pantalla ({}x{} letras, {}x{} px, celdas de {}x{} desde ({}, {})){}", COLUMNAS, FILAS, ancho, alto, cw, ch, BORDE, BORDE, if con_portapapeles { ", con portapapeles" } else { "" });
                         COMPARTIDO.ventana.store(1, Ordering::Release);
                     }
                     c.mandar(&e);
@@ -2023,7 +2045,29 @@ fn terminal() -> u64 {
                 }
                 (TECLADO, wl_keyboard::ev::KEY) => {
                     let (codigo, pulsada) = (palabra(2), palabra(3) == 1);
-                    if codigo == 29 || codigo == 97 {
+                    if codigo == 42 || codigo == 54 {
+                        mayusculas = if pulsada { mayusculas.saturating_add(1) } else { mayusculas.saturating_sub(1) };
+                    }
+                    // H9: Control+Mayúsculas+C copia lo seleccionado y Control+Mayúsculas+V pega (como en las
+                    // terminales de Linux): no llegan a Linux.
+                    if control > 0 && mayusculas > 0 && (codigo == 46 || codigo == 47) {
+                        if pulsada && codigo == 46 {
+                            if let Some((a, b)) = sel {
+                                let texto = t.texto_entre(a, b);
+                                println!("  [caja-linux] terminal: copiado \"{}\"", texto.chars().take(60).collect::<String>());
+                                let mut e = Escritor::new();
+                                pp.copiar(&mut e, false, texto, palabra(0));
+                                c.mandar(&e);
+                            }
+                        } else if pulsada {
+                            let mut e = Escritor::new();
+                            if pp.pegar(&mut e, false) {
+                                c.mandar(&e);
+                            } else {
+                                println!("  [caja-linux] terminal: nada que pegar");
+                            }
+                        }
+                    } else if codigo == 29 || codigo == 97 {
                         control = if pulsada { control.saturating_add(1) } else { control.saturating_sub(1) };
                     } else if let Some(tk) = teclado.tecla(codigo, pulsada) {
                         let mut b = Vec::new();
@@ -2038,17 +2082,84 @@ fn terminal() -> u64 {
                         }
                     }
                 }
-                (TECLADO, wl_keyboard::ev::LEAVE) => control = 0,
+                (TECLADO, wl_keyboard::ev::LEAVE) => {
+                    control = 0;
+                    mayusculas = 0;
+                }
+                // H9: seleccionar con el ratón (al soltar, a la selección primaria) y pegar la primaria con el central.
+                (PUNTERO, wl_pointer::ev::ENTER) => raton = ((palabra(2) as i32) >> 8, (palabra(3) as i32) >> 8),
+                (PUNTERO, wl_pointer::ev::MOTION) => {
+                    raton = ((palabra(1) as i32) >> 8, (palabra(2) as i32) >> 8);
+                    if arrastrando && let Some((a, _)) = sel {
+                        sucias_sel |= filas_de(sel);
+                        sel = Some((a, (celda_en(raton), fila_en(raton))));
+                        sucias_sel |= filas_de(sel);
+                    }
+                }
+                (PUNTERO, wl_pointer::ev::BUTTON) => {
+                    let (serie, boton, pulsado) = (palabra(0), palabra(2), palabra(3) == 1);
+                    match (boton, pulsado) {
+                        (272, true) => {
+                            sucias_sel |= filas_de(sel);
+                            let aqui = (celda_en(raton), fila_en(raton));
+                            sel = Some((aqui, aqui));
+                            arrastrando = true;
+                            sucias_sel |= filas_de(sel);
+                        }
+                        (272, false) if arrastrando => {
+                            arrastrando = false;
+                            match sel {
+                                Some((a, b)) if a != b => {
+                                    let texto = t.texto_entre(a, b);
+                                    println!("  [caja-linux] terminal: seleccionado \"{}\"", texto.chars().take(60).collect::<String>());
+                                    let mut e = Escritor::new();
+                                    pp.copiar(&mut e, true, texto, serie);
+                                    c.mandar(&e);
+                                }
+                                _ => {
+                                    sucias_sel |= filas_de(sel);
+                                    sel = None;
+                                }
+                            }
+                        }
+                        (274, true) => {
+                            let mut e = Escritor::new();
+                            if pp.pegar(&mut e, true) {
+                                c.mandar(&e);
+                            }
+                        }
+                        _ => {}
+                    }
+                }
                 (1, wl_display::ev::ERROR) => {
                     println!("  [caja-linux] terminal: error de protocolo");
                     return 1;
                 }
-                _ => {}
+                (o, orden) => {
+                    let mut e = Escritor::new();
+                    if pp.evento(&mut e, o, orden, &cuerpo, &mut || c.juntador.tomar_llave()) && !e.bytes.is_empty() {
+                        c.mandar(&e);
+                    }
+                }
+            }
+        }
+        // H9: lo pegado, a Linux (los saltos de línea, como Intro).
+        if let Some(datos) = pp.mover() {
+            println!("  [caja-linux] terminal: pegado ({} bytes)", datos.len());
+            let datos: Vec<u8> = datos.iter().map(|&b| if b == b'\n' { b'\r' } else { b }).collect();
+            if !datos.is_empty() && !COMPARTIDO.acabada.load(Ordering::Relaxed) {
+                COMPARTIDO.entrada.meter(&datos);
+                COMPARTIDO.avisar();
             }
         }
         // Lo nuevo de Linux, a la rejilla (como mucho 16 KB por vuelta: con una inundación, la ventana sigue viva).
         let n = COMPARTIDO.salida.sacar(&mut buf);
         if n > 0 {
+            // Lo nuevo puede mover las filas: lo seleccionado deja de verse (lo copiado sigue).
+            if sel.is_some() && !arrastrando {
+                sucias_sel |= filas_de(sel);
+                sel = None;
+            }
             t.meter(&buf[..n]);
             if !t.respuesta.is_empty() {
                 COMPARTIDO.entrada.meter(&core::mem::take(&mut t.respuesta));
@@ -2063,11 +2174,11 @@ fn terminal() -> u64 {
             e.empezar(VENTANA, xdg_toplevel::req::SET_TITLE).texto(Some("Linux (caja, apagada)")).fin();
             c.mandar(&e);
         }
-        if configurada && esperando == 0 && t.sucia() {
+        if configurada && esperando == 0 && (t.sucia() || sucias_sel != 0) {
             // La fila del cursor de antes y la de ahora también, para mover el cursor.
-            let sucias = t.tomar_sucias() | 1 << t.cursor().1.min(63) | 1 << fila_cursor.min(63);
+            let sucias = t.tomar_sucias() | 1 << t.cursor().1.min(63) | 1 << fila_cursor.min(63) | core::mem::take(&mut sucias_sel);
             fila_cursor = t.cursor().1;
-            pintar(&mut l, &t, &mut fuente, (cw, ch, base), sucias);
+            pintar(&mut l, &t, &mut fuente, (cw, ch, base), sucias, sel);
             let mut e = Escritor::new();
             e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho).int(alto).fin();
             e.empezar(SUPERFICIE, wl_surface::req::FRAME).uint(siguiente_aviso).fin();

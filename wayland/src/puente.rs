@@ -44,6 +44,12 @@ pub const TUBO_DATOS: u8 = 9;
 /// Fin de un tubo: número (u32). En los dos sentidos: se acabó lo que había que leer, o quien escribía ya no puede (su
 /// lector se fue) y el otro deja de leer.
 pub const TUBO_FIN: u8 = 10;
+/// Lo ya escrito en el destino de un tubo: número (u32) y cuántos bytes (u32). Quien lee de su extremo y lo manda en
+/// `TUBO_DATOS` no deja más de `VENTANA_TUBO` bytes sin confirmar: así uno que pega despacio frena al que copia, en vez
+/// de llenar lo que espera (y cortar el tubo).
+pub const TUBO_LEIDO: u8 = 11;
+/// Bytes de un tubo sin confirmar, como mucho.
+pub const VENTANA_TUBO: u64 = 128 * 1024;
 
 pub const CABECERA: usize = 9;
 /// Lo más que mide el contenido de una trama de `MEMORIA_ESCRIBIR` (en el PC, un búfer de 4K a 32 bits cabe en unas
@@ -137,8 +143,8 @@ impl Lector {
                             self.resto = largo - 12;
                             continue;
                         }
-                        CONECTAR..=TUBO_FIN if largo > MAX_CONTROL => return Err(FalloTrama::Larga),
-                        CONECTAR..=TUBO_FIN => {
+                        CONECTAR..=TUBO_LEIDO if largo > MAX_CONTROL => return Err(FalloTrama::Larga),
+                        CONECTAR..=TUBO_LEIDO => {
                             self.resto = largo;
                             self.buf.clear();
                         }
@@ -233,6 +239,8 @@ struct Tubo {
     fin: bool,
     bytes: u64,
     ultimo_ms: u64,
+    /// Si lee: lo mandado al invitado sin confirmar. Si escribe: lo escrito que aún no se le dijo.
+    en_vuelo: u64,
 }
 
 /// Lo más que mide una memoria del invitado (el tope de `memoria_crear`).
@@ -471,7 +479,7 @@ impl<S: Sistema> Puente<S> {
                     }
                 }
             }
-            TUBO_NUEVO | TUBO_DATOS | TUBO_FIN => {
+            TUBO_NUEVO | TUBO_DATOS | TUBO_FIN | TUBO_LEIDO => {
                 let Some(n) = Self::u32_en(d, 0) else {
                     self.cuentas.malas += 1;
                     return;
@@ -497,7 +505,7 @@ impl<S: Sistema> Puente<S> {
                     return;
                 };
                 self.cuentas.tubos += 1;
-                self.tubos.insert(n, Tubo { llave: lee, lee: true, para_compositor: Some(escribe), pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora });
+                self.tubos.insert(n, Tubo { llave: lee, lee: true, para_compositor: Some(escribe), pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora, en_vuelo: 0 });
             }
             TUBO_DATOS => {
                 let Some(t) = self.tubos.get_mut(&n).filter(|t| !t.lee && !t.fin) else {
@@ -514,6 +522,17 @@ impl<S: Sistema> Puente<S> {
                 }
                 t.pendiente.extend(d);
                 self.escribir_tubo(n);
+            }
+            TUBO_LEIDO => {
+                // El invitado ya escribió eso en su destino: se puede mandar más.
+                let k = d.get(..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap())) as u64;
+                match self.tubos.get_mut(&n).filter(|t| t.lee) {
+                    Some(t) => {
+                        t.en_vuelo = t.en_vuelo.saturating_sub(k);
+                        t.ultimo_ms = ahora;
+                    }
+                    None => self.cuentas.malas += 1,
+                }
             }
             _ => {
                 // TUBO_FIN: uno que leía aquí (el invitado ya no quiere), fuera; uno que escribe, al vaciar.
@@ -539,6 +558,7 @@ impl<S: Sistema> Puente<S> {
                 Ok(0) => return,
                 Ok(k) => {
                     t.pendiente.drain(..k.min(trozo.len()));
+                    t.en_vuelo += k as u64;
                 }
                 Err(()) => {
                     // Quien leía se fue: que el invitado deje de mandar.
@@ -547,7 +567,15 @@ impl<S: Sistema> Puente<S> {
                 }
             }
         }
-        if t.fin {
+        // Lo escrito, al invitado (con todo escrito, o cada 16 KB).
+        if t.en_vuelo > 0 && (t.pendiente.is_empty() || t.en_vuelo >= 16 * 1024) {
+            let mut d = n.to_le_bytes().to_vec();
+            d.extend_from_slice(&(t.en_vuelo.min(u32::MAX as u64) as u32).to_le_bytes());
+            t.en_vuelo = 0;
+            self.al_invitado(TUBO_LEIDO, 0, &d);
+        }
+        let t = self.tubos.get_mut(&n).unwrap();
+        if t.fin && t.pendiente.is_empty() {
             let t = self.tubos.remove(&n).unwrap();
             self.sis.cerrar(t.llave);
         }
@@ -586,7 +614,8 @@ impl<S: Sistema> Puente<S> {
             // Lo que se lee, al invitado en tramas de hasta 64 KB, sin pasar de la mitad de lo que se le guarda.
             let mut datos = n.to_le_bytes().to_vec();
             let mut acabado = false;
-            while datos.len() < 64 * 1024 && self.salida.len() + datos.len() < MAX_SALIDA / 2 {
+            let en_vuelo = t.en_vuelo;
+            while datos.len() < 64 * 1024 && self.salida.len() + datos.len() < MAX_SALIDA / 2 && en_vuelo + (datos.len() - 4 + MAX_CANAL) as u64 <= VENTANA_TUBO {
                 let llave = self.tubos[&n].llave;
                 match self.sis.tubo_leer(llave, &mut buf) {
                     Ok(0) => break,
@@ -601,6 +630,7 @@ impl<S: Sistema> Puente<S> {
             if k > 0 {
                 let t = self.tubos.get_mut(&n).unwrap();
                 t.bytes += k;
+                t.en_vuelo += k;
                 t.ultimo_ms = ahora;
                 self.cuentas.bytes_de_tubos += k;
                 if t.bytes > MAX_TUBO {
@@ -719,7 +749,7 @@ impl<S: Sistema> Puente<S> {
                 } else {
                     let ahora = self.sis.ahora_ms();
                     self.cuentas.tubos += 1;
-                    self.tubos.insert(n, Tubo { llave: l, lee: false, para_compositor: None, pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora });
+                    self.tubos.insert(n, Tubo { llave: l, lee: false, para_compositor: None, pendiente: VecDeque::new(), fin: false, bytes: 0, ultimo_ms: ahora, en_vuelo: 0 });
                 }
                 numeros.push(n);
                 continue;
@@ -1191,6 +1221,37 @@ mod pruebas {
         p.cerrar_todo();
         assert_eq!(p.tubos_vivos(), 0);
         assert!(p.sis.cerradas.contains(&800));
+    }
+
+    /// La ventana de los tubos: sin `TUBO_LEIDO` del invitado, no se manda más de `VENTANA_TUBO`; con él, sigue. Y lo que
+    /// se escribe en un canal se confirma al invitado.
+    #[test]
+    fn tubos_con_ventana() {
+        let mut p = Puente::nuevo(Falso::default(), 0);
+        let mut f = trama(CONECTAR, 1, &[]);
+        f.extend(tubo(TUBO_NUEVO, 7, &[]));
+        f.extend(trama(DATOS, 1, &juntar_datos(&[7], b"receive!")));
+        p.recibir(&f).unwrap();
+        let lee = p.sis.pares[&p.sis.enviados.last().unwrap().1[0]];
+        for _ in 0..2000 {
+            p.sis.escribir_en(lee, &[1u8; 200]);
+        }
+        let mandado = |p: &mut Puente<Falso>| -> u64 { al_invitado(p).iter().filter(|t| t.0 == TUBO_DATOS).map(|t| t.2.len() as u64 - 4).sum() };
+        p.mover_tubos();
+        p.mover_tubos();
+        let a = mandado(&mut p);
+        assert!(a <= VENTANA_TUBO && a > VENTANA_TUBO / 2, "{a}");
+        p.recibir(&tubo(TUBO_LEIDO, 7, &(a as u32).to_le_bytes())).unwrap();
+        p.mover_tubos();
+        assert!(mandado(&mut p) > 0);
+        // Al revés: lo escrito en el canal, confirmado.
+        let mut t = canal::cabecera_sub(TROZO_SUB_DATOS, 1).to_vec();
+        t.extend_from_slice(b"send....");
+        p.del_compositor(&t, &[900]);
+        let n = u32::from_le_bytes(al_invitado(&mut p)[0].2[..4].try_into().unwrap());
+        p.recibir(&tubo(TUBO_DATOS, n, &[5u8; 1000])).unwrap();
+        let leido = al_invitado(&mut p).into_iter().find(|t| t.0 == TUBO_LEIDO).unwrap();
+        assert_eq!(leido.2, [n.to_le_bytes(), 1000u32.to_le_bytes()].concat());
     }
 
     /// Basura al azar por el transporte: o error de trama (se corta) o nada; nunca pánico.

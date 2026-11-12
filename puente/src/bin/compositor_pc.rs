@@ -369,6 +369,10 @@ fn main() {
                         }
                     }
                     p::TUBO_NUEVO if t.datos.len() == 4 => tr.as_mut().unwrap().tubos.anunciado(u32::from_le_bytes(t.datos[..4].try_into().unwrap())),
+                    p::TUBO_LEIDO if t.datos.len() == 8 => {
+                        let (n, k) = (u32::from_le_bytes(t.datos[..4].try_into().unwrap()), u32::from_le_bytes(t.datos[4..8].try_into().unwrap()));
+                        tr.as_mut().unwrap().tubos.leido(n, k);
+                    }
                     p::TUBO_DATOS | p::TUBO_FIN if t.datos.len() >= 4 => {
                         let n = u32::from_le_bytes(t.datos[..4].try_into().unwrap());
                         let tt = tr.as_mut().unwrap();

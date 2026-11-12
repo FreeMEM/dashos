@@ -36,6 +36,9 @@ use std::os::fd::{AsRawFd, RawFd};
 use std::os::unix::net::{UnixListener, UnixStream};
 
 use dashos_puente as p;
+
+#[path = "../cliente_hostil.rs"]
+mod cliente_hostil;
 use wayland::tablas::{self, wl_buffer, wl_shm, wl_shm_pool, wl_surface, zwp_linux_buffer_params_v1};
 use wayland::{Interface, Kind, Valor, leer_args, leer_cabecera};
 
@@ -554,6 +557,11 @@ fn hostil(transporte: &str) {
 
 fn main() {
     let args: Vec<String> = std::env::args().collect();
+    if args.get(1).map(String::as_str) == Some("--cliente-hostil") {
+        let plazo = args.get(4).and_then(|x| x.parse().ok()).unwrap_or(60);
+        cliente_hostil::principal(args.get(2).map_or("/run/wayland-0", String::as_str), args.get(3).map_or("roto", String::as_str), plazo);
+        return;
+    }
     if args.get(1).map(String::as_str) == Some("--hostil") {
         hostil(args.get(2).map_or("vsock:5000", String::as_str));
         return;
@@ -645,6 +653,9 @@ fn main() {
                     }
                 }
                 p::TUBO_NUEVO if t.datos.len() == 4 => pu.tubos.anunciado(u32::from_le_bytes(t.datos[..4].try_into().unwrap())),
+                p::TUBO_LEIDO if t.datos.len() == 8 => {
+                    pu.tubos.leido(u32::from_le_bytes(t.datos[..4].try_into().unwrap()), u32::from_le_bytes(t.datos[4..8].try_into().unwrap()))
+                }
                 p::TUBO_DATOS | p::TUBO_FIN if t.datos.len() >= 4 => {
                     let n = u32::from_le_bytes(t.datos[..4].try_into().unwrap());
                     let mut v = Vec::new();

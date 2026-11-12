@@ -10,7 +10,7 @@ use std::io::{self, Read, Write};
 use std::os::fd::RawFd;
 
 // El formato de las tramas es el de `wayland::puente` (sin std): el mismo para los dos lados.
-pub use wayland::puente::{ADIOS, CONECTAR, DATOS, MAX_TRAMA, MEMORIA_CRECER, MEMORIA_ESCRIBIR, MEMORIA_NUEVA, MEMORIA_SOLTAR, TUBO_DATOS, TUBO_FIN, TUBO_NUEVO, juntar_datos, partir_datos};
+pub use wayland::puente::{ADIOS, CONECTAR, DATOS, MAX_TRAMA, MEMORIA_CRECER, MEMORIA_ESCRIBIR, MEMORIA_NUEVA, MEMORIA_SOLTAR, TUBO_DATOS, TUBO_FIN, TUBO_LEIDO, TUBO_NUEVO, juntar_datos, partir_datos};
 
 /// Los tubos del portapapeles con tuberías de Linux (H9).
 pub mod tubos;
