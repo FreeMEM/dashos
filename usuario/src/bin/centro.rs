@@ -7,9 +7,13 @@
 //!   lee; su sesión con `archivos` no tiene derechos y está encerrada en `C`.
 //! - **Pantallas**: lo que el compositor dice de la pantalla (`wl_output`): nombre, tamaño, frecuencia y escala. Solo se
 //!   lee.
-//! - **Apariencia** (S10c, C3, el principio): modo claro u oscuro y color de acento; el esquema sale del color con
-//!   `Tema::desde_color` (Material 3). Se elige con Intro o doble clic y se ve en el acto, de momento en la ventana del
-//!   propio centro: llevarlo a todos los programas pide un servicio de tema, y guardarlo, un sitio en Prefs.
+//! - **Apariencia** (S10c, C3): modo claro u oscuro y color de acento; el esquema sale del color con
+//!   `Tema::desde_color` (Material 3). Se elige con Intro o doble clic, se guarda en `Prefs/apariencia` y lo reparte
+//!   el compositor (`dashos_tema_v1`). Uno de los colores es "del fondo": la semilla que saca el programa `fondo` de
+//!   la imagen de escritorio. Sus esquemas (claro y oscuro) los calcula el centro una vez, al elegirlo o al cambiar de
+//!   fondo (sin FPU cuestan medio segundo), los guarda con la apariencia y los da al compositor, que los reparte: los
+//!   demás programas no los calculan. Debajo, los fondos de `Fondos/`: elegir uno se lo pide a `fondo`, y si lo pone,
+//!   se guarda en `Prefs/fondo`.
 //! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
@@ -19,8 +23,8 @@
 //! Teclado: flechas para elegir, Tab para pasar de la lista de categorías a la de la derecha, Supr para quitar, Esc para
 //! cerrar. Ratón: elegir y el botón Quitar o Cerrar.
 //!
-//! Llaves (en el orden en que se nombró cada canal en el sistema): 1 "ventanas", 2 "archivos", 3 "sesiones" y 4 su
-//! canal "centro".
+//! Llaves (en el orden en que se nombró cada canal en el sistema): 1 "ventanas", 2 "archivos", 3 "sesiones", 4 el canal
+//! "fondo" (C3) y 5 su canal "centro".
 
 #![no_std]
 #![no_main]
@@ -56,7 +60,9 @@ dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
-const CANAL: u32 = 4;
+/// C3: el fondo de escritorio, que dice su color y pone otra imagen.
+const FONDO: u32 = 4;
+const CANAL: u32 = 5;
 const ANCHO: i32 = 560;
 const ALTO: i32 = 420;
 /// Lo más que se pide de memoria para la ventana maximizada (una pantalla de 1920 × 1200).
@@ -84,6 +90,10 @@ const SALIDA: u32 = 40;
 const TEMA_OBJ: u32 = 43;
 /// Los colores de acento que se ofrecen (el primero, el violeta de referencia de Material 3).
 const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
+/// C3: el color "del fondo", tras los de la tabla.
+const DEL_FONDO: usize = COLORES.len();
+/// Las filas fijas de Apariencia: los dos modos, los colores y el del fondo. Después, un fondo por fila.
+const FILAS_FIJAS: usize = 2 + COLORES.len() + 1;
 const PERMISOS: usize = 0;
 const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
@@ -281,6 +291,8 @@ const PREFS: &str = "Prefs";
 const FICHERO_APARIENCIA: &str = "apariencia";
 /// C2: los mosaicos del panel rápido (cuáles y en qué orden), al lado.
 const FICHERO_PANEL: &str = "panel";
+/// C3: el fondo de escritorio que se ve (su nombre en `Fondos/`), al lado.
+const FICHERO_FONDO: &str = "fondo";
 
 /// Una sesión con el servicio de archivos, con su ventana proyectada (se quita al soltarla).
 struct Sesion {
@@ -389,10 +401,79 @@ fn guardar_prefs(fichero: &str, bytes: &[u8]) -> (i32, usize) {
     (estado, escritos as usize)
 }
 
-/// La apariencia guardada: (oscuro, color). `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
-/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta").
-fn leer_apariencia() -> Result<(bool, usize), &'static str> {
-    let bytes = leer_prefs(FICHERO_APARIENCIA, 64)?;
+/// C3: los colores del fondo: la semilla y sus dos esquemas (claro y oscuro, diez colores cada uno, en el orden de
+/// `Tema::colores`), calculados una vez.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct DelFondo {
+    semilla: u32,
+    esquemas: [u32; 20],
+}
+
+/// La apariencia: modo, color (uno de `COLORES` o `DEL_FONDO`) y los colores del fondo (los últimos calculados).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct Apariencia {
+    oscuro: bool,
+    color: usize,
+    fondo: Option<DelFondo>,
+}
+
+impl Apariencia {
+    const DE_SERIE: Apariencia = Apariencia { oscuro: false, color: 0, fondo: None };
+
+    /// El color que va al compositor: el de la tabla, o la semilla del fondo.
+    fn semilla(&self) -> u32 {
+        match self.fondo {
+            Some(f) if self.color == DEL_FONDO => f.semilla,
+            _ => COLORES[self.color.min(COLORES.len() - 1)].1,
+        }
+    }
+
+    fn nombre(&self) -> &'static str {
+        if self.color == DEL_FONDO { "Del fondo" } else { COLORES[self.color].0 }
+    }
+
+    fn modo(&self) -> &'static str {
+        if self.oscuro { "oscuro" } else { "claro" }
+    }
+
+    /// El tema de la ventana del propio centro (con los esquemas del fondo ya hechos, sin calcular).
+    fn tema(&self) -> Tema {
+        if let (DEL_FONDO, Some(f)) = (self.color, self.fondo) {
+            kit::tema::recordar_esquemas(f.semilla, &f.esquemas);
+        }
+        Tema::del_sistema(self.semilla(), self.oscuro)
+    }
+
+    /// Lo que se manda al compositor por el objeto del tema (enlazado con `version`): con el color del fondo, antes sus
+    /// esquemas, si los entiende (versión 2); y el tema.
+    fn mandar(&self, e: &mut Escritor, version: u32) {
+        if let (DEL_FONDO, Some(f), 2..) = (self.color, self.fondo, version) {
+            let mut b = [0u8; 80];
+            for (k, c) in f.esquemas.iter().enumerate() {
+                b[4 * k..4 * k + 4].copy_from_slice(&c.to_le_bytes());
+            }
+            e.empezar(TEMA_OBJ, dashos_tema_v1::req::ESQUEMA).uint(f.semilla).array(&b).fin();
+        }
+        e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(self.semilla()).uint(self.oscuro as u32).fin();
+    }
+
+    /// Lo mismo que lee `leer_apariencia`, para comparar al releer.
+    fn guardable(&self) -> (bool, usize, u32) {
+        (self.oscuro, self.color, if self.color == DEL_FONDO { self.semilla() } else { 0 })
+    }
+}
+
+/// Un color de 6 cifras hexadecimales, opaco.
+fn hex6(t: &str) -> Option<u32> {
+    (t.len() == 6).then(|| u32::from_str_radix(t, 16).ok()).flatten().map(|c| 0xff00_0000 | c)
+}
+
+/// La apariencia guardada. `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
+/// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta"). El del fondo (C3) lleva
+/// detrás su semilla y sus veinte colores, en hexadecimal ("claro fondo 3d6f88 006688 ffffff ..."); sin los veinte,
+/// se calculan.
+fn leer_apariencia() -> Result<Apariencia, &'static str> {
+    let bytes = leer_prefs(FICHERO_APARIENCIA, 256)?;
     let texto = core::str::from_utf8(&bytes).map_err(|_| "no se entiende")?;
     let mut partes = texto.trim_end_matches('\n').split(' ');
     let oscuro = match partes.next() {
@@ -400,17 +481,130 @@ fn leer_apariencia() -> Result<(bool, usize), &'static str> {
         Some("oscuro") => true,
         _ => return Err("no se entiende"),
     };
+    if partes.clone().next() == Some("fondo") {
+        partes.next();
+        let semilla = partes.next().and_then(hex6).ok_or("no se entiende")?;
+        let resto: Vec<u32> = partes.map(hex6).collect::<Option<_>>().ok_or("no se entiende")?;
+        let esquemas = match resto.len() {
+            20 => resto.try_into().unwrap(),
+            0 => {
+                println!("  [centro] los colores del fondo no estaban guardados: se calculan");
+                kit::tema::esquemas(semilla)
+            }
+            _ => return Err("no se entiende"),
+        };
+        return Ok(Apariencia { oscuro, color: DEL_FONDO, fondo: Some(DelFondo { semilla, esquemas }) });
+    }
     let color = partes.next().and_then(|c| COLORES.iter().position(|x| x.0.to_lowercase() == c)).ok_or("no se entiende")?;
     if partes.next().is_some() {
         return Err("no se entiende");
     }
-    Ok((oscuro, color))
+    Ok(Apariencia { oscuro, color, fondo: None })
 }
 
 /// Guarda la apariencia en `Prefs/apariencia`. El estado y los bytes.
-fn guardar_apariencia(oscuro: bool, color: usize) -> (i32, usize) {
-    let texto = alloc::format!("{} {}\n", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0.to_lowercase());
+fn guardar_apariencia(ap: &Apariencia) -> (i32, usize) {
+    let mut texto = match (ap.color, ap.fondo) {
+        (DEL_FONDO, Some(f)) => {
+            let mut t = alloc::format!("{} fondo {:06x}", ap.modo(), f.semilla & 0xff_ffff);
+            for c in f.esquemas {
+                t.push_str(&alloc::format!(" {:06x}", c & 0xff_ffff));
+            }
+            t
+        }
+        _ => alloc::format!("{} {}", ap.modo(), COLORES[ap.color.min(COLORES.len() - 1)].0.to_lowercase()),
+    };
+    texto.push('\n');
     guardar_prefs(FICHERO_APARIENCIA, texto.as_bytes())
+}
+
+/// C3: una petición al fondo de escritorio (por la llave 4), con una llave para la respuesta: (estado, semilla, ancho,
+/// alto, milisegundos) y el nombre del que se ve (tras "semilla"). Leer una imagen grande en QEMU tarda: hasta 30 s.
+fn al_fondo(pedido: &str) -> (i32, u32, u32, u32, u32, String) {
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 20 + 64];
+    let n = if dashos::canal_escribir(FONDO, pedido.as_bytes(), &[suyo]) == 0 {
+        dashos::canal_leer_plazo(lectura, &mut r, &mut [], 30_000_000).0
+    } else {
+        -1
+    };
+    dashos::cerrar(lectura);
+    if n < 20 {
+        return (-1, 0, 0, 0, 0, String::new());
+    }
+    let u = |i: usize| u32::from_le_bytes(r[i..i + 4].try_into().unwrap());
+    let nombre = core::str::from_utf8(&r[20..n as usize]).unwrap_or("");
+    (u(0) as i32, u(4), u(8), u(12), u(16), String::from(nombre))
+}
+
+/// C3: los fondos que hay (los PNG de `Fondos/`, como mucho 16), por orden.
+fn fondos() -> Vec<String> {
+    use dashos::protocolo::archivos as a;
+    let mut l = Vec::new();
+    let Some(ses) = Sesion::abrir() else { return l };
+    let (e, asa, _, _, _) = ses.pedir(a::BUSCAR, 0, 0, 0, "Fondos");
+    if e != a::BIEN {
+        return l;
+    }
+    let mut desde = 0u64;
+    'pag: while l.len() < 16 {
+        let (e, _, cuantas, siguiente, usados) = ses.pedir(a::LISTAR, asa, desde, 0, "");
+        if e != a::BIEN || cuantas == 0 {
+            break;
+        }
+        let v = ses.ventana();
+        let mut p = 0usize;
+        for _ in 0..cuantas {
+            // Tamaño, fecha, modo, tipo, largo del nombre, bits, largo del comentario, un 0; el nombre y el comentario.
+            if p + 24 > (usados as usize).min(v.len()) {
+                break 'pag;
+            }
+            let (tipo, ln, lc) = (v[p + 18], v[p + 19] as usize, v[p + 22] as usize);
+            let nombre = v.get(p + 24..p + 24 + ln).and_then(|b| core::str::from_utf8(b).ok()).unwrap_or("");
+            if tipo == a::FICHERO && nombre.to_lowercase().ends_with(".png") && !nombre.contains('|') && l.len() < 16 {
+                l.push(String::from(nombre));
+            }
+            p = (p + 24 + ln + lc).next_multiple_of(8);
+        }
+        if siguiente == u64::MAX {
+            break;
+        }
+        desde = siguiente;
+    }
+    ses.pedir(a::CERRAR, asa, 0, 0, "");
+    l.sort();
+    l
+}
+
+/// C3: saca los colores del fondo que se ve: pide su semilla al fondo y, si cambió, calcula los esquemas (una vez).
+/// `semilla`: la que ya se sabe (al poner otro fondo, la da su respuesta). `Err` con el porqué si no hay fondo.
+fn colores_del_fondo(ap: &mut Apariencia, semilla: Option<u32>) -> Result<(), String> {
+    let semilla = match semilla {
+        Some(s) => s,
+        None => {
+            let (estado, s, ..) = al_fondo("semilla");
+            if estado != 0 {
+                return Err(alloc::format!("no hay fondo en pantalla ({})", estado));
+            }
+            s
+        }
+    };
+    // Una imagen sin ningún color que valga (gris): el de serie.
+    let semilla = if semilla == 0 {
+        println!("  [centro] el fondo no tiene color: el de serie");
+        COLORES[0].1
+    } else {
+        semilla | 0xff00_0000
+    };
+    if ap.fondo.is_some_and(|f| f.semilla == semilla) {
+        println!("  [centro] colores del fondo: semilla {:06x}, ya calculados", semilla & 0xff_ffff);
+        return Ok(());
+    }
+    let t0 = dashos::ahora_us();
+    let esquemas = kit::tema::esquemas(semilla);
+    println!("  [centro] colores del fondo: semilla {:06x}, esquemas claro y oscuro en {} ms", semilla & 0xff_ffff, (dashos::ahora_us() - t0) / 1000);
+    ap.fondo = Some(DelFondo { semilla, esquemas });
+    Ok(())
 }
 
 /// C2: los mosaicos del panel rápido guardados en `Prefs/panel`. `Err` con el porqué si no hay o no se entiende (y
@@ -421,12 +615,19 @@ fn leer_panel() -> Result<Orden, &'static str> {
     Orden::entender(&bytes)
 }
 
-/// Las filas de Apariencia: los dos modos y los colores, con una marca en lo elegido.
-fn apariencia(oscuro: bool, color: usize) -> Vec<String> {
+/// Las filas de Apariencia: los dos modos, los colores y el del fondo, con una marca en lo elegido; y los fondos de
+/// `Fondos/`, con una marca en el que se ve (C3). También los nombres de los fondos, en el orden de las filas.
+fn apariencia(ap: &Apariencia) -> (Vec<String>, Vec<String>) {
     let marca = |si: bool| if si { " · elegido" } else { "" };
-    let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!oscuro)), alloc::format!("Modo oscuro{}", marca(oscuro))];
-    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color {}{}", c.0.to_lowercase(), marca(k == color))));
-    l
+    let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!ap.oscuro)), alloc::format!("Modo oscuro{}", marca(ap.oscuro))];
+    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color {}{}", c.0.to_lowercase(), marca(k == ap.color))));
+    l.push(alloc::format!("Color del fondo{}", marca(ap.color == DEL_FONDO)));
+    let lista = fondos();
+    let (estado, _, _, _, _, visto) = al_fondo("semilla");
+    for f in &lista {
+        l.push(alloc::format!("Fondo: {}{}", f, if estado == 0 && *f == visto { " · en pantalla" } else { "" }));
+    }
+    (l, lista)
 }
 
 /// Lo que se sabe de la pantalla (de `wl_output`): nombre, ancho, alto, frecuencia en mHz y escala.
@@ -499,6 +700,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     };
     let gp = global("wl_output");
     let gt = global("dashos_tema_v1");
+    // La versión del tema que se enlaza: la 2 trae los esquemas (C3).
+    let version_tema = globales.iter().find(|g| g.1 == "dashos_tema_v1").map_or(1, |g| g.2.min(2));
     let mut pantalla = Pantalla::default();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
@@ -535,17 +738,19 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
     // La apariencia guardada; si no hay o no se entiende, la de serie (claro, violeta).
-    let (mut oscuro, mut color) = match leer_apariencia() {
+    let mut ap = match leer_apariencia() {
         Ok(g) => {
-            println!("  [centro] apariencia guardada: {}, color {}", if g.0 { "oscuro" } else { "claro" }, COLORES[g.1].0);
+            println!("  [centro] apariencia guardada: {}, color {}", g.modo(), g.nombre());
             g
         }
         Err(porque) => {
             println!("  [centro] apariencia guardada: {}; se queda la de serie", porque);
-            (false, 0)
+            Apariencia::DE_SERIE
         }
     };
-    i.ctx.tema = Tema::del_sistema(COLORES[color].1, oscuro);
+    // Los fondos de las filas de Apariencia, en su orden.
+    let mut lista_fondos: Vec<String> = Vec::new();
+    i.ctx.tema = ap.tema();
     let mut lineas_registro: Vec<String> = Vec::new();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
@@ -555,7 +760,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         } else if cat == DISCOS {
             ("Cuánto ocupa lo guardado.", reg.join("|"))
         } else if cat == APARIENCIA {
-            ("Modo y color. Intro o doble clic para elegir.", reg.join("|"))
+            ("Modo, color y fondo. Intro o doble clic para elegir.", reg.join("|"))
         } else if cat == PANTALLAS {
             ("Lo que dice el compositor de la pantalla.", reg.join("|"))
         } else {
@@ -573,7 +778,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     } else if cat == DISCOS {
         lineas_registro = discos();
     } else if cat == APARIENCIA {
-        lineas_registro = apariencia(oscuro, color);
+        (lineas_registro, lista_fondos) = apariencia(&ap);
     } else if cat == PANTALLAS {
         lineas_registro = pantallas(&pantalla);
     } else if cat != PERMISOS {
@@ -605,8 +810,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         }
         // S10c: el tema del sistema. El centro lo pone (el compositor solo se lo deja a él): el guardado, al abrir.
         if let Some(gt) = gt {
-            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA_OBJ).fin();
-            e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
+            e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(version_tema).uint(TEMA_OBJ).fin();
+            ap.mandar(&mut e, version_tema);
         }
         e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
         e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
@@ -762,7 +967,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     lineas_registro = match cat {
                         DISCOS => discos(),
                         PANTALLAS => pantallas(&pantalla),
-                        APARIENCIA => apariencia(oscuro, color),
+                        APARIENCIA => {
+                            let (l, f) = apariencia(&ap);
+                            lista_fondos = f;
+                            l
+                        }
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -779,24 +988,47 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                 Some("elegir") if cat == APARIENCIA => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    let antes = ap;
                     match v {
-                        0 | 1 => oscuro = v == 1,
-                        k if (2..2 + COLORES.len() as i64).contains(&k) => color = (k - 2) as usize,
+                        0 | 1 => ap.oscuro = v == 1,
+                        k if (2..2 + COLORES.len() as i64).contains(&k) => ap.color = (k - 2) as usize,
+                        // C3: el color del fondo: su semilla, y sus esquemas si no estaban.
+                        k if k == FILAS_FIJAS as i64 - 1 => match colores_del_fondo(&mut ap, None) {
+                            Ok(()) => ap.color = DEL_FONDO,
+                            Err(porque) => println!("  [centro] Color del fondo: {}; se queda el de antes", porque),
+                        },
+                        // C3: otro fondo. Si `fondo` lo pone, se guarda; y si el color es el del fondo, sale del nuevo.
+                        k if k >= FILAS_FIJAS as i64 && ((k as usize - FILAS_FIJAS) < lista_fondos.len()) => {
+                            let nombre = lista_fondos[k as usize - FILAS_FIJAS].clone();
+                            let (estado, semilla, w, h, ms, _) = al_fondo(&alloc::format!("poner {}", nombre));
+                            if estado == 0 {
+                                let (guardado, _) = guardar_prefs(FICHERO_FONDO, alloc::format!("{}\n", nombre).as_bytes());
+                                println!("  [centro] Fondo {}: en pantalla ({} × {}, {} ms), semilla {:06x}; guardado: {}", nombre, w, h, ms, semilla & 0xff_ffff, guardado);
+                                if ap.color == DEL_FONDO && let Err(porque) = colores_del_fondo(&mut ap, Some(semilla)) {
+                                    println!("  [centro] Color del fondo: {}; se queda el de antes", porque);
+                                }
+                            } else {
+                                println!("  [centro] Fondo {}: no se pone ({}); se queda el de antes y el tema también", nombre, estado);
+                            }
+                            (lineas_registro, lista_fondos) = apariencia(&ap);
+                            i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                            cambio = true;
+                        }
                         _ => {}
                     }
-                    if v >= 0 {
-                        i.ctx.tema = Tema::del_sistema(COLORES[color].1, oscuro);
-                        lineas_registro = apariencia(oscuro, color);
+                    if ap.guardable() != antes.guardable() || (v >= 0 && v < FILAS_FIJAS as i64 - 1) {
+                        i.ctx.tema = ap.tema();
+                        (lineas_registro, lista_fondos) = apariencia(&ap);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         if gt.is_some() {
                             let mut e = Escritor::new();
-                            e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
+                            ap.mandar(&mut e, version_tema);
                             c.mandar(&e);
                         }
-                        let (guardado, bytes) = guardar_apariencia(oscuro, color);
+                        let (guardado, bytes) = guardar_apariencia(&ap);
                         // Y se relee, como al abrir la próxima vez.
-                        let releida = leer_apariencia() == Ok((oscuro, color));
-                        println!("  [centro] Apariencia: {}, color {}; guardada: {} ({} bytes); releída: {}", if oscuro { "oscuro" } else { "claro" }, COLORES[color].0, guardado, bytes, if releida { "sí" } else { "no" });
+                        let releida = leer_apariencia().map(|g| g.guardable()) == Ok(ap.guardable());
+                        println!("  [centro] Apariencia: {}, color {}; guardada: {} ({} bytes); releída: {}", ap.modo(), ap.nombre(), guardado, bytes, if releida { "sí" } else { "no" });
                         cambio = true;
                     }
                 }
@@ -892,7 +1124,7 @@ fn panel_guardar(linea: &[u8]) -> i32 {
 /// (una conexión de un momento) y, si se pudo, se guarda; si no, el disco no cambia (no dice algo que no se ve). El
 /// estado: 0, o -1 si no se pudo poner.
 fn aplicar_modo(oscuro: bool) -> i32 {
-    let color = leer_apariencia().map_or(0, |g| g.1);
+    let ap = Apariencia { oscuro, ..leer_apariencia().unwrap_or(Apariencia::DE_SERIE) };
     // Recién cerrada la conexión anterior, el compositor puede no haberla soltado aún: unos intentos.
     let mut conexion = None;
     for _ in 0..20 {
@@ -910,21 +1142,21 @@ fn aplicar_modo(oscuro: bool) -> i32 {
     let adios = || {
         dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     };
-    let Some(gt) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| g.0) else {
+    let Some((gt, version)) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| (g.0, g.2.min(2))) else {
         adios();
         return -1;
     };
     const SYNC: u32 = 44;
     let mut e = Escritor::new();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA_OBJ).fin();
-    e.empezar(TEMA_OBJ, dashos_tema_v1::req::PONER).uint(COLORES[color].1).uint(oscuro as u32).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(version).uint(TEMA_OBJ).fin();
+    ap.mandar(&mut e, version);
     e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
     c.mandar(&e);
     // Hasta que el compositor conteste al sync, no ha hecho lo de antes; un error de protocolo corta la conexión.
     while let Some((o, orden, _)) = c.evento() {
         if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
             adios();
-            let (guardado, _) = guardar_apariencia(oscuro, color);
+            let (guardado, _) = guardar_apariencia(&ap);
             println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
             return 0;
         }

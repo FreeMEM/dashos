@@ -357,6 +357,33 @@ Diferencias con el servicio de archivos:
 Pendiente: los HDF (fase 3), escribir con la capa de cambios (fase 2), quién monta qué (hoy, quien tenga la llave del
 canal) y un nombre de aparato (`IMG0:`) cuando haya `dos.library`.
 
+## Fondo de escritorio (S10c, C3)
+
+`usuario/src/bin/fondo.rs` pinta un PNG de `C/Fondos/` en la capa de fondo de layer-shell (tiene el poder de
+escritorio), escalado para cubrir la pantalla (lo que sobra se recorta por igual a cada lado), y saca de él el color
+semilla del tema (`kit::semilla`, el método de Material). Al arrancar pone el que dice `C/Prefs/fondo` (una línea con
+el nombre; si no hay, `ondas.png`). Si la imagen no se puede leer o no se entiende, no pone nada (se ve el color liso
+del compositor) o se queda la de antes. Lo que se deja: 32 MB de fichero y 16 millones de píxeles; más es "demasiado
+grande", sin leerlo. En una pantalla de más de 4 MB (lo que mide un objeto de memoria), va en franjas, una capa cada
+una. Llaves: 1 "ventanas", 2 "archivos", 3 su canal "fondo".
+
+Por su canal solo le habla el centro de control (el nombre lo da `inicio`), en texto y con una llave para la respuesta:
+
+| Pedido | Qué hace |
+|---|---|
+| `poner <nombre>` | Pone `Fondos/<nombre>`. No lo guarda: si sale bien, lo guarda el centro en `Prefs/fondo` |
+| `semilla` | Dice el fondo de ahora |
+
+La respuesta: estado (i32: 0 bien; -1 pedido malo o de otro; -2 no se lee el fichero; -3 no se entiende la imagen; -4
+demasiado grande; -5 sin memoria; -6 sin pantalla; -7 no hay fondo), la semilla (ARGB; 0 si la imagen no tiene ningún
+color que valga, como una gris), ancho, alto y los milisegundos que costó (u32 cada uno). Tras `semilla`, detrás, el
+nombre del fondo que se ve.
+
+Los colores del fondo los reparte el compositor (`dashos_tema_v1`, versión 2): el centro calcula una vez los dos
+esquemas (claro y oscuro) de la semilla, los da con la petición `esquema` y pone el tema; a quien enlazó la versión 2
+le llega el evento `esquema` antes de `tema`, y `kit::tema::recordar_evento_esquema` hace que `Tema::del_sistema` no
+los calcule. Con la versión 1 se calculan (sin FPU, de 200 a 350 ms en QEMU), una vez por proceso y color.
+
 ## Sonido (S19, A4)
 
 El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias

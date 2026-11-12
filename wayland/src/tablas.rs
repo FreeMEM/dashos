@@ -1061,15 +1061,17 @@ pub mod ext_idle_notification_v1 {
 
 pub static DASHOS_TEMA_V1: Interface = Interface {
     name: "dashos_tema_v1",
-    version: 1,
+    version: 2,
     requests: &[
         Message { name: "destroy", since: 1, destructor: true, args: &[] },
         Message { name: "poner", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "bloquear", since: 1, destructor: false, args: &[] },
+        Message { name: "esquema", since: 2, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "colores", kind: Kind::Array, nullable: false, interface: None }] },
     ],
     events: &[
         Message { name: "tema", since: 1, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "oscuro", kind: Kind::Uint, nullable: false, interface: None }] },
         Message { name: "panel", since: 1, destructor: false, args: &[] },
+        Message { name: "esquema", since: 2, destructor: false, args: &[Arg { name: "color", kind: Kind::Uint, nullable: false, interface: None }, Arg { name: "colores", kind: Kind::Array, nullable: false, interface: None }] },
     ],
 };
 
@@ -1079,10 +1081,12 @@ pub mod dashos_tema_v1 {
         pub const DESTROY: u16 = 0;
         pub const PONER: u16 = 1;
         pub const BLOQUEAR: u16 = 2;
+        pub const ESQUEMA: u16 = 3;
     }
     pub mod ev {
         pub const TEMA: u16 = 0;
         pub const PANEL: u16 = 1;
+        pub const ESQUEMA: u16 = 2;
     }
 }
 

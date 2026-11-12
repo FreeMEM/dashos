@@ -207,6 +207,12 @@ test = false
 required-features = ["ventanas"]
 
 [[bin]]
+name = "fondo"
+path = "src/bin/fondo.rs"
+test = false
+required-features = ["ventanas"]
+
+[[bin]]
 name = "selector"
 path = "src/bin/selector.rs"
 test = false

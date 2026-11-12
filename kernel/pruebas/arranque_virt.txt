@@ -150,8 +150,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Discos: Disco del sistema: 7,0 MB; Ocupado: 
 # Y comprobar el disco desde ahí: acción de administrador; `guardian` contesta (en la prueba, como Ana).
 ~│   [guardian] centro pide comprobar: contesta como Ana
-# S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, azul).
-~│   [guardian] tema del sistema: oscuro, color 0061a4
+# S10c: la pantalla de bloqueo y la de entrada siguen el tema del sistema (el del centro: oscuro, del fondo, C3).
+~│   [guardian] tema del sistema: oscuro, color c44e68
 # C2: los mosaicos guardados del panel están rotos en el disco (uno repetido y otro que no existe): el centro y el
 # panel se quedan los de serie.
 ~│   [centro] panel guardado: un mosaico repetido; se queda el de serie
@@ -183,6 +183,26 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
+# C3: el fondo de escritorio (`fondo`, una capa de fondo). En el disco, Prefs/fondo dice enorme.png (una cabecera de
+# 40000 × 40000): no se lee y se queda el color liso.
+~│   [fondo] enorme.png: demasiado grande (40000 × 40000); se queda el color liso
+# Desde Apariencia, ondas.png (960 × 600, escalada para cubrir los 800 × 600 de la pantalla): el fondo la pone y saca
+# su color semilla (Material You); el centro guarda el fondo.
+~│   [fondo] ondas.png en pantalla: 960 × 600 escalada a 800 × 600 en 1 franja; semilla 3d6f88
+~│   [centro] Fondo ondas.png: en pantalla (960 × 600, 
+# "Color del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
+# compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
+~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
+~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (160 bytes); releída: sí
+~│   [ajustes] tema del sistema: oscuro, color 3d6f88, esquema del centro (
+# Hostil: una imagen rota (su CRC no cuadra) no tumba a nadie: se quedan el fondo y el tema de antes.
+~│   [fondo] rota.png: un trozo está roto (su CRC no cuadra); se queda ondas.png
+~│   [centro] Fondo rota.png: no se pone (-3); se queda el de antes y el tema también
+# Otro fondo con el color del fondo elegido: el tema sale del nuevo, y Ajustes lo sigue.
+~│   [fondo] atardecer.png en pantalla: 640 × 480 escalada a 800 × 600 en 1 franja; semilla c44e68
+~│   [centro] Fondo atardecer.png: en pantalla (640 × 480, 
+~│   [centro] colores del fondo: semilla c44e68, esquemas claro y oscuro en 
+~│   [ajustes] tema del sistema: oscuro, color c44e68, esquema del centro (
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14) y procesos.
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
 # Super+Arriba la maximiza (un búfer nuevo de la pantalla entera) y Super+Abajo la devuelve.

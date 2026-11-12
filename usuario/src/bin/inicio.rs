@@ -34,6 +34,8 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     ("selector", 1000, 1000, 2, ""),
     // S10c: el centro de control, para ver cuánto ocupa el disco (INFO): sin derechos y encerrado en `C`.
     ("centro", 1000, 1000, 0, "C"),
+    // C3: el fondo de escritorio, para leer las imágenes de `C/Fondos` y su nombre en `C/Prefs/fondo`.
+    ("fondo", 1000, 1000, 0, "C"),
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),

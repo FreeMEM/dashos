@@ -4,7 +4,7 @@
     Protocolo propio de DashOS (S10c, C3). Licencia MPL-2.0, como el resto de DashOS.
   </copyright>
 
-  <interface name="dashos_tema_v1" version="1">
+  <interface name="dashos_tema_v1" version="2">
     <description summary="el tema del sistema: color de acento y modo">
       El compositor guarda el tema y se lo dice a cada programa que se suscribe: al enlazar y cada vez que cambia.
       Solo el centro de control lo cambia; a otro, poner es un error de protocolo.
@@ -28,6 +28,17 @@
       </description>
     </request>
 
+    <request name="esquema" since="2">
+      <description summary="los esquemas ya hechos de un color">
+        C3: el centro de control calcula una vez los esquemas de un color que no está en la tabla del kit (el sacado del
+        fondo de escritorio) y los da aquí, antes de poner ese color: 20 colores ARGB (u32, little-endian), los diez
+        del claro y los diez del oscuro, en el orden de `Tema::colores` del kit. Solo el centro; a otro, error. Un
+        tamaño que no sea de 80 bytes, también.
+      </description>
+      <arg name="color" type="uint"/>
+      <arg name="colores" type="array"/>
+    </request>
+
     <event name="tema">
       <description summary="el tema de ahora">Al enlazar y cada vez que cambia.</description>
       <arg name="color" type="uint"/>
@@ -38,6 +49,15 @@
       <description summary="abrir o cerrar el panel rápido">
         Super+A (C2): solo al panel rápido. La tecla no llega a la ventana.
       </description>
+    </event>
+
+    <event name="esquema" since="2">
+      <description summary="los esquemas ya hechos del color del tema">
+        Antes de `tema`, si el centro dio los esquemas de ese color: así quien lo sigue no los calcula (sin FPU, cientos
+        de milisegundos). Los mismos 80 bytes que la petición.
+      </description>
+      <arg name="color" type="uint"/>
+      <arg name="colores" type="array"/>
     </event>
   </interface>
 </protocol>

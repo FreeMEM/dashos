@@ -8,6 +8,7 @@
 
 use crate::color::Paletas;
 use crate::lienzo::Color;
+use core::sync::atomic::{AtomicU32, Ordering};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tema {
@@ -88,22 +89,52 @@ impl Tema {
         if color == 0xff67_50a4 {
             return if oscuro { Tema::OSCURO } else { Tema::CLARO };
         }
-        // Los acentos del centro de control, de la tabla; cualquier otro, calculado.
-        match TABLA.iter().find(|t| t.0 == color && t.1 == oscuro) {
-            Some(&(_, _, r)) => Tema {
-                primario: r[0],
-                sobre_primario: r[1],
-                contenedor_primario: r[2],
-                sobre_contenedor_primario: r[3],
-                superficie: r[4],
-                sobre_superficie: r[5],
-                variante_superficie: r[6],
-                sobre_variante_superficie: r[7],
-                contorno: r[8],
-                variante_contorno: r[9],
-                ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
-            },
-            None => Tema::desde_color(color, oscuro),
+        // Los acentos del centro de control, de la tabla; uno que llegó ya hecho (el del fondo, C3: lo calcula el centro
+        // y lo reparte el compositor), o calculado aquí antes; si no, se calcula (y se recuerda).
+        if let Some(&(_, _, r)) = TABLA.iter().find(|t| t.0 == color && t.1 == oscuro) {
+            return Tema::de_colores(&r, oscuro);
+        }
+        if let Some(t) = RECIBIDOS.iter().chain(&CALCULADOS).find_map(|h| h.leer(color, oscuro)) {
+            return t;
+        }
+        let t = Tema::desde_color(color, oscuro);
+        let k = SIGUIENTE.fetch_add(1, Ordering::Relaxed) as usize % CALCULADOS.len();
+        CALCULADOS[k].poner(color, oscuro, &t.colores());
+        t
+    }
+
+    /// Los diez colores del esquema, en el orden de la tabla y del protocolo del tema: primario, sobre primario,
+    /// contenedor primario, sobre contenedor primario, superficie, sobre superficie, variante de superficie, sobre
+    /// variante, contorno y variante de contorno.
+    pub fn colores(&self) -> [Color; 10] {
+        [
+            self.primario,
+            self.sobre_primario,
+            self.contenedor_primario,
+            self.sobre_contenedor_primario,
+            self.superficie,
+            self.sobre_superficie,
+            self.variante_superficie,
+            self.sobre_variante_superficie,
+            self.contorno,
+            self.variante_contorno,
+        ]
+    }
+
+    /// El tema de esos diez colores (lo demás, de la referencia del modo).
+    pub fn de_colores(r: &[Color; 10], oscuro: bool) -> Tema {
+        Tema {
+            primario: r[0],
+            sobre_primario: r[1],
+            contenedor_primario: r[2],
+            sobre_contenedor_primario: r[3],
+            superficie: r[4],
+            sobre_superficie: r[5],
+            variante_superficie: r[6],
+            sobre_variante_superficie: r[7],
+            contorno: r[8],
+            variante_contorno: r[9],
+            ..if oscuro { Tema::OSCURO } else { Tema::CLARO }
         }
     }
 
@@ -128,6 +159,79 @@ impl Tema {
         }
     }
 }
+
+/// Los dos esquemas de un color (claro y oscuro, diez colores cada uno, en el orden de `Tema::colores`): lo que el
+/// centro de control calcula una vez para el color del fondo y reparte (C3; sin FPU, de 400 a 700 ms en QEMU).
+pub fn esquemas(color: Color) -> [Color; 20] {
+    let mut r = [0; 20];
+    r[..10].copy_from_slice(&Tema::desde_color(color, false).colores());
+    r[10..].copy_from_slice(&Tema::desde_color(color, true).colores());
+    r
+}
+
+/// Recuerda los esquemas de `color` que llegaron ya hechos (el evento `esquema` de `dashos_tema_v1`): con ellos,
+/// `del_sistema` no calcula. Solo se guardan los últimos.
+pub fn recordar_esquemas(color: Color, colores: &[Color; 20]) {
+    let color = color | 0xff00_0000;
+    RECIBIDOS[0].poner(color, false, colores[..10].try_into().unwrap());
+    RECIBIDOS[1].poner(color, true, colores[10..].try_into().unwrap());
+}
+
+/// Lo mismo, desde el cuerpo del evento `esquema` de `dashos_tema_v1` tal como llega (el color, el largo del arreglo,
+/// 80, y los veinte colores en little-endian). `false` si no tiene esa forma (y no se recuerda nada).
+pub fn recordar_evento_esquema(cuerpo: &[u8]) -> bool {
+    if cuerpo.len() != 88 || u32::from_le_bytes(cuerpo[4..8].try_into().unwrap()) != 80 {
+        return false;
+    }
+    let color = u32::from_le_bytes(cuerpo[0..4].try_into().unwrap());
+    let colores: [Color; 20] = core::array::from_fn(|i| u32::from_le_bytes(cuerpo[8 + 4 * i..12 + 4 * i].try_into().unwrap()));
+    recordar_esquemas(color, &colores);
+    true
+}
+
+/// Si los esquemas de `color` llegaron ya hechos.
+pub fn recibido(color: Color) -> bool {
+    RECIBIDOS[0].leer(color | 0xff00_0000, false).is_some()
+}
+
+/// Un esquema guardado: color, modo y sus diez colores. Sin `unsafe` ni cerrojos: la versión es impar mientras se
+/// escribe, y quien lee la mira antes y después (si cambió, no vale).
+struct Hueco {
+    version: AtomicU32,
+    color: AtomicU32,
+    oscuro: AtomicU32,
+    c: [AtomicU32; 10],
+}
+
+impl Hueco {
+    const fn new() -> Hueco {
+        Hueco { version: AtomicU32::new(0), color: AtomicU32::new(0), oscuro: AtomicU32::new(0), c: [const { AtomicU32::new(0) }; 10] }
+    }
+
+    fn poner(&self, color: Color, oscuro: bool, c: &[Color; 10]) {
+        self.version.fetch_add(1, Ordering::AcqRel);
+        self.color.store(color, Ordering::Release);
+        self.oscuro.store(oscuro as u32, Ordering::Release);
+        for (a, &v) in self.c.iter().zip(c) {
+            a.store(v, Ordering::Release);
+        }
+        self.version.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn leer(&self, color: Color, oscuro: bool) -> Option<Tema> {
+        let v = self.version.load(Ordering::Acquire);
+        if v % 2 == 1 || v == 0 || self.color.load(Ordering::Acquire) != color || self.oscuro.load(Ordering::Acquire) != oscuro as u32 {
+            return None;
+        }
+        let c: [Color; 10] = core::array::from_fn(|i| self.c[i].load(Ordering::Acquire));
+        (self.version.load(Ordering::Acquire) == v).then(|| Tema::de_colores(&c, oscuro))
+    }
+}
+
+/// Los esquemas que llegaron hechos (claro y oscuro del último color) y los últimos calculados aquí.
+static RECIBIDOS: [Hueco; 2] = [const { Hueco::new() }; 2];
+static CALCULADOS: [Hueco; 4] = [const { Hueco::new() }; 4];
+static SIGUIENTE: AtomicU32 = AtomicU32::new(0);
 
 /// El estado de un control, para su capa.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -282,6 +386,94 @@ mod pruebas {
                 }
             }
         }
+    }
+
+    /// C3 (S10c): los colores sacados de imágenes de todo tipo (muy saturadas, grises, casi negras, casi blancas) dan
+    /// esquemas que se leen: el texto sobre la superficie y sus contenedores, sobre el primario y sobre los
+    /// contenedores, a 4,5:1 como poco (WCAG AA para texto normal), en claro y en oscuro. Sin semilla (gris), la de
+    /// serie, como hace el centro.
+    #[test]
+    fn contraste_con_colores_del_fondo() {
+        use alloc::vec::Vec;
+        // Imágenes de 96 × 64 hechas con una función de (x, y), con un poco de ruido.
+        let hacer = |f: &dyn Fn(u32, u32) -> (u32, u32, u32)| -> Vec<u32> {
+            let mut x = 0x2545_f491u32;
+            (0..96 * 64)
+                .map(|i| {
+                    x ^= x << 13;
+                    x ^= x >> 17;
+                    x ^= x << 5;
+                    let (r, g, b) = f(i % 96, i / 96);
+                    let ruido = |v: u32, k: u32| (v as i32 + ((x >> k) & 7) as i32 - 3).clamp(0, 255) as u32;
+                    0xff00_0000 | ruido(r, 0) << 16 | ruido(g, 3) << 8 | ruido(b, 6)
+                })
+                .collect()
+        };
+        let imagenes: Vec<(&str, Vec<u32>)> = alloc::vec![
+            ("rojo puro", hacer(&|_, _| (255, 0, 0))),
+            ("verde puro", hacer(&|_, _| (0, 255, 0))),
+            ("azul puro", hacer(&|_, _| (0, 0, 255))),
+            ("amarillo puro", hacer(&|_, _| (255, 255, 0))),
+            ("magenta y cian", hacer(&|x, _| if x < 48 { (255, 0, 255) } else { (0, 255, 255) })),
+            ("arcoíris", hacer(&|x, _| {
+                let h = x * 6 * 256 / 96;
+                let (s, f) = (h / 256, h % 256);
+                [(255, f, 0), (255 - f, 255, 0), (0, 255, f), (0, 255 - f, 255), (f, 0, 255), (255, 0, 255 - f)][s as usize % 6]
+            })),
+            ("grises", hacer(&|x, y| (x * 2 + y, x * 2 + y, x * 2 + y))),
+            ("casi negra", hacer(&|x, _| (8 + x / 12, 6, 14 + x / 8))),
+            ("negra con un toque", hacer(&|x, y| if x > 80 && y > 50 { (0, 120, 200) } else { (4, 4, 6) })),
+            ("casi blanca", hacer(&|x, _| (250 - x / 16, 247, 242 + x / 16))),
+            ("blanca con rosa", hacer(&|x, _| if x < 10 { (255, 120, 180) } else { (252, 250, 250) })),
+            ("naranja apagado", hacer(&|x, y| (150 + x / 2, 110 + y / 2, 80))),
+        ];
+        for (nombre, px) in &imagenes {
+            let semilla = crate::semilla::semilla(px, 96, 64).unwrap_or(ACENTOS[0].1);
+            for oscuro in [false, true] {
+                let t = Tema::desde_color(semilla, oscuro);
+                for (papel, texto, fondo) in [
+                    ("sobre_superficie", t.sobre_superficie, t.superficie),
+                    ("sobre_superficie en contenedor_bajo", t.sobre_superficie, t.contenedor_bajo()),
+                    ("sobre_superficie en contenedor", t.sobre_superficie, t.contenedor()),
+                    ("sobre_superficie en contenedor_alto", t.sobre_superficie, t.contenedor_alto()),
+                    ("sobre_variante en contenedor_alto", t.sobre_variante_superficie, t.contenedor_alto()),
+                    ("sobre_primario", t.sobre_primario, t.primario),
+                    ("sobre_contenedor_primario", t.sobre_contenedor_primario, t.contenedor_primario),
+                    ("sobre_contenedor_secundario", t.sobre_contenedor_secundario(), t.contenedor_secundario()),
+                    ("sobre_variante_superficie", t.sobre_variante_superficie, t.variante_superficie),
+                ] {
+                    let k = contraste(texto, fondo);
+                    assert!(k >= 4.5, "{nombre} (semilla {semilla:08x}), oscuro {oscuro}: {papel} {k:.2}");
+                }
+            }
+        }
+    }
+
+    /// Lo que llega hecho se usa sin calcular, y lo calculado se recuerda.
+    #[test]
+    fn esquemas_recibidos_y_recordados() {
+        let color = 0xff3a_6b8c;
+        let mut falsos = [0u32; 20];
+        for (i, c) in falsos.iter_mut().enumerate() {
+            *c = 0xff00_0000 | i as u32;
+        }
+        assert!(!recibido(color));
+        // Del evento tal cual: uno mal formado no se recuerda.
+        let mut cuerpo = alloc::vec::Vec::from(color.to_le_bytes());
+        cuerpo.extend_from_slice(&80u32.to_le_bytes());
+        cuerpo.extend(falsos.iter().flat_map(|c| c.to_le_bytes()));
+        assert!(!recordar_evento_esquema(&cuerpo[..84]));
+        assert!(!recibido(color));
+        assert!(recordar_evento_esquema(&cuerpo));
+        assert!(recibido(color));
+        assert_eq!(Tema::del_sistema(color, false).colores(), falsos[..10]);
+        assert_eq!(Tema::del_sistema(color, true).colores(), falsos[10..]);
+        // Otro color: se calcula y la segunda vez sale igual (recordado).
+        let otro = 0xff7a_2b4c;
+        let a = Tema::del_sistema(otro, true);
+        assert_eq!(a, Tema::desde_color(otro, true));
+        assert_eq!(Tema::del_sistema(otro, true), a);
+        assert_eq!(esquemas(otro)[10..], a.colores());
     }
 
     /// La tabla de los acentos da lo mismo que calcularlo (si `desde_color` cambia, la tabla se rehace).

@@ -66,11 +66,15 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
+    // C3: el fondo de escritorio, una capa de fondo con la imagen de `C/Fondos` (poder de escritorio). Nombra "fondo" antes
+    // que el centro, que le dice cuál poner: es su servidor.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("fondo", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/fondo"), &[], &["ventanas", "archivos", "fondo"]),
     // El centro de control (S10c, C1): la ventana de Ajustes, con la categoría Permisos. Por "centro" solo se le pide
     // que abra una categoría (en la prueba, `guardian`). Va antes que él: el
     // primero que nombra un canal es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "centro", "archivos"]),
+    ("centro", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/centro"), &[], &["ventanas", "sesiones", "fondo", "centro", "archivos"]),
     #[cfg(feature = "virt")]
     ("guardian", include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/guardian"), &[], &["ventanas", "sesiones", "centro"]),
     #[cfg(feature = "virt")]
