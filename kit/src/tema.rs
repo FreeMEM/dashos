@@ -134,6 +134,9 @@ impl Tema {
 pub struct Estado {
     pub encima: bool,
     pub foco: bool,
+    /// El foco se movió o se usó con el teclado (el `:focus-visible` de la web): se ve el anillo de foco y su capa.
+    /// Tras un clic, no.
+    pub anillo: bool,
     pub pulsado: bool,
     pub desactivado: bool,
 }
@@ -187,8 +190,8 @@ pub fn capa(estado: Estado, contenido: Color) -> Option<Color> {
     if estado.desactivado {
         return None;
     }
-    // Material 3: pulsado 10 %, foco 10 %, encima 8 % (de 255: 26, 26 y 20).
-    let opacidad = if estado.pulsado || estado.foco { 26 } else if estado.encima { 20 } else { return None };
+    // Material 3: pulsado 10 %, foco 10 %, encima 8 % (de 255: 26, 26 y 20). El foco, solo si vino del teclado.
+    let opacidad = if estado.pulsado || estado.anillo { 26 } else if estado.encima { 20 } else { return None };
     Some(con_opacidad(contenido, opacidad))
 }
 

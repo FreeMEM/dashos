@@ -120,11 +120,18 @@ impl<'a> Lienzo<'a> {
 
     /// Un rectángulo con las esquinas redondeadas de radio `radio`, suavizadas.
     pub fn redondeado(&mut self, r: Rect, radio: i32, color: Color) {
-        let radio = radio.min(r.w / 2).min(r.h / 2).max(0);
+        self.redondeado_lados(r, radio, radio, color);
+    }
+
+    /// Como `redondeado`, con un radio para las esquinas de la izquierda y otro para las de la derecha (los tramos de
+    /// un deslizador). En una pasada: con un color translúcido, nada se pinta dos veces.
+    pub fn redondeado_lados(&mut self, r: Rect, izquierda: i32, derecha: i32, color: Color) {
+        let tope = |v: i32| v.min(r.w / 2).min(r.h / 2).max(0);
+        let (izquierda, derecha) = (tope(izquierda), tope(derecha));
         let rc = r.cruce(self.recorte());
         for y in rc.y..rc.y + rc.h {
             for x in rc.x..rc.x + rc.w {
-                let cob = cobertura(r, radio, x, y);
+                let cob = cobertura_lados(r, izquierda, derecha, x, y);
                 if cob == 255 {
                     let i = y as usize * self.linea + x as usize;
                     self.px[i] = mezclar(self.px[i], color, 255);
@@ -160,6 +167,43 @@ impl<'a> Lienzo<'a> {
         }
     }
 
+    /// Un trazo recto de `a` a `b` (en octavos de píxel), de `grosor` octavos de ancho y puntas redondas, suavizado
+    /// con 4 × 4 muestras por píxel. Para la marca de una casilla.
+    pub fn trazo(&mut self, a: (i32, i32), b: (i32, i32), grosor: i32, color: Color) {
+        let rad = (grosor / 2) as i64;
+        let (dx, dy) = ((b.0 - a.0) as i64, (b.1 - a.1) as i64);
+        let largo2 = dx * dx + dy * dy;
+        let caja = Rect::new(
+            (a.0.min(b.0) - rad as i32).div_euclid(8),
+            (a.1.min(b.1) - rad as i32).div_euclid(8),
+            (a.0.abs_diff(b.0) as i32 + 2 * rad as i32) / 8 + 2,
+            (a.1.abs_diff(b.1) as i32 + 2 * rad as i32) / 8 + 2,
+        );
+        let rc = caja.cruce(self.recorte());
+        for y in rc.y..rc.y + rc.h {
+            for x in rc.x..rc.x + rc.w {
+                let mut dentro = 0;
+                for sy in 0..4 {
+                    for sx in 0..4 {
+                        // La distancia al segmento, al cuadrado, sin dividir: d² · largo² frente a rad² · largo².
+                        let (px, py) = ((x * 8 + sx * 2 + 1 - a.0) as i64, (y * 8 + sy * 2 + 1 - a.1) as i64);
+                        let t = px * dx + py * dy;
+                        let cerca = if t <= 0 || largo2 == 0 {
+                            px * px + py * py <= rad * rad
+                        } else if t >= largo2 {
+                            let (qx, qy) = (px - dx, py - dy);
+                            qx * qx + qy * qy <= rad * rad
+                        } else {
+                            (px * px + py * py) * largo2 - t * t <= rad * rad * largo2
+                        };
+                        dentro += cerca as u32;
+                    }
+                }
+                self.punto(x, y, color, dentro * 255 / 16);
+            }
+        }
+    }
+
     /// El borde de un rectángulo redondeado, de `grosor` píxeles hacia dentro.
     pub fn borde(&mut self, r: Rect, radio: i32, grosor: i32, color: Color) {
         let radio = radio.min(r.w / 2).min(r.h / 2).max(0);
@@ -181,14 +225,25 @@ impl<'a> Lienzo<'a> {
 
 /// La parte del píxel (x, y) dentro del rectángulo redondeado, de 0 a 255: 4 × 4 muestras en las esquinas.
 fn cobertura(r: Rect, radio: i32, x: i32, y: i32) -> u32 {
+    cobertura_lados(r, radio, radio, x, y)
+}
+
+/// Como `cobertura`, con un radio para las esquinas de la izquierda y otro para las de la derecha.
+fn cobertura_lados(r: Rect, izquierda: i32, derecha: i32, x: i32, y: i32) -> u32 {
     if !r.contiene(x, y) {
         return 0;
     }
+    // El radio de la esquina que toca, si el píxel está en una, y su centro.
+    let (radio, cx) = if x < r.x + izquierda {
+        (izquierda, r.x + izquierda)
+    } else if x >= r.x + r.w - derecha {
+        (derecha, r.x + r.w - derecha)
+    } else {
+        return 255;
+    };
     if radio == 0 {
         return 255;
     }
-    // Centro de la esquina que toca, si el píxel está en una.
-    let cx = if x < r.x + radio { r.x + radio } else if x >= r.x + r.w - radio { r.x + r.w - radio } else { return 255 };
     let cy = if y < r.y + radio { r.y + radio } else if y >= r.y + r.h - radio { r.y + r.h - radio } else { return 255 };
     // En octavos de píxel: las muestras en el centro de cada cuarto, el centro de la esquina en una frontera.
     let rad = radio * 8;
@@ -255,6 +310,29 @@ mod pruebas {
         assert_eq!(a(3, 2), a(3, 37));
         assert_eq!(a(3, 2), a(36, 37));
         assert_eq!(a(3, 2), a(2, 3));
+    }
+
+    #[test]
+    fn un_trazo_suavizado() {
+        let mut px = vec![0u32; 20 * 20];
+        let mut l = Lienzo::new(&mut px, 20, 20, 20);
+        // Horizontal, de (2, 10) a (17, 10), de 2 de ancho: llena las filas 9 y 10 y nada más.
+        l.trazo((16, 80), (136, 80), 16, 0xff00_00ff);
+        let a = |x: usize, y: usize| px[y * 20 + x] >> 24;
+        assert_eq!((a(10, 9), a(10, 10)), (255, 255));
+        assert_eq!((a(10, 8), a(10, 11)), (0, 0));
+        // Las puntas, redondas: el píxel de la esquina, a medias.
+        let punta = a(1, 9);
+        assert!(punta > 0 && punta < 255, "{punta}");
+        // En diagonal: el centro lleno, lejos nada, y los bordes a medias (suavizado).
+        let mut px = vec![0u32; 20 * 20];
+        let mut l = Lienzo::new(&mut px, 20, 20, 20);
+        l.trazo((16, 16), (128, 128), 16, 0xff00_00ff);
+        let a = |x: usize, y: usize| px[y * 20 + x] >> 24;
+        assert_eq!(a(8, 8), 255);
+        assert_eq!(a(14, 4), 0);
+        let borde = a(9, 7);
+        assert!(borde > 0 && borde < 255, "{borde}");
     }
 
     #[test]

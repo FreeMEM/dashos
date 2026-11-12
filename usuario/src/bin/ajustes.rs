@@ -1,9 +1,10 @@
-//! Una aplicación de prueba del kit de interfaz (K7): la ventana de `kit/examples/vista.rs` (un texto, un deslizador,
-//! una casilla, un campo de texto y dos botones de Material 3, atados con avisos) como cliente de Wayland. Responde al
-//! ratón y al teclado que le manda el compositor; el foco empieza en el campo. Espera dos segundos antes de conectarse,
-//! para salir la tercera en la cascada de la prueba (W7). Cambia de tamaño cuando el compositor se lo pide (Super+Arriba
-//! la maximiza; Super+Abajo la devuelve): una memoria, un pool y un búfer nuevos de ese tamaño (los viejos se sueltan:
-//! cada servicio tiene un cupo de 16 MB), y el kit vuelve a colocar.
+//! Una aplicación de prueba del kit de interfaz (K7): la ventana de `kit/examples/vista.rs` (un título, un texto
+//! secundario, un deslizador, una casilla, un campo de texto y dos botones de Material 3, atados con avisos) como
+//! cliente de Wayland. Como un diálogo de Material 3: Aceptar relleno y Cancelar de texto, al final de su fila.
+//! Responde al ratón y al teclado que le manda el compositor; el foco empieza en el campo. Espera dos segundos antes de
+//! conectarse, para salir la tercera en la cascada de la prueba (W7). Cambia de tamaño cuando el compositor se lo pide
+//! (Super+Arriba la maximiza; Super+Abajo la devuelve): una memoria, un pool y un búfer nuevos de ese tamaño (los viejos
+//! se sueltan: cada servicio tiene un cupo de 16 MB), y el kit vuelve a colocar.
 
 #![no_std]
 #![no_main]
@@ -82,10 +83,11 @@ fn principal() -> u64 {
 
     // La interfaz.
     let mut a = Arbol::new();
-    let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into()))]);
+    let titulo = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Ajustes".into())), (atr::ESTILO, Valor::Int(1))]);
+    let texto = a.crear(Texto, &[(atr::TEXTO, Valor::Texto("Volumen: 60 · Ñandú".into())), (atr::ESTILO, Valor::Int(2))]);
     let desl = a.crear(Deslizador, &[(atr::VALOR, Valor::Int(60))]);
     let casilla = a.crear(Casilla, &[(atr::VALOR, Valor::Bool(false))]);
-    let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into()))]);
+    let cancelar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cancelar".into())), (atr::ESTILO, Valor::Int(2))]);
     let aceptar = a.crear(Boton, &[(atr::TEXTO, Valor::Texto("Aceptar".into()))]);
     let nombre = a.crear(Campo, &[(atr::TEXTO, Valor::Texto("DashOS".into()))]);
     a.notificar(nombre, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("Nombre guardado".into())));
@@ -93,11 +95,14 @@ fn principal() -> u64 {
     a.notificar(casilla, atr::VALOR, Cuando::Siempre, aceptar, atr::DESACTIVADO, Que::Disparo);
     a.notificar(aceptar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("Aceptado".into())));
     a.notificar(cancelar, atr::CLIC, Cuando::Igual(Valor::Bool(true)), texto, atr::TEXTO, Que::Fijo(Valor::Texto("Cancelado".into())));
+    // Un hueco delante: los botones, al final de la fila (Material 3).
+    let hueco = a.crear(Texto, &[(atr::TEXTO, Valor::Texto(alloc::string::String::new()))]);
     let raiz = Hijo::Columna(vec![
+        Hijo::Obj(titulo),
         Hijo::Obj(texto),
         Hijo::Fila(vec![Hijo::Obj(desl), Hijo::Obj(casilla)]),
         Hijo::Obj(nombre),
-        Hijo::Fila(vec![Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
+        Hijo::Fila(vec![Hijo::Obj(hueco), Hijo::Obj(cancelar), Hijo::Obj(aceptar)]),
     ]);
     let mut i = Interfaz::new(a, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
