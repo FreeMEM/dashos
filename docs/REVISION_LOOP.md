@@ -1353,3 +1353,17 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   evaluaciones (876 600 → 274 248). Con 32 y 12 pasos ya cambian dos colores en una unidad: hay margen.
 - En virt (el centro, "esquemas claro y oscuro en"): ondas 936 → 194-236 ms, atardecer 822-828 → 188-208 ms.
 - `make prueba` BIEN; kit 60 bien; arranque-virt en dos vueltas, todo BIEN.
+
+### 2026-11-12 15:00: multimonitor y memoria del kit en revision
+- Fusionadas las ramas `multimonitor` (virtio-gpu en su proceso, compositor con varias salidas, `make arranque-virt-2`;
+  docs/bitacoras/multimonitor.md) y `kit-memoria` (texto sin `fontdue`, con `ttf-parser` y un rasterizador propio;
+  el montón crece la mitad de lo que tiene; la barra con `Lamina`; guardian con lienzo pequeño;
+  docs/bitacoras/kit-memoria.md). Choques: el guion (se quedan los arreglos de revision), la cascada (la de
+  multimonitor, que también mete dentro la ventana), el global `wl_output` (uno por pantalla) con el tema en versión 2,
+  y conectar al compositor (5 s de reintentos, y si no, aviso y llaves sueltas).
+- Memoria del arranque de pruebas: en uso 160,8 (esta mañana) → 112,2 MB; los 24 procesos que ve el centro, 114,4 →
+  66,2 MB; los del kit, de 4,4-6,4 a 0,6-1,6 MB cada uno.
+- `make prueba` BIEN; arranque-virt en dos vueltas, todo BIEN; arranque-virt-2 BIEN (las dos cabezas).
+- Decisiones del usuario pendientes de las dos ramas, en sus bitácoras (cabeza sin monitor a 1024 × 768, segunda
+  pantalla en negro al bloquear, la cascada mete dentro las ventanas, el clic que quita el teclado a la pregunta de
+  permisos, el rasterizador propio en vez de `fontdue`, las líneas del montón en la consola).
