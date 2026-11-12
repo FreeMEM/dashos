@@ -991,3 +991,9 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   Recomendación: la 2 para los datos (es lo lento: lectura y CRC, que van mejor en otro núcleo, y el servicio de disco
   ya atiende varias órdenes a la vez), y dejar la comprobación de la estructura dentro, que va a 1.655 MB/s. Antes:
   tramos de solo lectura en el servicio de disco (con su prueba hostil: escribir por ellos da -6).
+- A15, primer paso del comprobador aparte: el servicio de disco tiene tramos de solo lectura. Un tercer cliente con
+  nombre, `comprobador`, recibe la misma partición que `archivos`, pero `preparar` le niega escribir y descartar (-6);
+  leer y vaciar, sí. El programa `comprobador` (nuevo, `usuario/src/bin/comprobador.rs`) de momento abre el disco, lee
+  la cabecera (firma DashFS), intenta escribirla encima y descartarla, y la vuelve a leer igual. Prueba en virt:
+  "14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien" (sin la comprobación, escribir daría 0).
+  Siguiente: que recorra una instantánea con la biblioteca de RedoxFS y que `archivos` le pase el trabajo.

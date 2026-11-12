@@ -185,6 +185,11 @@ name = "pide"
 path = "src/bin/pide.rs"
 
 [[bin]]
+name = "comprobador"
+path = "src/bin/comprobador.rs"
+test = false
+
+[[bin]]
 name = "centro"
 path = "src/bin/centro.rs"
 test = false

@@ -39,6 +39,8 @@ DashOS en marcha con 4 núcleos.
 # A15: varias órdenes del anillo en el disco a la vez; lo que se pisa, en su orden.
 ~│   [disco] anillo con órdenes a la vez, en su orden: bien
 ~│   [disco] anillo otra vez: el nuevo va: bien; el viejo ya no se atiende: bien
+# A15: el comprobador aparte, con la partición de DashOS solo para leer (escribir y descartar, -6).
+~│   [comprobador] la partición de DashOS, solo para leer: 14336 sectores, firma DashFS; escribir -6, descartar -6, fuera -2: bien
 # FS1: el servicio de archivos abre el RedoxFS que empieza en el MB 1 del disco, sin escribir nada.
 ~│   [archivos] RedoxFS abierto: 7168 KB,
 # FS3: un cliente del protocolo de ficheros por el canal "archivos".
