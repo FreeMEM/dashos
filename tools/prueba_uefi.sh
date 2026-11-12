@@ -424,10 +424,17 @@ while time.time() - inicio < total:
             reintento = time.time() + 6
             # Sin lo de siempre (un clic de más daría otra vuelta al modo) hasta acabar.
             continue
+        # Con una sesión bloqueada, el teclado es de la pantalla de bloqueo: lo del selector espera (si no, sus Intro
+        # de reintento caían allí como contraseñas vacías).
+        def ultimo(t):
+            return texto.rfind(t)
+        bloqueado_ahora = ultimo("[guardian] sesión bloqueada") > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
+        if bloqueado_ahora and selector in (1, 2, 4, 5, 17, 18):
+            reintento = max(reintento, time.time() + 4)
         # U5: la ventana del selector. Mientras está, nada de lo de siempre (un clic podría caer en Cancelar). Primero un
         # Intro sin nada elegido, que no debe abrir nada; luego flecha abajo (el primer cajón, Privado) e Intro para
         # entrar; dentro, Fin (el último, nota.txt; el primero es "../") e Intro.
-        if selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
+        if not bloqueado_ahora and selector == 0 and "[selector] ventana de abrir en pantalla" in texto:
             selector = 1
             time.sleep(0.5)
             mandar("sendkey ret")
@@ -439,7 +446,7 @@ while time.time() - inicio < total:
             time.sleep(0.3)
             mandar("sendkey ret")
             reintento = time.time() + 4
-        if selector == 1:
+        if not bloqueado_ahora and selector == 1:
             if "[selector] entra en C/Privado" not in texto:
                 # Si una pregunta de `guardian` (que toma el teclado) se llevó las teclas, otra vez (Inicio: el primero).
                 if time.time() > reintento:
@@ -452,12 +459,12 @@ while time.time() - inicio < total:
                 time.sleep(0.25)
                 continue
             # Dentro, Retroceso sube a C; y otra vez abajo, abajo e Intro para volver a entrar.
-            if selector == 1 and "[selector] sube a C," not in texto:
+            if not bloqueado_ahora and selector == 1 and "[selector] sube a C," not in texto:
                 time.sleep(0.5)
                 mandar("sendkey backspace")
                 selector = 17
                 reintento = time.time() + 4
-        if selector == 17:
+        if not bloqueado_ahora and selector == 17:
             if "[selector] sube a C," not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -465,7 +472,7 @@ while time.time() - inicio < total:
             mandar("sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
             selector = 18
             reintento = time.time() + 4
-        if selector == 18:
+        if not bloqueado_ahora and selector == 18:
             if texto.count("[selector] entra en C/Privado") < 2 and time.time() < reintento:
                 time.sleep(0.25)
                 continue
@@ -498,7 +505,7 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
                 mandar("sendkey ret")
             reintento = time.time() + 4
-        if selector == 2:
+        if not bloqueado_ahora and selector == 2:
             if "[selector] el usuario " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -512,10 +519,10 @@ while time.time() - inicio < total:
         # U5: la carpeta para guardar (el hostil pide "carpeta"): abajo dos veces (Privado), Intro para entrar y, ya
         # dentro, clic en "Elegir esta carpeta" (los botones del kit no toman el teclado).
         # El hostil la pide justo después de lo de antes: hasta que sale, nada de lo de siempre (un clic caería en Cancelar).
-        if selector == 3 and "[selector] ventana de elegir carpeta en pantalla" not in texto and time.time() < espera_carpeta:
+        if not bloqueado_ahora and selector == 3 and "[selector] ventana de elegir carpeta en pantalla" not in texto and time.time() < espera_carpeta:
             time.sleep(0.25)
             continue
-        if selector == 3 and "[selector] ventana de elegir carpeta en pantalla" in texto:
+        if not bloqueado_ahora and selector == 3 and "[selector] ventana de elegir carpeta en pantalla" in texto:
             selector = 4
             # Las veces que ya entró en C/Privado (el flujo de antes también entra): hace falta una más.
             entradas_antes = texto.count("[selector] entra en C/Privado")
@@ -526,7 +533,7 @@ while time.time() - inicio < total:
             time.sleep(0.3)
             mandar("sendkey ret")
             reintento = time.time() + 4
-        if selector == 4:
+        if not bloqueado_ahora and selector == 4:
             if texto.count("[selector] entra en C/Privado") <= entradas_antes:
                 if time.time() > reintento:
                     reintento = time.time() + 4
@@ -553,7 +560,7 @@ while time.time() - inicio < total:
                 time.sleep(0.3)
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
             reintento = time.time() + 4
-        if selector == 5:
+        if not bloqueado_ahora and selector == 5:
             if "[selector] el usuario elige la carpeta" not in texto and "[selector] el usuario no elige carpeta" not in texto:
                 time.sleep(0.25)
                 if time.time() < reintento:

@@ -1230,3 +1230,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   La prueba hostil del tema exigía el de serie y, con el PC cargado, el centro ya había puesto el suyo: ahora solo
   exige que no sea el del hostil. El arranque de virt pasa a 200 s de tope (el guion para antes si todo sale): con
   otra sesión moviendo nueve Amiberry, la media pasó de 90 y no llegaba al panel.
+- Tras fusionar las tres ramas, el arranque se quedaba en el primer bloqueo comprobando contraseñas vacías: con el PC
+  cargado, Ana se bloqueaba mientras esperaba la ventana de elegir carpeta, y los Intro de reintento del guion para el
+  selector caían en la pantalla de bloqueo. Ahora, con una sesión bloqueada, los pasos del selector del guion no
+  mandan teclas y esperan. Con todo fusionado: `make prueba` y `make arranque-virt` bien (media de 30 a 50).
