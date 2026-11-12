@@ -55,7 +55,11 @@ Reglas comunes:
 
 ### Mapa de direcciones de un proceso
 
-El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca. Hoy está así:
+El espacio de usuario va de 64 KB a 512 GB (`1 << 39`). Los primeros 64 KB no se proyectan nunca, con una excepción:
+un proceso con el permiso de página 0 (la caja Amiga, H4) puede proyectar con la llamada 45 una página de solo lectura
+en la dirección 0 (ExecBase en la dirección 4); el resto de los 64 KB sigue cerrado también para él, y el kernel no
+copia nunca desde la página 0 ni hacia ella. Sin PAN (la A72 no lo tiene), un puntero nulo del kernel mientras corre la
+caja leería esa página en vez de fallar; escribir en ella, no. Hoy está así:
 
 | Tramo | Uso |
 |---|---|
@@ -178,6 +182,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 46 | `maquina_correr` | `x0` máquina (con escribir), `x1` informe (96 bytes), `x2` respuesta a una lectura pendiente, `x3` bloque de interrupciones (80 bytes) o 0 | El motivo de la salida (1 a 7); el informe, en `x1`; el bloque, al día |
 | 47 | `maquina_memoria` | `x0` máquina (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria. `E_ARGUMENTO` si pisa otra; `E_LIMITE` si la máquina está corriendo |
 | 48 | `maquina_estado` | `x0` máquina (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV), `x2` dirección de 33 u64 (0 y 1) o física del invitado (3) | 0 o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar, `E_NO_HAY` sin GIC virtual |
+| 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
 
@@ -429,6 +434,7 @@ Tipos de objeto:
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
 | Permiso de plazo | Solo el kernel (`inicio` lo reparte, S3) | Pedir la clase de plazo (escribir) |
+| Permiso de página 0 | Solo el kernel (`inicio` lo da a la caja Amiga, H4) | Proyectar la página 0 de solo lectura (escribir; llamada 45) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 | Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |

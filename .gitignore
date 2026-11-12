@@ -23,3 +23,5 @@ caja/build/
 jit-host/medidas/build/
 caja-linux/vmm/target/
 caja-linux/vhost-prueba/target/
+caja/build-pc/
+caja/pruebas68k/*.o

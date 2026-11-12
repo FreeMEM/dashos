@@ -58,6 +58,10 @@ const REPARTE: &[&str] = &["eco"];
 /// S10: también `avisos`: lo de una sesión de detrás se guarda sin salir a la de delante.
 const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 
+/// Programas de prueba que llevan alguna llave de aparato y que, aun así, se esperan (como los que no llevan ninguna):
+/// la caja Amiga, con el permiso de página 0 (H4).
+const SE_ESPERAN: &[&str] = &["caja-amiga"];
+
 /// Manda a `sesiones` (por `canal`, sin marca) una copia sin marca del canal `extremo`, que sirve `nombre_cab`.
 fn canal_a_sesiones(canal: u32, extremo: u32, nombre_cab: usize) {
     let copia = llave_duplicar(extremo, 7, 0);
@@ -176,6 +180,7 @@ fn principal() -> u64 {
             6 => "datos",
             7 => "permiso de plazo",
             8 => "permiso de máquinas virtuales",
+            9 => "permiso de página 0",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -405,8 +410,9 @@ fn principal() -> u64 {
         if !vigilado {
             dashos::cerrar(m);
         }
-        // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera.
-        if k == 0 {
+        // Los servicios de verdad (consola, USB) no acaban; los de prueba, sí: a esos se les espera. La caja Amiga
+        // lleva el permiso de página 0 y también se espera (H4).
+        if k == 0 || SE_ESPERAN.contains(&nombre(nombre_cab)) {
             let (clase, codigo) = proceso_esperar(proceso as u32);
             println!("  [inicio] {} acabó: clase {}, código {}", nombre(nombre_cab), clase, codigo);
         }

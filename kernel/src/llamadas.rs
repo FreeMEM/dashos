@@ -195,6 +195,8 @@ pub fn atender(marco: &mut Marco) {
         46 => maquina_correr(a[0] as u32, a[1], a[2], a[3]),
         47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
         48 => maquina_estado(a[0] as u32, a[1], a[2]),
+        // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
+        49 => pagina_cero(a[0] as u32, a[1] as u32),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -472,6 +474,38 @@ fn memoria_proyectar(h: u32, va: u64, permisos: u64) -> u64 {
         return E_LLAVE;
     }
     0
+}
+
+/// La llamada 45 (H4, S3): proyecta en la dirección 0, de solo lectura, un objeto de memoria de una página. Solo con el
+/// permiso de página 0, que da el kernel a `inicio` y este a la caja Amiga: la caja guarda ahí el puntero a ExecBase
+/// (dirección 4) y escribe el objeto por otra dirección. Una llave revocable de memoria no vale (la página 0 no se
+/// apunta en intermediarios).
+fn pagina_cero(permiso: u32, h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let m = {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoPaginaCero = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+        let Some((l, por)) = t.ver_con_intermediarios(h) else { return E_LLAVE };
+        let Objeto::Memoria(m) = l.objeto else { return E_TIPO };
+        if !por.is_empty() {
+            return E_ARGUMENTO;
+        }
+        if l.derechos & objetos::LEER == 0 {
+            return E_DERECHOS;
+        }
+        m
+    };
+    if m.paginas() != 1 {
+        return E_TAMANO;
+    }
+    match proc_.espacio.tomar().proyectar_pagina_cero(&m) {
+        Ok(()) => 0,
+        Err(e) => error_espacio(e),
+    }
 }
 
 /// Lo que mide un objeto de memoria, en bytes (W7): para no fiarse de lo que diga quien lo manda. Pide poder leerlo.

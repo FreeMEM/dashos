@@ -287,6 +287,11 @@ impl Espacio {
         if !(VA_MINIMA..VA_LIMITE).contains(&va) {
             return Err(Error::Direccion);
         }
+        self.hoja_o_crear_en(va)
+    }
+
+    /// Como `hoja_o_crear`, sin mirar `VA_MINIMA`: solo para la página 0 de la caja Amiga (`proyectar_pagina_cero`).
+    fn hoja_o_crear_en(&mut self, va: u64) -> Result<*mut u64, Error> {
         let ix = indices(va);
         let mut tabla = self.l1;
         for &i in &ix[..2] {
@@ -337,20 +342,41 @@ impl Espacio {
         if unsafe { e.read_volatile() } & VALIDO != 0 {
             return Err(Error::Ocupada);
         }
-        let atributos = VALIDO | AF | NG | AP_EL0 | PXN
-            | match permiso {
-                Permiso::Codigo => SH_INTERNO | ATTR_NORMAL | AP_SOLO_LECTURA,
-                Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
-                Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
-                Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
-                Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
-                Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
-            };
-        unsafe {
-            e.write_volatile((fisica & DIRECCION) | atributos);
-            core::arch::asm!("dsb ishst", "isb");
-        }
+        escribir_hoja(e, fisica, permiso);
         Ok(())
+    }
+
+    /// H4 (S3): la página 0 de la caja Amiga. Proyecta un objeto de una sola página en la dirección 0, de solo lectura y
+    /// nunca ejecutable: el 68k lee ahí, en la dirección 4, el puntero a ExecBase. Lo demás de los primeros 64 KB sigue
+    /// sin proyectarse. Quien llama ya comprobó el permiso (llamada 45); el kernel no copia nunca desde ni hacia la
+    /// página 0 (`para_copiar` sigue mirando `VA_MINIMA`). Sin PAN (la A72 no lo tiene), un puntero nulo del kernel
+    /// leería esta página en vez de fallar; escribir en ella, no (es de solo lectura también para EL1).
+    pub fn proyectar_pagina_cero(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> Result<(), Error> {
+        if m.paginas() != 1 || m.bus().is_some() {
+            return Err(Error::Direccion);
+        }
+        if self.proyectados.len() >= MAX_PROYECCIONES {
+            return Err(Error::Limite);
+        }
+        self.proyectados.try_reserve(1).map_err(|_| Error::SinMemoria)?;
+        let e = self.hoja_o_crear_en(0)?;
+        if unsafe { e.read_volatile() } & VALIDO != 0 {
+            return Err(Error::Ocupada);
+        }
+        escribir_hoja(e, m.fisicas()[0], Permiso::SoloLectura);
+        self.proyectados.push((0, m.clone(), [0; VIAS]));
+        Ok(())
+    }
+
+    /// Los permisos de la entrada de `va` para EL0: (leer, escribir, ejecutar). Para las pruebas de la página 0.
+    #[cfg(feature = "pruebas")]
+    pub fn permisos_el0(&self, va: u64) -> Option<(bool, bool, bool)> {
+        let e = self.hoja(va)?;
+        let v = unsafe { e.read_volatile() };
+        if v & VALIDO != VALIDO || v & AP_EL0 == 0 {
+            return None;
+        }
+        Some((true, v & AP_SOLO_LECTURA == 0, v & UXN == 0))
     }
 
     /// Proyecta un objeto de memoria entero desde `va`: de solo lectura, de lectura y escritura o (H4, el JIT de la
@@ -507,6 +533,23 @@ impl Espacio {
         }
         self.propias.push(p);
         Ok(())
+    }
+}
+
+/// Escribe en la entrada de nivel 3 `e` la página física `fisica` con los atributos de `permiso`.
+fn escribir_hoja(e: *mut u64, fisica: u64, permiso: Permiso) {
+    let atributos = VALIDO | AF | NG | AP_EL0 | PXN
+        | match permiso {
+            Permiso::Codigo => SH_INTERNO | ATTR_NORMAL | AP_SOLO_LECTURA,
+            Permiso::Datos => SH_INTERNO | ATTR_NORMAL | UXN,
+            Permiso::SoloLectura => SH_INTERNO | ATTR_NORMAL | UXN | AP_SOLO_LECTURA,
+            Permiso::Dispositivo => ATTR_DISPOSITIVO | UXN,
+            Permiso::DatosSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN,
+            Permiso::SoloLecturaSinCache => SH_INTERNO | ATTR_SIN_CACHE | UXN | AP_SOLO_LECTURA,
+        };
+    unsafe {
+        e.write_volatile((fisica & DIRECCION) | atributos);
+        core::arch::asm!("dsb ishst", "isb");
     }
 }
 
