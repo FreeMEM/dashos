@@ -1004,3 +1004,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   `FileSystem::open` sin error ni salida. No es la memoria (con 64 MB de grupo, igual). Sin mirar: si es por abrir
   mientras `archivos` escribe (en `ver` el disco está quieto) o algo de la apertura sin `cleanup`. Para la próxima:
   probarlo con el disco quieto (al final de la prueba) y con trazas dentro de `FileSystem::open`.
+  Corrección: la traza de aquella prueba solo imprimía las lecturas de los bloques 0 a 2, así que no se sabe si se
+  quedaba quieto o seguía leyendo bloques más altos (despacio o en bucle) hasta que la prueba acabó a los 110 s. Lo
+  primero la próxima vez: trazar todas las lecturas (o contarlas) y el tiempo. Tras el anillo, `open` lee la
+  cabecera elegida (`committed`) y después lo que haga falta del asignador.
