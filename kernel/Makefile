@@ -99,12 +99,13 @@ arranque-virt-vm: virt
 	grep -E "\[(caja-linux|sin-maquina)\]|Hipervisor" target/salida_virt_vm.txt
 
 # La caja Linux con un Linux de verdad: lo mismo con la Image de un kernel de Linux para arm64 y su initramfs, que no
-# van en git (`tools/caja_linux_invitado.py preparar` los deja en ~/.cache/dashos-caja-linux: Linux 6.18 y busybox).
+# van en git (`tools/caja_linux_invitado.py preparar` los deja en ~/.cache/dashos-caja-linux: Image-caja, un Linux 6.18
+# pequeño de 5 MB, y busybox).
 # Entran en el paquete de arranque (opción `linux`) y `caja-linux` los arranca en una máquina de 256 MB con los
 # aparatos del crate caja-linux/vmm (PL011, virtio-console, virtio-blk), el GIC virtual y el temporizador virtual,
 # hasta que el /init de busybox lee y escribe el disco y apaga la máquina por PSCI. LINUX=Image, INITRD=cpio.gz. Con
 # 3 GB (2 GB para procesos): con 2 la caja no tiene sitio para los 256 MB de su invitado y se queda con menos.
-LINUX ?= $(HOME)/.cache/dashos-caja-linux/Image
+LINUX ?= $(HOME)/.cache/dashos-caja-linux/Image-caja
 INITRD ?= $(HOME)/.cache/dashos-caja-linux/initramfs.cpio.gz
 VIRT_LINUX := target/kernel8-virt-linux.img
 arranque-virt-linux: usuario FORCE

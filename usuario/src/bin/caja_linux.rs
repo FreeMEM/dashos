@@ -589,7 +589,7 @@ const TROZOS: usize = RAM_LINUX / TROZO;
 const RAM_MINIMA: usize = 128 << 20;
 /// La consola temprana por el PL011; la de verdad, virtio-console (hvc0). `caja.escribir` pide al /init de prueba que
 /// escriba en el disco.
-const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 nokaslr panic=-1 caja.escribir";
+const BOOTARGS: &str = "earlycon=pl011,0x09000000 console=hvc0 panic=-1 caja.escribir";
 /// El disco: 1 MB en memoria, con esto al principio. El /init escribe `ESCRITO` en el sector 8.
 const MARCA_DISCO: &[u8] = b"DISCO-CAJA-LINUX";
 const ESCRITO: &[u8] = b"ESCRITO-POR-LINUX";

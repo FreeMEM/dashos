@@ -58,6 +58,61 @@ CONFIG_EXT4_FS=y
 CONFIG_MODULES=n
 """
 
+# El kernel pequeño para la caja de DashOS (Image-caja): tinyconfig y solo lo que hace falta para llegar a busybox con
+# los aparatos de la caja (GICv2, temporizador, PSCI, PL011, virtio-mmio: consola y disco). La Image del defconfig
+# (74 MB) no cabe en el paquete de arranque de DashOS, que el cargador de UEFI pone en 0x40200000 debajo de lo que
+# ocupa EDK2.
+FRAGMENTO_CAJA = """
+CONFIG_PRINTK=y
+CONFIG_PRINTK_TIME=y
+CONFIG_BUG=y
+CONFIG_MULTIUSER=y
+CONFIG_FUTEX=y
+CONFIG_EPOLL=y
+CONFIG_SIGNALFD=y
+CONFIG_TIMERFD=y
+CONFIG_EVENTFD=y
+CONFIG_SHMEM=y
+CONFIG_POSIX_TIMERS=y
+CONFIG_HIGH_RES_TIMERS=y
+CONFIG_NO_HZ_IDLE=y
+CONFIG_KERNEL_MODE_NEON=y
+CONFIG_BLK_DEV_INITRD=y
+CONFIG_RD_GZIP=y
+CONFIG_BINFMT_ELF=y
+CONFIG_BINFMT_SCRIPT=y
+CONFIG_PROC_FS=y
+CONFIG_SYSFS=y
+CONFIG_TMPFS=y
+CONFIG_DEVTMPFS=y
+CONFIG_DEVTMPFS_MOUNT=y
+CONFIG_TTY=y
+CONFIG_VT=n
+CONFIG_UNIX98_PTYS=y
+CONFIG_SERIAL_EARLYCON=y
+CONFIG_ARM_AMBA=y
+CONFIG_SERIAL_AMBA_PL011=y
+CONFIG_SERIAL_AMBA_PL011_CONSOLE=y
+CONFIG_HVC_DRIVER=y
+CONFIG_VIRTIO_MENU=y
+CONFIG_VIRTIO=y
+CONFIG_VIRTIO_MMIO=y
+CONFIG_VIRTIO_CONSOLE=y
+CONFIG_BLOCK=y
+CONFIG_BLK_DEV=y
+CONFIG_VIRTIO_BLK=y
+CONFIG_OF=y
+CONFIG_ARM_GIC=y
+CONFIG_ARM_ARCH_TIMER=y
+CONFIG_ARM_PSCI_FW=y
+CONFIG_POWER_RESET=y
+CONFIG_NET=y
+CONFIG_INET=y
+CONFIG_UNIX=y
+CONFIG_PACKET=y
+CONFIG_MODULES=n
+"""
+
 INIT = r"""#!/bin/sh
 mount -t proc proc /proc
 mount -t sysfs sys /sys
@@ -142,6 +197,34 @@ def kernel():
     shutil.copy(salida / "arch/arm64/boot/Image", imagen)
 
 
+def kernel_caja():
+    """Image-caja: la de tinyconfig con FRAGMENTO_CAJA, para el paquete de arranque de DashOS."""
+    imagen = CACHE / "Image-caja"
+    if imagen.exists():
+        print("ya está", imagen)
+        return
+    v = version_linux()
+    tar = CACHE / f"linux-{v}.tar.xz"
+    bajar(f"https://cdn.kernel.org/pub/linux/kernel/v6.x/linux-{v}.tar.xz", tar)
+    fuente = CACHE / f"linux-{v}"
+    if not fuente.exists():
+        run("tar", "-xf", tar, "-C", CACHE)
+    salida = CACHE / "linux-build-caja"
+    salida.mkdir(exist_ok=True)
+    mk = ["make", "-C", fuente, f"O={salida}", "ARCH=arm64", "LLVM=1", f"-j{NUCLEOS}"]
+    run(*mk, "tinyconfig")
+    (salida / "caja.config").write_text(FRAGMENTO_CAJA)
+    run(fuente / "scripts/kconfig/merge_config.sh", "-m", "-O", salida, salida / ".config", salida / "caja.config",
+        cwd=fuente)
+    run(*mk, "olddefconfig")
+    config = (salida / ".config").read_text()
+    faltan = [l for l in FRAGMENTO_CAJA.split() if l.endswith("=y") and l not in config.splitlines()]
+    if faltan:
+        print("aviso: no quedaron en la configuración:", " ".join(faltan))
+    run(*mk, "Image")
+    shutil.copy(salida / "arch/arm64/boot/Image", imagen)
+
+
 def busybox():
     binario = CACHE / "busybox"
     if binario.exists():
@@ -215,6 +298,7 @@ def preparar(_args):
     initramfs()
     disco()
     kernel()
+    kernel_caja()
 
 
 # La placa virt de QEMU, sacada de su DTB (qemu-system-aarch64 -M virt,dumpdtb=x.dtb): GICv2 en 0x08000000 (CPU en
