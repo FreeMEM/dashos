@@ -940,7 +940,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     if elegido {
                         llenar(l, Rect::nuevo(b.x0 + 4, b.y0 + 2, b.x1 - 4, b.y1 - 2), relleno);
                     }
-                    let tx = b.x1 + 1 + 6;
+                    let tx = if s.lugar == gt::PLACETEXT_RIGHT { b.x1 + 1 + 6 } else { b.x0 - 6 - fw * t.len() as i32 };
                     texto(l, glifos, tx, y + (alto1 - fa) / 2 + 1, t, tinta, i32::MAX);
                     dano = dano.union(&Rect::nuevo(tx, y, tx + fw * t.len() as i32, y + alto1));
                 }
@@ -995,18 +995,9 @@ impl<C: Compositor> CajaGrafica<C> {
             kind::SLIDER | kind::SCROLLER => {
                 bisel(l, r, claro, oscuro, false);
                 let dentro = Rect::nuevo(r.x0 + 4, r.y0 + 2, r.x1 - 4, r.y1 - 2);
+                // El mando, como el de 3.1: un bloque oscuro (el oráculo lo pinta así).
                 let mando = Self::mando(&s, dentro);
-                bisel(l, mando, claro, oscuro, false);
-                llenar(l, Rect::nuevo(mando.x0 + 2, mando.y0 + 1, mando.x1 - 2, mando.y1 - 1), relleno);
-                if s.tipo == kind::SLIDER && !s.formato.is_empty() {
-                    let t = formatear(&s.formato, s.valor);
-                    let ancho = fw * s.visibles.max(t.len() as i32);
-                    let tx = r.x0 - 4 - ancho;
-                    let caja = Rect::nuevo(tx, r.y0, r.x0 - 4, r.y1);
-                    llenar(l, caja, fondo);
-                    texto(l, glifos, tx + ancho - fw * t.len() as i32, centro_y(&r) + 1, &t, tinta, r.x0 - 3);
-                    dano = dano.union(&caja);
-                }
+                llenar(l, mando, oscuro);
             }
             kind::PALETTE => {
                 bisel(l, r, claro, oscuro, false);
@@ -1066,15 +1057,12 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             _ => {}
         }
-        // La etiqueta.
-        if !s.etiqueta.is_empty() && s.tipo != kind::MX || (s.tipo == kind::MX && !s.etiqueta.is_empty()) {
+        // La etiqueta (la de un mx no sale: sus opciones van donde diría su lugar, arriba).
+        if !s.etiqueta.is_empty() && s.tipo != kind::MX {
             let t = &s.etiqueta;
             let ancho = fw * t.len() as i32;
             let c = if s.pulsado && s.lugar == gt::PLACETEXT_IN { tinta_rel } else { tinta };
-            let mut izq = r.x0;
-            if s.tipo == kind::SLIDER && !s.formato.is_empty() {
-                izq -= 4 + fw * s.visibles.max(1);
-            }
+            let izq = r.x0;
             let (tx, ty) = match s.lugar {
                 gt::PLACETEXT_IN => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, centro_y(&r) + 1),
                 gt::PLACETEXT_RIGHT => (r.x1 + 1 + 6, centro_y(&r) + 1),
@@ -1084,6 +1072,17 @@ impl<C: Compositor> CajaGrafica<C> {
             };
             texto(l, glifos, tx, ty, t, c, i32::MAX);
             dano = dano.union(&Rect::nuevo(tx, ty, tx + ancho, ty + fa));
+        }
+        // El nivel de un deslizador, a su izquierda en un campo de GTSL_MaxLevelLen letras, encima de la etiqueta
+        // (como en 3.1, que con los dos a la izquierda los pisa).
+        if s.tipo == kind::SLIDER && !s.formato.is_empty() {
+            let t = formatear(&s.formato, s.valor);
+            let ancho = fw * s.visibles.max(t.len() as i32);
+            let tx = r.x0 - 2 - ancho;
+            let caja = Rect::nuevo(tx, r.y0, r.x0 - 2, r.y1);
+            llenar(l, caja, fondo);
+            texto(l, glifos, tx + ancho - fw * t.len() as i32, centro_y(&r) + 1, &t, tinta, r.x0 - 1);
+            dano = dano.union(&caja);
         }
         if desactivado {
             // Fantasma: la trama de puntos de BLOCKPEN, como intuition.

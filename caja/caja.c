@@ -949,14 +949,15 @@ int caja_main(void)
            dos caminos) recibe Ctrl-C de otro hilo a los 700 ms y acaba con "***Break" y 5; test_ctrl_c_for se lo
            manda él (SetSignal) y acaba igual; test_trap_illegal y test_trap_divzero acaban con el mensaje del
            tc_TrapCode de Dash y 20. Y el ejemplo de GadTools de FreeMEMLang (examples/test_gadtools.dash): el guion
-           pulsa su "Cancel" (0); sin guion de ratón, Ctrl-C a los 40 s (5). */
+           pulsa su "Cancel" (0) si llega; si no, Ctrl-C a los 6 s (5): su ventana no puede tapar mucho rato las de
+           los demás pasos de la prueba. */
         static const struct { const char *nombre; const uint8_t *desde, *hasta; int ctrl_c; uint32_t d0, otro; } dash2[] = {
             { "ctrl_c.exe", prog_dash_ctrl_c, prog_dash_ctrl_c_fin, 700, 5, 5 },
             { "ctrl_c_gcc.exe", prog_dash_ctrl_c_gcc, prog_dash_ctrl_c_gcc_fin, 700, 5, 5 },
             { "test_ctrl_c_for", prog_dash_ctrl_c_for, prog_dash_ctrl_c_for_fin, 0, 5, 5 },
             { "test_trap_illegal", prog_dash_trap_ilegal, prog_dash_trap_ilegal_fin, 0, 20, 20 },
             { "test_trap_divzero", prog_dash_trap_divcero, prog_dash_trap_divcero_fin, 0, 20, 20 },
-            { "test_gadtools", prog_dash_test_gadtools, prog_dash_test_gadtools_fin, 40000, 0, 5 },
+            { "test_gadtools", prog_dash_test_gadtools, prog_dash_test_gadtools_fin, 6000, 0, 5 },
         };
         for (unsigned i = 0; i < sizeof(dash2) / sizeof(dash2[0]); i++) {
             size_t n = (size_t)(dash2[i].hasta - dash2[i].desde);

@@ -29,7 +29,7 @@ filas!(G;
     GETOUTLINEPEN = "GetOutlinePen", SETOUTLINEPEN = "SetOutlinePen", SETWRITEMASK = "SetWriteMask",
     SETMAXPEN = "SetMaxPen", ALLOCBITMAP = "AllocBitMap", FREEBITMAP = "FreeBitMap", GETBITMAPATTR = "GetBitMapAttr",
     RELEASEPEN = "ReleasePen", OBTAINPEN = "ObtainPen", OBTAINBESTPENA = "ObtainBestPenA", FINDCOLOR = "FindColor",
-    WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos",
+    WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos", GETVPMODEID = "GetVPModeID",
 );
 
 filas!(I;
@@ -273,6 +273,8 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             // No hay blitter ni barrido: no se espera a nada (provisional: WaitTOF debería esperar al cuadro).
             WAITTOF | WAITBLIT | OWNBLITTER | DISOWNBLITTER | VBEAMPOS => 0,
+            // El modo de la pantalla: "PAL:HighRes" (PAL_MONITOR_ID | HIRES_KEY), el del Workbench de un A1200.
+            GETVPMODEID => 0x0002_9000,
             _ => return Err(Fallo::NoImplementada { n: self.numeros.graphics + f as u16 }),
         })
     }

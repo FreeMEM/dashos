@@ -1242,13 +1242,17 @@ while time.time() - inicio < total:
                     # haber salido encima entretanto).
                     for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
                         ir_a(x + 250, y + 5)
+                        time.sleep(0.3)
                         mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                         ir_a(x + dx, y + dy)
+                        time.sleep(0.3)
                         mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                         time.sleep(0.4)
                     ir_a(x + 250, y + 5)
+                    time.sleep(0.3)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                     ir_a(x + 25, y + 5)
+                    time.sleep(0.3)
                     mandar("mouse_button 2", pausa=0.3)
                     mandar("mouse_move 0 15", "mouse_move 0 14", pausa=0.3)
                     time.sleep(0.5)
@@ -1281,6 +1285,7 @@ while time.time() - inicio < total:
                         mandar("screendump " + os.environ["CAPTURA_GT_DASH"])
                         time.sleep(0.5)
                     ir_a(x + 164, y + 41)
+                    time.sleep(0.3)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                     w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
                     if menu == 2:
