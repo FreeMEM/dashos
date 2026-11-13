@@ -1254,3 +1254,173 @@ El hostil "sin-fin: le cortaron la tubería" no es fiable: en unas pasadas el pr
 (tras 64 KB) y en otras no, ni viviendo 150 s, con los mismos 64 KB pasados por el tubo en DashOS. Lo que importa sí sale
 siempre: la terminal pega sus 4 KB y deja de leer, y todo sigue. Esa línea ya no es de las esperadas; el guion apunta si
 llegó. Sin explicar: falta saber si DashOS corta el tubo (y manda `TUBO_FIN`) en esas pasadas.
+
+## 2026-11-13: GTK4, Firefox y más memoria para el invitado (rama `caja-linux-grandes`)
+
+Rama `caja-linux-grandes`, sacada de `fusion-fondo` (ff4b70f). Lo que faltaba de `caja-linux-apps`: GTK4 abortaba en la
+caja y Firefox no cabía. Sala limpia: Kconfig y la documentación de zram de Linux, el README y las NEWS de glycin, las
+opciones de `-M virt` de QEMU (`-M virt,help`); nada de su código.
+
+### Resultado
+
+- **GTK4 en la caja.** `gtk4-widget-factory` (GTK 4.24) sale como ventana de DashOS a los 12 a 16 s, con su menú (el
+  botón de las tres rayas) y una caja combinada abiertos: los dos son emergentes (`xdg_popup`). Los cargadores de
+  imágenes de glycin van en su caja de bwrap, como en cualquier Arch (el bwrap falso de `prueba-gtk` ya no está).
+- **Firefox en la caja.** Con 512 MB y el zram del invitado, su primera ventana sale a los 36 a 44 s con una página del
+  disco (`hola.html`).
+- **Más memoria.** QEMU con 8 GB y `highmem=on,highmem-ecam=off,highmem-mmio=off`: DashOS ve los 8 GB y da 512 MB al
+  invitado (la regla de serie). La cantidad se puede cambiar al compilar (`DASHOS_CAJA_LINUX_MB`).
+- **Hostil:** `prueba-come-memoria` (un `tail /dev/zero` que crece sin fin) llena la RAM y el zram; Linux lo mata (OOM,
+  código 137) a los 10 a 18 s. El invitado sigue (`echo sigue viva`), la ventana de GTK también, y DashOS no se entera.
+- **La barra de DashOS:** botón de maximizar (y volver) y una franja de 6 px por fuera que redimensiona la ventana.
+
+### GTK4: lo que le pasaba de verdad
+
+La pista de `caja-linux-apps` ("Operation not supported" al abrir la imagen) era falsa: `glycin-thumbnailer -i` quiere
+una URI; con una ruta, GIO hace un fichero que no se puede leer y da ese error sin tocar el kernel (strace: ninguna
+llamada falla). Con `file:///...` carga bien en la caja.
+
+El fallo de GTK era otro. Con `RUST_LOG=debug`, en QEMU sin DashOS y con la misma `Image-arch`: el hijo que lanza el
+cargador muere con SIGSEGV justo después de escribir "Setting process memory limit", antes de ser bwrap (también la
+prueba de si bwrap va, con `/usr/bin/true`). glycin limita la memoria de su cargador con `setrlimit` antes de lanzarlo, y
+el límite sale de la memoria libre más el intercambio libre (sus NEWS: hasta el 80 %). Con 256 MB y sin intercambio, ese
+límite (unos 120 MB) queda por debajo de lo que ya ocupa el proceso de GTK que se bifurca, y el hijo muere al seguir.
+Probado en QEMU sin DashOS, 4 vCPU:
+
+| RAM del invitado | Intercambio | El cargador de glycin |
+|---|---|---|
+| 256 MB | ninguno | SIGSEGV; GTK aborta ("Loader process exited early") |
+| 256 MB | 512 MB en un fichero | carga |
+| 256 MB | zram del tamaño de la RAM | carga, dentro de bwrap |
+| 384 MB y 512 MB | ninguno | carga |
+| 1 GB | ninguno | carga, dentro de bwrap |
+
+El arreglo, en la caja: zram en `Image-arch` (`CONFIG_ZRAM`, con zstd y lz4) y `dashos-zram.service`, que pone un zram
+del tamaño de la RAM como intercambio con prioridad 100, sube `vm.min_free_kbytes` a 1/32 de la RAM (con el de serie,
+kswapd avisaba de que no encontraba páginas al comprimir) y pone `vm.page-cluster` a 0. Solo si el kernel tiene zram
+(`ConditionPathExists`): con un `Image-arch` viejo no se ejecuta y systemd sigue en "running".
+
+### Más memoria: por qué `highmem=off` y cómo se quitó
+
+- QEMU `virt` con `highmem=off` no pone nada por encima de los 4 GB: la RAM empieza en el GB 1, así que no pasa de 3 GB.
+  Se usaba porque con `highmem=on` el ECAM del PCIe sube por encima de 256 GB y el kernel busca el xHCI en la ventana de
+  aparatos (U6). QEMU tiene opciones sueltas: `highmem-ecam=off` y `highmem-mmio=off` dejan el ECAM y las ventanas del
+  PCIe abajo, y la RAM sí pasa de los 4 GB.
+- Lo que no llegaba: el mapa del arranque (`arranque.s`) veía 4 GB; el mapa lineal del kernel y el reparto de páginas
+  (`memoria.rs`, `mapa.rs`), también 4 GB (y la marca de páginas, 8 GB); y el cargador de UEFI pedía el árbol y la ramfb
+  "en cualquier sitio": UEFI reparte desde arriba, por encima de los 4 GB.
+- Ahora, en `virt`: el mapa del arranque llega al GB 16 (bloques de 1 GB normales; lo que no es RAM no se toca), el mapa
+  lineal y el reparto, hasta 16 GB (4 M páginas, 512 KB de marcas). `mapa.rs` hace el mapa hasta el final de la RAM y
+  saca sus tablas de arriba (por eso el del arranque llega a 16). El cargador pide el árbol y la ramfb por debajo de 4
+  GB (`AllocateMaxAddress`). La pantalla y la memoria del firmware por encima de 4 GB valen si están en una zona
+  reservada del árbol. En la Pi no cambia nada (sigue en 4 GB; la de 8 GB sin probar).
+- `arranque-virt-wayland` va con `MEMORIA_GRANDE=8G` y `MAQUINA_GRANDE` (las dos en el Makefile): "Memoria física:
+  8192 MB en total", "el invitado, hasta 512 MB". Las demás pruebas siguen con 3 GB y `highmem=off`; `arranque-virt-vm`
+  con 8 GB y la máquina grande, también BIEN.
+- La regla de la memoria del invitado sigue siendo la del usuario (256 MB con 2 GB, 512 con 4 GB o más). Con
+  `DASHOS_CAJA_LINUX_MB=1024` al compilar el kernel va otra cantidad en el objeto "sistema" (un u64 más: 24 bytes); el
+  servicio y `inicio` la usan con `memoria_invitado_con` (64 MB como poco, la mitad de la RAM como mucho). El servicio
+  daba como mucho 512 MB (32 trozos de 16 MB): ahora hasta 2 GB (128; las direcciones del invitado acaban en 4 GB y su
+  RAM empieza en 1 GB). Probado con 1 GB: "1024 MB de RAM, 4 vCPU" y Firefox (abajo).
+
+### Firefox: cuánta memoria hace falta
+
+Con el zram, 512 MB le bastan; con 256 MB, no. Medido en QEMU sin DashOS (weston sin pantalla, `WAYLAND_DEBUG` para ver
+su primer búfer) y en DashOS:
+
+| Dónde | RAM | Primera ventana | Memoria |
+|---|---|---|---|
+| QEMU sin DashOS | 256 MB + zram | no sale en 21 minutos; al final Firefox ya no está | |
+| QEMU sin DashOS | 512 MB + zram | 25 s | Firefox 180 MB; 107 MB en el zram, que ocupan 21 MB |
+| DashOS (8 GB) | 512 MB + zram | 33 a 44 s | con hola.html: RAM 366 de 492 MB, intercambio 284 de 492 (en el zram, 274 MB que ocupan 82); Firefox 174 MB |
+| DashOS (8 GB), otra vez | 512 MB + zram | 31,5 s | con example.org (por la red de la caja): intercambio 427 de 492 MB (407 MB en 137); Firefox 104 MB |
+| DashOS (8 GB), `DASHOS_CAJA_LINUX_MB=1024` | 1 GB + zram | 23,8 s | con hola.html: RAM 758 de 995 MB, intercambio 43 MB; Firefox 433 MB |
+| Lo mismo, otra vez | 1 GB + zram | 21,8 s | con example.org: RAM 692 de 995 MB, intercambio 65 MB (58 MB en 41); Firefox 413 MB |
+
+Con 512 MB, Firefox abre y carga una página de verdad, pero el zram queda casi lleno (87 % con example.org): una página
+más pesada lo llevaría al OOM, y casi todo Firefox está en el intercambio (104 MB en la RAM, frente a 413 con 1 GB). Con
+1 GB sale antes (22 a 24 s) y apenas usa el intercambio. Propuesta para el usuario: la regla de serie como está (256 MB con 2 GB, 512 con 4 GB) y
+**1 GB con 8 GB o más**, para usar Firefox de verdad. Con 2 GB, Firefox no cabe (a quien lo necesite: compilar con
+`DASHOS_CAJA_LINUX_MB=512`). La cantidad ya se puede cambiar al compilar; la regla nueva no se ha puesto sin su permiso.
+
+### La barra de DashOS: maximizar y redimensionar
+
+En `wayland/src/decoracion.rs`: `Zona::Maximizar`, el botón a la izquierda del de cerrar (un cuadrado de 10 px; lo
+pintan el kit en el compositor y el pintor sencillo); maximiza con `maximizar_esta` y otra pulsación la devuelve. Y
+`bordes`: una franja de `BORDE` (6 px) por fuera de la ventana con la barra la redimensiona por ese borde o esquina, con
+el mismo `Redimension` que `xdg_toplevel.resize` (`empezar_redimension`, ahora compartido). Maximizada, la franja no
+hace nada; si otra ventana tapa ese sitio, el clic es suyo. Prueba: `maximizar_y_redimensionar_con_la_barra`.
+
+### Lo que hubo que arreglar por el camino
+
+- **El guion en Full HD.** `ir_a` llevaba el cursor a la esquina con 12 pasos de 100 px: desde la derecha de una
+  pantalla de 1920 no llegaba, y el clic caía 300 px a la derecha (en el botón de cerrar o de minimizar de GTK, que se
+  iba). Ahora 20 pasos.
+- **La geometría de las ventanas de Linux** que lee el guion traía seis números (con lo que mide), y se desempaquetaba en
+  cuatro: el guion moría al ver la ventana de GTK (nunca había llegado tan lejos).
+- **GTK y Firefox tapan la terminal de la caja** (con 800 x 600, GTK mide 1194 × 757 y sale en x negativa, y el guion
+  no veía su ventana: ahora lee coordenadas negativas). El guion no teclea con ellos delante: `prueba-gtk-guion` abre
+  GTK, deja 300 s para el menú, la caja combinada, redimensionar y mover, y lanza el hostil de la memoria con ella
+  abierta. Con 800 x 600 el botón del menú queda fuera de la pantalla: se abre el del botón derecho del primer campo de
+  texto (también un emergente); la caja combinada y el redimensionado, solo si se ven (Full HD). Firefox no hace caso
+  al teclado ni al ratón de DashOS (ver "Qué falta"). `prueba-firefox-guion` lo hace todo solo: hola.html, su memoria a los 150 s
+  (`prueba-memoria`, una línea por hvc0) y otra vez con example.org. Con `pkill -x firefox`: sin `-x`, `pkill firefox`
+  mataba también a ese guion (su nombre lo lleva).
+- **Las teclas `<` y `>`** del teclado español, en el guion.
+- `CAJA_SOLO=gtk`, `firefox` o `grandes` (los dos): solo eso, para probarlo sin esperar a lo demás (con otras líneas
+  esperadas, `ESPERADO_WAYLAND`). `CAJA_GTK_DEPURAR=1`: GTK con `WAYLAND_DEBUG` y su final en la terminal. Firefox va ya
+  en el guion de siempre (`CAJA_FIREFOX=0` lo salta).
+- **strace** en la imagen de los programas grandes.
+
+### Pruebas
+
+- `cargo test` en `wayland` (80, una nueva: `maximizar_y_redimensionar_con_la_barra`).
+- `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk.
+- `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-2`, `-diag`, `-escritorio`, `-usb`: BIEN, con 3 GB y
+  `highmem=off` como siempre (`-vm` y `-linux` otra vez tras el cambio de los 2 GB: BIEN). `arranque-virt-vm` también con 8 GB y la máquina grande: BIEN ("Memoria física: 8192 MB
+  en total").
+- `arranque-virt-arch` y `-gpu`, con `Image-arch` nuevo (zram) y su disco (caché propia de 4 GB, sin los programas
+  grandes): `-arch` BIEN. `-gpu`, antes de fusionar `fusion-fondo` (f965af7): faltaba "frames in" dos veces, como en
+  `fusion-fondo` antes del arreglo de los pools de Mesa (dcf1df6, arriba). En QEMU sin DashOS, es2gears con el
+  `Image-arch` nuevo (zram) y con el viejo da lo mismo: 60 cuadros por segundo.
+- `arranque-virt-wayland` (8 GB, disco de los programas grandes rehecho), tras fusionar `fusion-fondo` (f965af7) y en
+  Full HD: BIEN. GTK a los 13,5 s, su menú y la caja combinada abiertos, redimensionar 14 y mover 6 cuadros por segundo
+  (el PC muy cargado), el hostil de la memoria muerto a los 10,4 s, Firefox a los 35,1 s y con example.org a los
+  20,5 s (el zram, al 96 %: 471 de 492 MB).
+- Tras la fusión, también: `make prueba` BIEN (las dos), `arranque-virt` BIEN (la primera pasada, MAL en la captura de
+  las ventanas de prueba; repetida, las cinco BIEN), `-linux` BIEN y `-gpu` BIEN (con el arreglo de los pools de Mesa).
+  `-vm`, `-2`, `-diag`, `-escritorio`, `-usb` y `-arch`, BIEN antes de la fusión; no repetidas.
+- En Full HD (`DASHOS_PANTALLA=1920x1080`, `CAJA_SOLO=grandes` y `firefox`): BIEN con sus líneas (GTK, su emergente,
+  el hostil de la memoria, Firefox y su memoria).
+- En QEMU sin DashOS (`probar-arch` con weston sin pantalla): GTK con 256, 384, 512 MB y 1 GB, con y sin intercambio;
+  Firefox con 256 y 512 MB (las tablas de arriba).
+- Capturas (fuera de git, `capturas-agente/`, Full HD): las de la pasada final, `caja-linux-grandes-final-*-fhd.png`
+  (`gtk`, `gtk-menu`, `gtk-combo`, `gtk-grande`, `gtk-tras-hostil`, `firefox`, `firefox-red`, y `barra`, con el botón
+  de maximizar en `ventana_wayland`); y de antes, `caja-linux-grandes-gtk-fhd.png` (GTK4 en DashOS),
+  `-gtk-menu-fhd.png` (su menú), `-gtk-combo-fhd.png` (la caja combinada), `-gtk-grande-fhd.png` (redimensionada y
+  movida), `-gtk-tras-hostil-fhd.png` (tras el OOM del invitado), `-firefox-fhd.png` (hola.html) y
+  `-firefox-red-fhd.png` (example.org).
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, 8 GB, con el PC cargado por otras sesiones; el invitado con 512 MB y zram.
+
+| Medida | Valor |
+|---|---|
+| GTK4 (`gtk4-widget-factory`) hasta su primera ventana | 12,5 a 16,3 s (antes, en la caja, no salía) |
+| Redimensionar GTK4 (1666 × 881, por su borde izquierdo) | 23 cuadros por segundo (24 en 1033 ms) |
+| Moverla por su barra | 13 por segundo (24 en 1817 ms) |
+| Firefox hasta su primera ventana | 33 a 44 s; otra vez, 31,5 s (con 1 GB: 23,8 y 21,8 s) |
+| Firefox con 256 MB y zram (QEMU sin DashOS) | sin ventana en 21 minutos |
+| Hostil de la memoria: hasta que Linux mata al programa | 8,5 a 17,6 s (llena 492 MB de RAM y 492 de zram) |
+
+### Qué falta
+
+- **Firefox no hace caso al teclado ni al ratón de DashOS** tras su primera ventana (ni Control+L, ni letras en un campo,
+  ni arrastrar su barra); GTK4 y foot sí. Sin mirar: puede ser que vaya muy justo de memoria, o algo de GTK3 con el
+  teclado del puente. El guion no teclea en él.
+- **La regla de 1 GB con 8 GB o más**: propuesta, pendiente del usuario.
+- **La Pi 4 de 8 GB** sigue sin usar lo que pasa de los 4 GB (el mapa lineal de 16 GB es solo de `virt`).
+- Las tipografías CJK en la imagen (example.org las enseña como cajas).
+- Lo de antes: arrastrar y soltar, `xdg_activation`, `wp_viewporter`, `fractional-scale`, `text-input`, cursores del
+  servidor, `wm_capabilities`.

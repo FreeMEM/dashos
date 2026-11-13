@@ -50,8 +50,17 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),
-    // H5: la caja Amiga, de Ana (1000), para su volumen `SYS:` (de solo lectura en dos.library): la raíz del disco.
-    ("caja-amiga", 1000, 1000, 0, ""),
+    // H5: la caja Amiga, de Ana (1000). S28: su raíz 0 (leer y escribir) es su cajón, que la caja monta como `Caja:`;
+    // el disco va aparte, solo para leer (`RAICES_DE_MAS`), y es su `SYS:`. Así el servicio niega escribir en el disco
+    // aunque alguien se hiciera con la caja. Provisional, como todo `FICHAS`: con `sesiones`, su cajón será
+    // `Home:Datos/<paquete>` (S6b).
+    ("caja-amiga", 1000, 1000, 0, "Estado/Servicios/caja-amiga"),
+];
+/// Raíces de más en el alta de archivos (U2, S6b capa 2): programa, hueco (1 a 15), tope (4 leer, 6 leer y escribir) y
+/// camino desde la raíz del disco.
+const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
+    // S28: el disco entero, solo para leer: el `SYS:` de la caja Amiga.
+    ("caja-amiga", 1, 4, ""),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -142,7 +151,17 @@ fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
     m[20..24].copy_from_slice(&gid.to_le_bytes());
     m[24..28].copy_from_slice(&(raiz.len() as u32).to_le_bytes());
     m[32..32 + raiz.len()].copy_from_slice(raiz.as_bytes());
-    Some((m, 32 + raiz.len()))
+    let mut n = 32 + raiz.len();
+    // Las raíces de más: hueco, tope, largo del volumen (0: el principal), largo del camino y el camino.
+    for &(_, hueco, tope, camino) in RAICES_DE_MAS.iter().filter(|r| r.0 == programa) {
+        if n + 4 + camino.len() > m.len() {
+            break;
+        }
+        m[n..n + 4].copy_from_slice(&[hueco, tope, 0, camino.len() as u8]);
+        m[n + 4..n + 4 + camino.len()].copy_from_slice(camino.as_bytes());
+        n += 4 + camino.len();
+    }
+    Some((m, n))
 }
 
 /// Si al programa de la cabecera `cab` le toca el aparato `quien` (por su nombre en la lista de `aparatos`, que tiene
@@ -200,18 +219,20 @@ fn principal() -> u64 {
         p += 24;
     }
     // Lo que dice el kernel de la máquina ("sistema"): la RAM, para la memoria de la caja Linux (H9).
-    let (ram, _) = (0..n)
+    // Y lo pedido para el invitado al compilar (caja-linux-grandes), o 0.
+    let (ram, pedida) = (0..n)
         .find(|&i| nombre(aparatos + 24 * i) == "sistema" && u32_en(aparatos + 24 * i + 16) == 6)
         .and_then(|i| {
             let llave = u32_en(aparatos + 24 * i + 20);
             if memoria_proyectar(llave, SISTEMA, false) != 0 {
                 return None;
             }
-            let r = dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(SISTEMA as *const u8, 16) });
+            let datos = unsafe { core::slice::from_raw_parts(SISTEMA as *const u8, 24) };
+            let r = dashos::maquina::sistema(datos).map(|(ram, _)| (ram, dashos::maquina::memoria_pedida(datos)));
             dashos::memoria_quitar(SISTEMA);
             r
         })
-        .unwrap_or((0, false));
+        .unwrap_or((0, 0));
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
@@ -376,7 +397,7 @@ fn principal() -> u64 {
             // 2, su montón con el disco del invitado y la terminal). Se calcula con la RAM de la máquina (decisión del
             // usuario del 2026-11-12): 256 MB con 2 GB, 512 con 4 o más. Sin Linux que arrancar (sin su Image), solo los
             // 32 MB.
-            "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado(ram) + dashos::maquina::MARGEN_SERVICIO,
+            "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
@@ -404,7 +425,7 @@ fn principal() -> u64 {
                 }
             }
             if g > 0 {
-                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, (dashos::maquina::memoria_invitado(ram)) >> 20);
+                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
             }
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };

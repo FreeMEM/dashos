@@ -27,6 +27,8 @@ pub mod monton;
 pub mod prestados;
 pub mod hilos;
 pub mod red_cliente;
+/// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
+pub mod cortafuegos_caja;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
@@ -303,6 +305,22 @@ pub mod maquina {
         } else {
             128 << 20
         }
+    }
+
+    /// La RAM del invitado con `pedida` bytes pedidos al compilar el kernel (`DASHOS_CAJA_LINUX_MB`, en el objeto
+    /// "sistema"; caja-linux-grandes): sin pedir (0), la regla de serie (`memoria_invitado`). Lo pedido va en MB
+    /// enteros, con 64 MB como poco y, como mucho, la mitad de la RAM de la máquina.
+    pub fn memoria_invitado_con(ram: u64, pedida: u64) -> u64 {
+        if pedida == 0 {
+            return memoria_invitado(ram);
+        }
+        let tope = (ram / 2).max(64 << 20);
+        (pedida.clamp(64 << 20, tope) >> 20) << 20
+    }
+
+    /// Lo pedido para el invitado de la caja Linux en el objeto "sistema" (bytes 16 a 23), o 0 (la regla de serie).
+    pub fn memoria_pedida(datos: &[u8]) -> u64 {
+        datos.get(16..24).map_or(0, |b| u64::from_le_bytes(b.try_into().unwrap_or([0; 8])))
     }
 
     /// Lo que dice el objeto "sistema" del paquete de arranque: la RAM de la máquina en bytes y si hay hipervisor.

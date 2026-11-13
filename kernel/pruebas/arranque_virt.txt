@@ -74,6 +74,8 @@ DashOS en marcha con 4 núcleos.
 # S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
 # servicio imagen, que lo lee por el de archivos.
 ~│   [imagen] Disquete montado: FFS internacional, 1760 bloques
+# S28: su bloque de arranque, sin firmas (no arranca: el ADF de la prueba no es de arranque).
+~│   [imagen] Disquete: bloque de arranque: no arranca (sin DOS o con la suma mal): Kickstart no lo ejecuta
 ~│   [adf-prueba] montar: bien (1760 bloques, FFS bien, internacional bien); sin montar: bien; otra vez: bien
 ~│   [adf-prueba] volumen Disquete: 880 KB,
 ~│   [adf-prueba] raíz (3 entradas, fin bien): C/ Cajón/ LEEME.txt
@@ -468,8 +470,12 @@ DashOS en marcha con 4 núcleos.
 # la dos.library con OpenLibrary y escribe; el mismo fichero cortado y estropeado no rompe la caja ni pierde memoria; y
 # escribir en la dirección 4 mata la caja.
 # H5: exec, dos, graphics e intuition son las nativas en Rust (`caja/pegamento/`); cada programa es un proceso de exec.
+# S28: el cajón de la caja (raíz 0 de su ficha, para escribir) es `Caja:`; el disco va aparte, para leer (raíz 1), y es
+# `SYS:`. La caja comprueba, por debajo de su guardia, que el servicio niega escribir en el disco.
+~│   [caja-amiga] Caja: su cajón, para escribir; el servicio niega escribir en SYS: aunque la caja lo pida (Protegido): bien
 ~│   [caja-amiga] exec, dos, graphics e intuition nativas (Rust): ExecBase $
 ~│   [caja-amiga] SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura); compositor: conectada por Wayland
+~tablas de saltos y de los vectores de ExecBase; lo que cambie un programa se deshace al acabar
 ~solo de lectura; otra vez o en los primeros 64 KB, rechazada: bien
 ~│   [caja-amiga] saludo.exe: 3 hunks (código 612, datos 32, BSS 1008 bytes) en $
 ~│   [caja-amiga] hunk: hola desde un ejecutable de AmigaOS (m68k-amigaos-gcc)
@@ -492,6 +498,82 @@ DashOS en marcha con 4 núcleos.
 # que el programa dejó y el compositor sigue contestando.
 ~│   [caja-amiga] hostil: 61 llamadas malas, 0 funcionaron; el programa sigue vivo
 ~el compositor contesta con 0 ventanas de la caja abiertas: bien
+# S28 (docs/diseño/S28-malware-amiga.md): siete virus de laboratorio (caja/pruebas68k/malware/), uno por familia del
+# malware del Amiga: bloque de arranque, enlace, parches de exec y dos, residentes, guiones de arranque, troyanos y la
+# memoria de otros. Cada intento que debe fallar falla; lo permitido se dice. La caja deshace lo que dejan cambiado
+# (tablas de saltos, ExecBase, vectores del 68k) y, al final, comprueba que sus parches y su código residente no los
+# usó nadie más. El disco lo mira después tools/disco_archivos.py. El agujero de $7000_0000 es la decisión 1.
+~│   [caja-amiga] malware: arranque: OpenDevice trackdisk.device unidad 0: no se abre (error -1)
+~│   [caja-amiga] malware: arranque: OpenDevice scsi.device unidad 0: no se abre (error -1)
+~│   [caja-amiga] malware: arranque: abrir DF0:: no (IoErr 218)
+~│   [caja-amiga] malware: arranque: lee el bloque de arranque de SYS:Imagenes/disquete.adf (4 bytes, DOS\3): leer se puede
+~│   [caja-amiga] malware: arranque: escribir su bloque de arranque en SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: arranque: escribir LAMER! en el bloque 100 de SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: arranque: escribir su bloque de arranque en Caja:Discos/disco.adf: no (IoErr 223)
+~│   [caja-amiga] malware: arranque: escribir en el byte 1000 de Caja:Discos/disco.adf: no (IoErr 223)
+~│   [caja-amiga] malware: arranque: vaciar Caja:Discos/disco.adf (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: arranque: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware arranque.exe: 0 conseguidos (vector -1), 5 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: enlace: SYS:Programas/hola empieza por $7f454c46: no es un ejecutable de AmigaOS
+~│   [caja-amiga] malware: enlace: pegarse al final de SYS:Programas/hola: no (IoErr 214)
+~│   [caja-amiga] malware: enlace: Caja:C/saludo empieza por $000003f3: un ejecutable de AmigaOS
+~│   [caja-amiga] malware: enlace: pegarse al final de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: escribirse al principio de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: vaciar y reescribir Caja:C/saludo (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: enlace: esconder el original: renombrar Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: borrar Caja:C/saludo: no (IoErr 222)
+~│   [caja-amiga] malware: enlace: cambiar la proteccion de Caja:C/saludo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: crear un ejecutable nuevo en su cajon (Caja:C/saludo.nuevo; nadie lo arranca solo): si (permitido)
+~│   [caja-amiga] malware: enlace: pegarse a Caja:C/saludo.nuevo despues de cerrarlo: no (IoErr 223)
+~│   [caja-amiga] malware: enlace: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware enlace.exe: 0 conseguidos (vector -1), 8 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: parche: 5 parches con SetFunction (OpenLibrary, OldOpenLibrary, DoIO, Open, LoadSeg) y 1 a mano en la tabla (Write)
+~│   [caja-amiga] malware: parche: dentro de su programa sus parches se usan (como en el Amiga): 2 veces
+~│   [caja-amiga] malware: parche: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware parche.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 0 avisos del Enforcer; deshecho: 6 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: residente: ColdCapture, CoolCapture, WarmCapture, KickMemPtr y KickTagPtr en ExecBase: escritos (es la memoria de su caja; nada los usa)
+~│   [caja-amiga] malware: residente: vectores 4 y 31 del 68k (en $100000) cambiados: si, dentro de su programa
+~│   [caja-amiga] malware: residente: Supervisor() no entra en supervisor (la caja no lo tiene)
+~│   [caja-amiga] malware: residente: ColdReboot() vuelve sin reiniciar nada
+~│   [caja-amiga] malware: residente: su codigo residente no corrio nunca
+~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
+~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
+~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 205)
+~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 205)
+~│   [caja-amiga] malware: guion: anadir una linea a Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: escribir al principio de Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: sustituir Caja:S/Startup-Sequence (MODE_NEWFILE): no (IoErr 223)
+~│   [caja-amiga] malware: guion: crear Caja:S/User-Startup: no (IoErr 223)
+~│   [caja-amiga] malware: guion: crear Caja:Disk-Validator: no (IoErr 223)
+~│   [caja-amiga] malware: guion: renombrar Caja:S/Startup-Sequence: no (IoErr 223)
+~│   [caja-amiga] malware: guion: borrar Caja:S/Startup-Sequence: no (IoErr 222)
+~│   [caja-amiga] malware: guion: renombrar Caja:S/inocente a Caja:S/User-Startup: no (IoErr 223)
+~│   [caja-amiga] malware: guion: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: troyano: borrar SYS:LEEME.txt: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: borrar SYS:Imagenes/disquete.adf: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: borrar SYS:Programas/hola: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: vaciar SYS:C/grande.txt: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: renombrar SYS:Programas: no (IoErr 214)
+~│   [caja-amiga] malware: troyano: Format de Caja:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Format de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Relabel de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: Inhibit de SYS:: no (IoErr 236)
+~│   [caja-amiga] malware: troyano: borrar Caja:C/saludo: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:Discos/disco.adf: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:S/Startup-Sequence: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: borrar Caja:C/saludo.info: no (IoErr 222)
+~│   [caja-amiga] malware: troyano: cambiar la herramienta de Caja:C/saludo.info: no (IoErr 223)
+~│   [caja-amiga] malware: troyano: borrar un fichero de datos de su cajon (Caja:datos.txt; sin papelera todavia): si (permitido)
+~│   [caja-amiga] malware: troyano: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware troyano.exe: 0 conseguidos (vector -1), 10 negativas de la guardia, 4 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: memoria: otros programas corriendo en su caja: 0 (cada caja corre los suyos; otra caja u otro proceso no se ven)
+~│   [caja-amiga] malware: memoria: restos de ventana.exe en la memoria de la caja (4 MB del 68k): 0
+~│   [caja-amiga] malware: memoria: AGUJERO CONOCIDO: lee el ejecutable nativo de la caja en $70000000
+~│   [caja-amiga] malware: memoria: 0 conseguidos de lo que no se debe
+~│   [caja-amiga] malware memoria.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware: tras los siete, los parches de parche.exe se usaron 2 veces (las 2 de su programa), el código residente 0, y ExecBase sin vectores de reinicio: bien
 # Programas de Dash (el lenguaje de ~/Projects/FreeMEMLang), compilados al hacer la caja (`caja/Makefile`; sin `dash`,
 # no están y estas líneas faltan): texto.exe y texto_gcc.exe (`caja/pruebas68k/dash/caja_texto.dash`, directo y por C
 # con libnix, que abre utility.library), hola.exe (`examples/hola.dash`: ventana y Delay) y ventana.exe
@@ -555,3 +637,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] ventana Amiga en pantalla (320x200): GadTools Test
 ~(FAR 0x4); se termina
 ~│   [inicio] caja-amiga acabó: clase 2, código 0
+# S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de DashOS, un programa cualquiera con
+# ventanas. No pasa de su cupo de memoria, no ve ni enlaza protocolos para capturar la pantalla, mandar teclas o leer el
+# portapapeles sin foco, no se hace pasar por la caja Linux y, sin ventana, no oye nada de lo que se teclea (contraseñas
+# de `guardian` incluidas) ni del ratón, ni ve títulos ajenos; y no cambia el portapapeles sin foco.
+~│   [espia] llenar la memoria: se para en 
+~el cupo de su grupo; lo suelta y vuelve a pedir: bien
+~de espiar anunciados, 0 de 
+~enlaces por número aceptados: bien
+~│   [espia] hacerse pasar por la caja Linux (subconexión): sin respuesta true, el compositor sigue true: bien
+~contraseñas): 0 teclas, 0 veces el foco, 0 del ratón, 0 ofertas del portapapeles, 0 títulos ajenos; poner el portapapeles sin foco, cancelado: true: bien
+~│   [espia] malware de laboratorio: no consiguió nada: bien

@@ -176,3 +176,9 @@ Del 2026-11-10, aceptados por el usuario.
   programa. El centro de control hace de servicio del tema, el compositor lo reparte (`dashos_tema_v1`, versión 3) y en
   cada caja algo lo aplica: plumas de Material y un pintor Material para GadTools e intuition en la Amiga; un agente
   dentro de Arch que rellena las plantillas de GTK, libadwaita, Qt y foot en la Linux.
+- **El malware del Amiga** (S28, 2026-11-13): por familias (bloque de arranque, enlace, troyanos, residentes,
+  parches, disco directo, memoria de otros, arranque), qué puede en la caja y qué lo para. Capas sin firmas: el
+  proceso; `SYS:` de solo lectura también en el servicio; una guardia de dos que no deja cambiar ejecutables, iconos,
+  guiones de arranque ni bloques de arranque de imágenes; lo que un programa deja en exec, deshecho al acabar; la
+  memoria soltada, a cero. Siete virus de laboratorio en la prueba de siempre. Lo primero que falta: sacar el
+  ejecutable de la caja de los 4 GB del 68k.

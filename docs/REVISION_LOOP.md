@@ -1716,3 +1716,32 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   4 (tablas regeneradas; las tres listas de globales del compositor anuncian la 4; la barra y el panel la enlazan).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN
   (arranque-virt y -2 tras el arreglo de las listas de globales).
+
+### 2026-11-13 10:20: defensa contra el malware de Amiga (S28), en revision
+- Fusionada `caja-amiga-malware`: siete virus de laboratorio (`caja/pruebas68k/malware/`) dentro de `arranque-virt`,
+  que no consiguen nada fuera de lo permitido (el disco atacado se comprueba desde Linux byte a byte); guardia de
+  ficheros en `caja/dos` (ejecutables, iconos, guiones, Disk-Validator y bloques de arranque; SYS: de solo lectura
+  volumen a volumen); la caja deshace al acabar cada programa lo que tocó en tablas de saltos, ExecBase y vectores;
+  la memoria soltada se pone a cero; `archivos` conserva las raíces de volumen al volver a una instantánea (la caja y
+  el Workbench perdían SYS:); aviso sin firmas del bloque de arranque al montar un ADF; la guardia que pregunta,
+  primera parte (lo contestado se recuerda por programa; sin preguntador, se niega).
+- Pendiente de S28: la pregunta de verdad por `guardian`, papelera e instantánea del cajón, la caja fuera de los 4 GB.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -2, -wayland, -gpu, -diag, -escritorio, -usb: BIEN; -arch BIEN a la
+  segunda (la primera se quedó tras `pacman -Sy`: la red de fuera).
+
+### 2026-11-13 13:00: malware de Linux y DashOS (S29), GTK4 y Firefox en la caja, en revision
+- Fusionada `seguridad-malware`: estudio S29; marca de la caja Linux que el programa no puede quitar ni imitar (borde
+  ámbar, pestaña "LINUX", "Linux · " en la barra; `wayland/src/marca.rs`); pegar solo con tecla o clic de hace menos
+  de 5 s; cortafuegos de la caja en el servicio de red (Internet sí, red local no salvo DNS, DHCP y ping a la
+  puerta; sin ARP falso ni multidifusión); `espia` (malware de laboratorio nativo) no consigue nada. 11 preguntas
+  para el usuario en el estudio.
+- Fusionada `caja-linux-grandes`: GTK4 en la caja (el fallo era memoria: glycin; zram en `Image-arch` y
+  `dashos-zram.service`), QEMU de `-wayland` con 8 GB y `highmem=on` (ECAM y MMIO abajo), el kernel ve hasta 16 GB
+  en virt, el invitado hasta 2 GB (512 MB con la regla de hoy); Firefox abre en 20-44 s con 512 MB; botón de
+  maximizar y borde para redimensionar en la barra de DashOS. Pendiente: Firefox no responde a teclado y ratón;
+  decisión del usuario sobre 1 GB con 8 GB o más.
+- La imagen de los programas grandes, rehecha con todo lo unido en `~/.cache/dashos-caja-linux-apps` (la de antes, en
+  `-viejo`). Lo esperado de `-wayland` sigue la marca ("Linux · " en los títulos).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -gpu, -diag, -escritorio y -usb: BIEN; -wayland: con la
+  imagen nueva solo faltaban los dos títulos con la marca, corregidos y comprobados contra esa misma salida (sin
+  volver a correr los 70 minutos).

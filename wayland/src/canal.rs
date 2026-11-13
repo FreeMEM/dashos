@@ -41,6 +41,9 @@ pub const TROZO_SUB_DATOS: u8 = 5;
 pub const TROZO_SUB_ADIOS: u8 = 6;
 /// Bytes de la cabecera de un trozo de subconexión: tipo y número.
 pub const CABECERA_SUB: usize = 5;
+/// Un cliente de una subconexión es la marca de quien la lleva (en los 40 bits bajos) con el número de la subconexión más
+/// 1 encima (lo pone el compositor). Así se sabe de qué programa de DashOS viene cada cliente (S29: el portapapeles).
+pub const BITS_MARCA: u32 = 40;
 
 /// La cabecera de los trozos de datos de la subconexión `sub`.
 pub fn cabecera_sub(tipo: u8, sub: u32) -> [u8; CABECERA_SUB] {

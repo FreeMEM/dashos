@@ -14,6 +14,12 @@
 //! - Una fuente que deja de ser la selección recibe `cancelled`; si se destruye o su programa se va, ya no hay
 //!   selección.
 //! - Arrastrar y soltar no está: `start_drag` cancela su fuente en el acto.
+//! - S29 (`docs/diseño/S29-malware-linux-y-dashos.md`): pegar es cosa de quien está delante. Un `receive` solo vale si
+//!   el programa tiene el teclado y hace menos de `PEGAR_MS` que recibió una tecla o un clic (él u otro programa de la
+//!   misma caja: así funciona `wl-paste` tecleado en una terminal de Linux). Un programa que se lleva el teclado al
+//!   abrir una ventana y pide lo copiado sin que nadie pegue no lo recibe: la llave se cierra, la fuente no se entera y
+//!   el compositor lo dice (`Escena::pegados_negados`). Lo de Android 10 (solo lee el portapapeles quien tiene el
+//!   foco), más estricto. Las ofertas (los tipos) sí le llegan: no dicen lo copiado.
 //!
 //! Hostil: tipos de más (pasan `MAX_TIPOS`), largos (más de `MAX_TIPO` bytes) o repetidos se ignoran; un `receive` de
 //! una oferta vieja o de un tipo que no se ofreció cierra la llave sin molestar a la fuente; las ofertas vivas de un
@@ -41,6 +47,14 @@ pub const MAX_TIPO: usize = 255;
 pub const MAX_OFERTAS: usize = 32;
 /// Fuentes vivas por programa.
 pub const MAX_FUENTES: usize = 32;
+/// S29: cuánto vale una tecla o un clic para pegar (en QEMU, con el PC cargado, de la tecla al `receive` de un programa
+/// de Linux por el puente pasa más de un segundo).
+pub const PEGAR_MS: u32 = 5_000;
+
+/// El programa de DashOS del que viene un cliente: el mismo, o quien lleva su subconexión (la caja Linux).
+pub fn grupo(c: Cliente) -> Cliente {
+    c & ((1 << crate::canal::BITS_MARCA) - 1)
+}
 
 /// Cuál de las dos selecciones.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -70,6 +84,8 @@ pub struct DeCliente {
     pub ofertas: BTreeMap<u32, (Tipo, Rc<Seleccion>)>,
     /// Lo que hay que ofrecerle en el próximo `Entrada::Portapapeles`, por selección: `Some(None)`, que no hay.
     pub por_ofrecer: [Option<Option<Rc<Seleccion>>>; 2],
+    /// S29: cuándo recibió la última tecla o el último clic (la hora de `escribir_entrada`).
+    pub pulsado_ms: Option<u32>,
 }
 
 /// Lo que el compositor manda a una fuente (quien atiende lo escribe en la conexión de su programa con
@@ -279,6 +295,23 @@ impl<M: Memorias> PorCliente<'_, M> {
                 // Solo de la selección de ahora y de un tipo que ofrece; si no, la llave se cierra (quien pega ve el
                 // fin en el acto).
                 let actual = escena.selecciones[sel as usize].clone();
+                // S29: con el teclado y una tecla o un clic reciente suyo (o de su caja).
+                let con_teclado = escena.teclado.is_some_and(|t| t.0 == cliente);
+                let ahora = escena.reloj_ms;
+                let reciente = escena
+                    .clientes
+                    .iter()
+                    .filter(|(c, _)| grupo(**c) == grupo(cliente))
+                    .filter_map(|(_, d)| d.pp.pulsado_ms)
+                    .any(|t| ahora.wrapping_sub(t) <= PEGAR_MS);
+                if escena.pegar_con_entrada && !(con_teclado && reciente) {
+                    escena.memorias.soltar(llave, core::ptr::null(), 0);
+                    if !escena.pegados_negados.contains(&cliente) {
+                        escena.pegados_negados.push(cliente);
+                    }
+                    return Some(Ok(()));
+                }
+                let yo = escena.clientes.get_mut(&cliente)?;
                 let buena = yo.pp.ofertas.get(&objeto).zip(actual.as_ref()).filter(|((_, vista), a)| Rc::ptr_eq(vista, a)).map(|(_, a)| a.clone());
                 match buena {
                     Some(s) if s.tipos.iter().any(|x| x == t) && escena.clientes.contains_key(&s.cliente) => {

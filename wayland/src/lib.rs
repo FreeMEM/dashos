@@ -317,3 +317,6 @@ mod tests_multimonitor;
 
 #[cfg(test)]
 mod tests_linux;
+
+#[cfg(test)]
+mod tests_s29;

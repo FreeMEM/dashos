@@ -289,7 +289,7 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 17 instantáneas | Pone en la ventana las instantáneas del volumen de la asa, de la más vieja a la más nueva: fecha (8), largo del nombre (1) y el nombre; la siguiente en un múltiplo de 8 (FS9) | asa | a cuántas caben, b cuántas hay, c bytes usados |
 | 18 tomar | Toma una instantánea del volumen de la asa | asa, nombre (hasta 64 bytes, sin ':' ni '/') | — |
 | 19 descartar | Borra una instantánea y suelta lo que solo veía ella | asa, nombre | — |
-| 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer | asa, nombre | a el volumen |
+| 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer, también sus raíces 1 a 15 en él, salvo las que son la raíz del volumen (S28) | asa, nombre | a el volumen |
 | 21 volumen | Abre la raíz del volumen `nombre` (FS10); vacío, la raíz del cliente. Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
 | 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
 | 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto | nombre; a: 0 sin cifrar, 1 cifrado, 2 cifrado con Argon2 barato (pruebas); b largo de la contraseña | a su número |
@@ -494,6 +494,10 @@ descriptores que el aparato devuelve sin tenerlos.
 **El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
 tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se
 suelta.
+S29: el puerto pasa por el cortafuegos de la caja (`usuario/src/cortafuegos_caja.rs`): Internet sí; la red local no,
+salvo DNS y ping a la puerta de enlace o al DNS y DHCP; ni multidifusión, ni ARP que se haga pasar por la puerta o
+pregunte por otros aparatos; de la red local hacia el invitado, solo la puerta y el DNS. Las primeras 32 tramas
+cortadas distintas se dicen en el registro ("[red] cortafuegos de la caja Linux: corta ...").
 
 **Los programas.** Mensajes de palabras de 32 bits:
 
@@ -534,7 +538,8 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
 El servicio `caja-linux` crea y corre máquinas virtuales (llamadas 45 a 48 de `kernel.md`). Solo hay hipervisor si el
 kernel arrancó en EL2 (en QEMU, `virtualization=on`; `make arranque-virt-vm`).
 
-**Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina y si hay hipervisor, 16 bytes), 2 y 3 la Image de Linux y su
+**Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina, si hay hipervisor y la RAM pedida para el invitado al compilar
+el kernel, tres u64, 24 bytes), 2 y 3 la Image de Linux y su
 initramfs si los hay (`make arranque-virt-linux`), y después los canales "ventanas" (su terminal), "disco" (la
 partición de la caja Linux, el disco de Arch), "sesiones" (el permiso) y "red" (la red del invitado), en el orden en
 que `inicio` crea los canales. En la Pi 4: "sistema" y el permiso, que da `inicio` (allí aún no hay
@@ -547,7 +552,9 @@ registro de seguridad; a cualquier otro se le pregunta a quien está delante. `s
 
 **La memoria.** `inicio` le da la del invitado más 32 MB (`dashos::maquina::memoria_invitado`: 128 MB con menos de 2
 GB de RAM, 256 MB con 2 GB y 512 MB con 4 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
-invitado, y así hasta 64 MB.
+invitado, y así hasta 64 MB. Otra cantidad, al compilar el kernel: `DASHOS_CAJA_LINUX_MB=1024` (va en "sistema";
+`memoria_invitado_con`: al menos 64 MB y como mucho la mitad de la RAM). En QEMU `virt`, con más de 3 GB hace falta
+`highmem=on,highmem-ecam=off,highmem-mmio=off` (`MAQUINA_GRANDE` del Makefile): el kernel ve en `virt` hasta 16 GB.
 
 **Aparatos del invitado** (crate `caja-linux/vmm`): PL011 (consola temprana), PL031 (la hora de DashOS; si el invitado
 la cambia, cambia solo la suya), virtio-console (hvc0, 80x25), virtio-blk y, si el servicio de red le da un puerto,
@@ -560,7 +567,7 @@ por segundo seguidas (luego dice cuántas calló).
 
 **La red del invitado.** El servicio de red le da un puerto (`PUERTO`, solo a "caja-linux"): un puente de tramas hacia
 la tarjeta de verdad, con una MAC propia (02:da:50:...). Llegan al invitado las tramas para su MAC y las de difusión;
-del invitado solo salen las que llevan su MAC de origen. Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
+del invitado solo salen las que llevan su MAC de origen. Y pasan por el cortafuegos de la caja (S29, arriba en el servicio de red). Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
 el invitado es 10.0.2.16 y su puerta de enlace 10.0.2.2 (busybox, con dirección fija; Arch la pide por DHCP al
 servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2.16).
 

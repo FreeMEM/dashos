@@ -8,7 +8,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 use core::cell::RefCell;
 
-use crate::escena::decoracion::{ALTO_BARRA, LADO_BOTON, MARGEN_BOTON};
+use crate::escena::decoracion::{self, ALTO_BARRA, LADO_BOTON, MARGEN_BOTON};
 use crate::escena::portapapeles::{escribir_aviso, Aviso, Tipo, MAX_OFERTAS, MAX_TIPOS};
 use crate::escena::*;
 use crate::servidor::*;
@@ -558,6 +558,75 @@ fn mover_y_redimensionar() {
     let conf = ev.iter().rev().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
     assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1), conf.3.len()), (140, 130, 16));
     assert!(!escena.arrastrando());
+}
+
+/// La barra de DashOS (caja-linux-grandes): su botón de maximizar pone la ventana en todo lo que queda bajo su barra
+/// (un configure con el estado "maximizada") y otra pulsación la devuelve a su sitio; la franja de fuera de la ventana
+/// la redimensiona como `xdg_toplevel.resize`. Maximizada, la franja no hace nada; con otra ventana encima, tampoco.
+/// Confirma el último configure de la ventana (xdg_surface 9) que haya en `ev`, con un commit.
+fn confirmar(escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, ev: &[(Cliente, u32, u16, Vec<u8>)]) {
+    if let Some(x) = ev.iter().rev().find(|x| x.0 == c && x.1 == 9 && x.2 == xdg_surface::ev::CONFIGURE) {
+        let mut e = Escritor::new();
+        e.empezar(9, xdg_surface::req::ACK_CONFIGURE).uint(u32_en(&x.3, 0)).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        bien(escena, con, c, &e);
+    }
+}
+
+#[test]
+fn maximizar_y_redimensionar_con_la_barra() {
+    let mut escena = escena_800();
+    let mut c = Conexion::new();
+    abrir(&mut escena, &mut c, 1, 200, 100, Some(2));
+    let antes = sitio(&escena, 1);
+    let b = decoracion::barra_de(&escena.clientes[&1], 7).unwrap();
+    let boton = (b.x + b.w - MARGEN_BOTON - LADO_BOTON - LADO_BOTON / 2, b.y + ALTO_BARRA / 2);
+    assert_eq!(decoracion::zona(b.w, boton.0 - b.x, boton.1 - b.y), decoracion::Zona::Maximizar);
+    ir(&mut escena, boton.0, boton.1);
+    let ev = escena.raton(0, 0, 1);
+    escena.raton(0, 0, 0);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    let conf = ev.iter().rev().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
+    assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1)), (800, 600 - ALTO_BARRA as u32));
+    assert!((0..u32_en(&conf.3, 2) as usize / 4).any(|i| u32_en(&conf.3, 3 + i) == 1), "estado: maximizada");
+    assert_eq!(sitio(&escena, 1), (0, ALTO_BARRA));
+    confirmar(&mut escena, &mut c, 1, &ev);
+    // Maximizada, la franja de fuera no la redimensiona.
+    assert!(escena.borde_bajo_para_pruebas(400, 600 - 1).is_none());
+    // Otra vez: vuelve a su sitio, con un configure sin tamaño.
+    let b = decoracion::barra_de(&escena.clientes[&1], 7).unwrap();
+    ir(&mut escena, b.x + b.w - MARGEN_BOTON - LADO_BOTON - LADO_BOTON / 2, b.y + ALTO_BARRA / 2);
+    let ev = escena.raton(0, 0, 1);
+    escena.raton(0, 0, 0);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    let conf = ev.iter().rev().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
+    assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1)), (0, 0));
+    assert_eq!(sitio(&escena, 1), antes);
+    confirmar(&mut escena, &mut c, 1, &ev);
+    // La franja de abajo a la derecha: redimensiona por los dos bordes (2 | 8), con el estado "redimensionando".
+    let v = decoracion::ventana_de(&escena.clientes[&1], 7).unwrap();
+    assert_eq!(decoracion::bordes(v, v.x + v.w + 2, v.y + v.h + 2), 10);
+    assert_eq!(decoracion::bordes(v, v.x + 5, v.y + 5), 0, "dentro de la ventana, no");
+    ir(&mut escena, v.x + v.w + 2, v.y + v.h + 2);
+    escena.raton(0, 0, 1);
+    assert!(escena.arrastrando());
+    let ev = escena.raton(30, 20, 1);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    let conf = ev.iter().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
+    assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1)), (230, 120));
+    assert_eq!(u32_en(&conf.3, 3), 3, "estado: redimensionando");
+    escena.raton(0, 0, 0);
+    assert!(!escena.arrastrando());
+    // Otra ventana encima de la franja: el clic es suyo, no redimensiona la de abajo.
+    let mut c2 = Conexion::new();
+    abrir(&mut escena, &mut c2, 2, 300, 300, None);
+    let r2 = decoracion::ventana_de(&escena.clientes[&2], 7).unwrap();
+    let v = decoracion::ventana_de(&escena.clientes[&1], 7).unwrap();
+    let punto = (v.x + v.w + 2, v.y + v.h / 2);
+    assert!(r2.tiene(punto.0, punto.1), "la segunda tapa la franja de la derecha de la primera: {r2:?} {v:?}");
+    assert!(escena.borde_bajo_para_pruebas(punto.0, punto.1).is_none());
+    // Sin la de encima tapándola (en otro sitio de la franja, por arriba a la izquierda), sí.
+    assert_eq!(escena.borde_bajo_para_pruebas(v.x - 3, v.y - 3).map(|x| x.1), Some(5));
 }
 
 #[test]

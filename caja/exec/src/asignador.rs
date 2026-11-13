@@ -125,6 +125,10 @@ impl<M: Memoria> Exec<M> {
         if antes.is_some_and(|(a, l)| a + l > inicio) || (despues != 0 && despues < fin) {
             return Err(Fallo::YaLibre { dir });
         }
+        // S28: lo que se suelta se borra. Así un programa no lee lo que dejó otro (textos, claves, código) en la
+        // memoria libre, y lo que salte a memoria soltada encuentra ceros, no el código de antes. Un exec de verdad
+        // solo pisa los 8 bytes del `MemChunk`; leer lo soltado ya era un fallo del programa.
+        self.cero(inicio, fin - inicio)?;
         let (mut largo, mut sig) = (fin - inicio, despues);
         if despues != 0 && despues == fin {
             largo += self.l32(despues + memchunk::MC_BYTES)?;

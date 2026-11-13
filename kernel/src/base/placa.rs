@@ -44,6 +44,12 @@ pub const LIMITE_DMA: u64 = 1 << 30;
 #[cfg(feature = "virt")]
 pub const LIMITE_DMA: u64 = 2 << 30;
 
+/// Hasta dónde ve la memoria el mapa del arranque (arranque.s): 4 GB; en `virt`, 16 (con highmem, caja-linux-grandes).
+#[cfg(not(feature = "virt"))]
+pub const FIN_MAPA_ARRANQUE: u64 = 4 << 30;
+#[cfg(feature = "virt")]
+pub const FIN_MAPA_ARRANQUE: u64 = 16 << 30;
+
 pub const fn es_periferico(fisica: u64) -> bool {
     let mut i = 0;
     while i < ZONAS.len() {

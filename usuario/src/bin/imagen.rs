@@ -272,7 +272,7 @@ fn atender(vol: &mut Option<Vol>, c: &mut Cliente, orden: u32, asa: u32, a: u64,
             Err(e) => return mal(e),
         };
         return match Volumen::abrir(imagen) {
-            Ok(v) => {
+            Ok(mut v) => {
                 println!(
                     "  [imagen] {} montado: {}{}, {} bloques",
                     v.nombre(),
@@ -280,6 +280,12 @@ fn atender(vol: &mut Option<Vol>, c: &mut Cliente, orden: u32, asa: u32, a: u64,
                     if v.internacional() { " internacional" } else { "" },
                     v.bloques()
                 );
+                // S28: qué tiene su bloque de arranque, sin firmas (lo que haría al arrancar de él un Amiga real o el
+                // emulador completo; en DashOS no se ejecuta nunca).
+                match v.bloque_de_arranque() {
+                    Ok(b) => println!("  [imagen] {}: bloque de arranque: {}", v.nombre(), amigados::arranque::analizar(&b).frase()),
+                    Err(_) => println!("  [imagen] {}: bloque de arranque: no se lee", v.nombre()),
+                }
                 let r = Respuesta { estado: BIEN, a: v.bloques() as u64, b: v.ffs() as u64 | (v.internacional() as u64) << 1, ..Default::default() };
                 *vol = Some(v);
                 r

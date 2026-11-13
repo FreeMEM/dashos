@@ -18,6 +18,7 @@ extern crate alloc;
 
 mod archivos;
 mod compositor;
+mod defensa;
 mod memoria;
 mod tema;
 
@@ -34,6 +35,8 @@ use caja_timer::{Reloj, Temporizador};
 use caja_utility::Utilidad;
 
 use archivos::FsDashos;
+use caja_dos::guardia::Guardia;
+use defensa::{Deshecho, Foto};
 use compositor::CompositorWayland;
 use memoria::MemoriaCaja;
 
@@ -81,6 +84,13 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
+/// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
+/// escribir), que es `Caja:`; la 1, el disco para leer, que es `SYS:`. Con una ficha vieja (solo la 0, el disco), `SYS:`
+/// va en la 0.
+const RAIZ_CAJA: u32 = 0;
+const RAIZ_SYS: u32 = 1;
+/// Negativas de la guardia que se escriben de cada tarea (las demás solo se cuentan).
+const NEGADOS_A_LA_VISTA: u32 = 4;
 /// La interrupción de nivel 6 de la caja (`N_INTERRUPCION` de caja.h).
 const N_INTERRUPCION: u16 = 0xff01;
 /// Llaves de la caja (`kernel/src/inicio.rs`): 1 el permiso de página 0, 2 el canal "ventanas", 3 "archivos".
@@ -94,7 +104,7 @@ const AVISOS_A_LA_VISTA: u32 = 6;
 struct Caja {
     ex: Exec<MemoriaCaja>,
     consola: Consola,
-    dos: caja_dos::Dos<FsDashos>,
+    dos: caja_dos::Dos<Guardia<FsDashos>>,
     gr: CajaGrafica<CompositorWayland>,
     util: Utilidad,
     timer: Temporizador,
@@ -104,6 +114,12 @@ struct Caja {
     /// Avisos de la tarea en marcha: cuántos, y cuántos se han escrito.
     avisos: u32,
     avisos_dichos: u32,
+    /// Negativas de la guardia de la tarea en marcha: cuántas, y cuántas se han escrito.
+    negados: u32,
+    negados_dichos: u32,
+    /// La foto del sistema recién montado (S28) y lo que se deshizo tras el último programa.
+    foto: Option<Foto>,
+    deshecho: Deshecho,
     /// El `tc_TrapCode` de las tareas de la caja (`TRAMPA_DEFECTO` de caja.h).
     trampa: u32,
     /// Llamadas anidadas (68k desde una función nativa) de la tarea en marcha, y las que no se pudieron hacer.
@@ -261,14 +277,27 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     };
     let fs = FsDashos::abrir(LLAVE_ARCHIVOS);
     let hay_fs = fs.is_some();
-    let mut dos = caja_dos::Dos::nuevo(fs.unwrap_or_else(FsDashos::sin_servicio));
+    let mut fs = fs.unwrap_or_else(FsDashos::sin_servicio);
+    let con_cajon = hay_fs && caja_dos::SistemaArchivos::mirar(&mut fs, RAIZ_SYS, "").is_ok();
+    // Con su cajón, lo de solo lectura lo ponen dos, volumen a volumen (la guardia; decisión 8), y el servicio con las
+    // raíces; con una ficha vieja, también el adaptador.
+    fs.solo_lectura = !con_cajon;
+    let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
+    let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
     let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
     if hay_fs {
         let mut cd = CajaDos { ex: &mut ex, consola: &mut consola };
-        match dos.montar(&mut cd, "SYS", 0, true) {
-            Ok(()) => vol = String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
-            Err(e) => vol = format!("SYS: no se monta (error {})", e),
+        let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
+        vol = match dos.montar(&mut cd, "SYS", sys, true) {
+            Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
+            Err(e) => format!("SYS: no se monta (error {})", e),
+        };
+        if con_cajon {
+            match dos.montar(&mut cd, "Caja", RAIZ_CAJA, false) {
+                Ok(()) => di(&format!("Caja: su cajón, para escribir; {}", servicio)),
+                Err(e) => di(&format!("Caja: no se monta (error {})", e)),
+            }
         }
     }
     let comp = CompositorWayland::conectar(LLAVE_VENTANAS);
@@ -312,6 +341,11 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         an,
         al
     ));
+    let foto = Foto::hacer(&ex);
+    di(&format!(
+        "defensa: foto de {} tablas de saltos y de los vectores de ExecBase; lo que cambie un programa se deshace al acabar",
+        foto.bibliotecas()
+    ));
     let mut c = Caja {
         ex,
         consola,
@@ -323,6 +357,10 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         sucio: false,
         avisos: 0,
         avisos_dichos: 0,
+        negados: 0,
+        negados_dichos: 0,
+        foto: Some(foto),
+        deshecho: Deshecho::default(),
         trampa: 0,
         anidadas: 0,
         anidadas_no: 0,
@@ -339,6 +377,20 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     base
 }
 
+/// Que el servicio niegue escribir en `SYS:` aunque la caja se lo pida (por debajo de la guardia, como lo haría un
+/// programa que se hubiera hecho con la caja): crear, en la raíz 1 (la del disco, de leer). Lo que dice.
+fn comprobar_servicio(fs: &mut FsDashos) -> String {
+    use caja_dos::SistemaArchivos;
+    match fs.crear(RAIZ_SYS, "caja-prueba-de-escritura", false) {
+        Err(e) => format!("el servicio niega escribir en SYS: aunque la caja lo pida ({:?}): bien", e),
+        Ok((a, _)) => {
+            let _ = fs.cerrar(a);
+            let _ = fs.borrar(RAIZ_SYS, "caja-prueba-de-escritura");
+            String::from("MAL: el servicio deja escribir en SYS:")
+        }
+    }
+}
+
 /// El `tc_TrapCode` por defecto: en `ExecBase->TaskTrapCode` y en cada proceso nuevo de la caja.
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_poner_trampa(defecto: u32) {
@@ -346,6 +398,8 @@ pub extern "C" fn caja_poner_trampa(defecto: u32) {
     c.trampa = defecto;
     let b = c.ex.base();
     let _ = c.ex.mem.escribir32(b + caja_exec::estructuras::execbase::TASKTRAPCODE, defecto);
+    // S28: es parte de la foto de ExecBase; si no, la defensa lo "deshará" tras cada programa.
+    c.foto = Some(Foto::hacer(&c.ex));
 }
 
 /// Los procesos que se creen desde ahora, sin consola (`si` distinto de 0) o con ella.
@@ -435,6 +489,10 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     let nombre = unsafe { core::slice::from_raw_parts(nombre, largo) };
     c.avisos = 0;
     c.avisos_dichos = 0;
+    c.negados = 0;
+    c.negados_dichos = 0;
+    // S28: lo que pregunte la guardia de ficheros va por este programa (se recuerda por programa).
+    c.dos.fs.programa(core::str::from_utf8(nombre).unwrap_or("?"));
     c.anidadas = 0;
     c.anidadas_no = 0;
     c.excepciones = 0;
@@ -584,12 +642,48 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     if c.avisos > c.avisos_dichos {
         di(&format!("Enforcer: {} avisos más de esta tarea", c.avisos - c.avisos_dichos));
     }
+    if c.negados > c.negados_dichos {
+        di(&format!("guardia: {} negativas más de esta tarea", c.negados - c.negados_dichos));
+    }
+    // S28: lo que dejó cambiado en las tablas de saltos y en ExecBase, a como estaba.
+    c.deshecho = Deshecho::default();
+    if let Some(foto) = c.foto.take() {
+        let (d, campos) = foto.deshacer(&mut c.ex);
+        if d.entradas > 0 {
+            di(&format!("defensa: {} entradas de las tablas de saltos cambiadas por el programa: deshechas", d.entradas));
+        }
+        if d.campos > 0 {
+            di(&format!("defensa: ExecBase cambiada por el programa ({}): deshecha", campos.join("; ")));
+        }
+        c.deshecho = d;
+        c.foto = Some(foto);
+    }
     if ventanas > c.gr.ventanas().len() {
         di(&format!("{} ventanas sin cerrar: cerradas al acabar", ventanas - c.gr.ventanas().len()));
     }
     let _ = c.ex.tomar_quitadas();
     atender(c);
     bloques
+}
+
+/// Lo que se deshizo tras la última tarea (S28): entradas de tablas de saltos y grupos de campos de ExecBase.
+///
+/// # Safety
+/// `entradas` y `campos` tienen que apuntar a un `u32` donde escribir.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_defensa(entradas: *mut u32, campos: *mut u32) {
+    let d = caja().map_or(Deshecho::default(), |c| c.deshecho);
+    // SEGURIDAD: lo garantiza quien llama (caja.c, con variables suyas).
+    unsafe {
+        *entradas = d.entradas;
+        *campos = d.campos;
+    }
+}
+
+/// Cuántas negativas de la guardia (S28) ha dado la última tarea.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_negados() -> u32 {
+    caja().map_or(0, |c| c.negados)
 }
 
 /// Cuántos avisos del Enforcer ha dado la última tarea.
@@ -782,6 +876,13 @@ fn recoger_avisos(c: &mut Caja) {
         if c.avisos_dichos < AVISOS_A_LA_VISTA {
             c.avisos_dichos += 1;
             di(&format!("Enforcer: {}", t));
+        }
+    }
+    for n in c.dos.fs.tomar_negados() {
+        c.negados += 1;
+        if c.negados_dichos < NEGADOS_A_LA_VISTA {
+            c.negados_dichos += 1;
+            di(&format!("guardia: {} \"{}\" ({}): negado", n.orden, n.nombre, n.motivo));
         }
     }
     // Código cambiado (CacheClearU, SetFunction, MakeFunctions...): el JIT olvida lo traducido, menos lo que se está

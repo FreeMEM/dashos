@@ -254,6 +254,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
+    // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
+    // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
+    // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
+    ("espia", programa!("espia"), &[], &["ventanas"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]
@@ -278,6 +283,20 @@ const PAGINA_CERO: u32 = 9;
 const OPCIONAL: u32 = 0x100;
 /// Las llaves de arranque llevan todos los derechos: `inicio` las reparte (transferir) a los servicios.
 const DERECHOS: u32 = crate::objetos::TODOS;
+
+/// La RAM pedida para el invitado de la caja Linux al compilar el kernel, en MB (`DASHOS_CAJA_LINUX_MB`), o 0: la regla
+/// de serie (256 MB con 2 GB, 512 con 4 GB o más; `dashos::maquina::memoria_invitado`). caja-linux-grandes.
+fn caja_linux_mb() -> u64 {
+    let Some(t) = option_env!("DASHOS_CAJA_LINUX_MB") else { return 0 };
+    let mut n = 0u64;
+    for b in t.bytes() {
+        if !b.is_ascii_digit() {
+            return 0;
+        }
+        n = n.saturating_mul(10).saturating_add((b - b'0') as u64);
+    }
+    n.min(1 << 20)
+}
 
 fn nombre16(n: &str) -> [u8; 16] {
     let mut b = [0u8; 16];
@@ -597,11 +616,13 @@ pub fn lanzar() -> bool {
         }
     }
     // Lo que se sabe de la máquina, para quien lo necesite (la caja Linux, H9): la RAM que conoce el kernel en bytes
-    // (u64) y si hay hipervisor (u64, 1 o 0). Solo de lectura.
+    // (u64), si hay hipervisor (u64, 1 o 0) y la RAM pedida para el invitado de la caja Linux (u64, bytes; 0 = la regla
+    // de serie): `DASHOS_CAJA_LINUX_MB` al compilar (caja-linux-grandes). Solo de lectura.
     if let Some(m) = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz()) {
-        let mut datos = [0u8; 16];
+        let mut datos = [0u8; 24];
         datos[0..8].copy_from_slice(&(memoria::paginas().total() as u64 * memoria::PAGINA).to_le_bytes());
         datos[8..16].copy_from_slice(&(crate::base::hiper::hay() as u64).to_le_bytes());
+        datos[16..24].copy_from_slice(&(caja_linux_mb() << 20).to_le_bytes());
         m.escribir(0, &datos);
         apuntar(&mut llaves, "sistema", DATOS, Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), LEER | crate::objetos::TRANSFERIR));
     }
