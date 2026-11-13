@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
@@ -27,7 +27,7 @@ saludo.exe: saludo_entrada.s saludo.c
 	rm -f saludo_entrada.o
 
 # H5: una ventana Amiga (ventana.exe) y la prueba hostil de intuition, graphics y dos (hostil.exe), con la misma
-# entrada. Sin -g: no hace falta para el cargador, que ya lo prueba saludo.exe.
+# entrada. S28: actualiza.exe, un programa honrado que actualiza otro (la guardia pregunta). Sin -g: no hace falta para el cargador, que ya lo prueba saludo.exe.
 CFLAGS_VENTANA := -m68020 -O2 -ffreestanding -fno-builtin -nostdlib -nostartfiles -fomit-frame-pointer -Wall
 %.exe: %.c saludo_entrada.s
 	$(A)as -m68020 --register-prefix-optional saludo_entrada.s -o $*_entrada.o

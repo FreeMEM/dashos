@@ -30,7 +30,7 @@ QEMU=$!
 # (400, 130), donde solo está ella (junto a su título); un clic le da el teclado, el cursor sigue en (300, 300), y
 # Super+Arriba la maximiza y Super+Abajo la devuelve.
 # Cuando `guardian` pregunta por un permiso (U4), se contesta: a `pide`, sí; a otro, una "s" antes de tiempo, que no
-# debe contar, y después no.
+# debe contar, y después no. S28: a `actualiza.exe` de la caja Amiga, "e" (solo esta vez) y luego "s" (siempre).
 # Cuando `guardian` pone la pantalla de bloqueo (U3), se dejan de mandar esas teclas y se teclea una contraseña mala
 # y la buena, con Intro tras cada una; al desbloquear, sigue lo de antes. Igual con la pantalla de entrada y, tras
 # ella, con el bloqueo por tiempo: 3 s después de que `guardian` pida el aviso, nada hasta que bloquea.
@@ -40,7 +40,7 @@ QEMU=$!
 # U6, paso 2: con CAPTURA_U6=prefijo, la pantalla con la ventana de `cambio` de Ana delante (prefijo.ana.ppm) y la de la
 # sesión de Carla, con Ana detrás (prefijo.carla.ppm): ahí no tiene que estar (lo mira `tools/captura_cambio.py`).
 if [ -n "${TECLAS:-}" ]; then
-    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
+    python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>"${GUION_ERRORES:-/dev/null}" &
 import os, socket, sys, time
 ruta, total, serie, captura_pregunta, diag_registros, captura_selector, captura_centro = sys.argv[1], float(sys.argv[2]), sys.argv[3], sys.argv[4], sys.argv[5], sys.argv[6], sys.argv[7]
 diag_hecho = False
@@ -303,9 +303,28 @@ while time.time() - inicio < total:
             if preguntas == 1 and captura_pregunta:
                 time.sleep(0.3)
                 mandar("screendump " + captura_pregunta)
+            # S28: la guardia de ficheros de la caja Amiga. A `actualiza.exe` (un programa honrado que actualiza
+            # otro), "E" (solo esta vez) la primera vez y "S" (siempre) la segunda; a los virus de laboratorio, "N". Con
+            # CAPTURA_PREGUNTA_CAJA=fichero.ppm, la primera de actualiza.
+            caja_actualiza = " quiere cambiar " in linea and "actualiza.exe" in linea
+            if caja_actualiza:
+                globals()["actualiza_vistas"] = globals().get("actualiza_vistas", 0) + 1
+                if actualiza_vistas == 1 and os.environ.get("CAPTURA_PREGUNTA_CAJA"):
+                    time.sleep(0.3)
+                    mandar("screendump " + os.environ["CAPTURA_PREGUNTA_CAJA"])
+            # Las de la caja, sin la "s" a destiempo: con el guion lento (los movimientos del ratón de otros pasos tardan),
+            # llegaba pasado el primer segundo y valía como "siempre". Y la tecla, solo si la pregunta sigue en pantalla:
+            # si no, se la llevaría la ventana de debajo (Ajustes, que espera su texto).
+            def sigue_preguntando():
+                t = open(serie, errors="replace").read()
+                return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
             if "¿pide " in linea:
                 time.sleep(1.3)
                 mandar("sendkey s")
+            elif " quiere cambiar " in linea:
+                time.sleep(1.3)
+                if sigue_preguntando():
+                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "s"))
             else:
                 mandar("sendkey s")
                 time.sleep(1.3)
@@ -1380,8 +1399,11 @@ while time.time() - inicio < total:
                         ir_a(10 * paso, 5 * paso)
         # Mientras el selector espera teclas, no: el clic en Ajustes le quitaría el teclado y sus teclas irían a
         # Ajustes (con el PC lento, Ajustes sale después del selector).
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18):
+        # S28: ni con una pregunta de `guardian` en pantalla (las de la caja Amiga salen a esta hora) ni con la sesión
+        # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
+            preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
             # título, donde no hay nada que pulsar (el foco sigue en su campo; a (196, 196) está su Cancelar). Después, el
             # cursor vuelve a (196, 196) de su esquina, como antes. Dónde está la ventana lo dice el compositor (con la
@@ -1405,6 +1427,8 @@ while time.time() - inicio < total:
             time.sleep(2)
             mandar("sendkey meta_l-down")
             time.sleep(1)
+            if open(serie, errors="replace").read().count("[guardian] pregunta en pantalla: ") > preguntas_antes:
+                ajustes = False
         # El desplegable de Ajustes, cuando su campo ya tiene su "a" (antes, un clic en él se llevaría las "a"): el cursor
         # a la esquina y al desplegable (donde lo dicen el compositor y Ajustes), un clic abre el menú; con
         # CAPTURA_MENU=fichero.ppm, la pantalla así; un clic en la segunda opción la elige. El cursor va después abajo a la

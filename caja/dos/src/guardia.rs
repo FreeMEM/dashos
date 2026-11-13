@@ -18,11 +18,14 @@
 //! Cada negativa se apunta (`tomar_negados`) para que la caja la diga. Lo que se lee pasa sin tocar.
 //!
 //! **Preguntar** (decisión del usuario del 2026-11-13): con un `Preguntador`, lo que no se cambia se le pregunta al
-//! usuario (por `guardian`) en vez de negarlo, una vez por programa 68k y clase: la respuesta se recuerda mientras viva
-//! la caja (y, si el usuario lo dice, la recuerda `sesiones`). Sin `Preguntador`, se niega. Lo de solo lectura no se
-//! pregunta nunca.
+//! usuario (en la caja, por `sesiones` y `guardian`) en vez de negarlo. Lo contestado vale para lo que queda de esa
+//! vuelta del programa 68k (hasta que la caja diga otro con `programa`): un sí, para esa clase; un no (o nadie que
+//! conteste), para todo lo de ese programa, sin volver a preguntar. Lo que el usuario dice "siempre" lo recuerda
+//! `sesiones` por programa, también tras reiniciar: la próxima vuelta se pregunta y contesta él, sin el usuario. Sin
+//! `Preguntador`, se niega. Lo de solo lectura no se pregunta nunca.
 //!
-//! Lo que no hace (S28): versiones o papelera de lo que se borra o se escribe, cupos de espacio.
+//! Lo que no hace (S28): versiones de lo que se escribe, cupos de espacio. La papelera de lo que se borra la pone el
+//! servicio de archivos (la ficha de la caja), por debajo.
 
 use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
@@ -62,6 +65,17 @@ impl Clase {
         matches!(self, Clase::Ejecutable | Clase::Icono | Clase::Arranque)
     }
 
+    /// El nombre corto de la clase en el permiso que se pide a `sesiones` (S28, `usuario/src/preguntas_ficheros.rs`).
+    pub fn corto(self) -> &'static str {
+        match self {
+            Clase::Normal => "fichero",
+            Clase::Ejecutable => "ejec",
+            Clase::Icono => "icono",
+            Clase::Arranque => "guion",
+            Clase::Imagen(_) => "disco",
+        }
+    }
+
     pub fn nombre(self) -> &'static str {
         match self {
             Clase::Normal => "fichero",
@@ -92,7 +106,7 @@ pub fn clase_por_nombre(nombre: &str) -> Clase {
 /// A quién se pregunta (S28): en la caja, al usuario por `sesiones` y `guardian`.
 pub trait Preguntador {
     /// Si el programa 68k `programa` puede cambiar `nombre`, que es de la clase `clase`. `false` también si nadie
-    /// contesta.
+    /// contesta. `nombre` es el último del camino, tal como llega del programa (puede ser largo o raro).
     fn preguntar(&mut self, programa: &str, clase: Clase, nombre: &str) -> bool;
 }
 
@@ -128,8 +142,10 @@ pub struct Guardia<F: SistemaArchivos> {
     preguntador: Option<Box<dyn Preguntador>>,
     /// El programa 68k que corre (lo pone la caja al empezar cada uno).
     programa: String,
-    /// Lo contestado: (programa, clase) → sí o no.
-    respuestas: BTreeMap<(String, Clase), bool>,
+    /// Lo contestado en esta vuelta del programa: clase → sí o no.
+    respuestas: BTreeMap<Clase, bool>,
+    /// En esta vuelta, el usuario dijo que no (o nadie contestó): no se pregunta más.
+    dijo_no: bool,
     /// Cuántas veces se ha preguntado.
     pub preguntas: u64,
 }
@@ -149,6 +165,7 @@ impl<F: SistemaArchivos> Guardia<F> {
             preguntador: None,
             programa: String::new(),
             respuestas: BTreeMap::new(),
+            dijo_no: false,
             preguntas: 0,
         }
     }
@@ -158,22 +175,27 @@ impl<F: SistemaArchivos> Guardia<F> {
         self.preguntador = Some(p);
     }
 
-    /// El programa 68k que empieza a correr: lo que se pregunte va por él.
+    /// El programa 68k que empieza a correr: lo que se pregunte va por él. Lo contestado al anterior se olvida.
     pub fn programa(&mut self, nombre: &str) {
         self.programa = String::from(nombre);
+        self.respuestas.clear();
+        self.dijo_no = false;
     }
 
-    /// Si se deja cambiar algo de la clase `clase` (`nombre`) al programa que corre: lo recordado o, si no, lo que
-    /// conteste el preguntador (y se recuerda).
+    /// Si se deja cambiar algo de la clase `clase` (`nombre`) al programa que corre: lo contestado en esta vuelta o, si
+    /// no, lo que conteste el preguntador (y se recuerda). Tras un no, todo no.
     fn dejar(&mut self, clase: Clase, nombre: &str) -> bool {
-        let clave = (self.programa.clone(), clase);
-        if let Some(&r) = self.respuestas.get(&clave) {
+        if self.dijo_no {
+            return false;
+        }
+        if let Some(&r) = self.respuestas.get(&clase) {
             return r;
         }
         let Some(p) = self.preguntador.as_mut() else { return false };
         self.preguntas += 1;
-        let r = p.preguntar(&clave.0, clase, nombre);
-        self.respuestas.insert(clave, r);
+        let r = p.preguntar(&self.programa, clase, nombre);
+        self.respuestas.insert(clase, r);
+        self.dijo_no = !r;
         r
     }
 

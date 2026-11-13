@@ -28,6 +28,13 @@ pub const SALIR: u32 = 4;
 pub const VOLVER: u32 = 5;
 /// De un programa (U4): la llave de un servicio (orden, largo del nombre, 0, el nombre). Si su ficha tiene el permiso,
 /// contesta 0 con la llave: marcada con su número, revocable y sin derecho de transferirla; si no, -2.
+///
+/// S28: también un permiso **sin llave**, de la guardia de ficheros de la caja Amiga (`usuario/src/preguntas_ficheros.rs`):
+/// orden, largo del nombre, largo del detalle, el nombre (`ejec:<programa 68k>`, `icono:`, `guion:` o `disco:`) y el
+/// detalle (el programa 68k, un 0 y el fichero; `DETALLE` bytes como mucho). Solo de los programas de `PIDEN`. Se
+/// concede como los demás (por programa y usuario, guardado si el usuario dice "siempre") pero no da llave: contesta el
+/// estado (i32) y cómo se decidió (u32: `RECORDADO`, `SIEMPRE`, `ESTA_VEZ`, `DIJO_NO`, `SIN_PREGUNTAR`, `OCUPADO`).
+/// Una pregunta sin contestar a la vez por programa.
 pub const SERVICIO: u32 = 6;
 /// De un programa: renunciar a la llave de un servicio (como `SERVICIO`). `sesiones` la revoca: deja de servir.
 pub const DEJAR: u32 = 7;
@@ -53,6 +60,7 @@ pub const SIN_RAIZ: u8 = 0xff;
 /// De `guardian` (U4): mándame las preguntas por esta llave (la segunda del mensaje). Contesta 0.
 pub const PREGUNTAS: u32 = 11;
 /// De `guardian`: la respuesta a una pregunta (orden, número de la pregunta u32, 1 sí o 0 no u32). Contesta 0.
+/// S28: 2 es "sí, solo esta vez": se da (la llave, o el permiso sin llave) sin guardarlo; la próxima vez se pregunta.
 pub const RESPUESTA: u32 = 12;
 /// De `guardian` o de `centro` (el centro de control, S10c): retirar lo concedido (orden, largo del programa u32, largo
 /// del servicio u32, programa, servicio). `sesiones` lo borra de lo guardado y revoca las llaves de ese servicio que
@@ -112,7 +120,8 @@ pub const MAX_DETRAS: usize = 8;
 pub const PRIMERA_PERSONA: u32 = 1000;
 /// Lo que llega a `guardian` por su llave de preguntas: número (u32), usuario (u32), programa (16) y servicio (16). Si
 /// es una acción de administrador, en vez del servicio va la acción tras un "*": se contesta con `RESPUESTA_ADMIN`.
-pub const PREGUNTA: usize = 40;
+/// S28: y 128 bytes de detalle (ceros, salvo en un permiso sin llave: el programa 68k, un 0 y el fichero).
+pub const PREGUNTA: usize = 40 + 128;
 pub const ENTRADA_REGISTRO: usize = 40;
 pub const POR_PAGINA_REGISTRO: usize = 5;
 /// Lo que se apunta: matar negado, llave de servicio negada, entrar o volver negado, un proceso que muere por un fallo.
