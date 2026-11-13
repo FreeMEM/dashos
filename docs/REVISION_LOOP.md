@@ -1826,3 +1826,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   "s" suelta no da ningún permiso. Las respuestas son botones tonales de Material con la palabra dentro y su tecla
   subrayada en el color primario; "Mayús" pequeño dentro del botón cuando hace falta. El guion contesta `shift-s`.
 - `make prueba` BIEN; arranque-virt, -vm y -2: BIEN (lo demás no toca `guardian`).
+
+### 2026-11-13 17:40: esquinas menos redondeadas
+- Decisión del usuario ("los vértices de las ventanas, que no sean tan redondeados"): `kit::tema::RADIO_VENTANA` = 8
+  (Ajustes, centro, Workbench, selector, también al desmaximizar) y `RADIO_DIALOGO` = 12 (preguntas de `guardian`,
+  panel rápido); `decoracion::RADIO_MARCO` (barra de las ventanas de Linux) de 12 a 8. Antes 16, 24 y 28.
+- `cargo test` de kit y wayland; `make prueba` BIEN; arranque-virt, -2 y -escritorio: BIEN. Captura Full HD.
