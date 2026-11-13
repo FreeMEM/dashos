@@ -641,8 +641,12 @@ pub struct Escena<M: Memorias> {
     /// nombre que da `inicio`: lo pone quien atiende. Sus ventanas llevan la marca de la caja (`marca`). Dónde se pintó
     /// la marca en el último cuadro (como `sombras_antes`), y la pestaña ya pintada.
     pub de_caja: Vec<Cliente>,
+    /// Lo mismo para la caja Amiga (rama `amiga-integrada`): sus ventanas pueden llevar la barra de DashOS y los
+    /// controles de Material, así que también llevan la marca, con su color y "68K".
+    pub de_caja_amiga: Vec<Cliente>,
     marcas_antes: Vec<Rect>,
-    pestana_linux: Vec<u8>,
+    pestana_linux: marca::Pestana,
+    pestana_amiga: marca::Pestana,
     /// S29: si pegar (`receive`) pide una tecla o un clic reciente en el programa (`portapapeles::PEGAR_MS`); el
     /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
     pub pegar_con_entrada: bool,
@@ -837,9 +841,23 @@ impl<M: Memorias> Escena<M> {
             emergentes_colocados: Vec::new(),
             de_caja: Vec::new(),
             marcas_antes: Vec::new(),
-            pestana_linux: marca::pestana(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
+            pestana_linux: marca::Pestana::de_pixeles(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
+            de_caja_amiga: Vec::new(),
+            pestana_amiga: marca::Pestana::de_pixeles(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
+        }
+    }
+
+    /// S29: las pestañas de las ventanas de las cajas sin la barra de DashOS, pintadas por el compositor con el kit (la
+    /// de Linux y la de la caja Amiga). Una vacía o de medida que no cuadra no cambia la que había.
+    pub fn poner_pestanas(&mut self, linux: marca::Pestana, amiga: marca::Pestana) {
+        let vale = |p: &marca::Pestana| p.w > 0 && p.h > 0 && p.w <= 400 && p.h <= 100 && p.px.len() == (p.w * p.h * 4) as usize;
+        if vale(&linux) {
+            self.pestana_linux = linux;
+        }
+        if vale(&amiga) {
+            self.pestana_amiga = amiga;
         }
     }
 
@@ -1238,9 +1256,10 @@ impl<M: Memorias> Escena<M> {
         // S29: el de una ventana de la caja Linux, con "Linux · " delante (un programa de Linux no se hace pasar por
         // una ventana del sistema en la barra).
         let de_caja = self.ventana_con_titulo().is_some_and(|v| self.de_caja.contains(&v.0));
+        let de_amiga = self.ventana_con_titulo().is_some_and(|v| self.de_caja_amiga.contains(&v.0));
         let t_caja;
-        let t = if de_caja {
-            t_caja = marca::titulo_de_caja(self.titulo_activo());
+        let t = if de_caja || de_amiga {
+            t_caja = marca::titulo_con(if de_amiga { marca::PREFIJO_AMIGA } else { marca::PREFIJO_LINUX }, self.titulo_activo());
             t_caja.as_str()
         } else {
             self.titulo_activo()
@@ -1304,6 +1323,7 @@ impl<M: Memorias> Escena<M> {
         self.ponen_tema.retain(|&c| c != cliente);
         self.barras.retain(|&c| c != cliente);
         self.de_caja.retain(|&c| c != cliente);
+        self.de_caja_amiga.retain(|&c| c != cliente);
         self.pegados_negados.retain(|&c| c != cliente);
         self.avisos_lanzador.retain(|t| t.0 != cliente);
         self.avisos_titulo.retain(|t| t.0 != cliente);
@@ -1694,7 +1714,7 @@ impl<M: Memorias> Escena<M> {
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
         // S29: las marcas de las ventanas de las cajas: antes de qué capa van, lo que ocupa la ventana y su pestaña.
-        let mut marcas: Vec<(usize, Rect, Rect)> = Vec::new();
+        let mut marcas: Vec<(usize, Rect, Rect, bool)> = Vec::new();
         // S29: las capas de esas ventanas (de la primera a antes de la última) y a qué se recortan.
         let mut recortes: Vec<(usize, usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
@@ -1723,12 +1743,21 @@ impl<M: Memorias> Escena<M> {
             capas.extend(a.into_iter().map(|(s, x, y)| (c, s, x, y)));
             // S29: la marca de una ventana de la caja, encima de todo lo suyo (antes de la capa de la ventana siguiente);
             // lo suyo, recortado a lo que rodea la marca.
-            if self.de_caja.contains(&c)
+            let amiga = self.de_caja_amiga.contains(&c);
+            if (self.de_caja.contains(&c) || amiga)
                 && self.bloqueo.is_none()
                 && let Some(caja) = marca::caja_de(cli, id)
             {
                 let area = self.area_de(self.salida_de(caja));
-                marcas.push((capas.len(), caja, marca::sitio_pestana(caja, area, marca::medida_pestana(marca::TEXTO_LINUX))));
+                let p = if amiga { &self.pestana_amiga } else { &self.pestana_linux };
+                // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
+                // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
+                let sitio = if decoracion::con_barra(cli, id) {
+                    Rect { x: caja.x, y: caja.y, w: 0, h: 0 }
+                } else {
+                    marca::sitio_pestana(caja, area, (p.w, p.h))
+                };
+                marcas.push((capas.len(), caja, sitio, amiga));
                 recortes.push((desde, capas.len(), caja));
             }
         }
@@ -1802,7 +1831,9 @@ impl<M: Memorias> Escena<M> {
         // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer, sombra). Una sombra va como
         // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
         // S29: una fila del color de la caja, tan ancha como la marca más ancha (las tiras del borde la repiten).
-        let fila_marca: Vec<u8> = marca::COLOR_LINUX.to_le_bytes().repeat(marcas.iter().map(|m| m.1.w.max(0) as usize).max().unwrap_or(0));
+        let ancho_marcas = marcas.iter().map(|m| m.1.w.max(0) as usize).max().unwrap_or(0);
+        let fila_marca: Vec<u8> = marca::COLOR_LINUX.to_le_bytes().repeat(ancho_marcas);
+        let fila_amiga: Vec<u8> = if marcas.iter().any(|m| m.3) { marca::COLOR_AMIGA.to_le_bytes().repeat(ancho_marcas) } else { Vec::new() };
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut esquinas: Vec<Option<Rect>> = Vec::new();
         let mut s_i = 0;
@@ -1811,7 +1842,8 @@ impl<M: Memorias> Escena<M> {
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
             // S29: la marca de la ventana de antes, si acabó en la capa anterior.
             while m_i < marcas.len() && marcas[m_i].0 == k {
-                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, &fila_marca, &self.pestana_linux));
+                let (fila, pestana) = if marcas[m_i].3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px));
                 m_i += 1;
             }
             // Las barras de DashOS van tras la sombra de su ventana (más abajo).
@@ -1859,7 +1891,8 @@ impl<M: Memorias> Escena<M> {
         }
         // S29: la marca de la última ventana.
         for m in &marcas[m_i..] {
-            con_bufer.extend(marca::capas(m.1, m.2, &fila_marca, &self.pestana_linux));
+            let (fila, pestana) = if m.3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
+            con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px));
         }
         esquinas.resize(con_bufer.len(), None);
         // Lo que se queda fuera de las esquinas de abajo en la fila `fila` de la ventana `r` (0: nada; fuera de esas

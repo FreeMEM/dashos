@@ -15,6 +15,9 @@
 //! de ventanas de dom0), contada en su documentación.
 //!
 //! Y la barra de la pantalla recibe el título de una ventana de la caja con "Linux · " delante.
+//!
+//! Desde la rama `amiga-integrada`, también la caja Amiga (sus ventanas llevan la barra de DashOS y los controles de
+//! Material "como DashOS"): azul, "68K" y "68K · ".
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -31,6 +34,23 @@ pub const TINTA: u32 = 0xff1d_1b20;
 pub const PREFIJO_LINUX: &str = "Linux · ";
 /// El texto de la pestaña.
 pub const TEXTO_LINUX: &str = "LINUX";
+/// La caja Amiga (rama `amiga-integrada`): azul (el del Workbench de siempre), con la letra blanca; "68K" en la
+/// pestaña y "68K · " en la barra de la pantalla (lo eligió el usuario el 2026-11-13: el procesador que se traduce,
+/// sin la marca registrada).
+pub const COLOR_AMIGA: u32 = 0xff00_55aa;
+pub const TINTA_AMIGA: u32 = 0xffff_ffff;
+/// Para comparar (el usuario quiere verlas): `DASHOS_MARCA_AMIGA=classic` o `icono` al compilar; si no, "68K".
+pub const PREFIJO_AMIGA: &str = match option_env!("DASHOS_MARCA_AMIGA") {
+    Some(v) if v.as_bytes().len() == 7 => "Classic · ",
+    Some(v) if v.as_bytes().len() == 5 => "",
+    _ => "68K · ",
+};
+pub const TEXTO_AMIGA: &str = match option_env!("DASHOS_MARCA_AMIGA") {
+    Some(v) if v.as_bytes().len() == 7 => "CLASSIC",
+    // El icono: un chip, como una "letra" más de la tabla.
+    Some(v) if v.as_bytes().len() == 5 => "\u{25a3}",
+    _ => "68K",
+};
 
 /// Cada letra de la pestaña: 5 × 7, una fila por byte (el bit 4 es la columna de la izquierda), a escala `ESCALA`.
 const ESCALA: i32 = 2;
@@ -42,11 +62,31 @@ const LETRAS: &[(char, [u8; 7])] = &[
     ('N', [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001]),
     ('U', [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
     ('X', [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001]),
-    // Para la caja Amiga, si se le pone (S28).
+    // Para la caja Amiga: "68K".
+    ('6', [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
+    ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
+    ('K', [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001]),
+    // Para comparar: "CLASSIC" y el icono de chip (patas arriba y abajo, cuerpo con su muesca).
+    ('C', [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110]),
     ('A', [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
-    ('M', [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001]),
-    ('G', [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111]),
+    ('S', [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110]),
+    ('\u{25a3}', [0b01010, 0b11111, 0b10001, 0b10101, 0b10001, 0b11111, 0b01010]),
 ];
+
+/// Una pestaña ya pintada: píxeles ARGB premultiplicados (en bytes, como un búfer de `wl_shm`), ancho y alto.
+pub struct Pestana {
+    pub px: Vec<u8>,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Pestana {
+    /// La de letra de píxeles (`pestana`): la que se usa si el compositor no pone otra (`Escena::poner_pestanas`).
+    pub fn de_pixeles(texto: &str, color: u32, tinta: u32) -> Pestana {
+        let (w, h) = medida_pestana(texto);
+        Pestana { px: pestana(texto, color, tinta), w, h }
+    }
+}
 
 /// Lo que mide la pestaña de `texto`.
 pub fn medida_pestana(texto: &str) -> (i32, i32) {
@@ -112,22 +152,23 @@ pub fn tiras(caja: Rect) -> [Rect; 4] {
     ]
 }
 
-/// Dónde va la pestaña de una ventana que ocupa `caja`, en una salida cuyo sitio para ventanas es `area`: encima de la
-/// esquina de arriba a la izquierda si cabe; si no, por dentro, bajo el borde.
-pub fn sitio_pestana(caja: Rect, area: Rect, (w, h): (i32, i32)) -> Rect {
-    if caja.y - h >= area.y {
-        Rect { x: caja.x, y: caja.y - h, w, h }
-    } else {
-        Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h }
-    }
+/// Dónde va la pestaña de una ventana sin la barra de DashOS que ocupa `caja`: por dentro, bajo el borde de arriba a la
+/// izquierda (nunca fuera de la ventana: sin solapas, decisión del usuario del 2026-11-13). `area` ya no se usa.
+pub fn sitio_pestana(caja: Rect, _area: Rect, (w, h): (i32, i32)) -> Rect {
+    Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h }
 }
 
 /// El título para la barra de la pantalla de una ventana de la caja.
 pub fn titulo_de_caja(titulo: &str) -> String {
+    titulo_con(PREFIJO_LINUX, titulo)
+}
+
+/// El título para la barra de la pantalla con el prefijo de su caja.
+pub fn titulo_con(prefijo: &str, titulo: &str) -> String {
     if titulo.is_empty() {
         return String::new();
     }
-    let mut t = String::from(PREFIJO_LINUX);
+    let mut t = String::from(prefijo);
     t.push_str(titulo);
     t
 }
@@ -137,8 +178,9 @@ pub(super) type Capa<'a> = (Rect, i32, i32, &'a [u8], crate::shm::Bufer, Option<
 
 /// Las capas que pintan la marca de una ventana que ocupa `caja`, con la pestaña en `sitio`: las cuatro tiras del
 /// borde, de un color liso (`fila`: una fila de ese color al menos tan ancha como la caja; cada tira la repite, con
-/// paso 0), y la pestaña (`px`, de `medida_pestana`). Opacas: se copian encima de lo que haya.
+/// paso 0), y la pestaña (`px`, de `Pestana`). Las tiras, opacas; la pestaña, mezclada con lo de debajo.
 pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -> Vec<Capa<'a>> {
+    // La pestaña es ARGB premultiplicado: el compositor la pinta con las esquinas de abajo redondeadas (transparentes).
     let mut out = Vec::new();
     for t in tiras(caja) {
         if t.w <= 0 || t.h <= 0 || fila.len() < t.w as usize * 4 {
@@ -148,7 +190,7 @@ pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -
         out.push((t, t.x, t.y, fila, b, None));
     }
     if px.len() >= (sitio.w * sitio.h * 4) as usize && sitio.w > 0 && sitio.h > 0 {
-        let b = crate::shm::Bufer { pool: 0, desplazamiento: 0, ancho: sitio.w as u32, alto: sitio.h as u32, linea: sitio.w as usize * 4, formato: crate::shm::XRGB8888 };
+        let b = crate::shm::Bufer { pool: 0, desplazamiento: 0, ancho: sitio.w as u32, alto: sitio.h as u32, linea: sitio.w as usize * 4, formato: crate::shm::ARGB8888 };
         out.push((sitio, sitio.x, sitio.y, px, b, None));
     }
     out

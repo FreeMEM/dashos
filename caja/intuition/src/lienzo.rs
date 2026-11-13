@@ -5,6 +5,8 @@
 use alloc::vec;
 use alloc::vec::Vec;
 
+use crate::nitido::{Alinea, Estilo, MAX_LETRAS, MAX_TEXTOS, TextoNitido};
+
 /// Un rectángulo con los dos extremos incluidos, como `struct Rectangle`.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Rect {
@@ -65,12 +67,16 @@ pub struct Lienzo {
     /// El `ColorMap` cuyas plumas se usan al dibujar con `SetAPen` (0: el del Workbench).
     pub paleta: u32,
     dano: Option<Rect>,
+    /// Si se apuntan los textos de nuestras bibliotecas para la letra de DashOS (`nitido.rs`): solo en las ventanas
+    /// "como DashOS".
+    pub nitido: bool,
+    textos: Vec<TextoNitido>,
 }
 
 impl Lienzo {
     /// Un lienzo de `ancho` x `alto` del color `fondo`. Los tamaños se tienen que haber comprobado antes.
     pub fn nuevo(ancho: u32, alto: u32, fondo: u32, paleta: u32) -> Lienzo {
-        Lienzo { ancho, alto, pix: Vec::new(), fondo: fondo | 0xFF00_0000, paleta, dano: None }
+        Lienzo { ancho, alto, pix: Vec::new(), fondo: fondo | 0xFF00_0000, paleta, dano: None, nitido: false, textos: Vec::new() }
     }
     pub fn ancho(&self) -> u32 {
         self.ancho
@@ -114,6 +120,102 @@ impl Lienzo {
         self.asegurar();
         &self.pix
     }
+    /// Los píxeles y los textos nítidos apuntados (para mandarlos juntos).
+    pub fn pixeles_y_textos(&mut self) -> (&[u32], &[TextoNitido]) {
+        self.asegurar();
+        (&self.pix, &self.textos)
+    }
+    /// Los textos nítidos apuntados.
+    pub fn textos(&self) -> &[TextoNitido] {
+        &self.textos
+    }
+    /// Olvida los textos nítidos (al cambiar de tema).
+    pub fn olvidar_textos(&mut self) {
+        self.textos.clear();
+    }
+    /// Una copia de lo que hay en `r` (que tiene que estar dentro), fila a fila.
+    pub fn copiar(&mut self, r: Rect) -> Vec<u32> {
+        let r = r.interseccion(&self.rect());
+        if r.vacio() {
+            return Vec::new();
+        }
+        self.asegurar();
+        let an = self.ancho as usize;
+        let mut v = Vec::with_capacity(r.ancho() as usize * r.alto() as usize);
+        for y in r.y0..=r.y1 {
+            let i = y as usize * an;
+            v.extend_from_slice(&self.pix[i + r.x0 as usize..=i + r.x1 as usize]);
+        }
+        v
+    }
+    /// Lo de debajo de un texto nítido que sigue valiendo en el mismo hueco `r`: al pintar otra vez un texto encima del
+    /// suyo sin borrar (las etiquetas de fuera de un gadget se repintan así), el fondo de verdad es el de antes, no el
+    /// que ya lleva la topaz.
+    pub fn antes_de(&self, r: Rect) -> Option<Vec<u32>> {
+        let t = self.textos.iter().rev().find(|t| t.r == r)?;
+        t.vale(&self.pix, self.ancho, self.alto).then(|| t.antes.clone())
+    }
+    /// Apunta un texto nítido en el hueco `r` (dentro del lienzo, si no no se apunta) con lo que había antes de pintar
+    /// sus letras (`antes`, de `copiar`). Lo de después se copia ahora. Solo si el lienzo es `nitido`. Un texto en el
+    /// mismo hueco que otro lo sustituye; si hay demasiados, se quitan los que ya no valen y después los más viejos.
+    pub fn apuntar_texto(&mut self, r: Rect, antes: Vec<u32>, texto: &[u8], color: u32, alinea: Alinea, estilo: Estilo) {
+        if !self.nitido
+            || r.vacio()
+            || texto.is_empty()
+            || texto.len() > MAX_LETRAS
+            || r.interseccion(&self.rect()) != r
+            || antes.len() != r.ancho() as usize * r.alto() as usize
+        {
+            return;
+        }
+        let despues = self.copiar(r);
+        self.textos.retain(|t| t.r != r);
+        if self.textos.len() >= MAX_TEXTOS {
+            let (an, al) = (self.ancho, self.alto);
+            let pix = &self.pix;
+            self.textos.retain(|t| t.vale(pix, an, al));
+            while self.textos.len() >= MAX_TEXTOS {
+                self.textos.remove(0);
+            }
+        }
+        self.textos.push(TextoNitido { r, texto: texto.to_vec(), color, alinea, estilo, antes, despues });
+    }
+    /// Pasa cada píxel de `r` por `f` (como `poner`), y lo mismo con lo de antes de los textos nítidos que lo tocan, para
+    /// que sigan valiendo (un gadget desactivado: todo más claro). El color de la letra cambia si el hueco cae dentro.
+    pub fn filtrar(&mut self, r: Rect, f: impl Fn(u32) -> u32) {
+        let r = r.interseccion(&self.rect());
+        if r.vacio() {
+            return;
+        }
+        self.asegurar();
+        // Los que valen antes de tocar nada.
+        let (an, al) = (self.ancho, self.alto);
+        let validos: Vec<bool> = self.textos.iter().map(|t| !t.r.interseccion(&r).vacio() && t.vale(&self.pix, an, al)).collect();
+        for y in r.y0..=r.y1 {
+            for x in r.x0..=r.x1 {
+                let p = self.pixel(x, y);
+                self.poner(x, y, f(p));
+            }
+        }
+        let mut textos = core::mem::take(&mut self.textos);
+        for (t, _) in textos.iter_mut().zip(&validos).filter(|(_, v)| **v) {
+            let c = t.r.interseccion(&r);
+            let w = t.r.ancho() as usize;
+            for y in c.y0..=c.y1 {
+                for x in c.x0..=c.x1 {
+                    let i = (y - t.r.y0) as usize * w + (x - t.r.x0) as usize;
+                    if let Some(a) = t.antes.get_mut(i) {
+                        *a = f(*a) | 0xFF00_0000;
+                    }
+                }
+            }
+            if c == t.r {
+                t.color = f(t.color) | 0xFF00_0000;
+            }
+            t.despues = self.copiar(t.r);
+        }
+        self.textos = textos;
+    }
     /// Apunta una zona como cambiada (para mandarla entera al compositor).
     pub fn danar(&mut self, r: Rect) {
         let r = r.interseccion(&self.rect());
@@ -145,6 +247,9 @@ impl Lienzo {
         }
         self.ancho = ancho;
         self.alto = alto;
+        // Los textos que ya no caben, fuera (los demás dejan de valer solos si el programa pinta encima).
+        let r = Rect::de_tamano(ancho, alto);
+        self.textos.retain(|t| t.r.interseccion(&r) == t.r);
         self.dano = None;
         self.danar(Rect::de_tamano(ancho, alto));
     }

@@ -11,3 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 caja_exec = { package = "dashos-caja-exec", path = "../exec" }
+
+[dev-dependencies]
+# Para probar los textos nítidos con la letra de verdad (Roboto del kit), como en la caja.
+kit = { package = "dashos-kit", path = "../../kit" }

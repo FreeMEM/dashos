@@ -160,10 +160,6 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e8(s + sc::BARHBORDER, 5)?;
         ex.e8(s + sc::MENUVBORDER, 2)?;
         ex.e8(s + sc::MENUHBORDER, 4)?;
-        ex.e8(s + sc::WBORTOP, 2)?;
-        ex.e8(s + sc::WBORLEFT, 4)?;
-        ex.e8(s + sc::WBORRIGHT, 4)?;
-        ex.e8(s + sc::WBORBOTTOM, 2)?;
         ex.e32(s + sc::FONT, ta)?;
         ex.e8(s + sc::DETAILPEN, PLUMAS_WB[dri::DETAILPEN] as u8)?;
         ex.e8(s + sc::BLOCKPEN, PLUMAS_WB[dri::BLOCKPEN] as u8)?;
@@ -194,6 +190,25 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e16(di + dri::DRI_RESOLUTION + 2, 44)?;
         ex.e32(di + dri::DRI_FLAGS, dri::DRIF_NEWLOOK)?;
         self.intui.wb = Pantalla { dir: s, ancho: an, alto: al, cm, drawinfo: di, bloqueos: 0, plumas: PLUMAS_WB };
+        self.bordes_pantalla(ex)?;
+        Ok(())
+    }
+
+    /// Los bordes de las ventanas que dice la pantalla (`WBorTop`, `WBorLeft`...): los de 3.x, o 0 si los programas de la
+    /// caja van "como DashOS" con la barra de DashOS (sus ventanas no llevan bordes de intuition). Lo que vale es el
+    /// aspecto de la caja (sin la excepción de ningún programa: la pantalla es de todos). Se pone otra vez al cambiar el
+    /// ajuste; las ventanas abiertas no cambian.
+    pub(crate) fn bordes_pantalla<M: Memoria>(&mut self, ex: &mut Exec<M>) -> Result<(), Fallo> {
+        let s = self.intui.wb.dir;
+        if s == 0 {
+            return Ok(());
+        }
+        let dashos = self.comp.pone_barra() && self.comp.tema_amiga("").is_some();
+        let (arriba, izq, der, abajo) = if dashos { (0, 0, 0, 0) } else { (2, 4, 4, 2) };
+        ex.e8(s + sc::WBORTOP, arriba)?;
+        ex.e8(s + sc::WBORLEFT, izq)?;
+        ex.e8(s + sc::WBORRIGHT, der)?;
+        ex.e8(s + sc::WBORBOTTOM, abajo)?;
         Ok(())
     }
 
@@ -403,8 +418,18 @@ impl<C: Compositor> CajaGrafica<C> {
         let (san, sal) = (self.intui.wb.ancho as i32, self.intui.wb.alto as i32);
         p.flags &= wflg::DEL_PROGRAMA;
         let tiene_barra = p.titulo != 0 || p.flags & (wflg::DRAGBAR | wflg::CLOSEGADGET | wflg::DEPTHGADGET) != 0;
+        // S26: el aspecto que le toca (por el programa que la abre).
+        let programa = Self::nombre_programa(ex, ex.tarea_actual());
+        let aspecto = self.comp.tema_amiga(&programa);
+        // "Como DashOS", con un compositor que pone su barra: la ventana lleva la barra de DashOS (si tiene barra y no
+        // es de fondo) e intuition no pinta la suya. Sus bordes, los de la pantalla en ese aspecto (`WBor*` a 0): arriba,
+        // `WBorTop` + el alto de la letra + 1 si tiene barra, como en 3.x (los programas que colocan sus cosas con
+        // `BorderTop` o con `WBorTop + ta_YSize + 1` cuentan con eso), y nada a los lados ni abajo.
+        let dashos = aspecto.is_some() && self.comp.pone_barra() && p.flags & wflg::BORDERLESS == 0;
         let bordes = if p.flags & wflg::BORDERLESS != 0 {
             [0, 0, 0, 0]
+        } else if dashos {
+            [0, if tiene_barra { fuente::ALTO as i32 + 1 } else { 0 }, 0, 0]
         } else {
             let arriba = if tiene_barra { 2 + fuente::ALTO as i32 + 1 } else { 2 };
             let mut b = [4, arriba, 4, 2];
@@ -486,8 +511,6 @@ impl<C: Compositor> CajaGrafica<C> {
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).
-        let programa = Self::nombre_programa(ex, ex.tarea_actual());
-        let aspecto = self.comp.tema_amiga(&programa);
         let fondo = match crate::tema::Elegido::de(aspecto).como().fondo_ventana() {
             Some(f) => {
                 if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
@@ -497,6 +520,13 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             None => self.color(cm, 0) | 0xFF00_0000,
         };
+        // "Como DashOS": los textos de nuestras bibliotecas, con la letra de DashOS al ampliar (`nitido.rs`).
+        if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+            l.nitido = aspecto.is_some();
+            // Entera al compositor la primera vez (sin bordes de intuition, nadie más la daña toda).
+            let r = l.rect();
+            l.danar(r);
+        }
         self.init_rast_port(ex, rp)?;
         ex.e32(rp + rp_::BITMAP, bm)?;
         ex.e32(rp + rp_::LAYER, capa)?;
@@ -551,10 +581,11 @@ impl<C: Compositor> CajaGrafica<C> {
             minimo: (minimo.0 as u32, minimo.1 as u32),
             maximo: (maximo.0 as u32, maximo.1 as u32),
             programa: programa.clone(),
+            barra_dashos: dashos && tiene_barra && p.flags & wflg::BACKDROP == 0,
         };
         self.intui.orden += 1;
         let orden = self.intui.orden;
-        let geometria = Geometria { ancho: an, alto: al, flags: p.flags, bordes };
+        let geometria = Geometria { ancho: an, alto: al, flags: p.flags, bordes, barra_dashos: dashos };
         self.intui.ventanas.insert(
             w,
             Ventana {
@@ -658,7 +689,8 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
         let Some(d) = l.tomar_dano() else { return };
         let (an, al) = (l.ancho(), l.alto());
-        self.comp.presentar(s, l.pixeles(), an, al, d);
+        let (pix, textos) = l.pixeles_y_textos();
+        self.comp.presentar(s, pix, an, al, d, textos);
     }
 
     /// Manda al compositor lo que ha cambiado en todas las ventanas. La caja lo llama a cada cuadro (o al volver

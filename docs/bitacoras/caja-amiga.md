@@ -1137,3 +1137,131 @@ la pantalla de bloqueo), y reconoce la casilla Material en (100, 21), dentro de 
 - `make arranque-virt` (800x600: factor 1, las líneas de siempre sin cambios): las cinco BIEN, también con el guion
   final (una vuelta dio MAL en la captura del compositor, la de `ventana-a` y `ventana-b`, sin ventanas Amiga, con
   otra QEMU de otro agente a la vez; repetida, BIEN). `-vm`, `-2`, `-escritorio` y `-diag`: BIEN.
+
+## 2026-11-13: la caja Amiga integrada (barra de DashOS y letra del kit)
+
+Rama `amiga-integrada`, desde `revision` (86d7e2e). El usuario vio GadTools con el tema Material a 2x en Full HD y
+dijo: "no me gusta cómo se ven las fuentes ni la barra de la ventana; no se ven integradas con el entorno de
+escritorio; debería ser más Material Design". Con "como DashOS", la barra y la letra pasan a ser las de DashOS.
+"Original" no cambia.
+
+### La barra
+
+- **La pide la caja al compositor** (`caja/pegamento/src/compositor.rs`): `zxdg_decoration_manager_v1`, modo del
+  servidor, antes del primer commit, como una ventana de Linux que la pide. Sale la barra de siempre (`wayland/src/
+  decoracion.rs`): título, maximizar, cerrar, las cuatro esquinas redondeadas y la sombra. Solo si la ventana va "como
+  DashOS", tiene barra (título, `DRAGBAR`, cerrar o profundidad) y no es `BORDERLESS` ni `BACKDROP`; si el compositor no
+  tiene decoraciones (`Compositor::pone_barra`), como antes.
+- **Intuition no pinta barra ni bordes.** La geometría que ven los programas, coherente con 3.x: la pantalla dice
+  `WBorTop`, `WBorLeft`, `WBorRight` y `WBorBottom` = 0, y una ventana con barra lleva `BorderTop` = `WBorTop` + alto de
+  la letra + 1 = 9 (topaz/8) y 0 en los demás lados; una sin barra, 0 en todo. Así los que colocan sus cosas con
+  `BorderTop`, con `GimmeZeroZero` (la capa empieza en (0, 9)) o con la receta de los RKM `WBorTop + ta_YSize + 1` caen
+  en el mismo sitio, a 9 de arriba. Los que colocan con números fijos (como `gadtools.c`: el primer gadget en y = 20)
+  quedan donde siempre: no se mueve nada, solo desaparece la barra de dentro. La franja de 9 es del color de dentro.
+  `WindowLimits` y el tamaño mínimo cuentan con los bordes nuevos. La pantalla va con el aspecto de la caja (sin
+  excepciones: es de todos) y cambia con el ajuste; una ventana ya abierta no cambia de bordes nunca (el programa ya
+  colocó sus cosas): si se pasa a "original", sigue con la barra de DashOS y dentro clásico; si una "original" pasa a
+  "como DashOS", sigue con su barra de intuition, pintada como Material.
+- **Los gadgets del sistema**: cerrar de la barra → `xdg_toplevel.close` → `IDCMP_CLOSEWINDOW` (en un EasyRequest,
+  como el botón de la derecha: 0). Cambiar el tamaño desde el borde de DashOS o maximizar → `xdg_toplevel.configure` con
+  tamaño, que la caja **no atendía** (el gadget de tamaño pedía `xdg_toplevel.resize`, pero el tamaño nuevo no llegaba
+  nunca): ahora pasa a `Evento::Tamano`, entre el factor de la escala, e intuition lo ajusta a `WindowLimits` y manda
+  `NEWSIZE`, `REFRESHWINDOW` y `CHANGEWINDOW`. Profundidad: la ventana sube al pulsarla, como todas las de DashOS; la
+  barra no tiene botón de "al fondo" (pendiente, con el zoom de `WA_Zoom`). Una ventana que no se puede agrandar sigue
+  con el botón de maximizar: el compositor la lleva a la esquina y la caja no cambia su tamaño (el compositor no tiene
+  `set_max_size`; pendiente).
+- **La marca de caja (S29)** también para la caja Amiga (`wayland/src/marca.rs`, `escena.de_caja_amiga`, la pone el
+  compositor por el nombre "caja-amiga" que da `inicio`): borde y pestaña azules (`00 55 aa`, el del Workbench) con
+  "AMIGA" en blanco, y "Amiga · " delante del título en la barra de la pantalla. Un programa Amiga "como DashOS" se ve
+  como una ventana del sistema, así que la razón de S29 vale igual. Si al usuario le parece que rompe la integración,
+  es una línea en el compositor.
+- La caja dice ", con la barra de DashOS" en la línea "ventana Amiga en pantalla"; el guion (`tools/prueba_uefi.sh`)
+  la lee y cierra `ventana.exe` y la ventana de Dash con el botón de cerrar de la barra (40 de alto, a 20 del borde
+  derecho), y reconoce la ventana de GadTools por sus esquinas de la superficie y la barra encima. Los clics de GadTools
+  no cambian (sus gadgets están donde estaban).
+
+### La letra
+
+`caja/intuition/src/nitido.rs`. Intuition sigue pintando topaz a 1x (lo que lee el programa y lo que se ve si algo
+falla). Cada texto que pintan nuestras bibliotecas en una ventana "como DashOS" (`gadtools::texto_n`) se apunta en el
+lienzo como **texto nítido**: el hueco de la topaz, lo de debajo antes de las letras y lo que quedó después. Al ampliar
+(`presentar`), la caja mira cada texto que toca lo dañado: si su hueco sigue igual que al pintarlo, amplía el fondo de
+antes (sin la topaz) y escribe encima con Roboto del kit a la resolución de la pantalla (antialiasada); si no (el
+programa pintó encima, un menú lo tapa), sale tal cual. Al cerrarse el menú vuelve lo de antes y vuelve la letra.
+
+- **Encaje**: la letra mide 7/8 del alto del hueco (14 a 2x, 21 a 3x), centrada en vertical por la altura de las
+  mayúsculas y lo que baja la g. A lo ancho, Roboto es más estrecha que topaz casi siempre, así que se alinea como el
+  texto: las etiquetas a la izquierda de su gadget, contra el gadget; dentro, encima y debajo, centradas; los menús,
+  listas, ciclos y textos, a la izquierda; el nivel de un deslizador, a la derecha. Si no cabe, se reduce hasta 3/4 y
+  después se recorta con "…". Se escribe en un búfer del tamaño del hueco: nunca se sale. Si la topaz estaba cortada
+  (`hasta`), el hueco llega hasta ese límite y Roboto, más estrecha, enseña más del texto.
+- **Botones** con Roboto Medium (Material: "label large"). **Campos de texto** con Roboto Mono, una letra en cada
+  celda de topaz: el cursor (que ahora se pinta antes que las letras y queda en el fondo) y los clics caen en la misma
+  letra que con topaz.
+- **Desactivados**: el aclarado de Material pasa por `Lienzo::filtrar`, que aclara también el fondo y el color de los
+  textos que tapa, y siguen valiendo.
+- **A 1x, topaz**: el hueco mide 8 de alto y Roboto a ese tamaño (unos 6 de mayúscula) se lee peor que topaz, que está
+  dibujada para eso. Los textos se apuntan igual, pero no se usan.
+- **Lo que pinta el programa con `Text()` sigue en topaz.** Pendiente: una opción por programa para sus `Text()` (con
+  el mismo mecanismo: el hueco es el de `Text()`, pero cambia la anchura que el programa mide con `TextLength`).
+- Topes: 512 textos por ventana (al pasar, fuera los que ya no valen y después los más viejos; uno en el mismo hueco
+  sustituye al de antes, así los menús, que se repintan a cada movimiento, no acumulan), 256 letras por texto. Lo que
+  la letra no tiene sale como "?" (la caché de letras del kit no crece sin fin). Al cambiar de tema, se olvidan y se
+  apuntan otra vez al repintar.
+- Coste en la caja: el ejecutable pasa de 2,5 a 3,1 MB (frente al de `caja-amiga-escala`: Roboto, Roboto Medium y
+  Roboto Mono son 185 KB; el resto, el lector de TTF y el rasterizador del kit con sus reubicaciones); cada letra se rasteriza una vez
+  por tamaño (sin FPU, con la coma flotante por software del kit) y se guarda. Un texto que vale se compara con su copia
+  cada vez que se manda lo que lo toca.
+
+### Los controles a la resolución de la pantalla (no hecho)
+
+Los controles Material (píldoras, aros, casillas) siguen pintándose a 1x y ampliándose: a 2x se ven los escalones de 2
+píxeles en las curvas. Hacerlos nítidos pide pintar el gadget otra vez a `f` veces (el tema Material ya trabaja en
+octavos de píxel con `forma` y `trazo`, así que se podría con un lienzo a escala) y guardarlo como un parche con la
+misma comprobación que los textos; pero intuition tendría que saber el factor de cada ventana y el pintor, pintar en
+dos lienzos. Apuntado para otra vuelta.
+
+### Pruebas
+
+- `cargo test` de `caja/intuition` (78): `nitido` (encaje, reducir, elipsis, huecos de 0 y negativos, textos enormes,
+  letras que no hay, componer solo lo que vale, instantáneas que no cuadran, destinos cortos, celdas con más letras que
+  celdas, control y Latin-1), `tests/barra_dashos.rs` (bordes y `WBor*`, sin gadgets del sistema dentro, cerrar,
+  `NEWSIZE` dentro de `WindowLimits` con tamaños absurdos, `GimmeZeroZero`, ventanas sin barra, `BORDERLESS` y
+  `BACKDROP`, el programa con la excepción "original", un compositor sin barra, cambiar de tema con la ventana abierta
+  ida y vuelta, textos que dejan de valer al pintar encima y vuelven al repintar, la etiqueta de fuera repintada sin
+  borrar, etiquetas enormes y gadgets pegados al borde, 300 repintados y cambios de tamaño con el tope de textos, el
+  EasyRequest cerrado desde la barra) y `tests/letra_kit.rs` (con Roboto de verdad a 2x y 3x: antialiasada, dentro de
+  su hueco, y fuera de los huecos igual que la ampliación de siempre). `wayland` (95, con `marca_de_la_caja_amiga`).
+- `make prueba`: BIEN cargador hunk y BIEN esperado.txt. `make arranque-virt` (800x600, a 1x, con la barra de DashOS:
+  `ventana.exe` se cierra con el botón de la barra y da `IDCMP_CLOSEWINDOW`; lo mismo la de Dash): las cinco BIEN.
+  `-vm`, `-2`, `-escritorio` y `-diag`: BIEN. Todo otra vez tras fusionar `fusion-fondo` (esquinas a 8,
+  `RADIO_MARCO`, que es lo que usa la barra de las ventanas Amiga: la caja no lleva ningún radio propio).
+- Un fallo que salió en la primera captura y no en las pruebas: las etiquetas de fuera de un gadget (a la izquierda,
+  encima) se repintan sin borrar y su texto nítido tomaba como fondo la topaz de antes (se veían las dos letras). Ahora
+  el fondo de un texto que sigue valiendo en el mismo hueco se conserva; con su prueba.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro
+fondo;cajas=general dashos"` (u `original`), a 2x, tras fusionar `fusion-fondo` (esquinas a 8):
+
+- `antes-caja-gadtools-menu-material-fhd.png`: la de antes (rama `caja-amiga-escala`): barra de intuition pintada como
+  Material y topaz ampliada.
+- `caja-gadtools-menu-integrada-fhd.png`: la misma ventana ahora, con el menú Proyecto abierto y "Salir" señalado, al
+  lado de la ventana del centro (nativa). En pantallas grandes, el guion la arrastra por su barra a la derecha de
+  Ajustes antes de los clics (en la cascada salían una encima de la otra). `caja-gadtools-integrada-fhd.png`: antes de
+  los clics.
+- `caja-gadtools-menu-original-fhd.png`: con "original" (3.x, topaz, su barra de intuition).
+- `comparacion-original-dashos-fhd.png`: las dos ventanas con el menú abierto, lado a lado, con su rótulo.
+
+Lo que se ve y queda por hacer:
+
+- Con el menú abierto, las etiquetas que el menú tapa en parte ("Ciclo" y el texto del ciclo, debajo del menú) salen en
+  topaz hasta que se cierra: su hueco ya no es el de antes. Se podría dar por bueno el hueco si lo que cambió es solo
+  lo que tapa el menú (intuition sabe dónde está), pero no está hecho.
+- "Nivel" sale en topaz y cortado: el nivel del deslizador ("25") se pinta encima de la etiqueta, como en 3.1; el
+  hueco cambió.
+- La marca azul de la caja sale en las dos (va por caja, no por aspecto).
+- Los controles, a 1x ampliados (escalones de 2 en las curvas): ver arriba.
+- El guion mira las esquinas de la ventana de GadTools a 3 del borde (la marca ocupa los 3 de fuera; con el clásico, la
+  primera vuelta no la reconocía y no pulsaba nada).

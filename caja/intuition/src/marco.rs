@@ -30,6 +30,8 @@ pub(crate) struct Geometria {
     pub flags: u32,
     /// Izquierda, arriba, derecha, abajo.
     pub bordes: [i32; 4],
+    /// Con la barra de DashOS (la pone el compositor): intuition no pinta barra ni gadgets del sistema.
+    pub barra_dashos: bool,
 }
 
 impl Geometria {
@@ -39,7 +41,7 @@ impl Geometria {
 
     /// El gadget del sistema que hay en `(x, y)`.
     pub fn zona(&self, x: i32, y: i32) -> Option<Gadget> {
-        if x < 0 || y < 0 || x >= self.ancho || y >= self.alto || self.flags & wflg::BORDERLESS != 0 {
+        if x < 0 || y < 0 || x >= self.ancho || y >= self.alto || self.flags & wflg::BORDERLESS != 0 || self.barra_dashos {
             return None;
         }
         if self.flags & wflg::SIZEGADGET != 0 && x >= self.ancho - GADGET_TAMANO.0 && y >= self.alto - GADGET_TAMANO.1 {
@@ -90,6 +92,19 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let g = v.geometria;
         if g.flags & wflg::BORDERLESS != 0 && !g.barra() {
+            return;
+        }
+        // Con la barra de DashOS, los bordes (el de arriba, de la altura de la letra, y los demás de 0) son del color de
+        // dentro: ni barra ni gadgets.
+        if g.barra_dashos {
+            let (bm, fondo) = (v.bm, v.fondo);
+            let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+            let [bi, ba, bd, bb] = g.bordes;
+            let (an, al) = (g.ancho, g.alto);
+            llenar(l, Rect::nuevo(0, 0, an - 1, ba - 1), fondo);
+            llenar(l, Rect::nuevo(0, al - bb, an - 1, al - 1), fondo);
+            llenar(l, Rect::nuevo(0, 0, bi - 1, al - 1), fondo);
+            llenar(l, Rect::nuevo(an - bd, 0, an - 1, al - 1), fondo);
             return;
         }
         // S26: con el aspecto de DashOS, los bordes los pinta su tema (del mismo tamaño: nada se mueve).
