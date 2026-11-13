@@ -177,7 +177,7 @@ const SUBCONEXIONES: &[&str] = &["caja-linux"];
 /// Subconexiones a la vez por marca.
 const MAX_SUBS: usize = 32;
 /// Las subconexiones son clientes con la marca en los 40 bits bajos y el número más 1 encima.
-const BITS_MARCA: u32 = 40;
+const BITS_MARCA: u32 = canal::BITS_MARCA;
 
 /// El cliente de la subconexión `sub` de `marca`, si los números caben.
 fn id_sub(marca: Cliente, sub: u32) -> Option<Cliente> {
@@ -908,6 +908,10 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| BARRAS.contains(&n.as_str())) && !escena.barras.contains(&marca) {
                     escena.barras.push(marca);
                 }
+                // S29: la terminal de la caja Linux y la pantalla de su invitado llevan la marca de la caja.
+                if nombres.get(&marca).is_some_and(|n| SUBCONEXIONES.contains(&n.as_str())) && !escena.de_caja.contains(&marca) {
+                    escena.de_caja.push(marca);
+                }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default(), sub: None });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
@@ -946,6 +950,8 @@ fn principal() -> u64 {
                             dashos::cerrar(llaves[0]);
                         } else {
                             clientes.insert(id, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema: false, cola: Default::default(), sub: Some(sub) });
+                            // S29: cada programa del puente, con la marca de la caja.
+                            escena.de_caja.push(id);
                         }
                     }
                     (TROZO_SUB_DATOS, Some((_, id))) if clientes.contains_key(&id) => {
@@ -991,6 +997,10 @@ fn principal() -> u64 {
                 None => geometria,
             };
             println!("  [compositor] ventana de {}{} en ({}, {}){}{}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, geometria, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+        }
+        // S29: quien pidió pegar sin tecla ni clic suyo (no se le dio).
+        for cl in core::mem::take(&mut escena.pegados_negados) {
+            println!("  [compositor] portapapeles: {} pidió pegar sin tecla ni clic: no se le da", nombre_de(&nombres, &lanzados, cl));
         }
         for (cl, x, y) in core::mem::take(&mut escena.emergentes_colocados) {
             println!("  [compositor] emergente de {} en ({}, {})", nombre_de(&nombres, &lanzados, cl), x, y);

@@ -56,9 +56,11 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
 	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh
+	../puente/pruebas/s29_espia.sh
 	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 90
 
 arranque: $(IMAGEN)

@@ -27,6 +27,8 @@ pub mod monton;
 pub mod prestados;
 pub mod hilos;
 pub mod red_cliente;
+/// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
+pub mod cortafuegos_caja;
 mod copiar;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.

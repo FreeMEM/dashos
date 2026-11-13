@@ -14,6 +14,9 @@
 //! - Con `--dri RUTA`, el dispositivo de render que se anuncia para dmabuf (G6); si no, `/dev/dri/renderD128`.
 //! - Con `--escritorio`, todos los clientes tienen el poder de escritorio: `layer-shell` (G4).
 //! - Con `--salir-sin-clientes`, acaba cuando se va el último cliente (para las pruebas).
+//! - Con `--pegar-con-entrada` (S29), pegar pide una tecla o un clic reciente, como en DashOS. Aquí no hay teclado ni
+//!   ratón: nadie pega (lo usa `pruebas/s29_espia.sh`). Sin ella, pega cualquiera con el teclado (`h9_portapapeles.sh`).
+//! - Los clientes del puente son de la caja Linux (S29): sus ventanas llevan la marca de la caja.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -249,6 +252,9 @@ fn atender(id: Cliente, c: &mut DelCliente, bytes: &[u8], llaves: &[u32], escena
     // Con --escritorio, todos los clientes tienen el poder de escritorio (para probar barras y fondos de verdad).
     let globales: &[Global] = if ESCRITORIO.load(std::sync::atomic::Ordering::Relaxed) { &GLOBALES_ESCRITORIO } else { &GLOBALES };
     c.con.atender(globales, &mut escena.de(id));
+    for n in std::mem::take(&mut escena.pegados_negados) {
+        println!("compositor-pc: el cliente {} pidió pegar sin tecla ni clic: no se le da", n);
+    }
     if let Some(e) = &c.con.roto {
         println!("compositor-pc: error de protocolo del cliente {}: {}", id, e.texto);
     }
@@ -278,6 +284,7 @@ fn main() {
 
     let tabla = Rc::new(RefCell::new(Tabla::default()));
     let mut escena = Escena::new(MemoriasPc(tabla.clone()), FONDO);
+    escena.pegar_con_entrada = args.iter().any(|a| a == "--pegar-con-entrada");
     // El dispositivo de render que usarán los clientes de dmabuf (G6): `--dri`, o el primero.
     let dri = opcion("--dri").unwrap_or_else(|| "/dev/dri/renderD128".into());
     if let Ok(m) = std::fs::metadata(&dri) {
@@ -349,6 +356,7 @@ fn main() {
                 match t.tipo {
                     p::CONECTAR => {
                         clientes.insert(id, DelCliente { salida: Salida::Puente(t.conexion), con: Conexion::new() });
+                        escena.de_caja.push(id);
                         println!("compositor-pc: cliente {} del puente conectado", t.conexion);
                         alguno = true;
                     }
