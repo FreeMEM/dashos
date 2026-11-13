@@ -87,6 +87,12 @@ fn uso() -> bool {
 }
 
 fn principal() -> u64 {
+    // Antes de crear nada (cada llave nueva toma el siguiente número libre, y la 4 sería una suya): ¿hay llave 4?
+    let copia = dashos::llave_duplicar(4, u64::MAX, 0);
+    if copia > 0 {
+        dashos::cerrar(copia as u32);
+        USO.store(true, core::sync::atomic::Ordering::Relaxed);
+    }
     dashos::monton::con_nombre(&"guardian");
     let (preguntas, para_sesiones) = dashos::canal_crear();
     // `sesiones` puede tardar en arrancar (lee su registro y sus permisos del disco): se reintenta un rato.
@@ -110,10 +116,7 @@ fn principal() -> u64 {
     // La imagen para usar a mano (`make virt-uso`): `inicio` le da un canal más (llave 4, "uso"). Sin el guion de las
     // pruebas: la pantalla de entrada hasta que alguien entre, y luego atender (preguntas, "*bloquear" del panel,
     // apagar y cerrar sesión, que vuelve a la entrada).
-    let copia = dashos::llave_duplicar(4, u64::MAX, 0);
-    if copia > 0 {
-        dashos::cerrar(copia as u32);
-        USO.store(true, core::sync::atomic::Ordering::Relaxed);
+    if uso() {
         println!("  [guardian] modo de uso: pantalla de entrada");
         loop {
             if let Some(quien) = pantalla(None) {
