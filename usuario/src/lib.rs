@@ -432,6 +432,18 @@ pub fn grupo_uso(grupo: u32) -> (i64, u64) {
     (a as i64, b)
 }
 
+/// Trasfondo (llamada 52): microsegundos de CPU del grupo `grupo` (su llave, con leer) y sus subgrupos, vivos y
+/// muertos; con 0, los del grupo propio. Negativo si no se puede.
+pub fn cpu_tiempo(grupo: u32) -> i64 {
+    llamada(52, [grupo as u64, 0, 0, 0, 0]).0 as i64
+}
+
+/// Trasfondo: un contador del kernel (llamada 29, `medir`). 3 = µs ociosos del núcleo `n`; 5 y 6 = páginas de RAM y
+/// libres; 14 = los núcleos en marcha (un bit por núcleo). Negativo si no existe.
+pub fn medir(que: u64, n: u64) -> i64 {
+    llamada(29, [que, n, 0, 0, 0]).0 as i64
+}
+
 pub fn proceso_matar(proceso: u32) -> i64 {
     llamada(13, [proceso as u64, 0, 0, 0, 0]).0 as i64
 }

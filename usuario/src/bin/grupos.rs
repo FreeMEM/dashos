@@ -155,9 +155,73 @@ fn principal() -> u64 {
     if !vuelto {
         return 20;
     }
+    // 21-27, trasfondo: el tiempo de CPU por grupo (llamada 52) y los núcleos (llamada 29).
+    let (ok, cpu_hijo) = tiempo_de_cpu(tamano);
+    if ok != 0 {
+        return ok;
+    }
     println!("  [grupos] cupo agotado en {} trozos de 64 KB, devuelto entero, y grupos que se matan", trozos);
     println!("  [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse");
+    println!("  [grupos] tiempo de CPU: el hijo que gira gastó {} ms en su grupo, cuenta también en el de arriba y no se pierde al matarlo", cpu_hijo / 1000);
     42
+}
+
+/// Trasfondo: el tiempo de CPU por grupo (llamada 52) y los contadores de núcleos (llamada 29). 0 y los µs del hijo
+/// si va bien; si no, el número del paso que falló.
+fn tiempo_de_cpu(tamano: usize) -> (u64, i64) {
+    use dashos::{cpu_tiempo, medir};
+    // 21: lo propio se lee sin llave y no baja.
+    let a = cpu_tiempo(0);
+    esperar_ms(20);
+    let b = cpu_tiempo(0);
+    if a < 0 || b < a + 5_000 {
+        return (21, 0);
+    }
+    // 22: un hijo que gira 300 ms en un grupo nuevo: su grupo lo cuenta, y el de arriba (el propio) también.
+    let g = grupo_crear(2 * MB);
+    if g <= 0 {
+        return (22, 0);
+    }
+    let g = g as u32;
+    let p = hijo_en(g, tamano, &[2]);
+    if p <= 0 {
+        return (22, 0);
+    }
+    let antes = cpu_tiempo(0);
+    dashos::dormir_us(300_000);
+    let del_hijo = cpu_tiempo(g);
+    if del_hijo < 50_000 || cpu_tiempo(0) < antes + del_hijo / 2 {
+        println!("  [grupos] CPU del hijo {} µs; la propia, de {} a {}", del_hijo, antes, cpu_tiempo(0));
+        return (23, del_hijo);
+    }
+    // 24: muerto el hijo, lo gastado se queda (no baja) y ya no sube.
+    grupo_matar(g);
+    proceso_esperar(p as u32);
+    let muerto = cpu_tiempo(g);
+    dashos::dormir_us(50_000);
+    if muerto < del_hijo || cpu_tiempo(g) != muerto {
+        return (24, del_hijo);
+    }
+    // 25: sin derecho de leer, otra llave o una que no existe: no.
+    let sin_leer = dashos::llave_duplicar(g, dashos::ESCRIBIR, 0);
+    if sin_leer <= 0 || cpu_tiempo(sin_leer as u32) != -3 || cpu_tiempo(2) != -6 || cpu_tiempo(999) != -2 {
+        return (25, del_hijo);
+    }
+    // 26: los núcleos en marcha (al menos el 0) y uno que no existe.
+    let nucleos = medir(14, 0);
+    if nucleos <= 0 || nucleos & 1 == 0 || medir(3, 64) >= 0 {
+        return (26, del_hijo);
+    }
+    // 27: los µs ociosos de un núcleo no bajan nunca, aunque esté dormido sin tic (se suma su rato de ahora).
+    for n in (0..4).filter(|n| nucleos & (1 << n) != 0) {
+        let x = medir(3, n as u64);
+        dashos::dormir_us(20_000);
+        let y = medir(3, n as u64);
+        if x < 0 || y < x {
+            return (27, del_hijo);
+        }
+    }
+    (0, del_hijo)
 }
 
 /// Si lo usado por el grupo `g` vuelve a 0 en 200 ms: lo de un proceso que acabó se devuelve cuando su núcleo recoge

@@ -46,6 +46,9 @@ pub struct Cupo {
     /// Lo han matado (M2): no admite procesos ni subgrupos nuevos.
     muerto: core::sync::atomic::AtomicBool,
     usado: AtomicU64,
+    /// Tiempo de CPU de sus procesos y de los de sus subgrupos, vivos y muertos, en cuentas del contador (trasfondo,
+    /// llamada 52). Solo sube; da la vuelta a los 2^64 (siglos).
+    cpu: AtomicU64,
     /// Lo que este grupo tiene cobrado a su padre: su presupuesto.
     _del_padre: Option<Cargo>,
     miembros: Cerrojo<Vec<Weak<Control>>>,
@@ -76,6 +79,7 @@ impl Cupo {
             profundidad,
             muerto: core::sync::atomic::AtomicBool::new(false),
             usado: AtomicU64::new(0),
+            cpu: AtomicU64::new(0),
             _del_padre: del_padre,
             miembros: Cerrojo::default(),
             hijos: Cerrojo::default(),
@@ -95,6 +99,24 @@ impl Cupo {
             *r = Some(Arc::new(Cupo::con(bytes, 0, None)));
         }
         r.as_ref().map(Arc::clone).expect("el grupo raíz se acaba de poner")
+    }
+
+    /// Suma `cuentas` de CPU a este grupo y a los de encima (como mucho `MAX_PROFUNDIDAD`). Lo llama el planificador en
+    /// cada cambio de hilo: solo sumas atómicas, sin cerrojos ni memoria.
+    pub fn sumar_cpu(&self, cuentas: u64) {
+        let mut g = self;
+        loop {
+            g.cpu.fetch_add(cuentas, Ordering::Relaxed);
+            match &g._del_padre {
+                Some(p) => g = &p.cupo,
+                None => break,
+            }
+        }
+    }
+
+    /// El tiempo de CPU del grupo y sus subgrupos, en cuentas del contador.
+    pub fn cpu(&self) -> u64 {
+        self.cpu.load(Ordering::Relaxed)
     }
 
     /// Los números de los procesos vivos de este grupo (U6), hasta `max` (y cuántos hay).
