@@ -617,8 +617,10 @@ Rama `caja-amiga-gadtools`, desde `revision` (a77a6cd), con `revision` (d819301)
 
 Tras los programas de antes, la caja ejecuta:
 
-1. **`gadtools.exe`** (`caja/pruebas68k/gadtools.c`, de `m68k-amigaos-gcc`), justo después de `ventana.exe` (más
-   tarde, el guion está con Ajustes, el centro de control y el bloqueo de la sesión y no llega a pulsar): una ventana con un gadget de cada tipo
+1. **`gadtools.exe`** (`caja/pruebas68k/gadtools.c`, de `m68k-amigaos-gcc`). En la prueba de siempre está abierta 5
+   s y se cierra sola: con más tiempo, su ventana tapaba los pasos del guion de los demás (Ajustes, el centro de
+   control, el bloqueo de la sesión; los clics de esos pasos caían en ella) y el guion, ocupado con ellos, no llegaba
+   a pulsarla. Lo interactivo va en el modo de las capturas (`CAJA_INTERACTIVA=1`, abajo), donde espera 90 s: una ventana con un gadget de cada tipo
    de GadTools (botón, casilla, ciclo, mx, texto, número, cadena, entero, deslizador, lista y paleta), un
    `DrawBevelBoxA` y menús (`CreateMenus`, `LayoutMenus`, `SetMenuStrip`). Comprueba solo `GT_SetGadgetAttrs`,
    `GT_GetGadgetAttrs`, `ItemAddress` y `GTMENUITEM_USERDATA`, y escribe cada evento. El guion captura la ventana
@@ -685,6 +687,19 @@ Salida (QEMU virt; lo nuevo):
 │   [caja-amiga] dash: Error: división por cero (excepción 5)
 │   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1) en 12 ms, ...: bien
 ```
+
+6. **`EasyRequestArgs`** (`caja/intuition/src/requester.rs`): una ventana con el título, el texto (`es_TextFormat`
+   con sus argumentos, `%s`, `%ld`...) y un botón por cada parte de `es_GadgetFormat`, pintados por el tema; la tarea
+   espera (`SIGF_SINGLE`) hasta el clic y la repetición de la llamada devuelve el botón (1, 2... y 0 el último). Es lo
+   que usa Dash para su error cuando el programa no tiene consola (como desde el Workbench).
+
+**El modo de las capturas** (`CAJA_INTERACTIVA=1` al hacer la caja; `make -C kernel arranque-virt` lo pasa a
+`make -C caja`; hay que tocar `caja.c` para que se recompile): `gadtools.exe` espera 90 s y el guion, cuando su ventana
+se ve entera (lo mira en una captura: sus esquinas y un sitio vacío, de los colores del Workbench), la captura, pulsa la
+casilla, el ciclo, una opción del mx, un elemento de la lista y "Aceptar", y elige Proyecto > Salir con el botón
+derecho (captura con el menú abierto); y `test_trap_illegal` corre otra vez sin consola: su error sale en un
+requester, que el guion captura (`CAPTURA_REQ`) y cierra. Las capturas de esta entrada son de ese modo, con
+`DASHOS_PANTALLA=1920x1080`.
 
 ### Código 68k desde una función nativa (la reentrada en el JIT)
 
