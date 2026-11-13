@@ -127,9 +127,17 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
+# S26: el centro pone al arrancar lo guardado (aquí, basura: la paleta del fondo de serie; sin fondo, el violeta) y la
+# caja Amiga lo recibe del compositor y saca las plumas de Material para sus programas.
+~│   [centro] al arrancar: tema claro, color Paleta del fondo (sin calcular) (6750a4), programas de las cajas como DashOS; en el compositor: sí
+~│   [caja-amiga] tema de DashOS: programas Amiga como DashOS, claro, color 6750a4; plumas: fondo fef7ff, texto 1d1b20, relleno 6750a4
+# S26: ni el aspecto de los programas de las cajas (dashos_tema_v1, versión 3).
+~│   [hostil] compositor: cambiar el aspecto de las cajas sin ser el centro da error: sí; sigue como DashOS: sí
 # S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
 # panel rápido.
 ~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
+# S27: ni cambiar de espacio de trabajo como la barra.
+~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
@@ -200,6 +208,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanzador cerrado
+# S27: Super+2 cambia de espacio de trabajo (la barra lo enseña) y un clic en el 1 de la barra vuelve; las teclas del
+# volumen en ráfaga sacan un solo OSD, que las junta.
+~│   [compositor] espacios: se ve el 2
+~│   [barra] espacios: se ve el 2 de 3; el 1 en
+~│   [barra] pide el espacio 1
+~│   [panel] OSD abierto: volumen
+~│   [panel] OSD cerrado: 7 pulsaciones; volumen
 # S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
 # de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.
@@ -265,8 +280,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
-~│   [centro] Apariencia: oscuro, color Violeta; guardada: 0 (15 bytes); releída: sí
-# Con el ratón: doble clic en "Color azul" (dos clics en la misma fila, en menos de 500 ms).
+# S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
+# Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
 ~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
@@ -277,7 +293,7 @@ DashOS en marcha con 4 núcleos.
 # su color semilla (Material You); el centro guarda el fondo.
 ~│   [fondo] ondas.png en pantalla: 960 × 600 escalada a 800 × 600 en 1 franja; semilla 3d6f88
 ~│   [centro] Fondo ondas.png: en pantalla (960 × 600, 
-# "Color del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
+# "Paleta del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
 # compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
 ~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
 ~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí

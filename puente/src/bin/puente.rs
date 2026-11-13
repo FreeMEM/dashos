@@ -75,6 +75,8 @@ const PRIMERO_PROPIO: u32 = 0xfeff_ffff;
 
 /// Desde aquí, los números de pool de los búferes de dmabuf (no chocan con objetos del programa).
 const POOL_DMABUF: u32 = 0x8000_0000;
+/// Y desde aquí, los pools apartados: destruidos por el programa, que siguen por sus búferes, cuando su número vuelve.
+const POOL_APARTADO: u32 = 0x4000_0000;
 
 /// Espera a que la tarjeta acabe con un dmabuf antes de leerlo (empezar y acabar una lectura).
 fn esperar_tarjeta(fd: RawFd) {
@@ -96,6 +98,8 @@ struct Programa {
     cpu0: u64,
     /// Hay que cerrarlo (sus páginas se movieron).
     cerrar: bool,
+    /// Pools apartados hasta ahora (para sus números).
+    apartados: u32,
     entrada: Vec<u8>,
     /// Lo que llegó de DashOS para él y aún no es un mensaje entero (para seguir los objetos que crea el compositor).
     eventos: Vec<u8>,
@@ -135,7 +139,7 @@ impl Programa {
         let mut objetos = HashMap::new();
         objetos.insert(1, &tablas::WL_DISPLAY);
         let copia = std::path::Path::new(FORZAR_COPIA).exists();
-        Self { sock, copia, vistas: HashMap::new(), sin_copia: 0, cpu0: cpu_us(), cerrar: false, entrada: Vec::new(), eventos: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
+        Self { sock, copia, vistas: HashMap::new(), sin_copia: 0, cpu0: cpu_us(), cerrar: false, apartados: 0, entrada: Vec::new(), eventos: Vec::new(), fds: VecDeque::new(), objetos, pools: HashMap::new(), buferes: HashMap::new(), superficies: HashMap::new(), planos: HashMap::new(), danos: HashMap::new(), enviado: HashMap::new(), copiado: 0, cuadros: 0, propio: PRIMERO_PROPIO }
     }
 }
 
@@ -316,6 +320,17 @@ fn atender(pr: &mut Programa, conexion: u32, pu: &mut Puente) {
                         pr.vistas.insert(memoria, paginas);
                     }
                     None => pu.memoria_nueva(memoria, tamano as u64),
+                }
+                // Un número de pool que vuelve (Mesa crea y destruye un pool por cuadro, y libwayland repite el número) con el
+                // de antes aún vivo por sus búferes: el viejo pasa a un número propio, con sus búferes. Si no, esos búferes
+                // se leerían en el pool nuevo (con copia, otro dibujo; sin copia, otras páginas: el cliente se cerraba).
+                if let Some(viejo) = pr.pools.remove(&id) {
+                    pr.apartados = pr.apartados.wrapping_add(1);
+                    let k = POOL_APARTADO | (pr.apartados & 0x0fff_ffff);
+                    for b in pr.buferes.values_mut().filter(|b| b.0 == id) {
+                        b.0 = k;
+                    }
+                    pr.pools.insert(k, viejo);
                 }
                 if base != libc::MAP_FAILED {
                     let capacidad = tamano.max(1).next_multiple_of(4096);

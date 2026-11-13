@@ -33,6 +33,10 @@ esperar al compositor entre cuadros), `es2gears_wayland`
 20 s, `time vkcube --wsi wayland --c 100` (Vulkan con lavapipe) y `cuadros_gl kms 20` (por la virtio-gpu de la caja: su pantalla sale en una ventana de DashOS). Captura cada uno
 (PREFIJO.wayland.png, PREFIJO.gears.png, PREFIJO.kms.png), espera sus cuadros por segundo y apaga.
 
+Con MODO "aspecto" (`make arranque-virt-aspecto`, S26), lo mismo hasta el prompt de root y después el aspecto de los
+programas de Linux: espera al agente del aspecto y abre `muestra-gtk4` y foot, uno a uno, con su captura
+(PREFIJO.gtk4.png y PREFIJO.foot.png). GTK 3, aún no (aborta en la caja al cargar sus iconos).
+
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
 """
@@ -411,7 +415,7 @@ if modo == "wayland":
     paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
     # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 150 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
@@ -419,13 +423,14 @@ if modo == "wayland":
         time.sleep(1.0)
         clic_en_ventana()
         mandar("sendkey ctrl-shift-v")
-        esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60)
+        # Que el programa hostil vea su tubería cerrada no siempre llega en el plazo (ver la bitácora): se apunta.
+        apuntar("hostil sin fin: " + ("le cortaron la tubería" if esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60) else "sin ver el corte en 60 s"))
         esperar(r"terminal: pegado \(4096 bytes\)", 30)
         time.sleep(3.0)
         mandar("sendkey ctrl-c")
         time.sleep(1.0)
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 nunca 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 nunca 90 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
@@ -469,6 +474,55 @@ if modo == "wayland":
             time.sleep(5.0)
     time.sleep(2.0)
     a_la_terminal()
+    teclear("poweroff")
+    sys.exit(0)
+
+def arriba(dx, dy):
+    """Un clic en la última ventana de Linux, en (dx, dy) de su esquina: la sube encima de las demás (la de la caja
+    Amiga puede salir encima en cualquier momento)."""
+    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    if v:
+        clic(int(v[-1][0]) + dx, int(v[-1][1]) + dy)
+        time.sleep(1.0)
+
+
+if modo == "aspecto":
+    # S26 (`make arranque-virt-aspecto`): el aspecto de los programas de Linux. Espera a que el agente del aspecto
+    # (dashos-aspecto, un servicio de systemd que escucha el tema de DashOS por el puente) haya escrito el tema, abre
+    # una muestra de GTK 3 y otra de GTK 4 (los controles de siempre) y foot, y captura la pantalla con todo.
+    if not esperar(r"login: root \(automatic login\)", total):
+        sys.exit(1)
+    time.sleep(5.0)
+    clic_en_ventana()
+    paso("systemctl is-active dashos-aspecto", r"linux: active\s*$|linux: active\n", 120)
+    esperar(r"linux: aspecto: programas de Linux", 120)
+    # Cada programa, solo y encima de la terminal (una ventana nueva sale arriba), con su captura; se cierra solo. GTK 3
+    # aún no: en la caja aborta al cargar su primer icono (glycin sin bwrap; ver la bitácora de S26). Se limpia la
+    # terminal y lo que dicen los programas va solo a hvc0.
+    for n, nombre in ((4, "gtk4"),):
+        antes = len(re.findall(r"muestra-gtk: adiós", texto()))
+        clic_en_ventana()
+        teclear("clear")
+        time.sleep(1.0)
+        teclear(f"prueba-aspecto muestra-gtk{n} 30 &")
+        if esperar(rf"muestra-gtk: GTK {n} en pantalla", 400):
+            time.sleep(4.0)
+            arriba(420, 20)
+            capturar(prefijo + "." + nombre)
+        esperar_n(r"muestra-gtk: adiós|Aborted", antes + 1, 120)
+        time.sleep(2.0)
+    clic_en_ventana()
+    teclear("clear")
+    time.sleep(1.0)
+    teclear("prueba-aspecto prueba-foot &")
+    if esperar(r"foot: lista", 400):
+        time.sleep(4.0)
+        arriba(300, 60)
+        capturar(prefijo + ".foot")
+    clic_en_ventana()
+    teclear("cat /root/.config/glib-2.0/settings/keyfile /run/dashos-aspecto/linux")
+    time.sleep(3.0)
+    clic_en_ventana()
     teclear("poweroff")
     sys.exit(0)
 

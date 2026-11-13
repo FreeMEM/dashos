@@ -6,7 +6,11 @@
  * llegaron a la pantalla.
  *
  * Con DOBLE=1 en el entorno, alterna dos búferes del mismo pool y solo declara dañadas la banda vieja y la nueva, como
- * los programas de verdad: así se prueba que quien copie solo lo dañado no deje bandas viejas en el otro búfer. */
+ * los programas de verdad: así se prueba que quien copie solo lo dañado no deje bandas viejas en el otro búfer.
+ *
+ * Con POOLES=1 (H9), cada búfer en su pool, destruido en el acto, y el número del segundo pool es el del primero (como
+ * Mesa con llvmpipe, que hace un pool por búfer): quien guarde los pools por número no debe leer el primer búfer en el
+ * segundo pool. */
 #define _GNU_SOURCE
 #include <stdio.h>
 #include <stdlib.h>
@@ -128,10 +132,25 @@ int main(void) {
     if (fd < 0 || ftruncate(fd, 2 * tam) < 0) return 4;
     uint32_t *px = mmap(NULL, 2 * tam, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
     if (px == MAP_FAILED) return 4;
-    struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 2 * tam);
-    for (int i = 0; i < 2; i++) {
-        pxs[i] = px + i * ANCHO * ALTO;
-        buferes[i] = wl_shm_pool_create_buffer(pool, i * tam, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
+    if (getenv("POOLES") && !strcmp(getenv("POOLES"), "1")) {
+        for (int i = 0; i < 2; i++) {
+            int f = memfd_create("dashos-pool", MFD_CLOEXEC);
+            if (f < 0 || ftruncate(f, tam) < 0) return 4;
+            pxs[i] = mmap(NULL, tam, PROT_READ | PROT_WRITE, MAP_SHARED, f, 0);
+            if (pxs[i] == MAP_FAILED) return 4;
+            struct wl_shm_pool *p = wl_shm_create_pool(shm, f, tam);
+            buferes[i] = wl_shm_pool_create_buffer(p, 0, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
+            wl_shm_pool_destroy(p);
+            close(f);
+            /* El delete_id del pool, antes del siguiente: así libwayland repite su número. */
+            wl_display_roundtrip(pantalla);
+        }
+    } else {
+        struct wl_shm_pool *pool = wl_shm_create_pool(shm, fd, 2 * tam);
+        for (int i = 0; i < 2; i++) {
+            pxs[i] = px + i * ANCHO * ALTO;
+            buferes[i] = wl_shm_pool_create_buffer(pool, i * tam, ANCHO, ALTO, ANCHO * 4, WL_SHM_FORMAT_XRGB8888);
+        }
     }
     close(fd);
     superficie = wl_compositor_create_surface(compositor);

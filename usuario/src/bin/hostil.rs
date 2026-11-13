@@ -610,7 +610,21 @@ fn barra_ajena() -> bool {
         si(sin_capas && capa_negada),
         si(panel_negado)
     );
-    sin_capas && capa_negada && panel_negado
+    // S27: cambiar de espacio de trabajo como la barra (con la versión 3 del tema, que todos ven), ni con un número raro.
+    let mut espacio_negado = true;
+    for n in [2u32, 0, u32::MAX] {
+        let Some((lectura, copia)) = conectar() else { return false };
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(4).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::ESPACIO).uint(n).fin();
+        e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+        mandar(&e);
+        espacio_negado &= leer(lectura, copia, 60).1;
+        escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    }
+    println!("  [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: {}", si(espacio_negado));
+    sin_capas && capa_negada && panel_negado && espacio_negado
 }
 
 /// S10c: el tema del sistema solo lo cambia el centro de control. El hostil se suscribe (`dashos_tema_v1`, el global
@@ -663,7 +677,32 @@ fn tema_ajeno() -> bool {
     // haber puesto ya el suyo (era una carrera de la prueba).
     let intacto = tema.as_deref().is_some_and(|a| a.len() >= 8 && !(a[0..4] == 0xff00_0000u32.to_le_bytes() && a[4..8] == 1u32.to_le_bytes()));
     println!("  [hostil] compositor: poner el tema sin ser el centro da error: {}; el tema sigue: {}", si(error), si(intacto));
-    error && intacto
+    // S26: el aspecto de los programas de las cajas (versión 3), tampoco: ni "todo original" ni un texto roto.
+    let mut cajas_error = true;
+    for malo in ["general original", "programa linux original ../../bin/sh"] {
+        let Some((lectura, copia)) = conectar() else { return false };
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(3).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::CAJAS).texto(Some(malo)).fin();
+        let mut t = alloc::vec![TROZO_DATOS];
+        t.extend_from_slice(&e.bytes);
+        escribir(VENTANAS, &t, &[]);
+        cajas_error &= esperar(lectura, copia, 1, wl_display::ev::ERROR).is_some_and(|a| a.len() >= 8 && u32::from_le_bytes(a[0..4].try_into().unwrap()) == 60);
+    }
+    let Some((lectura, copia)) = conectar() else { return false };
+    let mut e = Escritor::new();
+    e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+    e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(3).uint(60).fin();
+    let mut t = alloc::vec![TROZO_DATOS];
+    t.extend_from_slice(&e.bytes);
+    escribir(VENTANAS, &t, &[]);
+    let cajas = esperar(lectura, copia, 60, dashos_tema_v1::ev::CAJAS);
+    escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    let texto = cajas.as_deref().and_then(|a| a.get(4..)).map(|b| alloc::string::String::from_utf8_lossy(b).into_owned()).unwrap_or_default();
+    let cajas_intacto = texto.starts_with("general dashos");
+    println!("  [hostil] compositor: cambiar el aspecto de las cajas sin ser el centro da error: {}; sigue como DashOS: {}", si(cajas_error), si(cajas_intacto));
+    error && intacto && cajas_error && cajas_intacto
 }
 
 fn si(b: bool) -> &'static str {

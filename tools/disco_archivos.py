@@ -283,6 +283,15 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(prefs, "fondo"), "w") as f:
         f.write("enorme.png\n")
     os.chmod(os.path.join(prefs, "fondo"), 0o600)
+    # S26 (`tools/aspecto_caja_linux.py`): con DASHOS_PREFS="fichero=contenido;...", otros Prefs del usuario (el fondo,
+    # la apariencia, el aspecto de las cajas) para las capturas del aspecto. "\n" en el contenido es un salto de línea.
+    for par in filter(None, os.environ.get("DASHOS_PREFS", "").split(";")):
+        nombre, _, contenido = par.partition("=")
+        if nombre not in ("apariencia", "fondo", "cajas", "panel"):
+            raise SystemExit(f"DASHOS_PREFS: {nombre} no es un Prefs del centro")
+        with open(os.path.join(prefs, nombre), "w") as f:
+            f.write(contenido.replace("\\n", "\n") + "\n")
+        os.chmod(os.path.join(prefs, nombre), 0o600)
     # S10: el cajón de otra persona, de Carla y solo suyo (el dueño se pone abajo, con `duenos`), y un nombre con un
     # tabulador en Imagenes (RedoxFS no admite ':'): el Workbench de Ana no abre lo primero ni enseña lo segundo. En la
     # raíz y en Imagenes, no en `C`: así no cambia lo que ven el selector y el hostil.

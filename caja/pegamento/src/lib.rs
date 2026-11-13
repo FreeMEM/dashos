@@ -20,6 +20,7 @@ mod archivos;
 mod compositor;
 mod defensa;
 mod memoria;
+mod tema;
 
 use alloc::format;
 use alloc::string::String;
