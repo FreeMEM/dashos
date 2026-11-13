@@ -124,6 +124,7 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+ajustes_visto = 0
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -1011,7 +1012,7 @@ while time.time() - inicio < total:
         if monitor_paso == 0 and avisos_paso == 99 and "[barra] CPU y memoria: " in texto:
             monitor_paso = 1
             reintento_monitor = time.time() + 15
-        if 1 <= monitor_paso <= 12:
+        if 1 <= monitor_paso <= 13:
             import re
             def ultimo_m(t):
                 return texto.rfind(t)
@@ -1046,11 +1047,12 @@ while time.time() - inicio < total:
                         5: "[barra] procesos abiertos" in texto and len(ab) >= 1 and len(capa_proc) >= 1,
                         6: "[centro] Monitor del sistema: " in texto and fila_mon("espera") is not None,
                         7: "[centro] Monitor: cerrar espera" in texto,
-                        8: "[centro] Monitor: Sistema" in texto or "[centro] Monitor: cerrar Caja" in texto,
-                        9: "[centro] Monitor: por memoria" in texto,
-                        10: "[centro] Panel del escritorio: Enseñar" in texto,
-                        11: "[centro] Panel del escritorio: Gráficas: no" in texto,
-                        12: "[centro] Panel del escritorio: Gráficas: sí" in texto}[monitor_paso]
+                        8: "[centro] Monitor: cerrar fondo" in texto,
+                        9: "[centro] Monitor: Sistema" in texto or "[centro] Monitor: cerrar Caja" in texto,
+                        10: "[centro] Monitor: por memoria" in texto,
+                        11: "[centro] Panel del escritorio: Enseñar" in texto,
+                        12: "[centro] Panel del escritorio: Gráficas: no" in texto,
+                        13: "[centro] Panel del escritorio: Gráficas: sí" in texto}[monitor_paso]
             if not espera_m:
                 if time.time() > reintento_monitor:
                     monitor_paso = 99
@@ -1081,26 +1083,31 @@ while time.time() - inicio < total:
                 k = fila_mon("espera")
                 mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
             elif monitor_paso == 7:
-                k = fila_mon("Caja") or fila_mon("Sistema")
+                # El fondo es de Ana, pero del escritorio: no se cierra (lo niega `sesiones`).
+                k = fila_mon("fondo")
                 if k is not None:
                     mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
             elif monitor_paso == 8:
-                mandar("sendkey home", "sendkey ret", pausa=0.3)
+                k = fila_mon("Caja") or fila_mon("Sistema")
+                if k is not None:
+                    mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
             elif monitor_paso == 9:
-                mandar("sendkey shift-tab", "sendkey down", "sendkey tab", pausa=0.4)
+                mandar("sendkey home", "sendkey ret", pausa=0.3)
             elif monitor_paso == 10:
+                mandar("sendkey shift-tab", "sendkey down", "sendkey tab", pausa=0.4)
+            elif monitor_paso == 11:
                 time.sleep(0.5)
                 if captura_monitor:
                     mandar("screendump " + captura_monitor + ".ajustes.ppm")
                     time.sleep(0.5)
                 mandar("sendkey home", "sendkey down", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
-            elif monitor_paso == 11:
+            elif monitor_paso == 12:
                 time.sleep(2.5)
                 if captura_monitor:
                     mandar("screendump " + captura_monitor + ".sin-graficas.ppm")
                     time.sleep(0.5)
                 mandar("sendkey ret")
-            elif monitor_paso == 12:
+            elif monitor_paso == 13:
                 time.sleep(2.5)
                 mandar("sendkey esc")
                 ir_a(790, 590)
@@ -1821,7 +1828,16 @@ while time.time() - inicio < total:
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
         # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
         # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
+        # Ni con una pregunta de `guardian` sin contestar (de permisos, de la caja Amiga o de administrador): tiene el
+        # teclado y Super+Arriba no llegaría a Ajustes (pasaba con el arranque más cargado, trasfondo). Como mucho 25 s
+        # esperando a que no haya ninguna (por si una cuenta no cuadra).
+        if not ajustes_visto and "[ajustes] ventana del kit en pantalla" in texto:
+            ajustes_visto = time.time()
+        import re
+        pregunta_ahora = (texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ")
+                          or len(re.findall(r"acción de administrador \w+: se pregunta", texto)) > texto.count(": contesta como "))
+        sin_pregunta = not pregunta_ahora or (ajustes_visto and time.time() - ajustes_visto > 25)
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
             ajustes = True
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su

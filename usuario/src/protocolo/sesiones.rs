@@ -133,6 +133,9 @@ pub const M_CAJA_AMIGA: u32 = 1;
 pub const M_CAJA_LINUX: u32 = 2;
 pub const M_SISTEMA: u32 = 3;
 pub const M_OTROS: u32 = 4;
+/// Un bit más en la clase: un programa del escritorio (`ESCRITORIO` en `sesiones`). Se ve, pero no se cierra desde el
+/// monitor ni con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
+pub const M_ESCRITORIO: u32 = 0x100;
 /// De `inicio`, sin marca: el permiso de apagar y reiniciar del kernel (llamada 51), con la llave. `sesiones` ya tiene
 /// las 8 llaves con que se lanza un programa: este le llega así.
 pub const PERMISO_APAGAR: u32 = 23;

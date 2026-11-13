@@ -878,6 +878,8 @@ fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
             Some(p) => alloc::format!("{} [{}]", x.e.titulo(), p),
             None => x.e.titulo(),
         };
+        // Los del escritorio se ven, pero no se cierran desde aquí.
+        let nombre = if x.e.escritorio { alloc::format!("{} · escritorio", nombre) } else { nombre };
         let quien = match x.e.clase {
             monitor::M_SISTEMA => String::from("sistema"),
             monitor::M_OTROS => String::from("otros"),
@@ -1361,6 +1363,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             let estado = if n >= 4 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { -99 };
                             let dicho = match estado {
                                 s::BIEN => "cerrado",
+                                s::PROTEGIDO if x.e.escritorio => "es del escritorio: no se cierra",
                                 s::PROTEGIDO => "no es tuyo: no se cierra",
                                 s::NO_EXISTE => "ya no está",
                                 _ => "sesiones no contesta",

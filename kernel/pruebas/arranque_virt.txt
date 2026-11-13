@@ -728,6 +728,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [barra] abre el monitor del sistema: 0
 ~│   [centro] abre Monitor del sistema
 ~│   [centro] Monitor: cerrar espera con Supr: 0 (cerrado)
+~│   [centro] Monitor: cerrar fondo con Supr: -2 (es del escritorio: no se cierra)
+~│   [sesiones] centro no puede cerrar a fondo: es del escritorio
 ~│   [centro] Monitor: Sistema (
 ~│   [centro] Monitor: por memoria: 
 ~│   [centro] Panel del escritorio: Gráficas: no; guardado: 0 (

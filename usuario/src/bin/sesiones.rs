@@ -118,6 +118,9 @@ const VEN_DELANTE: &[&str] = &["panel", "barra"];
 /// (`MATAR`), solo lo suyo.
 const MONITORES: &[&str] = &["fondo", "barra", "centro"];
 const MATAN_POR_DELANTE: &[&str] = &["centro"];
+/// Los programas del escritorio (los que lanza `inicio` con estos nombres): salen en el monitor marcados así y nadie los
+/// cierra con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
+const ESCRITORIO: &[&str] = &["fondo", "centro", "workbench", "explorador", "selector", "barra", "panel", "caja-amiga", "caja-linux"];
 /// Las cajas, que salen por su nombre en el monitor (con su pastilla) si son del sistema o de quien mira; la de otra
 /// persona va sumada en "otros", como lo demás suyo.
 const CAJAS: &[(&str, u32)] = &[("caja-amiga", M_CAJA_AMIGA), ("caja-linux", M_CAJA_LINUX)];
@@ -719,7 +722,8 @@ fn monitor_pagina(respuesta: u32, fichas: &[Option<Ficha>], yo: Option<Ficha>, a
     };
     for f in fichas.iter().flatten().filter(detalle).skip(desde).take(MONITOR_POR_PAGINA) {
         let (c, m) = uso(f);
-        poner(&mut r, van, f.marca, c, m, f.uid, f.gid, caja(f).unwrap_or(M_PROPIO), 1, &f.nombre);
+        let clase = caja(f).unwrap_or(M_PROPIO) | if es(f, ESCRITORIO) { M_ESCRITORIO } else { 0 };
+        poner(&mut r, van, f.marca, c, m, f.uid, f.gid, clase, 1, &f.nombre);
         van += 1;
     }
     let mut k = n_detalle;
@@ -1743,6 +1747,11 @@ fn principal() -> u64 {
                                 println!("  [sesiones] {} (usuario {}) intenta matar a un proceso de otra persona: no existe para él", nombre(&yo.nombre), yo.uid);
                                 registro.apuntar(R_MATAR, NO_EXISTE, &yo.nombre, &f.nombre);
                                 NO_EXISTE
+                            } else if es(&f, ESCRITORIO) {
+                                // Después de "ajeno": lo de otra persona sigue sin existir (no se dice que es del escritorio).
+                                println!("  [sesiones] {} no puede cerrar a {}: es del escritorio", nombre(&yo.nombre), nombre(&f.nombre));
+                                registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);
+                                PROTEGIDO
                             } else if f.uid != yo.uid {
                                 println!("  [sesiones] {} (usuario {}) no puede matar a {} (usuario {})", nombre(&yo.nombre), yo.uid, nombre(&f.nombre), f.uid);
                                 registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);

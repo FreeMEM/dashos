@@ -41,6 +41,8 @@ pub struct Entrada {
     pub clase: u32,
     pub cuantos: u32,
     pub nombre: String,
+    /// Un programa del escritorio: se ve, pero no se cierra.
+    pub escritorio: bool,
 }
 
 /// Las clases (como `protocolo::sesiones::M_*`, repetidas para probar en el PC sin la biblioteca).
@@ -49,6 +51,7 @@ pub const M_CAJA_AMIGA: u32 = 1;
 pub const M_CAJA_LINUX: u32 = 2;
 pub const M_SISTEMA: u32 = 3;
 pub const M_OTROS: u32 = 4;
+pub const M_ESCRITORIO: u32 = 0x100;
 pub const ENTRADA: usize = 56;
 pub const POR_PAGINA: usize = 4;
 
@@ -104,7 +107,8 @@ pub fn leer_pagina(r: &[u8]) -> Option<(usize, Vec<Entrada>)> {
             memoria: u64_en(e, 16),
             uid: u32_en(e, 24),
             gid: u32_en(e, 28),
-            clase: u32_en(e, 32).min(M_OTROS),
+            clase: (u32_en(e, 32) & 0xff).min(M_OTROS),
+            escritorio: u32_en(e, 32) & M_ESCRITORIO != 0,
             cuantos: u32_en(e, 36),
             nombre,
         });
@@ -119,7 +123,7 @@ pub fn escribir_entrada(e: &mut [u8], x: &Entrada) {
     e[16..24].copy_from_slice(&x.memoria.to_le_bytes());
     e[24..28].copy_from_slice(&x.uid.to_le_bytes());
     e[28..32].copy_from_slice(&x.gid.to_le_bytes());
-    e[32..36].copy_from_slice(&x.clase.to_le_bytes());
+    e[32..36].copy_from_slice(&(x.clase | if x.escritorio { M_ESCRITORIO } else { 0 }).to_le_bytes());
     e[36..40].copy_from_slice(&x.cuantos.to_le_bytes());
     e[40..56].fill(0);
     let n = x.nombre.len().min(16);
@@ -429,7 +433,7 @@ mod pruebas {
     use super::*;
 
     fn entrada(marca: u64, cpu_us: u64, clase: u32) -> Entrada {
-        Entrada { marca, cpu_us, memoria: 1 << 20, uid: 1000, gid: 1000, clase, cuantos: 1, nombre: alloc::format!("p{}", marca) }
+        Entrada { marca, cpu_us, memoria: 1 << 20, uid: 1000, gid: 1000, clase, cuantos: 1, nombre: alloc::format!("p{}", marca), escritorio: false }
     }
 
     #[test]
@@ -538,6 +542,7 @@ mod pruebas {
         r[4..8].copy_from_slice(&9u32.to_le_bytes());
         let mut e = entrada(7, 123, M_CAJA_AMIGA);
         e.nombre = "caja-amiga".into();
+        e.escritorio = true;
         escribir_entrada(&mut r[8..8 + ENTRADA], &e);
         escribir_entrada(&mut r[8 + ENTRADA..], &entrada(0, 5, M_SISTEMA));
         let (total, v) = leer_pagina(&r).unwrap();
