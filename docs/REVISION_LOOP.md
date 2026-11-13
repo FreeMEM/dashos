@@ -1757,3 +1757,12 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   que no son de GadTools, DrawInfo con plumas de 3.x, escalar las ventanas Amiga en Full HD, y los temas AOS4, MOS y
   Magic WB (otra implementación de `Tema`).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 14:30: escritorio al estilo DMS, oleada 2 (centro de control), en revision
+- Fusionada `escritorio-dms` (oleada 2): panel rápido como centro de control (cabecera con quien está delante y
+  cuánto lleva encendido, deslizadores de volumen y brillo, rejilla con Red, Modo oscuro y Bloquear); `sesiones`
+  contesta `DELANTE` solo al panel y a la barra; el panel pregunta el estado de la red; la píldora de la barra
+  enseña el estado real por `dashos_tema_v1` v5 (`estado`, solo del panel). Sin menú de apagado: no hay forma de
+  apagar. Dos preguntas del usuario: llamada de apagar/reiniciar (solo `sesiones`) y canal de solo lectura del
+  estado de la red para el panel.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
