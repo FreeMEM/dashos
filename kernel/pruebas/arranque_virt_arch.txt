@@ -41,13 +41,15 @@ DashOS en marcha con 4 núcleos
 ~systemd de Arch Linux ARM: sí, root entra en hvc0: sí, su shell: sí: bien
 # S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de la caja, tecleado en Arch tras pacman.
 # El cortafuegos de la caja (servicio de red) deja el DNS y corta un puerto del PC, otro aparato de la red local, mDNS y
-# un ARP que se hace pasar por la puerta de enlace.
+# un ARP que se hace pasar por la puerta de enlace; y el correo al puerto 25 de un servidor de Internet.
 ~[red] puerto para la caja Linux con MAC
 ~con cortafuegos (Internet sí, la red local no)
 ~archlinuxarm.org
 ~[red] cortafuegos de la caja Linux: corta IPv4 con la red local (hacia fuera, TCP
 ~→ 10.0.2.2:9)
 ~→ 192.168.255.254:80)
+~[red] cortafuegos de la caja Linux: corta correo al puerto 25 (hacia fuera, TCP
+~→ 1.1.1.1:25)
 ~[red] cortafuegos de la caja Linux: corta multidifusión o difusión (hacia fuera, ICMP
 ~→ 224.0.0.251)
 ~[red] cortafuegos de la caja Linux: corta un ARP que se hace pasar por la puerta de enlace o el DNS (hacia fuera, ARP

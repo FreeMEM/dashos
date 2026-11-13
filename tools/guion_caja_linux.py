@@ -692,6 +692,8 @@ if modo == "arch":
     paso("getent hosts archlinuxarm.org", r"linux: \S+\s+\S*archlinuxarm\.org", 60)
     paso("curl -sS -m 6 --connect-timeout 5 telnet://10.0.2.2:9", r"linux: curl: \(\d+\)", 30)
     paso("curl -sS -m 6 --connect-timeout 5 http://192.168.255.254", r"linux: curl: \(\d+\)", 30)
+    # S29: correo al puerto 25 de un servidor de Internet (correo basura): cortado aunque sea fuera de casa.
+    paso("curl -sS -m 6 --connect-timeout 5 telnet://1.1.1.1:25", r"linux: curl: \(\d+\)", 30)
     paso("ping -c 1 -W 2 224.0.0.251", r"linux: 1 packets transmitted", 30)
     teclear("ip addr add 10.0.2.2/32 dev eth0")
     time.sleep(1.0)
