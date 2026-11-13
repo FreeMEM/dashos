@@ -1745,3 +1745,15 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -gpu, -diag, -escritorio y -usb: BIEN; -wayland: con la
   imagen nueva solo faltaban los dos títulos con la marca, corregidos y comprobados contra esa misma salida (sin
   volver a correr los 70 minutos).
+
+### 2026-11-13 13:20: GadTools con el aspecto de DashOS (tema Material), en revision
+- Fusionada `gadtools-material`: el rasgo `Tema` de `caja/intuition` tiene `Material` junto a `Clasico`; los doce
+  gadgets, menús, EasyRequest, DrawBevelBox y los bordes de ventana de intuition se pintan con los colores del tema
+  del fondo, en los mismos rectángulos que el clásico; "como DashOS" → Material, "original" → Clasico, con
+  excepciones por programa (nombre de la tarea); al cambiar el tema o el modo con la ventana abierta se repinta.
+  Hostiles del pintor arreglaron desbordes en código compartido (`mando`, `celdas`) y un bucle del gris clásico.
+  Capturas comparadas mandadas al usuario.
+- Pendiente: esquinas redondeadas de las ventanas Amiga (la caja manda XRGB), gadget de zoom, gadgets de intuition
+  que no son de GadTools, DrawInfo con plumas de 3.x, escalar las ventanas Amiga en Full HD, y los temas AOS4, MOS y
+  Magic WB (otra implementación de `Tema`).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
