@@ -16,6 +16,11 @@
 //! permiso de plazo, que sí si es de Ana y que no si es de Carla (lo que Ana concede no vale para Carla). Al acabar,
 //! retira lo concedido para que el disco quede como estaba.
 //!
+//! Apagar y reiniciar (decisión del usuario del 2026-11-13): si el panel lo pide con otras sesiones abiertas, `sesiones`
+//! pregunta aquí ("*apagar", "*reiniciar"), con el mismo diálogo de teclado. "*salir" (Cerrar sesión, del panel) cierra
+//! la sesión de delante y pone la pantalla de entrada. Al acabar la prueba se queda atendiendo eso y las demás
+//! preguntas (`atender`).
+//!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio), 2 el canal "sesiones".
 
 #![no_std]
@@ -29,7 +34,7 @@ mod ventana_cliente;
 
 use alloc::string::String;
 use dashos::println;
-use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, VOLVER};
+use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, SALIR, VOLVER};
 use kit::lienzo::{Lienzo, Rect};
 use kit::tema::Tema;
 use kit::teclado::{Tecla, Teclado};
@@ -114,6 +119,9 @@ fn principal() -> u64 {
         let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
+        if de_apagar(&q) {
+            continue;
+        }
         // U3: bloquear la sesión de un usuario (lo pide uno de sus programas a `sesiones`).
         if servicio == b"*bloquear" {
             let usuario = core::str::from_utf8(programa).unwrap_or("?");
@@ -269,7 +277,75 @@ fn principal() -> u64 {
                 false
             }
         };
-    if bien && retirado && admin && bloqueo && entrada && cambio && por_tiempo && con_tecla { 0 } else { 1 }
+    let todo = bien && retirado && admin && bloqueo && entrada && cambio && por_tiempo && con_tecla;
+    println!("  [guardian] prueba acabada: {}; sigue atendiendo", if todo { "bien" } else { "MAL" });
+    atender(preguntas)
+}
+
+/// Apagar, reiniciar y cerrar la sesión (del panel, por `sesiones`): con otras sesiones abiertas, "*apagar" o
+/// "*reiniciar" se preguntan al usuario con el diálogo de teclado, y "*salir" cierra la sesión de delante y pone la
+/// pantalla de entrada. Si `q` no es de eso, falso.
+fn de_apagar(q: &[u8; PREGUNTA]) -> bool {
+    let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+    let programa = core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?");
+    let servicio = &q[24..24 + campo(&q[24..40])];
+    match servicio {
+        b"*apagar" | b"*reiniciar" => {
+            let si = preguntar(programa, core::str::from_utf8(servicio).unwrap_or("?"));
+            let mut r = [0u8; 12];
+            r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
+            pedir(&r, &[]);
+            true
+        }
+        b"*salir" => {
+            // `programa` es aquí el nombre de la cuenta.
+            let mut m = [0u8; 28];
+            let n = programa.len().min(16);
+            m[0..4].copy_from_slice(&SALIR.to_le_bytes());
+            m[4..8].copy_from_slice(&(n as u32).to_le_bytes());
+            m[12..12 + n].copy_from_slice(&programa.as_bytes()[..n]);
+            let estado = pedir(&m[..12 + n], &[]);
+            println!("  [guardian] cerrar la sesión de {}: {}", programa, estado);
+            if estado == 0 {
+                pantalla(None);
+            }
+            true
+        }
+        _ => false,
+    }
+}
+
+/// Tras la prueba: las preguntas que lleguen, para siempre. Las de apagar, como `de_apagar`; bloquear, con su pantalla;
+/// los permisos, al usuario; las acciones de administrador, negadas (aquí no se pide la contraseña).
+fn atender(preguntas: u32) -> ! {
+    loop {
+        let mut q = [0u8; PREGUNTA];
+        if dashos::canal_leer(preguntas, &mut q, &mut []).0 as usize != PREGUNTA || de_apagar(&q) {
+            continue;
+        }
+        let campo = |b: &[u8]| -> usize { b.iter().position(|&c| c == 0).unwrap_or(b.len()) };
+        let programa = core::str::from_utf8(&q[8..8 + campo(&q[8..24])]).unwrap_or("?");
+        let servicio = &q[24..24 + campo(&q[24..40])];
+        if servicio == b"*bloquear" {
+            pantalla(Some(programa));
+            continue;
+        }
+        let mut r = [0u8; 16];
+        let largo = if servicio.first() == Some(&b'*') {
+            r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            16
+        } else {
+            let si = preguntar(programa, core::str::from_utf8(servicio).unwrap_or("?"));
+            r[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            r[4..8].copy_from_slice(&q[0..4]);
+            r[8..12].copy_from_slice(&(si as u32).to_le_bytes());
+            12
+        };
+        pedir(&r[..largo], &[]);
+    }
 }
 
 /// Retira a `programa` el permiso de `servicio` (para todos los usuarios: `guardian` ve todo).
@@ -425,7 +501,10 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
     if memoria > 0 {
         dashos::cerrar(memoria);
     }
-    println!("  [guardian] ¿{} puede usar {}? El usuario dice {}", programa, servicio, if r { "sí" } else { "no" });
+    match servicio.strip_prefix('*') {
+        Some(que) => println!("  [guardian] {} con otras sesiones abiertas: el usuario dice {}", que, if r { "sí" } else { "no" }),
+        None => println!("  [guardian] ¿{} puede usar {}? El usuario dice {}", programa, servicio, if r { "sí" } else { "no" }),
+    }
     r
 }
 
@@ -509,7 +588,10 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
             (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0),
             (SYNC, wayland::tablas::wl_callback::ev::DONE) if vista.is_none() => {
                 vista = Some(dashos::ahora_us());
-                println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio);
+                match servicio.strip_prefix('*') {
+                    Some(que) => println!("  [guardian] confirmación en pantalla: ¿{}?", que),
+                    None => println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio),
+                }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
                 if let Some(l) = c.juntador.tomar_llave() {
@@ -551,14 +633,26 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servic
     l.redondeado(caja, 28, t.contenedor_alto());
     let x = caja.x + 24;
     let ancho_texto = caja.w - 48;
-    // El título: la pregunta. Si el nombre es largo y no cabe a 24, a 22 y luego a 20.
-    let titulo = alloc::format!("¿Dar permiso a \"{}\"?", programa);
+    // El título: la pregunta. Si el nombre es largo y no cabe a 24, a 22 y luego a 20. Apagar y reiniciar (con otras
+    // sesiones abiertas), con su propio texto.
+    let apagado = match servicio {
+        "*apagar" => Some("¿Apagar el equipo?"),
+        "*reiniciar" => Some("¿Reiniciar el equipo?"),
+        _ => None,
+    };
+    let titulo = match apagado {
+        Some(t) => String::from(t),
+        None => alloc::format!("¿Dar permiso a \"{}\"?", programa),
+    };
     let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
     l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
     fuente.dibujar(&mut l, x, caja.y + 24 + 24, &titulo, tam, t.sobre_superficie);
     // El texto, a 16 del título (de 32 de alto); líneas de 20.
     let y = caja.y + 24 + 32 + 16;
-    let frase = alloc::format!("Quiere usar \"{}\".", servicio);
+    let frase = match apagado {
+        Some(_) => String::from("Hay otras sesiones abiertas y se cerrarán."),
+        None => alloc::format!("Quiere usar \"{}\".", servicio),
+    };
     fuente.dibujar(&mut l, x, y + 15, &frase, 14, t.sobre_variante_superficie);
     fuente.dibujar(&mut l, x, y + 20 + 15, "Contesta con el teclado.", 14, t.sobre_variante_superficie);
     l.soltar_recorte();

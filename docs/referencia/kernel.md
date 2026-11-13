@@ -113,7 +113,7 @@ las únicas que da el kernel:
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
 - Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
-  virtuales (H9), la memoria de la VideoCore y, para
+  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), la memoria de la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
 
@@ -183,6 +183,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 47 | `maquina_memoria` | `x0` vCPU (con escribir), `x1` llave de memoria (leer y escribir), `x2` dirección física del invitado | 0: el invitado ve también esa memoria (todas sus vCPU, aunque estén corriendo). `E_ARGUMENTO` si pisa otra |
 | 48 | `maquina_estado` | `x0` vCPU (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV, 4 otra vCPU, 5 reiniciarla, 6 patearla, 7 parar la máquina), `x2` dirección de 33 u64 (0 y 1), física del invitado (3), número de vCPU (4) o entrada (5), `x3` entrada (4) o x0 (5), `x4` x0 (4) | 0, la llave de la vCPU nueva (4) o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar o el número de vCPU no vale, `E_NO_HAY` sin GIC virtual |
 | 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
+| 51 | `apagar` | `x0` permiso de apagar (con escribir), `x1` 0 apagar, 1 reiniciar | No vuelve si se pudo. Antes deja 300 ms para que la consola saque lo último del registro. Con PSCI (SYSTEM_OFF, SYSTEM_RESET) si el árbol lo trae (QEMU `virt`, UEFI, la Pi 5 con el BL31 de su firmware; en la Pi 5, que se corte la corriente lo decide su EEPROM, que no se toca); sin PSCI, en la Pi 4 y la Pi 3, con el perro guardián del bloque PM (apagar marca la partición 63 en PM_RSTS). `E_TIPO` si `x0` no es el permiso, `E_ARGUMENTO` con otro modo, `E_NO_HAY` si no se pudo |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -474,6 +475,7 @@ Tipos de objeto:
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 | Permiso de máquinas virtuales | Solo el kernel (`inicio` lo da a `caja-linux`) | Crear máquinas virtuales (escribir) |
+| Permiso de apagar | Solo el kernel (`inicio` lo manda a `sesiones`, sin derecho de transferirlo) | Apagar y reiniciar la máquina (escribir; llamada 51) |
 | vCPU de una máquina virtual | `maquina_crear` (la 0), `maquina_estado` 4 (las demás) | Correrla, darle más memoria a su máquina, patearla, pararla (escribir); la máquina se para al cerrar su última vCPU |
 
 ## Biblioteca de usuario en Rust

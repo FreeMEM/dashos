@@ -56,6 +56,9 @@ pub enum Objeto {
     /// 0, de solo lectura (ExecBase en la dirección 4 de la caja Amiga). Solo lo da el kernel, y `inicio` lo da a la
     /// caja Amiga y a nadie más.
     PermisoPaginaCero,
+    /// Permiso para apagar o reiniciar la máquina (decisión del usuario del 2026-11-13): con escribir, la llamada 51.
+    /// Solo lo da el kernel, a `inicio`, que se lo manda a `sesiones` y a nadie más.
+    PermisoApagar,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a

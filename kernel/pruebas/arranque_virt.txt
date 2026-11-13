@@ -141,6 +141,11 @@ DashOS en marcha con 4 núcleos.
 # S27, oleada 2: ni dar el estado de la red y del volumen como el panel, ni saber quién está delante.
 ~│   [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: sí
 ~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
+# Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
+# que le manda `inicio`, y solo el panel se lo puede pedir.
+~│   [sesiones] tiene el permiso de apagar
+~│   [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: -2
+~│   [hostil] apagar la máquina sin el permiso: 0 de 128 funcionaron: bien
 # S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
 ~│   [panel] red: conectada (10.0.2.15)
 ~│   [panel] delante: 

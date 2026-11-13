@@ -40,6 +40,7 @@
 //! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
 //! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
+//! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -198,6 +199,8 @@ pub fn atender(marco: &mut Marco) {
         // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
         49 => pagina_cero(a[0] as u32, a[1] as u32),
         50 => memoria_vista(a[0], a[1], a[2], a[3]),
+        // Apagar (a[1] = 0) o reiniciar (1) la máquina, con el permiso de apagar en a[0] (solo lo tiene `sesiones`).
+        51 => apagar(a[0] as u32, a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -507,6 +510,32 @@ fn pagina_cero(permiso: u32, h: u32) -> u64 {
         Ok(()) => 0,
         Err(e) => error_espacio(e),
     }
+}
+
+/// La llamada 51 (decisión del usuario del 2026-11-13): apaga (`modo` 0) o reinicia (1) la máquina. Solo con el
+/// permiso de apagar, que da el kernel a `inicio` y este a `sesiones`: el panel se lo pide a `sesiones`, que pregunta
+/// antes si hay otras sesiones abiertas. Si se puede, no vuelve; si no (sin PSCI ni perro guardián), `E_NO_HAY`.
+fn apagar(permiso: u32, modo: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    {
+        let t = proc_.llaves.tomar();
+        let Some(p) = t.ver(permiso) else { return E_LLAVE };
+        let Objeto::PermisoApagar = p.objeto else { return E_TIPO };
+        if p.derechos & objetos::ESCRIBIR == 0 {
+            return E_DERECHOS;
+        }
+    }
+    let reiniciar = match modo {
+        0 => false,
+        1 => true,
+        _ => return E_ARGUMENTO,
+    };
+    kprintln!("kernel: {} la máquina (llamada 51)", if reiniciar { "se reinicia" } else { "se apaga" });
+    // Un rato para que la consola saque lo último del registro (esto y lo de quien lo pidió) por el puerto serie.
+    planificador::dormir_us(300_000);
+    crate::nucleos::apagar(reiniciar);
+    kprintln!("kernel: no se pudo {} la máquina", if reiniciar { "reiniciar" } else { "apagar" });
+    E_NO_HAY
 }
 
 /// Orígenes de una vista, como mucho (la RAM de un invitado de 1 GB en trozos de 16 MB).

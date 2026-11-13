@@ -916,6 +916,19 @@ fn sesiones(memoria: u32) -> bool {
     dashos::cerrar(lectura);
     let delante_negado = delante == 4 && i32::from_le_bytes(rd[0..4].try_into().unwrap()) == s::PROTEGIDO;
     println!("  [hostil] sesiones: quién está delante, sin ser el panel ni la barra: {}", if delante_negado { "-2 y nada" } else { "MAL" });
+    // Apagar, reiniciar o cerrar la sesión sin ser el panel: -2 (la máquina sigue).
+    let mut negado = true;
+    for modo in [s::MODO_APAGAR, s::MODO_REINICIAR, s::MODO_SALIR, 7] {
+        let mut p = [0u8; 8];
+        p[0..4].copy_from_slice(&s::APAGAR.to_le_bytes());
+        p[4..8].copy_from_slice(&modo.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 8];
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        negado &= n == 4 && i32::from_le_bytes(r[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    }
+    println!("  [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: {}", if negado { "-2" } else { "MAL" });
     // U2: lanzar un programa del disco, sin ser `guardian`.
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&s::LANZAR.to_le_bytes());
@@ -997,6 +1010,18 @@ fn principal() -> u64 {
     let memoria = dashos::memoria_crear(4096);
     let ses = sesiones(memoria);
     println!("  [hostil] A14 hora: {}", if hora() { "bien" } else { "mal" });
+    // Apagar o reiniciar la máquina (llamada 51) con cada una de sus llaves y con números que no son llaves: todas dan
+    // error (solo `sesiones` tiene el permiso). Si alguna funcionara, la prueba se cortaría aquí.
+    let mut malas = 0;
+    for llave in 0..64u32 {
+        for reiniciar in [true, false] {
+            let r = dashos::apagar(llave, reiniciar);
+            if r >= 0 {
+                malas += 1;
+            }
+        }
+    }
+    println!("  [hostil] apagar la máquina sin el permiso: {} de 128 funcionaron: {}", malas, if malas == 0 { "bien" } else { "MAL" });
     let a = archivos(memoria);
     println!("  [hostil] archivos sigue: {}", si(a));
     let s = sonido(memoria);

@@ -23,6 +23,10 @@
 //! servicio de red, `ESTADO`), el modo oscuro y bloquear, en el orden guardado. El estado de la red y del volumen se lo
 //! dice al compositor (petición `estado` de `dashos_tema_v1`), que se lo pasa a la barra para su píldora.
 //!
+//! El menú de apagado (decisión del usuario del 2026-11-13): el botón de la derecha de la cabecera cambia los controles
+//! por cuatro filas: Apagar, Reiniciar y Cerrar sesión, que se piden a `sesiones` (`APAGAR`: solo se lo acepta al panel,
+//! y con otras sesiones abiertas pregunta antes con `guardian`), y Bloquear, como el botón del candado.
+//!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 "sesiones", 3 "centro", 4 "sonido" y
 //! 5 "red".
 
@@ -88,8 +92,17 @@ const ALTO_MAX: i32 = 520;
 const MARGEN: i32 = 8;
 /// Lo de arriba: quién está delante (o, editando, el título) y los botones Editar (o Hecho) y Bloquear.
 const CABECERA: i32 = 76;
-const BOTON_CABECERA: Rect = Rect { x: ANCHO - 16 - 40 - 8 - 88, y: 18, w: 88, h: 40 };
-const BOTON_BLOQUEAR: Rect = Rect { x: ANCHO - 16 - 40, y: 18, w: 40, h: 40 };
+const BOTON_CABECERA: Rect = Rect { x: ANCHO - 16 - 40 - 8 - 40 - 8 - 88, y: 18, w: 88, h: 40 };
+const BOTON_BLOQUEAR: Rect = Rect { x: ANCHO - 16 - 40 - 8 - 40, y: 18, w: 40, h: 40 };
+/// El botón del menú de apagado, a la derecha del todo.
+const BOTON_APAGADO: Rect = Rect { x: ANCHO - 16 - 40, y: 18, w: 40, h: 40 };
+/// Las filas del menú de apagado: lo que pone y la orden de `sesiones` (`None`: bloquear, como el candado).
+const ENERGIA: [(&str, Option<u32>); 4] = [
+    ("Apagar", Some(dashos::protocolo::sesiones::MODO_APAGAR)),
+    ("Reiniciar", Some(dashos::protocolo::sesiones::MODO_REINICIAR)),
+    ("Cerrar sesión", Some(dashos::protocolo::sesiones::MODO_SALIR)),
+    ("Bloquear", None),
+];
 /// Los deslizadores: filas de 56 a lo ancho.
 const ALTO_DESLIZADOR: i32 = 56;
 /// Los mosaicos de la rejilla: dos columnas, de 64 de alto, con 8 entre ellos.
@@ -126,6 +139,10 @@ enum Accion {
     Quitar(usize),
     /// Volver a poner un quitado (por su sitio en `MOSAICOS`).
     Poner(usize),
+    /// Abrir o cerrar el menú de apagado.
+    MenuApagado,
+    /// Una fila del menú de apagado (por su sitio en `ENERGIA`).
+    Energia(usize),
 }
 
 /// Dónde va cada cosa, según el orden y si se edita. Lo usan el pintado y los clics: no se desalinean.
@@ -149,14 +166,25 @@ fn pista_volumen(r: Rect) -> Rect {
     Rect::new(r.x + 56, r.y + (r.h - 16) / 2, r.w - 56 - 2 * (ICONO + 4) - 16, 16)
 }
 
-fn disponer(orden: &Orden, editando: bool) -> Disposicion {
+fn disponer(orden: &Orden, editando: bool, menu: bool) -> Disposicion {
     let mut d = Disposicion { alto: 0, filas: Vec::new(), zonas: Vec::new(), rotulo: 0, brillo: Rect::new(0, 0, 0, 0) };
     d.zonas.push((BOTON_CABECERA, if editando { Accion::Hecho } else { Accion::Editar }));
     // Los botones de icono, desde la derecha, con 4 entre uno y otro.
     let icono = |r: Rect, k: i32| Rect::new(r.x + r.w - 8 - ICONO - k * (ICONO + 4), r.y + (r.h - ICONO) / 2, ICONO, ICONO);
     if !editando {
         d.zonas.push((BOTON_BLOQUEAR, Accion::Mosaico(BLOQUEAR)));
+        d.zonas.push((BOTON_APAGADO, Accion::MenuApagado));
         let mut y = CABECERA;
+        if menu {
+            // El menú de apagado: una fila por cosa, en vez de los controles.
+            for i in 0..ENERGIA.len() {
+                let r = Rect::new(X, y, W, ALTO_FILA);
+                d.zonas.push((r, Accion::Energia(i)));
+                y += ALTO_FILA + 8;
+            }
+            d.alto = y + 8;
+            return d;
+        }
         // Los deslizadores: el volumen (si se ve su mosaico) y el brillo, siempre (apagado).
         if orden.vistos().any(|m| m == VOLUMEN) {
             let r = Rect::new(X, y, W, ALTO_DESLIZADOR);
@@ -292,6 +320,37 @@ struct Estado {
     ip: [u8; 4],
     /// Quién está delante (de `sesiones`), si se sabe.
     persona: String,
+    /// Se ve el menú de apagado en vez de los controles.
+    menu: bool,
+}
+
+/// El de encendido (24): un arco abierto arriba y una raya que entra por el hueco. El hueco se borra con el color de
+/// `fondo`.
+fn icono_encendido(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
+    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+    l.borde(Rect::new(cx - 8, cy - 7, 17, 17), 9, 2, color);
+    l.rellenar(Rect::new(cx - 4, cy - 8, 9, 6), fondo);
+    trazo(l, (cx, cy - 9), (cx, cy - 1), 2, color);
+}
+
+/// El de reiniciar (24): un arco abierto arriba a la derecha con la punta de una flecha.
+fn icono_reiniciar(l: &mut Lienzo, r: Rect, color: Color, fondo: Color) {
+    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+    l.borde(Rect::new(cx - 8, cy - 8, 17, 17), 9, 2, color);
+    l.rellenar(Rect::new(cx + 1, cy - 9, 9, 8), fondo);
+    trazo(l, (cx + 1, cy - 8), (cx + 6, cy - 8), 2, color);
+    trazo(l, (cx + 6, cy - 8), (cx + 6, cy - 3), 2, color);
+}
+
+/// El de cerrar sesión (24): media caja a la izquierda y una flecha que sale a la derecha.
+fn icono_salir(l: &mut Lienzo, r: Rect, color: Color) {
+    let (cx, cy) = (r.x + r.w / 2, r.y + r.h / 2);
+    trazo(l, (cx - 8, cy - 8), (cx - 1, cy - 8), 2, color);
+    trazo(l, (cx - 8, cy - 8), (cx - 8, cy + 8), 2, color);
+    trazo(l, (cx - 8, cy + 8), (cx - 1, cy + 8), 2, color);
+    trazo(l, (cx - 3, cy), (cx + 8, cy), 2, color);
+    trazo(l, (cx + 4, cy - 4), (cx + 8, cy), 2, color);
+    trazo(l, (cx + 4, cy + 4), (cx + 8, cy), 2, color);
 }
 
 /// El candado (24): el cuerpo y el arco.
@@ -448,14 +507,35 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
         let min = dashos::ahora_us() / 60_000_000;
         let encendido = if min < 60 { alloc::format!("Encendido hace {} min", min) } else { alloc::format!("Encendido hace {} h {} min", min / 60, min % 60) };
         fuente.dibujar(&mut l, 72, 54, &encendido, 12, t.sobre_variante_superficie);
-        // Bloquear: botón de icono tonal.
+        // Bloquear: botón de icono tonal. El de apagado, igual; con el menú abierto, lleno.
         l.redondeado(BOTON_BLOQUEAR, ICONO / 2, t.contenedor_secundario());
         icono_candado(&mut l, BOTON_BLOQUEAR, t.sobre_contenedor_secundario());
+        let (fondo, tinta) = if e.menu { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
+        l.redondeado(BOTON_APAGADO, ICONO / 2, fondo);
+        icono_encendido(&mut l, BOTON_APAGADO, tinta, fondo);
     }
     // Editar: botón tonal; Hecho: lleno (lo que se espera que se pulse).
     let (fondo, texto) = if e.editando { (t.primario, t.sobre_primario) } else { (t.contenedor_secundario(), t.sobre_contenedor_secundario()) };
     l.redondeado(BOTON_CABECERA, BOTON_CABECERA.h / 2, fondo);
     centrado(medio, &mut l, BOTON_CABECERA, BOTON_CABECERA.y + 25, if e.editando { "Hecho" } else { "Editar" }, 14, texto);
+    if !e.editando && e.menu {
+        // El menú de apagado: filas como las de edición, con su icono en un cuadrado redondeado.
+        for &(r, a) in &d.zonas {
+            let Accion::Energia(i) = a else { continue };
+            l.redondeado(r, 16, t.contenedor_alto());
+            let cuadro = Rect::new(r.x + 8, r.y + 8, 40, 40);
+            let (fondo, tinta) = (t.contenedor_secundario(), t.sobre_contenedor_secundario());
+            l.redondeado(cuadro, 12, fondo);
+            match i {
+                0 => icono_encendido(&mut l, cuadro, tinta, fondo),
+                1 => icono_reiniciar(&mut l, cuadro, tinta, fondo),
+                2 => icono_salir(&mut l, cuadro, tinta),
+                _ => icono_candado(&mut l, cuadro, tinta),
+            }
+            medio.dibujar(&mut l, r.x + 64, r.y + 34, ENERGIA[i].0, 16, t.sobre_superficie);
+        }
+        return;
+    }
     if !e.editando {
         pintar_controles(&mut l, e, d, fuente, medio);
         return;
@@ -543,6 +623,19 @@ fn estado_red() -> (u32, [u8; 4]) {
         Ok(_) => (1, [0; 4]),
         Err(_) => (0, [0; 4]),
     }
+}
+
+/// Apagar, reiniciar o cerrar la sesión (`MODO_*`), por `sesiones`: lo que conteste (0 si lo hace o lo pregunta).
+fn pedir_apagado(modo: u32) -> i32 {
+    use dashos::protocolo::sesiones as s;
+    let (lectura, escritura) = dashos::canal_crear();
+    let mut p = [0u8; 8];
+    p[0..4].copy_from_slice(&s::APAGAR.to_le_bytes());
+    p[4..8].copy_from_slice(&modo.to_le_bytes());
+    let mut r = [0u8; 4];
+    let n = if dashos::canal_escribir(SESIONES, &p, &[escritura]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
 }
 
 /// S27, oleada 2: quién está delante, de `sesiones` (vacío si no hay nadie o no contesta).
@@ -641,10 +734,19 @@ fn desde_la_esquina(r: Rect) -> (i32, i32) {
 /// Para las pruebas: dónde queda cada botón, desde la esquina de arriba a la derecha de la pantalla.
 fn decir_sitios(e: &Estado, d: &Disposicion, abierto_ahora: bool) {
     let zona = |a: Accion| d.zonas.iter().find(|z| z.1 == a).map(|z| desde_la_esquina(z.0));
+    if !e.editando && e.menu {
+        let filas: Vec<String> = (0..ENERGIA.len())
+            .filter_map(|i| zona(Accion::Energia(i)).map(|(x, y)| alloc::format!("{} ({}, {})", ENERGIA[i].0.to_lowercase(), x, y)))
+            .collect();
+        println!("  [panel] menú de apagado: {}", filas.join(" "));
+        return;
+    }
     if !e.editando {
         let (ex, ey) = desde_la_esquina(BOTON_CABECERA);
         println!("  [panel] se ven: {}; editar a ({}, {})", nombres(&e.orden), ex, ey);
         if abierto_ahora {
+            let (ax, ay) = desde_la_esquina(BOTON_APAGADO);
+            println!("  [panel] botón de apagado a ({}, {})", ax, ay);
             if let Some((x, y)) = zona(Accion::Mosaico(OSCURO)) {
                 println!("  [panel] abierto; mosaico a ({}, {}) de la esquina de arriba a la derecha", x, y);
             }
@@ -717,7 +819,7 @@ fn principal() -> u64 {
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     c.mandar(&e);
     println!("  [panel] en marcha: Super+A lo abre");
-    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false, red: 0, ip: [0; 4], persona: String::new() };
+    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false, red: 0, ip: [0; 4], persona: String::new(), menu: false };
     // S27, oleada 2: lo último que se dijo al compositor del estado (para la barra) y cuándo toca preguntar a la red.
     let mut estado_dicho: Option<(u32, u32, u32)> = None;
     let mut proxima_red = 0u64;
@@ -740,7 +842,7 @@ fn principal() -> u64 {
     // tamaño y pinta al llegar su configure.
     let pintar_o_pedir = |c: &mut Cliente, est: &Estado, configurado: i32, pedido: &mut i32, buferes: &mut [(u32, i32); 2], visto: &mut usize,
                           fuente: &mut Fuente, medio: &mut Fuente, decir: bool, abierto_ahora: bool| {
-        let d = disponer(&est.orden, est.editando);
+        let d = disponer(&est.orden, est.editando, est.menu);
         let alto = d.alto.min(ALTO_MAX);
         if alto != configurado {
             if *pedido != alto {
@@ -865,7 +967,8 @@ fn principal() -> u64 {
                 abierto = true;
                 veces_abierto += 1;
                 println!("  [panel] abierto por {}.ª vez", veces_abierto);
-                (configurado, pedido) = (0, disponer(&est.orden, false).alto.min(ALTO_MAX));
+                est.menu = false;
+                (configurado, pedido) = (0, disponer(&est.orden, false, false).alto.min(ALTO_MAX));
                 por_decir = (true, true);
                 let mut e = Escritor::new();
                 e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
@@ -945,7 +1048,7 @@ fn principal() -> u64 {
             (PUNTERO, wl_pointer::ev::LEAVE) => dentro = false,
             (PUNTERO, wl_pointer::ev::MOTION) => (x, y) = (palabra(1) as i32 >> 8, palabra(2) as i32 >> 8),
             (PUNTERO, wl_pointer::ev::BUTTON) if palabra(2) == BOTON_IZQUIERDO && palabra(3) == 1 && dentro && abierto && configurado > 0 => {
-                let d = disponer(&est.orden, est.editando);
+                let d = disponer(&est.orden, est.editando, est.menu);
                 let Some(&(_, accion)) = d.zonas.iter().find(|z| z.0.contiene(x, y)) else { continue };
                 // Si cambia lo que se ve, se pinta y se dicen los sitios nuevos.
                 let mut cambia = true;
@@ -963,6 +1066,23 @@ fn principal() -> u64 {
                         continue;
                     }
                     Accion::Mosaico(_) => cambia = false,
+                    Accion::MenuApagado => {
+                        est.menu = !est.menu;
+                        println!("  [panel] menú de apagado {}", if est.menu { "abierto" } else { "cerrado" });
+                    }
+                    Accion::Energia(i) => {
+                        // Se cierra el panel y se pide (bloquear, como el candado).
+                        abierto = false;
+                        est.menu = false;
+                        let Some(modo) = ENERGIA[i].1 else {
+                            cerrar(&mut c, &mut est, &antes, true);
+                            println!("  [panel] bloquear");
+                            continue;
+                        };
+                        cerrar(&mut c, &mut est, &antes, false);
+                        println!("  [panel] {}: {}", ENERGIA[i].0.to_lowercase(), pedir_apagado(modo));
+                        continue;
+                    }
                     Accion::VolumenMenos | Accion::VolumenMas | Accion::Silencio | Accion::Pista => {
                         match accion {
                             Accion::Silencio => {
@@ -1014,7 +1134,7 @@ fn principal() -> u64 {
                     }
                 }
                 if cambia {
-                    let alto = disponer(&est.orden, est.editando).alto.min(ALTO_MAX);
+                    let alto = disponer(&est.orden, est.editando, est.menu).alto.min(ALTO_MAX);
                     if alto == configurado {
                         pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, true, false);
                     } else {

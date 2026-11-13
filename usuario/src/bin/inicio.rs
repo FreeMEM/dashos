@@ -75,6 +75,31 @@ const SIGUEN_SESIONES: &[&str] = &["compositor", "sonido", "avisos"];
 /// la caja Amiga, con el permiso de página 0 (H4).
 const SE_ESPERAN: &[&str] = &["caja-amiga"];
 
+/// El permiso de apagar y reiniciar del kernel (tipo 10, "apagar"), si lo hay: se le manda a `sesiones` al lanzarlo y
+/// al relanzarlo (no cabe entre sus 8 llaves).
+static PERMISO_APAGAR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Manda a `sesiones` (por `canal`, sin marca) una copia del permiso de apagar, solo para escribir: llega sin el
+/// derecho de transferirla (UNA_VEZ), así que no la puede pasar a nadie.
+fn apagar_a_sesiones(canal: u32) {
+    let permiso = PERMISO_APAGAR.load(core::sync::atomic::Ordering::Relaxed);
+    if permiso == 0 {
+        return;
+    }
+    let copia = llave_duplicar(permiso, dashos::ESCRIBIR | dashos::TRANSFERIR | UNA_VEZ, 0);
+    if copia <= 0 {
+        return;
+    }
+    let orden = dashos::protocolo::sesiones::PERMISO_APAGAR.to_le_bytes();
+    for _ in 0..500 {
+        if dashos::canal_escribir(canal, &orden, &[copia as u32]) == 0 {
+            return;
+        }
+        dormir_un_tic();
+    }
+    dashos::cerrar(copia as u32);
+}
+
 /// Manda a `sesiones` (por `canal`, sin marca) una copia sin marca del canal `extremo`, que sirve `nombre_cab`.
 fn canal_a_sesiones(canal: u32, extremo: u32, nombre_cab: usize) {
     let copia = llave_duplicar(extremo, 7, 0);
@@ -213,10 +238,14 @@ fn principal() -> u64 {
             7 => "permiso de plazo",
             8 => "permiso de máquinas virtuales",
             9 => "permiso de página 0",
+            10 => "permiso de apagar",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
         p += 24;
+    }
+    if let Some(i) = (0..n).find(|&i| nombre(aparatos + 24 * i) == "apagar" && u32_en(aparatos + 24 * i + 16) == 10) {
+        PERMISO_APAGAR.store(u32_en(aparatos + 24 * i + 20), core::sync::atomic::Ordering::Relaxed);
     }
     // Lo que dice el kernel de la máquina ("sistema"): la RAM, para la memoria de la caja Linux (H9).
     // Y lo pedido para el invitado al compilar (caja-linux-grandes), o 0.
@@ -442,6 +471,7 @@ fn principal() -> u64 {
             for c in (0..32).filter(|&c| pendientes[c] != 0 && SIGUEN_SESIONES.contains(&nombre(lector[c] + 16))) {
                 canal_a_sesiones(sesiones, pendientes[c], lector[c] + 16);
             }
+            apagar_a_sesiones(sesiones);
             for &(cab, marca, grupo, p) in &antes[..n_antes] {
                 alta_en_sesiones(sesiones, cab, marca, grupo);
                 baja_en_sesiones(sesiones, p, marca);
@@ -591,6 +621,10 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
     if sesiones != 0 {
         alta_en_sesiones(sesiones, s.cab, marca, s.grupo);
         baja_en_sesiones(sesiones, s.proceso, marca);
+        // Si el relanzado es `sesiones`, otra vez su permiso de apagar.
+        if nombre(s.cab) == "sesiones" {
+            apagar_a_sesiones(sesiones);
+        }
     }
     dashos::proceso_avisar(s.proceso, s.aviso) == 0
 }

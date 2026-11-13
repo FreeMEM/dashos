@@ -96,6 +96,18 @@ pub const ENTRADA_MEMORIA: usize = 32;
 /// más: el nombre de quien está sentado no se le dice a cualquier programa.
 pub const DELANTE: u32 = 21;
 pub const LARGO_DELANTE: usize = 20;
+/// Del panel rápido (decisión del usuario del 2026-11-13): apagar, reiniciar o cerrar la sesión de delante (orden y
+/// `MODO_*` u32). A otro, -2. Si hay otras sesiones abiertas (además de la de delante), antes se pregunta a `guardian`
+/// (con "*apagar" o "*reiniciar" en vez del servicio; contesta con `RESPUESTA`), y sin `guardian`, no. Cerrar la sesión
+/// se lo pide a `guardian` ("*salir", con el nombre del usuario en lugar del programa), como `BLOQUEAR`. Contesta un
+/// i32 (0, o -2) antes de apagar; la máquina se apaga justo después.
+pub const APAGAR: u32 = 22;
+pub const MODO_APAGAR: u32 = 0;
+pub const MODO_REINICIAR: u32 = 1;
+pub const MODO_SALIR: u32 = 2;
+/// De `inicio`, sin marca: el permiso de apagar y reiniciar del kernel (llamada 51), con la llave. `sesiones` ya tiene
+/// las 8 llaves con que se lanza un programa: este le llega así.
+pub const PERMISO_APAGAR: u32 = 23;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los
@@ -122,6 +134,8 @@ pub const R_ENTRAR: u32 = 3;
 pub const R_FALLO: u32 = 4;
 pub const R_LANZAR: u32 = 5;
 pub const R_ADMIN: u32 = 6;
+/// Apagar, reiniciar o cerrar la sesión (`APAGAR`): lo hecho y lo negado.
+pub const R_APAGAR: u32 = 7;
 
 // Lo que contesta `MATAR`.
 pub const BIEN: i32 = 0;

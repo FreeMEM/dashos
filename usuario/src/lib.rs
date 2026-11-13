@@ -130,6 +130,12 @@ pub fn memoria_vista(origenes: &[u32], paginas: &[u32]) -> i64 {
     llamada(50, [origenes.as_ptr() as u64, origenes.len() as u64, paginas.as_ptr() as u64, paginas.len() as u64, 0]).0 as i64
 }
 
+/// Apaga (`reiniciar` falso) o reinicia la máquina (llamada 51), con el permiso de apagar (solo lo tiene `sesiones`).
+/// Si se puede, no vuelve; si no, un error negativo (-6 si la llave no es el permiso, -10 si la placa no sabe).
+pub fn apagar(permiso: u32, reiniciar: bool) -> i64 {
+    llamada(51, [permiso as u64, reiniciar as u64, 0, 0, 0]).0 as i64
+}
+
 /// Proyecta los registros de un aparato (llave de registros) en `direccion` (C20).
 pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
     llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64

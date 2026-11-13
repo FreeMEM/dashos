@@ -108,6 +108,8 @@ const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 const LANZADORES: &[&str] = &["barra", "workbench"];
 /// Quién puede preguntar quién está delante (S27, oleada 2: la cabecera del panel rápido).
 const VEN_DELANTE: &[&str] = &["panel", "barra"];
+/// Quien puede pedir apagar, reiniciar o cerrar la sesión (decisión del usuario del 2026-11-13): el panel rápido.
+const PUEDE_APAGAR: &[&str] = &["panel"];
 
 /// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
 /// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.
@@ -628,6 +630,19 @@ fn avisar_todo(canal: u32, fichas: &[Option<Ficha>], detras: &[u32; MAX_DETRAS])
     aviso_detras(canal, detras);
 }
 
+/// Apaga o reinicia la máquina con el permiso del kernel (llamada 51), tras apuntarlo en el registro y guardarlo en el
+/// disco. Si vuelve, es que no se pudo.
+fn apagar_ya(permiso: u32, reiniciar: bool, quien: &[u8; 16], registro: &mut Registro, archivos: &Option<Archivos>) {
+    let que: &[u8] = if reiniciar { b"reiniciar" } else { b"apagar" };
+    registro.apuntar(R_APAGAR, BIEN, quien, que);
+    if let Some(a) = archivos {
+        registro.guardar(a);
+    }
+    println!("  [sesiones] {} pide {}: se {} la máquina", nombre(quien), core::str::from_utf8(que).unwrap_or("?"), if reiniciar { "reinicia" } else { "apaga" });
+    let r = dashos::apagar(permiso, reiniciar);
+    println!("  [sesiones] el kernel no puede {}: {}", core::str::from_utf8(que).unwrap_or("?"), r);
+}
+
 fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
@@ -651,6 +666,10 @@ fn principal() -> u64 {
     // Y la llave del temporizador de su plazo.
     let mut comprobando: Option<(u32, [u8; 16], [u8; 16], u64, u32)> = None;
     let mut canal_guardian = 0u32;
+    // El permiso de apagar del kernel (llega de `inicio`, `PERMISO_APAGAR`) y lo que espera la respuesta de `guardian`
+    // (número de la pregunta, si es reiniciar, quién lo pidió y cuándo: pasado un minuto sin respuesta, se olvida).
+    let mut permiso_apagar = 0u32;
+    let mut apagado_pendiente: Option<(u32, bool, [u8; 16], u64)> = None;
     // H9: lo de `SIN_PREGUNTAR` (por su servicio en `REPARTE`) que quien está delante quitó en el centro de control.
     let mut sin_preguntar_quitado = [false; 8];
     let mut siguiente_pregunta = 1u32;
@@ -778,6 +797,10 @@ fn principal() -> u64 {
                         }
                     }
                 }
+            } else if u32_en(0) == PERMISO_APAGAR && k >= 1 && permiso_apagar == 0 {
+                permiso_apagar = ll[0];
+                usadas = 1;
+                println!("  [sesiones] tiene el permiso de apagar");
             } else if u32_en(0) == CANAL_SISTEMA && m.len() == 20 && k >= 1 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
@@ -1294,6 +1317,16 @@ fn principal() -> u64 {
                 RESPUESTA if yo.is_some_and(|f| es(&f, GUARDIANES)) => {
                     dashos::canal_escribir(respuesta, &BIEN.to_le_bytes(), &[]);
                     let (id, si) = (u32_en(4), u32_en(8) == 1);
+                    // Apagar o reiniciar con otras sesiones abiertas: lo que diga el usuario.
+                    if let Some((_, reiniciar, quien, _)) = apagado_pendiente.filter(|p| p.0 == id) {
+                        apagado_pendiente = None;
+                        if si {
+                            apagar_ya(permiso_apagar, reiniciar, &quien, &mut registro, &archivos);
+                        } else {
+                            registro.apuntar(R_APAGAR, PROTEGIDO, &quien, if reiniciar { b"reiniciar" } else { b"apagar" });
+                            println!("  [sesiones] {} pide {}: el usuario dice no", nombre(&quien), if reiniciar { "reiniciar" } else { "apagar" });
+                        }
+                    }
                     // Todas las que esperaban esa respuesta (copias del mismo programa que pidieron lo mismo).
                     let mut primera = true;
                     while let Some(i) = preguntas.iter().position(|p| p.is_some_and(|p| p.0 == id && p.4 < ACCION)) {
@@ -1410,6 +1443,67 @@ fn principal() -> u64 {
                     };
                     println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                APAGAR => {
+                    // Solo el panel (por el nombre que da `inicio`). Con otras sesiones abiertas (además de la de
+                    // delante), antes se pregunta a `guardian`; sin él, no.
+                    let modo = u32_en(4);
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let que: &[u8] = match modo {
+                        MODO_APAGAR => b"apagar",
+                        MODO_REINICIAR => b"reiniciar",
+                        MODO_SALIR => b"cerrar sesion",
+                        _ => b"?",
+                    };
+                    let reiniciar = modo == MODO_REINICIAR;
+                    let otras = abiertas.iter().filter(|&&u| u != 0 && u != activa).count();
+                    let mut ya = false;
+                    let estado = if !yo.is_some_and(|f| es(&f, PUEDE_APAGAR)) || que == b"?" {
+                        PROTEGIDO
+                    } else if modo == MODO_SALIR {
+                        // Como `BLOQUEAR`: lo hace `guardian`, con la cuenta de quien está delante.
+                        match CUENTAS.iter().find(|c| c.0 == activa && activa != 0) {
+                            Some(&(uid, cuenta)) if canal_guardian != 0 => {
+                                let mut q = [0u8; PREGUNTA];
+                                q[4..8].copy_from_slice(&uid.to_le_bytes());
+                                q[8..8 + cuenta.len().min(16)].copy_from_slice(&cuenta.as_bytes()[..cuenta.len().min(16)]);
+                                q[24..30].copy_from_slice(b"*salir");
+                                if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 { BIEN } else { PROTEGIDO }
+                            }
+                            _ => PROTEGIDO,
+                        }
+                    } else if permiso_apagar == 0 {
+                        PROTEGIDO
+                    } else if otras == 0 {
+                        ya = true;
+                        BIEN
+                    } else if canal_guardian != 0 && apagado_pendiente.is_none_or(|p| dashos::ahora_us().saturating_sub(p.3) > 60_000_000) {
+                        let id = siguiente_pregunta;
+                        siguiente_pregunta = siguiente_pregunta.wrapping_add(1).max(1);
+                        let mut q = [0u8; PREGUNTA];
+                        q[0..4].copy_from_slice(&id.to_le_bytes());
+                        q[4..8].copy_from_slice(&activa.to_le_bytes());
+                        q[8..24].copy_from_slice(&quien);
+                        q[24] = b'*';
+                        q[25..25 + que.len()].copy_from_slice(que);
+                        if dashos::canal_escribir(canal_guardian, &q, &[]) == 0 {
+                            apagado_pendiente = Some((id, reiniciar, quien, dashos::ahora_us()));
+                            println!("  [sesiones] {} pide {} con {} sesiones más abiertas: se pregunta", nombre(&quien), core::str::from_utf8(que).unwrap_or("?"), otras);
+                            BIEN
+                        } else {
+                            PROTEGIDO
+                        }
+                    } else {
+                        PROTEGIDO
+                    };
+                    if estado != BIEN {
+                        registro.apuntar(R_APAGAR, estado, &quien, que);
+                        println!("  [sesiones] {} pide {}: no", nombre(&quien), core::str::from_utf8(que).unwrap_or("?"));
+                    }
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                    if ya {
+                        apagar_ya(permiso_apagar, reiniciar, &quien, &mut registro, &archivos);
+                    }
                 }
                 DELANTE => {
                     // S27: el nombre de quien está delante, solo al panel y a la barra (los nombres que da `inicio`).

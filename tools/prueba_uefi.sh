@@ -39,6 +39,10 @@ QEMU=$!
 # (fichero.ppm) y la de "Cambiar de usuario" con el nombre ya puesto (fichero.nombre.ppm).
 # U6, paso 2: con CAPTURA_U6=prefijo, la pantalla con la ventana de `cambio` de Ana delante (prefijo.ana.ppm) y la de la
 # sesión de Carla, con Ana detrás (prefijo.carla.ppm): ahí no tiene que estar (lo mira `tools/captura_cambio.py`).
+# Con REINICIO=fichero (make arranque-virt): cuando ya salió todo lo esperado, el guion pulsa Reiniciar en el menú de
+# apagado del panel (decisión del usuario del 2026-11-13) y se espera a que la máquina vuelva a arrancar (otro "DashOS en
+# marcha") y a las líneas de ese fichero, en orden. La señal para el guion es un fichero junto a la salida.
+export REINICIO_SENAL="${REINICIO:+$SALIDA.reiniciar}"
 if [ -n "${TECLAS:-}" ]; then
     python3 -I - "$MONITOR" "$SEGUNDOS" "$SALIDA" "${CAPTURA_PREGUNTA:-}" "${DIAG_REGISTROS:-}" "${CAPTURA_SELECTOR:-}" "${CAPTURA_CENTRO:-}" <<'PY' >/dev/null 2>&1 &
 import os, socket, sys, time
@@ -124,6 +128,10 @@ gt_dash = 0
 gt_mirado = 0
 gt_movida = 0
 req_dash = 0
+reinicio = 0
+reinicio_hasta = 0
+reinicio_abiertos = 0
+reinicio_menus = 0
 
 while time.time() - inicio < total:
     try:
@@ -133,6 +141,49 @@ while time.time() - inicio < total:
             estado_dicho = time.time()
             with open(os.environ["ESTADO_GUION"], "a") as f:
                 f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso} caja {amiga}/{dash_amiga}/{gt_amiga}/{gt_dash}/{req_dash}\n")
+        # Con REINICIO: cuando ya salió todo lo esperado (la señal), Super+A, el botón de apagado del panel y Reiniciar.
+        # Con otras sesiones abiertas (Carla sigue detrás de Ana), `guardian` lo pregunta: S, pasado su segundo. Lo demás
+        # del guion ya no se hace (sus clics caerían en el panel).
+        senal = os.environ.get("REINICIO_SENAL")
+        if senal and os.path.exists(senal):
+            import re
+            def clic_panel(x, y):
+                # Los sitios, como en el paso del panel: desde la esquina de arriba a la derecha, bajo la barra.
+                capa = re.findall(r"\[compositor\] capa de panel en \((\d+), (\d+)\)", texto)
+                y += int(capa[-1][1]) - 8 if capa else 0
+                ir_a(800 - x, y)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            if reinicio == 0:
+                reinicio_abiertos = texto.count("[panel] botón de apagado a (")
+                mandar("sendkey meta_l-a")
+                reinicio, reinicio_hasta = 1, time.time() + 8
+            elif reinicio == 1:
+                b = re.findall(r"\[panel\] botón de apagado a \((\d+), (\d+)\)", texto)
+                if len(b) > reinicio_abiertos:
+                    time.sleep(0.5)
+                    reinicio_menus = texto.count("[panel] menú de apagado: ")
+                    clic_panel(int(b[-1][0]), int(b[-1][1]))
+                    reinicio, reinicio_hasta = 2, time.time() + 8
+                elif time.time() > reinicio_hasta:
+                    # No se abrió (o ya estaba abierto y Super+A lo cerró): otra vez.
+                    reinicio = 0
+            elif reinicio == 2:
+                m = re.findall(r"\[panel\] menú de apagado: .*reiniciar \((\d+), (\d+)\)", texto)
+                if len(m) > reinicio_menus:
+                    time.sleep(0.5)
+                    clic_panel(int(m[-1][0]), int(m[-1][1]))
+                    reinicio = 3
+                elif time.time() > reinicio_hasta:
+                    mandar("sendkey meta_l-a")
+                    time.sleep(1)
+                    reinicio = 0
+            elif reinicio == 3 and "[guardian] confirmación en pantalla: ¿reiniciar?" in texto:
+                time.sleep(1.3)
+                mandar("sendkey s")
+                reinicio = 4
+            time.sleep(0.25)
+            continue
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
         # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
         libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")
@@ -1482,16 +1533,36 @@ todas() {
         grep -qF -- "$l" <<< "$texto" || return 1
     done < "$LINEAS"
 }
+# Con REINICIO, lo que tiene que salir tras pulsar Reiniciar, y otro arranque del kernel.
+reiniciada() {
+    local texto
+    texto=$(sed -e 's/\x1b\[[0-9;]*[A-Za-z]//g' -e 's/\r//g' "$SALIDA")
+    [ "$(grep -cF -- "DashOS en marcha con" <<< "$texto")" -ge 2 ] || return 1
+    grep -v '^#' "$REINICIO" | grep -v '^$' | sed 's/^~//' | while IFS= read -r l; do
+        grep -qF -- "$l" <<< "$texto" || exit 1
+    done
+}
+CAPTURADA=
 while kill -0 "$QEMU" 2>/dev/null; do
-    if todas; then
+    # Con REINICIO, tras la captura se da la señal al guion y se espera al segundo arranque (`todas` ya no se mira).
+    if [ -n "$CAPTURADA" ] && [ -n "${REINICIO:-}" ]; then
+        [ -e "$REINICIO_SENAL" ] || touch "$REINICIO_SENAL"
+        if reiniciada; then
+            kill "$QEMU" 2>/dev/null
+            break
+        fi
+    elif todas; then
         sleep 0.5
         if [ -n "${CAPTURA:-}" ]; then
             # Un segundo para que el compositor pinte lo último (tras desbloquear, U3, vuelve a componer todo).
             sleep 1
             python3 -I -c 'import socket,sys,time; s=socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); s.sendall(("screendump "+sys.argv[2]+"\n").encode()); time.sleep(1)' "$MONITOR" "$CAPTURA"
         fi
-        kill "$QEMU" 2>/dev/null
-        break
+        CAPTURADA=1
+        if [ -z "${REINICIO:-}" ]; then
+            kill "$QEMU" 2>/dev/null
+            break
+        fi
     fi
     sleep 0.5
 done
@@ -1523,6 +1594,26 @@ while IFS= read -r ESPERADO; do
     DESDE=$((DESDE + N))
 done < "$ESPERADOS"
 
+# Con REINICIO: sus líneas, en orden, tras la última de los esperados; y el segundo arranque del kernel, después.
+if [ "$FALLO" = 0 ] && [ -n "${REINICIO:-}" ]; then
+    while IFS= read -r ESPERADO; do
+        [ -z "$ESPERADO" ] && continue
+        case "$ESPERADO" in \#*) continue;; esac
+        ESPERADO=${ESPERADO#\~}
+        N=$(tail -n +"$DESDE" "$SALIDA.txt" | grep -nF -m1 -- "$ESPERADO" | cut -d: -f1)
+        if [ -z "$N" ]; then
+            echo "FALTA (reinicio): $ESPERADO"
+            FALLO=1
+            break
+        fi
+        DESDE=$((DESDE + N))
+    done < "$REINICIO"
+    if [ "$FALLO" = 0 ] && ! tail -n +"$DESDE" "$SALIDA.txt" | grep -qF "DashOS en marcha con"; then
+        echo "FALTA (reinicio): el segundo arranque"
+        FALLO=1
+    fi
+    [ "$FALLO" = 0 ] && echo "BIEN: $(basename "$REINICIO")"
+fi
 if [ "$FALLO" = 0 ]; then
     echo "BIEN: $(basename "$ESPERADOS")"
 else
@@ -1530,5 +1621,5 @@ else
     tail -40 "$SALIDA.txt"
 fi
 [ -n "${GUARDAR:-}" ] && cp "$SALIDA.txt" "$GUARDAR"
-rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR" "$LINEAS"
+rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR" "$LINEAS" "$SALIDA.reiniciar"
 exit $FALLO

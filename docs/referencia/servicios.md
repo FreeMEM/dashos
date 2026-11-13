@@ -350,6 +350,14 @@ línea "programa servicio" por permiso concedido). Cuentas y frases, provisional
 `DELANTE` (21, S27): quién está delante (un i32 y 16 bytes con el nombre). Solo al panel rápido y a la barra, por el
 nombre que da `inicio`; a otro, o sin nadie delante, -2 y nada más.
 
+`APAGAR` (22; decisión del usuario del 2026-11-13): apagar (`MODO_APAGAR`), reiniciar (`MODO_REINICIAR`) o cerrar la
+sesión de delante (`MODO_SALIR`). Solo al panel rápido, por el nombre que da `inicio`; a otro, -2 (y se apunta,
+`R_APAGAR`). Apagar y reiniciar los hace `sesiones` con el permiso de apagar del kernel (llamada 51), que le manda
+`inicio` sin marca (`PERMISO_APAGAR`, 23: no cabe entre sus 8 llaves; otra vez si se relanza); antes lo apunta en el
+registro y lo guarda. Si hay otras sesiones abiertas además de la de delante, primero pregunta a `guardian` ("*apagar"
+o "*reiniciar", contesta con `RESPUESTA`); sin `guardian`, no. Cerrar la sesión se lo pide a `guardian` ("*salir", como
+`BLOQUEAR`), que hace `SALIR` y pone la pantalla de entrada. Contesta 0 (hecho o preguntado) o -2.
+
 `inicio` da de alta cada programa (orden 1, sin marca: marca, usuario, grupo, nombre y la llave de su grupo) y pide
 su aviso de fin hacia `sesiones` (la baja llega con la marca y el bit alto puesto). Los programas piden, con una llave
 de respuesta:
