@@ -1037,8 +1037,9 @@ const VA_INITRD: usize = 0x3800_0000;
 /// La RAM del invitado de Linux, en objetos de 16 MB (el tope de `memoria_crear`), proyectados seguidos aquí.
 const VA_RAM_LINUX: usize = 0x40_0000_0000;
 const TROZO: usize = 16 << 20;
-/// Lo más que se le da: 512 MB (lo de serie con 4 GB o más).
-const MAX_TROZOS: usize = 32;
+/// Lo más que se le da: 2 GB (caja-linux-grandes: lo de serie llega a 512 MB; más, con `DASHOS_CAJA_LINUX_MB`). Las
+/// direcciones del invitado acaban en 4 GB (`hiper::IPA_MAX`) y su RAM empieza en 1 GB.
+const MAX_TROZOS: usize = 128;
 const RAM_MINIMA: usize = 64 << 20;
 /// La consola temprana por el PL011; la de verdad, virtio-console (hvc0). `caja.escribir` pide al /init de prueba que
 /// escriba en el disco; `caja.terminal`, que deje una shell en hvc0 (hay ventana de terminal).
@@ -2219,9 +2220,12 @@ fn principal() -> u64 {
     let l = llaves();
     // SAFETY: recién proyectado aquí, solo de lectura; el objeto mide una página.
     let sistema = (dashos::memoria_proyectar(SISTEMA, VA_SISTEMA, false) == 0)
-        .then(|| dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(VA_SISTEMA as *const u8, 16) }))
+        .then(|| {
+            let datos = unsafe { core::slice::from_raw_parts(VA_SISTEMA as *const u8, 24) };
+            dashos::maquina::sistema(datos).map(|(ram, hiper)| (ram, hiper, dashos::maquina::memoria_pedida(datos)))
+        })
         .flatten();
-    let Some((ram, hiper)) = sistema else {
+    let Some((ram, hiper, pedida)) = sistema else {
         println!("  [caja-linux] sin los datos del sistema; MAL");
         return 1;
     };
@@ -2368,7 +2372,7 @@ fn principal() -> u64 {
     bien &= cuarto;
     // Con la Image de un kernel de Linux, Linux hasta busybox (y, con ventana, una terminal con su shell).
     if l.linux.is_some() {
-        let invitado = dashos::maquina::memoria_invitado(ram) as usize;
+        let invitado = dashos::maquina::memoria_invitado_con(ram, pedida) as usize;
         println!("  [caja-linux] linux: la máquina tiene {} MB de RAM: hasta {} MB para el invitado", ram >> 20, invitado >> 20);
         bien &= linux(&l, invitado);
     }

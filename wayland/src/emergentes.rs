@@ -215,6 +215,19 @@ impl<M: Memorias> Escena<M> {
         }
     }
 
+    /// Empieza a redimensionar la ventana `sup` de `c` por `bordes` (los de `xdg_toplevel.resize_edge`) desde donde está
+    /// el cursor: a petición del programa o desde la franja de fuera de la barra de DashOS. Falso si no es una ventana
+    /// con sitio.
+    pub(super) fn empezar_redimension(&mut self, (c, sup): (Cliente, u32), bordes: u32) -> bool {
+        let Some(cli) = self.clientes.get(&c) else { return false };
+        let Some(s) = cli.superficies.get(&sup) else { return false };
+        let (Some(rol), Some(sitio)) = (s.rol, s.sitio) else { return false };
+        let Some(x) = cli.xdg.get(&rol) else { return false };
+        let tam = x.geometria.map(|g| (g.w, g.h)).or_else(|| rect_de(cli, sup).map(|r| (r.w, r.h))).unwrap_or((MINIMO, MINIMO));
+        self.redimension = Some(Redimension { ventana: (c, sup), xdg: rol, bordes, cursor: self.cursor, tam, sitio, ahora: tam, pendiente: None });
+        true
+    }
+
     /// Mientras se redimensiona: el tamaño nuevo por lo que se movió el cursor (con su mínimo).
     pub(super) fn seguir_redimension(&mut self, out: &mut Vec<(Cliente, Entrada)>) {
         let Some(mut r) = self.redimension else { return };
@@ -414,7 +427,7 @@ impl<M: Memorias> PorCliente<'_, M> {
                 }
             }
             ("xdg_toplevel", xdg_toplevel::req::MOVE | xdg_toplevel::req::RESIZE) => {
-                let Some((&rol, x)) = yo.xdg.iter().find(|(_, x)| x.toplevel == Some(objeto)) else { return Some(Ok(())) };
+                let Some(x) = yo.xdg.values().find(|x| x.toplevel == Some(objeto)) else { return Some(Ok(())) };
                 if orden == xdg_toplevel::req::RESIZE && !matches!(args[2].uint(), 1 | 2 | 4 | 5 | 6 | 8 | 9 | 10) {
                     return Some(Err(ErrorProtocolo::new(objeto, BORDE_MALO, "borde que no existe")));
                 }
@@ -429,17 +442,7 @@ impl<M: Memorias> PorCliente<'_, M> {
                     let desde = super::decoracion::ventana_de(yo, sup).map_or(0, |v| escena.salida_de(v));
                     escena.arrastre = Some(((cliente, sup), escena.cursor.0 - sitio.0, escena.cursor.1 - sitio.1, desde));
                 } else {
-                    let tam = x.geometria.map(|g| (g.w, g.h)).or_else(|| rect_de(yo, sup).map(|r| (r.w, r.h))).unwrap_or((MINIMO, MINIMO));
-                    escena.redimension = Some(Redimension {
-                        ventana: (cliente, sup),
-                        xdg: rol,
-                        bordes: args[2].uint(),
-                        cursor: escena.cursor,
-                        tam,
-                        sitio,
-                        ahora: tam,
-                        pendiente: None,
-                    });
+                    escena.empezar_redimension((cliente, sup), args[2].uint());
                 }
                 // El programa deja de recibir el puntero mientras tanto.
                 if let Some((pc, ps)) = escena.puntero.take() {

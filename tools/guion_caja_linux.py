@@ -88,7 +88,7 @@ def esperar(patron, segundos):
 
 # Teclado español: lo que hay que pulsar (nombres de `sendkey` de QEMU, posición de EE. UU.) para cada letra.
 ESPECIALES = {" ": "spc", "-": "slash", ".": "dot", ",": "comma", "/": "shift-7", "=": "shift-0", ":": "shift-dot",
-              "_": "shift-slash", "&": "shift-6", ";": "shift-comma"}
+              "_": "shift-slash", "&": "shift-6", ";": "shift-comma", "<": "less", ">": "shift-less"}
 
 
 def teclear(orden):
@@ -117,7 +117,8 @@ def paso(orden, patron, segundos=20):
 
 
 def ir_a(x, y):
-    mandar(*["mouse_move -100 -100"] * 12, pausa=0.03)
+    # A la esquina de arriba a la izquierda: hasta 2000 px (en Full HD, 12 pasos de 100 no llegaban desde la derecha).
+    mandar(*["mouse_move -100 -100"] * 20, pausa=0.03)
     pasos = []
     while x > 0 or y > 0:
         dx, dy = min(x, 100), min(y, 100)
@@ -166,7 +167,7 @@ def capturar(nombre):
 
 def ventana_linux(n):
     """Dónde puso el compositor la ventana número `n` (desde 1) de un programa de Linux."""
-    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((-?\d+), (-?\d+)\)", texto())
     return (int(v[n - 1][0]), int(v[n - 1][1])) if len(v) >= n else None
 
 
@@ -194,7 +195,7 @@ def teclear_sin_intro(orden):
     mandar(*teclas, pausa=0.12)
 
 
-VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?(?: de (\d+)x(\d+))?"
+VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((-?\d+), (-?\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?(?: de (\d+)x(\d+))?"
 # Lo que tapa cada ventana de Linux (x, y, ancho, alto; con la barra de DashOS), y lo que se movió (las que arrastra el
 # guion): para hacer clic en la terminal de la caja donde no haya otra encima.
 movidas = {}
@@ -224,7 +225,7 @@ def esperar_ventana(antes, segundos):
         v = ventanas_linux()
         if len(v) > antes:
             w = v[antes]
-            g = tuple(int(n) for n in w[2:]) if w[2] else None
+            g = tuple(int(n) for n in w[2:6]) if w[2] else None
             return int(w[0]), int(w[1]), g
         time.sleep(0.25)
     return None
@@ -256,6 +257,10 @@ def terminal_dashos():
     return int(v.group(1)), int(v.group(2)), int(c.group(1)), int(c.group(2)), int(c.group(3))
 
 
+# CAJA_SOLO=gtk, firefox o grandes (los dos; para probarlos sin esperar a lo demás, caja-linux-grandes): en el modo wayland, solo eso
+# programa grande, sin la ventana de prueba, foot ni los hostiles. Las líneas esperadas de siempre no salen enteras.
+solo = os.environ.get("CAJA_SOLO", "")
+
 if modo == "wayland":
     if not esperar(r"login: root \(automatic login\)", total):
         sys.exit(1)
@@ -263,215 +268,288 @@ if modo == "wayland":
     clic_en_ventana()
     paso("systemctl is-active dashos-puente", r"linux: active\s*$|linux: active\n", 120)
     paso("puente --hostil vsock:5000", r"puente hostil: hecho", 120)
-    # 1. Un programa de Linux sin barra propia: lleva la de DashOS (xdg-decoration).
-    n = len(ventanas_linux())
-    teclear("ventana_wayland &")
-    if not esperar(r"ventana_wayland: primer cuadro en pantalla", 180):
-        sys.exit(1)
-    time.sleep(1.0)
-    v = esperar_ventana(n, 10)
-    if v:
-        x, y, _ = v
-        clic(x + 160, y + 120)
-        esperar(r"ventana_wayland: clic del botón", 30)
-        mandar("sendkey a")
-        esperar(r"ventana_wayland: tecla 30 pulsada", 30)
-        esperar(r"ventana_wayland: en marcha", 60)
+    if not solo:
+        # 1. Un programa de Linux sin barra propia: lleva la de DashOS (xdg-decoration).
+        n = len(ventanas_linux())
+        teclear("ventana_wayland &")
+        if not esperar(r"ventana_wayland: primer cuadro en pantalla", 180):
+            sys.exit(1)
         time.sleep(1.0)
-        capturar(prefijo)
-        # Moverla por su barra (la medida de cuadros al arrastrar) y cerrarla con su botón.
-        arrastrar((x + 100, y - 20), 40, (4, 2))
-        movidas[len(ventanas_linux()) - 1] = (160, 80)
-        esperar(r"\[compositor\] arrastre: ", 20)
-        clic(x + 160 + 320 - 4 - 16, y + 80 - 20)
-        if not esperar(r"ventana_wayland: el compositor pide cerrar", 30):
-            mandar("sendkey q")
-    esperar(r"ventana_wayland: .* adiós", 30)
-    # Medidas: sin copia y con copia (el puente copia a los programas que conectan con el fichero puesto), de 320 x 240
-    # y de 1280 x 720, 8 s cada una.
-    a_la_terminal()
-    for copia, ancho, alto in [(False, 320, 240), (True, 320, 240), (False, 1280, 720), (True, 1280, 720)]:
+        v = esperar_ventana(n, 10)
+        if v:
+            x, y, _ = v
+            clic(x + 160, y + 120)
+            esperar(r"ventana_wayland: clic del botón", 30)
+            mandar("sendkey a")
+            esperar(r"ventana_wayland: tecla 30 pulsada", 30)
+            esperar(r"ventana_wayland: en marcha", 60)
+            time.sleep(1.0)
+            capturar(prefijo)
+            # Moverla por su barra (la medida de cuadros al arrastrar) y cerrarla con su botón.
+            arrastrar((x + 100, y - 20), 40, (4, 2))
+            movidas[len(ventanas_linux()) - 1] = (160, 80)
+            esperar(r"\[compositor\] arrastre: ", 20)
+            clic(x + 160 + 320 - 4 - 16, y + 80 - 20)
+            if not esperar(r"ventana_wayland: el compositor pide cerrar", 30):
+                mandar("sendkey q")
+        esperar(r"ventana_wayland: .* adiós", 30)
+        # Medidas: sin copia y con copia (el puente copia a los programas que conectan con el fichero puesto), de 320 x 240
+        # y de 1280 x 720, 8 s cada una.
+        a_la_terminal()
+        for copia, ancho, alto in [(False, 320, 240), (True, 320, 240), (False, 1280, 720), (True, 1280, 720)]:
+            clic_en_ventana()
+            teclear("touch /run/dashos-puente-copia" if copia else "rm -f /run/dashos-puente-copia")
+            time.sleep(1.0)
+            antes = len(re.findall(rf"ventana_wayland: medida de {ancho} x {alto}", texto()))
+            teclear(f"ventana_wayland {ancho} {alto} 8")
+            if ancho == 1280 and not copia and esperar_n(r"primer cuadro en pantalla .*\(1280 x 720\)", 1, 180):
+                time.sleep(4.0)
+                capturar(prefijo + ".grande")
+            esperar_n(rf"ventana_wayland: medida de {ancho} x {alto}", antes + 1, 180)
+            time.sleep(1.0)
         clic_en_ventana()
-        teclear("touch /run/dashos-puente-copia" if copia else "rm -f /run/dashos-puente-copia")
+        teclear("rm -f /run/dashos-puente-copia")
         time.sleep(1.0)
-        antes = len(re.findall(rf"ventana_wayland: medida de {ancho} x {alto}", texto()))
-        teclear(f"ventana_wayland {ancho} {alto} 8")
-        if ancho == 1280 and not copia and esperar_n(r"primer cuadro en pantalla .*\(1280 x 720\)", 1, 180):
-            time.sleep(4.0)
-            capturar(prefijo + ".grande")
-        esperar_n(rf"ventana_wayland: medida de {ancho} x {alto}", antes + 1, 180)
-        time.sleep(1.0)
-    clic_en_ventana()
-    teclear("rm -f /run/dashos-puente-copia")
-    time.sleep(1.0)
-    clic_en_ventana()
-    teclear("journalctl -u dashos-puente -o cat --no-pager")
-    esperar_n(r"CPU del puente", 5, 60)
-    # 2. foot, y el portapapeles con DashOS.
-    clic_en_ventana()
-    n = len(ventanas_linux())
-    teclear("prueba-foot &")
-    t = terminal_dashos()
-    if esperar(r"foot: lista", 600) and t:
-        fv = esperar_ventana(n, 30)
-        time.sleep(3.0)
-        tx, ty, cw, ch, borde = t
-        if fv:
-            fx, fy, _ = fv
-            # Tres clics en su primera línea: la selecciona (y va a la selección primaria); Control+Mayúsculas+C la copia.
-            ir_a(fx + 40, fy + 10)
-            mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.06)
-            time.sleep(1.0)
-            mandar("sendkey ctrl-shift-c")
-            time.sleep(1.0)
-            # Arriba del todo, por su barra: la terminal de la caja (casi toda la pantalla) la taparía entera al tener el
-            # teclado, y así siempre se ve la franja de arriba de foot.
-            sube = (fy - 80) // 8
-            arrastrar((fx + 200, fy - 20), sube, (0, -8))
-            fy -= sube * 8
-            movidas[len(ventanas_linux()) - 1] = (0, -sube * 8)
-            # Pegar en la terminal de DashOS (nativa): echo y lo pegado.
-            a_la_terminal()
-            teclear_sin_intro("echo ")
-            mandar("sendkey ctrl-shift-v")
-            esperar(r"terminal: pegado \(", 30)
-            time.sleep(0.5)
-            mandar("sendkey ret")
-            if esperar(r"linux: Hola desde foot, en Arch Linux ARM, en DashOS", 30):
-                apuntar("portapapeles: de foot a DashOS, bien")
-            # La primaria, con el botón central.
-            teclear_sin_intro("echo primaria: ")
-            ir_a(tx + 300, ty + 200)
-            mandar("mouse_button 4", "mouse_button 0", pausa=0.1)
-            esperar(r"terminal: pegado \(.*\n(.|\n)*terminal: pegado \(", 30)
-            time.sleep(0.5)
-            mandar("sendkey ret")
-            if esperar(r"linux: primaria: Hola desde foot", 30):
-                apuntar("primaria: de foot a DashOS, bien")
-            # De DashOS a foot: se selecciona con el ratón en la terminal nativa y Control+Mayúsculas+C.
-            a_la_terminal()
-            paso("clear; echo pegame-en-foot", r"linux: pegame-en-foot\s*$|linux: pegame-en-foot\n", 30)
-            time.sleep(1.0)
-            fila = ty + borde + ch // 2
-            arrastrar((tx + borde + cw // 2, fila), 1, (13 * cw, 0))
-            esperar(r"terminal: seleccionado \"pegame-en-foot\"", 20)
-            mandar("sendkey ctrl-shift-c")
-            esperar(r"terminal: copiado", 20)
-            clic(fx + 100, fy + 40)
-            mandar("sendkey ctrl-shift-v")
-            time.sleep(2.0)
-            capturar(prefijo + ".portapapeles")
-            mandar("sendkey ret")
-            if esperar(r"foot: leido pegame-en-foot", 60):
-                apuntar("portapapeles: de DashOS a foot, bien")
-            capturar(prefijo + ".foot")
-    time.sleep(4.0)
+        clic_en_ventana()
+        teclear("journalctl -u dashos-puente -o cat --no-pager")
+        esperar_n(r"CPU del puente", 5, 60)
+        # 2. foot, y el portapapeles con DashOS.
+        clic_en_ventana()
+        n = len(ventanas_linux())
+        teclear("prueba-foot &")
+        t = terminal_dashos()
+        if esperar(r"foot: lista", 600) and t:
+            fv = esperar_ventana(n, 30)
+            time.sleep(3.0)
+            tx, ty, cw, ch, borde = t
+            if fv:
+                fx, fy, _ = fv
+                # Tres clics en su primera línea: la selecciona (y va a la selección primaria); Control+Mayúsculas+C la copia.
+                ir_a(fx + 40, fy + 10)
+                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.06)
+                time.sleep(1.0)
+                mandar("sendkey ctrl-shift-c")
+                time.sleep(1.0)
+                # Arriba del todo, por su barra: la terminal de la caja (casi toda la pantalla) la taparía entera al tener el
+                # teclado, y así siempre se ve la franja de arriba de foot.
+                sube = (fy - 80) // 8
+                arrastrar((fx + 200, fy - 20), sube, (0, -8))
+                fy -= sube * 8
+                movidas[len(ventanas_linux()) - 1] = (0, -sube * 8)
+                # Pegar en la terminal de DashOS (nativa): echo y lo pegado.
+                a_la_terminal()
+                teclear_sin_intro("echo ")
+                mandar("sendkey ctrl-shift-v")
+                esperar(r"terminal: pegado \(", 30)
+                time.sleep(0.5)
+                mandar("sendkey ret")
+                if esperar(r"linux: Hola desde foot, en Arch Linux ARM, en DashOS", 30):
+                    apuntar("portapapeles: de foot a DashOS, bien")
+                # La primaria, con el botón central.
+                teclear_sin_intro("echo primaria: ")
+                ir_a(tx + 300, ty + 200)
+                mandar("mouse_button 4", "mouse_button 0", pausa=0.1)
+                esperar(r"terminal: pegado \(.*\n(.|\n)*terminal: pegado \(", 30)
+                time.sleep(0.5)
+                mandar("sendkey ret")
+                if esperar(r"linux: primaria: Hola desde foot", 30):
+                    apuntar("primaria: de foot a DashOS, bien")
+                # De DashOS a foot: se selecciona con el ratón en la terminal nativa y Control+Mayúsculas+C.
+                a_la_terminal()
+                paso("clear; echo pegame-en-foot", r"linux: pegame-en-foot\s*$|linux: pegame-en-foot\n", 30)
+                time.sleep(1.0)
+                fila = ty + borde + ch // 2
+                arrastrar((tx + borde + cw // 2, fila), 1, (13 * cw, 0))
+                esperar(r"terminal: seleccionado \"pegame-en-foot\"", 20)
+                mandar("sendkey ctrl-shift-c")
+                esperar(r"terminal: copiado", 20)
+                clic(fx + 100, fy + 40)
+                mandar("sendkey ctrl-shift-v")
+                time.sleep(2.0)
+                capturar(prefijo + ".portapapeles")
+                mandar("sendkey ret")
+                if esperar(r"foot: leido pegame-en-foot", 60):
+                    apuntar("portapapeles: de DashOS a foot, bien")
+                capturar(prefijo + ".foot")
+        time.sleep(4.0)
     # 3. Un programa grande: GTK4 (gtk4-widget-factory), dibujado por la CPU.
     a_la_terminal()
     n = len(ventanas_linux())
-    teclear("prueba-gtk &")
-    if esperar(r"gtk: empieza", 120):
+    # CAJA_GTK_DEPURAR=1: con WAYLAND_DEBUG (en /tmp/gtk.log del invitado; su final sale por la terminal al acabar).
+    depurar = os.environ.get("CAJA_GTK_DEPURAR") == "1"
+    # `prueba-gtk-guion` abre GTK, espera 300 s (lo que sigue la prueba) y lanza el hostil de la memoria con ella
+    # abierta: no se teclea con su ventana delante (con 800 x 600 tapa entera la terminal de la caja).
+    if solo != "firefox":
+        teclear("WAYLAND_DEBUG=1 prueba-gtk-guion 2>/tmp/gtk.log &" if depurar else "prueba-gtk-guion &")
+    if solo != "firefox" and esperar(r"gtk: empieza", 120):
         t0 = time.time()
-        # En la caja, GTK 4.24 aborta al cargar su icono (glycin, ver la bitácora): se le espera poco.
+        # Hasta su primera ventana (sin el zram del invitado, con 256 MB, abortaba al cargar su icono: la bitácora).
         g = esperar_ventana(n, 240)
         if not g:
             apuntar("gtk4-widget-factory: sin ventana (" + ("Gdk-ERROR al cargar su icono" if "Gdk-ERROR" in texto() else "?") + ")")
         if g:
             apuntar(f"gtk4-widget-factory: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
-            # Para el registro (y las líneas esperadas): el guion la vio salir.
-            clic_en_ventana()
-            teclear("echo guion: gtk4 en pantalla")
             x, y, geo = g
             gx, gy, gw, gh = geo if geo else (0, 0, 600, 400)
+            # Lo que se ve de la pantalla y dónde está la terminal de la caja (con 800 x 600, GTK es más ancha que la
+            # pantalla y sale en x negativa; en Full HD, la terminal tapa la izquierda de su barra).
+            p = re.search(r"pantalla del firmware de (\d+)x(\d+)", texto())
+            ancho = int(p.group(1)) if p else 800
+            t = re.search(r"\[compositor\] ventana de caja-linux en \((\d+), (\d+)\) de (\d+)x(\d+)", texto())
+            term = tuple(int(n) for n in t.groups()) if t else (0, 0, 0, 0)
+            def libre(px, py):
+                return 0 <= px < ancho and not (term[0] <= px < term[0] + term[2] and term[1] <= py < term[1] + term[3])
+            # Su barra (la que se pinta GTK), donde no haya pestañas ni botones: con la ventana de Full HD (1666 de ancho),
+            # entre las pestañas y el botón del menú; más estrecha, a la izquierda (las pestañas van en el centro).
+            sitios = [(x + gx + gw - 400, y + gy + 16)] if gw >= 1600 else []
+            sitios += [(x + gx + 60, y + gy + 16), (x + gx + 160, y + gy + 16)]
+            barra = next((b for b in sitios if libre(*b)), sitios[0])
             # Arriba otra vez (un clic en su barra, sin moverla).
             time.sleep(15.0)
-            clic(x + gx + 200, y + gy + 12)
+            clic(*barra)
             time.sleep(5.0)
             capturar(prefijo + ".gtk")
-            # La lista de la primera caja combinada (la flecha, a la derecha del primer campo): un emergente.
-            clic(x + gx + 370, y + gy + 73)
-            if esperar(r"\[compositor\] emergente de caja-linux", 120):
+            # Su menú (el botón de las tres rayas, arriba a la derecha): un emergente (xdg_popup).
+            emergentes = lambda: len(re.findall(r"\[compositor\] emergente de caja-linux", texto()))
+            n_em = emergentes()
+            menu = (x + gx + gw - 164, y + gy + 23)
+            if libre(*menu):
+                clic(*menu)
+            else:
+                # Fuera de la pantalla: el menú del botón derecho del primer campo de texto, también un emergente.
+                ir_a(x + gx + 100, y + gy + 74)
+                mandar("mouse_button 2", "mouse_button 0", pausa=0.08)
+            if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 60):
                 time.sleep(8.0)
                 capturar(prefijo + ".gtk-menu")
+                apuntar("gtk4-widget-factory: " + ("su menú" if libre(*menu) else "el menú de un campo de texto") + " (emergente), abierto")
             mandar("sendkey esc")
             time.sleep(3.0)
-            # Moverla por su barra (xdg_toplevel.move): los cuadros mientras se arrastra.
+            # La lista de una caja combinada (la de "Andrea"): otro emergente. Solo con la ventana de Full HD (1666 de
+            # ancho): con otro tamaño, su sitio cambia.
+            if gw >= 1600:
+                n_em = emergentes()
+                clic(x + gx + 621, y + gy + 250)
+                if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 60):
+                    time.sleep(8.0)
+                    capturar(prefijo + ".gtk-combo")
+                    apuntar("gtk4-widget-factory: la caja combinada, abierta")
+                mandar("sendkey esc")
+                time.sleep(3.0)
+            # Agrandarla por su borde izquierdo (xdg_toplevel.resize desde su sombra, que es de GTK) y después moverla
+            # por su barra (xdg_toplevel.move; GTK lo pide tras unos píxeles de arrastre): los cuadros de cada cosa.
+            # (Con su borde izquierdo fuera de la pantalla, como con 800 x 600, solo se mueve.)
             antes = len(re.findall(r"\[compositor\] arrastre: ", texto()))
-            arrastrar((x + gx + 200, y + gy + 20), 30, (3, 2))
+            borde = x + gx - 4 >= 0
+            if borde:
+                arrastrar((x + gx - 4, y + gy + 300), 20, (-3, 0))
+                esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1), 30)
+                time.sleep(5.0)
+            arrastrar((barra[0], barra[1] + 4), 30, (3, 2))
             movidas[len(ventanas_linux()) - 1] = (90, 60)
-            esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1), 30)
-            time.sleep(2.0)
-            # Agrandarla por su borde izquierdo (resize; es más grande que la pantalla, la derecha no se ve).
-            x2, y2 = x + 90, y + 60
-            arrastrar((x2 + gx - 3, y2 + gy + 300), 20, (-3, 0))
-            esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 2), 30)
+            if esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1 + borde), 30):
+                m = re.findall(r"\[compositor\] arrastre: ([^\n]*)", texto())
+                apuntar(f"gtk4-widget-factory: redimensionar, {m[antes]}; mover, {m[-1]}" if borde else f"gtk4-widget-factory: mover, {m[-1]}")
             time.sleep(8.0)
             capturar(prefijo + ".gtk-grande")
+            # Hostil: con GTK abierta, `prueba-gtk-guion` lanza un programa que se come toda la memoria del invitado.
+            # Linux lo mata; la ventana de GTK y DashOS siguen (el compositor dice los cuadros cada 10 s; otra captura).
+            def en_pantalla():
+                n = re.findall(r"\[compositor\] Wayland: (\d+) ventanas en pantalla", texto())
+                return int(n[-1]) if n else -1
+            antes = en_pantalla()
+            if esperar(r"hostil memoria: tail acab", 900):
+                time.sleep(2.0)
+                m = re.search(r"hostil memoria: tail acabó con (\d+) a los ([\d.]+) s", texto())
+                apuntar(f"hostil memoria: tail muerto ({m.group(1)}) a los {m.group(2)} s" if m else "hostil memoria: tail acabó")
+                if esperar(r"gtk: sigue viva tras el hostil", 120):
+                    apuntar("hostil memoria: el invitado sigue")
+                time.sleep(5.0)
+                capturar(prefijo + ".gtk-tras-hostil")
+                apuntar(f"hostil memoria: ventanas en pantalla, antes {antes} y después {en_pantalla()}")
+            else:
+                apuntar("hostil memoria: tail no acabó en 15 minutos")
+        esperar(r"gtk: hecho", 900)
+        if depurar:
+            a_la_terminal()
+            teclear("tail -n 60 /tmp/gtk.log")
+            time.sleep(20.0)
+        time.sleep(3.0)
+    if not solo:
+        # 4. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.
         a_la_terminal()
-        teclear("pkill -f gtk4-widget-factory")
-        time.sleep(3.0)
-    # 4. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.
-    a_la_terminal()
-    paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
-    # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
-    n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 150 &")
-    h = esperar_ventana(n, 120)
-    if h:
-        clic(h[0] + 20, h[1] + 20)
-    if esperar(r"cliente hostil: sin-fin: selección puesta", 60):
-        time.sleep(1.0)
-        clic_en_ventana()
-        mandar("sendkey ctrl-shift-v")
-        # Que el programa hostil vea su tubería cerrada no siempre llega en el plazo (ver la bitácora): se apunta.
-        apuntar("hostil sin fin: " + ("le cortaron la tubería" if esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60) else "sin ver el corte en 60 s"))
-        esperar(r"terminal: pegado \(4096 bytes\)", 30)
-        time.sleep(3.0)
-        mandar("sendkey ctrl-c")
-        time.sleep(1.0)
-    n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 nunca 90 &")
-    h = esperar_ventana(n, 120)
-    if h:
-        clic(h[0] + 20, h[1] + 20)
-    if esperar(r"cliente hostil: nunca: selección puesta", 60):
-        time.sleep(1.0)
-        clic_en_ventana()
-        mandar("sendkey ctrl-shift-v")
-        esperar(r"terminal: pegado \(0 bytes\)", 40)
-    # Después, todo sigue: otra ventana de Linux sale y se cierra.
-    a_la_terminal()
-    n = len(ventanas_linux())
-    teclear("ventana_wayland &")
-    v = esperar_ventana(n, 120)
-    if v:
-        time.sleep(3.0)
-        clic(v[0] + 100, v[1] + 100)
-        mandar("sendkey q")
-        esperar(r"(ventana_wayland: .* adiós(.|\n)*){2}", 30)
-    # 5. Firefox, si cabe: su primera ventana, una captura y fuera.
-    # Solo con CAJA_FIREFOX=1: con 256 MB (y 768 MB de intercambio en el disco) no llega a abrir su ventana en 20
-    # minutos, y la caja se para a los 1500 s.
-    if os.environ.get("CAJA_FIREFOX") == "1":
+        paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
+        # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
+        n = len(ventanas_linux())
+        teclear("puente --cliente-hostil /run/wayland-0 sin-fin 150 &")
+        h = esperar_ventana(n, 120)
+        if h:
+            clic(h[0] + 20, h[1] + 20)
+        if esperar(r"cliente hostil: sin-fin: selección puesta", 60):
+            time.sleep(1.0)
+            clic_en_ventana()
+            mandar("sendkey ctrl-shift-v")
+            # Que el programa hostil vea su tubería cerrada no siempre llega en el plazo (ver la bitácora): se apunta.
+            apuntar("hostil sin fin: " + ("le cortaron la tubería" if esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60) else "sin ver el corte en 60 s"))
+            esperar(r"terminal: pegado \(4096 bytes\)", 30)
+            time.sleep(3.0)
+            mandar("sendkey ctrl-c")
+            time.sleep(1.0)
+        n = len(ventanas_linux())
+        teclear("puente --cliente-hostil /run/wayland-0 nunca 90 &")
+        h = esperar_ventana(n, 120)
+        if h:
+            clic(h[0] + 20, h[1] + 20)
+        if esperar(r"cliente hostil: nunca: selección puesta", 60):
+            time.sleep(1.0)
+            clic_en_ventana()
+            mandar("sendkey ctrl-shift-v")
+            esperar(r"terminal: pegado \(0 bytes\)", 40)
+        # Después, todo sigue: otra ventana de Linux sale y se cierra.
         a_la_terminal()
         n = len(ventanas_linux())
-        teclear("prueba-firefox &")
+        teclear("ventana_wayland &")
+        v = esperar_ventana(n, 120)
+        if v:
+            time.sleep(3.0)
+            clic(v[0] + 100, v[1] + 100)
+            mandar("sendkey q")
+            esperar(r"(ventana_wayland: .* adiós(.|\n)*){2}", 30)
+    # 5. Firefox: su primera ventana con una página del disco, lo que gasta de memoria y, si hay red, una página de
+    # verdad. Desde caja-linux-grandes (512 MB y el zram del invitado) sale en unos segundos; CAJA_FIREFOX=0 lo salta.
+    if (os.environ.get("CAJA_FIREFOX", "1") != "0" and solo != "gtk") or solo == "firefox":
+        # `prueba-firefox-guion` lo hace todo solo (no se teclea en Firefox: tapa la terminal y no hace caso al
+        # teclado): hola.html, su memoria a los 150 s, y otra vez con https://example.org.
+        a_la_terminal()
+        n = len(ventanas_linux())
+        teclear("prueba-firefox-guion &")
         if esperar(r"firefox: empieza", 120):
             t0 = time.time()
-            f = esperar_ventana(n, 1200)
+            f = esperar_ventana(n, 600)
             if f:
                 apuntar(f"firefox: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
-                clic_en_ventana()
-                teclear("echo guion: firefox en pantalla")
                 time.sleep(45.0)
-                clic(f[0] + (f[2][0] if f[2] else 0) + 200, f[1] + (f[2][1] if f[2] else 0) + 10)
+                fx, fy = f[0] + (f[2][0] if f[2] else 0), f[1] + (f[2][1] if f[2] else 0)
+                clic(fx + 200, fy + 10)
                 time.sleep(15.0)
                 capturar(prefijo + ".firefox")
+                if esperar(r"memoria: RAM", 240):
+                    m = re.findall(r"linux: (memoria: RAM[^\n]*)", texto())
+                    apuntar("firefox con hola.html: " + (m[-1] if m else "?"))
+                if esperar_n(r"firefox: empieza", 2, 120):
+                    t1 = time.time()
+                    f2 = esperar_ventana(n + 1, 600)
+                    if f2:
+                        apuntar(f"firefox (otra vez, con example.org): primera ventana a los {time.time() - t1:.1f} s")
+                        time.sleep(90.0)
+                        capturar(prefijo + ".firefox-red")
+                    if esperar_n(r"memoria: RAM", 2, 300):
+                        m = re.findall(r"linux: (memoria: RAM[^\n]*)", texto())
+                        apuntar("firefox con example.org: " + m[-1])
             else:
-                apuntar("firefox: sin ventana en 20 minutos")
-            clic_en_ventana()
-            teclear("pkill firefox")
-            time.sleep(5.0)
+                apuntar("firefox: sin ventana en 10 minutos")
+            esperar(r"firefox: hecho", 600)
+            time.sleep(3.0)
     time.sleep(2.0)
     a_la_terminal()
     teclear("poweroff")

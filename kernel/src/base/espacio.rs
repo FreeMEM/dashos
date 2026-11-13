@@ -468,7 +468,9 @@ impl Espacio {
         let p = paginas();
         let permitido = p.fuera_de_la_ram(fisica, tamano) || p.dentro_de_una_reserva(fisica, tamano);
         drop(p);
-        if fin > 1 << 32 || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !permitido {
+        // Por encima de 4 GB, solo una zona reservada del árbol (la pantalla de UEFI en RAM, con highmem en `virt`).
+        let reserva = paginas().dentro_de_una_reserva(fisica, tamano);
+        if (fin > 1 << 32 && !reserva) || fisica % PAGINA != 0 || tamano % PAGINA != 0 || !permitido {
             return Err(Error::Direccion);
         }
         self.preparar(va, tamano.div_ceil(PAGINA))?;

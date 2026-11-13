@@ -131,6 +131,11 @@ CONFIG_MODULES=n
 # necesita los suyos en un initramfs de 15 MB), que no se usa: con 57 MB entre los dos, sin probar, es dudoso que quepa en
 # el paquete de arranque de DashOS (la del defconfig, de 74 MB, no cabía). La de aquí mide 7 MB. Con vsock (virtio-vsock):
 # por ahí habla el puente de Wayland con DashOS.
+# Con zram (intercambio comprimido en la RAM; caja-linux-grandes): glycin, el cargador de imágenes de GTK 4.24, limita
+# la memoria de su cargador con la RAM libre más el intercambio libre (su NEWS: hasta el 80 %). Con 256 MB y sin
+# intercambio, el hijo que lo lanza muere con SIGSEGV justo después de "Setting process memory limit", antes de ser
+# bwrap ("Loader process exited early" y GTK aborta); con 384 MB o con intercambio, carga. `dashos-zram.service` pone un
+# zram del tamaño de la RAM. También ayuda a Firefox. zstd comprime más que lz4, y la caja va justa de RAM.
 FRAGMENTO_ARCH = FRAGMENTO_CAJA + """
 CONFIG_LOCALVERSION="-caja"
 CONFIG_SYSVIPC=y
@@ -199,6 +204,10 @@ CONFIG_DRM_VIRTIO_GPU_KMS=y
 CONFIG_DRM_FBDEV_EMULATION=n
 CONFIG_SYNC_FILE=y
 CONFIG_UDMABUF=y
+CONFIG_ZRAM=y
+CONFIG_ZRAM_BACKEND_ZSTD=y
+CONFIG_ZRAM_BACKEND_LZ4=y
+CONFIG_ZRAM_DEF_COMP_ZSTD=y
 """
 
 INIT = r"""#!/bin/sh
@@ -502,18 +511,16 @@ ARCH_GUIONES = {
 # desde ahí hasta su primera ventana en DashOS).
 ARCH_GUIONES.update({
     "./usr/local/bin/prueba-gtk":
-        "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
-        "# Sin la caja de bwrap para los cargadores de imágenes (glycin): en la caja, su cargador de SVG dentro de bwrap\n"
-        "# acaba sin decir nada (y GTK aborta). Delante en el PATH, un bwrap que dice lo que glycin reconoce como \"aquí no\n"
-        "# hay espacios de nombres\": así carga sin su caja.\n"
-        "export PATH=/usr/local/lib/dashos/sin-bwrap:$PATH\n"
-        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1\n"
+        "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo. Los cargadores\n"
+        "# de imágenes de GTK (glycin) van en su caja de bwrap, como en cualquier Arch; con poca RAM necesitan el\n"
+        "# intercambio de dashos-zram.service (sin él, el cargador muere al empezar y GTK aborta).\n"
+        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1\n"
         "echo \"gtk: empieza\" > /dev/hvc0\n"
         "exec \"${@:-gtk4-widget-factory}\"\n",
     "./usr/local/bin/prueba-firefox":
         "#!/bin/sh\n# Firefox en una ventana de DashOS, por Wayland y sin GPU (WebRender por software), con un solo proceso de\n"
-        "# contenido y algo de intercambio (la caja tiene poca RAM).\n"
-        "if ! grep -q /swap /proc/swaps; then fallocate -l 768M /swap && chmod 600 /swap && mkswap -q /swap && swapon /swap; fi\n"
+        "# contenido. Con el zram de dashos-zram.service le basta (512 MB de RAM); sin ningún intercambio, uno en el disco.\n"
+        "if [ -z \"$(swapon --noheadings)\" ]; then fallocate -l 768M /swap && chmod 600 /swap && mkswap -q /swap && swapon /swap; fi\n"
         "mkdir -p /tmp/ff\n"
         "cat > /tmp/ff/user.js <<'FIN'\n"
         "user_pref(\"dom.ipc.processCount\", 1);\n"
@@ -530,25 +537,71 @@ ARCH_GUIONES.update({
         "echo \"firefox: empieza\" > /dev/hvc0\n"
         "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
 })
-ARCH_GUIONES["./usr/local/lib/dashos/sin-bwrap/bwrap"] = (
-    "#!/bin/sh\n# Para prueba-gtk: que glycin vea que bwrap no va aquí (y cargue las imágenes sin su caja).\n"
-    "echo 'bwrap: Creating new namespace failed: Operation not permitted' >&2\nexit 1\n")
 ARCH_FICHEROS.update({
-    "./usr/local/lib/dashos/sin-bwrap/LEEME": "Un bwrap que dice que no va, para prueba-gtk (glycin carga las imágenes sin su caja).\n",
     "./usr/local/share/dashos/hola.html":
         "<!doctype html><meta charset=utf-8><title>Firefox en DashOS</title>"
         "<body style='font-family:sans-serif;background:#f3edf7;color:#1d1b20;margin:32px'>"
         "<h1>Hola desde Firefox</h1><p>Arch Linux ARM en la caja Linux de DashOS, por Wayland.</p>"
         "<p><input value='texto para copiar'></p></body>\n",
 })
+# Hostil (caja-linux-grandes): un programa del invitado que se come toda su memoria. `tail` guarda una "línea" de
+# /dev/zero que no acaba nunca: crece hasta llenar la RAM y el intercambio, y Linux lo mata (OOM). Lo que pasó, por hvc0.
+ARCH_GUIONES["./usr/local/bin/prueba-come-memoria"] = (
+    "#!/bin/sh\n# Un programa que se come toda la memoria del invitado (tail de /dev/zero): Linux tiene que matarlo.\n"
+    "echo \"hostil memoria: empieza con $(free -m | awk '/^Mem:/ {print $2}') MB de RAM y "
+    "$(free -m | awk '/^Swap:/ {print $2}') MB de intercambio\" > /dev/hvc0\n"
+    "t0=$(cut -d' ' -f1 /proc/uptime)\ntail /dev/zero\nr=$?\nt1=$(cut -d' ' -f1 /proc/uptime)\n"
+    "echo \"hostil memoria: tail acabó con $r a los $(awk \"BEGIN {print $t1 - $t0}\") s\" > /dev/hvc0\n"
+    "dmesg | grep -i 'out of memory' | tail -1 | sed 's/^/hostil memoria: /' > /dev/hvc0\n")
+# GTK4 para el guion, sin teclear con su ventana delante (con 800 x 600 es más grande que la pantalla y tapa la terminal
+# de la caja): la abre, deja $PAUSA_GTK s (300) para que el guion la pruebe (emergentes, mover, redimensionar), lanza el
+# hostil de la memoria con ella abierta, dice que sigue vivo y la cierra.
+ARCH_GUIONES["./usr/local/bin/prueba-gtk-guion"] = (
+    "#!/bin/sh\n# GTK4 y, con ella abierta, el hostil de la memoria; lo que pasa, por hvc0.\n"
+    "prueba-gtk \"$@\" &\nsleep ${PAUSA_GTK:-300}\nprueba-come-memoria\n"
+    "echo \"gtk: sigue viva tras el hostil\" > /dev/hvc0\nsleep 30\npkill -f gtk4-widget-factory\nsleep 3\n"
+    "echo \"gtk: hecho\" > /dev/hvc0\n")
+# Lo que gasta de memoria el invitado, en una línea por hvc0 (para el guion, que no teclea bien "|"): RAM, intercambio,
+# lo que ocupa comprimido el zram y los tres procesos más grandes.
+ARCH_GUIONES["./usr/local/bin/prueba-memoria"] = (
+    "#!/bin/sh\n# Una línea con la memoria del invitado: RAM e intercambio usados, el zram y los procesos más grandes.\n"
+    "z=$(awk '{printf \"%d MB en %d MB\", $1 / 1048576, $3 / 1048576}' /sys/block/zram0/mm_stat 2>/dev/null)\n"
+    "echo \"memoria: $(free -m | awk '/^Mem:/ {printf \"RAM %d de %d MB\", $3, $2} /^Swap:/ {printf \", intercambio %d de %d MB\", $3, $2}')"
+    ", zram $z; $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf \"%s %d MB; \", $2, $1 / 1024}')\" > /dev/hvc0\n")
+# Firefox para el guion (`make arranque-virt-wayland`), sin teclear en él (su ventana tapa la terminal de la caja, y no
+# hace caso al teclado de DashOS): con la página del disco, lo que gasta a los $1 s (150) y, otra vez, con una página de
+# verdad por la red de la caja y lo que gasta a los $2 s. `pkill -x`: sin él, `pkill firefox` mata también a este guion
+# (su nombre lo lleva).
+ARCH_GUIONES["./usr/local/bin/prueba-firefox-guion"] = (
+    "#!/bin/sh\n# Firefox con hola.html y luego con https://example.org; lo que gasta cada vez, por hvc0.\n"
+    "prueba-firefox &\nsleep ${1:-150}\nprueba-memoria\npkill -x firefox\nsleep 8\n"
+    "prueba-firefox https://example.org &\nsleep ${2:-150}\nprueba-memoria\npkill -x firefox\nsleep 5\n"
+    "echo \"firefox: hecho\" > /dev/hvc0\n")
+# El intercambio comprimido en la RAM (zram del tamaño de la RAM, con más prioridad que un fichero de intercambio). Solo
+# si el kernel lo tiene: con un Image-arch viejo el servicio no se ejecuta y systemd sigue en "running".
+ARCH_GUIONES["./usr/local/lib/dashos/zram"] = (
+    "#!/bin/sh\n# dashos-zram.service: /dev/zram0 como intercambio, del tamaño de la RAM, comprimido con zstd.\n"
+    "set -e\nkb=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)\n"
+    "echo zstd > /sys/block/zram0/comp_algorithm 2>/dev/null || true\n"
+    "echo $((kb * 1024)) > /sys/block/zram0/disksize\nmkswap -q /dev/zram0\nswapon -p 100 /dev/zram0\n"
+    "# Más memoria libre de reserva (zram necesita algo para comprimir: con la de serie, kswapd avisaba de que no\n"
+    "# la encontraba) y de página en página al leer del intercambio, que aquí no es un disco.\n"
+    "echo $((kb / 32)) > /proc/sys/vm/min_free_kbytes\necho 0 > /proc/sys/vm/page-cluster\n")
+ARCH_FICHEROS["./etc/systemd/system/dashos-zram.service"] = (
+    "[Unit]\nDescription=Intercambio comprimido en la RAM (zram) de la caja Linux de DashOS\n"
+    "ConditionPathExists=/sys/block/zram0\nDefaultDependencies=no\nBefore=swap.target\n\n"
+    "[Service]\nType=oneshot\nRemainAfterExit=yes\nExecStart=/usr/local/lib/dashos/zram\n\n"
+    "[Install]\nWantedBy=swap.target\n")
 ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.service":
-                "/etc/systemd/system/dashos-puente.service"}
+                "/etc/systemd/system/dashos-puente.service",
+                "./etc/systemd/system/swap.target.wants/dashos-zram.service":
+                "/etc/systemd/system/dashos-zram.service"}
 # Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
 # comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
 # Con GL y Vulkan por software (Mesa: llvmpipe y lavapipe) y sus programas de prueba (es2gears_wayland, vkcube), para
 # medir los gráficos de la caja (S25). Con DASHOS_CAJA_APPS=1 (H9, caja-linux-apps), GTK4 con sus demos (gtk4-demo,
 # gtk4-widget-factory) y Firefox.
-ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"] + (["gtk4-demos", "firefox"] if APPS else [])
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"] + (["gtk4-demos", "firefox", "strace"] if APPS else [])
 ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
 ARCH_REPOS = ["core", "extra", "alarm"]
 PAQUETES = ARCH / "paquetes"
@@ -676,9 +729,9 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
             nombres.add(nombre)
 
         nuevos = [n for n in ARCH_FICHEROS if n not in hecho]
-        # Las carpetas que no traiga el rootfs, de arriba abajo.
+        # Las carpetas que no traiga el rootfs, de arriba abajo (también las de los enlaces y los guiones).
         carpetas = set()
-        for n in nuevos:
+        for n in [*nuevos, *ARCH_ENLACES, *ARCH_GUIONES]:
             partes = n.split("/")
             carpetas.update("/".join(partes[:k]) for k in range(2, len(partes)))
         for c in sorted(carpetas, key=lambda c: c.count("/")):

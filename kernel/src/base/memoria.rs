@@ -13,11 +13,19 @@ use crate::kprintln;
 pub const PAGINA: u64 = 4096;
 /// Páginas libres que solo puede usar el kernel: 32 MB.
 pub const RESERVA: usize = 8192;
-/// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa.
+/// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa. En `virt`, 16 GB (caja-linux-grandes: QEMU con
+/// highmem y 6 u 8 GB, para dar más RAM al invitado de la caja Linux): 4 M páginas, 512 KB de mapa.
+#[cfg(not(feature = "virt"))]
 const MAX_PAGINAS: usize = (8u64 << 30) as usize / PAGINA as usize;
+#[cfg(feature = "virt")]
+const MAX_PAGINAS: usize = (16u64 << 30) as usize / PAGINA as usize;
 const PALABRAS: usize = MAX_PAGINAS / 64;
-/// Lo que cubre el mapa lineal del kernel: 4 GB.
+/// Lo que cubre el mapa lineal del kernel: 4 GB; en `virt`, 16 (arranque.s y mapa.rs). En la Pi 4 de 8 GB, lo de
+/// arriba de los 4 GB sigue sin repartirse (sin probar en una placa de verdad).
+#[cfg(not(feature = "virt"))]
 const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
+#[cfg(feature = "virt")]
+const MAPA_LINEAL: usize = MAX_PAGINAS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Zona {
@@ -146,7 +154,7 @@ impl Paginas {
             self.pista = PALABRAS - 1;
         }
         let primera = (dir / PAGINA) as usize;
-        // Solo se reparte lo que ve el mapa lineal del kernel (4 GB, arranque.s). En una Pi de 8 GB, lo de arriba se
+        // Solo se reparte lo que ve el mapa lineal del kernel (4 GB, arranque.s; 16 en `virt`). En una Pi de 8 GB, lo de arriba se
         // queda sin usar hasta que el mapa del kernel se haga por páginas (S16, fase 2); antes se repartía y el kernel
         // caía al tocarlo (auditoría, bajos).
         let tope = if ocupada { MAX_PAGINAS } else { MAPA_LINEAL };
@@ -274,6 +282,11 @@ impl Paginas {
     /// Bytes libres para procesos: los de la zona normal menos la reserva del kernel (para el grupo raíz, C43).
     pub fn bytes_para_procesos(&self) -> u64 {
         (self.libres - self.libres_bajo).saturating_sub(RESERVA) as u64 * PAGINA
+    }
+
+    /// Fin (exclusivo, en bytes) de la RAM que reparte el kernel: hasta ahí llega el mapa lineal (mapa.rs).
+    pub fn fin_de_la_ram(&self) -> u64 {
+        self.max_pagina as u64 * PAGINA
     }
 
     /// Si hay zona normal por encima del primer GB (C38).

@@ -135,7 +135,10 @@ pub fn construir() {
     let fin_fino = (bajo + tamano).div_ceil(MB2) * MB2;
     let hueco = |b: u64| destino != 0 && (destino..destino + reservado).contains(&b);
     let l1 = tabla_nueva();
-    for g in 0..4u64 {
+    // Los cuatro primeros GB siempre (los periféricos de la Pi 4 están en el cuarto); por encima, hasta donde llegue la
+    // RAM que se reparte (en `virt` con highmem, caja-linux-grandes).
+    let gbs = paginas().fin_de_la_ram().div_ceil(GB).max(4);
+    for g in 0..gbs {
         let base = g * GB;
         let cruza_perifericos = base < PERIFERICOS.1 && base + GB > PERIFERICOS.0;
         let especial = (base + GB > bajo && base < fin_fino) || cruza_perifericos || (destino != 0 && destino < base + GB && destino + reservado > base);

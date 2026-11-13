@@ -3143,6 +3143,10 @@ impl<M: Memorias> Escena<M> {
                             out.push((c, Entrada::Cerrar { xdg }));
                         }
                     }
+                    decoracion::Zona::Maximizar => {
+                        let maximizada = rol.and_then(|r| cli.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_some());
+                        self.maximizar_esta((c, s), !maximizada, &mut out);
+                    }
                     decoracion::Zona::Barra => {
                         let libre = rol.and_then(|r| cli.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_none());
                         if let (true, Some((x, y))) = (libre, cli.superficies.get(&s).and_then(|su| su.sitio)) {
@@ -3152,6 +3156,22 @@ impl<M: Memorias> Escena<M> {
                     }
                 }
             }
+            self.botones = botones;
+            return out;
+        }
+        // La franja de fuera de una ventana con la barra de DashOS: pulsar en ella la redimensiona (caja-linux-grandes).
+        if self.botones == 0
+            && botones & 1 != 0
+            && self.bloqueo.is_none()
+            && let Some(((c, s), b)) = self.borde_bajo(self.cursor.0, self.cursor.1)
+        {
+            if let Some((pc, ps)) = self.puntero.take() {
+                out.push((pc, Entrada::Sale { superficie: ps }));
+            }
+            self.super_sola = false;
+            self.cerrar_emergentes(Some((c, s)), &mut out);
+            self.activar((c, s), &mut out);
+            self.empezar_redimension((c, s), b);
             self.botones = botones;
             return out;
         }

@@ -21,7 +21,7 @@ static PASO: AtomicU32 = AtomicU32::new(0);
 static BGR: AtomicBool = AtomicBool::new(false);
 
 /// Apunta la pantalla: física, tamaño en bytes, medidas en píxeles, bytes por fila y si va en a8b8g8r8. Solo 32 bits por
-/// píxel. Falso, y sin pantalla, si no cabe en el mapa lineal (los 4 primeros GB), toca periféricos o no le salen las
+/// píxel. Falso, y sin pantalla, si no cabe en el mapa del arranque (los 4 primeros GB; 16 en `virt`), toca periféricos o no le salen las
 /// cuentas. Solo la primera vez.
 pub fn poner(fisica: u64, tamano: u64, ancho: u32, alto: u32, paso: u32, bgr: bool) -> bool {
     if FISICA.load(Ordering::Acquire) != 0 || fisica == 0 || ancho == 0 || alto == 0 {
@@ -29,7 +29,7 @@ pub fn poner(fisica: u64, tamano: u64, ancho: u32, alto: u32, paso: u32, bgr: bo
     }
     let necesario = paso as u64 * alto as u64;
     let Some(fin) = fisica.checked_add(tamano) else { return false };
-    if (paso as u64) < ancho as u64 * 4 || tamano < necesario || fin > 1 << 32 || super::placa::es_periferico(fisica)
+    if (paso as u64) < ancho as u64 * 4 || tamano < necesario || fin > super::placa::FIN_MAPA_ARRANQUE || super::placa::es_periferico(fisica)
         || super::placa::es_periferico(fin - 1)
     {
         return false;
