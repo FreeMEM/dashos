@@ -15,9 +15,9 @@ use kit::texto::Fuente;
 pub const LATERAL: i32 = 232;
 pub const CABECERA: i32 = 52;
 pub const PESTANAS: i32 = 40;
-pub const CELDA_W: i32 = 116;
-pub const CELDA_H: i32 = 128;
-pub const ICONO: i32 = 64;
+pub const CELDA_W: i32 = 124;
+pub const CELDA_H: i32 = 140;
+pub const ICONO: i32 = 72;
 pub const FILA: i32 = 40;
 pub const CAB_LISTA: i32 = 36;
 const BOTON: i32 = 36;
@@ -749,13 +749,38 @@ pub fn pintar(l: &mut Lienzo, v: &mut Ventana, app: &mut App, ahora: u64, ahora_
             Dialogo::Propiedades { i, rect, .. } => {
                 let r = *rect;
                 l.sombra(r, kit::tema::RADIO_DIALOGO, 6, 0, 18, 90);
-                if r.y + r.h < h && r.x + r.w <= w {
-                    let inicio = r.y as usize * l.linea + r.x as usize;
+                if r.y + r.h < h && r.x + r.w <= w && r.x >= 0 && r.y >= 0 {
+                    // El kit deja transparentes las esquinas de fuera del redondeo: ahí se vuelve a poner lo de debajo
+                    // (si no, se vería el escritorio a través de la ventana).
+                    let radio = kit::tema::RADIO_DIALOGO;
+                    let esquinas = [(r.x, r.y), (r.x + r.w - radio, r.y), (r.x, r.y + r.h - radio), (r.x + r.w - radio, r.y + r.h - radio)];
                     let linea_px = l.linea;
+                    let mut guardado = Vec::with_capacity((4 * radio * radio) as usize);
+                    for &(ex, ey) in &esquinas {
+                        for yy in ey..ey + radio {
+                            for xx in ex..ex + radio {
+                                guardado.push(l.px[yy as usize * linea_px + xx as usize]);
+                            }
+                        }
+                    }
+                    let inicio = r.y as usize * linea_px + r.x as usize;
                     let sub = &mut l.px[inicio..];
                     let mut sl = Lienzo::new(sub, r.w, r.h, linea_px);
                     i.ctx.tema = t;
                     i.dibujar(&mut sl);
+                    let mut k = 0;
+                    for &(ex, ey) in &esquinas {
+                        for yy in ey..ey + radio {
+                            for xx in ex..ex + radio {
+                                let p = &mut l.px[yy as usize * linea_px + xx as usize];
+                                let a = *p >> 24;
+                                if a < 255 {
+                                    *p = tema::mezcla(guardado[k] | 0xff00_0000, *p | 0xff00_0000, a);
+                                }
+                                k += 1;
+                            }
+                        }
+                    }
                 }
             }
             _ => {

@@ -93,7 +93,11 @@ paso desde su raíz: una ficha retocada no saca nada de la raíz. No es la papel
   (Privado) y cerrar las dos con Ctrl+W. `tools/disco_archivos.py` comprueba lo que queda en el disco.
 - Arreglado de paso en el guion: Ajustes esperaba a que el compositor dijera dónde puso su ventana (con un programa
   más al arrancar, esa línea salía tarde y el clic caía en su campo).
-- Captura en Full HD: ver abajo.
+- `DASHOS_PANTALLA=1920x1080 make arranque-virt`: todo el guion del explorador va bien (falla, como se espera, la línea
+  de la pantalla de 800 × 600). Capturas (fuera de git) en `capturas-agente/explorador-fhd.png` (Fondos con
+  miniaturas), `-lista`, `-info` (Propiedades), `-copia`, `-papelera` (el aviso con Deshacer), `-arrastre` y `-dos`.
+- Mirado en las capturas y arreglado: las migas no cabían (la raíz pasa a ser un icono), la pastilla de lo elegido se
+  pisaba con el aviso, las esquinas del diálogo de Propiedades dejaban ver el escritorio, iconos de la rejilla a 72.
 
 ## Lo que no se probó o no está
 
