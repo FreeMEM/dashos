@@ -780,7 +780,7 @@ fn filas(lista: &[(String, String)]) -> String {
 /// La ventana, abierta en la categoría `categoria`, hasta que el usuario la cierra.
 fn ventana(categoria: usize) {
     ventana_dentro(categoria);
-    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    adios_al_compositor();
     dashos::memoria_quitar(VA);
     dashos::memoria_quitar(VA_2);
     println!("  [centro] cerrado");
@@ -1298,15 +1298,14 @@ fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>) -> i32 {
                 conexion = Some((c, g));
                 break;
             }
+            adios_al_compositor();
         }
         dashos::dormir_us(50_000);
     }
     let Some((mut c, globales)) = conexion else { return -1 };
     // Al acabar, adiós al compositor: si no, la conexión siguiente le llega como la misma y rechaza sus objetos
     // ("número de objeto nuevo malo"); los reintentos lo tapaban.
-    let adios = || {
-        dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
-    };
+    let adios = adios_al_compositor;
     let Some((gt, version)) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| (g.0, g.2.min(3))) else {
         adios();
         return -1;
@@ -1331,6 +1330,19 @@ fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>) -> i32 {
     }
     adios();
     -1
+}
+
+/// Adiós al compositor por el canal "ventanas". Con el compositor atareado (al arrancar) su cola puede estar llena: se
+/// reintenta hasta 5 s. Un adiós perdido le dejaría la conexión vieja, y la siguiente (la ventana de Ajustes) le
+/// llegaría como la misma: "número de objeto nuevo malo" (S26: pasó con el tema puesto al arrancar).
+fn adios_al_compositor() {
+    for _ in 0..5_000 {
+        let e = dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+        if e == 0 || e == dashos::E_CERRADO {
+            return;
+        }
+        dashos::dormir_us(1_000);
+    }
 }
 
 /// S26: el centro es también el servicio del tema. Al arrancar, pone en el compositor lo guardado (si no hay nada, lo
