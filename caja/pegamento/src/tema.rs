@@ -8,7 +8,12 @@
 //! desde los papeles de Material 3. El pintor de GadTools y de los menús (la rama `caja-amiga-gadtools`: sus
 //! `Plumas` van en el mismo orden) las leerá de `CompositorWayland::tema`; con el aspecto original, `plumas` es `None`
 //! y se pinta como en 3.x.
+//!
+//! El tema `Material` de intuition (`caja/intuition/src/tema.rs`) pinta con los papeles de Material (`Tokens`), que
+//! salen de aquí: `tokens` con el tema de DashOS, y `aspecto` decide por programa (sus excepciones). `version` cambia
+//! con cualquier cosa que cambie lo que se ve, e intuition repinta sus ventanas.
 
+use caja_intuition::Tokens;
 use kit::tema::Tema;
 use wayland::aspecto::{Ajuste, Aspecto, Caja};
 
@@ -24,11 +29,16 @@ pub struct TemaCaja {
     pub ajuste: Ajuste,
     /// Las plumas de DashOS, si los programas Amiga van como DashOS (si no, `None`: las de siempre).
     pub plumas: Option<[u32; PLUMAS]>,
+    /// Los papeles de Material del tema de DashOS (aunque los programas Amiga vayan con el original: las excepciones
+    /// por programa los usan), `None` hasta que se sabe el color.
+    pub tokens: Option<Tokens>,
+    /// Sube cada vez que cambia el color, el modo o el ajuste.
+    pub version: u32,
 }
 
 impl Default for TemaCaja {
     fn default() -> Self {
-        TemaCaja { color: None, oscuro: false, ajuste: Ajuste::DE_SERIE, plumas: None }
+        TemaCaja { color: None, oscuro: false, ajuste: Ajuste::DE_SERIE, plumas: None, tokens: None, version: 0 }
     }
 }
 
@@ -52,18 +62,47 @@ pub fn plumas(t: &Tema) -> [u32; PLUMAS] {
     ]
 }
 
+/// Los papeles de Material 3 que usa el tema `Material` de intuition, del tema de DashOS.
+pub fn tokens(t: &Tema) -> Tokens {
+    Tokens {
+        primario: t.primario,
+        sobre_primario: t.sobre_primario,
+        contenedor_primario: t.contenedor_primario,
+        sobre_contenedor_primario: t.sobre_contenedor_primario,
+        superficie: t.superficie,
+        sobre_superficie: t.sobre_superficie,
+        variante_superficie: t.variante_superficie,
+        sobre_variante_superficie: t.sobre_variante_superficie,
+        contorno: t.contorno,
+        variante_contorno: t.variante_contorno,
+        contenedor_bajo: t.contenedor_bajo(),
+        contenedor: t.contenedor(),
+        contenedor_alto: t.contenedor_alto(),
+        contenedor_secundario: t.contenedor_secundario(),
+        sobre_contenedor_secundario: t.sobre_contenedor_secundario(),
+    }
+}
+
 impl TemaCaja {
-    /// El aspecto de un programa Amiga (su excepción, la de la caja o el general). Lo usará el pintor de GadTools.
-    #[allow(dead_code)]
+    /// El aspecto de un programa Amiga (su excepción, la de la caja o el general).
     pub fn aspecto(&self, programa: &str) -> Aspecto {
         self.ajuste.para(Caja::Amiga, programa)
+    }
+
+    /// Los colores con los que intuition pinta los controles de un programa: los de DashOS si va "como DashOS".
+    pub fn tokens_para(&self, programa: &str) -> Option<Tokens> {
+        self.tokens.filter(|_| self.aspecto(programa) == Aspecto::Dashos)
     }
 
     /// Rehace las plumas con lo que se sabe. Devuelve lo que hay que decir por la consola si algo cambió.
     pub fn rehacer(&mut self) -> Option<alloc::string::String> {
         let color = self.color?;
         let antes = self.plumas;
-        self.plumas = (self.ajuste.de_caja(Caja::Amiga) == Aspecto::Dashos).then(|| plumas(&Tema::del_sistema(color, self.oscuro)));
+        let tema = Tema::del_sistema(color, self.oscuro);
+        // Cualquier evento del tema puede cambiar lo que se ve (el color, el modo, una excepción): intuition repinta.
+        self.tokens = Some(tokens(&tema));
+        self.version = self.version.wrapping_add(1);
+        self.plumas = (self.ajuste.de_caja(Caja::Amiga) == Aspecto::Dashos).then(|| plumas(&tema));
         if self.plumas == antes {
             return None;
         }

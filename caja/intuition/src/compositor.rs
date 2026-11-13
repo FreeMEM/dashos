@@ -66,6 +66,52 @@ pub struct NuevaVentana {
     pub maximo: (u32, u32),
 }
 
+/// Los colores del tema de DashOS (Material 3) para pintar los controles de un programa Amiga "como DashOS" (S26):
+/// los papeles de Material que manda el compositor, ya en ARGB. Los saca la caja del tema que llega del fondo
+/// (`caja/pegamento/src/tema.rs`); aquí no se escribe ningún color a mano salvo `CLARO`, el de serie de Material 3
+/// (acento 6750a4), para las pruebas.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Tokens {
+    pub primario: u32,
+    pub sobre_primario: u32,
+    pub contenedor_primario: u32,
+    pub sobre_contenedor_primario: u32,
+    pub superficie: u32,
+    pub sobre_superficie: u32,
+    pub variante_superficie: u32,
+    pub sobre_variante_superficie: u32,
+    pub contorno: u32,
+    pub variante_contorno: u32,
+    /// Los contenedores de superficie (bajo, normal y alto): menús, barra de título, campos de solo lectura.
+    pub contenedor_bajo: u32,
+    pub contenedor: u32,
+    pub contenedor_alto: u32,
+    /// El acento suave: la fila elegida de una lista, un botón tonal, el elemento señalado de un menú.
+    pub contenedor_secundario: u32,
+    pub sobre_contenedor_secundario: u32,
+}
+
+impl Tokens {
+    /// El esquema claro de serie de Material 3 (el del kit con el acento 6750a4). Solo para las pruebas.
+    pub const CLARO: Tokens = Tokens {
+        primario: 0xff67_50a4,
+        sobre_primario: 0xffff_ffff,
+        contenedor_primario: 0xffea_ddff,
+        sobre_contenedor_primario: 0xff21_005d,
+        superficie: 0xfffe_f7ff,
+        sobre_superficie: 0xff1d_1b20,
+        variante_superficie: 0xffe7_e0ec,
+        sobre_variante_superficie: 0xff49_454f,
+        contorno: 0xff79_747e,
+        variante_contorno: 0xffca_c4d0,
+        contenedor_bajo: 0xfff9_f2fa,
+        contenedor: 0xfff3_edf5,
+        contenedor_alto: 0xffee_e7ef,
+        contenedor_secundario: 0xffe6_ddf1,
+        sobre_contenedor_secundario: 0xff1d_1b20,
+    };
+}
+
 /// El puente. Todo lo que no es crear, cerrar y presentar tiene una versión por defecto que no hace nada.
 pub trait Compositor {
     /// El tamaño del escritorio, que es el de la pantalla de Workbench (S23), en píxeles lógicos.
@@ -96,6 +142,15 @@ pub trait Compositor {
     /// Los eventos que han llegado desde la última vez.
     fn sacar_eventos(&mut self) -> Vec<(Superficie, Evento)> {
         Vec::new()
+    }
+    /// S26: los colores de DashOS si el programa `programa` (el nombre de su tarea) va "como DashOS"; `None` si va
+    /// con su aspecto original (o aún no se sabe el tema).
+    fn tema_amiga(&self, _programa: &str) -> Option<Tokens> {
+        None
+    }
+    /// Cambia cada vez que cambia el tema o el ajuste: intuition repinta entonces sus ventanas.
+    fn version_tema(&self) -> u32 {
+        0
     }
 }
 
@@ -135,6 +190,10 @@ pub struct CompositorDePrueba {
     pub pitidos: u32,
     /// Si es `false`, `crear_ventana` falla.
     pub acepta: bool,
+    /// S26: el tema de DashOS (`None`: todos con el aspecto original) y los programas que van con el original.
+    pub tema: Option<Tokens>,
+    pub originales: Vec<String>,
+    pub version_tema: u32,
     siguiente: Superficie,
 }
 
@@ -147,6 +206,9 @@ impl CompositorDePrueba {
             registro: Vec::new(),
             pitidos: 0,
             acepta: true,
+            tema: None,
+            originales: Vec::new(),
+            version_tema: 0,
             siguiente: 1,
         }
     }
@@ -256,5 +318,11 @@ impl Compositor for CompositorDePrueba {
     }
     fn sacar_eventos(&mut self) -> Vec<(Superficie, Evento)> {
         core::mem::take(&mut self.eventos)
+    }
+    fn tema_amiga(&self, programa: &str) -> Option<Tokens> {
+        self.tema.filter(|_| !self.originales.iter().any(|p| p == programa))
+    }
+    fn version_tema(&self) -> u32 {
+        self.version_tema
     }
 }

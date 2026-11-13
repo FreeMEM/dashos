@@ -24,6 +24,8 @@
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
 
 pub mod compositor;
 pub mod estructuras;
@@ -49,7 +51,7 @@ use alloc::vec::Vec;
 
 use caja_exec::{Exec, Memoria};
 
-pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie};
+pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie, Tokens};
 pub use fuente::{ALTO as FUENTE_ALTO, ANCHO as FUENTE_ANCHO, BASE as FUENTE_BASE};
 pub use lienzo::{Lienzo, Rect};
 
@@ -129,8 +131,9 @@ pub struct CajaGrafica<C: Compositor> {
     intui: intuition::Estado,
     gt: gadtools::Estado,
     menus: menus::Estado,
-    /// El aspecto de los controles (tema.rs).
-    tema: alloc::boxed::Box<dyn tema::Tema>,
+    /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
+    /// repintan (tema.rs).
+    version_tema: u32,
     /// Los requesters de `EasyRequestArgs` abiertos (uno por tarea) y sus títulos (ventana, cadena, largo).
     requesters: Vec<requester::Requester>,
     requester_titulos: Vec<(u32, u32, u32)>,
@@ -148,7 +151,7 @@ impl<C: Compositor> CajaGrafica<C> {
             intui: intuition::Estado::default(),
             gt: gadtools::Estado::default(),
             menus: menus::Estado::default(),
-            tema: alloc::boxed::Box::new(tema::Clasico),
+            version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),
             avisos: Vec::new(),
@@ -228,6 +231,23 @@ impl<C: Compositor> CajaGrafica<C> {
     /// La hora que da `CurrentTime` y llevan los mensajes (segundos y microsegundos desde 1978). La pone la caja.
     pub fn poner_hora(&mut self, segundos: u32, micros: u32) {
         self.intui.hora = (segundos, micros);
+    }
+
+    /// El aspecto de los controles de una ventana (S26): el de DashOS si su programa va "como DashOS"; si no, el
+    /// clásico.
+    pub(crate) fn tema_de(&self, w: u32) -> tema::Elegido {
+        let programa = self.intui.ventanas.get(&w).map(|v| v.programa.as_str()).unwrap_or("");
+        tema::Elegido::de(self.comp.tema_amiga(programa))
+    }
+
+    /// El nombre del programa de una tarea, para las excepciones del aspecto: el de su nodo, sin el camino
+    /// ("SYS:C/Dir" da "Dir").
+    pub(crate) fn nombre_programa<M: Memoria>(ex: &Exec<M>, tarea: u32) -> alloc::string::String {
+        use crate::acceso::Acceso;
+        let d = ex.l32(tarea.wrapping_add(caja_exec::estructuras::node::LN_NAME)).unwrap_or(0);
+        let n = if d != 0 { ex.cadena(d).unwrap_or_default() } else { Vec::new() };
+        let desde = n.iter().rposition(|&c| c == b':' || c == b'/').map_or(0, |k| k + 1);
+        n[desde..].iter().take(255).map(|&c| c as char).collect()
     }
 
     pub(crate) fn avisar<M: Memoria>(&mut self, ex: &Exec<M>, funcion: &'static str, fallo: Fallo) {
