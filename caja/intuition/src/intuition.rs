@@ -550,6 +550,7 @@ impl<C: Compositor> CajaGrafica<C> {
             sin_borde: p.flags & (wflg::BORDERLESS | wflg::BACKDROP) != 0,
             minimo: (minimo.0 as u32, minimo.1 as u32),
             maximo: (maximo.0 as u32, maximo.1 as u32),
+            programa: programa.clone(),
         };
         self.intui.orden += 1;
         let orden = self.intui.orden;

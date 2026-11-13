@@ -1041,3 +1041,99 @@ reubicaciones (`.rela.dyn`).
 - `arranque-virt-vm`, `-linux`, `-2`, `-diag` (la caja de la Pi 5), `-escritorio` y `-usb`: BIEN. `make tarjeta-pi5`
   sale. `make -C jit-host run`: BIEN (también con el parche 0014). No se pasaron `-arch`, `-gpu` ni `-wayland`: no se
   tocó nada común (solo `caja/` y lo que espera la prueba de la caja).
+
+## 2026-11-13: las ventanas Amiga a 2x y 3x en pantallas grandes
+
+Rama `caja-amiga-escala`, desde `revision` (267a072). En Full HD, una ventana de GadTools (410x192 con topaz/8) se
+veía diminuta. Ahora cada ventana Amiga se ve a un factor entero (1x, 2x, 3x) y el programa no se entera.
+
+### Cómo va
+
+- **Dónde se escala: en la caja, al mandar el búfer** (`caja/pegamento/src/compositor.rs`, con lo que se puede probar
+  en el PC en `caja/intuition/src/escala.rs`). Intuition pinta a 1x como siempre. Al mandar una ventana al compositor,
+  cada píxel va como un cuadrado de `f` x `f` (vecino más cercano: nítido, como en un monitor del Amiga), solo lo
+  dañado. El ratón que llega del compositor se divide entre `f` (redondeando hacia abajo, también fuera de la ventana):
+  los clics en gadgets, el arrastre de un deslizador y los menús con el botón derecho caen donde deben. El compositor
+  ve una ventana normal, más grande.
+- **Por qué no por el protocolo.** `wl_surface.set_buffer_scale` sirve para lo contrario (un búfer más grande que la
+  ventana, para HiDPI): no amplía. `wp_viewporter` (`set_destination`) sí, pero el compositor de DashOS no lo tiene ni
+  escala nada al componer: habría que meter la escala en la composición, en dónde cae el ratón, en los daños y en las
+  sombras de `wayland/src/escena.rs`, que además lleva otro agente a la vez. Ampliar en la caja cuesta f² de memoria
+  (410x192 a 2x: 1,2 MB) y la copia, que es poca. Si algún día el compositor tiene `wp_viewporter`, solo cambia
+  `CompositorWayland`: la caja mandaría el búfer a 1x con su destino a `f` veces.
+- **El tope.** El búfer ampliado tiene que caber en 4096 de lado y en su franja de 64 MB: si no, el factor de esa
+  ventana baja (hasta 1x). Una ventana que cambia de tamaño se mira otra vez con el tamaño nuevo.
+- **La pantalla de Workbench** mide lo de la pantalla real entre el factor de la caja (1920x1080 a 2x: 960x540), con
+  el tope de siempre de 1024x768.
+- **Cambiar el ajuste con la ventana abierta**: las que pasan a otro factor se piden enteras (`Evento::Exponer`) y
+  salen con el búfer nuevo. La pantalla de Workbench no cambia hasta que la caja vuelve a arrancar.
+- La línea de la consola dice el factor cuando no es 1: "ventana Amiga en pantalla (410x192, a 2x): ...". El guion
+  (`tools/prueba_uefi.sh`) lo lee y multiplica por él sus clics en GadTools, en el ejemplo de Dash y en el requester.
+
+### El ajuste (S26, `Prefs/cajas` y `dashos_tema_v1.cajas`)
+
+Dos líneas nuevas en el mismo texto (`wayland/src/aspecto.rs`), que el centro ya guarda tal cual al cambiar el
+aspecto:
+
+```text
+escala amiga 2
+escala-programa amiga 1 Directory Opus
+```
+
+`escala <caja> <auto|1|2|3>`: la de una caja (si falta, `auto`). `escala-programa <caja> <auto|1|2|3> <nombre>`: la
+de un programa (el nombre de su tarea, sin camino), por encima de la de su caja. Un 0, un 4, un negativo o cualquier
+otra cosa: el texto entero no vale, como lo demás de S26.
+
+**Decisión provisional, para el usuario**: `auto` da 3x desde 3200x1800 (4K), 2x desde 1600x900 (Full HD, 1440p) y
+1x por debajo (800x600, 1024x768, 1280x1024). Así lo que el programa ve como pantalla mide al menos 800x450. ¿Vale esa
+regla? ¿Hace falta 4x (8K) o un 1,5x?
+
+### Lo que falta
+
+1. **Ningún sitio en Ajustes para cambiarlo**: hoy se escribe a mano en `Prefs/cajas` (o con `DASHOS_PREFS`). Una fila
+   en Apariencia del centro (junto a "Programas de las cajas") movería las filas de los fondos que pulsa el guion, y el
+   centro lo lleva ahora el agente del escritorio: mejor con él.
+2. **La caja Linux** lee el mismo ajuste pero no escala (sus programas ya son HiDPI con GTK).
+3. **El factor no es fraccionario** (1,5x): con vecino más cercano saldrían píxeles de dos tamaños.
+4. **En el tema clásico, el clic del guion en la tercera opción del mx no llega** (ni `GADGETDOWN`): ya pasaba a 1x
+   (se ve el mx en "Verde" en `caja-gadtools-menu-clasico-ondas-fhd.png` de la rama `gadtools-material`); con el tema
+   Material sí llega. No es de la escala; sin mirar.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro
+fondo;cajas=general dashos"` (u `original`), sin línea de escala: la automática, 2x.
+
+- `caja-gadtools-escala-material-fhd.png` y `caja-gadtools-escala-clasico-fhd.png`: la ventana de GadTools a 2x (820x384
+  en la pantalla), entera, antes de los clics.
+- `caja-gadtools-menu-escala-material-fhd.png` y `caja-gadtools-menu-escala-clasico-fhd.png`: con el menú Proyecto
+  abierto con el botón derecho y "Salir" señalado, tras los clics del guion (ciclo en "Dos", "Amiga 4000" en la lista,
+  "Aceptado"; con Material, el mx en "Azul"). Al soltar llega `MENUPICK` y el programa acaba con 0:
+
+```
+│   [caja-amiga] ventana Amiga en pantalla (410x192, a 2x): GadTools en DashOS
+│   [compositor] ventana de caja-amiga en (40, 80) de 820x384
+│   [caja-amiga] gadtools: GADGETUP del gadget 2, codigo 0
+│   [caja-amiga] gadtools: GADGETUP del gadget 3, codigo 1
+│   [caja-amiga] gadtools: GADGETDOWN del gadget 4, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 10, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 0, codigo 0
+│   [caja-amiga] gadtools: MENUPICK menu 0 elemento 2 (2)
+│   [caja-amiga] gadtools.exe acabó con 0 (cerrada por el programa), 1286 llamadas nativas, en 16344 ms, 0 avisos, 0 bloques sin soltar: bien
+```
+
+El guion de las capturas, además: no mira ni pulsa la ventana de GadTools con la sesión bloqueada (la captura salía de
+la pantalla de bloqueo), y reconoce la casilla Material en (100, 21), dentro de la casilla y fuera de la marca blanca
+(en (103, 25), donde pulsa, ya está la marca: con ella no la daba por vista).
+
+### Pruebas
+
+- `cargo test`: `wayland` (92, con `aspecto::escalas` y las hostiles nuevas: 0, 4, negativos, números enormes, "2x",
+  líneas repetidas, nombres malos, demasiadas excepciones, y la basura al azar con las palabras nuevas) e intuition
+  (con `escala`: el factor que se baja si no cabe, coordenadas en el borde, fuera y negativas, la copia por vecino más
+  cercano a 1x, 2x y 3x, solo lo dañado, daños fuera o enormes, búferes que no cuadran como al cambiar de tamaño entre
+  medias, factor 0 y enorme). clippy limpio en lo nuevo.
+- `make prueba`: BIEN esperado.txt y BIEN cargador hunk.
+- `make arranque-virt` (800x600: factor 1, las líneas de siempre sin cambios): las cinco BIEN, también con el guion
+  final (una vuelta dio MAL en la captura del compositor, la de `ventana-a` y `ventana-b`, sin ventanas Amiga, con
+  otra QEMU de otro agente a la vez; repetida, BIEN). `-vm`, `-2`, `-escritorio` y `-diag`: BIEN.

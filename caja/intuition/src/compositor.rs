@@ -64,6 +64,8 @@ pub struct NuevaVentana {
     /// Tamaños mínimo y máximo (`WindowLimits`).
     pub minimo: (u32, u32),
     pub maximo: (u32, u32),
+    /// El programa que la abre (el nombre de su tarea, sin camino): su escala puede ser otra (S26, `escala-programa`).
+    pub programa: String,
 }
 
 /// Los colores del tema de DashOS (Material 3) para pintar los controles de un programa Amiga "como DashOS" (S26):
