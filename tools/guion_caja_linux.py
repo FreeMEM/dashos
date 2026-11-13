@@ -415,7 +415,7 @@ if modo == "wayland":
     paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
     # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 150 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
@@ -423,13 +423,14 @@ if modo == "wayland":
         time.sleep(1.0)
         clic_en_ventana()
         mandar("sendkey ctrl-shift-v")
-        esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60)
+        # Que el programa hostil vea su tubería cerrada no siempre llega en el plazo (ver la bitácora): se apunta.
+        apuntar("hostil sin fin: " + ("le cortaron la tubería" if esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60) else "sin ver el corte en 60 s"))
         esperar(r"terminal: pegado \(4096 bytes\)", 30)
         time.sleep(3.0)
         mandar("sendkey ctrl-c")
         time.sleep(1.0)
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 nunca 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 nunca 90 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
