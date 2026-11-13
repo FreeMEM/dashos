@@ -858,6 +858,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let mut g = g;
         let mut k = 0;
         while g != 0 && (n < 0 || k < n) && k < 10_000 {
+            if self.es_gadget_boopsi(ex, g) {
+                self.apuntar(crate::boopsi::Pendiente::Pintar { w, g });
+            }
             self.dibujar_gt(ex, w, g);
             g = ex.l32(g.wrapping_add(gadget::NEXTGADGET)).unwrap_or(0);
             k += 1;
@@ -1067,6 +1070,13 @@ impl<C: Compositor> CajaGrafica<C> {
         let e = leer_etiquetas(ex, tags)?;
         let hundido = e.iter().any(|(t, d)| *t == gt::BB_RECESSED && *d != 0);
         let cresta = e.iter().any(|(t, d)| *t == gt::BB_FRAMETYPE && *d == gt::BBFT_RIDGE);
+        self.bisel_rp(ex, rp, x, y, an, al, hundido, cresta)
+    }
+
+    /// Un marco en relieve en un `RastPort` (el de `DrawBevelBoxA`, y el de las imágenes de BOOPSI): con el tema de
+    /// DashOS en el lienzo de una ventana "como DashOS"; si no, con las plumas, como 3.x.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn bisel_rp<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, x: i32, y: i32, an: i32, al: i32, hundido: bool, cresta: bool) -> Result<(), Fallo> {
         if an < 2 || al < 2 {
             return Ok(());
         }
@@ -1158,6 +1168,17 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// El botón izquierdo bajó en `(x, y)` de la ventana: si es un gadget, lo suyo. `None` si no hay gadget ahí.
     pub(crate) fn gadget_pulsar<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32) -> Option<Result<bool, Fallo>> {
+        // BOOPSI: con un gadget suyo activo, o uno suyo debajo, el clic va a la cola (boopsi::atender, con el puente:
+        // su clase puede ser de 68k).
+        if self.boopsi_activo_en(w) || self.gadget_en(ex, w, x, y).is_some_and(|g| self.es_gadget_boopsi(ex, g)) {
+            self.apuntar(crate::boopsi::Pendiente::Entrada { w, e: crate::boopsi::Entrada::Pulsar { x, y } });
+            return Some(Ok(false));
+        }
+        self.gadget_pulsar_no_boopsi(ex, w, x, y)
+    }
+
+    /// Lo de `gadget_pulsar` para lo que no es BOOPSI (lo llama BOOPSI cuando el clic no era suyo).
+    pub(crate) fn gadget_pulsar_no_boopsi<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32) -> Option<Result<bool, Fallo>> {
         // Un gadget de texto activo pierde el cursor.
         if let Some(Activo::Texto { w: tw, g: tg }) = self.gt.activo {
             self.gt.activo = None;
@@ -1249,6 +1270,10 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// El ratón se movió con un gadget pulsado: `true` si era cosa de un gadget (y si hay que replanificar).
     pub(crate) fn gadget_mover<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32) -> Option<Result<bool, Fallo>> {
+        if self.boopsi_activo_en(w) {
+            self.apuntar(crate::boopsi::Pendiente::Entrada { w, e: crate::boopsi::Entrada::Mover { x, y } });
+            return Some(Ok(false));
+        }
         match self.gt.activo? {
             Activo::Pulsado { w: aw, g } if aw == w => {
                 let dentro = Self::caja_en(ex, w, g).is_some_and(|r| r.contiene(x, y));
@@ -1288,6 +1313,10 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// El botón izquierdo subió: lo que toque al gadget pulsado. `None` si no había ninguno.
     pub(crate) fn gadget_soltar<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32) -> Option<Result<bool, Fallo>> {
+        if self.boopsi_activo_en(w) {
+            self.apuntar(crate::boopsi::Pendiente::Entrada { w, e: crate::boopsi::Entrada::Soltar { x, y } });
+            return Some(Ok(false));
+        }
         match self.gt.activo? {
             Activo::Texto { .. } => None,
             Activo::Intuition { w: aw, g } => {
@@ -1348,6 +1377,13 @@ impl<C: Compositor> CajaGrafica<C> {
     /// Una tecla con un gadget de texto activo en la ventana `w`: la edita. `None` si no hay ninguno (la tecla va al
     /// programa como siempre).
     pub(crate) fn gadget_tecla<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, crudo: Option<u8>, c: Option<u8>) -> Option<Result<bool, Fallo>> {
+        if self.boopsi_activo_en(w) {
+            if let Some(crudo) = crudo {
+                let calif = self.intui.calif.bits;
+                self.apuntar(crate::boopsi::Pendiente::Entrada { w, e: crate::boopsi::Entrada::Tecla { crudo, ch: c, calif } });
+            }
+            return Some(Ok(false));
+        }
         let Some(Activo::Texto { w: aw, g }) = self.gt.activo else { return None };
         if aw != w {
             return None;

@@ -715,6 +715,7 @@ impl<C: Compositor> CajaGrafica<C> {
     pub fn close_window<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
         self.ventana(w)?;
         self.gadtools_ventana_cerrada(w);
+        self.boopsi_ventana_cerrada(w);
         self.reclamar(ex, w)?;
         let puerto = ex.l32(w + win::USERPORT)?;
         self.quitar_de_puerto(ex, w, puerto)?;
@@ -768,6 +769,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     v.pendientes.remove(&m);
                 }
                 ex.soltar(m, crate::estructuras::intuimessage::TAMANO_EXT)?;
+                self.soltar_adjunto(ex, m);
             }
         }
         Ok(())
@@ -809,6 +811,7 @@ impl<C: Compositor> CajaGrafica<C> {
             let nuestro = self.intui.ventanas.get_mut(&w).and_then(|v| v.pendientes.remove(&m)).is_some();
             if nuestro {
                 ex.soltar(m, crate::estructuras::intuimessage::TAMANO_EXT)?;
+                self.soltar_adjunto(ex, m);
             } else {
                 self.avisar(ex, "ReplyMsg", Fallo::Sospechoso { dir: m });
             }
@@ -855,12 +858,14 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         }
         self.gadtools_tarea_muerta(t);
+        self.boopsi_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {
             if v.tarea == t {
                 for &m in v.pendientes.keys() {
                     let _ = ex.soltar(m, crate::estructuras::intuimessage::TAMANO_EXT);
+                    self.soltar_adjunto(ex, m);
                 }
                 let _ = self.liberar(ex, &v);
             } else {
@@ -1124,6 +1129,10 @@ impl<C: Compositor> CajaGrafica<C> {
             v.geometria.alto = al;
         }
         self.dibujar_marco(w);
+        // Los gadgets BOOPSI relativos (el layout de una ventana de ReAction) se colocan otra vez.
+        if self.tiene_boopsi(ex, w) {
+            self.apuntar(crate::boopsi::Pendiente::Colocar { w });
+        }
         let mut replan = self.enviar(ex, w, idcmp::NEWSIZE, 0, 0)?;
         if ex.l32(w + win::FLAGS)? & wflg::NOCAREREFRESH == 0 {
             if simple {

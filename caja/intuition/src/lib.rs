@@ -27,6 +27,7 @@ extern crate alloc;
 #[cfg(test)]
 extern crate std;
 
+pub mod boopsi;
 pub mod compositor;
 pub mod escala;
 pub mod estructuras;
@@ -53,6 +54,7 @@ use alloc::vec::Vec;
 
 use caja_exec::{Exec, Memoria};
 
+pub use boopsi::{Corte68k, Hecho, Puente};
 pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie, Tokens};
 pub use fuente::{ALTO as FUENTE_ALTO, ANCHO as FUENTE_ANCHO, BASE as FUENTE_BASE};
 pub use lienzo::{Lienzo, Rect};
@@ -114,11 +116,13 @@ pub struct Numeros {
     pub graphics: u16,
     pub intuition: u16,
     pub gadtools: u16,
+    /// El despachador de las clases nativas de BOOPSI y, detrás, las funciones de las bibliotecas de ReAction.
+    pub boopsi: u16,
 }
 
 impl Default for Numeros {
     fn default() -> Numeros {
-        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00 }
+        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00, boopsi: 0x0B00 }
     }
 }
 
@@ -133,6 +137,7 @@ pub struct CajaGrafica<C: Compositor> {
     intui: intuition::Estado,
     gt: gadtools::Estado,
     menus: menus::Estado,
+    boopsi: boopsi::Estado,
     /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
     /// repintan (tema.rs).
     version_tema: u32,
@@ -153,6 +158,7 @@ impl<C: Compositor> CajaGrafica<C> {
             intui: intuition::Estado::default(),
             gt: gadtools::Estado::default(),
             menus: menus::Estado::default(),
+            boopsi: boopsi::Estado::default(),
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),
@@ -161,6 +167,7 @@ impl<C: Compositor> CajaGrafica<C> {
         c.instalar_graphics(ex)?;
         c.instalar_intuition(ex)?;
         c.instalar_gadtools(ex)?;
+        c.instalar_boopsi(ex)?;
         Ok(c)
     }
 

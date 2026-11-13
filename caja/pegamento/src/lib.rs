@@ -965,6 +965,8 @@ fn atender(c: &mut Caja) {
 /// saca de la espera; al volver, la espera se repite); `Plazo` si pasó demasiado tiempo.
 enum Espera {
     Lista,
+    /// Hay eventos de gadgets BOOPSI que atender (con el puente, fuera de aquí).
+    Boopsi,
     Excepcion,
     Plazo,
 }
@@ -976,6 +978,9 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
     let mut hasta = dashos::ahora_us() + maxima;
     loop {
         atender(c);
+        if c.gr.boopsi_pendiente() {
+            return Espera::Boopsi;
+        }
         // Ctrl-C de fuera (caja.c): la señal llega como la de cualquier otra tarea.
         // SEGURIDAD: una función de caja.c sin argumentos.
         if unsafe { caja_tomar_ctrl_c() } != 0 {
@@ -1000,17 +1005,85 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
     }
 }
 
-/// `Delay`: la tarea duerme `tics` (50 por segundo) y la caja atiende al compositor mientras.
-fn dormir(c: &mut Caja, tics: u32) {
+/// `Delay`: la tarea duerme `tics` (50 por segundo) y la caja atiende al compositor mientras (y a BOOPSI, con la
+/// pila `a7` de la llamada). `false` si el programa acabó dentro de un despachador 68k.
+/// Quien la llama no puede usar después su referencia de `caja()`: pide otra.
+fn dormir(tics: u32, a7: u32) -> bool {
     let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
     loop {
-        atender(c);
+        if let Some(c) = caja() {
+            atender(c);
+        }
+        if !atender_boopsi(a7) {
+            return false;
+        }
         let ahora = dashos::ahora_us();
         if ahora >= hasta {
-            return;
+            return true;
         }
         dashos::dormir_us((hasta - ahora).min(10_000));
     }
+}
+
+/// El puente de BOOPSI (`caja_intuition::boopsi`): las bibliotecas de la caja y el 68k anidado, con la pila de la
+/// llamada nativa en curso (`a7`). Cada `partes()` pide la referencia otra vez: BOOPSI no la guarda a través de
+/// `ejecutar_68k` (lo asegura el comprobador de préstamos: las dos cosas piden `&mut` al puente).
+struct PuenteCaja {
+    a7: u32,
+}
+
+impl caja_intuition::Puente for PuenteCaja {
+    type M = MemoriaCaja;
+    type C = CompositorWayland;
+
+    fn partes(&mut self) -> (&mut Exec<MemoriaCaja>, &mut CajaGrafica<CompositorWayland>) {
+        // El puente solo se crea con la caja ya montada (`caja()` dio algo antes), y no se desmonta nunca.
+        let c = caja().expect("caja montada");
+        (&mut c.ex, &mut c.gr)
+    }
+
+    fn ejecutar_68k(&mut self, dir: u32, regs: &Registros) -> Result<Registros, caja_intuition::Corte68k> {
+        let mut regs = *regs;
+        if regs.a[7] == 0 {
+            regs.a[7] = self.a7;
+        }
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let hecho = ejecutar_68k(dir, &regs, false);
+        let c = caja().expect("caja montada");
+        match hecho {
+            Ok(r) => {
+                c.anidadas += 1;
+                Ok(r)
+            }
+            Err(ANIDADA_ACABADO) => Err(caja_intuition::Corte68k::Acabado),
+            Err(e) => {
+                c.anidadas_no += 1;
+                if c.anidadas_no <= 3 {
+                    di(&format!(
+                        "BOOPSI: 68k en ${:x}: {} (D0 = 0)",
+                        dir,
+                        if e == ANIDADA_TOPE { "demasiados niveles" } else { "su pila no vale" }
+                    ));
+                }
+                Err(caja_intuition::Corte68k::NoSePudo)
+            }
+        }
+    }
+}
+
+/// Lo de BOOPSI que quedó en la cola al atender al compositor (clics y repintados de sus gadgets), con la pila de
+/// la llamada en curso. `false` si el programa acabó dentro de un despachador 68k.
+/// Quien la llama no puede tener viva ninguna referencia de `caja()`.
+fn atender_boopsi(a7: u32) -> bool {
+    let pendiente = caja().is_some_and(|c| c.gr.boopsi_pendiente());
+    if !pendiente {
+        return true;
+    }
+    let bien = caja_intuition::boopsi::atender(&mut PuenteCaja { a7 });
+    if let Some(c) = caja() {
+        c.sucio = true;
+    }
+    bien
 }
 
 /// La llama `dashos_native_call` (caja.c) con la copia de x0..x30 que hace el JIT y el número de la función.
@@ -1050,6 +1123,18 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         // SEGURIDAD: una función de caja.c sin argumentos.
         if unsafe { caja_tomar_ctrl_c() } != 0 {
             let _ = c.ex.senal_ctrl_c(t);
+        }
+        return if entregar_excepciones(r.a[7]) { C_SEGUIR } else { C_ACABAR };
+    }
+    if c.gr.es_boopsi(n) {
+        // BOOPSI (intuition, los despachadores de las clases nativas, las bibliotecas de ReAction): puede ejecutar
+        // 68k (los despachadores de las clases de usuario), con su puente.
+        let hecho = caja_intuition::boopsi::llamar(&mut PuenteCaja { a7: r.a[7] }, n, r);
+        let Some(c) = caja() else { return C_RECHAZADA };
+        c.sucio = true;
+        recoger_avisos(c);
+        if hecho == caja_intuition::Hecho::Acabar {
+            return C_ACABAR;
         }
         return if entregar_excepciones(r.a[7]) { C_SEGUIR } else { C_ACABAR };
     }
@@ -1095,6 +1180,16 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                     a = primera(c, n, r);
                     continue;
                 }
+                Espera::Boopsi => {
+                    // Un clic en un gadget BOOPSI (su clase puede ser de 68k): se atiende y la espera se repite.
+                    if !atender_boopsi(antes.a[7]) {
+                        return C_ACABAR;
+                    }
+                    let Some(c) = caja() else { return C_RECHAZADA };
+                    *r = antes;
+                    a = primera(c, n, r);
+                    continue;
+                }
                 Espera::Excepcion => {
                     if !entregar_excepciones(antes.a[7]) {
                         return C_ACABAR;
@@ -1113,7 +1208,11 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 }
             },
             Fin::Terminar => res = C_ACABAR,
-            Fin::Dormir(tics) => dormir(c, tics),
+            Fin::Dormir(tics) => {
+                if !dormir(tics, r.a[7]) {
+                    res = C_ACABAR;
+                }
+            }
             Fin::Rechazada => {
                 di(&format!("función nativa {}: no existe; rechazada (D0 = -1)", n));
                 r.d[0] = u32::MAX;
@@ -1126,7 +1225,11 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     // Lo dibujado va al compositor en cuanto el programa hace otra cosa que dibujar (exec o dos).
     if c.sucio && n < 0x400 {
         atender(c);
+        if !atender_boopsi(r.a[7]) {
+            return C_ACABAR;
+        }
     }
+    let Some(c) = caja() else { return C_RECHAZADA };
     recoger_avisos(c);
     if res == C_ACABAR {
         return res;
