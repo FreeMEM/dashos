@@ -10,8 +10,8 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] wayland: el puente de Linux conecta por vsock
 ~[caja-linux] linux: active
 ~[caja-linux] linux: aspecto: programas de Linux 
-~[caja-linux] linux: muestra-gtk: GTK 4 en pantalla, tema DashOS-
-~[caja-linux] linux: foot: lista
+~muestra-gtk: GTK 4 en pantalla, tema DashOS-
+~foot: lista
 ~[caja-linux] linux: muestra-gtk: adiós
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
