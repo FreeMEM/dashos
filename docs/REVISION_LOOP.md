@@ -1812,3 +1812,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - **Virus de laboratorio `memoria`**: basta con preguntar con `TypeOfMem`; la prueba de verdad es la del kernel.
 - **GadTools con el tema Material**: no le convence la letra ni la barra (ver la entrada anterior, rama
   `amiga-integrada`).
+
+### 2026-11-13 17:00: la guardia de la caja Amiga pregunta de verdad, y la papelera (S28), en revision
+- Fusionada `caja-amiga-guardia`: cambiar o borrar ejecutables, iconos, guiones de arranque o bloques de arranque
+  pregunta por `sesiones` (llave nueva 4 de la caja, permisos `ejec:`, `icono:`, `guion:`, `disco:`) a `guardian`
+  ("Programa de Amiga ... ¿Lo dejas?", Siempre / Esta vez / No); "siempre" se guarda con los demás permisos y se
+  retira en el centro. Papelera de la caja en `Estado/Servicios/caja-amiga.papelera` (servicio `archivos`). La
+  instantánea del cajón no: las de RedoxFS son por volumen (hará falta un volumen propio para la caja).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
