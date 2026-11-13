@@ -62,7 +62,8 @@ PRUEBA = """#!/bin/sh
 . /etc/profile.d/dashos-aspecto.sh
 export PATH=/usr/local/lib/dashos/sin-bwrap:$PATH
 export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1
-exec "$@"
+# Lo que digan va a hvc0 (las muestras y prueba-foot ya lo escriben allí): la terminal de la caja queda limpia.
+exec "$@" >/dev/null 2>&1
 """
 
 

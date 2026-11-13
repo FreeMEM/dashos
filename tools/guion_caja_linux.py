@@ -220,6 +220,15 @@ if modo == "wayland":
     teclear("poweroff")
     sys.exit(0)
 
+def arriba(dx, dy):
+    """Un clic en la última ventana de Linux, en (dx, dy) de su esquina: la sube encima de las demás (la de la caja
+    Amiga puede salir encima en cualquier momento)."""
+    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    if v:
+        clic(int(v[-1][0]) + dx, int(v[-1][1]) + dy)
+        time.sleep(1.0)
+
+
 if modo == "aspecto":
     # S26 (`make arranque-virt-aspecto`): el aspecto de los programas de Linux. Espera a que el agente del aspecto
     # (dashos-aspecto, un servicio de systemd que escucha el tema de DashOS por el puente) haya escrito el tema, abre
@@ -238,18 +247,20 @@ if modo == "aspecto":
         clic_en_ventana()
         teclear("clear")
         time.sleep(1.0)
-        teclear(f"prueba-aspecto muestra-gtk{n} 30 >/dev/null 2>&1 &")
+        teclear(f"prueba-aspecto muestra-gtk{n} 30 &")
         if esperar(rf"muestra-gtk: GTK {n} en pantalla", 400):
             time.sleep(4.0)
+            arriba(420, 20)
             capturar(prefijo + "." + nombre)
         esperar_n(r"muestra-gtk: adiós|Aborted", antes + 1, 120)
         time.sleep(2.0)
     clic_en_ventana()
     teclear("clear")
     time.sleep(1.0)
-    teclear("prueba-foot >/dev/null 2>&1 &")
+    teclear("prueba-aspecto prueba-foot &")
     if esperar(r"foot: lista", 400):
         time.sleep(4.0)
+        arriba(300, 60)
         capturar(prefijo + ".foot")
     clic_en_ventana()
     teclear("cat /root/.config/glib-2.0/settings/keyfile /run/dashos-aspecto/linux")
