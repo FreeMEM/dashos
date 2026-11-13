@@ -324,7 +324,13 @@ while time.time() - inicio < total:
                 m_ra = list(re.finditer(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?(?:, con la barra de DashOS)?\): ReAction", texto[corte:]))
                 v_ra = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
                 if m_ra and v_ra:
-                    time.sleep(2.0)
+                    # Delante de las demás: un clic dentro, en el margen del grupo (nada que pulsar ahí).
+                    time.sleep(1.5)
+                    f_ra = int(m_ra[-1].group(3) or 1)
+                    ir_a(int(v_ra[-1].group(1)) + 6 * f_ra, int(v_ra[-1].group(2)) + 16 * f_ra)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                    time.sleep(1.0)
                     foto = os.environ["CAPTURA_RA"] + (".orig" if ra_capturas else "") + ".ppm"
                     mandar("screendump " + foto)
                     with open(foto + ".txt", "w") as f:

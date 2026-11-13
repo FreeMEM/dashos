@@ -582,6 +582,12 @@ impl<C: Compositor> CajaGrafica<C> {
             maximo: (maximo.0 as u32, maximo.1 as u32),
             programa: programa.clone(),
             barra_dashos: dashos && tiene_barra && p.flags & wflg::BACKDROP == 0,
+            // La pestaña de la caja va en la barra de intuition, a la izquierda del gadget de profundidad (si no, tapaba
+            // el de cerrar, arriba a la izquierda).
+            hueco_marca: (!dashos && tiene_barra && bordes[1] > 2).then(|| {
+                let derecha = if p.flags & wflg::DEPTHGADGET != 0 { crate::marco::ANCHO_PROF } else { 0 };
+                (derecha, bordes[1])
+            }),
         };
         self.intui.orden += 1;
         let orden = self.intui.orden;

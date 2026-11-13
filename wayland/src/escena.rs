@@ -282,6 +282,9 @@ pub struct Superficie {
     pub entrada: Option<Region>,
     /// Dónde está en la pantalla, si se ve.
     pub sitio: Option<(i32, i32)>,
+    /// El hueco de la marca de su caja (`dashos_tema_v1.marca`): desde la derecha de la ventana, dónde empiezan los
+    /// gadgets de su barra, y el alto de la barra. Solo para colocar la pestaña.
+    pub hueco_marca: Option<(i32, i32)>,
     /// Lo que ocupaba en la pantalla la última vez que se compuso: al cambiar de búfer se repinta aunque el viejo ya
     /// no exista (el cliente puede destruirlo antes de poner el nuevo, como al cambiar de tamaño).
     pub visto: Option<Rect>,
@@ -1755,7 +1758,8 @@ impl<M: Memorias> Escena<M> {
                 let sitio = if decoracion::con_barra(cli, id) {
                     Rect { x: caja.x, y: caja.y, w: 0, h: 0 }
                 } else {
-                    marca::sitio_pestana(caja, area, (p.w, p.h))
+                    let hueco = cli.superficies.get(&id).and_then(|s| s.hueco_marca);
+                    marca::sitio_pestana(caja, area, (p.w, p.h), amiga, hueco)
                 };
                 marcas.push((capas.len(), caja, sitio, amiga));
                 recortes.push((desde, capas.len(), caja));
@@ -2181,6 +2185,16 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     let barras = &escena.barras;
                     let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
                     escena.avisos_estado.extend(suyos);
+                }
+            }
+            // La caja Amiga: el hueco de la pestaña de la marca en la barra de intuition de una ventana suya (sin la barra
+            // de DashOS). Solo de una superficie del mismo cliente; los números, tal cual: `marca::sitio_pestana` los
+            // recorta a la ventana.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::MARCA => {
+                let sup = args[0].uint();
+                let yo = escena.clientes.get_mut(&self.cliente).unwrap();
+                if let Some(s) = yo.superficies.get_mut(&sup) {
+                    s.hueco_marca = Some((args[1].int(), args[2].int()));
                 }
             }
             // S27: ver otro espacio de trabajo, como Super y el número; solo la barra.

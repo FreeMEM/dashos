@@ -363,6 +363,8 @@ fn border_top_en_los_dos_aspectos() {
     let b = bordes(&c, w);
     assert_eq!(b, [4, wbor(&c)[0] + alto_letra + 1, 18, 2]);
     assert!(!c.1.comp.ventana(c.1.superficie(w).unwrap()).pedida.barra_dashos);
+    // El hueco de la marca de la caja para el compositor: a la izquierda del gadget de profundidad, del alto de la barra.
+    assert_eq!(c.1.comp.ventana(c.1.superficie(w).unwrap()).pedida.hueco_marca, Some((23, b[1] as i32)));
     // La barra de intuition, de todo su alto: la fila de abajo de la barra es del borde (sombra del relieve de dentro), y
     // el título cabe entero entre la primera y la última fila.
     let s = c.1.superficie(w).unwrap();
@@ -380,4 +382,5 @@ fn border_top_en_los_dos_aspectos() {
     assert_eq!(wbor(&c), [0, 0, 0, 0]);
     let w = ventana(&mut c, GADGETS, &[]);
     assert_eq!(bordes(&c, w), [0, wbor(&c)[0] + alto_letra + 1, 0, 0]);
+    assert_eq!(c.1.comp.ventana(c.1.superficie(w).unwrap()).pedida.hueco_marca, None, "con la barra de DashOS, nada");
 }

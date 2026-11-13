@@ -63,7 +63,7 @@ static GLOBALES: [Global; 9] = [
     // hechos (C3); la 3, el aspecto de los programas de las cajas (S26); la 4 (S27), los espacios de trabajo y el
     // volumen, solo para la barra y el panel: a los demás, pedirlos es un error. Los `wl_output` van aparte, uno por
     // pantalla (multimonitor).
-    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 5 },
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
     // El portapapeles (H9): la selección de siempre y la primaria; y la barra de DashOS para quien la pida.
     PORTAPAPELES,
     PRIMARIA,
@@ -79,7 +79,7 @@ static GLOBALES_ESCRITORIO: [Global; 12] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 5 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,
@@ -94,7 +94,7 @@ static GLOBALES_CAPAS: [Global; 10] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     // La 4 (S27): los espacios de trabajo a la barra y las teclas del volumen al panel.
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 5 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,

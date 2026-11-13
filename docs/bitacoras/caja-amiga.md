@@ -1372,3 +1372,40 @@ getfile no abre el requester (no hay asl.library); listbrowser con varias column
 - Prueba: `tests/letra_kit.rs`, `campo_de_texto_seguido_y_etiqueta_del_deslizador_nitida`: con Roboto de verdad a 2x y
   3x, mide lo que ocupa la tinta de "hola" (no más que 4 avances de Mono, menos de 3 celdas de topaz), el cursor delante
   de la "l" y la etiqueta y el nivel del deslizador valiendo los dos, sin pisarse.
+
+### De paso: BorderTop en el aspecto original
+
+Aviso del coordinador: con "cajas=general original" a 2x, la barra de intuition de la ventana de GadTools salía
+aplastada (título cortado por arriba, gadget de profundidad pequeño), como si el `BorderTop` 9 y los `WBor*` 0 de "como
+DashOS" valieran también ahí. El oráculo (FS-UAE, Kickstart y Workbench 3.1, un programa que lee la pantalla y abre una
+ventana con todos los gadgets): `WBorTop` 2, `WBorLeft` 4, `WBorRight` 4, `WBorBottom` 2, letra de la pantalla
+topaz/9 y `BorderTop` 12 (= 2 + 9 + 1), 4, 18 y 2; los gadgets de la barra, de 24 x 12 (cerrar 20 x 12). La caja, con
+topaz/8: `WBorTop` 2 y `BorderTop` 11 en el original, y 0 y 9 "como DashOS": la misma cuenta. La prueba
+`border_top_en_los_dos_aspectos` (`tests/barra_dashos.rs`) lo comprueba en los dos aspectos (los bordes, el título
+dentro de la barra y el gadget de profundidad hasta su última fila) y pasa: en intuition no encontré el fallo con esas
+preferencias. Un caso que sí descuadra y queda apuntado: un programa con la excepción "original" en una caja "como
+DashOS" ve `WBorTop` 0 (la pantalla es de todos) y su ventana lleva `BorderTop` 11; si coloca sus gadgets con `WBorTop
++ ta_YSize + 1` (9), pisan 2 filas de la barra. Las capturas de esta vuelta lo mirarán en la caja de verdad.
+
+### De paso: la pestaña "68K" a la derecha (aspecto original)
+
+Encargo del usuario: con el aspecto original, la pestaña "68K" del compositor (por dentro, arriba a la izquierda;
+desde 130bfcb una pastilla del kit que cuelga del borde) tapaba el gadget de cerrar de la ventana Amiga. Ahora va
+arriba a la derecha, dentro de la barra de intuition, justo a la izquierda del gadget de profundidad. Fusionado
+130bfcb antes de tocar `wayland/`.
+
+- **Protocolo**: `dashos_tema_v1` pasa a la versión 6 con la petición `marca(superficie, derecha, alto)`: desde la
+  derecha de la ventana, dónde empiezan los gadgets de su barra, y el alto de la barra, en píxeles de la superficie. Solo
+  vale para una superficie del mismo cliente (otra, o una que no existe, no hace nada); se guarda en la superficie
+  (`Superficie::hueco_marca`) y se va con ella.
+- **La caja**: intuition dice el hueco al abrir una ventana sin la barra de DashOS que tenga barra
+  (`NuevaVentana::hueco_marca`: el ancho del gadget de profundidad y `BorderTop`, a 1x); el pegamento lo manda con el
+  factor de la ventana (y otra vez si cambia la escala).
+- **El compositor** (`marca::sitio_pestana`): la sigue pintando él y solo usa el dato para colocarla: a `derecha` + 6 del
+  borde derecho, siempre dentro de la ventana; sin dato o con uno absurdo (negativo, más ancho que la ventana), arriba a
+  la derecha con un margen fijo (56). "Como DashOS" no cambia (la pastilla va en la barra de DashOS), ni las ventanas de
+  Linux sin barra (a la izquierda, como antes).
+- Prueba: `wayland/src/tests_s29.rs`, `marca_de_la_caja_amiga`: a la derecha sin dato, junto a los gadgets con el dato
+  por el protocolo, y huecos negativos, enormes, `i32::MIN`/`MAX`, del ancho de la ventana y de otra superficie: la
+  pestaña sigue entera en su ventana; una ventana más estrecha que la pestaña, a la izquierda dentro. En intuition, el
+  hueco que se pide en los dos aspectos (`border_top_en_los_dos_aspectos`).

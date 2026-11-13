@@ -41,7 +41,7 @@ fn globales() -> [Global; 6] {
         Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
         Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
         Global { nombre: 5, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
-        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
     ]
 }
 
@@ -183,8 +183,45 @@ fn marca_de_la_caja_amiga() {
     assert_eq!(en(&p, ax, ay + 60), marca::COLOR_AMIGA);
     assert_eq!(en(&p, lx, ly + 60), COLOR_LINUX);
     let (pw, ph) = marca::medida_pestana(marca::TEXTO_AMIGA);
-    assert_eq!(en(&p, ax + GROSOR + 1, ay + GROSOR + 1), marca::COLOR_AMIGA);
-    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, ax + GROSOR + x, ay + GROSOR + y) == marca::TINTA_AMIGA)), "las letras");
+    // La pestaña de la caja Amiga va arriba a la derecha (a la izquierda tapaba el gadget de cerrar de intuition): sin
+    // hueco de la caja, con el margen fijo.
+    let caja = Rect { x: ax, y: ay, w: 200, h: 120 };
+    let s0 = marca::sitio_pestana(caja, caja, (pw, ph), true, None);
+    assert!(s0.x > ax + GROSOR + pw && s0.x + pw <= ax + 200 - GROSOR && s0.y == ay + GROSOR, "{s0:?}");
+    let letras = |p: &[u32], s: Rect| (0..pw).any(|x| (0..ph).any(|y| en(p, s.x + x, s.y + y) == marca::TINTA_AMIGA));
+    assert!(letras(&p, s0), "las letras, a la derecha");
+    assert!(!letras(&p, Rect { x: ax + GROSOR, y: ay + GROSOR, w: pw, h: ph }), "nada a la izquierda (el gadget de cerrar)");
+    // La caja dice el hueco de su barra (`dashos_tema_v1.marca`): la pestaña, justo a su izquierda.
+    let mut e = Escritor::new();
+    e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(6).uint(60).fin();
+    e.empezar(60, dashos_tema_v1::req::MARCA).uint(7).int(46).int(22).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    assert_eq!(escena.clientes[&amiga].superficies[&7].hueco_marca, Some((46, 22)));
+    let mut p = p;
+    escena.componer(&mut p, 800, 600, 800, 0, &mut |_, _, _| {});
+    let s1 = marca::sitio_pestana(caja, caja, (pw, ph), true, Some((46, 22)));
+    assert_eq!(s1.x + pw, ax + 200 - 46 - 6);
+    assert!(letras(&p, s1), "las letras, a la izquierda de los gadgets");
+    // Huecos absurdos (por el protocolo): la pestaña sigue en su ventana, entera, y no se va.
+    for (d, h) in [(-5, 22), (100_000, 22), (10, -1), (10, 100_000), (i32::MIN, i32::MAX), (i32::MAX, i32::MIN), (200, 22)] {
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::MARCA).uint(7).int(d).int(h).fin();
+        mandar(&mut escena, &mut a, amiga, &e);
+        let s = marca::sitio_pestana(caja, caja, (pw, ph), true, Some((d, h)));
+        assert!(s.x >= ax + GROSOR && s.x + pw <= ax + 200 - GROSOR && s.y == ay + GROSOR, "({d}, {h}): {s:?}");
+        escena.componer(&mut p, 800, 600, 800, 0, &mut |_, _, _| {});
+        assert!(letras(&p, s), "({d}, {h}): la pestaña se fue");
+    }
+    // De una superficie que no es suya, o que no existe: nada (ni se rompe la conexión).
+    let mut e = Escritor::new();
+    e.empezar(60, dashos_tema_v1::req::MARCA).uint(999).int(46).int(22).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    // Una ventana más pequeña que la pestaña: a la izquierda del todo, dentro.
+    let chica = Rect { x: 10, y: 10, w: 30, h: 20 };
+    let s = marca::sitio_pestana(chica, chica, (pw, ph), true, Some((5, 5)));
+    assert_eq!((s.x, s.y), (10 + GROSOR, 10 + GROSOR));
+    // Las de Linux, como antes: a la izquierda.
+    assert_eq!(marca::sitio_pestana(caja, caja, (pw, ph), false, Some((46, 22))).x, ax + GROSOR);
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, "GadTools"), "68K · GadTools");
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
     escena.adios(amiga);

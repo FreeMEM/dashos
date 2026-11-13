@@ -1146,21 +1146,8 @@ int caja_main(void)
                bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
-        /* 8b. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
-           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana
-           se ve entera; si no, se cierra sola (5). En la prueba de siempre espera 5 s: más tiempo abierta tapaba los
-           pasos del guion de los demás (Ajustes, el centro de control). Con CAJA_INTERACTIVA (las capturas), 90 s. */
-        t0 = ahora_us();
-        v = ejecuta_hunk(GT_NOMBRE, prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
-                         &llamadas, &sobras);
-        t1 = ahora_us();
-        bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
-        di("gadtools.exe acabó con %d (%s), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
-           (int)d0, d0 == 0 ? "cerrada por el programa" : d0 == 5 ? "cerrada sola por tiempo" : "?", llamadas,
-           (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
-        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
-
-        /* 8c. BOOPSI y ReAction (boopsi.c): una clase de usuario con su despachador en 68k (que vuelve a intuition
+        /* 8b. BOOPSI y ReAction (boopsi.c), antes que GadTools (que en el modo de las capturas espera 90 s y la sesión se
+           bloquea):  una clase de usuario con su despachador en 68k (que vuelve a intuition
            con DoSuperMethodA), interconexión con propgclass, strgclass, icclass y modelclass, y una ventana de
            window.class con su layout. Se comprueba solo y acaba con 0. */
         static const char *const boopsi_nombres[] = { BOOPSI_NOMBRE, "boopsi-orig-20" };
@@ -1176,6 +1163,20 @@ int caja_main(void)
                (int)d0, llamadas, hechas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
+
+        /* 8c. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
+           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana
+           se ve entera; si no, se cierra sola (5). En la prueba de siempre espera 5 s: más tiempo abierta tapaba los
+           pasos del guion de los demás (Ajustes, el centro de control). Con CAJA_INTERACTIVA (las capturas), 90 s. */
+        t0 = ahora_us();
+        v = ejecuta_hunk(GT_NOMBRE, prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
+                         &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
+        di("gadtools.exe acabó con %d (%s), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, d0 == 0 ? "cerrada por el programa" : d0 == 5 ? "cerrada sola por tiempo" : "?", llamadas,
+           (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
         /* 9. Llamadas anidadas: 68k desde una función nativa (anidado.c; el modo, en la letra del nombre). a: Open de una
            biblioteca 68k, sin fin (el tope), con la pila de vuelta más abajo, tc_ExceptCode, CallHookPkt y un
