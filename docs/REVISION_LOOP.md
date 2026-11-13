@@ -1891,3 +1891,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   sus programas de prueba, bloquea a los 3 s): falta una imagen "para usar" (solo el sistema, sin pruebas ni bloqueo
   rápido, teclado español). En el primer intento del usuario, a guardian le llegaron "qd" como nombre y contraseñas
   vacías: sin saber aún si fue la prueba que pisaba o el teclado.
+- USB: tableta (f130f00): `xhci` reconoce un puntero absoluto por su descriptor de informe (`usuario/src/hid_informe.rs`,
+  prueba hostil `descriptores_hostiles`) y el compositor lleva el cursor al punto (evento 3). `tools/qemu_a_mano.sh`
+  usa `usb-tablet`: el ratón de QEMU en ventana va donde el del PC (el usuario no podía moverse bien). Probado por QMP
+  sin ventana; make prueba y arranque-virt bien.
+- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo); renombrar las herramientas redoxfs-* y
+  `archivos/redoxfs` a dashfs (DashFS 4 ya está; solo los nombres).
