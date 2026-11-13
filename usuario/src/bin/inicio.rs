@@ -61,6 +61,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
 const RAICES_DE_MAS: &[(&str, u8, u8, &str)] = &[
     // S28: el disco entero, solo para leer: el `SYS:` de la caja Amiga.
     ("caja-amiga", 1, 4, ""),
+    // S28 (decisión del usuario del 2026-11-13): la papelera de la caja Amiga, junto a su cajón y fuera de su alcance:
+    // lo que borra va ahí (`HUECO_PAPELERA`). Provisional, como su cajón.
+    ("caja-amiga", dashos::protocolo::archivos::HUECO_PAPELERA, 6, "Estado/Servicios/caja-amiga.papelera"),
 ];
 /// Los servicios cuyas llaves reparte `sesiones` (U4): de ellos recibe una copia sin marca, para hacer copias marcadas
 /// con el número de cada programa al que se las da. Del resto (archivos), una con la suya, como cualquier cliente.
@@ -141,9 +144,9 @@ fn baja_en_sesiones(canal: u32, proceso: u32, marca: u64) {
 }
 
 /// El alta de `programa`, con la marca `marca`, para el servicio de archivos: cabecera de 32 bytes y el cajón raíz.
-fn alta(programa: &str, marca: u64) -> Option<([u8; 96], usize)> {
+fn alta(programa: &str, marca: u64) -> Option<([u8; 160], usize)> {
     let &(_, uid, gid, derechos, raiz) = FICHAS.iter().find(|f| f.0 == programa)?;
-    let mut m = [0u8; 96];
+    let mut m = [0u8; 160];
     m[0..4].copy_from_slice(&ALTA.to_le_bytes());
     m[4..8].copy_from_slice(&derechos.to_le_bytes());
     m[8..16].copy_from_slice(&marca.to_le_bytes());

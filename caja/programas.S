@@ -26,6 +26,8 @@ prog_\nombre\()_fin:
         programa mal_guion, "pruebas68k/malware/guion.exe"
         programa mal_troyano, "pruebas68k/malware/troyano.exe"
         programa mal_memoria, "pruebas68k/malware/memoria.exe"
+// S28: un programa honrado que actualiza otro (la guardia pregunta al usuario).
+        programa actualiza, "pruebas68k/actualiza.exe"
 // Programas de Dash (FreeMEMLang): los compila el Makefile en build/dash/ si está `dash`; si no, están vacíos.
         programa dash_hola, "build/dash/hola.exe"
         programa dash_texto, "build/dash/texto.exe"

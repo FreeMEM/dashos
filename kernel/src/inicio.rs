@@ -249,11 +249,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // H4 y H5: la caja Amiga (`caja/`): el JIT de Emu68 en un proceso big-endian, con exec, dos, graphics e intuition
     // nativas (en Rust); programas 68k que escriben, leen un fichero, abren una ventana en el escritorio y otros
     // hostiles; el último la mata. Sus llaves: 1 el permiso de página 0 (ExecBase en la dirección 4), 2 "ventanas" (el
-    // compositor) y 3 "archivos" (su ficha, en `FICHAS` de `inicio`). `inicio` la espera (`SE_ESPERAN`): va la última,
+    // compositor), 3 "archivos" (su ficha, en `FICHAS` de `inicio`) y 4 "sesiones" (S28: la guardia de ficheros pregunta
+    // al usuario por ahí, con permisos sin llave). `inicio` la espera (`SE_ESPERAN`): va la última,
     // para que su ventana (abierta hasta 40 s si nadie la cierra) no retrase a nadie (antes iba delante de la caja
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones"]),
     // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
     // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.

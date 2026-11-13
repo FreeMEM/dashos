@@ -611,6 +611,34 @@ struct Ficha {
     raiz: (u64, TreePtr<Node>),
     /// Sus raíces 1 a 15 desde el alta (U2: las que pone `sesiones` al lanzar un programa), con su tope.
     raices: [Option<(u64, TreePtr<Node>, u16)>; RAICES],
+    /// S28: su papelera (`HUECO_PAPELERA` en el alta): lo que borra va ahí. Volumen y cajón.
+    papelera: Option<(u64, TreePtr<Node>)>,
+}
+
+/// S28: lo más que se prueba para no pisar un nombre en la papelera ("nombre.1" a "nombre.999").
+const MAX_EN_PAPELERA: u32 = 999;
+
+/// Un nombre libre en el cajón `papelera` para lo que se borró como `nombre`: el mismo, o con ".N" detrás (recortado
+/// para que quepa en un nombre de RedoxFS sin partir una letra).
+fn libre_en_papelera<D: Disk>(tx: &mut redoxfs::Transaction<D>, papelera: TreePtr<Node>, nombre: &str) -> Result<String> {
+    if tx.find_node(papelera, nombre).is_err() {
+        return Ok(String::from(nombre));
+    }
+    let mut base = nombre;
+    while base.len() + 4 > redoxfs::DIR_ENTRY_MAX_LENGTH {
+        let mut corte = base.len() - 1;
+        while !base.is_char_boundary(corte) {
+            corte -= 1;
+        }
+        base = &base[..corte];
+    }
+    for n in 1..=MAX_EN_PAPELERA {
+        let otro = alloc::format!("{}.{}", base, n);
+        if tx.find_node(papelera, &otro).is_err() {
+            return Ok(otro);
+        }
+    }
+    Err(Error::new(ENOSPC))
 }
 
 const R: u16 = 4;
@@ -1647,6 +1675,8 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         BORRAR => {
             let Some((vol, dir)) = nodo_de(c, p.asa) else { return mal(ASA_MALA) };
             let Some(nombre) = un_nombre(p.nombre) else { return mal(MAL_FORMADO) };
+            // S28: con papelera (en el mismo volumen), un fichero va a ella en vez de borrarse.
+            let papelera = ficha.papelera.filter(|p| p.0 == vol).map(|p| p.1);
             let r = fs.tx_in(vol, |tx| {
                 let cajon = tx.read_tree(dir)?;
                 if !puede(&ficha, cajon.data(), W | X) {
@@ -1656,10 +1686,21 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                 if n.data().amiga_bits().contains(AmigaBits::NO_DELETE) || pegajoso(&ficha, cajon.data(), n.data()) {
                     return Err(Error::new(EACCES));
                 }
-                tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)?;
+                match papelera {
+                    Some(pap) if !n.data().is_dir() && pap.id() != dir.id() => {
+                        let destino = libre_en_papelera(tx, pap, nombre)?;
+                        tx.rename_node_no_replace(dir, nombre, pap, &destino)?;
+                    }
+                    _ => {
+                        tx.remove_node(dir, nombre, n.data().mode() & Node::MODE_TYPE)?;
+                    }
+                }
                 Ok(n.id())
             });
             rec.olvidar_nodo(vol, dir.id());
+            if let Some(pap) = papelera {
+                rec.olvidar_nodo(vol, pap.id());
+            }
             match r {
                 Ok(id) => {
                     rec.borrado(vol, dir.id(), id);
@@ -2040,12 +2081,21 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
     // Tras el camino, raíces de más (U2): hueco, tope (R, o R y W), largo del volumen y del camino, el volumen (vacío,
     // el principal) y el camino desde su raíz. La que no se encuentre o no cuadre, fuera; las demás siguen.
     let mut raices = [None; RAICES];
+    let mut papelera = None;
     let mut o = CABECERA + largo;
     while let Some(&[hueco, tope, lv, lc]) = m.get(o..o + 4).map(|x| <&[u8; 4]>::try_from(x).unwrap()) {
         let (hueco, tope, lv, lc) = (hueco as usize, tope as u16, lv as usize, lc as usize);
         let (Some(vol), Some(cam)) = (m.get(o + 4..o + 4 + lv), m.get(o + 4 + lv..o + 4 + lv + lc)) else { break };
         o += 4 + lv + lc;
         let (Ok(vol), Ok(cam)) = (core::str::from_utf8(vol), core::str::from_utf8(cam)) else { continue };
+        // S28: la papelera, fuera de sus raíces; se crea si falta.
+        if hueco == HUECO_PAPELERA as usize {
+            papelera = hacer_papelera(fs, vol, cam, uid, gid);
+            if papelera.is_none() {
+                println!("  [archivos] alta: sin papelera ({}:{})", vol, cam);
+            }
+            continue;
+        }
         if hueco == 0 || hueco >= RAICES || (tope != R && tope != R | W) {
             continue;
         }
@@ -2067,13 +2117,44 @@ fn alta(fs: &mut Fs, altas: &mut BTreeMap<u64, Ficha>, clientes: &mut [Option<Cl
             Err(_) => println!("  [archivos] alta: sin la raíz {} ({}:{})", hueco, vol, cam),
         }
     }
-    let f = Ficha { uid, gid, derechos, raiz: (0, raiz), raices };
+    let f = Ficha { uid, gid, derechos, raiz: (0, raiz), raices, papelera };
     if altas.len() < 4 * MAX_CLIENTES || altas.contains_key(&marca) {
         altas.insert(marca, f);
     }
     if let Some(c) = clientes.iter_mut().flatten().find(|c| c.marca == marca) {
         c.ficha = f;
     }
+}
+
+/// S28: el cajón de la papelera de un cliente, `cam` desde la raíz del volumen `vol` (vacío, el principal). Si falta el
+/// último cajón, se crea, del cliente (`uid` y `gid`) y solo para él (0700); los de antes tienen que existir.
+fn hacer_papelera(fs: &mut Fs, vol: &str, cam: &str, uid: u32, gid: u32) -> Option<(u64, TreePtr<Node>)> {
+    let id = if vol.is_empty() { Ok(0) } else { fs.tx(|tx| tx.find_volume(vol)) }.ok()?;
+    let partes: Vec<&str> = cam.split('/').filter(|p| !p.is_empty()).collect();
+    let (ultimo, antes) = partes.split_last()?;
+    let hora = ahora();
+    fs.tx_in(id, |tx| {
+        let mut n = tx.read_tree(TreePtr::<Node>::root())?;
+        for parte in antes {
+            n = tx.find_node(n.ptr(), parte)?;
+        }
+        let p = match tx.find_node(n.ptr(), ultimo) {
+            Ok(p) => p,
+            Err(_) => {
+                let p = tx.create_node(n.ptr(), ultimo, Node::MODE_DIR | 0o700, hora.0, hora.1)?;
+                let mut d = tx.read_tree(p.ptr())?;
+                d.data_mut().set_uid(uid);
+                d.data_mut().set_gid(gid);
+                tx.sync_tree(d)?;
+                tx.read_tree(p.ptr())?
+            }
+        };
+        if !p.data().is_dir() {
+            return Err(Error::new(ENOTDIR));
+        }
+        Ok((id, p.ptr()))
+    })
+    .ok()
 }
 
 /// Abre la sesión de quien tiene la marca `marca`, con su canal de respuesta: le da su ventana. Si ya tenía sesión,

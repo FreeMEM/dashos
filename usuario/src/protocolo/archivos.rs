@@ -87,6 +87,11 @@ pub const BAJA: u32 = 101;
 pub const D_ADMINISTRAR: u32 = 1;
 /// Derecho de repartir: ceder asas (U1).
 pub const D_REPARTIR: u32 = 2;
+/// S28: en el alta, el hueco de la raíz de más que no es una raíz sino la **papelera** del cliente: lo que borra (un
+/// fichero) va ahí en vez de borrarse, con su nombre (o "nombre.1", "nombre.2"... si ya hay uno). Su camino es desde
+/// la raíz de su volumen y queda fuera de sus raíces, así que el cliente no la ve ni la vacía. Si no existe, se crea
+/// (un cajón suyo, 0700). Los cajones se borran como siempre (vacíos, nada que guardar).
+pub const HUECO_PAPELERA: u8 = 0x80;
 
 // Estados de las respuestas.
 pub const BIEN: i32 = 0;

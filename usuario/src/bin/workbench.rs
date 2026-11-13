@@ -1112,7 +1112,7 @@ impl App {
             Hijo::Obj(hueco),
         ]);
         let mut i = self.interfaz(arbol, raiz);
-        i.esquinas = 16;
+        i.esquinas = kit::tema::RADIO_VENTANA;
         i.colocar(Rect::new(0, 0, ANCHO_CAJON, ALTO_CAJON));
         let cj = Cajon { lugar, asa, entradas, raros, lista: false, elegido: None, primera: 0, ultimo: None, estado, vista, info, cerrar, hueco };
         let mut cj = cj;
@@ -1365,7 +1365,7 @@ impl App {
             Hijo::Fila(botones),
         ]);
         let mut i = self.interfaz(arbol, raiz_kit);
-        i.esquinas = 16;
+        i.esquinas = kit::tema::RADIO_VENTANA;
         let alto = i.medida().min.1.clamp(200, 560);
         i.colocar(Rect::new(0, 0, ANCHO_INFO, alto));
         if puede {

@@ -23,6 +23,7 @@ no encuentra nada roto en él. Y que lo que DashOS escribió en el volumen cifra
 """
 import gzip
 import os
+import struct
 import subprocess
 import time
 import sys
@@ -41,13 +42,21 @@ CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
 # S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
 # un ejecutable de AmigaOS, su icono, un guion de arranque, una imagen de disco (una pista de un ADF) y un fichero de
-# datos. Tras la prueba, todo igual salvo el fichero de datos (sus programas pueden borrar sus datos: S28, la papelera)
-# y un ejecutable nuevo que deja el virus de enlace (crear sí puede).
+# datos. Tras la prueba, todo igual salvo el fichero de datos (sus programas pueden borrar sus datos: van a la papelera
+# de la caja), un ejecutable nuevo que deja el virus de enlace (crear sí puede) y `C/viejo`, que actualiza un programa
+# honrado con permiso del usuario.
 CAJA = "Estado/Servicios/caja-amiga"
 SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k", "saludo.exe")
 CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
 CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
 CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
+# S28: un ejecutable que actualiza `actualiza.exe` (un programa honrado; la guardia pregunta): una cabecera hunk vacía
+# con la versión en los 4 últimos bytes. La prueba lo deja en la versión 4 (tres vueltas con permiso).
+CAJA_VIEJO = struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 1)
+# S28: la papelera de la caja (la crea el servicio de archivos), con lo que borran el troyano (sus datos, dos ficheros
+# con el mismo nombre y uno de nombre largo: `caja/pruebas68k/malware/troyano.c`) y el virus de guiones (`inocente`).
+PAPELERA = CAJA + ".papelera"
+LARGO = "largo_" + "x" * 84
 DISQUETE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "pruebas", "disquete.adf.gz")
 
 if sys.argv[1] == "--comprobar":
@@ -89,10 +98,18 @@ if sys.argv[1] == "--comprobar":
         f"{CAJA}/C/saludo.info {len(CAJA_ICONO)}",
         # Lo que crea el virus de enlace al no poder pegarse a C/saludo: un ejecutable nuevo de 32 bytes.
         f"{CAJA}/C/saludo.nuevo 32",
+        f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
         f"{CAJA}/S/ cajón",
         f"{CAJA}/S/Startup-Sequence {len(CAJA_GUION)}",
+        f"{PAPELERA}/ cajón",
+        f"{PAPELERA}/basura.txt 1",
+        f"{PAPELERA}/basura.txt.1 2",
+        f"{PAPELERA}/datos.txt 17",
+        # El fichero que el virus de guiones crea, intenta renombrar a User-Startup y borra.
+        f"{PAPELERA}/inocente 21",
+        f"{PAPELERA}/{LARGO} 3",
         "Estado/Servicios/sesiones/ cajón",
         # U4: lo que el usuario (`guardian`, en la prueba) concedió y luego retiró: el fichero queda vacío.
         "Estado/Servicios/sesiones/permisos 0",
@@ -185,6 +202,10 @@ if sys.argv[1] == "--comprobar":
         ("LEEME.txt", b"DashOS lee RedoxFS\n"),
         ("Programas/hola", open(HOLA, "rb").read()),
     ]
+    # S28: lo borrado por la caja, en su papelera tal cual; y lo que actualizó `actualiza.exe` con permiso, tres veces.
+    intactos += [(f"{PAPELERA}/datos.txt", b"datos de la caja\n"), (f"{PAPELERA}/basura.txt", b"1"),
+                 (f"{PAPELERA}/basura.txt.1", b"12"), (f"{PAPELERA}/{LARGO}", b"123"),
+                 (f"{CAJA}/C/viejo", struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 4))]
     for camino, bien in intactos:
         hay = subprocess.run([ver, disco, desde, camino], capture_output=True).stdout
         if hay != bien:
@@ -229,6 +250,7 @@ with tempfile.TemporaryDirectory() as t:
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
     caja = os.path.join(raiz, *CAJA.split("/"))
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),
+                               ("C", "viejo", CAJA_VIEJO),
                                ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
                                ("", "datos.txt", b"datos de la caja\n")]:
         os.makedirs(os.path.join(caja, sub), exist_ok=True)

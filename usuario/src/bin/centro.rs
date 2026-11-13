@@ -834,7 +834,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto. 24 de margen.
-    i.esquinas = 16;
+    i.esquinas = kit::tema::RADIO_VENTANA;
     i.margen = 24;
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.

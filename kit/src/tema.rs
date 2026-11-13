@@ -10,6 +10,11 @@ use crate::color::{Paletas, Visto};
 use crate::lienzo::Color;
 use core::sync::atomic::{AtomicU32, Ordering};
 
+/// Radio de las esquinas de las ventanas (decisión del usuario del 2026-11-13: "que no sean tan redondeadas").
+pub const RADIO_VENTANA: i32 = 8;
+/// Radio de las esquinas de los diálogos y paneles (preguntas de `guardian`, panel rápido, menús grandes).
+pub const RADIO_DIALOGO: i32 = 12;
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct Tema {
     pub primario: Color,
