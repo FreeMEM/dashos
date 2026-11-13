@@ -636,7 +636,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), 0);
     let caja = Rect::new(0, 0, ancho, alto);
-    l.redondeado(caja, 28, t.contenedor_alto());
+    l.redondeado(caja, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
     let x = caja.x + 24;
     let ancho_texto = caja.w - 48;
     // El título: la pregunta. Si el nombre es largo y no cabe a 24, a 22 y luego a 20.
@@ -866,7 +866,7 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, c
     // La caja de la contraseña, con un punto por letra.
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
     // Material 3: la caja en el contenedor alto, sin marco; con error, el borde rojo.
-    l.redondeado(caja, 24, t.contenedor_alto());
+    l.redondeado(caja, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
     if mala {
         l.borde(caja, 24, 2, error);
     }

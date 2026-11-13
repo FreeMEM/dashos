@@ -338,7 +338,7 @@ fn icono_sol(l: &mut Lienzo, r: Rect, color: Color) {
 /// Un deslizador de fila: el contenedor alto con esquinas de 28, el icono, la pista (activa en el primario y el resto en
 /// el contenedor secundario, de 16 con los extremos redondos, como el deslizador del kit) y el agarre (una barra de 4).
 fn deslizador(l: &mut Lienzo, r: Rect, pista: Rect, valor: u32, activo: bool, t: &Tema) {
-    l.redondeado(r, 28, t.contenedor_alto());
+    l.redondeado(r, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
     let (activa, resto) = if activo { (t.primario, t.contenedor_secundario()) } else { (apagado(t.sobre_superficie), kit::tema::fondo_apagado(t.sobre_superficie)) };
     let lleno = (pista.w * valor.min(100) as i32 / 100).clamp(0, pista.w);
     // Hueco de 6 a cada lado del agarre.

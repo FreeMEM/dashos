@@ -28,7 +28,7 @@ use crate::tablas::{xdg_surface, xdg_toplevel, zxdg_decoration_manager_v1, zxdg_
 /// Lo que mide de alto la barra (Material 3: la de una ventana compacta).
 pub const ALTO_BARRA: i32 = 40;
 /// Radio de las esquinas de arriba de la barra (y de la sombra).
-pub const RADIO_MARCO: i32 = 12;
+pub const RADIO_MARCO: i32 = 8;
 /// El botón de cerrar: un cuadrado de este lado, a `MARGEN_BOTON` del borde derecho, centrado en la barra.
 pub const LADO_BOTON: i32 = 32;
 pub const MARGEN_BOTON: i32 = 4;

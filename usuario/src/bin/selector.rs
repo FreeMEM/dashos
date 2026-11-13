@@ -257,7 +257,7 @@ fn elegir_dentro(lectura: u32, camino: &mut Camino, quien: &str, carpeta: bool) 
     let raiz = Hijo::Columna(alloc::vec![Hijo::Obj(texto), Hijo::Obj(donde), Hijo::Obj(lista), Hijo::Fila(botones)]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
-    i.esquinas = 16;
+    i.esquinas = kit::tema::RADIO_VENTANA;
     i.margen = 24;
     i.foco = Some(lista);
     i.colocar(Rect::new(0, 0, ANCHO, alto));
