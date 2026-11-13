@@ -20,7 +20,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
 use dashos::protocolo::archivos::*;
-use redoxfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
+use dashfs::{AmigaBits, BLOCK_SIZE, Disk, FileSystem, Node, TreeData, TreePtr};
 use syscall::error::{EACCES, EBUSY, EEXIST, EINVAL, EIO, EISDIR, ENOENT, ENOSPC, ENOTDIR, ENOTEMPTY, EROFS, Error, Result};
 
 dashos::programa!(principal);
@@ -620,12 +620,12 @@ const MAX_EN_PAPELERA: u32 = 999;
 
 /// Un nombre libre en el cajón `papelera` para lo que se borró como `nombre`: el mismo, o con ".N" detrás (recortado
 /// para que quepa en un nombre de RedoxFS sin partir una letra).
-fn libre_en_papelera<D: Disk>(tx: &mut redoxfs::Transaction<D>, papelera: TreePtr<Node>, nombre: &str) -> Result<String> {
+fn libre_en_papelera<D: Disk>(tx: &mut dashfs::Transaction<D>, papelera: TreePtr<Node>, nombre: &str) -> Result<String> {
     if tx.find_node(papelera, nombre).is_err() {
         return Ok(String::from(nombre));
     }
     let mut base = nombre;
-    while base.len() + 4 > redoxfs::DIR_ENTRY_MAX_LENGTH {
+    while base.len() + 4 > dashfs::DIR_ENTRY_MAX_LENGTH {
         let mut corte = base.len() - 1;
         while !base.is_char_boundary(corte) {
             corte -= 1;
@@ -666,7 +666,7 @@ fn negado() -> Error {
 
 /// Pone a un nodo recién creado el dueño que le toca: el usuario del cliente, y su grupo o, si el cajón tiene el bit
 /// setgid, el del cajón. Los permisos, sin lo que quita la máscara de los nuevos (0o022).
-fn poner_dueno<D: Disk>(tx: &mut redoxfs::Transaction<D>, n: TreePtr<Node>, f: &Ficha, cajon: &Node) -> Result<TreeData<Node>> {
+fn poner_dueno<D: Disk>(tx: &mut dashfs::Transaction<D>, n: TreePtr<Node>, f: &Ficha, cajon: &Node) -> Result<TreeData<Node>> {
     let mut nodo = tx.read_tree(n)?;
     let gid = if cajon.mode() & 0o2000 != 0 { cajon.gid() } else { f.gid };
     nodo.data_mut().set_uid(f.uid);
@@ -805,7 +805,7 @@ fn vigilar_sujecion(fs: &mut Fs) {
     if !fs.holding() {
         return;
     }
-    let total = fs.header.size() / redoxfs::BLOCK_SIZE;
+    let total = fs.header.size() / dashfs::BLOCK_SIZE;
     if fs.allocator().free() < total / 16 {
         fs.release();
         let quien = SUJETA.swap(0, Ordering::Relaxed);
@@ -1840,9 +1840,9 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
         }
         COMPROBAR => {
             // FS8: a & 1, leer también los datos. Los problemas, uno por línea, van a la ventana hasta que se llene.
-            let opciones = redoxfs::check::Options { data: p.a & 1 != 0 };
+            let opciones = dashfs::check::Options { data: p.a & 1 != 0 };
             // Lo que está en cuarentena (paso B) el comprobador lo cuenta como libre pendiente (A11): sin guardar antes.
-            match fs.tx(|tx| redoxfs::check::check(tx, opciones, true)) {
+            match fs.tx(|tx| dashfs::check::check(tx, opciones, true)) {
                 Ok(informe) => {
                     let v = c.ventana();
                     let mut n = 0;
@@ -1977,7 +1977,7 @@ fn atender_orden(fs: &mut Fs, c: &mut Cliente, p: &Peticion, rec: &mut Recuerdos
                     return mal(SIN_AZAR);
                 }
             }
-            let coste = if p.a == 1 { redoxfs::seal::Cost::NORMAL } else { redoxfs::seal::Cost::CHEAP };
+            let coste = if p.a == 1 { dashfs::seal::Cost::NORMAL } else { dashfs::seal::Cost::CHEAP };
             let hecho = fs.tx(|tx| {
                 // Su raíz, de quien lo hace (R6), desde el principio.
                 let dueno = (ficha.uid, ficha.gid);
@@ -2252,7 +2252,7 @@ fn principal() -> u64 {
     // mal, se repara (en una transacción: si se va la luz a medias, el disco queda como estaba). Con algo sin
     // arreglar, el disco va de solo lectura hasta que un administrador lo arregle.
     let t0 = dashos::ahora_us();
-    let reparado = redoxfs::repair::repair(&mut fs, redoxfs::check::Options { data: false }, true, "Perdidos");
+    let reparado = dashfs::repair::repair(&mut fs, dashfs::check::Options { data: false }, true, "Perdidos");
     let us = dashos::ahora_us() - t0;
     let mut solo_lectura_al_arrancar = false;
     match reparado {

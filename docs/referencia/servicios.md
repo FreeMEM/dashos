@@ -221,7 +221,7 @@ Pendiente: varias colas de E/S del NVMe (una por núcleo).
 
 ## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 
-`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": el de la
+`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/dashfs`, S5) que lee por el canal "disco": el de la
 partición de DashOS del disco NVMe de `virt` (en los discos de prueba, desde el MB 1; A14). Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
 orden que cambia algo es una transacción de RedoxFS que queda en el disco, con la caché vaciada, antes de la respuesta
 (FS4). Este protocolo es el de todos los sistemas de archivos de DashOS: los que vengan (FAT, ext4,
@@ -344,7 +344,7 @@ Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar esc
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
 
 **Al arrancar** (A10), antes de atender a nadie, se comprueban los metadatos y, si hay algo mal, se repara en una
-transacción (`archivos/redoxfs/src/repair.rs`); si algo queda sin arreglar, el disco va de solo lectura.
+transacción (`archivos/dashfs/src/repair.rs`); si algo queda sin arreglar, el disco va de solo lectura.
 
 ## Sesiones (U2 a U6)
 

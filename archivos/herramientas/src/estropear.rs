@@ -5,7 +5,7 @@
 use std::fs::{File, OpenOptions};
 use std::os::unix::fs::FileExt;
 
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, TreePtr};
+use dashfs::{BLOCK_SIZE, Disk, FileSystem, TreePtr};
 use syscall::error::{EIO, Error, Result};
 
 struct Trozo {

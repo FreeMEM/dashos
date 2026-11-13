@@ -14,7 +14,7 @@ extern crate alloc;
 
 use dashos::println;
 use dashos::protocolo::archivos::{BIEN, EN_USO, ERROR_DEL_DISCO, LLENO, MAL_FORMADO, SESION, SOLTAR, SUJETAR};
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem};
+use dashfs::{BLOCK_SIZE, Disk, FileSystem};
 use syscall::error::{EIO, EROFS, Error, Result};
 
 dashos::programa!(principal);
@@ -206,7 +206,7 @@ fn principal() -> u64 {
     // Primero, una vez con los datos (FS8: cada bloque de datos leído y su resumen comprobado), medido por MB ocupado.
     let t0 = dashos::ahora_us();
     let datos = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, true), None, Some(0), false)
-        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)));
+        .and_then(|mut fs| fs.tx(|tx| dashfs::check::check(tx, dashfs::check::Options { data: true }, true)));
     let us = (dashos::ahora_us() - t0).max(1);
     match &datos {
         Ok(i) => println!("  [comprobador] A15 con los datos: {}, {} KB ocupados en {} ms, {} MB/s",
@@ -222,7 +222,7 @@ fn principal() -> u64 {
     let mut problema = None;
     for _ in 0..VUELTAS {
         let informe = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, false), None, Some(0), false)
-            .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: false }, true)));
+            .and_then(|mut fs| fs.tx(|tx| dashfs::check::check(tx, dashfs::check::Options { data: false }, true)));
         match informe {
             Ok(i) if i.is_clean() => {
                 limpias += 1;
@@ -270,7 +270,7 @@ fn comprobar(lectura: u32, vuelta: u32, sectores: u64, al: u32, datos: bool) -> 
         return (e, 0, 0);
     }
     let informe = FileSystem::open(Lector::nuevo(lectura, vuelta, sectores, datos), None, Some(0), false)
-        .and_then(|mut fs| fs.tx(|tx| redoxfs::check::check(tx, redoxfs::check::Options { data: datos }, true)));
+        .and_then(|mut fs| fs.tx(|tx| dashfs::check::check(tx, dashfs::check::Options { data: datos }, true)));
     // Soltado antes por falta de sitio: lo leído desde entonces no vale.
     if archivos(al, SOLTAR) == LLENO {
         return (LLENO, 0, 0);

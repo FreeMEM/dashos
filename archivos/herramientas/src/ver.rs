@@ -9,7 +9,7 @@ use std::fs::File;
 use std::io::Write;
 use std::os::unix::fs::FileExt;
 
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
+use dashfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
 use syscall::error::{EIO, EROFS, Error, Result};
 
 /// El mismo lector de la tabla que usa el servicio de disco.
@@ -92,7 +92,7 @@ fn main() {
     let mut fs = FileSystem::open(disco, None, Some(0), false).expect("no es un RedoxFS");
     let r = fs.tx(|tx| match args.get(3) {
         Some(o) if o == "--comprobar" => {
-            let informe = redoxfs::check::check(tx, redoxfs::check::Options { data: true }, true)?;
+            let informe = dashfs::check::check(tx, dashfs::check::Options { data: true }, true)?;
             let mut out: Vec<String> = informe.problems.iter().map(|p| p.to_string()).collect();
             if out.is_empty() {
                 out.push("sin problemas".into());

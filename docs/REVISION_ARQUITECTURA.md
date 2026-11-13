@@ -23,7 +23,7 @@ había una sonda sin commit: sus líneas van hasta 4 por encima de las de 5ad96b
 
 - `unsafe` solo en `kernel/src/base/`.
 - Sala limpia: no se lee Linux ni desensamblados para implementar. vAmiga (MPL) se puede leer; UAE, WinUAE y
-  Amiberry (GPL) no. `archivos/redoxfs` es un fork local y se puede cambiar; nada hacia RedoxFS sin permiso.
+  Amiberry (GPL) no. `archivos/dashfs` es un fork local y se puede cambiar; nada hacia RedoxFS sin permiso.
 - Ni ROMs, ni imágenes de sistema, ni kernels, DTB o firmware en el repo.
 - Toda ejecución de emulador bajo `flock /run/user/1000/dash-emu-red.lock`. No se editan fuentes mientras corre una
   compilación o una prueba.
@@ -163,7 +163,7 @@ Va primero: sin esto no se distingue una mejora del 10 % del ruido.
 
 ## 4. Sistema de archivos
 
-Ficheros: `usuario/src/bin/archivos.rs` (servicio), `archivos/redoxfs/src/` (RedoxFS, fork local),
+Ficheros: `usuario/src/bin/archivos.rs` (servicio), `archivos/dashfs/src/` (RedoxFS, fork local),
 `usuario/src/bin/nvme.rs`, `usuario/src/bin/sd.rs`, `usuario/src/ficheros.rs` (cliente).
 
 Cómo está hecho hoy: un proceso de un solo hilo atiende hasta 8 clientes por un canal, con llaves marcadas. Cada
@@ -184,7 +184,7 @@ con VACIAR o GUARDAR, a los 8 MB pendientes o al segundo.
   hoy, se deja como opción por volumen.
 - Va junto con A2: sin él, un fallo del guardado diferido no llega a nadie.
 - Ganancia estimada: crear sin fsync hacia 1.000 a 1.500/s (borrar sin guardar ya da 1.932/s).
-- Esfuerzo: pequeño. Prueba: `medir-fs`, y `archivos/redoxfs/tests/power_cut.rs` ampliada al guardado diferido.
+- Esfuerzo: pequeño. Prueba: `medir-fs`, y `archivos/dashfs/tests/power_cut.rs` ampliada al guardado diferido.
 
 **A2. Los errores de guardado no se pierden** [C]
 - Dónde: `archivos.rs:1297` y `:1374` (el fallo de `durable()` del temporizador solo se imprime); `:553`
@@ -269,7 +269,7 @@ con VACIAR o GUARDAR, a los 8 MB pendientes o al segundo.
 
 **A10. Comprobación y reparación al arrancar** [L]
 - Dónde: `archivos.rs:1273` (`FileSystem::open(disco, None, Some(0), true)` solo hace `cleanup`).
-- Qué pasa: COMPROBAR (16) solo informa. `archivos/redoxfs/src/repair.rs` existe y ninguna orden lo llama. Descartar
+- Qué pasa: COMPROBAR (16) solo informa. `archivos/dashfs/src/repair.rs` existe y ninguna orden lo llama. Descartar
   una instantánea puede no devolver su espacio hasta reparar (`docs/ARCHIVOS_LOOP.md:256`).
 - Arreglo: marca de "cerrado limpio" en la cabecera; si falta, comprobación rápida sin datos y reparación del
   asignador. Una orden REPARAR. COMPROBAR por trozos, para no parar a los demás clientes.
@@ -303,7 +303,7 @@ con VACIAR o GUARDAR, a los 8 MB pendientes o al segundo.
 - `usuario/src/bin/sd.rs:1-2`: solo lee dos sectores, por consulta, sin DMA y sin escribir. No ofrece el protocolo
   de disco. Hace falta un controlador de verdad: bloques múltiples, escritura, DMA, 50 MHz o más, el mismo protocolo
   que `nvme.rs`.
-- Sin descarte (TRIM): ni en `nvme.rs` ni en el `trait Disk` (`archivos/redoxfs/src/disk/mod.rs`; su
+- Sin descarte (TRIM): ni en `nvme.rs` ni en el `trait Disk` (`archivos/dashfs/src/disk/mod.rs`; su
   `impl Disk for Box<dyn Disk>` no reenvía `forget`).
 - Sin tabla de particiones: el sistema empieza en un desplazamiento fijo de 1 MB (`INICIO`).
 - Sin fechas: `archivos.rs:530`, `AHORA = 0`. Hace falta un servicio de hora (reloj de la placa o de red).

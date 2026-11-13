@@ -91,7 +91,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
     su lista: el hostil tenía archivos y sonido cambiados.
   - Archivos suelta al cliente que no lee sus respuestas (cola llena): el hostil abre otra sesión tras inundar.
   - Un volumen cifrado cerrado ya no se lista ni vacío: su raíz no se lee y no hay permisos que mirar. La raíz de un
-    volumen nace con su dueño (`create_volume_owned` en el fork de RedoxFS, `REDOXFS_DUENO` en `redoxfs-volume`).
+    volumen nace con su dueño (`create_volume_owned` en el fork de RedoxFS, `DASHFS_DUENO` en `dashfs-volume`).
   - Con S8, Ajustes sale mientras se teclea en otra ventana y no se lleva el teclado: la prueba de virt le da el
     teclado con un clic en (300, 300) cuando la salida dice que está en pantalla, y entonces maximiza.
   - QEMU `virt` da 40 bytes de semilla (`rng-seed` y `kaslr-seed`): el azar es de calidad y los volúmenes cifrados se
@@ -983,7 +983,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   1. **Dentro de `archivos`, a trozos.** Una instantánea interna fija la cabecera de ese momento (sus bloques no se
      reusan mientras viva) y el comprobador recorre esa foto con una pila propia en vez de recursión, unos cientos de
      nodos por vuelta del bucle; entre trozo y trozo, el servicio atiende a los demás. Lo que se escribe mientras
-     tanto no estorba: es otra foto. Pide reescribir el recorrido de `redoxfs::check` como iterador.
+     tanto no estorba: es otra foto. Pide reescribir el recorrido de `dashfs::check` como iterador.
   2. **En otro proceso, `comprobador`.** `archivos` hace la instantánea y le da un tramo del disco solo para leer
      (el servicio de disco necesitaría tramos de solo lectura); el comprobador lee con la biblioteca de RedoxFS, como
      `ver`, en otro núcleo, y contesta con el informe. `archivos` no se para nada y, si el comprobador cae o tarda,
@@ -1895,8 +1895,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   prueba hostil `descriptores_hostiles`) y el compositor lleva el cursor al punto (evento 3). `tools/qemu_a_mano.sh`
   usa `usb-tablet`: el ratón de QEMU en ventana va donde el del PC (el usuario no podía moverse bien). Probado por QMP
   sin ventana; make prueba y arranque-virt bien.
-- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar redoxfs-* y
-  `archivos/redoxfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
+- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar dashfs-* y
+  `archivos/dashfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
 - Imagen para usar (f51aded y siguiente): `make virt-uso` / `tools/qemu_a_mano.sh`; sin pruebas ni caja Amiga (aún
   corre sus virus de laboratorio); guardian con entrada de verdad. Fallo cazado: mirar la llave 4 tras `canal_crear`
   daba "uso" también en la imagen de pruebas (arranque-virt MAL en Ajustes); ahora se mira lo primero. arranque-virt

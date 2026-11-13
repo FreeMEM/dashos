@@ -84,12 +84,12 @@ virt: usuario FORCE
 # 1; desde el MB 1, un RedoxFS para el servicio de archivos (FS1, `tools/disco_archivos.py`). Nuevo en cada prueba: el
 # cliente de U6f escribe el sector 2, y lo de una vuelta anterior no debe servir de prueba.
 DISCO_NVME := target/nvme.img
-REDOXFS_AR := ../archivos/redoxfs/target/release/redoxfs-ar
+DASHFS_AR := ../archivos/dashfs/target/release/dashfs-ar
 VER := ../archivos/herramientas/target/release/ver
 $(DISCO_NVME): FORCE
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
-	python3 ../tools/disco_archivos.py $@ $(REDOXFS_AR)
+	python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
 
 # La red (S13): una tarjeta virtio-net en un concentrador con la red de usuario de QEMU (DHCP, 10.0.2.15; el eco del PC
 # en 10.0.2.100:7, `tools/red_eco.py`, lanzado por QEMU para cada conexión) y con `tools/red_basura.py`, que manda
@@ -242,9 +242,9 @@ ASPECTO_NOMBRE ?= dashos-ondas
 arranque-virt-aspecto: usuario FORCE
 	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/aspecto_caja_linux.py preparar"; exit 1; }
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
-	DASHOS_PREFS="$(ASPECTO_PREFS)" python3 ../tools/disco_archivos.py target/nvme-aspecto.img $(REDOXFS_AR)
+	DASHOS_PREFS="$(ASPECTO_PREFS)" python3 ../tools/disco_archivos.py target/nvme-aspecto.img $(DASHFS_AR)
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd
@@ -332,9 +332,9 @@ medir: usuario FORCE
 # RedoxFS vacío, nuevo en cada vuelta. Linux, con `tools/medir.py linux-fs`.
 MEDIR_FS := target/kernel8-medir-fs.img
 medir-fs: usuario FORCE
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar
 	cd ../archivos/herramientas && cargo build --release
-	python3 ../tools/medir.py disco-fs target/medir-fs.img $(REDOXFS_AR)
+	python3 ../tools/medir.py disco-fs target/medir-fs.img $(DASHFS_AR)
 	cargo build $(CARGO_PERFIL) --features virt,medir_fs
 	$(OBJCOPY) -O binary $(ELF) $(MEDIR_FS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(MEDIR_FS)) cargo build --release
