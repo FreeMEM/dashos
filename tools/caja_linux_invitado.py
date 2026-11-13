@@ -25,6 +25,7 @@ import hashlib
 import io
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -35,7 +36,11 @@ import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-CACHE = Path(os.environ.get("DASHOS_CAJA_LINUX_CACHE", Path.home() / ".cache" / "dashos-caja-linux"))
+# H9 (caja-linux-apps): con DASHOS_CAJA_APPS=1, la imagen de Arch de los programas grandes (GTK4 y Firefox, con lo del
+# rootfs que necesitan puesto al día, en un disco de 6 GB) y en su propia caché: la de siempre no cambia (ni su tamaño,
+# que dicen las líneas esperadas de `arranque-virt-arch`).
+APPS = os.environ.get("DASHOS_CAJA_APPS") == "1"
+CACHE = Path(os.environ.get("DASHOS_CAJA_LINUX_CACHE", Path.home() / ".cache" / ("dashos-caja-linux-apps" if APPS else "dashos-caja-linux")))
 TOOLCHAIN = Path.home() / ".local/opt/toolchains/aarch64--musl--stable-2026.08-1/bin/aarch64-buildroot-linux-musl-"
 BUSYBOX = "1.37.0"
 NUCLEOS = os.cpu_count() or 8
@@ -439,7 +444,8 @@ ARCH_HUELLA = "68B3537F39A313B3E574D06777193F152BDBE6A6"
 TIPO_CAJA_LINUX = "d0a18dbf-bbf4-4b0e-8627-ce5006b50018"
 TIPO_DASHOS = "d0a18dbf-bbf4-4b0e-8627-ce5006b50017"
 DISCO_ARCH = ARCH / "disco-arch.img"
-TAM_DISCO_ARCH = 4 << 30
+# 4 GB; 6 con DASHOS_CAJA_APPS=1 (H9, caja-linux-apps: GTK4 y Firefox con lo que piden ocupan 1,2 GB más).
+TAM_DISCO_ARCH = (6 if APPS else 4) << 30
 # La partición de DashOS: del MB 1 al 8, lo mismo que el RedoxFS del disco de las pruebas (`nvme.img`, 8 MB).
 INICIO_DASHOS = 1 << 20
 TAM_DASHOS = 7 << 20
@@ -488,16 +494,61 @@ ARCH_FICHEROS.update({
 ARCH_GUIONES = {
     "./usr/local/bin/prueba-foot":
         "#!/bin/sh\n# Una terminal de Wayland de verdad (foot) en una ventana de DashOS; lo que se teclea en ella sale por hvc0.\n"
-        "exec foot -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
+        "export LANG=C.UTF-8\nexec foot -W 50x8 -T 'foot en DashOS' sh -c 'echo \"foot: lista\" > /dev/hvc0; echo \"Hola desde foot, en Arch Linux ARM, en DashOS\"; "
         "read x; echo \"foot: leido $x\" > /dev/hvc0; echo \"leido: $x\"; sleep 3'\n",
 }
+# H9 (caja-linux-apps): un programa grande de GTK4 y Firefox, dibujados por la CPU (sin GPU en la caja), sin D-Bus ni
+# accesibilidad (sin sesión de D-Bus, at-spi esperaría su bus). Cada uno dice por hvc0 cuándo empieza (el guion mide
+# desde ahí hasta su primera ventana en DashOS).
+ARCH_GUIONES.update({
+    "./usr/local/bin/prueba-gtk":
+        "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
+        "# Sin la caja de bwrap para los cargadores de imágenes (glycin): en la caja, su cargador de SVG dentro de bwrap\n"
+        "# acaba sin decir nada (y GTK aborta). Delante en el PATH, un bwrap que dice lo que glycin reconoce como \"aquí no\n"
+        "# hay espacios de nombres\": así carga sin su caja.\n"
+        "export PATH=/usr/local/lib/dashos/sin-bwrap:$PATH\n"
+        "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1\n"
+        "echo \"gtk: empieza\" > /dev/hvc0\n"
+        "exec \"${@:-gtk4-widget-factory}\"\n",
+    "./usr/local/bin/prueba-firefox":
+        "#!/bin/sh\n# Firefox en una ventana de DashOS, por Wayland y sin GPU (WebRender por software), con un solo proceso de\n"
+        "# contenido y algo de intercambio (la caja tiene poca RAM).\n"
+        "if ! grep -q /swap /proc/swaps; then fallocate -l 768M /swap && chmod 600 /swap && mkswap -q /swap && swapon /swap; fi\n"
+        "mkdir -p /tmp/ff\n"
+        "cat > /tmp/ff/user.js <<'FIN'\n"
+        "user_pref(\"dom.ipc.processCount\", 1);\n"
+        "user_pref(\"fission.autostart\", false);\n"
+        "user_pref(\"browser.shell.checkDefaultBrowser\", false);\n"
+        "user_pref(\"browser.startup.homepage_override.mstone\", \"ignore\");\n"
+        "user_pref(\"browser.aboutwelcome.enabled\", false);\n"
+        "user_pref(\"datareporting.policy.dataSubmissionEnabled\", false);\n"
+        "user_pref(\"toolkit.telemetry.reportingpolicy.firstRun\", false);\n"
+        "user_pref(\"app.update.enabled\", false);\n"
+        "user_pref(\"browser.tabs.remote.autostart\", true);\n"
+        "FIN\n"
+        "export LANG=C.UTF-8 MOZ_ENABLE_WAYLAND=1 GDK_BACKEND=wayland GTK_A11Y=none NO_AT_BRIDGE=1\n"
+        "echo \"firefox: empieza\" > /dev/hvc0\n"
+        "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
+})
+ARCH_GUIONES["./usr/local/lib/dashos/sin-bwrap/bwrap"] = (
+    "#!/bin/sh\n# Para prueba-gtk: que glycin vea que bwrap no va aquí (y cargue las imágenes sin su caja).\n"
+    "echo 'bwrap: Creating new namespace failed: Operation not permitted' >&2\nexit 1\n")
+ARCH_FICHEROS.update({
+    "./usr/local/lib/dashos/sin-bwrap/LEEME": "Un bwrap que dice que no va, para prueba-gtk (glycin carga las imágenes sin su caja).\n",
+    "./usr/local/share/dashos/hola.html":
+        "<!doctype html><meta charset=utf-8><title>Firefox en DashOS</title>"
+        "<body style='font-family:sans-serif;background:#f3edf7;color:#1d1b20;margin:32px'>"
+        "<h1>Hola desde Firefox</h1><p>Arch Linux ARM en la caja Linux de DashOS, por Wayland.</p>"
+        "<p><input value='texto para copiar'></p></body>\n",
+})
 ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.service":
                 "/etc/systemd/system/dashos-puente.service"}
 # Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
 # comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
 # Con GL y Vulkan por software (Mesa: llvmpipe y lavapipe) y sus programas de prueba (es2gears_wayland, vkcube), para
-# medir los gráficos de la caja (S25).
-ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"]
+# medir los gráficos de la caja (S25). Con DASHOS_CAJA_APPS=1 (H9, caja-linux-apps), GTK4 con sus demos (gtk4-demo,
+# gtk4-widget-factory) y Firefox.
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"] + (["gtk4-demos", "firefox"] if APPS else [])
 ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
 ARCH_REPOS = ["core", "extra", "alarm"]
 PAQUETES = ARCH / "paquetes"
@@ -532,17 +583,72 @@ def arch_bajar():
     return tar
 
 
+# Lo que hacen los ganchos de pacman al instalar y aquí se hace en el PC (los paquetes se meten sin pacman): las
+# cachés que los programas grandes (GTK4, H9) necesitan o tardan en hacer en QEMU sin aceleración. Las carpetas de
+# donde salen, que se copian aparte al hacer el tar.
+CACHES = ("./usr/share/glib-2.0/schemas/", "./usr/share/fonts/", "./etc/fonts/", "./usr/share/fontconfig/",
+          "./usr/share/mime/packages/")
+
+
+def arch_caches(dentro, poner):
+    """Con lo copiado de `CACHES` en `dentro`: los esquemas de GSettings compilados (sin ellos, GTK aborta), la caché
+    de fontconfig (con --sysroot: los nombres, los del invitado; el formato, el mismo en aarch64 y x86_64, little-endian
+    de 64 bits) y la base de tipos MIME. `poner(ruta, datos)` los mete en el tar."""
+    esquemas = dentro / "usr/share/glib-2.0/schemas"
+    if esquemas.is_dir():
+        run("glib-compile-schemas", f"--targetdir={dentro}", esquemas)
+        if (dentro / "gschemas.compiled").exists():
+            poner("./usr/share/glib-2.0/schemas/gschemas.compiled", (dentro / "gschemas.compiled").read_bytes())
+    if (dentro / "etc/fonts/fonts.conf").exists():
+        subprocess.run(["fc-cache", "-s", "-f", f"--sysroot={dentro}"], check=False, capture_output=True)
+        for f in sorted((dentro / "var/cache/fontconfig").glob("*")):
+            poner(f"./var/cache/fontconfig/{f.name}", f.read_bytes())
+    mime = dentro / "usr/share/mime"
+    if (mime / "packages").is_dir() and shutil.which("update-mime-database"):
+        subprocess.run(["update-mime-database", mime], check=False, capture_output=True,
+                       env=dict(os.environ, PKGSYSTEM_ENABLE_FSYNC="0"))
+        for f in sorted(mime.glob("*")):
+            if f.is_file():
+                poner(f"./usr/share/mime/{f.name}", f.read_bytes())
+
+
 def arch_tar(origen, destino, paquetes=(), propios=()):
     """El tar del rootfs con los cambios de ARCH_FICHEROS, ARCH_MASCARAS y ARCH_QUITAR, los paquetes de `paquetes`
     (instalados a mano: sus ficheros y su entrada en la base de pacman) y los ficheros `propios` (ruta del invitado,
-    fichero del PC); sin comprimir, para mke2fs."""
+    fichero del PC); sin comprimir, para mke2fs. Con las cachés de `arch_caches`."""
     hecho = set()
     nombres = set()
     mtime_usr = 0
     tmp = destino.with_suffix(".part")
+    copia = Path(tempfile.mkdtemp(prefix="caja-caches-"))
+    mtimes = {}
+
+    def copiar(m, f):
+        """Copia en `copia` lo que va a las cachés (con la hora de su carpeta: fontconfig la mira)."""
+        if not m.name.startswith(CACHES) and m.name.rstrip("/") + "/" not in CACHES:
+            return
+        d = copia / m.name.lstrip("./")
+        if m.isdir():
+            d.mkdir(parents=True, exist_ok=True)
+            mtimes[d] = m.mtime
+        elif m.isreg():
+            d.parent.mkdir(parents=True, exist_ok=True)
+            d.write_bytes(f.read())
+        elif m.issym():
+            d.parent.mkdir(parents=True, exist_ok=True)
+            if not d.is_symlink():
+                d.symlink_to(m.linkname)
+
+    # Los paquetes que ponen al día uno del rootfs: sus ficheros pisan los de él, y su entrada vieja no va.
+    pisar, viejos = set(), []
+    for pk in paquetes:
+        if str(pk) in ACTUALIZAR:
+            viejos.append(re.compile(r"^\./var/lib/pacman/local/" + re.escape(ACTUALIZAR[str(pk)]) + r"-[0-9]"))
+            with tarfile.open(pk) as t:
+                pisar.update("./" + m.name.lstrip("./").rstrip("/") for m in t if not m.isdir())
     with tarfile.open(origen, "r:gz") as ent, tarfile.open(tmp, "w", format=tarfile.PAX_FORMAT) as sal:
         for m in ent:
-            if m.name in ARCH_QUITAR:
+            if m.name in ARCH_QUITAR or (not m.isdir() and m.name in pisar) or any(v.match(m.name) for v in viejos):
                 continue
             if m.name == "./usr":
                 mtime_usr = m.mtime
@@ -553,6 +659,12 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                 sal.addfile(m, io.BytesIO(datos))
                 hecho.add(m.name)
                 continue
+            if m.isreg() and m.name.startswith(CACHES):
+                datos = ent.extractfile(m).read()
+                copiar(m, io.BytesIO(datos))
+                sal.addfile(m, io.BytesIO(datos))
+                continue
+            copiar(m, None)
             sal.addfile(m, ent.extractfile(m) if m.isreg() else None)
         ahora = int(time.time())
 
@@ -601,6 +713,12 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                     m.name = nombre
                     m.uid = m.gid = 0
                     m.uname = m.gname = "root"
+                    if m.isreg() and nombre.startswith(CACHES):
+                        datos = t.extractfile(m).read()
+                        copiar(m, io.BytesIO(datos))
+                        sal.addfile(m, io.BytesIO(datos))
+                        continue
+                    copiar(m, None)
                     sal.addfile(m, t.extractfile(m) if m.isreg() else None)
             nv = f"{info['pkgname'][0]}-{info['pkgver'][0]}"
             desc = [("NAME", info["pkgname"]), ("VERSION", info["pkgver"]), ("BASE", info.get("pkgbase", [])),
@@ -616,6 +734,14 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
                   datos=("%FILES%\n" + "".join(f + "\n" for f in sorted(ficheros)) + "\n").encode())
         for destino_inv, fichero in propios:
             poner(destino_inv, datos=Path(fichero).read_bytes(), modo=0o755)
+        # Las cachés (H9): las carpetas copiadas, con la hora que tienen en el tar.
+        for d, t in sorted(mtimes.items(), key=lambda x: -len(str(x[0]))):
+            os.utime(d, (t, t))
+        if APPS:
+            if "./var/cache/fontconfig" not in nombres:
+                poner("./var/cache/fontconfig", tarfile.DIRTYPE, modo=0o755)
+            arch_caches(copia, lambda ruta, datos: poner(ruta, datos=datos))
+        shutil.rmtree(copia, ignore_errors=True)
         # /etc y /var al día respecto de /usr (ConditionNeedsUpdate): sin ldconfig, hwdb ni catálogo en el primer
         # arranque (el rootfs ya los trae hechos).
         marca = (f"TIMESTAMP_NSEC={mtime_usr * 1_000_000_000}\n").encode()
@@ -719,18 +845,91 @@ def arch_instalados(tar):
     return hay
 
 
+def _segmentos(v):
+    return re.findall(r"\d+|[a-zA-Z]+", v)
+
+
+def vercmp(a, b):
+    """Compara versiones de pacman (época:versión-revisión), como su `vercmp`: -1, 0 o 1."""
+    def partes(v):
+        e, _, resto = v.rpartition(":") if ":" in v else ("0", "", v)
+        ver, _, rel = resto.partition("-")
+        return int(e or 0), ver, rel
+    def cmp(x, y):
+        sx, sy = _segmentos(x), _segmentos(y)
+        for p, q in zip(sx, sy):
+            if p.isdigit() and q.isdigit():
+                d = (int(p) > int(q)) - (int(p) < int(q))
+            elif p.isdigit() != q.isdigit():
+                d = 1 if p.isdigit() else -1
+            else:
+                d = (p > q) - (p < q)
+            if d:
+                return d
+        return (len(sx) > len(sy)) - (len(sx) < len(sy))
+    (ea, va, ra), (eb, vb, rb) = partes(a), partes(b)
+    if ea != eb:
+        return (ea > eb) - (ea < eb)
+    d = cmp(va, vb)
+    if d or not ra or not rb:
+        return d
+    return cmp(ra, rb)
+
+
+def arch_versiones(tar):
+    """Las versiones de los paquetes que trae el rootfs: nombre → versión."""
+    cache = ARCH / "versiones.json"
+    if cache.exists() and cache.stat().st_mtime > tar.stat().st_mtime:
+        return json.loads(cache.read_text())
+    v = {}
+    with tarfile.open(tar, "r:gz") as t:
+        for m in t:
+            if m.name.startswith("./var/lib/pacman/local/") and m.name.endswith("/desc"):
+                campos, clave = {}, None
+                for l in t.extractfile(m).read().decode().splitlines():
+                    if l.startswith("%") and l.endswith("%"):
+                        clave = l.strip("%")
+                    elif l and clave:
+                        campos.setdefault(clave, []).append(l)
+                if "NAME" in campos and "VERSION" in campos:
+                    v[campos["NAME"][0]] = campos["VERSION"][0]
+    cache.write_text(json.dumps(v))
+    return v
+
+
+# Los paquetes del rootfs que hay que poner al día porque lo nuevo los necesita y el repositorio los tiene más nuevos
+# (GTK4 pide un glib2 más nuevo que el del rootfs): fichero → nombre. Sus ficheros pisan los del rootfs y su entrada vieja en la base de
+# pacman no se copia (lo hace `arch_tar`).
+ACTUALIZAR = {}
+# Lo que no se pone al día así: el arranque y los programas de base (con sus bibliotecas nuevas siguen funcionando).
+NO_ACTUALIZAR = {"systemd", "dbus", "bash", "coreutils", "pam", "util-linux", "kmod", "cryptsetup", "device-mapper",
+                 "linux-api-headers", "hwdata", "tzdata", "glibc"}
+
+
 def arch_paquetes(tar):
     """Baja `ARCH_PAQUETES` y lo que necesiten que no traiga el rootfs, con su suma y su firma comprobadas (la firma,
     con el anillo de claves de Arch Linux ARM que trae el propio rootfs). Devuelve los ficheros, en orden."""
     por_nombre, da = arch_bases()
     hay = arch_instalados(tar)
+    versiones = arch_versiones(tar)
     quiero, cola = [], list(ARCH_PAQUETES)
+    actualizar = set()
     while cola:
         dep = cola.pop(0)
         nombre = dep
         for op in (">=", "<=", "=", ">", "<"):
             nombre = nombre.split(op)[0]
         if nombre in hay:
+            # Del rootfs, pero quizá viejo: Arch Linux ARM no dice en sus dependencias qué versión hace falta (se pone
+            # todo al día a la vez), así que lo que piden los paquetes nuevos y en el repositorio es más nuevo, se pone al
+            # día (GTK 4.24 necesita el glib2 2.90 del repositorio; el rootfs trae el 2.88).
+            if not APPS or nombre not in versiones or nombre not in por_nombre or nombre in actualizar or nombre in NO_ACTUALIZAR:
+                continue
+            if vercmp(por_nombre[nombre][1]["VERSION"][0], versiones[nombre]) <= 0:
+                continue
+            actualizar.add(nombre)
+            quiero.append(nombre)
+            cola.extend(por_nombre[nombre][1].get("DEPENDS", []))
             continue
         real = nombre if nombre in por_nombre else da.get(nombre)
         if real is None:
@@ -741,6 +940,8 @@ def arch_paquetes(tar):
         hay.add(real)
         cola.extend(por_nombre[real][1].get("DEPENDS", []))
     print("paquetes de Arch Linux ARM para la imagen:", " ".join(quiero), flush=True)
+    if actualizar:
+        print("del rootfs, puestos al día:", " ".join(sorted(f"{n} {versiones[n]} → {por_nombre[n][1]['VERSION'][0]}" for n in actualizar)), flush=True)
     with tempfile.TemporaryDirectory() as gpg:
         entorno = dict(os.environ, GNUPGHOME=gpg)
         with tarfile.open(tar) as t:
@@ -762,6 +963,8 @@ def arch_paquetes(tar):
             if not firma or firma[0] in revocadas:
                 raise SystemExit(f"la firma de {f.name} no es de una clave de Arch Linux ARM:\n{r.stdout}{r.stderr}")
             ficheros.append(f)
+            if n in actualizar:
+                ACTUALIZAR[str(f)] = n
     print(f"{len(ficheros)} paquetes: suma y firma bien", flush=True)
     return ficheros
 
@@ -796,12 +999,16 @@ def arch_ventana(sysroot):
     fuente = RAIZ / "caja-linux/invitado/ventana_wayland.c"
     gen = ARCH / "gen"
     gen.mkdir(exist_ok=True)
-    xml = "/usr/share/wayland-protocols/stable/xdg-shell/xdg-shell.xml"
-    run("wayland-scanner", "client-header", xml, gen / "xdg-shell-client-protocol.h")
-    run("wayland-scanner", "private-code", xml, gen / "xdg-shell-protocol.c")
+    # Los XML, los del repositorio (wayland/protocolos): xdg-shell y la decoración del compositor (H9).
+    codigo = []
+    for xml in ["xdg-shell", "xdg-decoration-unstable-v1"]:
+        x = RAIZ / "wayland/protocolos" / f"{xml}.xml"
+        run("wayland-scanner", "client-header", x, gen / f"{xml}-client-protocol.h")
+        run("wayland-scanner", "private-code", x, gen / f"{xml}-protocol.c")
+        codigo.append(gen / f"{xml}-protocol.c")
     lib = sysroot / "usr/lib"
     run("clang", "--target=aarch64-linux-gnu", f"--sysroot={sysroot}", "-fuse-ld=lld", "-O2", "-Wall", "-nostdlib",
-        f"-I{gen}", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente, gen / "xdg-shell-protocol.c",
+        f"-I{gen}", "-o", sal, lib / "Scrt1.o", lib / "crti.o", fuente, *codigo,
         "-lwayland-client", "-lc", lib / "crtn.o")
     return sal
 

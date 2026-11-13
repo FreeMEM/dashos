@@ -12,7 +12,10 @@
  * del puente).
  *
  * Lo que dice por la salida (una línea por cosa, para las pruebas): que está en pantalla, cada tecla y cada clic, y
- * cada 5 s y al acabar cuántos cuadros por segundo lleva. Acaba con Esc o con q.
+ * cada 5 s y al acabar cuántos cuadros por segundo lleva. Acaba con Esc, con q o cuando el compositor pide cerrarla
+ * (el botón de la barra).
+ *
+ * No se pinta barra: pide la del compositor (xdg-decoration, modo servidor) y dice cuál le dieron.
  *
  * Se compila en el PC para aarch64 (tools/caja_linux_invitado.py) con el libwayland-client del paquete de Arch Linux
  * ARM. */
@@ -25,6 +28,7 @@
 #include <unistd.h>
 #include <wayland-client.h>
 #include "xdg-shell-client-protocol.h"
+#include "xdg-decoration-unstable-v1-client-protocol.h"
 
 static int ANCHO = 320, ALTO = 240, segundos;
 
@@ -32,6 +36,7 @@ static struct wl_compositor *compositor;
 static struct wl_shm *shm;
 static struct xdg_wm_base *wm;
 static struct wl_seat *asiento;
+static struct zxdg_decoration_manager_v1 *decoraciones;
 static struct wl_surface *superficie;
 static struct wl_buffer *buferes[2];
 static uint32_t *pxs[2];
@@ -53,6 +58,7 @@ static void global(void *d, struct wl_registry *r, uint32_t nombre, const char *
     else if (!strcmp(interfaz, "wl_shm")) shm = wl_registry_bind(r, nombre, &wl_shm_interface, 1);
     else if (!strcmp(interfaz, "xdg_wm_base")) wm = wl_registry_bind(r, nombre, &xdg_wm_base_interface, 1);
     else if (!strcmp(interfaz, "wl_seat")) asiento = wl_registry_bind(r, nombre, &wl_seat_interface, 5);
+    else if (!strcmp(interfaz, "zxdg_decoration_manager_v1")) decoraciones = wl_registry_bind(r, nombre, &zxdg_decoration_manager_v1_interface, 1);
 }
 static void global_quitado(void *d, struct wl_registry *r, uint32_t n) { (void)d; (void)r; (void)n; }
 static const struct wl_registry_listener registro = {global, global_quitado};
@@ -190,6 +196,12 @@ static void top_limites(void *d, struct xdg_toplevel *t, int32_t w, int32_t h) {
 static void top_capacidades(void *d, struct xdg_toplevel *t, struct wl_array *c) { (void)d; (void)t; (void)c; }
 static const struct xdg_toplevel_listener oyente_top = {top_configurar, top_cerrar, top_limites, top_capacidades};
 
+static void deco_configurar(void *d, struct zxdg_toplevel_decoration_v1 *z, uint32_t modo) {
+    (void)d; (void)z;
+    printf("ventana_wayland: decoración %s\n", modo == ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE ? "del compositor" : "propia");
+}
+static const struct zxdg_toplevel_decoration_v1_listener oyente_deco = {deco_configurar};
+
 int main(int argc, char **argv) {
     setvbuf(stdout, NULL, _IOLBF, 0);
     if (argc >= 3) {
@@ -234,6 +246,11 @@ int main(int argc, char **argv) {
     xdg_toplevel_add_listener(top, &oyente_top, NULL);
     xdg_toplevel_set_title(top, "Hola desde Linux");
     xdg_toplevel_set_app_id(top, "ventana_wayland");
+    if (decoraciones) {
+        struct zxdg_toplevel_decoration_v1 *deco = zxdg_decoration_manager_v1_get_toplevel_decoration(decoraciones, top);
+        zxdg_toplevel_decoration_v1_add_listener(deco, &oyente_deco, NULL);
+        zxdg_toplevel_decoration_v1_set_mode(deco, ZXDG_TOPLEVEL_DECORATION_V1_MODE_SERVER_SIDE);
+    }
     wl_surface_commit(superficie);
     while (!acabar && wl_display_dispatch(pantalla) != -1) {
     }

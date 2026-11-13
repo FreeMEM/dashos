@@ -1096,6 +1096,150 @@ pub mod dashos_tema_v1 {
     }
 }
 
+pub static ZXDG_DECORATION_MANAGER_V1: Interface = Interface {
+    name: "zxdg_decoration_manager_v1",
+    version: 2,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "get_toplevel_decoration", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zxdg_toplevel_decoration_v1") }, Arg { name: "toplevel", kind: Kind::Object, nullable: false, interface: Some("xdg_toplevel") }] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zxdg_decoration_manager_v1`.
+pub mod zxdg_decoration_manager_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const GET_TOPLEVEL_DECORATION: u16 = 1;
+    }
+    pub mod ev {
+    }
+}
+
+pub static ZXDG_TOPLEVEL_DECORATION_V1: Interface = Interface {
+    name: "zxdg_toplevel_decoration_v1",
+    version: 2,
+    requests: &[
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+        Message { name: "set_mode", since: 1, destructor: false, args: &[Arg { name: "mode", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "unset_mode", since: 1, destructor: false, args: &[] },
+    ],
+    events: &[
+        Message { name: "configure", since: 1, destructor: false, args: &[Arg { name: "mode", kind: Kind::Uint, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zxdg_toplevel_decoration_v1`.
+pub mod zxdg_toplevel_decoration_v1 {
+    pub mod req {
+        pub const DESTROY: u16 = 0;
+        pub const SET_MODE: u16 = 1;
+        pub const UNSET_MODE: u16 = 2;
+    }
+    pub mod ev {
+        pub const CONFIGURE: u16 = 0;
+    }
+}
+
+pub static ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1: Interface = Interface {
+    name: "zwp_primary_selection_device_manager_v1",
+    version: 1,
+    requests: &[
+        Message { name: "create_source", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zwp_primary_selection_source_v1") }] },
+        Message { name: "get_device", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::NewId, nullable: false, interface: Some("zwp_primary_selection_device_v1") }, Arg { name: "seat", kind: Kind::Object, nullable: false, interface: Some("wl_seat") }] },
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_primary_selection_device_manager_v1`.
+pub mod zwp_primary_selection_device_manager_v1 {
+    pub mod req {
+        pub const CREATE_SOURCE: u16 = 0;
+        pub const GET_DEVICE: u16 = 1;
+        pub const DESTROY: u16 = 2;
+    }
+    pub mod ev {
+    }
+}
+
+pub static ZWP_PRIMARY_SELECTION_DEVICE_V1: Interface = Interface {
+    name: "zwp_primary_selection_device_v1",
+    version: 1,
+    requests: &[
+        Message { name: "set_selection", since: 1, destructor: false, args: &[Arg { name: "source", kind: Kind::Object, nullable: true, interface: Some("zwp_primary_selection_source_v1") }, Arg { name: "serial", kind: Kind::Uint, nullable: false, interface: None }] },
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "data_offer", since: 1, destructor: false, args: &[Arg { name: "offer", kind: Kind::NewId, nullable: false, interface: Some("zwp_primary_selection_offer_v1") }] },
+        Message { name: "selection", since: 1, destructor: false, args: &[Arg { name: "id", kind: Kind::Object, nullable: true, interface: Some("zwp_primary_selection_offer_v1") }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_primary_selection_device_v1`.
+pub mod zwp_primary_selection_device_v1 {
+    pub mod req {
+        pub const SET_SELECTION: u16 = 0;
+        pub const DESTROY: u16 = 1;
+    }
+    pub mod ev {
+        pub const DATA_OFFER: u16 = 0;
+        pub const SELECTION: u16 = 1;
+    }
+}
+
+pub static ZWP_PRIMARY_SELECTION_OFFER_V1: Interface = Interface {
+    name: "zwp_primary_selection_offer_v1",
+    version: 1,
+    requests: &[
+        Message { name: "receive", since: 1, destructor: false, args: &[Arg { name: "mime_type", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "fd", kind: Kind::Fd, nullable: false, interface: None }] },
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "offer", since: 1, destructor: false, args: &[Arg { name: "mime_type", kind: Kind::Str, nullable: false, interface: None }] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_primary_selection_offer_v1`.
+pub mod zwp_primary_selection_offer_v1 {
+    pub mod req {
+        pub const RECEIVE: u16 = 0;
+        pub const DESTROY: u16 = 1;
+    }
+    pub mod ev {
+        pub const OFFER: u16 = 0;
+    }
+}
+
+pub static ZWP_PRIMARY_SELECTION_SOURCE_V1: Interface = Interface {
+    name: "zwp_primary_selection_source_v1",
+    version: 1,
+    requests: &[
+        Message { name: "offer", since: 1, destructor: false, args: &[Arg { name: "mime_type", kind: Kind::Str, nullable: false, interface: None }] },
+        Message { name: "destroy", since: 1, destructor: true, args: &[] },
+    ],
+    events: &[
+        Message { name: "send", since: 1, destructor: false, args: &[Arg { name: "mime_type", kind: Kind::Str, nullable: false, interface: None }, Arg { name: "fd", kind: Kind::Fd, nullable: false, interface: None }] },
+        Message { name: "cancelled", since: 1, destructor: false, args: &[] },
+    ],
+};
+
+/// Los números de las peticiones y eventos de `zwp_primary_selection_source_v1`.
+pub mod zwp_primary_selection_source_v1 {
+    pub mod req {
+        pub const OFFER: u16 = 0;
+        pub const DESTROY: u16 = 1;
+    }
+    pub mod ev {
+        pub const SEND: u16 = 0;
+        pub const CANCELLED: u16 = 1;
+    }
+}
+
 /// Todas las interfaces, para buscarlas por nombre.
 pub static INTERFACES: &[&Interface] = &[
     &WL_DISPLAY,
@@ -1135,4 +1279,10 @@ pub static INTERFACES: &[&Interface] = &[
     &EXT_IDLE_NOTIFIER_V1,
     &EXT_IDLE_NOTIFICATION_V1,
     &DASHOS_TEMA_V1,
+    &ZXDG_DECORATION_MANAGER_V1,
+    &ZXDG_TOPLEVEL_DECORATION_V1,
+    &ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1,
+    &ZWP_PRIMARY_SELECTION_DEVICE_V1,
+    &ZWP_PRIMARY_SELECTION_OFFER_V1,
+    &ZWP_PRIMARY_SELECTION_SOURCE_V1,
 ];

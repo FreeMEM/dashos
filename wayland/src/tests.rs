@@ -1286,7 +1286,7 @@ mod ventanas {
         preparar(&mut e, llave);
         e.empezar(7, wl_surface::req::COMMIT).fin();
         let ev = mandar(escena, con, c, &e);
-        let conf: Vec<_> = ev.iter().filter(|x| x.0 == 9 || x.0 == 10).collect();
+        let conf: Vec<_> = ev.iter().filter(|x| (x.0 == 9 || x.0 == 10) && !(x.0 == 10 && x.1 == xdg_toplevel::ev::CONFIGURE_BOUNDS)).collect();
         assert_eq!((conf[0].0, conf[0].1), (10, xdg_toplevel::ev::CONFIGURE));
         assert_eq!((conf[1].0, conf[1].1), (9, xdg_surface::ev::CONFIGURE));
         let serie = u32::from_le_bytes(conf[1].2[..4].try_into().unwrap());

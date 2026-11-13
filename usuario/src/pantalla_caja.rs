@@ -211,7 +211,8 @@ impl VentanaPantalla {
                 c.mandar(&e);
                 true
             }
-            (aviso, wl_callback::ev::DONE) if aviso >= AVISO => {
+            // Solo sus avisos: los objetos del compositor (desde 0xFF000000, las ofertas del portapapeles) no son suyos.
+            (aviso, wl_callback::ev::DONE) if (AVISO..0xFF00_0000).contains(&aviso) => {
                 if aviso == self.esperando {
                     self.esperando = 0;
                 }

@@ -1102,3 +1102,138 @@ Pinta lo mismo la CPU del invitado (llvmpipe): ninguno de los dos caminos usa un
 - `zwp_linux_dmabuf_v1` para la caja en el compositor de DashOS (con el `main_device` del invitado): para la V3D.
 - Teclado y ratón en la ventana de la pantalla (virtio-input); otro tamaño de pantalla (el aparato ya avisa con
   `EVENTO_PANTALLA`, falta que la ventana se pueda cambiar de tamaño); doble búfer contra el desgarro.
+## 2026-11-13: barra de DashOS, portapapeles y programas grandes (rama `caja-linux-apps`)
+
+Rama `caja-linux-apps`, sacada de `revision` (0ce1f49). Lo que faltaba para que los programas de Linux se usen como los
+de DashOS: la barra del compositor para los que no se pintan la suya, copiar y pegar entre Linux y DashOS, y un programa
+grande de verdad (GTK4, y Firefox si cabe). Sala limpia: los XML de Wayland (`xdg-decoration-unstable-v1`,
+`primary-selection-unstable-v1`, `xdg-shell`); nada de Weston, wlroots, Mutter, KWin ni sommelier.
+
+### Resultado
+
+`make arranque-virt-wayland` (con `revision` fusionada: sin copias, virtio-gpu 2D y Pi 5):
+
+- `ventana_wayland` pide la barra del compositor y sale con la de DashOS (título, X, esquinas redondeadas, sombra); se
+  mueve arrastrando la barra y se cierra con la X (`ventana_wayland: el compositor pide cerrar`).
+- **Portapapeles en los dos sentidos**: tres clics en foot y Control+Mayúsculas+C; en la terminal de la caja (nativa),
+  `echo ` y Control+Mayúsculas+V: `linux: Hola desde foot, en Arch Linux ARM, en DashOS`. La primaria, con el botón
+  central: `linux: primaria: Hola desde foot, ...`. Al revés: se selecciona con el ratón en la terminal, se copia y se
+  pega en foot: `foot: leido pegame-en-foot`.
+- **Hostiles de Linux** (`puente --cliente-hostil`): modo de decoración que no existe, dos decoraciones y un tipo que no
+  es UTF-8: el compositor corta esas conexiones. Una fuente que escribe sin fin: la terminal pega 4 KB y corta (la fuente
+  ve la tubería cerrada tras 64 KB, la ventana de 128 KB del tubo). Una que nunca cierra: la terminal deja de esperar a
+  los 10 s (`pegado (0 bytes)`). Después, otra ventana de Linux sale y se cierra como siempre.
+- **GTK4**: en el PC, el `gtk4-widget-factory` de Arch Linux ARM (GTK 4.24, aarch64, con `qemu-aarch64`) sale por el
+  puente y la escena con su menú emergente (el compositor del PC y el puente de verdad). **En la caja aún no**: aborta al
+  cargar su icono SVG (`Gdk-ERROR ... Loader process exited early`): glycin 4.0.5, el cargador de imágenes de
+  gdk-pixbuf, falla en el kernel de la caja ("Opening source: Operation not supported" con `glycin-thumbnailer`, también
+  en QEMU sin DashOS con la misma `Image-arch`). bwrap funciona; falta encontrar qué opción del kernel de Linux le falta.
+- **Firefox no cabe**: 20 minutos sin ventana con 256 MB (y 768 MB de intercambio en el disco): 7 GB leídos del disco,
+  la máquina pasándose páginas. En el PC (qemu-aarch64), su ventana principal sí sale por el puente. Queda fuera del
+  guion (CAJA_FIREFOX=1 lo intenta).
+
+### La barra de DashOS (`xdg-decoration`)
+
+- `zxdg_decoration_manager_v1` (v1) para todos los clientes (`wayland/src/decoracion.rs`). El programa pide el modo;
+  DashOS da el que pide, y si le da igual (`unset_mode`, o crea la decoración y no dice nada), el suyo. Contesta con
+  `configure` y un `xdg_surface.configure`. Errores: modo que no existe, dos decoraciones para una ventana, decoración de
+  una ventana con búfer (v1).
+- La barra la pinta el compositor con el kit (Material 3): 40 px, el contenedor de superficie (alto si la ventana tiene
+  el teclado), el título en Roboto Medium 14 recortado con "…", y la X de cerrar; esquinas de 12 arriba y, al componer,
+  también abajo (la superficie del programa se recorta en sus esquinas). La sombra rodea las dos. Se repinta solo si
+  cambia el título, el ancho, el teclado o el tema; lo que la letra no tiene sale como "?" (su caché no crece).
+- Pulsar en la barra coge la ventana para moverla; en la X, `xdg_toplevel.close`. La ventana nueva se coloca en cascada
+  contando la barra, y maximizada deja sitio para ella.
+
+### El portapapeles
+
+- `wl_data_device` de verdad y la selección primaria (`zwp_primary_selection_device_v1`), igual las dos
+  (`wayland/src/portapapeles.rs`). Solo pone la selección quien tiene el teclado (a otro se le cancela la fuente); la
+  oferta va a quien recibe el teclado justo antes de `enter`, y otra vez si cambia mientras lo tiene. El compositor no
+  toca los datos: en DashOS el descriptor de `receive` y `send` es la llave de un extremo de canal, y la pasa de quien
+  pega a quien copió. Arrastrar y soltar no está (`start_drag` cancela la fuente).
+- Topes: 32 tipos por fuente (más largos de 255 bytes, repetidos o de más se ignoran), 32 ofertas vivas por programa
+  (uno que no las destruye deja de recibirlas), 32 fuentes. Un `receive` de una oferta vieja o de un tipo que no se
+  ofreció cierra la llave sin molestar a la fuente.
+- **Por el puente**: los descriptores del portapapeles son tuberías en Linux y canales en DashOS, y van como **tubos**
+  (tramas `TUBO_NUEVO`, `TUBO_DATOS`, `TUBO_FIN` y `TUBO_LEIDO`, del 12 al 15: del 8 al 10 son las vistas sin copia de
+  `caja-linux-sincopia`). El lado que tiene un extremo donde hay que escribir lo anuncia; el otro crea su par, da el
+  extremo de escribir a su programa con el mensaje y manda lo que lee. `TUBO_LEIDO` es una ventana de 128 KB: quien pega
+  despacio frena al que copia (sin ella, 4 MB a un lector lento llenaban lo pendiente y se cortaba el tubo). Topes por
+  transporte: 16 tubos, 16 MB por tubo, 256 KB pendientes, 30 s sin moverse. En Linux, `dashos_puente::tubos` (el mismo
+  código en el puente y en el compositor del PC); el puente sigue además los objetos que crea el compositor en sus
+  eventos (las ofertas), para saber qué descriptores llevan sus peticiones.
+- **La terminal de la caja** (nativa) usa `usuario/src/portapapeles_cliente.rs`: selecciona con el ratón (al soltar va a
+  la primaria), Control+Mayúsculas+C copia, Control+Mayúsculas+V pega y el botón central pega la primaria. Pega como
+  mucho 4 KB y espera como mucho 10 s.
+
+### Emergentes y lo que piden los programas grandes
+
+`wayland/src/emergentes.rs`: `xdg_positioner` y `xdg_popup` (ancla, gravedad, desplazamiento, dar la vuelta y deslizar
+si no cabe; agarre con el teclado; un clic fuera manda `popup_done`; `reposition`), `set_window_geometry` (la sombra que
+se pinta GTK no cuenta para colocar ni lleva otra del compositor), `move` y `resize` a petición del programa (solo con
+un botón pulsado sobre la ventana; al redimensionar, un configure con el estado "redimensionando" sin pisar uno sin
+confirmar) y `set_maximized`. Y `configure_bounds` (v4) con lo que cabe en la salida.
+
+### Lo que hubo que arreglar por el camino
+
+- **La imagen de Arch, aparte.** GTK4 y Firefox (195 paquetes, 1,2 GB) van en otra imagen y otra caché
+  (`DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch`: `~/.cache/dashos-caja-linux-apps`, 6 GB);
+  `arranque-virt-wayland` la usa (APPS_IMAGE, APPS_DISCO). La de siempre no cambia (4 GB, sus paquetes). En esa imagen:
+  GTK 4.24 necesita el glib2 2.90 del repositorio y el rootfs trae el 2.88 (Arch Linux ARM no pone versiones en sus
+  dependencias): se ponen al día los paquetes del rootfs que lo nuevo necesita y son más nuevos en el repositorio
+  (30, sin systemd, bash ni lo de base); sus ficheros pisan los del rootfs. Y lo que harían los ganchos de pacman, en el
+  PC: esquemas de GSettings, caché de fontconfig (con `--sysroot`) y base de tipos MIME.
+- **Números que chocaban** (tras fusionar `revision`): la pantalla de la caja (virtio-gpu) usa los objetos 40 a 44 y se
+  quedaba con todo evento 0 de un objeto alto (las ofertas del portapapeles, que son del compositor, desde 0xFF000000):
+  el portapapeles de la terminal usa del 60 al 63 y las fuentes desde 0x20000000, y la pantalla mira solo sus avisos.
+  Las tramas de las vistas sin copia son del 8 al 10; los tubos, del 12 al 15.
+- **El guion**: la terminal de la caja tapa casi toda la pantalla; los clics en ella van donde no hay otra ventana
+  (el compositor dice ahora lo que mide cada una), foot se sube por su barra y Control+C limpia la línea antes de cada
+  paso. El punto y coma, en el teclado español. foot con `LANG=C.UTF-8` (si no, su primera línea es un aviso) y más
+  pequeño.
+- **La caja se para a los 1500 s**: GTK va antes que los hostiles.
+
+### Pruebas
+
+- `cargo test` en `wayland` (79): `tests_linux.rs` (barra, portapapeles entre dos, primaria, hostiles del portapapeles,
+  emergentes y sus hostiles, mover y redimensionar) y en `puente.rs` los tubos, su ventana y sus hostiles. La terminal:
+  `texto_entre_celdas`.
+- En el PC: `puente/pruebas/h9_portapapeles.sh` (wl-copy y wl-paste por el puente y directos: de Linux a DashOS, al
+  revés, de Linux a Linux, la primaria, 4 MB a un lector lento, y los tres hostiles) y `g1.sh`.
+- `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk. `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-2`:
+  BIEN. `arranque-virt-arch` (con la caché de siempre, 4 GB): BIEN. `arranque-virt-wayland` (con la de los programas
+  grandes): BIEN, con sus líneas nuevas (la barra, moverla y cerrarla, el portapapeles en los dos sentidos y la
+  primaria, los hostiles; GTK solo hasta `gtk: empieza`). Lo apuntado por el guion: "portapapeles: de foot a DashOS,
+  bien", "primaria: de foot a DashOS, bien", "portapapeles: de DashOS a foot, bien", "gtk4-widget-factory: sin ventana
+  (Gdk-ERROR al cargar su icono)". Resumen de la caja: 48 clientes de Linux, 5 tubos del portapapeles (65642 bytes),
+  402 cosas malas tiradas (los hostiles), 6 clientes cerrados.
+- Capturas (fuera de git, `capturas-agente/`): `caja-linux-wayland.png` (la barra de DashOS en `ventana_wayland`),
+  `caja-linux-wayland-portapapeles.png` (foot con lo pegado desde la terminal), `caja-linux-wayland-foot.png`, y en
+  Full HD (`DASHOS_PANTALLA=1920x1080`) las mismas con `-fhd` (esa pasada sale igual salvo una línea: la fuente sin fin
+  no llegó a ver su tubería cortada antes de sus 60 s; la terminal sí pegó sus 4 KB y cortó. Sin mirar más); GTK4 y Firefox de Arch Linux ARM en el PC (compositor del
+  PC, puente y `qemu-aarch64`): `caja-linux-gtk4-pc-fhd.png`, `caja-linux-firefox-pc-fhd.png`.
+
+### Medidas
+
+QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
+
+| Medida | Valor |
+|---|---|
+| Cuadros compuestos mientras se arrastra `ventana_wayland` (320 × 240, que pinta sin parar) por la barra de DashOS | 108 a 122 por segundo (67 a 73 antes de fusionar las vistas sin copia) |
+| `ventana_wayland` con la barra, sin copia y con copia (medidas de `caja-linux-sincopia`, ahora con la barra) | 320 × 240: 115 a 128 y 74 por segundo; 1280 × 720: 41,6 y 13,4 |
+| Lo mismo con foot (quieto): lo marca el ratón del guion (un movimiento cada 50 ms) | 17 por segundo |
+| GTK4 hasta su primera ventana | En la caja, no sale (aborta antes); en el PC con qemu-aarch64, unos segundos |
+| Firefox hasta su primera ventana | Más de 20 minutos con 256 MB: no sale |
+| Redimensionar | Sin medir: lo pide GTK con `xdg_toplevel.resize` (probado en `tests_linux.rs`), y GTK no abre en la caja |
+
+### Qué falta
+
+- **GTK4 en la caja**: encontrar qué le falta al kernel de la caja para glycin ("Operation not supported" al abrir la
+  imagen; con strace en la caja). Después, medir su arranque, su menú emergente y redimensionar.
+- **Firefox**: necesita más RAM que los 256 MB del invitado con 3 GB en la máquina (con 4 GB serían 512, pero QEMU
+  `virt` con `highmem=off` no pasa de 3 GB).
+- Arrastrar y soltar entre programas (`start_drag` cancela la fuente), `xdg_activation`, `wp_viewporter`,
+  `fractional-scale`, `text-input` y cursores del servidor (foot avisa de que no están; funciona sin ellos).
+- La barra de DashOS no tiene botón de maximizar ni deja redimensionar (las ventanas de servidor no se agrandan).
+- `wm_capabilities` no se manda (las pruebas de siempre esperan el configure primero).

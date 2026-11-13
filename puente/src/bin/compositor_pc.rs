@@ -29,8 +29,11 @@ use wayland::servidor::{Conexion, Global};
 use wayland::shm::Memorias;
 use wayland::tablas;
 
-const ANCHO: i32 = 800;
-const ALTO: i32 = 600;
+/// La pantalla: 800 × 600, o la de `--pantalla ANCHOxALTO` (H9: las capturas en Full HD).
+static PANTALLA: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+fn pantalla() -> (i32, i32) {
+    *PANTALLA.get().unwrap_or(&(800, 600))
+}
 const FONDO: u32 = 0xff20_4060;
 /// `--escritorio`: todos los clientes con el poder de escritorio.
 static ESCRITORIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -39,7 +42,7 @@ const DEL_PUENTE: Cliente = 1 << 32;
 
 /// Con `zwp_linux_dmabuf_v1` (G6): búferes de la tarjeta gráfica, lineales, que se leen con la CPU. Solo en el PC
 /// por ahora: en DashOS llegará con el puente (los dmabuf de la caja pasan a memoria).
-static GLOBALES: [Global; 8] = [
+static GLOBALES: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -47,11 +50,13 @@ static GLOBALES: [Global; 8] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 6, interfaz: &tablas::WL_OUTPUT, version: 4 },
     Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
-    // Como en el compositor de DashOS: los objetos del portapapeles, sin copiar ni pegar todavía (foot no arranca sin él).
+    // Como en el compositor de DashOS (H9): el portapapeles, la selección primaria y la barra de DashOS.
     Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
+    Global { nombre: 15, interfaz: &tablas::ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1, version: 1 },
+    Global { nombre: 16, interfaz: &tablas::ZXDG_DECORATION_MANAGER_V1, version: 1 },
 ];
 /// Los de un escritorio (S10b, G4): además, las capas. Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 10] = [
+static GLOBALES_ESCRITORIO: [Global; 12] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -62,6 +67,8 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::ZWP_LINUX_DMABUF_V1, version: 4 },
     Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
+    Global { nombre: 15, interfaz: &tablas::ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1, version: 1 },
+    Global { nombre: 16, interfaz: &tablas::ZXDG_DECORATION_MANAGER_V1, version: 1 },
 ];
 
 /// Los descriptores que hacen de llaves, y lo que hay proyectado de cada uno.
@@ -156,6 +163,16 @@ struct Transporte {
     /// Memoria del puente (su número) → llave de aquí.
     memorias: HashMap<u32, u32>,
     siguiente_memoria: u32,
+    /// Los tubos del portapapeles (H9), con tuberías: aquí hacen de los canales de DashOS.
+    tubos: p::tubos::Tubos,
+}
+
+impl Transporte {
+    fn tramas(&mut self, t: Vec<(u8, Vec<u8>)>) {
+        for (tipo, d) in t {
+            let _ = p::escribir_trama(&mut self.sock, tipo, 0, &d);
+        }
+    }
 }
 
 /// Lo que el servidor tiene para el cliente, con sus llaves vueltas descriptores (directo) o memorias (puente).
@@ -164,15 +181,27 @@ fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transp
     if e.bytes.is_empty() {
         return true;
     }
-    let fds: Vec<RawFd> = e.llaves.iter().filter_map(|&l| tabla.borrow_mut().sacar(l)).collect();
+    let mut fds: Vec<RawFd> = e.llaves.iter().filter_map(|&l| tabla.borrow_mut().sacar(l)).collect();
     let bien = match &c.salida {
         Salida::Directo(s) => p::mandar(s.as_raw_fd(), &e.bytes, &fds),
         Salida::Puente(conexion) => match tr.as_mut() {
             None => false,
             Some(t) => {
-                // Cada descriptor cruza como una memoria con su contenido.
+                // Cada descriptor cruza como una memoria con su contenido; una tubería (`send` del portapapeles), como
+                // un tubo (H9).
                 let mut numeros = Vec::new();
+                let mut tubos = Vec::new();
                 for &fd in &fds {
+                    if p::tubos::es_tuberia(fd) {
+                        t.siguiente_memoria += 1;
+                        let n = 0x8000_0000 | t.siguiente_memoria;
+                        let mut tr = Vec::new();
+                        t.tubos.escritor(n, fd, &mut tr);
+                        t.tramas(tr);
+                        numeros.push(n);
+                        tubos.push(fd);
+                        continue;
+                    }
                     let mut st: libc::stat = unsafe { std::mem::zeroed() };
                     let tam = if unsafe { libc::fstat(fd, &mut st) } == 0 { st.st_size.max(0) as usize } else { 0 };
                     let mut datos = vec![0u8; tam];
@@ -187,7 +216,14 @@ fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transp
                     let _ = p::escribir_memoria(&mut t.sock, n, 0, &datos);
                     numeros.push(n);
                 }
-                p::escribir_trama(&mut t.sock, p::DATOS, *conexion, &p::juntar_datos(&numeros, &e.bytes)).is_ok()
+                let bien = p::escribir_trama(&mut t.sock, p::DATOS, *conexion, &p::juntar_datos(&numeros, &e.bytes)).is_ok();
+                // Los de los tubos son ya de los tubos: no se cierran aquí.
+                for fd in tubos {
+                    if let Some(i) = fds.iter().position(|&f| f == fd) {
+                        fds.remove(i);
+                    }
+                }
+                bien
             }
         },
     };
@@ -199,7 +235,8 @@ fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transp
 
 fn captura(fichero: &str, marco: &[u32]) {
     let mut f = std::fs::File::create(fichero).expect("no se crea la captura");
-    write!(f, "P6\n{} {}\n255\n", ANCHO, ALTO).unwrap();
+    let (ancho, alto) = pantalla();
+    write!(f, "P6\n{} {}\n255\n", ancho, alto).unwrap();
     let px: Vec<u8> = marco.iter().flat_map(|q| [(q >> 16) as u8, (q >> 8) as u8, *q as u8]).collect();
     f.write_all(&px).unwrap();
 }
@@ -247,7 +284,11 @@ fn main() {
         use std::os::unix::fs::MetadataExt;
         escena.dispositivo = m.rdev();
     }
-    let mut marco = vec![0u32; (ANCHO * ALTO) as usize];
+    if let Some((a, b)) = opcion("--pantalla").and_then(|t| t.split_once('x').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))) {
+        let _ = PANTALLA.set((a, b));
+    }
+    let (ancho, alto) = pantalla();
+    let mut marco = vec![0u32; (ancho * alto) as usize];
     let mut clientes: HashMap<Cliente, DelCliente> = HashMap::new();
     let mut siguiente: Cliente = 1;
     let mut alguno = false;
@@ -265,6 +306,8 @@ fn main() {
         let i_tr = pfd.len();
         if let Some(t) = &tr {
             pfd.push(libc::pollfd { fd: t.sock.as_raw_fd(), events: libc::POLLIN, revents: 0 });
+            // H9: sus tubos.
+            pfd.extend(t.tubos.vigilar().into_iter().map(|(fd, ev, _)| libc::pollfd { fd, events: ev, revents: 0 }));
         }
         for c in clientes.values() {
             if let Salida::Directo(s) = &c.salida {
@@ -284,10 +327,15 @@ fn main() {
                 // Bloqueante: solo se lee cuando `poll` dice que hay algo.
                 sock.set_nonblocking(false).unwrap();
                 println!("compositor-pc: puente conectado");
-                tr = Some(Transporte { sock, entrada: Vec::new(), memorias: HashMap::new(), siguiente_memoria: 0 });
+                tr = Some(Transporte { sock, entrada: Vec::new(), memorias: HashMap::new(), siguiente_memoria: 0, tubos: Default::default() });
             }
         }
         let mut fuera = Vec::new();
+        if let Some(t) = tr.as_mut() {
+            let mut v = Vec::new();
+            t.tubos.mover(&mut v);
+            t.tramas(v);
+        }
         // Lo del puente.
         let listo_tr = pfd.get(i_tr).is_some_and(|f| f.revents & (libc::POLLIN | libc::POLLHUP) != 0);
         if listo_tr && tr.is_some() {
@@ -328,9 +376,32 @@ fn main() {
                             unsafe { libc::pwrite(fd, t.datos[12..].as_ptr().cast(), t.datos.len() - 12, desde as libc::off_t) };
                         }
                     }
+                    p::TUBO_NUEVO if t.datos.len() == 4 => tr.as_mut().unwrap().tubos.anunciado(u32::from_le_bytes(t.datos[..4].try_into().unwrap())),
+                    p::TUBO_LEIDO if t.datos.len() == 8 => {
+                        let (n, k) = (u32::from_le_bytes(t.datos[..4].try_into().unwrap()), u32::from_le_bytes(t.datos[4..8].try_into().unwrap()));
+                        tr.as_mut().unwrap().tubos.leido(n, k);
+                    }
+                    p::TUBO_DATOS | p::TUBO_FIN if t.datos.len() >= 4 => {
+                        let n = u32::from_le_bytes(t.datos[..4].try_into().unwrap());
+                        let tt = tr.as_mut().unwrap();
+                        let mut v = Vec::new();
+                        if t.tipo == p::TUBO_DATOS {
+                            tt.tubos.datos(n, &t.datos[4..], &mut v);
+                        } else {
+                            tt.tubos.fin(n, &mut v);
+                        }
+                        tt.tramas(v);
+                    }
                     p::DATOS => {
                         let Some((numeros, bytes)) = p::partir_datos(&t.datos) else { continue };
-                        let llaves: Vec<u32> = numeros.iter().filter_map(|n| tr.as_ref().unwrap().memorias.get(n).copied()).collect();
+                        // Una memoria, o un tubo que pidió el puente (el extremo de escribir de una tubería nueva).
+                        let llaves: Vec<u32> = numeros
+                            .iter()
+                            .filter_map(|n| {
+                                let tt = tr.as_mut().unwrap();
+                                tt.memorias.get(n).copied().or_else(|| tt.tubos.dar(*n).map(|fd| tabla.borrow_mut().poner(fd)))
+                            })
+                            .collect();
                         if let Some(c) = clientes.get_mut(&id) {
                             if !atender(id, c, bytes, &llaves, &mut escena, &tabla, &mut tr) {
                                 fuera.push(id);
@@ -370,7 +441,7 @@ fn main() {
         // La captura, cuando se va el primer cliente, antes de quitar lo suyo: con su ventana aún en pantalla (y lo
         // de los demás, como un fondo de swaybg).
         if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && !numeradas && !capturada && captura_tras.is_none()) {
-            escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
+            escena.componer(&mut marco, ancho, alto, ancho as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);
             capturada = true;
@@ -394,7 +465,7 @@ fn main() {
         // Componer, y avisar a quien esperaba su cuadro.
         let ms = empiezo.elapsed().as_millis() as u32;
         let mut avisos = Vec::new();
-        escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, ms, &mut |cl, aviso, ms| avisos.push((cl, aviso, ms)));
+        escena.componer(&mut marco, ancho, alto, ancho as usize, ms, &mut |cl, aviso, ms| avisos.push((cl, aviso, ms)));
         if let Some(f) = fichero.as_ref().filter(|_| !capturada && captura_tras.is_some_and(|t| empiezo.elapsed().as_millis() >= t)) {
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);
@@ -412,7 +483,27 @@ fn main() {
                 vaciar(c, &tabla, &mut tr);
             }
         }
-        escena.pendientes.clear();
+        // H9: la entrada que salió de las peticiones (el teclado a una ventana nueva, las ofertas del portapapeles, los
+        // configure al redimensionar) y lo del portapapeles para las fuentes.
+        for (cl, ev) in core::mem::take(&mut escena.pendientes) {
+            if let (Some(c), Some(de)) = (clientes.get_mut(&cl), escena.clientes.get_mut(&cl)) {
+                escena::escribir_entrada(&mut c.con, de, ev, ms);
+                vaciar(c, &tabla, &mut tr);
+            }
+        }
+        for (cl, aviso) in core::mem::take(&mut escena.avisos_portapapeles) {
+            match clientes.get_mut(&cl) {
+                Some(c) => {
+                    escena::portapapeles::escribir_aviso(&mut c.con, aviso);
+                    vaciar(c, &tabla, &mut tr);
+                }
+                None => {
+                    if let Some(fd) = aviso.llave().and_then(|l| tabla.borrow_mut().sacar(l)) {
+                        unsafe { libc::close(fd) };
+                    }
+                }
+            }
+        }
         if salir_sin_clientes && alguno && clientes.is_empty() {
             break;
         }
