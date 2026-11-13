@@ -1856,5 +1856,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   la pestaña de las ventanas sin barra pintada con el kit. Tanda completa (prueba, av, gpu, diag, escritorio,
   tarjeta, usb, linux, arch, vm, 2, wayland): todo rc=0 sobre 130bfcb. Prueba hostil nueva:
   `tests_s29::pestana_del_compositor` (medidas falsas, esquina transparente).
-- Pendiente del usuario: el plan de iconos (Material Symbols para la interfaz, colección propia tonal, temas de
-  Linux instalables, `.info` de la caja Amiga e iconos de la caja Linux) o meter un tema de Linux por defecto.
+- Iconos, decidido por el usuario ("me gusta tu plan"): (1) Material Symbols Rounded (Apache 2.0) como fuente
+  recortada para los símbolos de la interfaz; (2) colección propia de DashOS (unos 60: carpetas, tipos de fichero,
+  volúmenes, aparatos) que toma el color del fondo, y temas de Linux (norma freedesktop) instalables por el usuario,
+  ninguno de serie (Papirus es GPL, Adwaita CC-BY-SA); falta ver si hay un pintor de SVG sin std; (3) leer los
+  `.info` de la caja Amiga (clásicos, NewIcons, GlowIcons, PNG de OS4/MOS) y los iconos de los programas de la caja
+  Linux. Solo el formato: ninguna colección de Amiga en el repo; los temas retro, dibujados aquí. Va después del
+  explorador.
