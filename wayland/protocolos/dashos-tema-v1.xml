@@ -4,7 +4,7 @@
     Protocolo propio de DashOS (S10c, C3). Licencia MPL-2.0, como el resto de DashOS.
   </copyright>
 
-  <interface name="dashos_tema_v1" version="4">
+  <interface name="dashos_tema_v1" version="5">
     <description summary="el tema del sistema: color de acento y modo">
       El compositor guarda el tema y se lo dice a cada programa que se suscribe: al enlazar y cada vez que cambia.
       Solo el centro de control lo cambia; a otro, poner es un error de protocolo.
@@ -60,6 +60,17 @@
         protocolo. Uno fuera de 1 a 9 no hace nada.
       </description>
       <arg name="numero" type="uint"/>
+    </request>
+
+    <request name="estado" since="5">
+      <description summary="el estado de la red y del volumen, para la barra">
+        S27, oleada 2: el panel rápido (que lleva el volumen y pregunta a la red) lo dice aquí y el compositor se lo pasa a
+        la barra (evento `estado`), que lo enseña en su píldora de estado. Solo el panel; a otro, error de protocolo.
+        Red: 0 sin servicio, 1 sin dirección, 2 conectada. Nivel de 0 a 100 (más, se corta); silencio 0 o 1.
+      </description>
+      <arg name="red" type="uint"/>
+      <arg name="nivel" type="uint"/>
+      <arg name="silencio" type="uint"/>
     </request>
 
     <event name="tema">
@@ -118,6 +129,15 @@
         S27: solo al panel rápido. 1 subir, -1 bajar, 0 silenciar o quitar el silencio. La tecla no llega a la ventana.
       </description>
       <arg name="paso" type="int"/>
+    </event>
+    <event name="estado" since="5">
+      <description summary="el estado de la red y del volumen">
+        S27, oleada 2: solo a la barra, al suscribirse (si ya se sabe) y cada vez que el panel lo cambia. Lo mismo que la
+        petición, ya recortado.
+      </description>
+      <arg name="red" type="uint"/>
+      <arg name="nivel" type="uint"/>
+      <arg name="silencio" type="uint"/>
     </event>
   </interface>
 </protocol>

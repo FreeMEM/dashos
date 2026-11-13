@@ -106,6 +106,8 @@ const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 /// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador, y el
 /// Workbench (doble clic en un programa de `Programas`).
 const LANZADORES: &[&str] = &["barra", "workbench"];
+/// Quién puede preguntar quién está delante (S27, oleada 2: la cabecera del panel rápido).
+const VEN_DELANTE: &[&str] = &["panel", "barra"];
 
 /// El registro de seguridad (U6): las últimas `REGISTRO_MAX` negativas y fallos en memoria, y en el disco, en su
 /// cajón (`CAMINO_REGISTRO`): la cuenta (u64) y un anillo de `DISCO_MAX` entradas. Al arrancar lee lo que hubiera.
@@ -1408,6 +1410,24 @@ fn principal() -> u64 {
                     };
                     println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                DELANTE => {
+                    // S27: el nombre de quien está delante, solo al panel y a la barra (los nombres que da `inicio`).
+                    let cuenta = CUENTAS.iter().find(|c| c.0 == activa && activa != 0);
+                    let mut r = [0u8; LARGO_DELANTE];
+                    match (yo.is_some_and(|f| es(&f, VEN_DELANTE)), cuenta) {
+                        (true, Some(c)) => {
+                            let n = c.1.len().min(16);
+                            r[4..4 + n].copy_from_slice(&c.1.as_bytes()[..n]);
+                            dashos::canal_escribir(respuesta, &r, &[]);
+                        }
+                        (puede, _) => {
+                            if !puede && let Some(f) = yo {
+                                println!("  [sesiones] {} pide quién está delante: no puede", nombre(&f.nombre));
+                            }
+                            dashos::canal_escribir(respuesta, &PROTEGIDO.to_le_bytes(), &[]);
+                        }
+                    }
                 }
                 ACTIVA => {
                     // U6: si su sesión es la de delante (1), si está detrás (0) o si no tiene (-2).

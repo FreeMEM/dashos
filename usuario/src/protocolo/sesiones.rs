@@ -91,6 +91,11 @@ pub const CANAL_SISTEMA: u32 = 19;
 /// (u32) y lo que su grupo tiene cobrado en bytes (u64): páginas, canales y lo que crea, lo que el kernel le cobra.
 pub const MEMORIA: u32 = 20;
 pub const ENTRADA_MEMORIA: usize = 32;
+/// Del panel rápido o de la barra (S27, oleada 2): quién está delante (orden). Contesta un i32 (0, o -2 si quien pide no
+/// es uno de ellos o no hay nadie delante) y 16 bytes con el nombre de la persona, rellenos de ceros. A otro, -2 y nada
+/// más: el nombre de quien está sentado no se le dice a cualquier programa.
+pub const DELANTE: u32 = 21;
+pub const LARGO_DELANTE: usize = 20;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los

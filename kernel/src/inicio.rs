@@ -154,10 +154,6 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
     // Los dos, con el permiso de la clase de plazo (S3).
     ("sonido", programa!("sonido"), &[("plazo", PLAZO)], &["sonido"]),
-    // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
-    // el del sonido para el volumen general. Tras el servicio de sonido, que es quien sirve ese canal.
-    #[cfg(feature = "virt")]
-    ("panel", programa!("panel"), &[], &["ventanas", "centro", "sonido"]),
     // S10: el servicio de avisos (las notificaciones), que nombra "avisos" antes que nadie. Sigue las sesiones (`inicio`
     // da a `sesiones` una copia sin marca de su canal). Antes que la barra, que se suscribe a él.
     #[cfg(feature = "virt")]
@@ -213,6 +209,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("red-prueba", programa!("red-prueba"), &[], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("sin-red", programa!("sin-red"), &[], &[]),
+    // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
+    // el del sonido para el volumen general. S27, oleada 2: también "sesiones" (quién está delante, para su cabecera) y
+    // "red" (el estado de la red, para su mosaico y la barra; esa llave es también el permiso de red). Tras los servicios
+    // de sonido y de red, que son quienes leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 centro, 4 sonido, 5 red.
+    #[cfg(feature = "virt")]
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(feature = "virt")]
     ("caida", programa!("caida"), &[], &["caida"]),

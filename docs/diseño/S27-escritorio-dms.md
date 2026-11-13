@@ -198,7 +198,41 @@ Detalle en `docs/bitacoras/escritorio-dms.md`.
   o pone el silencio, lo manda al servicio de sonido y enseña una píldora abajo en el centro (320 × 56, contenedor
   alto, altavoz, pista y valor) durante 1,5 s tras la última tecla. Una ráfaga repinta la misma capa.
 
-### Decisiones para el usuario
+## 6. Lo hecho en la segunda oleada
+
+El usuario aceptó las siete recomendaciones de arriba (2026-11-13). Detalle en la bitácora.
+
+- **Centro de control** (el panel rápido, `usuario/src/bin/panel.rs`), de 440 de ancho:
+  - Cabecera: la inicial de quien está delante en un círculo del contenedor primario, su nombre (de `sesiones`, la
+    petición nueva `DELANTE`, solo para el panel y la barra), "Encendido hace N min", Editar y Bloquear (botón de icono
+    tonal).
+  - Deslizadores en filas redondas del contenedor alto: el volumen (el altavoz pone o quita el silencio, un clic en la
+    pista pone ese nivel, y los botones − y + de 10 en 10) y el brillo, apagado y con "Sin control aquí" (no hay aún
+    quien lleve el brillo).
+  - Rejilla de dos columnas: la red (lo que dice el servicio de red: "Conectada · 10.0.2.15", "Sin dirección" o "Sin
+    red"), el modo oscuro y bloquear. Cada mosaico con su icono en un cuadrado redondeado (en el primario si está
+    encendido), el nombre y el estado. El modo de edición no cambia.
+- **Píldora de estado de la barra** con el estado de verdad: el panel pregunta a la red cada 10 s y lleva el volumen;
+  cuando cambia algo, lo da al compositor (petición `estado`, `dashos_tema_v1` versión 5, solo del panel), que se lo
+  pasa a la barra. Sin red, el icono de red sale tachado y en el color suave; con el silencio, el altavoz lleva una
+  cruz; las ondas siguen al nivel.
+- **El panel tiene ahora los canales "sesiones" y "red"**. La llave de "red" es también el permiso de red: el panel
+  podría abrir conexiones. Ver la pregunta 9.
+- **Menú de apagado: no.** No hay en DashOS forma de apagar ni de reiniciar (ni llamada del kernel ni servicio): hace
+  falta antes una llamada al kernel con su permiso. El botón de la cabecera es Bloquear, que sí funciona.
+- Todo con los papeles del tema del kit (primario, contenedores, contorno, apagado al 38 % y al 12 %): servirá con los
+  cinco temas (Claro, Oscuro, AOS4, MOS, Magic WB) cuando estén.
+
+### Preguntas de la segunda oleada
+
+8. **Apagar y reiniciar.** Hace falta una llamada del kernel (PSCI en la Pi y en QEMU) y decidir quién puede usarla.
+   Recomiendo que solo `sesiones` la tenga, y que la pida el panel con la confirmación de `guardian` si hay otras
+   sesiones abiertas.
+9. **El estado de la red sin el permiso de red.** Hoy, para preguntar el estado, el panel tiene la llave del canal "red",
+   que también deja abrir conexiones. Recomiendo que el servicio de red sirva el estado por otro canal de solo lectura,
+   y quitar al panel la llave de "red".
+
+### Decisiones para el usuario (primera oleada, aceptadas)
 
 3. **La barra translúcida.** Recomiendo dejarla como está (88 %: se intuye el fondo, el texto se lee igual). Más
    transparente cuesta leer con fondos claros.

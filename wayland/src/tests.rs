@@ -1610,7 +1610,7 @@ mod entrada {
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
             Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 4 },
+            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 5 },
         ]
     }
 
@@ -2124,6 +2124,43 @@ mod entrada {
         escena.tecla(0x80, true);
         assert_eq!(escena.espacio, 3);
         assert!(escena.avisos_volumen.is_empty());
+    }
+
+    /// S27, oleada 2: el panel da el estado de la red y del volumen y el compositor se lo pasa a la barra (recortado); a
+    /// otro programa, darlo es un error; lo mismo dos veces no se repite; una barra que llega después lo recibe al
+    /// suscribirse.
+    #[test]
+    fn el_estado_del_panel_a_la_barra() {
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        escena.barras.push(5);
+        escena.barras.push(6);
+        escena.abren_panel.push(3);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(5).uint(60).fin();
+            mandar(escena, con, c, &e)
+        };
+        let (mut otro, mut panel, mut barra, mut tarde) = (Conexion::new(), Conexion::new(), Conexion::new(), Conexion::new());
+        suscribir(&mut escena, &mut otro, 2);
+        suscribir(&mut escena, &mut panel, 3);
+        let ev = suscribir(&mut escena, &mut barra, 5);
+        assert!(!ev.iter().any(|x| x.1 == dashos_tema_v1::ev::ESTADO), "sin estado aún, nada");
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESTADO).uint(9).uint(150).uint(7).fin();
+        otro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        otro.atender(&globales(), &mut escena.de(2));
+        assert!(otro.roto.is_some(), "un programa cualquiera dio el estado");
+        assert_eq!(escena.estado_escritorio, None);
+        mandar(&mut escena, &mut panel, 3, &e);
+        assert_eq!(escena.estado_escritorio, Some((2, 100, 1)));
+        assert_eq!(core::mem::take(&mut escena.avisos_estado), [(5, 60)]);
+        mandar(&mut escena, &mut panel, 3, &e);
+        assert!(escena.avisos_estado.is_empty(), "lo mismo otra vez");
+        let ev = suscribir(&mut escena, &mut tarde, 6);
+        let est = ev.iter().find(|x| x.1 == dashos_tema_v1::ev::ESTADO).expect("al suscribirse");
+        assert_eq!(est.2, [2u32.to_le_bytes(), 100u32.to_le_bytes(), 1u32.to_le_bytes()].concat());
     }
 
     /// S27: al cerrar la ventana que tiene el teclado, el teclado pasa a la de arriba que queda (antes se quedaba sin

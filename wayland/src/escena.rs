@@ -565,6 +565,10 @@ pub struct Escena<M: Memorias> {
     pub avisos_espacios: Vec<(Cliente, u32, u32, u32)>,
     /// Las teclas del volumen (S27), por decir al panel rápido: cliente, objeto y paso. Con `avisar_volumen`.
     pub avisos_volumen: Vec<(Cliente, u32, i32)>,
+    /// S27, oleada 2: el estado de la red y del volumen que dio el panel (red, nivel, silencio), para la barra.
+    pub estado_escritorio: Option<(u32, u32, u32)>,
+    /// Lo de arriba, por decir a cada barra (barra y objeto). Con `avisar_estado`.
+    pub avisos_estado: Vec<(Cliente, u32)>,
     /// Las capas que acaban de salir, con su sitio (S10: las pruebas del panel, bajo la barra): quien atiende lo dice y
     /// lo vacía.
     pub capas_colocadas: Vec<(Cliente, i32, i32)>,
@@ -698,14 +702,21 @@ pub fn avisar_titulo(con: &mut Conexion, objeto: u32, titulo: &str) {
 /// Lo más largo que se dice de un título (S10), en bytes: lo que cabe en la barra.
 pub const MAX_TITULO: usize = 96;
 
-/// S27: los espacios de trabajo, a la barra (solo si enlazó la versión 3).
+/// S27: los espacios de trabajo, a la barra (solo si enlazó la versión 4).
 pub fn avisar_espacios(con: &mut Conexion, objeto: u32, actual: u32, ocupados: u32) {
     if con.objetos.get(&objeto).is_some_and(|o| o.version >= 4) {
         con.salida.empezar(objeto, dashos_tema_v1::ev::ESPACIOS).uint(actual).uint(ocupados).fin();
     }
 }
 
-/// S27: una tecla del volumen, al panel rápido (solo si enlazó la versión 3).
+/// S27, oleada 2: el estado de la red y del volumen, a la barra (solo si enlazó la versión 5).
+pub fn avisar_estado(con: &mut Conexion, objeto: u32, (red, nivel, silencio): (u32, u32, u32)) {
+    if con.objetos.get(&objeto).is_some_and(|o| o.version >= 5) {
+        con.salida.empezar(objeto, dashos_tema_v1::ev::ESTADO).uint(red).uint(nivel).uint(silencio).fin();
+    }
+}
+
+/// S27: una tecla del volumen, al panel rápido (solo si enlazó la versión 4).
 pub fn avisar_volumen(con: &mut Conexion, objeto: u32, paso: i32) {
     if con.objetos.get(&objeto).is_some_and(|o| o.version >= 4) {
         con.salida.empezar(objeto, dashos_tema_v1::ev::VOLUMEN).int(paso).fin();
@@ -761,6 +772,8 @@ impl<M: Memorias> Escena<M> {
             espacios_dichos: (0, 0),
             avisos_espacios: Vec::new(),
             avisos_volumen: Vec::new(),
+            estado_escritorio: None,
+            avisos_estado: Vec::new(),
             capas_colocadas: Vec::new(),
             personas: BTreeMap::new(),
             detras: Vec::new(),
@@ -1229,6 +1242,7 @@ impl<M: Memorias> Escena<M> {
         self.barras.retain(|&c| c != cliente);
         self.avisos_lanzador.retain(|t| t.0 != cliente);
         self.avisos_titulo.retain(|t| t.0 != cliente);
+        self.avisos_estado.retain(|t| t.0 != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
         if let Some(b) = self.bloqueo.as_mut().filter(|b| b.cliente == cliente) {
             b.vivo = false;
@@ -2005,6 +2019,19 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     escena.pedir_panel();
                 }
             }
+            // S27, oleada 2: el estado de la red y del volumen, del panel a la barra; solo el panel.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::ESTADO => {
+                if !escena.abren_panel.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo el panel rápido da el estado"));
+                }
+                let nuevo = (args[0].uint().min(2), args[1].uint().min(100), (args[2].uint() != 0) as u32);
+                if escena.estado_escritorio != Some(nuevo) {
+                    escena.estado_escritorio = Some(nuevo);
+                    let barras = &escena.barras;
+                    let suyos: Vec<(Cliente, u32)> = escena.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+                    escena.avisos_estado.extend(suyos);
+                }
+            }
             // S27: ver otro espacio de trabajo, como Super y el número; solo la barra.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::ESPACIO => {
                 if !escena.barras.contains(&self.cliente) {
@@ -2627,6 +2654,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     // Y los espacios de trabajo (S27), si enlazó la 3.
                     let (e, o) = (self.escena.espacio, self.escena.ocupados());
                     avisar_espacios(con, id, e, o);
+                    // Y el estado de la red y del volumen, si el panel ya lo dio (oleada 2).
+                    if let Some(est) = self.escena.estado_escritorio {
+                        avisar_estado(con, id, est);
+                    }
                 }
             }
         }
