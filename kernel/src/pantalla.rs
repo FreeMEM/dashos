@@ -37,8 +37,20 @@ pub const L_BIG_ENDIAN: usize = 4;
 pub const L_MEMORIA: usize = 5;
 pub const L_SISTEMA: usize = 6;
 pub const L_CAJA: usize = 7;
+#[cfg(not(feature = "usb"))]
 const PRIMERA_FIJADA: usize = 8;
+#[cfg(not(feature = "usb"))]
 const LINEAS_PANEL: usize = 14;
+/// Con `usb` (la Pi 5): en lugar de la caja Amiga, cinco líneas del PCIe, el RP1 y sus dos xHCI (`rp1.rs`, desde
+/// `L_USB`), la última tecla o movimiento del ratón (`L_TECLA`) y, debajo, lo que importa de `xhci0` y `xhci1`.
+#[cfg(feature = "usb")]
+pub const L_USB: usize = 7;
+#[cfg(feature = "usb")]
+pub const L_TECLA: usize = 12;
+#[cfg(feature = "usb")]
+const PRIMERA_FIJADA: usize = 13;
+#[cfg(feature = "usb")]
+const LINEAS_PANEL: usize = 21;
 const LARGO: usize = 160;
 
 #[derive(Clone, Copy)]
@@ -191,11 +203,36 @@ impl Estado {
             };
             self.pintar_panel(L_CAJA);
         }
-        let caja = tiene("[caja-amiga]")
+        // Con `usb`: la última tecla (o ratón) en su línea; de los controladores, lo que dice cómo van.
+        #[cfg(feature = "usb")]
+        if tiene("[xhci") && (tiene("] tecla:") || tiene("] ratón:")) {
+            let mut ini = 0;
+            while ini < l.n && (l.b[ini] == b'|' || l.b[ini] == b' ' || l.b[ini] > 0x7f) {
+                ini += 1;
+            }
+            let mut f = Linea::VACIA;
+            let _ = f.write_str("Teclado y ratón: ");
+            for &b in &l.b[ini..l.n] {
+                if f.n < LARGO {
+                    f.b[f.n] = b;
+                    f.n += 1;
+                }
+            }
+            f.color = BIEN;
+            self.panel[L_TECLA] = f;
+            self.pintar_panel(L_TECLA);
+            return;
+        }
+        #[cfg(feature = "usb")]
+        let xhci = tiene("[xhci")
+            && ["DMA bien", "MAL", "aparato", "no se activa", "HID de arranque", "no hay", "sin registros"].iter().any(|p| tiene(p));
+        #[cfg(not(feature = "usb"))]
+        let xhci = false;
+        let caja = xhci || tiene("[caja-amiga]")
             && ["el 68k dio", "saludo.exe: ", "saludo.exe acab", "hunk: hola", "hunk: 168", "no arrancan", "sin memoria para"]
                 .iter()
                 .any(|p| tiene(p));
-        if caja || tiene("caja-amiga acab") || tiene("inicio: caja-amiga no se lanza") || tiene("PÁNICO") {
+        if caja || tiene("caja-amiga acab") || tiene("inicio: caja-amiga no se lanza") || tiene("PÁNICO") || (cfg!(feature = "usb") && tiene("inicio: xhci")) {
             // Sin la marca "| ", los espacios del principio ni "[caja-amiga] ".
             let mut ini = 0;
             while ini < l.n && (l.b[ini] == b'|' || l.b[ini] == b' ') {
@@ -244,7 +281,7 @@ fn contiene(t: &[u8], p: &str) -> bool {
 
 /// El color de una línea por lo que dice: verde si acaba bien, magenta si algo fue mal.
 fn color_de(t: &[u8]) -> u32 {
-    if ["MAL", "NO ", "no se lanza", "no arrancan", "PÁNICO"].iter().any(|p| contiene(t, p)) {
+    if ["MAL", "NO ", "no se lanza", "no arrancan", "PÁNICO", "no se activa"].iter().any(|p| contiene(t, p)) {
         MAL
     } else if contiene(t, "bien") || contiene(t, "BIEN") {
         BIEN

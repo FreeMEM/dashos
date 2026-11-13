@@ -69,14 +69,24 @@ impl Conexion {
         }
         let ipw = u32::from_le_bytes(ip);
         let peticion = [p::CONECTAR, p::IPV4, puerto as u32, tam as u32, ipw, 0, 0, 0];
-        if crate::canal_escribir(servicio, palabras(&peticion), &[e as u32]) != 0 {
-            crate::cerrar(e as u32);
-            c.soltar();
-            return Err(p::SIN_DIRECCION);
+        let fin = crate::ahora_us() + plazo_us;
+        // Con la cola del servicio llena (-8, E_LIMITE del kernel: el servicio va atrasado, pasa con el PC cargado), se
+        // espera y se reintenta dentro del plazo. Antes salía en el acto como SIN_DIRECCION y `red-gloton` contaba 50
+        // "no" seguidos que no eran el tope.
+        loop {
+            let r = crate::canal_escribir(servicio, palabras(&peticion), &[e as u32]);
+            if r == 0 {
+                break;
+            }
+            if r != -8 || crate::ahora_us() >= fin {
+                crate::cerrar(e as u32);
+                c.soltar();
+                return Err(if r == -8 { p::LIMITE } else { p::SIN_DIRECCION });
+            }
+            crate::dormir_us(2_000);
         }
         let mut b = [0u32; 4];
         let mut ll = [0u32; 8];
-        let fin = crate::ahora_us() + plazo_us;
         loop {
             let ahora = crate::ahora_us();
             if ahora >= fin {

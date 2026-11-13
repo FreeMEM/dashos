@@ -1659,3 +1659,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   GadTools/ReAction/MUI/asl/diskfont/layers, `BorderRPort`. Decisión del usuario: las líneas de Dash en
   `arranque_virt.txt` piden FreeMEMLang instalado (o un fichero aparte).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag y -escritorio: BIEN.
+
+### 2026-11-13 04:40: USB de la Pi 5 (PCIe, RP1, dos xHCI) y un arreglo del cliente de red, en revision
+- Fusionada `pi5-usb`: `kernel/src/rp1.rs` mira el PCIe de la BCM2712, el RP1 y sus dos xHCI (8 pruebas contra un
+  modelo falso); el controlador xhci pasa a `usuario/src/xhci_comun.rs` con `xhci0` y `xhci1`, sondeo cada 10 ms,
+  comprobación del DMA con una orden vacía. Tercer kernel en la tarjeta (`dashos-usb.img`) que cuenta cada paso en el
+  panel, y el escritorio de la Pi 5 con USB. `config.txt` con `pciex4_reset=0`. Supuestos (registros del PCIe como en
+  la Pi 4, lo que deja el firmware) escritos en `docs/bitacoras/pi5.md`. Prueba nueva `make arranque-virt-usb`.
+- Arreglo: `red_cliente::conectar` con la cola del servicio llena (E_LIMITE, el servicio atrasado con el PC cargado)
+  espera y reintenta dentro del plazo; antes salía como SIN_DIRECCION y `red-gloton` fallaba dos veces seguidas.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
+  `make tarjeta-pi5` sale.

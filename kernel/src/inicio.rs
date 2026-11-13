@@ -36,10 +36,20 @@ static INICIO: &[u8] = programa!("inicio");
 /// sin escritorio, ni USB, ni disco. La caja no tiene "ventanas" ni "archivos": se queda sin compositor y sin SYS:, y
 /// prueba lo suyo (el JIT, exec y dos nativas, saludo.exe); ventana.exe y hostil.exe, que necesitan el compositor, salen
 /// mal, como se espera.
-#[cfg(all(feature = "diagnostico", not(feature = "escritorio")))]
+#[cfg(all(feature = "diagnostico", not(feature = "escritorio"), not(feature = "usb")))]
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &[]),
+];
+
+/// El USB de la Pi 5 (opción `usb` sin `escritorio`, `make pi5-usb`): la consola y los dos xHCI del RP1, sin
+/// compositor: cada tecla y cada movimiento del ratón salen en el registro (y en el panel). Sus llaves: 1, el permiso
+/// DMA (con el desplazamiento de bus del PCIe del RP1); 2, sus registros. Sin interrupción: miran sus eventos cada 10 ms.
+#[cfg(all(feature = "usb", not(feature = "escritorio")))]
+static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
+    ("consola", programa!("consola"), &[("registro", REGISTRO), ("serie", REGISTROS)], &[]),
+    ("xhci0", programa!("xhci0"), &[("dma-xhci0", PERMISO_DMA), ("xhci0", REGISTROS)], &[]),
+    ("xhci1", programa!("xhci1"), &[("dma-xhci1", PERMISO_DMA), ("xhci1", REGISTROS)], &[]),
 ];
 
 /// Con `escritorio` (la Pi 5, paso 4): el escritorio en la pantalla que tenía la consola del kernel (`pantalla_del_kernel`),
@@ -54,6 +64,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("ventana-b", programa!("ventana-b"), &[], &["ventanas"]),
     ("ajustes", programa!("ajustes"), &[], &["ventanas"]),
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas"]),
+    // Con `usb`: el teclado y el ratón por los dos xHCI del RP1, al compositor (llave 3, "ventanas").
+    #[cfg(feature = "usb")]
+    ("xhci0", programa!("xhci0"), &[("dma-xhci0", PERMISO_DMA), ("xhci0", REGISTROS)], &["ventanas"]),
+    #[cfg(feature = "usb")]
+    ("xhci1", programa!("xhci1"), &[("dma-xhci1", PERMISO_DMA), ("xhci1", REGISTROS)], &["ventanas"]),
 ];
 
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
@@ -545,6 +560,19 @@ pub fn lanzar() -> bool {
             }
         }
     }
+    // La Pi 5 (opción `usb`): los dos xHCI del RP1, si el PCIe y el RP1 están como hacen falta (`diagnostico::usb_pi5`
+    // lo mira y lo cuenta). Sus registros (64 KB: los del xHCI y los globales del DWC3) y un permiso DMA cada uno, con el
+    // desplazamiento de bus del `dma-ranges` del PCIe (física + 64 GB). Se miran antes de dar la pantalla al compositor.
+    #[cfg(feature = "usb")]
+    if let Some(r) = crate::diagnostico::usb_pi5(&d) {
+        for (i, fisica) in r.usb.iter().enumerate() {
+            let Some(fisica) = *fisica else { continue };
+            let (nombre, dma) = if i == 0 { ("xhci0", "dma-xhci0") } else { ("xhci1", "dma-xhci1") };
+            apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano: 0x1_0000 }, DERECHOS));
+            let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, r.dma)));
+            apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
+        }
+    }
     // La pantalla que dejó el firmware (U4): un nodo `simple-framebuffer` del árbol, que pone el cargador UEFI. Su
     // memoria, como memoria del firmware (está fuera de la RAM o en una zona reservada), y sus medidas en un objeto de
     // memoria: ancho, alto, bytes por línea, formato (0 a8r8g8b8, 1 a8b8g8r8) y desplazamiento dentro de la página.
@@ -652,7 +680,12 @@ pub fn lanzar() -> bool {
         let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
         apuntar(&mut llaves, "dma-vgpu", PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
-    for (nombre, dma, clase) in [("xhci", "dma-xhci", 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
+    // Con `usb` (la prueba en QEMU `virt` de la imagen del USB de la Pi 5), el xHCI de QEMU hace de `xhci0`.
+    #[cfg(feature = "usb")]
+    let xhci = ("xhci0", "dma-xhci0");
+    #[cfg(not(feature = "usb"))]
+    let xhci = ("xhci", "dma-xhci");
+    for (nombre, dma, clase) in [(xhci.0, xhci.1, 0x0C_0330), ("nvme", "dma-nvme", 0x01_0802)] {
         if let Some((fisica, tamano, irq, _)) = aparato_pci(&d, Pci::Clase(clase), 0x10, nombre) {
             apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
             if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {

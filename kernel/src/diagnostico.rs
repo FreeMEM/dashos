@@ -79,7 +79,95 @@ pub fn al_empezar(d: &Dtb) {
         ),
     );
     pantalla::panel(pantalla::L_BIG_ENDIAN, TEXTO, format_args!("Big-endian en EL0, de verdad: falta probarlo (más abajo en el arranque)"));
+    #[cfg(not(feature = "usb"))]
     pantalla::panel(pantalla::L_CAJA, TITULO, format_args!("Caja Amiga (JIT de Emu68, big-endian): esperando a que arranque"));
+    #[cfg(feature = "usb")]
+    {
+        pantalla::panel(pantalla::L_USB, TITULO, format_args!("PCIe del RP1 (USB): se mira al final del arranque"));
+        pantalla::panel(pantalla::L_TECLA, TEXTO, format_args!("Teclado y ratón: aún nada (pulsar una tecla o mover el ratón cuando el USB diga BIEN)"));
+    }
+}
+
+/// La Pi 5 (opción `usb`): el PCIe del RP1, el RP1 y sus dos xHCI, tal como los dejó el firmware (`rp1.rs`), en el panel
+/// (desde `L_USB`) y en el registro. Lo que hay que dar a `xhci0` y `xhci1`: la física de cada uno y el desplazamiento
+/// de bus de su DMA. Con la MMU del kernel ya hecha (la ventana del RP1, el GB 124, solo está en ese mapa).
+#[cfg(feature = "usb")]
+pub fn usb_pi5(d: &Dtb) -> Option<crate::rp1::Resultado> {
+    use crate::rp1;
+    let Some(pcie) = d.por_nombre("pcie@1000120000\0") else {
+        kprintln!("rp1: sin PCIe de la BCM2712 (el árbol no trae pcie@1000120000): no es una Pi 5");
+        pantalla::panel(pantalla::L_USB, TEXTO, format_args!("PCIe del RP1: sin PCIe de la BCM2712 en el árbol (no es una Pi 5): nada que mirar"));
+        return None;
+    };
+    let mut datos = rp1::Datos { rc: d.reg_cpu(&pcie, 0).map_or(0, |r| r.0), ..Default::default() };
+    // `ranges` y `dma-ranges` del PCIe: (flags, PCI alto, PCI bajo; CPU, 2 celdas; tamaño, 2 celdas). La ventana de
+    // memoria de 32 bits (espacio 0b10 en los bits 25:24 de las flags) y la entrada que lleva a la RAM desde 0.
+    let entradas = |nombre: &str, f: &mut dyn FnMut(u32, u64, u64, u64)| {
+        if let Some((datos, largo)) = d.propiedad(&pcie, nombre) {
+            for i in 0..largo / 28 {
+                let c = |k: usize| d.celda(datos, 7 * i + k) as u64;
+                f(c(0) as u32, c(1) << 32 | c(2), c(3) << 32 | c(4), c(5) << 32 | c(6));
+            }
+        }
+    };
+    entradas("ranges", &mut |flags, pci, cpu, tam| {
+        if (flags >> 24) & 3 == 2 && datos.salida.is_none() {
+            datos.salida = Some((pci, d.traducir(&pcie, cpu), tam));
+        }
+    });
+    entradas("dma-ranges", &mut |_, pci, cpu, tam| {
+        if cpu == 0 && datos.entrada.is_none() {
+            datos.entrada = Some((pci, cpu, tam));
+        }
+    });
+    // El nodo `rp1`: `ranges` = (dirección del RP1, 2 celdas; PCI, 3 celdas; tamaño, 2 celdas).
+    if let Some(n) = d.por_nombre("rp1\0")
+        && let Some((r, largo)) = d.propiedad(&n, "ranges")
+        && largo >= 28
+    {
+        let c = |k: usize| d.celda(r, k) as u64;
+        datos.rp1 = Some((c(0) << 32 | c(1), c(3) << 32 | c(4)));
+    }
+    let mut k = 0;
+    d.cada_nodo(|n| {
+        if k < 2 && d.es_compatible(n, "snps,dwc3")
+            && let Some((dir, _)) = d.reg(n, 0)
+            && datos.rp1.is_some_and(|(base, _)| dir >= base && dir < base + 0x0100_0000)
+        {
+            datos.usb[k] = Some(dir);
+            k += 1;
+        }
+    });
+    kprintln!("rp1: el árbol dice {:x?}", datos);
+    struct Registros;
+    impl rp1::Bus for Registros {
+        fn leer(&mut self, f: u64) -> Option<u32> {
+            (crate::placa::es_periferico(f) && f % 4 == 0).then(|| crate::mmio::RegLe32::new(crate::mmu::virt(f as usize)).sondear()).flatten()
+        }
+        fn escribir(&mut self, f: u64, v: u32) {
+            if crate::placa::es_periferico(f) && f % 4 == 0 {
+                crate::mmio::RegLe32::new(crate::mmu::virt(f as usize)).escribir(v);
+            }
+        }
+    }
+    struct Panel;
+    impl rp1::Salida for Panel {
+        fn panel(&mut self, linea: usize, bien: Option<bool>, args: core::fmt::Arguments) {
+            let color = match bien {
+                Some(true) => BIEN,
+                Some(false) => MAL,
+                None => TEXTO,
+            };
+            kprintln!("rp1: {}", args);
+            pantalla::panel(pantalla::L_USB + linea, color, args);
+        }
+        fn registro(&mut self, args: core::fmt::Arguments) {
+            kprintln!("{}", args);
+        }
+    }
+    let r = rp1::examinar(&mut Registros, &datos, &mut Panel);
+    kprintln!("rp1: {:x?}", r);
+    r
 }
 
 /// La temperatura en milésimas de grado, para mostrarla.
