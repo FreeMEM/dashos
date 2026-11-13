@@ -34,8 +34,8 @@ esperar al compositor entre cuadros), `es2gears_wayland`
 (PREFIJO.wayland.png, PREFIJO.gears.png, PREFIJO.kms.png), espera sus cuadros por segundo y apaga.
 
 Con MODO "aspecto" (`make arranque-virt-aspecto`, S26), lo mismo hasta el prompt de root y después el aspecto de los
-programas de Linux: espera al agente del aspecto, abre `muestra-gtk3`, `muestra-gtk4` y foot, y captura la pantalla
-(PREFIJO.png).
+programas de Linux: espera al agente del aspecto y abre `muestra-gtk3`, `muestra-gtk4` y foot, uno a uno, con su
+captura (PREFIJO.gtk3.png, PREFIJO.gtk4.png y PREFIJO.foot.png).
 
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
@@ -230,21 +230,21 @@ if modo == "aspecto":
     clic_en_ventana()
     paso("systemctl is-active dashos-aspecto", r"linux: active\s*$|linux: active\n", 120)
     esperar(r"linux: aspecto: programas de Linux", 120)
-    clic_en_ventana()
-    teclear("prueba-aspecto muestra-gtk3 120 &")
-    esperar(r"muestra-gtk: GTK 3 en pantalla", 400)
-    time.sleep(3.0)
-    clic_en_ventana()
-    teclear("prueba-aspecto muestra-gtk4 100 &")
-    esperar(r"muestra-gtk: GTK 4 en pantalla|linux: .*Gdk-ERROR", 400)
-    time.sleep(3.0)
+    # Cada programa, solo y encima de la terminal (una ventana nueva sale arriba), con su captura; se cierra solo.
+    for n, nombre in ((3, "gtk3"), (4, "gtk4")):
+        antes = len(re.findall(r"muestra-gtk: adiós", texto()))
+        clic_en_ventana()
+        teclear(f"prueba-aspecto muestra-gtk{n} 30 &")
+        if esperar(rf"muestra-gtk: GTK {n} en pantalla", 400):
+            time.sleep(4.0)
+            capturar(prefijo + "." + nombre)
+        esperar_n(r"muestra-gtk: adiós|Aborted", antes + 1, 120)
+        time.sleep(2.0)
     clic_en_ventana()
     teclear("prueba-foot &")
-    esperar(r"foot: lista", 400)
-    time.sleep(4.0)
-    capturar(prefijo)
-    esperar_n(r"muestra-gtk: adiós", 1, 150)
-    time.sleep(2.0)
+    if esperar(r"foot: lista", 400):
+        time.sleep(4.0)
+        capturar(prefijo + ".foot")
     clic_en_ventana()
     teclear("cat /root/.config/glib-2.0/settings/keyfile /run/dashos-aspecto/linux")
     time.sleep(3.0)

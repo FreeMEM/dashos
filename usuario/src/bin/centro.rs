@@ -839,7 +839,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
     let mut cat = categoria;
-    // La apariencia guardada; si no hay o no se entiende, la de serie (claro, violeta).
+    // La apariencia guardada; si no hay o no se entiende, la de serie (claro, con la paleta del fondo).
     let mut ap = match leer_apariencia() {
         Ok(g) => {
             println!("  [centro] apariencia guardada: {}, color {}", g.modo(), g.nombre());
@@ -1339,8 +1339,7 @@ fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>) -> i32 {
 /// calcula los esquemas si no estaban guardados para ese color (una vez; si estaban, ni eso). Sin fondo, el violeta de
 /// referencia.
 fn aplicar_al_arrancar() {
-    let guardada = leer_apariencia();
-    let mut ap = guardada.unwrap_or(Apariencia::DE_SERIE);
+    let mut ap = leer_apariencia().unwrap_or(Apariencia::DE_SERIE);
     let cajas = leer_cajas().unwrap_or(Ajuste::DE_SERIE);
     let antes = ap.guardable();
     if ap.color == DEL_FONDO {
@@ -1368,8 +1367,8 @@ fn aplicar_al_arrancar() {
         }
         dashos::dormir_us(300_000);
     }
-    // Lo calculado se guarda si ya se había elegido la paleta del fondo (así, al arrancar otra vez, no se calcula).
-    let guardado = if guardada.is_ok() && ap.guardable() != antes { Some(guardar_apariencia(&ap).0) } else { None };
+    // Lo calculado se guarda (así, al arrancar otra vez o al abrir Ajustes, no se calcula ni se pierde).
+    let guardado = if ap.guardable() != antes { Some(guardar_apariencia(&ap).0) } else { None };
     println!(
         "  [centro] al arrancar: tema {}, color {} ({:06x}), programas de las cajas {}; en el compositor: {}{}",
         ap.modo(),

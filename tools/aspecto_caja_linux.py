@@ -55,12 +55,35 @@ if [ "$(cat /run/dashos-aspecto/linux 2>/dev/null)" = dashos ]; then export QT_Q
 """
 
 # Lanza las muestras de GTK como `prueba-gtk` de la imagen de base: dibujadas por la CPU, sin D-Bus ni accesibilidad,
-# y sin la caja de bwrap de glycin (no funciona en la caja).
+# y sin la caja de bwrap de glycin (en la caja, bwrap no crea sus espacios de nombres: la rama caja-linux-apps lo mira).
 PRUEBA = """#!/bin/sh
 # S26: muestra-gtk3 o muestra-gtk4 (lo que se pida) con el aspecto de la caja. Lo que diga sale por hvc0.
 . /etc/profile.d/dashos-aspecto.sh
-export PATH=/usr/local/lib/dashos/sin-bwrap:$PATH
+export PATH=/usr/local/lib/dashos/aspecto-bwrap:$PATH
 export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1
+exec "$@"
+"""
+
+
+# Solo para las pruebas (`prueba-aspecto`): un bwrap que no aísla nada. Se salta las opciones de bwrap (cuántos
+# argumentos lleva cada una, de su página de manual), pone las variables de `--setenv` y ejecuta la orden. Así glycin,
+# el cargador de imágenes de gdk-pixbuf, abre los iconos de GTK 3 sin su caja (con el bwrap que dice "no va", GTK 3
+# aborta al cargar su primer icono SVG; GTK 4 pinta los suyos sin glycin). No es para usarlo fuera de las pruebas: los
+# cargadores corren sin caja.
+BWRAP = """#!/bin/sh
+# Solo para las pruebas de S26 (prueba-aspecto): bwrap sin aislar nada.
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --) shift; break ;;
+    --setenv) export "$2=$3"; shift 3 ;;
+    --unsetenv) unset "$2"; shift 2 ;;
+    --bind|--bind-try|--dev-bind|--dev-bind-try|--ro-bind|--ro-bind-try|--symlink|--file|--bind-data|--ro-bind-data|--chmod) shift 3 ;;
+    --overlay) shift 4 ;;
+    --args|--argv0|--userns|--userns2|--pidns|--uid|--gid|--hostname|--chdir|--lock-file|--sync-fd|--remount-ro|--exec-label|--file-label|--proc|--dev|--tmpfs|--mqueue|--dir|--seccomp|--add-seccomp-fd|--block-fd|--userns-block-fd|--info-fd|--json-status-fd|--cap-add|--cap-drop|--perms|--size|--overlay-src|--tmp-overlay|--ro-overlay) shift 2 ;;
+    --*) shift ;;
+    *) break ;;
+  esac
+done
 exec "$@"
 """
 
@@ -165,6 +188,7 @@ def preparar():
         (t / "servicio").write_text(SERVICIO)
         (t / "perfil").write_text(PERFIL)
         (t / "prueba").write_text(PRUEBA)
+        (t / "bwrap").write_text(BWRAP)
         fuentes = RAIZ / "kit" / "fuentes"
         ficheros = [
             ("/usr/local/bin/dashos-aspecto", agente, 0o755),
@@ -172,6 +196,7 @@ def preparar():
             ("/usr/local/bin/muestra-gtk3", m3, 0o755),
             ("/usr/local/bin/muestra-gtk4", m4, 0o755),
             ("/usr/local/bin/prueba-aspecto", t / "prueba", 0o755),
+            ("/usr/local/lib/dashos/aspecto-bwrap/bwrap", t / "bwrap", 0o755),
             ("/etc/systemd/system/dashos-aspecto.service", t / "servicio", 0o644),
             ("/etc/profile.d/dashos-aspecto.sh", t / "perfil", 0o644),
             ("/usr/local/share/fonts/dashos/Roboto-Regular.ttf", fuentes / "Roboto-Regular.ttf", 0o644),
