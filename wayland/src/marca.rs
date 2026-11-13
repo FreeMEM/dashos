@@ -39,8 +39,18 @@ pub const TEXTO_LINUX: &str = "LINUX";
 /// sin la marca registrada).
 pub const COLOR_AMIGA: u32 = 0xff00_55aa;
 pub const TINTA_AMIGA: u32 = 0xffff_ffff;
-pub const PREFIJO_AMIGA: &str = "68K · ";
-pub const TEXTO_AMIGA: &str = "68K";
+/// Para comparar (el usuario quiere verlas): `DASHOS_MARCA_AMIGA=classic` o `icono` al compilar; si no, "68K".
+pub const PREFIJO_AMIGA: &str = match option_env!("DASHOS_MARCA_AMIGA") {
+    Some(v) if v.as_bytes().len() == 7 => "Classic · ",
+    Some(v) if v.as_bytes().len() == 5 => "",
+    _ => "68K · ",
+};
+pub const TEXTO_AMIGA: &str = match option_env!("DASHOS_MARCA_AMIGA") {
+    Some(v) if v.as_bytes().len() == 7 => "CLASSIC",
+    // El icono: un chip, como una "letra" más de la tabla.
+    Some(v) if v.as_bytes().len() == 5 => "\u{25a3}",
+    _ => "68K",
+};
 
 /// Cada letra de la pestaña: 5 × 7, una fila por byte (el bit 4 es la columna de la izquierda), a escala `ESCALA`.
 const ESCALA: i32 = 2;
@@ -56,6 +66,11 @@ const LETRAS: &[(char, [u8; 7])] = &[
     ('6', [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
     ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
     ('K', [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001]),
+    // Para comparar: "CLASSIC" y el icono de chip (patas arriba y abajo, cuerpo con su muesca).
+    ('C', [0b01110, 0b10001, 0b10000, 0b10000, 0b10000, 0b10001, 0b01110]),
+    ('A', [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
+    ('S', [0b01111, 0b10000, 0b10000, 0b01110, 0b00001, 0b00001, 0b11110]),
+    ('\u{25a3}', [0b01010, 0b11111, 0b10001, 0b10101, 0b10001, 0b11111, 0b01010]),
 ];
 
 /// Lo que mide la pestaña de `texto`.
