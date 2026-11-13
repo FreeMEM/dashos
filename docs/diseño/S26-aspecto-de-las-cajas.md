@@ -158,8 +158,10 @@ plumas y el mismo pintor de ReAction y MUI nativos.
   foot, y los envoltorios de las excepciones. `tools/aspecto_caja_linux.py preparar` lo mete, con el puente de esta
   rama, unas muestras de GTK y las letras de DashOS, en una copia de la imagen de Arch con GTK (la de
   `caja-linux-apps`). `make arranque-virt-aspecto` lo prueba entero y saca la captura.
-- Probado también en el PC con el compositor de DashOS (`compositor-pc`): GTK 3, GTK 4 y Qt 6 con los dos aspectos, y
-  GTK 3 cambiando de tema con la ventana abierta.
+- Probado en DashOS en Full HD con GTK 4 y foot, con dos fondos (la paleta cambia con el fondo) y con "original". GTK 3
+  aún aborta en la caja al cargar sus iconos (glycin sin bwrap, lo mira `caja-linux-apps`). En el PC, con el
+  compositor de DashOS (`compositor-pc`): GTK 3, GTK 4 y Qt 6 con los dos aspectos, y GTK 3 cambiando de tema con la
+  ventana abierta. Detalle en `docs/bitacoras/aspecto-cajas.md`.
 
 ## Orden de trabajo recomendado
 
