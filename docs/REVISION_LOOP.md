@@ -1905,3 +1905,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   por unir. Bloqueos para Tachyon: MUI tumba la caja (JIT de Emu68 en un longjmp del Init de muimaster) y la caja
   tiene 4 MB para el 68k (Tachyon pide 30-40). Propuesta al usuario: memoria según el programa, tope en Ajustes
   (256 MB por defecto).
+- RedoxFS → DashFS en el código (486d053): `archivos/dashfs`, crate `dashfs`, herramientas `dashfs-*`; formato igual.
+- El usuario: "continúa con lo pendiente" (2026-11-13, noche). Trasfondo nativo reanudado (agente, worktree
+  `trasfondo` en 486d053). Memoria de la caja Amiga: va lo recomendado, según el programa con tope en Ajustes (256 MB
+  de serie); pendiente de hacer (toca la caja). MUI (fallo del JIT) después.
