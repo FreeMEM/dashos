@@ -147,8 +147,12 @@ LONG inicio(void)
     struct StringInfo *si = (struct StringInfo *)gad[G_CADENA]->SpecialInfo;
     BOOL bien = nivel == 60 && activo == 2 && marcado == 1 && numero == 42 && ud == 2 && si
                 && si->Buffer[0] == 'h' && gad[G_ACEPTAR]->GadgetID == G_ACEPTAR;
-    di("  [caja-amiga] gadtools: atributos (nivel %ld, ciclo %ld, casilla %ld), ", nivel, activo, marcado);
-    di("entero %ld, ItemAddress y UserData del menu %ld: %s\n", numero, ud, (LONG)(bien ? "bien" : "MAL"));
+    /* En una sola escritura: si no, un aviso de la caja (la ventana en pantalla) puede caer en medio de la línea. */
+    {
+        LONG v[6] = { nivel, activo, marcado, numero, ud, (LONG)(bien ? "bien" : "MAL") };
+        VPrintf((CONST_STRPTR)"  [caja-amiga] gadtools: atributos (nivel %ld, ciclo %ld, casilla %ld), entero %ld, "
+                "ItemAddress y UserData del menu %ld: %s\n", v);
+    }
     if (!bien) mal++;
     GT_SetGadgetAttrs(gad[G_NIVEL], v, NULL, GTSL_Level, 25, TAG_END);
     GT_SetGadgetAttrs(gad[G_CICLO], v, NULL, GTCY_Active, 0, TAG_END);

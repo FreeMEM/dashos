@@ -110,6 +110,14 @@ impl<C: Compositor> CajaGrafica<C> {
         for w in self.ventanas() {
             let Some(v) = self.intui.ventanas.get(&w) else { continue };
             let (bm, viejo, [bi, ba, bd, bb]) = (v.bm, v.fondo, v.geometria.bordes);
+            // Si para esta ventana no ha cambiado nada (otro evento del tema con lo mismo), no se toca.
+            let aspecto = self.comp.tema_amiga(&v.programa);
+            if aspecto == v.aspecto {
+                continue;
+            }
+            if let Some(v) = self.intui.ventanas.get_mut(&w) {
+                v.aspecto = aspecto;
+            }
             let nuevo = match self.tema_de(w).como().fondo_ventana() {
                 Some(f) => f | 0xFF00_0000,
                 None => self.color(self.intui.wb.cm, 0) | 0xFF00_0000,

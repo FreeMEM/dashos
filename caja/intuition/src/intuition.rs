@@ -55,6 +55,8 @@ pub(crate) struct Ventana {
     pub programa: alloc::string::String,
     /// El color de dentro con el que se abrió (el de la pluma 0, o la superficie de DashOS).
     pub fondo: u32,
+    /// Los colores de DashOS con los que se pintó (`None`: el clásico): si no cambian, no se repinta.
+    pub aspecto: Option<crate::compositor::Tokens>,
     pub activa: bool,
     pub geometria: Geometria,
     pub pulsado: Option<Gadget>,
@@ -485,7 +487,8 @@ impl<C: Compositor> CajaGrafica<C> {
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).
         let programa = Self::nombre_programa(ex, ex.tarea_actual());
-        let fondo = match crate::tema::Elegido::de(self.comp.tema_amiga(&programa)).como().fondo_ventana() {
+        let aspecto = self.comp.tema_amiga(&programa);
+        let fondo = match crate::tema::Elegido::de(aspecto).como().fondo_ventana() {
             Some(f) => {
                 if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
                     l.poner_fondo(f);
@@ -566,6 +569,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 titulo,
                 programa,
                 fondo,
+                aspecto,
                 activa: false,
                 geometria,
                 pulsado: None,
