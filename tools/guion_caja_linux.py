@@ -368,7 +368,10 @@ if modo == "wayland":
     teclear("prueba-gtk &")
     if esperar(r"gtk: empieza", 120):
         t0 = time.time()
-        g = esperar_ventana(n, 900)
+        # En la caja, GTK 4.24 aborta al cargar su icono (glycin, ver la bitácora): se le espera poco.
+        g = esperar_ventana(n, 240)
+        if not g:
+            apuntar("gtk4-widget-factory: sin ventana (" + ("Gdk-ERROR al cargar su icono" if "Gdk-ERROR" in texto() else "?") + ")")
         if g:
             apuntar(f"gtk4-widget-factory: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
             # Para el registro (y las líneas esperadas): el guion la vio salir.

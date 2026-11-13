@@ -5,7 +5,7 @@
 # recibe un clic y una tecla, se mueve por su barra y se cierra con su botón; foot copia una línea que se pega en la
 # terminal de la caja (la de siempre y la primaria) y pega lo que se copia en ella. Hostiles de Linux: decoraciones y
 # tipos rotos (el compositor los corta), una fuente que escribe sin fin (se le corta) y otra que nunca cierra (se deja de
-# esperar). Después, otra ventana de Linux sale como siempre, y GTK4 (gtk4-widget-factory) abre su ventana.
+# esperar). Después, otra ventana de Linux sale como siempre. GTK4 se lanza (en la caja aún aborta al cargar su icono).
 # Sin copia: el puente da los pools de wl_shm por sus páginas físicas y el compositor los lee en la RAM del invitado
 # (vistas, llamada 50); `ventana_wayland` se mide sin copia y con copia, de 320 x 240 y de 1280 x 720.
 Hipervisor: EL2 instalado en 4 núcleos
@@ -48,8 +48,6 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] terminal: pegado (4096 bytes)
 ~[caja-linux] terminal: pegado (0 bytes)
 ~gtk: empieza
-~[caja-linux] linux: guion: gtk4 en pantalla
-~[compositor] emergente de caja-linux en
 ~[caja-linux] linux: se para la máquina a los
 ~Linux apagó la máquina por PSCI
 ~[caja-linux] wayland: 
