@@ -66,3 +66,15 @@ Rama `decisiones-1311`, sacada de `revision` (022e9d1). Las decisiones están en
   automática ya es 1x, así que la caja Amiga se ve igual). Se espera "Ampliar ventanas Amiga: 1x; guardado: 0
   (30 bytes); releído: sí", y `disco_archivos.py --comprobar` espera `C/Prefs/cajas` de 30 bytes.
 - Esto resuelve el punto 1 de "Lo que falta" de la escala en `docs/bitacoras/caja-amiga.md`.
+
+## Pruebas (2026-11-13)
+
+- `cargo test` de `wayland`: 94 bien. `cargo check` del kernel para la Pi 4, la Pi 3 y la Pi 5: sin errores ni avisos.
+- `make prueba`: "BIEN: esperado.txt" y "BIEN: cargador hunk".
+- `make arranque-virt`: las cinco BIEN y "BIEN: arranque_virt_reinicio.txt": el panel pide reiniciar, `sesiones`
+  pregunta (1 sesión más abierta), el guion dice que sí, el kernel reinicia y QEMU vuelve a arrancar (otro "DashOS en
+  marcha" a los 242 s). La primera vez falló la prueba hostil del panel: miraba `k` tras una lectura con error (la
+  llamada no lo toca); arreglado en el commit siguiente.
+- `-vm`, `-linux`, `-2`, `-diag`, `-escritorio`, `-usb`, `-arch` y `-gpu`: BIEN. `-wayland`: BIEN en 17 min, con
+  "hasta 1024 MB para el invitado" (Firefox con 449 MB, la RAM del invitado 668 de 995 MB).
+- Sin probar: Apagar y Cerrar sesión desde el panel, y el apagado en una Pi de verdad.
