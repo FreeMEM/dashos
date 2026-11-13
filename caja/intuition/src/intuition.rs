@@ -792,6 +792,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Cierra las ventanas de una tarea que se va a matar. La caja lo llama antes de `Exec::matar_tarea`.
     pub fn tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
+        self.requesters_tarea_muerta(ex, t);
         let ws: Vec<u32> = self.intui.ventanas.iter().filter(|(_, v)| v.tarea == t).map(|(w, _)| *w).collect();
         for w in ws {
             if let Err(f) = self.close_window(ex, w) {

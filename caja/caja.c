@@ -221,6 +221,13 @@ int memcmp(const void *a, const void *b, size_t n)
 
 /* volatile: los cambia dashos_native_call, que llama el código traducido desde dentro del asm de `arranca`; sin él, gcc
    (análisis entre funciones) da por hecho que `arranca` no los toca y no los vuelve a leer. */
+/* CAJA_INTERACTIVA=1 al compilar (make -C caja CAJA_INTERACTIVA=1): las pruebas que esperan a alguien, para sacar
+   capturas: GadTools espera 90 s y un programa de Dash sin consola saca su error en un requester. */
+#ifndef CAJA_INTERACTIVA
+#define CAJA_INTERACTIVA 0
+#endif
+#define GT_NOMBRE (CAJA_INTERACTIVA ? "gadtools-90" : "gadtools-5")
+
 static volatile int llamadas_nativas;
 static volatile int rechazadas;
 static volatile int cortadas;
@@ -914,10 +921,11 @@ int caja_main(void)
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
         /* 8b. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
-           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0). Sin guion de
-           ratón, se cierra sola a los 60 s (5). */
+           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana
+           se ve entera; si no, se cierra sola (5). En la prueba de siempre espera 5 s: más tiempo abierta tapaba los
+           pasos del guion de los demás (Ajustes, el centro de control). Con CAJA_INTERACTIVA (las capturas), 90 s. */
         t0 = ahora_us();
-        v = ejecuta_hunk("gadtools.exe", prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
+        v = ejecuta_hunk(GT_NOMBRE, prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
                          &llamadas, &sobras);
         t1 = ahora_us();
         bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
@@ -982,6 +990,18 @@ int caja_main(void)
                dash2[i].nombre, (int)d0, v, (uint32_t)((t1 - t0) / 1000), exc, caja_avisos(), sobras, bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
+#if CAJA_INTERACTIVA
+        /* El error de Dash en un requester: test_trap_illegal sin consola (Output() es 0, como desde el Workbench). El
+           guion lo captura (CAPTURA_REQ) y pulsa su botón. */
+        if (prog_dash_trap_ilegal_fin > prog_dash_trap_ilegal) {
+            di("test_trap_illegal (sin consola): su error, en un requester\n");
+            caja_sin_consola(1);
+            v = ejecuta_hunk("test_trap_illegal", prog_dash_trap_ilegal,
+                             (size_t)(prog_dash_trap_ilegal_fin - prog_dash_trap_ilegal), execbase, &d0, &llamadas, &sobras);
+            caja_sin_consola(0);
+            di("Dash test_trap_illegal (sin consola) acabó con %d (vector %d), %u avisos\n", (int)d0, v, caja_avisos());
+        }
+#endif
     }
 
     if (fallos) return 10 + fallos;

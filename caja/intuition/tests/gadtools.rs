@@ -306,3 +306,46 @@ fn gadtools_hostil() {
     assert!(c.1.ventanas().is_empty());
     let _ = w;
 }
+
+#[test]
+fn easy_request() {
+    let mut c = caja();
+    // EasyStruct: tamaño, flags, título, texto con argumentos y dos botones.
+    let es = reservar(&mut c, 20);
+    e32(&mut c, es, 20);
+    let (t, f, b) = (cadena(&mut c, "Dash"), cadena(&mut c, "Error: %s\nen %ld"), cadena(&mut c, "Vale|Salir"));
+    e32(&mut c, es + 8, t);
+    e32(&mut c, es + 12, f);
+    e32(&mut c, es + 16, b);
+    let args = reservar(&mut c, 8);
+    let s = cadena(&mut c, "instrucción ilegal");
+    e32(&mut c, args, s);
+    e32(&mut c, args + 4, 42);
+    let n = c.1.numero_intuition("EasyRequestArgs").unwrap();
+    let mut r = regs(&[], &[0, es, 0, args]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Bloquear);
+    let w = *c.1.ventanas().last().unwrap();
+    // Un clic en el botón de la derecha ("Salir"): devuelve 0; el de la izquierda daría 1.
+    let ancho = l16(&c, w + win::WIDTH) as i32;
+    let alto = l16(&c, w + win::HEIGHT) as i32;
+    let s = c.1.superficie(w).unwrap();
+    for (x, y) in [(ancho / 2 + 20, alto - 12)] {
+        c.1.comp.meter(s, Evento::Raton { x, y });
+        c.1.comp.meter(s, Evento::Boton { boton: BTN_LEFT, pulsado: true });
+        c.1.comp.meter(s, Evento::Boton { boton: BTN_LEFT, pulsado: false });
+    }
+    c.1.atender(&mut c.0);
+    let mut r = regs(&[], &[0, es, 0, args]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
+    assert_eq!(r.d[0], 0);
+    assert!(c.1.ventanas().is_empty(), "la ventana del requester se cierra");
+    // Hostil: una EasyStruct fuera de la memoria, o con el texto en la página 0: 0 y un aviso, sin ventana.
+    for mala in [0u32, 0xFFFF_FFF0] {
+        let mut r = regs(&[], &[0, mala, 0, 0]);
+        assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
+    }
+    e32(&mut c, es + 12, 8);
+    let mut r = regs(&[], &[0, es, 0, args]);
+    assert_eq!(c.1.llamar(&mut c.0, n, &mut r), caja_exec::Accion::Seguir);
+    assert!(c.1.ventanas().is_empty());
+}

@@ -109,6 +109,8 @@ struct Caja {
     anidadas_no: u32,
     /// Excepciones de tarea (`tc_ExceptCode`) entregadas.
     excepciones: u32,
+    /// Los procesos nuevos van sin consola (`caja_sin_consola`).
+    sin_consola: bool,
     /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
     /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
     n_waittof: u16,
@@ -324,6 +326,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         anidadas_no: 0,
         excepciones: 0,
         n_waittof: 0,
+        sin_consola: false,
     };
     c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
@@ -341,6 +344,14 @@ pub extern "C" fn caja_poner_trampa(defecto: u32) {
     c.trampa = defecto;
     let b = c.ex.base();
     let _ = c.ex.mem.escribir32(b + caja_exec::estructuras::execbase::TASKTRAPCODE, defecto);
+}
+
+/// Los procesos que se creen desde ahora, sin consola (`si` distinto de 0) o con ella.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_sin_consola(si: i32) {
+    if let Some(c) = caja() {
+        c.sin_consola = si != 0;
+    }
 }
 
 /// Cuántas llamadas anidadas hizo la tarea en marcha, cuántas no se pudieron hacer y cuántas excepciones de tarea
@@ -491,7 +502,7 @@ fn crear_proceso(
     }
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
-    let consola = c.dos.abrir_consola(&mut cd).unwrap_or(0);
+    let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
     let ex = &mut c.ex;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
     ex.mem.escribir32(t + pr::PR_COS, consola)?;

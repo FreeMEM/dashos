@@ -77,6 +77,8 @@ int caja_compositor_sigue(void);
 /* Pone el tc_TrapCode por defecto (ExecBase->TaskTrapCode y el de las tareas nuevas). */
 void caja_poner_trampa(uint32_t defecto);
 /* Las llamadas anidadas de la última tarea (hechas y no hechas) y sus excepciones de tarea entregadas. */
+/* Los procesos nuevos, sin consola (pr_CIS y pr_COS a 0, como desde el Workbench) o con ella. */
+void caja_sin_consola(int si);
 void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones);
 
 /* --- Lo que la caja (caja.c) da a Rust --- */

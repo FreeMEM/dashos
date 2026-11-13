@@ -156,6 +156,11 @@ impl<C: Compositor> CajaGrafica<C> {
         let v = self.ventana(w)?;
         let (s, g) = (v.superficie, v.geometria);
         let (x, y) = (ex.l16(w + win::MOUSEX)? as i16 as i32, ex.l16(w + win::MOUSEY)? as i16 as i32);
+        if boton == BTN_LEFT
+            && let Some(r) = self.requester_boton(ex, w, x, y, pulsado)
+        {
+            return r;
+        }
         match boton {
             BTN_LEFT if pulsado => match g.zona(x, y) {
                 Some(Gadget::Arrastre) => {

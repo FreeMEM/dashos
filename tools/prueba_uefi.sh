@@ -122,6 +122,7 @@ dash_amiga = 0
 gt_amiga = 0
 gt_dash = 0
 gt_mirado = 0
+req_dash = 0
 
 while time.time() - inicio < total:
     try:
@@ -1232,7 +1233,7 @@ while time.time() - inicio < total:
         if dash_amiga == 1 and gt_amiga == 0 and libre_para_amiga and time.time() > gt_mirado + 2:
             import re
             gt_mirado = time.time()
-            corte = texto.find("[caja-amiga] gadtools.exe: ")
+            corte = texto.find("[caja-amiga] gadtools-90: ")   # (solo con CAJA_INTERACTIVA=1: si no, 5 s)
             if corte >= 0 and "[caja-amiga] gadtools: ventana abierta y dibujada" in texto[corte:] \
                     and "[caja-amiga] gadtools.exe acabó" not in texto[corte:]:
                 v_gt = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
@@ -1300,6 +1301,24 @@ while time.time() - inicio < total:
                         ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
                     else:
                         ir_a(10 * paso, 5 * paso)
+        # El error de Dash en un requester (solo con la caja hecha con CAJA_INTERACTIVA=1, para las capturas): su
+        # captura (CAPTURA_REQ) y un clic en su botón, centrado abajo.
+        if req_dash == 0 and os.environ.get("CAPTURA_REQ"):
+            import re
+            corte = texto.find("[caja-amiga] test_trap_illegal (sin consola)")
+            if corte >= 0:
+                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)\): Dash", texto[corte:])
+                v_r = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if m_r and v_r:
+                    req_dash = 1
+                    x, y = int(v_r[-1].group(1)), int(v_r[-1].group(2))
+                    an, al = int(m_r.group(1)), int(m_r.group(2))
+                    time.sleep(1.0)
+                    mandar("screendump " + os.environ["CAPTURA_REQ"])
+                    time.sleep(0.5)
+                    ir_a(x + an // 2, y + al - 12)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
         # Mientras el selector espera teclas, no: el clic en Ajustes le quitaría el teclado y sus teclas irían a
         # Ajustes (con el PC lento, Ajustes sale después del selector).
         if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18):

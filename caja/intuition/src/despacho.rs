@@ -48,7 +48,7 @@ filas!(I;
     REFRESHGLIST = "RefreshGList", REFRESHGADGETS = "RefreshGadgets", ONGADGET = "OnGadget", OFFGADGET = "OffGadget",
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
-    INTUITEXTLENGTH = "IntuiTextLength",
+    INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -62,6 +62,10 @@ impl<C: Compositor> CajaGrafica<C> {
     /// La caja no tiene que repetir ninguna: no bloquean (el `Accion::Ceder` es por haber despertado a otra).
     pub fn llamar<M: Memoria>(&mut self, ex: &mut Exec<M>, n: u16, r: &mut Registros) -> Accion {
         let (g0, i0) = (self.numeros.graphics, self.numeros.intuition);
+        if n == self.numeros.intuition + EASYREQUESTARGS as u16 {
+            // Bloquea a la tarea hasta que pulsen un botón (requester.rs).
+            return self.easy_request(ex, r);
+        }
         if let Some(f) = self.es_gadtools(n) {
             match self.llamar_gadtools(ex, f, r) {
                 Ok(v) => r.d[0] = v,

@@ -41,6 +41,7 @@ mod idcmp;
 mod intuition;
 mod marco;
 mod menus;
+mod requester;
 mod tema;
 
 use alloc::collections::BTreeMap;
@@ -130,6 +131,9 @@ pub struct CajaGrafica<C: Compositor> {
     menus: menus::Estado,
     /// El aspecto de los controles (tema.rs).
     tema: alloc::boxed::Box<dyn tema::Tema>,
+    /// Los requesters de `EasyRequestArgs` abiertos (uno por tarea) y sus títulos (ventana, cadena, largo).
+    requesters: Vec<requester::Requester>,
+    requester_titulos: Vec<(u32, u32, u32)>,
     avisos: Vec<Aviso>,
 }
 
@@ -145,6 +149,8 @@ impl<C: Compositor> CajaGrafica<C> {
             gt: gadtools::Estado::default(),
             menus: menus::Estado::default(),
             tema: alloc::boxed::Box::new(tema::Clasico),
+            requesters: Vec::new(),
+            requester_titulos: Vec::new(),
             avisos: Vec::new(),
         };
         c.instalar_graphics(ex)?;

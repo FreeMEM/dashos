@@ -23,6 +23,9 @@ COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tabl
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
 	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
+ifneq ($(CAJA_INTERACTIVA),)
+CFLAGS  += -DCAJA_INTERACTIVA=$(CAJA_INTERACTIVA)
+endif
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error
 
 JIT_C := M68k_Translator M68k_SR M68k_MULDIV M68k_MOVE M68k_EA M68k_LINE0 M68k_LINE4 M68k_LINE5 \
