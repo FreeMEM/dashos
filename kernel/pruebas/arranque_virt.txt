@@ -364,7 +364,7 @@ DashOS en marcha con 4 núcleos.
 ~ muertos, 0 dicen que existen: bien
 # Super+Arriba la maximiza (un búfer nuevo de lo que deja la barra) y Super+Abajo la devuelve.
 ~│   [centro] el compositor pide 800x560
-~│   [centro] vuelve a 560x420
+~│   [centro] vuelve a 720x480
 ~│   [centro] cerrado
 ~│   [guardian] pide al centro abrir Permisos: 0, y se cerró: sí
 ~│   [guardian] acciones de administrador: de pide 2, del hostil 3: bien

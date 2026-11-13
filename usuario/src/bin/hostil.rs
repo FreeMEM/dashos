@@ -1100,9 +1100,9 @@ fn monitor_ajeno() -> bool {
         dashos::cerrar(lectura);
         if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
     };
-    let caja = todas.iter().find(|e| matches!(e.clase, monitor::M_CAJA_AMIGA | monitor::M_CAJA_LINUX)).map(|e| (e.nombre.clone(), matar(e.marca)));
+    let caja = todas.iter().find(|e| matches!(e.clase, monitor::M_CAJA_AMIGA | monitor::M_CAJA_LINUX)).map(|e| (alloc::format!("{} ({})", e.nombre, e.marca), matar(e.marca)));
     let suma = matar(0);
-    let caja_bien = caja.as_ref().is_none_or(|c| c.1 == s::PROTEGIDO);
+    let caja_bien = caja.as_ref().is_none_or(|c| c.1 == s::PROTEGIDO || c.1 == s::NO_EXISTE);
     println!(
         "  [hostil] monitor: {} entradas ({} suyas, de un usuario: {}, con hostil: {}); sumas sin nombres: {}; con el sistema sumado: {}; sin el compositor ni sesiones: {}; otra vez en el acto: {}; página lejana vacía: {}; luego sí: {}; cerrar {}: {}; cerrar una suma: {}",
         todas.len(), propios.len(), si(un_usuario), si(con_hostil), si(sumas_mudas), si(hay_sistema), si(sin_compositor),

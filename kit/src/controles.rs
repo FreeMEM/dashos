@@ -675,7 +675,7 @@ impl Lista {
 }
 
 /// El ancho de cada columna de una lista con tabuladores (trasfondo).
-const COLUMNA: i32 = 112;
+const COLUMNA: i32 = 100;
 
 impl Clase for Lista {
     fn nombre(&self) -> &'static str {
@@ -685,7 +685,16 @@ impl Clase for Lista {
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
         let navegacion = attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 1;
         let (tam, f) = if navegacion { (ctx.tema.letra_etiqueta, &mut ctx.medium) } else { (ctx.tema.letra_texto, &mut ctx.regular) };
-        let ancho = Ciclo::opciones(attrs).iter().map(|o| f.medir(o, tam).ancho).max().unwrap_or(0);
+        // Con columnas (tabuladores), lo primero y una columna fija por cada parte más.
+        let ancho = Ciclo::opciones(attrs)
+            .iter()
+            .map(|o| {
+                let mut partes = o.split('\t');
+                let primera = partes.next().unwrap_or("");
+                f.medir(primera, tam).ancho + partes.count() as i32 * COLUMNA
+            })
+            .max()
+            .unwrap_or(0);
         let alto = Self::filas(attrs) as i32 * FILA;
         Medida { min: (ancho + 32, alto), max: (SIN_MAX, alto), peso: 100 }
     }

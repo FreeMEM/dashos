@@ -118,7 +118,8 @@ const VEN_DELANTE: &[&str] = &["panel", "barra"];
 /// (`MATAR`), solo lo suyo.
 const MONITORES: &[&str] = &["fondo", "barra", "centro"];
 const MATAN_POR_DELANTE: &[&str] = &["centro"];
-/// Las cajas, que salen por su nombre en el monitor aunque sean del sistema (son del escritorio de quien mira).
+/// Las cajas, que salen por su nombre en el monitor (con su pastilla) si son del sistema o de quien mira; la de otra
+/// persona va sumada en "otros", como lo demás suyo.
 const CAJAS: &[(&str, u32)] = &[("caja-amiga", M_CAJA_AMIGA), ("caja-linux", M_CAJA_LINUX)];
 /// Quien puede pedir apagar, reiniciar o cerrar la sesión (decisión del usuario del 2026-11-13): el panel rápido.
 const PUEDE_APAGAR: &[&str] = &["panel"];
@@ -681,7 +682,8 @@ fn monitor_pagina(respuesta: u32, fichas: &[Option<Ficha>], yo: Option<Ficha>, a
         None => 0,
     };
     let caja = |f: &Ficha| CAJAS.iter().find(|c| c.0 == nombre(&f.nombre)).map(|c| c.1);
-    let detalle = |f: &&Ficha| (miran >= PRIMERA_PERSONA && f.uid == miran) || caja(f).is_some();
+    // Una caja sale por su nombre si es del sistema o de quien mira; la de otra persona va en "otros".
+    let detalle = |f: &&Ficha| (miran >= PRIMERA_PERSONA && f.uid == miran) || (caja(f).is_some() && f.uid < PRIMERA_PERSONA);
     let n_detalle = fichas.iter().flatten().filter(detalle).count();
     let uso = |f: &Ficha| (dashos::cpu_tiempo(f.grupo).max(0) as u64, dashos::grupo_uso(f.grupo).1);
     // Las sumas: (cpu, memoria, cuántos) del sistema y de otras personas.

@@ -73,8 +73,8 @@ const SESIONES: u32 = 3;
 /// C3: el fondo de escritorio, que dice su color y pone otra imagen.
 const FONDO: u32 = 4;
 const CANAL: u32 = 5;
-const ANCHO: i32 = 560;
-const ALTO: i32 = 420;
+const ANCHO: i32 = 720;
+const ALTO: i32 = 480;
 /// Lo más que se pide de memoria para la ventana maximizada (una pantalla de 1920 × 1200).
 const MAX_ANCHO: i32 = 1920;
 const MAX_ALTO: i32 = 1200;
@@ -869,7 +869,7 @@ fn ordenar(v: &mut VistaMonitor) {
 
 /// Las filas del monitor: la cabecera (Intro cambia el orden) y una por proceso, en columnas separadas por tabuladores.
 fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
-    let mut l = alloc::vec![alloc::format!("Proceso (por {})\tCPU\tMemoria\tUsuario", ORDENES[v.orden])];
+    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria\tUsuario", ORDENES[v.orden])];
     if v.sin_datos {
         l.push(String::from("sesiones no contesta"));
     }
@@ -990,7 +990,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     // Material 3: la categoría como título y su explicación como texto secundario; Quitar, tonal; Cerrar, de texto.
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
     let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
-    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
+    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(5)), (atr::VALOR, Valor::Int(-1))]);
     let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into())), (atr::ESTILO, Valor::Int(1))]);
     let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);

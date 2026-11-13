@@ -118,7 +118,7 @@ pub const MODO_SALIR: u32 = 2;
 /// suma), CPU en µs desde que nació (u64), memoria que tiene cobrada su grupo en bytes (u64), usuario (u32), grupo (u32),
 /// clase (u32, `M_*`), cuántos procesos van en ella (u32) y nombre (16). Privacidad (decisión del usuario del
 /// 2026-11-13): quien mira ve con detalle solo sus procesos (los de su usuario; el escritorio, `MONITORES`, mira por la
-/// persona de delante); las cajas Amiga y Linux, por su nombre, porque son del escritorio; lo demás del sistema, en una
+/// persona de delante); las cajas Amiga y Linux, por su nombre, si son suyas o del sistema; lo demás del sistema, en una
 /// suma "sistema", y lo de otras personas, en una suma "otros", sin nombres. Pedir la primera página más de una vez cada
 /// `MONITOR_CADA_US` da `OCUPADO` (las demás páginas, no): mirar muy deprisa no gasta a `sesiones`.
 pub const MONITOR: u32 = 24;
