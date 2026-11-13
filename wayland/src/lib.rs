@@ -313,3 +313,6 @@ mod tests;
 
 #[cfg(test)]
 mod tests_multimonitor;
+
+#[cfg(test)]
+mod tests_linux;

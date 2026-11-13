@@ -53,7 +53,7 @@ const FONDO: u32 = 0xff20_4060;
 
 /// Los globales de cada tipo de cliente, sin los `wl_output`: esos van uno por salida (multimonitor), con los
 /// números `GLOBAL_SALIDAS` (el 6, el de siempre, es la principal).
-static GLOBALES: [Global; 7] = [
+static GLOBALES: [Global; 9] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -62,11 +62,13 @@ static GLOBALES: [Global; 7] = [
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
     // hechos (C3). Los `wl_output` van aparte, uno por pantalla (multimonitor).
     Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
-    // El portapapeles (H9): por ahora solo los objetos, sin copiar ni pegar entre programas (ver `PORTAPAPELES`).
+    // El portapapeles (H9): la selección de siempre y la primaria; y la barra de DashOS para quien la pida.
     PORTAPAPELES,
+    PRIMARIA,
+    DECORACIONES,
 ];
 /// Los de un escritorio (S10b, G4): además, las capas y el bloqueo de la sesión (G5). Un cliente sin el poder ni los ve; si los pide igual, error.
-static GLOBALES_ESCRITORIO: [Global; 10] = [
+static GLOBALES_ESCRITORIO: [Global; 12] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -77,10 +79,12 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
     PORTAPAPELES,
+    PRIMARIA,
+    DECORACIONES,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
 /// el bloqueo, un programa podría enseñar una pantalla de bloqueo falsa y quedarse con la contraseña.
-static GLOBALES_CAPAS: [Global; 8] = [
+static GLOBALES_CAPAS: [Global; 10] = [
     Global { nombre: 1, interfaz: &tablas::WL_COMPOSITOR, version: 6 },
     Global { nombre: 2, interfaz: &tablas::WL_SHM, version: 1 },
     Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
@@ -89,11 +93,54 @@ static GLOBALES_CAPAS: [Global; 8] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
     PORTAPAPELES,
+    PRIMARIA,
+    DECORACIONES,
 ];
-/// `wl_data_device_manager` (v3): muchos programas de Linux no arrancan sin él (foot: "no clipboard available"). Sus
-/// objetos (`wl_data_source`, `wl_data_device`) se crean y se destruyen, pero el compositor aún no guarda ninguna
-/// selección ni manda ofertas: copiar y pegar entre programas está pendiente. El número 14: tras los de las salidas.
+/// `wl_data_device_manager` (v3): copiar y pegar entre programas (H9, `wayland::escena::portapapeles`). Muchos programas
+/// de Linux no arrancan sin él (foot: "no clipboard available"). El número 14: tras los de las salidas.
 const PORTAPAPELES: Global = Global { nombre: 14, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 };
+/// La selección primaria (H9): seleccionar y pegar con el botón central.
+const PRIMARIA: Global = Global { nombre: 15, interfaz: &tablas::ZWP_PRIMARY_SELECTION_DEVICE_MANAGER_V1, version: 1 };
+/// La barra de DashOS para los programas que no se pintan la suya (H9, `xdg-decoration`).
+const DECORACIONES: Global = Global { nombre: 16, interfaz: &tablas::ZXDG_DECORATION_MANAGER_V1, version: 1 };
+
+/// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
+/// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
+/// de la izquierda, recortado con "…" si no cabe, y la X del botón de cerrar.
+fn pintor() -> escena::decoracion::Pintor {
+    use escena::decoracion::{LADO_BOTON, MARGEN_BOTON, RADIO_MARCO};
+    use kit::lienzo::{Lienzo, Rect as R};
+    let mut fuente = kit::texto::Fuente::medium();
+    alloc::boxed::Box::new(move |px: &mut [u32], w: i32, h: i32, titulo: &str, activa: bool, (color, oscuro): (u32, bool)| {
+        let t = kit::tema::Tema::del_sistema(color, oscuro);
+        let mut l = Lienzo::new(px, w, h, w as usize);
+        let fondo = if activa { t.contenedor_alto() } else { t.contenedor() };
+        l.redondeado_esquinas(R::new(0, 0, w, h), [RADIO_MARCO, RADIO_MARCO, 0, 0], fondo);
+        let tinta = if activa { t.sobre_superficie } else { t.sobre_variante_superficie };
+        const TAM: u32 = 14;
+        // Lo que la letra no tiene sale como "?": así su caché no crece sin fin con títulos raros.
+        let mut texto: String = titulo.chars().take(200).map(|c| if fuente.tiene(c) { c } else { '?' }).collect();
+        let cabe = w - 16 - LADO_BOTON - MARGEN_BOTON - 8;
+        if fuente.medir(&texto, TAM).ancho > cabe {
+            let punto = if fuente.tiene('…') { "…" } else { "..." };
+            while !texto.is_empty() && fuente.medir(&alloc::format!("{texto}{punto}"), TAM).ancho > cabe {
+                texto.pop();
+            }
+            texto.push_str(punto);
+        }
+        let m = fuente.medir(&texto, TAM);
+        if cabe > 0 {
+            l.recortar(R::new(16, 0, cabe, h));
+            fuente.dibujar(&mut l, 16, (h + m.sube - m.baja) / 2, &texto, TAM, tinta);
+            l.soltar_recorte();
+        }
+        // La X: dos trazos de 10 px, de 2 px de grueso (en octavos de píxel), en el centro del botón.
+        let (cx, cy) = ((w - MARGEN_BOTON - LADO_BOTON / 2) * 8, h / 2 * 8);
+        let x = if activa { t.sobre_superficie } else { t.sobre_variante_superficie };
+        l.trazo((cx - 40, cy - 40), (cx + 40, cy + 40), 14, x);
+        l.trazo((cx - 40, cy + 40), (cx + 40, cy - 40), 14, x);
+    })
+}
 
 /// Los números de los globales de las salidas: el 6 (el de siempre) para la principal y del 11 en adelante para las
 /// demás.
@@ -668,6 +715,8 @@ fn principal() -> u64 {
     let mut escena = Escena::new(Proyecciones::default(), FONDO);
     // Material 3: las ventanas echan sombra.
     escena.sombras = true;
+    // H9: la barra de DashOS, con el kit.
+    escena.pintor = Some(pintor());
     escena.poner_salidas(vec![Salida { global: GLOBAL_SALIDAS[0], nombre: "DASHOS-1".into(), descripcion: "Pantalla de DashOS".into(), rect, mhz: 60_000 }]);
     let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
     c.presentar(&danos);
@@ -694,6 +743,8 @@ fn principal() -> u64 {
     // E8: cuadros, microsegundos componiendo, píxeles dañados y desde cuándo se cuenta.
     let mut primera_ventana = false;
     let mut medida = (0u64, 0u64, 0u64, dashos::ahora_us());
+    let mut cuadros_total = 0u64;
+    let mut arrastre: Option<(u64, u64)> = None;
     loop {
         // Un mensaje que no vale no para el compositor (M6).
         // Con algo pendiente para un cliente que no leía, se vuelve a probar a los 2 ms (E8).
@@ -931,7 +982,18 @@ fn principal() -> u64 {
         // Dónde se colocó cada ventana nueva (S10c: las pruebas del ratón llevan el puntero allí).
         for (cl, x, y) in core::mem::take(&mut escena.recien_colocadas) {
             let de_linux = if cl != marca_de(cl) { " (un programa de su puente de Wayland)" } else { "" };
-            println!("  [compositor] ventana de {}{} en ({}, {}){}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+            // H9: la geometría (la ventana de verdad dentro de su búfer), si la dio: las pruebas apuntan con ella.
+            let xdg = escena.clientes.get(&cl).and_then(|c| c.xdg.values().find(|v| c.superficies.get(&v.superficie).and_then(|s| s.sitio) == Some((x, y))).map(|v| (c, v)));
+            let geometria = xdg.and_then(|(_, v)| v.geometria).map_or(String::new(), |g| alloc::format!(" geometría ({}, {}, {}, {})", g.x, g.y, g.w, g.h));
+            // Y lo que mide (con la barra de DashOS si la lleva).
+            let geometria = match xdg.and_then(|(c, v)| escena::decoracion::ventana_de(c, v.superficie)) {
+                Some(r) => alloc::format!("{} de {}x{}", geometria, r.w, r.h),
+                None => geometria,
+            };
+            println!("  [compositor] ventana de {}{} en ({}, {}){}{}", nombre_de(&nombres, &lanzados, cl), de_linux, x, y, geometria, if escena.oculto(cl) { ", sin enseñar (su sesión está detrás)" } else { "" });
+        }
+        for (cl, x, y) in core::mem::take(&mut escena.emergentes_colocados) {
+            println!("  [compositor] emergente de {} en ({}, {})", nombre_de(&nombres, &lanzados, cl), x, y);
         }
         for (cl, i, x, y) in core::mem::take(&mut escena.movidas) {
             let salida = escena.salidas.get(i).map_or("?", |o| o.nombre.as_str());
@@ -950,6 +1012,23 @@ fn principal() -> u64 {
                 }
             }
         }
+        // H9: lo del portapapeles para las fuentes: `send` con su llave, `cancelled`. Si su programa ya no está, la llave
+        // se cierra (quien pegaba ve el fin).
+        for (cl, aviso) in core::mem::take(&mut escena.avisos_portapapeles) {
+            match clientes.get_mut(&cl) {
+                Some(cli) => {
+                    escena::portapapeles::escribir_aviso(&mut cli.con, aviso);
+                    if !mandar(cli) {
+                        caidos.push(cl);
+                    }
+                }
+                None => {
+                    if let Some(l) = aviso.llave() {
+                        dashos::cerrar(l);
+                    }
+                }
+            }
+        }
         // Se compone lo dañado y se avisa a quien esperaba su cuadro.
         let mut avisos = Vec::new();
         let t0 = dashos::ahora_us();
@@ -963,6 +1042,20 @@ fn principal() -> u64 {
             println!("  [compositor] primer cuadro con ventanas a los {} ms del encendido", dashos::ahora_us() / 1000);
         }
         // E8, la medida: cuántos cuadros (composiciones con daño) y cuánto tiempo en ellos, cada 10 s.
+        // H9: los cuadros mientras se arrastra o se redimensiona una ventana (la medida de la caja Linux).
+        if !danos.is_empty() {
+            cuadros_total += 1;
+        }
+        match (escena.arrastrando(), arrastre) {
+            (true, None) => arrastre = Some((t0, cuadros_total)),
+            (false, Some((desde, cuadros))) => {
+                let ms = (t0 - desde) / 1000;
+                let n = cuadros_total - cuadros;
+                println!("  [compositor] arrastre: {} cuadros en {} ms ({} por segundo)", n, ms, if ms > 0 { n * 1000 / ms } else { 0 });
+                arrastre = None;
+            }
+            _ => {}
+        }
         if !danos.is_empty() {
             medida.0 += 1;
             medida.1 += dashos::ahora_us() - t0;

@@ -140,6 +140,39 @@ impl Sistema for SistemaCaja {
         dashos::cerrar(llave);
     }
 
+    /// H9, los tubos del portapapeles: un canal de DashOS.
+    fn tubo_crear(&mut self) -> Option<(u32, u32)> {
+        let (a, b) = dashos::canal_crear();
+        (a > 0 && b > 0).then_some((a, b))
+    }
+
+    fn tubo_leer(&mut self, llave: u32, buf: &mut [u8]) -> Result<usize, ()> {
+        let mut ll = [0u32; 8];
+        // Un microsegundo: sin esperar (0 sería sin plazo).
+        let (n, k, _) = dashos::canal_leer_plazo(llave, buf, &mut ll, 1);
+        // Llaves por un tubo: no son de nadie aquí.
+        for &l in &ll[..k.min(8)] {
+            dashos::cerrar(l);
+        }
+        match n {
+            n if n >= 0 => Ok(n as usize),
+            dashos::E_PLAZO => Ok(0),
+            _ => Err(()),
+        }
+    }
+
+    fn tubo_escribir(&mut self, llave: u32, datos: &[u8]) -> Result<usize, ()> {
+        match dashos::canal_escribir(llave, datos, &[]) {
+            0 => Ok(datos.len()),
+            dashos::E_LIMITE => Ok(0),
+            _ => Err(()),
+        }
+    }
+
+    fn ahora_ms(&mut self) -> u64 {
+        dashos::ahora_us() / 1000
+    }
+
     fn al_compositor(&mut self, bytes: &[u8], llaves: &[u32]) -> Result<(), bool> {
         match dashos::canal_escribir(self.ventanas, bytes, llaves) {
             0 => {
@@ -209,6 +242,8 @@ fn sumar(a: &mut wayland::puente::Cuentas, b: &wayland::puente::Cuentas) {
     a.bytes_al_invitado += b.bytes_al_invitado;
     a.bytes_de_memoria += b.bytes_de_memoria;
     a.memorias += b.memorias;
+    a.tubos += b.tubos;
+    a.bytes_de_tubos += b.bytes_de_tubos;
     a.vistas += b.vistas;
     a.vistas_no += b.vistas_no;
     a.malas += b.malas;
@@ -275,6 +310,9 @@ fn hilo_puente(_: u64) -> u64 {
                     t.puente.vaciar();
                     avisar = true;
                 }
+                // H9: los tubos del portapapeles (lo que escribe un programa nativo, al invitado).
+                t.puente.mover_tubos();
+                avisar |= t.puente.hay_salida();
             }
             for c in p.cerrandose.iter_mut() {
                 c.vaciar();

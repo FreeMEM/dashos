@@ -420,6 +420,8 @@ pub const E_PLAZO: i64 = -9;
 pub const E_ARGUMENTO: i64 = -1;
 /// El otro lado del canal ya no está.
 pub const E_CERRADO: i64 = -4;
+/// Un límite: la tabla de llaves o la cola del canal llenas (`canal_escribir`).
+pub const E_LIMITE: i64 = -8;
 
 /// Como `canal_leer_marca`, pero esperando como mucho `plazo_us` microsegundos (0 es sin plazo): al vencer, `E_PLAZO`
 /// (K7). Caben hasta 65535 llaves.

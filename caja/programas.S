@@ -8,6 +8,7 @@ prog_\nombre:
         .incbin "\fichero"
 prog_\nombre\()_fin:
         .endm
+        programa sistema, "pruebas68k/sistema.bin"
         programa hola, "pruebas68k/hola.bin"
         programa lineaa, "pruebas68k/lineaa.bin"
         programa bucle, "pruebas68k/bucle.bin"
@@ -15,6 +16,8 @@ prog_\nombre\()_fin:
         programa saludo, "pruebas68k/saludo.exe"
         programa ventana, "pruebas68k/ventana.exe"
         programa hostil, "pruebas68k/hostil.exe"
+        programa anidado, "pruebas68k/anidado.exe"
+        programa gadtools, "pruebas68k/gadtools.exe"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"
@@ -30,3 +33,9 @@ prog_\nombre\()_fin:
         programa dash_ventana, "build/dash/ventana.exe"
         programa dash_interp, "build/dash/interp.exe"
         programa dash_listas, "build/dash/listas.exe"
+        programa dash_ctrl_c, "build/dash/ctrl_c.exe"
+        programa dash_ctrl_c_gcc, "build/dash/ctrl_c_gcc.exe"
+        programa dash_ctrl_c_for, "build/dash/ctrl_c_for.exe"
+        programa dash_trap_ilegal, "build/dash/trap_ilegal.exe"
+        programa dash_trap_divcero, "build/dash/trap_divcero.exe"
+        programa dash_test_gadtools, "build/dash/test_gadtools.exe"

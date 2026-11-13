@@ -272,6 +272,8 @@ pub(crate) struct InfoTarea {
     sp: u32,
     /// La tarea se bloqueó en `Wait` o `WaitPort` y la próxima llamada es la repetición.
     esperando: bool,
+    /// Está dentro de su código de excepción (`tc_ExceptCode`): no se le entrega otra hasta que vuelva.
+    en_excepcion: bool,
     /// Bibliotecas que tiene abiertas (una vez por cada `OpenLibrary`).
     bibliotecas: Vec<u32>,
     /// Puertos que creó con `CreateMsgPort`.

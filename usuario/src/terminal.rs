@@ -134,6 +134,29 @@ impl Terminal {
         ((self.primera + y) % self.filas) * self.columnas + x
     }
 
+    /// H9, el portapapeles: el texto de la pantalla entre dos celdas (las dos dentro, en orden de lectura, da igual
+    /// cuál va antes): cada fila sin sus espacios del final, separadas por saltos de línea.
+    pub fn texto_entre(&self, a: (usize, usize), b: (usize, usize)) -> alloc::string::String {
+        let (a, b) = if (a.1, a.0) <= (b.1, b.0) { (a, b) } else { (b, a) };
+        let mut out = alloc::string::String::new();
+        for y in a.1..=b.1.min(self.filas - 1) {
+            let desde = if y == a.1 { a.0 } else { 0 };
+            let hasta = if y == b.1 { b.0.min(self.columnas - 1) } else { self.columnas - 1 };
+            let fila: alloc::string::String = (desde..=hasta).map(|x| self.celda(x, y).c).collect();
+            if y > a.1 {
+                out.push('\n');
+            }
+            out.push_str(fila.trim_end());
+        }
+        out
+    }
+
+    /// Si la celda (x, y) está entre `a` y `b` (en orden de lectura).
+    pub fn entre(x: usize, y: usize, a: (usize, usize), b: (usize, usize)) -> bool {
+        let (a, b) = if (a.1, a.0) <= (b.1, b.0) { (a, b) } else { (b, a) };
+        (y, x) >= (a.1, a.0) && (y, x) <= (b.1, b.0)
+    }
+
     fn ensuciar(&mut self, y: usize) {
         self.sucias |= 1 << y.min(63);
     }
@@ -519,6 +542,18 @@ mod pruebas {
         let mut t = Terminal::nueva(10, 4);
         t.meter(datos);
         t
+    }
+
+    /// H9: el texto entre dos celdas, para copiar lo seleccionado.
+    #[test]
+    fn texto_entre_celdas() {
+        let t = t(b"hola\r\nmundo bien\r\nfin");
+        assert_eq!(t.texto_entre((0, 0), (3, 0)), "hola");
+        assert_eq!(t.texto_entre((2, 1), (1, 0)), "ola\nmun");
+        assert_eq!(t.texto_entre((0, 0), (9, 2)), "hola\nmundo bien\nfin");
+        assert!(Terminal::entre(5, 0, (0, 1), (3, 0)));
+        assert!(!Terminal::entre(2, 0, (3, 0), (0, 1)));
+        assert_eq!(t.texto_entre((50, 50), (60, 60)), "");
     }
 
     #[test]
