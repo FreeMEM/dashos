@@ -674,6 +674,9 @@ impl Lista {
     }
 }
 
+/// El ancho de cada columna de una lista con tabuladores (trasfondo).
+const COLUMNA: i32 = 112;
+
 impl Clase for Lista {
     fn nombre(&self) -> &'static str {
         "lista"
@@ -726,9 +729,19 @@ impl Clase for Lista {
                 l.redondeado(fila.dentro(dentro), radio, tema::con_opacidad(tinta, 26));
                 l.borde(fila.dentro(dentro), radio, 3, t.secundario);
             }
-            let m = f.medir(o, tam);
+            // Columnas (trasfondo): con tabuladores, lo primero a la izquierda y lo demás en columnas de `COLUMNA` a la
+            // derecha, alineado a la derecha (números de una tabla). La primera fila con columnas va en el color suave.
+            let mut partes = o.split('\t');
+            let primera_parte = partes.next().unwrap_or("");
+            let resto: Vec<&str> = partes.collect();
+            let m = f.medir(primera_parte, tam);
             let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
-            f.dibujar(l, fila.x + 16, base, o, tam, tinta);
+            f.dibujar(l, fila.x + 16, base, primera_parte, tam, tinta);
+            for (j, c) in resto.iter().enumerate() {
+                let derecha = fila.x + fila.w - 16 - (resto.len() - 1 - j) as i32 * COLUMNA;
+                let w = f.medir(c, tam).ancho;
+                f.dibujar(l, derecha - w, base, c, tam, tinta);
+            }
         }
         l.soltar_recorte();
     }
