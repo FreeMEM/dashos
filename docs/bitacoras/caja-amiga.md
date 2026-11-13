@@ -930,3 +930,44 @@ Desactivado: todo al 38 % sobre la superficie.
    `bisel_caja`) y una variante más de `Elegido`; la lógica de GadTools, menús y ventanas no cambia. Falta que el
    ajuste de S26 (`dashos_tema_v1.cajas`) lleve qué tema, no solo "como DashOS"/"original".
 6. **Tamaño en Full HD**: ver las capturas.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS` (el fondo y "cajas=general dashos"
+u "original"):
+
+- `caja-gadtools-menu-material-ondas-fhd.png` y `caja-gadtools-menu-material-atardecer-fhd.png`: la ventana entera
+  con el menú Proyecto abierto ("Salir" señalado). Los colores cambian con el fondo (acento 3d6f88 con las olas,
+  c44e68 con el atardecer).
+- `caja-gadtools-menu-clasico-ondas-fhd.png` y `caja-gadtools-clasico-ondas-fhd.png`: lo mismo con "original" (3.x).
+- `caja-gadtools-material-atardecer-fhd.png`: la barra Material (X, profundidad, título) y los gadgets, con Ajustes
+  tapando parte. `caja-gadtools-material-atardecer-oscuro-fhd.png`: la misma ventana repintada al pasar el guion al
+  modo oscuro con ella abierta (tapada en parte por el centro de control).
+- Sin captura limpia de la ventana sin menú: las ventanas del guion (Ajustes, el centro, uno maximizado) la tapan
+  según cómo vaya la carga del PC.
+
+- **A 1:1 se ve muy pequeño en Full HD**: la ventana de GadTools mide 410x192 con topaz/8 en una pantalla de
+  1920x1080. Escalar las ventanas Amiga (x2) es otro paso (en el compositor o en la caja), no hecho.
+- La pantalla de Workbench de la caja sigue topada a 1024x768: las ventanas Amiga salen en esa zona, arriba a la
+  izquierda.
+- El guion de las capturas (`tools/prueba_uefi.sh`) reconocía la ventana de GadTools por los colores de 3.x; ahora
+  también por los de Material (barra, superficie y la casilla del primario: una ventana del kit encima tiene la misma
+  superficie).
+- El ejemplo de Dash (`test_gadtools.dash`) y el requester: sus capturas salieron tapadas por una ventana maximizada;
+  no se entregan.
+
+### Pruebas
+
+- `cargo test` de `caja/intuition`: 7 de `tema.rs` (mismo rectángulo que el clásico para los 12 tipos y 5 lugares,
+  colores de los tokens, menús, bordes, `DrawBevelBox`, círculos suaves y una hostil: rectángulos vacíos, negativos,
+  enormes, campos absurdos, radios y grosores imposibles) y 3 de `tests/material.rs` (ventana con el tema y al
+  cambiarlo con la ventana abierta, la excepción por programa, plumas de la `DrawInfo` fuera de la paleta y su tabla
+  apuntando fuera de la memoria, `DrawBevelBoxA`); las de antes, igual. clippy limpio en lo nuevo.
+- Lo hostil encontró desbordes en código compartido (`mando` y `celdas` con límites de -2^31 a 2^31-1, o un
+  `GTPA_IndicatorWidth` enorme) y que el fantasma clásico recorría todo el rectángulo de un gadget enorme aunque
+  cayera fuera del lienzo: arreglados (64 bits, y solo lo que cae en el lienzo).
+- `make prueba`: BIEN esperado.txt y BIEN cargador hunk. `make arranque-virt`: las cinco BIEN (tras juntar
+  `fusion-fondo`, que arregla la barra con `dashos_tema_v1` v4; antes, "el compositor pide 800x560" faltaba por eso).
+  La línea de atributos de `gadtools.exe` se escribía en dos veces y el aviso de la ventana en pantalla caía en medio
+  (con el tema Material, siempre): ahora va en una sola escritura (`caja/pruebas68k/gadtools.c` y su `.exe`).
+- `arranque-virt-vm`, `-2` y `-escritorio`: BIEN.
