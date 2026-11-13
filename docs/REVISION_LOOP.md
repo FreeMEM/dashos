@@ -1884,3 +1884,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   el agente de la caja Amiga. Worktree `.worktrees/trasfondo` (rama `trasfondo`, desde 2d7cfb0) ya creado; el agente
   se lanzó por error y se paró a los pocos minutos: al reanudarlo, el encargo completo está en la conversación (o
   rehacerlo desde la última fusión).
+- Unido a revision: BOOPSI y ReAction (caja-amiga-reaction) y el explorador (explorador), tanda completa sobre 2d7cfb0
+  todo rc=0 (prueba, av, gpu, diag, escritorio, tarjeta, usb, linux, arch, vm, 2, wayland; wayland ya con
+  set_min_size/set_max_size).
+- `tools/qemu_a_mano.sh`: DashOS en QEMU con ventana para que el usuario lo use. Es la imagen de las pruebas (lanza
+  sus programas de prueba, bloquea a los 3 s): falta una imagen "para usar" (solo el sistema, sin pruebas ni bloqueo
+  rápido, teclado español). En el primer intento del usuario, a guardian le llegaron "qd" como nombre y contraseñas
+  vacías: sin saber aún si fue la prueba que pisaba o el teclado.
