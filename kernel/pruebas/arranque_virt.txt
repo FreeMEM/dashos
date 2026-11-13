@@ -74,6 +74,8 @@ DashOS en marcha con 4 núcleos.
 # S20, fase 1: un ADF (FFS internacional, kernel/pruebas/disquete.adf.gz) montado como volumen de solo lectura por el
 # servicio imagen, que lo lee por el de archivos.
 ~│   [imagen] Disquete montado: FFS internacional, 1760 bloques
+# S28: su bloque de arranque, sin firmas (no arranca: el ADF de la prueba no es de arranque).
+~│   [imagen] Disquete: bloque de arranque: no arranca (sin DOS o con la suma mal): Kickstart no lo ejecuta
 ~│   [adf-prueba] montar: bien (1760 bloques, FFS bien, internacional bien); sin montar: bien; otra vez: bien
 ~│   [adf-prueba] volumen Disquete: 880 KB,
 ~│   [adf-prueba] raíz (3 entradas, fin bien): C/ Cajón/ LEEME.txt
