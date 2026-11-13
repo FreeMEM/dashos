@@ -17,9 +17,14 @@
 //!
 //! Cada negativa se apunta (`tomar_negados`) para que la caja la diga. Lo que se lee pasa sin tocar.
 //!
-//! Lo que no hace (S28): preguntar al usuario (hoy niega siempre), versiones o papelera de lo que se borra o se
-//! escribe, cupos de espacio.
+//! **Preguntar** (decisión del usuario del 2026-11-13): con un `Preguntador`, lo que no se cambia se le pregunta al
+//! usuario (por `guardian`) en vez de negarlo, una vez por programa 68k y clase: la respuesta se recuerda mientras viva
+//! la caja (y, si el usuario lo dice, la recuerda `sesiones`). Sin `Preguntador`, se niega. Lo de solo lectura no se
+//! pregunta nunca.
+//!
+//! Lo que no hace (S28): versiones o papelera de lo que se borra o se escribe, cupos de espacio.
 
+use alloc::boxed::Box;
 use alloc::collections::{BTreeMap, BTreeSet};
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -41,7 +46,7 @@ const DE_ARRANQUE: &[&str] =
 const MAX_NEGADOS: usize = 64;
 
 /// Qué es un fichero para la guardia.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub enum Clase {
     Normal,
     Ejecutable,
@@ -84,6 +89,13 @@ pub fn clase_por_nombre(nombre: &str) -> Clase {
     }
 }
 
+/// A quién se pregunta (S28): en la caja, al usuario por `sesiones` y `guardian`.
+pub trait Preguntador {
+    /// Si el programa 68k `programa` puede cambiar `nombre`, que es de la clase `clase`. `false` también si nadie
+    /// contesta.
+    fn preguntar(&mut self, programa: &str, clase: Clase, nombre: &str) -> bool;
+}
+
 /// Una negativa: la orden, el nombre del objeto y por qué.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Negado {
@@ -112,6 +124,14 @@ pub struct Guardia<F: SistemaArchivos> {
     negados: Vec<Negado>,
     /// Todas las negativas desde el principio.
     pub total_negados: u64,
+    /// A quién preguntar; sin él, se niega.
+    preguntador: Option<Box<dyn Preguntador>>,
+    /// El programa 68k que corre (lo pone la caja al empezar cada uno).
+    programa: String,
+    /// Lo contestado: (programa, clase) → sí o no.
+    respuestas: BTreeMap<(String, Clase), bool>,
+    /// Cuántas veces se ha preguntado.
+    pub preguntas: u64,
 }
 
 fn ultimo(camino: &str) -> &str {
@@ -120,7 +140,41 @@ fn ultimo(camino: &str) -> &str {
 
 impl<F: SistemaArchivos> Guardia<F> {
     pub fn nueva(dentro: F) -> Guardia<F> {
-        Guardia { dentro, solo_lectura: BTreeSet::new(), asas: BTreeMap::new(), negados: Vec::new(), total_negados: 0 }
+        Guardia {
+            dentro,
+            solo_lectura: BTreeSet::new(),
+            asas: BTreeMap::new(),
+            negados: Vec::new(),
+            total_negados: 0,
+            preguntador: None,
+            programa: String::new(),
+            respuestas: BTreeMap::new(),
+            preguntas: 0,
+        }
+    }
+
+    /// A quién preguntar desde ahora (sin él, se niega).
+    pub fn poner_preguntador(&mut self, p: Box<dyn Preguntador>) {
+        self.preguntador = Some(p);
+    }
+
+    /// El programa 68k que empieza a correr: lo que se pregunte va por él.
+    pub fn programa(&mut self, nombre: &str) {
+        self.programa = String::from(nombre);
+    }
+
+    /// Si se deja cambiar algo de la clase `clase` (`nombre`) al programa que corre: lo recordado o, si no, lo que
+    /// conteste el preguntador (y se recuerda).
+    fn dejar(&mut self, clase: Clase, nombre: &str) -> bool {
+        let clave = (self.programa.clone(), clase);
+        if let Some(&r) = self.respuestas.get(&clave) {
+            return r;
+        }
+        let Some(p) = self.preguntador.as_mut() else { return false };
+        self.preguntas += 1;
+        let r = p.preguntar(&clave.0, clase, nombre);
+        self.respuestas.insert(clave, r);
+        r
     }
 
     /// Las negativas desde la última vez.
@@ -211,6 +265,9 @@ impl<F: SistemaArchivos> Guardia<F> {
         let c = self.clase(asa);
         if c.intocable() {
             let n = self.nombre_de(asa);
+            if self.dejar(c, &n) {
+                return Ok(Clase::Normal);
+            }
             return Err(self.negar(orden, &n, c.nombre(), ErrorFs::Protegido));
         }
         Ok(c)
@@ -247,6 +304,7 @@ impl<F: SistemaArchivos> SistemaArchivos for Guardia<F> {
         if let Clase::Imagen(tope) = self.cambiable(asa, "escribir")?
             && desde < tope
             && !datos.is_empty()
+            && !self.dejar(Clase::Imagen(tope), &n)
         {
             return Err(self.negar("escribir", &n, Clase::Imagen(tope).nombre(), ErrorFs::Protegido));
         }
@@ -268,7 +326,7 @@ impl<F: SistemaArchivos> SistemaArchivos for Guardia<F> {
 
     fn crear(&mut self, asa: Asa, nombre: &str, cajon: bool) -> Result<(Asa, Datos), ErrorFs> {
         self.escribible(asa, "crear", nombre)?;
-        if !cajon && clase_por_nombre(nombre) == Clase::Arranque {
+        if !cajon && clase_por_nombre(nombre) == Clase::Arranque && !self.dejar(Clase::Arranque, nombre) {
             return Err(self.negar("crear", nombre, Clase::Arranque.nombre(), ErrorFs::Protegido));
         }
         let raiz = self.raiz_de(asa).ok_or(ErrorFs::AsaMala)?;
@@ -280,7 +338,7 @@ impl<F: SistemaArchivos> SistemaArchivos for Guardia<F> {
     fn borrar(&mut self, asa: Asa, nombre: &str) -> Result<(), ErrorFs> {
         self.escribible(asa, "borrar", nombre)?;
         let c = self.clase_en(asa, nombre);
-        if c != Clase::Normal {
+        if c != Clase::Normal && !self.dejar(c, nombre) {
             return Err(self.negar("borrar", nombre, c.nombre(), ErrorFs::Protegido));
         }
         self.dentro.borrar(asa, nombre)
@@ -290,10 +348,10 @@ impl<F: SistemaArchivos> SistemaArchivos for Guardia<F> {
         self.escribible(asa, "renombrar", viejo)?;
         self.escribible(asa_nueva, "renombrar", nuevo)?;
         let c = self.clase_en(asa, viejo);
-        if c != Clase::Normal {
+        if c != Clase::Normal && !self.dejar(c, viejo) {
             return Err(self.negar("renombrar", viejo, c.nombre(), ErrorFs::Protegido));
         }
-        if clase_por_nombre(nuevo) == Clase::Arranque {
+        if clase_por_nombre(nuevo) == Clase::Arranque && !self.dejar(Clase::Arranque, nuevo) {
             return Err(self.negar("renombrar", nuevo, Clase::Arranque.nombre(), ErrorFs::Protegido));
         }
         self.dentro.renombrar(asa, viejo, asa_nueva, nuevo)
@@ -304,6 +362,7 @@ impl<F: SistemaArchivos> SistemaArchivos for Guardia<F> {
         self.escribible(asa, "recortar", &n)?;
         if let Clase::Imagen(tope) = self.cambiable(asa, "recortar")?
             && tamano < tope
+            && !self.dejar(Clase::Imagen(tope), &n)
         {
             return Err(self.negar("recortar", &n, Clase::Imagen(tope).nombre(), ErrorFs::Protegido));
         }

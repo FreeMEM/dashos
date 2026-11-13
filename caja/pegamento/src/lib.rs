@@ -490,6 +490,8 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     c.avisos_dichos = 0;
     c.negados = 0;
     c.negados_dichos = 0;
+    // S28: lo que pregunte la guardia de ficheros va por este programa (se recuerda por programa).
+    c.dos.fs.programa(core::str::from_utf8(nombre).unwrap_or("?"));
     c.anidadas = 0;
     c.anidadas_no = 0;
     c.excepciones = 0;

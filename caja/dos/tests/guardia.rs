@@ -354,3 +354,38 @@ fn tras_negar_se_sigue_leyendo() {
     let f = c.open("SYS:LEEME.txt", MODE_OLDFILE);
     assert_ne!(f, 0, "IoErr {}", c.io_err());
 }
+
+/// Un preguntador de prueba: deja los iconos y nada más, y apunta lo que le preguntan.
+struct Prueba(std::rc::Rc<std::cell::RefCell<Vec<(String, Clase, String)>>>);
+impl caja_dos::guardia::Preguntador for Prueba {
+    fn preguntar(&mut self, programa: &str, clase: Clase, nombre: &str) -> bool {
+        self.0.borrow_mut().push((programa.into(), clase, nombre.into()));
+        clase == Clase::Icono
+    }
+}
+
+/// S28, decisión del 2026-11-13: la guardia pregunta, una vez por programa y clase, y recuerda.
+#[test]
+fn pregunta_y_recuerda_por_programa() {
+    let mut c = Caso::nuevo();
+    let vistas = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    c.dos.fs.poner_preguntador(Box::new(Prueba(vistas.clone())));
+    c.dos.fs.programa("instalador");
+    // El icono: se pregunta y se deja; la segunda vez, sin preguntar.
+    assert_eq!(c.pegar_al_final("Caja:C/saludo.info").0, 5);
+    assert_eq!(c.pegar_al_final("Caja:C/saludo.info").0, 5);
+    // El ejecutable: se pregunta una vez y se niega, también para borrarlo.
+    assert_eq!(c.pegar_al_final("Caja:C/saludo"), (u32::MAX, ERROR_WRITE_PROTECTED));
+    assert_eq!(c.borrar("Caja:C/saludo"), DOSFALSE);
+    assert_eq!(vistas.borrow().len(), 2, "{:?}", vistas.borrow());
+    assert_eq!(vistas.borrow()[0], ("instalador".into(), Clase::Icono, "saludo.info".into()));
+    // Otro programa: se le vuelve a preguntar.
+    c.dos.fs.programa("otro");
+    assert_eq!(c.borrar("Caja:C/saludo"), DOSFALSE);
+    assert_eq!(vistas.borrow().len(), 3);
+    // Lo de solo lectura no se pregunta nunca.
+    assert_eq!(c.pegar_al_final("SYS:C/Dir"), (u32::MAX, ERROR_DISK_WRITE_PROTECTED));
+    assert_eq!(vistas.borrow().len(), 3);
+    assert_eq!(c.dos.fs.preguntas, 3);
+    assert_eq!(c.mem().contenido(c.trabajo, "C/saludo").unwrap(), HUNK);
+}
