@@ -1699,3 +1699,10 @@ iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Es
 - Arreglos de pruebas: arch, wayland y gpu sobre su copia del disco (`target/disco-arch.img`, con reflink); el hostil
   "sin-fin: le cortaron la tubería" sale de lo esperado (inestable, se apunta en medidas; pendiente de explicar).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 09:25: decisión del usuario: cinco temas
+Habrá cinco temas configurados para elegir: Claro, Oscuro, AOS4 (al estilo de AmigaOS 4), MOS (al estilo de MorphOS)
+y Magic WB (al estilo de MagicWB). Sirven para el escritorio y para las cajas ("como DashOS" pinta con el tema
+elegido; Claro y Oscuro con la paleta del fondo de S26). Los tres retro se inspiran en su aspecto (colores,
+degradados, relieve, tipo de barra) y se dibujan aquí: sin copiar iconos, patrones ni imágenes de esos sistemas.
+Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
