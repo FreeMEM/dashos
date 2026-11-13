@@ -1416,11 +1416,80 @@ QEMU `virt`, TCG, 4 vCPU, 8 GB, con el PC cargado por otras sesiones; el invitad
 
 ### Qué falta
 
-- **Firefox no hace caso al teclado ni al ratón de DashOS** tras su primera ventana (ni Control+L, ni letras en un campo,
-  ni arrastrar su barra); GTK4 y foot sí. Sin mirar: puede ser que vaya muy justo de memoria, o algo de GTK3 con el
-  teclado del puente. El guion no teclea en él.
+- ~~**Firefox no hace caso al teclado ni al ratón de DashOS**~~: arreglado en `firefox-entrada` (abajo): el compositor
+  no miraba la región de entrada de las superficies.
 - **La regla de 1 GB con 8 GB o más**: propuesta, pendiente del usuario.
 - **La Pi 4 de 8 GB** sigue sin usar lo que pasa de los 4 GB (el mapa lineal de 16 GB es solo de `virt`).
 - Las tipografías CJK en la imagen (example.org las enseña como cajas).
 - Lo de antes: arrastrar y soltar, `xdg_activation`, `wp_viewporter`, `fractional-scale`, `text-input`, cursores del
   servidor, `wm_capabilities`.
+
+## 2026-11-13: Firefox no hacía caso al ratón (rama `firefox-entrada`)
+
+Rama `firefox-entrada`, desde `revision` (b7ea33c). Firefox abría su ventana en DashOS, pero no respondía a clics ni a lo
+tecleado; GTK4 y foot sí. Sala limpia: la especificación de Wayland (`wl_surface.set_input_region`, `wl_region`,
+`wl_subsurface`) y lo que dice `WAYLAND_DEBUG` de Firefox; nada de su código ni del de otros compositores.
+
+### Qué era
+
+Firefox pinta la página en una **subsuperficie** (un `wl_surface` suyo, hijo de la ventana de GTK) y le pone una región
+de entrada propia con `set_input_region` que no cubre la página (con el arreglo, el clic en (400, 64) de la ventana pasa a
+GTK: la entrada es para la ventana de GTK de debajo). El compositor no guardaba las regiones (`wl_region` no hacía nada) y buscaba bajo el ratón
+la superficie de más arriba por su rectángulo: el ratón entraba en la subsuperficie de la página. GTK solo atiende eventos
+de superficies suyas, y los de esa los tiraba: ningún clic llegaba.
+
+Con `WAYLAND_DEBUG=1` en Firefox (`CAJA_FIREFOX_DEPURAR=1` en el guion), antes del arreglo:
+
+- `wl_subcompositor.get_subsurface(wl_subsurface#45, wl_surface#19, wl_surface#40)`, `set_desync()`,
+  `wl_surface#19.set_input_region(wl_region#49)`: la página (#19) sobre la ventana (#40).
+- `wl_pointer#10.enter(12, wl_surface#19, 36, 64)` y luego `motion` y `button` sobre #19: a GTK no le sirven.
+- Las teclas sí llegaban, y a la ventana buena: `wl_keyboard#17.enter(.., wl_surface#40, ..)` y `key(..)` en los dos
+  `wl_keyboard` (GTK pide uno y Firefox otro, con su `wl_seat` de versión 7; los dos reciben todo). Sin el clic en la
+  barra de direcciones, lo tecleado no iba a ningún campo: por eso parecía que el teclado tampoco.
+
+Las otras sospechas no eran: el `wl_seat` (versiones 5 y 7, capacidades 3), el mapa del teclado (llega con su fd y tamaño
+a los dos), `wl_pointer.frame` (llega), el foco tras el primer configure (enter en #40). Lo de la memoria tampoco.
+
+### El arreglo
+
+En `wayland/src/escena.rs`: `wl_region` guarda sus trozos (`add` suma, `subtract` resta, en orden; un punto está dentro si
+el último trozo que lo cubre suma), con tope `MAX_REGION` (512; pasado, error de protocolo `REGION_DEMASIADO`).
+`set_input_region` copia la región en el estado pendiente de la superficie (se puede destruir la región después) y pasa a
+la superficie en el commit, como el búfer; en una subsuperficie sincronizada, con el commit de la madre. Null: toda la
+superficie. `bajo` (lo que hay bajo el ratón) ya no ve una superficie fuera de su región: el ratón pasa a lo de debajo,
+aquí la ventana de GTK. Vale también para las ventanas: la sombra que GTK se pinta fuera de su región deja pasar los clics a
+lo de detrás, como pide el protocolo. Los programas nativos de DashOS no ponen regiones: no cambia nada para ellos.
+
+### La prueba
+
+- `cargo test` de `wayland`: `region_de_entrada` (una subsuperficie sin entrada sobre una ventana: el ratón entra, se mueve
+  y pulsa en la ventana, que se lleva el teclado; una región con un trozo restado; sincronizada, hasta el commit de la
+  madre; null; hostil: trozos que se salen de i32, negativos y vacíos, la región destruida tras ponerla, la subsuperficie
+  que desaparece con el ratón encima, y una región de 513 trozos, cortada). Sin el cambio en `bajo`, falla.
+- El guion (`tools/guion_caja_linux.py`, Firefox en el modo wayland): tras la primera ventana de Firefox, un clic en su
+  barra de direcciones (la segunda fila, bajo las pestañas: Firefox se pinta su barra), Control+A,
+  `file:///usr/local/share/dashos/` e Intro. Si llegan el ratón y el teclado, la barra de DashOS dice el título nuevo
+  ("título: Linux · Index of file:///usr/local/share/dashos/"), que está en `arranque_virt_wayland.txt`. Variante corta:
+  `CAJA_SOLO=firefox ESPERADO_WAYLAND=pruebas/arranque_virt_wayland_firefox.txt make arranque-virt-wayland` (solo Firefox,
+  unos 15 minutos). Antes del arreglo: "firefox: no hizo caso al clic ni a lo tecleado".
+
+### Pruebas
+
+- `cargo test` en `wayland`: 94 (una nueva, `region_de_entrada`), y una ignorada como antes.
+- `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk.
+- `arranque-virt` (las cinco BIEN), `-vm` y `-2`: BIEN.
+- Variante corta en Full HD (`CAJA_SOLO=firefox`, `arranque_virt_wayland_firefox.txt`): antes del arreglo, "no hizo caso
+  al clic ni a lo tecleado" (con `WAYLAND_DEBUG`); con él, BIEN: el título nuevo a los 100 s de empezar Firefox.
+- `arranque-virt-wayland` entera, en Full HD: BIEN. Firefox a los 33,6 s; el clic y lo tecleado, bien a los 93,9 s; con
+  example.org, a los 24,5 s. GTK4 a los 12 s, su menú y la caja combinada abiertos, el hostil de la memoria muerto a los
+  10 s, el portapapeles con foot en los tres sentidos. "Hostil sin fin: sin ver el corte en 60 s", como antes (se apunta,
+  no es una línea esperada).
+- Capturas (fuera de git, `capturas-agente/`): `firefox-entrada-firefox-fhd.png` (la variante corta) y
+  `firefox-entrada-final-firefox-fhd.png` (la pasada entera): Firefox con el índice de `/usr/local/share/dashos/`
+  tecleado en su barra de direcciones; y `firefox-entrada-firefox-red-fhd.png` (example.org).
+
+### Qué falta
+
+- Arrastrar Firefox por su barra (la de pestañas, que se pinta él: `xdg_toplevel.move`) no está en el guion; con el
+  ratón ya en su ventana debería ir como con GTK4, sin probar.
+- La región opaca (`set_opaque_region`) sigue sin usarse para componer.

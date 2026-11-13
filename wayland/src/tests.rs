@@ -1231,6 +1231,99 @@ mod ventanas {
         assert!(con.roto.is_none(), "{:?}", con.roto);
     }
 
+    /// firefox-entrada: la región de entrada (`set_input_region`). Firefox pinta la página en una subsuperficie sin
+    /// entrada (región vacía): el ratón tiene que ir a la ventana de GTK de debajo, que es la que conoce. Con la
+    /// subsuperficie de `subsuperficies` (8 x 8 en (45, 45) de la pantalla, encima de la ventana 7 de 16 x 16 en (40,
+    /// 40)); 26 y 27, regiones.
+    #[test]
+    fn region_de_entrada() {
+        use crate::tablas::{wl_compositor, wl_region, wl_subcompositor, wl_subsurface};
+        let mut escena = Escena::new(Mem::default(), 0);
+        let mut con = Conexion::new();
+        abrir(&mut escena, &mut con, 1, 70);
+        let mut e = Escritor::new();
+        e.empezar(2, wl_registry::req::BIND).uint(4).texto(Some("wl_subcompositor")).uint(1).uint(20).fin();
+        e.empezar(3, wl_compositor::req::CREATE_SURFACE).uint(21).fin();
+        e.empezar(4, wl_shm::req::CREATE_POOL).uint(22).llave(71).int(8 * 8 * 4).fin();
+        e.empezar(22, wl_shm_pool::req::CREATE_BUFFER).uint(23).int(0).int(8).int(8).int(32).uint(XRGB8888).fin();
+        e.empezar(20, wl_subcompositor::req::GET_SUBSURFACE).uint(24).uint(21).uint(7).fin();
+        e.empezar(24, wl_subsurface::req::SET_POSITION).int(5).int(5).fin();
+        e.empezar(21, wl_surface::req::ATTACH).uint(23).int(0).int(0).fin();
+        e.empezar(21, wl_surface::req::COMMIT).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        assert_eq!(escena.bajo(46, 46), Some(((1, 21), 1, 1)), "sin región, la hija entera");
+        // Región vacía, y se destruye en seguida (la superficie se queda con su copia). Va sincronizada: hasta el commit
+        // de la madre, nada cambia.
+        let mut e = Escritor::new();
+        e.empezar(3, wl_compositor::req::CREATE_REGION).uint(26).fin();
+        e.empezar(21, wl_surface::req::SET_INPUT_REGION).uint(26).fin();
+        e.empezar(26, wl_region::req::DESTROY).fin();
+        e.empezar(21, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert_eq!(escena.bajo(46, 46).map(|b| b.0), Some((1, 21)));
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        assert_eq!(escena.bajo(46, 46), Some(((1, 7), 6, 6)), "sin entrada, el ratón ve la madre");
+        assert!(escena.clientes[&1].regiones.is_empty());
+        // Con el ratón: entra en la madre (la ventana de GTK), y el clic es suyo.
+        escena.cursor = (45, 45);
+        let ev = escena.raton(1, 1, 0);
+        assert!(ev.contains(&(1, Entrada::Entra { superficie: 7, x: 6, y: 6 })), "{ev:?}");
+        let ev = escena.raton(0, 0, 1);
+        assert!(ev.iter().any(|x| matches!(x, (1, Entrada::Boton { .. }))), "{ev:?}");
+        assert_eq!(escena.puntero, Some((1, 7)));
+        assert_eq!(escena.teclado, Some((1, 7)));
+        escena.raton(0, 0, 0);
+        // Un trozo: suma 4 x 4 y resta el centro (1, 1, 2 x 2). Desincronizada: su commit basta.
+        let mut e = Escritor::new();
+        e.empezar(24, wl_subsurface::req::SET_DESYNC).fin();
+        e.empezar(3, wl_compositor::req::CREATE_REGION).uint(27).fin();
+        e.empezar(27, wl_region::req::ADD).int(0).int(0).int(4).int(4).fin();
+        e.empezar(27, wl_region::req::SUBTRACT).int(1).int(1).int(2).int(2).fin();
+        // Hostiles: trozos que se salen de i32 al sumar, negativos o vacíos no rompen nada ni cuentan.
+        e.empezar(27, wl_region::req::ADD).int(i32::MAX).int(i32::MAX).int(i32::MAX).int(i32::MAX).fin();
+        e.empezar(27, wl_region::req::ADD).int(i32::MIN).int(i32::MIN).int(-5).int(0).fin();
+        e.empezar(21, wl_surface::req::SET_INPUT_REGION).uint(27).fin();
+        e.empezar(21, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        assert_eq!(escena.bajo(45, 45).map(|b| b.0), Some((1, 21)));
+        assert_eq!(escena.bajo(46, 46).map(|b| b.0), Some((1, 7)), "restado");
+        assert_eq!(escena.bajo(48, 48).map(|b| b.0), Some((1, 21)), "en el borde que queda");
+        assert_eq!(escena.bajo(49, 49).map(|b| b.0), Some((1, 7)), "fuera de la región");
+        assert_eq!(escena.bajo(39, 39), None, "fuera de todo");
+        // Ya en la hija (por su borde), la hija desaparece con el ratón encima: el ratón vuelve a la madre.
+        escena.cursor = (44, 44);
+        escena.raton(1, 1, 0);
+        assert_eq!(escena.puntero, Some((1, 21)));
+        let mut e = Escritor::new();
+        e.empezar(24, wl_subsurface::req::DESTROY).fin();
+        e.empezar(21, wl_surface::req::DESTROY).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert!(con.roto.is_none(), "{:?}", con.roto);
+        let ev = escena.raton(1, 1, 0);
+        assert!(ev.contains(&(1, Entrada::Entra { superficie: 7, x: 6, y: 6 })), "{ev:?}");
+        // Null: otra vez toda la superficie (aquí, la ventana).
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::SET_INPUT_REGION).uint(0).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut con, 1, &e);
+        assert_eq!(escena.bajo(55, 55).map(|b| b.0), Some((1, 7)));
+        // Hostil: una región sin fin se corta en el tope.
+        let mut e = Escritor::new();
+        e.empezar(3, wl_compositor::req::CREATE_REGION).uint(28).fin();
+        for i in 0..=MAX_REGION as i32 {
+            e.empezar(28, wl_region::req::ADD).int(i).int(0).int(1).int(1).fin();
+        }
+        mandar(&mut escena, &mut con, 1, &e);
+        let r = con.roto.expect("tenía que cortarse");
+        assert_eq!((r.objeto, r.codigo), (28, REGION_DEMASIADO));
+    }
+
     #[test]
     fn errores_de_subsuperficies() {
         use crate::tablas::wl_subcompositor;
