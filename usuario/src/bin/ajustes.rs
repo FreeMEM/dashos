@@ -122,7 +122,7 @@ fn principal() -> u64 {
     let mut i = Interfaz::new(a, raiz, Tema::CLARO);
     i.margen = 24;
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto.
-    i.esquinas = 16;
+    i.esquinas = kit::tema::RADIO_VENTANA;
     i.foco = Some(nombre);
     i.colocar(Rect::new(0, 0, ANCHO, ALTO));
 
@@ -256,7 +256,7 @@ fn principal() -> u64 {
                     pool = otro_pool;
                     medida = nueva;
                     i.colocar(Rect::new(0, 0, medida.0, medida.1));
-                    i.esquinas = if pedida.0 > 0 { 0 } else { 16 };
+                    i.esquinas = if pedida.0 > 0 { 0 } else { kit::tema::RADIO_VENTANA };
                     pintar(&mut i, px, medida);
                     presentar(&mut c, Some(bufer), medida);
                     if pedida.0 > 0 {

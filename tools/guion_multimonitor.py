@@ -66,7 +66,8 @@ contestadas = 0
 def contestar(t):
     """Las preguntas de `guardian` que aún no se contestaron."""
     global contestadas
-    vistas = re.findall(r"\[guardian\] pregunta en pantalla: ¿(\S+) puede", t)
+    # S28: también las de la caja Amiga ("la caja Amiga: X quiere cambiar ..."), que no empiezan por "¿": "n".
+    vistas = [m or "?" for m in re.findall(r"\[guardian\] pregunta en pantalla: (?:¿(\S+) puede)?", t)]
     while contestadas < len(vistas):
         quien = vistas[contestadas]
         contestadas += 1

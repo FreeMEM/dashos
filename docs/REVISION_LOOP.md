@@ -1812,3 +1812,23 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - **Virus de laboratorio `memoria`**: basta con preguntar con `TypeOfMem`; la prueba de verdad es la del kernel.
 - **GadTools con el tema Material**: no le convence la letra ni la barra (ver la entrada anterior, rama
   `amiga-integrada`).
+
+### 2026-11-13 17:00: la guardia de la caja Amiga pregunta de verdad, y la papelera (S28), en revision
+- Fusionada `caja-amiga-guardia`: cambiar o borrar ejecutables, iconos, guiones de arranque o bloques de arranque
+  pregunta por `sesiones` (llave nueva 4 de la caja, permisos `ejec:`, `icono:`, `guion:`, `disco:`) a `guardian`
+  ("Programa de Amiga ... ¿Lo dejas?", Siempre / Esta vez / No); "siempre" se guarda con los demás permisos y se
+  retira en el centro. Papelera de la caja en `Estado/Servicios/caja-amiga.papelera` (servicio `archivos`). La
+  instantánea del cajón no: las de RedoxFS son por volumen (hará falta un volumen propio para la caja).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 17:10: guardian, "Siempre" y "Sí" con Mayúsculas y S, y botones con la tecla destacada
+- Decisiones del usuario: "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S; una
+  "s" suelta no da ningún permiso. Las respuestas son botones tonales de Material con la palabra dentro y su tecla
+  subrayada en el color primario; "Mayús" pequeño dentro del botón cuando hace falta. El guion contesta `shift-s`.
+- `make prueba` BIEN; arranque-virt, -vm y -2: BIEN (lo demás no toca `guardian`).
+
+### 2026-11-13 17:40: esquinas menos redondeadas
+- Decisión del usuario ("los vértices de las ventanas, que no sean tan redondeados"): `kit::tema::RADIO_VENTANA` = 8
+  (Ajustes, centro, Workbench, selector, también al desmaximizar) y `RADIO_DIALOGO` = 12 (preguntas de `guardian`,
+  panel rápido); `decoracion::RADIO_MARCO` (barra de las ventanas de Linux) de 12 a 8. Antes 16, 24 y 28.
+- `cargo test` de kit y wayland; `make prueba` BIEN; arranque-virt, -2 y -escritorio: BIEN. Captura Full HD.

@@ -846,7 +846,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let raiz = Hijo::Fila(alloc::vec![Hijo::Obj(lado), derecha]);
     let mut i = Interfaz::new(arbol, raiz, Tema::CLARO);
     // Material 3: esquinas redondeadas (el búfer es ARGB); maximizada, en ángulo recto. 24 de margen.
-    i.esquinas = 16;
+    i.esquinas = kit::tema::RADIO_VENTANA;
     i.margen = 24;
     i.foco = Some(permisos);
     // Lo de la derecha según la categoría.
@@ -998,7 +998,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         px = unsafe { core::slice::from_raw_parts_mut(otra_va as *mut u32, (nueva.0 * nueva.1) as usize) };
                         (m, va, bufer, pool, medida) = (m2, otra_va, otro, otro_pool, nueva);
                         i.colocar(Rect::new(0, 0, medida.0, medida.1));
-                        i.esquinas = if pedida.0 > 0 { 0 } else { 16 };
+                        i.esquinas = if pedida.0 > 0 { 0 } else { kit::tema::RADIO_VENTANA };
                         presentar(&mut c, &mut i, px, medida, Some(bufer));
                         if pedida.0 > 0 {
                             println!("  [centro] el compositor pide {}x{}", medida.0, medida.1);

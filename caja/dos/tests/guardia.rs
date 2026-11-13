@@ -364,12 +364,18 @@ impl caja_dos::guardia::Preguntador for Prueba {
     }
 }
 
-/// S28, decisión del 2026-11-13: la guardia pregunta, una vez por programa y clase, y recuerda.
+fn con_preguntador(c: &mut Caso) -> std::rc::Rc<std::cell::RefCell<Vec<(String, Clase, String)>>> {
+    let vistas = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    c.dos.fs.poner_preguntador(Box::new(Prueba(vistas.clone())));
+    vistas
+}
+
+/// S28, decisión del 2026-11-13: la guardia pregunta, una vez por clase en cada vuelta del programa, y recuerda; tras
+/// un no, nada más de ese programa en esa vuelta.
 #[test]
 fn pregunta_y_recuerda_por_programa() {
     let mut c = Caso::nuevo();
-    let vistas = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
-    c.dos.fs.poner_preguntador(Box::new(Prueba(vistas.clone())));
+    let vistas = con_preguntador(&mut c);
     c.dos.fs.programa("instalador");
     // El icono: se pregunta y se deja; la segunda vez, sin preguntar.
     assert_eq!(c.pegar_al_final("Caja:C/saludo.info").0, 5);
@@ -379,6 +385,13 @@ fn pregunta_y_recuerda_por_programa() {
     assert_eq!(c.borrar("Caja:C/saludo"), DOSFALSE);
     assert_eq!(vistas.borrow().len(), 2, "{:?}", vistas.borrow());
     assert_eq!(vistas.borrow()[0], ("instalador".into(), Clase::Icono, "saludo.info".into()));
+    assert_eq!(vistas.borrow()[1], ("instalador".into(), Clase::Ejecutable, "saludo".into()));
+    // Tras el no, tampoco el guion, sin preguntar.
+    let f = c.open("Caja:S/Startup-Sequence", MODE_OLDFILE);
+    assert_ne!(f, 0);
+    assert_eq!(c.write(f, b"x"), u32::MAX);
+    c.close(f);
+    assert_eq!(vistas.borrow().len(), 2);
     // Otro programa: se le vuelve a preguntar.
     c.dos.fs.programa("otro");
     assert_eq!(c.borrar("Caja:C/saludo"), DOSFALSE);
@@ -386,6 +399,73 @@ fn pregunta_y_recuerda_por_programa() {
     // Lo de solo lectura no se pregunta nunca.
     assert_eq!(c.pegar_al_final("SYS:C/Dir"), (u32::MAX, ERROR_DISK_WRITE_PROTECTED));
     assert_eq!(vistas.borrow().len(), 3);
-    assert_eq!(c.dos.fs.preguntas, 3);
+    // Otra vuelta del primero: se le vuelve a preguntar (lo de "siempre" lo recuerda `sesiones`, no la guardia).
+    c.dos.fs.programa("instalador");
+    assert_eq!(c.pegar_al_final("Caja:C/saludo.info").0, 5);
+    assert_eq!(vistas.borrow().len(), 4);
+    assert_eq!(c.dos.fs.preguntas, 4);
     assert_eq!(c.mem().contenido(c.trabajo, "C/saludo").unwrap(), HUNK);
+}
+
+/// Un programa que insiste: mil intentos por todos los caminos, una sola pregunta.
+#[test]
+fn mil_intentos_una_pregunta() {
+    let mut c = Caso::nuevo();
+    let vistas = con_preguntador(&mut c);
+    c.dos.fs.programa("pesado");
+    for i in 0..1000 {
+        match i % 4 {
+            0 => assert_eq!(c.pegar_al_final("Caja:C/saludo").0, u32::MAX),
+            1 => assert_eq!(c.borrar("Caja:C/saludo"), DOSFALSE),
+            2 => assert_eq!(c.renombrar("Caja:C/saludo", "Caja:C/otro"), DOSFALSE),
+            _ => assert_eq!(c.borrar("Caja:S/Startup-Sequence"), DOSFALSE),
+        }
+    }
+    assert_eq!(vistas.borrow().len(), 1);
+    assert_eq!(c.mem().contenido(c.trabajo, "C/saludo").unwrap(), HUNK);
+}
+
+/// Nombres enormes (101 bytes) o raros: llegan tal cual al preguntador (limpiarlos es cosa de quien los enseña), sin romper nada.
+#[test]
+fn nombres_enormes_y_raros() {
+    let mut c = Caso::nuevo();
+    let vistas = con_preguntador(&mut c);
+    let largo = "ñ".repeat(48) + ".info";
+    for (i, nombre) in [largo.as_str(), "a\u{1b}[31mb.info", "x\u{7f}y.info", "%s%n.info"].iter().enumerate() {
+        c.dos.fs.programa(&"p".repeat(i * 300 + 1));
+        let ruta = format!("Caja:{}", nombre);
+        let f = c.open(&ruta, MODE_NEWFILE);
+        if f == 0 {
+            continue;
+        }
+        c.close(f);
+        assert_eq!(c.pegar_al_final(&ruta).0, 5, "{}", nombre);
+        // Los programas escriben en Latin-1: dos lo pasa a texto así.
+        let latin1: String = nombre.bytes().map(|b| b as char).collect();
+        assert_eq!(vistas.borrow().last().unwrap().2, latin1);
+    }
+    assert_eq!(vistas.borrow().len(), 4, "{:?}", vistas.borrow());
+}
+
+/// Un preguntador que no contesta (en la caja: `sesiones` sin `guardian`, o sin respuesta a tiempo): no, y no se le
+/// vuelve a preguntar en esa vuelta.
+#[test]
+fn sin_respuesta_no() {
+    struct Mudo(std::rc::Rc<std::cell::Cell<u32>>);
+    impl caja_dos::guardia::Preguntador for Mudo {
+        fn preguntar(&mut self, _: &str, _: Clase, _: &str) -> bool {
+            self.0.set(self.0.get() + 1);
+            false
+        }
+    }
+    let mut c = Caso::nuevo();
+    let veces = std::rc::Rc::new(std::cell::Cell::new(0));
+    c.dos.fs.poner_preguntador(Box::new(Mudo(veces.clone())));
+    c.dos.fs.programa("x");
+    for _ in 0..50 {
+        assert_eq!(c.pegar_al_final("Caja:C/saludo.info").0, u32::MAX);
+        assert_eq!(c.borrar("Caja:Discos/disco.adf"), DOSFALSE);
+    }
+    assert_eq!(veces.get(), 1);
+    c.intacto();
 }

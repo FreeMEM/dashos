@@ -228,7 +228,10 @@ cliente llega, sin marca (solo escribe sin marca quien reparte las llaves, hoy `
 derechos en la asa (bytes 4-7; 1 = administrar), su marca en a, usuario (16-19) y grupo (20-23) en b, y el cajón raíz
 como nombre, desde la raíz del volumen principal. Tras el nombre pueden ir raíces de más (U2): hueco, tope (4 leer, 6
 leer y escribir), largo del volumen y del camino (un byte cada uno), el volumen (vacío, el principal) y el camino; se
-ponen al abrir la sesión. Sin alta no hay sesión (-12). Con la orden 101, **baja**, también sin marca (la manda
+ponen al abrir la sesión. S28: con el hueco `HUECO_PAPELERA` (0x80), ese camino no es una raíz sino la **papelera** del
+cliente: lo que borra (un fichero, no un cajón) va ahí, con su nombre o "nombre.N" si ya hay uno, en vez de borrarse. Queda
+fuera de sus raíces (no la ve ni la vacía); si falta, se crea, suya y 0700. Hoy la tiene la caja Amiga
+(`Estado/Servicios/caja-amiga.papelera`). Sin alta no hay sesión (-12). Con la orden 101, **baja**, también sin marca (la manda
 `sesiones` cuando acaba algo que lanzó): se sueltan la sesión de esa marca (bytes 8-15), sus asas y raíces, y su alta.
 Las fichas provisionales están en `usuario/src/bin/inicio.rs` (`FICHAS`). Con ellas:
 
@@ -367,12 +370,12 @@ de respuesta:
 | 1 procesos | cualquiera | La lista, por páginas de 7 fichas de 32 bytes (marca, usuario, grupo, nombre). Solo los de su usuario y los del sistema (usuario por debajo de 1000); `guardian`, todos (U6) |
 | 2 matar | cualquiera | Mata el grupo de un proceso del mismo usuario; uno del sistema, -2 (para eso, la acción "matar"); uno de otra persona, -1, como si no existiera (U6) |
 | 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
-| 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6) |
+| 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6). S28: de la caja Amiga, también un permiso **sin llave** (`ejec:`, `icono:`, `guion:` o `disco:` y el programa 68k, con el programa entero y el fichero de detalle): se concede o se pregunta igual, sin llave; contesta el estado y cómo se decidió (`usuario/src/preguntas_ficheros.rs`). Una pregunta a la vez por programa |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
 | 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces. La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
 | 11 preguntas | `guardian` | La llave por la que se le pregunta: permisos, acciones de administrador y bloquear |
-| 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda); quitar uno concedido (se borra y se revocan sus llaves) |
+| 12 respuesta, 13 retirar | `guardian` | Sí o no a un permiso (lo concedido se guarda; S28: 2 es "sí, solo esta vez", sin guardarlo); quitar uno concedido (se borra y se revocan sus llaves) |
 | 14 administrar | cualquiera | Una acción de la lista cerrada ("comprobar", "matar"), con la contraseña de un administrador que pide `guardian`. Desde una sesión de detrás, -2 (U6) |
 | 15 respuesta de administrador | `guardian` | Usuario y contraseña para esa acción; se comprueban con su volumen |
 | 16 bloquear | uno del usuario con la sesión delante | `guardian` bloquea la sesión con su pantalla |

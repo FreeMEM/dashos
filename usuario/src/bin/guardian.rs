@@ -32,6 +32,11 @@ extern crate alloc;
 #[allow(dead_code)]
 mod ventana_cliente;
 
+#[path = "../preguntas_ficheros.rs"]
+#[allow(dead_code)]
+mod preguntas_ficheros;
+use preguntas_ficheros as pf;
+
 use alloc::string::String;
 use dashos::println;
 use dashos::protocolo::sesiones::{ENTRAR, FICHA, LANZAR, POR_PAGINA, PREGUNTA, PREGUNTAS, PROCESOS, RESPUESTA, RESPUESTA_ADMIN, RETIRAR, SALIR, VOLVER};
@@ -108,9 +113,17 @@ fn principal() -> u64 {
     // U3: a quién se pidió bloquear. Se bloquea al acabar el rato de preguntas: en la prueba, bloquear antes pararía
     // las ventanas de las demás pruebas, que no reciben nada con la sesión bloqueada.
     let mut por_bloquear: Option<alloc::string::String> = None;
-    // Atiende 40 s: lo que dura la prueba.
-    let fin = dashos::ahora_us() + 40_000_000;
-    while dashos::ahora_us() < fin {
+    // Atiende 40 s: lo que dura la prueba. S28: y hasta que pregunte la caja Amiga lo suyo (`CAJA_ESPERADAS`: sus cuatro
+    // virus de laboratorio y dos veces `actualiza.exe`), 120 s como mucho: va después de su ventana, que espera al guion.
+    // Y 20 s más tras la última suya: lo que sigue (el centro de control, los bloqueos) se lleva el teclado y el guion,
+    // y la caja, después, abre las ventanas de Dash que el guion pulsa (antes de S28 caían dentro de los 40 s).
+    let empieza = dashos::ahora_us();
+    let fin = empieza + 40_000_000;
+    let (mut caja, mut caja_si, mut ultima_caja) = (0u32, 0u32, 0u64);
+    while dashos::ahora_us() < fin
+        || (caja < CAJA_ESPERADAS && dashos::ahora_us() < empieza + 120_000_000)
+        || (caja > 0 && dashos::ahora_us() < ultima_caja + 20_000_000)
+    {
         let mut q = [0u8; PREGUNTA];
         let (n, _, _) = dashos::canal_leer_plazo(preguntas, &mut q, &mut [], 1_000_000);
         if n as usize != PREGUNTA {
@@ -120,6 +133,19 @@ fn principal() -> u64 {
         let programa = &q[8..8 + campo(&q[8..24])];
         let servicio = &q[24..24 + campo(&q[24..40])];
         if de_apagar(&q) {
+            continue;
+        }
+        // S28: la guardia de ficheros de la caja Amiga (un permiso sin llave): siempre, esta vez o no.
+        if pf::es_permiso(servicio) {
+            let r = preguntar_fichero(core::str::from_utf8(programa).unwrap_or("?"), servicio, &q[40..]);
+            caja += 1;
+            caja_si += (r != pf::RESPUESTA_NO) as u32;
+            ultima_caja = dashos::ahora_us();
+            let mut m = [0u8; 12];
+            m[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            m[4..8].copy_from_slice(&q[0..4]);
+            m[8..12].copy_from_slice(&r.to_le_bytes());
+            pedir(&m, &[]);
             continue;
         }
         // U3: bloquear la sesión de un usuario (lo pide uno de sus programas a `sesiones`).
@@ -172,6 +198,10 @@ fn principal() -> u64 {
     // `pide` de otro usuario que esperaban la misma pregunta reciben la llave esa vez, y si piden otra vez, se les
     // pregunta).
     let ambas = [&b"eco"[..], b"plazo"].iter().all(|sv| vistas.iter().any(|v| v.0 == *sv));
+    println!("  [guardian] preguntas de la caja Amiga (guardia de ficheros): {}, a {} dijo que sí", caja, caja_si);
+    // S28: el permiso sin llave que el usuario dio "siempre" a `actualiza.exe` en la caja Amiga, fuera (retirar uno sin
+    // llave, como los demás). Ya, antes del centro de control, que enseña lo concedido.
+    println!("  [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: {}", retirar("caja-amiga", "ejec:actualiza"));
     let bien = ambas && !repetida && a_otros >= 1 && si_pide == a_pide && si_otros == 0;
     println!("  [guardian] preguntas de pide, una por servicio y usuario: {} ({}; y {} de otros)", if bien { "bien" } else { "MAL" }, a_pide, a_otros);
     if si_pide != a_pide || si_otros != 0 {
@@ -332,6 +362,16 @@ fn atender(preguntas: u32) -> ! {
             pantalla(Some(programa));
             continue;
         }
+        // S28: un fichero de la caja Amiga: siempre, esta vez o no.
+        if pf::es_permiso(servicio) {
+            let r = preguntar_fichero(programa, servicio, &q[40..]);
+            let mut m = [0u8; 12];
+            m[0..4].copy_from_slice(&RESPUESTA.to_le_bytes());
+            m[4..8].copy_from_slice(&q[0..4]);
+            m[8..12].copy_from_slice(&r.to_le_bytes());
+            pedir(&m, &[]);
+            continue;
+        }
         let mut r = [0u8; 16];
         let largo = if servicio.first() == Some(&b'*') {
             r[0..4].copy_from_slice(&RESPUESTA_ADMIN.to_le_bytes());
@@ -489,18 +529,23 @@ fn cambio_rapido(preguntas: u32) -> bool {
     bien
 }
 
+/// S28: lo que se espera de la caja Amiga en la prueba: una pregunta de cada virus de laboratorio que cambia ficheros
+/// (arranque, enlace, guion y troyano) y dos de `actualiza.exe` (la tercera vez ya lo recuerda `sesiones`).
+const CAJA_ESPERADAS: u32 = 6;
+
 /// U4: pregunta al usuario si deja a `programa` usar `servicio`, en una capa encima de todo, en el centro, con el
 /// teclado (solo `guardian` puede poner capas: un programa no puede pintar una igual por encima). Sí con S y no con N;
 /// lo que se pulse en el primer segundo no cuenta (quien estaba escribiendo no contesta sin querer), y sin respuesta en
 /// 30 s, no.
 fn preguntar(programa: &str, servicio: &str) -> bool {
     let mut memoria = 0;
-    let r = preguntar_dentro(programa, servicio, &mut memoria);
+    let r = preguntar_dentro(programa, &Pregunta::Servicio(servicio), &mut memoria);
     dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     dashos::memoria_quitar(VA);
     if memoria > 0 {
         dashos::cerrar(memoria);
     }
+    let r = r == pf::RESPUESTA_SIEMPRE;
     match servicio.strip_prefix('*') {
         Some(que) => println!("  [guardian] {} con otras sesiones abiertas: el usuario dice {}", que, if r { "sí" } else { "no" }),
         None => println!("  [guardian] ¿{} puede usar {}? El usuario dice {}", programa, servicio, if r { "sí" } else { "no" }),
@@ -508,25 +553,62 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
     r
 }
 
-fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
+/// S28: la guardia de ficheros de la caja Amiga. `programa` es quien pide en `sesiones` (la caja), `permiso` el permiso
+/// sin llave (`ejec:...`) y `detalle` el programa 68k y el fichero (`preguntas_ficheros::detalle`), que no se fían: se
+/// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: Mayús+S siempre (se guarda), E solo esta vez y N no.
+/// Devuelve la respuesta para `sesiones` (`RESPUESTA_*`).
+fn preguntar_fichero(programa: &str, permiso: &[u8], detalle: &[u8]) -> u32 {
+    let (prog68k, fichero) = pf::leer_detalle(detalle);
+    let (prog68k, fichero) = (limpiar(prog68k, "un programa"), limpiar(fichero, "un fichero"));
+    let frase = pf::clase_de(permiso).map_or("algo protegido", |c| c.1);
+    let quien = if programa == "caja-amiga" { "la caja Amiga" } else { programa };
+    let mut memoria = 0;
+    let r = preguntar_dentro(quien, &Pregunta::Fichero { prog68k: &prog68k, fichero: &fichero, frase }, &mut memoria);
+    dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
+    dashos::memoria_quitar(VA);
+    if memoria > 0 {
+        dashos::cerrar(memoria);
+    }
+    let dice = match r {
+        pf::RESPUESTA_SIEMPRE => "sí, siempre",
+        pf::RESPUESTA_ESTA_VEZ => "sí, solo esta vez",
+        _ => "no",
+    };
+    println!("  [guardian] {}: ¿{} puede cambiar {}? El usuario dice {}", quien, prog68k, fichero, dice);
+    r
+}
+
+/// Lo que llega de fuera, para enseñarlo: sin letras de control y, si queda vacío, `si_no`.
+fn limpiar(t: &str, si_no: &str) -> String {
+    let t: String = t.chars().map(|c| if c.is_control() { '?' } else { c }).collect();
+    if t.trim().is_empty() { String::from(si_no) } else { t }
+}
+
+/// Lo que se pregunta: un servicio (U4) o un cambio en un fichero de la caja Amiga (S28).
+enum Pregunta<'a> {
+    Servicio(&'a str),
+    Fichero { prog68k: &'a str, fichero: &'a str, frase: &'a str },
+}
+
+fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u32 {
     const CAPAS: u32 = 20;
     const CAPA: u32 = 21;
-    // El diálogo; su sombra la pone el compositor, como a las demás capas.
-    const ANCHO: i32 = DIALOGO.0;
-    const ALTO: i32 = DIALOGO.1;
+    // El diálogo; su sombra la pone el compositor, como a las demás capas. El de un fichero, más grande.
+    let fichero = matches!(pregunta, Pregunta::Fichero { .. });
+    let (ancho_d, alto_d) = if fichero { DIALOGO_FICHERO } else { DIALOGO };
     const ESPERA_US: u64 = 1_000_000;
     /// El tema del sistema (S10c): llega al enlazar, antes que la configuración de la capa.
     const TEMA: u32 = 22;
     let mut tema = Tema::OSCURO;
     let (mut fuente, mut medio) = (Fuente::regular(), Fuente::medium());
-    let Some(mut c) = Cliente::conectar() else { return false };
-    let Some(globales) = c.globales() else { return false };
+    let Some(mut c) = Cliente::conectar() else { return pf::RESPUESTA_NO };
+    let Some(globales) = c.globales() else { return pf::RESPUESTA_NO };
     let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
     let (Some(gc), Some(gs), Some(ga), Some(gl)) =
         (global("wl_compositor"), global("wl_shm"), global("wl_seat"), global("zwlr_layer_shell_v1"))
     else {
         println!("  [guardian] el compositor no le da capas");
-        return false;
+        return pf::RESPUESTA_NO;
     };
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
@@ -540,7 +622,7 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUPERFICIE).fin();
     // Encima de todo (3), sin anclas (en el centro), con el teclado en exclusiva (1).
     e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA).uint(SUPERFICIE).uint(0).uint(3).texto(Some("guardian")).fin();
-    e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO as u32).uint(ALTO as u32).fin();
+    e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(ancho_d as u32).uint(alto_d as u32).fin();
     e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(1).fin();
     e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
@@ -550,31 +632,31 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
     let fin = dashos::ahora_us() + 30_000_000;
     loop {
         if dashos::ahora_us() > fin {
-            return false;
+            return pf::RESPUESTA_NO;
         }
-        let Ok(ev) = c.evento_plazo(100_000) else { return false };
+        let Ok(ev) = c.evento_plazo(100_000) else { return pf::RESPUESTA_NO };
         let Some((o, orden, cuerpo)) = ev else { continue };
         let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
         match (o, orden) {
             (CAPA, zwlr_layer_surface_v1::ev::CONFIGURE) if vista.is_none() => {
-                let tamano = (ANCHO * ALTO * 4) as usize;
+                let tamano = (ancho_d * alto_d * 4) as usize;
                 let m = dashos::memoria_crear(tamano);
                 if (m as i32) <= 0 {
-                    return false;
+                    return pf::RESPUESTA_NO;
                 }
                 *memoria = m as u32;
                 if dashos::memoria_proyectar(m as u32, VA, true) != 0 {
-                    return false;
+                    return pf::RESPUESTA_NO;
                 }
                 let px = unsafe { core::slice::from_raw_parts_mut(VA as *mut u32, tamano / 4) };
-                pintar_pregunta(px, ANCHO, ALTO, programa, servicio, &mut fuente, &mut medio, &tema);
+                pintar_pregunta(px, ancho_d, alto_d, programa, pregunta, &mut fuente, &mut medio, &tema);
                 let copia = dashos::llave_duplicar(m as u32, dashos::LEER | dashos::TRANSFERIR, 0);
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
-                e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ANCHO).int(ALTO).int(ANCHO * 4).uint(0).fin();
+                e.empezar(POOL, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER).int(0).int(ancho_d).int(alto_d).int(ancho_d * 4).uint(0).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::ATTACH).uint(BUFER).int(0).int(0).fin();
-                e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO).int(ALTO).fin();
+                e.empezar(SUPERFICIE, wl_surface::req::DAMAGE).int(0).int(0).int(ancho_d).int(alto_d).fin();
                 e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
                 e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
                 c.mandar(&e);
@@ -584,13 +666,17 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
             }
-            (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => return false,
+            (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => return pf::RESPUESTA_NO,
             (TEMA, wayland::tablas::dashos_tema_v1::ev::TEMA) => tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0),
             (SYNC, wayland::tablas::wl_callback::ev::DONE) if vista.is_none() => {
                 vista = Some(dashos::ahora_us());
-                match servicio.strip_prefix('*') {
-                    Some(que) => println!("  [guardian] confirmación en pantalla: ¿{}?", que),
-                    None => println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio),
+                match pregunta {
+                    // Apagar o reiniciar con otras sesiones abiertas: una confirmación.
+                    Pregunta::Servicio(servicio) if servicio.starts_with('*') => println!("  [guardian] confirmación en pantalla: ¿{}?", &servicio[1..]),
+                    Pregunta::Servicio(servicio) => println!("  [guardian] pregunta en pantalla: ¿{} puede usar {}?", programa, servicio),
+                    Pregunta::Fichero { prog68k, fichero, frase } => {
+                        println!("  [guardian] pregunta en pantalla: {}: {} quiere cambiar {}, {}", programa, prog68k, fichero, frase)
+                    }
                 }
             }
             (TECLADO, wl_keyboard::ev::KEYMAP) => {
@@ -605,71 +691,160 @@ fn preguntar_dentro(programa: &str, servicio: &str, memoria: &mut u32) -> bool {
                     Some(Tecla::Letra(ch)) if !a_tiempo => {
                         println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
                     }
-                    Some(Tecla::Letra('s' | 'S')) => return true,
-                    Some(Tecla::Letra('n' | 'N')) => return false,
+                    // "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S (decisiones del
+                    // usuario del 2026-11-13): una "s" suelta, tecleando en otra ventana cuando sale la pregunta, no debe
+                    // dar un permiso.
+                    Some(Tecla::Letra('S')) => return pf::RESPUESTA_SIEMPRE,
+                    Some(Tecla::Letra('e' | 'E')) if fichero => return pf::RESPUESTA_ESTA_VEZ,
+                    Some(Tecla::Letra('n' | 'N')) => return pf::RESPUESTA_NO,
                     _ => {}
                 }
             }
             (1, wl_display::ev::ERROR) => {
                 println!("  [guardian] error de protocolo en la pregunta");
-                return false;
+                return pf::RESPUESTA_NO;
             }
             _ => {}
         }
     }
 }
 
-/// Lo que mide el diálogo de la pregunta (Material 3: de 280 a 560 de ancho).
+/// Lo que mide el diálogo de la pregunta (Material 3: de 280 a 560 de ancho). El de un fichero de la caja Amiga (S28),
+/// más ancho y alto: el texto, en hasta cuatro líneas, y tres respuestas.
 const DIALOGO: (i32, i32) = (440, 208);
+const DIALOGO_FICHERO: (i32, i32) = (520, 268);
+/// Lo más largo que se enseña de un nombre que llega de fuera (el resto, "…").
+const MAX_NOMBRE_VISTO: usize = 60;
 
 /// Pinta la pregunta de U4 como un diálogo de Material 3, con los colores del tema del sistema (S10c): el contenedor
 /// alto con esquinas de 28 (fuera, transparente; la sombra, del compositor), 24 de relleno, el título (headline small, 24), el texto (body
 /// medium, 14, en el color suave) y abajo a la derecha las respuestas. No se pulsan (`guardian` solo atiende al
 /// teclado): cada una lleva su tecla en una tecla dibujada, con contorno, y su nombre en el primario.
-fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, servicio: &str, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
+/// S28: la de un fichero de la caja Amiga: "Programa de Amiga" de título, y "<programa> quiere cambiar <fichero>, un
+/// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "Mayús+S Siempre", "E Esta vez" y "N No".
+#[allow(clippy::too_many_arguments)]
+fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregunta: &Pregunta, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
     l.borrar(Rect::new(0, 0, ancho, alto), 0);
     let caja = Rect::new(0, 0, ancho, alto);
-    l.redondeado(caja, 28, t.contenedor_alto());
+    l.redondeado(caja, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
     let x = caja.x + 24;
     let ancho_texto = caja.w - 48;
     // El título: la pregunta. Si el nombre es largo y no cabe a 24, a 22 y luego a 20. Apagar y reiniciar (con otras
     // sesiones abiertas), con su propio texto.
-    let apagado = match servicio {
-        "*apagar" => Some("¿Apagar el equipo?"),
-        "*reiniciar" => Some("¿Reiniciar el equipo?"),
-        _ => None,
-    };
-    let titulo = match apagado {
-        Some(t) => String::from(t),
-        None => alloc::format!("¿Dar permiso a \"{}\"?", programa),
+    let titulo = match pregunta {
+        Pregunta::Servicio("*apagar") => String::from("¿Apagar el equipo?"),
+        Pregunta::Servicio("*reiniciar") => String::from("¿Reiniciar el equipo?"),
+        Pregunta::Servicio(_) => alloc::format!("¿Dar permiso a \"{}\"?", programa),
+        Pregunta::Fichero { .. } => String::from("Programa de Amiga"),
     };
     let tam = [24u32, 22, 20].into_iter().find(|&tam| fuente.medir(&titulo, tam).ancho <= ancho_texto).unwrap_or(20);
     l.recortar(Rect::new(x, caja.y, ancho_texto, caja.h));
     fuente.dibujar(&mut l, x, caja.y + 24 + 24, &titulo, tam, t.sobre_superficie);
     // El texto, a 16 del título (de 32 de alto); líneas de 20.
     let y = caja.y + 24 + 32 + 16;
-    let frase = match apagado {
-        Some(_) => String::from("Hay otras sesiones abiertas y se cerrarán."),
-        None => alloc::format!("Quiere usar \"{}\".", servicio),
+    let (lineas, respuestas): (alloc::vec::Vec<String>, &[(&str, &str)]) = match pregunta {
+        Pregunta::Servicio(servicio) if servicio.starts_with('*') => (
+            alloc::vec![String::from("Hay otras sesiones abiertas y se cerrarán."), String::from("Contesta con el teclado.")],
+            &[("Mayús+S", "Sí"), ("N", "No")],
+        ),
+        Pregunta::Servicio(servicio) => (
+            alloc::vec![alloc::format!("Quiere usar \"{}\".", servicio), String::from("Contesta con el teclado.")],
+            &[("Mayús+S", "Sí"), ("N", "No")],
+        ),
+        Pregunta::Fichero { prog68k, fichero, frase } => {
+            let texto = alloc::format!(
+                "{} quiere cambiar {}, {}. ¿Lo dejas? Lo pide {}.",
+                recortar(prog68k),
+                recortar(fichero),
+                frase,
+                programa
+            );
+            let mut v = partir(fuente, &texto, ancho_texto, 4);
+            v.push(String::from("Contesta con el teclado."));
+            (v, &[("Mayús+S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
+        }
     };
-    fuente.dibujar(&mut l, x, y + 15, &frase, 14, t.sobre_variante_superficie);
-    fuente.dibujar(&mut l, x, y + 20 + 15, "Contesta con el teclado.", 14, t.sobre_variante_superficie);
+    for (i, linea) in lineas.iter().enumerate() {
+        fuente.dibujar(&mut l, x, y + 20 * i as i32 + 15, linea, 14, t.sobre_variante_superficie);
+    }
     l.soltar_recorte();
-    // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: "N No" y "S Sí".
+    // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: botones tonales de Material (píldoras de
+    // 40 de alto) con la palabra dentro y su tecla destacada (la primera letra, subrayada y en el color primario). Si
+    // la tecla pide Mayúsculas ("Mayús+S"), "Mayús" va pequeño detrás de la palabra, dentro del botón.
     let fila = caja.y + caja.h - 24 - 40;
     let mut derecha = caja.x + caja.w - 24;
-    for (tecla, nombre) in [("S", "Sí"), ("N", "No")] {
-        let mn = medio.medir(nombre, 14);
-        let ancho_resp = 12 + 24 + 8 + mn.ancho + 12;
+    for (tecla, nombre) in respuestas.iter().rev() {
+        let con_mayus = tecla.starts_with("Mayús");
+        let mut letras = nombre.chars();
+        let primera: String = letras.next().map(String::from).unwrap_or_default();
+        let resto: String = letras.collect();
+        let mp = medio.medir(&primera, 14);
+        let mr = medio.medir(&resto, 14);
+        let mm = medio.medir("Mayús", 11);
+        let ancho_texto = mp.ancho + mr.ancho + if con_mayus { 6 + mm.ancho } else { 0 };
+        let ancho_resp = 24 + ancho_texto + 24;
         let r = Rect::new(derecha - ancho_resp, fila, ancho_resp, 40);
-        let k = Rect::new(r.x + 12, fila + 8, 24, 24);
-        l.borde(k, 6, 1, t.contorno);
-        let mk = medio.medir(tecla, 14);
-        medio.dibujar(&mut l, k.x + (k.w - mk.ancho) / 2, k.y + (k.h - mk.alto()) / 2 + mk.sube, tecla, 14, t.sobre_superficie);
-        medio.dibujar(&mut l, k.x + k.w + 8, fila + (40 - mn.alto()) / 2 + mn.sube, nombre, 14, t.primario);
+        l.redondeado(r, 20, t.contenedor_primario);
+        let x0 = r.x + 24;
+        let y_base = fila + (40 - mp.alto()) / 2 + mp.sube;
+        medio.dibujar(&mut l, x0, y_base, &primera, 14, t.primario);
+        // El subrayado de la tecla, de 2 de grueso, bajo la letra.
+        l.redondeado(Rect::new(x0, fila + 40 / 2 + mp.alto() / 2 + 1, mp.ancho.max(2), 2), 1, t.primario);
+        medio.dibujar(&mut l, x0 + mp.ancho, y_base, &resto, 14, t.sobre_contenedor_primario);
+        if con_mayus {
+            let ym = fila + (40 - mm.alto()) / 2 + mm.sube;
+            medio.dibujar(&mut l, x0 + mp.ancho + mr.ancho + 6, ym, "Mayús", 11, t.sobre_variante_superficie);
+        }
         derecha = r.x - 8;
     }
+}
+
+/// Un nombre que llega de fuera, entre comillas y recortado a `MAX_NOMBRE_VISTO` letras.
+fn recortar(n: &str) -> String {
+    if n.chars().count() <= MAX_NOMBRE_VISTO {
+        return alloc::format!("\"{}\"", n);
+    }
+    let corto: String = n.chars().take(MAX_NOMBRE_VISTO - 1).collect();
+    alloc::format!("\"{}…\"", corto)
+}
+
+/// Parte `texto` en líneas de `ancho` como mucho (a 14), por las palabras; una palabra que no cabe sola se parte por
+/// las letras. Hasta `max` líneas: si sobra, la última acaba en "…".
+fn partir(fuente: &mut Fuente, texto: &str, ancho: i32, max: usize) -> alloc::vec::Vec<String> {
+    let mut lineas: alloc::vec::Vec<String> = alloc::vec::Vec::new();
+    let mut linea = String::new();
+    for palabra in texto.split(' ') {
+        let prueba = if linea.is_empty() { String::from(palabra) } else { alloc::format!("{} {}", linea, palabra) };
+        if fuente.medir(&prueba, 14).ancho <= ancho {
+            linea = prueba;
+            continue;
+        }
+        if !linea.is_empty() {
+            lineas.push(core::mem::take(&mut linea));
+        }
+        // La palabra sola: si no cabe, por letras.
+        for ch in palabra.chars() {
+            linea.push(ch);
+            if fuente.medir(&linea, 14).ancho > ancho {
+                linea.pop();
+                lineas.push(core::mem::take(&mut linea));
+                linea.push(ch);
+            }
+        }
+    }
+    if !linea.is_empty() {
+        lineas.push(linea);
+    }
+    if lineas.len() > max {
+        lineas.truncate(max);
+        let ultima = &mut lineas[max - 1];
+        while !ultima.is_empty() && fuente.medir(&alloc::format!("{}…", ultima), 14).ancho > ancho {
+            ultima.pop();
+        }
+        ultima.push('…');
+    }
+    lineas
 }
 
 /// U3: pide al compositor un aviso cuando nadie toque el teclado ni el ratón en `ms` milisegundos
@@ -789,7 +964,7 @@ fn pintar(px: &mut [u32], ancho: i32, alto: i32, usuaria: &str, entrada: bool, c
     // La caja de la contraseña, con un punto por letra.
     let caja = Rect::new(ancho / 2 - 160, y + 120, 320, 48);
     // Material 3: la caja en el contenedor alto, sin marco; con error, el borde rojo.
-    l.redondeado(caja, 24, t.contenedor_alto());
+    l.redondeado(caja, kit::tema::RADIO_DIALOGO, t.contenedor_alto());
     if mala {
         l.borde(caja, 24, 2, error);
     }
