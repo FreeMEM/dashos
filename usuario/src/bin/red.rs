@@ -50,6 +50,9 @@ const CANAL: u32 = 1;
 const CANAL_ESTADO: u32 = 2;
 /// Lo que da "red-estado": las palabras de `R_ESTADO` que pone el bucle principal (la configuración, las conexiones en
 /// total y las tramas); `E_SUYAS` y `E_RECHAZOS` quedan a 0.
+/// Trasfondo: bytes de las tramas que entraron y salieron por la tarjeta (`E_ENTRAN`, `E_SALEN`).
+static BYTES_ENTRAN: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+static BYTES_SALEN: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 static FOTO: [core::sync::atomic::AtomicU32; p::E_PALABRAS] = [const { core::sync::atomic::AtomicU32::new(0) }; p::E_PALABRAS];
 
 /// El hilo de "red-estado": a `ESTADO` (con una llave de respuesta) contesta la foto; lo demás, nada (las llaves que
@@ -296,6 +299,7 @@ impl phy::TxToken for Tx<'_> {
         }
         fence(Ordering::SeqCst);
         poner_tramas(p::T_TX_ESCRITAS, escritas.wrapping_add(1));
+        BYTES_SALEN.fetch_add(n as u64, Ordering::Relaxed);
         self.t.enviadas = true;
         r
     }
@@ -353,6 +357,7 @@ impl Tarjeta {
             }
             fence(Ordering::SeqCst);
             poner_tramas(p::T_TX_ESCRITAS, escritas.wrapping_add(1));
+            BYTES_SALEN.fetch_add(n as u64, Ordering::Relaxed);
             self.enviadas = true;
             pu.del_invitado += 1;
         }
@@ -388,6 +393,7 @@ impl Device for Tarjeta {
                 continue;
             }
             self.recibidas += 1;
+            BYTES_ENTRAN.fetch_add(n as u64, Ordering::Relaxed);
             // H9: lo que es del invitado de la caja Linux va a su puerto; lo de difusión, también a la pila.
             if let Some(pu) = self.puerto.as_mut()
                 && pu.para_el(&rx.buf[..rx.n])
@@ -745,6 +751,10 @@ fn principal() -> u64 {
             }
         }
         e[p::E_CONEXIONES] = conex.iter().flatten().count() as u32;
+        for (i, b) in [(p::E_ENTRAN, BYTES_ENTRAN.load(Ordering::Relaxed)), (p::E_SALEN, BYTES_SALEN.load(Ordering::Relaxed))] {
+            e[i] = b as u32;
+            e[i + 1] = (b >> 32) as u32;
+        }
         for (i, x) in e.iter().enumerate() {
             FOTO[i].store(*x, Ordering::Relaxed);
         }

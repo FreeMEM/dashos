@@ -19,7 +19,12 @@
 //! Un objeto de memoria mide 4 MB como mucho: en una pantalla mayor (1920 × 1080 son 8 MB), el fondo va en franjas,
 //! una capa por franja, cada una pegada arriba con su margen.
 //!
-//! Llaves: 1 "ventanas" (con el poder de escritorio, por las capas), 2 "archivos" y 3 su canal "fondo".
+//! Trasfondo nativo (lo pidió el usuario): además, el panel del monitor del sistema, en una capa de fondo encima de la
+//! imagen, que lleva un hilo propio (`fondo_panel.rs`). El centro de control le dice "monitor" tras guardar
+//! `Prefs/monitor`, y el panel relee sus ajustes.
+//!
+//! Llaves: 1 "ventanas" (con el poder de escritorio, por las capas), 2 "archivos", 3 "sesiones" (los procesos, con la
+//! vista de la persona de delante), 4 "red-estado" y 5 su canal "fondo".
 
 #![no_std]
 #![no_main]
@@ -29,6 +34,14 @@ extern crate alloc;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
+#[path = "../monitor.rs"]
+#[allow(dead_code)]
+mod monitor;
+#[path = "../reloj.rs"]
+#[allow(dead_code)]
+mod reloj;
+#[path = "../fondo_panel.rs"]
+mod fondo_panel;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -45,7 +58,7 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
-const CANAL: u32 = 3;
+const CANAL: u32 = 5;
 /// El fondo si no hay `Prefs/fondo`.
 const DE_SERIE: &str = "ondas.png";
 /// El cajón de los fondos, desde la raíz del usuario.
@@ -446,6 +459,11 @@ fn contestar(llave: u32, (estado, semilla, w, h, ms): (i32, u32, u32, u32, u32),
 fn principal() -> u64 {
     dashos::monton::con_nombre(&"fondo");
     let mut pantalla: Option<Pantalla> = None;
+    // El panel del monitor, en su hilo, con su pila (vive lo que el programa).
+    let pila: &'static mut [u8] = alloc::vec![0u8; 256 << 10].leak();
+    if dashos::hilos::crear(fondo_panel::hilo, 0, pila, 0) < 0 {
+        println!("  [fondo] no se pudo lanzar el hilo del panel del monitor");
+    }
     // El que se ve: nombre, semilla, ancho y alto.
     let mut actual: Option<(String, u32, u32, u32)> = None;
     let nombre = guardado();
@@ -479,6 +497,17 @@ fn principal() -> u64 {
         }
         let del_centro = nombres.get(&marca).is_some_and(|n| n == "centro");
         let pedido = core::str::from_utf8(&buf[..n]).unwrap_or("");
+        // Trasfondo: el centro guardó `Prefs/monitor`: que el panel lo relea (se le despierta por su puerta).
+        if del_centro && pedido == "monitor" {
+            fondo_panel::RELEER.store(true, core::sync::atomic::Ordering::Release);
+            let puerta = fondo_panel::PUERTA.load(core::sync::atomic::Ordering::Acquire);
+            let r = if puerta != 0 && dashos::canal_escribir(puerta, &[1], &[]) == 0 { BIEN } else { SIN_PANTALLA };
+            if k >= 1 {
+                contestar(ll[0], (r, 0, 0, 0, 0), "");
+            }
+            cerrar_llaves(&ll[..k]);
+            continue;
+        }
         let respuesta = match pedido.strip_prefix("poner ") {
             Some(nombre) if del_centro && nombre_vale(nombre) => poner(&mut pantalla, nombre, &mut actual),
             None if del_centro && pedido == "semilla" => match &actual {

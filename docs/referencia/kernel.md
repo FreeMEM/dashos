@@ -164,7 +164,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 | 28 | `plazo` | `x0` permiso de plazo (con escribir; no hace falta con capacidad 0), `x1` capacidad en µs (0: vuelve a la clase justa), `x2` periodo en µs (de 1 ms a 1 s) | 0, o `E_LIMITE` si no se admite |
-| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola; 12: páginas del montón del kernel; 13: páginas que no estaban libres al arrancar (imagen del kernel, firmware, árbol) | El número |
+| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola; 12: páginas del montón del kernel; 13: páginas que no estaban libres al arrancar (imagen del kernel, firmware, árbol); 14: los núcleos en marcha, un bit por núcleo. El 3 cuenta también el rato ocioso de ahora (un núcleo dormido sin tic no parece ocupado) | El número; `E_ARGUMENTO` con un núcleo que no existe |
 | 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
 | 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 | 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
@@ -184,6 +184,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 48 | `maquina_estado` | `x0` vCPU (con escribir), `x1` operación (0 leer registros, 1 escribirlos, 2 aborto externo, 3 proyectar la GICV, 4 otra vCPU, 5 reiniciarla, 6 patearla, 7 parar la máquina), `x2` dirección de 33 u64 (0 y 1), física del invitado (3), número de vCPU (4) o entrada (5), `x3` entrada (4) o x0 (5), `x4` x0 (4) | 0, la llave de la vCPU nueva (4) o un error: `E_LIMITE` si está corriendo, `E_ARGUMENTO` si no hubo acceso que abortar o el número de vCPU no vale, `E_NO_HAY` sin GIC virtual |
 | 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
 | 51 | `apagar` | `x0` permiso de apagar (con escribir), `x1` 0 apagar, 1 reiniciar | No vuelve si se pudo. Antes deja 300 ms para que la consola saque lo último del registro. Con PSCI (SYSTEM_OFF, SYSTEM_RESET) si el árbol lo trae (QEMU `virt`, UEFI, la Pi 5 con el BL31 de su firmware; en la Pi 5, que se corte la corriente lo decide su EEPROM, que no se toca); sin PSCI, en la Pi 4 y la Pi 3, con el perro guardián del bloque PM (apagar marca la partición 63 en PM_RSTS). `E_TIPO` si `x0` no es el permiso, `E_ARGUMENTO` con otro modo, `E_NO_HAY` si no se pudo |
+| 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -294,6 +295,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   los dos lados de todos los canales que crearon (C44), aunque tengan llaves en otros grupos: quien los use después
   recibe `E_CERRADO`. Así se suelta todo lo que el grupo dejó, también los ciclos entre canales.
 - **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
+- **52, `cpu_tiempo`** (trasfondo). El planificador suma lo que corre cada hilo, en cada cambio, a su grupo y a todos los
+  de encima (sumas atómicas, sin cerrojos ni memoria). Lo del hilo que corre ahora entra en su siguiente cambio (como
+  mucho un tic tarde). El contador no baja nunca, ni al matar el grupo. Lo prueba `grupos` en `make prueba`: un hijo
+  que gira cuenta en su grupo y en el de arriba, no se pierde al matarlo, y sin leer, con otra llave o con una que no
+  existe, no se lee.
 - **17, `revocar`.** Pide el derecho de escribir en el revocador. Desde ese momento, la copia revocable y las suyas
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos

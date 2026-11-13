@@ -118,10 +118,20 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Quien hace de `guardian` en la prueba de U3: pide entrar con una contraseña mala y con la buena, y salir.
     // Un programa con permiso para `eco` (U4): lo pide a `sesiones`, lo usa, renuncia y comprueba que ya no sirve.
     // Quien atiende las preguntas al usuario (U4): `sesiones` le pregunta si un programa puede usar un servicio.
+    // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee), y el controlador de
+    // virtio-net, si lo hay. La llave del canal "red" es el permiso de red: hoy la da `inicio`; más adelante, `sesiones`.
+    // Trasfondo: va antes del fondo, que lee "red-estado" para su panel (el primero que nombra un canal lo sirve).
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    // También "red-estado": solo el estado, para leer (decisión del usuario del 2026-11-13); lo atiende un hilo aparte.
+    ("red", programa!("red"), &[], &["red", "red-estado"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     // C3: el fondo de escritorio, una capa de fondo con la imagen de `C/Fondos` (poder de escritorio). Nombra "fondo" antes
     // que el centro, que le dice cuál poner: es su servidor.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("fondo", programa!("fondo"), &[], &["ventanas", "archivos", "fondo"]),
+    // Trasfondo: también "sesiones" (los procesos, con la vista de la persona de delante) y "red-estado" (lo que entra y
+    // sale), para el panel del monitor. Llaves: 1 ventanas, 2 archivos, 3 sesiones, 4 red-estado y 5 su canal "fondo".
+    ("fondo", programa!("fondo"), &[], &["ventanas", "archivos", "sesiones", "red-estado", "fondo"]),
     // El centro de control (S10c, C1): la ventana de Ajustes, con la categoría Permisos. Por "centro" solo se le pide
     // que abra una categoría (en la prueba, `guardian`). Va antes que él: el
     // primero que nombra un canal es su servidor.
@@ -203,14 +213,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("presa", programa!("presa"), &[], &["sesiones"]),
-    // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee); el controlador de
-    // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
-    // uno sin la llave. La llave del canal "red" es el permiso de red: hoy la da `inicio`; más adelante, `sesiones`.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    // También "red-estado": solo el estado, para leer (decisión del usuario del 2026-11-13); lo atiende un hilo aparte.
-    ("red", programa!("red"), &[], &["red", "red-estado"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
+    // Las pruebas de la red (el servicio va antes del fondo): una con permiso (el eco del PC, caudal, basura), un glotón
+    // de conexiones y uno sin la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("red-gloton", programa!("red-gloton"), &[], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
@@ -221,7 +225,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // el del sonido para el volumen general. S27, oleada 2: también "sesiones" (quién está delante, para su cabecera) y
     // el estado de la red, para su mosaico y la barra: por "red-estado", que solo da eso (decisión del usuario del
     // 2026-11-13: sin la llave de "red", que es el permiso de red). Tras los servicios de sonido y de red, que son quienes
-    // leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 centro, 4 sonido, 5 red-estado.
+    // leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 red-estado (desde trasfondo, la red va antes del fondo), 4
+    // centro y 5 sonido.
     #[cfg(feature = "virt")]
     ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
