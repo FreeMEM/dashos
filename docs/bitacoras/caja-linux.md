@@ -1472,3 +1472,24 @@ lo de detrás, como pide el protocolo. Los programas nativos de DashOS no ponen 
   ("título: Linux · Index of file:///usr/local/share/dashos/"), que está en `arranque_virt_wayland.txt`. Variante corta:
   `CAJA_SOLO=firefox ESPERADO_WAYLAND=pruebas/arranque_virt_wayland_firefox.txt make arranque-virt-wayland` (solo Firefox,
   unos 15 minutos). Antes del arreglo: "firefox: no hizo caso al clic ni a lo tecleado".
+
+### Pruebas
+
+- `cargo test` en `wayland`: 94 (una nueva, `region_de_entrada`), y una ignorada como antes.
+- `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk.
+- `arranque-virt` (las cinco BIEN), `-vm` y `-2`: BIEN.
+- Variante corta en Full HD (`CAJA_SOLO=firefox`, `arranque_virt_wayland_firefox.txt`): antes del arreglo, "no hizo caso
+  al clic ni a lo tecleado" (con `WAYLAND_DEBUG`); con él, BIEN: el título nuevo a los 100 s de empezar Firefox.
+- `arranque-virt-wayland` entera, en Full HD: BIEN. Firefox a los 33,6 s; el clic y lo tecleado, bien a los 93,9 s; con
+  example.org, a los 24,5 s. GTK4 a los 12 s, su menú y la caja combinada abiertos, el hostil de la memoria muerto a los
+  10 s, el portapapeles con foot en los tres sentidos. "Hostil sin fin: sin ver el corte en 60 s", como antes (se apunta,
+  no es una línea esperada).
+- Capturas (fuera de git, `capturas-agente/`): `firefox-entrada-firefox-fhd.png` (la variante corta) y
+  `firefox-entrada-final-firefox-fhd.png` (la pasada entera): Firefox con el índice de `/usr/local/share/dashos/`
+  tecleado en su barra de direcciones; y `firefox-entrada-firefox-red-fhd.png` (example.org).
+
+### Qué falta
+
+- Arrastrar Firefox por su barra (la de pestañas, que se pinta él: `xdg_toplevel.move`) no está en el guion; con el
+  ratón ya en su ventana debería ir como con GTK4, sin probar.
+- La región opaca (`set_opaque_region`) sigue sin usarse para componer.
