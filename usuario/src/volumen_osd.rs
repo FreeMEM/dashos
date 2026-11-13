@@ -43,6 +43,12 @@ impl Volumen {
         self.efectivo() != antes || paso == 0
     }
 
+    /// Un clic en la pista: ese nivel (sin pasar de 100), y quita el silencio.
+    pub fn poner(&mut self, nivel: u32) {
+        self.silencio = false;
+        self.nivel = nivel.min(100);
+    }
+
     /// Los botones del panel: de 10 en 10, sin pasar de 0 a 100. También quitan el silencio.
     pub fn boton(&mut self, mas: bool) {
         self.silencio = false;
@@ -98,6 +104,9 @@ mod pruebas {
         v.tecla(0);
         v.boton(false);
         assert_eq!((v.efectivo(), v.silencio), (90, false));
+        v.tecla(0);
+        v.poner(1000);
+        assert_eq!((v.efectivo(), v.silencio), (100, false));
     }
 
     /// Hostil: ráfagas de miles de pulsaciones y pasos raros: nunca sale de 0 a 100.

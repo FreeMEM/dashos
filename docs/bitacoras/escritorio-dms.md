@@ -118,3 +118,62 @@ Todo otra vez, con Arch primero: `-arch` BIEN (antes, tres veces MAL), `make arr
 - La sombra del compositor va bajo toda la capa de la barra (40), no bajo la tira (de 4 a 36): no se nota en las
   capturas, pero no es exacta.
 - La hora sigue en UTC.
+
+## 2026-11-13: segunda oleada (centro de control y estado real en la barra)
+
+El usuario aceptó las siete recomendaciones de la primera oleada. Antes, `git merge revision`: con el aspecto común
+(S26), la versión 3 de `dashos_tema_v1` es la de las cajas y los espacios y el volumen pasaron a la 4. Lo nuevo va en la
+5. Decisión nueva del usuario: habrá cinco temas (Claro, Oscuro, AOS4, MOS, Magic WB); no los hago, pero todo lo nuevo
+usa solo papeles del tema del kit.
+
+### Lo hecho
+
+- **Centro de control** (`panel.rs`): 440 de ancho. Cabecera con quien está delante (inicial, nombre y "Encendido hace
+  N min"), Editar y Bloquear. Deslizador del volumen (el altavoz pone el silencio, la pista pone el nivel, − y + de 10
+  en 10) y del brillo, apagado ("Sin control aquí": no hay servicio de brillo). Rejilla de dos columnas: red, modo
+  oscuro, bloquear, con el icono en un cuadrado redondeado (luna, candado y red dibujados con el lienzo). La edición, la
+  de antes. El mosaico del modo oscuro y los botones del volumen siguen diciendo dónde están: el guion no cambia.
+- **Quién está delante**: `sesiones` contesta `DELANTE` (21) solo al panel y a la barra; a otro, -2.
+- **La red**: el panel pregunta `ESTADO` al servicio de red al arrancar y cada 10 s (con 300 ms de plazo). Para eso,
+  `inicio` le da los canales "sesiones" y "red", y el panel pasa tras los servicios de red en la lista (el primero que
+  nombra un canal es quien lo lee). Sus llaves: 1 ventanas, 2 sesiones, 3 centro, 4 sonido, 5 red.
+- **La barra**: el panel da el estado (red, nivel, silencio) al compositor con la petición `estado` de la versión 5
+  (solo el panel; recortado), y el compositor se lo pasa a la barra. Icono de red tachado y en el color suave sin red;
+  altavoz con cruz con el silencio y ondas según el nivel.
+- **Menú de apagado**: no se hizo. DashOS no tiene cómo apagar ni reiniciar (ni llamada del kernel ni servicio).
+  Pregunta 8 del estudio.
+
+### Pruebas
+
+- Escena: `el_estado_del_panel_a_la_barra` (nueva): un programa cualquiera no lo da, el recorte, sin repetir y una
+  barra que llega tarde lo recibe al suscribirse. 86, bien.
+- Hostil: dar el estado sin ser el panel (error de protocolo) y `DELANTE` sin ser el panel ni la barra (-2). Dos líneas
+  nuevas en `arranque_virt.txt`, más tres del panel y la barra ("red: conectada (10.0.2.15)", "delante:", "estado:").
+- Volumen: `poner` (la pista) en `volumen_osd.rs`, con su prueba.
+- `make arranque-virt`: las cinco BIEN a la primera. `make prueba`, `-vm`, `-linux`, `-2`, `-diag`, `-escritorio` y
+  `-usb`: BIEN. `-wayland` y `-gpu` (con `~/.cache/dashos-caja-linux`): BIEN.
+- `-arch`, antes de fusionar `revision` otra vez: MAL dos veces, como en la primera oleada. El `poweroff` del final no le
+  llegó a Linux. Mientras tanto, las ventanas de prueba de la caja Amiga ("GadTools Test", "Cero") salían y se iban, y el
+  teclado iba de ellas a la terminal y vuelta. Tras `git merge revision` (9f44c5c), BIEN a la primera.
+- Tras la fusión, todo otra vez (Arch primero): ver abajo.
+
+### Capturas (fuera de git)
+
+- `capturas-agente/o2-antes/` (revision, 1920 × 1080) y `o2-despues/` (esta oleada): `centro.ppm.panel.png` es el centro
+  de control abierto, y la barra se ve arriba en todas.
+- `capturas-agente/comp-centro-control.png`: antes y después, lado a lado.
+- `capturas-agente/o2-v/panel-recorte.png`: el centro a 800 × 600.
+
+### Pendiente
+
+- Apagar y reiniciar (pregunta 8) y el menú de apagado.
+- El estado de la red sin el permiso de red (pregunta 9).
+- El brillo: no hay quien lo lleve (en la Pi, el de la pantalla oficial o DDC).
+- No molestar, Bluetooth y los demás mosaicos de DMS: cuando haya servicio detrás.
+- La cabecera no se repinta sola cada minuto (el "Encendido hace" se pone al día al repintar).
+
+### Resultado tras fusionar revision (9f44c5c)
+
+Todo otra vez, con Arch primero: `-arch` BIEN, `make arranque-virt` las cinco BIEN, `make prueba` BIEN, y `-vm`,
+`-linux`, `-2` (las dos), `-diag`, `-escritorio`, `-usb`, `-wayland` y `-gpu` BIEN. Escena (`cargo test --lib`): 92,
+bien.

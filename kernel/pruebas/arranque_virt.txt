@@ -138,6 +138,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
 # S27: ni cambiar de espacio de trabajo como la barra.
 ~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
+# S27, oleada 2: ni dar el estado de la red y del volumen como el panel, ni saber quién está delante.
+~│   [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: sí
+~│   [hostil] sesiones: quién está delante, sin ser el panel ni la barra: -2 y nada
+# S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
+~│   [panel] red: conectada (10.0.2.15)
+~│   [panel] delante: 
+~│   [barra] estado: red conectada, volumen
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien

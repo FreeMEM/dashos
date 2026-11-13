@@ -624,7 +624,21 @@ fn barra_ajena() -> bool {
         escribir(VENTANAS, &[TROZO_ADIOS], &[]);
     }
     println!("  [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: {}", si(espacio_negado));
-    sin_capas && capa_negada && panel_negado && espacio_negado
+    // S27, oleada 2: dar el estado de la red y del volumen como el panel (la barra lo enseñaría).
+    let estado_negado = {
+        let Some((lectura, copia)) = conectar() else { return false };
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(5).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::ESTADO).uint(0).uint(0).uint(1).fin();
+        e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+        mandar(&e);
+        let negado = leer(lectura, copia, 60).1;
+        escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+        negado
+    };
+    println!("  [hostil] compositor: dar el estado de la red y del volumen sin ser el panel da error: {}", si(estado_negado));
+    sin_capas && capa_negada && panel_negado && espacio_negado && estado_negado
 }
 
 /// S10c: el tema del sistema solo lo cambia el centro de control. El hostil se suscribe (`dashos_tema_v1`, el global
@@ -895,6 +909,13 @@ fn sesiones(memoria: u32) -> bool {
     if !concedidos_negado {
         println!("  [hostil] sesiones: ver lo concedido da {} bytes (tenía que negarse)", visto);
     }
+    // S27, oleada 2: quién está delante, sin ser el panel ni la barra: -2 y nada más (4 bytes).
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut rd = [0u8; 32];
+    let delante = if escribir(SESIONES, &s::DELANTE.to_le_bytes(), &[suyo]) { dashos::canal_leer_plazo(lectura, &mut rd, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let delante_negado = delante == 4 && i32::from_le_bytes(rd[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    println!("  [hostil] sesiones: quién está delante, sin ser el panel ni la barra: {}", if delante_negado { "-2 y nada" } else { "MAL" });
     // U2: lanzar un programa del disco, sin ser `guardian`.
     let mut p = [0u8; 32];
     p[0..4].copy_from_slice(&s::LANZAR.to_le_bytes());
@@ -925,7 +946,7 @@ fn sesiones(memoria: u32) -> bool {
         println!("  [hostil] sesiones: la tabla de nombres no es la suya ({} bytes, {} nombres, Home: {})", n, t.len(), home);
     }
     let bien = a == s::PROTEGIDO && c == s::BIEN && d == s::NO_EXISTE && !sin_baja && entrar == dashos::protocolo::archivos::PROTEGIDO
-        && servicio == s::PROTEGIDO && k == 0 && registro_negado && concedidos_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
+        && servicio == s::PROTEGIDO && k == 0 && registro_negado && concedidos_negado && delante_negado && lanzar == s::PROTEGIDO && nombres && retirar == s::PROTEGIDO
         && admin1 == s::PROTEGIDO && admin2 == s::PROTEGIDO && admin3 == s::PROTEGIDO && plazo == s::PROTEGIDO && kp == 0;
     if bien {
         println!("  [hostil] sesiones: ve {} procesos; no mata al compositor (otro usuario), sí a presa (el suyo); los que acabaron, fuera", cuantos);

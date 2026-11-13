@@ -163,6 +163,9 @@ struct Barra {
     /// S27: el espacio de trabajo que se ve y los que tienen ventanas (bit n-1 por el espacio n), de `espacios`.
     espacio: u32,
     ocupados: u32,
+    /// S27, oleada 2: el estado que da el panel por el compositor: red (0 sin servicio, 1 sin dirección, 2 conectada),
+    /// nivel del volumen y silencio. `None` hasta que llega.
+    estado: Option<(u32, u32, bool)>,
 }
 
 /// Dónde va cada cosa de la barra (se calcula al pintar y al mirar dónde cae el ratón).
@@ -319,16 +322,26 @@ fn icono_red(l: &mut Lienzo, r: Rect, color: Color) {
     l.redondeado(Rect::new(cx + 2, cy + 4, 6, 5), 1, color);
 }
 
-/// El altavoz (de 16): la caja, la bocina (un trapecio con los lados suavizados) y dos ondas.
-fn icono_sonido(l: &mut Lienzo, r: Rect, color: Color) {
+/// El altavoz (de 16): la caja, la bocina (un trapecio con los lados suavizados) y las ondas que pida el nivel (una hasta
+/// el 50 %, dos por encima, ninguna en 0); con el silencio, una cruz.
+fn icono_sonido(l: &mut Lienzo, r: Rect, nivel: u32, silencio: bool, color: Color) {
     let (cx, cy) = (r.x + 5, r.y + r.h / 2);
     l.rellenar(Rect::new(cx - 4, cy - 2, 3, 4), color);
     for i in 0..4 {
         l.rellenar(Rect::new(cx - 1 + i, cy - 2 - i, 1, 4 + 2 * i), color);
     }
+    if silencio {
+        l.trazo(((cx + 5) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 10) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
+        l.trazo(((cx + 10) * 8 + 4, (cy - 3) * 8 + 4), ((cx + 5) * 8 + 4, (cy + 2) * 8 + 4), 12, color);
+        return;
+    }
     l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
-    l.borde(Rect::new(cx - 1, cy - 3, 7, 6), 3, 1, color);
-    l.borde(Rect::new(cx - 2, cy - 6, 11, 12), 6, 1, color);
+    if nivel > 0 {
+        l.borde(Rect::new(cx - 1, cy - 3, 7, 6), 3, 1, color);
+    }
+    if nivel > 50 {
+        l.borde(Rect::new(cx - 2, cy - 6, 11, 12), 6, 1, color);
+    }
     l.soltar_recorte();
 }
 
@@ -391,8 +404,17 @@ fn pintar_barra(px: &mut [u32], b: &Barra, fuente: &mut Fuente, medio: &mut Fuen
     }
     // El estado: red y sonido, en el primario (como DMS); abre el panel rápido.
     pildora(&mut l, d.estado, false, Some(Boton::Panel));
-    icono_red(&mut l, Rect::new(d.estado.x + 10, d.estado.y + 4, 16, 16), t.primario);
-    icono_sonido(&mut l, Rect::new(d.estado.x + 34, d.estado.y + 4, 16, 16), t.primario);
+    // Con el estado del panel (oleada 2): sin red, el icono en el color suave y tachado; con el silencio, la cruz.
+    let (red, nivel, silencio) = b.estado.unwrap_or((2, 100, false));
+    let r_red = Rect::new(d.estado.x + 10, d.estado.y + 4, 16, 16);
+    if red == 2 {
+        icono_red(&mut l, r_red, t.primario);
+    } else {
+        icono_red(&mut l, r_red, t.sobre_variante_superficie);
+        l.trazo(((r_red.x + 1) * 8, (r_red.y + 1) * 8), ((r_red.x + 15) * 8, (r_red.y + 15) * 8), 12, t.sobre_variante_superficie);
+    }
+    let color = if silencio { t.sobre_variante_superficie } else { t.primario };
+    icono_sonido(&mut l, Rect::new(d.estado.x + 34, d.estado.y + 4, 16, 16), nivel, silencio, color);
 }
 
 /// La campana de los avisos (18), centrada en `r`: la cúpula, el borde y el badajo.
@@ -927,7 +949,7 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(4).uint(TEMA).fin();
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(5).uint(TEMA).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_KEYBOARD).uint(TECLADO).fin();
     // La barra: arriba (anclas 1 arriba, 4 izquierda, 8 derecha), a todo lo ancho, en la capa de arriba (2), con su
@@ -941,7 +963,7 @@ fn principal() -> u64 {
     e.empezar(SUPERFICIE, wl_surface::req::COMMIT).fin();
     c.mandar(&e);
 
-    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0 };
+    let mut b = Barra { tema: Tema::CLARO, ancho: 0, titulo: String::new(), hora: hora_ahora(), encima: None, lanzador_abierto: false, sin_leer: 0, historial_abierto: false, espacio: 1, ocupados: 0, estado: None };
     // Los avisos: se suscribe con la puerta. Lo que ya hubiera no sale como toast, solo cuenta para la campana.
     let mut avs = Avisos { activo: false, toast: None, toast_listo: false, hist: None, hist_listo: false, visto_hasta: 0, hoja_a: None, hoja_h: None };
     if puerta != 0 {
@@ -1110,6 +1132,16 @@ fn principal() -> u64 {
                 }
             }
             // S27: los espacios de trabajo, del compositor.
+            // S27, oleada 2: el estado de la red y del volumen, que da el panel.
+            (TEMA, dashos_tema_v1::ev::ESTADO) => {
+                let nuevo = Some((palabra(0).min(2), palabra(1).min(100), palabra(2) != 0));
+                if nuevo != b.estado {
+                    b.estado = nuevo;
+                    let (red, nivel, silencio) = nuevo.unwrap();
+                    println!("  [barra] estado: red {}, volumen {}{}", ["sin servicio", "sin dirección", "conectada"][red as usize], nivel, if silencio { " (silencio)" } else { "" });
+                    pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
+                }
+            }
             (TEMA, dashos_tema_v1::ev::ESPACIOS) => {
                 let (actual, ocupados) = (palabra(0).clamp(1, 9), palabra(1) & 0x1ff);
                 if (actual, ocupados) != (b.espacio, b.ocupados) {

@@ -96,7 +96,7 @@ que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verd
 sin zona exclusiva propia se colocan dentro de lo que dejan las barras; las ventanas maximizadas se reajustan si la barra
 sale o se va.
 
-Versión 3 (S27, `docs/diseño/S27-escritorio-dms.md`): **espacios de trabajo** del 1 al 9. Cada ventana es del espacio que
+Versión 4 (S27, `docs/diseño/S27-escritorio-dms.md`): **espacios de trabajo** del 1 al 9. Cada ventana es del espacio que
 se veía al salir; las de los otros no se pintan, no reciben teclado ni ratón y sus avisos de `frame` salen a ritmo bajo,
 como las de una sesión de detrás (U6). Super+1..9 cambia de espacio y Super+Mayúsculas+1..9 lleva allí la ventana con el
 teclado (sin ir con ella); esas teclas no llegan a la ventana. A la barra, el evento `espacios` (el que se ve y los que
@@ -105,6 +105,10 @@ protocolo; fuera de 1 a 9, nada) cambia de espacio. **Teclas del volumen** (HID 
 está suscrito, le llegan como el evento `volumen` (1, -1 o 0 para el silencio) y no a la ventana; si no, a la ventana.
 Bloqueada la sesión, nada de esto. Los programas normales ven también la versión 3, pero solo la barra y el panel
 reciben sus eventos.
+
+Versión 5 (S27, oleada 2): petición `estado` (red: 0 sin servicio, 1 sin dirección, 2 conectada; nivel del volumen; si
+hay silencio), solo del panel rápido; a otro, error de protocolo. El compositor la recorta (red hasta 2, nivel hasta
+100), la guarda y se la da a la barra con el evento `estado`, al suscribirse y cada vez que cambia.
 
 **Multimonitor.** Un `wl_output` por pantalla, cada uno con su global (6 la principal; 11, 12 y 13 las demás), su
 nombre (DASHOS-1, DASHOS-2...) y su sitio en el espacio común (`geometry`; las pantallas van una al lado de otra, de
@@ -342,6 +346,9 @@ archivos, 3 `eco` sin marca (para repartirlo), 4 su canal, 5 una copia sin marca
 con que nace lo que lanza) y 6 una copia sin marca del canal de archivos (las altas de lo que lanza). Su cajón,
 `Estado/Servicios/sesiones` (usuario 1, 0700): `registro` (la cuenta y un anillo de 1.024 entradas) y `permisos` (una
 línea "programa servicio" por permiso concedido). Cuentas y frases, provisionales en el código (`CUENTAS`, `ADMIN`).
+
+`DELANTE` (21, S27): quién está delante (un i32 y 16 bytes con el nombre). Solo al panel rápido y a la barra, por el
+nombre que da `inicio`; a otro, o sin nadie delante, -2 y nada más.
 
 `inicio` da de alta cada programa (orden 1, sin marca: marca, usuario, grupo, nombre y la llave de su grupo) y pide
 su aviso de fin hacia `sesiones` (la baja llega con la marca y el bit alto puesto). Los programas piden, con una llave
