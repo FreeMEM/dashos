@@ -150,6 +150,9 @@ arranque-virt-linux: usuario FORCE
 # solo usa la RAM por debajo de los 4 GB de direcciones físicas (su mapa lineal), y en `virt` empieza en el GB 1.
 ARCH_IMAGE ?= $(HOME)/.cache/dashos-caja-linux/Image-arch
 ARCH_DISCO ?= $(HOME)/.cache/dashos-caja-linux/arch/disco-arch.img
+# Cada prueba trabaja sobre su copia (en btrfs, `--reflink` la hace al momento): `poner-dashos` escribe DashOS en el
+# disco y, con el de la caché, dos pruebas a la vez (o dos worktrees) se pisaban y fallaban sin motivo.
+DISCO_ARCH_COPIA := target/disco-arch.img
 VIRT_ARCH := target/kernel8-virt-arch.img
 arranque-virt-arch: usuario $(DISCO_NVME) FORCE
 	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): no va en git; tools/caja_linux_invitado.py preparar-arch"; exit 1; }
@@ -157,12 +160,13 @@ arranque-virt-arch: usuario $(DISCO_NVME) FORCE
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd
-	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cp --reflink=auto "$(ARCH_DISCO)" $(DISCO_ARCH_COPIA)
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) $(DISCO_ARCH_COPIA)
 	cargo build $(CARGO_PERFIL) --features virt,linux
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
 	rm -f target/caja-arch.ppm target/caja-arch.png
-	GUARDAR=$(abspath target/salida_virt_arch.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-arch) CAJA_MODO=arch QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_arch.txt 1800
+	GUARDAR=$(abspath target/salida_virt_arch.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-arch) CAJA_MODO=arch QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(abspath $(DISCO_ARCH_COPIA)),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_arch.txt 1800
 	grep -E "\[(caja-linux|nvme)\]" target/salida_virt_arch.txt | grep -vE "linux: (\[ |[0-9]+$$)" | grep -vE "hostil|invitado dice" || true
 	@# La captura de la terminal, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente && cp target/caja-arch.png ../capturas-agente/caja-linux-arch.png 2>/dev/null || true
@@ -185,12 +189,13 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd
-	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cp --reflink=auto "$(ARCH_DISCO)" $(DISCO_ARCH_COPIA)
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) $(DISCO_ARCH_COPIA)
 	cargo build $(CARGO_PERFIL) --features virt,linux
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
 	rm -f target/caja-wayland*.ppm target/caja-wayland*.png target/caja-wayland.medidas.txt
-	GUARDAR=$(abspath target/salida_virt_wayland.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-wayland) CAJA_MODO=wayland QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_wayland.txt 4500
+	GUARDAR=$(abspath target/salida_virt_wayland.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-wayland) CAJA_MODO=wayland QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(abspath $(DISCO_ARCH_COPIA)),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_wayland.txt 4500
 	grep -E "\[(caja-linux|compositor)\]" target/salida_virt_wayland.txt | grep -E "wayland|puente|foot|ventana|terminal|hostil|gtk|firefox|arrastre" | grep -vE "linux: \[ " || true
 	cat target/caja-wayland.medidas.txt 2>/dev/null || true
 	@# Las capturas, fuera de git (capturas-agente/ está en .git/info/exclude).
@@ -210,12 +215,13 @@ arranque-virt-gpu: usuario $(DISCO_NVME) FORCE
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd
-	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) "$(ARCH_DISCO)"
+	cp --reflink=auto "$(ARCH_DISCO)" $(DISCO_ARCH_COPIA)
+	python3 ../tools/caja_linux_invitado.py poner-dashos $(DISCO_NVME) $(DISCO_ARCH_COPIA)
 	cargo build $(CARGO_PERFIL) --features virt,linux
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
 	rm -f target/caja-gpu*.ppm target/caja-gpu*.png
-	GUARDAR=$(abspath target/salida_virt_gpu.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-gpu) CAJA_MODO=gpu QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_gpu.txt 1800
+	GUARDAR=$(abspath target/salida_virt_gpu.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-gpu) CAJA_MODO=gpu QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(abspath $(DISCO_ARCH_COPIA)),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_gpu.txt 1800
 	grep -E "\[(caja-linux|compositor)\]" target/salida_virt_gpu.txt | grep -E "gpu|cuadros_gl|FPS|frames|ventana" | grep -vE "linux: \[ " || true
 	@# Las capturas, fuera de git (capturas-agente/ está en .git/info/exclude).
 	mkdir -p ../capturas-agente
