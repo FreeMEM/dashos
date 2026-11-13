@@ -504,9 +504,9 @@ ARCH_GUIONES.update({
     "./usr/local/bin/prueba-gtk":
         "#!/bin/sh\n# GTK4 en una ventana de DashOS: gtk4-widget-factory (o lo que se pida), dibujado con cairo.\n"
         "# Sin la caja de bwrap para los cargadores de imágenes (glycin): en la caja, su cargador de SVG dentro de bwrap\n"
-        "# acaba sin decir nada (y GTK aborta). Sin bwrap, glycin ve que no va y carga sin él (el disco es una copia de la\n"
-        "# prueba: nada se queda).\n"
-        "[ -x /usr/bin/bwrap ] && mv /usr/bin/bwrap /usr/local/lib/dashos/sin-bwrap/bwrap-apartado\n"
+        "# acaba sin decir nada (y GTK aborta). Delante en el PATH, un bwrap que dice lo que glycin reconoce como \"aquí no\n"
+        "# hay espacios de nombres\": así carga sin su caja.\n"
+        "export PATH=/usr/local/lib/dashos/sin-bwrap:$PATH\n"
         "export LANG=C.UTF-8 GSK_RENDERER=cairo GDK_BACKEND=wayland GDK_DISABLE=gl,vulkan GTK_A11Y=none NO_AT_BRIDGE=1 GLYCIN_DISABLE_SANDBOX=1\n"
         "echo \"gtk: empieza\" > /dev/hvc0\n"
         "exec \"${@:-gtk4-widget-factory}\"\n",
@@ -530,8 +530,11 @@ ARCH_GUIONES.update({
         "echo \"firefox: empieza\" > /dev/hvc0\n"
         "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
 })
+ARCH_GUIONES["./usr/local/lib/dashos/sin-bwrap/bwrap"] = (
+    "#!/bin/sh\n# Para prueba-gtk: que glycin vea que bwrap no va aquí (y cargue las imágenes sin su caja).\n"
+    "echo 'bwrap: Creating new namespace failed: Operation not permitted' >&2\nexit 1\n")
 ARCH_FICHEROS.update({
-    "./usr/local/lib/dashos/sin-bwrap/LEEME": "Aquí deja prueba-gtk el bwrap del sistema (glycin carga las imágenes sin su caja).\n",
+    "./usr/local/lib/dashos/sin-bwrap/LEEME": "Un bwrap que dice que no va, para prueba-gtk (glycin carga las imágenes sin su caja).\n",
     "./usr/local/share/dashos/hola.html":
         "<!doctype html><meta charset=utf-8><title>Firefox en DashOS</title>"
         "<body style='font-family:sans-serif;background:#f3edf7;color:#1d1b20;margin:32px'>"
