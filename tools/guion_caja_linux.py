@@ -362,45 +362,7 @@ if modo == "wayland":
                 apuntar("portapapeles: de DashOS a foot, bien")
             capturar(prefijo + ".foot")
     time.sleep(4.0)
-    # 3. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.
-    a_la_terminal()
-    paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
-    # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
-    n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 60 &")
-    h = esperar_ventana(n, 120)
-    if h:
-        clic(h[0] + 20, h[1] + 20)
-    if esperar(r"cliente hostil: sin-fin: selección puesta", 60):
-        time.sleep(1.0)
-        clic_en_ventana()
-        mandar("sendkey ctrl-shift-v")
-        esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60)
-        esperar(r"terminal: pegado \(4096 bytes\)", 30)
-        time.sleep(3.0)
-        mandar("sendkey ctrl-c")
-        time.sleep(1.0)
-    n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 nunca 60 &")
-    h = esperar_ventana(n, 120)
-    if h:
-        clic(h[0] + 20, h[1] + 20)
-    if esperar(r"cliente hostil: nunca: selección puesta", 60):
-        time.sleep(1.0)
-        clic_en_ventana()
-        mandar("sendkey ctrl-shift-v")
-        esperar(r"terminal: pegado \(0 bytes\)", 40)
-    # Después, todo sigue: otra ventana de Linux sale y se cierra.
-    a_la_terminal()
-    n = len(ventanas_linux())
-    teclear("ventana_wayland &")
-    v = esperar_ventana(n, 120)
-    if v:
-        time.sleep(3.0)
-        clic(v[0] + 100, v[1] + 100)
-        mandar("sendkey q")
-        esperar(r"(ventana_wayland: .* adiós(.|\n)*){2}", 30)
-    # 4. Un programa grande: GTK4 (gtk4-widget-factory), dibujado por la CPU.
+    # 3. Un programa grande: GTK4 (gtk4-widget-factory), dibujado por la CPU.
     a_la_terminal()
     n = len(ventanas_linux())
     teclear("prueba-gtk &")
@@ -441,6 +403,44 @@ if modo == "wayland":
         a_la_terminal()
         teclear("pkill -f gtk4-widget-factory")
         time.sleep(3.0)
+    # 4. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.
+    a_la_terminal()
+    paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
+    # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
+    n = len(ventanas_linux())
+    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 60 &")
+    h = esperar_ventana(n, 120)
+    if h:
+        clic(h[0] + 20, h[1] + 20)
+    if esperar(r"cliente hostil: sin-fin: selección puesta", 60):
+        time.sleep(1.0)
+        clic_en_ventana()
+        mandar("sendkey ctrl-shift-v")
+        esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60)
+        esperar(r"terminal: pegado \(4096 bytes\)", 30)
+        time.sleep(3.0)
+        mandar("sendkey ctrl-c")
+        time.sleep(1.0)
+    n = len(ventanas_linux())
+    teclear("puente --cliente-hostil /run/wayland-0 nunca 60 &")
+    h = esperar_ventana(n, 120)
+    if h:
+        clic(h[0] + 20, h[1] + 20)
+    if esperar(r"cliente hostil: nunca: selección puesta", 60):
+        time.sleep(1.0)
+        clic_en_ventana()
+        mandar("sendkey ctrl-shift-v")
+        esperar(r"terminal: pegado \(0 bytes\)", 40)
+    # Después, todo sigue: otra ventana de Linux sale y se cierra.
+    a_la_terminal()
+    n = len(ventanas_linux())
+    teclear("ventana_wayland &")
+    v = esperar_ventana(n, 120)
+    if v:
+        time.sleep(3.0)
+        clic(v[0] + 100, v[1] + 100)
+        mandar("sendkey q")
+        esperar(r"(ventana_wayland: .* adiós(.|\n)*){2}", 30)
     # 5. Firefox, si cabe: su primera ventana, una captura y fuera.
     # Solo con CAJA_FIREFOX=1: con 256 MB (y 768 MB de intercambio en el disco) no llega a abrir su ventana en 20
     # minutos, y la caja se para a los 1500 s.
