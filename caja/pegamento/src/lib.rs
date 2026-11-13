@@ -19,6 +19,7 @@ extern crate alloc;
 mod archivos;
 mod compositor;
 mod memoria;
+mod tema;
 
 use alloc::format;
 use alloc::string::String;
@@ -41,6 +42,11 @@ use memoria::MemoriaCaja;
 unsafe extern "C" {
     fn caja_monton_reservar(tam: usize, alin: usize) -> *mut u8;
     fn caja_monton_soltar(p: *mut u8);
+    fn caja_ejecutar_68k(pc: u32, r: *mut u32, usuario: i32) -> i32;
+    fn caja_jit_olvidar();
+    fn caja_tomar_ctrl_c() -> i32;
+    fn caja_tomar_pilas_raras() -> i32;
+    fn caja_espera_maxima_us() -> u64;
 }
 
 struct Monton;
@@ -75,6 +81,8 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
+/// La interrupción de nivel 6 de la caja (`N_INTERRUPCION` de caja.h).
+const N_INTERRUPCION: u16 = 0xff01;
 /// Llaves de la caja (`kernel/src/inicio.rs`): 1 el permiso de página 0, 2 el canal "ventanas", 3 "archivos".
 const LLAVE_VENTANAS: u32 = 2;
 const LLAVE_ARCHIVOS: u32 = 3;
@@ -96,12 +104,26 @@ struct Caja {
     /// Avisos de la tarea en marcha: cuántos, y cuántos se han escrito.
     avisos: u32,
     avisos_dichos: u32,
+    /// El `tc_TrapCode` de las tareas de la caja (`TRAMPA_DEFECTO` de caja.h).
+    trampa: u32,
+    /// Llamadas anidadas (68k desde una función nativa) de la tarea en marcha, y las que no se pudieron hacer.
+    anidadas: u32,
+    anidadas_no: u32,
+    /// Excepciones de tarea (`tc_ExceptCode`) entregadas.
+    excepciones: u32,
+    /// Los procesos nuevos van sin consola (`caja_sin_consola`).
+    sin_consola: bool,
+    /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
+    /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
+    n_waittof: u16,
 }
 
 /// El estado, para las funciones `extern "C"`.
 struct Celda(UnsafeCell<Option<Caja>>);
 // SEGURIDAD: solo lo usa el hilo principal de la caja (caja_main y las llamadas nativas que hace el JIT en ese hilo);
-// el vigilante no entra nunca en Rust. Las llamadas nativas no se anidan (Rust no ejecuta 68k).
+// el vigilante no entra nunca en Rust. Las llamadas nativas sí se anidan: una función nativa puede ejecutar 68k
+// (`ejecutar_68k`), y ese 68k llamar a otra. Por eso ninguna referencia que dé `caja()` vive a través de
+// `ejecutar_68k`: quien la llama la suelta antes y pide otra después (ver `ejecutar_68k`).
 unsafe impl Sync for Celda {}
 static CAJA: Celda = Celda(UnsafeCell::new(None));
 
@@ -282,6 +304,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         gr.intuition_base()
     ));
     di(&format!("utility.library y timer.device nativos (Rust): ${:x} y ${:x}", util.base(), timer.base()));
+    di(&format!("gadtools.library nativa (Rust): ${:x}", gr.gadtools_base()));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -289,13 +312,64 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         an,
         al
     ));
-    let mut c = Caja { ex, consola, dos, gr, util, timer, dos_base, sucio: false, avisos: 0, avisos_dichos: 0 };
+    let mut c = Caja {
+        ex,
+        consola,
+        dos,
+        gr,
+        util,
+        timer,
+        dos_base,
+        sucio: false,
+        avisos: 0,
+        avisos_dichos: 0,
+        trampa: 0,
+        anidadas: 0,
+        anidadas_no: 0,
+        excepciones: 0,
+        n_waittof: 0,
+        sin_consola: false,
+    };
+    c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
     // SEGURIDAD: ver `caja()`; aquí se pone el valor por primera vez.
     unsafe {
         *CAJA.0.get() = Some(c);
     }
     base
+}
+
+/// El `tc_TrapCode` por defecto: en `ExecBase->TaskTrapCode` y en cada proceso nuevo de la caja.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_poner_trampa(defecto: u32) {
+    let Some(c) = caja() else { return };
+    c.trampa = defecto;
+    let b = c.ex.base();
+    let _ = c.ex.mem.escribir32(b + caja_exec::estructuras::execbase::TASKTRAPCODE, defecto);
+}
+
+/// Los procesos que se creen desde ahora, sin consola (`si` distinto de 0) o con ella.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_sin_consola(si: i32) {
+    if let Some(c) = caja() {
+        c.sin_consola = si != 0;
+    }
+}
+
+/// Cuántas llamadas anidadas hizo la tarea en marcha, cuántas no se pudieron hacer y cuántas excepciones de tarea
+/// (`tc_ExceptCode`) se le entregaron.
+///
+/// # Safety
+/// Los tres punteros tienen que poder escribirse.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_cuentas_anidadas(hechas: *mut u32, no: *mut u32, excepciones: *mut u32) {
+    let Some(c) = caja() else { return };
+    // SEGURIDAD: lo garantiza quien llama (caja.c, con variables suyas).
+    unsafe {
+        *hechas = c.anidadas;
+        *no = c.anidadas_no;
+        *excepciones = c.excepciones;
+    }
 }
 
 #[unsafe(no_mangle)]
@@ -361,6 +435,9 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     let nombre = unsafe { core::slice::from_raw_parts(nombre, largo) };
     c.avisos = 0;
     c.avisos_dichos = 0;
+    c.anidadas = 0;
+    c.anidadas_no = 0;
+    c.excepciones = 0;
     match crear_proceso(c, nombre, pila, pc, vuelta, args, seglist) {
         Ok((t, s)) => {
             // SEGURIDAD: lo garantiza quien llama.
@@ -416,6 +493,7 @@ fn crear_proceso(
     ex.mem.escribir32(mp + msgport::MP_SIGTASK, t)?;
     ex.new_list(mp + msgport::MP_MSGLIST, nt::MESSAGE)?;
     ex.mem.escribir32(t + pr::PR_STACKSIZE, pila)?;
+    ex.mem.escribir32(t + task::TC_TRAPCODE, c.trampa)?;
     ex.mem.escribir32(t + pr::PR_ARGUMENTS, args)?;
     ex.add_task(t, pc, vuelta)?;
     // Son suyas: si la tarea muere, exec las suelta.
@@ -426,7 +504,7 @@ fn crear_proceso(
     }
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
-    let consola = c.dos.abrir_consola(&mut cd).unwrap_or(0);
+    let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
     let ex = &mut c.ex;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
     ex.mem.escribir32(t + pr::PR_COS, consola)?;
@@ -539,12 +617,19 @@ enum Fin {
     Terminar,
     Dormir(u32),
     Rechazada,
+    /// Exec pide ejecutar código 68k antes de acabar (una función parcheada, el `Open` de una biblioteca 68k...):
+    /// la caja lo ejecuta anidado y sigue con `tras`.
+    Ejecutar { dir: u32, regs: Registros, tras: caja_exec::Continuacion },
 }
 
 /// Lo que devuelve `caja_llamada` a caja.c.
 const C_SEGUIR: i32 = 0;
 const C_RECHAZADA: i32 = 1;
 const C_ACABAR: i32 = 2;
+
+/// Lo que devuelve `caja_ejecutar_68k` (caja.h).
+const ANIDADA_ACABADO: i32 = 1;
+const ANIDADA_TOPE: i32 = 2;
 
 /// Una función nativa que no es de exec: de dos, de graphics, de intuition o de utility.
 fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
@@ -568,6 +653,9 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
             caja_dos::Accion::Ajena => Fin::Rechazada,
         };
     }
+    if n == c.n_waittof && n != 0 {
+        return Fin::Dormir(1);
+    }
     match c.gr.llamar(&mut c.ex, n, r) {
         Accion::Ajena => Fin::Rechazada,
         a => {
@@ -586,10 +674,9 @@ fn de_accion(a: Accion) -> Fin {
     }
 }
 
-/// La función nativa `n` con los registros `r`, hasta el final (con las llamadas que exec pida por el camino).
-fn llamar(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
-    let mut a = if n <= lvo::ULTIMO_DE_EXEC { c.ex.llamar(n, r) } else { Accion::Ajena };
-    // Lo que exec pide ejecutar antes de acabar (el `Open` de una biblioteca nativa, por ejemplo).
+/// Sigue lo que pide exec (`a`) para la función nativa `n` con los registros `r`: las llamadas nativas que pida por
+/// el camino se hacen aquí; si pide ejecutar 68k, `Fin::Ejecutar` (lo hace `caja_llamada`, sin referencias vivas).
+fn avanzar(c: &mut Caja, n: u16, r: &mut Registros, mut a: Accion) -> Fin {
     for _ in 0..16 {
         match a {
             Accion::Llamar { destino: Destino::Nativa(m), regs, tras } => {
@@ -598,17 +685,78 @@ fn llamar(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
                     if m <= lvo::ULTIMO_DE_EXEC { de_accion(c.ex.llamar(m, &mut rr)) } else { ajena(c, m, &mut rr) };
                 a = c.ex.continuar(tras, &rr, r);
             }
-            Accion::Llamar { destino: Destino::Codigo68k(d), tras, .. } => {
-                // Ejecutar 68k desde una función nativa (una función parcheada con SetFunction) aún no se puede: hace
-                // falta una tarea 68k anidada. Se da como si hubiera devuelto 0.
-                di(&format!("exec pide ejecutar 68k en ${:x} desde una función nativa: aún no se puede (D0 = 0)", d));
-                a = c.ex.continuar(tras, &Registros::default(), r);
+            Accion::Llamar { destino: Destino::Codigo68k(dir), regs, tras } => {
+                let mut regs = regs;
+                if regs.a[7] == 0 {
+                    regs.a[7] = r.a[7];
+                }
+                return Fin::Ejecutar { dir, regs, tras };
             }
             Accion::Ajena => return ajena(c, n, r),
             _ => break,
         }
     }
     de_accion(a)
+}
+
+/// Ejecuta código 68k desde una función nativa (caja.c, `caja_ejecutar_68k`): desde `dir` con `regs`, hasta su RTS.
+/// Con `usuario`, en el modo de usuario y su pila (las excepciones de tarea); si no, en el modo y la pila de quien
+/// llama. Devuelve los registros al volver, o el código de `caja_ejecutar_68k`.
+///
+/// Quien la llama no puede tener viva ninguna referencia de `caja()`: el 68k de dentro llama a funciones nativas, que
+/// toman la suya. Después, otra con `caja()`.
+fn ejecutar_68k(dir: u32, regs: &Registros, usuario: bool) -> Result<Registros, i32> {
+    let mut v = [0u32; 16];
+    v[..8].copy_from_slice(&regs.d);
+    v[8..].copy_from_slice(&regs.a);
+    // SEGURIDAD: `v` son 16 u32 nuestros; caja.c los lee y los escribe y no los guarda. Lo de `caja()`, arriba.
+    let e = unsafe { caja_ejecutar_68k(dir, v.as_mut_ptr(), usuario as i32) };
+    if e != 0 {
+        return Err(e);
+    }
+    let mut r = Registros::default();
+    r.d.copy_from_slice(&v[..8]);
+    r.a.copy_from_slice(&v[8..]);
+    Ok(r)
+}
+
+/// Entrega a la tarea en marcha sus excepciones (`SetExcept`): si ha recibido alguna de sus señales de excepción,
+/// ejecuta su `tc_ExceptCode` (anidado, en modo de usuario, con D0 = las señales, A1 = `tc_ExceptData` y A6 =
+/// ExecBase) y vuelve a habilitar las que devuelva en D0. `a7` es la pila de quien hizo la llamada nativa (en modo de
+/// usuario, la de la tarea; desde la interrupción de la caja, caja.c toma la de usuario). `false` si el programa
+/// acabó dentro.
+fn entregar_excepciones(a7: u32) -> bool {
+    for _ in 0..4 {
+        let Some(c) = caja() else { return true };
+        let t = c.ex.tarea_actual();
+        let (senales, codigo, datos) = match c.ex.tomar_excepcion() {
+            Ok(Some(x)) => x,
+            _ => return true,
+        };
+        let mut r = Registros::default();
+        r.d[0] = senales;
+        r.a[1] = datos;
+        r.a[6] = c.ex.base();
+        r.a[7] = a7;
+        c.excepciones += 1;
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let res = ejecutar_68k(codigo, &r, true);
+        let Some(c) = caja() else { return true };
+        match res {
+            Ok(rr) => {
+                c.anidadas += 1;
+                let _ = c.ex.acabar_excepcion(t, rr.d[0]);
+            }
+            Err(ANIDADA_ACABADO) => return false,
+            Err(e) => {
+                c.anidadas_no += 1;
+                di(&format!("tc_ExceptCode en ${:x}: no se pudo ejecutar ({}); las señales vuelven", codigo, e));
+                let _ = c.ex.acabar_excepcion(t, senales);
+                return true;
+            }
+        }
+    }
+    true
 }
 
 /// Junta los avisos de las tres bibliotecas y escribe los primeros de la tarea.
@@ -636,8 +784,17 @@ fn recoger_avisos(c: &mut Caja) {
             di(&format!("Enforcer: {}", t));
         }
     }
-    // El JIT tendría que olvidar el código cambiado (SetFunction...): aún no se hace (ver la bitácora).
-    let _ = c.ex.tomar_codigo_cambiado();
+    // Código cambiado (CacheClearU, SetFunction, MakeFunctions...): el JIT olvida lo traducido, menos lo que se está
+    // ejecutando (caja.c).
+    if !c.ex.tomar_codigo_cambiado().is_empty() {
+        // SEGURIDAD: una función de caja.c sin argumentos; no ejecuta 68k.
+        unsafe { caja_jit_olvidar() };
+    }
+    // SEGURIDAD: igual.
+    let raras = unsafe { caja_tomar_pilas_raras() };
+    if raras > 0 {
+        di(&format!("{} llamadas anidadas volvieron con la pila más abajo de lo debido (la de fuera, intacta)", raras));
+    }
 }
 
 fn decir_compositor(c: &mut Caja) {
@@ -679,21 +836,40 @@ fn atender(c: &mut Caja) {
 }
 
 /// La tarea espera señales (Wait, WaitPort): mientras, la caja atiende al compositor, que puede mandarle mensajes.
-/// `true` cuando vuelve a tener el testigo; `false` si pasó demasiado tiempo.
-fn esperar(c: &mut Caja, t: u32) -> bool {
+/// `Espera::Lista` cuando vuelve a tener el testigo; `Excepcion` si hay que entregarle una excepción antes (exec la
+/// saca de la espera; al volver, la espera se repite); `Plazo` si pasó demasiado tiempo.
+enum Espera {
+    Lista,
+    Excepcion,
+    Plazo,
+}
+
+fn esperar(c: &mut Caja, t: u32) -> Espera {
     let _ = c.ex.elegir_siguiente();
-    let mut hasta = dashos::ahora_us() + ESPERA_MAXIMA_US;
+    // SEGURIDAD: una función de caja.c sin argumentos.
+    let maxima = unsafe { caja_espera_maxima_us() }.max(ESPERA_MAXIMA_US);
+    let mut hasta = dashos::ahora_us() + maxima;
     loop {
         atender(c);
+        // Ctrl-C de fuera (caja.c): la señal llega como la de cualquier otra tarea.
+        // SEGURIDAD: una función de caja.c sin argumentos.
+        if unsafe { caja_tomar_ctrl_c() } != 0 {
+            let _ = c.ex.senal_ctrl_c(t);
+        }
+        if c.ex.excepcion_en_espera(t) {
+            let _ = c.ex.despertar(t);
+            let _ = c.ex.elegir_siguiente();
+            return Espera::Excepcion;
+        }
         if c.ex.elegir_siguiente() == Some(t) {
-            return true;
+            return Espera::Lista;
         }
         // Con una espera de timer.device en marcha, algo la va a despertar: el plazo cuenta desde que venza.
         if let Some(p) = c.timer.proximo() {
-            hasta = hasta.max(p.saturating_add(ESPERA_MAXIMA_US));
+            hasta = hasta.max(p.saturating_add(maxima));
         }
         if dashos::ahora_us() > hasta {
-            return false;
+            return Espera::Plazo;
         }
         dashos::dormir_us(5_000);
     }
@@ -714,42 +890,103 @@ fn dormir(c: &mut Caja, tics: u32) {
 
 /// La llama `dashos_native_call` (caja.c) con la copia de x0..x30 que hace el JIT y el número de la función.
 /// Devuelve `C_SEGUIR`, `C_RECHAZADA` (nadie tiene ese número: D0 = -1) o `C_ACABAR` (la tarea se ha quitado o se
-/// ha quedado esperando sin remedio: la caja corta el programa).
+/// ha quedado esperando sin remedio, o el programa acabó dentro de una llamada anidada: la caja corta el programa).
+///
+/// Puede ejecutar 68k anidado (lo que pida exec, y las excepciones de la tarea): para eso no guarda la referencia
+/// de `caja()` a través de `ejecutar_68k` y pide otra después.
 ///
 /// # Safety
 /// `regs` tiene que apuntar a 31 `u64` que se puedan leer y escribir (la copia de los registros del JIT).
 #[unsafe(no_mangle)]
 pub unsafe extern "C" fn caja_llamada(regs: *mut u64, n: u32) -> i32 {
-    let Some(c) = caja() else { return C_RECHAZADA };
     // SEGURIDAD: lo garantiza quien llama (el parche 0002 deja la copia en la pila del JIT).
     let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
     let Some(mut r) = Registros::desde_jit(x) else {
         return C_RECHAZADA;
     };
     let n = n as u16;
+    let res = llamada(n, &mut r);
+    r.hacia_jit(x);
+    res
+}
+
+/// Lo primero de la función `n`: la de exec, o `Ajena` (la sigue `avanzar`).
+fn primera(c: &mut Caja, n: u16, r: &mut Registros) -> Accion {
+    if n <= lvo::ULTIMO_DE_EXEC { c.ex.llamar(n, r) } else { Accion::Ajena }
+}
+
+fn llamada(n: u16, r: &mut Registros) -> i32 {
+    let Some(c) = caja() else { return C_RECHAZADA };
     revisar_temporizador(c);
-    let antes = r;
+    let antes = *r;
     let t = c.ex.tarea_actual();
+    if n == N_INTERRUPCION {
+        // La interrupción de nivel 6 de la caja (caja.c la levanta desde otro hilo): Ctrl-C para el programa.
+        // SEGURIDAD: una función de caja.c sin argumentos.
+        if unsafe { caja_tomar_ctrl_c() } != 0 {
+            let _ = c.ex.senal_ctrl_c(t);
+        }
+        return if entregar_excepciones(r.a[7]) { C_SEGUIR } else { C_ACABAR };
+    }
+    let mut a = primera(c, n, r);
     let mut res = C_SEGUIR;
     loop {
-        match llamar(c, n, &mut r) {
+        let Some(c) = caja() else { return C_RECHAZADA };
+        match avanzar(c, n, r, a) {
             Fin::Seguir => {}
             Fin::Ceder => {
                 // Una sola tarea 68k a la vez (de momento): el testigo vuelve a ella.
                 let _ = c.ex.elegir_siguiente();
             }
-            Fin::Bloquear => {
-                if esperar(c, t) {
+            Fin::Ejecutar { dir, regs, tras } => {
+                // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+                let hecho = ejecutar_68k(dir, &regs, false);
+                let Some(c) = caja() else { return C_RECHAZADA };
+                let rr = match hecho {
+                    Ok(rr) => {
+                        c.anidadas += 1;
+                        rr
+                    }
+                    Err(ANIDADA_ACABADO) => return C_ACABAR,
+                    Err(e) => {
+                        c.anidadas_no += 1;
+                        if c.anidadas_no <= 3 {
+                            di(&format!(
+                                "68k en ${:x} desde una función nativa: {} (D0 = 0)",
+                                dir,
+                                if e == ANIDADA_TOPE { "demasiados niveles" } else { "su pila no vale" }
+                            ));
+                        }
+                        Registros::default()
+                    }
+                };
+                a = c.ex.continuar(tras, &rr, r);
+                continue;
+            }
+            Fin::Bloquear => match esperar(c, t) {
+                Espera::Lista => {
                     // Exec sabe que es la repetición: la misma llamada con los mismos registros.
-                    r = antes;
+                    *r = antes;
+                    a = primera(c, n, r);
                     continue;
                 }
-                di(&format!(
-                    "la tarea lleva {} s esperando sin que llegue nada: se corta",
-                    ESPERA_MAXIMA_US / 1_000_000
-                ));
-                res = C_ACABAR;
-            }
+                Espera::Excepcion => {
+                    if !entregar_excepciones(antes.a[7]) {
+                        return C_ACABAR;
+                    }
+                    let Some(c) = caja() else { return C_RECHAZADA };
+                    *r = antes;
+                    a = primera(c, n, r);
+                    continue;
+                }
+                Espera::Plazo => {
+                    di(&format!(
+                        "la tarea lleva {} s esperando sin que llegue nada: se corta",
+                        ESPERA_MAXIMA_US / 1_000_000
+                    ));
+                    res = C_ACABAR;
+                }
+            },
             Fin::Terminar => res = C_ACABAR,
             Fin::Dormir(tics) => dormir(c, tics),
             Fin::Rechazada => {
@@ -760,11 +997,18 @@ pub unsafe extern "C" fn caja_llamada(regs: *mut u64, n: u32) -> i32 {
         }
         break;
     }
+    let Some(c) = caja() else { return C_RECHAZADA };
     // Lo dibujado va al compositor en cuanto el programa hace otra cosa que dibujar (exec o dos).
     if c.sucio && n < 0x400 {
         atender(c);
     }
     recoger_avisos(c);
-    r.hacia_jit(x);
+    if res == C_ACABAR {
+        return res;
+    }
+    // Las excepciones de la tarea (SetExcept): las señales pueden haber llegado en esta llamada.
+    if !entregar_excepciones(r.a[7]) {
+        return C_ACABAR;
+    }
     res
 }

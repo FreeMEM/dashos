@@ -16,8 +16,9 @@ use core::slice;
 use caja_intuition::compositor::{Compositor, Evento, NuevaVentana, Superficie};
 use caja_intuition::lienzo::Rect;
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
+use crate::tema::TemaCaja;
 use wayland::tablas::{
-    wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
+    dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
     wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
 };
 use wayland::Escritor;
@@ -71,6 +72,10 @@ pub struct CompositorWayland {
     sync_hecho: Option<u32>,
     /// Lo que la caja tiene que decir por la consola (ventanas en pantalla, errores del compositor).
     pub dichos: Vec<String>,
+    /// S26: el objeto del tema del sistema (`dashos_tema_v1`, 0 si no hay) y lo que dice: las plumas de DashOS para
+    /// quien pinta los controles (`tema.rs`).
+    tema_obj: u32,
+    pub tema: TemaCaja,
 }
 
 fn palabra(c: &[u8], i: usize) -> u32 {
@@ -102,6 +107,8 @@ impl CompositorWayland {
             serie_boton: 0,
             sync_hecho: None,
             dichos: Vec::new(),
+            tema_obj: 0,
+            tema: TemaCaja::default(),
         }
     }
 
@@ -176,6 +183,12 @@ impl CompositorWayland {
         if let Some(go) = globales.iter().find(|g| g.1 == "wl_output") {
             c.salida = c.nuevo_id();
             e.empezar(registro, wl_registry::req::BIND).uint(go.0).texto(Some("wl_output")).uint(go.2.min(2)).uint(c.salida).fin();
+        }
+        // S26: el tema de DashOS (color, modo y el aspecto de los programas de las cajas). Llega al enlazar y cada vez
+        // que cambia.
+        if let Some(gt) = global("dashos_tema_v1") {
+            c.tema_obj = c.nuevo_id();
+            e.empezar(registro, wl_registry::req::BIND).uint(gt.0).texto(Some("dashos_tema_v1")).uint(gt.1.min(3)).uint(c.tema_obj).fin();
         }
         c.mandar(&e);
         c.sincronizar(2_000_000);
@@ -327,7 +340,9 @@ impl CompositorWayland {
         if self.por_objeto(|v| v.buf, o).is_some() || self.por_objeto(|v| v.sup, o).is_some() {
             return;
         }
-        if o == self.raton && o != 0 {
+        if o == self.tema_obj && o != 0 {
+            self.tema_ev(orden, c);
+        } else if o == self.raton && o != 0 {
             self.raton_ev(orden, c);
         } else if o == self.teclado && o != 0 {
             self.teclado_ev(orden, c);
@@ -344,6 +359,35 @@ impl CompositorWayland {
         } else if orden == wl_callback::ev::DONE && c.len() == 4 && o >= 2 {
             // Un sync (lo demás de la caja no pide `wl_callback`).
             self.sync_hecho = Some(o);
+        }
+    }
+
+    /// S26: un evento del tema de DashOS. Los esquemas de un color que no está en la tabla del kit (la paleta del
+    /// fondo) llegan hechos antes de su `tema`: así no se calculan aquí (sin FPU, cientos de milisegundos).
+    fn tema_ev(&mut self, orden: u16, c: &[u8]) {
+        match orden {
+            dashos_tema_v1::ev::ESQUEMA => {
+                kit::tema::recordar_evento_esquema(c);
+                return;
+            }
+            dashos_tema_v1::ev::TEMA if c.len() >= 8 => {
+                self.tema.color = Some(palabra(c, 0) | 0xff00_0000);
+                self.tema.oscuro = palabra(c, 1) != 0;
+            }
+            dashos_tema_v1::ev::CAJAS => {
+                let largo = palabra(c, 0) as usize;
+                match c.get(4..4 + largo.saturating_sub(1)).map(wayland::aspecto::Ajuste::entender) {
+                    Some(Ok(a)) => self.tema.ajuste = a,
+                    _ => {
+                        self.dichos.push(String::from("tema de DashOS: un aspecto de las cajas que no se entiende; se queda el de antes"));
+                        return;
+                    }
+                }
+            }
+            _ => return,
+        }
+        if let Some(d) = self.tema.rehacer() {
+            self.dichos.push(d);
         }
     }
 

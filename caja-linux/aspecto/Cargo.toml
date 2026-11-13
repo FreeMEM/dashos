@@ -1,0 +1,19 @@
+[package]
+name = "dashos-aspecto"
+version = "0.0.1"
+edition = "2024"
+license = "MPL-2.0"
+description = "S26: el agente del aspecto dentro de la caja Linux. Escucha el tema de DashOS (dashos_tema_v1, por el puente de Wayland) y pone los colores, la letra y el modo de DashOS en GTK 3, GTK 4, Qt y foot, o los deja como son"
+
+[dependencies]
+wayland = { package = "dashos-wayland", path = "../../wayland" }
+kit = { package = "dashos-kit", path = "../../kit" }
+
+[[bin]]
+name = "dashos-aspecto"
+path = "src/main.rs"
+
+[profile.release]
+opt-level = "s"
+lto = true
+panic = "abort"

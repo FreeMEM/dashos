@@ -18,6 +18,7 @@ use alloc::vec::Vec;
 /// `wl_keyboard.keymap`. Origen y licencia en `teclados/LEEME.md`.
 pub static MAPA_TECLADO: &[u8] = concat!(include_str!("../teclados/es.xkb"), "\0").as_bytes();
 
+pub mod aspecto;
 pub mod canal;
 pub mod escena;
 pub mod puente;

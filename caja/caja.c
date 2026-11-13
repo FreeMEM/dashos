@@ -221,14 +221,106 @@ int memcmp(const void *a, const void *b, size_t n)
 
 /* volatile: los cambia dashos_native_call, que llama el código traducido desde dentro del asm de `arranca`; sin él, gcc
    (análisis entre funciones) da por hecho que `arranca` no los toca y no los vuelve a leer. */
+/* CAJA_INTERACTIVA=1 al compilar (make -C caja CAJA_INTERACTIVA=1): las pruebas que esperan a alguien, para sacar
+   capturas: GadTools espera 90 s y un programa de Dash sin consola saca su error en un requester. */
+#ifndef CAJA_INTERACTIVA
+#define CAJA_INTERACTIVA 0
+#endif
+#define GT_NOMBRE (CAJA_INTERACTIVA ? "gadtools-90" : "gadtools-5")
+
+/* Lo más que una tarea espera sin que llegue nada antes de que la caja la corte (pegamento/: esperar). */
+uint64_t caja_espera_maxima_us(void) { return (CAJA_INTERACTIVA ? 600ULL : 60ULL) * 1000000ULL; }
+
 static volatile int llamadas_nativas;
 static volatile int rechazadas;
 static volatile int cortadas;
 
 static struct M68KState m68k;
 
+/* --- Llamadas anidadas: código 68k desde una función nativa --- */
+
+/* Cada función nativa corre dentro de una unidad traducida del JIT (la que tiene su $A0FF), y esa unidad sigue
+   ejecutándose al volver. Si desde la función se ejecuta 68k otra vez (caja_ejecutar_68k), hay un MainLoop dentro de
+   otro: una pila de contextos. Cada nivel guarda lo que el MainLoop de dentro cambia (los registros fijos del 68k que
+   no recarga el JIT al volver de la función: v8-v15, los de coma flotante, y v19-v31, el SR, las pilas, el puntero al
+   contexto, la última PC...) y lo devuelve al acabar; los x0..x30 los recarga el propio JIT (parche 0002). Y saca su
+   unidad de la lista LRU y de la tabla del JIT mientras tanto (fijar), para que nada la suelte: ni el JIT al quedarse
+   sin sitio, ni al ver que su código cambió, ni caja_jit_olvidar.
+
+   El nivel acaba cuando el 68k vuelve a VUELTA_ANIDADA (la dirección de vuelta que se le pone): la función nativa
+   N_VUELTA lo apunta y el código salta a la dirección 0, donde acaba ese MainLoop. Si acaba de otra forma (el programa
+   acabó dentro, una excepción sin tc_TrapCode, el vigilante lo cortó), el programa entero se da por acabado y se
+   deshacen los niveles de fuera: cada uno vuelve con ANIDADA_ACABADO, su función nativa corta el programa (la NMI) y
+   su MainLoop acaba por el vector 31; ninguna llamada nativa más se ejecuta entretanto. */
+#define MAX_ANIDADO 16
+#define MAX_NATIVAS (MAX_ANIDADO + 4)
+static volatile int anidado;                  /* niveles abiertos */
+static volatile int vuelto[MAX_ANIDADO + 1];  /* 1: volvió a su VUELTA; 2: volvió con la pila más arriba (rota) */
+static uint32_t a7_esperado[MAX_ANIDADO + 1];
+static volatile int programa_acabado;         /* acabó dentro de un nivel: se deshacen todos */
+static volatile uint32_t fin_marca, fin_d0;   /* cómo acabó (MARCA y D0 de ese momento) */
+static volatile int nativas;                  /* funciones nativas en curso (una por nivel, más la de arriba) */
+static uintptr_t ret_jit[MAX_NATIVAS];        /* dónde vuelve cada una, en el código traducido */
+static volatile uint32_t jit_generacion;      /* sube cada vez que el JIT lo olvida todo */
+static volatile int pilas_raras;
+static volatile int ctrl_c_pendiente;
+
+extern struct List LRU;
+extern struct List ICache[EMU68_HASHSIZE];
+
+static struct M68KTranslationUnit *unidad_de(struct Node *n)
+{
+    return (struct M68KTranslationUnit *)((char *)n - __builtin_offsetof(struct M68KTranslationUnit, mt_LRUNode));
+}
+
+/* La unidad que contiene `arm` (una dirección de vuelta en el código traducido, en su proyección de ejecutar), fuera
+   de la lista LRU y de la tabla: así nada la suelta. NULL si no está (ya la fijó un nivel de fuera, o no es del JIT). */
+static struct M68KTranslationUnit *fijar(uintptr_t arm)
+{
+    struct Node *n;
+    ForeachNode(&LRU, n) {
+        struct M68KTranslationUnit *u = unidad_de(n);
+        uintptr_t ini = (uintptr_t)&u->mt_ARMCode[0] | 0x0000001000000000ULL;
+        if (arm > ini && arm <= ini + 4 * ((uintptr_t)u->mt_ARMInsnCnt + 1)) {
+            REMOVE(&u->mt_LRUNode);
+            REMOVE(&u->mt_HashNode);
+            return u;
+        }
+    }
+    return NULL;
+}
+
+static void desfijar(struct M68KTranslationUnit *u)
+{
+    if (!u) return;
+    ADDHEAD(&LRU, &u->mt_LRUNode);
+    ADDHEAD(&ICache[(u->mt_M68kAddress >> EMU68_HASHSHIFT) & EMU68_HASHMASK], &u->mt_HashNode);
+}
+
 void dashos_native_call(uint64_t *regs, uint32_t index)
 {
+    if (index == N_VUELTA) {
+        /* Vuelve el nivel de dentro. Con la pila donde se le dejó, bien; más abajo (dejó algo en ella), se acepta: la
+           de fuera está intacta. Más arriba, ha deshecho marcos de fuera (un longjmp, otro nivel): se corta. Sin
+           niveles (un programa que salta aquí), su código sigue a la dirección 0 y el programa acaba. */
+        int n = anidado;
+        if (n > 0 && !programa_acabado) {
+            uint32_t a7 = lee_r(regs, R_A(7));
+            if (a7 > a7_esperado[n]) vuelto[n] = 2;
+            else { vuelto[n] = 1; if (a7 < a7_esperado[n]) pilas_raras++; }
+        }
+        return;
+    }
+    if (programa_acabado) {
+        /* Se está deshaciendo: nada más se ejecuta, y este nivel acaba en cuanto vuelva a su MainLoop. */
+        pon_r(regs, R_D(0), 0);
+        __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
+        return;
+    }
+    if (index == N_INTERRUPCION) __atomic_store_n(&m68k.INTF.ARM, 0, __ATOMIC_RELEASE);
+    int k = nativas;
+    if (k < MAX_NATIVAS) ret_jit[k] = (uintptr_t)__builtin_return_address(0);
+    nativas = k + 1;
     llamadas_nativas++;
     switch (caja_llamada(regs, index)) {
         case 1:   /* nadie tiene ese número: rechazada, como una función que falla, y el programa sigue */
@@ -242,7 +334,96 @@ void dashos_native_call(uint64_t *regs, uint32_t index)
         default:
             break;
     }
+    nativas = k;
 }
+
+/* El MainLoop de un nivel: guarda v8-v15 y v19-v31 (lo que el JIT no recarga), pone la última PC a "ninguna" (así no
+   salta al código de la unidad de fuera) y los devuelve al acabar. Todo en un asm: entre medias, el compilador no puede
+   tener nada en esos registros. Los x0..x30 se dan por perdidos: los guarda quien llama (los callee-saved, el
+   compilador, por la lista) y el JIT al volver de la función nativa. */
+__attribute__((noipa)) static void main_loop_anidado(void)
+{
+    __asm__ volatile(
+        "sub sp, sp, #352\n"
+        "stp q8, q9, [sp, #0]\n"     "stp q10, q11, [sp, #32]\n"  "stp q12, q13, [sp, #64]\n"
+        "stp q14, q15, [sp, #96]\n"  "stp q19, q20, [sp, #128]\n" "stp q21, q22, [sp, #160]\n"
+        "stp q23, q24, [sp, #192]\n" "stp q25, q26, [sp, #224]\n" "stp q27, q28, [sp, #256]\n"
+        "stp q29, q30, [sp, #288]\n" "str q31, [sp, #320]\n"
+        "mov w0, #-1\n"
+        "mov " CTX_LAST_PC_ASM ", w0\n"
+        "bl MainLoop\n"
+        "ldp q8, q9, [sp, #0]\n"     "ldp q10, q11, [sp, #32]\n"  "ldp q12, q13, [sp, #64]\n"
+        "ldp q14, q15, [sp, #96]\n"  "ldp q19, q20, [sp, #128]\n" "ldp q21, q22, [sp, #160]\n"
+        "ldp q23, q24, [sp, #192]\n" "ldp q25, q26, [sp, #224]\n" "ldp q27, q28, [sp, #256]\n"
+        "ldp q29, q30, [sp, #288]\n" "ldr q31, [sp, #320]\n"
+        "add sp, sp, #352\n"
+        ::: "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
+            "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+            "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v16", "v17", "v18", "memory", "cc");
+}
+
+/* El SR del 68k que corre (el del registro, con C y V cambiados de sitio respecto al de M68KState). */
+static uint32_t sr_vivo(void)
+{
+    uint32_t r;
+    __asm__ volatile("umov %w0, " REG_SR_ASM : "=r"(r));
+    return (r & ~3u) | ((r & 1) << 1) | ((r >> 1) & 1);
+}
+
+#define LEE_V21(i) ({ uint32_t _v; __asm__ volatile("mov %w0, v21.s[" #i "]" : "=r"(_v)); _v; })
+
+int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario)
+{
+    if (programa_acabado) return ANIDADA_ACABADO;
+    if (anidado >= MAX_ANIDADO) return ANIDADA_TOPE;
+    uint32_t sr = sr_vivo(), usp = LEE_V21(1), isp = LEE_V21(2), msp = LEE_V21(3);
+    uint32_t a7 = r[15];
+    if (usuario && (sr & SR_S)) { a7 = usp; sr &= ~(SR_S | SR_M); }
+    a7 = (a7 - 4) & ~1u;
+    /* Sitio en la pila para la vuelta y algo más: si no, no se ejecuta (el 68k escribiría fuera de su memoria). */
+    if (a7 < M68K_RAM + 256 || !en_ram68k(a7, 4)) return ANIDADA_PILA;
+    pon32(a7, (uint32_t)VUELTA_ANIDADA);
+
+    /* Lo arquitectónico del contexto de fuera: el MainLoop de dentro lo pisa al acabar. */
+    struct { uint32_t d[8], a[8], pc, usp, isp, msp, vbr; uint16_t sr; } antes;
+    for (int i = 0; i < 8; i++) { antes.d[i] = m68k.D[i].u32; antes.a[i] = m68k.A[i].u32; }
+    antes.pc = m68k.PC; antes.usp = m68k.USP.u32; antes.isp = m68k.ISP.u32; antes.msp = m68k.MSP.u32;
+    antes.vbr = m68k.VBR; antes.sr = m68k.SR;
+
+    for (int i = 0; i < 8; i++) { m68k.D[i].u32 = r[i]; m68k.A[i].u32 = r[8 + i]; }
+    m68k.A[7].u32 = a7;
+    if (sr & SR_S) { if (sr & SR_M) msp = a7; else isp = a7; } else usp = a7;
+    m68k.USP.u32 = usp; m68k.ISP.u32 = isp; m68k.MSP.u32 = msp;
+    m68k.SR = (uint16_t)sr;
+    m68k.PC = pc;
+
+    int n = ++anidado;
+    vuelto[n] = 0;
+    a7_esperado[n] = a7 + 4;
+    struct M68KTranslationUnit *u = nativas > 0 && nativas <= MAX_NATIVAS ? fijar(ret_jit[nativas - 1]) : NULL;
+    uint32_t gen = jit_generacion;
+    main_loop_anidado();
+    desfijar(u);
+    /* Si el JIT lo olvidó todo dentro, la unidad de la última PC de fuera ya no existe. */
+    if (gen != jit_generacion) __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
+    anidado = n - 1;
+
+    for (int i = 0; i < 8; i++) { r[i] = m68k.D[i].u32; r[8 + i] = m68k.A[i].u32; }
+    int v = vuelto[n];
+    if (v != 1 && !programa_acabado) {
+        programa_acabado = 1;
+        fin_marca = v == 2 ? 0xfffe : lee16(MARCA);
+        fin_d0 = m68k.D[0].u32;
+    }
+    for (int i = 0; i < 8; i++) { m68k.D[i].u32 = antes.d[i]; m68k.A[i].u32 = antes.a[i]; }
+    m68k.PC = antes.pc; m68k.USP.u32 = antes.usp; m68k.ISP.u32 = antes.isp; m68k.MSP.u32 = antes.msp;
+    m68k.VBR = antes.vbr; m68k.SR = antes.sr;
+    return v == 1 ? ANIDADA_BIEN : ANIDADA_ACABADO;
+}
+
+int caja_tomar_ctrl_c(void) { return __atomic_exchange_n(&ctrl_c_pendiente, 0, __ATOMIC_ACQ_REL); }
+
+int caja_tomar_pilas_raras(void) { int n = pilas_raras; pilas_raras = 0; return n; }
 
 /* --- Los programas 68k --- */
 
@@ -259,26 +440,53 @@ extern const uint8_t prog_dash_texto_gcc[], prog_dash_texto_gcc_fin[];
 extern const uint8_t prog_dash_ventana[], prog_dash_ventana_fin[];
 extern const uint8_t prog_dash_interp[], prog_dash_interp_fin[];
 extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
+extern const uint8_t prog_anidado[], prog_anidado_fin[];
+extern const uint8_t prog_gadtools[], prog_gadtools_fin[];
+extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
+extern const uint8_t prog_dash_ctrl_c_gcc[], prog_dash_ctrl_c_gcc_fin[];
+extern const uint8_t prog_dash_ctrl_c_for[], prog_dash_ctrl_c_for_fin[];
+extern const uint8_t prog_dash_trap_ilegal[], prog_dash_trap_ilegal_fin[];
+extern const uint8_t prog_dash_trap_divcero[], prog_dash_trap_divcero_fin[];
+extern const uint8_t prog_dash_test_gadtools[], prog_dash_test_gadtools_fin[];
 
-/* Las trampas: el vector i escribe i en MARCA y salta a COMUN, que pone la pila y vuelve a la dirección 0, donde
-   MainLoop termina. Así un programa que provoca una excepción del 68k acaba sin tumbar la caja. Al volver de su
-   función, cada tarea salta también a COMUN (su dirección de vuelta). */
+/* Los vectores. Las excepciones del procesador van al despacho de sistema.s ("move.l #i,-(sp); jmp DESPACHO"), que
+   hace lo de exec: a tc_TrapCode de la tarea con el número encima del marco; si la tarea no tiene, el programa acaba
+   por esa excepción (TRAMPA_DEFECTO: MARCA = i y a COMUN). Las interrupciones de los niveles 1 a 5 y 7 (el vigilante)
+   acaban el programa sin más ("move.w #i,MARCA; jmp COMUN"); la de nivel 6 es la de la caja (INTERRUPCION68K). COMUN
+   pone una pila y vuelve a la dirección 0, donde MainLoop termina. Al volver de su función, cada tarea salta también a
+   COMUN (su dirección de vuelta). */
+extern const uint8_t prog_sistema[], prog_sistema_fin[];
 static void prepara_vectores(void)
 {
     for (uint32_t i = 0; i < 256; i++) {
         uintptr_t t = TRAMPAS + 14 * i;
         pon32(VECTORES + 4 * i, (uint32_t)t);
-        pon16(t, 0x33fc); pon16(t + 2, (uint16_t)i);                          /* move.w #i,MARCA */
-        pon32(t + 4, (uint32_t)MARCA);
-        pon16(t + 8, 0x4ef9); pon32(t + 10, (uint32_t)COMUN);                 /* jmp COMUN */
+        if (i >= 24 && i <= 31) {
+            pon16(t, 0x33fc); pon16(t + 2, (uint16_t)i);                      /* move.w #i,MARCA */
+            pon32(t + 4, (uint32_t)MARCA);
+            pon16(t + 8, 0x4ef9); pon32(t + 10, (uint32_t)COMUN);             /* jmp COMUN */
+        } else {
+            pon16(t, 0x2f3c); pon32(t + 2, i);                                 /* move.l #i,-(sp) */
+            pon16(t + 6, 0x4ef9); pon32(t + 8, (uint32_t)DESPACHO);           /* jmp DESPACHO */
+        }
     }
+    pon32(VECTORES + 4 * 30, (uint32_t)INTERRUPCION68K);
     pon16(COMUN, 0x4ff9); pon32(COMUN + 2, (uint32_t)(PILA_TOPE - 4));      /* lea PILA_TOPE-4,a7 */
     pon16(COMUN + 6, 0x4297);                                                  /* clr.l (a7) */
     pon16(COMUN + 8, 0x4e75);                                                  /* rts */
+    uint8_t *d = (uint8_t *)SISTEMA68K;
+    for (const uint8_t *p = prog_sistema; p < prog_sistema_fin && d < (uint8_t *)SUPER_BAJO; ) *d++ = *p++;
 }
 
-/* Ejecuta el 68k desde `pc` con A7 = `a7`, A6 = `a6`, A0 = `a0` y D0 = `d0` (el resto a 0), en supervisor y sin máscara
-   de interrupciones, hasta que vuelve a la dirección 0. Devuelve el vector por el que acabó, o -1 si acabó con su RTS. */
+/* La pila de supervisor: la de las excepciones y las interrupciones (los programas corren en modo de usuario, como
+   las tareas de exec). De AllocMem, una vez. */
+#define SUPER_LEN 16384
+static uint32_t super_tope;
+
+/* Ejecuta el 68k desde `pc` con A7 = `a7`, A6 = `a6`, A0 = `a0` y D0 = `d0` (el resto a 0), en modo de usuario (la
+   pila de supervisor, la de la caja) y sin máscara de interrupciones, hasta que vuelve a la dirección 0. Devuelve el
+   vector por el que acabó, -1 si acabó con su RTS, o -2 si una llamada anidada volvió deshaciendo marcos de fuera. Si
+   el programa acabó dentro de una llamada anidada, lo de ese momento (su vector y su D0). */
 __attribute__((noipa)) static int arranca(uint32_t pc, uint32_t a7, uint32_t a6, uint32_t a0, uint32_t d0)
 {
     pon16(MARCA, 0xffff);
@@ -286,12 +494,17 @@ __attribute__((noipa)) static int arranca(uint32_t pc, uint32_t a7, uint32_t a6,
     m68k.A[0].u32 = a0;
     m68k.D[0].u32 = d0;
     for (int fp = 0; fp < 8; fp++) m68k.FP[fp].u64 = 0x7fffffffffffffffULL;
-    m68k.ISP.u32 = a7;
+    m68k.USP.u32 = a7;
+    m68k.ISP.u32 = super_tope;
+    m68k.MSP.u32 = super_tope;
     m68k.A[7].u32 = a7;
     m68k.A[6].u32 = a6;
     m68k.VBR = VECTORES;
     m68k.PC = pc;
-    m68k.SR = SR_S;
+    m68k.SR = 0;
+    anidado = 0;
+    programa_acabado = 0;
+    nativas = 0;
     m68k.CACR = 0x80008000;
     m68k.INT64 = 0;
     __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
@@ -302,6 +515,11 @@ __attribute__((noipa)) static int arranca(uint32_t pc, uint32_t a7, uint32_t a6,
                      "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17",
                      "v18", "v27", "v28", "v29", "v30", "v31", "memory", "cc");
     uint16_t marca = lee16(MARCA);
+    if (programa_acabado) {
+        marca = (uint16_t)fin_marca;
+        m68k.D[0].u32 = fin_d0;
+        if (marca == 0xfffe) return -2;
+    }
     return marca == 0xffff ? -1 : marca;
 }
 
@@ -330,9 +548,9 @@ static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t 
    y Emu68 encontraría en su caché lo traducido del de antes. Como el CINV/CPUSH del 68k (M68k_LINEF.c), y además
    suelta las unidades (como cuando se queda sin sitio, M68k_Translator.c). Solo entre programas, con el 68k parado:
    desde una llamada nativa soltaría el código que está corriendo. */
-extern struct List LRU;
 static void jit_olvidar(void)
 {
+    jit_generacion++;
     struct Node *n;
     while ((n = REMTAIL(&LRU)) != NULL) {
         struct M68KTranslationUnit *u =
@@ -345,6 +563,16 @@ static void jit_olvidar(void)
     cache_invalidate_all(ICACHE);
     M68K_ResetReturnStack();
     m68k.JIT_CACHE_FREE = tlsf_get_free_size(jit_tlsf);
+}
+
+/* Desde una función nativa (CacheClearU, SetFunction...): todo menos la unidad que la llamó, que sigue ejecutándose
+   al volver (las de los niveles de fuera ya están fijadas). La última PC pasa a "ninguna": su unidad puede no existir. */
+void caja_jit_olvidar(void)
+{
+    struct M68KTranslationUnit *u = nativas > 0 && nativas <= MAX_NATIVAS ? fijar(ret_jit[nativas - 1]) : NULL;
+    jit_olvidar();
+    desfijar(u);
+    __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
 }
 
 /* Carga un programa plano en `donde` (su dirección de enlace, en la zona PLANOS) y lo ejecuta con A6 = DOSBase. */
@@ -449,6 +677,23 @@ static void vigila(uint64_t us)
     for (;;) {}
 }
 
+/* Ctrl-C desde fuera (como el de una consola): otro hilo, a los `us`, lo pide y levanta la interrupción de nivel 6
+   del 68k; la caja lo entrega como la señal SIGBREAKF_CTRL_C de la tarea. Si el programa no acaba en 10 s más, la
+   NMI lo corta (el vigilante de siempre). Con `us` = 0, solo eso: un vigilante de 10 s, sin Ctrl-C. */
+static volatile int ctrl_c_corriendo;
+static void manda_ctrl_c(uint64_t us)
+{
+    if (us) {
+        sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
+        __atomic_store_n(&ctrl_c_pendiente, 1, __ATOMIC_RELEASE);
+        __atomic_store_n(&m68k.INTF.ARM, 1, __ATOMIC_RELEASE);
+    }
+    for (int i = 0; i < 100 && ctrl_c_corriendo; i++) sc(SC_DORMIR, 100000, 0, 0, 0, 0);
+    if (ctrl_c_corriendo) __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
+    sc(SC_SALIR, 0, 0, 0, 0, 0);
+    for (;;) {}
+}
+
 /* --- Principal --- */
 
 int caja_main(void)
@@ -509,6 +754,14 @@ int caja_main(void)
         di("las bibliotecas nativas no arrancan\n");
         return 5;
     }
+    uint32_t super = caja_alloc_mem(SUPER_LEN, 0);
+    if (!super) {
+        di("sin memoria para la pila de supervisor\n");
+        return 6;
+    }
+    super_tope = super + SUPER_LEN;
+    pon32(SUPER_BAJO, super + 512);
+    caja_poner_trampa((uint32_t)TRAMPA_DEFECTO);
     r0 = sc(SC_PAGINA_CERO, LLAVE_PAGINA0, p0, 0, 0, 0);
     /* La caja la lee (EL0 puede leerla); otra vez, o en el resto de los primeros 64 KB, el kernel no deja. */
     int pagina0 = r0 == 0 && lee32(4) == execbase && sc(SC_PAGINA_CERO, LLAVE_PAGINA0, p0, 0, 0, 0) < 0
@@ -670,6 +923,89 @@ int caja_main(void)
                bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
+        /* 8b. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
+           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana
+           se ve entera; si no, se cierra sola (5). En la prueba de siempre espera 5 s: más tiempo abierta tapaba los
+           pasos del guion de los demás (Ajustes, el centro de control). Con CAJA_INTERACTIVA (las capturas), 90 s. */
+        t0 = ahora_us();
+        v = ejecuta_hunk(GT_NOMBRE, prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
+                         &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
+        di("gadtools.exe acabó con %d (%s), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, d0 == 0 ? "cerrada por el programa" : d0 == 5 ? "cerrada sola por tiempo" : "?", llamadas,
+           (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 9. Llamadas anidadas: 68k desde una función nativa (anidado.c; el modo, en la letra del nombre). a: Open de una
+           biblioteca 68k, sin fin (el tope), con la pila de vuelta más abajo, tc_ExceptCode, CallHookPkt y un
+           tc_TrapCode que recupera: acaba con 0. b: vuelve con la pila más arriba: cortado (-2). c: instrucción
+           ilegal dentro: acaba por el vector 4 dentro de la anidada. d: excepción dentro de la excepción, sin fin:
+           vector 4 al acabarse la pila de supervisor. */
+        static const struct { const char *nombre; int vector; } anid[] = {
+            { "anidado-a", -1 }, { "anidado-b", -2 }, { "anidado-c", 4 }, { "anidado-d", 4 },
+        };
+        for (unsigned i = 0; i < sizeof(anid) / sizeof(anid[0]); i++) {
+            v = ejecuta_hunk(anid[i].nombre, prog_anidado, (size_t)(prog_anidado_fin - prog_anidado), execbase, &d0,
+                             &llamadas, &sobras);
+            uint32_t hechas = 0, no = 0, exc = 0;
+            caja_cuentas_anidadas(&hechas, &no, &exc);
+            bien = v == anid[i].vector && (v != -1 || d0 == 0) && caja_bloques(0) == sistema && anidado == 0;
+            di("%s acabó por el vector %d (D0 %d), %u llamadas anidadas (%u no), %u excepciones de tarea, %u avisos: %s\n",
+               anid[i].nombre, v, (int)d0, hechas, no, exc, caja_avisos(), bien ? "bien" : "MAL");
+            if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        }
+
+        /* 10. Ctrl-C y las excepciones del procesador en programas de Dash: el bucle sin fin de caja_ctrl_c.dash (por los
+           dos caminos) recibe Ctrl-C de otro hilo a los 700 ms y acaba con "***Break" y 5; test_ctrl_c_for se lo
+           manda él (SetSignal) y acaba igual; test_trap_illegal y test_trap_divzero acaban con el mensaje del
+           tc_TrapCode de Dash y 20. Y el ejemplo de GadTools de FreeMEMLang (examples/test_gadtools.dash): el guion
+           pulsa su "Cancel" (0) si llega; si no, Ctrl-C a los 6 s (5): su ventana no puede tapar mucho rato las de
+           los demás pasos de la prueba. */
+        static const struct { const char *nombre; const uint8_t *desde, *hasta; int ctrl_c; uint32_t d0, otro; } dash2[] = {
+            { "ctrl_c.exe", prog_dash_ctrl_c, prog_dash_ctrl_c_fin, 700, 5, 5 },
+            { "ctrl_c_gcc.exe", prog_dash_ctrl_c_gcc, prog_dash_ctrl_c_gcc_fin, 700, 5, 5 },
+            { "test_ctrl_c_for", prog_dash_ctrl_c_for, prog_dash_ctrl_c_for_fin, 0, 5, 5 },
+            { "test_trap_illegal", prog_dash_trap_ilegal, prog_dash_trap_ilegal_fin, 0, 20, 20 },
+            { "test_trap_divzero", prog_dash_trap_divcero, prog_dash_trap_divcero_fin, 0, 20, 20 },
+            { "test_gadtools", prog_dash_test_gadtools, prog_dash_test_gadtools_fin, 6000, 0, 5 },
+        };
+        for (unsigned i = 0; i < sizeof(dash2) / sizeof(dash2[0]); i++) {
+            size_t n = (size_t)(dash2[i].hasta - dash2[i].desde);
+            if (n == 0) {
+                di("Dash %s: no está (la caja se compiló sin ~/Projects/FreeMEMLang/dash, o no compiló)\n", dash2[i].nombre);
+                continue;
+            }
+            ctrl_c_corriendo = 1;
+            long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN),
+                        (long)dash2[i].ctrl_c * 1000, 0, 0);
+            caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
+            t0 = ahora_us();
+            v = ejecuta_hunk(dash2[i].nombre, dash2[i].desde, n, execbase, &d0, &llamadas, &sobras);
+            t1 = ahora_us();
+            caja_consola_prefijo(NULL, 0);
+            ctrl_c_corriendo = 0;
+            if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+            uint32_t hechas = 0, no = 0, exc = 0;
+            caja_cuentas_anidadas(&hechas, &no, &exc);
+            bien = v == -1 && (d0 == dash2[i].d0 || d0 == dash2[i].otro) && caja_avisos() == 0 && sobras == 0 && caja_bloques(0) == sistema;
+            di("Dash %s acabó con %d (vector %d) en %u ms, %u excepciones de tarea, %u avisos, %u bloques sin soltar: %s\n",
+               dash2[i].nombre, (int)d0, v, (uint32_t)((t1 - t0) / 1000), exc, caja_avisos(), sobras, bien ? "bien" : "MAL");
+            if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        }
+#if CAJA_INTERACTIVA
+        /* El error de Dash en un requester: test_trap_illegal sin consola (Output() es 0, como desde el Workbench). El
+           guion lo captura (CAPTURA_REQ) y pulsa su botón; si no llega, el requester sigue abierto hasta el final de la
+           prueba (la espera, de 600 s en este modo) y sale en la captura final (CAPTURA). */
+        if (prog_dash_trap_ilegal_fin > prog_dash_trap_ilegal) {
+            di("test_trap_illegal (sin consola): su error, en un requester\n");
+            caja_sin_consola(1);
+            v = ejecuta_hunk("test_trap_illegal", prog_dash_trap_ilegal,
+                             (size_t)(prog_dash_trap_ilegal_fin - prog_dash_trap_ilegal), execbase, &d0, &llamadas, &sobras);
+            caja_sin_consola(0);
+            di("Dash test_trap_illegal (sin consola) acabó con %d (vector %d), %u avisos\n", (int)d0, v, caja_avisos());
+        }
+#endif
     }
 
     if (fallos) return 10 + fallos;

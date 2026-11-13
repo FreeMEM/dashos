@@ -57,6 +57,10 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
+	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
+	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
 	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh
@@ -92,10 +96,10 @@ RED_QEMU := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tool
 
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	rm -f target/captura.ppm target/amiga.ppm target/dash.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
+	rm -f target/captura.ppm target/amiga.ppm target/dash.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
-	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_U6=$(abspath target/u6) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt 300; \
+	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_U6=$(abspath target/u6) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),300); \
 	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
@@ -205,6 +209,32 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 	cp target/caja-wayland.foot.png ../capturas-agente/caja-linux-wayland-foot.png 2>/dev/null || true
 	cp target/caja-wayland.grande.png ../capturas-agente/caja-linux-wayland-grande.png 2>/dev/null || true
 	for c in portapapeles gtk gtk-menu gtk-grande firefox; do cp target/caja-wayland.$$c.png ../capturas-agente/caja-linux-wayland-$$c.png 2>/dev/null || true; done
+
+# S26 (docs/diseño/S26-aspecto-de-las-cajas.md): el aspecto de los programas de la caja Linux. Lo mismo que
+# `arranque-virt-wayland`, con la imagen de `tools/aspecto_caja_linux.py preparar` (la de los programas grandes, con GTK,
+# más el agente del aspecto: ARCH_IMAGE y ARCH_DISCO de su caché) y los Prefs del usuario de ASPECTO_PREFS (fondo,
+# apariencia y aspecto de las cajas): el centro los pone al arrancar, el compositor los reparte y el agente de Arch
+# escribe el tema de GTK. El guion (modo aspecto) abre una muestra de GTK 4 y foot, y captura cada uno
+# en capturas-agente/aspecto-$(ASPECTO_NOMBRE)-{gtk4,foot}.png. Para Full HD: DASHOS_PANTALLA=1920x1080.
+ASPECTO_PREFS ?= fondo=ondas.png;apariencia=claro fondo;cajas=general dashos
+ASPECTO_NOMBRE ?= dashos-ondas
+arranque-virt-aspecto: usuario FORCE
+	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): tools/aspecto_caja_linux.py preparar"; exit 1; }
+	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/aspecto_caja_linux.py preparar"; exit 1; }
+	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
+	cd ../archivos/herramientas && cargo build --release
+	DASHOS_PREFS="$(ASPECTO_PREFS)" python3 ../tools/disco_archivos.py target/nvme-aspecto.img $(REDOXFS_AR)
+	mkdir -p target/linux
+	cp "$(ARCH_IMAGE)" target/linux/Image
+	: > target/linux/initrd
+	python3 ../tools/caja_linux_invitado.py poner-dashos target/nvme-aspecto.img "$(ARCH_DISCO)"
+	cargo build $(CARGO_PERFIL) --features virt,linux
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
+	rm -f target/caja-aspecto*.ppm target/caja-aspecto*.png
+	GUARDAR=$(abspath target/salida_virt_aspecto.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-aspecto) CAJA_MODO=aspecto QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_aspecto.txt 1800
+	grep -E "\[(caja-linux|compositor|centro|caja-amiga)\]" target/salida_virt_aspecto.txt | grep -E "aspecto|muestra|tema|al arrancar|foot" | grep -vE "linux: \[ " || true
+	mkdir -p ../capturas-agente && for q in gtk4 foot; do cp target/caja-aspecto.$$q.png ../capturas-agente/aspecto-$(ASPECTO_NOMBRE)-$$q.png 2>/dev/null || true; done
 
 # Los gráficos de la caja Linux (S25, docs/diseño/S25-gpu-caja-linux.md): lo mismo que `arranque-virt-wayland` (el mismo
 # disco, con Mesa, mesa-utils, vulkan-swrast y `cuadros_gl` de `preparar-arch`), pero el guion (modo gpu) mide

@@ -119,6 +119,11 @@ amiga = 0
 amiga_desde = 0
 v_amiga = None
 dash_amiga = 0
+gt_amiga = 0
+gt_dash = 0
+gt_mirado = 0
+gt_movida = 0
+req_dash = 0
 
 while time.time() - inicio < total:
     try:
@@ -127,7 +132,120 @@ while time.time() - inicio < total:
         if os.environ.get("ESTADO_GUION") and time.time() - globals().get("estado_dicho", 0) > 2:
             estado_dicho = time.time()
             with open(os.environ["ESTADO_GUION"], "a") as f:
-                f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso}\n")
+                f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso} caja {amiga}/{dash_amiga}/{gt_amiga}/{gt_dash}/{req_dash}\n")
+        # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
+        # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
+        libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")
+        # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), tras la de Dash: cuando se ve entera (una captura
+        # comprueba que sus cuatro esquinas y un sitio vacío de dentro son de los colores del Workbench: si otra ventana
+        # del arranque la tapa, los clics irían a esa; se mira otra vez en la vuelta siguiente), la captura
+        # (CAPTURA_GT), clics en la casilla, el ciclo, la tercera opción del mx, el tercer elemento de la lista y
+        # "Aceptar", y el menú con el botón derecho: sobre "Proyecto", abajo hasta "Salir" (la captura con el menú
+        # abierto, CAPTURA_GT_MENU) y soltar, que cierra el programa. Las posiciones, las de gadtools.c.
+        if dash_amiga == 1 and gt_amiga == 0 and libre_caja and time.time() > gt_mirado + 2:
+            import re
+            gt_mirado = time.time()
+            corte = texto.find("[caja-amiga] gadtools-90: ")   # (solo con CAJA_INTERACTIVA=1: si no, 5 s)
+            if corte >= 0 and "[caja-amiga] gadtools: ventana abierta y dibujada" in texto[corte:] \
+                    and "[caja-amiga] gadtools.exe acabó" not in texto[corte:]:
+                v_gt = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if v_gt:
+                    x, y = int(v_gt[-1].group(1)), int(v_gt[-1].group(2))
+                    foto = os.environ.get("CAPTURA_GT") or "/tmp/dashos-gt-mira.ppm"
+                    mandar("screendump " + foto)
+                    time.sleep(0.7)
+                    def pixeles(ruta, puntos):
+                        try:
+                            d = open(ruta, "rb").read()
+                            cab = d.split(b"\n", 3)
+                            an = int(cab[1].split()[0])
+                            datos = cab[3]
+                            return [tuple(datos[3 * (py * an + px):3 * (py * an + px) + 3]) for px, py in puntos]
+                        except Exception:
+                            return []
+                    wb = {(0xAA, 0xAA, 0xAA), (0, 0, 0), (0xFF, 0xFF, 0xFF), (0x66, 0x88, 0xBB)}
+                    vistos = pixeles(foto, [(x + 1, y + 1), (x + 408, y + 1), (x + 1, y + 190), (x + 408, y + 190)])
+                    vacio = pixeles(foto, [(x + 200, y + 183)])
+                    ancho_pantalla = 0
+                    try:
+                        ancho_pantalla = int(open(foto, "rb").read().split(b"\n", 3)[1].split()[0])
+                    except Exception:
+                        pass
+                    tapada = not (len(vistos) == 4 and all(c in wb for c in vistos) and vacio == [(0xAA, 0xAA, 0xAA)])
+                    if tapada and gt_movida < 3:
+                        # Un clic en su borde izquierdo (no es ningún gadget; suele verse: las otras ventanas salen más a
+                        # la derecha) la sube encima de las demás; se mira otra vez en la vuelta siguiente.
+                        gt_movida += 1
+                        ir_a(x + 2, y + 100)
+                        time.sleep(0.3)
+                        mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                        time.sleep(0.5)
+                        continue
+                    if not tapada:
+                        gt_amiga = 1
+                        for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
+                            ir_a(x + dx, y + dy)
+                            time.sleep(0.3)
+                            mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                            time.sleep(0.4)
+                        ir_a(x + 25, y + 5)
+                        time.sleep(0.3)
+                        mandar("mouse_button 2", pausa=0.3)
+                        mandar("mouse_move 0 15", "mouse_move 0 14", pausa=0.3)
+                        time.sleep(0.5)
+                        if os.environ.get("CAPTURA_GT_MENU"):
+                            mandar("screendump " + os.environ["CAPTURA_GT_MENU"])
+                            time.sleep(0.5)
+                        mandar("mouse_button 0", pausa=0.2)
+                        w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+                        if menu == 2:
+                            ir_a(790, 590)
+                        elif ajustes and w:
+                            ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
+                        else:
+                            ir_a(10 * paso, 5 * paso)
+        # El ejemplo de GadTools de FreeMEMLang (`examples/test_gadtools.dash`): la captura (CAPTURA_GT_DASH) y un clic en
+        # su "Cancel" (gt_button(120, 20, 80, 20) en una ventana GIMMEZEROZERO: desde la esquina de dentro, 4 y 11).
+        if dash_amiga == 1 and gt_dash == 0 and libre_caja:
+            import re
+            corte = texto.find("[caja-amiga] test_gadtools: ")
+            if corte >= 0:
+                v_gd = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if v_gd:
+                    gt_dash = 1
+                    x, y = int(v_gd[-1].group(1)), int(v_gd[-1].group(2))
+                    time.sleep(1.0)
+                    if os.environ.get("CAPTURA_GT_DASH"):
+                        mandar("screendump " + os.environ["CAPTURA_GT_DASH"])
+                        time.sleep(0.5)
+                    ir_a(x + 164, y + 41)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                    w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+                    if menu == 2:
+                        ir_a(790, 590)
+                    elif ajustes and w:
+                        ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
+                    else:
+                        ir_a(10 * paso, 5 * paso)
+        # El error de Dash en un requester (solo con la caja hecha con CAJA_INTERACTIVA=1, para las capturas): su
+        # captura (CAPTURA_REQ) y un clic en su botón, centrado abajo.
+        if req_dash == 0 and os.environ.get("CAPTURA_REQ"):
+            import re
+            corte = texto.find("[caja-amiga] test_trap_illegal (sin consola)")
+            if corte >= 0:
+                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)\): Dash", texto[corte:])
+                v_r = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if m_r and v_r:
+                    req_dash = 1
+                    x, y = int(v_r[-1].group(1)), int(v_r[-1].group(2))
+                    an, al = int(m_r.group(1)), int(m_r.group(2))
+                    time.sleep(1.0)
+                    mandar("screendump " + os.environ["CAPTURA_REQ"])
+                    time.sleep(0.5)
+                    ir_a(x + an // 2, y + al - 12)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
         # Diagnóstico: con DIAG_REGISTROS=fichero, si el compositor suelta a alguien, los registros de los núcleos (tres
         # veces, para ver si se mueven).
         if diag_registros and not diag_hecho and os.environ.get("DIAG_TEXTO", "se le suelta") in texto:
@@ -324,7 +442,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
             reintento = time.time() + 5
         # C3: los fondos y el color del fondo. Con el teclado en la lista de Apariencia (Inicio, abajo hasta la fila,
-        # Intro): poner ondas.png (en el disco, el guardado es el enorme, que no se pone), elegir "Color del fondo",
+        # Intro): poner ondas.png (en el disco, el guardado es el enorme, que no se pone), elegir "Paleta del fondo",
         # poner rota.png (no se pone: se quedan el fondo y el tema) y poner atardecer.png (el tema sale del nuevo).
         # Las filas, de lo que dice el centro al entrar en Apariencia. Con CAPTURA_CENTRO, fichero.fondo-ondas.ppm,
         # fichero.fondo-color.ppm y fichero.fondo-atardecer.ppm.
@@ -354,7 +472,7 @@ while time.time() - inicio < total:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".fondo-ondas.ppm")
             time.sleep(0.5)
-            elegir_fila("Color del fondo")
+            elegir_fila("Paleta del fondo")
             reintento = time.time() + 30
         if not selector_espera and centro == 16:
             if "[centro] Apariencia: oscuro, color Del fondo" not in texto and time.time() < reintento:
@@ -539,7 +657,7 @@ while time.time() - inicio < total:
             import re
             bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\), panel en \((\d+), (\d+)\)", texto)
             def ir_barra(x, y):
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 pasos = []
                 while x > 0 or y > 0:
                     dx, dy = min(x, 100), min(y, 100)
@@ -551,7 +669,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             ir_barra(int(bb.group(1)), int(bb.group(2)))
             reintento = time.time() + 8
-        if 1 <= barra <= 7:
+        if 1 <= barra <= 10:
             captura_barra = os.environ.get("CAPTURA_BARRA")
             espera = {1: texto.count("[barra] lanzador abierto") >= 1,
                       2: '[barra] busca "ho": hola' in texto,
@@ -559,11 +677,19 @@ while time.time() - inicio < total:
                       4: texto.count("[barra] lanzador abierto") >= 2,
                       5: texto.count("[barra] lanzador cerrado") >= 2,
                       6: "[panel] abierto por 2.ª vez" in texto and texto.count("[compositor] capa de panel en") >= 2,
-                      7: texto.count("[panel] cerrado") >= 2}[barra]
+                      7: texto.count("[panel] cerrado") >= 2,
+                      # S27: Super+2 (se ve el 2), el clic en el 1 de la barra (se ve el 1) y las teclas del volumen
+                      # en ráfaga: un solo OSD que las junta.
+                      8: "[barra] espacios: se ve el 2" in texto,
+                      9: "[barra] espacios: se ve el 1" in texto[texto.find("[barra] espacios: se ve el 2"):],
+                      10: "[panel] OSD cerrado: " in texto}[barra]
+            if barra == 10 and captura_barra and "[panel] OSD abierto" in texto and not globals().get("osd_capturado"):
+                globals()["osd_capturado"] = True
+                mandar("screendump " + captura_barra[:-4] + ".osd.ppm")
             if not espera:
                 if time.time() > reintento:
                     # No llegó: se deja (las líneas que falten lo dirán).
-                    barra = 8
+                    barra = 11
                 time.sleep(0.25)
                 continue
             time.sleep(0.6)
@@ -588,6 +714,17 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_barra[:-4] + ".panel.ppm")
                     time.sleep(0.5)
                 ir_barra(int(bb.group(3)), int(bb.group(4)))
+            elif barra == 7:
+                mandar("sendkey meta_l-2")
+            elif barra == 8:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".espacio2.ppm")
+                    time.sleep(0.5)
+                uno = re.findall(r"\[barra\] espacios: se ve el 2 de \d+; el 1 en \((\d+), (\d+)\)", texto)
+                if uno:
+                    ir_barra(int(uno[-1][0]), int(uno[-1][1]))
+            elif barra == 9:
+                mandar(*["sendkey volumedown"] * 6, "sendkey volumeup", pausa=0.05)
             barra += 1
             reintento = time.time() + 8
             continue
@@ -596,7 +733,7 @@ while time.time() - inicio < total:
         # cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra y el compositor (dónde sale cada capa).
         # Con CAPTURA_AVISOS=fichero.ppm: el toast (fichero.ppm), el historial (fichero.hist.ppm) y vacío
         # (fichero.vacio.ppm).
-        if avisos_paso == 0 and barra == 8 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
+        if avisos_paso == 0 and barra == 11 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
             avisos_paso = 1
             reintento_avisos = time.time() + 10
         if 1 <= avisos_paso <= 8:
@@ -619,7 +756,7 @@ while time.time() - inicio < total:
             capa_hist = capa_tras("[barra] historial abierto")
             borrar = re.findall(r"\[barra\] historial abierto: .*Borrar todo en \((\d+), (\d+)\)", texto)
             def clic_en(x, y):
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 pasos = []
                 while x > 0 or y > 0:
                     dx, dy = min(x, 100), min(y, 100)
@@ -668,7 +805,7 @@ while time.time() - inicio < total:
                 x, y = capa_hist[0]
                 # La rueda sobre la lista (a media altura del historial): dos pasos en un sentido y dos en el otro (el signo
                 # de `dz` en el monitor de QEMU no está claro): en algún momento la lista pasa por la fila 3.
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 px, py = int(x) + 150, int(y) + 200
                 pasos = []
                 while px > 0 or py > 0:
@@ -715,7 +852,7 @@ while time.time() - inicio < total:
         # con las ventanas de Sistema y Programas (fichero.ppm), Privado como lista (fichero.lista.ppm), la Información
         # (fichero.info.ppm) y la
         # Información con el comentario escrito (fichero.comentario.ppm). Al final, Cerrar en cada ventana.
-        if wb == 0 and barra == 8 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
+        if wb == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
             wb = 1
             reintento = 0
         if 1 <= wb <= 17:

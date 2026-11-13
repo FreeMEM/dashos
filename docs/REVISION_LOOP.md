@@ -1670,3 +1670,49 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   espera y reintenta dentro del plazo; antes salía como SIN_DIRECCION y `red-gloton` fallaba dos veces seguidas.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
   `make tarjeta-pi5` sale.
+
+### 2026-11-13 08:00: decisiones del usuario (aspecto de las cajas y malware de Amiga)
+- S26, todas como se recomendaron: todo "como DashOS" de serie (también la caja Amiga); paleta del fondo de serie;
+  con "Original", el modo claro/oscuro del sistema; bordes Amiga con "como DashOS": la barra de intuition pintada
+  como Material con el mismo tamaño, más sombra y esquinas del compositor; topaz de serie y Roboto solo por programa;
+  bastan las excepciones por programa.
+- S28, todas como se recomendaron: el modelo por capas, con prioridad en sacar la caja de los 4 GB (los programas en
+  modo usuario ya los hizo `caja-amiga-gadtools`); `Caja:` para el cajón del programa y `Work:` para los ficheros del
+  usuario; cambiar o borrar ejecutables, iconos y guiones pregunta con `guardian` y se recuerda por programa;
+  papelera e instantánea del cajón en cada arranque; aviso sin firmas de un bloque de arranque no estándar al montar
+  un ADF; modo usuario con excepción por programa.
+
+### 2026-11-13 09:00: decisiones del usuario sobre el escritorio al estilo DMS (S27)
+Todas como se recomendaron: ventanas libres de serie en el primer espacio y columnas tipo niri con un clic por
+espacio; espacios en vertical (arriba/abajo cambian de espacio, los lados recorren las columnas); barra translúcida al
+88 %; la barra enseña como poco 3 espacios y hasta el más alto con ventanas; lanzador en lista hasta que haya
+iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Espacio. Sigue la oleada 2 (rama
+`escritorio-dms`) cuando haya sitio (como mucho 3 agentes a la vez).
+
+### 2026-11-13 09:15: GTK sin bordes propios, portapapeles, GadTools, aspecto común y arreglos de pruebas, en revision
+- Fusionadas `caja-linux-apps` (xdg-decoration con la barra de DashOS, portapapeles en los dos sentidos y la
+  primaria, xdg_popup y lo que piden los programas grandes, hostiles; el puente aparta los pools de Mesa con número
+  repetido: es2gears y cuadros_gl ya no se cortan), `caja-amiga-gadtools` (código 68k desde funciones nativas,
+  tc_TrapCode, tc_ExceptCode y Ctrl-C, programas en modo usuario, gadtools.library con sus doce gadgets, menús con el
+  botón derecho, EasyRequest, todo pintado por un rasgo `Tema`) y `aspecto-cajas` (S26: tema del fondo para todo,
+  `dashos_tema_v1` v3, agente `dashos-aspecto` en Arch que hace el tema GTK, plumas Material para la caja Amiga).
+- Arreglos de pruebas: arch, wayland y gpu sobre su copia del disco (`target/disco-arch.img`, con reflink); el hostil
+  "sin-fin: le cortaron la tubería" sale de lo esperado (inestable, se apunta en medidas; pendiente de explicar).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 09:25: decisión del usuario: cinco temas
+Habrá cinco temas configurados para elegir: Claro, Oscuro, AOS4 (al estilo de AmigaOS 4), MOS (al estilo de MorphOS)
+y Magic WB (al estilo de MagicWB). Sirven para el escritorio y para las cajas ("como DashOS" pinta con el tema
+elegido; Claro y Oscuro con la paleta del fondo de S26). Los tres retro se inspiran en su aspecto (colores,
+degradados, relieve, tipo de barra) y se dibujan aquí: sin copiar iconos, patrones ni imágenes de esos sistemas.
+Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
+
+### 2026-11-13 09:45: el escritorio al estilo DMS (S27, oleada 1), en revision
+- Fusionada `escritorio-dms`: barra flotante con píldoras (lanzador, espacios, título; reloj con fecha en el centro;
+  avisos y estado a la derecha), espacios de trabajo 1-9 en el compositor (Super+número, Super+Mayús+número, clic
+  en la barra), lanzador en el centro con hasta 1000 programas, OSD del volumen; arreglo del compositor: al cerrar la
+  ventana con el teclado, el teclado pasa a la de arriba. Estudio `docs/diseño/S27-escritorio-dms.md` con 7 oleadas.
+- Choque con S26 en `dashos_tema_v1`: la 3 queda para el aspecto de las cajas y los espacios y el volumen pasan a la
+  4 (tablas regeneradas; las tres listas de globales del compositor anuncian la 4; la barra y el panel la enlazan).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN
+  (arranque-virt y -2 tras el arreglo de las listas de globales).

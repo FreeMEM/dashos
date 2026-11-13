@@ -171,3 +171,8 @@ Del 2026-11-10, aceptados por el usuario.
   propias (base de modos con PAL, HAM, AGA y RTG, escalado con su proporción) y clonadas; arrastrar dejando dos a la
   vez; menús en la barra; ficha de compatibilidad por programa.
 
+- **El aspecto de las cajas** (S26, 2026-11-13): un tema único que sale del fondo (como Material You y DMS) y llega
+  a todo; los programas de las cajas Amiga y Linux, "como DashOS" u "originales", con excepciones por caja y por
+  programa. El centro de control hace de servicio del tema, el compositor lo reparte (`dashos_tema_v1`, versión 3) y en
+  cada caja algo lo aplica: plumas de Material y un pintor Material para GadTools e intuition en la Amiga; un agente
+  dentro de Arch que rellena las plantillas de GTK, libadwaita, Qt y foot en la Linux.

@@ -97,6 +97,8 @@ struct Peticion {
     interior: (Option<i32>, Option<i32>),
     cola_raton: u16,
     cola_repeticion: u16,
+    /// Los gadgets del programa (`WA_Gadgets`, `nw_FirstGadget`).
+    gadgets: u32,
 }
 
 /// Tope de etiquetas que se recorren (más es una lista en círculo).
@@ -258,6 +260,7 @@ impl<C: Compositor> CajaGrafica<C> {
         p.ancho = ex.l16(n + nw::WIDTH)? as i16 as i32;
         p.alto = ex.l16(n + nw::HEIGHT)? as i16 as i32;
         p.detalle = ex.l8(n + nw::DETAILPEN)?;
+        p.gadgets = ex.l32(n + nw::FIRSTGADGET)?;
         p.bloque = ex.l8(n + nw::BLOCKPEN)?;
         p.idcmp = ex.l32(n + nw::IDCMPFLAGS)?;
         p.flags = ex.l32(n + nw::FLAGS)?;
@@ -306,6 +309,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 wa::SCREENTITLE => p.titulo_pantalla = dato,
                 wa::CUSTOMSCREEN | wa::PUBSCREEN => p.pantalla = Some(dato),
                 wa::PUBSCREENNAME => p.nombre_pub = Some(dato),
+                wa::GADGETS => p.gadgets = dato,
                 wa::PUBSCREENFALLBACK => p.respaldo = dato != 0,
                 wa::MINWIDTH => p.minimo.0 = dato as i32,
                 wa::MINHEIGHT => p.minimo.1 = dato as i32,
@@ -361,6 +365,7 @@ impl<C: Compositor> CajaGrafica<C> {
             interior: (None, None),
             cola_raton: COLA_RATON,
             cola_repeticion: COLA_REPETICION,
+            gadgets: 0,
         };
         let mut lista = etiquetas;
         if n != 0 {
@@ -565,6 +570,10 @@ impl<C: Compositor> CajaGrafica<C> {
         if activar {
             self.activar(ex, w, true)?;
         }
+        if p.gadgets != 0 {
+            self.add_g_list(ex, w, p.gadgets, -1, -1)?;
+            self.dibujar_lista(ex, w, p.gadgets, -1, false);
+        }
         self.presentar_ventana(w);
         Ok(w)
     }
@@ -650,6 +659,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// conteste. Cerrar dos veces, o una que no es, da un aviso.
     pub fn close_window<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
         self.ventana(w)?;
+        self.gadtools_ventana_cerrada(w);
         self.reclamar(ex, w)?;
         let puerto = ex.l32(w + win::USERPORT)?;
         self.quitar_de_puerto(ex, w, puerto)?;
@@ -782,12 +792,14 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Cierra las ventanas de una tarea que se va a matar. La caja lo llama antes de `Exec::matar_tarea`.
     pub fn tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
+        self.requesters_tarea_muerta(ex, t);
         let ws: Vec<u32> = self.intui.ventanas.iter().filter(|(_, v)| v.tarea == t).map(|(w, _)| *w).collect();
         for w in ws {
             if let Err(f) = self.close_window(ex, w) {
                 self.avisar(ex, "CloseWindow", f);
             }
         }
+        self.gadtools_tarea_muerta(t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {
@@ -1020,8 +1032,12 @@ impl<C: Compositor> CajaGrafica<C> {
         al: u32,
     ) -> Result<bool, Fallo> {
         let v = self.ventana(w)?;
-        let an = (an as i32).clamp(v.minimo.0, v.maximo.0);
-        let al = (al as i32).clamp(v.minimo.1, v.maximo.1);
+        let an = (an as i32).min(v.maximo.0).max(v.minimo.0);
+        let al = (al as i32).min(v.maximo.1).max(v.minimo.1);
+        // Lo que pide el compositor (o unos límites de WindowLimits absurdos) no puede dar un lienzo imposible.
+        if !crate::lienzo::tamano_valido(an as i64, al as i64) {
+            return Err(Fallo::TamanoMalo { ancho: an, alto: al });
+        }
         let g = v.geometria;
         if an == g.ancho && al == g.alto {
             return Ok(false);

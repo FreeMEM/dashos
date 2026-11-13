@@ -19,6 +19,8 @@ caja_utility = { package = "dashos-caja-utility", path = "../utility" }
 caja_timer = { package = "dashos-caja-timer", path = "../timer" }
 dashos = { package = "dashos-usuario", path = "../../usuario", default-features = false }
 wayland = { package = "dashos-wayland", path = "../../wayland" }
+# S26: el esquema de Material 3 del tema de DashOS (las plumas de los programas Amiga "como DashOS").
+kit = { package = "dashos-kit", path = "../../kit" }
 
 [profile.release]
 panic = "abort"
