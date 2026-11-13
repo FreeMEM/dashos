@@ -200,7 +200,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
     // uno sin la llave. La llave del canal "red" es el permiso de red: hoy la da `inicio`; más adelante, `sesiones`.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("red", programa!("red"), &[], &["red"]),
+    // También "red-estado": solo el estado, para leer (decisión del usuario del 2026-11-13); lo atiende un hilo aparte.
+    ("red", programa!("red"), &[], &["red", "red-estado"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
@@ -211,10 +212,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("sin-red", programa!("sin-red"), &[], &[]),
     // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
     // el del sonido para el volumen general. S27, oleada 2: también "sesiones" (quién está delante, para su cabecera) y
-    // "red" (el estado de la red, para su mosaico y la barra; esa llave es también el permiso de red). Tras los servicios
-    // de sonido y de red, que son quienes leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 centro, 4 sonido, 5 red.
+    // el estado de la red, para su mosaico y la barra: por "red-estado", que solo da eso (decisión del usuario del
+    // 2026-11-13: sin la llave de "red", que es el permiso de red). Tras los servicios de sonido y de red, que son quienes
+    // leen esos canales. Llaves: 1 ventanas, 2 sesiones, 3 centro, 4 sonido, 5 red-estado.
     #[cfg(feature = "virt")]
-    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red"]),
+    ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
     #[cfg(feature = "virt")]
     ("caida", programa!("caida"), &[], &["caida"]),

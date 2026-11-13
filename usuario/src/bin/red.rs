@@ -16,7 +16,12 @@
 //!   no (salvo la puerta de enlace y el DNS para lo justo), ni hacerse pasar por la puerta por ARP. Las primeras
 //!   `AVISOS_CORTAFUEGOS` tramas cortadas se dicen en el registro.
 //!
-//! Llaves: 1 el canal "red" (lee) y 2 una copia para escribirse (no la usa: espera con plazo).
+//! - El estado, solo para leer (decisión del usuario del 2026-11-13): el canal "red-estado" lo atiende un hilo aparte
+//!   (`atender_estado`), que solo contesta `ESTADO` con una foto que deja aquí el bucle principal (`FOTO`): sin
+//!   conexiones propias ni lo de otros. Con esa llave no se llega al bucle, así que no se abre nada. Es la del panel.
+//!
+//! Llaves: 1 el canal "red" (lee), 2 el canal "red-estado" (lee) y 3 y 4 copias para escribirse (no las usa: espera con
+//! plazo).
 
 #![no_std]
 #![no_main]
@@ -42,6 +47,46 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const CANAL: u32 = 1;
+const CANAL_ESTADO: u32 = 2;
+/// Lo que da "red-estado": las palabras de `R_ESTADO` que pone el bucle principal (la configuración, las conexiones en
+/// total y las tramas); `E_SUYAS` y `E_RECHAZOS` quedan a 0.
+static FOTO: [core::sync::atomic::AtomicU32; p::E_PALABRAS] = [const { core::sync::atomic::AtomicU32::new(0) }; p::E_PALABRAS];
+
+/// El hilo de "red-estado": a `ESTADO` (con una llave de respuesta) contesta la foto; lo demás, nada (las llaves que
+/// lleguen se cierran). Los avisos de `inicio` (quién es cada marca, "relanzado") llegan sin marca y se tiran igual.
+fn atender_estado(_: u64) -> u64 {
+    let mut buf = [0u8; 256];
+    let mut ll = [0u32; 8];
+    let mut rechazos = 0u32;
+    loop {
+        let (n, k, marca) = dashos::canal_leer_marca(CANAL_ESTADO, &mut buf, &mut ll);
+        if n == E_CERRADO {
+            return 0;
+        }
+        if n < 0 {
+            dashos::dormir_us(1_000);
+            continue;
+        }
+        let llaves = &ll[..k.min(ll.len())];
+        let orden = if n >= 4 { u32::from_le_bytes(buf[..4].try_into().unwrap()) } else { 0 };
+        if marca != 0 && n == 4 && orden == p::ESTADO && llaves.len() == 1 {
+            let mut e = [0u32; p::E_PALABRAS];
+            for (i, x) in e.iter_mut().enumerate() {
+                *x = FOTO[i].load(Ordering::Relaxed);
+            }
+            e[0] = p::R_ESTADO;
+            dashos::canal_escribir(llaves[0], palabras(&e), &[]);
+        } else if marca != 0 {
+            rechazos += 1;
+            if rechazos <= 4 {
+                println!("  [red] por el canal del estado solo se contesta ESTADO: orden {} rechazada", orden);
+            }
+        }
+        llaves.iter().for_each(|&l| {
+            dashos::cerrar(l);
+        });
+    }
+}
 const VA_TRAMAS: usize = 0x40_0000_0000;
 const VA_CONEX: usize = 0x41_0000_0000;
 /// La memoria del puerto de la caja Linux (H9).
@@ -565,6 +610,11 @@ struct Red {
 }
 
 fn principal() -> u64 {
+    // El hilo del canal "red-estado", con su pila (no se suelta: vive lo que el servicio).
+    let pila: &'static mut [u8] = vec![0u8; 32 * 1024].leak();
+    if dashos::hilos::crear(atender_estado, 0, pila, 0) < 0 {
+        println!("  [red] sin hilo para el canal del estado");
+    }
     let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
     let mut red: Option<Red> = None;
     let mut conex: Vec<Option<Conex>> = (0..p::MAX_CONEXIONES).map(|_| None).collect();
@@ -679,6 +729,24 @@ fn principal() -> u64 {
                     }
                 }
             }
+        }
+        // La foto del estado para el canal "red-estado" (solo para leer).
+        let mut e = [0u32; p::E_PALABRAS];
+        if let Some(r) = &red {
+            if let Some((ip, prefijo, puerta, dns)) = r.configurada {
+                e[p::E_CONFIGURADA] = 1;
+                e[p::E_IP] = u32::from_le_bytes(ip.octets());
+                e[p::E_PREFIJO] = prefijo as u32;
+                e[p::E_PUERTA] = puerta.map_or(0, |a| u32::from_le_bytes(a.octets()));
+                e[p::E_DNS] = dns.map_or(0, |a| u32::from_le_bytes(a.octets()));
+            }
+            for (i, t) in [(p::E_RECIBIDAS, p::T_RECIBIDAS), (p::E_CORTAS, p::T_CORTAS), (p::E_LARGAS, p::T_LARGAS), (p::E_SIN_SITIO, p::T_SIN_SITIO), (p::E_ENVIADAS, p::T_ENVIADAS), (p::E_TX_MALAS, p::T_TX_MALAS)] {
+                e[i] = tramas(t);
+            }
+        }
+        e[p::E_CONEXIONES] = conex.iter().flatten().count() as u32;
+        for (i, x) in e.iter().enumerate() {
+            FOTO[i].store(*x, Ordering::Relaxed);
         }
         // La pila y las conexiones.
         plazo = 100_000;

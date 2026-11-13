@@ -33,3 +33,13 @@ Rama `decisiones-1311`, sacada de `revision` (022e9d1). Las decisiones están en
   `guardian` pregunta (Carla sigue detrás de Ana) y el guion contesta que sí. Se espera a las líneas de ese fichero y a
   un segundo "DashOS en marcha". El tiempo de la prueba pasa de 300 a 360 s.
 - Sin probar en el guion: Apagar (en QEMU acabaría la prueba igual que con `-no-reboot`) y Cerrar sesión.
+
+## 2. El estado de la red, solo para leer, para el panel
+
+- Canal nuevo "red-estado", que lee el servicio de red (lo nombra tras "red"). Lo atiende un hilo aparte
+  (`atender_estado`): solo contesta `ESTADO`, con una foto que deja el bucle principal en `FOTO` en cada vuelta (la
+  configuración, las conexiones en total y las tramas; sin las suyas ni los rechazos). Lo demás se tira y sus llaves se
+  cierran. Con esa llave no se llega al bucle de la pila: no hay forma de abrir una conexión.
+- `inicio`: el panel recibe "red-estado" en lugar de "red" (sigue siendo su llave 5). Ya no tiene el permiso de red.
+- Prueba hostil, en el panel al arrancar: pide `CONECTAR` (al eco del PC) con su llave y no recibe nada en 1 s. El
+  servicio lo dice ("solo se contesta ESTADO: orden 1 rechazada"). Y el panel sigue viendo la red conectada.

@@ -147,6 +147,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: -2
 ~│   [hostil] apagar la máquina sin el permiso: 0 de 128 funcionaron: bien
 # S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
+# Decisión del usuario del 2026-11-13: el panel sabe el estado por "red-estado", que solo da eso; con esa llave no se
+# abre una conexión (el hilo del estado del servicio de red la rechaza).
+~│   [panel] con la llave del estado de la red, abrir una conexión: no se puede (bien)
+~│   [red] por el canal del estado solo se contesta ESTADO: orden 1 rechazada
 ~│   [panel] red: conectada (10.0.2.15)
 ~│   [panel] delante: 
 ~│   [barra] estado: red conectada, volumen

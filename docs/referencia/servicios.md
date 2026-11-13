@@ -51,7 +51,7 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 | sonido | permiso de plazo (S3) | "sonido" (es quien lee) |
 | virtio-sonido | su permiso DMA, registros y configuración del aparato, permiso de plazo (S3), su interrupción (opcional) | "sonido" |
-| red (solo `virt`) | — | "red" (es quien lee) |
+| red (solo `virt`) | — | "red" y "red-estado" (es quien lee los dos) |
 | virtio-red (solo `virt`) | su permiso DMA, registros y configuración del aparato, su interrupción (opcional) | "red" |
 | red-prueba, red-gloton (pruebas, solo `virt`) | — | "red" |
 
@@ -490,6 +490,11 @@ recibir, esperar y cerrar; `estado`).
 **El permiso.** Solo llega a la red quien tiene una llave del canal "red". Hoy la da `inicio`, por nombre, a quien la
 pide en `PROGRAMAS`; más adelante la repartirá `sesiones`. El servicio sabe de quién es cada marca por `inicio` y no
 atiende marcas que no conoce. Un programa solo toca sus conexiones.
+
+**El estado, solo para leer** (decisión del usuario del 2026-11-13). El canal "red-estado" lo atiende un hilo aparte del
+servicio, que solo contesta `ESTADO` (las mismas palabras de `R_ESTADO`, sin `E_SUYAS` ni `E_RECHAZOS`) con una foto que
+deja el bucle principal en cada vuelta. Cualquier otra orden se tira (y sus llaves se cierran): con esa llave no se
+abre nada. La tiene el panel rápido, en vez de la de "red".
 
 **El controlador.** Llaves: 1 su permiso DMA, 2 sus registros (BAR 4), 3 su configuración del PCIe, 4 su interrupción
 (INTx; opcional, sin ella mira cada 2 ms) y después el canal "red". Funciones: VERSION_1 y MAC; sin sumas por el

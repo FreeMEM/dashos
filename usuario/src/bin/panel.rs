@@ -27,8 +27,11 @@
 //! por cuatro filas: Apagar, Reiniciar y Cerrar sesión, que se piden a `sesiones` (`APAGAR`: solo se lo acepta al panel,
 //! y con otras sesiones abiertas pregunta antes con `guardian`), y Bloquear, como el botón del candado.
 //!
+//! El estado de la red llega por "red-estado", que solo da eso (decisión del usuario del 2026-11-13): el panel no tiene
+//! la llave de "red", que es el permiso de red. Al arrancar comprueba que con la suya no se abre una conexión.
+//!
 //! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 "sesiones", 3 "centro", 4 "sonido" y
-//! 5 "red".
+//! 5 "red-estado".
 
 #![no_std]
 #![no_main]
@@ -638,6 +641,28 @@ fn pedir_apagado(modo: u32) -> i32 {
     if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
 }
 
+/// Prueba hostil: con la llave de "red-estado", pedir una conexión (al eco del PC en la prueba) no da nada: ni
+/// `R_CONECTAR` ni memoria. Verdadero si no llegó nada en un segundo (o se cerró la respuesta).
+fn conectar_con_el_estado() -> bool {
+    use dashos::protocolo::red as r;
+    let (lectura, escritura) = dashos::canal_crear();
+    let pedido = [r::CONECTAR, r::IPV4, 7, r::ANILLO_MIN as u32, u32::from_le_bytes([10, 0, 2, 100]), 0, 0, 0];
+    let b: Vec<u8> = pedido.iter().flat_map(|w| w.to_le_bytes()).collect();
+    let mut resp = [0u8; 16];
+    let mut ll = [0u32; 4];
+    let (n, k) = if dashos::canal_escribir(RED, &b, &[escritura]) == 0 {
+        let (n, k, _) = dashos::canal_leer_plazo(lectura, &mut resp, &mut ll, 1_000_000);
+        (n, k)
+    } else {
+        (-1, 0)
+    };
+    ll[..k.min(ll.len())].iter().for_each(|&l| {
+        dashos::cerrar(l);
+    });
+    dashos::cerrar(lectura);
+    n < 0 && k == 0
+}
+
 /// S27, oleada 2: quién está delante, de `sesiones` (vacío si no hay nadie o no contesta).
 fn quien_delante() -> String {
     use dashos::protocolo::sesiones as s;
@@ -786,6 +811,7 @@ fn principal() -> u64 {
         }
         None => println!("  [panel] el centro no dice los mosaicos: los de serie"),
     }
+    println!("  [panel] con la llave del estado de la red, abrir una conexión: {}", if conectar_con_el_estado() { "no se puede (bien)" } else { "MAL" });
     let Some(mut c) = Cliente::conectar() else {
         println!("  [panel] sin compositor");
         return 1;
