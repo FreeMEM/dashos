@@ -176,4 +176,7 @@ pub trait SistemaArchivos {
     fn fechar(&mut self, _asa: Asa, _fecha: u64) -> Result<(), ErrorFs> {
         Err(ErrorFs::NoSoportado)
     }
+    /// La raíz `raiz` es de un volumen de solo lectura (`Dos::montar`): lo que cambia el disco desde ella no se manda
+    /// (la guardia, `guardia.rs`). El servicio ya lo sabe por sus raíces; por defecto, nada.
+    fn marcar_solo_lectura(&mut self, _raiz: Asa) {}
 }

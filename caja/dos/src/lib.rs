@@ -27,6 +27,7 @@ extern crate alloc;
 pub mod errores;
 pub mod estructuras;
 pub mod fs;
+pub mod guardia;
 pub mod lvo;
 pub mod memfs;
 pub mod memoria;

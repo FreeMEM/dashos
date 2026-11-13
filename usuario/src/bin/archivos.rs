@@ -2306,13 +2306,20 @@ fn principal() -> u64 {
                 c.fetch_add(reloj() - t0, Ordering::Relaxed);
             }
             // Tras volver a una instantánea, las asas de todos en ese volumen llevan a nodos que ya no son los
-            // mismos: se sueltan (la vuelta ya olvidó que estaban abiertos).
+            // mismos: se sueltan (la vuelta ya olvidó que estaban abiertos). S28: las raíces que son la raíz del
+            // volumen se quedan (su nodo es siempre el mismo) y vuelven a contar como abiertas: la caja Amiga, con el
+            // disco de solo lectura como raíz 1, no se queda sin `SYS:` cuando alguien vuelve a una instantánea.
             if orden == VOLVER && r.estado == BIEN {
+                let raiz_del_volumen = TreePtr::<Node>::root().id();
                 for c in clientes.iter_mut().flatten() {
                     c.asas.retain(|_, (vol, _)| *vol != r.a);
                     for raiz in c.raices.iter_mut() {
-                        if raiz.is_some_and(|x| x.0 == r.a) {
-                            *raiz = None;
+                        match *raiz {
+                            Some((vol, n, _)) if vol == r.a && n.id() == raiz_del_volumen => {
+                                *fs.node_usages.entry((vol << 32) | u64::from(n.id())).or_insert(0) += 1;
+                            }
+                            Some((vol, _, _)) if vol == r.a => *raiz = None,
+                            _ => {}
                         }
                     }
                 }

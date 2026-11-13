@@ -64,6 +64,11 @@ impl<F: SistemaArchivos> Dos<F> {
             E::Mal(f) => f.codigo(),
         })?;
         let i = self.volumenes.len();
+        // Decisión 8 del usuario (2026-11-13): el volumen de solo lectura lo controla dos, volumen a volumen: la guardia
+        // (`guardia.rs`) niega lo que cambie el disco desde su raíz con ERROR_DISK_WRITE_PROTECTED.
+        if solo_lectura {
+            self.fs.marcar_solo_lectura(raiz);
+        }
         self.volumenes.push(Volumen { nombre: n, raiz, solo_lectura, doslist: dl, puerto });
         self.nombres.insert(k, Nombre::Volumen(i));
         if self.arranque.is_none() {

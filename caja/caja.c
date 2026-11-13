@@ -260,6 +260,10 @@ extern const uint8_t prog_dash_ventana[], prog_dash_ventana_fin[];
 extern const uint8_t prog_dash_interp[], prog_dash_interp_fin[];
 extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
 
+/* La foto de los vectores (S28): desde VECTORES hasta COMUN incluido; MARCA y la pila de COMUN cambian siempre. */
+static uint8_t vectores_foto[COMUN + 16 - VECTORES];
+static int vectores_deshechos;
+
 /* Las trampas: el vector i escribe i en MARCA y salta a COMUN, que pone la pila y vuelve a la dirección 0, donde
    MainLoop termina. Así un programa que provoca una excepción del 68k acaba sin tumbar la caja. Al volver de su
    función, cada tarea salta también a COMUN (su dirección de vuelta). */
@@ -275,6 +279,20 @@ static void prepara_vectores(void)
     pon16(COMUN, 0x4ff9); pon32(COMUN + 2, (uint32_t)(PILA_TOPE - 4));      /* lea PILA_TOPE-4,a7 */
     pon16(COMUN + 6, 0x4297);                                                  /* clr.l (a7) */
     pon16(COMUN + 8, 0x4e75);                                                  /* rts */
+    for (uint32_t i = 0; i < sizeof(vectores_foto); i++) vectores_foto[i] = *(volatile uint8_t *)(VECTORES + i);
+}
+
+/* S28: los vectores del 68k, las trampas y COMUN, como los dejó prepara_vectores. Un programa los puede cambiar (está
+   en la memoria del 68k y corre en supervisor): al acabar, vuelven a como estaban. Cuántas palabras cambió. */
+static int vectores_deshacer(void)
+{
+    int n = 0;
+    for (uint32_t i = 0; i < sizeof(vectores_foto); i += 4) {
+        uint32_t f = (uint32_t)vectores_foto[i] << 24 | (uint32_t)vectores_foto[i + 1] << 16
+            | (uint32_t)vectores_foto[i + 2] << 8 | vectores_foto[i + 3];
+        if (lee32(VECTORES + i) != f) { pon32(VECTORES + i, f); n++; }
+    }
+    return n;
 }
 
 /* Ejecuta el 68k desde `pc` con A7 = `a7`, A6 = `a6`, A0 = `a0` y D0 = `d0` (el resto a 0), en supervisor y sin máscara
@@ -320,6 +338,8 @@ static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t 
     uint32_t t = caja_tarea_nueva(nombre, largo_de(nombre), 16384, pc, (uint32_t)COMUN, args68k, seglist, &sp);
     if (!t) { if (args68k) caja_free_mem(args68k, sizeof(args)); return -2; }
     int v = arranca(pc, sp, a6, args68k, sizeof(args) - 1);
+    vectores_deshechos = vectores_deshacer();
+    if (vectores_deshechos) di("defensa: %d vectores del 68k cambiados por el programa: deshechos\n", vectores_deshechos);
     uint32_t s = caja_tarea_fin(t);
     if (sobras) *sobras = s;
     if (args68k) caja_free_mem(args68k, sizeof(args));
@@ -447,6 +467,71 @@ static void vigila(uint64_t us)
     __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
     sc(SC_SALIR, 0, 0, 0, 0, 0);
     for (;;) {}
+}
+
+/* --- S28: los virus de laboratorio (pruebas68k/malware/, docs/diseño/S28-malware-amiga.md) --- */
+
+extern const uint8_t prog_mal_arranque[], prog_mal_arranque_fin[];
+extern const uint8_t prog_mal_enlace[], prog_mal_enlace_fin[];
+extern const uint8_t prog_mal_parche[], prog_mal_parche_fin[];
+extern const uint8_t prog_mal_residente[], prog_mal_residente_fin[];
+extern const uint8_t prog_mal_guion[], prog_mal_guion_fin[];
+extern const uint8_t prog_mal_troyano[], prog_mal_troyano_fin[];
+extern const uint8_t prog_mal_memoria[], prog_mal_memoria_fin[];
+/* De pegamento/ (Rust): lo que se deshizo tras el último programa, y las negativas de la guardia de sus ficheros. */
+void caja_defensa(uint32_t *entradas, uint32_t *campos);
+uint32_t caja_negados(void);
+
+/* Donde los virus de laboratorio cuentan cuántas veces se usaron sus parches y su código residente: una zona que exec
+   no reparte (la de los programas planos, sin usar aquí). */
+#define ZONA_LIBRE 0x0014F000UL
+
+/* Los siete, uno tras otro. Cada uno intenta lo de su familia y devuelve cuántas cosas consiguió que no debía (0); la
+   caja comprueba además que acaba bien, que no deja memoria y que lo que cambió en exec (tablas de saltos, ExecBase,
+   vectores del 68k) se deshizo. Al final, que nada de lo suyo se usó después (sus parches, su código residente).
+   Devuelve cuántos fallos. */
+static int prueba_malware(uint32_t execbase, uint32_t sistema)
+{
+    static const struct { const char *nombre; const uint8_t *desde, *hasta; } virus[] = {
+        { "arranque.exe", prog_mal_arranque, prog_mal_arranque_fin },
+        { "enlace.exe", prog_mal_enlace, prog_mal_enlace_fin },
+        { "parche.exe", prog_mal_parche, prog_mal_parche_fin },
+        { "residente.exe", prog_mal_residente, prog_mal_residente_fin },
+        { "guion.exe", prog_mal_guion, prog_mal_guion_fin },
+        { "troyano.exe", prog_mal_troyano, prog_mal_troyano_fin },
+        { "memoria.exe", prog_mal_memoria, prog_mal_memoria_fin },
+    };
+    static const char prefijo[] = "  [caja-amiga] malware: ";
+    int fallos = 0;
+    pon32(ZONA_LIBRE, 0);
+    pon32(ZONA_LIBRE + 4, 0);
+    for (unsigned i = 0; i < sizeof(virus) / sizeof(virus[0]); i++) {
+        uint32_t d0 = 0, sobras = 0, entradas = 0, campos = 0;
+        int llamadas = 0;
+        caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
+        int v = ejecuta_hunk(virus[i].nombre, virus[i].desde, (size_t)(virus[i].hasta - virus[i].desde), execbase, &d0,
+                             &llamadas, &sobras);
+        caja_consola_prefijo(NULL, 0);
+        caja_defensa(&entradas, &campos);
+        int bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        if (virus[i].desde == prog_mal_parche) bien = bien && entradas == 6;
+        else if (virus[i].desde == prog_mal_residente) bien = bien && campos == 2 && vectores_deshechos == 2;
+        else bien = bien && entradas == 0 && campos == 0 && vectores_deshechos == 0;
+        di("malware %s: %d conseguidos (vector %d), %u negativas de la guardia, %u avisos del Enforcer; deshecho: %u "
+           "entradas de tablas, %u grupos de ExecBase, %d vectores del 68k: %s\n", virus[i].nombre, (int)d0, v,
+           caja_negados(), caja_avisos(), entradas, campos, vectores_deshechos, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+    }
+    /* Después de los siete: los parches de parche.exe solo se usaron en su programa (2 veces), el código residente de
+       residente.exe nunca, y ExecBase no tiene vectores de reinicio. */
+    uint32_t usos = lee32(ZONA_LIBRE), reinicio = lee32(ZONA_LIBRE + 4);
+    int limpio = lee32(execbase + 42) == 0 && lee32(execbase + 46) == 0 && lee32(execbase + 50) == 0
+        && lee32(execbase + 546) == 0 && lee32(execbase + 550) == 0;
+    int bien = usos == 2 && reinicio == 0 && limpio;
+    di("malware: tras los siete, los parches de parche.exe se usaron %u veces (las 2 de su programa), el código residente "
+       "%u, y ExecBase sin vectores de reinicio: %s\n", usos, reinicio, limpio ? "bien" : "MAL");
+    if (!bien) fallos++;
+    return fallos;
 }
 
 /* --- Principal --- */
@@ -640,6 +725,10 @@ int caja_main(void)
            "caja), el compositor contesta con %d ventanas de la caja abiertas: %s\n", (int)d0, llamadas, caja_avisos(),
            sobras, abiertas, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* S28: los virus de laboratorio. Después, los programas de Dash sirven además de prueba de que la caja sigue
+           bien (y de que los parches de los virus ya no están: pasan por OpenLibrary y Open). */
+        fallos += prueba_malware(execbase, sistema);
 
         /* 8. Programas de Dash, el lenguaje de FreeMEMLang (compilados con `dash` al hacer la caja; ver el Makefile):
            lo que escriben sale con "  [caja-amiga] dash: " delante. Tienen que acabar con 0, sin avisos del Enforcer y
