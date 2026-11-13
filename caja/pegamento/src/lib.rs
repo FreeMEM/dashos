@@ -20,7 +20,13 @@ mod archivos;
 mod compositor;
 mod defensa;
 mod memoria;
+mod preguntador;
 mod tema;
+
+/// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.
+#[path = "../../../usuario/src/preguntas_ficheros.rs"]
+#[allow(dead_code)]
+mod pf;
 
 use alloc::format;
 use alloc::string::String;
@@ -284,6 +290,10 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     fs.solo_lectura = !con_cajon;
     let servicio = if con_cajon { comprobar_servicio(&mut fs) } else { String::new() };
     let mut dos = caja_dos::Dos::nuevo(Guardia::nueva(fs));
+    // S28: con su cajón, lo que la guardia no deja cambiar se pregunta al usuario por `sesiones` y `guardian`.
+    if con_cajon {
+        dos.fs.poner_preguntador(alloc::boxed::Box::new(preguntador::PorSesiones));
+    }
     let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
     if hay_fs {
@@ -493,6 +503,7 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     c.negados_dichos = 0;
     // S28: lo que pregunte la guardia de ficheros va por este programa (se recuerda por programa).
     c.dos.fs.programa(core::str::from_utf8(nombre).unwrap_or("?"));
+    preguntador::reiniciar_cuenta();
     c.anidadas = 0;
     c.anidadas_no = 0;
     c.excepciones = 0;
@@ -684,6 +695,19 @@ pub unsafe extern "C" fn caja_defensa(entradas: *mut u32, campos: *mut u32) {
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_negados() -> u32 {
     caja().map_or(0, |c| c.negados)
+}
+
+/// S28: cuántas veces ha preguntado la guardia de ficheros por la última tarea, y en `como` cómo se decidió la
+/// última (`preguntas_ficheros::RECORDADO`..., o `preguntador::NADA`).
+///
+/// # Safety
+/// `como` tiene que apuntar a un `u32` donde escribir.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_preguntas(como: *mut u32) -> u32 {
+    let (n, c) = preguntador::cuenta();
+    // SEGURIDAD: lo garantiza quien llama (caja.c, con una variable suya).
+    unsafe { *como = c };
+    n
 }
 
 /// Cuántos avisos del Enforcer ha dado la última tarea.

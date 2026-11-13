@@ -727,9 +727,29 @@ extern const uint8_t prog_mal_residente[], prog_mal_residente_fin[];
 extern const uint8_t prog_mal_guion[], prog_mal_guion_fin[];
 extern const uint8_t prog_mal_troyano[], prog_mal_troyano_fin[];
 extern const uint8_t prog_mal_memoria[], prog_mal_memoria_fin[];
-/* De pegamento/ (Rust): lo que se deshizo tras el último programa, y las negativas de la guardia de sus ficheros. */
+extern const uint8_t prog_actualiza[], prog_actualiza_fin[];
+/* De pegamento/ (Rust): lo que se deshizo tras el último programa, y las negativas de la guardia de sus ficheros; y
+   cuántas veces preguntó la guardia al usuario (por `sesiones`) y cómo se decidió la última. */
 void caja_defensa(uint32_t *entradas, uint32_t *campos);
 uint32_t caja_negados(void);
+uint32_t caja_preguntas(uint32_t *como);
+
+/* Cómo se decidió una pregunta (usuario/src/preguntas_ficheros.rs). */
+enum { COMO_SIN_PREGUNTAR, COMO_RECORDADO, COMO_SIEMPRE, COMO_ESTA_VEZ, COMO_DIJO_NO, COMO_OCUPADO, COMO_NADA = 0xff };
+static const char *como_texto(uint32_t c)
+{
+    switch (c) {
+    case COMO_SIN_PREGUNTAR: return "nadie a quien preguntar: no";
+    case COMO_RECORDADO: return "sí, lo recuerda sesiones";
+    case COMO_SIEMPRE: return "el usuario dice sí, siempre";
+    case COMO_ESTA_VEZ: return "el usuario dice sí, solo esta vez";
+    case COMO_DIJO_NO: return "el usuario dice no";
+    case COMO_OCUPADO: return "ya preguntaba otra cosa: no";
+    case COMO_NADA: return "sin preguntas";
+    default: return "?";
+    }
+}
+static int como_deja(uint32_t c) { return c == COMO_RECORDADO || c == COMO_SIEMPRE || c == COMO_ESTA_VEZ; }
 
 /* Donde los virus de laboratorio cuentan cuántas veces se usaron sus parches y su código residente: una zona que exec
    no reparte (la de los programas planos, sin usar aquí). */
@@ -812,12 +832,17 @@ static int prueba_malware(uint32_t execbase, uint32_t sistema)
                "más; en $70000000, %s; %u ms): %s\n", bajas, de_mas, trozos, antes ? "algo" : "nada", ms, fuera ? "bien" : "MAL");
             bien = bien && fuera;
         }
+        /* S28: la guardia pregunta al usuario una vez como mucho por virus (tras un no, nada más de ese programa), y
+           ningún virus recibe un sí. */
+        uint32_t como = COMO_NADA, preguntas = caja_preguntas(&como);
+        bien = bien && preguntas <= 1 && !como_deja(como);
         if (virus[i].desde == prog_mal_parche) bien = bien && entradas == 6;
         else if (virus[i].desde == prog_mal_residente) bien = bien && campos == 2 && vectores_deshechos == 2;
         else bien = bien && entradas == 0 && campos == 0 && vectores_deshechos == 0;
-        di("malware %s: %d conseguidos (vector %d), %u negativas de la guardia, %u avisos del Enforcer; deshecho: %u "
-           "entradas de tablas, %u grupos de ExecBase, %d vectores del 68k: %s\n", virus[i].nombre, (int)d0, v,
-           caja_negados(), caja_avisos(), entradas, campos, vectores_deshechos, bien ? "bien" : "MAL");
+        di("malware %s: %d conseguidos (vector %d), %u negativas de la guardia (%u preguntas: %s), %u avisos del "
+           "Enforcer; deshecho: %u entradas de tablas, %u grupos de ExecBase, %d vectores del 68k: %s\n", virus[i].nombre,
+           (int)d0, v, caja_negados(), preguntas, como_texto(como), caja_avisos(), entradas, campos, vectores_deshechos,
+           bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
     }
     /* Después de los siete: los parches de parche.exe solo se usaron en su programa (2 veces), el código residente de
@@ -829,6 +854,31 @@ static int prueba_malware(uint32_t execbase, uint32_t sistema)
     di("malware: tras los siete, los parches de parche.exe se usaron %u veces (las 2 de su programa), el código residente "
        "%u, y ExecBase sin vectores de reinicio: %s\n", usos, reinicio, limpio ? "bien" : "MAL");
     if (!bien) fallos++;
+    return fallos;
+}
+
+/* S28: un programa honrado que actualiza otro (actualiza.exe reescribe Caja:C/viejo, un ejecutable), tres vueltas. La
+   guardia pregunta al usuario por `sesiones` y `guardian`; en la prueba, el guion contesta "solo esta vez" la primera
+   y "siempre" la segunda, y la tercera ya lo recuerda `sesiones` (sin el usuario). En cada vuelta, una pregunta, y el
+   programa actualiza si y solo si le dejaron. Sin `sesiones` ni `guardian` (o sin Caja:), no le dejan: también bien. */
+static int prueba_actualiza(uint32_t execbase, uint32_t sistema)
+{
+    static const char prefijo[] = "  [caja-amiga] ";
+    int fallos = 0;
+    for (int vuelta = 1; vuelta <= 3; vuelta++) {
+        uint32_t d0 = 0, sobras = 0, como = COMO_NADA;
+        int llamadas = 0;
+        caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
+        int v = ejecuta_hunk("actualiza.exe", prog_actualiza, (size_t)(prog_actualiza_fin - prog_actualiza), execbase,
+                             &d0, &llamadas, &sobras);
+        caja_consola_prefijo(NULL, 0);
+        uint32_t preguntas = caja_preguntas(&como);
+        int bien = v == -1 && sobras == 0 && caja_bloques(0) == sistema && preguntas <= 1
+            && (d0 == 0) == (preguntas == 1 && como_deja(como));
+        di("actualiza.exe, vuelta %d: %u preguntas (%s): %s: %s\n", vuelta, preguntas, como_texto(como),
+           d0 == 0 ? "actualizado" : "no le dejan", bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+    }
     return fallos;
 }
 
@@ -1052,6 +1102,7 @@ int caja_main(void)
         /* S28: los virus de laboratorio. Después, los programas de Dash sirven además de prueba de que la caja sigue
            bien (y de que los parches de los virus ya no están: pasan por OpenLibrary y Open). */
         fallos += prueba_malware(execbase, sistema);
+        fallos += prueba_actualiza(execbase, sistema);
 
         /* 8. Programas de Dash, el lenguaje de FreeMEMLang (compilados con `dash` al hacer la caja; ver el Makefile):
            lo que escriben sale con "  [caja-amiga] dash: " delante. Tienen que acabar con 0, sin avisos del Enforcer y

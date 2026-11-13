@@ -367,6 +367,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [guardian] U6: el permiso de plazo de cambio, preguntado como Ana 1 y como Carla 1: bien
 ~│   [guardian] cambio rápido: Ana, Carla y otra vez Ana: bien
 ~│   [guardian] U6: retirar a cambio el permiso de plazo: 0; a pide el de eco: 
+~│   [guardian] S28: retirar a caja-amiga el permiso ejec:actualiza: 0
 # Hostil: un programa del disco llamado como el panel rápido no tiene sus poderes (son por el nombre que da `inicio`).
 ~│   [cambio] lanzado del disco como panel: 
 ~, 0 de escritorio; pedir el bloqueo da error: true: bien
@@ -515,7 +516,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: arranque: escribir en el byte 1000 de Caja:Discos/disco.adf: no (IoErr 223)
 ~│   [caja-amiga] malware: arranque: vaciar Caja:Discos/disco.adf (MODE_NEWFILE): no (IoErr 223)
 ~│   [caja-amiga] malware: arranque: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware arranque.exe: 0 conseguidos (vector -1), 5 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware arranque.exe: 0 conseguidos (vector -1), 5 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: enlace: SYS:Programas/hola empieza por $7f454c46: no es un ejecutable de AmigaOS
 ~│   [caja-amiga] malware: enlace: pegarse al final de SYS:Programas/hola: no (IoErr 214)
 ~│   [caja-amiga] malware: enlace: Caja:C/saludo empieza por $000003f3: un ejecutable de AmigaOS
@@ -528,18 +529,18 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: enlace: crear un ejecutable nuevo en su cajon (Caja:C/saludo.nuevo; nadie lo arranca solo): si (permitido)
 ~│   [caja-amiga] malware: enlace: pegarse a Caja:C/saludo.nuevo despues de cerrarlo: no (IoErr 223)
 ~│   [caja-amiga] malware: enlace: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware enlace.exe: 0 conseguidos (vector -1), 8 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware enlace.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: parche: 5 parches con SetFunction (OpenLibrary, OldOpenLibrary, DoIO, Open, LoadSeg) y 1 a mano en la tabla (Write)
 ~│   [caja-amiga] malware: parche: dentro de su programa sus parches se usan (como en el Amiga): 2 veces
 ~│   [caja-amiga] malware: parche: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware parche.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 0 avisos del Enforcer; deshecho: 6 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware parche.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 0 avisos del Enforcer; deshecho: 6 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: residente: ColdCapture, CoolCapture, WarmCapture, KickMemPtr y KickTagPtr en ExecBase: escritos (es la memoria de su caja; nada los usa)
 ~│   [caja-amiga] malware: residente: vectores 4 y 31 del 68k (en $100000) cambiados: si, dentro de su programa
 ~│   [caja-amiga] malware: residente: Supervisor() no entra en supervisor (la caja no lo tiene)
 ~│   [caja-amiga] malware: residente: ColdReboot() vuelve sin reiniciar nada
 ~│   [caja-amiga] malware: residente: su codigo residente no corrio nunca
 ~│   [caja-amiga] malware: residente: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
+~│   [caja-amiga] malware residente.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 3 avisos del Enforcer; deshecho: 0 entradas de tablas, 2 grupos de ExecBase, 2 vectores del 68k: bien
 ~│   [caja-amiga] malware: guion: abrir S:Startup-Sequence para escribir: no (IoErr 218)
 ~│   [caja-amiga] malware: guion: crear SYS:S/Startup-Sequence: no (IoErr 205)
 ~│   [caja-amiga] malware: guion: poner su SYS:L/Disk-Validator: no (IoErr 205)
@@ -552,7 +553,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: guion: borrar Caja:S/Startup-Sequence: no (IoErr 222)
 ~│   [caja-amiga] malware: guion: renombrar Caja:S/inocente a Caja:S/User-Startup: no (IoErr 223)
 ~│   [caja-amiga] malware: guion: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware guion.exe: 0 conseguidos (vector -1), 8 negativas de la guardia (1 preguntas: el usuario dice no), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: troyano: borrar SYS:LEEME.txt: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Imagenes/disquete.adf: no (IoErr 214)
 ~│   [caja-amiga] malware: troyano: borrar SYS:Programas/hola: no (IoErr 214)
@@ -567,16 +568,32 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] malware: troyano: borrar Caja:S/Startup-Sequence: no (IoErr 222)
 ~│   [caja-amiga] malware: troyano: borrar Caja:C/saludo.info: no (IoErr 222)
 ~│   [caja-amiga] malware: troyano: cambiar la herramienta de Caja:C/saludo.info: no (IoErr 223)
-~│   [caja-amiga] malware: troyano: borrar un fichero de datos de su cajon (Caja:datos.txt; sin papelera todavia): si (permitido)
+~│   [caja-amiga] malware: troyano: borrar un fichero de datos de su cajon (Caja:datos.txt; va a la papelera): si (permitido)
+~│   [caja-amiga] malware: troyano: crear y borrar dos veces Caja:basura.txt y uno de nombre largo (a la papelera, sin pisarse): si (permitido)
 ~│   [caja-amiga] malware: troyano: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware troyano.exe: 0 conseguidos (vector -1), 10 negativas de la guardia, 4 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware troyano.exe: 0 conseguidos (vector -1), 10 negativas de la guardia (1 preguntas: el usuario dice no), 4 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: memoria: otros programas corriendo en su caja: 0 (cada caja corre los suyos; otra caja u otro proceso no se ven)
 ~│   [caja-amiga] malware: memoria: restos de ventana.exe en la memoria de la caja (4 MB del 68k): 0
 ~│   [caja-amiga] malware: memoria: el ejecutable nativo de la caja, antes en $70000000: nada (TypeOfMem 0; no lee)
 ~│   [caja-amiga] malware: memoria: la caja, toda por encima de 4 GB (0 direcciones suyas por debajo); en los 4 GB del 68k, el kernel no ve más que la página 0 y la memoria del 68k (0 de 65471 trozos de 64 KB con algo de más; en $70000000, nada;
 ~│   [caja-amiga] malware: memoria: 0 conseguidos de lo que no se debe
-~│   [caja-amiga] malware memoria.exe: 0 conseguidos (vector -1), 0 negativas de la guardia, 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
+~│   [caja-amiga] malware memoria.exe: 0 conseguidos (vector -1), 0 negativas de la guardia (0 preguntas: sin preguntas), 0 avisos del Enforcer; deshecho: 0 entradas de tablas, 0 grupos de ExecBase, 0 vectores del 68k: bien
 ~│   [caja-amiga] malware: tras los siete, los parches de parche.exe se usaron 2 veces (las 2 de su programa), el código residente 0, y ExecBase sin vectores de reinicio: bien
+# S28, decisión del usuario del 2026-11-13: la guardia pregunta al usuario en vez de negar. La caja lo pide a
+# `sesiones` (un permiso sin llave, `ejec:<programa>`), que se lo pregunta a `guardian`; el guion contesta que no a
+# cada virus (la primera vez: tras un no, nada más de ese programa). Un programa honrado, actualiza.exe, reescribe
+# Caja:C/viejo (un ejecutable) tres veces: "solo esta vez", "siempre" (lo guarda `sesiones`) y la tercera ya lo
+# recuerda `sesiones` sin preguntar al usuario. tools/disco_archivos.py mira después que quedó en la versión 4, y que
+# lo borrado por el troyano está en la papelera de la caja (fuera de su alcance).
+~│   [caja-amiga] guardia: enlace.exe quiere cambiar "saludo" (ejecutable): se pregunta (ejec:enlace): el usuario dice no
+~│   [guardian] la caja Amiga: ¿enlace.exe puede cambiar saludo? El usuario dice no
+~│   [sesiones] caja-amiga pide ejec:actualiza: 0 (el usuario dice sí, solo esta vez)
+~│   [caja-amiga] actualiza: Caja:C/viejo de la version 1 a la 2: hecho
+~│   [caja-amiga] actualiza.exe, vuelta 1: 1 preguntas (el usuario dice sí, solo esta vez): actualizado: bien
+~│   [caja-amiga] actualiza.exe, vuelta 2: 1 preguntas (el usuario dice sí, siempre): actualizado: bien
+~│   [caja-amiga] actualiza.exe, vuelta 3: 1 preguntas (sí, lo recuerda sesiones): actualizado: bien
+~│   [caja-amiga] actualiza: Caja:C/viejo de la version 3 a la 4: hecho
+~│   [guardian] preguntas de la caja Amiga (guardia de ficheros): 6, a 2 dijo que sí
 # Programas de Dash (el lenguaje de ~/Projects/FreeMEMLang), compilados al hacer la caja (`caja/Makefile`; sin `dash`,
 # no están y estas líneas faltan): texto.exe y texto_gcc.exe (`caja/pruebas68k/dash/caja_texto.dash`, directo y por C
 # con libnix, que abre utility.library), hola.exe (`examples/hola.dash`: ventana y Delay) y ventana.exe
