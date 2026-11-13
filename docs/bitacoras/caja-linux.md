@@ -1383,12 +1383,20 @@ hace nada; si otra ventana tapa ese sitio, el clic es suyo. Prueba: `maximizar_y
   grandes): `-arch` BIEN. `-gpu`, antes de fusionar `fusion-fondo` (f965af7): faltaba "frames in" dos veces, como en
   `fusion-fondo` antes del arreglo de los pools de Mesa (dcf1df6, arriba). En QEMU sin DashOS, es2gears con el
   `Image-arch` nuevo (zram) y con el viejo da lo mismo: 60 cuadros por segundo.
-- `arranque-virt-wayland` (8 GB, disco de los programas grandes rehecho): RESULTADO_WAYLAND.
+- `arranque-virt-wayland` (8 GB, disco de los programas grandes rehecho), tras fusionar `fusion-fondo` (f965af7) y en
+  Full HD: BIEN. GTK a los 13,5 s, su menú y la caja combinada abiertos, redimensionar 14 y mover 6 cuadros por segundo
+  (el PC muy cargado), el hostil de la memoria muerto a los 10,4 s, Firefox a los 35,1 s y con example.org a los
+  20,5 s (el zram, al 96 %: 471 de 492 MB).
+- Tras la fusión, también: `make prueba` BIEN (las dos), `arranque-virt` BIEN (la primera pasada, MAL en la captura de
+  las ventanas de prueba; repetida, las cinco BIEN), `-linux` BIEN y `-gpu` BIEN (con el arreglo de los pools de Mesa).
+  `-vm`, `-2`, `-diag`, `-escritorio`, `-usb` y `-arch`, BIEN antes de la fusión; no repetidas.
 - En Full HD (`DASHOS_PANTALLA=1920x1080`, `CAJA_SOLO=grandes` y `firefox`): BIEN con sus líneas (GTK, su emergente,
   el hostil de la memoria, Firefox y su memoria).
 - En QEMU sin DashOS (`probar-arch` con weston sin pantalla): GTK con 256, 384, 512 MB y 1 GB, con y sin intercambio;
   Firefox con 256 y 512 MB (las tablas de arriba).
-- Capturas (fuera de git, `capturas-agente/`, Full HD): `caja-linux-grandes-gtk-fhd.png` (GTK4 en DashOS),
+- Capturas (fuera de git, `capturas-agente/`, Full HD): las de la pasada final, `caja-linux-grandes-final-*-fhd.png`
+  (`gtk`, `gtk-menu`, `gtk-combo`, `gtk-grande`, `gtk-tras-hostil`, `firefox`, `firefox-red`, y `barra`, con el botón
+  de maximizar en `ventana_wayland`); y de antes, `caja-linux-grandes-gtk-fhd.png` (GTK4 en DashOS),
   `-gtk-menu-fhd.png` (su menú), `-gtk-combo-fhd.png` (la caja combinada), `-gtk-grande-fhd.png` (redimensionada y
   movida), `-gtk-tras-hostil-fhd.png` (tras el OOM del invitado), `-firefox-fhd.png` (hola.html) y
   `-firefox-red-fhd.png` (example.org).
