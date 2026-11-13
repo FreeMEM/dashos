@@ -17,7 +17,7 @@
 //! Y la barra de la pantalla recibe el título de una ventana de la caja con "Linux · " delante.
 //!
 //! Desde la rama `amiga-integrada`, también la caja Amiga (sus ventanas llevan la barra de DashOS y los controles de
-//! Material "como DashOS"): azul, "AMIGA" y "Amiga · ".
+//! Material "como DashOS"): azul, "68K" y "68K · ".
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -34,12 +34,13 @@ pub const TINTA: u32 = 0xff1d_1b20;
 pub const PREFIJO_LINUX: &str = "Linux · ";
 /// El texto de la pestaña.
 pub const TEXTO_LINUX: &str = "LINUX";
-/// La caja Amiga (rama `amiga-integrada`): azul (el del Workbench de siempre), con la letra blanca; "Amiga · " en la
-/// barra de la pantalla.
+/// La caja Amiga (rama `amiga-integrada`): azul (el del Workbench de siempre), con la letra blanca; "68K" en la
+/// pestaña y "68K · " en la barra de la pantalla (lo eligió el usuario el 2026-11-13: el procesador que se traduce,
+/// sin la marca registrada).
 pub const COLOR_AMIGA: u32 = 0xff00_55aa;
 pub const TINTA_AMIGA: u32 = 0xffff_ffff;
-pub const PREFIJO_AMIGA: &str = "Amiga · ";
-pub const TEXTO_AMIGA: &str = "AMIGA";
+pub const PREFIJO_AMIGA: &str = "68K · ";
+pub const TEXTO_AMIGA: &str = "68K";
 
 /// Cada letra de la pestaña: 5 × 7, una fila por byte (el bit 4 es la columna de la izquierda), a escala `ESCALA`.
 const ESCALA: i32 = 2;
@@ -51,10 +52,10 @@ const LETRAS: &[(char, [u8; 7])] = &[
     ('N', [0b10001, 0b11001, 0b10101, 0b10011, 0b10001, 0b10001, 0b10001]),
     ('U', [0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b10001, 0b01110]),
     ('X', [0b10001, 0b10001, 0b01010, 0b00100, 0b01010, 0b10001, 0b10001]),
-    // Para la caja Amiga, si se le pone (S28).
-    ('A', [0b01110, 0b10001, 0b10001, 0b11111, 0b10001, 0b10001, 0b10001]),
-    ('M', [0b10001, 0b11011, 0b10101, 0b10101, 0b10001, 0b10001, 0b10001]),
-    ('G', [0b01110, 0b10001, 0b10000, 0b10111, 0b10001, 0b10001, 0b01111]),
+    // Para la caja Amiga: "68K".
+    ('6', [0b00110, 0b01000, 0b10000, 0b11110, 0b10001, 0b10001, 0b01110]),
+    ('8', [0b01110, 0b10001, 0b10001, 0b01110, 0b10001, 0b10001, 0b01110]),
+    ('K', [0b10001, 0b10010, 0b10100, 0b11000, 0b10100, 0b10010, 0b10001]),
 ];
 
 /// Lo que mide la pestaña de `texto`.

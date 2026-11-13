@@ -163,8 +163,8 @@ fn marca_de_las_ventanas_de_la_caja() {
     assert!(escena.de_caja.is_empty());
 }
 
-/// La caja Amiga (rama `amiga-integrada`): su marca es azul con "AMIGA" en la pestaña, junto a una de la caja Linux
-/// (ámbar); el título en la barra de la pantalla, con "Amiga · " delante.
+/// La caja Amiga (rama `amiga-integrada`): su marca es azul con "68K" en la pestaña, junto a una de la caja Linux
+/// (ámbar); el título en la barra de la pantalla, con "68K · " delante.
 #[test]
 fn marca_de_la_caja_amiga() {
     let mut escena = escena_800();
@@ -183,7 +183,7 @@ fn marca_de_la_caja_amiga() {
     let (pw, ph) = marca::medida_pestana(marca::TEXTO_AMIGA);
     assert_eq!(en(&p, ax + 1, ay - ph + 1), marca::COLOR_AMIGA);
     assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, ax + x, ay - ph + y) == marca::TINTA_AMIGA)), "las letras");
-    assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, "GadTools"), "Amiga · GadTools");
+    assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, "GadTools"), "68K · GadTools");
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
     escena.adios(amiga);
     assert!(escena.de_caja_amiga.is_empty());

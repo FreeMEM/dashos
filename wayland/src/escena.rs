@@ -642,7 +642,7 @@ pub struct Escena<M: Memorias> {
     /// la marca en el último cuadro (como `sombras_antes`), y la pestaña ya pintada.
     pub de_caja: Vec<Cliente>,
     /// Lo mismo para la caja Amiga (rama `amiga-integrada`): sus ventanas pueden llevar la barra de DashOS y los
-    /// controles de Material, así que también llevan la marca, con su color y "AMIGA".
+    /// controles de Material, así que también llevan la marca, con su color y "68K".
     pub de_caja_amiga: Vec<Cliente>,
     marcas_antes: Vec<Rect>,
     pestana_linux: Vec<u8>,
