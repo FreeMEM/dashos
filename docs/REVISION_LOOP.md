@@ -1716,3 +1716,15 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   4 (tablas regeneradas; las tres listas de globales del compositor anuncian la 4; la barra y el panel la enlazan).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN
   (arranque-virt y -2 tras el arreglo de las listas de globales).
+
+### 2026-11-13 10:20: defensa contra el malware de Amiga (S28), en revision
+- Fusionada `caja-amiga-malware`: siete virus de laboratorio (`caja/pruebas68k/malware/`) dentro de `arranque-virt`,
+  que no consiguen nada fuera de lo permitido (el disco atacado se comprueba desde Linux byte a byte); guardia de
+  ficheros en `caja/dos` (ejecutables, iconos, guiones, Disk-Validator y bloques de arranque; SYS: de solo lectura
+  volumen a volumen); la caja deshace al acabar cada programa lo que tocó en tablas de saltos, ExecBase y vectores;
+  la memoria soltada se pone a cero; `archivos` conserva las raíces de volumen al volver a una instantánea (la caja y
+  el Workbench perdían SYS:); aviso sin firmas del bloque de arranque al montar un ADF; la guardia que pregunta,
+  primera parte (lo contestado se recuerda por programa; sin preguntador, se niega).
+- Pendiente de S28: la pregunta de verdad por `guardian`, papelera e instantánea del cajón, la caja fuera de los 4 GB.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -2, -wayland, -gpu, -diag, -escritorio, -usb: BIEN; -arch BIEN a la
+  segunda (la primera se quedó tras `pacman -Sy`: la red de fuera).
