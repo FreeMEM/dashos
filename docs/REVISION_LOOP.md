@@ -1766,3 +1766,13 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   apagar. Dos preguntas del usuario: llamada de apagar/reiniciar (solo `sesiones`) y canal de solo lectura del
   estado de la red para el panel.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 15:20: la caja Amiga fuera de los 4 GB del 68k (S28), en revision
+- Fusionada `caja-amiga-4gb`: parche de Emu68 `0014-direcciones-de-64-bits.patch` (M68K_Exception, Load96bit y
+  Store96bit con movz/movk; **se aplica a mano** en `third_party/Emu68` de cada worktree, como los demás); la caja es
+  un PIE estático enlazado en 0 que se reubica sola (`caja/entrada.S`) y el cargador de DashOS la pone entre 128 y
+  256 GB; el 68k solo ve la página 0 y su memoria de 4 MB (comprobado con la llamada 42 sobre los 4 GB bajos);
+  arreglado un fallo antiguo (x29 sin guardar alrededor de `MainLoop`: un Ctrl-C a un programa en Wait mataba la
+  caja). Sin coste medible (6 ms `saludo.exe`, 248 ms los de Dash).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
+  `make tarjeta-pi5` sale.
