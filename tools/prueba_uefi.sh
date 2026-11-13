@@ -312,7 +312,7 @@ while time.time() - inicio < total:
             elif " quiere cambiar " in linea:
                 time.sleep(1.3)
                 if sigue_preguntando():
-                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "s"))
+                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
             else:
                 mandar("sendkey s")
                 time.sleep(1.3)

@@ -600,7 +600,11 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     Some(Tecla::Letra(ch)) if !a_tiempo => {
                         println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
                     }
-                    Some(Tecla::Letra('s' | 'S')) => return pf::RESPUESTA_SIEMPRE,
+                    // En las preguntas de ficheros de la caja, "Siempre" pide Mayúsculas y S (decisión del usuario del
+                    // 2026-11-13): una "s" suelta, tecleando en otra ventana cuando sale la pregunta, no debe dar un
+                    // permiso para siempre. En las de permisos de servicios, "S" (Sí) como antes.
+                    Some(Tecla::Letra('S')) => return pf::RESPUESTA_SIEMPRE,
+                    Some(Tecla::Letra('s')) if !fichero => return pf::RESPUESTA_SIEMPRE,
                     Some(Tecla::Letra('e' | 'E')) if fichero => return pf::RESPUESTA_ESTA_VEZ,
                     Some(Tecla::Letra('n' | 'N')) => return pf::RESPUESTA_NO,
                     _ => {}
@@ -627,7 +631,7 @@ const MAX_NOMBRE_VISTO: usize = 60;
 /// medium, 14, en el color suave) y abajo a la derecha las respuestas. No se pulsan (`guardian` solo atiende al
 /// teclado): cada una lleva su tecla en una tecla dibujada, con contorno, y su nombre en el primario.
 /// S28: la de un fichero de la caja Amiga: "Programa de Amiga" de título, y "<programa> quiere cambiar <fichero>, un
-/// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "S Siempre", "E Esta vez" y "N No".
+/// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "Mayús+S Siempre", "E Esta vez" y "N No".
 #[allow(clippy::too_many_arguments)]
 fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregunta: &Pregunta, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
@@ -661,7 +665,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             );
             let mut v = partir(fuente, &texto, ancho_texto, 4);
             v.push(String::from("Contesta con el teclado."));
-            (v, &[("S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
+            (v, &[("Mayús+S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
         }
     };
     for (i, linea) in lineas.iter().enumerate() {
