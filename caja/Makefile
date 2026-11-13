@@ -23,6 +23,9 @@ COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tabl
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
 	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(CONTEXT_RESERVE)
 CFLAGS  := $(COMMON) -std=gnu23 -Wno-error
+ifneq ($(CAJA_INTERACTIVA),)
+CFLAGS  += -DCAJA_INTERACTIVA=$(CAJA_INTERACTIVA)
+endif
 CXXFLAGS:= $(COMMON) -std=gnu++23 -fno-rtti -Wno-error
 
 JIT_C := M68k_Translator M68k_SR M68k_MULDIV M68k_MOVE M68k_EA M68k_LINE0 M68k_LINE4 M68k_LINE5 \
@@ -68,8 +71,9 @@ DASH    ?= $(HOME)/Projects/FreeMEMLang/dash
 DASH_EJ := $(dir $(DASH))examples
 DASH_TESTS := $(dir $(DASH))tests
 DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe \
-	$(B)/dash/interp.exe $(B)/dash/listas.exe
-$(B)/programas.o: programas.S pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe $(DASH_EXES) | $(B)
+	$(B)/dash/interp.exe $(B)/dash/listas.exe $(B)/dash/ctrl_c.exe $(B)/dash/ctrl_c_gcc.exe $(B)/dash/ctrl_c_for.exe \
+	$(B)/dash/trap_ilegal.exe $(B)/dash/trap_divcero.exe $(B)/dash/test_gadtools.exe
+$(B)/programas.o: programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe $(DASH_EXES) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
 define compila_dash
@@ -91,6 +95,24 @@ $(B)/dash/interp.exe: $(wildcard $(DASH_TESTS)/test_interp_comillas.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_interp_comillas.dash,)
 $(B)/dash/listas.exe: $(wildcard $(DASH_TESTS)/test_lista_listas_literal.dash) | $(B)
 	$(call compila_dash,$(DASH_TESTS)/test_lista_listas_literal.dash,)
+
+# Ctrl-C en un bucle (las excepciones de tarea, por los dos caminos) y tres pruebas de FreeMEMLang tal cual: Ctrl-C
+# por SetSignal a sí mismo, y dos excepciones del procesador que recoge el tc_TrapCode de Dash (llevan @native: van
+# por C aunque se pida el camino directo).
+$(B)/dash/ctrl_c.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
+	$(call compila_dash,$<,)
+$(B)/dash/ctrl_c_gcc.exe: pruebas68k/dash/caja_ctrl_c.dash | $(B)
+	$(call compila_dash,$<,--gcc)
+$(B)/dash/ctrl_c_for.exe: $(wildcard $(DASH_TESTS)/test_ctrl_c_for.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_ctrl_c_for.dash,)
+$(B)/dash/trap_ilegal.exe: $(wildcard $(DASH_TESTS)/test_trap_illegal.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_trap_illegal.dash,)
+$(B)/dash/trap_divcero.exe: $(wildcard $(DASH_TESTS)/test_trap_divzero.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_trap_divzero.dash,)
+
+# El ejemplo de GadTools de FreeMEMLang, tal cual.
+$(B)/dash/test_gadtools.exe: $(wildcard $(DASH_EJ)/test_gadtools.dash) | $(B)
+	$(call compila_dash,$(DASH_EJ)/test_gadtools.dash,)
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).

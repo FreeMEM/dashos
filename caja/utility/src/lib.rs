@@ -10,8 +10,9 @@
 //! valor de "no se pudo", nunca un pánico. Las listas de etiquetas que reparte (`AllocateTagItems`,
 //! `CloneTagItems`) las apunta en una tabla nativa: `FreeTagItems` de otra cosa da un aviso.
 //!
-//! Lo que falta: `CallHookPkt` (ejecutar 68k desde una función nativa, como `SetFunction` en exec), los objetos con
-//! nombre (V39) y `MapTags`/`FilterTagChanges`/`PackStructureTags`/`UnpackStructureTags`: dan un aviso y 0.
+//! `CallHookPkt` no es nativa: su entrada de la tabla de saltos es código 68k que salta a `h_Entry` (lo de la ROM).
+//!
+//! Lo que falta: los objetos con nombre (V39) y `MapTags`/`FilterTagChanges`/`PackStructureTags`/`UnpackStructureTags`: dan un aviso y 0.
 
 #![no_std]
 #![forbid(unsafe_code)]
@@ -229,6 +230,12 @@ impl Utilidad {
         let numeros: Vec<u16> = (0..FUNCIONES.len() as u16).map(|i| primero + i).collect();
         // `struct UtilityBase` (V39): la biblioteca, ub_Language y ub_Reserved.
         let base = ex.crear_biblioteca_nativa("utility.library", 40, 1, &numeros, 36)?;
+        // `CallHookPkt(hook, object, message)(a0/a2/a1)` no es nativa: su entrada es 68k, como en la ROM. Salta a
+        // `h_Entry` (en hook + 8) con los mismos registros: `move.l 8(a0),-(sp)` y `rts`, los 6 bytes de la entrada.
+        let e = base - 6 * entrada("CallHookPkt").unwrap_or(17) as u32;
+        for (i, w) in [0x2F28u16, 0x0008, 0x4E75].into_iter().enumerate() {
+            ex.mem.escribir16(e + 2 * i as u32, w)?;
+        }
         Ok(Utilidad { base, primero, avisos: Vec::new(), listas: BTreeMap::new(), unico: 0 })
     }
 

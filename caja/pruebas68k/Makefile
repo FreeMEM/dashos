@@ -3,8 +3,9 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe
 
+sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
 lineaa.bin: BASE := 0x120000
 bucle.bin: BASE := 0x130000

@@ -16,6 +16,9 @@ use alloc::vec::Vec;
 use crate::estructuras::{execbase, list, memf, memlist, node, nt, sig, task, ts};
 use crate::{Accion, Exec, Fallo, InfoTarea, Memoria};
 
+/// `TF_EXCEPT` de `tc_Flags`: la tarea está en su código de excepción.
+const TF_EXCEPT: u8 = 1 << 5;
+
 /// Lo que da una función que puede esperar.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Espera {
@@ -510,6 +513,70 @@ impl<M: Memoria> Exec<M> {
             return Err(Fallo::SenalNoReservada { n });
         }
         self.e32(t + task::TC_SIGALLOC, reservadas & !m)
+    }
+
+    /// Excepciones de tarea (`SetExcept`): si la tarea actual ha recibido señales que están en `tc_SigExcept`,
+    /// tiene `tc_ExceptCode` y no está ya en su excepción, las quita de `tc_SigRecvd` y de `tc_SigExcept`, marca
+    /// `TF_EXCEPT` y devuelve `(señales, tc_ExceptCode, tc_ExceptData)`: la caja ejecuta ese código 68k con D0 = las
+    /// señales y A1 = los datos, y al volver llama a `acabar_excepcion` con su D0. Como exec, en el modo de usuario y
+    /// en la pila de la tarea.
+    pub fn tomar_excepcion(&mut self) -> Result<Option<(u32, u32, u32)>, Fallo> {
+        let t = self.tarea_actual();
+        if t == 0 || self.tareas.get(&t).is_none_or(|i| i.en_excepcion) {
+            return Ok(None);
+        }
+        let recibidas = self.l32(t + task::TC_SIGRECVD)?;
+        let excepcion = self.l32(t + task::TC_SIGEXCEPT)?;
+        let senales = recibidas & excepcion;
+        let codigo = self.l32(t + task::TC_EXCEPTCODE)?;
+        if senales == 0 || codigo == 0 {
+            return Ok(None);
+        }
+        let datos = self.l32(t + task::TC_EXCEPTDATA)?;
+        self.e32(t + task::TC_SIGRECVD, recibidas & !senales)?;
+        self.e32(t + task::TC_SIGEXCEPT, excepcion & !senales)?;
+        let f = self.l8(t + task::TC_FLAGS)?;
+        self.e8(t + task::TC_FLAGS, f | TF_EXCEPT)?;
+        if let Some(i) = self.tareas.get_mut(&t) {
+            i.en_excepcion = true;
+        }
+        Ok(Some((senales, codigo, datos)))
+    }
+
+    /// Si `t` espera (`Wait`) y tiene una excepción que entregar: la caja la saca de la espera (`despertar`), la
+    /// entrega y repite su `Wait`, como exec, que corre la excepción y vuelve a esperar.
+    pub fn excepcion_en_espera(&self, t: u32) -> bool {
+        if self.tareas.get(&t).is_none_or(|i| i.en_excepcion) || self.estado(t) != Ok(ts::WAIT) {
+            return false;
+        }
+        let (Ok(r), Ok(x), Ok(c)) =
+            (self.l32(t + task::TC_SIGRECVD), self.l32(t + task::TC_SIGEXCEPT), self.l32(t + task::TC_EXCEPTCODE))
+        else {
+            return false;
+        };
+        r & x != 0 && c != 0
+    }
+
+    /// Saca a `t` de `TaskWait` y la deja lista (sin darle señales). Nada si no esperaba.
+    pub fn despertar(&mut self, t: u32) -> Result<(), Fallo> {
+        self.conocida(t)?;
+        if self.estado(t)? == ts::WAIT {
+            self.remove(t)?;
+            self.e8(t + task::TC_STATE, ts::READY)?;
+            self.enqueue(self.base + execbase::TASKREADY, t)?;
+        }
+        Ok(())
+    }
+
+    /// Volvió el código de excepción de `t`: las señales de su D0 vuelven a `tc_SigExcept` (las demás se quedan
+    /// fuera, como en exec). Si `t` ya no existe (el programa acabó dentro), no hace nada.
+    pub fn acabar_excepcion(&mut self, t: u32, devueltas: u32) -> Result<(), Fallo> {
+        let Some(i) = self.tareas.get_mut(&t) else { return Ok(()) };
+        i.en_excepcion = false;
+        let x = self.l32(t + task::TC_SIGEXCEPT)?;
+        self.e32(t + task::TC_SIGEXCEPT, x | devueltas)?;
+        let f = self.l8(t + task::TC_FLAGS)?;
+        self.e8(t + task::TC_FLAGS, f & !TF_EXCEPT)
     }
 
     /// Para la caja: las señales del sistema que puede mandar desde fuera (Ctrl-C al matar, S2).

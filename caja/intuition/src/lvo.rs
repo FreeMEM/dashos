@@ -360,3 +360,33 @@ pub fn graphics(nombre: &str) -> Option<usize> {
 pub fn intuition(nombre: &str) -> Option<usize> {
     INTUITION.iter().position(|(n, _)| *n == nombre)
 }
+
+/// Las funciones de `gadtools_lib.fd` (V40) desde la entrada 5 (-30), con sus seis privadas (en 3.2, dos de ellas
+/// son `SetDesignFontA` y `ScaleGadgetRectA`) antes de `GT_GetGadgetAttrsA` (-174).
+pub const GADTOOLS: [(&str, &str); 25] = [
+    ("CreateGadgetA", "d0/a0/a1/a2"),
+    ("FreeGadgets", "a0"),
+    ("GT_SetGadgetAttrsA", "a0/a1/a2/a3"),
+    ("CreateMenusA", "a0/a1"),
+    ("FreeMenus", "a0"),
+    ("LayoutMenuItemsA", "a0/a1/a2"),
+    ("LayoutMenusA", "a0/a1/a2"),
+    ("GT_GetIMsg", "a0"),
+    ("GT_ReplyIMsg", "a1"),
+    ("GT_RefreshWindow", "a0/a1"),
+    ("GT_BeginRefresh", "a0"),
+    ("GT_EndRefresh", "a0/d0"),
+    ("GT_FilterIMsg", "a1"),
+    ("GT_PostFilterIMsg", "a1"),
+    ("CreateContext", "a0"),
+    ("DrawBevelBoxA", "a0/d0/d1/d2/d3/a1"),
+    ("GetVisualInfoA", "a0/a1"),
+    ("FreeVisualInfo", "a0"),
+    ("gadtoolsPrivate1", ""),
+    ("gadtoolsPrivate2", ""),
+    ("gadtoolsPrivate3", ""),
+    ("gadtoolsPrivate4", ""),
+    ("gadtoolsPrivate5", ""),
+    ("gadtoolsPrivate6", ""),
+    ("GT_GetGadgetAttrsA", "a0/a1/a2/a3"),
+];

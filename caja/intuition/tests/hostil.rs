@@ -270,8 +270,8 @@ fn funciones_que_faltan() {
     let mut c = caja();
     assert_eq!(g(&mut c, "Flood", &[1, 2, 3], &[0, 0]), 0);
     assert!(matches!(ultimo(&c), Fallo::NoImplementada { .. }));
-    assert_eq!(i(&mut c, "OpenScreen", &[], &[0x2000]), 0);
-    assert_eq!(c.1.avisos().last().unwrap().funcion, "OpenScreen");
+    assert_eq!(i(&mut c, "AutoRequest", &[], &[0x2000]), 0);
+    assert_eq!(c.1.avisos().last().unwrap().funcion, "AutoRequest");
 }
 
 /// Un generador sencillo (xorshift) para las llamadas al azar.
@@ -318,12 +318,15 @@ fn al_azar(semilla: u64, vueltas: u32) {
     buenos.extend([w, l32(&c, w + win::RPORT), t, cadena(&mut c, "Workbench")]);
     let malos = [0u32, 4, 0x10, 0xFFF, TAMANO - 2, TAMANO, 0xFFFF_FFFF, 0x8000_0000];
     let numeros = [0u32, 1, 2, 3, 7, 8, 15, 31, 32, 255, 256, 0xFFFF, 0x8000, (-1i32) as u32, (-5i32) as u32];
-    let total = (lvo::GRAPHICS.len() + lvo::INTUITION.len()) as u64;
+    let (ng, ni) = (lvo::GRAPHICS.len() as u64, lvo::INTUITION.len() as u64);
+    let total = ng + ni + lvo::GADTOOLS.len() as u64;
     let numero = |c: &Caja, f: u64| {
-        if f < lvo::GRAPHICS.len() as u64 {
+        if f < ng {
             c.1.numero_graphics(lvo::GRAPHICS[f as usize].0).unwrap()
+        } else if f < ng + ni {
+            c.1.numero_intuition(lvo::INTUITION[(f - ng) as usize].0).unwrap()
         } else {
-            c.1.numero_intuition(lvo::INTUITION[(f - lvo::GRAPHICS.len() as u64) as usize].0).unwrap()
+            c.1.numero_gadtools(lvo::GADTOOLS[(f - ng - ni) as usize].0).unwrap()
         }
     };
     // Las que están hechas (las otras dan `NoImplementada` con cualquier cosa).
