@@ -344,3 +344,40 @@ fn requester_con_la_barra_de_dashos() {
     assert_eq!(r.d[0], 0);
     assert!(c.1.ventanas().is_empty());
 }
+
+/// BorderTop en los dos aspectos, frente al oráculo (FS-UAE, Kickstart y Workbench 3.1): allí la pantalla da `WBorTop`
+/// 2, `WBorLeft` 4, `WBorRight` 4 y `WBorBottom` 2, y una ventana con barra, `BorderTop` = `WBorTop` + alto de la letra
+/// de la pantalla + 1 (12 con topaz/9; aquí la letra es topaz/8: 11), 4 a la izquierda, 18 a la derecha con el gadget de
+/// tamaño y 2 abajo; los gadgets de la barra, del alto de `BorderTop`. "Como DashOS" (con la barra de DashOS), la misma
+/// cuenta con `WBorTop` 0: 9.
+#[test]
+fn border_top_en_los_dos_aspectos() {
+    // Original (con un compositor que pone barras: no la usa).
+    let mut c = caja();
+    c.1.comp.barra = true;
+    c.1.comp.version_tema += 1;
+    c.1.atender(&mut c.0);
+    let alto_letra = caja_intuition::FUENTE_ALTO as u8;
+    assert_eq!(wbor(&c), [2, 4, 4, 2]);
+    let w = ventana(&mut c, GADGETS, &[]);
+    let b = bordes(&c, w);
+    assert_eq!(b, [4, wbor(&c)[0] + alto_letra + 1, 18, 2]);
+    assert!(!c.1.comp.ventana(c.1.superficie(w).unwrap()).pedida.barra_dashos);
+    // La barra de intuition, de todo su alto: la fila de abajo de la barra es del borde (sombra del relieve de dentro), y
+    // el título cabe entero entre la primera y la última fila.
+    let s = c.1.superficie(w).unwrap();
+    let v = c.1.comp.ventana(s);
+    let ba = b[1] as u32;
+    let fondo_barra = v.pixel(150, 1);
+    let filas_con_titulo: Vec<u32> = (0..ba).filter(|&y| (24..80).any(|x| v.pixel(x, y) != fondo_barra && v.pixel(x, y) != v.pixel(23, y))).collect();
+    assert!(!filas_con_titulo.is_empty(), "el título");
+    assert!(filas_con_titulo[0] >= 1 && *filas_con_titulo.last().unwrap() <= ba - 2, "el título cabe en la barra: {filas_con_titulo:?} en {ba}");
+    // El gadget de profundidad, del alto de la barra: su relieve llega a la fila ba - 1.
+    let an = v.ancho;
+    assert_ne!(v.pixel(an - 10, ba - 1), v.pixel(an - 10, ba / 2), "el gadget de profundidad acaba en la última fila de la barra");
+    // Como DashOS.
+    let mut c = caja_dashos();
+    assert_eq!(wbor(&c), [0, 0, 0, 0]);
+    let w = ventana(&mut c, GADGETS, &[]);
+    assert_eq!(bordes(&c, w), [0, wbor(&c)[0] + alto_letra + 1, 0, 0]);
+}

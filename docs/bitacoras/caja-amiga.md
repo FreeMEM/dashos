@@ -1356,3 +1356,19 @@ Las bibliotecas `window.class`, `layout.gadget`, `button.gadget`, `checkbox.gadg
 Diferencias sabidas: chooser cambia de opción con cada clic (como un ciclo de GadTools) en vez de abrir su menú;
 getfile no abre el requester (no hay asl.library); listbrowser con varias columnas las junta en una; space no llama a
 `SPACE_RenderHook`; `LAYOUT_FixedHoriz`, `ShrinkWrap` y las páginas (`PAGE_GetClass`), sin hacer.
+
+### De paso: dos fallos de GadTools "como DashOS" (vistos en la captura Full HD de GadTools)
+
+- **Los campos de texto salían espaciados** ("h o l a", "4 2"): con `Estilo::Celdas` cada letra de Roboto Mono iba
+  centrada en su celda de topaz (8 x f), y el avance de Mono a 7/8 del alto es casi la mitad. Ahora van seguidas, con
+  su avance (`nitido::escribir`). El cursor ya no puede ir en la celda de topaz del fondo: intuition lo pinta de 1 de
+  ancho después de las letras (a 1x, en su celda, como antes) y el texto nítido lo lleva (`TextoNitido::cursor`, con
+  `Lienzo::cursor_del_ultimo`, que copia otra vez lo de después) y lo pinta delante de su letra. Queda: un clic en el
+  campo pone el cursor por celdas de topaz, así que en textos largos cae unas letras más allá de donde se ve.
+- **La etiqueta de la izquierda de un deslizador con nivel** ("Nivel" con `GTSL_LevelFormat`) salía en topaz: el campo
+  del nivel la pisaba (como en 3.1, "Niv25") y su hueco ya no era el de antes. Con el tema de DashOS va a la izquierda
+  del campo del nivel (`etiqueta_desde`); el clásico sigue como 3.1. Es lo único que se mueve respecto al clásico (la
+  prueba `mismo_rectangulo_que_el_clasico` lo admite solo para ese caso).
+- Prueba: `tests/letra_kit.rs`, `campo_de_texto_seguido_y_etiqueta_del_deslizador_nitida`: con Roboto de verdad a 2x y
+  3x, mide lo que ocupa la tinta de "hola" (no más que 4 avances de Mono, menos de 3 celdas de topaz), el cursor delante
+  de la "l" y la etiqueta y el nivel del deslizador valiendo los dos, sin pisarse.

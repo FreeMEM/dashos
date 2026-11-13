@@ -66,6 +66,9 @@ pub struct TextoNitido {
     /// El hueco antes de pintar las letras de topaz y después (fila a fila, `r.ancho()` x `r.alto()`).
     pub antes: Vec<u32>,
     pub despues: Vec<u32>,
+    /// El cursor de un campo de texto (`Estilo::Celdas`): delante de qué letra y de qué color. Se pinta con la letra
+    /// de DashOS, en su sitio (a 1x va en topaz, en la celda).
+    pub cursor: Option<(usize, u32)>,
 }
 
 impl TextoNitido {
@@ -169,21 +172,38 @@ pub fn escribir(l: &mut dyn Letras, t: &TextoNitido, f: u32, px: &mut [u32]) {
     }
     let texto = t.caracteres();
     if t.estilo == Estilo::Celdas {
-        // Una letra por celda de topaz (8 de ancho a 1x), centrada.
-        let celda = (crate::fuente::ANCHO * f) as i32;
+        // Los campos de texto: Roboto Mono seguida, cada letra con su avance (antes iba una en cada celda de topaz, y a
+        // 2x salía espaciada: "h o l a"), y el cursor delante de su letra.
         let tam = tam_para(al);
         let (sube, baja) = l.alturas(Estilo::Celdas, tam);
         let base = (al - (sube + baja)) / 2 + sube;
+        let mut x = 0i32;
+        let mut cursor_x = None;
         for (i, c) in texto.chars().enumerate() {
-            let x0 = (i as i32).saturating_mul(celda);
-            if x0 >= an {
+            if t.cursor.is_some_and(|(k, _)| k == i) {
+                cursor_x = Some(x);
+            }
+            if x >= an {
                 break;
             }
             let c = if l.tiene(Estilo::Celdas, c) { c } else { '?' };
             let mut b = [0u8; 4];
             let s = c.encode_utf8(&mut b);
             let w = l.ancho(Estilo::Celdas, s, tam);
-            l.escribir(Estilo::Celdas, px, an, al, x0 + (celda - w) / 2, base, s, tam, t.color);
+            l.escribir(Estilo::Celdas, px, an, al, x, base, s, tam, t.color);
+            x = x.saturating_add(w.max(1));
+        }
+        if let Some((k, color)) = t.cursor {
+            let cx = cursor_x.unwrap_or(if k >= texto.chars().count() { x } else { an });
+            let grosor = (f as i32).max(1);
+            let cx = cx.clamp(0, (an - grosor).max(0));
+            for y in 0..al {
+                for dx in 0..grosor {
+                    if let Some(p) = px.get_mut((y * an + cx + dx) as usize) {
+                        *p = color | 0xFF00_0000;
+                    }
+                }
+            }
         }
         return;
     }
@@ -317,7 +337,7 @@ mod pruebas {
                 despues[y * w + x] = pix[(r.y0 as usize + y) * ancho as usize + r.x0 as usize + x];
             }
         }
-        TextoNitido { r, texto: s.to_vec(), color: 0xff00_00ff, alinea: Alinea::Izquierda, estilo: Estilo::Normal, antes: vec![0xffff_ffff; w * h], despues }
+        TextoNitido { r, texto: s.to_vec(), color: 0xff00_00ff, alinea: Alinea::Izquierda, estilo: Estilo::Normal, antes: vec![0xffff_ffff; w * h], despues, cursor: None }
     }
 
     #[test]
@@ -367,6 +387,8 @@ mod pruebas {
             estilo: Estilo::Celdas,
             antes: vec![0; antes],
             despues: vec![0xff00_0000; despues],
+            // Un cursor fuera de todo (más allá del texto y del hueco): no se sale.
+            cursor: Some((usize::MAX, 0xffff_0000)),
         };
         let malos = [
             // Fuera, a medias, negativo, vacío, con instantáneas que no cuadran.
