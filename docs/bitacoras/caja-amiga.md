@@ -1265,3 +1265,219 @@ Lo que se ve y queda por hacer:
 - Los controles, a 1x ampliados (escalones de 2 en las curvas): ver arriba.
 - El guion mira las esquinas de la ventana de GadTools a 3 del borde (la marca ocupa los 3 de fuera; con el clásico, la
   primera vuelta no la reconocía y no pulsaba nada).
+
+## 2026-11-13: BOOPSI y ReAction en la caja Amiga
+
+Rama `caja-amiga-reaction` (desde `fusion-fondo`, 77d8e47). intuition tiene BOOPSI nativo y, encima, las clases de
+ReAction de 3.2, con las dos apariencias por el rasgo `Tema` (las mismas reglas que GadTools). Escrito desde el RKRM
+(Libraries, "BOOPSI"), los autodocs de intuition, amiga.lib y de cada clase de ReAction del NDK 3.2 y sus includes; sin
+leer código de ninguna implementación.
+
+### Cómo va (`caja/intuition/src/boopsi/`)
+
+- **Las clases son `struct IClass` de verdad** en la memoria del 68k, con su gancho despachador: `DoMethod` de
+  amiga.lib salta al `h_Entry` de la clase sin pasar por intuition (y `DoSuperMethod`, al de la superclase). Las
+  nativas comparten un `h_Entry`: 6 bytes de 68k con `$A0FF n; RTS` (n = 0xB00, `Numeros::boopsi`) que entran en el
+  despachador nativo con la clase en A0. Una clase de usuario (`MakeClass`) lleva su despachador en 68k; los objetos
+  son los de siempre: `struct _Object` delante, `OCLASS(o)` en `o - 4`, `INST_DATA` por `cl_InstOffset`, un gadget es
+  su `struct Gadget` (ExtGadget) y una imagen su `struct Image`. La memoria es de la tarea (`AllocMem`): lo que un
+  programa no dispone cuenta como suyo sin soltar.
+- **Llamar a 68k desde lo nativo** (un `OM_NEW` a una clase de usuario, el `OM_UPDATE` de una interconexión a uno de
+  sus objetos, el gancho de edición de un campo): el rasgo `Puente` (`partes()` y `ejecutar_68k`). Nada de BOOPSI es un
+  método de `CajaGrafica` con `&mut self`: todo recibe el puente, pide `partes()` cuando lo necesita y suelta la
+  referencia antes de ejecutar 68k (lo asegura el comprobador de préstamos: las dos cosas piden `&mut` al puente). En
+  la caja, `PuenteCaja` (pegamento) pide `caja()` en cada `partes()` y ejecuta con `caja_ejecutar_68k`, con la pila de
+  la llamada nativa en curso. El 68k de dentro puede volver a intuition (`DoSuperMethodA`): es otra llamada nativa,
+  con su propio puente.
+- **Lo que llega por eventos** (un clic en un gadget BOOPSI, repintar uno tras `RefreshGList` o el cambio de tema,
+  colocar los relativos tras `NEWSIZE`) no se puede hacer en `CajaGrafica::atender`, que tiene `&mut self`: va a una
+  cola (`Pendiente`) y la caja la atiende después con el puente (`boopsi::atender`): al final de cada llamada nativa
+  que atiende al compositor, en `Wait` (`Espera::Boopsi`: se atiende y la espera se repite) y en `Delay`/`WaitTOF`.
+  Mientras haya un gadget BOOPSI activo o un evento suyo en la cola, el ratón y el teclado de esa ventana van a la
+  cola (si no, un clic y su soltar en la misma vuelta se separaban).
+- **La entrada**: un clic sobre un gadget BOOPSI da `GM_HITTEST` y `GM_GOACTIVE` (con su `InputEvent` y el ratón
+  relativo al gadget); mientras devuelva `GMR_MEACTIVE`, `GM_HANDLEINPUT` con cada evento; al acabar, `GM_GOINACTIVE` y,
+  con `GMR_VERIFY`, `IDCMP_GADGETUP` con el código de terminación. `GMR_REUSE` pasa el clic a lo de debajo. Un hijo de
+  un layout o un grupo que acaba deja su dirección (`hoja`) y el `GADGETUP` lleva la del hijo: window.class lo
+  traduce a `WMHI_GADGETUP | GA_ID`.
+- **Lo malo**: una clase o un objeto que no lo son, un método desconocido, etiquetas en círculo, un almacén que no se
+  puede escribir: aviso y 0. Un despachador 68k que no vuelve (el programa acaba dentro): `Corte68k::Acabado` deshace
+  todo hasta arriba y la caja corta el programa. Uno que se llama a sí mismo por intuition sin fin: tope de 48 métodos
+  anidados (`MAX_NIVELES`); en 68k puro, el tope de 16 niveles de la caja (sigue con 0). Interconexiones en círculo:
+  cada objeto, mientras notifica, no atiende más notificaciones (lo de `ICM_SETLOOP`/`ICM_CHECKLOOP`). Un árbol de
+  layouts muy hondo se dispone sin recursión.
+
+### Clases de sistema (`sistema.rs`)
+
+rootclass (OM_NEW, OM_DISPOSE, OM_ADDTAIL, OM_REMOVE), icclass y modelclass (ICA_TARGET, ICA_MAP con
+`TAG_IGNORE`, ICTARGET_IDCMP con la copia de las etiquetas en el `IAddress` de `IDCMP_IDCMPUPDATE`, que se suelta al
+contestar; los miembros de modelclass reciben `OM_UPDATE` y se disponen con él), imageclass (la `struct Image`,
+IM_DRAW/DRAWFRAME/HITTEST/HITFRAME/ERASE/FRAMEBOX/DOMAINFRAME), frameiclass (con el tema si dibuja en una ventana
+nuestra: tarjeta con contorno "como DashOS"), sysiclass (flechas, casilla, mx, cerrar, profundidad, tamaño),
+fillrectclass, itexticlass, gadgetclass (todos los `GA_*` de posición, relativos, activación, texto, imagen,
+`GA_Previous`), propgclass (mando, página, arrastre, `PGA_Top`/`Total`/`Visible` y los pots), strgclass (su
+`StringInfo` y búfer, `STRINGA_TextVal`/`LongVal`, edición con el teclado, y `STRINGA_EditHook`: el gancho en 68k con su
+`SGWork`, `SGH_KEY`), buttongclass y frbuttonclass (con `GA_ToggleSelect`), groupgclass (miembros colocados respecto al
+grupo, el grupo crece, reenvía render y entrada).
+
+Lo que dijo el oráculo (FS-UAE con el Kickstart 3.2.3 y el Workbench 3.2, `caja/pruebas68k/boopsi.c`, sin cerrojo):
+propgclass **no notifica** lo que le llega por `OM_SET`, `OM_UPDATE` ni `SetGadgetAttrs` (solo lo que mueve el
+usuario): así se hizo. icclass y modelclass sí pasan lo que les llega. En 3.2, `NewObject(NULL, "layout.gadget")` (y
+checkbox, string, label, slider) da NULL: esas clases no están en la lista pública con su nombre; `button.gadget` sí.
+Aquí todas son públicas (más permisivo: lo que va en 3.2 va aquí); los programas de 3.2 usan `XXX_GetClass()`.
+
+### ReAction (`reaction.rs`)
+
+Las bibliotecas `window.class`, `layout.gadget`, `button.gadget`, `checkbox.gadget`, `chooser.gadget`,
+`integer.gadget`, `string.gadget`, `slider.gadget`, `scroller.gadget`, `listbrowser.gadget`, `radiobutton.gadget`,
+`space.gadget`, `getfile.gadget`, `label.image`, `bevel.image` y `glyph.image` (versión 47), con sus funciones: los
+`GetClass`, los nodos de chooser, listbrowser y radiobutton (`Alloc/Free/Set/GetXNodeAttrsA`, `FreeListBrowserList`,
+`ListBrowserClearAll`, `ListBrowserSelectAll`) y `RethinkLayout` y `LayoutLimits` de layout. exec abre
+`gadgets/layout.gadget` por el final del camino (lo que sería `LIBS:Gadgets/` con ramlib).
+
+- **window.class**: `WA_*` guardadas, `WINDOW_Layout`, `WINDOW_Position` (centrada), `WINDOW_MenuStrip`,
+  `WINDOW_SigMask`, `WINDOW_Window`; `WM_OPEN` abre del tamaño pedido y, como mínimo, del que pide el layout
+  (`GM_DOMAIN`), con `WindowLimits` a ese mínimo; el layout va como gadget de la ventana en todo lo de dentro, con
+  `GFLG_RELSPECIAL`; `WM_HANDLEINPUT` traduce los mensajes (`WMHI_CLOSEWINDOW`, `GADGETUP | GA_ID` con el código,
+  `MENUPICK`, `NEWSIZE` recolocando, `RAWKEY`, `VANILLAKEY`, `ACTIVE`, `INACTIVE`, `IDCMPUPDATE` con `GA_ID`) hasta
+  `WMHI_LASTMSG`; `WM_CLOSE`, `WM_ICONIFY` (cierra), `WM_RETHINK`; `OM_DISPOSE` cierra y dispone el layout.
+- **layout.gadget**: `LAYOUT_AddChild`/`AddImage` con los `CHILD_*` que los siguen (pesos, mínimos, máximos,
+  `CHILD_Label`, `CHILD_NoDispose`, `CHILD_ReplaceObject`), `LAYOUT_RemoveChild`, orientación, `SpaceOuter`,
+  `SpaceInner`, márgenes y espacio, alineación, `EvenSize`, `BevelStyle` y `Label` (el título del grupo). El diseño:
+  el mínimo de cada hijo (`GM_DOMAIN` / `IM_DOMAINFRAME`, recursivo), lo que sobra repartido por pesos sin pasar de
+  los máximos, el otro eje entero (o su mínimo, centrado, con peso 0), la columna de etiquetas en vertical. Con la
+  ventana abierta, añadir un hijo la recoloca entera. La entrada va al hijo de debajo (con su `GM_HITTEST`).
+- **Los controles se pintan como los de GadTools** (`pintar.rs`): botón, casilla (de su tamaño, a la izquierda, con su
+  texto), chooser (un ciclo), integer y string (campo), slider y scroller (deslizador), listbrowser (listview),
+  radiobutton (mx), getfile (texto y botón). Así salen las dos apariencias y la letra nítida sin nada propio, en los
+  mismos rectángulos. Las imágenes: label (texto con la tinta del tema, sin el `_`), bevel (grupo, campo, botón,
+  raya), glyph (flechas, marca).
+
+Diferencias sabidas: chooser cambia de opción con cada clic (como un ciclo de GadTools) en vez de abrir su menú;
+getfile no abre el requester (no hay asl.library); listbrowser con varias columnas las junta en una; space no llama a
+`SPACE_RenderHook`; `LAYOUT_FixedHoriz`, `ShrinkWrap` y las páginas (`PAGE_GetClass`), sin hacer.
+
+### De paso: dos fallos de GadTools "como DashOS" (vistos en la captura Full HD de GadTools)
+
+- **Los campos de texto salían espaciados** ("h o l a", "4 2"): con `Estilo::Celdas` cada letra de Roboto Mono iba
+  centrada en su celda de topaz (8 x f), y el avance de Mono a 7/8 del alto es casi la mitad. Ahora van seguidas, con
+  su avance (`nitido::escribir`). El cursor ya no puede ir en la celda de topaz del fondo: intuition lo pinta de 1 de
+  ancho después de las letras (a 1x, en su celda, como antes) y el texto nítido lo lleva (`TextoNitido::cursor`, con
+  `Lienzo::cursor_del_ultimo`, que copia otra vez lo de después) y lo pinta delante de su letra. Queda: un clic en el
+  campo pone el cursor por celdas de topaz, así que en textos largos cae unas letras más allá de donde se ve.
+- **La etiqueta de la izquierda de un deslizador con nivel** ("Nivel" con `GTSL_LevelFormat`) salía en topaz: el campo
+  del nivel la pisaba (como en 3.1, "Niv25") y su hueco ya no era el de antes. Con el tema de DashOS va a la izquierda
+  del campo del nivel (`etiqueta_desde`); el clásico sigue como 3.1. Es lo único que se mueve respecto al clásico (la
+  prueba `mismo_rectangulo_que_el_clasico` lo admite solo para ese caso).
+- Prueba: `tests/letra_kit.rs`, `campo_de_texto_seguido_y_etiqueta_del_deslizador_nitida`: con Roboto de verdad a 2x y
+  3x, mide lo que ocupa la tinta de "hola" (no más que 4 avances de Mono, menos de 3 celdas de topaz), el cursor delante
+  de la "l" y la etiqueta y el nivel del deslizador valiendo los dos, sin pisarse.
+
+### De paso: la barra de intuition aplastada en el aspecto original
+
+Aviso del coordinador: con "cajas=general original" a 2x, la barra de intuition de la ventana de GadTools salía
+aplastada (título cortado por arriba, gadget de profundidad pequeño), como si el `BorderTop` 9 y los `WBor*` 0 de "como
+DashOS" valieran también ahí. El oráculo (FS-UAE, Kickstart y Workbench 3.1, un programa que lee la pantalla y abre una
+ventana con todos los gadgets): `WBorTop` 2, `WBorLeft` 4, `WBorRight` 4, `WBorBottom` 2, letra de la pantalla
+topaz/9 y `BorderTop` 12 (= 2 + 9 + 1), 4, 18 y 2; los gadgets de la barra, de 24 x 12 (cerrar 20 x 12). La caja, con
+topaz/8, ya hacía la misma cuenta: `WBorTop` 2 y `BorderTop` 11 en el original, y 0 y 9 "como DashOS". La prueba
+`border_top_en_los_dos_aspectos` (`tests/barra_dashos.rs`) lo comprueba en los dos aspectos (los bordes, el título dentro
+de la barra, el gadget de profundidad hasta la última fila de la barra y el hueco de la marca).
+
+**Lo que lo aplastaba era la marca del compositor** (`capturas-agente/caja-gadtools-dash-original-antes-fhd.png`): la
+tira azul de arriba (3 píxeles de la pantalla, por dentro de la ventana) tapaba la primera fila y media de la barra a 2x
+(el relieve y lo de arriba del título) y parte de los gadgets. Ahora, en una ventana de la caja Amiga con barra de
+intuition (la caja dijo su hueco, ver abajo), el compositor no pinta esa tira: la barra de intuition ya hace de borde de
+arriba, y la pestaña va dentro de ella. Las tiras de los lados y de abajo siguen. Con su prueba en
+`wayland/src/tests_s29.rs` (y la tira, cuando se quita o vuelve, se daña para que se repinte).
+
+Queda apuntado un caso que sí descuadra en intuition: un programa con la excepción "original" en una caja "como DashOS"
+ve `WBorTop` 0 (la pantalla es de todos) y su ventana lleva `BorderTop` 11; si coloca sus gadgets con `WBorTop +
+ta_YSize + 1` (9), pisan 2 filas de la barra.
+
+### De paso: la pestaña "68K" a la derecha (aspecto original)
+
+Encargo del usuario: con el aspecto original, la pestaña "68K" del compositor (por dentro, arriba a la izquierda;
+desde 130bfcb una pastilla del kit que cuelga del borde) tapaba el gadget de cerrar de la ventana Amiga. Ahora va
+arriba a la derecha, dentro de la barra de intuition, justo a la izquierda del gadget de profundidad. Fusionado
+130bfcb antes de tocar `wayland/`.
+
+- **Protocolo**: `dashos_tema_v1` pasa a la versión 6 con la petición `marca(superficie, derecha, alto)`: desde la
+  derecha de la ventana, dónde empiezan los gadgets de su barra, y el alto de la barra, en píxeles de la superficie. Solo
+  vale para una superficie del mismo cliente (otra, o una que no existe, no hace nada); se guarda en la superficie
+  (`Superficie::hueco_marca`) y se va con ella.
+- **La caja**: intuition dice el hueco al abrir una ventana sin la barra de DashOS que tenga barra
+  (`NuevaVentana::hueco_marca`: el ancho del gadget de profundidad y `BorderTop`, a 1x); el pegamento lo manda con el
+  factor de la ventana (y otra vez si cambia la escala).
+- **El compositor** (`marca::sitio_pestana`): la sigue pintando él y solo usa el dato para colocarla: a `derecha` + 6 del
+  borde derecho, siempre dentro de la ventana; sin dato o con uno absurdo (negativo, más ancho que la ventana), arriba a
+  la derecha con un margen fijo (56). "Como DashOS" no cambia (la pastilla va en la barra de DashOS), ni las ventanas de
+  Linux sin barra (a la izquierda, como antes).
+- Prueba: `wayland/src/tests_s29.rs`, `marca_de_la_caja_amiga`: a la derecha sin dato, junto a los gadgets con el dato
+  por el protocolo, y huecos negativos, enormes, `i32::MIN`/`MAX`, del ancho de la ventana y de otra superficie: la
+  pestaña sigue entera en su ventana; una ventana más estrecha que la pestaña, a la izquierda dentro. En intuition, el
+  hueco que se pide en los dos aspectos (`border_top_en_los_dos_aspectos`).
+
+### Programas que corren
+
+- **`caja/pruebas68k/boopsi.c`** (m68k-amigaos-gcc, sin amiga.lib): la clase "contador" (subclase de gadgetclass con su
+  despachador en 68k, `DoSuperMethodA` por `CallHookPkt`, un atributo y un método propios y `GM_RENDER` que pinta con
+  graphics), interconexión (propgclass, strgclass, icclass, modelclass), y una ventana de window.class con su layout
+  (etiqueta, campo, casilla, deslizador y botón por los `GetClass`). 43 comprobaciones: **0 fallos en FS-UAE con el
+  Kickstart 3.2.3 y el Workbench 3.2** (el oráculo, sin cerrojo) **y 0 en la caja** (`boopsi.exe acabó con 0, 136
+  llamadas nativas, 7 despachadores 68k, 0 avisos, 0 bloques sin soltar`).
+- **`tests/test_doc_reaction.dash`** de FreeMEMLang (con `./dash`, directo a hunk): "ventana 1", "nombre: Amiga, sonido:
+  1", "fin", con 0 y sin bloques sin soltar (lo mismo que espera FreeMEMLang en el emulador).
+- **`examples/test_reaction.dash`**: abre su ventana de ReAction Demo (300x200) y espera; la prueba la cierra como con
+  el botón de la barra a los 4 s y acaba con 0. Ctrl-C no vale para esto: Dash solo lo mira en sus bucles y el programa
+  está en `Wait` con la máscara de su ventana (igual que en un Amiga).
+- Los tres, en `make arranque-virt` (líneas nuevas en `kernel/pruebas/arranque_virt.txt`).
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=750` (750: con 480 el guion acababa antes de llegar a
+ReAction) y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro fondo;cajas=general original\nprograma amiga dashos
+boopsi-20"`: la caja corre boopsi.exe dos veces en ese modo, "boopsi-20" (como DashOS, por la excepción) y
+"boopsi-orig-20" (original), cada una 20 s; el guion (`tools/prueba_uefi.sh`, `CAPTURA_RA`) pone cada ventana delante
+con un clic dentro y la captura, con su sitio en un `.txt`. BOOPSI va ahora antes que GadTools en la prueba de la caja:
+con GadTools esperando 90 s, la sesión se bloqueaba antes.
+
+- `comparacion-reaction-fhd.png`: la ventana de ReAction de boopsi.c, original y como DashOS, lado a lado con su rótulo
+  (a 2x). `caja-reaction-original-fhd.png` y `caja-reaction-dashos-fhd.png`: las pantallas enteras.
+- `caja-gadtools-original-fhd.png`, `caja-gadtools-menu-original-fhd.png` (original) y `caja-gadtools-dashos-fhd.png`,
+  `caja-gadtools-menu-dashos-fhd.png` (de serie): GadTools en los dos aspectos, con la pestaña "68K" a la derecha en el
+  original y, como DashOS, los campos de texto seguidos y "Nivel" nítido.
+- `comparacion-gadtools-fhd.png`: la ventana de GadTools en los dos aspectos, lado a lado con su rótulo.
+- `caja-gadtools-dash-original-antes-fhd.png` y `caja-gadtools-dash-original-fhd.png`: el ejemplo de GadTools de Dash
+  en el original antes y después de quitar la tira de arriba de la marca (antes, la tira azul tapaba la fila de luz de
+  la barra y el título quedaba pegado arriba, como cortado).
+- El oráculo de FS-UAE no dio captura útil de la ventana de ReAction: `emu_run.py --screenshot` saca la pantalla de
+  delante, y era la de la consola de AmigaDOS.
+
+### Pruebas
+
+- `cargo test`: intuition 98 (nuevas: `tests/boopsi.rs` 13, `tests/reaction.rs` 5, `letra_kit` 1, `barra_dashos` 1;
+  con hostiles: clases y objetos que no existen, métodos desconocidos, etiquetas en círculo, almacenes y mensajes
+  ilegibles, despachadores 68k que no vuelven, que se llaman sin fin por intuition o en 68k puro, `h_Entry` nulo o
+  impar, círculos de interconexión de dos y de tres, `ICA_TARGET` a la basura, 3000 miembros de tamaños absurdos,
+  layouts con hijos que no son objetos, 2000 hijos, 100 niveles de layouts, ventanas de 100000 x 0xFFFFFFFF, la tarea
+  que muere con un clic en la cola), exec 113 (`open_library_con_camino`), wayland 96. Las pruebas de BOOPSI usan un
+  puente de prueba cuyos "despachadores 68k" son funciones de Rust que hacen lo del programa (`tests/comun/puente.rs`).
+  clippy limpio en lo nuevo.
+- `make prueba`: BIEN cargador hunk y BIEN esperado.txt. (En dos vueltas anteriores, G1, libwayland por el puente de la
+  caja Linux, dio MAL con los mismos colores; nada de lo suyo cambió en esta rama, y en la última vuelta pasó.)
+- `make arranque-virt` (las seis BIEN, con boopsi.exe, test_doc_reaction y test_reaction), `-vm`, `-2`, `-escritorio`
+  y `-diag`: BIEN, tras lo último (la marca y el orden de BOOPSI antes de GadTools).
+- El oráculo: boopsi.c en FS-UAE con 3.2 (0 fallos) y un programa de bordes con 3.1 (los números de arriba).
+
+### Lo que falta
+
+- chooser.gadget abre su menú en 3.2; aquí cambia de opción con cada clic. getfile.gadget no abre el requester (no hay
+  asl.library). listbrowser con columnas las junta en una. space.gadget no llama a `SPACE_RenderHook` (el lienzo de
+  `ra_add_canvas` de Dash). Sin páginas (`PAGE_GetClass`), `LAYOUT_ShrinkWrap`, `FixedHoriz`/`Vert`, el foco con Tab
+  (`GMR_NEXTACTIVE` se devuelve pero no activa el siguiente) ni las teclas de los gadgets (`GA_ActivateKey`).
+- Los gadgets BOOPSI no reciben `IECLASS_TIMER` (los que repiten mientras se pulsa, como las flechas de un scroller).
+- Un clic en un campo de texto "como DashOS" coloca el cursor por celdas de topaz: en textos largos cae unas letras más
+  allá de donde se ve (ahora la letra va seguida).
+- La excepción "original" en una caja "como DashOS": la pantalla dice `WBorTop` 0 y la ventana lleva `BorderTop` 11.
+- El oráculo visual de ReAction en FS-UAE (la captura sale de la pantalla de la consola).

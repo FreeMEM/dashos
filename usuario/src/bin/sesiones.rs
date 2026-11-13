@@ -110,7 +110,7 @@ const GUARDIANES: &[&str] = &["guardian", "entrada"];
 const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 /// Quién lanza como la persona de delante, solo de `Programas/` (S10): la barra de la pantalla, con su lanzador, y el
 /// Workbench (doble clic en un programa de `Programas`).
-const LANZADORES: &[&str] = &["barra", "workbench"];
+const LANZADORES: &[&str] = &["barra", "workbench", "explorador"];
 /// Quién puede preguntar quién está delante (S27, oleada 2: la cabecera del panel rápido).
 const VEN_DELANTE: &[&str] = &["panel", "barra"];
 /// Quien puede pedir apagar, reiniciar o cerrar la sesión (decisión del usuario del 2026-11-13): el panel rápido.

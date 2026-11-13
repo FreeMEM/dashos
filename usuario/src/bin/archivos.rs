@@ -766,9 +766,10 @@ fn ahora() -> (u64, u32) {
     (ns / 1_000_000_000, (ns % 1_000_000_000) as u32)
 }
 
-/// Un nombre de una sola parte, para crear, borrar o renombrar.
+/// Un nombre de una sola parte, para crear, borrar o renombrar. Ni "." ni ".." (explorador: un cliente podía crear
+/// un cajón llamado "..", o renombrar algo así, y luego ningún programa lo podía abrir ni borrar sin dudas).
 fn un_nombre(b: &[u8]) -> Option<&str> {
-    core::str::from_utf8(b).ok().filter(|n| !n.is_empty() && !n.contains('/') && !n.contains('\0'))
+    core::str::from_utf8(b).ok().filter(|n| !n.is_empty() && *n != "." && *n != ".." && !n.contains('/') && !n.contains('\0'))
 }
 
 /// Cierra un nodo abierto. Sin transacción si sigue abierto por otro, o si era el último y no hay nodos borrados

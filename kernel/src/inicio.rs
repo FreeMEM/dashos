@@ -227,8 +227,12 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // S10: el Workbench, con los iconos de los volúmenes en el escritorio (capa de abajo, por su nombre) y las ventanas
     // de cajón. "archivos" para ver los cajones (como Ana) y "sesiones" para lanzar de `Programas/` y saber si su sesión
     // está abierta. Al final, para no cambiar el número de los de antes.
+    // El explorador de archivos (como Nautilus): su canal "explorador" (lo nombra antes que el Workbench, que le pide
+    // abrir los volúmenes), "archivos" como Ana con el derecho de repartir y "sesiones" para lanzar de `Programas/`.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones"]),
+    ("explorador", programa!("explorador"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
     ("hola", programa!("hola"), &[], &[]),
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.

@@ -74,8 +74,9 @@ DASH_TESTS := $(dir $(DASH))tests
 MALWARE := $(patsubst %,pruebas68k/malware/%.exe,arranque enlace parche residente guion troyano memoria)
 DASH_EXES := $(B)/dash/hola.exe $(B)/dash/texto.exe $(B)/dash/texto_gcc.exe $(B)/dash/ventana.exe \
 	$(B)/dash/interp.exe $(B)/dash/listas.exe $(B)/dash/ctrl_c.exe $(B)/dash/ctrl_c_gcc.exe $(B)/dash/ctrl_c_for.exe \
-	$(B)/dash/trap_ilegal.exe $(B)/dash/trap_divcero.exe $(B)/dash/test_gadtools.exe
-$(B)/programas.o: programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/actualiza.exe $(MALWARE) $(DASH_EXES) | $(B)
+	$(B)/dash/trap_ilegal.exe $(B)/dash/trap_divcero.exe $(B)/dash/test_gadtools.exe \
+	$(B)/dash/test_reaction.exe $(B)/dash/test_doc_reaction.exe
+$(B)/programas.o: programas.S pruebas68k/sistema.bin pruebas68k/hola.bin pruebas68k/lineaa.bin pruebas68k/bucle.bin pruebas68k/mala.bin pruebas68k/saludo.exe pruebas68k/ventana.exe pruebas68k/hostil.exe pruebas68k/anidado.exe pruebas68k/gadtools.exe pruebas68k/boopsi.exe pruebas68k/actualiza.exe $(MALWARE) $(DASH_EXES) | $(B)
 	$(CC) $(COMMON) -c $< -o $@
 
 define compila_dash
@@ -115,6 +116,11 @@ $(B)/dash/trap_divcero.exe: $(wildcard $(DASH_TESTS)/test_trap_divzero.dash) | $
 # El ejemplo de GadTools de FreeMEMLang, tal cual.
 $(B)/dash/test_gadtools.exe: $(wildcard $(DASH_EJ)/test_gadtools.dash) | $(B)
 	$(call compila_dash,$(DASH_EJ)/test_gadtools.dash,)
+# ReAction: el ejemplo (espera a que pulsen) y la prueba de la documentación (acaba sola).
+$(B)/dash/test_reaction.exe: $(wildcard $(DASH_EJ)/test_reaction.dash) | $(B)
+	$(call compila_dash,$(DASH_EJ)/test_reaction.dash,)
+$(B)/dash/test_doc_reaction.exe: $(wildcard $(DASH_TESTS)/test_doc_reaction.dash) | $(B)
+	$(call compila_dash,$(DASH_TESTS)/test_doc_reaction.dash,)
 
 # Las bibliotecas nativas (pegamento/, una staticlib de Rust para aarch64_be-unknown-none-softfloat). Su memcpy (de
 # compiler_builtins, que entra con LTO) se queda dentro: el del C es el de Emu68 (support.c).

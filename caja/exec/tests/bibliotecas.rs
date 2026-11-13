@@ -67,6 +67,31 @@ fn biblioteca_nativa_ajena() {
 }
 
 #[test]
+fn open_library_con_camino() {
+    // Las clases de ReAction se abren como "gadgets/layout.gadget": vale el final del camino.
+    let (mut e, _t) = caja_con_tarea();
+    let lib = e.crear_biblioteca_nativa("layout.gadget", 47, 1, &[300], 34).unwrap();
+    let mut r = Registros::default();
+    for nombre in ["gadgets/layout.gadget", "SYS:Classes/Gadgets/layout.gadget", "layout.gadget"] {
+        r.a[1] = cadena(&mut e, nombre);
+        r.d[0] = 44;
+        llamar(&mut e, "OpenLibrary", &mut r);
+        assert_eq!(r.d[0], lib, "{nombre}");
+    }
+    for nombre in ["gadgets/", "gadgets/otra.gadget", "layout.gadget/", ":"] {
+        r.a[1] = cadena(&mut e, nombre);
+        r.d[0] = 0;
+        llamar(&mut e, "OpenLibrary", &mut r);
+        assert_eq!(r.d[0], 0, "{nombre}");
+    }
+    // La versión cuenta igual.
+    r.a[1] = cadena(&mut e, "gadgets/layout.gadget");
+    r.d[0] = 48;
+    llamar(&mut e, "OpenLibrary", &mut r);
+    assert_eq!(r.d[0], 0);
+}
+
+#[test]
 fn set_function_sobre_una_funcion_nativa() {
     let (mut e, _t) = caja_con_tarea();
     let b = e.base();

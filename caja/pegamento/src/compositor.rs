@@ -74,6 +74,8 @@ struct Ventana {
     /// El tamaño del último `xdg_toplevel.configure` (en la superficie ampliada; 0 si lo elige ella), hasta su
     /// `xdg_surface.configure`.
     pedido: (i32, i32),
+    /// El hueco de la marca de la caja en su barra de intuition (1x), para decírselo al compositor con su factor.
+    hueco_marca: Option<(i32, i32)>,
 }
 
 /// La letra de DashOS (el kit) para los textos nítidos: Roboto, Roboto Medium y Roboto Mono.
@@ -144,6 +146,8 @@ pub struct CompositorWayland {
     /// S26: el objeto del tema del sistema (`dashos_tema_v1`, 0 si no hay) y lo que dice: las plumas de DashOS para
     /// quien pinta los controles (`tema.rs`).
     tema_obj: u32,
+    /// La versión de `dashos_tema_v1` enlazada (la 6 tiene `marca`).
+    tema_version: u32,
     pub tema: TemaCaja,
     /// `zxdg_decoration_manager_v1` (0 si el compositor no la tiene): la barra de DashOS.
     deco_mgr: u32,
@@ -181,6 +185,7 @@ impl CompositorWayland {
             sync_hecho: None,
             dichos: Vec::new(),
             tema_obj: 0,
+            tema_version: 0,
             tema: TemaCaja::default(),
             deco_mgr: 0,
             letras: None,
@@ -263,7 +268,8 @@ impl CompositorWayland {
         // que cambia.
         if let Some(gt) = global("dashos_tema_v1") {
             c.tema_obj = c.nuevo_id();
-            e.empezar(registro, wl_registry::req::BIND).uint(gt.0).texto(Some("dashos_tema_v1")).uint(gt.1.min(3)).uint(c.tema_obj).fin();
+            e.empezar(registro, wl_registry::req::BIND).uint(gt.0).texto(Some("dashos_tema_v1")).uint(gt.1.min(6)).uint(c.tema_obj).fin();
+            c.tema_version = gt.1.min(6);
         }
         // La barra de DashOS para las ventanas "como DashOS" (como las de Linux que la piden).
         if let Some(gd) = global("zxdg_decoration_manager_v1") {
@@ -432,6 +438,7 @@ impl CompositorWayland {
             return;
         }
         if o == self.tema_obj && o != 0 {
+            // (De la versión 6, la de `marca`: los eventos que no son de la caja se ignoran en `tema_ev`.)
             self.tema_ev(orden, c);
         } else if o == self.raton && o != 0 {
             self.raton_ev(orden, c);
@@ -611,6 +618,18 @@ impl CompositorWayland {
         dashos::cerrar(memoria);
     }
 
+    /// Dice al compositor dónde va la marca de la caja en la barra de intuition de la ventana `s` (sin la barra de
+    /// DashOS): a la izquierda de sus gadgets de la derecha, ya con su factor (`dashos_tema_v1.marca`, versión 6).
+    fn decir_hueco_marca(&self, s: Superficie, e: &mut Escritor) {
+        let Some(v) = self.ventanas.get(&s) else { return };
+        let Some((derecha, alto)) = v.hueco_marca else { return };
+        if self.tema_obj == 0 || self.tema_version < 6 {
+            return;
+        }
+        let f = v.f.max(1) as i32;
+        e.empezar(self.tema_obj, dashos_tema_v1::req::MARCA).uint(v.sup).int(derecha.saturating_mul(f)).int(alto.saturating_mul(f)).fin();
+    }
+
     /// El factor que pide el ajuste para un programa (su excepción, la de la caja o el automático de la pantalla).
     fn factor_pedido(&self, programa: &str) -> u32 {
         self.tema.ajuste.escala_para(Caja::Amiga, programa).factor(self.pantalla.0, self.pantalla.1)
@@ -711,8 +730,10 @@ impl Compositor for CompositorWayland {
                 programa,
                 deco,
                 pedido: (0, 0),
+                hueco_marca: if barra { None } else { v.hueco_marca },
             },
         );
+        self.decir_hueco_marca(s, &mut e);
         self.mandar(&e);
         Some(s)
     }
@@ -764,8 +785,12 @@ impl Compositor for CompositorWayland {
                 return;
             };
             let v = self.ventanas.get_mut(&s).unwrap();
+            let otro_f = v.f != f;
             (v.memoria, v.pool, v.buf, v.va, v.ancho, v.alto, v.f) = (m, p, b, va, ancho, alto, f);
             dano = Rect::de_tamano(ancho, alto);
+            if otro_f {
+                self.decir_hueco_marca(s, &mut e);
+            }
         }
         // Ampliada, los textos nítidos que tocan lo dañado se escriben enteros.
         if f > 1 && !textos.is_empty() {

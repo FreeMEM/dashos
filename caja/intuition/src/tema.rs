@@ -146,6 +146,21 @@ impl Elegido {
 /// La etiqueta de un gadget (la de un mx no sale: sus opciones van donde diría su lugar, arriba), con el color de
 /// dentro (`PLACETEXT_IN`) y el de fuera. Devuelve lo que ha tocado. La comparten los dos temas: el mismo sitio.
 fn etiqueta(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32) -> Rect {
+    etiqueta_desde(l, glifos, s, r, dentro, fuera, 0)
+}
+
+/// Lo que mide el campo del nivel de un deslizador (0 si no tiene).
+fn ancho_nivel(s: &Gt) -> i32 {
+    if s.tipo != kind::SLIDER || s.formato.is_empty() {
+        return 0;
+    }
+    let t = formatear(&s.formato, s.valor);
+    fuente::ANCHO as i32 * s.visibles.clamp(0, 256).max(t.len() as i32) + 2
+}
+
+/// `etiqueta`, con la de la izquierda `antes` píxeles más allá (la del deslizador en el tema de DashOS, fuera del
+/// campo de su nivel: encima, como en 3.1, la letra de DashOS no puede volver y sale en topaz).
+fn etiqueta_desde(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fuera: u32, antes: i32) -> Rect {
     if s.etiqueta.is_empty() || s.tipo == kind::MX {
         return Rect::nuevo(0, 0, -1, -1);
     }
@@ -160,7 +175,7 @@ fn etiqueta(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fu
         gt::PLACETEXT_RIGHT => (r.x1 + 1 + 6, centro_y + 1),
         gt::PLACETEXT_ABOVE => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, r.y0 - fa - 2),
         gt::PLACETEXT_BELOW => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, r.y1 + 3),
-        _ => (r.x0 - 6 - ancho, centro_y + 1),
+        _ => (r.x0 - 6 - ancho - antes, centro_y + 1),
     };
     let alinea = match s.lugar {
         gt::PLACETEXT_IN | gt::PLACETEXT_ABOVE | gt::PLACETEXT_BELOW => Alinea::Centro,
@@ -747,14 +762,19 @@ impl Tema for Material {
                 self.campo(l, r, borde, grosor, t.superficie);
                 let tx = r.x0 + 6;
                 let ty = centro_y(&r) + 1;
-                // El cursor antes que las letras: con la letra de DashOS, es parte del fondo del texto.
+                let n_antes = l.textos().len();
+                texto_n(l, glifos, tx, ty, cadena, t.sobre_superficie, r.x1 - 4, Alinea::Izquierda, Estilo::Celdas);
+                // El cursor después de las letras, de 1 de ancho y en las filas del texto: a 1x va en su celda de topaz;
+                // con la letra de DashOS, el texto lo pinta en su sitio (el de topaz queda fuera de su fondo).
                 if activo_texto {
                     let cx = tx.saturating_add(fw.saturating_mul(cursor.min(4096) as i32));
                     if cx + fw <= r.x1 - 3 {
-                        llenar(l, Rect::nuevo(cx - 1, ty - 1, cx, ty + fa - 1), t.primario);
+                        llenar(l, Rect::nuevo(cx - 1, ty, cx - 1, ty + fa - 1), t.primario);
+                        if l.textos().len() > n_antes || l.textos().last().is_some_and(|x| x.r.x0 == tx && x.r.y0 == ty) {
+                            l.cursor_del_ultimo(tx, ty, cursor, t.primario);
+                        }
                     }
                 }
-                texto_n(l, glifos, tx, ty, cadena, t.sobre_superficie, r.x1 - 4, Alinea::Izquierda, Estilo::Celdas);
             }
             kind::TEXT | kind::NUMBER => {
                 if s.borde {
@@ -869,7 +889,9 @@ impl Tema for Material {
             }
             _ => {}
         }
-        dano = dano.union(&etiqueta(l, glifos, s, r, dentro, t.sobre_superficie));
+        let izquierda = !matches!(s.lugar, gt::PLACETEXT_IN | gt::PLACETEXT_RIGHT | gt::PLACETEXT_ABOVE | gt::PLACETEXT_BELOW);
+        let antes = if izquierda { ancho_nivel(s) } else { 0 };
+        dano = dano.union(&etiqueta_desde(l, glifos, s, r, dentro, t.sobre_superficie, antes));
         dano = dano.union(&nivel(l, glifos, s, r, t.superficie, t.sobre_variante_superficie));
         if desactivado {
             // Desactivado: todo al 38 % sobre la superficie, como Material 3.
@@ -1139,8 +1161,12 @@ mod pruebas {
                     let r = Rect::nuevo(180, 120, 180 + an - 1, 120 + al - 1);
                     let (lc, dc) = pintar(&Clasico, &s, r, desactivado, &elementos);
                     let (lm, dm) = pintar(&m, &s, r, desactivado, &elementos);
-                    assert_eq!(dc, dm, "tipo {tipo} lugar {lugar}: el daño cambia");
-                    let todo = dc.union(&cambiado(&lc));
+                    // La etiqueta de la izquierda de un deslizador con nivel va fuera del campo del nivel (con el tema
+                    // de DashOS; en 3.x se pisan): solo eso se mueve, a la izquierda.
+                    let izquierda = !matches!(lugar, gt::PLACETEXT_IN | gt::PLACETEXT_RIGHT | gt::PLACETEXT_ABOVE | gt::PLACETEXT_BELOW);
+                    let extra = if izquierda && !s.etiqueta.is_empty() { ancho_nivel(&s) } else { 0 };
+                    assert_eq!(dc, Rect::nuevo(dm.x0 + extra, dm.y0, dm.x1, dm.y1), "tipo {tipo} lugar {lugar}: el daño cambia");
+                    let todo = dc.union(&cambiado(&lc)).union(&dm);
                     assert!(dentro_de(cambiado(&lm), todo), "tipo {tipo} lugar {lugar}: pinta fuera ({:?} en {:?})", cambiado(&lm), todo);
                     assert!(dentro_de(r, cambiado(&lm)), "tipo {tipo} lugar {lugar}: no cubre su rectángulo");
                 }

@@ -152,11 +152,29 @@ pub fn tiras(caja: Rect) -> [Rect; 4] {
     ]
 }
 
-/// Dónde va la pestaña de una ventana sin la barra de DashOS que ocupa `caja`: por dentro, bajo el borde de arriba a la
-/// izquierda (nunca fuera de la ventana: sin solapas, decisión del usuario del 2026-11-13). `area` ya no se usa.
-pub fn sitio_pestana(caja: Rect, _area: Rect, (w, h): (i32, i32)) -> Rect {
-    Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h }
+/// Dónde va la pestaña de una ventana sin la barra de DashOS que ocupa `caja`: por dentro, bajo el borde de arriba
+/// (nunca fuera de la ventana: sin solapas, decisión del usuario del 2026-11-13). En las de Linux, a la izquierda. En
+/// las de la caja Amiga, a la derecha, dentro de la barra de intuition y a la izquierda de sus gadgets de profundidad
+/// (a la izquierda tapaba el de cerrar): `hueco` es lo que dice la caja (`dashos_tema_v1.marca`: desde la derecha,
+/// dónde empiezan los gadgets, y el alto de la barra); sin él, o con algo absurdo, arriba a la derecha con un margen
+/// fijo. Siempre dentro de la ventana. `area` ya no se usa.
+pub fn sitio_pestana(caja: Rect, _area: Rect, (w, h): (i32, i32), amiga: bool, hueco: Option<(i32, i32)>) -> Rect {
+    if !amiga {
+        return Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h };
+    }
+    let derecha = match hueco {
+        Some((d, alto)) if d >= 0 && alto > 0 && d <= caja.w - 2 * GROSOR && alto <= caja.h => d + MARGEN_HUECO,
+        _ => MARGEN_DERECHA,
+    };
+    let x_max = caja.x.saturating_add(caja.w).saturating_sub(GROSOR).saturating_sub(w);
+    let x = caja.x.saturating_add(caja.w).saturating_sub(derecha).saturating_sub(w).min(x_max).max(caja.x + GROSOR);
+    Rect { x, y: caja.y + GROSOR, w, h }
 }
+
+/// Lo que queda entre la pestaña y los gadgets de la derecha de la barra de intuition.
+const MARGEN_HUECO: i32 = 6;
+/// Sin hueco de la caja: lo que se deja a la derecha (lo de un gadget de profundidad a 2x y un poco).
+const MARGEN_DERECHA: i32 = 56;
 
 /// El título para la barra de la pantalla de una ventana de la caja.
 pub fn titulo_de_caja(titulo: &str) -> String {
@@ -179,10 +197,14 @@ pub(super) type Capa<'a> = (Rect, i32, i32, &'a [u8], crate::shm::Bufer, Option<
 /// Las capas que pintan la marca de una ventana que ocupa `caja`, con la pestaña en `sitio`: las cuatro tiras del
 /// borde, de un color liso (`fila`: una fila de ese color al menos tan ancha como la caja; cada tira la repite, con
 /// paso 0), y la pestaña (`px`, de `Pestana`). Las tiras, opacas; la pestaña, mezclada con lo de debajo.
-pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -> Vec<Capa<'a>> {
+/// Con `sin_arriba` (una ventana de la caja Amiga con su barra de intuition), sin la tira de arriba.
+pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8], sin_arriba: bool) -> Vec<Capa<'a>> {
     // La pestaña es ARGB premultiplicado: el compositor la pinta con las esquinas de abajo redondeadas (transparentes).
     let mut out = Vec::new();
-    for t in tiras(caja) {
+    for (k, t) in tiras(caja).into_iter().enumerate() {
+        if sin_arriba && k == 0 {
+            continue;
+        }
         if t.w <= 0 || t.h <= 0 || fila.len() < t.w as usize * 4 {
             continue;
         }

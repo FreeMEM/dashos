@@ -124,6 +124,8 @@ avisos_paso = 0
 reintento_avisos = 0
 wb = 0
 wb_ventana = {}
+ex = 0
+ex_mov = {}
 bloqueo_capturado = False
 cambio = 0
 captura_u6_hecha = 0
@@ -133,6 +135,7 @@ v_amiga = None
 dash_amiga = 0
 gt_amiga = 0
 gt_dash = 0
+ra_capturas = 0
 gt_mirado = 0
 gt_movida = 0
 req_dash = 0
@@ -311,6 +314,30 @@ while time.time() - inicio < total:
                             ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
                         else:
                             ir_a(10 * paso, 5 * paso)
+        # BOOPSI y ReAction (`caja/pruebas68k/boopsi.c`, solo con CAJA_INTERACTIVA=1): sus dos ventanas de ReAction, la
+        # de "como DashOS" (boopsi-20) y la original (boopsi-orig-20, con la excepción de DASHOS_PREFS): una captura de
+        # cada una (CAPTURA_RA.ppm y CAPTURA_RA.orig.ppm) con su sitio y su tamaño al lado (.txt: x y ancho alto
+        # escala), para ponerlas lado a lado. Se cierran solas a los 20 s.
+        if libre_caja and ra_capturas < 2 and os.environ.get("CAPTURA_RA"):
+            import re
+            nombre_ra = "boopsi-20" if ra_capturas == 0 else "boopsi-orig-20"
+            corte = texto.find("[caja-amiga] " + nombre_ra + ": ")
+            if corte >= 0:
+                m_ra = list(re.finditer(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?(?:, con la barra de DashOS)?\): ReAction", texto[corte:]))
+                v_ra = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if m_ra and v_ra:
+                    # Delante de las demás: un clic dentro, en el margen del grupo (nada que pulsar ahí).
+                    time.sleep(1.5)
+                    f_ra = int(m_ra[-1].group(3) or 1)
+                    ir_a(int(v_ra[-1].group(1)) + 6 * f_ra, int(v_ra[-1].group(2)) + 16 * f_ra)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                    time.sleep(1.0)
+                    foto = os.environ["CAPTURA_RA"] + (".orig" if ra_capturas else "") + ".ppm"
+                    mandar("screendump " + foto)
+                    with open(foto + ".txt", "w") as f:
+                        f.write(f"{v_ra[-1].group(1)} {v_ra[-1].group(2)} {m_ra[-1].group(1)} {m_ra[-1].group(2)} {m_ra[-1].group(3) or 1}\n")
+                    ra_capturas += 1
         # El ejemplo de GadTools de FreeMEMLang (`examples/test_gadtools.dash`): la captura (CAPTURA_GT_DASH) y un clic en
         # su "Cancel" (gt_button(120, 20, 80, 20) en una ventana GIMMEZEROZERO: desde la esquina de dentro, 4 y 11).
         if dash_amiga == 1 and gt_dash == 0 and libre_caja:
@@ -982,185 +1009,366 @@ while time.time() - inicio < total:
         bloqueo_desde = max(ultimo("[guardian] sesión bloqueada"), ultimo("pantalla de bloqueo pintada"),
                             ultimo("pantalla de entrada pintada"))
         bloqueado_ahora = bloqueo_desde > max(ultimo("[guardian] desbloqueado"), ultimo("[guardian] entra "))
-        # S10: el Workbench, al final (tras la barra), con la sesión de Ana delante y sin bloquear. Doble clic en el icono
-        # de Sistema (abre su ventana), en DeCarla (no se abre: es de Carla) y en Programas (otra ventana); doble clic en
-        # hola (lo lanza `sesiones`) y botón derecho en hola (su Información, que no se puede cambiar: Cerrar). Luego el
-        # icono de Home, Privado, el botón Lista, un clic en nota.txt e Información: en su campo, "nota de Ana", la casilla
-        # Archivado y Guardar. Los sitios los dicen el compositor (dónde salió cada ventana: la n-ésima "ventana de
-        # workbench", y la capa) y el Workbench (dentro de cada una). Con CAPTURA_WORKBENCH=fichero.ppm: el escritorio
-        # con las ventanas de Sistema y Programas (fichero.ppm), Privado como lista (fichero.lista.ppm), la Información
-        # (fichero.info.ppm) y la
-        # Información con el comentario escrito (fichero.comentario.ppm). Al final, Cerrar en cada ventana.
-        if wb == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
-            wb = 1
-            reintento = 0
-        if 1 <= wb <= 17:
+        # El explorador de archivos, al final (tras la barra), con la sesión de Ana delante y sin bloquear: el doble clic
+        # en el icono de Sistema del Workbench lo abre; luego DeCarla (no se lista), Atrás, Programas, hola (lo lanza
+        # `sesiones`), sus Propiedades (por Sistema no se cambian), la carpeta personal, Privado como lista, las
+        # Propiedades de nota.txt (comentario y Archivado), buscar escribiendo, carpeta nueva (y un nombre que no vale),
+        # copiar y pegar, cambiar el nombre (F2), la papelera y restaurar, las miniaturas de Fondos, una pestaña, otra
+        # ventana con el camino escrito (Ctrl+L), moverla por su barra y arrastrar un fichero a la primera. Los sitios
+        # los dicen el compositor (dónde salió cada ventana) y el explorador (dónde quedó cada cosa dentro). Con
+        # CAPTURA_EXPLORADOR=prefijo: prefijo.ppm (Fondos con miniaturas), .lista, .info, .copia y .dos.
+        if ex == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto and "[explorador] listo" in texto:
+            ex = 1
+            reintento = time.time() + 20
+        if 1 <= ex < 90:
             import re
-            captura_wb = os.environ.get("CAPTURA_WORKBENCH")
-            def ultima_wb(patron):
+            captura_ex = os.environ.get("CAPTURA_EXPLORADOR")
+            def ultima(patron):
                 t = re.findall(patron, texto)
                 return t[-1] if t else None
-            def ir_wb(x, y):
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+            def ir_ex(x, y):
+                mandar(*["mouse_move -100 -100"] * 22, pausa=0.02)
                 pasos = []
                 while x > 0 or y > 0:
                     dx, dy = min(x, 100), min(y, 100)
                     pasos.append(f"mouse_move {dx} {dy}")
                     x, y = x - dx, y - dy
-                mandar(*pasos, pausa=0.05)
+                mandar(*pasos, pausa=0.03)
                 time.sleep(0.3)
-            def doble():
-                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
-            def clic():
+            def clic_ex():
                 mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
-            def capa_wb():
-                c = ultima_wb(r"\[compositor\] capa de workbench en \((\d+), (\d+)\)")
+            def doble_ex():
+                mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            def escribir_ex(t):
+                # Como `teclear`, sin el Intro del final.
+                mandar(*[("sendkey spc" if c == " " else "sendkey shift-" + c.lower() if c.isupper() else "sendkey shift-7" if c == "/" else "sendkey " + c) for c in t], pausa=0.15)
+            def tecla_ex(*t):
+                mandar(*["sendkey " + x for x in t], pausa=0.25)
+            def capa_ex():
+                c = ultima(r"\[compositor\] capa de workbench en \((\d+), (\d+)\)")
                 return (int(c[0]), int(c[1])) if c else (0, 40)
-            def icono_wb(nombre):
-                c = ultima_wb(r"\[workbench\] (?:en pantalla: \d+x\d+, )?icono de " + nombre + r" en \((\d+), (\d+)\)")
-                cx, cy = capa_wb()
+            def icono_ex(nombre):
+                c = ultima(r"\[workbench\] (?:en pantalla: \d+x\d+, )?icono de " + nombre + r" en \((\d+), (\d+)\)")
+                cx, cy = capa_ex()
                 return (cx + int(c[0]), cy + int(c[1])) if c else None
-            def origen(n):
-                # La n-ésima ventana del Workbench que coloca el compositor.
-                t = re.findall(r"\[compositor\] ventana de workbench en \((\d+), (\d+)\)", texto)
-                return (int(t[n - 1][0]), int(t[n - 1][1])) if len(t) >= n else None
-            def en_ventana(clave, que):
-                # Dónde está `que` (una entrada o un botón) en la ventana de `clave`, en la pantalla.
-                n = wb_ventana.get(clave)
-                o = origen(n) if n else None
-                if not o:
+            def origen_ex(n):
+                t = re.findall(r"\[compositor\] ventana de explorador en \((\d+), (\d+)\)", texto)
+                if len(t) < n:
                     return None
-                g = ultima_wb(r"\[workbench\] ventana " + str(n) + r"[^\n]*?(?:: |; |, )" + re.escape(que) + r" en \((\d+), (\d+)\)")
-                return (o[0] + int(g[0]), o[1] + int(g[1])) if g else None
-            def ventana_de(ruta):
-                g = ultima_wb(r"\[workbench\] ventana (\d+) de " + re.escape(ruta) + r" en pantalla")
-                return int(g) if g else None
-            espera = {1: ventana_de("Sistema") and origen(ventana_de("Sistema")),
-                      2: "[workbench] no abre Sistema/DeCarla" in texto,
-                      3: ventana_de("Sistema/Programas") and origen(ventana_de("Sistema/Programas")),
-                      4: "[workbench] lanza Programas/hola" in texto,
-                      5: ventana_de("Información de Sistema/Programas/hola") and origen(ventana_de("Información de Sistema/Programas/hola")),
-                      6: "[workbench] cierra la ventana " + str(ventana_de("Información de Sistema/Programas/hola")) in texto,
-                      7: ventana_de("Home") and origen(ventana_de("Home")),
-                      8: ventana_de("Home/Privado") and origen(ventana_de("Home/Privado")),
-                      9: "[workbench] Home/Privado como lista" in texto,
-                      10: ventana_de("Información de Home/Privado/nota.txt") and origen(ventana_de("Información de Home/Privado/nota.txt")),
-                      11: True,
-                      12: "[workbench] guarda Home/Privado/nota.txt" in texto,
-                      13: "[workbench] cierra la ventana " + str(wb_ventana.get("Home/Privado")) in texto,
-                      14: "[workbench] cierra la ventana " + str(wb_ventana.get("Home")) in texto,
-                      15: "[workbench] cierra la ventana " + str(wb_ventana.get("Sistema/Programas")) in texto,
-                      16: "[workbench] sin ventanas abiertas" in texto}
-            if wb > 1 and not espera[wb - 1]:
+                dx, dy = ex_mov.get(n, (0, 0))
+                return (int(t[n - 1][0]) + dx, int(t[n - 1][1]) + dy)
+            def en_ex(n, que, linea=r"(?:rejilla|lista)"):
+                o = origen_ex(n)
+                g = ultima(r"\[explorador\] ventana " + str(n) + r", " + linea + r": (?:[^\n]*?; )?" + re.escape(que) + r" en \((\d+), (\d+)\)")
+                return (o[0] + int(g[0]), o[1] + int(g[1])) if o and g else None
+            def en_menu(n, que):
+                return en_ex(n, que, "menú")
+            def cuenta(t):
+                return texto.count(t)
+            espera = {1: "[explorador] ventana 1 en Sistema:" in texto and origen_ex(1),
+                      2: "[explorador] no abre Sistema/DeCarla: -12" in texto,
+                      3: cuenta("[explorador] ventana 1 en Sistema:") >= 2,
+                      4: "[explorador] ventana 1 en Sistema/Programas:" in texto,
+                      5: "[explorador] lanza Programas/hola" in texto,
+                      6: "[explorador] ventana 1, menú:" in texto,
+                      7: "[explorador] ventana 1, propiedades:" in texto,
+                      8: "[explorador] ventana 1: diálogo cancelado" in texto,
+                      9: "[explorador] ventana 1 en Home:" in texto,
+                      10: "[explorador] ventana 1 en Home/Privado:" in texto,
+                      11: "[explorador] ventana 1 como lista" in texto,
+                      12: "[explorador] ventana 1: por Tamano" in texto,
+                      13: "[explorador] Propiedades de Home/Privado/nota.txt" in texto and cuenta("[explorador] ventana 1, propiedades:") >= 2,
+                      14: "[explorador] guarda Home/Privado/nota.txt" in texto,
+                      15: cuenta("[explorador] ventana 1 en Home:") >= 2,
+                      16: "[explorador] búsqueda de \"nota\" acabada" in texto,
+                      17: cuenta("[explorador] ventana 1 en Home:") >= 3,
+                      18: "[explorador] crea la carpeta Home/Viaje: 0" in texto,
+                      19: "[explorador] ventana 1: el nombre \"..\" no vale" in texto,
+                      20: "[explorador] copia 2 elementos" in texto,
+                      21: "[explorador] ventana 1 en Home/Viaje:" in texto,
+                      22: "[explorador] acabado: Copiar 2 elementos a Viaje" in texto,
+                      23: "[explorador] cambia el nombre de Home/Viaje/grande.txt a \"texto grande.txt\": 0" in texto,
+                      24: "[explorador] acabado: Mover \"texto grande.txt\" a la papelera" in texto,
+                      25: "[explorador] ventana 1 en Papelera:" in texto,
+                      26: cuenta("[explorador] ventana 1, menú:") >= 2,
+                      27: "[explorador] acabado: Restaurar" in texto,
+                      28: "[explorador] ventana 1 en Home/Fondos:" in texto,
+                      29: "[explorador] miniatura de Home/Fondos/" in texto,
+                      30: "[explorador] ventana 1: pestaña nueva (2 pestañas)" in texto,
+                      31: "[explorador] ventana 1: cierra una pestaña (1 quedan)" in texto,
+                      32: cuenta("[explorador] ventana 1 en Home/Privado:") >= 2,
+                      33: "[explorador] ventana 2 en pantalla" in texto and origen_ex(2),
+                      34: "[explorador] ventana 2: camino escrito \"Home/../DeCarla\": no vale" in texto,
+                      35: "[explorador] ventana 2 en Home/Viaje:" in texto,
+                      36: True,
+                      37: "[explorador] acabado: Mover \"datos.bin\" a Privado" in texto,
+                      38: "[explorador] cierra la ventana 2" in texto,
+                      39: "[explorador] sin ventanas abiertas" in texto}
+            if ex > 1 and not espera.get(ex - 1, True):
                 if time.time() > reintento:
                     # No llegó: se deja (las líneas que falten lo dirán).
-                    wb = 99
+                    ex = 99
                 time.sleep(0.25)
                 continue
             time.sleep(0.6)
-            for clave in ("Sistema", "Sistema/Programas", "Información de Sistema/Programas/hola", "Home", "Home/Privado", "Información de Home/Privado/nota.txt"):
-                if ventana_de(clave):
-                    wb_ventana[clave] = ventana_de(clave)
             sitio = None
-            if wb == 1:
-                sitio = icono_wb("Sistema")
+            if ex == 1:
+                sitio = icono_ex("Sistema")
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 2:
-                sitio = en_ventana("Sistema", "DeCarla")
+                    ir_ex(*sitio)
+                    doble_ex()
+            elif ex in (2, 4, 5, 10):
+                sitio = en_ex(1, {2: "DeCarla", 4: "Programas", 5: "hola", 10: "Privado"}[ex])
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 3:
-                sitio = en_ventana("Sistema", "Programas")
+                    ir_ex(*sitio)
+                    doble_ex()
+            elif ex == 3:
+                sitio = en_ex(1, "Atrás")
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 4:
-                if captura_wb:
-                    mandar("screendump " + captura_wb)
-                    time.sleep(0.5)
-                sitio = en_ventana("Sistema/Programas", "hola")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 6:
+                sitio = en_ex(1, "hola")
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 5:
-                sitio = en_ventana("Sistema/Programas", "hola")
-                if sitio:
-                    ir_wb(*sitio)
+                    ir_ex(*sitio)
                     mandar("mouse_button 2", "mouse_button 0", pausa=0.08)
-            elif wb == 6:
-                sitio = en_ventana("Información de Sistema/Programas/hola", "Cerrar")
+            elif ex == 7:
+                sitio = en_menu(1, "Propiedades")
                 if sitio:
-                    ir_wb(*sitio)
-                    clic()
-            elif wb == 7:
-                sitio = icono_wb("Home")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 8:
+                sitio = en_ex(1, "Cerrar", "propiedades")
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 8:
-                sitio = en_ventana("Home", "Privado")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 9:
+                sitio = en_ex(1, "lugar Carpeta personal")
                 if sitio:
-                    ir_wb(*sitio)
-                    doble()
-            elif wb == 9:
-                sitio = en_ventana("Home/Privado", "Lista o Iconos")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 11:
+                sitio = en_ex(1, "Vista")
                 if sitio:
-                    ir_wb(*sitio)
-                    clic()
-            elif wb == 10:
-                if captura_wb:
-                    mandar("screendump " + captura_wb[:-4] + ".lista.ppm")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 12:
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".lista.ppm")
                     time.sleep(0.5)
-                sitio = en_ventana("Home/Privado", "nota.txt")
-                boton = en_ventana("Home/Privado", "Información")
-                if sitio and boton:
-                    ir_wb(*sitio)
-                    clic()
-                    time.sleep(0.5)
-                    ir_wb(*boton)
-                    clic()
-            elif wb == 11:
-                if captura_wb:
-                    mandar("screendump " + captura_wb[:-4] + ".info.ppm")
-                    time.sleep(0.5)
-                sitio = en_ventana("Información de Home/Privado/nota.txt", "campo")
+                sitio = en_ex(1, "columna Tamano")
                 if sitio:
-                    ir_wb(*sitio)
-                    clic()
-                    time.sleep(0.5)
-                    teclear("nota de Ana")
-                    time.sleep(0.5)
-                    archivado = en_ventana("Información de Home/Privado/nota.txt", "Archivado")
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 13:
+                # Otra vez por nombre (la columna Nombre), y Ctrl+I en nota.txt.
+                nombre = en_ex(1, "columna Nombre")
+                if nombre:
+                    ir_ex(*nombre)
+                    clic_ex()
+                    time.sleep(0.6)
+                sitio = en_ex(1, "nota.txt")
+                if sitio:
+                    ir_ex(*sitio)
+                    clic_ex()
+                    time.sleep(0.4)
+                    tecla_ex("ctrl-i")
+            elif ex == 14:
+                sitio = en_ex(1, "campo", "propiedades")
+                if sitio:
+                    ir_ex(*sitio)
+                    clic_ex()
+                    time.sleep(0.4)
+                    escribir_ex("nota de Ana")
+                    time.sleep(0.4)
+                    archivado = en_ex(1, "Archivado", "propiedades")
                     if archivado:
-                        ir_wb(*archivado)
-                        clic()
-            elif wb == 12:
-                if captura_wb:
-                    time.sleep(0.5)
-                    mandar("screendump " + captura_wb[:-4] + ".comentario.ppm")
-                    time.sleep(0.5)
-                sitio = en_ventana("Información de Home/Privado/nota.txt", "Guardar")
+                        ir_ex(*archivado)
+                        clic_ex()
+                    time.sleep(0.4)
+                    if captura_ex:
+                        mandar("screendump " + captura_ex + ".info.ppm")
+                        time.sleep(0.5)
+                    guardar = en_ex(1, "Guardar", "propiedades")
+                    if guardar:
+                        ir_ex(*guardar)
+                        clic_ex()
+            elif ex == 15:
+                sitio = True
+                tecla_ex("backspace")
+            elif ex == 16:
+                sitio = True
+                escribir_ex("nota")
+            elif ex == 17:
+                sitio = True
+                tecla_ex("esc")
+            elif ex == 18:
+                sitio = True
+                tecla_ex("ctrl-shift-n")
+                time.sleep(0.6)
+                tecla_ex("ctrl-a")
+                escribir_ex("Viaje")
+                tecla_ex("ret")
+            elif ex == 19:
+                sitio = True
+                tecla_ex("ctrl-shift-n")
+                time.sleep(0.6)
+                tecla_ex("ctrl-a", "dot", "dot", "ret")
+                time.sleep(0.6)
+                tecla_ex("esc")
+            elif ex == 20:
+                sitio = en_ex(1, "datos.bin")
                 if sitio:
-                    ir_wb(*sitio)
-                    clic()
-            elif 13 <= wb <= 16:
-                # Al final, se cierran todas (la captura de `captura_ventanas.py` mira lo de debajo).
-                clave = ("Home/Privado", "Home", "Sistema/Programas", "Sistema")[wb - 13]
-                sitio = en_ventana(clave, "Cerrar")
+                    ir_ex(*sitio)
+                    clic_ex()
+                    time.sleep(0.4)
+                    # Ctrl+abajo mueve sin elegir, Ctrl+espacio elige: datos.bin y grande.txt (frio.bin va en medio).
+                    tecla_ex("ctrl-down", "ctrl-down", "ctrl-spc", "ctrl-c")
+            elif ex == 21:
+                sitio = en_ex(1, "Viaje")
                 if sitio:
-                    ir_wb(*sitio)
-                    clic()
-            elif wb == 17:
+                    ir_ex(*sitio)
+                    doble_ex()
+            elif ex == 22:
+                sitio = True
+                tecla_ex("ctrl-v")
+                if captura_ex:
+                    time.sleep(0.2)
+                    mandar("screendump " + captura_ex + ".copia.ppm")
+            elif ex == 23:
+                sitio = en_ex(1, "grande.txt")
+                if sitio:
+                    ir_ex(*sitio)
+                    clic_ex()
+                    time.sleep(0.4)
+                    tecla_ex("f2")
+                    time.sleep(0.6)
+                    escribir_ex("texto grande")
+                    tecla_ex("ret")
+            elif ex == 24:
+                sitio = True
+                tecla_ex("delete")
+            elif ex == 25:
+                if captura_ex:
+                    time.sleep(0.3)
+                    mandar("screendump " + captura_ex + ".papelera.ppm")
+                    time.sleep(0.5)
+                sitio = en_ex(1, "lugar Papelera")
+                if sitio:
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 26:
+                sitio = en_ex(1, "texto grande.txt")
+                if sitio:
+                    ir_ex(*sitio)
+                    mandar("mouse_button 2", "mouse_button 0", pausa=0.08)
+            elif ex == 27:
+                sitio = en_menu(1, "Restaurar")
+                if sitio:
+                    ir_ex(*sitio)
+                    clic_ex()
+            elif ex == 28:
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Home/Fondos")
+                tecla_ex("ret", "ctrl-1")
+            elif ex == 29:
+                # Las miniaturas, una a una: se espera a la primera y un poco más.
+                sitio = True
+                time.sleep(4)
+                if captura_ex:
+                    mandar("screendump " + captura_ex + ".ppm")
+                    time.sleep(0.5)
+                tecla_ex("ctrl-t")
+            elif ex == 30:
+                sitio = True
+                tecla_ex("ctrl-w")
+            elif ex == 31:
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Home/Privado")
+                tecla_ex("ret")
+            elif ex == 32:
+                sitio = True
+                tecla_ex("ctrl-n")
+            elif ex == 33:
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Home/")
+                tecla_ex("dot", "dot")
+                escribir_ex("/DeCarla")
+                tecla_ex("ret")
+            elif ex == 34:
+                sitio = True
+                tecla_ex("ctrl-l")
+                time.sleep(0.4)
+                tecla_ex("ctrl-a")
+                escribir_ex("Home/Viaje")
+                tecla_ex("ret")
+            elif ex == 35:
+                # La segunda ventana, por su barra (el título "Archivos"), 300 a la derecha.
+                o = origen_ex(2)
+                if o:
+                    sitio = True
+                    ir_ex(o[0] + 120, o[1] + 26)
+                    mandar("mouse_button 1")
+                    time.sleep(0.6)
+                    mandar(*["mouse_move 30 0"] * 10, pausa=0.05)
+                    time.sleep(0.3)
+                    mandar("mouse_button 0")
+                    ex_mov[2] = (300, 0)
+            elif ex == 36:
+                # Arrastrar datos.bin de la segunda ventana a la carpeta de la primera (Privado), por la parte que se ve.
+                desde = en_ex(2, "datos.bin")
+                o1 = origen_ex(1)
+                if desde and o1:
+                    sitio = True
+                    ir_ex(*desde)
+                    mandar("mouse_button 1")
+                    time.sleep(0.3)
+                    x, y = desde
+                    hx, hy = o1[0] + 290, o1[1] + 330
+                    pasos = []
+                    while (x, y) != (hx, hy):
+                        dx = max(-25, min(25, hx - x))
+                        dy = max(-25, min(25, hy - y))
+                        pasos.append(f"mouse_move {dx} {dy}")
+                        x, y = x + dx, y + dy
+                    mandar(*pasos, pausa=0.05)
+                    time.sleep(0.4)
+                    if captura_ex:
+                        mandar("screendump " + captura_ex + ".arrastre.ppm")
+                        time.sleep(0.5)
+                    mandar("mouse_button 0")
+            elif ex == 37:
+                sitio = True
+                if captura_ex:
+                    time.sleep(0.5)
+                    mandar("screendump " + captura_ex + ".dos.ppm")
+                    time.sleep(0.5)
+                tecla_ex("ctrl-w")
+            elif ex == 38:
+                o1 = origen_ex(1)
+                if o1:
+                    sitio = True
+                    ir_ex(o1[0] + 560, o1[1] + 380)
+                    clic_ex()
+                    time.sleep(0.4)
+                    tecla_ex("ctrl-w")
+            elif ex == 39:
                 sitio = True
             if sitio is None:
                 # No se sabe dónde: se deja.
-                wb = 99
+                ex = 99
                 continue
-            wb += 1
-            reintento = time.time() + 15
+            ex += 1
+            reintento = time.time() + 20
             continue
         # Si el selector ya se rindió (un minuto sin elegir: con el PC cargado, la sesión siguió bloqueada todo ese rato),
         # el guion no le espera más: si no, sus pasos hacían `continue` para siempre y no llegaba ni a Super+L. Sus líneas
@@ -1501,7 +1709,9 @@ while time.time() - inicio < total:
         # Ajustes (con el PC lento, Ajustes sale después del selector).
         # S28: ni con una pregunta de `guardian` en pantalla (las de la caja Amiga salen a esta hora) ni con la sesión
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
+        # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
+        # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
