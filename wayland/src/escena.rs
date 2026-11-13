@@ -242,6 +242,30 @@ struct Estado {
     bufer: Option<Option<u32>>,
     danos: Vec<Rect>,
     avisos: Vec<u32>,
+    /// firefox-entrada: la región de entrada nueva (`set_input_region`): `Some(None)`, toda la superficie; `None`, no
+    /// se tocó.
+    entrada: Option<Option<Region>>,
+}
+
+/// Una región de `wl_region` (firefox-entrada): los rectángulos que se suman (`true`) o se restan, en orden. Un punto
+/// está dentro si el último que lo cubre suma.
+pub type Region = Vec<(bool, Rect)>;
+
+/// Lo más que guarda una región: pasado, error de protocolo (sin tope, un cliente llenaría la memoria del compositor).
+pub const MAX_REGION: usize = 512;
+/// Error de `wl_region` (propio de DashOS: el protocolo no tiene ninguno): más trozos de `MAX_REGION`.
+pub const REGION_DEMASIADO: u32 = 0;
+
+/// Si (x, y), en coordenadas de la superficie, cae en la región (firefox-entrada).
+pub fn en_region(r: &Region, x: i32, y: i32) -> bool {
+    let (x, y) = (x as i64, y as i64);
+    let mut dentro = false;
+    for (suma, q) in r {
+        if q.w > 0 && q.h > 0 && x >= q.x as i64 && x < q.x as i64 + q.w as i64 && y >= q.y as i64 && y < q.y as i64 + q.h as i64 {
+            dentro = *suma;
+        }
+    }
+    dentro
 }
 
 #[derive(Debug, Default)]
@@ -253,6 +277,9 @@ pub struct Superficie {
     pub danos: Vec<Rect>,
     /// Avisos de `frame` que esperan al siguiente cuadro compuesto.
     avisos: Vec<u32>,
+    /// firefox-entrada: su región de entrada (`None`: toda ella). El ratón solo la ve ahí; fuera, pasa a lo de debajo
+    /// (Firefox pinta la página en una subsuperficie sin entrada: los clics van a la ventana de GTK de debajo).
+    pub entrada: Option<Region>,
     /// Dónde está en la pantalla, si se ve.
     pub sitio: Option<(i32, i32)>,
     /// Lo que ocupaba en la pantalla la última vez que se compuso: al cambiar de búfer se repinta aunque el viejo ya
@@ -399,6 +426,9 @@ fn juntar(g: &mut Option<Estado>, p: Estado) {
                 e.danos.push(todo);
             }
             e.avisos.extend(p.avisos);
+            if p.entrada.is_some() {
+                e.entrada = p.entrada;
+            }
         }
     }
 }
@@ -475,6 +505,8 @@ pub struct DeCliente {
     pub pp: portapapeles::DeCliente,
     /// Sus `xdg_positioner` (H9).
     pub posicionadores: BTreeMap<u32, emergentes::Posicionador>,
+    /// Sus `wl_region` (firefox-entrada).
+    pub regiones: BTreeMap<u32, Region>,
 }
 
 /// Todas las superficies de todos los clientes y el orden en que se apilan.
@@ -1353,6 +1385,9 @@ impl<M: Memorias> Escena<M> {
             s.danos.push(todo);
         }
         s.avisos.extend(p.avisos);
+        if let Some(r) = p.entrada {
+            s.entrada = r;
+        }
         let hijas: Vec<u32> = s.pila.iter().copied().filter(|&h| h != id).collect();
         for h in hijas {
             let yo = self.clientes.get_mut(&cliente).unwrap();
@@ -2053,7 +2088,10 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 if orden == wl_compositor::req::CREATE_SURFACE {
                     yo.superficies.insert(args[0].uint(), Superficie::default());
                 }
-                // create_region: las regiones solo se guardan para opaco y entrada; aquí no cambian nada todavía.
+                // firefox-entrada: las regiones se guardan para la de entrada (la opaca no cambia nada todavía).
+                if orden == wl_compositor::req::CREATE_REGION {
+                    yo.regiones.insert(args[0].uint(), Region::new());
+                }
             }
             "wl_seat" => match orden {
                 wl_seat::req::GET_POINTER => yo.punteros.push(args[0].uint()),
@@ -2365,8 +2403,12 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                     _ => {}
                 }
             }
-            "wl_region" => {
-                let _ = wl_region::req::ADD;
+            "wl_region" if matches!(orden, wl_region::req::ADD | wl_region::req::SUBTRACT) => {
+                let Some(r) = yo.regiones.get_mut(&objeto) else { return Ok(()) };
+                if r.len() >= MAX_REGION {
+                    return Err(ErrorProtocolo::new(objeto, REGION_DEMASIADO, "región con demasiados trozos"));
+                }
+                r.push((orden == wl_region::req::ADD, Rect { x: args[0].int(), y: args[1].int(), w: args[2].int(), h: args[3].int() }));
             }
             "zwp_linux_dmabuf_v1" => match orden {
                 zwp_linux_dmabuf_v1::req::CREATE_PARAMS => {
@@ -2645,6 +2687,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                         }
                     }
                     wl_surface::req::FRAME => s.pendiente.avisos.push(args[0].uint()),
+                    // Se copia ya: el cliente puede destruir la región después (firefox-entrada).
+                    wl_surface::req::SET_INPUT_REGION => {
+                        let r = args[0].uint();
+                        s.pendiente.entrada = Some((r != 0).then(|| yo.regiones.get(&r).cloned().unwrap_or_default()));
+                    }
                     wl_surface::req::COMMIT => {
                         let p = core::mem::take(&mut s.pendiente);
                         // Una subsuperficie sincronizada guarda su estado hasta el commit de su madre (G3).
@@ -2869,6 +2916,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         }
         yo.punteros.retain(|&p| p != objeto);
         yo.teclados.retain(|&t| t != objeto);
+        yo.regiones.remove(&objeto);
         // Un búfer que aún se ve se aparta y se suelta cuando la superficie ponga otro.
         let viendo: Vec<u32> = yo.superficies.iter().filter(|(_, s)| s.bufer == Some(objeto)).map(|(&k, _)| k).collect();
         if !viendo.is_empty()
@@ -3027,9 +3075,12 @@ impl<M: Memorias> Escena<M> {
             arbol(cli, raiz, sx, sy, &mut a);
             for &(id, _, _) in a.iter().rev() {
                 if let Some(r) = rect_de(cli, id)
-                    && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h {
-                        return Some(((c, id), x - r.x, y - r.y));
-                    }
+                    && x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h
+                    // firefox-entrada: fuera de su región de entrada, el ratón no la ve (pasa a lo de debajo).
+                    && cli.superficies[&id].entrada.as_ref().is_none_or(|e| en_region(e, x - r.x, y - r.y))
+                {
+                    return Some(((c, id), x - r.x, y - r.y));
+                }
             }
         }
         None

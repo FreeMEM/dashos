@@ -568,8 +568,8 @@ ARCH_GUIONES["./usr/local/bin/prueba-memoria"] = (
     "z=$(awk '{printf \"%d MB en %d MB\", $1 / 1048576, $3 / 1048576}' /sys/block/zram0/mm_stat 2>/dev/null)\n"
     "echo \"memoria: $(free -m | awk '/^Mem:/ {printf \"RAM %d de %d MB\", $3, $2} /^Swap:/ {printf \", intercambio %d de %d MB\", $3, $2}')"
     ", zram $z; $(ps -eo rss=,comm= --sort=-rss | head -3 | awk '{printf \"%s %d MB; \", $2, $1 / 1024}')\" > /dev/hvc0\n")
-# Firefox para el guion (`make arranque-virt-wayland`), sin teclear en él (su ventana tapa la terminal de la caja, y no
-# hace caso al teclado de DashOS): con la página del disco, lo que gasta a los $1 s (150) y, otra vez, con una página de
+# Firefox para el guion (`make arranque-virt-wayland`; su ventana tapa la terminal de la caja: el guion teclea en Firefox,
+# no en ella, firefox-entrada): con la página del disco, lo que gasta a los $1 s (150) y, otra vez, con una página de
 # verdad por la red de la caja y lo que gasta a los $2 s. `pkill -x`: sin él, `pkill firefox` mata también a este guion
 # (su nombre lo lleva).
 ARCH_GUIONES["./usr/local/bin/prueba-firefox-guion"] = (

@@ -518,20 +518,34 @@ if modo == "wayland":
     # 5. Firefox: su primera ventana con una página del disco, lo que gasta de memoria y, si hay red, una página de
     # verdad. Desde caja-linux-grandes (512 MB y el zram del invitado) sale en unos segundos; CAJA_FIREFOX=0 lo salta.
     if (os.environ.get("CAJA_FIREFOX", "1") != "0" and solo != "gtk") or solo == "firefox":
-        # `prueba-firefox-guion` lo hace todo solo (no se teclea en Firefox: tapa la terminal y no hace caso al
-        # teclado): hola.html, su memoria a los 150 s, y otra vez con https://example.org.
+        # `prueba-firefox-guion` abre hola.html, dice su memoria a los 150 s, y otra vez con https://example.org. Antes
+        # de esos 150 s, el guion pulsa en su barra de direcciones y teclea otra (firefox-entrada).
         a_la_terminal()
         n = len(ventanas_linux())
-        teclear("prueba-firefox-guion &")
+        # CAJA_FIREFOX_DEPURAR=1: con WAYLAND_DEBUG (en /tmp/ff.log del invitado); al acabar, lo de la entrada y las
+        # subsuperficies sale por la terminal.
+        depurar_ff = os.environ.get("CAJA_FIREFOX_DEPURAR") == "1"
+        teclear("WAYLAND_DEBUG=1 prueba-firefox-guion 2>/tmp/ff.log &" if depurar_ff else "prueba-firefox-guion &")
         if esperar(r"firefox: empieza", 120):
             t0 = time.time()
             f = esperar_ventana(n, 600)
             if f:
                 apuntar(f"firefox: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
-                time.sleep(45.0)
+                esperar(r"título: Linux · Firefox en DashOS", 60)
+                time.sleep(20.0)
                 fx, fy = f[0] + (f[2][0] if f[2] else 0), f[1] + (f[2][1] if f[2] else 0)
-                clic(fx + 200, fy + 10)
-                time.sleep(15.0)
+                # Un clic en su barra de direcciones (la segunda fila, bajo las pestañas: Firefox se pinta su barra),
+                # una dirección del disco tecleada e Intro. Si le llegan el ratón y el teclado, su título cambia (lo
+                # dice la barra de DashOS).
+                clic(fx + 400, fy + 64)
+                time.sleep(2.0)
+                mandar("sendkey ctrl-a")
+                teclear("file:///usr/local/share/dashos/")
+                if esperar(r"título: Linux · Index of file:///usr/local/share/dashos/", 60):
+                    apuntar(f"firefox: clic en su barra de direcciones y dirección tecleada, bien (a los {time.time() - t0:.1f} s)")
+                else:
+                    apuntar("firefox: no hizo caso al clic ni a lo tecleado")
+                time.sleep(5.0)
                 capturar(prefijo + ".firefox")
                 if esperar(r"memoria: RAM", 240):
                     m = re.findall(r"linux: (memoria: RAM[^\n]*)", texto())
@@ -550,6 +564,10 @@ if modo == "wayland":
                 apuntar("firefox: sin ventana en 10 minutos")
             esperar(r"firefox: hecho", 600)
             time.sleep(3.0)
+            if depurar_ff:
+                a_la_terminal()
+                teclear("clear; grep -c . /tmp/ff.log; grep -m400 -e subsurface -e input_region -e wl_pointer -e wl_keyboard -e wl_seat /tmp/ff.log")
+                time.sleep(30.0)
     time.sleep(2.0)
     a_la_terminal()
     teclear("poweroff")

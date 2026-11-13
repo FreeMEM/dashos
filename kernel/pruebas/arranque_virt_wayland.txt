@@ -8,6 +8,7 @@
 # esperar). Después, otra ventana de Linux sale como siempre. Desde caja-linux-grandes (QEMU con 8 GB, 512 MB para el
 # invitado y su zram): GTK4 (gtk4-widget-factory) sale con su menú emergente; un programa del invitado que se come toda su
 # memoria muere (OOM) y la ventana de GTK sigue; Firefox abre una página del disco.
+# firefox-entrada: un clic en la barra de direcciones de Firefox y otra dirección tecleada: su título cambia.
 # Sin copia: el puente da los pools de wl_shm por sus páginas físicas y el compositor los lee en la RAM del invitado
 # (vistas, llamada 50); `ventana_wayland` se mide sin copia y con copia, de 320 x 240 y de 1280 x 720.
 Hipervisor: EL2 instalado en 4 núcleos
@@ -57,6 +58,7 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~gtk: sigue viva tras el hostil
 ~gtk: hecho
 ~título: Linux · Firefox en DashOS
+~título: Linux · Index of file:///usr/local/share/dashos/
 ~firefox: hecho
 ~memoria: RAM
 ~[caja-linux] linux: se para la máquina a los
