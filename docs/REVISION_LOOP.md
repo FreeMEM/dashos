@@ -1879,3 +1879,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   las demos de MUI (rama `caja-amiga-libs`).
 - Pendiente de decidir: experimento de Wine con Box64/FEX en la caja Arch (juegos de Windows; Proton de verdad necesita
   Vulkan en la caja, S25).
+- Trasfondo nativo, integrado en el escritorio (panel en `fondo`, indicadores en la barra, "Monitor del sistema" y
+  ajustes en el centro de control; privacidad: lo de otros usuarios, sumado): el usuario lo quiere DESPUÉS de que acabe
+  el agente de la caja Amiga. Worktree `.worktrees/trasfondo` (rama `trasfondo`, desde 2d7cfb0) ya creado; el agente
+  se lanzó por error y se paró a los pocos minutos: al reanudarlo, el encargo completo está en la conversación (o
+  rehacerlo desde la última fusión).
