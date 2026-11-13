@@ -1670,3 +1670,14 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   espera y reintenta dentro del plazo; antes salía como SIN_DIRECCION y `red-gloton` fallaba dos veces seguidas.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
   `make tarjeta-pi5` sale.
+
+### 2026-11-13 08:00: decisiones del usuario (aspecto de las cajas y malware de Amiga)
+- S26, todas como se recomendaron: todo "como DashOS" de serie (también la caja Amiga); paleta del fondo de serie;
+  con "Original", el modo claro/oscuro del sistema; bordes Amiga con "como DashOS": la barra de intuition pintada
+  como Material con el mismo tamaño, más sombra y esquinas del compositor; topaz de serie y Roboto solo por programa;
+  bastan las excepciones por programa.
+- S28, todas como se recomendaron: el modelo por capas, con prioridad en sacar la caja de los 4 GB (los programas en
+  modo usuario ya los hizo `caja-amiga-gadtools`); `Caja:` para el cajón del programa y `Work:` para los ficheros del
+  usuario; cambiar o borrar ejecutables, iconos y guiones pregunta con `guardian` y se recuerda por programa;
+  papelera e instantánea del cajón en cada arranque; aviso sin firmas de un bloque de arranque no estándar al montar
+  un ADF; modo usuario con excepción por programa.
