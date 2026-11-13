@@ -2,9 +2,10 @@
 //! la imagen y debajo de los iconos del Workbench. Es una capa más del fondo (la de fondo, 0, creada después de las
 //! franjas de la imagen), con la región de entrada vacía: no recibe clics.
 //!
-//! Lo lleva un hilo propio del programa `fondo`, con su propia conexión al compositor: el hilo principal sigue
-//! atendiendo al centro de control. El centro, tras guardar `Prefs/monitor`, se lo dice al fondo ("monitor"), y el hilo
-//! principal toca la puerta de esta conexión para que relea los ajustes.
+//! Va en la misma conexión al compositor que la imagen (el compositor conoce a cada proceso por la marca de su llave:
+//! una conexión por proceso), y lo mueve el bucle principal de `fondo`, que espera en esa conexión. Lo que llega por el
+//! canal "fondo" (el centro de control) lo recoge un hilo aparte, que toca la puerta de la conexión para despertarlo.
+//! El centro, tras guardar `Prefs/monitor`, se lo dice al fondo ("monitor"), y el panel relee sus ajustes.
 //!
 //! Lo que enseña (Material 3, con los colores del tema y Roboto): la hora y la fecha, la CPU por núcleo con el historial
 //! de la máquina, la memoria, los seis procesos que más gastan (las cajas, con su pastilla 68K o LINUX), los discos y
@@ -18,33 +19,30 @@ use crate::reloj;
 use crate::ventana_cliente::*;
 use alloc::string::String;
 use alloc::vec::Vec;
-use core::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 use dashos::println;
 use dashos::protocolo::archivos as a;
 use dashos::protocolo::sesiones as s;
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{con_opacidad, Tema};
 use kit::texto::Fuente;
-use wayland::tablas::{dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_output, wl_region, wl_registry, wl_shm_pool, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1};
+use wayland::tablas::{dashos_tema_v1, wl_buffer, wl_compositor, wl_region, wl_shm_pool, wl_surface, zwlr_layer_shell_v1, zwlr_layer_surface_v1};
 use wayland::Escritor;
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
 const RED_ESTADO: u32 = 4;
-/// La puerta de esta conexión: el hilo principal escribe por ella para que relea los ajustes.
-pub static PUERTA: AtomicU32 = AtomicU32::new(0);
-pub static RELEER: AtomicBool = AtomicBool::new(false);
-const MARCA_PUERTA: u64 = 0x5452_4153_464f_4e44;
-// Objetos propios de esta conexión (los de `ventana_cliente` van del 2 al 14).
-const CAPAS: u32 = 20;
-const TEMA_OBJ: u32 = 21;
-const SALIDA: u32 = 22;
-const SUP: u32 = 23;
-const CAPA: u32 = 24;
-const REGION: u32 = 25;
-const BUFER_P: u32 = 26;
-const POOL_P: u32 = 27;
-/// Dónde se proyectan el búfer del panel y la ventana de `archivos` de este hilo (las del hilo principal van aparte).
+/// La marca de la puerta de la conexión (el hilo del canal "fondo" despierta por ella al bucle principal).
+pub const MARCA_PUERTA: u64 = 0x5452_4153_464f_4e44;
+// Objetos del panel en la conexión del fondo (los de `ventana_cliente` van del 2 al 14; los del fondo, 20, 21 y desde
+// 100). El objeto de las capas (21) es el del fondo.
+const CAPAS: u32 = 21;
+pub const TEMA_OBJ: u32 = 60;
+const SUP: u32 = 61;
+const CAPA: u32 = 62;
+const REGION: u32 = 63;
+const BUFER_P: u32 = 64;
+const POOL_P: u32 = 65;
+/// Dónde se proyectan el búfer del panel y la ventana de `archivos` del panel (las de la imagen van aparte).
 const VA_PANEL: usize = 0x58_0000_0000;
 const VA_ARCHIVOS_PANEL: usize = 0x5c_0000_0000;
 /// Lo más alto que se hace (para la memoria del búfer).
@@ -83,6 +81,28 @@ const HUECO_BLOQUE: i32 = 18;
 
 /// El alto del panel con estos ajustes y estos datos.
 fn alto(aj: &Ajustes, d: &Datos, md: Medidas) -> i32 {
+    alto_con(aj, d, md, aj.graficas)
+}
+
+/// Los ajustes que caben en una pantalla de `alto_pantalla`: si no cabe, sin gráficas; si aún no, sin la hora ni los
+/// discos (en 800 × 600 no cabe todo).
+fn que_quepa(aj: &Ajustes, d: &Datos, md: Medidas, alto_pantalla: i32) -> Ajustes {
+    let max = alto_pantalla - 40 - 2 * md.margen;
+    let mut a = aj.clone();
+    if alto(&a, d, md) > max {
+        a.graficas = false;
+    }
+    for quita in ["reloj", "discos", "red"] {
+        if alto(&a, d, md) > max
+            && let Some(k) = monitor::BLOQUES.iter().position(|b| b.0 == quita)
+        {
+            a.bloques &= !(1 << k);
+        }
+    }
+    a
+}
+
+fn alto_con(aj: &Ajustes, d: &Datos, md: Medidas, graficas: bool) -> i32 {
     let mut h = md.pad;
     let mut bloque = |x: i32| {
         h += x + HUECO_BLOQUE;
@@ -91,10 +111,10 @@ fn alto(aj: &Ajustes, d: &Datos, md: Medidas) -> i32 {
         bloque(64);
     }
     if aj.bloque("cpu") {
-        bloque(ALTO_CAB + d.m.en_marcha.max(1) as i32 * ALTO_FILA_NUCLEO + if aj.graficas { ALTO_GRAFICA + 6 } else { 0 });
+        bloque(ALTO_CAB + d.m.en_marcha.max(1) as i32 * ALTO_FILA_NUCLEO + if graficas { ALTO_GRAFICA + 6 } else { 0 });
     }
     if aj.bloque("memoria") {
-        bloque(ALTO_CAB + 12 + if aj.graficas { ALTO_GRAFICA + 6 } else { 0 });
+        bloque(ALTO_CAB + 12 + if graficas { ALTO_GRAFICA + 6 } else { 0 });
     }
     if aj.bloque("procesos") {
         bloque(ALTO_CAB + monitor::LOS_QUE_MAS as i32 * ALTO_FILA_PROC);
@@ -103,7 +123,7 @@ fn alto(aj: &Ajustes, d: &Datos, md: Medidas) -> i32 {
         bloque(ALTO_CAB + d.discos.len().max(1) as i32 * 30);
     }
     if aj.bloque("red") {
-        bloque(ALTO_CAB + 20 + if aj.graficas { ALTO_GRAFICA + 6 } else { 0 });
+        bloque(ALTO_CAB + 20 + if graficas { ALTO_GRAFICA + 6 } else { 0 });
     }
     (h - HUECO_BLOQUE + md.pad).clamp(2 * md.pad, ALTO_MAX)
 }
@@ -450,187 +470,206 @@ fn medir(d: &mut Datos, disco: &mut u64) {
     d.hora = (ns > 0).then(|| reloj::fecha(ns));
 }
 
-/// El hilo del panel. No acaba (salvo si se cae el compositor).
-pub fn hilo(_: u64) -> u64 {
-    let Some((mut c, puerta)) = Cliente::conectar_con_puerta(MARCA_PUERTA) else {
-        println!("  [fondo] panel: sin compositor");
-        return 1;
-    };
-    PUERTA.store(puerta, Ordering::Release);
-    let Some(globales) = c.globales() else { return 2 };
-    let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
-    let (Some(gc), Some(gs), Some(gl), Some(go)) = (global("wl_compositor"), global("wl_shm"), global("zwlr_layer_shell_v1"), global("wl_output")) else {
-        return 3;
-    };
-    let mut e = Escritor::new();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gc).texto(Some("wl_compositor")).uint(6).uint(COMPOSITOR).fin();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(go).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
-    if let Some(gt) = global("dashos_tema_v1") {
-        e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(2).uint(TEMA_OBJ).fin();
+/// El panel: sus ajustes, lo medido y su superficie. Lo mueve el bucle principal de `fondo`.
+pub struct Panel {
+    le: Letras,
+    tema: Tema,
+    aj: Ajustes,
+    d: Datos,
+    disco: u64,
+    /// La superficie: (alto, configurada) mientras existe; la memoria del búfer; su esquina.
+    sup: Option<(i32, bool)>,
+    hoja: Option<Lamina>,
+    esquina: Esquina,
+    /// Lo que se pinta (los ajustes, recortados a lo que cabe).
+    visto: Ajustes,
+    primera: bool,
+    rehacer: bool,
+    siguiente: u64,
+    gasto_desde: (u64, i64),
+    md: Medidas,
+}
+
+impl Panel {
+    pub fn nuevo() -> Panel {
+        let aj = leer_ajustes();
+        println!("  [fondo] panel del monitor: {}", aj.escribir().replace('\n', "; "));
+        Panel {
+            le: Letras { r: Fuente::regular(), m: Fuente::medium() },
+            tema: Tema::CLARO,
+            visto: aj.clone(),
+            esquina: aj.esquina,
+            aj,
+            d: Datos::default(),
+            disco: 0,
+            sup: None,
+            hoja: None,
+            primera: true,
+            rehacer: false,
+            siguiente: 0,
+            gasto_desde: (dashos::ahora_us(), dashos::cpu_tiempo(0).max(0)),
+            md: medidas(0),
+        }
     }
-    c.mandar(&e);
-    let mut le = Letras { r: Fuente::regular(), m: Fuente::medium() };
-    let mut tema = Tema::CLARO;
-    let mut aj = leer_ajustes();
-    let mut d = Datos::default();
-    let mut disco = 0u64;
-    let mut pantalla = 0i32;
-    // La superficie: (alto, configurada) mientras existe; la memoria del búfer.
-    let mut sup: Option<(i32, bool)> = None;
-    let mut hoja: Option<Lamina> = None;
-    let mut esquina = aj.esquina;
-    let mut primera = true;
-    let (mut gasto_desde, mut cpu_desde) = (dashos::ahora_us(), dashos::cpu_tiempo(0).max(0));
-    let mut siguiente = 0u64;
-    println!("  [fondo] panel del monitor: {}", aj.escribir().replace('\n', "; "));
-    loop {
-        let ahora = dashos::ahora_us();
-        // Lo que gasta el panel (el grupo del fondo; casi todo es este hilo), una vez por minuto.
-        if ahora.saturating_sub(gasto_desde) >= 60_000_000 {
-            let cpu = dashos::cpu_tiempo(0).max(0);
-            let pm = (cpu - cpu_desde) as u64 * 100_000 / (ahora - gasto_desde).max(1);
-            println!("  [fondo] panel: gasta {},{:03} % de un núcleo (intervalo {} s)", pm / 1000, pm % 1000, aj.intervalo);
-            (gasto_desde, cpu_desde) = (ahora, cpu);
+
+    /// Enlaza el tema (versión 2: con los esquemas ya hechos).
+    pub fn atar(e: &mut Escritor, globales: &[(u32, String, u32)]) {
+        if let Some(g) = globales.iter().find(|g| g.1 == "dashos_tema_v1") {
+            e.empezar(REGISTRO, wayland::tablas::wl_registry::req::BIND).uint(g.0).texto(Some("dashos_tema_v1")).uint(g.2.min(2)).uint(TEMA_OBJ).fin();
         }
-        if RELEER.swap(false, Ordering::AcqRel) {
-            aj = leer_ajustes();
-            println!("  [fondo] panel: ajustes nuevos: {}", aj.escribir().replace('\n', "; "));
-            siguiente = 0;
+    }
+
+    /// Los ajustes nuevos (el centro guardó `Prefs/monitor`).
+    pub fn releer(&mut self) {
+        self.aj = leer_ajustes();
+        println!("  [fondo] panel: ajustes nuevos: {}", self.aj.escribir().replace('\n', "; "));
+        self.siguiente = 0;
+    }
+
+    /// La imagen puso capas nuevas (van encima de las que ya hubiera): el panel se vuelve a crear, para quedar encima.
+    pub fn rehacer(&mut self) {
+        self.rehacer = true;
+        self.siguiente = 0;
+    }
+
+    /// Cuánto falta para la próxima medida (µs).
+    pub fn plazo(&self) -> u64 {
+        if self.aj.mostrar { self.siguiente.saturating_sub(dashos::ahora_us()).max(1_000) } else { 60_000_000 }
+    }
+
+    fn quitar(&mut self, c: &mut Cliente) {
+        if self.sup.take().is_none() {
+            return;
         }
-        let md = medidas(pantalla);
-        // Quitar la superficie si no se enseña o cambió de esquina (se crea otra).
-        if sup.is_some() && (!aj.mostrar || esquina != aj.esquina) {
-            let mut e = Escritor::new();
-            e.empezar(CAPA, zwlr_layer_surface_v1::req::DESTROY).fin();
-            e.empezar(SUP, wl_surface::req::DESTROY).fin();
-            e.empezar(BUFER_P, wl_buffer::req::DESTROY).fin();
-            if let Some(h) = hoja.take() {
-                h.soltar(&mut e);
+        let mut e = Escritor::new();
+        e.empezar(CAPA, zwlr_layer_surface_v1::req::DESTROY).fin();
+        e.empezar(SUP, wl_surface::req::DESTROY).fin();
+        e.empezar(BUFER_P, wl_buffer::req::DESTROY).fin();
+        if let Some(h) = self.hoja.take() {
+            h.soltar(&mut e);
+        }
+        c.mandar(&e);
+    }
+
+    fn pintar_y_dar(&mut self, c: &mut Cliente, pantalla: (i32, i32)) {
+        if let (Some((h, true)), Some(hoja)) = (self.sup, self.hoja.as_mut()) {
+            let md = self.md;
+            pintar(hoja.px((md.ancho * h) as usize), md.ancho, h, &self.tema, &self.visto, &self.d, &mut self.le, md);
+            presentar(c, md.ancho, h);
+            if self.primera {
+                self.primera = false;
+                decir(&self.d, &self.visto, md, h, pantalla.0);
             }
-            c.mandar(&e);
-            sup = None;
-            if !aj.mostrar {
+        }
+    }
+
+    /// Si toca, mide y pinta. `pantalla`: lo que mide la pantalla.
+    pub fn tic(&mut self, c: &mut Cliente, pantalla: (i32, i32)) {
+        let ahora = dashos::ahora_us();
+        // Lo que gasta el fondo (casi todo es el panel), una vez por minuto.
+        if ahora.saturating_sub(self.gasto_desde.0) >= 60_000_000 {
+            let cpu = dashos::cpu_tiempo(0).max(0);
+            let pm = (cpu - self.gasto_desde.1).max(0) as u64 * 100_000 / (ahora - self.gasto_desde.0).max(1);
+            println!("  [fondo] panel: gasta {},{:03} % de un núcleo (intervalo {} s)", pm / 1000, pm % 1000, self.aj.intervalo);
+            self.gasto_desde = (ahora, cpu);
+        }
+        if self.sup.is_some() && (!self.aj.mostrar || self.esquina != self.aj.esquina || self.rehacer) {
+            self.quitar(c);
+            if !self.aj.mostrar {
                 println!("  [fondo] panel: oculto");
             }
         }
-        if aj.mostrar && pantalla > 0 && ahora >= siguiente {
-            siguiente = ahora + aj.intervalo as u64 * 1_000_000;
-            medir(&mut d, &mut disco);
-            let h = alto(&aj, &d, md);
-            let mut e = Escritor::new();
-            if sup.is_none() {
-                let Some(l) = Lamina::nueva(&mut e, (md.ancho * ALTO_MAX * 4) as usize, VA_PANEL, POOL_P) else {
-                    println!("  [fondo] panel: sin memoria");
-                    return 4;
-                };
-                hoja = Some(l);
-                esquina = aj.esquina;
-                let (arriba, izquierda) = match esquina {
-                    Esquina::ArribaIzquierda => (true, true),
-                    Esquina::ArribaDerecha => (true, false),
-                    Esquina::AbajoIzquierda => (false, true),
-                    Esquina::AbajoDerecha => (false, false),
-                };
-                // Anclas: 1 arriba, 2 abajo, 4 izquierda, 8 derecha. Arriba, bajo la barra (40) y su margen; a la
-                // derecha, a la izquierda de la columna de iconos del Workbench (unos 120).
-                let anclas = if arriba { 1 } else { 2 } | if izquierda { 4 } else { 8 };
-                let (m_arriba, m_abajo) = if arriba { (40 + md.margen, 0) } else { (0, md.margen) };
-                let (m_izq, m_der) = if izquierda { (md.margen, 0) } else { (0, md.margen + 120) };
-                e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP).fin();
-                e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA).uint(SUP).uint(0).uint(0).texto(Some("monitor")).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(md.ancho as u32).uint(h as u32).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(anclas).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_MARGIN).int(m_arriba).int(m_der).int(m_abajo).int(m_izq).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(-1).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
-                // Sin región de entrada: los clics pasan a lo de debajo.
-                e.empezar(COMPOSITOR, wl_compositor::req::CREATE_REGION).uint(REGION).fin();
-                e.empezar(SUP, wl_surface::req::SET_INPUT_REGION).uint(REGION).fin();
-                e.empezar(REGION, wl_region::req::DESTROY).fin();
-                e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_P).int(0).int(md.ancho).int(h).int(md.ancho * 4).uint(0).fin();
-                e.empezar(SUP, wl_surface::req::COMMIT).fin();
-                sup = Some((h, false));
-            } else if let Some((h0, lista)) = sup
-                && h0 != h
-            {
-                e.empezar(BUFER_P, wl_buffer::req::DESTROY).fin();
-                e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_P).int(0).int(md.ancho).int(h).int(md.ancho * 4).uint(0).fin();
-                e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(md.ancho as u32).uint(h as u32).fin();
-                sup = Some((h, lista));
-            }
+        self.rehacer = false;
+        if !self.aj.mostrar || pantalla.0 <= 0 || ahora < self.siguiente {
+            return;
+        }
+        self.siguiente = ahora + self.aj.intervalo as u64 * 1_000_000;
+        self.md = medidas(pantalla.0);
+        let md = self.md;
+        medir(&mut self.d, &mut self.disco);
+        self.visto = que_quepa(&self.aj, &self.d, md, pantalla.1);
+        let h = alto(&self.visto, &self.d, md);
+        let mut e = Escritor::new();
+        if self.sup.is_none() {
+            let Some(l) = Lamina::nueva(&mut e, (md.ancho * ALTO_MAX * 4) as usize, VA_PANEL, POOL_P) else {
+                println!("  [fondo] panel: sin memoria");
+                return;
+            };
+            self.hoja = Some(l);
+            self.esquina = self.aj.esquina;
+            let (arriba, izquierda) = match self.esquina {
+                Esquina::ArribaIzquierda => (true, true),
+                Esquina::ArribaDerecha => (true, false),
+                Esquina::AbajoIzquierda => (false, true),
+                Esquina::AbajoDerecha => (false, false),
+            };
+            // Anclas: 1 arriba, 2 abajo, 4 izquierda, 8 derecha. Arriba, bajo la barra (40) y su margen; a la derecha,
+            // a la izquierda de la columna de iconos del Workbench (unos 120).
+            let anclas = if arriba { 1 } else { 2 } | if izquierda { 4 } else { 8 };
+            let (m_arriba, m_abajo) = if arriba { (40 + md.margen, 0) } else { (0, md.margen) };
+            let (m_izq, m_der) = if izquierda { (md.margen, 0) } else { (0, md.margen + 120) };
+            e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP).fin();
+            e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA).uint(SUP).uint(0).uint(0).texto(Some("monitor")).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(md.ancho as u32).uint(h as u32).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(anclas).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_MARGIN).int(m_arriba).int(m_der).int(m_abajo).int(m_izq).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_EXCLUSIVE_ZONE).int(-1).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
+            // Sin región de entrada: los clics pasan a lo de debajo.
+            e.empezar(COMPOSITOR, wl_compositor::req::CREATE_REGION).uint(REGION).fin();
+            e.empezar(SUP, wl_surface::req::SET_INPUT_REGION).uint(REGION).fin();
+            e.empezar(REGION, wl_region::req::DESTROY).fin();
+            e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_P).int(0).int(md.ancho).int(h).int(md.ancho * 4).uint(0).fin();
+            e.empezar(SUP, wl_surface::req::COMMIT).fin();
+            self.sup = Some((h, false));
             c.mandar(&e);
-            if let (Some((h, true)), Some(hoja)) = (sup, hoja.as_mut()) {
-                pintar(hoja.px((md.ancho * h) as usize), md.ancho, h, &tema, &aj, &d, &mut le, md);
-                presentar(&mut c, md.ancho, h);
-                if primera {
-                    primera = false;
-                    decir(&d, &aj, md, h, pantalla);
-                }
-            }
+            return;
         }
-        let plazo = if aj.mostrar && pantalla > 0 { siguiente.saturating_sub(dashos::ahora_us()).max(1_000) } else { 60_000_000 };
-        let ev = match c.evento_plazo(plazo) {
-            Err(()) => {
-                println!("  [fondo] panel: se fue el compositor");
-                return 5;
-            }
-            Ok(ev) => ev,
-        };
-        if c.timbres > 0 {
-            c.timbres = 0;
+        if let Some((h0, lista)) = self.sup
+            && h0 != h
+        {
+            e.empezar(BUFER_P, wl_buffer::req::DESTROY).fin();
+            e.empezar(POOL_P, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_P).int(0).int(md.ancho).int(h).int(md.ancho * 4).uint(0).fin();
+            e.empezar(CAPA, zwlr_layer_surface_v1::req::SET_SIZE).uint(md.ancho as u32).uint(h as u32).fin();
+            self.sup = Some((h, lista));
+            c.mandar(&e);
         }
-        let Some((o, orden, cuerpo)) = ev else { continue };
+        self.pintar_y_dar(c, pantalla);
+    }
+
+    /// Un evento del compositor: `true` si era del panel.
+    pub fn evento(&mut self, c: &mut Cliente, o: u32, orden: u16, cuerpo: &[u8], pantalla: (i32, i32)) -> bool {
         let palabra = |k: usize| cuerpo.get(4 * k..4 * k + 4).map_or(0, |p| u32::from_le_bytes(p.try_into().unwrap()));
         match (o, orden) {
-            (SALIDA, wl_output::ev::MODE) => {
-                let w = palabra(1) as i32;
-                if w > 0 && w != pantalla {
-                    pantalla = w.min(16384);
-                    siguiente = 0;
-                }
-            }
             (TEMA_OBJ, dashos_tema_v1::ev::ESQUEMA) => {
-                kit::tema::recordar_evento_esquema(&cuerpo);
+                kit::tema::recordar_evento_esquema(cuerpo);
             }
             (TEMA_OBJ, dashos_tema_v1::ev::TEMA) => {
-                tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0);
-                if let (Some((h, true)), Some(hoja)) = (sup, hoja.as_mut()) {
-                    pintar(hoja.px((md.ancho * h) as usize), md.ancho, h, &tema, &aj, &d, &mut le, md);
-                    presentar(&mut c, md.ancho, h);
-                }
+                self.tema = Tema::del_sistema(palabra(0) | 0xff00_0000, palabra(1) != 0);
+                self.pintar_y_dar(c, pantalla);
             }
+            (TEMA_OBJ, _) => {}
             (CAPA, zwlr_layer_surface_v1::ev::CONFIGURE) => {
                 let mut e = Escritor::new();
                 e.empezar(CAPA, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
                 c.mandar(&e);
-                if let Some((h, false)) = sup {
-                    sup = Some((h, true));
-                    if let Some(hoja) = hoja.as_mut() {
-                        pintar(hoja.px((md.ancho * h) as usize), md.ancho, h, &tema, &aj, &d, &mut le, md);
-                        presentar(&mut c, md.ancho, h);
-                        if primera {
-                            primera = false;
-                            decir(&d, &aj, md, h, pantalla);
-                        }
-                    }
+                if let Some((h, false)) = self.sup {
+                    self.sup = Some((h, true));
+                    self.pintar_y_dar(c, pantalla);
                 }
             }
             (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => {
-                sup = None;
-                if let Some(h) = hoja.take() {
+                self.sup = None;
+                if let Some(h) = self.hoja.take() {
                     let mut e = Escritor::new();
                     h.soltar(&mut e);
                     c.mandar(&e);
                 }
             }
-            (1, wl_display::ev::ERROR) => {
-                println!("  [fondo] panel: error de protocolo en el objeto {}", palabra(0));
-                return 6;
-            }
-            _ => {}
+            (CAPA | SUP | BUFER_P, _) => {}
+            _ => return false,
         }
+        true
     }
 }
 

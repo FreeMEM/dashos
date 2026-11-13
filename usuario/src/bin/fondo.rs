@@ -20,8 +20,10 @@
 //! una capa por franja, cada una pegada arriba con su margen.
 //!
 //! Trasfondo nativo (lo pidió el usuario): además, el panel del monitor del sistema, en una capa de fondo encima de la
-//! imagen, que lleva un hilo propio (`fondo_panel.rs`). El centro de control le dice "monitor" tras guardar
-//! `Prefs/monitor`, y el panel relee sus ajustes.
+//! imagen (`fondo_panel.rs`). El bucle principal espera en la conexión con el compositor (una por proceso: el
+//! compositor conoce a cada uno por su marca), con el plazo de la próxima medida; lo que llega por el canal "fondo" lo
+//! recoge un hilo aparte, que lo deja en una cola y toca la puerta de la conexión. El centro de control le dice
+//! "monitor" tras guardar `Prefs/monitor`, y el panel relee sus ajustes.
 //!
 //! Llaves: 1 "ventanas" (con el poder de escritorio, por las capas), 2 "archivos", 3 "sesiones" (los procesos, con la
 //! vista de la persona de delante), 4 "red-estado" y 5 su canal "fondo".
@@ -43,7 +45,7 @@ mod reloj;
 #[path = "../fondo_panel.rs"]
 mod fondo_panel;
 
-use alloc::collections::BTreeMap;
+use alloc::collections::{BTreeMap, VecDeque};
 use alloc::string::String;
 use alloc::vec::Vec;
 use dashos::println;
@@ -215,6 +217,8 @@ fn leer_fondo(nombre: &str) -> Result<Leido, (i32, String)> {
 /// Lo que se ve: las franjas (superficie, capa, pool, búfer, memoria, y, alto) y la imagen de la que salieron.
 struct Pantalla {
     c: Cliente,
+    /// Eventos que llegaron mientras la imagen esperaba los suyos: del panel, para el bucle principal.
+    pendientes: Vec<(u32, u16, Vec<u8>)>,
     ancho: i32,
     alto: i32,
     /// Superficie y capa de cada franja (y y alto).
@@ -234,7 +238,8 @@ impl Pantalla {
 
     /// Se conecta, pide las capas y espera a saber lo que mide la pantalla.
     fn abrir() -> Option<Pantalla> {
-        let mut c = Cliente::conectar()?;
+        let (mut c, puerta) = Cliente::conectar_con_puerta(fondo_panel::MARCA_PUERTA)?;
+        PUERTA.store(puerta, core::sync::atomic::Ordering::Release);
         let globales = c.globales()?;
         let global = |n: &str| globales.iter().find(|g| g.1 == n).map(|g| g.0);
         let (Some(gc), Some(gs), Some(gl), Some(go)) = (global("wl_compositor"), global("wl_shm"), global("zwlr_layer_shell_v1"), global("wl_output")) else {
@@ -246,9 +251,11 @@ impl Pantalla {
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
         e.empezar(REGISTRO, wl_registry::req::BIND).uint(go).texto(Some("wl_output")).uint(4).uint(SALIDA).fin();
+        fondo_panel::Panel::atar(&mut e, &globales);
         e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
         c.mandar(&e);
         let (mut ancho, mut alto) = (0, 0);
+        let mut pendientes = Vec::new();
         loop {
             let (o, orden, cuerpo) = c.evento_plazo(5_000_000).ok()??;
             let palabra = |k: usize| u32::from_le_bytes(cuerpo[4 * k..4 * k + 4].try_into().unwrap());
@@ -256,14 +263,14 @@ impl Pantalla {
                 (SALIDA, wl_output::ev::MODE) => (ancho, alto) = (palabra(1) as i32, palabra(2) as i32),
                 (SYNC, wayland::tablas::wl_callback::ev::DONE) => break,
                 (1, wl_display::ev::ERROR) => return None,
-                _ => {}
+                (o, orden) => pendientes.push((o, orden, cuerpo)),
             }
         }
         if ancho <= 0 || alto <= 0 || ancho > 16384 || alto > 16384 {
             println!("  [fondo] la pantalla no dice lo que mide");
             return None;
         }
-        Some(Pantalla { c, ancho, alto, capas: Vec::new(), buferes: Vec::new(), juego: 0, siguiente: PRIMER_OBJETO })
+        Some(Pantalla { c, pendientes, ancho, alto, capas: Vec::new(), buferes: Vec::new(), juego: 0, siguiente: PRIMER_OBJETO })
     }
 
     /// Las franjas de la pantalla: (y, alto), cada una de 4 MB como mucho.
@@ -315,6 +322,8 @@ impl Pantalla {
                 } else if o == 1 && orden == wl_display::ev::ERROR {
                     println!("  [fondo] error de protocolo al pedir las capas");
                     return false;
+                } else {
+                    self.pendientes.push((o, orden, cuerpo));
                 }
             }
         }
@@ -367,20 +376,8 @@ impl Pantalla {
                     println!("  [fondo] error de protocolo al pintar");
                     return false;
                 }
-                Ok(Some(_)) => {}
+                Ok(Some(ev)) => self.pendientes.push(ev),
                 _ => return false,
-            }
-        }
-    }
-
-    /// Lo que haya mandado el compositor, sin esperar (liberar búferes, borrar objetos). `false` si se fue.
-    fn vaciar(&mut self) -> bool {
-        loop {
-            match self.c.evento_plazo(1) {
-                Ok(None) => return true,
-                Ok(Some((1, orden, _))) if orden == wl_display::ev::ERROR => return false,
-                Ok(Some(_)) => {}
-                Err(()) => return false,
             }
         }
     }
@@ -421,6 +418,7 @@ fn poner(p: &mut Option<Pantalla>, nombre: &str, actual: &mut Option<(String, u3
         return (SIN_PANTALLA, 0, w, h, 0);
     };
     let t1 = dashos::ahora_us();
+    let sin_capas = pan.capas.is_empty();
     if !pan.pintar(&leido.imagen) {
         println!("  [fondo] {}: no se pudo pintar; se queda {}", nombre, antes);
         return (SIN_PANTALLA, 0, w, h, 0);
@@ -441,6 +439,9 @@ fn poner(p: &mut Option<Pantalla>, nombre: &str, actual: &mut Option<(String, u3
         (dashos::ahora_us() - t1) / 1000
     );
     *actual = Some((String::from(nombre), leido.semilla, w, h));
+    if sin_capas {
+        PANEL_ENCIMA.store(true, core::sync::atomic::Ordering::Release);
+    }
     (BIEN, leido.semilla, w, h, ms)
 }
 
@@ -456,77 +457,172 @@ fn contestar(llave: u32, (estado, semilla, w, h, ms): (i32, u32, u32, u32, u32),
     dashos::canal_escribir(llave, &r[..20 + n], &[]);
 }
 
-fn principal() -> u64 {
-    dashos::monton::con_nombre(&"fondo");
-    let mut pantalla: Option<Pantalla> = None;
-    // El panel del monitor, en su hilo, con su pila (vive lo que el programa).
-    let pila: &'static mut [u8] = alloc::vec![0u8; 256 << 10].leak();
-    if dashos::hilos::crear(fondo_panel::hilo, 0, pila, 0) < 0 {
-        println!("  [fondo] no se pudo lanzar el hilo del panel del monitor");
+/// La puerta de la conexión con el compositor (para despertar al bucle principal) y si el panel tiene que volver a
+/// crearse encima de capas nuevas de la imagen.
+static PUERTA: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+static PANEL_ENCIMA: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+/// Un mensaje del canal "fondo": los datos, las llaves y la marca.
+struct Mensaje {
+    datos: Vec<u8>,
+    llaves: Vec<u32>,
+    marca: u64,
+}
+
+/// La cola entre el hilo del canal y el bucle principal (como mucho `MAX_COLA`; lo que sobre se tira y se cierra).
+struct Cola {
+    cerrojo: dashos::hilos::Cerrojo,
+    v: core::cell::UnsafeCell<VecDeque<Mensaje>>,
+}
+// El cerrojo protege `v`.
+unsafe impl Sync for Cola {}
+static COLA: Cola = Cola { cerrojo: dashos::hilos::Cerrojo::nuevo(), v: core::cell::UnsafeCell::new(VecDeque::new()) };
+const MAX_COLA: usize = 16;
+
+impl Cola {
+    fn con<R>(&self, f: impl FnOnce(&mut VecDeque<Mensaje>) -> R) -> R {
+        self.cerrojo.tomar();
+        // SAFETY: con el cerrojo tomado, nadie más toca la cola.
+        let r = f(unsafe { &mut *self.v.get() });
+        self.cerrojo.soltar();
+        r
     }
-    // El que se ve: nombre, semilla, ancho y alto.
-    let mut actual: Option<(String, u32, u32, u32)> = None;
-    let nombre = guardado();
-    poner(&mut pantalla, &nombre, &mut actual);
+}
+
+/// El hilo del canal "fondo": recoge cada mensaje, lo deja en la cola y despierta al bucle principal.
+fn hilo_canal(_: u64) -> u64 {
     let mut buf = [0u8; MAX_DATOS];
     let mut ll = [0u32; MAX_LLAVES];
-    // El directorio de `inicio` (sin marca): el nombre de cada cliente del canal.
-    let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
-    let mut malos = 0u64;
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),
             Recibido::Cerrado => return 0,
             Recibido::Nada => continue,
         };
-        if marca == 0 {
-            if n == 24 && nombres.len() < 64 {
-                let de = u64::from_le_bytes(buf[..8].try_into().unwrap());
-                let nombre = &buf[8..24];
-                let nombre = core::str::from_utf8(&nombre[..nombre.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("");
-                nombres.insert(de, nombre.into());
+        let m = Mensaje { datos: buf[..n].to_vec(), llaves: ll[..k].to_vec(), marca };
+        let sobra = COLA.con(|c| {
+            if c.len() >= MAX_COLA {
+                Some(m)
+            } else {
+                c.push_back(m);
+                None
             }
-            cerrar_llaves(&ll[..k]);
-            continue;
+        });
+        if let Some(m) = sobra {
+            cerrar_llaves(&m.llaves);
         }
-        if let Some(p) = pantalla.as_mut()
-            && !p.vaciar()
-        {
-            println!("  [fondo] el compositor se fue");
-            pantalla = None;
+        let puerta = PUERTA.load(core::sync::atomic::Ordering::Acquire);
+        if puerta != 0 {
+            dashos::canal_escribir(puerta, &[1], &[]);
         }
-        let del_centro = nombres.get(&marca).is_some_and(|n| n == "centro");
-        let pedido = core::str::from_utf8(&buf[..n]).unwrap_or("");
-        // Trasfondo: el centro guardó `Prefs/monitor`: que el panel lo relea (se le despierta por su puerta).
-        if del_centro && pedido == "monitor" {
-            fondo_panel::RELEER.store(true, core::sync::atomic::Ordering::Release);
-            let puerta = fondo_panel::PUERTA.load(core::sync::atomic::Ordering::Acquire);
-            let r = if puerta != 0 && dashos::canal_escribir(puerta, &[1], &[]) == 0 { BIEN } else { SIN_PANTALLA };
-            if k >= 1 {
-                contestar(ll[0], (r, 0, 0, 0, 0), "");
-            }
-            cerrar_llaves(&ll[..k]);
-            continue;
-        }
-        let respuesta = match pedido.strip_prefix("poner ") {
-            Some(nombre) if del_centro && nombre_vale(nombre) => poner(&mut pantalla, nombre, &mut actual),
-            None if del_centro && pedido == "semilla" => match &actual {
-                Some((_, s, w, h)) => (BIEN, *s, *w, *h, 0),
-                None => (SIN_FONDO, 0, 0, 0, 0),
-            },
-            _ => {
-                malos += 1;
-                if malos <= 3 {
-                    println!("  [fondo] pedido que no vale ({} bytes): nada", n);
-                }
-                (PEDIDO_MALO, 0, 0, 0, 0)
-            }
-        };
-        if k >= 1 {
-            // Tras "semilla", también el nombre del que se ve.
-            let visto = if pedido == "semilla" { actual.as_ref().map_or("", |a| a.0.as_str()) } else { "" };
-            contestar(ll[0], respuesta, visto);
-        }
-        cerrar_llaves(&ll[..k]);
     }
+}
+
+fn principal() -> u64 {
+    dashos::monton::con_nombre(&"fondo");
+    let mut pantalla: Option<Pantalla> = None;
+    // El que se ve: nombre, semilla, ancho y alto.
+    let mut actual: Option<(String, u32, u32, u32)> = None;
+    let mut panel = fondo_panel::Panel::nuevo();
+    let nombre = guardado();
+    poner(&mut pantalla, &nombre, &mut actual);
+    if pantalla.is_none() {
+        // Sin imagen, el panel también se ve (sobre el color liso).
+        pantalla = Pantalla::abrir();
+    }
+    // El canal "fondo", en su hilo, con su pila (vive lo que el programa).
+    let pila: &'static mut [u8] = alloc::vec![0u8; 64 << 10].leak();
+    if dashos::hilos::crear(hilo_canal, 0, pila, 0) < 0 {
+        println!("  [fondo] no se pudo lanzar el hilo de su canal");
+        return 1;
+    }
+    // El directorio de `inicio` (sin marca): el nombre de cada cliente del canal.
+    let mut nombres: BTreeMap<u64, String> = BTreeMap::new();
+    let mut malos = 0u64;
+    loop {
+        // Lo del panel que llegó mientras se pintaba la imagen, y la medida si toca.
+        if let Some(p) = pantalla.as_mut() {
+            if PANEL_ENCIMA.swap(false, core::sync::atomic::Ordering::AcqRel) {
+                panel.rehacer();
+            }
+            let medida = (p.ancho, p.alto);
+            for (o, orden, cuerpo) in core::mem::take(&mut p.pendientes) {
+                panel.evento(&mut p.c, o, orden, &cuerpo, medida);
+            }
+            panel.tic(&mut p.c, medida);
+        }
+        // Lo que llegó por el canal "fondo".
+        while let Some(m) = COLA.con(|c| c.pop_front()) {
+            atender(m, &mut pantalla, &mut actual, &mut nombres, &mut malos, &mut panel);
+        }
+        // Esperar: en la conexión con el compositor hasta la próxima medida (como mucho 2 s, por si un timbre no
+        // entró), o sin compositor, un rato.
+        match pantalla.as_mut() {
+            Some(p) => {
+                let medida = (p.ancho, p.alto);
+                match p.c.evento_plazo(panel.plazo().min(2_000_000)) {
+                    Ok(Some((1, orden, cuerpo))) if orden == wl_display::ev::ERROR => {
+                        let objeto = cuerpo.get(0..4).map_or(0, |b| u32::from_le_bytes(b.try_into().unwrap()));
+                        println!("  [fondo] error de protocolo en el objeto {}", objeto);
+                        pantalla = None;
+                    }
+                    Ok(Some((o, orden, cuerpo))) => {
+                        panel.evento(&mut p.c, o, orden, &cuerpo, medida);
+                    }
+                    Ok(None) => p.c.timbres = 0,
+                    Err(()) => {
+                        println!("  [fondo] el compositor se fue");
+                        pantalla = None;
+                    }
+                }
+            }
+            None => dashos::dormir_us(50_000),
+        }
+    }
+}
+
+/// Un mensaje del canal "fondo": el directorio de `inicio` (sin marca) o un pedido del centro.
+fn atender(m: Mensaje, pantalla: &mut Option<Pantalla>, actual: &mut Option<(String, u32, u32, u32)>, nombres: &mut BTreeMap<u64, String>, malos: &mut u64, panel: &mut fondo_panel::Panel) {
+    let (buf, n, ll, k, marca) = (&m.datos, m.datos.len(), &m.llaves, m.llaves.len(), m.marca);
+    if marca == 0 {
+        if n == 24 && nombres.len() < 64 {
+            let de = u64::from_le_bytes(buf[..8].try_into().unwrap());
+            let nombre = &buf[8..24];
+            let nombre = core::str::from_utf8(&nombre[..nombre.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("");
+            nombres.insert(de, nombre.into());
+        }
+        cerrar_llaves(ll);
+        return;
+    }
+    let del_centro = nombres.get(&marca).is_some_and(|n| n == "centro");
+    let pedido = core::str::from_utf8(buf).unwrap_or("");
+    // Trasfondo: el centro guardó `Prefs/monitor`: que el panel lo relea.
+    if del_centro && pedido == "monitor" {
+        panel.releer();
+        if k >= 1 {
+            contestar(ll[0], (BIEN, 0, 0, 0, 0), "");
+        }
+        cerrar_llaves(ll);
+        return;
+    }
+    let respuesta = match pedido.strip_prefix("poner ") {
+        Some(nombre) if del_centro && nombre_vale(nombre) => poner(pantalla, nombre, actual),
+        None if del_centro && pedido == "semilla" => match actual {
+            Some((_, s, w, h)) => (BIEN, *s, *w, *h, 0),
+            None => (SIN_FONDO, 0, 0, 0, 0),
+        },
+        _ => {
+            *malos += 1;
+            if *malos <= 3 {
+                println!("  [fondo] pedido que no vale ({} bytes): nada", n);
+            }
+            (PEDIDO_MALO, 0, 0, 0, 0)
+        }
+    };
+    if k >= 1 {
+        // Tras "semilla", también el nombre del que se ve.
+        let visto = if pedido == "semilla" { actual.as_ref().map_or("", |a| a.0.as_str()) } else { "" };
+        contestar(ll[0], respuesta, visto);
+    }
+    cerrar_llaves(ll);
 }
