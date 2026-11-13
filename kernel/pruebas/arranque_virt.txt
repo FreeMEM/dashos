@@ -677,6 +677,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] gadtools.library nativa (Rust)
 ~│   [caja-amiga] boopsi: 0 fallos
 ~│   [caja-amiga] boopsi.exe acabó con 0, 
+~│   [caja-amiga] ramlib: Suma(40, 2) = 42: bien
+~│   [caja-amiga] ramlib: 0 fallos
+~│   [caja-amiga] ramlib.exe acabó con 0, 
+~│   [caja-amiga] capa.exe acabó con 0, 
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con

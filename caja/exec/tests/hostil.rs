@@ -87,7 +87,8 @@ fn ronda(semilla: u64, llamadas: u32, estropear: bool) {
             hecho.d[0] = valor(&mut a, &utiles);
             acc = e.continuar(tras, &hecho, &mut r);
             vueltas += 1;
-            assert!(vueltas < 4);
+            // RawDoFmt con un PutChProc de 68k: una vuelta por carácter (hasta 64 KB y el 0).
+            assert!(vueltas < if lvo::nombre(n) == "RawDoFmt" { 65_540 } else { 4 });
         }
         match acc {
             Accion::Ceder | Accion::Bloquear | Accion::Terminar => {
