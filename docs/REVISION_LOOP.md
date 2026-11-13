@@ -1871,3 +1871,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   la caja Linux: corta correo al puerto 25 (hacia fuera, TCP 10.0.2.16:44586 → 1.1.1.1:25)"; arranque-virt bien a la
   segunda (la primera, con dos agentes probando a la vez, las ventanas de prueba salieron oscurecidas en la captura:
   algo delante en ese instante; sin relación con el cambio, a vigilar si se repite).
+- `caja-amiga-reaction` (BOOPSI y ReAction; pestaña 68K a la derecha en el aspecto original; campos seguidos) y
+  `explorador` (programa `explorador` tipo Nautilus; el Workbench le pasa los dobles clics) unidos en fusion-fondo
+  (2d7cfb0; conflicto en kernel/Makefile: las dos capturas y TIEMPO_VIRT 600). Tanda completa en marcha.
+- Compositor: set_min_size/set_max_size respetados (85a5f0b, prueba hostil `tamano_minimo_y_maximo`).
+- El agente de la caja Amiga sigue con bibliotecas de disco (`LIBS:`), el AmigaOS del usuario como capa y lo que pidan
+  las demos de MUI (rama `caja-amiga-libs`).
+- Pendiente de decidir: experimento de Wine con Box64/FEX en la caja Arch (juegos de Windows; Proton de verdad necesita
+  Vulkan en la caja, S25).
