@@ -247,6 +247,8 @@ impl<M: Memorias> Escena<M> {
             h -= dy;
         }
         let nuevo = (w.clamp(MINIMO, super::MAX_LADO), h.clamp(MINIMO, super::MAX_LADO));
+        // Dentro del mínimo y el máximo que pidió la ventana (`set_min_size`, `set_max_size`).
+        let nuevo = self.clientes.get(&r.ventana.0).and_then(|c| c.xdg.get(&r.xdg)).map_or(nuevo, |x| x.limitar(nuevo));
         if nuevo == r.ahora && r.pendiente.is_none() {
             return;
         }

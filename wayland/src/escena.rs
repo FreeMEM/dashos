@@ -479,6 +479,27 @@ pub struct Xdg {
     pub emergente: Option<emergentes::Emergente>,
     /// S27: el espacio de trabajo de la ventana (1 a `MAX_ESPACIOS`); 0 hasta que sale en pantalla.
     pub espacio: u32,
+    /// El tamaño mínimo y máximo que pidió (`set_min_size`, `set_max_size`): ancho y alto de cada uno, 0 sin límite.
+    /// Se respetan al redimensionar desde el compositor y al maximizar (`limitar`).
+    pub minimo: (i32, i32),
+    pub maximo: (i32, i32),
+}
+
+impl Xdg {
+    /// Un tamaño dentro de lo que pidió la ventana (y de `MINIMO`..`MAX_LADO`). Si pidió un mínimo mayor que el
+    /// máximo, gana el máximo.
+    pub fn limitar(&self, (w, h): (i32, i32)) -> (i32, i32) {
+        let uno = |v: i32, min: i32, max: i32| {
+            let v = v.max(min).clamp(emergentes::MINIMO, MAX_LADO);
+            if max > 0 { v.min(max.max(emergentes::MINIMO)) } else { v }
+        };
+        (uno(w, self.minimo.0, self.maximo.0), uno(h, self.minimo.1, self.maximo.1))
+    }
+
+    /// Si el máximo que pidió no deja llenar `w` × `h` (no se puede maximizar: un diálogo de tamaño fijo).
+    pub fn no_cabe_en(&self, w: i32, h: i32) -> bool {
+        (self.maximo.0 > 0 && self.maximo.0 < w) || (self.maximo.1 > 0 && self.maximo.1 < h)
+    }
 }
 
 /// Lo de cada cliente.
@@ -2612,6 +2633,12 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 match orden {
                     xdg_toplevel::req::SET_TITLE => x.titulo = args[0].texto().into(),
                     xdg_toplevel::req::SET_APP_ID => x.app = args[0].texto().into(),
+                    // Lo negativo cuenta como sin límite, y nada pasa de `MAX_LADO`: un cliente no rompe las cuentas.
+                    xdg_toplevel::req::SET_MIN_SIZE | xdg_toplevel::req::SET_MAX_SIZE => {
+                        let v = |a: &Valor| a.int().clamp(0, MAX_LADO);
+                        let t = (v(&args[0]), v(&args[1]));
+                        if orden == xdg_toplevel::req::SET_MIN_SIZE { x.minimo = t } else { x.maximo = t }
+                    }
                     _ => {}
                 }
             }
@@ -3496,6 +3523,10 @@ impl<M: Memorias> Escena<M> {
         }
         let g = x.geometria.unwrap_or_default();
         let (w, h) = (a.w, a.h - barra);
+        // Un tamaño máximo menor que lo que queda: no se maximiza (un diálogo de tamaño fijo).
+        if si && x.no_cabe_en(w, h) {
+            return;
+        }
         let origen = (a.x - g.x, a.y + barra - g.y);
         let nuevo = match (si, x.antes_de_maximizar) {
             (true, None) => {

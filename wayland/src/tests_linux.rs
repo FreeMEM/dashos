@@ -634,3 +634,51 @@ fn tablas_nuevas() {
     assert!(interfaz("zxdg_toplevel_decoration_v1").is_some());
     assert!(interfaz("zwp_primary_selection_offer_v1").is_some());
 }
+
+/// `set_min_size` y `set_max_size`: al redimensionar desde la franja, el tamaño no pasa de lo que pidió; un máximo
+/// menor que la pantalla no deja maximizar (diálogo de tamaño fijo). Hostil: negativos y enormes cuentan como sin
+/// límite o como `MAX_LADO`, y un mínimo mayor que el máximo no rompe nada (gana el máximo).
+#[test]
+fn tamano_minimo_y_maximo() {
+    let mut escena = escena_800();
+    let mut c = Conexion::new();
+    abrir(&mut escena, &mut c, 1, 200, 100, Some(2));
+    let mut e = Escritor::new();
+    e.empezar(10, xdg_toplevel::req::SET_MAX_SIZE).int(220).int(110).fin();
+    e.empezar(10, xdg_toplevel::req::SET_MIN_SIZE).int(-5).int(i32::MAX).fin();
+    bien(&mut escena, &mut c, 1, &e);
+    let x = escena.clientes[&1].xdg.values().find(|x| x.toplevel == Some(10)).unwrap();
+    assert_eq!((x.minimo, x.maximo), ((0, MAX_LADO), (220, 110)));
+    assert_eq!(x.limitar((500, 500)), (220, 110), "mínimo mayor que el máximo: gana el máximo");
+    // Redimensionar por abajo a la derecha 300 × 300: se queda en 220 × 110.
+    let v = decoracion::ventana_de(&escena.clientes[&1], 7).unwrap();
+    ir(&mut escena, v.x + v.w + 2, v.y + v.h + 2);
+    escena.raton(0, 0, 1);
+    let ev = escena.raton(300, 300, 1);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    let conf = ev.iter().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
+    assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1)), (220, 110));
+    escena.raton(0, 0, 0);
+    confirmar(&mut escena, &mut c, 1, &ev);
+    // El botón de maximizar no la maximiza.
+    let antes = sitio(&escena, 1);
+    let b = decoracion::barra_de(&escena.clientes[&1], 7).unwrap();
+    ir(&mut escena, b.x + b.w - MARGEN_BOTON - LADO_BOTON - LADO_BOTON / 2, b.y + ALTO_BARRA / 2);
+    let ev = escena.raton(0, 0, 1);
+    escena.raton(0, 0, 0);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    assert!(!ev.iter().any(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE), "sin maximizar: {ev:?}");
+    assert_eq!(sitio(&escena, 1), antes);
+    // Sin límites (0, 0), vuelve a poder maximizarse.
+    let mut e = Escritor::new();
+    e.empezar(10, xdg_toplevel::req::SET_MAX_SIZE).int(0).int(-1).fin();
+    e.empezar(10, xdg_toplevel::req::SET_MIN_SIZE).int(0).int(0).fin();
+    bien(&mut escena, &mut c, 1, &e);
+    let b = decoracion::barra_de(&escena.clientes[&1], 7).unwrap();
+    ir(&mut escena, b.x + b.w - MARGEN_BOTON - LADO_BOTON - LADO_BOTON / 2, b.y + ALTO_BARRA / 2);
+    let ev = escena.raton(0, 0, 1);
+    escena.raton(0, 0, 0);
+    let ev = repartir(&mut escena, &mut [(1, &mut c)], ev);
+    let conf = ev.iter().rev().find(|x| x.1 == 10 && x.2 == xdg_toplevel::ev::CONFIGURE).unwrap();
+    assert_eq!((u32_en(&conf.3, 0), u32_en(&conf.3, 1)), (800, 600 - ALTO_BARRA as u32));
+}
