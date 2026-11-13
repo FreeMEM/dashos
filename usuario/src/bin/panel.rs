@@ -656,11 +656,14 @@ fn conectar_con_el_estado() -> bool {
     } else {
         (-1, 0)
     };
-    ll[..k.min(ll.len())].iter().for_each(|&l| {
-        dashos::cerrar(l);
-    });
+    // Con error, `k` no vale (la llamada no lo toca): solo se miran las llaves si llegó algo.
+    if n >= 0 {
+        ll[..k.min(ll.len())].iter().for_each(|&l| {
+            dashos::cerrar(l);
+        });
+    }
     dashos::cerrar(lectura);
-    n < 0 && k == 0
+    n < 0
 }
 
 /// S27, oleada 2: quién está delante, de `sesiones` (vacío si no hay nadie o no contesta).
