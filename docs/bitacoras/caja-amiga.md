@@ -608,3 +608,24 @@ texto largo se corta allí por la derecha). Con esa comparación salió el fallo
   se apaga como siempre. No es de la caja Amiga; al juntar con esa rama, desaparece.
 - La captura: `capturas-agente/caja-dash-ventana.png` (la pantalla con la ventana de Dash, a 800x600) y
   `caja-dash-ventana-detalle.png` (la ventana, al doble); la del oráculo, `oraculo-fsuae-dash-ventana.png`.
+
+## 2026-11-13: decisiones del usuario
+
+El usuario aceptó todas las recomendaciones ("como recomiendas"):
+
+1. **El ejecutable de la caja, por encima de 4 GB**: parche de Emu68 que cargue las direcciones de sus funciones con
+   64 bits. Pronto: hoy el 68k puede escribir los datos de la caja y usar sus permisos.
+2. **El Enforcer que avisa y sigue**: canal de excepciones del kernel por proceso. Después de GadTools.
+3. **Sin PAN en la A72 (Pi 4)**: se acepta; en la Pi 5 (A76) se activa.
+4. **UCI en EL0 para todos los procesos**: se acepta.
+5. **Varias tareas 68k**: un solo hilo que cambia de tarea, como un Amiga (Forbid y Disable como esperan los
+   programas). Para usar varios núcleos, un programa por caja.
+6. **Cortar un programa con la NMI de nivel 7**: se acepta.
+7. **Número de función de 16 bits**: se acepta.
+8. **`SYS:` de solo lectura lo controla `dos`, volumen a volumen** (ERROR_DISK_WRITE_PROTECTED).
+9. **La fuente del Workbench**, de las preferencias cuando las haya; si no, topaz/8.
+10. **Las cuatro pruebas en una caja**: se queda así.
+11. **Las líneas de Dash en un fichero aparte**, que solo se mira si está `~/Projects/FreeMEMLang/dash`.
+
+Preocupación del usuario: el malware de Amiga era muy destructivo (virus de arranque, de enlace, troyanos que
+formateaban). Estudio y pruebas en `docs/diseño/S28-malware-amiga.md`.
