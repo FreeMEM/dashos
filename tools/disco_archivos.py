@@ -53,6 +53,11 @@ CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
 # S28: un ejecutable que actualiza `actualiza.exe` (un programa honrado; la guardia pregunta): una cabecera hunk vacía
 # con la versión en los 4 últimos bytes. La prueba lo deja en la versión 4 (tres vueltas con permiso).
 CAJA_VIEJO = struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 1)
+# ramlib: bibliotecas de disco en `Caja:Libs` (su `LIBS:`): una buena, una con el RomTag falso, una que miente con su
+# versión (`caja/pruebas68k/prueba_lib.c`) y una que no es un ejecutable.
+PRUEBAS68K = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k")
+CAJA_LIBS = [(n, open(os.path.join(PRUEBAS68K, n), "rb").read()) for n in ("prueba.library", "falsa.library", "miente.library")]
+CAJA_LIBS.append(("rota.library", b"\x00\x00\x03\xf3 esto no es un ejecutable"))
 # S28: la papelera de la caja (la crea el servicio de archivos), con lo que borran el troyano (sus datos, dos ficheros
 # con el mismo nombre y uno de nombre largo: `caja/pruebas68k/malware/troyano.c`) y el virus de guiones (`inocente`).
 PAPELERA = CAJA + ".papelera"
@@ -104,6 +109,8 @@ if sys.argv[1] == "--comprobar":
         f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        f"{CAJA}/Libs/ cajón",
+        *[f"{CAJA}/Libs/{n} {len(d)}" for n, d in sorted(CAJA_LIBS)],
         f"{CAJA}/S/ cajón",
         f"{CAJA}/S/Startup-Sequence {len(CAJA_GUION)}",
         f"{PAPELERA}/ cajón",
@@ -255,7 +262,8 @@ with tempfile.TemporaryDirectory() as t:
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),
                                ("C", "viejo", CAJA_VIEJO),
                                ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
-                               ("", "datos.txt", b"datos de la caja\n")]:
+                               ("", "datos.txt", b"datos de la caja\n"),
+                               *[("Libs", n, d) for n, d in CAJA_LIBS]]:
         os.makedirs(os.path.join(caja, sub), exist_ok=True)
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)

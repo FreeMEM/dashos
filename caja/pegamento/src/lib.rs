@@ -21,6 +21,7 @@ mod compositor;
 mod defensa;
 mod memoria;
 mod preguntador;
+mod ramlib;
 mod tema;
 
 /// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.
@@ -91,6 +92,9 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
+/// ramlib (`ramlib.rs`): cargar de disco y soltar lo cargado.
+const N_RAMLIB_CARGAR: u16 = 0xD00;
+const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
 /// escribir), que es `Caja:`; la 1, el disco para leer, que es `SYS:`. Con una ficha vieja (solo la 0, el disco), `SYS:`
 /// va en la 0.
@@ -139,6 +143,10 @@ struct Caja {
     /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
     /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
     n_waittof: u16,
+    /// ramlib: lo cargado de disco, lo soltado y cuántas cargas se han dicho.
+    ramlib_cargas: u32,
+    ramlib_soltadas: u32,
+    ramlib_dichas: u32,
 }
 
 /// El estado, para las funciones `extern "C"`.
@@ -165,6 +173,8 @@ fn di(texto: &str) {
 struct CajaDos<'a> {
     ex: &'a mut Exec<MemoriaCaja>,
     consola: &'a mut Consola,
+    /// Lo que reserve dos es del sistema, no de la tarea (las bibliotecas que carga ramlib: siguen al acabar ella).
+    sistema: bool,
 }
 
 /// Lo que escriben los programas en la consola: con un prefijo al principio de cada línea si la caja lo pide (los
@@ -189,7 +199,11 @@ const DE_1970_A_1978: u64 = 2922 * 86400;
 
 impl caja_dos::Caja for CajaDos<'_> {
     fn reservar(&mut self, largo: u32) -> u32 {
-        self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0)
+        let d = self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+        if self.sistema && d != 0 {
+            self.ex.cambiar_dueno(d - 4, 0);
+        }
+        d
     }
     fn liberar(&mut self, dir: u32, _largo: u32) {
         let _ = self.ex.free_vec(dir);
@@ -298,7 +312,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
     if hay_fs {
-        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola };
+        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola, sistema: false };
         let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
         vol = match dos.montar(&mut cd, "SYS", sys, true) {
             Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
@@ -378,7 +392,22 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         excepciones: 0,
         n_waittof: 0,
         sin_consola: false,
+        ramlib_cargas: 0,
+        ramlib_soltadas: 0,
+        ramlib_dichas: 0,
     };
+    // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
+    c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
+    {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        let mut hechas = Vec::new();
+        for (nombre, ruta) in [("LIBS", "Caja:Libs"), ("DEVS", "Caja:Devs"), ("Classes", "Caja:Classes"), ("FONTS", "Caja:Fonts")] {
+            if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
+                hechas.push(alloc::format!("{}: {}", nombre, ruta));
+            }
+        }
+        di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+    }
     c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
     // SEGURIDAD: ver `caja()`; aquí se pone el valor por primera vez.
@@ -573,7 +602,7 @@ fn crear_proceso(
         return Err(caja_exec::Fallo::TareaDesconocida { dir: t });
     }
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
-    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
     let ex = &mut c.ex;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
@@ -638,7 +667,7 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let Some(c) = caja() else { return 0 };
     let ventanas = c.gr.ventanas().len();
     {
-        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         c.dos.acabar_tarea(&mut cd, t);
     }
     c.gr.tarea_muerta(&mut c.ex, t);
@@ -755,6 +784,14 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     if c.util.es_mia(n) {
         return de_accion(c.util.llamar(&mut c.ex, n, r));
     }
+    if n == N_RAMLIB_CARGAR {
+        r.d[0] = ramlib::cargar(c, r.a[1], r.d[1]);
+        return Fin::Seguir;
+    }
+    if n == N_RAMLIB_SOLTAR {
+        ramlib::soltar(c, r.d[1]);
+        return Fin::Seguir;
+    }
     if c.timer.es_mio(n) {
         let reloj = reloj();
         return de_accion(c.timer.llamar(&mut c.ex, n, r, reloj));
@@ -763,7 +800,7 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
     {
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
-        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
         (r.d, r.a) = (rd.d, rd.a);
         return match a {
@@ -931,7 +968,7 @@ fn decir_compositor(c: &mut Caja) {
 
 /// La hora de intuition (segundos y microsegundos desde 1978).
 fn poner_hora(c: &mut Caja) {
-    let cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+    let cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let (s, us) = caja_dos::Caja::hora(&cd);
     c.gr.poner_hora(s.saturating_sub(DE_1970_A_1978) as u32, us);
 }

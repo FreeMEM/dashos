@@ -458,6 +458,7 @@ extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
 extern const uint8_t prog_anidado[], prog_anidado_fin[];
 extern const uint8_t prog_gadtools[], prog_gadtools_fin[];
 extern const uint8_t prog_boopsi[], prog_boopsi_fin[];
+extern const uint8_t prog_ramlib[], prog_ramlib_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1163,6 +1164,17 @@ int caja_main(void)
                (int)d0, llamadas, hechas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
+
+        /* 8b2. ramlib (ramlib.c): abre bibliotecas de disco (Caja:Libs, su LIBS:), las usa y las cierra, y lo malo (un
+           RomTag falso, una que miente con su versión, un fichero que no es ejecutable, caminos raros, layers.library).
+           Al acabar no queda nada suyo en memoria: los bloques del sistema, como antes. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("ramlib", prog_ramlib, (size_t)(prog_ramlib_fin - prog_ramlib), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
+        di("ramlib.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, %u bloques del sistema de más: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, caja_bloques(0) - sistema, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
         /* 8c. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
            espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana

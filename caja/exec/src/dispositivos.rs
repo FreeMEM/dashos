@@ -125,6 +125,12 @@ impl<M: Memoria> Exec<M> {
         let n = self.cadena(nombre)?;
         let d = self.find_name(self.base + execbase::DEVICELIST, &n)?;
         self.e8(ior + io::IO_ERROR, 0)?;
+        // No está: ramlib la busca en disco (DEVS:) y vuelve aquí.
+        if d == 0
+            && let Some(acc) = self.pedir_carga(nombre, &n, crate::ramlib::Apertura { nombre, version: 0, disp: Some((unidad, ior, flags)) }, r)
+        {
+            return Ok(acc);
+        }
         if d == 0 {
             self.e32(ior + io::IO_DEVICE, 0)?;
             self.e8(ior + io::IO_ERROR, io::IOERR_OPENFAIL as u8)?;
@@ -148,8 +154,11 @@ impl<M: Memoria> Exec<M> {
             self.e32(ior + io::IO_DEVICE, 0)?;
             return Ok(());
         }
-        let n = self.l16(d + library::LIB_OPENCNT)?;
-        self.e16(d + library::LIB_OPENCNT, n.saturating_add(1))?;
+        // Los de disco (ramlib) llevan su cuenta en su `Open`, como en el Amiga; los nativos, aquí.
+        if !self.ramlib.cargadas.contains_key(&d) {
+            let n = self.l16(d + library::LIB_OPENCNT)?;
+            self.e16(d + library::LIB_OPENCNT, n.saturating_add(1))?;
+        }
         let t = self.tarea_actual();
         if let Some(i) = self.tareas.get_mut(&t) {
             i.bibliotecas.push(d);
@@ -167,7 +176,7 @@ impl<M: Memoria> Exec<M> {
         let mut rr = *r;
         rr.a[1] = ior;
         rr.a[6] = d;
-        Ok(self.llamar_codigo(d - 12, rr, Continuacion::CerrarDispositivo { io: ior }, r))
+        Ok(self.llamar_codigo(d - 12, rr, Continuacion::CerrarDispositivo { io: ior, dev: d }, r))
     }
 
     pub(crate) fn tras_cerrar_dispositivo(&mut self, ior: u32) -> Result<(), Fallo> {

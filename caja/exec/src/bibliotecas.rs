@@ -98,17 +98,31 @@ impl<M: Memoria> Exec<M> {
                     }
                 }
             }
-            Continuacion::CerrarBiblioteca { .. } | Continuacion::IniciarBiblioteca | Continuacion::Devolver => {}
+            Continuacion::CerrarBiblioteca { lib } => return self.tras_cerrar(lib, d0, r),
+            Continuacion::IniciarBiblioteca | Continuacion::Devolver => {}
+            Continuacion::Cargada(a) => return self.tras_carga(a, d0, r),
+            Continuacion::Fallida(a) => return self.apertura_fallida(&a, r),
+            Continuacion::Residente { a, seglist } => return self.tras_residente(a, seglist, d0, r),
+            Continuacion::AutoIniciada { tipo, tras } => {
+                let lib = self.tras_autoinit(tipo, d0);
+                let siguiente = self.sacar(tras);
+                let mut h = *hecho;
+                h.d[0] = lib;
+                return self.continuar(siguiente, &h, r);
+            }
+            Continuacion::Echada { lib, d0: v } => return self.tras_echar(lib, d0, v, r),
+            Continuacion::Valor(v) => r.d[0] = v,
             Continuacion::AbrirDispositivo { dev, io } => {
                 if let Err(f) = self.tras_abrir_dispositivo(dev, io, r) {
                     self.avisar("OpenDevice", f);
                     r.d[0] = io::IOERR_OPENFAIL as i32 as u32;
                 }
             }
-            Continuacion::CerrarDispositivo { io } => {
+            Continuacion::CerrarDispositivo { io, dev } => {
                 if let Err(f) = self.tras_cerrar_dispositivo(io) {
                     self.avisar("CloseDevice", f);
                 }
+                return self.tras_cerrar(dev, d0, r);
             }
             Continuacion::HacerIO { io } => match self.tras_doio(io, r) {
                 Ok(a) => return a,
@@ -172,6 +186,12 @@ impl<M: Memoria> Exec<M> {
             && let Some(k) = n.iter().rposition(|&c| c == b'/' || c == b':')
         {
             lib = self.find_name(self.base + execbase::LIBLIST, &n[k + 1..])?;
+        }
+        // No está: ramlib la busca en disco (LIBS:...) y vuelve aquí.
+        if lib == 0
+            && let Some(acc) = self.pedir_carga(nombre, &n, crate::ramlib::Apertura { nombre, version, disp: None }, r)
+        {
+            return Ok(acc);
         }
         if lib == 0 || (self.l16(lib + library::LIB_VERSION)? as u32) < version {
             r.d[0] = 0;
@@ -363,6 +383,21 @@ impl<M: Memoria> Exec<M> {
         seglist: u32,
         r: &mut Registros,
     ) -> Result<Accion, Fallo> {
+        self.make_library_con(vectores, estructura, init, tamano_datos, seglist, Continuacion::IniciarBiblioteca, r)
+    }
+
+    /// `MakeLibrary` que sigue con `tras` tras el `init`.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn make_library_con(
+        &mut self,
+        vectores: u32,
+        estructura: u32,
+        init: u32,
+        tamano_datos: u32,
+        seglist: u32,
+        tras: Continuacion,
+        r: &mut Registros,
+    ) -> Result<Accion, Fallo> {
         if vectores == 0 {
             return Err(Fallo::PunteroNulo);
         }
@@ -391,7 +426,7 @@ impl<M: Memoria> Exec<M> {
         rr.d[0] = lib;
         rr.a[0] = seglist;
         rr.a[6] = self.base;
-        Ok(self.llamar_codigo(init, rr, Continuacion::IniciarBiblioteca, r))
+        Ok(self.llamar_codigo(init, rr, tras, r))
     }
 
     /// Crea una biblioteca nativa de la caja (dos, graphics, intuition... cuando las haya) y la añade a

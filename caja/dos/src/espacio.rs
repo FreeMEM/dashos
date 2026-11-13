@@ -32,6 +32,22 @@ pub struct CapasS4b<'a> {
 }
 
 impl<F: SistemaArchivos> Dos<F> {
+    /// Para ramlib (la carga de bibliotecas y dispositivos de disco, en la caja): lee el fichero `ruta` (con las
+    /// asignaciones y `PROGDIR:` de la tarea en marcha) y lo carga con `c.cargar_segmentos`, que puede reservar en
+    /// otra memoria que la de la tarea. La lista de segmentos no queda apuntada como de la tarea (no es un `LoadSeg`
+    /// suyo): la suelta quien la cargó, con `c.descargar_segmentos`. El error, el de dos.
+    pub fn cargar_de_disco<C: Caja>(&mut self, c: &mut C, ruta: &[u8]) -> Result<u32, u32> {
+        let datos = self.leer_entero(c, ruta, 16 << 20).map_err(|e| match e {
+            E::Io(n) => n,
+            E::Mal(f) => f.codigo(),
+        })?;
+        let seg = c.cargar_segmentos(&datos)?;
+        if seg == 0 {
+            return Err(ERROR_BAD_HUNK);
+        }
+        Ok(seg)
+    }
+
     // --- Volúmenes ---
 
     /// Monta una raíz del servicio como volumen `nombre` (sin `:`). La raíz es de dos desde ahora. El primero que se

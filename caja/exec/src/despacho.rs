@@ -6,7 +6,7 @@
 
 use crate::lvo::{self, FIN_DE_TAREA, ULTIMO_DE_EXEC};
 use crate::tareas::Espera;
-use crate::{Accion, Exec, Fallo, Memoria, Registros};
+use crate::{Continuacion, Accion, Exec, Fallo, Memoria, Registros};
 
 fn d0(r: &mut Registros, v: u32) -> Result<Accion, Fallo> {
     r.d[0] = v;
@@ -58,6 +58,10 @@ impl<M: Memoria> Exec<M> {
                 d0(r, v)
             }
             4 => d0(r, 0),
+            // FindResident(name)(a1): no hay módulos de ROM en la caja.
+            16 => d0(r, 0),
+            // InitResident(resident, segList)(a1/d1)
+            17 => self.iniciar_residente(a[1], d[1], Continuacion::Devolver, r),
             // InitStruct(initTable, memory, size)(a1/a2/d0)
             13 => {
                 self.init_struct(a[1], a[2], d[0])?;

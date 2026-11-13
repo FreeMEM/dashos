@@ -1481,3 +1481,47 @@ con GadTools esperando 90 s, la sesión se bloqueaba antes.
   allá de donde se ve (ahora la letra va seguida).
 - La excepción "original" en una caja "como DashOS": la pantalla dice `WBorTop` 0 y la ventana lleva `BorderTop` 11.
 - El oráculo visual de ReAction en FS-UAE (la captura sale de la pantalla de la consola).
+
+## 2026-11-13: bibliotecas de disco (ramlib) y el AmigaOS del usuario
+
+Rama `caja-amiga-libs`, desde `fusion-fondo` (d28660d). La meta: ver Tachyon 68k (MUI 5) dentro de la caja. Plan del
+coordinador, por pasos: ramlib, el AmigaOS del usuario como capa, apuntar lo que falta, Tachyon. Diseño: S4, apartado 6
+y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nunca lo que toca el chipset).
+
+### Paso 1: ramlib
+
+- **exec** (`caja/exec/src/ramlib.rs`): un `OpenLibrary` u `OpenDevice` de algo que no está en memoria pide a la caja
+  que lo cargue (`poner_ramlib`: un número nativo para cargar y otro para soltar; `Accion::Llamar` con su
+  continuación). Con la lista de segmentos, exec busca el `RomTag` (un `RTC_MATCHWORD` cuyo `rt_MatchTag` se apunta a
+  sí mismo, entero dentro de su segmento), lo inicia (`InitResident`: con `RTF_AUTOINIT`, `MakeLibrary` con su tabla y
+  después `AddLibrary` o `AddDevice`; sin él, su `rt_Init` con D0 = 0, A0 = la lista y A6 = SysBase) y abre la
+  biblioteca. Al cerrarla el último, su `Expunge`; si devuelve la lista de segmentos, se suelta. `InitResident` y
+  `FindResident` (0: no hay ROM) también para los programas. Lo nativo siempre gana: solo se pide lo que no está en la
+  lista, y un `RomTag` que se llame como una que ya está (una nativa) no se inicia. Una que se abre a sí misma desde su
+  `Init` no se vuelve a cargar. Una que miente con su versión (más baja que la pedida) se echa en seguida. Los
+  dispositivos de disco llevan su cuenta de aperturas en su `Open`, como en el Amiga (los nativos, exec).
+- **dos** (`caja/dos/src/hunk.rs`): el cargador hunk en Rust, para `LoadSeg` (antes daba `ERROR_NOT_IMPLEMENTED`: el
+  cargador estaba en C, solo para los programas de prueba de la caja) y para ramlib: CODE, DATA, BSS, RELOC32,
+  RELOC32SHORT, DREL32, SYMBOL, DEBUG, NAME, END; todo comprobado; si falla, suelta lo que reservó.
+  `Dos::cargar_de_disco`: lee un fichero (con las asignaciones de la tarea) y lo carga sin apuntarlo como `LoadSeg`
+  suyo.
+- **La caja** (`caja/pegamento/src/ramlib.rs`): busca en `LIBS:`, `Classes:`, `PROGDIR:Libs/` y `PROGDIR:Classes/`
+  (los dispositivos en `DEVS:` y `PROGDIR:Devs/`; un nombre con `:`, tal cual), carga en memoria del sistema (la
+  biblioteca sigue cuando acaba la tarea que la abrió, hasta que se echa) y el JIT olvida lo traducido. Nunca de
+  disco: exec, graphics, layers, intuition y dos. `LIBS:`, `DEVS:`, `Classes:` y `FONTS:` se asignan al arrancar a
+  los cajones de `Caja:` que haya (en el disco de pruebas, `Caja:Libs`).
+- **Prueba de la caja** (`caja/pruebas68k/ramlib.c`, con `prueba_lib.c`: una biblioteca de disco hecha a mano, con su
+  `RomTag`, `RTF_AUTOINIT`, Open/Close/Expunge que se echa sola y `Suma`): abre `prueba.library` de `Caja:Libs`, la
+  usa (`Suma(40, 2)` = 42), la abre otra vez (la misma), la cierra (se echa) y la abre por su camino entero. Lo malo:
+  versión más nueva de la que hay, RomTag falso (`falsa.library`), versión que miente (`miente.library`), un fichero
+  que no es ejecutable (`rota.library`), una que no existe, `LIBS://../S/Startup-Sequence`, `layers.library` (nunca de
+  disco), graphics (la nativa) y, al final, nada suyo en memoria: 0 fallos, 0 avisos, 0 bloques sin soltar y los
+  bloques del sistema como antes.
+- **Pruebas de cargo**: `exec/tests/ramlib.rs` (con una "caja" que hace lo que haría la de verdad: cargar, abrir,
+  cerrar y echar; lo nativo gana; RomTag falso, sin RomTag, tabla de saltos fuera de la memoria, versión que miente,
+  cerrar dos veces, nombres de 300 letras, vacíos y con caminos raros, la que se abre a sí misma, un dispositivo) y
+  `dos/tests/hunk.rs` (ejecutables y bibliotecas de verdad de `caja/pruebas68k`, el RomTag reubicado; cortados por
+  todas partes, 6000 con bytes cambiados al azar, a mano: tamaños enormes, reubicaciones fuera, overlays, sin memoria a
+  mitad; nada sin soltar).
+- `make prueba` (BIEN cargador hunk, BIEN esperado.txt) y `make arranque-virt` (las seis BIEN, con la línea nueva de
+  ramlib.exe): bien.

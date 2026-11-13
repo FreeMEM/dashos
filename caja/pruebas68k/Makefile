@@ -3,7 +3,7 @@
 A := /opt/amiga/bin/m68k-amigaos-
 HUNK2BIN := ../../jit-host/pruebas68k/hunk2bin.py
 
-all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe
+all: sistema.bin hola.bin lineaa.bin bucle.bin mala.bin saludo.exe ventana.exe hostil.exe anidado.exe gadtools.exe actualiza.exe boopsi.exe ramlib.exe prueba.library falsa.library miente.library
 
 sistema.bin: BASE := 0x101600
 hola.bin: BASE := 0x110000
@@ -35,3 +35,18 @@ CFLAGS_VENTANA := -m68020 -O2 -ffreestanding -fno-builtin -nostdlib -nostartfile
 	rm -f $*_entrada.o
 
 .PHONY: all
+
+# ramlib: prueba.library (una biblioteca de disco hecha a mano, con su RomTag y RTF_AUTOINIT) y sus variantes
+# hostiles (falsa: un RomTag que no se apunta a sí mismo; miente: dice la versión 1), y el programa que las abre.
+prueba.library: prueba_lib.c biblioteca_entrada.s
+	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o prueba_lib_entrada.o
+	$(A)gcc $(CFLAGS_VENTANA) prueba_lib_entrada.o prueba_lib.c -o $@ $(LIBGCC)
+	rm -f prueba_lib_entrada.o
+falsa.library: prueba_lib.c biblioteca_entrada.s
+	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o falsa_entrada.o
+	$(A)gcc $(CFLAGS_VENTANA) -DFALSA falsa_entrada.o prueba_lib.c -o $@ $(LIBGCC)
+	rm -f falsa_entrada.o
+miente.library: prueba_lib.c biblioteca_entrada.s
+	$(A)as -m68020 --register-prefix-optional biblioteca_entrada.s -o miente_entrada.o
+	$(A)gcc $(CFLAGS_VENTANA) -DVERSION=1 miente_entrada.o prueba_lib.c -o $@ $(LIBGCC)
+	rm -f miente_entrada.o
