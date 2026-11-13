@@ -105,7 +105,7 @@ Antes, `git merge revision` dos veces (la segunda, por los arreglos del guion de
   su ventana se queda un minuto en (136, 172), encima del menú de Ajustes, que el guion pulsa en ese rato. Como no
   salen todas las líneas, no se hace la captura final y `captura_ventanas.py` no se comprobó.
 - Fallos por el camino, ya arreglados: el Workbench no se conectaba al compositor la primera vez (se reintenta); la
-  capa de pantalla entera retrasaba la prueba; ":" en un nombre rompía `redoxfs-ar`; el guion se quedaba esperando al
+  capa de pantalla entera retrasaba la prueba; ":" en un nombre rompía `dashfs-ar`; el guion se quedaba esperando al
   selector para siempre; sin memoria con cinco ventanas; las raíces dejaban de valer tras FS9; `secreto.txt` chocaba
   con FS10.
 

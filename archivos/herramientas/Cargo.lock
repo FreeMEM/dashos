@@ -115,11 +115,44 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashfs"
+version = "0.9.1"
+dependencies = [
+ "aes",
+ "argon2",
+ "base64ct",
+ "bitflags",
+ "chacha20",
+ "endian-num",
+ "env_logger",
+ "getrandom",
+ "humansize",
+ "libc",
+ "libredox 0.1.25",
+ "lz4_flex",
+ "parse-size",
+ "poly1305",
+ "range-tree",
+ "redox-buffer-pool",
+ "redox-path",
+ "redox-rings",
+ "redox-scheme",
+ "redox_syscall 0.9.5",
+ "seahash",
+ "siphasher",
+ "smallvec",
+ "termion",
+ "uuid",
+ "xts-mode",
+ "zerocopy",
+]
+
+[[package]]
 name = "dashos-archivos-herramientas"
 version = "0.0.1"
 dependencies = [
+ "dashfs",
  "redox_syscall 0.9.5",
- "redoxfs",
 ]
 
 [[package]]
@@ -410,39 +443,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags",
-]
-
-[[package]]
-name = "redoxfs"
-version = "0.9.1"
-dependencies = [
- "aes",
- "argon2",
- "base64ct",
- "bitflags",
- "chacha20",
- "endian-num",
- "env_logger",
- "getrandom",
- "humansize",
- "libc",
- "libredox 0.1.25",
- "lz4_flex",
- "parse-size",
- "poly1305",
- "range-tree",
- "redox-buffer-pool",
- "redox-path",
- "redox-rings",
- "redox-scheme",
- "redox_syscall 0.9.5",
- "seahash",
- "siphasher",
- "smallvec",
- "termion",
- "uuid",
- "xts-mode",
- "zerocopy",
 ]
 
 [[package]]

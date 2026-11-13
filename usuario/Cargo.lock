@@ -121,6 +121,30 @@ dependencies = [
 ]
 
 [[package]]
+name = "dashfs"
+version = "0.9.1"
+dependencies = [
+ "aes",
+ "argon2",
+ "base64ct",
+ "bitflags 2.13.2",
+ "chacha20",
+ "endian-num",
+ "libc",
+ "lz4_flex",
+ "poly1305",
+ "redox-buffer-pool",
+ "redox-path",
+ "redox-rings",
+ "redox_syscall 0.9.5",
+ "seahash",
+ "siphasher",
+ "uuid",
+ "xts-mode",
+ "zerocopy",
+]
+
+[[package]]
 name = "dashos-amigados"
 version = "0.0.1"
 
@@ -148,6 +172,7 @@ version = "0.0.1"
 name = "dashos-usuario"
 version = "0.0.1"
 dependencies = [
+ "dashfs",
  "dashos-amigados",
  "dashos-audiodevice",
  "dashos-caja-vmm",
@@ -156,7 +181,6 @@ dependencies = [
  "dashos-wayland",
  "linked_list_allocator",
  "redox_syscall 0.9.5",
- "redoxfs",
  "smoltcp",
 ]
 
@@ -416,30 +440,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "580c875845b41ecb1564ad1ae4703044cef774145e3d7a94dc2b3fa7c97868fd"
 dependencies = [
  "bitflags 2.13.2",
-]
-
-[[package]]
-name = "redoxfs"
-version = "0.9.1"
-dependencies = [
- "aes",
- "argon2",
- "base64ct",
- "bitflags 2.13.2",
- "chacha20",
- "endian-num",
- "libc",
- "lz4_flex",
- "poly1305",
- "redox-buffer-pool",
- "redox-path",
- "redox-rings",
- "redox_syscall 0.9.5",
- "seahash",
- "siphasher",
- "uuid",
- "xts-mode",
- "zerocopy",
 ]
 
 [[package]]

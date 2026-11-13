@@ -249,6 +249,9 @@ struct Ranura {
     dci: u32,
     mps: u32,
     teclado: bool,
+    /// Una tableta (puntero absoluto, como la `usb-tablet` de QEMU): dónde va cada cosa en su informe
+    /// (`dashos::hid_informe`). Sin ella, con `teclado` falso, es un ratón de arranque.
+    tableta: Option<dashos::hid_informe::Tableta>,
     activo: bool,
     /// Del descriptor de aparato: fabricante, producto y clase; y la primera interfaz (clase, subclase, protocolo).
     vid: u16,
@@ -464,8 +467,9 @@ fn principal() -> u64 {
         }
     }
     let teclados = lista.iter().flatten().filter(|r| r.activo && r.teclado).count();
-    let ratones = lista.iter().flatten().filter(|r| r.activo && !r.teclado).count();
-    decir!("versión {:x}.{:02x}, {} puertos; HID de arranque: {} teclado y {} ratón", version >> 8, version & 0xff, puertos, teclados, ratones);
+    let ratones = lista.iter().flatten().filter(|r| r.activo && !r.teclado && r.tableta.is_none()).count();
+    let tabletas = lista.iter().flatten().filter(|r| r.activo && r.tableta.is_some()).count();
+    decir!("versión {:x}.{:02x}, {} puertos; HID de arranque: {} teclado y {} ratón; {} tableta", version >> 8, version & 0xff, puertos, teclados, ratones, tabletas);
     // Los eventos se miran al llegar la interrupción (o cada 10 ms sin ella): los informes que llegan van al
     // compositor y se pide el siguiente.
     let mut entrada = dashos::hid::Entrada::nueva(canal, NOMBRE);
@@ -514,7 +518,16 @@ fn principal() -> u64 {
                 for (i, b) in informe.iter_mut().enumerate().take(largo.min(16)) {
                     *b = unsafe { core::ptr::read_volatile((VA_DMA + base_ranura(k) + R_INFORME + i) as *const u8) };
                 }
-                if r.teclado { entrada.teclado(&informe[..largo.min(16)]) } else { entrada.raton(&informe[..largo.min(16)]) }
+                let informe = &informe[..largo.min(16)];
+                if r.teclado {
+                    entrada.teclado(informe)
+                } else if let Some(t) = r.tableta {
+                    if let Some(l) = dashos::hid_informe::leer(&t, informe) {
+                        entrada.tableta(l)
+                    }
+                } else {
+                    entrada.raton(informe)
+                }
             }
             // El siguiente informe.
             r.int.poner(bus + (base_ranura(k) + R_INFORME) as u64, r.mps, (T_NORMAL << 10) | (1 << 5) | (1 << 2));
@@ -533,7 +546,15 @@ fn principal() -> u64 {
 }
 
 fn que_es(r: &Ranura) -> &'static str {
-    if r.dci == 0 { "sin teclado ni ratón de arranque" } else if r.teclado { "teclado" } else { "ratón" }
+    if r.dci == 0 {
+        "sin teclado ni ratón de arranque"
+    } else if r.teclado {
+        "teclado"
+    } else if r.tableta.is_some() {
+        "tableta"
+    } else {
+        "ratón"
+    }
 }
 
 /// Los saltos de concentrador de una cadena de ruta (cuántos grupos de 4 bits tiene).
@@ -662,7 +683,7 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Opt
     if codigo != 1 {
         return None;
     }
-    let mut r = Ranura { id, hub: false, velocidad, ruta, ep0, int, dci: 0, mps: 0, teclado: false, activo: false, vid: 0, pid: 0, clase: 0, interfaz: (0, 0, 0) };
+    let mut r = Ranura { id, hub: false, velocidad, ruta, ep0, int, dci: 0, mps: 0, teclado: false, tableta: None, activo: false, vid: 0, pid: 0, clase: 0, interfaz: (0, 0, 0) };
     // Descriptor de aparato (18) y de configuración (9 y después entero).
     x.paso = "descriptor de aparato";
     x.control(&mut r, k, [0x80, 6, 0, 1, 0, 0, 18, 0], 18)?;
@@ -677,8 +698,10 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Opt
     let n = x.control(&mut r, k, [0x80, 6, 0, 2, 0, 0, total as u8, (total >> 8) as u8], total)? as usize;
     let d = x.datos(k, n);
     // Interfaz HID de arranque (clase 3, subclase 1, protocolo 1 teclado o 2 ratón) y su punto de entrada de
-    // interrupción.
+    // interrupción. O, si no hay de arranque, una HID cualquiera (protocolo 0) que puede ser una tableta: se mira su
+    // descriptor de informe (el largo, en su descriptor HID, 0x21).
     let (mut i, mut interfaz, mut hallado) = (0, None, None);
+    let (mut otra, mut otra_hallada, mut largo_informe) = (None::<u8>, None, 0u16);
     while i + 1 < n && d[i] != 0 {
         match d[i + 1] {
             4 if i + 8 < n => {
@@ -686,6 +709,10 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Opt
                     r.interfaz = (d[i + 5], d[i + 6], d[i + 7]);
                 }
                 interfaz = (d[i + 5] == 3 && d[i + 6] == 1 && (d[i + 7] == 1 || d[i + 7] == 2)).then_some((d[i + 2], d[i + 7] == 1));
+                otra = (d[i + 5] == 3 && d[i + 7] == 0).then_some(d[i + 2]);
+            }
+            0x21 if i + 8 < n && otra.is_some() && otra_hallada.is_none() && d[i + 6] == 0x22 => {
+                largo_informe = u16::from_le_bytes([d[i + 7], d[i + 8]]);
             }
             5 if i + 6 < n => {
                 if let Some((ifz, teclado)) = interfaz {
@@ -693,6 +720,13 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Opt
                         let mps = u16::from_le_bytes([d[i + 4], d[i + 5]]) as u32 & 0x7ff;
                         hallado = Some((ifz, teclado, (d[i + 2] & 0xf) as u32, mps, d[i + 6]));
                     }
+                } else if let Some(ifz) = otra
+                    && d[i + 2] & 0x80 != 0
+                    && d[i + 3] & 3 == 3
+                    && otra_hallada.is_none()
+                {
+                    let mps = u16::from_le_bytes([d[i + 4], d[i + 5]]) as u32 & 0x7ff;
+                    otra_hallada = Some((ifz, false, (d[i + 2] & 0xf) as u32, mps, d[i + 6]));
                 }
             }
             _ => {}
@@ -704,9 +738,27 @@ fn configurar(x: &mut Xhci, p: u32, velocidad: u32, k: usize, ruta: u32, tt: Opt
     if r.hub {
         return Some(r);
     }
+    // Sin teclado ni ratón de arranque: una tableta, si su descriptor de informe lo dice (hasta 256 bytes, lo que cabe
+    // en los datos de la ranura; uno más largo no se mira).
+    if hallado.is_none()
+        && let Some(h) = otra_hallada
+        && (1..=256).contains(&largo_informe)
+    {
+        x.paso = "descriptor de informe";
+        let n = x.control(&mut r, k, [0x81, 6, 0, 0x22, h.0, 0, largo_informe as u8, (largo_informe >> 8) as u8], largo_informe as u32)? as usize;
+        let d = x.datos(k, n);
+        r.tableta = dashos::hid_informe::tableta(&d[..n.min(256)]);
+        if r.tableta.is_some() && h.3 <= dashos::hid_informe::MAX_INFORME {
+            hallado = Some(h);
+        } else {
+            r.tableta = None;
+        }
+    }
     let Some((ifz, teclado, num, mps, b_intervalo)) = hallado else { return Some(r) };
-    x.paso = "SET_PROTOCOL";
-    x.control(&mut r, k, [0x21, 0x0B, 0, 0, ifz, 0, 0, 0], 0)?; // SET_PROTOCOL: arranque
+    if r.tableta.is_none() {
+        x.paso = "SET_PROTOCOL";
+        x.control(&mut r, k, [0x21, 0x0B, 0, 0, ifz, 0, 0, 0], 0)?; // SET_PROTOCOL: arranque
+    }
     let _ = x.control(&mut r, k, [0x21, 0x0A, 0, 0, ifz, 0, 0, 0], 0); // SET_IDLE 0: puede no admitirse
     // Configurar el punto (4.6.6): contexto de entrada con la ranura y el punto nuevo (DCI = 2 · número + 1).
     let dci = 2 * num + 1;

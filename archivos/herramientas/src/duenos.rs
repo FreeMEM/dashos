@@ -3,7 +3,7 @@
 //! está cifrado, la contraseña llega por la primera línea de la entrada estándar. Con `camino=`, solo a ese cajón (o
 //! fichero) del volumen principal y a lo que cuelga de él (U6: el cajón de `sesiones`, del usuario 1).
 //!
-//! Para el disco de pruebas (`tools/disco_archivos.py`, R6 de `docs/REVISION_LOOP.md`): `redoxfs-ar` copia el dueño
+//! Para el disco de pruebas (`tools/disco_archivos.py`, R6 de `docs/REVISION_LOOP.md`): `dashfs-ar` copia el dueño
 //! de Linux de cada fichero, que cambia de un PC a otro, y las raíces salen del usuario 0. Con dueños fijos, las
 //! pruebas de permisos de DashOS dan lo mismo en cualquier sitio.
 
@@ -11,7 +11,7 @@ use std::fs::{File, OpenOptions};
 use std::io::BufRead;
 use std::os::unix::fs::FileExt;
 
-use redoxfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
+use dashfs::{BLOCK_SIZE, Disk, FileSystem, Node, Transaction, TreePtr};
 use syscall::error::{EIO, Error, Result};
 
 struct Trozo {

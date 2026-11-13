@@ -93,7 +93,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // El disco NVMe (U6d), que sirve el disco por el canal "disco" (U6f).
     ("nvme", programa!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     // Una prueba del servicio de disco (U6f), solo en `virt`: la Pi aún no tiene servicio de disco.
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("disco", programa!("disco"), &[], &["disco"]),
     // El servicio de archivos (FS1, S5): sirve el RedoxFS del mismo disco por el canal "archivos" (FS3), con un
     // cliente de prueba. Solo en `virt`, como la prueba de arriba.
@@ -130,25 +130,32 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Con `linux` (`make arranque-virt-linux`), sin `guardian` ni las pruebas que lo necesitan (pide, entrada, el hostil
     // y su presa, el selector): sus preguntas y sus pantallas de bloqueo se llevarían el teclado de la terminal de la
     // caja Linux.
-    #[cfg(all(feature = "virt", not(feature = "linux")))]
+    #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro"]),
-    #[cfg(all(feature = "virt", not(feature = "linux")))]
+    // Con `uso` (la imagen para usar a mano, `make virt-uso`), un canal más, "uso", que solo dice eso: `guardian`
+    // pone la pantalla de entrada y atiende, sin el guion de las pruebas. Es el último suyo: no mueve los demás.
+    #[cfg(feature = "uso")]
+    ("guardian", programa!("guardian"), &[], &["ventanas", "sesiones", "centro", "uso"]),
+    #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("pide", programa!("pide"), &[], &["sesiones"]),
-    #[cfg(all(feature = "virt", not(feature = "linux")))]
+    #[cfg(all(feature = "virt", not(feature = "linux"), not(feature = "uso")))]
     ("entrada", programa!("entrada"), &[], &["sesiones"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("ficheros", programa!("ficheros"), &[], &["archivos"]),
     // Un ADF montado como volumen (S20, fase 1): el servicio lo lee por "archivos" y lo sirve por "imagen", con
     // un cliente de prueba.
     #[cfg(feature = "virt")]
     ("imagen", programa!("imagen"), &[], &["archivos", "imagen"]),
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("adf-prueba", programa!("adf-prueba"), &[], &["imagen"]),
     ("gpu", programa!("gpu"), &[("dma-gpu", PERMISO_DMA), ("v3d", REGISTROS), ("v3d-puente", REGISTROS), ("pm", REGISTROS), ("cprman", REGISTROS)], &["buzon"]),
     // Dos clientes de Wayland de prueba (W7), cada uno con su ventana.
+    #[cfg(not(feature = "uso"))]
     ("ventana-a", programa!("ventana-a"), &[], &["ventanas"]),
+    #[cfg(not(feature = "uso"))]
     ("ventana-b", programa!("ventana-b"), &[], &["ventanas"]),
     // Una aplicación con el kit de interfaz (K7): Material 3, con el ratón.
+    #[cfg(not(feature = "uso"))]
     ("ajustes", programa!("ajustes"), &[], &["ventanas"]),
     // El sonido (S19): el servicio, que nombra "sonido" antes que nadie (A4), y el controlador de virtio-sound (A3),
     // si lo hay, que espera su interrupción (o, sin ella, mira sus colas con un temporizador).
@@ -164,13 +171,13 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(feature = "virt")]
     ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "avisos"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("avisador", programa!("avisador"), &[], &["avisos"]),
     ("virtio-sonido", programa!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("plazo", PLAZO), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     // Dos programas que suenan a la vez por el servicio (A4), solo en `virt`.
-    #[cfg(all(feature = "virt", not(feature = "paula")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "uso")))]
     ("tono-a", programa!("tono-a"), &[], &["sonido"]),
-    #[cfg(all(feature = "virt", not(feature = "paula")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "uso")))]
     ("tono-b", programa!("tono-b"), &[], &["sonido"]),
     // audio.device nativo (S19, fase 2), en lugar de los tonos: `make sonido-paula`.
     #[cfg(all(feature = "virt", feature = "paula"))]
@@ -191,10 +198,10 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("selector", programa!("selector"), &[], &["ventanas", "archivos", "selector"]),
     // Un cliente hostil (R1, `docs/REVISION_LOOP.md`), solo en `virt`: ataca a archivos, al sonido y al compositor y
     // comprueba que siguen contestando.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("hostil", programa!("hostil"), &[], &["sesiones", "ventanas", "archivos", "sonido", "selector", "disco", "centro"]),
     // Un programa del mismo usuario que `hostil`, que este mata por `sesiones` (U2).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("presa", programa!("presa"), &[], &["sesiones"]),
     // La red (S13): el servicio con la pila, que nombra "red" antes que nadie (es quien lee); el controlador de
     // virtio-net, si lo hay; y tres pruebas: una con permiso (el eco del PC, caudal, basura), un glotón de conexiones y
@@ -204,11 +211,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("red", programa!("red"), &[], &["red", "red-estado"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("virtio-red", programa!("virtio-red"), &[("dma-vred", PERMISO_DMA), ("virtio-red", REGISTROS), ("vred-cfg", REGISTROS), ("virtio-red", INTERRUPCION | OPCIONAL)], &["red"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("red-gloton", programa!("red-gloton"), &[], &["red"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("red-prueba", programa!("red-prueba"), &[], &["red"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-red", programa!("sin-red"), &[], &[]),
     // C2 de S10c: el panel rápido (Super+A), con el poder de escritorio para su capa, el canal del centro para el modo y
     // el del sonido para el volumen general. S27, oleada 2: también "sesiones" (quién está delante, para su cabecera) y
@@ -218,17 +225,22 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     #[cfg(feature = "virt")]
     ("panel", programa!("panel"), &[], &["ventanas", "sesiones", "centro", "sonido", "red-estado"]),
     // Un servicio que se cae a propósito (E6), solo en `virt`: `inicio` lo relanza tres veces y lo deja.
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("caida", programa!("caida"), &[], &["caida"]),
     // Un cliente suyo (el programa de saludo, que acaba solo): al relanzar a `caida`, `inicio` le vuelve a dar su
     // entrada del directorio.
-    #[cfg(feature = "virt")]
+    #[cfg(all(feature = "virt", not(feature = "uso")))]
     ("caida-cliente", programa!("hola"), &[], &["caida"]),
     // S10: el Workbench, con los iconos de los volúmenes en el escritorio (capa de abajo, por su nombre) y las ventanas
     // de cajón. "archivos" para ver los cajones (como Ana) y "sesiones" para lanzar de `Programas/` y saber si su sesión
     // está abierta. Al final, para no cambiar el número de los de antes.
+    // El explorador de archivos (como Nautilus): su canal "explorador" (lo nombra antes que el Workbench, que le pide
+    // abrir los volúmenes), "archivos" como Ana con el derecho de repartir y "sesiones" para lanzar de `Programas/`.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
-    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones"]),
+    ("explorador", programa!("explorador"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    ("workbench", programa!("workbench"), &[], &["ventanas", "archivos", "sesiones", "explorador"]),
+    #[cfg(not(feature = "uso"))]
     ("hola", programa!("hola"), &[], &[]),
     // El multimonitor: el controlador de virtio-gpu, si lo hay, que da sus cabezas al compositor por "ventanas"
     // (`protocolo::pantallas`). Al final: así las marcas de los demás no cambian.
@@ -241,7 +253,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // disco le da la partición de la caja Linux, si la hay).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco"]),
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
     // En la Pi 4 (decisión del usuario del 2026-11-12: no en la Pi 3, sin virtualización): la caja, que solo hace algo
     // si el firmware entró en EL2. Allí aún no hay `sesiones` (es solo de `virt`): hasta que lo haya, el permiso se lo
@@ -255,12 +267,13 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // al usuario por ahí, con permisos sin llave). `inicio` la espera (`SE_ESPERAN`): va la última,
     // para que su ventana (abierta hasta 40 s si nadie la cierra) no retrase a nadie (antes iba delante de la caja
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    // Con `uso`, fuera de momento: aún corre sus programas de prueba (los virus de laboratorio preguntan uno tras otro).
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones"]),
     // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
     // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux"), not(feature = "uso")))]
     ("espia", programa!("espia"), &[], &["ventanas"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),

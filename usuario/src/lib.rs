@@ -10,6 +10,7 @@ use core::fmt;
 
 pub mod graficos;
 pub mod hid;
+pub mod hid_informe;
 pub mod particiones;
 pub mod servicio;
 pub mod avisos_cliente;

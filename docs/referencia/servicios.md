@@ -20,14 +20,20 @@ hub y usa los teclados y ratones en modo de arranque (HID 1.11, apéndice B).
 
 Cada evento es un mensaje de 8 bytes:
 
-| Byte | Tecla | Ratón |
-|---|---|---|
-| 0 | 1 | 2 |
-| 1 | Uso HID (página 7, teclado); los modificadores son 0xE0 a 0xE7 | Botones (bit 0 izquierdo, 1 derecho, 2 central) |
-| 2 | 1 pulsada, 0 soltada | Movimiento x, con signo |
-| 3 | 0 | Movimiento y, con signo |
-| 4 | 0 | Rueda, con signo (0 si el ratón no la manda) |
-| 5-7 | 0 | 0 |
+| Byte | Tecla | Ratón | Tableta (solo `xhci`) |
+|---|---|---|---|
+| 0 | 1 | 2 | 3 |
+| 1 | Uso HID (página 7, teclado); los modificadores son 0xE0 a 0xE7 | Botones (bit 0 izquierdo, 1 derecho, 2 central) | Botones |
+| 2 | 1 pulsada, 0 soltada | Movimiento x, con signo | x absoluta, de 0 a 32767 (2 bytes, little-endian) |
+| 3 | 0 | Movimiento y, con signo | |
+| 4 | 0 | Rueda, con signo (0 si el ratón no la manda) | y absoluta, de 0 a 32767 (2 bytes) |
+| 5 | 0 | 0 | |
+| 6 | 0 | 0 | Rueda, con signo |
+| 7 | 0 | 0 | 0 |
+
+La tableta es un puntero absoluto (la `usb-tablet` de QEMU, pantallas táctiles en modo ratón): `xhci` la reconoce por
+su descriptor de informe (`usuario/src/hid_informe.rs`), sin modo de arranque. El compositor lleva el cursor a ese punto
+de todo el espacio de las salidas.
 
 Si la cola del canal está llena, el evento se pierde.
 
@@ -215,7 +221,7 @@ Pendiente: varias colas de E/S del NVMe (una por núcleo).
 
 ## Archivos (FS1, FS3, FS7, FS8, FS9, FS10)
 
-`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/redoxfs`, S5) que lee por el canal "disco": el de la
+`usuario/src/bin/archivos.rs` sirve un RedoxFS (`archivos/dashfs`, S5) que lee por el canal "disco": el de la
 partición de DashOS del disco NVMe de `virt` (en los discos de prueba, desde el MB 1; A14). Llaves: 1 el canal "disco" y 2 el canal "archivos", donde lee. Cada
 orden que cambia algo es una transacción de RedoxFS que queda en el disco, con la caché vaciada, antes de la respuesta
 (FS4). Este protocolo es el de todos los sistemas de archivos de DashOS: los que vengan (FAT, ext4,
@@ -338,7 +344,7 @@ Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar esc
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
 
 **Al arrancar** (A10), antes de atender a nadie, se comprueban los metadatos y, si hay algo mal, se repara en una
-transacción (`archivos/redoxfs/src/repair.rs`); si algo queda sin arreglar, el disco va de solo lectura.
+transacción (`archivos/dashfs/src/repair.rs`); si algo queda sin arreglar, el disco va de solo lectura.
 
 ## Sesiones (U2 a U6)
 

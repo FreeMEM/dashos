@@ -8,7 +8,7 @@
                                              antes, tools/medir_linux/hacer.sh)
     tools/medir.py linux-fs JSON [-n N]      el banco de ficheros en Linux (Debian arm64, ext4 en NVMe, QEMU virt; paso F;
                                              antes, tools/medir_linux/hacer_fs.sh)
-    tools/medir.py disco-fs DISCO REDOXFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F), en una partición (A14)
+    tools/medir.py disco-fs DISCO DASHFS_AR un disco de 1 + 64 MB con un RedoxFS vacío desde el MB 1 (paso F), en una partición (A14)
     tools/medir.py dashos-fs EFI DISCO JSON [-n N]  el banco de ficheros de DashOS en QEMU virt por UEFI (`make medir-fs`)
     tools/medir.py pi3 IMAGEN JSON [-n N]    lo mismo en QEMU raspi3b (P3, `make medir-pi3`)
     tools/medir.py comparar BASE NUEVO       compara dos JSON: dice "dentro del ruido" si la diferencia es menor que la
@@ -122,7 +122,7 @@ def disco_fs(salida, ar):
         f.truncate(64 << 20)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
     # La raíz, del usuario del banco (1000, como `medir-fs` en las fichas de `inicio`): desde R6 el servicio mira
-    # dueños y permisos, y la raíz que hace redoxfs-ar es del 0.
+    # dueños y permisos, y la raíz que hace dashfs-ar es del 0.
     duenos = os.path.join(RAIZ, "archivos/herramientas/target/release/duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     with open(salida, "wb") as f:

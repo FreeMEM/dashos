@@ -4,17 +4,17 @@
 - Primer MB: lo de la prueba del servicio de disco (U6f): un texto y la firma 0x55AA en el sector 0, otro texto en
   el 1. El cliente de U6f escribe el sector 2. En el sector 0, además, la tabla de particiones (MBR, A14): una sola
   partición, la de DashOS (tipo 0x7F), desde el MB 1 hasta el final.
-- Desde el MB 1: un RedoxFS hecho con `redoxfs-ar` a partir de una carpeta con LEEME.txt, C/grande.txt (las líneas
+- Desde el MB 1: un RedoxFS hecho con `dashfs-ar` a partir de una carpeta con LEEME.txt, C/grande.txt (las líneas
   "línea 0", "línea 1"..., unos 300 KB, para que pase por varios registros de 128 KB) y Prefs/fuente. Y un volumen
-  cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `redoxfs-volume`, que está al lado de
-  `redoxfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde. Y `Imagenes/disquete.adf`, el ADF de la
+  cifrado, "Ana", con la contraseña "clave de Ana" (FS10), hecho con `dashfs-volume`, que está al lado de
+  `dashfs-ar`; con Argon2 barato, para que abrirlo en QEMU no tarde. Y `Imagenes/disquete.adf`, el ADF de la
   prueba de S20 (`kernel/pruebas/disquete.adf.gz`, hecho con `tools/adf_oraculo.py --disquete`). Y `C/Privado/nota.txt`,
   solo para su dueño (cajón 0700, fichero 0600), para la prueba de permisos de R6 (`docs/REVISION_LOOP.md`).
 - Todo, raíces incluidas (la del disco y la de "Ana"), es del usuario 1000, grupo 1000 (`duenos`, en
-  archivos/herramientas, y `REDOXFS_DUENO` para "Ana"): `redoxfs-ar` copiaría el dueño de Linux, que cambia de un
+  archivos/herramientas, y `DASHFS_DUENO` para "Ana"): `dashfs-ar` copiaría el dueño de Linux, que cambia de un
   PC a otro.
 
-Uso: disco_archivos.py SALIDA REDOXFS_AR
+Uso: disco_archivos.py SALIDA DASHFS_AR
      disco_archivos.py --comprobar DISCO VER
 
 Con --comprobar, tras la prueba en QEMU, mira con `ver` (archivos/herramientas) que el disco tiene lo que escribió
@@ -74,6 +74,11 @@ if sys.argv[1] == "--comprobar":
     fondo = subprocess.run([ver, disco, desde, "C/Prefs/fondo"], capture_output=True).stdout
     esperado = [
         "C/ cajón",
+        # El explorador de archivos: su papelera en Home (vacía al acabar: lo tirado se restauró), la carpeta que crea
+        # (Viaje, con grande.txt copiado y renombrado), y datos.bin copiado ahí y arrastrado luego a Privado.
+        "C/.Papelera/ cajón",
+        "C/.Papelera/archivos/ cajón",
+        "C/.Papelera/info/ cajón",
         # C3: los fondos de escritorio de prueba (`tools/fondos_prueba.py`).
         "C/Fondos/ cajón",
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
@@ -88,7 +93,10 @@ if sys.argv[1] == "--comprobar":
         "C/Prefs/panel 24",
         "C/Privado/ cajón",
         # S10: el comentario y el bit de archivado que puso el Workbench (Información, como Ana).
+        "C/Privado/datos.bin 614400",
         "C/Privado/nota.txt 18 bits=0x1 : nota de Ana",
+        "C/Viaje/ cajón",
+        "C/Viaje/texto grande.txt 313890",
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",
@@ -370,13 +378,13 @@ with tempfile.TemporaryDirectory() as t:
     with open(fs, "wb") as f:
         f.truncate(tamano)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
-    volumen = os.path.join(os.path.dirname(ar), "redoxfs-volume")
+    volumen = os.path.join(os.path.dirname(ar), "dashfs-volume")
     # La raíz de "Ana", del 1000 al crearla: cambiarla después la reescribiría con la llave del volumen.
     subprocess.run([volumen, fs, "create-encrypted", "Ana", "--test-cost"], input=b"clave de Ana\n", check=True,
-                   env={**os.environ, "REDOXFS_DUENO": "1000:1000"})
+                   env={**os.environ, "DASHFS_DUENO": "1000:1000"})
     # U3: "Carla", el volumen de la usuaria 1001, que `sesiones` abre al entrar y cierra al salir.
     subprocess.run([volumen, fs, "create-encrypted", "Carla", "--test-cost"], input=b"clave de Carla\n", check=True,
-                   env={**os.environ, "REDOXFS_DUENO": "1001:1001"})
+                   env={**os.environ, "DASHFS_DUENO": "1001:1001"})
     duenos = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "archivos", "herramientas", "target", "release", "duenos")
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)

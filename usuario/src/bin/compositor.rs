@@ -942,7 +942,8 @@ fn principal() -> u64 {
                 println!("  [compositor] {} salidas del controlador gráfico: {}", total, lista.join(", "));
             }
         }
-        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y, rueda).
+        // La entrada de los controladores de USB (W8): 8 bytes; 1 tecla (uso HID, pulsada), 2 ratón (botones, x, y, rueda),
+        // 3 tableta (botones, x e y absolutas en dos bytes cada una, rueda).
         if matches!(nombres.get(&marca).map(String::as_str), Some("usb" | "xhci")) {
             llaves.iter().for_each(|&l| { dashos::cerrar(l); });
             let entrada = match (n, buf[0]) {
@@ -951,6 +952,26 @@ fn principal() -> u64 {
                     let mut e = escena.raton(buf[2] as i8 as i32, buf[3] as i8 as i32, buf[1]);
                     e.extend(escena.rueda(buf[4] as i8 as i32));
                     e
+                }
+                // Una tableta (el ratón de una máquina virtual): la posición absoluta, de 0 a 32767 en cada eje, sobre
+                // todo el espacio de las salidas; se lleva el cursor hasta allí como un movimiento (lo de dentro de
+                // una salida lo pone `raton`).
+                (8, 3) => {
+                    let (ax, ay) = (u16::from_le_bytes([buf[2], buf[3]]).min(32767) as i64, u16::from_le_bytes([buf[4], buf[5]]).min(32767) as i64);
+                    let caja = escena.salidas.iter().map(|o| o.rect).reduce(|a, r| {
+                        let (x0, y0) = (a.x.min(r.x), a.y.min(r.y));
+                        Rect { x: x0, y: y0, w: (a.x + a.w).max(r.x + r.w) - x0, h: (a.y + a.h).max(r.y + r.h) - y0 }
+                    });
+                    match caja {
+                        Some(c) if c.w > 0 && c.h > 0 => {
+                            let x = c.x + (ax * (c.w as i64 - 1) / 32767) as i32;
+                            let y = c.y + (ay * (c.h as i64 - 1) / 32767) as i32;
+                            let mut e = escena.raton(x - escena.cursor.0, y - escena.cursor.1, buf[1]);
+                            e.extend(escena.rueda(buf[6] as i8 as i32));
+                            e
+                        }
+                        _ => Vec::new(),
+                    }
                 }
                 _ => Vec::new(),
             };

@@ -61,6 +61,8 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/reloj.rs -o target/reloj_pruebas && ./target/reloj_pruebas -q
+	@# El explorador de archivos: la lógica y los trabajos largos contra un servicio de archivos falso (hostiles incluidos).
+	cd ../usuario && rustc --edition 2024 --test src/explorador/pruebas.rs -o target/explorador_pruebas && ./target/explorador_pruebas -q
 	@# S28: la pregunta de la guardia de ficheros de la caja Amiga (permisos sin llave, detalle, nombres raros).
 	cd ../usuario && rustc --edition 2024 --test src/preguntas_ficheros.rs -o target/preguntas_ficheros_pruebas && ./target/preguntas_ficheros_pruebas -q
 	../puente/pruebas/g0.sh
@@ -82,12 +84,12 @@ virt: usuario FORCE
 # 1; desde el MB 1, un RedoxFS para el servicio de archivos (FS1, `tools/disco_archivos.py`). Nuevo en cada prueba: el
 # cliente de U6f escribe el sector 2, y lo de una vuelta anterior no debe servir de prueba.
 DISCO_NVME := target/nvme.img
-REDOXFS_AR := ../archivos/redoxfs/target/release/redoxfs-ar
+DASHFS_AR := ../archivos/dashfs/target/release/dashfs-ar
 VER := ../archivos/herramientas/target/release/ver
 $(DISCO_NVME): FORCE
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
-	python3 ../tools/disco_archivos.py $@ $(REDOXFS_AR)
+	python3 ../tools/disco_archivos.py $@ $(DASHFS_AR)
 
 # La red (S13): una tarjeta virtio-net en un concentrador con la red de usuario de QEMU (DHCP, 10.0.2.15; el eco del PC
 # en 10.0.2.100:7, `tools/red_eco.py`, lanzado por QEMU para cada conexión) y con `tools/red_basura.py`, que manda
@@ -100,15 +102,22 @@ RED_QEMU := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tool
 # pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	rm -f target/captura.ppm target/amiga.ppm target/dash.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
+	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
-	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_U6=$(abspath target/u6) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),360); \
+	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
 	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm
 	python3 ../tools/sonido_wav.py target/sonido.wav
 	python3 ../tools/captura_cambio.py target/u6.ana.ppm target/u6.carla.ppm
+
+# La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
+# de entrada de verdad. No es una prueba: nada la comprueba.
+VIRT_USO := target/kernel8-virt-uso.img
+virt-uso: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_USO)
 
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio
@@ -233,9 +242,9 @@ ASPECTO_NOMBRE ?= dashos-ondas
 arranque-virt-aspecto: usuario FORCE
 	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): tools/aspecto_caja_linux.py preparar"; exit 1; }
 	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/aspecto_caja_linux.py preparar"; exit 1; }
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar --bin redoxfs-volume
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar --bin dashfs-volume
 	cd ../archivos/herramientas && cargo build --release
-	DASHOS_PREFS="$(ASPECTO_PREFS)" python3 ../tools/disco_archivos.py target/nvme-aspecto.img $(REDOXFS_AR)
+	DASHOS_PREFS="$(ASPECTO_PREFS)" python3 ../tools/disco_archivos.py target/nvme-aspecto.img $(DASHFS_AR)
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd
@@ -323,9 +332,9 @@ medir: usuario FORCE
 # RedoxFS vacío, nuevo en cada vuelta. Linux, con `tools/medir.py linux-fs`.
 MEDIR_FS := target/kernel8-medir-fs.img
 medir-fs: usuario FORCE
-	cd ../archivos/redoxfs && cargo build --release --bin redoxfs-ar
+	cd ../archivos/dashfs && cargo build --release --bin dashfs-ar
 	cd ../archivos/herramientas && cargo build --release
-	python3 ../tools/medir.py disco-fs target/medir-fs.img $(REDOXFS_AR)
+	python3 ../tools/medir.py disco-fs target/medir-fs.img $(DASHFS_AR)
 	cargo build $(CARGO_PERFIL) --features virt,medir_fs
 	$(OBJCOPY) -O binary $(ELF) $(MEDIR_FS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(MEDIR_FS)) cargo build --release

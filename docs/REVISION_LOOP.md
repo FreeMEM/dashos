@@ -91,7 +91,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
     su lista: el hostil tenía archivos y sonido cambiados.
   - Archivos suelta al cliente que no lee sus respuestas (cola llena): el hostil abre otra sesión tras inundar.
   - Un volumen cifrado cerrado ya no se lista ni vacío: su raíz no se lee y no hay permisos que mirar. La raíz de un
-    volumen nace con su dueño (`create_volume_owned` en el fork de RedoxFS, `REDOXFS_DUENO` en `redoxfs-volume`).
+    volumen nace con su dueño (`create_volume_owned` en el fork de RedoxFS, `DASHFS_DUENO` en `dashfs-volume`).
   - Con S8, Ajustes sale mientras se teclea en otra ventana y no se lleva el teclado: la prueba de virt le da el
     teclado con un clic en (300, 300) cuando la salida dice que está en pantalla, y entonces maximiza.
   - QEMU `virt` da 40 bytes de semilla (`rng-seed` y `kaslr-seed`): el azar es de calidad y los volúmenes cifrados se
@@ -983,7 +983,7 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   1. **Dentro de `archivos`, a trozos.** Una instantánea interna fija la cabecera de ese momento (sus bloques no se
      reusan mientras viva) y el comprobador recorre esa foto con una pila propia en vez de recursión, unos cientos de
      nodos por vuelta del bucle; entre trozo y trozo, el servicio atiende a los demás. Lo que se escribe mientras
-     tanto no estorba: es otra foto. Pide reescribir el recorrido de `redoxfs::check` como iterador.
+     tanto no estorba: es otra foto. Pide reescribir el recorrido de `dashfs::check` como iterador.
   2. **En otro proceso, `comprobador`.** `archivos` hace la instantánea y le da un tramo del disco solo para leer
      (el servicio de disco necesitaría tramos de solo lectura); el comprobador lee con la biblioteca de RedoxFS, como
      `ver`, en otro núcleo, y contesta con el informe. `archivos` no se para nada y, si el comprobador cae o tarda,
@@ -1871,3 +1871,42 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   la caja Linux: corta correo al puerto 25 (hacia fuera, TCP 10.0.2.16:44586 → 1.1.1.1:25)"; arranque-virt bien a la
   segunda (la primera, con dos agentes probando a la vez, las ventanas de prueba salieron oscurecidas en la captura:
   algo delante en ese instante; sin relación con el cambio, a vigilar si se repite).
+- `caja-amiga-reaction` (BOOPSI y ReAction; pestaña 68K a la derecha en el aspecto original; campos seguidos) y
+  `explorador` (programa `explorador` tipo Nautilus; el Workbench le pasa los dobles clics) unidos en fusion-fondo
+  (2d7cfb0; conflicto en kernel/Makefile: las dos capturas y TIEMPO_VIRT 600). Tanda completa en marcha.
+- Compositor: set_min_size/set_max_size respetados (85a5f0b, prueba hostil `tamano_minimo_y_maximo`).
+- El agente de la caja Amiga sigue con bibliotecas de disco (`LIBS:`), el AmigaOS del usuario como capa y lo que pidan
+  las demos de MUI (rama `caja-amiga-libs`).
+- Pendiente de decidir: experimento de Wine con Box64/FEX en la caja Arch (juegos de Windows; Proton de verdad necesita
+  Vulkan en la caja, S25).
+- Trasfondo nativo, integrado en el escritorio (panel en `fondo`, indicadores en la barra, "Monitor del sistema" y
+  ajustes en el centro de control; privacidad: lo de otros usuarios, sumado): el usuario lo quiere DESPUÉS de que acabe
+  el agente de la caja Amiga. Worktree `.worktrees/trasfondo` (rama `trasfondo`, desde 2d7cfb0) ya creado; el agente
+  se lanzó por error y se paró a los pocos minutos: al reanudarlo, el encargo completo está en la conversación (o
+  rehacerlo desde la última fusión).
+- Unido a revision: BOOPSI y ReAction (caja-amiga-reaction) y el explorador (explorador), tanda completa sobre 2d7cfb0
+  todo rc=0 (prueba, av, gpu, diag, escritorio, tarjeta, usb, linux, arch, vm, 2, wayland; wayland ya con
+  set_min_size/set_max_size).
+- `tools/qemu_a_mano.sh`: DashOS en QEMU con ventana para que el usuario lo use. Es la imagen de las pruebas (lanza
+  sus programas de prueba, bloquea a los 3 s): falta una imagen "para usar" (solo el sistema, sin pruebas ni bloqueo
+  rápido, teclado español). En el primer intento del usuario, a guardian le llegaron "qd" como nombre y contraseñas
+  vacías: sin saber aún si fue la prueba que pisaba o el teclado.
+- USB: tableta (f130f00): `xhci` reconoce un puntero absoluto por su descriptor de informe (`usuario/src/hid_informe.rs`,
+  prueba hostil `descriptores_hostiles`) y el compositor lleva el cursor al punto (evento 3). `tools/qemu_a_mano.sh`
+  usa `usb-tablet`: el ratón de QEMU en ventana va donde el del PC (el usuario no podía moverse bien). Probado por QMP
+  sin ventana; make prueba y arranque-virt bien.
+- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar dashfs-* y
+  `archivos/dashfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
+- Imagen para usar (f51aded y siguiente): `make virt-uso` / `tools/qemu_a_mano.sh`; sin pruebas ni caja Amiga (aún
+  corre sus virus de laboratorio); guardian con entrada de verdad. Fallo cazado: mirar la llave 4 tras `canal_crear`
+  daba "uso" también en la imagen de pruebas (arranque-virt MAL en Ajustes); ahora se mira lo primero. arranque-virt
+  bien y la de uso entra como Ana. Falta: fondo de pantalla en la de uso, la caja Amiga con arranque normal.
+- `caja-amiga-libs` (ramlib, AmigaOS del usuario como capa, registro de lo que falta, keymap y layers nativas): hecha,
+  por unir. Bloqueos para Tachyon: MUI tumba la caja (JIT de Emu68 en un longjmp del Init de muimaster) y la caja
+  tiene 4 MB para el 68k (Tachyon pide 30-40). Propuesta al usuario: memoria según el programa, tope en Ajustes
+  (256 MB por defecto).
+- RedoxFS → DashFS en el código (486d053): `archivos/dashfs`, crate `dashfs`, herramientas `dashfs-*`; formato igual.
+- El usuario: "continúa con lo pendiente" (2026-11-13, noche). Trasfondo nativo reanudado (agente, worktree
+  `trasfondo` en 486d053). Memoria de la caja Amiga: va lo recomendado, según el programa con tope en Ajustes (256 MB
+  de serie); pendiente de hacer (toca la caja). MUI (fallo del JIT) después.
+- El usuario (2026-11-13, noche): "párate cuando vayas por el 98 %, no antes". El tope de esta semana pasa del 90 al 98 %.
