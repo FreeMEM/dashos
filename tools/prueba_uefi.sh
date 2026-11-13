@@ -569,10 +569,20 @@ while time.time() - inicio < total:
             if texto.count("[centro] Apariencia: oscuro, color Del fondo") < 2 and time.time() < reintento:
                 time.sleep(0.25)
                 continue
-            centro = 7
+            centro = 19
             if captura_centro:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".fondo-atardecer.ppm")
+            time.sleep(0.5)
+            # Decisión del usuario del 2026-11-13: la fila "Ampliar ventanas Amiga", de automático a 1x (en 800 x 600
+            # la automática ya es 1x: la caja Amiga se ve igual). Por su nombre, como los fondos.
+            elegir_fila("Ampliar ventanas Amiga")
+            reintento = time.time() + 15
+        if not selector_espera and centro == 19:
+            if "[centro] Ampliar ventanas Amiga: 1x" not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
+            centro = 7
             time.sleep(0.5)
             mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4

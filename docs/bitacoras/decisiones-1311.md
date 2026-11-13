@@ -52,3 +52,17 @@ Rama `decisiones-1311`, sacada de `revision` (022e9d1). Las decisiones están en
 - 1 GB son justo los 64 trozos de 16 MB que admite una vista (`memoria_vista`, `MAX_ORIGENES`).
 - `make arranque-virt-wayland` (8 GB): la caja dice "hasta 1024 MB para el invitado" (esperados de `-wayland` y de su
   variante de Firefox al día).
+
+## 4. Fila "Ampliar ventanas Amiga" en Ajustes
+
+- Centro de control, Apariencia: una fila nueva tras "Programas de las cajas", "Ampliar ventanas Amiga: automático".
+  Cada vez que se elige pasa a la siguiente: automático, 1x, 2x, 3x y otra vez automático. Escribe `escala amiga N` en
+  `Prefs/cajas` (automático es no poner la línea), relee para comprobar y se lo da al compositor (`CAJAS` de
+  `dashos_tema_v1`), igual que el aspecto de las cajas. La regla automática no cambia (3x desde 3200x1800, 2x desde
+  1600x900, 1x debajo).
+- Los fondos van una fila más abajo. El guion los busca por su nombre, no por su sitio; el doble clic por posición es
+  en los colores, que están antes. Así que el guion no se descoloca.
+- Prueba (`make arranque-virt`): tras los fondos, el guion elige la fila una vez (de automático a 1x; en 800 x 600 la
+  automática ya es 1x, así que la caja Amiga se ve igual). Se espera "Ampliar ventanas Amiga: 1x; guardado: 0
+  (30 bytes); releído: sí", y `disco_archivos.py --comprobar` espera `C/Prefs/cajas` de 30 bytes.
+- Esto resuelve el punto 1 de "Lo que falta" de la escala en `docs/bitacoras/caja-amiga.md`.

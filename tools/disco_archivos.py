@@ -65,6 +65,9 @@ if sys.argv[1] == "--comprobar":
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
         "C/Prefs/ cajón",
         f"C/Prefs/apariencia {len(apariencia)}",
+        # La escala de las ventanas Amiga, que pone el guion con la fila de Apariencia: "general dashos" y
+        # "escala amiga 1".
+        "C/Prefs/cajas 30",
         # C2: los mosaicos del panel rápido, como los dejó el panel (los de serie).
         # C3: el fondo que se quedó, el último que se puso desde el centro.
         "C/Prefs/fondo 14",

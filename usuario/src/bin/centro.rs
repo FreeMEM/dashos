@@ -53,7 +53,7 @@ use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     xdg_surface, xdg_toplevel, xdg_wm_base,
 };
-use wayland::aspecto::{self, Ajuste, Aspecto};
+use wayland::aspecto::{self, Ajuste, Aspecto, Caja, Escala};
 use wayland::Escritor;
 
 dashos::programa!(principal);
@@ -96,12 +96,22 @@ const TEMA_OBJ: u32 = 43;
 const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
 /// C3: el color "del fondo", tras los de la tabla.
 const DEL_FONDO: usize = COLORES.len();
-/// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo y (S26) el aspecto de los programas de
-/// las cajas, como DashOS u originales. Después, un fondo por fila.
+/// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo, (S26) el aspecto de los programas de
+/// las cajas, como DashOS u originales, y lo que se amplían las ventanas Amiga (decisión del usuario del 2026-11-13:
+/// una fila que pasa por automático, 1x, 2x y 3x). Después, un fondo por fila.
 const FILA_PALETA: usize = 2 + COLORES.len();
 const FILA_CAJAS_DASHOS: usize = FILA_PALETA + 1;
 const FILA_CAJAS_ORIGINAL: usize = FILA_PALETA + 2;
-const FILAS_FIJAS: usize = FILA_PALETA + 3;
+const FILA_ESCALA_AMIGA: usize = FILA_PALETA + 3;
+const FILAS_FIJAS: usize = FILA_PALETA + 4;
+
+/// Cómo se dice la escala de las ventanas Amiga en su fila.
+fn nombre_escala(e: Escala) -> String {
+    match e {
+        Escala::Auto => String::from("automático"),
+        Escala::Fija(f) => alloc::format!("{}x", f),
+    }
+}
 const PERMISOS: usize = 0;
 const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
@@ -657,6 +667,7 @@ fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
     let mas = if excepciones > 0 { alloc::format!(" ({} excepciones)", excepciones) } else { String::new() };
     l.push(alloc::format!("Programas de las cajas: como DashOS{}{}", marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
     l.push(alloc::format!("Programas de las cajas: originales{}{}", marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
+    l.push(alloc::format!("Ampliar ventanas Amiga: {}", nombre_escala(cajas.escala_de_caja(Caja::Amiga))));
     let lista = fondos();
     let (estado, _, _, _, _, visto) = al_fondo("semilla");
     for f in &lista {
@@ -1144,6 +1155,32 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
                             let releido = leer_cajas() == Ok(cajas.clone());
                             println!("  [centro] Programas de las cajas: {}; guardado: {} ({} bytes); releído: {}", if general == Aspecto::Dashos { "como DashOS" } else { "originales" }, guardado, bytes, if releido { "sí" } else { "no" });
+                            (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                            i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                            cambio = true;
+                        }
+                        // Ampliar las ventanas Amiga: cada vez, la siguiente (automático, 1x, 2x, 3x y otra vez
+                        // automático). Se guarda en `Prefs/cajas` (`escala amiga ...`; sin línea, automático) y se da
+                        // al compositor, como el aspecto.
+                        k if k == FILA_ESCALA_AMIGA as i64 => {
+                            let siguiente = match cajas.escala_de_caja(Caja::Amiga) {
+                                Escala::Auto => Escala::Fija(1),
+                                Escala::Fija(f) if f < aspecto::MAX_ESCALA => Escala::Fija(f + 1),
+                                Escala::Fija(_) => Escala::Auto,
+                            };
+                            cajas.escalas.retain(|c| c.0 != Caja::Amiga);
+                            if siguiente != Escala::Auto {
+                                cajas.escalas.push((Caja::Amiga, siguiente));
+                            }
+                            let texto = cajas.escribir();
+                            if gt.is_some() && version_tema >= 3 {
+                                let mut e = Escritor::new();
+                                e.empezar(TEMA_OBJ, dashos_tema_v1::req::CAJAS).texto(Some(&texto)).fin();
+                                c.mandar(&e);
+                            }
+                            let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
+                            let releido = leer_cajas() == Ok(cajas.clone());
+                            println!("  [centro] Ampliar ventanas Amiga: {}; guardado: {} ({} bytes); releído: {}", nombre_escala(siguiente), guardado, bytes, if releido { "sí" } else { "no" });
                             (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;
