@@ -892,6 +892,7 @@ impl<C: Compositor> CajaGrafica<C> {
             (Vec::new(), 0)
         };
         let activo_texto = matches!(self.gt.activo, Some(Activo::Texto { g: x, .. }) if x == g);
+        let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
         // En una ventana GIMMEZEROZERO, lo de un gadget de la capa de dentro (su etiqueta, su nivel) no sale a los
         // bordes: se guardan y se devuelven al acabar (en 3.1, la etiqueta de un gadget pegado al borde se corta).
@@ -930,7 +931,7 @@ impl<C: Compositor> CajaGrafica<C> {
             cursor,
             activo_texto,
         };
-        let dano = self.tema.gadget(l, glifos, &plumas, &vista);
+        let dano = tema.como().gadget(l, glifos, &plumas, &vista);
         for (x, y, p) in bordes {
             l.poner(x, y, p);
         }
@@ -970,17 +971,18 @@ impl<C: Compositor> CajaGrafica<C> {
 
 /// El mando de un deslizador (horizontal si es más ancho que alto) dentro de `dentro`.
 pub(crate) fn mando(s: &Gt, dentro: Rect) -> Rect {
+        // En 64 bits: unos límites absurdos (GTSL_Min de -2^31 y GTSL_Max de 2^31-1) no se desbordan.
         let (rango, pos, vis) = if s.tipo == kind::SLIDER {
-            ((s.max - s.min).max(0) + 1, s.valor - s.min, 1)
+            ((s.max as i64 - s.min as i64).max(0) + 1, s.valor as i64 - s.min as i64, 1)
         } else {
-            (s.max.max(1), s.valor, s.visibles.max(1))
+            ((s.max as i64).max(1), s.valor as i64, (s.visibles as i64).max(1))
         };
         let horizontal = dentro.x1 - dentro.x0 >= dentro.y1 - dentro.y0;
-        let largo = if horizontal { dentro.x1 - dentro.x0 + 1 } else { dentro.y1 - dentro.y0 + 1 };
+        let largo = if horizontal { dentro.x1 as i64 - dentro.x0 as i64 + 1 } else { dentro.y1 as i64 - dentro.y0 as i64 + 1 };
         let mando = (largo * vis.min(rango) / rango.max(1)).max(6).min(largo);
         let libre = largo - mando;
         let pasos = (rango - vis).max(1);
-        let p = libre * pos.clamp(0, pasos) / pasos;
+        let (p, mando) = ((libre * pos.clamp(0, pasos) / pasos) as i32, mando as i32);
         if horizontal {
             Rect::nuevo(dentro.x0 + p, dentro.y0, dentro.x0 + p + mando - 1, dentro.y1)
         } else {
@@ -990,10 +992,11 @@ pub(crate) fn mando(s: &Gt, dentro: Rect) -> Rect {
 
 /// Las celdas de los colores de una paleta, en orden (filas y columnas que más se acerquen a cuadradas).
 pub(crate) fn celdas(s: &Gt, r: Rect) -> Vec<Rect> {
-        let n = s.colores.max(1) as i32;
-        let x0 = r.x0 + if s.indicador > 0 { s.indicador + 2 } else { 4 };
-        let zona = Rect::nuevo(x0, r.y0 + 2, r.x1 - 4, r.y1 - 2);
-        let (an, al) = ((zona.x1 - zona.x0 + 1).max(1), (zona.y1 - zona.y0 + 1).max(1));
+        // En 64 bits (un rectángulo o un GTPA_IndicatorWidth absurdos no se desbordan); como mucho 256 colores.
+        let n = s.colores.clamp(1, 256) as i64;
+        let x0 = r.x0 as i64 + if s.indicador > 0 { s.indicador as i64 + 2 } else { 4 };
+        let (zx0, zy0, zx1, zy1) = (x0, r.y0 as i64 + 2, r.x1 as i64 - 4, r.y1 as i64 - 2);
+        let (an, al) = ((zx1 - zx0 + 1).max(1), (zy1 - zy0 + 1).max(1));
         let mut mejor = (1, n);
         for filas in 1..=n {
             if n % filas != 0 {
@@ -1006,14 +1009,15 @@ pub(crate) fn celdas(s: &Gt, r: Rect) -> Vec<Rect> {
             }
         }
         let (filas, cols) = mejor;
+        let c32 = |v: i64| v.clamp(i32::MIN as i64 / 2, i32::MAX as i64 / 2) as i32;
         let mut v = Vec::new();
         for i in 0..n {
             let (f, c) = (i / cols, i % cols);
             v.push(Rect::nuevo(
-                zona.x0 + c * an / cols,
-                zona.y0 + f * al / filas,
-                zona.x0 + (c + 1) * an / cols - 1,
-                zona.y0 + (f + 1) * al / filas - 1,
+                c32(zx0 + c * an / cols),
+                c32(zy0 + f * al / filas),
+                c32(zx0 + (c + 1) * an / cols - 1),
+                c32(zy0 + (f + 1) * al / filas - 1),
             ));
         }
         v
@@ -1030,9 +1034,12 @@ impl<C: Compositor> CajaGrafica<C> {
         if an < 2 || al < 2 {
             return Ok(());
         }
+        if self.bisel_material(ex, rp, x, y, an, al, hundido, cresta)? {
+            return Ok(());
+        }
         let antes = self.leer_rp(ex, rp)?.fg as u32;
         // Las plumas, las que diga el tema (de la DrawInfo de la pantalla).
-        let (a, b) = self.tema.plumas_bisel(false);
+        let (a, b) = crate::tema::Tema::plumas_bisel(&crate::tema::Clasico, false);
         let (claro, oscuro) = (self.intui.wb.plumas[a] as u32, self.intui.wb.plumas[b] as u32);
         let caja = |s: &mut Self, ex: &mut Exec<M>, x0: i32, y0: i32, x1: i32, y1: i32, h: bool| -> Result<(), Fallo> {
             let (a, b) = if h { (oscuro, claro) } else { (claro, oscuro) };
@@ -1048,6 +1055,45 @@ impl<C: Compositor> CajaGrafica<C> {
             caja(self, ex, x + 2, y + 1, x + an - 3, y + al - 2, !hundido)?;
         }
         self.set_a_pen(ex, rp, antes)
+    }
+
+    /// S26: el marco de `DrawBevelBoxA` con el aspecto de DashOS (una tarjeta con contorno), pintado en el lienzo del
+    /// `RastPort` con su capa y su recorte. `false` si toca el clásico (o el mapa es planar: va por las plumas).
+    #[allow(clippy::too_many_arguments)]
+    fn bisel_material<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, x: i32, y: i32, an: i32, al: i32, hundido: bool, cresta: bool) -> Result<bool, Fallo> {
+        let i = self.leer_rp(ex, rp)?;
+        let ventana = if i.capa != 0 { ex.l32(i.capa.wrapping_add(crate::estructuras::layer::WINDOW)).unwrap_or(0) } else { 0 };
+        let tema = if self.intui.ventanas.contains_key(&ventana) {
+            self.tema_de(ventana)
+        } else {
+            crate::tema::Elegido::de(self.comp.tema_amiga(&Self::nombre_programa(ex, ex.tarea_actual())))
+        };
+        if !matches!(tema, crate::tema::Elegido::Material(_)) || !matches!(self.mapa(ex, i.bm)?, crate::graphics::Mapa::Nativo) {
+            return Ok(false);
+        }
+        let (dx, dy) = self.origen_capa(i.capa);
+        let capa = self.recorte_capa(i.capa);
+        let Some(l) = self.gfx.lienzos.get_mut(&i.bm) else { return Ok(false) };
+        let clip = capa.map_or(l.rect(), |c| c.interseccion(&l.rect()));
+        let r = Rect::nuevo(x.saturating_add(dx), y.saturating_add(dy), x.saturating_add(an - 1).saturating_add(dx), y.saturating_add(al - 1).saturating_add(dy));
+        // Lo de fuera del recorte (otra capa, los bordes de una GIMMEZEROZERO) se guarda y se devuelve.
+        let toca = r.interseccion(&l.rect());
+        let mut fuera = Vec::new();
+        if !toca.vacio() {
+            for py in toca.y0..=toca.y1 {
+                for px in toca.x0..=toca.x1 {
+                    if !clip.contiene(px, py) {
+                        fuera.push((px, py, l.pixel(px, py)));
+                    }
+                }
+            }
+        }
+        tema.como().bisel_caja(l, r, hundido, cresta);
+        for (px, py, c) in fuera {
+            l.poner(px, py, c);
+        }
+        l.danar(toca.interseccion(&clip));
+        Ok(true)
     }
 
     // --- El ratón y el teclado ---

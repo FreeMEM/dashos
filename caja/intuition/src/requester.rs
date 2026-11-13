@@ -216,6 +216,7 @@ impl<C: Compositor> CajaGrafica<C> {
             vistas.push((g, *r));
         }
         let plumas = self.plumas(ex);
+        let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
         for (g, r) in &vistas {
@@ -229,7 +230,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 cursor: 0,
                 activo_texto: false,
             };
-            let d = self.tema.gadget(l, glifos, &plumas, &vista);
+            let d = tema.como().gadget(l, glifos, &plumas, &vista);
             l.danar(d.interseccion(&l.rect()));
         }
     }

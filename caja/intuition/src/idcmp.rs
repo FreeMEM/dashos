@@ -93,8 +93,58 @@ impl<C: Compositor> CajaGrafica<C> {
                 Err(f) => self.avisar(ex, "(evento)", f),
             }
         }
+        // S26: si ha cambiado el tema de DashOS o el ajuste del aspecto, se repintan las ventanas.
+        let v = self.comp.version_tema();
+        if v != self.version_tema {
+            self.version_tema = v;
+            self.repintar_tema(ex);
+        }
         self.presentar();
         replan
+    }
+
+    /// Repinta lo que pinta intuition en cada ventana con el tema que le toca ahora: los bordes, los gadgets de
+    /// GadTools y los requesters. Lo de dentro que era del color de fondo de antes pasa al de ahora (lo que pintó el
+    /// programa con otros colores se queda; un menú abierto se ve como estaba hasta que se mueva).
+    pub(crate) fn repintar_tema<M: Memoria>(&mut self, ex: &mut Exec<M>) {
+        for w in self.ventanas() {
+            let Some(v) = self.intui.ventanas.get(&w) else { continue };
+            let (bm, viejo, [bi, ba, bd, bb]) = (v.bm, v.fondo, v.geometria.bordes);
+            // Si para esta ventana no ha cambiado nada (otro evento del tema con lo mismo), no se toca.
+            let aspecto = self.comp.tema_amiga(&v.programa);
+            if aspecto == v.aspecto {
+                continue;
+            }
+            if let Some(v) = self.intui.ventanas.get_mut(&w) {
+                v.aspecto = aspecto;
+            }
+            let nuevo = match self.tema_de(w).como().fondo_ventana() {
+                Some(f) => f | 0xFF00_0000,
+                None => self.color(self.intui.wb.cm, 0) | 0xFF00_0000,
+            };
+            if nuevo != viejo {
+                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                    let (an, al) = (l.ancho() as i32, l.alto() as i32);
+                    for y in ba.max(0)..(al - bb).min(al) {
+                        for x in bi.max(0)..(an - bd).min(an) {
+                            if l.pixel(x, y) | 0xFF00_0000 == viejo {
+                                l.poner(x, y, nuevo);
+                            }
+                        }
+                    }
+                    l.poner_fondo(nuevo);
+                }
+                if let Some(v) = self.intui.ventanas.get_mut(&w) {
+                    v.fondo = nuevo;
+                }
+            }
+            self.dibujar_marco(w);
+            let primero = ex.l32(w.wrapping_add(win::FIRSTGADGET)).unwrap_or(0);
+            self.dibujar_lista(ex, w, primero, -1, true);
+            if self.requesters.iter().any(|q| q.w == w) {
+                self.dibujar_requester(ex, w);
+            }
+        }
     }
 
     /// Un evento del compositor para la ventana de la superficie `s`.

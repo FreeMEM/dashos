@@ -13,7 +13,7 @@ use alloc::string::String;
 use alloc::vec::Vec;
 use core::slice;
 
-use caja_intuition::compositor::{Compositor, Evento, NuevaVentana, Superficie};
+use caja_intuition::compositor::{Compositor, Evento, NuevaVentana, Superficie, Tokens};
 use caja_intuition::lienzo::Rect;
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use crate::tema::TemaCaja;
@@ -644,5 +644,12 @@ impl Compositor for CompositorWayland {
     fn sacar_eventos(&mut self) -> Vec<(Superficie, Evento)> {
         self.bombear();
         core::mem::take(&mut self.eventos)
+    }
+    /// S26: los colores de DashOS para un programa Amiga que va "como DashOS" (tema.rs).
+    fn tema_amiga(&self, programa: &str) -> Option<Tokens> {
+        self.tema.tokens_para(programa)
+    }
+    fn version_tema(&self) -> u32 {
+        self.tema.version
     }
 }

@@ -471,6 +471,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (bm, alto_barra) = (v.bm, v.geometria.bordes[1].max(fuente::ALTO as i32 + 3));
         let plumas = self.plumas(ex);
+        let tema = self.tema_de(w);
         let mut titulos = Vec::new();
         let mut elems = Vec::new();
         let mut caja = None;
@@ -523,7 +524,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         }
         let vista = VistaMenu { alto_barra, ancho: an_l, titulos: &titulos, elems: &elems, caja, msel };
-        self.tema.menu(l, glifos, &plumas, &vista);
+        tema.como().menu(l, glifos, &plumas, &vista);
         let r = l.rect();
         l.danar(r);
     }

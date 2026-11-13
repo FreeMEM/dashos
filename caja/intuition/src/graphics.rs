@@ -229,12 +229,12 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// El recorte de un `RastPort`: su capa, si es de una ventana.
-    fn recorte_capa(&self, capa: u32) -> Option<Rect> {
+    pub(crate) fn recorte_capa(&self, capa: u32) -> Option<Rect> {
         if capa == 0 { None } else { self.gfx.capas.get(&capa).copied() }
     }
 
     /// Dónde cae el (0, 0) de un `RastPort` en su mapa (el de su capa; (0, 0) casi siempre).
-    fn origen_capa(&self, capa: u32) -> (i32, i32) {
+    pub(crate) fn origen_capa(&self, capa: u32) -> (i32, i32) {
         if capa == 0 { (0, 0) } else { self.gfx.origenes.get(&capa).copied().unwrap_or((0, 0)) }
     }
 

@@ -171,7 +171,16 @@ while time.time() - inicio < total:
                         ancho_pantalla = int(open(foto, "rb").read().split(b"\n", 3)[1].split()[0])
                     except Exception:
                         pass
-                    tapada = not (len(vistos) == 4 and all(c in wb for c in vistos) and vacio == [(0xAA, 0xAA, 0xAA)])
+                    clasica = len(vistos) == 4 and all(c in wb for c in vistos) and vacio == [(0xAA, 0xAA, 0xAA)]
+                    # Con el aspecto de DashOS (S26): las dos esquinas de arriba, de la barra; las de abajo y el sitio
+                    # vacío, de la superficie (otra ventana encima no da eso).
+                    # Y la casilla marcada (en (103, 25)), del primario: no es la barra ni la superficie (una ventana
+                    # del kit encima tiene la misma superficie).
+                    casilla = pixeles(foto, [(x + 103, y + 25)])
+                    material = len(vistos) == 4 and len(vacio) == 1 and vistos[0] == vistos[1] != vistos[2] \
+                        and vistos[2] == vistos[3] == vacio[0] and len(casilla) == 1 and casilla[0] not in (vistos[0], vacio[0]) \
+                        and max(casilla[0]) - min(casilla[0]) > 40
+                    tapada = not (clasica or material)
                     if tapada and gt_movida < 3:
                         # Un clic en su borde izquierdo (no es ningún gadget; suele verse: las otras ventanas salen más a
                         # la derecha) la sube encima de las demás; se mira otra vez en la vuelta siguiente.

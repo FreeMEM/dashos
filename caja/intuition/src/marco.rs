@@ -86,9 +86,20 @@ fn contorno(l: &mut Lienzo, r: Rect, c: u32) {
 impl<C: Compositor> CajaGrafica<C> {
     /// Dibuja los adornos de una ventana en su lienzo.
     pub(crate) fn dibujar_marco(&mut self, w: u32) {
+        let tema = self.tema_de(w);
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let g = v.geometria;
         if g.flags & wflg::BORDERLESS != 0 && !g.barra() {
+            return;
+        }
+        // S26: con el aspecto de DashOS, los bordes los pinta su tema (del mismo tamaño: nada se mueve).
+        if let crate::tema::Elegido::Material(m) = tema {
+            let (bm, titulo, activa) = (v.bm, v.titulo.clone(), v.activa);
+            let glifos = &self.intui.glifos;
+            let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
+            let vista = crate::tema::VistaMarco { ancho: g.ancho, alto: g.alto, flags: g.flags, bordes: g.bordes, activa, titulo: &titulo };
+            use crate::tema::Tema;
+            m.marco(l, glifos, &vista);
             return;
         }
         let activa = v.activa;

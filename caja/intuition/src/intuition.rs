@@ -51,6 +51,12 @@ pub(crate) struct Ventana {
     pub tarea: u32,
     pub orden: u64,
     pub titulo: Vec<u8>,
+    /// El programa que la abrió (el nombre de su tarea): de él sale su aspecto (S26).
+    pub programa: alloc::string::String,
+    /// El color de dentro con el que se abrió (el de la pluma 0, o la superficie de DashOS).
+    pub fondo: u32,
+    /// Los colores de DashOS con los que se pintó (`None`: el clásico): si no cambian, no se repinta.
+    pub aspecto: Option<crate::compositor::Tokens>,
     pub activa: bool,
     pub geometria: Geometria,
     pub pulsado: Option<Gadget>,
@@ -478,6 +484,19 @@ impl<C: Compositor> CajaGrafica<C> {
         };
         let cm = self.intui.wb.cm;
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
+        // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
+        // programa que borra con la pluma 0 pinta el gris de siempre).
+        let programa = Self::nombre_programa(ex, ex.tarea_actual());
+        let aspecto = self.comp.tema_amiga(&programa);
+        let fondo = match crate::tema::Elegido::de(aspecto).como().fondo_ventana() {
+            Some(f) => {
+                if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                    l.poner_fondo(f);
+                }
+                f | 0xFF00_0000
+            }
+            None => self.color(cm, 0) | 0xFF00_0000,
+        };
         self.init_rast_port(ex, rp)?;
         ex.e32(rp + rp_::BITMAP, bm)?;
         ex.e32(rp + rp_::LAYER, capa)?;
@@ -548,6 +567,9 @@ impl<C: Compositor> CajaGrafica<C> {
                 tarea: ex.tarea_actual(),
                 orden,
                 titulo,
+                programa,
+                fondo,
+                aspecto,
                 activa: false,
                 geometria,
                 pulsado: None,
@@ -1043,7 +1065,8 @@ impl<C: Compositor> CajaGrafica<C> {
             return Ok(false);
         }
         let (bm, capa) = (v.bm, v.capa);
-        let fondo = self.color(self.intui.wb.cm, self.intui.wb.plumas[dri::BACKGROUNDPEN] as u8);
+        // Lo de dentro, del color con el que se abrió (el de BACKGROUNDPEN, o la superficie de DashOS).
+        let fondo = v.fondo;
         if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
             l.cambiar_tamano(an as u32, al as u32);
             // Lo que era borde abajo y a la derecha queda dentro: se borra.

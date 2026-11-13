@@ -863,3 +863,111 @@ fuente (topaz/9 allí), los botones del mx (redondeados allí) y la marca de la 
 - El modo de las capturas (`CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480`): sale "FALTA: pantalla del
   firmware: 800x600" (la línea esperada es la de 800x600); no es una prueba, solo para las capturas.
 - El oráculo, sin cerrojo desde ahora (orden del usuario: la caja Amiga no abre servidores).
+
+## 2026-11-13: el tema Material de DashOS en la caja Amiga (S26)
+
+Rama `gadtools-material` (desde `fusion-fondo`). Lo que pinta la caja Amiga (GadTools, los menús, `EasyRequest`,
+`DrawBevelBoxA` y los bordes de intuition) sale ya con el aspecto de DashOS si el ajuste de S26 dice "como DashOS" (lo
+de serie), y con el de 3.x si dice "original".
+
+### Cómo va
+
+- **Los colores**: `caja/pegamento/src/tema.rs` saca de `kit::tema::Tema` (el tema del sistema, con la paleta del
+  fondo, claro u oscuro) los papeles de Material 3 que hacen falta (`Tokens`, en `caja/intuition/src/compositor.rs`):
+  primario, sobre-primario, superficie y su variante, contornos, contenedores de superficie (bajo, normal, alto) y el
+  contenedor secundario (el acento suave). Ningún color está escrito a mano (salvo `Tokens::CLARO`, solo para las
+  pruebas). Las plumas de la `DrawInfo` siguen siendo las de 3.x: el tema Material no las usa.
+- **El puente**: dos funciones nuevas del rasgo `Compositor`, `tema_amiga(programa)` (los tokens si ese programa va
+  como DashOS) y `version_tema()` (sube con cada evento del tema). La caja las da desde `TemaCaja`.
+- **Quién elige**: cada ventana guarda el programa que la abrió (el nombre de su tarea, sin camino) y `tema_de(w)` da
+  `Elegido::Material` o `Elegido::Clasico`. Las excepciones por programa del ajuste (`programa amiga original X`)
+  funcionan ya. `DrawBevelBoxA` mira la ventana de la capa del `RastPort` (o, si no hay, la tarea).
+- **Al cambiar el tema o el ajuste con la ventana abierta**: `atender` ve otra versión y repinta los bordes, los gadgets
+  de GadTools y los requesters; lo de dentro que tenía el color de fondo de antes pasa al de ahora. Lo que el programa
+  pintó con otros colores se queda; un menú abierto, hasta que se mueve.
+- **El fondo de las ventanas**: con "como DashOS", una ventana nueva sale de la superficie del tema. La paleta de la
+  pantalla no se toca (S26): un programa que borra con la pluma 0 pinta el gris de siempre.
+
+### Los controles (`caja/intuition/src/tema.rs`, `Material`)
+
+Todo en el mismo rectángulo que el clásico y con la etiqueta y el nivel en el mismo sitio (lo comprueba
+`mismo_rectangulo_que_el_clasico` con los 12 tipos, los 5 lugares de la etiqueta, pulsados y desactivados). Bordes
+suaves con 16 muestras por píxel, en octavos de píxel (`Forma`, `trazo`).
+
+| Control | Material |
+|---|---|
+| Botón | Píldora tonal (contenedor secundario); pulsado, del primario |
+| Casilla | Cuadrado de esquinas de 2 en el centro de su caja: contorno; marcada, primario con la marca |
+| Mx | Botones de radio: aro (primario el elegido) con su punto |
+| Ciclo | Desplegable con contorno: texto a la izquierda y triángulo a la derecha (sigue pasando de opción con el clic) |
+| Cadena y entero | Campo con contorno de esquinas de 4; con el cursor, contorno de 2 del primario y cursor de barra |
+| Texto y número | Con borde: relleno del contenedor alto, sin contorno |
+| Deslizador | Pista de 4 (primario hasta el mando) y mando redondo del primario |
+| Barra (scroller) | Pista y mando como píldoras |
+| Paleta | Tarjeta con contorno, muestras redondeadas, la elegida con aro del primario |
+| Lista | Tarjeta con contorno; la fila elegida en el acento suave; barra de píldoras y chevrones |
+| `DrawBevelBoxA` | Tarjeta con contorno (variante), esquinas de 4; dentro no se toca |
+| Menús | Barra del contenedor alto; el título señalado en píldora; el menú, contenedor bajo con contorno; el elemento señalado en el acento suave; la tecla Amiga en una tecla redondeada |
+| `EasyRequest` | Ventana con bordes Material, fondo de superficie, botones tonales |
+| Bordes de la ventana | Barra del mismo alto: contenedor alto (activa) o contenedor (inactiva), título a la izquierda como la barra de DashOS, X de cerrar, icono de profundidad (dos ventanas), rayas de tamaño; lados y abajo de la superficie, sin relieve |
+
+Desactivado: todo al 38 % sobre la superficie.
+
+### Lo que falta y decisiones pendientes
+
+1. **Esquinas redondeadas de las ventanas Amiga**: el compositor ya les pone sombra, pero no esquinas (la caja manda
+   XRGB8888: el compositor solo redondea las que llevan su barra o las ARGB con esquinas transparentes). Para tenerlas,
+   la caja tendría que mandar ARGB con las esquinas transparentes (`caja/pegamento/src/compositor.rs`), o el
+   compositor redondear las de la caja Amiga.
+2. **El gadget de zoom**: intuition aún no tiene (`WA_Zoom`); cuando lo tenga, su icono Material va en el mismo tema.
+3. **Los gadgets de intuition sin GadTools** (`Border`, `Image`, `IntuiText`, `PROPGADGET`) y BOOPSI siguen sin
+   dibujarse: cuando se hagan, por el mismo `Tema`.
+4. **La `DrawInfo`** sigue con las plumas de 3.x aunque el programa vaya como DashOS (S26 pedía plumas nuevas con
+   `ObtainPen`). Es una por pantalla y las excepciones son por programa: queda por decidir.
+5. **Siguiente paso, cinco temas para elegir** (dato del usuario): Claro, Oscuro, AOS4 (estilo AmigaOS 4), MOS
+   (estilo MorphOS) y Magic WB (estilo MagicWB). `Material` sirve para Claro y Oscuro (los tokens ya salen del modo y
+   de la paleta del fondo). Los otros tres son más implementaciones de `Tema` (con sus `fondo_ventana`, `marco` y
+   `bisel_caja`) y una variante más de `Elegido`; la lógica de GadTools, menús y ventanas no cambia. Falta que el
+   ajuste de S26 (`dashos_tema_v1.cajas`) lleve qué tema, no solo "como DashOS"/"original".
+6. **Tamaño en Full HD**: ver las capturas.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS` (el fondo y "cajas=general dashos"
+u "original"):
+
+- `caja-gadtools-menu-material-ondas-fhd.png` y `caja-gadtools-menu-material-atardecer-fhd.png`: la ventana entera
+  con el menú Proyecto abierto ("Salir" señalado). Los colores cambian con el fondo (acento 3d6f88 con las olas,
+  c44e68 con el atardecer).
+- `caja-gadtools-menu-clasico-ondas-fhd.png` y `caja-gadtools-clasico-ondas-fhd.png`: lo mismo con "original" (3.x).
+- `caja-gadtools-material-atardecer-fhd.png`: la barra Material (X, profundidad, título) y los gadgets, con Ajustes
+  tapando parte. `caja-gadtools-material-atardecer-oscuro-fhd.png`: la misma ventana repintada al pasar el guion al
+  modo oscuro con ella abierta (tapada en parte por el centro de control).
+- Sin captura limpia de la ventana sin menú: las ventanas del guion (Ajustes, el centro, uno maximizado) la tapan
+  según cómo vaya la carga del PC.
+
+- **A 1:1 se ve muy pequeño en Full HD**: la ventana de GadTools mide 410x192 con topaz/8 en una pantalla de
+  1920x1080. Escalar las ventanas Amiga (x2) es otro paso (en el compositor o en la caja), no hecho.
+- La pantalla de Workbench de la caja sigue topada a 1024x768: las ventanas Amiga salen en esa zona, arriba a la
+  izquierda.
+- El guion de las capturas (`tools/prueba_uefi.sh`) reconocía la ventana de GadTools por los colores de 3.x; ahora
+  también por los de Material (barra, superficie y la casilla del primario: una ventana del kit encima tiene la misma
+  superficie).
+- El ejemplo de Dash (`test_gadtools.dash`) y el requester: sus capturas salieron tapadas por una ventana maximizada;
+  no se entregan.
+
+### Pruebas
+
+- `cargo test` de `caja/intuition`: 7 de `tema.rs` (mismo rectángulo que el clásico para los 12 tipos y 5 lugares,
+  colores de los tokens, menús, bordes, `DrawBevelBox`, círculos suaves y una hostil: rectángulos vacíos, negativos,
+  enormes, campos absurdos, radios y grosores imposibles) y 3 de `tests/material.rs` (ventana con el tema y al
+  cambiarlo con la ventana abierta, la excepción por programa, plumas de la `DrawInfo` fuera de la paleta y su tabla
+  apuntando fuera de la memoria, `DrawBevelBoxA`); las de antes, igual. clippy limpio en lo nuevo.
+- Lo hostil encontró desbordes en código compartido (`mando` y `celdas` con límites de -2^31 a 2^31-1, o un
+  `GTPA_IndicatorWidth` enorme) y que el fantasma clásico recorría todo el rectángulo de un gadget enorme aunque
+  cayera fuera del lienzo: arreglados (64 bits, y solo lo que cae en el lienzo).
+- `make prueba`: BIEN esperado.txt y BIEN cargador hunk. `make arranque-virt`: las cinco BIEN (tras juntar
+  `fusion-fondo`, que arregla la barra con `dashos_tema_v1` v4; antes, "el compositor pide 800x560" faltaba por eso).
+  La línea de atributos de `gadtools.exe` se escribía en dos veces y el aviso de la ventana en pantalla caía en medio
+  (con el tema Material, siempre): ahora va en una sola escritura (`caja/pruebas68k/gadtools.c` y su `.exe`).
+- `arranque-virt-vm`, `-2` y `-escritorio`: BIEN.
