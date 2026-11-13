@@ -15,6 +15,9 @@
 //! de ventanas de dom0), contada en su documentación.
 //!
 //! Y la barra de la pantalla recibe el título de una ventana de la caja con "Linux · " delante.
+//!
+//! Desde la rama `amiga-integrada`, también la caja Amiga (sus ventanas llevan la barra de DashOS y los controles de
+//! Material "como DashOS"): azul, "AMIGA" y "Amiga · ".
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -31,6 +34,12 @@ pub const TINTA: u32 = 0xff1d_1b20;
 pub const PREFIJO_LINUX: &str = "Linux · ";
 /// El texto de la pestaña.
 pub const TEXTO_LINUX: &str = "LINUX";
+/// La caja Amiga (rama `amiga-integrada`): azul (el del Workbench de siempre), con la letra blanca; "Amiga · " en la
+/// barra de la pantalla.
+pub const COLOR_AMIGA: u32 = 0xff00_55aa;
+pub const TINTA_AMIGA: u32 = 0xffff_ffff;
+pub const PREFIJO_AMIGA: &str = "Amiga · ";
+pub const TEXTO_AMIGA: &str = "AMIGA";
 
 /// Cada letra de la pestaña: 5 × 7, una fila por byte (el bit 4 es la columna de la izquierda), a escala `ESCALA`.
 const ESCALA: i32 = 2;
@@ -124,10 +133,15 @@ pub fn sitio_pestana(caja: Rect, area: Rect, (w, h): (i32, i32)) -> Rect {
 
 /// El título para la barra de la pantalla de una ventana de la caja.
 pub fn titulo_de_caja(titulo: &str) -> String {
+    titulo_con(PREFIJO_LINUX, titulo)
+}
+
+/// El título para la barra de la pantalla con el prefijo de su caja.
+pub fn titulo_con(prefijo: &str, titulo: &str) -> String {
     if titulo.is_empty() {
         return String::new();
     }
-    let mut t = String::from(PREFIJO_LINUX);
+    let mut t = String::from(prefijo);
     t.push_str(titulo);
     t
 }

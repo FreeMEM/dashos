@@ -12,6 +12,15 @@
 //! S26, `auto` de serie). El programa no se entera: intuition pinta a 1x; aquí cada píxel va al búfer como un cuadrado
 //! de `f` x `f` y las coordenadas del ratón se dividen entre `f`. El compositor ve una ventana normal, más grande. La
 //! pantalla de Workbench mide lo de la pantalla real entre el factor de la caja.
+//!
+//! **La barra de DashOS** (rama `amiga-integrada`): una ventana "como DashOS" con barra pide la del compositor
+//! (`xdg-decoration`, modo del servidor), como una de Linux: título, cerrar, maximizar, las cuatro esquinas redondeadas y
+//! la sombra (todo del compositor). Cerrar llega como `Evento::Cerrar`
+//! (`IDCMP_CLOSEWINDOW`); el borde de DashOS y maximizar, como un `xdg_toplevel.configure` con tamaño, que aquí pasa a
+//! `Evento::Tamano` (intuition lo ajusta a `WindowLimits` y manda `IDCMP_NEWSIZE`).
+//!
+//! **La letra de DashOS** (`caja_intuition::nitido`): ampliada, lo que escribieron nuestras bibliotecas se vuelve a
+//! escribir con Roboto del kit al tamaño de la pantalla, en el hueco de la topaz.
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -21,11 +30,12 @@ use core::slice;
 use caja_intuition::compositor::{Compositor, Evento, NuevaVentana, Superficie, Tokens};
 use caja_intuition::escala;
 use caja_intuition::lienzo::Rect;
+use caja_intuition::nitido::{self, Estilo, Letras, TextoNitido};
 use wayland::canal::{self, Juntador, TROZO_CONECTAR, TROZO_DATOS};
 use crate::tema::TemaCaja;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_callback, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat,
-    wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base,
+    wl_shm, wl_shm_pool, wl_surface, xdg_surface, xdg_toplevel, xdg_wm_base, zxdg_decoration_manager_v1, zxdg_toplevel_decoration_v1,
 };
 use wayland::aspecto::{Caja, MAX_ESCALA};
 use wayland::Escritor;
@@ -38,6 +48,8 @@ const MAX_LADO: u32 = 4096;
 const MAX_SUPERFICIES: u32 = 256;
 /// `wl_shm.format`: XRGB8888 (el alfa de los mapas nativos es siempre 0xFF).
 const XRGB8888: u32 = 1;
+/// `zxdg_toplevel_decoration_v1.mode`: la barra la pone el compositor.
+const MODO_SERVIDOR: u32 = 2;
 /// `xdg_toplevel.resize_edge`: abajo a la derecha.
 const BORDE_ABAJO_DERECHA: u32 = 10;
 
@@ -57,6 +69,51 @@ struct Ventana {
     titulo: String,
     /// El programa que la abrió (para su escala).
     programa: String,
+    /// Su decoración (`zxdg_toplevel_decoration_v1`, 0 si no lleva la barra de DashOS).
+    deco: u32,
+    /// El tamaño del último `xdg_toplevel.configure` (en la superficie ampliada; 0 si lo elige ella), hasta su
+    /// `xdg_surface.configure`.
+    pedido: (i32, i32),
+}
+
+/// La letra de DashOS (el kit) para los textos nítidos: Roboto, Roboto Medium y Roboto Mono.
+struct LetrasKit {
+    normal: kit::texto::Fuente,
+    grueso: kit::texto::Fuente,
+    mono: kit::texto::Fuente,
+}
+
+impl LetrasKit {
+    fn nuevas() -> LetrasKit {
+        LetrasKit { normal: kit::texto::Fuente::regular(), grueso: kit::texto::Fuente::medium(), mono: kit::texto::Fuente::mono() }
+    }
+    fn de(&mut self, e: Estilo) -> &mut kit::texto::Fuente {
+        match e {
+            Estilo::Normal => &mut self.normal,
+            Estilo::Grueso => &mut self.grueso,
+            Estilo::Celdas => &mut self.mono,
+        }
+    }
+}
+
+impl Letras for LetrasKit {
+    fn ancho(&mut self, e: Estilo, texto: &str, tam: u32) -> i32 {
+        self.de(e).medir(texto, tam).ancho
+    }
+    fn alturas(&mut self, _e: Estilo, tam: u32) -> (i32, i32) {
+        // Roboto: mayúsculas de 1456/2048 del cuerpo y lo que baja la g, unos 430/2048.
+        (((tam * 1456 + 1024) / 2048) as i32, ((tam * 430 + 1024) / 2048) as i32)
+    }
+    fn escribir(&mut self, e: Estilo, px: &mut [u32], ancho: i32, alto: i32, x: i32, base: i32, texto: &str, tam: u32, color: u32) {
+        if ancho <= 0 || alto <= 0 || px.len() < ancho as usize * alto as usize {
+            return;
+        }
+        let mut l = kit::lienzo::Lienzo::new(px, ancho, alto, ancho as usize);
+        self.de(e).dibujar(&mut l, x, base, texto, tam, color);
+    }
+    fn tiene(&mut self, e: Estilo, c: char) -> bool {
+        self.de(e).tiene(c)
+    }
 }
 
 pub struct CompositorWayland {
@@ -88,6 +145,10 @@ pub struct CompositorWayland {
     /// quien pinta los controles (`tema.rs`).
     tema_obj: u32,
     pub tema: TemaCaja,
+    /// `zxdg_decoration_manager_v1` (0 si el compositor no la tiene): la barra de DashOS.
+    deco_mgr: u32,
+    /// La letra de DashOS, cuando hace falta la primera vez.
+    letras: Option<LetrasKit>,
 }
 
 fn palabra(c: &[u8], i: usize) -> u32 {
@@ -121,6 +182,8 @@ impl CompositorWayland {
             dichos: Vec::new(),
             tema_obj: 0,
             tema: TemaCaja::default(),
+            deco_mgr: 0,
+            letras: None,
         }
     }
 
@@ -201,6 +264,11 @@ impl CompositorWayland {
         if let Some(gt) = global("dashos_tema_v1") {
             c.tema_obj = c.nuevo_id();
             e.empezar(registro, wl_registry::req::BIND).uint(gt.0).texto(Some("dashos_tema_v1")).uint(gt.1.min(3)).uint(c.tema_obj).fin();
+        }
+        // La barra de DashOS para las ventanas "como DashOS" (como las de Linux que la piden).
+        if let Some(gd) = global("zxdg_decoration_manager_v1") {
+            c.deco_mgr = c.nuevo_id();
+            e.empezar(registro, wl_registry::req::BIND).uint(gd.0).texto(Some("zxdg_decoration_manager_v1")).uint(1).uint(c.deco_mgr).fin();
         }
         c.mandar(&e);
         c.sincronizar(2_000_000);
@@ -343,9 +411,20 @@ impl CompositorWayland {
             return;
         }
         if let Some(s) = self.por_objeto(|v| v.top, o) {
-            if orden == xdg_toplevel::ev::CLOSE {
-                self.eventos.push((s, Evento::Cerrar));
+            match orden {
+                xdg_toplevel::ev::CLOSE => self.eventos.push((s, Evento::Cerrar)),
+                // configure: ancho, alto, estados. Vale con el `xdg_surface.configure` que lo sigue.
+                xdg_toplevel::ev::CONFIGURE => {
+                    if let Some(v) = self.ventanas.get_mut(&s) {
+                        v.pedido = (palabra(c, 0) as i32, palabra(c, 1) as i32);
+                    }
+                }
+                _ => {}
             }
+            return;
+        }
+        // zxdg_toplevel_decoration_v1.configure: el modo (se pidió el del servidor; si da otro, la ventana sigue igual).
+        if o != 0 && self.por_objeto(|v| v.deco, o).is_some() {
             return;
         }
         // wl_buffer.release y wl_surface.enter/leave: nada que hacer.
@@ -469,7 +548,16 @@ impl CompositorWayland {
         let Some(v) = self.ventanas.get_mut(&s) else { return };
         let primera = !v.configurada;
         v.configurada = true;
+        let pedido = core::mem::take(&mut v.pedido);
         let (sup, xdg, buf, an, al, f) = (v.sup, v.xdg, v.buf, v.ancho, v.alto, v.f);
+        // Otro tamaño desde el compositor (el borde de DashOS, maximizar): al programa, en sus coordenadas. Intuition lo
+        // ajusta a sus límites; si no cambia, no pasa nada. Lo absurdo (negativo, enorme) no llega.
+        if pedido.0 > 0 && pedido.1 > 0 && pedido.0 <= MAX_LADO as i32 * MAX_ESCALA as i32 && pedido.1 <= MAX_LADO as i32 * MAX_ESCALA as i32 {
+            let (na, nl) = ((pedido.0 as u32 / f.max(1)).max(1), (pedido.1 as u32 / f.max(1)).max(1));
+            if (na, nl) != (an, al) {
+                self.eventos.push((s, Evento::Tamano { ancho: na, alto: nl }));
+            }
+        }
         let titulo = v.titulo.clone();
         let mut e = Escritor::new();
         e.empezar(xdg, xdg_surface::req::ACK_CONFIGURE).uint(serie).fin();
@@ -482,7 +570,8 @@ impl CompositorWayland {
         if primera {
             // El tamaño es el del programa; con escala, después la que lleva.
             let a = if f > 1 { alloc::format!(", a {}x", f) } else { String::new() };
-            self.dichos.push(alloc::format!("ventana Amiga en pantalla ({}x{}{}): {}", an, al, a, titulo));
+            let b = if self.ventanas.get(&s).is_some_and(|v| v.deco != 0) { ", con la barra de DashOS" } else { "" };
+            self.dichos.push(alloc::format!("ventana Amiga en pantalla ({}x{}{}{}): {}", an, al, a, b, titulo));
         }
     }
 
@@ -585,6 +674,7 @@ impl Compositor for CompositorWayland {
         let mut e = Escritor::new();
         let programa: String = v.programa.chars().take(200).collect();
         let f = self.factor_de(&programa, v.ancho, v.alto);
+        let barra = v.barra_dashos && self.deco_mgr != 0;
         let (memoria, pool, buf, va) = self.crear_bufer(s, v.ancho * f, v.alto * f, &mut e)?;
         let (sup, xdg, top) = (self.nuevo_id(), self.nuevo_id(), self.nuevo_id());
         e.empezar(self.compositor, wl_compositor::req::CREATE_SURFACE).uint(sup).fin();
@@ -593,10 +683,35 @@ impl Compositor for CompositorWayland {
         let titulo: String = v.titulo.chars().take(200).collect();
         e.empezar(top, xdg_toplevel::req::SET_TITLE).texto(Some(&titulo)).fin();
         e.empezar(top, xdg_toplevel::req::SET_APP_ID).texto(Some("caja-amiga")).fin();
+        // La barra de DashOS: antes del primer commit (en la versión 1, una ventana con búfer ya no puede pedirla).
+        let deco = if barra {
+            let d = self.nuevo_id();
+            e.empezar(self.deco_mgr, zxdg_decoration_manager_v1::req::GET_TOPLEVEL_DECORATION).uint(d).uint(top).fin();
+            e.empezar(d, zxdg_toplevel_decoration_v1::req::SET_MODE).uint(MODO_SERVIDOR).fin();
+            d
+        } else {
+            0
+        };
         e.empezar(sup, wl_surface::req::COMMIT).fin();
         self.ventanas.insert(
             s,
-            Ventana { sup, xdg, top, pool, buf, memoria, va, ancho: v.ancho, alto: v.alto, f, configurada: false, titulo, programa },
+            Ventana {
+                sup,
+                xdg,
+                top,
+                pool,
+                buf,
+                memoria,
+                va,
+                ancho: v.ancho,
+                alto: v.alto,
+                f,
+                configurada: false,
+                titulo,
+                programa,
+                deco,
+                pedido: (0, 0),
+            },
         );
         self.mandar(&e);
         Some(s)
@@ -612,6 +727,9 @@ impl Compositor for CompositorWayland {
         }
         self.eventos.retain(|(x, _)| *x != s);
         let mut e = Escritor::new();
+        if v.deco != 0 {
+            e.empezar(v.deco, zxdg_toplevel_decoration_v1::req::DESTROY).fin();
+        }
         e.empezar(v.top, xdg_toplevel::req::DESTROY).fin();
         e.empezar(v.xdg, xdg_surface::req::DESTROY).fin();
         e.empezar(v.sup, wl_surface::req::DESTROY).fin();
@@ -621,7 +739,7 @@ impl Compositor for CompositorWayland {
         self.mandar(&e);
     }
 
-    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect) {
+    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect, textos: &[TextoNitido]) {
         if pix.len() < ancho as usize * alto as usize {
             return;
         }
@@ -649,6 +767,10 @@ impl Compositor for CompositorWayland {
             (v.memoria, v.pool, v.buf, v.va, v.ancho, v.alto, v.f) = (m, p, b, va, ancho, alto, f);
             dano = Rect::de_tamano(ancho, alto);
         }
+        // Ampliada, los textos nítidos que tocan lo dañado se escriben enteros.
+        if f > 1 && !textos.is_empty() {
+            dano = nitido::dano_con_textos(dano, textos, pix, ancho, alto);
+        }
         let v = self.ventanas.get(&s).unwrap();
         let (anf, alf) = (ancho as usize * f as usize, alto as usize * f as usize);
         // SEGURIDAD: el búfer de la ventana está proyectado en `v.va` con al menos ancho·f × alto·f × 4 bytes (lo creó
@@ -656,6 +778,10 @@ impl Compositor for CompositorWayland {
         let dst = unsafe { slice::from_raw_parts_mut(v.va as *mut u32, anf * alf) };
         // XRGB8888 de Wayland es un u32 en little-endian: sus bytes, dados la vuelta en la caja.
         let d = escala::ampliar(pix, ancho, alto, f, dano, dst, u32::swap_bytes);
+        if f > 1 && !textos.is_empty() {
+            let letras = self.letras.get_or_insert_with(LetrasKit::nuevas);
+            nitido::componer(letras, textos, pix, ancho, alto, f, dano, dst, u32::swap_bytes);
+        }
         if d.vacio() {
             self.mandar(&e);
             return;
@@ -707,5 +833,8 @@ impl Compositor for CompositorWayland {
     }
     fn version_tema(&self) -> u32 {
         self.tema.version
+    }
+    fn pone_barra(&self) -> bool {
+        self.deco_mgr != 0
     }
 }

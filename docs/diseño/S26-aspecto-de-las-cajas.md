@@ -102,6 +102,12 @@ las esquinas redondeadas y la sombra, sin otra barra encima (dos barras serían 
 3.x, como ahora, con la sombra del compositor. Esto concreta la pregunta abierta de S4 y S23 ("Amiga por dentro, borde
 de DashOS por fuera").
 
+**Decidido después (usuario, 2026-11-13, rama `amiga-integrada`)**: con "como DashOS", la ventana Amiga lleva **la barra
+del compositor**, como una de Linux, y la letra de nuestras bibliotecas es la del kit a la resolución de la pantalla.
+Intuition no pinta barra ni bordes: `WBor*` de la pantalla a 0 y `BorderTop` = `WBorTop` + alto de la letra + 1 (9 con
+topaz/8), así que los programas que colocan sus cosas con `BorderTop` o con `WBorTop + ta_YSize + 1` siguen bien. Lo que
+pinta el programa con `Text()` sigue en topaz. Detalle en `docs/bitacoras/caja-amiga.md`.
+
 ### 4. La caja Linux: qué se puede y qué no
 
 Dentro de Arch, un agente (`dashos-aspecto`, `caja-linux/aspecto`) se conecta al compositor como un programa de

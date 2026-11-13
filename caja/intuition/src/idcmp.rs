@@ -97,6 +97,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let v = self.comp.version_tema();
         if v != self.version_tema {
             self.version_tema = v;
+            if let Err(f) = self.bordes_pantalla(ex) {
+                self.avisar(ex, "(tema)", f);
+            }
             self.repintar_tema(ex);
         }
         self.presentar();
@@ -117,6 +120,11 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             if let Some(v) = self.intui.ventanas.get_mut(&w) {
                 v.aspecto = aspecto;
+            }
+            // Los textos nítidos se apuntan otra vez al repintar (solo "como DashOS").
+            if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+                l.olvidar_textos();
+                l.nitido = aspecto.is_some();
             }
             let nuevo = match self.tema_de(w).como().fondo_ventana() {
                 Some(f) => f | 0xFF00_0000,
@@ -163,7 +171,10 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.e16(w + win::TOPEDGE, y as u16)?;
                 self.enviar(ex, w, idcmp::CHANGEWINDOW, 0, 0)
             }
-            Evento::Cerrar => self.enviar(ex, w, idcmp::CLOSEWINDOW, 0, 0),
+            Evento::Cerrar => match self.requester_cerrar(ex, w) {
+                Some(r) => r,
+                None => self.enviar(ex, w, idcmp::CLOSEWINDOW, 0, 0),
+            },
             Evento::Exponer => {
                 let bm = self.ventana(w)?.bm;
                 if let Some(l) = self.gfx.lienzos.get_mut(&bm) {

@@ -392,7 +392,7 @@ impl<C: Compositor> CajaGrafica<C> {
             return true;
         }
         let tira = a.tira;
-        let alto_barra = self.intui.ventanas.get(&w).map_or(11, |v| v.geometria.bordes[1]);
+        let alto_barra = self.intui.ventanas.get(&w).map_or(11, |v| v.geometria.bordes[1].max(fuente::ALTO as i32 + 3));
         let menus = siguientes(ex, tira, menu::NEXTMENU);
         let (mut m, mut i) = (a.menu, -1);
         if y < alto_barra {

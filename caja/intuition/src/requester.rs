@@ -257,6 +257,18 @@ impl<C: Compositor> CajaGrafica<C> {
         Some(ex.signal(t, SIGF_SINGLE).map(|a| a == Accion::Ceder).map_err(Fallo::from))
     }
 
+    /// Cerrar un requester desde la barra de DashOS: como el botón de la derecha (0, "Cancelar"). `None` si `w` no es
+    /// de un requester.
+    pub(crate) fn requester_cerrar<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Option<Result<bool, Fallo>> {
+        let q = self.requesters.iter().position(|q| q.w == w)?;
+        if self.requesters[q].resultado.is_some() {
+            return Some(Ok(false));
+        }
+        self.requesters[q].resultado = Some(0);
+        let t = self.requesters[q].tarea;
+        Some(ex.signal(t, SIGF_SINGLE).map(|a| a == Accion::Ceder).map_err(Fallo::from))
+    }
+
     /// La tarea murió con un requester abierto (su ventana la cierra intuition con las demás).
     pub(crate) fn requesters_tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
         self.cerrar_requester(ex, t);

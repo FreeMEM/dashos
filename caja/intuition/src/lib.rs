@@ -32,6 +32,7 @@ pub mod escala;
 pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;
+pub mod nitido;
 pub mod teclado;
 
 mod acceso;
