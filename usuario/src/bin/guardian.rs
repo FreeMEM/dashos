@@ -466,7 +466,7 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
 
 /// S28: la guardia de ficheros de la caja Amiga. `programa` es quien pide en `sesiones` (la caja), `permiso` el permiso
 /// sin llave (`ejec:...`) y `detalle` el programa 68k y el fichero (`preguntas_ficheros::detalle`), que no se fían: se
-/// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: S siempre (se guarda), E solo esta vez y N no.
+/// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: Mayús+S siempre (se guarda), E solo esta vez y N no.
 /// Devuelve la respuesta para `sesiones` (`RESPUESTA_*`).
 fn preguntar_fichero(programa: &str, permiso: &[u8], detalle: &[u8]) -> u32 {
     let (prog68k, fichero) = pf::leer_detalle(detalle);
@@ -600,11 +600,10 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     Some(Tecla::Letra(ch)) if !a_tiempo => {
                         println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
                     }
-                    // En las preguntas de ficheros de la caja, "Siempre" pide Mayúsculas y S (decisión del usuario del
-                    // 2026-11-13): una "s" suelta, tecleando en otra ventana cuando sale la pregunta, no debe dar un
-                    // permiso para siempre. En las de permisos de servicios, "S" (Sí) como antes.
+                    // "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S (decisiones del
+                    // usuario del 2026-11-13): una "s" suelta, tecleando en otra ventana cuando sale la pregunta, no debe
+                    // dar un permiso.
                     Some(Tecla::Letra('S')) => return pf::RESPUESTA_SIEMPRE,
-                    Some(Tecla::Letra('s')) if !fichero => return pf::RESPUESTA_SIEMPRE,
                     Some(Tecla::Letra('e' | 'E')) if fichero => return pf::RESPUESTA_ESTA_VEZ,
                     Some(Tecla::Letra('n' | 'N')) => return pf::RESPUESTA_NO,
                     _ => {}
@@ -653,7 +652,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
     let (lineas, respuestas): (alloc::vec::Vec<String>, &[(&str, &str)]) = match pregunta {
         Pregunta::Servicio(servicio) => (
             alloc::vec![alloc::format!("Quiere usar \"{}\".", servicio), String::from("Contesta con el teclado.")],
-            &[("S", "Sí"), ("N", "No")],
+            &[("Mayús+S", "Sí"), ("N", "No")],
         ),
         Pregunta::Fichero { prog68k, fichero, frase } => {
             let texto = alloc::format!(
