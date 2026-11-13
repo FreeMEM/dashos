@@ -1786,3 +1786,10 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   tope de 512 trozos) y el ratón ya no cae en una subsuperficie fuera de su región; Firefox recibe clics y teclas
   (barra de direcciones, tecleo, Intro). Variante corta: `CAJA_SOLO=firefox`.
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 16:20: el usuario cambia dos decisiones de S26 para la caja Amiga
+Tras ver GadTools con el tema Material a 2x: "no me gusta cómo se ven las fuentes ni la barra de la ventana; no se ven
+integradas con el escritorio; debería ser más Material Design". Con "como DashOS": la letra de los controles,
+menús y barra (intuition, GadTools, requesters) pasa a ser la de DashOS, dibujada a la resolución real de la
+pantalla (no topaz ampliada); la barra de la ventana Amiga pasa a ser la de DashOS (la del compositor, como las
+ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `amiga-integrada`.
