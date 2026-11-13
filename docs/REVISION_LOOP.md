@@ -1851,3 +1851,10 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   el usuario.
 - Marca de las cajas: pestaña de las ventanas sin barra de DashOS pintada con el kit (130bfcb, en fusion-fondo; tanda
   en marcha). G1 mira el azul más abajo (la esquina la tapa la pestaña).
+- Unido a revision (efeefed): `amiga-integrada` (barra de DashOS en las ventanas Amiga "como DashOS", Roboto a
+  resolución real en GadTools, menús y EasyRequest), la marca "68K" como pastilla dentro de la barra (sin solapas) y
+  la pestaña de las ventanas sin barra pintada con el kit. Tanda completa (prueba, av, gpu, diag, escritorio,
+  tarjeta, usb, linux, arch, vm, 2, wayland): todo rc=0 sobre 130bfcb. Prueba hostil nueva:
+  `tests_s29::pestana_del_compositor` (medidas falsas, esquina transparente).
+- Pendiente del usuario: el plan de iconos (Material Symbols para la interfaz, colección propia tonal, temas de
+  Linux instalables, `.info` de la caja Amiga e iconos de la caja Linux) o meter un tema de Linux por defecto.
