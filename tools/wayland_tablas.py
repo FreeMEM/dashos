@@ -8,7 +8,7 @@ import os
 import xml.etree.ElementTree as ET
 
 RAIZ = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "wayland")
-XMLS = ["wayland.xml", "xdg-shell.xml", "wlr-layer-shell-unstable-v1.xml", "ext-session-lock-v1.xml", "linux-dmabuf-v1.xml", "ext-idle-notify-v1.xml", "dashos-tema-v1.xml"]
+XMLS = ["wayland.xml", "xdg-shell.xml", "wlr-layer-shell-unstable-v1.xml", "ext-session-lock-v1.xml", "linux-dmabuf-v1.xml", "ext-idle-notify-v1.xml", "dashos-tema-v1.xml", "xdg-decoration-unstable-v1.xml", "primary-selection-unstable-v1.xml"]
 # Lo que DashOS no sirve: el portapapeles de wl_data_* va después, y wl_shell está obsoleto.
 FUERA = {"wl_shell", "wl_shell_surface"}
 TIPOS = {"int": "Int", "uint": "Uint", "fixed": "Fixed", "string": "Str", "object": "Object",
