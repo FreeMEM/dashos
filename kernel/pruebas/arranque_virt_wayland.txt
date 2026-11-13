@@ -50,13 +50,13 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] terminal: pegado (0 bytes)
 ~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 512 MB para el invitado
 ~gtk: empieza
-~título: GTK Widget Factory
+~título: Linux · GTK Widget Factory
 ~[compositor] emergente de caja-linux
 ~hostil memoria: empieza con
 ~hostil memoria: tail acabó con 137
 ~gtk: sigue viva tras el hostil
 ~gtk: hecho
-~título: Firefox en DashOS
+~título: Linux · Firefox en DashOS
 ~firefox: hecho
 ~memoria: RAM
 ~[caja-linux] linux: se para la máquina a los
