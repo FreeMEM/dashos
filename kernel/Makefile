@@ -172,9 +172,17 @@ arranque-virt-arch: usuario $(DISCO_NVME) FORCE
 # guion (modo wayland) abre programas gráficos de Linux: el puente de Arch los pasa por vsock a la caja y la caja al
 # compositor como subconexiones. Antes, `puente --hostil` manda tramas rotas por vsock. Capturas en capturas-agente/.
 # Desde caja-linux-apps: la barra de DashOS (xdg-decoration), el portapapeles entre foot y la terminal de la caja, los
-# hostiles de Linux (`puente --cliente-hostil`), GTK4 (gtk4-widget-factory) y Firefox (256 MB y 768 MB de intercambio);
-# las medidas del guion, en target/caja-wayland.medidas.txt. Firefox, solo con CAJA_FIREFOX=1 (no cabe: ver la bitácora).
+# hostiles de Linux (`puente --cliente-hostil`), GTK4 (gtk4-widget-factory) y Firefox;
+# las medidas del guion, en target/caja-wayland.medidas.txt. Sin Firefox: CAJA_FIREFOX=0.
 # El disco de los programas grandes, en su propia caché: DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch.
+# Desde caja-linux-grandes, con 8 GB y la RAM por encima de los 4 GB (highmem, pero con el ECAM y las ventanas del PCIe
+# por debajo, donde las busca el kernel): DashOS da 512 MB al invitado (la regla de serie, `dashos::maquina`), y GTK4
+# carga sus iconos con el zram del invitado; Firefox cabe. DASHOS_CAJA_LINUX_MB=1024 (al compilar) da otra cantidad al
+# invitado. Hace falta el disco de los programas grandes rehecho desde caja-linux-grandes (zram en Image-arch).
+MAQUINA_GRANDE := highmem=on,highmem-ecam=off,highmem-mmio=off
+MEMORIA_GRANDE ?= 8G
+# Con CAJA_SOLO=gtk, firefox o grandes (solo eso, tools/guion_caja_linux.py), otras líneas esperadas.
+ESPERADO_WAYLAND ?= pruebas/arranque_virt_wayland.txt
 APPS_IMAGE ?= $(HOME)/.cache/dashos-caja-linux-apps/Image-arch
 APPS_DISCO ?= $(HOME)/.cache/dashos-caja-linux-apps/arch/disco-arch.img
 arranque-virt-wayland: ARCH_IMAGE = $(APPS_IMAGE)
@@ -190,7 +198,7 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 	$(OBJCOPY) -O binary $(ELF) $(VIRT_ARCH)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT_ARCH)) cargo build --release
 	rm -f target/caja-wayland*.ppm target/caja-wayland*.png target/caja-wayland.medidas.txt
-	GUARDAR=$(abspath target/salida_virt_wayland.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-wayland) CAJA_MODO=wayland QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_wayland.txt 4500
+	GUARDAR=$(abspath target/salida_virt_wayland.txt) MEMORIA=$(MEMORIA_GRANDE) MAQUINA=$(MAQUINA_GRANDE),virtualization=on CAJA_LINUX=$(abspath target/caja-wayland) CAJA_MODO=wayland QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi $(ESPERADO_WAYLAND) 4500
 	grep -E "\[(caja-linux|compositor)\]" target/salida_virt_wayland.txt | grep -E "wayland|puente|foot|ventana|terminal|hostil|gtk|firefox|arrastre" | grep -vE "linux: \[ " || true
 	cat target/caja-wayland.medidas.txt 2>/dev/null || true
 	@# Las capturas, fuera de git (capturas-agente/ está en .git/info/exclude).
