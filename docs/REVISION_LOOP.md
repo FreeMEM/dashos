@@ -1895,5 +1895,5 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   prueba hostil `descriptores_hostiles`) y el compositor lleva el cursor al punto (evento 3). `tools/qemu_a_mano.sh`
   usa `usb-tablet`: el ratón de QEMU en ventana va donde el del PC (el usuario no podía moverse bien). Probado por QMP
   sin ventana; make prueba y arranque-virt bien.
-- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo); renombrar las herramientas redoxfs-* y
-  `archivos/redoxfs` a dashfs (DashFS 4 ya está; solo los nombres).
+- Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar redoxfs-* y
+  `archivos/redoxfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
