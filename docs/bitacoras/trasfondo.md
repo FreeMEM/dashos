@@ -64,6 +64,13 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   sistema no; Intro en la cabecera ordena por memoria; en el Panel del escritorio se quitan y se ponen las gráficas y el
   fondo relee los ajustes.
 
+- **La imagen para usar** (`make virt-uso`, sin ventana, 1920 × 1080, tableta USB): entrada como Ana con `sendkey`, el
+  panel en el fondo, un clic en la píldora de la barra (el desplegable) y otro en "Abrir el monitor del sistema" (Ajustes
+  en el Monitor, con sus columnas). Capturas en `capturas-agente/trasfondo-fhd-uso-*.png`.
+- Capturas de `arranque-virt` en Full HD: `capturas-agente/trasfondo-fhd-monitor.*.png` (desplegable, monitor, ajustes
+  del panel y el panel sin gráficas); en 800 × 600, `trasfondo-800-monitor.*.png`. Con Full HD falla, como siempre, la
+  línea de la pantalla de 800 × 600.
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
