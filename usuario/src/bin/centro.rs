@@ -53,6 +53,7 @@ use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_output, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface,
     xdg_surface, xdg_toplevel, xdg_wm_base,
 };
+use wayland::aspecto::{self, Ajuste, Aspecto};
 use wayland::Escritor;
 
 dashos::programa!(principal);
@@ -95,8 +96,12 @@ const TEMA_OBJ: u32 = 43;
 const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
 /// C3: el color "del fondo", tras los de la tabla.
 const DEL_FONDO: usize = COLORES.len();
-/// Las filas fijas de Apariencia: los dos modos, los colores y el del fondo. Después, un fondo por fila.
-const FILAS_FIJAS: usize = 2 + COLORES.len() + 1;
+/// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo y (S26) el aspecto de los programas de
+/// las cajas, como DashOS u originales. Después, un fondo por fila.
+const FILA_PALETA: usize = 2 + COLORES.len();
+const FILA_CAJAS_DASHOS: usize = FILA_PALETA + 1;
+const FILA_CAJAS_ORIGINAL: usize = FILA_PALETA + 2;
+const FILAS_FIJAS: usize = FILA_PALETA + 3;
 const PERMISOS: usize = 0;
 const NADA_CONCEDIDO: &str = "Ningún programa tiene permisos concedidos";
 const SEGURIDAD: usize = 1;
@@ -296,6 +301,8 @@ const FICHERO_APARIENCIA: &str = "apariencia";
 const FICHERO_PANEL: &str = "panel";
 /// C3: el fondo de escritorio que se ve (su nombre en `Fondos/`), al lado.
 const FICHERO_FONDO: &str = "fondo";
+/// S26: el aspecto de los programas de las cajas (el texto de `wayland::aspecto`), al lado.
+const FICHERO_CAJAS: &str = "cajas";
 
 /// Una sesión con el servicio de archivos, con su ventana proyectada (se quita al soltarla).
 struct Sesion {
@@ -421,18 +428,25 @@ struct Apariencia {
 }
 
 impl Apariencia {
-    const DE_SERIE: Apariencia = Apariencia { oscuro: false, color: 0, fondo: None };
+    /// La de serie (S26, como en Material You y DMS): claro, con la paleta del fondo. Hasta que se sabe el color del
+    /// fondo (o si no hay fondo), el violeta de referencia.
+    const DE_SERIE: Apariencia = Apariencia { oscuro: false, color: DEL_FONDO, fondo: None };
 
-    /// El color que va al compositor: el de la tabla, o la semilla del fondo.
+    /// El color que va al compositor: el de la tabla, o la semilla del fondo (sin ella, el de serie).
     fn semilla(&self) -> u32 {
         match self.fondo {
             Some(f) if self.color == DEL_FONDO => f.semilla,
+            _ if self.color == DEL_FONDO => COLORES[0].1,
             _ => COLORES[self.color.min(COLORES.len() - 1)].1,
         }
     }
 
     fn nombre(&self) -> &'static str {
-        if self.color == DEL_FONDO { "Del fondo" } else { COLORES[self.color].0 }
+        match (self.color, self.fondo) {
+            (DEL_FONDO, Some(_)) => "Del fondo",
+            (DEL_FONDO, None) => "Paleta del fondo (sin calcular)",
+            (k, _) => COLORES[k].0,
+        }
     }
 
     fn modo(&self) -> &'static str {
@@ -474,7 +488,7 @@ fn hex6(t: &str) -> Option<u32> {
 /// La apariencia guardada. `Err` con el porqué si no hay o no se entiende (y entonces, la de serie).
 /// El fichero es una línea: "claro" u "oscuro", un espacio y el color ("oscuro violeta"). El del fondo (C3) lleva
 /// detrás su semilla y sus veinte colores, en hexadecimal ("claro fondo 3d6f88 006688 ffffff ..."); sin los veinte,
-/// se calculan.
+/// se calculan. Sin semilla ("claro fondo", S26), la paleta del fondo aún sin calcular.
 fn leer_apariencia() -> Result<Apariencia, &'static str> {
     let bytes = leer_prefs(FICHERO_APARIENCIA, 256)?;
     let texto = core::str::from_utf8(&bytes).map_err(|_| "no se entiende")?;
@@ -486,6 +500,9 @@ fn leer_apariencia() -> Result<Apariencia, &'static str> {
     };
     if partes.clone().next() == Some("fondo") {
         partes.next();
+        if partes.clone().next().is_none() {
+            return Ok(Apariencia { oscuro, color: DEL_FONDO, fondo: None });
+        }
         let semilla = partes.next().and_then(hex6).ok_or("no se entiende")?;
         let resto: Vec<u32> = partes.map(hex6).collect::<Option<_>>().ok_or("no se entiende")?;
         let esquemas = match resto.len() {
@@ -515,6 +532,7 @@ fn guardar_apariencia(ap: &Apariencia) -> (i32, usize) {
             }
             t
         }
+        (DEL_FONDO, None) => alloc::format!("{} fondo", ap.modo()),
         _ => alloc::format!("{} {}", ap.modo(), COLORES[ap.color.min(COLORES.len() - 1)].0.to_lowercase()),
     };
     texto.push('\n');
@@ -610,6 +628,13 @@ fn colores_del_fondo(ap: &mut Apariencia, semilla: Option<u32>) -> Result<(), St
     Ok(())
 }
 
+/// S26: el aspecto de los programas de las cajas guardado en `Prefs/cajas`. `Err` con el porqué si no hay o no se
+/// entiende (y entonces, el de serie: todo como DashOS).
+fn leer_cajas() -> Result<Ajuste, &'static str> {
+    let bytes = leer_prefs(FICHERO_CAJAS, aspecto::MAX_TEXTO as u64).map_err(|e| if e == "no se entiende" { "demasiado largo" } else { e })?;
+    Ajuste::entender(&bytes).map_err(|_| "no se entiende")
+}
+
 /// C2: los mosaicos del panel rápido guardados en `Prefs/panel`. `Err` con el porqué si no hay o no se entiende (y
 /// entonces, los de serie). Lo que vale lo dice `panel_mosaicos`, el mismo que usa el panel.
 fn leer_panel() -> Result<Orden, &'static str> {
@@ -620,11 +645,17 @@ fn leer_panel() -> Result<Orden, &'static str> {
 
 /// Las filas de Apariencia: los dos modos, los colores y el del fondo, con una marca en lo elegido; y los fondos de
 /// `Fondos/`, con una marca en el que se ve (C3). También los nombres de los fondos, en el orden de las filas.
-fn apariencia(ap: &Apariencia) -> (Vec<String>, Vec<String>) {
+fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
     let marca = |si: bool| if si { " · elegido" } else { "" };
     let mut l = alloc::vec![alloc::format!("Modo claro{}", marca(!ap.oscuro)), alloc::format!("Modo oscuro{}", marca(ap.oscuro))];
-    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color {}{}", c.0.to_lowercase(), marca(k == ap.color))));
-    l.push(alloc::format!("Color del fondo{}", marca(ap.color == DEL_FONDO)));
+    l.extend(COLORES.iter().enumerate().map(|(k, c)| alloc::format!("Color fijo {}{}", c.0.to_lowercase(), marca(k == ap.color))));
+    l.push(alloc::format!("Paleta del fondo{}", marca(ap.color == DEL_FONDO)));
+    // S26: los programas de las cajas (Amiga, Linux), con el tema de DashOS o con el suyo. Las excepciones por caja y
+    // por programa van en `Prefs/cajas`; aquí se dice si las hay.
+    let excepciones = cajas.cajas.len() + cajas.programas.len();
+    let mas = if excepciones > 0 { alloc::format!(" ({} excepciones)", excepciones) } else { String::new() };
+    l.push(alloc::format!("Programas de las cajas: como DashOS{}{}", marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
+    l.push(alloc::format!("Programas de las cajas: originales{}{}", marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
     let lista = fondos();
     let (estado, _, _, _, _, visto) = al_fondo("semilla");
     for f in &lista {
@@ -768,7 +799,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let gps: Vec<u32> = globales.iter().filter(|g| g.1 == "wl_output").map(|g| g.0).take(MAX_PANTALLAS).collect();
     let gt = global("dashos_tema_v1");
     // La versión del tema que se enlaza: la 2 trae los esquemas (C3).
-    let version_tema = globales.iter().find(|g| g.1 == "dashos_tema_v1").map_or(1, |g| g.2.min(2));
+    // La 3, el aspecto de los programas de las cajas (S26).
+    let version_tema = globales.iter().find(|g| g.1 == "dashos_tema_v1").map_or(1, |g| g.2.min(3));
     let mut pantalla: Vec<Pantalla> = Vec::new();
     let mut lista = concedidos();
     let mut arbol = Arbol::new();
@@ -818,6 +850,16 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             Apariencia::DE_SERIE
         }
     };
+    // S26: el aspecto de los programas de las cajas; si no hay o no se entiende, el de serie (todo como DashOS).
+    let mut cajas = match leer_cajas() {
+        Ok(a) => a,
+        Err(porque) => {
+            if porque != "no hay" {
+                println!("  [centro] aspecto de las cajas guardado: {}; se queda el de serie", porque);
+            }
+            Ajuste::DE_SERIE
+        }
+    };
     // Los fondos de las filas de Apariencia, en su orden.
     let mut lista_fondos: Vec<String> = Vec::new();
     i.ctx.tema = ap.tema();
@@ -848,7 +890,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     } else if cat == DISCOS {
         lineas_registro = discos();
     } else if cat == APARIENCIA {
-        (lineas_registro, lista_fondos) = apariencia(&ap);
+        (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
     } else if cat == PANTALLAS {
         lineas_registro = pantallas(&pantalla);
     } else if cat != PERMISOS {
@@ -1060,7 +1102,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         DISCOS => discos(),
                         PANTALLAS => pantallas(&pantalla),
                         APARIENCIA => {
-                            let (l, f) = apariencia(&ap);
+                            let (l, f) = apariencia(&ap, &cajas);
                             lista_fondos = f;
                             l
                         }
@@ -1085,7 +1127,27 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         0 | 1 => ap.oscuro = v == 1,
                         k if (2..2 + COLORES.len() as i64).contains(&k) => ap.color = (k - 2) as usize,
                         // C3: el color del fondo: su semilla, y sus esquemas si no estaban.
-                        k if k == FILAS_FIJAS as i64 - 1 => match colores_del_fondo(&mut ap, None) {
+                        // S26: los programas de las cajas, como DashOS o con su aspecto de siempre. Se guarda y se da al
+                        // compositor, que lo reparte a las cajas.
+                        k if k == FILA_CAJAS_DASHOS as i64 || k == FILA_CAJAS_ORIGINAL as i64 => {
+                            cajas.general = if k == FILA_CAJAS_DASHOS as i64 { Aspecto::Dashos } else { Aspecto::Original };
+                            // Las excepciones por caja que ya digan lo mismo que el general sobran.
+                            let general = cajas.general;
+                            cajas.cajas.retain(|c| c.1 != general);
+                            let texto = cajas.escribir();
+                            if gt.is_some() && version_tema >= 3 {
+                                let mut e = Escritor::new();
+                                e.empezar(TEMA_OBJ, dashos_tema_v1::req::CAJAS).texto(Some(&texto)).fin();
+                                c.mandar(&e);
+                            }
+                            let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
+                            let releido = leer_cajas() == Ok(cajas.clone());
+                            println!("  [centro] Programas de las cajas: {}; guardado: {} ({} bytes); releído: {}", if general == Aspecto::Dashos { "como DashOS" } else { "originales" }, guardado, bytes, if releido { "sí" } else { "no" });
+                            (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                            i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                            cambio = true;
+                        }
+                        k if k == FILA_PALETA as i64 => match colores_del_fondo(&mut ap, None) {
                             Ok(()) => ap.color = DEL_FONDO,
                             Err(porque) => println!("  [centro] Color del fondo: {}; se queda el de antes", porque),
                         },
@@ -1102,15 +1164,15 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             } else {
                                 println!("  [centro] Fondo {}: no se pone ({}); se queda el de antes y el tema también", nombre, estado);
                             }
-                            (lineas_registro, lista_fondos) = apariencia(&ap);
+                            (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;
                         }
                         _ => {}
                     }
-                    if ap.guardable() != antes.guardable() || (v >= 0 && v < FILAS_FIJAS as i64 - 1) {
+                    if ap.guardable() != antes.guardable() || (v >= 0 && v < FILA_PALETA as i64) {
                         i.ctx.tema = ap.tema();
-                        (lineas_registro, lista_fondos) = apariencia(&ap);
+                        (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                         if gt.is_some() {
                             let mut e = Escritor::new();
@@ -1217,6 +1279,17 @@ fn panel_guardar(linea: &[u8]) -> i32 {
 /// estado: 0, o -1 si no se pudo poner.
 fn aplicar_modo(oscuro: bool) -> i32 {
     let ap = Apariencia { oscuro, ..leer_apariencia().unwrap_or(Apariencia::DE_SERIE) };
+    if poner_en_compositor(&ap, None) != 0 {
+        return -1;
+    }
+    let (guardado, _) = guardar_apariencia(&ap);
+    println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
+    0
+}
+
+/// Pone la apariencia (y, con `cajas`, el aspecto de los programas de las cajas, S26) en el compositor, con una conexión
+/// de un momento. 0 si el compositor lo hizo; -1 si no se pudo.
+fn poner_en_compositor(ap: &Apariencia, cajas: Option<&Ajuste>) -> i32 {
     // Recién cerrada la conexión anterior, el compositor puede no haberla soltado aún: unos intentos.
     let mut conexion = None;
     for _ in 0..20 {
@@ -1234,7 +1307,7 @@ fn aplicar_modo(oscuro: bool) -> i32 {
     let adios = || {
         dashos::canal_escribir(VENTANAS, &[wayland::canal::TROZO_ADIOS], &[]);
     };
-    let Some((gt, version)) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| (g.0, g.2.min(2))) else {
+    let Some((gt, version)) = globales.iter().find(|g| g.1 == "dashos_tema_v1").map(|g| (g.0, g.2.min(3))) else {
         adios();
         return -1;
     };
@@ -1242,19 +1315,70 @@ fn aplicar_modo(oscuro: bool) -> i32 {
     let mut e = Escritor::new();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(version).uint(TEMA_OBJ).fin();
     ap.mandar(&mut e, version);
+    if let Some(cajas) = cajas
+        && version >= 3
+    {
+        e.empezar(TEMA_OBJ, dashos_tema_v1::req::CAJAS).texto(Some(&cajas.escribir())).fin();
+    }
     e.empezar(1, wl_display::req::SYNC).uint(SYNC).fin();
     c.mandar(&e);
     // Hasta que el compositor conteste al sync, no ha hecho lo de antes; un error de protocolo corta la conexión.
     while let Some((o, orden, _)) = c.evento() {
         if o == SYNC && orden == wayland::tablas::wl_callback::ev::DONE {
             adios();
-            let (guardado, _) = guardar_apariencia(&ap);
-            println!("  [centro] modo {} (lo pide el panel), guardado: {}", if oscuro { "oscuro" } else { "claro" }, guardado);
             return 0;
         }
     }
     adios();
     -1
+}
+
+/// S26: el centro es también el servicio del tema. Al arrancar, pone en el compositor lo guardado (si no hay nada, lo
+/// de serie: claro, con la paleta del fondo, y los programas de las cajas como DashOS), y el compositor lo reparte a
+/// quien escucha (los programas de DashOS y las cajas). Con la paleta del fondo, pide su color al fondo de escritorio y
+/// calcula los esquemas si no estaban guardados para ese color (una vez; si estaban, ni eso). Sin fondo, el violeta de
+/// referencia.
+fn aplicar_al_arrancar() {
+    let guardada = leer_apariencia();
+    let mut ap = guardada.unwrap_or(Apariencia::DE_SERIE);
+    let cajas = leer_cajas().unwrap_or(Ajuste::DE_SERIE);
+    let antes = ap.guardable();
+    if ap.color == DEL_FONDO {
+        // El fondo arranca antes que el centro, pero quizá aún no contesta (sin canal, -1; sin pantalla, -6): unos
+        // intentos. Sin fondo que valga (-7, por ejemplo una imagen que no se lee), sin más.
+        for intento in 0..8 {
+            match colores_del_fondo(&mut ap, None) {
+                Ok(()) => break,
+                Err(porque) => {
+                    let otra = porque.contains("(-1)") || porque.contains("(-6)");
+                    if !otra || intento == 7 {
+                        println!("  [centro] al arrancar, paleta del fondo: {}; el color de serie", porque);
+                        break;
+                    }
+                    dashos::dormir_us(400_000);
+                }
+            }
+        }
+    }
+    let mut puesto = -1;
+    for _ in 0..10 {
+        puesto = poner_en_compositor(&ap, Some(&cajas));
+        if puesto == 0 {
+            break;
+        }
+        dashos::dormir_us(300_000);
+    }
+    // Lo calculado se guarda si ya se había elegido la paleta del fondo (así, al arrancar otra vez, no se calcula).
+    let guardado = if guardada.is_ok() && ap.guardable() != antes { Some(guardar_apariencia(&ap).0) } else { None };
+    println!(
+        "  [centro] al arrancar: tema {}, color {} ({:06x}), programas de las cajas {}; en el compositor: {}{}",
+        ap.modo(),
+        ap.nombre(),
+        ap.semilla() & 0xff_ffff,
+        if cajas.general == Aspecto::Dashos { "como DashOS" } else { "originales" },
+        if puesto == 0 { "sí" } else { "no" },
+        guardado.map_or(String::new(), |g| alloc::format!("; guardado: {}", g))
+    );
 }
 
 fn principal() -> u64 {
@@ -1264,6 +1388,7 @@ fn principal() -> u64 {
     let mut malos = 0u64;
     // El directorio de `inicio` (sin marca): la marca y el nombre de cada cliente del canal.
     let mut nombres: alloc::collections::BTreeMap<u64, alloc::string::String> = alloc::collections::BTreeMap::new();
+    aplicar_al_arrancar();
     loop {
         let (n, k, marca) = match recibir(CANAL, &mut buf, &mut ll) {
             Recibido::Mensaje { n, k, marca } => (n, k, marca),

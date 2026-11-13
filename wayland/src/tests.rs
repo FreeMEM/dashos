@@ -1610,7 +1610,7 @@ mod entrada {
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
             Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
         ]
     }
 
@@ -1763,6 +1763,81 @@ mod entrada {
         let mut nuevo = Conexion::new();
         let ev = suscribir(&mut escena, &mut nuevo, 6, 2);
         assert_eq!(ev.iter().filter(|x| x.0 == 60).map(|x| x.1).collect::<Vec<_>>(), [dashos_tema_v1::ev::ESQUEMA, dashos_tema_v1::ev::TEMA]);
+    }
+
+    /// S26: el aspecto de los programas de las cajas. Llega al enlazar la versión 3 (tras el tema), y no a quien enlazó
+    /// la 2; solo el centro lo cambia, con un texto que valga (si no, error de protocolo y nada cambia); se dice a los
+    /// suscritos solo si cambia; y lo que llega es el texto ya escrito por `aspecto` (igual que el que se lee).
+    #[test]
+    fn aspecto_de_las_cajas() {
+        use crate::aspecto::{Ajuste, Aspecto, Caja};
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, version: u32| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(version).uint(60).fin();
+            con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+            con.atender(&globales(), &mut escena.de(c));
+            eventos(&con.sacar())
+        };
+        let texto_de = |ev: &[(u32, u16, Vec<u8>)]| {
+            ev.iter().filter(|x| x.0 == 60 && x.1 == dashos_tema_v1::ev::CAJAS).map(|x| {
+                let n = u32::from_le_bytes(x.2[..4].try_into().unwrap()) as usize;
+                alloc::string::String::from_utf8(x.2[4..4 + n - 1].to_vec()).unwrap()
+            }).collect::<Vec<_>>()
+        };
+        let (mut v2, mut v3, mut centro, mut h) = (Conexion::new(), Conexion::new(), Conexion::new(), Conexion::new());
+        let ev = suscribir(&mut escena, &mut v2, 1, 2);
+        assert!(texto_de(&ev).is_empty(), "la versión 2 no sabe de cajas");
+        let ev = suscribir(&mut escena, &mut v3, 2, 3);
+        assert_eq!(ev.iter().filter(|x| x.0 == 60).map(|x| x.1).collect::<Vec<_>>(), [dashos_tema_v1::ev::TEMA, dashos_tema_v1::ev::CAJAS]);
+        assert_eq!(texto_de(&ev), ["general dashos\n"]);
+        suscribir(&mut escena, &mut centro, 3, 3);
+        suscribir(&mut escena, &mut h, 4, 3);
+        escena.ponen_tema.push(3);
+        let pedir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, t: &str| {
+            let mut e = Escritor::new();
+            e.empezar(60, dashos_tema_v1::req::CAJAS).texto(Some(t)).fin();
+            con.juntador.meter(&e.bytes, &e.llaves).unwrap();
+            con.atender(&globales(), &mut escena.de(c));
+        };
+        // Hostil: un programa cualquiera (por ejemplo, uno de Linux por el puente) no lo cambia.
+        pedir(&mut escena, &mut h, 4, "general original\n");
+        assert!(h.roto.is_some(), "un programa cualquiera cambió el aspecto de las cajas");
+        assert_eq!(escena.cajas, "general dashos\n");
+        // El compositor corta a quien rompe el protocolo.
+        escena.adios(4);
+        // Hostil: el centro con un texto que no vale (un nombre con "/", una caja que no existe, demasiado largo).
+        for malo in ["programa linux original ../bin/sh\n", "caja atari original\n", &"x".repeat(3000)] {
+            let mut c = Conexion::new();
+            suscribir(&mut escena, &mut c, 5, 3);
+            escena.ponen_tema.push(5);
+            pedir(&mut escena, &mut c, 5, malo);
+            assert!(c.roto.is_some(), "aceptó {:?}", malo);
+            escena.adios(5);
+        }
+        assert_eq!(escena.cajas, "general dashos\n");
+        assert!(escena.avisos_cajas.is_empty());
+        // El centro, con uno que vale: a los suscritos (quien atiende manda solo a los de la versión 3).
+        pedir(&mut escena, &mut centro, 3, "general dashos\ncaja linux original\nprograma amiga original MultiView");
+        assert!(centro.roto.is_none(), "{:?}", centro.roto);
+        assert_eq!(core::mem::take(&mut escena.avisos_cajas), [(1, 60), (2, 60), (3, 60)]);
+        for con in [&mut v2, &mut v3] {
+            avisar_cajas(con, 60, &escena.cajas);
+        }
+        assert!(texto_de(&eventos(&v2.sacar())).is_empty());
+        let t = texto_de(&eventos(&v3.sacar()));
+        assert_eq!(t, ["general dashos\ncaja linux original\nprograma amiga original MultiView\n"]);
+        let a = Ajuste::entender(t[0].as_bytes()).unwrap();
+        assert_eq!((a.de_caja(Caja::Linux), a.para(Caja::Amiga, "MultiView"), a.para(Caja::Amiga, "Ed")), (Aspecto::Original, Aspecto::Original, Aspecto::Dashos));
+        // Lo mismo otra vez: nada que avisar.
+        pedir(&mut escena, &mut centro, 3, "general dashos\ncaja linux original\nprograma amiga original MultiView\n");
+        assert!(escena.avisos_cajas.is_empty());
+        // Quien se va, fuera.
+        escena.adios(2);
+        pedir(&mut escena, &mut centro, 3, "general original\n");
+        assert_eq!(core::mem::take(&mut escena.avisos_cajas), [(1, 60), (3, 60)]);
     }
 
     #[test]

@@ -422,6 +422,13 @@ esquemas (claro y oscuro) de la semilla, los da con la petición `esquema` y pon
 le llega el evento `esquema` antes de `tema`, y `kit::tema::recordar_evento_esquema` hace que `Tema::del_sistema` no
 los calcule. Con la versión 1 se calculan (sin FPU, de 200 a 350 ms en QEMU), una vez por proceso y color.
 
+La versión 3 (S26, `docs/diseño/S26-aspecto-de-las-cajas.md`) añade el aspecto de los programas de las cajas: la
+petición `cajas` (solo el centro; el texto de `wayland::aspecto`, como mucho 2048 bytes; uno que no vale es un error de
+protocolo) y el evento `cajas`, con el mismo texto ya comprobado, al enlazar (tras `tema`) y cada vez que cambia. Lo
+escuchan la caja Amiga (sus plumas de Material) y, por el puente, el agente `dashos-aspecto` de la caja Linux. El
+centro pone al arrancar la apariencia guardada y el aspecto de las cajas (`Prefs/apariencia`, `Prefs/cajas`); la de
+serie es la paleta del fondo, claro, y todo como DashOS.
+
 ## Sonido (S19, A4)
 
 El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias

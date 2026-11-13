@@ -19,6 +19,7 @@ extern crate alloc;
 mod archivos;
 mod compositor;
 mod memoria;
+mod tema;
 
 use alloc::format;
 use alloc::string::String;

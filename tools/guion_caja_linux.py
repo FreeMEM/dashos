@@ -33,6 +33,10 @@ esperar al compositor entre cuadros), `es2gears_wayland`
 20 s, `time vkcube --wsi wayland --c 100` (Vulkan con lavapipe) y `cuadros_gl kms 20` (por la virtio-gpu de la caja: su pantalla sale en una ventana de DashOS). Captura cada uno
 (PREFIJO.wayland.png, PREFIJO.gears.png, PREFIJO.kms.png), espera sus cuadros por segundo y apaga.
 
+Con MODO "aspecto" (`make arranque-virt-aspecto`, S26), lo mismo hasta el prompt de root y después el aspecto de los
+programas de Linux: espera al agente del aspecto, abre `muestra-gtk3`, `muestra-gtk4` y foot, y captura la pantalla
+(PREFIJO.png).
+
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
 """
@@ -212,6 +216,38 @@ if modo == "wayland":
             esperar(r"foot: leido hola", 60)
             capturar(prefijo + ".foot")
     time.sleep(4.0)
+    clic_en_ventana()
+    teclear("poweroff")
+    sys.exit(0)
+
+if modo == "aspecto":
+    # S26 (`make arranque-virt-aspecto`): el aspecto de los programas de Linux. Espera a que el agente del aspecto
+    # (dashos-aspecto, un servicio de systemd que escucha el tema de DashOS por el puente) haya escrito el tema, abre
+    # una muestra de GTK 3 y otra de GTK 4 (los controles de siempre) y foot, y captura la pantalla con todo.
+    if not esperar(r"login: root \(automatic login\)", total):
+        sys.exit(1)
+    time.sleep(5.0)
+    clic_en_ventana()
+    paso("systemctl is-active dashos-aspecto", r"linux: active\s*$|linux: active\n", 120)
+    esperar(r"linux: aspecto: programas de Linux", 120)
+    clic_en_ventana()
+    teclear("prueba-aspecto muestra-gtk3 120 &")
+    esperar(r"muestra-gtk: GTK 3 en pantalla", 400)
+    time.sleep(3.0)
+    clic_en_ventana()
+    teclear("prueba-aspecto muestra-gtk4 100 &")
+    esperar(r"muestra-gtk: GTK 4 en pantalla|linux: .*Gdk-ERROR", 400)
+    time.sleep(3.0)
+    clic_en_ventana()
+    teclear("prueba-foot &")
+    esperar(r"foot: lista", 400)
+    time.sleep(4.0)
+    capturar(prefijo)
+    esperar_n(r"muestra-gtk: adiós", 1, 150)
+    time.sleep(2.0)
+    clic_en_ventana()
+    teclear("cat /root/.config/glib-2.0/settings/keyfile /run/dashos-aspecto/linux")
+    time.sleep(3.0)
     clic_en_ventana()
     teclear("poweroff")
     sys.exit(0)

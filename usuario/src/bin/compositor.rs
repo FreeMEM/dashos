@@ -60,8 +60,9 @@ static GLOBALES: [Global; 7] = [
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
-    // hechos (C3). Los `wl_output` van aparte, uno por pantalla (multimonitor).
-    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    // hechos (C3); la 3, el aspecto de los programas de las cajas (S26). Los `wl_output` van aparte, uno por pantalla
+    // (multimonitor).
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     // El portapapeles (H9): por ahora solo los objetos, sin copiar ni pegar entre programas (ver `PORTAPAPELES`).
     PORTAPAPELES,
 ];
@@ -75,7 +76,7 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     PORTAPAPELES,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
@@ -160,6 +161,16 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, objeto) in core::mem::take(&mut escena.avisos_tema) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_tema(&mut cli.con, objeto, tema, esquema.as_ref());
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // S26: el aspecto de los programas de las cajas, a los suscritos de la versión 3.
+    let cajas = escena.cajas.clone();
+    for (cl, objeto) in core::mem::take(&mut escena.avisos_cajas) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_cajas(&mut cli.con, objeto, &cajas);
             if !mandar(cli) {
                 caidos.push(cl);
             }
