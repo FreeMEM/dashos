@@ -2051,6 +2051,24 @@ mod entrada {
         assert!(escena.avisos_volumen.is_empty());
     }
 
+    /// S27: al cerrar la ventana que tiene el teclado, el teclado pasa a la de arriba que queda (antes se quedaba sin
+    /// dueño hasta un clic).
+    #[test]
+    fn el_teclado_vuelve_al_cerrar_una_ventana() {
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut va, mut vb) = (Conexion::new(), Conexion::new());
+        abrir(&mut escena, &mut va, 1, 100, 100);
+        abrir(&mut escena, &mut vb, 2, 50, 50);
+        assert_eq!(escena.teclado, Some((2, 7)));
+        let mut e = Escritor::new();
+        e.empezar(10, xdg_toplevel::req::DESTROY).fin();
+        e.empezar(9, xdg_surface::req::DESTROY).fin();
+        e.empezar(7, wl_surface::req::DESTROY).fin();
+        mandar(&mut escena, &mut vb, 2, &e);
+        assert_eq!(escena.teclado, Some((1, 7)));
+        assert!(escena.pendientes.contains(&(1, Entrada::TecladoEntra { superficie: 7 })));
+    }
+
     /// C2: la petición `bloquear` de `dashos_tema_v1` hace lo de Super+L (el aviso de inactividad pendiente, ya), solo
     /// para el panel rápido; a otro programa, error de protocolo y nada.
     #[test]
@@ -2224,8 +2242,9 @@ mod entrada {
         let key = leer_args(&tablas::WL_KEYBOARD.events[3], &ev[2].2, &mut [].into_iter()).unwrap();
         assert_eq!(&key[1..], [Valor::Uint(101), Valor::Uint(30), Valor::Uint(1)]);
 
-        // Si el cliente se va, la entrada deja de apuntarle.
+        // Si el cliente se va, la entrada deja de apuntarle, y el teclado pasa a la ventana de arriba que queda (S27).
         escena.adios(1);
-        assert!(escena.teclado.is_none());
+        assert_eq!(escena.teclado, Some((2, 7)));
+        assert!(escena.pendientes.contains(&(2, Entrada::TecladoEntra { superficie: 7 })));
     }
 }

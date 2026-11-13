@@ -1154,8 +1154,9 @@ impl<M: Memorias> Escena<M> {
 
     /// Un cliente se fue: suelta su memoria y sus superficies.
     pub fn adios(&mut self, cliente: Cliente) {
-        // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4), vuelve a la ventana de arriba.
-        let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente && self.capas.contains(&t));
+        // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4) o una ventana suya (S27: si no, el teclado
+        // se quedaba sin dueño hasta un clic), vuelve a la ventana de arriba.
+        let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente);
         self.sin_entrada(cliente);
         self.inactividad.retain(|i| i.cliente != cliente);
         self.avisos_inactividad.retain(|a| a.0 != cliente);
@@ -2583,13 +2584,19 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             if escena.puntero == Some((self.cliente, sup)) {
                 escena.puntero = None;
             }
-            if escena.teclado == Some((self.cliente, sup)) {
+            let tenia_teclado = escena.teclado == Some((self.cliente, sup));
+            if tenia_teclado {
                 escena.teclado = None;
             }
             let antes = escena.orden.len();
             escena.orden.retain(|o| *o != (self.cliente, sup));
             if escena.orden.len() != antes {
                 escena.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+            }
+            // S27: el teclado, a la ventana de arriba que queda (antes se quedaba sin dueño hasta un clic, y lo que se
+            // tecleaba se perdía), como cuando se cierra una capa o se va un cliente.
+            if tenia_teclado {
+                escena.devolver_teclado();
             }
         }
     }

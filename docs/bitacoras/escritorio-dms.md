@@ -69,3 +69,52 @@ cerrarlo. El mosaico del volumen dice "Silencio" con el silencio puesto.
 - `tools/captura_ventanas.py` mira la barra en (8, 20), dentro de la tira (en (5, 5) ahora se ve el fondo).
 - En el guion, ir a la esquina antes de un clic de la barra o de los avisos mueve 2000 y no 1200: a 1920 de ancho no
   llegaba.
+
+### Capturas (fuera de git, `capturas-agente/`)
+
+- `antes/`: la tanda de 1920 × 1080 sin tocar nada.
+- `despues/`: la misma tanda con la primera oleada. Ahora el guion llega a todos los pasos también a 1920 (avisos
+  incluidos): `barra.png` (lanzador), `barra.busca.png`, `barra.panel.png`, `barra.espacio2.png` (en el 2, la ventana
+  del 1 no se ve y su punto sale ocupado), `barra.osd.png`, `avisos*.png` y las de siempre.
+- `v1/`: las de `make arranque-virt` a 800 × 600 (la prueba de verdad), con el OSD y el espacio 2.
+- Comparadas: `comp-barra.png` (arriba de la pantalla, antes y después, con el panel abierto) y `comp-lanzador.png`.
+- Las de DMS que miró el agente de las ideas, para comparar: en el directorio de trabajo de la sesión (no van al repo).
+
+Comparado con DMS: misma forma (tira flotante, píldoras, el espacio que se ve alargado y en el acento, reloj con fecha
+en medio, estado en el acento a la derecha, OSD abajo en el centro). Distinto a propósito: Material 3 de verdad en los
+papeles (DMS usa grises fijos con algo del acento), la barra algo más alta (32 frente a unos 28: las píldoras de 24 dejan
+el texto de 14 de Material 3), y el OSD en el contenedor alto en vez de casi negro.
+
+### Resultado
+
+- `cd wayland && cargo test --lib`: 68, bien. Pruebas de PC nuevas: bien.
+- `make prueba`: BIEN (esperado.txt y cargador hunk).
+- `make arranque-virt`: las cinco BIEN a la primera (arranque, disco, captura, sonido y la ventana de Ana).
+- `-vm`, `-linux`, `-2` (las dos BIEN), `-diag`, `-escritorio`, `-usb`, `-wayland` y `-gpu`: BIEN.
+- `-arch`: la primera vez, MAL. Linux no recibió el `poweroff` final. Justo antes, la ventana del programa de Dash de la
+  caja Amiga salió y se llevó el teclado (nadie tecleaba desde hacía rato), y al cerrarse a los 40 s el teclado quedó
+  sin dueño ("título: (ninguno)"): el compositor solo devuelve el teclado a la ventana de arriba cuando se va una
+  *capa* que lo tenía, no cuando se va una ventana. Eso ya era así en `revision`; es una carrera de tiempos con la
+  máquina cargada (otra sesión corría a la vez su prueba de Arch). Se repitió y falló igual, dos veces más: la ventana
+  de Dash sale siempre en ese punto de la prueba.
+- Arreglo (en el compositor, pequeño): al cerrarse la ventana que tiene el teclado, o al irse su cliente, el teclado
+  pasa a la ventana de arriba que queda, como ya pasaba al cerrarse una capa. Antes se quedaba sin dueño hasta un clic,
+  y lo que se tecleaba se perdía (le pasaría a cualquiera que cierre una ventana y siga escribiendo). Pruebas de la
+  escena: `el_teclado_vuelve_al_cerrar_una_ventana` (nueva) y `asiento_puntero_y_teclado` (al irse el cliente, el
+  teclado pasa a la otra ventana; antes esperaba que no lo tuviera nadie).
+
+### Resultado tras el arreglo del teclado
+
+Todo otra vez, con Arch primero: `-arch` BIEN (antes, tres veces MAL), `make arranque-virt` las cinco BIEN,
+`make prueba` BIEN, y `-vm`, `-linux`, `-2` (las dos), `-diag`, `-escritorio`, `-usb`, `-wayland` y `-gpu` BIEN.
+`cd wayland && cargo test --lib`: 69, bien.
+
+### Pendiente
+
+- La píldora de estado no enseña el estado de verdad (red conectada, volumen, silencio): oleada 2.
+- Los espacios son de todo el escritorio, no de cada pantalla (multimonitor): sección 3 del estudio.
+- El lanzador mide lo que piden todos los programas (hasta 7 filas) aunque al buscar queden menos; DMS hace igual.
+- El OSD no se repinta si cambia el tema mientras se ve (dura 1,5 s).
+- La sombra del compositor va bajo toda la capa de la barra (40), no bajo la tira (de 4 a 36): no se nota en las
+  capturas, pero no es exacta.
+- La hora sigue en UTC.
