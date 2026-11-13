@@ -34,8 +34,8 @@ esperar al compositor entre cuadros), `es2gears_wayland`
 (PREFIJO.wayland.png, PREFIJO.gears.png, PREFIJO.kms.png), espera sus cuadros por segundo y apaga.
 
 Con MODO "aspecto" (`make arranque-virt-aspecto`, S26), lo mismo hasta el prompt de root y después el aspecto de los
-programas de Linux: espera al agente del aspecto y abre `muestra-gtk3`, `muestra-gtk4` y foot, uno a uno, con su
-captura (PREFIJO.gtk3.png, PREFIJO.gtk4.png y PREFIJO.foot.png).
+programas de Linux: espera al agente del aspecto y abre `muestra-gtk4` y foot, uno a uno, con su captura
+(PREFIJO.gtk4.png y PREFIJO.foot.png). GTK 3, aún no (aborta en la caja al cargar sus iconos).
 
 Cada paso espera su línea en la salida serie y repite la orden (hasta tres veces) si no llega. Teclado español: el
 guion de la orden "-" es la tecla de la barra en el de EE. UU.
@@ -230,18 +230,24 @@ if modo == "aspecto":
     clic_en_ventana()
     paso("systemctl is-active dashos-aspecto", r"linux: active\s*$|linux: active\n", 120)
     esperar(r"linux: aspecto: programas de Linux", 120)
-    # Cada programa, solo y encima de la terminal (una ventana nueva sale arriba), con su captura; se cierra solo.
-    for n, nombre in ((3, "gtk3"), (4, "gtk4")):
+    # Cada programa, solo y encima de la terminal (una ventana nueva sale arriba), con su captura; se cierra solo. GTK 3
+    # aún no: en la caja aborta al cargar su primer icono (glycin sin bwrap; ver la bitácora de S26). Se limpia la
+    # terminal y lo que dicen los programas va solo a hvc0.
+    for n, nombre in ((4, "gtk4"),):
         antes = len(re.findall(r"muestra-gtk: adiós", texto()))
         clic_en_ventana()
-        teclear(f"prueba-aspecto muestra-gtk{n} 30 &")
+        teclear("clear")
+        time.sleep(1.0)
+        teclear(f"prueba-aspecto muestra-gtk{n} 30 >/dev/null 2>&1 &")
         if esperar(rf"muestra-gtk: GTK {n} en pantalla", 400):
             time.sleep(4.0)
             capturar(prefijo + "." + nombre)
         esperar_n(r"muestra-gtk: adiós|Aborted", antes + 1, 120)
         time.sleep(2.0)
     clic_en_ventana()
-    teclear("prueba-foot &")
+    teclear("clear")
+    time.sleep(1.0)
+    teclear("prueba-foot >/dev/null 2>&1 &")
     if esperar(r"foot: lista", 400):
         time.sleep(4.0)
         capturar(prefijo + ".foot")

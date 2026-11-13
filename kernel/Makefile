@@ -193,8 +193,8 @@ arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
 # `arranque-virt-wayland`, con la imagen de `tools/aspecto_caja_linux.py preparar` (la de los programas grandes, con GTK,
 # más el agente del aspecto: ARCH_IMAGE y ARCH_DISCO de su caché) y los Prefs del usuario de ASPECTO_PREFS (fondo,
 # apariencia y aspecto de las cajas): el centro los pone al arrancar, el compositor los reparte y el agente de Arch
-# escribe el tema de GTK. El guion (modo aspecto) abre una muestra de GTK 3, otra de GTK 4 y foot, y captura cada una
-# en capturas-agente/aspecto-$(ASPECTO_NOMBRE)-{gtk3,gtk4,foot}.png. Para Full HD: DASHOS_PANTALLA=1920x1080.
+# escribe el tema de GTK. El guion (modo aspecto) abre una muestra de GTK 4 y foot, y captura cada uno
+# en capturas-agente/aspecto-$(ASPECTO_NOMBRE)-{gtk4,foot}.png. Para Full HD: DASHOS_PANTALLA=1920x1080.
 ASPECTO_PREFS ?= fondo=ondas.png;apariencia=claro fondo;cajas=general dashos
 ASPECTO_NOMBRE ?= dashos-ondas
 arranque-virt-aspecto: usuario FORCE
@@ -213,7 +213,7 @@ arranque-virt-aspecto: usuario FORCE
 	rm -f target/caja-aspecto*.ppm target/caja-aspecto*.png
 	GUARDAR=$(abspath target/salida_virt_aspecto.txt) MEMORIA=3G MAQUINA=highmem=off,virtualization=on CAJA_LINUX=$(abspath target/caja-aspecto) CAJA_MODO=aspecto QEMU_EXTRA="-device ramfb $(USB_QEMU) $(RED_CAJA) -drive file=$(ARCH_DISCO),if=none,id=nv,format=raw,snapshot=on -device nvme,serial=caja,drive=nv" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt_aspecto.txt 1800
 	grep -E "\[(caja-linux|compositor|centro|caja-amiga)\]" target/salida_virt_aspecto.txt | grep -E "aspecto|muestra|tema|al arrancar|foot" | grep -vE "linux: \[ " || true
-	mkdir -p ../capturas-agente && for q in gtk3 gtk4 foot; do cp target/caja-aspecto.$$q.png ../capturas-agente/aspecto-$(ASPECTO_NOMBRE)-$$q.png 2>/dev/null || true; done
+	mkdir -p ../capturas-agente && for q in gtk4 foot; do cp target/caja-aspecto.$$q.png ../capturas-agente/aspecto-$(ASPECTO_NOMBRE)-$$q.png 2>/dev/null || true; done
 
 # Los gráficos de la caja Linux (S25, docs/diseño/S25-gpu-caja-linux.md): lo mismo que `arranque-virt-wayland` (el mismo
 # disco, con Mesa, mesa-utils, vulkan-swrast y `cuadros_gl` de `preparar-arch`), pero el guion (modo gpu) mide
