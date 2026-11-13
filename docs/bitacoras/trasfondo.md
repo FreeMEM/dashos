@@ -66,7 +66,26 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
 
 ## Medido
 
-(se completa abajo)
+- **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
+  minuto), con intervalo de 2 s, en QEMU (TCG, sin aceleración: en la Pi irá más holgado): entre 0,45 % y 0,77 % de un
+  núcleo, en 800 × 600 (panel de 300 × 500) y en 1920 × 1080 (380 × 740). Antes del panel, el fondo en reposo no
+  gastaba nada: esperaba en su canal sin plazo. Queda por debajo del 1 % pedido, pero no muy lejos: cada medida repinta
+  el panel entero; si hiciera falta, se repintaría solo lo que cambia.
+- `sesiones` atiende cada medida con unas 9 páginas de `MONITOR` (lo que gasta no entra en la cifra de arriba).
+
+## Decisiones para el usuario
+
+- **Privacidad** (como la pidió): con detalle solo lo de quien mira; el sistema y las demás personas, sumados y sin
+  nombres. Las cajas salen por su nombre si son del sistema o de quien mira; la de otra persona, sumada.
+- **Los programas del escritorio son de Ana**: `inicio` lanza el fondo, el centro, el Workbench, el explorador, el
+  selector y la caja Amiga con la ficha de Ana (`FICHAS`). Por eso salen como procesos suyos y Ana los puede cerrar
+  desde el monitor (también el propio centro). Es lo que dice la regla ("si tiene derecho"), pero quizá convenga
+  marcarlos como "del escritorio" y no dejar cerrarlos desde ahí.
+- **El uso de CPU de cada proceso es del total de la máquina** (los cuatro núcleos suman 100 %), no de un núcleo como en
+  `top`. Así la suma de la lista cuadra con la cifra de la barra.
+- **Ajustes crece a 720 × 480** (antes 560 × 420), con cinco filas en la lista, para que quepan las columnas.
+- **El orden de lanzamiento cambia**: la red va antes del fondo (para que el fondo tenga "red-estado"), y cambian las
+  llaves del panel rápido y de la barra.
 
 ## Pendiente
 

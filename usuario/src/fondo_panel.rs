@@ -304,7 +304,7 @@ pub fn pintar(px: &mut [u32], w: i32, h: i32, t: &Tema, aj: &Ajustes, d: &Datos,
         let medio = x0 + ancho / 2;
         flecha(&mut l, x0, y + 9, true, t.primario);
         le.r.dibujar(&mut l, x0 + 16, y + 14, &e, 13, texto);
-        flecha(&mut l, medio, y + 9, false, t.contenedor_terciario);
+        flecha(&mut l, medio, y + 9, false, t.secundario);
         le.r.dibujar(&mut l, medio + 16, y + 14, &s, 13, texto);
         y += 20;
         if aj.graficas {
@@ -314,7 +314,7 @@ pub fn pintar(px: &mut [u32], w: i32, h: i32, t: &Tema, aj: &Ajustes, d: &Datos,
             let sale: Vec<u32> = d.m.red_hist.iter().map(|x| (x.1 as u128 * 1000 / max as u128) as u32).collect();
             let r = Rect::new(x0, y, ancho, ALTO_GRAFICA);
             grafica(&mut l, r, &entra, t.primario, rejilla);
-            grafica(&mut l, r, &sale, t.contenedor_terciario, 0);
+            grafica(&mut l, r, &sale, t.secundario, 0);
         }
     }
 }

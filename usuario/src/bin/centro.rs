@@ -1053,9 +1053,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         } else if cat == PANTALLAS {
             ("Lo que dice el compositor de cada pantalla.", reg.join("|"))
         } else if cat == MONITOR_SIS {
-            ("Tus procesos; el sistema y otros usuarios, sumados. Intro en la cabecera cambia el orden.", reg.join("|"))
+            ("Lo tuyo con detalle; lo demás, sumado.", reg.join("|"))
         } else if cat == PANEL_FONDO {
-            ("El monitor que se ve en el fondo del escritorio. Intro o doble clic cambia una fila.", reg.join("|"))
+            ("El monitor del fondo. Intro cambia una fila.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
@@ -1317,6 +1317,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     println!("  [centro] {}, con negativas del hostil: {}; {} entradas", CATEGORIAS[cat].1, if hostil { "sí" } else { "no" }, lineas_registro.len());
                 }
                 poner(&mut i, cat, &lista, &lineas_registro);
+                // Lo de la derecha cambió de medida (trasfondo: las columnas del monitor): se vuelve a colocar.
+                i.colocar(Rect::new(0, 0, medida.0, medida.1));
                 cambio = true;
             }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
