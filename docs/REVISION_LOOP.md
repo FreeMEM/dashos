@@ -1909,3 +1909,4 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - El usuario: "continúa con lo pendiente" (2026-11-13, noche). Trasfondo nativo reanudado (agente, worktree
   `trasfondo` en 486d053). Memoria de la caja Amiga: va lo recomendado, según el programa con tope en Ajustes (256 MB
   de serie); pendiente de hacer (toca la caja). MUI (fallo del JIT) después.
+- El usuario (2026-11-13, noche): "párate cuando vayas por el 98 %, no antes". El tope de esta semana pasa del 90 al 98 %.
