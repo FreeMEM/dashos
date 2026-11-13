@@ -21,6 +21,7 @@ use caja_exec::{Exec, Memoria, Registros};
 use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{drawinfo as dri, idcmp, ie, tag, window as win};
 use crate::lienzo::{Lienzo, Rect};
+use crate::nitido::{Alinea, Estilo};
 use crate::lvo::{GADTOOLS as T, fila};
 use crate::tema::{Plumas, Vista};
 use crate::{CajaGrafica, Compositor, Fallo, fuente};
@@ -270,6 +271,41 @@ pub(crate) fn texto(l: &mut Lienzo, glifos: &[[u8; 8]], x: i32, y: i32, s: &[u8]
         x += fuente::ANCHO as i32;
     }
     x
+}
+
+/// Como `texto`, y en un lienzo "como DashOS" apunta el texto nítido (`nitido.rs`): al ampliar la ventana, se escribe
+/// con la letra de DashOS en el hueco de la topaz, alineado con `alinea`. Si la topaz no cabía hasta `hasta`, el hueco
+/// llega hasta `hasta` (dentro del lienzo) y la letra de DashOS, más estrecha, puede enseñar más del texto.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn texto_n(
+    l: &mut Lienzo,
+    glifos: &[[u8; 8]],
+    x: i32,
+    y: i32,
+    s: &[u8],
+    c: u32,
+    hasta: i32,
+    alinea: Alinea,
+    estilo: Estilo,
+) -> i32 {
+    if !l.nitido || s.is_empty() {
+        return texto(l, glifos, x, y, s, c, hasta);
+    }
+    let fw = fuente::ANCHO as i64;
+    let (x64, hasta64) = (x as i64, hasta as i64);
+    let caben = ((hasta64 - x64) / fw).clamp(0, s.len() as i64);
+    let recortado = (caben as usize) < s.len();
+    let fin = if recortado && estilo != Estilo::Celdas { hasta64.min(l.ancho() as i64) } else { x64 + caben * fw };
+    let r = (fin > x64 && fin <= i32::MAX as i64 && y as i64 + fuente::ALTO as i64 <= i32::MAX as i64)
+        .then(|| Rect::nuevo(x, y, fin as i32 - 1, y + fuente::ALTO as i32 - 1))
+        .filter(|r| r.interseccion(&l.rect()) == *r);
+    let antes = r.map(|r| l.copiar(r));
+    let fin_x = texto(l, glifos, x, y, s, c, hasta);
+    if let (Some(r), Some(antes)) = (r, antes) {
+        let t = if estilo == Estilo::Celdas { &s[..caben as usize] } else { s };
+        l.apuntar_texto(r, antes, t, c, alinea, estilo);
+    }
+    fin_x
 }
 
 pub(crate) fn llenar(l: &mut Lienzo, r: Rect, c: u32) {

@@ -13,7 +13,8 @@ use alloc::vec::Vec;
 
 use crate::compositor::Tokens;
 use crate::fuente;
-use crate::gadtools::{Gt, celdas, formatear, gt, kind, mando, texto};
+use crate::gadtools::{Gt, celdas, formatear, gt, kind, mando, texto, texto_n};
+use crate::nitido::{Alinea, Estilo};
 use crate::marco::{ANCHO_CERRAR, ANCHO_PROF, GADGET_TAMANO};
 use crate::menus::ANCHO_AMIGA;
 use crate::lienzo::{Lienzo, Rect};
@@ -161,7 +162,13 @@ fn etiqueta(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, dentro: u32, fu
         gt::PLACETEXT_BELOW => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, r.y1 + 3),
         _ => (r.x0 - 6 - ancho, centro_y + 1),
     };
-    texto(l, glifos, tx, ty, t, c, i32::MAX);
+    let alinea = match s.lugar {
+        gt::PLACETEXT_IN | gt::PLACETEXT_ABOVE | gt::PLACETEXT_BELOW => Alinea::Centro,
+        gt::PLACETEXT_RIGHT => Alinea::Izquierda,
+        _ => Alinea::Derecha,
+    };
+    let estilo = if s.tipo == kind::BUTTON && s.lugar == gt::PLACETEXT_IN { Estilo::Grueso } else { Estilo::Normal };
+    texto_n(l, glifos, tx, ty, t, c, i32::MAX, alinea, estilo);
     Rect::nuevo(tx, ty, tx + ancho, ty + fa)
 }
 
@@ -178,7 +185,7 @@ fn nivel(l: &mut Lienzo, glifos: &[[u8; 8]], s: &Gt, r: Rect, fondo: u32, tinta:
     let tx = r.x0 - 2 - ancho;
     let caja = Rect::nuevo(tx, r.y0, r.x0 - 2, r.y1);
     llenar(l, caja, fondo);
-    texto(l, glifos, tx + ancho - fw * t.len() as i32, r.y0 + (r.y1 - r.y0 + 1 - fa) / 2 + 1, &t, tinta, r.x0 - 1);
+    texto_n(l, glifos, tx + ancho - fw * t.len() as i32, r.y0 + (r.y1 - r.y0 + 1 - fa) / 2 + 1, &t, tinta, r.x0 - 1, Alinea::Derecha, Estilo::Normal);
     caja
 }
 
@@ -720,7 +727,8 @@ impl Tema for Material {
                         forma(l, Forma::circulo(cx, cy, 18), None, t.primario);
                     }
                     let tx = if s.lugar == gt::PLACETEXT_RIGHT { b.x1 + 1 + 6 } else { b.x0 - 6 - fw * txt.len() as i32 };
-                    texto(l, glifos, tx, y + (alto1 - fa) / 2 + 1, txt, t.sobre_superficie, i32::MAX);
+                    let alinea = if s.lugar == gt::PLACETEXT_RIGHT { Alinea::Izquierda } else { Alinea::Derecha };
+                    texto_n(l, glifos, tx, y + (alto1 - fa) / 2 + 1, txt, t.sobre_superficie, i32::MAX, alinea, Estilo::Normal);
                     dano = dano.union(&Rect::nuevo(tx, y, tx + fw * txt.len() as i32, y + alto1));
                 }
             }
@@ -730,7 +738,7 @@ impl Tema for Material {
                 self.campo(l, r, t.contorno, 8, fondo);
                 let txt = s.textos.get(s.valor.max(0) as usize).cloned().unwrap_or_default();
                 let c = if s.pulsado { t.sobre_contenedor_secundario } else { t.sobre_superficie };
-                texto(l, glifos, r.x0 + 8, centro_y(&r) + 1, &txt, c, r.x1 - 16);
+                texto_n(l, glifos, r.x0 + 8, centro_y(&r) + 1, &txt, c, r.x1 - 16, Alinea::Izquierda, Estilo::Normal);
                 triangulo_abajo(l, r.x1 - 9, centro_y(&r) + 3, 3, t.sobre_variante_superficie);
             }
             kind::STRING | kind::INTEGER => {
@@ -739,13 +747,14 @@ impl Tema for Material {
                 self.campo(l, r, borde, grosor, t.superficie);
                 let tx = r.x0 + 6;
                 let ty = centro_y(&r) + 1;
-                texto(l, glifos, tx, ty, cadena, t.sobre_superficie, r.x1 - 4);
+                // El cursor antes que las letras: con la letra de DashOS, es parte del fondo del texto.
                 if activo_texto {
                     let cx = tx.saturating_add(fw.saturating_mul(cursor.min(4096) as i32));
                     if cx + fw <= r.x1 - 3 {
                         llenar(l, Rect::nuevo(cx - 1, ty - 1, cx, ty + fa - 1), t.primario);
                     }
                 }
+                texto_n(l, glifos, tx, ty, cadena, t.sobre_superficie, r.x1 - 4, Alinea::Izquierda, Estilo::Celdas);
             }
             kind::TEXT | kind::NUMBER => {
                 if s.borde {
@@ -753,7 +762,7 @@ impl Tema for Material {
                 }
                 let txt = if s.tipo == kind::NUMBER { alloc::format!("{}", s.valor).into_bytes() } else { s.texto.clone() };
                 let tx = if s.borde { r.x0 + 6 } else { r.x0 };
-                texto(l, glifos, tx, centro_y(&r) + 1, &txt, t.sobre_superficie, r.x1 - 2);
+                texto_n(l, glifos, tx, centro_y(&r) + 1, &txt, t.sobre_superficie, r.x1 - 2, Alinea::Izquierda, Estilo::Normal);
             }
             kind::SLIDER => {
                 // El deslizador de Material 3: una pista de 4 (del primario hasta el mando) y un mando redondo.
@@ -835,7 +844,7 @@ impl Tema for Material {
                         forma(l, Forma::de(Rect::nuevo(lista.x0 + 2, y, lista.x1 - 2, y + alto_el - 1), 24), None, t.contenedor_secundario);
                     }
                     let c = if elegido { t.sobre_contenedor_secundario } else { t.sobre_superficie };
-                    texto(l, glifos, lista.x0 + 4, y + 1, txt, c, lista.x1 - 2);
+                    texto_n(l, glifos, lista.x0 + 4, y + 1, txt, c, lista.x1 - 2, Alinea::Izquierda, Estilo::Normal);
                 }
                 // La barra: pista y mando como píldoras, y dos flechas (chevrones).
                 let barra = Rect::nuevo(r.x1 - 15, r.y0, r.x1, r.y1 - 16);
@@ -864,15 +873,8 @@ impl Tema for Material {
         dano = dano.union(&nivel(l, glifos, s, r, t.superficie, t.sobre_variante_superficie));
         if desactivado {
             // Desactivado: todo al 38 % sobre la superficie, como Material 3.
-            let d = r.interseccion(&l.rect());
-            if !d.vacio() {
-                for y in d.y0..=d.y1 {
-                    for x in d.x0..=d.x1 {
-                        let p = l.pixel(x, y);
-                        l.poner(x, y, mezcla(p, t.superficie, 158));
-                    }
-                }
-            }
+            // (Con `filtrar`, los textos nítidos de dentro siguen valiendo, más claros.)
+            l.filtrar(r, |p| mezcla(p, t.superficie, 158));
         }
         dano
     }
@@ -898,7 +900,7 @@ impl Tema for Material {
             } else {
                 t.sobre_superficie
             };
-            texto(l, glifos, ti.x + 4, ty, &ti.nombre, c, an_l);
+            texto_n(l, glifos, ti.x + 4, ty, &ti.nombre, c, an_l, Alinea::Izquierda, Estilo::Normal);
         }
         let Some(c) = caja else { return };
         // El menú: una superficie (contenedor bajo) con esquinas de 4 y contorno; el elemento señalado, en una píldora.
@@ -917,7 +919,7 @@ impl Tema for Material {
             } else {
                 t.sobre_superficie
             };
-            texto(l, glifos, e.r.x0 + e.tx, e.r.y0 + 1, &e.texto, fg, e.r.x1);
+            texto_n(l, glifos, e.r.x0 + e.tx, e.r.y0 + 1, &e.texto, fg, e.r.x1, Alinea::Izquierda, Estilo::Normal);
             if e.marca == Some(true) {
                 let (mx, my) = (e.r.x0 as i64 * 8 + 24, e.r.y0 as i64 * 8 + 32);
                 trazo(l, (mx + 4, my + 8), (mx + 24, my + 28), 12, fg);
@@ -929,8 +931,8 @@ impl Tema for Material {
                 let ax = kx - 4 - ANCHO_AMIGA + 8;
                 let tecla = Forma::de(Rect::nuevo(ax, e.r.y0 + 1, ax + 12, e.r.y0 + 8), 16);
                 contorno(l, tecla, 8, fg);
-                texto(l, glifos, ax + 3, e.r.y0 + 1, b"A", fg, ax + 12);
-                texto(l, glifos, kx, e.r.y0 + 1, &[k], fg, e.r.x1 + 1);
+                texto_n(l, glifos, ax + 3, e.r.y0 + 1, b"A", fg, ax + 12, Alinea::Centro, Estilo::Grueso);
+                texto_n(l, glifos, kx, e.r.y0 + 1, &[k], fg, e.r.x1 + 1, Alinea::Centro, Estilo::Normal);
             }
         }
     }
@@ -983,7 +985,7 @@ impl Tema for Material {
             }
             // El título, con la fuente de la pantalla, cortado antes del gadget de profundidad.
             let arriba = ((ba - fuente::ALTO as i32) / 2).max(1);
-            texto(l, glifos, x0, arriba, v.titulo, tinta, x1);
+            texto_n(l, glifos, x0, arriba, v.titulo, tinta, x1, Alinea::Izquierda, Estilo::Grueso);
         }
         if v.flags & wflg::SIZEGADGET != 0 {
             // El de tamaño: dos rayas en diagonal en la esquina (sin tocar el último píxel, que es de la superficie).

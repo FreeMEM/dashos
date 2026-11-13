@@ -7,5 +7,5 @@ pantalla de la consola del kernel, al compositor:
 ~[ventana-a] 30 cuadros: bien
 ~[ventana-b] 30 cuadros: bien
 ~[caja-amiga] saludo.exe acabó con 0 (vector -1), 7 llamadas nativas
-~[caja-amiga] ventana: abierta (328x163, dentro 320x150), dibujada; espera IDCMP_CLOSEWINDOW
+~[caja-amiga] ventana: abierta (320x159, dentro 320x150), dibujada; espera IDCMP_CLOSEWINDOW
 ~[compositor] ventana de caja-amiga en (

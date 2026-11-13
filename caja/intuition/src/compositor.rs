@@ -17,6 +17,7 @@ use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::lienzo::Rect;
+use crate::nitido::TextoNitido;
 
 /// El número de una ventana en el compositor.
 pub type Superficie = u32;
@@ -66,6 +67,9 @@ pub struct NuevaVentana {
     pub maximo: (u32, u32),
     /// El programa que la abre (el nombre de su tarea, sin camino): su escala puede ser otra (S26, `escala-programa`).
     pub programa: String,
+    /// Con la barra de DashOS (la del compositor, como las ventanas de Linux): intuition no pinta la suya. Solo si el
+    /// compositor la pone (`Compositor::pone_barra`).
+    pub barra_dashos: bool,
 }
 
 /// Los colores del tema de DashOS (Material 3) para pintar los controles de un programa Amiga "como DashOS" (S26):
@@ -121,8 +125,9 @@ pub trait Compositor {
     /// Una ventana nueva; `None` si no puede.
     fn crear_ventana(&mut self, v: &NuevaVentana) -> Option<Superficie>;
     fn cerrar_ventana(&mut self, s: Superficie);
-    /// Manda los píxeles: `pix` es la ventana entera (`ancho` x `alto`, fila a fila) y `dano` lo que cambió.
-    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect);
+    /// Manda los píxeles: `pix` es la ventana entera (`ancho` x `alto`, fila a fila) y `dano` lo que cambió. `textos`,
+    /// los textos de nuestras bibliotecas que se pueden escribir con la letra de DashOS al ampliar (`nitido.rs`).
+    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect, textos: &[TextoNitido]);
     fn poner_titulo(&mut self, _s: Superficie, _titulo: &str) {}
     /// El programa la mueve (`MoveWindow`, `ChangeWindowBox`): el compositor contesta con `Evento::Posicion`.
     fn mover(&mut self, _s: Superficie, _x: i32, _y: i32) {}
@@ -154,6 +159,12 @@ pub trait Compositor {
     fn version_tema(&self) -> u32 {
         0
     }
+    /// Si el compositor puede poner su barra (título, cerrar, maximizar, esquinas y sombra) a una ventana que la pide
+    /// (`NuevaVentana::barra_dashos`). Con ella, cerrar llega como `Evento::Cerrar` y cambiar el tamaño desde su borde,
+    /// como `Evento::Tamano`.
+    fn pone_barra(&self) -> bool {
+        false
+    }
 }
 
 /// Una ventana del compositor de prueba.
@@ -169,6 +180,8 @@ pub struct VentanaDePrueba {
     pub pix: Vec<u32>,
     pub danos: Vec<Rect>,
     pub cerrada: bool,
+    /// Los textos nítidos que llegaron con el último `presentar`.
+    pub textos: Vec<TextoNitido>,
 }
 
 impl VentanaDePrueba {
@@ -196,6 +209,8 @@ pub struct CompositorDePrueba {
     pub tema: Option<Tokens>,
     pub originales: Vec<String>,
     pub version_tema: u32,
+    /// Si pone la barra de DashOS (`pone_barra`).
+    pub barra: bool,
     siguiente: Superficie,
 }
 
@@ -211,6 +226,7 @@ impl CompositorDePrueba {
             tema: None,
             originales: Vec::new(),
             version_tema: 0,
+            barra: false,
             siguiente: 1,
         }
     }
@@ -248,6 +264,7 @@ impl Compositor for CompositorDePrueba {
                 pix: vec![0; v.ancho as usize * v.alto as usize],
                 danos: Vec::new(),
                 cerrada: false,
+                textos: Vec::new(),
             },
         );
         self.apuntar("crear", s);
@@ -259,8 +276,9 @@ impl Compositor for CompositorDePrueba {
         }
         self.apuntar("cerrar", s);
     }
-    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect) {
+    fn presentar(&mut self, s: Superficie, pix: &[u32], ancho: u32, alto: u32, dano: Rect, textos: &[TextoNitido]) {
         let Some(v) = self.ventanas.get_mut(&s) else { return };
+        v.textos = textos.to_vec();
         if v.ancho != ancho || v.alto != alto || v.pix.len() != pix.len() {
             v.ancho = ancho;
             v.alto = alto;
@@ -326,5 +344,8 @@ impl Compositor for CompositorDePrueba {
     }
     fn version_tema(&self) -> u32 {
         self.version_tema
+    }
+    fn pone_barra(&self) -> bool {
+        self.barra
     }
 }

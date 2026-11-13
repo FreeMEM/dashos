@@ -97,6 +97,14 @@ def ir_a(x, y):
         x, y = x - dx, y - dy
     mandar(*pasos, pausa=0.05)
 
+def cerrar_amiga(x, y, m):
+    # Dónde se pulsa para cerrar una ventana Amiga en (x, y) de la pantalla. Con la barra de DashOS (la caja dice
+    # "con la barra de DashOS"), su botón de cerrar: encima de la ventana (40 de alto), a 4 + 16 del borde derecho
+    # (`wayland/src/decoracion.rs`). Si no, el gadget de cerrar de intuition, arriba a la izquierda (20 x 11).
+    if m and m.group(3):
+        return (x + int(m.group(1)) * int(m.group(2) or 1) - 4 - 16, y - 20)
+    return (x + 10, y + 5)
+
 menu = 0
 preguntas = 0
 selector = 0
@@ -156,7 +164,7 @@ while time.time() - inicio < total:
                 if v_gt:
                     x0, y0 = int(v_gt[-1].group(1)), int(v_gt[-1].group(2))
                     # Con escala (pantallas grandes), la caja dice "a 2x": las posiciones de gadtools.c, por el factor.
-                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?\)", texto[corte:]))
+                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?(?:, con la barra de DashOS)?\)", texto[corte:]))
                     f_gt = int(m_f[-1].group(1) or 1) if m_f else 1
                     x, y = x0, y0
                     foto = os.environ.get("CAPTURA_GT") or "/tmp/dashos-gt-mira.ppm"
@@ -174,6 +182,12 @@ while time.time() - inicio < total:
                     wb = {(0xAA, 0xAA, 0xAA), (0, 0, 0), (0xFF, 0xFF, 0xFF), (0x66, 0x88, 0xBB)}
                     vistos = pixeles(foto, [(x + 1 * f_gt, y + 1 * f_gt), (x + 408 * f_gt, y + 1 * f_gt), (x + 1 * f_gt, y + 190 * f_gt), (x + 408 * f_gt, y + 190 * f_gt)])
                     vacio = pixeles(foto, [(x + 200 * f_gt, y + 183 * f_gt)])
+                    # Con la barra de DashOS (rama amiga-integrada): las esquinas de abajo las redondea el compositor y
+                    # arriba no hay barra de intuition. Se miran un poco más dentro, y la barra de DashOS encima.
+                    con_barra = bool(m_f) and "con la barra de DashOS" in m_f[-1].group(0)
+                    if con_barra:
+                        vistos = pixeles(foto, [(x + 6 * f_gt, y + 1 * f_gt), (x + 403 * f_gt, y + 1 * f_gt), (x + 6 * f_gt, y + 186 * f_gt), (x + 403 * f_gt, y + 186 * f_gt)])
+                        barra_d = pixeles(foto, [(x + 100 * f_gt, y - 30), (x + 300 * f_gt, y - 30)])
                     ancho_pantalla = 0
                     try:
                         ancho_pantalla = int(open(foto, "rb").read().split(b"\n", 3)[1].split()[0])
@@ -189,6 +203,12 @@ while time.time() - inicio < total:
                     material = len(vistos) == 4 and len(vacio) == 1 and vistos[0] == vistos[1] != vistos[2] \
                         and vistos[2] == vistos[3] == vacio[0] and len(casilla) == 1 and casilla[0] not in (vistos[0], vacio[0]) \
                         and max(casilla[0]) - min(casilla[0]) > 40
+                    if con_barra:
+                        # Las cuatro esquinas y el sitio vacío, de la superficie; la barra de DashOS, de otro color (el
+                        # contenedor) e igual en los dos sitios; la casilla, del primario.
+                        material = len(vistos) == 4 and len(vacio) == 1 and len(set(vistos + vacio)) == 1 \
+                            and len(barra_d) == 2 and barra_d[0] == barra_d[1] != vacio[0] \
+                            and len(casilla) == 1 and casilla[0] != vacio[0] and max(casilla[0]) - min(casilla[0]) > 40
                     tapada = not (clasica or material)
                     if tapada and gt_movida < 3:
                         # Un clic en su borde izquierdo (no es ningún gadget; suele verse: las otras ventanas salen más a
@@ -236,7 +256,7 @@ while time.time() - inicio < total:
                     if os.environ.get("CAPTURA_GT_DASH"):
                         mandar("screendump " + os.environ["CAPTURA_GT_DASH"])
                         time.sleep(0.5)
-                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?\)", texto[corte:]))
+                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?(?:, con la barra de DashOS)?\)", texto[corte:]))
                     f_gd = int(m_f[-1].group(1) or 1) if m_f else 1
                     ir_a(x + 164 * f_gd, y + 41 * f_gd)
                     time.sleep(0.3)
@@ -254,7 +274,7 @@ while time.time() - inicio < total:
             import re
             corte = texto.find("[caja-amiga] test_trap_illegal (sin consola)")
             if corte >= 0:
-                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?\): Dash", texto[corte:])
+                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?(?:, con la barra de DashOS)?\): Dash", texto[corte:])
                 v_r = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
                 if m_r and v_r:
                     req_dash = 1
@@ -1344,7 +1364,8 @@ while time.time() - inicio < total:
                 "¿pide puede usar eco? El usuario dice" in texto or time.time() - amiga_desde > 30):
             import re
             amiga = 2
-            ir_a(int(v_amiga.group(1)) + 10, int(v_amiga.group(2)) + 5)
+            ir_a(*cerrar_amiga(int(v_amiga.group(1)), int(v_amiga.group(2)),
+                               re.search(r"ventana Amiga en pantalla \((\d+)x\d+(?:, a (\d+)x)?(, con la barra de DashOS)?\)", texto)))
             mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
             w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             if menu == 2:
@@ -1369,7 +1390,7 @@ while time.time() - inicio < total:
                         time.sleep(0.5)
                         mandar("screendump " + os.environ["CAPTURA_DASH"])
                         time.sleep(0.5)
-                    ir_a(x + 10, y + 5)
+                    ir_a(*cerrar_amiga(x, y, list(re.finditer(r"ventana Amiga en pantalla \((\d+)x\d+(?:, a (\d+)x)?(, con la barra de DashOS)?\)", texto[corte:]))[-1]))
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
                     w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
                     if menu == 2:

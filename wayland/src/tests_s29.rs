@@ -163,6 +163,32 @@ fn marca_de_las_ventanas_de_la_caja() {
     assert!(escena.de_caja.is_empty());
 }
 
+/// La caja Amiga (rama `amiga-integrada`): su marca es azul con "AMIGA" en la pestaña, junto a una de la caja Linux
+/// (ámbar); el título en la barra de la pantalla, con "Amiga · " delante.
+#[test]
+fn marca_de_la_caja_amiga() {
+    let mut escena = escena_800();
+    let (amiga, linux): (Cliente, Cliente) = (5, 9 | (1 << 40));
+    escena.de_caja_amiga.push(amiga);
+    escena.de_caja.push(linux);
+    let (mut a, mut b) = (Conexion::new(), Conexion::new());
+    abrir(&mut escena, &mut a, amiga, 200, 120, "GadTools");
+    abrir(&mut escena, &mut b, linux, 200, 120, "foot");
+    escena.colocar(amiga, 7, 100, 100);
+    escena.colocar(linux, 7, 450, 300);
+    let ((ax, ay), (lx, ly)) = (sitio(&escena, amiga), sitio(&escena, linux));
+    let p = componer(&mut escena);
+    assert_eq!(en(&p, ax, ay + 60), marca::COLOR_AMIGA);
+    assert_eq!(en(&p, lx, ly + 60), COLOR_LINUX);
+    let (pw, ph) = marca::medida_pestana(marca::TEXTO_AMIGA);
+    assert_eq!(en(&p, ax + 1, ay - ph + 1), marca::COLOR_AMIGA);
+    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, ax + x, ay - ph + y) == marca::TINTA_AMIGA)), "las letras");
+    assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, "GadTools"), "Amiga · GadTools");
+    assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
+    escena.adios(amiga);
+    assert!(escena.de_caja_amiga.is_empty());
+}
+
 /// Hostil: el programa de la caja pone una subsuperficie (con su búfer) lejos de su ventana para pintar fuera del
 /// borde, y otra encima del borde para taparlo. El borde rodea también a la lejana, y se pinta encima de la que tapa.
 #[test]

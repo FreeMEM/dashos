@@ -959,6 +959,10 @@ fn principal() -> u64 {
                 if nombres.get(&marca).is_some_and(|n| SUBCONEXIONES.contains(&n.as_str())) && !escena.de_caja.contains(&marca) {
                     escena.de_caja.push(marca);
                 }
+                // Y las de la caja Amiga, con la suya (rama `amiga-integrada`).
+                if nombres.get(&marca).is_some_and(|n| n == "caja-amiga") && !escena.de_caja_amiga.contains(&marca) {
+                    escena.de_caja_amiga.push(marca);
+                }
                 clientes.insert(marca, DeVentanas { con: Conexion::new(), respuesta: llaves[0], del_sistema, cola: Default::default(), sub: None });
             }
             Some(TROZO_DATOS) if clientes.contains_key(&marca) => {
