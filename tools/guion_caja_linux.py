@@ -163,7 +163,7 @@ def capturar(nombre):
 
 def ventana_linux(n):
     """Dónde puso el compositor la ventana número `n` (desde 1) de un programa de Linux."""
-    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((-?\d+), (-?\d+)\)", texto())
     return (int(v[n - 1][0]), int(v[n - 1][1])) if len(v) >= n else None
 
 
@@ -191,7 +191,7 @@ def teclear_sin_intro(orden):
     mandar(*teclas, pausa=0.12)
 
 
-VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?(?: de (\d+)x(\d+))?"
+VENTANA_LINUX = r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((-?\d+), (-?\d+)\)(?: geometría \((-?\d+), (-?\d+), (\d+), (\d+)\))?(?: de (\d+)x(\d+))?"
 # Lo que tapa cada ventana de Linux (x, y, ancho, alto; con la barra de DashOS), y lo que se movió (las que arrastra el
 # guion): para hacer clic en la terminal de la caja donde no haya otra encima.
 movidas = {}
@@ -373,8 +373,10 @@ if modo == "wayland":
     n = len(ventanas_linux())
     # CAJA_GTK_DEPURAR=1: con WAYLAND_DEBUG (en /tmp/gtk.log del invitado; su final sale por la terminal al acabar).
     depurar = os.environ.get("CAJA_GTK_DEPURAR") == "1"
+    # `prueba-gtk-guion` abre GTK, espera 300 s (lo que sigue la prueba) y lanza el hostil de la memoria con ella
+    # abierta: no se teclea con su ventana delante (con 800 x 600 tapa entera la terminal de la caja).
     if solo != "firefox":
-        teclear("WAYLAND_DEBUG=1 prueba-gtk 2>/tmp/gtk.log &" if depurar else "prueba-gtk &")
+        teclear("WAYLAND_DEBUG=1 prueba-gtk-guion 2>/tmp/gtk.log &" if depurar else "prueba-gtk-guion &")
     if solo != "firefox" and esperar(r"gtk: empieza", 120):
         t0 = time.time()
         # Hasta su primera ventana (sin el zram del invitado, con 256 MB, abortaba al cargar su icono: la bitácora).
@@ -383,14 +385,21 @@ if modo == "wayland":
             apuntar("gtk4-widget-factory: sin ventana (" + ("Gdk-ERROR al cargar su icono" if "Gdk-ERROR" in texto() else "?") + ")")
         if g:
             apuntar(f"gtk4-widget-factory: primera ventana a los {time.time() - t0:.1f} s (desde que empieza, en el reloj del PC)")
-            # Para el registro (y las líneas esperadas): el guion la vio salir.
-            clic_en_ventana()
-            teclear("echo guion: gtk4 en pantalla")
             x, y, geo = g
             gx, gy, gw, gh = geo if geo else (0, 0, 600, 400)
-            # Su barra (la que se pinta GTK) por la derecha, entre las pestañas y sus botones: la izquierda la tapa la
-            # terminal de la caja.
-            barra = (x + gx + gw - 400, y + gy + 16)
+            # Lo que se ve de la pantalla y dónde está la terminal de la caja (con 800 x 600, GTK es más ancha que la
+            # pantalla y sale en x negativa; en Full HD, la terminal tapa la izquierda de su barra).
+            p = re.search(r"pantalla del firmware de (\d+)x(\d+)", texto())
+            ancho = int(p.group(1)) if p else 800
+            t = re.search(r"\[compositor\] ventana de caja-linux en \((\d+), (\d+)\) de (\d+)x(\d+)", texto())
+            term = tuple(int(n) for n in t.groups()) if t else (0, 0, 0, 0)
+            def libre(px, py):
+                return 0 <= px < ancho and not (term[0] <= px < term[0] + term[2] and term[1] <= py < term[1] + term[3])
+            # Su barra (la que se pinta GTK), donde no haya pestañas ni botones: con la ventana de Full HD (1666 de ancho),
+            # entre las pestañas y el botón del menú; más estrecha, a la izquierda (las pestañas van en el centro).
+            sitios = [(x + gx + gw - 400, y + gy + 16)] if gw >= 1600 else []
+            sitios += [(x + gx + 60, y + gy + 16), (x + gx + 160, y + gy + 16)]
+            barra = next((b for b in sitios if libre(*b)), sitios[0])
             # Arriba otra vez (un clic en su barra, sin moverla).
             time.sleep(15.0)
             clic(*barra)
@@ -399,62 +408,68 @@ if modo == "wayland":
             # Su menú (el botón de las tres rayas, arriba a la derecha): un emergente (xdg_popup).
             emergentes = lambda: len(re.findall(r"\[compositor\] emergente de caja-linux", texto()))
             n_em = emergentes()
-            clic(x + gx + gw - 164, y + gy + 23)
-            if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 120):
+            menu = (x + gx + gw - 164, y + gy + 23)
+            if libre(*menu):
+                clic(*menu)
+            else:
+                # Fuera de la pantalla: el menú del botón derecho del primer campo de texto, también un emergente.
+                ir_a(x + gx + 100, y + gy + 74)
+                mandar("mouse_button 2", "mouse_button 0", pausa=0.08)
+            if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 60):
                 time.sleep(8.0)
                 capturar(prefijo + ".gtk-menu")
-                apuntar("gtk4-widget-factory: su menú emergente, abierto")
+                apuntar("gtk4-widget-factory: " + ("su menú" if libre(*menu) else "el menú de un campo de texto") + " (emergente), abierto")
             mandar("sendkey esc")
             time.sleep(3.0)
-            # La lista de la primera caja combinada (su flecha): otro emergente. Donde cae depende del tamaño de la
-            # ventana: el de Full HD (1666 de ancho) o el de 800 x 600.
-            n_em = emergentes()
-            clic(*((x + gx + 621, y + gy + 250) if gw >= 1600 else (x + gx + 370, y + gy + 73)))
-            if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 120):
-                time.sleep(8.0)
-                capturar(prefijo + ".gtk-combo")
-                apuntar("gtk4-widget-factory: la caja combinada, abierta")
-            mandar("sendkey esc")
-            time.sleep(3.0)
+            # La lista de una caja combinada (la de "Andrea"): otro emergente. Solo con la ventana de Full HD (1666 de
+            # ancho): con otro tamaño, su sitio cambia.
+            if gw >= 1600:
+                n_em = emergentes()
+                clic(x + gx + 621, y + gy + 250)
+                if esperar_n(r"\[compositor\] emergente de caja-linux", n_em + 1, 60):
+                    time.sleep(8.0)
+                    capturar(prefijo + ".gtk-combo")
+                    apuntar("gtk4-widget-factory: la caja combinada, abierta")
+                mandar("sendkey esc")
+                time.sleep(3.0)
             # Agrandarla por su borde izquierdo (xdg_toplevel.resize desde su sombra, que es de GTK) y después moverla
             # por su barra (xdg_toplevel.move; GTK lo pide tras unos píxeles de arrastre): los cuadros de cada cosa.
+            # (Con su borde izquierdo fuera de la pantalla, como con 800 x 600, solo se mueve.)
             antes = len(re.findall(r"\[compositor\] arrastre: ", texto()))
-            arrastrar((x + gx - 4, y + gy + 300), 20, (-3, 0))
-            esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1), 30)
-            time.sleep(5.0)
+            borde = x + gx - 4 >= 0
+            if borde:
+                arrastrar((x + gx - 4, y + gy + 300), 20, (-3, 0))
+                esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1), 30)
+                time.sleep(5.0)
             arrastrar((barra[0], barra[1] + 4), 30, (3, 2))
             movidas[len(ventanas_linux()) - 1] = (90, 60)
-            if esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 2), 30):
+            if esperar(r"(\[compositor\] arrastre: (.|\n)*){%d}" % (antes + 1 + borde), 30):
                 m = re.findall(r"\[compositor\] arrastre: ([^\n]*)", texto())
-                apuntar(f"gtk4-widget-factory: redimensionar, {m[antes]}; mover, {m[-1]}")
+                apuntar(f"gtk4-widget-factory: redimensionar, {m[antes]}; mover, {m[-1]}" if borde else f"gtk4-widget-factory: mover, {m[-1]}")
             time.sleep(8.0)
             capturar(prefijo + ".gtk-grande")
-            # Hostil: un programa del invitado se come toda su memoria (caja-linux-grandes). Linux lo mata; la ventana
-            # de GTK y DashOS siguen (el compositor dice los cuadros cada 10 s; un clic en GTK y otra captura).
+            # Hostil: con GTK abierta, `prueba-gtk-guion` lanza un programa que se come toda la memoria del invitado.
+            # Linux lo mata; la ventana de GTK y DashOS siguen (el compositor dice los cuadros cada 10 s; otra captura).
             def en_pantalla():
                 n = re.findall(r"\[compositor\] Wayland: (\d+) ventanas en pantalla", texto())
                 return int(n[-1]) if n else -1
-            a_la_terminal()
             antes = en_pantalla()
-            teclear("prueba-come-memoria")
             if esperar(r"hostil memoria: tail acab", 900):
                 time.sleep(2.0)
                 m = re.search(r"hostil memoria: tail acabó con (\d+) a los ([\d.]+) s", texto())
                 apuntar(f"hostil memoria: tail muerto ({m.group(1)}) a los {m.group(2)} s" if m else "hostil memoria: tail acabó")
-                if paso("echo sigue viva", r"linux: sigue viva\s*$|linux: sigue viva\n", 60):
+                if esperar(r"gtk: sigue viva tras el hostil", 120):
                     apuntar("hostil memoria: el invitado sigue")
-                clic(barra[0] + 90, barra[1] + 60)
                 time.sleep(5.0)
                 capturar(prefijo + ".gtk-tras-hostil")
                 apuntar(f"hostil memoria: ventanas en pantalla, antes {antes} y después {en_pantalla()}")
             else:
                 apuntar("hostil memoria: tail no acabó en 15 minutos")
+        esperar(r"gtk: hecho", 900)
         if depurar:
             a_la_terminal()
             teclear("tail -n 60 /tmp/gtk.log")
             time.sleep(20.0)
-        a_la_terminal()
-        teclear("pkill -f gtk4-widget-factory")
         time.sleep(3.0)
     if not solo:
         # 4. Hostiles de Linux: decoraciones y tipos rotos; una fuente que escribe sin fin y otra que nunca cierra.

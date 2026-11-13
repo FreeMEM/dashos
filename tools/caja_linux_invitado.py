@@ -553,6 +553,14 @@ ARCH_GUIONES["./usr/local/bin/prueba-come-memoria"] = (
     "t0=$(cut -d' ' -f1 /proc/uptime)\ntail /dev/zero\nr=$?\nt1=$(cut -d' ' -f1 /proc/uptime)\n"
     "echo \"hostil memoria: tail acabó con $r a los $(awk \"BEGIN {print $t1 - $t0}\") s\" > /dev/hvc0\n"
     "dmesg | grep -i 'out of memory' | tail -1 | sed 's/^/hostil memoria: /' > /dev/hvc0\n")
+# GTK4 para el guion, sin teclear con su ventana delante (con 800 x 600 es más grande que la pantalla y tapa la terminal
+# de la caja): la abre, deja $PAUSA_GTK s (300) para que el guion la pruebe (emergentes, mover, redimensionar), lanza el
+# hostil de la memoria con ella abierta, dice que sigue vivo y la cierra.
+ARCH_GUIONES["./usr/local/bin/prueba-gtk-guion"] = (
+    "#!/bin/sh\n# GTK4 y, con ella abierta, el hostil de la memoria; lo que pasa, por hvc0.\n"
+    "prueba-gtk \"$@\" &\nsleep ${PAUSA_GTK:-300}\nprueba-come-memoria\n"
+    "echo \"gtk: sigue viva tras el hostil\" > /dev/hvc0\nsleep 30\npkill -f gtk4-widget-factory\nsleep 3\n"
+    "echo \"gtk: hecho\" > /dev/hvc0\n")
 # Lo que gasta de memoria el invitado, en una línea por hvc0 (para el guion, que no teclea bien "|"): RAM, intercambio,
 # lo que ocupa comprimido el zram y los tres procesos más grandes.
 ARCH_GUIONES["./usr/local/bin/prueba-memoria"] = (
