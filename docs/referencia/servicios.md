@@ -365,7 +365,9 @@ usuario, grupo, clase (`M_PROPIO`, `M_CAJA_AMIGA`, `M_CAJA_LINUX`, `M_SISTEMA`, 
 Privacidad (decisión del usuario del 2026-11-13): con detalle, solo lo del usuario de quien pide; el fondo, la barra y
 el centro miran por la persona de delante; las cajas, por su nombre; el resto del sistema y las demás personas, en dos
 sumas sin marca ni nombres. La primera página, como mucho una vez cada 200 ms por programa (si no, `OCUPADO`, -3).
-`MATAR` (2) desde el centro de control cierra por la persona de delante: solo lo suyo; sin nadie delante, nada.
+`MATAR` (2) desde el centro de control cierra por la persona de delante: solo lo suyo; sin nadie delante, nada. Los
+programas del escritorio (fondo, centro, Workbench, explorador, selector, barra, panel y cajas, lanzados por `inicio`)
+salen con el bit `M_ESCRITORIO` en la clase y `MATAR` no los cierra (-2), sea quien sea quien lo pida.
 
 `APAGAR` (22; decisión del usuario del 2026-11-13): apagar (`MODO_APAGAR`), reiniciar (`MODO_REINICIAR`) o cerrar la
 sesión de delante (`MODO_SALIR`). Solo al panel rápido, por el nombre que da `inicio`; a otro, -2 (y se apunta,

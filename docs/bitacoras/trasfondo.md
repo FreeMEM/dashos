@@ -99,15 +99,19 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
 
 - **Privacidad** (como la pidió): con detalle solo lo de quien mira; el sistema y las demás personas, sumados y sin
   nombres. Las cajas salen por su nombre si son del sistema o de quien mira; la de otra persona, sumada.
-- **Los programas del escritorio son de Ana**: `inicio` lanza el fondo, el centro, el Workbench, el explorador, el
-  selector y la caja Amiga con la ficha de Ana (`FICHAS`). Por eso salen como procesos suyos y Ana los puede cerrar
-  desde el monitor (también el propio centro). Es lo que dice la regla ("si tiene derecho"), pero quizá convenga
-  marcarlos como "del escritorio" y no dejar cerrarlos desde ahí.
+- **Los programas del escritorio** (decisión del coordinador del 2026-11-14; el usuario puede cambiarla): el fondo, el
+  centro, el Workbench, el explorador, el selector, la barra, el panel y las cajas los lanza `inicio`, varios con la
+  ficha de Ana. Salen en el monitor marcados "· escritorio" (bit `M_ESCRITORIO` de la clase) y `sesiones` no los cierra
+  con `MATAR` (a quien no es su dueño le sigue diciendo que no existen). La acción de administrador "matar" no se tocó.
+  Prueba en arranque-virt: desde el monitor, Ana intenta cerrar el fondo y se niega.
 - **El uso de CPU de cada proceso es del total de la máquina** (los cuatro núcleos suman 100 %), no de un núcleo como en
   `top`. Así la suma de la lista cuadra con la cifra de la barra.
 - **Ajustes crece a 720 × 480** (antes 560 × 420), con cinco filas en la lista, para que quepan las columnas.
-- **El orden de lanzamiento cambia**: la red va antes del fondo (para que el fondo tenga "red-estado"), y cambian las
-  llaves del panel rápido y de la barra.
+- **El orden de lanzamiento cambia** (aceptado por el coordinador): la red va antes del fondo, para que el fondo tenga
+  "red-estado". Llaves nuevas: fondo 1 ventanas, 2 archivos, 3 sesiones, 4 red-estado, 5 fondo; panel rápido 1
+  ventanas, 2 sesiones, 3 red-estado, 4 centro, 5 sonido; barra 1 ventanas, 2 archivos, 3 sesiones, 4 centro, 5 avisos.
+- **El guion de Ajustes de arranque-virt** espera a que no haya ninguna pregunta de `guardian` sin contestar (de
+  permisos, de la caja Amiga o de administrador) antes de mandar Super+Arriba (como mucho 25 s).
 
 ## Pendiente
 
