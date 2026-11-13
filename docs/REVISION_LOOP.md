@@ -1897,3 +1897,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   sin ventana; make prueba y arranque-virt bien.
 - Pendientes del usuario: imagen "para usar" (antes o después del Trasfondo). Renombrar redoxfs-* y
   `archivos/redoxfs` a dashfs: APROBADO por el usuario (2026-11-13); se hace al acabar el agente de la caja Amiga.
+- Imagen para usar (f51aded y siguiente): `make virt-uso` / `tools/qemu_a_mano.sh`; sin pruebas ni caja Amiga (aún
+  corre sus virus de laboratorio); guardian con entrada de verdad. Fallo cazado: mirar la llave 4 tras `canal_crear`
+  daba "uso" también en la imagen de pruebas (arranque-virt MAL en Ajustes); ahora se mira lo primero. arranque-virt
+  bien y la de uso entra como Ana. Falta: fondo de pantalla en la de uso, la caja Amiga con arranque normal.
+- `caja-amiga-libs` (ramlib, AmigaOS del usuario como capa, registro de lo que falta, keymap y layers nativas): hecha,
+  por unir. Bloqueos para Tachyon: MUI tumba la caja (JIT de Emu68 en un longjmp del Init de muimaster) y la caja
+  tiene 4 MB para el 68k (Tachyon pide 30-40). Propuesta al usuario: memoria según el programa, tope en Ajustes
+  (256 MB por defecto).
