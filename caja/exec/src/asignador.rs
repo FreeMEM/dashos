@@ -189,9 +189,22 @@ impl<M: Memoria> Exec<M> {
         Ok(dir)
     }
 
+    /// De quién es la memoria que se reserva ahora: de la tarea en marcha o, mientras corre código de una biblioteca
+    /// cargada de disco (`memoria_del_sistema`), del sistema (0): la biblioteca sigue en memoria cuando acaba la tarea
+    /// que la usó, y lo suyo no se puede soltar con ella.
+    pub(crate) fn dueno_de_lo_nuevo(&self) -> u32 {
+        if self.memoria_del_sistema { 0 } else { self.tarea_actual() }
+    }
+
+    /// Lo que se reserve desde ahora, del sistema (`si`) o de la tarea (la caja lo pone en cada llamada nativa según
+    /// quién la hace).
+    pub fn memoria_del_sistema(&mut self, si: bool) {
+        self.memoria_del_sistema = si;
+    }
+
     /// `AllocMem`. 0 si no hay sitio (sin llamar a los manejadores de poca memoria: aún no los hay).
     pub fn alloc_mem(&mut self, tamano: u32, req: u32) -> Result<u32, Fallo> {
-        let dueno = self.tarea_actual();
+        let dueno = self.dueno_de_lo_nuevo();
         self.reservar(tamano, req, dueno)
     }
 
@@ -227,7 +240,7 @@ impl<M: Memoria> Exec<M> {
         }
         let libre = self.l32(mh + memheader::MH_FREE)?;
         self.e32(mh + memheader::MH_FREE, libre.wrapping_sub(fin - inicio))?;
-        let dueno = self.tarea_actual();
+        let dueno = self.dueno_de_lo_nuevo();
         self.bloques.insert(inicio, Bloque { largo: fin - inicio, dueno, vec: false });
         Ok(inicio)
     }

@@ -1596,7 +1596,27 @@ y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nun
   Lo siguiente: una traza por instrucción del JIT en la caja, en ese bloque, y el arreglo en el parche de Emu68.
   Hasta entonces, un programa que abra muimaster tumba la caja (no el sistema: DashOS sigue).
 - **Lo que sigue faltando** (lo dice el registro): mathieeesingbas y mathffp (en la ROM del Amiga; las piden
-  mathieeesingtrans y mathtrans), `FindNamedObject` y `AllocNamedObjectA` de utility (datatypes), icon, workbench y
+  mathieeesingtrans y mathtrans), `FindNamedObject` y `AllocNamedObjectA` de utility (datatypes; el registro aún no
+  sabe los LVO de utility: sale 0), `CreateNewProc` de dos (texteditor.gadget, que abre igual), icon, workbench y
   asl nativas (las de 3.2 usan una privada de exec), los ganchos de layers (`DoHookClipRects`, que MUI usa para el
   fondo) y que graphics recorte con la región de la capa. Y el aviso `CierreDeMas` de locale, diskfont y commodities
   recién cargadas.
+
+### Paso 4: Tachyon 68k
+
+- **No arranca todavía**, por dos cosas, las dos fuera de lo que faltaba de las bibliotecas:
+  - **La memoria del 68k de la caja es de 4 MB** (`M68K_RAM_LEN`, de 1 a 5 MB). Tachyon (`build/dashweb`, 68020)
+    ocupa 5 MB solo de código y gasta 29-39 MB al correr (su README): la caja dice "no carga: sin memoria para los
+    hunks". Agrandarla es una decisión del sistema: `memoria_crear` reserva entera la memoria del objeto y la cobra
+    al cupo del proceso; 64 MB por caja pesan en la máquina de pruebas. Propuesta: que la caja la pida según el
+    programa (o crezca a trozos), o un tope mayor en un ajuste.
+  - **MUI 5 tumba la caja** (paso 3): hasta arreglar el traductor, muimaster no se carga (`TUMBAN_EL_JIT` en
+    `pegamento/src/ramlib.rs`): quien la abre recibe 0 y acaba solo (las demos de MUI acaban con 20, "no se pudo
+    abrir muimaster"), en vez de tumbar la caja. Tachyon es MUI 5, así que tampoco pintaría su ventana.
+  - bsdsocket no hace falta para lo anterior: Tachyon arranca sin red; no se llegó a ver.
+- **De paso, un arreglo de fondo**: lo que reserva el código de una biblioteca de disco (su `Init`, sus funciones) era
+  de la tarea que la llamaba, y la caja lo soltaba al acabar ella, con la biblioteca aún en memoria. Ahora exec
+  reserva para el sistema mientras corre código de una biblioteca cargada por ramlib (la caja lo mira en cada llamada
+  nativa por la dirección de vuelta: `memoria_del_sistema`; prueba en `exec/tests/ramlib.rs`). Con eso, `capa.exe`
+  vuelve a acabar con 0 bloques sin soltar. Con todo: 8 de las 16 bibliotecas de su prueba abren del 3.2 del usuario
+  (iffparse, locale, mathieeedoubbas, mathieeedoubtrans, diskfont, commodities, rexxsyslib y texteditor.gadget).

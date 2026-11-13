@@ -78,25 +78,19 @@ impl Faltan {
 /// tiene, o la tarea.
 pub(crate) fn quien(c: &super::Caja, pc: u32) -> String {
     use caja_exec::Memoria;
-    let m = &c.ex.mem;
-    for (seg, nombre) in &c.ramlib_segs {
-        // La lista de segmentos (como `caja_dos::hunk::segmentos`, con tope): BPTR al siguiente, tamaño delante.
-        let mut b = *seg;
-        for _ in 0..1024 {
-            if b == 0 || b >= 1 << 30 {
-                break;
-            }
-            let p = b << 2;
-            let (Ok(bytes), Ok(sig)) = (m.leer32(p.wrapping_sub(4)), m.leer32(p)) else { break };
-            if pc >= p + 4 && pc < (p + 4).saturating_add(bytes.saturating_sub(8)) {
-                return format!("{} (+${:x})", nombre, pc - (p + 4));
-            }
-            b = sig;
-        }
+    if let Some((nombre, d)) = de_biblioteca(c, pc) {
+        return format!("{} (+${:x})", nombre, d);
     }
     let t = c.ex.tarea_actual();
-    let n = m.leer32(t + 10).ok().and_then(|p| c.ex.leer_cadena(p).ok());
+    let n = c.ex.mem.leer32(t + 10).ok().and_then(|p| c.ex.leer_cadena(p).ok());
     format!("la tarea {} (${:x})", n.unwrap_or_else(|| String::from("?")), pc)
+}
+
+/// La biblioteca de disco cuyo código tiene `pc`, y a cuánto del principio de su segmento.
+pub(crate) fn de_biblioteca(c: &super::Caja, pc: u32) -> Option<(&str, u32)> {
+    c.ramlib_segs.iter().find_map(|(_, rangos, nombre)| {
+        rangos.iter().find(|&&(d, f)| pc >= d && pc < f).map(|&(d, _)| (nombre.as_str(), pc - d))
+    })
 }
 
 #[cfg(test)]

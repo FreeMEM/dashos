@@ -367,3 +367,26 @@ fn recursos_y_alert() {
     r.d[7] = 0x8100_0005;
     assert_ne!(llamar(&mut e, "Alert", &mut r), Accion::Seguir, "se acaba la tarea {t:x}");
 }
+
+/// Lo que reserva el código de una biblioteca de disco es del sistema (la caja lo dice con `memoria_del_sistema`):
+/// la biblioteca sigue en memoria cuando acaba la tarea que la usó.
+#[test]
+fn memoria_de_las_bibliotecas_de_disco() {
+    let (mut e, t) = caja_con_tarea();
+    e.memoria_del_sistema(true);
+    let a = e.alloc_mem(64, memf::CLEAR).unwrap();
+    let mut r = Registros::default();
+    (r.d[0], r.d[1]) = (100, memf::CLEAR);
+    llamar(&mut e, "AllocVec", &mut r);
+    let v = r.d[0];
+    let mut r = Registros::default();
+    (r.d[0], r.d[1], r.d[2]) = (memf::CLEAR, 4096, 1024);
+    llamar(&mut e, "CreatePool", &mut r);
+    let p = r.d[0];
+    e.memoria_del_sistema(false);
+    let b = e.alloc_mem(64, memf::CLEAR).unwrap();
+    let del_sistema: Vec<u32> = e.bloques_de(0).iter().map(|x| x.0).collect();
+    let de_la_tarea: Vec<u32> = e.bloques_de(t).iter().map(|x| x.0).collect();
+    assert!(del_sistema.contains(&a) && del_sistema.contains(&(v - 4)) && del_sistema.contains(&p));
+    assert!(de_la_tarea.contains(&b) && !de_la_tarea.contains(&a));
+}

@@ -46,6 +46,10 @@ const RECHAZADAS: [&[u8]; 22] = [
 /// execPrivate17").
 const SIN_SOPORTE: [&[u8]; 3] = [b"icon.library", b"workbench.library", b"asl.library"];
 
+/// Las que tumban la caja entera al cargarlas: el traductor de Emu68 cae (un puntero nulo) en su `Init` (muimaster 5,
+/// bitácora de la caja, paso 3). Hasta arreglarlo, no se cargan: quien las abre recibe 0 y sigue (o acaba él solo).
+const TUMBAN_EL_JIT: [&[u8]; 1] = [b"muimaster.library"];
+
 /// Dónde dice el usuario que está su AmigaOS (una carpeta del disco de DashOS; DashOS no trae ninguno).
 const PREFS_AMIGAOS: &[u8] = b"SYS:C/Prefs/amigaos";
 
@@ -136,6 +140,11 @@ pub(super) fn cargar(c: &mut Caja, nombre: u32, tipo: u32) -> u32 {
         apuntar_falta(c, &n, disp);
         return 0;
     }
+    if TUMBAN_EL_JIT.contains(&base(&n).as_slice()) {
+        decir(c, &format!("ramlib: {} no se carga de disco (aún no: el JIT de la caja cae en su Init)", latin1(&n)));
+        apuntar_falta(c, &n, disp);
+        return 0;
+    }
     if rechazada(&n) {
         decir(c, &format!("ramlib: {} no se carga de disco (nunca: hablaría con el chipset)", latin1(&n)));
         apuntar_falta(c, &n, disp);
@@ -144,12 +153,14 @@ pub(super) fn cargar(c: &mut Caja, nombre: u32, tipo: u32) -> u32 {
     for ruta in sitios(&n, disp) {
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: true };
         if let Ok(seg) = c.dos.cargar_de_disco(&mut cd, &ruta) {
+            let rangos: Vec<(u32, u32)> =
+                caja_dos::hunk::segmentos(&cd, seg).iter().map(|&(d, n)| (d, d.saturating_add(n))).collect();
             // Código nuevo: el JIT olvida lo traducido (salvo lo que se está ejecutando, caja.c).
             // SEGURIDAD: una función de caja.c sin argumentos; no ejecuta 68k.
             unsafe { super::caja_jit_olvidar() };
             c.ramlib_cargas += 1;
             if c.ramlib_segs.len() < 256 {
-                c.ramlib_segs.push((seg, latin1(&base(&n))));
+                c.ramlib_segs.push((seg, rangos, latin1(&base(&n))));
             }
             decir(c, &format!("ramlib: {} cargada de disco", latin1(&ruta)));
             return seg;
@@ -173,7 +184,7 @@ pub(super) fn soltar(c: &mut Caja, seglist: u32) {
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: true };
     caja_dos::hunk::descargar(&mut cd, seglist);
     c.ramlib_soltadas += 1;
-    c.ramlib_segs.retain(|(s, _)| *s != seglist);
+    c.ramlib_segs.retain(|(s, _, _)| *s != seglist);
 }
 
 fn leer_nombre(c: &Caja, d: u32) -> Option<Vec<u8>> {

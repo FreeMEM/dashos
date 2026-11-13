@@ -151,7 +151,7 @@ struct Caja {
     /// Lo que falta (`faltan.rs`) y la dirección de vuelta de la llamada en curso (quién la hizo).
     faltan: faltan::Faltan,
     /// Lo cargado de disco por ramlib que sigue en memoria: (lista de segmentos, nombre), para decir quién llama.
-    ramlib_segs: Vec<(u32, String)>,
+    ramlib_segs: Vec<(u32, Vec<(u32, u32)>, String)>,
     pc_llamada: u32,
     /// El último programa leído de disco para caja.c (`caja_programa_de_disco`): sigue vivo hasta el siguiente.
     programa: Vec<u8>,
@@ -1261,6 +1261,9 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     let antes = *r;
     let t = c.ex.tarea_actual();
     c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
+    // Lo que reserve código de una biblioteca de disco es del sistema: la biblioteca sigue al acabar la tarea.
+    let de_biblioteca = faltan::de_biblioteca(c, c.pc_llamada).is_some();
+    c.ex.memoria_del_sistema(de_biblioteca);
     // Las privadas de exec (`execPrivateN`, sin documentar): la caja no las tiene ni las puede tener (no se sabe qué
     // hacen). Quien las llama (algunas bibliotecas de un AmigaOS de verdad, en su `Init`) usaría lo que devuelven:
     // con 0 saltaría a la página cero y se colgaría. Mejor acabar el programa, diciendo quién fue.
@@ -1324,6 +1327,8 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                         Registros::default()
                     }
                 };
+                // Las llamadas de dentro cambiaron de quién es lo nuevo: otra vez el de esta llamada.
+                c.ex.memoria_del_sistema(de_biblioteca);
                 a = c.ex.continuar(tras, &rr, r);
                 continue;
             }

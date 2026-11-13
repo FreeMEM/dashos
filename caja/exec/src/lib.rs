@@ -343,6 +343,8 @@ pub struct Exec<M: Memoria> {
     /// `RawDoFmt` con un `PutChProc` de 68k: lo que queda por entregar (`formato.rs`).
     pub(crate) entregas: alloc::collections::BTreeMap<u32, formato::Entrega>,
     pub(crate) n_entrega: u32,
+    /// Lo que se reserva ahora es del sistema (código de una biblioteca de disco): `memoria_del_sistema`.
+    pub(crate) memoria_del_sistema: bool,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -375,6 +377,7 @@ impl<M: Memoria> Exec<M> {
             ramlib: ramlib::Ramlib::default(),
             entregas: alloc::collections::BTreeMap::new(),
             n_entrega: 0,
+            memoria_del_sistema: false,
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;
