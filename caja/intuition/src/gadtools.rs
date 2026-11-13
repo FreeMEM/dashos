@@ -22,6 +22,7 @@ use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{drawinfo as dri, idcmp, ie, tag, window as win};
 use crate::lienzo::{Lienzo, Rect};
 use crate::lvo::{GADTOOLS as T, fila};
+use crate::tema::{Plumas, Vista};
 use crate::{CajaGrafica, Compositor, Fallo, fuente};
 
 macro_rules! filas {
@@ -322,7 +323,7 @@ fn opciones<M: Memoria>(ex: &Exec<M>, d: u32) -> Vec<Vec<u8>> {
 }
 
 /// `%ld`, `%lu`, `%ld%%`... con un número: lo que hace falta para `GTSL_LevelFormat` (RawDoFmt con un LONG).
-fn formatear(f: &[u8], n: i32) -> Vec<u8> {
+pub(crate) fn formatear(f: &[u8], n: i32) -> Vec<u8> {
     let mut v = Vec::new();
     let mut i = 0;
     while i < f.len() {
@@ -829,9 +830,6 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Dibujo ---
 
-    fn pluma(&self, i: usize) -> u32 {
-        self.color(self.intui.wb.cm, self.intui.wb.plumas[i] as u8)
-    }
 
     /// El rectángulo de un gadget en la ventana.
     fn caja_de<M: Memoria>(ex: &Exec<M>, g: u32) -> Option<Rect> {
@@ -883,15 +881,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(r) = Self::caja_en(ex, w, g) else { return };
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
         let desactivado = ex.l16(g.wrapping_add(gadget::FLAGS)).unwrap_or(0) & gadget::GFLG_DISABLED != 0;
-        let (claro, oscuro, tinta, fondo, relleno, tinta_rel, bloque) = (
-            self.pluma(dri::SHINEPEN),
-            self.pluma(dri::SHADOWPEN),
-            self.pluma(dri::TEXTPEN),
-            self.pluma(dri::BACKGROUNDPEN),
-            self.pluma(dri::FILLPEN),
-            self.pluma(dri::FILLTEXTPEN),
-            self.pluma(dri::BLOCKPEN),
-        );
+        let plumas = self.plumas(ex);
         let paleta: Vec<u32> = (0..s.colores.min(256)).map(|i| self.color(self.intui.wb.cm, (i + s.desplaz) as u8)).collect();
         let elementos = if s.tipo == kind::LISTVIEW { Self::elementos(ex, s.lista) } else { Vec::new() };
         let (cadena, cursor) = if s.info != 0 {
@@ -903,202 +893,83 @@ impl<C: Compositor> CajaGrafica<C> {
         };
         let activo_texto = matches!(self.gt.activo, Some(Activo::Texto { g: x, .. }) if x == g);
         let glifos = &self.intui.glifos;
+        // En una ventana GIMMEZEROZERO, lo de un gadget de la capa de dentro (su etiqueta, su nivel) no sale a los
+        // bordes: se guardan y se devuelven al acabar (en 3.1, la etiqueta de un gadget pegado al borde se corta).
+        let dentro_gzz = {
+            let gzz = ex.l32(w.wrapping_add(win::FLAGS)).unwrap_or(0) & crate::estructuras::wflg::GIMMEZEROZERO != 0;
+            let propio = ex.l16(g.wrapping_add(gadget::GADGETTYPE)).unwrap_or(0) & gadget::GTYP_GZZGADGET != 0;
+            self.intui.ventanas.get(&w).filter(|_| gzz && !propio).map(|v| {
+                let gm = v.geometria;
+                let [bi, ba, bd, bb] = gm.bordes;
+                Rect::nuevo(bi, ba, gm.ancho - bd - 1, gm.alto - bb - 1)
+            })
+        };
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return };
-        let fa = fuente::ALTO as i32;
-        let fw = fuente::ANCHO as i32;
-        let centro_y = |r: &Rect| r.y0 + (r.y1 - r.y0 + 1 - fa) / 2;
-        let mut dano = r;
-        // El fondo de la caja (las etiquetas de fuera se pintan sobre lo que haya).
-        llenar(l, r, fondo);
-        match s.tipo {
-            kind::BUTTON => {
-                bisel(l, r, claro, oscuro, s.pulsado);
-                if s.pulsado {
-                    llenar(l, Rect::nuevo(r.x0 + 2, r.y0 + 1, r.x1 - 2, r.y1 - 1), relleno);
-                }
-            }
-            kind::CHECKBOX => {
-                bisel(l, r, claro, oscuro, false);
-                if s.valor != 0 {
-                    // Una marca: dos trazos.
-                    let (cx, cy) = (r.x0 + 6, r.y0 + 5);
-                    for i in 0..3 {
-                        llenar(l, Rect::nuevo(cx + i * 2, cy + i - 1, cx + i * 2 + 1, cy + i), tinta);
-                    }
-                    for i in 0..5 {
-                        llenar(l, Rect::nuevo(cx + 6 + i * 2, cy + 1 - i, cx + 7 + i * 2, cy + 2 - i), tinta);
-                    }
-                }
-            }
-            kind::MX => {
-                let alto1 = 9;
-                for (i, t) in s.textos.iter().enumerate() {
-                    let y = r.y0 + i as i32 * (alto1 + s.espacio);
-                    let b = Rect::nuevo(r.x0, y, r.x0 + 16, y + alto1 - 1);
-                    let elegido = i as i32 == s.valor;
-                    bisel(l, b, claro, oscuro, elegido);
-                    if elegido {
-                        llenar(l, Rect::nuevo(b.x0 + 4, b.y0 + 2, b.x1 - 4, b.y1 - 2), relleno);
-                    }
-                    let tx = if s.lugar == gt::PLACETEXT_RIGHT { b.x1 + 1 + 6 } else { b.x0 - 6 - fw * t.len() as i32 };
-                    texto(l, glifos, tx, y + (alto1 - fa) / 2 + 1, t, tinta, i32::MAX);
-                    dano = dano.union(&Rect::nuevo(tx, y, tx + fw * t.len() as i32, y + alto1));
-                }
-            }
-            kind::CYCLE => {
-                bisel(l, r, claro, oscuro, s.pulsado);
-                if s.pulsado {
-                    llenar(l, Rect::nuevo(r.x0 + 2, r.y0 + 1, r.x1 - 2, r.y1 - 1), relleno);
-                }
-                // El dibujo del ciclo (una flecha en círculo) y la separación.
-                let (gx, gy) = (r.x0 + 6, centro_y(&r));
-                let c = if s.pulsado { tinta_rel } else { tinta };
-                llenar(l, Rect::nuevo(gx + 1, gy, gx + 5, gy), c);
-                llenar(l, Rect::nuevo(gx, gy + 1, gx, gy + 6), c);
-                llenar(l, Rect::nuevo(gx + 6, gy + 1, gx + 6, gy + 2), c);
-                llenar(l, Rect::nuevo(gx + 1, gy + 7, gx + 5, gy + 7), c);
-                llenar(l, Rect::nuevo(gx + 4, gy + 2, gx + 8, gy + 2), c);
-                llenar(l, Rect::nuevo(gx + 5, gy + 3, gx + 7, gy + 3), c);
-                llenar(l, Rect::nuevo(gx + 6, gy + 4, gx + 6, gy + 4), c);
-                llenar(l, Rect::nuevo(r.x0 + 18, r.y0 + 2, r.x0 + 18, r.y1 - 2), oscuro);
-                llenar(l, Rect::nuevo(r.x0 + 19, r.y0 + 2, r.x0 + 19, r.y1 - 2), claro);
-                let t = s.textos.get(s.valor.max(0) as usize).cloned().unwrap_or_default();
-                let zona = Rect::nuevo(r.x0 + 20, r.y0, r.x1, r.y1);
-                let tx = zona.x0 + ((zona.x1 - zona.x0 + 1) - fw * t.len() as i32).max(0) / 2;
-                texto(l, glifos, tx, centro_y(&r) + 1, &t, c, r.x1 - 2);
-            }
-            kind::STRING | kind::INTEGER => {
-                bisel(l, r, claro, oscuro, false);
-                bisel(l, Rect::nuevo(r.x0 + 2, r.y0 + 1, r.x1 - 2, r.y1 - 1), claro, oscuro, true);
-                let tx = r.x0 + 6;
-                let ty = centro_y(&r) + 1;
-                let fin = texto(l, glifos, tx, ty, &cadena, tinta, r.x1 - 4);
-                if activo_texto {
-                    let cx = tx + fw * cursor as i32;
-                    if cx + fw <= r.x1 - 3 {
-                        llenar(l, Rect::nuevo(cx, ty, cx + fw - 1, ty + fa - 1), relleno);
-                        if let Some(&ch) = cadena.get(cursor) {
-                            texto(l, glifos, cx, ty, &[ch], tinta_rel, r.x1 - 3);
+        let bordes: Vec<(i32, i32, u32)> = match dentro_gzz {
+            Some(d) => {
+                let (an, al) = (l.ancho() as i32, l.alto() as i32);
+                let mut v = Vec::new();
+                for y in 0..al {
+                    for x in 0..an {
+                        if !d.contiene(x, y) {
+                            v.push((x, y, l.pixel(x, y)));
                         }
                     }
                 }
-                let _ = fin;
+                v
             }
-            kind::TEXT | kind::NUMBER => {
-                if s.borde {
-                    bisel(l, r, claro, oscuro, true);
-                }
-                let t = if s.tipo == kind::NUMBER { alloc::format!("{}", s.valor).into_bytes() } else { s.texto.clone() };
-                let tx = if s.borde { r.x0 + 6 } else { r.x0 };
-                texto(l, glifos, tx, centro_y(&r) + 1, &t, tinta, r.x1 - 2);
-            }
-            kind::SLIDER | kind::SCROLLER => {
-                bisel(l, r, claro, oscuro, false);
-                let dentro = Rect::nuevo(r.x0 + 4, r.y0 + 2, r.x1 - 4, r.y1 - 2);
-                // El mando, como el de 3.1: un bloque oscuro (el oráculo lo pinta así).
-                let mando = Self::mando(&s, dentro);
-                llenar(l, mando, oscuro);
-            }
-            kind::PALETTE => {
-                bisel(l, r, claro, oscuro, false);
-                let ind = if s.indicador > 0 { s.indicador } else { 0 };
-                if ind > 0 {
-                    let ri = Rect::nuevo(r.x0 + 4, r.y0 + 2, r.x0 + ind - 2, r.y1 - 2);
-                    bisel(l, ri, claro, oscuro, true);
-                    let c = paleta.get((s.valor - s.desplaz as i32).max(0) as usize).copied().unwrap_or(fondo);
-                    llenar(l, Rect::nuevo(ri.x0 + 2, ri.y0 + 1, ri.x1 - 2, ri.y1 - 1), c);
-                }
-                for (i, cel) in Self::celdas(&s, r).into_iter().enumerate() {
-                    let c = paleta.get(i).copied().unwrap_or(fondo);
-                    if i as i32 + s.desplaz as i32 == s.valor {
-                        llenar(l, cel, tinta);
-                        llenar(l, Rect::nuevo(cel.x0 + 2, cel.y0 + 2, cel.x1 - 2, cel.y1 - 2), c);
-                    } else {
-                        llenar(l, Rect::nuevo(cel.x0 + 1, cel.y0 + 1, cel.x1 - 1, cel.y1 - 1), c);
-                    }
-                }
-            }
-            kind::LISTVIEW => {
-                let lista = Rect::nuevo(r.x0, r.y0, r.x1 - 16, r.y1);
-                bisel(l, lista, claro, oscuro, true);
-                let alto_el = fa + 1;
-                let filas = ((lista.y1 - lista.y0 - 3) / alto_el).max(0);
-                for f in 0..filas {
-                    let i = s.arriba + f;
-                    let Some(t) = elementos.get(i.max(0) as usize) else { break };
-                    let y = lista.y0 + 2 + f * alto_el;
-                    let elegido = i == s.valor;
-                    if elegido {
-                        llenar(l, Rect::nuevo(lista.x0 + 2, y, lista.x1 - 2, y + alto_el - 1), relleno);
-                    }
-                    texto(l, glifos, lista.x0 + 4, y + 1, t, if elegido { tinta_rel } else { tinta }, lista.x1 - 2);
-                }
-                // La barra: un deslizador y dos flechas.
-                let barra = Rect::nuevo(r.x1 - 15, r.y0, r.x1, r.y1 - 16);
-                bisel(l, barra, claro, oscuro, false);
-                let total = elementos.len() as i32;
-                if total > filas && filas > 0 {
-                    let alto = (barra.y1 - barra.y0 - 3).max(4);
-                    let km = (alto * filas / total).max(4);
-                    let ky = barra.y0 + 2 + (alto - km) * s.arriba.clamp(0, total - filas) / (total - filas).max(1);
-                    bisel(l, Rect::nuevo(barra.x0 + 4, ky, barra.x1 - 4, ky + km), claro, oscuro, false);
-                } else {
-                    bisel(l, Rect::nuevo(barra.x0 + 4, barra.y0 + 2, barra.x1 - 4, barra.y1 - 2), claro, oscuro, false);
-                }
-                for (k, y0) in [(0, r.y1 - 15), (1, r.y1 - 7)] {
-                    let b = Rect::nuevo(r.x1 - 15, y0, r.x1, y0 + 7);
-                    bisel(l, b, claro, oscuro, false);
-                    let cx = b.x0 + 8;
-                    for i in 0..3 {
-                        let fy = if k == 0 { b.y0 + 2 + i } else { b.y1 - 2 - i };
-                        llenar(l, Rect::nuevo(cx - i, fy, cx + i, fy), tinta);
-                    }
-                }
-            }
-            _ => {}
-        }
-        // La etiqueta (la de un mx no sale: sus opciones van donde diría su lugar, arriba).
-        if !s.etiqueta.is_empty() && s.tipo != kind::MX {
-            let t = &s.etiqueta;
-            let ancho = fw * t.len() as i32;
-            let c = if s.pulsado && s.lugar == gt::PLACETEXT_IN { tinta_rel } else { tinta };
-            let izq = r.x0;
-            let (tx, ty) = match s.lugar {
-                gt::PLACETEXT_IN => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, centro_y(&r) + 1),
-                gt::PLACETEXT_RIGHT => (r.x1 + 1 + 6, centro_y(&r) + 1),
-                gt::PLACETEXT_ABOVE => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, r.y0 - fa - 2),
-                gt::PLACETEXT_BELOW => (r.x0 + ((r.x1 - r.x0 + 1) - ancho) / 2, r.y1 + 3),
-                _ => (izq - 6 - ancho, if s.tipo == kind::MX { r.y0 + 1 } else { centro_y(&r) + 1 }),
-            };
-            texto(l, glifos, tx, ty, t, c, i32::MAX);
-            dano = dano.union(&Rect::nuevo(tx, ty, tx + ancho, ty + fa));
-        }
-        // El nivel de un deslizador, a su izquierda en un campo de GTSL_MaxLevelLen letras, encima de la etiqueta
-        // (como en 3.1, que con los dos a la izquierda los pisa).
-        if s.tipo == kind::SLIDER && !s.formato.is_empty() {
-            let t = formatear(&s.formato, s.valor);
-            let ancho = fw * s.visibles.max(t.len() as i32);
-            let tx = r.x0 - 2 - ancho;
-            let caja = Rect::nuevo(tx, r.y0, r.x0 - 2, r.y1);
-            llenar(l, caja, fondo);
-            texto(l, glifos, tx + ancho - fw * t.len() as i32, centro_y(&r) + 1, &t, tinta, r.x0 - 1);
-            dano = dano.union(&caja);
-        }
-        if desactivado {
-            // Fantasma: la trama de puntos de BLOCKPEN, como intuition.
-            for y in r.y0..=r.y1 {
-                for x in r.x0..=r.x1 {
-                    if (x + y) % 2 == 0 && (y % 2 == 0) {
-                        l.poner(x, y, bloque);
-                    }
-                }
-            }
+            None => Vec::new(),
+        };
+        let vista = Vista {
+            s: &s,
+            r,
+            desactivado,
+            paleta: &paleta,
+            elementos: &elementos,
+            cadena: &cadena,
+            cursor,
+            activo_texto,
+        };
+        let dano = self.tema.gadget(l, glifos, &plumas, &vista);
+        for (x, y, p) in bordes {
+            l.poner(x, y, p);
         }
         l.danar(dano.interseccion(&l.rect()));
     }
 
-    /// El mando de un deslizador (horizontal si es más ancho que alto) dentro de `dentro`.
-    fn mando(s: &Gt, dentro: Rect) -> Rect {
+    /// Los colores del tema: los de las plumas de la `DrawInfo` del Workbench (la de la memoria del 68k, la que ve el
+    /// programa), con las de intuition si no se puede leer.
+    pub(crate) fn plumas<M: Memoria>(&self, ex: &Exec<M>) -> Plumas {
+        let di = self.intui.wb.drawinfo;
+        let tabla = ex.l32(di.wrapping_add(dri::DRI_PENS)).unwrap_or(0);
+        let n = ex.l16(di.wrapping_add(dri::DRI_NUMPENS)).unwrap_or(0) as usize;
+        let pen = |i: usize| -> u32 {
+            let p = if i < n && tabla != 0 {
+                ex.l16(tabla.wrapping_add(2 * i as u32)).unwrap_or(self.intui.wb.plumas[i])
+            } else {
+                self.intui.wb.plumas[i]
+            };
+            self.color(self.intui.wb.cm, p as u8)
+        };
+        Plumas {
+            detalle: pen(dri::DETAILPEN),
+            bloque: pen(dri::BLOCKPEN),
+            texto: pen(dri::TEXTPEN),
+            claro: pen(dri::SHINEPEN),
+            oscuro: pen(dri::SHADOWPEN),
+            relleno: pen(dri::FILLPEN),
+            texto_relleno: pen(dri::FILLTEXTPEN),
+            fondo: pen(dri::BACKGROUNDPEN),
+            texto_resaltado: pen(dri::HIGHLIGHTTEXTPEN),
+            barra_detalle: pen(dri::BARDETAILPEN),
+            barra_bloque: pen(dri::BARBLOCKPEN),
+            barra_borde: pen(dri::BARTRIMPEN),
+        }
+    }
+}
+
+/// El mando de un deslizador (horizontal si es más ancho que alto) dentro de `dentro`.
+pub(crate) fn mando(s: &Gt, dentro: Rect) -> Rect {
         let (rango, pos, vis) = if s.tipo == kind::SLIDER {
             ((s.max - s.min).max(0) + 1, s.valor - s.min, 1)
         } else {
@@ -1115,10 +986,10 @@ impl<C: Compositor> CajaGrafica<C> {
         } else {
             Rect::nuevo(dentro.x0, dentro.y0 + p, dentro.x1, dentro.y0 + p + mando - 1)
         }
-    }
+}
 
-    /// Las celdas de los colores de una paleta, en orden (filas y columnas que más se acerquen a cuadradas).
-    fn celdas(s: &Gt, r: Rect) -> Vec<Rect> {
+/// Las celdas de los colores de una paleta, en orden (filas y columnas que más se acerquen a cuadradas).
+pub(crate) fn celdas(s: &Gt, r: Rect) -> Vec<Rect> {
         let n = s.colores.max(1) as i32;
         let x0 = r.x0 + if s.indicador > 0 { s.indicador + 2 } else { 4 };
         let zona = Rect::nuevo(x0, r.y0 + 2, r.x1 - 4, r.y1 - 2);
@@ -1146,8 +1017,9 @@ impl<C: Compositor> CajaGrafica<C> {
             ));
         }
         v
-    }
+}
 
+impl<C: Compositor> CajaGrafica<C> {
     /// `DrawBevelBoxA`: un marco en relieve en un `RastPort` (con `GTBB_Recessed`, hundido; con
     /// `GTBB_FrameType` = `BBFT_RIDGE`, doble).
     #[allow(clippy::too_many_arguments)]
@@ -1159,7 +1031,9 @@ impl<C: Compositor> CajaGrafica<C> {
             return Ok(());
         }
         let antes = self.leer_rp(ex, rp)?.fg as u32;
-        let (claro, oscuro) = (self.intui.wb.plumas[dri::SHINEPEN] as u32, self.intui.wb.plumas[dri::SHADOWPEN] as u32);
+        // Las plumas, las que diga el tema (de la DrawInfo de la pantalla).
+        let (a, b) = self.tema.plumas_bisel(false);
+        let (claro, oscuro) = (self.intui.wb.plumas[a] as u32, self.intui.wb.plumas[b] as u32);
         let caja = |s: &mut Self, ex: &mut Exec<M>, x0: i32, y0: i32, x1: i32, y1: i32, h: bool| -> Result<(), Fallo> {
             let (a, b) = if h { (oscuro, claro) } else { (claro, oscuro) };
             s.set_a_pen(ex, rp, a)?;
@@ -1245,7 +1119,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             kind::SLIDER | kind::SCROLLER => {
                 let dentro = Rect::nuevo(r.x0 + 4, r.y0 + 2, r.x1 - 4, r.y1 - 2);
-                let m = Self::mando(&s, dentro);
+                let m = mando(&s, dentro);
                 if m.contiene(x, y) {
                     self.gt.activo = Some(Activo::Arrastre { w, g, dx: x - m.x0 });
                     return self.enviar(ex, w, idcmp::GADGETDOWN, s.valor as u16, g);
@@ -1308,7 +1182,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 let r = Self::caja_en(ex, w, g)?;
                 let mut s = self.gt.gadgets.get(&g)?.clone();
                 let dentro = Rect::nuevo(r.x0 + 4, r.y0 + 2, r.x1 - 4, r.y1 - 2);
-                let m = Self::mando(&s, dentro);
+                let m = mando(&s, dentro);
                 let horizontal = dentro.x1 - dentro.x0 >= dentro.y1 - dentro.y0;
                 let (largo, mlargo, p) = if horizontal {
                     (dentro.x1 - dentro.x0 + 1, m.x1 - m.x0 + 1, x - dx - dentro.x0)
@@ -1369,7 +1243,7 @@ impl<C: Compositor> CajaGrafica<C> {
                         }
                         kind::PALETTE => {
                             let r = Self::caja_en(ex, w, g)?;
-                            if let Some(i) = Self::celdas(&s, r).iter().position(|c| c.contiene(x, y)) {
+                            if let Some(i) = celdas(&s, r).iter().position(|c| c.contiene(x, y)) {
                                 s.valor = i as i32 + s.desplaz as i32;
                                 codigo = Some(s.valor);
                             }

@@ -15,7 +15,7 @@ use caja_exec::{Exec, Memoria};
 
 use crate::acceso::Acceso;
 use crate::estructuras::{drawinfo as dri, idcmp, window as win};
-use crate::gadtools::{bisel, llenar, texto};
+use crate::tema::{Elem, Titulo, VistaMenu};
 use crate::lienzo::Rect;
 use crate::{CajaGrafica, Compositor, Fallo, fuente};
 
@@ -86,7 +86,7 @@ const NOITEM: u16 = 0x3F;
 const NOSUB: u16 = 0x1F;
 /// Lo que ocupa la marca de `CHECKIT` a la izquierda y la tecla Amiga a la derecha.
 const ANCHO_MARCA: i32 = 15;
-const ANCHO_AMIGA: i32 = 23;
+pub(crate) const ANCHO_AMIGA: i32 = 23;
 /// Tope de menús y elementos que se recorren (más: una lista en círculo).
 const MAX_ELEMENTOS: u32 = 4096;
 
@@ -470,25 +470,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let (w, tira, msel, isel) = (a.w, a.tira, a.menu, a.item);
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (bm, alto_barra) = (v.bm, v.geometria.bordes[1].max(fuente::ALTO as i32 + 3));
-        let pen = |s: &Self, i: usize| s.color(s.intui.wb.cm, s.intui.wb.plumas[i] as u8);
-        let (fondo, tinta, claro, oscuro) =
-            (pen(self, dri::BARBLOCKPEN), pen(self, dri::BARDETAILPEN), pen(self, dri::SHINEPEN), pen(self, dri::SHADOWPEN));
-        // Lo que se dibuja, leído antes de tomar el lienzo.
-        struct Titulo {
-            x: i32,
-            an: i32,
-            nombre: Vec<u8>,
-            activo: bool,
-        }
-        struct Elem {
-            r: Rect,
-            texto: Vec<u8>,
-            tx: i32,
-            raya: bool,
-            activo: bool,
-            marca: Option<bool>,
-            tecla: Option<u8>,
-        }
+        let plumas = self.plumas(ex);
         let mut titulos = Vec::new();
         let mut elems = Vec::new();
         let mut caja = None;
@@ -540,68 +522,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 l.poner(k as i32 % an_l, k as i32 / an_l, p);
             }
         }
-        // La barra: la de la ventana, de fondo claro, con los títulos.
-        let barra = Rect::nuevo(0, 0, an_l - 1, alto_barra - 1);
-        llenar(l, barra, fondo);
-        llenar(l, Rect::nuevo(0, alto_barra - 1, an_l - 1, alto_barra - 1), tinta);
-        let ty = (alto_barra - fuente::ALTO as i32) / 2;
-        for (k, t) in titulos.iter().enumerate() {
-            let sel = k as i32 == msel;
-            if sel {
-                llenar(l, Rect::nuevo(t.x, 0, t.x + t.an - 1, alto_barra - 2), tinta);
-            }
-            texto(l, glifos, t.x + 4, ty, &t.nombre, if sel { fondo } else { tinta }, an_l);
-            if !t.activo {
-                for x in t.x..t.x + t.an {
-                    for y in 0..alto_barra - 1 {
-                        if (x + y) % 2 == 0 && y % 2 == 0 {
-                            l.poner(x, y, fondo);
-                        }
-                    }
-                }
-            }
-        }
-        if let Some(c) = caja {
-            llenar(l, c, fondo);
-            bisel(l, c, claro, oscuro, false);
-            llenar(l, Rect::nuevo(c.x0, c.y0, c.x1, c.y0), tinta);
-            llenar(l, Rect::nuevo(c.x0, c.y0, c.x0, c.y1), tinta);
-            llenar(l, Rect::nuevo(c.x1, c.y0, c.x1, c.y1), tinta);
-            llenar(l, Rect::nuevo(c.x0, c.y1, c.x1, c.y1), tinta);
-            for e in &elems {
-                if e.raya {
-                    let y = (e.r.y0 + e.r.y1) / 2;
-                    llenar(l, Rect::nuevo(e.r.x0 + 2, y - 1, e.r.x1 - 2, y - 1), oscuro);
-                    llenar(l, Rect::nuevo(e.r.x0 + 2, y, e.r.x1 - 2, y), claro);
-                    continue;
-                }
-                let (bg, fg) = if e.activo { (tinta, fondo) } else { (fondo, tinta) };
-                if e.activo {
-                    llenar(l, e.r, bg);
-                }
-                texto(l, glifos, e.r.x0 + e.tx, e.r.y0 + 1, &e.texto, fg, e.r.x1);
-                if e.marca == Some(true) {
-                    let (mx, my) = (e.r.x0 + 3, e.r.y0 + 4);
-                    for i in 0..3 {
-                        llenar(l, Rect::nuevo(mx + i, my + i, mx + i, my + i + 1), fg);
-                    }
-                    for i in 0..5 {
-                        llenar(l, Rect::nuevo(mx + 3 + i, my + 2 - i, mx + 3 + i, my + 3 - i), fg);
-                    }
-                }
-                if let Some(k) = e.tecla {
-                    // La tecla Amiga (una A en un recuadro) y la letra, a la derecha.
-                    let kx = e.r.x1 - 2 - fuente::ANCHO as i32;
-                    let ax = kx - 4 - ANCHO_AMIGA + 8;
-                    llenar(l, Rect::nuevo(ax, e.r.y0 + 1, ax + 12, e.r.y0 + 1), fg);
-                    llenar(l, Rect::nuevo(ax, e.r.y0 + 8, ax + 12, e.r.y0 + 8), fg);
-                    llenar(l, Rect::nuevo(ax, e.r.y0 + 1, ax, e.r.y0 + 8), fg);
-                    llenar(l, Rect::nuevo(ax + 12, e.r.y0 + 1, ax + 12, e.r.y0 + 8), fg);
-                    texto(l, glifos, ax + 3, e.r.y0 + 1, b"A", fg, ax + 12);
-                    texto(l, glifos, kx, e.r.y0 + 1, &[k], fg, e.r.x1 + 1);
-                }
-            }
-        }
+        let vista = VistaMenu { alto_barra, ancho: an_l, titulos: &titulos, elems: &elems, caja, msel };
+        self.tema.menu(l, glifos, &plumas, &vista);
         let r = l.rect();
         l.danar(r);
     }

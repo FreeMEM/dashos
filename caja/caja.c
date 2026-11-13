@@ -873,6 +873,19 @@ int caja_main(void)
            (uint32_t)((t1 - t0) / 1000), caja_avisos(), bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
+        /* 6b. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
+           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0). Sin guion de
+           ratón, se cierra sola a los 60 s (5). Va justo después de ventana.exe: el guion está libre. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("gadtools.exe", prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
+                         &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
+        di("gadtools.exe acabó con %d (%s), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, d0 == 0 ? "cerrada por el programa" : d0 == 5 ? "cerrada sola por tiempo" : "?", llamadas,
+           (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
         /* 7. Hostil: punteros malos a OpenWindow, OpenWindowTagList, las de dibujo y las de dos; dibujar fuera de la
            ventana. La caja sigue, y el compositor también. */
         v = ejecuta_hunk("hostil.exe", prog_hostil, (size_t)(prog_hostil_fin - prog_hostil), execbase, &d0, &llamadas,
@@ -913,19 +926,6 @@ int caja_main(void)
                bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
-        /* 8b. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
-           espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0). Sin guion de
-           ratón, se cierra sola a los 40 s (5). */
-        t0 = ahora_us();
-        v = ejecuta_hunk("gadtools.exe", prog_gadtools, (size_t)(prog_gadtools_fin - prog_gadtools), execbase, &d0,
-                         &llamadas, &sobras);
-        t1 = ahora_us();
-        bien = v == -1 && (d0 == 0 || d0 == 5) && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
-        di("gadtools.exe acabó con %d (%s), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
-           (int)d0, d0 == 0 ? "cerrada por el programa" : d0 == 5 ? "cerrada sola por tiempo" : "?", llamadas,
-           (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
-        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
-
         /* 9. Llamadas anidadas: 68k desde una función nativa (anidado.c; el modo, en la letra del nombre). a: Open de una
            biblioteca 68k, sin fin (el tope), con la pila de vuelta más abajo, tc_ExceptCode, CallHookPkt y un
            tc_TrapCode que recupera: acaba con 0. b: vuelve con la pila más arriba: cortado (-2). c: instrucción
@@ -940,8 +940,8 @@ int caja_main(void)
             uint32_t hechas = 0, no = 0, exc = 0;
             caja_cuentas_anidadas(&hechas, &no, &exc);
             bien = v == anid[i].vector && (v != -1 || d0 == 0) && caja_bloques(0) == sistema && anidado == 0;
-            di("%s acabó con %d (vector %d), %u llamadas anidadas (%u no), %u excepciones de tarea, %u avisos: %s\n",
-               anid[i].nombre, (int)d0, v, hechas, no, exc, caja_avisos(), bien ? "bien" : "MAL");
+            di("%s acabó por el vector %d (D0 %d), %u llamadas anidadas (%u no), %u excepciones de tarea, %u avisos: %s\n",
+               anid[i].nombre, v, (int)d0, hechas, no, exc, caja_avisos(), bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         }
 

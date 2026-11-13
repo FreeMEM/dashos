@@ -41,6 +41,7 @@ mod idcmp;
 mod intuition;
 mod marco;
 mod menus;
+mod tema;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -127,6 +128,8 @@ pub struct CajaGrafica<C: Compositor> {
     intui: intuition::Estado,
     gt: gadtools::Estado,
     menus: menus::Estado,
+    /// El aspecto de los controles (tema.rs).
+    tema: alloc::boxed::Box<dyn tema::Tema>,
     avisos: Vec<Aviso>,
 }
 
@@ -141,6 +144,7 @@ impl<C: Compositor> CajaGrafica<C> {
             intui: intuition::Estado::default(),
             gt: gadtools::Estado::default(),
             menus: menus::Estado::default(),
+            tema: alloc::boxed::Box::new(tema::Clasico),
             avisos: Vec::new(),
         };
         c.instalar_graphics(ex)?;

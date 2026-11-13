@@ -1226,7 +1226,7 @@ while time.time() - inicio < total:
         # la casilla, el ciclo, la tercera opción del mx, el tercer elemento de la lista y "Aceptar", y el menú con el
         # botón derecho: sobre el título "Proyecto", abajo hasta "Salir" (la captura con el menú abierto, CAPTURA_GT_MENU)
         # y soltar, que cierra el programa. Las posiciones, las de gadtools.c, desde la esquina de la ventana.
-        if dash_amiga == 1 and gt_amiga == 0 and libre_para_amiga:
+        if amiga == 2 and gt_amiga == 0 and libre_para_amiga:
             import re
             corte = texto.find("[caja-amiga] gadtools.exe: ")
             if corte >= 0 and "[caja-amiga] gadtools: ventana abierta y dibujada" in texto[corte:]:
@@ -1238,17 +1238,17 @@ while time.time() - inicio < total:
                     if os.environ.get("CAPTURA_GT"):
                         mandar("screendump " + os.environ["CAPTURA_GT"])
                         time.sleep(0.5)
-                    # Antes de cada clic, otro en la barra de título: la ventana sube (otra ventana del arranque puede
-                    # haber salido encima entretanto).
+                    # Antes de cada clic, otro en un sitio vacío de la ventana (abajo en el centro): sube, por si otra
+                    # ventana del arranque ha salido encima entretanto.
                     for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
-                        ir_a(x + 250, y + 5)
+                        ir_a(x + 200, y + 183)
                         time.sleep(0.3)
                         mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                         ir_a(x + dx, y + dy)
                         time.sleep(0.3)
                         mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                         time.sleep(0.4)
-                    ir_a(x + 250, y + 5)
+                    ir_a(x + 200, y + 183)
                     time.sleep(0.3)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                     ir_a(x + 25, y + 5)
@@ -1269,7 +1269,7 @@ while time.time() - inicio < total:
                         ir_a(10 * paso, 5 * paso)
         # El ejemplo de GadTools de FreeMEMLang (`examples/test_gadtools.dash`): la captura (CAPTURA_GT_DASH) y un clic en
         # su "Cancel" (gt_button(120, 20, 80, 20) en una ventana GIMMEZEROZERO: desde la esquina de dentro, 4 y 11).
-        if gt_amiga == 1 and gt_dash == 0 and libre_para_amiga:
+        if dash_amiga == 1 and gt_dash == 0 and libre_para_amiga:
             import re
             corte = texto.find("[caja-amiga] test_gadtools: ")
             if corte >= 0:
@@ -1278,7 +1278,7 @@ while time.time() - inicio < total:
                     gt_dash = 1
                     x, y = int(v_gd[-1].group(1)), int(v_gd[-1].group(2))
                     time.sleep(1.0)
-                    ir_a(x + 250, y + 5)
+                    ir_a(x + 254, y + 111)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                     time.sleep(0.3)
                     if os.environ.get("CAPTURA_GT_DASH"):

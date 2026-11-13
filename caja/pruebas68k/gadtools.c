@@ -3,7 +3,7 @@
     cadena, entero, deslizador, lista y paleta), un marco de DrawBevelBoxA y menús (CreateMenus, LayoutMenus,
     SetMenuStrip). Comprueba sola GT_SetGadgetAttrs, GT_GetGadgetAttrs e ItemAddress, y después escribe cada evento
     que llega (GT_GetIMsg) hasta que la cierran: con su gadget de cerrar, con "Salir" o con el menú Proyecto > Salir.
-    Sin nadie que pulse, se cierra sola a los 40 s (devuelve 5). El guion de la prueba captura la ventana, pulsa la
+    Sin nadie que pulse, se cierra sola a los 60 s (devuelve 5). El guion de la prueba captura la ventana, pulsa la
     casilla, el ciclo, un elemento de la lista y "Aceptar", y elige Proyecto > Salir con el botón derecho.
 */
 #include <exec/types.h>
@@ -149,7 +149,7 @@ LONG inicio(void)
 
     BOOL seguir = TRUE;
     LONG vueltas = 0;
-    while (seguir && vueltas < 40 * 25) {
+    while (seguir && vueltas < 60 * 25) {
         struct IntuiMessage *m;
         while ((m = GT_GetIMsg(v->UserPort))) {
             ULONG clase = m->Class;
@@ -196,7 +196,7 @@ LONG inicio(void)
             vueltas++;
         }
     }
-    if (seguir) di("  [caja-amiga] gadtools: nadie la cerro en 40 s; se cierra sola\n", 0, 0, 0);
+    if (seguir) di("  [caja-amiga] gadtools: nadie la cerro en 60 s; se cierra sola\n", 0, 0, 0);
     ClearMenuStrip(v);
     CloseWindow(v);
     FreeMenus(menu);
