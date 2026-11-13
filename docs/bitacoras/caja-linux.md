@@ -1202,7 +1202,17 @@ confirmar) y `set_maximized`. Y `configure_bounds` (v4) con lo que cabe en la sa
 - En el PC: `puente/pruebas/h9_portapapeles.sh` (wl-copy y wl-paste por el puente y directos: de Linux a DashOS, al
   revés, de Linux a Linux, la primaria, 4 MB a un lector lento, y los tres hostiles) y `g1.sh`.
 - `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk. `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-2`:
-  BIEN. ESTADO_PRUEBAS
+  BIEN. `arranque-virt-arch` (con la caché de siempre, 4 GB): BIEN. `arranque-virt-wayland` (con la de los programas
+  grandes): BIEN, con sus líneas nuevas (la barra, moverla y cerrarla, el portapapeles en los dos sentidos y la
+  primaria, los hostiles; GTK solo hasta `gtk: empieza`). Lo apuntado por el guion: "portapapeles: de foot a DashOS,
+  bien", "primaria: de foot a DashOS, bien", "portapapeles: de DashOS a foot, bien", "gtk4-widget-factory: sin ventana
+  (Gdk-ERROR al cargar su icono)". Resumen de la caja: 48 clientes de Linux, 5 tubos del portapapeles (65642 bytes),
+  402 cosas malas tiradas (los hostiles), 6 clientes cerrados.
+- Capturas (fuera de git, `capturas-agente/`): `caja-linux-wayland.png` (la barra de DashOS en `ventana_wayland`),
+  `caja-linux-wayland-portapapeles.png` (foot con lo pegado desde la terminal), `caja-linux-wayland-foot.png`, y en
+  Full HD (`DASHOS_PANTALLA=1920x1080`) las mismas con `-fhd` (esa pasada sale igual salvo una línea: la fuente sin fin
+  no llegó a ver su tubería cortada antes de sus 60 s; la terminal sí pegó sus 4 KB y cortó. Sin mirar más); GTK4 y Firefox de Arch Linux ARM en el PC (compositor del
+  PC, puente y `qemu-aarch64`): `caja-linux-gtk4-pc-fhd.png`, `caja-linux-firefox-pc-fhd.png`.
 
 ### Medidas
 
@@ -1211,6 +1221,7 @@ QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
 | Medida | Valor |
 |---|---|
 | Cuadros compuestos mientras se arrastra `ventana_wayland` (320 × 240, que pinta sin parar) por la barra de DashOS | 108 a 122 por segundo (67 a 73 antes de fusionar las vistas sin copia) |
+| `ventana_wayland` con la barra, sin copia y con copia (medidas de `caja-linux-sincopia`, ahora con la barra) | 320 × 240: 115 a 128 y 74 por segundo; 1280 × 720: 41,6 y 13,4 |
 | Lo mismo con foot (quieto): lo marca el ratón del guion (un movimiento cada 50 ms) | 17 por segundo |
 | GTK4 hasta su primera ventana | En la caja, no sale (aborta antes); en el PC con qemu-aarch64, unos segundos |
 | Firefox hasta su primera ventana | Más de 20 minutos con 256 MB: no sale |
