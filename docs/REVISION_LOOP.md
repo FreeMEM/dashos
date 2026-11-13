@@ -1688,3 +1688,14 @@ espacio; espacios en vertical (arriba/abajo cambian de espacio, los lados recorr
 88 %; la barra enseña como poco 3 espacios y hasta el más alto con ventanas; lanzador en lista hasta que haya
 iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Espacio. Sigue la oleada 2 (rama
 `escritorio-dms`) cuando haya sitio (como mucho 3 agentes a la vez).
+
+### 2026-11-13 09:15: GTK sin bordes propios, portapapeles, GadTools, aspecto común y arreglos de pruebas, en revision
+- Fusionadas `caja-linux-apps` (xdg-decoration con la barra de DashOS, portapapeles en los dos sentidos y la
+  primaria, xdg_popup y lo que piden los programas grandes, hostiles; el puente aparta los pools de Mesa con número
+  repetido: es2gears y cuadros_gl ya no se cortan), `caja-amiga-gadtools` (código 68k desde funciones nativas,
+  tc_TrapCode, tc_ExceptCode y Ctrl-C, programas en modo usuario, gadtools.library con sus doce gadgets, menús con el
+  botón derecho, EasyRequest, todo pintado por un rasgo `Tema`) y `aspecto-cajas` (S26: tema del fondo para todo,
+  `dashos_tema_v1` v3, agente `dashos-aspecto` en Arch que hace el tema GTK, plumas Material para la caja Amiga).
+- Arreglos de pruebas: arch, wayland y gpu sobre su copia del disco (`target/disco-arch.img`, con reflink); el hostil
+  "sin-fin: le cortaron la tubería" sale de lo esperado (inestable, se apunta en medidas; pendiente de explicar).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
