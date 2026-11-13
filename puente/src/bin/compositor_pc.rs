@@ -29,8 +29,11 @@ use wayland::servidor::{Conexion, Global};
 use wayland::shm::Memorias;
 use wayland::tablas;
 
-const ANCHO: i32 = 800;
-const ALTO: i32 = 600;
+/// La pantalla: 800 × 600, o la de `--pantalla ANCHOxALTO` (H9: las capturas en Full HD).
+static PANTALLA: std::sync::OnceLock<(i32, i32)> = std::sync::OnceLock::new();
+fn pantalla() -> (i32, i32) {
+    *PANTALLA.get().unwrap_or(&(800, 600))
+}
 const FONDO: u32 = 0xff20_4060;
 /// `--escritorio`: todos los clientes con el poder de escritorio.
 static ESCRITORIO: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
@@ -232,7 +235,8 @@ fn vaciar(c: &mut DelCliente, tabla: &Rc<RefCell<Tabla>>, tr: &mut Option<Transp
 
 fn captura(fichero: &str, marco: &[u32]) {
     let mut f = std::fs::File::create(fichero).expect("no se crea la captura");
-    write!(f, "P6\n{} {}\n255\n", ANCHO, ALTO).unwrap();
+    let (ancho, alto) = pantalla();
+    write!(f, "P6\n{} {}\n255\n", ancho, alto).unwrap();
     let px: Vec<u8> = marco.iter().flat_map(|q| [(q >> 16) as u8, (q >> 8) as u8, *q as u8]).collect();
     f.write_all(&px).unwrap();
 }
@@ -280,7 +284,11 @@ fn main() {
         use std::os::unix::fs::MetadataExt;
         escena.dispositivo = m.rdev();
     }
-    let mut marco = vec![0u32; (ANCHO * ALTO) as usize];
+    if let Some((a, b)) = opcion("--pantalla").and_then(|t| t.split_once('x').and_then(|(a, b)| Some((a.parse().ok()?, b.parse().ok()?)))) {
+        let _ = PANTALLA.set((a, b));
+    }
+    let (ancho, alto) = pantalla();
+    let mut marco = vec![0u32; (ancho * alto) as usize];
     let mut clientes: HashMap<Cliente, DelCliente> = HashMap::new();
     let mut siguiente: Cliente = 1;
     let mut alguno = false;
@@ -433,7 +441,7 @@ fn main() {
         // La captura, cuando se va el primer cliente, antes de quitar lo suyo: con su ventana aún en pantalla (y lo
         // de los demás, como un fondo de swaybg).
         if let Some(f) = fichero.as_ref().filter(|_| !fuera.is_empty() && !numeradas && !capturada && captura_tras.is_none()) {
-            escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
+            escena.componer(&mut marco, ancho, alto, ancho as usize, empiezo.elapsed().as_millis() as u32, &mut |_, _, _| {});
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);
             capturada = true;
@@ -457,7 +465,7 @@ fn main() {
         // Componer, y avisar a quien esperaba su cuadro.
         let ms = empiezo.elapsed().as_millis() as u32;
         let mut avisos = Vec::new();
-        escena.componer(&mut marco, ANCHO, ALTO, ANCHO as usize, ms, &mut |cl, aviso, ms| avisos.push((cl, aviso, ms)));
+        escena.componer(&mut marco, ancho, alto, ancho as usize, ms, &mut |cl, aviso, ms| avisos.push((cl, aviso, ms)));
         if let Some(f) = fichero.as_ref().filter(|_| !capturada && captura_tras.is_some_and(|t| empiezo.elapsed().as_millis() >= t)) {
             captura(f, &marco);
             println!("compositor-pc: captura en {}", f);

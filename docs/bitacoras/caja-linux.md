@@ -1111,7 +1111,26 @@ grande de verdad (GTK4, y Firefox si cabe). Sala limpia: los XML de Wayland (`xd
 
 ### Resultado
 
-RESULTADO_PENDIENTE
+`make arranque-virt-wayland` (con `revision` fusionada: sin copias, virtio-gpu 2D y Pi 5):
+
+- `ventana_wayland` pide la barra del compositor y sale con la de DashOS (título, X, esquinas redondeadas, sombra); se
+  mueve arrastrando la barra y se cierra con la X (`ventana_wayland: el compositor pide cerrar`).
+- **Portapapeles en los dos sentidos**: tres clics en foot y Control+Mayúsculas+C; en la terminal de la caja (nativa),
+  `echo ` y Control+Mayúsculas+V: `linux: Hola desde foot, en Arch Linux ARM, en DashOS`. La primaria, con el botón
+  central: `linux: primaria: Hola desde foot, ...`. Al revés: se selecciona con el ratón en la terminal, se copia y se
+  pega en foot: `foot: leido pegame-en-foot`.
+- **Hostiles de Linux** (`puente --cliente-hostil`): modo de decoración que no existe, dos decoraciones y un tipo que no
+  es UTF-8: el compositor corta esas conexiones. Una fuente que escribe sin fin: la terminal pega 4 KB y corta (la fuente
+  ve la tubería cerrada tras 64 KB, la ventana de 128 KB del tubo). Una que nunca cierra: la terminal deja de esperar a
+  los 10 s (`pegado (0 bytes)`). Después, otra ventana de Linux sale y se cierra como siempre.
+- **GTK4**: en el PC, el `gtk4-widget-factory` de Arch Linux ARM (GTK 4.24, aarch64, con `qemu-aarch64`) sale por el
+  puente y la escena con su menú emergente (el compositor del PC y el puente de verdad). **En la caja aún no**: aborta al
+  cargar su icono SVG (`Gdk-ERROR ... Loader process exited early`): glycin 4.0.5, el cargador de imágenes de
+  gdk-pixbuf, falla en el kernel de la caja ("Opening source: Operation not supported" con `glycin-thumbnailer`, también
+  en QEMU sin DashOS con la misma `Image-arch`). bwrap funciona; falta encontrar qué opción del kernel de Linux le falta.
+- **Firefox no cabe**: 20 minutos sin ventana con 256 MB (y 768 MB de intercambio en el disco): 7 GB leídos del disco,
+  la máquina pasándose páginas. En el PC (qemu-aarch64), su ventana principal sí sale por el puente. Queda fuera del
+  guion (CAJA_FIREFOX=1 lo intenta).
 
 ### La barra de DashOS (`xdg-decoration`)
 
@@ -1158,16 +1177,52 @@ confirmar) y `set_maximized`. Y `configure_bounds` (v4) con lo que cabe en la sa
 
 ### Lo que hubo que arreglar por el camino
 
-ARREGLOS_PENDIENTE
+- **La imagen de Arch, aparte.** GTK4 y Firefox (195 paquetes, 1,2 GB) van en otra imagen y otra caché
+  (`DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch`: `~/.cache/dashos-caja-linux-apps`, 6 GB);
+  `arranque-virt-wayland` la usa (APPS_IMAGE, APPS_DISCO). La de siempre no cambia (4 GB, sus paquetes). En esa imagen:
+  GTK 4.24 necesita el glib2 2.90 del repositorio y el rootfs trae el 2.88 (Arch Linux ARM no pone versiones en sus
+  dependencias): se ponen al día los paquetes del rootfs que lo nuevo necesita y son más nuevos en el repositorio
+  (30, sin systemd, bash ni lo de base); sus ficheros pisan los del rootfs. Y lo que harían los ganchos de pacman, en el
+  PC: esquemas de GSettings, caché de fontconfig (con `--sysroot`) y base de tipos MIME.
+- **Números que chocaban** (tras fusionar `revision`): la pantalla de la caja (virtio-gpu) usa los objetos 40 a 44 y se
+  quedaba con todo evento 0 de un objeto alto (las ofertas del portapapeles, que son del compositor, desde 0xFF000000):
+  el portapapeles de la terminal usa del 60 al 63 y las fuentes desde 0x20000000, y la pantalla mira solo sus avisos.
+  Las tramas de las vistas sin copia son del 8 al 10; los tubos, del 12 al 15.
+- **El guion**: la terminal de la caja tapa casi toda la pantalla; los clics en ella van donde no hay otra ventana
+  (el compositor dice ahora lo que mide cada una), foot se sube por su barra y Control+C limpia la línea antes de cada
+  paso. El punto y coma, en el teclado español. foot con `LANG=C.UTF-8` (si no, su primera línea es un aviso) y más
+  pequeño.
+- **La caja se para a los 1500 s**: GTK va antes que los hostiles.
 
 ### Pruebas
 
-PRUEBAS_PENDIENTE
+- `cargo test` en `wayland` (79): `tests_linux.rs` (barra, portapapeles entre dos, primaria, hostiles del portapapeles,
+  emergentes y sus hostiles, mover y redimensionar) y en `puente.rs` los tubos, su ventana y sus hostiles. La terminal:
+  `texto_entre_celdas`.
+- En el PC: `puente/pruebas/h9_portapapeles.sh` (wl-copy y wl-paste por el puente y directos: de Linux a DashOS, al
+  revés, de Linux a Linux, la primaria, 4 MB a un lector lento, y los tres hostiles) y `g1.sh`.
+- `make prueba`: BIEN: esperado.txt y BIEN: cargador hunk. `arranque-virt` (las cinco BIEN), `-vm`, `-linux`, `-2`:
+  BIEN. ESTADO_PRUEBAS
 
 ### Medidas
 
-MEDIDAS_PENDIENTE
+QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
+
+| Medida | Valor |
+|---|---|
+| Cuadros compuestos mientras se arrastra `ventana_wayland` (320 × 240, que pinta sin parar) por la barra de DashOS | 108 a 122 por segundo (67 a 73 antes de fusionar las vistas sin copia) |
+| Lo mismo con foot (quieto): lo marca el ratón del guion (un movimiento cada 50 ms) | 17 por segundo |
+| GTK4 hasta su primera ventana | En la caja, no sale (aborta antes); en el PC con qemu-aarch64, unos segundos |
+| Firefox hasta su primera ventana | Más de 20 minutos con 256 MB: no sale |
+| Redimensionar | Sin medir: lo pide GTK con `xdg_toplevel.resize` (probado en `tests_linux.rs`), y GTK no abre en la caja |
 
 ### Qué falta
 
-FALTA_PENDIENTE
+- **GTK4 en la caja**: encontrar qué le falta al kernel de la caja para glycin ("Operation not supported" al abrir la
+  imagen; con strace en la caja). Después, medir su arranque, su menú emergente y redimensionar.
+- **Firefox**: necesita más RAM que los 256 MB del invitado con 3 GB en la máquina (con 4 GB serían 512, pero QEMU
+  `virt` con `highmem=off` no pasa de 3 GB).
+- Arrastrar y soltar entre programas (`start_drag` cancela la fuente), `xdg_activation`, `wp_viewporter`,
+  `fractional-scale`, `text-input` y cursores del servidor (foot avisa de que no están; funciona sin ellos).
+- La barra de DashOS no tiene botón de maximizar ni deja redimensionar (las ventanas de servidor no se agrandan).
+- `wm_capabilities` no se manda (las pruebas de siempre esperan el configure primero).
