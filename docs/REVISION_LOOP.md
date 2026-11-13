@@ -1793,3 +1793,22 @@ integradas con el escritorio; debería ser más Material Design". Con "como Dash
 menús y barra (intuition, GadTools, requesters) pasa a ser la de DashOS, dibujada a la resolución real de la
 pantalla (no topaz ampliada); la barra de la ventana Amiga pasa a ser la de DashOS (la del compositor, como las
 ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `amiga-integrada`.
+
+### 2026-11-13 16:30: decisiones del usuario, "el resto como recomiendas"
+- **Apagar y reiniciar** (S27): llamada nueva del kernel que solo tiene `sesiones`; el panel la pide; confirmación de
+  `guardian` si hay otras sesiones abiertas.
+- **Estado de la red para el panel** (S27): canal de solo lectura del estado; el panel pierde la llave del canal
+  "red" que le dejaría abrir conexiones.
+- **Memoria del invitado Linux**: 1 GB en máquinas de 8 GB o más (256 MB con 2 GB, 512 MB con 4 GB, 1 GB con 8 GB+).
+- **Malware de Linux y DashOS** (S29), las 11 como se recomendaron: red de la caja con NAT en vez del puente de
+  tramas; la red local como permiso preguntado (`red-local`, `red-escuchar`); aviso al leer el portapapeles y permiso
+  por caja; marca con color fijo por caja; instantáneas del disco de la caja Linux (una al día y antes de
+  actualizar, midiendo en la Pi); instantáneas de `Home:` cada hora; cerrar la sesión aunque un programa no quiera
+  (avisar, esperar, matar); cupos de disco por usuario y por aplicación con reserva del sistema; fuzzing guiado de
+  los aparatos de la caja en cada cambio (partir `caja-linux` más adelante); la frase secreta en todas las ventanas
+  de `guardian`; límite de CPU y caudal por caja y el puerto 25 cerrado.
+- **Escala de las ventanas Amiga**: la regla automática vale (3x desde 3200x1800, 2x desde 1600x900, 1x debajo), sin
+  1,5x ni 4x; fila "Ampliar ventanas Amiga" en Ajustes.
+- **Virus de laboratorio `memoria`**: basta con preguntar con `TypeOfMem`; la prueba de verdad es la del kernel.
+- **GadTools con el tema Material**: no le convence la letra ni la barra (ver la entrada anterior, rama
+  `amiga-integrada`).
