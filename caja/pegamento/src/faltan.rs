@@ -34,6 +34,8 @@ pub(crate) fn lvo_de(biblioteca: &str, funcion: &str) -> i32 {
         "intuition.library" => caja_intuition::lvo::intuition(funcion).map_or(0, caja_intuition::lvo::lvo),
         // Una biblioteca entera que no hay (ni nativa ni de disco): su OpenLibrary.
         _ if funcion == "OpenLibrary" || funcion == "OpenDevice" => 0,
+        "layers.library" => caja_intuition::LAYERS.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo),
+        "keymap.library" => caja_intuition::KEYMAP.iter().position(|n| *n == funcion).map_or(0, caja_intuition::lvo::lvo),
         "gadtools.library" => {
             caja_intuition::lvo::GADTOOLS.iter().position(|(n, _)| *n == funcion).map_or(0, caja_intuition::lvo::lvo)
         }

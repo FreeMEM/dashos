@@ -5,6 +5,7 @@
 //! función devuelve 0 en D0 (lo que devolvería exec al no poder), sin tumbar la caja.
 
 use crate::lvo::{self, FIN_DE_TAREA, ULTIMO_DE_EXEC};
+use crate::estructuras::execbase;
 use crate::tareas::Espera;
 use crate::{Continuacion, Accion, Exec, Fallo, Memoria, Registros};
 
@@ -265,6 +266,31 @@ impl<M: Memoria> Exec<M> {
                 Ok(espera(e, r))
             }
             80 => self.abort_io(a[1], r),
+            // AddResource y RemResource(resource)(a1): a la lista de recursos y fuera. OpenResource(resName)(a1): el
+            // de ese nombre, o 0 (la caja no tiene ninguno propio: ni CIA, ni disk, ni potgo...).
+            81 => {
+                self.enqueue(self.base + execbase::RESOURCELIST, a[1])?;
+                Ok(Accion::Seguir)
+            }
+            82 => {
+                self.remove(a[1])?;
+                Ok(Accion::Seguir)
+            }
+            83 => {
+                let n = self.cadena(a[1])?;
+                let v = self.find_name(self.base + execbase::RESOURCELIST, &n)?;
+                d0(r, v)
+            }
+            // RawDoFmt(FormatString, DataStream, PutChProc, PutChData)(a0/a1/a2/a3)
+            87 => self.raw_do_fmt(r),
+            // Alert(alertNum)(d7): un aviso con su número; con AT_DeadEnd la tarea no puede seguir y se acaba.
+            18 => {
+                self.avisar("Alert", Fallo::Alerta { n: d[7] });
+                if d[7] & 0x8000_0000 != 0 {
+                    return self.rem_task(0);
+                }
+                Ok(Accion::Seguir)
+            }
             // OpenLibrary(libName, version)(a1/d0)
             92 => self.open_library(a[1], d[0], r),
             // InitSemaphore, ObtainSemaphore, ReleaseSemaphore y AttemptSemaphore(sigSem)(a0)

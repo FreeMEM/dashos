@@ -112,6 +112,7 @@ impl<M: Memoria> Exec<M> {
             }
             Continuacion::Echada { lib, d0: v } => return self.tras_echar(lib, d0, v, r),
             Continuacion::Valor(v) => r.d[0] = v,
+            Continuacion::Entrega { id } => return self.entregar_caracter(id, r, hecho.a[3]),
             Continuacion::AbrirDispositivo { dev, io } => {
                 if let Err(f) = self.tras_abrir_dispositivo(dev, io, r) {
                     self.avisar("OpenDevice", f);

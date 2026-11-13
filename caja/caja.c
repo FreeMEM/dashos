@@ -1167,7 +1167,7 @@ int caja_main(void)
         }
 
         /* 8b2. ramlib (ramlib.c): abre bibliotecas de disco (Caja:Libs, su LIBS:), las usa y las cierra, y lo malo (un
-           RomTag falso, una que miente con su versión, un fichero que no es ejecutable, caminos raros, layers.library).
+           RomTag falso, una que miente con su versión, un fichero que no es ejecutable, caminos raros, lowlevel.library) y layers.library (la nativa).
            Al acabar no queda nada suyo en memoria: los bloques del sistema, como antes. */
         t0 = ahora_us();
         v = ejecuta_hunk("ramlib", prog_ramlib, (size_t)(prog_ramlib_fin - prog_ramlib), execbase, &d0, &llamadas, &sobras);

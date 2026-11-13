@@ -322,3 +322,48 @@ fn dispositivo_de_disco() {
     assert_eq!(r.d[0] as i32, io::IOERR_OPENFAIL as i32);
     let _ = lvo::ENTRADAS;
 }
+
+/// Lo que pedían las bibliotecas del AmigaOS del usuario al cargarlas (el registro de lo que falta, paso 3):
+/// `OpenResource` (mathieeedoubtrans) y `Alert` (commodities, sin keymap).
+#[test]
+fn recursos_y_alert() {
+    let (mut e, t) = caja_con_tarea();
+    let nombre = cadena(&mut e, "FileSystem.resource");
+    let mut r = Registros::default();
+    r.a[1] = nombre;
+    assert_eq!(llamar(&mut e, "OpenResource", &mut r), Accion::Seguir);
+    assert_eq!(r.d[0], 0, "la caja no tiene recursos propios");
+    // Uno puesto con AddResource se encuentra; quitado, ya no.
+    let rec = e.alloc_mem(32, memf::CLEAR).unwrap();
+    e.mem.escribir32(rec + node::LN_NAME, nombre).unwrap();
+    e.mem.escribir8(rec + node::LN_TYPE, nt::RESOURCE).unwrap();
+    let mut r = Registros::default();
+    r.a[1] = rec;
+    llamar(&mut e, "AddResource", &mut r);
+    let mut r = Registros::default();
+    r.a[1] = nombre;
+    llamar(&mut e, "OpenResource", &mut r);
+    assert_eq!(r.d[0], rec);
+    let mut r = Registros::default();
+    r.a[1] = rec;
+    llamar(&mut e, "RemResource", &mut r);
+    let mut r = Registros::default();
+    r.a[1] = nombre;
+    llamar(&mut e, "OpenResource", &mut r);
+    assert_eq!(r.d[0], 0);
+    // Hostil: un nombre fuera de la memoria da un aviso y 0.
+    let mut r = Registros::default();
+    r.a[1] = 0xFFFF_0000;
+    llamar(&mut e, "OpenResource", &mut r);
+    assert_eq!(r.d[0], 0);
+    assert_eq!(e.tomar_avisos().len(), 1);
+    // Alert: un aviso; la tarea sigue. Con AT_DeadEnd, se acaba.
+    let mut r = Registros::default();
+    r.d[7] = 0x0003_0000;
+    assert_eq!(llamar(&mut e, "Alert", &mut r), Accion::Seguir);
+    let av = e.tomar_avisos();
+    assert_eq!(av[0].fallo, caja_exec::Fallo::Alerta { n: 0x0003_0000 });
+    let mut r = Registros::default();
+    r.d[7] = 0x8100_0005;
+    assert_ne!(llamar(&mut e, "Alert", &mut r), Accion::Seguir, "se acaba la tarea {t:x}");
+}

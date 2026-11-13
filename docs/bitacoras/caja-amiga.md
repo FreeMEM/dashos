@@ -1551,8 +1551,52 @@ y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nun
   usuario (`sys32mui`): abren iffparse 45.3, locale 47.26, mathieeedoubbas 47.2, mathieeedoubtrans 47.2 y diskfont
   47.1; no abren mathieeesingtrans y mathtrans (piden mathieeesingbas y mathffp, que en el Amiga están en la ROM),
   commodities (pide keymap, en la ROM), datatypes (pide layers), icon, workbench y asl (privadas de exec),
-  rexxsyslib, muimaster (pide keymap) y las dos clases (piden lo de antes). Ninguna cuelga ni deja nada sin soltar.
+  muimaster (pide keymap) y las dos clases. Ninguna cuelga ni deja nada sin soltar. (Con el paso 3 abren también
+  commodities 45.2 y rexxsyslib 47.2.)
 - **Lo que falta del paso**: el HDF; un aviso `CierreDeMas` al cerrar locale y diskfont recién cargadas (abren y se
   usan; su cuenta de aperturas llega a 0 antes de tiempo, sin averiguar aún por qué); con el AmigaOS puesto, el
   runtime de Dash abre su `clipboard.device`, que pide `GetDeviceProc` (no hecho en dos): un aviso en los dos
   programas de ReAction.
+
+### Paso 3: apuntar lo que falta y rellenar lo más pedido
+
+- **El registro** (`caja/pegamento/src/faltan.rs`): cada función nativa que se llama y no está hecha (el aviso
+  `NoImplementada` de exec, dos, graphics, intuition, gadtools, layers, keymap, utility o timer), y cada biblioteca o
+  dispositivo que no hay (ni nativo ni en disco, o rechazado), con su LVO y quién llama: la biblioteca de disco cuyo
+  código tiene la dirección de vuelta (`mathieeesingtrans.library (+$974)`) o la tarea. La primera vez de cada una
+  sale en la consola (`falta: ...`); al acabar cada tarea, un resumen con las más pedidas (`faltan N funciones
+  distintas...`).
+- **Programas del usuario** (paso 8b4 de la caja): `tools/disco_archivos.py` con `DASHOS_PROGRAMAS_AMIGA=a:b:c`
+  los copia al disco de pruebas y los apunta en `SYS:C/Prefs/programas-amiga`; la caja los ejecuta y a los 6 s cierra
+  sus ventanas (si no acaban en 10 s más, el vigilante los corta). No cuentan como fallo.
+- **Lo más pedido**, con el 3.2 del usuario, las demos de MUI 5 (Class1, Balancing, Aboutbox) y `capa.exe`:
+  - keymap.library nativa (la pedían muimaster y commodities; en el Amiga está en la ROM): `MapRawKey` (Latin-1 con
+    la distribución estadounidense de `teclado.rs`, y las secuencias CSI de cursores, F1-F10 y Help), `MapANSI`,
+    `AskKeyMapDefault` (una `struct KeyMap` de verdad, con sus tablas) y `SetKeyMapDefault`.
+  - layers.library nativa (la pedía datatypes; muimaster la abre): cerrojos que no esperan (una tarea 68k a la vez),
+    `InstallClipRegion` (guarda la región; graphics aún no recorta con ella), `NewLayerInfo`/`DisposeLayerInfo`,
+    `BeginUpdate`, `LayerOccluded`. Crear y mover capas sueltas y los ganchos, `NoImplementada`.
+  - exec: `OpenResource`, `AddResource`, `RemResource` (mathieeedoubtrans; la caja no tiene recursos propios: 0),
+    `Alert` (commodities: un aviso; con `AT_DeadEnd`, acaba la tarea) y `RawDoFmt` (rexxsyslib), con el formato del
+    autodoc; con `PutChProc` a 0 o el `stuffChar` del autodoc se escribe directo, con otra función de 68k se la
+    llama por carácter.
+  - dos: `GetDeviceProc` (lo pide `clipboard.device` del 3.2, que abre el runtime de Dash): 0 con
+    `ERROR_DEVICE_NOT_MOUNTED` (la caja no tiene procesos manejadores); `FreeDeviceProc`, nada.
+  - Pruebas de cargo: `intuition/tests/capas.rs` (lo que hacen, lo que no, y punteros nulos, búferes cortos o
+    fuera de la memoria), `exec/tests/formato.rs` (los tres caminos de `RawDoFmt`, destinos y formatos malos, el corte
+    en 64 KB), `exec/tests/ramlib.rs` (recursos y `Alert`), `dos/tests/cerrojos.rs` (`GetDeviceProc`).
+- **El oráculo** (FS-UAE con el 3.2 del usuario y su MUI, sin cerrojo): Class1 abre su ventana y dibuja sus líneas.
+- **Lo que para a MUI** (y a Tachyon, que es MUI 5): con keymap y layers, muimaster se carga y empieza su `Init`, y
+  la caja entera cae: el traductor de Emu68 lee un puntero nulo (`EMIT_LoadFromEffectiveAddress`, FAR 0) al traducir
+  un bloque de muimaster que hace un `longjmp`: `movea.l $90,a1`, `btst #4,297(a1)`, `fmovem.x 64(a0),fp0-fp7`,
+  `movem.l 4(a0),d1-d7`, `movem.l 36(a0),a1-a7`, `move.l (a0),(a7)`, `movea.l 32(a0),a0`, `rts` (localizado con una
+  traza temporal del JIT, ya quitada). En el banco del JIT (`jit-host`, con qemu-aarch64_be) ese mismo bloque se
+  traduce y va bien (con `$90` cambiada por una dirección del banco, cuya memoria empieza en 1 MB; FMOVEM.X d16(An)
+  carga FP0 bien): lo que cae depende de algo de la caja (¿la página cero, `$90`?, ¿otra configuración del JIT?).
+  Lo siguiente: una traza por instrucción del JIT en la caja, en ese bloque, y el arreglo en el parche de Emu68.
+  Hasta entonces, un programa que abra muimaster tumba la caja (no el sistema: DashOS sigue).
+- **Lo que sigue faltando** (lo dice el registro): mathieeesingbas y mathffp (en la ROM del Amiga; las piden
+  mathieeesingtrans y mathtrans), `FindNamedObject` y `AllocNamedObjectA` de utility (datatypes), icon, workbench y
+  asl nativas (las de 3.2 usan una privada de exec), los ganchos de layers (`DoHookClipRects`, que MUI usa para el
+  fondo) y que graphics recorte con la región de la capa. Y el aviso `CierreDeMas` de locale, diskfont y commodities
+  recién cargadas.

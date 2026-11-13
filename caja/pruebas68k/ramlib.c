@@ -1,8 +1,8 @@
 /*
     ramlib en la caja: abre bibliotecas que no son nativas y están en el disco (Caja:Libs, que es LIBS:), las usa, las
     cierra (y se echan) y prueba lo malo: un RomTag falso, una que miente con su versión, un fichero que no es un
-    ejecutable, una que no existe, nombres con caminos raros y las que nunca se cargan de disco (layers). Escribe cada
-    comprobación y acaba con 0 si todas van bien.
+    ejecutable, una que no existe, nombres con caminos raros y las que nunca se cargan de disco (lowlevel, que habla
+    con el hardware; layers ya es nativa). Escribe cada comprobación y acaba con 0 si todas van bien.
 */
 #include <exec/types.h>
 #include <exec/execbase.h>
@@ -70,7 +70,12 @@ LONG inicio(void)
     mira("un fichero que no es un ejecutable (rota.library)", OpenLibrary((CONST_STRPTR)"rota.library", 0) == NULL, 1);
     mira("una que no existe", OpenLibrary((CONST_STRPTR)"noexiste.library", 0) == NULL, 1);
     mira("camino raro (LIBS://../S/Startup-Sequence)", OpenLibrary((CONST_STRPTR)"LIBS://../S/Startup-Sequence", 0) == NULL, 1);
-    mira("layers.library, nunca de disco", OpenLibrary((CONST_STRPTR)"layers.library", 0) == NULL, 1);
+    mira("lowlevel.library, nunca de disco", OpenLibrary((CONST_STRPTR)"lowlevel.library", 0) == NULL, 1);
+    {
+        struct Library *l = OpenLibrary((CONST_STRPTR)"layers.library", 0);
+        mira("layers.library, la nativa", l != NULL, 1);
+        if (l) CloseLibrary(l);
+    }
     struct Library *g = OpenLibrary((CONST_STRPTR)"graphics.library", 0);
     mira("graphics.library, la nativa", g != NULL, 1);
     if (g) CloseLibrary(g);

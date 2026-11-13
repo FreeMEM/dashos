@@ -367,6 +367,8 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     ));
     di(&format!("utility.library y timer.device nativos (Rust): ${:x} y ${:x}", util.base(), timer.base()));
     di(&format!("gadtools.library nativa (Rust): ${:x}", gr.gadtools_base()));
+    let (capas, teclas) = gr.capas_bases();
+    di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -992,6 +994,10 @@ fn recoger_avisos(c: &mut Caja) {
                 "graphics.library"
             } else if caja_intuition::lvo::intuition(a.funcion).is_some() {
                 "intuition.library"
+            } else if caja_intuition::LAYERS.contains(&a.funcion) {
+                "layers.library"
+            } else if caja_intuition::KEYMAP.contains(&a.funcion) {
+                "keymap.library"
             } else {
                 "gadtools.library"
             };

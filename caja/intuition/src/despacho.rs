@@ -76,6 +76,18 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             return Accion::Seguir;
         }
+        if let Some((de_layers, f)) = self.es_capas(n) {
+            let res = if de_layers { self.llamar_layers(ex, f, r) } else { self.llamar_keymap(ex, f, r) };
+            match res {
+                Ok(v) => r.d[0] = v,
+                Err(e) => {
+                    let nombre = if de_layers { crate::capas::LAYERS[f] } else { crate::capas::KEYMAP[f] };
+                    self.avisar(ex, nombre, e);
+                    r.d[0] = 0;
+                }
+            }
+            return Accion::Seguir;
+        }
         let (gfx, f) = if n >= g0 && ((n - g0) as usize) < G.len() {
             (true, (n - g0) as usize)
         } else if n >= i0 && ((n - i0) as usize) < I.len() {

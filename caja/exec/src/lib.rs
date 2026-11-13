@@ -35,9 +35,11 @@ mod bibliotecas;
 mod charcos;
 mod despacho;
 mod dispositivos;
+mod formato;
 mod listas;
 mod puertos;
 pub mod ramlib;
+pub use formato::stuff_char;
 mod semaforos;
 mod tareas;
 
@@ -110,6 +112,8 @@ pub enum Fallo {
     NoImplementada { n: u16 },
     /// Algo que exec deja pasar pero suele ser un error: esperar señales no reservadas, puerto de otra tarea...
     Sospechoso { dir: u32 },
+    /// `Alert`: el programa (o una biblioteca suya) avisa de un fallo; con `AT_DeadEnd` (el bit 31), se acaba.
+    Alerta { n: u32 },
     /// La memoria de la caja es demasiado pequeña para arrancar.
     SinSitio,
 }
@@ -180,6 +184,8 @@ pub enum Continuacion {
     Echada { lib: u32, d0: u32 },
     /// D0 = ese valor.
     Valor(u32),
+    /// `RawDoFmt`: volvió su `PutChProc` con un carácter; el siguiente (con el A3 que dejó).
+    Entrega { id: u32 },
 }
 
 /// Un trozo de memoria para el reparto: `[inicio, fin)` con sus atributos (`MEMF_CHIP`...).
@@ -334,6 +340,9 @@ pub struct Exec<M: Memoria> {
     dispositivos: alloc::collections::BTreeSet<u32>,
     /// ramlib (`ramlib.rs`).
     pub(crate) ramlib: ramlib::Ramlib,
+    /// `RawDoFmt` con un `PutChProc` de 68k: lo que queda por entregar (`formato.rs`).
+    pub(crate) entregas: alloc::collections::BTreeMap<u32, formato::Entrega>,
+    pub(crate) n_entrega: u32,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -364,6 +373,8 @@ impl<M: Memoria> Exec<M> {
             doio_en_espera: Vec::new(),
             dispositivos: alloc::collections::BTreeSet::new(),
             ramlib: ramlib::Ramlib::default(),
+            entregas: alloc::collections::BTreeMap::new(),
+            n_entrega: 0,
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;

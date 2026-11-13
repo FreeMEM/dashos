@@ -363,3 +363,16 @@ fn comentario_proteccion_fecha() {
     assert_eq!(b.io_err(), ERROR_OBJECT_NOT_FOUND);
     b.limpio(0, 1);
 }
+
+/// GetDeviceProc (lo pide clipboard.device de un AmigaOS de verdad): la caja no tiene procesos manejadores; 0 con
+/// ERROR_DEVICE_NOT_MOUNTED, sin aviso. FreeDeviceProc de lo que sea: nada.
+#[test]
+fn get_device_proc() {
+    let mut b = Banco::nuevo();
+    let nombre = b.cad("CLIPS:");
+    assert_eq!(b.llamar(lvo::GET_DEVICE_PROC, &[nombre, 0]), 0);
+    assert_eq!(b.io_err(), caja_dos::errores::ERROR_DEVICE_NOT_MOUNTED);
+    assert_eq!(b.llamar(lvo::FREE_DEVICE_PROC, &[0]), 0);
+    assert_eq!(b.llamar(lvo::FREE_DEVICE_PROC, &[0xDEAD_BEE0]), 0);
+    assert!(b.dos.tomar_avisos().is_empty());
+}
