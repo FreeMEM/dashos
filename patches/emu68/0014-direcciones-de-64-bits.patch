@@ -1,0 +1,71 @@
+--- a/src/M68k_Exception.c
++++ b/src/M68k_Exception.c
+@@ -55,6 +55,18 @@
+     }
+ 
+     extern void M68K_Exception();
++#ifdef DASHOS_HOST
++    /* DashOS: la dirección entera, con 64 bits. La caja Amiga va por encima de 4 GB, fuera del alcance del 68k. */
++    uint64_t val = (uintptr_t)M68K_Exception;
++
++    EMIT(ctx,
++        mov_reg(0, sr),
++        mov64_immed_u16(2, val & 0xffff, 0),
++        movk64_immed_u16(2, (val >> 16) & 0xffff, 1),
++        movk64_immed_u16(2, (val >> 32) & 0xffff, 2),
++        movk64_immed_u16(2, (val >> 48) & 0xffff, 3)
++    );
++#else
+     uint32_t val = (uintptr_t)M68K_Exception;
+ 
+     EMIT(ctx,
+@@ -62,6 +74,7 @@
+         mov_immed_u16(2, val & 0xffff, 0),
+         movk_immed_u16(2, val >> 16, 1)
+     );
++#endif
+ #ifndef DASHOS_HOST
+     /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
+     EMIT(ctx, orr64_immed(2, 2, 25, 25, 1));
+--- a/src/M68k_LINEF.c
++++ b/src/M68k_LINEF.c
+@@ -27,8 +27,19 @@
+ {
+     if (reg_Load96 == 0xff) {
+         reg_Load96 = RA_AllocARMRegister(ctx);
++#ifdef DASHOS_HOST
++        /* DashOS: la dirección entera, con 64 bits. La caja Amiga va por encima de 4 GB, fuera del alcance del 68k. */
++        uint64_t val = (uintptr_t)Load96bit;
++        EMIT(ctx,
++            mov64_immed_u16(reg_Load96, val & 0xffff, 0),
++            movk64_immed_u16(reg_Load96, (val >> 16) & 0xffff, 1),
++            movk64_immed_u16(reg_Load96, (val >> 32) & 0xffff, 2),
++            movk64_immed_u16(reg_Load96, (val >> 48) & 0xffff, 3)
++        );
++#else
+         uint32_t val = (uintptr_t)Load96bit;
+         EMIT_LoadImmediate(ctx, reg_Load96, val);
++#endif
+ #ifndef DASHOS_HOST
+         /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
+         EMIT(ctx, 
+@@ -42,8 +53,19 @@
+ {
+     if (reg_Save96 == 0xff) {
+         reg_Save96 = RA_AllocARMRegister(ctx);
++#ifdef DASHOS_HOST
++        /* DashOS: la dirección entera, con 64 bits. La caja Amiga va por encima de 4 GB, fuera del alcance del 68k. */
++        uint64_t val = (uintptr_t)Store96bit;
++        EMIT(ctx,
++            mov64_immed_u16(reg_Save96, val & 0xffff, 0),
++            movk64_immed_u16(reg_Save96, (val >> 16) & 0xffff, 1),
++            movk64_immed_u16(reg_Save96, (val >> 32) & 0xffff, 2),
++            movk64_immed_u16(reg_Save96, (val >> 48) & 0xffff, 3)
++        );
++#else
+         uint32_t val = (uintptr_t)Store96bit;
+         EMIT_LoadImmediate(ctx, reg_Save96, val);
++#endif
+ #ifndef DASHOS_HOST
+         /* DashOS: en el banco de pruebas (un programa de Linux) el código no está en la mitad alta */
+         EMIT(ctx, 

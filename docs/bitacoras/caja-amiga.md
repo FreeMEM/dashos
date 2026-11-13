@@ -971,3 +971,73 @@ u "original"):
   La línea de atributos de `gadtools.exe` se escribía en dos veces y el aviso de la ventana en pantalla caía en medio
   (con el tema Material, siempre): ahora va en una sola escritura (`caja/pruebas68k/gadtools.c` y su `.exe`).
 - `arranque-virt-vm`, `-2` y `-escritorio`: BIEN.
+
+## 2026-11-13: la caja, fuera de los 4 GB del 68k (decisión 1)
+
+Rama `caja-amiga-4gb`, desde `revision` (267a072). Cierra el agujero 1 de S28: el ejecutable nativo de la caja estaba
+en `$7000_0000`, al alcance del 68k (podía leer y escribir su `.data` y `.bss`: el estado del 68k, la tabla de la caché
+del JIT, el estado de exec, dos e intuition).
+
+### Qué se hizo
+
+- **Parche 0014 de Emu68** (`patches/emu68/0014-direcciones-de-64-bits.patch`): las tres direcciones de funciones de C
+  que el JIT cargaba con 32 bits (`M68K_Exception` en `EMIT_Exception`, y `Load96bit`/`Store96bit` en `get_Load96` y
+  `get_Save96` de `M68k_LINEF.c`) van con 64 bits (`movz` y tres `movk`), solo con `DASHOS_HOST`. Las demás llamadas
+  del código traducido (`dashos_native_call`, las matemáticas, `kprintf`...) ya eran de 64 bits; se buscaron todas las
+  que convierten un puntero a 32 bits y no hay más que alcancen el código traducido. Los 14 parches se aplican limpios
+  sobre Emu68 af63580 y dan el mismo árbol que el de `third_party/Emu68`.
+- **La caja es un PIE estático** (`ET_DYN`), sin tocar el kernel: el cargador ya pone los PIE en una base al azar entre
+  128 y 256 GB y su pila entre 256 y 384 GB (C29, pensado para esto). `caja/enlace.ld` la enlaza en 0 (con otra
+  dirección, ld la marca `ET_EXEC` aunque sea `-pie`), con `.data.rel.ro` y `.got` entre los datos y `.rela.dyn` entre
+  los de solo lectura. `caja/entrada.S` aplica sus `R_AARCH64_RELATIVE` antes de nada (13.962; otro tipo de
+  reubicación acaba la caja con 70, y el Makefile no deja enlazar si sale alguna). C con `-fpie`, Rust (`pegamento/`)
+  con `relocation-model=pie`. Los objetos dependen del Makefile (las opciones cambiaron).
+- **Arreglo de un fallo de antes, que el PIE destapó**: `main_loop_anidado` y `arranca` (caja.c) llaman a `MainLoop`
+  desde un asm con x29 en la lista de lo que se pisa, pero GCC no lo guarda (es el puntero de marco) y `MainLoop` deja
+  en x29 la A7 del 68k. Con `relocation-model=pie`, Rust tenía en x29 un puntero a `CAJA` a través de `ejecutar_68k`:
+  Ctrl-C a un programa parado en `Wait` (el ejemplo de GadTools de Dash, cuando el clic del guion no llega a "Cancel")
+  rompía la caja (lectura en `entregar_excepciones` con FAR `0xa5fc0021100002f6`). Forzado a 1,2 s, falla siempre con
+  el PIE sin el arreglo y nunca con la caja de antes. Ahora el asm guarda x29.
+
+### Qué ve el 68k
+
+Los 4 GB bajos: la página 0 y su memoria (4 MB en `$0010_0000`). Nada de la caja. Lo comprueba la caja tras
+`memoria.exe` (`caja_fuera_del_68k`): el ejecutable (de `__caja_imagen` a `__caja_fin`), la pila del kernel, la de
+ahora, el estado del 68k, el código traducido, los montones, las pilas y la página 0 para escribir, todo por encima de
+4 GB; y le pregunta al kernel por los 4 GB bajos con la llamada 42 (`esperar`, que da `E_ARGUMENTO` donde no hay memoria
+que leer), una página de cada 64 KB: 65.471 trozos, ninguno con algo, tampoco `$7000_0000` (medio segundo en QEMU;
+página a página eran 8 s, demasiado para la prueba). `memoria.exe` pregunta antes a exec (`TypeOfMem($70000000)` = 0) y
+no lee: leer ahí ahora terminaría la caja.
+
+```
+│   [caja-amiga] malware: memoria: el ejecutable nativo de la caja, antes en $70000000: nada (TypeOfMem 0; no lee)
+│   [caja-amiga] malware: memoria: la caja, toda por encima de 4 GB (0 direcciones suyas por debajo); en los 4 GB del 68k, el kernel no ve más que la página 0 y la memoria del 68k (0 de 65471 trozos de 64 KB con algo de más; en $70000000, nada; 513 ms): bien
+```
+
+### Coste (QEMU TCG, PC cargado: carga 6-9)
+
+| Prueba | Antes | Después |
+|---|---|---|
+| Suma de 1 a 100.000 (`hola`) | 11 ms | 11 y 12 ms |
+| `saludo.exe` (7 llamadas nativas) | 6 ms | 7 y 6 ms |
+| Hunk hostil (30.216 cargas) | 168 ms | 179 ms |
+| Dash `texto.exe` / `texto_gcc.exe` (62 / 6.862 llamadas) | 246 / 249 ms | 248 / 250 ms |
+| Dash `test_interp_comillas` / `test_lista_listas_literal` | 14 / 22 ms | 15 / 22 ms |
+| Dash `ctrl_c`, `test_ctrl_c_for`, `test_trap_*` | 706, 19, 10, 13 ms | 705, 18, 9, 13 ms |
+
+Las llamadas nativas, iguales. Dentro del ruido: la carga de 64 bits son dos instrucciones más solo donde el código
+traducido entra en una excepción o en la coma flotante de 96 bits. El ejecutable lleva 335 KB más de tabla de
+reubicaciones (`.rela.dyn`).
+
+### Pruebas
+
+- `make -C kernel prueba`: "BIEN: cargador hunk (0 fallos)" y "BIEN: esperado.txt".
+- `make -C kernel arranque-virt`: las cinco BIEN (en esta vuelta, `test_gadtools` acabó por el Ctrl-C de los 6 s, el
+  caso que rompía la caja antes del arreglo de x29). Antes, una vuelta con el PIE sin el arreglo falló por eso, y otra
+  por "el desplegable dice: Destello" de Ajustes con la comprobación página a página (8 s más de caja, que se cruzaban
+  con el guion); con una de cada 64 KB, bien.
+- Ctrl-C forzado a 1,2 s en `test_gadtools` (cambio de prueba, no queda): con el PIE sin el arreglo, la caja muere
+  siempre; con la caja de antes y con el arreglo, acaba con 5 y las cinco BIEN.
+- `arranque-virt-vm`, `-linux`, `-2`, `-diag` (la caja de la Pi 5), `-escritorio` y `-usb`: BIEN. `make tarjeta-pi5`
+  sale. `make -C jit-host run`: BIEN (también con el parche 0014). No se pasaron `-arch`, `-gpu` ni `-wayland`: no se
+  tocó nada común (solo `caja/` y lo que espera la prueba de la caja).

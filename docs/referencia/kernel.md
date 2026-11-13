@@ -64,7 +64,7 @@ caja leería esa página en vez de fallar; escribir en ella, no. Hoy está así:
 | Tramo | Uso |
 |---|---|
 | 0 – 2 GB | Ejecutables `ET_EXEC` (desde `0x40_0000`) y su pila (hasta `0x8000_0000`) |
-| 0 – 4 GB | En la caja Amiga, la memoria del Amiga tal cual (S3). Ningún código nativo de la caja va aquí |
+| 0 – 4 GB | En la caja Amiga, la memoria del Amiga tal cual (S3). Ningún código nativo de la caja va aquí: es un PIE |
 | desde 4 GB | Libre. El runtime de Dash pone ahí su montón, con `memoria_crear` y `memoria_proyectar` |
 | 128 – 256 GB | Imagen de los PIE |
 | 256 – 384 GB | Pila de los PIE |

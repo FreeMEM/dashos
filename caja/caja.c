@@ -13,7 +13,6 @@
       $0000_0000 - $0000_0FFF  la página 0, de solo lectura: ExecBase en la dirección 4 (llamada 49 del kernel)
       $0010_0000 - $004F_FFFF  memoria del 68k (4 MB): vectores, la zona del sistema de exec, los programas planos y,
                                desde $0015_0000, lo que reparte AllocMem (caja.h)
-      $7000_0000 -             este ejecutable (ET_EXEC; Emu68 llama a sus funciones de C con direcciones de 32 bits)
       4 GB                     el código traducido, para escribir
       4 GB + 64 GB             el mismo código, para ejecutar (bit 36: lo pone Emu68 en mt_ARMEntryPoint)
       8 GB                     el montón general de Emu68 (TLSF)
@@ -22,6 +21,10 @@
       14 GB                    la página 0, para escribirla
       16 GB                    la ventana del servicio de archivos
       20 GB                    los búferes de las ventanas (wl_shm), 64 MB por ventana
+      128 - 256 GB             este ejecutable: un PIE estático, en una base al azar (enlace.ld; Emu68 carga las
+                               direcciones de sus funciones con 64 bits, parche 0014)
+      256 - 384 GB             la pila con que lo arranca el kernel (entrada.S pasa enseguida a la de 12 GB)
+    En los 4 GB bajos, los que ve el 68k, no hay nada de la caja (S28): lo comprueba caja_fuera_del_68k.
 
     Sin libc: las llamadas al sistema van a mano, y las funciones de cadena y memoria son las de src/support.c
     de Emu68.
@@ -61,6 +64,8 @@ static long sc(long n, long a, long b, long c, long d, long e)
 #define SC_HILO_UNIR         41
 #define SC_PROCESO_SALIR     44
 #define SC_PAGINA_CERO       49
+#define SC_ESPERAR           42
+#define E_ARGUMENTO          (-1L)
 
 #define P_LEER     1
 #define LLAVE_PAGINA0 1   /* la llave 1 de la caja: el permiso de página 0 que le da `inicio` */
@@ -189,9 +194,13 @@ static long proyecta(uintptr_t va, size_t len, int permisos)
     return r ? r : m;
 }
 
-/* La llama entrada.S antes que nada: el tope de una pila por encima de 4 GB, donde el 68k no llega. 0 si no hay. */
-uintptr_t caja_pila(void)
+/* El SP con que arrancó el kernel la caja: el tope de la pila del ELF. */
+static uintptr_t pila_elf;
+
+/* La llama entrada.S antes que nada (con el SP del kernel): el tope de una pila propia, en 12 GB. 0 si no hay. */
+uintptr_t caja_pila(uintptr_t sp_elf)
 {
+    pila_elf = sp_elf;
     return proyecta(PILAS, PILA_LEN, P_ESCRIBIR) > 0 ? PILAS + PILA_LEN : 0;
 }
 
@@ -340,7 +349,9 @@ void dashos_native_call(uint64_t *regs, uint32_t index)
 /* El MainLoop de un nivel: guarda v8-v15 y v19-v31 (lo que el JIT no recarga), pone la última PC a "ninguna" (así no
    salta al código de la unidad de fuera) y los devuelve al acabar. Todo en un asm: entre medias, el compilador no puede
    tener nada en esos registros. Los x0..x30 se dan por perdidos: los guarda quien llama (los callee-saved, el
-   compilador, por la lista) y el JIT al volver de la función nativa. */
+   compilador, por la lista) y el JIT al volver de la función nativa. Salvo x29: GCC no lo guarda aunque esté en la
+   lista (es el puntero de marco), y MainLoop deja en él la A7 del 68k; lo guarda el asm. Sin eso, quien llama (Rust)
+   seguía con la A7 donde tenía un puntero suyo: Ctrl-C a un programa en Wait rompía la caja. */
 __attribute__((noipa)) static void main_loop_anidado(void)
 {
     __asm__ volatile(
@@ -348,17 +359,18 @@ __attribute__((noipa)) static void main_loop_anidado(void)
         "stp q8, q9, [sp, #0]\n"     "stp q10, q11, [sp, #32]\n"  "stp q12, q13, [sp, #64]\n"
         "stp q14, q15, [sp, #96]\n"  "stp q19, q20, [sp, #128]\n" "stp q21, q22, [sp, #160]\n"
         "stp q23, q24, [sp, #192]\n" "stp q25, q26, [sp, #224]\n" "stp q27, q28, [sp, #256]\n"
-        "stp q29, q30, [sp, #288]\n" "str q31, [sp, #320]\n"
+        "stp q29, q30, [sp, #288]\n" "str q31, [sp, #320]\n" "str x29, [sp, #336]\n"
         "mov w0, #-1\n"
         "mov " CTX_LAST_PC_ASM ", w0\n"
         "bl MainLoop\n"
+        "ldr x29, [sp, #336]\n"
         "ldp q8, q9, [sp, #0]\n"     "ldp q10, q11, [sp, #32]\n"  "ldp q12, q13, [sp, #64]\n"
         "ldp q14, q15, [sp, #96]\n"  "ldp q19, q20, [sp, #128]\n" "ldp q21, q22, [sp, #160]\n"
         "ldp q23, q24, [sp, #192]\n" "ldp q25, q26, [sp, #224]\n" "ldp q27, q28, [sp, #256]\n"
         "ldp q29, q30, [sp, #288]\n" "ldr q31, [sp, #320]\n"
         "add sp, sp, #352\n"
         ::: "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10", "x11", "x12", "x13", "x14", "x15",
-            "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30",
+            "x16", "x17", "x18", "x19", "x20", "x21", "x22", "x23", "x24", "x25", "x26", "x27", "x28", "x30",
             "v0", "v1", "v2", "v3", "v4", "v5", "v6", "v7", "v16", "v17", "v18", "memory", "cc");
 }
 
@@ -534,9 +546,11 @@ __attribute__((noipa)) static int arranca(uint32_t pc, uint32_t a7, uint32_t a6,
     m68k.INT64 = 0;
     __asm__ volatile("mov " CTX_LAST_PC_ASM ", %w0" ::"r"(0xffffffff));
     __asm__ volatile("mov " CTX_POINTER_ASM ", %0" ::"r"(&m68k));
-    __asm__ volatile("bl MainLoop" ::: "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10",
+    /* x29 lo guarda el asm: GCC no lo hace aunque esté en la lista (ver main_loop_anidado). */
+    __asm__ volatile("str x29, [sp, #-16]!\n" "bl MainLoop\n" "ldr x29, [sp], #16"
+                     ::: "x0", "x1", "x2", "x3", "x4", "x5", "x6", "x7", "x8", "x9", "x10",
                      "x11", "x12", "x13", "x14", "x15", "x16", "x17", "x18", "x19", "x20", "x21", "x22",
-                     "x23", "x24", "x25", "x26", "x27", "x28", "x29", "x30", "v0", "v1", "v2", "v3", "v4",
+                     "x23", "x24", "x25", "x26", "x27", "x28", "x30", "v0", "v1", "v2", "v3", "v4",
                      "v5", "v6", "v7", "v8", "v9", "v10", "v11", "v12", "v13", "v14", "v15", "v16", "v17",
                      "v18", "v27", "v28", "v29", "v30", "v31", "memory", "cc");
     uint16_t marca = lee16(MARCA);
@@ -721,6 +735,45 @@ uint32_t caja_negados(void);
    no reparte (la de los programas planos, sin usar aquí). */
 #define ZONA_LIBRE 0x0014F000UL
 
+/* S28: nada de la caja al alcance del 68k. El 68k ve los 4 GB bajos del proceso tal cual (sus direcciones son de 32
+   bits y el JIT las usa sin más); la caja va toda por encima. Comprueba dos cosas:
+   - que el ejecutable (de __caja_imagen a __caja_fin), la pila del kernel, la pila de ahora, el estado del 68k, el
+     código traducido, los montones, las pilas y la página 0 para escribir están por encima de 4 GB (en *bajas, cuántos
+     no);
+   - que en los 4 GB bajos no hay más memoria que la página 0 y la del 68k: se lo pregunta al kernel con la llamada 42
+     (esperar), que da E_ARGUMENTO donde no hay memoria que leer. Una página de cada 64 KB (65.536 preguntas, medio
+     segundo en QEMU; las 4 KB de todas, 8 s): lo que la caja proyecta, lo pone ella en sus direcciones fijas, y el
+     ejecutable y su pila los pone el kernel por encima de 128 GB (lo de arriba). En *antes, si hay algo en $7000_0000,
+     donde estuvo la caja hasta S28.
+   Devuelve en cuántos trozos de 64 KB de los 4 GB bajos hay algo de más (0 es bien); en *trozos, cuántos miró, y en
+   *ms, lo que tardó. */
+extern char __caja_imagen[], __caja_fin[];
+int caja_main(void);
+static uint32_t caja_fuera_del_68k(uint32_t *bajas, int *antes, uint32_t *ms, uint32_t *trozos)
+{
+    uintptr_t sp;
+    __asm__ volatile("mov %0, sp" : "=r"(sp));
+    const uintptr_t suyas[] = {
+        (uintptr_t)__caja_imagen, (uintptr_t)__caja_fin - 1, (uintptr_t)caja_main, (uintptr_t)&m68k, pila_elf - 1, sp,
+        JIT_RW, JIT_RX, MONTON, MONTON_RUST, PILAS, PAGINA0_RW,
+    };
+    *bajas = 0;
+    for (unsigned i = 0; i < sizeof(suyas) / sizeof(suyas[0]); i++)
+        *bajas += suyas[i] < 0x100000000UL;
+    uint64_t t0 = ahora_us();
+    uint32_t de_mas = 0;
+    *trozos = 0;
+    for (uintptr_t p = 0x10000; p < 0x100000000UL; p += 0x10000) {
+        if (p >= M68K_RAM && p < M68K_RAM + M68K_RAM_LEN)
+            continue;
+        ++*trozos;
+        de_mas += sc(SC_ESPERAR, (long)p, 0x5A5A5A5A, 1, 0, 0) != E_ARGUMENTO;
+    }
+    *antes = sc(SC_ESPERAR, 0x70000000L, 0x5A5A5A5A, 1, 0, 0) != E_ARGUMENTO;
+    *ms = (uint32_t)((ahora_us() - t0) / 1000);
+    return de_mas;
+}
+
 /* Los siete, uno tras otro. Cada uno intenta lo de su familia y devuelve cuántas cosas consiguió que no debía (0); la
    caja comprueba además que acaba bien, que no deja memoria y que lo que cambió en exec (tablas de saltos, ExecBase,
    vectores del 68k) se deshizo. Al final, que nada de lo suyo se usó después (sus parches, su código residente).
@@ -749,6 +802,16 @@ static int prueba_malware(uint32_t execbase, uint32_t sistema)
         caja_consola_prefijo(NULL, 0);
         caja_defensa(&entradas, &campos);
         int bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        if (virus[i].desde == prog_mal_memoria) {
+            uint32_t bajas = 0, ms = 0, trozos = 0;
+            int antes = 1;
+            uint32_t de_mas = caja_fuera_del_68k(&bajas, &antes, &ms, &trozos);
+            int fuera = de_mas == 0 && bajas == 0 && !antes && trozos > 65000;
+            di("malware: memoria: la caja, toda por encima de 4 GB (%u direcciones suyas por debajo); en los 4 GB del "
+               "68k, el kernel no ve más que la página 0 y la memoria del 68k (%u de %u trozos de 64 KB con algo de "
+               "más; en $70000000, %s; %u ms): %s\n", bajas, de_mas, trozos, antes ? "algo" : "nada", ms, fuera ? "bien" : "MAL");
+            bien = bien && fuera;
+        }
         if (virus[i].desde == prog_mal_parche) bien = bien && entradas == 6;
         else if (virus[i].desde == prog_mal_residente) bien = bien && campos == 2 && vectores_deshechos == 2;
         else bien = bien && entradas == 0 && campos == 0 && vectores_deshechos == 0;
