@@ -320,11 +320,11 @@ while time.time() - inicio < total:
                 return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
             if "¿pide " in linea:
                 time.sleep(1.3)
-                mandar("sendkey s")
+                mandar("sendkey shift-s")
             elif " quiere cambiar " in linea:
                 time.sleep(1.3)
                 if sigue_preguntando():
-                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "s"))
+                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
             else:
                 mandar("sendkey s")
                 time.sleep(1.3)

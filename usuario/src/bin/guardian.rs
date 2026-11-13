@@ -466,7 +466,7 @@ fn preguntar(programa: &str, servicio: &str) -> bool {
 
 /// S28: la guardia de ficheros de la caja Amiga. `programa` es quien pide en `sesiones` (la caja), `permiso` el permiso
 /// sin llave (`ejec:...`) y `detalle` el programa 68k y el fichero (`preguntas_ficheros::detalle`), que no se fían: se
-/// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: S siempre (se guarda), E solo esta vez y N no.
+/// enseñan limpios. Lo mismo que `preguntar`, con tres respuestas: Mayús+S siempre (se guarda), E solo esta vez y N no.
 /// Devuelve la respuesta para `sesiones` (`RESPUESTA_*`).
 fn preguntar_fichero(programa: &str, permiso: &[u8], detalle: &[u8]) -> u32 {
     let (prog68k, fichero) = pf::leer_detalle(detalle);
@@ -600,7 +600,10 @@ fn preguntar_dentro(programa: &str, pregunta: &Pregunta, memoria: &mut u32) -> u
                     Some(Tecla::Letra(ch)) if !a_tiempo => {
                         println!("  [guardian] tecla {:?} antes de tiempo: no cuenta", ch);
                     }
-                    Some(Tecla::Letra('s' | 'S')) => return pf::RESPUESTA_SIEMPRE,
+                    // "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S (decisiones del
+                    // usuario del 2026-11-13): una "s" suelta, tecleando en otra ventana cuando sale la pregunta, no debe
+                    // dar un permiso.
+                    Some(Tecla::Letra('S')) => return pf::RESPUESTA_SIEMPRE,
                     Some(Tecla::Letra('e' | 'E')) if fichero => return pf::RESPUESTA_ESTA_VEZ,
                     Some(Tecla::Letra('n' | 'N')) => return pf::RESPUESTA_NO,
                     _ => {}
@@ -627,7 +630,7 @@ const MAX_NOMBRE_VISTO: usize = 60;
 /// medium, 14, en el color suave) y abajo a la derecha las respuestas. No se pulsan (`guardian` solo atiende al
 /// teclado): cada una lleva su tecla en una tecla dibujada, con contorno, y su nombre en el primario.
 /// S28: la de un fichero de la caja Amiga: "Programa de Amiga" de título, y "<programa> quiere cambiar <fichero>, un
-/// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "S Siempre", "E Esta vez" y "N No".
+/// programa ejecutable. ¿Lo dejas?" partido en líneas; las respuestas, "Mayús+S Siempre", "E Esta vez" y "N No".
 #[allow(clippy::too_many_arguments)]
 fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregunta: &Pregunta, fuente: &mut Fuente, medio: &mut Fuente, t: &Tema) {
     let mut l = Lienzo::new(px, ancho, alto, ancho as usize);
@@ -649,7 +652,7 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
     let (lineas, respuestas): (alloc::vec::Vec<String>, &[(&str, &str)]) = match pregunta {
         Pregunta::Servicio(servicio) => (
             alloc::vec![alloc::format!("Quiere usar \"{}\".", servicio), String::from("Contesta con el teclado.")],
-            &[("S", "Sí"), ("N", "No")],
+            &[("Mayús+S", "Sí"), ("N", "No")],
         ),
         Pregunta::Fichero { prog68k, fichero, frase } => {
             let texto = alloc::format!(
@@ -661,25 +664,40 @@ fn pintar_pregunta(px: &mut [u32], ancho: i32, alto: i32, programa: &str, pregun
             );
             let mut v = partir(fuente, &texto, ancho_texto, 4);
             v.push(String::from("Contesta con el teclado."));
-            (v, &[("S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
+            (v, &[("Mayús+S", "Siempre"), ("E", "Esta vez"), ("N", "No")])
         }
     };
     for (i, linea) in lineas.iter().enumerate() {
         fuente.dibujar(&mut l, x, y + 20 * i as i32 + 15, linea, 14, t.sobre_variante_superficie);
     }
     l.soltar_recorte();
-    // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: "N No" y "S Sí".
+    // Las respuestas, abajo a la derecha (24 del borde), 8 entre una y otra: botones tonales de Material (píldoras de
+    // 40 de alto) con la palabra dentro y su tecla destacada (la primera letra, subrayada y en el color primario). Si
+    // la tecla pide Mayúsculas ("Mayús+S"), "Mayús" va pequeño detrás de la palabra, dentro del botón.
     let fila = caja.y + caja.h - 24 - 40;
     let mut derecha = caja.x + caja.w - 24;
     for (tecla, nombre) in respuestas.iter().rev() {
-        let mn = medio.medir(nombre, 14);
-        let ancho_resp = 12 + 24 + 8 + mn.ancho + 12;
+        let con_mayus = tecla.starts_with("Mayús");
+        let mut letras = nombre.chars();
+        let primera: String = letras.next().map(String::from).unwrap_or_default();
+        let resto: String = letras.collect();
+        let mp = medio.medir(&primera, 14);
+        let mr = medio.medir(&resto, 14);
+        let mm = medio.medir("Mayús", 11);
+        let ancho_texto = mp.ancho + mr.ancho + if con_mayus { 6 + mm.ancho } else { 0 };
+        let ancho_resp = 24 + ancho_texto + 24;
         let r = Rect::new(derecha - ancho_resp, fila, ancho_resp, 40);
-        let k = Rect::new(r.x + 12, fila + 8, 24, 24);
-        l.borde(k, 6, 1, t.contorno);
-        let mk = medio.medir(tecla, 14);
-        medio.dibujar(&mut l, k.x + (k.w - mk.ancho) / 2, k.y + (k.h - mk.alto()) / 2 + mk.sube, tecla, 14, t.sobre_superficie);
-        medio.dibujar(&mut l, k.x + k.w + 8, fila + (40 - mn.alto()) / 2 + mn.sube, nombre, 14, t.primario);
+        l.redondeado(r, 20, t.contenedor_primario);
+        let x0 = r.x + 24;
+        let y_base = fila + (40 - mp.alto()) / 2 + mp.sube;
+        medio.dibujar(&mut l, x0, y_base, &primera, 14, t.primario);
+        // El subrayado de la tecla, de 2 de grueso, bajo la letra.
+        l.redondeado(Rect::new(x0, fila + 40 / 2 + mp.alto() / 2 + 1, mp.ancho.max(2), 2), 1, t.primario);
+        medio.dibujar(&mut l, x0 + mp.ancho, y_base, &resto, 14, t.sobre_contenedor_primario);
+        if con_mayus {
+            let ym = fila + (40 - mm.alto()) / 2 + mm.sube;
+            medio.dibujar(&mut l, x0 + mp.ancho + mr.ancho + 6, ym, "Mayús", 11, t.sobre_variante_superficie);
+        }
         derecha = r.x - 8;
     }
 }
