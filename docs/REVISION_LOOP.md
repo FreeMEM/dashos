@@ -1681,3 +1681,10 @@ K6 (ida y vuelta con paso directo) espera a medir en la Pi real (B5).
   usuario; cambiar o borrar ejecutables, iconos y guiones pregunta con `guardian` y se recuerda por programa;
   papelera e instantánea del cajón en cada arranque; aviso sin firmas de un bloque de arranque no estándar al montar
   un ADF; modo usuario con excepción por programa.
+
+### 2026-11-13 09:00: decisiones del usuario sobre el escritorio al estilo DMS (S27)
+Todas como se recomendaron: ventanas libres de serie en el primer espacio y columnas tipo niri con un clic por
+espacio; espacios en vertical (arriba/abajo cambian de espacio, los lados recorren las columnas); barra translúcida al
+88 %; la barra enseña como poco 3 espacios y hasta el más alto con ventanas; lanzador en lista hasta que haya
+iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Espacio. Sigue la oleada 2 (rama
+`escritorio-dms`) cuando haya sitio (como mucho 3 agentes a la vez).
