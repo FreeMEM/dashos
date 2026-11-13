@@ -70,6 +70,14 @@ impl<M: Memoria> Exec<M> {
         self.ramlib.cargador = Some((cargar, descargar));
     }
 
+    /// La tarea que estaba cargando algo acabó a medias (la cortó la caja dentro del `Init` de una biblioteca): lo
+    /// que se estaba cargando y sus continuaciones, fuera (si no, ese nombre ya no se podría volver a cargar). Lo
+    /// cargado sigue en memoria. Solo vale con una tarea 68k a la vez (la caja, de momento).
+    pub fn ramlib_cortada(&mut self) {
+        self.ramlib.cargando.clear();
+        self.ramlib.guardadas.clear();
+    }
+
     /// Las bibliotecas y dispositivos cargados de disco que siguen en memoria: (base, lista de segmentos).
     pub fn cargadas_de_disco(&self) -> Vec<(u32, u32)> {
         self.ramlib.cargadas.iter().map(|(b, s)| (*b, *s)).collect()
@@ -198,7 +206,7 @@ impl<M: Memoria> Exec<M> {
             let id = self.guardar(tras);
             let siguiente = Continuacion::AutoIniciada { tipo, tras: id };
             let mut tmp = *r;
-            let acc = match self.make_library_con(vectores, estructura, funcion, tamano, seglist, siguiente, &mut tmp) {
+            let acc = match self.make_library_con(vectores, estructura, funcion, tamano, seglist, rt, siguiente, &mut tmp) {
                 Ok(a) => a,
                 Err(f) => {
                     self.ramlib.guardadas.remove(&id);
@@ -250,14 +258,20 @@ impl<M: Memoria> Exec<M> {
             r.d[0] = 0;
             return self.echar(lib, r);
         }
-        let res = match a.disp {
-            None => self.open_library(a.nombre, a.version, r),
-            Some((unidad, ior, flags)) => self.open_device(a.nombre, unidad, ior, flags, r),
-        };
-        res.unwrap_or_else(|f| {
-            self.avisar("OpenLibrary", f);
-            Accion::Seguir
-        })
+        // Se abre por su base, no por su nombre otra vez: una que se llame de otra forma (o que su `Init` no dejó
+        // nombrada) no se volvería a cargar sin fin.
+        match a.disp {
+            None => {
+                let mut rr = *r;
+                rr.d[0] = a.version;
+                rr.a[6] = lib;
+                self.llamar_codigo(lib.wrapping_sub(6), rr, Continuacion::AbrirBiblioteca { lib }, r)
+            }
+            Some((unidad, ior, flags)) => self.abrir_dispositivo_en(lib, unidad, ior, flags, r).unwrap_or_else(|f| {
+                self.avisar("OpenDevice", f);
+                Accion::Seguir
+            }),
+        }
     }
 
     /// Echa una cargada de disco que nadie tiene abierta: su `Expunge` (A6 = base) y, si devuelve su lista de

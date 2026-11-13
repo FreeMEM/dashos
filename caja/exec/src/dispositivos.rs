@@ -137,6 +137,12 @@ impl<M: Memoria> Exec<M> {
             r.d[0] = io::IOERR_OPENFAIL as i32 as u32;
             return Ok(Accion::Seguir);
         }
+        self.abrir_dispositivo_en(d, unidad, ior, flags, r)
+    }
+
+    /// Lo de `OpenDevice` con el dispositivo ya encontrado: su `Open`.
+    pub(crate) fn abrir_dispositivo_en(&mut self, d: u32, unidad: u32, ior: u32, flags: u32, r: &mut Registros) -> Result<Accion, Fallo> {
+        self.e8(ior + io::IO_ERROR, 0)?;
         self.e32(ior + io::IO_DEVICE, d)?;
         let mut rr = *r;
         rr.d[0] = unidad;

@@ -13,8 +13,76 @@ use caja_exec::Memoria;
 
 use super::{Caja, CajaDos, di};
 
-/// Las que no se cargan nunca de disco.
-const RECHAZADAS: [&[u8]; 5] = [b"exec.library", b"graphics.library", b"layers.library", b"intuition.library", b"dos.library"];
+/// Las que no se cargan nunca de disco: las del sistema (nativas en la caja; las de un AmigaOS hablan con el
+/// chipset) y las que solo sirven para el hardware del Amiga (lo pedirían y fallarían a medias, o colgarían).
+const RECHAZADAS: [&[u8]; 22] = [
+    b"exec.library",
+    b"graphics.library",
+    b"layers.library",
+    b"intuition.library",
+    b"dos.library",
+    b"lowlevel.library",
+    b"68020.library",
+    b"68030.library",
+    b"68040.library",
+    b"68060.library",
+    b"680x0.library",
+    b"mmu.library",
+    b"audio.device",
+    b"trackdisk.device",
+    b"gameport.device",
+    b"keyboard.device",
+    b"input.device",
+    b"serial.device",
+    b"parallel.device",
+    b"scsi.device",
+    b"carddisk.device",
+    b"printer.device",
+];
+
+/// Las de un AmigaOS de verdad que aún no van en la caja: su `Init` llama a funciones privadas de exec (sin
+/// documentar), y el programa que las abriera acabaría ahí. Mejor que no abran: muchos programas siguen sin ellas
+/// (MUI, sin icon.library). Lo que hace falta son nativas. Vistas en el AmigaOS 3.2 (la caja lo dice: "falta:
+/// execPrivate17").
+const SIN_SOPORTE: [&[u8]; 3] = [b"icon.library", b"workbench.library", b"asl.library"];
+
+/// Dónde dice el usuario que está su AmigaOS (una carpeta del disco de DashOS; DashOS no trae ninguno).
+const PREFS_AMIGAOS: &[u8] = b"SYS:C/Prefs/amigaos";
+
+/// Monta el AmigaOS del usuario, si lo dio en `SYS:C/Prefs/amigaos` (una línea: su carpeta, desde la raíz del disco):
+/// `AmigaOS:` es esa carpeta (de solo leer: `SYS:` lo es) y sus `Libs`, `Classes`, `Devs`, `Fonts` y `Locale` van
+/// detrás de las asignaciones de la caja (`LIBS:`, `Classes:`...), y `MUI:` si lo trae. Lo nativo gana siempre: ramlib
+/// solo carga lo que no está. Devuelve lo que se dice por la consola.
+pub(super) fn montar_amigaos<F: caja_dos::SistemaArchivos>(dos: &mut caja_dos::Dos<F>, cd: &mut CajaDos) -> alloc::string::String {
+    let Ok(texto) = dos.leer_fichero(cd, PREFS_AMIGAOS, 4096) else {
+        return alloc::string::String::from("AmigaOS del usuario: ninguno (SYS:C/Prefs/amigaos)");
+    };
+    let linea: Vec<u8> = texto.split(|&b| b == b'\n').next().unwrap_or(&[]).iter().copied().filter(|&b| b != b'\r').collect();
+    let carpeta = core::str::from_utf8(&linea).unwrap_or("").trim().trim_start_matches('/');
+    if carpeta.is_empty() || carpeta.contains(':') || carpeta.split('/').any(|p| p == ".." || p == ".") || carpeta.len() > 200 {
+        return format!("AmigaOS del usuario: \"{}\" no vale (una carpeta del disco)", carpeta);
+    }
+    let ruta = format!("SYS:{}", carpeta);
+    if let Err(e) = dos.asignar(cd, "AmigaOS", &ruta) {
+        return format!("AmigaOS del usuario: {} no se monta (error {})", ruta, e);
+    }
+    let mut hechas = Vec::new();
+    for (nombre, sub) in [
+        ("LIBS", "Libs"),
+        ("Classes", "Classes"),
+        ("DEVS", "Devs"),
+        ("FONTS", "Fonts"),
+        ("LOCALE", "Locale"),
+        ("MUI", "MUI"),
+        ("LIBS", "MUI/Libs"),
+    ] {
+        let destino = format!("AmigaOS:{}", sub);
+        if dos.asignar_mas(cd, nombre, &destino).is_ok() {
+            hechas.push(format!("{}: {}", nombre, destino));
+        }
+    }
+    format!("AmigaOS del usuario en {} (solo leer), detrás de lo nativo: {}", ruta, hechas.join(", "))
+}
 
 /// Cuántas cargas se dicen por la consola (las demás solo se cuentan).
 const DICHAS: u32 = 24;
@@ -62,22 +130,42 @@ pub(super) fn cargar(c: &mut Caja, nombre: u32, tipo: u32) -> u32 {
     if n.is_empty() || n.iter().any(|&b| b < 32) {
         return 0;
     }
-    if rechazada(&n) {
-        decir(c, &format!("ramlib: {} no se carga de disco (nunca: hablaría con el chipset)", latin1(&n)));
+    let disp = tipo == caja_exec::ramlib::CARGAR_DISPOSITIVO;
+    if SIN_SOPORTE.contains(&base(&n).as_slice()) {
+        decir(c, &format!("ramlib: {} no se carga de disco (aún no: usa funciones privadas de exec)", latin1(&n)));
+        apuntar_falta(c, &n, disp);
         return 0;
     }
-    for ruta in sitios(&n, tipo == caja_exec::ramlib::CARGAR_DISPOSITIVO) {
+    if rechazada(&n) {
+        decir(c, &format!("ramlib: {} no se carga de disco (nunca: hablaría con el chipset)", latin1(&n)));
+        apuntar_falta(c, &n, disp);
+        return 0;
+    }
+    for ruta in sitios(&n, disp) {
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: true };
         if let Ok(seg) = c.dos.cargar_de_disco(&mut cd, &ruta) {
             // Código nuevo: el JIT olvida lo traducido (salvo lo que se está ejecutando, caja.c).
             // SEGURIDAD: una función de caja.c sin argumentos; no ejecuta 68k.
             unsafe { super::caja_jit_olvidar() };
             c.ramlib_cargas += 1;
+            if c.ramlib_segs.len() < 256 {
+                c.ramlib_segs.push((seg, latin1(&base(&n))));
+            }
             decir(c, &format!("ramlib: {} cargada de disco", latin1(&ruta)));
             return seg;
         }
     }
+    apuntar_falta(c, &n, disp);
     0
+}
+
+/// Una biblioteca o un dispositivo que no hay (ni nativo, ni de disco, o rechazado) va al registro de lo que falta.
+fn apuntar_falta(c: &mut Caja, n: &[u8], disp: bool) {
+    let q = super::faltan::quien(c, c.pc_llamada);
+    let f = if disp { "OpenDevice" } else { "OpenLibrary" };
+    if let Some(t) = c.faltan.apuntar(&latin1(&base(n)), f, &q) {
+        di(&t);
+    }
 }
 
 /// Suelta una lista de segmentos que cargó `cargar` (tras el `Expunge` de su biblioteca).
@@ -85,6 +173,7 @@ pub(super) fn soltar(c: &mut Caja, seglist: u32) {
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: true };
     caja_dos::hunk::descargar(&mut cd, seglist);
     c.ramlib_soltadas += 1;
+    c.ramlib_segs.retain(|(s, _)| *s != seglist);
 }
 
 fn leer_nombre(c: &Caja, d: u32) -> Option<Vec<u8>> {

@@ -459,6 +459,7 @@ extern const uint8_t prog_anidado[], prog_anidado_fin[];
 extern const uint8_t prog_gadtools[], prog_gadtools_fin[];
 extern const uint8_t prog_boopsi[], prog_boopsi_fin[];
 extern const uint8_t prog_ramlib[], prog_ramlib_fin[];
+extern const uint8_t prog_capa[], prog_capa_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1175,6 +1176,42 @@ int caja_main(void)
         di("ramlib.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, %u bloques del sistema de más: %s\n",
            (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, caja_bloques(0) - sistema, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 8b3. El AmigaOS del usuario como capa (capa.c): si la caja lo montó (SYS:C/Prefs/amigaos), abre sus
+           bibliotecas de software; las del hardware fallan limpias. Sin él, lo dice y acaba. Lo que se queda en memoria
+           (una biblioteca que no se deja echar) y los avisos (funciones que aún faltan) se cuentan, sin fallar. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("capa", prog_capa, (size_t)(prog_capa_fin - prog_capa), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0;
+        di("capa.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, %d bloques del sistema de más: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, (int)(caja_bloques(0) - sistema), bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        sistema = caja_bloques(0);
+
+        /* 8b4. Programas de AmigaOS del usuario (SYS:C/Prefs/programas-amiga, con DASHOS_PROGRAMAS_AMIGA): las demos de
+           MUI, Tachyon... Para ver hasta dónde llegan y qué les falta (el registro de lo que falta, faltan.rs): a los 6 s
+           (en el modo de las capturas, 30 s) se cierran sus ventanas como con el botón de la barra; si no acaban en 10
+           s más, el vigilante los corta. No cuentan como fallo: DashOS no trae ninguno. */
+        for (uint32_t i = 0; i < 64; i++) {
+            char pnom[128];
+            const uint8_t *pdat = 0;
+            uint32_t plar = 0;
+            if (!caja_programa_de_disco(i, pnom, sizeof(pnom), &pdat, &plar)) break;
+            ctrl_c_corriendo = 1;
+            cerrar_en_vez = 1;
+            long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN),
+                        (long)(CAJA_INTERACTIVA ? 30000 : 6000) * 1000, 0, 0);
+            t0 = ahora_us();
+            v = ejecuta_hunk(pnom, pdat, plar, execbase, &d0, &llamadas, &sobras);
+            t1 = ahora_us();
+            ctrl_c_corriendo = 0;
+            cerrar_en_vez = 0;
+            if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+            di("programa del usuario %s acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar\n",
+               pnom, (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras);
+            sistema = caja_bloques(0);
+        }
 
         /* 8c. GadTools (gadtools.c): una ventana con un gadget de cada tipo y menús. Comprueba sola sus atributos y
            espera clics: el guion pulsa varios gadgets y elige Proyecto > Salir con el botón derecho (0), si su ventana

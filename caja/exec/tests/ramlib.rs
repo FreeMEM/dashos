@@ -34,6 +34,8 @@ struct Disco {
     se_abre: bool,
     /// Sin RomTag.
     sin_romtag: bool,
+    /// Su `init` no pone el nombre en la base (no se encontraría por él).
+    sin_nombre: bool,
 }
 
 fn c_str(e: &Exec<MemoriaVec>, d: u32) -> String {
@@ -55,6 +57,7 @@ const BUENA: Disco = Disco {
     dispositivo: false,
     se_abre: false,
     sin_romtag: false,
+    sin_nombre: false,
 };
 
 struct Caja {
@@ -134,7 +137,9 @@ impl Caja {
                         let s = rr.a[0] << 2;
                         s + 4 + 16 + rt::TAMANO + 2 + 16 + 20
                     };
-                    self.e.mem.escribir32(lib + node::LN_NAME, seg_nombre).unwrap();
+                    if !self.disco.sin_nombre {
+                        self.e.mem.escribir32(lib + node::LN_NAME, seg_nombre).unwrap();
+                    }
                     self.e.mem.escribir16(lib + library::LIB_VERSION, self.disco.version).unwrap();
                     if self.disco.se_abre {
                         let mut r2 = regs;
@@ -263,6 +268,18 @@ fn hostiles() {
     // Una que se abre a sí misma desde su init: no se carga otra vez (el OpenLibrary de dentro da 0).
     let mut c = Caja::nueva(Disco { se_abre: true, ..BUENA });
     assert_ne!(c.open_library("disco.library", 0), 0);
+    assert_eq!(c.cargas.len(), 1);
+    // Una cuyo init no la nombra: se abre igual (por su base), sin cargarla otra vez.
+    let mut c = Caja::nueva(Disco { sin_nombre: true, ..BUENA });
+    let lib = c.open_library("disco.library", 0);
+    assert_ne!(lib, 0);
+    assert_eq!(c.cargas.len(), 1, "no se carga otra vez");
+    // InitResident con RTF_AUTOINIT le pone el nombre, el tipo y la versión de su RomTag: la segunda vez se encuentra
+    // por su nombre, sin cargarla.
+    let n = c.e.mem.leer32(lib + node::LN_NAME).unwrap();
+    assert_eq!(c_str(&c.e, n), "disco.library");
+    assert_eq!(c.e.mem.leer8(lib + node::LN_TYPE).unwrap(), nt::LIBRARY);
+    assert_eq!(c.open_library("disco.library", 0), lib);
     assert_eq!(c.cargas.len(), 1);
     // Sin ramlib (otra caja): ni se pide.
     let (mut e, _t) = caja_con_tarea();

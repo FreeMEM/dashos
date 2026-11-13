@@ -1525,3 +1525,34 @@ y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nun
   mitad; nada sin soltar).
 - `make prueba` (BIEN cargador hunk, BIEN esperado.txt) y `make arranque-virt` (las seis BIEN, con la línea nueva de
   ramlib.exe): bien.
+
+### Paso 2: el AmigaOS del usuario como capa
+
+- **Dónde**: `SYS:C/Prefs/amigaos` (una línea: una carpeta del disco de DashOS, sin `:` ni `..`). La caja la asigna
+  como `AmigaOS:` (de solo leer: `SYS:` lo es) y pone sus `Libs`, `Classes`, `Devs`, `Fonts`, `Locale`, `MUI` y
+  `MUI/Libs` detrás de `LIBS:`, `Classes:`, `DEVS:`... (`AssignAdd`): lo nativo y lo de `Caja:` va antes. DashOS no
+  trae ningún AmigaOS ni ROM. Para probar, `tools/disco_archivos.py` copia uno al disco de pruebas con
+  `DASHOS_AMIGAOS=carpeta` (el del usuario, de su equipo: nunca va a git). Un HDF todavía no: hace falta leer su
+  sistema de archivos (FFS o PFS3), pendiente.
+- **Nunca de disco** (`pegamento/src/ramlib.rs`, `RECHAZADAS`): exec, graphics, layers, intuition y dos (las de la caja
+  son nativas, las de un AmigaOS hablan con el chipset), lowlevel, las 680x0 y mmu, y los dispositivos del hardware
+  (audio, trackdisk, gameport, keyboard, input, serial, parallel, scsi, carddisk, printer). Fallan limpias: 0 o
+  `IOERR_OPENFAIL`.
+- **Aún no** (`SIN_SOPORTE`): icon, workbench y asl del AmigaOS 3.2 llaman en su `Init` a `execPrivate17`, una
+  función privada de exec sin documentar. Una privada de exec ahora acaba el programa que la llama (antes devolvía 0 y
+  la biblioteca saltaba a la página cero: la caja se colgaba); estas tres ni se cargan, para que quien las abre
+  siga sin ellas. Hace falta que sean nativas.
+- **Arreglo de exec**: `InitResident` con `RTF_AUTOINIT` pone el nodo desde el `RomTag` (tipo, prioridad, nombre,
+  versión, id) antes de su tabla de `InitStruct`. Muchas bibliotecas de verdad no traen tabla y su `Init` solo pone la
+  revisión: sin nombre, ningún `OpenLibrary` las encontraba y ramlib las cargaba otra vez, 16 veces. Y tras cargarla,
+  exec la abre por su base, no por su nombre.
+- **Prueba** (`caja/pruebas68k/capa.c`, paso 8b3 de la caja): abre 16 bibliotecas del AmigaOS del usuario; lowlevel y
+  audio.device tienen que fallar. Sin AmigaOS, lo dice y acaba (así va en `make arranque-virt`). Con el 3.2 del
+  usuario (`sys32mui`): abren iffparse 45.3, locale 47.26, mathieeedoubbas 47.2, mathieeedoubtrans 47.2 y diskfont
+  47.1; no abren mathieeesingtrans y mathtrans (piden mathieeesingbas y mathffp, que en el Amiga están en la ROM),
+  commodities (pide keymap, en la ROM), datatypes (pide layers), icon, workbench y asl (privadas de exec),
+  rexxsyslib, muimaster (pide keymap) y las dos clases (piden lo de antes). Ninguna cuelga ni deja nada sin soltar.
+- **Lo que falta del paso**: el HDF; un aviso `CierreDeMas` al cerrar locale y diskfont recién cargadas (abren y se
+  usan; su cuenta de aperturas llega a 0 antes de tiempo, sin averiguar aún por qué); con el AmigaOS puesto, el
+  runtime de Dash abre su `clipboard.device`, que pide `GetDeviceProc` (no hecho en dos): un aviso en los dos
+  programas de ReAction.

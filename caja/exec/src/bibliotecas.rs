@@ -383,7 +383,7 @@ impl<M: Memoria> Exec<M> {
         seglist: u32,
         r: &mut Registros,
     ) -> Result<Accion, Fallo> {
-        self.make_library_con(vectores, estructura, init, tamano_datos, seglist, Continuacion::IniciarBiblioteca, r)
+        self.make_library_con(vectores, estructura, init, tamano_datos, seglist, 0, Continuacion::IniciarBiblioteca, r)
     }
 
     /// `MakeLibrary` que sigue con `tras` tras el `init`.
@@ -395,6 +395,7 @@ impl<M: Memoria> Exec<M> {
         init: u32,
         tamano_datos: u32,
         seglist: u32,
+        rt: u32,
         tras: Continuacion,
         r: &mut Registros,
     ) -> Result<Accion, Fallo> {
@@ -413,6 +414,18 @@ impl<M: Memoria> Exec<M> {
         }
         let lib = m + neg;
         self.make_functions(lib, tabla, if cortos { vectores } else { 0 })?;
+        if rt != 0 {
+            // `InitResident` con `RTF_AUTOINIT`: el nodo sale del `RomTag` (tipo, prioridad, nombre, versión, id). Muchas
+            // bibliotecas no traen tabla de `InitStruct` y su `Init` solo pone la revisión: sin esto no tendrían nombre
+            // y ningún `OpenLibrary` las encontraría. Su tabla, si la traen, va después y manda.
+            use crate::ramlib::resident;
+            self.e8(lib + node::LN_TYPE, self.l8(rt + resident::RT_TYPE)?)?;
+            self.e8(lib + node::LN_PRI, self.l8(rt + resident::RT_PRI)?)?;
+            self.e32(lib + node::LN_NAME, self.l32(rt + resident::RT_NAME)?)?;
+            self.e16(lib + library::LIB_VERSION, self.l8(rt + resident::RT_VERSION)? as u16)?;
+            self.e32(lib + library::LIB_IDSTRING, self.l32(rt + resident::RT_IDSTRING)?)?;
+            self.e8(lib + library::LIB_FLAGS, library::LIBF_SUMUSED | library::LIBF_CHANGED)?;
+        }
         if estructura != 0 {
             self.init_struct(estructura, lib, 0)?;
         }

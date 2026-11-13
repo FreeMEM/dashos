@@ -48,6 +48,14 @@ impl<F: SistemaArchivos> Dos<F> {
         Ok(seg)
     }
 
+    /// Lee un fichero entero (hasta `max` bytes) por su ruta del Amiga, para la caja (sus ajustes).
+    pub fn leer_fichero<C: Caja>(&mut self, c: &mut C, ruta: &[u8], max: u64) -> Result<Vec<u8>, u32> {
+        self.leer_entero(c, ruta, max).map_err(|e| match e {
+            E::Io(n) => n,
+            E::Mal(f) => f.codigo(),
+        })
+    }
+
     // --- Volúmenes ---
 
     /// Monta una raíz del servicio como volumen `nombre` (sin `:`). La raíz es de dos desde ahora. El primero que se
