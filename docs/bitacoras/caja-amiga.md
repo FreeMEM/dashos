@@ -1453,3 +1453,31 @@ con GadTools esperando 90 s, la sesión se bloqueaba antes.
   la barra y el título quedaba pegado arriba, como cortado).
 - El oráculo de FS-UAE no dio captura útil de la ventana de ReAction: `emu_run.py --screenshot` saca la pantalla de
   delante, y era la de la consola de AmigaDOS.
+
+### Pruebas
+
+- `cargo test`: intuition 98 (nuevas: `tests/boopsi.rs` 13, `tests/reaction.rs` 5, `letra_kit` 1, `barra_dashos` 1;
+  con hostiles: clases y objetos que no existen, métodos desconocidos, etiquetas en círculo, almacenes y mensajes
+  ilegibles, despachadores 68k que no vuelven, que se llaman sin fin por intuition o en 68k puro, `h_Entry` nulo o
+  impar, círculos de interconexión de dos y de tres, `ICA_TARGET` a la basura, 3000 miembros de tamaños absurdos,
+  layouts con hijos que no son objetos, 2000 hijos, 100 niveles de layouts, ventanas de 100000 x 0xFFFFFFFF, la tarea
+  que muere con un clic en la cola), exec 113 (`open_library_con_camino`), wayland 96. Las pruebas de BOOPSI usan un
+  puente de prueba cuyos "despachadores 68k" son funciones de Rust que hacen lo del programa (`tests/comun/puente.rs`).
+  clippy limpio en lo nuevo.
+- `make prueba`: BIEN cargador hunk y BIEN esperado.txt. (En dos vueltas anteriores, G1, libwayland por el puente de la
+  caja Linux, dio MAL con los mismos colores; nada de lo suyo cambió en esta rama, y en la última vuelta pasó.)
+- `make arranque-virt` (las seis BIEN, con boopsi.exe, test_doc_reaction y test_reaction), `-vm`, `-2`, `-escritorio`
+  y `-diag`: BIEN, tras lo último (la marca y el orden de BOOPSI antes de GadTools).
+- El oráculo: boopsi.c en FS-UAE con 3.2 (0 fallos) y un programa de bordes con 3.1 (los números de arriba).
+
+### Lo que falta
+
+- chooser.gadget abre su menú en 3.2; aquí cambia de opción con cada clic. getfile.gadget no abre el requester (no hay
+  asl.library). listbrowser con columnas las junta en una. space.gadget no llama a `SPACE_RenderHook` (el lienzo de
+  `ra_add_canvas` de Dash). Sin páginas (`PAGE_GetClass`), `LAYOUT_ShrinkWrap`, `FixedHoriz`/`Vert`, el foco con Tab
+  (`GMR_NEXTACTIVE` se devuelve pero no activa el siguiente) ni las teclas de los gadgets (`GA_ActivateKey`).
+- Los gadgets BOOPSI no reciben `IECLASS_TIMER` (los que repiten mientras se pulsa, como las flechas de un scroller).
+- Un clic en un campo de texto "como DashOS" coloca el cursor por celdas de topaz: en textos largos cae unas letras más
+  allá de donde se ve (ahora la letra va seguida).
+- La excepción "original" en una caja "como DashOS": la pantalla dice `WBorTop` 0 y la ventana lleva `BorderTop` 11.
+- El oráculo visual de ReAction en FS-UAE (la captura sale de la pantalla de la consola).
