@@ -180,7 +180,8 @@ while time.time() - inicio < total:
                         except Exception:
                             return []
                     wb = {(0xAA, 0xAA, 0xAA), (0, 0, 0), (0xFF, 0xFF, 0xFF), (0x66, 0x88, 0xBB)}
-                    vistos = pixeles(foto, [(x + 1 * f_gt, y + 1 * f_gt), (x + 408 * f_gt, y + 1 * f_gt), (x + 1 * f_gt, y + 190 * f_gt), (x + 408 * f_gt, y + 190 * f_gt)])
+                    # (A 3 del borde: la marca de la caja Amiga, S29, ocupa los 3 píxeles de fuera.)
+                    vistos = pixeles(foto, [(x + 3 * f_gt, y + 3 * f_gt), (x + 406 * f_gt, y + 3 * f_gt), (x + 3 * f_gt, y + 188 * f_gt), (x + 406 * f_gt, y + 188 * f_gt)])
                     vacio = pixeles(foto, [(x + 200 * f_gt, y + 183 * f_gt)])
                     # Con la barra de DashOS (rama amiga-integrada): las esquinas de abajo las redondea el compositor y
                     # arriba no hay barra de intuition. Se miran un poco más dentro, y la barra de DashOS encima.
@@ -221,6 +222,22 @@ while time.time() - inicio < total:
                         continue
                     if not tapada:
                         gt_amiga = 1
+                        # En una pantalla grande y con la barra de DashOS, se arrastra por su barra hasta la derecha de
+                        # Ajustes (en la cascada quedan una encima de la otra): así la captura con el menú las enseña a
+                        # las dos, una al lado de la otra.
+                        if con_barra and ancho_pantalla >= 1600:
+                            w_aj = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+                            destino = (int(w_aj.group(1)) + 360 + 40) if w_aj else 600
+                            if destino > x:
+                                ir_a(x + 200 * f_gt, y - 20)
+                                time.sleep(0.3)
+                                mandar("mouse_button 1", pausa=0.3)
+                                dx_t = destino - x
+                                while dx_t > 0:
+                                    mandar(f"mouse_move {min(dx_t, 50)} 0", pausa=0.08)
+                                    dx_t -= 50
+                                mandar("mouse_button 0", pausa=0.5)
+                                x = destino
                         for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
                             ir_a(x + dx * f_gt, y + dy * f_gt)
                             time.sleep(0.3)

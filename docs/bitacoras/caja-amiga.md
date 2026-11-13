@@ -1220,3 +1220,48 @@ píxeles en las curvas. Hacerlos nítidos pide pintar el gadget otra vez a `f` v
 octavos de píxel con `forma` y `trazo`, así que se podría con un lienzo a escala) y guardarlo como un parche con la
 misma comprobación que los textos; pero intuition tendría que saber el factor de cada ventana y el pintor, pintar en
 dos lienzos. Apuntado para otra vuelta.
+
+### Pruebas
+
+- `cargo test` de `caja/intuition` (78): `nitido` (encaje, reducir, elipsis, huecos de 0 y negativos, textos enormes,
+  letras que no hay, componer solo lo que vale, instantáneas que no cuadran, destinos cortos, celdas con más letras que
+  celdas, control y Latin-1), `tests/barra_dashos.rs` (bordes y `WBor*`, sin gadgets del sistema dentro, cerrar,
+  `NEWSIZE` dentro de `WindowLimits` con tamaños absurdos, `GimmeZeroZero`, ventanas sin barra, `BORDERLESS` y
+  `BACKDROP`, el programa con la excepción "original", un compositor sin barra, cambiar de tema con la ventana abierta
+  ida y vuelta, textos que dejan de valer al pintar encima y vuelven al repintar, la etiqueta de fuera repintada sin
+  borrar, etiquetas enormes y gadgets pegados al borde, 300 repintados y cambios de tamaño con el tope de textos, el
+  EasyRequest cerrado desde la barra) y `tests/letra_kit.rs` (con Roboto de verdad a 2x y 3x: antialiasada, dentro de
+  su hueco, y fuera de los huecos igual que la ampliación de siempre). `wayland` (95, con `marca_de_la_caja_amiga`).
+- `make prueba`: BIEN cargador hunk y BIEN esperado.txt. `make arranque-virt` (800x600, a 1x, con la barra de DashOS:
+  `ventana.exe` se cierra con el botón de la barra y da `IDCMP_CLOSEWINDOW`; lo mismo la de Dash): las cinco BIEN.
+  `-vm`, `-2`, `-escritorio` y `-diag`: BIEN. Todo otra vez tras fusionar `fusion-fondo` (esquinas a 8,
+  `RADIO_MARCO`, que es lo que usa la barra de las ventanas Amiga: la caja no lleva ningún radio propio).
+- Un fallo que salió en la primera captura y no en las pruebas: las etiquetas de fuera de un gadget (a la izquierda,
+  encima) se repintan sin borrar y su texto nítido tomaba como fondo la topaz de antes (se veían las dos letras). Ahora
+  el fondo de un texto que sigue valiendo en el mismo hueco se conserva; con su prueba.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro
+fondo;cajas=general dashos"` (u `original`), a 2x, tras fusionar `fusion-fondo` (esquinas a 8):
+
+- `antes-caja-gadtools-menu-material-fhd.png`: la de antes (rama `caja-amiga-escala`): barra de intuition pintada como
+  Material y topaz ampliada.
+- `caja-gadtools-menu-integrada-fhd.png`: la misma ventana ahora, con el menú Proyecto abierto y "Salir" señalado, al
+  lado de la ventana del centro (nativa). En pantallas grandes, el guion la arrastra por su barra a la derecha de
+  Ajustes antes de los clics (en la cascada salían una encima de la otra). `caja-gadtools-integrada-fhd.png`: antes de
+  los clics.
+- `caja-gadtools-menu-original-fhd.png`: con "original" (3.x, topaz, su barra de intuition).
+- `comparacion-original-dashos-fhd.png`: las dos ventanas con el menú abierto, lado a lado, con su rótulo.
+
+Lo que se ve y queda por hacer:
+
+- Con el menú abierto, las etiquetas que el menú tapa en parte ("Ciclo" y el texto del ciclo, debajo del menú) salen en
+  topaz hasta que se cierra: su hueco ya no es el de antes. Se podría dar por bueno el hueco si lo que cambió es solo
+  lo que tapa el menú (intuition sabe dónde está), pero no está hecho.
+- "Nivel" sale en topaz y cortado: el nivel del deslizador ("25") se pinta encima de la etiqueta, como en 3.1; el
+  hueco cambió.
+- La marca azul de la caja sale en las dos (va por caja, no por aspecto).
+- Los controles, a 1x ampliados (escalones de 2 en las curvas): ver arriba.
+- El guion mira las esquinas de la ventana de GadTools a 3 del borde (la marca ocupa los 3 de fuera; con el clásico, la
+  primera vuelta no la reconocía y no pulsaba nada).
