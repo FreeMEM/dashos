@@ -1863,3 +1863,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   `.info` de la caja Amiga (clásicos, NewIcons, GlowIcons, PNG de OS4/MOS) y los iconos de los programas de la caja
   Linux. Solo el formato: ninguna colección de Amiga en el repo; los temas retro, dibujados aquí. Va después del
   explorador.
+- Orden decidido por el usuario (2026-11-13): tras ReAction, primero cargar bibliotecas y clases de disco (`LIBS:`,
+  `Classes:`, como ramlib) y montar el AmigaOS del usuario (su HDF o carpeta, solo lectura, como capa: lo nativo manda;
+  sus bibliotecas que no tocan el chipset rellenan lo que falte); después `bsdsocket.library`. Meta: Tachyon 68k con
+  MUI 5 y AmiSSL en la caja, apuntando cada LVO que falte.
+- S29: puerto 25 hacia fuera cerrado (a13959e); pruebas en marcha.
