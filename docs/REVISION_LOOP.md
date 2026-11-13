@@ -1841,3 +1841,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   para el panel. `memoria_invitado`: 1 GB con 8 GB o más. Fila "Ampliar ventanas Amiga" en Apariencia.
 - Sin probar: Apagar y Cerrar sesión desde el panel; el apagado en una Pi de verdad.
 - `make prueba` BIEN; arranque-virt (con reinicio), -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13, tarde: explorador y orden de la red Amiga
+
+- El usuario: "nos hace falta un explorador tipo Nautilus". Agente en `.worktrees/explorador` (rama `explorador`, desde
+  130bfcb de fusion-fondo): programa `explorador` con barra lateral, migas, rejilla y lista, selección y teclado,
+  copiar/mover/renombrar/papelera, arrastrar, pestañas, búsqueda; órdenes nuevas de `archivos` con su prueba hostil.
+- `bsdsocket.library` en la caja Amiga (con DNS, UDP y escuchar en la pila de DashOS): después de ReAction, lo decidió
+  el usuario.
+- Marca de las cajas: pestaña de las ventanas sin barra de DashOS pintada con el kit (130bfcb, en fusion-fondo; tanda
+  en marcha). G1 mira el azul más abajo (la esquina la tapa la pestaña).
