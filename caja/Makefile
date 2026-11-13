@@ -18,7 +18,7 @@ M68K_SAVED := -fcall-saved-x4 -fcall-saved-x5 -fcall-saved-x6 -fcall-saved-x7 -f
 	-fcall-saved-x9 -fcall-saved-x10 -fcall-saved-x11
 
 COMMON  := -MMD -MP -mbig-endian -ffreestanding -fno-exceptions -fno-unwind-tables -fno-stack-protector \
-	-fno-asynchronous-unwind-tables -fno-pic -fno-pie -march=armv8-a+crc -O2 -fomit-frame-pointer \
+	-fno-asynchronous-unwind-tables -fpie -march=armv8-a+crc -O2 -fomit-frame-pointer \
 	-ffixed-x12 -falign-functions=32 -mno-outline-atomics -fno-builtin \
 	-DEMU68_VERSION_MAJOR=1 -DEMU68_VERSION_MINOR=1 -DDASHOS_HOST=1 -DDASHOS_NATIVE_CALLS=1 \
 	-I$(EMU68)/include -I$(EMU68)/external/capstone/include -I../jit-host/include $(CONTEXT_RESERVE)
@@ -125,14 +125,21 @@ $(B)/pegamento.a: FORCE | $(B)
 	cmp -s $@.tmp $@ || mv $@.tmp $@
 	rm -f $@.tmp
 
+# Un PIE estático (enlace.ld): el kernel lo pone por encima de 128 GB, fuera del alcance del 68k (S28). Solo puede llevar
+# reubicaciones R_AARCH64_RELATIVE (las aplica entrada.S): se comprueba aquí.
 $(B)/caja-amiga: $(OBJS) $(B)/pegamento.a enlace.ld
-	$(CXX) -mbig-endian -static -nostdlib -nostartfiles -Wl,-EB -Wl,--build-id=none -Wl,-z,noexecstack \
-		-Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@ $(OBJS) $(B)/pegamento.a
+	$(CXX) -mbig-endian -static-pie -nostdlib -nostartfiles -Wl,-EB -Wl,--build-id=none -Wl,-z,noexecstack \
+		-Wl,-z,text -Wl,-T,enlace.ld -Wl,-Map=$(B)/caja-amiga.map -o $@.tmp $(OBJS) $(B)/pegamento.a
+	@if $(TC)readelf -rW $@.tmp | grep -E '^[0-9a-f]{16} ' | grep -v R_AARCH64_RELATIVE; then \
+		echo "La caja lleva reubicaciones que entrada.S no aplica"; rm -f $@.tmp; exit 1; fi
+	mv $@.tmp $@
 
 $(B):
 	mkdir -p $(B)
 
 -include $(OBJS:.o=.d)
+# Con otras opciones (de -fno-pie a -fpie, por ejemplo), todo de nuevo.
+$(OBJS): Makefile
 
 # El cargador hunk, en el PC (con ASan y UBSan).
 pruebas-pc:

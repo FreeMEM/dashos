@@ -7,4 +7,5 @@ target = "aarch64_be-unknown-none-softfloat"
 build-std = ["core", "alloc", "compiler_builtins"]
 
 [target.aarch64_be-unknown-none-softfloat]
-rustflags = ["-C", "relocation-model=static"]
+# PIE: la caja es un PIE estático, por encima de 4 GB (../enlace.ld).
+rustflags = ["-C", "relocation-model=pie"]
