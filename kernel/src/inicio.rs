@@ -290,7 +290,7 @@ const OPCIONAL: u32 = 0x100;
 const DERECHOS: u32 = crate::objetos::TODOS;
 
 /// La RAM pedida para el invitado de la caja Linux al compilar el kernel, en MB (`DASHOS_CAJA_LINUX_MB`), o 0: la regla
-/// de serie (256 MB con 2 GB, 512 con 4 GB o más; `dashos::maquina::memoria_invitado`). caja-linux-grandes.
+/// de serie (256 MB con 2 GB, 512 con 4 GB, 1 GB con 8 GB o más; `dashos::maquina::memoria_invitado`). caja-linux-grandes.
 fn caja_linux_mb() -> u64 {
     let Some(t) = option_env!("DASHOS_CAJA_LINUX_MB") else { return 0 };
     let mut n = 0u64;

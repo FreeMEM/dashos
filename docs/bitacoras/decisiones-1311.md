@@ -43,3 +43,12 @@ Rama `decisiones-1311`, sacada de `revision` (022e9d1). Las decisiones están en
 - `inicio`: el panel recibe "red-estado" en lugar de "red" (sigue siendo su llave 5). Ya no tiene el permiso de red.
 - Prueba hostil, en el panel al arrancar: pide `CONECTAR` (al eco del PC) con su llave y no recibe nada en 1 s. El
   servicio lo dice ("solo se contesta ESTADO: orden 1 rechazada"). Y el panel sigue viendo la red conectada.
+
+## 3. 1 GB para el invitado Linux con 8 GB o más
+
+- La regla de serie (`dashos::maquina::memoria_invitado`, en `usuario/src/lib.rs`; la usan `inicio` para el cupo de la
+  caja y `caja-linux`): 128 MB con menos de 2 GB, 256 MB con 2 GB, 512 MB con 4 GB y ahora 1 GB con 8 GB o más (con la
+  misma holgura de 128 MB por debajo de cada umbral). `DASHOS_CAJA_LINUX_MB` sigue mandando si se pone.
+- 1 GB son justo los 64 trozos de 16 MB que admite una vista (`memoria_vista`, `MAX_ORIGENES`).
+- `make arranque-virt-wayland` (8 GB): la caja dice "hasta 1024 MB para el invitado" (esperados de `-wayland` y de su
+  variante de Firefox al día).

@@ -5,7 +5,7 @@
 # recibe un clic y una tecla, se mueve por su barra y se cierra con su botón; foot copia una línea que se pega en la
 # terminal de la caja (la de siempre y la primaria) y pega lo que se copia en ella. Hostiles de Linux: decoraciones y
 # tipos rotos (el compositor los corta), una fuente que escribe sin fin (se le corta) y otra que nunca cierra (se deja de
-# esperar). Después, otra ventana de Linux sale como siempre. Desde caja-linux-grandes (QEMU con 8 GB, 512 MB para el
+# esperar). Después, otra ventana de Linux sale como siempre. Desde caja-linux-grandes (QEMU con 8 GB, 1 GB para el
 # invitado y su zram): GTK4 (gtk4-widget-factory) sale con su menú emergente; un programa del invitado que se come toda su
 # memoria muere (OOM) y la ventana de GTK sigue; Firefox abre una página del disco.
 # firefox-entrada: un clic en la barra de direcciones de Firefox y otra dirección tecleada: su título cambia.
@@ -49,7 +49,7 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[compositor] error de protocolo de caja-linux: modo que no existe
 ~[caja-linux] terminal: pegado (4096 bytes)
 ~[caja-linux] terminal: pegado (0 bytes)
-~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 512 MB para el invitado
+~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 1024 MB para el invitado
 ~gtk: empieza
 ~título: Linux · GTK Widget Factory
 ~[compositor] emergente de caja-linux

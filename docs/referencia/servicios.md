@@ -564,7 +564,7 @@ como concedido (sale en el centro de control, que lo puede quitar; quitado, la p
 registro de seguridad; a cualquier otro se le pregunta a quien está delante. `sin-maquina` lo pide y no lo recibe.
 
 **La memoria.** `inicio` le da la del invitado más 32 MB (`dashos::maquina::memoria_invitado`: 128 MB con menos de 2
-GB de RAM, 256 MB con 2 GB y 512 MB con 4 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
+GB de RAM, 256 MB con 2 GB, 512 MB con 4 GB y 1 GB con 8 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
 invitado, y así hasta 64 MB. Otra cantidad, al compilar el kernel: `DASHOS_CAJA_LINUX_MB=1024` (va en "sistema";
 `memoria_invitado_con`: al menos 64 MB y como mucho la mitad de la RAM). En QEMU `virt`, con más de 3 GB hace falta
 `highmem=on,highmem-ecam=off,highmem-mmio=off` (`MAQUINA_GRANDE` del Makefile): el kernel ve en `virt` hasta 16 GB.

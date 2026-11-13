@@ -1037,7 +1037,7 @@ const VA_INITRD: usize = 0x3800_0000;
 /// La RAM del invitado de Linux, en objetos de 16 MB (el tope de `memoria_crear`), proyectados seguidos aquí.
 const VA_RAM_LINUX: usize = 0x40_0000_0000;
 const TROZO: usize = 16 << 20;
-/// Lo más que se le da: 2 GB (caja-linux-grandes: lo de serie llega a 512 MB; más, con `DASHOS_CAJA_LINUX_MB`). Las
+/// Lo más que se le da: 2 GB (caja-linux-grandes: lo de serie llega a 1 GB, con 8 GB en la máquina; más, con `DASHOS_CAJA_LINUX_MB`). Las
 /// direcciones del invitado acaban en 4 GB (`hiper::IPA_MAX`) y su RAM empieza en 1 GB.
 const MAX_TROZOS: usize = 128;
 const RAM_MINIMA: usize = 64 << 20;

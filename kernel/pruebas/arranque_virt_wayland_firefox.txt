@@ -7,7 +7,7 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~[caja-linux] linux: caja login: root (automatic login)
 ~[caja-linux] wayland: el puente de Linux conecta por vsock
 ~[caja-linux] linux: puente hostil: hecho
-~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 512 MB para el invitado
+~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 1024 MB para el invitado
 ~firefox: empieza
 ~título: Linux · Firefox en DashOS
 ~título: Linux · Index of file:///usr/local/share/dashos/

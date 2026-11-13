@@ -298,13 +298,16 @@ pub mod maquina {
     /// la virtio-gpu de la caja (S25: 8 MB de recursos y 1,2 MB de la ventana de su pantalla).
     pub const MARGEN_SERVICIO: u64 = 66 << 20;
 
-    /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisión del usuario del
-    /// 2026-11-12): 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con menos. La caja pide eso más
+    /// La RAM de serie del invitado de la caja Linux con `ram` bytes en la máquina (decisiones del usuario del
+    /// 2026-11-12 y del 2026-11-13): 1 GB con 8 GB o más, 512 MB con 4 GB o más, 256 MB con 2 GB o más y 128 MB con
+    /// menos (con 1 GB, Firefox abre en unos 23 s en QEMU; con 512 MB, en 33 a 44). La caja pide eso más
     /// `MARGEN_SERVICIO`. Con algo de holgura por debajo de cada umbral: el kernel no cuenta lo que se queda el
     /// firmware.
     pub fn memoria_invitado(ram: u64) -> u64 {
         const HOLGURA: u64 = 128 << 20;
-        if ram + HOLGURA >= 4 << 30 {
+        if ram + HOLGURA >= 8 << 30 {
+            1 << 30
+        } else if ram + HOLGURA >= 4 << 30 {
             512 << 20
         } else if ram + HOLGURA >= 2 << 30 {
             256 << 20

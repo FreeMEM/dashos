@@ -424,7 +424,7 @@ fn principal() -> u64 {
             "guardian" => 32 << 20,
             // La caja Linux (H9): la RAM de su invitado de Linux sale de su cupo, más 32 MB del servicio (tablas de la etapa
             // 2, su montón con el disco del invitado y la terminal). Se calcula con la RAM de la máquina (decisión del
-            // usuario del 2026-11-12): 256 MB con 2 GB, 512 con 4 o más. Sin Linux que arrancar (sin su Image), solo los
+            // usuario del 2026-11-12 y del 2026-11-13): 256 MB con 2 GB, 512 con 4 y 1 GB con 8 o más. Sin Linux que arrancar (sin su Image), solo los
             // 32 MB.
             "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
