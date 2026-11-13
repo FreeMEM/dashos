@@ -47,6 +47,9 @@ const FICHAS: &[(&str, u32, u32, u32, &str)] = &[
     // disco solo para leer (raíz 1, "Sistema") y `C` para leer y escribir (raíz 2, "Home" provisional), y solo va por
     // ellas.
     ("workbench", 1000, 1000, 2, ""),
+    // El explorador de archivos, como el Workbench: de Ana, con el derecho de repartir; se cede sus raíces (Sistema
+    // para leer, `C` como Home y el cajón de la caja Amiga) y solo va por ellas.
+    ("explorador", 1000, 1000, 2, ""),
     // A15: el comprobador aparte, para sujetar el disco mientras lee la foto (administrar). No lee nada por archivos;
     // la raíz es la del disco porque no todos los discos tienen `C` (el de medir-fs no), y sin raíz no hay alta.
     ("comprobador", 1, 1, 1, ""),
@@ -416,12 +419,16 @@ fn principal() -> u64 {
         // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
         // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
         // U6: `sesiones`, también 64: de su cupo salen los grupos de lo que lanza (8 MB cada uno).
-        // S10: el Workbench, 48: cada ventana suya lleva su búfer y las dos fuentes del kit (unos megas).
         // C3: el fondo, 48: la imagen a pantalla entera en el montón y dos juegos de franjas (el que se ve y el nuevo); a
         // 1920 × 1080, unos 8 MB cada cosa.
         let cupo = match nombre(nombre_cab) {
             "archivos" | "sesiones" => 64 << 20,
-            "workbench" | "fondo" => 48 << 20,
+            "fondo" => 48 << 20,
+            // El explorador: sus ventanas (3 MB cada una a 1100 × 720, 8 maximizada en Full HD), las fuentes, un PNG a
+            // medio decodificar (hasta 1,5 Mpx) y 64 miniaturas. El Workbench, desde que los cajones los abre el
+            // explorador, solo pinta los iconos y la Información: 16, lo de siempre. Juntos, lo mismo que antes el
+            // Workbench solo (en `virt`, con 48 para el explorador ya no cabía la caja Amiga).
+            "explorador" => 32 << 20,
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,

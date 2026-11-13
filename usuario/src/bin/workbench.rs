@@ -20,7 +20,11 @@
 //! Los nombres que no se pueden enseñar sin dudas (vacíos, ".", "..", con '/', ':', '|' o de control) no salen ni se
 //! abren, y todo se busca de un paso, por la asa del cajón y un solo nombre.
 //!
-//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos" y 3 el canal "sesiones".
+//! El doble clic en un volumen o en un cajón lo atiende el explorador de archivos (`explorador`, como Nautilus): se le
+//! pide por su canal que abra ese lugar (la raíz y los nombres). Si no está, se abre aquí la ventana de cajón sencilla.
+//!
+//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos", 3 el canal "sesiones" y 4 el
+//! canal "explorador".
 
 #![no_std]
 #![no_main]
@@ -30,6 +34,8 @@ extern crate alloc;
 #[path = "../ventana_cliente.rs"]
 #[allow(dead_code)]
 mod ventana_cliente;
+#[path = "../permisos_kit.rs"]
+mod permisos_kit;
 
 use alloc::collections::BTreeMap;
 use alloc::string::String;
@@ -42,8 +48,9 @@ use kit::grupos::Medida;
 use kit::lienzo::{Color, Lienzo, Rect};
 use kit::objetos::{atr, Arbol, Atr, Clase, Cuando, Obj, Que, Valor};
 use kit::teclado::{Tecla, Teclado};
-use kit::tema::{self, con_opacidad, Estado, Tema};
+use kit::tema::{con_opacidad, Tema};
 use kit::texto::Fuente;
+use permisos_kit::Permisos;
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_keyboard, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool,
@@ -56,6 +63,7 @@ dashos::monton!();
 
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
+const EXPLORADOR: u32 = 4;
 // Los objetos fijos (los de `ventana_cliente` van del 2 al 14); los de cada ventana, desde `PRIMER_ID`, sin repetir.
 const CAPAS: u32 = 20;
 const TEMA: u32 = 22;
@@ -472,112 +480,6 @@ impl Clase for Hueco {
 
     fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut Contexto) -> Medida {
         Medida::elastica(200, 120)
-    }
-}
-
-/// Los permisos de Unix y los bits del Amiga juntos, en una rejilla de casillas (Material 3): filas Dueño, Grupo y Otros
-/// con Leer, Escribir, Ejecutar y No borrar; y una fila más con Guion, Puro, Archivado y Residente. `VALOR` lleva los
-/// bits del Amiga en los bits 16 y siguientes y el modo (12 bits) abajo. Al pulsar se apunta la casilla en `CURSOR` y
-/// al soltar dentro se cambia.
-struct Permisos;
-
-const PERM_ETIQUETA: i32 = 76;
-const PERM_COL: i32 = 80;
-const PERM_CAB: i32 = 24;
-const PERM_FILA: i32 = 40;
-const COLUMNAS: [&str; 4] = ["Leer", "Escribir", "Ejecutar", "No borrar"];
-const FILAS: [&str; 3] = ["Dueño", "Grupo", "Otros"];
-const COLUMNAS_AMIGA: [&str; 4] = ["Guion", "Puro", "Archivado", "Residente"];
-
-impl Permisos {
-    /// El bit de la casilla (fila 0 a 3, columna 0 a 3) en el valor junto.
-    fn bit(fila: usize, col: usize) -> i64 {
-        match (fila, col) {
-            (0..=2, 0..=2) => 0o400 >> (3 * fila + col),
-            (0..=2, 3) => (16 << fila) << 16,
-            (3, _) => ([4, 2, 1, 8][col]) << 16,
-            _ => 0,
-        }
-    }
-
-    /// El centro de la casilla, dentro de `r`.
-    fn centro(r: Rect, fila: usize, col: usize) -> (i32, i32) {
-        let y = if fila < 3 { PERM_CAB + fila as i32 * PERM_FILA } else { 2 * PERM_CAB + 3 * PERM_FILA };
-        (r.x + PERM_ETIQUETA + col as i32 * PERM_COL + PERM_COL / 2, r.y + y + PERM_FILA / 2)
-    }
-
-    fn casilla_en(r: Rect, x: i32, y: i32) -> i64 {
-        for fila in 0..4 {
-            for col in 0..4 {
-                let (cx, cy) = Self::centro(r, fila, col);
-                if (x - cx).abs() <= 20 && (y - cy).abs() <= 20 {
-                    return (fila * 4 + col) as i64;
-                }
-            }
-        }
-        -1
-    }
-}
-
-impl Clase for Permisos {
-    fn nombre(&self) -> &'static str {
-        "permisos"
-    }
-
-    fn medida(&self, _attrs: &BTreeMap<Atr, Valor>, _ctx: &mut Contexto) -> Medida {
-        Medida::fija(PERM_ETIQUETA + 4 * PERM_COL, 2 * PERM_CAB + 4 * PERM_FILA)
-    }
-
-    fn dibujar(&self, attrs: &BTreeMap<Atr, Valor>, l: &mut Lienzo, r: Rect, ctx: &mut Contexto, e: Estado) {
-        let t = ctx.tema;
-        let valor = attrs.get(&atr::VALOR).map_or(0, Valor::int);
-        let pulsada = if e.pulsado { attrs.get(&atr::CURSOR).map_or(-1, Valor::int) } else { -1 };
-        let suave = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_variante_superficie };
-        for (cab, nombres) in [(0, COLUMNAS), (PERM_CAB + 3 * PERM_FILA, COLUMNAS_AMIGA)] {
-            for (c, n) in nombres.iter().enumerate() {
-                let cx = r.x + PERM_ETIQUETA + c as i32 * PERM_COL + PERM_COL / 2;
-                centrado(&mut ctx.medium, l, cx, r.y + cab + 16, n, 12, suave);
-            }
-        }
-        let tinta = if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_superficie };
-        for (fila, n) in FILAS.iter().chain(["Amiga"].iter()).enumerate() {
-            let (_, cy) = Self::centro(r, fila, 0);
-            ctx.regular.dibujar(l, r.x, cy + 5, n, 14, tinta);
-            for col in 0..4 {
-                let (cx, cy) = Self::centro(r, fila, col);
-                let marcada = valor & Self::bit(fila, col) != 0;
-                let caja = Rect::new(cx - 9, cy - 9, 18, 18);
-                if pulsada == (fila * 4 + col) as i64 {
-                    l.redondeado(Rect::new(cx - 20, cy - 20, 40, 40), 20, con_opacidad(if marcada { t.sobre_superficie } else { t.primario }, 26));
-                }
-                if marcada {
-                    l.redondeado(caja, 2, if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.primario });
-                    let marca = if e.desactivado { t.superficie } else { t.sobre_primario };
-                    let p = |x: i32, y: i32| (caja.x * 8 + x, caja.y * 8 + y);
-                    l.trazo(p(30, 74), p(58, 102), 16, marca);
-                    l.trazo(p(58, 102), p(115, 45), 16, marca);
-                } else {
-                    l.borde(caja, 2, 2, if e.desactivado { tema::apagado(t.sobre_superficie) } else { t.sobre_variante_superficie });
-                }
-            }
-        }
-    }
-
-    fn pulsable(&self) -> bool {
-        true
-    }
-
-    fn arrastrar(&self, _attrs: &BTreeMap<Atr, Valor>, r: Rect, x: i32, y: i32) -> Vec<(Atr, Valor)> {
-        alloc::vec![(atr::CURSOR, Valor::Int(Self::casilla_en(r, x, y)))]
-    }
-
-    fn clic(&self, attrs: &BTreeMap<Atr, Valor>) -> Vec<(Atr, Valor)> {
-        let k = attrs.get(&atr::CURSOR).map_or(-1, Valor::int);
-        if !(0..16).contains(&k) {
-            return Vec::new();
-        }
-        let v = attrs.get(&atr::VALOR).map_or(0, Valor::int);
-        alloc::vec![(atr::VALOR, Valor::Int(v ^ Self::bit(k as usize / 4, k as usize % 4)))]
     }
 }
 
@@ -1080,9 +982,30 @@ impl App {
         }
     }
 
-    /// Abre la ventana de un volumen (su raíz).
+    /// Pide al explorador que abra un lugar: "abrir", la raíz y los nombres separados por un 0. Verdad si se lo pidió.
+    fn al_explorador(&self, lugar: &Lugar) -> bool {
+        let mut m = Vec::from(&b"abrir"[..]);
+        m.push(lugar.raiz as u8);
+        for (i, n) in lugar.nombres.iter().enumerate() {
+            if i > 0 {
+                m.push(0);
+            }
+            m.extend_from_slice(n.as_bytes());
+        }
+        if m.len() > 240 {
+            return false;
+        }
+        let e = dashos::canal_escribir(EXPLORADOR, &m, &[]);
+        println!("  [workbench] pide al explorador que abra {}: {}", lugar.texto(), e);
+        e == 0
+    }
+
+    /// Abre la ventana de un volumen (su raíz): en el explorador, o aquí si no está.
     fn abrir_volumen(&mut self, raiz: u32) {
         let lugar = Lugar { raiz, nombres: Vec::new() };
+        if self.al_explorador(&lugar) {
+            return;
+        }
         match listar(&self.ar, &mut self.c, raiz) {
             Ok((ent, raros)) => {
                 self.ventana_cajon(lugar, raiz, ent, raros);
@@ -1177,6 +1100,11 @@ impl App {
                 String::from("Solo se lanzan los de Programas")
             };
             self.aviso_cajon(k, &aviso);
+            return;
+        }
+        let mut nombres = lugar.nombres.clone();
+        nombres.push(e.nombre.clone());
+        if self.al_explorador(&Lugar { raiz: lugar.raiz, nombres }) {
             return;
         }
         // Un paso, por la asa del cajón y el nombre; y se mira que siga siendo un cajón.
