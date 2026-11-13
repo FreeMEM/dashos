@@ -106,6 +106,13 @@ impl Entrada {
         self.previo.copy_from_slice(&i[..8]);
     }
 
+    /// Lo que dijo una tableta (`hid_informe::leer`): evento 3, con la posición absoluta (0 a 32767 en cada eje,
+    /// en dos bytes cada una), los botones y la rueda.
+    pub fn tableta(&mut self, l: crate::hid_informe::Lectura) {
+        let (x, y) = ((l.x.min(crate::hid_informe::ESCALA) as u16).to_le_bytes(), (l.y.min(crate::hid_informe::ESCALA) as u16).to_le_bytes());
+        self.mandar([3, l.botones, x[0], x[1], y[0], y[1], l.rueda as i8 as u8, 0]);
+    }
+
     /// Un informe de ratón de arranque (HID 1.11, B.2): botones, x, y y, si lo trae, la rueda.
     pub fn raton(&mut self, i: &[u8]) {
         if i.len() >= 3 {

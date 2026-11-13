@@ -20,14 +20,20 @@ hub y usa los teclados y ratones en modo de arranque (HID 1.11, apéndice B).
 
 Cada evento es un mensaje de 8 bytes:
 
-| Byte | Tecla | Ratón |
-|---|---|---|
-| 0 | 1 | 2 |
-| 1 | Uso HID (página 7, teclado); los modificadores son 0xE0 a 0xE7 | Botones (bit 0 izquierdo, 1 derecho, 2 central) |
-| 2 | 1 pulsada, 0 soltada | Movimiento x, con signo |
-| 3 | 0 | Movimiento y, con signo |
-| 4 | 0 | Rueda, con signo (0 si el ratón no la manda) |
-| 5-7 | 0 | 0 |
+| Byte | Tecla | Ratón | Tableta (solo `xhci`) |
+|---|---|---|---|
+| 0 | 1 | 2 | 3 |
+| 1 | Uso HID (página 7, teclado); los modificadores son 0xE0 a 0xE7 | Botones (bit 0 izquierdo, 1 derecho, 2 central) | Botones |
+| 2 | 1 pulsada, 0 soltada | Movimiento x, con signo | x absoluta, de 0 a 32767 (2 bytes, little-endian) |
+| 3 | 0 | Movimiento y, con signo | |
+| 4 | 0 | Rueda, con signo (0 si el ratón no la manda) | y absoluta, de 0 a 32767 (2 bytes) |
+| 5 | 0 | 0 | |
+| 6 | 0 | 0 | Rueda, con signo |
+| 7 | 0 | 0 | 0 |
+
+La tableta es un puntero absoluto (la `usb-tablet` de QEMU, pantallas táctiles en modo ratón): `xhci` la reconoce por
+su descriptor de informe (`usuario/src/hid_informe.rs`), sin modo de arranque. El compositor lleva el cursor a ese punto
+de todo el espacio de las salidas.
 
 Si la cola del canal está llena, el evento se pierde.
 

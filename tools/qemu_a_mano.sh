@@ -4,7 +4,8 @@
 #   tools/qemu_a_mano.sh [ANCHOxALTO]        (por defecto 1920x1080)
 #
 # Compila la imagen de `virt` y el cargador UEFI de este árbol, copia el disco de prueba (el original no se toca) y
-# abre QEMU en una ventana. Clic dentro para que capture el ratón; Ctrl+Alt+G lo suelta. Cerrar la ventana lo acaba.
+# abre QEMU en una ventana. El ratón es una tableta USB (posición absoluta): va donde esté el del PC, sin capturarlo.
+# Cerrar la ventana lo acaba.
 # Lo que dice DashOS por el puerto serie queda en target/a-mano/serie.txt.
 #
 # Ojo: de momento es la imagen de las pruebas automáticas (lanza sus programas de prueba y bloquea la pantalla a los
@@ -24,7 +25,7 @@ exec qemu-system-aarch64 -name DashOS -M virt,gic-version=2,acpi=off,highmem=off
     -bios /usr/share/edk2/aarch64/QEMU_EFI.fd -drive file=fat:rw:"$D/arranque",format=raw,if=virtio \
     -display gtk,zoom-to-fit=on -serial file:"$D/serie.txt" -device ramfb \
     -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 \
-    -device usb-mouse,bus=xhci.0,port=2 \
+    -device usb-tablet,bus=xhci.0,port=2 \
     -drive file="$D/disco.img",if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv \
     -audiodev pipewire,id=snd0 -device virtio-sound-pci,audiodev=snd0 \
     -netdev user,id=red0 -device virtio-net-pci,netdev=red0,disable-legacy=on,mac=52:54:00:12:34:56,romfile=
