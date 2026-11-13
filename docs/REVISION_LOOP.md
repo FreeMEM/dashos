@@ -1776,3 +1776,13 @@ Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
   caja). Sin coste medible (6 ms `saludo.exe`, 248 ms los de Dash).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN;
   `make tarjeta-pi5` sale.
+
+### 2026-11-13 16:30: ventanas Amiga a 2x/3x y Firefox con ratón y teclado, en revision
+- Fusionada `caja-amiga-escala`: la caja escala sus ventanas por un factor entero al mandarlas al compositor (vecino
+  más cercano, solo lo dañado; el programa no se entera; el ratón se divide entre el factor). `auto`: 3x desde
+  3200x1800, 2x desde 1600x900, 1x por debajo; `escala amiga` y `escala-programa` en `Prefs/cajas` (sin fila en
+  Ajustes todavía). Pendiente: el clic en la tercera opción del mx con el tema clásico no llega (también a 1x).
+- Fusionada `firefox-entrada`: el compositor guarda las regiones de entrada (`wl_region`, `set_input_region`, con
+  tope de 512 trozos) y el ratón ya no cae en una subsuperficie fuera de su región; Firefox recibe clics y teclas
+  (barra de direcciones, tecleo, Intro). Variante corta: `CAJA_SOLO=firefox`.
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
