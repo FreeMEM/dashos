@@ -136,6 +136,10 @@ while time.time() - inicio < total:
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
         # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
         libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")
+        # Ni con la sesión bloqueada: la captura saldría de la pantalla de bloqueo (lo mismo que `bloqueado_ahora`, abajo).
+        bloqueo_caja = max(texto.rfind("[guardian] sesión bloqueada"), texto.rfind("pantalla de bloqueo pintada"),
+                           texto.rfind("pantalla de entrada pintada"))
+        libre_caja = libre_caja and bloqueo_caja <= max(texto.rfind("[guardian] desbloqueado"), texto.rfind("[guardian] entra "))
         # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), tras la de Dash: cuando se ve entera (una captura
         # comprueba que sus cuatro esquinas y un sitio vacío de dentro son de los colores del Workbench: si otra ventana
         # del arranque la tapa, los clics irían a esa; se mira otra vez en la vuelta siguiente), la captura
@@ -178,9 +182,10 @@ while time.time() - inicio < total:
                     clasica = len(vistos) == 4 and all(c in wb for c in vistos) and vacio == [(0xAA, 0xAA, 0xAA)]
                     # Con el aspecto de DashOS (S26): las dos esquinas de arriba, de la barra; las de abajo y el sitio
                     # vacío, de la superficie (otra ventana encima no da eso).
-                    # Y la casilla marcada (en (103, 25)), del primario: no es la barra ni la superficie (una ventana
-                    # del kit encima tiene la misma superficie).
-                    casilla = pixeles(foto, [(x + 103 * f_gt, y + 25 * f_gt)])
+                    # Y la casilla marcada, del primario: no es la barra ni la superficie (una ventana del kit encima
+                    # tiene la misma superficie). En (100, 21), dentro de la casilla y fuera de la marca blanca (en
+                    # (103, 25), donde se pulsa, ya está la marca).
+                    casilla = pixeles(foto, [(x + 100 * f_gt, y + 21 * f_gt)])
                     material = len(vistos) == 4 and len(vacio) == 1 and vistos[0] == vistos[1] != vistos[2] \
                         and vistos[2] == vistos[3] == vacio[0] and len(casilla) == 1 and casilla[0] not in (vistos[0], vacio[0]) \
                         and max(casilla[0]) - min(casilla[0]) > 40

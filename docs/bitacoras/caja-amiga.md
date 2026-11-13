@@ -1025,3 +1025,45 @@ regla? ¿Hace falta 4x (8K) o un 1,5x?
    centro lo lleva ahora el agente del escritorio: mejor con él.
 2. **La caja Linux** lee el mismo ajuste pero no escala (sus programas ya son HiDPI con GTK).
 3. **El factor no es fraccionario** (1,5x): con vecino más cercano saldrían píxeles de dos tamaños.
+4. **En el tema clásico, el clic del guion en la tercera opción del mx no llega** (ni `GADGETDOWN`): ya pasaba a 1x
+   (se ve el mx en "Verde" en `caja-gadtools-menu-clasico-ondas-fhd.png` de la rama `gadtools-material`); con el tema
+   Material sí llega. No es de la escala; sin mirar.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480` y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro
+fondo;cajas=general dashos"` (u `original`), sin línea de escala: la automática, 2x.
+
+- `caja-gadtools-escala-material-fhd.png` y `caja-gadtools-escala-clasico-fhd.png`: la ventana de GadTools a 2x (820x384
+  en la pantalla), entera, antes de los clics.
+- `caja-gadtools-menu-escala-material-fhd.png` y `caja-gadtools-menu-escala-clasico-fhd.png`: con el menú Proyecto
+  abierto con el botón derecho y "Salir" señalado, tras los clics del guion (ciclo en "Dos", "Amiga 4000" en la lista,
+  "Aceptado"; con Material, el mx en "Azul"). Al soltar llega `MENUPICK` y el programa acaba con 0:
+
+```
+│   [caja-amiga] ventana Amiga en pantalla (410x192, a 2x): GadTools en DashOS
+│   [compositor] ventana de caja-amiga en (40, 80) de 820x384
+│   [caja-amiga] gadtools: GADGETUP del gadget 2, codigo 0
+│   [caja-amiga] gadtools: GADGETUP del gadget 3, codigo 1
+│   [caja-amiga] gadtools: GADGETDOWN del gadget 4, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 10, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 0, codigo 0
+│   [caja-amiga] gadtools: MENUPICK menu 0 elemento 2 (2)
+│   [caja-amiga] gadtools.exe acabó con 0 (cerrada por el programa), 1286 llamadas nativas, en 16344 ms, 0 avisos, 0 bloques sin soltar: bien
+```
+
+El guion de las capturas, además: no mira ni pulsa la ventana de GadTools con la sesión bloqueada (la captura salía de
+la pantalla de bloqueo), y reconoce la casilla Material en (100, 21), dentro de la casilla y fuera de la marca blanca
+(en (103, 25), donde pulsa, ya está la marca: con ella no la daba por vista).
+
+### Pruebas
+
+- `cargo test`: `wayland` (92, con `aspecto::escalas` y las hostiles nuevas: 0, 4, negativos, números enormes, "2x",
+  líneas repetidas, nombres malos, demasiadas excepciones, y la basura al azar con las palabras nuevas) e intuition
+  (con `escala`: el factor que se baja si no cabe, coordenadas en el borde, fuera y negativas, la copia por vecino más
+  cercano a 1x, 2x y 3x, solo lo dañado, daños fuera o enormes, búferes que no cuadran como al cambiar de tamaño entre
+  medias, factor 0 y enorme). clippy limpio en lo nuevo.
+- `make prueba`: BIEN esperado.txt y BIEN cargador hunk.
+- `make arranque-virt` (800x600: factor 1, las líneas de siempre sin cambios): las cinco BIEN, también con el guion
+  final (una vuelta dio MAL en la captura del compositor, la de `ventana-a` y `ventana-b`, sin ventanas Amiga, con
+  otra QEMU de otro agente a la vez; repetida, BIEN). `-vm`, `-2`, `-escritorio` y `-diag`: BIEN.
