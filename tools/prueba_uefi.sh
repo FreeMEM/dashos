@@ -1822,9 +1822,7 @@ while time.time() - inicio < total:
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
         # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
         # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
-        # Trasfondo: tampoco mientras la ventana Amiga espera su clic de cerrar (amiga == 1): el clic en Ajustes la sube y
-        # su barra tapa el gadget de cerrar de la ventana Amiga.
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and amiga != 1:
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
