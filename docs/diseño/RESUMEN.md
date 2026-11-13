@@ -171,3 +171,9 @@ Del 2026-11-10, aceptados por el usuario.
   propias (base de modos con PAL, HAM, AGA y RTG, escalado con su proporción) y clonadas; arrastrar dejando dos a la
   vez; menús en la barra; ficha de compatibilidad por programa.
 
+- **El malware del Amiga** (S28, 2026-11-13): por familias (bloque de arranque, enlace, troyanos, residentes,
+  parches, disco directo, memoria de otros, arranque), qué puede en la caja y qué lo para. Capas sin firmas: el
+  proceso; `SYS:` de solo lectura también en el servicio; una guardia de dos que no deja cambiar ejecutables, iconos,
+  guiones de arranque ni bloques de arranque de imágenes; lo que un programa deja en exec, deshecho al acabar; la
+  memoria soltada, a cero. Siete virus de laboratorio en la prueba de siempre. Lo primero que falta: sacar el
+  ejecutable de la caja de los 4 GB del 68k.

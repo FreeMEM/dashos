@@ -147,8 +147,10 @@ def capturar(nombre):
 
 
 def ventana_linux(n):
-    """Dónde puso el compositor la ventana número `n` (desde 1) de un programa de Linux."""
+    """Dónde puso el compositor la ventana número `n` (desde 1) de un programa de Linux; con 0, la última."""
     v = re.findall(r"\[compositor\] ventana de caja-linux \(un programa de su puente de Wayland\) en \((\d+), (\d+)\)", texto())
+    if n == 0:
+        return (int(v[-1][0]), int(v[-1][1])) if v else None
     return (int(v[n - 1][0]), int(v[n - 1][1])) if len(v) >= n else None
 
 
@@ -205,7 +207,8 @@ if modo == "wayland":
     teclear("prueba-foot &")
     if esperar(r"foot: lista", 600):
         time.sleep(3.0)
-        v = ventana_linux(2)
+        # La de foot es la última que ha salido (antes van las de las pruebas de la GPU, S25: no es la segunda).
+        v = ventana_linux(0)
         if v:
             clic(v[0] + 100, v[1] + 100)
             teclear("hola")
