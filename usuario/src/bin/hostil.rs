@@ -610,7 +610,21 @@ fn barra_ajena() -> bool {
         si(sin_capas && capa_negada),
         si(panel_negado)
     );
-    sin_capas && capa_negada && panel_negado
+    // S27: cambiar de espacio de trabajo como la barra (con la versión 3 del tema, que todos ven), ni con un número raro.
+    let mut espacio_negado = true;
+    for n in [2u32, 0, u32::MAX] {
+        let Some((lectura, copia)) = conectar() else { return false };
+        let mut e = Escritor::new();
+        e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+        e.empezar(2, wl_registry::req::BIND).uint(7).texto(Some("dashos_tema_v1")).uint(3).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::ESPACIO).uint(n).fin();
+        e.empezar(1, wl_display::req::SYNC).uint(70).fin();
+        mandar(&e);
+        espacio_negado &= leer(lectura, copia, 60).1;
+        escribir(VENTANAS, &[TROZO_ADIOS], &[]);
+    }
+    println!("  [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: {}", si(espacio_negado));
+    sin_capas && capa_negada && panel_negado && espacio_negado
 }
 
 /// S10c: el tema del sistema solo lo cambia el centro de control. El hostil se suscribe (`dashos_tema_v1`, el global

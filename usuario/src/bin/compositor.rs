@@ -61,7 +61,9 @@ static GLOBALES: [Global; 7] = [
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
     // hechos (C3). Los `wl_output` van aparte, uno por pantalla (multimonitor).
-    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    // La 3 (S27) trae los espacios de trabajo y el volumen, solo para la barra y el panel: a los demás, pedirlos es un
+    // error.
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     // El portapapeles (H9): por ahora solo los objetos, sin copiar ni pegar entre programas (ver `PORTAPAPELES`).
     PORTAPAPELES,
 ];
@@ -75,7 +77,7 @@ static GLOBALES_ESCRITORIO: [Global; 10] = [
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
     Global { nombre: 8, interfaz: &tablas::EXT_SESSION_LOCK_MANAGER_V1, version: 1 },
     Global { nombre: 9, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     PORTAPAPELES,
 ];
 /// Los de las capas del escritorio (S10): solo las capas, sin el bloqueo de la sesión ni los avisos de inactividad. Con
@@ -87,7 +89,8 @@ static GLOBALES_CAPAS: [Global; 8] = [
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    // La 3 (S27): los espacios de trabajo a la barra y las teclas del volumen al panel.
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     PORTAPAPELES,
 ];
 /// `wl_data_device_manager` (v3): muchos programas de Linux no arrancan sin él (foot: "no clipboard available"). Sus
@@ -179,6 +182,25 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, objeto) in core::mem::take(&mut escena.avisos_lanzador) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_lanzador(&mut cli.con, objeto);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // Los espacios de trabajo, a la barra (S27), si cambiaron; y las teclas del volumen, al panel.
+    escena.revisar_espacios();
+    for (cl, objeto, actual, ocupados) in core::mem::take(&mut escena.avisos_espacios) {
+        println!("  [compositor] espacios: se ve el {}, con ventanas {:#05b}", actual, ocupados);
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_espacios(&mut cli.con, objeto, actual, ocupados);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    for (cl, objeto, paso) in core::mem::take(&mut escena.avisos_volumen) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_volumen(&mut cli.con, objeto, paso);
             if !mandar(cli) {
                 caidos.push(cl);
             }

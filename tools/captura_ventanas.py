@@ -84,8 +84,9 @@ def main():
     # el fondo de escritorio, o el color liso si no hay).
     if not casi(en(5, 60), fondo_en(5, 60)):
         fallos.append(f"fondo en (5, 60): {en(5, 60)}, y debía ser {fondo_en(5, 60)}")
-    if casi(en(5, 5), fondo_en(5, 5)) or casi(en(400, 20), fondo_en(400, 20)):
-        fallos.append(f"sin barra arriba: (5, 5) = {en(5, 5)}, (400, 20) = {en(400, 20)}")
+    # S27: la barra es una tira flotante (de x = 6, y = 4 a 32 de alto): se mira dentro de ella.
+    if casi(en(8, 20), fondo_en(8, 20)) or casi(en(400, 20), fondo_en(400, 20)):
+        fallos.append(f"sin barra arriba: (8, 20) = {en(8, 20)}, (400, 20) = {en(400, 20)}")
     # Orden 1: ventana-a en (40, 40) debajo y ventana-b en (72, 72) encima.
     orden1 = [
         ((45, 45), ROJO),

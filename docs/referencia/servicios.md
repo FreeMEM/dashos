@@ -96,6 +96,16 @@ que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verd
 sin zona exclusiva propia se colocan dentro de lo que dejan las barras; las ventanas maximizadas se reajustan si la barra
 sale o se va.
 
+Versión 3 (S27, `docs/diseño/S27-escritorio-dms.md`): **espacios de trabajo** del 1 al 9. Cada ventana es del espacio que
+se veía al salir; las de los otros no se pintan, no reciben teclado ni ratón y sus avisos de `frame` salen a ritmo bajo,
+como las de una sesión de detrás (U6). Super+1..9 cambia de espacio y Super+Mayúsculas+1..9 lleva allí la ventana con el
+teclado (sin ir con ella); esas teclas no llegan a la ventana. A la barra, el evento `espacios` (el que se ve y los que
+tienen ventanas, un bit por espacio) al suscribirse y al cambiar; la petición `espacio` (solo la barra; a otro, error de
+protocolo; fuera de 1 a 9, nada) cambia de espacio. **Teclas del volumen** (HID 0x7F, 0x80 y 0x81): si el panel rápido
+está suscrito, le llegan como el evento `volumen` (1, -1 o 0 para el silencio) y no a la ventana; si no, a la ventana.
+Bloqueada la sesión, nada de esto. Los programas normales ven también la versión 3, pero solo la barra y el panel
+reciben sus eventos.
+
 **Multimonitor.** Un `wl_output` por pantalla, cada uno con su global (6 la principal; 11, 12 y 13 las demás), su
 nombre (DASHOS-1, DASHOS-2...) y su sitio en el espacio común (`geometry`; las pantallas van una al lado de otra, de
 izquierda a derecha). Sin xdg-output: la escala es 1 y el tamaño lógico es el del modo. Si las pantallas cambian con

@@ -29,6 +29,8 @@ mod ventana_cliente;
 #[path = "../panel_mosaicos.rs"]
 #[allow(dead_code)]
 mod panel_mosaicos;
+#[path = "../volumen_osd.rs"]
+mod volumen_osd;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -37,6 +39,7 @@ use kit::lienzo::{Color, Lienzo, Rect};
 use kit::tema::{apagado, Tema};
 use kit::texto::Fuente;
 use panel_mosaicos::{Orden, MAX_TEXTO, MOSAICOS};
+use volumen_osd::{Osd, Volumen};
 use ventana_cliente::*;
 use wayland::tablas::{
     dashos_tema_v1, wl_buffer, wl_compositor, wl_display, wl_pointer, wl_registry, wl_seat, wl_shm, wl_shm_pool, wl_surface, zwlr_layer_shell_v1,
@@ -55,6 +58,16 @@ const CAPA: u32 = 21;
 const TEMA: u32 = 22;
 /// El segundo búfer (el primero es `BUFER`), para cambiar de altura sin soltar el que se ve.
 const BUFER_2: u32 = 23;
+/// S27: el aviso del volumen en pantalla (OSD): su superficie, su capa, su búfer y su memoria (solo mientras se ve).
+const SUP_OSD: u32 = 24;
+const CAPA_OSD: u32 = 25;
+const BUFER_OSD: u32 = 26;
+const POOL_OSD: u32 = 27;
+const VA_OSD: usize = VA + (1 << 32);
+/// Una píldora de 320 × 56, abajo en el centro, a 24 del borde.
+const ANCHO_OSD: i32 = 320;
+const ALTO_OSD: i32 = 56;
+const ABAJO_OSD: i32 = 24;
 const ANCHO: i32 = 300;
 /// Lo más alto que se pinta (la memoria es para esto).
 const ALTO_MAX: i32 = 400;
@@ -224,7 +237,7 @@ fn centrado(f: &mut Fuente, l: &mut Lienzo, r: Rect, base: i32, texto: &str, tam
 struct Estado {
     tema: Tema,
     oscuro: bool,
-    volumen: u32,
+    volumen: Volumen,
     orden: Orden,
     editando: bool,
 }
@@ -258,7 +271,8 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
                 OSCURO if e.oscuro => String::from("Encendido"),
                 OSCURO => String::from("Apagado"),
                 BLOQUEAR => String::from("Super+L"),
-                _ => alloc::format!("{} %", e.volumen),
+                _ if e.volumen.silencio => String::from("Silencio"),
+                _ => alloc::format!("{} %", e.volumen.nivel),
             };
             medio.dibujar(&mut l, r.x + 20, r.y + 28, MOSAICOS[m].1, 16, texto);
             fuente.dibujar(&mut l, r.x + 20, r.y + 49, &abajo, 14, suave);
@@ -266,7 +280,7 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
         // Los botones del volumen: de icono, tonales (el contenedor secundario, como Editar); en el tope, apagados.
         for &(z, a) in &d.zonas {
             if matches!(a, Accion::VolumenMenos | Accion::VolumenMas) {
-                let apagado_si = (a == Accion::VolumenMenos && e.volumen == 0) || (a == Accion::VolumenMas && e.volumen == 100);
+                let apagado_si = (a == Accion::VolumenMenos && e.volumen.efectivo() == 0) || (a == Accion::VolumenMas && e.volumen.efectivo() == 100);
                 l.redondeado(z, ICONO / 2, if apagado_si { t.contenedor() } else { t.contenedor_secundario() });
                 let color = if apagado_si { apagado(t.sobre_superficie) } else { t.sobre_contenedor_secundario() };
                 icono(&mut l, z, if a == Accion::VolumenMenos { Icono::Menos } else { Icono::Poner }, color);
@@ -299,6 +313,53 @@ fn pintar(px: &mut [u32], alto: i32, e: &Estado, d: &Disposicion, fuente: &mut F
         let color = if desactivado { apagado(t.sobre_variante_superficie) } else { t.sobre_variante_superficie };
         icono(&mut l, z, i, color);
     }
+}
+
+/// El altavoz de Material (24), centrado en `r`: la caja, la bocina y dos ondas; con el silencio, una cruz en vez de
+/// las ondas. Las ondas, como trozos de un borde redondo recortado a la derecha.
+fn icono_altavoz(l: &mut Lienzo, r: Rect, silencio: bool, nivel: u32, color: Color) {
+    let (cx, cy) = (r.x + r.w / 2 - 4, r.y + r.h / 2);
+    l.redondeado(Rect::new(cx - 7, cy - 3, 5, 7), 1, color);
+    // La bocina: un trapecio, columna a columna, con los bordes suavizados por dos trazos.
+    for i in 0..5 {
+        l.rellenar(Rect::new(cx - 2 + i, cy - 3 - i, 1, 7 + 2 * i), color);
+    }
+    trazo(l, (cx - 2, cy - 3), (cx + 2, cy - 7), 1, color);
+    trazo(l, (cx - 2, cy + 3), (cx + 2, cy + 7), 1, color);
+    if silencio {
+        trazo(l, (cx + 6, cy - 3), (cx + 11, cy + 2), 2, color);
+        trazo(l, (cx + 11, cy - 3), (cx + 6, cy + 2), 2, color);
+        return;
+    }
+    l.recortar(Rect::new(cx + 4, r.y, r.w, r.h));
+    if nivel > 0 {
+        l.borde(Rect::new(cx - 1, cy - 4, 9, 9), 5, 2, color);
+    }
+    if nivel > 50 {
+        l.borde(Rect::new(cx - 4, cy - 8, 17, 17), 9, 2, color);
+    }
+    l.soltar_recorte();
+}
+
+/// El OSD del volumen: una píldora en el contenedor más alto (como un menú o una tarjeta elevada de Material 3), con el
+/// altavoz, la pista (activa en el primario, el resto en el contenedor secundario, como el deslizador del kit) y el
+/// valor. El compositor le pone la sombra.
+fn pintar_osd(px: &mut [u32], v: &Volumen, t: &Tema, medio: &mut Fuente) {
+    px.fill(0);
+    let mut l = Lienzo::new(px, ANCHO_OSD, ALTO_OSD, ANCHO_OSD as usize);
+    let r = Rect::new(0, 0, ANCHO_OSD, ALTO_OSD);
+    l.redondeado(r, ALTO_OSD / 2, t.contenedor_alto());
+    icono_altavoz(&mut l, Rect::new(16, 16, 24, 24), v.silencio, v.nivel, t.sobre_superficie);
+    let texto = if v.silencio { String::from("Silencio") } else { alloc::format!("{} %", v.nivel) };
+    let ancho_texto = medio.medir("Silencio", 14).ancho.max(medio.medir("100 %", 14).ancho);
+    let pista = Rect::new(56, (ALTO_OSD - 8) / 2, ANCHO_OSD - 56 - 20 - ancho_texto - 16, 8);
+    l.redondeado(pista, 4, t.contenedor_secundario());
+    let lleno = pista.w * v.efectivo() as i32 / 100;
+    if lleno > 0 {
+        l.redondeado(Rect::new(pista.x, pista.y, lleno.max(8), pista.h), 4, if v.silencio { apagado(t.sobre_superficie) } else { t.primario });
+    }
+    let ancho = medio.medir(&texto, 14).ancho;
+    medio.dibujar(&mut l, ANCHO_OSD - 20 - ancho, ALTO_OSD / 2 + 5, &texto, 14, t.sobre_superficie);
 }
 
 /// El volumen general al servicio de sonido (sin respuesta).
@@ -427,7 +488,8 @@ fn principal() -> u64 {
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gs).texto(Some("wl_shm")).uint(1).uint(SHM).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(ga).texto(Some("wl_seat")).uint(7).uint(ASIENTO).fin();
     e.empezar(REGISTRO, wl_registry::req::BIND).uint(gl).texto(Some("zwlr_layer_shell_v1")).uint(4).uint(CAPAS).fin();
-    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(1).uint(TEMA).fin();
+    // La 3: las teclas del volumen (S27).
+    e.empezar(REGISTRO, wl_registry::req::BIND).uint(gt).texto(Some("dashos_tema_v1")).uint(3).uint(TEMA).fin();
     e.empezar(ASIENTO, wl_seat::req::GET_POINTER).uint(PUNTERO).fin();
     c.mandar(&e);
     // La memoria del dibujo, una vez; los búferes, según la altura.
@@ -442,7 +504,11 @@ fn principal() -> u64 {
     e.empezar(SHM, wl_shm::req::CREATE_POOL).uint(POOL).llave(copia as u32).int(tamano as i32).fin();
     c.mandar(&e);
     println!("  [panel] en marcha: Super+A lo abre");
-    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: 100, orden, editando: false };
+    let mut est = Estado { tema: Tema::CLARO, oscuro: false, volumen: Volumen::new(), orden, editando: false };
+    // S27: el OSD del volumen (lo que dura y lo juntado), si ya tiene su configure, y su memoria mientras se ve.
+    let mut osd = Osd::default();
+    let mut osd_listo = false;
+    let mut hoja_osd: Option<Lamina> = None;
     let mut abierto = false;
     // Cuántas veces se abrió (con Super+A o con el botón de la barra): para las pruebas.
     let mut veces_abierto = 0u32;
@@ -494,10 +560,32 @@ fn principal() -> u64 {
     // Lo que hay que decir tras el próximo pintado (para las pruebas): (decir, recién abierto).
     let mut por_decir = (false, false);
     loop {
-        let Some((o, orden_ev, cuerpo)) = c.evento() else {
-            println!("  [panel] se cortó la conexión con el compositor");
-            return 5;
+        // Con el OSD a la vista, se espera como mucho hasta que toque quitarlo; sin él, sin plazo, como antes.
+        let ev = match osd.hasta {
+            Some(h) => c.evento_plazo(h.saturating_sub(dashos::ahora_us()).max(1)),
+            None => c.evento().map(Some).ok_or(()),
         };
+        let ev = match ev {
+            Err(()) => {
+                println!("  [panel] se cortó la conexión con el compositor");
+                return 5;
+            }
+            Ok(ev) => ev,
+        };
+        if let Some(juntadas) = osd.vencido(dashos::ahora_us()) {
+            let mut e = Escritor::new();
+            e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::DESTROY).fin();
+            e.empezar(SUP_OSD, wl_surface::req::DESTROY).fin();
+            e.empezar(BUFER_OSD, wl_buffer::req::DESTROY).fin();
+            if let Some(h) = hoja_osd.take() {
+                h.soltar(&mut e);
+            }
+            c.mandar(&e);
+            osd_listo = false;
+            let v = est.volumen;
+            println!("  [panel] OSD cerrado: {} pulsaciones; volumen {}{}", juntadas, v.nivel, if v.silencio { " (silencio)" } else { "" });
+        }
+        let Some((o, orden_ev, cuerpo)) = ev else { continue };
         let palabra = |i: usize| u32::from_le_bytes(cuerpo[4 * i..4 * i + 4].try_into().unwrap());
         // Cerrar el panel: si se estaba editando, se acaba la edición y se guarda.
         let cerrar = |c: &mut Cliente, est: &mut Estado, antes: &Orden, bloquear: bool| {
@@ -562,6 +650,57 @@ fn principal() -> u64 {
                 pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, decir, ahora);
             }
             (CAPA, zwlr_layer_surface_v1::ev::CLOSED) => abierto = false,
+            // S27: una tecla del volumen. Se cambia, se manda al servicio de sonido y sale (o se alarga) el OSD. Una
+            // ráfaga solo repinta la misma capa.
+            (TEMA, dashos_tema_v1::ev::VOLUMEN) => {
+                let paso = palabra(0) as i32;
+                if est.volumen.tecla(paso) {
+                    pedir_volumen(est.volumen.efectivo());
+                }
+                if abierto && configurado > 0 && !est.editando {
+                    pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
+                }
+                if osd.pulsacion(dashos::ahora_us()) {
+                    let mut e = Escritor::new();
+                    let Some(hoja) = Lamina::nueva(&mut e, (ANCHO_OSD * ALTO_OSD * 4) as usize, VA_OSD, POOL_OSD) else {
+                        println!("  [panel] sin memoria para el OSD");
+                        osd = Osd::default();
+                        continue;
+                    };
+                    hoja_osd = Some(hoja);
+                    // Abajo en el centro (ancla 2), en la capa de encima de todo (3), sin teclado.
+                    e.empezar(POOL_OSD, wl_shm_pool::req::CREATE_BUFFER).uint(BUFER_OSD).int(0).int(ANCHO_OSD).int(ALTO_OSD).int(ANCHO_OSD * 4).uint(0).fin();
+                    e.empezar(COMPOSITOR, wl_compositor::req::CREATE_SURFACE).uint(SUP_OSD).fin();
+                    e.empezar(CAPAS, zwlr_layer_shell_v1::req::GET_LAYER_SURFACE).uint(CAPA_OSD).uint(SUP_OSD).uint(0).uint(3).texto(Some("osd")).fin();
+                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_SIZE).uint(ANCHO_OSD as u32).uint(ALTO_OSD as u32).fin();
+                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_ANCHOR).uint(2).fin();
+                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_MARGIN).int(0).int(0).int(ABAJO_OSD).int(0).fin();
+                    e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::SET_KEYBOARD_INTERACTIVITY).uint(0).fin();
+                    e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
+                    c.mandar(&e);
+                    let v = est.volumen;
+                    println!("  [panel] OSD abierto: volumen {}{}", v.nivel, if v.silencio { " (silencio)" } else { "" });
+                } else if osd_listo && let Some(h) = hoja_osd.as_mut() {
+                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
+                    let mut e = Escritor::new();
+                    e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
+                    e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();
+                    e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
+                    c.mandar(&e);
+                }
+            }
+            (CAPA_OSD, zwlr_layer_surface_v1::ev::CONFIGURE) if hoja_osd.is_some() => {
+                let mut e = Escritor::new();
+                e.empezar(CAPA_OSD, zwlr_layer_surface_v1::req::ACK_CONFIGURE).uint(palabra(0)).fin();
+                if let Some(h) = hoja_osd.as_mut() {
+                    pintar_osd(h.px((ANCHO_OSD * ALTO_OSD) as usize), &est.volumen, &est.tema, &mut medio);
+                }
+                e.empezar(SUP_OSD, wl_surface::req::ATTACH).uint(BUFER_OSD).int(0).int(0).fin();
+                e.empezar(SUP_OSD, wl_surface::req::DAMAGE).int(0).int(0).int(ANCHO_OSD).int(ALTO_OSD).fin();
+                e.empezar(SUP_OSD, wl_surface::req::COMMIT).fin();
+                c.mandar(&e);
+                osd_listo = true;
+            }
             (PUNTERO, wl_pointer::ev::ENTER) => {
                 dentro = true;
                 (x, y) = (palabra(2) as i32 >> 8, palabra(3) as i32 >> 8);
@@ -588,8 +727,8 @@ fn principal() -> u64 {
                     }
                     Accion::Mosaico(_) => cambia = false,
                     Accion::VolumenMenos | Accion::VolumenMas => {
-                        est.volumen = if accion == Accion::VolumenMenos { est.volumen.saturating_sub(10) } else { (est.volumen + 10).min(100) };
-                        pedir_volumen(est.volumen);
+                        est.volumen.boton(accion == Accion::VolumenMas);
+                        pedir_volumen(est.volumen.efectivo());
                         pintar_o_pedir(&mut c, &est, configurado, &mut pedido, &mut buferes, &mut visto, &mut fuente, &mut medio, false, false);
                         cambia = false;
                     }

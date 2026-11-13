@@ -1610,7 +1610,7 @@ mod entrada {
             Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
             Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
             Global { nombre: 5, interfaz: &tablas::EXT_IDLE_NOTIFIER_V1, version: 2 },
-            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 2 },
+            Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
         ]
     }
 
@@ -1920,6 +1920,135 @@ mod entrada {
         escena.revisar_titulo();
         escena.adios(5);
         assert!(escena.avisos_titulo.is_empty() && escena.barras.is_empty());
+    }
+
+    /// S27: los espacios de trabajo y las teclas del volumen. Una ventana nueva va al espacio que se ve; Super y un número
+    /// cambia de espacio (lo de los otros no se pinta, no tiene el teclado y la tecla no llega a nadie); con Mayúsculas,
+    /// lleva la ventana con el teclado. La barra (versión 3) recibe los espacios al suscribirse y cuando cambian, y puede
+    /// pedir otro; a un programa cualquiera, pedirlo es un error. Las teclas del volumen van al panel (sin panel, a la
+    /// ventana). Bloqueada, nada de esto. Hostil: números fuera de 1 a 9 y ráfagas.
+    #[test]
+    fn espacios_de_trabajo_y_volumen() {
+        use crate::tablas::dashos_tema_v1;
+        let mut escena = Escena::new(Mem::default(), 0);
+        let (mut va, mut vb) = (Conexion::new(), Conexion::new());
+        abrir(&mut escena, &mut va, 1, 100, 100);
+        assert_eq!(escena.espacio_de((1, 7)), 1);
+        escena.barras.push(5);
+        let suscribir = |escena: &mut Escena<Mem>, con: &mut Conexion, c: Cliente, version: u32| {
+            let mut e = Escritor::new();
+            e.empezar(1, wl_display::req::GET_REGISTRY).uint(2).fin();
+            e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(version).uint(60).fin();
+            mandar(escena, con, c, &e)
+        };
+        let (mut otro, mut panel, mut barra, mut vieja) = (Conexion::new(), Conexion::new(), Conexion::new(), Conexion::new());
+        suscribir(&mut escena, &mut otro, 2, 3);
+        // La barra de la versión 1 no recibe los espacios; la de la 3, sí: el 1, con ventana en el 1.
+        escena.barras.push(6);
+        let ev = suscribir(&mut escena, &mut vieja, 6, 1);
+        assert!(!ev.iter().any(|x| x.1 == dashos_tema_v1::ev::ESPACIOS));
+        let ev = suscribir(&mut escena, &mut barra, 5, 3);
+        let esp = ev.iter().find(|x| x.0 == 60 && x.1 == dashos_tema_v1::ev::ESPACIOS).expect("espacios al suscribirse");
+        assert_eq!(esp.2, [1u32.to_le_bytes(), 1u32.to_le_bytes()].concat());
+        escena.revisar_espacios();
+        escena.avisos_espacios.clear();
+
+        // Super+2: el 2 se ve, la ventana del 1 ya no (ni tiene el teclado), y el 2 no llega a nadie.
+        escena.tecla(0xE3, true);
+        let ev = escena.tecla(0x1F, true);
+        assert!(!ev.iter().any(|x| matches!(x.1, Entrada::Tecla { .. })), "{ev:?}");
+        assert!(ev.contains(&(1, Entrada::TecladoSale { superficie: 7 })), "{ev:?}");
+        escena.tecla(0x1F, false);
+        escena.tecla(0xE3, false);
+        assert_eq!(escena.espacio, 2);
+        assert!(!escena.raices().contains(&(1, 7)));
+        assert_eq!(escena.teclado, None);
+        assert!(escena.avisos_lanzador.is_empty(), "Super con un número no es Super sola");
+        escena.revisar_espacios();
+        assert_eq!(core::mem::take(&mut escena.avisos_espacios), [(6, 60, 2, 0b1), (5, 60, 2, 0b1)]);
+        // La ventana de fondo pide su frame: sale a ritmo bajo, como las de una sesión de detrás.
+        let mut e = Escritor::new();
+        e.empezar(7, wl_surface::req::FRAME).uint(40).fin();
+        e.empezar(7, wl_surface::req::COMMIT).fin();
+        mandar(&mut escena, &mut va, 1, &e);
+        assert!(escena.hay_avisos_ocultos());
+        assert_eq!(escena.avisos_ocultos(RITMO_OCULTO_MS + 1), [(1, 40)]);
+
+        // Una ventana nueva va al 2, con el teclado. Super+Mayúsculas+3 la lleva al 3, sin ir con ella.
+        abrir(&mut escena, &mut vb, 2, 50, 50);
+        assert_eq!(escena.espacio_de((2, 7)), 2);
+        assert_eq!(escena.teclado, Some((2, 7)));
+        escena.revisar_espacios();
+        assert!(core::mem::take(&mut escena.avisos_espacios).contains(&(5, 60, 2, 0b11)));
+        escena.tecla(0xE3, true);
+        escena.tecla(0xE1, true);
+        escena.tecla(0x20, true);
+        escena.tecla(0x20, false);
+        escena.tecla(0xE1, false);
+        escena.tecla(0xE3, false);
+        assert_eq!((escena.espacio, escena.espacio_de((2, 7)), escena.teclado), (2, 3, None));
+        escena.revisar_espacios();
+        assert!(core::mem::take(&mut escena.avisos_espacios).contains(&(5, 60, 2, 0b101)));
+        // Super+1: vuelve la del 1, con el teclado.
+        escena.tecla(0xE3, true);
+        let ev = escena.tecla(0x1E, true);
+        assert!(ev.contains(&(1, Entrada::TecladoEntra { superficie: 7 })), "{ev:?}");
+        escena.tecla(0x1E, false);
+        escena.tecla(0xE3, false);
+        assert!(escena.raices().contains(&(1, 7)) && !escena.raices().contains(&(2, 7)));
+
+        // La barra pide el 3; un programa cualquiera, no (error de protocolo), ni aunque sea un número raro.
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESPACIO).uint(3).fin();
+        otro.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        otro.atender(&globales(), &mut escena.de(2));
+        assert!(otro.roto.is_some(), "un programa cualquiera cambió de espacio");
+        assert_eq!(escena.espacio, 1);
+        mandar(&mut escena, &mut barra, 5, &e);
+        assert_eq!((escena.espacio, escena.teclado), (3, Some((2, 7))));
+        for n in [0, 10, u32::MAX, 3] {
+            let mut e = Escritor::new();
+            e.empezar(60, dashos_tema_v1::req::ESPACIO).uint(n).fin();
+            mandar(&mut escena, &mut barra, 5, &e);
+            assert_eq!(escena.espacio, 3, "espacio {n}");
+        }
+        // La barra de la versión 1 no puede pedirlo (la petición es de la 3).
+        let mut e = Escritor::new();
+        e.empezar(60, dashos_tema_v1::req::ESPACIO).uint(1).fin();
+        vieja.juntador.meter(&e.bytes, &e.llaves).unwrap();
+        vieja.atender(&globales(), &mut escena.de(6));
+        assert!(vieja.roto.is_some());
+        assert_eq!(escena.espacio, 3);
+
+        // El volumen: sin panel, la tecla llega a la ventana; con panel (suscrito), al panel y no a la ventana.
+        let ev = escena.tecla(0x80, true);
+        assert!(ev.contains(&(2, Entrada::Tecla { codigo: 115, pulsada: true })), "{ev:?}");
+        escena.tecla(0x80, false);
+        escena.abren_panel.push(3);
+        suscribir(&mut escena, &mut panel, 3, 3);
+        // En ráfaga: 50 pulsaciones, 50 avisos (el panel las junta); al soltar, nada.
+        for _ in 0..50 {
+            let ev = escena.tecla(0x81, true);
+            assert!(ev.is_empty(), "{ev:?}");
+            escena.tecla(0x81, false);
+        }
+        escena.tecla(0x7F, true);
+        let v = core::mem::take(&mut escena.avisos_volumen);
+        assert_eq!(v.len(), 51);
+        assert!(v[..50].iter().all(|&x| x == (3, 60, -1)) && v[50] == (3, 60, 0));
+        // Cómo le llega al panel.
+        avisar_volumen(&mut panel, 60, -1);
+        let ev = eventos(&panel.sacar());
+        assert_eq!((ev[0].1, ev[0].2.clone()), (dashos_tema_v1::ev::VOLUMEN, (-1i32).to_le_bytes().to_vec()));
+
+        // Bloqueada: ni espacios ni volumen.
+        escena.bloqueo = Some(Bloqueo { cliente: 9, objeto: 1, vivo: true, superficies: Vec::new() });
+        escena.tecla(0xE3, true);
+        escena.tecla(0x1E, true);
+        escena.tecla(0xE3, false);
+        escena.tecla(0x80, true);
+        assert_eq!(escena.espacio, 3);
+        assert!(escena.avisos_volumen.is_empty());
     }
 
     /// C2: la petición `bloquear` de `dashos_tema_v1` hace lo de Super+L (el aviso de inactividad pendiente, ya), solo
