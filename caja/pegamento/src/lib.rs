@@ -45,6 +45,7 @@ unsafe extern "C" {
     fn caja_jit_olvidar();
     fn caja_tomar_ctrl_c() -> i32;
     fn caja_tomar_pilas_raras() -> i32;
+    fn caja_espera_maxima_us() -> u64;
 }
 
 struct Monton;
@@ -844,7 +845,9 @@ enum Espera {
 
 fn esperar(c: &mut Caja, t: u32) -> Espera {
     let _ = c.ex.elegir_siguiente();
-    let mut hasta = dashos::ahora_us() + ESPERA_MAXIMA_US;
+    // SEGURIDAD: una función de caja.c sin argumentos.
+    let maxima = unsafe { caja_espera_maxima_us() }.max(ESPERA_MAXIMA_US);
+    let mut hasta = dashos::ahora_us() + maxima;
     loop {
         atender(c);
         // Ctrl-C de fuera (caja.c): la señal llega como la de cualquier otra tarea.
@@ -862,7 +865,7 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
         }
         // Con una espera de timer.device en marcha, algo la va a despertar: el plazo cuenta desde que venza.
         if let Some(p) = c.timer.proximo() {
-            hasta = hasta.max(p.saturating_add(ESPERA_MAXIMA_US));
+            hasta = hasta.max(p.saturating_add(maxima));
         }
         if dashos::ahora_us() > hasta {
             return Espera::Plazo;

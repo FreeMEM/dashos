@@ -228,6 +228,9 @@ int memcmp(const void *a, const void *b, size_t n)
 #endif
 #define GT_NOMBRE (CAJA_INTERACTIVA ? "gadtools-90" : "gadtools-5")
 
+/* Lo más que una tarea espera sin que llegue nada antes de que la caja la corte (pegamento/: esperar). */
+uint64_t caja_espera_maxima_us(void) { return (CAJA_INTERACTIVA ? 600ULL : 60ULL) * 1000000ULL; }
+
 static volatile int llamadas_nativas;
 static volatile int rechazadas;
 static volatile int cortadas;
@@ -992,7 +995,8 @@ int caja_main(void)
         }
 #if CAJA_INTERACTIVA
         /* El error de Dash en un requester: test_trap_illegal sin consola (Output() es 0, como desde el Workbench). El
-           guion lo captura (CAPTURA_REQ) y pulsa su botón. */
+           guion lo captura (CAPTURA_REQ) y pulsa su botón; si no llega, el requester sigue abierto hasta el final de la
+           prueba (la espera, de 600 s en este modo) y sale en la captura final (CAPTURA). */
         if (prog_dash_trap_ilegal_fin > prog_dash_trap_ilegal) {
             di("test_trap_illegal (sin consola): su error, en un requester\n");
             caja_sin_consola(1);

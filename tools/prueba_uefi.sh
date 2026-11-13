@@ -132,7 +132,7 @@ while time.time() - inicio < total:
         if os.environ.get("ESTADO_GUION") and time.time() - globals().get("estado_dicho", 0) > 2:
             estado_dicho = time.time()
             with open(os.environ["ESTADO_GUION"], "a") as f:
-                f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso}\n")
+                f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso} caja {amiga}/{dash_amiga}/{gt_amiga}/{gt_dash}/{req_dash}\n")
         # Los pasos de las capturas de la caja Amiga (GadTools, el ejemplo de Dash y el requester), al principio de la
         # vuelta: los pasos de más abajo esperan con "continue" y no se llegaría a ellos.
         libre_caja = texto.count("[guardian] pregunta en pantalla: ") <= texto.count("El usuario dice ")
