@@ -1832,3 +1832,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   (Ajustes, centro, Workbench, selector, también al desmaximizar) y `RADIO_DIALOGO` = 12 (preguntas de `guardian`,
   panel rápido); `decoracion::RADIO_MARCO` (barra de las ventanas de Linux) de 12 a 8. Antes 16, 24 y 28.
 - `cargo test` de kit y wayland; `make prueba` BIEN; arranque-virt, -2 y -escritorio: BIEN. Captura Full HD.
+
+### 2026-11-13 18:10: apagar y reiniciar, red de solo lectura, 1 GB, fila de escala, en revision
+- Fusionada `decisiones-1311`: llamada 51 `apagar` (PSCI en virt, UEFI y Pi 5; perro guardián PM en Pi 4/3, sin
+  probar en placa) con permiso propio que `inicio` manda a `sesiones`; orden `APAGAR` solo del panel, con pregunta de
+  `guardian` si hay otras sesiones (Mayús+S); menú de encendido en el panel (Apagar, Reiniciar, Cerrar sesión,
+  Bloquear); `arranque-virt` reinicia al final y comprueba el segundo arranque. Canal "red-estado" de solo lectura
+  para el panel. `memoria_invitado`: 1 GB con 8 GB o más. Fila "Ampliar ventanas Amiga" en Apariencia.
+- Sin probar: Apagar y Cerrar sesión desde el panel; el apagado en una Pi de verdad.
+- `make prueba` BIEN; arranque-virt (con reinicio), -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
