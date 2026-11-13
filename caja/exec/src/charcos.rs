@@ -80,7 +80,7 @@ impl<M: Memoria> Exec<M> {
             return Ok(0);
         }
         let Some(puddle) = redondear(puddle) else { return Ok(0) };
-        let dueno = self.tarea_actual();
+        let dueno = self.dueno_de_lo_nuevo();
         let p = self.reservar(CH_TAMANO, flags & !memf::CLEAR, dueno)?;
         if p == 0 {
             return Ok(0);

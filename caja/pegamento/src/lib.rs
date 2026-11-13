@@ -19,8 +19,10 @@ extern crate alloc;
 mod archivos;
 mod compositor;
 mod defensa;
+mod faltan;
 mod memoria;
 mod preguntador;
+mod ramlib;
 mod tema;
 
 /// S28: lo que comparten la caja, `sesiones` y `guardian` para preguntar por los ficheros protegidos.
@@ -91,6 +93,9 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
+/// ramlib (`ramlib.rs`): cargar de disco y soltar lo cargado.
+const N_RAMLIB_CARGAR: u16 = 0xD00;
+const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
 /// escribir), que es `Caja:`; la 1, el disco para leer, que es `SYS:`. Con una ficha vieja (solo la 0, el disco), `SYS:`
 /// va en la 0.
@@ -139,6 +144,17 @@ struct Caja {
     /// El número nativo de `WaitTOF`: espera un cuadro (20 ms) atendiendo al compositor, como el Amiga espera al
     /// barrido vertical. Los bucles que leen eventos sin esperar (`GT_GetIMsg` y `WaitTOF`) los reciben así.
     n_waittof: u16,
+    /// ramlib: lo cargado de disco, lo soltado y cuántas cargas se han dicho.
+    ramlib_cargas: u32,
+    ramlib_soltadas: u32,
+    ramlib_dichas: u32,
+    /// Lo que falta (`faltan.rs`) y la dirección de vuelta de la llamada en curso (quién la hizo).
+    faltan: faltan::Faltan,
+    /// Lo cargado de disco por ramlib que sigue en memoria: (lista de segmentos, nombre), para decir quién llama.
+    ramlib_segs: Vec<(u32, Vec<(u32, u32)>, String)>,
+    pc_llamada: u32,
+    /// El último programa leído de disco para caja.c (`caja_programa_de_disco`): sigue vivo hasta el siguiente.
+    programa: Vec<u8>,
 }
 
 /// El estado, para las funciones `extern "C"`.
@@ -165,6 +181,8 @@ fn di(texto: &str) {
 struct CajaDos<'a> {
     ex: &'a mut Exec<MemoriaCaja>,
     consola: &'a mut Consola,
+    /// Lo que reserve dos es del sistema, no de la tarea (las bibliotecas que carga ramlib: siguen al acabar ella).
+    sistema: bool,
 }
 
 /// Lo que escriben los programas en la consola: con un prefijo al principio de cada línea si la caja lo pide (los
@@ -189,7 +207,11 @@ const DE_1970_A_1978: u64 = 2922 * 86400;
 
 impl caja_dos::Caja for CajaDos<'_> {
     fn reservar(&mut self, largo: u32) -> u32 {
-        self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0)
+        let d = self.ex.alloc_vec(largo, memf::PUBLIC | memf::CLEAR).unwrap_or(0);
+        if self.sistema && d != 0 {
+            self.ex.cambiar_dueno(d - 4, 0);
+        }
+        d
     }
     fn liberar(&mut self, dir: u32, _largo: u32) {
         let _ = self.ex.free_vec(dir);
@@ -298,7 +320,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     let mut vol = String::from("sin servicio de archivos");
     let mut consola = Consola::default();
     if hay_fs {
-        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola };
+        let mut cd = CajaDos { ex: &mut ex, consola: &mut consola, sistema: false };
         let sys = if con_cajon { RAIZ_SYS } else { RAIZ_CAJA };
         vol = match dos.montar(&mut cd, "SYS", sys, true) {
             Ok(()) => String::from("SYS: sobre el servicio de archivos (la raíz de su ficha, de solo lectura)"),
@@ -345,6 +367,8 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     ));
     di(&format!("utility.library y timer.device nativos (Rust): ${:x} y ${:x}", util.base(), timer.base()));
     di(&format!("gadtools.library nativa (Rust): ${:x}", gr.gadtools_base()));
+    let (capas, teclas) = gr.capas_bases();
+    di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -378,7 +402,28 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         excepciones: 0,
         n_waittof: 0,
         sin_consola: false,
+        ramlib_cargas: 0,
+        ramlib_soltadas: 0,
+        ramlib_dichas: 0,
+        faltan: faltan::Faltan::default(),
+        ramlib_segs: Vec::new(),
+        pc_llamada: 0,
+        programa: Vec::new(),
     };
+    // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
+    c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
+    {
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        let mut hechas = Vec::new();
+        for (nombre, ruta) in [("LIBS", "Caja:Libs"), ("DEVS", "Caja:Devs"), ("Classes", "Caja:Classes"), ("FONTS", "Caja:Fonts")] {
+            if c.dos.asignar(&mut cd, nombre, ruta).is_ok() {
+                hechas.push(alloc::format!("{}: {}", nombre, ruta));
+            }
+        }
+        di(&format!("ramlib: lo que no es nativo se carga de disco; {}", if hechas.is_empty() { String::from("sin cajones") } else { hechas.join(", ") }));
+        // El AmigaOS del usuario, si lo dio (`SYS:C/Prefs/amigaos`): detrás de lo nativo y de la caja.
+        di(&ramlib::montar_amigaos(&mut c.dos, &mut cd));
+    }
     c.n_waittof = c.gr.numero_graphics("WaitTOF").unwrap_or(0);
     decir_compositor(&mut c);
     // SEGURIDAD: ver `caja()`; aquí se pone el valor por primera vez.
@@ -411,6 +456,42 @@ pub extern "C" fn caja_poner_trampa(defecto: u32) {
     let _ = c.ex.mem.escribir32(b + caja_exec::estructuras::execbase::TASKTRAPCODE, defecto);
     // S28: es parte de la foto de ExecBase; si no, la defensa lo "deshará" tras cada programa.
     c.foto = Some(Foto::hacer(&c.ex));
+}
+
+/// Dónde están los programas de AmigaOS que el usuario pone en el disco para probarlos (una ruta por línea; ver
+/// `tools/disco_archivos.py`, `DASHOS_PROGRAMAS_AMIGA`). DashOS no trae ninguno.
+const PREFS_PROGRAMAS: &[u8] = b"SYS:C/Prefs/programas-amiga";
+
+/// El programa `i` de `SYS:C/Prefs/programas-amiga`: copia su ruta en `nombre` (hasta `max` bytes, con su 0), y
+/// deja en `datos` y `largo` el fichero entero (vivo hasta la siguiente llamada). 0 si no hay tantos o no se lee.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_programa_de_disco(i: u32, nombre: *mut u8, max: u32, datos: *mut *const u8, largo: *mut u32) -> i32 {
+    let Some(c) = caja() else { return 0 };
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+    let Ok(lista) = c.dos.leer_fichero(&mut cd, PREFS_PROGRAMAS, 64 * 1024) else { return 0 };
+    let Some(ruta) = lista
+        .split(|&b| b == b'\n')
+        .map(|l| l.strip_suffix(b"\r").unwrap_or(l))
+        .filter(|l| !l.is_empty())
+        .nth(i as usize)
+    else {
+        return 0;
+    };
+    let ruta = ruta.to_vec();
+    let Ok(v) = c.dos.leer_fichero(&mut cd, &ruta, 16 << 20) else { return 0 };
+    c.programa = v;
+    if nombre.is_null() || datos.is_null() || largo.is_null() || max == 0 {
+        return 0;
+    }
+    let n = ruta.len().min(max as usize - 1);
+    // SEGURIDAD: caja.c da `nombre` con `max` bytes y dos punteros válidos; `programa` sigue vivo hasta la siguiente.
+    unsafe {
+        core::ptr::copy_nonoverlapping(ruta.as_ptr(), nombre, n);
+        *nombre.add(n) = 0;
+        *datos = c.programa.as_ptr();
+        *largo = c.programa.len() as u32;
+    }
+    1
 }
 
 /// Los procesos que se creen desde ahora, sin consola (`si` distinto de 0) o con ella.
@@ -573,7 +654,7 @@ fn crear_proceso(
         return Err(caja_exec::Fallo::TareaDesconocida { dir: t });
     }
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
-    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
     let ex = &mut c.ex;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
@@ -638,7 +719,7 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let Some(c) = caja() else { return 0 };
     let ventanas = c.gr.ventanas().len();
     {
-        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         c.dos.acabar_tarea(&mut cd, t);
     }
     c.gr.tarea_muerta(&mut c.ex, t);
@@ -648,9 +729,13 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let bloques = c.ex.bloques_de(t).iter().filter(|(d, _)| *d != t && *d != pila && *d != cli).count() as u32;
     c.timer.tarea_muerta(t);
     let _ = c.ex.matar_tarea(t);
+    c.ex.ramlib_cortada();
     c.util.tarea_muerta(&c.ex);
     let _ = c.ex.elegir_siguiente();
     recoger_avisos(c);
+    if let Some(r) = c.faltan.resumen_de_la_tarea() {
+        di(&r);
+    }
     if c.avisos > c.avisos_dichos {
         di(&format!("Enforcer: {} avisos más de esta tarea", c.avisos - c.avisos_dichos));
     }
@@ -755,6 +840,14 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     if c.util.es_mia(n) {
         return de_accion(c.util.llamar(&mut c.ex, n, r));
     }
+    if n == N_RAMLIB_CARGAR {
+        r.d[0] = ramlib::cargar(c, r.a[1], r.d[1]);
+        return Fin::Seguir;
+    }
+    if n == N_RAMLIB_SOLTAR {
+        ramlib::soltar(c, r.d[1]);
+        return Fin::Seguir;
+    }
     if c.timer.es_mio(n) {
         let reloj = reloj();
         return de_accion(c.timer.llamar(&mut c.ex, n, r, reloj));
@@ -763,7 +856,7 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
     {
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
-        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
         (r.d, r.a) = (rd.d, rd.a);
         return match a {
@@ -881,20 +974,56 @@ fn entregar_excepciones(a7: u32) -> bool {
 /// Junta los avisos de las tres bibliotecas y escribe los primeros de la tarea.
 fn recoger_avisos(c: &mut Caja) {
     let mut textos: Vec<String> = Vec::new();
+    // Lo no hecho va además al registro de lo que falta (`faltan.rs`), con su biblioteca.
+    let mut faltan: Vec<(&'static str, &'static str)> = Vec::new();
     for a in c.ex.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("exec.library", a.funcion));
+        }
         textos.push(format!("{} (exec): {:?}", a.funcion, a.fallo));
     }
     for a in c.dos.tomar_avisos() {
+        if matches!(a.fallo, caja_dos::Fallo::NoImplementada { .. }) {
+            faltan.push(("dos.library", a.funcion));
+        }
         textos.push(format!("{} (dos): {:?}", a.funcion, a.fallo));
     }
     for a in c.gr.tomar_avisos() {
+        if matches!(a.fallo, caja_intuition::Fallo::NoImplementada { .. }) {
+            let b = if caja_intuition::lvo::graphics(a.funcion).is_some() {
+                "graphics.library"
+            } else if caja_intuition::lvo::intuition(a.funcion).is_some() {
+                "intuition.library"
+            } else if caja_intuition::LAYERS.contains(&a.funcion) {
+                "layers.library"
+            } else if caja_intuition::KEYMAP.contains(&a.funcion) {
+                "keymap.library"
+            } else {
+                "gadtools.library"
+            };
+            faltan.push((b, a.funcion));
+        }
         textos.push(format!("{} (graphics/intuition): {:?}", a.funcion, a.fallo));
     }
     for a in c.util.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("utility.library", a.funcion));
+        }
         textos.push(format!("{} (utility): {:?}", a.funcion, a.fallo));
     }
     for a in c.timer.tomar_avisos() {
+        if matches!(a.fallo, caja_exec::Fallo::NoImplementada { .. }) {
+            faltan.push(("timer.device", a.funcion));
+        }
         textos.push(format!("{} (timer.device): {:?}", a.funcion, a.fallo));
+    }
+    if !faltan.is_empty() {
+        let q = faltan::quien(c, c.pc_llamada);
+        for (b, f) in faltan {
+            if let Some(t) = c.faltan.apuntar(b, f, &q) {
+                di(&t);
+            }
+        }
     }
     for t in textos {
         c.avisos += 1;
@@ -931,7 +1060,7 @@ fn decir_compositor(c: &mut Caja) {
 
 /// La hora de intuition (segundos y microsegundos desde 1978).
 fn poner_hora(c: &mut Caja) {
-    let cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola };
+    let cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let (s, us) = caja_dos::Caja::hora(&cd);
     c.gr.poner_hora(s.saturating_sub(DE_1970_A_1978) as u32, us);
 }
@@ -1131,6 +1260,21 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     revisar_temporizador(c);
     let antes = *r;
     let t = c.ex.tarea_actual();
+    c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
+    // Lo que reserve código de una biblioteca de disco es del sistema: la biblioteca sigue al acabar la tarea.
+    let de_biblioteca = faltan::de_biblioteca(c, c.pc_llamada).is_some();
+    c.ex.memoria_del_sistema(de_biblioteca);
+    // Las privadas de exec (`execPrivateN`, sin documentar): la caja no las tiene ni las puede tener (no se sabe qué
+    // hacen). Quien las llama (algunas bibliotecas de un AmigaOS de verdad, en su `Init`) usaría lo que devuelven:
+    // con 0 saltaría a la página cero y se colgaría. Mejor acabar el programa, diciendo quién fue.
+    if n <= lvo::ULTIMO_DE_EXEC && lvo::nombre(n).starts_with("execPrivate") {
+        let q = faltan::quien(c, c.pc_llamada);
+        if let Some(t) = c.faltan.apuntar("exec.library", lvo::nombre(n), &q) {
+            di(&t);
+        }
+        di(&format!("{} llama a {}, privada de exec (sin documentar): se acaba el programa", q, lvo::nombre(n)));
+        return C_ACABAR;
+    }
     if n == N_INTERRUPCION {
         // La interrupción de nivel 6 de la caja (caja.c la levanta desde otro hilo): Ctrl-C para el programa.
         // SEGURIDAD: una función de caja.c sin argumentos.
@@ -1183,6 +1327,8 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                         Registros::default()
                     }
                 };
+                // Las llamadas de dentro cambiaron de quién es lo nuevo: otra vez el de esta llamada.
+                c.ex.memoria_del_sistema(de_biblioteca);
                 a = c.ex.continuar(tras, &rr, r);
                 continue;
             }

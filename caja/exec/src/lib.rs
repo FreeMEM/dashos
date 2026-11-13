@@ -35,8 +35,11 @@ mod bibliotecas;
 mod charcos;
 mod despacho;
 mod dispositivos;
+mod formato;
 mod listas;
 mod puertos;
+pub mod ramlib;
+pub use formato::stuff_char;
 mod semaforos;
 mod tareas;
 
@@ -109,6 +112,8 @@ pub enum Fallo {
     NoImplementada { n: u16 },
     /// Algo que exec deja pasar pero suele ser un error: esperar señales no reservadas, puerto de otra tarea...
     Sospechoso { dir: u32 },
+    /// `Alert`: el programa (o una biblioteca suya) avisa de un fallo; con `AT_DeadEnd` (el bit 31), se acaba.
+    Alerta { n: u32 },
     /// La memoria de la caja es demasiado pequeña para arrancar.
     SinSitio,
 }
@@ -164,9 +169,23 @@ pub enum Continuacion {
     /// Volvió el `Open` de un dispositivo (`OpenDevice`): su error está en `io_Error`.
     AbrirDispositivo { dev: u32, io: u32 },
     /// Volvió el `Close` de un dispositivo.
-    CerrarDispositivo { io: u32 },
+    CerrarDispositivo { io: u32, dev: u32 },
     /// Volvió el `BeginIO` de `DoIO`: si no acabó en el acto, hay que esperar.
     HacerIO { io: u32 },
+    /// ramlib: volvió la carga de la caja (D0, la lista de segmentos).
+    Cargada(ramlib::Apertura),
+    /// ramlib: la apertura falla (tras soltar lo cargado).
+    Fallida(ramlib::Apertura),
+    /// ramlib: volvió el `InitResident` de lo cargado (D0, la base).
+    Residente { a: ramlib::Apertura, seglist: u32 },
+    /// `InitResident` con `RTF_AUTOINIT`: volvió su `init`; se añade a su lista y se sigue con la guardada.
+    AutoIniciada { tipo: u8, tras: u32 },
+    /// Volvió el `Expunge` de una de disco (D0, su lista); `d0` es lo que devolverá la llamada.
+    Echada { lib: u32, d0: u32 },
+    /// D0 = ese valor.
+    Valor(u32),
+    /// `RawDoFmt`: volvió su `PutChProc` con un carácter; el siguiente (con el A3 que dejó).
+    Entrega { id: u32 },
 }
 
 /// Un trozo de memoria para el reparto: `[inicio, fin)` con sus atributos (`MEMF_CHIP`...).
@@ -319,6 +338,13 @@ pub struct Exec<M: Memoria> {
     /// Los dispositivos de `AddDevice` (y los nativos): así no hay que recorrer `DeviceList`, que un programa puede
     /// haber estropeado, en cada petición.
     dispositivos: alloc::collections::BTreeSet<u32>,
+    /// ramlib (`ramlib.rs`).
+    pub(crate) ramlib: ramlib::Ramlib,
+    /// `RawDoFmt` con un `PutChProc` de 68k: lo que queda por entregar (`formato.rs`).
+    pub(crate) entregas: alloc::collections::BTreeMap<u32, formato::Entrega>,
+    pub(crate) n_entrega: u32,
+    /// Lo que se reserva ahora es del sistema (código de una biblioteca de disco): `memoria_del_sistema`.
+    pub(crate) memoria_del_sistema: bool,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -348,6 +374,10 @@ impl<M: Memoria> Exec<M> {
             esperas_semaforo: Vec::new(),
             doio_en_espera: Vec::new(),
             dispositivos: alloc::collections::BTreeSet::new(),
+            ramlib: ramlib::Ramlib::default(),
+            entregas: alloc::collections::BTreeMap::new(),
+            n_entrega: 0,
+            memoria_del_sistema: false,
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;

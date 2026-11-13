@@ -40,6 +40,7 @@ mod acceso;
 mod despacho;
 mod dibujo;
 mod fuente;
+mod capas;
 mod gadtools;
 mod graphics;
 mod idcmp;
@@ -55,6 +56,7 @@ use alloc::vec::Vec;
 use caja_exec::{Exec, Memoria};
 
 pub use boopsi::{Corte68k, Hecho, Puente};
+pub use capas::{KEYMAP, LAYERS};
 pub use compositor::{Compositor, CompositorDePrueba, Evento, NuevaVentana, Superficie, Tokens};
 pub use fuente::{ALTO as FUENTE_ALTO, ANCHO as FUENTE_ANCHO, BASE as FUENTE_BASE};
 pub use lienzo::{Lienzo, Rect};
@@ -118,11 +120,14 @@ pub struct Numeros {
     pub gadtools: u16,
     /// El despachador de las clases nativas de BOOPSI y, detrás, las funciones de las bibliotecas de ReAction.
     pub boopsi: u16,
+    /// layers.library y keymap.library (`capas.rs`).
+    pub layers: u16,
+    pub keymap: u16,
 }
 
 impl Default for Numeros {
     fn default() -> Numeros {
-        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00, boopsi: 0x0B00 }
+        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00, boopsi: 0x0B00, layers: 0x0C00, keymap: 0x0C40 }
     }
 }
 
@@ -136,6 +141,7 @@ pub struct CajaGrafica<C: Compositor> {
     gfx: graphics::Estado,
     intui: intuition::Estado,
     gt: gadtools::Estado,
+    capas: capas::Estado,
     menus: menus::Estado,
     boopsi: boopsi::Estado,
     /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
@@ -157,6 +163,7 @@ impl<C: Compositor> CajaGrafica<C> {
             gfx: graphics::Estado::default(),
             intui: intuition::Estado::default(),
             gt: gadtools::Estado::default(),
+            capas: capas::Estado::default(),
             menus: menus::Estado::default(),
             boopsi: boopsi::Estado::default(),
             version_tema: 0,
@@ -167,8 +174,17 @@ impl<C: Compositor> CajaGrafica<C> {
         c.instalar_graphics(ex)?;
         c.instalar_intuition(ex)?;
         c.instalar_gadtools(ex)?;
+        c.instalar_capas(ex)?;
         c.instalar_boopsi(ex)?;
         Ok(c)
+    }
+
+    /// El número nativo de una función de layers.library o de keymap.library, por su nombre.
+    pub fn numero_capas(&self, nombre: &str) -> Option<u16> {
+        if let Some(i) = capas::LAYERS.iter().position(|n| *n == nombre) {
+            return Some(self.numeros.layers + i as u16);
+        }
+        capas::KEYMAP.iter().position(|n| *n == nombre).map(|i| self.numeros.keymap + i as u16)
     }
 
     /// El número nativo de una función de gadtools.library, por su nombre.

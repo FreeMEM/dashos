@@ -53,6 +53,11 @@ CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
 # S28: un ejecutable que actualiza `actualiza.exe` (un programa honrado; la guardia pregunta): una cabecera hunk vacía
 # con la versión en los 4 últimos bytes. La prueba lo deja en la versión 4 (tres vueltas con permiso).
 CAJA_VIEJO = struct.pack(">8I", 0x3F3, 0, 0, 0, 0, 0, 0, 1)
+# ramlib: bibliotecas de disco en `Caja:Libs` (su `LIBS:`): una buena, una con el RomTag falso, una que miente con su
+# versión (`caja/pruebas68k/prueba_lib.c`) y una que no es un ejecutable.
+PRUEBAS68K = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k")
+CAJA_LIBS = [(n, open(os.path.join(PRUEBAS68K, n), "rb").read()) for n in ("prueba.library", "falsa.library", "miente.library")]
+CAJA_LIBS.append(("rota.library", b"\x00\x00\x03\xf3 esto no es un ejecutable"))
 # S28: la papelera de la caja (la crea el servicio de archivos), con lo que borran el troyano (sus datos, dos ficheros
 # con el mismo nombre y uno de nombre largo: `caja/pruebas68k/malware/troyano.c`) y el virus de guiones (`inocente`).
 PAPELERA = CAJA + ".papelera"
@@ -112,6 +117,8 @@ if sys.argv[1] == "--comprobar":
         f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        f"{CAJA}/Libs/ cajón",
+        *[f"{CAJA}/Libs/{n} {len(d)}" for n, d in sorted(CAJA_LIBS)],
         f"{CAJA}/S/ cajón",
         f"{CAJA}/S/Startup-Sequence {len(CAJA_GUION)}",
         f"{PAPELERA}/ cajón",
@@ -184,6 +191,8 @@ if sys.argv[1] == "--comprobar":
             fallos.append(f"{secreto!r} en claro en el disco")
     if comprobado != "sin problemas\n":
         fallos.append(f"comprobación: {comprobado.strip()}")
+    # Paso 2 de la caja Amiga: el AmigaOS del usuario (con DASHOS_AMIGAOS) no es parte de lo que se compara.
+    arbol = [l for l in arbol if not l.startswith("Amiga/") and not l.startswith(("C/Prefs/amigaos ", "C/Prefs/programas-amiga "))]
     if arbol != esperado:
         fallos.append(f"árbol: {arbol}")
     permisos = subprocess.run([ver, disco, desde, "Estado/Servicios/sesiones/permisos"], capture_output=True).stdout
@@ -263,7 +272,8 @@ with tempfile.TemporaryDirectory() as t:
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),
                                ("C", "viejo", CAJA_VIEJO),
                                ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
-                               ("", "datos.txt", b"datos de la caja\n")]:
+                               ("", "datos.txt", b"datos de la caja\n"),
+                               *[("Libs", n, d) for n, d in CAJA_LIBS]]:
         os.makedirs(os.path.join(caja, sub), exist_ok=True)
         with open(os.path.join(caja, sub, nombre), "wb") as f:
             f.write(datos)
@@ -339,9 +349,34 @@ with tempfile.TemporaryDirectory() as t:
     # U5: un nombre con '|', que el selector no debe enseñar (separa las filas de su lista y correría las de después).
     with open(os.path.join(raiz, "C", "raro|nombre.txt"), "w") as f:
         f.write("no se enseña\n")
+    # La caja Amiga, paso 2: con DASHOS_AMIGAOS=carpeta (la del AmigaOS del usuario, de su equipo: nunca va a git), una
+    # copia en Amiga/AmigaOS y su ajuste en C/Prefs/amigaos, y el disco crece lo que haga falta.
+    tamano = 7 << 20
+    amigaos = os.environ.get("DASHOS_AMIGAOS")
+    if amigaos:
+        import shutil
+        shutil.copytree(os.path.expanduser(amigaos), os.path.join(raiz, "Amiga", "AmigaOS"))
+        with open(os.path.join(raiz, "C", "Prefs", "amigaos"), "w") as f:
+            f.write("Amiga/AmigaOS\n")
+    # Paso 3: con DASHOS_PROGRAMAS_AMIGA=fichero:fichero... (programas de AmigaOS del usuario: demos de MUI, Tachyon...,
+    # tampoco van a git), una copia en Amiga/Programas y su lista en C/Prefs/programas-amiga (la caja los ejecuta).
+    programas = [p for p in os.environ.get("DASHOS_PROGRAMAS_AMIGA", "").split(":") if p]
+    if programas:
+        import shutil
+        os.makedirs(os.path.join(raiz, "Amiga", "Programas"), exist_ok=True)
+        lista = []
+        for p in programas:
+            n = os.path.basename(p)
+            shutil.copy(os.path.expanduser(p), os.path.join(raiz, "Amiga", "Programas", n))
+            lista.append(f"SYS:Amiga/Programas/{n}\n")
+        with open(os.path.join(raiz, "C", "Prefs", "programas-amiga"), "w") as f:
+            f.write("".join(lista))
+    if amigaos or programas:
+        ocupado = sum(os.path.getsize(os.path.join(d, n)) for d, _, ns in os.walk(os.path.join(raiz, "Amiga")) for n in ns)
+        tamano += (ocupado * 3 // 2 + (4 << 20)) & ~((1 << 20) - 1)
     fs = os.path.join(t, "fs.img")
     with open(fs, "wb") as f:
-        f.truncate(7 << 20)
+        f.truncate(tamano)
     subprocess.run([ar, fs, raiz], check=True, stdout=subprocess.DEVNULL)
     volumen = os.path.join(os.path.dirname(ar), "redoxfs-volume")
     # La raíz de "Ana", del 1000 al crearla: cambiarla después la reescribiría con la llave del volumen.
