@@ -124,6 +124,7 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+ajustes_intentos = 0
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -1844,10 +1845,19 @@ while time.time() - inicio < total:
             ir_a(vx + 196, vy + 196)
             time.sleep(0.5)
             mandar("sendkey meta_l-up")
-            time.sleep(2)
+            # Hasta 4 s a que Ajustes diga que se maximizó (con el arranque cargado, una pregunta de `guardian` que sale
+            # justo después se lleva Super+Arriba): si no, se repite más tarde.
+            pide_antes = texto.count("[ajustes] el compositor pide ")
+            maximizada = False
+            for _ in range(16):
+                time.sleep(0.25)
+                if open(serie, errors="replace").read().count("[ajustes] el compositor pide ") > pide_antes:
+                    maximizada = True
+                    break
             mandar("sendkey meta_l-down")
             time.sleep(1)
-            if open(serie, errors="replace").read().count("[guardian] pregunta en pantalla: ") > preguntas_antes:
+            ajustes_intentos += 1
+            if (not maximizada and ajustes_intentos < 4) or open(serie, errors="replace").read().count("[guardian] pregunta en pantalla: ") > preguntas_antes:
                 ajustes = False
         # El desplegable de Ajustes, cuando su campo ya tiene su "a" (antes, un clic en él se llevaría las "a"): el cursor
         # a la esquina y al desplegable (donde lo dicen el compositor y Ajustes), un clic abre el menú; con
