@@ -178,7 +178,20 @@ impl Lienzo {
                 self.textos.remove(0);
             }
         }
-        self.textos.push(TextoNitido { r, texto: texto.to_vec(), color, alinea, estilo, antes, despues });
+        self.textos.push(TextoNitido { r, texto: texto.to_vec(), color, alinea, estilo, antes, despues, cursor: None });
+    }
+    /// El cursor del último texto apuntado, si empieza en (x, y): se pinta con la letra de DashOS, y lo de después se
+    /// copia otra vez (quien llama acaba de pintar el cursor de topaz encima).
+    pub fn cursor_del_ultimo(&mut self, x: i32, y: i32, cursor: usize, color: u32) {
+        let Some(i) = self.textos.len().checked_sub(1) else { return };
+        let r = self.textos[i].r;
+        if r.x0 != x || r.y0 != y {
+            return;
+        }
+        let despues = self.copiar(r);
+        let t = &mut self.textos[i];
+        t.cursor = Some((cursor, color));
+        t.despues = despues;
     }
     /// Pasa cada píxel de `r` por `f` (como `poner`), y lo mismo con lo de antes de los textos nítidos que lo tocan, para
     /// que sigan valiendo (un gadget desactivado: todo más claro). El color de la letra cambia si el hueco cae dentro.

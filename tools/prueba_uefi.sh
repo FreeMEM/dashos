@@ -133,6 +133,7 @@ v_amiga = None
 dash_amiga = 0
 gt_amiga = 0
 gt_dash = 0
+ra_capturas = 0
 gt_mirado = 0
 gt_movida = 0
 req_dash = 0
@@ -311,6 +312,30 @@ while time.time() - inicio < total:
                             ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
                         else:
                             ir_a(10 * paso, 5 * paso)
+        # BOOPSI y ReAction (`caja/pruebas68k/boopsi.c`, solo con CAJA_INTERACTIVA=1): sus dos ventanas de ReAction, la
+        # de "como DashOS" (boopsi-20) y la original (boopsi-orig-20, con la excepción de DASHOS_PREFS): una captura de
+        # cada una (CAPTURA_RA.ppm y CAPTURA_RA.orig.ppm) con su sitio y su tamaño al lado (.txt: x y ancho alto
+        # escala), para ponerlas lado a lado. Se cierran solas a los 20 s.
+        if libre_caja and ra_capturas < 2 and os.environ.get("CAPTURA_RA"):
+            import re
+            nombre_ra = "boopsi-20" if ra_capturas == 0 else "boopsi-orig-20"
+            corte = texto.find("[caja-amiga] " + nombre_ra + ": ")
+            if corte >= 0:
+                m_ra = list(re.finditer(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?(?:, con la barra de DashOS)?\): ReAction", texto[corte:]))
+                v_ra = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
+                if m_ra and v_ra:
+                    # Delante de las demás: un clic dentro, en el margen del grupo (nada que pulsar ahí).
+                    time.sleep(1.5)
+                    f_ra = int(m_ra[-1].group(3) or 1)
+                    ir_a(int(v_ra[-1].group(1)) + 6 * f_ra, int(v_ra[-1].group(2)) + 16 * f_ra)
+                    time.sleep(0.3)
+                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                    time.sleep(1.0)
+                    foto = os.environ["CAPTURA_RA"] + (".orig" if ra_capturas else "") + ".ppm"
+                    mandar("screendump " + foto)
+                    with open(foto + ".txt", "w") as f:
+                        f.write(f"{v_ra[-1].group(1)} {v_ra[-1].group(2)} {m_ra[-1].group(1)} {m_ra[-1].group(2)} {m_ra[-1].group(3) or 1}\n")
+                    ra_capturas += 1
         # El ejemplo de GadTools de FreeMEMLang (`examples/test_gadtools.dash`): la captura (CAPTURA_GT_DASH) y un clic en
         # su "Cancel" (gt_button(120, 20, 80, 20) en una ventana GIMMEZEROZERO: desde la esquina de dentro, 4 y 11).
         if dash_amiga == 1 and gt_dash == 0 and libre_caja:

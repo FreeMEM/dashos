@@ -165,7 +165,14 @@ impl<M: Memoria> Exec<M> {
     /// vieja que `version`. (Cargarla de `LIBS:` es cosa de ramlib y dos, que aún no están.)
     pub fn open_library(&mut self, nombre: u32, version: u32, r: &mut Registros) -> Result<Accion, Fallo> {
         let n = self.cadena(nombre)?;
-        let lib = self.find_name(self.base + execbase::LIBLIST, &n)?;
+        let mut lib = self.find_name(self.base + execbase::LIBLIST, &n)?;
+        // "gadgets/layout.gadget", "images/label.image": la biblioteca se llama como el final del camino (lo que
+        // tendría en la lista si la hubiera cargado ramlib de LIBS:Gadgets/).
+        if lib == 0
+            && let Some(k) = n.iter().rposition(|&c| c == b'/' || c == b':')
+        {
+            lib = self.find_name(self.base + execbase::LIBLIST, &n[k + 1..])?;
+        }
         if lib == 0 || (self.l16(lib + library::LIB_VERSION)? as u32) < version {
             r.d[0] = 0;
             return Ok(Accion::Seguir);

@@ -18,6 +18,7 @@ prog_\nombre\()_fin:
         programa hostil, "pruebas68k/hostil.exe"
         programa anidado, "pruebas68k/anidado.exe"
         programa gadtools, "pruebas68k/gadtools.exe"
+        programa boopsi, "pruebas68k/boopsi.exe"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"
@@ -41,3 +42,5 @@ prog_\nombre\()_fin:
         programa dash_trap_ilegal, "build/dash/trap_ilegal.exe"
         programa dash_trap_divcero, "build/dash/trap_divcero.exe"
         programa dash_test_gadtools, "build/dash/test_gadtools.exe"
+        programa dash_test_reaction, "build/dash/test_reaction.exe"
+        programa dash_test_doc_reaction, "build/dash/test_doc_reaction.exe"

@@ -2,6 +2,8 @@
 //! compositor de prueba, y ayudas para llamar a las funciones como lo haría el JIT.
 #![allow(dead_code)]
 
+pub mod puente;
+
 use caja_exec::estructuras::memf;
 use caja_exec::{Accion, Config, Exec, Memoria, MemoriaVec, Registros};
 use caja_intuition::{CajaGrafica, CompositorDePrueba, Numeros};

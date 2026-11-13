@@ -70,6 +70,10 @@ pub struct NuevaVentana {
     /// Con la barra de DashOS (la del compositor, como las ventanas de Linux): intuition no pinta la suya. Solo si el
     /// compositor la pone (`Compositor::pone_barra`).
     pub barra_dashos: bool,
+    /// Sin la barra de DashOS, el hueco de la marca de la caja (la pestaña "68K" del compositor) en su barra de
+    /// intuition, a 1x: (desde la derecha, dónde empiezan los gadgets de profundidad; el alto de la barra). `None`: sin
+    /// barra de intuition.
+    pub hueco_marca: Option<(i32, i32)>,
 }
 
 /// Los colores del tema de DashOS (Material 3) para pintar los controles de un programa Amiga "como DashOS" (S26):
