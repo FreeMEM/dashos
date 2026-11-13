@@ -98,12 +98,16 @@ const COLORES: &[(&str, u32)] = &kit::tema::ACENTOS;
 const DEL_FONDO: usize = COLORES.len();
 /// Las filas de Apariencia: los dos modos, los colores fijos, la paleta del fondo, (S26) el aspecto de los programas de
 /// las cajas, como DashOS u originales, y lo que se amplían las ventanas Amiga (decisión del usuario del 2026-11-13:
-/// una fila que pasa por automático, 1x, 2x y 3x). Después, un fondo por fila.
+/// una fila que pasa por automático, 1x, 2x y 3x) y hasta cuánta memoria pide la caja Amiga para sus programas (otra
+/// fila, que pasa por 64, 128, 256, 512 y 1024 MB). Después, un fondo por fila.
 const FILA_PALETA: usize = 2 + COLORES.len();
 const FILA_CAJAS_DASHOS: usize = FILA_PALETA + 1;
 const FILA_CAJAS_ORIGINAL: usize = FILA_PALETA + 2;
 const FILA_ESCALA_AMIGA: usize = FILA_PALETA + 3;
-const FILAS_FIJAS: usize = FILA_PALETA + 4;
+const FILA_MEMORIA_AMIGA: usize = FILA_PALETA + 4;
+const FILAS_FIJAS: usize = FILA_PALETA + 5;
+/// Los topes de memoria de la caja Amiga que da su fila, en MB.
+const MEMORIAS_AMIGA: [u32; 5] = [64, 128, 256, 512, 1024];
 
 /// Cómo se dice la escala de las ventanas Amiga en su fila.
 fn nombre_escala(e: Escala) -> String {
@@ -668,6 +672,7 @@ fn apariencia(ap: &Apariencia, cajas: &Ajuste) -> (Vec<String>, Vec<String>) {
     l.push(alloc::format!("Programas de las cajas: como DashOS{}{}", marca(cajas.general == Aspecto::Dashos), if cajas.general == Aspecto::Dashos { mas.as_str() } else { "" }));
     l.push(alloc::format!("Programas de las cajas: originales{}{}", marca(cajas.general == Aspecto::Original), if cajas.general == Aspecto::Original { mas.as_str() } else { "" }));
     l.push(alloc::format!("Ampliar ventanas Amiga: {}", nombre_escala(cajas.escala_de_caja(Caja::Amiga))));
+    l.push(alloc::format!("Memoria de la caja Amiga: {} MB", cajas.memoria_de_caja(Caja::Amiga)));
     let lista = fondos();
     let (estado, _, _, _, _, visto) = al_fondo("semilla");
     for f in &lista {
@@ -1181,6 +1186,29 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
                             let releido = leer_cajas() == Ok(cajas.clone());
                             println!("  [centro] Ampliar ventanas Amiga: {}; guardado: {} ({} bytes); releído: {}", nombre_escala(siguiente), guardado, bytes, if releido { "sí" } else { "no" });
+                            (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
+                            i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                            cambio = true;
+                        }
+                        // La memoria de la caja Amiga: cada vez, el siguiente tope (64, 128, 256, 512, 1024 MB y otra
+                        // vez 64). Se guarda en `Prefs/cajas` (`memoria amiga ...`; sin línea, el de serie) y se da al
+                        // compositor, que lo reparte a la caja: su 68k crece según pidan sus programas, hasta ahí.
+                        k if k == FILA_MEMORIA_AMIGA as i64 => {
+                            let ahora = cajas.memoria_de_caja(Caja::Amiga);
+                            let siguiente = MEMORIAS_AMIGA.iter().copied().find(|&m| m > ahora).unwrap_or(MEMORIAS_AMIGA[0]);
+                            cajas.memorias.retain(|c| c.0 != Caja::Amiga);
+                            if siguiente != aspecto::MEMORIA_DE_SERIE {
+                                cajas.memorias.push((Caja::Amiga, siguiente));
+                            }
+                            let texto = cajas.escribir();
+                            if gt.is_some() && version_tema >= 3 {
+                                let mut e = Escritor::new();
+                                e.empezar(TEMA_OBJ, dashos_tema_v1::req::CAJAS).texto(Some(&texto)).fin();
+                                c.mandar(&e);
+                            }
+                            let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
+                            let releido = leer_cajas() == Ok(cajas.clone());
+                            println!("  [centro] Memoria de la caja Amiga: {} MB; guardado: {} ({} bytes); releído: {}", siguiente, guardado, bytes, if releido { "sí" } else { "no" });
                             (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;

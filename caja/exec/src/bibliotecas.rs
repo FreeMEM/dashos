@@ -20,6 +20,7 @@ use crate::{io, lvo};
 pub const LINEA_A_NATIVA: u16 = 0xA0FF;
 const JMP_ABS: u16 = 0x4EF9;
 const RTS: u16 = 0x4E75;
+const TST_L_D0: u16 = 0x4A80;
 
 /// Lo que hay en una entrada de la tabla de saltos.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -456,6 +457,35 @@ impl<M: Memoria> Exec<M> {
         tamano_datos: u32,
     ) -> Result<u32, Fallo> {
         self.crear_nativa(nombre, version, revision, None, numeros, tamano_datos, false)
+    }
+
+    /// Como `crear_biblioteca_nativa`, y las funciones `con_cc` dejan los códigos de condición según D0 (`TST.L D0`
+    /// al volver), como piden sus autodocs (`IEEESPCmp`: "cc = gt..."): su entrada salta a un trozo de 68k
+    /// `LINEA_A n` / `TST.L D0` / `RTS` en la zona del sistema.
+    pub fn crear_biblioteca_nativa_con_cc(
+        &mut self,
+        nombre: &str,
+        version: u16,
+        revision: u16,
+        numeros: &[u16],
+        tamano_datos: u32,
+        con_cc: &[u16],
+    ) -> Result<u32, Fallo> {
+        let lib = self.crear_nativa(nombre, version, revision, None, numeros, tamano_datos, false)?;
+        for &n in con_cc {
+            let Some(&(l, desp)) = self.ajenas.get(&n) else { return Err(Fallo::TablaMala { dir: lib }) };
+            let trozo = self.reservar(8, memf::PUBLIC, 0)?;
+            if trozo == 0 {
+                return Err(Fallo::SinSitio);
+            }
+            self.escribir_entrada_nativa(trozo, n)?;
+            self.e16(trozo + 4, TST_L_D0)?;
+            self.e16(trozo + 6, RTS)?;
+            self.escribir_salto(l.wrapping_add_signed(desp), trozo)?;
+            self.trampolines.insert(n, trozo);
+        }
+        self.sum_library(lib)?;
+        Ok(lib)
     }
 
     /// Lo de `crear_biblioteca_nativa` para una biblioteca o un dispositivo (en `DeviceList`, con su `Open` propio:

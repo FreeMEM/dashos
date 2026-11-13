@@ -20,6 +20,7 @@ mod archivos;
 mod compositor;
 mod defensa;
 mod faltan;
+mod mates;
 mod memoria;
 mod preguntador;
 mod ramlib;
@@ -94,6 +95,10 @@ const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
 /// ramlib (`ramlib.rs`): cargar de disco y soltar lo cargado.
+/// `OpenLibrary` de exec (su entrada).
+const N_OPEN_LIBRARY: u16 = 92;
+/// mathieeesingbas.library (`mates.rs`).
+const N_MATES: u16 = 0xD80;
 const N_RAMLIB_CARGAR: u16 = 0xD00;
 const N_RAMLIB_SOLTAR: u16 = 0xD01;
 /// Las raíces de la caja en el servicio de archivos (`usuario/src/bin/inicio.rs`, S28): la 0, su cajón (leer y
@@ -367,6 +372,14 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     ));
     di(&format!("utility.library y timer.device nativos (Rust): ${:x} y ${:x}", util.base(), timer.base()));
     di(&format!("gadtools.library nativa (Rust): ${:x}", gr.gadtools_base()));
+    let mates_base = match mates::instalar(&mut ex, N_MATES) {
+        Ok(b) => b,
+        Err(f) => {
+            di(&format!("mathieeesingbas.library no se crea: {:?}", f));
+            return 0;
+        }
+    };
+    di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
     di(&format!(
@@ -492,6 +505,16 @@ pub extern "C" fn caja_programa_de_disco(i: u32, nombre: *mut u8, max: u32, dato
         *largo = c.programa.len() as u32;
     }
     1
+}
+
+/// Un tope más bajo para la memoria del 68k, en MB, para una prueba (0: el del ajuste). Dice cómo está la memoria.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_tope_de_prueba(mb: u32) {
+    if let Some(c) = caja() {
+        c.ex.mem.poner_tope_de_prueba(mb << 20);
+        let (t, l) = c.ex.mem.tope_y_largo();
+        di(&format!("memoria del 68k: {} MB, tope {} MB ({} veces crecida)", l >> 20, t >> 20, c.ex.mem.crecidas));
+    }
 }
 
 /// Los procesos que se creen desde ahora, sin consola (`si` distinto de 0) o con ella.
@@ -840,6 +863,10 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     if c.util.es_mia(n) {
         return de_accion(c.util.llamar(&mut c.ex, n, r));
     }
+    if (N_MATES..N_MATES + mates::FUNCIONES.len() as u16).contains(&n) {
+        r.d[0] = mates::llamar((n - N_MATES) as usize, r).unwrap_or(0);
+        return Fin::Seguir;
+    }
     if n == N_RAMLIB_CARGAR {
         r.d[0] = ramlib::cargar(c, r.a[1], r.d[1]);
         return Fin::Seguir;
@@ -1086,6 +1113,9 @@ fn atender(c: &mut Caja) {
     revisar_temporizador(c);
     poner_hora(c);
     c.gr.atender(&mut c.ex);
+    // El tope de la memoria del 68k, del ajuste de las cajas (si cambió en el centro de control, el nuevo).
+    let tope = c.gr.comp.tema.ajuste.memoria_de_caja(wayland::aspecto::Caja::Amiga);
+    c.ex.mem.poner_tope(tope << 20);
     c.sucio = false;
     decir_compositor(c);
 }
@@ -1390,6 +1420,18 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     }
     let Some(c) = caja() else { return C_RECHAZADA };
     recoger_avisos(c);
+    // Un OpenLibrary que da 0 por una biblioteca que sí hay (más vieja que la pedida, o que no se dejó abrir) también
+    // va al registro de lo que falta: el programa la quería así.
+    if n == N_OPEN_LIBRARY && r.d[0] == 0 && res == C_SEGUIR {
+        if let Ok(nombre) = c.ex.leer_cadena(antes.a[1])
+            && c.ex.esta_en_memoria(nombre.as_bytes())
+        {
+            let q = faltan::quien(c, c.pc_llamada);
+            if let Some(t) = c.faltan.apuntar(&nombre, &format!("OpenLibrary v{}", antes.d[0]), &q) {
+                di(&t);
+            }
+        }
+    }
     if res == C_ACABAR {
         return res;
     }

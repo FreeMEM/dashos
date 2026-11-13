@@ -666,6 +666,15 @@ while time.time() - inicio < total:
             if "[centro] Ampliar ventanas Amiga: 1x" not in texto and time.time() < reintento:
                 time.sleep(0.25)
                 continue
+            # Decisión del usuario del 2026-11-13: la memoria de la caja Amiga, de 256 MB (de serie) a 512.
+            time.sleep(0.5)
+            elegir_fila("Memoria de la caja Amiga")
+            reintento = time.time() + 15
+            centro = 20
+        if not selector_espera and centro == 20:
+            if "[centro] Memoria de la caja Amiga: 512 MB" not in texto and time.time() < reintento:
+                time.sleep(0.25)
+                continue
             centro = 7
             time.sleep(0.5)
             mandar("sendkey shift-tab", "sendkey down", pausa=0.3)

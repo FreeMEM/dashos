@@ -8,9 +8,13 @@
 #include <stdint.h>
 #include <stddef.h>
 
-/* La memoria del 68k (4 MB). Las direcciones del 68k son direcciones reales del proceso. */
+/* La memoria del 68k: empieza con 4 MB y crece según la pidan sus programas (caja_ampliar_ram), hasta el tope de su
+   ajuste (Prefs/cajas, `memoria amiga`; de serie, 256 MB). Las direcciones del 68k son direcciones reales del proceso. */
 #define M68K_RAM     0x00100000UL
-#define M68K_RAM_LEN 0x00400000UL
+#define M68K_RAM_LEN 0x00400000UL   /* lo de al principio */
+#define M68K_RAM_MAX 0xC0000000UL   /* hasta donde puede crecer, como mucho (deja sitio arriba) */
+extern volatile uint32_t m68k_ram_fin;   /* dónde acaba ahora */
+uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define VECTORES     0x00100000UL   /* VBR: 256 vectores */
 #define TRAMPAS      0x00100400UL   /* una trampa de 14 bytes por vector */
 #define COMUN        0x00101400UL   /* lo que acaba un programa: vuelve a la dirección 0 */
@@ -41,7 +45,8 @@ static inline uint32_t lee32(uintptr_t a) { return *(volatile uint32_t *)a; }
 /* ¿Está [a, a + n) dentro de la memoria del 68k? */
 static inline int en_ram68k(uint32_t a, uint32_t n)
 {
-    return a >= M68K_RAM && n <= M68K_RAM_LEN && a - M68K_RAM <= M68K_RAM_LEN - n;
+    uint32_t largo = m68k_ram_fin - M68K_RAM;
+    return a >= M68K_RAM && n <= largo && a - M68K_RAM <= largo - n;
 }
 
 /* Registros del 68k en la copia de x0..x30 que deja el JIT (EMIT_lineA, parche 0002). */
@@ -79,6 +84,7 @@ void caja_poner_trampa(uint32_t defecto);
 /* Las llamadas anidadas de la última tarea (hechas y no hechas) y sus excepciones de tarea entregadas. */
 /* Los procesos nuevos, sin consola (pr_CIS y pr_COS a 0, como desde el Workbench) o con ella. */
 void caja_sin_consola(int si);
+void caja_tope_de_prueba(uint32_t mb);
 int caja_programa_de_disco(uint32_t i, char *nombre, uint32_t max, const uint8_t **datos, uint32_t *largo);
 void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones);
 

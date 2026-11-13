@@ -1620,3 +1620,52 @@ y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nun
   nativa por la dirección de vuelta: `memoria_del_sistema`; prueba en `exec/tests/ramlib.rs`). Con eso, `capa.exe`
   vuelve a acabar con 0 bloques sin soltar. Con todo: 8 de las 16 bibliotecas de su prueba abren del 3.2 del usuario
   (iffparse, locale, mathieeedoubbas, mathieeedoubtrans, diskfont, commodities, rexxsyslib y texteditor.gadget).
+
+## 2026-11-13 (noche): hacia Tachyon. Memoria según el programa y MUI 5
+
+Rama `caja-amiga-libs`, con `revision` (404ea53) unida: `archivos/dashfs`, la tableta USB y `make virt-uso`.
+
+### La memoria del 68k crece según el programa
+
+Decisión del usuario: la caja pide la memoria según lo que necesite el programa, con un tope en un ajuste (de serie,
+256 MB).
+
+- **Cómo crece** (`caja_ampliar_ram`, `caja/caja.c`): el 68k ve sus direcciones como las del proceso, desde 1 MB.
+  Empieza con 4 MB. Cuando un `AllocMem` (o `AllocVec`, `CreatePool`, los hunks de un programa) no cabe, exec pide más
+  (`Memoria::ampliar`): la caja proyecta objetos de memoria nuevos justo detrás de lo que hay. `memoria_crear`
+  reserva entera la memoria de un objeto y la cobra al cupo, así que se crece a trozos: lo que haga falta y al menos
+  una cuarta parte de lo que ya hay, en objetos de 16 MB como mucho (el máximo del kernel). Exec sube el `MH_UPPER` de
+  la región de arriba y mete lo nuevo en su lista de libres, pegado al trozo libre de su final: cabe un bloque más
+  grande que cada trozo (un hunk de 5 MB). La chip no crece. Lo crecido no se devuelve: exec lo vuelve a repartir.
+- **El tope**: `memoria amiga <MB>` en `Prefs/cajas` (de 8 a 2048; sin línea, 256), una fila nueva del centro de
+  control ("Memoria de la caja Amiga", que pasa por 64, 128, 256, 512 y 1024 MB). El compositor lo reparte como el
+  resto del ajuste; la caja lo mira cada vez que atiende al compositor. Un `AllocMem` que no cabría ni con todo lo que
+  queda no hace crecer nada (un programa que pide 2 GB no se lleva la caja hasta el tope).
+- **El cupo**: el de la caja Amiga en `inicio` pasa de 32 MB a 32 + 256. Es un límite sacado del cupo raíz, no memoria
+  gastada; si no cabe (en `virt` de pruebas no cabía), la mitad, y así hasta 16. Un tope mayor en el ajuste no pasa
+  del cupo: `memoria_crear` da `E_MEMORIA` y la caja se queda donde llegó.
+- `AvailMem` cuenta, en lo que no es chip, lo que queda por crecer: un programa que mira antes de pedir no se asusta.
+- **Pruebas**: `exec/tests/crecer.rs` (crece lo justo, la chip no, lo soltado se reutiliza, `TypeOfMem` de lo nuevo;
+  hostil: pedir 256 KB sin fin para en el tope, tamaños absurdos dan 0) y `glotona.exe` en la caja (paso 8b3b): con un
+  tope de prueba de 48 MB pide 1 MB tras otro hasta que no le dan más, sin pasar del tope y sin colgar nada; soltado
+  todo, 24 MB de una vez caben sin crecer.
+
+### MUI 5: no era el JIT
+
+- **La traza por instrucción** (temporal, ya quitada: cada instrucción que traduce el JIT, con su dirección y sus
+  palabras, desde que ramlib carga muimaster) enseñó que el bloque del `longjmp` se traduce entero dos veces y que la
+  caída llega después. La dirección de la caída (`0x110000c154`) no es del traductor sino del **código traducido**
+  (la caché del JIT); FAR 0: el 68k escribe en la dirección 0. Ese bloque es el `exit()` de la biblioteca de C de
+  muimaster: hace `longjmp` a un `jmp_buf` que en una biblioteca nadie ha llenado (ceros), carga A7 = 0 y escribe ahí.
+  En la caja, escribir en la página 0 acaba con la caja entera (S28, como la prueba de malware de la dirección 4).
+  En el banco del JIT el mismo bloque, llamado dos veces como en muimaster, va bien. **No hace falta parche de Emu68.**
+- **Por qué salía**: lo dice la propia muimaster por `Output()`, "mathieeesingbas.library could not be opened": la
+  coma flotante simple IEEE, que en el Amiga está en la ROM. Ahora es nativa (`pegamento/src/mates.rs`, del autodoc:
+  las 12 funciones; `IEEESPCmp` e `IEEESPTst` dejan los códigos de condición con un `TST.L D0` al volver, con
+  `crear_biblioteca_nativa_con_cc` de exec). Con ella muimaster 21.227 abre.
+- **Las clases de MUI** las hace muimaster con `MakeClass` en su `Init`, en la tarea del primero que la abre; al
+  acabar esa tarea, la caja las quitaba, y la biblioteca seguía en memoria sin ellas ("MUI: cannot create an object"
+  en el siguiente programa). Ahora las clases y los objetos que hace código de una biblioteca de disco son del sistema
+  (`Exec::dueno_de_lo_nuevo`, lo mismo que su memoria).
+- El registro de lo que falta dice ahora la primera vez de cada cosa **en cada tarea** (antes, solo la primera de todas:
+  lo que pedía muimaster ya lo había pedido otro antes y no salía) y los `OpenLibrary` que dan 0 por versión.
