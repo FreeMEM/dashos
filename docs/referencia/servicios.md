@@ -510,7 +510,8 @@ El servicio de notificaciones, solo en `virt` por ahora. Canal "avisos"; el prot
 El servicio `caja-linux` crea y corre máquinas virtuales (llamadas 45 a 48 de `kernel.md`). Solo hay hipervisor si el
 kernel arrancó en EL2 (en QEMU, `virtualization=on`; `make arranque-virt-vm`).
 
-**Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina y si hay hipervisor, 16 bytes), 2 y 3 la Image de Linux y su
+**Llaves.** En `virt`: 1 "sistema" (la RAM de la máquina, si hay hipervisor y la RAM pedida para el invitado al compilar
+el kernel, tres u64, 24 bytes), 2 y 3 la Image de Linux y su
 initramfs si los hay (`make arranque-virt-linux`), y después los canales "ventanas" (su terminal), "disco" (la
 partición de la caja Linux, el disco de Arch), "sesiones" (el permiso) y "red" (la red del invitado), en el orden en
 que `inicio` crea los canales. En la Pi 4: "sistema" y el permiso, que da `inicio` (allí aún no hay
@@ -523,7 +524,9 @@ registro de seguridad; a cualquier otro se le pregunta a quien está delante. `s
 
 **La memoria.** `inicio` le da la del invitado más 32 MB (`dashos::maquina::memoria_invitado`: 128 MB con menos de 2
 GB de RAM, 256 MB con 2 GB y 512 MB con 4 GB o más); sin Image de Linux, solo los 32 MB. Si no cabe, la mitad para el
-invitado, y así hasta 64 MB.
+invitado, y así hasta 64 MB. Otra cantidad, al compilar el kernel: `DASHOS_CAJA_LINUX_MB=1024` (va en "sistema";
+`memoria_invitado_con`: al menos 64 MB y como mucho la mitad de la RAM). En QEMU `virt`, con más de 3 GB hace falta
+`highmem=on,highmem-ecam=off,highmem-mmio=off` (`MAQUINA_GRANDE` del Makefile): el kernel ve en `virt` hasta 16 GB.
 
 **Aparatos del invitado** (crate `caja-linux/vmm`): PL011 (consola temprana), PL031 (la hora de DashOS; si el invitado
 la cambia, cambia solo la suya), virtio-console (hvc0, 80x25), virtio-blk y, si el servicio de red le da un puerto,

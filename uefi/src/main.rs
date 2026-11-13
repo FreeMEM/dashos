@@ -158,9 +158,9 @@ fn ramfb(bs: &ServiciosArranque, c: &mut Consola, ancho: u32, alto: u32) -> Opti
     }
     let sel = sel?;
     let tamano = ancho as u64 * alto as u64 * 4;
-    let mut base = 0u64;
-    // Tipo 0 (cualquier sitio), memoria 0 (reservada).
-    if (bs.reservar_paginas)(0, 0, tamano.div_ceil(4096) as usize, &mut base) != BIEN {
+    let mut base = DEBAJO_DE_4GB;
+    // Por debajo de 4 GB, memoria 0 (reservada).
+    if (bs.reservar_paginas)(POR_DEBAJO_DE, 0, tamano.div_ceil(4096) as usize, &mut base) != BIEN {
         return None;
     }
     unsafe { core::ptr::write_bytes(base as *mut u8, 0, tamano as usize) };
@@ -318,8 +318,11 @@ const DIRECCION_NUCLEO: u64 = 0x4020_0000;
 const MARGEN_NUCLEO: usize = 2 << 20;
 
 // Reservar páginas (UEFI 2.10, 7.2): tipos de reserva y de memoria.
-const EN_CUALQUIER_SITIO: u32 = 0;
+/// Por debajo de la dirección que se pasa (caja-linux-grandes: con highmem, QEMU `virt` tiene RAM por encima de los 4
+/// GB y UEFI reparte desde arriba; el árbol y la pantalla se quedan por debajo).
+const POR_DEBAJO_DE: u32 = 1;
 const EN_ESA_DIRECCION: u32 = 2;
+const DEBAJO_DE_4GB: u64 = 0xFFFF_FFFF;
 const DATOS_DEL_CARGADOR: u32 = 2;
 const PAGINA: usize = 4096;
 
@@ -588,8 +591,8 @@ extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> 
     let _ = writeln!(c, "DashOS: kernel de {} bytes en {:#x}", NUCLEO.len(), dir);
     // Sitio para la copia del árbol, con hueco para 128 zonas reservadas más.
     let capacidad = tam_arbol as usize + 16 * 128 + 64 + 256 + 64;
-    let mut copia = 0u64;
-    if (bs.reservar_paginas)(EN_CUALQUIER_SITIO, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
+    let mut copia = DEBAJO_DE_4GB;
+    if (bs.reservar_paginas)(POR_DEBAJO_DE, DATOS_DEL_CARGADOR, capacidad.div_ceil(PAGINA), &mut copia) != BIEN {
         let _ = writeln!(c, "DashOS: sin memoria para el árbol");
         return 1;
     }

@@ -2219,9 +2219,12 @@ fn principal() -> u64 {
     let l = llaves();
     // SAFETY: recién proyectado aquí, solo de lectura; el objeto mide una página.
     let sistema = (dashos::memoria_proyectar(SISTEMA, VA_SISTEMA, false) == 0)
-        .then(|| dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(VA_SISTEMA as *const u8, 16) }))
+        .then(|| {
+            let datos = unsafe { core::slice::from_raw_parts(VA_SISTEMA as *const u8, 24) };
+            dashos::maquina::sistema(datos).map(|(ram, hiper)| (ram, hiper, dashos::maquina::memoria_pedida(datos)))
+        })
         .flatten();
-    let Some((ram, hiper)) = sistema else {
+    let Some((ram, hiper, pedida)) = sistema else {
         println!("  [caja-linux] sin los datos del sistema; MAL");
         return 1;
     };
@@ -2368,7 +2371,7 @@ fn principal() -> u64 {
     bien &= cuarto;
     // Con la Image de un kernel de Linux, Linux hasta busybox (y, con ventana, una terminal con su shell).
     if l.linux.is_some() {
-        let invitado = dashos::maquina::memoria_invitado(ram) as usize;
+        let invitado = dashos::maquina::memoria_invitado_con(ram, pedida) as usize;
         println!("  [caja-linux] linux: la máquina tiene {} MB de RAM: hasta {} MB para el invitado", ram >> 20, invitado >> 20);
         bien &= linux(&l, invitado);
     }

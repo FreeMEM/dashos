@@ -200,18 +200,20 @@ fn principal() -> u64 {
         p += 24;
     }
     // Lo que dice el kernel de la máquina ("sistema"): la RAM, para la memoria de la caja Linux (H9).
-    let (ram, _) = (0..n)
+    // Y lo pedido para el invitado al compilar (caja-linux-grandes), o 0.
+    let (ram, pedida) = (0..n)
         .find(|&i| nombre(aparatos + 24 * i) == "sistema" && u32_en(aparatos + 24 * i + 16) == 6)
         .and_then(|i| {
             let llave = u32_en(aparatos + 24 * i + 20);
             if memoria_proyectar(llave, SISTEMA, false) != 0 {
                 return None;
             }
-            let r = dashos::maquina::sistema(unsafe { core::slice::from_raw_parts(SISTEMA as *const u8, 16) });
+            let datos = unsafe { core::slice::from_raw_parts(SISTEMA as *const u8, 24) };
+            let r = dashos::maquina::sistema(datos).map(|(ram, _)| (ram, dashos::maquina::memoria_pedida(datos)));
             dashos::memoria_quitar(SISTEMA);
             r
         })
-        .unwrap_or((0, false));
+        .unwrap_or((0, 0));
     let programas = u32_en(p) as usize;
     p += 4;
     let cabeceras = p;
@@ -376,7 +378,7 @@ fn principal() -> u64 {
             // 2, su montón con el disco del invitado y la terminal). Se calcula con la RAM de la máquina (decisión del
             // usuario del 2026-11-12): 256 MB con 2 GB, 512 con 4 o más. Sin Linux que arrancar (sin su Image), solo los
             // 32 MB.
-            "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado(ram) + dashos::maquina::MARGEN_SERVICIO,
+            "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
@@ -404,7 +406,7 @@ fn principal() -> u64 {
                 }
             }
             if g > 0 {
-                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, (dashos::maquina::memoria_invitado(ram)) >> 20);
+                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
             }
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };

@@ -146,15 +146,17 @@ en_el1:
                                         // ejecuta por aquí; auditoría, hallazgo 12)
 .if PLACA_VIRT
     // QEMU virt (U3, placa.rs): el primer GB son aparatos y la RAM empieza en 1 GB. Bloques de 1 GB: el primero de
-    // dispositivo, los otros tres normales. Sin nivel 2.
+    // dispositivo, los demás normales hasta el GB 16. Sin nivel 2. Con highmem (caja-linux-grandes) la RAM de QEMU
+    // pasa de los 4 GB, y el mapa de verdad (mapa.rs) se hace con tablas sacadas de arriba de la RAM.
     ldr     x8, =0x0060000000000401     // bloque de dispositivo: válido, AttrIndx 0, AF, PXN y UXN
     str     x8, [x0, #0]
-    orr     x5, x4, #(1 << 30)
-    str     x5, [x0, #8]
-    orr     x5, x4, #(2 << 30)
-    str     x5, [x0, #16]
-    orr     x5, x4, #(3 << 30)
-    str     x5, [x0, #24]
+    mov     x2, #1
+13: lsl     x5, x2, #30
+    orr     x5, x5, x4
+    str     x5, [x0, x2, lsl #3]
+    add     x2, x2, #1
+    cmp     x2, #16
+    b.ne    13b
 .elseif PLACA_PI3
     // La Pi 3 (P3): el primer GB, por bloques de 2 MB (los periféricos desde 0x3F000000); el segundo, de dispositivo
     // (los locales de los núcleos en 0x40000000; no hay RAM ahí); los otros dos, normales (sin nada).
