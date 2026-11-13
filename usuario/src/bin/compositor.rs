@@ -60,9 +60,10 @@ static GLOBALES: [Global; 9] = [
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     // El tema del sistema (S10c): todos lo ven; cambiarlo, solo el centro de control. La versión 2 trae los esquemas ya
-    // hechos (C3); la 3, el aspecto de los programas de las cajas (S26). Los `wl_output` van aparte, uno por pantalla
-    // (multimonitor).
-    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
+    // hechos (C3); la 3, el aspecto de los programas de las cajas (S26); la 4 (S27), los espacios de trabajo y el
+    // volumen, solo para la barra y el panel: a los demás, pedirlos es un error. Los `wl_output` van aparte, uno por
+    // pantalla (multimonitor).
+    Global { nombre: 7, interfaz: &tablas::DASHOS_TEMA_V1, version: 4 },
     // El portapapeles (H9): la selección de siempre y la primaria; y la barra de DashOS para quien la pida.
     PORTAPAPELES,
     PRIMARIA,
@@ -92,7 +93,8 @@ static GLOBALES_CAPAS: [Global; 10] = [
     Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
     Global { nombre: 5, interfaz: &tablas::WL_SUBCOMPOSITOR, version: 1 },
     Global { nombre: 7, interfaz: &tablas::ZWLR_LAYER_SHELL_V1, version: 4 },
-    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 1 },
+    // La 3 (S27): los espacios de trabajo a la barra y las teclas del volumen al panel.
+    Global { nombre: 10, interfaz: &tablas::DASHOS_TEMA_V1, version: 3 },
     PORTAPAPELES,
     PRIMARIA,
     DECORACIONES,
@@ -237,6 +239,25 @@ fn avisar_inactividad(escena: &mut Escena<Proyecciones>, clientes: &mut BTreeMap
     for (cl, objeto) in core::mem::take(&mut escena.avisos_lanzador) {
         if let Some(cli) = clientes.get_mut(&cl) {
             escena::avisar_lanzador(&mut cli.con, objeto);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    // Los espacios de trabajo, a la barra (S27), si cambiaron; y las teclas del volumen, al panel.
+    escena.revisar_espacios();
+    for (cl, objeto, actual, ocupados) in core::mem::take(&mut escena.avisos_espacios) {
+        println!("  [compositor] espacios: se ve el {}, con ventanas {:#05b}", actual, ocupados);
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_espacios(&mut cli.con, objeto, actual, ocupados);
+            if !mandar(cli) {
+                caidos.push(cl);
+            }
+        }
+    }
+    for (cl, objeto, paso) in core::mem::take(&mut escena.avisos_volumen) {
+        if let Some(cli) = clientes.get_mut(&cl) {
+            escena::avisar_volumen(&mut cli.con, objeto, paso);
             if !mandar(cli) {
                 caidos.push(cl);
             }

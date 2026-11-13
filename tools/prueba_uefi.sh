@@ -657,7 +657,7 @@ while time.time() - inicio < total:
             import re
             bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\), panel en \((\d+), (\d+)\)", texto)
             def ir_barra(x, y):
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 pasos = []
                 while x > 0 or y > 0:
                     dx, dy = min(x, 100), min(y, 100)
@@ -669,7 +669,7 @@ while time.time() - inicio < total:
             time.sleep(0.5)
             ir_barra(int(bb.group(1)), int(bb.group(2)))
             reintento = time.time() + 8
-        if 1 <= barra <= 7:
+        if 1 <= barra <= 10:
             captura_barra = os.environ.get("CAPTURA_BARRA")
             espera = {1: texto.count("[barra] lanzador abierto") >= 1,
                       2: '[barra] busca "ho": hola' in texto,
@@ -677,11 +677,19 @@ while time.time() - inicio < total:
                       4: texto.count("[barra] lanzador abierto") >= 2,
                       5: texto.count("[barra] lanzador cerrado") >= 2,
                       6: "[panel] abierto por 2.ª vez" in texto and texto.count("[compositor] capa de panel en") >= 2,
-                      7: texto.count("[panel] cerrado") >= 2}[barra]
+                      7: texto.count("[panel] cerrado") >= 2,
+                      # S27: Super+2 (se ve el 2), el clic en el 1 de la barra (se ve el 1) y las teclas del volumen
+                      # en ráfaga: un solo OSD que las junta.
+                      8: "[barra] espacios: se ve el 2" in texto,
+                      9: "[barra] espacios: se ve el 1" in texto[texto.find("[barra] espacios: se ve el 2"):],
+                      10: "[panel] OSD cerrado: " in texto}[barra]
+            if barra == 10 and captura_barra and "[panel] OSD abierto" in texto and not globals().get("osd_capturado"):
+                globals()["osd_capturado"] = True
+                mandar("screendump " + captura_barra[:-4] + ".osd.ppm")
             if not espera:
                 if time.time() > reintento:
                     # No llegó: se deja (las líneas que falten lo dirán).
-                    barra = 8
+                    barra = 11
                 time.sleep(0.25)
                 continue
             time.sleep(0.6)
@@ -706,6 +714,17 @@ while time.time() - inicio < total:
                     mandar("screendump " + captura_barra[:-4] + ".panel.ppm")
                     time.sleep(0.5)
                 ir_barra(int(bb.group(3)), int(bb.group(4)))
+            elif barra == 7:
+                mandar("sendkey meta_l-2")
+            elif barra == 8:
+                if captura_barra:
+                    mandar("screendump " + captura_barra[:-4] + ".espacio2.ppm")
+                    time.sleep(0.5)
+                uno = re.findall(r"\[barra\] espacios: se ve el 2 de \d+; el 1 en \((\d+), (\d+)\)", texto)
+                if uno:
+                    ir_barra(int(uno[-1][0]), int(uno[-1][1]))
+            elif barra == 9:
+                mandar(*["sendkey volumedown"] * 6, "sendkey volumeup", pausa=0.05)
             barra += 1
             reintento = time.time() + 8
             continue
@@ -714,7 +733,7 @@ while time.time() - inicio < total:
         # cierra. Con la sesión bloqueada, se espera. Los sitios los dicen la barra y el compositor (dónde sale cada capa).
         # Con CAPTURA_AVISOS=fichero.ppm: el toast (fichero.ppm), el historial (fichero.hist.ppm) y vacío
         # (fichero.vacio.ppm).
-        if avisos_paso == 0 and barra == 8 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
+        if avisos_paso == 0 and barra == 11 and "[barra] campana en (" in texto and "[avisador] inundar" in texto:
             avisos_paso = 1
             reintento_avisos = time.time() + 10
         if 1 <= avisos_paso <= 8:
@@ -737,7 +756,7 @@ while time.time() - inicio < total:
             capa_hist = capa_tras("[barra] historial abierto")
             borrar = re.findall(r"\[barra\] historial abierto: .*Borrar todo en \((\d+), (\d+)\)", texto)
             def clic_en(x, y):
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 pasos = []
                 while x > 0 or y > 0:
                     dx, dy = min(x, 100), min(y, 100)
@@ -786,7 +805,7 @@ while time.time() - inicio < total:
                 x, y = capa_hist[0]
                 # La rueda sobre la lista (a media altura del historial): dos pasos en un sentido y dos en el otro (el signo
                 # de `dz` en el monitor de QEMU no está claro): en algún momento la lista pasa por la fila 3.
-                mandar(*["mouse_move -100 -100"] * 12, pausa=0.05)
+                mandar(*["mouse_move -100 -100"] * 20, pausa=0.05)
                 px, py = int(x) + 150, int(y) + 200
                 pasos = []
                 while px > 0 or py > 0:
@@ -833,7 +852,7 @@ while time.time() - inicio < total:
         # con las ventanas de Sistema y Programas (fichero.ppm), Privado como lista (fichero.lista.ppm), la Información
         # (fichero.info.ppm) y la
         # Información con el comentario escrito (fichero.comentario.ppm). Al final, Cerrar en cada ventana.
-        if wb == 0 and barra == 8 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
+        if wb == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto:
             wb = 1
             reintento = 0
         if 1 <= wb <= 17:

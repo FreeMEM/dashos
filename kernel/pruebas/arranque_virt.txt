@@ -134,6 +134,8 @@ DashOS en marcha con 4 núcleos.
 # S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
 # panel rápido.
 ~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
+# S27: ni cambiar de espacio de trabajo como la barra.
+~│   [hostil] compositor: cambiar de espacio de trabajo sin ser la barra da error: sí
 ~│   [hostil] compositor sigue: sí
 # S10c: el centro de control rechaza lo que no sea abrir una categoría, también tras una inundación.
 ~│   [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: bien
@@ -204,6 +206,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] barra lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanza Programas/hola: 0 (proceso 
 ~│   [barra] lanzador cerrado
+# S27: Super+2 cambia de espacio de trabajo (la barra lo enseña) y un clic en el 1 de la barra vuelve; las teclas del
+# volumen en ráfaga sacan un solo OSD, que las junta.
+~│   [compositor] espacios: se ve el 2
+~│   [barra] espacios: se ve el 2 de 3; el 1 en
+~│   [barra] pide el espacio 1
+~│   [panel] OSD abierto: volumen
+~│   [panel] OSD cerrado: 7 pulsaciones; volumen
 # S10: el Workbench de Ana. Sus raíces: el disco solo para leer (Sistema) y `C` (Home, provisional). No lista el cajón
 # de `sesiones` ni el de Carla, no abre sus ficheros, no crea por Sistema ni sube por encima de Home; y los nombres con
 # '|' o ':' no salen.

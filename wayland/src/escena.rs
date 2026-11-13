@@ -135,6 +135,15 @@ const KEY_IZQUIERDA: u32 = 105;
 const KEY_DERECHA: u32 = 106;
 const KEY_L: u32 = 38;
 const KEY_A: u32 = 30;
+/// Las teclas del volumen (S27), que van al panel rápido.
+const KEY_SILENCIO: u32 = 113;
+const KEY_BAJAR_VOLUMEN: u32 = 114;
+const KEY_SUBIR_VOLUMEN: u32 = 115;
+/// Del 1 (evdev 2) al 9 (evdev 10): con Super, los espacios de trabajo (S27).
+const KEY_1: u32 = 2;
+const KEY_9: u32 = 10;
+/// S27: los espacios de trabajo, del 1 al `MAX_ESPACIOS`.
+pub const MAX_ESPACIOS: u32 = 9;
 
 /// Un cliente es su marca de canal (S10b): la conexión.
 pub type Cliente = u64;
@@ -435,6 +444,8 @@ pub struct Xdg {
     pub geometria: Option<Rect>,
     /// Si es un emergente (`xdg_popup`).
     pub emergente: Option<emergentes::Emergente>,
+    /// S27: el espacio de trabajo de la ventana (1 a `MAX_ESPACIOS`); 0 hasta que sale en pantalla.
+    pub espacio: u32,
 }
 
 /// Lo de cada cliente.
@@ -544,6 +555,16 @@ pub struct Escena<M: Memorias> {
     titulo_dicho: alloc::string::String,
     /// Super está pulsada sin otra tecla ni botón por medio: al soltarla, el lanzador (S10).
     super_sola: bool,
+    /// S27: el espacio de trabajo que se ve (1 a `MAX_ESPACIOS`). Las ventanas de los otros no se ven ni reciben nada,
+    /// como las de una sesión de detrás (U6).
+    pub espacio: u32,
+    /// Lo último que se dijo a las barras de los espacios (el que se ve y los que tienen ventanas).
+    espacios_dichos: (u32, u32),
+    /// Los espacios por decir a cada barra (S27): barra, objeto, el que se ve y los ocupados. Quien atiende los manda
+    /// con `avisar_espacios`.
+    pub avisos_espacios: Vec<(Cliente, u32, u32, u32)>,
+    /// Las teclas del volumen (S27), por decir al panel rápido: cliente, objeto y paso. Con `avisar_volumen`.
+    pub avisos_volumen: Vec<(Cliente, u32, i32)>,
     /// Las capas que acaban de salir, con su sitio (S10: las pruebas del panel, bajo la barra): quien atiende lo dice y
     /// lo vacía.
     pub capas_colocadas: Vec<(Cliente, i32, i32)>,
@@ -677,6 +698,20 @@ pub fn avisar_titulo(con: &mut Conexion, objeto: u32, titulo: &str) {
 /// Lo más largo que se dice de un título (S10), en bytes: lo que cabe en la barra.
 pub const MAX_TITULO: usize = 96;
 
+/// S27: los espacios de trabajo, a la barra (solo si enlazó la versión 3).
+pub fn avisar_espacios(con: &mut Conexion, objeto: u32, actual: u32, ocupados: u32) {
+    if con.objetos.get(&objeto).is_some_and(|o| o.version >= 4) {
+        con.salida.empezar(objeto, dashos_tema_v1::ev::ESPACIOS).uint(actual).uint(ocupados).fin();
+    }
+}
+
+/// S27: una tecla del volumen, al panel rápido (solo si enlazó la versión 3).
+pub fn avisar_volumen(con: &mut Conexion, objeto: u32, paso: i32) {
+    if con.objetos.get(&objeto).is_some_and(|o| o.version >= 4) {
+        con.salida.empezar(objeto, dashos_tema_v1::ev::VOLUMEN).int(paso).fin();
+    }
+}
+
 impl<M: Memorias> Escena<M> {
     pub fn new(memorias: M, fondo: u32) -> Self {
         // Al empezar, la pantalla entera está por pintar.
@@ -722,6 +757,10 @@ impl<M: Memorias> Escena<M> {
             avisos_titulo: Vec::new(),
             titulo_dicho: alloc::string::String::new(),
             super_sola: false,
+            espacio: 1,
+            espacios_dichos: (0, 0),
+            avisos_espacios: Vec::new(),
+            avisos_volumen: Vec::new(),
             capas_colocadas: Vec::new(),
             personas: BTreeMap::new(),
             detras: Vec::new(),
@@ -895,6 +934,80 @@ impl<M: Memorias> Escena<M> {
         self.personas.get(&cliente).is_some_and(|u| self.detras.contains(u))
     }
 
+    /// S27: el espacio de trabajo de una superficie, si es una ventana ya en pantalla (0 si no: una capa, una
+    /// subsuperficie, una ventana sin colocar).
+    pub fn espacio_de(&self, (c, sup): (Cliente, u32)) -> u32 {
+        let Some(cli) = self.clientes.get(&c) else { return 0 };
+        cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).map_or(0, |x| x.espacio)
+    }
+
+    /// Si una superficie raíz no se ve: de una sesión de detrás (U6) o una ventana de otro espacio de trabajo (S27).
+    pub fn fuera(&self, v: (Cliente, u32)) -> bool {
+        if self.oculto(v.0) {
+            return true;
+        }
+        let e = self.espacio_de(v);
+        e != 0 && e != self.espacio
+    }
+
+    /// S27: los espacios con alguna ventana de quien está delante (bit n-1 por el espacio n).
+    pub fn ocupados(&self) -> u32 {
+        self.orden.iter().filter(|v| !self.oculto(v.0)).map(|&v| self.espacio_de(v)).filter(|&e| (1..=MAX_ESPACIOS).contains(&e)).fold(0, |m, e| m | 1 << (e - 1))
+    }
+
+    /// S27: ver el espacio `n`. Lo de los otros deja de verse; el teclado y el puntero salen de lo que se va, y el
+    /// teclado pasa a la ventana de arriba del nuevo. Con la sesión bloqueada, o fuera de 1 a `MAX_ESPACIOS`, nada.
+    pub fn cambiar_espacio(&mut self, n: u32) {
+        if !(1..=MAX_ESPACIOS).contains(&n) || n == self.espacio || self.bloqueo.is_some() {
+            return;
+        }
+        self.espacio = n;
+        self.arrastre = None;
+        self.tras_cambio_de_sesion();
+        // Si nadie tenía el teclado (el espacio de antes estaba vacío), a la ventana de arriba de este.
+        self.devolver_teclado();
+    }
+
+    /// S27: lleva la ventana con el teclado al espacio `n`, sin ir con ella: deja de verse y el teclado pasa a la de
+    /// arriba de este.
+    pub fn mover_a_espacio(&mut self, n: u32) {
+        if !(1..=MAX_ESPACIOS).contains(&n) || n == self.espacio || self.bloqueo.is_some() {
+            return;
+        }
+        let Some((c, sup)) = self.teclado else { return };
+        let Some(cli) = self.clientes.get_mut(&c) else { return };
+        let Some(x) = cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get_mut(&r)) else { return };
+        if x.espacio == 0 {
+            return;
+        }
+        x.espacio = n;
+        self.tras_cambio_de_sesion();
+    }
+
+    /// S27: si cambiaron los espacios (el que se ve o los ocupados), se dice a cada barra. Quien atiende lo llama tras
+    /// cada mensaje, como `revisar_titulo`.
+    pub fn revisar_espacios(&mut self) {
+        let ahora = (self.espacio, self.ocupados());
+        if ahora == self.espacios_dichos {
+            return;
+        }
+        self.espacios_dichos = ahora;
+        let barras = &self.barras;
+        let suyos: Vec<(Cliente, u32)> = self.temas.iter().filter(|t| barras.contains(&t.0)).copied().collect();
+        for (c, o) in suyos {
+            self.avisos_espacios.push((c, o, ahora.0, ahora.1));
+        }
+    }
+
+    /// S27: una tecla del volumen, al panel rápido. Si no hay panel suscrito, `false` (la tecla sigue a la ventana).
+    pub fn pedir_volumen(&mut self, paso: i32) -> bool {
+        let abren = &self.abren_panel;
+        let suyos: Vec<(Cliente, u32, i32)> = self.temas.iter().filter(|t| abren.contains(&t.0)).map(|t| (t.0, t.1, paso)).collect();
+        let hay = !suyos.is_empty();
+        self.avisos_volumen.extend(suyos);
+        hay
+    }
+
     /// U6: un mensaje sin marca que puede ser de `sesiones`. Con otra marca (la de un cliente), nada: nadie más decide
     /// qué sesión está delante. Devuelve lo que se aplicó, o `None` si no era un aviso de sesiones.
     pub fn aviso_de_sesiones(&mut self, marca: u64, m: &[u8]) -> Option<AvisoSesiones> {
@@ -927,30 +1040,46 @@ impl<M: Memorias> Escena<M> {
     /// teclado pasa a la ventana de arriba que se ve.
     fn tras_cambio_de_sesion(&mut self) {
         self.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
-        if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0)) {
+        if let Some((c, s)) = self.teclado.filter(|t| self.oculto(t.0) || self.fuera_raiz(*t)) {
             self.pendientes.push((c, Entrada::TecladoSale { superficie: s }));
             self.teclado = None;
             self.devolver_teclado();
         }
-        if let Some((c, s)) = self.puntero.filter(|p| self.oculto(p.0)) {
+        if let Some((c, s)) = self.puntero.filter(|p| self.oculto(p.0) || self.fuera_raiz(*p)) {
             self.pendientes.push((c, Entrada::Sale { superficie: s }));
             self.puntero = None;
         }
     }
 
-    /// La ventana de más arriba que se ve (U6: las de una sesión de detrás, no).
+    /// La ventana de más arriba que se ve (U6: las de una sesión de detrás, no; S27: las de otro espacio, tampoco).
     fn ventana_de_arriba(&self) -> Option<(Cliente, u32)> {
-        self.orden.iter().rev().find(|v| !self.oculto(v.0)).copied()
+        self.orden.iter().rev().find(|&&v| !self.fuera(v)).copied()
+    }
+
+    /// S27: si la superficie `v` (una ventana o una de sus hijas) es de una ventana de otro espacio.
+    fn fuera_raiz(&self, (c, sup): (Cliente, u32)) -> bool {
+        let Some(cli) = self.clientes.get(&c) else { return false };
+        // Sube por las madres de las subsuperficies (con tope) hasta la raíz.
+        let mut id = sup;
+        for _ in 0..MAX_HONDO {
+            match cli.superficies.get(&id).and_then(|s| s.madre) {
+                Some(m) => id = m,
+                None => break,
+            }
+        }
+        self.fuera((c, id))
     }
 
     /// U6: los avisos de `frame` de las superficies ocultas, a ritmo bajo: si pasó `RITMO_OCULTO_MS` desde los
     /// últimos, todos los que esperan (cliente y aviso). Quien atiende los manda con la hora `ms`.
     pub fn avisos_ocultos(&mut self, ms: u32) -> Vec<(Cliente, u32)> {
         let mut out = Vec::new();
-        if self.detras.is_empty() || ms.wrapping_sub(self.ultimo_oculto_ms) < RITMO_OCULTO_MS {
+        if !self.hay_fuera() || ms.wrapping_sub(self.ultimo_oculto_ms) < RITMO_OCULTO_MS {
             return out;
         }
-        let ocultos: Vec<Cliente> = self.clientes.keys().copied().filter(|&c| self.oculto(c)).collect();
+        // S27: también los clientes con alguna ventana en otro espacio (las que se ven tendrán sus avisos al componer; si
+        // alguno sale aquí antes, solo llega un poco antes de tiempo).
+        let ocultos: Vec<Cliente> = self.clientes.keys().copied().filter(|&c| self.oculto(c) || self.con_ventana_fuera(c)).collect();
         for c in ocultos {
             for s in self.clientes.get_mut(&c).unwrap().superficies.values_mut() {
                 out.extend(s.avisos.drain(..).map(|a| (c, a)));
@@ -964,7 +1093,18 @@ impl<M: Memorias> Escena<M> {
 
     /// U6: si alguna superficie oculta espera su aviso de `frame` (quien atiende no espera más de `RITMO_OCULTO_MS`).
     pub fn hay_avisos_ocultos(&self) -> bool {
-        !self.detras.is_empty() && self.clientes.iter().any(|(&c, cli)| self.oculto(c) && cli.superficies.values().any(|s| !s.avisos.is_empty()))
+        self.hay_fuera()
+            && self.clientes.iter().any(|(&c, cli)| (self.oculto(c) || self.con_ventana_fuera(c)) && cli.superficies.values().any(|s| !s.avisos.is_empty()))
+    }
+
+    /// Si puede haber algo que no se ve: una sesión detrás (U6) o una ventana en otro espacio (S27).
+    fn hay_fuera(&self) -> bool {
+        !self.detras.is_empty() || self.orden.iter().any(|&v| self.fuera(v))
+    }
+
+    /// S27: si `c` tiene alguna ventana en otro espacio.
+    fn con_ventana_fuera(&self, c: Cliente) -> bool {
+        self.orden.iter().any(|&v| v.0 == c && self.fuera(v))
     }
 
     /// Lo que atiende las peticiones de un cliente.
@@ -1017,7 +1157,7 @@ impl<M: Memorias> Escena<M> {
             return "";
         }
         let ventana = match self.teclado {
-            Some(t) if self.capas.contains(&t) => self.orden.last().copied(),
+            Some(t) if self.capas.contains(&t) => self.ventana_de_arriba(),
             t => t,
         };
         let Some((c, sup)) = ventana else { return "" };
@@ -1067,8 +1207,9 @@ impl<M: Memorias> Escena<M> {
 
     /// Un cliente se fue: suelta su memoria y sus superficies.
     pub fn adios(&mut self, cliente: Cliente) {
-        // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4), vuelve a la ventana de arriba.
-        let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente && self.capas.contains(&t));
+        // Si tenía el teclado una capa suya (una pregunta de `guardian`, U4) o una ventana suya (S27: si no, el teclado
+        // se quedaba sin dueño hasta un clic), vuelve a la ventana de arriba.
+        let capa_con_teclado = self.teclado.is_some_and(|t| t.0 == cliente);
         self.sin_entrada(cliente);
         // H9: sus selecciones del portapapeles, sus emergentes con agarre y lo que redimensionaba.
         self.olvidar_fuente(cliente, None);
@@ -1419,8 +1560,9 @@ impl<M: Memorias> Escena<M> {
         for nivel in [2, 3] {
             out.extend(self.capas.iter().filter(|x| capa_de(x) == Some(nivel)));
         }
-        // U6: lo de una sesión de detrás no se pinta (ni recibe el puntero, que va por aquí).
-        out.retain(|x| !self.oculto(x.0));
+        // U6: lo de una sesión de detrás no se pinta (ni recibe el puntero, que va por aquí); S27: ni las ventanas de
+        // otro espacio.
+        out.retain(|&x| !self.fuera(x));
         out
     }
 
@@ -1862,6 +2004,13 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 if escena.bloqueo.is_none() {
                     escena.pedir_panel();
                 }
+            }
+            // S27: ver otro espacio de trabajo, como Super y el número; solo la barra.
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::ESPACIO => {
+                if !escena.barras.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo la barra cambia de espacio"));
+                }
+                escena.cambiar_espacio(args[0].uint());
             }
             // C3: los esquemas ya hechos de un color, para repartirlos con él. Solo el centro, y de 26 colores justos.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::ESQUEMA => {
@@ -2441,6 +2590,11 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                             let (x, y) = (x - g.x, y + barra - g.y);
                             escena.colocar(cliente, objeto, x, y);
                             escena.recien_colocadas.push((cliente, x, y));
+                            // S27: en el espacio de trabajo que se ve.
+                            let espacio = escena.espacio;
+                            if let Some(x) = escena.clientes.get_mut(&cliente).and_then(|c| c.superficies.get(&objeto).and_then(|s| s.rol).and_then(|r| c.xdg.get_mut(&r))) {
+                                x.espacio = espacio;
+                            }
                             // Una ventana nueva se lleva el teclado, como en cualquier escritorio, salvo que se esté
                             // escribiendo en la de otro programa (S8): entonces sale encima, pero sin el teclado.
                             let mut ev = Vec::new();
@@ -2470,6 +2624,9 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 // A la barra, también el título de ahora (S10).
                 if self.escena.barras.contains(&self.cliente) {
                     avisar_titulo(con, id, &self.escena.titulo_dicho);
+                    // Y los espacios de trabajo (S27), si enlazó la 3.
+                    let (e, o) = (self.escena.espacio, self.escena.ocupados());
+                    avisar_espacios(con, id, e, o);
                 }
             }
         }
@@ -2635,13 +2792,19 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
             if escena.puntero == Some((self.cliente, sup)) {
                 escena.puntero = None;
             }
-            if escena.teclado == Some((self.cliente, sup)) {
+            let tenia_teclado = escena.teclado == Some((self.cliente, sup));
+            if tenia_teclado {
                 escena.teclado = None;
             }
             let antes = escena.orden.len();
             escena.orden.retain(|o| *o != (self.cliente, sup));
             if escena.orden.len() != antes {
                 escena.danos.push(Rect { x: 0, y: 0, w: i32::MAX / 2, h: i32::MAX / 2 });
+            }
+            // S27: el teclado, a la ventana de arriba que queda (antes se quedaba sin dueño hasta un clic, y lo que se
+            // tecleaba se perdía), como cuando se cierra una capa o se va un cliente.
+            if tenia_teclado {
+                escena.devolver_teclado();
             }
         }
     }
@@ -2816,8 +2979,8 @@ impl<M: Memorias> Escena<M> {
 
     /// Le da el teclado sin cambiar el orden (una capa del escritorio no está entre las ventanas, G4).
     pub fn dar_teclado(&mut self, ventana: (Cliente, u32), out: &mut Vec<(Cliente, Entrada)>) {
-        // U6: nunca a una sesión de detrás.
-        if self.oculto(ventana.0) {
+        // U6: nunca a una sesión de detrás; S27, ni a una ventana de otro espacio.
+        if self.oculto(ventana.0) || self.fuera_raiz(ventana) {
             return;
         }
         if self.teclado != Some(ventana) {
@@ -3009,6 +3172,33 @@ impl<M: Memorias> Escena<M> {
             self.super_sola = mascara == 64 && self.mods & !64 == 0;
         } else if mascara == 64 && core::mem::take(&mut self.super_sola) && self.bloqueo.is_none() {
             self.pedir_lanzador();
+        }
+        // S27: las teclas del volumen van al panel rápido (si lo hay; si no, a la ventana, como antes), y Super con un
+        // número cambia de espacio de trabajo (con Mayúsculas, lleva allí la ventana con el teclado). Ninguna de estas
+        // llega a la ventana. Con la sesión bloqueada, nada.
+        if self.bloqueo.is_none() {
+            let paso = match codigo {
+                KEY_SUBIR_VOLUMEN => Some(1),
+                KEY_BAJAR_VOLUMEN => Some(-1),
+                KEY_SILENCIO => Some(0),
+                _ => None,
+            };
+            if let Some(paso) = paso
+                && self.abren_panel.iter().any(|c| self.temas.iter().any(|t| t.0 == *c))
+            {
+                if pulsada {
+                    self.pedir_volumen(paso);
+                }
+                return out;
+            }
+            if self.mods & 64 != 0 && (KEY_1..=KEY_9).contains(&codigo) {
+                if pulsada {
+                    let n = codigo - KEY_1 + 1;
+                    if self.mods & 1 != 0 { self.mover_a_espacio(n) } else { self.cambiar_espacio(n) }
+                    out.append(&mut self.pendientes);
+                }
+                return out;
+            }
         }
         let Some((c, _)) = self.teclado else {
             // Sin ventana con el teclado los modificadores se siguen llevando, y Super+L (U3) bloquea igual.

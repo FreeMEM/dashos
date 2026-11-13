@@ -4,7 +4,7 @@
     Protocolo propio de DashOS (S10c, C3). Licencia MPL-2.0, como el resto de DashOS.
   </copyright>
 
-  <interface name="dashos_tema_v1" version="3">
+  <interface name="dashos_tema_v1" version="4">
     <description summary="el tema del sistema: color de acento y modo">
       El compositor guarda el tema y se lo dice a cada programa que se suscribe: al enlazar y cada vez que cambia.
       Solo el centro de control lo cambia; a otro, poner es un error de protocolo.
@@ -54,6 +54,14 @@
       <arg name="ajuste" type="string"/>
     </request>
 
+    <request name="espacio" since="4">
+      <description summary="ver otro espacio de trabajo">
+        S27: como Super y el número (un clic en el espacio, en la barra). Del 1 al 9. Solo la barra; a otro, error de
+        protocolo. Uno fuera de 1 a 9 no hace nada.
+      </description>
+      <arg name="numero" type="uint"/>
+    </request>
+
     <event name="tema">
       <description summary="el tema de ahora">Al enlazar y cada vez que cambia.</description>
       <arg name="color" type="uint"/>
@@ -94,6 +102,22 @@
         lo vuelve a comprobar con `wayland::aspecto`.
       </description>
       <arg name="ajuste" type="string"/>
+    </event>
+
+    <event name="espacios" since="4">
+      <description summary="los espacios de trabajo">
+        S27: solo a la barra, al suscribirse y cada vez que cambia. El que se ve (1 a 9) y los que tienen ventanas (bit
+        n-1 por el espacio n). Solo cuentan las ventanas de quien está delante.
+      </description>
+      <arg name="actual" type="uint"/>
+      <arg name="ocupados" type="uint"/>
+    </event>
+
+    <event name="volumen" since="4">
+      <description summary="las teclas del volumen">
+        S27: solo al panel rápido. 1 subir, -1 bajar, 0 silenciar o quitar el silencio. La tecla no llega a la ventana.
+      </description>
+      <arg name="paso" type="int"/>
     </event>
   </interface>
 </protocol>
