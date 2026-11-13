@@ -148,13 +148,15 @@ fn marca_de_las_ventanas_de_la_caja() {
     }
     // Dentro del borde, lo del programa (0x40404040 de la memoria de prueba).
     assert_eq!(en(&p, lx + GROSOR + 2, ly + 60) & 0xffffff, 0x404040);
-    // La pestaña encima de la esquina (la ventana está en cascada, con sitio arriba): su fondo es ámbar.
+    // La pestaña, por dentro de la esquina (sin solapas: nada fuera de la ventana): su fondo es ámbar; encima de la
+    // ventana, nada suyo.
     let (pw, ph) = marca::medida_pestana(marca::TEXTO_LINUX);
-    assert_eq!(en(&p, lx + 1, ly - ph + 1), COLOR_LINUX);
-    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, lx + x, ly - ph + y) == marca::TINTA)), "las letras");
+    assert_eq!(en(&p, lx + GROSOR + 1, ly + GROSOR + 1), COLOR_LINUX);
+    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, lx + GROSOR + x, ly + GROSOR + y) == marca::TINTA)), "las letras");
+    assert_ne!(en(&p, lx + 1, ly - 2), COLOR_LINUX, "fuera de la ventana, nada");
     // La nativa: ni borde ni pestaña.
     assert_ne!(en(&p, nx, ny + 60), COLOR_LINUX);
-    assert_ne!(en(&p, nx + 1, ny - ph + 1), COLOR_LINUX);
+    assert_ne!(en(&p, nx + GROSOR + 1, ny + GROSOR + 1), COLOR_LINUX);
     // Se va la de Linux: lo de donde estaba la pestaña vuelve al fondo (o a lo que hubiera debajo).
     escena.adios(linux);
     let mut p2 = p.clone();
@@ -181,8 +183,8 @@ fn marca_de_la_caja_amiga() {
     assert_eq!(en(&p, ax, ay + 60), marca::COLOR_AMIGA);
     assert_eq!(en(&p, lx, ly + 60), COLOR_LINUX);
     let (pw, ph) = marca::medida_pestana(marca::TEXTO_AMIGA);
-    assert_eq!(en(&p, ax + 1, ay - ph + 1), marca::COLOR_AMIGA);
-    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, ax + x, ay - ph + y) == marca::TINTA_AMIGA)), "las letras");
+    assert_eq!(en(&p, ax + GROSOR + 1, ay + GROSOR + 1), marca::COLOR_AMIGA);
+    assert!((0..pw).any(|x| (0..ph).any(|y| en(&p, ax + GROSOR + x, ay + GROSOR + y) == marca::TINTA_AMIGA)), "las letras");
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, "GadTools"), "68K · GadTools");
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
     escena.adios(amiga);
@@ -231,7 +233,7 @@ fn marca_hostil_subsuperficies() {
     // El borde de abajo a la derecha, tras la lejana; y el de arriba, encima de la que lo tapa.
     assert_eq!(en(&p, lx + 399, ly + 249), COLOR_LINUX);
     assert_eq!(en(&p, lx + 50, ly), COLOR_LINUX);
-    assert_eq!(en(&p, lx + 50, ly + GROSOR) & 0xffffff, 0x404040, "bajo el borde, lo que pintó");
+    assert_eq!(en(&p, lx + 150, ly + GROSOR) & 0xffffff, 0x404040, "bajo el borde, lo que pintó (lejos de la pestaña)");
 }
 
 /// La barra de la pantalla recibe el título de una ventana de la caja con "Linux · " delante; el de una nativa, tal cual.

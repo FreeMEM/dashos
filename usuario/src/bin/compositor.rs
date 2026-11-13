@@ -114,7 +114,8 @@ fn pintor() -> escena::decoracion::Pintor {
     use escena::decoracion::{LADO_BOTON, MARGEN_BOTON, RADIO_MARCO};
     use kit::lienzo::{Lienzo, Rect as R};
     let mut fuente = kit::texto::Fuente::medium();
-    alloc::boxed::Box::new(move |px: &mut [u32], w: i32, h: i32, titulo: &str, activa: bool, (color, oscuro): (u32, bool)| {
+    let mut fuente_marca = kit::texto::Fuente::medium();
+    alloc::boxed::Box::new(move |px: &mut [u32], w: i32, h: i32, titulo: &str, activa: bool, (color, oscuro): (u32, bool), marca: escena::decoracion::MarcaBarra| {
         let t = kit::tema::Tema::del_sistema(color, oscuro);
         let mut l = Lienzo::new(px, w, h, w as usize);
         let fondo = if activa { t.contenedor_alto() } else { t.contenedor() };
@@ -123,7 +124,19 @@ fn pintor() -> escena::decoracion::Pintor {
         const TAM: u32 = 14;
         // Lo que la letra no tiene sale como "?": así su caché no crece sin fin con títulos raros.
         let mut texto: String = titulo.chars().take(200).map(|c| if fuente.tiene(c) { c } else { '?' }).collect();
-        let cabe = w - 16 - 2 * LADO_BOTON - MARGEN_BOTON - 8;
+        // S29: la marca de la caja ("68K", "LINUX"), una pastilla de su color a 12 de la izquierda, con la misma letra
+        // (11, medium); el título, detrás. La pinta el compositor: el programa no puede imitarla.
+        let mut izquierda = 16;
+        if let Some((texto_marca, fondo_marca, tinta_marca)) = marca {
+            const TAM_MARCA: u32 = 11;
+            let mm = fuente_marca.medir(texto_marca, TAM_MARCA);
+            let (pw, ph) = (mm.ancho + 16, 20);
+            let p = R::new(12, (h - ph) / 2, pw, ph);
+            l.redondeado(p, ph / 2, fondo_marca);
+            fuente_marca.dibujar(&mut l, p.x + 8, p.y + (ph + mm.sube - mm.baja) / 2, texto_marca, TAM_MARCA, tinta_marca);
+            izquierda = p.x + pw + 8;
+        }
+        let cabe = w - izquierda - 2 * LADO_BOTON - MARGEN_BOTON - 8;
         if fuente.medir(&texto, TAM).ancho > cabe {
             let punto = if fuente.tiene('…') { "…" } else { "..." };
             while !texto.is_empty() && fuente.medir(&alloc::format!("{texto}{punto}"), TAM).ancho > cabe {
@@ -133,8 +146,8 @@ fn pintor() -> escena::decoracion::Pintor {
         }
         let m = fuente.medir(&texto, TAM);
         if cabe > 0 {
-            l.recortar(R::new(16, 0, cabe, h));
-            fuente.dibujar(&mut l, 16, (h + m.sube - m.baja) / 2, &texto, TAM, tinta);
+            l.recortar(R::new(izquierda, 0, cabe, h));
+            fuente.dibujar(&mut l, izquierda, (h + m.sube - m.baja) / 2, &texto, TAM, tinta);
             l.soltar_recorte();
         }
         // La X: dos trazos de 10 px, de 2 px de grueso (en octavos de píxel), en el centro del botón.

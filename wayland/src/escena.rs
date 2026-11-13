@@ -1738,7 +1738,14 @@ impl<M: Memorias> Escena<M> {
             {
                 let area = self.area_de(self.salida_de(caja));
                 let texto = if amiga { marca::TEXTO_AMIGA } else { marca::TEXTO_LINUX };
-                marcas.push((capas.len(), caja, marca::sitio_pestana(caja, area, marca::medida_pestana(texto)), amiga));
+                // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
+                // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
+                let sitio = if decoracion::con_barra(cli, id) {
+                    Rect { x: caja.x, y: caja.y, w: 0, h: 0 }
+                } else {
+                    marca::sitio_pestana(caja, area, marca::medida_pestana(texto))
+                };
+                marcas.push((capas.len(), caja, sitio, amiga));
                 recortes.push((desde, capas.len(), caja));
             }
         }

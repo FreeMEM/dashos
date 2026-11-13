@@ -44,7 +44,10 @@ pub const DECO_MODO: u32 = 3;
 
 /// Quien pinta la barra: píxeles ARGB premultiplicados (ancho × alto, seguidos), ancho, alto, título, si tiene el
 /// teclado y el tema del sistema (color y si es oscuro).
-pub type Pintor = Box<dyn FnMut(&mut [u32], i32, i32, &str, bool, (u32, bool))>;
+/// La marca de la caja dentro de la barra (S29, sin solapa: lo pidió el usuario el 2026-11-13): texto, color de la
+/// pastilla y color de su letra.
+pub type MarcaBarra = Option<(&'static str, u32, u32)>;
+pub type Pintor = Box<dyn FnMut(&mut [u32], i32, i32, &str, bool, (u32, bool), MarcaBarra)>;
 
 /// La barra pintada de una ventana.
 #[derive(Default)]
@@ -53,7 +56,7 @@ pub struct Marco {
     pub px: Vec<u8>,
     /// Dónde se pintó la última vez (para dañar donde estaba al moverse o irse).
     pub rect: Rect,
-    pintado: Option<(String, bool, i32, (u32, bool))>,
+    pintado: Option<(String, bool, i32, (u32, bool), Option<&'static str>)>,
 }
 
 /// Dónde cae un punto de la barra.
@@ -104,7 +107,7 @@ pub fn bordes(v: Rect, x: i32, y: i32) -> u32 {
 
 /// La barra sin letras (sin pintor): el color de superficie de Material 3, las esquinas de arriba transparentes y una
 /// X en el botón.
-pub fn pintar_sencillo(px: &mut [u32], w: i32, h: i32, _titulo: &str, activa: bool, (_, oscuro): (u32, bool)) {
+pub fn pintar_sencillo(px: &mut [u32], w: i32, h: i32, _titulo: &str, activa: bool, (_, oscuro): (u32, bool), marca: MarcaBarra) {
     let fondo = match (oscuro, activa) {
         (true, true) => 0xff2b_2930,
         (true, false) => 0xff21_1f26,
@@ -121,6 +124,14 @@ pub fn pintar_sencillo(px: &mut [u32], w: i32, h: i32, _titulo: &str, activa: bo
             if dx * dx + dy * dy > r * r {
                 px[(y * w + x) as usize] = 0;
                 px[(y * w + w - 1 - x) as usize] = 0;
+            }
+        }
+    }
+    // La marca de la caja: una pastilla lisa de su color a 12 de la izquierda (con el pintor del compositor lleva letras).
+    if let Some((_, color, _)) = marca {
+        for y in (h / 2 - 8).max(0)..(h / 2 + 8).min(h) {
+            for x in 12..(12 + 28).min(w) {
+                px[(y * w + x) as usize] = color;
             }
         }
     }
@@ -174,7 +185,14 @@ impl<M: Memorias> Escena<M> {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some(b) = barra_de(cli, sup) else { continue };
             let titulo = cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).map_or("", |x| x.titulo.as_str());
-            let clave = (String::from(titulo), teclado == Some((c, sup)), b.w, tema);
+            let marca: MarcaBarra = if self.de_caja_amiga.contains(&c) {
+                Some((crate::escena::marca::TEXTO_AMIGA, crate::escena::marca::COLOR_AMIGA, crate::escena::marca::TINTA_AMIGA))
+            } else if self.de_caja.contains(&c) {
+                Some((crate::escena::marca::TEXTO_LINUX, crate::escena::marca::COLOR_LINUX, crate::escena::marca::TINTA))
+            } else {
+                None
+            };
+            let clave = (String::from(titulo), teclado == Some((c, sup)), b.w, tema, marca.map(|m| m.0));
             vivos.push((c, sup));
             let m = self.marcos.entry((c, sup)).or_default();
             if m.rect != b {
@@ -185,8 +203,8 @@ impl<M: Memorias> Escena<M> {
             if m.pintado.as_ref() != Some(&clave) {
                 let mut px = alloc::vec![0u32; (b.w as usize) * ALTO_BARRA as usize];
                 match &mut self.pintor {
-                    Some(p) => p(&mut px, b.w, ALTO_BARRA, &clave.0, clave.1, tema),
-                    None => pintar_sencillo(&mut px, b.w, ALTO_BARRA, &clave.0, clave.1, tema),
+                    Some(p) => p(&mut px, b.w, ALTO_BARRA, &clave.0, clave.1, tema, marca),
+                    None => pintar_sencillo(&mut px, b.w, ALTO_BARRA, &clave.0, clave.1, tema, marca),
                 }
                 m.px = px.iter().flat_map(|p| p.to_le_bytes()).collect();
                 m.pintado = Some(clave);

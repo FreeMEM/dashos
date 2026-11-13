@@ -137,14 +137,10 @@ pub fn tiras(caja: Rect) -> [Rect; 4] {
     ]
 }
 
-/// Dónde va la pestaña de una ventana que ocupa `caja`, en una salida cuyo sitio para ventanas es `area`: encima de la
-/// esquina de arriba a la izquierda si cabe; si no, por dentro, bajo el borde.
-pub fn sitio_pestana(caja: Rect, area: Rect, (w, h): (i32, i32)) -> Rect {
-    if caja.y - h >= area.y {
-        Rect { x: caja.x, y: caja.y - h, w, h }
-    } else {
-        Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h }
-    }
+/// Dónde va la pestaña de una ventana sin la barra de DashOS que ocupa `caja`: por dentro, bajo el borde de arriba a la
+/// izquierda (nunca fuera de la ventana: sin solapas, decisión del usuario del 2026-11-13). `area` ya no se usa.
+pub fn sitio_pestana(caja: Rect, _area: Rect, (w, h): (i32, i32)) -> Rect {
+    Rect { x: caja.x + GROSOR, y: caja.y + GROSOR, w, h }
 }
 
 /// El título para la barra de la pantalla de una ventana de la caja.
