@@ -125,6 +125,10 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
+# S26: el centro pone al arrancar lo guardado (aquí, basura: la paleta del fondo de serie; sin fondo, el violeta) y la
+# caja Amiga lo recibe del compositor y saca las plumas de Material para sus programas.
+~│   [centro] al arrancar: tema claro, color Paleta del fondo (sin calcular) (6750a4), programas de las cajas como DashOS; en el compositor: sí
+~│   [caja-amiga] tema de DashOS: programas Amiga como DashOS, claro, color 6750a4; plumas: fondo fef7ff, texto 1d1b20, relleno 6750a4
 # S26: ni el aspecto de los programas de las cajas (dashos_tema_v1, versión 3).
 ~│   [hostil] compositor: cambiar el aspecto de las cajas sin ser el centro da error: sí; sigue como DashOS: sí
 # S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
@@ -266,7 +270,7 @@ DashOS en marcha con 4 núcleos.
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
 # S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
-~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (12 bytes); releída: sí
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
 # Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
 ~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
