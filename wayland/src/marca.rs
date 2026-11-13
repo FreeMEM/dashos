@@ -73,6 +73,21 @@ const LETRAS: &[(char, [u8; 7])] = &[
     ('\u{25a3}', [0b01010, 0b11111, 0b10001, 0b10101, 0b10001, 0b11111, 0b01010]),
 ];
 
+/// Una pestaña ya pintada: píxeles ARGB premultiplicados (en bytes, como un búfer de `wl_shm`), ancho y alto.
+pub struct Pestana {
+    pub px: Vec<u8>,
+    pub w: i32,
+    pub h: i32,
+}
+
+impl Pestana {
+    /// La de letra de píxeles (`pestana`): la que se usa si el compositor no pone otra (`Escena::poner_pestanas`).
+    pub fn de_pixeles(texto: &str, color: u32, tinta: u32) -> Pestana {
+        let (w, h) = medida_pestana(texto);
+        Pestana { px: pestana(texto, color, tinta), w, h }
+    }
+}
+
 /// Lo que mide la pestaña de `texto`.
 pub fn medida_pestana(texto: &str) -> (i32, i32) {
     let n = texto.chars().count() as i32;
@@ -163,8 +178,9 @@ pub(super) type Capa<'a> = (Rect, i32, i32, &'a [u8], crate::shm::Bufer, Option<
 
 /// Las capas que pintan la marca de una ventana que ocupa `caja`, con la pestaña en `sitio`: las cuatro tiras del
 /// borde, de un color liso (`fila`: una fila de ese color al menos tan ancha como la caja; cada tira la repite, con
-/// paso 0), y la pestaña (`px`, de `medida_pestana`). Opacas: se copian encima de lo que haya.
+/// paso 0), y la pestaña (`px`, de `Pestana`). Las tiras, opacas; la pestaña, mezclada con lo de debajo.
 pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -> Vec<Capa<'a>> {
+    // La pestaña es ARGB premultiplicado: el compositor la pinta con las esquinas de abajo redondeadas (transparentes).
     let mut out = Vec::new();
     for t in tiras(caja) {
         if t.w <= 0 || t.h <= 0 || fila.len() < t.w as usize * 4 {
@@ -174,7 +190,7 @@ pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -
         out.push((t, t.x, t.y, fila, b, None));
     }
     if px.len() >= (sitio.w * sitio.h * 4) as usize && sitio.w > 0 && sitio.h > 0 {
-        let b = crate::shm::Bufer { pool: 0, desplazamiento: 0, ancho: sitio.w as u32, alto: sitio.h as u32, linea: sitio.w as usize * 4, formato: crate::shm::XRGB8888 };
+        let b = crate::shm::Bufer { pool: 0, desplazamiento: 0, ancho: sitio.w as u32, alto: sitio.h as u32, linea: sitio.w as usize * 4, formato: crate::shm::ARGB8888 };
         out.push((sitio, sitio.x, sitio.y, px, b, None));
     }
     out

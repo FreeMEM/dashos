@@ -163,6 +163,22 @@ fn pintor() -> escena::decoracion::Pintor {
     })
 }
 
+/// S29: la pestaña de una ventana de caja sin la barra de DashOS, con el kit: cuelga del borde de arriba (las esquinas
+/// de arriba rectas, pegadas a él; las de abajo redondeadas), de su color, con su texto en Roboto Medium 11 como la
+/// pastilla de la barra. ARGB premultiplicado: lo de fuera de las esquinas, transparente.
+fn pestana_kit(texto: &str, color: u32, tinta: u32) -> escena::marca::Pestana {
+    use kit::lienzo::{Lienzo, Rect as R};
+    const TAM: u32 = 11;
+    let mut fuente = kit::texto::Fuente::medium();
+    let m = fuente.medir(texto, TAM);
+    let (w, h) = (m.ancho + 16, 18);
+    let mut px = alloc::vec![0u32; (w * h) as usize];
+    let mut l = Lienzo::new(&mut px, w, h, w as usize);
+    l.redondeado_esquinas(R::new(0, 0, w, h), [0, 0, 6, 6], color);
+    fuente.dibujar(&mut l, 8, (h + m.sube - m.baja) / 2, texto, TAM, tinta);
+    escena::marca::Pestana { px: px.iter().flat_map(|p| p.to_le_bytes()).collect(), w, h }
+}
+
 /// Los números de los globales de las salidas: el 6 (el de siempre) para la principal y del 11 en adelante para las
 /// demás.
 const GLOBAL_SALIDAS: [u32; pp::MAX_CABEZAS] = [6, 11, 12, 13];
@@ -777,6 +793,10 @@ fn principal() -> u64 {
     escena.sombras = true;
     // H9: la barra de DashOS, con el kit.
     escena.pintor = Some(pintor());
+    {
+        use escena::marca as m;
+        escena.poner_pestanas(pestana_kit(m::TEXTO_LINUX, m::COLOR_LINUX, m::TINTA), pestana_kit(m::TEXTO_AMIGA, m::COLOR_AMIGA, m::TINTA_AMIGA));
+    }
     escena.poner_salidas(vec![Salida { global: GLOBAL_SALIDAS[0], nombre: "DASHOS-1".into(), descripcion: "Pantalla de DashOS".into(), rect, mhz: 60_000 }]);
     let danos = escena.componer(&mut c.marco, ancho, alto, ancho as usize, 0, &mut |_, _, _| {});
     c.presentar(&danos);
