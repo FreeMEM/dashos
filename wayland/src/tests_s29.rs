@@ -187,6 +187,7 @@ fn marca_de_la_caja_amiga() {
     // hueco de la caja, con el margen fijo.
     let caja = Rect { x: ax, y: ay, w: 200, h: 120 };
     let s0 = marca::sitio_pestana(caja, caja, (pw, ph), true, None);
+    assert_eq!(en(&p, ax + 20, ay + 1), marca::COLOR_AMIGA, "sin hueco, la tira de arriba");
     assert!(s0.x > ax + GROSOR + pw && s0.x + pw <= ax + 200 - GROSOR && s0.y == ay + GROSOR, "{s0:?}");
     let letras = |p: &[u32], s: Rect| (0..pw).any(|x| (0..ph).any(|y| en(p, s.x + x, s.y + y) == marca::TINTA_AMIGA));
     assert!(letras(&p, s0), "las letras, a la derecha");
@@ -199,6 +200,9 @@ fn marca_de_la_caja_amiga() {
     assert_eq!(escena.clientes[&amiga].superficies[&7].hueco_marca, Some((46, 22)));
     let mut p = p;
     escena.componer(&mut p, 800, 600, 800, 0, &mut |_, _, _| {});
+    // La tira de arriba ya no tapa la barra de intuition (su título y sus gadgets); las de los lados siguen.
+    assert_ne!(en(&p, ax + 20, ay + 1), marca::COLOR_AMIGA, "la tira de arriba, fuera");
+    assert_eq!(en(&p, ax + 1, ay + 60), marca::COLOR_AMIGA, "la de la izquierda sigue");
     let s1 = marca::sitio_pestana(caja, caja, (pw, ph), true, Some((46, 22)));
     assert_eq!(s1.x + pw, ax + 200 - 46 - 6);
     assert!(letras(&p, s1), "las letras, a la izquierda de los gadgets");

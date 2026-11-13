@@ -1373,19 +1373,27 @@ getfile no abre el requester (no hay asl.library); listbrowser con varias column
   3x, mide lo que ocupa la tinta de "hola" (no más que 4 avances de Mono, menos de 3 celdas de topaz), el cursor delante
   de la "l" y la etiqueta y el nivel del deslizador valiendo los dos, sin pisarse.
 
-### De paso: BorderTop en el aspecto original
+### De paso: la barra de intuition aplastada en el aspecto original
 
 Aviso del coordinador: con "cajas=general original" a 2x, la barra de intuition de la ventana de GadTools salía
 aplastada (título cortado por arriba, gadget de profundidad pequeño), como si el `BorderTop` 9 y los `WBor*` 0 de "como
 DashOS" valieran también ahí. El oráculo (FS-UAE, Kickstart y Workbench 3.1, un programa que lee la pantalla y abre una
 ventana con todos los gadgets): `WBorTop` 2, `WBorLeft` 4, `WBorRight` 4, `WBorBottom` 2, letra de la pantalla
 topaz/9 y `BorderTop` 12 (= 2 + 9 + 1), 4, 18 y 2; los gadgets de la barra, de 24 x 12 (cerrar 20 x 12). La caja, con
-topaz/8: `WBorTop` 2 y `BorderTop` 11 en el original, y 0 y 9 "como DashOS": la misma cuenta. La prueba
-`border_top_en_los_dos_aspectos` (`tests/barra_dashos.rs`) lo comprueba en los dos aspectos (los bordes, el título
-dentro de la barra y el gadget de profundidad hasta su última fila) y pasa: en intuition no encontré el fallo con esas
-preferencias. Un caso que sí descuadra y queda apuntado: un programa con la excepción "original" en una caja "como
-DashOS" ve `WBorTop` 0 (la pantalla es de todos) y su ventana lleva `BorderTop` 11; si coloca sus gadgets con `WBorTop
-+ ta_YSize + 1` (9), pisan 2 filas de la barra. Las capturas de esta vuelta lo mirarán en la caja de verdad.
+topaz/8, ya hacía la misma cuenta: `WBorTop` 2 y `BorderTop` 11 en el original, y 0 y 9 "como DashOS". La prueba
+`border_top_en_los_dos_aspectos` (`tests/barra_dashos.rs`) lo comprueba en los dos aspectos (los bordes, el título dentro
+de la barra, el gadget de profundidad hasta la última fila de la barra y el hueco de la marca).
+
+**Lo que lo aplastaba era la marca del compositor** (`capturas-agente/caja-gadtools-dash-original-antes-fhd.png`): la
+tira azul de arriba (3 píxeles de la pantalla, por dentro de la ventana) tapaba la primera fila y media de la barra a 2x
+(el relieve y lo de arriba del título) y parte de los gadgets. Ahora, en una ventana de la caja Amiga con barra de
+intuition (la caja dijo su hueco, ver abajo), el compositor no pinta esa tira: la barra de intuition ya hace de borde de
+arriba, y la pestaña va dentro de ella. Las tiras de los lados y de abajo siguen. Con su prueba en
+`wayland/src/tests_s29.rs` (y la tira, cuando se quita o vuelve, se daña para que se repinte).
+
+Queda apuntado un caso que sí descuadra en intuition: un programa con la excepción "original" en una caja "como DashOS"
+ve `WBorTop` 0 (la pantalla es de todos) y su ventana lleva `BorderTop` 11; si coloca sus gadgets con `WBorTop +
+ta_YSize + 1` (9), pisan 2 filas de la barra.
 
 ### De paso: la pestaña "68K" a la derecha (aspecto original)
 
@@ -1409,3 +1417,39 @@ arriba a la derecha, dentro de la barra de intuition, justo a la izquierda del g
   por el protocolo, y huecos negativos, enormes, `i32::MIN`/`MAX`, del ancho de la ventana y de otra superficie: la
   pestaña sigue entera en su ventana; una ventana más estrecha que la pestaña, a la izquierda dentro. En intuition, el
   hueco que se pide en los dos aspectos (`border_top_en_los_dos_aspectos`).
+
+### Programas que corren
+
+- **`caja/pruebas68k/boopsi.c`** (m68k-amigaos-gcc, sin amiga.lib): la clase "contador" (subclase de gadgetclass con su
+  despachador en 68k, `DoSuperMethodA` por `CallHookPkt`, un atributo y un método propios y `GM_RENDER` que pinta con
+  graphics), interconexión (propgclass, strgclass, icclass, modelclass), y una ventana de window.class con su layout
+  (etiqueta, campo, casilla, deslizador y botón por los `GetClass`). 43 comprobaciones: **0 fallos en FS-UAE con el
+  Kickstart 3.2.3 y el Workbench 3.2** (el oráculo, sin cerrojo) **y 0 en la caja** (`boopsi.exe acabó con 0, 136
+  llamadas nativas, 7 despachadores 68k, 0 avisos, 0 bloques sin soltar`).
+- **`tests/test_doc_reaction.dash`** de FreeMEMLang (con `./dash`, directo a hunk): "ventana 1", "nombre: Amiga, sonido:
+  1", "fin", con 0 y sin bloques sin soltar (lo mismo que espera FreeMEMLang en el emulador).
+- **`examples/test_reaction.dash`**: abre su ventana de ReAction Demo (300x200) y espera; la prueba la cierra como con
+  el botón de la barra a los 4 s y acaba con 0. Ctrl-C no vale para esto: Dash solo lo mira en sus bucles y el programa
+  está en `Wait` con la máscara de su ventana (igual que en un Amiga).
+- Los tres, en `make arranque-virt` (líneas nuevas en `kernel/pruebas/arranque_virt.txt`).
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+Con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=750` (750: con 480 el guion acababa antes de llegar a
+ReAction) y `DASHOS_PREFS="fondo=ondas.png;apariencia=claro fondo;cajas=general original\nprograma amiga dashos
+boopsi-20"`: la caja corre boopsi.exe dos veces en ese modo, "boopsi-20" (como DashOS, por la excepción) y
+"boopsi-orig-20" (original), cada una 20 s; el guion (`tools/prueba_uefi.sh`, `CAPTURA_RA`) pone cada ventana delante
+con un clic dentro y la captura, con su sitio en un `.txt`. BOOPSI va ahora antes que GadTools en la prueba de la caja:
+con GadTools esperando 90 s, la sesión se bloqueaba antes.
+
+- `comparacion-reaction-fhd.png`: la ventana de ReAction de boopsi.c, original y como DashOS, lado a lado con su rótulo
+  (a 2x). `caja-reaction-original-fhd.png` y `caja-reaction-dashos-fhd.png`: las pantallas enteras.
+- `caja-gadtools-original-fhd.png`, `caja-gadtools-menu-original-fhd.png` (original) y `caja-gadtools-dashos-fhd.png`,
+  `caja-gadtools-menu-dashos-fhd.png` (de serie): GadTools en los dos aspectos, con la pestaña "68K" a la derecha en el
+  original y, como DashOS, los campos de texto seguidos y "Nivel" nítido.
+- `comparacion-gadtools-fhd.png`: la ventana de GadTools en los dos aspectos, lado a lado con su rótulo.
+- `caja-gadtools-dash-original-antes-fhd.png` y `caja-gadtools-dash-original-fhd.png`: el ejemplo de GadTools de Dash
+  en el original antes y después de quitar la tira de arriba de la marca (antes, la tira azul tapaba la fila de luz de
+  la barra y el título quedaba pegado arriba, como cortado).
+- El oráculo de FS-UAE no dio captura útil de la ventana de ReAction: `emu_run.py --screenshot` saca la pantalla de
+  delante, y era la de la consola de AmigaDOS.

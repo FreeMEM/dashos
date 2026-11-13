@@ -1717,7 +1717,7 @@ impl<M: Memorias> Escena<M> {
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
         // S29: las marcas de las ventanas de las cajas: antes de qué capa van, lo que ocupa la ventana y su pestaña.
-        let mut marcas: Vec<(usize, Rect, Rect, bool)> = Vec::new();
+        let mut marcas: Vec<(usize, Rect, Rect, bool, bool)> = Vec::new();
         // S29: las capas de esas ventanas (de la primera a antes de la última) y a qué se recortan.
         let mut recortes: Vec<(usize, usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
@@ -1755,18 +1755,27 @@ impl<M: Memorias> Escena<M> {
                 let p = if amiga { &self.pestana_amiga } else { &self.pestana_linux };
                 // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
                 // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
+                let mut sin_arriba = false;
                 let sitio = if decoracion::con_barra(cli, id) {
                     Rect { x: caja.x, y: caja.y, w: 0, h: 0 }
                 } else {
                     let hueco = cli.superficies.get(&id).and_then(|s| s.hueco_marca);
+                    // Con la barra de intuition (la caja dijo su hueco), la tira de arriba no se pinta: tapaba el título y
+                    // los gadgets de la barra (a 2x, el título salía cortado por arriba).
+                    sin_arriba = amiga && hueco.is_some_and(|(_, alto)| alto > 0);
                     marca::sitio_pestana(caja, area, (p.w, p.h), amiga, hueco)
                 };
-                marcas.push((capas.len(), caja, sitio, amiga));
+                marcas.push((capas.len(), caja, sitio, amiga, sin_arriba));
                 recortes.push((desde, capas.len(), caja));
             }
         }
         // S29: lo que ocupan las marcas: si una aparece, se mueve o se va, se daña donde estaba y donde está.
-        let marcas_ahora: Vec<Rect> = marcas.iter().flat_map(|m| [m.1, m.2]).collect();
+        // (Con la tira de arriba, también ella: si se quita o vuelve, se daña.)
+        let marcas_ahora: Vec<Rect> = marcas
+            .iter()
+            .flat_map(|m| [Some(m.1), Some(m.2), (!m.4).then(|| marca::tiras(m.1)[0])])
+            .flatten()
+            .collect();
         for r in &self.marcas_antes {
             if !marcas_ahora.contains(r) {
                 self.danos.push(*r);
@@ -1847,7 +1856,7 @@ impl<M: Memorias> Escena<M> {
             // S29: la marca de la ventana de antes, si acabó en la capa anterior.
             while m_i < marcas.len() && marcas[m_i].0 == k {
                 let (fila, pestana) = if marcas[m_i].3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
-                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px));
+                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px, marcas[m_i].4));
                 m_i += 1;
             }
             // Las barras de DashOS van tras la sombra de su ventana (más abajo).
@@ -1896,7 +1905,7 @@ impl<M: Memorias> Escena<M> {
         // S29: la marca de la última ventana.
         for m in &marcas[m_i..] {
             let (fila, pestana) = if m.3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
-            con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px));
+            con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px, m.4));
         }
         esquinas.resize(con_bufer.len(), None);
         // Lo que se queda fuera de las esquinas de abajo en la fila `fila` de la ventana `r` (0: nada; fuera de esas

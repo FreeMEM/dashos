@@ -197,10 +197,14 @@ pub(super) type Capa<'a> = (Rect, i32, i32, &'a [u8], crate::shm::Bufer, Option<
 /// Las capas que pintan la marca de una ventana que ocupa `caja`, con la pestaña en `sitio`: las cuatro tiras del
 /// borde, de un color liso (`fila`: una fila de ese color al menos tan ancha como la caja; cada tira la repite, con
 /// paso 0), y la pestaña (`px`, de `Pestana`). Las tiras, opacas; la pestaña, mezclada con lo de debajo.
-pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8]) -> Vec<Capa<'a>> {
+/// Con `sin_arriba` (una ventana de la caja Amiga con su barra de intuition), sin la tira de arriba.
+pub(super) fn capas<'a>(caja: Rect, sitio: Rect, fila: &'a [u8], px: &'a [u8], sin_arriba: bool) -> Vec<Capa<'a>> {
     // La pestaña es ARGB premultiplicado: el compositor la pinta con las esquinas de abajo redondeadas (transparentes).
     let mut out = Vec::new();
-    for t in tiras(caja) {
+    for (k, t) in tiras(caja).into_iter().enumerate() {
+        if sin_arriba && k == 0 {
+            continue;
+        }
         if t.w <= 0 || t.h <= 0 || fila.len() < t.w as usize * 4 {
             continue;
         }
