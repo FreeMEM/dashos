@@ -8,13 +8,19 @@
 # Cerrar la ventana lo acaba.
 # Lo que dice DashOS por el puerto serie queda en target/a-mano/serie.txt.
 #
-# Ojo: de momento es la imagen de las pruebas automáticas (lanza sus programas de prueba y bloquea la pantalla a los
-# pocos segundos). Usuarios: Ana ("clave de Ana") y Carla ("clave de Carla").
+# La imagen es la de usar: sin los programas de prueba, con la pantalla de entrada (PRUEBAS=1 para la de las pruebas).
+# Usuarios: Ana ("clave de Ana") y Carla ("clave de Carla"). La caja Amiga aún corre sus programas de prueba.
 set -eu
 cd "$(dirname "$0")/../kernel"
 PANTALLA=${1:-1920x1080}
-make virt target/nvme.img
-NUCLEO=$(realpath target/kernel8-virt.img)
+# PRUEBAS=1: la imagen de las pruebas automáticas (con sus programas de prueba); si no, la de usar (`make virt-uso`).
+if [ -n "${PRUEBAS:-}" ]; then
+    make virt target/nvme.img
+    NUCLEO=$(realpath target/kernel8-virt.img)
+else
+    make virt-uso target/nvme.img
+    NUCLEO=$(realpath target/kernel8-virt-uso.img)
+fi
 (cd ../uefi && DASHOS_PANTALLA="$PANTALLA" DASHOS_NUCLEO="$NUCLEO" cargo build --release)
 D=target/a-mano
 rm -rf "$D"

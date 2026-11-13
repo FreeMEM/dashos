@@ -79,6 +79,13 @@ fn pedir(m: &[u8], mas: &[u32]) -> i32 {
     if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
 }
 
+/// La imagen para usar (llave 4, "uso"): sin las cuentas de la prueba (cuántos intentos malos espera el guion).
+static USO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+fn uso() -> bool {
+    USO.load(core::sync::atomic::Ordering::Relaxed)
+}
+
 fn principal() -> u64 {
     dashos::monton::con_nombre(&"guardian");
     let (preguntas, para_sesiones) = dashos::canal_crear();
@@ -99,6 +106,22 @@ fn principal() -> u64 {
     if apuntado != 0 {
         println!("  [guardian] sesiones no le deja atender preguntas: {}", apuntado);
         return 1;
+    }
+    // La imagen para usar a mano (`make virt-uso`): `inicio` le da un canal más (llave 4, "uso"). Sin el guion de las
+    // pruebas: la pantalla de entrada hasta que alguien entre, y luego atender (preguntas, "*bloquear" del panel,
+    // apagar y cerrar sesión, que vuelve a la entrada).
+    let copia = dashos::llave_duplicar(4, u64::MAX, 0);
+    if copia > 0 {
+        dashos::cerrar(copia as u32);
+        USO.store(true, core::sync::atomic::Ordering::Relaxed);
+        println!("  [guardian] modo de uso: pantalla de entrada");
+        loop {
+            if let Some(quien) = pantalla(None) {
+                println!("  [guardian] entra {}", quien);
+                break;
+            }
+        }
+        atender(preguntas);
     }
     let (mut a_pide, mut a_otros) = (0, 0);
     // U6: lo concedido es por programa y usuario: a `pide` se le pregunta una vez por servicio y usuario (servicio y
@@ -1143,9 +1166,16 @@ fn pantalla_dentro(usuaria: Option<&str>, memoria: &mut u32) -> Option<String> {
                     }
                     if entrada {
                         // En la prueba, antes, un usuario que no existe: una mala.
+                        if uso() {
+                            return Some(nombre.clone());
+                        }
                         let bien = malas == 1;
                         println!("  [guardian] entra {} tras {} intento malo: {}", nombre, malas, if bien { "bien" } else { "MAL" });
                         return bien.then(|| nombre.clone());
+                    }
+                    if uso() {
+                        println!("  [guardian] desbloqueado");
+                        return Some(nombre.clone());
                     }
                     let bien = malas == 1;
                     println!("  [guardian] desbloqueado con la contraseña buena tras {} mala: {}", malas, if bien { "bien" } else { "MAL" });

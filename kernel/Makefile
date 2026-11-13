@@ -112,6 +112,13 @@ arranque-virt: virt $(DISCO_NVME)
 	python3 ../tools/sonido_wav.py target/sonido.wav
 	python3 ../tools/captura_cambio.py target/u6.ana.ppm target/u6.carla.ppm
 
+# La imagen para usar a mano (`tools/qemu_a_mano.sh`): `virt` con `uso`, sin los programas de prueba y con la pantalla
+# de entrada de verdad. No es una prueba: nada la comprueba.
+VIRT_USO := target/kernel8-virt-uso.img
+virt-uso: usuario FORCE
+	cargo build $(CARGO_PERFIL) --features virt,uso
+	$(OBJCOPY) -O binary $(ELF) $(VIRT_USO)
+
 # La caja Linux (H9, docs/bitacoras/caja-linux.md): la misma imagen de `virt` en una QEMU virt con virtualization=on,
 # sin disco ni USB. EDK2 y el cargador entran en EL2: el kernel deja ahí el trozo del hipervisor y el servicio
 # `caja-linux` corre sus invitados de prueba. Sin virtualization=on (`arranque-virt`), el servicio dice que no hay
