@@ -1820,3 +1820,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   retira en el centro. Papelera de la caja en `Estado/Servicios/caja-amiga.papelera` (servicio `archivos`). La
   instantánea del cajón no: las de RedoxFS son por volumen (hará falta un volumen propio para la caja).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 17:10: guardian, "Siempre" y "Sí" con Mayúsculas y S, y botones con la tecla destacada
+- Decisiones del usuario: "Siempre" (ficheros de la caja) y "Sí" (permisos de servicios) piden Mayúsculas y S; una
+  "s" suelta no da ningún permiso. Las respuestas son botones tonales de Material con la palabra dentro y su tecla
+  subrayada en el color primario; "Mayús" pequeño dentro del botón cuando hace falta. El guion contesta `shift-s`.
+- `make prueba` BIEN; arranque-virt, -vm y -2: BIEN (lo demás no toca `guardian`).
