@@ -71,6 +71,21 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   del panel y el panel sin gráficas); en 800 × 600, `trasfondo-800-monitor.*.png`. Con Full HD falla, como siempre, la
   línea de la pantalla de 800 × 600.
 
+### Estado de las pruebas al acabar
+
+- `make prueba`: BIEN (con la línea nueva de `grupos`).
+- `make arranque-virt` (800 × 600): todas las líneas del monitor salen (panel, gasto, hostil "bien", píldora,
+  desplegable, abrir el monitor, cerrar `espera` sí, la suma no, ordenar, gráficas fuera y dentro). **Pero no pasa
+  entero**: falta una línea de la prueba de Ajustes del kit que no es de este trabajo, `[ajustes] el compositor pide
+  800x560` (Super+Arriba no la maximiza: una pregunta de `guardian` sale justo entonces y se lleva la tecla). Salió en
+  dos vueltas seguidas, así que no parece casualidad: el arranque va más cargado o en otro orden (la red se lanza antes,
+  el panel y la barra miden). Se probó a reintentar Super+Arriba (fallaba entonces el cierre de la ventana Amiga, que
+  tapaba Ajustes al subir) y a esperar a la ventana Amiga (fallaba entonces el desplegable de Ajustes); los dos cambios
+  se deshicieron. Queda por arreglar el guion de ese tramo, o mirar si conviene lanzar la red donde estaba y dar al
+  fondo "red-estado" por `sesiones`.
+- No se corrieron las demás variantes (-vm, -linux, -2, -escritorio...). Cambian las llaves del panel rápido y de la
+  barra, y el orden de lanzamiento: hay que pasarlas antes de unir.
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
