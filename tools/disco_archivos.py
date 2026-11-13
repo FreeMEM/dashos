@@ -69,6 +69,11 @@ if sys.argv[1] == "--comprobar":
     fondo = subprocess.run([ver, disco, desde, "C/Prefs/fondo"], capture_output=True).stdout
     esperado = [
         "C/ cajón",
+        # El explorador de archivos: su papelera en Home (vacía al acabar: lo tirado se restauró), la carpeta que crea
+        # (Viaje, con grande.txt copiado y renombrado), y datos.bin copiado ahí y arrastrado luego a Privado.
+        "C/.Papelera/ cajón",
+        "C/.Papelera/archivos/ cajón",
+        "C/.Papelera/info/ cajón",
         # C3: los fondos de escritorio de prueba (`tools/fondos_prueba.py`).
         "C/Fondos/ cajón",
         *[f"C/Fondos/{n} {os.path.getsize(os.path.join(FONDOS, n))}" for n in sorted(fondos_prueba.FONDOS)],
@@ -83,7 +88,10 @@ if sys.argv[1] == "--comprobar":
         "C/Prefs/panel 24",
         "C/Privado/ cajón",
         # S10: el comentario y el bit de archivado que puso el Workbench (Información, como Ana).
+        "C/Privado/datos.bin 614400",
         "C/Privado/nota.txt 18 bits=0x1 : nota de Ana",
+        "C/Viaje/ cajón",
+        "C/Viaje/texto grande.txt 313890",
         "C/datos.bin 614400",
         "C/frio.bin 1048576",
         "C/grande.txt 313890",

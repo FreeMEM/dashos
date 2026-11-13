@@ -203,6 +203,11 @@ path = "src/bin/workbench.rs"
 required-features = ["ventanas"]
 
 [[bin]]
+name = "explorador"
+path = "src/bin/explorador.rs"
+required-features = ["ventanas"]
+
+[[bin]]
 name = "presa"
 path = "src/bin/presa.rs"
 
