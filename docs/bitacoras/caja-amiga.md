@@ -1265,3 +1265,94 @@ Lo que se ve y queda por hacer:
 - Los controles, a 1x ampliados (escalones de 2 en las curvas): ver arriba.
 - El guion mira las esquinas de la ventana de GadTools a 3 del borde (la marca ocupa los 3 de fuera; con el clásico, la
   primera vuelta no la reconocía y no pulsaba nada).
+
+## 2026-11-13: BOOPSI y ReAction en la caja Amiga
+
+Rama `caja-amiga-reaction` (desde `fusion-fondo`, 77d8e47). intuition tiene BOOPSI nativo y, encima, las clases de
+ReAction de 3.2, con las dos apariencias por el rasgo `Tema` (las mismas reglas que GadTools). Escrito desde el RKRM
+(Libraries, "BOOPSI"), los autodocs de intuition, amiga.lib y de cada clase de ReAction del NDK 3.2 y sus includes; sin
+leer código de ninguna implementación.
+
+### Cómo va (`caja/intuition/src/boopsi/`)
+
+- **Las clases son `struct IClass` de verdad** en la memoria del 68k, con su gancho despachador: `DoMethod` de
+  amiga.lib salta al `h_Entry` de la clase sin pasar por intuition (y `DoSuperMethod`, al de la superclase). Las
+  nativas comparten un `h_Entry`: 6 bytes de 68k con `$A0FF n; RTS` (n = 0xB00, `Numeros::boopsi`) que entran en el
+  despachador nativo con la clase en A0. Una clase de usuario (`MakeClass`) lleva su despachador en 68k; los objetos
+  son los de siempre: `struct _Object` delante, `OCLASS(o)` en `o - 4`, `INST_DATA` por `cl_InstOffset`, un gadget es
+  su `struct Gadget` (ExtGadget) y una imagen su `struct Image`. La memoria es de la tarea (`AllocMem`): lo que un
+  programa no dispone cuenta como suyo sin soltar.
+- **Llamar a 68k desde lo nativo** (un `OM_NEW` a una clase de usuario, el `OM_UPDATE` de una interconexión a uno de
+  sus objetos, el gancho de edición de un campo): el rasgo `Puente` (`partes()` y `ejecutar_68k`). Nada de BOOPSI es un
+  método de `CajaGrafica` con `&mut self`: todo recibe el puente, pide `partes()` cuando lo necesita y suelta la
+  referencia antes de ejecutar 68k (lo asegura el comprobador de préstamos: las dos cosas piden `&mut` al puente). En
+  la caja, `PuenteCaja` (pegamento) pide `caja()` en cada `partes()` y ejecuta con `caja_ejecutar_68k`, con la pila de
+  la llamada nativa en curso. El 68k de dentro puede volver a intuition (`DoSuperMethodA`): es otra llamada nativa,
+  con su propio puente.
+- **Lo que llega por eventos** (un clic en un gadget BOOPSI, repintar uno tras `RefreshGList` o el cambio de tema,
+  colocar los relativos tras `NEWSIZE`) no se puede hacer en `CajaGrafica::atender`, que tiene `&mut self`: va a una
+  cola (`Pendiente`) y la caja la atiende después con el puente (`boopsi::atender`): al final de cada llamada nativa
+  que atiende al compositor, en `Wait` (`Espera::Boopsi`: se atiende y la espera se repite) y en `Delay`/`WaitTOF`.
+  Mientras haya un gadget BOOPSI activo o un evento suyo en la cola, el ratón y el teclado de esa ventana van a la
+  cola (si no, un clic y su soltar en la misma vuelta se separaban).
+- **La entrada**: un clic sobre un gadget BOOPSI da `GM_HITTEST` y `GM_GOACTIVE` (con su `InputEvent` y el ratón
+  relativo al gadget); mientras devuelva `GMR_MEACTIVE`, `GM_HANDLEINPUT` con cada evento; al acabar, `GM_GOINACTIVE` y,
+  con `GMR_VERIFY`, `IDCMP_GADGETUP` con el código de terminación. `GMR_REUSE` pasa el clic a lo de debajo. Un hijo de
+  un layout o un grupo que acaba deja su dirección (`hoja`) y el `GADGETUP` lleva la del hijo: window.class lo
+  traduce a `WMHI_GADGETUP | GA_ID`.
+- **Lo malo**: una clase o un objeto que no lo son, un método desconocido, etiquetas en círculo, un almacén que no se
+  puede escribir: aviso y 0. Un despachador 68k que no vuelve (el programa acaba dentro): `Corte68k::Acabado` deshace
+  todo hasta arriba y la caja corta el programa. Uno que se llama a sí mismo por intuition sin fin: tope de 48 métodos
+  anidados (`MAX_NIVELES`); en 68k puro, el tope de 16 niveles de la caja (sigue con 0). Interconexiones en círculo:
+  cada objeto, mientras notifica, no atiende más notificaciones (lo de `ICM_SETLOOP`/`ICM_CHECKLOOP`). Un árbol de
+  layouts muy hondo se dispone sin recursión.
+
+### Clases de sistema (`sistema.rs`)
+
+rootclass (OM_NEW, OM_DISPOSE, OM_ADDTAIL, OM_REMOVE), icclass y modelclass (ICA_TARGET, ICA_MAP con
+`TAG_IGNORE`, ICTARGET_IDCMP con la copia de las etiquetas en el `IAddress` de `IDCMP_IDCMPUPDATE`, que se suelta al
+contestar; los miembros de modelclass reciben `OM_UPDATE` y se disponen con él), imageclass (la `struct Image`,
+IM_DRAW/DRAWFRAME/HITTEST/HITFRAME/ERASE/FRAMEBOX/DOMAINFRAME), frameiclass (con el tema si dibuja en una ventana
+nuestra: tarjeta con contorno "como DashOS"), sysiclass (flechas, casilla, mx, cerrar, profundidad, tamaño),
+fillrectclass, itexticlass, gadgetclass (todos los `GA_*` de posición, relativos, activación, texto, imagen,
+`GA_Previous`), propgclass (mando, página, arrastre, `PGA_Top`/`Total`/`Visible` y los pots), strgclass (su
+`StringInfo` y búfer, `STRINGA_TextVal`/`LongVal`, edición con el teclado, y `STRINGA_EditHook`: el gancho en 68k con su
+`SGWork`, `SGH_KEY`), buttongclass y frbuttonclass (con `GA_ToggleSelect`), groupgclass (miembros colocados respecto al
+grupo, el grupo crece, reenvía render y entrada).
+
+Lo que dijo el oráculo (FS-UAE con el Kickstart 3.2.3 y el Workbench 3.2, `caja/pruebas68k/boopsi.c`, sin cerrojo):
+propgclass **no notifica** lo que le llega por `OM_SET`, `OM_UPDATE` ni `SetGadgetAttrs` (solo lo que mueve el
+usuario): así se hizo. icclass y modelclass sí pasan lo que les llega. En 3.2, `NewObject(NULL, "layout.gadget")` (y
+checkbox, string, label, slider) da NULL: esas clases no están en la lista pública con su nombre; `button.gadget` sí.
+Aquí todas son públicas (más permisivo: lo que va en 3.2 va aquí); los programas de 3.2 usan `XXX_GetClass()`.
+
+### ReAction (`reaction.rs`)
+
+Las bibliotecas `window.class`, `layout.gadget`, `button.gadget`, `checkbox.gadget`, `chooser.gadget`,
+`integer.gadget`, `string.gadget`, `slider.gadget`, `scroller.gadget`, `listbrowser.gadget`, `radiobutton.gadget`,
+`space.gadget`, `getfile.gadget`, `label.image`, `bevel.image` y `glyph.image` (versión 47), con sus funciones: los
+`GetClass`, los nodos de chooser, listbrowser y radiobutton (`Alloc/Free/Set/GetXNodeAttrsA`, `FreeListBrowserList`,
+`ListBrowserClearAll`, `ListBrowserSelectAll`) y `RethinkLayout` y `LayoutLimits` de layout. exec abre
+`gadgets/layout.gadget` por el final del camino (lo que sería `LIBS:Gadgets/` con ramlib).
+
+- **window.class**: `WA_*` guardadas, `WINDOW_Layout`, `WINDOW_Position` (centrada), `WINDOW_MenuStrip`,
+  `WINDOW_SigMask`, `WINDOW_Window`; `WM_OPEN` abre del tamaño pedido y, como mínimo, del que pide el layout
+  (`GM_DOMAIN`), con `WindowLimits` a ese mínimo; el layout va como gadget de la ventana en todo lo de dentro, con
+  `GFLG_RELSPECIAL`; `WM_HANDLEINPUT` traduce los mensajes (`WMHI_CLOSEWINDOW`, `GADGETUP | GA_ID` con el código,
+  `MENUPICK`, `NEWSIZE` recolocando, `RAWKEY`, `VANILLAKEY`, `ACTIVE`, `INACTIVE`, `IDCMPUPDATE` con `GA_ID`) hasta
+  `WMHI_LASTMSG`; `WM_CLOSE`, `WM_ICONIFY` (cierra), `WM_RETHINK`; `OM_DISPOSE` cierra y dispone el layout.
+- **layout.gadget**: `LAYOUT_AddChild`/`AddImage` con los `CHILD_*` que los siguen (pesos, mínimos, máximos,
+  `CHILD_Label`, `CHILD_NoDispose`, `CHILD_ReplaceObject`), `LAYOUT_RemoveChild`, orientación, `SpaceOuter`,
+  `SpaceInner`, márgenes y espacio, alineación, `EvenSize`, `BevelStyle` y `Label` (el título del grupo). El diseño:
+  el mínimo de cada hijo (`GM_DOMAIN` / `IM_DOMAINFRAME`, recursivo), lo que sobra repartido por pesos sin pasar de
+  los máximos, el otro eje entero (o su mínimo, centrado, con peso 0), la columna de etiquetas en vertical. Con la
+  ventana abierta, añadir un hijo la recoloca entera. La entrada va al hijo de debajo (con su `GM_HITTEST`).
+- **Los controles se pintan como los de GadTools** (`pintar.rs`): botón, casilla (de su tamaño, a la izquierda, con su
+  texto), chooser (un ciclo), integer y string (campo), slider y scroller (deslizador), listbrowser (listview),
+  radiobutton (mx), getfile (texto y botón). Así salen las dos apariencias y la letra nítida sin nada propio, en los
+  mismos rectángulos. Las imágenes: label (texto con la tinta del tema, sin el `_`), bevel (grupo, campo, botón,
+  raya), glyph (flechas, marca).
+
+Diferencias sabidas: chooser cambia de opción con cada clic (como un ciclo de GadTools) en vez de abrir su menú;
+getfile no abre el requester (no hay asl.library); listbrowser con varias columnas las junta en una; space no llama a
+`SPACE_RenderHook`; `LAYOUT_FixedHoriz`, `ShrinkWrap` y las páginas (`PAGE_GetClass`), sin hacer.

@@ -153,14 +153,22 @@ fn interconexion_prop_a_cadena() {
     let cad = nuevo(&mut p, 0, "strgclass", &[(stringa::MAXCHARS, 12), (stringa::LONGVAL, 0), (ga::ID, 2)]);
     let mapa = etiquetas(&mut p, &[(pga::TOP, stringa::LONGVAL)]);
     let prop = nuevo(&mut p, 0, "propgclass", &[(pga::TOTAL, 100), (pga::VISIBLE, 10), (ga::ID, 1), (ica::TARGET, cad), (ica::MAP, mapa)]);
-    // Un OM_UPDATE al deslizador (lo que haría otro objeto) cambia su PGA_Top y lo notifica a la cadena.
+    // Un OM_UPDATE al deslizador (lo que haría otro objeto) cambia su PGA_Top pero no lo notifica (como en 3.2: solo
+    // notifica lo que mueve el usuario).
     let t = etiquetas(&mut p, &[(pga::TOP, 37)]);
     let m = mensaje(&mut p, &[om::UPDATE, t, 0, 0]);
     do_method(&mut p, prop, m).unwrap();
     assert_eq!(get(&mut p, prop, pga::TOP), 37);
+    assert_eq!(get(&mut p, cad, stringa::LONGVAL), 0);
+    // Un icclass sí: lo que le llega pasa a su objetivo con su mapa.
+    let ic0 = nuevo(&mut p, 0, "icclass", &[(ica::TARGET, cad), (ica::MAP, mapa)]);
+    let t = etiquetas(&mut p, &[(pga::TOP, 37)]);
+    let m = mensaje(&mut p, &[om::UPDATE, t, 0, 0]);
+    do_method(&mut p, ic0, m).unwrap();
     assert_eq!(get(&mut p, cad, stringa::LONGVAL), 37);
     let buf = get(&mut p, cad, stringa::TEXTVAL);
     assert_eq!(c_str(&p, buf), "37");
+    dispose(&mut p, ic0);
     // modelclass en medio: deslizador → modelo → (miembro) cadena y (objetivo) otro deslizador.
     let modelo = nuevo(&mut p, 0, "modelclass", &[]);
     let prop2 = nuevo(&mut p, 0, "propgclass", &[(pga::TOTAL, 100), (pga::VISIBLE, 10)]);
@@ -185,15 +193,14 @@ fn interconexion_prop_a_cadena() {
 #[test]
 fn interconexion_en_circulo() {
     let mut p = prueba();
-    // A → B y B → A: un OM_UPDATE a A no da vueltas sin fin.
-    let a = nuevo(&mut p, 0, "propgclass", &[(pga::TOTAL, 100), (pga::VISIBLE, 1)]);
-    let b = nuevo(&mut p, 0, "propgclass", &[(pga::TOTAL, 100), (pga::VISIBLE, 1), (ica::TARGET, a)]);
+    // A → B y B → A (dos icclass, que notifican todo lo que les llega): un OM_UPDATE a A no da vueltas sin fin.
+    let a = nuevo(&mut p, 0, "icclass", &[]);
+    let b = nuevo(&mut p, 0, "icclass", &[(ica::TARGET, a)]);
     set(&mut p, a, &[(ica::TARGET, b)]);
     let t = etiquetas(&mut p, &[(pga::TOP, 12)]);
     let m = mensaje(&mut p, &[om::UPDATE, t, 0, 0]);
     do_method(&mut p, a, m).unwrap();
-    assert_eq!(get(&mut p, a, pga::TOP), 12);
-    assert_eq!(get(&mut p, b, pga::TOP), 12);
+    // Y dos deslizadores en círculo, movidos por el usuario (notifican): ver `gadgets_en_una_ventana`.
     // Uno que se tiene a sí mismo de objetivo, e icclass en círculo con tres.
     let c = nuevo(&mut p, 0, "icclass", &[]);
     set(&mut p, c, &[(ica::TARGET, c)]);

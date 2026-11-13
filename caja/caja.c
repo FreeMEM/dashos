@@ -236,6 +236,9 @@ int memcmp(const void *a, const void *b, size_t n)
 #define CAJA_INTERACTIVA 0
 #endif
 #define GT_NOMBRE (CAJA_INTERACTIVA ? "gadtools-90" : "gadtools-5")
+/* BOOPSI y ReAction (boopsi.c): sin esperar; en el modo de las capturas, su ventana de ReAction 20 s con cada aspecto
+   (el segundo, con la excepción "original" de DASHOS_PREFS para ese nombre). */
+#define BOOPSI_NOMBRE (CAJA_INTERACTIVA ? "boopsi-20" : "boopsi-0")
 
 /* Lo más que una tarea espera sin que llegue nada antes de que la caja la corte (pegamento/: esperar). */
 uint64_t caja_espera_maxima_us(void) { return (CAJA_INTERACTIVA ? 600ULL : 60ULL) * 1000000ULL; }
@@ -454,6 +457,9 @@ extern const uint8_t prog_dash_interp[], prog_dash_interp_fin[];
 extern const uint8_t prog_dash_listas[], prog_dash_listas_fin[];
 extern const uint8_t prog_anidado[], prog_anidado_fin[];
 extern const uint8_t prog_gadtools[], prog_gadtools_fin[];
+extern const uint8_t prog_boopsi[], prog_boopsi_fin[];
+extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
+extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
 extern const uint8_t prog_dash_ctrl_c_gcc[], prog_dash_ctrl_c_gcc_fin[];
 extern const uint8_t prog_dash_ctrl_c_for[], prog_dash_ctrl_c_for_fin[];
@@ -886,12 +892,19 @@ static int prueba_actualiza(uint32_t execbase, uint32_t sistema)
    del 68k; la caja lo entrega como la señal SIGBREAKF_CTRL_C de la tarea. Si el programa no acaba en 10 s más, la
    NMI lo corta (el vigilante de siempre). Con `us` = 0, solo eso: un vigilante de 10 s, sin Ctrl-C. */
 static volatile int ctrl_c_corriendo;
+/* En vez de Ctrl-C, cerrar sus ventanas como con el botón de cerrar de la barra (un programa que solo espera a sus
+   ventanas en Wait, como el ejemplo de ReAction de Dash, no ve Ctrl-C hasta que algo lo despierta). */
+static volatile int cerrar_en_vez, cerrar_pendiente;
+int caja_tomar_cerrar(void) { return __atomic_exchange_n(&cerrar_pendiente, 0, __ATOMIC_ACQ_REL); }
 static void manda_ctrl_c(uint64_t us)
 {
     if (us) {
         sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
-        __atomic_store_n(&ctrl_c_pendiente, 1, __ATOMIC_RELEASE);
-        __atomic_store_n(&m68k.INTF.ARM, 1, __ATOMIC_RELEASE);
+        if (cerrar_en_vez) __atomic_store_n(&cerrar_pendiente, 1, __ATOMIC_RELEASE);
+        else {
+            __atomic_store_n(&ctrl_c_pendiente, 1, __ATOMIC_RELEASE);
+            __atomic_store_n(&m68k.INTF.ARM, 1, __ATOMIC_RELEASE);
+        }
     }
     for (int i = 0; i < 100 && ctrl_c_corriendo; i++) sc(SC_DORMIR, 100000, 0, 0, 0, 0);
     if (ctrl_c_corriendo) __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
@@ -1147,6 +1160,23 @@ int caja_main(void)
            (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
+        /* 8c. BOOPSI y ReAction (boopsi.c): una clase de usuario con su despachador en 68k (que vuelve a intuition
+           con DoSuperMethodA), interconexión con propgclass, strgclass, icclass y modelclass, y una ventana de
+           window.class con su layout. Se comprueba solo y acaba con 0. */
+        static const char *const boopsi_nombres[] = { BOOPSI_NOMBRE, "boopsi-orig-20" };
+        for (unsigned i = 0; i < (CAJA_INTERACTIVA ? 2u : 1u); i++) {
+            t0 = ahora_us();
+            v = ejecuta_hunk(boopsi_nombres[i], prog_boopsi, (size_t)(prog_boopsi_fin - prog_boopsi), execbase, &d0,
+                             &llamadas, &sobras);
+            t1 = ahora_us();
+            uint32_t hechas = 0, no = 0, exc = 0;
+            caja_cuentas_anidadas(&hechas, &no, &exc);
+            bien = v == -1 && d0 == 0 && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema && no == 0;
+            di("boopsi.exe acabó con %d, %d llamadas nativas, %u despachadores 68k, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+               (int)d0, llamadas, hechas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+            if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        }
+
         /* 9. Llamadas anidadas: 68k desde una función nativa (anidado.c; el modo, en la letra del nombre). a: Open de una
            biblioteca 68k, sin fin (el tope), con la pila de vuelta más abajo, tc_ExceptCode, CallHookPkt y un
            tc_TrapCode que recupera: acaba con 0. b: vuelve con la pila más arriba: cortado (-2). c: instrucción
@@ -1179,6 +1209,11 @@ int caja_main(void)
             { "test_trap_illegal", prog_dash_trap_ilegal, prog_dash_trap_ilegal_fin, 0, 20, 20 },
             { "test_trap_divzero", prog_dash_trap_divcero, prog_dash_trap_divcero_fin, 0, 20, 20 },
             { "test_gadtools", prog_dash_test_gadtools, prog_dash_test_gadtools_fin, 6000, 0, 5 },
+            /* ReAction (window.class y layout.gadget nativos): la prueba de la documentación acaba sola; el ejemplo
+               espera a que pulsen "OK" o "Cancel" o cierren su ventana: a los 4 s (en el modo de las capturas, 30 s)
+               se cierra como con el botón de la barra (un negativo: cerrar en vez de Ctrl-C) y acaba con 0. */
+            { "test_doc_reaction", prog_dash_test_doc_reaction, prog_dash_test_doc_reaction_fin, 0, 0, 0 },
+            { "test_reaction", prog_dash_test_reaction, prog_dash_test_reaction_fin, CAJA_INTERACTIVA ? -30000 : -4000, 0, 0 },
         };
         for (unsigned i = 0; i < sizeof(dash2) / sizeof(dash2[0]); i++) {
             size_t n = (size_t)(dash2[i].hasta - dash2[i].desde);
@@ -1187,8 +1222,9 @@ int caja_main(void)
                 continue;
             }
             ctrl_c_corriendo = 1;
+            cerrar_en_vez = dash2[i].ctrl_c < 0;
             long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN),
-                        (long)dash2[i].ctrl_c * 1000, 0, 0);
+                        (long)(dash2[i].ctrl_c < 0 ? -dash2[i].ctrl_c : dash2[i].ctrl_c) * 1000, 0, 0);
             caja_consola_prefijo(prefijo, sizeof(prefijo) - 1);
             t0 = ahora_us();
             v = ejecuta_hunk(dash2[i].nombre, dash2[i].desde, n, execbase, &d0, &llamadas, &sobras);

@@ -52,6 +52,7 @@ unsafe extern "C" {
     fn caja_monton_reservar(tam: usize, alin: usize) -> *mut u8;
     fn caja_monton_soltar(p: *mut u8);
     fn caja_ejecutar_68k(pc: u32, r: *mut u32, usuario: i32) -> i32;
+    fn caja_tomar_cerrar() -> i32;
     fn caja_jit_olvidar();
     fn caja_tomar_ctrl_c() -> i32;
     fn caja_tomar_pilas_raras() -> i32;
@@ -85,8 +86,8 @@ fn panico(info: &core::panic::PanicInfo) -> ! {
 // --- El estado de la caja ---
 
 /// Dónde empiezan los números nativos de dos: `0x100 + entrada` (la 5, Open, es la 0x105). Exec usa del 1 al 255,
-/// graphics desde 0x400 e intuition desde 0x600 (`caja_intuition::Numeros`), utility desde 0x800 y timer.device
-/// desde 0x880: no chocan.
+/// graphics desde 0x400 e intuition desde 0x600 (`caja_intuition::Numeros`), utility desde 0x800, timer.device
+/// desde 0x880, gadtools desde 0xA00 y BOOPSI desde 0xB00 (su despachador y las bibliotecas de ReAction): no chocan.
 const N_DOS: u16 = 0x100;
 const N_UTILITY: u16 = 0x800;
 const N_TIMER: u16 = 0x880;
@@ -978,7 +979,19 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
     let mut hasta = dashos::ahora_us() + maxima;
     loop {
         atender(c);
+        // Las pruebas de la caja: cerrar las ventanas de la tarea como con el botón de la barra.
+        // SEGURIDAD: una función de caja.c sin argumentos.
+        if unsafe { caja_tomar_cerrar() } != 0 {
+            for w in c.gr.ventanas() {
+                if let Some(s) = c.gr.superficie(w) {
+                    let _ = c.gr.evento(&mut c.ex, s, caja_intuition::Evento::Cerrar);
+                }
+            }
+        }
         if c.gr.boopsi_pendiente() {
+            // La tarea vuelve a tener el testigo: se atiende BOOPSI con ella y la espera se repite.
+            let _ = c.ex.despertar(t);
+            let _ = c.ex.elegir_siguiente();
             return Espera::Boopsi;
         }
         // Ctrl-C de fuera (caja.c): la señal llega como la de cualquier otra tarea.

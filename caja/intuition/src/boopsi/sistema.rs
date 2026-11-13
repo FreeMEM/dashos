@@ -985,14 +985,10 @@ pub(crate) fn prop<P: Puente>(p: &mut P, cl: u32, obj: u32, msg: u32, id: u32) -
             let e = { let v_ = l32(p, msg + 4)?; etiquetas(p, v_) }?;
             let cambio = poner_prop(p, obj, &e) || c != 0;
             let gi = l32(p, msg + 8)?;
+            // Lo que llega por OM_SET u OM_UPDATE cambia el deslizador, pero no se notifica: solo lo que mueve el
+            // usuario (como en 3.2, el oráculo).
             if cambio {
                 repintar(p, obj, gi)?;
-                // Lo que cambió desde fuera también se notifica (así se encadenan: un modelo, otro deslizador).
-                if id == om::UPDATE && e.iter().any(|(t, _)| *t == pga::TOP) {
-                    let x = prop_de(p, obj);
-                    let flags = l32(p, msg + 12)?;
-                    notificar_desde(p, obj, gi, &[(pga::TOP, x.arriba)], flags & om::OPUF_INTERIM != 0)?;
-                }
             }
             Ok(cambio as u32)
         }

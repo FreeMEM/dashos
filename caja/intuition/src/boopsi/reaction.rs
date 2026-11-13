@@ -1032,14 +1032,25 @@ fn layout<P: Puente>(p: &mut P, cl: u32, obj: u32, msg: u32, id: u32) -> R<u32> 
             Ok(0)
         }
         om::DISPOSE => {
-            let hijos = layout_de(p, obj).map(|l| core::mem::take(&mut l.hijos)).unwrap_or_default();
-            for h in hijos {
-                if !h.no_disponer && p.partes().1.es_objeto(h.o) {
-                    metodo(p, h.o, &[om::DISPOSE])?;
+            // Sin recursión para los layouts de dentro (un árbol muy hondo no gasta niveles): sus hijos pasan a la
+            // lista y cada uno se dispone ya vacío.
+            let mut pendientes = layout_de(p, obj).map(|l| core::mem::take(&mut l.hijos)).unwrap_or_default();
+            let mut vueltas = 0;
+            while let Some(h) = pendientes.pop() {
+                vueltas += 1;
+                if vueltas > 100_000 {
+                    break;
                 }
                 if h.etiqueta != 0 && p.partes().1.es_objeto(h.etiqueta) {
                     metodo(p, h.etiqueta, &[om::DISPOSE])?;
                 }
+                if h.no_disponer || !p.partes().1.es_objeto(h.o) || h.o == obj {
+                    continue;
+                }
+                if let Some(l) = layout_de(p, h.o) {
+                    pendientes.append(&mut l.hijos);
+                }
+                metodo(p, h.o, &[om::DISPOSE])?;
             }
             a_super(p, cl, obj, msg)
         }
@@ -1482,7 +1493,7 @@ fn imagen_ra<P: Puente>(p: &mut P, k: Nativa, cl: u32, obj: u32, msg: u32, id: u
             e16(p, caja + 6, al as u16)?;
             Ok(1)
         }
-        _ => sistema::imagen(p, Nativa::Image, cl, obj, msg, id),
+        _ => sistema::imagen(p, k, cl, obj, msg, id),
     }
 }
 

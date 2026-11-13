@@ -648,6 +648,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con
+~│   [caja-amiga] boopsi: 0 fallos
+~│   [caja-amiga] boopsi.exe acabó con 0, 
 ~│   [caja-amiga] anidado: Open 68k desde exec: bien (abierta 1 vez)
 ~│   [caja-amiga] anidado: Open que se abre a si misma: 16 niveles, 15 abiertas dentro
 ~│   [caja-amiga] anidado: Open que vuelve con la pila mas abajo: sigue
@@ -666,6 +668,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] dash: Error: división por cero (excepción 5)
 ~│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1)
 ~│   [caja-amiga] ventana Amiga en pantalla (320x200, con la barra de DashOS): GadTools Test
+~│   [caja-amiga] dash: ventana 1
+~│   [caja-amiga] dash: nombre: Amiga, sonido: 1
+~│   [caja-amiga] dash: fin
+~│   [caja-amiga] Dash test_doc_reaction acabó con 0 (vector -1)
+~│   [caja-amiga] Dash test_reaction acabó con 
 ~(FAR 0x4); se termina
 ~│   [inicio] caja-amiga acabó: clase 2, código 0
 # S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de DashOS, un programa cualquiera con
