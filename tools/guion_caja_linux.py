@@ -411,7 +411,7 @@ if modo == "wayland":
     paso("puente --cliente-hostil /run/wayland-0 roto", r"cliente hostil: roto: hecho", 120)
     # Su ventana sale sin el teclado (se acaba de teclear): un clic se lo da, y con él pone la selección.
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 sin-fin 150 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
@@ -425,7 +425,7 @@ if modo == "wayland":
         mandar("sendkey ctrl-c")
         time.sleep(1.0)
     n = len(ventanas_linux())
-    teclear("puente --cliente-hostil /run/wayland-0 nunca 60 &")
+    teclear("puente --cliente-hostil /run/wayland-0 nunca 90 &")
     h = esperar_ventana(n, 120)
     if h:
         clic(h[0] + 20, h[1] + 20)
