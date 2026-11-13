@@ -125,6 +125,12 @@ DashOS en marcha con 4 núcleos.
 ~│   [hostil] sonido sigue: sí
 # S10c: el tema del sistema no lo cambia cualquiera.
 ~│   [hostil] compositor: poner el tema sin ser el centro da error: sí; el tema sigue: sí
+# S26: el centro pone al arrancar lo guardado (aquí, basura: la paleta del fondo de serie; sin fondo, el violeta) y la
+# caja Amiga lo recibe del compositor y saca las plumas de Material para sus programas.
+~│   [centro] al arrancar: tema claro, color Paleta del fondo (sin calcular) (6750a4), programas de las cajas como DashOS; en el compositor: sí
+~│   [caja-amiga] tema de DashOS: programas Amiga como DashOS, claro, color 6750a4; plumas: fondo fef7ff, texto 1d1b20, relleno 6750a4
+# S26: ni el aspecto de los programas de las cajas (dashos_tema_v1, versión 3).
+~│   [hostil] compositor: cambiar el aspecto de las cajas sin ser el centro da error: sí; sigue como DashOS: sí
 # S10: un programa cualquiera no puede ponerse de barra (sin el poder de escritorio, las capas ni se ven) ni pedir el
 # panel rápido.
 ~│   [hostil] compositor: sin el poder de escritorio no hay capas (ni se anuncian ni se enlazan): sí; pedir el panel rápido da error: sí
@@ -263,8 +269,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Pantallas: Pantalla DASHOS-1: 800 × 600; Frecuencia: 60,000 Hz; Escala: 1
 # Apariencia (C3): modo oscuro, y la ventana se repinta con el esquema oscuro.
 ~│   [centro] Apariencia: Modo claro · elegido
-~│   [centro] Apariencia: oscuro, color Violeta; guardada: 0 (15 bytes); releída: sí
-# Con el ratón: doble clic en "Color azul" (dos clics en la misma fila, en menos de 500 ms).
+# S26: la de serie es la paleta del fondo; aquí, sin fondo aún (el guardado es el enorme), sin calcular.
+~│   [centro] Apariencia: oscuro, color Paleta del fondo (sin calcular); guardada: 0 (13 bytes); releída: sí
+# Con el ratón: doble clic en "Color fijo azul" (dos clics en la misma fila, en menos de 500 ms).
 ~│   [centro] Apariencia: oscuro, color Azul; guardada: 0 (12 bytes); releída: sí
 # Y el tema llega a los demás programas por el compositor (dashos_tema_v1): Ajustes se repinta.
 ~│   [ajustes] tema del sistema: oscuro, color 0061a4
@@ -275,7 +282,7 @@ DashOS en marcha con 4 núcleos.
 # su color semilla (Material You); el centro guarda el fondo.
 ~│   [fondo] ondas.png en pantalla: 960 × 600 escalada a 800 × 600 en 1 franja; semilla 3d6f88
 ~│   [centro] Fondo ondas.png: en pantalla (960 × 600, 
-# "Color del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
+# "Paleta del fondo": el centro calcula una vez los esquemas de la semilla, los guarda con la apariencia y los da al
 # compositor, que los reparte: Ajustes, que estaba abierta, los usa sin calcular.
 ~│   [centro] colores del fondo: semilla 3d6f88, esquemas claro y oscuro en 
 ~│   [centro] Apariencia: oscuro, color Del fondo; guardada: 0 (202 bytes); releída: sí

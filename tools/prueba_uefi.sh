@@ -442,7 +442,7 @@ while time.time() - inicio < total:
                 mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
             reintento = time.time() + 5
         # C3: los fondos y el color del fondo. Con el teclado en la lista de Apariencia (Inicio, abajo hasta la fila,
-        # Intro): poner ondas.png (en el disco, el guardado es el enorme, que no se pone), elegir "Color del fondo",
+        # Intro): poner ondas.png (en el disco, el guardado es el enorme, que no se pone), elegir "Paleta del fondo",
         # poner rota.png (no se pone: se quedan el fondo y el tema) y poner atardecer.png (el tema sale del nuevo).
         # Las filas, de lo que dice el centro al entrar en Apariencia. Con CAPTURA_CENTRO, fichero.fondo-ondas.ppm,
         # fichero.fondo-color.ppm y fichero.fondo-atardecer.ppm.
@@ -472,7 +472,7 @@ while time.time() - inicio < total:
                 time.sleep(0.8)
                 mandar("screendump " + captura_centro + ".fondo-ondas.ppm")
             time.sleep(0.5)
-            elegir_fila("Color del fondo")
+            elegir_fila("Paleta del fondo")
             reintento = time.time() + 30
         if not selector_espera and centro == 16:
             if "[centro] Apariencia: oscuro, color Del fondo" not in texto and time.time() < reintento:

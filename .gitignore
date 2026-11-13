@@ -25,3 +25,4 @@ caja-linux/vmm/target/
 caja-linux/vhost-prueba/target/
 caja/build-pc/
 caja/pruebas68k/*.o
+caja-linux/aspecto/target/

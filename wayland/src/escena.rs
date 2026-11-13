@@ -487,6 +487,10 @@ pub struct Escena<M: Memorias> {
     /// Quién está suscrito al tema (cliente y objeto) y a quién hay que decirle el nuevo (quien atiende lo manda).
     temas: Vec<(Cliente, u32)>,
     pub avisos_tema: Vec<(Cliente, u32)>,
+    /// S26: el aspecto de los programas de las cajas (el texto de `aspecto::Ajuste`, ya comprobado), y a qué suscritos
+    /// del tema (versión 3) hay que mandar el nuevo (quien atiende lo manda, con `avisar_cajas`).
+    pub cajas: alloc::string::String,
+    pub avisos_cajas: Vec<(Cliente, u32)>,
     /// Super+A (C2): a qué suscritos del tema hay que mandar `panel` (los de `abren_panel`).
     pub avisos_panel: Vec<(Cliente, u32)>,
     /// Quién recibe Super+A: lo pone quien atiende, por el nombre que da `inicio` (el panel rápido).
@@ -648,6 +652,13 @@ pub fn avisar_tema(con: &mut Conexion, objeto: u32, (color, oscuro): (u32, bool)
     con.salida.empezar(objeto, dashos_tema_v1::ev::TEMA).uint(color).uint(oscuro as u32).fin();
 }
 
+/// S26: el aspecto de los programas de las cajas, al objeto `objeto` de `dashos_tema_v1` si es de la versión 3.
+pub fn avisar_cajas(con: &mut Conexion, objeto: u32, ajuste: &str) {
+    if con.objetos.get(&objeto).is_some_and(|o| o.version >= 3) {
+        con.salida.empezar(objeto, dashos_tema_v1::ev::CAJAS).texto(Some(ajuste)).fin();
+    }
+}
+
 /// Super+A (C2): que abra o cierre el panel rápido.
 pub fn avisar_panel(con: &mut Conexion, objeto: u32) {
     con.salida.empezar(objeto, dashos_tema_v1::ev::PANEL).fin();
@@ -682,6 +693,8 @@ impl<M: Memorias> Escena<M> {
             esquema: None,
             temas: Vec::new(),
             avisos_tema: Vec::new(),
+            cajas: crate::aspecto::Ajuste::DE_SERIE.escribir(),
+            avisos_cajas: Vec::new(),
             avisos_panel: Vec::new(),
             sombras_antes: Vec::new(),
             sombras: false,
@@ -1068,6 +1081,7 @@ impl<M: Memorias> Escena<M> {
         self.del_sistema.retain(|&c| c != cliente);
         self.temas.retain(|t| t.0 != cliente);
         self.avisos_tema.retain(|t| t.0 != cliente);
+        self.avisos_cajas.retain(|t| t.0 != cliente);
         self.avisos_panel.retain(|t| t.0 != cliente);
         self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
@@ -1861,6 +1875,22 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let colores: [u32; ESQUEMA_COLORES] = core::array::from_fn(|i| u32::from_le_bytes(bytes[4 * i..4 * i + 4].try_into().unwrap()));
                 escena.esquema = Some((args[0].uint() | 0xff00_0000, colores));
             }
+            // S26: el aspecto de los programas de las cajas. Solo el centro, y un texto que valga; se dice a los suscritos
+            // de la versión 3 (si cambia).
+            "dashos_tema_v1" if orden == dashos_tema_v1::req::CAJAS => {
+                if !escena.ponen_tema.contains(&self.cliente) {
+                    return Err(ErrorProtocolo::new(objeto, 0, "solo el centro de control cambia el aspecto de las cajas"));
+                }
+                let Ok(ajuste) = crate::aspecto::Ajuste::entender(args[0].texto().as_bytes()) else {
+                    return Err(ErrorProtocolo::new(objeto, 0, "aspecto de las cajas que no vale"));
+                };
+                let texto = ajuste.escribir();
+                if texto != escena.cajas {
+                    escena.cajas = texto;
+                    let todos: Vec<(Cliente, u32)> = escena.temas.clone();
+                    escena.avisos_cajas.extend(todos);
+                }
+            }
             // C2: bloquear ya, como Super+L; solo el panel rápido.
             "dashos_tema_v1" if orden == dashos_tema_v1::req::BLOQUEAR => {
                 if !escena.abren_panel.contains(&self.cliente) {
@@ -1874,6 +1904,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
                 let cliente = self.cliente;
                 escena.temas.retain(|t| !(t.0 == cliente && t.1 == objeto));
                 escena.avisos_tema.retain(|t| !(t.0 == cliente && t.1 == objeto));
+                escena.avisos_cajas.retain(|t| !(t.0 == cliente && t.1 == objeto));
             }
             "ext_idle_notification_v1" if orden == ext_idle_notification_v1::req::DESTROY => {
                 let cliente = self.cliente;
@@ -2433,6 +2464,7 @@ impl<M: Memorias> Servicio for PorCliente<'_, M> {
         if core::ptr::eq(global.interfaz, &tablas::DASHOS_TEMA_V1) {
             // El tema de ahora, en el acto; y se apunta para los cambios (con tope: de más, nada se apunta y se dice).
             avisar_tema(con, id, self.escena.tema, self.escena.esquema.as_ref());
+            avisar_cajas(con, id, &self.escena.cajas);
             if self.escena.temas.len() < MAX_TEMAS {
                 self.escena.temas.push((self.cliente, id));
                 // A la barra, también el título de ahora (S10).
