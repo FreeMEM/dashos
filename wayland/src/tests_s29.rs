@@ -191,6 +191,36 @@ fn marca_de_la_caja_amiga() {
     assert!(escena.de_caja_amiga.is_empty());
 }
 
+/// La pestaña que pone el compositor (`poner_pestanas`): se usa la suya, sus esquinas transparentes dejan ver la
+/// ventana; una de medida falsa (píxeles que no cuadran, enorme o vacía) no cambia la que había.
+#[test]
+fn pestana_del_compositor() {
+    let mut escena = escena_800();
+    let linux: Cliente = 9 | (3 << 40);
+    escena.de_caja.push(linux);
+    let mut b = Conexion::new();
+    abrir(&mut escena, &mut b, linux, 200, 120, "foot");
+    escena.colocar(linux, 7, 100, 100);
+    let (lx, ly) = sitio(&escena, linux);
+    // 20 × 10: opaca de un color propio salvo la esquina de abajo a la derecha, transparente.
+    let (w, h) = (20, 10);
+    let mut px = vec![0xff12_3456u32; (w * h) as usize];
+    px[(w * h - 1) as usize] = 0;
+    let buena = marca::Pestana { px: px.iter().flat_map(|p| p.to_le_bytes()).collect(), w, h };
+    let falsa = |w: i32, h: i32, n: usize| marca::Pestana { px: vec![0xff; n], w, h };
+    escena.poner_pestanas(buena, falsa(1000, 10, 40_000));
+    let p = componer(&mut escena);
+    assert_eq!(en(&p, lx + GROSOR + 1, ly + GROSOR + 1), 0xff12_3456, "la del compositor");
+    assert_eq!(en(&p, lx + GROSOR + w - 1, ly + GROSOR + h - 1) & 0xffffff, 0x404040, "por la esquina, la ventana");
+    // Las falsas no entran: píxeles de menos, vacía.
+    escena.poner_pestanas(falsa(20, 10, 10), falsa(0, 0, 0));
+    // Se mueve la ventana para que se componga otra vez.
+    escena.colocar(linux, 7, 300, 300);
+    let (lx, ly) = sitio(&escena, linux);
+    let p = componer(&mut escena);
+    assert_eq!(en(&p, lx + GROSOR + 1, ly + GROSOR + 1), 0xff12_3456, "sigue la buena");
+}
+
 /// Hostil: el programa de la caja pone una subsuperficie (con su búfer) lejos de su ventana para pintar fuera del
 /// borde, y otra encima del borde para taparlo. El borde rodea también a la lejana, y se pinta encima de la que tapa.
 #[test]

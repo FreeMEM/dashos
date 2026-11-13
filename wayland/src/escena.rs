@@ -645,8 +645,8 @@ pub struct Escena<M: Memorias> {
     /// controles de Material, así que también llevan la marca, con su color y "68K".
     pub de_caja_amiga: Vec<Cliente>,
     marcas_antes: Vec<Rect>,
-    pestana_linux: Vec<u8>,
-    pestana_amiga: Vec<u8>,
+    pestana_linux: marca::Pestana,
+    pestana_amiga: marca::Pestana,
     /// S29: si pegar (`receive`) pide una tecla o un clic reciente en el programa (`portapapeles::PEGAR_MS`); el
     /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
     pub pegar_con_entrada: bool,
@@ -841,11 +841,23 @@ impl<M: Memorias> Escena<M> {
             emergentes_colocados: Vec::new(),
             de_caja: Vec::new(),
             marcas_antes: Vec::new(),
-            pestana_linux: marca::pestana(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
+            pestana_linux: marca::Pestana::de_pixeles(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
             de_caja_amiga: Vec::new(),
-            pestana_amiga: marca::pestana(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
+            pestana_amiga: marca::Pestana::de_pixeles(marca::TEXTO_AMIGA, marca::COLOR_AMIGA, marca::TINTA_AMIGA),
             pegar_con_entrada: true,
             pegados_negados: Vec::new(),
+        }
+    }
+
+    /// S29: las pestañas de las ventanas de las cajas sin la barra de DashOS, pintadas por el compositor con el kit (la
+    /// de Linux y la de la caja Amiga). Una vacía o de medida que no cuadra no cambia la que había.
+    pub fn poner_pestanas(&mut self, linux: marca::Pestana, amiga: marca::Pestana) {
+        let vale = |p: &marca::Pestana| p.w > 0 && p.h > 0 && p.w <= 400 && p.h <= 100 && p.px.len() == (p.w * p.h * 4) as usize;
+        if vale(&linux) {
+            self.pestana_linux = linux;
+        }
+        if vale(&amiga) {
+            self.pestana_amiga = amiga;
         }
     }
 
@@ -1737,13 +1749,13 @@ impl<M: Memorias> Escena<M> {
                 && let Some(caja) = marca::caja_de(cli, id)
             {
                 let area = self.area_de(self.salida_de(caja));
-                let texto = if amiga { marca::TEXTO_AMIGA } else { marca::TEXTO_LINUX };
+                let p = if amiga { &self.pestana_amiga } else { &self.pestana_linux };
                 // Con la barra de DashOS la marca va dentro de la barra (la pinta `decoracion`): sin pestaña. Sin barra,
                 // la pestaña va por dentro de la ventana, nunca fuera (sin solapas: lo pidió el usuario el 2026-11-13).
                 let sitio = if decoracion::con_barra(cli, id) {
                     Rect { x: caja.x, y: caja.y, w: 0, h: 0 }
                 } else {
-                    marca::sitio_pestana(caja, area, marca::medida_pestana(texto))
+                    marca::sitio_pestana(caja, area, (p.w, p.h))
                 };
                 marcas.push((capas.len(), caja, sitio, amiga));
                 recortes.push((desde, capas.len(), caja));
@@ -1831,7 +1843,7 @@ impl<M: Memorias> Escena<M> {
             // S29: la marca de la ventana de antes, si acabó en la capa anterior.
             while m_i < marcas.len() && marcas[m_i].0 == k {
                 let (fila, pestana) = if marcas[m_i].3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
-                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, pestana));
+                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, fila, &pestana.px));
                 m_i += 1;
             }
             // Las barras de DashOS van tras la sombra de su ventana (más abajo).
@@ -1880,7 +1892,7 @@ impl<M: Memorias> Escena<M> {
         // S29: la marca de la última ventana.
         for m in &marcas[m_i..] {
             let (fila, pestana) = if m.3 { (&fila_amiga, &self.pestana_amiga) } else { (&fila_marca, &self.pestana_linux) };
-            con_bufer.extend(marca::capas(m.1, m.2, fila, pestana));
+            con_bufer.extend(marca::capas(m.1, m.2, fila, &pestana.px));
         }
         esquinas.resize(con_bufer.len(), None);
         // Lo que se queda fuera de las esquinas de abajo en la fila `fila` de la ventana `r` (0: nada; fuera de esas
