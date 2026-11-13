@@ -150,7 +150,11 @@ while time.time() - inicio < total:
                     and "[caja-amiga] gadtools.exe acabó" not in texto[corte:]:
                 v_gt = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
                 if v_gt:
-                    x, y = int(v_gt[-1].group(1)), int(v_gt[-1].group(2))
+                    x0, y0 = int(v_gt[-1].group(1)), int(v_gt[-1].group(2))
+                    # Con escala (pantallas grandes), la caja dice "a 2x": las posiciones de gadtools.c, por el factor.
+                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?\)", texto[corte:]))
+                    f_gt = int(m_f[-1].group(1) or 1) if m_f else 1
+                    x, y = x0, y0
                     foto = os.environ.get("CAPTURA_GT") or "/tmp/dashos-gt-mira.ppm"
                     mandar("screendump " + foto)
                     time.sleep(0.7)
@@ -164,8 +168,8 @@ while time.time() - inicio < total:
                         except Exception:
                             return []
                     wb = {(0xAA, 0xAA, 0xAA), (0, 0, 0), (0xFF, 0xFF, 0xFF), (0x66, 0x88, 0xBB)}
-                    vistos = pixeles(foto, [(x + 1, y + 1), (x + 408, y + 1), (x + 1, y + 190), (x + 408, y + 190)])
-                    vacio = pixeles(foto, [(x + 200, y + 183)])
+                    vistos = pixeles(foto, [(x + 1 * f_gt, y + 1 * f_gt), (x + 408 * f_gt, y + 1 * f_gt), (x + 1 * f_gt, y + 190 * f_gt), (x + 408 * f_gt, y + 190 * f_gt)])
+                    vacio = pixeles(foto, [(x + 200 * f_gt, y + 183 * f_gt)])
                     ancho_pantalla = 0
                     try:
                         ancho_pantalla = int(open(foto, "rb").read().split(b"\n", 3)[1].split()[0])
@@ -176,7 +180,7 @@ while time.time() - inicio < total:
                     # vacío, de la superficie (otra ventana encima no da eso).
                     # Y la casilla marcada (en (103, 25)), del primario: no es la barra ni la superficie (una ventana
                     # del kit encima tiene la misma superficie).
-                    casilla = pixeles(foto, [(x + 103, y + 25)])
+                    casilla = pixeles(foto, [(x + 103 * f_gt, y + 25 * f_gt)])
                     material = len(vistos) == 4 and len(vacio) == 1 and vistos[0] == vistos[1] != vistos[2] \
                         and vistos[2] == vistos[3] == vacio[0] and len(casilla) == 1 and casilla[0] not in (vistos[0], vacio[0]) \
                         and max(casilla[0]) - min(casilla[0]) > 40
@@ -185,7 +189,7 @@ while time.time() - inicio < total:
                         # Un clic en su borde izquierdo (no es ningún gadget; suele verse: las otras ventanas salen más a
                         # la derecha) la sube encima de las demás; se mira otra vez en la vuelta siguiente.
                         gt_movida += 1
-                        ir_a(x + 2, y + 100)
+                        ir_a(x + 2 * f_gt, y + 100 * f_gt)
                         time.sleep(0.3)
                         mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                         time.sleep(0.5)
@@ -193,14 +197,14 @@ while time.time() - inicio < total:
                     if not tapada:
                         gt_amiga = 1
                         for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
-                            ir_a(x + dx, y + dy)
+                            ir_a(x + dx * f_gt, y + dy * f_gt)
                             time.sleep(0.3)
                             mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                             time.sleep(0.4)
-                        ir_a(x + 25, y + 5)
+                        ir_a(x + 25 * f_gt, y + 5 * f_gt)
                         time.sleep(0.3)
                         mandar("mouse_button 2", pausa=0.3)
-                        mandar("mouse_move 0 15", "mouse_move 0 14", pausa=0.3)
+                        mandar(f"mouse_move 0 {15 * f_gt}", f"mouse_move 0 {14 * f_gt}", pausa=0.3)
                         time.sleep(0.5)
                         if os.environ.get("CAPTURA_GT_MENU"):
                             mandar("screendump " + os.environ["CAPTURA_GT_MENU"])
@@ -227,7 +231,9 @@ while time.time() - inicio < total:
                     if os.environ.get("CAPTURA_GT_DASH"):
                         mandar("screendump " + os.environ["CAPTURA_GT_DASH"])
                         time.sleep(0.5)
-                    ir_a(x + 164, y + 41)
+                    m_f = list(re.finditer(r"ventana Amiga en pantalla \(\d+x\d+(?:, a (\d+)x)?\)", texto[corte:]))
+                    f_gd = int(m_f[-1].group(1) or 1) if m_f else 1
+                    ir_a(x + 164 * f_gd, y + 41 * f_gd)
                     time.sleep(0.3)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
                     w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
@@ -243,16 +249,17 @@ while time.time() - inicio < total:
             import re
             corte = texto.find("[caja-amiga] test_trap_illegal (sin consola)")
             if corte >= 0:
-                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)\): Dash", texto[corte:])
+                m_r = re.search(r"ventana Amiga en pantalla \((\d+)x(\d+)(?:, a (\d+)x)?\): Dash", texto[corte:])
                 v_r = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
                 if m_r and v_r:
                     req_dash = 1
                     x, y = int(v_r[-1].group(1)), int(v_r[-1].group(2))
                     an, al = int(m_r.group(1)), int(m_r.group(2))
+                    f_r = int(m_r.group(3) or 1)
                     time.sleep(1.0)
                     mandar("screendump " + os.environ["CAPTURA_REQ"])
                     time.sleep(0.5)
-                    ir_a(x + an // 2, y + al - 12)
+                    ir_a(x + an // 2 * f_r, y + (al - 12) * f_r)
                     time.sleep(0.3)
                     mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
         # Diagnóstico: con DIAG_REGISTROS=fichero, si el compositor suelta a alguien, los registros de los núcleos (tres

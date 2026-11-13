@@ -28,6 +28,7 @@ extern crate alloc;
 extern crate std;
 
 pub mod compositor;
+pub mod escala;
 pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;

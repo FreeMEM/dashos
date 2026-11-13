@@ -17,9 +17,14 @@
 //! - `programa <caja> <aspecto> <nombre>`: el de un programa de esa caja, por encima de todo. El nombre es el resto de
 //!   la línea (puede llevar espacios: los nombres del Amiga los llevan): el del fichero del programa, sin carpeta.
 //!
-//! Aspectos: `dashos` y `original`. Cajas: `amiga`, `linux` y `ppc` (S17). Lo que no sea esto, una línea repetida, un
-//! nombre vacío, con `/`, `:` o caracteres de control, más de `MAX_PROGRAMAS` programas o más de `MAX_TEXTO` bytes es
-//! un error: el texto entero no vale (quien lo lee se queda con lo que tenía).
+//! - `escala <caja> <escala>`: a qué tamaño se ven las ventanas de una caja (una vez por caja; si falta, `auto`).
+//! - `escala-programa <caja> <escala> <nombre>`: el de un programa, por encima del de su caja.
+//!
+//! Aspectos: `dashos` y `original`. Escalas: `auto` (según la pantalla, `escala_automatica`) o un factor entero de 1 a
+//! `MAX_ESCALA` (cada píxel del programa, un cuadrado de factor × factor en la pantalla). Hoy solo la caja Amiga la
+//! usa. Cajas: `amiga`, `linux` y `ppc` (S17). Lo que no sea esto, una línea repetida, un nombre vacío, con `/`, `:` o
+//! caracteres de control, más de `MAX_PROGRAMAS` programas (de cada clase) o más de `MAX_TEXTO` bytes es un error: el
+//! texto entero no vale (quien lo lee se queda con lo que tenía).
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -30,6 +35,56 @@ pub const MAX_TEXTO: usize = 2048;
 pub const MAX_PROGRAMAS: usize = 32;
 /// Lo más largo del nombre de un programa, en bytes.
 pub const MAX_NOMBRE: usize = 64;
+
+/// El factor de escala más grande que se puede pedir.
+pub const MAX_ESCALA: u32 = 3;
+
+/// A qué tamaño se ven las ventanas de los programas de una caja.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Escala {
+    /// Según la pantalla (`escala_automatica`).
+    Auto,
+    /// Un factor fijo, de 1 a `MAX_ESCALA`.
+    Fija(u32),
+}
+
+impl Escala {
+    fn de(t: &str) -> Option<Escala> {
+        match t {
+            "auto" => Some(Escala::Auto),
+            "1" | "2" | "3" => t.parse().ok().map(Escala::Fija),
+            _ => None,
+        }
+    }
+
+    pub fn nombre(self) -> String {
+        match self {
+            Escala::Auto => String::from("auto"),
+            Escala::Fija(f) => alloc::format!("{}", f.clamp(1, MAX_ESCALA)),
+        }
+    }
+
+    /// El factor en una pantalla de `ancho` x `alto`: siempre de 1 a `MAX_ESCALA`.
+    pub fn factor(self, ancho: u32, alto: u32) -> u32 {
+        match self {
+            Escala::Auto => escala_automatica(ancho, alto),
+            Escala::Fija(f) => f.clamp(1, MAX_ESCALA),
+        }
+    }
+}
+
+/// La escala automática (decisión provisional): 3 desde 3200 x 1800 (4K), 2 desde 1600 x 900 (Full HD, 1440p) y 1
+/// por debajo. Así lo que el programa ve como pantalla (la real entre el factor) mide al menos 800 x 450 y una
+/// ventana de topaz/8 se lee como en un monitor del Amiga.
+pub fn escala_automatica(ancho: u32, alto: u32) -> u32 {
+    if ancho >= 3200 && alto >= 1800 {
+        3
+    } else if ancho >= 1600 && alto >= 900 {
+        2
+    } else {
+        1
+    }
+}
 
 /// Cómo se pintan los programas de una caja.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -88,6 +143,9 @@ pub struct Ajuste {
     pub general: Aspecto,
     pub cajas: Vec<(Caja, Aspecto)>,
     pub programas: Vec<(Caja, String, Aspecto)>,
+    /// La escala de cada caja que la cambia (las demás, `auto`) y las excepciones por programa.
+    pub escalas: Vec<(Caja, Escala)>,
+    pub escalas_programas: Vec<(Caja, String, Escala)>,
 }
 
 /// Por qué un texto no vale.
@@ -110,7 +168,13 @@ impl Default for Ajuste {
 
 impl Ajuste {
     /// El de serie: todo como DashOS (S26: la petición del usuario es un entorno homogéneo).
-    pub const DE_SERIE: Ajuste = Ajuste { general: Aspecto::Dashos, cajas: Vec::new(), programas: Vec::new() };
+    pub const DE_SERIE: Ajuste = Ajuste {
+        general: Aspecto::Dashos,
+        cajas: Vec::new(),
+        programas: Vec::new(),
+        escalas: Vec::new(),
+        escalas_programas: Vec::new(),
+    };
 
     /// Un nombre de programa que vale: no vacío, como mucho `MAX_NOMBRE` bytes, sin `/`, `:`, controles ni espacios a
     /// los lados.
@@ -163,6 +227,26 @@ impl Ajuste {
                     }
                     a.programas.push((caja, String::from(nombre), asp));
                 }
+                (Some("escala"), Some(caja), Some(esc), None) => {
+                    let (caja, esc) = (Caja::de(caja).ok_or(Error::Linea)?, Escala::de(esc).ok_or(Error::Linea)?);
+                    if a.escalas.iter().any(|c| c.0 == caja) {
+                        return Err(Error::Repetida);
+                    }
+                    a.escalas.push((caja, esc));
+                }
+                (Some("escala-programa"), Some(caja), Some(esc), Some(nombre)) => {
+                    let (caja, esc) = (Caja::de(caja).ok_or(Error::Linea)?, Escala::de(esc).ok_or(Error::Linea)?);
+                    if !Ajuste::nombre_vale(nombre) {
+                        return Err(Error::Nombre);
+                    }
+                    if a.escalas_programas.iter().any(|p| p.0 == caja && p.1 == nombre) {
+                        return Err(Error::Repetida);
+                    }
+                    if a.escalas_programas.len() == MAX_PROGRAMAS {
+                        return Err(Error::Demasiados);
+                    }
+                    a.escalas_programas.push((caja, String::from(nombre), esc));
+                }
                 _ => return Err(Error::Linea),
             }
         }
@@ -178,7 +262,23 @@ impl Ajuste {
         for (c, n, a) in &self.programas {
             t.push_str(&alloc::format!("programa {} {} {}\n", c.nombre(), a.nombre(), n));
         }
+        for (c, e) in &self.escalas {
+            t.push_str(&alloc::format!("escala {} {}\n", c.nombre(), e.nombre()));
+        }
+        for (c, n, e) in &self.escalas_programas {
+            t.push_str(&alloc::format!("escala-programa {} {} {}\n", c.nombre(), e.nombre(), n));
+        }
         t
+    }
+
+    /// La escala de una caja (sin mirar programas): la suya o `auto`.
+    pub fn escala_de_caja(&self, caja: Caja) -> Escala {
+        self.escalas.iter().find(|c| c.0 == caja).map_or(Escala::Auto, |c| c.1)
+    }
+
+    /// La escala de un programa de una caja: su excepción o la de su caja.
+    pub fn escala_para(&self, caja: Caja, programa: &str) -> Escala {
+        self.escalas_programas.iter().find(|p| p.0 == caja && p.1 == programa).map_or_else(|| self.escala_de_caja(caja), |p| p.2)
     }
 
     /// El aspecto de una caja (sin mirar programas).
@@ -220,6 +320,30 @@ mod pruebas {
     }
 
     #[test]
+    fn escalas() {
+        let t = "general dashos\nescala amiga 2\nescala-programa amiga 1 Directory Opus\nescala-programa amiga auto MultiView\n";
+        let a = Ajuste::entender(t.as_bytes()).unwrap();
+        assert_eq!(a.escribir(), t);
+        assert_eq!(a.escala_para(Caja::Amiga, "gadtools"), Escala::Fija(2));
+        assert_eq!(a.escala_para(Caja::Amiga, "Directory Opus"), Escala::Fija(1));
+        assert_eq!(a.escala_para(Caja::Amiga, "MultiView"), Escala::Auto);
+        assert_eq!(a.escala_para(Caja::Linux, "gimp"), Escala::Auto);
+        // Sin línea de escala: automática. Con la escala antes que nada (sin `general`): vale.
+        assert_eq!(Ajuste::DE_SERIE.escala_para(Caja::Amiga, "x"), Escala::Auto);
+        assert_eq!(Ajuste::entender(b"escala amiga 3\n").unwrap().escala_de_caja(Caja::Amiga), Escala::Fija(3));
+        // La automática: 1 hasta Full HD, 2 en Full HD y 1440p, 3 en 4K; con el alto también (una pantalla muy apaisada
+        // y baja no pasa a 2).
+        for (w, h, f) in [(800, 600, 1), (1024, 768, 1), (1280, 1024, 1), (1599, 1200, 1), (1600, 900, 2), (1920, 1080, 2), (2560, 1440, 2), (3200, 1800, 3), (3840, 2160, 3), (7680, 4320, 3), (3840, 600, 1), (0, 0, 1), (u32::MAX, u32::MAX, 3)] {
+            assert_eq!(escala_automatica(w, h), f, "{}x{}", w, h);
+            assert_eq!(Escala::Auto.factor(w, h), f);
+        }
+        // Un factor fijo no sale nunca de 1..=MAX_ESCALA, aunque se construya a mano.
+        assert_eq!(Escala::Fija(0).factor(1920, 1080), 1);
+        assert_eq!(Escala::Fija(u32::MAX).factor(1920, 1080), MAX_ESCALA);
+        assert_eq!(Escala::Fija(0).nombre(), "1");
+    }
+
+    #[test]
     fn poner_caja() {
         let mut a = Ajuste::DE_SERIE;
         a.poner_caja(Caja::Linux, Aspecto::Original);
@@ -246,6 +370,18 @@ mod pruebas {
             (b"general dashos extra\n", Error::Linea),
             (b"\xff\xfe\n", Error::NoUtf8),
             (b"general\0dashos\n", Error::Linea),
+            (b"escala amiga 0\n", Error::Linea),
+            (b"escala amiga 4\n", Error::Linea),
+            (b"escala amiga 99999999999999999999\n", Error::Linea),
+            (b"escala amiga -1\n", Error::Linea),
+            (b"escala amiga 2x\n", Error::Linea),
+            (b"escala amiga\n", Error::Linea),
+            (b"escala atari 2\n", Error::Linea),
+            (b"escala amiga 2\nescala amiga 1\n", Error::Repetida),
+            (b"escala-programa amiga 2 \n", Error::Nombre),
+            (b"escala-programa amiga 2 DH0:C/Dir\n", Error::Nombre),
+            (b"escala-programa amiga 2 x\nescala-programa amiga 1 x\n", Error::Repetida),
+            (b"escala-programa amiga 2\n", Error::Linea),
         ];
         for (t, e) in malos {
             assert_eq!(Ajuste::entender(t), Err(*e), "{:?}", core::str::from_utf8(t));
@@ -259,6 +395,11 @@ mod pruebas {
             muchos.push_str(&alloc::format!("programa amiga original p{}\n", k));
         }
         assert_eq!(Ajuste::entender(muchos.as_bytes()), Err(Error::Demasiados));
+        let mut muchas = String::new();
+        for k in 0..=MAX_PROGRAMAS {
+            muchas.push_str(&alloc::format!("escala-programa amiga 2 p{}\n", k));
+        }
+        assert_eq!(Ajuste::entender(muchas.as_bytes()), Err(Error::Demasiados));
         // Basura al azar: nunca un pánico, y lo que vale se escribe y se vuelve a leer igual.
         let mut x = 0x2545_f491_4f6c_dd1du64;
         for _ in 0..20_000 {
@@ -268,7 +409,7 @@ mod pruebas {
                 x ^= x << 13;
                 x ^= x >> 7;
                 x ^= x << 17;
-                let palabras: &[&[u8]] = &[b"general ", b"caja ", b"programa ", b"amiga ", b"linux ", b"dashos", b"original", b"\n", b" ", b"x", b"\xc3\xb1", b"/", b"\0"];
+                let palabras: &[&[u8]] = &[b"general ", b"caja ", b"programa ", b"escala ", b"escala-programa ", b"auto ", b"2 ", b"amiga ", b"linux ", b"dashos", b"original", b"\n", b" ", b"x", b"\xc3\xb1", b"/", b"\0"];
                 b.extend_from_slice(palabras[(x % palabras.len() as u64) as usize]);
             }
             if let Ok(a) = Ajuste::entender(&b) {
