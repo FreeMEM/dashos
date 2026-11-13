@@ -171,10 +171,15 @@ arranque-virt-arch: usuario $(DISCO_NVME) FORCE
 # compositor como subconexiones. Antes, `puente --hostil` manda tramas rotas por vsock. Capturas en capturas-agente/.
 # Desde caja-linux-apps: la barra de DashOS (xdg-decoration), el portapapeles entre foot y la terminal de la caja, los
 # hostiles de Linux (`puente --cliente-hostil`), GTK4 (gtk4-widget-factory) y Firefox (256 MB y 768 MB de intercambio);
-# las medidas del guion, en target/caja-wayland.medidas.txt. CAJA_FIREFOX=0 se salta Firefox.
+# las medidas del guion, en target/caja-wayland.medidas.txt. Firefox, solo con CAJA_FIREFOX=1 (no cabe: ver la bitácora).
+# El disco de los programas grandes, en su propia caché: DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch.
+APPS_IMAGE ?= $(HOME)/.cache/dashos-caja-linux-apps/Image-arch
+APPS_DISCO ?= $(HOME)/.cache/dashos-caja-linux-apps/arch/disco-arch.img
+arranque-virt-wayland: ARCH_IMAGE = $(APPS_IMAGE)
+arranque-virt-wayland: ARCH_DISCO = $(APPS_DISCO)
 arranque-virt-wayland: usuario $(DISCO_NVME) FORCE
-	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (ARCH_IMAGE=$(ARCH_IMAGE)): no va en git; tools/caja_linux_invitado.py preparar-arch"; exit 1; }
-	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (ARCH_DISCO=$(ARCH_DISCO)): tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(ARCH_IMAGE)" || { echo "Falta el kernel (APPS_IMAGE=$(ARCH_IMAGE)): no va en git; DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch"; exit 1; }
+	@test -f "$(ARCH_DISCO)" || { echo "Falta el disco de Arch (APPS_DISCO=$(ARCH_DISCO)): DASHOS_CAJA_APPS=1 tools/caja_linux_invitado.py preparar-arch"; exit 1; }
 	mkdir -p target/linux
 	cp "$(ARCH_IMAGE)" target/linux/Image
 	: > target/linux/initrd

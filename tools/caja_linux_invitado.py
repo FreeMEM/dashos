@@ -36,7 +36,11 @@ import urllib.request
 from pathlib import Path
 
 RAIZ = Path(__file__).resolve().parent.parent
-CACHE = Path(os.environ.get("DASHOS_CAJA_LINUX_CACHE", Path.home() / ".cache" / "dashos-caja-linux"))
+# H9 (caja-linux-apps): con DASHOS_CAJA_APPS=1, la imagen de Arch de los programas grandes (GTK4 y Firefox, con lo del
+# rootfs que necesitan puesto al día, en un disco de 6 GB) y en su propia caché: la de siempre no cambia (ni su tamaño,
+# que dicen las líneas esperadas de `arranque-virt-arch`).
+APPS = os.environ.get("DASHOS_CAJA_APPS") == "1"
+CACHE = Path(os.environ.get("DASHOS_CAJA_LINUX_CACHE", Path.home() / ".cache" / ("dashos-caja-linux-apps" if APPS else "dashos-caja-linux")))
 TOOLCHAIN = Path.home() / ".local/opt/toolchains/aarch64--musl--stable-2026.08-1/bin/aarch64-buildroot-linux-musl-"
 BUSYBOX = "1.37.0"
 NUCLEOS = os.cpu_count() or 8
@@ -440,8 +444,8 @@ ARCH_HUELLA = "68B3537F39A313B3E574D06777193F152BDBE6A6"
 TIPO_CAJA_LINUX = "d0a18dbf-bbf4-4b0e-8627-ce5006b50018"
 TIPO_DASHOS = "d0a18dbf-bbf4-4b0e-8627-ce5006b50017"
 DISCO_ARCH = ARCH / "disco-arch.img"
-# 6 GB (H9, caja-linux-apps: GTK4 y Firefox con lo que piden ocupan 1,2 GB más).
-TAM_DISCO_ARCH = 6 << 30
+# 4 GB; 6 con DASHOS_CAJA_APPS=1 (H9, caja-linux-apps: GTK4 y Firefox con lo que piden ocupan 1,2 GB más).
+TAM_DISCO_ARCH = (6 if APPS else 4) << 30
 # La partición de DashOS: del MB 1 al 8, lo mismo que el RedoxFS del disco de las pruebas (`nvme.img`, 8 MB).
 INICIO_DASHOS = 1 << 20
 TAM_DASHOS = 7 << 20
@@ -525,7 +529,8 @@ ARCH_GUIONES.update({
         "echo \"firefox: empieza\" > /dev/hvc0\n"
         "exec firefox --no-remote --profile /tmp/ff \"${1:-file:///usr/local/share/dashos/hola.html}\"\n",
 })
-ARCH_GUIONES["./usr/local/lib/dashos/sin-bwrap/bwrap"] = "#!/bin/sh\n# Para prueba-gtk: que glycin vea que bwrap no va.\nexit 1\n"
+# Que acabe por SIGSYS: es lo que glycin reconoce como "bwrap no va aquí" (con otro fallo, lo usa igual).
+ARCH_GUIONES["./usr/local/lib/dashos/sin-bwrap/bwrap"] = "#!/bin/sh\n# Para prueba-gtk: que glycin vea que bwrap no va.\nkill -SYS $$\n"
 ARCH_FICHEROS.update({
     "./usr/local/lib/dashos/sin-bwrap/LEEME": "Un bwrap que falla, para prueba-gtk (glycin carga las imágenes sin su caja).\n",
     "./usr/local/share/dashos/hola.html":
@@ -539,9 +544,9 @@ ARCH_ENLACES = {"./etc/systemd/system/multi-user.target.wants/dashos-puente.serv
 # Lo que se lleva ya instalado en la imagen (bajado de los servidores de Arch Linux ARM en el PC, con su firma
 # comprobada): libwayland para el cliente de prueba y foot, una terminal de Wayland de verdad, con una letra.
 # Con GL y Vulkan por software (Mesa: llvmpipe y lavapipe) y sus programas de prueba (es2gears_wayland, vkcube), para
-# medir los gráficos de la caja (S25). H9 (caja-linux-apps): GTK4 con sus demos (gtk4-demo, gtk4-widget-factory) y
-# Firefox.
-ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools", "gtk4-demos", "firefox"]
+# medir los gráficos de la caja (S25). Con DASHOS_CAJA_APPS=1 (H9, caja-linux-apps), GTK4 con sus demos (gtk4-demo,
+# gtk4-widget-factory) y Firefox.
+ARCH_PAQUETES = ["wayland", "foot", "ttf-dejavu", "mesa-utils", "vulkan-swrast", "vulkan-tools"] + (["gtk4-demos", "firefox"] if APPS else [])
 ARCH_REPO = "http://mirror.archlinuxarm.org/aarch64"
 ARCH_REPOS = ["core", "extra", "alarm"]
 PAQUETES = ARCH / "paquetes"
@@ -590,7 +595,8 @@ def arch_caches(dentro, poner):
     esquemas = dentro / "usr/share/glib-2.0/schemas"
     if esquemas.is_dir():
         run("glib-compile-schemas", f"--targetdir={dentro}", esquemas)
-        poner("./usr/share/glib-2.0/schemas/gschemas.compiled", (dentro / "gschemas.compiled").read_bytes())
+        if (dentro / "gschemas.compiled").exists():
+            poner("./usr/share/glib-2.0/schemas/gschemas.compiled", (dentro / "gschemas.compiled").read_bytes())
     if (dentro / "etc/fonts/fonts.conf").exists():
         subprocess.run(["fc-cache", "-s", "-f", f"--sysroot={dentro}"], check=False, capture_output=True)
         for f in sorted((dentro / "var/cache/fontconfig").glob("*")):
@@ -729,9 +735,10 @@ def arch_tar(origen, destino, paquetes=(), propios=()):
         # Las cachés (H9): las carpetas copiadas, con la hora que tienen en el tar.
         for d, t in sorted(mtimes.items(), key=lambda x: -len(str(x[0]))):
             os.utime(d, (t, t))
-        if "./var/cache/fontconfig" not in nombres:
-            poner("./var/cache/fontconfig", tarfile.DIRTYPE, modo=0o755)
-        arch_caches(copia, lambda ruta, datos: poner(ruta, datos=datos))
+        if APPS:
+            if "./var/cache/fontconfig" not in nombres:
+                poner("./var/cache/fontconfig", tarfile.DIRTYPE, modo=0o755)
+            arch_caches(copia, lambda ruta, datos: poner(ruta, datos=datos))
         shutil.rmtree(copia, ignore_errors=True)
         # /etc y /var al día respecto de /usr (ConditionNeedsUpdate): sin ldconfig, hwdb ni catálogo en el primer
         # arranque (el rootfs ya los trae hechos).
@@ -914,7 +921,7 @@ def arch_paquetes(tar):
             # Del rootfs, pero quizá viejo: Arch Linux ARM no dice en sus dependencias qué versión hace falta (se pone
             # todo al día a la vez), así que lo que piden los paquetes nuevos y en el repositorio es más nuevo, se pone al
             # día (GTK 4.24 necesita el glib2 2.90 del repositorio; el rootfs trae el 2.88).
-            if nombre not in versiones or nombre not in por_nombre or nombre in actualizar or nombre in NO_ACTUALIZAR:
+            if not APPS or nombre not in versiones or nombre not in por_nombre or nombre in actualizar or nombre in NO_ACTUALIZAR:
                 continue
             if vercmp(por_nombre[nombre][1]["VERSION"][0], versiones[nombre]) <= 0:
                 continue

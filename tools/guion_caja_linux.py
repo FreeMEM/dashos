@@ -442,7 +442,9 @@ if modo == "wayland":
         teclear("pkill -f gtk4-widget-factory")
         time.sleep(3.0)
     # 5. Firefox, si cabe: su primera ventana, una captura y fuera.
-    if os.environ.get("CAJA_FIREFOX") != "0":
+    # Solo con CAJA_FIREFOX=1: con 256 MB (y 768 MB de intercambio en el disco) no llega a abrir su ventana en 20
+    # minutos, y la caja se para a los 1500 s.
+    if os.environ.get("CAJA_FIREFOX") == "1":
         a_la_terminal()
         n = len(ventanas_linux())
         teclear("prueba-firefox &")
