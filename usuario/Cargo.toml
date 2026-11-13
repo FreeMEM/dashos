@@ -169,6 +169,11 @@ required-features = ["ventanas"]
 name = "hostil"
 path = "src/bin/hostil.rs"
 
+# S29: malware de laboratorio (docs/diseño/S29-malware-linux-y-dashos.md).
+[[bin]]
+name = "espia"
+path = "src/bin/espia.rs"
+
 [[bin]]
 name = "caida"
 path = "src/bin/caida.rs"

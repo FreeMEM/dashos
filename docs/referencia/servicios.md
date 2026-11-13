@@ -487,6 +487,10 @@ descriptores que el aparato devuelve sin tenerlos.
 **El puerto de la caja Linux (H9).** `PUERTO` y `TRAMAS_PUERTO` (`protocolo::red`), solo de "caja-linux": un puente de
 tramas para la tarjeta de su invitado (ver la caja Linux, abajo). Si la caja se va (su canal cerrado), el puerto se
 suelta.
+S29: el puerto pasa por el cortafuegos de la caja (`usuario/src/cortafuegos_caja.rs`): Internet sí; la red local no,
+salvo DNS y ping a la puerta de enlace o al DNS y DHCP; ni multidifusión, ni ARP que se haga pasar por la puerta o
+pregunte por otros aparatos; de la red local hacia el invitado, solo la puerta y el DNS. Las primeras 32 tramas
+cortadas distintas se dicen en el registro ("[red] cortafuegos de la caja Linux: corta ...").
 
 **Los programas.** Mensajes de palabras de 32 bits:
 
@@ -553,7 +557,7 @@ por segundo seguidas (luego dice cuántas calló).
 
 **La red del invitado.** El servicio de red le da un puerto (`PUERTO`, solo a "caja-linux"): un puente de tramas hacia
 la tarjeta de verdad, con una MAC propia (02:da:50:...). Llegan al invitado las tramas para su MAC y las de difusión;
-del invitado solo salen las que llevan su MAC de origen. Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
+del invitado solo salen las que llevan su MAC de origen. Y pasan por el cortafuegos de la caja (S29, arriba en el servicio de red). Las ranuras las crea el servicio (64 y 64 de 2 KB). En QEMU,
 el invitado es 10.0.2.16 y su puerta de enlace 10.0.2.2 (busybox, con dirección fija; Arch la pide por DHCP al
 servidor de QEMU, que también contesta a la MAC del invitado, y le da la 10.0.2.16).
 

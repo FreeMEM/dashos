@@ -56,6 +56,7 @@ prueba: $(PRUEBAS)
 	cd ../usuario && rustc --edition 2024 --test src/lanzables.rs -o target/lanzables_pruebas && ./target/lanzables_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/terminal.rs -o target/terminal_pruebas && ./target/terminal_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/protocolo/avisos.rs -o target/avisos_pruebas && ./target/avisos_pruebas -q
+	cd ../usuario && rustc --edition 2024 --test src/cortafuegos_caja.rs -o target/cortafuegos_caja_pruebas && ./target/cortafuegos_caja_pruebas -q
 	@# S27: el volumen y el OSD del panel, la lista del lanzador y la fecha de la barra.
 	cd ../usuario && rustc --edition 2024 --test src/volumen_osd.rs -o target/volumen_osd_pruebas && ./target/volumen_osd_pruebas -q
 	cd ../usuario && rustc --edition 2024 --test src/lanzador_lista.rs -o target/lanzador_lista_pruebas && ./target/lanzador_lista_pruebas -q
@@ -63,6 +64,7 @@ prueba: $(PRUEBAS)
 	../puente/pruebas/g0.sh
 	../puente/pruebas/g1.sh
 	../puente/pruebas/g4.sh && ../puente/pruebas/g5.sh && ../puente/pruebas/g6.sh
+	../puente/pruebas/s29_espia.sh
 	../tools/prueba_qemu.sh $(PRUEBAS) pruebas/esperado.txt 90
 
 arranque: $(IMAGEN)

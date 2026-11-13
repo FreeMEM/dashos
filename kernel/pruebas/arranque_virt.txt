@@ -630,3 +630,14 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] ventana Amiga en pantalla (320x200): GadTools Test
 ~(FAR 0x4); se termina
 ~│   [inicio] caja-amiga acabó: clase 2, código 0
+# S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de DashOS, un programa cualquiera con
+# ventanas. No pasa de su cupo de memoria, no ve ni enlaza protocolos para capturar la pantalla, mandar teclas o leer el
+# portapapeles sin foco, no se hace pasar por la caja Linux y, sin ventana, no oye nada de lo que se teclea (contraseñas
+# de `guardian` incluidas) ni del ratón, ni ve títulos ajenos; y no cambia el portapapeles sin foco.
+~│   [espia] llenar la memoria: se para en 
+~el cupo de su grupo; lo suelta y vuelve a pedir: bien
+~de espiar anunciados, 0 de 
+~enlaces por número aceptados: bien
+~│   [espia] hacerse pasar por la caja Linux (subconexión): sin respuesta true, el compositor sigue true: bien
+~contraseñas): 0 teclas, 0 veces el foco, 0 del ratón, 0 ofertas del portapapeles, 0 títulos ajenos; poner el portapapeles sin foco, cancelado: true: bien
+~│   [espia] malware de laboratorio: no consiguió nada: bien

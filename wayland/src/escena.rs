@@ -25,6 +25,9 @@ pub mod decoracion;
 pub mod emergentes;
 #[path = "portapapeles.rs"]
 pub mod portapapeles;
+// S29: la marca de las ventanas de las cajas, en su fichero.
+#[path = "marca.rs"]
+pub mod marca;
 
 /// Errores de `zwp_linux_buffer_params_v1` (de `linux-dmabuf-v1.xml`, G6).
 pub const DMABUF_USADO: u32 = 0;
@@ -598,6 +601,16 @@ pub struct Escena<M: Memorias> {
     redimension: Option<emergentes::Redimension>,
     /// H9: los emergentes que acaban de salir (quien atiende lo dice y lo vacía).
     pub emergentes_colocados: Vec<(Cliente, i32, i32)>,
+    /// S29: los clientes de la caja Linux (su terminal, la pantalla del invitado y cada programa de su puente), por el
+    /// nombre que da `inicio`: lo pone quien atiende. Sus ventanas llevan la marca de la caja (`marca`). Dónde se pintó
+    /// la marca en el último cuadro (como `sombras_antes`), y la pestaña ya pintada.
+    pub de_caja: Vec<Cliente>,
+    marcas_antes: Vec<Rect>,
+    pestana_linux: Vec<u8>,
+    /// S29: si pegar (`receive`) pide una tecla o un clic reciente en el programa (`portapapeles::PEGAR_MS`); el
+    /// compositor del PC, sin teclado ni ratón, lo quita. Y a quién se le negó, para que quien atiende lo diga.
+    pub pegar_con_entrada: bool,
+    pub pegados_negados: Vec<Cliente>,
 }
 
 /// U6: cada cuánto reciben sus avisos de `frame` las ventanas de una sesión de detrás (no se pintan, pero así no se
@@ -777,6 +790,11 @@ impl<M: Memorias> Escena<M> {
             agarres: Vec::new(),
             redimension: None,
             emergentes_colocados: Vec::new(),
+            de_caja: Vec::new(),
+            marcas_antes: Vec::new(),
+            pestana_linux: marca::pestana(marca::TEXTO_LINUX, marca::COLOR_LINUX, marca::TINTA),
+            pegar_con_entrada: true,
+            pegados_negados: Vec::new(),
         }
     }
 
@@ -1153,22 +1171,35 @@ impl<M: Memorias> Escena<M> {
     /// bloqueada. Si el teclado lo tiene una capa (el lanzador, el panel), el de la ventana de arriba, que es la que lo
     /// recupera al cerrarse. Así la barra solo sabe el título de lo que tiene delante quien está sentado.
     pub fn titulo_activo(&self) -> &str {
-        if self.bloqueo.is_some() {
-            return "";
-        }
-        let ventana = match self.teclado {
-            Some(t) if self.capas.contains(&t) => self.ventana_de_arriba(),
-            t => t,
-        };
-        let Some((c, sup)) = ventana else { return "" };
+        let Some((c, sup)) = self.ventana_con_titulo() else { return "" };
         let Some(cli) = self.clientes.get(&c) else { return "" };
         cli.superficies.get(&sup).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).map_or("", |x| x.titulo.as_str())
+    }
+
+    /// La ventana cuyo título va a la barra (ver `titulo_activo`).
+    fn ventana_con_titulo(&self) -> Option<(Cliente, u32)> {
+        if self.bloqueo.is_some() {
+            return None;
+        }
+        match self.teclado {
+            Some(t) if self.capas.contains(&t) => self.ventana_de_arriba(),
+            t => t,
+        }
     }
 
     /// S10: si cambió el título de la ventana con el teclado, se dice a cada barra (cortado a `MAX_TITULO` bytes, por
     /// una frontera de letra). Quien atiende lo llama tras cada mensaje.
     pub fn revisar_titulo(&mut self) {
-        let t = self.titulo_activo();
+        // S29: el de una ventana de la caja Linux, con "Linux · " delante (un programa de Linux no se hace pasar por
+        // una ventana del sistema en la barra).
+        let de_caja = self.ventana_con_titulo().is_some_and(|v| self.de_caja.contains(&v.0));
+        let t_caja;
+        let t = if de_caja {
+            t_caja = marca::titulo_de_caja(self.titulo_activo());
+            t_caja.as_str()
+        } else {
+            self.titulo_activo()
+        };
         let mut fin = t.len().min(MAX_TITULO);
         while !t.is_char_boundary(fin) {
             fin -= 1;
@@ -1227,6 +1258,8 @@ impl<M: Memorias> Escena<M> {
         self.abren_panel.retain(|&c| c != cliente);
         self.ponen_tema.retain(|&c| c != cliente);
         self.barras.retain(|&c| c != cliente);
+        self.de_caja.retain(|&c| c != cliente);
+        self.pegados_negados.retain(|&c| c != cliente);
         self.avisos_lanzador.retain(|t| t.0 != cliente);
         self.avisos_titulo.retain(|t| t.0 != cliente);
         // Si muere quien bloqueó, sigue bloqueado, en negro: nadie más puede quitarlo (G5).
@@ -1611,6 +1644,10 @@ impl<M: Memorias> Escena<M> {
         // Material 3: cada ventana echa su sombra, justo debajo de ella (y de sus subsuperficies). Bloqueada, nada. Las
         // capas de fondo (C3: el fondo de escritorio, que puede ir en franjas), tampoco: no están encima de nada.
         let mut sombras: Vec<(usize, Rect, i32)> = Vec::new();
+        // S29: las marcas de las ventanas de las cajas: antes de qué capa van, lo que ocupa la ventana y su pestaña.
+        let mut marcas: Vec<(usize, Rect, Rect)> = Vec::new();
+        // S29: las capas de esas ventanas (de la primera a antes de la última) y a qué se recortan.
+        let mut recortes: Vec<(usize, usize, Rect)> = Vec::new();
         for (c, id) in self.raices() {
             let Some(cli) = self.clientes.get(&c) else { continue };
             let Some((x, y)) = cli.superficies.get(&id).and_then(|s| s.sitio) else { continue };
@@ -1633,8 +1670,32 @@ impl<M: Memorias> Escena<M> {
             }
             let mut a = Vec::new();
             arbol(cli, id, x, y, &mut a);
+            let desde = capas.len();
             capas.extend(a.into_iter().map(|(s, x, y)| (c, s, x, y)));
+            // S29: la marca de una ventana de la caja, encima de todo lo suyo (antes de la capa de la ventana siguiente);
+            // lo suyo, recortado a lo que rodea la marca.
+            if self.de_caja.contains(&c)
+                && self.bloqueo.is_none()
+                && let Some(caja) = marca::caja_de(cli, id)
+            {
+                let area = self.area_de(self.salida_de(caja));
+                marcas.push((capas.len(), caja, marca::sitio_pestana(caja, area, marca::medida_pestana(marca::TEXTO_LINUX))));
+                recortes.push((desde, capas.len(), caja));
+            }
         }
+        // S29: lo que ocupan las marcas: si una aparece, se mueve o se va, se daña donde estaba y donde está.
+        let marcas_ahora: Vec<Rect> = marcas.iter().flat_map(|m| [m.1, m.2]).collect();
+        for r in &self.marcas_antes {
+            if !marcas_ahora.contains(r) {
+                self.danos.push(*r);
+            }
+        }
+        for r in &marcas_ahora {
+            if !self.marcas_antes.contains(r) {
+                self.danos.push(*r);
+            }
+        }
+        self.marcas_antes = marcas_ahora;
         let ahora: Vec<Rect> = sombras.iter().map(|s| sombra_fuera(s.1)).collect();
         for r in &self.sombras_antes {
             if !ahora.contains(r) {
@@ -1691,11 +1752,19 @@ impl<M: Memorias> Escena<M> {
         }
         // Las capas con búfer, de abajo arriba: (sitio en pantalla, origen, píxeles, búfer, sombra). Una sombra va como
         // una capa sin píxeles (`Some(ventana)`), nunca opaca, justo antes de su ventana.
+        // S29: una fila del color de la caja, tan ancha como la marca más ancha (las tiras del borde la repiten).
+        let fila_marca: Vec<u8> = marca::COLOR_LINUX.to_le_bytes().repeat(marcas.iter().map(|m| m.1.w.max(0) as usize).max().unwrap_or(0));
         let mut con_bufer: Vec<(Rect, i32, i32, &[u8], crate::shm::Bufer, Option<(Rect, i32)>)> = Vec::new();
         let mut esquinas: Vec<Option<Rect>> = Vec::new();
         let mut s_i = 0;
         let mut b_i = 0;
+        let mut m_i = 0;
         for (k, &(c, id, x, y)) in capas.iter().enumerate() {
+            // S29: la marca de la ventana de antes, si acabó en la capa anterior.
+            while m_i < marcas.len() && marcas[m_i].0 == k {
+                con_bufer.extend(marca::capas(marcas[m_i].1, marcas[m_i].2, &fila_marca, &self.pestana_linux));
+                m_i += 1;
+            }
             // Las barras de DashOS van tras la sombra de su ventana (más abajo).
             let mut barras_aqui = Vec::new();
             while b_i < barras.len() && barras[b_i].0 == k {
@@ -1724,13 +1793,24 @@ impl<M: Memorias> Escena<M> {
             let cli = &self.clientes[&c];
             let Some(b) = cli.superficies[&id].bufer else { continue };
             let Some((px, bufer)) = cli.shm.pixeles(b) else { continue };
-            let r = Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 };
+            let mut r = Rect { x, y, w: bufer.ancho as i32, h: bufer.alto as i32 };
+            // S29: lo de una ventana de la caja, solo dentro de su marca.
+            if let Some(&(_, _, caja)) = recortes.iter().find(|x| (x.0..x.1).contains(&k)) {
+                r = r.cruce(caja);
+                if r.vacio() {
+                    continue;
+                }
+            }
             // H9: una ventana con la barra de DashOS lleva también redondeadas las esquinas de abajo.
             while esquinas.len() < con_bufer.len() {
                 esquinas.push(None);
             }
             esquinas.push(decoracion::con_barra(cli, id).then_some(r));
             con_bufer.push((r, x, y, px, bufer, None));
+        }
+        // S29: la marca de la última ventana.
+        for m in &marcas[m_i..] {
+            con_bufer.extend(marca::capas(m.1, m.2, &fila_marca, &self.pestana_linux));
         }
         esquinas.resize(con_bufer.len(), None);
         // Lo que se queda fuera de las esquinas de abajo en la fila `fila` de la ventana `r` (0: nada; fuera de esas
@@ -3394,6 +3474,10 @@ impl<M: Memorias> Escena<M> {
 
 /// Escribe un evento de entrada en la conexión de su cliente, para todos sus `wl_pointer` o `wl_keyboard`.
 pub fn escribir_entrada(con: &mut Conexion, cli: &mut DeCliente, ev: Entrada, ms: u32) {
+    // S29: la última tecla o el último clic que recibió (para pegar: `portapapeles::PEGAR_MS`).
+    if matches!(ev, Entrada::Tecla { pulsada: true, .. } | Entrada::Boton { pulsado: true, .. }) {
+        cli.pp.pulsado_ms = Some(ms);
+    }
     let fixed = |v: i32| v.wrapping_mul(256) as u32;
     match ev {
         Entrada::ConfiguraCapa { objeto, ancho, alto } => {

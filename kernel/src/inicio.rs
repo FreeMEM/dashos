@@ -252,6 +252,11 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
     ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos"]),
+    // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
+    // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
+    // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "linux")))]
+    ("espia", programa!("espia"), &[], &["ventanas"]),
     #[cfg(feature = "medir_fs")]
     ("medir-fs", programa!("medir-fs"), &[], &["archivos"]),
     #[cfg(feature = "medir")]

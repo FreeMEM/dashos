@@ -12,6 +12,9 @@
 //!   y comparte con el programa. Como mucho
 //!   `POR_PROGRAMA` conexiones por programa y `MAX_CONEXIONES` en total. Un programa solo toca sus conexiones.
 //! - Cortafuegos de entrada: nada escucha, así que todo lo que llega sin pedirlo se rechaza (la pila contesta RST).
+//! - S29: el puerto de la caja Linux pasa por su cortafuegos (`dashos::cortafuegos_caja`): Internet sí, la red local
+//!   no (salvo la puerta de enlace y el DNS para lo justo), ni hacerse pasar por la puerta por ARP. Las primeras
+//!   `AVISOS_CORTAFUEGOS` tramas cortadas se dicen en el registro.
 //!
 //! Llaves: 1 el canal "red" (lee) y 2 una copia para escribirse (no la usa: espera con plazo).
 
@@ -27,6 +30,7 @@ use alloc::vec::Vec;
 use core::ptr::{read_volatile, write_volatile};
 use core::sync::atomic::{fence, Ordering};
 use dashos::println;
+use dashos::cortafuegos_caja;
 use dashos::protocolo::red as p;
 use smoltcp::iface::{Config, Interface, SocketHandle, SocketSet};
 use smoltcp::phy::{self, Device, DeviceCapabilities, Medium};
@@ -94,6 +98,64 @@ struct Puerto {
     del_invitado: u64,
     sin_sitio: u64,
     falsas: u64,
+    /// S29: el cortafuegos de la caja (con la puerta de enlace y el DNS del DHCP del servicio), y lo que cortó: hacia
+    /// fuera, hacia dentro y cuántas se dijeron.
+    reglas: cortafuegos_caja::Reglas,
+    cortadas_salida: u64,
+    cortadas_entrada: u64,
+    dichas: Vec<String>,
+}
+
+/// S29: cuántas tramas cortadas distintas (por lo que son y adónde van) se dicen en el registro; las repetidas y las
+/// demás solo se cuentan.
+const AVISOS_CORTAFUEGOS: usize = 32;
+
+/// S29: una trama en pocas palabras, para el registro: "TCP 10.0.2.16:40000 → 10.0.2.2:22", "ARP de 10.0.2.2 por
+/// 10.0.2.3"...
+fn describir(t: &[u8]) -> String {
+    let u16_en = |i: usize| t.get(i..i + 2).map_or(0, |b| u16::from_be_bytes([b[0], b[1]]));
+    let ip = |i: usize| t.get(i..i + 4).map_or(String::from("?"), |b| alloc::format!("{}.{}.{}.{}", b[0], b[1], b[2], b[3]));
+    match u16_en(12) {
+        0x0806 => alloc::format!("ARP {} de {} por {}", if u16_en(20) == 2 { "respuesta" } else { "pregunta" }, ip(28), ip(38)),
+        0x0800 => {
+            let ihl = t.get(14).map_or(20, |b| (b & 0x0f) as usize * 4);
+            let proto = t.get(23).copied().unwrap_or(0);
+            let nombre = match proto {
+                6 => "TCP",
+                17 => "UDP",
+                1 => "ICMP",
+                _ => "IPv4",
+            };
+            if proto == 6 || proto == 17 {
+                alloc::format!("{} {}:{} → {}:{}", nombre, ip(26), u16_en(14 + ihl), ip(30), u16_en(16 + ihl))
+            } else {
+                alloc::format!("{} {} → {}", nombre, ip(26), ip(30))
+            }
+        }
+        0x86dd => String::from("IPv6"),
+        otro => alloc::format!("tipo {:#06x}", otro),
+    }
+}
+
+impl Puerto {
+    /// S29: apunta una trama cortada, y la dice si aún toca.
+    fn cortada(&mut self, t: &[u8], c: cortafuegos_caja::Corte, sale: bool) {
+        if sale {
+            self.cortadas_salida += 1;
+        } else {
+            self.cortadas_entrada += 1;
+        }
+        let linea = alloc::format!("corta {} ({}, {})", c.texto(), if sale { "hacia fuera" } else { "hacia dentro" }, describir(t));
+        // Sin el puerto de origen: las repeticiones de lo mismo (LLMNR, reintentos de TCP) se dicen una vez.
+        let clave = match linea.find(':') {
+            Some(i) if linea[i..].contains('→') => alloc::format!("{}{}", &linea[..i], &linea[linea.find('→').unwrap()..]),
+            _ => linea.clone(),
+        };
+        if self.dichas.len() < AVISOS_CORTAFUEGOS && !self.dichas.contains(&clave) {
+            self.dichas.push(clave);
+            println!("  [red] cortafuegos de la caja Linux: {}", linea);
+        }
+    }
 }
 
 fn puerto_palabra(i: usize) -> u32 {
@@ -233,6 +295,11 @@ impl Tarjeta {
                 pu.falsas += 1;
                 continue;
             }
+            // S29: el cortafuegos de la caja.
+            if let Err(c) = cortafuegos_caja::salida(&b[..n], &pu.reglas) {
+                pu.cortada(&b[..n], c, true);
+                continue;
+            }
             let escritas = tramas(p::T_TX_ESCRITAS);
             let destino = VA_TRAMAS + 64 + (self.rx + escritas % self.tx) as usize * p::RANURA;
             unsafe {
@@ -280,7 +347,11 @@ impl Device for Tarjeta {
             if let Some(pu) = self.puerto.as_mut()
                 && pu.para_el(&rx.buf[..rx.n])
             {
-                pu.meter(&rx.buf[..rx.n]);
+                // S29: lo que entra también pasa por el cortafuegos de la caja.
+                match cortafuegos_caja::entrada(&rx.buf[..rx.n], &pu.reglas) {
+                    Ok(()) => pu.meter(&rx.buf[..rx.n]),
+                    Err(c) => pu.cortada(&rx.buf[..rx.n], c, false),
+                }
                 if rx.buf[0] & 1 == 0 {
                     continue;
                 }
@@ -634,6 +705,12 @@ fn principal() -> u64 {
                 }
             }
             r.iface.poll(ahora(), &mut r.tarjeta, &mut r.sockets);
+            // S29: el cortafuegos de la caja, con la puerta de enlace y el DNS de ahora.
+            if let Some(pu) = r.tarjeta.puerto.as_mut() {
+                let (puerta, dns) = r.configurada.map_or((None, None), |c| (c.2, c.3));
+                pu.reglas.puerta = puerta.map(|a| a.octets());
+                pu.reglas.dns = dns.map(|a| a.octets());
+            }
             r.tarjeta.bombear_puerto();
             if let Some(pu) = r.tarjeta.puerto.as_mut()
                 && pu.avisar
@@ -642,8 +719,8 @@ fn principal() -> u64 {
                 // Si la caja ya no está (su canal cerrado), el puerto se suelta.
                 if dashos::canal_escribir(pu.aviso, palabras(&[p::TRAMAS_PUERTO]), &[]) == E_CERRADO {
                     println!(
-                        "  [red] la caja Linux se fue: se suelta su puerto ({} tramas al invitado, {} de él, {} sin sitio, {} falsas)",
-                        pu.al_invitado, pu.del_invitado, pu.sin_sitio, pu.falsas
+                        "  [red] la caja Linux se fue: se suelta su puerto ({} tramas al invitado, {} de él, {} sin sitio, {} falsas; el cortafuegos cortó {} hacia fuera y {} hacia dentro)",
+                        pu.al_invitado, pu.del_invitado, pu.sin_sitio, pu.falsas, pu.cortadas_salida, pu.cortadas_entrada
                     );
                     dashos::memoria_quitar(VA_PUERTO);
                     dashos::cerrar(pu.memoria);
@@ -704,8 +781,23 @@ fn puerto_nuevo(red: &mut Option<Red>, mac: &[u8], aviso: u32) -> i32 {
         dashos::cerrar(memoria);
         return p::LIMITE;
     }
-    println!("  [red] puerto para la caja Linux con MAC {}: un puente de tramas hacia la tarjeta", EthernetAddress(mac));
-    r.tarjeta.puerto = Some(Puerto { mac, memoria, aviso, rx_escritas: 0, tx_leidas: 0, avisar: false, al_invitado: 0, del_invitado: 0, sin_sitio: 0, falsas: 0 });
+    println!("  [red] puerto para la caja Linux con MAC {}: un puente de tramas hacia la tarjeta, con cortafuegos (Internet sí, la red local no)", EthernetAddress(mac));
+    r.tarjeta.puerto = Some(Puerto {
+        mac,
+        memoria,
+        aviso,
+        rx_escritas: 0,
+        tx_leidas: 0,
+        avisar: false,
+        al_invitado: 0,
+        del_invitado: 0,
+        sin_sitio: 0,
+        falsas: 0,
+        reglas: cortafuegos_caja::Reglas::default(),
+        cortadas_salida: 0,
+        cortadas_entrada: 0,
+        dichas: Vec::new(),
+    });
     p::BIEN
 }
 

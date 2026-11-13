@@ -587,6 +587,21 @@ if modo == "arch":
     paso("ls /var/lib/pacman/sync", r"linux: .*extra\.db", 900)
     time.sleep(1.5)
     capturar(prefijo)
+    # S29 (docs/diseño/S29-malware-linux-y-dashos.md): el malware de laboratorio de la caja, con órdenes de Arch: lo que
+    # haría un programa malo de Linux con la red de casa. El nombre de un servidor se resuelve (el DNS pasa); un puerto
+    # del PC (10.0.2.2 en QEMU es el propio PC), otro aparato de la red local, buscar aparatos por mDNS y hacerse pasar
+    # por la puerta de enlace por ARP (con su dirección puesta un momento), no: el cortafuegos de la caja, en el
+    # servicio de red de DashOS, lo corta y lo dice. Antes, pacman ya bajó de Internet. Al final, para no estropear la
+    # red de lo de antes.
+    paso("getent hosts archlinuxarm.org", r"linux: \S+\s+\S*archlinuxarm\.org", 60)
+    paso("curl -sS -m 6 --connect-timeout 5 telnet://10.0.2.2:9", r"linux: curl: \(\d+\)", 30)
+    paso("curl -sS -m 6 --connect-timeout 5 http://192.168.255.254", r"linux: curl: \(\d+\)", 30)
+    paso("ping -c 1 -W 2 224.0.0.251", r"linux: 1 packets transmitted", 30)
+    teclear("ip addr add 10.0.2.2/32 dev eth0")
+    time.sleep(1.0)
+    paso("arping -c 2 -U -I eth0 10.0.2.2", r"linux: Sent 2 probes|arping: ", 30)
+    teclear("ip addr del 10.0.2.2/32 dev eth0")
+    time.sleep(1.0)
     teclear("poweroff")
     sys.exit(0)
 
