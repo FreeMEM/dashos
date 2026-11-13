@@ -1867,4 +1867,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   `Classes:`, como ramlib) y montar el AmigaOS del usuario (su HDF o carpeta, solo lectura, como capa: lo nativo manda;
   sus bibliotecas que no tocan el chipset rellenan lo que falte); después `bsdsocket.library`. Meta: Tachyon 68k con
   MUI 5 y AmiSSL en la caja, apuntando cada LVO que falte.
-- S29: puerto 25 hacia fuera cerrado (a13959e); pruebas en marcha.
+- S29: puerto 25 hacia fuera cerrado (a13959e). make prueba bien; arranque-virt-arch bien, con "[red] cortafuegos de
+  la caja Linux: corta correo al puerto 25 (hacia fuera, TCP 10.0.2.16:44586 → 1.1.1.1:25)"; arranque-virt bien a la
+  segunda (la primera, con dos agentes probando a la vez, las ventanas de prueba salieron oscurecidas en la captura:
+  algo delante en ese instante; sin relación con el cambio, a vigilar si se repite).
