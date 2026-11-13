@@ -30,8 +30,8 @@
 //! barra con la llamada 29 cada 2 s). Al pulsarla, un desplegable con los procesos (`MONITOR` de `sesiones`: los de la
 //! persona de delante con detalle, las cajas con su pastilla, y el sistema y otros usuarios sumados).
 //!
-//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos", 3 el canal "sesiones" y 4 el
-//! canal "avisos".
+//! Llaves: 1 el canal "ventanas" (con las capas, por su nombre), 2 el canal "archivos", 3 el canal "sesiones", 4 el
+//! canal "centro" (trasfondo: abrir el monitor del sistema) y 5 el canal "avisos".
 
 #![no_std]
 #![no_main]
@@ -77,7 +77,9 @@ dashos::monton!();
 // de la lista de la barra: "archivos" se nombra antes que "sesiones".
 const ARCHIVOS: u32 = 2;
 const SESIONES: u32 = 3;
-const AVISOS: u32 = 4;
+/// Trasfondo: el centro de control, para abrir el monitor del sistema ("abrir monitor").
+const CENTRO: u32 = 4;
+const AVISOS: u32 = 5;
 /// La marca de la puerta por la que el servicio de avisos toca el timbre.
 const MARCA_TIMBRE: u64 = 0x4156_4953_0000_0001;
 // Los objetos propios (los de `ventana_cliente` van del 2 al 14).
@@ -106,7 +108,8 @@ const ANCHO_P: i32 = 400;
 const FILAS_P: usize = 10;
 const ALTO_FILA_P: i32 = 36;
 const Y_FILAS_P: i32 = 76;
-const ALTO_P_MAX: i32 = Y_FILAS_P + FILAS_P as i32 * ALTO_FILA_P + 16;
+const PIE_P: i32 = 52;
+const ALTO_P_MAX: i32 = Y_FILAS_P + FILAS_P as i32 * ALTO_FILA_P + 12 + PIE_P;
 /// Cada cuánto se mide la CPU y la memoria de la píldora (y el desplegable, si está abierto).
 const CADA_MEDIDA_US: u64 = 2_000_000;
 /// Dónde se ve la ventana del servicio de archivos.
@@ -993,6 +996,7 @@ struct Procesos {
     listo: bool,
     alto: i32,
     sin_datos: bool,
+    encima_abrir: bool,
 }
 
 /// La CPU de la máquina y la memoria en uso, en décimas (llamada 29: nada de otros procesos).
@@ -1033,8 +1037,14 @@ fn medir_procesos(m: &mut monitor::Medidor) -> bool {
 }
 
 fn alto_procesos(n: usize) -> i32 {
-    Y_FILAS_P + n.clamp(1, FILAS_P) as i32 * ALTO_FILA_P + 12
+    Y_FILAS_P + n.clamp(1, FILAS_P) as i32 * ALTO_FILA_P + 12 + PIE_P
 }
+
+/// El botón del pie del desplegable: abre el monitor del sistema en Ajustes.
+fn boton_abrir(alto: i32) -> Rect {
+    Rect::new(ANCHO_P - 16 - 236, alto - PIE_P + 6, 236, 40)
+}
+const ABRIR_MONITOR: &str = "Abrir el monitor del sistema";
 
 /// La pastilla de una caja, como la de la barra de sus ventanas: "68K" o "LINUX" en su color. Devuelve su ancho.
 fn pastilla_caja(l: &mut Lienzo, f: &mut Fuente, x: i32, cy: i32, clase: u32) -> i32 {
@@ -1087,13 +1097,21 @@ fn pintar_procesos(px: &mut [u32], p: &Procesos, m: &monitor::Medidor, t: &Tema,
         derecha(fuente, &mut l, col_cpu, cy + 5, &monitor::por_ciento(v.cpu), 13, t.sobre_superficie);
         derecha(fuente, &mut l, col_mem, cy + 5, &monitor::bytes(v.e.memoria), 13, t.sobre_variante_superficie);
     }
+    // El pie: un botón de texto de Material 3 (el primario, sin contenedor) que abre el monitor del sistema.
+    let b = boton_abrir(p.alto);
+    l.rellenar(Rect::new(16, b.y - 6, ANCHO_P - 32, 1), t.variante_contorno);
+    if p.encima_abrir {
+        l.redondeado(b, b.h / 2, con_opacidad(t.primario, 20));
+    }
+    let w = medio.medir(ABRIR_MONITOR, 14).ancho;
+    medio.dibujar(&mut l, b.x + (b.w - w) / 2, b.y + 25, ABRIR_MONITOR, 14, t.primario);
 }
 
 fn pantalla_procesos(c: &mut Cliente, p: &mut Procesos, m: &monitor::Medidor, t: &Tema, fuente: &mut Fuente, medio: &mut Fuente) {
     let alto = p.alto;
     let Some(hoja) = p.hoja.as_mut() else { return };
     let px = hoja.px((ANCHO_P * alto) as usize);
-    let p2 = Procesos { hoja: None, listo: p.listo, alto, sin_datos: p.sin_datos };
+    let p2 = Procesos { hoja: None, listo: p.listo, alto, sin_datos: p.sin_datos, encima_abrir: p.encima_abrir };
     pintar_procesos(px, &p2, m, t, fuente, medio);
     let mut e = Escritor::new();
     e.empezar(SUP_PROC, wl_surface::req::ATTACH).uint(BUFER_PROC).int(0).int(0).fin();
@@ -1133,7 +1151,8 @@ fn abrir_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos, m: &mut moni
         Some(x) => alloc::format!("{} [{}]", v.e.titulo(), x),
         None => v.e.titulo(),
     }).collect();
-    println!("  [barra] procesos abiertos: {} filas{}: {}", m.vistos.len(), if ok { "" } else { " (sesiones no contesta)" }, nombres.join(", "));
+    let b = boton_abrir(p.alto);
+    println!("  [barra] procesos abiertos: {} filas{}: {}; abrir el monitor en ({}, {})", m.vistos.len(), if ok { "" } else { " (sesiones no contesta)" }, nombres.join(", "), b.x + b.w / 2, b.y + b.h / 2);
 }
 
 fn cerrar_procesos(c: &mut Cliente, b: &mut Barra, p: &mut Procesos) {
@@ -1204,7 +1223,7 @@ fn principal() -> u64 {
     let mut med = monitor::Medidor::default();
     b.uso = medir_uso(&mut med);
     let mut proxima_medida = dashos::ahora_us() + CADA_MEDIDA_US;
-    let mut procs = Procesos { hoja: None, listo: false, alto: 0, sin_datos: false };
+    let mut procs = Procesos { hoja: None, listo: false, alto: 0, sin_datos: false, encima_abrir: false };
     let mut uso_dicho = false;
     // Los avisos: se suscribe con la puerta. Lo que ya hubiera no sale como toast, solo cuenta para la campana.
     let mut avs = Avisos { activo: false, toast: None, toast_listo: false, hist: None, hist_listo: false, visto_hasta: 0, hoja_a: None, hoja_h: None };
@@ -1561,6 +1580,13 @@ fn principal() -> u64 {
                 } else {
                     None
                 };
+                let abrir = sobre == SUP_PROC && boton_abrir(procs.alto).contiene(x, y);
+                if b.procesos_abierto && abrir != procs.encima_abrir {
+                    procs.encima_abrir = abrir;
+                    if procs.listo {
+                        pantalla_procesos(&mut c, &mut procs, &med, &b.tema, &mut fuente, &mut medio);
+                    }
+                }
                 let borrar = sobre == SUP_HIST && zona_borrar(&mut medio).contiene(x, y);
                 if let Some(h) = avs.hist.as_mut().filter(|h| h.encima_borrar != borrar) {
                     h.encima_borrar = borrar;
@@ -1608,6 +1634,11 @@ fn principal() -> u64 {
                         }
                         pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
                     }
+                } else if sobre == SUP_PROC && b.procesos_abierto && boton_abrir(procs.alto).contiene(x, y) {
+                    let r = dashos::canal_escribir(CENTRO, b"abrir monitor", &[]);
+                    println!("  [barra] abre el monitor del sistema: {}", r);
+                    cerrar_procesos(&mut c, &mut b, &mut procs);
+                    pantalla_barra(&mut c, &b, &mut fuente, &mut medio);
                 } else if sobre == SUP_AVISO {
                     cerrar_toast(&mut c, &mut avs, "con un clic");
                 } else if sobre == SUP_HIST && zona_borrar(&mut medio).contiene(x, y) {

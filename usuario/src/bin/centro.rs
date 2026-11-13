@@ -1198,6 +1198,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         configurada = true;
                         presentar(&mut c, &mut i, px, medida, Some(bufer));
                         println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
+                        if cat == MONITOR_SIS || cat == PANEL_FONDO {
+                            println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
+                        }
                         // Dónde queda la lista de la derecha en la ventana (las pruebas del ratón la buscan).
                         if let Some(r) = i.sitios.get(&permisos) {
                             println!("  [centro] lista en ({}, {}), filas de 56", r.x, r.y);
@@ -1360,7 +1363,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                                 s::NO_EXISTE => "ya no está",
                                 _ => "sesiones no contesta",
                             };
-                            println!("  [centro] Monitor: cerrar {} (proceso {}) {}: {} ({})", x.e.titulo(), x.e.marca, como, estado, dicho);
+                            println!("  [centro] Monitor: cerrar {} {}: {} ({}); era el proceso {}", x.e.titulo(), como, estado, dicho, x.e.marca);
                             medir_monitor(&mut vm);
                             lineas_registro = lineas_monitor(&vm);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));

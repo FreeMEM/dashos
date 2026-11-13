@@ -236,6 +236,11 @@ path = "src/bin/avisa.rs"
 test = false
 
 [[bin]]
+name = "espera"
+path = "src/bin/espera.rs"
+test = false
+
+[[bin]]
 name = "pide"
 path = "src/bin/pide.rs"
 

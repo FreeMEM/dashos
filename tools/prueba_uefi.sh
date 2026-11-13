@@ -122,6 +122,8 @@ panel = 0
 barra = 0
 avisos_paso = 0
 reintento_avisos = 0
+monitor_paso = 0
+reintento_monitor = 0
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -998,6 +1000,114 @@ while time.time() - inicio < total:
                 continue
             avisos_paso += 1
             reintento_avisos = time.time() + 10
+            continue
+        # Trasfondo: el monitor del sistema, tras los avisos (con Ana delante). El lanzador lanza `espera` (un proceso de
+        # Ana que dura 90 s); un clic en la píldora de CPU y memoria de la barra abre el desplegable de los procesos, y su
+        # botón "Abrir el monitor del sistema" abre Ajustes en el Monitor. Ahí: Supr sobre `espera` lo cierra (es de Ana)
+        # y sobre la suma del sistema no (no es suyo); Intro en la cabecera cambia el orden. Luego, Panel del escritorio:
+        # Intro en "Gráficas" las quita y otra vez las pone (el fondo relee sus ajustes). Esc cierra Ajustes.
+        # Con CAPTURA_MONITOR=fichero: el desplegable (fichero.barra.ppm), el monitor (fichero.centro.ppm) y los ajustes
+        # del panel (fichero.ajustes.ppm).
+        if monitor_paso == 0 and avisos_paso == 99 and "[barra] CPU y memoria: " in texto:
+            monitor_paso = 1
+            reintento_monitor = time.time() + 15
+        if 1 <= monitor_paso <= 12:
+            import re
+            def ultimo_m(t):
+                return texto.rfind(t)
+            if ultimo_m("[guardian] sesión bloqueada") > max(ultimo_m("[guardian] desbloqueado"), ultimo_m("[guardian] entra ")):
+                time.sleep(0.25)
+                reintento_monitor = time.time() + 15
+                continue
+            captura_monitor = os.environ.get("CAPTURA_MONITOR")
+            def clic_m(x, y):
+                mandar(*["mouse_move -100 -100"] * 25, pausa=0.04)
+                pasos = []
+                while x > 0 or y > 0:
+                    dx, dy = min(x, 100), min(y, 100)
+                    pasos.append(f"mouse_move {dx} {dy}")
+                    x, y = x - dx, y - dy
+                mandar(*pasos, pausa=0.05)
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
+            pi = re.findall(r"\[barra\] CPU y memoria: .*; en \((\d+), (\d+)\)", texto)
+            ab = re.findall(r"\[barra\] procesos abiertos: .*abrir el monitor en \((\d+), (\d+)\)", texto)
+            i_abiertos = texto.rfind("[barra] procesos abiertos")
+            capa_proc = re.findall(r"\[compositor\] capa de barra en \((\d+), (\d+)\)", texto[i_abiertos:]) if i_abiertos >= 0 else []
+            filas_mon = re.findall(r"\[centro\] Monitor del sistema: ([^\n]*)", texto)
+            filas = filas_mon[-1].split("; ") if filas_mon else []
+            def fila_mon(empieza):
+                return next((k for k, f in enumerate(filas) if f.startswith(empieza)), None)
+            espera_m = {1: True,
+                        2: texto.count("[barra] lanzador abierto") >= 4,
+                        3: '[barra] busca "espera": espera' in texto,
+                        4: "[barra] lanza Programas/espera: 0" in texto,
+                        5: "[barra] procesos abiertos" in texto and len(ab) >= 1 and len(capa_proc) >= 1,
+                        6: "[centro] Monitor del sistema: " in texto and fila_mon("espera") is not None,
+                        7: "[centro] Monitor: cerrar espera" in texto,
+                        8: "[centro] Monitor: Sistema" in texto or "[centro] Monitor: cerrar Caja" in texto,
+                        9: "[centro] Monitor: por memoria" in texto,
+                        10: "[centro] Panel del escritorio: Enseñar" in texto,
+                        11: "[centro] Panel del escritorio: Gráficas: no" in texto,
+                        12: "[centro] Panel del escritorio: Gráficas: sí" in texto}[monitor_paso]
+            if not espera_m:
+                if time.time() > reintento_monitor:
+                    monitor_paso = 99
+                time.sleep(0.25)
+                continue
+            time.sleep(0.6)
+            if monitor_paso == 1:
+                clic_m(int(bb.group(1)), int(bb.group(2)))
+            elif monitor_paso == 2:
+                mandar("sendkey e", "sendkey s", "sendkey p", "sendkey e", "sendkey r", "sendkey a", pausa=0.3)
+            elif monitor_paso == 3:
+                mandar("sendkey ret")
+            elif monitor_paso == 4:
+                time.sleep(1.0)
+                clic_m(int(pi[-1][0]), int(pi[-1][1]))
+            elif monitor_paso == 5:
+                time.sleep(0.6)
+                if captura_monitor:
+                    mandar("screendump " + captura_monitor + ".barra.ppm")
+                    time.sleep(0.5)
+                x, y = capa_proc[0]
+                clic_m(int(x) + int(ab[-1][0]), int(y) + int(ab[-1][1]))
+            elif monitor_paso == 6:
+                time.sleep(1.0)
+                if captura_monitor:
+                    mandar("screendump " + captura_monitor + ".centro.ppm")
+                    time.sleep(0.5)
+                k = fila_mon("espera")
+                mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
+            elif monitor_paso == 7:
+                k = fila_mon("Caja") or fila_mon("Sistema")
+                if k is not None:
+                    mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
+            elif monitor_paso == 8:
+                mandar("sendkey home", "sendkey ret", pausa=0.3)
+            elif monitor_paso == 9:
+                mandar("sendkey shift-tab", "sendkey down", "sendkey tab", pausa=0.4)
+            elif monitor_paso == 10:
+                time.sleep(0.5)
+                if captura_monitor:
+                    mandar("screendump " + captura_monitor + ".ajustes.ppm")
+                    time.sleep(0.5)
+                mandar("sendkey home", "sendkey down", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
+            elif monitor_paso == 11:
+                time.sleep(2.5)
+                if captura_monitor:
+                    mandar("screendump " + captura_monitor + ".sin-graficas.ppm")
+                    time.sleep(0.5)
+                mandar("sendkey ret")
+            elif monitor_paso == 12:
+                time.sleep(2.5)
+                mandar("sendkey esc")
+                ir_a(790, 590)
+                monitor_paso = 99
+                continue
+            monitor_paso += 1
+            reintento_monitor = time.time() + 15
             continue
         # Con una sesión bloqueada, el teclado es de la pantalla de bloqueo: lo del selector espera (si no, sus Intro
         # de reintento caían allí como contraseñas vacías).

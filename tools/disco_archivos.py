@@ -40,6 +40,8 @@ PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 # S10: un programa del disco que avisa (lo lanza la barra).
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
+# Trasfondo: un programa que espera 90 s (lo lanza la barra; el monitor del sistema lo cierra).
+ESPERA = os.path.join(os.path.dirname(HOLA), "espera")
 # S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
 # un ejecutable de AmigaOS, su icono, un guion de arranque, una imagen de disco (una pista de un ADF) y un fichero de
 # datos. Tras la prueba, todo igual salvo el fichero de datos (sus programas pueden borrar sus datos: van a la papelera
@@ -134,6 +136,7 @@ if sys.argv[1] == "--comprobar":
         "Programas/ cajón",
         f"Programas/avisa {os.path.getsize(AVISA)}",
         f"Programas/cambio {os.path.getsize(CAMBIO)}",
+        f"Programas/espera {os.path.getsize(ESPERA)}",
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
@@ -277,6 +280,9 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Programas", "avisa"), "wb") as f:
         f.write(open(AVISA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "avisa"), 0o755)
+    with open(os.path.join(raiz, "Programas", "espera"), "wb") as f:
+        f.write(open(ESPERA, "rb").read())
+    os.chmod(os.path.join(raiz, "Programas", "espera"), 0o755)
     with open(os.path.join(raiz, "Programas", "cambio"), "wb") as f:
         f.write(open(CAMBIO, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "cambio"), 0o755)

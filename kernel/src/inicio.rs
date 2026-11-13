@@ -179,7 +179,8 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // (como quien está delante, solo de `Programas/`) y "archivos" para listar `Programas`. Tras el panel: su botón lo abre.
     // "avisos" para enseñar las notificaciones (S10).
     #[cfg(feature = "virt")]
-    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "avisos"]),
+    // Trasfondo: también "centro", para abrir el monitor del sistema desde su desplegable de procesos.
+    ("barra", programa!("barra"), &[], &["ventanas", "sesiones", "archivos", "centro", "avisos"]),
     // S10: la prueba hostil de los avisos: un programa cualquiera con la llave.
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("avisador", programa!("avisador"), &[], &["avisos"]),
