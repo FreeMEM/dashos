@@ -151,7 +151,11 @@ usa solo papeles del tema del kit.
   nuevas en `arranque_virt.txt`, más tres del panel y la barra ("red: conectada (10.0.2.15)", "delante:", "estado:").
 - Volumen: `poner` (la pista) en `volumen_osd.rs`, con su prueba.
 - `make arranque-virt`: las cinco BIEN a la primera. `make prueba`, `-vm`, `-linux`, `-2`, `-diag`, `-escritorio` y
-  `-usb`: BIEN. `-arch`, `-wayland` y `-gpu` (con `~/.cache/dashos-caja-linux`): abajo.
+  `-usb`: BIEN. `-wayland` y `-gpu` (con `~/.cache/dashos-caja-linux`): BIEN.
+- `-arch`, antes de fusionar `revision` otra vez: MAL dos veces, como en la primera oleada. El `poweroff` del final no le
+  llegó a Linux. Mientras tanto, las ventanas de prueba de la caja Amiga ("GadTools Test", "Cero") salían y se iban, y el
+  teclado iba de ellas a la terminal y vuelta. Tras `git merge revision` (9f44c5c), BIEN a la primera.
+- Tras la fusión, todo otra vez (Arch primero): ver abajo.
 
 ### Capturas (fuera de git)
 
@@ -167,3 +171,9 @@ usa solo papeles del tema del kit.
 - El brillo: no hay quien lo lleve (en la Pi, el de la pantalla oficial o DDC).
 - No molestar, Bluetooth y los demás mosaicos de DMS: cuando haya servicio detrás.
 - La cabecera no se repinta sola cada minuto (el "Encendido hace" se pone al día al repintar).
+
+### Resultado tras fusionar revision (9f44c5c)
+
+Todo otra vez, con Arch primero: `-arch` BIEN, `make arranque-virt` las cinco BIEN, `make prueba` BIEN, y `-vm`,
+`-linux`, `-2` (las dos), `-diag`, `-escritorio`, `-usb`, `-wayland` y `-gpu` BIEN. Escena (`cargo test --lib`): 92,
+bien.
