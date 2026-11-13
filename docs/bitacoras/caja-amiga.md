@@ -699,7 +699,9 @@ se ve entera (lo mira en una captura: sus esquinas y un sitio vacío, de los col
 casilla, el ciclo, una opción del mx, un elemento de la lista y "Aceptar", y elige Proyecto > Salir con el botón
 derecho (captura con el menú abierto); y `test_trap_illegal` corre otra vez sin consola: su error sale en un
 requester, que el guion captura (`CAPTURA_REQ`) y cierra. Las capturas de esta entrada son de ese modo, con
-`DASHOS_PANTALLA=1920x1080`.
+`DASHOS_PANTALLA=1920x1080`. El guion hace los pasos de la caja al principio de cada vuelta (los de más abajo
+esperan con `continue`) y solo pulsa en la ventana de GadTools cuando se ve entera (si no, un clic en su borde
+izquierdo la sube); aun así, con la máquina cargada, unas vueltas lo consiguen y otras no.
 
 ### Código 68k desde una función nativa (la reentrada en el JIT)
 
@@ -810,3 +812,33 @@ fuente (topaz/9 allí), los botones del mx (redondeados allí) y la marca de la 
 7. **`tests/test_gt_events.dash` de FreeMEMLang** no encaja todavía: lanza un proceso auxiliar que pulsa por
    `input.device`, y la caja corre una sola tarea 68k.
 8. Lo de antes sigue: el Enforcer de verdad, varias tareas 68k, `LoadSeg` por dos.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+- `caja-gadtools-fhd.png`: la ventana de GadTools a 1920x1080 (con Ajustes y el centro de control del guion al lado).
+- `caja-gadtools-menu-fhd.png`: la misma con el menú Proyecto abierto ("Abrir... A", la raya, "Salir Q" señalado);
+  se ven ya la casilla quitada, el ciclo en "Dos" y el mx en "Azul" (los clics del guion).
+- `caja-dash-test_gadtools.png`: `examples/test_gadtools.dash` de FreeMEMLang en la caja (800x600, la prueba de
+  siempre; el guion pulsó después su "Cancel" y acabó con 0). Como en el oráculo: los gadgets en la capa de dentro de
+  la ventana `GIMMEZEROZERO`, la etiqueta "Value:" cortada por el borde y el nivel a la izquierda.
+- `oraculo-fsuae-gadtools.png` y `oraculo-fsuae-test_gadtools.png`: lo mismo en FS-UAE (Kickstart 3.1).
+- El requester del error de Dash: se abre (la salida dice "ventana Amiga en pantalla (360x79): Dash" y la prueba
+  `easy_request` de `cargo test` lo pulsa), pero en las vueltas del modo de capturas la captura del guion cayó con la
+  sesión bloqueada (el paso de la pantalla de bloqueo del guion) o no llegó: **sin captura todavía**.
+
+### Pruebas
+
+- `cargo test`: exec 111, dos 53, intuition 52 (con `tests/gadtools.rs`: gadgets y eventos, menús con el botón
+  derecho, `EasyRequestArgs` y una hostil; el fuzzer de `hostil.rs` llama también a gadtools), utility 7, timer 7.
+  clippy limpio en exec, utility e intuition. El fuzzer encontró un fallo de antes: un `IDCMP_NEWSIZE` del compositor
+  con unos límites de `WindowLimits` absurdos pedía un lienzo de 200 TB; ahora el tamaño se comprueba.
+- `make -C kernel prueba`: "BIEN: cargador hunk (0 fallos)" y "BIEN: esperado.txt" (tras juntar `revision`).
+- `make -C kernel arranque-virt`: las cinco BIEN, con las líneas nuevas de la caja (GadTools, los cuatro modos de
+  `anidado`, Ctrl-C y las excepciones de Dash). Vueltas anteriores fallaron por cómo convivía la ventana de GadTools
+  con los pasos del guion de los demás (Ajustes, el centro de control: sus clics caían en ella, o los del guion de la
+  caja en ellos); por eso en la prueba de siempre está 5 s y lo interactivo va en el modo de las capturas.
+- `arranque-virt-vm`, `-linux`, `-2`, `-diag`, `-escritorio`: BIEN. `-arch`, `-wayland` y `-gpu`, con el kernel y el
+  disco de lo fusionado (`ARCH_IMAGE` y `ARCH_DISCO` de `~/.cache/dashos-caja-linux-fusion`): BIEN.
+- El modo de las capturas (`CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480`): sale "FALTA: pantalla del
+  firmware: 800x600" (la línea esperada es la de 800x600); no es una prueba, solo para las capturas.
+- El oráculo, sin cerrojo desde ahora (orden del usuario: la caja Amiga no abre servidores).
