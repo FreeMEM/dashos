@@ -11,7 +11,9 @@
 //!
 //! La barra la pinta quien atiende (`Escena::pintor`, con el kit y su letra); sin él (las pruebas, el compositor del PC),
 //! una barra sencilla sin letras. Se pinta de nuevo solo si cambia el título, el ancho, si tiene el teclado o el tema.
-//! Pulsar en la barra coge la ventana para moverla; en el botón, se le pide que se cierre (`xdg_toplevel.close`).
+//! Pulsar en la barra coge la ventana para moverla; en el botón, se le pide que se cierre (`xdg_toplevel.close`). Desde
+//! caja-linux-grandes, el botón de maximizar (y volver) a su izquierda, y una franja de `BORDE` por fuera de la ventana
+//! que la redimensiona (como `xdg_toplevel.resize`).
 
 use alloc::boxed::Box;
 use alloc::string::String;
@@ -30,6 +32,8 @@ pub const RADIO_MARCO: i32 = 12;
 /// El botón de cerrar: un cuadrado de este lado, a `MARGEN_BOTON` del borde derecho, centrado en la barra.
 pub const LADO_BOTON: i32 = 32;
 pub const MARGEN_BOTON: i32 = 4;
+/// Lo que se puede coger por fuera de una ventana con la barra de DashOS para redimensionarla (caja-linux-grandes).
+pub const BORDE: i32 = 6;
 /// Los modos de `zxdg_toplevel_decoration_v1`.
 pub const MODO_CLIENTE: u32 = 1;
 pub const MODO_SERVIDOR: u32 = 2;
@@ -57,13 +61,45 @@ pub struct Marco {
 pub enum Zona {
     Barra,
     Cerrar,
+    /// El botón de maximizar (y de volver), a la izquierda del de cerrar (caja-linux-grandes).
+    Maximizar,
 }
 
 /// La zona de la barra de `ancho` en (x, y), relativos a su esquina.
 pub fn zona(ancho: i32, x: i32, y: i32) -> Zona {
     let bx = ancho - MARGEN_BOTON - LADO_BOTON;
     let by = (ALTO_BARRA - LADO_BOTON) / 2;
-    if x >= bx && x < bx + LADO_BOTON && y >= by && y < by + LADO_BOTON { Zona::Cerrar } else { Zona::Barra }
+    let en = |bx: i32| x >= bx && x < bx + LADO_BOTON && y >= by && y < by + LADO_BOTON;
+    if en(bx) {
+        Zona::Cerrar
+    } else if en(bx - LADO_BOTON) {
+        Zona::Maximizar
+    } else {
+        Zona::Barra
+    }
+}
+
+/// Los bordes (los de `xdg_toplevel.resize_edge`: 1 arriba, 2 abajo, 4 izquierda, 8 derecha) por los que se coge una
+/// ventana que ocupa `v` si el cursor está en (x, y), en la franja de `BORDE` de fuera; 0 si no está ahí.
+pub fn bordes(v: Rect, x: i32, y: i32) -> u32 {
+    let fuera = Rect { x: v.x - BORDE, y: v.y - BORDE, w: v.w + 2 * BORDE, h: v.h + 2 * BORDE };
+    if !fuera.tiene(x, y) || v.tiene(x, y) {
+        return 0;
+    }
+    let mut b = 0;
+    if y < v.y {
+        b |= 1;
+    }
+    if y >= v.y + v.h {
+        b |= 2;
+    }
+    if x < v.x {
+        b |= 4;
+    }
+    if x >= v.x + v.w {
+        b |= 8;
+    }
+    b
 }
 
 /// La barra sin letras (sin pintor): el color de superficie de Material 3, las esquinas de arriba transparentes y una
@@ -88,13 +124,19 @@ pub fn pintar_sencillo(px: &mut [u32], w: i32, h: i32, _titulo: &str, activa: bo
             }
         }
     }
-    // La X del botón de cerrar: dos diagonales de 12 px.
+    // La X del botón de cerrar: dos diagonales de 12 px. Y el cuadrado del de maximizar, de 10 px.
     let (cx, cy) = (w - MARGEN_BOTON - LADO_BOTON / 2, h / 2);
+    let mx = cx - LADO_BOTON;
+    let mut puntos = Vec::new();
     for d in -6..6 {
-        for (x, y) in [(cx + d, cy + d), (cx + d, cy - d - 1)] {
-            if x >= 0 && x < w && y >= 0 && y < h {
-                px[(y * w + x) as usize] = tinta;
-            }
+        puntos.extend([(cx + d, cy + d), (cx + d, cy - d - 1)]);
+    }
+    for d in -5..5 {
+        puntos.extend([(mx + d, cy - 5), (mx + d, cy + 4), (mx - 5, cy + d), (mx + 4, cy + d)]);
+    }
+    for (x, y) in puntos {
+        if x >= 0 && x < w && y >= 0 && y < h {
+            px[(y * w + x) as usize] = tinta;
         }
     }
 }
@@ -159,6 +201,40 @@ impl<M: Memorias> Escena<M> {
             }
             sigue
         });
+    }
+
+    /// Si en (x, y) lo de más arriba es la franja de fuera de una ventana con la barra de DashOS (y sin maximizar):
+    /// cuál y por qué bordes se coge para redimensionarla (caja-linux-grandes).
+    pub(super) fn borde_bajo(&self, x: i32, y: i32) -> Option<((Cliente, u32), u32)> {
+        for (c, raiz) in self.raices().into_iter().rev() {
+            let cli = &self.clientes[&c];
+            let libre = cli.superficies.get(&raiz).and_then(|s| s.rol).and_then(|r| cli.xdg.get(&r)).is_some_and(|x| x.antes_de_maximizar.is_none());
+            if let Some(v) = ventana_de(cli, raiz)
+                && con_barra(cli, raiz)
+                && libre
+            {
+                let b = bordes(v, x, y);
+                if b != 0 {
+                    return Some(((c, raiz), b));
+                }
+                if v.tiene(x, y) {
+                    return None;
+                }
+            }
+            let Some((sx, sy)) = cli.superficies.get(&raiz).and_then(|s| s.sitio) else { continue };
+            let mut a = Vec::new();
+            arbol(cli, raiz, sx, sy, &mut a);
+            if a.iter().any(|&(id, _, _)| rect_de(cli, id).is_some_and(|r| r.tiene(x, y))) {
+                return None;
+            }
+        }
+        None
+    }
+
+    /// `borde_bajo`, para las pruebas.
+    #[cfg(test)]
+    pub fn borde_bajo_para_pruebas(&self, x: i32, y: i32) -> Option<((Cliente, u32), u32)> {
+        self.borde_bajo(x, y)
     }
 
     /// Si en (x, y) lo de más arriba es la barra de una ventana: cuál y en qué zona.

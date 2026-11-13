@@ -106,7 +106,7 @@ const DECORACIONES: Global = Global { nombre: 16, interfaz: &tablas::ZXDG_DECORA
 
 /// H9: quien pinta la barra de DashOS de las ventanas que la llevan, con el kit (Material 3): el contenedor de
 /// superficie (alto si tiene el teclado), las esquinas de arriba redondeadas, el título (title small: 14, medium) a 16
-/// de la izquierda, recortado con "…" si no cabe, y la X del botón de cerrar.
+/// de la izquierda, recortado con "…" si no cabe, la X del botón de cerrar y el cuadrado del de maximizar.
 fn pintor() -> escena::decoracion::Pintor {
     use escena::decoracion::{LADO_BOTON, MARGEN_BOTON, RADIO_MARCO};
     use kit::lienzo::{Lienzo, Rect as R};
@@ -120,7 +120,7 @@ fn pintor() -> escena::decoracion::Pintor {
         const TAM: u32 = 14;
         // Lo que la letra no tiene sale como "?": así su caché no crece sin fin con títulos raros.
         let mut texto: String = titulo.chars().take(200).map(|c| if fuente.tiene(c) { c } else { '?' }).collect();
-        let cabe = w - 16 - LADO_BOTON - MARGEN_BOTON - 8;
+        let cabe = w - 16 - 2 * LADO_BOTON - MARGEN_BOTON - 8;
         if fuente.medir(&texto, TAM).ancho > cabe {
             let punto = if fuente.tiene('…') { "…" } else { "..." };
             while !texto.is_empty() && fuente.medir(&alloc::format!("{texto}{punto}"), TAM).ancho > cabe {
@@ -139,6 +139,11 @@ fn pintor() -> escena::decoracion::Pintor {
         let x = if activa { t.sobre_superficie } else { t.sobre_variante_superficie };
         l.trazo((cx - 40, cy - 40), (cx + 40, cy + 40), 14, x);
         l.trazo((cx - 40, cy + 40), (cx + 40, cy - 40), 14, x);
+        // Maximizar (caja-linux-grandes): un cuadrado de 10 px en el botón de al lado.
+        let mx = cx - LADO_BOTON * 8;
+        for (a, b) in [((-40, -40), (40, -40)), ((40, -40), (40, 40)), ((40, 40), (-40, 40)), ((-40, 40), (-40, -40))] {
+            l.trazo((mx + a.0, cy + a.1), (mx + b.0, cy + b.1), 12, x);
+        }
     })
 }
 
