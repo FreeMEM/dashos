@@ -256,7 +256,7 @@ fn principal() -> u64 {
                     pool = otro_pool;
                     medida = nueva;
                     i.colocar(Rect::new(0, 0, medida.0, medida.1));
-                    i.esquinas = if pedida.0 > 0 { 0 } else { 16 };
+                    i.esquinas = if pedida.0 > 0 { 0 } else { kit::tema::RADIO_VENTANA };
                     pintar(&mut i, px, medida);
                     presentar(&mut c, Some(bufer), medida);
                     if pedida.0 > 0 {
