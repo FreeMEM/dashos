@@ -39,6 +39,16 @@ PIDE = os.path.join(os.path.dirname(HOLA), "pide")
 CAMBIO = os.path.join(os.path.dirname(HOLA), "cambio")
 # S10: un programa del disco que avisa (lo lanza la barra).
 AVISA = os.path.join(os.path.dirname(HOLA), "avisa")
+# S28: el cajón de la caja Amiga (su `Caja:`), con lo que atacan sus virus de laboratorio (`caja/pruebas68k/malware/`):
+# un ejecutable de AmigaOS, su icono, un guion de arranque, una imagen de disco (una pista de un ADF) y un fichero de
+# datos. Tras la prueba, todo igual salvo el fichero de datos (sus programas pueden borrar sus datos: S28, la papelera)
+# y un ejecutable nuevo que deja el virus de enlace (crear sí puede).
+CAJA = "Estado/Servicios/caja-amiga"
+SALUDO = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "caja", "pruebas68k", "saludo.exe")
+CAJA_ICONO = bytes([0xE3, 0x10, 0, 1]) + bytes(74) + b"saludo\0"
+CAJA_GUION = b"; el arranque de la caja Amiga\nsaludo\n"
+CAJA_ADF = b"DOS\0" + bytes(11 * 512 - 4)
+DISQUETE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "pruebas", "disquete.adf.gz")
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
@@ -73,6 +83,16 @@ if sys.argv[1] == "--comprobar":
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
         "Estado/Servicios/ cajón",
+        f"{CAJA}/ cajón",
+        f"{CAJA}/C/ cajón",
+        f"{CAJA}/C/saludo {os.path.getsize(SALUDO)}",
+        f"{CAJA}/C/saludo.info {len(CAJA_ICONO)}",
+        # Lo que crea el virus de enlace al no poder pegarse a C/saludo: un ejecutable nuevo de 32 bytes.
+        f"{CAJA}/C/saludo.nuevo 32",
+        f"{CAJA}/Discos/ cajón",
+        f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        f"{CAJA}/S/ cajón",
+        f"{CAJA}/S/Startup-Sequence {len(CAJA_GUION)}",
         "Estado/Servicios/sesiones/ cajón",
         # U4: lo que el usuario (`guardian`, en la prueba) concedió y luego retiró: el fichero queda vacío.
         "Estado/Servicios/sesiones/permisos 0",
@@ -155,6 +175,20 @@ if sys.argv[1] == "--comprobar":
         trozo.append(x & 0xFF)
     if bytes(trozo[128 * 1024:]) in crudo:
         fallos.append("Escrito/descarte.bin, borrado y guardado, sigue en el disco")
+    # S28: lo que atacaron los virus de laboratorio de la caja Amiga, byte a byte como estaba.
+    intactos = [
+        (f"{CAJA}/C/saludo", open(SALUDO, "rb").read()),
+        (f"{CAJA}/C/saludo.info", CAJA_ICONO),
+        (f"{CAJA}/S/Startup-Sequence", CAJA_GUION),
+        (f"{CAJA}/Discos/disco.adf", CAJA_ADF),
+        ("Imagenes/disquete.adf", gzip.open(DISQUETE).read()),
+        ("LEEME.txt", b"DashOS lee RedoxFS\n"),
+        ("Programas/hola", open(HOLA, "rb").read()),
+    ]
+    for camino, bien in intactos:
+        hay = subprocess.run([ver, disco, desde, camino], capture_output=True).stdout
+        if hay != bien:
+            fallos.append(f"{camino} cambió ({len(hay)} bytes)")
     if fallos:
         print("MAL: el disco tras la prueba:", *fallos, sep="\n  ")
         sys.exit(1)
@@ -192,6 +226,15 @@ with tempfile.TemporaryDirectory() as t:
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
+    # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
+    caja = os.path.join(raiz, *CAJA.split("/"))
+    for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),
+                               ("S", "Startup-Sequence", CAJA_GUION), ("Discos", "disco.adf", CAJA_ADF),
+                               ("", "datos.txt", b"datos de la caja\n")]:
+        os.makedirs(os.path.join(caja, sub), exist_ok=True)
+        with open(os.path.join(caja, sub, nombre), "wb") as f:
+            f.write(datos)
+    os.chmod(caja, 0o700)
     with open(os.path.join(raiz, "Programas", "hola"), "wb") as f:
         f.write(open(HOLA, "rb").read())
     os.chmod(os.path.join(raiz, "Programas", "hola"), 0o755)
@@ -240,6 +283,15 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(prefs, "fondo"), "w") as f:
         f.write("enorme.png\n")
     os.chmod(os.path.join(prefs, "fondo"), 0o600)
+    # S26 (`tools/aspecto_caja_linux.py`): con DASHOS_PREFS="fichero=contenido;...", otros Prefs del usuario (el fondo,
+    # la apariencia, el aspecto de las cajas) para las capturas del aspecto. "\n" en el contenido es un salto de línea.
+    for par in filter(None, os.environ.get("DASHOS_PREFS", "").split(";")):
+        nombre, _, contenido = par.partition("=")
+        if nombre not in ("apariencia", "fondo", "cajas", "panel"):
+            raise SystemExit(f"DASHOS_PREFS: {nombre} no es un Prefs del centro")
+        with open(os.path.join(prefs, nombre), "w") as f:
+            f.write(contenido.replace("\\n", "\n") + "\n")
+        os.chmod(os.path.join(prefs, nombre), 0o600)
     # S10: el cajón de otra persona, de Carla y solo suyo (el dueño se pone abajo, con `duenos`), y un nombre con un
     # tabulador en Imagenes (RedoxFS no admite ':'): el Workbench de Ana no abre lo primero ni enseña lo segundo. En la
     # raíz y en Imagenes, no en `C`: así no cambia lo que ven el selector y el hostil.

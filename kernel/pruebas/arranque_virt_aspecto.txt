@@ -1,0 +1,17 @@
+# S26: el aspecto de los programas de la caja Linux (`make arranque-virt-aspecto`). Arch Linux ARM en la caja, como en
+# `arranque_virt_wayland.txt`, con la imagen de `tools/aspecto_caja_linux.py preparar`. El centro de control pone al
+# arrancar lo guardado (el fondo, su paleta y el aspecto de las cajas); el compositor lo reparte (dashos_tema_v1,
+# versión 3); en Arch, dashos-aspecto lo recibe por el puente de Wayland y escribe el tema de GTK, sus ajustes, los de
+# GSettings y foot; la muestra de GTK 4 y foot lo usan (GTK 3 aún aborta en la caja al cargar sus iconos).
+Hipervisor: EL2 instalado en 4 núcleos
+~[centro] al arrancar: tema 
+~[caja-linux] linux: Welcome to Arch Linux ARM!
+~[caja-linux] linux: caja login: root (automatic login)
+~[caja-linux] wayland: el puente de Linux conecta por vsock
+~[caja-linux] linux: active
+~[caja-linux] linux: aspecto: programas de Linux 
+~muestra-gtk: GTK 4 en pantalla, tema 
+~foot: lista
+~[caja-linux] linux: muestra-gtk: adiós
+~[caja-linux] linux: se para la máquina a los
+~Linux apagó la máquina por PSCI

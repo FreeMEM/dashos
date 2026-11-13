@@ -187,3 +187,11 @@ pub fn png(ancho: u32, alto: u32, argb: &[u32]) -> Vec<u8> {
     trozo(&mut out, b"IEND", &[]);
     out
 }
+
+/// Llama a una función de gadtools.library por su nombre.
+pub fn gt(c: &mut Caja, nombre: &str, d: &[u32], a: &[u32]) -> u32 {
+    let n = c.1.numero_gadtools(nombre).expect("función de gadtools");
+    let mut r = regs(d, a);
+    c.1.llamar(&mut c.0, n, &mut r);
+    r.d[0]
+}

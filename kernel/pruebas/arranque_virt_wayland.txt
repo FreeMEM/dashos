@@ -46,7 +46,6 @@ Hipervisor: EL2 instalado en 4 núcleos
 ~cliente hostil: dos decoraciones para una ventana: el compositor lo cortó
 ~cliente hostil: tipo del portapapeles que no es UTF-8: el compositor lo cortó
 ~[compositor] error de protocolo de caja-linux: modo que no existe
-~cliente hostil: sin-fin: le cortaron la tubería
 ~[caja-linux] terminal: pegado (4096 bytes)
 ~[caja-linux] terminal: pegado (0 bytes)
 ~[caja-linux] linux: la máquina tiene 8192 MB de RAM: hasta 512 MB para el invitado

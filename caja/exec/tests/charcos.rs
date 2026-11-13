@@ -371,3 +371,40 @@ fn muchos_trozos_vivos_sin_ir_lento() {
     assert!(e.avisos().is_empty());
     e.delete_pool(p).unwrap();
 }
+
+#[test]
+fn excepciones_de_tarea() {
+    let (mut e, t) = caja_con_tarea();
+    // Sin tc_ExceptCode, nada que entregar aunque llegue la señal.
+    e.set_except(sig::SIGBREAKF_CTRL_C, sig::SIGBREAKF_CTRL_C).unwrap();
+    e.signal(t, sig::SIGBREAKF_CTRL_C).unwrap();
+    assert_eq!(e.tomar_excepcion().unwrap(), None);
+    // Con código: se entrega una vez; la señal sale de recibidas y de tc_SigExcept mientras dura.
+    e.mem.escribir32(t + task::TC_EXCEPTCODE, 0x12_0000).unwrap();
+    e.mem.escribir32(t + task::TC_EXCEPTDATA, 0x1234).unwrap();
+    assert_eq!(e.tomar_excepcion().unwrap(), Some((sig::SIGBREAKF_CTRL_C, 0x12_0000, 0x1234)));
+    assert_eq!(l32(&e, t + task::TC_SIGRECVD) & sig::SIGBREAKF_CTRL_C, 0);
+    assert_eq!(l32(&e, t + task::TC_SIGEXCEPT), 0);
+    // Dentro de su excepción no se le entrega otra.
+    e.set_except(sig::SIGBREAKF_CTRL_C, sig::SIGBREAKF_CTRL_C).unwrap();
+    e.signal(t, sig::SIGBREAKF_CTRL_C).unwrap();
+    assert_eq!(e.tomar_excepcion().unwrap(), None);
+    // Al volver con D0 = 0, la señal queda fuera de tc_SigExcept (como pidió); la recibida, para después.
+    e.acabar_excepcion(t, 0).unwrap();
+    e.set_except(0, sig::SIGBREAKF_CTRL_C).unwrap();
+    assert_eq!(e.tomar_excepcion().unwrap(), None);
+    // Con D0 = la señal, vuelve a tc_SigExcept y la recibida se entrega.
+    e.set_except(sig::SIGBREAKF_CTRL_C, sig::SIGBREAKF_CTRL_C).unwrap();
+    assert!(e.tomar_excepcion().unwrap().is_some());
+    e.acabar_excepcion(t, sig::SIGBREAKF_CTRL_C).unwrap();
+    assert_eq!(l32(&e, t + task::TC_SIGEXCEPT), sig::SIGBREAKF_CTRL_C);
+    // Una tarea que espera con una excepción pendiente se puede despertar (para entregarla y volver a esperar).
+    e.signal(t, 0).unwrap();
+    assert!(!e.excepcion_en_espera(t), "no espera");
+    // Hostil: acabar la excepción de una tarea que no existe, o de una que no estaba en ella; despertar lo que no es
+    // una tarea.
+    e.acabar_excepcion(0xDEAD_0000, 5).unwrap();
+    e.acabar_excepcion(t, 0).unwrap();
+    assert!(e.despertar(0xDEAD_0000).is_err());
+    assert!(e.despertar(t).is_ok());
+}

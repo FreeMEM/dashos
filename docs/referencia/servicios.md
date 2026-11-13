@@ -96,6 +96,16 @@ que cambia. Cada movimiento del ratón mueve la ventana. Provisional: el de verd
 sin zona exclusiva propia se colocan dentro de lo que dejan las barras; las ventanas maximizadas se reajustan si la barra
 sale o se va.
 
+Versión 3 (S27, `docs/diseño/S27-escritorio-dms.md`): **espacios de trabajo** del 1 al 9. Cada ventana es del espacio que
+se veía al salir; las de los otros no se pintan, no reciben teclado ni ratón y sus avisos de `frame` salen a ritmo bajo,
+como las de una sesión de detrás (U6). Super+1..9 cambia de espacio y Super+Mayúsculas+1..9 lleva allí la ventana con el
+teclado (sin ir con ella); esas teclas no llegan a la ventana. A la barra, el evento `espacios` (el que se ve y los que
+tienen ventanas, un bit por espacio) al suscribirse y al cambiar; la petición `espacio` (solo la barra; a otro, error de
+protocolo; fuera de 1 a 9, nada) cambia de espacio. **Teclas del volumen** (HID 0x7F, 0x80 y 0x81): si el panel rápido
+está suscrito, le llegan como el evento `volumen` (1, -1 o 0 para el silencio) y no a la ventana; si no, a la ventana.
+Bloqueada la sesión, nada de esto. Los programas normales ven también la versión 3, pero solo la barra y el panel
+reciben sus eventos.
+
 **Multimonitor.** Un `wl_output` por pantalla, cada uno con su global (6 la principal; 11, 12 y 13 las demás), su
 nombre (DASHOS-1, DASHOS-2...) y su sitio en el espacio común (`geometry`; las pantallas van una al lado de otra, de
 izquierda a derecha). Sin xdg-output: la escala es 1 y el tamaño lógico es el del modo. Si las pantallas cambian con
@@ -275,7 +285,7 @@ del cliente; la orden 21 da la raíz de otro volumen.
 | 17 instantáneas | Pone en la ventana las instantáneas del volumen de la asa, de la más vieja a la más nueva: fecha (8), largo del nombre (1) y el nombre; la siguiente en un múltiplo de 8 (FS9) | asa | a cuántas caben, b cuántas hay, c bytes usados |
 | 18 tomar | Toma una instantánea del volumen de la asa | asa, nombre (hasta 64 bytes, sin ':' ni '/') | — |
 | 19 descartar | Borra una instantánea y suelta lo que solo veía ella | asa, nombre | — |
-| 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer | asa, nombre | a el volumen |
+| 20 volver | Vuelve el volumen de la asa a su instantánea más nueva, que se queda. Lo escrito después se pierde y las asas de todos los clientes en ese volumen dejan de valer, también sus raíces 1 a 15 en él, salvo las que son la raíz del volumen (S28) | asa, nombre | a el volumen |
 | 21 volumen | Abre la raíz del volumen `nombre` (FS10); vacío, la raíz del cliente. Un cifrado cerrado se abre, pero no se lee | nombre | como buscar |
 | 22 volúmenes | Pone en la ventana los volúmenes además del principal: número (8), marcas (1: 1 cifrado, 2 abierto), largo del nombre (1) y el nombre; el siguiente en un múltiplo de 8 | — | a cuántos caben, b cuántos hay, c bytes usados |
 | 23 hacer volumen | Hace un volumen. Cifrado, con su primera contraseña en los b primeros bytes de la ventana (que se borran) y las llaves del azar del kernel (R10); sin azar de calidad, -14. Queda abierto | nombre; a: 0 sin cifrar, 1 cifrado, 2 cifrado con Argon2 barato (pruebas); b largo de la contraseña | a su número |
@@ -421,6 +431,13 @@ Los colores del fondo los reparte el compositor (`dashos_tema_v1`, versión 2): 
 esquemas (claro y oscuro) de la semilla, los da con la petición `esquema` y pone el tema; a quien enlazó la versión 2
 le llega el evento `esquema` antes de `tema`, y `kit::tema::recordar_evento_esquema` hace que `Tema::del_sistema` no
 los calcule. Con la versión 1 se calculan (sin FPU, de 200 a 350 ms en QEMU), una vez por proceso y color.
+
+La versión 3 (S26, `docs/diseño/S26-aspecto-de-las-cajas.md`) añade el aspecto de los programas de las cajas: la
+petición `cajas` (solo el centro; el texto de `wayland::aspecto`, como mucho 2048 bytes; uno que no vale es un error de
+protocolo) y el evento `cajas`, con el mismo texto ya comprobado, al enlazar (tras `tema`) y cada vez que cambia. Lo
+escuchan la caja Amiga (sus plumas de Material) y, por el puente, el agente `dashos-aspecto` de la caja Linux. El
+centro pone al arrancar la apariencia guardada y el aspecto de las cajas (`Prefs/apariencia`, `Prefs/cajas`); la de
+serie es la paleta del fondo, claro, y todo como DashOS.
 
 ## Sonido (S19, A4)
 

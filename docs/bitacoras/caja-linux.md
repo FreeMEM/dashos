@@ -1238,6 +1238,23 @@ QEMU `virt`, TCG, 4 vCPU, con el PC cargado por otras sesiones.
 - La barra de DashOS no tiene botón de maximizar ni deja redimensionar (las ventanas de servidor no se agrandan).
 - `wm_capabilities` no se manda (las pruebas de siempre esperan el configure primero).
 
+### Después de fusionar en `fusion-fondo`: los pools de Mesa (dcf1df6)
+
+`make arranque-virt-gpu` fallaba a veces en "frames in": `es2gears_wayland` salía y se iba al momento. No eran los
+bordes: `cuadros_gl wayland` se cortaba siempre a los 5 o 6 cuadros, también en d819301 (antes de `caja-linux-apps`) y
+con el disco de `revision`. Mesa con llvmpipe hace un pool por búfer y lo destruye en el acto, y libwayland repite su
+número. El puente guardaba los pools por número: al crear el nuevo, el viejo (vivo por sus búferes) se perdía y esos
+búferes se leían en el pool nuevo. Con copia, otro dibujo; sin copia, las páginas no casaban y el puente cerraba al
+programa ("Linux movió las páginas de un búfer sin copia"). Ahora el viejo pasa a un número propio con sus búferes.
+Prueba: `puente/pruebas/h9_pool_repetido.sh` (`cliente_shm` con `POOLES=1`): MAL sin el arreglo, bien con él. Con él,
+`arranque-virt-gpu`: BIEN; `cuadros_gl wayland`, 386 cuadros en 20 s (19,3 por segundo; antes, 9,4 en la bitácora de
+S25 y 5 cuadros en estas pruebas) y 431 en 15 s sin esperar al compositor; `es2gears_wayland`, de 94 a 140 cuadros en 5 s.
+
+El hostil "sin-fin: le cortaron la tubería" no es fiable: en unas pasadas el programa hostil ve su tubería cerrada
+(tras 64 KB) y en otras no, ni viviendo 150 s, con los mismos 64 KB pasados por el tubo en DashOS. Lo que importa sí sale
+siempre: la terminal pega sus 4 KB y deja de leer, y todo sigue. Esa línea ya no es de las esperadas; el guion apunta si
+llegó. Sin explicar: falta saber si DashOS corta el tubo (y manda `TUBO_FIN`) en esas pasadas.
+
 ## 2026-11-13: GTK4, Firefox y más memoria para el invitado (rama `caja-linux-grandes`)
 
 Rama `caja-linux-grandes`, sacada de `fusion-fondo` (ff4b70f). Lo que faltaba de `caja-linux-apps`: GTK4 abortaba en la
@@ -1363,9 +1380,9 @@ hace nada; si otra ventana tapa ese sitio, el clic es suyo. Prueba: `maximizar_y
   `highmem=off` como siempre (`-vm` y `-linux` otra vez tras el cambio de los 2 GB: BIEN). `arranque-virt-vm` también con 8 GB y la máquina grande: BIEN ("Memoria física: 8192 MB
   en total").
 - `arranque-virt-arch` y `-gpu`, con `Image-arch` nuevo (zram) y su disco (caché propia de 4 GB, sin los programas
-  grandes): `-arch` BIEN. `-gpu`: falta "frames in" dos veces (es2gears sale pero no pinta tras sus primeros cuadros);
-  no es de esta rama: `fusion-fondo` (de donde sale) da lo mismo en su última pasada, y `caja-linux-apps` no. En QEMU
-  sin DashOS, es2gears con el `Image-arch` nuevo (zram) y con el viejo da lo mismo: 60 cuadros por segundo.
+  grandes): `-arch` BIEN. `-gpu`, antes de fusionar `fusion-fondo` (f965af7): faltaba "frames in" dos veces, como en
+  `fusion-fondo` antes del arreglo de los pools de Mesa (dcf1df6, arriba). En QEMU sin DashOS, es2gears con el
+  `Image-arch` nuevo (zram) y con el viejo da lo mismo: 60 cuadros por segundo.
 - `arranque-virt-wayland` (8 GB, disco de los programas grandes rehecho): RESULTADO_WAYLAND.
 - En Full HD (`DASHOS_PANTALLA=1920x1080`, `CAJA_SOLO=grandes` y `firefox`): BIEN con sus líneas (GTK, su emergente,
   el hostil de la memoria, Firefox y su memoria).

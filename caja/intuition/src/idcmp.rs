@@ -139,6 +139,12 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e16(s + sc::MOUSEY, y.saturating_add(wy) as u16)?;
         ex.e16(self.intui.base + ib::MOUSEX, x.saturating_add(wx) as u16)?;
         ex.e16(self.intui.base + ib::MOUSEY, y.saturating_add(wy) as u16)?;
+        if self.mover_menu(ex, w, x, y) {
+            return Ok(false);
+        }
+        if let Some(r) = self.gadget_mover(ex, w, x, y) {
+            return r;
+        }
         if arrastrando || ex.l32(w + win::FLAGS)? & wflg::REPORTMOUSE == 0 {
             return Ok(false);
         }
@@ -150,6 +156,11 @@ impl<C: Compositor> CajaGrafica<C> {
         let v = self.ventana(w)?;
         let (s, g) = (v.superficie, v.geometria);
         let (x, y) = (ex.l16(w + win::MOUSEX)? as i16 as i32, ex.l16(w + win::MOUSEY)? as i16 as i32);
+        if boton == BTN_LEFT
+            && let Some(r) = self.requester_boton(ex, w, x, y, pulsado)
+        {
+            return r;
+        }
         match boton {
             BTN_LEFT if pulsado => match g.zona(x, y) {
                 Some(Gadget::Arrastre) => {
@@ -166,7 +177,10 @@ impl<C: Compositor> CajaGrafica<C> {
                     self.marcar(w, Some(z));
                     Ok(false)
                 }
-                None => self.enviar(ex, w, idcmp::MOUSEBUTTONS, ie::SELECTDOWN, 0),
+                None => match self.gadget_pulsar(ex, w, x, y) {
+                    Some(r) => r,
+                    None => self.enviar(ex, w, idcmp::MOUSEBUTTONS, ie::SELECTDOWN, 0),
+                },
             },
             BTN_LEFT => {
                 let antes = self.intui.ventanas.get_mut(&w).and_then(|v| v.pulsado.take());
@@ -179,13 +193,20 @@ impl<C: Compositor> CajaGrafica<C> {
                         Ok(false)
                     }
                     Some(_) => Ok(false),
-                    None => self.enviar(ex, w, idcmp::MOUSEBUTTONS, ie::SELECTUP, 0),
+                    None => match self.gadget_soltar(ex, w, x, y) {
+                        Some(r) => r,
+                        None => self.enviar(ex, w, idcmp::MOUSEBUTTONS, ie::SELECTUP, 0),
+                    },
                 }
             }
-            // Sin menús todavía: el botón derecho solo llega con `RMBTRAP`.
+            // El botón derecho: los menús de la ventana (menus.rs), o el botón tal cual con `RMBTRAP`.
             BTN_RIGHT => {
                 if ex.l32(w + win::FLAGS)? & wflg::RMBTRAP == 0 {
-                    return Ok(false);
+                    if pulsado {
+                        self.abrir_menu(ex, w);
+                        return Ok(false);
+                    }
+                    return self.soltar_menu(ex).unwrap_or(Ok(false));
                 }
                 self.enviar(ex, w, idcmp::MOUSEBUTTONS, if pulsado { ie::MENUDOWN } else { ie::MENUUP }, 0)
             }
@@ -222,6 +243,17 @@ impl<C: Compositor> CajaGrafica<C> {
             q |= ie::NUMERICPAD;
         }
         self.intui.calif.bits = q;
+        if pulsada {
+            let ch = match caracter {
+                Some(c) if (c as u32) <= 0xFF => Some(c as u32 as u8),
+                Some(_) => None,
+                None => teclado::caracter_por_defecto(codigo, self.intui.calif),
+            };
+            if let Some(r) = self.gadget_tecla(ex, w, crudo.map(|(c, _)| c), ch) {
+                self.intui.calif.bits = base;
+                return r;
+            }
+        }
         let flags = ex.l32(w + win::IDCMPFLAGS)?;
         let r = (|| {
             if pulsada && flags & idcmp::VANILLAKEY != 0 {

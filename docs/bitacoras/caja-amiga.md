@@ -608,3 +608,258 @@ texto largo se corta allí por la derecha). Con esa comparación salió el fallo
   se apaga como siempre. No es de la caja Amiga; al juntar con esa rama, desaparece.
 - La captura: `capturas-agente/caja-dash-ventana.png` (la pantalla con la ventana de Dash, a 800x600) y
   `caja-dash-ventana-detalle.png` (la ventana, al doble); la del oráculo, `oraculo-fsuae-dash-ventana.png`.
+
+## 2026-11-13: decisiones del usuario
+
+El usuario aceptó todas las recomendaciones ("como recomiendas"):
+
+1. **El ejecutable de la caja, por encima de 4 GB**: parche de Emu68 que cargue las direcciones de sus funciones con
+   64 bits. Pronto: hoy el 68k puede escribir los datos de la caja y usar sus permisos.
+2. **El Enforcer que avisa y sigue**: canal de excepciones del kernel por proceso. Después de GadTools.
+3. **Sin PAN en la A72 (Pi 4)**: se acepta; en la Pi 5 (A76) se activa.
+4. **UCI en EL0 para todos los procesos**: se acepta.
+5. **Varias tareas 68k**: un solo hilo que cambia de tarea, como un Amiga (Forbid y Disable como esperan los
+   programas). Para usar varios núcleos, un programa por caja.
+6. **Cortar un programa con la NMI de nivel 7**: se acepta.
+7. **Número de función de 16 bits**: se acepta.
+8. **`SYS:` de solo lectura lo controla `dos`, volumen a volumen** (ERROR_DISK_WRITE_PROTECTED).
+9. **La fuente del Workbench**, de las preferencias cuando las haya; si no, topaz/8.
+10. **Las cuatro pruebas en una caja**: se queda así.
+11. **Las líneas de Dash en un fichero aparte**, que solo se mira si está `~/Projects/FreeMEMLang/dash`.
+
+Preocupación del usuario: el malware de Amiga era muy destructivo (virus de arranque, de enlace, troyanos que
+formateaban). Estudio y pruebas en `docs/diseño/S28-malware-amiga.md`.
+
+## 2026-11-13: 68k desde funciones nativas, tc_TrapCode, Ctrl-C y GadTools
+
+Rama `caja-amiga-gadtools`, desde `revision` (a77a6cd), con `revision` (d819301) juntada antes de las pruebas finales.
+
+### Qué funciona (`make -C kernel arranque-virt`)
+
+Tras los programas de antes, la caja ejecuta:
+
+1. **`gadtools.exe`** (`caja/pruebas68k/gadtools.c`, de `m68k-amigaos-gcc`). En la prueba de siempre está abierta 5
+   s y se cierra sola: con más tiempo, su ventana tapaba los pasos del guion de los demás (Ajustes, el centro de
+   control, el bloqueo de la sesión; los clics de esos pasos caían en ella) y el guion, ocupado con ellos, no llegaba
+   a pulsarla. Lo interactivo va en el modo de las capturas (`CAJA_INTERACTIVA=1`, abajo), donde espera 90 s: una ventana con un gadget de cada tipo
+   de GadTools (botón, casilla, ciclo, mx, texto, número, cadena, entero, deslizador, lista y paleta), un
+   `DrawBevelBoxA` y menús (`CreateMenus`, `LayoutMenus`, `SetMenuStrip`). Comprueba solo `GT_SetGadgetAttrs`,
+   `GT_GetGadgetAttrs`, `ItemAddress` y `GTMENUITEM_USERDATA`, y escribe cada evento. El guion captura la ventana
+   (`CAPTURA_GT`), pulsa la casilla, el ciclo, la tercera opción del mx, un elemento de la lista y "Aceptar", y elige
+   Proyecto > Salir con el botón derecho (captura con el menú abierto, `CAPTURA_GT_MENU`): llegan `GADGETUP`,
+   `GADGETDOWN` y `MENUPICK` con sus códigos, y el programa acaba con 0, sin avisos ni memoria perdida.
+2. **`anidado.exe`** (`anidado.c`), cuatro veces (el modo, en la última letra del nombre del proceso):
+   - `a`: el `Open` de una biblioteca 68k hecha con `MakeLibrary`, que exec llama desde lo nativo; un `Open` que se
+     abre a sí mismo sin fin (la caja corta en 16 niveles y da 0; el programa sigue); un `Open` que vuelve con la pila
+     más abajo (se acepta con un aviso: la de fuera está intacta); `tc_ExceptCode` dos veces (con `A1` =
+     `tc_ExceptData`); `CallHookPkt`; un `tc_TrapCode` propio que recupera una instrucción ilegal. Acaba con 0.
+   - `b`: un `tc_ExceptCode` que vuelve con la pila más arriba (ha deshecho marcos de fuera): la caja corta el
+     programa (vector -2).
+   - `c`: una instrucción ilegal dentro de `tc_ExceptCode`, sin `tc_TrapCode` propio: el programa acaba por el
+     vector 4 dentro de la llamada anidada y se deshacen los niveles.
+   - `d`: excepción dentro de excepción (un `tc_TrapCode` que provoca otra, sin fin): se acaba la pila de supervisor y
+     el programa acaba por el vector 4.
+3. **Ctrl-C en Dash**: `caja_ctrl_c.dash` (un `while true` que no llama a nada), por el camino directo y por
+   `--gcc`: la caja manda Ctrl-C desde otro hilo a los 700 ms y el programa para con "***Break" y 5. Por el camino
+   directo es todo el recorrido de Dash: la interrupción de nivel 6, la señal, `tc_ExceptCode` anidado (el de Dash
+   cambia los NOP de sus bucles por `TRAP #14` y llama a `CacheClearU`), el JIT olvida lo traducido sin soltar lo que
+   está corriendo, el `TRAP #14` llega al `tc_TrapCode` de Dash y este vuelve con RTE a su salida.
+   `test_ctrl_c_for.dash` de FreeMEMLang (Ctrl-C por `SetSignal` a sí mismo), tal cual: igual.
+4. **Excepciones del procesador en Dash**: `test_trap_illegal.dash` y `test_trap_divzero.dash` de FreeMEMLang, tal
+   cual: "Error: instrucción ilegal (excepción 4)" / "Error: división por cero (excepción 5)", dónde ("en el
+   programa: hunk 0 + $7e2") y 20, con su limpieza normal (sin memoria perdida). Son las salidas que FreeMEMLang
+   espera en FS-UAE.
+5. **`examples/test_gadtools.dash`** de FreeMEMLang, tal cual: abre su pantalla (el Workbench, ver abajo), su
+   ventana con dos botones, un deslizador, una paleta, un texto y menús. El guion la captura y pulsa "Cancel"; si no
+   llega a tiempo, Ctrl-C a los 6 s (acaba con 0 o con 5). En el oráculo (`oraculo-fsuae-test_gadtools.png`) los
+   gadgets de una ventana `GIMMEZEROZERO` van en la capa de dentro y su etiqueta se corta en el borde: igual aquí.
+
+Salida (QEMU virt; lo nuevo):
+
+```
+│   [caja-amiga] gadtools.library nativa (Rust): $202a08
+│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
+│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
+│   [caja-amiga] gadtools: GADGETUP del gadget 2, codigo 0
+│   [caja-amiga] gadtools: GADGETUP del gadget 3, codigo 1
+│   [caja-amiga] gadtools: GADGETDOWN del gadget 4, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 10, codigo 2
+│   [caja-amiga] gadtools: GADGETUP del gadget 0, codigo 0
+│   [caja-amiga] gadtools: MENUPICK menu 0 elemento 2 (2)
+│   [caja-amiga] gadtools.exe acabó con 0 (cerrada por el programa), ..., 0 avisos, 0 bloques sin soltar: bien
+│   [caja-amiga] anidado: Open 68k desde exec: bien (abierta 1 vez)
+│   [caja-amiga] 68k en $206ce2 desde una función nativa: demasiados niveles (D0 = 0)
+│   [caja-amiga] anidado: Open que se abre a si misma: 16 niveles, 15 abiertas dentro
+│   [caja-amiga] 1 llamadas anidadas volvieron con la pila más abajo de lo debido (la de fuera, intacta)
+│   [caja-amiga] anidado: tc_ExceptCode 2 veces, A1 = $1234
+│   [caja-amiga] anidado: CallHookPkt da 1320 (esperado 1320)
+│   [caja-amiga] anidado: tc_TrapCode propio recupera la instruccion ilegal: bien
+│   [caja-amiga] anidado-a acabó por el vector -1 (D0 0), 38 llamadas anidadas (1 no), 2 excepciones de tarea, 0 avisos: bien
+│   [caja-amiga] anidado-b acabó por el vector -2 ...: bien
+│   [caja-amiga] anidado-c acabó por el vector 4 ...: bien
+│   [caja-amiga] anidado-d acabó por el vector 4 ...: bien
+│   [caja-amiga] dash: bucle sin fin: espera a Ctrl-C
+│   [caja-amiga] dash: ***Break
+│   [caja-amiga] Dash ctrl_c.exe acabó con 5 (vector -1) en 705 ms, 1 excepciones de tarea, 0 avisos, 0 bloques sin soltar: bien
+│   (lo mismo con ctrl_c_gcc.exe y test_ctrl_c_for)
+│   [caja-amiga] dash: Error: instrucción ilegal (excepción 4)
+│   [caja-amiga] dash: en el programa: hunk 0 + $7e2
+│   [caja-amiga] Dash test_trap_illegal acabó con 20 (vector -1) en 12 ms, ...: bien
+│   [caja-amiga] dash: Error: división por cero (excepción 5)
+│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1) en 12 ms, ...: bien
+```
+
+6. **`EasyRequestArgs`** (`caja/intuition/src/requester.rs`): una ventana con el título, el texto (`es_TextFormat`
+   con sus argumentos, `%s`, `%ld`...) y un botón por cada parte de `es_GadgetFormat`, pintados por el tema; la tarea
+   espera (`SIGF_SINGLE`) hasta el clic y la repetición de la llamada devuelve el botón (1, 2... y 0 el último). Es lo
+   que usa Dash para su error cuando el programa no tiene consola (como desde el Workbench).
+
+**El modo de las capturas** (`CAJA_INTERACTIVA=1` al hacer la caja; `make -C kernel arranque-virt` lo pasa a
+`make -C caja`; hay que tocar `caja.c` para que se recompile): `gadtools.exe` espera 90 s y el guion, cuando su ventana
+se ve entera (lo mira en una captura: sus esquinas y un sitio vacío, de los colores del Workbench), la captura, pulsa la
+casilla, el ciclo, una opción del mx, un elemento de la lista y "Aceptar", y elige Proyecto > Salir con el botón
+derecho (captura con el menú abierto); y `test_trap_illegal` corre otra vez sin consola: su error sale en un
+requester, que el guion captura (`CAPTURA_REQ`) y cierra. Las capturas de esta entrada son de ese modo, con
+`DASHOS_PANTALLA=1920x1080`. El guion hace los pasos de la caja al principio de cada vuelta (los de más abajo
+esperan con `continue`) y solo pulsa en la ventana de GadTools cuando se ve entera (si no, un clic en su borde
+izquierdo la sube); aun así, con la máquina cargada, unas vueltas lo consiguen y otras no.
+
+### Código 68k desde una función nativa (la reentrada en el JIT)
+
+Una función nativa corre dentro de la unidad traducida que tiene su `$A0FF`, y esa unidad sigue al volver. Para
+ejecutar 68k desde ella (`caja_ejecutar_68k`, caja.c) se abre otro `MainLoop` dentro: una pila de contextos.
+
+- **Qué se guarda.** Los x0..x30 ya los guarda el JIT al llamar a la función (parche 0002) y los recarga al volver.
+  Lo que no recarga son los registros vectoriales: v8-v15 (FP0-FP7, que además el ABI pide conservar) y v19-v31 (el
+  SR, FPCR/FPSR/FPIAR, la última PC, el puntero al contexto, el contador, CACR y USP/ISP/MSP). Se guardan y se
+  devuelven en un solo asm alrededor de `bl MainLoop` (`main_loop_anidado`): entre medias el compilador no puede tener
+  nada en ellos. El SR y las pilas del nivel de dentro salen de los registros vivos (no de `M68KState`, que está
+  viejo), y los campos arquitectónicos de `M68KState` se devuelven al acabar.
+- **La vuelta.** Se mete en la pila 68k la dirección `VUELTA_ANIDADA` (sistema.s): `$A0FF $FF00`, que apunta que el
+  nivel volvió y comprueba la pila, y `jmp 0.w`, donde acaba ese `MainLoop`. Con la pila donde se dejó, bien; más
+  abajo (el 68k dejó algo), se acepta con aviso; más arriba (deshizo marcos de fuera: un longjmp, la vuelta de otro
+  nivel), se corta el programa.
+- **El JIT.** La unidad que llamó se saca de la lista LRU y de la tabla mientras dura el nivel (`fijar`): ni el JIT al
+  quedarse sin sitio, ni al ver su código cambiado, ni `caja_jit_olvidar` la sueltan. `caja_jit_olvidar` (con
+  `CacheClearU`, `CacheClearE`, `SetFunction`, `MakeFunctions`) olvida todo lo demás desde la propia función nativa;
+  la última PC pasa a "ninguna" (en ese nivel y, al volver, en los de fuera), porque su unidad puede no existir.
+  Era el punto 3 de lo pendiente de la entrada anterior.
+- **Tope.** 16 niveles: más da `ANIDADA_TOPE` (la función nativa sigue como si el 68k hubiera dado 0, con un aviso).
+  Una pila 68k sin sitio, `ANIDADA_PILA`, igual.
+- **Si el 68k de dentro no vuelve.** Si el programa acaba dentro (su RTS final a `COMUN`, una excepción sin
+  `tc_TrapCode`, la NMI del vigilante), se apunta cómo acabó (vector y D0) y se deshacen todos los niveles: cada
+  función nativa de fuera corta el programa (la NMI), su `MainLoop` acaba por el vector 31 y entretanto ninguna llamada
+  nativa más se ejecuta. `arranca` da lo apuntado. Un programa que sigue para siempre dentro de un nivel (un longjmp
+  fuera de un gancho) es como uno que sigue para siempre: lo corta el vigilante o su espera de 60 s.
+- **Rust.** Ninguna referencia de `caja()` vive a través de `caja_ejecutar_68k`: `caja_llamada` la suelta, ejecuta y
+  pide otra (`ejecutar_68k`, `entregar_excepciones`). Exec pide el 68k con su continuación (`Accion::Llamar` y
+  `continuar`), que ya existía.
+
+### tc_TrapCode, el modo de usuario y las excepciones de tarea
+
+- **Las excepciones del procesador** van a `tc_TrapCode` de la tarea, como en exec: cada vector es `move.l #n,-(sp);
+  jmp DESPACHO` (sistema.s, en 68k, sin llamadas nativas) y el despacho salta a `tc_TrapCode` con el número encima del
+  marco. Sin tarea o sin `tc_TrapCode`, o con la pila de supervisor casi acabada (una excepción dentro de otra, sin
+  fin), el programa acaba por esa excepción (`TRAMPA_DEFECTO`, que es también `ExecBase->TaskTrapCode` y el de cada
+  proceso). Las interrupciones de los niveles 1-5 y 7 acaban el programa como antes; la de nivel 6 es la de la caja.
+  No hizo falta la reentrada para esto: el `tc_TrapCode` de Dash vuelve con RTE al programa, todo en 68k.
+- **Modo de usuario.** Los programas corren ahora en modo de usuario, con una pila de supervisor de la caja (16 KB de
+  AllocMem): el manejador de Dash vuelve con RTE en modo de usuario a una pila suya, y con la misma pila para todo una
+  interrupción posterior pisaba la del programa.
+- **`tc_ExceptCode`** (exec: `tomar_excepcion`, `acabar_excepcion`): al final de cada llamada nativa, si la tarea ha
+  recibido alguna de sus señales de `tc_SigExcept`, la caja ejecuta su `tc_ExceptCode` anidado, en modo de usuario y
+  en su pila, con D0 = las señales, A1 = `tc_ExceptData` y A6 = ExecBase; las señales salen de recibidas y de
+  `tc_SigExcept` mientras dura, y vuelven a `tc_SigExcept` las que devuelva en D0. Si la tarea espera en `Wait`, exec
+  la saca (`despertar`), se entrega y el `Wait` se repite.
+- **Ctrl-C desde fuera**: otro hilo de la caja pide Ctrl-C y levanta la interrupción de nivel 6 del 68k; su vector
+  (`$A0FF $FF01; rte`) da la señal a la tarea y entrega su excepción. Así se corta un bucle que no llama a nada. En
+  `Wait` y `Delay` la caja también lo mira.
+- **`CallHookPkt`** no es nativa: su entrada es `move.l 8(a0),-(sp); rts` (lo de la ROM: salta a `h_Entry`).
+
+### GadTools
+
+`gadtools.library` 40 nativa, dentro del crate de intuition (`caja/intuition/src/gadtools.rs` y `menus.rs`), escrita
+desde los autodocs, `libraries/gadtools.h`, `gadtools_lib.fd` y el RKRM. Números nativos desde `0xA00`.
+
+- `CreateContext`, `CreateGadgetA` (botón, casilla, entero, lista, mx, número, ciclo, paleta, barra, deslizador,
+  cadena y texto), `FreeGadgets`, `GT_SetGadgetAttrsA`, `GT_GetGadgetAttrsA`, `GT_GetIMsg`, `GT_ReplyIMsg`,
+  `GT_FilterIMsg`, `GT_PostFilterIMsg`, `GT_RefreshWindow`, `GT_BeginRefresh`, `GT_EndRefresh`, `DrawBevelBoxA`,
+  `GetVisualInfoA`, `FreeVisualInfo`, `CreateMenusA`, `FreeMenus`, `LayoutMenusA` y `LayoutMenuItemsA`.
+- Cada gadget es una `struct Gadget` de verdad (con su `StringInfo` y su búfer en los de texto), de `AllocMem` de la
+  tarea; su estado y su dibujo son nativos. Se dibujan en el lienzo de la ventana con el aspecto de 3.x, con las plumas
+  de la pantalla. En una ventana `GIMMEZEROZERO`, los gadgets sin `GTYP_GZZGADGET` van en la capa de dentro.
+- intuition: `AddGadget`, `AddGList`, `RemoveGadget`, `RemoveGList`, `RefreshGList`, `RefreshGadgets`, `OnGadget`,
+  `OffGadget`, `ItemAddress`, `OnMenu`, `OffMenu`, `IntuiTextLength`, `GetDefaultPubScreen`, `WA_Gadgets` y
+  `nw_FirstGadget`. Pulsar: `GADGETUP`/`GADGETDOWN` con su código (y `MOUSEMOVE` al arrastrar un deslizador), la cadena
+  se edita con el teclado (Return y Tab acaban). Los gadgets de intuition que no son de GadTools se pulsan (y mandan
+  sus mensajes) pero no se dibujan todavía.
+- **Menús**: con el botón derecho la barra de menús sale en la barra de título de la ventana (no hay barra de
+  pantalla: cada ventana Amiga es una del escritorio), el menú cae debajo y al soltar llega `MENUPICK` con
+  `FULLMENUNUM` (o `MENUNULL`). Aspecto NewLook de 3.x; teclas Amiga dibujadas, `CHECKIT`/`MENUTOGGLE`, desactivados.
+- **Un solo punto para el aspecto** (decisión del usuario: poder elegir entre el aspecto de DashOS y el original):
+  todo lo que se ve de GadTools y de los menús (botones, casillas, ciclos, mx, cadenas, deslizadores, listas, paletas,
+  etiquetas, bordes en relieve, la barra y los menús que caen, y las plumas de `DrawBevelBoxA`) se pinta por el rasgo
+  `Tema` (`caja/intuition/src/tema.rs`), con los colores de `Plumas`: los de las plumas de la `DrawInfo` de la
+  pantalla, leídos de la memoria del 68k. La lógica (estado, clics, mensajes) no pinta nada. Hoy hay un tema,
+  `Clasico` (3.x). **Siguiente paso: el tema Material 3 de DashOS**, otro `impl Tema`, y cómo se elige (por caja, por
+  programa, en Ajustes): sin hacer.
+- `WaitTOF` duerme un cuadro (20 ms) atendiendo al compositor: los bucles que leen eventos sin `Wait` (los de Dash
+  con `wait_vblank`) los reciben así. `GetVPModeID` da "PAL:HighRes".
+
+### El oráculo
+
+`gadtools.exe` en FS-UAE con el Kickstart 3.1 del usuario y el Workbench 3.1 de `DASH_EMU_SYS`, con el cerrojo:
+la misma línea de atributos ("nivel 60, ciclo 2, casilla 1, entero 42, ... : bien"); allí nadie pulsa y se cierra a
+los 40 s. La captura del emulador (`capturas-agente/oraculo-fsuae-gadtools.png`) sirvió para corregir el aspecto: en
+un mx, las opciones van donde diga `ng_Flags` (a la izquierda) y su etiqueta no sale; el nivel del deslizador va a su
+izquierda encima de la etiqueta (en 3.1 se pisan: "Niv25"); el mando es un bloque oscuro. Diferencias que quedan: la
+fuente (topaz/9 allí), los botones del mx (redondeados allí) y la marca de la casilla.
+
+### Lo que falta y decisiones pendientes
+
+1. **`OpenScreen` da el Workbench** (lo cuenta como un `LockPubScreen`; `CloseScreen` lo suelta): cada ventana ya es
+   una del escritorio y una pantalla propia no tiene dónde ir. Provisional y fácil de quitar. ¿Una pantalla propia
+   debería ser otra superficie del compositor (a pantalla entera, como un juego)?
+2. **Los menús salen dentro de la ventana** (en su barra de título, cortados por su tamaño). La otra opción: una
+   superficie emergente del compositor (`xdg_popup`) por menú. Decisión del usuario.
+3. **Los programas corren en modo de usuario** (antes, en supervisor). Lo que use instrucciones privilegiadas sin
+   `Supervisor()` da ahora la excepción 8, como en el Amiga. `Supervisor()` no está.
+4. **asl.library**: no se hizo (el tercer objetivo). `file_open_dialog` de Dash no abre nada.
+5. **Gadgets de intuition sin GadTools**: no se dibujan (`Border`, `Image`, `IntuiText` de `GadgetRender`), ni los
+   gadgets propietarios (`PROPGADGET` de intuition) se mueven; BOOPSI tampoco. Los ganchos (`GTST_EditHook`, los de
+   `GTLV_CallBack`) no se llaman todavía, aunque ya se podría con `caja_ejecutar_68k`.
+6. **Ctrl-C de verdad**: hoy lo manda la caja (sus pruebas). Falta de dónde: una consola de DashOS para la caja, o
+   Ctrl-C en una ventana Amiga con el foco.
+7. **`tests/test_gt_events.dash` de FreeMEMLang** no encaja todavía: lanza un proceso auxiliar que pulsa por
+   `input.device`, y la caja corre una sola tarea 68k.
+8. Lo de antes sigue: el Enforcer de verdad, varias tareas 68k, `LoadSeg` por dos.
+
+### Capturas (`capturas-agente/`, fuera de git)
+
+- `caja-gadtools-fhd.png`: la ventana de GadTools a 1920x1080 (con Ajustes y el centro de control del guion al lado).
+- `caja-gadtools-menu-fhd.png`: la misma con el menú Proyecto abierto ("Abrir... A", la raya, "Salir Q" señalado);
+  se ven ya la casilla quitada, el ciclo en "Dos" y el mx en "Azul" (los clics del guion).
+- `caja-dash-test_gadtools.png`: `examples/test_gadtools.dash` de FreeMEMLang en la caja (800x600, la prueba de
+  siempre; el guion pulsó después su "Cancel" y acabó con 0). Como en el oráculo: los gadgets en la capa de dentro de
+  la ventana `GIMMEZEROZERO`, la etiqueta "Value:" cortada por el borde y el nivel a la izquierda.
+- `oraculo-fsuae-gadtools.png` y `oraculo-fsuae-test_gadtools.png`: lo mismo en FS-UAE (Kickstart 3.1).
+- El requester del error de Dash: se abre (la salida dice "ventana Amiga en pantalla (360x79): Dash" y la prueba
+  `easy_request` de `cargo test` lo pulsa), pero en las vueltas del modo de capturas la captura del guion cayó con la
+  sesión bloqueada (el paso de la pantalla de bloqueo del guion) o no llegó: **sin captura todavía**.
+
+### Pruebas
+
+- `cargo test`: exec 111, dos 53, intuition 52 (con `tests/gadtools.rs`: gadgets y eventos, menús con el botón
+  derecho, `EasyRequestArgs` y una hostil; el fuzzer de `hostil.rs` llama también a gadtools), utility 7, timer 7.
+  clippy limpio en exec, utility e intuition. El fuzzer encontró un fallo de antes: un `IDCMP_NEWSIZE` del compositor
+  con unos límites de `WindowLimits` absurdos pedía un lienzo de 200 TB; ahora el tamaño se comprueba.
+- `make -C kernel prueba`: "BIEN: cargador hunk (0 fallos)" y "BIEN: esperado.txt" (tras juntar `revision`).
+- `make -C kernel arranque-virt`: las cinco BIEN, con las líneas nuevas de la caja (GadTools, los cuatro modos de
+  `anidado`, Ctrl-C y las excepciones de Dash). Vueltas anteriores fallaron por cómo convivía la ventana de GadTools
+  con los pasos del guion de los demás (Ajustes, el centro de control: sus clics caían en ella, o los del guion de la
+  caja en ellos); por eso en la prueba de siempre está 5 s y lo interactivo va en el modo de las capturas.
+- `arranque-virt-vm`, `-linux`, `-2`, `-diag`, `-escritorio`: BIEN. `-arch`, `-wayland` y `-gpu`, con el kernel y el
+  disco de lo fusionado (`ARCH_IMAGE` y `ARCH_DISCO` de `~/.cache/dashos-caja-linux-fusion`): BIEN.
+- El modo de las capturas (`CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080 TIEMPO_VIRT=480`): sale "FALTA: pantalla del
+  firmware: 800x600" (la línea esperada es la de 800x600); no es una prueba, solo para las capturas.
+- El oráculo, sin cerrojo desde ahora (orden del usuario: la caja Amiga no abre servidores).

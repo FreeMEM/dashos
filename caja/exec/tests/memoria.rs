@@ -283,3 +283,25 @@ fn alloc_entry_hostil() {
     assert!(e.free_entry(0xFFFF_FFFE).is_err());
     assert!(e.alloc_entry(TAMANO - 4).is_err());
 }
+
+/// S28: lo que se suelta queda a cero (FreeMem, FreeVec, FreePooled y la muerte de la tarea), para que el siguiente
+/// programa no lea lo que dejó otro en la memoria libre.
+#[test]
+fn lo_soltado_queda_a_cero() {
+    let (mut e, t) = caja_con_tarea();
+    let a = e.alloc_mem(256, 0).unwrap();
+    e.mem.leer_mut(a, 256).unwrap().fill(0xAA);
+    e.free_mem(a, 256).unwrap();
+    // Los 8 primeros son el MemChunk (o se juntaron con otro trozo); el resto, a cero.
+    assert!(e.mem.leer(a + 8, 248).unwrap().iter().all(|&x| x == 0));
+    let v = e.alloc_vec(100, 0).unwrap();
+    e.mem.leer_mut(v, 100).unwrap().fill(0xBB);
+    e.free_vec(v).unwrap();
+    assert!(e.mem.leer(v + 8, 92).unwrap().iter().all(|&x| x == 0));
+    // Lo que deja una tarea al morir.
+    let b = e.alloc_mem(512, 0).unwrap();
+    e.cambiar_dueno(b, t);
+    e.mem.leer_mut(b, 512).unwrap().fill(0xCC);
+    let _ = e.matar_tarea(t);
+    assert!(e.mem.leer(b + 8, 504).unwrap().iter().all(|&x| x == 0));
+}

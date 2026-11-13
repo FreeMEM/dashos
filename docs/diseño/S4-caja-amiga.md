@@ -1,5 +1,8 @@
 # S4. La caja Amiga
 
+> **2026-11-13.** El malware del Amiga y cómo se defiende la caja (guardia de ficheros, raíces, lo que deja un
+> programa deshecho, virus de laboratorio): [S28](S28-malware-amiga.md).
+
 > **2026-11-10.** Las pantallas (Workbench, públicas, propias y clonadas, modos y menús), juntas en [S23](S23-pantallas-amiga.md).
 
 > **Nota del 2026-11-03 por la tarde.** El usuario decidió que lo nativo sea little-endian y solo la caja Amiga
