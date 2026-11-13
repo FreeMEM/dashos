@@ -1699,3 +1699,20 @@ iconos; el volumen sube un 5 % por tecla; lanzador con Super sola y con Super+Es
 - Arreglos de pruebas: arch, wayland y gpu sobre su copia del disco (`target/disco-arch.img`, con reflink); el hostil
   "sin-fin: le cortaron la tubería" sale de lo esperado (inestable, se apunta en medidas; pendiente de explicar).
 - `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN.
+
+### 2026-11-13 09:25: decisión del usuario: cinco temas
+Habrá cinco temas configurados para elegir: Claro, Oscuro, AOS4 (al estilo de AmigaOS 4), MOS (al estilo de MorphOS)
+y Magic WB (al estilo de MagicWB). Sirven para el escritorio y para las cajas ("como DashOS" pinta con el tema
+elegido; Claro y Oscuro con la paleta del fondo de S26). Los tres retro se inspiran en su aspecto (colores,
+degradados, relieve, tipo de barra) y se dibujan aquí: sin copiar iconos, patrones ni imágenes de esos sistemas.
+Va en el rasgo `Tema` de GadTools/intuition y en el kit de DashOS.
+
+### 2026-11-13 09:45: el escritorio al estilo DMS (S27, oleada 1), en revision
+- Fusionada `escritorio-dms`: barra flotante con píldoras (lanzador, espacios, título; reloj con fecha en el centro;
+  avisos y estado a la derecha), espacios de trabajo 1-9 en el compositor (Super+número, Super+Mayús+número, clic
+  en la barra), lanzador en el centro con hasta 1000 programas, OSD del volumen; arreglo del compositor: al cerrar la
+  ventana con el teclado, el teclado pasa a la de arriba. Estudio `docs/diseño/S27-escritorio-dms.md` con 7 oleadas.
+- Choque con S26 en `dashos_tema_v1`: la 3 queda para el aspecto de las cajas y los espacios y el volumen pasan a la
+  4 (tablas regeneradas; las tres listas de globales del compositor anuncian la 4; la barra y el panel la enlazan).
+- `make prueba` BIEN; arranque-virt, -vm, -linux, -arch, -2, -wayland, -gpu, -diag, -escritorio y -usb: BIEN
+  (arranque-virt y -2 tras el arreglo de las listas de globales).
