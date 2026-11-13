@@ -121,6 +121,7 @@ v_amiga = None
 dash_amiga = 0
 gt_amiga = 0
 gt_dash = 0
+gt_mirado = 0
 
 while time.time() - inicio < total:
     try:
@@ -1222,51 +1223,59 @@ while time.time() - inicio < total:
                         ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
                     else:
                         ir_a(10 * paso, 5 * paso)
-        # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), después de la de Dash: la captura (CAPTURA_GT), clics en
-        # la casilla, el ciclo, la tercera opción del mx, el tercer elemento de la lista y "Aceptar", y el menú con el
-        # botón derecho: sobre el título "Proyecto", abajo hasta "Salir" (la captura con el menú abierto, CAPTURA_GT_MENU)
-        # y soltar, que cierra el programa. Las posiciones, las de gadtools.c, desde la esquina de la ventana.
-        if amiga == 2 and gt_amiga == 0 and libre_para_amiga:
+        # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), tras la de Dash: cuando se ve entera (una captura
+        # comprueba que sus cuatro esquinas y un sitio vacío de dentro son de los colores del Workbench: si otra ventana
+        # del arranque la tapa, los clics irían a esa; se mira otra vez en la vuelta siguiente), la captura
+        # (CAPTURA_GT), clics en la casilla, el ciclo, la tercera opción del mx, el tercer elemento de la lista y
+        # "Aceptar", y el menú con el botón derecho: sobre "Proyecto", abajo hasta "Salir" (la captura con el menú
+        # abierto, CAPTURA_GT_MENU) y soltar, que cierra el programa. Las posiciones, las de gadtools.c.
+        if dash_amiga == 1 and gt_amiga == 0 and libre_para_amiga and time.time() > gt_mirado + 2:
             import re
+            gt_mirado = time.time()
             corte = texto.find("[caja-amiga] gadtools.exe: ")
-            if corte >= 0 and "[caja-amiga] gadtools: ventana abierta y dibujada" in texto[corte:]:
+            if corte >= 0 and "[caja-amiga] gadtools: ventana abierta y dibujada" in texto[corte:] \
+                    and "[caja-amiga] gadtools.exe acabó" not in texto[corte:]:
                 v_gt = list(re.finditer(r"\[compositor\] ventana de caja-amiga en \((\d+), (\d+)\)", texto[corte:]))
                 if v_gt:
-                    gt_amiga = 1
                     x, y = int(v_gt[-1].group(1)), int(v_gt[-1].group(2))
-                    time.sleep(0.5)
-                    if os.environ.get("CAPTURA_GT"):
-                        mandar("screendump " + os.environ["CAPTURA_GT"])
-                        time.sleep(0.5)
-                    # Antes de cada clic, otro en un sitio vacío de la ventana (abajo en el centro): sube, por si otra
-                    # ventana del arranque ha salido encima entretanto.
-                    for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
-                        ir_a(x + 200, y + 183)
+                    foto = os.environ.get("CAPTURA_GT") or "/tmp/dashos-gt-mira.ppm"
+                    mandar("screendump " + foto)
+                    time.sleep(0.7)
+                    def pixeles(ruta, puntos):
+                        try:
+                            d = open(ruta, "rb").read()
+                            cab = d.split(b"\n", 3)
+                            an = int(cab[1].split()[0])
+                            datos = cab[3]
+                            return [tuple(datos[3 * (py * an + px):3 * (py * an + px) + 3]) for px, py in puntos]
+                        except Exception:
+                            return []
+                    wb = {(0xAA, 0xAA, 0xAA), (0, 0, 0), (0xFF, 0xFF, 0xFF), (0x66, 0x88, 0xBB)}
+                    vistos = pixeles(foto, [(x + 1, y + 1), (x + 408, y + 1), (x + 1, y + 190), (x + 408, y + 190)])
+                    vacio = pixeles(foto, [(x + 200, y + 183)])
+                    if len(vistos) == 4 and all(c in wb for c in vistos) and vacio == [(0xAA, 0xAA, 0xAA)]:
+                        gt_amiga = 1
+                        for dx, dy in [(103, 25), (140, 43), (98, 82), (300, 54), (290, 168)]:
+                            ir_a(x + dx, y + dy)
+                            time.sleep(0.3)
+                            mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
+                            time.sleep(0.4)
+                        ir_a(x + 25, y + 5)
                         time.sleep(0.3)
-                        mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
-                        ir_a(x + dx, y + dy)
-                        time.sleep(0.3)
-                        mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
-                        time.sleep(0.4)
-                    ir_a(x + 200, y + 183)
-                    time.sleep(0.3)
-                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
-                    ir_a(x + 25, y + 5)
-                    time.sleep(0.3)
-                    mandar("mouse_button 2", pausa=0.3)
-                    mandar("mouse_move 0 15", "mouse_move 0 14", pausa=0.3)
-                    time.sleep(0.5)
-                    if os.environ.get("CAPTURA_GT_MENU"):
-                        mandar("screendump " + os.environ["CAPTURA_GT_MENU"])
+                        mandar("mouse_button 2", pausa=0.3)
+                        mandar("mouse_move 0 15", "mouse_move 0 14", pausa=0.3)
                         time.sleep(0.5)
-                    mandar("mouse_button 0", pausa=0.2)
-                    w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
-                    if menu == 2:
-                        ir_a(790, 590)
-                    elif ajustes and w:
-                        ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
-                    else:
-                        ir_a(10 * paso, 5 * paso)
+                        if os.environ.get("CAPTURA_GT_MENU"):
+                            mandar("screendump " + os.environ["CAPTURA_GT_MENU"])
+                            time.sleep(0.5)
+                        mandar("mouse_button 0", pausa=0.2)
+                        w = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+                        if menu == 2:
+                            ir_a(790, 590)
+                        elif ajustes and w:
+                            ir_a(int(w.group(1)) + 196, int(w.group(2)) + 196)
+                        else:
+                            ir_a(10 * paso, 5 * paso)
         # El ejemplo de GadTools de FreeMEMLang (`examples/test_gadtools.dash`): la captura (CAPTURA_GT_DASH) y un clic en
         # su "Cancel" (gt_button(120, 20, 80, 20) en una ventana GIMMEZEROZERO: desde la esquina de dentro, 4 y 11).
         if dash_amiga == 1 and gt_dash == 0 and libre_para_amiga:
@@ -1278,9 +1287,6 @@ while time.time() - inicio < total:
                     gt_dash = 1
                     x, y = int(v_gd[-1].group(1)), int(v_gd[-1].group(2))
                     time.sleep(1.0)
-                    ir_a(x + 254, y + 111)
-                    mandar("mouse_button 1", "mouse_button 0", pausa=0.15)
-                    time.sleep(0.3)
                     if os.environ.get("CAPTURA_GT_DASH"):
                         mandar("screendump " + os.environ["CAPTURA_GT_DASH"])
                         time.sleep(0.5)
