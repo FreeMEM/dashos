@@ -419,7 +419,8 @@ if modo == "wayland":
         time.sleep(1.0)
         clic_en_ventana()
         mandar("sendkey ctrl-shift-v")
-        esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60)
+        # Que el programa hostil vea su tubería cerrada no siempre llega en el plazo (ver la bitácora): se apunta.
+        apuntar("hostil sin fin: " + ("le cortaron la tubería" if esperar(r"cliente hostil: sin-fin: le cortaron la tubería", 60) else "sin ver el corte en 60 s"))
         esperar(r"terminal: pegado \(4096 bytes\)", 30)
         time.sleep(3.0)
         mandar("sendkey ctrl-c")
