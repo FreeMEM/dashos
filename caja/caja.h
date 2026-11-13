@@ -21,6 +21,17 @@
 #define PLANOS       0x00110000UL   /* los programas planos de prueba, cada uno enlazado en su dirección */
 #define CHIP         0x00150000UL   /* desde aquí reparte exec (AllocMem): "chip" hasta los 2 MB, "fast" el resto */
 
+/* El código 68k de la caja (pruebas68k/sistema.s, en sistema.bin): sus piezas, en direcciones fijas. */
+#define SISTEMA68K      0x00101600UL
+#define DESPACHO        (SISTEMA68K + 0x00)   /* las excepciones del procesador, a tc_TrapCode de la tarea */
+#define TRAMPA_DEFECTO  (SISTEMA68K + 0x40)   /* el tc_TrapCode de las tareas: el programa acaba por esa excepción */
+#define VUELTA_ANIDADA  (SISTEMA68K + 0x60)   /* adonde vuelve el 68k que la caja llama desde una función nativa */
+#define INTERRUPCION68K (SISTEMA68K + 0x70)   /* el vector 30 (nivel 6): la caja lo levanta desde otro hilo */
+#define SUPER_BAJO      (SISTEMA68K + 0x7c)   /* el límite de la pila de supervisor (lo mira el despacho) */
+/* Funciones nativas de la propia caja (no son de ninguna biblioteca). */
+#define N_VUELTA        0xff00
+#define N_INTERRUPCION  0xff01
+
 static inline void pon8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
 static inline void pon16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = v; }   /* el proceso es big-endian */
 static inline void pon32(uintptr_t a, uint32_t v) { *(volatile uint32_t *)a = v; }
@@ -63,5 +74,25 @@ void caja_consola_prefijo(const char *prefijo, size_t largo);
 uint32_t caja_tarea_fin(uint32_t t);
 uint32_t caja_avisos(void);
 int caja_compositor_sigue(void);
+/* Pone el tc_TrapCode por defecto (ExecBase->TaskTrapCode y el de las tareas nuevas). */
+void caja_poner_trampa(uint32_t defecto);
+/* Las llamadas anidadas de la última tarea (hechas y no hechas) y sus excepciones de tarea entregadas. */
+void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones);
+
+/* --- Lo que la caja (caja.c) da a Rust --- */
+/* Ejecuta código 68k desde una función nativa (una llamada anidada): desde `pc`, con los registros r[0..7] = D0-D7
+   y r[8..15] = A0-A7, hasta que vuelve con su RTS. Con `usuario`, en el modo de usuario y en su pila (como exec con
+   tc_ExceptCode); si no, en el modo y la pila de quien llama. Deja en r los registros al volver. */
+int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario);
+#define ANIDADA_BIEN     0
+#define ANIDADA_ACABADO  1   /* el programa acabó dentro (o se cortó): hay que deshacer todo */
+#define ANIDADA_TOPE     2   /* demasiados niveles: no se ejecuta */
+#define ANIDADA_PILA     3   /* la pila 68k de quien llama no vale: no se ejecuta */
+/* El JIT olvida lo traducido, desde una función nativa (CacheClearU, SetFunction): menos lo que se está ejecutando. */
+void caja_jit_olvidar(void);
+/* 1 si alguien ha pedido Ctrl-C para el programa (y lo apaga). */
+int caja_tomar_ctrl_c(void);
+/* Cuántas veces volvió una llamada anidada con la pila más abajo de lo debido (lo apaga). */
+int caja_tomar_pilas_raras(void);
 
 #endif

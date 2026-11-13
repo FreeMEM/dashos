@@ -44,6 +44,11 @@ filas!(I;
     SETMENUSTRIP = "SetMenuStrip", CLEARMENUSTRIP = "ClearMenuStrip", RESETMENUSTRIP = "ResetMenuStrip",
     SETPOINTER = "SetPointer", CLEARPOINTER = "ClearPointer", SETWINDOWPOINTERA = "SetWindowPointerA",
     SCREENTOFRONT = "ScreenToFront", SCREENTOBACK = "ScreenToBack",
+    ADDGADGET = "AddGadget", REMOVEGADGET = "RemoveGadget", ADDGLIST = "AddGList", REMOVEGLIST = "RemoveGList",
+    REFRESHGLIST = "RefreshGList", REFRESHGADGETS = "RefreshGadgets", ONGADGET = "OnGadget", OFFGADGET = "OffGadget",
+    ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
+    OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
+    INTUITEXTLENGTH = "IntuiTextLength",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -57,6 +62,16 @@ impl<C: Compositor> CajaGrafica<C> {
     /// La caja no tiene que repetir ninguna: no bloquean (el `Accion::Ceder` es por haber despertado a otra).
     pub fn llamar<M: Memoria>(&mut self, ex: &mut Exec<M>, n: u16, r: &mut Registros) -> Accion {
         let (g0, i0) = (self.numeros.graphics, self.numeros.intuition);
+        if let Some(f) = self.es_gadtools(n) {
+            match self.llamar_gadtools(ex, f, r) {
+                Ok(v) => r.d[0] = v,
+                Err(e) => {
+                    self.avisar(ex, crate::lvo::GADTOOLS[f].0, e);
+                    r.d[0] = 0;
+                }
+            }
+            return Accion::Seguir;
+        }
         let (gfx, f) = if n >= g0 && ((n - g0) as usize) < G.len() {
             (true, (n - g0) as usize)
         } else if n >= i0 && ((n - i0) as usize) < I.len() {
@@ -298,7 +313,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 self.comp.pitido();
                 Ok(0)
             }
-            // Sin menús todavía: se guardan, y no salen.
+            // Los menús salen con el botón derecho (menus.rs).
             SETMENUSTRIP | RESETMENUSTRIP => {
                 self.ventana(a[0])?;
                 ex.e32(a[0] + win::MENUSTRIP, a[1])?;
@@ -306,12 +321,49 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             CLEARMENUSTRIP => {
                 self.ventana(a[0])?;
+                self.menu_ventana_cerrada(a[0]);
                 ex.e32(a[0] + win::MENUSTRIP, 0)?;
                 Ok(0)
             }
             // El puntero es el del escritorio (provisional).
             SETPOINTER | CLEARPOINTER | SETWINDOWPOINTERA => hecho(self.ventana(a[0]).map(|_| ())),
             SCREENTOFRONT | SCREENTOBACK => Ok(0),
+            ADDGADGET => self.add_g_list(ex, a[0], a[1], palabra(d[0]), 1),
+            ADDGLIST => self.add_g_list(ex, a[0], a[1], palabra(d[0]), palabra(d[1])),
+            REMOVEGADGET => self.remove_g_list(ex, a[0], a[1], 1),
+            REMOVEGLIST => self.remove_g_list(ex, a[0], a[1], palabra(d[0])),
+            REFRESHGLIST => {
+                self.ventana(a[1])?;
+                self.dibujar_lista(ex, a[1], a[0], palabra(d[0]), false);
+                Ok(0)
+            }
+            REFRESHGADGETS => {
+                self.ventana(a[1])?;
+                self.dibujar_lista(ex, a[1], a[0], -1, false);
+                Ok(0)
+            }
+            ONGADGET | OFFGADGET => hecho(self.on_off_gadget(ex, a[0], a[1], f == ONGADGET)),
+            ITEMADDRESS => self.item_address(ex, a[0], d[0]),
+            ONMENU | OFFMENU => hecho(self.on_off_menu(ex, a[0], d[0], f == ONMENU)),
+            // Una pantalla propia es, de momento, el Workbench (cada ventana ya es una del escritorio): se cuenta
+            // como un bloqueo, y CloseScreen lo suelta. Provisional (ver la bitácora).
+            OPENSCREEN | OPENSCREENTAGLIST => self.lock_pub_screen(ex, 0),
+            CLOSESCREEN => {
+                if a[0] != self.workbench() {
+                    return Err(Fallo::PantallaDesconocida { dir: a[0] });
+                }
+                self.unlock_pub_screen(ex, 0, a[0]).map(|_| 1)
+            }
+            GETDEFAULTPUBSCREEN => {
+                if a[0] != 0 {
+                    ex.escribir_bytes(a[0], b"Workbench\0")?;
+                }
+                Ok(0)
+            }
+            INTUITEXTLENGTH => {
+                let t = ex.l32(a[0].wrapping_add(12))?;
+                Ok(ex.cadena(t)?.len() as u32 * crate::fuente::ANCHO)
+            }
             _ => Err(Fallo::NoImplementada { n: self.numeros.intuition + f as u16 }),
         }
     }

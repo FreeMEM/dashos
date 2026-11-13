@@ -35,10 +35,12 @@ mod acceso;
 mod despacho;
 mod dibujo;
 mod fuente;
+mod gadtools;
 mod graphics;
 mod idcmp;
 mod intuition;
 mod marco;
+mod menus;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -105,11 +107,12 @@ pub struct Aviso {
 pub struct Numeros {
     pub graphics: u16,
     pub intuition: u16,
+    pub gadtools: u16,
 }
 
 impl Default for Numeros {
     fn default() -> Numeros {
-        Numeros { graphics: 0x0400, intuition: 0x0600 }
+        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00 }
     }
 }
 
@@ -122,6 +125,8 @@ pub struct CajaGrafica<C: Compositor> {
     numeros: Numeros,
     gfx: graphics::Estado,
     intui: intuition::Estado,
+    gt: gadtools::Estado,
+    menus: menus::Estado,
     avisos: Vec<Aviso>,
 }
 
@@ -134,11 +139,19 @@ impl<C: Compositor> CajaGrafica<C> {
             numeros,
             gfx: graphics::Estado::default(),
             intui: intuition::Estado::default(),
+            gt: gadtools::Estado::default(),
+            menus: menus::Estado::default(),
             avisos: Vec::new(),
         };
         c.instalar_graphics(ex)?;
         c.instalar_intuition(ex)?;
+        c.instalar_gadtools(ex)?;
         Ok(c)
+    }
+
+    /// El número nativo de una función de gadtools.library, por su nombre.
+    pub fn numero_gadtools(&self, nombre: &str) -> Option<u16> {
+        lvo::GADTOOLS.iter().position(|(n, _)| *n == nombre).map(|i| self.numeros.gadtools + i as u16)
     }
 
     /// El número nativo de una función de graphics, por su nombre.
