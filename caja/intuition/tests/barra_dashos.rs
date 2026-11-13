@@ -57,7 +57,10 @@ fn ventana(c: &mut Caja, flags: u32, mas: &[(u32, u32)]) -> u32 {
     let g = gt(c, "CreateGadgetA", &[BUTTON], &[g, ng, t0]);
     assert_ne!(g, 0);
     e16(c, ng + 2, 40);
-    e32(c, ng + 8, 0);
+    e16(c, ng, 60);
+    let etiqueta = cadena(c, "Texto");
+    e32(c, ng + 8, etiqueta);
+    e32(c, ng + 18, 1); // PLACETEXT_LEFT
     let hola = cadena(c, "hola");
     let ts = etiquetas(c, &[(0x8008_002D, hola)]); // GTST_String
     assert_ne!(gt(c, "CreateGadgetA", &[STRING], &[g, ng, ts]), 0);
@@ -237,6 +240,18 @@ fn textos_nitidos() {
     for t in &v.textos {
         assert!(t.vale(&v.pix, v.ancho, v.alto), "{:?}", t.texto);
     }
+    // La etiqueta de fuera del campo se repinta sin borrar: lo de debajo sigue siendo la superficie, sin la topaz.
+    for _ in 0..3 {
+        gt(&mut c, "GT_RefreshWindow", &[], &[w, 0]);
+        let primero = l32(&c, w + win::FIRSTGADGET);
+        i(&mut c, "RefreshGList", &[u32::MAX], &[primero, w, 0]);
+    }
+    c.1.atender(&mut c.0);
+    let v = c.1.comp.ventana(s);
+    let fuera = v.textos.iter().find(|t| t.texto == b"Texto").expect("la etiqueta de fuera");
+    assert_eq!(fuera.alinea, Alinea::Derecha);
+    assert!(fuera.vale(&v.pix, v.ancho, v.alto));
+    assert!(fuera.antes.iter().all(|&p| p | 0xFF00_0000 == T.superficie), "la topaz en el fondo de la etiqueta");
     // El programa pinta encima de la etiqueta: deja de valer (sale tal cual, con la topaz).
     let rp = l32(&c, w + win::RPORT);
     pen(&mut c, rp, 1);

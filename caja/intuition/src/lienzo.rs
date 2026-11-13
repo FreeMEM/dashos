@@ -148,6 +148,13 @@ impl Lienzo {
         }
         v
     }
+    /// Lo de debajo de un texto nítido que sigue valiendo en el mismo hueco `r`: al pintar otra vez un texto encima del
+    /// suyo sin borrar (las etiquetas de fuera de un gadget se repintan así), el fondo de verdad es el de antes, no el
+    /// que ya lleva la topaz.
+    pub fn antes_de(&self, r: Rect) -> Option<Vec<u32>> {
+        let t = self.textos.iter().rev().find(|t| t.r == r)?;
+        t.vale(&self.pix, self.ancho, self.alto).then(|| t.antes.clone())
+    }
     /// Apunta un texto nítido en el hueco `r` (dentro del lienzo, si no no se apunta) con lo que había antes de pintar
     /// sus letras (`antes`, de `copiar`). Lo de después se copia ahora. Solo si el lienzo es `nitido`. Un texto en el
     /// mismo hueco que otro lo sustituye; si hay demasiados, se quitan los que ya no valen y después los más viejos.

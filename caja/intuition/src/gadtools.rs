@@ -299,7 +299,7 @@ pub(crate) fn texto_n(
     let r = (fin > x64 && fin <= i32::MAX as i64 && y as i64 + fuente::ALTO as i64 <= i32::MAX as i64)
         .then(|| Rect::nuevo(x, y, fin as i32 - 1, y + fuente::ALTO as i32 - 1))
         .filter(|r| r.interseccion(&l.rect()) == *r);
-    let antes = r.map(|r| l.copiar(r));
+    let antes = r.map(|r| l.antes_de(r).unwrap_or_else(|| l.copiar(r)));
     let fin_x = texto(l, glifos, x, y, s, c, hasta);
     if let (Some(r), Some(antes)) = (r, antes) {
         let t = if estilo == Estilo::Celdas { &s[..caben as usize] } else { s };
