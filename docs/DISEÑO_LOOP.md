@@ -103,7 +103,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
   qué cuesta.
 - [x] S8 **Paquetes y Hangar.** Un gestor de paquetes como pacman: formato, repositorios, firmas, dependencias,
   actualizaciones atómicas con instantáneas del sistema de archivos, y deltas. Tres clases de paquete: nativos de
-  DashOS, programas Amiga y programas de Linux. Hangar como tienda y catálogo por encima, con programas de pago.
+  DashOS, programas Amiga y programas de Linux. Hangar como catálogo por encima.
 - [x] S9 **Gráficos.** De la pantalla del firmware a la GPU V3D de la Pi 4. Las dos salidas HDMI. Compositor,
   sincronía vertical, escalado para pantallas de mucha densidad.
 - [x] S10 **Escritorio.** Ventanas flotantes y en mosaico en el mismo escritorio, escritorios virtuales, varios
@@ -232,7 +232,7 @@ capa de traducción nunca está completa. Consecuencia para S9: el compositor ti
 `docs/diseño/S8-paquetes.md`. Dos niveles como Fedora Silverblue: `SYS:` como imagen firmada que entra al reiniciar,
 y paquetes por encima en `Paquetes:` o `Home:`, con cada transacción en una instantánea. Un gestor, `Paq`, con una
 orden que lo pone todo al día, como `pacman -Syu`. Tres mundos: nativos y Amiga con `Paq` (los Amiga con su
-`Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es la tienda y `Paq` el motor; el
+`Installer` dentro de la caja), Linux con el gestor de su distribución. Hangar es el catálogo y `Paq` el motor; el
 cliente de Hangar para el Amiga funcionaría en la caja desde el primer día. Hangar solo se leyó, no se tocó.
 
 ### 2026-11-03 — S9 (gráficos)

@@ -71,7 +71,7 @@ escritorio, como ChromeOS y WSL2; y la capa de llamadas de Linux solo más adela
 ## Paquetes (S8)
 
 `SYS:` como imagen firmada que entra al reiniciar, y paquetes por encima con transacciones en instantáneas. Una orden,
-`Paq`, lo pone todo al día. Hangar es la tienda encima de `Paq`.
+`Paq`, lo pone todo al día. Hangar es el catálogo encima de `Paq`.
 
 ## Gráficos y escritorio (S9, S10)
 
