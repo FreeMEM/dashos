@@ -107,6 +107,17 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   la caja vaya antes, en el mismo estilo de un tramo tras otro.
 - Dos vueltas de las tres permitidas, ninguna entera; se paró ahí.
 
+### Con revision unida (f14cc6b), tres vueltas más: ninguna entera
+
+- Unida `revision` (47e458d). El centro no puede esperar a que la caja Amiga acabe sus ventanas: `guardian` deja de
+  esperar al centro ("y se cerró: no") y bloquea la sesión, y el tramo del centro se queda a medias. En su lugar, si una
+  ventana de la caja le quita el teclado, un clic en un sitio vacío del centro se lo devuelve; y a "Acerca de" se llega
+  con Fin.
+- Aun así, en la tercera vuelta `guardian` bloqueó la sesión justo después de "Apariencia: oscuro": el tramo del centro
+  no le cabe en el tiempo que `guardian` lo espera (faltan los colores, los fondos, ampliar y Acerca de). Falta medir
+  cuánto lo espera `guardian` y qué alarga ahora ese tramo (las preguntas primero, los clics de refoco, las ventanas de
+  la caja), o que `guardian` espere a que el centro diga "cerrado".
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
