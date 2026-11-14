@@ -1,30 +1,9 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="512" height="512" viewBox="0 0 512 512">
 <defs>
- <linearGradient id="verde" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#3be39a"/><stop offset="1" stop-color="#16805a"/></linearGradient>
- <linearGradient id="oro" x1="0" y1="0" x2="1" y2="0"><stop offset="0" stop-color="#f2c55c"/><stop offset="1" stop-color="#d79a1e"/></linearGradient>
- <pattern id="rejilla" width="32" height="32" patternUnits="userSpaceOnUse"><path d="M32 0H0V32" fill="none" stroke="#1d3a2d" stroke-width="1"/></pattern>
+ <clipPath id="arriba"><rect x="0" y="0" width="512" height="352"/></clipPath>
+ <mask id="rayas"><rect width="512" height="512" fill="white"/><rect x="0" y="232" width="512" height="18" fill="black"/><rect x="0" y="274" width="512" height="18" fill="black"/><rect x="0" y="316" width="512" height="18" fill="black"/></mask>
 </defs>
 <rect width="512" height="512" rx="104" fill="#0b1913"/>
-<rect x="24" y="24" width="464" height="464" rx="84" fill="url(#rejilla)" opacity=".55"/>
-<g fill="none" stroke="#2fd08a" stroke-width="7" stroke-linecap="round">
- <path d="M64 120V64H120"/><path d="M392 64H448V120"/><path d="M448 392V448H392"/><path d="M120 448H64V392"/>
-</g>
-<g stroke="#2fd08a" stroke-width="4" fill="#0b1913">
- <path d="M176 149H140V120" fill="none"/><circle cx="140" cy="116" r="6"/>
- <path d="M336 183H372V212" fill="none"/><circle cx="372" cy="216" r="6"/>
- <path d="M176 217H150V300" fill="none"/><circle cx="150" cy="304" r="6"/>
- <path d="M336 149H362V128" fill="none"/><circle cx="362" cy="124" r="6"/>
-</g>
-<rect x="196" y="100" width="120" height="24" rx="5" fill="url(#oro)"/>
-<g fill="url(#verde)">
- <rect x="176" y="136" width="160" height="26" rx="5"/>
- <rect x="176" y="170" width="160" height="26" rx="5"/>
- <rect x="176" y="204" width="160" height="26" rx="5"/>
- <rect x="226" y="238" width="60" height="124"/>
- <path d="M222 362H290L332 410H180Z"/>
-</g>
-<g stroke="#0b1913" stroke-width="5" fill="#0b1913" stroke-linecap="round">
- <path d="M244 250V300" fill="none"/><circle cx="244" cy="306" r="5" stroke="none"/>
- <path d="M268 262V336" fill="none"/><circle cx="268" cy="342" r="5" stroke="none"/>
-</g>
+<g clip-path="url(#arriba)" mask="url(#rayas)"><circle cx="256" cy="352" r="168" fill="#1f9a64"/></g>
+<rect x="80" y="372" width="352" height="28" rx="14" fill="#e2a72e"/>
 </svg>

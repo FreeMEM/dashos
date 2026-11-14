@@ -378,8 +378,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
 ## Decisiones del usuario del 2026-11-14
 
 - **DashOS pasa a llamarse UsirOS** (Usir es el nombre egipcio de Osiris: lo despedazaron, Isis reunió sus pedazos y
-  volvió a la vida, como el Amiga), por problemas con las marcas. Antes se pensó en AlborOS. Logo: el pilar djed
-  (columna de Osiris), dibujo propio. El cambio en el repositorio, el código y la
+  volvió a la vida, como el Amiga), por problemas con las marcas. Antes se pensó en AlborOS. Suena casi a "user OS":
+  un sistema para quien lo usa, sencillo como AmigaOS. Logo: el sol naciente (`docs/marca/`). El cambio en el repositorio, el código y la
   web está pendiente; el nombre se comprueba antes en las bases de marcas (OEPM, EUIPO y USPTO, clase 9).
 
 - **x86-64 también es plataforma objetivo** ("vamos también a por x86"). ARM vale a corto plazo, pero tiene dos
