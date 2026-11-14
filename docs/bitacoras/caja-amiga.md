@@ -1710,3 +1710,20 @@ Decisión del usuario: la caja pide la memoria según lo que necesite el program
   soltar: bien"). "no abre Sistema/DeCarla: -12" es una línea esperada (lo ajeno del explorador).
 - Con el margen nuevo, en `virt` de 2 GB la caja tiene 40 MB de cupo (8 para su 68k) y `espia` se lanza; glotona llega
   a 15 MB. `make arranque-virt` dos vueltas seguidas: todo BIEN.
+
+## 2026-11-14: MUI que pinte (rama `caja-amiga-mui`, desde `revision` b8805be) — a medias
+
+- **Memoria para probar Tachyon**: `MEMORIA=3G make arranque-virt` (la variable de `tools/prueba_uefi.sh` ya existía;
+  `virt` va con `highmem=off`, así que 4 GB no caben). Con 3 GB, la regla de la cuarta parte da a la caja 288 MB de
+  cupo (256 para su 68k), y Tachyon carga.
+- **Hecho**: una ventana de refresco simple nace por pintar (su capa con `LAYERREFRESH` e `IDCMP_REFRESHWINDOW` al
+  abrirla o cuando `ModifyIDCMP` lo pide luego: MUI abre sin IDCMP y pone su puerto después); `GetDisplayInfoData`
+  (`DTAG_DISP`, `DIMS`, `MNTR`, `NAME`) y `WeighTAMatch`. Con sus pruebas en `intuition/tests/dibujo.rs`.
+- **Lo que se ve** (una traza temporal, ya quitada, de las llamadas de graphics, intuition y layers de cada tarea):
+  Class1 recibe el `IDCMP_REFRESHWINDOW` y hace `BeginRefresh`/`EndRefresh` sin dibujar nada en medio; no llama a
+  `Move`, `Draw`, `RectFill`, ni a las regiones, ni a los ganchos de layers (solo `LockLayerInfo`/`UnlockLayerInfo` y
+  `MapRawKey`). MUI decide no pintar antes de llegar a graphics: no es el recorte ni el gancho de relleno. Lo siguiente
+  es averiguar qué mira MUI para dar sus objetos por visibles (la `Layer` de la ventana, su `DamageList` vacía, la
+  `Screen` y su `ViewPort`/`ColorMap`, o el proceso que no puede crear con `CreateNewProc`), con el oráculo de FS-UAE.
+- **Sin hacer**: las regiones de graphics (`NewRegion`, `OrRectRegion`...: no están; Tachyon llama a `NewRegion`),
+  los ganchos de layers, cybergraphics, los objetos con nombre de utility, icon y workbench.
