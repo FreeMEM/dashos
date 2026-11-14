@@ -124,6 +124,8 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+ajustes_hecho_en = 0
+tramo_ajustes_hecho = False
 ajustes_reintentos = 0
 ajustes_visto = 0
 wb = 0
@@ -1136,7 +1138,7 @@ while time.time() - inicio < total:
         # ventana con el camino escrito (Ctrl+L), moverla por su barra y arrastrar un fichero a la primera. Los sitios
         # los dicen el compositor (dónde salió cada ventana) y el explorador (dónde quedó cada cosa dentro). Con
         # CAPTURA_EXPLORADOR=prefijo: prefijo.ppm (Fondos con miniaturas), .lista, .info, .copia y .dos.
-        if ex == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto and "[explorador] listo" in texto:
+        if ex == 0 and barra == 11 and tramo_ajustes_hecho and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto and "[explorador] listo" in texto:
             ex = 1
             reintento = time.time() + 20
         if 1 <= ex < 90:
@@ -1839,8 +1841,19 @@ while time.time() - inicio < total:
         pregunta_ahora = (texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ")
                           or len(re.findall(r"acción de administrador \w+: se pregunta", texto)) > texto.count(": contesta como "))
         sin_pregunta = not pregunta_ahora or (ajustes_visto and time.time() - ajustes_visto > 25)
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
+        # Un tramo tras otro (trasfondo): la ventana Amiga, Ajustes (maximizar, devolver y su desplegable), el explorador y
+        # el monitor. Cada uno empieza cuando la salida serie dice que acabó el anterior. La ventana Amiga va primero: se
+        # cierra sola a los 40 s si nadie la cierra.
+        amiga_hecho = ("[caja-amiga] ventana: IDCMP_CLOSEWINDOW recibido" in texto or "nadie la cerro en 40 s" in texto
+                       or ("[caja-amiga] ventana Amiga en pantalla" not in texto and ajustes_visto and time.time() - ajustes_visto > 90))
+        ajustes_hecho = "[ajustes] vuelve a " in texto or ajustes_reintentos >= 3
+        desplegable_hecho = "[ajustes] el desplegable dice" in texto or menu_intentos >= 3
+        # (Si Ajustes se quedara a medias, a los 3 min el explorador sigue igual: las líneas que falten lo dirán.)
+        if (desplegable_hecho and menu != 1) or (ajustes_visto and time.time() - ajustes_visto > 180):
+            tramo_ajustes_hecho = True
+        if not ajustes and amiga_hecho and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
             ajustes = True
+            ajustes_hecho_en = time.time()
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
             # título, donde no hay nada que pulsar (el foco sigue en su campo; a (196, 196) está su Cancelar). Después, el
@@ -1878,11 +1891,12 @@ while time.time() - inicio < total:
         # Si Super+Arriba no llegó a Ajustes la primera vez (una pregunta de `guardian` se llevó la tecla), otra vez más tarde:
         # sin preguntas, con la ventana Amiga ya cerrada (el clic sube Ajustes y su barra la taparía) y con el desplegable
         # ya probado (el clic cerraría su menú). Hasta 3 veces, esperando 4 s a que diga que se maximizó.
-        if (ajustes and ajustes_reintentos < 3 and "[ajustes] el compositor pide " not in texto and menu == 2
-                and "[ajustes] el desplegable dice" in texto and amiga != 1 and sin_pregunta and not bloqueado_ahora
+        if (ajustes and ajustes_reintentos < 3 and "[ajustes] el compositor pide " not in texto and menu == 0
+                and time.time() - ajustes_hecho_en > 6 and sin_pregunta and not bloqueado_ahora
                 and not selector_espera and sin_centro and libre_caja):
             import re
             ajustes_reintentos += 1
+            ajustes_hecho_en = time.time()
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             vx, vy = (int(v.group(1)), int(v.group(2))) if v else (104, 104)
             ir_a(vx + 296, vy + 26)
@@ -1898,7 +1912,7 @@ while time.time() - inicio < total:
             ir_a(790, 590)
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
-        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
+        if ajustes and ajustes_hecho and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
             import re
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
