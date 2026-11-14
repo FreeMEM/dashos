@@ -1930,3 +1930,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   Descartado (05:50): con el panel del fondo apagado (`DE_SERIE.mostrar = false`) falla igual; la capa de la barra
   no cambia de tamaño. Queda: el orden de arranque (la red antes del fondo), la prueba hostil del monitor (cien
   peticiones a `sesiones`) o el ritmo de la barra midiendo. Siguiente: probar con la red en su sitio de antes.
+- **Trasfondo unido a revision** (fdeab11): panel del monitor en el fondo, CPU y memoria en la barra con su lista,
+  "Monitor del sistema" y "Panel del escritorio" en Ajustes; llamada 52 `cpu_tiempo`, orden `MONITOR` de `sesiones`;
+  lo de otros usuarios y el sistema, sumado; los programas del escritorio no se cierran desde el monitor. Lo que
+  rompía arranque-virt era la prueba hostil del monitor al principio de `hostil` (cargaba a `sesiones` cuando contesta
+  los permisos de las demás pruebas): ahora va la última. Además, la comprobación de la captura no mira lo que cae sobre
+  el panel, y `guardian` (prueba) espera al centro por evento con tope de 60 s. Tanda completa sobre 7091afd: todo bien
+  salvo av y virt2, arreglados en fdeab11 y repetidos (bien). La prueba con clics de la barra y del monitor, pendiente
+  (objetivo aparte).
