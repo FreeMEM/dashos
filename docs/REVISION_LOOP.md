@@ -1938,3 +1938,4 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   el panel, y `guardian` (prueba) espera al centro por evento con tope de 60 s. Tanda completa sobre 7091afd: todo bien
   salvo av y virt2, arreglados en fdeab11 y repetidos (bien). La prueba con clics de la barra y del monitor, pendiente
   (objetivo aparte).
+- El usuario aprueba cambiar los cupos de los grupos de reserva a tope, como los cgroups de Linux (2026-11-14): cobrar al usar, topes que pueden sumar más que la máquina, presión de memoria (avisar a las cajas, luego cerrar con aviso). Agente en `.worktrees/cupos-topes`. Aclarado al usuario: ninguna caja reserva un núcleo (un núcleo a la vez es un techo de la caja Amiga, no una reserva).
