@@ -124,6 +124,18 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+pregunta_contestada = (0, "", 0)
+# Con GUION_ERRORES: cada 3 s, en qué línea del guion está el bucle (para ver qué rama espera con "continue").
+if os.environ.get("GUION_TRAZA"):
+    import threading, traceback
+    _principal = threading.main_thread().ident
+    def _trazar():
+        while True:
+            time.sleep(3)
+            f = sys._current_frames().get(_principal)
+            if f is not None:
+                print(f"{time.time() - inicio:.0f} s: línea {f.f_lineno}", file=sys.stderr, flush=True)
+    threading.Thread(target=_trazar, daemon=True).start()
 ajustes_hecho_en = 0
 tramo_ajustes_hecho = False
 ajustes_reintentos = 0
@@ -158,6 +170,60 @@ while time.time() - inicio < total:
             estado_dicho = time.time()
             with open(os.environ["ESTADO_GUION"], "a") as f:
                 f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso} caja {amiga}/{dash_amiga}/{gt_amiga}/{gt_dash}/{req_dash}\n")
+        # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
+        # segundo no cuenta) y luego que no.
+        vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
+        if len(vistas) > preguntas:
+            linea = vistas[preguntas]
+            preguntas += 1
+            # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
+            if preguntas == 1 and captura_pregunta:
+                time.sleep(0.3)
+                mandar("screendump " + captura_pregunta)
+            # S28: la guardia de ficheros de la caja Amiga. A `actualiza.exe` (un programa honrado que actualiza
+            # otro), "E" (solo esta vez) la primera vez y "S" (siempre) la segunda; a los virus de laboratorio, "N". Con
+            # CAPTURA_PREGUNTA_CAJA=fichero.ppm, la primera de actualiza.
+            caja_actualiza = " quiere cambiar " in linea and "actualiza.exe" in linea
+            if caja_actualiza:
+                globals()["actualiza_vistas"] = globals().get("actualiza_vistas", 0) + 1
+                if actualiza_vistas == 1 and os.environ.get("CAPTURA_PREGUNTA_CAJA"):
+                    time.sleep(0.3)
+                    mandar("screendump " + os.environ["CAPTURA_PREGUNTA_CAJA"])
+            # Las de la caja, sin la "s" a destiempo: con el guion lento (los movimientos del ratón de otros pasos tardan),
+            # llegaba pasado el primer segundo y valía como "siempre". Y la tecla, solo si la pregunta sigue en pantalla:
+            # si no, se la llevaría la ventana de debajo (Ajustes, que espera su texto).
+            def sigue_preguntando():
+                t = open(serie, errors="replace").read()
+                return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
+            if "¿pide " in linea:
+                time.sleep(1.3)
+                mandar("sendkey shift-s")
+            elif " quiere cambiar " in linea:
+                time.sleep(1.3)
+                if sigue_preguntando():
+                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
+            else:
+                mandar("sendkey s")
+                time.sleep(1.3)
+                mandar("sendkey n")
+            pregunta_contestada = (time.time(), linea, 0)
+            time.sleep(0.5)
+            continue
+        # Trasfondo (prioridad para las preguntas): con una pregunta de `guardian` en pantalla sin contestar, ninguna otra
+        # tecla ni clic de ningún tramo (se los llevaría su ventana). Si a los 4 s sigue ahí (la tecla no llegó), se
+        # contesta otra vez, hasta 3; después se deja seguir lo demás.
+        if texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ") and pregunta_contestada[2] < 3:
+            cuando, linea_p, veces = pregunta_contestada
+            if time.time() - cuando > 4:
+                pregunta_contestada = (time.time(), linea_p, veces + 1)
+                if "¿pide " in linea_p:
+                    mandar("sendkey shift-s")
+                elif " quiere cambiar " in linea_p:
+                    mandar("sendkey " + ("e" if "actualiza.exe" in linea_p and globals().get("actualiza_vistas", 0) == 1 else "shift-s" if "actualiza.exe" in linea_p else "n"))
+                else:
+                    mandar("sendkey n")
+            time.sleep(0.25)
+            continue
         # Con REINICIO: cuando ya salió todo lo esperado (la señal), Super+A, el botón de apagado del panel y Reiniciar.
         # Con otras sesiones abiertas (Carla sigue detrás de Ana), `guardian` lo pregunta: S, pasado su segundo. Lo demás
         # del guion ya no se hace (sus clics caerían en el panel).
@@ -415,44 +481,6 @@ while time.time() - inicio < total:
             captura_u6_hecha = 2
             time.sleep(0.3)
             mandar("screendump " + captura_u6 + ".carla.ppm")
-        # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
-        # segundo no cuenta) y luego que no.
-        vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
-        if len(vistas) > preguntas:
-            linea = vistas[preguntas]
-            preguntas += 1
-            # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
-            if preguntas == 1 and captura_pregunta:
-                time.sleep(0.3)
-                mandar("screendump " + captura_pregunta)
-            # S28: la guardia de ficheros de la caja Amiga. A `actualiza.exe` (un programa honrado que actualiza
-            # otro), "E" (solo esta vez) la primera vez y "S" (siempre) la segunda; a los virus de laboratorio, "N". Con
-            # CAPTURA_PREGUNTA_CAJA=fichero.ppm, la primera de actualiza.
-            caja_actualiza = " quiere cambiar " in linea and "actualiza.exe" in linea
-            if caja_actualiza:
-                globals()["actualiza_vistas"] = globals().get("actualiza_vistas", 0) + 1
-                if actualiza_vistas == 1 and os.environ.get("CAPTURA_PREGUNTA_CAJA"):
-                    time.sleep(0.3)
-                    mandar("screendump " + os.environ["CAPTURA_PREGUNTA_CAJA"])
-            # Las de la caja, sin la "s" a destiempo: con el guion lento (los movimientos del ratón de otros pasos tardan),
-            # llegaba pasado el primer segundo y valía como "siempre". Y la tecla, solo si la pregunta sigue en pantalla:
-            # si no, se la llevaría la ventana de debajo (Ajustes, que espera su texto).
-            def sigue_preguntando():
-                t = open(serie, errors="replace").read()
-                return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
-            if "¿pide " in linea:
-                time.sleep(1.3)
-                mandar("sendkey shift-s")
-            elif " quiere cambiar " in linea:
-                time.sleep(1.3)
-                if sigue_preguntando():
-                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
-            else:
-                mandar("sendkey s")
-                time.sleep(1.3)
-                mandar("sendkey n")
-            time.sleep(0.5)
-            continue
         # Mientras el selector espera teclas, el centro no teclea: si los dos tecleaban a la vez, las teclas se las llevaba
         # la ventana que tuviera el teclado y el selector caducaba al minuto. El selector va primero (caduca); el centro
         # sigue después.
