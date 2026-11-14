@@ -843,6 +843,105 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(largo.clamp(0, 0x7FFF) as u32)
     }
 
+    /// `GetDisplayInfoData` (`graphics/displayinfo.h`): lo que se sabe del modo de la pantalla de la caja (la del
+    /// Workbench, del tamaño del escritorio, 8 bits por color): `DTAG_DISP`, `DTAG_DIMS`, `DTAG_MNTR` y `DTAG_NAME`, cada
+    /// uno con su `QueryHeader`. Copia como mucho `largo` bytes en `buf` y devuelve cuántos; otra etiqueta, 0.
+    pub fn get_display_info_data<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        buf: u32,
+        largo: u32,
+        tag: u32,
+        id: u32,
+    ) -> Result<u32, Fallo> {
+        let (an, al) = self.comp.tamano_escritorio();
+        let (an, al) = (an.min(0x7FFF) as u16, al.min(0x7FFF) as u16);
+        let mut v: alloc::vec::Vec<u8> = match tag {
+            0x8000_0000 => alloc::vec![0; 56],
+            0x8000_1000 => alloc::vec![0; 88],
+            0x8000_2000 => alloc::vec![0; 96],
+            0x8000_3000 => alloc::vec![0; 56],
+            _ => return Ok(0),
+        };
+        let pon16 = |v: &mut [u8], o: usize, x: u16| v[o..o + 2].copy_from_slice(&x.to_be_bytes());
+        let pon32 = |v: &mut [u8], o: usize, x: u32| v[o..o + 4].copy_from_slice(&x.to_be_bytes());
+        let n = v.len();
+        pon32(&mut v, 0, tag);
+        pon32(&mut v, 4, id);
+        pon32(&mut v, 8, 3); // TAG_SKIP
+        pon32(&mut v, 12, (n as u32 - 16) / 8);
+        let rect = |v: &mut [u8], o: usize| {
+            pon16(v, o + 4, an - 1);
+            pon16(v, o + 6, al - 1);
+        };
+        match tag {
+            0x8000_0000 => {
+                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200); // DIPF_IS_WB | DIPF_IS_DRAGGABLE
+                pon16(&mut v, 22, 22);
+                pon16(&mut v, 24, 22);
+                pon16(&mut v, 26, 35);
+                pon16(&mut v, 28, 8);
+                pon16(&mut v, 30, 4096);
+                pon16(&mut v, 32, 22);
+                pon16(&mut v, 34, 22);
+                v[40] = 8;
+                v[41] = 8;
+                v[42] = 8;
+            }
+            0x8000_1000 => {
+                pon16(&mut v, 16, 8);
+                pon16(&mut v, 18, 16);
+                pon16(&mut v, 20, 16);
+                pon16(&mut v, 22, 16368);
+                pon16(&mut v, 24, 16384);
+                for o in [26, 34, 42, 50, 58] {
+                    rect(&mut v, o);
+                }
+            }
+            0x8000_2000 => {
+                pon16(&mut v, 24, 22);
+                pon16(&mut v, 26, 22);
+                pon16(&mut v, 36, al);
+                pon16(&mut v, 38, an / 2);
+                pon16(&mut v, 76, 1);
+                pon16(&mut v, 78, 1);
+                pon32(&mut v, 84, id);
+            }
+            _ => {
+                let nombre = b"DashOS";
+                v[16..16 + nombre.len()].copy_from_slice(nombre);
+            }
+        }
+        let k = (largo as usize).min(n);
+        if k == 0 {
+            return Ok(0);
+        }
+        ex.tramo(buf, k as u32)?;
+        for (i, b) in v[..k].iter().enumerate() {
+            ex.e8(buf + i as u32, *b)?;
+        }
+        Ok(k as u32)
+    }
+
+    /// `WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)`: de 0 (nada que ver) a 32767 (`MAXFONTMATCHWEIGHT`, la
+    /// misma): el nombre tiene que ser el mismo (sin mirar mayúsculas); cada punto de alto de diferencia, y cada
+    /// estilo distinto, restan.
+    pub fn weigh_ta_match<M: Memoria>(&mut self, ex: &mut Exec<M>, pedida: u32, otra: u32) -> Result<u32, Fallo> {
+        use crate::estructuras::textattr as ta;
+        ex.tramo(pedida, 8)?;
+        ex.tramo(otra, 8)?;
+        let (n1, n2) = (ex.l32(pedida + ta::TA_NAME)?, ex.l32(otra + ta::TA_NAME)?);
+        if n1 != 0 && n2 != 0 {
+            let (a, b) = (ex.cadena(n1)?, ex.cadena(n2)?);
+            if !a.eq_ignore_ascii_case(&b) {
+                return Ok(0);
+            }
+        }
+        let dy = (ex.l16(pedida + ta::TA_YSIZE)? as i32 - ex.l16(otra + ta::TA_YSIZE)? as i32).unsigned_abs();
+        let estilos = (ex.l8(pedida + 6)? ^ ex.l8(otra + 6)?).count_ones();
+        Ok(32767u32.saturating_sub(dy * 1024 + estilos * 256))
+    }
+
     /// `TextExtent(rp, string, count, textExtent)`: el ancho (como `TextLength`), el alto de la fuente y el rectángulo
     /// que ocupa respecto a la posición actual (la línea base): de 0 a ancho - 1 y de -base a alto - base - 1.
     pub fn text_extent<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, s: u32, n: u32, te: u32) -> Result<(), Fallo> {

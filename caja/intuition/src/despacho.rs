@@ -30,7 +30,8 @@ filas!(G;
     SETMAXPEN = "SetMaxPen", ALLOCBITMAP = "AllocBitMap", FREEBITMAP = "FreeBitMap", GETBITMAPATTR = "GetBitMapAttr",
     RELEASEPEN = "ReleasePen", OBTAINPEN = "ObtainPen", OBTAINBESTPENA = "ObtainBestPenA", FINDCOLOR = "FindColor",
     WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos", GETVPMODEID = "GetVPModeID",
-    TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA",
+    TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA", GETDISPLAYINFODATA = "GetDisplayInfoData",
+    WEIGHTAMATCH = "WeighTAMatch",
 );
 
 filas!(I;
@@ -132,6 +133,10 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             TEXTLENGTH => self.text_length(ex, a[1], a[0], d[0])?,
+            // GetDisplayInfoData(handle, buf, size, tagID, displayID)(a0/a1/d0/d1/d2): bytes copiados, o 0.
+            GETDISPLAYINFODATA => self.get_display_info_data(ex, a[1], d[0], d[1], d[2])?,
+            // WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)(a0/a1/a2): cuánto se parecen dos fuentes.
+            WEIGHTAMATCH => self.weigh_ta_match(ex, a[0], a[1])?,
             // TextExtent(rp, string, count, textExtent)(a1/a0/d0/a2)
             TEXTEXTENT => {
                 self.text_extent(ex, a[1], a[0], d[0], a[2])?;

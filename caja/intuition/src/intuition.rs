@@ -635,7 +635,27 @@ impl<C: Compositor> CajaGrafica<C> {
             self.dibujar_lista(ex, w, p.gadgets, -1, false);
         }
         self.presentar_ventana(w);
+        // Una ventana de refresco simple nace con todo por pintar (como en el Amiga, donde su capa nueva no guarda nada):
+        // su capa queda marcada (`LAYERREFRESH`) y, si lo pide, recibe `IDCMP_REFRESHWINDOW` (MUI pinta al recibirlo).
+        self.refresco_inicial(ex, w)?;
         Ok(w)
+    }
+
+    /// Si `w` es de refresco simple y le queda algo por pintar (su capa con `LAYERREFRESH`), `IDCMP_REFRESHWINDOW`:
+    /// al abrirla y cuando el programa lo pide después con `ModifyIDCMP` (MUI abre sin IDCMP y pone su puerto luego).
+    fn refresco_inicial<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
+        let fl = ex.l32(w + win::FLAGS)?;
+        if fl & wflg::SIMPLE_REFRESH == 0 || fl & wflg::NOCAREREFRESH != 0 {
+            return Ok(());
+        }
+        let capa = self.ventana(w)?.capa;
+        let f = ex.l16(capa + layer::FLAGS)?;
+        ex.e16(capa + layer::FLAGS, f | layer::LAYERREFRESH)?;
+        let ya = self.ventana(w)?.pendientes.values().any(|&c| c == idcmp::REFRESHWINDOW);
+        if !ya {
+            self.enviar(ex, w, idcmp::REFRESHWINDOW, 0, 0)?;
+        }
+        Ok(())
     }
 
     /// Escribe el tamaño de una ventana en sus estructuras (`Window`, `GZZWidth`, `BitMap`).
@@ -946,7 +966,14 @@ impl<C: Compositor> CajaGrafica<C> {
             // El programa ha puesto su propio puerto (compartido): ese no lo borra intuition.
             v.puerto_creado = 0;
         }
+        let antes = ex.l32(w + win::IDCMPFLAGS)?;
         ex.e32(w + win::IDCMPFLAGS, flags)?;
+        if flags & idcmp::REFRESHWINDOW != 0 && antes & idcmp::REFRESHWINDOW == 0 {
+            let capa = self.ventana(w)?.capa;
+            if ex.l16(capa + layer::FLAGS)? & layer::LAYERREFRESH != 0 {
+                self.refresco_inicial(ex, w)?;
+            }
+        }
         Ok(1)
     }
 
