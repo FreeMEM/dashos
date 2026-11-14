@@ -101,7 +101,8 @@ fn principal() -> u64 {
             k = 2;
             nuestro = a;
         }
-        let g = grupo_crear(64 << 20);
+        // Un tope de 64 MB; `grupos`, sin tope de verdad (1 TB): llena la memoria de la máquina a propósito (S3).
+        let g = grupo_crear(if nombre == "grupos" { 1 << 40 } else { 64 << 20 });
         let p = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if p <= 0 {
             return 100 + i as u64;

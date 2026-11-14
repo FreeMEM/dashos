@@ -199,13 +199,14 @@ extern "C" fn repartidor(_: usize) {
             llegadas[i] = p.swap(0, Ordering::SeqCst) | REENTREGAR[i].swap(0, Ordering::SeqCst);
         }
         let vencidos = crate::temporizadores::tomar_pendiente();
-        if llegadas.iter().all(|&x| x == 0) && !vencidos {
+        let presion = crate::presion::hay_pendiente();
+        if llegadas.iter().all(|&x| x == 0) && !vencidos && !presion {
             // Se apunta con el cerrojo y lo suelta ya bloqueado: una interrupción en otro núcleo no se pierde. Los
             // muertos de otros núcleos se miran con el cerrojo tomado: quien los apunta avisa tomándolo (U3d).
             let mut cola = REPARTIDOR.tomar();
             // Otra vez con el cerrojo (K12): `terminar()` en otro núcleo puede marcar una y despertar entre la mirada
             // de arriba y aquí; sin esto, esperaría al siguiente despertar.
-            if PENDIENTES.iter().any(|p| p.load(Ordering::SeqCst) != 0) {
+            if PENDIENTES.iter().any(|p| p.load(Ordering::SeqCst) != 0) || crate::presion::hay_pendiente() {
                 drop(cola);
                 crate::cerrojo::restaurar_irq(estado);
                 continue;
@@ -224,6 +225,9 @@ extern "C" fn repartidor(_: usize) {
         crate::cerrojo::restaurar_irq(estado);
         if vencidos {
             crate::temporizadores::repartir();
+        }
+        if presion {
+            crate::presion::repartir();
         }
         for (w, &palabra) in llegadas.iter().enumerate() {
             let mut p = palabra;

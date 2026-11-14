@@ -1,16 +1,19 @@
-//! Cupos por grupo de procesos (C42, S16 decisión F, al estilo de los jobs de Fuchsia).
+//! Cupos por grupo de procesos (C42, S16 decisión F, al estilo de los jobs de Fuchsia), como topes (S3, cupos como
+//! topes: la idea de `memory.max` de los cgroups de Linux).
 //!
-//! Cada proceso pertenece a un grupo con un presupuesto, en bytes, de memoria del kernel y de memoria para procesos.
-//! Todo lo que crea se cobra ahí con un `Cargo`, que devuelve lo cobrado al soltarse:
+//! Cada proceso pertenece a un grupo con un tope, en bytes, de memoria del kernel y de memoria para procesos. Todo lo que
+//! crea se cobra con un `Cargo`, que devuelve lo cobrado al soltarse:
 //! - un objeto de memoria, por sus páginas;
 //! - un espacio, por sus tablas y sus páginas propias (imagen y pila);
 //! - un proceso, un coste fijo (`COSTE_PROCESO`): hilo, pila del kernel y tabla de llaves;
 //! - un canal, un coste fijo (`COSTE_CANAL`) que cubre sus dos colas llenas.
 //!
-//! Al agotarse, la llamada devuelve `E_MEMORIA`. Un grupo nuevo saca su presupuesto del grupo de quien lo crea y lo
-//! devuelve cuando ya no queda nada cobrado a él. Matar un grupo mata a todos sus procesos y a los de sus subgrupos.
-//! El grupo raíz, el de lo que lanza el kernel, no tiene límite; lo que protege al kernel ahí es la reserva de
-//! `memoria.rs`.
+//! Un cobro suma a su grupo y a todos los de encima, hasta el raíz; si alguno pasaría de su tope, no se hace (y lo
+//! sumado a los de abajo se deshace), y la llamada devuelve `E_MEMORIA`. Crear un grupo no aparta nada para él: solo
+//! cobra al de quien lo crea lo que ocupa el grupo en sí (`COSTE_GRUPO`). Por eso los topes de los hijos pueden sumar
+//! más que el del padre, y más que la RAM: lo que no se pasa nunca es lo usado de verdad. Matar un grupo mata a todos
+//! sus procesos y a los de sus subgrupos. El tope del grupo raíz, el de lo que lanza el kernel, es la memoria libre para
+//! procesos al arrancar; lo que protege al kernel por debajo es la reserva de `memoria.rs`.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Control, MAX_COLA, MAX_DATOS, MAX_LLAVES, MAX_TABLA};
@@ -49,7 +52,7 @@ pub struct Cupo {
     /// Tiempo de CPU de sus procesos y de los de sus subgrupos, vivos y muertos, en cuentas del contador (trasfondo,
     /// llamada 52). Solo sube; da la vuelta a los 2^64 (siglos).
     cpu: AtomicU64,
-    /// Lo que este grupo tiene cobrado a su padre: su presupuesto.
+    /// Lo que este grupo tiene cobrado a su padre (`COSTE_GRUPO`), con el padre: por aquí sube cada cobro.
     _del_padre: Option<Cargo>,
     miembros: Cerrojo<Vec<Weak<Control>>>,
     hijos: Cerrojo<Vec<Weak<Cupo>>>,
@@ -87,8 +90,8 @@ impl Cupo {
         }
     }
 
-    /// El grupo raíz. Su límite es la memoria libre para procesos al crearlo, menos la reserva del kernel: así la
-    /// suma de todos los presupuestos no pasa de la memoria que hay (auditoría de la fase 3, M4).
+    /// El grupo raíz. Su tope es la memoria libre para procesos al crearlo, menos la reserva del kernel: como todo cobro
+    /// sube hasta aquí, lo usado por todos no pasa de la memoria que hay (auditoría de la fase 3, M4).
     ///
     /// Los bytes se leen antes de crear el grupo: con el repartidor de páginas tomado, `Arc::new` se quedaba esperándolo
     /// para sí mismo si el montón necesitaba una página nueva (el diagnóstico de la Pi 5 lo llamaba el primero).
@@ -134,13 +137,13 @@ impl Cupo {
         total
     }
 
-    /// Un subgrupo con `limite` bytes, sacados de este (más `COSTE_GRUPO`). `None` si no caben, si este grupo está
-    /// muerto o si ya hay `MAX_PROFUNDIDAD` niveles.
+    /// Un subgrupo con un tope de `limite` bytes. No aparta nada: solo se cobra aquí lo que ocupa el grupo en sí
+    /// (`COSTE_GRUPO`). `None` si eso no cabe, si este grupo está muerto o si ya hay `MAX_PROFUNDIDAD` niveles.
     pub fn hijo(self: &Arc<Self>, limite: u64) -> Option<Arc<Cupo>> {
         if self.profundidad + 1 >= MAX_PROFUNDIDAD {
             return None;
         }
-        let cargo = self.cobrar(limite.checked_add(COSTE_GRUPO)?)?;
+        let cargo = self.cobrar(COSTE_GRUPO)?;
         let h = Arc::new(Cupo::con(limite, self.profundidad + 1, Some(cargo)));
         let mut hijos = self.hijos.tomar();
         if self.muerto.load(Ordering::Acquire) {
@@ -152,28 +155,63 @@ impl Cupo {
         Some(h)
     }
 
-    /// Cobra `n` bytes. `None` si no caben en el presupuesto.
+    /// El grupo de encima, si lo hay.
+    fn padre(&self) -> Option<&Cupo> {
+        self._del_padre.as_ref().map(|c| &*c.cupo)
+    }
+
+    /// Cobra `n` bytes. `None` si no caben en el tope de este grupo o de alguno de encima.
     pub fn cobrar(self: &Arc<Self>, n: u64) -> Option<Cargo> {
         self.cobrar_suelto(n).then(|| Cargo { cupo: self.clone(), n })
     }
 
-    /// Cobra `n` bytes sin cargo: quien cobra lleva la cuenta y los devuelve con `devolver`.
-    pub fn cobrar_suelto(&self, n: u64) -> bool {
+    /// Suma `n` bytes a lo usado por este grupo solo, si caben en su tope.
+    fn sumar(&self, n: u64) -> bool {
         let mut usado = self.usado.load(Ordering::Relaxed);
         loop {
             let Some(nuevo) = usado.checked_add(n).filter(|&x| x <= self.limite) else { return false };
-            match self.usado.compare_exchange_weak(usado, nuevo, Ordering::AcqRel, Ordering::Relaxed) {
+            match self.usado.compare_exchange_weak(usado, nuevo, Ordering::Relaxed, Ordering::Relaxed) {
                 Ok(_) => return true,
                 Err(visto) => usado = visto,
             }
         }
     }
 
-    pub fn devolver(&self, n: u64) {
-        self.usado.fetch_sub(n, Ordering::AcqRel);
+    /// Cobra `n` bytes sin cargo: quien cobra lleva la cuenta y los devuelve con `devolver`. Suma a este grupo y a los
+    /// de encima, uno a uno, con sumas atómicas y sin cerrojos ni memoria (como `sumar_cpu`). Son cuentas y no publican
+    /// nada más, así que van sin orden de memoria (`Relaxed`): la suma de cada grupo sigue siendo atómica. Si alguno pasaría de su
+    /// tope, se resta de los que ya se habían sumado y no se cobra. Mientras tanto, otro cobro puede ver ese grupo con
+    /// `n` bytes de más y fallar: es un rato de nada, y no deja nada mal contado.
+    pub fn cobrar_suelto(&self, n: u64) -> bool {
+        let mut g = self;
+        loop {
+            if !g.sumar(n) {
+                let mut d = self;
+                while !core::ptr::eq(d, g) {
+                    d.usado.fetch_sub(n, Ordering::Relaxed);
+                    d = d.padre().expect("los de abajo del que no cabe tienen padre");
+                }
+                return false;
+            }
+            match g.padre() {
+                Some(p) => g = p,
+                None => return true,
+            }
+        }
     }
 
-    /// (límite, usado), en bytes.
+    /// Devuelve `n` bytes cobrados a este grupo: a él y a todos los de encima.
+    pub fn devolver(&self, n: u64) {
+        let mut g = self;
+        loop {
+            g.usado.fetch_sub(n, Ordering::Relaxed);
+            match g.padre() {
+                Some(p) => g = p,
+                None => return,
+            }
+        }
+    }
+
     /// El grupo de primer nivel al que pertenece (el hijo del raíz por el que se baja hasta este; el raíz, si es el
     /// raíz), como un número que solo se compara. Para repartir el trabajo entre servicios (auditoría de la fase 4,
     /// A3): un servicio y sus subgrupos cuentan como uno.
@@ -188,8 +226,17 @@ impl Cupo {
         }
     }
 
+    /// (tope, usado), en bytes. Lo usado cuenta lo de sus subgrupos.
     pub fn uso(&self) -> (u64, u64) {
         (self.limite, self.usado.load(Ordering::Relaxed))
+    }
+
+    /// Lo usado por el grupo sin sus subgrupos: lo suyo menos lo de cada hijo vivo. Es una foto: con cobros a la vez,
+    /// puede ir un poco por delante o por detrás.
+    pub fn uso_propio(&self) -> u64 {
+        let total = self.usado.load(Ordering::Relaxed);
+        let hijos: u64 = self.hijos.tomar().iter().filter_map(|w| w.upgrade()).map(|h| h.usado.load(Ordering::Relaxed)).sum();
+        total.saturating_sub(hijos)
     }
 
     /// Apunta un proceso como miembro del grupo, para poder matarlo con él.

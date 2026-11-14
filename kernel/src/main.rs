@@ -39,6 +39,7 @@ mod objetos;
 #[cfg(feature = "diagnostico")]
 mod pantalla;
 mod pcie;
+mod presion;
 mod procesos;
 mod registro;
 mod rp1;
