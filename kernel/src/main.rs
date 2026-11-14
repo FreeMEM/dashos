@@ -2,6 +2,9 @@
 //!
 //! `kmain` solo pone el sistema en marcha. Las pruebas del arranque (C2 a C36) están en `pruebas.rs` y solo entran
 //! en la imagen con la opción `pruebas` (`make prueba`); la imagen normal (`make`) no las lleva (C36, S16 fase 2).
+//!
+//! En x86-64 (S21, X1) solo entra un `kmain` mínimo y `base/x86_64/`: lo demás es de ARM y va detrás de
+//! `#[cfg(target_arch = "aarch64")]` hasta que X2 a X4 lo lleven a las dos arquitecturas.
 
 #![no_std]
 #![no_main]
@@ -11,37 +14,60 @@
 // del hardware lo pide a `base` por una interfaz segura. Revisar la seguridad del kernel es revisar `base`.
 #![deny(unsafe_code)]
 
+#[cfg(target_arch = "aarch64")]
 extern crate alloc;
 
+#[cfg(target_arch = "aarch64")]
 #[allow(unsafe_code)]
 mod base;
+#[cfg(target_arch = "aarch64")]
 pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, placa, planificador};
+#[cfg(target_arch = "x86_64")]
+#[allow(unsafe_code)]
+#[path = "base/x86_64/mod.rs"]
+mod base;
 
+#[cfg(target_arch = "aarch64")]
 mod azar;
+#[cfg(target_arch = "aarch64")]
 mod cupo;
+#[cfg(target_arch = "aarch64")]
 mod dtb;
+#[cfg(target_arch = "aarch64")]
 mod elf;
+#[cfg(target_arch = "aarch64")]
 mod gic;
-#[cfg(not(feature = "pruebas"))]
+#[cfg(all(target_arch = "aarch64", not(feature = "pruebas")))]
 mod inicio;
+#[cfg(target_arch = "aarch64")]
 mod interrupciones;
+#[cfg(target_arch = "aarch64")]
 mod its;
+#[cfg(target_arch = "aarch64")]
 mod llamadas;
+#[cfg(target_arch = "aarch64")]
 mod objetos;
+#[cfg(target_arch = "aarch64")]
 mod pcie;
+#[cfg(target_arch = "aarch64")]
 mod procesos;
+#[cfg(target_arch = "aarch64")]
 mod registro;
+#[cfg(target_arch = "aarch64")]
 mod reloj;
+#[cfg(target_arch = "aarch64")]
 mod serie;
+#[cfg(target_arch = "aarch64")]
 mod temporizadores;
 // Las pruebas tocan el hardware a mano; no van en la imagen normal.
-#[cfg(feature = "pruebas")]
+#[cfg(all(target_arch = "aarch64", feature = "pruebas"))]
 #[allow(unsafe_code)]
 mod pruebas;
 
 use core::panic::PanicInfo;
 
 /// Lo llama `base` (arranque.s → `kmain`) en el núcleo 0, con la MMU encendida y en la mitad alta.
+#[cfg(target_arch = "aarch64")]
 pub fn kmain(dtb: usize) -> ! {
     serie::iniciar();
     kprintln!();
@@ -102,8 +128,60 @@ pub fn kmain(dtb: usize) -> ! {
     planificador::ocioso();
 }
 
+#[cfg(target_arch = "aarch64")]
 #[panic_handler]
 fn panico(info: &PanicInfo) -> ! {
     serie::imprimir_directo(format_args!("PÁNICO: {}\n", info));
+    base::cpu::parar()
+}
+
+/// x86-64 (X1): lo llama `base` (arranque.s → `kmain_x86` → `kmain`) con las tablas de páginas del firmware. Dice lo
+/// que dejó el cargador y se para.
+#[cfg(target_arch = "x86_64")]
+pub fn kmain() -> ! {
+    use base::{arranque, serie};
+    use core::fmt::Write;
+    serie::iniciar();
+    let mut s = serie::Serie;
+    let _ = writeln!(s);
+    let _ = writeln!(s, "DashOS {} (x86-64)", env!("CARGO_PKG_VERSION"));
+    let _ = writeln!(s, "Orden de bytes: {}", if 0x1122_3344u32.to_ne_bytes()[0] == 0x11 { "big-endian" } else { "little-endian" });
+    match arranque::info() {
+        Some(i) => {
+            let (mut entradas, mut libres) = (0, 0u64);
+            for t in arranque::mapa_de_memoria() {
+                entradas += 1;
+                // Libre al salir de los servicios de arranque: código y datos del cargador y de los servicios, y
+                // memoria convencional (UEFI 2.10, 7.2).
+                if matches!(t.tipo, 1..=4 | 7) {
+                    libres += t.paginas;
+                }
+            }
+            let _ = writeln!(s, "Mapa de memoria de UEFI: {} entradas, {} MB libres", entradas, libres * 4096 >> 20);
+            match arranque::rsdp() {
+                Some((dir, rev)) => {
+                    let _ = writeln!(s, "ACPI: RSDP en {:#x}, revisión {}", dir, rev);
+                }
+                None => {
+                    let _ = writeln!(s, "ACPI: sin RSDP válida");
+                }
+            }
+            if i.pantalla_base != 0 {
+                let _ = writeln!(s, "Pantalla: {}x{} en {:#x}", i.pantalla_ancho, i.pantalla_alto, i.pantalla_base);
+            }
+        }
+        None => {
+            let _ = writeln!(s, "sin InfoArranque del cargador");
+        }
+    }
+    let _ = writeln!(s, "DashOS en marcha (x86-64)");
+    base::cpu::parar()
+}
+
+#[cfg(target_arch = "x86_64")]
+#[panic_handler]
+fn panico(info: &PanicInfo) -> ! {
+    use core::fmt::Write;
+    let _ = writeln!(base::serie::Serie, "PÁNICO: {}", info);
     base::cpu::parar()
 }

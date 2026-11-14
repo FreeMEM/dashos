@@ -5,22 +5,39 @@
 #
 # El programa va como EFI/BOOT/BOOTAA64.EFI en un disco FAT (el directorio que QEMU presenta como disco), que EDK2
 # arranca solo. Mismo formato de esperados que prueba_qemu.sh: líneas en orden, "~" en cualquier sitio, "#" ignoradas.
+#
+# Con ARQ=x86_64 (S21, X1), en QEMU q35 con OVMF, como EFI/BOOT/BOOTX64.EFI, con una copia de las variables de OVMF.
 set -u
 EFI=$1
 ESPERADOS=$2
 SEGUNDOS=${3:-30}
+ARQ=${ARQ:-aarch64}
 FIRMWARE=${EDK2:-/usr/share/edk2/aarch64/QEMU_EFI.fd}
 DISCO=$(mktemp -d)
 mkdir -p "$DISCO/EFI/BOOT"
-cp "$EFI" "$DISCO/EFI/BOOT/BOOTAA64.EFI"
+if [ "$ARQ" = x86_64 ]; then
+    cp "$EFI" "$DISCO/EFI/BOOT/BOOTX64.EFI"
+else
+    cp "$EFI" "$DISCO/EFI/BOOT/BOOTAA64.EFI"
+fi
 SALIDA=$(mktemp)
 # GIC=2 por ahora (el kernel maneja el GICv2 desde U3); con GIC=3, el de los portátiles con Snapdragon y las placas de
 # servidor (los Mac usan el AIC de Apple). acpi=off: así EDK2 da el árbol de dispositivos (como U-Boot en los Mac).
 # Los portátiles dan ACPI: queda para después.
 MONITOR=$SALIDA.mon
-timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -M virt,gic-version=${GIC:-2},acpi=${ACPI:-off}${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
-    -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
-    -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
+if [ "$ARQ" = x86_64 ]; then
+    OVMF=${OVMF:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}
+    VARS=$SALIDA.vars
+    cp "${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}" "$VARS"
+    timeout "$SEGUNDOS" qemu-system-x86_64 -monitor unix:"$MONITOR",server,nowait -M q35${MAQUINA:+,$MAQUINA} -cpu max -smp 4 -m 2G \
+        -drive if=pflash,format=raw,readonly=on,file="$OVMF" -drive if=pflash,format=raw,file="$VARS" \
+        -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
+        -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
+else
+    timeout "$SEGUNDOS" qemu-system-aarch64 -monitor unix:"$MONITOR",server,nowait -M virt,gic-version=${GIC:-2},acpi=${ACPI:-off}${MAQUINA:+,$MAQUINA} -cpu cortex-a72 -smp 4 -m 2G \
+        -bios "$FIRMWARE" -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
+        -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &
+fi
 QEMU=$!
 # Con TECLAS=1, una "a" y un movimiento del ratón (10, 5) cada medio segundo desde el segundo 3 (U6: el xHCI). Desde
 # el paso 15 también un clic (W8): el cursor del compositor, que empieza en (0, 0), ya está en (150, 75), sobre la
@@ -111,5 +128,5 @@ else
     tail -40 "$SALIDA.txt"
 fi
 [ -n "${GUARDAR:-}" ] && cp "$SALIDA.txt" "$GUARDAR"
-rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$MONITOR" "$LINEAS"
+rm -rf "$DISCO" "$SALIDA" "$SALIDA.txt" "$SALIDA.vars" "$MONITOR" "$LINEAS"
 exit $FALLO

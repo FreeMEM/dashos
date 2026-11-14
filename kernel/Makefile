@@ -5,6 +5,7 @@
 # make arranque  la imagen normal en QEMU: tiene que llegar a "DashOS en marcha"
 # make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
+# make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -81,6 +82,20 @@ prueba-virt: usuario FORCE
 	$(OBJCOPY) -O binary $(ELF) $(PRUEBAS_VIRT)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(PRUEBAS_VIRT)) cargo build --release
 	QEMU_EXTRA="-device ramfb" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_virt.txt 120
+
+# x86-64 (S21, X1): el kernel para x86_64-unknown-none, como ELF sin la información de depuración, dentro del programa
+# de UEFI para x86_64-unknown-uefi; OVMF lo arranca en QEMU q35 y el kernel tiene que hablar por COM1.
+OBJCOPY_X86 ?= objcopy
+ELF_X86     := target/x86_64-unknown-none/$(PERFIL)/dashos-kernel
+NUCLEO_X86  := target/kernel-x86.elf
+
+x86: FORCE
+	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none
+	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86)
+
+arranque-x86: x86
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
+	GUARDAR=$(abspath target/salida_x86.txt) ARQ=x86_64 ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_x86.txt 60
 
 clean:
 	cargo clean

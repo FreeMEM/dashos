@@ -1,0 +1,11 @@
+# X1 (S21): el programa de UEFI en x86-64 (BOOTX64.EFI), arrancado por OVMF en QEMU q35, carga el ELF del kernel, sale
+# de los servicios de arranque y salta; el kernel habla por COM1 con lo que le dejó el cargador.
+DashOS: arranque por UEFI en x86-64
+DashOS: kernel ELF de
+DashOS: fuera de los servicios de arranque
+DashOS 0.0.1 (x86-64)
+Orden de bytes: little-endian
+Mapa de memoria de UEFI:
+ACPI: RSDP en
+Pantalla:
+DashOS en marcha (x86-64)

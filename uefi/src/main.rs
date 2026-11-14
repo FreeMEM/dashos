@@ -5,6 +5,8 @@
 //! del árbol de dispositivos con las zonas que UEFI se queda (como `/memreserve/`), sale de los servicios de arranque,
 //! apaga la MMU y salta al kernel con el árbol en `x0`.
 //!
+//! En x86-64 (S21, X1) el mismo programa sale como `EFI/BOOT/BOOTX64.EFI`; lo propio de x86 está en `x86_64.rs`.
+//!
 //! Escrito con la especificación de UEFI 2.10 (tablas del sistema y de servicios de arranque, protocolo de texto) y la
 //! de devicetree (cabecera FDT).
 
@@ -14,8 +16,12 @@
 use core::ffi::c_void;
 use core::fmt::Write;
 
+#[cfg(target_arch = "aarch64")]
 mod acpi;
+#[cfg(target_arch = "aarch64")]
 mod fdt;
+#[cfg(target_arch = "x86_64")]
+mod x86_64;
 
 type Estado = usize;
 const BIEN: Estado = 0;
@@ -148,6 +154,7 @@ fn buscar_pantalla(bs: &ServiciosArranque) -> Option<Pantalla> {
 
 /// GUID de la tabla del árbol de dispositivos (EFI_DTB_TABLE_GUID), b1b621d5-f19c-41a5-830b-d9152c69aae0, en el orden
 /// de bytes de memoria de un EFI_GUID (los tres primeros campos en little-endian).
+#[cfg(target_arch = "aarch64")]
 const GUID_DTB: [u8; 16] = [0xd5, 0x21, 0xb6, 0xb1, 0x9c, 0xf1, 0xa5, 0x41, 0x83, 0x0b, 0xd9, 0x15, 0x2c, 0x69, 0xaa, 0xe0];
 
 /// Escritura por la consola de UEFI, pasando el texto a UCS-2 por trozos (y "\n" a "\r\n").
@@ -177,10 +184,13 @@ impl Write for Consola {
 }
 
 /// El PL011 de QEMU `virt`, para cuando ya no hay servicios de arranque. Provisional: en U2 sale del árbol.
+#[cfg(target_arch = "aarch64")]
 const PL011_VIRT: usize = 0x0900_0000;
 
+#[cfg(target_arch = "aarch64")]
 struct Serie;
 
+#[cfg(target_arch = "aarch64")]
 impl Write for Serie {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         for b in s.bytes() {
@@ -193,6 +203,7 @@ impl Write for Serie {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 fn serie_byte(b: u8) {
     unsafe {
         while core::ptr::read_volatile((PL011_VIRT + 0x18) as *const u32) & (1 << 5) != 0 {}
@@ -201,6 +212,7 @@ fn serie_byte(b: u8) {
 }
 
 /// El árbol de dispositivos de la tabla de configuración: (dirección, tamaño según su cabecera).
+#[cfg(target_arch = "aarch64")]
 fn buscar_dtb(st: &TablaSistema) -> Option<(usize, u32)> {
     for i in 0..st.entradas_configuracion {
         let e = unsafe { &*st.configuracion.add(i) };
@@ -217,28 +229,36 @@ fn buscar_dtb(st: &TablaSistema) -> Option<(usize, u32)> {
 }
 
 /// La imagen del kernel y dónde va en la memoria física. En QEMU `virt` la RAM empieza en 0x40000000.
+#[cfg(target_arch = "aarch64")]
 static NUCLEO: &[u8] = include_bytes!(env!("DASHOS_NUCLEO"));
+#[cfg(target_arch = "aarch64")]
 const DIRECCION_NUCLEO: u64 = 0x4020_0000;
 /// Lo que se reserva tras la imagen: pila de arranque y algo de margen (el kernel pone sus tablas y pilas detrás).
+#[cfg(target_arch = "aarch64")]
 const MARGEN_NUCLEO: usize = 2 << 20;
 
 // Reservar páginas (UEFI 2.10, 7.2): tipos de reserva y de memoria.
+#[cfg(target_arch = "aarch64")]
 const EN_CUALQUIER_SITIO: u32 = 0;
 const EN_ESA_DIRECCION: u32 = 2;
+#[cfg(target_arch = "aarch64")]
 const DATOS_DEL_CARGADOR: u32 = 2;
 const PAGINA: usize = 4096;
 
 /// Tipos del mapa de memoria que quedan libres al salir de los servicios de arranque: código y datos del cargador y de
 /// los servicios de arranque, y memoria convencional. Lo demás (servicios de ejecución, ACPI, reservado, inservible,
 /// persistente...) lo sigue usando el firmware o no es RAM normal: va al árbol como zona reservada.
+#[cfg(target_arch = "aarch64")]
 fn libre_al_salir(tipo: u32) -> bool {
     matches!(tipo, 1 | 2 | 3 | 4 | 7)
 }
 
+#[cfg(target_arch = "aarch64")]
 fn be32(p: *const u8) -> u32 {
     u32::from_be_bytes(unsafe { [*p, *p.add(1), *p.add(2), *p.add(3)] })
 }
 
+#[cfg(target_arch = "aarch64")]
 fn poner_be32(p: *mut u8, v: u32) {
     let b = v.to_be_bytes();
     for (i, x) in b.iter().enumerate() {
@@ -249,6 +269,7 @@ fn poner_be32(p: *mut u8, v: u32) {
 /// Un nodo `simple-framebuffer` (devicetree, `bindings/display/simple-framebuffer.yaml`) para la pantalla del firmware:
 /// sus tokens del bloque de estructura y las cadenas que usan. Supone `#address-cells` y `#size-cells` de 2 en la raíz
 /// (los de QEMU `virt` y de las máquinas de 64 bits). Las cadenas van detrás de las del árbol, desde `base_cadenas`.
+#[cfg(target_arch = "aarch64")]
 fn nodo_pantalla(p: &Pantalla, base_cadenas: u32, estructura: &mut [u8; 256], cadenas: &mut [u8; 64]) -> (usize, usize) {
     const NOMBRES: &[u8] = b"compatible\0reg\0width\0height\0stride\0format\0status\0";
     cadenas[..NOMBRES.len()].copy_from_slice(NOMBRES);
@@ -288,8 +309,10 @@ fn nodo_pantalla(p: &Pantalla, base_cadenas: u32, estructura: &mut [u8; 256], ca
 }
 
 /// Escribe texto con formato en un trozo de bytes, cortando lo que no quepa.
+#[cfg(target_arch = "aarch64")]
 struct Trozo<'a>(&'a mut [u8], usize);
 
+#[cfg(target_arch = "aarch64")]
 impl Write for Trozo<'_> {
     fn write_str(&mut self, s: &str) -> core::fmt::Result {
         for &b in s.as_bytes() {
@@ -306,6 +329,7 @@ impl Write for Trozo<'_> {
 /// Formato FDT (devicetree 0.4, cap. 5): cabecera de 40 bytes, mapa de reservas (pares de 64 bits big-endian acabados
 /// en un par a cero), bloque de estructura y bloque de cadenas. Devuelve el tamaño nuevo, o `None` si no cabe.
 /// Con `pantalla`, añade al final de la raíz su nodo `simple-framebuffer` (U4).
+#[cfg(target_arch = "aarch64")]
 fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas: &[(u64, u64)], pantalla: Option<&Pantalla>) -> Option<usize> {
     let (tam_estructura, off_estructura) = (be32(unsafe { origen.add(36) }) as usize, be32(unsafe { origen.add(8) }) as usize);
     let (tam_cadenas, off_cadenas) = (be32(unsafe { origen.add(32) }) as usize, be32(unsafe { origen.add(12) }) as usize);
@@ -355,6 +379,7 @@ fn copiar_arbol(origen: *const u8, destino: *mut u8, capacidad: usize, reservas:
 }
 
 /// Lleva un tramo hasta el punto de coherencia: con la MMU apagada, el kernel lo leerá de la memoria, no de la caché.
+#[cfg(target_arch = "aarch64")]
 fn limpiar(dir: usize, tam: usize) {
     let mut p = dir & !63;
     while p < dir + tam {
@@ -365,6 +390,7 @@ fn limpiar(dir: usize, tam: usize) {
 }
 
 /// Apaga la MMU y las cachés del nivel en que estemos (EL1 o EL2) y salta a `entrada` con `arbol` en x0. No vuelve.
+#[cfg(target_arch = "aarch64")]
 fn saltar(entrada: u64, arbol: u64) -> ! {
     unsafe {
         core::arch::asm!(
@@ -408,6 +434,7 @@ fn tabla_config(st: &TablaSistema, guid: &[u8; 16]) -> Option<usize> {
 
 /// Los tramos de RAM del mapa de memoria de UEFI, juntando los seguidos (U5: para el árbol hecho desde ACPI). Es RAM
 /// todo salvo lo reservado, lo inservible y la entrada y salida proyectadas (tipos 0, 8, 11, 12 y 13).
+#[cfg(target_arch = "aarch64")]
 fn tramos_de_ram(bs: &ServiciosArranque, ram: &mut [(u64, u64); 32]) -> usize {
     let mapa = &raw mut MAPA;
     let (mut tamano, mut llave, mut tam_desc, mut version) = (unsafe { (*mapa).len() }, 0usize, 0usize, 0u32);
@@ -436,10 +463,12 @@ fn tramos_de_ram(bs: &ServiciosArranque, ram: &mut [(u64, u64); 32]) -> usize {
 }
 
 /// El árbol hecho desde ACPI (U5), aquí hasta que se copie.
+#[cfg(target_arch = "aarch64")]
 static mut ARBOL_ACPI: [u8; 16384] = [0; 16384];
 
 static mut MAPA: [u8; 64 * 1024] = [0; 64 * 1024];
 
+#[cfg(target_arch = "aarch64")]
 #[unsafe(export_name = "efi_main")]
 extern "efiapi" fn principal(imagen: *const c_void, st: *const TablaSistema) -> Estado {
     let st = unsafe { &*st };

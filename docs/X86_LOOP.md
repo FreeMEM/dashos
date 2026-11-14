@@ -34,7 +34,7 @@ Dos líneas a la vez (decisión 4 de S21):
 
 ## Tareas de la línea A
 
-- [ ] X1 **Arranque en x86-64.** El programa de `uefi/` compila también para `x86_64-unknown-uefi`
+- [x] X1 **Arranque en x86-64.** El programa de `uefi/` compila también para `x86_64-unknown-uefi`
   (`EFI/BOOT/BOOTX64.EFI`), carga el kernel compilado para `x86_64-unknown-none` y salta a él con lo que necesite
   (mapa de memoria, tablas ACPI, GOP). El kernel escribe por COM1 (0x3F8) "DashOS en marcha (x86-64)". Lo de ARM
   (`base`, GIC, ITS, árbol de dispositivos, PL011) queda detrás de `#[cfg(target_arch = "aarch64")]`; lo de x86 va en
@@ -66,3 +66,34 @@ Dos líneas a la vez (decisión 4 de S21):
 
 Rama `x86` desde `main` (3170b53) en `.worktrees/x86`, con S21 y las decisiones del día en `PLAN.md`. RelevoJIT
 creado en `~/Projects/RelevoJIT` (MPL-2.0, diseño en `docs/DISEÑO.md`). Uso semanal al empezar: 34 %.
+
+### 2026-11-14 — X1: arranque en x86-64
+
+Hecho:
+
+- `uefi/` compila también para `x86_64-unknown-uefi` (`BOOTX64.EFI`). Lo de x86 está en `uefi/src/x86_64.rs`. Lo de
+  ARM de `main.rs` (árbol, PL011, `dc civac`, el salto) queda detrás de `cfg(target_arch = "aarch64")`.
+- El cargador de x86 lleva dentro el kernel como ELF y pone cada segmento PT_LOAD en su dirección física, como código
+  del cargador (OVMF marca los datos del cargador como no ejecutables). Le deja una `InfoArranque` con el mapa de
+  memoria de UEFI, la RSDP de ACPI y la pantalla del GOP. Sale de los servicios de arranque y salta con la info en
+  `rdi`.
+- El kernel x86 está en `kernel/src/base/x86_64/`: entrada en ensamblador (`arranque.s`), COM1 (16550), la
+  `InfoArranque` y `parar`. Enlazado en 1 MB (`enlace_x86.ld`), sin PIE, con la proyección 1:1 del firmware.
+- `main.rs`: en x86 solo entra un `kmain` mínimo. Escribe por COM1 la versión, el mapa de memoria, la RSDP (firma y
+  suma comprobadas), la pantalla y "DashOS en marcha (x86-64)", y se para con `hlt`.
+- `make -C kernel arranque-x86`: QEMU `q35` con OVMF y una copia de sus variables, 60 s como mucho
+  (`tools/prueba_uefi.sh` con `ARQ=x86_64`; sin `ARQ`, igual que antes). Esperados en `kernel/pruebas/arranque_x86.txt`.
+
+Queda fuera en x86: todo el resto del kernel (memoria, MMU, excepciones, GIC e ITS, árbol, temporizadores,
+planificador, procesos, llamadas, `pruebas.rs`), y `alloc`. Lo de ARM sigue entero, detrás de su `cfg`.
+La mitad alta del kernel en x86 llega con sus tablas de páginas (X2).
+
+Comprobado: `make -C kernel arranque-x86` da BIEN (106 entradas en el mapa, 2041 MB libres, ACPI 2, pantalla
+1280x800). En ARM, `make -C kernel`, `make -C kernel prueba` y `make -C kernel arranque-virt` dan BIEN. `make prueba`
+ya pasaba antes del cambio (comprobado en una copia limpia de 191966b). La imagen normal de ARM, compilada en el mismo
+directorio antes y después, mide lo mismo y cambia en 3 bytes: los números de línea de `main.rs` de los mensajes de
+pánico.
+
+No comprobado: un PC de verdad; OVMF con arranque seguro; que 1 MB esté libre en otros firmwares (si no, el cargador
+lo dice y no arranca).
+
