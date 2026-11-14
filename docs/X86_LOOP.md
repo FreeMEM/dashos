@@ -17,7 +17,9 @@ Dos líneas a la vez (decisión 4 de S21):
 1. **Uso.** Al empezar, lee `~/.claude/state/uso-7d.txt` (`<porcentaje> <epoch>`). Con 76 % o más, no se lanza nada
    nuevo. Con 80 % o más, se cierra (regla 8).
 2. **Quién hace qué.** La sesión del bucle coordina: lanza agentes en segundo plano, revisa lo que entregan, prueba
-   y apunta. Como mucho **un agente por línea** a la vez (mismo árbol de trabajo); en la línea B, dos si trabajan en
+   y apunta. Desde el 2026-11-14 a las 22:3x (el usuario pidió gastar menos), **un solo agente a la vez** en todo el
+   bucle, y nada nuevo con la ventana de 5 horas por encima del 80 % (`~/.claude/cache/usage-now.json`). Antes era
+   como mucho **un agente por línea** a la vez (mismo árbol de trabajo); en la línea B, dos si trabajan en
    ficheros distintos (grupos de instrucciones) y en worktrees aparte.
 3. **El encargo del agente.** El texto de la tarea, más: papel de implementador; las reglas de sala limpia de
    `AGENTS.md` (regla 1) o de `RelevoJIT/docs/DISEÑO.md`; `unsafe` solo en `kernel/src/base/` (regla 6); deja una
@@ -319,3 +321,13 @@ No comprobado: un PC de verdad (otro GOP, otros formatos de píxel); la
 ventana de interrupciones de ARM medida (la prueba es de x86; en ARM solo se comprobó que todo sigue pasando);
 `puertos_permitir` con un proceso de varios hilos en varios núcleos (los otros hilos ven los puertos en su próximo
 cambio). Captura de la pantalla de x86 en `kernel/target/captura-x86.ppm`.
+
+### 2026-11-14 22:3x — Pausa por la ventana de 5 horas
+
+El usuario pidió bajar el consumo: la ventana de 5 horas iba por el 95 % (semanal, 50 %). Se paró el agente de X7a a
+medias. Su trabajo queda sin commit: en esta rama, cambios en `kernel/src/base/x86_64/espacio.rs`,
+`kernel/src/llamadas.rs` y `usuario/` (Cargo.toml, build.rs, lib.rs); en RelevoJIT, rama `puertos`, la capa de
+puertos (`include/relevo_port.h`, `src/port/`, `tests/port_libc.c`, `tests/runbin.c`) y cambios en `Makefile`,
+`src/fpx_trans.c` y `src/interp/ops_fpu.c`. Sin probar. Se retoma con un solo agente cuando la ventana se renueve.
+RelevoJIT: R7 fusionado (JIT 15 a 30 veces el intérprete en enteros).
+
