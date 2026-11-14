@@ -1910,6 +1910,9 @@ while time.time() - inicio < total:
         # Ni con el centro de control abierto o a punto de abrirse: su tramo va por teclas, y el clic en Ajustes le
         # quitaría el teclado (sus flechas irían a Ajustes y el centro se quedaría esperando).
         centro_libre = centro == 4 or (centro == 0 and "[guardian] el centro de control abrirá" not in texto)
+        # Y tampoco en el tramo de los bloqueos y el cambio de usuario (U3, U6), que `guardian` empieza al cerrarse el
+        # centro: con la sesión yendo y viniendo, Super+Arriba se perdía.
+        centro_libre = centro_libre and (bloqueo >= 10 or "[guardian] pide al centro abrir Permisos" not in texto)
         if not ajustes and centro_libre and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
             ajustes = True
             ajustes_hecho_en = time.time()
@@ -1998,6 +2001,9 @@ while time.time() - inicio < total:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
                 menu_intentos += 1
                 menu = 0
+            elif time.time() - menu_desde > 6:
+                # Tres veces sin abrirse: se deja (su línea faltará), sin parar lo demás del guion.
+                menu = 2
             if menu == 1:
                 # Con el menú abierto o por abrirse, nada de lo de siempre: un clic fuera lo cierra sin elegir.
                 time.sleep(0.25)
