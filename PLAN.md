@@ -383,6 +383,8 @@ resumido, en `docs/diseño/RESUMEN.md`.
   sistema se sigue llamando DashOS en el código, el repositorio y GitHub; se cambia a UsirOS cuando sea estable y se
   publique en serio (usuario, 2026-11-14). Comprobado en TMview el 2026-11-14: ninguna marca "usiros" ni "useros"
   en la clase 9 (OEPM, EUIPO, USPTO, OMPI). Registro en la EUIPO: 850 € una clase, +50 € la segunda.
+  Plan: registrar UsirOS (EUIPO, clase 9, y la 42 si hay servicios) antes de anunciarlo en público, para que nadie
+  lo registre antes (lo que le pasó a Linux en 1994). Mientras tanto, DashOS en todo.
 
 - **x86-64 también es plataforma objetivo** ("vamos también a por x86"). ARM vale a corto plazo, pero tiene dos
   problemas: los ARM nuevos están dejando el big-endian, y los controladores de los portátiles y máquinas ARM nuevas
