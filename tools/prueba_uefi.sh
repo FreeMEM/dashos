@@ -1882,7 +1882,10 @@ while time.time() - inicio < total:
         # (Si Ajustes se quedara a medias, a los 3 min el explorador sigue igual: las líneas que falten lo dirán.)
         if (desplegable_hecho and menu != 1) or (ajustes_visto and time.time() - ajustes_visto > 180):
             tramo_ajustes_hecho = True
-        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
+        # Ni con el centro de control abierto o a punto de abrirse: su tramo va por teclas, y el clic en Ajustes le
+        # quitaría el teclado (sus flechas irían a Ajustes y el centro se quedaría esperando).
+        centro_libre = centro == 4 or (centro == 0 and "[guardian] el centro de control abrirá" not in texto)
+        if not ajustes and centro_libre and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
             ajustes = True
             ajustes_hecho_en = time.time()
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
@@ -1923,7 +1926,7 @@ while time.time() - inicio < total:
         # sin preguntas, con la ventana Amiga ya cerrada (el clic sube Ajustes y su barra la taparía) y con el desplegable
         # ya probado (el clic cerraría su menú). Hasta 3 veces, esperando 4 s a que diga que se maximizó.
         if (ajustes and ajustes_reintentos < 3 and "[ajustes] el compositor pide " not in texto and menu == 0
-                and time.time() - ajustes_hecho_en > 6 and sin_pregunta and not bloqueado_ahora
+                and time.time() - ajustes_hecho_en > 6 and sin_pregunta and centro_libre and not bloqueado_ahora
                 and not selector_espera and sin_centro and libre_caja):
             import re
             ajustes_reintentos += 1
