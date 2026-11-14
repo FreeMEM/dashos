@@ -469,13 +469,18 @@ fn principal() -> u64 {
                 println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
             }
         }
-        // La caja Amiga: si no cabe con los 256 MB de su 68k, con la mitad, y así hasta 16 (lo que crezca su 68k sale de
-        // este cupo; con menos, sus programas grandes no caben, pero los demás sí).
+        // La caja Amiga: si no caben los 256 MB para su 68k, 128 y 64; si tampoco, sin margen (lo de siempre, 32 MB: su
+        // 68k apenas crece). Lo que se le dé aquí se quita a los servicios que se lanzan después: no se baja de 64 para
+        // no dejarlos sin sitio en una máquina pequeña (en `virt` de 2 GB, el de `espia` ya no cabía).
         if nombre(nombre_cab) == "caja-amiga" && g <= 0 {
             let mut del_68k: u64 = 256 << 20;
-            while g <= 0 && del_68k > 16 << 20 {
+            while g <= 0 && del_68k > 64 << 20 {
                 del_68k /= 2;
                 g = grupo_crear((32 << 20) + del_68k);
+            }
+            if g <= 0 {
+                del_68k = 0;
+                g = grupo_crear(32 << 20);
             }
             if g > 0 {
                 println!("  [inicio] caja-amiga: sin sitio para 256 MB de su 68k; con {} MB", del_68k >> 20);
