@@ -185,6 +185,8 @@ void MainLoop(void);
 #define PAGINA0_RW 0x0000000380000000UL   /* la página 0, para escribirla: por encima de 4 GB, el 68k no llega */
 
 
+volatile uint32_t m68k_ram_fin = M68K_RAM + M68K_RAM_LEN;
+
 /* Un objeto de memoria nuevo, proyectado en `va`. Devuelve su llave, o un error negativo. */
 static long proyecta(uintptr_t va, size_t len, int permisos)
 {
@@ -192,6 +194,35 @@ static long proyecta(uintptr_t va, size_t len, int permisos)
     if (m <= 0) return m ? m : -1;
     long r = sc(SC_MEMORIA_PROYECTAR, m, (long)va, permisos, 0, 0);
     return r ? r : m;
+}
+
+/* La memoria del 68k crece (lo pide exec cuando un AllocMem no cabe): `memoria_crear` reserva entera la memoria del
+   objeto y la cobra al cupo del proceso, así que se crece a trozos, justo detrás de lo que hay: lo que haga falta
+   (`minimo` y algo más), y al menos una cuarta parte de lo que ya hay (para no pedir de poco en poco), en objetos de
+   16 MB como mucho (el máximo de un objeto). Nunca más allá de `tope` bytes desde M68K_RAM ni de M68K_RAM_MAX. Si el
+   cupo no da, se queda en lo que haya conseguido. Devuelve el final nuevo (el de antes si no se pudo nada). Lo
+   crecido no se devuelve: la memoria libre del 68k la vuelve a repartir exec. */
+#define TROZO_RAM     (1UL << 20)
+#define TROZO_RAM_MAX (16UL << 20)
+uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope)
+{
+    uint64_t fin = m68k_ram_fin;
+    uint64_t techo = (uint64_t)M68K_RAM + tope;
+    if (techo > M68K_RAM_MAX) techo = M68K_RAM_MAX;
+    /* Lo que no cabe ni con todo lo que queda, ni se intenta: un AllocMem absurdo no hace crecer la caja hasta el tope. */
+    if (fin >= techo || (uint64_t)minimo > techo - fin) return (uint32_t)fin;
+    uint64_t quiero = ((uint64_t)minimo + (64UL << 10) + TROZO_RAM - 1) & ~(uint64_t)(TROZO_RAM - 1);
+    uint64_t cuarto = ((fin - M68K_RAM) / 4 + TROZO_RAM - 1) & ~(uint64_t)(TROZO_RAM - 1);
+    if (quiero < cuarto) quiero = cuarto;
+    if (fin + quiero > techo) quiero = techo - fin;
+    while (quiero > 0) {
+        uint64_t n = quiero < TROZO_RAM_MAX ? quiero : TROZO_RAM_MAX;
+        if (proyecta((uintptr_t)fin, (size_t)n, P_ESCRIBIR) <= 0) break;
+        fin += n;
+        quiero -= n;
+    }
+    __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
+    return (uint32_t)fin;
 }
 
 /* El SP con que arrancó el kernel la caja: el tope de la pila del ELF. */
@@ -460,6 +491,7 @@ extern const uint8_t prog_gadtools[], prog_gadtools_fin[];
 extern const uint8_t prog_boopsi[], prog_boopsi_fin[];
 extern const uint8_t prog_ramlib[], prog_ramlib_fin[];
 extern const uint8_t prog_capa[], prog_capa_fin[];
+extern const uint8_t prog_glotona[], prog_glotona_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -792,7 +824,7 @@ static uint32_t caja_fuera_del_68k(uint32_t *bajas, int *antes, uint32_t *ms, ui
     uint32_t de_mas = 0;
     *trozos = 0;
     for (uintptr_t p = 0x10000; p < 0x100000000UL; p += 0x10000) {
-        if (p >= M68K_RAM && p < M68K_RAM + M68K_RAM_LEN)
+        if (p >= M68K_RAM && p < m68k_ram_fin)
             continue;
         ++*trozos;
         de_mas += sc(SC_ESPERAR, (long)p, 0x5A5A5A5A, 1, 0, 0) != E_ARGUMENTO;
@@ -1188,6 +1220,19 @@ int caja_main(void)
            (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, (int)(caja_bloques(0) - sistema), bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         sistema = caja_bloques(0);
+
+        /* 8b3b. La memoria del 68k crece según la pidan (glotona.c, hostil): con un tope de prueba de 48 MB (el del
+           ajuste es de 256), pide 1 MB tras otro hasta que no le dan más; no pasa del tope, nada se cuelga y, soltado
+           todo, la memoria crecida se vuelve a repartir. Lo crecido se queda (no se devuelve al sistema). */
+        caja_tope_de_prueba(48);
+        t0 = ahora_us();
+        v = ejecuta_hunk("glotona", prog_glotona, (size_t)(prog_glotona_fin - prog_glotona), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        caja_tope_de_prueba(0);
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema && m68k_ram_fin <= M68K_RAM + (48UL << 20);
+        di("glotona.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, la memoria del 68k acaba en $%x: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, m68k_ram_fin, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
         /* 8b4. Programas de AmigaOS del usuario (SYS:C/Prefs/programas-amiga, con DASHOS_PROGRAMAS_AMIGA): las demos de
            MUI, Tachyon... Para ver hasta dónde llegan y qué les falta (el registro de lo que falta, faltan.rs): a los 6 s

@@ -440,8 +440,10 @@ fn principal() -> u64 {
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
-            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas.
-            "caja-amiga" => 32 << 20,
+            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas. Y lo que crezca el 68k según sus programas
+            // (decisión del usuario del 2026-11-13): hasta 256 MB de serie (`memoria amiga` en `Prefs/cajas`; un tope
+            // mayor ahí no pasa de este cupo). Es un límite, no una reserva: se gasta solo lo que la caja proyecta.
+            "caja-amiga" => (32 << 20) + (256 << 20),   // 256: `wayland::aspecto::MEMORIA_DE_SERIE`
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
@@ -465,6 +467,23 @@ fn principal() -> u64 {
             }
             if g > 0 {
                 println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
+            }
+        }
+        // La caja Amiga: si no caben los 256 MB para su 68k, 128 y 64; si tampoco, sin margen (lo de siempre, 32 MB: su
+        // 68k apenas crece). Lo que se le dé aquí se quita a los servicios que se lanzan después: no se baja de 64 para
+        // no dejarlos sin sitio en una máquina pequeña (en `virt` de 2 GB, el de `espia` ya no cabía).
+        if nombre(nombre_cab) == "caja-amiga" && g <= 0 {
+            let mut del_68k: u64 = 256 << 20;
+            while g <= 0 && del_68k > 64 << 20 {
+                del_68k /= 2;
+                g = grupo_crear((32 << 20) + del_68k);
+            }
+            if g <= 0 {
+                del_68k = 0;
+                g = grupo_crear(32 << 20);
+            }
+            if g > 0 {
+                println!("  [inicio] caja-amiga: sin sitio para 256 MB de su 68k; con {} MB", del_68k >> 20);
             }
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };

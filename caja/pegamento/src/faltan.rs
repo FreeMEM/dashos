@@ -9,8 +9,8 @@ use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
 
-/// Cuántas se dicen la primera vez (las demás solo se cuentan).
-const DICHAS: usize = 64;
+/// Cuántas se dicen (la primera vez de cada una en cada tarea; las demás solo se cuentan).
+const DICHAS: usize = 256;
 
 #[derive(Default)]
 pub(crate) struct Faltan {
@@ -49,11 +49,14 @@ impl Faltan {
     pub fn apuntar(&mut self, biblioteca: &str, funcion: &str, quien: &str) -> Option<String> {
         self.llamadas += 1;
         let k = (String::from(biblioteca), String::from(funcion));
-        *self.de_la_tarea.entry(k.clone()).or_insert(0) += 1;
+        let en_la_tarea = self.de_la_tarea.entry(k.clone()).or_insert(0);
+        *en_la_tarea += 1;
+        let primera_de_la_tarea = *en_la_tarea == 1;
         let lvo = lvo_de(biblioteca, funcion);
         let e = self.mapa.entry(k).or_insert((0, lvo, String::from(quien)));
         e.0 += 1;
-        if e.0 == 1 && self.dichas < DICHAS {
+        // La primera vez de cada una en cada tarea (otro programa puede pedir lo mismo por otra razón).
+        if primera_de_la_tarea && self.dichas < DICHAS {
             self.dichas += 1;
             return Some(format!("falta: {} {} (LVO {}), la llama {}", biblioteca, funcion, lvo, quien));
         }

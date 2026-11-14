@@ -15,6 +15,15 @@ pub trait Memoria {
     fn trozo(&self, dir: u32, largo: u32) -> Option<&[u8]>;
     /// Lo mismo, para escribir.
     fn trozo_mut(&mut self, dir: u32, largo: u32) -> Option<&mut [u8]>;
+    /// Más memoria justo detrás de la que hay, al menos `minimo` bytes: el tramo nuevo `[antes, despues)`, o `None` si
+    /// no se puede (el tope, el cupo). De serie, nunca: una memoria fija.
+    fn ampliar(&mut self, _minimo: u32) -> Option<(u32, u32)> {
+        None
+    }
+    /// Cuánto más puede crecer (lo que `AvailMem` cuenta como libre además de lo que hay).
+    fn margen(&self) -> u32 {
+        0
+    }
 
     fn leer(&self, dir: u32, largo: u32) -> Result<&[u8], Fallo> {
         self.trozo(dir, largo).ok_or(Fallo::FueraDeMemoria { dir, largo })

@@ -1620,3 +1620,83 @@ y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nun
   nativa por la dirección de vuelta: `memoria_del_sistema`; prueba en `exec/tests/ramlib.rs`). Con eso, `capa.exe`
   vuelve a acabar con 0 bloques sin soltar. Con todo: 8 de las 16 bibliotecas de su prueba abren del 3.2 del usuario
   (iffparse, locale, mathieeedoubbas, mathieeedoubtrans, diskfont, commodities, rexxsyslib y texteditor.gadget).
+
+## 2026-11-13 (noche): hacia Tachyon. Memoria según el programa y MUI 5
+
+Rama `caja-amiga-libs`, con `revision` (404ea53) unida: `archivos/dashfs`, la tableta USB y `make virt-uso`.
+
+### La memoria del 68k crece según el programa
+
+Decisión del usuario: la caja pide la memoria según lo que necesite el programa, con un tope en un ajuste (de serie,
+256 MB).
+
+- **Cómo crece** (`caja_ampliar_ram`, `caja/caja.c`): el 68k ve sus direcciones como las del proceso, desde 1 MB.
+  Empieza con 4 MB. Cuando un `AllocMem` (o `AllocVec`, `CreatePool`, los hunks de un programa) no cabe, exec pide más
+  (`Memoria::ampliar`): la caja proyecta objetos de memoria nuevos justo detrás de lo que hay. `memoria_crear`
+  reserva entera la memoria de un objeto y la cobra al cupo, así que se crece a trozos: lo que haga falta y al menos
+  una cuarta parte de lo que ya hay, en objetos de 16 MB como mucho (el máximo del kernel). Exec sube el `MH_UPPER` de
+  la región de arriba y mete lo nuevo en su lista de libres, pegado al trozo libre de su final: cabe un bloque más
+  grande que cada trozo (un hunk de 5 MB). La chip no crece. Lo crecido no se devuelve: exec lo vuelve a repartir.
+- **El tope**: `memoria amiga <MB>` en `Prefs/cajas` (de 8 a 2048; sin línea, 256), una fila nueva del centro de
+  control ("Memoria de la caja Amiga", que pasa por 64, 128, 256, 512 y 1024 MB). El compositor lo reparte como el
+  resto del ajuste; la caja lo mira cada vez que atiende al compositor. Un `AllocMem` que no cabría ni con todo lo que
+  queda no hace crecer nada (un programa que pide 2 GB no se lleva la caja hasta el tope).
+- **El cupo**: el de la caja Amiga en `inicio` pasa de 32 MB a 32 + 256. Un grupo saca su presupuesto del de quien lo
+  crea al nacer (no gasta memoria, pero los servicios que vienen detrás ya no lo tienen): si no cabe, 128 y 64; si
+  tampoco, los 32 de siempre (sin margen: su 68k apenas crece). Con menos de 64, en `virt` de 2 GB, `espia` ya no se
+  podía lanzar. En esa máquina no cabe ningún margen; en una con más memoria debería caber (sin probar: `virt` va con
+  `highmem=off`). Un tope mayor en el ajuste no pasa del cupo: `memoria_crear` da `E_MEMORIA` y la caja se queda donde llegó.
+- `AvailMem` cuenta, en lo que no es chip, lo que queda por crecer: un programa que mira antes de pedir no se asusta.
+- **Pruebas**: `exec/tests/crecer.rs` (crece lo justo, la chip no, lo soltado se reutiliza, `TypeOfMem` de lo nuevo;
+  hostil: pedir 256 KB sin fin para en el tope, tamaños absurdos dan 0) y `glotona.exe` en la caja (paso 8b3b): con un
+  tope de prueba de 48 MB pide 1 MB tras otro hasta que no le dan más, sin pasar del tope ni del cupo y sin colgar
+  nada; soltado todo, la mitad de lo que tuvo, de una vez, cabe sin crecer. Con 32 + 32 MB de cupo llegaba a 33 MB
+  (lo paraba el cupo, no el tope).
+
+### MUI 5: no era el JIT
+
+- **La traza por instrucción** (temporal, ya quitada: cada instrucción que traduce el JIT, con su dirección y sus
+  palabras, desde que ramlib carga muimaster) enseñó que el bloque del `longjmp` se traduce entero dos veces y que la
+  caída llega después. La dirección de la caída (`0x110000c154`) no es del traductor sino del **código traducido**
+  (la caché del JIT); FAR 0: el 68k escribe en la dirección 0. Ese bloque es el `exit()` de la biblioteca de C de
+  muimaster: hace `longjmp` a un `jmp_buf` que en una biblioteca nadie ha llenado (ceros), carga A7 = 0 y escribe ahí.
+  En la caja, escribir en la página 0 acaba con la caja entera (S28, como la prueba de malware de la dirección 4).
+  En el banco del JIT el mismo bloque, llamado dos veces como en muimaster, va bien. **No hace falta parche de Emu68.**
+- **Por qué salía**: lo dice la propia muimaster por `Output()`, "mathieeesingbas.library could not be opened": la
+  coma flotante simple IEEE, que en el Amiga está en la ROM. Ahora es nativa (`pegamento/src/mates.rs`, del autodoc:
+  las 12 funciones; `IEEESPCmp` e `IEEESPTst` dejan los códigos de condición con un `TST.L D0` al volver, con
+  `crear_biblioteca_nativa_con_cc` de exec). Con ella muimaster 21.227 abre.
+- **Las clases de MUI**: MUI 5 no usa `MakeClass` ni la `rootclass` de intuition: arma sus `struct IClass` a mano,
+  con su propia clase raíz (`cl_Super` = 0, despachador en 68k) que hace los objetos ella sola (la clase en la palabra
+  de antes del objeto, `OCLASS`). Intuition no comprueba lo que le dan; la caja comprobaba que la clase o el objeto
+  fueran suyos ("MUI: cannot create an object"). Ahora los **adopta** (`adoptar_clase`, `clase_de_objeto` en
+  `intuition/src/boopsi/mod.rs`): una clase que se puede leer entera, con un `h_Entry` par y legible, y cuyas
+  superclases (como mucho 32, sin dar vueltas) llegan a una conocida o a `cl_Super` = 0, pasa a ser de usuario y del
+  sistema; un objeto cuya palabra de antes es una clase así se despacha por ella (`SetAttrsA`, `GetAttr`, `DoMethodA`,
+  `DisposeObject`). Basura, círculos o despachadores fuera de la memoria siguen dando 0 con aviso
+  (`tests/boopsi.rs`: `clase_hecha_a_mano`, `raiz_propia`). Además, lo que crea código de una biblioteca de disco
+  (clases con `MakeClass`, objetos) es del sistema, como su memoria (`Exec::dueno_de_lo_nuevo`).
+- **Resultado**: la demo Class1 de MUI abre su ventana ("A Simple Custom Class", 144 x 133) y acaba con 0 al cerrarla;
+  Tachyon (`build/dashweb`, 68020, MUI 5) carga sus 5 MB de hunks (la memoria crece), arranca sin red y abre su
+  ventana ("Tachyon", 800 x 171). El oráculo FS-UAE 3.2 da la misma ventana de Class1 con sus líneas.
+- **Lo que pidieron y ya está**: graphics `TextExtent` (Tachyon, por cada texto) y `SetRPAttrsA` (fuente, plumas y
+  modo), intuition `LockIBase`/`UnlockIBase` (con una tarea 68k a la vez, nada que esperar) y `ReportMouse`.
+- **Lo que piden y falta** (el registro): `CreateNewProc` de dos (muimaster; la caja aún no tiene varias tareas 68k a
+  la vez), `GetDisplayInfoData` de graphics, `WeighTAMatch` (diskfont), `FindNamedObject` y `AllocNamedObjectA` de
+  utility (datatypes), cybergraphics, icon, workbench, screennotify e input.device (las abre muimaster y sigue sin
+  ellas), y `CierreDeMas` al cerrar bibliotecas de disco recién cargadas (sin averiguar).
+- El registro de lo que falta dice ahora la primera vez de cada cosa **en cada tarea** (antes, solo la primera de todas:
+  lo que pedía muimaster ya lo había pedido otro antes y no salía) y los `OpenLibrary` que dan 0 por versión.
+- **Capturas** (`capturas-agente/`, fuera de git; llevan la demo de MUI del SDK del usuario: no publicar), en Full HD
+  con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080` y un vigía que pide `screendump` al monitor de QEMU cuando la
+  caja dice que la ventana está en pantalla:
+  - `caja-tachyon-fhd.png`: la ventana de Tachyon a lo ancho, con su barra de estado ("Ready: 4649 bytes in 641 ms":
+    carga su página de inicio, sin red), el marco de la página y la barra de desplazamiento. Faltan la barra de
+    botones y el texto de la página.
+  - `caja-mui-class1-fhd.png`: la ventana de Class1 abierta, pero vacía: el oráculo FS-UAE dibuja ahí sus líneas.
+    Lo que MUI pinta dentro (su fondo con `DoHookClipRects`, su recorte con `InstallClipRegion`, lo que pide de
+    `GetDisplayInfoData`) es lo siguiente que mirar.
+- **Pruebas de la tanda**: `make prueba` BIEN. `make arranque-virt`: lo de la caja, bien (glotona, en la máquina de 2 GB
+  sin margen de cupo, llega a 6 MB y para); fallan, cada vez una distinta, dos líneas del guion del explorador
+  ("suelta en la ventana 1: mueve a Home/Privado", "no abre Sistema/DeCarla: -12"), que esta rama no toca: sin
+  averiguar si es el explorador recién unido de `revision` o la máquina cargada (había otras QEMU a la vez).

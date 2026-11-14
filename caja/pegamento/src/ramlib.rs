@@ -46,10 +46,6 @@ const RECHAZADAS: [&[u8]; 22] = [
 /// execPrivate17").
 const SIN_SOPORTE: [&[u8]; 3] = [b"icon.library", b"workbench.library", b"asl.library"];
 
-/// Las que tumban la caja entera al cargarlas: el traductor de Emu68 cae (un puntero nulo) en su `Init` (muimaster 5,
-/// bitácora de la caja, paso 3). Hasta arreglarlo, no se cargan: quien las abre recibe 0 y sigue (o acaba él solo).
-const TUMBAN_EL_JIT: [&[u8]; 1] = [b"muimaster.library"];
-
 /// Dónde dice el usuario que está su AmigaOS (una carpeta del disco de DashOS; DashOS no trae ninguno).
 const PREFS_AMIGAOS: &[u8] = b"SYS:C/Prefs/amigaos";
 
@@ -137,11 +133,6 @@ pub(super) fn cargar(c: &mut Caja, nombre: u32, tipo: u32) -> u32 {
     let disp = tipo == caja_exec::ramlib::CARGAR_DISPOSITIVO;
     if SIN_SOPORTE.contains(&base(&n).as_slice()) {
         decir(c, &format!("ramlib: {} no se carga de disco (aún no: usa funciones privadas de exec)", latin1(&n)));
-        apuntar_falta(c, &n, disp);
-        return 0;
-    }
-    if TUMBAN_EL_JIT.contains(&base(&n).as_slice()) {
-        decir(c, &format!("ramlib: {} no se carga de disco (aún no: el JIT de la caja cae en su Init)", latin1(&n)));
         apuntar_falta(c, &n, disp);
         return 0;
     }

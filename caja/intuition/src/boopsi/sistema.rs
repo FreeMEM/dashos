@@ -31,7 +31,8 @@ pub(crate) fn root<P: Puente>(p: &mut P, _cl: u32, obj: u32, msg: u32, id: u32) 
             let n = ex.l32(tc + iclass::OBJECTCOUNT)?;
             ex.e32(tc + iclass::OBJECTCOUNT, n + 1)?;
             let o = b + CABECERA;
-            let t = ex.tarea_actual();
+            // Lo que crea una biblioteca de disco es del sistema (como su memoria): no se va con la tarea en marcha.
+            let t = ex.dueno_de_lo_nuevo();
             gr.boopsi.objetos.insert(o, Obj { bloque: b, largo, clase: tc, tarea: t, d: Datos::default() });
             Ok(o)
         }

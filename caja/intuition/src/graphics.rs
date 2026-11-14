@@ -843,6 +843,23 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(largo.clamp(0, 0x7FFF) as u32)
     }
 
+    /// `TextExtent(rp, string, count, textExtent)`: el ancho (como `TextLength`), el alto de la fuente y el rectángulo
+    /// que ocupa respecto a la posición actual (la línea base): de 0 a ancho - 1 y de -base a alto - base - 1.
+    pub fn text_extent<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, s: u32, n: u32, te: u32) -> Result<(), Fallo> {
+        ex.tramo(te, 12)?;
+        let ancho = self.text_length(ex, rp, s, n)?;
+        let i = self.leer_rp(ex, rp)?;
+        let fu = self.fuente_de(ex, &i, "TextExtent")?;
+        let (alto, base) = (fu.alto.min(0x7FFF) as i32, fu.base.min(0x7FFF) as i32);
+        ex.e16(te, ancho as u16)?;
+        ex.e16(te + 2, alto as u16)?;
+        ex.e16(te + 4, 0)?;
+        ex.e16(te + 6, (-base) as i16 as u16)?;
+        ex.e16(te + 8, (ancho as i32 - 1).max(0) as i16 as u16)?;
+        ex.e16(te + 10, (alto - base - 1) as i16 as u16)?;
+        Ok(())
+    }
+
     /// `Text`: `n` caracteres con la fuente del `RastPort` en la posición actual (la línea base en `cp_y`), con
     /// las plumas y el modo; la posición avanza. En JAM2, el fondo de cada glifo va con la pluma B.
     pub fn text<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, s: u32, n: u32) -> Result<(), Fallo> {

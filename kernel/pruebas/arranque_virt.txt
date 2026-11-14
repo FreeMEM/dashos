@@ -354,6 +354,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [ajustes] tema del sistema: oscuro, color c44e68, esquema del centro (
 # La fila "Ampliar ventanas Amiga" (decisión del usuario del 2026-11-13): de automático a 1x, en `Prefs/cajas`.
 ~│   [centro] Ampliar ventanas Amiga: 1x; guardado: 0 (30 bytes); releído: sí
+# La fila "Memoria de la caja Amiga" (decisión del usuario del 2026-11-13: crece según el programa, hasta este tope;
+# de serie, 256 MB): a 512 MB, en `Prefs/cajas`.
+~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14), procesos, memoria en uso y lo que más gasta
 # (la orden MEMORIA de `sesiones`; la lista entera, en la consola).
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
@@ -681,6 +684,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] ramlib: 0 fallos
 ~│   [caja-amiga] ramlib.exe acabó con 0, 
 ~│   [caja-amiga] capa.exe acabó con 0, 
+# La memoria del 68k crece según la pidan, hasta el tope (aquí uno de prueba, 48 MB): glotona.c pide sin fin.
+~│   [caja-amiga] glotona: 0 fallos
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con

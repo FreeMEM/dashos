@@ -603,8 +603,8 @@ pub(crate) fn con_etiquetas<P: Puente, T>(p: &mut P, t: &[(u32, u32)], f: impl F
 
 /// La clase de un objeto (`OCLASS`), si es un objeto vivo.
 pub(crate) fn clase_de<P: Puente>(p: &mut P, o: u32) -> R<u32> {
-    match p.partes().1.boopsi.objetos.get(&o) {
-        Some(ob) => Ok(ob.clase),
+    match clase_de_objeto(p, o)? {
+        Some(c) => Ok(c),
         None => Err(Fallo::Sospechoso { dir: o }.into()),
     }
 }
@@ -627,6 +627,54 @@ fn nativa_de<P: Puente>(p: &mut P, cl: u32) -> R<Option<(Nativa, u32)>> {
         }
     }
     Ok(None)
+}
+
+/// Una clase que no hizo `MakeClass` (MUI 5 arma las suyas a mano, con su propia clase raíz: una `struct IClass` con
+/// su despachador en 68k y `cl_Super` a 0 en la de arriba): si parece una de verdad (se puede leer entera y su `h_Entry`
+/// es una dirección de código par, ella y sus superclases, como mucho 32, sin dar vueltas, hasta una que la caja conoce
+/// o hasta `cl_Super` = 0), se apunta como de usuario, del sistema (no se va con ninguna tarea). Intuition no comprueba
+/// las clases que le dan; la caja comprueba esto. Devuelve si la conoce (ya o desde ahora).
+pub(crate) fn adoptar_clase<P: Puente>(p: &mut P, cl: u32) -> R<bool> {
+    let mut cadena = Vec::new();
+    let mut c = cl;
+    for _ in 0..32 {
+        if c == 0 && !cadena.is_empty() {
+            break;
+        }
+        if p.partes().1.boopsi.clases.contains_key(&c) {
+            break;
+        }
+        let ex = p.partes().0;
+        if c == 0 || ex.tramo(c, iclass::TAMANO).is_err() {
+            return Ok(false);
+        }
+        let entrada = ex.l32(c + iclass::H_ENTRY)?;
+        if entrada == 0 || entrada & 1 != 0 || ex.tramo(entrada, 2).is_err() || cadena.contains(&c) {
+            return Ok(false);
+        }
+        cadena.push(c);
+        c = ex.l32(c + iclass::SUPER)?;
+    }
+    if c != 0 && !p.partes().1.boopsi.clases.contains_key(&c) {
+        return Ok(false);
+    }
+    for k in cadena {
+        p.partes().1.boopsi.clases.insert(k, Clase { nativa: None, tarea: 0 });
+    }
+    Ok(true)
+}
+
+/// La clase de un objeto: la apuntada si lo hizo la caja (rootclass); si no, la de su cabecera (`OCLASS`: la palabra
+/// de antes del objeto), si es una clase que se puede adoptar (los objetos de MUI 5, que hace su propia clase raíz).
+pub(crate) fn clase_de_objeto<P: Puente>(p: &mut P, o: u32) -> R<Option<u32>> {
+    if let Some(ob) = p.partes().1.boopsi.objetos.get(&o) {
+        return Ok(Some(ob.clase));
+    }
+    if o < 4 || o & 1 != 0 || p.partes().0.tramo(o - 4, 8).is_err() {
+        return Ok(None);
+    }
+    let c = l32(p, o - 4)?;
+    Ok(adoptar_clase(p, c)?.then_some(c))
 }
 
 /// Manda el mensaje `msg` (en la memoria del 68k) a la clase `cl` para el objeto `obj`: su despachador, nativo o
@@ -658,7 +706,7 @@ fn enviar_sin_tope<P: Puente>(p: &mut P, cl: u32, obj: u32, msg: u32) -> R<u32> 
         let (_, gr) = p.partes();
         (gr.boopsi.stub, gr.boopsi.clases.contains_key(&cl), gr.intui.base)
     };
-    if !conocida {
+    if !conocida && !adoptar_clase(p, cl)? {
         return Err(Fallo::Sospechoso { dir: cl }.into());
     }
     let entrada = l32(p, cl + iclass::H_ENTRY)?;
@@ -722,7 +770,7 @@ pub(crate) fn a_objeto<P: Puente>(p: &mut P, obj: u32, msg: u32) -> R<u32> {
 
 /// `DoMethod` desde lo nativo: el mensaje con esas palabras.
 pub(crate) fn metodo<P: Puente>(p: &mut P, obj: u32, palabras: &[u32]) -> R<u32> {
-    if !p.partes().1.es_objeto(obj) {
+    if clase_de_objeto(p, obj)?.is_none() {
         return Ok(0);
     }
     con_mensaje(p, palabras, |p, m| a_objeto(p, obj, m))
@@ -769,7 +817,7 @@ pub(crate) fn new_object<P: Puente>(p: &mut P, cl: u32, id: u32, tags: u32) -> R
     } else {
         0
     };
-    if clase == 0 || !p.partes().1.boopsi.clases.contains_key(&clase) {
+    if clase == 0 || (!p.partes().1.boopsi.clases.contains_key(&clase) && !adoptar_clase(p, clase)?) {
         return if cl != 0 { Err(Fallo::Sospechoso { dir: cl }.into()) } else { Ok(0) };
     }
     con_mensaje(p, &[om::NEW, tags, 0], |p, m| enviar(p, clase, clase, m))
@@ -780,7 +828,7 @@ pub(crate) fn dispose_object<P: Puente>(p: &mut P, o: u32) -> R<()> {
     if o == 0 {
         return Ok(());
     }
-    if !p.partes().1.es_objeto(o) {
+    if clase_de_objeto(p, o)?.is_none() {
         return Err(Fallo::Sospechoso { dir: o }.into());
     }
     metodo(p, o, &[om::DISPOSE]).map(|_| ())
@@ -791,7 +839,7 @@ fn set_attrs<P: Puente>(p: &mut P, o: u32, w: u32, tags: u32) -> R<u32> {
     if o == 0 {
         return Ok(0);
     }
-    if !p.partes().1.es_objeto(o) {
+    if clase_de_objeto(p, o)?.is_none() {
         return Err(Fallo::Sospechoso { dir: o }.into());
     }
     let w = if p.partes().1.intui.ventanas.contains_key(&w) { w } else { 0 };
@@ -803,7 +851,7 @@ fn get_attr<P: Puente>(p: &mut P, id: u32, o: u32, storage: u32) -> R<u32> {
     if o == 0 || storage == 0 {
         return Ok(0);
     }
-    if !p.partes().1.es_objeto(o) {
+    if clase_de_objeto(p, o)?.is_none() {
         return Err(Fallo::Sospechoso { dir: o }.into());
     }
     p.partes().0.tramo(storage, 4)?;
@@ -834,7 +882,7 @@ fn make_class<P: Puente>(p: &mut P, id: u32, sup_id: u32, sup: u32, tam: u32, _f
     } else {
         0
     };
-    if s == 0 || !p.partes().1.boopsi.clases.contains_key(&s) {
+    if s == 0 || (!p.partes().1.boopsi.clases.contains_key(&s) && !adoptar_clase(p, s)?) {
         return Ok(0);
     }
     let off = l16(p, s + iclass::INSTOFFSET)? as u32 + l16(p, s + iclass::INSTSIZE)? as u32;
@@ -852,12 +900,15 @@ fn make_class<P: Puente>(p: &mut P, id: u32, sup_id: u32, sup: u32, tam: u32, _f
     ex.e16(cl + iclass::INSTSIZE, tam as u16)?;
     let n = ex.l32(s + iclass::SUBCLASSCOUNT)?;
     ex.e32(s + iclass::SUBCLASSCOUNT, n + 1)?;
-    let t = ex.tarea_actual();
+    // Una clase que hace una biblioteca de disco (MUI) es del sistema: la biblioteca sigue cuando acaba la tarea que
+    // la abrió por primera vez, y sus clases con ella.
+    let t = ex.dueno_de_lo_nuevo();
     gr.boopsi.clases.insert(cl, Clase { nativa: None, tarea: t });
     Ok(cl)
 }
 
 fn add_class<P: Puente>(p: &mut P, cl: u32) -> R<()> {
+    adoptar_clase(p, cl)?;
     let (ex, gr) = p.partes();
     if !gr.boopsi.clases.contains_key(&cl) {
         return Err(Fallo::Sospechoso { dir: cl }.into());
