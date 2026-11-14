@@ -41,7 +41,7 @@ pub(crate) struct Charco {
     flags: u32,
     puddle: u32,
     thresh: u32,
-    dueno: u32,
+    pub(crate) dueno: u32,
     /// Cada charco: (dirección del `MemHeader`, lo repartible `[inicio, fin)`).
     charcos: Vec<(u32, u32, u32)>,
     /// Bloques de más de `thresh`: dirección → tamaño pedido.

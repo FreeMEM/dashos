@@ -32,6 +32,7 @@ pub mod registros;
 
 mod asignador;
 mod bibliotecas;
+pub mod cambio;
 mod charcos;
 mod despacho;
 mod dispositivos;
@@ -54,6 +55,7 @@ use estructuras::*;
 pub use memoria::{Memoria, MemoriaVec};
 pub use registros::Registros;
 pub use tareas::Espera;
+pub use cambio::{Contexto, Modo};
 
 /// Lo que puede salir mal en una llamada. Ninguno tumba la caja: se apunta como aviso y la función devuelve lo que
 /// devolvería al fallar (normalmente 0 en D0).
@@ -300,6 +302,16 @@ pub(crate) struct InfoTarea {
     bibliotecas: Vec<u32>,
     /// Puertos que creó con `CreateMsgPort`.
     puertos: Vec<u32>,
+    /// Quién la creó: la tarea que hizo su `AddTask`, o 0 (el sistema, una biblioteca de disco o la caja).
+    creadora: u32,
+    /// Lo que guarda la caja mientras no corre (`cambio.rs`).
+    contexto: Option<cambio::Contexto>,
+    /// La llamada que repite al volver (el trampolín `REPETIR`).
+    repetir: Option<u16>,
+    /// Espera sin señales hasta que la caja la deje lista (`aparcar`).
+    aparcada: bool,
+    /// Ha corrido (la caja la retomó o la puso en marcha): sin contexto guardado ya no se puede retomar.
+    corrido: bool,
 }
 
 const MAX_AVISOS: usize = 1024;
@@ -451,6 +463,9 @@ impl<M: Memoria> Exec<M> {
         e.escribir_entrada_nativa(fin, lvo::FIN_DE_TAREA)?;
         e.trampolines.insert(lvo::FIN_DE_TAREA, fin);
         e.fin_de_tarea = fin;
+        let rep = e.de_sistema(6)?;
+        e.escribir_entrada_nativa(rep, lvo::REPETIR)?;
+        e.trampolines.insert(lvo::REPETIR, rep);
         e.e32(b + execbase::TASKEXITCODE, fin)?;
 
         // La memoria repartible: un MemHeader al principio de cada región.
