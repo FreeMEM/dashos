@@ -161,7 +161,7 @@ impl Nvme {
         for (i, v) in cdw.iter().enumerate() {
             poner32(e + 40 + 4 * i, *v);
         }
-        unsafe { core::arch::asm!("dmb oshst") };
+        dashos::barrera::escrituras();
         c.cola = (c.cola + 1) % ENTRADAS;
         escribir(TIMBRES + (2 * c.id) * self.paso, c.cola as u32);
         // La terminada llega cuando su bit de fase (DW3, bit 16) es el que se espera (4.6).
@@ -175,7 +175,7 @@ impl Nvme {
         if !lista {
             return Err(u32::MAX);
         }
-        unsafe { core::arch::asm!("dmb oshld") };
+        dashos::barrera::lecturas();
         let (dw0, dw3) = (dma32(t), dma32(t + 12));
         c.cabeza = (c.cabeza + 1) % ENTRADAS;
         if c.cabeza == 0 {

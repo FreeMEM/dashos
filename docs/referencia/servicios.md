@@ -56,6 +56,12 @@ En cada canal el primero que lo nombra es el servidor; los demás reciben una co
 aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
+En x86-64 (X5) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada servicio:
+`entrada`, `xhci`, `nvme`, `disco`, `archivos`, `ficheros`, `sonido`, `virtio-sonido`, `tono-a`, `tono-b` y `hola`.
+Sin consola (es un hilo del kernel: COM1 es de E/S por puertos) ni compositor (X6). En su lugar, `entrada`
+(`usuario/src/bin/entrada.rs`, de prueba) nombra antes que nadie el canal de entrada y escribe los eventos que le
+llegan (los cuatro primeros de cada clase y después la cuenta). Las interrupciones de los aparatos son MSI-X.
+
 ## Buzón de la VideoCore (C50)
 
 `usuario/src/bin/buzon.rs`. Llaves: 1 su permiso DMA, 2 los registros del buzón (la página entera; el buzón está en
@@ -99,7 +105,8 @@ planos por hardware.
 ## xHCI (U6)
 
 `usuario/src/bin/xhci.rs`. Llaves: 1 su permiso DMA, 2 sus registros (la BAR 0 del aparato del PCIe, que busca el
-kernel), 3 su INTx si el kernel la sabe (del `interrupt-map` del árbol), y después el canal de entrada del compositor. Reinicia el controlador, da dirección a lo que haya en cada puerto y,
+kernel), 3 su interrupción si el kernel la sabe (MSI-X, o la INTx del `interrupt-map` del árbol), y después el canal
+de entrada del compositor. Reinicia el controlador, da dirección a lo que haya en cada puerto y,
 a los teclados y ratones de arranque, les lee los informes y los manda como eventos, con el mismo formato que `usb`.
 Hoy sin hubs; sin interrupción (con ACPI), mira los eventos cada 10 ms.
 
@@ -224,6 +231,10 @@ Pendiente: la fecha de lo escrito (no hay reloj de la hora: va en 0), juntar esc
 (S6), cambiar si una carpeta distingue mayúsculas (para la caja Linux).
 
 ## Sonido (S19, A4)
+
+El controlador de virtio-sound (`usuario/src/bin/virtio_sonido.rs`) pone en cada cola la entrada 0 de la tabla de
+MSI-X (`queue_msix_vector`, virtio 1.2, 4.1.4.3): es la única que prepara el kernel. Con INTx no cuenta. En x86 (X5)
+su interrupción es esa MSI-X; en ARM, la INTx.
 
 El servicio "sonido" lee el canal "sonido"; el controlador de virtio-sound y los programas le escriben con copias
 marcadas, y `inicio` le dice de quién es cada marca. Mensajes de palabras de 32 bits (little-endian):

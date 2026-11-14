@@ -11,6 +11,7 @@
 use core::arch::asm;
 use core::fmt;
 
+pub mod barrera;
 pub mod graficos;
 pub mod hid;
 #[cfg(feature = "monton")]

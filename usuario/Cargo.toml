@@ -217,3 +217,8 @@ required-features = ["archivos"]
 name = "ficheros"
 path = "src/bin/ficheros.rs"
 test = false
+
+[[bin]]
+name = "entrada"
+path = "src/bin/entrada.rs"
+test = false

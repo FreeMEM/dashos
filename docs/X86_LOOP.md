@@ -51,20 +51,23 @@ Dos líneas a la vez (decisión 4 de S21):
   de cada proceso, con PCID en vez de ASID), cambio de contexto, cargador ELF x86-64, la biblioteca
   `usuario/` para `x86_64` (entrada al kernel). `make -C kernel prueba-x86` con las pruebas de `pruebas.rs` que no
   tocan hardware de la Pi.
-- [ ] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
+- [x] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
   `virtio_sonido` funcionando en `q35`.
-  Lo que dejó X4 para aquí:
-  - Las interrupciones de los procesos en x86 son las GSI del IOAPIC (número = GSI + 32, al núcleo 0, en
-    `interrupciones.rs`, módulo `arq`). Las MSI van como las LPI de ARM: hoy `arq::LPIS` es 0 en x86.
-  - La imagen normal de x86 no lanza `inicio` (`inicio.rs` sigue siendo solo de ARM): hace falta el paquete de
-    arranque con los ELF de x86 y las llaves de los aparatos de ACPI y PCIe. Sin él, ningún servicio corre en x86.
-  - `registros_proyectar` en x86 acepta lo que esté fuera de la RAM (sin caché); el permiso DMA no lo da nadie aún
-    (sin IOMMU, en un PC un aparato llega a toda la memoria).
-  - El camino con PCID no está probado: ni QEMU TCG ni el KVM de esta máquina lo dan. Con PCID, cada CR3 lleva el suyo
-    y uno soltado se vacía de la TLB la próxima vez que se carga (`espacio.rs`).
-  - Quitar una proyección de un proceso vivo vacía la TLB entera de los demás núcleos (`vaciar_tlb_otros`). Con
-    muchos núcleos o muchas `memoria_quitar` convendrá algo más fino (INVPCID, o solo los núcleos donde corre).
 - [ ] X6 **Pantalla.** GOP hasta el compositor y el kit, como en `virt` (U4): el escritorio en QEMU x86.
+  Lo que dejó X5 para aquí:
+  - `inicio_x86.rs` no da pantalla: falta la llave de la memoria del GOP y sus medidas (lo que en ARM sale del nodo
+    `simple-framebuffer`; aquí, de la `InfoArranque`), y lanzar el compositor, las ventanas de prueba y Ajustes.
+  - El compositor tiene que ser quien lee el canal de entrada; entonces sobra `entrada` (el programa de prueba que hoy
+    escribe los eventos del xHCI).
+  - Sin consola como proceso: es un hilo del kernel (`serie::consola_del_kernel`). Para un proceso haría falta darle
+    los puertos de COM1 (el mapa de E/S de la TSS).
+  - Sin INTx en x86: su número sale del `_PRT` del AML de ACPI, que no se lee. Todos los aparatos de `q35` tienen MSI.
+  - Las interrupciones del IOAPIC entregadas a un proceso siguen sin probar (los aparatos van por MSI).
+  - Sin IOMMU (VT-d o AMD-Vi): un aparato con bus master alcanza toda la memoria.
+  - Una llamada al sistema corre sin interrupciones en su núcleo, en las dos arquitecturas. Un `memoria_crear` de 4 MB
+    tardaba en QEMU x86 de 6 a 25 ms, y cortaba el sonido; el montón de usuario pide ahora trozos de 1 MB. Lo de
+    fondo (llamadas largas que se puedan interrumpir, o poner a cero fuera de la llamada) queda abierto.
+  - Lo que quedaba de X4 sigue igual: el camino con PCID sin probar, y `vaciar_tlb_otros` vacía la TLB entera.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S21).
@@ -240,3 +243,41 @@ No comprobado: el camino con PCID (ni QEMU TCG ni este KVM lo dan); una CPU sin 
 mira por CPUID, pero solo se probó con `-cpu max` y el anfitrión); interrupciones de aparatos entregadas a un proceso
 por el IOAPIC (hay código, sin prueba: llega con X5); la imagen normal de x86 con `inicio` (no lo lanza). Lo que queda
 para X5 está apuntado en su tarea.
+
+
+### 2026-11-14 — X5: PCIe y controladores estándar en x86-64
+
+Hecho:
+
+- `acpi.rs` lee la MCFG (los tramos de ECAM). `mapa.rs` tiene el GB 257 para los registros que toca el kernel, sin
+  caché (PCD y PWT), solo fuera de la RAM; `base/x86_64/mmio.rs` da una `Ventana` con accesos de 32 bits comprobados.
+- `kernel/src/pci.rs`: recorre todos los buses de la MCFG y las funciones de cada aparato, mide las BAR (también de 64
+  bits) y da una MSI-X (su primera entrada, la tabla en cualquier BAR) o, si no la tiene, una MSI.
+- Las MSI van como las LPI de ARM: números desde la 8192, enmascaradas en el kernel, al núcleo 0, cada una por su
+  vector (0xB0 a 0xEF). Las GSI del IOAPIC quedan en los vectores 0x30 a 0xAF (de la 32 a la 159).
+- `kernel/src/inicio_x86.rs`: la imagen normal de x86 lanza `inicio` con el mismo paquete de arranque que ARM, los ELF
+  de x86 y las llaves del xHCI, el NVMe y el sonido de virtio (registros, permiso DMA y MSI-X).
+- Servicios en x86 sin cambios de lógica: `xhci`, `nvme`, `disco`, `archivos`, `ficheros`, `sonido`,
+  `virtio-sonido` y los tonos. Las barreras de ARM pasan a `dashos::barrera` (en x86, del compilador o `mfence`).
+  `entrada` (nuevo, de prueba) lee los eventos del xHCI mientras no hay compositor en x86.
+- `virtio-sonido` pone la entrada 0 de MSI-X en cada cola: sin eso, con MSI-X el aparato no avisa. En ARM (INTx) no
+  cambia nada.
+- La consola de x86 es un hilo del kernel que saca el registro por COM1 con las interrupciones abiertas.
+- AES y Poly1305 (de RedoxFS) van por software en x86 (`--cfg aes_force_soft`, `poly1305_force_soft`): sin SSE no
+  compilaban.
+- El montón de usuario pide trozos de 1 MB, no de 4. Se encontró midiendo: el sonido se cortaba al arrancar en x86 una
+  vez de cada dos. `archivos` pedía 4 MB en una sola llamada, que en QEMU tardaba hasta 23 ms sin interrupciones en su
+  núcleo, y la MSI del sonido se entregaba tarde.
+- `make -C kernel arranque-x86`: q35 con `qemu-xhci` (teclado detrás de un concentrador y ratón), NVMe con
+  `target/nvme.img` y `virtio-sound`; teclas y ratón por el monitor (`TECLAS=1`), el disco leído después en Linux y el
+  WAV analizado con `tools/sonido_wav.py`, como `arranque-virt`.
+
+Comprobado: `make -C kernel arranque-x86` da BIEN cinco veces seguidas (la salida, el disco y el sonido), con los tres
+aparatos por MSI-X (8192 a 8194) y las BAR en 768 GB. A mano, con KVM (`-enable-kvm -cpu host`), también BIEN, con las
+BAR en 56 TB. `make -C kernel prueba-x86`, `make -C kernel prueba`, `make -C kernel arranque` y
+`make -C kernel arranque-virt` dan BIEN.
+
+No comprobado: un PC de verdad; la INTx y el IOAPIC con un proceso; MSI sin MSI-X (el código está, `q35` no lo
+usa); aparatos detrás de un puente del PCIe (se recorren todos los buses de la MCFG, pero `q35` los pone en el 0);
+varios segmentos de PCIe (solo el 0); un núcleo 0 con ID de APIC de más de 8 bits (la MSI no llegaría: haría falta el
+remapeo de interrupciones). Lo que queda está en X6.

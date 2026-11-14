@@ -75,6 +75,34 @@ pub fn escribir_byte(b: u8) {
     crate::base::serie::byte(b);
 }
 
+/// x86-64 (X5): la consola es un hilo del kernel. COM1 es de E/S por puertos y aún no hay forma de dársela a un
+/// proceso, así que este hilo hace lo que hace el proceso `consola` en ARM (C48): toma el registro y lo saca por COM1
+/// con las interrupciones abiertas. Sin él, cada línea de un programa salía por COM1 con el cerrojo de la serie tomado
+/// (las IRQ enmascaradas): en QEMU, cada byte son dos accesos a puertos, y las interrupciones del núcleo se retrasaban
+/// decenas de milisegundos (el sonido se cortaba al arrancar). En el núcleo `nucleo`, en la clase justa.
+#[cfg(target_arch = "x86_64")]
+pub fn consola_del_kernel(nucleo: usize) {
+    crate::planificador::crear(consola, 0, nucleo);
+}
+
+#[cfg(target_arch = "x86_64")]
+extern "C" fn consola(_: usize) {
+    let mut buf = [0u8; 256];
+    loop {
+        // `sacar` se bloquea como en una llamada al sistema: con las IRQ enmascaradas.
+        let estado = crate::cerrojo::enmascarar_irq();
+        let n = crate::registro::sacar(&mut buf);
+        crate::cerrojo::restaurar_irq(estado);
+        let Some(n) = n else { return };
+        for &b in &buf[..n] {
+            if b == b'\n' {
+                escribir_byte(b'\r');
+            }
+            escribir_byte(b);
+        }
+    }
+}
+
 pub struct Serie;
 
 impl fmt::Write for Serie {

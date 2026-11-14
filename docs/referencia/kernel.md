@@ -367,9 +367,9 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S21, X4)
+## x86-64 (S21, X4 y X5)
 
-En x86-64 (rama `x86`, `make -C kernel prueba-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
+En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
 mismos límites. Cambian los registros y lo que es de la CPU:
 
@@ -398,15 +398,29 @@ mismos límites. Cambian los registros y lo que es de la CPU:
 - **Copias.** El kernel lee y escribe la memoria del proceso con `rep movsb` entre `stac` y `clac` (SMAP), con el espacio
   del proceso puesto solo durante la copia. Con CR0.WP, no escribe donde el proceso no puede escribir. Fuera de la
   copia, la mitad baja del kernel está vacía, como en ARM.
-- **Interrupciones de aparatos.** El número de una interrupción es su GSI del IOAPIC más 32 (de la 32 a la 223); llega
-  al núcleo 0. Aún no hay MSI (X5). El mensaje es el mismo: 4 bytes con el número, en little-endian.
+- **Interrupciones de aparatos.** El número de una interrupción es su GSI del IOAPIC más 32 (de la 32 a la 159); llega
+  al núcleo 0. Las MSI y MSI-X del PCIe (X5) se numeran como las LPI de ARM, de la 8192 a la 8255, y se tratan igual:
+  se enmascaran en el kernel, una que llega enmascarada se avisa al terminar. Van al núcleo 0, cada una por su vector
+  (de 0xB0 a 0xEF). El mensaje es el mismo: 4 bytes con el número, en little-endian.
+- **Llaves de arranque** (X5, `kernel/src/inicio_x86.rs`). El mismo paquete que en ARM, con los ELF de x86. Los
+  aparatos salen del PCIe (el ECAM de la MCFG de ACPI, todos sus buses): el xHCI (clase 0x0C0330, BAR 0), el NVMe
+  (0x010802, BAR 0) y el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración), cada uno con sus registros,
+  un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI). Sin INTx: en un PC su
+  número sale del AML de ACPI (`_PRT`), que el kernel no lee. No hay llave del registro ni de la serie: la consola es
+  un hilo del kernel (COM1 es de E/S por puertos y un proceso no llega), ni pantalla (X6).
 - **Registros y memoria del firmware.** `registros_proyectar` solo proyecta lo que está fuera de la RAM, sin caché.
   La memoria del firmware (la pantalla del GOP), fuera de la RAM o en una reserva, como memoria normal: la caché la
-  deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU.
+  deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU. Las BAR pueden
+  estar por encima de 4 GB (en QEMU `q35`, en 768 GB).
+- **Sin IOMMU** (X5). El permiso DMA da memoria por debajo de 4 GB, pero un aparato con el bus master encendido
+  alcanza toda la memoria física: un controlador de un aparato del PCIe puede leer y escribir cualquier cosa por DMA.
+  En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).
 
 La biblioteca `usuario/` compila para `x86_64-unknown-none` (sin SSE en el código de Rust, como el kernel; la FPU se
 usa con ensamblador) con `-C relocation-model=static -C code-model=small`, y su `_start` de ensamblador guarda la
-frecuencia del contador. Los programas que tocan aparatos de la Pi no se compilan para x86.
+frecuencia del contador. Los programas que tocan aparatos de la Pi no se compilan para x86. Las barreras para la
+memoria que se comparte con un aparato están en `dashos::barrera` (`dmb` en ARM; en x86, una barrera del compilador o
+`mfence`).
 
 ## Limitaciones conocidas
 

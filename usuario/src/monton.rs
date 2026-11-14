@@ -1,8 +1,11 @@
 //! Montón de un programa de usuario (FS1): `alloc` (Box, Vec...) sobre objetos de memoria del kernel.
 //!
-//! El kernel da objetos de 4 MB como mucho (`MAX_MEMORIA`). El montón los proyecta seguidos desde `BASE`, así que
-//! crece por arriba: cuando una petición no cabe, pide otro trozo y alarga la lista libre de
+//! El kernel da objetos de 4 MB como mucho (`MAX_MEMORIA`). El montón pide trozos de 1 MB y los proyecta seguidos
+//! desde `BASE`, así que crece por arriba: cuando una petición no cabe, pide otro trozo y alarga la lista libre de
 //! `linked_list_allocator`. Nunca devuelve memoria al kernel. Lo usa el programa que llama a `dashos::monton!()`.
+//!
+//! Trozos de 1 MB y no de 4 (X5): el kernel pone a cero las páginas de un `memoria_crear` dentro de la llamada, sin
+//! interrupciones en ese núcleo. Con 4 MB, en QEMU (x86, TCG) eran de 6 a 25 ms, y el sonido se cortaba si coincidía.
 
 use core::alloc::{GlobalAlloc, Layout};
 use core::cell::UnsafeCell;
@@ -12,9 +15,9 @@ use linked_list_allocator::Heap;
 
 /// Dónde empieza el montón: a 64 GB, en el tramo libre desde 4 GB (`docs/referencia/kernel.md`).
 pub const BASE: usize = 0x10_0000_0000;
-const TROZO: usize = 4 << 20;
+const TROZO: usize = 1 << 20;
 /// Tope: 256 MB.
-const TROZOS_MAX: usize = 64;
+const TROZOS_MAX: usize = 256;
 
 pub struct Monton {
     cerrojo: AtomicBool,

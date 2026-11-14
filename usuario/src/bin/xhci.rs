@@ -111,7 +111,7 @@ fn poner_trb(off: usize, parametro: u64, estado: u32, control: u32) {
     unsafe {
         core::ptr::write_volatile((VA_DMA + off) as *mut u64, parametro.to_le());
         core::ptr::write_volatile((VA_DMA + off + 8) as *mut u32, estado.to_le());
-        core::arch::asm!("dmb oshst");
+        dashos::barrera::escrituras();
         core::ptr::write_volatile((VA_DMA + off + 12) as *mut u32, control.to_le()); // el ciclo, lo último
     }
 }
@@ -167,7 +167,7 @@ impl Xhci {
     }
 
     fn timbre(&self, n: usize, objetivo: u32) {
-        unsafe { core::arch::asm!("dsb sy") };
+        dashos::barrera::completa();
         escribir(self.db + 4 * n, objetivo);
     }
 

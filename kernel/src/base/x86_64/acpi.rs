@@ -1,8 +1,10 @@
 //! Las tablas de ACPI que necesita el kernel en x86-64 (S21, X3): la MADT (núcleos, APIC local, IOAPIC y cambios de
-//! las interrupciones ISA), la del HPET y la FADT (el temporizador de gestión de energía, por si no hay HPET).
+//! las interrupciones ISA), la del HPET y la FADT (el temporizador de gestión de energía, por si no hay HPET). Desde
+//! X5, la MCFG: dónde está el espacio de configuración del PCIe (ECAM).
 //!
 //! Escrito con la especificación de ACPI 6.5: 5.2.5 (RSDP), 5.2.6 (cabecera), 5.2.7 y 5.2.8 (RSDT y XSDT), 5.2.9
-//! (FADT), 5.2.12 (MADT); y con la del HPET de Intel (IA-PC HPET 1.0a, 3.2.4). Cada tabla se comprueba (firma, largo
+//! (FADT), 5.2.12 (MADT); con la del HPET de Intel (IA-PC HPET 1.0a, 3.2.4); y con la del firmware de PCI (PCI Firmware
+//! Specification 3.2, 4.1.2, la tabla MCFG). Cada tabla se comprueba (firma, largo
 //! y suma) antes de leerla, y solo se lee lo que se ve por el mapa lineal (`mapa::se_ve`): una dirección mala del
 //! firmware da una tabla de menos, no un fallo.
 
@@ -26,6 +28,16 @@ pub struct Cambio {
     pub banderas: u16,
 }
 
+/// Un tramo de ECAM de la MCFG: el espacio de configuración de los buses `bus_ini` a `bus_fin` del segmento
+/// `segmento`, 1 MB por bus desde `base` (la dirección del bus 0, aunque el tramo empiece en otro).
+#[derive(Clone, Copy, Debug)]
+pub struct Ecam {
+    pub base: u64,
+    pub segmento: u16,
+    pub bus_ini: u8,
+    pub bus_fin: u8,
+}
+
 /// Lo que el kernel saca de ACPI.
 #[derive(Clone, Debug, Default)]
 pub struct Acpi {
@@ -41,6 +53,8 @@ pub struct Acpi {
     pub hpet: Option<u64>,
     /// El temporizador de gestión de energía: puerto de E/S y si cuenta 32 bits (si no, 24).
     pub pm_timer: Option<(u16, bool)>,
+    /// Los tramos de ECAM del PCIe (MCFG, X5).
+    pub ecam: Vec<Ecam>,
 }
 
 fn leer<T: Copy>(fisica: u64) -> T {
@@ -153,6 +167,18 @@ pub fn leer_tablas() -> Option<Acpi> {
             if puerto != 0 && puerto <= 0xffff {
                 a.pm_timer = Some((puerto as u16, de32));
             }
+        }
+    }
+    // MCFG: tras la cabecera (36) y 8 reservados, entradas de 16 bytes: base (u64), segmento (u16), primer y último
+    // bus (u8, u8) y 4 reservados.
+    if let Some(&(_, m, l)) = tablas.iter().find(|t| &t.0 == b"MCFG") {
+        let mut p = m + 44;
+        while p + 16 <= m + l as u64 {
+            let e = Ecam { base: leer(p), segmento: leer(p + 8), bus_ini: leer(p + 10), bus_fin: leer(p + 11) };
+            if e.base != 0 && e.bus_fin >= e.bus_ini {
+                a.ecam.push(e);
+            }
+            p += 16;
         }
     }
     Some(a)

@@ -5,7 +5,8 @@
 # make arranque  la imagen normal en QEMU: tiene que llegar a "DashOS en marcha"
 # make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
-# make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35
+# make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35,
+#              con los servicios de X5 (xHCI con teclado y ratón, NVMe con su disco, virtio-sound)
 # make prueba-x86  lo mismo con las pruebas del arranque de x86 (pruebas_x86.rs) y los programas de usuario de x86
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
@@ -90,20 +91,33 @@ OBJCOPY_X86 ?= objcopy
 ELF_X86     := target/x86_64-unknown-none/$(PERFIL)/dashos-kernel
 NUCLEO_X86  := target/kernel-x86.elf
 
-x86: FORCE
+# Los servicios que lanza `inicio` en x86 (X5, `inicio_x86.rs`). Las mismas características que `usuario-x86`, para
+# no recompilar la biblioteca entre una y otra.
+FUNCIONES_X86 := archivos,sonido
+SERVICIOS_X86 := inicio entrada xhci nvme disco archivos ficheros sonido virtio-sonido tono-a tono-b hola
+
+usuario-x86-servicios: FORCE
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(addprefix --bin ,$(SERVICIOS_X86))
+
+x86: usuario-x86-servicios FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86)
 
-arranque-x86: x86
+# Como arranque-virt (U6, S19): q35 con qemu-xhci (el teclado detrás de un concentrador y el ratón), un disco NVMe
+# (el mismo de arranque-virt, que se mira después en Linux) y virtio-sound (el WAV se analiza después).
+arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
-	GUARDAR=$(abspath target/salida_x86.txt) ARQ=x86_64 ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_x86.txt 60
+	rm -f target/sonido-x86.wav
+	GUARDAR=$(abspath target/salida_x86.txt) ARQ=x86_64 TECLAS=1 QEMU_EXTRA="-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_x86.txt 90
+	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
+	python3 ../tools/sonido_wav.py target/sonido-x86.wav
 
 # Los programas de usuario de x86-64 que no tocan aparatos (S21, X4), y el PIE de C29 (con las binutils del sistema).
 PIE_X86 := ../usuario/target/pie_x86
 BINES_X86 := hola fpu_a fpu_b malo tenis repartos tls trampas hijo padre llaves grupos lanzador tiempo muchos
 
 usuario-x86: FORCE
-	cd ../usuario && cargo build --release --target x86_64-unknown-none $(addprefix --bin ,$(BINES_X86))
+	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(addprefix --bin ,$(BINES_X86))
 	as --64 -o $(PIE_X86).o ../usuario/asm/pie_x86.s
 	ld -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE_X86) $(PIE_X86).o
 

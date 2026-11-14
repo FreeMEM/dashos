@@ -6,8 +6,8 @@
 //!
 //! Vectores:
 //! - 0x20 a 0x2F: los dos 8259, apagados; si alguno da una espuria, se ignora.
-//! - 0x30 a 0xEF: aparatos (por el IOAPIC, y más adelante MSI). Las del kernel ponen su función con `manejar`; las de
-//!   los procesos van al repartidor (`interrupciones.rs`, X4).
+//! - 0x30 a 0xEF: aparatos. Las del kernel ponen su función con `manejar`; las de los procesos van al repartidor
+//!   (`interrupciones.rs`, X4): de 0x30 a 0xAF, las GSI de los IOAPIC (la GSI más 0x30); de 0xB0 a 0xEF, las MSI (X5).
 //! - 0xF0 el reloj, 0xF1 replanificar (C17), 0xF2 vaciar la TLB (`nucleos::vaciar_tlb_otros`), 0xFF la espuria.
 
 use super::cpu;
@@ -20,6 +20,8 @@ pub const VECTOR_ESPURIA: u8 = 0xff;
 /// Los vectores que se pueden dar a los aparatos.
 pub const PRIMER_VECTOR_APARATO: u8 = 0x30;
 pub const ULTIMO_VECTOR_APARATO: u8 = 0xef;
+/// Desde aquí, los vectores de aparatos son de las MSI (X5); por debajo, de las GSI de los IOAPIC.
+pub const PRIMER_VECTOR_MSI: u8 = 0xb0;
 
 const MSR_APIC_BASE: u32 = 0x1b;
 const APIC_BASE_EN: u64 = 1 << 11;

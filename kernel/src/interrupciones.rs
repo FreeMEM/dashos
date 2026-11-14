@@ -14,7 +14,8 @@
 //! pide órdenes al ITS. Son mensajes, sin nivel: una que llega enmascarada se apunta y se avisa al terminar.
 //!
 //! En x86-64 (X4) el controlador es el IOAPIC (`arq`, abajo): el número de una interrupción es su GSI más 32, y llega
-//! al núcleo 0 por el vector de aparatos que le toca (`apic.rs`). Las MSI llegan con X5.
+//! al núcleo 0 por el vector de aparatos que le toca (`apic.rs`). Las MSI (X5) se tratan como las LPI: los mismos
+//! números desde la 8192, enmascaradas aquí, cada una con su vector (desde `apic::PRIMER_VECTOR_MSI`) del núcleo 0.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -25,7 +26,7 @@ use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255, y las primeras `LPIS` LPI
 /// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256. En x86, las GSI de los IOAPIC que caben
-/// en los vectores de aparatos, y aún sin LPI (MSI).
+/// en sus vectores (de la 32 a la 159) y, como LPI, las MSI (X5).
 pub const PRIMERA: u32 = 32;
 pub const ULTIMA: u32 = arq::ULTIMA;
 pub const LPIS: u32 = arq::LPIS;
@@ -56,13 +57,15 @@ mod arq {
 }
 
 /// x86-64 (X4): los IOAPIC. La interrupción `intid` es la GSI `intid - 32`, y va al vector de aparatos
-/// `apic::PRIMER_VECTOR_APARATO + intid - 32` del núcleo 0.
+/// `apic::PRIMER_VECTOR_APARATO + intid - 32` del núcleo 0. Las MSI (X5), como las LPI: la 8192 + k va al vector
+/// `apic::PRIMER_VECTOR_MSI + k` del núcleo 0.
 #[cfg(target_arch = "x86_64")]
 mod arq {
     use crate::base::{apic, ioapic};
+    use core::sync::atomic::{AtomicU32, Ordering};
 
-    pub const ULTIMA: u32 = super::PRIMERA + (apic::ULTIMO_VECTOR_APARATO - apic::PRIMER_VECTOR_APARATO) as u32;
-    pub const LPIS: u32 = 0;
+    pub const ULTIMA: u32 = super::PRIMERA + (apic::PRIMER_VECTOR_MSI - 1 - apic::PRIMER_VECTOR_APARATO) as u32;
+    pub const LPIS: u32 = (apic::ULTIMO_VECTOR_APARATO - apic::PRIMER_VECTOR_MSI) as u32 + 1;
 
     fn vector(intid: u32) -> u8 {
         apic::PRIMER_VECTOR_APARATO + (intid - super::PRIMERA) as u8
@@ -70,7 +73,29 @@ mod arq {
 
     /// El número de la interrupción que llega por el vector de aparatos `v`.
     pub fn de_vector(v: u8) -> u32 {
-        super::PRIMERA + (v - apic::PRIMER_VECTOR_APARATO) as u32
+        if v >= apic::PRIMER_VECTOR_MSI {
+            super::PRIMERA_LPI + (v - apic::PRIMER_VECTOR_MSI) as u32
+        } else {
+            super::PRIMERA + (v - apic::PRIMER_VECTOR_APARATO) as u32
+        }
+    }
+
+    static MSI_SIGUIENTE: AtomicU32 = AtomicU32::new(0);
+
+    /// Una MSI nueva para un aparato (X5): (número, dirección y dato que escribe el aparato). Va al núcleo 0, por su
+    /// vector, por flanco y con entrega fija (SDM, volumen 3, 11.11: la dirección 0xFEE con el ID de APIC del destino en
+    /// los bits 19:12; el dato, el vector). `None` si se acabaron o el núcleo 0 tiene un ID de más de 8 bits (haría
+    /// falta el remapeo de interrupciones).
+    pub fn msi() -> Option<(u32, u64, u32)> {
+        let destino = crate::nucleos::apic_de(0)?;
+        if destino > 0xff {
+            return None;
+        }
+        let k = MSI_SIGUIENTE.fetch_add(1, Ordering::Relaxed);
+        if k >= LPIS {
+            return None;
+        }
+        Some((super::PRIMERA_LPI + k, 0xFEE0_0000 | (destino as u64) << 12, (apic::PRIMER_VECTOR_MSI as u32) + k))
     }
 
     /// Al núcleo 0, y desenmascarada. Si ningún IOAPIC lleva esa GSI, no llegará nunca.
@@ -95,6 +120,12 @@ mod arq {
 #[cfg(target_arch = "x86_64")]
 pub fn atender_vector(v: u8) -> bool {
     atender(arq::de_vector(v))
+}
+
+/// x86-64 (X5): una MSI nueva para un aparato del PCIe: (número de la interrupción, dirección y dato del mensaje).
+#[cfg(target_arch = "x86_64")]
+pub fn msi() -> Option<(u32, u64, u32)> {
+    arq::msi()
 }
 const PRIMERA_LPI: u32 = 8192;
 const PALABRAS: usize = 5;

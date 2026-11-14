@@ -7,7 +7,8 @@
 //! el planificador de `base`, que son comunes). Desde X4 también son comunes los procesos, las llaves, los canales, los
 //! cupos, el cargador de ELF, las llamadas, el registro y la consola. Lo que sigue siendo solo de ARM (GIC, ITS, árbol
 //! de dispositivos, PCIe de la Pi, `inicio`) va detrás de `#[cfg(target_arch = "aarch64")]`. Las pruebas de x86 están
-//! en `pruebas_x86.rs`; las del planificador, comunes, en `pruebas_hilos.rs`.
+//! en `pruebas_x86.rs`; las del planificador, comunes, en `pruebas_hilos.rs`. Desde X5, x86 tiene su PCIe (`pci.rs`,
+//! por la MCFG) y su `inicio` (`inicio_x86.rs`), con las llaves de los aparatos de ACPI y del PCIe.
 
 #![no_std]
 #![no_main]
@@ -29,7 +30,7 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 #[path = "base/x86_64/mod.rs"]
 mod base;
 #[cfg(target_arch = "x86_64")]
-pub use base::{cerrojo, cpu, espacio, excepciones, mapa, memoria, mmu, monton, nucleos, planificador};
+pub use base::{cerrojo, cpu, espacio, excepciones, mapa, memoria, mmio, mmu, monton, nucleos, planificador};
 #[cfg(feature = "pruebas")]
 mod pruebas_hilos;
 mod reloj;
@@ -52,6 +53,11 @@ mod procesos;
 mod registro;
 mod serie;
 mod temporizadores;
+
+#[cfg(all(target_arch = "x86_64", not(feature = "pruebas")))]
+mod inicio_x86;
+#[cfg(target_arch = "x86_64")]
+mod pci;
 
 #[cfg(target_arch = "aarch64")]
 mod dtb;
@@ -142,7 +148,8 @@ fn panico(info: &PanicInfo) -> ! {
 /// x86-64: lo llama `base` (arranque.s → `kmain_x86` → `kmain`) en el núcleo 0, ya en la mitad alta con las tablas
 /// del arranque. X1: dice lo que dejó el cargador. X2: GDT, TSS e IDT, la memoria física desde el mapa de UEFI, las
 /// defensas, las tablas de páginas propias y el montón. X3: ACPI, el reloj, los APIC, el planificador y los demás
-/// núcleos. X4: el repartidor de interrupciones y los procesos.
+/// núcleos. X4: el repartidor de interrupciones y los procesos. X5: el
+/// PCIe y `inicio` con los servicios.
 #[cfg(target_arch = "x86_64")]
 pub fn kmain() -> ! {
     use base::{acpi, apic, arranque, ioapic, tiempo};
@@ -230,6 +237,14 @@ pub fn kmain() -> ! {
     pruebas::ejecutar(&a, n);
 
     kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
+    // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM, con la consola en un hilo del kernel
+    // en el último núcleo (`serie::consola_del_kernel`).
+    #[cfg(not(feature = "pruebas"))]
+    serie::consola_del_kernel(n as usize);
+    #[cfg(not(feature = "pruebas"))]
+    if !inicio_x86::lanzar(&a) {
+        kprintln!("sin programa de inicio: el sistema se queda parado");
+    }
     planificador::ocioso()
 }
 

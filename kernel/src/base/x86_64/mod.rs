@@ -13,6 +13,9 @@
 //! - X4: los procesos. Los espacios (`espacio.rs`, con PCID), las copias de su memoria (`usuario.rs`), la entrada por
 //!   `syscall` y la bajada al anillo 3 (`vectores.s`, `excepciones.rs`), la FPU (XSAVE) y el TLS (base de FS) por hilo
 //!   (`cpu.rs`, `planificador.rs`).
+//!
+//! - X5: los registros de los aparatos que toca el kernel (`mmio.rs`, en el GB de aparatos de `mapa.rs`) y la MCFG de
+//!   ACPI (`acpi.rs`). El PCIe y las MSI van fuera de `base` (`pci.rs`, `interrupciones.rs`).
 
 pub mod acpi;
 pub mod apic;
@@ -24,6 +27,7 @@ pub mod espacio;
 pub mod excepciones;
 pub mod ioapic;
 pub mod mapa;
+pub mod mmio;
 #[path = "../memoria.rs"]
 pub mod memoria;
 pub mod mmu;

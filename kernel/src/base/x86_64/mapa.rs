@@ -10,7 +10,9 @@
 //! - la imagen del kernel, en los 2 GB de arriba, con páginas de 4 KB: `.text` solo lectura y ejecutable, `.rodata`
 //!   solo lectura, lo demás lectura y escritura sin ejecución; las páginas de guarda de las pilas, sin proyectar;
 //! - el GB 256, para las pilas de los hilos (X3): ranuras de 32 KB, la mitad de abajo sin proyectar (guarda) y la de
-//!   arriba la pila, como en ARM. Al soltar una pila se vacía la TLB de los demás núcleos (`nucleos::vaciar_tlb_otros`).
+//!   arriba la pila, como en ARM. Al soltar una pila se vacía la TLB de los demás núcleos (`nucleos::vaciar_tlb_otros`);
+//! - el GB 257, para los registros de los aparatos que toca el kernel (X5: el ECAM del PCIe, las tablas de MSI-X), sin
+//!   caché (PCD y PWT) y sin ejecución, con páginas de 2 MB si el tramo lo permite. No se quitan nunca.
 //!
 //! Nada se puede escribir y ejecutar a la vez (W^X), y nada lleva el bit de usuario: con SMEP y SMAP, el kernel no
 //! ejecuta ni toca la mitad baja. Las entradas de la mitad alta son globales: no se van de la TLB al cambiar de CR3.
@@ -22,6 +24,8 @@ use core::sync::atomic::{AtomicU64, Ordering};
 const PRESENTE: u64 = 1;
 const ESCRITURA: u64 = 1 << 1;
 const USUARIO: u64 = 1 << 2;
+const PWT: u64 = 1 << 3;
+const PCD: u64 = 1 << 4;
 const PS: u64 = 1 << 7; // página grande (2 MB en un PD)
 const GLOBAL: u64 = 1 << 8;
 const ACCEDIDA: u64 = 1 << 5;
@@ -35,6 +39,7 @@ const MB2: u64 = 1 << 21;
 /// Hasta dónde puede llegar el mapa lineal: hasta las pilas.
 const MAX_LINEAL_GB: u64 = 256;
 const INDICE_PILAS: usize = 256;
+const INDICE_APARATOS: usize = 257;
 const INDICE_IMAGEN: usize = 510;
 
 unsafe extern "C" {
@@ -107,6 +112,7 @@ static PML4: AtomicU64 = AtomicU64::new(0);
 /// Dónde acaba el mapa lineal (física) y el PD del GB de las pilas.
 static TOPE_LINEAL: AtomicU64 = AtomicU64::new(0);
 static PD_PILAS: AtomicU64 = AtomicU64::new(0);
+static PD_APARATOS: AtomicU64 = AtomicU64::new(0);
 static TABLAS: AtomicU64 = AtomicU64::new(0);
 
 /// Cuántas páginas de tablas ha sacado el mapa del kernel del repartidor.
@@ -174,6 +180,10 @@ pub fn construir() {
     let pd = tabla_nueva();
     poner(pdpt, INDICE_PILAS, pd | TABLA);
     PD_PILAS.store(pd, Ordering::Release);
+    // Los registros de los aparatos (X5): su PD, vacío.
+    let pd = tabla_nueva();
+    poner(pdpt, INDICE_APARATOS, pd | TABLA);
+    PD_APARATOS.store(pd, Ordering::Release);
     TOPE_LINEAL.store(tope * GB, Ordering::Release);
     PML4.store(pml4, Ordering::Release);
 }
@@ -277,6 +287,54 @@ impl Drop for Pila {
         }
         RANURAS_OCUPADAS.tomar()[self.ranura / 64] &= !(1 << (self.ranura % 64));
     }
+}
+
+const APARATOS_VA: usize = mmu::KERNEL_VA + (INDICE_APARATOS << 30);
+/// Lo ya usado del GB de los aparatos (desplazamiento desde su principio).
+static APARATOS_USADO: crate::cerrojo::Cerrojo<u64> = crate::cerrojo::Cerrojo::new(0);
+
+/// Proyecta, sin caché y sin ejecución, los registros de un aparato en el GB de los aparatos del kernel (X5), y da la
+/// dirección virtual de `fisica`. Solo memoria física fuera de la RAM (`fuera_de_la_ram`): así nunca es un alias de
+/// memoria del kernel o de un proceso. Con páginas de 2 MB si el tramo empieza y acaba alineado a 2 MB (el ECAM); si
+/// no, de 4 KB. `None` si no cabe, no es de aparatos o falta memoria para las tablas. No se quita nunca.
+pub fn proyectar_aparato(fisica: u64, tamano: u64) -> Option<usize> {
+    let pd = PD_APARATOS.load(Ordering::Acquire);
+    let ini = fisica & !(PAGINA - 1);
+    let fin = fisica.checked_add(tamano)?.checked_next_multiple_of(PAGINA)?;
+    if pd == 0 || tamano == 0 || fin > 1 << 52 || !paginas().fuera_de_la_ram(ini, fin - ini) {
+        return None;
+    }
+    let largo = fin - ini;
+    let grande = ini % MB2 == 0 && largo % MB2 == 0;
+    let mut usado = APARATOS_USADO.tomar();
+    let desde = usado.next_multiple_of(if grande { MB2 } else { PAGINA });
+    if desde + largo > GB {
+        return None;
+    }
+    let atributos = PRESENTE | ESCRITURA | GLOBAL | ACCEDIDA | SUCIA | PCD | PWT | nx();
+    let mut o = 0;
+    while o < largo {
+        let d = desde + o;
+        let i2 = (d >> 21) as usize;
+        if grande {
+            poner(pd, i2, (ini + o) | atributos | PS);
+            o += MB2;
+            continue;
+        }
+        let mut pt = leer(pd, i2) & DIRECCION;
+        if pt == 0 {
+            let t = paginas().pagina(Zona::Dma1G)?;
+            unsafe { core::ptr::write_bytes(mmu::virt(t as usize) as *mut u8, 0, PAGINA as usize) };
+            TABLAS.fetch_add(1, Ordering::Relaxed);
+            poner(pd, i2, t | TABLA);
+            pt = t;
+        }
+        poner(pt, ((d >> 12) & 0x1ff) as usize, (ini + o) | atributos);
+        o += PAGINA;
+    }
+    // Entradas nuevas: no hay nada que sacar de ninguna TLB (SDM, 4.10.2.3).
+    *usado = desde + largo;
+    Some(APARATOS_VA + desde as usize + (fisica - ini) as usize)
 }
 
 /// Pasa este núcleo al mapa del kernel. Desde aquí no hay proyección 1:1 ni mitad baja.

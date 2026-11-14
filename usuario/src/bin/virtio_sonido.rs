@@ -53,6 +53,7 @@ const C_COLAS: usize = 0x12;
 const C_ESTADO: usize = 0x14;
 const C_COLA_ELEGIR: usize = 0x16;
 const C_COLA_TAMANO: usize = 0x18;
+const C_COLA_MSIX: usize = 0x1A;
 const C_COLA_ENCENDER: usize = 0x1C;
 const C_COLA_AVISO: usize = 0x1E;
 const C_COLA_DESC: usize = 0x20;
@@ -194,10 +195,10 @@ impl Cola {
     /// Ofrece al aparato la cadena que empieza en el descriptor `cabeza` y le avisa.
     fn ofrecer(&mut self, cabeza: u16, numero: u16) {
         poner16(self.m + DISP + 4 + 2 * (self.disp % ENTRADAS) as usize, cabeza);
-        unsafe { core::arch::asm!("dmb oshst") };
+        dashos::barrera::escrituras();
         self.disp = self.disp.wrapping_add(1);
         poner16(self.m + DISP + 2, self.disp);
-        unsafe { core::arch::asm!("dmb osh") };
+        dashos::barrera::total();
         poner_reg16(self.aviso, numero);
     }
 
@@ -206,7 +207,7 @@ impl Cola {
         if dma16(self.m + USADOS + 2) == self.usados {
             return None;
         }
-        unsafe { core::arch::asm!("dmb oshld") };
+        dashos::barrera::lecturas();
         let id = dma32(self.m + USADOS + 4 + 8 * (self.usados % ENTRADAS) as usize);
         self.usados = self.usados.wrapping_add(1);
         Some(id as u16)
@@ -226,6 +227,9 @@ fn montar(b: &Bloques, bus: u64, numero: u16, m: usize) -> Option<Cola> {
     poner_reg64(b.comun + C_COLA_DISP, base + DISP as u64);
     poner_reg64(b.comun + C_COLA_USADOS, base + USADOS as u64);
     let aviso = b.aviso + reg16(b.comun + C_COLA_AVISO) as usize * b.multiplicador as usize;
+    // Con MSI-X (el kernel se la da en x86, X5), cada cola dice qué entrada de la tabla usa: la 0, la única que
+    // prepara el kernel. Sin ella, la cola no avisaría (4.1.4.3, 4.1.5.1.2). Con INTx no cuenta.
+    poner_reg16(b.comun + C_COLA_MSIX, 0);
     poner_reg16(b.comun + C_COLA_ENCENDER, 1);
     Some(Cola { m, bus: base, aviso, disp: 0, usados: 0 })
 }
@@ -372,7 +376,7 @@ fn principal() -> u64 {
     let (mut devueltos, mut vacios, mut errores) = (0u64, 0u64, 0u64);
     let mut sonando = false;
     // La interrupción, a un canal propio. Por nivel (INTx): leer el estado (ISR) la baja, y después se vuelve a
-    // habilitar (4.1.4.5).
+    // habilitar (4.1.4.5). Por MSI-X (x86, X5), leer el ISR no hace nada.
     let avisos = irq.and_then(|i| {
         let (lee, escribe) = dashos::canal_crear();
         (dashos::interrupcion_asociar(i, escribe) == 0).then_some((lee, i))
@@ -407,7 +411,7 @@ fn principal() -> u64 {
             poner32(base + ESTADO, 0);
             let (escritos, leidos) = (salida(0), salida(1));
             if escritos != leidos {
-                unsafe { core::arch::asm!("dmb ishld") };
+                dashos::barrera::lecturas();
                 let desde = VA_SALIDA + 64 + (leidos as usize % RANURAS) * PERIODO;
                 for k in 0..CUADROS {
                     poner32(base + DATOS + 4 * k, unsafe { read_volatile((desde + 4 * k) as *const u32) });

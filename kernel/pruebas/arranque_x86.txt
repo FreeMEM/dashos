@@ -15,3 +15,51 @@ CPU: NX sí, SMEP sí, SMAP sí
 MMU: tablas propias
 Defensas: NX sí, SMEP sí, SMAP sí, WP sí
 DashOS en marcha (x86-64)
+# X5: el PCIe por la MCFG de ACPI, cada aparato con su MSI-X (desde la 8192, como las LPI de ARM), e inicio con los
+# servicios, como en arranque-virt.
+~PCIe: 1 tramos de ECAM en la MCFG,
+~xhci: en el PCIe 0:
+~nvme: en el PCIe 0:
+~virtio-sonido: en el PCIe 0:
+~│   [inicio] todo lanzado; se queda esperando
+~│   hola desde Rust en EL0 (DashOS, little-endian)
+# El xHCI: el teclado detrás de un concentrador y el ratón; sus eventos llegan a `entrada` (en ARM, al compositor).
+~│   [xhci] puerto 5: ranura 1, concentrador
+~│   [xhci] puerto 5 ruta 1: ranura 2, teclado
+~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
+~│   [xhci] avisos por su interrupción
+~│   [entrada] tecla: uso 0x04 (a) pulsada
+~│   [entrada] tecla: uso 0x04 (a) soltada
+~│   [entrada] ratón: botones 0x0, movimiento (10, 5)
+# El NVMe con su disco (target/nvme.img, el de arranque-virt), por su interrupción.
+~│   [nvme] disco de 16384 sectores de 512 bytes (8192 KB)
+~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
+~│   [nvme] sector 1: "DashOS: sector 1", firma 0x0000
+~│   [nvme] avisos por su interrupción
+~│   [disco] abierto: 16384 sectores de 512 bytes
+~│   [disco] leer: bien; escribir y releer: bien; cruzando páginas: bien; rechazos: bien; vaciar: bien
+~│   [disco] anillo: 16 lecturas y un rechazo: bien
+~│   [archivos] RedoxFS abierto: 7168 KB,
+~│   [ficheros] raíz (3 entradas, fin bien): C/ LEEME.txt Prefs/
+~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
+~│   [ficheros] C/grande.txt: 313890 bytes, 25000 líneas: bien
+~│   [ficheros] datos: bien; volumen: 7168 KB,
+~│   [ficheros] rechazos: bien; desde un cajón: bien
+~│   [ficheros] escribir 200 KB: bien; releer: bien; ocupa sitio: bien
+~│   [ficheros] recortar: bien; renombrar y mover: bien; borrar abierto: bien
+~│   [ficheros] hola.txt: bien; rechazos al escribir: bien
+~│   [ficheros] FS6 mayúsculas: bien; FS7 comentario: bien, en la lista: bien; bits: bien
+~│   [ficheros] FS8 comprobación: bien
+~│   [ficheros] FS9 instantáneas: bien
+~│   [ficheros] FS10 volúmenes: bien
+# El sonido: el controlador de virtio-sound, el servicio y dos programas que suenan a la vez; tools/sonido_wav.py mira
+# el WAV de QEMU.
+~│   [sonido] salida por virtio-sonido: 8 ranuras de 256 cuadros a 48 kHz
+~│   [virtio-sonido] suena el flujo 0 para el servicio
+~│   [virtio-sonido] avisos por su interrupción
+~│   [sonido] tono-a abre un flujo: I16, 1 canales, 48000 Hz
+~│   [sonido] tono-b abre un flujo: F32, 2 canales, 44100 Hz
+~│   [tono-a] 1,5 s escritos; ahora falla a propósito
+~│   [sonido] tono-a ya no está: su flujo sale con fundido
+~│   [sonido] tono-a: flujo cerrado
+~│   [sonido] tono-b: flujo cerrado
