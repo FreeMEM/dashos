@@ -6,9 +6,9 @@ uso, se para**. Diseño en `docs/diseño/S21-x86.md`.
 
 Dos líneas a la vez (decisión 4 de S21):
 
-- **Línea A, AlborOS en x86-64** (tareas `X`). Rama `x86` de `~/Projects/dashos`, en `.worktrees/x86`. Otra sesión
+- **Línea A, UsirOS (antes DashOS) en x86-64** (tareas `X`). Rama `x86` de `~/Projects/dashos`, en `.worktrees/x86`. Otra sesión
   trabaja en `main`: aquí solo se añade, sin mover lo de ARM más de lo imprescindible, para que la fusión sea fácil.
-  El cambio de nombre DashOS → AlborOS no se hace en este bucle.
+  El cambio de nombre DashOS → UsirOS no se hace en este bucle.
 - **Línea B, RelevoJIT** (tareas `R`). `~/Projects/RelevoJIT`, su propio repositorio (privado en GitHub hasta que el
   usuario diga). Diseño en su `docs/DISEÑO.md`; tareas y bitácora en su `docs/BITACORA.md`.
 
@@ -43,7 +43,7 @@ Dos líneas a la vez (decisión 4 de S21):
 - [x] X2 **Memoria y excepciones.** GDT, IDT, TSS; tablas de páginas propias de 4 niveles con el mismo reparto que en
   ARM (lo que pide `base`: `mmu`, `espacio`, `memoria`, `monton`); la memoria física desde el mapa de UEFI; SMEP, SMAP
   y NX encendidos.
-- [ ] X3 **Tiempo, interrupciones y núcleos.** ACPI (MADT, HPET o TSC calibrado), APIC local (x2APIC si lo hay) con
+- [~] X3 **Tiempo, interrupciones y núcleos.** ACPI (MADT, HPET o TSC calibrado), APIC local (x2APIC si lo hay) con
   su temporizador, IOAPIC, arranque de los demás núcleos (INIT-SIPI), avisos entre núcleos. El planificador y los
   hilos de `base` funcionando, con las pilas de los hilos en el GB 256 (`mapa::pila_nueva`, que en x86 necesita
   avisar a los demás núcleos para vaciar la TLB). Una GDT y una TSS por núcleo.
