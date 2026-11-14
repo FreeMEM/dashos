@@ -2,8 +2,9 @@
 //! ACPI y la pantalla del GOP.
 //!
 //! La misma estructura está en `uefi/src/x86_64.rs`: si cambia allí, cambia aquí (y `VERSION`). Todo está en memoria
-//! que el cargador dejó como suya (código y datos del cargador) y que, en X1, nadie más escribe: el kernel corre con
-//! la proyección 1:1 del firmware y no reparte memoria.
+//! que el cargador dejó como suya (código y datos del cargador), que el repartidor de páginas no da a nadie
+//! (`memoria::iniciar_tramos`, X2). Se lee por el mapa lineal (`mmu::virt`): la dirección que deja el cargador es
+//! física.
 
 use core::sync::atomic::{AtomicUsize, Ordering};
 
@@ -45,7 +46,7 @@ pub fn info() -> Option<InfoArranque> {
     if p == 0 || p % 8 != 0 {
         return None;
     }
-    let i = unsafe { core::ptr::read_volatile(p as *const InfoArranque) };
+    let i = unsafe { core::ptr::read_volatile(super::mmu::virt(p) as *const InfoArranque) };
     (i.marca == MARCA && i.version == VERSION).then_some(i)
 }
 
@@ -63,7 +64,7 @@ pub struct Tramo {
 pub fn mapa_de_memoria() -> impl Iterator<Item = Tramo> {
     let (base, n, paso) = match info() {
         Some(i) if i.mapa_descriptor >= 40 && i.mapa != 0 && i.mapa_tamano / i.mapa_descriptor <= 4096 => {
-            (i.mapa as usize, (i.mapa_tamano / i.mapa_descriptor) as usize, i.mapa_descriptor as usize)
+            (super::mmu::virt(i.mapa as usize), (i.mapa_tamano / i.mapa_descriptor) as usize, i.mapa_descriptor as usize)
         }
         _ => (0, 0, 0),
     };
@@ -87,7 +88,20 @@ pub fn rsdp() -> Option<(u64, u8)> {
     if dir == 0 {
         return None;
     }
-    let b: [u8; 20] = unsafe { core::ptr::read_unaligned(dir as *const [u8; 20]) };
+    let b: [u8; 20] = unsafe { core::ptr::read_unaligned(super::mmu::virt(dir as usize) as *const [u8; 20]) };
     let suma = b.iter().fold(0u8, |s, &x| s.wrapping_add(x));
     (&b[..8] == b"RSD PTR " && suma == 0).then_some((dir, b[15]))
+}
+
+/// Los tipos del mapa de UEFI que son RAM (UEFI 2.10, 7.2): código y datos del cargador (1, 2), de los servicios de
+/// arranque (3, 4) y de ejecución (5, 6), convencional (7), ACPI recuperable (9) y ACPI NVS (10).
+pub fn es_ram(tipo: u32) -> bool {
+    matches!(tipo, 1..=7 | 9 | 10)
+}
+
+/// Lo que el kernel puede repartir al empezar: lo de los servicios de arranque (ya fuera) y la memoria convencional.
+/// El código y los datos del cargador no: ahí están el kernel, esta `InfoArranque` y el mapa. Las tablas de ACPI
+/// tampoco, que se leen en X3.
+pub fn es_libre(tipo: u32) -> bool {
+    matches!(tipo, 3 | 4 | 7)
 }

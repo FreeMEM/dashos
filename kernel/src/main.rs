@@ -3,18 +3,18 @@
 //! `kmain` solo pone el sistema en marcha. Las pruebas del arranque (C2 a C36) están en `pruebas.rs` y solo entran
 //! en la imagen con la opción `pruebas` (`make prueba`); la imagen normal (`make`) no las lleva (C36, S16 fase 2).
 //!
-//! En x86-64 (S21, X1) solo entra un `kmain` mínimo y `base/x86_64/`: lo demás es de ARM y va detrás de
-//! `#[cfg(target_arch = "aarch64")]` hasta que X2 a X4 lo lleven a las dos arquitecturas.
+//! En x86-64 (S21) entran un `kmain` propio, `base/x86_64/` (con el repartidor de páginas, el montón y los cerrojos de
+//! `base`, que son comunes) y `serie_x86.rs`: lo demás es de ARM y va detrás de `#[cfg(target_arch = "aarch64")]`
+//! hasta que X3 y X4 lo lleven a las dos arquitecturas. Las pruebas de x86 están en `pruebas_x86.rs`.
 
 #![no_std]
 #![no_main]
 // Parte de lo que solo usan las pruebas (o lo que usarán los servicios) sale como código muerto en la imagen normal.
-#![cfg_attr(not(feature = "pruebas"), allow(dead_code))]
+#![cfg_attr(any(not(feature = "pruebas"), target_arch = "x86_64"), allow(dead_code))]
 // Todo el código inseguro va en `base` (C37, S16 B). El resto del kernel no puede tener `unsafe`: lo que necesite
 // del hardware lo pide a `base` por una interfaz segura. Revisar la seguridad del kernel es revisar `base`.
 #![deny(unsafe_code)]
 
-#[cfg(target_arch = "aarch64")]
 extern crate alloc;
 
 #[cfg(target_arch = "aarch64")]
@@ -26,6 +26,15 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 #[allow(unsafe_code)]
 #[path = "base/x86_64/mod.rs"]
 mod base;
+#[cfg(target_arch = "x86_64")]
+pub use base::{cerrojo, cpu, excepciones, mapa, memoria, mmu, monton};
+#[cfg(target_arch = "x86_64")]
+#[path = "serie_x86.rs"]
+mod serie;
+#[cfg(all(target_arch = "x86_64", feature = "pruebas"))]
+#[allow(unsafe_code)]
+#[path = "pruebas_x86.rs"]
+mod pruebas;
 
 #[cfg(target_arch = "aarch64")]
 mod azar;
@@ -135,53 +144,72 @@ fn panico(info: &PanicInfo) -> ! {
     base::cpu::parar()
 }
 
-/// x86-64 (X1): lo llama `base` (arranque.s → `kmain_x86` → `kmain`) con las tablas de páginas del firmware. Dice lo
-/// que dejó el cargador y se para.
+/// x86-64: lo llama `base` (arranque.s → `kmain_x86` → `kmain`) en el núcleo 0, ya en la mitad alta con las tablas
+/// del arranque. X1: dice lo que dejó el cargador. X2: GDT, TSS e IDT, la memoria física desde el mapa de UEFI, las
+/// defensas, las tablas de páginas propias y el montón. Luego se para: el resto llega en X3 y X4.
 #[cfg(target_arch = "x86_64")]
 pub fn kmain() -> ! {
-    use base::{arranque, serie};
-    use core::fmt::Write;
-    serie::iniciar();
-    let mut s = serie::Serie;
-    let _ = writeln!(s);
-    let _ = writeln!(s, "DashOS {} (x86-64)", env!("CARGO_PKG_VERSION"));
-    let _ = writeln!(s, "Orden de bytes: {}", if 0x1122_3344u32.to_ne_bytes()[0] == 0x11 { "big-endian" } else { "little-endian" });
-    match arranque::info() {
-        Some(i) => {
-            let (mut entradas, mut libres) = (0, 0u64);
-            for t in arranque::mapa_de_memoria() {
-                entradas += 1;
-                // Libre al salir de los servicios de arranque: código y datos del cargador y de los servicios, y
-                // memoria convencional (UEFI 2.10, 7.2).
-                if matches!(t.tipo, 1..=4 | 7) {
-                    libres += t.paginas;
-                }
-            }
-            let _ = writeln!(s, "Mapa de memoria de UEFI: {} entradas, {} MB libres", entradas, libres * 4096 >> 20);
-            match arranque::rsdp() {
-                Some((dir, rev)) => {
-                    let _ = writeln!(s, "ACPI: RSDP en {:#x}, revisión {}", dir, rev);
-                }
-                None => {
-                    let _ = writeln!(s, "ACPI: sin RSDP válida");
-                }
-            }
-            if i.pantalla_base != 0 {
-                let _ = writeln!(s, "Pantalla: {}x{} en {:#x}", i.pantalla_ancho, i.pantalla_alto, i.pantalla_base);
-            }
-        }
-        None => {
-            let _ = writeln!(s, "sin InfoArranque del cargador");
+    use base::arranque;
+    base::serie::iniciar();
+    excepciones::iniciar();
+    kprintln!();
+    kprintln!("DashOS {} (x86-64)", env!("CARGO_PKG_VERSION"));
+    kprintln!("Orden de bytes: {}", if 0x1122_3344u32.to_ne_bytes()[0] == 0x11 { "big-endian" } else { "little-endian" });
+    kprintln!("GDT, TSS e IDT cargadas");
+    let Some(i) = arranque::info() else {
+        kprintln!("sin InfoArranque del cargador");
+        cpu::parar()
+    };
+    let (mut entradas, mut libres) = (0, 0u64);
+    for t in arranque::mapa_de_memoria() {
+        entradas += 1;
+        if arranque::es_libre(t.tipo) {
+            libres += t.paginas;
         }
     }
-    let _ = writeln!(s, "DashOS en marcha (x86-64)");
-    base::cpu::parar()
+    kprintln!("Mapa de memoria de UEFI: {} entradas, {} MB libres", entradas, libres * 4096 >> 20);
+    match arranque::rsdp() {
+        Some((dir, rev)) => kprintln!("ACPI: RSDP en {:#x}, revisión {}", dir, rev),
+        None => kprintln!("ACPI: sin RSDP válida"),
+    }
+    if i.pantalla_base != 0 {
+        kprintln!("Pantalla: {}x{} en {:#x}", i.pantalla_ancho, i.pantalla_alto, i.pantalla_base);
+    }
+
+    // El primer MB queda fuera: ahí irá el trampolín de los demás núcleos (X3), y el firmware deja cosas.
+    memoria::paginas().iniciar_tramos(
+        arranque::mapa_de_memoria()
+            .filter(|t| arranque::es_ram(t.tipo))
+            .map(|t| (t.inicio, t.paginas * memoria::PAGINA, arranque::es_libre(t.tipo))),
+        &[(0, 0x10_0000)],
+        4 << 30,
+    );
+    let libres_al_empezar = memoria::paginas().libres();
+    let f = cpu::encender_defensas();
+    kprintln!("CPU: NX {}, SMEP {}, SMAP {}, UMIP {}, páginas globales {}", si(f.nx), si(f.smep), si(f.smap), si(f.umip), si(f.pge));
+    mapa::construir();
+    mapa::activar();
+    let (cr0, cr3, cr4, efer) = mmu::estado();
+    kprintln!("MMU: tablas propias (CR3 {:#x}, CR0 {:#x}, CR4 {:#x}, EFER {:#x}); kmain en {:#x}", cr3, cr0, cr4, efer, kmain as *const () as usize);
+    let (nx, smep, smap, wp) = cpu::defensas_activas();
+    kprintln!("Defensas: NX {}, SMEP {}, SMAP {}, WP {}", si(nx), si(smep), si(smap), si(wp));
+
+    #[cfg(feature = "pruebas")]
+    pruebas::ejecutar(libres_al_empezar);
+    let _ = libres_al_empezar;
+
+    kprintln!("DashOS en marcha (x86-64)");
+    cpu::parar()
+}
+
+#[cfg(target_arch = "x86_64")]
+fn si(b: bool) -> &'static str {
+    if b { "sí" } else { "no" }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[panic_handler]
 fn panico(info: &PanicInfo) -> ! {
-    use core::fmt::Write;
-    let _ = writeln!(base::serie::Serie, "PÁNICO: {}", info);
-    base::cpu::parar()
+    serie::imprimir_directo(format_args!("PÁNICO: {}\n", info));
+    cpu::parar()
 }

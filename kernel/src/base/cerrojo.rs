@@ -90,6 +90,7 @@ impl<T> Drop for Guarda<'_, T> {
 }
 
 /// Enmascara las IRQ y devuelve el estado anterior de DAIF.
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn enmascarar_irq() -> u64 {
     let daif: u64;
@@ -97,9 +98,28 @@ pub fn enmascarar_irq() -> u64 {
     daif
 }
 
+#[cfg(target_arch = "aarch64")]
 #[inline]
 pub fn restaurar_irq(daif: u64) {
     unsafe { core::arch::asm!("msr daif, {}", in(reg) daif) };
+}
+
+/// En x86-64 (S21, X2): cierra las interrupciones (IF) y devuelve RFLAGS de antes.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn enmascarar_irq() -> u64 {
+    let rflags: u64;
+    unsafe { core::arch::asm!("pushfq", "pop {}", "cli", out(reg) rflags) };
+    rflags
+}
+
+/// Las vuelve a abrir si lo estaban (RFLAGS.IF, bit 9).
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn restaurar_irq(rflags: u64) {
+    if rflags & (1 << 9) != 0 {
+        unsafe { core::arch::asm!("sti", options(nomem, nostack)) };
+    }
 }
 
 /// Nombre de antes de C35, cuando había cerrojos que no enmascaraban. Hoy son lo mismo.

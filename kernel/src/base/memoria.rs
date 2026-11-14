@@ -7,6 +7,7 @@
 //! Lo normal se reparte desde arriba, para dejar libre la memoria baja que solo esos periféricos pueden usar.
 
 use crate::cerrojo::{CerrojoIrq, GuardaIrq};
+#[cfg(target_arch = "aarch64")]
 use crate::dtb::Dtb;
 use crate::kprintln;
 
@@ -14,10 +15,18 @@ pub const PAGINA: u64 = 4096;
 /// Páginas libres que solo puede usar el kernel: 32 MB.
 pub const RESERVA: usize = 8192;
 /// Hasta 8 GB, el máximo de una Pi 4: 2 M páginas, 256 KB de mapa.
+#[cfg(target_arch = "aarch64")]
 const MAX_PAGINAS: usize = (8u64 << 30) as usize / PAGINA as usize;
+/// En x86-64 (S21, X2), hasta 16 GB de direcciones físicas: 512 KB de mapa. Lo de arriba no se usa.
+#[cfg(target_arch = "x86_64")]
+const MAX_PAGINAS: usize = (16u64 << 30) as usize / PAGINA as usize;
 const PALABRAS: usize = MAX_PAGINAS / 64;
 /// Lo que cubre el mapa lineal del kernel: 4 GB.
+#[cfg(target_arch = "aarch64")]
 const MAPA_LINEAL: usize = (4u64 << 30) as usize / PAGINA as usize;
+/// En x86-64 el mapa lineal llega a toda la memoria que se reparte (`mapa.rs` de x86).
+#[cfg(target_arch = "x86_64")]
+const MAPA_LINEAL: usize = MAX_PAGINAS;
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Zona {
@@ -98,6 +107,7 @@ pub fn escribir_fisica(fisica: u64, datos: &[u8]) {
 }
 
 /// Limpia e invalida la caché de datos de un trozo de memoria del kernel, y espera a que acabe.
+#[cfg(target_arch = "aarch64")]
 fn limpiar_cache(direccion: usize, bytes: usize) {
     let mut a = direccion & !63;
     while a < direccion + bytes {
@@ -150,6 +160,7 @@ impl Paginas {
     }
 
     /// Prepara el reparto con la memoria que describe el árbol, menos lo reservado.
+    #[cfg(target_arch = "aarch64")]
     pub fn iniciar(&mut self, d: &Dtb, dtb_dir: usize) {
         // Solo una vez: otra marcaría libre la memoria que ya está en uso.
         if self.total != 0 {
@@ -386,12 +397,14 @@ impl Paginas {
 /// (segunda vuelta de la auditoría, M7): un controlador que pide y suelta sin parar agota su cupo, no la memoria del
 /// sistema. Si el permiso se suelta del todo, su cuarentena no vuelve nunca: nadie podría ya decir que el aparato
 /// está parado.
+#[cfg(target_arch = "aarch64")]
 pub struct PermisoDma {
     pub zona: Zona,
     pub desplazamiento_bus: u64,
     cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize, Option<crate::cupo::Cargo>)>>,
 }
 
+#[cfg(target_arch = "aarch64")]
 impl PermisoDma {
     pub fn nuevo(zona: Zona, desplazamiento_bus: u64) -> Self {
         Self { zona, desplazamiento_bus, cuarentena: CerrojoIrq::new(alloc::vec::Vec::new()) }
@@ -417,6 +430,7 @@ impl PermisoDma {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
@@ -427,6 +441,7 @@ pub struct Memoria {
     cargo: Option<crate::cupo::Cargo>,
 }
 
+#[cfg(target_arch = "aarch64")]
 impl Memoria {
     /// Lo que mide, en bytes (páginas enteras).
     pub fn tamano(&self) -> u64 {
@@ -539,6 +554,7 @@ impl Memoria {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 impl Drop for Memoria {
     fn drop(&mut self) {
         if let Some(permiso) = self.permiso.take() {
@@ -557,5 +573,74 @@ impl Drop for Memoria {
             // Son nuestras, y ya no las proyecta nadie: cada espacio que las proyecta guarda un Arc.
             unsafe { p.liberar(f, 1) };
         }
+    }
+}
+
+/// En x86-64 los aparatos ven la memoria como la CPU: no hay caché que limpiar. Basta con que las escrituras de antes
+/// salgan antes que las de después.
+#[cfg(target_arch = "x86_64")]
+fn limpiar_cache(_direccion: usize, _bytes: usize) {
+    core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
+}
+
+/// x86-64 (S21, X2): el reparto desde el mapa de memoria de UEFI.
+#[cfg(target_arch = "x86_64")]
+impl Paginas {
+    /// Prepara el reparto. `tramos` da la memoria (inicio, tamaño y si está libre); lo que no está libre cuenta como
+    /// RAM pero no se reparte. Además no se reparten la imagen del kernel ni los tramos de `reservados`. `limite_dma`
+    /// es el tope de las zonas de DMA (`Dma1G` y `Dma3G`): en un PC, los aparatos de 32 bits llegan a los primeros 4 GB.
+    /// No hay zona solo para DMA (el piso de C38): sin IOMMU, en un PC cualquier aparato llega a toda la memoria.
+    pub fn iniciar_tramos(&mut self, tramos: impl Iterator<Item = (u64, u64, bool)>, reservados: &[(u64, u64)], limite_dma: u64) {
+        if self.total != 0 {
+            return;
+        }
+        for (dir, tam, libre) in tramos {
+            if tam == 0 {
+                continue;
+            }
+            if libre {
+                self.marcar_tramo(dir, tam, false);
+            }
+            // Los tramos seguidos se juntan: el mapa de UEFI trae muchos.
+            let ultimo = self.ram.iter().rposition(|t| t.1 != 0);
+            match ultimo {
+                Some(u) if self.ram[u].0 + self.ram[u].1 == dir => self.ram[u].1 += tam,
+                _ => {
+                    if let Some(h) = self.ram.iter_mut().find(|t| t.1 == 0) {
+                        *h = (dir, tam);
+                    } else {
+                        let u = &mut self.ram[MAX_TRAMOS - 1];
+                        let (ini, fin) = (u.0.min(dir), (u.0 + u.1).max(dir + tam));
+                        *u = (ini, fin - ini);
+                    }
+                }
+            }
+            let fin = (((dir + tam) / PAGINA) as usize).min(MAPA_LINEAL);
+            self.total += fin.saturating_sub((dir / PAGINA) as usize);
+            self.max_pagina = self.max_pagina.max(fin);
+        }
+        let (ki, kf) = unsafe {
+            (
+                crate::mmu::fisica(&__kernel_inicio as *const u8 as usize) as u64,
+                crate::mmu::fisica(&__kernel_fin as *const u8 as usize) as u64,
+            )
+        };
+        self.marcar_tramo(ki, kf - ki, true);
+        for &(dir, tam) in reservados {
+            self.marcar_tramo(dir, tam, true);
+        }
+        self.limite_1g = ((limite_dma / PAGINA) as usize).min(self.max_pagina);
+        self.limite_3g = self.limite_1g;
+        kprintln!(
+            "Memoria física: {} MB en total, {} MB libres; zona DMA de 32 bits hasta {} MB",
+            self.total as u64 * PAGINA >> 20,
+            self.libres as u64 * PAGINA >> 20,
+            self.limite_1g as u64 * PAGINA >> 20
+        );
+    }
+
+    /// Dónde acaba la RAM más alta que se reparte (física).
+    pub fn max_fisica(&self) -> u64 {
+        self.max_pagina as u64 * PAGINA
     }
 }

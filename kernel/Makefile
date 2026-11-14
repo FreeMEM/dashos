@@ -6,6 +6,7 @@
 # make virt    la imagen para QEMU virt (U3, docs/UEFI_LOOP.md), que carga el programa de UEFI
 # make arranque-virt  esa imagen dentro del programa de UEFI, arrancada por EDK2 en QEMU virt
 # make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35
+# make prueba-x86  lo mismo con las pruebas del arranque de x86 (pruebas_x86.rs)
 BOOTLIN ?= $(HOME)/.local/opt/toolchains/aarch64be--glibc--stable-2026.08-1/bin
 OBJCOPY ?= $(BOOTLIN)/aarch64_be-linux-objcopy
 PIE     := ../usuario/target/pie
@@ -96,6 +97,15 @@ x86: FORCE
 arranque-x86: x86
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	GUARDAR=$(abspath target/salida_x86.txt) ARQ=x86_64 ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_x86.txt 60
+
+# Las pruebas del arranque en x86-64 (S21, X2): memoria, montón, mapa, excepciones y defensas.
+NUCLEO_X86_PRUEBAS := target/kernel-x86-pruebas.elf
+
+prueba-x86: FORCE
+	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features pruebas
+	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_PRUEBAS)
+	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_PRUEBAS)) cargo build --release --target x86_64-unknown-uefi
+	GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_x86.txt 60
 
 clean:
 	cargo clean

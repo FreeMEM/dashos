@@ -1,0 +1,19 @@
+# X2 (S21): las pruebas del arranque en x86-64 (make prueba-x86). La última para el núcleo con un fallo doble.
+DashOS 0.0.1 (x86-64)
+GDT, TSS e IDT cargadas
+Memoria física:
+CPU: NX sí, SMEP sí, SMAP sí
+MMU: tablas propias
+Defensas: NX sí, SMEP sí, SMAP sí, WP sí
+X2: memoria libre como el mapa de UEFI bien
+X2: reparto de páginas bien, devolución bien
+X2: montón bien
+X2: mapa del kernel con W^X y guardas bien
+Excepción: punto de parada en
+X2: de vuelta del punto de parada
+X2: fallo de página recuperado bien
+X2: SMEP, SMAP y NX activos bien
+X2: desborde de la pila del arranque
+Excepción 8 (fallo doble (#DF)) en el kernel
+en la pila de emergencia (IST 1)
+Núcleo parado.

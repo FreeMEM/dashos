@@ -40,13 +40,15 @@ Dos líneas a la vez (decisión 4 de S21):
   (`base`, GIC, ITS, árbol de dispositivos, PL011) queda detrás de `#[cfg(target_arch = "aarch64")]`; lo de x86 va en
   `kernel/src/base/x86_64/`. `make -C kernel arranque-x86`: QEMU `q35` con OVMF
   (`/usr/share/edk2/x64/OVMF_CODE.4m.fd`). La compilación de ARM no cambia.
-- [ ] X2 **Memoria y excepciones.** GDT, IDT, TSS; tablas de páginas propias de 4 niveles con el mismo reparto que en
+- [x] X2 **Memoria y excepciones.** GDT, IDT, TSS; tablas de páginas propias de 4 niveles con el mismo reparto que en
   ARM (lo que pide `base`: `mmu`, `espacio`, `memoria`, `monton`); la memoria física desde el mapa de UEFI; SMEP, SMAP
   y NX encendidos.
 - [ ] X3 **Tiempo, interrupciones y núcleos.** ACPI (MADT, HPET o TSC calibrado), APIC local (x2APIC si lo hay) con
   su temporizador, IOAPIC, arranque de los demás núcleos (INIT-SIPI), avisos entre núcleos. El planificador y los
-  hilos de `base` funcionando.
-- [ ] X4 **Procesos.** Anillo 3, `syscall`/`sysret`, cambio de contexto, cargador ELF x86-64, la biblioteca
+  hilos de `base` funcionando, con las pilas de los hilos en el GB 256 (`mapa::pila_nueva`, que en x86 necesita
+  avisar a los demás núcleos para vaciar la TLB). Una GDT y una TSS por núcleo.
+- [ ] X4 **Procesos.** Anillo 3, `syscall`/`sysret` (`swapgs`, `clac` al entrar), `espacio` de x86 (la mitad baja
+  de cada proceso, con PCID en vez de ASID), cambio de contexto, cargador ELF x86-64, la biblioteca
   `usuario/` para `x86_64` (entrada al kernel). `make -C kernel prueba-x86` con las pruebas de `pruebas.rs` que no
   tocan hardware de la Pi.
 - [ ] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
@@ -97,3 +99,40 @@ pánico.
 No comprobado: un PC de verdad; OVMF con arranque seguro; que 1 MB esté libre en otros firmwares (si no, el cargador
 lo dice y no arranca).
 
+
+### 2026-11-14 — X2: memoria y excepciones en x86-64
+
+Hecho:
+
+- El kernel x86 está enlazado en los 2 GB de arriba (`0xFFFF_FFFF_8000_0000` + física), como pide el modelo de
+  código "kernel"; se carga en 1 MB físico. El cargador pone los segmentos en `p_paddr` y salta a la entrada física.
+- `arranque.s` hace unas tablas de arranque en `.bss` (4 GB con páginas de 2 MB: 1:1, el mapa lineal y la imagen),
+  carga CR3 y salta arriba.
+- `excepciones.rs` y `vectores.s`: GDT con los segmentos del anillo 0 y 3 en el orden de `syscall`/`sysret`, TSS
+  con pilas IST para fallo doble, NMI y comprobación de máquina, e IDT con las 32 excepciones. Lo que no se trata
+  se cuenta por COM1 (vector, nombre, código de error, RIP, CR2 y registros) y el núcleo se para. `int3` avisa y
+  sigue, como BRK en ARM.
+- La memoria física sale del mapa de UEFI con el mismo repartidor de ARM (`base/memoria.rs`, con `iniciar_tramos`
+  para x86). Libre: lo de los servicios de arranque y la memoria convencional; el primer MB, la imagen y lo del
+  cargador quedan fuera. Zona DMA de 32 bits; sin zona solo para DMA (no hay IOMMU). Hasta 16 GB físicos.
+- `mapa.rs`: tablas de 4 niveles propias, todo en PML4[511] como en ARM: el mapa lineal desde `KERNEL_VA` con
+  páginas de 2 MB y NX, sin alias de la imagen; la imagen con W^X por páginas y guardas bajo cada pila; el GB 256
+  reservado para las pilas de los hilos. Entradas globales.
+- `cpu.rs`: CPUID, y se encienden NX (EFER.NXE), CR0.WP, PGE, SMEP, SMAP y UMIP si la CPU los tiene.
+- El montón (`base/monton.rs`) y los cerrojos (`base/cerrojo.rs`, con IF en vez de DAIF) son los de ARM.
+  `kprintln!` en x86 va por `serie_x86.rs`.
+- `make -C kernel prueba-x86` con `pruebas_x86.rs` y `pruebas/esperado_x86.txt`.
+
+Comprobado: `make -C kernel prueba-x86` da BIEN en QEMU `q35` con `-cpu max`. La memoria libre al empezar es la
+que da el mapa de UEFI contada aparte (522168 páginas), y después eso menos las 10 tablas del mapa. Reparto y
+devolución de páginas, y el montón (también un bloque de 64 KB que vuelve entero). Las entradas del mapa: código
+sin escritura, `.rodata` y datos sin ejecución, la guarda y el alias lineal del código sin proyectar. Escribir y
+leer una página sin proyectar y escribir en `.rodata` dan el fallo de página con el código y CR2 esperados, y se
+recuperan. NX, SMEP y SMAP de verdad: ejecutar datos, ejecutar una página de usuario y leerla fallan. El desborde
+de la pila del arranque da un fallo doble por la pila IST, con CR2 en la guarda. `make -C kernel arranque-x86`,
+`make -C kernel prueba` y `make -C kernel arranque-virt` dan BIEN. La imagen normal de ARM mide lo mismo y cambia en
+8 bytes (números de línea de los pánicos de `memoria.rs`).
+
+No comprobado ni hecho: `espacio` en x86 (va con los procesos, X4: depende de `cupo`, `objetos` y el planificador);
+las pilas de los hilos y una GDT y TSS por núcleo (X3); una CPU sin NX, SMEP o SMAP (el código las mira por CPUID,
+pero solo se probó con `-cpu max`); un PC de verdad; RAM por encima de 16 GB (no se usa).

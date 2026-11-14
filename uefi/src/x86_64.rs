@@ -1,8 +1,10 @@
 //! El cargador en x86-64 (S21, X1): el mismo programa de UEFI, como `EFI/BOOT/BOOTX64.EFI`.
 //!
-//! Lleva dentro el kernel compilado para `x86_64-unknown-none`, como ELF. Pone sus segmentos en su dirección física,
+//! Lleva dentro el kernel compilado para `x86_64-unknown-none`, como ELF. Pone sus segmentos en su dirección física
+//! (la de carga, `p_paddr`: desde X2 la virtual está en la mitad alta),
 //! junta lo que el kernel necesita (el mapa de memoria de UEFI, el puntero RSDP de ACPI y la pantalla del GOP) en una
-//! `InfoArranque`, sale de los servicios de arranque y salta a la entrada del ELF con la dirección de la info en `rdi`,
+//! `InfoArranque`, sale de los servicios de arranque y salta a la entrada del ELF, en su dirección física, con la
+//! dirección de la info en `rdi`,
 //! las interrupciones cerradas y las tablas de páginas del firmware, que proyectan la memoria física 1:1.
 //!
 //! Escrito con la especificación de UEFI 2.10 (7.2, servicios de memoria; 4.6, tabla de configuración), la de ACPI
@@ -78,19 +80,20 @@ fn u64_en(b: &[u8], i: usize) -> Option<u64> {
     Some(u64::from_le_bytes(b.get(i..i + 8)?.try_into().ok()?))
 }
 
-/// Un segmento que se carga (PT_LOAD): desde dónde en el fichero, a qué dirección, cuánto hay en el fichero y cuánto
-/// ocupa en memoria (lo de más, a cero).
+/// Un segmento que se carga (PT_LOAD): desde dónde en el fichero, a qué dirección física y en qué virtual, cuánto hay
+/// en el fichero y cuánto ocupa en memoria (lo de más, a cero).
 #[derive(Clone, Copy, Default)]
 struct Segmento {
     desde: usize,
     dir: u64,
+    virt: u64,
     en_fichero: u64,
     en_memoria: u64,
 }
 
-/// El ELF del kernel: entrada, sus segmentos y el tramo físico que cubren. Solo un ejecutable de 64 bits,
-/// little-endian, de x86-64, con cada segmento en su dirección física (en X1 el kernel corre con la proyección 1:1
-/// del firmware).
+/// El ELF del kernel: entrada (física), sus segmentos y el tramo físico que cubren. Solo un ejecutable de 64 bits,
+/// little-endian, de x86-64. La entrada del ELF es virtual: se pasa a física con el segmento que la contiene, y el
+/// kernel empieza con la proyección 1:1 del firmware (arranque.s del kernel).
 struct Elf {
     entrada: u64,
     segmentos: [Segmento; 8],
@@ -118,13 +121,11 @@ fn leer_elf(b: &[u8]) -> Result<Elf, &'static str> {
         }
         let s = Segmento {
             desde: u64_en(b, p + 8).ok_or("cabeceras de programa cortas")? as usize,
-            dir: u64_en(b, p + 16).ok_or("cabeceras de programa cortas")?,
+            dir: u64_en(b, p + 24).ok_or("cabeceras de programa cortas")?,
+            virt: u64_en(b, p + 16).ok_or("cabeceras de programa cortas")?,
             en_fichero: u64_en(b, p + 32).ok_or("cabeceras de programa cortas")?,
             en_memoria: u64_en(b, p + 40).ok_or("cabeceras de programa cortas")?,
         };
-        if u64_en(b, p + 24) != Some(s.dir) {
-            return Err("un segmento no está en su dirección física");
-        }
         if s.en_fichero > s.en_memoria || b.get(s.desde..s.desde + s.en_fichero as usize).is_none() {
             return Err("un segmento se sale del fichero");
         }
@@ -136,8 +137,10 @@ fn leer_elf(b: &[u8]) -> Result<Elf, &'static str> {
         e.inicio = e.inicio.min(s.dir);
         e.fin = e.fin.max(s.dir + s.en_memoria);
     }
-    if e.n == 0 || !(e.inicio..e.fin).contains(&e.entrada) {
-        return Err("sin segmentos, o la entrada fuera de ellos");
+    let segmento = e.segmentos[..e.n].iter().find(|s| (s.virt..s.virt + s.en_memoria).contains(&entrada));
+    match segmento {
+        Some(s) => e.entrada = entrada - s.virt + s.dir,
+        None => return Err("sin segmentos, o la entrada fuera de ellos"),
     }
     Ok(e)
 }
