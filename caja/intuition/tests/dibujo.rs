@@ -532,3 +532,159 @@ fn display_info_y_weigh_ta_match() {
     assert_eq!(g(&mut c, "WeighTAMatch", &[], &[0xFFFF_0000, a, 0]), 0);
     assert_eq!(c.1.tomar_avisos().len(), 2);
 }
+
+/// `BltMaskBitMapRastPort` (los botones de imagen de MUI): solo donde la plantilla tiene su bit a 1; con ANBC, el origen
+/// invertido. Lo hostil: plantilla nula o fuera de la memoria, tamaños enormes o negativos.
+#[test]
+fn copia_con_plantilla() {
+    let mut c = caja();
+    // Origen planar de 1 plano, 16 x 2, todo a 1; plantilla: la fila 0 con 0xF0F0, la 1 con 0x0F0F.
+    let (bp, rpp) = planar(&mut c, 1, 16, 2);
+    pen(&mut c, rpp, 1);
+    rect(&mut c, rpp, 0, 0, 15, 1);
+    let pl = reservar(&mut c, 4);
+    e16(&mut c, pl, 0xF0F0);
+    e16(&mut c, pl + 2, 0x0F0F);
+    let (_, rpd) = planar(&mut c, 2, 16, 2);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 2, 0xE0], &[bp, rpd, pl]);
+    assert_eq!(ver(&mut c, rpd, 16, 2), ["####....####....", "....####....####"]);
+    // Desde (4, 1) del origen a (0, 0): la plantilla va con el origen.
+    let (_, rpd2) = planar(&mut c, 2, 16, 2);
+    g(&mut c, "BltMaskBitMapRastPort", &[4, 1, 0, 0, 8, 1, 0xE0], &[bp, rpd2, pl]);
+    assert_eq!(ver(&mut c, rpd2, 8, 1), ["####...."]);
+    // ANBC: el origen invertido (a 0 en un plano) solo bajo la plantilla.
+    pen(&mut c, rpd, 3);
+    rect(&mut c, rpd, 0, 0, 15, 1);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 1, 0x20], &[bp, rpd, pl]);
+    assert_eq!(pluma(&mut c, rpd, 0, 0), 2);
+    assert_eq!(pluma(&mut c, rpd, 4, 0), 3);
+    // A un nativo: el color de la pluma 1 del Workbench (negro) solo bajo la plantilla.
+    let (bn, rpn) = nativo(&mut c, 16, 2);
+    pen(&mut c, rpn, 2);
+    rect(&mut c, rpn, 0, 0, 15, 1);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 2, 0xE0], &[bp, rpn, pl]);
+    let l = c.1.lienzo(bn).unwrap();
+    assert_eq!((l.pixel(0, 0), l.pixel(4, 0), l.pixel(4, 1)), (0xFF00_0000, 0xFFFF_FFFF, 0xFF00_0000));
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+    // Hostil: plantilla nula o fuera: un aviso y nada pintado; tamaños enormes y negativos, recortados o nada.
+    let (_, rpv) = planar(&mut c, 1, 16, 2);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 2, 0xE0], &[bp, rpv, 0]);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 2, 0xE0], &[bp, rpv, TAMANO - 1]);
+    assert_eq!(c.1.tomar_avisos().len(), 2);
+    assert_eq!(ver(&mut c, rpv, 16, 2), ["................", "................"]);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 0x7FFF, 0x7FFF, 0xE0], &[bp, rpv, pl]);
+    assert_eq!(ver(&mut c, rpv, 16, 2), ["####....####....", "....####....####"]);
+    g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, (-5i32) as u32, 3, 0xE0], &[bp, rpv, pl]);
+    g(&mut c, "BltMaskBitMapRastPort", &[0xFFFF_8000, 0xFFFF_8000, 0, 0, 16, 2, 0xE0], &[bp, rpv, pl]);
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+}
+
+/// Un `RastPort` planar con su `AreaInfo` (de `max` vértices) y su `TmpRas`, como lo montan los programas.
+fn con_area(c: &mut Caja, ancho: u32, alto: u32, max: u32) -> (u32, u32) {
+    let (_, rp) = planar(c, 2, ancho, alto);
+    let ai = reservar(c, 24);
+    let buf = reservar(c, 5 * max);
+    g(c, "InitArea", &[max], &[ai, buf]);
+    e32(c, rp + rastport::AREAINFO, ai);
+    let tr = reservar(c, 8);
+    let ras = reservar(c, 64);
+    assert_eq!(g(c, "InitTmpRas", &[64], &[tr, ras]), tr);
+    e32(c, rp + rastport::TMPRAS, tr);
+    (rp, ai)
+}
+
+/// El relleno de áreas: polígonos (convexos, cóncavos, solapados con la regla par-impar), elipses, contorno, patrón,
+/// tabla llena y lo hostil (sin AreaInfo, tabla fuera de la memoria, cuentas imposibles, radios de 0, coordenadas
+/// enormes).
+#[test]
+fn relleno_de_areas() {
+    let mut c = caja();
+    let (rp, ai) = con_area(&mut c, 16, 12, 20);
+    pen(&mut c, rp, 1);
+    // Un rectángulo de (1, 1) a (6, 4): todo, bordes incluidos.
+    for (f, x, y) in [("AreaMove", 1, 1), ("AreaDraw", 6, 1), ("AreaDraw", 6, 4), ("AreaDraw", 1, 4)] {
+        assert_eq!(g(&mut c, f, &[x, y], &[0, rp]), 0);
+    }
+    assert_eq!(l16(&c, ai + 16), 4);
+    assert_eq!(g(&mut c, "AreaEnd", &[], &[0, rp]), 0);
+    assert_eq!(l16(&c, ai + 16), 0);
+    assert_eq!(ver(&mut c, rp, 8, 6), ["........", ".######.", ".######.", ".######.", ".######.", "........"]);
+    // Un triángulo con la punta abajo, y otro rectángulo que lo cruza: lo común queda vacío (par-impar).
+    let (rp, _) = con_area(&mut c, 12, 8, 20);
+    pen(&mut c, rp, 1);
+    for (f, x, y) in [("AreaMove", 0, 0), ("AreaDraw", 8, 0), ("AreaDraw", 4, 4)] {
+        g(&mut c, f, &[x, y], &[0, rp]);
+    }
+    for (f, x, y) in [("AreaMove", 3, 0), ("AreaDraw", 5, 0), ("AreaDraw", 5, 6), ("AreaDraw", 3, 6)] {
+        g(&mut c, f, &[x, y], &[0, rp]);
+    }
+    g(&mut c, "AreaEnd", &[], &[0, rp]);
+    let v = ver(&mut c, rp, 10, 7);
+    assert_eq!(&v[0][..9], "###...###");
+    assert_eq!(&v[5][..9], "...###...");
+    assert_eq!(pluma(&mut c, rp, 4, 1), 0);
+    assert_eq!(pluma(&mut c, rp, 1, 0), 1);
+    // Una elipse de radios 4 y 2 en (5, 3): simétrica, sus extremos dentro y las esquinas fuera.
+    let (rp, _) = con_area(&mut c, 12, 8, 4);
+    pen(&mut c, rp, 2);
+    assert_eq!(g(&mut c, "AreaEllipse", &[5, 3, 4, 2], &[0, rp]), 0);
+    g(&mut c, "AreaEnd", &[], &[0, rp]);
+    assert_eq!(pluma(&mut c, rp, 5, 3), 2);
+    assert_eq!((pluma(&mut c, rp, 1, 3), pluma(&mut c, rp, 9, 3)), (2, 2));
+    assert_eq!((pluma(&mut c, rp, 5, 1), pluma(&mut c, rp, 5, 5)), (2, 2));
+    assert_eq!((pluma(&mut c, rp, 1, 1), pluma(&mut c, rp, 9, 5), pluma(&mut c, rp, 0, 3)), (0, 0, 0));
+    for y in 0..7 {
+        for dx in 0..6 {
+            assert_eq!(pluma(&mut c, rp, 5 - dx, y), pluma(&mut c, rp, 5 + dx, y), "simétrica en ({dx}, {y})");
+            assert_eq!(pluma(&mut c, rp, 5 - dx, y), pluma(&mut c, rp, 5 - dx, 6 - y), "simétrica en ({dx}, {y})");
+        }
+    }
+    // Con contorno (SetOutlinePen): el borde con la pluma de contorno y dentro la de relleno.
+    let (rp, _) = con_area(&mut c, 12, 8, 8);
+    pen(&mut c, rp, 1);
+    g(&mut c, "SetOutlinePen", &[3], &[rp]);
+    for (f, x, y) in [("AreaMove", 0, 0), ("AreaDraw", 7, 0), ("AreaDraw", 7, 5), ("AreaDraw", 0, 5)] {
+        g(&mut c, f, &[x, y], &[0, rp]);
+    }
+    g(&mut c, "AreaEnd", &[], &[0, rp]);
+    assert_eq!((pluma(&mut c, rp, 0, 0), pluma(&mut c, rp, 7, 5), pluma(&mut c, rp, 3, 3)), (3, 3, 1));
+    // Tabla llena: -1 y lo de antes sigue; una elipse necesita dos vértices.
+    let (rp, ai) = con_area(&mut c, 12, 8, 3);
+    for (f, x, y) in [("AreaMove", 0, 0), ("AreaDraw", 5, 0), ("AreaDraw", 5, 5)] {
+        assert_eq!(g(&mut c, f, &[x, y], &[0, rp]), 0);
+    }
+    assert_eq!(g(&mut c, "AreaDraw", &[0, 5], &[0, rp]), u32::MAX);
+    assert_eq!(g(&mut c, "AreaEllipse", &[3, 3, 2, 2], &[0, rp]), u32::MAX);
+    assert_eq!(l16(&c, ai + 16), 3);
+    assert_eq!(g(&mut c, "AreaEnd", &[], &[0, rp]), 0);
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+    // Hostil: sin AreaInfo, -1 con aviso; tabla fuera de la memoria o cuenta mayor que el tope, igual.
+    let (_, sin) = planar(&mut c, 1, 8, 8);
+    assert_eq!(g(&mut c, "AreaMove", &[0, 0], &[0, sin]), u32::MAX);
+    assert_eq!(g(&mut c, "AreaEnd", &[], &[0, sin]), u32::MAX);
+    let (rp, ai) = con_area(&mut c, 8, 8, 4);
+    e32(&mut c, ai, TAMANO - 2);
+    assert_eq!(g(&mut c, "AreaDraw", &[1, 1], &[0, rp]), u32::MAX);
+    let (rp, ai) = con_area(&mut c, 8, 8, 4);
+    e16(&mut c, ai + 16, 9);
+    assert_eq!(g(&mut c, "AreaEnd", &[], &[0, rp]), u32::MAX);
+    g(&mut c, "InitArea", &[4], &[0, 0]);
+    g(&mut c, "InitArea", &[0x7FFF], &[ai, TAMANO - 16]);
+    assert_eq!(c.1.tomar_avisos().len(), 6);
+    // Radios de 0 o negativos: nada. Coordenadas enormes: recortado al mapa, sin colgarse.
+    let (rp, _) = con_area(&mut c, 16, 16, 12);
+    pen(&mut c, rp, 1);
+    g(&mut c, "AreaEllipse", &[5, 5, 0, 3], &[0, rp]);
+    g(&mut c, "AreaEllipse", &[5, 5, (-3i32) as u32, 3], &[0, rp]);
+    g(&mut c, "AreaEnd", &[], &[0, rp]);
+    assert_eq!(pluma(&mut c, rp, 5, 5), 0);
+    for (f, x, y) in [("AreaMove", -32768, -32768), ("AreaDraw", 32767, -32768), ("AreaDraw", 32767, 32767), ("AreaDraw", -32768, 32767)]
+    {
+        g(&mut c, f, &[x as u32, y as u32], &[0, rp]);
+    }
+    g(&mut c, "AreaEllipse", &[0, 0, 32767, 32767], &[0, rp]);
+    assert_eq!(g(&mut c, "AreaEnd", &[], &[0, rp]), 0);
+    // El cuadrado enorme y la elipse enorme se cruzan: el centro queda vacío (par-impar), las esquinas llenas.
+    assert_eq!(pluma(&mut c, rp, 5, 5), 0);
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+}

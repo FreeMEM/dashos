@@ -38,6 +38,7 @@ pub mod regiones;
 pub mod teclado;
 
 mod acceso;
+mod areas;
 mod despacho;
 mod dibujo;
 mod fuente;
@@ -133,6 +134,9 @@ impl Default for Numeros {
 }
 
 const MAX_AVISOS: usize = 1024;
+
+/// Lo más que separa los dos clics de un doble clic (`DoubleClick`), en µs: el de DashOS (`kit::controles::DOBLE_MS`).
+pub const DOBLE_CLIC_US: i64 = 500_000;
 
 /// graphics.library e intuition.library de una caja, con su puente al compositor.
 pub struct CajaGrafica<C: Compositor> {

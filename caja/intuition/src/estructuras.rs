@@ -87,6 +87,26 @@ pub mod rastport {
     pub const NOCROSSFILL: u16 = 0x20;
 }
 
+/// `struct AreaInfo` (de `graphics/rastport.h`): la tabla de vértices de `AreaMove`/`AreaDraw`/`AreaEllipse`.
+pub mod areainfo {
+    pub const VCTRTBL: u32 = 0;
+    pub const VCTRPTR: u32 = 4;
+    pub const FLAGTBL: u32 = 8;
+    pub const FLAGPTR: u32 = 12;
+    pub const COUNT: u32 = 16;
+    pub const MAXCOUNT: u32 = 18;
+    pub const FIRSTX: u32 = 20;
+    pub const FIRSTY: u32 = 22;
+    pub const TAMANO: u32 = 24;
+}
+
+/// `struct TmpRas`.
+pub mod tmpras {
+    pub const RASPTR: u32 = 0;
+    pub const SIZE: u32 = 4;
+    pub const TAMANO: u32 = 8;
+}
+
 /// Modos de dibujo (`rp_DrawMode`).
 pub mod drmd {
     pub const JAM1: u8 = 0;

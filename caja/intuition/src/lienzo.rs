@@ -2,7 +2,6 @@
 //! del 68k. Es lo que hay detrás de cada ventana y de los `BitMap` nativos de `AllocBitMap`. Lleva la zona que ha
 //! cambiado desde la última vez que se mandó al compositor.
 
-use alloc::vec;
 use alloc::vec::Vec;
 
 use crate::nitido::{Alinea, Estilo, MAX_LETRAS, MAX_TEXTOS, TextoNitido};
@@ -87,10 +86,23 @@ impl Lienzo {
     pub fn rect(&self) -> Rect {
         Rect::de_tamano(self.ancho, self.alto)
     }
-    fn asegurar(&mut self) {
+    /// Los píxeles se reservan al pintar por primera vez. Si no hay memoria (el montón de la caja tiene tope), el
+    /// lienzo sigue sin píxeles: no se pinta nada y se ve del color de fondo, pero la caja no se cae.
+    fn asegurar(&mut self) -> bool {
         if self.pix.is_empty() && self.ancho > 0 && self.alto > 0 {
-            self.pix = vec![self.fondo; self.ancho as usize * self.alto as usize];
+            let n = self.ancho as usize * self.alto as usize;
+            let mut v = Vec::new();
+            if v.try_reserve_exact(n).is_err() {
+                return false;
+            }
+            v.resize(n, self.fondo);
+            self.pix = v;
         }
+        !self.pix.is_empty()
+    }
+    /// Si tiene sus píxeles (o los puede tener).
+    pub fn con_pixeles(&mut self) -> bool {
+        self.asegurar()
     }
     /// El píxel de `(x, y)`, o 0 fuera.
     pub fn pixel(&self, x: i32, y: i32) -> u32 {
@@ -107,7 +119,9 @@ impl Lienzo {
         if x < 0 || y < 0 || x as u32 >= self.ancho || y as u32 >= self.alto {
             return;
         }
-        self.asegurar();
+        if !self.asegurar() {
+            return;
+        }
         self.pix[y as usize * self.ancho as usize + x as usize] = v | 0xFF00_0000;
         let p = Rect::nuevo(x, y, x, y);
         self.dano = Some(match self.dano {
@@ -117,12 +131,12 @@ impl Lienzo {
     }
     /// Todos los píxeles, fila a fila.
     pub fn pixeles(&mut self) -> &[u32] {
-        self.asegurar();
+        let _ = self.asegurar();
         &self.pix
     }
     /// Los píxeles y los textos nítidos apuntados (para mandarlos juntos).
     pub fn pixeles_y_textos(&mut self) -> (&[u32], &[TextoNitido]) {
-        self.asegurar();
+        let _ = self.asegurar();
         (&self.pix, &self.textos)
     }
     /// Los textos nítidos apuntados.
@@ -139,9 +153,11 @@ impl Lienzo {
         if r.vacio() {
             return Vec::new();
         }
-        self.asegurar();
+        let mut v = Vec::new();
+        if !self.asegurar() || v.try_reserve_exact(r.ancho() as usize * r.alto() as usize).is_err() {
+            return Vec::new();
+        }
         let an = self.ancho as usize;
-        let mut v = Vec::with_capacity(r.ancho() as usize * r.alto() as usize);
         for y in r.y0..=r.y1 {
             let i = y as usize * an;
             v.extend_from_slice(&self.pix[i + r.x0 as usize..=i + r.x1 as usize]);
@@ -200,7 +216,9 @@ impl Lienzo {
         if r.vacio() {
             return;
         }
-        self.asegurar();
+        if !self.asegurar() {
+            return;
+        }
         // Los que valen antes de tocar nada.
         let (an, al) = (self.ancho, self.alto);
         let validos: Vec<bool> = self.textos.iter().map(|t| !t.r.interseccion(&r).vacio() && t.vale(&self.pix, an, al)).collect();
@@ -249,8 +267,13 @@ impl Lienzo {
     }
     /// Cambia el tamaño conservando lo que cabe; lo nuevo, del color de fondo. Lo apunta todo como cambiado.
     pub fn cambiar_tamano(&mut self, ancho: u32, alto: u32) {
+        let mut nuevo = Vec::new();
+        if !self.pix.is_empty() && nuevo.try_reserve_exact(ancho as usize * alto as usize).is_err() {
+            // Sin memoria para el tamaño nuevo: se pierde lo pintado (se reservará al pintar otra vez).
+            self.pix = Vec::new();
+        }
         if !self.pix.is_empty() {
-            let mut nuevo = vec![self.fondo; ancho as usize * alto as usize];
+            nuevo.resize(ancho as usize * alto as usize, self.fondo);
             for y in 0..alto.min(self.alto) as usize {
                 let n = ancho.min(self.ancho) as usize;
                 let o = y * self.ancho as usize;

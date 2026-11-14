@@ -377,7 +377,11 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return false };
         let Some(l) = self.gfx.lienzos.get_mut(&bm) else { return false };
-        let debajo = l.pixeles().to_vec();
+        let px = l.pixeles();
+        let mut debajo = Vec::new();
+        if debajo.try_reserve_exact(px.len()).is_ok() {
+            debajo.extend_from_slice(px);
+        }
         self.menus.abierto = Some(Abierto { w, tira, menu: -1, item: -1, debajo });
         // Lo que ya está bajo el ratón (el título sobre el que se pulsó).
         let x = ex.l16(w.wrapping_add(win::MOUSEX)).unwrap_or(0) as i16 as i32;

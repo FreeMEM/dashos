@@ -681,3 +681,17 @@ fn capa_con_dano() {
     assert_eq!(rect(&c, l32(&c, capa + layer::DAMAGELIST)), None);
     assert!(clases(&mensajes(&mut c, w)).is_empty());
 }
+
+/// `DoubleClick`: dentro de 500 ms (el doble clic de DashOS), sí; más, al revés o con microsegundos imposibles, no.
+#[test]
+fn doble_clic() {
+    let mut c = caja();
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 900_000, 11, 300_000], &[]), 1);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 0, 10, 500_000], &[]), 1);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 0, 10, 500_001], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[11, 0, 10, 900_000], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 2_000_000, 10, 2_100_000], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[u32::MAX, 999_999, 0, 0], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[0, 0, u32::MAX, 0], &[]), 0);
+    assert!(c.1.avisos().is_empty());
+}

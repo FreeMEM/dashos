@@ -748,6 +748,10 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(d) = l.tomar_dano() else { return };
         let (an, al) = (l.ancho(), l.alto());
         let (pix, textos) = l.pixeles_y_textos();
+        // Sin memoria para sus píxeles, no hay nada que mandar.
+        if pix.len() != an as usize * al as usize {
+            return;
+        }
         self.comp.presentar(s, pix, an, al, d, textos);
     }
 
@@ -919,6 +923,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         self.gadtools_tarea_muerta(t);
         self.regiones_tarea_muerta(t);
+        self.capas_tarea_muerta(ex, t);
         self.boopsi_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
@@ -1136,6 +1141,11 @@ impl<C: Compositor> CajaGrafica<C> {
             self.poner_region_sistema(ex, dano, &[])?;
         }
         Ok(())
+    }
+
+    /// La capa de la ventana activa (0 si no hay): lo que da `WhichLayer`.
+    pub(crate) fn capa_activa(&self) -> u32 {
+        self.intui.ventanas.values().find(|v| v.activa).map(|v| v.capa).unwrap_or(0)
     }
 
     /// `ViewPortAddress`.
