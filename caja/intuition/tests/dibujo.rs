@@ -509,7 +509,8 @@ fn display_info_y_weigh_ta_match() {
     assert_eq!(g(&mut c, "GetDisplayInfoData", &[128, 0x8000_1000, 0], &[0, buf]), 88);
     assert_eq!(l16(&c, buf + 26 + 4), 639);
     assert_eq!(g(&mut c, "GetDisplayInfoData", &[128, 0x8000_9000, 0], &[0, buf]), 0);
-    // WeighTAMatch: la misma, 32767; un punto de alto menos, menos; otro nombre, 0.
+    // WeighTAMatch: la misma, 32767; un punto de alto menos, menos; el nombre no cuenta (diskfont pasa una TextFont
+    // desplazada, con basura donde iría el nombre).
     let topaz = cadena(&mut c, "topaz.font");
     let topaz2 = cadena(&mut c, "Topaz.font");
     let otra = cadena(&mut c, "xen.font");
@@ -522,7 +523,9 @@ fn display_info_y_weigh_ta_match() {
     let (a, b, d, e) = (ta(&mut c, topaz, 8), ta(&mut c, topaz2, 8), ta(&mut c, topaz, 9), ta(&mut c, otra, 8));
     assert_eq!(g(&mut c, "WeighTAMatch", &[], &[a, b, 0]), 32767);
     assert!(g(&mut c, "WeighTAMatch", &[], &[a, d, 0]) < 32767);
-    assert_eq!(g(&mut c, "WeighTAMatch", &[], &[a, e, 0]), 0);
+    assert_eq!(g(&mut c, "WeighTAMatch", &[], &[a, e, 0]), 32767);
+    let basura = ta(&mut c, 52, 8);
+    assert_eq!(g(&mut c, "WeighTAMatch", &[], &[a, basura, 0]), 32767);
     assert!(c.1.tomar_avisos().is_empty());
     // Hostil: un búfer fuera de la memoria, un TextAttr fuera: avisos, 0.
     assert_eq!(g(&mut c, "GetDisplayInfoData", &[56, 0x8000_0000, 0], &[0, 0xFFFF_0000]), 0);

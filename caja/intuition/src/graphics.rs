@@ -924,19 +924,13 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// `WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)`: de 0 (nada que ver) a 32767 (`MAXFONTMATCHWEIGHT`, la
-    /// misma): el nombre tiene que ser el mismo (sin mirar mayúsculas); cada punto de alto de diferencia, y cada
-    /// estilo distinto, restan.
+    /// misma): cada punto de alto de diferencia, y cada estilo distinto, restan. Desde V39 es privada (sin autodoc).
     pub fn weigh_ta_match<M: Memoria>(&mut self, ex: &mut Exec<M>, pedida: u32, otra: u32) -> Result<u32, Fallo> {
         use crate::estructuras::textattr as ta;
+        // El nombre no cuenta (lo compara quien llama): diskfont de 3.2 pasa como `TextAttr` la `TextFont` desplazada
+        // 16 bytes, para que `tf_YSize`, `tf_Style` y `tf_Flags` caigan en su sitio; su `ta_Name` es basura.
         ex.tramo(pedida, 8)?;
         ex.tramo(otra, 8)?;
-        let (n1, n2) = (ex.l32(pedida + ta::TA_NAME)?, ex.l32(otra + ta::TA_NAME)?);
-        if n1 != 0 && n2 != 0 {
-            let (a, b) = (ex.cadena(n1)?, ex.cadena(n2)?);
-            if !a.eq_ignore_ascii_case(&b) {
-                return Ok(0);
-            }
-        }
         let dy = (ex.l16(pedida + ta::TA_YSIZE)? as i32 - ex.l16(otra + ta::TA_YSIZE)? as i32).unsigned_abs();
         let estilos = (ex.l8(pedida + 6)? ^ ex.l8(otra + 6)?).count_ones();
         Ok(32767u32.saturating_sub(dy * 1024 + estilos * 256))

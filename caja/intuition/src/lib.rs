@@ -34,6 +34,7 @@ pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;
 pub mod nitido;
+pub mod regiones;
 pub mod teclado;
 
 mod acceso;
@@ -144,6 +145,7 @@ pub struct CajaGrafica<C: Compositor> {
     capas: capas::Estado,
     menus: menus::Estado,
     boopsi: boopsi::Estado,
+    reg: regiones::Estado,
     /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
     /// repintan (tema.rs).
     version_tema: u32,
@@ -166,6 +168,7 @@ impl<C: Compositor> CajaGrafica<C> {
             capas: capas::Estado::default(),
             menus: menus::Estado::default(),
             boopsi: boopsi::Estado::default(),
+            reg: regiones::Estado::default(),
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),

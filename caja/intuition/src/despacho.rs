@@ -7,6 +7,7 @@ use caja_exec::{Accion, Exec, Memoria, Registros};
 use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{rastport as rp_, window as win};
 use crate::lvo::{GRAPHICS as G, INTUITION as I, fila};
+use crate::regiones::Op;
 use crate::{CajaGrafica, Compositor, Fallo};
 
 macro_rules! filas {
@@ -31,7 +32,10 @@ filas!(G;
     RELEASEPEN = "ReleasePen", OBTAINPEN = "ObtainPen", OBTAINBESTPENA = "ObtainBestPenA", FINDCOLOR = "FindColor",
     WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos", GETVPMODEID = "GetVPModeID",
     TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA", GETDISPLAYINFODATA = "GetDisplayInfoData",
-    WEIGHTAMATCH = "WeighTAMatch",
+    WEIGHTAMATCH = "WeighTAMatch", NEWREGION = "NewRegion", DISPOSEREGION = "DisposeRegion",
+    CLEARREGION = "ClearRegion", ORRECTREGION = "OrRectRegion", ANDRECTREGION = "AndRectRegion",
+    CLEARRECTREGION = "ClearRectRegion", XORRECTREGION = "XorRectRegion", ORREGIONREGION = "OrRegionRegion",
+    ANDREGIONREGION = "AndRegionRegion", XORREGIONREGION = "XorRegionRegion",
 );
 
 filas!(I;
@@ -133,6 +137,28 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             TEXTLENGTH => self.text_length(ex, a[1], a[0], d[0])?,
+            // Las regiones (regiones.rs): la región en a0 y el rectángulo (o la región de origen) en a1.
+            NEWREGION => self.new_region(ex)?,
+            DISPOSEREGION => {
+                self.dispose_region(ex, a[0])?;
+                0
+            }
+            CLEARREGION => {
+                self.clear_region(ex, a[0])?;
+                0
+            }
+            ORRECTREGION => self.rect_region(ex, a[0], a[1], Op::O)?,
+            // AndRectRegion no devuelve nada (V39: void).
+            ANDRECTREGION => {
+                self.rect_region(ex, a[0], a[1], Op::Y)?;
+                0
+            }
+            CLEARRECTREGION => self.rect_region(ex, a[0], a[1], Op::Menos)?,
+            XORRECTREGION => self.rect_region(ex, a[0], a[1], Op::Xor)?,
+            // OrRegionRegion(srcRegion, destRegion)(a0/a1): dest = dest op src.
+            ORREGIONREGION => self.region_region(ex, a[0], a[1], Op::O)?,
+            ANDREGIONREGION => self.region_region(ex, a[0], a[1], Op::Y)?,
+            XORREGIONREGION => self.region_region(ex, a[0], a[1], Op::Xor)?,
             // GetDisplayInfoData(handle, buf, size, tagID, displayID)(a0/a1/d0/d1/d2): bytes copiados, o 0.
             GETDISPLAYINFODATA => self.get_display_info_data(ex, a[1], d[0], d[1], d[2])?,
             // WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)(a0/a1/a2): cuánto se parecen dos fuentes.

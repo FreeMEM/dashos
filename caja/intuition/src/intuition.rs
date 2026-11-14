@@ -16,7 +16,7 @@ use caja_exec::{Exec, Memoria};
 use crate::acceso::{Acceso, palabra, puntero};
 use crate::compositor::NuevaVentana;
 use crate::estructuras::{
-    colormap, drawinfo as dri, idcmp, intuitionbase as ib, layer, newwindow as nw, rastport as rp_, rectangle,
+    cliprect, colormap, drawinfo as dri, idcmp, intuitionbase as ib, layer, newwindow as nw, rastport as rp_, rectangle,
     screen as sc, tag, textattr, textfont, tipo_pantalla, viewport, wa, wflg, window as win,
 };
 use crate::lienzo::{self, Rect};
@@ -40,6 +40,9 @@ pub(crate) struct Pantalla {
 pub(crate) struct Ventana {
     pub rp: u32,
     pub capa: u32,
+    /// La `ClipRect` de la capa (la capa entera) y su `DamageList` (lo que falta por pintar), del sistema.
+    pub cliprect: u32,
+    pub dano: u32,
     pub bm: u32,
     pub superficie: Superficie,
     /// El `UserPort` que creó intuition (0 si es del programa o no hay).
@@ -537,6 +540,19 @@ impl<C: Compositor> CajaGrafica<C> {
             if p.flags & wflg::SIMPLE_REFRESH != 0 { layer::LAYERSIMPLE } else { layer::LAYERSMART },
         )?;
         let gzz = (p.flags & wflg::GIMMEZEROZERO != 0).then_some(bordes);
+        // La capa, como las de layers: su `Layer_Info` (la de la pantalla), una `ClipRect` que la cubre entera (en su
+        // búfer nunca está tapada) y una `DamageList` vacía (MUI la mira para saber qué repintar).
+        ex.e32(capa + layer::LAYERINFO, wb + sc::LAYERINFO)?;
+        let cliprect = ex.reservar(cliprect::TAMANO, memf::CLEAR)?;
+        let dano = match self.region_del_sistema(ex) {
+            Ok(d) => d,
+            Err(e) => {
+                ex.soltar(cliprect, cliprect::TAMANO)?;
+                return Err(e);
+            }
+        };
+        ex.e32(capa + layer::CLIPRECT, cliprect)?;
+        ex.e32(capa + layer::DAMAGELIST, dano)?;
         self.poner_capa(ex, capa, an, al, gzz)?;
         let plumas = self.intui.wb.plumas;
         let detalle = if p.detalle == 0xFF { plumas[dri::DETAILPEN] as u8 } else { p.detalle };
@@ -597,6 +613,8 @@ impl<C: Compositor> CajaGrafica<C> {
             Ventana {
                 rp,
                 capa,
+                cliprect,
+                dano,
                 bm,
                 superficie: 0,
                 puerto_creado: puerto,
@@ -648,9 +666,15 @@ impl<C: Compositor> CajaGrafica<C> {
         if fl & wflg::SIMPLE_REFRESH == 0 || fl & wflg::NOCAREREFRESH != 0 {
             return Ok(());
         }
-        let capa = self.ventana(w)?.capa;
+        let v = self.ventana(w)?;
+        let (capa, dano) = (v.capa, v.dano);
         let f = ex.l16(capa + layer::FLAGS)?;
         ex.e16(capa + layer::FLAGS, f | layer::LAYERREFRESH)?;
+        // Todo por pintar, en coordenadas de la capa.
+        let (an, al) = (ex.l16(capa + layer::WIDTH)?, ex.l16(capa + layer::HEIGHT)?);
+        if an > 0 && al > 0 {
+            self.poner_region_sistema(ex, dano, &[Rect::nuevo(0, 0, an as i32 - 1, al as i32 - 1)])?;
+        }
         let ya = self.ventana(w)?.pendientes.values().any(|&c| c == idcmp::REFRESHWINDOW);
         if !ya {
             self.enviar(ex, w, idcmp::REFRESHWINDOW, 0, 0)?;
@@ -696,6 +720,14 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e16(b + rectangle::MAXY, r.y1 as u16)?;
         ex.e16(capa + layer::WIDTH, r.ancho() as u16)?;
         ex.e16(capa + layer::HEIGHT, r.alto() as u16)?;
+        let cr = ex.l32(capa + layer::CLIPRECT)?;
+        if cr != 0 {
+            let c = puntero(cr)? + cliprect::BOUNDS;
+            ex.e16(c + rectangle::MINX, r.x0 as u16)?;
+            ex.e16(c + rectangle::MINY, r.y0 as u16)?;
+            ex.e16(c + rectangle::MAXX, r.x1 as u16)?;
+            ex.e16(c + rectangle::MAXY, r.y1 as u16)?;
+        }
         self.gfx.capas.insert(capa, r);
         if gzz.is_some() {
             self.gfx.origenes.insert(capa, (r.x0, r.y0));
@@ -803,6 +835,8 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Lo que se suelta al final de una ventana.
     fn liberar<M: Memoria>(&mut self, ex: &mut Exec<M>, v: &Ventana) -> Result<(), Fallo> {
+        self.soltar_dano(ex, v.dano);
+        ex.soltar(v.cliprect, cliprect::TAMANO)?;
         ex.soltar(v.respuesta, msgport::TAMANO)?;
         ex.soltar(v.rp, rp_::TAMANO)?;
         ex.soltar(v.capa, layer::TAMANO)?;
@@ -884,6 +918,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         }
         self.gadtools_tarea_muerta(t);
+        self.regiones_tarea_muerta(t);
         self.boopsi_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
@@ -1095,9 +1130,10 @@ impl<C: Compositor> CajaGrafica<C> {
     pub fn end_refresh<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, completo: bool) -> Result<(), Fallo> {
         let v = self.ventana(w)?;
         if completo {
-            let capa = v.capa;
+            let (capa, dano) = (v.capa, v.dano);
             let f = ex.l16(capa + layer::FLAGS)?;
             ex.e16(capa + layer::FLAGS, f & !layer::LAYERREFRESH)?;
+            self.poner_region_sistema(ex, dano, &[])?;
         }
         Ok(())
     }
@@ -1169,8 +1205,12 @@ impl<C: Compositor> CajaGrafica<C> {
         let mut replan = self.enviar(ex, w, idcmp::NEWSIZE, 0, 0)?;
         if ex.l32(w + win::FLAGS)? & wflg::NOCAREREFRESH == 0 {
             if simple {
+                // Toda la capa por pintar (el programa se recoloca con NEWSIZE y lo repinta todo).
                 let f = ex.l16(capa + layer::FLAGS)?;
                 ex.e16(capa + layer::FLAGS, f | layer::LAYERREFRESH)?;
+                let dano = self.ventana(w)?.dano;
+                let r = self.gfx.capas.get(&capa).copied().unwrap_or(Rect::de_tamano(an as u32, al as u32));
+                self.poner_region_sistema(ex, dano, &[Rect::nuevo(0, 0, r.ancho() as i32 - 1, r.alto() as i32 - 1)])?;
             }
             replan |= self.enviar(ex, w, idcmp::REFRESHWINDOW, 0, 0)?;
         }

@@ -279,7 +279,9 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Coloca los elementos de una lista: uno debajo de otro, todos del ancho del más ancho; los subelementos, a la
     /// derecha de su elemento.
-    fn colocar_items<M: Memoria>(&mut self, ex: &mut Exec<M>, primero: u32, x: i32) -> Result<(), Fallo> {
+    /// Coloca una lista de elementos y, si no es ya de subelementos (`sub`), sus subelementos: en intuition no hay más
+    /// niveles, y un `SubItem` que vuelve a una lista de antes no debe hacer dar vueltas sin fin.
+    fn colocar_items<M: Memoria>(&mut self, ex: &mut Exec<M>, primero: u32, x: i32, sub: bool) -> Result<(), Fallo> {
         let items = siguientes(ex, primero, item::NEXTITEM);
         let ancho = items.iter().map(|&i| Self::ancho_item(ex, i)).max().unwrap_or(0) + 8;
         let mut y = 2;
@@ -295,8 +297,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 ex.e16(t.wrapping_add(itext::LEFTEDGE), if f & item::CHECKIT != 0 { ANCHO_MARCA as u16 } else { 2 })?;
             }
             let s = ex.l32(it.wrapping_add(item::SUBITEM))?;
-            if s != 0 {
-                self.colocar_items(ex, s, ancho - 4)?;
+            if s != 0 && !sub {
+                self.colocar_items(ex, s, ancho - 4, true)?;
             }
             y += alto;
         }
@@ -309,7 +311,7 @@ impl<C: Compositor> CajaGrafica<C> {
             return Ok(0);
         }
         if solo_items {
-            self.colocar_items(ex, m, 0)?;
+            self.colocar_items(ex, m, 0, false)?;
             return Ok(1);
         }
         let mut x = 5;
@@ -321,7 +323,7 @@ impl<C: Compositor> CajaGrafica<C> {
             ex.e16(mu.wrapping_add(menu::WIDTH), ancho as u16)?;
             ex.e16(mu.wrapping_add(menu::HEIGHT), fuente::ALTO as u16 + 2)?;
             let primero = ex.l32(mu.wrapping_add(menu::FIRSTITEM))?;
-            self.colocar_items(ex, primero, 0)?;
+            self.colocar_items(ex, primero, 0, false)?;
             x += ancho;
         }
         Ok(1)
