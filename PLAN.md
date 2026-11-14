@@ -375,3 +375,20 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
   programas de pago de DashOS se venden ahí.
 
+## Decisiones del usuario del 2026-11-14
+
+- **DashOS pasa a llamarse AlborOS**, por problemas con las marcas. El cambio en el repositorio, el código y la
+  web está pendiente; el nombre se comprueba antes en las bases de marcas (OEPM, EUIPO y USPTO, clase 9).
+
+- **x86-64 también es plataforma objetivo** ("vamos también a por x86"). ARM vale a corto plazo, pero tiene dos
+  problemas: los ARM nuevos están dejando el big-endian, y los controladores de los portátiles y máquinas ARM nuevas
+  no están resueltos ni en Linux. En x86 la caja Amiga va siempre con el modo U7 (dar la vuelta a los bytes), y el JIT
+  68k se escribe nuevo: Emu68 no se puede portar. **El JIT de x86 va en un proyecto aparte en GitHub**, para que lo
+  use más gente; DashOS lo usa como usa Emu68. Se llama **RelevoJIT**, con licencia MPL-2.0, y es una biblioteca.
+  Diseño y decisiones en `docs/diseño/S21-x86.md`:
+  - Intérprete y JIT, con los registros del 68k en memoria y cargados en registros de x86 por bloque.
+  - U7 (dar la vuelta a los bytes) pasa a ser el modo por defecto también en ARM.
+  - El kernel x86 y el JIT avanzan a la vez. De momento en QEMU; después, gráficos de Intel, AMD y NVIDIA.
+  - ARM se queda en las placas (Pi 3, 4 y 5, THEA). Los portátiles, en x86, que son baratos. Los portátiles ARM y los
+    Mac bajan de prioridad (cambia "Otros ordenadores ARM", arriba).
+
