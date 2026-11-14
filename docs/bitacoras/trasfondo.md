@@ -85,6 +85,16 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
 - Lo que queda: ordenar ese tramo del guion (Ajustes, ventana Amiga y explorador en secuencia, no a la vez) o devolver la
   red a su sitio de antes (el arranque cambió de ritmo al lanzarla antes del fondo).
 
+### Ordenar el guion (decisión del coordinador), a medias
+
+- Hecho: el explorador espera a que acabe el tramo de Ajustes (maximizar, devolver y el desplegable), y el monitor al
+  explorador. El desplegable espera a que Ajustes vuelva de maximizar. La ventana Amiga se sube con un clic dentro antes
+  de pulsar su gadget de cerrar.
+- No pasa aún. En las dos últimas vueltas completas (v11 y v13) Ajustes no llegó a maximizarse: faltó "el campo dice:
+  DashOSa". Una vuelta con trazas del guion (v16) no imprimió nada en el bloque de Ajustes: alguna rama de más arriba
+  del bucle hace `continue` en cada vuelta desde que sale Ajustes. Hay que buscar cuál (probablemente una espera de la
+  caja Amiga o de las preguntas) y ponerla en el orden de los tramos.
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
