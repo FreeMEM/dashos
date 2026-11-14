@@ -62,6 +62,11 @@ Dos líneas a la vez (decisión 4 de S21):
   - Otras llamadas largas con las interrupciones cerradas: `memoria_dma` pone a cero hasta 4 MB con el cerrojo del
     repartidor tomado, y soltar 4 MB o un proceso grande también va de una vez. Solo `memoria_crear` tiene pausas.
   - Lo que quedaba de X4 sigue igual: el camino con PCID sin probar, y `vaciar_tlb_otros` vacía la TLB entera.
+- [~] X7a **RelevoJIT dentro de DashOS x86, sin caja Amiga.** La caja Amiga aún no está en `main` (vive en las ramas
+  `caja-amiga*` de la otra sesión), así que primero RelevoJIT corre en un proceso de DashOS: compilado sin libc
+  (capa de puertos en RelevoJIT: memoria, `memcpy`, matemáticas), su memoria de código sobre objetos de memoria de
+  DashOS (doble proyección RW y RX), y un programa que ejecuta los programas de `jit-host/pruebas68k` con el
+  intérprete y con el JIT, con la misma salida que en Linux. El cargador avisa con `relevo_invalidate`.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S21).
