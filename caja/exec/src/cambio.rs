@@ -282,6 +282,11 @@ impl<M: Memoria> Exec<M> {
         Ok(accion)
     }
 
+    /// Cuántas tareas conoce exec.
+    pub fn num_tareas(&self) -> usize {
+        self.tareas.len()
+    }
+
     /// Tras añadir una tarea desde fuera de exec (`CreateNewProc` de la caja): si hay que ceder el testigo (la nueva
     /// es de más prioridad y no hay `Forbid`; con `Forbid`, se cede al `Permit`).
     pub fn tras_anadir(&mut self) -> bool {

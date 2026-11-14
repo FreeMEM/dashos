@@ -35,6 +35,7 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define CAIDA68K        (SISTEMA68K + 0x80)   /* tras trampa_defecto: acaba el programa, o sigue otra tarea */
 #define FIN_SISTEMA68K  (SISTEMA68K + 0xa0)
 #define RTS_SUELTO      (VUELTA_ANIDADA + 4)  /* un RTS (el de la vuelta anidada) */
+#define RTR_SUELTO      (SISTEMA68K + 0x9c)   /* un RTR: retoma una tarea que perdió el testigo por su turno */
 #define CAMBIO          (MARCA + 2)           /* 1: caida cambió de tarea (RTE en vez de COMUN) */
 /* Funciones nativas de la propia caja (no son de ninguna biblioteca). */
 #define N_VUELTA        0xff00
@@ -105,6 +106,12 @@ void caja_desaparcar(uint32_t t);
 /* Una tarea cae por una excepción sin tc_TrapCode (en modo de usuario, por `caida`, con su número en `vector`): si es
    la del programa, 0 (el programa acaba). Si es otra, la caja la quita, corre otra y deja sus registros en regs: 1. */
 int caja_caida(uint64_t *regs, uint32_t vector);
+/* La interrupción de la caja llegó con una tarea en modo de usuario (en `pc`, con `sr` y su pila en `usp`): si acabó
+   su turno y hay otra, la caja le quita el testigo (guarda su CCR y su PC en su pila, para el RTR_SUELTO) y deja en
+   regs los registros de la siguiente: 1. Si no, 0. */
+int caja_turno(uint64_t *regs, uint32_t usp, uint32_t pc, uint32_t sr, uint32_t rtr);
+/* Si hay varias tareas: el reloj de la caja levanta su interrupción cada cuadro para mirar el turno. */
+void caja_turnos(int si);
 /* Desde el último programa: cambios de tarea, tareas acabadas y aparcadas en la vuelta de un nivel (y las pone a 0). */
 void caja_cuentas_tareas(uint32_t *cambios, uint32_t *acabadas, uint32_t *aparcadas);
 

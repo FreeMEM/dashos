@@ -74,3 +74,9 @@ caida:
 	jmp	0x101400		| COMUN
 1:	clr.w	0x101502
 	rte
+
+| --- $10169C: un RTR suelto: retoma una tarea a la que la caja quitó el testigo en la interrupción de su turno (en su
+| pila, el CCR y la PC de donde estaba).
+	.org	0x9c
+rtr_suelto:
+	rtr

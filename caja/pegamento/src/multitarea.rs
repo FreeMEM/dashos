@@ -11,7 +11,7 @@
 use alloc::format;
 use alloc::vec::Vec;
 
-use caja_exec::{Contexto, Modo, Registros};
+use caja_exec::{Contexto, Memoria, Modo, Registros};
 
 use crate::{Caja, caja, di};
 
@@ -20,6 +20,7 @@ unsafe extern "C" {
     fn caja_tiene_nivel(t: u32) -> i32;
     fn caja_fp_leer(v: *mut u64);
     fn caja_fp_poner(v: *const u64);
+    fn caja_turnos(si: i32);
 }
 
 /// El turno de una tarea (el `Quantum` de exec, 4 cuadros de 20 ms).
@@ -39,7 +40,43 @@ pub(crate) fn tiene_nivel(t: u32) -> bool {
 
 /// Si hay más tareas que la que corre (si no, todo como con una sola).
 pub(crate) fn hay_otras(c: &Caja) -> bool {
-    c.ex.tareas().len() > 1
+    c.ex.num_tareas() > 1
+}
+
+/// Le dice al reloj de la caja si hay varias tareas (entonces mira el turno en su interrupción).
+pub(crate) fn avisar_reloj(c: &Caja) {
+    // SEGURIDAD: una función de caja.c que guarda un entero.
+    unsafe { caja_turnos(hay_otras(c) as i32) };
+}
+
+/// La interrupción de la caja llegó con la tarea en marcha en modo de usuario, en `pc` con `sr` y su pila en `usp`:
+/// si acabó su turno (y no hay `Forbid` ni `Disable`) y hay otra lista de su prioridad, se le quita el testigo: su
+/// CCR y su PC van a su pila (los saca el `RTR` en `rtr`) y corre otra, con sus registros en `r`. `true` si cambió.
+pub(crate) fn turno_por_reloj(r: &mut Registros, usp: u32, pc: u32, sr: u32, rtr: u32) -> bool {
+    let Some(c) = caja() else { return false };
+    if !hay_otras(c) || !c.ex.interrupciones_activas() {
+        return false;
+    }
+    let ahora = dashos::ahora_us();
+    if ahora.saturating_sub(c.inicio_turno) <= TURNO_US {
+        return false;
+    }
+    if !c.ex.fin_de_turno() {
+        c.inicio_turno = ahora;
+        return false;
+    }
+    let t = c.ex.tarea_actual();
+    let nu = usp.wrapping_sub(6);
+    if t == 0 || usp < 16 || c.ex.mem.escribir16(nu, (sr & 0xff) as u16).is_err() || c.ex.mem.escribir32(nu + 2, pc).is_err() {
+        return false;
+    }
+    let mut regs = *r;
+    regs.a[7] = nu;
+    if !guardar(c, t, regs, Modo::Saltar(rtr)) {
+        return false;
+    }
+    c.por_reloj += 1;
+    matches!(siguiente(r, None), Siguiente::Lista)
 }
 
 fn fp_leer(ctx: &mut Contexto) {

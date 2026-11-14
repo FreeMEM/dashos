@@ -173,6 +173,8 @@ struct Caja {
     tareas_acabadas: u32,
     aparcadas: u32,
     procesos_creados: u32,
+    /// Turnos quitados por el reloj (una tarea que no llamaba a nada).
+    por_reloj: u32,
     /// Lo que hay que hacer cuando acabe cada proceso de `CreateNewProc` (`procesos.rs`).
     al_acabar: alloc::collections::BTreeMap<u32, procesos::AlAcabar>,
 }
@@ -444,6 +446,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         tareas_acabadas: 0,
         aparcadas: 0,
         procesos_creados: 0,
+        por_reloj: 0,
         al_acabar: alloc::collections::BTreeMap::new(),
     };
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
@@ -727,7 +730,19 @@ fn crear_proceso(
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
+    // El cajón del programa (`pr_HomeDir`, `PROGDIR:`), si viene de disco con su ruta (los del usuario: Tachyon busca
+    // ahí sus iconos). El cerrojo es de la tarea: dos lo suelta cuando acaba.
+    let mut programa = 0;
+    if let Some(i) = nombre.iter().rposition(|&b| b == b'/' || b == b':') {
+        let cajon = if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
+            c.dos.dar_cerrojo(l, t);
+            programa = l;
+        }
+    }
     let ex = &mut c.ex;
+    ex.mem.escribir32(t + pr::PR_HOMEDIR, programa)?;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
     ex.mem.escribir32(t + pr::PR_COS, consola)?;
     // La CLI: los programas de C (libnix, el runtime de Dash) miran `pr_CLI` para saber que no vienen del Workbench
@@ -816,6 +831,7 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     // Entre un programa y otro no corre ninguna tarea (las del sistema que estén listas esperan al siguiente).
     c.ex.sin_tarea_en_marcha();
     c.principal = 0;
+    multitarea::avisar_reloj(c);
     recoger_avisos(c);
     if let Some(r) = c.faltan.resumen_de_la_tarea() {
         di(&r);
@@ -1618,6 +1634,7 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     }
     // Varias tareas: cede si hay otra de más prioridad lista o si acabó su turno y hay otra de la suya.
     let Some(c) = caja() else { return res };
+    multitarea::avisar_reloj(c);
     if res == C_SEGUIR && multitarea::hay_otras(c) && multitarea::se_puede_cambiar() {
         let t = c.ex.tarea_actual();
         let turno = dashos::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
@@ -1679,7 +1696,7 @@ pub unsafe extern "C" fn caja_cuentas_tareas(cambios: *mut u32, acabadas: *mut u
     unsafe {
         *cambios = core::mem::take(&mut c.cambios);
         *acabadas = core::mem::take(&mut c.tareas_acabadas);
-        *aparcadas = core::mem::take(&mut c.aparcadas);
+        *aparcadas = core::mem::take(&mut c.aparcadas) + (core::mem::take(&mut c.por_reloj) << 16);
     }
 }
 
@@ -1708,6 +1725,24 @@ pub unsafe extern "C" fn caja_caida(regs: *mut u64, vector: u32) -> i32 {
             1
         }
         multitarea::Siguiente::Plazo => 0,
+    }
+}
+
+/// La interrupción de la caja con una tarea en modo de usuario (caja.c): si acabó su turno, corre otra (sus registros
+/// en `regs`): 1. Si no, 0.
+///
+/// # Safety
+/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_turno(regs: *mut u64, usp: u32, pc: u32, sr: u32, rtr: u32) -> i32 {
+    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
+    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
+    let Some(mut r) = Registros::desde_jit(x) else { return 0 };
+    if multitarea::turno_por_reloj(&mut r, usp, pc, sr, rtr) {
+        r.hacia_jit(x);
+        1
+    } else {
+        0
     }
 }
 

@@ -275,6 +275,15 @@ impl<F: SistemaArchivos> Dos<F> {
         }
     }
 
+    /// Un cerrojo compartido de `ruta` (una ruta del Amiga), de la tarea en marcha: el BPTR, o el error de dos. Para
+    /// el cajón del programa (`pr_HomeDir`, `PROGDIR:`) de un programa que la caja carga de disco.
+    pub fn cerrojo_de_ruta<C: Caja>(&mut self, c: &mut C, ruta: &[u8]) -> Result<u32, u32> {
+        self.lock_ruta(c, ruta, crate::estructuras::SHARED_LOCK).map(|d| d >> 2).map_err(|e| match e {
+            E::Io(x) => x,
+            E::Mal(f) => f.codigo(),
+        })
+    }
+
     /// Si `bptr` es un fichero abierto de dos.
     pub fn es_fichero(&self, bptr: u32) -> bool {
         self.fichero(bptr).is_ok()

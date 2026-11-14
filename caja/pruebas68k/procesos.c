@@ -10,6 +10,7 @@
          programa), un puerto borrado con mensajes dentro, una tarea que quita a otra que espera, una que se señala a
          sí misma sin fin, AddTask con basura. Acaba con 0; los avisos del Enforcer se esperan.
       c  una tarea quita la del programa (RemTask): el programa acaba ahí (la caja lo corta) y su tarea con él.
+      e  la medida: 10.000 idas y vueltas entre dos tareas con Wait y Signal (la caja dice el tiempo).
       d  tareas y un proceso que caen (instrucción ilegal, división por cero, sin tc_TrapCode): la caja los quita y el
          programa sigue; acaba con 0.
 */
@@ -194,6 +195,12 @@ static ULONG *segmento_falso(void)
     return m;
 }
 
+static void hija_bucle(void)
+{
+    while (!parar) vueltas++;
+    Signal(principal, 1L << sig_p);
+}
+
 static void normal(void)
 {
     /* 1. Ping-pong con Wait y Signal. */
@@ -274,6 +281,17 @@ static void normal(void)
     Wait(1L << sig_p);
     di("  [caja-amiga] procesos: turno: la hija ocupada dio %ld vueltas mientras la principal dormia\n", v1, 0, 0);
     mira(v1 > 100, "el turno entre dos tareas de la misma prioridad");
+
+    /* 7b. Una hija que no llama a nada (un bucle puro) tampoco: el reloj de la caja le quita el testigo. */
+    vueltas = 0;
+    parar = 0;
+    crear("bucle", 0, hija_bucle, 2048);
+    Delay(10);
+    LONG v2 = vueltas;
+    parar = 1;
+    Wait(1L << sig_p);
+    di("  [caja-amiga] procesos: turno por reloj: la hija sin llamadas dio %ld vueltas\n", v2, 0, 0);
+    mira(v2 > 1000, "una tarea que no llama a nada no se queda con la caja");
 
     /* 8. CreateNewProc con NP_Entry: un proceso de más prioridad corre enseguida, con sus argumentos, NIL: como
        entrada y salida, y acaba al volver de su función (la caja cierra sus NIL:). */
@@ -464,6 +482,31 @@ static void mata(void)
     di("  [caja-amiga] procesos: MAL: la principal sigue tras quitarla\n", 0, 0, 0);
 }
 
+/* --- e: la medida --- */
+
+static volatile LONG idas_medida;
+
+static void hija_medida(void)
+{
+    sig_h = AllocSignal(-1);
+    Signal(principal, 1L << sig_p);
+    for (LONG i = 0; i < idas_medida; i++) {
+        Wait(1L << sig_h);
+        Signal(principal, 1L << sig_p);
+    }
+}
+
+static void medida(void)
+{
+    idas_medida = 10000;
+    hija = crear("medida", 0, hija_medida, 4096);
+    Wait(1L << sig_p);
+    for (LONG i = 0; i < idas_medida; i++) {
+        Signal(hija, 1L << sig_h);
+        Wait(1L << sig_p);
+    }
+}
+
 /* --- d: tareas que caen --- */
 
 static void hija_ilegal(void)
@@ -510,6 +553,7 @@ LONG inicio(void)
     else if (modo == 'b') hostil();
     else if (modo == 'c') mata();
     else if (modo == 'd') cae();
+    else if (modo == 'e') medida();
     di("  [caja-amiga] procesos: %ld fallos (modo %lc)\n", fallos, modo, 0);
     FreeSignal(sig_p);
     CloseLibrary((struct Library *)DOSBase);

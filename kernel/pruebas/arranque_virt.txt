@@ -745,6 +745,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] procesos-c acabó por el vector 31
 ~│   [caja-amiga] procesos: un proceso que cae se quita: bien
 ~│   [caja-amiga] procesos-d acabó por el vector -1 (D0 0)
+# Una tarea que no llama a nada pierde el testigo con el reloj de la caja (la interrupción de nivel 6 cada 20 ms), y la
+# medida del cambio de tarea (e).
+~│   [caja-amiga] procesos: una tarea que no llama a nada no se queda con la caja: bien
+~│   [caja-amiga] procesos-e acabó por el vector -1 (D0 0)
+~│   [caja-amiga] procesos: medida: 
 ~│   [caja-amiga] dash: Error: división por cero (excepción 5)
 ~│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1)
 ~│   [caja-amiga] ventana Amiga en pantalla (320x200, con la barra de DashOS): GadTools Test

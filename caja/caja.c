@@ -365,6 +365,7 @@ static struct M68KState m68k;
 #define MAX_NATIVAS (MAX_ANIDADO + 4)
 static volatile int anidado;                  /* niveles abiertos */
 static uint32_t dueno_nivel[MAX_ANIDADO + 1];  /* la tarea 68k que abrió cada nivel */
+static volatile int turnos_activos;           /* hay varias tareas: el reloj mira el turno (más abajo) */
 static volatile int vuelto[MAX_ANIDADO + 1];  /* 1: volvió a su VUELTA; 2: volvió con la pila más arriba (rota) */
 static uint32_t a7_esperado[MAX_ANIDADO + 1];
 static volatile int programa_acabado;         /* acabó dentro de un nivel: se deshacen todos */
@@ -482,6 +483,23 @@ void dashos_native_call(uint64_t *regs, uint32_t index)
             __atomic_store_n(&m68k.INTF.ARM_err, 1, __ATOMIC_RELEASE);
             break;
         default:
+            /* La interrupción de la caja con una tarea en modo de usuario (el marco, encima de la pila de supervisor:
+               SR, PC, formato): si acabó su turno, la caja le quita el testigo y deja los registros de la siguiente;
+               el marco pasa a volver en modo de usuario al RTS_SUELTO, que la retoma, con su pila en USP (como en
+               caida). */
+            if (index == N_INTERRUPCION && turnos_activos) {
+                uint32_t f = lee_r(regs, R_A(7)), usp_antes;
+                __asm__ volatile("mov %w0, " REG_USP_ASM : "=r"(usp_antes));
+                if (en_ram68k(f, 8) && !(lee16(f) & SR_S) && (lee16(f + 6) >> 12) <= 1
+                    && caja_turno(regs, usp_antes, lee32(f + 2), lee16(f), (uint32_t)RTR_SUELTO) == 1) {
+                    uint32_t usp = lee_r(regs, R_A(7));
+                    pon16(f, 0);
+                    pon32(f + 2, (uint32_t)RTS_SUELTO);
+                    pon16(f + 6, 0);
+                    pon_r(regs, R_A(7), f);
+                    __asm__ volatile("mov " REG_USP_ASM ", %w0" :: "r"(usp));
+                }
+            }
             break;
     }
     nativas = k;
@@ -579,6 +597,18 @@ int caja_ejecutar_68k(uint32_t pc, uint32_t *r, int usuario)
 }
 
 int caja_tomar_ctrl_c(void) { return __atomic_exchange_n(&ctrl_c_pendiente, 0, __ATOMIC_ACQ_REL); }
+
+/* El reloj de los turnos: con varias tareas, un hilo levanta la interrupción de nivel 6 cada 20 ms; en ella, la caja
+   mira si la tarea en marcha acabó su turno (una que no llama a nada no lo suelta de otra forma). */
+static volatile int turnos_activos;
+void caja_turnos(int si) { turnos_activos = si; }
+static void reloj_turnos(uint64_t us)
+{
+    for (;;) {
+        sc(SC_DORMIR, (long)us, 0, 0, 0, 0);
+        if (turnos_activos) __atomic_store_n(&m68k.INTF.ARM, 1, __ATOMIC_RELEASE);
+    }
+}
 
 int caja_tomar_pilas_raras(void) { int n = pilas_raras; pilas_raras = 0; return n; }
 
@@ -1213,6 +1243,12 @@ int caja_main(void)
         di("sin memoria para el vigilante\n");
         return 4;
     }
+    /* El reloj de los turnos (varias tareas), con su pila: para siempre. */
+    static uint8_t *pila_reloj;
+    pila_reloj = (uint8_t *)(PILAS + PILA_LEN + 0x30000);
+    if (proyecta((uintptr_t)pila_reloj, PILA_VIGIA_LEN, P_ESCRIBIR) <= 0
+        || sc(SC_HILO_CREAR, (long)reloj_turnos, (long)(pila_reloj + PILA_VIGIA_LEN), 20000, 0, 0) < 0)
+        di("sin el reloj de los turnos: una tarea que no llama a nada no soltará el testigo\n");
     long hilo = sc(SC_HILO_CREAR, (long)vigila, (long)(pila_vigia + PILA_VIGIA_LEN), 300000, 0, 0);
     if (hilo < 0) {
         di("no se pudo crear el vigilante: %d\n", (int)hilo);
@@ -1522,13 +1558,18 @@ int caja_main(void)
            el programa sigue. En todos, nada del programa queda en memoria. Van al final: con ellos antes, la ventana de test_gadtools seguía
            abierta cuando el guion de la prueba pulsaba en el centro de control. */
         static const struct { const char *nombre; int vector; } proc[] = {
-            { "procesos-a", -1 }, { "procesos-b", -1 }, { "procesos-c", 31 }, { "procesos-d", -1 },
+            { "procesos-a", -1 }, { "procesos-b", -1 }, { "procesos-c", 31 }, { "procesos-d", -1 }, { "procesos-e", -1 },
         };
         for (unsigned i = 0; i < sizeof(proc) / sizeof(proc[0]); i++) {
+            ctrl_c_corriendo = 1;
+            cerrar_en_vez = 0;
+            long hv = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 0, 0, 0);
             t0 = ahora_us();
             v = ejecuta_hunk(proc[i].nombre, prog_procesos, (size_t)(prog_procesos_fin - prog_procesos), execbase, &d0,
                              &llamadas, &sobras);
             t1 = ahora_us();
+            ctrl_c_corriendo = 0;
+            if (hv >= 0) sc(SC_HILO_UNIR, hv, 0, 0, 0, 0);
             uint32_t cambios = 0, acabadas = 0, aparcadas = 0;
             caja_cuentas_tareas(&cambios, &acabadas, &aparcadas);
             bien = v == proc[i].vector && (v != -1 || d0 == 0) && caja_bloques(0) == sistema && anidado == 0
@@ -1537,6 +1578,10 @@ int caja_main(void)
                "%u avisos, %u bloques sin soltar: %s\n", proc[i].nombre, v, (int)d0, cambios, acabadas, llamadas,
                (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
             if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+            if (proc[i].nombre[9] == 'e' && cambios)
+                di("procesos: medida: %u cambios de tarea en %u ms, %u ns por cambio (con su Wait y su Signal)\n", cambios,
+                   (uint32_t)((t1 - t0) / 1000), (uint32_t)((t1 - t0) * 1000 / cambios));
+            if (aparcadas >> 16) di("procesos: %u turnos quitados por el reloj\n", aparcadas >> 16);
         }
 
 #if CAJA_INTERACTIVA
