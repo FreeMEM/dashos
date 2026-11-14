@@ -6,9 +6,9 @@ uso, se para**. Diseño en `docs/diseño/S21-x86.md`.
 
 Dos líneas a la vez (decisión 4 de S21):
 
-- **Línea A, UsirOS (antes DashOS) en x86-64** (tareas `X`). Rama `x86` de `~/Projects/dashos`, en `.worktrees/x86`. Otra sesión
+- **Línea A, DashOS en x86-64** (tareas `X`). Rama `x86` de `~/Projects/dashos`, en `.worktrees/x86`. Otra sesión
   trabaja en `main`: aquí solo se añade, sin mover lo de ARM más de lo imprescindible, para que la fusión sea fácil.
-  El cambio de nombre DashOS → UsirOS no se hace en este bucle.
+  El nombre sigue siendo DashOS (UsirOS será el público, al publicar).
 - **Línea B, RelevoJIT** (tareas `R`). `~/Projects/RelevoJIT`, su propio repositorio (privado en GitHub hasta que el
   usuario diga). Diseño en su `docs/DISEÑO.md`; tareas y bitácora en su `docs/BITACORA.md`.
 
@@ -47,7 +47,7 @@ Dos líneas a la vez (decisión 4 de S21):
   su temporizador, IOAPIC, arranque de los demás núcleos (INIT-SIPI), avisos entre núcleos. El planificador y los
   hilos de `base` funcionando, con las pilas de los hilos en el GB 256 (`mapa::pila_nueva`, que en x86 necesita
   avisar a los demás núcleos para vaciar la TLB). Una GDT y una TSS por núcleo.
-- [ ] X4 **Procesos.** Anillo 3, `syscall`/`sysret` (`swapgs`, `clac` al entrar), `espacio` de x86 (la mitad baja
+- [~] X4 **Procesos.** Anillo 3, `syscall`/`sysret` (`swapgs`, `clac` al entrar), `espacio` de x86 (la mitad baja
   de cada proceso, con PCID en vez de ASID), cambio de contexto, cargador ELF x86-64, la biblioteca
   `usuario/` para `x86_64` (entrada al kernel). `make -C kernel prueba-x86` con las pruebas de `pruebas.rs` que no
   tocan hardware de la Pi.

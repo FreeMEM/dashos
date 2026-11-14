@@ -1,6 +1,6 @@
 # Marca
 
-Logo de UsirOS (usuario, 2026-11-14): el sol naciente. Medio sol verde cortado por tres rayas, sobre un horizonte
+Logo de UsirOS, el nombre público futuro de DashOS (usuario, 2026-11-14; se usa al publicar la versión estable): el sol naciente. Medio sol verde cortado por tres rayas, sobre un horizonte
 dorado. Dibujo propio, MPL-2.0 como el resto.
 
 Por qué:

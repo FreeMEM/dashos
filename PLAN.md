@@ -377,10 +377,12 @@ resumido, en `docs/diseño/RESUMEN.md`.
 
 ## Decisiones del usuario del 2026-11-14
 
-- **DashOS pasa a llamarse UsirOS** (Usir es el nombre egipcio de Osiris: lo despedazaron, Isis reunió sus pedazos y
+- **Nombre público futuro: UsirOS** (Usir es el nombre egipcio de Osiris: lo despedazaron, Isis reunió sus pedazos y
   volvió a la vida, como el Amiga), por problemas con las marcas. Antes se pensó en AlborOS. Suena casi a "user OS":
-  un sistema para quien lo usa, sencillo como AmigaOS. Logo: el sol naciente (`docs/marca/`). El cambio en el repositorio, el código y la
-  web está pendiente; el nombre se comprueba antes en las bases de marcas (OEPM, EUIPO y USPTO, clase 9).
+  un sistema para quien lo usa, sencillo como AmigaOS. Logo: el sol naciente (`docs/marca/`). Mientras se desarrolla, el
+  sistema se sigue llamando DashOS en el código, el repositorio y GitHub; se cambia a UsirOS cuando sea estable y se
+  publique en serio (usuario, 2026-11-14). Comprobado en TMview el 2026-11-14: ninguna marca "usiros" ni "useros"
+  en la clase 9 (OEPM, EUIPO, USPTO, OMPI). Registro en la EUIPO: 850 € una clase, +50 € la segunda.
 
 - **x86-64 también es plataforma objetivo** ("vamos también a por x86"). ARM vale a corto plazo, pero tiene dos
   problemas: los ARM nuevos están dejando el big-endian, y los controladores de los portátiles y máquinas ARM nuevas
