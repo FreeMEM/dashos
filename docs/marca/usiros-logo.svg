@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="720" height="360" viewBox="0 0 720 360">
+<rect width="720" height="360" fill="#ffffff"/>
+<clipPath id="c"><rect x="0" y="0" width="720" height="320"/></clipPath>
+<g clip-path="url(#c)"></g>
+<g fill="#1f8a5b" transform="translate(70,40)"><rect x="20" y="0" width="120" height="26" rx="6"/><rect x="10" y="38" width="140" height="26" rx="6"/><rect x="10" y="76" width="140" height="26" rx="6"/><rect x="10" y="114" width="140" height="26" rx="6"/><rect x="48" y="146" width="64" height="104"/><path d="M48 230 L112 230 L140 280 L20 280 Z"/></g>
+<text x="260" y="205" font-family="DejaVu Sans, sans-serif" font-size="88" font-weight="700" fill="#1b1b1b">Usir<tspan fill="#1f8a5b">OS</tspan></text>
+</svg>
