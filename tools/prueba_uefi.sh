@@ -124,6 +124,7 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+ajustes_reintentos = 0
 ajustes_visto = 0
 wb = 0
 wb_ventana = {}
@@ -1873,6 +1874,27 @@ while time.time() - inicio < total:
         # Sin el centro de control encima (sale en (200, 200) y taparía el desplegable): antes de que se anuncie, o ya
         # cerrado. Tampoco con la ventana del selector esperando teclas: también lo taparía.
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
+        # Si Super+Arriba no llegó a Ajustes la primera vez (una pregunta de `guardian` se llevó la tecla), otra vez más tarde:
+        # sin preguntas, con la ventana Amiga ya cerrada (el clic sube Ajustes y su barra la taparía) y con el desplegable
+        # ya probado (el clic cerraría su menú). Hasta 3 veces, esperando 4 s a que diga que se maximizó.
+        if (ajustes and ajustes_reintentos < 3 and "[ajustes] el compositor pide " not in texto and menu == 2
+                and "[ajustes] el desplegable dice" in texto and amiga != 1 and sin_pregunta and not bloqueado_ahora
+                and not selector_espera and sin_centro and libre_caja):
+            import re
+            ajustes_reintentos += 1
+            v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
+            vx, vy = (int(v.group(1)), int(v.group(2))) if v else (104, 104)
+            ir_a(vx + 296, vy + 26)
+            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+            time.sleep(0.5)
+            mandar("sendkey meta_l-up")
+            for _ in range(16):
+                time.sleep(0.25)
+                if "[ajustes] el compositor pide " in open(serie, errors="replace").read():
+                    break
+            mandar("sendkey meta_l-down")
+            time.sleep(1)
+            ir_a(790, 590)
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
         if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
