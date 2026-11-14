@@ -1010,7 +1010,8 @@ while time.time() - inicio < total:
         # Intro en "Gráficas" las quita y otra vez las pone (el fondo relee sus ajustes). Esc cierra Ajustes.
         # Con CAPTURA_MONITOR=fichero: el desplegable (fichero.barra.ppm), el monitor (fichero.centro.ppm) y los ajustes
         # del panel (fichero.ajustes.ppm).
-        if monitor_paso == 0 and avisos_paso == 99 and "[barra] CPU y memoria: " in texto:
+        # Después del explorador (sus clics y teclas se cruzarían con estos).
+        if monitor_paso == 0 and avisos_paso == 99 and ex >= 90 and "[barra] CPU y memoria: " in texto:
             monitor_paso = 1
             reintento_monitor = time.time() + 15
         if 1 <= monitor_paso <= 13:
