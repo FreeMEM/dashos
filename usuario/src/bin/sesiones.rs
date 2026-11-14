@@ -113,6 +113,17 @@ const VEN_PERMISOS: &[&str] = &["guardian", "entrada", "centro"];
 const LANZADORES: &[&str] = &["barra", "workbench", "explorador"];
 /// Quién puede preguntar quién está delante (S27, oleada 2: la cabecera del panel rápido).
 const VEN_DELANTE: &[&str] = &["panel", "barra"];
+/// Trasfondo: los programas del escritorio que miran los procesos por la persona de delante (`MONITOR`): el fondo (su
+/// panel), la barra (sus indicadores) y el centro de control (el monitor del sistema). El centro también cierra por ella
+/// (`MATAR`), solo lo suyo.
+const MONITORES: &[&str] = &["fondo", "barra", "centro"];
+const MATAN_POR_DELANTE: &[&str] = &["centro"];
+/// Los programas del escritorio (los que lanza `inicio` con estos nombres): salen en el monitor marcados así y nadie los
+/// cierra con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
+const ESCRITORIO: &[&str] = &["fondo", "centro", "workbench", "explorador", "selector", "barra", "panel", "caja-amiga", "caja-linux"];
+/// Las cajas, que salen por su nombre en el monitor (con su pastilla) si son del sistema o de quien mira; la de otra
+/// persona va sumada en "otros", como lo demás suyo.
+const CAJAS: &[(&str, u32)] = &[("caja-amiga", M_CAJA_AMIGA), ("caja-linux", M_CAJA_LINUX)];
 /// Quien puede pedir apagar, reiniciar o cerrar la sesión (decisión del usuario del 2026-11-13): el panel rápido.
 const PUEDE_APAGAR: &[&str] = &["panel"];
 
@@ -664,6 +675,70 @@ fn apagar_ya(permiso: u32, reiniciar: bool, quien: &[u8; 16], registro: &mut Reg
     println!("  [sesiones] el kernel no puede {}: {}", core::str::from_utf8(que).unwrap_or("?"), r);
 }
 
+/// Trasfondo: una página de `MONITOR` para quien pide (`yo`), con la privacidad de `protocolo::sesiones::MONITOR`: con
+/// detalle, lo de la persona que mira (el escritorio mira por la de delante, `activa`) y las cajas; lo demás del sistema,
+/// sumado en "sistema", y lo de otras personas, en "otros". Las sumas van al final, solo si tienen algo.
+fn monitor_pagina(respuesta: u32, fichas: &[Option<Ficha>], yo: Option<Ficha>, activa: u32, desde: usize) {
+    let miran = match yo {
+        Some(f) if es(&f, MONITORES) => activa,
+        Some(f) => f.uid,
+        None => 0,
+    };
+    let caja = |f: &Ficha| CAJAS.iter().find(|c| c.0 == nombre(&f.nombre)).map(|c| c.1);
+    // Una caja sale por su nombre si es del sistema o de quien mira; la de otra persona va en "otros".
+    let detalle = |f: &&Ficha| (miran >= PRIMERA_PERSONA && f.uid == miran) || (caja(f).is_some() && f.uid < PRIMERA_PERSONA);
+    let n_detalle = fichas.iter().flatten().filter(detalle).count();
+    let uso = |f: &Ficha| (dashos::cpu_tiempo(f.grupo).max(0) as u64, dashos::grupo_uso(f.grupo).1);
+    // Las sumas: (cpu, memoria, cuántos) del sistema y de otras personas.
+    let mut sumas = [(0u64, 0u64, 0u32); 2];
+    let hacen_falta = desde + MONITOR_POR_PAGINA > n_detalle;
+    if hacen_falta {
+        for f in fichas.iter().flatten().filter(|f| !detalle(f)) {
+            let s = &mut sumas[if f.uid < PRIMERA_PERSONA { 0 } else { 1 }];
+            let (c, m) = uso(f);
+            *s = (s.0.saturating_add(c), s.1.saturating_add(m), s.2 + 1);
+        }
+    } else {
+        // Para el total: solo si hay alguno de cada (sin pedir sus números al kernel).
+        for f in fichas.iter().flatten().filter(|f| !detalle(f)) {
+            sumas[if f.uid < PRIMERA_PERSONA { 0 } else { 1 }].2 += 1;
+        }
+    }
+    let clases = [M_SISTEMA, M_OTROS];
+    let n_sumas = sumas.iter().filter(|s| s.2 > 0).count();
+    let total = n_detalle + n_sumas;
+    let mut r = [0u8; 8 + ENTRADA_MONITOR * MONITOR_POR_PAGINA];
+    let mut van = 0;
+    let poner = |r: &mut [u8], van: usize, marca: u64, cpu: u64, mem: u64, uid: u32, gid: u32, clase: u32, cuantos: u32, n: &[u8; 16]| {
+        let e = &mut r[8 + ENTRADA_MONITOR * van..8 + ENTRADA_MONITOR * (van + 1)];
+        e[0..8].copy_from_slice(&marca.to_le_bytes());
+        e[8..16].copy_from_slice(&cpu.to_le_bytes());
+        e[16..24].copy_from_slice(&mem.to_le_bytes());
+        e[24..28].copy_from_slice(&uid.to_le_bytes());
+        e[28..32].copy_from_slice(&gid.to_le_bytes());
+        e[32..36].copy_from_slice(&clase.to_le_bytes());
+        e[36..40].copy_from_slice(&cuantos.to_le_bytes());
+        e[40..56].copy_from_slice(n);
+    };
+    for f in fichas.iter().flatten().filter(detalle).skip(desde).take(MONITOR_POR_PAGINA) {
+        let (c, m) = uso(f);
+        let clase = caja(f).unwrap_or(M_PROPIO) | if es(f, ESCRITORIO) { M_ESCRITORIO } else { 0 };
+        poner(&mut r, van, f.marca, c, m, f.uid, f.gid, clase, 1, &f.nombre);
+        van += 1;
+    }
+    let mut k = n_detalle;
+    for (s, &clase) in sumas.iter().zip(&clases).filter(|(s, _)| s.2 > 0) {
+        if van < MONITOR_POR_PAGINA && k >= desde {
+            poner(&mut r, van, 0, s.0, s.1, 0, 0, clase, s.2, &[0; 16]);
+            van += 1;
+        }
+        k += 1;
+    }
+    r[0..4].copy_from_slice(&(van as u32).to_le_bytes());
+    r[4..8].copy_from_slice(&(total as u32).to_le_bytes());
+    dashos::canal_escribir(respuesta, &r[..8 + ENTRADA_MONITOR * van], &[]);
+}
+
 fn nombre(n: &[u8; 16]) -> &str {
     core::str::from_utf8(&n[..n.iter().position(|&c| c == 0).unwrap_or(16)]).unwrap_or("?")
 }
@@ -708,6 +783,8 @@ fn principal() -> u64 {
     let mut detras_dicho = [0u32; MAX_DETRAS];
     let mut idos = [0u64; 8];
     let mut ido = 0;
+    // Trasfondo: quién pidió la primera página de `MONITOR` y cuándo (µs), para no dejar que se pida muy deprisa.
+    let mut monitor_visto = [(0u64, 0u64); 8];
     let mut b = [0u8; dashos::servicio::MAX_DATOS];
     let mut ll = [0u32; dashos::servicio::MAX_LLAVES];
     let archivos = Archivos::abrir();
@@ -1618,6 +1695,29 @@ fn principal() -> u64 {
                         }
                     }
                 }
+                MONITOR => {
+                    let desde = u32_en(4) as usize;
+                    let ahora = dashos::ahora_us();
+                    // La primera página, como mucho una vez cada `MONITOR_CADA_US` por programa: si no, `OCUPADO`.
+                    let ocupado = desde == 0
+                        && match monitor_visto.iter().position(|v| v.0 == marca) {
+                            Some(k) if ahora.saturating_sub(monitor_visto[k].1) < MONITOR_CADA_US => true,
+                            Some(k) => {
+                                monitor_visto[k].1 = ahora;
+                                false
+                            }
+                            None => {
+                                let k = (0..monitor_visto.len()).min_by_key(|&k| monitor_visto[k].1).unwrap_or(0);
+                                monitor_visto[k] = (marca, ahora);
+                                false
+                            }
+                        };
+                    if ocupado {
+                        dashos::canal_escribir(respuesta, &OCUPADO.to_le_bytes(), &[]);
+                    } else {
+                        monitor_pagina(respuesta, &fichas, yo, activa, desde);
+                    }
+                }
                 ACTIVA => {
                     // U6: si su sesión es la de delante (1), si está detrás (0) o si no tiene (-2).
                     let r: i32 = match yo {
@@ -1633,14 +1733,25 @@ fn principal() -> u64 {
                     let estado = match (yo, i) {
                         (_, None) => NO_EXISTE,
                         (None, _) => PROTEGIDO,
-                        (Some(yo), Some(i)) => {
+                        (Some(yo_), Some(i)) => {
                             let f = fichas[i].unwrap();
+                            // Trasfondo: el centro de control cierra por la persona de delante (lo suyo y nada más); sin
+                            // nadie delante, nada.
+                            let mut yo = yo_;
+                            if es(&yo, MATAN_POR_DELANTE) {
+                                yo.uid = if activa >= PRIMERA_PERSONA { activa } else { u32::MAX };
+                            }
                             // U6: uno de otra persona no sale en su lista; aquí tampoco existe.
                             let ajeno = f.uid >= PRIMERA_PERSONA && f.uid != yo.uid && !es(&yo, GUARDIANES);
                             if ajeno {
                                 println!("  [sesiones] {} (usuario {}) intenta matar a un proceso de otra persona: no existe para él", nombre(&yo.nombre), yo.uid);
                                 registro.apuntar(R_MATAR, NO_EXISTE, &yo.nombre, &f.nombre);
                                 NO_EXISTE
+                            } else if es(&f, ESCRITORIO) {
+                                // Después de "ajeno": lo de otra persona sigue sin existir (no se dice que es del escritorio).
+                                println!("  [sesiones] {} no puede cerrar a {}: es del escritorio", nombre(&yo.nombre), nombre(&f.nombre));
+                                registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);
+                                PROTEGIDO
                             } else if f.uid != yo.uid {
                                 println!("  [sesiones] {} (usuario {}) no puede matar a {} (usuario {})", nombre(&yo.nombre), yo.uid, nombre(&f.nombre), f.uid);
                                 registro.apuntar(R_MATAR, PROTEGIDO, &yo.nombre, &f.nombre);

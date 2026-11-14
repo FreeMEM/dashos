@@ -22,6 +22,10 @@ extern crate alloc;
 
 use dashos::println;
 use dashos::protocolo::archivos::*;
+
+#[path = "../monitor.rs"]
+#[allow(dead_code)]
+mod monitor;
 use wayland::canal::{TROZO_ADIOS, TROZO_CONECTAR, TROZO_DATOS};
 use wayland::tablas::{wl_callback, wl_display};
 use wayland::{Escritor, leer_cabecera};
@@ -1032,8 +1036,89 @@ fn principal() -> u64 {
     println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
     let m = monton_grande();
     println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: {}", if m { "bien" } else { "MAL" });
+    // Trasfondo: la prueba del monitor, la última. Al principio, sus páginas cargaban a `sesiones` justo cuando contesta
+    // las preguntas de permisos de las demás pruebas, y el arranque se desacompasaba (Ajustes no llegaba a maximizarse).
+    let mon = monitor_ajeno();
+    println!("  [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: {}", if mon { "bien" } else { "MAL" });
     let _ = E_LIMITE;
-    if a && s && c && ses && disco_bien && ce && m { 0 } else { 1 }
+    if a && s && c && ses && disco_bien && ce && m && mon { 0 } else { 1 }
+}
+
+/// Trasfondo: el monitor de `sesiones` (`MONITOR`) a un programa cualquiera de una persona. Tiene que ver con nombre solo
+/// lo suyo (y las cajas); el sistema y las demás personas, sumados y sin nombres; no puede cerrar una caja ni una suma;
+/// pedir muy deprisa da `OCUPADO` sin tumbar nada, y una página que no existe viene vacía.
+fn monitor_ajeno() -> bool {
+    use dashos::protocolo::sesiones as s;
+    // `plazo`: lo que se espera la respuesta. Las cien seguidas esperan poco (20 ms): si `sesiones` no contesta a las
+    // que corta por ir deprisa, con 2 s cada una la prueba se alargaba hasta 200 s y lo que viene detrás se cruzaba con
+    // otros pasos del guion de arranque-virt.
+    let pagina_plazo = |desde: u32, plazo: u64| -> (i64, [u8; 256]) {
+        let mut p = [0u8; 8];
+        p[0..4].copy_from_slice(&s::MONITOR.to_le_bytes());
+        p[4..8].copy_from_slice(&desde.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 256];
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut r, &mut [], plazo).0 } else { -1 };
+        dashos::cerrar(lectura);
+        (n, r)
+    };
+    let pagina = |desde: u32| pagina_plazo(desde, 2_000_000);
+    dormir_ms(300);
+    // Todas las páginas (tras la primera, las demás se dejan pedir seguidas).
+    let mut todas = alloc::vec::Vec::new();
+    let mut total = usize::MAX;
+    while todas.len() < total && todas.len() < 128 {
+        let (n, r) = pagina(todas.len() as u32);
+        let Some((t, v)) = (n > 0).then(|| monitor::leer_pagina(&r[..n as usize])).flatten() else {
+            println!("  [hostil] monitor: página que no se entiende ({})", n);
+            return false;
+        };
+        total = t;
+        if v.is_empty() {
+            break;
+        }
+        todas.extend(v);
+    }
+    let propios: alloc::vec::Vec<&monitor::Entrada> = todas.iter().filter(|e| e.clase == monitor::M_PROPIO).collect();
+    let un_usuario = propios.iter().all(|e| e.uid == propios[0].uid && e.uid >= s::PRIMERA_PERSONA);
+    let con_hostil = propios.iter().any(|e| e.nombre == "hostil");
+    let sumas_mudas = todas.iter().filter(|e| matches!(e.clase, monitor::M_SISTEMA | monitor::M_OTROS)).all(|e| e.marca == 0 && e.nombre.is_empty() && e.uid == 0);
+    let hay_sistema = todas.iter().any(|e| e.clase == monitor::M_SISTEMA && e.cuantos > 0);
+    let sin_compositor = !todas.iter().any(|e| e.nombre == "compositor" || e.nombre == "sesiones");
+    // Pedir la primera página otra vez en el acto: `OCUPADO`. Y cien seguidas: tampoco tumban nada.
+    let (n, r) = pagina(0);
+    let ocupado = n == 4 && i32::from_le_bytes(r[0..4].try_into().unwrap()) == s::OCUPADO;
+    let cien = dashos::ahora_us();
+    for _ in 0..100 {
+        pagina_plazo(0, 20_000);
+    }
+    let cien_ms = (dashos::ahora_us() - cien) / 1000;
+    println!("  [hostil] monitor: cien peticiones seguidas en {} ms", cien_ms);
+    let lejos = pagina(1_000_000);
+    let vacia = lejos.0 == 8 && u32::from_le_bytes(lejos.1[0..4].try_into().unwrap()) == 0;
+    dormir_ms(300);
+    let otra_vez = pagina(0).0 > 8;
+    // Cerrar una caja (del sistema) o una suma: no.
+    let matar = |m: u64| -> i32 {
+        let mut p = [0u8; 12];
+        p[0..4].copy_from_slice(&s::MATAR.to_le_bytes());
+        p[4..12].copy_from_slice(&m.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        let mut r = [0u8; 4];
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        dashos::cerrar(lectura);
+        if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+    };
+    let caja = todas.iter().find(|e| matches!(e.clase, monitor::M_CAJA_AMIGA | monitor::M_CAJA_LINUX)).map(|e| (alloc::format!("{} ({})", e.nombre, e.marca), matar(e.marca)));
+    let suma = matar(0);
+    let caja_bien = caja.as_ref().is_none_or(|c| c.1 == s::PROTEGIDO || c.1 == s::NO_EXISTE);
+    println!(
+        "  [hostil] monitor: {} entradas ({} suyas, de un usuario: {}, con hostil: {}); sumas sin nombres: {}; con el sistema sumado: {}; sin el compositor ni sesiones: {}; otra vez en el acto: {}; página lejana vacía: {}; luego sí: {}; cerrar {}: {}; cerrar una suma: {}",
+        todas.len(), propios.len(), si(un_usuario), si(con_hostil), si(sumas_mudas), si(hay_sistema), si(sin_compositor),
+        if ocupado { "ocupado" } else { "contesta" }, si(vacia), si(otra_vez),
+        caja.as_ref().map_or("una caja", |c| c.0.as_str()), caja.as_ref().map_or(0, |c| c.1), suma
+    );
+    un_usuario && con_hostil && sumas_mudas && hay_sistema && sin_compositor && ocupado && vacia && otra_vez && caja_bien && suma == s::NO_EXISTE
 }
 
 /// Lo grande del montón (desde 256 KB) va en su objeto, fuera del montón, y al soltarlo se devuelve: lo reservado

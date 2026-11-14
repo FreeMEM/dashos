@@ -113,6 +113,29 @@ pub const APAGAR: u32 = 22;
 pub const MODO_APAGAR: u32 = 0;
 pub const MODO_REINICIAR: u32 = 1;
 pub const MODO_SALIR: u32 = 2;
+/// Trasfondo (el monitor del sistema): de un programa, la orden y desde qué entrada (u32). Contesta cuántas van (u32),
+/// cuántas hay (u32) y entradas de `ENTRADA_MONITOR` bytes (`MONITOR_POR_PAGINA` como mucho): marca (u64; 0 en una
+/// suma), CPU en µs desde que nació (u64), memoria que tiene cobrada su grupo en bytes (u64), usuario (u32), grupo (u32),
+/// clase (u32, `M_*`), cuántos procesos van en ella (u32) y nombre (16). Privacidad (decisión del usuario del
+/// 2026-11-13): quien mira ve con detalle solo sus procesos (los de su usuario; el escritorio, `MONITORES`, mira por la
+/// persona de delante); las cajas Amiga y Linux, por su nombre, si son suyas o del sistema; lo demás del sistema, en una
+/// suma "sistema", y lo de otras personas, en una suma "otros", sin nombres. Pedir la primera página más de una vez cada
+/// `MONITOR_CADA_US` da `OCUPADO` (las demás páginas, no): mirar muy deprisa no gasta a `sesiones`.
+pub const MONITOR: u32 = 24;
+pub const ENTRADA_MONITOR: usize = 56;
+pub const MONITOR_POR_PAGINA: usize = 4;
+pub const MONITOR_CADA_US: u64 = 200_000;
+pub const OCUPADO: i32 = -3;
+/// Las clases de una entrada del monitor: un proceso de quien mira, una caja (68K o LINUX), la suma del sistema y la de
+/// otras personas.
+pub const M_PROPIO: u32 = 0;
+pub const M_CAJA_AMIGA: u32 = 1;
+pub const M_CAJA_LINUX: u32 = 2;
+pub const M_SISTEMA: u32 = 3;
+pub const M_OTROS: u32 = 4;
+/// Un bit más en la clase: un programa del escritorio (`ESCRITORIO` en `sesiones`). Se ve, pero no se cierra desde el
+/// monitor ni con `MATAR` (decisión del coordinador del 2026-11-14; el usuario puede cambiarla).
+pub const M_ESCRITORIO: u32 = 0x100;
 /// De `inicio`, sin marca: el permiso de apagar y reiniciar del kernel (llamada 51), con la llave. `sesiones` ya tiene
 /// las 8 llaves con que se lanza un programa: este le llega así.
 pub const PERMISO_APAGAR: u32 = 23;

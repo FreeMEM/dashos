@@ -674,6 +674,9 @@ impl Lista {
     }
 }
 
+/// El ancho de cada columna de una lista con tabuladores (trasfondo).
+const COLUMNA: i32 = 76;
+
 impl Clase for Lista {
     fn nombre(&self) -> &'static str {
         "lista"
@@ -682,7 +685,16 @@ impl Clase for Lista {
     fn medida(&self, attrs: &BTreeMap<Atr, Valor>, ctx: &mut Contexto) -> Medida {
         let navegacion = attrs.get(&atr::ESTILO).map_or(0, Valor::int) == 1;
         let (tam, f) = if navegacion { (ctx.tema.letra_etiqueta, &mut ctx.medium) } else { (ctx.tema.letra_texto, &mut ctx.regular) };
-        let ancho = Ciclo::opciones(attrs).iter().map(|o| f.medir(o, tam).ancho).max().unwrap_or(0);
+        // Con columnas (tabuladores), lo primero y una columna fija por cada parte más.
+        let ancho = Ciclo::opciones(attrs)
+            .iter()
+            .map(|o| {
+                let mut partes = o.split('\t');
+                let primera = partes.next().unwrap_or("");
+                f.medir(primera, tam).ancho + partes.count() as i32 * COLUMNA
+            })
+            .max()
+            .unwrap_or(0);
         let alto = Self::filas(attrs) as i32 * FILA;
         Medida { min: (ancho + 32, alto), max: (SIN_MAX, alto), peso: 100 }
     }
@@ -726,9 +738,19 @@ impl Clase for Lista {
                 l.redondeado(fila.dentro(dentro), radio, tema::con_opacidad(tinta, 26));
                 l.borde(fila.dentro(dentro), radio, 3, t.secundario);
             }
-            let m = f.medir(o, tam);
+            // Columnas (trasfondo): con tabuladores, lo primero a la izquierda y lo demás en columnas de `COLUMNA` a la
+            // derecha, alineado a la derecha (números de una tabla). La primera fila con columnas va en el color suave.
+            let mut partes = o.split('\t');
+            let primera_parte = partes.next().unwrap_or("");
+            let resto: Vec<&str> = partes.collect();
+            let m = f.medir(primera_parte, tam);
             let base = fila.y + (FILA - m.alto()) / 2 + m.sube;
-            f.dibujar(l, fila.x + 16, base, o, tam, tinta);
+            f.dibujar(l, fila.x + 16, base, primera_parte, tam, tinta);
+            for (j, c) in resto.iter().enumerate() {
+                let derecha = fila.x + fila.w - 16 - (resto.len() - 1 - j) as i32 * COLUMNA;
+                let w = f.medir(c, tam).ancho;
+                f.dibujar(l, derecha - w, base, c, tam, tinta);
+            }
         }
         l.soltar_recorte();
     }

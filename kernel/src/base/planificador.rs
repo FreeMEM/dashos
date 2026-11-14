@@ -295,9 +295,13 @@ struct Contadores {
     tics: AtomicU64,
     cambios: AtomicU64,
     ocioso: AtomicU64,
+    /// Desde cuándo está en el ocioso (cuentas del contador), o 0 si corre otra cosa (trasfondo): sin esto, un núcleo
+    /// que duerme sin tic (M5) no sumaba su rato ocioso hasta despertar, y parecía ocupado al 100 %.
+    ocioso_desde: AtomicU64,
 }
-static CONTADORES: [Contadores; MAX_NUCLEOS] =
-    [const { Contadores { tics: AtomicU64::new(0), cambios: AtomicU64::new(0), ocioso: AtomicU64::new(0) } }; MAX_NUCLEOS];
+static CONTADORES: [Contadores; MAX_NUCLEOS] = [const {
+    Contadores { tics: AtomicU64::new(0), cambios: AtomicU64::new(0), ocioso: AtomicU64::new(0), ocioso_desde: AtomicU64::new(0) }
+}; MAX_NUCLEOS];
 
 /// Un contador del núcleo `n`: 1 = interrupciones, 2 = cambios de hilo, 3 = microsegundos en el hilo ocioso; 4 = hilos
 /// robados entre núcleos, de todos; 5, 6 y 7 = páginas de RAM, páginas libres y bytes del kernel; 8 a 11, las esperas
@@ -308,7 +312,16 @@ pub fn contador(que: u64, n: usize) -> Option<u64> {
     match que {
         1 => Some(c.tics.load(Ordering::Relaxed)),
         2 => Some(c.cambios.load(Ordering::Relaxed)),
-        3 => Some((c.ocioso.load(Ordering::Relaxed) as u128 * 1_000_000 / reloj::frecuencia().max(1) as u128) as u64),
+        // Con el rato ocioso que lleva ahora, si está en el ocioso (trasfondo). Puede quedarse corto un instante (al salir
+        // del ocioso se quita la marca antes de sumar), nunca pasarse.
+        3 => {
+            let desde = c.ocioso_desde.load(Ordering::Acquire);
+            let ahora_ = if desde != 0 { reloj::ahora().saturating_sub(desde) } else { 0 };
+            let cuentas = c.ocioso.load(Ordering::Acquire).saturating_add(ahora_);
+            Some((cuentas as u128 * 1_000_000 / reloj::frecuencia().max(1) as u128) as u64)
+        }
+        // 14 (trasfondo): los núcleos en marcha, un bit por núcleo.
+        14 => Some(PRESENTES.load(Ordering::Acquire) as u64),
         4 => Some(ROBOS.load(Ordering::Relaxed)),
         8 => Some(DESPERTADOS.load(Ordering::Relaxed)),
         9 => Some(DESPERTADOS_TARDE.load(Ordering::Relaxed)),
@@ -842,10 +855,15 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             }
             // Cobrar el tiempo al hilo que corría: al presupuesto si es de plazo, al tiempo virtual si es justo.
             if actual == nucleo.ocioso {
-                CONTADORES[n].ocioso.fetch_add(ahora.saturating_sub(nucleo.desde), Ordering::Relaxed);
+                CONTADORES[n].ocioso_desde.store(0, Ordering::Release);
+                CONTADORES[n].ocioso.fetch_add(ahora.saturating_sub(nucleo.desde), Ordering::Release);
             }
             if (*actual).id != 0 {
                 let gastado = ahora.saturating_sub(nucleo.desde);
+                // Trasfondo: el tiempo de CPU, también a su grupo y a los de encima (llamada 52), sea cual sea la clase.
+                if (*actual).proceso != 0 {
+                    (*((*actual).proceso as *const crate::objetos::Proceso)).cupo.sumar_cpu(gastado);
+                }
                 match (*actual).plazo.as_mut() {
                     Some(p) => p.restante = p.restante.saturating_sub(gastado),
                     None => {
@@ -1007,6 +1025,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         reloj::programar(proxima.max(1));
 
         nucleo.desde = ahora;
+        CONTADORES[n].ocioso_desde.store(if siguiente == nucleo.ocioso { ahora.max(1) } else { 0 }, Ordering::Release);
         if siguiente == actual {
             // Sigue el mismo. Puede que acabe de volver de la cola: se bloqueó con un plazo que ya había vencido (leer
             // con 1 µs), los dormidos vencidos lo pusieron listo en la cola y se ha elegido a sí mismo. Vuelve a

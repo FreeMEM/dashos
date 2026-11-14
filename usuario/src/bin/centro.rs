@@ -14,6 +14,12 @@
 //!   fondo (sin FPU cuestan medio segundo), los guarda con la apariencia y los da al compositor, que los reparte: los
 //!   demás programas no los calculan. Debajo, los fondos de `Fondos/`: elegir uno se lo pide a `fondo`, y si lo pone,
 //!   se guarda en `Prefs/fondo`.
+//! - **Monitor del sistema** (trasfondo): los procesos que deja ver `sesiones` (`MONITOR`: los de la persona de
+//!   delante con detalle, las cajas con su pastilla, el sistema y otros usuarios sumados), con CPU, memoria, usuario y
+//!   grupo, cada 2 s. Intro en la cabecera cambia el orden (CPU, memoria, nombre, usuario); "Cerrar proceso" (o Supr)
+//!   pide a `sesiones` que lo cierre, que solo lo hace si es de quien está delante.
+//! - **Panel del escritorio** (trasfondo, como TrasfondoPrefs): si se enseña, la esquina, el intervalo, las gráficas y
+//!   qué bloques. Se guarda en `Prefs/monitor` y se le dice al fondo ("monitor"), que lo relee.
 //! - **Acerca de**: la versión, cuánto lleva encendido, la fecha y hora (UTC, A14) y cuántos procesos hay.
 //!
 //! Por su canal "centro" solo se le pide que abra una categoría ("abrir permisos"): nadie cambia un ajuste desde fuera.
@@ -37,6 +43,9 @@ mod ventana_cliente;
 #[path = "../panel_mosaicos.rs"]
 #[allow(dead_code)]
 mod panel_mosaicos;
+#[path = "../monitor.rs"]
+#[allow(dead_code)]
+mod monitor;
 
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -80,8 +89,15 @@ const CATEGORIAS: &[(&str, &str)] = &[
     ("discos", "Discos"),
     ("pantallas", "Pantallas"),
     ("apariencia", "Apariencia"),
+    ("monitor", "Monitor del sistema"),
+    ("escritorio", "Panel del escritorio"),
     ("acerca", "Acerca de"),
 ];
+const MONITOR_SIS: usize = 5;
+const PANEL_FONDO: usize = 6;
+const FICHERO_MONITOR: &str = "monitor";
+/// Cada cuánto se vuelve a medir con el monitor a la vista.
+const CADA_MONITOR_US: u64 = 2_000_000;
 const DISCOS: usize = 2;
 const PANTALLAS: usize = 3;
 const APARIENCIA: usize = 4;
@@ -784,6 +800,157 @@ fn acerca() -> Vec<String> {
     l
 }
 
+/// Trasfondo: el monitor del sistema a la vista: lo medido, el orden y las filas que se ven (en ese orden).
+struct VistaMonitor {
+    med: monitor::Medidor,
+    orden: usize,
+    filas: Vec<monitor::Visto>,
+    medido: u64,
+    sin_datos: bool,
+}
+
+const ORDENES: [&str; 4] = ["CPU", "memoria", "nombre", "usuario"];
+
+/// El nombre de un usuario, provisional como las cuentas de `sesiones` (luego, `Estado:Cuentas/usuarios`).
+fn usuario(uid: u32) -> String {
+    match uid {
+        1000 => String::from("Ana"),
+        1001 => String::from("Carla"),
+        u if u < s::PRIMERA_PERSONA => String::from("sistema"),
+        u => alloc::format!("{}", u),
+    }
+}
+
+/// Mide los núcleos (para el reparto) y los procesos (`MONITOR`, todas sus páginas). `false` si `sesiones` no contesta.
+fn medir_monitor(v: &mut VistaMonitor) -> bool {
+    let presentes = dashos::medir(14, 0).max(0) as u64;
+    let ociosos: [Option<u64>; monitor::MAX_NUCLEOS] = core::array::from_fn(|n| {
+        let x = dashos::medir(3, n as u64);
+        (presentes & (1 << n) != 0 && x >= 0).then_some(x as u64)
+    });
+    v.med.nucleos(presentes, &ociosos, dashos::ahora_us());
+    let mut entradas = Vec::new();
+    let mut total = usize::MAX;
+    let mut ok = true;
+    while entradas.len() < total && entradas.len() < 256 {
+        let mut p = [0u8; 8];
+        p[0..4].copy_from_slice(&s::MONITOR.to_le_bytes());
+        p[4..8].copy_from_slice(&(entradas.len() as u32).to_le_bytes());
+        let mut r = [0u8; MAX_DATOS];
+        let n = a_sesiones(&p, &mut r);
+        match (n > 0).then(|| monitor::leer_pagina(&r[..n as usize])).flatten() {
+            Some((t, x)) if !x.is_empty() => {
+                total = t;
+                entradas.extend(x);
+            }
+            Some(_) => break,
+            None => {
+                ok = false;
+                break;
+            }
+        }
+    }
+    if ok {
+        v.med.procesos(entradas, dashos::ahora_us());
+    }
+    v.sin_datos = !ok;
+    v.medido = dashos::ahora_us();
+    ordenar(v);
+    ok
+}
+
+fn ordenar(v: &mut VistaMonitor) {
+    let mut f = v.med.vistos.clone();
+    match v.orden {
+        0 => f.sort_by(|a, b| b.cpu.cmp(&a.cpu).then(b.e.memoria.cmp(&a.e.memoria))),
+        1 => f.sort_by(|a, b| b.e.memoria.cmp(&a.e.memoria)),
+        2 => f.sort_by(|a, b| a.e.titulo().to_lowercase().cmp(&b.e.titulo().to_lowercase())),
+        _ => f.sort_by(|a, b| a.e.uid.cmp(&b.e.uid).then(b.cpu.cmp(&a.cpu))),
+    }
+    // Las sumas, siempre al final.
+    f.sort_by_key(|x| matches!(x.e.clase, monitor::M_SISTEMA | monitor::M_OTROS));
+    v.filas = f;
+}
+
+/// Las filas del monitor: la cabecera (Intro cambia el orden) y una por proceso, en columnas separadas por tabuladores.
+fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
+    // Cabe en la ventana de siempre (560 de ancho): el usuario y el grupo van con el nombre; CPU y memoria, en columnas.
+    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria", ORDENES[v.orden])];
+    if v.sin_datos {
+        l.push(String::from("sesiones no contesta"));
+    }
+    for x in &v.filas {
+        let nombre = match x.e.pastilla() {
+            Some(p) => alloc::format!("{} [{}]", x.e.titulo(), p),
+            None => x.e.titulo(),
+        };
+        // Los del escritorio se ven, pero no se cierran desde aquí.
+        // Usuario y grupo (el grupo solo si no es el propio del usuario) y, si es del escritorio, que no se cierra.
+        let quien = match x.e.clase {
+            monitor::M_SISTEMA | monitor::M_OTROS => String::new(),
+            _ => {
+                let u = if x.e.gid == x.e.uid { usuario(x.e.uid) } else { alloc::format!("{}/{}", usuario(x.e.uid), x.e.gid) };
+                if x.e.escritorio { alloc::format!(" ({}, escritorio)", u) } else { alloc::format!(" ({})", u) }
+            }
+        };
+        l.push(alloc::format!("{}{}\t{}\t{}", nombre.replace(['|', '\t'], " "), quien, monitor::por_ciento(x.cpu), monitor::bytes(x.e.memoria)));
+    }
+    l
+}
+
+/// Trasfondo: los ajustes del panel del escritorio (los de serie si no hay o no se entienden).
+fn leer_ajustes_monitor() -> monitor::Ajustes {
+    match leer_prefs(FICHERO_MONITOR, 512).map(|b| String::from(core::str::from_utf8(&b).unwrap_or(""))) {
+        Ok(t) => monitor::Ajustes::leer(&t).unwrap_or_else(|porque| {
+            println!("  [centro] Prefs/monitor: {}; los de serie", porque);
+            monitor::Ajustes::DE_SERIE
+        }),
+        Err(_) => monitor::Ajustes::DE_SERIE,
+    }
+}
+
+fn si_no(b: bool) -> &'static str {
+    if b { "sí" } else { "no" }
+}
+
+/// Las filas del panel del escritorio: enseñarlo, la esquina, el intervalo, las gráficas y un bloque por fila.
+fn lineas_panel(aj: &monitor::Ajustes) -> Vec<String> {
+    let esquina = monitor::ESQUINAS.iter().find(|e| e.0 == aj.esquina).map_or("", |e| e.2);
+    let mut l = alloc::vec![
+        alloc::format!("Enseñar el panel en el fondo: {}", si_no(aj.mostrar)),
+        alloc::format!("Esquina: {}", esquina),
+        alloc::format!("Cada cuánto se mide: {} s", aj.intervalo),
+        alloc::format!("Gráficas: {}", si_no(aj.graficas)),
+    ];
+    for (k, b) in monitor::BLOQUES.iter().enumerate() {
+        l.push(alloc::format!("{}: {}", b.1, si_no(aj.bloques & (1 << k) != 0)));
+    }
+    l
+}
+
+/// Cambia la fila `k` del panel del escritorio (la siguiente opción) y lo guarda; se lo dice al fondo.
+fn cambiar_panel(aj: &mut monitor::Ajustes, k: usize) -> Option<String> {
+    match k {
+        0 => aj.mostrar = !aj.mostrar,
+        1 => {
+            let i = monitor::ESQUINAS.iter().position(|e| e.0 == aj.esquina).unwrap_or(0);
+            aj.esquina = monitor::ESQUINAS[(i + 1) % monitor::ESQUINAS.len()].0;
+        }
+        2 => {
+            let i = monitor::INTERVALOS.iter().position(|&x| x == aj.intervalo).unwrap_or(0);
+            aj.intervalo = monitor::INTERVALOS[(i + 1) % monitor::INTERVALOS.len()];
+        }
+        3 => aj.graficas = !aj.graficas,
+        k if k - 4 < monitor::BLOQUES.len() => aj.bloques ^= 1 << (k - 4),
+        _ => return None,
+    }
+    let texto = aj.escribir();
+    let (guardado, bytes) = guardar_prefs(FICHERO_MONITOR, texto.as_bytes());
+    let releido = leer_ajustes_monitor() == *aj;
+    let fondo = al_fondo("monitor").0;
+    Some(alloc::format!("guardado: {} ({} bytes); releído: {}; el fondo: {}", guardado, bytes, si_no(releido), fondo))
+}
+
 /// Las filas de la lista: "programa · servicio". Sin '|', que separa las filas (un nombre así no lo da `inicio`).
 /// Sin nada concedido, una fila que lo dice (Quitar no hace nada en ella: no hay qué).
 fn filas(lista: &[(String, String)]) -> String {
@@ -881,6 +1048,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     let mut lista_fondos: Vec<String> = Vec::new();
     i.ctx.tema = ap.tema();
     let mut lineas_registro: Vec<String> = Vec::new();
+    // Trasfondo: el monitor del sistema y los ajustes del panel del escritorio.
+    let mut vm = VistaMonitor { med: monitor::Medidor::default(), orden: 0, filas: Vec::new(), medido: 0, sin_datos: false };
+    let mut aj_panel = leer_ajustes_monitor();
     let poner = |i: &mut Interfaz, cat: usize, lista: &[(String, String)], reg: &[String]| {
         let (explicacion, contenido) = if cat == PERMISOS {
             ("Lo que cada programa puede usar. Quitarlo lo revoca ya.", filas(lista))
@@ -892,6 +1062,10 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             ("Modo, color y fondo. Intro o doble clic para elegir.", reg.join("|"))
         } else if cat == PANTALLAS {
             ("Lo que dice el compositor de cada pantalla.", reg.join("|"))
+        } else if cat == MONITOR_SIS {
+            ("Lo tuyo con detalle; lo demás, sumado.", reg.join("|"))
+        } else if cat == PANEL_FONDO {
+            ("El monitor del fondo. Intro cambia una fila.", reg.join("|"))
         } else {
             ("El sistema.", reg.join("|"))
         };
@@ -900,7 +1074,8 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(contenido));
         i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
         i.arbol.poner(permisos, atr::PRIMERA, Valor::Int(0));
-        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS));
+        i.arbol.poner(quitar, atr::DESACTIVADO, Valor::Bool(cat != PERMISOS && cat != MONITOR_SIS));
+        i.arbol.poner(quitar, atr::TEXTO, Valor::Texto(if cat == MONITOR_SIS { "Cerrar proceso" } else { "Quitar" }.into()));
     };
     if cat == SEGURIDAD {
         lineas_registro = registro();
@@ -910,6 +1085,13 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
         (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
     } else if cat == PANTALLAS {
         lineas_registro = pantallas(&pantalla);
+    } else if cat == MONITOR_SIS {
+        medir_monitor(&mut vm);
+        dashos::dormir_us(250_000);
+        medir_monitor(&mut vm);
+        lineas_registro = lineas_monitor(&vm);
+    } else if cat == PANEL_FONDO {
+        lineas_registro = lineas_panel(&aj_panel);
     } else if cat != PERMISOS {
         lineas_registro = acerca();
     }
@@ -1026,6 +1208,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                         configurada = true;
                         presentar(&mut c, &mut i, px, medida, Some(bufer));
                         println!("  [centro] {} en pantalla: {} concedidos", CATEGORIAS[cat].1, lista.len());
+                        if cat == MONITOR_SIS || cat == PANEL_FONDO {
+                            println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
+                        }
                         // Dónde queda la lista de la derecha en la ventana (las pruebas del ratón la buscan).
                         if let Some(r) = i.sitios.get(&permisos) {
                             println!("  [centro] lista en ({}, {}), filas de 56", r.x, r.y);
@@ -1093,7 +1278,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     false
                 }
                 (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_ESC => return Some(()),
-                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && cat == PERMISOS => {
+                (TECLADO, wl_keyboard::ev::KEY) if palabra(3) == 1 && palabra(2) == TECLA_SUPR && i.foco == Some(permisos) && (cat == PERMISOS || cat == MONITOR_SIS) => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto("quitar-supr".into()));
                     false
                 }
@@ -1123,6 +1308,16 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             lista_fondos = f;
                             l
                         }
+                        MONITOR_SIS => {
+                            medir_monitor(&mut vm);
+                            dashos::dormir_us(250_000);
+                            medir_monitor(&mut vm);
+                            lineas_monitor(&vm)
+                        }
+                        PANEL_FONDO => {
+                            aj_panel = leer_ajustes_monitor();
+                            lineas_panel(&aj_panel)
+                        }
                         _ => acerca(),
                     };
                     println!("  [centro] {}: {}", CATEGORIAS[cat].1, lineas_registro.join("; "));
@@ -1132,10 +1327,64 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     println!("  [centro] {}, con negativas del hostil: {}; {} entradas", CATEGORIAS[cat].1, if hostil { "sí" } else { "no" }, lineas_registro.len());
                 }
                 poner(&mut i, cat, &lista, &lineas_registro);
+                // Lo de la derecha cambió de medida (trasfondo: las columnas del monitor): se vuelve a colocar.
+                i.colocar(Rect::new(0, 0, medida.0, medida.1));
                 cambio = true;
             }
             match i.arbol.leer(marca, atr::TEXTO).map(Valor::texto).as_deref() {
                 Some("cerrar") => return Some(()),
+                Some("elegir") if cat == MONITOR_SIS => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    if i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int) == 0 {
+                        vm.orden = (vm.orden + 1) % ORDENES.len();
+                        ordenar(&mut vm);
+                        lineas_registro = lineas_monitor(&vm);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        println!("  [centro] Monitor: por {}: {}", ORDENES[vm.orden], lineas_registro[1..].join("; "));
+                        cambio = true;
+                    }
+                }
+                Some("elegir") if cat == PANEL_FONDO => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    if let Some(r) = usize::try_from(v).ok().and_then(|k| cambiar_panel(&mut aj_panel, k)) {
+                        lineas_registro = lineas_panel(&aj_panel);
+                        println!("  [centro] Panel del escritorio: {}; {}", lineas_registro[v as usize], r);
+                        i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                        cambio = true;
+                    }
+                }
+                Some(como @ ("quitar" | "quitar-supr")) if cat == MONITOR_SIS => {
+                    i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
+                    let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                    let como = if como == "quitar" { "con el botón" } else { "con Supr" };
+                    let quitar_desde = if vm.sin_datos { 2 } else { 1 };
+                    if let Some(x) = usize::try_from(v - quitar_desde).ok().and_then(|k| vm.filas.get(k)).cloned() {
+                        if x.e.marca == 0 {
+                            println!("  [centro] Monitor: {} es una suma: no se cierra", x.e.titulo());
+                        } else {
+                            let mut p = [0u8; 12];
+                            p[0..4].copy_from_slice(&s::MATAR.to_le_bytes());
+                            p[4..12].copy_from_slice(&x.e.marca.to_le_bytes());
+                            let mut r = [0u8; 8];
+                            let n = a_sesiones(&p, &mut r);
+                            let estado = if n >= 4 { i32::from_le_bytes(r[0..4].try_into().unwrap()) } else { -99 };
+                            let dicho = match estado {
+                                s::BIEN => "cerrado",
+                                s::PROTEGIDO if x.e.escritorio => "es del escritorio: no se cierra",
+                                s::PROTEGIDO => "no es tuyo: no se cierra",
+                                s::NO_EXISTE => "ya no está",
+                                _ => "sesiones no contesta",
+                            };
+                            println!("  [centro] Monitor: cerrar {} {}: {} ({}); era el proceso {}", x.e.titulo(), como, estado, dicho, x.e.marca);
+                            medir_monitor(&mut vm);
+                            lineas_registro = lineas_monitor(&vm);
+                            i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                            i.arbol.poner(permisos, atr::VALOR, Valor::Int(-1));
+                            cambio = true;
+                        }
+                    }
+                }
                 Some("elegir") if cat == APARIENCIA => {
                     i.arbol.poner(marca, atr::TEXTO, Valor::Texto(String::new()));
                     let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
@@ -1289,6 +1538,22 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                     }
                 }
                 _ => {}
+            }
+            // Trasfondo: el monitor a la vista se mide cada 2 s; lo elegido sigue en el mismo proceso.
+            if cat == MONITOR_SIS && dashos::ahora_us().saturating_sub(vm.medido) >= CADA_MONITOR_US {
+                let v = i.arbol.leer(permisos, atr::VALOR).map_or(-1, Valor::int);
+                let quitar_desde = if vm.sin_datos { 2 } else { 1 };
+                let elegido = usize::try_from(v - quitar_desde).ok().and_then(|k| vm.filas.get(k)).map(|x| x.e.clave());
+                medir_monitor(&mut vm);
+                lineas_registro = lineas_monitor(&vm);
+                i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
+                let quitar_desde = if vm.sin_datos { 2 } else { 1 };
+                let nuevo = match elegido {
+                    Some(c) => vm.filas.iter().position(|x| x.e.clave() == c).map_or(-1, |k| (k + quitar_desde) as i64),
+                    None => v.min(0),
+                };
+                i.arbol.poner(permisos, atr::VALOR, Valor::Int(nuevo));
+                cambio = true;
             }
             if cambio && configurada {
                 presentar(&mut c, &mut i, px, medida, None);

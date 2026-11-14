@@ -359,6 +359,16 @@ línea "programa servicio" por permiso concedido). Cuentas y frases, provisional
 `DELANTE` (21, S27): quién está delante (un i32 y 16 bytes con el nombre). Solo al panel rápido y a la barra, por el
 nombre que da `inicio`; a otro, o sin nadie delante, -2 y nada más.
 
+`MONITOR` (24, trasfondo): los procesos para el monitor del sistema, por páginas de 4 (desde la entrada que se diga, u32).
+Cada entrada, 56 bytes: marca, µs de CPU desde que nació (llamada 52 sobre su grupo), memoria cobrada a su grupo,
+usuario, grupo, clase (`M_PROPIO`, `M_CAJA_AMIGA`, `M_CAJA_LINUX`, `M_SISTEMA`, `M_OTROS`), cuántos y nombre.
+Privacidad (decisión del usuario del 2026-11-13): con detalle, solo lo del usuario de quien pide; el fondo, la barra y
+el centro miran por la persona de delante; las cajas, por su nombre; el resto del sistema y las demás personas, en dos
+sumas sin marca ni nombres. La primera página, como mucho una vez cada 200 ms por programa (si no, `OCUPADO`, -3).
+`MATAR` (2) desde el centro de control cierra por la persona de delante: solo lo suyo; sin nadie delante, nada. Los
+programas del escritorio (fondo, centro, Workbench, explorador, selector, barra, panel y cajas, lanzados por `inicio`)
+salen con el bit `M_ESCRITORIO` en la clase y `MATAR` no los cierra (-2), sea quien sea quien lo pida.
+
 `APAGAR` (22; decisión del usuario del 2026-11-13): apagar (`MODO_APAGAR`), reiniciar (`MODO_REINICIAR`) o cerrar la
 sesión de delante (`MODO_SALIR`). Solo al panel rápido, por el nombre que da `inicio`; a otro, -2 (y se apunta,
 `R_APAGAR`). Apagar y reiniciar los hace `sesiones` con el permiso de apagar del kernel (llamada 51), que le manda
@@ -503,7 +513,9 @@ atiende marcas que no conoce. Un programa solo toca sus conexiones.
 **El estado, solo para leer** (decisión del usuario del 2026-11-13). El canal "red-estado" lo atiende un hilo aparte del
 servicio, que solo contesta `ESTADO` (las mismas palabras de `R_ESTADO`, sin `E_SUYAS` ni `E_RECHAZOS`) con una foto que
 deja el bucle principal en cada vuelta. Cualquier otra orden se tira (y sus llaves se cierran): con esa llave no se
-abre nada. La tiene el panel rápido, en vez de la de "red".
+abre nada. La tiene el panel rápido, en vez de la de "red", y el fondo (el panel del monitor, trasfondo). Desde
+trasfondo, `R_ESTADO` lleva también los bytes que entraron y salieron por la tarjeta (`E_ENTRAN`, `E_SALEN`: u64 en dos
+palabras), también los de la caja Linux.
 
 **El controlador.** Llaves: 1 su permiso DMA, 2 sus registros (BAR 4), 3 su configuración del PCIe, 4 su interrupción
 (INTx; opcional, sin ella mira cada 2 ms) y después el canal "red". Funciones: VERSION_1 y MAC; sin sumas por el

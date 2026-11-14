@@ -201,6 +201,8 @@ pub fn atender(marco: &mut Marco) {
         50 => memoria_vista(a[0], a[1], a[2], a[3]),
         // Apagar (a[1] = 0) o reiniciar (1) la máquina, con el permiso de apagar en a[0] (solo lo tiene `sesiones`).
         51 => apagar(a[0] as u32, a[1]),
+        // Trasfondo: el tiempo de CPU de un grupo (con su llave, con leer) o, con 0, del grupo de quien llama.
+        52 => cpu_tiempo(a[0] as u32),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1015,6 +1017,24 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     let (limite, usado) = g.uso();
     marco.poner_x1(usado);
     limite
+}
+
+/// Llamada 52 (trasfondo): microsegundos de CPU que han gastado los procesos del grupo `h` y de sus subgrupos, vivos y
+/// muertos, desde que se creó. Con `h` = 0, los del grupo de quien llama (sin llave: es lo suyo). Solo con la llave del
+/// grupo y el derecho de leer: nadie mide a otro sin que se la den (`sesiones` tiene las de lo que lanza).
+fn cpu_tiempo(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let cuentas = if h == 0 {
+        proc_.cupo.cpu()
+    } else {
+        let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+        let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+        if l.derechos & objetos::LEER == 0 {
+            return E_DERECHOS;
+        }
+        g.cpu()
+    };
+    (cuentas as u128 * 1_000_000 / crate::reloj::frecuencia().max(1) as u128).min(i64::MAX as u128) as u64
 }
 
 /// Memoria para DMA (C46), con una llave de permiso DMA con derecho de escribir: hasta 4 MB seguidos de la zona del

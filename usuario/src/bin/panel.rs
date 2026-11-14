@@ -30,8 +30,8 @@
 //! El estado de la red llega por "red-estado", que solo da eso (decisión del usuario del 2026-11-13): el panel no tiene
 //! la llave de "red", que es el permiso de red. Al arrancar comprueba que con la suya no se abre una conexión.
 //!
-//! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 "sesiones", 3 "centro", 4 "sonido" y
-//! 5 "red-estado".
+//! Llaves: 1 el canal "ventanas" (con el poder de escritorio, para la capa), 2 "sesiones", 3 "red-estado" (desde
+//! trasfondo, la red se lanza antes que el fondo), 4 "centro" y 5 "sonido".
 
 #![no_std]
 #![no_main]
@@ -66,9 +66,9 @@ dashos::programa!(principal);
 dashos::monton!();
 
 const SESIONES: u32 = 2;
-const CENTRO: u32 = 3;
-const SONIDO: u32 = 4;
-const RED: u32 = 5;
+const RED: u32 = 3;
+const CENTRO: u32 = 4;
+const SONIDO: u32 = 5;
 /// Cada cuánto se pregunta a la red, y cuánto se le espera.
 const CADA_RED_US: u64 = 10_000_000;
 const PLAZO_RED_US: u64 = 300_000;

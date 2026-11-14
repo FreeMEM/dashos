@@ -144,4 +144,8 @@ pub const E_ENVIADAS: usize = 12;
 pub const E_TX_MALAS: usize = 13;
 /// Mensajes rechazados del servicio: de quien no es el controlador, órdenes desconocidas, conexiones ajenas.
 pub const E_RECHAZOS: usize = 14;
-pub const E_PALABRAS: usize = 15;
+/// Trasfondo: los bytes de las tramas que entraron y salieron por la tarjeta desde que arrancó el servicio (u64 en dos
+/// palabras, la baja primero), también las de la caja Linux. El monitor del sistema saca de ahí lo que va por segundo.
+pub const E_ENTRAN: usize = 15;
+pub const E_SALEN: usize = 17;
+pub const E_PALABRAS: usize = 19;
