@@ -1965,3 +1965,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - Revisión del formato de paquetes compartido (v2) hecha para la sesión que lo lleva; quedan por decidir con el
   usuario: perfil de máquina de la caja Amiga (S4), vocabulario de máquina de aarch64-dashos, la caja de instalación
   de S8 y paquetes firmados frente a índices (S6/S8).
+- **MUI pinta: unido a revision** (8e26184, rama `caja-amiga-mui`; detalle en `docs/bitacoras/caja-amiga.md`, sección
+  del 2026-11-14). Causa: la capa de la ventana no tenía `ClipRect`, y sin ella MUI da la ventana por tapada (sin ella,
+  Class1 hace 0 líneas; con ella, 96). Cada capa lleva ya su `LayerInfo` y una `DamageList` de verdad. Además: regiones
+  de graphics con prueba hostil, capas sueltas (`CreateUpfrontLayer`...), `InstallClipRegion`,
+  `BltMaskBitMapRastPort`, relleno de áreas, `DoubleClick`, objetos con nombre de utility; la memoria de píxeles de la
+  caja crece en vez de 8 MB fijos (Tachyon la llenaba y tiraba la caja); exec ya no cuenta mal las aperturas de locale
+  y diskfont; `WeighTAMatch` sin comparar nombres; menús con submenú en círculo sin colgarse. Tachyon (`MEMORIA=3G`)
+  enseña su página de inicio sin iconos ni logo. Tanda completa sobre 8e26184: todo rc=0 (Firefox de wayland bien).
+  Pendiente, por orden: `CreateNewProc` (varias tareas 68k a la vez; lo piden muimaster y datatypes: sin él no hay
+  imágenes en Tachyon), y cybergraphics, picasso96api, icon, workbench, screennotify, input.device.
