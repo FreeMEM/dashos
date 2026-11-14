@@ -54,24 +54,28 @@
     </mask>
   </defs>
   <g
-     clip-path="url(#arriba)"
-     mask="url(#rayas)"
-     id="g6">
-    <circle
-       cx="64"
-       cy="98"
-       r="46"
-       fill="#1f9a64"
-       id="circle6" />
+     transform="translate(0,-20)"
+     id="g7">
+    <g
+       clip-path="url(#arriba)"
+       mask="url(#rayas)"
+       id="g6">
+      <circle
+         cx="64"
+         cy="98"
+         r="46"
+         fill="#1f9a64"
+         id="circle6" />
+    </g>
+    <rect
+       x="8"
+       y="104"
+       width="112"
+       height="8"
+       rx="4"
+       fill="#e2a72e"
+       id="rect7" />
   </g>
-  <rect
-     x="8"
-     y="104"
-     width="112"
-     height="8"
-     rx="4"
-     fill="#e2a72e"
-     id="rect7" />
   <g
      id="text7"
      style="font-size:76px;font-family:Audiowide;fill:#eaf5ef"
