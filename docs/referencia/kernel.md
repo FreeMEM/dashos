@@ -113,7 +113,8 @@ las únicas que da el kernel:
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
 - Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
-  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), la memoria de la VideoCore y, para
+  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), el del aviso de memoria (llamada 53), la memoria de
+  la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
 
@@ -153,9 +154,9 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 15 | `llave_duplicar` | `x0` llave, `x1` derechos, `x2` marca | Llave nueva |
 | 16 | `llave_revocable` | `x0` llave | `x0` copia revocable, `x1` revocador |
 | 17 | `revocar` | `x0` revocador | 0 |
-| 18 | `grupo_crear` | `x0` presupuesto en bytes | Llave de grupo |
+| 18 | `grupo_crear` | `x0` tope en bytes | Llave de grupo |
 | 19 | `grupo_matar` | `x0` llave de grupo | 0 |
-| 20 | `grupo_uso` | `x0` llave de grupo | `x0` límite, `x1` usado |
+| 20 | `grupo_uso` | `x0` llave de grupo | `x0` tope, `x1` usado con sus subgrupos, `x2` usado sin ellos |
 | 21 | `memoria_quitar` | `x0` dirección donde empieza una proyección | 0 |
 | 23 | `registro_leer` | `x0` llave del registro, `x1` búfer, `x2` capacidad | Bytes leídos |
 | 22 | `memoria_dma` | `x0` permiso DMA, `x1` tamaño | `x0` llave de memoria, `x1` dirección de bus |
@@ -185,6 +186,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
 | 51 | `apagar` | `x0` permiso de apagar (con escribir), `x1` 0 apagar, 1 reiniciar | No vuelve si se pudo. Antes deja 300 ms para que la consola saque lo último del registro. Con PSCI (SYSTEM_OFF, SYSTEM_RESET) si el árbol lo trae (QEMU `virt`, UEFI, la Pi 5 con el BL31 de su firmware; en la Pi 5, que se corte la corriente lo decide su EEPROM, que no se toca); sin PSCI, en la Pi 4 y la Pi 3, con el perro guardián del bloque PM (apagar marca la partición 63 en PM_RSTS). `E_TIPO` si `x0` no es el permiso, `E_ARGUMENTO` con otro modo, `E_NO_HAY` si no se pudo |
 | 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
+| 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
+| 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -276,25 +279,43 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **16, `llave_revocable`.** Una copia que pasa por un intermediario, y el revocador de ese intermediario. Las copias
   que se hagan de la revocable también pasan por él. Cada intermediario cuesta 256 bytes del cupo. Como mucho hay 4
   intermediarios uno dentro de otro, contando los de los revocadores; el quinto da `E_LIMITE`.
-- **Grupos y cupos** (C42). Cada proceso es de un grupo con un presupuesto en bytes. Todo lo que crea se cobra ahí:
+- **Grupos y cupos** (C42; topes desde S3). Cada proceso es de un grupo con un tope en bytes. Todo lo que crea se cobra
+  ahí y en todos los grupos de encima, hasta el raíz:
   - un objeto de memoria, por sus páginas;
   - su espacio, por sus tablas y sus páginas de imagen y pila;
   - cada proceso, unos 64 KB fijos: su tabla de llaves llena (41 KB; no crece más), la pila del kernel (16) y el hilo
     con su estado de coma flotante, el proceso y lo que redondea el montón (8);
   - cada canal, unos 26 KB fijos (sus dos colas llenas).
 
-  Al agotarse, la llamada da `E_MEMORIA`. Lo cobrado vuelve al grupo cuando se suelta el objeto, aunque lo tenga otro
-  proceso. Los procesos que lanza el kernel son del grupo raíz, cuyo límite es la memoria libre para procesos al
-  arrancar, menos la reserva del kernel.
-- **18, `grupo_crear`.** Un subgrupo del propio con ese presupuesto, más 512 bytes del grupo en sí, que salen del
-  propio: si no cabe, `E_MEMORIA`. Se devuelve al propio cuando ya no queda nada cobrado al subgrupo. Como mucho hay 7
-  niveles bajo el raíz. Un grupo matado no admite procesos ni subgrupos nuevos.
+  Si algún grupo de la cadena pasaría de su tope, no se cobra nada y la llamada da `E_MEMORIA`; también si no queda
+  memoria física. El tope no aparta nada: los topes de los hijos pueden sumar más que el del padre y más que la RAM, y
+  lo que no se pasa nunca es lo usado de verdad. Lo cobrado vuelve, en toda la cadena, cuando se suelta el objeto, aunque
+  lo tenga otro proceso. Los procesos que lanza el kernel son del grupo raíz, cuyo tope es la memoria libre para
+  procesos al arrancar, menos la reserva del kernel. Las sumas son atómicas y sin cerrojos: dos cobros a la vez no pasan
+  de un tope; mientras uno que no cabe deshace lo sumado abajo, otro puede fallar por un momento.
+- **18, `grupo_crear`.** Un subgrupo del propio con ese tope. Del propio solo se cobran los 512 bytes del grupo en sí
+  (si no caben, `E_MEMORIA`), que vuelven cuando ya no queda nada cobrado al subgrupo. Un tope mayor que el del propio
+  vale, pero no sirve de nada: el del propio para antes. Como mucho hay 7 niveles bajo el raíz. Un grupo matado no admite
+  procesos ni subgrupos nuevos.
 - **12 con `x4`.** Con una llave de grupo con derecho de escribir, el proceso nuevo es de ese grupo; con 0, del de
   quien lo crea.
 - **19, `grupo_matar`.** Pide el derecho de escribir. Mata a todos los procesos del grupo y de sus subgrupos, y cierra
   los dos lados de todos los canales que crearon (C44), aunque tengan llaves en otros grupos: quien los use después
   recibe `E_CERRADO`. Así se suelta todo lo que el grupo dejó, también los ciclos entre canales.
-- **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el presupuesto y lo usado.
+- **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el tope (`x0`), lo usado por el grupo con sus subgrupos (`x1`)
+  y lo usado sin ellos (`x2`, lo suyo menos lo de cada subgrupo vivo; una foto que, con cobros a la vez, puede ir algo
+  por delante o por detrás). En la biblioteca, `grupo_uso` y `grupo_uso_propio`.
+- **54, `grupo_tope`** (S3). Cambia el tope de un grupo. Pide su llave con escribir, y que no sea el grupo de quien
+  llama ni uno de encima: un proceso no se sube su tope (la caja Amiga no cambia el suyo; se lo pone `sesiones`, que
+  tiene la llave de su grupo). Uno por debajo de lo usado vale: no se quita nada, y todo cobro falla hasta que lo usado
+  baje de él. Lo prueba `grupos` (pasos 36 a 39).
+- **53, `memoria_aviso`** (S3). El aviso de memoria baja. Pide el permiso de memoria (llave de arranque del tipo 11,
+  "memoria", que `inicio` manda solo a `sesiones`) y un canal con escribir; los avisos van al otro lado, con la marca de esa llave, y dejan de
+  llegar si se revoca. Hay un solo oyente: uno nuevo quita al anterior. Nada más pedirlo llega el nivel de ahora, y
+  después cada cambio: memoria baja cuando lo libre para procesos baja del 5 % de lo que había al arrancar, y normal
+  cuando vuelve a pasar del 10 %. Se mira al acabar cada llamada al sistema. El mensaje, de 24 bytes en little-endian:
+  el nivel (u32: 0 normal, 1 baja), 0 (u32), los bytes libres para procesos (u64) y los que había al arrancar (u64). Con
+  la cola llena, ese aviso se pierde. Lo prueba `prueba_topes` en `make prueba`.
 - **52, `cpu_tiempo`** (trasfondo). El planificador suma lo que corre cada hilo, en cada cambio, a su grupo y a todos los
   de encima (sumas atómicas, sin cerrojos ni memoria). Lo del hilo que corre ahora entra en su siguiente cambio (como
   mucho un tic tarde). El contador no baja nunca, ni al matar el grupo. Lo prueba `grupos` en `make prueba`: un hijo

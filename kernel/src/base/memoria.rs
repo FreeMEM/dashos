@@ -147,6 +147,7 @@ impl Paginas {
                 self.libres_bajo += bajo as usize;
             }
         }
+        LIBRES_NORMALES.store(self.libres - self.libres_bajo, core::sync::atomic::Ordering::Relaxed);
     }
 
     fn marcar_tramo(&mut self, dir: u64, tam: u64, ocupada: bool) {
@@ -244,6 +245,8 @@ impl Paginas {
             if self.piso > 0 { "solo para DMA" } else { "compartido: no hay memoria por encima" }
         );
         RESERVADAS_AL_ARRANCAR.store(self.total - self.libres, core::sync::atomic::Ordering::Relaxed);
+        LIBRES_NORMALES.store(self.libres - self.libres_bajo, core::sync::atomic::Ordering::Relaxed);
+        PARA_PROCESOS_AL_ARRANCAR.store((self.libres - self.libres_bajo).saturating_sub(RESERVA), core::sync::atomic::Ordering::Relaxed);
         kprintln!(
             "Memoria física: {} MB en total, {} MB libres; zonas DMA hasta {} MB y {} MB",
             self.total as u64 * PAGINA >> 20,
@@ -707,6 +710,22 @@ impl Drop for Memoria {
 
 /// Las páginas que no estaban libres al arrancar: la imagen del kernel con sus pilas, lo que reserva el firmware (su
 /// pantalla, sus tablas) y el árbol de dispositivos. Para contar en qué se va la memoria (llamada 29, contador 13).
+/// Páginas libres de la zona normal, copia sin cerrojo de las cuentas del repartidor: para mirar si queda poca
+/// memoria (`presion.rs`) en cada llamada sin tomar el cerrojo.
+static LIBRES_NORMALES: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+/// Páginas para procesos al arrancar (las libres de la zona normal menos la reserva del kernel).
+static PARA_PROCESOS_AL_ARRANCAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
+
+/// Bytes libres para procesos ahora (los de la zona normal menos la reserva del kernel), sin cerrojo.
+pub fn libres_para_procesos() -> u64 {
+    LIBRES_NORMALES.load(core::sync::atomic::Ordering::Relaxed).saturating_sub(RESERVA) as u64 * PAGINA
+}
+
+/// Bytes para procesos al arrancar: el tope del grupo raíz y la medida del aviso de memoria baja.
+pub fn para_procesos_al_arrancar() -> u64 {
+    PARA_PROCESOS_AL_ARRANCAR.load(core::sync::atomic::Ordering::Relaxed) as u64 * PAGINA
+}
+
 static RESERVADAS_AL_ARRANCAR: core::sync::atomic::AtomicUsize = core::sync::atomic::AtomicUsize::new(0);
 
 pub fn reservadas_al_arrancar() -> usize {

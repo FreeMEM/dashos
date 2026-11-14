@@ -28,6 +28,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_gic_del_kernel();
     prueba_pagina_cero();
     prueba_vista();
+    prueba_coste_cobro();
     prueba_dma();
     prueba_hilos();
     prueba_procesos();
@@ -49,6 +50,7 @@ pub fn ejecutar(dtb: usize, nucleos: u32) {
     prueba_repartos();
     prueba_asid();
     prueba_el0();
+    prueba_topes();
     prueba_lanzador();
     prueba_reparto();
     prueba_dma_proceso();
@@ -1239,6 +1241,33 @@ fn prueba_pagina_cero() {
     kprintln!("H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: {}", if bien { "bien" } else { "MAL" });
 }
 
+/// Cupos como topes: lo que cuesta cobrar. 10.000 objetos de memoria de una página creados y soltados en un grupo a tres
+/// niveles bajo el raíz (como lo que lanza `sesiones`), y 100.000 cobros sueltos de 4 KB. Lo mejor de tres vueltas, en
+/// µs, para comparar antes y después (`docs/bitacoras/cupos.md`).
+fn prueba_coste_cobro() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(g1) = raiz.hijo(64 << 20) else { return };
+    let Some(g2) = g1.hijo(32 << 20) else { return };
+    let Some(g3) = g2.hijo(16 << 20) else { return };
+    let us = |c: u64| c * 1_000_000 / reloj::frecuencia().max(1);
+    let (mut objetos, mut cobros) = (u64::MAX, u64::MAX);
+    for _ in 0..3 {
+        let t = reloj::ahora();
+        for _ in 0..10_000 {
+            let m = memoria::Memoria::nueva(4096, &g3);
+            core::hint::black_box(&m);
+        }
+        objetos = objetos.min(us(reloj::ahora() - t));
+        let t = reloj::ahora();
+        for _ in 0..100_000 {
+            let c = g3.cobrar(4096);
+            core::hint::black_box(&c);
+        }
+        cobros = cobros.min(us(reloj::ahora() - t));
+    }
+    kprintln!("  coste de cobrar: 10000 objetos de 4 KB en {} µs; 100000 cobros en {} µs; usado al final {}", objetos, cobros, g3.uso().1);
+}
+
 /// H9: las vistas de memoria (llamada 50), para que el compositor lea sin copia los búferes de un invitado. Una vista
 /// ve las páginas que se le piden de sus orígenes, en ese orden; un número fuera, una lista vacía o una vista como
 /// origen no valen; se cobra solo su lista, y si no cabe en el cupo, no se hace; soltar el origen con la vista viva no
@@ -1345,6 +1374,64 @@ static HIJO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-s
 static LLAVES: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/llaves");
 static TIEMPO: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/tiempo");
 
+/// S3, cupos como topes, desde el kernel: un cobro sube por toda la cadena y, si no cabe arriba, no queda nada a
+/// medias abajo; cien hermanos con topes de 1 TB caben (solo cuestan lo que ocupan); y la memoria llena de verdad: falla
+/// limpio, avisa de la memoria baja por el canal del oyente (llamada 53) y, soltada, avisa de que vuelve.
+fn prueba_topes() {
+    use crate::presion;
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(g1) = raiz.hijo(4 << 20) else { return };
+    let (Some(g2), Some(g3)) = (g1.hijo(64 << 20), g1.hijo(1 << 40).and_then(|x| x.hijo(1 << 40))) else { return };
+    let a = g2.cobrar(1 << 20);
+    let b = g3.cobrar(2 << 20);
+    let suben = a.is_some() && b.is_some() && g1.uso().1 >= 3 << 20 && g2.uso().1 == 1 << 20 && g3.uso().1 == 2 << 20;
+    // 2 MB más en g3 no caben en g1 (4 MB): no se cobra, y ni g3 ni su padre se quedan con nada de más.
+    let antes = (g1.uso().1, g3.uso().1);
+    let no_cabe = g3.cobrar(2 << 20).is_none() && (g1.uso().1, g3.uso().1) == antes;
+    drop((a, b));
+    let vuelven = g2.uso().1 == 0 && g3.uso().1 == 0;
+    let hermanos: alloc::vec::Vec<_> = (0..100).filter_map(|_| g1.hijo(1 << 40)).collect();
+    let cien = hermanos.len() == 100 && g1.uso().1 < 100 * 1024
+        && g3.es_o_cuelga_de(&g1) && g3.es_o_cuelga_de(&g3) && !g2.es_o_cuelga_de(&g3) && !g1.es_o_cuelga_de(&g2);
+    drop(hermanos);
+    // La memoria llena de verdad, con un oyente del aviso.
+    let (x, _y) = objetos::Canal::nuevo();
+    let objetos::Objeto::Extremo(p) = &x.objeto else { return };
+    let canal = p.canal().clone();
+    presion::escuchar(canal.clone(), 0, alloc::vec::Vec::new(), 7);
+    let nivel_de = |canal: &alloc::sync::Arc<objetos::Canal>| -> Option<u32> {
+        for _ in 0..100 {
+            presion::repartir();
+            if let Some(m) = canal.intentar_leer(1) {
+                return Some(u32::from_le_bytes(m.datos[0..4].try_into().ok()?)).filter(|_| m.marca == 7 && m.datos.len() == 24);
+            }
+            esperar_tics(1);
+        }
+        None
+    };
+    let primero = nivel_de(&canal);
+    let Some(g) = raiz.hijo(u64::MAX / 2) else { return };
+    let mut tomado = alloc::vec::Vec::new();
+    while let Some(m) = memoria::Memoria::nueva(16 << 20, &g) {
+        if tomado.try_reserve(1).is_err() {
+            break;
+        }
+        tomado.push(m);
+    }
+    let mb = tomado.len() * 16;
+    let queda = memoria::libres_para_procesos() >> 20;
+    presion::mirar();
+    let baja = presion::nivel() == 1 && nivel_de(&canal) == Some(1);
+    drop(tomado);
+    presion::mirar();
+    let normal = presion::nivel() == 0 && nivel_de(&canal) == Some(0) && g.uso().1 == 0;
+    presion::callar();
+    kprintln!("  topes: cadena {}, sin cobro a medias {}, devuelto {}, cien hermanos de 1 TB {}; memoria llena a {} MB (quedan {} MB), aviso {:?}, baja {}, de vuelta {}",
+        suben, no_cabe, vuelven, cien, mb, queda, primero, baja, normal);
+    let bien = suben && no_cabe && vuelven && cien && mb > 0 && queda < 64 && primero == Some(0) && baja && normal;
+    kprintln!("S3: cupos como topes y aviso de memoria baja {}", if bien { "bien" } else { "MAL" });
+}
+
 /// C43: las pruebas que son programas sueltos las lanza un proceso (`usuario/src/bin/lanzador.rs`), cada una en su
 /// grupo de 64 MB, y comprueba sus códigos de salida. El kernel solo le da el paquete con los ELF.
 static LANZADOR: &[u8] = include_bytes!("../../usuario/target/aarch64-unknown-none-softfloat/release/lanzador");
@@ -1399,7 +1486,8 @@ fn prueba_lanzador() {
     let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
     m.escribir(0, &paquete);
     let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
-    let Some(grupo) = raiz.hijo(256 << 20) else { return };
+    // Sin tope de verdad (1 TB): `grupos` llena la memoria de la máquina a propósito (S3). Ya no se aparta nada.
+    let Some(grupo) = raiz.hijo(1 << 40) else { return };
     let Some(control) = lanzar_elf_en(LANZADOR, alloc::vec![m], 2, grupo.clone()) else { return };
     let inicio = reloj::tics();
     // Con margen: con la máquina cargada, QEMU va mucho más lento.

@@ -59,6 +59,9 @@ pub enum Objeto {
     /// Permiso para apagar o reiniciar la máquina (decisión del usuario del 2026-11-13): con escribir, la llamada 51.
     /// Solo lo da el kernel, a `inicio`, que se lo manda a `sesiones` y a nadie más.
     PermisoApagar,
+    /// Permiso para escuchar el aviso de memoria baja (S3): con escribir, la llamada 53. Solo lo da el kernel, a
+    /// `inicio`, que se lo manda a `sesiones` y a nadie más.
+    PermisoMemoria,
     /// Un grupo de procesos con su cupo (C42): con escribir se crean procesos en él y se mata; con leer se mira el uso.
     Grupo(Arc<crate::cupo::Cupo>),
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a

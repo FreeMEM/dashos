@@ -1938,3 +1938,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   el panel, y `guardian` (prueba) espera al centro por evento con tope de 60 s. Tanda completa sobre 7091afd: todo bien
   salvo av y virt2, arreglados en fdeab11 y repetidos (bien). La prueba con clics de la barra y del monitor, pendiente
   (objetivo aparte).
+- El usuario aprueba cambiar los cupos de los grupos de reserva a tope, como los cgroups de Linux (2026-11-14): cobrar al usar, topes que pueden sumar más que la máquina, presión de memoria (avisar a las cajas, luego cerrar con aviso). Agente en `.worktrees/cupos-topes`. Aclarado al usuario: ninguna caja reserva un núcleo (un núcleo a la vez es un techo de la caja Amiga, no una reserva).
+- MUI (rama `caja-amiga-mui`, 6352004 y 870a64c, sin unir): ventanas de refresco simple con IDCMP_REFRESHWINDOW, GetDisplayInfoData y WeighTAMatch. MUI sigue sin pintar: hace BeginRefresh/EndRefresh sin dibujar nada en medio; decide no pintar antes de llegar a graphics. Sospechosos: la Layer de la ventana o su DamageList, Screen/ViewPort/ColorMap, o CreateNewProc. Falta NewRegion y lo demás de regiones (lo pide Tachyon). Con MEMORIA=3G Tachyon carga. El agente paró por la cuota.
+- **Cupos como topes unidos a revision** (e8f0910, rama `cupos-topes`): los grupos cobran al usar y el cupo es un tope
+  (como los cgroups); topes de serie: sesiones 512 MB, programas 64 MB, caja Amiga 288 MB, caja Linux invitado + 66 MB.
+  Llamada 53 (aviso de memoria baja, `kernel/src/presion.rs`) con permiso propio (llave tipo 11 "memoria", solo para
+  `sesiones`); llamada 54 `grupo_tope` (no vale sobre el grupo propio ni los de encima). El tope de la caja Amiga lo
+  pone el núcleo y `sesiones` lo ajusta a "memoria amiga" + 32 MB con lo que le dice el centro (no puede leer los
+  Prefs del usuario). red-prueba reintenta con la cola llena (salían 12 rechazos en vez de 13). Tanda completa sobre
+  e8f0910: todo bien (el fallo anterior de wayland no se repitió: suelto). Pendiente: que el aviso llegue a las cajas
+  (globo de Linux, cachés Amiga) y cerrar con aviso al que se pase.

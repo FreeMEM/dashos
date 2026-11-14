@@ -144,6 +144,8 @@ DashOS en marcha con 4 núcleos.
 # Apagar y reiniciar (decisión del usuario del 2026-11-13): solo `sesiones` tiene el permiso del kernel (llamada 51),
 # que le manda `inicio`, y solo el panel se lo puede pedir.
 ~│   [sesiones] tiene el permiso de apagar
+# S3: con él, sesiones escucha el aviso de memoria baja del kernel (llamada 53).
+~│   [sesiones] escucha el aviso de memoria baja
 ~│   [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: -2
 ~│   [hostil] apagar la máquina sin el permiso: 0 de 128 funcionaron: bien
 # S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
@@ -356,7 +358,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Ampliar ventanas Amiga: 1x; guardado: 0 (30 bytes); releído: sí
 # La fila "Memoria de la caja Amiga" (decisión del usuario del 2026-11-13: crece según el programa, hasta este tope;
 # de serie, 256 MB): a 512 MB, en `Prefs/cajas`.
-~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí
+~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí; tope del grupo: 0
+# S3: el tope del grupo de la caja lo pone el kernel; se lo pide `sesiones`, que relee Prefs/cajas.
+~│   [sesiones] caja-amiga: tope de 288 MB (memoria amiga 256): 0
+# Cuando el centro cambia el ajuste, la caja de pruebas ya acabó: sesiones lo guarda y lo pondrá al lanzarla.
+~│   [sesiones] caja-amiga: no está en marcha; memoria amiga 512 al lanzarla
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14), procesos, memoria en uso y lo que más gasta
 # (la orden MEMORIA de `sesiones`; la lista entera, en la consola).
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 
@@ -686,6 +692,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] capa.exe acabó con 0, 
 # La memoria del 68k crece según la pidan, hasta el tope (aquí uno de prueba, 48 MB): glotona.c pide sin fin.
 ~│   [caja-amiga] glotona: 0 fallos
+# S3: con los cupos como topes, la para su tope de prueba (48 MB) y no el cupo (antes llegaba a 15).
+~│   [caja-amiga] glotona: 46 MB antes de quedarse sin sitio
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con

@@ -203,6 +203,10 @@ pub fn atender(marco: &mut Marco) {
         51 => apagar(a[0] as u32, a[1]),
         // Trasfondo: el tiempo de CPU de un grupo (con su llave, con leer) o, con 0, del grupo de quien llama.
         52 => cpu_tiempo(a[0] as u32),
+        // Cupos como topes (S3): el aviso de memoria baja a un canal, con el permiso de apagar (solo `sesiones`).
+        53 => memoria_aviso(a[0] as u32, a[1] as u32),
+        // S3: cambiar el tope de un grupo (con su llave, con escribir; no el propio ni los de encima).
+        54 => grupo_tope(a[0] as u32, a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -226,6 +230,8 @@ pub fn atender(marco: &mut Marco) {
         }
     };
     marco.poner_x0(r);
+    // Si lo libre para procesos ha cruzado el umbral del aviso de memoria baja (S3): dos lecturas si no.
+    crate::presion::mirar();
 }
 
 fn escribir_consola(p: u64, n: u64) -> u64 {
@@ -983,13 +989,14 @@ fn revocar(h: u32) -> u64 {
     0
 }
 
-/// Un subgrupo del grupo propio con `presupuesto` bytes, que salen del propio (C42).
-fn grupo_crear(presupuesto: u64) -> u64 {
+/// Un subgrupo del grupo propio con un tope de `tope` bytes (C42; desde S3, un tope y no una reserva: del propio solo
+/// sale lo que ocupa el grupo en sí).
+fn grupo_crear(tope: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(g) = proc_.cupo.hijo(presupuesto) else { return E_MEMORIA };
+    let Some(g) = proc_.cupo.hijo(tope) else { return E_MEMORIA };
     match proc_.llaves.tomar().instalar(objetos::Llave::nueva(Objeto::Grupo(g), objetos::TODOS)) {
         Ok(n) => n as u64,
         Err(_) => E_LIMITE,
@@ -1016,7 +1023,39 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     }
     let (limite, usado) = g.uso();
     marco.poner_x1(usado);
+    marco.poner_x2(g.uso_propio());
     limite
+}
+
+/// Llamada 54 (S3): pone `tope` al grupo de `h` (con escribir). El propio grupo y los de encima, no (`E_DERECHOS`): un
+/// proceso no se sube su tope. Por debajo de lo usado vale: no se quita nada y los cobros fallan hasta que baje.
+fn grupo_tope(h: u32, tope: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 || proc_.cupo.es_o_cuelga_de(&g) {
+        return E_DERECHOS;
+    }
+    g.poner_tope(tope);
+    0
+}
+
+/// Llamada 53 (S3): el aviso de memoria baja, al otro lado del canal de `hc` (con escribir). Pide el permiso de memoria
+/// (`permiso`, con escribir), que el kernel da a `inicio` y este solo a `sesiones`. Hay un solo oyente: el nuevo quita
+/// al anterior. Nada más pedirlo llega el nivel de ahora.
+fn memoria_aviso(permiso: u32, hc: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let (p, canal) = {
+        let t = proc_.llaves.tomar();
+        (t.ver(permiso), t.ver_con_intermediarios(hc))
+    };
+    let (Some(p), Some((canal, via))) = (p, canal) else { return E_LLAVE };
+    let (Objeto::PermisoMemoria, Objeto::Extremo(e)) = (p.objeto, canal.objeto) else { return E_TIPO };
+    if p.derechos & objetos::ESCRIBIR == 0 || canal.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    crate::presion::escuchar(e.canal().clone(), e.lado(), via.iter().map(|r| r.vigia()).collect(), canal.marca);
+    0
 }
 
 /// Llamada 52 (trasfondo): microsegundos de CPU que han gastado los procesos del grupo `h` y de sus subgrupos, vivos y

@@ -129,17 +129,27 @@ fn principal() -> u64 {
     let canal = dashos::llave_duplicar(escribe, dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
     let mut tarjeta = [0u8; 12];
     tarjeta[..4].copy_from_slice(&p::TARJETA.to_le_bytes());
-    dashos::canal_escribir(SERVICIO, &tarjeta, &[falsa as u32, canal as u32]);
+    // Con la cola del servicio llena (16 mensajes; la máquina cargada al arrancar), `canal_escribir` da -8 y el mensaje no
+    // llega: se reintenta un rato, como en `mal` (salían 12 rechazos en vez de 14, una vez de cuatro).
+    let mandar = |m: &[u8], ll: &[u32]| {
+        for _ in 0..2000 {
+            if dashos::canal_escribir(SERVICIO, m, ll) != -8 {
+                return;
+            }
+            dashos::dormir_us(1_000);
+        }
+    };
+    mandar(&tarjeta, &[falsa as u32, canal as u32]);
     for orden in [p::AVISO, p::CERRAR] {
         for id in [0u32, 1, 0x100, 0x201, u32::MAX] {
             let mut m = [0u8; 8];
             m[..4].copy_from_slice(&orden.to_le_bytes());
             m[4..].copy_from_slice(&id.to_le_bytes());
-            dashos::canal_escribir(SERVICIO, &m, &[]);
+            mandar(&m, &[]);
         }
     }
-    dashos::canal_escribir(SERVICIO, &999u32.to_le_bytes(), &[]);
-    dashos::canal_escribir(SERVICIO, &[], &[]);
+    mandar(&999u32.to_le_bytes(), &[]);
+    mandar(&[], &[]);
     dashos::cerrar(lee);
     dashos::cerrar(escribe);
     dashos::cerrar(mem);
