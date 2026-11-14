@@ -36,6 +36,12 @@ Linux (solo la idea; no se ha leído código de Linux).
   limpio y, al acabar, el grupo vuelve a 0 y caben otra vez 16 MB. Para eso el lanzador da a `grupos` 1 TB y el kernel
   al lanzador otro tanto (ya no se aparta nada).
 
+- En `make arranque-virt` (QEMU virt de 2 GB): `sesiones` escucha el aviso; la caja Amiga tiene un tope de 2080 MB;
+  `espia` se lanza; `glotona` llega a 46 MB, su tope de prueba de 48 (antes la paraba el cupo en 15).
+- Pasan, cada una una vez: `make prueba`, `arranque-virt` (dos vueltas), `-vm`, `-2`, `-escritorio`, `-diag`, `-usb`
+  y `arranque-virt-linux` (el invitado con sus 256 MB).
+- No probado: Tachyon de verdad en la caja (no está en el disco de pruebas; `glotona` hace de glotón), ni una Pi.
+
 ### Lo medido: lo que cuesta cobrar
 
 `prueba_coste_cobro` en `make prueba` (raspi4b en QEMU, lo mejor de tres vueltas en cada arranque; tres arranques):
