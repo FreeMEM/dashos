@@ -37,6 +37,7 @@ pub mod procesos;
 pub mod registros;
 
 mod args;
+mod busqueda;
 mod cambios;
 mod cerrojos;
 mod despacho;
@@ -340,6 +341,8 @@ pub struct Dos<F: SistemaArchivos> {
     pub(crate) puerto_consola: u32,
     /// Lo que se reservó en la caja para siempre (puertos, nombres...): dirección → largo.
     pub(crate) fijos: BTreeMap<u32, u32>,
+    /// Búsquedas de MatchFirst en marcha, por la dirección de su `AnchorPath`.
+    pub(crate) busquedas: BTreeMap<u32, busqueda::Busqueda>,
     pub(crate) avisos: Vec<Aviso>,
 }
 
@@ -360,6 +363,7 @@ impl<F: SistemaArchivos> Dos<F> {
             cabeza_doslist: 0,
             puerto_consola: 0,
             fijos: BTreeMap::new(),
+            busquedas: BTreeMap::new(),
             avisos: Vec::new(),
         }
     }
@@ -584,6 +588,8 @@ impl<F: SistemaArchivos> Dos<F> {
         }
         self.campos.retain(|(t, _), _| *t != tarea);
         self.locales.retain(|(t, _, _), _| *t != tarea);
+        // Sus búsquedas: los cerrojos ya se soltaron arriba y el AChain lo suelta exec con su memoria.
+        self.busquedas.retain(|_, b| b.dueno != tarea);
     }
 
     /// Una tarea acabó sin que la maten (una hija que vuelve de su función): sus ficheros, cerrojos y variables
@@ -598,6 +604,11 @@ impl<F: SistemaArchivos> Dos<F> {
         for l in self.cerrojos.values_mut() {
             if l.dueno == de {
                 l.dueno = a;
+            }
+        }
+        for b in self.busquedas.values_mut() {
+            if b.dueno == de {
+                b.dueno = a;
             }
         }
         self.campos.retain(|(t, _), _| *t != de);

@@ -555,6 +555,44 @@ pub extern "C" fn caja_programa_de_disco(i: u32, nombre: *mut u8, max: u32, dato
     1
 }
 
+/// Un fichero entero por su ruta de dos (`C:AddDataTypes`): lo deja en `datos` y `largo` (vivo hasta la siguiente
+/// llamada a esta o a `caja_programa_de_disco`). 0 si no está o no se lee.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_fichero_de_dos(ruta: *const u8, datos: *mut *const u8, largo: *mut u32) -> i32 {
+    let Some(c) = caja() else { return 0 };
+    if ruta.is_null() || datos.is_null() || largo.is_null() {
+        return 0;
+    }
+    // SEGURIDAD: caja.c da una cadena C acabada en 0.
+    let ruta = unsafe { core::ffi::CStr::from_ptr(ruta as *const core::ffi::c_char) }.to_bytes().to_vec();
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+    let Ok(v) = c.dos.leer_fichero(&mut cd, &ruta, 16 << 20) else { return 0 };
+    c.programa = v;
+    // SEGURIDAD: dos punteros válidos de caja.c; `programa` sigue vivo hasta la siguiente.
+    unsafe {
+        *datos = c.programa.as_ptr();
+        *largo = c.programa.len() as u32;
+    }
+    1
+}
+
+/// La memoria que reservó el programa `t` y no soltó pasa al sistema (antes de `caja_tarea_fin`, que la soltaría):
+/// para un programa que deja cosas a una biblioteca, como `AddDataTypes` a datatypes. No su estructura, su pila ni su
+/// CLI. Devuelve cuántos bloques pasaron.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_memoria_al_sistema(t: u32) -> u32 {
+    let Some(c) = caja() else { return 0 };
+    let pila = c.ex.mem.leer32(t + task::TC_SPLOWER).unwrap_or(0);
+    let cli = c.ex.mem.leer32(t + caja_dos::estructuras::process::PR_CLI).unwrap_or(0) << 2;
+    let mut n = 0;
+    for (d, _) in c.ex.bloques_de(t) {
+        if d != t && d != pila && d != cli && c.ex.cambiar_dueno(d, 0) {
+            n += 1;
+        }
+    }
+    n
+}
+
 /// Un tope más bajo para la memoria del 68k, en MB, para una prueba (0: el del ajuste). Dice cómo está la memoria.
 #[unsafe(no_mangle)]
 pub extern "C" fn caja_tope_de_prueba(mb: u32) {

@@ -395,6 +395,18 @@ impl<F: SistemaArchivos> Dos<F> {
             PARSE_PATTERN | PARSE_PATTERN_NO_CASE => {
                 d0(Self::parse_pattern(c, d[1], d[2], d[3], n == PARSE_PATTERN_NO_CASE)?)
             }
+            MATCH_FIRST => {
+                let r = self.match_first(c, d[1], d[2]);
+                d0(self.codigo_busqueda(c, n, r))
+            }
+            MATCH_NEXT => {
+                let r = self.match_next(c, d[1]);
+                d0(self.codigo_busqueda(c, n, r))
+            }
+            MATCH_END => {
+                self.match_end(c, d[1]);
+                d0(0)
+            }
             MATCH_PATTERN | MATCH_PATTERN_NO_CASE => {
                 d0(Self::match_pattern(c, d[1], d[2], n == MATCH_PATTERN_NO_CASE)?)
             }

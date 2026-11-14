@@ -795,23 +795,32 @@ static size_t largo_de(const char *s) { size_t n = 0; while (s[n]) n++; return n
    cuántos bloques de memoria no soltó él. Devuelve el vector por el que acabó, -1 si con su RTS, o -2 si no se pudo
    crear el proceso. */
 static volatile int cerrar_pendiente;   /* (más abajo, con manda_ctrl_c) */
+/* Los argumentos del programa siguiente (NULL: ninguno, solo "\n"), y si lo que deje pasa al sistema en vez de
+   soltarse (caja_memoria_al_sistema: AddDataTypes deja sus tipos a datatypes); en tarea_pasadas, cuántos bloques. */
+static const char *tarea_args;
+static int tarea_al_sistema;
+static uint32_t tarea_pasadas;
+uint32_t caja_memoria_al_sistema(uint32_t t);
+int caja_fichero_de_dos(const char *ruta, const uint8_t **datos, uint32_t *largo);
 static int ejecuta_tarea(const char *nombre, uint32_t pc, uint32_t a6, uint32_t seglist, uint32_t *sobras)
 {
-    static const char args[] = "\n";
-    uint32_t args68k = caja_alloc_mem(sizeof(args), 0);
-    if (args68k) for (unsigned i = 0; i < sizeof(args); i++) pon8(args68k + i, (uint8_t)args[i]);
+    const char *args = tarea_args ? tarea_args : "\n";
+    uint32_t largo_args = (uint32_t)largo_de(args) + 1;
+    uint32_t args68k = caja_alloc_mem(largo_args, 0);
+    if (args68k) for (unsigned i = 0; i < largo_args; i++) pon8(args68k + i, (uint8_t)args[i]);
     uint32_t sp = 0;
     /* Lo que se pidió para el programa de antes no es para este. */
     __atomic_store_n(&ctrl_c_pendiente, 0, __ATOMIC_RELEASE);
     __atomic_store_n(&cerrar_pendiente, 0, __ATOMIC_RELEASE);
     uint32_t t = caja_tarea_nueva(nombre, largo_de(nombre), 16384, pc, (uint32_t)COMUN, args68k, seglist, &sp);
-    if (!t) { if (args68k) caja_free_mem(args68k, sizeof(args)); return -2; }
-    int v = arranca(pc, sp, a6, args68k, sizeof(args) - 1);
+    if (!t) { if (args68k) caja_free_mem(args68k, largo_args); return -2; }
+    int v = arranca(pc, sp, a6, args68k, largo_args - 1);
     vectores_deshechos = vectores_deshacer();
     if (vectores_deshechos) di("defensa: %d vectores del 68k cambiados por el programa: deshechos\n", vectores_deshechos);
+    tarea_pasadas = tarea_al_sistema ? caja_memoria_al_sistema(t) : 0;
     uint32_t s = caja_tarea_fin(t);
     if (sobras) *sobras = s;
-    if (args68k) caja_free_mem(args68k, sizeof(args));
+    if (args68k) caja_free_mem(args68k, largo_args);
     return v;
 }
 
@@ -1419,6 +1428,33 @@ int caja_main(void)
            (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, (int)(caja_bloques(0) - sistema), bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         sistema = caja_bloques(0);
+
+        /* 8b3a. Los tipos de datatypes: con el AmigaOS del usuario (su C:AddDataTypes), `AddDataTypes REFRESH QUIET`,
+           como su Startup-Sequence. Recorre DEVS:DataTypes con MatchFirst y deja los tipos a datatypes: lo que no
+           suelta pasa al sistema (si se soltara, datatypes se quedaría con memoria libre). A los 20 s, el vigilante lo
+           corta. Sin él, lo dice y sigue. No cuenta como fallo: DashOS no trae AddDataTypes. */
+        {
+            const uint8_t *adt = 0;
+            uint32_t adt_largo = 0;
+            if (caja_fichero_de_dos("C:AddDataTypes", &adt, &adt_largo)) {
+                ctrl_c_corriendo = 1;
+                long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 20000L * 1000, 0, 0);
+                tarea_args = "REFRESH QUIET\n";
+                tarea_al_sistema = 1;
+                t0 = ahora_us();
+                v = ejecuta_hunk("AddDataTypes", adt, adt_largo, execbase, &d0, &llamadas, &sobras);
+                t1 = ahora_us();
+                tarea_args = 0;
+                tarea_al_sistema = 0;
+                ctrl_c_corriendo = 0;
+                if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
+                di("AddDataTypes REFRESH acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques pasan al sistema\n",
+                   (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), tarea_pasadas);
+                sistema = caja_bloques(0);
+            } else {
+                di("AddDataTypes: no está (sin el AmigaOS del usuario): datatypes sin tipos\n");
+            }
+        }
 
         /* 8b3b. La memoria del 68k crece según la pidan (glotona.c, hostil): con un tope de prueba de 48 MB (el del
            ajuste es de 256), pide 1 MB tras otro hasta que no le dan más; no pasa del tope, nada se cuelga y, soltado
