@@ -365,14 +365,19 @@ with tempfile.TemporaryDirectory() as t:
         with open(os.path.join(raiz, "C", "Prefs", "amigaos"), "w") as f:
             f.write("Amiga/AmigaOS\n")
     # Paso 3: con DASHOS_PROGRAMAS_AMIGA=fichero:fichero... (programas de AmigaOS del usuario: demos de MUI, Tachyon...,
-    # tampoco van a git), una copia en Amiga/Programas y su lista en C/Prefs/programas-amiga (la caja los ejecuta).
+    # tampoco van a git), una copia en Amiga/Programas y su lista en C/Prefs/programas-amiga (la caja los ejecuta). Un
+    # cajón de la lista se copia también allí (lo que el programa lee de PROGDIR:), sin ejecutarlo.
     programas = [p for p in os.environ.get("DASHOS_PROGRAMAS_AMIGA", "").split(":") if p]
     if programas:
         import shutil
         os.makedirs(os.path.join(raiz, "Amiga", "Programas"), exist_ok=True)
         lista = []
         for p in programas:
-            n = os.path.basename(p)
+            n = os.path.basename(p.rstrip("/"))
+            # Un cajón (los iconos de Tachyon, que busca en PROGDIR:iconos/) se copia entero y no se ejecuta.
+            if os.path.isdir(os.path.expanduser(p)):
+                shutil.copytree(os.path.expanduser(p), os.path.join(raiz, "Amiga", "Programas", n))
+                continue
             shutil.copy(os.path.expanduser(p), os.path.join(raiz, "Amiga", "Programas", n))
             lista.append(f"SYS:Amiga/Programas/{n}\n")
         with open(os.path.join(raiz, "C", "Prefs", "programas-amiga"), "w") as f:
