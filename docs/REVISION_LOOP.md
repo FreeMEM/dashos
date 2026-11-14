@@ -1948,3 +1948,20 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   Prefs del usuario). red-prueba reintenta con la cola llena (salían 12 rechazos en vez de 13). Tanda completa sobre
   e8f0910: todo bien (el fallo anterior de wayland no se repitió: suelto). Pendiente: que el aviso llegue a las cajas
   (globo de Linux, cachés Amiga) y cerrar con aviso al que se pase.
+- **Aviso de memoria a las cajas unido a revision** (c59772d, rama `aviso-cajas`; detalle en `docs/bitacoras/aviso-cajas.md`):
+  con memoria baja, la caja Linux infla un globo (virtio-balloon propio, una cuarta parte de la RAM del invitado) y
+  devuelve esas páginas al sistema (llamada 55, solo memoria que no comparte nadie); la caja Amiga llama a los
+  manejadores de AddMemHandler y devuelve lo crecido que sobra. Solo `sesiones` puede pedirlo. Programa de prueba
+  `presion` (llena la memoria cuando una caja dice que tiene algo que soltar). `Image-caja` de serie rehecha con
+  `CONFIG_VIRTIO_BALLOON` (`tools/caja_linux_invitado.py preparar`). Tanda completa sobre c59772d: todo rc=0 salvo
+  wayland, que falló en Firefox ("FALTA: título: Linux · Index of file:///usr/local/share/dashos/"): la barra de
+  direcciones recibió "are/dashos/", se perdieron las primeras teclas. Repetido con `CAJA_SOLO=firefox` dos veces
+  sobre c59772d (MAL y BIEN) y una sobre 16940f0 a la vez (BIEN): fallo suelto del guion, no del aviso. El agente
+  decía que en -linux salían MAL ramlib y adf-prueba: no se repite (linux rc=0).
+  Pendiente: hacer firme el paso de Firefox del guion (esperar a que la barra tenga el foco, o mirar lo tecleado y
+  repetir); `presion` acaba a los 15 min y `inicio` lo relanza como si hubiera caído (3 veces, ruido en los registros
+  largos); el globo no suelta las páginas con vistas del puente de Wayland (sin probar con Arch inflado); los
+  manejadores Amiga no se llaman al llegar al tope del grupo; cerrar con aviso al que se pase (S3).
+- Revisión del formato de paquetes compartido (v2) hecha para la sesión que lo lleva; quedan por decidir con el
+  usuario: perfil de máquina de la caja Amiga (S4), vocabulario de máquina de aarch64-dashos, la caja de instalación
+  de S8 y paquetes firmados frente a índices (S6/S8).
