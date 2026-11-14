@@ -1641,11 +1641,11 @@ Decisión del usuario: la caja pide la memoria según lo que necesite el program
   control ("Memoria de la caja Amiga", que pasa por 64, 128, 256, 512 y 1024 MB). El compositor lo reparte como el
   resto del ajuste; la caja lo mira cada vez que atiende al compositor. Un `AllocMem` que no cabría ni con todo lo que
   queda no hace crecer nada (un programa que pide 2 GB no se lleva la caja hasta el tope).
-- **El cupo**: el de la caja Amiga en `inicio` pasa de 32 MB a 32 + 256. Un grupo saca su presupuesto del de quien lo
-  crea al nacer (no gasta memoria, pero los servicios que vienen detrás ya no lo tienen): si no cabe, 128 y 64; si
-  tampoco, los 32 de siempre (sin margen: su 68k apenas crece). Con menos de 64, en `virt` de 2 GB, `espia` ya no se
-  podía lanzar. En esa máquina no cabe ningún margen; en una con más memoria debería caber (sin probar: `virt` va con
-  `highmem=off`). Un tope mayor en el ajuste no pasa del cupo: `memoria_crear` da `E_MEMORIA` y la caja se queda donde llegó.
+- **El cupo** (propuesta del coordinador): el de la caja Amiga en `inicio` es 32 MB más una cuarta parte de lo que
+  queda libre para grupos al lanzarla, hasta 256 MB (`margen_caja_amiga`: la mayor que cabe se busca a mitades con
+  grupos de prueba que se matan en seguida). Un grupo saca su presupuesto del de quien lo crea al nacer: con todo el
+  margen que cupiera, los servicios de después (`espia`) ya no se podían lanzar en `virt` de 2 GB. Un tope mayor en el
+  ajuste no pasa del cupo: `memoria_crear` da `E_MEMORIA` y la caja se queda donde llegó.
 - `AvailMem` cuenta, en lo que no es chip, lo que queda por crecer: un programa que mira antes de pedir no se asusta.
 - **Pruebas**: `exec/tests/crecer.rs` (crece lo justo, la chip no, lo soltado se reutiliza, `TypeOfMem` de lo nuevo;
   hostil: pedir 256 KB sin fin para en el tope, tamaños absurdos dan 0) y `glotona.exe` en la caja (paso 8b3b): con un
@@ -1700,3 +1700,13 @@ Decisión del usuario: la caja pide la memoria según lo que necesite el program
   sin margen de cupo, llega a 6 MB y para); fallan, cada vez una distinta, dos líneas del guion del explorador
   ("suelta en la ventana 1: mueve a Home/Privado", "no abre Sistema/DeCarla: -12"), que esta rama no toca: sin
   averiguar si es el explorador recién unido de `revision` o la máquina cargada (había otras QEMU a la vez).
+
+### Arreglo: `make arranque-virt` sobre `revision` unida
+
+- "MAL: el disco tras la prueba" era `C/Prefs/cajas` de 48 bytes en vez de 30: el guion pulsa ahora también la fila
+  "Memoria de la caja Amiga" (`memoria amiga 512`). El árbol esperado de `tools/disco_archivos.py` lo dice ya.
+  "[archivos] queda poco sitio: se suelta el disco sujeto" sale también en `revision` sola (y en prueba1 y prueba3):
+  es la prueba A15 de `ficheros`, que sujeta el disco sin soltarlo hasta que `archivos` lo suelta ("A15 sujetar sin
+  soltar: bien"). "no abre Sistema/DeCarla: -12" es una línea esperada (lo ajeno del explorador).
+- Con el margen nuevo, en `virt` de 2 GB la caja tiene 40 MB de cupo (8 para su 68k) y `espia` se lanza; glotona llega
+  a 15 MB. `make arranque-virt` dos vueltas seguidas: todo BIEN.
