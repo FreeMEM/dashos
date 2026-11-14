@@ -205,6 +205,8 @@ pub fn atender(marco: &mut Marco) {
         52 => cpu_tiempo(a[0] as u32),
         // Cupos como topes (S3): el aviso de memoria baja a un canal, con el permiso de apagar (solo `sesiones`).
         53 => memoria_aviso(a[0] as u32, a[1] as u32),
+        // S3: cambiar el tope de un grupo (con su llave, con escribir; no el propio ni los de encima).
+        54 => grupo_tope(a[0] as u32, a[1]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1025,8 +1027,21 @@ fn grupo_uso(marco: &mut Marco, h: u32) -> u64 {
     limite
 }
 
-/// Llamada 53 (S3): el aviso de memoria baja, al otro lado del canal de `hc` (con escribir). Pide el permiso de apagar
-/// (`permiso`, con escribir): el del que lleva el sistema, que solo tiene `sesiones`. Hay un solo oyente: el nuevo quita
+/// Llamada 54 (S3): pone `tope` al grupo de `h` (con escribir). El propio grupo y los de encima, no (`E_DERECHOS`): un
+/// proceso no se sube su tope. Por debajo de lo usado vale: no se quita nada y los cobros fallan hasta que baje.
+fn grupo_tope(h: u32, tope: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Grupo(g) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 || proc_.cupo.es_o_cuelga_de(&g) {
+        return E_DERECHOS;
+    }
+    g.poner_tope(tope);
+    0
+}
+
+/// Llamada 53 (S3): el aviso de memoria baja, al otro lado del canal de `hc` (con escribir). Pide el permiso de memoria
+/// (`permiso`, con escribir), que el kernel da a `inicio` y este solo a `sesiones`. Hay un solo oyente: el nuevo quita
 /// al anterior. Nada más pedirlo llega el nivel de ahora.
 fn memoria_aviso(permiso: u32, hc: u32) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
@@ -1035,7 +1050,7 @@ fn memoria_aviso(permiso: u32, hc: u32) -> u64 {
         (t.ver(permiso), t.ver_con_intermediarios(hc))
     };
     let (Some(p), Some((canal, via))) = (p, canal) else { return E_LLAVE };
-    let (Objeto::PermisoApagar, Objeto::Extremo(e)) = (p.objeto, canal.objeto) else { return E_TIPO };
+    let (Objeto::PermisoMemoria, Objeto::Extremo(e)) = (p.objeto, canal.objeto) else { return E_TIPO };
     if p.derechos & objetos::ESCRIBIR == 0 || canal.derechos & objetos::ESCRIBIR == 0 {
         return E_DERECHOS;
     }

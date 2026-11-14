@@ -305,6 +305,17 @@ fn resultado_comprobar(estado: i32, problemas: u64) -> String {
 }
 
 /// Comprobar el disco: la acción de administrador "comprobar" (U5) por `sesiones`, que se lo pregunta a `guardian`.
+/// S3: dice a `sesiones` que ha cambiado `Prefs/cajas`, para que ponga a la caja Amiga el tope de su ajuste. Lo que
+/// conteste (0 si lo puso), o `i32::MIN` si no contesta.
+fn cajas_a_sesiones() -> i32 {
+    let p = s::CAJAS_CAMBIADAS.to_le_bytes();
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+}
+
 /// El estado y cuántos problemas.
 fn comprobar_disco() -> (i32, u64) {
     let accion = b"comprobar";
@@ -1457,7 +1468,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             }
                             let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
                             let releido = leer_cajas() == Ok(cajas.clone());
-                            println!("  [centro] Memoria de la caja Amiga: {} MB; guardado: {} ({} bytes); releído: {}", siguiente, guardado, bytes, if releido { "sí" } else { "no" });
+                            // S3: el tope de verdad lo pone el kernel; se lo pide `sesiones`, que relee el fichero.
+                            let tope = cajas_a_sesiones();
+                            println!("  [centro] Memoria de la caja Amiga: {} MB; guardado: {} ({} bytes); releído: {}; tope del grupo: {}", siguiente, guardado, bytes, if releido { "sí" } else { "no" }, tope);
                             (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;

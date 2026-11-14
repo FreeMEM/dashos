@@ -152,9 +152,15 @@ Amiga "32 MB más la cuarta parte de lo libre". Ahora es un **tope**, con la ide
   pierde es la garantía de que un grupo tiene sitio para llegar a su tope: otro puede habérselo comido.
 - **Aviso de memoria baja.** Por eso hace falta saber cuándo queda poco. El kernel avisa (llamada 53) cuando lo libre
   para procesos baja del 5 % de lo que había al arrancar, y otra vez cuando pasa del 10 % (el hueco evita un aviso en
-  cada página). Escucha `sesiones`, que tiene el permiso de apagar, y se lo dirá a las cajas para que suelten lo que
+  cada página). Escucha `sesiones`, que tiene el permiso de memoria (una llave de arranque propia), y se lo dirá a las cajas para que suelten lo que
   puedan. Primera versión: el aviso llega y se apunta en el registro. Pendiente: el globo de la caja Linux (devolver
   páginas del invitado) y las cachés de la caja Amiga (las bibliotecas sin abrir, los lienzos que no se ven).
+
+- **El tope de la caja Amiga lo pone el kernel** (decisión del usuario del 2026-11-14), no la caja: un programa 68k
+  podría engañarla. Es el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie) más los 32 MB fijos de la caja.
+  La caja nace con el de serie (288 MB); `sesiones`, que tiene la llave de su grupo, lo cambia (llamada 54) al darla
+  de alta y cada vez que el centro de control dice que cambió el ajuste (relee el fichero; no se fía del mensaje). Un
+  proceso no puede cambiar el tope de su grupo ni el de los de encima.
 
 ### Si ni así basta (diseño, sin hacer)
 

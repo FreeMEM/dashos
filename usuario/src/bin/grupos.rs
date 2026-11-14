@@ -173,6 +173,7 @@ fn principal() -> u64 {
     }
     println!("  [grupos] cupo agotado en {} trozos de 64 KB, devuelto entero, y grupos que se matan", trozos);
     println!("  [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse");
+    println!("  [grupos] topes: el propio no se sube, uno por debajo de lo usado no quita nada y no deja cobrar, y el aviso de memoria pide su permiso");
     println!("  [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en {} KB; con la memoria llena ({} MB) falla limpio y todo vuelve", trozos_nieto * 64, lleno);
     println!("  [grupos] tiempo de CPU: el hijo que gira gastó {} ms en su grupo, cuenta también en el de arriba y no se pierde al matarlo", cpu_hijo / 1000);
     42
@@ -277,6 +278,55 @@ fn topes(tamano: usize) -> (u64, u64) {
     }
     dashos::cerrar(m);
     dashos::cerrar(g);
+    // 36: un proceso no se sube su propio tope: con la llave de su grupo (con escribir), la llamada 54 da E_DERECHOS.
+    let gs = grupo_crear(MB);
+    if gs <= 0 {
+        return (36, 0);
+    }
+    let gs = gs as u32;
+    let copia = dashos::llave_duplicar(gs, dashos::LEER | dashos::ESCRIBIR | dashos::TRANSFERIR, 0);
+    let (a, b) = canal_crear();
+    let p = if copia > 0 && canal_escribir(a, &[16], &[]) == 0 { proceso_crear_en(gs, 1, tamano, &[b, copia as u32]) } else { -1 };
+    if p <= 0 || proceso_esperar(p as u32) != (0, 3) || grupo_uso(gs).0 != MB as i64 {
+        return (36, 0);
+    }
+    // 37: bajar el tope por debajo de lo usado. Vale, no se quita nada, y no se cobra más (un proceso nuevo no cabe)
+    // hasta subirlo otra vez. Sin escribir, no se cambia.
+    let gl = grupo_crear(4 * MB);
+    if gl <= 0 {
+        return (37, 0);
+    }
+    let gl = gl as u32;
+    let comilon = hijo_en(gl, tamano, &[14]);
+    let mut lleno = false;
+    for _ in 0..500 {
+        if grupo_uso(gl).1 > 3 * MB {
+            lleno = true;
+            break;
+        }
+        dashos::dormir_us(2000);
+    }
+    let sin_escribir = dashos::llave_duplicar(gl, dashos::LEER, 0);
+    if comilon <= 0 || !lleno || sin_escribir <= 0 || dashos::grupo_tope(sin_escribir as u32, 64 * MB) != -3 {
+        return (37, 0);
+    }
+    if dashos::grupo_tope(gl, MB) != 0 || grupo_uso(gl).0 != MB as i64 || grupo_uso(gl).1 <= 3 * MB {
+        println!("  [grupos] tope bajado: {:?}", grupo_uso(gl));
+        return (38, 0);
+    }
+    let otro = hijo_en(gl, tamano, &[1, 0]);
+    if otro != -7 || dashos::grupo_tope(gl, 8 * MB) != 0 || grupo_matar(gl) != 0 || !vuelve_a_cero(gl) {
+        println!("  [grupos] con el tope bajado, un proceso más: {}", otro);
+        return (39, 0);
+    }
+    // 40: el aviso de memoria baja (llamada 53) pide su permiso: con otra llave, E_TIPO; sin llave, E_LLAVE.
+    let (x, y) = canal_crear();
+    if dashos::memoria_aviso(gl, x) != -6 || dashos::memoria_aviso(y, x) != -6 || dashos::memoria_aviso(999, x) != -2 {
+        return (40, 0);
+    }
+    for k in [x, y, gl, sin_escribir as u32, gs, copia as u32] {
+        dashos::cerrar(k);
+    }
     (0, trozos * 16)
 }
 

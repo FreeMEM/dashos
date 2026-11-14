@@ -44,7 +44,9 @@ pub const MAX_PROFUNDIDAD: u32 = 8;
 pub const COSTE_CANAL: u64 = 2 * MAX_COLA as u64 * (MAX_DATOS as u64 + 64 * MAX_LLAVES as u64 + 64);
 
 pub struct Cupo {
-    limite: u64,
+    /// El tope. Lo puede cambiar quien tenga la llave del grupo con escribir (llamada 54), salvo el propio grupo y los
+    /// de encima.
+    limite: AtomicU64,
     profundidad: u32,
     /// Lo han matado (M2): no admite procesos ni subgrupos nuevos.
     muerto: core::sync::atomic::AtomicBool,
@@ -78,7 +80,7 @@ static RAIZ: Cerrojo<Option<Arc<Cupo>>> = Cerrojo::new(None);
 impl Cupo {
     fn con(limite: u64, profundidad: u32, del_padre: Option<Cargo>) -> Self {
         Self {
-            limite,
+            limite: AtomicU64::new(limite),
             profundidad,
             muerto: core::sync::atomic::AtomicBool::new(false),
             usado: AtomicU64::new(0),
@@ -155,6 +157,26 @@ impl Cupo {
         Some(h)
     }
 
+    /// Cambia el tope (llamada 54). Uno por debajo de lo usado vale: no se quita nada, y los cobros fallan hasta que lo
+    /// usado baje de él.
+    pub fn poner_tope(&self, tope: u64) {
+        self.limite.store(tope, Ordering::Relaxed);
+    }
+
+    /// ¿Es `otro` este grupo o uno de los de encima? (un proceso no cambia el tope de su grupo ni de los de encima).
+    pub fn es_o_cuelga_de(&self, otro: &Cupo) -> bool {
+        let mut g = self;
+        loop {
+            if core::ptr::eq(g, otro) {
+                return true;
+            }
+            match g.padre() {
+                Some(p) => g = p,
+                None => return false,
+            }
+        }
+    }
+
     /// El grupo de encima, si lo hay.
     fn padre(&self) -> Option<&Cupo> {
         self._del_padre.as_ref().map(|c| &*c.cupo)
@@ -169,7 +191,8 @@ impl Cupo {
     fn sumar(&self, n: u64) -> bool {
         let mut usado = self.usado.load(Ordering::Relaxed);
         loop {
-            let Some(nuevo) = usado.checked_add(n).filter(|&x| x <= self.limite) else { return false };
+            let limite = self.limite.load(Ordering::Relaxed);
+            let Some(nuevo) = usado.checked_add(n).filter(|&x| x <= limite) else { return false };
             match self.usado.compare_exchange_weak(usado, nuevo, Ordering::Relaxed, Ordering::Relaxed) {
                 Ok(_) => return true,
                 Err(visto) => usado = visto,
@@ -228,7 +251,7 @@ impl Cupo {
 
     /// (tope, usado), en bytes. Lo usado cuenta lo de sus subgrupos.
     pub fn uso(&self) -> (u64, u64) {
-        (self.limite, self.usado.load(Ordering::Relaxed))
+        (self.limite.load(Ordering::Relaxed), self.usado.load(Ordering::Relaxed))
     }
 
     /// Lo usado por el grupo sin sus subgrupos: lo suyo menos lo de cada hijo vivo. Es una foto: con cobros a la vez,

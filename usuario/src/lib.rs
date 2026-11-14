@@ -448,12 +448,19 @@ pub fn grupo_uso_propio(grupo: u32) -> (i64, u64, u64) {
     (r0 as i64, r1, r2)
 }
 
-/// S3: que el kernel avise de la memoria baja al otro lado de `canal` (con escribir), con el permiso de apagar (solo lo
+/// S3: que el kernel avise de la memoria baja al otro lado de `canal` (con escribir), con el permiso de memoria (solo lo
 /// tiene `sesiones`). Mensajes de 24 bytes: nivel (u32: 0 normal, 1 baja), 0 (u32), bytes libres para procesos (u64) y
 /// los que había al arrancar (u64). 0 o un error negativo.
 pub fn memoria_aviso(permiso: u32, canal: u32) -> i64 {
     llamada(53, [permiso as u64, canal as u64, 0, 0, 0]).0 as i64
 }
+
+/// S3: pone `tope` bytes de tope al grupo de la llave `grupo` (con escribir). El propio grupo y los de encima no se
+/// pueden (-3). Uno por debajo de lo usado vale: no se quita nada, y no se cobra más hasta que baje. 0 o un error.
+pub fn grupo_tope(grupo: u32, tope: u64) -> i64 {
+    llamada(54, [grupo as u64, tope, 0, 0, 0]).0 as i64
+}
+
 
 /// Trasfondo (llamada 52): microsegundos de CPU del grupo `grupo` (su llave, con leer) y sus subgrupos, vivos y
 /// muertos; con 0, los del grupo propio. Negativo si no se puede.

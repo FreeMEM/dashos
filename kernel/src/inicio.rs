@@ -8,7 +8,8 @@
 //! (little-endian; lo lee `usuario/src/bin/inicio.rs`):
 //! - u32 cuántos aparatos; por cada uno, 24 bytes: nombre (16, relleno con 0), tipo (u32: 1 registros,
 //!   2 interrupción, 3 permiso DMA, 4 registro, 5 memoria del firmware, 6 datos, 7 permiso de plazo, 8 permiso de
-//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar) y número de llave (u32);
+//!   máquinas virtuales, 9 permiso de página 0, 10 permiso de apagar, 11 permiso del aviso de memoria) y número de
+//!   llave (u32);
 //! - u32 cuántos programas; por cada uno, 32 bytes: tamaño (u32), qué canales (u32: el bit i es el canal i; C50),
 //!   qué aparatos le pasa `inicio` (8 bytes: el número de cada uno en la lista de arriba, en el orden en que los pide
 //!   el programa, y 0xFF en los huecos) y nombre (16). Sus llaves serán la 1, la 2...: primero los aparatos, en ese
@@ -303,6 +304,9 @@ const PAGINA_CERO: u32 = 9;
 /// El permiso de apagar y reiniciar (llamada 51): no va en la lista de ningún programa; `inicio` lo busca por su nombre
 /// ("apagar") y se lo manda a `sesiones` (`PERMISO_APAGAR` de su protocolo), que ya tiene sus 8 llaves.
 const APAGAR: u32 = 10;
+/// El permiso del aviso de memoria baja (llamada 53, S3): como el de apagar, `inicio` lo busca por su nombre
+/// ("memoria") y se lo manda a `sesiones` (`PERMISO_MEMORIA`).
+const AVISO_MEMORIA: u32 = 11;
 /// Marca de un aparato que el servicio puede no tener: si falta, se lanza igual, sin esa llave (y las siguientes
 /// corren un puesto).
 const OPCIONAL: u32 = 0x100;
@@ -749,6 +753,8 @@ pub fn lanzar() -> bool {
     // El permiso de apagar y reiniciar (decisión del usuario del 2026-11-13): para `sesiones`. Tras el de página 0, por
     // lo mismo.
     apuntar(&mut llaves, "apagar", APAGAR, Llave::nueva(Objeto::PermisoApagar, DERECHOS));
+    // S3: el del aviso de memoria baja, para `sesiones`. El último, por lo mismo.
+    apuntar(&mut llaves, "memoria", AVISO_MEMORIA, Llave::nueva(Objeto::PermisoMemoria, DERECHOS));
     // Un servicio al que le falta algún aparato no se lanza (la GPU en QEMU, por ejemplo).
     let lanzables: Vec<_> = PROGRAMAS
         .iter()

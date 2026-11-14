@@ -1391,7 +1391,8 @@ fn prueba_topes() {
     drop((a, b));
     let vuelven = g2.uso().1 == 0 && g3.uso().1 == 0;
     let hermanos: alloc::vec::Vec<_> = (0..100).filter_map(|_| g1.hijo(1 << 40)).collect();
-    let cien = hermanos.len() == 100 && g1.uso().1 < 100 * 1024;
+    let cien = hermanos.len() == 100 && g1.uso().1 < 100 * 1024
+        && g3.es_o_cuelga_de(&g1) && g3.es_o_cuelga_de(&g3) && !g2.es_o_cuelga_de(&g3) && !g1.es_o_cuelga_de(&g2);
     drop(hermanos);
     // La memoria llena de verdad, con un oyente del aviso.
     let (x, _y) = objetos::Canal::nuevo();

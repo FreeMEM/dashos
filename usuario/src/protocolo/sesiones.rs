@@ -139,6 +139,13 @@ pub const M_ESCRITORIO: u32 = 0x100;
 /// De `inicio`, sin marca: el permiso de apagar y reiniciar del kernel (llamada 51), con la llave. `sesiones` ya tiene
 /// las 8 llaves con que se lanza un programa: este le llega así.
 pub const PERMISO_APAGAR: u32 = 23;
+/// De `inicio`, sin marca: el permiso del aviso de memoria baja del kernel (llamada 53, S3), con la llave. Como
+/// `PERMISO_APAGAR`.
+pub const PERMISO_MEMORIA: u32 = 25;
+/// Del centro de control (S3): ha cambiado `Prefs/cajas`. Con una llave para contestar. `sesiones` relee el fichero (no
+/// se fía de nada que traiga el mensaje) y pone a la caja Amiga el tope de su grupo: el ajuste `memoria amiga` más 32
+/// MB (llamada 54). Contesta un i32: 0, o negativo. Solo se le acepta al centro.
+pub const CAJAS_CAMBIADAS: u32 = 26;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los
