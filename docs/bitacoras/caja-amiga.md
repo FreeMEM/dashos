@@ -1727,3 +1727,84 @@ Decisión del usuario: la caja pide la memoria según lo que necesite el program
   `Screen` y su `ViewPort`/`ColorMap`, o el proceso que no puede crear con `CreateNewProc`), con el oráculo de FS-UAE.
 - **Sin hacer**: las regiones de graphics (`NewRegion`, `OrRectRegion`...: no están; Tachyon llama a `NewRegion`),
   los ganchos de layers, cybergraphics, los objetos con nombre de utility, icon y workbench.
+
+## 2026-11-14 (tarde): MUI pinta y Tachyon enseña su página (rama `caja-amiga-mui`, con `revision` 16940f0 unida)
+
+- **Unión**: `revision` (16940f0) unida sin conflictos (4c32357). Emu68 de este worktree con los parches 0001-0014
+  aplicados: su `git diff` es el mismo que el de `.worktrees/revision` (el `--reverse --check` de cada parche suelto
+  falla en algunos porque los de después tocan las mismas líneas).
+- **Cómo se miró**: `DASHOS_AMIGAOS=~/.cache/dash-emu/sys32mui DASHOS_PROGRAMAS_AMIGA=<Class1>:<dashweb>` con
+  `make arranque-virt` (con Tachyon, `MEMORIA=3G`), un guion fuera de git que corta QEMU (por PID) cuando acaba el
+  último programa y saca un `screendump` por el monitor (unos 4 minutos por vuelta), y una traza temporal en
+  `pegamento` (cada llamada nativa de la tarea del programa, con registros, quién la hace y lo que devuelve; ya
+  quitada). Las capturas se quedan en el equipo: no se publican (llevan MUI y Tachyon del usuario). FS-UAE no hizo
+  falta: no lo he ejecutado en esta tanda.
+
+### Por qué MUI no pintaba
+
+- MUI no dibuja en una capa sin `ClipRect` (`layer->ClipRect` a NULL: la da por tapada entera). Comprobado: con la
+  `ClipRect` y sin ella (lo demás igual), Class1 hace 96 `Draw` o ninguno. Ahora la capa de cada ventana lleva una
+  `ClipRect` que la cubre, su `Layer_Info` (la de la pantalla) y una `DamageList` de verdad (una región): todo por
+  pintar al abrir una ventana de refresco simple o al cambiarla de tamaño; `EndRefresh(TRUE)` la vacía.
+- **Resultado** (captura mirada a mano): la ventana de Class1 sale con su marco de MUI y el abanico de líneas de la
+  clase propia. Class1 acaba con 0, 2 avisos (antes 21).
+
+### Tachyon
+
+- Con `MEMORIA=3G`, Tachyon (768 x 540) pinta su página de inicio: el texto, el cuadro de búsqueda con su botón y las
+  ocho tarjetas con sus bordes redondeados. **Falta**: los iconos de la barra de botones (salen cuadrados vacíos) y
+  el logo (un rectángulo vacío); son imágenes y datatypes aún no arranca (abajo).
+- **Lo que pidió y ya está**: las regiones de graphics (`regiones.rs`: las diez, en la memoria del 68k con la
+  disposición de `graphics/regions.h`, en bandas); `CreateUpfrontLayer` y compañía, `DeleteLayer` y `WhichLayer`
+  (pinta su página en una capa de un mapa fuera de pantalla y la copia a la ventana); `InstallClipRegion` recorta ya
+  todo lo que se pinta (la usa Tachyon en esa capa y MUI en la ventana); `BltMaskBitMapRastPort` (imágenes de MUI);
+  el relleno de áreas (`areas.rs`: `InitArea`, `InitTmpRas`, `AreaMove`, `AreaDraw`, `AreaEllipse`, `AreaEnd`);
+  `DoubleClick` (500 ms, el de DashOS).
+- **Un fallo de fondo que salió**: el montón de Rust de la caja era de 8 MB fijos y ahí viven los píxeles de las
+  ventanas y de los `BitMap` nativos. Con la capa de Tachyon funcionando, pintar su mapa de 740 x 516 (1,5 MB) acabó
+  la memoria y la caja entera cayó (pánico de Rust). Ahora el montón crece como la memoria del 68k (objetos nuevos
+  justo detrás, hasta 512 MB, lo que deje el cupo), un lienzo sin memoria no pinta en vez de caerse y `AllocBitMap`
+  nativo reserva sus píxeles al crearse (sin memoria da 0). Prueba hostil en `glotona.c`: un `AllocBitMap` de 64 MB
+  de una vez no cabe (en 2 y en 3 GB; no he averiguado si es el cupo o la memoria del kernel), 16 de 2 MB sí, y
+  soltados otro cabe; la caja sigue.
+
+### Arreglos sueltos
+
+- **`CierreDeMas` al cerrar locale y diskfont** (pendiente desde el paso 1 de ramlib): las de 3.2 llevan su cuenta de
+  aperturas en un campo suyo, no en `lib_OpenCnt` (volcado de las primeras palabras de su `Open`: `addq.w #1,$52(a6)`
+  en locale, `addq.w #1,$22(a6)` en diskfont), y exec no llamaba a su `Close` porque veía `lib_OpenCnt` a 0. Ahora
+  `CloseLibrary` solo mira `lib_OpenCnt` en las nativas; en las demás, cerrar de más es cerrar lo que la tarea no
+  abrió. Y lo que abre el código de una biblioteca de disco no se apunta a la tarea en la que corre (como su
+  memoria): matar esa tarea no lo cierra. Class1 y Tachyon ya no dan ninguno.
+- **`WeighTAMatch`** no compara nombres: diskfont de 3.2 le pasa la `TextFont` desplazada 16 bytes (así
+  `tf_YSize`, `tf_Style` y `tf_Flags` caen donde los de un `TextAttr`) y lo que cae en `ta_Name` es basura (52, el
+  `mn_Length`). Desde V39 es privada y sin autodoc.
+- **Menús**: un `SubItem` en círculo hacía recursión sin fin en `LayoutMenusA` (desbordaba la pila; salió en la prueba
+  al azar de `hostil.rs`). Intuition solo tiene un nivel de subelementos.
+- **utility**: los objetos con nombre (`nombres.rs`: `AllocNamedObjectA`, `AddNamedObject`, `FindNamedObject`,
+  `ReleaseNamedObject`, `RemNamedObject`, `AttemptRemNamedObject`, `FreeNamedObject`, `NamedObjectName`), que pedía
+  datatypes. Ya no faltan; datatypes sigue sin arrancar porque ahora pide `CreateNewProc`.
+
+### Pruebas
+
+- De cargo: `tests/regiones.rs` (contra un modelo de puntos: 3000 pares al azar con las cuatro operaciones; bandas;
+  por la biblioteca; hostil: rectángulos degenerados, el plano entero de WORD, negativos, nulos, fuera de la memoria,
+  listas en círculo, de un nodo que se apunta a sí mismo, puestas a mano, más largas que el tope, resultados de más de
+  16384 rectángulos, sin memoria), `capa_con_dano` y `doble_clic` (`tests/ventanas.rs`), `capas_sueltas` y
+  `region_de_recorte` (`tests/capas.rs`, con una región de 16000 rectángulos), `copia_con_plantilla` y
+  `relleno_de_areas` (`tests/dibujo.rs`), `biblioteca_con_cuenta_propia` (`exec/tests/bibliotecas.rs`),
+  `objetos_con_nombre` y su hostil (`utility/tests/utility.rs`), desplazamientos en `tests/estructuras.rs`.
+- Antes de cada commit: las pruebas de cargo de exec, intuition, dos, utility y timer, `make prueba` y
+  `make arranque-virt`: bien las tres veces (sin el AmigaOS del usuario, como siempre). Con él, `arranque-virt` falla
+  siempre en la línea `[nvme] disco de 16384 sectores` (el disco crece con el AmigaOS): esperado, no es un fallo.
+
+### Lo que queda (por lo que bloquea)
+
+- **`CreateNewProc`**: lo piden muimaster (2 veces) y ahora datatypes en su `Init` (sin él, datatypes no abre y no
+  hay imágenes: los iconos de Tachyon y su logo). Hace falta que la caja lleve varias tareas 68k a la vez: es lo
+  grande que sigue.
+- Bibliotecas que no hay: cybergraphics (muimaster, Tachyon), picasso96api (Tachyon), icon, workbench y
+  screennotify (muimaster; icon y workbench de 3.2 usan una privada de exec), input.device (commodities).
+- El recorte de `BeginRefresh` a la `DamageList`: hoy la `DamageList` siempre es la ventana entera, así que no cambia
+  nada, pero no se recorta con ella.
+- Los ganchos de relleno de 68k de las capas sueltas (se llaman como "sin relleno") y mover u ordenar capas sueltas.
