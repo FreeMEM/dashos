@@ -33,6 +33,7 @@ pub mod lvo;
 pub mod memfs;
 pub mod memoria;
 pub mod nombres;
+pub mod procesos;
 pub mod registros;
 
 mod args;
@@ -583,6 +584,57 @@ impl<F: SistemaArchivos> Dos<F> {
         }
         self.campos.retain(|(t, _), _| *t != tarea);
         self.locales.retain(|(t, _, _), _| *t != tarea);
+    }
+
+    /// Una tarea acabó sin que la maten (una hija que vuelve de su función): sus ficheros, cerrojos y variables
+    /// locales pasan a `a` (quien la creó), como en AmigaOS, donde no se cierran solos: puede haberlos dado a otra.
+    /// Se cerrarán cuando acabe `a` (`acabar_tarea`).
+    pub fn traspasar_tarea(&mut self, de: u32, a: u32) {
+        for f in self.ficheros.values_mut() {
+            if f.dueno == de {
+                f.dueno = a;
+            }
+        }
+        for l in self.cerrojos.values_mut() {
+            if l.dueno == de {
+                l.dueno = a;
+            }
+        }
+        self.campos.retain(|(t, _), _| *t != de);
+        let locales: Vec<_> = self.locales.keys().filter(|(t, _, _)| *t == de).cloned().collect();
+        for k in locales {
+            if let Some(v) = self.locales.remove(&k) {
+                self.locales.entry((a, k.1, k.2)).or_insert(v);
+            }
+        }
+    }
+
+    /// Cambia el dueño de un fichero (un BPTR que dio dos): el de `NP_Input` y `NP_Output` de un proceso nuevo pasa
+    /// a él. `false` si no es un fichero de dos.
+    pub fn dar_fichero(&mut self, bptr: u32, a: u32) -> bool {
+        let Ok(d) = self.fichero(bptr) else { return false };
+        match self.ficheros.get_mut(&d) {
+            Some(f) => {
+                f.dueno = a;
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Cambia el dueño de un cerrojo (un BPTR que dio dos), como `dar_fichero`.
+    pub fn dar_cerrojo(&mut self, bptr: u32, a: u32) -> bool {
+        let d = bptr.wrapping_shl(2);
+        if bptr >= 1 << 30 {
+            return false;
+        }
+        match self.cerrojos.get_mut(&d) {
+            Some(l) if !l.de_asignacion => {
+                l.dueno = a;
+                true
+            }
+            _ => false,
+        }
     }
 
     /// Escribe en un `DateStamp` de la caja una fecha en segundos desde 1970.

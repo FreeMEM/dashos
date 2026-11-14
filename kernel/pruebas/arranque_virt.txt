@@ -728,6 +728,28 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] Dash test_ctrl_c_for acabó con 5 (vector -1)
 ~│   [caja-amiga] dash: Error: instrucción ilegal (excepción 4)
 ~│   [caja-amiga] Dash test_trap_illegal acabó con 20 (vector -1)
+# Varias tareas 68k a la vez en el hilo del JIT (procesos.c): Wait y Signal, puertos, prioridades, Forbid, Delay y el
+# turno entre tareas (a); miles de tareas, tareas que no acaban, un puerto borrado con mensajes, RemTask de otra (b); una
+# tarea que quita la del programa (c); tareas y un proceso que caen por una excepción y se quitan solos (d). Y
+# CreateNewProc (con NP_Entry, NP_Seglist, CreateProc; NULL y etiquetas absurdas dan 0).
+~│   [caja-amiga] procesos: Wait y Signal entre dos tareas: bien
+~│   [caja-amiga] procesos: 0 fallos (modo a)
+~│   [caja-amiga] procesos-a acabó por el vector -1 (D0 0)
+~│   [caja-amiga] procesos: CreateNewProc con NP_Entry: bien
+~│   [caja-amiga] procesos: NP_Seglist y CreateProc: bien
+~│   [caja-amiga] procesos: miles de tareas: bien
+~│   [caja-amiga] procesos: CreateNewProc con etiquetas absurdas o NULL da 0: bien
+~│   [caja-amiga] procesos: 0 fallos (modo b)
+~│   [caja-amiga] procesos-b acabó por el vector -1 (D0 0)
+~│   [caja-amiga] una tarea quita la del programa: el programa acaba
+~│   [caja-amiga] procesos-c acabó por el vector 31
+~│   [caja-amiga] procesos: un proceso que cae se quita: bien
+~│   [caja-amiga] procesos-d acabó por el vector -1 (D0 0)
+# Una tarea que no llama a nada pierde el testigo con el reloj de la caja (la interrupción de nivel 6 cada 20 ms), y la
+# medida del cambio de tarea (e).
+~│   [caja-amiga] procesos: una tarea que no llama a nada no se queda con la caja: bien
+~│   [caja-amiga] procesos-e acabó por el vector -1 (D0 0)
+~│   [caja-amiga] procesos: medida: 
 ~│   [caja-amiga] dash: Error: división por cero (excepción 5)
 ~│   [caja-amiga] Dash test_trap_divzero acabó con 20 (vector -1)
 ~│   [caja-amiga] ventana Amiga en pantalla (320x200, con la barra de DashOS): GadTools Test

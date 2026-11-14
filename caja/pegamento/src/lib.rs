@@ -23,7 +23,9 @@ mod defensa;
 mod faltan;
 mod mates;
 mod memoria;
+mod multitarea;
 mod preguntador;
+mod procesos;
 mod ramlib;
 mod tema;
 
@@ -161,6 +163,20 @@ struct Caja {
     pc_llamada: u32,
     /// El último programa leído de disco para caja.c (`caja_programa_de_disco`): sigue vivo hasta el siguiente.
     programa: Vec<u8>,
+    /// Varias tareas (`multitarea.rs`): la tarea del programa en marcha; las que duermen (`Delay`, `WaitTOF`) y
+    /// hasta cuándo; cuándo empezó el turno de la que corre; y cuentas para las pruebas (cambios de tarea, tareas
+    /// acabadas, aparcadas en la vuelta de un nivel anidado).
+    principal: u32,
+    dormidas: Vec<(u32, u64)>,
+    inicio_turno: u64,
+    cambios: u32,
+    tareas_acabadas: u32,
+    aparcadas: u32,
+    procesos_creados: u32,
+    /// Turnos quitados por el reloj (una tarea que no llamaba a nada).
+    por_reloj: u32,
+    /// Lo que hay que hacer cuando acabe cada proceso de `CreateNewProc` (`procesos.rs`).
+    al_acabar: alloc::collections::BTreeMap<u32, procesos::AlAcabar>,
 }
 
 /// El estado, para las funciones `extern "C"`.
@@ -423,6 +439,15 @@ pub unsafe extern "C" fn caja_rust_arrancar(
         ramlib_segs: Vec::new(),
         pc_llamada: 0,
         programa: Vec::new(),
+        principal: 0,
+        dormidas: Vec::new(),
+        inicio_turno: 0,
+        cambios: 0,
+        tareas_acabadas: 0,
+        aparcadas: 0,
+        procesos_creados: 0,
+        por_reloj: 0,
+        al_acabar: alloc::collections::BTreeMap::new(),
     };
     // ramlib: lo que no está en memoria, de disco (`ramlib.rs`). Sus asignaciones, a los cajones que haya.
     c.ex.poner_ramlib(N_RAMLIB_CARGAR, N_RAMLIB_SOLTAR);
@@ -637,6 +662,8 @@ pub unsafe extern "C" fn caja_tarea_nueva(
     c.excepciones = 0;
     match crear_proceso(c, nombre, pila, pc, vuelta, args, seglist) {
         Ok((t, s)) => {
+            c.principal = t;
+            c.inicio_turno = dashos::ahora_us();
             // SEGURIDAD: lo garantiza quien llama.
             unsafe { *sp = s };
             t
@@ -696,13 +723,26 @@ fn crear_proceso(
     // Son suyas: si la tarea muere, exec las suelta.
     ex.cambiar_dueno(t, t);
     ex.cambiar_dueno(p, t);
-    if ex.elegir_siguiente() != Some(t) {
-        return Err(caja_exec::Fallo::TareaDesconocida { dir: t });
-    }
+    // La tarea del programa no es de nadie y se pone en marcha ya (las del sistema que estén listas correrán cuando
+    // ella espere o ceda).
+    ex.poner_creadora(t, 0);
+    ex.poner_en_marcha(t)?;
     // La consola, como entrada y salida (lo de un programa lanzado desde el CLI).
     let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
     let consola = if c.sin_consola { 0 } else { c.dos.abrir_consola(&mut cd).unwrap_or(0) };
+    // El cajón del programa (`pr_HomeDir`, `PROGDIR:`), si viene de disco con su ruta (los del usuario: Tachyon busca
+    // ahí sus iconos). El cerrojo es de la tarea: dos lo suelta cuando acaba.
+    let mut programa = 0;
+    if let Some(i) = nombre.iter().rposition(|&b| b == b'/' || b == b':') {
+        let cajon = if nombre[i] == b':' { &nombre[..=i] } else { &nombre[..i] };
+        let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+        if let Ok(l) = c.dos.cerrojo_de_ruta(&mut cd, cajon) {
+            c.dos.dar_cerrojo(l, t);
+            programa = l;
+        }
+    }
     let ex = &mut c.ex;
+    ex.mem.escribir32(t + pr::PR_HOMEDIR, programa)?;
     ex.mem.escribir32(t + pr::PR_CIS, consola)?;
     ex.mem.escribir32(t + pr::PR_COS, consola)?;
     // La CLI: los programas de C (libnix, el runtime de Dash) miran `pr_CLI` para saber que no vienen del Workbench
@@ -764,10 +804,21 @@ pub unsafe extern "C" fn caja_consola_prefijo(prefijo: *const u8, largo: usize) 
 pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let Some(c) = caja() else { return 0 };
     let ventanas = c.gr.ventanas().len();
+    // Las tareas que creó el programa (o sus tareas) mueren con él, antes que él: su código se va a soltar. Las que
+    // creó código de una biblioteca de disco son del sistema y siguen.
+    let hijas = c.ex.descendientes(t);
+    if !hijas.is_empty() {
+        di(&format!("{} tareas del programa siguen vivas al acabar: se quitan", hijas.len()));
+    }
+    for h in hijas {
+        multitarea::quitar_tarea(c, h, true);
+    }
     {
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         c.dos.acabar_tarea(&mut cd, t);
     }
+    c.dormidas.retain(|&(x, _)| x != t);
+    procesos::al_acabar(c, t);
     c.gr.tarea_muerta(&mut c.ex, t);
     // Lo suyo que no es del programa: su estructura, su pila y su CLI.
     let pila = c.ex.mem.leer32(t + task::TC_SPLOWER).unwrap_or(0);
@@ -777,7 +828,10 @@ pub extern "C" fn caja_tarea_fin(t: u32) -> u32 {
     let _ = c.ex.matar_tarea(t);
     c.ex.ramlib_cortada();
     c.util.tarea_muerta(&c.ex);
-    let _ = c.ex.elegir_siguiente();
+    // Entre un programa y otro no corre ninguna tarea (las del sistema que estén listas esperan al siguiente).
+    c.ex.sin_tarea_en_marcha();
+    c.principal = 0;
+    multitarea::avisar_reloj(c);
     recoger_avisos(c);
     if let Some(r) = c.faltan.resumen_de_la_tarea() {
         di(&r);
@@ -905,6 +959,16 @@ fn ajena(c: &mut Caja, n: u16, r: &mut Registros) -> Fin {
     if (N_DOS + caja_dos::lvo::PRIMERA..=N_DOS + caja_dos::lvo::ULTIMA).contains(&n)
         && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
     {
+        // Los procesos nuevos los monta la caja (necesitan exec): `procesos.rs`.
+        if n == N_DOS + caja_dos::lvo::CREATE_NEW_PROC || n == N_DOS + caja_dos::lvo::CREATE_PROC {
+            let (v, ceder) = if n == N_DOS + caja_dos::lvo::CREATE_NEW_PROC {
+                procesos::create_new_proc(c, r.d[1])
+            } else {
+                procesos::create_proc(c, r)
+            };
+            r.d[0] = v;
+            return if ceder { Fin::Ceder } else { Fin::Seguir };
+        }
         let mut rd = caja_dos::Registros { d: r.d, a: r.a };
         let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
         let a = c.dos.llamar(&mut cd, n - N_DOS, &mut rd);
@@ -1154,22 +1218,42 @@ enum Espera {
     Plazo,
 }
 
+/// Lo más que se espera sin que llegue nada antes de cortar el programa.
+fn espera_maxima() -> u64 {
+    // SEGURIDAD: una función de caja.c sin argumentos.
+    unsafe { caja_espera_maxima_us() }.max(ESPERA_MAXIMA_US)
+}
+
+/// Las pruebas de la caja: cerrar las ventanas como con el botón de la barra, si lo piden.
+fn cerrar_si_lo_piden(c: &mut Caja) {
+    // SEGURIDAD: una función de caja.c sin argumentos.
+    if unsafe { caja_tomar_cerrar() } != 0 {
+        for w in c.gr.ventanas() {
+            if let Some(s) = c.gr.superficie(w) {
+                let _ = c.gr.evento(&mut c.ex, s, caja_intuition::Evento::Cerrar);
+            }
+        }
+    }
+}
+
+/// Si alguien de fuera ha pedido Ctrl-C para el programa (y lo apaga).
+fn ctrl_c_de_fuera() -> bool {
+    // SEGURIDAD: una función de caja.c sin argumentos.
+    unsafe { caja_tomar_ctrl_c() != 0 }
+}
+
+/// A quién va Ctrl-C de fuera: a la tarea del programa, si sigue; si no, a `t`.
+fn para_ctrl_c(c: &Caja, t: u32) -> u32 {
+    if c.principal != 0 && c.ex.tareas().contains(&c.principal) { c.principal } else { t }
+}
+
 fn esperar(c: &mut Caja, t: u32) -> Espera {
     let _ = c.ex.elegir_siguiente();
-    // SEGURIDAD: una función de caja.c sin argumentos.
-    let maxima = unsafe { caja_espera_maxima_us() }.max(ESPERA_MAXIMA_US);
+    let maxima = espera_maxima();
     let mut hasta = dashos::ahora_us() + maxima;
     loop {
         atender(c);
-        // Las pruebas de la caja: cerrar las ventanas de la tarea como con el botón de la barra.
-        // SEGURIDAD: una función de caja.c sin argumentos.
-        if unsafe { caja_tomar_cerrar() } != 0 {
-            for w in c.gr.ventanas() {
-                if let Some(s) = c.gr.superficie(w) {
-                    let _ = c.gr.evento(&mut c.ex, s, caja_intuition::Evento::Cerrar);
-                }
-            }
-        }
+        cerrar_si_lo_piden(c);
         if c.gr.boopsi_pendiente() {
             // La tarea vuelve a tener el testigo: se atiende BOOPSI con ella y la espera se repite.
             let _ = c.ex.despertar(t);
@@ -1177,9 +1261,9 @@ fn esperar(c: &mut Caja, t: u32) -> Espera {
             return Espera::Boopsi;
         }
         // Ctrl-C de fuera (caja.c): la señal llega como la de cualquier otra tarea.
-        // SEGURIDAD: una función de caja.c sin argumentos.
-        if unsafe { caja_tomar_ctrl_c() } != 0 {
-            let _ = c.ex.senal_ctrl_c(t);
+        if ctrl_c_de_fuera() {
+            let p = para_ctrl_c(c, t);
+            let _ = c.ex.senal_ctrl_c(p);
         }
         if c.ex.excepcion_en_espera(t) {
             let _ = c.ex.despertar(t);
@@ -1311,8 +1395,21 @@ fn primera(c: &mut Caja, n: u16, r: &mut Registros) -> Accion {
 fn llamada(n: u16, r: &mut Registros) -> i32 {
     let Some(c) = caja() else { return C_RECHAZADA };
     revisar_temporizador(c);
+    multitarea::despertar_dormidas(c);
     let antes = *r;
     let t = c.ex.tarea_actual();
+    if n == lvo::REPETIR {
+        // Una tarea que se bloqueó vuelve a correr (`multitarea.rs`): repite su llamada con los registros de entonces.
+        // Antes, sus excepciones (la pudo sacar de la espera una de ellas).
+        let Some(m) = c.ex.tomar_repeticion(t).filter(|&m| m != lvo::REPETIR) else {
+            di("el trampolín de repetir, sin nada que repetir: no hace nada");
+            return C_SEGUIR;
+        };
+        if !entregar_excepciones(r.a[7]) {
+            return C_ACABAR;
+        }
+        return llamada(m, r);
+    }
     c.pc_llamada = c.ex.mem.leer32(r.a[7]).unwrap_or(0);
     // Lo que reserve código de una biblioteca de disco es del sistema: la biblioteca sigue al acabar la tarea.
     let de_biblioteca = faltan::de_biblioteca(c, c.pc_llamada).is_some();
@@ -1330,11 +1427,39 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     }
     if n == N_INTERRUPCION {
         // La interrupción de nivel 6 de la caja (caja.c la levanta desde otro hilo): Ctrl-C para el programa.
-        // SEGURIDAD: una función de caja.c sin argumentos.
-        if unsafe { caja_tomar_ctrl_c() } != 0 {
-            let _ = c.ex.senal_ctrl_c(t);
+        if ctrl_c_de_fuera() {
+            let p = para_ctrl_c(c, t);
+            let _ = c.ex.senal_ctrl_c(p);
         }
         return if entregar_excepciones(r.a[7]) { C_SEGUIR } else { C_ACABAR };
+    }
+    // El fin de una tarea que no es la del programa (vuelve de su función, o `RemTask(0)`): se quita y corre otra.
+    if t != 0 && t != c.principal && (n == lvo::FIN_DE_TAREA || (n == N_REMTASK && (r.a[1] == 0 || r.a[1] == t))) {
+        if multitarea::se_puede_cambiar() && !multitarea::tiene_nivel(t) {
+            multitarea::quitar_tarea(c, t, false);
+            recoger_avisos(c);
+            return match multitarea::siguiente(r, None) {
+                multitarea::Siguiente::Lista => C_SEGUIR,
+                multitarea::Siguiente::Plazo => plazo_acabado(),
+            };
+        }
+        di("una tarea acaba dentro de una llamada anidada suya o en modo supervisor: se acaba el programa");
+        return C_ACABAR;
+    }
+    // `RemTask` de otra: se quita (si es la del programa, el programa acaba).
+    if n == N_REMTASK && r.a[1] != 0 && r.a[1] != t && c.ex.tareas().contains(&r.a[1]) {
+        let v = r.a[1];
+        if v == c.principal {
+            di("una tarea quita la del programa: el programa acaba");
+            return C_ACABAR;
+        }
+        if multitarea::tiene_nivel(v) {
+            di(&format!("RemTask de ${:x}: está dentro de una llamada anidada suya; no se quita", v));
+            return C_SEGUIR;
+        }
+        multitarea::quitar_tarea(c, v, false);
+        recoger_avisos(c);
+        return C_SEGUIR;
     }
     if c.gr.es_boopsi(n) {
         // BOOPSI (intuition, los despachadores de las clases nativas, las bibliotecas de ReAction): puede ejecutar
@@ -1359,13 +1484,19 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         primera(c, n, r)
     };
     let mut res = C_SEGUIR;
+    let mut ceder = false;
     loop {
         let Some(c) = caja() else { return C_RECHAZADA };
         match avanzar(c, n, r, a) {
             Fin::Seguir => {}
             Fin::Ceder => {
-                // Una sola tarea 68k a la vez (de momento): el testigo vuelve a ella.
-                let _ = c.ex.elegir_siguiente();
+                // Hay otra de más prioridad lista: al acabar la llamada (`multitarea.rs`). Con una sola tarea, el
+                // testigo vuelve a ella.
+                if multitarea::hay_otras(c) {
+                    ceder = true;
+                } else {
+                    let _ = c.ex.elegir_siguiente();
+                }
             }
             Fin::Ejecutar { dir, regs, tras } => {
                 // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
@@ -1393,6 +1524,20 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 c.ex.memoria_del_sistema(de_biblioteca);
                 a = c.ex.continuar(tras, &rr, r);
                 continue;
+            }
+            Fin::Bloquear if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {
+                // Se para con su llamada por repetir y corre otra (`multitarea.rs`).
+                if !multitarea::guardar(c, t, antes, caja_exec::Modo::Repetir(n)) {
+                    return C_ACABAR;
+                }
+                if c.ex.excepcion_en_espera(t) {
+                    let _ = c.ex.despertar(t);
+                }
+                recoger_avisos(c);
+                return match multitarea::siguiente(r, Some((t, antes.a[7]))) {
+                    multitarea::Siguiente::Lista => C_SEGUIR,
+                    multitarea::Siguiente::Plazo => plazo_acabado(),
+                };
             }
             Fin::Bloquear => match esperar(c, t) {
                 Espera::Lista => {
@@ -1429,6 +1574,21 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
                 }
             },
             Fin::Terminar => res = C_ACABAR,
+            Fin::Dormir(tics) if multitarea::hay_otras(c) && multitarea::se_puede_cambiar() => {
+                // Duerme aparcada hasta su hora y corre otra (`multitarea.rs`).
+                let hasta = dashos::ahora_us() + tics.min(50 * 3600) as u64 * 20_000;
+                if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {
+                    return C_ACABAR;
+                }
+                let _ = c.ex.aparcar(t);
+                c.dormidas.push((t, hasta));
+                recoger_avisos(c);
+                let a7 = r.a[7];
+                return match multitarea::siguiente(r, Some((t, a7))) {
+                    multitarea::Siguiente::Lista => C_SEGUIR,
+                    multitarea::Siguiente::Plazo => plazo_acabado(),
+                };
+            }
             Fin::Dormir(tics) => {
                 if !dormir(tics, r.a[7]) {
                     res = C_ACABAR;
@@ -1472,5 +1632,126 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
     if !entregar_excepciones(r.a[7]) {
         return C_ACABAR;
     }
+    // Varias tareas: cede si hay otra de más prioridad lista o si acabó su turno y hay otra de la suya.
+    let Some(c) = caja() else { return res };
+    multitarea::avisar_reloj(c);
+    if res == C_SEGUIR && multitarea::hay_otras(c) && multitarea::se_puede_cambiar() {
+        let t = c.ex.tarea_actual();
+        let turno = dashos::ahora_us().saturating_sub(c.inicio_turno) > multitarea::TURNO_US;
+        let cambiar = ceder || (turno && c.ex.fin_de_turno());
+        if turno && !cambiar {
+            c.inicio_turno = dashos::ahora_us();
+        }
+        if cambiar && t != 0 {
+            if !multitarea::guardar(c, t, *r, caja_exec::Modo::Volver) {
+                return C_ACABAR;
+            }
+            return match multitarea::siguiente(r, None) {
+                multitarea::Siguiente::Lista => C_SEGUIR,
+                multitarea::Siguiente::Plazo => plazo_acabado(),
+            };
+        }
+    }
     res
+}
+
+/// Nadie se puso listo en el plazo: se corta el programa.
+fn plazo_acabado() -> i32 {
+    di(&format!("las tareas llevan {} s esperando sin que llegue nada: se corta el programa", ESPERA_MAXIMA_US / 1_000_000));
+    C_ACABAR
+}
+
+/// `RemTask` de exec (su entrada).
+const N_REMTASK: u16 = 48;
+
+/// La tarea en marcha (caja.c, para saber de quién es cada nivel de llamadas anidadas).
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_tarea_en_marcha() -> u32 {
+    caja().map_or(0, |c| c.ex.tarea_actual())
+}
+
+/// La tarea en marcha llega a la vuelta de un nivel anidado que no es suyo (caja.c): se aparca y corre otra, con sus
+/// registros en `regs`. 0, o 1 si hay que cortar el programa.
+///
+/// # Safety
+/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_aparcar_en_vuelta(regs: *mut u64, vuelta: u32) -> i32 {
+    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
+    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
+    let Some(mut r) = Registros::desde_jit(x) else { return 1 };
+    let v = multitarea::aparcar_en_vuelta(&mut r, vuelta);
+    r.hacia_jit(x);
+    v
+}
+
+/// Cambios de tarea, tareas acabadas y aparcadas desde la última vez (las pone a 0).
+///
+/// # Safety
+/// Los tres punteros tienen que poder escribirse.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_cuentas_tareas(cambios: *mut u32, acabadas: *mut u32, aparcadas: *mut u32) {
+    let Some(c) = caja() else { return };
+    // SEGURIDAD: lo garantiza quien llama (caja.c, con variables suyas).
+    unsafe {
+        *cambios = core::mem::take(&mut c.cambios);
+        *acabadas = core::mem::take(&mut c.tareas_acabadas);
+        *aparcadas = core::mem::take(&mut c.aparcadas) + (core::mem::take(&mut c.por_reloj) << 16);
+    }
+}
+
+/// Una tarea cae por una excepción sin `tc_TrapCode` (caja.c, `N_CAIDA`): si no es la del programa ni tiene niveles
+/// anidados abiertos, se quita y corre otra (sus registros, en `regs`): 1. Si no, 0: el programa acaba.
+///
+/// # Safety
+/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_caida(regs: *mut u64, vector: u32) -> i32 {
+    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
+    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
+    let Some(mut r) = Registros::desde_jit(x) else { return 0 };
+    let Some(c) = caja() else { return 0 };
+    let t = c.ex.tarea_actual();
+    if t == 0 || t == c.principal || !c.ex.tareas().contains(&t) || multitarea::tiene_nivel(t) {
+        return 0;
+    }
+    let nombre = c.ex.mem.leer32(t + node::LN_NAME).ok().and_then(|n| c.ex.leer_cadena(n).ok()).unwrap_or_default();
+    di(&format!("la tarea \"{}\" cae por la excepción {} sin tc_TrapCode: se quita; el programa sigue", nombre, vector));
+    multitarea::quitar_tarea(c, t, true);
+    recoger_avisos(c);
+    match multitarea::siguiente(&mut r, None) {
+        multitarea::Siguiente::Lista => {
+            r.hacia_jit(x);
+            1
+        }
+        multitarea::Siguiente::Plazo => 0,
+    }
+}
+
+/// La interrupción de la caja con una tarea en modo de usuario (caja.c): si acabó su turno, corre otra (sus registros
+/// en `regs`): 1. Si no, 0.
+///
+/// # Safety
+/// `regs` tiene que apuntar a la copia de 31 registros del JIT.
+#[unsafe(no_mangle)]
+pub unsafe extern "C" fn caja_turno(regs: *mut u64, usp: u32, pc: u32, sr: u32, rtr: u32) -> i32 {
+    // SEGURIDAD: lo garantiza quien llama (dashos_native_call, con la copia del JIT).
+    let x = unsafe { core::slice::from_raw_parts_mut(regs, caja_exec::registros::X_TOTAL) };
+    let Some(mut r) = Registros::desde_jit(x) else { return 0 };
+    if multitarea::turno_por_reloj(&mut r, usp, pc, sr, rtr) {
+        r.hacia_jit(x);
+        1
+    } else {
+        0
+    }
+}
+
+/// Se cerraron los niveles de encima del de `t`: si estaba aparcada en su vuelta, ya puede seguir.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_desaparcar(t: u32) {
+    if let Some(c) = caja()
+        && !c.dormidas.iter().any(|&(x, _)| x == t)
+    {
+        let _ = c.ex.desaparcar(t);
+    }
 }

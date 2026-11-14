@@ -263,7 +263,8 @@ impl<M: Memoria> Exec<M> {
         self.e8(t + task::TC_TDNESTCNT, 0xFF)?;
         self.e8(t + task::TC_STATE, ts::READY)?;
         self.enqueue(self.base + execbase::TASKREADY, t)?;
-        self.tareas.insert(t, InfoTarea { pc: inicial_pc, sp, ..Default::default() });
+        let creadora = self.dueno_de_lo_nuevo();
+        self.tareas.insert(t, InfoTarea { pc: inicial_pc, sp, creadora, ..Default::default() });
         Ok(t)
     }
 

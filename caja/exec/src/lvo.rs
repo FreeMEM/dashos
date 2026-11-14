@@ -171,11 +171,15 @@ pub fn nombre(n: u16) -> &'static str {
     match n {
         1..=ENTRADAS => FUNCIONES[n as usize - 1].0,
         FIN_DE_TAREA => "(fin de tarea)",
+        REPETIR => "(repetir)",
         _ => "(desconocida)",
     }
 }
 
 /// Número nativo privado de exec: el código al que vuelve una tarea cuando acaba su función (`RemTask(NULL)`).
 pub const FIN_DE_TAREA: u16 = 200;
+/// Número nativo privado de exec: el trampolín con que la caja retoma una tarea que se bloqueó en una llamada: la
+/// repite con los registros de entonces (`cambio.rs`).
+pub const REPETIR: u16 = 201;
 /// Los números nativos de exec van del 1 a este; los demás son de otras bibliotecas nativas de la caja.
 pub const ULTIMO_DE_EXEC: u16 = 255;
