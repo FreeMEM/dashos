@@ -1978,3 +1978,12 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - `presion` escucha siempre: antes acababa a los 15 min y, como lee un canal, `inicio` lo vigilaba como servicio y lo
   relanzaba tres veces como caído (ruido en wayland). make prueba y arranque-virt bien; presion sigue provocando el
   aviso (la caja Amiga devuelve memoria). Que ya no se relanza solo se ve en las pruebas largas (wayland): sin mirar aún.
+- **Procesos 68k unidos a revision** (cd40efd, rama `caja-amiga-procesos`; detalle en `docs/bitacoras/caja-amiga.md`,
+  2026-11-14 noche): varias tareas 68k a la vez con planificador propio en el hilo de Emu68 (turnos de 80 ms, reloj
+  cada 20 ms), `CreateNewProc`/`CreateProc`, datatypes.library abre. Tanda completa todo rc=0 (av a la segunda: el
+  fallo suelto del explorador). Las cuatro decisiones del agente, aprobadas por el usuario (en S4). Por unir:
+  1d88b46 (`MatchFirst`/`MatchNext`/`MatchEnd` y `AddDataTypes REFRESH` al arrancar), sin probar aún con el AmigaOS
+  del usuario.
+- Decisiones del usuario (2026-11-15) sobre lo abierto del formato de paquetes, escritas en S4, S8 y S6b: perfil de
+  la caja (lo dice ella), vocabulario aarch64 (ARMv8.0, 16 KB, `hypervisor` y memoria), instaladores con capa de
+  captura, firma de fichero opcional con sus reglas.

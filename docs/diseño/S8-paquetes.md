@@ -104,6 +104,31 @@ del proyecto Hangar, que tiene abierta la pregunta de qué sistemas cubre. Este 
 - `SYS:` se actualiza al reiniciar. Se avisa, nunca se fuerza.
 - Las actualizaciones de seguridad se marcan como tales en el índice.
 
+## Decidido el 2026-11-15 (formato de paquetes 2, lo que quedaba abierto)
+
+**La máquina de un paquete Amiga** es la caja, con el perfil que ella dice (S4).
+
+**Vocabulario de máquina de `aarch64-dashos`.** Mínimo de procesador: ARMv8.0-A. Lo que un programa puede mirar al
+arrancar (cifrado, LSE y demás extensiones) no se declara: lo detecta él y elige su camino. Todo binario de DashOS se
+enlaza para páginas de 16 KB, que valen también con 4 KB: así no hay paquetes aparte para el Mac. Se declara solo lo
+que no se arregla al arrancar: `hypervisor` (hay EL2 para cajas) y la memoria mínima (`4GB`). Lo demás se añade
+cuando un programa de verdad lo pida; una palabra que un `Paq` viejo no conoce es un error, y no instala.
+
+**Instaladores Amiga (`installer`).** No se le prohíbe escribir fuera de su cajón (casi todos copian a `LIBS:` y tocan
+`S:User-Startup`, y abortarían): corre en una caja de instalación aparte, sin red y con tope de tiempo, sobre una
+capa de captura que no toca el sistema. Al acabar, `Paq` reparte lo capturado: lo del cajón elegido, al cajón del
+paquete; lo de `C:`, `LIBS:`, `DEVS:`, `FONTS:` y `LOCALE:`, a las capas del paquete (la lista cerrada de S4b); de
+`S:User-Startup` solo las líneas `Assign`, que pasan a ser sus asignaciones; lo demás se descarta y se enseña. Hace
+falta el `Installer` del AmigaOS del usuario (DashOS no lo trae): sin él, el paquete se instala como cajón.
+
+**Firmas.** Lo que baja de un repositorio va comprobado por el índice firmado, que lleva la huella de cada paquete.
+La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, lo entregado fuera):
+
+- solo cuenta si la clave está en la lista del usuario; con una clave desconocida es como sin firma;
+- un paquete suelto firmado no lleva serie ni caducidad: nunca sustituye a una versión más nueva sin preguntar;
+- lo suelto tiene identidad propia (no la del repositorio): aunque se llame igual, no hereda lo concedido (S6b);
+- sin firma válida es un "suelto" de S6b: se instala solo si el usuario lo confirma, y pregunta todo.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?

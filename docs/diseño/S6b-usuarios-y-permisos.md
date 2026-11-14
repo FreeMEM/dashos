@@ -347,6 +347,16 @@ Cada camino tiene un programa que lo intenta y tiene que fallar. Van en `make pr
 - La ejecución especulativa: las defensas de S16 están sin medir.
 - Dos aplicaciones que se ponen de acuerdo: una con red puede hacer de recadera de otra sin red.
 
+## Decidido el 2026-11-15: identidad de la aplicación y paquetes sueltos (con S8)
+
+- La identidad de una aplicación para lo concedido es repositorio + nombre del paquete, no solo el nombre. Si cambia
+  de origen, lo concedido se pierde.
+- Un paquete suelto (de un USB) tiene identidad propia aunque vaya firmado con una clave conocida: no hereda lo
+  concedido al del repositorio con su mismo nombre. Sin firma válida es la ficha "suelto" de la tabla.
+- Los nombres de permisos del formato de paquetes son los de la lista de permisos de este documento, en inglés:
+  `network`, `network-listen`, `camera`, `microphone`, `location`, `files`, `volumes`, `deadline`, `screen`,
+  `arexx:PORT`, `autostart`. `files:RUTA` no existe.
+
 ## Lo que cambia en cada pieza
 
 | Pieza | Cambio |
