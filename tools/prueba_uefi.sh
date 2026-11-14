@@ -124,6 +124,7 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
+centro_avisado = 0
 pregunta_contestada = (0, "", 0)
 # Con GUION_ERRORES: cada 3 s, en qué línea del guion está el bucle (para ver qué rama espera con "continue").
 if os.environ.get("GUION_TRAZA"):
@@ -489,7 +490,12 @@ while time.time() - inicio < total:
         # su ventana se lleve el teclado (S8: 2 s sin teclas). Dentro, flecha abajo (pide · eco) y Supr para quitarlo;
         # luego Tab (a la lista de categorías) y flecha abajo (Seguridad), y Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm,
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
-        if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
+        # Trasfondo: el tramo del centro espera a que la caja Amiga acabe sus ventanas de prueba (la caja va por su
+        # cuenta y se lleva el teclado con cada una; su fin lo dice `inicio`). Como mucho 150 s desde el aviso.
+        if centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto and not centro_avisado:
+            centro_avisado = time.time()
+        caja_hecha = "[inicio] caja-amiga acabó" in texto or (centro_avisado and time.time() - centro_avisado > 150)
+        if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto and caja_hecha:
             centro = 1
         if not selector_espera and centro == 1:
             if "[centro] Permisos en pantalla" not in texto:
