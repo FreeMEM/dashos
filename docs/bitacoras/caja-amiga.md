@@ -1894,3 +1894,57 @@ enseña imágenes.
 - **Arreglo de la prueba**: el Ctrl-C de las pruebas de Dash con plazo (`manda_ctrl_c`) llegaba al programa
   siguiente si el suyo acababa antes (salió con test_reaction tras test_gadtools: "***Break"). Ahora solo se manda
   si su programa sigue, y cada programa empieza sin Ctrl-C ni cierre pendientes.
+
+### Segunda tanda: el turno por reloj, PROGDIR: y lo que se vio con datatypes y Tachyon
+
+- **El turno por reloj**: con más de una tarea, un hilo de la caja levanta la interrupción de nivel 6 cada 20 ms. En
+  ella (modo supervisor, con el marco de la interrupción encima), si la tarea estaba en modo de usuario, acabó su
+  turno (80 ms), no hay `Forbid` ni `Disable` y hay otra lista de su prioridad, se le quita el testigo: su CCR y su PC
+  van a su pila (los saca un `RTR` suelto, $10169C, al retomarla) y el marco se rehace para volver en modo de usuario a
+  la siguiente (como en `caida`). Una tarea que no llama a nada ya no se queda con la caja (`procesos-a`, prueba 7b).
+- **`PROGDIR:` de los programas de disco**: la caja pone `pr_HomeDir` (un cerrojo del cajón de su ruta) a los programas
+  que carga de disco (`caja_dos::Dos::cerrojo_de_ruta`). Tachyon ya encuentra su cajón (escribe allí sus ajustes).
+- `tools/disco_archivos.py`: un cajón en `DASHOS_PROGRAMAS_AMIGA` se copia entero a `Amiga/Programas` sin ejecutarlo
+  (los iconos de Tachyon: `DASHOS_PROGRAMAS_AMIGA=.../dashweb:.../iconos`).
+- **Medidas** (QEMU `virt`, máquina con otras QEMU a la vez): sin cambios fuera del ruido en lo de antes (la suma de
+  1 a 100.000, 11 → 12 ms; texto_gcc, 6862 llamadas nativas, 249 → 253 ms; boopsi 142 → 145; ramlib 18 → 16;
+  glotona 256 → 246). Multitarea: 1000 idas y vueltas con Wait/Signal más 6 tareas más en `procesos-a`, 2223 cambios
+  de tarea; `procesos-b`, 4000 tareas creadas, llegadas a su `Wait` y acabadas con Ctrl-C (8241 cambios) en 1,2 s con
+  sus `Delay`. La medida limpia es `procesos-e`: 10.000 idas y vueltas con Wait y Signal, 20.002 cambios de tarea en
+  125 ms, **6,3 µs por cambio** (con su `Wait`, su `Signal` y la repetición del `Wait`).
+
+### datatypes y Tachyon (con el AmigaOS 3.2 del usuario, `MEMORIA=3G`; capturas solo en el equipo, sin publicar)
+
+- **datatypes.library 47.3 abre**: su `Init` crea su proceso ("datatypes.library", prioridad 0, espera) y vuelve. El
+  proceso es del sistema y sigue tras el programa. muimaster abre como antes.
+- **Tachyon** arranca, pinta su página y acaba con 0 sin avisos (30 s, con los turnos y sus tareas: `dash_task`), pero
+  los iconos de la barra y el logo siguen vacíos. Con sus iconos en el disco y `PROGDIR:` bien, no llega a pedir nada a
+  datatypes que se vea en el registro.
+- **Por qué no carga imágenes**: una prueba a mano (en `capa.c`, quitada: tarda 20 s) con `NewDTObject` de un ILBM del
+  AmigaOS del usuario da 0 con `IoErr` 212 (`ERROR_OBJECT_WRONG_TYPE`): datatypes no tiene registrado ningún tipo.
+  Eso lo hace `AddDataTypes REFRESH` (C: del usuario). Lanzado como proceso (`CreateNewProc` con `NP_Seglist`,
+  `NP_Arguments` y `NP_Cli`: funciona), pide **`MatchFirst`/`MatchNext` de dos, que no están**, y no acaba. Es lo
+  siguiente: `MatchFirst`/`MatchNext`/`MatchEnd` (AnchorPath), y que la caja lance `AddDataTypes REFRESH` al montar el
+  AmigaOS del usuario (o que lo haga su Startup-Sequence). Ojo entonces: lo que reserve `AddDataTypes` (un programa,
+  no una biblioteca) es suyo y pasaría a quien lo lanzó; si datatypes se queda con ello, hay que darlo al sistema.
+- Para que MUI y Tachyon pinten imágenes hará falta además cybergraphics (o picasso96api): las piden y no están.
+
+### Decisiones pendientes del usuario
+
+- **Un hilo de JIT por caja con planificador propio** en vez de un hilo del kernel por tarea (S4 §2).
+- **Las tareas que crea un programa mueren con él** (en AmigaOS seguirían, con su código ya soltado); las de las
+  bibliotecas de disco siguen.
+- **Lo que deja una hija al acabar pasa a su creadora** (memoria, ficheros, cerrojos, bibliotecas) en vez de soltarse.
+- **Una tarea que cae** (excepción sin `tc_TrapCode`) se quita y el programa sigue; si es la del programa, el programa
+  acaba (como antes). En AmigaOS sería un requester de "Software Failure".
+- No hay tope de tareas propio: las para el tope de memoria del 68k y el cupo (4000 en la prueba, sin problema).
+
+### Lo que queda
+
+- `MatchFirst`/`MatchNext` en dos y `AddDataTypes REFRESH` (arriba); cybergraphics.
+- `NP_ExitCode` (se avisa y no se llama), `NP_NotifyOnDeath` y `NP_Synchronous` (tampoco en dos 40).
+- Una tarea que acaba o cae dentro de una llamada anidada suya acaba el programa entero; `RemTask` de una tarea con una
+  llamada anidada abierta se niega (con aviso).
+- Entre un programa y otro no corre ninguna tarea: las del sistema que queden listas esperan al siguiente programa.
+- En modo supervisor (un `tc_TrapCode` que espera) no se cambia de tarea: espera en el sitio, como antes.
+- La prueba del oráculo (FS-UAE) de todo esto: no se ha hecho.
