@@ -102,8 +102,9 @@ const MAX_PROGRAMA: usize = 4 << 20;
 /// Los números de proceso de lo que lanza `sesiones` empiezan aquí: los de `inicio` son el número del programa más 1.
 const PRIMER_PID_PROPIO: u64 = lanzables::PRIMER_PID_PROPIO;
 /// Lo que se da a cada programa que lanza (su grupo de recursos).
-/// U6, paso 2: 8 MB, que un programa con montón (sus trozos son de 4 MB) y una ventana cabe; antes, 4.
-const PRESUPUESTO_LANZADO: u64 = 8 << 20;
+/// U6, paso 2: 8 MB, que un programa con montón (sus trozos son de 4 MB) y una ventana cabe; antes, 4. S3: desde que los
+/// cupos son topes y no se aparta nada al crearlos, 64 MB (una ventana a pantalla entera en Full HD son 8).
+const PRESUPUESTO_LANZADO: u64 = 64 << 20;
 /// Quién puede pedir entrar y salir (U3): `guardian`, y `entrada`, que hace de él en las pruebas.
 const GUARDIANES: &[&str] = &["guardian", "entrada"];
 /// Quién puede ver y retirar lo concedido (S10c): `guardian` y el centro de control. Nadie más se llama así (`inicio`).
@@ -749,6 +750,55 @@ fn es(f: &Ficha, nombres: &[&str]) -> bool {
     lanzables::del_sistema(f.marca, nombre(&f.nombre), nombres)
 }
 
+/// S3 (cupos como topes): pide al kernel el aviso de memoria baja (llamada 53, con el permiso de apagar) y lo atiende
+/// en un hilo propio, que lo apunta en el registro del sistema. Repartirlo a las cajas para que suelten lo que puedan
+/// (el globo de la caja Linux, las cachés de la Amiga) queda pendiente: hoy solo se dice.
+fn escuchar_memoria(permiso: u32) {
+    let (a, b) = dashos::canal_crear();
+    if (a as i32) <= 0 || dashos::memoria_aviso(permiso, a) != 0 {
+        println!("  [sesiones] sin el aviso de memoria baja");
+        return;
+    }
+    // `a` se queda abierta: es el lado desde el que escribe el kernel.
+    // SAFETY: se llama una sola vez (con el primer permiso de apagar), y la pila es solo de ese hilo desde aquí.
+    let pila = unsafe { &mut *PILA_MEMORIA.0.get() };
+    if dashos::hilos::crear(hilo_memoria, b as u64, pila, 0) < 0 {
+        println!("  [sesiones] sin hilo para el aviso de memoria baja");
+        return;
+    }
+    println!("  [sesiones] escucha el aviso de memoria baja");
+}
+
+/// La pila del hilo del aviso de memoria baja (`sesiones` no tiene montón).
+struct Pila(core::cell::UnsafeCell<[u8; 16 << 10]>);
+// SAFETY: solo la usa el hilo del aviso, que se crea una vez.
+unsafe impl Sync for Pila {}
+static PILA_MEMORIA: Pila = Pila(core::cell::UnsafeCell::new([0; 16 << 10]));
+
+/// El hilo del aviso de memoria baja: cada mensaje del kernel (24 bytes: nivel, 0, libres y lo que había al arrancar).
+fn hilo_memoria(lectura: u64) -> u64 {
+    let mut b = [0u8; 24];
+    let mut ll = [0u32; 1];
+    loop {
+        let (n, _) = dashos::canal_leer(lectura as u32, &mut b, &mut ll);
+        if n == dashos::E_CERRADO {
+            return 0;
+        }
+        if n != 24 {
+            dashos::dormir_us(10_000);
+            continue;
+        }
+        let nivel = u32::from_le_bytes(b[0..4].try_into().unwrap());
+        let libres = u64::from_le_bytes(b[8..16].try_into().unwrap()) >> 20;
+        let total = u64::from_le_bytes(b[16..24].try_into().unwrap()) >> 20;
+        if nivel == 1 {
+            println!("  [sesiones] memoria baja: quedan {} MB libres de {}; se pide a las cajas que suelten lo que puedan", libres, total);
+        } else {
+            println!("  [sesiones] memoria: {} MB libres de {}", libres, total);
+        }
+    }
+}
+
 fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
@@ -901,6 +951,7 @@ fn principal() -> u64 {
                 permiso_apagar = ll[0];
                 usadas = 1;
                 println!("  [sesiones] tiene el permiso de apagar");
+                escuchar_memoria(permiso_apagar);
             } else if u32_en(0) == CANAL_SISTEMA && m.len() == 20 && k >= 1 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
@@ -1062,7 +1113,7 @@ fn principal() -> u64 {
                         (Some(a), true, Some(hueco)) => match a.leer_entero(camino) {
                             Err(e) => (e, 0),
                             Ok((mem, tam)) => {
-                                // Su grupo sale del cupo de `sesiones` (64 MB): 8 MB para cada uno, de momento.
+                                // Su grupo, dentro del de `sesiones`: un tope de 64 MB, que no aparta nada (S3).
                                 let g = dashos::grupo_crear(PRESUPUESTO_LANZADO);
                                 // Nace con una llave: su canal con `sesiones`, marcado con su número (que viaja una vez).
                                 let pid = siguiente_pid;

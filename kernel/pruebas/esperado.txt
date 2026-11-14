@@ -30,6 +30,8 @@ S6: arranque endurecido bien
 S4: el GIC del kernel bien
 H4: la página 0 de la caja Amiga, solo de lectura y el resto de los 64 KB cerrado: bien
 H9: vistas de memoria con páginas de otro objeto, solo de lectura: bien
+# S3, cupos como topes: lo que cuesta cobrar (para comparar, docs/bitacoras/cupos.md).
+  coste de cobrar: 10000 objetos de 4 KB en
 C38: el kernel y los procesos, fuera del alcance del DMA: bien
 C10: hilos bien
   proceso con ASID 1 en el núcleo 2
@@ -97,6 +99,10 @@ Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x18
 Proceso: excepción de clase 0x20 en 0xffffff8000080000
 C32: registros de EL0 bien
+# S3: los cupos son topes; la memoria llena de verdad falla limpio y avisa por el canal del oyente (llamada 53).
+memoria: quedan
+  topes: cadena true, sin cobro a medias true, devuelto true, cien hermanos de 1 TB true; memoria llena a
+S3: cupos como topes y aviso de memoria baja bien
 # C51: hola (C19 y C30), padre (C39) y grupos (C42) los lanza también el lanzador, y cada grupo tiene que quedar a cero.
   subgrupos uno dentro de otro: 7 niveles como mucho
   hola desde Rust en EL0 (DashOS, little-endian)
@@ -125,6 +131,7 @@ C32: registros de EL0 bien
   [lanzador] tiempo: clase 0, código 49
   [grupos] cupo agotado en
   [grupos] ciclos soltados al matar el grupo, y matanzas a la vez sin caerse
+  [grupos] topes: un nieto con tope de 64 MB bajo uno de 2 MB se para en
   [grupos] tiempo de CPU: el hijo que gira gastó
   [lanzador] grupos: clase 0, código 42
   [lanzador] 7 pruebas lanzadas desde un proceso, cada una en su grupo, que queda a cero

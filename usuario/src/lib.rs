@@ -417,19 +417,42 @@ pub fn proceso_crear_en(grupo: u32, memoria: u32, tamano: usize, llaves: &[u32])
     llamada(12, [memoria as u64, tamano as u64, llaves.as_ptr() as u64, llaves.len() as u64, grupo as u64]).0 as i64
 }
 
-/// Un subgrupo del propio con `presupuesto` bytes (C42).
-pub fn grupo_crear(presupuesto: u64) -> i64 {
-    llamada(18, [presupuesto, 0, 0, 0, 0]).0 as i64
+/// Un subgrupo del propio con un tope de `tope` bytes (C42). Desde S3 es un tope y no una reserva: no se aparta nada
+/// del propio (solo los 512 bytes del grupo), y los topes de los hijos pueden sumar más que la máquina.
+pub fn grupo_crear(tope: u64) -> i64 {
+    llamada(18, [tope, 0, 0, 0, 0]).0 as i64
 }
 
 pub fn grupo_matar(grupo: u32) -> i64 {
     llamada(19, [grupo as u64, 0, 0, 0, 0]).0 as i64
 }
 
-/// (límite, usado) en bytes, o un error negativo en el límite.
+/// (tope, usado) en bytes, o un error negativo en el tope. Lo usado cuenta lo de sus subgrupos.
 pub fn grupo_uso(grupo: u32) -> (i64, u64) {
     let (a, b) = llamada(20, [grupo as u64, 0, 0, 0, 0]);
     (a as i64, b)
+}
+
+/// (tope, usado con sus subgrupos, usado sin ellos) en bytes, o un error negativo en el tope (S3).
+pub fn grupo_uso_propio(grupo: u32) -> (i64, u64, u64) {
+    let (r0, r1, r2): (u64, u64, u64);
+    unsafe {
+        asm!("svc #0",
+            in("x8") 20u64,
+            inlateout("x0") grupo as u64 => r0,
+            inlateout("x1") 0u64 => r1,
+            inlateout("x2") 0u64 => r2,
+            in("x3") 0u64, in("x4") 0u64,
+            options(nostack));
+    }
+    (r0 as i64, r1, r2)
+}
+
+/// S3: que el kernel avise de la memoria baja al otro lado de `canal` (con escribir), con el permiso de apagar (solo lo
+/// tiene `sesiones`). Mensajes de 24 bytes: nivel (u32: 0 normal, 1 baja), 0 (u32), bytes libres para procesos (u64) y
+/// los que había al arrancar (u64). 0 o un error negativo.
+pub fn memoria_aviso(permiso: u32, canal: u32) -> i64 {
+    llamada(53, [permiso as u64, canal as u64, 0, 0, 0]).0 as i64
 }
 
 /// Trasfondo (llamada 52): microsegundos de CPU del grupo `grupo` (su llave, con leer) y sus subgrupos, vivos y

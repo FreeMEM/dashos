@@ -416,36 +416,37 @@ fn principal() -> u64 {
             continue;
         }
         unsafe { core::ptr::copy_nonoverlapping(origen as *const u8, destino as *mut u8, tamano) };
-        // 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de docs/MULTITAREA_LOOP.md: con 6 MB
-        // de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
-        // U6: `sesiones`, también 64: de su cupo salen los grupos de lo que lanza (8 MB cada uno).
+        // Topes de memoria de cada servicio (S3: desde los cupos como topes no se aparta nada al crear el grupo; lo que
+        // no se pasa es lo usado de verdad). 16 MB por servicio; el de archivos, 64, para su caché de bloques (paso F9 de
+        // docs/MULTITAREA_LOOP.md: con 6 MB de caché, un fichero de 8 MB leído de corrido iba siempre al disco).
+        // U6: `sesiones`, 512: lo usado por los grupos de lo que lanza (64 MB cada uno) cuenta en el suyo.
         // C3: el fondo, 48: la imagen a pantalla entera en el montón y dos juegos de franjas (el que se ve y el nuevo); a
         // 1920 × 1080, unos 8 MB cada cosa.
         let cupo = match nombre(nombre_cab) {
-            "archivos" | "sesiones" => 64 << 20,
+            "archivos" => 64 << 20,
+            "sesiones" => 512 << 20,
             "fondo" => 48 << 20,
             // El explorador: sus ventanas (3 MB cada una a 1100 × 720, 8 maximizada en Full HD), las fuentes, un PNG a
             // medio decodificar (hasta 1,5 Mpx) y 64 miniaturas. El Workbench, desde que los cajones los abre el
-            // explorador, solo pinta los iconos y la Información: 16, lo de siempre. Juntos, lo mismo que antes el
-            // Workbench solo (en `virt`, con 48 para el explorador ya no cabía la caja Amiga).
+            // explorador, solo pinta los iconos y la Información: 16, lo de siempre.
             "explorador" => 32 << 20,
             // La pantalla de bloqueo y de entrada de `guardian` es de pantalla entera (8,3 MB a 1920 × 1080), con su
             // montón y la capa de las preguntas al lado.
             "guardian" => 32 << 20,
-            // La caja Linux (H9): la RAM de su invitado de Linux sale de su cupo, más 32 MB del servicio (tablas de la etapa
+            // La caja Linux (H9): la RAM de su invitado de Linux sale de su cupo, más 66 MB del servicio (tablas de la etapa
             // 2, su montón con el disco del invitado y la terminal). Se calcula con la RAM de la máquina (decisión del
-            // usuario del 2026-11-12 y del 2026-11-13): 256 MB con 2 GB, 512 con 4 y 1 GB con 8 o más. Sin Linux que arrancar (sin su Image), solo los
-            // 32 MB.
+            // usuario del 2026-11-12 y del 2026-11-13): 256 MB con 2 GB, 512 con 4 y 1 GB con 8 o más. Sin Linux que
+            // arrancar (sin su Image), solo el margen. Si no hay tanta memoria libre, la caja usa para el invitado lo que
+            // le den (trozos de 16 MB hasta `E_MEMORIA`).
             "caja-linux" if tiene_aparato(cab, aparatos, n, "linux") => dashos::maquina::memoria_invitado_con(ram, pedida) + dashos::maquina::MARGEN_SERVICIO,
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
-            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas. Y lo que crezca el 68k según sus programas
-            // (decisión del usuario del 2026-11-13): como mucho una cuarta parte de lo que queda libre al lanzarla y
-            // nunca más de 256 MB, el tope de serie de `Prefs/cajas` (`memoria amiga`: uno mayor ahí no pasa de este
-            // cupo). El presupuesto de un grupo se saca del de quien lo crea: lo que se dé aquí ya no lo tienen los
-            // servicios de después, de ahí la cuarta parte.
-            "caja-amiga" => (32 << 20) + margen_caja_amiga(32 << 20),
+            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas: 32 MB. Y lo que crezca el 68k según sus
+            // programas: hasta el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie), que lleva la propia caja.
+            // `inicio` no lee el ajuste: el tope del grupo deja sitio para el mayor que admite (2048 MB), y es la caja
+            // la que se para en el suyo (S3: con los cupos como topes, ya no hace falta la cuarta parte de lo libre).
+            "caja-amiga" => (32 << 20) + MAX_MEMORIA_AMIGA,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
@@ -455,30 +456,12 @@ fn principal() -> u64 {
                 guardadas[j] = llave_duplicar(suyas[j], u64::MAX, 0).max(0) as u32;
             }
         }
-        let mut g = grupo_crear(cupo);
-        // Si no cabe lo de la caja Linux (2 GB de RAM y el primer GB solo para DMA, como en QEMU con highmem=off), con
-        // la mitad para el invitado, y así hasta 64 MB: el servicio usa para el invitado lo que le quepa (H9).
-        if nombre(nombre_cab) == "caja-linux" && cupo > dashos::maquina::MARGEN_SERVICIO {
-            let mut invitado = cupo - dashos::maquina::MARGEN_SERVICIO;
-            while g <= 0 && invitado > 64 << 20 {
-                invitado /= 2;
-                g = grupo_crear(invitado + dashos::maquina::MARGEN_SERVICIO);
-                if g > 0 {
-                    println!("  [inicio] caja-linux: sin sitio para {} MB; con {} MB", cupo >> 20, (invitado + dashos::maquina::MARGEN_SERVICIO) >> 20);
-                }
-            }
-            if g > 0 {
-                println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
-            }
+        let g = grupo_crear(cupo);
+        if g > 0 && nombre(nombre_cab) == "caja-linux" && cupo > dashos::maquina::MARGEN_SERVICIO {
+            println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
         }
-        // La caja Amiga: si aun así no cabe, sin margen (lo de siempre, 32 MB: su 68k apenas crece).
-        if nombre(nombre_cab) == "caja-amiga" {
-            if g <= 0 {
-                g = grupo_crear(32 << 20);
-            }
-            if g > 0 {
-                println!("  [inicio] caja-amiga: {} MB de cupo, {} para que crezca su 68k", cupo >> 20, (cupo >> 20).saturating_sub(32));
-            }
+        if g > 0 && nombre(nombre_cab) == "caja-amiga" {
+            println!("  [inicio] caja-amiga: tope de {} MB, {} para que crezca su 68k (lo para antes su ajuste)", cupo >> 20, (cupo >> 20).saturating_sub(32));
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
@@ -652,21 +635,5 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
     dashos::proceso_avisar(s.proceso, s.aviso) == 0
 }
 
-/// Lo que puede crecer el 68k de la caja Amiga: una cuarta parte de lo que queda libre para grupos tras su cupo `base`
-/// (la mayor que se puede crear ahora, buscada a mitades con grupos de prueba que se matan en seguida), en MB enteros,
-/// hasta 256.
-fn margen_caja_amiga(base: u64) -> u64 {
-    let (mut cabe, mut no) = (0u64, 8u64 << 30);
-    while no - cabe > 1 << 20 {
-        let medio = cabe + (no - cabe) / 2;
-        let g = grupo_crear(medio);
-        if g > 0 {
-            dashos::grupo_matar(g as u32);
-            dashos::cerrar(g as u32);
-            cabe = medio;
-        } else {
-            no = medio;
-        }
-    }
-    (cabe.saturating_sub(base) / 4).min(256 << 20) & !((1 << 20) - 1)
-}
+/// El mayor ajuste `memoria amiga` que admite `Prefs/cajas` (de 8 a 2048 MB; de serie, 256).
+const MAX_MEMORIA_AMIGA: u64 = 2048 << 20;
