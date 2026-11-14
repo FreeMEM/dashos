@@ -1923,3 +1923,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   "[ajustes] el compositor pide 800x560". No es el guion: es algo de la rama (¿qué superficie recibe ese clic? ¿la red
   antes del fondo cambia la cascada?). SIN UNIR hasta arreglarlo. La prueba con clics del monitor irá en un objetivo
   aparte. guardian (prueba) ya espera al centro por evento (35670fb).
+  Pistas apuntadas (2026-11-14, 05:30): en la rama, ventana-a y ventana-b salen en orden inverso en la cascada (la red
+  antes del fondo cambia el ritmo); el panel del fondo es capa de nivel 0 en (16, 84) y `Escena::raices` pone las capas
+  0 y 1 debajo de las ventanas, así que no debería comerse clics de ventanas (comprobado leyendo el código, no
+  probado). Siguiente paso: registrar en el compositor quién recibe el clic del guion en (400, 130) y comparar.
