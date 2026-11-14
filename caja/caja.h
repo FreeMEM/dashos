@@ -32,9 +32,14 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope);
 #define VUELTA_ANIDADA  (SISTEMA68K + 0x60)   /* adonde vuelve el 68k que la caja llama desde una función nativa */
 #define INTERRUPCION68K (SISTEMA68K + 0x70)   /* el vector 30 (nivel 6): la caja lo levanta desde otro hilo */
 #define SUPER_BAJO      (SISTEMA68K + 0x7c)   /* el límite de la pila de supervisor (lo mira el despacho) */
+#define CAIDA68K        (SISTEMA68K + 0x80)   /* tras trampa_defecto: acaba el programa, o sigue otra tarea */
+#define FIN_SISTEMA68K  (SISTEMA68K + 0xa0)
+#define RTS_SUELTO      (VUELTA_ANIDADA + 4)  /* un RTS (el de la vuelta anidada) */
+#define CAMBIO          (MARCA + 2)           /* 1: caida cambió de tarea (RTE en vez de COMUN) */
 /* Funciones nativas de la propia caja (no son de ninguna biblioteca). */
 #define N_VUELTA        0xff00
 #define N_INTERRUPCION  0xff01
+#define N_CAIDA         0xff02
 
 static inline void pon8(uintptr_t a, uint8_t v) { *(volatile uint8_t *)a = v; }
 static inline void pon16(uintptr_t a, uint16_t v) { *(volatile uint16_t *)a = v; }   /* el proceso es big-endian */
@@ -90,6 +95,18 @@ int caja_presion_listo(void);
 void caja_atender_memoria(void);
 int caja_programa_de_disco(uint32_t i, char *nombre, uint32_t max, const uint8_t **datos, uint32_t *largo);
 void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones);
+
+/* Varias tareas (pegamento/src/multitarea.rs): la tarea en marcha; aparcar la que llega a la vuelta de un nivel que no
+   es suyo (guarda sus registros, corre otra y deja los de la otra en regs: 0, o 1 si hay que cortar el programa); y
+   dejar lista la dueña de un nivel cuando se cierran los de encima. */
+uint32_t caja_tarea_en_marcha(void);
+int caja_aparcar_en_vuelta(uint64_t *regs, uint32_t vuelta);
+void caja_desaparcar(uint32_t t);
+/* Una tarea cae por una excepción sin tc_TrapCode (en modo de usuario, por `caida`, con su número en `vector`): si es
+   la del programa, 0 (el programa acaba). Si es otra, la caja la quita, corre otra y deja sus registros en regs: 1. */
+int caja_caida(uint64_t *regs, uint32_t vector);
+/* Desde el último programa: cambios de tarea, tareas acabadas y aparcadas en la vuelta de un nivel (y las pone a 0). */
+void caja_cuentas_tareas(uint32_t *cambios, uint32_t *acabadas, uint32_t *aparcadas);
 
 /* --- Lo que la caja (caja.c) da a Rust --- */
 /* Ejecuta código 68k desde una función nativa (una llamada anidada): desde `pc`, con los registros r[0..7] = D0-D7
