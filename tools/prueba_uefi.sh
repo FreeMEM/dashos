@@ -1846,17 +1846,15 @@ while time.time() - inicio < total:
         pregunta_ahora = (texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ")
                           or len(re.findall(r"acción de administrador \w+: se pregunta", texto)) > texto.count(": contesta como "))
         sin_pregunta = not pregunta_ahora or (ajustes_visto and time.time() - ajustes_visto > 25)
-        # Un tramo tras otro (trasfondo): la ventana Amiga, Ajustes (maximizar, devolver y su desplegable), el explorador y
-        # el monitor. Cada uno empieza cuando la salida serie dice que acabó el anterior. La ventana Amiga va primero: se
-        # cierra sola a los 40 s si nadie la cierra.
-        amiga_hecho = ("[caja-amiga] ventana: IDCMP_CLOSEWINDOW recibido" in texto or "nadie la cerro en 40 s" in texto
-                       or ("[caja-amiga] ventana Amiga en pantalla" not in texto and ajustes_visto and time.time() - ajustes_visto > 90))
+        # Un tramo tras otro (trasfondo): Ajustes (maximizar, devolver y su desplegable), el explorador y el monitor; cada
+        # uno empieza cuando la salida serie dice que acabó el anterior. La ventana Amiga no espera a Ajustes (se cierra
+        # sola a los 40 s, y en ese rato las ventanas de la caja tienen el paso): se sube con un clic antes de cerrarla.
         ajustes_hecho = "[ajustes] vuelve a " in texto or ajustes_reintentos >= 3
         desplegable_hecho = "[ajustes] el desplegable dice" in texto or menu_intentos >= 3
         # (Si Ajustes se quedara a medias, a los 3 min el explorador sigue igual: las líneas que falten lo dirán.)
         if (desplegable_hecho and menu != 1) or (ajustes_visto and time.time() - ajustes_visto > 180):
             tramo_ajustes_hecho = True
-        if not ajustes and amiga_hecho and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
             ajustes = True
             ajustes_hecho_en = time.time()
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
