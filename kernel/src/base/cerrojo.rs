@@ -126,6 +126,29 @@ pub fn restaurar_irq(rflags: u64) {
     }
 }
 
+/// Abre las interrupciones un momento y las vuelve a cerrar (X6): una que esté pendiente se atiende ahí, y el tic puede
+/// cambiar de hilo. Para las llamadas al sistema largas (`memoria_crear`), que corren con ellas cerradas. Solo sin
+/// ningún cerrojo tomado: si no, la interrupción podría pedir el mismo y el núcleo se colgaría. Si estaban abiertas, no
+/// cambia nada.
+#[cfg(target_arch = "aarch64")]
+#[inline]
+pub fn ventana_irq() {
+    let daif = enmascarar_irq();
+    unsafe { core::arch::asm!("msr daifclr, #2", "isb", "msr daifset, #2", options(nostack)) };
+    restaurar_irq(daif);
+}
+
+/// En x86, `sti` deja pasar las interrupciones después de la instrucción siguiente: tras el `nop`. El salto es para
+/// QEMU sin KVM, que solo mira las interrupciones al empezar un bloque traducido: sin él, el `nop` y el `cli` iban en
+/// el mismo bloque y no entraba ninguna.
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn ventana_irq() {
+    let rflags = enmascarar_irq();
+    unsafe { core::arch::asm!("sti", "nop", "jmp 2f", "2:", "cli", options(nostack)) };
+    restaurar_irq(rflags);
+}
+
 /// Nombre de antes de C35, cuando había cerrojos que no enmascaraban. Hoy son lo mismo.
 pub type CerrojoIrq<T> = Cerrojo<T>;
 pub type GuardaIrq<'a, T> = Guarda<'a, T>;

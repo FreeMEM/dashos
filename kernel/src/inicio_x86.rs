@@ -2,9 +2,10 @@
 //! allí), los ELF de x86 y las llaves de los aparatos que salen de ACPI y del PCIe en vez del árbol de dispositivos.
 //!
 //! Lo que hay en x86 por ahora: el xHCI, el NVMe y el sonido de virtio, cada uno con sus registros (su BAR), un permiso
-//! DMA propio y una MSI (MSI-X o MSI) si la tiene, y los servicios que van encima (disco, archivos, sonido). Sin consola
-//! (el kernel escribe en COM1, que es de E/S por puertos y un proceso no llega) ni compositor (la pantalla es X6): el
-//! xHCI manda sus eventos a `entrada`, un programa de prueba que los escribe.
+//! DMA propio y una MSI (MSI-X o MSI) si la tiene, y los servicios que van encima (disco, archivos, sonido). Y (X6) la
+//! pantalla del GOP para el compositor, que lee el teclado y el ratón del xHCI, con las ventanas de prueba y Ajustes.
+//! La consola es un proceso, como en ARM: recibe el registro y los puertos de COM1 (una llave de puertos, que se usa con
+//! `puertos_permitir` y queda en el mapa de E/S de la TSS).
 //!
 //! Sin IOMMU: el permiso DMA da memoria de la zona baja (por debajo de 4 GB), pero un aparato con el bus master
 //! encendido llega a toda la memoria física (`docs/referencia/kernel.md`, limitaciones).
@@ -25,8 +26,11 @@ static INICIO: &[u8] = elf!("inicio");
 /// Los servicios que lanza `inicio`, en orden, con los aparatos (por nombre y tipo) y los canales (por nombre) que le
 /// pasa a cada uno: los de ARM (`inicio.rs`) que tienen sus aparatos en un PC.
 static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
-    // Quien lee los eventos del teclado y el ratón (en ARM, el compositor): nombra "ventanas" antes que el xHCI.
-    ("entrada", elf!("entrada"), &[], &["ventanas"]),
+    // La consola (C48), con el registro y los puertos de COM1 (X6).
+    ("consola", elf!("consola"), &[("registro", REGISTRO), ("serie", PUERTOS)], &[]),
+    // El compositor (X6), con la pantalla del GOP: nombra "ventanas" antes que el xHCI y que los clientes de Wayland,
+    // así es quien lee (el servidor), como en ARM.
+    ("compositor", elf!("compositor"), &[("pantalla", FIRMWARE), ("pantalla-info", DATOS)], &["ventanas"]),
     ("xhci", elf!("xhci"), &[("dma-xhci", PERMISO_DMA), ("xhci", REGISTROS), ("xhci", INTERRUPCION | OPCIONAL)], &["ventanas"]),
     ("nvme", elf!("nvme"), &[("dma-nvme", PERMISO_DMA), ("nvme", REGISTROS), ("nvme", INTERRUPCION | OPCIONAL)], &["disco"]),
     ("disco", elf!("disco"), &[], &["disco"]),
@@ -36,12 +40,24 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     ("virtio-sonido", elf!("virtio-sonido"), &[("dma-vsonido", PERMISO_DMA), ("virtio-sonido", REGISTROS), ("vsonido-cfg", REGISTROS), ("virtio-sonido", INTERRUPCION | OPCIONAL)], &["sonido"]),
     ("tono-a", elf!("tono-a"), &[], &["sonido"]),
     ("tono-b", elf!("tono-b"), &[], &["sonido"]),
+    // Dos clientes de Wayland de prueba (W7) y una aplicación con el kit (K7), como en ARM.
+    ("ventana-a", elf!("ventana-a"), &[], &["ventanas"]),
+    ("ventana-b", elf!("ventana-b"), &[], &["ventanas"]),
+    ("ajustes", elf!("ajustes"), &[], &["ventanas"]),
     ("hola", elf!("hola"), &[], &[]),
 ];
 
 const REGISTROS: u32 = 1;
 const INTERRUPCION: u32 = 2;
 const PERMISO_DMA: u32 = 3;
+const REGISTRO: u32 = 4;
+const FIRMWARE: u32 = 5;
+/// Un objeto de memoria con datos, de solo lectura (las medidas de la pantalla).
+const DATOS: u32 = 6;
+/// Puertos de E/S (X6): los de COM1, para la consola.
+const PUERTOS: u32 = 7;
+/// COM1: la UART 16550 de un PC, ocho puertos desde 0x3F8.
+const COM1: (u32, u32) = (0x3f8, 8);
 const OPCIONAL: u32 = 0x100;
 const DERECHOS: u32 = crate::objetos::TODOS;
 
@@ -86,6 +102,33 @@ fn preparar(f: &Funcion, bar: usize, nombre: &str) -> Option<(u64, u64, Option<u
     Some((base, paginas, irq.map(|(i, _)| i)))
 }
 
+/// La pantalla del GOP que deja el cargador en la `InfoArranque`, si la hay: (memoria, objeto con sus medidas), como
+/// el nodo `simple-framebuffer` en ARM (`inicio.rs`, U4). Las medidas: ancho, alto, bytes por línea, formato (0
+/// a8r8g8b8, 1 a8b8g8r8) y desplazamiento dentro de la página. El formato del GOP (UEFI 2.10, 12.9) es al revés: 0
+/// es R, G, B en memoria (a8b8g8r8) y 1, B, G, R (a8r8g8b8); el cargador solo pasa estos dos, de 32 bits.
+fn pantalla_del_gop() -> Option<(Objeto, Objeto)> {
+    let i = crate::base::arranque::info()?;
+    if i.pantalla_base == 0 || i.pantalla_tamano == 0 || i.pantalla_formato > 1 {
+        return None;
+    }
+    let (fisica, tamano) = (i.pantalla_base, i.pantalla_tamano);
+    let paso = i.pantalla_por_linea.checked_mul(4)?;
+    if (paso as u64).checked_mul(i.pantalla_alto as u64)? > tamano || i.pantalla_ancho > i.pantalla_por_linea {
+        return None;
+    }
+    let formato = 1 - i.pantalla_formato;
+    let pagina = fisica & !(memoria::PAGINA - 1);
+    let fin = fisica.checked_add(tamano)?.div_ceil(memoria::PAGINA) * memoria::PAGINA;
+    kprintln!("pantalla del firmware: {}x{} en {:#x} ({} KB)", i.pantalla_ancho, i.pantalla_alto, fisica, tamano / 1024);
+    let info = memoria::Memoria::nueva(memoria::PAGINA as usize, &crate::cupo::Cupo::raiz())?;
+    let mut datos = [0u8; 20];
+    for (k, v) in [i.pantalla_ancho, i.pantalla_alto, paso, formato, (fisica - pagina) as u32].iter().enumerate() {
+        datos[4 * k..4 * k + 4].copy_from_slice(&v.to_le_bytes());
+    }
+    info.escribir(0, &datos);
+    Some((Objeto::Firmware { fisica: pagina, tamano: fin - pagina }, Objeto::Memoria(alloc::sync::Arc::new(info))))
+}
+
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
 pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
     let mut llaves: Vec<Llave> = Vec::new();
@@ -95,6 +138,14 @@ pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
         llaves.push(l);
         manifiesto.push((nombre16(nombre), tipo, llaves.len() as u32 + 1));
     };
+    // La consola (X6): el registro del sistema y los puertos de COM1, como el registro y el PL011 en ARM.
+    apuntar(&mut llaves, "registro", REGISTRO, Llave::nueva(Objeto::Registro, DERECHOS));
+    apuntar(&mut llaves, "serie", PUERTOS, Llave::nueva(Objeto::Puertos { primero: COM1.0, cuantos: COM1.1 }, DERECHOS));
+    // La pantalla del GOP (X6): su memoria, como memoria del firmware (fuera de la RAM), y sus medidas.
+    if let Some((pantalla, info)) = pantalla_del_gop() {
+        apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
+        apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
+    }
     let funciones = crate::pci::enumerar(a);
     kprintln!("PCIe: {} tramos de ECAM en la MCFG, {} funciones", a.ecam.len(), funciones.len());
     for (nombre, quien, bar, cfg, dma) in APARATOS {

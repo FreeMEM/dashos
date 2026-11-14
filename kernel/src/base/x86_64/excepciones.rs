@@ -34,7 +34,10 @@ const IST_DF: u8 = 1;
 const IST_NMI: u8 = 2;
 const IST_MC: u8 = 3;
 
-/// La TSS de 64 bits: solo las pilas. Sin mapa de puertos (su base apunta fuera de la TSS): el anillo 3 no hace E/S.
+/// La TSS de 64 bits: las pilas y el mapa de puertos de E/S (X6). El mapa cubre los puertos 0 a 0x3FF (los de un PC
+/// clásico: COM1 es 0x3F8), un bit por puerto, a 1 si el anillo 3 no puede usarlo. Detrás, bytes a 0xFF hasta el
+/// final de la TSS: la CPU lee dos bytes del mapa, y un puerto que cae más allá del límite queda prohibido (manual de
+/// Intel, vol. 1, 19.5.2). Lo pone el cambio de hilo, con los puertos del proceso que entra (`cargar_puertos`).
 #[repr(C, packed(4))]
 struct Tss {
     _r0: u32,
@@ -45,12 +48,73 @@ struct Tss {
     _r2: u64,
     _r3: u16,
     mapa_es: u16,
+    mapa: [u8; MAPA_ES + 4],
 }
 
 use super::nucleos::MAX_NUCLEOS;
 
+/// Bytes del mapa de E/S: los puertos de 0 a `MAX_PUERTO - 1`.
+const MAPA_ES: usize = MAX_PUERTO as usize / 8;
+/// El primer puerto que un proceso no puede tener nunca.
+pub const MAX_PUERTO: u32 = 0x400;
+
 static mut TSS: [Tss; MAX_NUCLEOS] =
-    [const { Tss { _r0: 0, rsp: [0; 3], _r1: 0, ist: [0; 7], _r2: 0, _r3: 0, mapa_es: 104 } }; MAX_NUCLEOS];
+    [const { Tss { _r0: 0, rsp: [0; 3], _r1: 0, ist: [0; 7], _r2: 0, _r3: 0, mapa_es: 104, mapa: [0xff; MAPA_ES + 4] } }; MAX_NUCLEOS];
+
+/// Los puertos de E/S que puede usar un proceso (X6), del 0 a `MAX_PUERTO - 1`: un bit por puerto, a 1 si puede. Cada
+/// vez que se le dan más cambia su versión, sacada de un contador global: así un núcleo sabe si el mapa de su TSS ya es
+/// el de este proceso sin mirar los bits (y un proceso nuevo en la misma dirección que otro muerto no hereda el suyo).
+/// La versión 0 es "ninguno".
+pub struct Puertos {
+    bits: [AtomicU64; MAPA_ES / 8],
+    version: AtomicU64,
+}
+
+static VERSION_PUERTOS: AtomicU64 = AtomicU64::new(1);
+
+/// La versión del mapa de puertos que tiene puesto cada núcleo en su TSS (0: todos prohibidos).
+static PUERTOS_CARGADOS: [AtomicU64; MAX_NUCLEOS] = [const { AtomicU64::new(0) }; MAX_NUCLEOS];
+
+impl Puertos {
+    pub const fn nuevos() -> Self {
+        Puertos { bits: [const { AtomicU64::new(0) }; MAPA_ES / 8], version: AtomicU64::new(0) }
+    }
+
+    /// Permite los puertos de `primero` a `primero + cuantos - 1`. Falso, sin cambiar nada, si se salen del mapa.
+    pub fn permitir(&self, primero: u32, cuantos: u32) -> bool {
+        match primero.checked_add(cuantos) {
+            Some(fin) if fin <= MAX_PUERTO && cuantos > 0 => {
+                for p in primero..fin {
+                    self.bits[(p / 64) as usize].fetch_or(1 << (p % 64), Ordering::Relaxed);
+                }
+                self.version.store(VERSION_PUERTOS.fetch_add(1, Ordering::Relaxed), Ordering::Release);
+                true
+            }
+            _ => false,
+        }
+    }
+}
+
+/// Pone en la TSS de este núcleo el mapa de E/S de `p` (con `None`, o sin puertos, todos prohibidos), si no lo tenía
+/// ya. Con las interrupciones cerradas: en el cambio a un hilo de proceso y tras darle puertos al proceso que corre.
+pub fn cargar_puertos(p: Option<&Puertos>) {
+    let n = super::nucleos::numero() as usize % MAX_NUCLEOS;
+    let version = p.map_or(0, |p| p.version.load(Ordering::Acquire));
+    if PUERTOS_CARGADOS[n].load(Ordering::Relaxed) == version {
+        return;
+    }
+    unsafe {
+        let mapa = &raw mut (*(&raw mut TSS[n])).mapa;
+        for k in 0..MAPA_ES / 8 {
+            let permitidos = match p {
+                Some(p) if version != 0 => p.bits[k].load(Ordering::Relaxed),
+                _ => 0,
+            };
+            (mapa as *mut u8).add(8 * k).cast::<u64>().write_unaligned(!permitidos);
+        }
+    }
+    PUERTOS_CARGADOS[n].store(version, Ordering::Relaxed);
+}
 
 /// 0 nulo, 0x08 código del kernel (64 bits), 0x10 datos del kernel, 0x18 nulo (código de usuario de 32 bits, que no
 /// se usa), 0x20 datos de usuario, 0x28 código de usuario (64 bits), 0x30 y 0x38 la TSS de su núcleo.

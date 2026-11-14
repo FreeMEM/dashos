@@ -57,6 +57,8 @@ pub fn ejecutar() {
     prueba_despertar();
     prueba_procesos();
     prueba_proteccion();
+    prueba_puertos();
+    prueba_llamada_larga();
     prueba_recoger();
     prueba_fpu();
     prueba_pie();
@@ -93,6 +95,12 @@ unsafe extern "C" {
     static conserva_fin: u8;
     static eco_inicio: u8;
     static eco_fin: u8;
+    static puertos_inicio: u8;
+    static puertos_fin: u8;
+    static puertos_sin_inicio: u8;
+    static puertos_sin_fin: u8;
+    static crear_mucho_inicio: u8;
+    static crear_mucho_fin: u8;
 }
 
 const VA_CODIGO: u64 = 0x40_0000;
@@ -134,6 +142,7 @@ fn crear_proceso(codigo: &[u8], mensaje: &str, nucleo: usize, llave: Option<obje
     let p = alloc::sync::Arc::new(objetos::Proceso {
         ttbr0: e.ttbr0(),
         big_endian: false,
+        puertos: crate::excepciones::Puertos::nuevos(),
         espacio: cerrojo::Cerrojo::new(e),
         llaves: cerrojo::Cerrojo::new(tabla),
         cupo: crate::cupo::Cupo::raiz(),
@@ -226,6 +235,68 @@ fn prueba_proteccion() {
         "X4: un proceso no lee la memoria del kernel ni la de otro proceso {}",
         bien(fm == Some(objetos::Fin::Fallo) && fe == Some(objetos::Fin::Fallo) && vivo)
     );
+}
+
+/// X6: los puertos de E/S por el mapa de la TSS. Un proceso con la llave de COM1 la pide (`puertos_permitir`), usa su
+/// registro de prueba y muere al tocar un puerto que no es suyo. Después, en el mismo núcleo, uno sin llave muere al
+/// tocar COM1: el mapa del primero no se queda puesto. Y una llave de puertos fuera del mapa no se puede pedir.
+fn prueba_puertos() {
+    let llave = objetos::Llave::nueva(objetos::Objeto::Puertos { primero: 0x3f8, cuantos: 8 }, objetos::TODOS);
+    let con = crear_proceso(programa(unsafe { &puertos_inicio }, unsafe { &puertos_fin }), "", 2, Some(llave), None, false);
+    esperar_que(100, || con.estado.tomar().fin.is_some());
+    let sin = crear_proceso(programa(unsafe { &puertos_sin_inicio }, unsafe { &puertos_sin_fin }), "", 2, None, None, false);
+    esperar_que(100, || sin.estado.tomar().fin.is_some());
+    let fuera = objetos::Llave::nueva(objetos::Objeto::Puertos { primero: 0x3fc, cuantos: 8 }, objetos::TODOS);
+    let lejos = crear_proceso(programa(unsafe { &puertos_inicio }, unsafe { &puertos_fin }), "", 2, Some(fuera), None, false);
+    esperar_que(100, || lejos.estado.tomar().fin.is_some());
+    let (fc, fs, fl) = (con.estado.tomar().fin, sin.estado.tomar().fin, lejos.estado.tomar().fin);
+    kprintln!("  con la llave: {:?}; sin ella: {:?}; con una llave fuera del mapa: {:?}", fc, fs, fl);
+    kprintln!(
+        "X6: puertos de E/S por el mapa de la TSS {}",
+        bien(fc == Some(objetos::Fin::Fallo) && fs == Some(objetos::Fin::Fallo) && fl == Some(objetos::Fin::Salida(1)))
+    );
+}
+
+/// X6: una llamada larga no deja el núcleo sin interrupciones. Un proceso del núcleo 3 pide y suelta 16 veces 4 MB
+/// (`memoria_crear` los pone a cero, y en QEMU eso tardaba hasta 25 ms con las interrupciones cerradas). En el mismo
+/// núcleo, un hilo de plazo que despierta cada milisegundo: así el temporizador de ese núcleo salta a menudo, y no puede
+/// llegar mucho más tarde de lo programado porque la llamada se para tras cada página. Se mide solo con el proceso
+/// corriendo (despertar de `hlt` en QEMU sin KVM tarda a veces milisegundos). Medido en QEMU sin KVM: sin las pausas,
+/// de 14 a 16 ms tarde; con ellas, en torno a 1 ms (lo que tarda allí la primera escritura en una página); con KVM,
+/// 16 veces 4 MB tardan 3 ms en total.
+fn prueba_llamada_larga() {
+    PARAR_DESPERTADOR.store(false, Ordering::Relaxed);
+    if planificador::crear_plazo(despertador, 0, 3, 100, 1_000).is_none() {
+        kprintln!("X6: plazo no admitido");
+        return;
+    }
+    esperar_tics(2);
+    let ms = reloj::frecuencia() / 1000;
+    let t0 = reloj::ahora();
+    let p = crear_proceso(programa(unsafe { &crear_mucho_inicio }, unsafe { &crear_mucho_fin }), "", 3, None, None, false);
+    while reloj::ahora() - t0 < 2 * ms {
+        core::hint::spin_loop();
+    }
+    let _ = reloj::retraso_maximo(3);
+    while p.estado.tomar().fin.is_none() && reloj::ahora() - t0 < 2_000 * ms {
+        core::hint::spin_loop();
+    }
+    let retraso = reloj::retraso_maximo(3);
+    let total = reloj::ahora() - t0;
+    PARAR_DESPERTADOR.store(true, Ordering::Relaxed);
+    let us = |c: u64| c * 1_000_000 / reloj::frecuencia();
+    let fin = p.estado.tomar().fin;
+    kprintln!("  16 veces 4 MB: {:?} en {} ms; el temporizador del núcleo 3 llegó como mucho {} µs tarde", fin, us(total) / 1000, us(retraso));
+    kprintln!("X6: memoria_crear de 4 MB con las interrupciones atendidas {}", bien(fin == Some(objetos::Fin::Salida(0)) && us(retraso) < 4_000));
+    esperar_tics(2);
+}
+
+static PARAR_DESPERTADOR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
+extern "C" fn despertador(_: usize) {
+    while !PARAR_DESPERTADOR.load(Ordering::Relaxed) {
+        planificador::esperar_periodo();
+    }
 }
 
 /// C18: crear y terminar procesos muchas veces sin que se pierda memoria.

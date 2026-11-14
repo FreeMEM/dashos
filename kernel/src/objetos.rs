@@ -34,6 +34,9 @@ pub enum Objeto {
     /// como memoria normal sin caché. Solo la crea el kernel, para `inicio`. Quien la tiene puede escribir en toda la
     /// memoria de la VideoCore, también la del propio firmware: es para el compositor, de confianza.
     Firmware { fisica: u64, tamano: u64 },
+    /// Puertos de E/S de un PC (X6): de `primero` a `primero + cuantos - 1`. Con `puertos_permitir`, el proceso los usa
+    /// con `in` y `out` desde el anillo 3. Solo la crea el kernel, en x86 (la de COM1, para la consola).
+    Puertos { primero: u32, cuantos: u32 },
     /// Una interrupción de aparato (C20): llega como mensaje a un canal.
     Interrupcion(Arc<crate::interrupciones::Interrupcion>),
     /// Un temporizador (C49): avisa por un canal pasado un plazo, una vez o cada cierto tiempo.
@@ -597,6 +600,9 @@ pub struct Proceso {
     /// sus bibliotecas, big-endian como el 68k (decisión del usuario, 03/11/2026).
     pub big_endian: bool,
     pub espacio: Cerrojo<crate::espacio::Espacio>,
+    /// x86 (X6): los puertos de E/S que puede usar (`puertos_permitir`); el cambio de hilo los pone en la TSS.
+    #[cfg(target_arch = "x86_64")]
+    pub puertos: crate::excepciones::Puertos,
     pub llaves: Cerrojo<TablaLlaves>,
     /// Su grupo (C42): a él se cobra lo que crea.
     pub cupo: Arc<crate::cupo::Cupo>,

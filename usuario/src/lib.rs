@@ -118,6 +118,12 @@ pub fn registros_proyectar(llave: u32, direccion: usize) -> i64 {
     llamada(9, [llave as u64, direccion as u64, 0, 0, 0]).0 as i64
 }
 
+/// En x86 (X6): el proceso puede usar con `in` y `out` los puertos de E/S de `llave` (una llave de puertos). En ARM
+/// no hay llaves de puertos.
+pub fn puertos_permitir(llave: u32) -> i64 {
+    llamada(29, [llave as u64, 0, 0, 0, 0]).0 as i64
+}
+
 /// La interrupción de `llave` llegará como mensaje (su número, 4 bytes) al otro lado de `canal`.
 pub fn interrupcion_asociar(llave: u32, canal: u32) -> i64 {
     llamada(10, [llave as u64, canal as u64, 0, 0, 0]).0 as i64

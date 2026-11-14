@@ -281,3 +281,63 @@ eco_inicio:
     syscall
 14: jmp 14b
 eco_fin:
+
+// X6: los puertos de E/S. Pide los de su llave 1 (COM1, 0x3F8 a 0x3FF); sin ella, sale con 1. Escribe 0x5A en el
+// registro de prueba de la UART (0x3FF) y lo relee: si no es lo mismo, sale con 2. Después lee 0x3F7, que no es suyo:
+// tiene que morir ahí (#GP); si no, sale con 3.
+    .globl puertos_inicio, puertos_fin
+puertos_inicio:
+    mov edi, 1
+    mov eax, 29                         // puertos_permitir(1)
+    syscall
+    mov edi, 1
+    test rax, rax
+    jnz 1f
+    mov dx, 0x3ff
+    mov al, 0x5a
+    out dx, al
+    xor eax, eax
+    in al, dx
+    mov edi, 2
+    cmp al, 0x5a
+    jne 1f
+    mov dx, 0x3f7
+    in al, dx
+    mov edi, 3
+1:  mov eax, 2                          // salir
+    syscall
+2:  jmp 2b
+puertos_fin:
+
+// X6: usa el registro de prueba de COM1 sin haber pedido nada: tiene que morir (#GP). Si no, sale con 4.
+    .globl puertos_sin_inicio, puertos_sin_fin
+puertos_sin_inicio:
+    mov dx, 0x3ff
+    in al, dx
+    mov edi, 4
+    mov eax, 2
+    syscall
+3:  jmp 3b
+puertos_sin_fin:
+
+// X6: pide 16 veces un objeto de memoria de 4 MB y lo suelta. Sale con 0, o con 1 si alguna vez no se lo dan.
+    .globl crear_mucho_inicio, crear_mucho_fin
+crear_mucho_inicio:
+    mov ebx, 16
+1:  mov edi, 0x400000
+    mov eax, 7                          // memoria_crear(4 MB)
+    syscall
+    test rax, rax
+    js 2f
+    mov rdi, rax
+    mov eax, 6                          // cerrar
+    syscall
+    dec ebx
+    jnz 1b
+    xor edi, edi
+    jmp 3f
+2:  mov edi, 1
+3:  mov eax, 2
+    syscall
+4:  jmp 4b
+crear_mucho_fin:

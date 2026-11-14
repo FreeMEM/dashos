@@ -32,6 +32,9 @@
 //! | 24 | temporizador_crear(llave de canal, primer plazo µs, periodo µs) -> llave |
 //! | 25 | registros_recortar(llave de registros o del firmware, desde, tamaño) -> llave |
 //! | 26 | dma_liberar(permiso DMA) -> páginas devueltas de su cuarentena |
+//! | 27 | memoria_tamano(llave de memoria) -> bytes |
+//! | 28 | plazo(capacidad µs, periodo µs): el hilo pasa a la clase de plazo (0, vuelve a la justa) |
+//! | 29 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6) |
 //!
 //! `proceso_crear` lleva en x4 una llave de grupo donde crear el proceso, o 0 para el propio (C42).
 
@@ -58,7 +61,7 @@ const E_MEMORIA: u64 = -7i64 as u64;
 /// Un límite por proceso o por canal: tabla de llaves llena, cola llena o demasiadas proyecciones.
 const E_LIMITE: u64 = -8i64 as u64;
 /// Topes de trabajo por llamada (C35, S16 E): la llamada corre entera con las IRQ enmascaradas. Poner a cero 4 MB
-/// lleva menos de un milisegundo en la Pi 4; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
+/// lleva menos de un milisegundo en la Pi 4, y desde X6 se para tras cada página a atender las interrupciones; 256 bytes por la serie a 115200 baudios, unos 22 ms (provisional, hasta
 /// la consola como servicio).
 const MAX_MEMORIA: u64 = 4 << 20;
 const MAX_ESCRIBIR: u64 = 256;
@@ -154,6 +157,7 @@ pub fn atender(marco: &mut Marco) {
         // A6 (S19): el hilo que llama pasa a la clase de plazo (capacidad y periodo en microsegundos), o vuelve a la
         // justa con capacidad 0. E_LIMITE si su núcleo ya tiene prometido demasiado o los números no valen.
         28 => if planificador::plazo_actual(a[0], a[1]) { 0 } else { E_LIMITE },
+        29 => puertos_permitir(a[0] as u32),
         n => {
             kprintln!("  [hilo {}] llamada desconocida {}", planificador::actual_id(), n);
             E_ARGUMENTO
@@ -337,7 +341,10 @@ fn memoria_crear(tamano: u64) -> u64 {
     if proc_.llaves.tomar().huecos() == 0 {
         return E_LIMITE;
     }
-    let Some(m) = objetos::Memoria::nueva(tamano as usize, &proc_.cupo) else { return E_MEMORIA };
+    // Sin cerrojos tomados: el borrado de las páginas se para cada poco para atender las interrupciones (X6).
+    let Some(m) = objetos::Memoria::nueva_con_pausas(tamano as usize, &proc_.cupo, &mut crate::cerrojo::ventana_irq) else {
+        return E_MEMORIA;
+    };
     let llave = objetos::Llave::nueva(Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::TODOS);
     match proc_.llaves.tomar().instalar(llave) {
         Ok(n) => n as u64,
@@ -417,6 +424,31 @@ fn registros_proyectar(h: u32, va: u64) -> u64 {
     match r {
         Ok(()) => 0,
         Err(err) => error_espacio(err),
+    }
+}
+
+/// Da al proceso los puertos de E/S de una llave de puertos (X6, solo x86): desde aquí los usa con `in` y `out`. Pide
+/// leer y escribir. Vale para todos sus hilos; en los que corren ahora en otro núcleo, desde su próximo cambio. En ARM
+/// no hay llaves de puertos: siempre `E_TIPO`.
+fn puertos_permitir(h: u32) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
+    let Objeto::Puertos { primero, cuantos } = l.objeto else { return E_TIPO };
+    if l.derechos & (objetos::LEER | objetos::ESCRIBIR) != objetos::LEER | objetos::ESCRIBIR {
+        return E_DERECHOS;
+    }
+    #[cfg(target_arch = "x86_64")]
+    {
+        if !proc_.puertos.permitir(primero, cuantos) {
+            return E_ARGUMENTO;
+        }
+        crate::excepciones::cargar_puertos(Some(&proc_.puertos));
+        0
+    }
+    #[cfg(not(target_arch = "x86_64"))]
+    {
+        let _ = (primero, cuantos);
+        E_TIPO
     }
 }
 

@@ -362,13 +362,18 @@ impl Paginas {
     /// `RESERVA` páginas libres, que quedan para el kernel (montón, pilas, hilos). Así un proceso que se come la
     /// memoria recibe un error, y el kernel sigue pudiendo trabajar (auditoría, hallazgo 8).
     pub fn pagina_usuario(&mut self) -> Option<u64> {
+        let p = self.pagina_usuario_sin_borrar()?;
+        borrar_pagina(p);
+        Some(p)
+    }
+
+    /// Como `pagina_usuario`, pero sin ponerla a cero: quien la pide la borra antes de que la vea nadie (X6: así el
+    /// borrado va fuera del cerrojo del repartidor).
+    fn pagina_usuario_sin_borrar(&mut self) -> Option<u64> {
         if self.libres - self.libres_bajo <= RESERVA {
             return None;
         }
-        let p = self.pagina(Zona::Normal)?;
-        // Recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
-        unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
-        Some(p)
+        self.pagina(Zona::Normal)
     }
 
     /// Devuelve `n` páginas desde `dir` al repartidor.
@@ -428,6 +433,16 @@ impl PermisoDma {
     }
 }
 
+/// Páginas que `Memoria::nueva_con_pausas` borra entre pausa y pausa. Una: en QEMU sin KVM, la primera escritura en
+/// una página de la RAM del invitado tarda a veces más de un milisegundo (la reserva el anfitrión), y con 8 páginas
+/// entre pausa y pausa el temporizador llegaba hasta 7 ms tarde. La pausa cuesta unas pocas instrucciones.
+const PAGINAS_POR_PAUSA: usize = 1;
+
+/// Pone a cero una página recién sacada del repartidor: nadie más la tiene, y el mapa lineal la ve entera.
+fn borrar_pagina(p: u64) {
+    unsafe { core::ptr::write_bytes(crate::mmu::virt(p as usize) as *mut u8, 0, PAGINA as usize) };
+}
+
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
@@ -447,12 +462,25 @@ impl Memoria {
     /// `tamano` bytes, redondeado a páginas. `None` si no hay memoria fuera de la reserva del kernel; entonces las
     /// páginas que ya se habían tomado vuelven al repartidor.
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
+        Self::nueva_con_pausas(tamano, cupo, &mut || {})
+    }
+
+    /// Como `nueva`, pero llama a `pausa` cada `PAGINAS_POR_PAUSA` páginas, sin ningún cerrojo de aquí tomado (X6).
+    /// Para `memoria_crear`: poner a cero 4 MB tardaba en QEMU x86 hasta 25 ms con las interrupciones cerradas, y ahí
+    /// la llamada abre un momento las interrupciones (`cerrojo::ventana_irq`) tras cada página. Cada página se pide al repartidor y se
+    /// borra fuera de su cerrojo, antes de entrar en el objeto.
+    pub fn nueva_con_pausas(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>, pausa: &mut dyn FnMut()) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
         let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo) };
         m.paginas.try_reserve_exact(n).ok()?;
-        for _ in 0..n {
-            m.paginas.push(paginas().pagina_usuario()?);
+        for k in 0..n {
+            let p = paginas().pagina_usuario_sin_borrar()?;
+            borrar_pagina(p);
+            m.paginas.push(p);
+            if (k + 1) % PAGINAS_POR_PAUSA == 0 && k + 1 < n {
+                pausa();
+            }
         }
         Some(m)
     }

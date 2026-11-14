@@ -645,6 +645,9 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
                 if let Some(p) = &(*nuevo)._pila {
                     super::nucleos::poner_pila_kernel(p.tope() as u64);
                 }
+                // Sus puertos de E/S (X6) en el mapa de la TSS. El proceso vive mientras viva su hilo.
+                let proceso = (*nuevo).proceso as *const crate::objetos::Proceso;
+                super::excepciones::cargar_puertos(Some(&(*proceso).puertos));
             }
         }
         cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto)

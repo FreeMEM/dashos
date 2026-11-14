@@ -48,6 +48,12 @@ X4: syscall y sysret conservan los registros bien
 ~Proceso: excepción 14 (fallo de página (#PF)) en 0x400000 (CR2 0x600000, código 0x4); se termina
 │   el otro proceso sigue entero
 X4: un proceso no lee la memoria del kernel ni la de otro proceso bien
+# X6: un proceso con la llave de COM1 usa sus puertos y muere al tocar otro; uno sin llave muere al tocar COM1.
+Proceso: excepción 13 (fallo de protección general (#GP))
+Proceso: excepción 13 (fallo de protección general (#GP))
+X6: puertos de E/S por el mapa de la TSS bien
+# X6: poner a cero 4 MB en memoria_crear se para tras cada página a atender las interrupciones.
+X6: memoria_crear de 4 MB con las interrupciones atendidas bien
 C18: recogida bien
 C28: FPU por hilo bien
 │   [pie] hola desde un PIE por encima de 4 GB

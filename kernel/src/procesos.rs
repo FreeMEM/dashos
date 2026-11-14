@@ -48,6 +48,8 @@ pub fn lanzar(binario: &[u8], llaves: Vec<Llave>, nucleo: Option<usize>, cupo: A
     let p = Arc::new(Proceso {
         ttbr0: e.ttbr0(),
         big_endian: cargado.big_endian,
+        #[cfg(target_arch = "x86_64")]
+        puertos: crate::excepciones::Puertos::nuevos(),
         espacio: Cerrojo::new(e),
         llaves: Cerrojo::new(tabla),
         cupo,

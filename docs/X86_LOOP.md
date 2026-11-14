@@ -53,20 +53,14 @@ Dos líneas a la vez (decisión 4 de S21):
   tocan hardware de la Pi.
 - [x] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
   `virtio_sonido` funcionando en `q35`.
-- [ ] X6 **Pantalla.** GOP hasta el compositor y el kit, como en `virt` (U4): el escritorio en QEMU x86.
-  Lo que dejó X5 para aquí:
-  - `inicio_x86.rs` no da pantalla: falta la llave de la memoria del GOP y sus medidas (lo que en ARM sale del nodo
-    `simple-framebuffer`; aquí, de la `InfoArranque`), y lanzar el compositor, las ventanas de prueba y Ajustes.
-  - El compositor tiene que ser quien lee el canal de entrada; entonces sobra `entrada` (el programa de prueba que hoy
-    escribe los eventos del xHCI).
-  - Sin consola como proceso: es un hilo del kernel (`serie::consola_del_kernel`). Para un proceso haría falta darle
-    los puertos de COM1 (el mapa de E/S de la TSS).
+- [x] X6 **Pantalla.** GOP hasta el compositor y el kit, como en `virt` (U4): el escritorio en QEMU x86. También
+  la consola como proceso (COM1 por el mapa de E/S de la TSS) y `memoria_crear` con pausas para las interrupciones.
+  Lo que queda abierto, para después:
   - Sin INTx en x86: su número sale del `_PRT` del AML de ACPI, que no se lee. Todos los aparatos de `q35` tienen MSI.
   - Las interrupciones del IOAPIC entregadas a un proceso siguen sin probar (los aparatos van por MSI).
   - Sin IOMMU (VT-d o AMD-Vi): un aparato con bus master alcanza toda la memoria.
-  - Una llamada al sistema corre sin interrupciones en su núcleo, en las dos arquitecturas. Un `memoria_crear` de 4 MB
-    tardaba en QEMU x86 de 6 a 25 ms, y cortaba el sonido; el montón de usuario pide ahora trozos de 1 MB. Lo de
-    fondo (llamadas largas que se puedan interrumpir, o poner a cero fuera de la llamada) queda abierto.
+  - Otras llamadas largas con las interrupciones cerradas: `memoria_dma` pone a cero hasta 4 MB con el cerrojo del
+    repartidor tomado, y soltar 4 MB o un proceso grande también va de una vez. Solo `memoria_crear` tiene pausas.
   - Lo que quedaba de X4 sigue igual: el camino con PCID sin probar, y `vaciar_tlb_otros` vacía la TLB entera.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
@@ -281,3 +275,42 @@ No comprobado: un PC de verdad; la INTx y el IOAPIC con un proceso; MSI sin MSI-
 usa); aparatos detrás de un puente del PCIe (se recorren todos los buses de la MCFG, pero `q35` los pone en el 0);
 varios segmentos de PCIe (solo el 0); un núcleo 0 con ID de APIC de más de 8 bits (la MSI no llegaría: haría falta el
 remapeo de interrupciones). Lo que queda está en X6.
+
+
+### 2026-11-14 — X6: pantalla, consola como proceso y llamadas largas en x86-64
+
+Hecho:
+
+- `inicio_x86.rs` da la pantalla del GOP como en `virt`: la memoria (memoria del firmware, fuera de la RAM) y sus
+  medidas en un objeto de memoria, con el formato del nodo `simple-framebuffer` de U4. Salen de la `InfoArranque`. El
+  formato del GOP va al revés: 1 (B, G, R) es a8r8g8b8.
+- `inicio` lanza en x86 el compositor, `ventana-a`, `ventana-b` y Ajustes, como en ARM. El compositor nombra antes que
+  nadie el canal "ventanas" y lee el teclado y el ratón del xHCI. Fuera `entrada` (el programa de prueba de X5).
+  El compositor, el kit y Wayland compilan para x86 sin cambios.
+- La consola es un proceso, como en ARM. Objeto nuevo, `Puertos` (solo lo crea el kernel, en x86), y llamada 29,
+  `puertos_permitir`: el proceso puede usar esos puertos con `in` y `out`. La TSS de cada núcleo lleva un mapa de E/S
+  de los puertos 0 a 0x3FF (más allá del límite, todo prohibido). El cambio de hilo pone el del proceso que entra, si
+  no lo tenía ya (una versión por cada vez que se dan puertos, global: un proceso nuevo en la misma dirección no hereda
+  el mapa de otro). `inicio` da a la consola el registro y los puertos de COM1. Fuera el hilo de consola del kernel.
+- `memoria_crear` pone a cero página a página fuera del cerrojo del repartidor, y tras cada página abre un momento las
+  interrupciones (`cerrojo::ventana_irq`), en las dos arquitecturas. En x86 la ventana es `sti`, `nop`, un salto y
+  `cli`: QEMU sin KVM solo mira las interrupciones al empezar un bloque traducido. Una página entre pausas y no ocho:
+  en QEMU sin KVM, la primera escritura en una página del invitado tarda a veces más de 1 ms (la reserva el anfitrión).
+- `reloj` apunta con cuánto retraso llega el temporizador de cada núcleo (`retraso_maximo`), para la prueba.
+- `make -C kernel arranque-x86` captura la pantalla por el monitor de QEMU (`target/captura-x86.ppm`) y la mira con
+  `tools/captura_ventanas.py`, como `arranque-virt`.
+
+Comprobado: `make -C kernel arranque-x86` da BIEN: la pantalla de 1280x800, las dos ventanas de prueba con sus 30
+cuadros, Ajustes (el campo recibe las "a", se maximiza a 1280x800 y vuelve), el ratón y el clic llegan a una ventana,
+la consola lanzada como proceso y el registro por ella; la captura, el disco y el sonido, bien. `make -C kernel
+prueba-x86` da BIEN, con dos pruebas nuevas. Puertos: un proceso con la llave de COM1 escribe y relee el registro de
+prueba de la UART y muere (#GP) al leer 0x3F7; después, en el mismo núcleo, uno sin llave muere al tocar COM1; una llave
+que se sale del mapa no se puede pedir. Llamada larga: un proceso pide y suelta 16 veces 4 MB en el núcleo 3, con un hilo
+de plazo de 1 ms en el mismo núcleo, y el temporizador llega como mucho unos 1,1 ms tarde. Sin las pausas llegaba de 14 a
+16 ms tarde; con pausas cada 8 páginas, 6 a 7 ms; con un proceso que solo gira, 80 µs. Con KVM, las 16 veces tardan 3 ms
+en total. `make -C kernel prueba` y `make -C kernel arranque-virt` (ARM) dan BIEN.
+
+No comprobado: un PC de verdad (otro GOP, otros formatos de píxel); la
+ventana de interrupciones de ARM medida (la prueba es de x86; en ARM solo se comprobó que todo sigue pasando);
+`puertos_permitir` con un proceso de varios hilos en varios núcleos (los otros hilos ven los puertos en su próximo
+cambio). Captura de la pantalla de x86 en `kernel/target/captura-x86.ppm`.

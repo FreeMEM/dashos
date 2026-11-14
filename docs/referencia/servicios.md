@@ -41,13 +41,13 @@ el segundo, el otro. La lista está en `kernel/src/inicio.rs` (`PROGRAMAS`):
 
 | Servicio | Aparatos | Canales |
 |---|---|---|
-| consola | registro, registros del puerto serie | — |
+| consola | registro, registros del puerto serie (en x86, los puertos de COM1) | — |
 | buzon | su permiso DMA, registros del buzón, memoria de la VideoCore | "buzon" |
 | usb | permiso DMA, registros e interrupción del DWC2 | "entrada" |
 | xhci | su permiso DMA, registros del xHCI del PCIe, su INTx (opcional) | "entrada" |
 | nvme | su permiso DMA, registros del NVMe del PCIe, su interrupción (opcional) | "disco" (es quien lee) |
 | disco (prueba, solo `virt`) | — | "disco" |
-| compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI) | "buzon" (en la Pi), "entrada" (es quien lee) |
+| compositor | — (en la Pi); la pantalla de UEFI y sus medidas (por UEFI, también en x86) | "buzon" (en la Pi), "entrada" (es quien lee) |
 | gpu | permiso DMA de la GPU, registros de la V3D, del puente ASB, del bloque PM y del cprman | "buzon" |
 
 En cada canal el primero que lo nombra es el servidor; los demás reciben una copia marcada (su número de programa más
@@ -56,11 +56,12 @@ En cada canal el primero que lo nombra es el servidor; los demás reciben una co
 aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA tiene su propio permiso (M5). Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
-En x86-64 (X5) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada servicio:
-`entrada`, `xhci`, `nvme`, `disco`, `archivos`, `ficheros`, `sonido`, `virtio-sonido`, `tono-a`, `tono-b` y `hola`.
-Sin consola (es un hilo del kernel: COM1 es de E/S por puertos) ni compositor (X6). En su lugar, `entrada`
-(`usuario/src/bin/entrada.rs`, de prueba) nombra antes que nadie el canal de entrada y escribe los eventos que le
-llegan (los cuatro primeros de cada clase y después la cuenta). Las interrupciones de los aparatos son MSI-X.
+En x86-64 (X5 y X6) la lista es otra, `PROGRAMAS` de `kernel/src/inicio_x86.rs`, con las mismas llaves para cada
+servicio: `consola`, `compositor`, `xhci`, `nvme`, `disco`, `archivos`, `ficheros`, `sonido`, `virtio-sonido`,
+`tono-a`, `tono-b`, `ventana-a`, `ventana-b`, `ajustes` y `hola`. La consola recibe el registro y, en vez de los
+registros del PL011, una llave de los puertos de COM1, que pide con `puertos_permitir` y usa con `in` y `out`. El
+compositor recibe la pantalla del GOP y sus medidas, como por UEFI en ARM, y nombra antes que nadie el canal de
+entrada. Las interrupciones de los aparatos son MSI-X.
 
 ## Buzón de la VideoCore (C50)
 

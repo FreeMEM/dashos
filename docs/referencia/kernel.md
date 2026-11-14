@@ -145,6 +145,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 26 | `dma_liberar` | `x0` permiso DMA | Páginas devueltas |
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
+| 29 | `puertos_permitir` | `x0` llave de puertos de E/S (solo x86) | 0 |
 
 ### Detalles
 
@@ -177,6 +178,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   cierran y el otro lado se entera. Lo mismo pasa con un extremo que va dentro de un mensaje que ya nadie leerá.
 - **7, `memoria_crear`.** Páginas nuevas de 4 KB, todas a cero. La llave tiene todos los derechos. Los últimos
   32 MB libres son del kernel: al llegar ahí devuelve `E_MEMORIA`.
+  Ponerlas a cero es lo largo de la llamada: tras cada página abre un momento las interrupciones (X6), así que el
+  núcleo atiende el reloj y los aparatos mientras, y el tic puede pasar a otro hilo.
 - **8, `memoria_proyectar`.**
   - Proyecta el objeto entero a partir de la dirección. Si alguna página del tramo ya tiene algo, no proyecta nada y
     devuelve `E_ARGUMENTO`.
@@ -232,6 +235,11 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   dan `E_LLAVE`, estén donde estén. El objeto se suelta: si era lo último que tenía un lado de canal, el lado se
   cierra. Si es memoria, se quitan las proyecciones que se hicieron con la copia revocable o con sus copias, en todos
   los procesos (C45); las hechas con la llave original siguen.
+- **29, `puertos_permitir`** (X6, solo x86-64). Con una llave de puertos de E/S (leer y escribir), el proceso puede
+  usar esos puertos con `in` y `out` desde el anillo 3; los demás siguen terminándolo. Va al mapa de E/S de la TSS
+  de cada núcleo, que se pone al cambiar a un hilo del proceso: vale ya en el hilo que llama, y en los demás hilos del
+  proceso desde su próximo cambio. Solo puertos por debajo de 0x400 (`E_ARGUMENTO` si no). Solo el kernel crea estas
+  llaves: la de COM1 (0x3F8 a 0x3FF), para la consola. En ARM no hay llaves de puertos: siempre `E_TIPO`.
 - **23, `registro_leer`** (C48). Para la consola: pide la llave del registro, que solo da el kernel a `inicio`. Saca
   hasta 4096 bytes del registro, esperando si no hay nada. La primera vez, el kernel deja el puerto serie: desde ahí
   solo escribe en el registro, salvo el pánico, que va directo.
@@ -342,6 +350,7 @@ Tipos de objeto:
 | Revocador | `llave_revocable` | Revocar la copia (escribir) |
 | Permiso DMA | Solo el kernel | Crear memoria DMA (escribir) |
 | Registro | Solo el kernel | Sacar el registro del sistema (leer) |
+| Puertos de E/S | Solo el kernel, en x86 | Usarlos desde el proceso (`puertos_permitir`); la consola, COM1 (X6) |
 | Grupo | `grupo_crear` | Crear procesos en él y matarlo (escribir), ver su uso (leer) |
 | Temporizador | `temporizador_crear` | Avisos por un canal pasado un plazo; se para al cerrarlo |
 
@@ -367,7 +376,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S21, X4 y X5)
+## x86-64 (S21, X4 a X6)
 
 En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
@@ -377,7 +386,7 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   (los de ARM `x0` a `x4`, en ese orden; `r10` en vez de `rcx`, que `syscall` usa para la vuelta). El resultado vuelve
   en `rax` (`x0` en ARM) y, en las llamadas que dan más, en `rdx` (`x1`) y `r8` (`x2`, la marca de `canal_leer`).
   `syscall` pisa `rcx` y `r11`; todos los demás registros vuelven como estaban. La llamada corre con las interrupciones
-  cerradas, como en ARM, y vuelve con `sysret`.
+  cerradas, como en ARM (salvo las pausas de `memoria_crear`, X6), y vuelve con `sysret`.
 - **Ejecutable.** ELF64 de x86-64 (`e_machine` 62), solo little-endian: x86 no tiene big-endian. Lo demás, igual:
   `ET_EXEC` o `ET_DYN`, segmentos, pila y reglas de rechazo. Un PIE aplica él mismo sus `R_X86_64_RELATIVE`.
 - **Al arrancar.** `rsp` apunta al tope de la pila (alineado a 16, como pide el System V al entrar en un proceso) y
@@ -391,8 +400,9 @@ mismos límites. Cambian los registros y lo que es de la CPU:
 - **TLS.** Las bases de FS y GS son de cada hilo, empiezan a 0 y el kernel las guarda y repone en cada cambio. El
   proceso las lee y las pone con `rdfsbase`, `wrfsbase`, `rdgsbase` y `wrgsbase` (FSGSBASE). En una CPU sin FSGSBASE
   esas instrucciones terminan el proceso, y no hay otra forma de ponerlas.
-- **Lo que puede tocar.** `rdtsc` sí (como el contador virtual en ARM). `rdpmc`, `wrmsr`, `rdmsr`, `hlt`, `cli`, la E/S
-  por puertos y cualquier otra instrucción privilegiada terminan el proceso, como leer, escribir o ejecutar la mitad
+- **Lo que puede tocar.** `rdtsc` sí (como el contador virtual en ARM). La E/S por los puertos que le den con una llave
+  de puertos (`puertos_permitir`, X6) también. `rdpmc`, `wrmsr`, `rdmsr`, `hlt`, `cli`, la E/S por cualquier otro
+  puerto y cualquier otra instrucción privilegiada terminan el proceso, como leer, escribir o ejecutar la mitad
   alta. Un fallo de la FPU (#MF, #XM) también. El kernel escribe en la consola el vector, `rip`, CR2 y el código de
   error.
 - **Copias.** El kernel lee y escribe la memoria del proceso con `rep movsb` entre `stac` y `clac` (SMAP), con el espacio
@@ -402,12 +412,15 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   al núcleo 0. Las MSI y MSI-X del PCIe (X5) se numeran como las LPI de ARM, de la 8192 a la 8255, y se tratan igual:
   se enmascaran en el kernel, una que llega enmascarada se avisa al terminar. Van al núcleo 0, cada una por su vector
   (de 0xB0 a 0xEF). El mensaje es el mismo: 4 bytes con el número, en little-endian.
-- **Llaves de arranque** (X5, `kernel/src/inicio_x86.rs`). El mismo paquete que en ARM, con los ELF de x86. Los
+- **Llaves de arranque** (X5 y X6, `kernel/src/inicio_x86.rs`). El mismo paquete que en ARM, con los ELF de x86. Los
   aparatos salen del PCIe (el ECAM de la MCFG de ACPI, todos sus buses): el xHCI (clase 0x0C0330, BAR 0), el NVMe
   (0x010802, BAR 0) y el sonido de virtio (0x1af4:0x1059, BAR 4, más su configuración), cada uno con sus registros,
   un permiso DMA propio y su MSI (MSI-X si la tiene, en su primera entrada; si no, MSI). Sin INTx: en un PC su
-  número sale del AML de ACPI (`_PRT`), que el kernel no lee. No hay llave del registro ni de la serie: la consola es
-  un hilo del kernel (COM1 es de E/S por puertos y un proceso no llega), ni pantalla (X6).
+  número sale del AML de ACPI (`_PRT`), que el kernel no lee. Además (X6): el registro y los puertos de COM1 (tipo
+  7, "puertos de E/S") para la consola, que es un proceso como en ARM; y la pantalla del GOP que deja el cargador en
+  la `InfoArranque`, como memoria del firmware ("pantalla") y sus medidas ("pantalla-info"), con el mismo formato que
+  el `simple-framebuffer` de `virt` (U4). El formato del GOP va al revés que el de ese nodo: 1 (B, G, R en memoria)
+  es a8r8g8b8.
 - **Registros y memoria del firmware.** `registros_proyectar` solo proyecta lo que está fuera de la RAM, sin caché.
   La memoria del firmware (la pantalla del GOP), fuera de la RAM o en una reserva, como memoria normal: la caché la
   deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU. Las BAR pueden

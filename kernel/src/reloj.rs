@@ -18,7 +18,25 @@ pub fn ahora() -> u64 {
 /// Programa la siguiente interrupción del temporizador de este núcleo dentro de `cuentas`. El planificador la
 /// pone en cada decisión: el tic normal, o antes si un hilo de plazo agota su presupuesto o lo recupera (C14).
 pub fn programar(cuentas: u64) {
+    PLAZO[nucleo()].store(ahora().saturating_add(cuentas), Ordering::Relaxed);
     crate::base::cpu::temporizador(cuentas);
+}
+
+/// Hasta 8 núcleos: cuándo toca la próxima interrupción del temporizador de cada uno y con cuánto retraso ha llegado,
+/// como mucho, desde la última vez que se miró (X6: para las pruebas de las llamadas largas, que corren con las
+/// interrupciones cerradas).
+const NUCLEOS: usize = 8;
+static PLAZO: [AtomicU64; NUCLEOS] = [const { AtomicU64::new(u64::MAX) }; NUCLEOS];
+static RETRASO: [AtomicU64; NUCLEOS] = [const { AtomicU64::new(0) }; NUCLEOS];
+
+fn nucleo() -> usize {
+    crate::nucleos::numero() as usize % NUCLEOS
+}
+
+/// El mayor retraso (en cuentas) con que llegó la interrupción del temporizador del núcleo `n` desde la última vez que
+/// se preguntó, y vuelta a empezar.
+pub fn retraso_maximo(n: usize) -> u64 {
+    RETRASO[n % NUCLEOS].swap(0, Ordering::Relaxed)
 }
 
 /// Tic periódico de `hz` veces por segundo. `ppi` es el PPI del temporizador físico no seguro (del árbol).
@@ -68,6 +86,8 @@ pub fn interrupcion(intid: u32) -> bool {
     if intid != INTID.load(Ordering::Relaxed) {
         return false;
     }
+    let n = nucleo();
+    RETRASO[n].fetch_max(ahora().saturating_sub(PLAZO[n].load(Ordering::Relaxed)), Ordering::Relaxed);
     programar(PERIODO.load(Ordering::Relaxed));
     if crate::temporizadores::tic() {
         crate::interrupciones::despertar_repartidor();

@@ -237,10 +237,7 @@ pub fn kmain() -> ! {
     pruebas::ejecutar(&a, n);
 
     kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
-    // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM, con la consola en un hilo del kernel
-    // en el último núcleo (`serie::consola_del_kernel`).
-    #[cfg(not(feature = "pruebas"))]
-    serie::consola_del_kernel(n as usize);
+    // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM. La consola es un proceso (X6).
     #[cfg(not(feature = "pruebas"))]
     if !inicio_x86::lanzar(&a) {
         kprintln!("sin programa de inicio: el sistema se queda parado");

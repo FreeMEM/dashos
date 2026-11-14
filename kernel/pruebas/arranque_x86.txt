@@ -21,16 +21,28 @@ DashOS en marcha (x86-64)
 ~xhci: en el PCIe 0:
 ~nvme: en el PCIe 0:
 ~virtio-sonido: en el PCIe 0:
+# X6: la consola es un proceso, con el registro y los puertos de COM1 (el mapa de E/S de la TSS).
+~│   [inicio] consola lanzado en su grupo, con 2 llaves
 ~│   [inicio] todo lanzado; se queda esperando
 ~│   hola desde Rust en EL0 (DashOS, little-endian)
-# El xHCI: el teclado detrás de un concentrador y el ratón; sus eventos llegan a `entrada` (en ARM, al compositor).
+# El xHCI: el teclado detrás de un concentrador y el ratón; sus eventos llegan al compositor (X6).
 ~│   [xhci] puerto 5: ranura 1, concentrador
 ~│   [xhci] puerto 5 ruta 1: ranura 2, teclado
 ~│   [xhci] versión 1.00, 8 puertos; HID de arranque: 1 teclado y 1 ratón
 ~│   [xhci] avisos por su interrupción
-~│   [entrada] tecla: uso 0x04 (a) pulsada
-~│   [entrada] tecla: uso 0x04 (a) soltada
-~│   [entrada] ratón: botones 0x0, movimiento (10, 5)
+# X6: la pantalla del GOP (la VGA de q35), del cargador al compositor por la InfoArranque y por inicio; las ventanas
+# de prueba (W7) y Ajustes (K7), y el teclado y el ratón del xHCI hasta ellas (W8), como en arranque-virt.
+~pantalla del firmware: 1280x800 en
+~│   [compositor] pantalla de UEFI de 1280x800 a 32 bits, un búfer
+~│   [ventana-a] 30 cuadros: bien
+~│   [ventana-b] 30 cuadros: bien
+~│   [compositor] Wayland: 2 ventanas en pantalla
+~│   [ajustes] ventana del kit en pantalla (360x250)
+~│   [ajustes] el campo dice: DashOSa
+~│   [ajustes] el compositor pide 1280x800
+~│   [ajustes] vuelve a 360x250
+~│   [ventana] ratón dentro
+~│   [ventana] tecla 30 recibida
 # El NVMe con su disco (target/nvme.img, el de arranque-virt), por su interrupción.
 ~│   [nvme] disco de 16384 sectores de 512 bytes (8192 KB)
 ~│   [nvme] sector 0: "DashOS: sector 0 del disco NVMe", firma 0xaa55
