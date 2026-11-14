@@ -34,9 +34,11 @@ pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;
 pub mod nitido;
+pub mod regiones;
 pub mod teclado;
 
 mod acceso;
+mod areas;
 mod despacho;
 mod dibujo;
 mod fuente;
@@ -133,6 +135,9 @@ impl Default for Numeros {
 
 const MAX_AVISOS: usize = 1024;
 
+/// Lo más que separa los dos clics de un doble clic (`DoubleClick`), en µs: el de DashOS (`kit::controles::DOBLE_MS`).
+pub const DOBLE_CLIC_US: i64 = 500_000;
+
 /// graphics.library e intuition.library de una caja, con su puente al compositor.
 pub struct CajaGrafica<C: Compositor> {
     /// El puente con el compositor (Wayland en la caja; `CompositorDePrueba` en las pruebas).
@@ -144,6 +149,7 @@ pub struct CajaGrafica<C: Compositor> {
     capas: capas::Estado,
     menus: menus::Estado,
     boopsi: boopsi::Estado,
+    reg: regiones::Estado,
     /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
     /// repintan (tema.rs).
     version_tema: u32,
@@ -166,6 +172,7 @@ impl<C: Compositor> CajaGrafica<C> {
             capas: capas::Estado::default(),
             menus: menus::Estado::default(),
             boopsi: boopsi::Estado::default(),
+            reg: regiones::Estado::default(),
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),

@@ -87,6 +87,26 @@ pub mod rastport {
     pub const NOCROSSFILL: u16 = 0x20;
 }
 
+/// `struct AreaInfo` (de `graphics/rastport.h`): la tabla de vértices de `AreaMove`/`AreaDraw`/`AreaEllipse`.
+pub mod areainfo {
+    pub const VCTRTBL: u32 = 0;
+    pub const VCTRPTR: u32 = 4;
+    pub const FLAGTBL: u32 = 8;
+    pub const FLAGPTR: u32 = 12;
+    pub const COUNT: u32 = 16;
+    pub const MAXCOUNT: u32 = 18;
+    pub const FIRSTX: u32 = 20;
+    pub const FIRSTY: u32 = 22;
+    pub const TAMANO: u32 = 24;
+}
+
+/// `struct TmpRas`.
+pub mod tmpras {
+    pub const RASPTR: u32 = 0;
+    pub const SIZE: u32 = 4;
+    pub const TAMANO: u32 = 8;
+}
+
 /// Modos de dibujo (`rp_DrawMode`).
 pub mod drmd {
     pub const JAM1: u8 = 0;
@@ -132,6 +152,22 @@ pub mod textfont {
     pub const FPF_PROPORTIONAL: u8 = 0x20;
     pub const FPF_DESIGNED: u8 = 0x40;
     pub const FPF_REMOVED: u8 = 0x80;
+}
+
+/// `struct Region` (de `graphics/regions.h`): sus límites y la lista de sus rectángulos.
+pub mod region {
+    pub const BOUNDS: u32 = 0;
+    pub const REGIONRECTANGLE: u32 = 8;
+    pub const TAMANO: u32 = 12;
+}
+
+/// `struct RegionRectangle`: un nodo de la lista doble de una región; sus límites son relativos a la esquina de arriba
+/// a la izquierda de los de la región.
+pub mod region_rectangle {
+    pub const NEXT: u32 = 0;
+    pub const PREV: u32 = 4;
+    pub const BOUNDS: u32 = 8;
+    pub const TAMANO: u32 = 16;
 }
 
 /// `struct ColorMap` (V39).
@@ -183,8 +219,9 @@ pub mod viewport {
     pub const HIRES: u16 = 0x8000;
 }
 
-/// `struct Layer` (de `graphics/clip.h`). Aquí solo se rellenan `rp`, `bounds`, `Window`, `Width` y `Height`:
-/// layers.library no es nativa todavía.
+/// `struct Layer` (de `graphics/clip.h`). Se rellenan `rp`, `bounds`, `Flags`, `Window`, `LayerInfo`, `Width`,
+/// `Height`, una sola `ClipRect` (la capa entera: una ventana nunca está tapada en su búfer) y la `DamageList` (lo que
+/// falta por pintar de una ventana de refresco simple).
 pub mod layer {
     pub const FRONT: u32 = 0;
     pub const BACK: u32 = 4;
@@ -211,6 +248,16 @@ pub mod layer {
     pub const LAYERSMART: u16 = 2;
     pub const LAYERSUPER: u16 = 4;
     pub const LAYERREFRESH: u16 = 0x80;
+}
+
+/// `struct ClipRect` (de `graphics/clip.h`).
+pub mod cliprect {
+    pub const NEXT: u32 = 0;
+    pub const PREV: u32 = 4;
+    pub const LOBS: u32 = 8;
+    pub const BITMAP: u32 = 12;
+    pub const BOUNDS: u32 = 16;
+    pub const TAMANO: u32 = 40;
 }
 
 /// `struct Layer_Info` (solo su tamaño: va dentro de `struct Screen`).

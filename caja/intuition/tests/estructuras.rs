@@ -88,6 +88,15 @@ fn colormap_viewport_capa_y_gfxbase() {
     assert_eq!((layer::RP, layer::BOUNDS, layer::FLAGS, layer::WINDOW), (12, 16, 30, 40));
     assert_eq!((layer::LAYERINFO, layer::LOCK, layer::BACKFILL, layer::WIDTH, layer::HEIGHT), (68, 72, 118, 134, 136));
     assert_eq!(layer::DAMAGELIST, 156);
+    assert_eq!((layer::FRONT, layer::BACK, layer::CLIPRECT, layer::CLIPREGION), (0, 4, 8, 126));
+    assert_eq!((cliprect::NEXT, cliprect::PREV, cliprect::LOBS, cliprect::BITMAP), (0, 4, 8, 12));
+    assert_eq!((cliprect::BOUNDS, cliprect::TAMANO), (16, 40));
+    assert_eq!((region::BOUNDS, region::REGIONRECTANGLE, region::TAMANO), (0, 8, 12));
+    assert_eq!((region_rectangle::NEXT, region_rectangle::PREV, region_rectangle::BOUNDS), (0, 4, 8));
+    assert_eq!(region_rectangle::TAMANO, 16);
+    assert_eq!((areainfo::VCTRTBL, areainfo::VCTRPTR, areainfo::FLAGTBL, areainfo::FLAGPTR), (0, 4, 8, 12));
+    assert_eq!((areainfo::COUNT, areainfo::MAXCOUNT, areainfo::FIRSTX, areainfo::FIRSTY), (16, 18, 20, 22));
+    assert_eq!((areainfo::TAMANO, tmpras::RASPTR, tmpras::SIZE, tmpras::TAMANO), (24, 0, 4, 8));
     assert_eq!(layer_info::TAMANO, 102);
     assert_eq!(gfxbase::TAMANO, 552);
     assert_eq!((gfxbase::ACTIVIEW, gfxbase::TEXTFONTS, gfxbase::DEFAULTFONT), (34, 140, 154));

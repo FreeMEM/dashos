@@ -92,7 +92,9 @@ impl<M: Memoria> Exec<M> {
         r.d[0] = d0;
         match tras {
             Continuacion::AbrirBiblioteca { .. } => {
-                if d0 != 0 {
+                // Lo que abre el código de una biblioteca de disco es suyo, no de la tarea en la que corre (como su
+                // memoria): matar esa tarea no lo debe cerrar.
+                if d0 != 0 && !self.memoria_del_sistema {
                     let t = self.tarea_actual();
                     if let Some(i) = self.tareas.get_mut(&t) {
                         i.bibliotecas.push(d0);
@@ -206,8 +208,11 @@ impl<M: Memoria> Exec<M> {
         Ok(self.llamar_codigo(lib - 6, rr, Continuacion::AbrirBiblioteca { lib }, r))
     }
 
-    /// `CloseLibrary`. Con 0 no hace nada. Una base que no es de la lista, o que nadie tiene abierta, da un fallo
-    /// y no se llama a su `Close`.
+    /// `CloseLibrary`. Con 0 no hace nada. Una base que no es de la lista da un fallo y no se llama a su `Close`;
+    /// tampoco cerrar de más: en una nativa, si nadie la tiene abierta (`lib_OpenCnt`); en una de disco o del programa,
+    /// cuya cuenta lleva ella a su manera (locale y diskfont de 3.2 usan un contador suyo, no `lib_OpenCnt`), si la
+    /// tarea que cierra (ni otra) no la abrió. Lo que cierra el código de una biblioteca de disco no se mira: lo que
+    /// abrió no se apuntó a ninguna tarea.
     pub fn close_library(&mut self, lib: u32, r: &mut Registros) -> Result<Accion, Fallo> {
         r.d[0] = 0;
         if lib == 0 {
@@ -216,10 +221,17 @@ impl<M: Memoria> Exec<M> {
         if !self.es_biblioteca(lib)? {
             return Err(Fallo::BibliotecaDesconocida { dir: lib });
         }
-        if self.l16(lib + library::LIB_OPENCNT)? == 0 {
+        let nativa = matches!(self.entrada(lib.wrapping_sub(12)), Ok(Entrada::Nativa(_)));
+        if nativa {
+            if self.l16(lib + library::LIB_OPENCNT)? == 0 {
+                return Err(Fallo::CierreDeMas { dir: lib });
+            }
+        } else if !self.memoria_del_sistema && !self.tareas.values().any(|i| i.bibliotecas.contains(&lib)) {
             return Err(Fallo::CierreDeMas { dir: lib });
         }
-        self.olvidar_apertura(lib);
+        if !self.memoria_del_sistema {
+            self.olvidar_apertura(lib);
+        }
         let mut rr = *r;
         rr.a[6] = lib;
         Ok(self.llamar_codigo(lib - 12, rr, Continuacion::CerrarBiblioteca { lib }, r))

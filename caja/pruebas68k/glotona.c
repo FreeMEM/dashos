@@ -3,14 +3,20 @@
     1 MB tras otro sin soltar nada hasta que no le dan más, y algo absurdo (2 GB). No pasa del tope (la caja le pone
     uno de prueba, 48 MB, o su cupo si es menos) y nada se cuelga; al soltarlo todo, un bloque de la mitad cabe sin
     crecer (exec lo vuelve a repartir). AvailMem cuenta lo que queda por crecer. Acaba con 0 si todo cuadra.
+
+    Lo mismo con la memoria nativa de la caja (el montón de Rust, donde viven los píxeles de los BitMap nativos): un
+    AllocBitMap de 64 MB (cabe o no, según el cupo; si no, 0), BitMap nativos de 2 MB hasta 16 o hasta que no den más,
+    y, soltados, otro cabe. La caja no se cae al quedarse sin memoria nativa.
 */
 #include <exec/types.h>
 #include <exec/memory.h>
 #include <proto/exec.h>
 #include <proto/dos.h>
+#include <proto/graphics.h>
 
 struct ExecBase *SysBase;
 struct DosLibrary *DOSBase;
+struct GfxBase *GfxBase;
 
 static void di(const char *f, LONG a, LONG b, LONG c)
 {
@@ -48,6 +54,23 @@ LONG inicio(void)
     APTR grande = mitad ? AllocMem(mitad, MEMF_ANY | MEMF_CLEAR) : (APTR)1;
     di("  [caja-amiga] glotona: soltado todo, %ld MB de una vez %s\n", mitad >> 20, (LONG)(grande ? "caben: bien" : "no caben: MAL"), 0);
     if (!grande) fallos++; else if (mitad) FreeMem(grande, mitad);
+    /* La memoria nativa. */
+    GfxBase = (struct GfxBase *)OpenLibrary((CONST_STRPTR)"graphics.library", 39);
+    if (!GfxBase) { di("  [caja-amiga] glotona: MAL (sin graphics)\n", 0, 0, 0); fallos++; }
+    else {
+        struct BitMap *enorme = AllocBitMap(4096, 4096, 32, BMF_CLEAR, NULL);
+        if (enorme) FreeBitMap(enorme);
+        struct BitMap *mapas[16];
+        ULONG m = 0;
+        while (m < 16 && (mapas[m] = AllocBitMap(1024, 512, 32, BMF_CLEAR, NULL)) != NULL) m++;
+        for (ULONG i = 0; i < m; i++) FreeBitMap(mapas[i]);
+        struct BitMap *otro = AllocBitMap(1024, 512, 32, BMF_CLEAR, NULL);
+        di("  [caja-amiga] glotona: memoria nativa: 64 MB %s, %ld de 2 MB, y soltados otro %s\n",
+           (LONG)(enorme ? "caben" : "no caben"), m, (LONG)(otro ? "cabe: bien" : "no cabe: MAL"));
+        if (!otro || m == 0) fallos++;
+        if (otro) FreeBitMap(otro);
+        CloseLibrary((struct Library *)GfxBase);
+    }
     di("  [caja-amiga] glotona: %ld fallos\n", fallos, 0, 0);
     CloseLibrary((struct Library *)DOSBase);
     return fallos ? 10 : 0;

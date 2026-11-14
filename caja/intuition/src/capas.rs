@@ -7,10 +7,16 @@
 //!
 //! **layers**: las capas las lleva el compositor (una ventana, una superficie), así que lo que en el Amiga reparte la
 //! pantalla aquí no tiene qué repartir. Los cerrojos (`LockLayer`, `LockLayerInfo`...) no esperan: en la caja hay una
-//! sola tarea 68k a la vez. `InstallClipRegion` guarda la región en la capa y devuelve la de antes (provisional:
-//! graphics aún no recorta con ella). `NewLayerInfo`/`DisposeLayerInfo` reservan y sueltan su estructura. Una capa
-//! nunca está tapada (`LayerOccluded` = 0). Lo demás (crear, mover, ordenar capas sueltas, ganchos) da el aviso
-//! `NoImplementada`.
+//! sola tarea 68k a la vez. `InstallClipRegion` guarda la región en la capa y devuelve la de antes; graphics recorta con
+//! ella todo lo que se pinta en la capa (`Pintor::region`). `NewLayerInfo`/`DisposeLayerInfo` reservan y sueltan su estructura. Una capa
+//! nunca está tapada (`LayerOccluded` = 0).
+//!
+//! Las capas sueltas (`CreateUpfrontLayer`, `CreateBehindLayer` y sus variantes con gancho; Tachyon pinta así en un
+//! mapa fuera de pantalla) son un recorte en su mapa: su `RastPort` dibuja con el (0, 0) en la esquina de la capa y
+//! no se sale de ella, como el interior de una ventana `WFLG_GIMMEZEROZERO`. No se tapan entre sí: cada una pinta en
+//! su rectángulo (lo normal en un mapa fuera de pantalla, donde hay una sola). `DeleteLayer` las suelta; las de una
+//! tarea que acaba, también. `WhichLayer` da la capa de la ventana activa (el compositor sabe dónde está el ratón;
+//! la caja, no). Mover, ordenar y los ganchos de relleno de 68k dan el aviso `NoImplementada`.
 //!
 //! **keymap**: la distribución estadounidense (la de `teclado.rs`), en una `struct KeyMap` de verdad para quien la lea.
 //! `MapRawKey` da el carácter Latin-1 de una pulsación o la secuencia CSI de las teclas de cursor y de función;
@@ -22,8 +28,9 @@ use alloc::vec::Vec;
 use caja_exec::estructuras::memf;
 use caja_exec::{Exec, Memoria, Registros};
 
-use crate::acceso::Acceso;
-use crate::estructuras::{ie, layer, layer_info};
+use crate::acceso::{Acceso, palabra, puntero};
+use crate::estructuras::{cliprect, ie, layer, layer_info, rastport as rp_, rectangle};
+use crate::lienzo::Rect;
 use crate::teclado::{Calificadores, caracter_por_defecto, crudo};
 use crate::{CajaGrafica, Compositor, Fallo};
 
@@ -71,6 +78,39 @@ pub const LAYERS: [&str; 36] = [
 pub const KEYMAP: [&str; 4] = ["SetKeyMapDefault", "AskKeyMapDefault", "MapRawKey", "MapANSI"];
 
 const INITLAYERS: usize = 0;
+const CREATEUPFRONTLAYER: usize = 1;
+const CREATEBEHINDLAYER: usize = 2;
+const DELETELAYER: usize = 10;
+const WHICHLAYER: usize = 17;
+const CREATEUPFRONTHOOKLAYER: usize = 26;
+const CREATEBEHINDHOOKLAYER: usize = 27;
+
+/// Que los números de arriba sean los de sus nombres en la tabla.
+const fn es(i: usize, nombre: &str) -> bool {
+    let (a, b) = (LAYERS[i].as_bytes(), nombre.as_bytes());
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut k = 0;
+    while k < a.len() {
+        if a[k] != b[k] {
+            return false;
+        }
+        k += 1;
+    }
+    true
+}
+const _: () = assert!(
+    es(CREATEUPFRONTLAYER, "CreateUpfrontLayer")
+        && es(CREATEBEHINDLAYER, "CreateBehindLayer")
+        && es(DELETELAYER, "DeleteLayer")
+        && es(WHICHLAYER, "WhichLayer")
+        && es(CREATEUPFRONTHOOKLAYER, "CreateUpfrontHookLayer")
+        && es(CREATEBEHINDHOOKLAYER, "CreateBehindHookLayer")
+        && es(INSTALLCLIPREGION, "InstallClipRegion")
+        && es(LAYEROCCLUDED, "LayerOccluded")
+        && es(NEWLAYERINFO, "NewLayerInfo")
+);
 const BEGINUPDATE: usize = 8;
 const ENDUPDATE: usize = 9;
 const LOCKLAYER: usize = 11;
@@ -117,11 +157,22 @@ mod input_event {
     pub const IECLASS_RAWKEY: u8 = 1;
 }
 
+/// Una capa suelta: su `RastPort`, su `ClipRect`, su `DamageList` y la tarea que la creó.
+#[derive(Clone, Copy)]
+pub(crate) struct Suelta {
+    rp: u32,
+    cliprect: u32,
+    dano: u32,
+    tarea: u32,
+}
+
 /// El estado de las dos.
 #[derive(Default)]
 pub(crate) struct Estado {
     pub layers: u32,
     pub keymap: u32,
+    /// Las capas sueltas: `Layer` → lo suyo.
+    sueltas: crate::Tabla<Suelta>,
     /// La `struct KeyMap` de la caja y la que el programa puso por defecto (`SetKeyMapDefault`).
     km_caja: u32,
     km_defecto: u32,
@@ -213,8 +264,85 @@ impl<C: Compositor> CajaGrafica<C> {
                 antes
             }
             LAYEROCCLUDED => 0,
+            // Create{Upfront,Behind}[Hook]Layer(li, bm, x0, y0, x1, y1, flags, [hook,] bm2)(a0/a1/d0-d4/[a3/]a2).
+            CREATEUPFRONTLAYER | CREATEBEHINDLAYER => self.crear_capa(ex, r, 0)?,
+            CREATEUPFRONTHOOKLAYER | CREATEBEHINDHOOKLAYER => self.crear_capa(ex, r, r.a[3])?,
+            // DeleteLayer(dummy, layer)(a0/a1): TRUE.
+            DELETELAYER => {
+                self.borrar_capa(ex, a[1])?;
+                1
+            }
+            // WhichLayer(li, x, y)(a0/d0/d1).
+            WHICHLAYER => self.capa_activa(),
             _ => return Err(Fallo::NoImplementada { n: self.numeros.layers + f as u16 }),
         })
+    }
+
+    /// Crea una capa suelta en el mapa `a1`, de `(d0, d1)` a `(d2, d3)`, con `flags` (d4) y su `Layer_Info` (a0).
+    /// Con el gancho de relleno de serie (0) se borra con la pluma 0; con `LAYERS_NOBACKFILL` (1), no; uno de 68k aún no
+    /// se llama (no se borra).
+    fn crear_capa<M: Memoria>(&mut self, ex: &mut Exec<M>, r: &Registros, gancho: u32) -> Result<u32, Fallo> {
+        let (li, bm) = (r.a[0], r.a[1]);
+        let rc = Rect::nuevo(palabra(r.d[0]), palabra(r.d[1]), palabra(r.d[2]), palabra(r.d[3]));
+        if bm == 0 {
+            return Err(caja_exec::Fallo::PunteroNulo.into());
+        }
+        if rc.vacio() || rc.x0 < 0 || rc.y0 < 0 {
+            return Err(Fallo::TamanoMalo { ancho: rc.x1 - rc.x0 + 1, alto: rc.y1 - rc.y0 + 1 });
+        }
+        // El mapa tiene que ser uno que graphics sepa pintar.
+        self.mapa(ex, puntero(bm)?)?;
+        let capa = ex.reservar(layer::TAMANO, memf::CLEAR)?;
+        let rp = ex.reservar(rp_::TAMANO, memf::CLEAR)?;
+        let cr = ex.reservar(cliprect::TAMANO, memf::CLEAR)?;
+        let dano = self.region_del_sistema(ex)?;
+        self.init_rast_port(ex, rp)?;
+        ex.e32(rp + rp_::BITMAP, bm)?;
+        ex.e32(rp + rp_::LAYER, capa)?;
+        ex.e32(capa + layer::RP, rp)?;
+        ex.e32(capa + layer::LAYERINFO, li)?;
+        ex.e16(capa + layer::FLAGS, r.d[4] as u16)?;
+        ex.e32(capa + layer::SUPERBITMAP, r.a[2])?;
+        ex.e32(capa + layer::CLIPRECT, cr)?;
+        ex.e32(capa + layer::DAMAGELIST, dano)?;
+        for (base, v) in [(capa + layer::BOUNDS, rc), (cr + cliprect::BOUNDS, rc)] {
+            ex.e16(base + rectangle::MINX, v.x0 as u16)?;
+            ex.e16(base + rectangle::MINY, v.y0 as u16)?;
+            ex.e16(base + rectangle::MAXX, v.x1 as u16)?;
+            ex.e16(base + rectangle::MAXY, v.y1 as u16)?;
+        }
+        ex.e16(capa + layer::WIDTH, rc.ancho() as u16)?;
+        ex.e16(capa + layer::HEIGHT, rc.alto() as u16)?;
+        self.gfx.capas.insert(capa, rc);
+        self.gfx.origenes.insert(capa, (rc.x0, rc.y0));
+        self.capas.sueltas.insert(capa, Suelta { rp, cliprect: cr, dano, tarea: ex.tarea_actual() });
+        if gancho == 0 {
+            self.set_rast(ex, rp, 0)?;
+        }
+        Ok(capa)
+    }
+
+    /// Suelta una capa suelta (`DeleteLayer`). Una que no lo es da un fallo y no se toca.
+    pub(crate) fn borrar_capa<M: Memoria>(&mut self, ex: &mut Exec<M>, capa: u32) -> Result<(), Fallo> {
+        let Some(s) = self.capas.sueltas.remove(&capa) else {
+            return Err(Fallo::NoReservado { dir: capa });
+        };
+        self.gfx.capas.remove(&capa);
+        self.gfx.origenes.remove(&capa);
+        self.soltar_dano(ex, s.dano);
+        ex.soltar(s.cliprect, cliprect::TAMANO)?;
+        ex.soltar(s.rp, rp_::TAMANO)?;
+        ex.soltar(capa, layer::TAMANO)
+    }
+
+    /// Las capas sueltas de una tarea que acaba.
+    pub(crate) fn capas_tarea_muerta<M: Memoria>(&mut self, ex: &mut Exec<M>, t: u32) {
+        let suyas: Vec<u32> = self.capas.sueltas.iter().filter(|(_, s)| s.tarea == t).map(|(c, _)| *c).collect();
+        for c in suyas {
+            if let Err(f) = self.borrar_capa(ex, c) {
+                self.avisar(ex, "DeleteLayer", f);
+            }
+        }
     }
 
     pub(crate) fn llamar_keymap<M: Memoria>(&mut self, ex: &mut Exec<M>, f: usize, r: &mut Registros) -> Result<u32, Fallo> {

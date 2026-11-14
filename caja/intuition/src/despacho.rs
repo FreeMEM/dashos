@@ -7,6 +7,7 @@ use caja_exec::{Accion, Exec, Memoria, Registros};
 use crate::acceso::{Acceso, palabra};
 use crate::estructuras::{rastport as rp_, window as win};
 use crate::lvo::{GRAPHICS as G, INTUITION as I, fila};
+use crate::regiones::Op;
 use crate::{CajaGrafica, Compositor, Fallo};
 
 macro_rules! filas {
@@ -30,7 +31,13 @@ filas!(G;
     SETMAXPEN = "SetMaxPen", ALLOCBITMAP = "AllocBitMap", FREEBITMAP = "FreeBitMap", GETBITMAPATTR = "GetBitMapAttr",
     RELEASEPEN = "ReleasePen", OBTAINPEN = "ObtainPen", OBTAINBESTPENA = "ObtainBestPenA", FINDCOLOR = "FindColor",
     WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos", GETVPMODEID = "GetVPModeID",
-    TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA",
+    TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA", GETDISPLAYINFODATA = "GetDisplayInfoData",
+    WEIGHTAMATCH = "WeighTAMatch", NEWREGION = "NewRegion", DISPOSEREGION = "DisposeRegion",
+    CLEARREGION = "ClearRegion", ORRECTREGION = "OrRectRegion", ANDRECTREGION = "AndRectRegion",
+    CLEARRECTREGION = "ClearRectRegion", XORRECTREGION = "XorRectRegion", ORREGIONREGION = "OrRegionRegion",
+    ANDREGIONREGION = "AndRegionRegion", XORREGIONREGION = "XorRegionRegion",
+    BLTMASKBITMAPRASTPORT = "BltMaskBitMapRastPort", INITAREA = "InitArea", INITTMPRAS = "InitTmpRas",
+    AREAMOVE = "AreaMove", AREADRAW = "AreaDraw", AREAELLIPSE = "AreaEllipse", AREAEND = "AreaEnd",
 );
 
 filas!(I;
@@ -50,12 +57,12 @@ filas!(I;
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
     INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
-    LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse",
+    LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
 );
 
 /// Las funciones que devuelven -1 al fallar.
 fn falla_con_menos_uno(lib_gfx: bool, f: usize) -> bool {
-    lib_gfx && matches!(f, READPIXEL | WRITEPIXEL | OBTAINPEN | OBTAINBESTPENA | GETRGB4)
+    lib_gfx && matches!(f, READPIXEL | WRITEPIXEL | OBTAINPEN | OBTAINBESTPENA | GETRGB4 | AREAMOVE | AREADRAW | AREAELLIPSE | AREAEND)
 }
 
 impl<C: Compositor> CajaGrafica<C> {
@@ -132,6 +139,44 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             TEXTLENGTH => self.text_length(ex, a[1], a[0], d[0])?,
+            // El relleno de áreas (areas.rs). InitArea(areainfo, buffer, max)(a0/a1/d0); InitTmpRas(tmpras, buffer,
+            // size)(a0/a1/d0); AreaMove/AreaDraw(rp, x, y)(a1/d0/d1); AreaEllipse(rp, cx, cy, a, b)(a1/d0-d3);
+            // AreaEnd(rp)(a1).
+            INITAREA => {
+                self.init_area(ex, a[0], a[1], d[0])?;
+                0
+            }
+            INITTMPRAS => self.init_tmp_ras(ex, a[0], a[1], d[0])?,
+            AREAMOVE => self.area_move(ex, a[1], w(0), w(1))?,
+            AREADRAW => self.area_draw(ex, a[1], w(0), w(1))?,
+            AREAELLIPSE => self.area_ellipse(ex, a[1], w(0), w(1), w(2), w(3))?,
+            AREAEND => self.area_end(ex, a[1])?,
+            // Las regiones (regiones.rs): la región en a0 y el rectángulo (o la región de origen) en a1.
+            NEWREGION => self.new_region(ex)?,
+            DISPOSEREGION => {
+                self.dispose_region(ex, a[0])?;
+                0
+            }
+            CLEARREGION => {
+                self.clear_region(ex, a[0])?;
+                0
+            }
+            ORRECTREGION => self.rect_region(ex, a[0], a[1], Op::O)?,
+            // AndRectRegion no devuelve nada (V39: void).
+            ANDRECTREGION => {
+                self.rect_region(ex, a[0], a[1], Op::Y)?;
+                0
+            }
+            CLEARRECTREGION => self.rect_region(ex, a[0], a[1], Op::Menos)?,
+            XORRECTREGION => self.rect_region(ex, a[0], a[1], Op::Xor)?,
+            // OrRegionRegion(srcRegion, destRegion)(a0/a1): dest = dest op src.
+            ORREGIONREGION => self.region_region(ex, a[0], a[1], Op::O)?,
+            ANDREGIONREGION => self.region_region(ex, a[0], a[1], Op::Y)?,
+            XORREGIONREGION => self.region_region(ex, a[0], a[1], Op::Xor)?,
+            // GetDisplayInfoData(handle, buf, size, tagID, displayID)(a0/a1/d0/d1/d2): bytes copiados, o 0.
+            GETDISPLAYINFODATA => self.get_display_info_data(ex, a[1], d[0], d[1], d[2])?,
+            // WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)(a0/a1/a2): cuánto se parecen dos fuentes.
+            WEIGHTAMATCH => self.weigh_ta_match(ex, a[0], a[1])?,
             // TextExtent(rp, string, count, textExtent)(a1/a0/d0/a2)
             TEXTEXTENT => {
                 self.text_extent(ex, a[1], a[0], d[0], a[2])?;
@@ -301,6 +346,11 @@ impl<C: Compositor> CajaGrafica<C> {
                 self.clip_blit(ex, a[0], true, w(0), w(1), a[1], w(2), w(3), w(4), w(5), d[6] as u8)?;
                 0
             }
+            // BltMaskBitMapRastPort(srcbm, x, y, destrp, x, y, w, h, minterm, bltmask)(a0/d0/d1/a1/d2/d3/d4/d5/d6/a2)
+            BLTMASKBITMAPRASTPORT => {
+                self.blt_mask_bit_map_rast_port(ex, a[0], w(0), w(1), a[1], w(2), w(3), w(4), w(5), d[6] as u8, a[2])?;
+                0
+            }
             BLTBITMAPRASTPORT => {
                 self.clip_blit(ex, a[0], false, w(0), w(1), a[1], w(2), w(3), w(4), w(5), d[6] as u8)?;
                 0
@@ -399,6 +449,13 @@ impl<C: Compositor> CajaGrafica<C> {
                     ex.escribir_bytes(a[0], b"Workbench\0")?;
                 }
                 Ok(0)
+            }
+            // DoubleClick(sSecs, sMicros, cSecs, cMicros)(d0-d3): si caben en el doble clic de DashOS (500 ms, el de
+            // MUI y Workbench de serie). Al revés, o con microsegundos imposibles, no.
+            DOUBLECLICK => {
+                let t = |s: u32, m: u32| s as i64 * 1_000_000 + m as i64;
+                let dif = t(d[2], d[3]) - t(d[0], d[1]);
+                Ok((d[1] < 1_000_000 && d[3] < 1_000_000 && (0..=crate::DOBLE_CLIC_US).contains(&dif)) as u32)
             }
             // LockIBase(dontknow)(d0) y UnlockIBase(ibLock)(a0): con una sola tarea 68k a la vez, nada que esperar.
             LOCKIBASE | UNLOCKIBASE => Ok(0),

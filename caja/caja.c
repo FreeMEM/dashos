@@ -181,6 +181,7 @@ void MainLoop(void);
 #define MONTON_LEN (4UL << 20)
 #define MONTON_RUST 0x0000000280000000UL   /* el montón de Rust, aparte del de Emu68 */
 #define MONTON_RUST_LEN (8UL << 20)
+#define MONTON_RUST_MAX (512UL << 20)      /* hasta dónde puede crecer (ver caja_monton_reservar) */
 #define PILAS    0x0000000300000000UL
 #define PILA_LEN (1UL << 20)
 #define PILA_VIGIA_LEN (64UL << 10)
@@ -271,12 +272,41 @@ uintptr_t caja_pila(uintptr_t sp_elf)
     return proyecta(PILAS, PILA_LEN, P_ESCRIBIR) > 0 ? PILAS + PILA_LEN : 0;
 }
 
-/* Lo que Rust (pegamento/) usa como memoria: un TLSF propio, para que lo suyo no se mezcle con lo del JIT. */
+/* Lo que Rust (pegamento/) usa como memoria: un TLSF propio, para que lo suyo no se mezcle con lo del JIT. Empieza con
+   MONTON_RUST_LEN y crece como la memoria del 68k (los píxeles de las ventanas y de los BitMap nativos viven aquí:
+   Tachyon pide varios de 1,5 MB): si lo pedido no cabe, objetos nuevos justo detrás de lo que hay, lo que haga falta y
+   al menos la mitad de lo que ya hay, en objetos de 16 MB como mucho, hasta MONTON_RUST_MAX. Si el cupo no da, NULL:
+   Rust lo trata como falta de memoria (un lienzo sin píxeles, una función que falla) sin caerse. */
 static void *tlsf_rust;
+static uint64_t monton_rust_fin = MONTON_RUST + MONTON_RUST_LEN;
+
+static int monton_rust_crecer(size_t tam, size_t alin)
+{
+    uint64_t techo = MONTON_RUST + MONTON_RUST_MAX;
+    uint64_t quiero = ((uint64_t)tam + alin + (64UL << 10) + TROZO_RAM - 1) & ~(uint64_t)(TROZO_RAM - 1);
+    uint64_t mitad = ((monton_rust_fin - MONTON_RUST) / 2 + TROZO_RAM - 1) & ~(uint64_t)(TROZO_RAM - 1);
+    if (quiero < mitad) quiero = mitad;
+    if (monton_rust_fin >= techo || (uint64_t)tam > techo - monton_rust_fin) return 0;
+    if (quiero > techo - monton_rust_fin) quiero = techo - monton_rust_fin;
+    uint64_t desde = monton_rust_fin, hecho = 0;
+    while (hecho < quiero) {
+        uint64_t n = quiero - hecho < TROZO_RAM_MAX ? quiero - hecho : TROZO_RAM_MAX;
+        if (proyecta((uintptr_t)(desde + hecho), (size_t)n, P_ESCRIBIR) <= 0) break;
+        hecho += n;
+    }
+    if (hecho == 0) return 0;
+    tlsf_add_memory(tlsf_rust, (void *)desde, hecho);
+    monton_rust_fin = desde + hecho;
+    return 1;
+}
 
 void *caja_monton_reservar(size_t tam, size_t alin)
 {
-    return tlsf_rust ? tlsf_malloc_aligned(tlsf_rust, tam, alin < 8 ? 8 : alin) : NULL;
+    if (!tlsf_rust) return NULL;
+    if (alin < 8) alin = 8;
+    void *p = tlsf_malloc_aligned(tlsf_rust, tam, alin);
+    if (!p && monton_rust_crecer(tam, alin)) p = tlsf_malloc_aligned(tlsf_rust, tam, alin);
+    return p;
 }
 
 void caja_monton_soltar(void *p)

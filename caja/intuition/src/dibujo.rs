@@ -3,6 +3,7 @@
 //! sabe poner un punto según el modo de dibujo (`JAM1`, `JAM2`, `COMPLEMENT`, `INVERSVID`). Encima van las
 //! líneas (Bresenham), los rectángulos y las plantillas de un bit (texto y `BltTemplate`).
 
+use alloc::vec::Vec;
 use caja_exec::Memoria;
 
 use crate::estructuras::drmd;
@@ -89,6 +90,9 @@ pub(crate) struct Pintor<'a, M: Memoria> {
     pub sup: Sup<'a, M>,
     /// Lo que se puede tocar: el mapa y la capa de la ventana.
     pub clip: Rect,
+    /// La región de recorte de la capa (`InstallClipRegion`), en bandas y en las coordenadas del pintor: solo se toca
+    /// lo que cae dentro de alguno de sus rectángulos (y de `clip`, que ya es su caja).
+    pub region: Option<Vec<Rect>>,
     pub a: Tinta,
     pub b: Tinta,
     pub modo: u8,
@@ -118,6 +122,11 @@ impl<M: Memoria> Pintor<'_, M> {
     pub fn trasladar(&mut self, dx: i32, dy: i32) {
         let c = self.clip;
         self.clip = Rect::nuevo(c.x0 - dx, c.y0 - dy, c.x1 - dx, c.y1 - dy);
+        if let Some(r) = &mut self.region {
+            for q in r.iter_mut() {
+                *q = Rect::nuevo(q.x0 - dx, q.y0 - dy, q.x1 - dx, q.y1 - dy);
+            }
+        }
         self.dx = dx;
         self.dy = dy;
     }
@@ -135,8 +144,31 @@ impl<M: Memoria> Pintor<'_, M> {
     }
 
     /// Escribe un valor crudo (ARGB o pluma), sin modo de dibujo, si cae dentro del recorte.
+    /// Pone una región de recorte (rectángulos en bandas, en las coordenadas del pintor): `clip` pasa a ser también su
+    /// caja.
+    pub fn recortar_con(&mut self, region: Vec<Rect>) {
+        let caja = region.iter().fold(Rect::nuevo(0, 0, -1, -1), |u, r| u.union(r));
+        self.clip = self.clip.interseccion(&caja);
+        self.region = Some(region);
+    }
+
+    /// Si `(x, y)` cae en la región de recorte (o no hay): la banda por búsqueda binaria y, dentro, el rectángulo.
+    fn en_region(&self, x: i32, y: i32) -> bool {
+        let Some(r) = &self.region else { return true };
+        // La primera banda que acaba en `y` o más abajo.
+        let i = r.partition_point(|q| q.y1 < y);
+        let Some(b) = r.get(i) else { return false };
+        if b.y0 > y {
+            return false;
+        }
+        let fin = i + r[i..].partition_point(|q| q.y0 == b.y0);
+        let banda = &r[i..fin];
+        let k = banda.partition_point(|q| q.x1 < x);
+        banda.get(k).is_some_and(|q| q.x0 <= x)
+    }
+
     pub fn crudo(&mut self, x: i32, y: i32, v: u32) {
-        if !self.clip.contiene(x, y) {
+        if !self.clip.contiene(x, y) || !self.en_region(x, y) {
             return;
         }
         let (x, y) = (x + self.dx, y + self.dy);
@@ -155,7 +187,7 @@ impl<M: Memoria> Pintor<'_, M> {
     /// Invierte un punto: en los planares, los bits de los planos de la máscara; en los nativos, el color (sin
     /// tocar el alfa). Dos veces deja lo que había.
     pub fn complementar(&mut self, x: i32, y: i32) {
-        if !self.clip.contiene(x, y) {
+        if !self.clip.contiene(x, y) || !self.en_region(x, y) {
             return;
         }
         let (x, y) = (x + self.dx, y + self.dy);

@@ -622,3 +622,76 @@ fn gimme_zero_zero_dibuja_dentro_de_los_bordes() {
     i(&mut c, "CloseWindow", &[], &[w]);
     assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
 }
+
+/// Una ventana de refresco simple: su capa con su `Layer_Info`, una `ClipRect` que la cubre y una `DamageList` con todo
+/// por pintar al abrirla (MUI la mira para saber qué repintar); `EndRefresh(TRUE)` la vacía, un cambio de tamaño la
+/// vuelve a llenar y cerrar no deja nada. Lo hostil: el programa estropea los punteros de la capa.
+#[test]
+fn capa_con_dano() {
+    use caja_intuition::estructuras::{cliprect, region, region_rectangle as rr};
+    let mut c = caja();
+    let antes = c.0.bloques_de(0).len();
+    let w = abrir(&mut c, GADGETS | wflg::SIMPLE_REFRESH);
+    let capa = l32(&c, w + win::WLAYER);
+    assert_eq!(l32(&c, capa + layer::LAYERINFO), c.1.workbench() + sc::LAYERINFO);
+    let cr = l32(&c, capa + layer::CLIPRECT);
+    assert_ne!(cr, 0);
+    assert_eq!(l32(&c, cr + cliprect::NEXT), 0);
+    assert_eq!(l32(&c, cr + cliprect::LOBS), 0);
+    assert_eq!((l16(&c, cr + cliprect::BOUNDS + 4), l16(&c, cr + cliprect::BOUNDS + 6)), (199, 99));
+    let dano = l32(&c, capa + layer::DAMAGELIST);
+    assert_ne!(dano, 0);
+    let rect = |c: &Caja, reg: u32| {
+        let n = l32(c, reg + region::REGIONRECTANGLE);
+        if n == 0 {
+            return None;
+        }
+        assert_eq!(l32(c, n + rr::NEXT), 0);
+        let b = |o: u32| l16(c, reg + o) as i16 + l16(c, n + rr::BOUNDS + o % 4) as i16;
+        Some((b(0), b(2), b(4), b(6)))
+    };
+    assert_eq!(rect(&c, dano), Some((0, 0, 199, 99)));
+    assert_ne!(l16(&c, capa + layer::FLAGS) & layer::LAYERREFRESH, 0);
+    assert_eq!(clases(&mensajes(&mut c, w)), [idcmp::REFRESHWINDOW]);
+    i(&mut c, "BeginRefresh", &[], &[w]);
+    i(&mut c, "EndRefresh", &[1], &[w]);
+    assert_eq!(rect(&c, dano), None);
+    assert_eq!(l16(&c, capa + layer::FLAGS) & layer::LAYERREFRESH, 0);
+    // Cambiar de tamaño: todo por pintar otra vez, y la ClipRect con el tamaño nuevo.
+    let s = c.1.superficie(w).unwrap();
+    c.1.comp.meter(s, Evento::Tamano { ancho: 300, alto: 150 });
+    c.1.atender(&mut c.0);
+    assert_eq!(rect(&c, dano), Some((0, 0, 299, 149)));
+    assert_eq!(l16(&c, cr + cliprect::BOUNDS + 4), 299);
+    // EndRefresh(FALSE) no la vacía.
+    i(&mut c, "EndRefresh", &[0], &[w]);
+    assert_eq!(rect(&c, dano), Some((0, 0, 299, 149)));
+    mensajes(&mut c, w);
+    // Hostil: el programa estropea los punteros de la capa; intuition usa los suyos y cierra sin perder nada.
+    e32(&mut c, capa + layer::DAMAGELIST, 0xFFFF_FFF0);
+    e32(&mut c, capa + layer::CLIPRECT, 0);
+    i(&mut c, "EndRefresh", &[1], &[w]);
+    assert_eq!(rect(&c, dano), None);
+    i(&mut c, "CloseWindow", &[], &[w]);
+    assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
+    assert_eq!(c.0.bloques_de(0).len(), antes);
+    // Una ventana inteligente también tiene su DamageList, vacía, y no recibe REFRESHWINDOW al abrirse.
+    let w = abrir(&mut c, GADGETS);
+    let capa = l32(&c, w + win::WLAYER);
+    assert_eq!(rect(&c, l32(&c, capa + layer::DAMAGELIST)), None);
+    assert!(clases(&mensajes(&mut c, w)).is_empty());
+}
+
+/// `DoubleClick`: dentro de 500 ms (el doble clic de DashOS), sí; más, al revés o con microsegundos imposibles, no.
+#[test]
+fn doble_clic() {
+    let mut c = caja();
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 900_000, 11, 300_000], &[]), 1);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 0, 10, 500_000], &[]), 1);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 0, 10, 500_001], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[11, 0, 10, 900_000], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[10, 2_000_000, 10, 2_100_000], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[u32::MAX, 999_999, 0, 0], &[]), 0);
+    assert_eq!(i(&mut c, "DoubleClick", &[0, 0, u32::MAX, 0], &[]), 0);
+    assert!(c.1.avisos().is_empty());
+}

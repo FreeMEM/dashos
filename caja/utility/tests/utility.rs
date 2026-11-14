@@ -255,3 +255,195 @@ fn hostil() {
     assert_eq!(u.llamar(&mut e, PRIMERO - 1, &mut r), Accion::Ajena);
     assert_eq!(u.llamar(&mut e, PRIMERO + 41, &mut r), Accion::Ajena);
 }
+
+// --- Objetos con nombre (V39) ---
+
+const ANO_NAMESPACE: u32 = 4000;
+const ANO_USERSPACE: u32 = 4001;
+const ANO_PRIORITY: u32 = 4002;
+const ANO_FLAGS: u32 = 4003;
+
+fn nombre_de(e: &Exec<MemoriaVec>, d: u32) -> Vec<u8> {
+    let mut v = Vec::new();
+    while let Ok(c) = e.mem.leer8(d + v.len() as u32) {
+        if c == 0 {
+            break;
+        }
+        v.push(c);
+    }
+    v
+}
+
+/// Lo que hace datatypes: un espacio propio en el raíz, objetos dentro por prioridad, buscarlos (sin mayúsculas o con
+/// ellas), soltarlos, quitarlos y liberarlos; la memoria de usuario.
+#[test]
+fn objetos_con_nombre() {
+    let (mut e, mut u) = caja();
+    let n_dt = cadena(&mut e, b"DataTypes");
+    let t = etiquetas(&mut e, &[(ANO_NAMESPACE, 1), (ANO_FLAGS, 1)]);
+    let dt = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n_dt, t, 0]).0;
+    assert_ne!(dt, 0);
+    assert_eq!(e.mem.leer32(dt).unwrap(), 0, "sin memoria de usuario, no_Object es 0");
+    let nombre = llamar(&mut e, &mut u, "NamedObjectName", [0; 3], [dt, 0, 0]).0;
+    assert_eq!(nombre_de(&e, nombre), b"DataTypes");
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, dt, 0]).0, 1);
+    // Se encuentra en el raíz sin mirar mayúsculas.
+    let n_min = cadena(&mut e, b"datatypes");
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [0, n_min, 0]).0, dt);
+    // Tres dentro, con prioridades; el espacio no admite repetidos (NSF_NODUPS).
+    let mut hijos = Vec::new();
+    for (n, p) in [(&b"ilbm"[..], 0u32), (b"png", 5), (b"gif", 0)] {
+        let c = cadena(&mut e, n);
+        let t = etiquetas(&mut e, &[(ANO_PRIORITY, p), (ANO_USERSPACE, 10)]);
+        let o = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [c, t, 0]).0;
+        let datos = e.mem.leer32(o).unwrap();
+        assert!(datos != 0 && datos % 4 == 0, "memoria de usuario alineada a 4");
+        e.mem.escribir32(datos + 6, 0x1234_5678).unwrap();
+        assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [dt, o, 0]).0, 1);
+        // El uso de quien lo creó: soltado, otros lo pueden quitar.
+        llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [o, 0, 0]);
+        hijos.push(o);
+    }
+    let otro_png = {
+        let c = cadena(&mut e, b"PNG");
+        llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [c, 0, 0]).0
+    };
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [dt, otro_png, 0]).0, 0, "NSF_NODUPS sin mayúsculas");
+    // Todos en orden: png (5) primero, luego ilbm y gif (en el orden en que entraron).
+    let mut orden = Vec::new();
+    let mut ultimo = 0;
+    loop {
+        let o = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, 0, ultimo]).0;
+        if o == 0 {
+            break;
+        }
+        orden.push(o);
+        ultimo = o;
+    }
+    assert_eq!(orden, [hijos[1], hijos[0], hijos[2]]);
+    for &o in &orden {
+        llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [o, 0, 0]);
+    }
+    // AttemptRemNamedObject: con un uso más (alguien lo encontró) no; soltado, sí.
+    let n_gif = cadena(&mut e, b"GIF");
+    let gif = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_gif, 0]).0;
+    assert_eq!(gif, hijos[2]);
+    let gif2 = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_gif, 0]).0;
+    assert_eq!(llamar(&mut e, &mut u, "AttemptRemNamedObject", [0; 3], [gif, 0, 0]).0, 0);
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [gif2, 0, 0]);
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [gif, 0, 0]);
+    assert_eq!(llamar(&mut e, &mut u, "AttemptRemNamedObject", [0; 3], [gif, 0, 0]).0, 1);
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_gif, 0]).0, 0);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [gif, 0, 0]);
+    // RemNamedObject con alguien usándolo: se quita al soltarse, y se contesta el mensaje con el objeto en ln_Name.
+    let puerto = e.create_msg_port().unwrap();
+    let m = e.alloc_mem(20, memf::CLEAR | memf::PUBLIC).unwrap();
+    e.mem.escribir32(m + 14, puerto).unwrap();
+    let n_ilbm = cadena(&mut e, b"ilbm");
+    let ilbm = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_ilbm, 0]).0;
+    let ilbm2 = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_ilbm, 0]).0;
+    llamar(&mut e, &mut u, "RemNamedObject", [0; 3], [ilbm, m, 0]);
+    assert_eq!(e.get_msg(puerto).unwrap(), 0, "aún lo usa otro");
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_ilbm, 0]).0, 0, "ya no se encuentra");
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [ilbm2, 0, 0]);
+    assert_eq!(e.get_msg(puerto).unwrap(), m);
+    assert_eq!(e.mem.leer32(m + 10).unwrap(), ilbm);
+    // Liberar: uno en un espacio, no; el espacio con hijos, no; vacío, sí.
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [ilbm, 0, 0]);
+    assert!(u.tomar_avisos().is_empty(), "{:?}", u.avisos());
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [hijos[1], 0, 0]);
+    assert_eq!(u.tomar_avisos().len(), 1, "png sigue en el espacio");
+    let n_png = cadena(&mut e, b"png");
+    let png = llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [dt, n_png, 0]).0;
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [png, 0, 0]);
+    assert_eq!(llamar(&mut e, &mut u, "AttemptRemNamedObject", [0; 3], [png, 0, 0]).0, 1);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [png, 0, 0]);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [otro_png, 0, 0]);
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [dt, 0, 0]);
+    assert_eq!(llamar(&mut e, &mut u, "AttemptRemNamedObject", [0; 3], [dt, 0, 0]).0, 1);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [dt, 0, 0]);
+    assert!(u.tomar_avisos().is_empty(), "{:?}", u.avisos());
+    // utility ya no conoce ninguno (su memoria se soltó: la vuelve a usar quien la pida).
+    for o in [dt, otro_png].into_iter().chain(hijos.clone()) {
+        assert_eq!(llamar(&mut e, &mut u, "NamedObjectName", [0; 3], [o, 0, 0]).0, 0);
+    }
+    assert_eq!(u.tomar_avisos().len(), 5);
+    // Y no se pierde memoria: cien vueltas de crear, meter, sacar y soltar dejan los mismos bloques.
+    let n = cadena(&mut e, b"vuelta");
+    let t = etiquetas(&mut e, &[(ANO_NAMESPACE, 1), (ANO_USERSPACE, 100)]);
+    let antes = e.bloques_de(e.tarea_actual()).len();
+    for _ in 0..100 {
+        let o = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, t, 0]).0;
+        assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, o, 0]).0, 1);
+        assert_eq!(llamar(&mut e, &mut u, "AttemptRemNamedObject", [0; 3], [o, 0, 0]).0, 1);
+        llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [o, 0, 0]);
+    }
+    assert_eq!(e.bloques_de(e.tarea_actual()).len(), antes);
+    assert!(u.tomar_avisos().is_empty(), "{:?}", u.avisos());
+}
+
+/// Lo hostil: objetos que utility no dio, nulos, ya soltados; un objeto en dos espacios o en el suyo; nombres sin fin
+/// o fuera de la memoria; memoria de usuario absurda; etiquetas en círculo; una tarea que acaba sin soltarlos.
+#[test]
+fn objetos_con_nombre_hostil() {
+    let (mut e, mut u) = caja();
+    let falso = e.alloc_mem(64, memf::CLEAR).unwrap();
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, falso, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [falso, 0, 0]).0, 0);
+    for f in ["ReleaseNamedObject", "FreeNamedObject", "AttemptRemNamedObject", "NamedObjectName"] {
+        assert_eq!(llamar(&mut e, &mut u, f, [0; 3], [falso, 0, 0]).0, 0, "{f}");
+    }
+    assert_eq!(u.tomar_avisos().len(), 6);
+    // Nulos: lo que dice el autodoc (0, sin aviso) salvo AllocNamedObjectA sin nombre.
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, 0, 0]).0, 0);
+    llamar(&mut e, &mut u, "ReleaseNamedObject", [0; 3], [0, 0, 0]);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [0, 0, 0]);
+    assert_eq!(llamar(&mut e, &mut u, "NamedObjectName", [0; 3], [0, 0, 0]).0, 0);
+    assert!(u.tomar_avisos().is_empty());
+    assert_eq!(llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [0, 0, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [0xFFFF_FFF0, 0, 0]).0, 0);
+    // Un nombre sin fin (4 KB de letras sin cero).
+    let largo = e.alloc_mem(4096, 0).unwrap();
+    e.mem.leer_mut(largo, 4096).unwrap().fill(b'a');
+    assert_eq!(llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [largo, 0, 0]).0, 0);
+    assert_eq!(u.tomar_avisos().len(), 3);
+    // Memoria de usuario absurda: 0, sin aviso (no hay memoria).
+    let n = cadena(&mut e, b"x");
+    let t = etiquetas(&mut e, &[(ANO_USERSPACE, 0xFFFF_FFF0)]);
+    assert_eq!(llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, t, 0]).0, 0);
+    // Etiquetas en círculo: un aviso, 0.
+    let t = etiquetas(&mut e, &[(2, 0)]);
+    e.mem.escribir32(t + 4, t).unwrap();
+    assert_eq!(llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, t, 0]).0, 0);
+    assert_eq!(u.tomar_avisos().len(), 1);
+    // Un objeto en dos espacios, o en el suyo propio, o un espacio dentro de su hijo: no.
+    let t_ns = etiquetas(&mut e, &[(ANO_NAMESPACE, 1)]);
+    let a = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, t_ns, 0]).0;
+    let b = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, t_ns, 0]).0;
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [a, a, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [a, b, 0]).0, 1);
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, b, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [b, a, 0]).0, 0);
+    // Uno sin espacio no sirve de espacio.
+    let c = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n, 0, 0]).0;
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [c, a, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [c, 0, 0]).0, 0);
+    // lastObject de otro espacio: aviso, 0.
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [0, 0, b]).0, 0);
+    assert_eq!(u.tomar_avisos().len(), 6);
+    // Soltar dos veces: el segundo, ya no es suyo.
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [c, 0, 0]);
+    llamar(&mut e, &mut u, "FreeNamedObject", [0; 3], [c, 0, 0]);
+    assert_eq!(u.tomar_avisos().len(), 1);
+    // Una tarea que acaba con objetos vivos: la caja suelta su memoria y utility se olvida de ellos.
+    let otra = e.crear_tarea("otra", 5, 1024, 0x1000).unwrap();
+    assert_eq!(e.elegir_siguiente(), Some(otra));
+    let n2 = cadena(&mut e, b"suyo");
+    let suyo = llamar(&mut e, &mut u, "AllocNamedObjectA", [0; 3], [n2, 0, 0]).0;
+    assert_eq!(llamar(&mut e, &mut u, "AddNamedObject", [0; 3], [0, suyo, 0]).0, 1);
+    e.matar_tarea(otra).unwrap();
+    u.tarea_muerta(&e);
+    assert_eq!(llamar(&mut e, &mut u, "FindNamedObject", [0; 3], [0, n, 0]).0, 0);
+    assert_eq!(llamar(&mut e, &mut u, "NamedObjectName", [0; 3], [suyo, 0, 0]).0, 0);
+    assert_eq!(u.tomar_avisos().len(), 1);
+}

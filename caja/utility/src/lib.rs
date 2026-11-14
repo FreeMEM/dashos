@@ -12,12 +12,16 @@
 //!
 //! `CallHookPkt` no es nativa: su entrada de la tabla de saltos es código 68k que salta a `h_Entry` (lo de la ROM).
 //!
-//! Lo que falta: los objetos con nombre (V39) y `MapTags`/`FilterTagChanges`/`PackStructureTags`/`UnpackStructureTags`: dan un aviso y 0.
+//! Los objetos con nombre (V39, los usa datatypes.library) están en `nombres.rs`.
+//!
+//! Lo que falta: `MapTags`/`FilterTagChanges`/`PackStructureTags`/`UnpackStructureTags`: dan un aviso y 0.
 
 #![no_std]
 #![forbid(unsafe_code)]
 
 extern crate alloc;
+
+mod nombres;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
@@ -103,7 +107,7 @@ pub mod clockdata {
 }
 
 /// Tope de vueltas al recorrer etiquetas: más es una lista en círculo (un `TAG_MORE` que vuelve atrás).
-const MAX_VUELTAS: u32 = 1 << 16;
+pub(crate) const MAX_VUELTAS: u32 = 1 << 16;
 const MAX_AVISOS: usize = 1024;
 
 /// utility.library de una caja.
@@ -115,6 +119,8 @@ pub struct Utilidad {
     /// Listas de etiquetas que dio `AllocateTagItems` o `CloneTagItems`: dirección → tamaño.
     listas: BTreeMap<u32, u32>,
     unico: u32,
+    /// Los objetos con nombre y sus espacios.
+    nombres: nombres::Nombres,
 }
 
 fn comprobar(dir: u32, largo: u32, escribir: bool) -> Result<(), Fallo> {
@@ -236,7 +242,7 @@ impl Utilidad {
         for (i, w) in [0x2F28u16, 0x0008, 0x4E75].into_iter().enumerate() {
             ex.mem.escribir16(e + 2 * i as u32, w)?;
         }
-        Ok(Utilidad { base, primero, avisos: Vec::new(), listas: BTreeMap::new(), unico: 0 })
+        Ok(Utilidad { base, primero, avisos: Vec::new(), listas: BTreeMap::new(), unico: 0, nombres: Default::default() })
     }
 
     pub fn base(&self) -> u32 {
@@ -376,6 +382,12 @@ impl Utilidad {
             "GetUniqueID" => {
                 self.unico = self.unico.wrapping_add(1);
                 self.unico
+            }
+            // Los objetos con nombre (nombres.rs). Antes, se olvidan los de las tareas que acabaron.
+            "AllocNamedObjectA" | "AddNamedObject" | "FindNamedObject" | "ReleaseNamedObject" | "RemNamedObject"
+            | "AttemptRemNamedObject" | "FreeNamedObject" | "NamedObjectName" => {
+                self.nombres.podar(ex);
+                self.objetos_con_nombre(ex, FUNCIONES[i], &a)?
             }
             _ => return Err(Fallo::NoImplementada { n: self.primero + i as u16 }),
         };
@@ -612,6 +624,45 @@ impl Utilidad {
     /// Olvida las listas de etiquetas de una tarea que muere (exec ya soltó su memoria).
     pub fn tarea_muerta<M: Memoria>(&mut self, ex: &Exec<M>) {
         self.listas.retain(|&d, _| ex.bloque(d.wrapping_sub(4)).is_some_and(|b| b.vec));
+        self.nombres.podar(ex);
+    }
+
+    /// Las funciones de los objetos con nombre, con sus registros.
+    fn objetos_con_nombre<M: Memoria>(&mut self, ex: &mut Exec<M>, f: &str, a: &[u32; 8]) -> Result<u32, Fallo> {
+        Ok(match f {
+            // AllocNamedObjectA(name, tagList)(a0/a1)
+            "AllocNamedObjectA" => {
+                let mut etiquetas = Vec::new();
+                self.recorrer(ex, a[1], |_, t, v| {
+                    etiquetas.push((t, v));
+                    true
+                })?;
+                self.nombres.alloc(ex, a[0], &etiquetas)?
+            }
+            // AddNamedObject(nameSpace, object)(a0/a1)
+            "AddNamedObject" => self.nombres.add(a[0], a[1])? as u32,
+            // FindNamedObject(nameSpace, name, lastObject)(a0/a1/a2)
+            "FindNamedObject" => self.nombres.find(ex, a[0], a[1], a[2])?,
+            // ReleaseNamedObject(object)(a0); RemNamedObject(object, message)(a0/a1): el mensaje se contesta cuando sale,
+            // con el objeto en ln_Name.
+            "ReleaseNamedObject" | "RemNamedObject" => {
+                let m = if f == "RemNamedObject" { self.nombres.rem(a[0], a[1])? } else { self.nombres.release(a[0])? };
+                if let Some(m) = m {
+                    e32(ex, m + 10, a[0])?;
+                    ex.reply_msg(m)?;
+                }
+                0
+            }
+            // AttemptRemNamedObject(object)(a0)
+            "AttemptRemNamedObject" => self.nombres.attempt_rem(a[0])? as u32,
+            // FreeNamedObject(object)(a0)
+            "FreeNamedObject" => {
+                self.nombres.free(ex, a[0])?;
+                0
+            }
+            // NamedObjectName(object)(a0)
+            _ => self.nombres.name(a[0])?,
+        })
     }
 
     /// Cuántas listas de etiquetas repartidas siguen vivas.

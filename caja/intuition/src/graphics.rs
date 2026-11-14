@@ -233,6 +233,28 @@ impl<C: Compositor> CajaGrafica<C> {
         if capa == 0 { None } else { self.gfx.capas.get(&capa).copied() }
     }
 
+    /// La región de recorte (`InstallClipRegion`) de una capa de graphics (la de una ventana o una suelta), en bandas y
+    /// en las coordenadas de la capa (las del `RastPort`). `None` si no tiene; una región que no se puede leer es un
+    /// fallo (no se pinta nada).
+    pub(crate) fn region_de_capa<M: Memoria>(&self, ex: &Exec<M>, capa: u32) -> Result<Option<Vec<Rect>>, Fallo> {
+        if capa == 0 || !self.gfx.capas.contains_key(&capa) {
+            return Ok(None);
+        }
+        let reg = ex.l32(capa + crate::estructuras::layer::CLIPREGION)?;
+        if reg == 0 {
+            return Ok(None);
+        }
+        let (rs, _) = self.leer_region(ex, reg)?;
+        Ok(Some(crate::regiones::operar(&rs, &[], crate::regiones::Op::O).ok_or(Fallo::Sospechoso { dir: reg })?))
+    }
+
+    /// La región de recorte de una capa, en las coordenadas de su mapa (la de la capa movida a su origen `(dx, dy)`).
+    fn region_en_mapa<M: Memoria>(&self, ex: &Exec<M>, capa: u32, dx: i32, dy: i32) -> Result<Option<Vec<Rect>>, Fallo> {
+        Ok(self.region_de_capa(ex, capa)?.map(|v| {
+            v.into_iter().map(|q| Rect::nuevo(q.x0 + dx, q.y0 + dy, q.x1 + dx, q.y1 + dy)).collect()
+        }))
+    }
+
     /// Dónde cae el (0, 0) de un `RastPort` en su mapa (el de su capa; (0, 0) casi siempre).
     pub(crate) fn origen_capa(&self, capa: u32) -> (i32, i32) {
         if capa == 0 { (0, 0) } else { self.gfx.origenes.get(&capa).copied().unwrap_or((0, 0)) }
@@ -247,9 +269,13 @@ impl<C: Compositor> CajaGrafica<C> {
         let mapa = self.mapa(ex, i.bm)?;
         let capa = self.recorte_capa(i.capa);
         let (dx, dy) = self.origen_capa(i.capa);
+        let region = self.region_de_capa(ex, i.capa)?;
         let mut p = self.pintor_mapa(ex, i.bm, mapa, capa, i.fg, i.bg, i.modo, i.mascara)?;
         if (dx, dy) != (0, 0) {
             p.trasladar(dx, dy);
+        }
+        if let Some(r) = region {
+            p.recortar_con(r);
         }
         Ok(p)
     }
@@ -276,7 +302,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 if let Some(c) = capa {
                     clip = clip.interseccion(&c);
                 }
-                Ok(Pintor { sup: Sup::Nativa(l), clip, a, b, modo, mascara, dx: 0, dy: 0 })
+                Ok(Pintor { sup: Sup::Nativa(l), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
             }
             Mapa::Planar(p) => {
                 let mut clip = p.rect();
@@ -285,7 +311,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 let a = Tinta { pen: fg, argb: 0 };
                 let b = Tinta { pen: bg, argb: 0 };
-                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, a, b, modo, mascara, dx: 0, dy: 0 })
+                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
             }
         }
     }
@@ -386,7 +412,7 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// El patrón de área de un `RastPort` (`AreaPtrn`, `2^AreaPtSz` filas), o vacío.
-    fn patron_area<M: Memoria>(&self, ex: &Exec<M>, i: &InfoRp) -> Result<Vec<u16>, Fallo> {
+    pub(crate) fn patron_area<M: Memoria>(&self, ex: &Exec<M>, i: &InfoRp) -> Result<Vec<u16>, Fallo> {
         if i.area == 0 || i.area_sz > 8 {
             return Ok(Vec::new());
         }
@@ -564,9 +590,10 @@ impl<C: Compositor> CajaGrafica<C> {
         }
     }
 
-    /// El corazón de `BltBitMap`, `ClipBlit` y `BltBitMapRastPort`: copia `ancho` x `alto` de un mapa a otro
-    /// con un minitérmino, recortando a los dos (y a `capa` en el destino). Entre un mapa planar y uno nativo,
-    /// las plumas pasan por la paleta del nativo. Devuelve los planos copiados.
+    /// El corazón de `BltBitMap`, `ClipBlit`, `BltBitMapRastPort` y `BltMaskBitMapRastPort`: copia `ancho` x `alto` de
+    /// un mapa a otro con un minitérmino, recortando a los dos (y a `capa` en el destino). Entre un mapa planar y uno
+    /// nativo, las plumas pasan por la paleta del nativo. Con `plantilla` (un plano de un bit del ancho y el alto del
+    /// origen, con filas de `RASSIZE`), solo se tocan los puntos con su bit a 1. Devuelve los planos copiados.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn copiar<M: Memoria>(
         &mut self,
@@ -582,6 +609,8 @@ impl<C: Compositor> CajaGrafica<C> {
         m: u8,
         mascara: u8,
         capa: Option<Rect>,
+        plantilla: Option<u32>,
+        region: Option<Vec<Rect>>,
     ) -> Result<u32, Fallo> {
         let mo = self.mapa(ex, origen)?;
         let md = self.mapa(ex, destino)?;
@@ -605,6 +634,21 @@ impl<C: Compositor> CajaGrafica<C> {
             return Ok(0);
         }
         let datos = self.leer_rect(ex, origen, mo, ro);
+        // Las filas de la plantilla que caen en lo copiado (en coordenadas del origen), leídas antes de pintar.
+        let filas_plantilla = match plantilla {
+            Some(pl) => {
+                let por_fila = (lim_o.ancho()).div_ceil(16) * 2;
+                let mut v = Vec::with_capacity(ro.alto() as usize);
+                for y in ro.y0..=ro.y1 {
+                    let d = (pl as u64) + (y - lim_o.y0) as u64 * por_fila as u64 + (ro.x0 - lim_o.x0) as u64 / 8;
+                    let d = u32::try_from(d).map_err(|_| caja_exec::Fallo::FueraDeMemoria { dir: pl, largo: 0 })?;
+                    let ultimo = (ro.x1 - lim_o.x0) as u32 / 8 - (ro.x0 - lim_o.x0) as u32 / 8;
+                    v.push(ex.bytes(d, ultimo + 1)?);
+                }
+                Some(v)
+            }
+            None => None,
+        };
         let cm_o = self.gfx.lienzos.get(&origen).map(|l| l.paleta).unwrap_or(0);
         let cm_d = self.gfx.lienzos.get(&destino).map(|l| l.paleta).unwrap_or(0);
         // Traducir al tipo del destino.
@@ -621,11 +665,29 @@ impl<C: Compositor> CajaGrafica<C> {
             Mapa::Planar(p) => p.prof as u32,
         };
         let mut p = self.pintor_mapa(ex, destino, md, capa, 0, 0, drmd::JAM2, mascara)?;
+        if let Some(r) = region {
+            p.recortar_con(r);
+        }
         let an = ro.ancho() as usize;
+        let nativo = matches!(md, Mapa::Nativo);
         for y in ro.y0..=ro.y1 {
             for x in ro.x0..=ro.x1 {
                 let b = datos[(y - ro.y0) as usize * an + (x - ro.x0) as usize];
                 let (tx, ty) = (x + dx, y + dy);
+                if let Some(f) = &filas_plantilla {
+                    // El bit de la plantilla; con ANBC, el origen invertido (en un nativo, el color sin el alfa).
+                    let k = (x - lim_o.x0) as u32 - ((ro.x0 - lim_o.x0) as u32 & !7);
+                    if f[(y - ro.y0) as usize][(k / 8) as usize] & (0x80 >> (k % 8)) == 0 {
+                        continue;
+                    }
+                    let v = if m & 0xC0 == 0 {
+                        if nativo { b ^ 0x00FF_FFFF } else { !b & 0xFF }
+                    } else {
+                        b
+                    };
+                    p.crudo(tx, ty, v);
+                    continue;
+                }
                 let v = if m == 0xC0 {
                     b
                 } else {
@@ -654,7 +716,7 @@ impl<C: Compositor> CajaGrafica<C> {
         m: u8,
         mascara: u8,
     ) -> Result<u32, Fallo> {
-        self.copiar(ex, origen, xs, ys, destino, xd, yd, ancho, alto, m, mascara, None)
+        self.copiar(ex, origen, xs, ys, destino, xd, yd, ancho, alto, m, mascara, None, None, None)
     }
 
     /// `ClipBlit` y `BltBitMapRastPort` (con `origen_rp` = 0 y `origen` el mapa).
@@ -682,9 +744,39 @@ impl<C: Compositor> CajaGrafica<C> {
         let d = self.leer_rp(ex, destino_rp)?;
         let capa = self.recorte_capa(d.capa);
         let (dx, dy) = self.origen_capa(d.capa);
+        let region = self.region_en_mapa(ex, d.capa, dx, dy)?;
         let (xs, ys) = (xs.saturating_add(ox), ys.saturating_add(oy));
         let (xd, yd) = (xd.saturating_add(dx), yd.saturating_add(dy));
-        self.copiar(ex, bm_o, xs, ys, d.bm, xd, yd, ancho, alto, m, d.mascara, capa)?;
+        self.copiar(ex, bm_o, xs, ys, d.bm, xd, yd, ancho, alto, m, d.mascara, capa, None, region)?;
+        Ok(())
+    }
+
+    /// `BltMaskBitMapRastPort`: como `BltBitMapRastPort`, pero solo donde la plantilla (`bltmask`) tiene su bit a 1;
+    /// con (ABC|ABNC|ANBC) el origen tal cual, con ANBC invertido.
+    #[allow(clippy::too_many_arguments)]
+    pub fn blt_mask_bit_map_rast_port<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        origen: u32,
+        xs: i32,
+        ys: i32,
+        destino_rp: u32,
+        xd: i32,
+        yd: i32,
+        ancho: i32,
+        alto: i32,
+        m: u8,
+        plantilla: u32,
+    ) -> Result<(), Fallo> {
+        if plantilla == 0 {
+            return Err(caja_exec::Fallo::PunteroNulo.into());
+        }
+        let d = self.leer_rp(ex, destino_rp)?;
+        let capa = self.recorte_capa(d.capa);
+        let (dx, dy) = self.origen_capa(d.capa);
+        let region = self.region_en_mapa(ex, d.capa, dx, dy)?;
+        let (xd, yd) = (xd.saturating_add(dx), yd.saturating_add(dy));
+        self.copiar(ex, origen, xs, ys, d.bm, xd, yd, ancho, alto, m, d.mascara, capa, Some(plantilla), region)?;
         Ok(())
     }
 
@@ -841,6 +933,99 @@ impl<C: Compositor> CajaGrafica<C> {
             largo += avance + kern + i.espacio;
         }
         Ok(largo.clamp(0, 0x7FFF) as u32)
+    }
+
+    /// `GetDisplayInfoData` (`graphics/displayinfo.h`): lo que se sabe del modo de la pantalla de la caja (la del
+    /// Workbench, del tamaño del escritorio, 8 bits por color): `DTAG_DISP`, `DTAG_DIMS`, `DTAG_MNTR` y `DTAG_NAME`, cada
+    /// uno con su `QueryHeader`. Copia como mucho `largo` bytes en `buf` y devuelve cuántos; otra etiqueta, 0.
+    pub fn get_display_info_data<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        buf: u32,
+        largo: u32,
+        tag: u32,
+        id: u32,
+    ) -> Result<u32, Fallo> {
+        let (an, al) = self.comp.tamano_escritorio();
+        let (an, al) = (an.min(0x7FFF) as u16, al.min(0x7FFF) as u16);
+        let mut v: alloc::vec::Vec<u8> = match tag {
+            0x8000_0000 => alloc::vec![0; 56],
+            0x8000_1000 => alloc::vec![0; 88],
+            0x8000_2000 => alloc::vec![0; 96],
+            0x8000_3000 => alloc::vec![0; 56],
+            _ => return Ok(0),
+        };
+        let pon16 = |v: &mut [u8], o: usize, x: u16| v[o..o + 2].copy_from_slice(&x.to_be_bytes());
+        let pon32 = |v: &mut [u8], o: usize, x: u32| v[o..o + 4].copy_from_slice(&x.to_be_bytes());
+        let n = v.len();
+        pon32(&mut v, 0, tag);
+        pon32(&mut v, 4, id);
+        pon32(&mut v, 8, 3); // TAG_SKIP
+        pon32(&mut v, 12, (n as u32 - 16) / 8);
+        let rect = |v: &mut [u8], o: usize| {
+            pon16(v, o + 4, an - 1);
+            pon16(v, o + 6, al - 1);
+        };
+        match tag {
+            0x8000_0000 => {
+                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200); // DIPF_IS_WB | DIPF_IS_DRAGGABLE
+                pon16(&mut v, 22, 22);
+                pon16(&mut v, 24, 22);
+                pon16(&mut v, 26, 35);
+                pon16(&mut v, 28, 8);
+                pon16(&mut v, 30, 4096);
+                pon16(&mut v, 32, 22);
+                pon16(&mut v, 34, 22);
+                v[40] = 8;
+                v[41] = 8;
+                v[42] = 8;
+            }
+            0x8000_1000 => {
+                pon16(&mut v, 16, 8);
+                pon16(&mut v, 18, 16);
+                pon16(&mut v, 20, 16);
+                pon16(&mut v, 22, 16368);
+                pon16(&mut v, 24, 16384);
+                for o in [26, 34, 42, 50, 58] {
+                    rect(&mut v, o);
+                }
+            }
+            0x8000_2000 => {
+                pon16(&mut v, 24, 22);
+                pon16(&mut v, 26, 22);
+                pon16(&mut v, 36, al);
+                pon16(&mut v, 38, an / 2);
+                pon16(&mut v, 76, 1);
+                pon16(&mut v, 78, 1);
+                pon32(&mut v, 84, id);
+            }
+            _ => {
+                let nombre = b"DashOS";
+                v[16..16 + nombre.len()].copy_from_slice(nombre);
+            }
+        }
+        let k = (largo as usize).min(n);
+        if k == 0 {
+            return Ok(0);
+        }
+        ex.tramo(buf, k as u32)?;
+        for (i, b) in v[..k].iter().enumerate() {
+            ex.e8(buf + i as u32, *b)?;
+        }
+        Ok(k as u32)
+    }
+
+    /// `WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)`: de 0 (nada que ver) a 32767 (`MAXFONTMATCHWEIGHT`, la
+    /// misma): cada punto de alto de diferencia, y cada estilo distinto, restan. Desde V39 es privada (sin autodoc).
+    pub fn weigh_ta_match<M: Memoria>(&mut self, ex: &mut Exec<M>, pedida: u32, otra: u32) -> Result<u32, Fallo> {
+        use crate::estructuras::textattr as ta;
+        // El nombre no cuenta (lo compara quien llama): diskfont de 3.2 pasa como `TextAttr` la `TextFont` desplazada
+        // 16 bytes, para que `tf_YSize`, `tf_Style` y `tf_Flags` caigan en su sitio; su `ta_Name` es basura.
+        ex.tramo(pedida, 8)?;
+        ex.tramo(otra, 8)?;
+        let dy = (ex.l16(pedida + ta::TA_YSIZE)? as i32 - ex.l16(otra + ta::TA_YSIZE)? as i32).unsigned_abs();
+        let estilos = (ex.l8(pedida + 6)? ^ ex.l8(otra + 6)?).count_ones();
+        Ok(32767u32.saturating_sub(dy * 1024 + estilos * 256))
     }
 
     /// `TextExtent(rp, string, count, textExtent)`: el ancho (como `TextLength`), el alto de la fuente y el rectángulo
@@ -1051,6 +1236,13 @@ impl<C: Compositor> CajaGrafica<C> {
         if nativo {
             let cm = self.gfx.lienzos.get(&amigo).map(|l| l.paleta).unwrap_or(0);
             self.nuevo_nativo(ex, bm, ancho, alto, cm)?;
+            // Sus píxeles, ya: si el montón de la caja no da para ellos, AllocBitMap da 0 como en el Amiga sin memoria
+            // (sin aviso: no es un error del programa), en vez de un mapa en el que no se puede pintar.
+            if !self.gfx.lienzos.get_mut(&bm).is_some_and(|l| l.con_pixeles()) {
+                self.gfx.lienzos.remove(&bm);
+                ex.soltar(bm, bitmap::TAMANO)?;
+                return Ok(0);
+            }
             self.gfx.reservados.insert(bm, vec![(bm, bitmap::TAMANO)]);
             return Ok(bm);
         }

@@ -334,3 +334,84 @@ fn tablas_malas() {
     assert!(e.make_functions(0x2000, 0xFFFF_FFFC, 0).is_err());
     assert!(e.init_struct(0xFFFF_FFFF, z, 0).is_err());
 }
+
+/// Una biblioteca de disco que lleva su propia cuenta de aperturas (locale y diskfont de 3.2 suman en un campo suyo,
+/// no en `lib_OpenCnt`): CloseLibrary llama a su Close sin mirar `lib_OpenCnt`; cerrar más de lo que la tarea abrió es
+/// `CierreDeMas` y su Close no se llama; lo que abre y cierra el código de una biblioteca de disco no se apunta a la
+/// tarea (matarla no lo toca).
+#[test]
+fn biblioteca_con_cuenta_propia() {
+    const OPEN: u32 = 0x0010_0100;
+    const CLOSE: u32 = 0x0010_0200;
+    const CUENTA: u32 = 34;
+    let (mut e, _t) = caja_con_tarea();
+    let z = e.alloc_mem(64, memf::CLEAR).unwrap();
+    for (i, f) in [OPEN, CLOSE, 0x0010_0300, 0x0010_0400, 0xFFFF_FFFF].iter().enumerate() {
+        e.mem.escribir32(z + 4 * i as u32, *f).unwrap();
+    }
+    let nombre = cadena(&mut e, "propia.library");
+    let mut r = Registros::default();
+    r.a[0] = z;
+    r.d[0] = 40;
+    llamar(&mut e, "MakeLibrary", &mut r);
+    let lib = r.d[0];
+    e.mem.escribir32(lib + node::LN_NAME, nombre).unwrap();
+    r.a[1] = lib;
+    llamar(&mut e, "AddLibrary", &mut r);
+    // "Ejecuta" su Open y su Close como harían ellas: su contador en +34, `lib_OpenCnt` sin tocar.
+    let mut cerrados = 0;
+    let correr = |e: &mut caja_exec::Exec<caja_exec::MemoriaVec>, a: Accion, r: &mut Registros, cerrados: &mut u32| {
+        let Accion::Llamar { destino: Destino::Codigo68k(pc), regs, tras } = a else { return a };
+        let mut h = regs;
+        let n = e.mem.leer16(lib + CUENTA).unwrap();
+        if pc == OPEN {
+            e.mem.escribir16(lib + CUENTA, n + 1).unwrap();
+            h.d[0] = lib;
+        } else {
+            assert_eq!(pc, CLOSE);
+            e.mem.escribir16(lib + CUENTA, n.wrapping_sub(1)).unwrap();
+            *cerrados += 1;
+            h.d[0] = 0;
+        }
+        e.continuar(tras, &h, r)
+    };
+    let abrir = |e: &mut caja_exec::Exec<caja_exec::MemoriaVec>, r: &mut Registros| {
+        r.a[1] = nombre;
+        r.d[0] = 0;
+        llamar(e, "OpenLibrary", r)
+    };
+    let a = abrir(&mut e, &mut r);
+    correr(&mut e, a, &mut r, &mut cerrados);
+    assert_eq!(r.d[0], lib);
+    assert_eq!((e.mem.leer16(lib + CUENTA).unwrap(), opencnt(&e, lib)), (1, 0));
+    r.a[1] = lib;
+    let a = llamar(&mut e, "CloseLibrary", &mut r);
+    correr(&mut e, a, &mut r, &mut cerrados);
+    assert_eq!((cerrados, e.mem.leer16(lib + CUENTA).unwrap()), (1, 0));
+    assert!(e.avisos().is_empty(), "{:?}", e.avisos());
+    // Cerrar de más: CierreDeMas, sin llamar a su Close.
+    r.a[1] = lib;
+    let a = llamar(&mut e, "CloseLibrary", &mut r);
+    assert_eq!(a, Accion::Seguir);
+    assert_eq!(e.avisos().last().unwrap().fallo, Fallo::CierreDeMas { dir: lib });
+    // Desde el código de una biblioteca de disco: no se apunta a la tarea, y su cierre no se mira.
+    e.memoria_del_sistema(true);
+    let a = abrir(&mut e, &mut r);
+    correr(&mut e, a, &mut r, &mut cerrados);
+    e.memoria_del_sistema(false);
+    let otra = e.crear_tarea("otra", 5, 1024, 0x1000).unwrap();
+    // Matar una tarea que no la abrió no cambia su cuenta.
+    e.matar_tarea(otra).unwrap();
+    assert_eq!(e.mem.leer16(lib + CUENTA).unwrap(), 1);
+    // La tarea no puede cerrar lo que abrió la biblioteca; la biblioteca, sí.
+    r.a[1] = lib;
+    let n_avisos = e.avisos().len();
+    llamar(&mut e, "CloseLibrary", &mut r);
+    assert_eq!(e.avisos().len(), n_avisos + 1);
+    e.memoria_del_sistema(true);
+    r.a[1] = lib;
+    let a = llamar(&mut e, "CloseLibrary", &mut r);
+    correr(&mut e, a, &mut r, &mut cerrados);
+    e.memoria_del_sistema(false);
+    assert_eq!((cerrados, e.mem.leer16(lib + CUENTA).unwrap()), (2, 0));
+}
