@@ -71,20 +71,19 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   del panel y el panel sin gráficas); en 800 × 600, `trasfondo-800-monitor.*.png`. Con Full HD falla, como siempre, la
   línea de la pantalla de 800 × 600.
 
-### Estado de las pruebas al acabar
+### Estado de las pruebas al acabar (2026-11-14)
 
-- `make prueba`: BIEN (con la línea nueva de `grupos`).
-- `make arranque-virt` (800 × 600): todas las líneas del monitor salen (panel, gasto, hostil "bien", píldora,
-  desplegable, abrir el monitor, cerrar `espera` sí, la suma no, ordenar, gráficas fuera y dentro). **Pero no pasa
-  entero**: falta una línea de la prueba de Ajustes del kit que no es de este trabajo, `[ajustes] el compositor pide
-  800x560` (Super+Arriba no la maximiza: una pregunta de `guardian` sale justo entonces y se lleva la tecla). Salió en
-  dos vueltas seguidas, así que no parece casualidad: el arranque va más cargado o en otro orden (la red se lanza antes,
-  el panel y la barra miden). Se probó a reintentar Super+Arriba (fallaba entonces el cierre de la ventana Amiga, que
-  tapaba Ajustes al subir) y a esperar a la ventana Amiga (fallaba entonces el desplegable de Ajustes); los dos cambios
-  se deshicieron. Queda por arreglar el guion de ese tramo, o mirar si conviene lanzar la red donde estaba y dar al
-  fondo "red-estado" por `sesiones`.
-- No se corrieron las demás variantes (-vm, -linux, -2, -escritorio...). Cambian las llaves del panel rápido y de la
-  barra, y el orden de lanzamiento: hay que pasarlas antes de unir.
+- `make prueba`: BIEN. Variantes: `-vm`, `-2`, `-escritorio`, `-diag`, `-usb`, `-linux`, `-arch` (con la caché de
+  `Image-arch` y `disco-arch.img`) y `-wayland`: BIEN (las dos últimas sin variables raras, como pidió el coordinador).
+- `make arranque-virt`: todas las líneas del monitor salen siempre (panel, gasto, hostil "bien", píldora, desplegable,
+  abrir el monitor, cerrar `espera` sí, cerrar el fondo no por ser del escritorio, la suma no, ordenar, gráficas). **No
+  pasa entero**: en cada vuelta falla una línea distinta del tramo de Ajustes, la ventana Amiga y el explorador, que se
+  pisan por tiempos (Super+Arriba en Ajustes, el clic de cerrar de la ventana Amiga tapado por la barra de Ajustes, el
+  arrastre del explorador). Lo hecho en el guion: esperar a que no haya pregunta de `guardian` antes de Super+Arriba,
+  reintentarlo después del desplegable y con la ventana Amiga cerrada, y la prueba del monitor después del explorador.
+  Ajustes volvió a 560 × 420 (con 720 × 480 cambiaba la cascada de las ventanas del explorador).
+- Lo que queda: ordenar ese tramo del guion (Ajustes, ventana Amiga y explorador en secuencia, no a la vez) o devolver la
+  red a su sitio de antes (el arranque cambió de ritmo al lanzarla antes del fondo).
 
 ## Medido
 
@@ -106,7 +105,8 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   Prueba en arranque-virt: desde el monitor, Ana intenta cerrar el fondo y se niega.
 - **El uso de CPU de cada proceso es del total de la máquina** (los cuatro núcleos suman 100 %), no de un núcleo como en
   `top`. Así la suma de la lista cuadra con la cifra de la barra.
-- **Ajustes crece a 720 × 480** (antes 560 × 420), con cinco filas en la lista, para que quepan las columnas.
+- **Ajustes sigue en 560 × 420**: el monitor pone el usuario (y el grupo si no es el suyo) junto al nombre, y CPU y
+  memoria en columnas.
 - **El orden de lanzamiento cambia** (aceptado por el coordinador): la red va antes del fondo, para que el fondo tenga
   "red-estado". Llaves nuevas: fondo 1 ventanas, 2 archivos, 3 sesiones, 4 red-estado, 5 fondo; panel rápido 1
   ventanas, 2 sesiones, 3 red-estado, 4 centro, 5 sonido; barra 1 ventanas, 2 archivos, 3 sesiones, 4 centro, 5 avisos.
