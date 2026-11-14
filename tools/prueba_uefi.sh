@@ -725,13 +725,15 @@ while time.time() - inicio < total:
                 continue
             centro = 7
             time.sleep(0.5)
-            mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
+            # Fin: "Acerca de" es la última; con las categorías de trasfondo (Monitor del sistema y Panel del
+            # escritorio) en medio, bajar de una en una tardaba tanto que `guardian` dejaba de esperar al centro.
+            mandar("sendkey shift-tab", "sendkey end", pausa=0.3)
             reintento = time.time() + 4
         if not selector_espera and centro == 7:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    mandar("sendkey down")
+                    mandar("sendkey end")
                 time.sleep(0.25)
                 continue
             centro = 12
