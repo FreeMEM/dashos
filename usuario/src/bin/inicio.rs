@@ -85,10 +85,18 @@ const SE_ESPERAN: &[&str] = &["caja-amiga"];
 /// al relanzarlo (no cabe entre sus 8 llaves).
 static PERMISO_APAGAR: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
 
-/// Manda a `sesiones` (por `canal`, sin marca) una copia del permiso de apagar, solo para escribir: llega sin el
-/// derecho de transferirla (UNA_VEZ), así que no la puede pasar a nadie.
+/// El permiso del aviso de memoria baja (tipo 11, "memoria", S3): a `sesiones`, como el de apagar.
+static PERMISO_MEMORIA: core::sync::atomic::AtomicU32 = core::sync::atomic::AtomicU32::new(0);
+
+/// Manda a `sesiones` (por `canal`, sin marca) una copia del permiso de apagar y otra del de memoria, solo para escribir:
+/// llegan sin el derecho de transferirlas (UNA_VEZ), así que no las puede pasar a nadie.
 fn apagar_a_sesiones(canal: u32) {
-    let permiso = PERMISO_APAGAR.load(core::sync::atomic::Ordering::Relaxed);
+    permiso_a_sesiones(canal, &PERMISO_APAGAR, dashos::protocolo::sesiones::PERMISO_APAGAR);
+    permiso_a_sesiones(canal, &PERMISO_MEMORIA, dashos::protocolo::sesiones::PERMISO_MEMORIA);
+}
+
+fn permiso_a_sesiones(canal: u32, cual: &core::sync::atomic::AtomicU32, orden: u32) {
+    let permiso = cual.load(core::sync::atomic::Ordering::Relaxed);
     if permiso == 0 {
         return;
     }
@@ -96,7 +104,7 @@ fn apagar_a_sesiones(canal: u32) {
     if copia <= 0 {
         return;
     }
-    let orden = dashos::protocolo::sesiones::PERMISO_APAGAR.to_le_bytes();
+    let orden = orden.to_le_bytes();
     for _ in 0..500 {
         if dashos::canal_escribir(canal, &orden, &[copia as u32]) == 0 {
             return;
@@ -245,6 +253,7 @@ fn principal() -> u64 {
             8 => "permiso de máquinas virtuales",
             9 => "permiso de página 0",
             10 => "permiso de apagar",
+            11 => "permiso del aviso de memoria",
             _ => "?",
         };
         println!("  [inicio]   llave {}: {} de {}", u32_en(p + 20), tipo, nombre(p));
@@ -252,6 +261,9 @@ fn principal() -> u64 {
     }
     if let Some(i) = (0..n).find(|&i| nombre(aparatos + 24 * i) == "apagar" && u32_en(aparatos + 24 * i + 16) == 10) {
         PERMISO_APAGAR.store(u32_en(aparatos + 24 * i + 20), core::sync::atomic::Ordering::Relaxed);
+    }
+    if let Some(i) = (0..n).find(|&i| nombre(aparatos + 24 * i) == "memoria" && u32_en(aparatos + 24 * i + 16) == 11) {
+        PERMISO_MEMORIA.store(u32_en(aparatos + 24 * i + 20), core::sync::atomic::Ordering::Relaxed);
     }
     // Lo que dice el kernel de la máquina ("sistema"): la RAM, para la memoria de la caja Linux (H9).
     // Y lo pedido para el invitado al compilar (caja-linux-grandes), o 0.
@@ -443,10 +455,11 @@ fn principal() -> u64 {
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
             // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas: 32 MB. Y lo que crezca el 68k según sus
-            // programas: hasta el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie), que lleva la propia caja.
-            // `inicio` no lee el ajuste: el tope del grupo deja sitio para el mayor que admite (2048 MB), y es la caja
-            // la que se para en el suyo (S3: con los cupos como topes, ya no hace falta la cuarta parte de lo libre).
-            "caja-amiga" => (32 << 20) + MAX_MEMORIA_AMIGA,
+            // programas: hasta el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie). El tope lo pone el kernel,
+            // no la caja (un programa 68k podría engañarla). `inicio` no lee Prefs: la caja nace con el de serie, y
+            // `sesiones`, que tiene la llave de su grupo (con el alta), le pone el del ajuste (llamada 54) al darla de
+            // alta y cada vez que el centro lo cambia. S3: ya no hace falta la cuarta parte de lo libre.
+            "caja-amiga" => (32 << 20) + MEMORIA_AMIGA_DE_SERIE,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
@@ -461,7 +474,7 @@ fn principal() -> u64 {
             println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
         }
         if g > 0 && nombre(nombre_cab) == "caja-amiga" {
-            println!("  [inicio] caja-amiga: tope de {} MB, {} para que crezca su 68k (lo para antes su ajuste)", cupo >> 20, (cupo >> 20).saturating_sub(32));
+            println!("  [inicio] caja-amiga: tope de {} MB, {} para que crezca su 68k", cupo >> 20, (cupo >> 20).saturating_sub(32));
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
         if proceso <= 0 {
@@ -635,5 +648,5 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
     dashos::proceso_avisar(s.proceso, s.aviso) == 0
 }
 
-/// El mayor ajuste `memoria amiga` que admite `Prefs/cajas` (de 8 a 2048 MB; de serie, 256).
-const MAX_MEMORIA_AMIGA: u64 = 2048 << 20;
+/// El ajuste `memoria amiga` de serie de `Prefs/cajas` (de 8 a 2048 MB).
+const MEMORIA_AMIGA_DE_SERIE: u64 = 256 << 20;

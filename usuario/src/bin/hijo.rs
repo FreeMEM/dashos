@@ -15,6 +15,7 @@
 //! 12, N: duerme N veces 500 µs y sale con lo tarde que despertó, en µs: mediana, p90, p99 y máximo (S2).
 //! 13, T: como 5, pero el nieto se come la memoria y gira (14), y el hijo lo espera (S3: matar el grupo con todo).
 //! 14: se come la memoria a trozos de 64 KB y gira (S3).
+//! 16: intenta subir a 1 TB el tope del grupo de su llave 2 (el suyo) y sale con el error en positivo (S3).
 //! 15: se come la memoria a trozos de 16 MB (el máximo) y sale con cuántos le dieron (250 si no acaba en E_MEMORIA; S3).
 //! Si no le llega nada, se queda bloqueado leyendo (para matarlo bloqueado).
 
@@ -72,6 +73,7 @@ fn principal() -> u64 {
                 core::hint::spin_loop();
             }
         }
+        16 => (-dashos::grupo_tope(2, 1 << 40)) as u64,
         15 => {
             let mut n = 0;
             loop {

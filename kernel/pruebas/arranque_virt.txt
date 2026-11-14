@@ -358,7 +358,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [centro] Ampliar ventanas Amiga: 1x; guardado: 0 (30 bytes); releído: sí
 # La fila "Memoria de la caja Amiga" (decisión del usuario del 2026-11-13: crece según el programa, hasta este tope;
 # de serie, 256 MB): a 512 MB, en `Prefs/cajas`.
-~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí
+~│   [centro] Memoria de la caja Amiga: 512 MB; guardado: 0 (48 bytes); releído: sí; tope del grupo: 0
+# S3: el tope del grupo de la caja lo pone el kernel; se lo pide `sesiones`, que relee Prefs/cajas.
+~│   [sesiones] caja-amiga: tope de 288 MB (memoria amiga 256): 0
+# Cuando el centro cambia el ajuste, la caja de pruebas ya acabó: sesiones lo guarda y lo pondrá al lanzarla.
+~│   [sesiones] caja-amiga: no está en marcha; memoria amiga 512 al lanzarla
 # Y Acerca de: versión, encendido, fecha y hora (del reloj de virt, A14), procesos, memoria en uso y lo que más gasta
 # (la orden MEMORIA de `sesiones`; la lista entera, en la consola).
 ~│   [centro] Acerca de: DashOS, versión 0.0.1; Encendido hace 

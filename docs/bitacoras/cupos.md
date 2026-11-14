@@ -64,3 +64,30 @@ cuesta el doble (55 a 110 ns).
 - Cerrar a alguien cuando ni así baste (diseño en S3).
 - Que `inicio` lea el ajuste `memoria amiga` y lo ponga de tope del grupo: hoy el tope es el mayor posible y lo
   respeta la caja.
+
+## 2026-11-14, segunda vuelta (decisiones del usuario)
+
+- **Permiso propio del aviso:** llave de arranque del tipo 11 ("memoria", `Objeto::PermisoMemoria`), que `inicio` manda
+  solo a `sesiones` (`PERMISO_MEMORIA`, 25), como la de apagar. La llamada 53 ya no acepta el permiso de apagar.
+- **`grupo_tope` (54):** cambia el tope de un grupo con su llave y escribir. El propio grupo y los de encima, no
+  (`E_DERECHOS`). Elegido: un tope por debajo de lo usado vale; no se quita nada y todo cobro falla hasta que lo usado
+  baje.
+- **El tope de la caja Amiga lo pone el kernel:** nace con 288 MB (256 de serie más 32); `sesiones` le pone el del ajuste
+  (llamada 54, con la llave del grupo que le da `inicio` en el alta) al darla de alta y cuando el centro se lo dice
+  (`CAJAS_CAMBIADAS`, 26, con los MB: al arrancar si no es el de serie y al cambiarlo; solo se le acepta al centro).
+  `sesiones` no puede leer `Prefs/cajas`: es del usuario (cajón 0700); probado, le salía el de serie. Sin caja en
+  marcha, no hay nada que poner: queda para su alta.
+- **Pruebas hostiles en `grupos`:** 36, un proceso con la llave de su propio grupo no se sube el tope (`E_DERECHOS`);
+  37 a 39, sin escribir no se cambia; bajado a 1 MB con 3 MB usados, no se quita nada y un proceso nuevo da
+  `E_MEMORIA`; subido, se mata y vuelve a 0; 40, la llamada 53 con otra llave da `E_TIPO` y sin llave `E_LLAVE`. En el
+  kernel, `es_o_cuelga_de` con la cadena.
+- **`red-prueba`, 12 rechazos en vez de 14 en fusion-fondo (una vez de cuatro):** la ráfaga se mandaba sin mirar si la
+  cola del servicio (16 mensajes) estaba llena; ahora reintenta con -8, como ya hacía con los mal formados. En esta
+  rama salen siempre 14. No hay nada de los topes en ese camino (el servicio de red no tiene subgrupos ni se quedó sin
+  memoria en ese registro), pero la causa no está comprobada: es lo más probable.
+- **Tras b9f8f3e:** `make prueba` bien; `make arranque-virt` bien a la segunda (la primera cayó en "suelta en la ventana 1:
+  mueve a Home/Privado" del guion del explorador, un fallo suelto ya apuntado en `caja-amiga.md`); `red-prueba` da 14
+  rechazos en las cuatro vueltas de esta rama. `make arranque-virt-wayland` bien en esta rama (el invitado con 1024 MB,
+  Firefox abre `Index of file:///usr/local/share/dashos/`). El fallo de wayland en fusion-fondo no se reproduce aquí; el
+  `salida_virt_wayland.txt` de fusion-fondo es del 2026-11-13, de antes de unir esta rama, así que no dice nada de él.
+  Los topes no tocan la caja Linux: no crea subgrupos, y su tope (invitado más 66 MB) es el mismo número que antes.

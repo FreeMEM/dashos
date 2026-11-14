@@ -113,7 +113,8 @@ las únicas que da el kernel:
 - La 1: el paquete de arranque, un objeto de memoria de solo lectura. Dice qué es cada una de las demás llaves y trae
   los ELF de los servicios. Su formato está en `kernel/src/inicio.rs`.
 - Después, los permisos DMA (uno por aparato con DMA), el registro del sistema, el permiso de plazo, el de máquinas
-  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), la memoria de la VideoCore y, para
+  virtuales (H9), el de página 0 (H4), el de apagar (llamada 51), el del aviso de memoria (llamada 53), la memoria de
+  la VideoCore y, para
   cada aparato del árbol que conoce el kernel (serie, SD, USB, buzón de la VideoCore, y la V3D si contesta), sus
   registros (en páginas enteras) y su interrupción.
 
@@ -185,7 +186,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 50 | `memoria_vista` | `x0` tabla de llaves de memoria (los orígenes, con leer), `x1` cuántas (de 1 a 64), `x2` tabla de números de página (u32), `x3` cuántos (de 1 a 4096) | Llave de un objeto de memoria nuevo hecho con esas páginas de los orígenes, sin copiarlas, solo para leer (H9) |
 | 51 | `apagar` | `x0` permiso de apagar (con escribir), `x1` 0 apagar, 1 reiniciar | No vuelve si se pudo. Antes deja 300 ms para que la consola saque lo último del registro. Con PSCI (SYSTEM_OFF, SYSTEM_RESET) si el árbol lo trae (QEMU `virt`, UEFI, la Pi 5 con el BL31 de su firmware; en la Pi 5, que se corte la corriente lo decide su EEPROM, que no se toca); sin PSCI, en la Pi 4 y la Pi 3, con el perro guardián del bloque PM (apagar marca la partición 63 en PM_RSTS). `E_TIPO` si `x0` no es el permiso, `E_ARGUMENTO` con otro modo, `E_NO_HAY` si no se pudo |
 | 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
-| 53 | `memoria_aviso` | `x0` permiso de apagar (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
+| 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
+| 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -303,8 +305,12 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 - **20, `grupo_uso`.** Pide el derecho de leer. Devuelve el tope (`x0`), lo usado por el grupo con sus subgrupos (`x1`)
   y lo usado sin ellos (`x2`, lo suyo menos lo de cada subgrupo vivo; una foto que, con cobros a la vez, puede ir algo
   por delante o por detrás). En la biblioteca, `grupo_uso` y `grupo_uso_propio`.
-- **53, `memoria_aviso`** (S3). El aviso de memoria baja. Pide el permiso de apagar (el de quien lleva el sistema:
-  solo lo tiene `sesiones`) y un canal con escribir; los avisos van al otro lado, con la marca de esa llave, y dejan de
+- **54, `grupo_tope`** (S3). Cambia el tope de un grupo. Pide su llave con escribir, y que no sea el grupo de quien
+  llama ni uno de encima: un proceso no se sube su tope (la caja Amiga no cambia el suyo; se lo pone `sesiones`, que
+  tiene la llave de su grupo). Uno por debajo de lo usado vale: no se quita nada, y todo cobro falla hasta que lo usado
+  baje de él. Lo prueba `grupos` (pasos 36 a 39).
+- **53, `memoria_aviso`** (S3). El aviso de memoria baja. Pide el permiso de memoria (llave de arranque del tipo 11,
+  "memoria", que `inicio` manda solo a `sesiones`) y un canal con escribir; los avisos van al otro lado, con la marca de esa llave, y dejan de
   llegar si se revoca. Hay un solo oyente: uno nuevo quita al anterior. Nada más pedirlo llega el nivel de ahora, y
   después cada cambio: memoria baja cuando lo libre para procesos baja del 5 % de lo que había al arrancar, y normal
   cuando vuelve a pasar del 10 %. Se mira al acabar cada llamada al sistema. El mensaje, de 24 bytes en little-endian:

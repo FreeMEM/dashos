@@ -750,7 +750,22 @@ fn es(f: &Ficha, nombres: &[&str]) -> bool {
     lanzables::del_sistema(f.marca, nombre(&f.nombre), nombres)
 }
 
-/// S3 (cupos como topes): pide al kernel el aviso de memoria baja (llamada 53, con el permiso de apagar) y lo atiende
+/// S3: pone al grupo de la caja Amiga el tope de su ajuste (`memoria amiga`, `mb` MB, de 8 a 2048) más los 32 MB fijos
+/// de la caja (llamada 54, con la llave del grupo que da `inicio` en el alta). El ajuste lo dice el centro de control
+/// (`CAJAS_CAMBIADAS`): `sesiones` no puede leer `Prefs/cajas`, que es del usuario (cajón 0700). Sin caja en marcha, no
+/// hay nada que poner: se pone en su alta. 0, o negativo si el kernel no quiere.
+fn tope_caja_amiga(mb: u64, fichas: &[Option<Ficha>]) -> i32 {
+    let mb = mb.clamp(8, 2048);
+    let Some(caja) = fichas.iter().flatten().find(|f| nombre(&f.nombre) == "caja-amiga") else {
+        println!("  [sesiones] caja-amiga: no está en marcha; memoria amiga {} al lanzarla", mb);
+        return 0;
+    };
+    let r = dashos::grupo_tope(caja.grupo, (mb + 32) << 20);
+    println!("  [sesiones] caja-amiga: tope de {} MB (memoria amiga {}): {}", mb + 32, mb, r);
+    r as i32
+}
+
+/// S3 (cupos como topes): pide al kernel el aviso de memoria baja (llamada 53, con el permiso de memoria) y lo atiende
 /// en un hilo propio, que lo apunta en el registro del sistema. Repartirlo a las cajas para que suelten lo que puedan
 /// (el globo de la caja Linux, las cachés de la Amiga) queda pendiente: hoy solo se dice.
 fn escuchar_memoria(permiso: u32) {
@@ -817,6 +832,10 @@ fn principal() -> u64 {
     // El permiso de apagar del kernel (llega de `inicio`, `PERMISO_APAGAR`) y lo que espera la respuesta de `guardian`
     // (número de la pregunta, si es reiniciar, quién lo pidió y cuándo: pasado un minuto sin respuesta, se olvida).
     let mut permiso_apagar = 0u32;
+    // S3: si ya escucha el aviso de memoria baja (el permiso llega de `inicio`, `PERMISO_MEMORIA`).
+    let mut memoria_escuchada = false;
+    // S3: el ajuste `memoria amiga` en MB, como lo dice el centro (256 de serie).
+    let mut memoria_amiga = 256u64;
     let mut apagado_pendiente: Option<(u32, bool, [u8; 16], u64)> = None;
     // H9: lo de `SIN_PREGUNTAR` (por su servicio en `REPARTE`) que quien está delante quitó en el centro de control.
     let mut sin_preguntar_quitado = [false; 8];
@@ -931,6 +950,10 @@ fn principal() -> u64 {
                     }
                     fichas[i] = Some(f);
                     usadas = 1;
+                    // S3: la caja Amiga nace con el tope de serie; aquí, el de su ajuste.
+                    if nombre(&f.nombre) == "caja-amiga" {
+                        tope_caja_amiga(memoria_amiga, &fichas);
+                    }
                     // U6: lo de una persona, al compositor y al sonido. Y si vuelve uno de ellos (relanzado por
                     // `inicio`), empieza sin saber nada: todo otra vez.
                     if f.uid >= PRIMERA_PERSONA {
@@ -951,7 +974,10 @@ fn principal() -> u64 {
                 permiso_apagar = ll[0];
                 usadas = 1;
                 println!("  [sesiones] tiene el permiso de apagar");
-                escuchar_memoria(permiso_apagar);
+            } else if u32_en(0) == PERMISO_MEMORIA && k >= 1 && !memoria_escuchada {
+                memoria_escuchada = true;
+                usadas = 1;
+                escuchar_memoria(ll[0]);
             } else if u32_en(0) == CANAL_SISTEMA && m.len() == 20 && k >= 1 {
                 // U6: la llave sin marca de uno que sigue las sesiones; se le dice lo que haya ya.
                 let mut quien = [0u8; 16];
@@ -1666,6 +1692,16 @@ fn principal() -> u64 {
                     };
                     println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                CAJAS_CAMBIADAS => {
+                    // S3: solo el centro de control, que es donde el usuario elige el ajuste. La caja no puede.
+                    let r: i32 = if yo.is_some_and(|f| nombre(&f.nombre) == "centro") && m.len() >= 8 {
+                        memoria_amiga = u32_en(4) as u64;
+                        tope_caja_amiga(memoria_amiga, &fichas)
+                    } else {
+                        PROTEGIDO
+                    };
+                    dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
                 }
                 APAGAR => {
                     // Solo el panel (por el nombre que da `inicio`). Con otras sesiones abiertas (además de la de

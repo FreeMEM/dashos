@@ -305,6 +305,19 @@ fn resultado_comprobar(estado: i32, problemas: u64) -> String {
 }
 
 /// Comprobar el disco: la acción de administrador "comprobar" (U5) por `sesiones`, que se lo pregunta a `guardian`.
+/// S3: dice a `sesiones` el ajuste `memoria amiga` (al arrancar y al cambiarlo), para que ponga a la caja Amiga ese tope. Lo que
+/// conteste (0 si lo puso), o `i32::MIN` si no contesta.
+fn cajas_a_sesiones(mb: u32) -> i32 {
+    let mut p = [0u8; 8];
+    p[0..4].copy_from_slice(&s::CAJAS_CAMBIADAS.to_le_bytes());
+    p[4..8].copy_from_slice(&mb.to_le_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut r = [0u8; 4];
+    let n = if dashos::canal_escribir(SESIONES, &p, &[suyo]) == 0 { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    if n == 4 { i32::from_le_bytes(r) } else { i32::MIN }
+}
+
 /// El estado y cuántos problemas.
 fn comprobar_disco() -> (i32, u64) {
     let accion = b"comprobar";
@@ -1044,6 +1057,11 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
             Ajuste::DE_SERIE
         }
     };
+    // S3: el tope de la caja Amiga lo pone el kernel, desde su ajuste; `sesiones` no lee Prefs del usuario: se lo dice el
+    // centro (al cambiarlo, también).
+    if cajas.memoria_de_caja(Caja::Amiga) != aspecto::MEMORIA_DE_SERIE {
+        cajas_a_sesiones(cajas.memoria_de_caja(Caja::Amiga));
+    }
     // Los fondos de las filas de Apariencia, en su orden.
     let mut lista_fondos: Vec<String> = Vec::new();
     i.ctx.tema = ap.tema();
@@ -1457,7 +1475,9 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
                             }
                             let (guardado, bytes) = guardar_prefs(FICHERO_CAJAS, texto.as_bytes());
                             let releido = leer_cajas() == Ok(cajas.clone());
-                            println!("  [centro] Memoria de la caja Amiga: {} MB; guardado: {} ({} bytes); releído: {}", siguiente, guardado, bytes, if releido { "sí" } else { "no" });
+                            // S3: el tope de verdad lo pone el kernel; se lo pide `sesiones`, que relee el fichero.
+                            let tope = cajas_a_sesiones(siguiente);
+                            println!("  [centro] Memoria de la caja Amiga: {} MB; guardado: {} ({} bytes); releído: {}; tope del grupo: {}", siguiente, guardado, bytes, if releido { "sí" } else { "no" }, tope);
                             (lineas_registro, lista_fondos) = apariencia(&ap, &cajas);
                             i.arbol.poner(permisos, atr::OPCIONES, Valor::Texto(lineas_registro.join("|")));
                             cambio = true;
