@@ -68,3 +68,16 @@ _start:
     cli
     hlt
     jmp 3b
+
+// Los demás núcleos (X3), desde el trampolín (trampolin.s), con las tablas del arranque: rdi = su número, rsi = el
+// tope de su pila, rdx = el CR3 del kernel. Corre en la imagen, que se ve igual con las dos tablas.
+.globl _secundario_x86
+_secundario_x86:
+    mov cr3, rdx
+    mov rsp, rsi
+    xor ebp, ebp
+    call kmain_secundario_x86
+4:
+    cli
+    hlt
+    jmp 4b

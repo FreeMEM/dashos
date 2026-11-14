@@ -9,7 +9,8 @@
 //!   del firmware los dejan sin caché aunque aquí vayan como memoria normal;
 //! - la imagen del kernel, en los 2 GB de arriba, con páginas de 4 KB: `.text` solo lectura y ejecutable, `.rodata`
 //!   solo lectura, lo demás lectura y escritura sin ejecución; las páginas de guarda de las pilas, sin proyectar;
-//! - el GB 256, para las pilas de los hilos (X3), vacío.
+//! - el GB 256, para las pilas de los hilos (X3): ranuras de 32 KB, la mitad de abajo sin proyectar (guarda) y la de
+//!   arriba la pila, como en ARM. Al soltar una pila se vacía la TLB de los demás núcleos (`nucleos::vaciar_tlb_otros`).
 //!
 //! Nada se puede escribir y ejecutar a la vez (W^X), y nada lleva el bit de usuario: con SMEP y SMAP, el kernel no
 //! ejecuta ni toca la mitad baja. Las entradas de la mitad alta son globales: no se van de la TLB al cambiar de CR3.
@@ -103,6 +104,9 @@ fn leer(tabla: u64, i: usize) -> u64 {
 
 /// El PML4 del kernel (físico), o 0 si aún no se ha hecho.
 static PML4: AtomicU64 = AtomicU64::new(0);
+/// Dónde acaba el mapa lineal (física) y el PD del GB de las pilas.
+static TOPE_LINEAL: AtomicU64 = AtomicU64::new(0);
+static PD_PILAS: AtomicU64 = AtomicU64::new(0);
 static TABLAS: AtomicU64 = AtomicU64::new(0);
 
 /// Cuántas páginas de tablas ha sacado el mapa del kernel del repartidor.
@@ -166,10 +170,113 @@ pub fn construir() {
         o += PAGINA;
     }
 
-    // Las pilas de los hilos (X3): su PD, vacío.
+    // Las pilas de los hilos (X3): su PD, vacío. Las PT se hacen al usarlas.
     let pd = tabla_nueva();
     poner(pdpt, INDICE_PILAS, pd | TABLA);
+    PD_PILAS.store(pd, Ordering::Release);
+    TOPE_LINEAL.store(tope * GB, Ordering::Release);
     PML4.store(pml4, Ordering::Release);
+}
+
+/// El PML4 del kernel (físico): el CR3 de todos los núcleos.
+pub fn pml4() -> u64 {
+    PML4.load(Ordering::Acquire)
+}
+
+/// ¿Se ve entera la memoria física de `fisica` a `fisica + largo` por el mapa lineal? Sin las páginas de la imagen del
+/// kernel, que no están en él. Para leer lo que deja el firmware (ACPI) y los registros de los aparatos.
+pub fn se_ve(fisica: u64, largo: u64) -> bool {
+    let tope = TOPE_LINEAL.load(Ordering::Acquire);
+    let (ini, fin) = mmu::imagen_va();
+    let (img_ini, img_fin) = ((mmu::fisica(ini) as u64) & !(PAGINA - 1), (mmu::fisica(fin) as u64).div_ceil(PAGINA) * PAGINA);
+    match fisica.checked_add(largo) {
+        Some(f) => f <= tope && (f <= img_ini || fisica >= img_fin),
+        None => false,
+    }
+}
+
+const PILAS_VA: usize = mmu::KERNEL_VA + (INDICE_PILAS << 30);
+/// Ranuras de pila: 32 KB alineados; la mitad de abajo es guarda, la de arriba la pila (como en ARM).
+const RANURA: usize = 0x8000;
+pub const PILA: usize = 0x4000;
+const RANURAS: usize = (GB as usize) / RANURA;
+static RANURAS_OCUPADAS: crate::cerrojo::CerrojoIrq<[u64; RANURAS / 64]> = crate::cerrojo::CerrojoIrq::new([0; RANURAS / 64]);
+
+/// La pila del kernel de un hilo: 16 KB en una ranura propia del GB 256, con 16 KB sin proyectar debajo. Un hilo que
+/// se pasa cae en la guarda en vez de pisar la memoria de otro.
+pub struct Pila {
+    ranura: usize,
+    paginas: [u64; PILA / PAGINA as usize],
+}
+
+impl Pila {
+    /// Dirección del final de la pila (donde empieza RSP).
+    pub fn tope(&self) -> usize {
+        PILAS_VA + (self.ranura + 1) * RANURA
+    }
+
+    fn primera_va(&self) -> usize {
+        self.tope() - PILA
+    }
+}
+
+/// La PT de los 2 MB de la pila que empieza en `v`.
+fn pt_pilas(v: usize) -> u64 {
+    leer(PD_PILAS.load(Ordering::Acquire), (v - PILAS_VA) >> 21) & DIRECCION
+}
+
+/// Una pila nueva. `None` si no quedan ranuras o memoria. Poner entradas nuevas no pide vaciar ninguna TLB: la CPU no
+/// guarda las que no están presentes (SDM, 4.10.2.3).
+pub fn pila_nueva() -> Option<Pila> {
+    let pd = PD_PILAS.load(Ordering::Acquire);
+    if pd == 0 {
+        return None;
+    }
+    let mut ocupadas = RANURAS_OCUPADAS.tomar();
+    let (w, palabra) = ocupadas.iter().enumerate().find(|(_, w)| **w != u64::MAX)?;
+    let ranura = w * 64 + palabra.trailing_ones() as usize;
+    let mut pila = Pila { ranura, paginas: [0; PILA / PAGINA as usize] };
+    // La PT de estos 2 MB (64 ranuras), si aún no existe. Con el cerrojo tomado: nadie la crea dos veces. No se suelta.
+    let i2 = (pila.primera_va() - PILAS_VA) >> 21;
+    let mut pt = leer(pd, i2) & DIRECCION;
+    if pt == 0 {
+        pt = paginas().pagina(Zona::Normal)?;
+        unsafe { core::ptr::write_bytes(mmu::virt(pt as usize) as *mut u8, 0, PAGINA as usize) };
+        poner(pd, i2, pt | TABLA);
+    }
+    for i in 0..pila.paginas.len() {
+        let Some(p) = paginas().pagina(Zona::Normal) else {
+            for &q in &pila.paginas[..i] {
+                unsafe { paginas().liberar(q, 1) };
+            }
+            return None;
+        };
+        pila.paginas[i] = p;
+    }
+    for (i, &p) in pila.paginas.iter().enumerate() {
+        let v = pila.primera_va() + i * PAGINA as usize;
+        poner(pt, (v >> 12) & 0x1ff, p | atributos(Tipo::Datos));
+    }
+    ocupadas[w] |= 1 << (ranura % 64);
+    Some(pila)
+}
+
+impl Drop for Pila {
+    /// Quita las entradas, las saca de la TLB de este núcleo y de la de los demás, y solo entonces devuelve las
+    /// páginas y la ranura: hasta ahí, otro núcleo aún podría verlas por una entrada vieja de su TLB.
+    fn drop(&mut self) {
+        let pt = pt_pilas(self.primera_va());
+        for i in 0..self.paginas.len() {
+            let v = self.primera_va() + i * PAGINA as usize;
+            poner(pt, (v >> 12) & 0x1ff, 0);
+            unsafe { core::arch::asm!("invlpg [{}]", in(reg) v, options(nostack, preserves_flags)) };
+        }
+        super::nucleos::vaciar_tlb_otros();
+        for &p in &self.paginas {
+            unsafe { paginas().liberar(p, 1) };
+        }
+        RANURAS_OCUPADAS.tomar()[self.ranura / 64] &= !(1 << (self.ranura % 64));
+    }
 }
 
 /// Pasa este núcleo al mapa del kernel. Desde aquí no hay proyección 1:1 ni mitad baja.

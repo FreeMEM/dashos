@@ -8,6 +8,8 @@
 // La pila queda alineada a 16 en la llamada: la CPU la alinea antes de meter SS, RSP, RFLAGS, CS y RIP (40 bytes), y
 // con el código, el vector y los 15 registros son 176.
 //
+// De 32 a 255 (X3), las interrupciones: sin código de error, con el mismo marco; `excepcion_x86` las pasa al APIC.
+//
 // Falta para X4 (anillo 3): swapgs y clac al entrar desde un proceso.
 
 .macro VECTOR n, codigo
@@ -54,6 +56,16 @@ VECTOR 29, 1
 VECTOR 30, 1
 VECTOR 31, 0
 
+// Las interrupciones, de 0x20 a 0xff: dos cifras hexadecimales.
+.irp a, 2,3,4,5,6,7,8,9,a,b,c,d,e,f
+.irp b, 0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f
+vector_x86_0x\a\()\b:
+    push 0
+    push 0x\a\()\b
+    jmp excepcion_comun_x86
+.endr
+.endr
+
 excepcion_comun_x86:
     push rax
     push rbx
@@ -91,13 +103,18 @@ excepcion_comun_x86:
     add rsp, 16
     iretq
 
-// Las direcciones de las 32 entradas, para la IDT.
+// Las direcciones de las 256 entradas, para la IDT.
 .section .rodata.vectores, "a"
 .balign 8
 .globl vectores_x86
 vectores_x86:
 .irp n, 0,1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,16,17,18,19,20,21,22,23,24,25,26,27,28,29,30,31
     .quad vector_x86_\n
+.endr
+.irp a, 2,3,4,5,6,7,8,9,a,b,c,d,e,f
+.irp b, 0,1,2,3,4,5,6,7,8,9,a,b,c,d,e,f
+    .quad vector_x86_0x\a\()\b
+.endr
 .endr
 
 // Sondas para las pruebas: un acceso que puede fallar. Si falla, la excepción ve que rip está en la sonda y vuelve a

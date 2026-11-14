@@ -1,12 +1,19 @@
-//! Las pruebas del arranque en x86-64 (S21, X2). Solo entran con la opción `pruebas` (`make -C kernel prueba-x86`).
-//! Cada una dice "bien" o "MAL" por el puerto serie; la última (el desborde de la pila) para el núcleo.
+//! Las pruebas del arranque en x86-64 (S21, X2 y X3). Solo entran con la opción `pruebas` (`make -C kernel
+//! prueba-x86`). Cada una dice "bien" o "MAL" por el puerto serie; la última (el desborde de la pila) para el núcleo.
+//!
+//! Las de X2 van antes de repartir nada más (cuentan la memoria libre); las de X3, con los cuatro núcleos en marcha.
+//! Las del planificador que no dependen del hardware (C8, C10 y C14) son las mismas que en ARM (`pruebas_hilos.rs`).
 
-use crate::base::arranque;
+use crate::base::acpi::Acpi;
+use crate::base::{apic, arranque, ioapic, tiempo};
+use crate::cerrojo::Cerrojo;
 use crate::excepciones::{sonda_ejecutar, sonda_escribir, sonda_leer, Fallo};
 use crate::memoria::{paginas, Zona, PAGINA};
-use crate::{cpu, kprintln, mapa, mmu, monton};
+use crate::planificador::{self, ColaEspera};
+use crate::{cpu, kprintln, mapa, mmu, monton, nucleos, reloj};
+use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 
-pub fn ejecutar(libres_al_empezar: usize) {
+pub fn ejecutar_x2(libres_al_empezar: usize) {
     prueba_memoria_libre(libres_al_empezar);
     prueba_reparto();
     prueba_monton();
@@ -14,6 +21,22 @@ pub fn ejecutar(libres_al_empezar: usize) {
     prueba_punto_de_parada();
     prueba_fallo_de_pagina();
     prueba_defensas();
+}
+
+/// Las de X3, y al final el desborde de X2, que para el núcleo 0.
+pub fn ejecutar(a: &Acpi, n: u32) {
+    prueba_acpi(a);
+    prueba_tsc();
+    prueba_temporizador(n);
+    crate::pruebas_hilos::prueba_reloj();
+    prueba_nucleos(n);
+    crate::pruebas_hilos::prueba_hilos();
+    prueba_trabajo();
+    prueba_avisos();
+    prueba_ioapic();
+    prueba_tlb();
+    crate::pruebas_hilos::prueba_plazo();
+    prueba_recogida();
     prueba_desborde();
 }
 
@@ -217,4 +240,316 @@ fn prueba_desborde() {
     let guarda = unsafe { &__guarda_arranque as *const u8 as usize };
     kprintln!("X2: desborde de la pila del arranque (guarda en {:#x}); tiene que dar un fallo doble", guarda);
     hondo(0);
+}
+
+// --- X3 ---
+
+/// Espera, mirando la referencia (el HPET), `ms` milisegundos, con `hlt` entre medias.
+fn esperar_ref_ms(ms: u64) {
+    let r0 = tiempo::referencia_cuentas();
+    while tiempo::diferencia_ns(r0, tiempo::referencia_cuentas()) < ms * 1_000_000 {
+        reloj::esperar_interrupcion();
+    }
+}
+
+fn esperar_tics(n: u64) {
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + n {
+        reloj::esperar_interrupcion();
+    }
+}
+
+/// Espera a que `f` sea verdad, como mucho `tics` tics.
+fn esperar_que(tics: u64, f: impl Fn() -> bool) -> bool {
+    let inicio = reloj::tics();
+    while !f() {
+        if reloj::tics() >= inicio + tics {
+            return false;
+        }
+        reloj::esperar_interrupcion();
+    }
+    true
+}
+
+/// Lo que dice la MADT de QEMU `q35` con `-smp 4`: cuatro núcleos, un IOAPIC y el HPET.
+fn prueba_acpi(a: &Acpi) {
+    kprintln!("  núcleos (ID de APIC): {:?}", a.nucleos);
+    for io in &a.ioapics {
+        kprintln!("  IOAPIC {} en {:#x}, desde la GSI {}", io.id, io.direccion, io.gsi_base);
+    }
+    for c in &a.cambios {
+        kprintln!("  IRQ {} → GSI {} ({:#x})", c.irq, c.gsi, c.banderas);
+    }
+    kprintln!("  APIC local en {:#x}; HPET en {:#x}; PM timer {:?}; 8259 {}", a.apic_local, a.hpet.unwrap_or(0), a.pm_timer, a.pic_8259);
+    let todo = a.nucleos.len() == 4 && !a.ioapics.is_empty() && a.hpet.is_some();
+    kprintln!("X3: ACPI (MADT y HPET) {}", bien(todo));
+}
+
+/// El TSC calibrado: 200 ms del HPET, medidos otra vez, tienen que ser 200 ms del TSC (con un 2 % de margen).
+fn prueba_tsc() {
+    let r0 = tiempo::referencia_cuentas();
+    let t0 = reloj::ahora();
+    let mut ns = 0;
+    while ns < 200_000_000 {
+        ns = tiempo::diferencia_ns(r0, tiempo::referencia_cuentas());
+    }
+    let us_tsc = (reloj::ahora() - t0) * 1_000_000 / reloj::frecuencia();
+    let us_ref = ns / 1000;
+    kprintln!("  {} µs del HPET son {} µs del TSC ({} kHz)", us_ref, us_tsc, reloj::frecuencia() / 1000);
+    kprintln!("X3: TSC calibrado contra el HPET {}", bien(us_tsc.abs_diff(us_ref) * 50 < us_ref));
+}
+
+/// El temporizador del APIC de cada núcleo a 100 Hz: en 500 ms del HPET, unas 50 interrupciones en cada uno.
+fn prueba_temporizador(n: u32) {
+    let nucleos = n as usize + 1;
+    let antes: [u64; nucleos::MAX_NUCLEOS] = core::array::from_fn(apic::interrupciones_reloj);
+    esperar_ref_ms(500);
+    let despues: [u64; nucleos::MAX_NUCLEOS] = core::array::from_fn(apic::interrupciones_reloj);
+    let cuentas: alloc::vec::Vec<u64> = (0..nucleos).map(|i| despues[i] - antes[i]).collect();
+    kprintln!("  interrupciones del reloj en 500 ms, por núcleo: {:?}", cuentas);
+    let todo = nucleos == 4 && cuentas.iter().all(|&c| (45..=55).contains(&c));
+    kprintln!("X3: temporizador del APIC a 100 Hz en cada núcleo {}", bien(todo));
+}
+
+/// Cada núcleo dice quién es y qué tablas tiene: (número, base de la GDT, selector de la TSS, pila de fallo doble).
+static TABLAS: [[AtomicU64; 4]; nucleos::MAX_NUCLEOS] = [const { [const { AtomicU64::new(0) }; 4] }; nucleos::MAX_NUCLEOS];
+static PRESENTADOS: AtomicUsize = AtomicUsize::new(0);
+
+fn apuntar_tablas(i: usize) {
+    let (gdt, tr, df) = crate::excepciones::tablas_de_este_nucleo();
+    let t = &TABLAS[i];
+    t[0].store(nucleos::numero() as u64, Ordering::Relaxed);
+    t[1].store(gdt, Ordering::Relaxed);
+    t[2].store(tr as u64, Ordering::Relaxed);
+    t[3].store(df, Ordering::Relaxed);
+}
+
+extern "C" fn presentarse(i: usize) {
+    apuntar_tablas(i);
+    PRESENTADOS.fetch_add(1, Ordering::Release);
+}
+
+/// Los demás núcleos en marcha, cada uno con su GDT, su TSS y su pila de fallo doble, y un hilo en cada uno.
+fn prueba_nucleos(n: u32) {
+    apuntar_tablas(0);
+    for i in 1..=n as usize {
+        planificador::crear(presentarse, i, i);
+    }
+    let llegaron = esperar_que(50, || PRESENTADOS.load(Ordering::Acquire) == n as usize);
+    let mut todo = n == 3 && llegaron;
+    for i in 0..=n as usize {
+        let t: [u64; 4] = core::array::from_fn(|k| TABLAS[i][k].load(Ordering::Relaxed));
+        kprintln!("  núcleo {}: GDT en {:#x}, TSS {:#x}, pila de fallo doble {:#x}", t[0], t[1], t[2], t[3]);
+        todo &= t[0] == i as u64 && t[2] == 0x30 && t[3] != 0;
+        for j in 0..i {
+            todo &= TABLAS[j][1].load(Ordering::Relaxed) != t[1] && TABLAS[j][3].load(Ordering::Relaxed) != t[3];
+        }
+    }
+    kprintln!("X3: {} núcleos más en marcha, cada uno con su GDT y su TSS {}", n, bien(todo));
+}
+
+/// Seis hilos en los núcleos 1 a 3 se reparten una suma y terminan.
+const TROZOS: usize = 6;
+const HASTA: u64 = 3_000_000;
+static PARCIALES: [AtomicU64; TROZOS] = [const { AtomicU64::new(0) }; TROZOS];
+static DONDE: [AtomicU64; TROZOS] = [const { AtomicU64::new(0) }; TROZOS];
+static HECHOS: AtomicUsize = AtomicUsize::new(0);
+
+extern "C" fn sumar_trozo(i: usize) {
+    let paso = HASTA / TROZOS as u64;
+    let mut s = 0u64;
+    for x in i as u64 * paso..(i as u64 + 1) * paso {
+        s = s.wrapping_add(core::hint::black_box(x));
+    }
+    PARCIALES[i].store(s, Ordering::Relaxed);
+    DONDE[i].store(nucleos::numero() as u64, Ordering::Relaxed);
+    HECHOS.fetch_add(1, Ordering::Release);
+}
+
+fn prueba_trabajo() {
+    let t0 = reloj::ahora();
+    for i in 0..TROZOS {
+        planificador::crear(sumar_trozo, i, 1 + i % 3);
+    }
+    let acabaron = esperar_que(500, || HECHOS.load(Ordering::Acquire) == TROZOS);
+    let ms = (reloj::ahora() - t0) * 1000 / reloj::frecuencia();
+    let suma: u64 = PARCIALES.iter().map(|p| p.load(Ordering::Relaxed)).sum();
+    let donde: [u64; TROZOS] = core::array::from_fn(|i| DONDE[i].load(Ordering::Relaxed));
+    kprintln!("  {} trozos en {} ms, en los núcleos {:?}; suma {}", HECHOS.load(Ordering::Acquire), ms, donde, suma);
+    let todo = acabaron && suma == HASTA * (HASTA - 1) / 2 && (0..TROZOS).all(|i| donde[i] == 1 + i as u64 % 3);
+    kprintln!("X3: hilos en tres núcleos que se reparten el trabajo y terminan {}", bien(todo));
+}
+
+/// Un hilo del núcleo 2 bloqueado en una cola de espera; el núcleo 0 lo despierta y mide cuánto tarda en correr.
+/// Con aviso entre núcleos (una IPI) corre enseguida; sin él, espera a su tic (hasta 10 ms).
+static COLA: Cerrojo<ColaEspera> = Cerrojo::new(ColaEspera::nueva());
+static ESPERANDO: AtomicBool = AtomicBool::new(false);
+static PEDIDO: AtomicU64 = AtomicU64::new(0);
+static TARDANZA: AtomicU64 = AtomicU64::new(0);
+static ACABAR: AtomicBool = AtomicBool::new(false);
+
+extern "C" fn dormilon(_: usize) {
+    loop {
+        let estado = crate::cerrojo::enmascarar_irq();
+        let mut cola = COLA.tomar();
+        let t = PEDIDO.load(Ordering::Acquire);
+        if t != 0 {
+            drop(cola);
+            crate::cerrojo::restaurar_irq(estado);
+            TARDANZA.store(reloj::ahora() - t, Ordering::Release);
+            PEDIDO.store(0, Ordering::Release);
+            continue;
+        }
+        if ACABAR.load(Ordering::Acquire) {
+            drop(cola);
+            crate::cerrojo::restaurar_irq(estado);
+            return;
+        }
+        cola.apuntarme();
+        ESPERANDO.store(true, Ordering::Release);
+        planificador::bloquear_soltando(cola);
+        crate::cerrojo::restaurar_irq(estado);
+    }
+}
+
+/// Despierta al dormilón `vueltas` veces y da la media de lo que tarda en correr, en µs.
+fn despertar_dormilon(vueltas: u64) -> u64 {
+    let mut total = 0;
+    for _ in 0..vueltas {
+        if !esperar_que(100, || ESPERANDO.load(Ordering::Acquire)) {
+            return u64::MAX;
+        }
+        // Con el cerrojo tomado, el dormilón ya consta como bloqueado (lo suelta `bloquear_soltando`).
+        {
+            let mut cola = COLA.tomar();
+            ESPERANDO.store(false, Ordering::Release);
+            PEDIDO.store(reloj::ahora(), Ordering::Release);
+            cola.despertar_todos();
+        }
+        while PEDIDO.load(Ordering::Acquire) != 0 {
+            core::hint::spin_loop();
+        }
+        total += TARDANZA.load(Ordering::Acquire) * 1_000_000 / reloj::frecuencia();
+    }
+    total / vueltas
+}
+
+fn prueba_avisos() {
+    planificador::crear(dormilon, 0, 2);
+    planificador::AVISAR_NUCLEOS.store(false, Ordering::Relaxed);
+    let sin = despertar_dormilon(10);
+    planificador::AVISAR_NUCLEOS.store(true, Ordering::Relaxed);
+    let antes = apic::avisos_recibidos(2);
+    let con = despertar_dormilon(20);
+    let avisos = apic::avisos_recibidos(2) - antes;
+    ACABAR.store(true, Ordering::Release);
+    let _ = esperar_que(100, || ESPERANDO.load(Ordering::Acquire));
+    COLA.tomar().despertar_todos();
+    kprintln!("  despertar un hilo del núcleo 2: sin aviso {} µs, con aviso {} µs; {} avisos recibidos", sin, con, avisos);
+    kprintln!("X3: avisos entre núcleos {}", bien(sin != u64::MAX && con * 10 < sin && avisos >= 20));
+}
+
+/// La IRQ 4 (COM1) por el IOAPIC al núcleo 2: la UART la pide cuando su registro de transmisión queda vacío.
+static UART_VECES: AtomicU64 = AtomicU64::new(0);
+static UART_NUCLEO: AtomicU64 = AtomicU64::new(u64::MAX);
+const VECTOR_UART: u8 = 0x40;
+
+fn atender_uart() {
+    let _ = crate::base::serie::reconocer();
+    crate::base::serie::aviso_de_hueco(false);
+    UART_NUCLEO.store(nucleos::numero() as u64, Ordering::Relaxed);
+    UART_VECES.fetch_add(1, Ordering::Release);
+}
+
+fn prueba_ioapic() {
+    let linea = ioapic::isa(4);
+    let Some(destino) = nucleos::apic_de(2) else {
+        kprintln!("X3: IOAPIC MAL (sin núcleo 2)");
+        return;
+    };
+    apic::manejar(VECTOR_UART, Some(atender_uart));
+    let dirigida = ioapic::dirigir(linea, VECTOR_UART, destino);
+    crate::base::serie::aviso_de_hueco(true);
+    let llego = esperar_que(20, || UART_VECES.load(Ordering::Acquire) > 0);
+    crate::base::serie::aviso_de_hueco(false);
+    ioapic::enmascarar(linea.gsi);
+    apic::manejar(VECTOR_UART, None);
+    let donde = UART_NUCLEO.load(Ordering::Relaxed);
+    kprintln!("  IRQ 4 por la GSI {} al vector {:#x} del APIC {}: {} veces, atendida en el núcleo {}",
+        linea.gsi, VECTOR_UART, destino, UART_VECES.load(Ordering::Relaxed), donde as i64);
+    kprintln!("X3: interrupción de la UART por el IOAPIC {}", bien(dirigida && llego && donde == 2));
+}
+
+/// Vaciar la TLB al soltar una pila: el núcleo 3 lee la pila de otro hilo (y la tiene en su TLB); el núcleo 0 la
+/// suelta; el núcleo 3 la vuelve a leer y tiene que fallar. Sin vaciar su TLB, la leería todavía.
+static TLB_DIR: AtomicUsize = AtomicUsize::new(0);
+static TLB_FASE: AtomicU64 = AtomicU64::new(0);
+static TLB_LEIDO: AtomicU64 = AtomicU64::new(0);
+static TLB_FALLO: AtomicU64 = AtomicU64::new(0);
+static TLB_CR2: AtomicU64 = AtomicU64::new(0);
+
+extern "C" fn lector_tlb(_: usize) {
+    while TLB_FASE.load(Ordering::Acquire) != 1 {
+        core::hint::spin_loop();
+    }
+    let d = TLB_DIR.load(Ordering::Relaxed);
+    TLB_LEIDO.store(unsafe { sonda_leer(d) }.map(|b| b as u64).unwrap_or(u64::MAX), Ordering::Relaxed);
+    TLB_FASE.store(2, Ordering::Release);
+    while TLB_FASE.load(Ordering::Acquire) != 3 {
+        core::hint::spin_loop();
+    }
+    match unsafe { sonda_leer(d) } {
+        Ok(_) => TLB_FALLO.store(0, Ordering::Relaxed),
+        Err(f) => {
+            TLB_FALLO.store(f.vector, Ordering::Relaxed);
+            TLB_CR2.store(f.cr2, Ordering::Relaxed);
+        }
+    }
+    TLB_FASE.store(4, Ordering::Release);
+}
+
+fn prueba_tlb() {
+    let Some(pila) = mapa::pila_nueva() else {
+        kprintln!("X3: TLB MAL (sin pila)");
+        return;
+    };
+    let d = pila.tope() - 8;
+    unsafe { (d as *mut u8).write_volatile(0x5a) };
+    TLB_DIR.store(d, Ordering::Relaxed);
+    planificador::crear(lector_tlb, 0, 3);
+    TLB_FASE.store(1, Ordering::Release);
+    let leyo = esperar_que(50, || TLB_FASE.load(Ordering::Acquire) == 2);
+    let antes = nucleos::vaciados_tlb(3);
+    drop(pila);
+    let vaciados = nucleos::vaciados_tlb(3) - antes;
+    TLB_FASE.store(3, Ordering::Release);
+    let volvio = esperar_que(50, || TLB_FASE.load(Ordering::Acquire) == 4);
+    let (leido, fallo, cr2) = (TLB_LEIDO.load(Ordering::Relaxed), TLB_FALLO.load(Ordering::Relaxed), TLB_CR2.load(Ordering::Relaxed));
+    kprintln!("  el núcleo 3 leyó {:#x} en {:#x}; tras soltarla ({} vaciados de su TLB), excepción {} con CR2 {:#x}",
+        leido, d, vaciados, fallo, cr2);
+    kprintln!("X3: vaciado de la TLB en los demás núcleos al soltar una pila {}",
+        bien(leyo && volvio && leido == 0x5a && vaciados >= 1 && fallo == 14 && cr2 == d as u64));
+}
+
+/// Hilos que terminan en los núcleos 1 a 3 no dejan memoria: sus pilas y sus hilos vuelven (los suelta el hilo ocioso
+/// de algún núcleo).
+extern "C" fn nada_hilo(_: usize) {}
+
+fn prueba_recogida() {
+    let tanda = |n: usize| {
+        for i in 0..n {
+            planificador::crear(nada_hilo, 0, 1 + i % 3);
+        }
+        esperar_tics(30);
+    };
+    let libres = || paginas().libres() + monton::paginas_pequenas();
+    tanda(30);
+    let antes = libres();
+    tanda(50);
+    let medio = libres();
+    tanda(50);
+    let despues = libres();
+    kprintln!("  dos tandas de 50 hilos: páginas libres {}, {} y {}", antes, medio, despues);
+    let perdidas = antes.saturating_sub(despues);
+    kprintln!("X3: recogida de hilos {} ({} páginas de diferencia en 100 hilos)", bien(perdidas <= 4), perdidas);
 }

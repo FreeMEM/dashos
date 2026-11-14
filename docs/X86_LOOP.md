@@ -43,7 +43,7 @@ Dos líneas a la vez (decisión 4 de S21):
 - [x] X2 **Memoria y excepciones.** GDT, IDT, TSS; tablas de páginas propias de 4 niveles con el mismo reparto que en
   ARM (lo que pide `base`: `mmu`, `espacio`, `memoria`, `monton`); la memoria física desde el mapa de UEFI; SMEP, SMAP
   y NX encendidos.
-- [~] X3 **Tiempo, interrupciones y núcleos.** ACPI (MADT, HPET o TSC calibrado), APIC local (x2APIC si lo hay) con
+- [x] X3 **Tiempo, interrupciones y núcleos.** ACPI (MADT, HPET o TSC calibrado), APIC local (x2APIC si lo hay) con
   su temporizador, IOAPIC, arranque de los demás núcleos (INIT-SIPI), avisos entre núcleos. El planificador y los
   hilos de `base` funcionando, con las pilas de los hilos en el GB 256 (`mapa::pila_nueva`, que en x86 necesita
   avisar a los demás núcleos para vaciar la TLB). Una GDT y una TSS por núcleo.
@@ -51,6 +51,19 @@ Dos líneas a la vez (decisión 4 de S21):
   de cada proceso, con PCID en vez de ASID), cambio de contexto, cargador ELF x86-64, la biblioteca
   `usuario/` para `x86_64` (entrada al kernel). `make -C kernel prueba-x86` con las pruebas de `pruebas.rs` que no
   tocan hardware de la Pi.
+  Lo que dejó X3 para aquí:
+  - `objetos_x86.rs` es un sustituto con lo que nombra el planificador (`Proceso`, `Control`, `Fin`): se quita al
+    compilar `objetos.rs` en x86. Con él llegan `cupo`, `temporizadores` y el repartidor (`interrupciones.rs`), que hoy
+    habla con el GIC y el ITS: hay que separar lo de la arquitectura (en x86, IOAPIC y luego MSI).
+  - Sin repartidor, en x86 los hilos muertos los suelta el hilo ocioso de cualquier núcleo (`recoger_global` en
+    `ocioso`, con `cfg`). Un núcleo siempre ocupado no recoge; con el repartidor vuelve a ser como en ARM.
+  - El planificador tiene huecos con `cfg` para lo de EL0: la FPU (`EstadoFp` está vacío en x86: XSAVE), el TLS
+    (`tpidr`: en x86, la base de FS), el orden de bytes (no hay), `mitad_baja_vacia` (con `espacio`) y
+    `bajar_a_el0`/`crear_proceso`. Falta poner RSP0 de la TSS del núcleo con la pila del hilo en cada cambio.
+  - GS apunta a la zona de cada núcleo (`nucleos::numero` lee `gs:[0]`): al entrar desde el anillo 3, `swapgs`, con
+    IA32_KERNEL_GS_BASE.
+  - `nucleos::vaciar_tlb_otros` vacía la TLB entera de los demás (globales incluidas). Para los espacios de los
+    procesos convendrá algo más fino (por PCID y dirección).
 - [ ] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
   `virtio_sonido` funcionando en `q35`.
 - [ ] X6 **Pantalla.** GOP hasta el compositor y el kit, como en `virt` (U4): el escritorio en QEMU x86.
@@ -136,3 +149,43 @@ de la pila del arranque da un fallo doble por la pila IST, con CR2 en la guarda.
 No comprobado ni hecho: `espacio` en x86 (va con los procesos, X4: depende de `cupo`, `objetos` y el planificador);
 las pilas de los hilos y una GDT y TSS por núcleo (X3); una CPU sin NX, SMEP o SMAP (el código las mira por CPUID,
 pero solo se probó con `-cpu max`); un PC de verdad; RAM por encima de 16 GB (no se usa).
+
+
+### 2026-11-14 — X3: tiempo, interrupciones y núcleos en x86-64
+
+Hecho:
+
+- `acpi.rs`: RSDP, XSDT (o RSDT), MADT (núcleos, APIC local, IOAPIC, cambios ISA), HPET y FADT (PM timer). Cada tabla
+  se comprueba (firma, largo, suma) y solo se lee lo que se ve por el mapa lineal (`mapa::se_ve`).
+- `tiempo.rs`: el contador es el TSC, calibrado contra el HPET (o el PM timer; si no hay ninguno, CPUID 0x15/0x16).
+  El temporizador del APIC va en modo de plazo del TSC si lo hay; si no, de un disparo, con su frecuencia medida.
+- `apic.rs`: x2APIC si lo hay, si no xAPIC. Los 8259 remapeados y enmascarados. Vectores: 0x30-0xEF aparatos
+  (`manejar`), 0xF0 reloj, 0xF1 replanificar, 0xF2 TLB, 0xFF espuria. La IDT tiene ya las 256 entradas.
+- `ioapic.rs`: todas las entradas enmascaradas al empezar; `isa` (con los cambios de la MADT), `dirigir`, `enmascarar`.
+- `nucleos.rs` y `trampolin.s`: INIT, SIPI y SIPI con un trampolín en una página libre por debajo de 1 MB (modo real,
+  protegido y largo, con las tablas del arranque). Cada núcleo tiene su GDT, su TSS y sus pilas IST (de
+  `pila_nueva`), y su número en la zona a la que apunta GS. Al acabar, fuera la proyección 1:1 del arranque.
+- Avisos entre núcleos por IPI. `vaciar_tlb_otros`: generación pedida y hecha por núcleo; quien espera atiende lo que
+  le piden a él, y un núcleo que no contesta en 100 ms se avisa y se salta.
+- `mapa.rs`: las pilas de los hilos en el GB 256, como en ARM. Al soltar una: fuera las entradas, `invlpg`, vaciado en
+  los demás y solo después se devuelven las páginas y la ranura.
+- `contexto.s`: `cambiar_contexto` (rbx, rbp, r12-r15 en la pila) e `hilo_entrada`.
+- El planificador es el mismo fichero en las dos arquitecturas (`base/planificador.rs`). Lo de cada una, detrás de
+  `cfg`: `Contexto` y `contexto_nuevo`, `avisar_nucleo`, `mitad_baja_vacia`, y lo de EL0 (solo ARM por ahora).
+  `reloj.rs` también es común. `objetos_x86.rs` da en x86 los tipos de procesos que nombra el planificador.
+- Las pruebas C8, C10 y C14 de ARM pasan a `pruebas_hilos.rs` y corren en las dos arquitecturas.
+
+Comprobado: `make -C kernel prueba-x86` da BIEN (q35, `-smp 4`, `-cpu max`): ACPI con 4 núcleos, IOAPIC y HPET; 200 ms
+del HPET son 200 ms del TSC (diferencia de 13 µs); 50 o 51 interrupciones del reloj en 500 ms del HPET en cada
+núcleo; C8, C10 y C14; los 3 núcleos con su GDT, su TSS y su pila de fallo doble distintas; seis hilos en los
+núcleos 1 a 3 que se reparten una suma y terminan; despertar un hilo del núcleo 2 tarda unos 8 ms sin aviso y 66 µs
+con él (20 avisos recibidos); la IRQ 4 de la UART por el IOAPIC atendida en el núcleo 2; el núcleo 3 deja de ver una
+pila soltada en el núcleo 0 (y sin el vaciado la seguía viendo, incluso con datos de otra: comprobado quitándolo);
+100 hilos que terminan sin perder páginas; las pruebas de X2 siguen. También a mano: con `-cpu max,-x2apic` (xAPIC)
+y con KVM (`-enable-kvm -cpu host`, que da el modo de plazo del TSC), todo bien. `make -C kernel arranque-x86`,
+`make -C kernel prueba` y `make -C kernel arranque-virt` dan BIEN.
+
+No comprobado ni hecho: un PC de verdad (MTRR de los demás núcleos, firmware sin HPET, más de 4 núcleos: solo se
+arrancan 4); el PM timer y CPUID como referencia (sin HPET); x2APIC con ID por encima de 255 (el IOAPIC no los
+alcanza sin remapeo de interrupciones); las NMI de la MADT (LINT1 va como NMI en todos); apagar o reiniciar núcleos.
+Lo que queda para X4 está apuntado en su tarea.

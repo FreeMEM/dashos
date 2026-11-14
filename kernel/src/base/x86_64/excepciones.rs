@@ -7,7 +7,8 @@
 //! (código y pila del kernel, 0x08 y 0x10) y STAR[63:48] = 0x18 (`sysret` de 64 bits toma la pila de 0x18 + 8 y el
 //! código de 0x18 + 16).
 //!
-//! Por ahora hay una GDT y una TSS, las del núcleo 0. Cada núcleo tendrá las suyas en X3.
+//! Cada núcleo tiene su GDT y su TSS (X3), con sus pilas IST; la IDT es la misma para todos. Las entradas de 32 a 255
+//! son las interrupciones (`apic::interrupcion`).
 
 use super::serie::Serie;
 use core::fmt::Write;
@@ -41,11 +42,14 @@ struct Tss {
     mapa_es: u16,
 }
 
-static mut TSS: Tss = Tss { _r0: 0, rsp: [0; 3], _r1: 0, ist: [0; 7], _r2: 0, _r3: 0, mapa_es: 104 };
+use super::nucleos::MAX_NUCLEOS;
+
+static mut TSS: [Tss; MAX_NUCLEOS] =
+    [const { Tss { _r0: 0, rsp: [0; 3], _r1: 0, ist: [0; 7], _r2: 0, _r3: 0, mapa_es: 104 } }; MAX_NUCLEOS];
 
 /// 0 nulo, 0x08 código del kernel (64 bits), 0x10 datos del kernel, 0x18 nulo (código de usuario de 32 bits, que no
-/// se usa), 0x20 datos de usuario, 0x28 código de usuario (64 bits), 0x30 y 0x38 la TSS.
-static mut GDT: [u64; 8] = [
+/// se usa), 0x20 datos de usuario, 0x28 código de usuario (64 bits), 0x30 y 0x38 la TSS de su núcleo.
+const GDT_BASE: [u64; 8] = [
     0,
     0x00af_9a00_0000_ffff,
     0x00cf_9200_0000_ffff,
@@ -55,6 +59,7 @@ static mut GDT: [u64; 8] = [
     0,
     0,
 ];
+static mut GDT: [[u64; 8]; MAX_NUCLEOS] = [GDT_BASE; MAX_NUCLEOS];
 
 #[repr(C, align(16))]
 #[derive(Clone, Copy)]
@@ -69,7 +74,7 @@ struct Descriptor {
 }
 
 unsafe extern "C" {
-    static vectores_x86: [u64; 32];
+    static vectores_x86: [u64; 256];
     static __pila_fin: u8;
     static __pila_df_fin: u8;
     static __pila_nmi_fin: u8;
@@ -78,24 +83,65 @@ unsafe extern "C" {
 
 static HECHO: AtomicBool = AtomicBool::new(false);
 
-/// Carga la GDT, la TSS y la IDT con las 32 excepciones de la CPU. Una vez, en el núcleo 0, antes que nada que pueda
-/// fallar: hasta aquí siguen las del firmware.
+/// Carga la GDT y la TSS del núcleo 0 y la IDT, con las 32 excepciones de la CPU y las interrupciones. Una vez, en el
+/// núcleo 0, antes que nada que pueda fallar: hasta aquí siguen las del firmware.
 pub fn iniciar() {
     if HECHO.swap(true, Ordering::AcqRel) {
         return;
     }
     unsafe {
-        let tss = &raw mut TSS;
-        (*tss).ist[(IST_DF - 1) as usize] = &__pila_df_fin as *const u8 as u64;
-        (*tss).ist[(IST_NMI - 1) as usize] = &__pila_nmi_fin as *const u8 as u64;
-        (*tss).ist[(IST_MC - 1) as usize] = &__pila_mc_fin as *const u8 as u64;
+        preparar_nucleo(0, [&__pila_df_fin as *const u8 as u64, &__pila_nmi_fin as *const u8 as u64, &__pila_mc_fin as *const u8 as u64]);
+        cargar_gdt(0);
+        let idt = &raw mut IDT;
+        for (v, &entrada) in vectores_x86.iter().enumerate() {
+            let ist = match v {
+                2 => IST_NMI,
+                8 => IST_DF,
+                18 => IST_MC,
+                _ => 0,
+            } as u64;
+            // Puerta de interrupción de 64 bits (tipo 0xE), presente, DPL 0: entra con las interrupciones cerradas.
+            let bajo = (entrada & 0xffff) | (CODIGO_KERNEL as u64) << 16 | ist << 32 | 0x8e << 40 | ((entrada >> 16) & 0xffff) << 48;
+            (*idt)[v] = Puerta([bajo, entrada >> 32]);
+        }
+    }
+    cargar_idt();
+}
+
+/// Las pilas IST del núcleo `n` (fallo doble, NMI y comprobación de máquina) en su TSS, y su TSS en su GDT. Antes de
+/// arrancarlo (`nucleos::despertar`).
+pub(super) fn preparar_nucleo(n: usize, ist: [u64; 3]) {
+    unsafe {
+        let tss = &raw mut TSS[n];
+        (*tss).ist[(IST_DF - 1) as usize] = ist[0];
+        (*tss).ist[(IST_NMI - 1) as usize] = ist[1];
+        (*tss).ist[(IST_MC - 1) as usize] = ist[2];
         let base = tss as u64;
         let limite = (core::mem::size_of::<Tss>() - 1) as u64;
         // Descriptor de sistema de 16 bytes: tipo 9 (TSS de 64 bits disponible), presente.
         let bajo = (limite & 0xffff) | (base & 0xff_ffff) << 16 | 0x89 << 40 | ((limite >> 16) & 0xf) << 48 | ((base >> 24) & 0xff) << 56;
-        let gdt = &raw mut GDT;
+        let gdt = &raw mut GDT[n];
         (*gdt)[6] = bajo;
         (*gdt)[7] = base >> 32;
+    }
+}
+
+/// En cada uno de los demás núcleos, lo primero: su GDT y su TSS, y la IDT común.
+pub(super) fn iniciar_nucleo(n: usize) {
+    cargar_gdt(n);
+    cargar_idt();
+}
+
+fn cargar_idt() {
+    let d = Descriptor { limite: (core::mem::size_of::<[Puerta; 256]>() - 1) as u16, base: &raw const IDT as u64 };
+    unsafe { core::arch::asm!("lidt [{}]", in(reg) &d, options(nostack)) };
+}
+
+/// Carga la GDT del núcleo `n` (los segmentos y su TSS). Deja GS a 0: la base de GS se pone después
+/// (`nucleos::poner_gs`).
+fn cargar_gdt(n: usize) {
+    unsafe {
+        let gdt = &raw mut GDT[n];
         let d = Descriptor { limite: (core::mem::size_of::<[u64; 8]>() - 1) as u16, base: gdt as u64 };
         core::arch::asm!(
             "lgdt [{d}]",
@@ -117,22 +163,20 @@ pub fn iniciar() {
             tss = in(reg) TSS_SELECTOR,
             t = out(reg) _,
         );
-
-        let idt = &raw mut IDT;
-        for (v, &entrada) in vectores_x86.iter().enumerate() {
-            let ist = match v {
-                2 => IST_NMI,
-                8 => IST_DF,
-                18 => IST_MC,
-                _ => 0,
-            } as u64;
-            // Puerta de interrupción de 64 bits (tipo 0xE), presente, DPL 0: entra con las interrupciones cerradas.
-            let bajo = (entrada & 0xffff) | (CODIGO_KERNEL as u64) << 16 | ist << 32 | 0x8e << 40 | ((entrada >> 16) & 0xffff) << 48;
-            (*idt)[v] = Puerta([bajo, entrada >> 32]);
-        }
-        let d = Descriptor { limite: (core::mem::size_of::<[Puerta; 256]>() - 1) as u16, base: idt as u64 };
-        core::arch::asm!("lidt [{}]", in(reg) &d, options(nostack));
     }
+}
+
+/// Las tablas de este núcleo, para las pruebas: (base de su GDT, selector de su TSS, su pila de fallo doble).
+pub fn tablas_de_este_nucleo() -> (u64, u16, u64) {
+    let mut d = Descriptor { limite: 0, base: 0 };
+    let tr: u16;
+    unsafe {
+        core::arch::asm!("sgdt [{}]", in(reg) &mut d, options(nostack));
+        core::arch::asm!("str {:x}", out(reg) tr, options(nomem, nostack, preserves_flags));
+    }
+    let n = super::nucleos::numero() as usize % MAX_NUCLEOS;
+    let df = unsafe { (*(&raw const TSS[n])).ist[(IST_DF - 1) as usize] };
+    (d.base, tr, df)
 }
 
 /// Lo que guardan las entradas (vectores.s) y la CPU en la pila, de abajo arriba. Mismo orden y tamaño (176 bytes).
@@ -266,6 +310,11 @@ fn apuntar_sonda(m: &Marco, cr2: u64) {
 
 #[unsafe(no_mangle)]
 extern "C" fn excepcion_x86(m: &mut Marco) {
+    // De 32 en adelante, interrupciones: al APIC (el reloj, los avisos entre núcleos, los aparatos).
+    if m.vector >= 32 {
+        super::apic::interrupcion(m.vector as u8);
+        return;
+    }
     // CR2: la dirección del fallo de página; en un fallo doble, la del fallo de página que lo causó, si lo hubo.
     let cr2 = if matches!(m.vector, 8 | 14) { super::cpu::cr2() } else { 0 };
     let del_kernel = m.cs & 3 == 0;

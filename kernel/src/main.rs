@@ -3,9 +3,11 @@
 //! `kmain` solo pone el sistema en marcha. Las pruebas del arranque (C2 a C36) están en `pruebas.rs` y solo entran
 //! en la imagen con la opción `pruebas` (`make prueba`); la imagen normal (`make`) no las lleva (C36, S16 fase 2).
 //!
-//! En x86-64 (S21) entran un `kmain` propio, `base/x86_64/` (con el repartidor de páginas, el montón y los cerrojos de
-//! `base`, que son comunes) y `serie_x86.rs`: lo demás es de ARM y va detrás de `#[cfg(target_arch = "aarch64")]`
-//! hasta que X3 y X4 lo lleven a las dos arquitecturas. Las pruebas de x86 están en `pruebas_x86.rs`.
+//! En x86-64 (S21) entran un `kmain` propio, `base/x86_64/` (con el repartidor de páginas, el montón, los cerrojos y
+//! el planificador de `base`, que son comunes), `reloj.rs`, `serie_x86.rs` y `objetos_x86.rs` (lo que el planificador
+//! nombra de los procesos): lo demás es de ARM y va detrás de `#[cfg(target_arch = "aarch64")]` hasta que X4 lo lleve
+//! a las dos arquitecturas. Las pruebas de x86 están en `pruebas_x86.rs`; las del planificador, comunes, en
+//! `pruebas_hilos.rs`.
 
 #![no_std]
 #![no_main]
@@ -27,10 +29,16 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 #[path = "base/x86_64/mod.rs"]
 mod base;
 #[cfg(target_arch = "x86_64")]
-pub use base::{cerrojo, cpu, excepciones, mapa, memoria, mmu, monton};
+pub use base::{cerrojo, cpu, excepciones, mapa, memoria, mmu, monton, nucleos, planificador};
 #[cfg(target_arch = "x86_64")]
 #[path = "serie_x86.rs"]
 mod serie;
+#[cfg(target_arch = "x86_64")]
+#[path = "objetos_x86.rs"]
+mod objetos;
+#[cfg(feature = "pruebas")]
+mod pruebas_hilos;
+mod reloj;
 #[cfg(all(target_arch = "x86_64", feature = "pruebas"))]
 #[allow(unsafe_code)]
 #[path = "pruebas_x86.rs"]
@@ -62,8 +70,6 @@ mod pcie;
 mod procesos;
 #[cfg(target_arch = "aarch64")]
 mod registro;
-#[cfg(target_arch = "aarch64")]
-mod reloj;
 #[cfg(target_arch = "aarch64")]
 mod serie;
 #[cfg(target_arch = "aarch64")]
@@ -146,12 +152,14 @@ fn panico(info: &PanicInfo) -> ! {
 
 /// x86-64: lo llama `base` (arranque.s → `kmain_x86` → `kmain`) en el núcleo 0, ya en la mitad alta con las tablas
 /// del arranque. X1: dice lo que dejó el cargador. X2: GDT, TSS e IDT, la memoria física desde el mapa de UEFI, las
-/// defensas, las tablas de páginas propias y el montón. Luego se para: el resto llega en X3 y X4.
+/// defensas, las tablas de páginas propias y el montón. X3: ACPI, el reloj, los APIC, el planificador y los demás
+/// núcleos. Los procesos llegan en X4.
 #[cfg(target_arch = "x86_64")]
 pub fn kmain() -> ! {
-    use base::arranque;
+    use base::{acpi, apic, arranque, ioapic, tiempo};
     base::serie::iniciar();
     excepciones::iniciar();
+    nucleos::iniciar_bsp();
     kprintln!();
     kprintln!("DashOS {} (x86-64)", env!("CARGO_PKG_VERSION"));
     kprintln!("Orden de bytes: {}", if 0x1122_3344u32.to_ne_bytes()[0] == 0x11 { "big-endian" } else { "little-endian" });
@@ -176,7 +184,8 @@ pub fn kmain() -> ! {
         kprintln!("Pantalla: {}x{} en {:#x}", i.pantalla_ancho, i.pantalla_alto, i.pantalla_base);
     }
 
-    // El primer MB queda fuera: ahí irá el trampolín de los demás núcleos (X3), y el firmware deja cosas.
+    // El primer MB queda fuera: ahí va el trampolín de los demás núcleos (`nucleos::despertar`), y el firmware deja
+    // cosas.
     memoria::paginas().iniciar_tramos(
         arranque::mapa_de_memoria()
             .filter(|t| arranque::es_ram(t.tipo))
@@ -194,12 +203,41 @@ pub fn kmain() -> ! {
     let (nx, smep, smap, wp) = cpu::defensas_activas();
     kprintln!("Defensas: NX {}, SMEP {}, SMAP {}, WP {}", si(nx), si(smep), si(smap), si(wp));
 
+    // Las de X2 cuentan la memoria libre: antes de que se reparta nada más.
     #[cfg(feature = "pruebas")]
-    pruebas::ejecutar(libres_al_empezar);
+    pruebas::ejecutar_x2(libres_al_empezar);
     let _ = libres_al_empezar;
 
-    kprintln!("DashOS en marcha (x86-64)");
-    cpu::parar()
+    let Some(a) = acpi::leer_tablas() else {
+        kprintln!("ACPI: sin MADT; el sistema se queda parado");
+        cpu::parar()
+    };
+    kprintln!(
+        "ACPI: {} núcleos en la MADT, {} IOAPIC, {} cambios ISA, HPET {}, PM timer {}",
+        a.nucleos.len(), a.ioapics.len(), a.cambios.len(), si(a.hpet.is_some()), si(a.pm_timer.is_some())
+    );
+    let referencia = tiempo::iniciar(&a);
+    apic::iniciar(&a);
+    let entradas = ioapic::iniciar(&a);
+    nucleos::bsp_en_marcha();
+    kprintln!(
+        "Reloj: TSC a {} kHz, medido con {:?}; temporizador del APIC {} ({}); {} entradas de IOAPIC",
+        tiempo::frecuencia() / 1000,
+        referencia,
+        if tiempo::plazo_tsc() { "con plazo del TSC" } else { "de un disparo" },
+        if apic::x2apic() { "x2APIC" } else { "xAPIC" },
+        entradas
+    );
+    planificador::iniciar_nucleo();
+    reloj::iniciar(100);
+    reloj::habilitar_irq();
+    let n = nucleos::despertar(&a);
+
+    #[cfg(feature = "pruebas")]
+    pruebas::ejecutar(&a, n);
+
+    kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
+    planificador::ocioso()
 }
 
 #[cfg(target_arch = "x86_64")]

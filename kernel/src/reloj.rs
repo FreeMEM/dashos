@@ -1,5 +1,7 @@
-//! Temporizador genérico de ARM (el físico de EL1) y el tic del sistema.
+//! El tic del sistema: el temporizador genérico de ARM (el físico de EL1), o en x86-64 (X3) el del APIC local, con el
+//! TSC como contador (`base/x86_64/tiempo.rs`). Las cuentas son las del contador: CNTPCT en ARM, el TSC en x86.
 
+#[cfg(target_arch = "aarch64")]
 use crate::gic;
 use core::sync::atomic::{AtomicU32, AtomicU64, Ordering};
 
@@ -20,6 +22,7 @@ pub fn programar(cuentas: u64) {
 }
 
 /// Tic periódico de `hz` veces por segundo. `ppi` es el PPI del temporizador físico no seguro (del árbol).
+#[cfg(target_arch = "aarch64")]
 pub fn iniciar(ppi: u32, hz: u64) {
     let intid = 16 + ppi;
     INTID.store(intid, Ordering::Relaxed);
@@ -30,8 +33,20 @@ pub fn iniciar(ppi: u32, hz: u64) {
     programar(periodo);
 }
 
-/// La parte de cada núcleo: el temporizador y su PPI son privados de cada núcleo.
+/// x86-64: tic periódico de `hz` veces por segundo. El APIC local de cada núcleo ya tiene su temporizador apuntando a
+/// su vector (`apic::VECTOR_RELOJ`); aquí solo se programa.
+#[cfg(target_arch = "x86_64")]
+pub fn iniciar(hz: u64) {
+    INTID.store(crate::base::apic::VECTOR_RELOJ as u32, Ordering::Relaxed);
+    let periodo = frecuencia() / hz;
+    PERIODO.store(periodo, Ordering::Relaxed);
+    ARRANQUE.store(ahora(), Ordering::Relaxed);
+    programar(periodo);
+}
+
+/// La parte de cada núcleo: el temporizador y su interrupción son privados de cada núcleo.
 pub fn iniciar_nucleo() {
+    #[cfg(target_arch = "aarch64")]
     gic::habilitar(INTID.load(Ordering::Relaxed), 0x80);
     programar(PERIODO.load(Ordering::Relaxed));
 }
@@ -54,6 +69,8 @@ pub fn interrupcion(intid: u32) -> bool {
         return false;
     }
     programar(PERIODO.load(Ordering::Relaxed));
+    // Los temporizadores de los procesos (C49) llegan a x86 con los objetos (X4).
+    #[cfg(target_arch = "aarch64")]
     if crate::temporizadores::tic() {
         crate::interrupciones::despertar_repartidor();
     }

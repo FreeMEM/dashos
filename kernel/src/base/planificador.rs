@@ -9,6 +9,10 @@
 //! - Clase de plazo (C14, S2): un hilo con capacidad y periodo corre antes que cualquier hilo justo mientras le
 //!   quede presupuesto en su periodo; entre los de plazo, el de plazo más cercano (EDF). Al agotarlo, espera al
 //!   periodo siguiente. El temporizador se programa para el momento justo en que eso cambia.
+//!
+//! Es el mismo en ARM y en x86-64 (X3). Lo de cada arquitectura va detrás de `cfg`: el contexto de un hilo y cómo
+//! empieza (`contexto_nuevo`), cómo se avisa a otro núcleo (`avisar_nucleo`) y lo de los procesos que en x86 llega con
+//! X4 (EL0, la FPU, el orden de bytes, el TLS). En x86, `objetos` es todavía un sustituto (`objetos_x86.rs`).
 
 use crate::cerrojo::CerrojoIrq;
 use crate::nucleos;
@@ -20,11 +24,57 @@ use core::sync::atomic::{AtomicU64, Ordering};
 const MAX_NUCLEOS: usize = 4;
 pub const PESO_NORMAL: u64 = 1024;
 
+#[cfg(target_arch = "aarch64")]
 #[repr(C)]
 #[derive(Default)]
 pub struct Contexto {
     x19_x30: [u64; 12],
     sp: u64,
+}
+
+/// x86-64 (X3): solo la pila. Los registros que la convención obliga a conservar (rbx, rbp, r12 a r15) y la dirección
+/// de vuelta van en ella (`x86_64/contexto.s`).
+#[cfg(target_arch = "x86_64")]
+#[repr(C)]
+#[derive(Default)]
+pub struct Contexto {
+    rsp: u64,
+}
+
+/// El contexto de un hilo nuevo: empieza en `hilo_entrada`, que llama a `f(arg)`, con la pila en `tope`.
+#[cfg(target_arch = "aarch64")]
+fn contexto_nuevo(f: extern "C" fn(usize), arg: usize, tope: usize) -> Contexto {
+    let mut contexto = Contexto::default();
+    contexto.x19_x30[0] = f as *const () as usize as u64; // x19
+    contexto.x19_x30[1] = arg as u64; // x20
+    contexto.x19_x30[11] = hilo_entrada as *const () as usize as u64; // x30
+    contexto.sp = tope as u64;
+    contexto
+}
+
+/// En x86, lo que sacará `cambiar_contexto` de la pila: r15, r14, r13 (el argumento), r12 (la función), rbx, rbp y la
+/// vuelta a `hilo_entrada`. Al llegar allí, la pila queda en `tope`, alineada a 16.
+#[cfg(target_arch = "x86_64")]
+fn contexto_nuevo(f: extern "C" fn(usize), arg: usize, tope: usize) -> Contexto {
+    let marco: [u64; 7] = [0, 0, arg as u64, f as *const () as usize as u64, 0, 0, hilo_entrada as *const () as usize as u64];
+    let rsp = tope - 8 * marco.len();
+    // `tope` es el de una pila recién hecha (`mapa::pila_nueva`), proyectada y de nadie más todavía.
+    unsafe { core::ptr::copy_nonoverlapping(marco.as_ptr(), rsp as *mut u64, marco.len()) };
+    Contexto { rsp: rsp as u64 }
+}
+
+/// Pide a otro núcleo que vuelva a planificar (C17): un SGI del GIC en ARM, una IPI del APIC en x86.
+fn avisar_nucleo(n: usize) {
+    #[cfg(target_arch = "aarch64")]
+    crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+    #[cfg(target_arch = "x86_64")]
+    nucleos::avisar(n);
+}
+
+/// La mitad baja vacía (PAN por software, C34). En x86 aún no hay espacios de procesos (X4): siempre lo está.
+fn mitad_baja_vacia() {
+    #[cfg(target_arch = "aarch64")]
+    crate::espacio::activar_vacio();
 }
 
 #[derive(PartialEq, Eq, Clone, Copy)]
@@ -62,12 +112,17 @@ pub struct Hilo {
 }
 
 /// Lo que guarda `fp_guardar` (contexto.s): q0..q31, FPCR y FPSR.
+#[cfg(target_arch = "aarch64")]
 #[repr(C, align(16))]
 struct EstadoFp {
     q: [u128; 32],
     fpcr: u64,
     fpsr: u64,
 }
+
+/// En x86 la FPU de los procesos (XSAVE) llega con X4; el kernel no la usa (softfloat).
+#[cfg(target_arch = "x86_64")]
+struct EstadoFp;
 
 #[derive(Clone, Copy)]
 struct Plazo {
@@ -111,19 +166,28 @@ static CAMBIOS: AtomicU64 = AtomicU64::new(0);
 unsafe extern "C" {
     fn cambiar_contexto(viejo: *mut Contexto, nuevo: *const Contexto);
     fn hilo_entrada();
+}
+
+#[cfg(target_arch = "aarch64")]
+unsafe extern "C" {
     fn fp_guardar(p: *mut EstadoFp);
     fn fp_cargar(p: *const EstadoFp);
 }
 
 /// CPACR_EL1.FPEN (C28): 0b01 atrapa los accesos de EL0 a la FPU (EL1 no la usa, pero puede guardarla); 0b11 los deja.
+#[cfg(target_arch = "aarch64")]
 const FPEN_ATRAPAR: u64 = 0b01 << 20;
+#[cfg(target_arch = "aarch64")]
 const FPEN_LIBRE: u64 = 0b11 << 20;
+#[cfg(target_arch = "aarch64")]
 static FP_CAMBIOS: AtomicU64 = AtomicU64::new(0);
 
 /// SCTLR_EL1.E0E: orden de bytes de los datos en EL0. Cada proceso tiene el suyo (C30); el kernel es little-endian
 /// desde C33 (EE a 0) y las instrucciones son siempre little-endian.
+#[cfg(target_arch = "aarch64")]
 const SCTLR_E0E: u64 = 1 << 24;
 
+#[cfg(target_arch = "aarch64")]
 fn orden_el0(big_endian: bool) {
     let mut v: u64;
     unsafe { core::arch::asm!("mrs {}, sctlr_el1", out(reg) v) };
@@ -134,6 +198,7 @@ fn orden_el0(big_endian: bool) {
     }
 }
 
+#[cfg(target_arch = "aarch64")]
 fn fpen(v: u64) {
     unsafe { core::arch::asm!("msr cpacr_el1, {}", "isb", in(reg) v) };
 }
@@ -160,12 +225,15 @@ pub fn iniciar_nucleo() {
         matar: false,
         sig_muerto: core::ptr::null_mut(),
     }));
-    fpen(FPEN_ATRAPAR);
-    registros_el0();
-    // Fuera la proyección identidad del arranque, también de la TLB: sus bloques son globales y, si se quedaran,
-    // valdrían para cualquier ASID.
-    crate::espacio::activar_vacio();
-    unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
+    #[cfg(target_arch = "aarch64")]
+    {
+        fpen(FPEN_ATRAPAR);
+        registros_el0();
+        // Fuera la proyección identidad del arranque, también de la TLB: sus bloques son globales y, si se quedaran,
+        // valdrían para cualquier ASID.
+        crate::espacio::activar_vacio();
+        unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
+    }
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
 }
 
@@ -176,6 +244,7 @@ pub fn iniciar_nucleo() {
 /// - PMUSERENR_EL0 = 0: los contadores de rendimiento no son para EL0.
 /// - MDSCR_EL1 = 0: sin depuración ni pasos sueltos.
 /// - TPIDRRO_EL0 = 0 (EL0 lo lee y no lo escribe) y TPIDR_EL0 = 0.
+#[cfg(target_arch = "aarch64")]
 fn registros_el0() {
     unsafe {
         core::arch::asm!(
@@ -208,13 +277,8 @@ unsafe fn crear_hilo(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso
 }
 
 unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, proceso: usize, registrar: Option<&crate::objetos::Control>, pila: crate::mapa::Pila) -> u64 {
-    let tope = pila.tope();
     let id = SIGUIENTE_ID.fetch_add(1, Ordering::Relaxed);
-    let mut contexto = Contexto::default();
-    contexto.x19_x30[0] = f as *const () as usize as u64; // x19
-    contexto.x19_x30[1] = arg as u64; // x20
-    contexto.x19_x30[11] = hilo_entrada as *const () as usize as u64; // x30
-    contexto.sp = tope as u64;
+    let contexto = contexto_nuevo(f, arg, pila.tope());
     let mut cola = NUCLEOS[nucleo].tomar();
     let nc = cola.as_mut().expect("núcleo sin planificador");
     let minimo = nc
@@ -492,13 +556,15 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             (*siguiente).estado = Estado::Corriendo;
             // Dentro del kernel la mitad baja siempre está vacía (PAN por software, C34): el espacio del hilo se pone
             // al volver a EL0 (excepciones.rs) y solo durante las copias de usuario (llamadas.rs).
-            crate::espacio::activar_vacio();
+            mitad_baja_vacia();
+            #[cfg(target_arch = "aarch64")]
             if (*siguiente).proceso != 0 {
                 orden_el0((*((*siguiente).proceso as *const crate::objetos::Proceso)).big_endian);
             }
         }
         nucleo.actual = siguiente;
         // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
+        #[cfg(target_arch = "aarch64")]
         fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
@@ -506,10 +572,13 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         // de núcleo, así que nadie más puede poner a correr el hilo viejo antes de que se guarde su contexto.
     };
     unsafe {
-        let tpidr: u64;
-        core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
-        (*viejo).tpidr = tpidr;
-        core::arch::asm!("msr tpidr_el0, {}", in(reg) (*nuevo).tpidr);
+        #[cfg(target_arch = "aarch64")]
+        {
+            let tpidr: u64;
+            core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
+            (*viejo).tpidr = tpidr;
+            core::arch::asm!("msr tpidr_el0, {}", in(reg) (*nuevo).tpidr);
+        }
         cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto)
     };
     // Ya en el hilo que vuelve: los muertos de este núcleo tienen su contexto guardado (U3d).
@@ -539,6 +608,8 @@ fn trasladar_muertos(n: usize) {
         movidos = true;
     }
     if movidos {
+        // En x86 aún no hay repartidor (llega con los objetos, X4): los suelta el hilo ocioso (`ocioso`).
+        #[cfg(target_arch = "aarch64")]
         crate::interrupciones::despertar_repartidor();
     }
 }
@@ -602,7 +673,7 @@ pub(super) fn despertar(h: *mut Hilo) {
     // se abren las interrupciones.
     let de_plazo = unsafe { (*h).plazo.is_some() };
     if (n != nucleos::numero() as usize || de_plazo) && AVISAR_NUCLEOS.load(Ordering::Relaxed) {
-        crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+        avisar_nucleo(n);
     }
 }
 
@@ -719,7 +790,7 @@ pub fn terminar_actual(fin: crate::objetos::Fin) -> ! {
         None => 0,
     };
     if proceso != 0 {
-        crate::espacio::activar_vacio();
+        mitad_baja_vacia();
         let p = unsafe { alloc::sync::Arc::from_raw(proceso as *const crate::objetos::Proceso) };
         // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: se apunta cómo y se despierta a
         // quien esperaba.
@@ -764,6 +835,7 @@ pub fn ttbr0_actual() -> u64 {
 ///
 /// # Seguridad
 /// `ttbr0` tiene que ser el de un espacio vivo del proceso de este hilo (`Espacio::ttbr0`).
+#[cfg(target_arch = "aarch64")]
 pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
     unsafe extern "C" {
         fn entrar_el0(pc: u64, sp: u64) -> !;
@@ -781,11 +853,13 @@ pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
 }
 
 /// Lo que necesita un hilo nuevo de proceso para bajar a EL0.
+#[cfg(target_arch = "aarch64")]
 struct Arranque {
     entrada: u64,
     pila: u64,
 }
 
+#[cfg(target_arch = "aarch64")]
 extern "C" fn arrancar_proceso(a: usize) {
     let a = unsafe { Box::from_raw(a as *mut Arranque) };
     let ttbr0 = proceso_actual_arc().map(|p| p.ttbr0).unwrap_or(0);
@@ -797,6 +871,7 @@ extern "C" fn arrancar_proceso(a: usize) {
 /// queda con `p` y se apunta en su lista de hilos antes de poder correr.
 /// `pila_kernel` es la pila del kernel del hilo, que se pide antes (`mapa::pila_nueva`) para que esto no pueda
 /// fallar por falta de pilas cuando ya se han dado las llaves (M4).
+#[cfg(target_arch = "aarch64")]
 pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> u64 {
     let control = p.control.clone();
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
@@ -829,7 +904,7 @@ pub fn matar_proceso(c: &crate::objetos::Control) {
         if despertar_lo {
             despertar(h.0);
         } else if n != nucleos::numero() as usize {
-            crate::gic::avisar(n as u32, crate::gic::SGI_PLANIFICAR);
+            avisar_nucleo(n);
         }
     }
 }
@@ -855,11 +930,15 @@ pub fn recoger() {
     }
 }
 
-/// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones.
+/// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones. En x86, también los de la lista global.
 pub fn ocioso() -> ! {
     reloj::habilitar_irq();
     loop {
         recoger();
+        #[cfg(target_arch = "x86_64")]
+        if hay_muertos_global() {
+            recoger_global();
+        }
         reloj::esperar_interrupcion();
     }
 }
@@ -870,6 +949,7 @@ pub fn cambios() -> u64 {
 
 /// El hilo actual ha usado la FPU desde EL0 sin ser su dueño (C28): se guardan los registros del dueño anterior, se
 /// cargan los suyos (a cero la primera vez) y la FPU queda libre para él.
+#[cfg(target_arch = "aarch64")]
 pub fn fp_atrapado() {
     let n = nucleos::numero() as usize;
     let mut g = NUCLEOS[n].tomar();
@@ -892,6 +972,7 @@ pub fn fp_atrapado() {
 }
 
 /// Cuántas veces ha cambiado de dueño la FPU de algún núcleo.
+#[cfg(target_arch = "aarch64")]
 pub fn fp_cambios() -> u64 {
     FP_CAMBIOS.load(Ordering::Relaxed)
 }

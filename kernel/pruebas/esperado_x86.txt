@@ -1,4 +1,4 @@
-# X2 (S21): las pruebas del arranque en x86-64 (make prueba-x86). La última para el núcleo con un fallo doble.
+# X2 y X3 (S21): las pruebas del arranque en x86-64 (make prueba-x86). La última para el núcleo 0 con un fallo doble.
 DashOS 0.0.1 (x86-64)
 GDT, TSS e IDT cargadas
 Memoria física:
@@ -13,6 +13,23 @@ Excepción: punto de parada en
 X2: de vuelta del punto de parada
 X2: fallo de página recuperado bien
 X2: SMEP, SMAP y NX activos bien
+ACPI: 4 núcleos en la MADT
+Reloj: TSC a
+~núcleo 1 en marcha
+~núcleo 2 en marcha
+~núcleo 3 en marcha
+X3: ACPI (MADT y HPET) bien
+X3: TSC calibrado contra el HPET bien
+X3: temporizador del APIC a 100 Hz en cada núcleo bien
+C8: interrupciones bien
+X3: 3 núcleos más en marcha, cada uno con su GDT y su TSS bien
+C10: hilos bien
+X3: hilos en tres núcleos que se reparten el trabajo y terminan bien
+X3: avisos entre núcleos bien
+X3: interrupción de la UART por el IOAPIC bien
+X3: vaciado de la TLB en los demás núcleos al soltar una pila bien
+C14: clase de plazo bien
+X3: recogida de hilos bien
 X2: desborde de la pila del arranque
 Excepción 8 (fallo doble (#DF)) en el kernel
 en la pila de emergencia (IST 1)

@@ -14,6 +14,27 @@ pub const CR4_UMIP: u64 = 1 << 11;
 pub const CR4_SMEP: u64 = 1 << 20;
 pub const CR4_SMAP: u64 = 1 << 21;
 
+// Lo que `reloj` pide a la CPU, como en ARM (`cpu.rs`): el contador y su frecuencia son los del TSC, y el temporizador
+// el del APIC local (`tiempo.rs`).
+pub use super::tiempo::{contador, frecuencia, temporizador};
+
+/// Abre las interrupciones de este núcleo.
+pub fn habilitar_irq() {
+    unsafe { asm!("sti", options(nomem, nostack)) };
+}
+
+/// Espera una interrupción (`hlt`). Como `wfi` en ARM, vuelve también si las interrupciones están cerradas: entonces
+/// las abre solo durante la espera (`sti; hlt`, sin hueco entre las dos), y la interrupción se atiende al despertar.
+pub fn esperar_interrupcion() {
+    let rflags: u64;
+    unsafe { asm!("pushfq", "pop {}", out(reg) rflags, options(nomem, preserves_flags)) };
+    if rflags & (1 << 9) != 0 {
+        unsafe { asm!("hlt", options(nomem, nostack)) };
+    } else {
+        unsafe { asm!("sti", "hlt", "cli", options(nomem, nostack)) };
+    }
+}
+
 /// Para este núcleo para siempre: interrupciones cerradas y `hlt` en bucle.
 pub fn parar() -> ! {
     loop {
