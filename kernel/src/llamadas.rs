@@ -207,6 +207,9 @@ pub fn atender(marco: &mut Marco) {
         53 => memoria_aviso(a[0] as u32, a[1] as u32),
         // S3: cambiar el tope de un grupo (con su llave, con escribir; no el propio ni los de encima).
         54 => grupo_tope(a[0] as u32, a[1]),
+        // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
+        // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
+        55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
             planificador::dormir_us(a[0].min(3_600_000_000));
@@ -1491,6 +1494,47 @@ fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
     }
     match maquina.anadir(m, ipa, &proc_.cupo) {
         Ok(()) => 0,
+        Err(e) => error_hiper(e),
+    }
+}
+
+/// Llamada 55 (`docs/bitacoras/aviso-cajas.md`): el globo de una máquina. Con la llave de una vCPU (escribir), suelta
+/// (`op` 0) o repone (1) las páginas del invitado cuyas direcciones (u64, alineadas a 4 KB) están en la tabla `tabla`
+/// (`n`, de 1 a 256). Solo memoria que tiene nadie más que la máquina y quien llama (ver `hiper::Espacio::globo`): las
+/// páginas de otra se saltan. Devuelve cuántas se hicieron.
+fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
+    let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
+    if n == 0 || n > crate::base::hiper::MAX_GLOBO as u64 {
+        return E_TAMANO;
+    }
+    if op > 1 {
+        return E_ARGUMENTO;
+    }
+    // La tabla se copia antes de tomar los cerrojos (copiar del proceso toma su espacio).
+    let Some(bytes) = leer_usuario(tabla, 8 * n as usize) else { return E_ARGUMENTO };
+    // En el orden de bytes del proceso, como las tablas de llaves.
+    let ipas: Vec<u64> = bytes
+        .chunks_exact(8)
+        .map(|c| {
+            let c: [u8; 8] = c.try_into().unwrap();
+            if proc_.big_endian { u64::from_be_bytes(c) } else { u64::from_le_bytes(c) }
+        })
+        .collect();
+    let llaves = proc_.llaves.tomar();
+    let Some(l) = llaves.ver(h) else { return E_LLAVE };
+    let Objeto::Maquina(maquina) = l.objeto else { return E_TIPO };
+    if l.derechos & objetos::ESCRIBIR == 0 {
+        return E_DERECHOS;
+    }
+    // Con la tabla de llaves y el espacio tomados, nadie del proceso puede sacar otra referencia al objeto mientras se
+    // cuenta y se suelta (orden de los cerrojos: llaves, espacio y la etapa 2, como en el resto).
+    let mut espacio = proc_.espacio.tomar();
+    let cuenta = |m: &alloc::sync::Arc<crate::memoria::Memoria>| llaves.cuantas_de_memoria(m);
+    let r = maquina.globo(&ipas, op == 0, &mut espacio, &cuenta);
+    drop(espacio);
+    drop(llaves);
+    match r {
+        Ok(k) => k as u64,
         Err(e) => error_hiper(e),
     }
 }

@@ -146,6 +146,11 @@ DashOS en marcha con 4 núcleos.
 ~│   [sesiones] tiene el permiso de apagar
 # S3: con él, sesiones escucha el aviso de memoria baja del kernel (llamada 53).
 ~│   [sesiones] escucha el aviso de memoria baja
+# aviso-cajas: solo las cajas del sistema escuchan el aviso de memoria baja (por un canal que solo tiene `sesiones`, que
+# es quien les pide que suelten); otro programa no se apunta, su canal se cierra sin usar y no puede decir que soltó.
+~│   [hostil] sesiones: escuchar el aviso de memoria baja sin ser una caja (su canal, cerrado sin usar: sí) o decir que soltó: -2
+~│   [sesiones] caja-amiga escucha el aviso de memoria baja
+~│   [caja-amiga] escucha el aviso de memoria baja
 ~│   [hostil] sesiones: apagar, reiniciar o cerrar la sesión sin ser el panel: -2
 ~│   [hostil] apagar la máquina sin el permiso: 0 de 128 funcionaron: bien
 # S27, oleada 2: el panel sabe la red y quién está delante, y la barra recibe el estado por el compositor.
@@ -694,6 +699,17 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] glotona: 0 fallos
 # S3: con los cupos como topes, la para su tope de prueba (48 MB) y no el cupo (antes llegaba a 15).
 ~│   [caja-amiga] glotona: 46 MB antes de quedarse sin sitio
+# aviso-cajas: con la memoria del 68k crecida y libre, memh.c pone un manejador de memoria baja (AddMemHandler) y la caja
+# dice a `presion` que tiene algo que soltar; `presion` llena la memoria de DashOS hasta que el kernel avisa, `sesiones`
+# mide lo que tiene cobrado la caja y se lo pide; la caja llama al manejador (suelta su caché de 2 MB) y devuelve lo
+# crecido que está libre. `sesiones` vuelve a medir: tiene que haber bajado.
+~│   [presion] caja-amiga tiene algo que soltar: se llena la memoria
+~│   [sesiones] memoria baja: quedan
+~│   [sesiones] caja-amiga: tiene
+~│   [caja-amiga] memh: su manejador se llamo 1 veces y solto 2048 KB de cache
+~│   [caja-amiga] memoria baja: 1 manejadores del 68k (1 llamadas); la memoria del 68k pasa de
+~│   [sesiones] caja-amiga suelta memoria con el aviso: bien
+~│   [caja-amiga] memh.exe acabó con 0,
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con

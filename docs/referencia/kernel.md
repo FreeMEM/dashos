@@ -165,7 +165,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 27 | `memoria_tamano` | `x0` llave de memoria (con derecho de leer) | Bytes que mide (páginas enteras) |
 | 24 | `temporizador_crear` | `x0` llave de un extremo de canal, `x1` primer plazo en µs, `x2` periodo en µs (0: una vez) | Llave del temporizador |
 | 28 | `plazo` | `x0` permiso de plazo (con escribir; no hace falta con capacidad 0), `x1` capacidad en µs (0: vuelve a la clase justa), `x2` periodo en µs (de 1 ms a 1 s) | 0, o `E_LIMITE` si no se admite |
-| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola; 12: páginas del montón del kernel; 13: páginas que no estaban libres al arrancar (imagen del kernel, firmware, árbol); 14: los núcleos en marcha, un bit por núcleo. El 3 cuenta también el rato ocioso de ahora (un núcleo dormido sin tic no parece ocupado) | El número; `E_ARGUMENTO` con un núcleo que no existe |
+| 29 | `medir` | `x0` 0: núcleo de quien llama; 1, 2, 3: interrupciones, cambios de hilo o µs ociosos del núcleo `x1`; 4: hilos robados entre núcleos; 5, 6, 7: páginas de RAM, páginas libres y bytes del kernel; 8, 9, 10: hilos despertados que pasaron a correr, de ellos tras más de 100 µs, y µs de espera en total; 11: pasadas que dejaron seguir al que corría con uno recién despertado en la cola; 12: páginas del montón del kernel; 13: páginas que no estaban libres al arrancar (imagen del kernel, firmware, árbol); 14: los núcleos en marcha, un bit por núcleo; 15 y 16: bytes libres para procesos ahora y los que había al arrancar (lo que mira el aviso de memoria baja, llamada 53). El 3 cuenta también el rato ocioso de ahora (un núcleo dormido sin tic no parece ocupado) | El número; `E_ARGUMENTO` con un núcleo que no existe |
 | 30 | `dormir` | `x0` microsegundos (como mucho una hora) | 0, al despertar (antes si lo matan) |
 | 31 | `fijar` | `x0` 1: el hilo que llama no se mueve de su núcleo; 0: el reparto entre núcleos puede moverlo | 0 |
 | 32, 33 | — | Reservadas para la ida y vuelta con paso directo (K6) | |
@@ -188,6 +188,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | 52 | `cpu_tiempo` | `x0` llave de grupo (con leer), o 0: el grupo propio | Microsegundos de CPU que han gastado los procesos del grupo y de sus subgrupos, vivos y muertos, desde que se creó (las dos clases, también los hilos de una vCPU). `E_LLAVE`, `E_TIPO` (no es un grupo) o `E_DERECHOS` (sin leer). Para el monitor del sistema (trasfondo): solo quien tiene la llave del grupo (`sesiones`, de lo que lanza) mide a otro |
 | 53 | `memoria_aviso` | `x0` permiso de memoria (con escribir), `x1` canal (con escribir) | 0. El aviso de memoria baja llega al otro lado del canal (S3). `E_LLAVE`, `E_TIPO` o `E_DERECHOS` |
 | 54 | `grupo_tope` | `x0` llave de grupo (con escribir), `x1` tope en bytes | 0. `E_DERECHOS` sin escribir o si es el grupo propio o uno de encima (S3) |
+| 55 | `maquina_globo` | `x0` vCPU (con escribir), `x1` 0 soltar, 1 reponer, `x2` tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, en el orden de bytes del proceso), `x3` cuántas (de 1 a 256) | Cuántas páginas se soltaron o repusieron. El globo de la caja Linux (aviso-cajas): soltar quita la página de la etapa 2 y de las proyecciones de quien llama, vacía las TLB y la devuelve al sistema (y sus bytes al grupo del objeto); reponer pone una nueva a cero (cobrada a ese grupo). Solo memoria que no tiene nadie más: las páginas de un objeto que esté en otra máquina, otro proceso, un mensaje, una vista o tras una llave revocable se saltan. `E_ARGUMENTO` si una dirección no es de su RAM o no está alineada (no se toca nada), `E_TAMANO`, `E_MEMORIA` si no se pudo reponer ninguna, `E_NO_HAY` sin hipervisor en el núcleo |
 | 49 | `pagina_cero` | `x0` permiso de página 0 (con escribir), `x1` llave de memoria de una página (con leer; no revocable) | 0. La proyecta en la dirección 0, de solo lectura y sin ejecutar (H4). `E_TIPO` si `x0` no es el permiso, `E_TAMANO` si el objeto no mide una página, `E_ARGUMENTO` si ya hay página 0 o la llave es revocable |
 
 ### Detalles
@@ -316,6 +317,23 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   cuando vuelve a pasar del 10 %. Se mira al acabar cada llamada al sistema. El mensaje, de 24 bytes en little-endian:
   el nivel (u32: 0 normal, 1 baja), 0 (u32), los bytes libres para procesos (u64) y los que había al arrancar (u64). Con
   la cola llena, ese aviso se pierde. Lo prueba `prueba_topes` en `make prueba`.
+- **55, `maquina_globo`** (aviso-cajas, `docs/bitacoras/aviso-cajas.md`). El globo (virtio-balloon) de la caja Linux.
+  Con la llave de una vCPU (escribir) y una tabla de direcciones físicas del invitado (u64, alineadas a 4 KB, de su RAM;
+  de 1 a 256), suelta o repone esas páginas. Puede ser con sus vCPU en marcha.
+  - Soltar: la página sale de la etapa 2 y de las proyecciones del objeto en el proceso que llama (el servicio ve la
+    RAM del invitado), se vacían las TLB de ese VMID en todos los núcleos y la página vuelve al sistema; sus bytes se
+    devuelven al grupo que creó el objeto. Desde ahí, si el invitado la toca sale al servicio como un aparato que no
+    existe, y si la toca el servicio, es un fallo suyo (el de la caja no la toca: lleva la cuenta).
+  - Reponer: una página nueva a cero (limpia hasta la RAM: el invitado puede leerla sin caché) en su sitio, en la
+    etapa 2 y en esas proyecciones, cobrada al grupo del objeto. `E_MEMORIA` si no se pudo ninguna.
+  - Solo memoria que no tiene nadie más: el kernel cuenta las referencias del objeto y tienen que ser las de esta máquina,
+    las proyecciones y las llaves (sin intermediario) de quien llama, con su tabla de llaves y su espacio tomados. Las
+    páginas de un objeto que esté en otra máquina, en otro proceso, en un mensaje sin leer, en una vista o tras una llave
+    revocable se saltan. Una página soltada no está en ninguna vista nueva (`memoria_vista` da `E_ARGUMENTO`), no se
+    proyecta (queda un hueco) y el kernel no lee ni escribe por ella.
+  - `E_ARGUMENTO` si alguna dirección no está alineada o no es de su RAM (no se toca nada), `E_TAMANO` con 0 o más de
+    256, `E_TIPO`, `E_DERECHOS`, `E_NO_HAY` sin hipervisor en el núcleo. Lo prueba `caja-linux` (`prueba_globo`) en
+    `make arranque-virt-vm` y `-linux`.
 - **52, `cpu_tiempo`** (trasfondo). El planificador suma lo que corre cada hilo, en cada cambio, a su grupo y a todos los
   de encima (sumas atómicas, sin cerrojos ni memoria). Lo del hilo que corre ahora entra en su siguiente cambio (como
   mucho un tic tarde). El contador no baja nunca, ni al matar el grupo. Lo prueba `grupos` en `make prueba`: un hijo

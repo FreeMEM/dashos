@@ -765,9 +765,21 @@ fn tope_caja_amiga(mb: u64, fichas: &[Option<Ficha>]) -> i32 {
     r as i32
 }
 
+/// aviso-cajas: las cajas que escuchan el aviso de memoria baja (`ESCUCHAR_MEMORIA`), por su sitio en `CAJAS`: el
+/// lado de escribir de su canal, una copia de la llave de su grupo (para medir lo que tiene cobrado) y lo que tenía
+/// cobrado al llegar el último aviso. Las pone el hilo principal y las lee el del aviso.
+static OYENTES: [core::sync::atomic::AtomicU32; 2] = [const { core::sync::atomic::AtomicU32::new(0) }; 2];
+static GRUPOS_CAJAS: [core::sync::atomic::AtomicU32; 2] = [const { core::sync::atomic::AtomicU32::new(0) }; 2];
+static ANTES_DEL_AVISO: [core::sync::atomic::AtomicU64; 2] = [const { core::sync::atomic::AtomicU64::new(0) }; 2];
+
+/// El sitio en `CAJAS` (y en `OYENTES`) de una ficha, si es una caja del sistema (por el nombre que da `inicio`).
+fn sitio_caja(f: &Ficha) -> Option<usize> {
+    CAJAS.iter().position(|c| lanzables::del_sistema(f.marca, nombre(&f.nombre), &[c.0]))
+}
+
 /// S3 (cupos como topes): pide al kernel el aviso de memoria baja (llamada 53, con el permiso de memoria) y lo atiende
-/// en un hilo propio, que lo apunta en el registro del sistema. Repartirlo a las cajas para que suelten lo que puedan
-/// (el globo de la caja Linux, las cachés de la Amiga) queda pendiente: hoy solo se dice.
+/// en un hilo propio, que lo apunta en el registro del sistema y lo reparte a las cajas que lo escuchan (aviso-cajas):
+/// el globo de la caja Linux y las cachés y los manejadores de memoria de la Amiga.
 fn escuchar_memoria(permiso: u32) {
     let (a, b) = dashos::canal_crear();
     if (a as i32) <= 0 || dashos::memoria_aviso(permiso, a) != 0 {
@@ -810,6 +822,28 @@ fn hilo_memoria(lectura: u64) -> u64 {
             println!("  [sesiones] memoria baja: quedan {} MB libres de {}; se pide a las cajas que suelten lo que puedan", libres, total);
         } else {
             println!("  [sesiones] memoria: {} MB libres de {}", libres, total);
+        }
+        // A cada caja que escucha: lo mismo, por su canal. Antes, lo que tiene cobrado su grupo, para comparar cuando
+        // diga que ha soltado (`SOLTADO`).
+        let mut m = [0u8; LARGO_SOLTAR];
+        m[0..4].copy_from_slice(&SOLTAR.to_le_bytes());
+        m[4..8].copy_from_slice(&nivel.to_le_bytes());
+        m[8..24].copy_from_slice(&b[8..24]);
+        for (i, caja) in CAJAS.iter().enumerate() {
+            let canal = OYENTES[i].load(core::sync::atomic::Ordering::Acquire);
+            if canal == 0 {
+                continue;
+            }
+            if nivel == 1 {
+                let g = GRUPOS_CAJAS[i].load(core::sync::atomic::Ordering::Acquire);
+                let usado = dashos::grupo_uso(g).1;
+                ANTES_DEL_AVISO[i].store(usado, core::sync::atomic::Ordering::Release);
+                println!("  [sesiones] {}: tiene {} KB cobrados; se le pide que suelte", caja.0, usado >> 10);
+            }
+            let r = dashos::canal_escribir(canal, &m, &[]);
+            if r != 0 {
+                println!("  [sesiones] {}: el aviso no le llega ({})", caja.0, r);
+            }
         }
     }
 }
@@ -1692,6 +1726,54 @@ fn principal() -> u64 {
                     };
                     println!("  [sesiones] {} retira {} {}: {}", nombre(&quien), core::str::from_utf8(prog).unwrap_or("?"), core::str::from_utf8(serv).unwrap_or("?"), estado);
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
+                }
+                ESCUCHAR_MEMORIA => {
+                    // aviso-cajas: solo las cajas del sistema (por el nombre que da `inicio`), con el lado de escribir
+                    // de su canal. A cualquier otro, `PROTEGIDO`, y su llave se cierra sin usarla.
+                    let r = match (yo, yo.as_ref().and_then(sitio_caja)) {
+                        (Some(f), Some(i)) if k >= 2 => {
+                            let g = dashos::llave_duplicar(f.grupo, dashos::LEER, 0);
+                            let viejo = OYENTES[i].swap(ll[1], core::sync::atomic::Ordering::AcqRel);
+                            let grupo_viejo = GRUPOS_CAJAS[i].swap(g.max(0) as u32, core::sync::atomic::Ordering::AcqRel);
+                            for v in [viejo, grupo_viejo] {
+                                if v != 0 {
+                                    dashos::cerrar(v);
+                                }
+                            }
+                            usadas = 2;
+                            println!("  [sesiones] {} escucha el aviso de memoria baja", nombre(&f.nombre));
+                            BIEN
+                        }
+                        _ => {
+                            let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                            println!("  [sesiones] {} no es una caja del sistema: no escucha el aviso de memoria", nombre(&quien));
+                            registro.apuntar(R_SERVICIO, PROTEGIDO, &quien, b"memoria");
+                            PROTEGIDO
+                        }
+                    };
+                    dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
+                }
+                SOLTADO => {
+                    // De una caja apuntada: lo que dice que soltó y lo que tiene cobrado ahora su grupo, contra lo de
+                    // antes del aviso (lo mide `sesiones` con el kernel, no se fía de la caja).
+                    let i = yo.as_ref().and_then(sitio_caja).filter(|&i| OYENTES[i].load(core::sync::atomic::Ordering::Acquire) != 0);
+                    let r = match (yo, i) {
+                        (Some(f), Some(i)) => {
+                            let antes = ANTES_DEL_AVISO[i].load(core::sync::atomic::Ordering::Acquire);
+                            let ahora = dashos::grupo_uso(f.grupo).1;
+                            println!(
+                                "  [sesiones] {} suelta memoria con el aviso: {} (dice {} KB; su grupo pasa de {} KB a {} KB cobrados)",
+                                nombre(&f.nombre),
+                                if ahora < antes { "bien" } else { "no bajó" },
+                                u64_en(4) >> 10,
+                                antes >> 10,
+                                ahora >> 10
+                            );
+                            BIEN
+                        }
+                        _ => PROTEGIDO,
+                    };
+                    dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
                 }
                 CAJAS_CAMBIADAS => {
                     // S3: solo el centro de control, que es donde el usuario elige el ajuste. La caja no puede.

@@ -12,6 +12,7 @@ use caja_vmm::pl011::{self, Pl011};
 use caja_vmm::virtio::bloque::{self, Bloque, Bloques, DiscoEnMemoria, ErrorBloques};
 use caja_vmm::virtio::cola::{DESC_F_INDIRECT, DESC_F_NEXT, DESC_F_WRITE};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
+use caja_vmm::virtio::globo::{self, ExtremoGlobo, Globo};
 use caja_vmm::virtio::mmio::*;
 use caja_vmm::virtio::red::{self, ExtremoRed, Red};
 use caja_vmm::virtio::vsock::{self, Cabecera, ExtremoVsock, Vsock};
@@ -30,6 +31,39 @@ const RED: u64 = 0x0a00_0400;
 const SPI_RED: u32 = 18;
 const VSOCK: u64 = 0x0a00_0600;
 const SPI_VSOCK: u32 = 19;
+const GLOBO: u64 = 0x0a00_0800;
+const SPI_GLOBO: u32 = 20;
+
+/// El lado de DashOS del globo en las pruebas: apunta lo que mete y saca el invitado.
+#[derive(Default)]
+struct Hinchado {
+    objetivo: u32,
+    inflado: Vec<u64>,
+    desinflado: Vec<u64>,
+    actual: Vec<u32>,
+    reiniciado: u32,
+}
+
+#[derive(Default, Clone)]
+struct ExtremoHinchado(Rc<RefCell<Hinchado>>);
+
+impl ExtremoGlobo for ExtremoHinchado {
+    fn inflar(&mut self, dirs: &[u64]) {
+        self.0.borrow_mut().inflado.extend_from_slice(dirs);
+    }
+    fn desinflar(&mut self, dirs: &[u64]) {
+        self.0.borrow_mut().desinflado.extend_from_slice(dirs);
+    }
+    fn objetivo(&self) -> u32 {
+        self.0.borrow().objetivo
+    }
+    fn actual(&mut self, paginas: u32) {
+        self.0.borrow_mut().actual.push(paginas);
+    }
+    fn reiniciado(&mut self) {
+        self.0.borrow_mut().reiniciado += 1;
+    }
+}
 
 /// El lado de DashOS de vsock en las pruebas: escucha en el puerto 5000, guarda lo que llega por cada conexión (con un
 /// tope para probar la espera) y tiene una cola de salida por conexión.
@@ -155,6 +189,7 @@ struct Banco {
     disco: Disco,
     cable: ExtremoCable,
     enchufes: ExtremoEnchufes,
+    globo: ExtremoHinchado,
 }
 
 fn banco_con(solo_lectura: bool) -> Banco {
@@ -171,10 +206,12 @@ fn banco_con(solo_lectura: bool) -> Banco {
     m.añadir(RED, SPI_RED, Box::new(TransporteMmio::nuevo(Red::nueva(Box::new(cable.clone()), mac)))).unwrap();
     let enchufes = ExtremoEnchufes::default();
     m.añadir(VSOCK, SPI_VSOCK, Box::new(TransporteMmio::nuevo(Vsock::nuevo(Box::new(enchufes.clone()))))).unwrap();
+    let globo = ExtremoHinchado::default();
+    m.añadir(GLOBO, SPI_GLOBO, Box::new(TransporteMmio::nuevo(Globo::nuevo(Box::new(globo.clone()))))).unwrap();
     // El GIC encendido, con las SPI de los aparatos habilitadas, como lo deja Linux.
     m.mmio(0, GICD + gic::CTLR, 4, Operacion::Escribir(1));
     m.mmio(0, GICD + gic::ISENABLER + 4, 4, Operacion::Escribir(u32::MAX as u64));
-    Banco { m, consola, uart, disco, cable, enchufes }
+    Banco { m, consola, uart, disco, cable, enchufes, globo }
 }
 
 fn banco() -> Banco {
@@ -685,7 +722,7 @@ fn maquina_direcciones() {
     assert!(b.m.añadir(0x1000, 500, p()).is_err());
     assert!(b.m.añadir(u64::MAX - 10, 5, p()).is_err());
     assert!(b.m.añadir(0x1000, 5, p()).is_ok());
-    assert_eq!(b.m.aparatos().len(), 6);
+    assert_eq!(b.m.aparatos().len(), 7);
 }
 
 /// Accesos al azar a todo (registros de los aparatos y del GIC, memoria del invitado con colas apuntando a sitios
@@ -710,12 +747,13 @@ fn a_lo_loco() {
             b.arrancar(CONSOLA, &[Cola::en(RAM + 0x2000, 16), Cola::en(RAM + 0x3000, 16)]);
             b.arrancar(RED, &[Cola::en(RAM + 0x2800, 8), Cola::en(RAM + 0x3800, 8)]);
             b.arrancar(VSOCK, &[Cola::en(RAM + 0x1800, 8), Cola::en(RAM + 0x3c00, 8), Cola::en(RAM + 0x2c00, 4)]);
+            b.arrancar(GLOBO, &[Cola::en(RAM + 0x3400, 8), Cola::en(RAM + 0x2400, 8)]);
             b.enchufes.0.borrow_mut().salen.insert(1, VecDeque::from(vec![7u8; 3000]));
             b.cable.0.borrow_mut().entran.extend((0..50).map(|i| vec![i as u8; i * 40]));
         }
         for _ in 0..20_000 {
             let r = azar();
-            let base = [UART, CONSOLA, DISCO, GICD, RAM, RED, VSOCK][(r % 7) as usize];
+            let base = [UART, CONSOLA, DISCO, GICD, RAM, RED, VSOCK, GLOBO][(r % 8) as usize];
             let desp = if r & 0x100 != 0 { (r >> 16) & 0x1fc } else { (r >> 16) & 0xfff };
             let tam = [1u8, 2, 4, 8, 3][((r >> 8) % 5) as usize];
             let v = azar();
@@ -732,10 +770,13 @@ fn a_lo_loco() {
                     let _ = b.m.mem.escribir_u64(dir & !7, azar() & 0x0000_0000_407f_ffff | (azar() & 0xf000));
                 }
                 6 => {
-                    let base = [DISCO, CONSOLA, RED, VSOCK][(r % 4) as usize];
+                    let base = [DISCO, CONSOLA, RED, VSOCK, GLOBO][(r % 5) as usize];
                     b.m.mmio(0, base + R_QUEUE_NOTIFY, 4, Operacion::Escribir(v % 3));
                 }
-                _ => b.m.sondear(),
+                _ => {
+                    b.globo.0.borrow_mut().objetivo = (v >> 20) as u32;
+                    b.m.sondear()
+                }
             }
             for c in 0..2 {
                 for e in b.m.gic.pendientes(c) {
@@ -1029,4 +1070,102 @@ fn vsock_hostil() {
     let ultima = *b.enchufes.0.borrow().llegado.keys().last().unwrap();
     assert_eq!(b.enchufes.0.borrow().llegado[&ultima], b"bien");
     assert!(!b.necesita_reinicio(VSOCK));
+}
+
+/// Escribe una lista de números de página (le32) en la RAM del invitado.
+fn lista_de_paginas(b: &mut Banco, dir: u64, pfns: &[u32]) {
+    for (i, &p) in pfns.iter().enumerate() {
+        b.mem().escribir_u32(dir + 4 * i as u64, p).unwrap();
+    }
+}
+
+fn globo_listo() -> (Banco, Cola, Cola) {
+    let mut b = banco();
+    let inflar = Cola::en(RAM + 0x1_0000, 8);
+    let desinflar = Cola::en(RAM + 0x2_0000, 8);
+    let f = b.arrancar(GLOBO, &[inflar, desinflar]);
+    assert_eq!(f & !F_VERSION_1, globo::F_MUST_TELL_HOST | globo::F_DEFLATE_ON_OOM);
+    (b, inflar, desinflar)
+}
+
+#[test]
+fn globo_pide_mete_y_saca() {
+    let (mut b, mut inflar, mut desinflar) = globo_listo();
+    assert_eq!(b.r(GLOBO + R_DEVICE_ID), globo::ID_GLOBO);
+    assert_eq!(b.r(GLOBO + R_CONFIG), 0, "al empezar no pide nada");
+    // DashOS pide 300 páginas: al sondear, la configuración cambia y el invitado se entera por la interrupción.
+    let generacion = b.r(GLOBO + R_CONFIG_GENERATION);
+    b.globo.0.borrow_mut().objetivo = 300;
+    b.m.sondear();
+    assert_eq!(b.r(GLOBO + R_CONFIG), 300);
+    assert_ne!(b.r(GLOBO + R_CONFIG_GENERATION), generacion);
+    assert_eq!(b.r(GLOBO + R_INTERRUPT_STATUS) & INT_CONFIG, INT_CONFIG);
+    assert!(b.pendiente_en_gic(SPI_GLOBO));
+    b.w(GLOBO + R_INTERRUPT_ACK, INT_CONFIG);
+    // Sondear otra vez sin cambios no avisa.
+    b.m.sondear();
+    assert_eq!(b.r(GLOBO + R_INTERRUPT_STATUS), 0);
+    // El invitado mete tres páginas y lo dice en `actual`; `num_pages` no lo puede tocar.
+    lista_de_paginas(&mut b, BUF, &[0x40100, 0x40101, 0x40200]);
+    let c = b.poner(&mut inflar, &[(BUF, 12, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert_eq!(b.usados(&mut inflar), vec![(c as u32, 0)]);
+    assert_eq!(b.globo.0.borrow().inflado, vec![0x4010_0000, 0x4010_1000, 0x4020_0000]);
+    b.w(GLOBO + R_CONFIG + 4, 3);
+    b.w(GLOBO + R_CONFIG, 7);
+    assert_eq!(b.r(GLOBO + R_CONFIG), 300);
+    assert_eq!(b.r(GLOBO + R_CONFIG + 4), 3);
+    assert_eq!(b.globo.0.borrow().actual, vec![3]);
+    // Y saca una: el aparato contesta después de pasarla al otro lado.
+    lista_de_paginas(&mut b, BUF + 0x100, &[0x40101]);
+    let c = b.poner(&mut desinflar, &[(BUF + 0x100, 4, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 1);
+    assert_eq!(b.usados(&mut desinflar), vec![(c as u32, 0)]);
+    assert_eq!(b.globo.0.borrow().desinflado, vec![0x4010_1000]);
+    // Reiniciar el aparato: el otro lado tiene que devolver todo.
+    let antes = b.globo.0.borrow().reiniciado;
+    b.w(GLOBO + R_STATUS, 0);
+    assert_eq!(b.globo.0.borrow().reiniciado, antes + 1);
+}
+
+#[test]
+fn globo_hostil() {
+    let (mut b, mut inflar, _) = globo_listo();
+    // Un búfer de largo raro: lo que no completa un número se tira.
+    lista_de_paginas(&mut b, BUF, &[0x40100, 0x40101]);
+    b.poner(&mut inflar, &[(BUF, 7, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert_eq!(b.globo.0.borrow().inflado, vec![0x4010_0000]);
+    // Un búfer de escritura no se lee.
+    b.poner(&mut inflar, &[(BUF, 8, true)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert_eq!(b.globo.0.borrow().inflado.len(), 1);
+    // Una lista enorme (1 MB, de la RAM): solo se leen los primeros 64 KB, por lotes de 256.
+    b.poner(&mut inflar, &[(RAM, 1 << 20, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert_eq!(b.globo.0.borrow().inflado.len(), 1 + 16384);
+    // Números de página de cualquier cosa: pasan tal cual (los mira el otro lado).
+    lista_de_paginas(&mut b, BUF, &[u32::MAX, 0]);
+    b.poner(&mut inflar, &[(BUF, 8, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    let v = b.globo.0.borrow().inflado.clone();
+    assert_eq!(&v[v.len() - 2..], &[u32::MAX as u64 * 4096, 0]);
+    // Una lista fuera de la RAM: el aparato pide reinicio y vuelve a funcionar tras él.
+    b.poner(&mut inflar, &[(0x1_0000_0000, 64, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert!(b.necesita_reinicio(GLOBO));
+    let mut inflar = Cola::en(RAM + 0x3_0000, 8);
+    b.arrancar(GLOBO, &[inflar, Cola::en(RAM + 0x4_0000, 8)]);
+    assert!(!b.necesita_reinicio(GLOBO));
+    lista_de_paginas(&mut b, BUF, &[0x40300]);
+    b.poner(&mut inflar, &[(BUF, 4, false)]);
+    b.w(GLOBO + R_QUEUE_NOTIFY, 0);
+    assert_eq!(*b.globo.0.borrow().inflado.last().unwrap(), 0x4030_0000);
+    // Escribir la configuración de cualquier forma no rompe nada, y `num_pages` sigue siendo del aparato.
+    for desp in 0..12u64 {
+        for tam in [1u8, 2, 4, 8] {
+            let _ = b.m.mmio(0, GLOBO + R_CONFIG + desp, tam, Operacion::Escribir(u64::MAX));
+        }
+    }
+    assert_eq!(b.r(GLOBO + R_CONFIG), 0);
 }

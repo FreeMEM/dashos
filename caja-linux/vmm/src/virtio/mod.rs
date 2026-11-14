@@ -3,6 +3,7 @@
 pub mod bloque;
 pub mod cola;
 pub mod consola;
+pub mod globo;
 pub mod gpu;
 pub mod mmio;
 pub mod red;
@@ -60,6 +61,11 @@ pub trait AparatoVirtio {
     /// El lado de DashOS tiene algo para el invitado. Devuelve si hay que darle una interrupción.
     fn sondear(&mut self, _colas: &mut [ColaPartida], _mem: &mut dyn MemoriaInvitado) -> Result<bool, ErrorVirtio> {
         Ok(false)
+    }
+    /// Al sondear: el lado de DashOS cambió la configuración (el objetivo del globo...). Si es así, el transporte sube
+    /// ConfigGeneration y da la interrupción de cambio de configuración.
+    fn config_nueva(&mut self) -> bool {
+        false
     }
 }
 

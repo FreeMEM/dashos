@@ -16,15 +16,15 @@ fn redondear(n: u32) -> Option<u32> {
 }
 
 /// Un trozo libre: dónde está, cuánto mide y el sitio del enlace que apunta a él.
-struct Trozo {
-    dir: u32,
-    largo: u32,
-    enlace: u32,
+pub(crate) struct Trozo {
+    pub(crate) dir: u32,
+    pub(crate) largo: u32,
+    pub(crate) enlace: u32,
 }
 
 impl<M: Memoria> Exec<M> {
     /// Recorre los trozos libres de un `MemHeader`, comprobando que están en orden y dentro de él.
-    fn trozos(&self, mh: u32, mut f: impl FnMut(&Trozo) -> bool) -> Result<(), Fallo> {
+    pub(crate) fn trozos(&self, mh: u32, mut f: impl FnMut(&Trozo) -> bool) -> Result<(), Fallo> {
         let abajo = self.lp(mh + memheader::MH_LOWER)?;
         let arriba = self.lp(mh + memheader::MH_UPPER)?;
         let mut enlace = mh + memheader::MH_FIRST;

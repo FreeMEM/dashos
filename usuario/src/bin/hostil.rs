@@ -920,6 +920,32 @@ fn sesiones(memoria: u32) -> bool {
     dashos::cerrar(lectura);
     let delante_negado = delante == 4 && i32::from_le_bytes(rd[0..4].try_into().unwrap()) == s::PROTEGIDO;
     println!("  [hostil] sesiones: quién está delante, sin ser el panel ni la barra: {}", if delante_negado { "-2 y nada" } else { "MAL" });
+    // aviso-cajas: escuchar el aviso de memoria baja sin ser una caja del sistema: -2, y el canal que da se cierra sin
+    // usarse (no le llegará nunca el aviso, ni podrá hacer soltar a nadie). Decir que ha soltado, tampoco: -2.
+    let (aviso_lee, aviso_escribe) = dashos::canal_crear();
+    let (lectura, suyo) = dashos::canal_crear();
+    let mut ra = [0u8; 8];
+    let n = if escribir(SESIONES, &s::ESCUCHAR_MEMORIA.to_le_bytes(), &[suyo, aviso_escribe]) {
+        dashos::canal_leer_plazo(lectura, &mut ra, &mut [], 2_000_000).0
+    } else {
+        -1
+    };
+    dashos::cerrar(lectura);
+    let escuchar_negado = n == 4 && i32::from_le_bytes(ra[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    let cerrado = dashos::canal_leer_plazo(aviso_lee, &mut ra, &mut [], 1_000_000).0 == dashos::E_CERRADO;
+    dashos::cerrar(aviso_lee);
+    let mut p = [0u8; 12];
+    p[0..4].copy_from_slice(&s::SOLTADO.to_le_bytes());
+    p[4..12].copy_from_slice(&u64::MAX.to_le_bytes());
+    let (lectura, suyo) = dashos::canal_crear();
+    let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut ra, &mut [], 2_000_000).0 } else { -1 };
+    dashos::cerrar(lectura);
+    let soltado_negado = n == 4 && i32::from_le_bytes(ra[0..4].try_into().unwrap()) == s::PROTEGIDO;
+    println!(
+        "  [hostil] sesiones: escuchar el aviso de memoria baja sin ser una caja (su canal, cerrado sin usar: {}) o decir que soltó: {}",
+        if cerrado { "sí" } else { "no" },
+        if escuchar_negado && soltado_negado && cerrado { "-2" } else { "MAL" }
+    );
     // Apagar, reiniciar o cerrar la sesión sin ser el panel: -2 (la máquina sigue).
     let mut negado = true;
     for modo in [s::MODO_APAGAR, s::MODO_REINICIAR, s::MODO_SALIR, 7] {

@@ -24,6 +24,12 @@ pub trait Memoria {
     fn margen(&self) -> u32 {
         0
     }
+    /// Devuelve a DashOS la memoria desde `desde` hasta el final (libre: exec ya no la reparte), en lo que pueda (los
+    /// trozos enteros que creció, nunca lo de antes de crecer). El final nuevo, entre `desde` y el de antes, o `None`
+    /// si no suelta nada. De serie, nunca.
+    fn encoger(&mut self, _desde: u32) -> Option<u32> {
+        None
+    }
 
     fn leer(&self, dir: u32, largo: u32) -> Result<&[u8], Fallo> {
         self.trozo(dir, largo).ok_or(Fallo::FueraDeMemoria { dir, largo })

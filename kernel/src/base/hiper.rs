@@ -341,6 +341,9 @@ pub enum Error {
 }
 
 
+/// Páginas como mucho por llamada al globo (llamada 55).
+pub const MAX_GLOBO: usize = 256;
+
 /// Los VMID en uso (8 bits; el 0 es del kernel).
 static VMIDS: [AtomicU64; 4] = [const { AtomicU64::new(1) }, const { AtomicU64::new(0) }, const { AtomicU64::new(0) }, const { AtomicU64::new(0) }];
 
@@ -433,8 +436,13 @@ impl Espacio {
         i.cargos.push(cargo);
         // Apuntada antes de proyectarla: si algo falla a medias, sus páginas siguen sujetas mientras estén en la etapa 2.
         i.memorias.push((ipa, tam, memoria.clone()));
-        for (k, &f) in memoria.fisicas().iter().enumerate() {
+        for (k, f) in memoria.fisicas().enumerate() {
             let a = ipa + k as u64 * PAGINA;
+            if f == 0 {
+                // Soltada por el globo de otra máquina: no hay página que ver (el globo no suelta memoria compartida, así
+                // que no pasa; por si acaso, se queda sin proyectar).
+                continue;
+            }
             let l2 = i.siguiente(self.l1, (a >> 30) as usize)?;
             let l3 = i.siguiente(l2, ((a >> 21) & 511) as usize)?;
             poner(l3, ((a >> 12) & 511) as usize, f | S2_PAGINA);
@@ -445,7 +453,7 @@ impl Espacio {
         let ctr: u64;
         unsafe { core::arch::asm!("mrs {}, ctr_el0", out(reg) ctr) };
         let linea = 4usize << ((ctr >> 16) & 0xf);
-        for &f in memoria.fisicas() {
+        for f in memoria.fisicas().filter(|&f| f != 0) {
             let k = mmu::virt(f as usize);
             let mut a = k;
             while a < k + PAGINA as usize {
@@ -457,6 +465,130 @@ impl Espacio {
         // SAFETY: barreras y la caché de instrucciones.
         unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
         Ok(())
+    }
+
+    /// Globo (llamada 55, `docs/bitacoras/aviso-cajas.md`): suelta (`soltar`) o repone las páginas del invitado en
+    /// las direcciones `ipas` (alineadas a 4 KB y dentro de su memoria; si alguna no, `Argumento` sin tocar nada).
+    ///
+    /// Soltar quita la página de la etapa 2 y de las proyecciones del proceso que la pide (`proceso`, el servicio de
+    /// la caja, que ve la RAM del invitado), vacía las TLB de este VMID en todos los núcleos y devuelve la página al
+    /// sistema y sus bytes al grupo. Reponer pone en su sitio una página nueva a cero (cobrada al grupo del objeto),
+    /// en la etapa 2 y en esas proyecciones. Puede ser con las vCPU en marcha: un invitado que toque una página soltada
+    /// sale al servicio como si fuera un aparato que no existe.
+    ///
+    /// Solo con memoria que no tiene nadie más: el objeto de cada página no puede estar en otra máquina, en otro
+    /// proceso, en un mensaje, en una vista ni detrás de una llave revocable. Se comprueba contando: sus `Arc` tienen
+    /// que ser exactamente los de esta máquina, las proyecciones de `proceso` y las llaves de su tabla (`llaves_de`).
+    /// Quien llama tiene tomados los cerrojos de esa tabla y de ese espacio, así que nadie puede sacar otro mientras
+    /// tanto. Las páginas de un objeto que no pasa se saltan. Devuelve cuántas se hicieron.
+    pub fn globo(&self, ipas: &[u64], soltar: bool, proceso: &mut super::espacio::Espacio, llaves_de: &dyn Fn(&Arc<Memoria>) -> usize) -> Result<usize, Error> {
+        if ipas.len() > MAX_GLOBO {
+            return Err(Error::Argumento);
+        }
+        if !en_este_nucleo() {
+            return Err(Error::NoHay);
+        }
+        let i = self.interior.tomar();
+        let donde = |ipa: u64| i.memorias.iter().find(|(b, t, _)| ipa >= *b && ipa - b < *t);
+        if ipas.iter().any(|&ipa| ipa % PAGINA != 0 || donde(ipa).is_none()) {
+            return Err(Error::Argumento);
+        }
+        let mut sueltas = [0u64; MAX_GLOBO];
+        let mut n_sueltas = 0;
+        let mut hechas = 0;
+        // El último objeto mirado y si es solo de esta máquina y de este proceso.
+        let mut visto: Option<(*const Memoria, bool)> = None;
+        let mut falta_memoria = false;
+        for &ipa in ipas {
+            let Some((b, _, m)) = donde(ipa) else { continue };
+            let k = ((ipa - b) / PAGINA) as usize;
+            let solo = match visto {
+                Some((p, r)) if core::ptr::eq(p, Arc::as_ptr(m)) => r,
+                _ => {
+                    let nuestras = i.memorias.iter().filter(|(_, _, o)| Arc::ptr_eq(o, m)).count() + proceso.proyecciones_de(m) + llaves_de(m);
+                    let r = Arc::strong_count(m) == nuestras && m.bus().is_none() && !m.es_vista();
+                    visto = Some((Arc::as_ptr(m), r));
+                    r
+                }
+            };
+            if !solo {
+                continue;
+            }
+            // La entrada de la etapa 2: sus tablas existen desde `anadir`.
+            let l2 = leer(self.l1, (ipa >> 30) as usize);
+            if l2 & TABLA != TABLA {
+                continue;
+            }
+            let l3 = leer(l2 & 0x0000_ffff_ffff_f000, ((ipa >> 21) & 511) as usize);
+            if l3 & TABLA != TABLA {
+                continue;
+            }
+            let l3 = l3 & 0x0000_ffff_ffff_f000;
+            let idx = ((ipa >> 12) & 511) as usize;
+            if soltar {
+                if m.fisica(k) == 0 {
+                    continue;
+                }
+                poner(l3, idx, 0);
+                proceso.quitar_pagina(m, k);
+                if let Some(f) = m.soltar_pagina(k) {
+                    sueltas[n_sueltas] = f;
+                    n_sueltas += 1;
+                    hechas += 1;
+                }
+            } else {
+                if m.fisica(k) != 0 {
+                    continue;
+                }
+                let Some(f) = memoria::pagina_usuario() else {
+                    falta_memoria = true;
+                    break;
+                };
+                if !m.reponer_pagina(k, f) {
+                    // SAFETY: recién sacada, nadie más la tiene.
+                    unsafe { memoria::paginas().liberar(f, 1) };
+                    falta_memoria = true;
+                    break;
+                }
+                // A cero hasta la RAM: el invitado podría leerla sin caché y ver lo que hubo antes en ella.
+                let v = mmu::virt(f as usize);
+                let mut a = v;
+                while a < v + PAGINA as usize {
+                    // SAFETY: la página recién sacada, por el mapa lineal; limpiar no cambia su contenido.
+                    unsafe { core::arch::asm!("dc civac, {}", in(reg) a) };
+                    a += 64;
+                }
+                // SAFETY: barrera: la página, en la RAM antes de que la vea la etapa 2.
+                unsafe { core::arch::asm!("dsb ish") };
+                poner(l3, idx, f | S2_PAGINA);
+                proceso.poner_pagina(m, k, f);
+                hechas += 1;
+            }
+        }
+        if n_sueltas > 0 {
+            // Fuera de las TLB de todos los núcleos lo de este VMID; solo después se devuelven las páginas.
+            let vttbr = self.vttbr();
+            // SAFETY: barrera y la orden OLVIDAR de hiper.s (no cambia nada más que las TLB).
+            unsafe {
+                core::arch::asm!("dsb ishst");
+                core::arch::asm!("hvc #0", inlateout("x0") HV_OLVIDAR => _, inlateout("x1") vttbr => _, options(nostack));
+            }
+            drop(i);
+            let mut p = memoria::paginas();
+            for &f in &sueltas[..n_sueltas] {
+                // SAFETY: páginas que eran del objeto, que ya no ve nadie: ni la etapa 2 (TLB vaciadas), ni el proceso
+                // (`quitar_pagina` vació las suyas), ni otro (nadie más tenía el objeto).
+                unsafe { p.liberar(f, 1) };
+            }
+        } else {
+            drop(i);
+            // SAFETY: barrera: las entradas nuevas, antes de volver.
+            unsafe { core::arch::asm!("dsb ish") };
+        }
+        if hechas == 0 && falta_memoria {
+            return Err(Error::Memoria);
+        }
+        Ok(hechas)
     }
 
     /// Proyecta la GICV del GIC virtual en `ipa` (alineada a 4 KB, sin pisar su memoria): ahí espera el invitado la

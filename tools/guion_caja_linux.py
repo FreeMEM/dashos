@@ -724,6 +724,9 @@ esperar(r"líneas sin sacar al registro", 120)
 paso("echo sigue viva", r"linux: sigue viva", 30)
 if "eth0" in texto():
     paso("ping -c 2 10.0.2.2", r"linux: 2 packets transmitted", 30)
+# aviso-cajas: antes de apagar, que el globo haya ido y vuelto (el aviso de memoria baja que provoca `presion`): el
+# invitado da memoria a DashOS y, cuando vuelve a haber, la recupera.
+esperar(r"\[caja-linux\] globo: vacío", 180)
 time.sleep(1.0)
 mandar("screendump " + prefijo + ".fin.ppm")
 time.sleep(1.0)

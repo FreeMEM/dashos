@@ -331,6 +331,9 @@ impl<A: AparatoVirtio> AparatoMmio for TransporteMmio<A> {
         if !self.activo() {
             return;
         }
+        if self.aparato.config_nueva() {
+            self.config_cambiada();
+        }
         let r = self.aparato.sondear(&mut self.colas, mem);
         self.resultado(r);
     }

@@ -460,6 +460,8 @@ fn principal() -> u64 {
             // `sesiones`, que tiene la llave de su grupo (con el alta), le pone el del ajuste (llamada 54) al darla de
             // alta y cada vez que el centro lo cambia. S3: ya no hace falta la cuarta parte de lo libre.
             "caja-amiga" => (32 << 20) + MEMORIA_AMIGA_DE_SERIE,
+            // aviso-cajas: la prueba del aviso de memoria baja llena la memoria de verdad (solo en las imágenes de prueba).
+            "presion" => 1 << 40,
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).

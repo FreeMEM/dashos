@@ -37,6 +37,7 @@ mod despacho;
 mod dispositivos;
 mod formato;
 mod listas;
+pub mod memoria_baja;
 mod puertos;
 pub mod ramlib;
 pub use formato::stuff_char;
@@ -186,6 +187,8 @@ pub enum Continuacion {
     Valor(u32),
     /// `RawDoFmt`: volvió su `PutChProc` con un carácter; el siguiente (con el A3 que dejó).
     Entrega { id: u32 },
+    /// Memoria baja: volvió un manejador (D0, lo que dice); después, la llamada `n` del programa, con su D0 de antes.
+    Manejador { n: u16, d0: u32 },
 }
 
 /// Un trozo de memoria para el reparto: `[inicio, fin)` con sus atributos (`MEMF_CHIP`...).
@@ -345,6 +348,8 @@ pub struct Exec<M: Memoria> {
     pub(crate) n_entrega: u32,
     /// Lo que se reserva ahora es del sistema (código de una biblioteca de disco): `memoria_del_sistema`.
     pub(crate) memoria_del_sistema: bool,
+    /// El aviso de memoria baja de DashOS y los manejadores de los programas (`memoria_baja.rs`).
+    pub(crate) memoria_baja: memoria_baja::MemoriaBaja,
 }
 
 /// Las funciones de exec con número nativo propio, en el orden de la tabla.
@@ -378,6 +383,7 @@ impl<M: Memoria> Exec<M> {
             entregas: alloc::collections::BTreeMap::new(),
             n_entrega: 0,
             memoria_del_sistema: false,
+            memoria_baja: memoria_baja::MemoriaBaja::default(),
         };
         // La zona del sistema tiene que existir entera, fuera de la página 0.
         let (zs, fz) = config.sistema;

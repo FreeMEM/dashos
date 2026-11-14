@@ -85,6 +85,9 @@ void caja_poner_trampa(uint32_t defecto);
 /* Los procesos nuevos, sin consola (pr_CIS y pr_COS a 0, como desde el Workbench) o con ella. */
 void caja_sin_consola(int si);
 void caja_tope_de_prueba(uint32_t mb);
+/* aviso-cajas: el aviso de memoria baja (pegamento/src/aviso.rs). */
+int caja_presion_listo(void);
+void caja_atender_memoria(void);
 int caja_programa_de_disco(uint32_t i, char *nombre, uint32_t max, const uint8_t **datos, uint32_t *largo);
 void caja_cuentas_anidadas(uint32_t *hechas, uint32_t *no, uint32_t *excepciones);
 

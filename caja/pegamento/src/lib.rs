@@ -17,6 +17,7 @@
 extern crate alloc;
 
 mod archivos;
+mod aviso;
 mod compositor;
 mod defensa;
 mod faltan;
@@ -177,7 +178,7 @@ fn caja() -> Option<&'static mut Caja> {
 }
 
 /// Lo que dice la caja por la consola: "  [caja-amiga] ...".
-fn di(texto: &str) {
+pub(crate) fn di(texto: &str) {
     dashos::println!("  [caja-amiga] {}", texto);
 }
 
@@ -443,7 +444,29 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     unsafe {
         *CAJA.0.get() = Some(c);
     }
+    // aviso-cajas: el aviso de memoria baja, por `sesiones`.
+    aviso::escuchar();
     base
+}
+
+/// aviso-cajas: lo soltado por un aviso de memoria baja, si lo hay, al registro y a `sesiones`.
+fn informar_soltado(c: &mut Caja) {
+    if let Some(s) = c.ex.tomar_soltado() {
+        aviso::informar(s, c.ex.mem.ram());
+    }
+}
+
+/// aviso-cajas: entre un programa y otro (sin tarea en marcha), el aviso de memoria baja que haya llegado: sin
+/// manejadores que llamar (los de un programa que se fue ya no están), se devuelve lo crecido que esté libre.
+#[unsafe(no_mangle)]
+pub extern "C" fn caja_atender_memoria() {
+    let Some(c) = caja() else { return };
+    if aviso::tomar_pedido() {
+        c.ex.pedir_soltar();
+    }
+    c.ex.soltar_sin_tarea();
+    informar_soltado(c);
+    recoger_avisos(c);
 }
 
 /// Que el servicio niegue escribir en `SYS:` aunque la caja se lo pida (por debajo de la guardia, como lo haría un
@@ -1325,7 +1348,16 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         }
         return if entregar_excepciones(r.a[7]) { C_SEGUIR } else { C_ACABAR };
     }
-    let mut a = primera(c, n, r);
+    // aviso-cajas: con un aviso de memoria baja sin atender, antes de esta llamada a exec se llama a los manejadores de
+    // los programas y se suelta lo que se pueda (`caja_exec::memoria_baja`); después sigue la llamada.
+    if aviso::tomar_pedido() {
+        c.ex.pedir_soltar();
+    }
+    let mut a = if c.ex.soltar_pendiente() && (5..=lvo::ENTRADAS).contains(&n) {
+        c.ex.empezar_a_soltar(n, r)
+    } else {
+        primera(c, n, r)
+    };
     let mut res = C_SEGUIR;
     loop {
         let Some(c) = caja() else { return C_RECHAZADA };
@@ -1419,6 +1451,7 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
         }
     }
     let Some(c) = caja() else { return C_RECHAZADA };
+    informar_soltado(c);
     recoger_avisos(c);
     // Un OpenLibrary que da 0 por una biblioteca que sí hay (más vieja que la pedida, o que no se dejó abrir) también
     // va al registro de lo que falta: el programa la quería así.

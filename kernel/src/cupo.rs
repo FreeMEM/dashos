@@ -69,6 +69,19 @@ pub struct Cargo {
     n: u64,
 }
 
+impl Cargo {
+    /// El grupo al que se cobró.
+    pub fn cupo(&self) -> &Arc<Cupo> {
+        &self.cupo
+    }
+
+    /// Quita `n` bytes de lo que devolverá al soltarse: ya se devolvieron por otro lado (las páginas soltadas por el
+    /// globo de una máquina, llamada 55).
+    pub fn descontar(&mut self, n: u64) {
+        self.n = self.n.saturating_sub(n);
+    }
+}
+
 impl Drop for Cargo {
     fn drop(&mut self) {
         self.cupo.devolver(self.n);

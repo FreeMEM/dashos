@@ -104,7 +104,8 @@ pub struct Espacio {
     /// Objetos de memoria proyectados, con la dirección donde empiezan: el espacio los mantiene vivos mientras estén
     /// proyectados (C18, C45). Con cada uno, los intermediarios revocables por los que se hizo (como números que solo
     /// se comparan; 0, ninguno): revocar quita solo las suyas (auditoría de la fase 4, M2).
-    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS])>,
+    /// Y su permiso: el globo de una máquina (llamada 55) repone sus páginas con él.
+    proyectados: alloc::vec::Vec<(u64, alloc::sync::Arc<super::memoria::Memoria>, [usize; VIAS], Permiso)>,
     /// El grupo al que se cobran sus tablas y sus páginas propias, y cuánto lleva cobrado (C42).
     cupo: alloc::sync::Arc<crate::cupo::Cupo>,
     cobrado: u64,
@@ -363,8 +364,12 @@ impl Espacio {
         if unsafe { e.read_volatile() } & VALIDO != 0 {
             return Err(Error::Ocupada);
         }
-        escribir_hoja(e, m.fisicas()[0], Permiso::SoloLectura);
-        self.proyectados.push((0, m.clone(), [0; VIAS]));
+        let f = m.fisica(0);
+        if f == 0 {
+            return Err(Error::Direccion);
+        }
+        escribir_hoja(e, f, Permiso::SoloLectura);
+        self.proyectados.push((0, m.clone(), [0; VIAS], Permiso::SoloLectura));
         Ok(())
     }
 
@@ -404,7 +409,8 @@ impl Espacio {
             (Acceso::Leer, false) => Permiso::SoloLectura,
             (Acceso::Ejecutar, _) => Permiso::Codigo,
         };
-        for (i, &p) in m.fisicas().iter().enumerate() {
+        // Las páginas soltadas por el globo (0) se quedan sin proyectar hasta que se repongan (llamada 55).
+        for (i, p) in m.fisicas().enumerate().filter(|&(_, p)| p != 0) {
             let _ = self.proyectar(va + i as u64 * PAGINA, p, permiso);
         }
         // Las páginas del objeto ya están limpias hasta la RAM (`limpiar_cache` al crearlo) y lo que escriba después
@@ -416,13 +422,13 @@ impl Espacio {
         }
         let mut vias = [0usize; VIAS];
         vias[..via.len()].copy_from_slice(via);
-        self.proyectados.push((va, m.clone(), vias));
+        self.proyectados.push((va, m.clone(), vias, permiso));
         Ok(())
     }
 
     /// ¿Hay en `va` una proyección hecha a través del intermediario `via`? (para purgar sus listas, M2)
     pub fn proyectada_via(&self, va: u64, via: usize) -> bool {
-        self.proyectados.iter().any(|(v, _, vs)| *v == va && vs.contains(&via))
+        self.proyectados.iter().any(|(v, _, vs, _)| *v == va && vs.contains(&via))
     }
 
     /// Quita la proyección que empieza en `va` (C45): borra sus entradas y vacía la TLB de este ASID en todos los
@@ -430,12 +436,12 @@ impl Espacio {
     /// (para revocar sin tocar otra proyección que haya ocupado el sitio, o la misma hecha con la llave original; M2).
     /// Falso si no había.
     pub fn quitar_proyeccion(&mut self, va: u64, m: Option<&alloc::sync::Arc<super::memoria::Memoria>>, via: Option<usize>) -> bool {
-        let Some(i) = self.proyectados.iter().position(|(v, o, vs)| {
+        let Some(i) = self.proyectados.iter().position(|(v, o, vs, _)| {
             *v == va && m.is_none_or(|m| alloc::sync::Arc::ptr_eq(o, m)) && via.is_none_or(|x| vs.contains(&x))
         }) else {
             return false;
         };
-        let (_, objeto, _) = self.proyectados.swap_remove(i);
+        let (_, objeto, _, _) = self.proyectados.swap_remove(i);
         // Con pocas páginas, una invalidación por página; con muchas, una sola de todo el ASID: así el trabajo con
         // las IRQ enmascaradas no depende de lo grande que sea el objeto (auditoría de la fase 4, M3).
         let paginas = objeto.paginas() as u64;
@@ -458,6 +464,49 @@ impl Espacio {
         // El objeto se suelta aquí, ya sin entradas que lo vean.
         drop(objeto);
         true
+    }
+
+    /// Cuántas proyecciones de `m` tiene (para saber si alguien más lo tiene: globo, llamada 55).
+    pub fn proyecciones_de(&self, m: &alloc::sync::Arc<super::memoria::Memoria>) -> usize {
+        self.proyectados.iter().filter(|(_, o, _, _)| alloc::sync::Arc::ptr_eq(o, m)).count()
+    }
+
+    /// Globo (llamada 55): quita la página `k` de `m` de todas sus proyecciones en este espacio y la saca de las TLB de
+    /// todos los núcleos. Después, el proceso no la ve: tocarla es un fallo.
+    pub(super) fn quitar_pagina(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, k: usize) {
+        for i in 0..self.proyectados.len() {
+            let (va, ref o, _, _) = self.proyectados[i];
+            if !alloc::sync::Arc::ptr_eq(o, m) {
+                continue;
+            }
+            let p = va + k as u64 * PAGINA;
+            if let Some(e) = self.hoja(p) {
+                unsafe {
+                    e.write_volatile(0);
+                    core::arch::asm!("dsb ishst", "tlbi vae1is, {}", in(reg) (self.asid << 48) | (p >> 12));
+                }
+            }
+        }
+        unsafe { core::arch::asm!("dsb ish", "isb") };
+    }
+
+    /// Globo: pone la página `fisica` como página `k` de `m` en todas sus proyecciones de este espacio, con el permiso de
+    /// cada una. Sus tablas ya existen (se crearon al proyectar el objeto entero) y la entrada estaba vacía, así que no
+    /// hay nada que vaciar de las TLB.
+    pub(super) fn poner_pagina(&mut self, m: &alloc::sync::Arc<super::memoria::Memoria>, k: usize, fisica: u64) {
+        let mut codigo = false;
+        for (va, o, _, permiso) in &self.proyectados {
+            if !alloc::sync::Arc::ptr_eq(o, m) {
+                continue;
+            }
+            if let Some(e) = self.hoja(va + k as u64 * PAGINA) {
+                escribir_hoja(e, fisica, *permiso);
+                codigo |= matches!(permiso, Permiso::Codigo);
+            }
+        }
+        if codigo {
+            unsafe { core::arch::asm!("dsb ish", "ic ialluis", "dsb ish", "isb") };
+        }
     }
 
     /// Proyecta memoria del firmware (C50): la de la VideoCore, por debajo de 4 GB y fuera de la RAM que reparte el

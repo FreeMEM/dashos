@@ -146,6 +146,21 @@ pub const PERMISO_MEMORIA: u32 = 25;
 /// para contestar. `sesiones` pone a la caja Amiga el tope de su grupo: ese ajuste más 32 MB (llamada 54). Contesta un
 /// i32: 0, o negativo. Solo se le acepta al centro (`PROTEGIDO` a cualquier otro).
 pub const CAJAS_CAMBIADAS: u32 = 26;
+/// De una caja del sistema (`caja-amiga` o `caja-linux`, por el nombre que da `inicio`; aviso-cajas): "dime cuándo
+/// soltar memoria". Trae dos llaves: la de contestar y el lado de escribir de un canal que solo lee la caja. Por él le
+/// manda `sesiones`, y nadie más (nadie más tiene esa llave), `SOLTAR`. Contesta un i32: 0, o `PROTEGIDO` a cualquier
+/// otro programa (que se queda sin ser oído). Una caja que vuelve (relanzada) se apunta otra vez y la llave vieja se
+/// cierra.
+pub const ESCUCHAR_MEMORIA: u32 = 27;
+/// De `sesiones` a una caja, por su canal de `ESCUCHAR_MEMORIA`: el aviso de memoria baja del kernel (llamada 53). La
+/// orden, el nivel (u32: 1 memoria baja, que suelte lo que pueda; 0 otra vez normal), los bytes libres para procesos
+/// (u64) y los que había al arrancar (u64). 24 bytes.
+pub const SOLTAR: u32 = 28;
+pub const LARGO_SOLTAR: usize = 24;
+/// De una caja, tras soltar por un `SOLTAR` de nivel 1: lo que soltó, en bytes (u64), con una llave de contestar.
+/// `sesiones` mira lo que tiene cobrado su grupo y lo apunta en el registro, con lo que tenía antes del aviso. Contesta
+/// un i32 (0, o `PROTEGIDO` si no es una caja apuntada).
+pub const SOLTADO: u32 = 29;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
 /// debajo de `PRIMERA_PERSONA`, del sistema; 0, que se olvide), su marca (u64) y 16 bytes de nombre (solo para los

@@ -36,6 +36,7 @@ use caja_vmm::pl031::{Pl031, Reloj};
 use caja_vmm::psci::{self, AccionPsci, Psci};
 use caja_vmm::virtio::bloque::{Bloque, Bloques, ErrorBloques};
 use caja_vmm::virtio::consola::{Consola, ExtremoConsola};
+use caja_vmm::virtio::globo::{ExtremoGlobo, Globo};
 use caja_vmm::virtio::mmio::TransporteMmio;
 use caja_vmm::virtio::vsock::Vsock;
 use core::cell::{RefCell, UnsafeCell};
@@ -145,6 +146,89 @@ fn maquina_x0(codigo: &[u8], x0: u64) -> Result<u32, i64> {
     dashos::memoria_quitar(VA);
     dashos::cerrar(mem);
     if r > 0 { Ok(r as u32) } else { Err(r) }
+}
+
+/// aviso-cajas: la llamada 55 (`maquina_globo`) sobre una máquina con `codigo` y su RAM también proyectada aquí (como
+/// la de Linux): soltar y reponer páginas, que lo repuesto llega a cero (nada de lo de antes) también a la vista del
+/// servicio, y los hostiles: direcciones que no son suyas, tablas de tamaño imposible, una llave que no es una vCPU, y
+/// memoria que tiene alguien más (en un mensaje sin leer o en una vista), que no se suelta.
+fn prueba_globo(codigo: &[u8]) -> bool {
+    let mem = dashos::memoria_crear(RAM) as i32;
+    if mem <= 0 || dashos::memoria_proyectar(mem as u32, VA, true) != 0 {
+        println!("  [caja-linux] globo: sin memoria para la prueba; MAL");
+        return false;
+    }
+    let mem = mem as u32;
+    // SAFETY: recién proyectada aquí, RAM bytes; el invitado no corre en esta prueba.
+    let ram = unsafe { core::slice::from_raw_parts_mut(VA as *mut u8, RAM) };
+    ram[..codigo.len()].copy_from_slice(codigo);
+    ram[0x1000..0x3000].fill(0xA5);
+    let vm = dashos::maquina_crear(permiso(), mem, RAM_IPA, RAM_IPA, 0);
+    if vm <= 0 {
+        println!("  [caja-linux] globo: no se crea la máquina ({}); MAL", vm);
+        dashos::memoria_quitar(VA);
+        dashos::cerrar(mem);
+        return false;
+    }
+    let vm = vm as u32;
+    let dos = [RAM_IPA + 0x1000, RAM_IPA + 0x2000];
+    let soltadas = dashos::maquina_globo(vm, true, &dos);
+    let otra_vez = dashos::maquina_globo(vm, true, &dos);
+    // Hostiles: sin alinear, fuera de su RAM (y una buena con ellas: tampoco se suelta), tamaños imposibles, otra llave.
+    let sin_alinear = dashos::maquina_globo(vm, true, &[RAM_IPA + 0x3008]);
+    let fuera = dashos::maquina_globo(vm, true, &[RAM_IPA + 0x4000, RAM_IPA + RAM as u64]);
+    let vacia = dashos::maquina_globo(vm, true, &[]);
+    let grande = dashos::maquina_globo(vm, true, &[RAM_IPA + 0x4000; dashos::MAX_GLOBO + 1]);
+    let no_vcpu = dashos::maquina_globo(mem, true, &[RAM_IPA + 0x4000]);
+    let repuestas = dashos::maquina_globo(vm, false, &dos);
+    // Lo repuesto llega a cero, también aquí (la proyección del servicio ve la página nueva).
+    let a_cero = ram[0x1000..0x3000].iter().all(|&b| b == 0);
+    let repuestas_otra = dashos::maquina_globo(vm, false, &dos);
+    // Con una copia de la llave en un mensaje sin leer, la memoria la tiene alguien más: no se suelta nada.
+    let (a, b) = dashos::canal_crear();
+    let copia = dashos::llave_duplicar(mem, u64::MAX, 0) as u32;
+    let en_mensaje = if dashos::canal_escribir(a, b"m", &[copia]) == 0 { dashos::maquina_globo(vm, true, &[RAM_IPA + 0x4000]) } else { -100 };
+    let mut ll = [0u32; 1];
+    let (_, k) = dashos::canal_leer(b, &mut [0u8; 4], &mut ll);
+    if k == 1 {
+        dashos::cerrar(ll[0]);
+    }
+    dashos::cerrar(a);
+    dashos::cerrar(b);
+    // Con una vista suya (como las del puente de Wayland), tampoco.
+    let vista = dashos::memoria_vista(&[mem], &[4]);
+    let con_vista = dashos::maquina_globo(vm, true, &[RAM_IPA + 0x4000]);
+    if vista > 0 {
+        dashos::cerrar(vista as u32);
+    }
+    // Ya sin nadie más: sí. Y una vista de una página soltada no se hace.
+    let sin_nadie = dashos::maquina_globo(vm, true, &[RAM_IPA + 0x4000]);
+    let vista_soltada = dashos::memoria_vista(&[mem], &[4]);
+    let al_final = dashos::maquina_globo(vm, false, &[RAM_IPA + 0x4000]);
+    dashos::cerrar(vm);
+    dashos::memoria_quitar(VA);
+    dashos::cerrar(mem);
+    let bien = soltadas == 2
+        && otra_vez == 0
+        && sin_alinear == -1
+        && fuera == -1
+        && vacia == -5
+        && grande == -5
+        && no_vcpu == -6
+        && repuestas == 2
+        && a_cero
+        && repuestas_otra == 0
+        && en_mensaje == 0
+        && vista > 0
+        && con_vista == 0
+        && sin_nadie == 1
+        && vista_soltada == -1
+        && al_final == 1;
+    println!(
+        "  [caja-linux] globo: suelta {} páginas (otra vez {}), las repone ({}, a cero: {}); sin alinear {}, fuera {}, tablas imposibles {} y {}, sin vCPU {}; con la memoria en un mensaje {}, en una vista {}, sin nadie más {}; vista de una soltada {}",
+        soltadas, otra_vez, repuestas, if a_cero { "sí" } else { "no" }, sin_alinear, fuera, vacia, grande, no_vcpu, en_mensaje, con_vista, sin_nadie, vista_soltada
+    );
+    bien
 }
 
 /// Cómo acabó una máquina.
@@ -316,9 +400,11 @@ fn ram_vacia() -> RamCaja {
 
 impl MemoriaInvitado for RamCaja {
     fn leer(&self, dir: u64, buf: &mut [u8]) -> Result<(), FueraDeMemoria> {
+        globo::comprobar(dir, buf.len() as u64)?;
         self.0.leer(dir, buf)
     }
     fn escribir(&mut self, dir: u64, datos: &[u8]) -> Result<(), FueraDeMemoria> {
+        globo::comprobar(dir, datos.len() as u64)?;
         self.0.escribir(dir, datos)
     }
     fn barrera(&self) {
@@ -1071,6 +1157,9 @@ struct Llaves {
     disco: Option<u32>,
     /// El permiso, en la Pi 4 (lo da `inicio`).
     permiso: Option<u32>,
+    /// aviso-cajas: el canal "presion" de la prueba del aviso de memoria baja (solo en las imágenes de prueba): por él
+    /// se dice a `presion` que el invitado está en marcha, para que provoque el aviso.
+    presion: Option<u32>,
 }
 
 /// Si existe la llave `k` (una copia sin derechos, que se cierra en el acto).
@@ -1102,6 +1191,7 @@ fn llaves() -> Llaves {
         l.disco = Some(k + 1);
         l.sesiones = Some(k + 2);
         l.red = Some(k + 3);
+        l.presion = existe(k + 4).then_some(k + 4);
     } else if existe(k + 1) {
         l.ventanas = Some(k);
         l.sesiones = Some(k + 1);
@@ -1190,6 +1280,10 @@ impl Registro {
         let mut e = self.estado.borrow_mut();
         e.lineas += 1;
         e.busybox |= t.contains("BusyBox v");
+        if !e.fin && t.contains("caja-linux: fin de la prueba") {
+            // El invitado ya hizo lo suyo: a `presion` (la prueba del aviso de memoria baja), que provoque el aviso.
+            globo::listo();
+        }
         e.fin |= t.contains("caja-linux: fin de la prueba");
         e.terminal |= t.contains("caja-linux: terminal lista");
         e.arch |= t.contains("Welcome to Arch Linux ARM");
@@ -1708,6 +1802,12 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     let gpu = caja_vmm::virtio::gpu::Gpu::nueva(Box::new(pantalla_caja::ExtremoPantalla), &[(pantalla_caja::ANCHO, pantalla_caja::ALTO)], pantalla_caja::TOPE_RECURSOS);
     let puestos = puestos && (!wayland || maq.añadir(v4.base, v4.spi, Box::new(TransporteMmio::nuevo(gpu))).is_ok());
     let n_virtio = n_virtio + wayland as u32;
+    // aviso-cajas: el globo (virtio-balloon), en el transporte siguiente. Por él devuelve páginas el invitado cuando
+    // DashOS va justo de memoria (el aviso de memoria baja, por `sesiones`).
+    globo::preparar(tam_ram as u64);
+    let v5 = disposicion::virtio(n_virtio);
+    let puestos = puestos && maq.añadir(v5.base, v5.spi, Box::new(TransporteMmio::nuevo(Globo::nuevo(Box::new(globo::GloboCaja))))).is_ok();
+    let n_virtio = n_virtio + 1;
     let bootargs = match (arch, terminal) {
         (true, _) => String::from(BOOTARGS_ARCH),
         (false, true) => alloc::format!("{} caja.terminal", BOOTARGS),
@@ -1749,6 +1849,11 @@ fn linux(l: &Llaves, ram_invitado: usize) -> bool {
     }
     let vm = vm as u32;
     COMPARTIDO.vcpu0.store(vm, Ordering::Release);
+    // aviso-cajas: el aviso de memoria baja, de `sesiones`; y el canal de la prueba.
+    globo::PRESION.store(l.presion.unwrap_or(0), Ordering::Release);
+    if let Some(s) = l.sesiones {
+        globo::escuchar(s);
+    }
     println!(
         "  [caja-linux] linux: Image de {} KB en {:#x}, initramfs de {} KB, árbol de {} bytes en {:#x}, {} MB de RAM, {} vCPU, PL011, PL031, virtio-console, virtio-blk de {} KB{}; arranca",
         imagen.len() / 1024, plan.kernel, initrd.map_or(0, |d| d.len() / 1024), dtb.len(), plan.dtb, tam_ram >> 20, VCPUS_LINUX, tam_disco_kb,
@@ -2364,6 +2469,10 @@ fn principal() -> u64 {
     let tercero = prueba_interrupciones(irq) & prueba_gic_hostil(gic_hostil, tormenta, el2);
     println!("  [caja-linux] interrupciones del invitado: {}", if tercero { "bien" } else { "MAL" });
     bien &= tercero;
+    // aviso-cajas: el globo (llamada 55), sobre una máquina parada.
+    let globo = prueba_globo(hola);
+    println!("  [caja-linux] globo (llamada 55): {}", if globo { "bien" } else { "MAL" });
+    bien &= globo;
     // Varias vCPU.
     // SAFETY: etiquetas de smp.s.
     let smp = unsafe { codigo(&invitado_smp, &invitado_smp_fin) };
@@ -2378,4 +2487,276 @@ fn principal() -> u64 {
     }
     // Hecho: el hilo de la terminal sigue con su ventana; el proceso acaba entero.
     dashos::hilos::proceso_salir(if bien { 0 } else { 1 })
+}
+
+// --- aviso-cajas: el globo del invitado y el aviso de memoria baja ---
+//
+// `sesiones` reparte el aviso de memoria baja del kernel (llamada 53) a las cajas que lo escuchan
+// (`ESCUCHAR_MEMORIA`). Con memoria baja, la caja pide al invitado un globo (virtio-balloon): las páginas que mete en
+// él se devuelven al sistema con la llamada 55 (`maquina_globo`), y el servicio deja de tocarlas (el kernel las quita
+// también de su proyección de la RAM del invitado: tocarlas lo tumbaría). Cuando vuelve a haber memoria de sobra, se
+// le devuelven.
+mod globo {
+    use super::*;
+    use dashos::protocolo::sesiones as s;
+
+    /// Páginas de 4 KB de la RAM más grande del invitado (`MAX_TROZOS` de 16 MB).
+    const PAGINAS: usize = MAX_TROZOS * TROZO / 4096;
+    /// Las páginas que están en el globo (y que el kernel ya no proyecta aquí): un bit por página de la RAM.
+    static MAPA: [AtomicU64; PAGINAS / 64] = [const { AtomicU64::new(0) }; PAGINAS / 64];
+    /// Lo que mide la RAM del invitado, en páginas.
+    static RAM_PAGINAS: AtomicU64 = AtomicU64::new(0);
+    /// Lo que se pide al invitado (páginas) y lo que dice que tiene.
+    static OBJETIVO: AtomicU32 = AtomicU32::new(0);
+    static ACTUAL: AtomicU32 = AtomicU32::new(0);
+    /// Páginas que el kernel ha devuelto al sistema y ha repuesto, desde que arrancó la máquina.
+    static SOLTADAS: AtomicU64 = AtomicU64::new(0);
+    static REPUESTAS: AtomicU64 = AtomicU64::new(0);
+    /// Al llegar el invitado al objetivo, se dice (una vez por aviso): lo soltado desde el aviso.
+    static INFORME: AtomicBool = AtomicBool::new(false);
+    static SOLTADAS_AL_AVISO: AtomicU64 = AtomicU64::new(0);
+    /// La llave de `sesiones`, para decir lo soltado (`SOLTADO`); el canal de la prueba, "presion".
+    static SESIONES: AtomicU32 = AtomicU32::new(0);
+    pub static PRESION: AtomicU32 = AtomicU32::new(0);
+    static LISTO: AtomicBool = AtomicBool::new(false);
+
+    /// Una máquina nueva con `tam` bytes de RAM: el globo, vacío.
+    pub fn preparar(tam: u64) {
+        for m in &MAPA {
+            m.store(0, Ordering::Relaxed);
+        }
+        RAM_PAGINAS.store(tam / 4096, Ordering::Release);
+        OBJETIVO.store(0, Ordering::Release);
+        ACTUAL.store(0, Ordering::Release);
+        INFORME.store(false, Ordering::Release);
+        LISTO.store(false, Ordering::Release);
+    }
+
+    /// La página `i` de la RAM está en el globo.
+    fn en_globo(i: u64) -> bool {
+        MAPA.get((i / 64) as usize).is_some_and(|m| m.load(Ordering::Acquire) & (1 << (i % 64)) != 0)
+    }
+
+    fn marcar(i: u64, si: bool) {
+        if let Some(m) = MAPA.get((i / 64) as usize) {
+            if si {
+                m.fetch_or(1 << (i % 64), Ordering::AcqRel);
+            } else {
+                m.fetch_and(!(1 << (i % 64)), Ordering::AcqRel);
+            }
+        }
+    }
+
+    /// Para los aparatos: `[dir, dir + largo)` no toca ninguna página del globo (el kernel ya no las proyecta aquí).
+    pub fn comprobar(dir: u64, largo: u64) -> Result<(), FueraDeMemoria> {
+        if largo == 0 || dir < disposicion::RAM {
+            return Ok(());
+        }
+        let desde = (dir - disposicion::RAM) / 4096;
+        let hasta = (dir - disposicion::RAM).saturating_add(largo - 1) / 4096;
+        let n = RAM_PAGINAS.load(Ordering::Acquire);
+        if (desde..=hasta.min(n.saturating_sub(1))).any(en_globo) {
+            return Err(FueraDeMemoria { dir, largo });
+        }
+        Ok(())
+    }
+
+    /// El número de página de la RAM de `dir`, si es una página de la RAM.
+    fn pagina(dir: u64) -> Option<u64> {
+        let i = dir.checked_sub(disposicion::RAM)? / 4096;
+        (dir % 4096 == 0 && i < RAM_PAGINAS.load(Ordering::Acquire)).then_some(i)
+    }
+
+    /// Suelta (o repone) estas páginas con el kernel; devuelve cuántas hizo.
+    fn kernel(dirs: &[u64], soltar: bool) -> u64 {
+        let vm = COMPARTIDO.vcpu0.load(Ordering::Acquire);
+        if vm == 0 || dirs.is_empty() {
+            return 0;
+        }
+        let r = dashos::maquina_globo(vm, soltar, dirs);
+        if r < 0 {
+            println!("  [caja-linux] globo: el kernel no quiere {} {} páginas ({})", if soltar { "soltar" } else { "reponer" }, dirs.len(), r);
+            return 0;
+        }
+        r as u64
+    }
+
+    /// El lado de DashOS del globo del invitado.
+    pub struct GloboCaja;
+
+    impl ExtremoGlobo for GloboCaja {
+        fn inflar(&mut self, dirs: &[u64]) {
+            // Primero se marcan (los aparatos ya no las tocan) y después se sueltan. Las que no son de la RAM, o ya
+            // estaban, se ignoran: el invitado puede mandar cualquier cosa.
+            let mut v = [0u64; dashos::MAX_GLOBO];
+            let mut n = 0;
+            for &d in dirs.iter().take(dashos::MAX_GLOBO) {
+                if let Some(i) = pagina(d).filter(|&i| !en_globo(i)) {
+                    marcar(i, true);
+                    v[n] = d;
+                    n += 1;
+                }
+            }
+            SOLTADAS.fetch_add(kernel(&v[..n], true), Ordering::AcqRel);
+        }
+
+        fn desinflar(&mut self, dirs: &[u64]) {
+            let mut v = [0u64; dashos::MAX_GLOBO];
+            let mut n = 0;
+            for &d in dirs.iter().take(dashos::MAX_GLOBO) {
+                if pagina(d).is_some_and(en_globo) {
+                    v[n] = d;
+                    n += 1;
+                }
+            }
+            REPUESTAS.fetch_add(kernel(&v[..n], false), Ordering::AcqRel);
+            for &d in &v[..n] {
+                if let Some(i) = pagina(d) {
+                    marcar(i, false);
+                }
+            }
+        }
+
+        fn objetivo(&self) -> u32 {
+            OBJETIVO.load(Ordering::Acquire)
+        }
+
+        fn actual(&mut self, paginas: u32) {
+            ACTUAL.store(paginas, Ordering::Release);
+            let objetivo = OBJETIVO.load(Ordering::Acquire);
+            if objetivo > 0 && paginas >= objetivo && INFORME.swap(false, Ordering::AcqRel) {
+                let sueltas = SOLTADAS.load(Ordering::Acquire) - SOLTADAS_AL_AVISO.load(Ordering::Acquire);
+                println!(
+                    "  [caja-linux] globo: el invitado dio {} MB; DashOS recuperó {} MB de su RAM",
+                    (paginas as u64 * 4096) >> 20,
+                    (sueltas * 4096) >> 20
+                );
+                decir_soltado(sueltas * 4096);
+            } else if objetivo == 0 && paginas == 0 && INFORME.swap(false, Ordering::AcqRel) {
+                println!("  [caja-linux] globo: vacío; el invitado tiene otra vez toda su RAM ({} páginas repuestas)", REPUESTAS.load(Ordering::Acquire));
+            }
+        }
+
+        fn reiniciado(&mut self) {
+            // El invitado ya no sabe qué había en el globo: se le devuelve todo.
+            let n = RAM_PAGINAS.load(Ordering::Acquire);
+            let mut v = [0u64; dashos::MAX_GLOBO];
+            let mut k = 0;
+            for i in (0..n).filter(|&i| en_globo(i)) {
+                v[k] = disposicion::RAM + i * 4096;
+                k += 1;
+                if k == v.len() {
+                    REPUESTAS.fetch_add(kernel(&v, false), Ordering::AcqRel);
+                    k = 0;
+                }
+                marcar(i, false);
+            }
+            REPUESTAS.fetch_add(kernel(&v[..k], false), Ordering::AcqRel);
+            ACTUAL.store(0, Ordering::Release);
+        }
+    }
+
+    /// Dice a `sesiones` lo soltado (`SOLTADO`), para que mida el grupo.
+    fn decir_soltado(bytes: u64) {
+        let ses = SESIONES.load(Ordering::Acquire);
+        if ses == 0 {
+            return;
+        }
+        let mut m = [0u8; 12];
+        m[0..4].copy_from_slice(&s::SOLTADO.to_le_bytes());
+        m[4..12].copy_from_slice(&bytes.to_le_bytes());
+        let (lectura, suyo) = dashos::canal_crear();
+        if dashos::canal_escribir(ses, &m, &[suyo]) != 0 {
+            dashos::cerrar(suyo);
+        }
+        // La respuesta no hace falta: se cierra el lado de leer.
+        dashos::cerrar(lectura);
+    }
+
+    /// El invitado está en marcha: a la prueba (una vez).
+    pub fn listo() {
+        let p = PRESION.load(Ordering::Acquire);
+        if p != 0 && !LISTO.swap(true, Ordering::AcqRel) {
+            let _ = dashos::canal_escribir(p, b"caja-linux", &[]);
+        }
+    }
+
+    /// Se apunta en `sesiones` para el aviso de memoria baja (`ESCUCHAR_MEMORIA`) y lo atiende en un hilo.
+    pub fn escuchar(sesiones: u32) {
+        SESIONES.store(sesiones, Ordering::Release);
+        let (lectura, escritura) = dashos::canal_crear();
+        let mut m = [0u8; 4];
+        m.copy_from_slice(&s::ESCUCHAR_MEMORIA.to_le_bytes());
+        let (resp, suyo) = dashos::canal_crear();
+        let r = if dashos::canal_escribir(sesiones, &m, &[suyo, escritura]) == 0 {
+            let mut b = [0u8; 4];
+            let (n, _, _) = dashos::canal_leer_plazo(resp, &mut b, &mut [], 5_000_000);
+            if n == 4 { i32::from_le_bytes(b) as i64 } else { n }
+        } else {
+            dashos::cerrar(suyo);
+            dashos::cerrar(escritura);
+            -1
+        };
+        dashos::cerrar(resp);
+        if r != 0 {
+            println!("  [caja-linux] sesiones no le da el aviso de memoria baja ({})", r);
+            dashos::cerrar(lectura);
+            return;
+        }
+        let pila: &'static mut [u8] = Box::leak(alloc::vec![0u8; 32 * 1024].into_boxed_slice());
+        if dashos::hilos::crear(hilo, lectura as u64, pila, 0) < 0 {
+            println!("  [caja-linux] sin hilo para el aviso de memoria baja");
+            return;
+        }
+        println!("  [caja-linux] escucha el aviso de memoria baja (globo de {} MB de RAM)", (RAM_PAGINAS.load(Ordering::Acquire) * 4096) >> 20);
+    }
+
+    /// El hilo del aviso: con memoria baja, el globo crece una cuarta parte de la RAM del invitado (hasta la mitad);
+    /// con memoria otra vez normal, se devuelve lo que quepa sin volver a bajar del 15 % libre (así no se avisa otra vez
+    /// en el acto). Como el kernel solo avisa al cambiar de nivel, con el globo lleno y memoria normal se mira cada
+    /// segundo cuánto hay libre (llamada 29, contadores 15 y 16), para devolver lo demás cuando lo haya.
+    fn hilo(lectura: u64) -> u64 {
+        let mut b = [0u8; s::LARGO_SOLTAR];
+        let mut nivel = 0;
+        loop {
+            let (n, _, _) = dashos::canal_leer_plazo(lectura as u32, &mut b, &mut [], 1_000_000);
+            if n == dashos::E_CERRADO {
+                return 0;
+            }
+            let (libres, total) = if n == s::LARGO_SOLTAR as i64 && u32::from_le_bytes(b[0..4].try_into().unwrap()) == s::SOLTAR {
+                nivel = u32::from_le_bytes(b[4..8].try_into().unwrap());
+                (u64::from_le_bytes(b[8..16].try_into().unwrap()), u64::from_le_bytes(b[16..24].try_into().unwrap()))
+            } else if n == dashos::E_PLAZO && nivel == 0 && OBJETIVO.load(Ordering::Acquire) > 0 {
+                (dashos::medir(15, 0).max(0) as u64, dashos::medir(16, 0).max(0) as u64)
+            } else {
+                continue;
+            };
+            if COMPARTIDO.vcpu0.load(Ordering::Acquire) == 0 {
+                continue;
+            }
+            let ram = RAM_PAGINAS.load(Ordering::Acquire);
+            let antes = OBJETIVO.load(Ordering::Acquire) as u64;
+            let objetivo = if nivel == 1 {
+                (antes + ram / 4).min(ram / 2)
+            } else {
+                // Lo que se puede devolver sin bajar del 15 % de lo que había libre al arrancar.
+                let sobra = libres.saturating_sub(total * 15 / 100) / 4096;
+                antes.saturating_sub(sobra)
+            };
+            if objetivo == antes || n == dashos::E_PLAZO && objetivo != 0 && antes - objetivo < ram / 16 {
+                // Sin cambios (o, mirando cada segundo, poca cosa: se espera a poder devolver más de una vez).
+                continue;
+            }
+            SOLTADAS_AL_AVISO.store(SOLTADAS.load(Ordering::Acquire), Ordering::Release);
+            INFORME.store(true, Ordering::Release);
+            OBJETIVO.store(objetivo as u32, Ordering::Release);
+            if nivel == 1 {
+                println!("  [caja-linux] memoria baja: se pide al invitado un globo de {} MB (de {} MB de RAM)", (objetivo * 4096) >> 20, (ram * 4096) >> 20);
+            } else {
+                println!("  [caja-linux] memoria otra vez normal: el globo baja a {} MB", (objetivo * 4096) >> 20);
+            }
+            // Que la vCPU 0 salga a mirarlo: el aparato ve el objetivo nuevo y avisa al invitado.
+            COMPARTIDO.avisar();
+        }
+    }
 }

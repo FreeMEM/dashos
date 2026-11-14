@@ -258,7 +258,14 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // (decisión del usuario del 2026-11-12); `sin-maquina` también lo pide, y no se le da. La caja tiene además su
     // ventana de terminal ("ventanas"), la red del invitado ("red") y el disco de Arch Linux ARM ("disco": el servicio de
     // disco le da la partición de la caja Linux, si la hay).
-    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga")))]
+    // aviso-cajas: provoca el aviso de memoria baja (llena la memoria) cuando una caja dice por el canal "presion" que
+    // tiene algo que soltar, para ver que lo suelta. Va antes de las cajas: es quien lee el canal (y cambia las marcas
+    // de los de después, que no se usan en ningún sitio). Solo en las imágenes de prueba.
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    ("presion", programa!("presion"), &[], &["presion"]),
+    #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
+    ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco", "presion"]),
+    #[cfg(all(feature = "virt", feature = "uso"))]
     ("caja-linux", programa!("caja-linux"), &[("sistema", DATOS), ("linux", DATOS | OPCIONAL), ("initrd", DATOS | OPCIONAL)], &["ventanas", "sesiones", "red", "disco"]),
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
     ("sin-maquina", programa!("sin-maquina"), &[("sistema", DATOS)], &["sesiones"]),
@@ -276,7 +283,7 @@ static PROGRAMAS: &[(&str, &[u8], &[(&str, u32)], &[&str])] = &[
     // Linux, y `sin-maquina` llegaba tarde a su pregunta).
     // Con `uso`, fuera de momento: aún corre sus programas de prueba (los virus de laboratorio preguntan uno tras otro).
     #[cfg(all(feature = "virt", not(feature = "paula"), not(feature = "carga"), not(feature = "uso")))]
-    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones"]),
+    ("caja-amiga", programa!("caja-amiga"), &[("pagina0", PAGINA_CERO)], &["ventanas", "archivos", "sesiones", "presion"]),
     // S29: malware de laboratorio (`docs/diseño/S29-malware-linux-y-dashos.md`): un programa cualquiera con ventanas
     // que intenta llenar la memoria, capturar la pantalla, hacerse pasar por la caja Linux y escuchar las teclas y el
     // portapapeles de los demás mientras el guion teclea contraseñas. Al final, para no cambiar las marcas de los de antes.

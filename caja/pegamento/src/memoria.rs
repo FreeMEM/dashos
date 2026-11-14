@@ -50,6 +50,11 @@ impl MemoriaCaja {
         (t, self.largo)
     }
 
+    /// Dónde empieza la RAM del 68k.
+    pub fn ram(&self) -> u32 {
+        self.ram
+    }
+
     /// Dónde está `[dir, dir + largo)` en el proceso, si es todo memoria del 68k.
     fn sitio(&self, dir: u32, largo: u32) -> Option<usize> {
         let fin = dir as u64 + largo as u64;
@@ -65,7 +70,8 @@ impl MemoriaCaja {
     pub fn trozo(&self, dir: u32, largo: u32) -> Option<&[u8]> {
         let p = self.sitio(dir, largo)?;
         // SEGURIDAD: `sitio` solo da tramos dentro de la RAM del 68k o de la página 0 por su alias de escribir, que la
-        // caja proyectó antes de crear este valor y no quita nunca (viven lo que el proceso). Mientras corre una
+        // caja proyectó antes de crear este valor y no quita mientras estén en `largo` (lo crecido solo se quita en
+        // `encoger`, con `&mut self`, y `largo` baja antes de que nadie vuelva a mirar). Mientras corre una
         // función nativa, el 68k está parado (el JIT ha llamado a `dashos_native_call`) y el hilo vigilante no toca
         // esta memoria: nadie más la escribe durante el préstamo.
         Some(unsafe { slice::from_raw_parts(p as *const u8, largo as usize) })
@@ -81,6 +87,9 @@ impl MemoriaCaja {
 unsafe extern "C" {
     /// caja.c: proyecta más memoria del 68k justo detrás de la que hay y devuelve el final nuevo.
     fn caja_ampliar_ram(minimo: u32, tope: u32) -> u32;
+    /// caja.c (aviso-cajas): devuelve a DashOS los trozos crecidos que empiezan en `desde` o más arriba (los de
+    /// arriba del todo, seguidos) y devuelve el final nuevo.
+    fn caja_encoger_ram(desde: u32) -> u32;
 }
 
 impl caja_exec::Memoria for MemoriaCaja {
@@ -105,5 +114,20 @@ impl caja_exec::Memoria for MemoriaCaja {
     fn margen(&self) -> u32 {
         let (t, l) = self.tope_y_largo();
         t.saturating_sub(l)
+    }
+    fn encoger(&mut self, desde: u32) -> Option<u32> {
+        let antes = self.ram + self.largo;
+        if desde >= antes || desde < self.ram {
+            return None;
+        }
+        // SEGURIDAD: una función de caja.c con un número; solo quita proyecciones de memoria crecida por encima de
+        // `desde`, que exec ya no reparte (lo garantiza `Exec::encoger`), y no ejecuta 68k. Desde aquí, `trozo` ya no da
+        // esa memoria.
+        let despues = unsafe { caja_encoger_ram(desde) };
+        if despues >= antes || despues < desde {
+            return None;
+        }
+        self.largo = despues - self.ram;
+        Some(despues)
     }
 }

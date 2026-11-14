@@ -322,6 +322,10 @@ pub fn contador(que: u64, n: usize) -> Option<u64> {
         }
         // 14 (trasfondo): los núcleos en marcha, un bit por núcleo.
         14 => Some(PRESENTES.load(Ordering::Acquire) as u64),
+        // 15 y 16 (aviso-cajas): bytes libres para procesos ahora y los que había al arrancar: lo que mira el aviso de
+        // memoria baja (`presion.rs`).
+        15 => Some(crate::memoria::libres_para_procesos()),
+        16 => Some(crate::memoria::para_procesos_al_arrancar()),
         4 => Some(ROBOS.load(Ordering::Relaxed)),
         8 => Some(DESPERTADOS.load(Ordering::Relaxed)),
         9 => Some(DESPERTADOS_TARDE.load(Ordering::Relaxed)),

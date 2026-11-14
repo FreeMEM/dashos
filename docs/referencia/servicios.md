@@ -396,6 +396,8 @@ de respuesta:
 | 15 respuesta de administrador | `guardian` | Usuario y contraseña para esa acción; se comprueban con su volumen |
 | 16 bloquear | uno del usuario con la sesión delante | `guardian` bloquea la sesión con su pantalla |
 | 18 activa | cualquiera | Si su sesión está delante (1), detrás (0) o no tiene (-2). U6: cambio rápido de usuario |
+| 27 escuchar memoria | las cajas (`caja-amiga`, `caja-linux`) | aviso-cajas: con la llave de contestar y el lado de escribir de un canal que solo lee la caja. Por él le manda `sesiones` (nadie más tiene esa llave) el aviso de memoria baja del kernel: orden 28 `SOLTAR`, el nivel (1 que suelte lo que pueda; 0 normal), lo libre para procesos y lo que había al arrancar. A otro programa, -2, y el canal que da se cierra sin usar |
+| 29 soltado | una caja apuntada | Lo que soltó por un aviso (u64, bytes). `sesiones` mide lo que tiene cobrado su grupo y lo apunta junto a lo que tenía al llegar el aviso. A otro, -2 |
 
 Las negativas (matar, servicio, entrar, lanzar, administrar, bloquear) y los procesos que mueren por un fallo quedan en
 el registro.

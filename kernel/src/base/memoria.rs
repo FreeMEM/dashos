@@ -463,7 +463,11 @@ impl PermisoDma {
 }
 
 pub struct Memoria {
-    paginas: alloc::vec::Vec<u64>,
+    /// Las páginas físicas, en orden. Un 0 es una página soltada con el globo de una máquina (llamada 55): no está en
+    /// ninguna proyección ni en la etapa 2, y no cuenta en su grupo hasta que se repone.
+    paginas: alloc::vec::Vec<core::sync::atomic::AtomicU64>,
+    /// Cuántas hay soltadas (sus bytes ya se devolvieron al grupo uno a uno).
+    soltadas: core::sync::atomic::AtomicU64,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
     bus: Option<u64>,
     /// Si es memoria DMA, el permiso con que se hizo: al soltarse, sus páginas van a su cuarentena (M5).
@@ -504,10 +508,10 @@ impl Memoria {
     pub fn nueva(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
         m.paginas.try_reserve_exact(n).ok()?;
         for _ in 0..n {
-            m.paginas.push(pagina_usuario()?);
+            m.paginas.push(core::sync::atomic::AtomicU64::new(pagina_usuario()?));
         }
         Some(m)
     }
@@ -517,13 +521,13 @@ impl Memoria {
     pub fn nueva_en_llamada(tamano: usize, cupo: &alloc::sync::Arc<crate::cupo::Cupo>) -> Option<Self> {
         let n = tamano.div_ceil(PAGINA as usize);
         let cargo = cupo.cobrar(n as u64 * PAGINA)?;
-        let mut m = Self { paginas: alloc::vec::Vec::new(), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
+        let mut m = Self { paginas: alloc::vec::Vec::new(), soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: alloc::vec::Vec::new() };
         m.paginas.try_reserve_exact(n).ok()?;
         for i in 0..n {
             if i % 64 == 63 {
                 crate::planificador::punto_de_corte();
             }
-            m.paginas.push(pagina_usuario()?);
+            m.paginas.push(core::sync::atomic::AtomicU64::new(pagina_usuario()?));
         }
         Some(m)
     }
@@ -575,9 +579,16 @@ impl Memoria {
         }
         unsafe { core::arch::asm!("dsb sy") };
         for i in 0..n as u64 {
-            paginas.push(base + i * PAGINA);
+            paginas.push(core::sync::atomic::AtomicU64::new(base + i * PAGINA));
         }
-        Some(Self { paginas, bus: Some(base + desplazamiento_bus), permiso: Some(permiso.clone()), cargo: Some(cargo), origenes: alloc::vec::Vec::new() })
+        Some(Self {
+            paginas,
+            soltadas: core::sync::atomic::AtomicU64::new(0),
+            bus: Some(base + desplazamiento_bus),
+            permiso: Some(permiso.clone()),
+            cargo: Some(cargo),
+            origenes: alloc::vec::Vec::new(),
+        })
     }
 
     /// Una vista (llamada 50): un objeto de memoria hecho con páginas de otros, sin copiarlas. `numeros` dice cuáles,
@@ -602,7 +613,8 @@ impl Memoria {
             let mut fisica = None;
             for o in origenes {
                 if n < o.paginas.len() {
-                    fisica = Some(o.paginas[n]);
+                    // Una página soltada por el globo (0) no se ve por una vista.
+                    fisica = Some(o.fisica(n)).filter(|&f| f != 0);
                     if !propios.iter().any(|p| alloc::sync::Arc::ptr_eq(p, o)) {
                         propios.push(o.clone());
                     }
@@ -610,10 +622,10 @@ impl Memoria {
                 }
                 n -= o.paginas.len();
             }
-            paginas.push(fisica.ok_or(FalloVista::Fuera)?);
+            paginas.push(core::sync::atomic::AtomicU64::new(fisica.ok_or(FalloVista::Fuera)?));
         }
         let cargo = cupo.cobrar(coste_vista(numeros.len(), propios.len())).ok_or(FalloVista::Memoria)?;
-        Ok(Self { paginas, bus: None, permiso: None, cargo: Some(cargo), origenes: propios })
+        Ok(Self { paginas, soltadas: core::sync::atomic::AtomicU64::new(0), bus: None, permiso: None, cargo: Some(cargo), origenes: propios })
     }
 
     /// Si es una vista: solo se proyecta para leer, y no vale como RAM de un invitado.
@@ -651,12 +663,16 @@ impl Memoria {
             Some(fin) if fin <= self.paginas.len() * pag => {}
             _ => return false,
         }
+        // Si una página del tramo está soltada (globo), no se toca nada.
+        if largo > 0 && (desde / pag..=(desde + largo - 1) / pag).any(|i| self.fisica(i) == 0) {
+            return false;
+        }
         let mut hecho = 0;
         while hecho < largo {
             let pos = desde + hecho;
             let dentro = pos % pag;
             let n = (pag - dentro).min(largo - hecho);
-            f(self.paginas[pos / pag], dentro, hecho, n);
+            f(self.fisica(pos / pag), dentro, hecho, n);
             hecho += n;
         }
         true
@@ -678,8 +694,57 @@ impl Memoria {
         })
     }
 
-    pub(super) fn fisicas(&self) -> &[u64] {
-        &self.paginas
+    /// La física de la página `i` (0 si está soltada).
+    pub(super) fn fisica(&self, i: usize) -> u64 {
+        self.paginas[i].load(core::sync::atomic::Ordering::Acquire)
+    }
+
+    /// Las físicas, en orden (0 las soltadas).
+    pub(super) fn fisicas(&self) -> impl Iterator<Item = u64> + '_ {
+        self.paginas.iter().map(|p| p.load(core::sync::atomic::Ordering::Acquire))
+    }
+
+    /// Globo (llamada 55): quita la página `i` del objeto y devuelve su física, que el que llama libera cuando ya no la
+    /// ve nadie (ni la etapa 2 ni las proyecciones, con las TLB vaciadas). Sus bytes vuelven al grupo. `None` si ya
+    /// estaba soltada o el objeto no es de los que se sueltan (DMA o vista).
+    ///
+    /// Quien llama garantiza que nadie más tiene el objeto: solo la máquina y el proceso que la pide (sus llaves y sus
+    /// proyecciones), con sus cerrojos tomados (`hiper::Espacio::globo`).
+    pub(super) fn soltar_pagina(&self, i: usize) -> Option<u64> {
+        if self.bus.is_some() || self.es_vista() {
+            return None;
+        }
+        let f = self.paginas.get(i)?.swap(0, core::sync::atomic::Ordering::AcqRel);
+        if f == 0 {
+            return None;
+        }
+        self.soltadas.fetch_add(1, core::sync::atomic::Ordering::Relaxed);
+        if let Some(c) = &self.cargo {
+            c.cupo().devolver(PAGINA);
+        }
+        Some(f)
+    }
+
+    /// Globo: vuelve a poner en el hueco `i` (soltado) la página `fisica`, recién sacada y a cero. Cobra sus bytes al
+    /// grupo del objeto; falso si no caben (y entonces no pone nada) o si el hueco no estaba soltado.
+    pub(super) fn reponer_pagina(&self, i: usize, fisica: u64) -> bool {
+        let Some(p) = self.paginas.get(i) else { return false };
+        if p.load(core::sync::atomic::Ordering::Acquire) != 0 {
+            return false;
+        }
+        if let Some(c) = &self.cargo
+            && !c.cupo().cobrar_suelto(PAGINA)
+        {
+            return false;
+        }
+        p.store(fisica, core::sync::atomic::Ordering::Release);
+        self.soltadas.fetch_sub(1, core::sync::atomic::Ordering::Relaxed);
+        true
+    }
+
+    /// Cuántas páginas tiene soltadas.
+    pub fn soltadas(&self) -> u64 {
+        self.soltadas.load(core::sync::atomic::Ordering::Relaxed)
     }
 }
 
@@ -692,7 +757,7 @@ impl Drop for Memoria {
         if let Some(permiso) = self.permiso.take() {
             // Memoria DMA: a la cuarentena de su permiso (M5). Son seguidas. Si no hay memoria para apuntarlas, se
             // quedan sin devolver: mejor perderlas que dárselas a otro con el aparato escribiendo.
-            if let Some(&base) = self.paginas.first() {
+            if let Some(base) = self.paginas.first().map(|p| p.load(core::sync::atomic::Ordering::Relaxed)) {
                 let mut c = permiso.cuarentena.tomar();
                 if c.try_reserve(1).is_ok() {
                     c.push((base, self.paginas.len(), self.cargo.take()));
@@ -700,8 +765,13 @@ impl Drop for Memoria {
             }
             return;
         }
+        // Las soltadas ya se devolvieron a su grupo: el cargo solo devuelve lo demás.
+        let soltadas = *self.soltadas.get_mut();
+        if let Some(c) = self.cargo.as_mut() {
+            c.descontar(soltadas * PAGINA);
+        }
         let mut p = paginas();
-        for &f in &self.paginas {
+        for f in self.paginas.iter_mut().map(|f| *f.get_mut()).filter(|&f| f != 0) {
             // Son nuestras, y ya no las proyecta nadie: cada espacio que las proyecta guarda un Arc.
             unsafe { p.liberar(f, 1) };
         }

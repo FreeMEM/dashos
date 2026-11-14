@@ -394,6 +394,15 @@ impl<M: Memoria> Exec<M> {
                 self.stack_swap(a[0], r)?;
                 Ok(Accion::Seguir)
             }
+            // AddMemHandler(memHandler)(a1), RemMemHandler(memHandler)(a1): aviso-cajas (`memoria_baja.rs`).
+            129 => {
+                self.add_mem_handler(a[1])?;
+                Ok(Accion::Seguir)
+            }
+            130 => {
+                self.rem_mem_handler(a[1])?;
+                Ok(Accion::Seguir)
+            }
             FIN_DE_TAREA => self.rem_task(0),
             _ => Err(Fallo::NoImplementada { n }),
         }

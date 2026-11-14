@@ -195,6 +195,12 @@ impl Maquina {
         self.comun.espacio.anadir(memoria, ipa, cupo)
     }
 
+    /// Globo (llamada 55): suelta o repone las páginas del invitado en `ipas` (ver `hiper::Espacio::globo`). `proceso`
+    /// es el espacio de quien llama y `llaves_de` cuenta las llaves de su tabla que tienen un objeto de memoria.
+    pub fn globo(&self, ipas: &[u64], soltar: bool, proceso: &mut crate::espacio::Espacio, llaves_de: &dyn Fn(&Arc<Memoria>) -> usize) -> Result<usize, hiper::Error> {
+        self.comun.espacio.globo(ipas, soltar, proceso, llaves_de)
+    }
+
     /// Proyecta la GICV del GIC virtual donde el invitado espera la interfaz de CPU de su GIC (para todas sus vCPU).
     pub fn proyectar_gicv(&self, ipa: u64, cupo: &Arc<crate::cupo::Cupo>) -> Result<(), hiper::Error> {
         self.comun.espacio.proyectar_gicv(ipa, cupo)

@@ -331,6 +331,12 @@ name = "sin-maquina"
 path = "src/bin/sin_maquina.rs"
 test = false
 
+# aviso-cajas: provoca el aviso de memoria baja para ver que las cajas sueltan memoria (solo en las pruebas).
+[[bin]]
+name = "presion"
+path = "src/bin/presion.rs"
+test = false
+
 [[bin]]
 name = "sonido"
 path = "src/bin/sonido.rs"

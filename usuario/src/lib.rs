@@ -224,6 +224,16 @@ pub fn maquina_memoria(llave: u32, memoria: u32, ipa: u64) -> i64 {
     llamada(47, [llave as u64, memoria as u64, ipa, 0, 0]).0 as i64
 }
 
+/// El globo de la máquina `llave` (llamada 55): suelta (`soltar`) o repone las páginas del invitado en las direcciones
+/// `dirs` (alineadas a 4 KB, dentro de su RAM; hasta `MAX_GLOBO`). Solo con memoria que no tiene nadie más que la
+/// máquina y quien llama. Cuántas se hicieron, o un error negativo.
+pub fn maquina_globo(llave: u32, soltar: bool, dirs: &[u64]) -> i64 {
+    llamada(55, [llave as u64, !soltar as u64, dirs.as_ptr() as u64, dirs.len() as u64, 0]).0 as i64
+}
+
+/// Páginas como mucho en una llamada a `maquina_globo`.
+pub const MAX_GLOBO: usize = 256;
+
 /// Lo que dice `maquina_correr` de por qué volvió el invitado (`kernel/src/maquinas.rs`).
 pub mod maquina {
     pub const HVC: i64 = 1;

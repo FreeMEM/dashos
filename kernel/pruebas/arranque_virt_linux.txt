@@ -25,6 +25,9 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] hostil (tormenta del temporizador): no la reconoce nunca; el reloj lo sacó
 ~[caja-linux] hostil (registro de EL2): trampa en
 ~[caja-linux] interrupciones del invitado: bien
+# aviso-cajas: el globo de una máquina (llamada 55): suelta y repone páginas (lo repuesto, a cero), y no suelta memoria
+# que tenga alguien más (en un mensaje o en una vista) ni direcciones que no son suyas.
+~[caja-linux] globo (llamada 55): bien
 # Varias vCPU (invitados/smp.s, cada vCPU en un hilo del servicio): PSCI y SGI entre ellas, y dos hostiles que acaban
 # con una vCPU aún dentro (una tormenta de SGI y un bucle sin fin con todo enmascarado): se paran y los hilos se unen.
 ~[caja-linux] varias vCPU: PSCI (CPU_ON a una que no existe y dos veces a la misma, rechazados; AFFINITY_INFO), 100 idas y vueltas de SGI entre dos vCPU:
@@ -52,6 +55,21 @@ DashOS en marcha con 4 núcleos
 ~[caja-linux] linux: caja-linux: eth0 02:da:50:
 ~[caja-linux] linux: caja-linux: ping 3 packets transmitted, 3 packets received, 0% packet loss
 ~[caja-linux] linux: caja-linux: fin de la prueba
+# aviso-cajas: con el invitado en marcha, `presion` llena la memoria de DashOS hasta el aviso de memoria baja; `sesiones`
+# se lo pasa a las cajas. La Linux pide al invitado un globo (virtio-balloon) de la cuarta parte de su RAM: lo que mete
+# en él vuelve a DashOS (llamada 55) y `sesiones` ve bajar lo cobrado al grupo de la caja. Cuando `presion` suelta, el
+# globo se vacía y el invitado recupera su RAM. La caja Amiga suelta también (su manejador y lo crecido libre).
+~[sesiones] caja-linux escucha el aviso de memoria baja
+~[caja-linux] escucha el aviso de memoria baja (globo de
+~[presion] caja-linux tiene algo que soltar: se llena la memoria
+~[caja-linux] memoria baja: se pide al invitado un globo de 64 MB (de 256 MB de RAM)
+~[caja-linux] globo: el invitado dio 64 MB; DashOS recuperó 64 MB de su RAM
+~[sesiones] caja-linux suelta memoria con el aviso: bien
+~[caja-linux] memoria otra vez normal: el globo baja a 0 MB
+~[caja-linux] globo: vacío; el invitado tiene otra vez toda su RAM
+~[presion] caja-amiga tiene algo que soltar: se llena la memoria
+~[caja-amiga] memh: su manejador se llamo 1 veces y solto 2048 KB de cache
+~[sesiones] caja-amiga suelta memoria con el aviso: bien
 # La terminal: una ventana en el escritorio con hvc0; el guion (tools/guion_caja_linux.py) teclea en ella, la inunda
 # con `seq 1 30000` y sigue contestando, y apaga con `poweroff -f`.
 ~[caja-linux] terminal: ventana en pantalla (80x25 letras

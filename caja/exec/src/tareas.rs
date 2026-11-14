@@ -354,6 +354,7 @@ impl<M: Memoria> Exec<M> {
             execbase::DEVICELIST,
             execbase::RESOURCELIST,
             execbase::SEMAPHORELIST,
+            execbase::EX_MEMHANDLERS,
         ] {
             for n in self.nodos(b + lista).unwrap_or_default() {
                 if suyos.iter().any(|&(d, l)| n >= d && n < d + l) {

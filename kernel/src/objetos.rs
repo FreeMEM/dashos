@@ -719,6 +719,12 @@ impl TablaLlaves {
         self.llaves.get(h as usize).and_then(|x| x.clone())
     }
 
+    /// Cuántas llaves de la tabla son el objeto de memoria `m` sin intermediario (globo, llamada 55: así se sabe si
+    /// alguien más lo tiene).
+    pub fn cuantas_de_memoria(&self, m: &Arc<Memoria>) -> usize {
+        self.llaves.iter().flatten().filter(|l| matches!(&l.objeto, Objeto::Memoria(o) if Arc::ptr_eq(o, m))).count()
+    }
+
     pub fn quitar(&mut self, h: u32) -> Option<Llave> {
         let l = self.llaves.get_mut(h as usize).and_then(|x| x.take());
         if l.is_some() {

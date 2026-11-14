@@ -61,6 +61,8 @@ static long sc(long n, long a, long b, long c, long d, long e)
 #define SC_MEMORIA_PROYECTAR 8
 #define SC_DORMIR            30
 #define SC_HILO_CREAR        40
+#define SC_CERRAR            6
+#define SC_MEMORIA_QUITAR    21
 #define SC_HILO_UNIR         41
 #define SC_PROCESO_SALIR     44
 #define SC_PAGINA_CERO       49
@@ -201,9 +203,14 @@ static long proyecta(uintptr_t va, size_t len, int permisos)
    (`minimo` y algo más), y al menos una cuarta parte de lo que ya hay (para no pedir de poco en poco), en objetos de
    16 MB como mucho (el máximo de un objeto). Nunca más allá de `tope` bytes desde M68K_RAM ni de M68K_RAM_MAX. Si el
    cupo no da, se queda en lo que haya conseguido. Devuelve el final nuevo (el de antes si no se pudo nada). Lo
-   crecido no se devuelve: la memoria libre del 68k la vuelve a repartir exec. */
+   crecido libre lo vuelve a repartir exec; con memoria baja en DashOS (aviso-cajas), lo de arriba que esté libre se
+   devuelve (`caja_encoger_ram`). */
 #define TROZO_RAM     (1UL << 20)
 #define TROZO_RAM_MAX (16UL << 20)
+/* aviso-cajas: los objetos con que ha crecido la memoria del 68k, en orden (dirección, largo y llave). */
+#define MAX_CRECIDOS 256
+static struct { uint64_t va, largo; long llave; } crecidos[MAX_CRECIDOS];
+static unsigned n_crecidos;
 uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope)
 {
     uint64_t fin = m68k_ram_fin;
@@ -217,11 +224,40 @@ uint32_t caja_ampliar_ram(uint32_t minimo, uint32_t tope)
     if (fin + quiero > techo) quiero = techo - fin;
     while (quiero > 0) {
         uint64_t n = quiero < TROZO_RAM_MAX ? quiero : TROZO_RAM_MAX;
-        if (proyecta((uintptr_t)fin, (size_t)n, P_ESCRIBIR) <= 0) break;
+        long m = proyecta((uintptr_t)fin, (size_t)n, P_ESCRIBIR);
+        if (m <= 0) break;
+        /* Sin sitio para apuntarlo, no se podrá devolver (ni lo de debajo): se queda, como antes. */
+        if (n_crecidos < MAX_CRECIDOS) {
+            crecidos[n_crecidos].va = fin;
+            crecidos[n_crecidos].largo = n;
+            crecidos[n_crecidos].llave = m;
+        }
+        n_crecidos++;
         fin += n;
         quiero -= n;
     }
     __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
+    return (uint32_t)fin;
+}
+
+/* aviso-cajas: devuelve a DashOS los objetos crecidos de arriba del todo que empiezan en `desde` o más arriba (exec ya
+   no reparte esa memoria: está libre). Primero baja el final (nadie mira ya ahí) y después los quita y cierra su llave:
+   sus páginas vuelven al sistema. Devuelve el final nuevo. */
+uint32_t caja_encoger_ram(uint32_t desde)
+{
+    uint64_t fin = m68k_ram_fin;
+    unsigned n = n_crecidos;
+    while (n > 0 && n <= MAX_CRECIDOS && crecidos[n - 1].va >= desde && crecidos[n - 1].va + crecidos[n - 1].largo == fin) {
+        fin = crecidos[n - 1].va;
+        n--;
+    }
+    if (n == n_crecidos) return (uint32_t)fin;
+    __atomic_store_n(&m68k_ram_fin, (uint32_t)fin, __ATOMIC_RELEASE);
+    while (n_crecidos > n) {
+        n_crecidos--;
+        sc(SC_MEMORIA_QUITAR, (long)crecidos[n_crecidos].va, 0, 0, 0, 0);
+        sc(SC_CERRAR, crecidos[n_crecidos].llave, 0, 0, 0, 0);
+    }
     return (uint32_t)fin;
 }
 
@@ -492,6 +528,7 @@ extern const uint8_t prog_boopsi[], prog_boopsi_fin[];
 extern const uint8_t prog_ramlib[], prog_ramlib_fin[];
 extern const uint8_t prog_capa[], prog_capa_fin[];
 extern const uint8_t prog_glotona[], prog_glotona_fin[];
+extern const uint8_t prog_memh[], prog_memh_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1233,6 +1270,24 @@ int caja_main(void)
         di("glotona.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, la memoria del 68k acaba en $%x: %s\n",
            (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, m68k_ram_fin, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 8b3c. aviso-cajas: memoria baja. Con la memoria del 68k crecida y libre (lo que dejó glotona), memh.c pone un
+           manejador de memoria baja (AddMemHandler) que suelta 2 MB de "caché" y espera. La caja dice a `presion` (canal
+           de la prueba) que tiene algo que soltar; `presion` llena la memoria de DashOS, el kernel avisa a `sesiones` y
+           `sesiones` a la caja: en la siguiente llamada a exec de memh se llama a su manejador y se devuelve a DashOS lo
+           crecido que está libre. Sin el canal (otras imágenes), no se prueba. */
+        if (caja_presion_listo()) {
+            t0 = ahora_us();
+            v = ejecuta_hunk("memh", prog_memh, (size_t)(prog_memh_fin - prog_memh), execbase, &d0, &llamadas, &sobras);
+            t1 = ahora_us();
+            caja_atender_memoria();
+            bien = v == -1 && d0 == 0 && sobras == 0 && caja_avisos() == 0 && caja_bloques(0) == sistema;
+            di("memh.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar, la memoria del 68k acaba en $%x: %s\n",
+               (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, m68k_ram_fin, bien ? "bien" : "MAL");
+            if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+        } else {
+            di("memh.exe: sin la prueba del aviso de memoria baja (no hay a quién pedirlo)\n");
+        }
 
         /* 8b4. Programas de AmigaOS del usuario (SYS:C/Prefs/programas-amiga, con DASHOS_PROGRAMAS_AMIGA): las demos de
            MUI, Tachyon... Para ver hasta dónde llegan y qué les falta (el registro de lo que falta, faltan.rs): a los 6 s
