@@ -179,6 +179,11 @@ impl<M: Memoria> Exec<M> {
                 break;
             }
         }
+        // No cabe: si la memoria puede crecer (la caja la pide a trozos), la región de arriba crece y se prueba otra
+        // vez. La chip no crece.
+        if dir == 0 && atr & memf::CHIP == 0 && let Some(mh) = self.crecer(largo)? {
+            dir = self.allocate(mh, largo, req & memf::REVERSE != 0)?;
+        }
         if dir == 0 {
             return Ok(0);
         }
@@ -189,9 +194,46 @@ impl<M: Memoria> Exec<M> {
         Ok(dir)
     }
 
+    /// Pide a la memoria al menos `largo` bytes más y se los da a la región que acaba justo donde empieza lo nuevo
+    /// (la de arriba): su `MH_UPPER` sube y el tramo nuevo entra en su lista de libres, junto al trozo libre de su
+    /// final si lo hay (así cabe algo más grande que lo nuevo). Devuelve esa región, o `None`.
+    fn crecer(&mut self, largo: u32) -> Result<Option<u32>, Fallo> {
+        let Some((antes, despues)) = self.mem.ampliar(largo) else { return Ok(None) };
+        let (antes, despues) = ((antes + 7) & !7, despues & !7);
+        if despues <= antes {
+            return Ok(None);
+        }
+        let mut region = None;
+        for mh in self.nodos(self.base + execbase::MEMLIST)? {
+            if self.lp(mh + memheader::MH_UPPER)? == antes {
+                region = Some(mh);
+            }
+        }
+        let Some(mh) = region else { return Ok(None) };
+        self.e32(mh + memheader::MH_UPPER, despues)?;
+        if let Some(r) = self.regiones.iter_mut().find(|r| r.1 == antes) {
+            r.1 = despues;
+        }
+        self.deallocate(mh, antes, despues - antes)?;
+        Ok(Some(mh))
+    }
+
+    /// De quién es la memoria que se reserva ahora: de la tarea en marcha o, mientras corre código de una biblioteca
+    /// cargada de disco (`memoria_del_sistema`), del sistema (0): la biblioteca sigue en memoria cuando acaba la tarea
+    /// que la usó, y lo suyo no se puede soltar con ella.
+    pub fn dueno_de_lo_nuevo(&self) -> u32 {
+        if self.memoria_del_sistema { 0 } else { self.tarea_actual() }
+    }
+
+    /// Lo que se reserve desde ahora, del sistema (`si`) o de la tarea (la caja lo pone en cada llamada nativa según
+    /// quién la hace).
+    pub fn memoria_del_sistema(&mut self, si: bool) {
+        self.memoria_del_sistema = si;
+    }
+
     /// `AllocMem`. 0 si no hay sitio (sin llamar a los manejadores de poca memoria: aún no los hay).
     pub fn alloc_mem(&mut self, tamano: u32, req: u32) -> Result<u32, Fallo> {
-        let dueno = self.tarea_actual();
+        let dueno = self.dueno_de_lo_nuevo();
         self.reservar(tamano, req, dueno)
     }
 
@@ -227,7 +269,7 @@ impl<M: Memoria> Exec<M> {
         }
         let libre = self.l32(mh + memheader::MH_FREE)?;
         self.e32(mh + memheader::MH_FREE, libre.wrapping_sub(fin - inicio))?;
-        let dueno = self.tarea_actual();
+        let dueno = self.dueno_de_lo_nuevo();
         self.bloques.insert(inicio, Bloque { largo: fin - inicio, dueno, vec: false });
         Ok(inicio)
     }
@@ -285,8 +327,15 @@ impl<M: Memoria> Exec<M> {
     }
 
     /// `AvailMem`: lo libre de las regiones con esos atributos; con `MEMF_LARGEST`, el trozo libre mayor; con
-    /// `MEMF_TOTAL`, el tamaño de las regiones.
+    /// `MEMF_TOTAL`, el tamaño de las regiones. Si la memoria puede crecer (`Memoria::margen`), lo que no es chip
+    /// cuenta también lo que le queda por crecer: un programa que mira cuánto hay antes de pedir no se asusta.
     pub fn avail_mem(&self, req: u32) -> Result<u32, Fallo> {
+        let v = self.avail_mem_ahora(req)?;
+        let margen = if req & memf::ATRIBUTOS & memf::CHIP == 0 { self.mem.margen() } else { 0 };
+        Ok(if req & memf::LARGEST != 0 { v.max(margen) } else { v.saturating_add(margen) })
+    }
+
+    fn avail_mem_ahora(&self, req: u32) -> Result<u32, Fallo> {
         let atr = req & memf::ATRIBUTOS;
         let mut total: u32 = 0;
         for mh in self.nodos(self.base + execbase::MEMLIST)? {

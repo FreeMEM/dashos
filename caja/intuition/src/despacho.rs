@@ -30,6 +30,7 @@ filas!(G;
     SETMAXPEN = "SetMaxPen", ALLOCBITMAP = "AllocBitMap", FREEBITMAP = "FreeBitMap", GETBITMAPATTR = "GetBitMapAttr",
     RELEASEPEN = "ReleasePen", OBTAINPEN = "ObtainPen", OBTAINBESTPENA = "ObtainBestPenA", FINDCOLOR = "FindColor",
     WRITECHUNKYPIXELS = "WriteChunkyPixels", VBEAMPOS = "VBeamPos", GETVPMODEID = "GetVPModeID",
+    TEXTEXTENT = "TextExtent", SETRPATTRSA = "SetRPAttrsA",
 );
 
 filas!(I;
@@ -49,6 +50,7 @@ filas!(I;
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
     INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
+    LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -71,6 +73,18 @@ impl<C: Compositor> CajaGrafica<C> {
                 Ok(v) => r.d[0] = v,
                 Err(e) => {
                     self.avisar(ex, crate::lvo::GADTOOLS[f].0, e);
+                    r.d[0] = 0;
+                }
+            }
+            return Accion::Seguir;
+        }
+        if let Some((de_layers, f)) = self.es_capas(n) {
+            let res = if de_layers { self.llamar_layers(ex, f, r) } else { self.llamar_keymap(ex, f, r) };
+            match res {
+                Ok(v) => r.d[0] = v,
+                Err(e) => {
+                    let nombre = if de_layers { crate::capas::LAYERS[f] } else { crate::capas::KEYMAP[f] };
+                    self.avisar(ex, nombre, e);
                     r.d[0] = 0;
                 }
             }
@@ -118,6 +132,26 @@ impl<C: Compositor> CajaGrafica<C> {
                 0
             }
             TEXTLENGTH => self.text_length(ex, a[1], a[0], d[0])?,
+            // TextExtent(rp, string, count, textExtent)(a1/a0/d0/a2)
+            TEXTEXTENT => {
+                self.text_extent(ex, a[1], a[0], d[0], a[2])?;
+                0
+            }
+            // SetRPAttrsA(rp, tags)(a0/a1): fuente y plumas (lo demás de rpattr.h no cambia nada aquí: la máscara de
+            // escritura y la pluma máxima no se usan, y DrawBounds es solo para leer).
+            SETRPATTRSA => {
+                self.leer_rp(ex, a[0])?;
+                for (tag, v) in crate::gadtools::leer_etiquetas(ex, a[1])? {
+                    match tag {
+                        0x8000_0000 => self.set_font(ex, a[0], v)?,
+                        0x8000_0002 => self.set_a_pen(ex, a[0], v)?,
+                        0x8000_0003 => self.set_b_pen(ex, a[0], v)?,
+                        0x8000_0004 => self.set_dr_md(ex, a[0], v)?,
+                        _ => {}
+                    }
+                }
+                0
+            }
             TEXT => {
                 self.text(ex, a[1], a[0], d[0])?;
                 0
@@ -364,6 +398,19 @@ impl<C: Compositor> CajaGrafica<C> {
                 if a[0] != 0 {
                     ex.escribir_bytes(a[0], b"Workbench\0")?;
                 }
+                Ok(0)
+            }
+            // LockIBase(dontknow)(d0) y UnlockIBase(ibLock)(a0): con una sola tarea 68k a la vez, nada que esperar.
+            LOCKIBASE | UNLOCKIBASE => Ok(0),
+            // ReportMouse(flag, window)(d0/a0): WFLG_REPORTMOUSE de la ventana (los IDCMP_MOUSEMOVE de su ventana).
+            REPORTMOUSE => {
+                let w = a[0];
+                if !self.intui.ventanas.contains_key(&w) {
+                    return Err(Fallo::VentanaDesconocida { dir: w });
+                }
+                let f = ex.l32(w + crate::estructuras::window::FLAGS)?;
+                let f = if d[0] & 0xFFFF != 0 { f | crate::estructuras::wflg::REPORTMOUSE } else { f & !crate::estructuras::wflg::REPORTMOUSE };
+                ex.e32(w + crate::estructuras::window::FLAGS, f)?;
                 Ok(0)
             }
             INTUITEXTLENGTH => {

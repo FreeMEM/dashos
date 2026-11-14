@@ -382,6 +382,11 @@ impl<F: SistemaArchivos> Dos<F> {
                 let b = self.sitio_de_cerrojo(d[2])?;
                 d0(if a.vol == b.vol { DOSTRUE } else { DOSFALSE })
             }
+            // GetDeviceProc(name, dp): el proceso manejador de un dispositivo, para mandarle paquetes. En la caja no hay
+            // manejadores (los volúmenes los lleva dos con el servicio de archivos de DashOS): 0, con
+            // ERROR_DEVICE_NOT_MOUNTED, como un dispositivo que no está. FreeDeviceProc(dp): nada que soltar.
+            GET_DEVICE_PROC => Err(E::Io(ERROR_DEVICE_NOT_MOUNTED)),
+            FREE_DEVICE_PROC => d0(0),
             EXALL => d0(self.ex_all(c, d[1], d[2], d[3], d[4], d[5])?),
             EXALL_END => {
                 Self::ex_all_end(c, d[5])?;

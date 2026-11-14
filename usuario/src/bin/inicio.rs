@@ -440,8 +440,12 @@ fn principal() -> u64 {
             "caja-linux" => dashos::maquina::MARGEN_SERVICIO,
             // H4 y H5: la caja Amiga, con su ejecutable (2 MB y 2 de datos), 4 MB de código traducido, 4 de montón de
             // Emu68, 8 del de Rust (las bibliotecas nativas y los lienzos: el del Workbench, de hasta 1024 x 768, son 3
-            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas.
-            "caja-amiga" => 32 << 20,
+            // MB), 4 del 68k, 1 de pilas y los búferes de sus ventanas. Y lo que crezca el 68k según sus programas
+            // (decisión del usuario del 2026-11-13): como mucho una cuarta parte de lo que queda libre al lanzarla y
+            // nunca más de 256 MB, el tope de serie de `Prefs/cajas` (`memoria amiga`: uno mayor ahí no pasa de este
+            // cupo). El presupuesto de un grupo se saca del de quien lo crea: lo que se dé aquí ya no lo tienen los
+            // servicios de después, de ahí la cuarta parte.
+            "caja-amiga" => (32 << 20) + margen_caja_amiga(32 << 20),
             _ => 16 << 20,
         };
         // De un servicio, inicio guarda una copia de cada llave, con los mismos derechos, para relanzarlo (E6).
@@ -465,6 +469,15 @@ fn principal() -> u64 {
             }
             if g > 0 {
                 println!("  [inicio] caja-linux: {} MB de RAM en la máquina; el invitado, hasta {} MB", ram >> 20, dashos::maquina::memoria_invitado_con(ram, pedida) >> 20);
+            }
+        }
+        // La caja Amiga: si aun así no cabe, sin margen (lo de siempre, 32 MB: su 68k apenas crece).
+        if nombre(nombre_cab) == "caja-amiga" {
+            if g <= 0 {
+                g = grupo_crear(32 << 20);
+            }
+            if g > 0 {
+                println!("  [inicio] caja-amiga: {} MB de cupo, {} para que crezca su 68k", cupo >> 20, (cupo >> 20).saturating_sub(32));
             }
         }
         let proceso = if g > 0 { proceso_crear_en(g as u32, m, tamano, &suyas[..k]) } else { g };
@@ -637,4 +650,23 @@ fn relanzar(s: &mut Servicio, pendientes: &[u32; 32], clientes_de: &[u64; 32], l
         }
     }
     dashos::proceso_avisar(s.proceso, s.aviso) == 0
+}
+
+/// Lo que puede crecer el 68k de la caja Amiga: una cuarta parte de lo que queda libre para grupos tras su cupo `base`
+/// (la mayor que se puede crear ahora, buscada a mitades con grupos de prueba que se matan en seguida), en MB enteros,
+/// hasta 256.
+fn margen_caja_amiga(base: u64) -> u64 {
+    let (mut cabe, mut no) = (0u64, 8u64 << 30);
+    while no - cabe > 1 << 20 {
+        let medio = cabe + (no - cabe) / 2;
+        let g = grupo_crear(medio);
+        if g > 0 {
+            dashos::grupo_matar(g as u32);
+            dashos::cerrar(g as u32);
+            cabe = medio;
+        } else {
+            no = medio;
+        }
+    }
+    (cabe.saturating_sub(base) / 4).min(256 << 20) & !((1 << 20) - 1)
 }

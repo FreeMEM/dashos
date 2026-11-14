@@ -458,3 +458,38 @@ fn planos_cero_y_unos() {
     assert_eq!(pluma(&mut c, rp, 0, 0), 1);
     assert!(c.1.avisos().is_empty());
 }
+
+/// Lo que pedían MUI 5 y Tachyon (el registro de lo que falta): `TextExtent` y `SetRPAttrsA`.
+#[test]
+fn text_extent_y_set_rp_attrs() {
+    let mut c = caja();
+    let (_, rp) = planar(&mut c, 1, 64, 8);
+    let s = cadena(&mut c, "Hola");
+    let te = reservar(&mut c, 12);
+    g(&mut c, "TextExtent", &[4], &[s, rp, te]);
+    // topaz/8: 8 de ancho por letra, 8 de alto, la línea base en 6.
+    assert_eq!(l16(&c, te), 32);
+    assert_eq!(l16(&c, te + 2), 8);
+    assert_eq!(l16(&c, te + 4) as i16, 0);
+    assert_eq!(l16(&c, te + 6) as i16, -6);
+    assert_eq!(l16(&c, te + 8) as i16, 31);
+    assert_eq!(l16(&c, te + 10) as i16, 1);
+    // Sin texto: ancho 0, el rectángulo sin anchura.
+    g(&mut c, "TextExtent", &[0], &[s, rp, te]);
+    assert_eq!(l16(&c, te), 0);
+    // SetRPAttrsA: plumas y modo; lo que no se conoce, nada.
+    let tags = reservar(&mut c, 40);
+    for (k, (t, v)) in [(0x8000_0002u32, 3u32), (0x8000_0003, 2), (0x8000_0004, 1), (0x8000_0007, 9), (0, 0)].iter().enumerate() {
+        e32(&mut c, tags + 8 * k as u32, *t);
+        e32(&mut c, tags + 8 * k as u32 + 4, *v);
+    }
+    g(&mut c, "SetRPAttrsA", &[], &[rp, tags]);
+    assert_eq!(g(&mut c, "GetAPen", &[], &[rp]), 3);
+    assert_eq!(g(&mut c, "GetBPen", &[], &[rp]), 2);
+    assert_eq!(g(&mut c, "GetDrMd", &[], &[rp]), 1);
+    assert!(c.1.tomar_avisos().is_empty());
+    // Hostil: un TextExtent fuera de la memoria y unas etiquetas fuera: avisos, nada roto.
+    g(&mut c, "TextExtent", &[4], &[s, rp, 0xFFFF_0000]);
+    g(&mut c, "SetRPAttrsA", &[], &[rp, 0xFFFF_0000]);
+    assert_eq!(c.1.tomar_avisos().len(), 2);
+}

@@ -19,6 +19,9 @@
 //!
 //! - `escala <caja> <escala>`: a qué tamaño se ven las ventanas de una caja (una vez por caja; si falta, `auto`).
 //! - `escala-programa <caja> <escala> <nombre>`: el de un programa, por encima del de su caja.
+//! - `memoria <caja> <MB>`: hasta cuánta memoria puede pedir la caja para sus programas (una vez por caja; si falta,
+//!   `MEMORIA_DE_SERIE`; de `MIN_MEMORIA` a `MAX_MEMORIA`). Hoy solo la caja Amiga la usa: su 68k crece según lo que
+//!   pidan sus programas, hasta ese tope.
 //!
 //! Aspectos: `dashos` y `original`. Escalas: `auto` (según la pantalla, `escala_automatica`) o un factor entero de 1 a
 //! `MAX_ESCALA` (cada píxel del programa, un cuadrado de factor × factor en la pantalla). Hoy solo la caja Amiga la
@@ -35,6 +38,12 @@ pub const MAX_TEXTO: usize = 2048;
 pub const MAX_PROGRAMAS: usize = 32;
 /// Lo más largo del nombre de un programa, en bytes.
 pub const MAX_NOMBRE: usize = 64;
+
+/// La memoria de una caja para sus programas, en MB: de serie (decisión del usuario, 2026-11-13), lo menos y lo más
+/// (el 68k ve 4 GB; la caja Amiga empieza su memoria en 1 MB y deja sitio arriba).
+pub const MEMORIA_DE_SERIE: u32 = 256;
+pub const MIN_MEMORIA: u32 = 8;
+pub const MAX_MEMORIA: u32 = 2048;
 
 /// El factor de escala más grande que se puede pedir.
 pub const MAX_ESCALA: u32 = 3;
@@ -146,6 +155,8 @@ pub struct Ajuste {
     /// La escala de cada caja que la cambia (las demás, `auto`) y las excepciones por programa.
     pub escalas: Vec<(Caja, Escala)>,
     pub escalas_programas: Vec<(Caja, String, Escala)>,
+    /// El tope de memoria de cada caja que lo cambia, en MB (las demás, `MEMORIA_DE_SERIE`).
+    pub memorias: Vec<(Caja, u32)>,
 }
 
 /// Por qué un texto no vale.
@@ -174,6 +185,7 @@ impl Ajuste {
         programas: Vec::new(),
         escalas: Vec::new(),
         escalas_programas: Vec::new(),
+        memorias: Vec::new(),
     };
 
     /// Un nombre de programa que vale: no vacío, como mucho `MAX_NOMBRE` bytes, sin `/`, `:`, controles ni espacios a
@@ -247,6 +259,17 @@ impl Ajuste {
                     }
                     a.escalas_programas.push((caja, String::from(nombre), esc));
                 }
+                (Some("memoria"), Some(caja), Some(mb), None) => {
+                    let caja = Caja::de(caja).ok_or(Error::Linea)?;
+                    let mb: u32 = mb.parse().map_err(|_| Error::Linea)?;
+                    if !(MIN_MEMORIA..=MAX_MEMORIA).contains(&mb) {
+                        return Err(Error::Linea);
+                    }
+                    if a.memorias.iter().any(|c| c.0 == caja) {
+                        return Err(Error::Repetida);
+                    }
+                    a.memorias.push((caja, mb));
+                }
                 _ => return Err(Error::Linea),
             }
         }
@@ -268,7 +291,15 @@ impl Ajuste {
         for (c, n, e) in &self.escalas_programas {
             t.push_str(&alloc::format!("escala-programa {} {} {}\n", c.nombre(), e.nombre(), n));
         }
+        for (c, mb) in &self.memorias {
+            t.push_str(&alloc::format!("memoria {} {}\n", c.nombre(), mb));
+        }
         t
+    }
+
+    /// El tope de memoria de una caja, en MB: el suyo o el de serie.
+    pub fn memoria_de_caja(&self, caja: Caja) -> u32 {
+        self.memorias.iter().find(|c| c.0 == caja).map_or(MEMORIA_DE_SERIE, |c| c.1)
     }
 
     /// La escala de una caja (sin mirar programas): la suya o `auto`.
@@ -317,6 +348,20 @@ mod pruebas {
         // Con un 0 al final (como viene un texto de Wayland), y vacío: el de serie.
         assert_eq!(Ajuste::entender(b"general original\n\0").unwrap().general, Aspecto::Original);
         assert_eq!(Ajuste::entender(b"").unwrap(), Ajuste::DE_SERIE);
+    }
+
+    #[test]
+    fn memorias() {
+        let t = "general dashos\nmemoria amiga 512\n";
+        let a = Ajuste::entender(t.as_bytes()).unwrap();
+        assert_eq!(a.escribir(), t);
+        assert_eq!(a.memoria_de_caja(Caja::Amiga), 512);
+        assert_eq!(a.memoria_de_caja(Caja::Linux), MEMORIA_DE_SERIE);
+        assert_eq!(Ajuste::DE_SERIE.memoria_de_caja(Caja::Amiga), 256);
+        // Fuera de límites, repetida, sin número o con signo: el texto entero no vale.
+        for malo in ["memoria amiga 4", "memoria amiga 4096", "memoria amiga 256\nmemoria amiga 128", "memoria amiga", "memoria amiga -1", "memoria amiga 1e3", "memoria nada 64"] {
+            assert!(Ajuste::entender(malo.as_bytes()).is_err(), "{malo}");
+        }
     }
 
     #[test]

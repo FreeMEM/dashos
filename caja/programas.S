@@ -19,6 +19,9 @@ prog_\nombre\()_fin:
         programa anidado, "pruebas68k/anidado.exe"
         programa gadtools, "pruebas68k/gadtools.exe"
         programa boopsi, "pruebas68k/boopsi.exe"
+        programa ramlib, "pruebas68k/ramlib.exe"
+        programa capa, "pruebas68k/capa.exe"
+        programa glotona, "pruebas68k/glotona.exe"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"

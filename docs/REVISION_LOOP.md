@@ -1905,3 +1905,15 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   por unir. Bloqueos para Tachyon: MUI tumba la caja (JIT de Emu68 en un longjmp del Init de muimaster) y la caja
   tiene 4 MB para el 68k (Tachyon pide 30-40). Propuesta al usuario: memoria según el programa, tope en Ajustes
   (256 MB por defecto).
+- RedoxFS → DashFS en el código (486d053): `archivos/dashfs`, crate `dashfs`, herramientas `dashfs-*`; formato igual.
+- El usuario: "continúa con lo pendiente" (2026-11-13, noche). Trasfondo nativo reanudado (agente, worktree
+  `trasfondo` en 486d053). Memoria de la caja Amiga: va lo recomendado, según el programa con tope en Ajustes (256 MB
+  de serie); pendiente de hacer (toca la caja). MUI (fallo del JIT) después.
+- El usuario (2026-11-13, noche): "párate cuando vayas por el 98 %, no antes". El tope de esta semana pasa del 90 al 98 %.
+- Unido a revision (1d915f8): caja-amiga-libs (ramlib, AmigaOS del usuario, keymap y layers nativas) junto con el renombrado a dashfs; tanda completa sobre 3f9f7ae todo rc=0, y en revision make prueba y arranque-virt bien. Tabla de avance de la web corregida a petición del usuario (en la sesión de la web, sin commit).
+- Unido a revision (52347e3): caja-amiga-libs, segunda parte. La memoria del 68k crece según el programa, con tope en
+  Ajustes ("memoria amiga", 256 MB de serie). El cupo de la caja es 32 MB más 1/4 de la memoria libre, hasta 256 MB.
+  mathieeesingbas nativa: MUI 5 abre (la demo Class1 sale vacía, faltan ganchos y recorte de layers) y Tachyon 68k
+  abre su ventana sin botones ni texto. Hace falta una máquina con más de 2 GB para que quepa. Tanda completa todo rc=0.
+- Trasfondo (rama `trasfondo`): hecho y con todas las variantes bien salvo arranque-virt. El tramo Ajustes / ventana
+  Amiga / explorador del guion depende del ritmo; el agente lo está ordenando en secuencia.

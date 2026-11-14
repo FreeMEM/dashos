@@ -596,3 +596,93 @@ fn la_tarea_muere_con_todo() {
     assert!(!p.c.1.boopsi_pendiente());
     assert!(caja_intuition::boopsi::atender(&mut p));
 }
+
+/// Una clase hecha a mano, sin MakeClass (como las arma MUI 5): una `struct IClass` con su despachador y su
+/// superclase. La caja la adopta al usarla; una que no lleva a ninguna conocida (basura, en círculo) no.
+#[test]
+fn clase_hecha_a_mano() {
+    let mut p = prueba();
+    let gc = p.c.1.clase_publica("gadgetclass").unwrap();
+    // Su despachador: en la memoria de la caja (la adopción mira que se pueda leer).
+    let entrada = reservar(&mut p.c, 4);
+    let cl = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, cl + iclass::H_ENTRY, entrada);
+    p.codigo.insert(entrada, despachador_contador);
+    e32(&mut p.c, cl + iclass::SUPER, gc);
+    let off = l16(&p.c, gc + iclass::INSTOFFSET) + l16(&p.c, gc + iclass::INSTSIZE);
+    e16(&mut p.c, cl + iclass::INSTOFFSET, off);
+    e16(&mut p.c, cl + iclass::INSTSIZE, 4);
+    let o = nuevo(&mut p, cl, "", &[(ga::ID, 9), (MI_ATRIBUTO, 41)]);
+    assert_ne!(o, 0);
+    assert_eq!(rl32(&p, o - 4), cl);
+    assert_eq!(get(&mut p, o, MI_ATRIBUTO), 100);
+    assert_eq!(get(&mut p, o, ga::ID), 9);
+    dispose(&mut p, o);
+    assert_eq!(avisos(&p), 0, "{:?}", p.c.1.avisos());
+    // Una cuya superclase es basura, y otra en círculo: no se adoptan (0, con aviso).
+    let mala = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, mala + iclass::H_ENTRY, entrada);
+    e32(&mut p.c, mala + iclass::SUPER, 0xFFFF_0000);
+    assert_eq!(nuevo(&mut p, mala, "", &[]), 0);
+    let circulo = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, circulo + iclass::H_ENTRY, entrada);
+    e32(&mut p.c, circulo + iclass::SUPER, circulo);
+    assert_eq!(nuevo(&mut p, circulo, "", &[]), 0);
+    let sin_entrada = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, sin_entrada + iclass::SUPER, gc);
+    assert_eq!(nuevo(&mut p, sin_entrada, "", &[]), 0);
+    assert!(avisos(&p) >= 3);
+}
+
+/// La clase raíz propia de MUI 5: `cl_Super` = 0 y su despachador hace los objetos él solo (memoria suya, la clase
+/// en la palabra de antes del objeto, `OCLASS`). Los objetos así son de la caja también para `GetAttr`, `SetAttrsA`,
+/// `DoMethodA` y `DisposeObject`.
+fn despachador_raiz_propia(p: &mut Prueba, r: Registros) -> Result<Registros, Corte68k> {
+    let (cl, obj, msg) = (r.a[0], r.a[2], r.a[1]);
+    let mut out = r;
+    out.d[0] = match rl32(p, msg) {
+        om::NEW => {
+            let b = reservar(&mut p.c, 16);
+            e32(&mut p.c, b, cl);
+            b + 4
+        }
+        om::GET => {
+            let st = rl32(p, msg + 8);
+            e32(&mut p.c, st, 77);
+            1
+        }
+        om::SET => 1,
+        om::DISPOSE => {
+            e32(&mut p.c, obj, 0xD15C_0000);
+            1
+        }
+        _ => 0,
+    };
+    Ok(out)
+}
+
+#[test]
+fn raiz_propia() {
+    let mut p = prueba();
+    let entrada = reservar(&mut p.c, 4);
+    p.codigo.insert(entrada, despachador_raiz_propia);
+    let raiz = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, raiz + iclass::H_ENTRY, entrada);
+    let hija = reservar(&mut p.c, iclass::TAMANO);
+    e32(&mut p.c, hija + iclass::H_ENTRY, entrada);
+    e32(&mut p.c, hija + iclass::SUPER, raiz);
+    let o = nuevo(&mut p, hija, "", &[]);
+    assert_ne!(o, 0);
+    assert_eq!(rl32(&p, o - 4), hija);
+    assert_eq!(get(&mut p, o, 0x8000_1234), 77);
+    set(&mut p, o, &[(0x8000_1234, 1)]);
+    dispose(&mut p, o);
+    assert_eq!(rl32(&p, o), 0xD15C_0000, "su OM_DISPOSE");
+    assert_eq!(avisos(&p), 0, "{:?}", p.c.1.avisos());
+    // Un "objeto" cuya palabra de antes no es una clase: nada, con aviso.
+    let falso = reservar(&mut p.c, 16) + 4;
+    e32(&mut p.c, falso - 4, 0xFFFF_0000);
+    let st = reservar(&mut p.c, 4);
+    assert_eq!(ib(&mut p, "GetAttr", &[0x8000_1234], &[falso, st]), 0);
+    assert!(avisos(&p) >= 1);
+}

@@ -28,6 +28,7 @@ pub mod errores;
 pub mod estructuras;
 pub mod fs;
 pub mod guardia;
+pub mod hunk;
 pub mod lvo;
 pub mod memfs;
 pub mod memoria;
@@ -81,13 +82,15 @@ pub trait Caja: Memoria {
         0
     }
     /// `LoadSeg`: carga el ejecutable `datos` (el fichero entero) en la memoria de la caja y devuelve su lista de
-    /// segmentos (un BPTR), o un código de error de dos (`ERROR_BAD_HUNK`, `ERROR_NO_FREE_STORE`...). El formato
-    /// hunk es del cargador (rama `caja-amiga-hunk`); sin él, `ERROR_NOT_IMPLEMENTED`.
-    fn cargar_segmentos(&mut self, _datos: &[u8]) -> Result<u32, u32> {
-        Err(ERROR_NOT_IMPLEMENTED)
+    /// segmentos (un BPTR), o un código de error de dos (`ERROR_BAD_HUNK`, `ERROR_NO_FREE_STORE`...). De serie, con
+    /// el cargador de `hunk.rs` sobre `reservar`; quien tenga un JIT tiene que olvidar lo traducido después.
+    fn cargar_segmentos(&mut self, datos: &[u8]) -> Result<u32, u32> {
+        hunk::cargar(self, datos)
     }
     /// `UnLoadSeg`: suelta una lista de segmentos de `cargar_segmentos`.
-    fn descargar_segmentos(&mut self, _segmentos: u32) {}
+    fn descargar_segmentos(&mut self, segmentos: u32) {
+        hunk::descargar(self, segmentos)
+    }
     /// `CheckSignal`: las señales de `mascara` que han llegado a la tarea en marcha, que quedan borradas (como
     /// `SetSignal(0, mascara)` de exec).
     fn senales(&mut self, _mascara: u32) -> u32 {

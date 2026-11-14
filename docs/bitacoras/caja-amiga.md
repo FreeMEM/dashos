@@ -1481,3 +1481,232 @@ con GadTools esperando 90 s, la sesión se bloqueaba antes.
   allá de donde se ve (ahora la letra va seguida).
 - La excepción "original" en una caja "como DashOS": la pantalla dice `WBorTop` 0 y la ventana lleva `BorderTop` 11.
 - El oráculo visual de ReAction en FS-UAE (la captura sale de la pantalla de la consola).
+
+## 2026-11-13: bibliotecas de disco (ramlib) y el AmigaOS del usuario
+
+Rama `caja-amiga-libs`, desde `fusion-fondo` (d28660d). La meta: ver Tachyon 68k (MUI 5) dentro de la caja. Plan del
+coordinador, por pasos: ramlib, el AmigaOS del usuario como capa, apuntar lo que falta, Tachyon. Diseño: S4, apartado 6
+y recomendación 6 (cargar del AmigaOS del usuario lo que aún no es nativo, nunca lo que toca el chipset).
+
+### Paso 1: ramlib
+
+- **exec** (`caja/exec/src/ramlib.rs`): un `OpenLibrary` u `OpenDevice` de algo que no está en memoria pide a la caja
+  que lo cargue (`poner_ramlib`: un número nativo para cargar y otro para soltar; `Accion::Llamar` con su
+  continuación). Con la lista de segmentos, exec busca el `RomTag` (un `RTC_MATCHWORD` cuyo `rt_MatchTag` se apunta a
+  sí mismo, entero dentro de su segmento), lo inicia (`InitResident`: con `RTF_AUTOINIT`, `MakeLibrary` con su tabla y
+  después `AddLibrary` o `AddDevice`; sin él, su `rt_Init` con D0 = 0, A0 = la lista y A6 = SysBase) y abre la
+  biblioteca. Al cerrarla el último, su `Expunge`; si devuelve la lista de segmentos, se suelta. `InitResident` y
+  `FindResident` (0: no hay ROM) también para los programas. Lo nativo siempre gana: solo se pide lo que no está en la
+  lista, y un `RomTag` que se llame como una que ya está (una nativa) no se inicia. Una que se abre a sí misma desde su
+  `Init` no se vuelve a cargar. Una que miente con su versión (más baja que la pedida) se echa en seguida. Los
+  dispositivos de disco llevan su cuenta de aperturas en su `Open`, como en el Amiga (los nativos, exec).
+- **dos** (`caja/dos/src/hunk.rs`): el cargador hunk en Rust, para `LoadSeg` (antes daba `ERROR_NOT_IMPLEMENTED`: el
+  cargador estaba en C, solo para los programas de prueba de la caja) y para ramlib: CODE, DATA, BSS, RELOC32,
+  RELOC32SHORT, DREL32, SYMBOL, DEBUG, NAME, END; todo comprobado; si falla, suelta lo que reservó.
+  `Dos::cargar_de_disco`: lee un fichero (con las asignaciones de la tarea) y lo carga sin apuntarlo como `LoadSeg`
+  suyo.
+- **La caja** (`caja/pegamento/src/ramlib.rs`): busca en `LIBS:`, `Classes:`, `PROGDIR:Libs/` y `PROGDIR:Classes/`
+  (los dispositivos en `DEVS:` y `PROGDIR:Devs/`; un nombre con `:`, tal cual), carga en memoria del sistema (la
+  biblioteca sigue cuando acaba la tarea que la abrió, hasta que se echa) y el JIT olvida lo traducido. Nunca de
+  disco: exec, graphics, layers, intuition y dos. `LIBS:`, `DEVS:`, `Classes:` y `FONTS:` se asignan al arrancar a
+  los cajones de `Caja:` que haya (en el disco de pruebas, `Caja:Libs`).
+- **Prueba de la caja** (`caja/pruebas68k/ramlib.c`, con `prueba_lib.c`: una biblioteca de disco hecha a mano, con su
+  `RomTag`, `RTF_AUTOINIT`, Open/Close/Expunge que se echa sola y `Suma`): abre `prueba.library` de `Caja:Libs`, la
+  usa (`Suma(40, 2)` = 42), la abre otra vez (la misma), la cierra (se echa) y la abre por su camino entero. Lo malo:
+  versión más nueva de la que hay, RomTag falso (`falsa.library`), versión que miente (`miente.library`), un fichero
+  que no es ejecutable (`rota.library`), una que no existe, `LIBS://../S/Startup-Sequence`, `layers.library` (nunca de
+  disco), graphics (la nativa) y, al final, nada suyo en memoria: 0 fallos, 0 avisos, 0 bloques sin soltar y los
+  bloques del sistema como antes.
+- **Pruebas de cargo**: `exec/tests/ramlib.rs` (con una "caja" que hace lo que haría la de verdad: cargar, abrir,
+  cerrar y echar; lo nativo gana; RomTag falso, sin RomTag, tabla de saltos fuera de la memoria, versión que miente,
+  cerrar dos veces, nombres de 300 letras, vacíos y con caminos raros, la que se abre a sí misma, un dispositivo) y
+  `dos/tests/hunk.rs` (ejecutables y bibliotecas de verdad de `caja/pruebas68k`, el RomTag reubicado; cortados por
+  todas partes, 6000 con bytes cambiados al azar, a mano: tamaños enormes, reubicaciones fuera, overlays, sin memoria a
+  mitad; nada sin soltar).
+- `make prueba` (BIEN cargador hunk, BIEN esperado.txt) y `make arranque-virt` (las seis BIEN, con la línea nueva de
+  ramlib.exe): bien.
+
+### Paso 2: el AmigaOS del usuario como capa
+
+- **Dónde**: `SYS:C/Prefs/amigaos` (una línea: una carpeta del disco de DashOS, sin `:` ni `..`). La caja la asigna
+  como `AmigaOS:` (de solo leer: `SYS:` lo es) y pone sus `Libs`, `Classes`, `Devs`, `Fonts`, `Locale`, `MUI` y
+  `MUI/Libs` detrás de `LIBS:`, `Classes:`, `DEVS:`... (`AssignAdd`): lo nativo y lo de `Caja:` va antes. DashOS no
+  trae ningún AmigaOS ni ROM. Para probar, `tools/disco_archivos.py` copia uno al disco de pruebas con
+  `DASHOS_AMIGAOS=carpeta` (el del usuario, de su equipo: nunca va a git). Un HDF todavía no: hace falta leer su
+  sistema de archivos (FFS o PFS3), pendiente.
+- **Nunca de disco** (`pegamento/src/ramlib.rs`, `RECHAZADAS`): exec, graphics, layers, intuition y dos (las de la caja
+  son nativas, las de un AmigaOS hablan con el chipset), lowlevel, las 680x0 y mmu, y los dispositivos del hardware
+  (audio, trackdisk, gameport, keyboard, input, serial, parallel, scsi, carddisk, printer). Fallan limpias: 0 o
+  `IOERR_OPENFAIL`.
+- **Aún no** (`SIN_SOPORTE`): icon, workbench y asl del AmigaOS 3.2 llaman en su `Init` a `execPrivate17`, una
+  función privada de exec sin documentar. Una privada de exec ahora acaba el programa que la llama (antes devolvía 0 y
+  la biblioteca saltaba a la página cero: la caja se colgaba); estas tres ni se cargan, para que quien las abre
+  siga sin ellas. Hace falta que sean nativas.
+- **Arreglo de exec**: `InitResident` con `RTF_AUTOINIT` pone el nodo desde el `RomTag` (tipo, prioridad, nombre,
+  versión, id) antes de su tabla de `InitStruct`. Muchas bibliotecas de verdad no traen tabla y su `Init` solo pone la
+  revisión: sin nombre, ningún `OpenLibrary` las encontraba y ramlib las cargaba otra vez, 16 veces. Y tras cargarla,
+  exec la abre por su base, no por su nombre.
+- **Prueba** (`caja/pruebas68k/capa.c`, paso 8b3 de la caja): abre 16 bibliotecas del AmigaOS del usuario; lowlevel y
+  audio.device tienen que fallar. Sin AmigaOS, lo dice y acaba (así va en `make arranque-virt`). Con el 3.2 del
+  usuario (`sys32mui`): abren iffparse 45.3, locale 47.26, mathieeedoubbas 47.2, mathieeedoubtrans 47.2 y diskfont
+  47.1; no abren mathieeesingtrans y mathtrans (piden mathieeesingbas y mathffp, que en el Amiga están en la ROM),
+  commodities (pide keymap, en la ROM), datatypes (pide layers), icon, workbench y asl (privadas de exec),
+  muimaster (pide keymap) y las dos clases. Ninguna cuelga ni deja nada sin soltar. (Con el paso 3 abren también
+  commodities 45.2 y rexxsyslib 47.2.)
+- **Lo que falta del paso**: el HDF; un aviso `CierreDeMas` al cerrar locale y diskfont recién cargadas (abren y se
+  usan; su cuenta de aperturas llega a 0 antes de tiempo, sin averiguar aún por qué); con el AmigaOS puesto, el
+  runtime de Dash abre su `clipboard.device`, que pide `GetDeviceProc` (no hecho en dos): un aviso en los dos
+  programas de ReAction.
+
+### Paso 3: apuntar lo que falta y rellenar lo más pedido
+
+- **El registro** (`caja/pegamento/src/faltan.rs`): cada función nativa que se llama y no está hecha (el aviso
+  `NoImplementada` de exec, dos, graphics, intuition, gadtools, layers, keymap, utility o timer), y cada biblioteca o
+  dispositivo que no hay (ni nativo ni en disco, o rechazado), con su LVO y quién llama: la biblioteca de disco cuyo
+  código tiene la dirección de vuelta (`mathieeesingtrans.library (+$974)`) o la tarea. La primera vez de cada una
+  sale en la consola (`falta: ...`); al acabar cada tarea, un resumen con las más pedidas (`faltan N funciones
+  distintas...`).
+- **Programas del usuario** (paso 8b4 de la caja): `tools/disco_archivos.py` con `DASHOS_PROGRAMAS_AMIGA=a:b:c`
+  los copia al disco de pruebas y los apunta en `SYS:C/Prefs/programas-amiga`; la caja los ejecuta y a los 6 s cierra
+  sus ventanas (si no acaban en 10 s más, el vigilante los corta). No cuentan como fallo.
+- **Lo más pedido**, con el 3.2 del usuario, las demos de MUI 5 (Class1, Balancing, Aboutbox) y `capa.exe`:
+  - keymap.library nativa (la pedían muimaster y commodities; en el Amiga está en la ROM): `MapRawKey` (Latin-1 con
+    la distribución estadounidense de `teclado.rs`, y las secuencias CSI de cursores, F1-F10 y Help), `MapANSI`,
+    `AskKeyMapDefault` (una `struct KeyMap` de verdad, con sus tablas) y `SetKeyMapDefault`.
+  - layers.library nativa (la pedía datatypes; muimaster la abre): cerrojos que no esperan (una tarea 68k a la vez),
+    `InstallClipRegion` (guarda la región; graphics aún no recorta con ella), `NewLayerInfo`/`DisposeLayerInfo`,
+    `BeginUpdate`, `LayerOccluded`. Crear y mover capas sueltas y los ganchos, `NoImplementada`.
+  - exec: `OpenResource`, `AddResource`, `RemResource` (mathieeedoubtrans; la caja no tiene recursos propios: 0),
+    `Alert` (commodities: un aviso; con `AT_DeadEnd`, acaba la tarea) y `RawDoFmt` (rexxsyslib), con el formato del
+    autodoc; con `PutChProc` a 0 o el `stuffChar` del autodoc se escribe directo, con otra función de 68k se la
+    llama por carácter.
+  - dos: `GetDeviceProc` (lo pide `clipboard.device` del 3.2, que abre el runtime de Dash): 0 con
+    `ERROR_DEVICE_NOT_MOUNTED` (la caja no tiene procesos manejadores); `FreeDeviceProc`, nada.
+  - Pruebas de cargo: `intuition/tests/capas.rs` (lo que hacen, lo que no, y punteros nulos, búferes cortos o
+    fuera de la memoria), `exec/tests/formato.rs` (los tres caminos de `RawDoFmt`, destinos y formatos malos, el corte
+    en 64 KB), `exec/tests/ramlib.rs` (recursos y `Alert`), `dos/tests/cerrojos.rs` (`GetDeviceProc`).
+- **El oráculo** (FS-UAE con el 3.2 del usuario y su MUI, sin cerrojo): Class1 abre su ventana y dibuja sus líneas.
+- **Lo que para a MUI** (y a Tachyon, que es MUI 5): con keymap y layers, muimaster se carga y empieza su `Init`, y
+  la caja entera cae: el traductor de Emu68 lee un puntero nulo (`EMIT_LoadFromEffectiveAddress`, FAR 0) al traducir
+  un bloque de muimaster que hace un `longjmp`: `movea.l $90,a1`, `btst #4,297(a1)`, `fmovem.x 64(a0),fp0-fp7`,
+  `movem.l 4(a0),d1-d7`, `movem.l 36(a0),a1-a7`, `move.l (a0),(a7)`, `movea.l 32(a0),a0`, `rts` (localizado con una
+  traza temporal del JIT, ya quitada). En el banco del JIT (`jit-host`, con qemu-aarch64_be) ese mismo bloque se
+  traduce y va bien (con `$90` cambiada por una dirección del banco, cuya memoria empieza en 1 MB; FMOVEM.X d16(An)
+  carga FP0 bien): lo que cae depende de algo de la caja (¿la página cero, `$90`?, ¿otra configuración del JIT?).
+  Lo siguiente: una traza por instrucción del JIT en la caja, en ese bloque, y el arreglo en el parche de Emu68.
+  Hasta entonces, un programa que abra muimaster tumba la caja (no el sistema: DashOS sigue).
+- **Lo que sigue faltando** (lo dice el registro): mathieeesingbas y mathffp (en la ROM del Amiga; las piden
+  mathieeesingtrans y mathtrans), `FindNamedObject` y `AllocNamedObjectA` de utility (datatypes; el registro aún no
+  sabe los LVO de utility: sale 0), `CreateNewProc` de dos (texteditor.gadget, que abre igual), icon, workbench y
+  asl nativas (las de 3.2 usan una privada de exec), los ganchos de layers (`DoHookClipRects`, que MUI usa para el
+  fondo) y que graphics recorte con la región de la capa. Y el aviso `CierreDeMas` de locale, diskfont y commodities
+  recién cargadas.
+
+### Paso 4: Tachyon 68k
+
+- **No arranca todavía**, por dos cosas, las dos fuera de lo que faltaba de las bibliotecas:
+  - **La memoria del 68k de la caja es de 4 MB** (`M68K_RAM_LEN`, de 1 a 5 MB). Tachyon (`build/dashweb`, 68020)
+    ocupa 5 MB solo de código y gasta 29-39 MB al correr (su README): la caja dice "no carga: sin memoria para los
+    hunks". Agrandarla es una decisión del sistema: `memoria_crear` reserva entera la memoria del objeto y la cobra
+    al cupo del proceso; 64 MB por caja pesan en la máquina de pruebas. Propuesta: que la caja la pida según el
+    programa (o crezca a trozos), o un tope mayor en un ajuste.
+  - **MUI 5 tumba la caja** (paso 3): hasta arreglar el traductor, muimaster no se carga (`TUMBAN_EL_JIT` en
+    `pegamento/src/ramlib.rs`): quien la abre recibe 0 y acaba solo (las demos de MUI acaban con 20, "no se pudo
+    abrir muimaster"), en vez de tumbar la caja. Tachyon es MUI 5, así que tampoco pintaría su ventana.
+  - bsdsocket no hace falta para lo anterior: Tachyon arranca sin red; no se llegó a ver.
+- **De paso, un arreglo de fondo**: lo que reserva el código de una biblioteca de disco (su `Init`, sus funciones) era
+  de la tarea que la llamaba, y la caja lo soltaba al acabar ella, con la biblioteca aún en memoria. Ahora exec
+  reserva para el sistema mientras corre código de una biblioteca cargada por ramlib (la caja lo mira en cada llamada
+  nativa por la dirección de vuelta: `memoria_del_sistema`; prueba en `exec/tests/ramlib.rs`). Con eso, `capa.exe`
+  vuelve a acabar con 0 bloques sin soltar. Con todo: 8 de las 16 bibliotecas de su prueba abren del 3.2 del usuario
+  (iffparse, locale, mathieeedoubbas, mathieeedoubtrans, diskfont, commodities, rexxsyslib y texteditor.gadget).
+
+## 2026-11-13 (noche): hacia Tachyon. Memoria según el programa y MUI 5
+
+Rama `caja-amiga-libs`, con `revision` (404ea53) unida: `archivos/dashfs`, la tableta USB y `make virt-uso`.
+
+### La memoria del 68k crece según el programa
+
+Decisión del usuario: la caja pide la memoria según lo que necesite el programa, con un tope en un ajuste (de serie,
+256 MB).
+
+- **Cómo crece** (`caja_ampliar_ram`, `caja/caja.c`): el 68k ve sus direcciones como las del proceso, desde 1 MB.
+  Empieza con 4 MB. Cuando un `AllocMem` (o `AllocVec`, `CreatePool`, los hunks de un programa) no cabe, exec pide más
+  (`Memoria::ampliar`): la caja proyecta objetos de memoria nuevos justo detrás de lo que hay. `memoria_crear`
+  reserva entera la memoria de un objeto y la cobra al cupo, así que se crece a trozos: lo que haga falta y al menos
+  una cuarta parte de lo que ya hay, en objetos de 16 MB como mucho (el máximo del kernel). Exec sube el `MH_UPPER` de
+  la región de arriba y mete lo nuevo en su lista de libres, pegado al trozo libre de su final: cabe un bloque más
+  grande que cada trozo (un hunk de 5 MB). La chip no crece. Lo crecido no se devuelve: exec lo vuelve a repartir.
+- **El tope**: `memoria amiga <MB>` en `Prefs/cajas` (de 8 a 2048; sin línea, 256), una fila nueva del centro de
+  control ("Memoria de la caja Amiga", que pasa por 64, 128, 256, 512 y 1024 MB). El compositor lo reparte como el
+  resto del ajuste; la caja lo mira cada vez que atiende al compositor. Un `AllocMem` que no cabría ni con todo lo que
+  queda no hace crecer nada (un programa que pide 2 GB no se lleva la caja hasta el tope).
+- **El cupo** (propuesta del coordinador): el de la caja Amiga en `inicio` es 32 MB más una cuarta parte de lo que
+  queda libre para grupos al lanzarla, hasta 256 MB (`margen_caja_amiga`: la mayor que cabe se busca a mitades con
+  grupos de prueba que se matan en seguida). Un grupo saca su presupuesto del de quien lo crea al nacer: con todo el
+  margen que cupiera, los servicios de después (`espia`) ya no se podían lanzar en `virt` de 2 GB. Un tope mayor en el
+  ajuste no pasa del cupo: `memoria_crear` da `E_MEMORIA` y la caja se queda donde llegó.
+- `AvailMem` cuenta, en lo que no es chip, lo que queda por crecer: un programa que mira antes de pedir no se asusta.
+- **Pruebas**: `exec/tests/crecer.rs` (crece lo justo, la chip no, lo soltado se reutiliza, `TypeOfMem` de lo nuevo;
+  hostil: pedir 256 KB sin fin para en el tope, tamaños absurdos dan 0) y `glotona.exe` en la caja (paso 8b3b): con un
+  tope de prueba de 48 MB pide 1 MB tras otro hasta que no le dan más, sin pasar del tope ni del cupo y sin colgar
+  nada; soltado todo, la mitad de lo que tuvo, de una vez, cabe sin crecer. Con 32 + 32 MB de cupo llegaba a 33 MB
+  (lo paraba el cupo, no el tope).
+
+### MUI 5: no era el JIT
+
+- **La traza por instrucción** (temporal, ya quitada: cada instrucción que traduce el JIT, con su dirección y sus
+  palabras, desde que ramlib carga muimaster) enseñó que el bloque del `longjmp` se traduce entero dos veces y que la
+  caída llega después. La dirección de la caída (`0x110000c154`) no es del traductor sino del **código traducido**
+  (la caché del JIT); FAR 0: el 68k escribe en la dirección 0. Ese bloque es el `exit()` de la biblioteca de C de
+  muimaster: hace `longjmp` a un `jmp_buf` que en una biblioteca nadie ha llenado (ceros), carga A7 = 0 y escribe ahí.
+  En la caja, escribir en la página 0 acaba con la caja entera (S28, como la prueba de malware de la dirección 4).
+  En el banco del JIT el mismo bloque, llamado dos veces como en muimaster, va bien. **No hace falta parche de Emu68.**
+- **Por qué salía**: lo dice la propia muimaster por `Output()`, "mathieeesingbas.library could not be opened": la
+  coma flotante simple IEEE, que en el Amiga está en la ROM. Ahora es nativa (`pegamento/src/mates.rs`, del autodoc:
+  las 12 funciones; `IEEESPCmp` e `IEEESPTst` dejan los códigos de condición con un `TST.L D0` al volver, con
+  `crear_biblioteca_nativa_con_cc` de exec). Con ella muimaster 21.227 abre.
+- **Las clases de MUI**: MUI 5 no usa `MakeClass` ni la `rootclass` de intuition: arma sus `struct IClass` a mano,
+  con su propia clase raíz (`cl_Super` = 0, despachador en 68k) que hace los objetos ella sola (la clase en la palabra
+  de antes del objeto, `OCLASS`). Intuition no comprueba lo que le dan; la caja comprobaba que la clase o el objeto
+  fueran suyos ("MUI: cannot create an object"). Ahora los **adopta** (`adoptar_clase`, `clase_de_objeto` en
+  `intuition/src/boopsi/mod.rs`): una clase que se puede leer entera, con un `h_Entry` par y legible, y cuyas
+  superclases (como mucho 32, sin dar vueltas) llegan a una conocida o a `cl_Super` = 0, pasa a ser de usuario y del
+  sistema; un objeto cuya palabra de antes es una clase así se despacha por ella (`SetAttrsA`, `GetAttr`, `DoMethodA`,
+  `DisposeObject`). Basura, círculos o despachadores fuera de la memoria siguen dando 0 con aviso
+  (`tests/boopsi.rs`: `clase_hecha_a_mano`, `raiz_propia`). Además, lo que crea código de una biblioteca de disco
+  (clases con `MakeClass`, objetos) es del sistema, como su memoria (`Exec::dueno_de_lo_nuevo`).
+- **Resultado**: la demo Class1 de MUI abre su ventana ("A Simple Custom Class", 144 x 133) y acaba con 0 al cerrarla;
+  Tachyon (`build/dashweb`, 68020, MUI 5) carga sus 5 MB de hunks (la memoria crece), arranca sin red y abre su
+  ventana ("Tachyon", 800 x 171). El oráculo FS-UAE 3.2 da la misma ventana de Class1 con sus líneas.
+- **Lo que pidieron y ya está**: graphics `TextExtent` (Tachyon, por cada texto) y `SetRPAttrsA` (fuente, plumas y
+  modo), intuition `LockIBase`/`UnlockIBase` (con una tarea 68k a la vez, nada que esperar) y `ReportMouse`.
+- **Lo que piden y falta** (el registro): `CreateNewProc` de dos (muimaster; la caja aún no tiene varias tareas 68k a
+  la vez), `GetDisplayInfoData` de graphics, `WeighTAMatch` (diskfont), `FindNamedObject` y `AllocNamedObjectA` de
+  utility (datatypes), cybergraphics, icon, workbench, screennotify e input.device (las abre muimaster y sigue sin
+  ellas), y `CierreDeMas` al cerrar bibliotecas de disco recién cargadas (sin averiguar).
+- El registro de lo que falta dice ahora la primera vez de cada cosa **en cada tarea** (antes, solo la primera de todas:
+  lo que pedía muimaster ya lo había pedido otro antes y no salía) y los `OpenLibrary` que dan 0 por versión.
+- **Capturas** (`capturas-agente/`, fuera de git; llevan la demo de MUI del SDK del usuario: no publicar), en Full HD
+  con `CAJA_INTERACTIVA=1 DASHOS_PANTALLA=1920x1080` y un vigía que pide `screendump` al monitor de QEMU cuando la
+  caja dice que la ventana está en pantalla:
+  - `caja-tachyon-fhd.png`: la ventana de Tachyon a lo ancho, con su barra de estado ("Ready: 4649 bytes in 641 ms":
+    carga su página de inicio, sin red), el marco de la página y la barra de desplazamiento. Faltan la barra de
+    botones y el texto de la página.
+  - `caja-mui-class1-fhd.png`: la ventana de Class1 abierta, pero vacía: el oráculo FS-UAE dibuja ahí sus líneas.
+    Lo que MUI pinta dentro (su fondo con `DoHookClipRects`, su recorte con `InstallClipRegion`, lo que pide de
+    `GetDisplayInfoData`) es lo siguiente que mirar.
+- **Pruebas de la tanda**: `make prueba` BIEN. `make arranque-virt`: lo de la caja, bien (glotona, en la máquina de 2 GB
+  sin margen de cupo, llega a 6 MB y para); fallan, cada vez una distinta, dos líneas del guion del explorador
+  ("suelta en la ventana 1: mueve a Home/Privado", "no abre Sistema/DeCarla: -12"), que esta rama no toca: sin
+  averiguar si es el explorador recién unido de `revision` o la máquina cargada (había otras QEMU a la vez).
+
+### Arreglo: `make arranque-virt` sobre `revision` unida
+
+- "MAL: el disco tras la prueba" era `C/Prefs/cajas` de 48 bytes en vez de 30: el guion pulsa ahora también la fila
+  "Memoria de la caja Amiga" (`memoria amiga 512`). El árbol esperado de `tools/disco_archivos.py` lo dice ya.
+  "[archivos] queda poco sitio: se suelta el disco sujeto" sale también en `revision` sola (y en prueba1 y prueba3):
+  es la prueba A15 de `ficheros`, que sujeta el disco sin soltarlo hasta que `archivos` lo suelta ("A15 sujetar sin
+  soltar: bien"). "no abre Sistema/DeCarla: -12" es una línea esperada (lo ajeno del explorador).
+- Con el margen nuevo, en `virt` de 2 GB la caja tiene 40 MB de cupo (8 para su 68k) y `espia` se lanza; glotona llega
+  a 15 MB. `make arranque-virt` dos vueltas seguidas: todo BIEN.
