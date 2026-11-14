@@ -75,3 +75,44 @@ debajo del 5 %), la deja en el 7 % (sigue siendo memoria baja), espera 10 s y lo
 `tools/caja_linux_invitado.py`. `preparar` la vuelve a compilar sola (cambia el fragmento). Para no pisar la de las
 otras sesiones, la de esta rama se compiló aparte (`~/.cache/dashos-caja-linux/Image-caja-globo`) y se pasó con
 `LINUX=`.
+
+### Lo medido
+
+En `make arranque-virt-linux` (QEMU virt de 3 GB, invitado de 256 MB):
+
+- Caja Linux: globo de 64 MB; el kernel recuperó 64 MB; `sesiones` ve su grupo pasar de 267.366 KB a 201.856 KB. Al
+  soltar `presion`, el globo vuelve a 0 y se reponen las páginas.
+- Caja Amiga: con el manejador de `memh.exe` (suelta 2 MB) y lo crecido por glotona, la memoria del 68k baja de 48 a
+  4 MB: devuelve 45.056 KB; su grupo pasa de 72.356 KB a 27.326 KB.
+
+En `make arranque-virt` (2 GB, sin hipervisor): lo de la Amiga, igual (72.386 KB a 27.356 KB).
+
+### Comprobado
+
+- `make prueba` bien; `make arranque-virt-linux` bien (con `LINUX=~/.cache/dashos-caja-linux/Image-caja-globo`);
+  `make arranque-virt` bien (ver abajo).
+- `cargo test` de `caja-linux/vmm` y de `caja/exec`.
+
+### Fallos de por el camino
+
+- `presion` tomaba por avisos de las cajas los mensajes de `inicio` (sin marca: quién es cada cliente del canal) y
+  provocaba el aviso al arrancar, dos veces. Ahora solo cuenta "caja-amiga" o "caja-linux" con marca.
+- Lo que escribe un programa 68k sale en Latin-1: los acentos de `memh.c` salían mal y la línea esperada no casaba.
+- El kernel solo avisa al cambiar de nivel: con lo que sueltan las cajas, lo libre pasa del 10 % mientras `presion`
+  aún llena, y al soltar `presion` ya no llega otro aviso. Por eso la caja Linux mira lo libre cada segundo con el
+  globo lleno.
+
+### Pendiente
+
+- Cerrar con aviso al que se pase (S3), si ni así basta.
+- Los manejadores de la Amiga solo se llaman con el aviso de DashOS, no cuando un `AllocMem` no cabe (como en un Amiga):
+  aquí la memoria crece sola hasta el tope del grupo. Llamarlos también al llegar al tope queda por hacer.
+- Un programa 68k que use memoria ya liberada en lo alto de la RAM crecida, tras devolverla, tumba la caja (antes la
+  usaba sin que se notara).
+- Con el puente de Wayland (vistas de la RAM del invitado), el kernel no suelta las páginas de esos trozos: hay que
+  soltar las vistas o usar el globo solo en los trozos sin vistas. Sin probar con Arch ni con wayland.
+- Sin estadísticas del invitado (cola de estadísticas): el globo pide siempre una cuarta parte de la RAM, sin saber
+  cuánta tiene libre (con DEFLATE_ON_OOM, si le falta, la saca él).
+- `Image-caja` de la caché de serie sin rehacer: hay que pasar `tools/caja_linux_invitado.py preparar` (la rehace al ver
+  el fragmento nuevo). Sin el globo en el kernel del invitado, la prueba de `-linux` falla en las líneas del globo.
+- Sin probar en una Pi.
