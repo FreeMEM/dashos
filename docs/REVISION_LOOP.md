@@ -1975,3 +1975,6 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   enseña su página de inicio sin iconos ni logo. Tanda completa sobre 8e26184: todo rc=0 (Firefox de wayland bien).
   Pendiente, por orden: `CreateNewProc` (varias tareas 68k a la vez; lo piden muimaster y datatypes: sin él no hay
   imágenes en Tachyon), y cybergraphics, picasso96api, icon, workbench, screennotify, input.device.
+- `presion` escucha siempre: antes acababa a los 15 min y, como lee un canal, `inicio` lo vigilaba como servicio y lo
+  relanzaba tres veces como caído (ruido en wayland). make prueba y arranque-virt bien; presion sigue provocando el
+  aviso (la caja Amiga devuelve memoria). Que ya no se relanza solo se ve en las pruebas largas (wayland): sin mirar aún.

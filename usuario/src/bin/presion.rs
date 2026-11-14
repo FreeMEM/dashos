@@ -20,8 +20,6 @@ const GRANDE: usize = 16 << 20;
 const PEQUENO: usize = 1 << 20;
 /// Lo que espera con la memoria baja, para que las cajas suelten (el globo de Linux, los manejadores de la Amiga).
 const ESPERA_US: u64 = 10_000_000;
-/// Hasta cuándo escucha a las cajas.
-const PLAZO_US: u64 = 900_000_000;
 
 fn libres() -> u64 {
     dashos::medir(15, 0).max(0) as u64
@@ -48,14 +46,11 @@ fn principal() -> u64 {
         return 1;
     }
     let mut b = [0u8; 32];
-    let hasta = dashos::ahora_us() + PLAZO_US;
     let mut llaves = [0u32; 1000];
+    // Es un servicio (lee un canal): `inicio` lo vigila y relanza al que acaba. Así que escucha siempre; antes acababa
+    // a los 15 min y `inicio` lo relanzaba tres veces como si hubiera caído.
     loop {
-        let quedan = hasta.saturating_sub(dashos::ahora_us());
-        if quedan == 0 {
-            return 0;
-        }
-        let (n, _, marca) = dashos::canal_leer_plazo(CANAL, &mut b, &mut [], quedan);
+        let (n, _, marca) = dashos::canal_leer_marca(CANAL, &mut b, &mut []);
         if n < 0 {
             return 0;
         }
