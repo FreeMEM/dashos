@@ -125,6 +125,17 @@ El guion empieza el centro a los 135 s del arranque y llega a "Apariencia: oscur
 (hasta los ~195 s) y bloqueaba: el tramo entero no cabe. Decisión del coordinador: `guardian` espera el evento de
 cierre del centro con un tope de 300 s (solo en su guion de prueba).
 
+### Con la espera de `guardian` por evento (tope 300 s)
+
+- El tramo del centro ya se completa: de 135 s a 176 s del arranque (41 s), con "cerrado" a su hora.
+- Pero Ajustes sigue sin maximizarse. Antes del centro no hay hueco (preguntas, ventanas de la caja); durante los
+  bloqueos y el cambio de usuario (U3, U6) Super+Arriba se pierde; y después (a los 418 s, con Ajustes con el teclado:
+  la barra dice "título: Ajustes" y le llega la "a" de "DashOSa") Super+Arriba tampoco la maximiza, tres veces. No se
+  sabe por qué: hay que mirar en el compositor qué hace con Super+Arriba tras el cambio de usuario.
+- Otras dos que fallan en esa vuelta: el arrastre del explorador ("suelta en la ventana 2") y, en el monitor, el paso
+  que cierra el fondo dio con otra fila (el orden de la lista cambió entre la línea y la tecla).
+- Dos vueltas de las tres; se paró ahí (plan B del coordinador).
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
