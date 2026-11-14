@@ -124,7 +124,7 @@ avisos_paso = 0
 reintento_avisos = 0
 monitor_paso = 0
 reintento_monitor = 0
-centro_avisado = 0
+centro_refoco = 0
 pregunta_contestada = (0, "", 0)
 # Con GUION_ERRORES: cada 3 s, en qué línea del guion está el bucle (para ver qué rama espera con "continue").
 if os.environ.get("GUION_TRAZA"):
@@ -490,13 +490,21 @@ while time.time() - inicio < total:
         # su ventana se lleve el teclado (S8: 2 s sin teclas). Dentro, flecha abajo (pide · eco) y Supr para quitarlo;
         # luego Tab (a la lista de categorías) y flecha abajo (Seguridad), y Esc para cerrar. Con CAPTURA_CENTRO=fichero.ppm,
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
-        # Trasfondo: el tramo del centro espera a que la caja Amiga acabe sus ventanas de prueba (la caja va por su
-        # cuenta y se lleva el teclado con cada una; su fin lo dice `inicio`). Como mucho 150 s desde el aviso.
-        if centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto and not centro_avisado:
-            centro_avisado = time.time()
-        caja_hecha = "[inicio] caja-amiga acabó" in texto or (centro_avisado and time.time() - centro_avisado > 150)
-        if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto and caja_hecha:
+        if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
+        # Trasfondo: el centro no puede esperar a la caja (`guardian` deja de esperarlo y bloquea la sesión), así que, si
+        # una ventana de la caja le quitó el teclado (el título de la barra ya no es el suyo), un clic en un sitio vacío
+        # suyo (arriba a la derecha, dentro del margen) se lo devuelve antes de seguir con sus teclas.
+        if centro not in (0, 3, 4) and not selector_espera and not bloqueado_ahora and time.time() - centro_refoco > 2:
+            import re
+            titulos = re.findall(r"\[barra\] título: ([^\n]*)", texto)
+            vc = re.findall(r"\[compositor\] ventana de centro en \((\d+), (\d+)\) de (\d+)x", texto)
+            if titulos and vc and titulos[-1] != "Centro de control" and "[centro] Permisos en pantalla" in texto:
+                centro_refoco = time.time()
+                x, y, w = int(vc[-1][0]), int(vc[-1][1]), int(vc[-1][2])
+                ir_a(x + w - 12, y + 10)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                time.sleep(0.4)
         if not selector_espera and centro == 1:
             if "[centro] Permisos en pantalla" not in texto:
                 time.sleep(0.25)
