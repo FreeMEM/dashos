@@ -73,8 +73,8 @@ const SESIONES: u32 = 3;
 /// C3: el fondo de escritorio, que dice su color y pone otra imagen.
 const FONDO: u32 = 4;
 const CANAL: u32 = 5;
-const ANCHO: i32 = 720;
-const ALTO: i32 = 480;
+const ANCHO: i32 = 560;
+const ALTO: i32 = 420;
 /// Lo más que se pide de memoria para la ventana maximizada (una pantalla de 1920 × 1200).
 const MAX_ANCHO: i32 = 1920;
 const MAX_ALTO: i32 = 1200;
@@ -869,7 +869,8 @@ fn ordenar(v: &mut VistaMonitor) {
 
 /// Las filas del monitor: la cabecera (Intro cambia el orden) y una por proceso, en columnas separadas por tabuladores.
 fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
-    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria\tUsuario", ORDENES[v.orden])];
+    // Cabe en la ventana de siempre (560 de ancho): el usuario y el grupo van con el nombre; CPU y memoria, en columnas.
+    let mut l = alloc::vec![alloc::format!("Por {}\tCPU\tMemoria", ORDENES[v.orden])];
     if v.sin_datos {
         l.push(String::from("sesiones no contesta"));
     }
@@ -879,13 +880,15 @@ fn lineas_monitor(v: &VistaMonitor) -> Vec<String> {
             None => x.e.titulo(),
         };
         // Los del escritorio se ven, pero no se cierran desde aquí.
-        let nombre = if x.e.escritorio { alloc::format!("{} · escritorio", nombre) } else { nombre };
+        // Usuario y grupo (el grupo solo si no es el propio del usuario) y, si es del escritorio, que no se cierra.
         let quien = match x.e.clase {
-            monitor::M_SISTEMA => String::from("sistema"),
-            monitor::M_OTROS => String::from("otros"),
-            _ => alloc::format!("{} · {}", usuario(x.e.uid), if x.e.gid == x.e.uid { usuario(x.e.gid).to_lowercase() } else { alloc::format!("{}", x.e.gid) }),
+            monitor::M_SISTEMA | monitor::M_OTROS => String::new(),
+            _ => {
+                let u = if x.e.gid == x.e.uid { usuario(x.e.uid) } else { alloc::format!("{}/{}", usuario(x.e.uid), x.e.gid) };
+                if x.e.escritorio { alloc::format!(" ({}, escritorio)", u) } else { alloc::format!(" ({})", u) }
+            }
         };
-        l.push(alloc::format!("{}\t{}\t{}\t{}", nombre.replace(['|', '\t'], " "), monitor::por_ciento(x.cpu), monitor::bytes(x.e.memoria), quien));
+        l.push(alloc::format!("{}{}\t{}\t{}", nombre.replace(['|', '\t'], " "), quien, monitor::por_ciento(x.cpu), monitor::bytes(x.e.memoria)));
     }
     l
 }
@@ -992,7 +995,7 @@ fn ventana_dentro(categoria: usize) -> Option<()> {
     // Material 3: la categoría como título y su explicación como texto secundario; Quitar, tonal; Cerrar, de texto.
     let titulo = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(1))]);
     let explica = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new())), (atr::ESTILO, Valor::Int(2))]);
-    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(5)), (atr::VALOR, Valor::Int(-1))]);
+    let permisos = arbol.crear(Lista, &[(atr::OPCIONES, Valor::Texto(String::new())), (atr::FILAS, Valor::Int(4)), (atr::VALOR, Valor::Int(-1))]);
     let quitar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Quitar".into())), (atr::ESTILO, Valor::Int(1))]);
     let cerrar = arbol.crear(Boton, &[(atr::TEXTO, Valor::Texto("Cerrar".into())), (atr::ESTILO, Valor::Int(2))]);
     let marca = arbol.crear(Texto, &[(atr::TEXTO, Valor::Texto(String::new()))]);

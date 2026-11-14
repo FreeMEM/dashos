@@ -675,7 +675,7 @@ impl Lista {
 }
 
 /// El ancho de cada columna de una lista con tabuladores (trasfondo).
-const COLUMNA: i32 = 100;
+const COLUMNA: i32 = 76;
 
 impl Clase for Lista {
     fn nombre(&self) -> &'static str {
