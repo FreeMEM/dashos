@@ -85,3 +85,9 @@ cuesta el doble (55 a 110 ns).
   cola del servicio (16 mensajes) estaba llena; ahora reintenta con -8, como ya hacía con los mal formados. En esta
   rama salen siempre 14. No hay nada de los topes en ese camino (el servicio de red no tiene subgrupos ni se quedó sin
   memoria en ese registro), pero la causa no está comprobada: es lo más probable.
+- **Tras b9f8f3e:** `make prueba` bien; `make arranque-virt` bien a la segunda (la primera cayó en "suelta en la ventana 1:
+  mueve a Home/Privado" del guion del explorador, un fallo suelto ya apuntado en `caja-amiga.md`); `red-prueba` da 14
+  rechazos en las cuatro vueltas de esta rama. `make arranque-virt-wayland` bien en esta rama (el invitado con 1024 MB,
+  Firefox abre `Index of file:///usr/local/share/dashos/`). El fallo de wayland en fusion-fondo no se reproduce aquí; el
+  `salida_virt_wayland.txt` de fusion-fondo es del 2026-11-13, de antes de unir esta rama, así que no dice nada de él.
+  Los topes no tocan la caja Linux: no crea subgrupos, y su tope (invitado más 66 MB) es el mismo número que antes.
