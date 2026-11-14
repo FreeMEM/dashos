@@ -1808,3 +1808,89 @@ Decisión del usuario: la caja pide la memoria según lo que necesite el program
 - El recorte de `BeginRefresh` a la `DamageList`: hoy la `DamageList` siempre es la ventana entera, así que no cambia
   nada, pero no se recorta con ella.
 - Los ganchos de relleno de 68k de las capas sueltas (se llaman como "sin relleno") y mover u ordenar capas sueltas.
+
+## 2026-11-14 (noche): varias tareas 68k a la vez (rama `caja-amiga-procesos`, desde `revision` 124c383)
+
+Lo piden muimaster (dos `CreateNewProc`) y datatypes (uno en su `Init`): sin ellos datatypes no abre y Tachyon no
+enseña imágenes.
+
+### Diseño
+
+- **Un solo hilo de Emu68 por caja, con un planificador propio dentro.** Las tareas 68k no son hilos del kernel: se
+  cambian de una a otra dentro de una llamada nativa. Cuando la tarea A espera (`Wait`, `WaitPort`, un semáforo, un
+  `DoIO`), cede (una de más prioridad quedó lista) o acaba, la caja guarda sus registros, elige otra con
+  `elegir_siguiente` de exec y vuelve al JIT con los registros de la otra. El código que sigue a la llamada nativa es
+  siempre el `RTS` de la entrada (`$A0FF n RTS`), y ese `RTS` saca la vuelta de la pila de la tarea nueva: así sigue
+  donde se quedó. Para retomar una tarea, la caja deja 4 bytes debajo de su pila:
+  - si su llamada acabó (cedió por prioridad o por turno): nada; vuelve a su código con sus registros;
+  - si se bloqueó: la dirección de un trampolín de exec (`$A0FF 201 RTS`, `lvo::REPETIR`), que repite su llamada con
+    los registros de entonces (exec ya trata la segunda vez como la repetición de la espera);
+  - si es nueva: su PC de arranque.
+  Los registros de coma flotante (FP0-FP7 en d8-d15, FPCR y FPSR en v19) se guardan y se cambian con ella.
+- **Por qué no un hilo por tarea** (lo que proponía S4 §2): el JIT, su caché y su estado son de un hilo; con varios,
+  una tarea parada dentro de una llamada nativa tiene su vuelta en un bloque traducido que otra puede soltar. Además,
+  miles de tareas serían miles de hilos y pilas del kernel. Con el testigo no se ganaba paralelismo. Lo que se pierde:
+  que una biblioteca nativa suelte el testigo durante un trabajo largo (no lo hacía ninguna). **Decisión del usuario
+  pendiente**: cambia S4 §2; provisional, esto.
+- **Cuándo se cambia**: solo dentro de una llamada nativa hecha en modo de usuario (las de las tareas). En modo
+  supervisor (un `tc_TrapCode`, la interrupción de la caja) no se cambia: la tarea espera como hasta ahora. El turno
+  (`Quantum`, 4 cuadros = 80 ms) se mira en cada llamada nativa: si acabó y hay otra lista de su prioridad, cambia.
+  Un bucle que no llama a nada no se interrumpe (pendiente: quitar el testigo con la interrupción de la caja).
+- **Prioridades, `Forbid`/`Permit` y `Disable`/`Enable`**: las de exec, que ya estaban (`TaskReady` por prioridad,
+  turnos entre iguales). Con `Forbid` la tarea no cede ni por prioridad ni por turno; si espera dentro, el `Forbid` se
+  rompe mientras y vuelve con ella. `Disable` además aplaza la interrupción de la caja.
+- **Llamadas anidadas** (68k desde una función nativa: el `Init` de una biblioteca de disco, un despachador BOOPSI):
+  cada nivel es un `MainLoop` dentro de otro en la pila del hilo, y es de la tarea que lo abrió. Otra tarea puede
+  correr dentro (el `Init` de datatypes crea su proceso y lo espera), pero un nivel solo acaba con la vuelta de su
+  dueña cuando está arriba del todo. Si una tarea llega a la vuelta de un nivel que no es el de arriba, se aparca
+  (espera sin señales) hasta que se cierren los de encima.
+- **Fin de una tarea y limpieza**: una tarea que no es la del programa acaba volviendo de su función (al código de
+  fin de exec) o con `RemTask`: dos cierra lo suyo, intuition sus ventanas, timer sus esperas, exec suelta su
+  `tc_MemEntry` (la estructura y la pila de `CreateTask`/`CreateNewProc`) y lo demás que reservó pasa a quien la creó
+  (como en AmigaOS, no se suelta: puede haberlo dado a otra tarea; se soltará cuando acabe el programa). Cuando acaba
+  el programa, mueren con él las tareas que creó él o sus tareas; las que creó código de una biblioteca de disco son
+  del sistema y siguen (como la de datatypes).
+- **Memoria**: la estructura y la pila de cada tarea salen de `AllocMem` como todo, con el tope del ajuste y el cupo
+  del grupo; sin sitio, `CreateNewProc` da 0. El aviso de memoria baja llama a los manejadores en la siguiente llamada
+  a exec de cualquier tarea. Por tarea, la caja guarda además unos 200 bytes en su montón de Rust.
+
+### Hecho (primera tanda)
+
+- **exec** (`caja/exec/src/cambio.rs`): el contexto de cada tarea parada (`Contexto`: registros, `Modo` y coma
+  flotante) en su `InfoTarea`; `guardar_contexto`, `reanudar` (deja en la pila lo que hará el `RTS`), el trampolín
+  `$A0FF 201 RTS` (`lvo::REPETIR`) y `tomar_repeticion`; quién creó cada tarea (`creadora`, de `AddTask`: la tarea en
+  marcha, o 0 si llama código de una biblioteca de disco) y `descendientes`; `acabar_hija` (`RemTask` y lo demás a la
+  creadora); `poner_en_marcha` y `sin_tarea_en_marcha` (la tarea de un programa empieza ya, sin mirar prioridades;
+  entre programas no corre ninguna); `aparcar`/`desaparcar` (esperar sin señales). Una tarea que ya corrió y no tiene
+  contexto guardado no se puede retomar (no vuelve a empezar en su PC).
+- **La caja** (`pegamento/src/multitarea.rs`, `lib.rs`, `caja.c`): cambia de tarea en `Wait`/`WaitPort`/cualquier
+  bloqueo, al ceder por prioridad, al acabar el turno (80 ms, en cada llamada nativa), en `Delay`/`WaitTOF` (la tarea
+  duerme aparcada hasta su hora) y al acabar una tarea (vuelve de su función o `RemTask(0)`). Con una sola tarea, todo
+  sigue como antes (`esperar`, `dormir` en el sitio). Sin nadie listo, la caja espera atendiendo al compositor, a
+  timer.device y a las dormidas; los gadgets BOOPSI se atienden con la tarea de la llamada en curso, como antes.
+  Ctrl-C de fuera va a la tarea del programa. `RemTask` de otra la quita (si es la del programa, el programa acaba; si
+  tiene abierta una llamada anidada suya, no se quita y se avisa).
+- **Llamadas anidadas**: la vuelta (`sistema.s`) acaba ahora en `RTS` en vez de `jmp 0.w`: para cerrar el nivel, la
+  caja deja un 0 encima de la pila; si la que llega no es la dueña del nivel de arriba, se aparca y corre otra; al
+  cerrarse un nivel, la dueña del de debajo se desaparca. caja.c apunta la dueña de cada nivel.
+- **La coma flotante**: `caja_fp_leer`/`caja_fp_poner` (caja.c, sin marco): d8-d15 son callee-saved y nadie entre el
+  JIT y Rust los guarda (Rust es softfloat; `dashos_native_call` no los toca: mirado en el desensamblado), así que lo
+  que se pone llega al JIT.
+- **Una tarea que cae** (excepción sin `tc_TrapCode`, en modo de usuario) y no es la del programa: `trampa_defecto`
+  sigue en `caida` ($101680), que llama a la función nativa `$FF02`. La caja la quita, carga la siguiente y deja
+  encima del marco de la excepción (mirando su formato, para que la pila de supervisor quede como antes) uno de
+  formato 0 que vuelve en modo de usuario a un `RTS` suelto, con su pila en USP: `RTE`. Si cae la del programa, como
+  antes: el programa acaba por esa excepción.
+- **dos** (`caja/dos/src/procesos.rs`): las etiquetas de `CreateNewProc` (`NP_*` de `dos/dostags.h`) leídas y
+  comprobadas (tope de 4096 etiquetas con sus `TAG_MORE`, `TAG_SKIP` acotado, punteros, entradas pares y en memoria,
+  pila de 1 KB a 64 MB, nombres de 255 como mucho); `traspasar_tarea` (ficheros, cerrojos y variables locales de una
+  tarea que acaba pasan a su creadora); `abrir_nil`, `duplicar_cerrojo`, `cerrar_bptr`, `soltar_bptr`, `dar_fichero`,
+  `dar_cerrojo`.
+- **`CreateNewProc` y `CreateProc`** (`pegamento/src/procesos.rs`): la `Process` con su puerto, su pila, sus
+  argumentos (A0/D0 al empezar), NIL: de serie como entrada y salida, copia del cajón y del de su programa, `NP_Cli`;
+  todo en un `MemList` de `tc_MemEntry` (exec lo suelta al acabar). Al acabar se cierra lo que pidió
+  (`NP_CloseInput`...), se sueltan sus cerrojos y, con `NP_FreeSeglist`, su lista de segmentos. Lo que crea una
+  biblioteca de disco es del sistema (sus `FileHandle` y `FileLock` también) y sigue tras el programa.
+- **Arreglo de la prueba**: el Ctrl-C de las pruebas de Dash con plazo (`manda_ctrl_c`) llegaba al programa
+  siguiente si el suyo acababa antes (salió con test_reaction tras test_gadtools: "***Break"). Ahora solo se manda
+  si su programa sigue, y cada programa empieza sin Ctrl-C ni cierre pendientes.
