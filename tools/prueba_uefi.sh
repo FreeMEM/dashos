@@ -1791,6 +1791,11 @@ while time.time() - inicio < total:
                 "¿pide puede usar eco? El usuario dice" in texto or time.time() - amiga_desde > 30):
             import re
             amiga = 2
+            # Primero un clic en su borde izquierdo, dentro (8 a la derecha, 40 abajo): la sube, por si otra ventana que
+            # salió después (Ajustes) tapa su gadget de cerrar con su barra.
+            ir_a(int(v_amiga.group(1)) + 8, int(v_amiga.group(2)) + 40)
+            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+            time.sleep(0.4)
             ir_a(*cerrar_amiga(int(v_amiga.group(1)), int(v_amiga.group(2)),
                                re.search(r"ventana Amiga en pantalla \((\d+)x\d+(?:, a (\d+)x)?(, con la barra de DashOS)?\)", texto)))
             mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
