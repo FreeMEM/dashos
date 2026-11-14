@@ -95,6 +95,18 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   del bucle hace `continue` en cada vuelta desde que sale Ajustes. Hay que buscar cuál (probablemente una espera de la
   caja Amiga o de las preguntas) y ponerla en el orden de los tramos.
 
+### Tercera vuelta del guion (prioridad para las preguntas)
+
+- Hecho: con una pregunta de `guardian` sin contestar, el guion solo la contesta (y otra vez a los 4 s si la tecla no
+  llegó, hasta 3), sin otras teclas ni clics; trazas del bucle con `GUION_TRAZA=1 GUION_ERRORES=fichero` (la línea en
+  la que está cada 3 s) y `ESTADO_GUION`; Ajustes no se toca con el centro de control abierto.
+- Lo que encontraron las trazas: el `continue` que se comía el bloque de Ajustes era el tramo del centro de control,
+  que se quedaba esperando una categoría (sus flechas iban a Ajustes, que ya tenía el teclado). Con la última regla, el
+  centro se queda igual esperando "Acerca de": el teclado lo cogen las ventanas de la caja Amiga que van saliendo (BOOPSI,
+  GadTools, ReAction) y al final ninguna. Falta que el tramo del centro espere a que la caja termine sus ventanas, o que
+  la caja vaya antes, en el mismo estilo de un tramo tras otro.
+- Dos vueltas de las tres permitidas, ninguna entera; se paró ahí.
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
