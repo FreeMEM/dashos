@@ -725,22 +725,9 @@ DashOS en marcha con 4 núcleos.
 ~│   [espia] hacerse pasar por la caja Linux (subconexión): sin respuesta true, el compositor sigue true: bien
 ~contraseñas): 0 teclas, 0 veces el foco, 0 del ratón, 0 ofertas del portapapeles, 0 títulos ajenos; poner el portapapeles sin foco, cancelado: true: bien
 ~│   [espia] malware de laboratorio: no consiguió nada: bien
-# Trasfondo nativo: el panel del monitor en el fondo (con lo que gasta, medido cada minuto), la prueba hostil del
-# monitor de `sesiones`, la píldora de CPU y memoria de la barra con su desplegable (con un clic de verdad), y en
-# Ajustes el Monitor del sistema (cerrar lo propio sí, lo ajeno no) y el Panel del escritorio (el fondo lo relee).
+# Trasfondo nativo (lo que no necesita clics; la prueba con clics de la barra y del monitor en Ajustes queda para un
+# objetivo aparte): el panel en el fondo, lo que gasta y la prueba hostil del monitor de `sesiones`.
 ~│   [fondo] panel en pantalla: 300 × 
 ~│   [fondo] panel: gasta 
 ~│   [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: bien
 ~│   [barra] CPU y memoria: 
-~│   [barra] lanza Programas/espera: 0
-~│   [barra] procesos abiertos: 
-~│   [barra] abre el monitor del sistema: 0
-~│   [centro] abre Monitor del sistema
-~│   [centro] Monitor: cerrar espera con Supr: 0 (cerrado)
-~│   [centro] Monitor: cerrar fondo con Supr: -2 (es del escritorio: no se cierra)
-~│   [sesiones] centro no puede cerrar a fondo: es del escritorio
-~│   [centro] Monitor: Sistema (
-~│   [centro] Monitor: por memoria: 
-~│   [centro] Panel del escritorio: Gráficas: no; guardado: 0 (
-~│   [fondo] panel: ajustes nuevos: mostrar si; esquina abajo-izquierda; bloques reloj cpu memoria procesos discos red; intervalo 2; graficas no; 
-~│   [centro] Panel del escritorio: Gráficas: sí; guardado: 0 (

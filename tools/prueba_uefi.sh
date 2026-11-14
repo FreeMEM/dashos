@@ -122,25 +122,6 @@ panel = 0
 barra = 0
 avisos_paso = 0
 reintento_avisos = 0
-monitor_paso = 0
-reintento_monitor = 0
-centro_refoco = 0
-pregunta_contestada = (0, "", 0)
-# Con GUION_ERRORES: cada 3 s, en qué línea del guion está el bucle (para ver qué rama espera con "continue").
-if os.environ.get("GUION_TRAZA"):
-    import threading, traceback
-    _principal = threading.main_thread().ident
-    def _trazar():
-        while True:
-            time.sleep(3)
-            f = sys._current_frames().get(_principal)
-            if f is not None:
-                print(f"{time.time() - inicio:.0f} s: línea {f.f_lineno}", file=sys.stderr, flush=True)
-    threading.Thread(target=_trazar, daemon=True).start()
-ajustes_hecho_en = 0
-tramo_ajustes_hecho = False
-ajustes_reintentos = 0
-ajustes_visto = 0
 wb = 0
 wb_ventana = {}
 ex = 0
@@ -171,60 +152,6 @@ while time.time() - inicio < total:
             estado_dicho = time.time()
             with open(os.environ["ESTADO_GUION"], "a") as f:
                 f.write(f"{time.time() - inicio:.0f} s: paso {paso} ajustes {ajustes} menu {menu} selector {selector} preguntas {preguntas} centro {centro} bloqueo {bloqueo} cambio {cambio} panel {panel} barra {barra} avisos {avisos_paso} caja {amiga}/{dash_amiga}/{gt_amiga}/{gt_dash}/{req_dash}\n")
-        # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
-        # segundo no cuenta) y luego que no.
-        vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
-        if len(vistas) > preguntas:
-            linea = vistas[preguntas]
-            preguntas += 1
-            # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
-            if preguntas == 1 and captura_pregunta:
-                time.sleep(0.3)
-                mandar("screendump " + captura_pregunta)
-            # S28: la guardia de ficheros de la caja Amiga. A `actualiza.exe` (un programa honrado que actualiza
-            # otro), "E" (solo esta vez) la primera vez y "S" (siempre) la segunda; a los virus de laboratorio, "N". Con
-            # CAPTURA_PREGUNTA_CAJA=fichero.ppm, la primera de actualiza.
-            caja_actualiza = " quiere cambiar " in linea and "actualiza.exe" in linea
-            if caja_actualiza:
-                globals()["actualiza_vistas"] = globals().get("actualiza_vistas", 0) + 1
-                if actualiza_vistas == 1 and os.environ.get("CAPTURA_PREGUNTA_CAJA"):
-                    time.sleep(0.3)
-                    mandar("screendump " + os.environ["CAPTURA_PREGUNTA_CAJA"])
-            # Las de la caja, sin la "s" a destiempo: con el guion lento (los movimientos del ratón de otros pasos tardan),
-            # llegaba pasado el primer segundo y valía como "siempre". Y la tecla, solo si la pregunta sigue en pantalla:
-            # si no, se la llevaría la ventana de debajo (Ajustes, que espera su texto).
-            def sigue_preguntando():
-                t = open(serie, errors="replace").read()
-                return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
-            if "¿pide " in linea:
-                time.sleep(1.3)
-                mandar("sendkey shift-s")
-            elif " quiere cambiar " in linea:
-                time.sleep(1.3)
-                if sigue_preguntando():
-                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
-            else:
-                mandar("sendkey s")
-                time.sleep(1.3)
-                mandar("sendkey n")
-            pregunta_contestada = (time.time(), linea, 0)
-            time.sleep(0.5)
-            continue
-        # Trasfondo (prioridad para las preguntas): con una pregunta de `guardian` en pantalla sin contestar, ninguna otra
-        # tecla ni clic de ningún tramo (se los llevaría su ventana). Si a los 4 s sigue ahí (la tecla no llegó), se
-        # contesta otra vez, hasta 3; después se deja seguir lo demás.
-        if texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ") and pregunta_contestada[2] < 3:
-            cuando, linea_p, veces = pregunta_contestada
-            if time.time() - cuando > 4:
-                pregunta_contestada = (time.time(), linea_p, veces + 1)
-                if "¿pide " in linea_p:
-                    mandar("sendkey shift-s")
-                elif " quiere cambiar " in linea_p:
-                    mandar("sendkey " + ("e" if "actualiza.exe" in linea_p and globals().get("actualiza_vistas", 0) == 1 else "shift-s" if "actualiza.exe" in linea_p else "n"))
-                else:
-                    mandar("sendkey n")
-            time.sleep(0.25)
-            continue
         # Con REINICIO: cuando ya salió todo lo esperado (la señal), Super+A, el botón de apagado del panel y Reiniciar.
         # Con otras sesiones abiertas (Carla sigue detrás de Ana), `guardian` lo pregunta: S, pasado su segundo. Lo demás
         # del guion ya no se hace (sus clics caerían en el panel).
@@ -482,6 +409,44 @@ while time.time() - inicio < total:
             captura_u6_hecha = 2
             time.sleep(0.3)
             mandar("screendump " + captura_u6 + ".carla.ppm")
+        # U4: las preguntas de permisos de `guardian`. A `pide`, que sí; a los demás, una "s" enseguida (en el primer
+        # segundo no cuenta) y luego que no.
+        vistas = [l for l in texto.splitlines() if "[guardian] pregunta en pantalla: " in l]
+        if len(vistas) > preguntas:
+            linea = vistas[preguntas]
+            preguntas += 1
+            # Con CAPTURA_PREGUNTA=fichero.ppm, la pantalla con la primera pregunta.
+            if preguntas == 1 and captura_pregunta:
+                time.sleep(0.3)
+                mandar("screendump " + captura_pregunta)
+            # S28: la guardia de ficheros de la caja Amiga. A `actualiza.exe` (un programa honrado que actualiza
+            # otro), "E" (solo esta vez) la primera vez y "S" (siempre) la segunda; a los virus de laboratorio, "N". Con
+            # CAPTURA_PREGUNTA_CAJA=fichero.ppm, la primera de actualiza.
+            caja_actualiza = " quiere cambiar " in linea and "actualiza.exe" in linea
+            if caja_actualiza:
+                globals()["actualiza_vistas"] = globals().get("actualiza_vistas", 0) + 1
+                if actualiza_vistas == 1 and os.environ.get("CAPTURA_PREGUNTA_CAJA"):
+                    time.sleep(0.3)
+                    mandar("screendump " + os.environ["CAPTURA_PREGUNTA_CAJA"])
+            # Las de la caja, sin la "s" a destiempo: con el guion lento (los movimientos del ratón de otros pasos tardan),
+            # llegaba pasado el primer segundo y valía como "siempre". Y la tecla, solo si la pregunta sigue en pantalla:
+            # si no, se la llevaría la ventana de debajo (Ajustes, que espera su texto).
+            def sigue_preguntando():
+                t = open(serie, errors="replace").read()
+                return t.count("[guardian] pregunta en pantalla: ") > t.count("El usuario dice ")
+            if "¿pide " in linea:
+                time.sleep(1.3)
+                mandar("sendkey shift-s")
+            elif " quiere cambiar " in linea:
+                time.sleep(1.3)
+                if sigue_preguntando():
+                    mandar("sendkey " + ("n" if not caja_actualiza else "e" if actualiza_vistas == 1 else "shift-s"))
+            else:
+                mandar("sendkey s")
+                time.sleep(1.3)
+                mandar("sendkey n")
+            time.sleep(0.5)
+            continue
         # Mientras el selector espera teclas, el centro no teclea: si los dos tecleaban a la vez, las teclas se las llevaba
         # la ventana que tuviera el teclado y el selector caducaba al minuto. El selector va primero (caduca); el centro
         # sigue después.
@@ -492,19 +457,6 @@ while time.time() - inicio < total:
         # la ventana con la fila marcada, y en fichero.ppm.seg.ppm, la de Seguridad.
         if not selector_espera and centro == 0 and "[guardian] el centro de control abrirá Permisos" in texto:
             centro = 1
-        # Trasfondo: el centro no puede esperar a la caja (`guardian` deja de esperarlo y bloquea la sesión), así que, si
-        # una ventana de la caja le quitó el teclado (el título de la barra ya no es el suyo), un clic en un sitio vacío
-        # suyo (arriba a la derecha, dentro del margen) se lo devuelve antes de seguir con sus teclas.
-        if centro not in (0, 3, 4) and not selector_espera and not bloqueado_ahora and time.time() - centro_refoco > 2:
-            import re
-            titulos = re.findall(r"\[barra\] título: ([^\n]*)", texto)
-            vc = re.findall(r"\[compositor\] ventana de centro en \((\d+), (\d+)\) de (\d+)x", texto)
-            if titulos and vc and titulos[-1] != "Centro de control" and "[centro] Permisos en pantalla" in texto:
-                centro_refoco = time.time()
-                x, y, w = int(vc[-1][0]), int(vc[-1][1]), int(vc[-1][2])
-                ir_a(x + w - 12, y + 10)
-                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-                time.sleep(0.4)
         if not selector_espera and centro == 1:
             if "[centro] Permisos en pantalla" not in texto:
                 time.sleep(0.25)
@@ -725,15 +677,13 @@ while time.time() - inicio < total:
                 continue
             centro = 7
             time.sleep(0.5)
-            # Fin: "Acerca de" es la última; con las categorías de trasfondo (Monitor del sistema y Panel del
-            # escritorio) en medio, bajar de una en una tardaba tanto que `guardian` dejaba de esperar al centro.
-            mandar("sendkey shift-tab", "sendkey end", pausa=0.3)
+            mandar("sendkey shift-tab", "sendkey down", pausa=0.3)
             reintento = time.time() + 4
         if not selector_espera and centro == 7:
             if "[centro] Acerca de: " not in texto:
                 if time.time() > reintento:
                     reintento = time.time() + 4
-                    mandar("sendkey end")
+                    mandar("sendkey down")
                 time.sleep(0.25)
                 continue
             centro = 12
@@ -1058,121 +1008,6 @@ while time.time() - inicio < total:
             avisos_paso += 1
             reintento_avisos = time.time() + 10
             continue
-        # Trasfondo: el monitor del sistema, tras los avisos (con Ana delante). El lanzador lanza `espera` (un proceso de
-        # Ana que dura 90 s); un clic en la píldora de CPU y memoria de la barra abre el desplegable de los procesos, y su
-        # botón "Abrir el monitor del sistema" abre Ajustes en el Monitor. Ahí: Supr sobre `espera` lo cierra (es de Ana)
-        # y sobre la suma del sistema no (no es suyo); Intro en la cabecera cambia el orden. Luego, Panel del escritorio:
-        # Intro en "Gráficas" las quita y otra vez las pone (el fondo relee sus ajustes). Esc cierra Ajustes.
-        # Con CAPTURA_MONITOR=fichero: el desplegable (fichero.barra.ppm), el monitor (fichero.centro.ppm) y los ajustes
-        # del panel (fichero.ajustes.ppm).
-        # Después del explorador (sus clics y teclas se cruzarían con estos).
-        if monitor_paso == 0 and avisos_paso == 99 and ex >= 90 and "[barra] CPU y memoria: " in texto:
-            monitor_paso = 1
-            reintento_monitor = time.time() + 15
-        if 1 <= monitor_paso <= 13:
-            import re
-            def ultimo_m(t):
-                return texto.rfind(t)
-            if ultimo_m("[guardian] sesión bloqueada") > max(ultimo_m("[guardian] desbloqueado"), ultimo_m("[guardian] entra ")):
-                time.sleep(0.25)
-                reintento_monitor = time.time() + 15
-                continue
-            captura_monitor = os.environ.get("CAPTURA_MONITOR")
-            def clic_m(x, y):
-                mandar(*["mouse_move -100 -100"] * 25, pausa=0.04)
-                pasos = []
-                while x > 0 or y > 0:
-                    dx, dy = min(x, 100), min(y, 100)
-                    pasos.append(f"mouse_move {dx} {dy}")
-                    x, y = x - dx, y - dy
-                mandar(*pasos, pausa=0.05)
-                time.sleep(0.3)
-                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
-            bb = re.search(r"\[barra\] botones: lanzador en \((\d+), (\d+)\)", texto)
-            pi = re.findall(r"\[barra\] CPU y memoria: .*; en \((\d+), (\d+)\)", texto)
-            ab = re.findall(r"\[barra\] procesos abiertos: .*abrir el monitor en \((\d+), (\d+)\)", texto)
-            i_abiertos = texto.rfind("[barra] procesos abiertos")
-            capa_proc = re.findall(r"\[compositor\] capa de barra en \((\d+), (\d+)\)", texto[i_abiertos:]) if i_abiertos >= 0 else []
-            filas_mon = re.findall(r"\[centro\] Monitor del sistema: ([^\n]*)", texto)
-            filas = filas_mon[-1].split("; ") if filas_mon else []
-            def fila_mon(empieza):
-                return next((k for k, f in enumerate(filas) if f.startswith(empieza)), None)
-            espera_m = {1: True,
-                        2: texto.count("[barra] lanzador abierto") >= 4,
-                        3: '[barra] busca "espera": espera' in texto,
-                        4: "[barra] lanza Programas/espera: 0" in texto,
-                        5: "[barra] procesos abiertos" in texto and len(ab) >= 1 and len(capa_proc) >= 1,
-                        6: "[centro] Monitor del sistema: " in texto and fila_mon("espera") is not None,
-                        7: "[centro] Monitor: cerrar espera" in texto,
-                        8: "[centro] Monitor: cerrar fondo" in texto,
-                        9: "[centro] Monitor: Sistema" in texto or "[centro] Monitor: cerrar Caja" in texto,
-                        10: "[centro] Monitor: por memoria" in texto,
-                        11: "[centro] Panel del escritorio: Enseñar" in texto,
-                        12: "[centro] Panel del escritorio: Gráficas: no" in texto,
-                        13: "[centro] Panel del escritorio: Gráficas: sí" in texto}[monitor_paso]
-            if not espera_m:
-                if time.time() > reintento_monitor:
-                    monitor_paso = 99
-                time.sleep(0.25)
-                continue
-            time.sleep(0.6)
-            if monitor_paso == 1:
-                clic_m(int(bb.group(1)), int(bb.group(2)))
-            elif monitor_paso == 2:
-                mandar("sendkey e", "sendkey s", "sendkey p", "sendkey e", "sendkey r", "sendkey a", pausa=0.3)
-            elif monitor_paso == 3:
-                mandar("sendkey ret")
-            elif monitor_paso == 4:
-                time.sleep(1.0)
-                clic_m(int(pi[-1][0]), int(pi[-1][1]))
-            elif monitor_paso == 5:
-                time.sleep(0.6)
-                if captura_monitor:
-                    mandar("screendump " + captura_monitor + ".barra.ppm")
-                    time.sleep(0.5)
-                x, y = capa_proc[0]
-                clic_m(int(x) + int(ab[-1][0]), int(y) + int(ab[-1][1]))
-            elif monitor_paso == 6:
-                time.sleep(1.0)
-                if captura_monitor:
-                    mandar("screendump " + captura_monitor + ".centro.ppm")
-                    time.sleep(0.5)
-                k = fila_mon("espera")
-                mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
-            elif monitor_paso == 7:
-                # El fondo es de Ana, pero del escritorio: no se cierra (lo niega `sesiones`).
-                k = fila_mon("fondo")
-                if k is not None:
-                    mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
-            elif monitor_paso == 8:
-                k = fila_mon("Caja") or fila_mon("Sistema")
-                if k is not None:
-                    mandar("sendkey home", *["sendkey down"] * k, "sendkey delete", pausa=0.25)
-            elif monitor_paso == 9:
-                mandar("sendkey home", "sendkey ret", pausa=0.3)
-            elif monitor_paso == 10:
-                mandar("sendkey shift-tab", "sendkey down", "sendkey tab", pausa=0.4)
-            elif monitor_paso == 11:
-                time.sleep(0.5)
-                if captura_monitor:
-                    mandar("screendump " + captura_monitor + ".ajustes.ppm")
-                    time.sleep(0.5)
-                mandar("sendkey home", "sendkey down", "sendkey down", "sendkey down", "sendkey ret", pausa=0.3)
-            elif monitor_paso == 12:
-                time.sleep(2.5)
-                if captura_monitor:
-                    mandar("screendump " + captura_monitor + ".sin-graficas.ppm")
-                    time.sleep(0.5)
-                mandar("sendkey ret")
-            elif monitor_paso == 13:
-                time.sleep(2.5)
-                mandar("sendkey esc")
-                ir_a(790, 590)
-                monitor_paso = 99
-                continue
-            monitor_paso += 1
-            reintento_monitor = time.time() + 15
-            continue
         # Con una sesión bloqueada, el teclado es de la pantalla de bloqueo: lo del selector espera (si no, sus Intro
         # de reintento caían allí como contraseñas vacías).
         def ultimo(t):
@@ -1191,7 +1026,7 @@ while time.time() - inicio < total:
         # ventana con el camino escrito (Ctrl+L), moverla por su barra y arrastrar un fichero a la primera. Los sitios
         # los dicen el compositor (dónde salió cada ventana) y el explorador (dónde quedó cada cosa dentro). Con
         # CAPTURA_EXPLORADOR=prefijo: prefijo.ppm (Fondos con miniaturas), .lista, .info, .copia y .dos.
-        if ex == 0 and barra == 11 and tramo_ajustes_hecho and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto and "[explorador] listo" in texto:
+        if ex == 0 and barra == 11 and not bloqueado_ahora and "[workbench] icono de Home en (" in texto and "[compositor] capa de workbench en (" in texto and "[explorador] listo" in texto:
             ex = 1
             reintento = time.time() + 20
         if 1 <= ex < 90:
@@ -1844,11 +1679,6 @@ while time.time() - inicio < total:
                 "¿pide puede usar eco? El usuario dice" in texto or time.time() - amiga_desde > 30):
             import re
             amiga = 2
-            # Primero un clic en su borde izquierdo, dentro (8 a la derecha, 40 abajo): la sube, por si otra ventana que
-            # salió después (Ajustes) tapa su gadget de cerrar con su barra.
-            ir_a(int(v_amiga.group(1)) + 8, int(v_amiga.group(2)) + 40)
-            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-            time.sleep(0.4)
             ir_a(*cerrar_amiga(int(v_amiga.group(1)), int(v_amiga.group(2)),
                                re.search(r"ventana Amiga en pantalla \((\d+)x\d+(?:, a (\d+)x)?(, con la barra de DashOS)?\)", texto)))
             mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
@@ -1890,32 +1720,8 @@ while time.time() - inicio < total:
         # bloqueada: se llevarían el teclado, también Super+Arriba. Si sale una pregunta mientras, se repite.
         # Con el sitio que le dio el compositor ya dicho (con más programas al arrancar, como el explorador, esa línea
         # puede salir después que la de Ajustes, y el clic iba al sitio de siempre: encima de su campo).
-        # Ni con una pregunta de `guardian` sin contestar (de permisos, de la caja Amiga o de administrador): tiene el
-        # teclado y Super+Arriba no llegaría a Ajustes (pasaba con el arranque más cargado, trasfondo). Como mucho 25 s
-        # esperando a que no haya ninguna (por si una cuenta no cuadra).
-        if not ajustes_visto and "[ajustes] ventana del kit en pantalla" in texto:
-            ajustes_visto = time.time()
-        import re
-        pregunta_ahora = (texto.count("[guardian] pregunta en pantalla: ") > texto.count("El usuario dice ")
-                          or len(re.findall(r"acción de administrador \w+: se pregunta", texto)) > texto.count(": contesta como "))
-        sin_pregunta = not pregunta_ahora or (ajustes_visto and time.time() - ajustes_visto > 25)
-        # Un tramo tras otro (trasfondo): Ajustes (maximizar, devolver y su desplegable), el explorador y el monitor; cada
-        # uno empieza cuando la salida serie dice que acabó el anterior. La ventana Amiga no espera a Ajustes (se cierra
-        # sola a los 40 s, y en ese rato las ventanas de la caja tienen el paso): se sube con un clic antes de cerrarla.
-        ajustes_hecho = "[ajustes] vuelve a " in texto or ajustes_reintentos >= 3
-        desplegable_hecho = "[ajustes] el desplegable dice" in texto or menu_intentos >= 3
-        # (Si Ajustes se quedara a medias, a los 3 min el explorador sigue igual: las líneas que falten lo dirán.)
-        if (desplegable_hecho and menu != 1) or (ajustes_visto and time.time() - ajustes_visto > 180):
-            tramo_ajustes_hecho = True
-        # Ni con el centro de control abierto o a punto de abrirse: su tramo va por teclas, y el clic en Ajustes le
-        # quitaría el teclado (sus flechas irían a Ajustes y el centro se quedaría esperando).
-        centro_libre = centro == 4 or (centro == 0 and "[guardian] el centro de control abrirá" not in texto)
-        # Y tampoco en el tramo de los bloqueos y el cambio de usuario (U3, U6), que `guardian` empieza al cerrarse el
-        # centro: con la sesión yendo y viniendo, Super+Arriba se perdía.
-        centro_libre = centro_libre and (bloqueo >= 10 or "[guardian] pide al centro abrir Permisos" not in texto)
-        if not ajustes and centro_libre and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora and sin_pregunta:
+        if not ajustes and "[ajustes] ventana del kit en pantalla" in texto and "[compositor] ventana de ajustes en (" in texto and selector not in (1, 2, 4, 5, 17, 18) and libre_caja and not bloqueado_ahora:
             ajustes = True
-            ajustes_hecho_en = time.time()
             preguntas_antes = texto.count("[guardian] pregunta en pantalla: ")
             # El clic, a (296, 26) de la esquina de Ajustes (en (400, 130) con la ventana en (104, 104)): a la derecha de su
             # título, donde no hay nada que pulsar (el foco sigue en su campo; a (196, 196) está su Cancelar). Después, el
@@ -1950,31 +1756,9 @@ while time.time() - inicio < total:
         # Sin el centro de control encima (sale en (200, 200) y taparía el desplegable): antes de que se anuncie, o ya
         # cerrado. Tampoco con la ventana del selector esperando teclas: también lo taparía.
         sin_centro = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
-        # Si Super+Arriba no llegó a Ajustes la primera vez (una pregunta de `guardian` se llevó la tecla), otra vez más tarde:
-        # sin preguntas, con la ventana Amiga ya cerrada (el clic sube Ajustes y su barra la taparía) y con el desplegable
-        # ya probado (el clic cerraría su menú). Hasta 3 veces, esperando 4 s a que diga que se maximizó.
-        if (ajustes and ajustes_reintentos < 3 and "[ajustes] el compositor pide " not in texto and menu == 0
-                and time.time() - ajustes_hecho_en > 6 and sin_pregunta and centro_libre and not bloqueado_ahora
-                and not selector_espera and sin_centro and libre_caja):
-            import re
-            ajustes_reintentos += 1
-            ajustes_hecho_en = time.time()
-            v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
-            vx, vy = (int(v.group(1)), int(v.group(2))) if v else (104, 104)
-            ir_a(vx + 296, vy + 26)
-            mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
-            time.sleep(0.5)
-            mandar("sendkey meta_l-up")
-            for _ in range(16):
-                time.sleep(0.25)
-                if "[ajustes] el compositor pide " in open(serie, errors="replace").read():
-                    break
-            mandar("sendkey meta_l-down")
-            time.sleep(1)
-            ir_a(790, 590)
         # Sin esperar dentro de la vuelta (antes se esperaba hasta 10 s aquí, y con reintentos 30: el guion no atendía
         # nada más y, con el PC lento, Super+L llegaba tarde): menu 1 = clic dado, esperando el menú; 2 = elegida.
-        if ajustes and ajustes_hecho and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
+        if ajustes and menu == 0 and sin_centro and not bloqueado_ahora and not selector_espera and "[ajustes] el campo dice: DashOSa" in texto:
             import re
             v = re.search(r"\[compositor\] ventana de ajustes en \((\d+), (\d+)\)", texto)
             d = re.search(r"\[ajustes\] desplegable en \((\d+), (\d+)\)", texto)
@@ -2001,9 +1785,6 @@ while time.time() - inicio < total:
                 # No se abrió (algo lo tapaba, o el PC va lento): otra vez, hasta tres.
                 menu_intentos += 1
                 menu = 0
-            elif time.time() - menu_desde > 6:
-                # Tres veces sin abrirse: se deja (su línea faltará), sin parar lo demás del guion.
-                menu = 2
             if menu == 1:
                 # Con el menú abierto o por abrirse, nada de lo de siempre: un clic fuera lo cierra sin elegir.
                 time.sleep(0.25)
