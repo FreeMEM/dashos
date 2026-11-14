@@ -254,9 +254,9 @@ fn principal() -> u64 {
     // Mientras está abierto, se siguen atendiendo las acciones de administrador (el centro comprueba el disco desde
     // Discos): en la prueba, a "centro" se le da la contraseña de Ana, como a `pide`.
     let mut cerrado = false;
-    // Hasta que el centro diga que se cerró (el evento); el tope, generoso (300 s; antes 60): el tramo del centro en la
+    // Hasta que el centro diga que se cerró (el evento); el tope, 60 s (como antes; con 300, en `arranque-virt-2` el bloqueo no llegaba a tiempo): el tramo del centro en la
     // prueba depende de lo que tarden las demás ventanas del arranque (trasfondo, decisión del coordinador).
-    let hasta = dashos::ahora_us() + 300_000_000;
+    let hasta = dashos::ahora_us() + 60_000_000;
     while mandado == 0 && dashos::ahora_us() < hasta {
         if dashos::canal_leer_plazo(lectura, &mut r4, &mut [], 200_000).0 == 4 {
             cerrado = true;

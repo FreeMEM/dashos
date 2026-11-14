@@ -51,7 +51,10 @@ def leer_ppm(ruta):
 
 
 def mitad(c):
-    """Lo de debajo, tapado por negro con alfa 128 premultiplicado (como compone el compositor)."""
+    """Lo de debajo, tapado por negro con alfa 128 premultiplicado (como compone el compositor). Sin lo de debajo
+    (`None`: el panel del fondo), nada."""
+    if c is None:
+        return None
     return tuple((v * 127 + 127) // 255 for v in c)
 
 
@@ -64,7 +67,19 @@ def main():
     puestos = re.findall(r"\[fondo\] (\S+) en pantalla:", salida)
     imagen = fondos_prueba.pixeles(os.path.join(dir_, "fondos-prueba", puestos[-1])) if puestos else None
 
+    # Trasfondo: el panel del monitor, en la capa de fondo, encima de la imagen (su sitio, de la línea del compositor, y
+    # su tamaño, de la del fondo). Lo que haya debajo de lo semitransparente ahí es el panel, que cambia con lo medido:
+    # esos puntos no se comparan (`None`).
+    panel = None
+    m_tam = re.findall(r"\[fondo\] panel en pantalla: (\d+) × (\d+)", salida)
+    m_sitio = [m for m in re.findall(r"\[compositor\] capa de fondo en \((\d+), (\d+)\)", salida) if m != ("0", "0")]
+    if m_tam and m_sitio:
+        (pw, ph), (px_, py_) = m_tam[-1], m_sitio[-1]
+        panel = (int(px_), int(py_), int(pw), int(ph))
+
     def fondo_en(x, y):
+        if panel and panel[0] <= x < panel[0] + panel[2] and panel[1] <= y < panel[1] + panel[3]:
+            return None
         return fondos_prueba.cubrir_en(imagen, ancho, alto, x, y) if imagen else FONDO
 
     def en(x, y):
@@ -76,7 +91,9 @@ def main():
 
     def casi_o_sombra(a, b):
         """El color, o el mismo oscurecido por sombras (Material 3: alfa de 70 cada una; cerca de las dos ventanas de
-        prueba se suman dos, hasta un 47 % más oscuro)."""
+        prueba se suman dos, hasta un 47 % más oscuro). Sin color esperado (`None`, sobre el panel), vale."""
+        if b is None:
+            return True
         return casi(a, b) or all(y * 134 // 255 - 3 <= x <= y + 2 for x, y in zip(a, b))
 
     fallos = []
