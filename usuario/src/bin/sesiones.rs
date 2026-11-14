@@ -750,35 +750,16 @@ fn es(f: &Ficha, nombres: &[&str]) -> bool {
     lanzables::del_sistema(f.marca, nombre(&f.nombre), nombres)
 }
 
-/// Dónde está el ajuste de las cajas, desde la raíz de `sesiones` (el centro lo guarda en `Prefs/cajas` desde la suya,
-/// `C`).
-const CAMINO_CAJAS: &[u8] = b"C/Prefs/cajas";
-
-/// S3: pone al grupo de la caja Amiga el tope de su ajuste (`memoria amiga <MB>` en `Prefs/cajas`, de 8 a 2048; sin
-/// línea o sin fichero, 256) más los 32 MB fijos de la caja (llamada 54, con la llave del grupo que da `inicio` en el
-/// alta). 0, o negativo si no hay caja o el kernel no quiere.
-fn tope_caja_amiga(archivos: &Option<Archivos>, fichas: &[Option<Ficha>]) -> i32 {
-    use dashos::protocolo::archivos as x;
-    let Some(caja) = fichas.iter().flatten().find(|f| nombre(&f.nombre) == "caja-amiga") else { return -1 };
-    let mut mb = 256u64;
-    if let Some(a) = archivos {
-        let (e, asa, tam) = a.orden(x::BUSCAR, 0, 0, 0, CAMINO_CAJAS);
-        if e == x::BIEN {
-            let (e, _, n) = a.orden(x::LEER, asa, 0, tam.min(4096), b"");
-            a.orden(x::CERRAR, asa, 0, 0, b"");
-            if e == x::BIEN {
-                let texto = unsafe { core::slice::from_raw_parts(VA_VENTANA as *const u8, n as usize) };
-                for linea in texto.split(|&c| c == b'\n') {
-                    let mut p = linea.split(|&c| c == b' ').filter(|p| !p.is_empty());
-                    if let (Some(b"memoria"), Some(b"amiga"), Some(v), None) = (p.next(), p.next(), p.next(), p.next()) {
-                        if let Some(v) = core::str::from_utf8(v).ok().and_then(|v| v.parse::<u64>().ok()) {
-                            mb = v.clamp(8, 2048);
-                        }
-                    }
-                }
-            }
-        }
-    }
+/// S3: pone al grupo de la caja Amiga el tope de su ajuste (`memoria amiga`, `mb` MB, de 8 a 2048) más los 32 MB fijos
+/// de la caja (llamada 54, con la llave del grupo que da `inicio` en el alta). El ajuste lo dice el centro de control
+/// (`CAJAS_CAMBIADAS`): `sesiones` no puede leer `Prefs/cajas`, que es del usuario (cajón 0700). Sin caja en marcha, no
+/// hay nada que poner: se pone en su alta. 0, o negativo si el kernel no quiere.
+fn tope_caja_amiga(mb: u64, fichas: &[Option<Ficha>]) -> i32 {
+    let mb = mb.clamp(8, 2048);
+    let Some(caja) = fichas.iter().flatten().find(|f| nombre(&f.nombre) == "caja-amiga") else {
+        println!("  [sesiones] caja-amiga: no está en marcha; memoria amiga {} al lanzarla", mb);
+        return 0;
+    };
     let r = dashos::grupo_tope(caja.grupo, (mb + 32) << 20);
     println!("  [sesiones] caja-amiga: tope de {} MB (memoria amiga {}): {}", mb + 32, mb, r);
     r as i32
@@ -853,6 +834,8 @@ fn principal() -> u64 {
     let mut permiso_apagar = 0u32;
     // S3: si ya escucha el aviso de memoria baja (el permiso llega de `inicio`, `PERMISO_MEMORIA`).
     let mut memoria_escuchada = false;
+    // S3: el ajuste `memoria amiga` en MB, como lo dice el centro (256 de serie).
+    let mut memoria_amiga = 256u64;
     let mut apagado_pendiente: Option<(u32, bool, [u8; 16], u64)> = None;
     // H9: lo de `SIN_PREGUNTAR` (por su servicio en `REPARTE`) que quien está delante quitó en el centro de control.
     let mut sin_preguntar_quitado = [false; 8];
@@ -969,7 +952,7 @@ fn principal() -> u64 {
                     usadas = 1;
                     // S3: la caja Amiga nace con el tope de serie; aquí, el de su ajuste.
                     if nombre(&f.nombre) == "caja-amiga" {
-                        tope_caja_amiga(&archivos, &fichas);
+                        tope_caja_amiga(memoria_amiga, &fichas);
                     }
                     // U6: lo de una persona, al compositor y al sonido. Y si vuelve uno de ellos (relanzado por
                     // `inicio`), empieza sin saber nada: todo otra vez.
@@ -1711,8 +1694,13 @@ fn principal() -> u64 {
                     dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
                 CAJAS_CAMBIADAS => {
-                    // S3: solo el centro de control. Se relee el fichero: nada de lo que traiga el mensaje.
-                    let r: i32 = if yo.is_some_and(|f| nombre(&f.nombre) == "centro") { tope_caja_amiga(&archivos, &fichas) } else { PROTEGIDO };
+                    // S3: solo el centro de control, que es donde el usuario elige el ajuste. La caja no puede.
+                    let r: i32 = if yo.is_some_and(|f| nombre(&f.nombre) == "centro") && m.len() >= 8 {
+                        memoria_amiga = u32_en(4) as u64;
+                        tope_caja_amiga(memoria_amiga, &fichas)
+                    } else {
+                        PROTEGIDO
+                    };
                     dashos::canal_escribir(respuesta, &r.to_le_bytes(), &[]);
                 }
                 APAGAR => {

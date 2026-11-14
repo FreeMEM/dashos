@@ -159,7 +159,8 @@ Amiga "32 MB más la cuarta parte de lo libre". Ahora es un **tope**, con la ide
 - **El tope de la caja Amiga lo pone el kernel** (decisión del usuario del 2026-11-14), no la caja: un programa 68k
   podría engañarla. Es el ajuste `memoria amiga` de `Prefs/cajas` (256 MB de serie) más los 32 MB fijos de la caja.
   La caja nace con el de serie (288 MB); `sesiones`, que tiene la llave de su grupo, lo cambia (llamada 54) al darla
-  de alta y cada vez que el centro de control dice que cambió el ajuste (relee el fichero; no se fía del mensaje). Un
+  de alta y cada vez que el centro de control le dice el ajuste (solo se le acepta al centro, donde lo elige el
+  usuario; `sesiones` no puede leer los Prefs del usuario). Un
   proceso no puede cambiar el tope de su grupo ni el de los de encima.
 
 ### Si ni así basta (diseño, sin hacer)

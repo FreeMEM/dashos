@@ -142,9 +142,9 @@ pub const PERMISO_APAGAR: u32 = 23;
 /// De `inicio`, sin marca: el permiso del aviso de memoria baja del kernel (llamada 53, S3), con la llave. Como
 /// `PERMISO_APAGAR`.
 pub const PERMISO_MEMORIA: u32 = 25;
-/// Del centro de control (S3): ha cambiado `Prefs/cajas`. Con una llave para contestar. `sesiones` relee el fichero (no
-/// se fía de nada que traiga el mensaje) y pone a la caja Amiga el tope de su grupo: el ajuste `memoria amiga` más 32
-/// MB (llamada 54). Contesta un i32: 0, o negativo. Solo se le acepta al centro.
+/// Del centro de control (S3), al arrancar y cada vez que cambia: el ajuste `memoria amiga` (u32, MB), con una llave
+/// para contestar. `sesiones` pone a la caja Amiga el tope de su grupo: ese ajuste más 32 MB (llamada 54). Contesta un
+/// i32: 0, o negativo. Solo se le acepta al centro (`PROTEGIDO` a cualquier otro).
 pub const CAJAS_CAMBIADAS: u32 = 26;
 /// De `sesiones` al compositor y al sonido, sin marca (U6, paso 2): solo `inicio` y `sesiones` tienen una llave sin
 /// marca de sus canales, así que ningún programa puede mandarlos. De quién es un programa: orden, usuario (u32; por
