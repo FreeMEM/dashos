@@ -1013,8 +1013,6 @@ fn principal() -> u64 {
     let disco_bien = disco();
     let memoria = dashos::memoria_crear(4096);
     let ses = sesiones(memoria);
-    let mon = monitor_ajeno();
-    println!("  [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: {}", if mon { "bien" } else { "MAL" });
     println!("  [hostil] A14 hora: {}", if hora() { "bien" } else { "mal" });
     // Apagar o reiniciar la máquina (llamada 51) con cada una de sus llaves y con números que no son llaves: todas dan
     // error (solo `sesiones` tiene el permiso). Si alguna funcionara, la prueba se cortaría aquí.
@@ -1038,6 +1036,10 @@ fn principal() -> u64 {
     println!("  [hostil] centro: pedidos malos rechazados sin abrir nada, y sigue contestando tras la inundación: {}", if ce { "bien" } else { "MAL" });
     let m = monton_grande();
     println!("  [hostil] montón: lo grande va aparte y vuelve al kernel al soltarlo: {}", if m { "bien" } else { "MAL" });
+    // Trasfondo: la prueba del monitor, la última. Al principio, sus páginas cargaban a `sesiones` justo cuando contesta
+    // las preguntas de permisos de las demás pruebas, y el arranque se desacompasaba (Ajustes no llegaba a maximizarse).
+    let mon = monitor_ajeno();
+    println!("  [hostil] monitor: solo lo suyo con nombre, lo ajeno sumado, sin cerrar lo ajeno y sin dejarse pedir muy deprisa: {}", if mon { "bien" } else { "MAL" });
     let _ = E_LIMITE;
     if a && s && c && ses && disco_bien && ce && m && mon { 0 } else { 1 }
 }
@@ -1047,16 +1049,20 @@ fn principal() -> u64 {
 /// pedir muy deprisa da `OCUPADO` sin tumbar nada, y una página que no existe viene vacía.
 fn monitor_ajeno() -> bool {
     use dashos::protocolo::sesiones as s;
-    let pagina = |desde: u32| -> (i64, [u8; 256]) {
+    // `plazo`: lo que se espera la respuesta. Las cien seguidas esperan poco (20 ms): si `sesiones` no contesta a las
+    // que corta por ir deprisa, con 2 s cada una la prueba se alargaba hasta 200 s y lo que viene detrás se cruzaba con
+    // otros pasos del guion de arranque-virt.
+    let pagina_plazo = |desde: u32, plazo: u64| -> (i64, [u8; 256]) {
         let mut p = [0u8; 8];
         p[0..4].copy_from_slice(&s::MONITOR.to_le_bytes());
         p[4..8].copy_from_slice(&desde.to_le_bytes());
         let (lectura, suyo) = dashos::canal_crear();
         let mut r = [0u8; 256];
-        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut r, &mut [], 2_000_000).0 } else { -1 };
+        let n = if escribir(SESIONES, &p, &[suyo]) { dashos::canal_leer_plazo(lectura, &mut r, &mut [], plazo).0 } else { -1 };
         dashos::cerrar(lectura);
         (n, r)
     };
+    let pagina = |desde: u32| pagina_plazo(desde, 2_000_000);
     dormir_ms(300);
     // Todas las páginas (tras la primera, las demás se dejan pedir seguidas).
     let mut todas = alloc::vec::Vec::new();
@@ -1082,9 +1088,12 @@ fn monitor_ajeno() -> bool {
     // Pedir la primera página otra vez en el acto: `OCUPADO`. Y cien seguidas: tampoco tumban nada.
     let (n, r) = pagina(0);
     let ocupado = n == 4 && i32::from_le_bytes(r[0..4].try_into().unwrap()) == s::OCUPADO;
+    let cien = dashos::ahora_us();
     for _ in 0..100 {
-        pagina(0);
+        pagina_plazo(0, 20_000);
     }
+    let cien_ms = (dashos::ahora_us() - cien) / 1000;
+    println!("  [hostil] monitor: cien peticiones seguidas en {} ms", cien_ms);
     let lejos = pagina(1_000_000);
     let vacia = lejos.0 == 8 && u32::from_le_bytes(lejos.1[0..4].try_into().unwrap()) == 0;
     dormir_ms(300);
