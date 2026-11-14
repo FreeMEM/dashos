@@ -1917,3 +1917,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   abre su ventana sin botones ni texto. Hace falta una máquina con más de 2 GB para que quepa. Tanda completa todo rc=0.
 - Trasfondo (rama `trasfondo`): hecho y con todas las variantes bien salvo arranque-virt. El tramo Ajustes / ventana
   Amiga / explorador del guion depende del ritmo; el agente lo está ordenando en secuencia.
+- Trasfondo (rama `trasfondo`, último commit con el plan B): hecho y bonito (capturas Full HD mandadas), con todas las
+  variantes bien salvo `make arranque-virt`. Con el guion de revision, en esa rama el clic del guion en (400, 130) no da
+  el teclado ni a la ventana Amiga ni a Ajustes (la barra no enseña "68K · Ventana Amiga" ni "Ajustes"), y falta
+  "[ajustes] el compositor pide 800x560". No es el guion: es algo de la rama (¿qué superficie recibe ese clic? ¿la red
+  antes del fondo cambia la cascada?). SIN UNIR hasta arreglarlo. La prueba con clics del monitor irá en un objetivo
+  aparte. guardian (prueba) ya espera al centro por evento (35670fb).
