@@ -11,8 +11,9 @@
 //!   periodo siguiente. El temporizador se programa para el momento justo en que eso cambia.
 //!
 //! Es el mismo en ARM y en x86-64 (X3). Lo de cada arquitectura va detrás de `cfg`: el contexto de un hilo y cómo
-//! empieza (`contexto_nuevo`), cómo se avisa a otro núcleo (`avisar_nucleo`) y lo de los procesos que en x86 llega con
-//! X4 (EL0, la FPU, el orden de bytes, el TLS). En x86, `objetos` es todavía un sustituto (`objetos_x86.rs`).
+//! empieza (`contexto_nuevo`), cómo se avisa a otro núcleo (`avisar_nucleo`) y lo de los procesos (X4): cómo se baja a
+//! EL0 o al anillo 3, la FPU (CPACR y q0-q31 en ARM; CR0.TS y XSAVE en x86), el TLS (TPIDR_EL0; la base de FS y la de
+//! GS del proceso), la pila del kernel a la que entra el proceso (RSP0, en x86) y el orden de bytes (solo ARM).
 
 use crate::cerrojo::CerrojoIrq;
 use crate::nucleos;
@@ -71,9 +72,8 @@ fn avisar_nucleo(n: usize) {
     nucleos::avisar(n);
 }
 
-/// La mitad baja vacía (PAN por software, C34). En x86 aún no hay espacios de procesos (X4): siempre lo está.
+/// La mitad baja vacía (PAN por software, C34).
 fn mitad_baja_vacia() {
-    #[cfg(target_arch = "aarch64")]
     crate::espacio::activar_vacio();
 }
 
@@ -103,8 +103,11 @@ pub struct Hilo {
     /// Sus registros de FP/SIMD cuando no están en la FPU (C28). `None` hasta que los usa por primera vez.
     fp: Option<Box<EstadoFp>>,
     /// Su TPIDR_EL0, el puntero de TLS que EL0 puede leer y escribir: se guarda y se repone en cada cambio para que
-    /// un proceso no vea ni cambie el de otro (auditoría, hallazgo 5).
+    /// un proceso no vea ni cambie el de otro (auditoría, hallazgo 5). En x86, la base de FS.
     tpidr: u64,
+    /// x86: la base de GS del proceso (con FSGSBASE la puede cambiar él), que se guarda igual.
+    #[cfg(target_arch = "x86_64")]
+    gs_usuario: u64,
     /// Lo han matado (C39): muere en su siguiente vuelta a EL0, o al despertar si estaba bloqueado.
     matar: bool,
     /// Ya muerto y con su contexto guardado: el siguiente en la lista global de muertos (U3d).
@@ -120,9 +123,53 @@ struct EstadoFp {
     fpsr: u64,
 }
 
-/// En x86 la FPU de los procesos (XSAVE) llega con X4; el kernel no la usa (softfloat).
+#[cfg(target_arch = "aarch64")]
+impl EstadoFp {
+    /// La primera vez: todo a cero, FPCR = 0 (redondeo al más cercano, sin excepciones).
+    fn nuevo() -> Box<Self> {
+        Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 })
+    }
+}
+
+/// x86 (X4): la zona de XSAVE (o FXSAVE) de un hilo. El kernel no usa la FPU (softfloat): solo los procesos.
 #[cfg(target_arch = "x86_64")]
-struct EstadoFp;
+#[repr(C, align(64))]
+struct EstadoFp([u8; super::cpu::TAMANO_FP]);
+
+#[cfg(target_arch = "x86_64")]
+impl EstadoFp {
+    /// La primera vez, el estado inicial (`cpu::fp_inicial`). Sin pasar por la pila del kernel, que es pequeña.
+    fn nuevo() -> Box<Self> {
+        let mut e: Box<Self> = unsafe { Box::<Self>::new_zeroed().assume_init() };
+        super::cpu::fp_inicial(&mut e.0);
+        e
+    }
+}
+
+/// Guarda la FPU de este núcleo en `e` y carga la de `nuevo`. Con la FPU libre para el kernel.
+#[cfg(target_arch = "aarch64")]
+unsafe fn fp_cambiar(e: Option<&mut EstadoFp>, nuevo: &EstadoFp) {
+    if let Some(e) = e {
+        unsafe { fp_guardar(e) };
+    }
+    unsafe { fp_cargar(nuevo) };
+}
+
+#[cfg(target_arch = "x86_64")]
+unsafe fn fp_cambiar(e: Option<&mut EstadoFp>, nuevo: &EstadoFp) {
+    if let Some(e) = e {
+        unsafe { super::cpu::fp_guardar(e.0.as_mut_ptr()) };
+    }
+    unsafe { super::cpu::fp_cargar(nuevo.0.as_ptr()) };
+}
+
+/// La FPU libre para el hilo que corre, o atrapada: CPACR_EL1.FPEN en ARM, CR0.TS en x86.
+fn fp_libre(libre: bool) {
+    #[cfg(target_arch = "aarch64")]
+    fpen(if libre { FPEN_LIBRE } else { FPEN_ATRAPAR });
+    #[cfg(target_arch = "x86_64")]
+    super::cpu::fpu_libre(libre);
+}
 
 #[derive(Clone, Copy)]
 struct Plazo {
@@ -179,7 +226,6 @@ unsafe extern "C" {
 const FPEN_ATRAPAR: u64 = 0b01 << 20;
 #[cfg(target_arch = "aarch64")]
 const FPEN_LIBRE: u64 = 0b11 << 20;
-#[cfg(target_arch = "aarch64")]
 static FP_CAMBIOS: AtomicU64 = AtomicU64::new(0);
 
 /// SCTLR_EL1.E0E: orden de bytes de los datos en EL0. Cada proceso tiene el suyo (C30); el kernel es little-endian
@@ -222,6 +268,8 @@ pub fn iniciar_nucleo() {
         _pila: None,
         fp: None,
         tpidr: 0,
+        #[cfg(target_arch = "x86_64")]
+        gs_usuario: 0,
         matar: false,
         sig_muerto: core::ptr::null_mut(),
     }));
@@ -234,6 +282,9 @@ pub fn iniciar_nucleo() {
         crate::espacio::activar_vacio();
         unsafe { core::arch::asm!("dsb ishst", "tlbi vmalle1", "dsb ish", "isb") };
     }
+    // x86: la FPU atrapada hasta que un hilo la use (`cpu::encender_defensas` ya la deja así).
+    #[cfg(target_arch = "x86_64")]
+    fp_libre(false);
     *NUCLEOS[n].tomar() = Some(Nucleo { actual: ocioso, ocioso, listos: Vec::new(), muertos: Vec::new(), desde: reloj::ahora(), fp_dueno: core::ptr::null_mut() });
 }
 
@@ -300,6 +351,8 @@ unsafe fn crear_hilo_con(f: extern "C" fn(usize), arg: usize, nucleo: usize, pro
         _pila: Some(pila),
         fp: None,
         tpidr: 0,
+        #[cfg(target_arch = "x86_64")]
+        gs_usuario: 0,
         matar: false,
         sig_muerto: core::ptr::null_mut(),
     }));
@@ -564,8 +617,7 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
         }
         nucleo.actual = siguiente;
         // La FPU queda libre solo para su dueño; los demás hilos la piden con una excepción (`fp_atrapado`).
-        #[cfg(target_arch = "aarch64")]
-        fpen(if siguiente == nucleo.fp_dueno { FPEN_LIBRE } else { FPEN_ATRAPAR });
+        fp_libre(siguiente == nucleo.fp_dueno);
         CAMBIOS.fetch_add(1, Ordering::Relaxed);
         (actual, siguiente)
         // El cerrojo se suelta aquí, pero las interrupciones siguen enmascaradas hasta volver. Los hilos no cambian
@@ -578,6 +630,22 @@ fn planificar_enmascarado(bloquear: bool, soltar: impl FnOnce()) {
             core::arch::asm!("mrs {}, tpidr_el0", out(reg) tpidr);
             (*viejo).tpidr = tpidr;
             core::arch::asm!("msr tpidr_el0, {}", in(reg) (*nuevo).tpidr);
+        }
+        // x86: las bases de FS y GS del proceso son de cada hilo (como TPIDR_EL0). Solo las de los hilos de procesos:
+        // los del kernel no las usan. Y la pila del kernel a la que entrará el hilo desde el anillo 3.
+        #[cfg(target_arch = "x86_64")]
+        {
+            if (*viejo).proceso != 0 {
+                (*viejo).tpidr = super::cpu::fs_base();
+                (*viejo).gs_usuario = super::cpu::gs_usuario();
+            }
+            if (*nuevo).proceso != 0 {
+                super::cpu::poner_fs_base((*nuevo).tpidr);
+                super::cpu::poner_gs_usuario((*nuevo).gs_usuario);
+                if let Some(p) = &(*nuevo)._pila {
+                    super::nucleos::poner_pila_kernel(p.tope() as u64);
+                }
+            }
         }
         cambiar_contexto(&mut (*viejo).contexto, &(*nuevo).contexto)
     };
@@ -608,8 +676,6 @@ fn trasladar_muertos(n: usize) {
         movidos = true;
     }
     if movidos {
-        // En x86 aún no hay repartidor (llega con los objetos, X4): los suelta el hilo ocioso (`ocioso`).
-        #[cfg(target_arch = "aarch64")]
         crate::interrupciones::despertar_repartidor();
     }
 }
@@ -792,19 +858,25 @@ pub fn terminar_actual(fin: crate::objetos::Fin) -> ! {
     if proceso != 0 {
         mitad_baja_vacia();
         let p = unsafe { alloc::sync::Arc::from_raw(proceso as *const crate::objetos::Proceso) };
-        // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: se apunta cómo y se despierta a
-        // quien esperaba.
+        // Fuera de la lista de hilos (C39). Si era el último, el proceso ha acabado: primero se suelta (su espacio, sus
+        // llaves y lo cobrado a su grupo) y después se apunta cómo acabó y se despierta a quien esperaba. Al revés, quien
+        // esperaba podía mirar el uso del grupo antes de que volviera lo del proceso (X4, `grupos` en x86).
+        let control = p.control.clone();
         let yo = HiloRef(actual());
-        {
-            let mut e = p.control.estado.tomar();
+        let ultimo = {
+            let mut e = control.estado.tomar();
             e.hilos.retain(|&h| h != yo);
-            if e.hilos.is_empty() && e.fin.is_none() {
+            e.hilos.is_empty() && e.fin.is_none()
+        };
+        drop(p);
+        if ultimo {
+            let mut e = control.estado.tomar();
+            if e.fin.is_none() {
                 e.fin = Some(fin);
                 // Con el cerrojo tomado: los que esperan siguen vivos mientras lo tengamos (A2).
                 e.esperando.despertar_todos();
             }
         }
-        drop(p);
     }
     if let Some(nucleo) = NUCLEOS[n].tomar().as_mut() {
         unsafe { (*nucleo.actual).estado = Estado::Muerto };
@@ -833,12 +905,18 @@ pub fn ttbr0_actual() -> u64 {
 /// espacio: si un tic entrara entre medias, el cambio de hilo dejaría la mitad baja vacía y el proceso bajaría sin
 /// su memoria (auditoría de cierre de la fase 2, M1). `entrar_el0` sigue con ellas enmascaradas hasta el `eret`.
 ///
+/// En x86 (X4) baja al anillo 3, con la frecuencia del contador (el TSC) en rdi: lo que en ARM da CNTFRQ_EL0.
+///
 /// # Seguridad
 /// `ttbr0` tiene que ser el de un espacio vivo del proceso de este hilo (`Espacio::ttbr0`).
-#[cfg(target_arch = "aarch64")]
 pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
+    #[cfg(target_arch = "aarch64")]
     unsafe extern "C" {
         fn entrar_el0(pc: u64, sp: u64) -> !;
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe extern "C" {
+        fn entrar_anillo3_x86(pc: u64, sp: u64, arg: u64) -> !;
     }
     crate::cerrojo::enmascarar_irq();
     if debe_morir() {
@@ -849,17 +927,22 @@ pub unsafe fn bajar_a_el0(ttbr0: u64, pc: u64, sp: u64) -> ! {
         unsafe { (*nucleo.actual).ttbr0 = ttbr0 };
     }
     crate::espacio::activar(ttbr0);
-    unsafe { entrar_el0(pc, sp) }
+    #[cfg(target_arch = "aarch64")]
+    unsafe {
+        entrar_el0(pc, sp)
+    }
+    #[cfg(target_arch = "x86_64")]
+    unsafe {
+        entrar_anillo3_x86(pc, sp, reloj::frecuencia())
+    }
 }
 
 /// Lo que necesita un hilo nuevo de proceso para bajar a EL0.
-#[cfg(target_arch = "aarch64")]
 struct Arranque {
     entrada: u64,
     pila: u64,
 }
 
-#[cfg(target_arch = "aarch64")]
 extern "C" fn arrancar_proceso(a: usize) {
     let a = unsafe { Box::from_raw(a as *mut Arranque) };
     let ttbr0 = proceso_actual_arc().map(|p| p.ttbr0).unwrap_or(0);
@@ -871,7 +954,6 @@ extern "C" fn arrancar_proceso(a: usize) {
 /// queda con `p` y se apunta en su lista de hilos antes de poder correr.
 /// `pila_kernel` es la pila del kernel del hilo, que se pide antes (`mapa::pila_nueva`) para que esto no pueda
 /// fallar por falta de pilas cuando ya se han dado las llaves (M4).
-#[cfg(target_arch = "aarch64")]
 pub fn crear_proceso(p: alloc::sync::Arc<crate::objetos::Proceso>, entrada: u64, pila: u64, nucleo: usize, pila_kernel: crate::mapa::Pila) -> u64 {
     let control = p.control.clone();
     let ptr = alloc::sync::Arc::into_raw(p) as usize;
@@ -930,15 +1012,11 @@ pub fn recoger() {
     }
 }
 
-/// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones. En x86, también los de la lista global.
+/// El hilo ocioso: recoge lo que dejan los muertos y espera interrupciones.
 pub fn ocioso() -> ! {
     reloj::habilitar_irq();
     loop {
         recoger();
-        #[cfg(target_arch = "x86_64")]
-        if hay_muertos_global() {
-            recoger_global();
-        }
         reloj::esperar_interrupcion();
     }
 }
@@ -948,31 +1026,27 @@ pub fn cambios() -> u64 {
 }
 
 /// El hilo actual ha usado la FPU desde EL0 sin ser su dueño (C28): se guardan los registros del dueño anterior, se
-/// cargan los suyos (a cero la primera vez) y la FPU queda libre para él.
-#[cfg(target_arch = "aarch64")]
+/// cargan los suyos (los iniciales la primera vez) y la FPU queda libre para él. Se libera antes de tocarla: en x86, con
+/// CR0.TS, también XSAVE daría la excepción.
 pub fn fp_atrapado() {
     let n = nucleos::numero() as usize;
     let mut g = NUCLEOS[n].tomar();
     let Some(nucleo) = g.as_mut() else { return };
     let actual = nucleo.actual;
+    fp_libre(true);
     if nucleo.fp_dueno != actual {
         unsafe {
             let viejo = nucleo.fp_dueno;
-            if !viejo.is_null() {
-                let e = (*viejo).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
-                fp_guardar(&mut **e);
-            }
-            let e = (*actual).fp.get_or_insert_with(|| Box::new(EstadoFp { q: [0; 32], fpcr: 0, fpsr: 0 }));
-            fp_cargar(&**e);
+            let guardar = if viejo.is_null() { None } else { Some(&mut **(*viejo).fp.get_or_insert_with(EstadoFp::nuevo)) };
+            let e = (*actual).fp.get_or_insert_with(EstadoFp::nuevo);
+            fp_cambiar(guardar, e);
         }
         nucleo.fp_dueno = actual;
         FP_CAMBIOS.fetch_add(1, Ordering::Relaxed);
     }
-    fpen(FPEN_LIBRE);
 }
 
 /// Cuántas veces ha cambiado de dueño la FPU de algún núcleo.
-#[cfg(target_arch = "aarch64")]
 pub fn fp_cambios() -> u64 {
     FP_CAMBIOS.load(Ordering::Relaxed)
 }

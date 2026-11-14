@@ -1,4 +1,4 @@
-//! Las pruebas del arranque en x86-64 (S21, X2 y X3). Solo entran con la opción `pruebas` (`make -C kernel
+//! Las pruebas del arranque en x86-64 (S21, X2 a X4). Solo entran con la opción `pruebas` (`make -C kernel
 //! prueba-x86`). Cada una dice "bien" o "MAL" por el puerto serie; la última (el desborde de la pila) para el núcleo.
 //!
 //! Las de X2 van antes de repartir nada más (cuentan la memoria libre); las de X3, con los cuatro núcleos en marcha.
@@ -23,7 +23,7 @@ pub fn ejecutar_x2(libres_al_empezar: usize) {
     prueba_defensas();
 }
 
-/// Las de X3, y al final el desborde de X2, que para el núcleo 0.
+/// Las de X3, las de los procesos (X4, `pruebas_procesos_x86.rs`) y al final el desborde de X2, que para el núcleo 0.
 pub fn ejecutar(a: &Acpi, n: u32) {
     prueba_acpi(a);
     prueba_tsc();
@@ -37,6 +37,7 @@ pub fn ejecutar(a: &Acpi, n: u32) {
     prueba_tlb();
     crate::pruebas_hilos::prueba_plazo();
     prueba_recogida();
+    crate::pruebas_procesos_x86::ejecutar();
     prueba_desborde();
 }
 

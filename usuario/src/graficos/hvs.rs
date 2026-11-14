@@ -210,7 +210,11 @@ impl Hvs {
         // Fondo con relleno, como Linux en la BCM2711 (§3.7, §9).
         let fondo = self.r(DISPBKGNDX + 0x10 * self.canal);
         fondo.escribir(fondo.leer() | DISPBKGND_FILL);
+        #[cfg(target_arch = "aarch64")]
         unsafe { core::arch::asm!("dsb sy") };
+        // El HVS es de la Pi: en x86-64 este código solo se compila (X4).
+        #[cfg(not(target_arch = "aarch64"))]
+        core::sync::atomic::fence(core::sync::atomic::Ordering::SeqCst);
         self.r(DISPLIST + 4 * self.canal).escribir(inicio as u32);
         self.zona = zona;
         Ok(inicio as u32)

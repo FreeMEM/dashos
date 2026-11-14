@@ -315,6 +315,25 @@ pub fn entrada(v: usize) -> Option<u64> {
     None
 }
 
+/// Lo que ve ahora el kernel en `v` con el CR3 de este núcleo: (se lee, se escribe). Para la llamada de prueba 99
+/// (C34): fuera de una copia, la mitad baja de un proceso no se ve.
+pub fn traducir(v: usize) -> (bool, bool) {
+    let mut tabla = super::cpu::cr3() & DIRECCION;
+    let mut escribir = true;
+    for nivel in 0..4 {
+        let e = leer(tabla, (v >> (39 - 9 * nivel)) & 0x1ff);
+        if e & PRESENTE == 0 {
+            return (false, false);
+        }
+        escribir &= e & ESCRITURA != 0;
+        if nivel == 3 || (nivel > 0 && e & PS != 0) {
+            return (true, escribir);
+        }
+        tabla = e & DIRECCION;
+    }
+    (false, false)
+}
+
 /// Lo que dice una entrada: (se puede escribir, se puede ejecutar, es de usuario).
 pub fn permisos(e: u64) -> (bool, bool, bool) {
     (e & ESCRITURA != 0, e & NX == 0, e & USUARIO != 0)

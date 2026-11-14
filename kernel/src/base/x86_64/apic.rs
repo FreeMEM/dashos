@@ -6,7 +6,8 @@
 //!
 //! Vectores:
 //! - 0x20 a 0x2F: los dos 8259, apagados; si alguno da una espuria, se ignora.
-//! - 0x30 a 0xEF: aparatos (por el IOAPIC, y más adelante MSI). Quien los use pone su función con `manejar`.
+//! - 0x30 a 0xEF: aparatos (por el IOAPIC, y más adelante MSI). Las del kernel ponen su función con `manejar`; las de
+//!   los procesos van al repartidor (`interrupciones.rs`, X4).
 //! - 0xF0 el reloj, 0xF1 replanificar (C17), 0xF2 vaciar la TLB (`nucleos::vaciar_tlb_otros`), 0xFF la espuria.
 
 use super::cpu;
@@ -242,6 +243,8 @@ pub(super) fn interrupcion(vector: u8) {
             RELOJ[n].fetch_add(1, Ordering::Relaxed);
             // EOI antes de cambiar de hilo: si no, el APIC no daría otra hasta volver a este.
             eoi();
+            // Lectores del registro dormidos con algo nuevo (C48): aquí, sin el cerrojo del planificador.
+            crate::registro::avisar();
             if crate::reloj::interrupcion(vector as u32) {
                 crate::planificador::tic();
             }
@@ -261,6 +264,12 @@ pub(super) fn interrupcion(vector: u8) {
                 // Solo `manejar` escribe aquí, y siempre una `fn()`.
                 let f: fn() = unsafe { core::mem::transmute(f) };
                 f();
+            } else if (PRIMER_VECTOR_APARATO..=ULTIMO_VECTOR_APARATO).contains(&vector) && crate::interrupciones::atender_vector(vector) {
+                // De un proceso (X4): ya enmascarada en su IOAPIC y apuntada para el repartidor, como en ARM.
+                eoi();
+                crate::registro::avisar();
+                crate::planificador::tic();
+                return;
             } else {
                 SIN_DUENO.fetch_add(1, Ordering::Relaxed);
             }

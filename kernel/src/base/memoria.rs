@@ -397,14 +397,12 @@ impl Paginas {
 /// (segunda vuelta de la auditoría, M7): un controlador que pide y suelta sin parar agota su cupo, no la memoria del
 /// sistema. Si el permiso se suelta del todo, su cuarentena no vuelve nunca: nadie podría ya decir que el aparato
 /// está parado.
-#[cfg(target_arch = "aarch64")]
 pub struct PermisoDma {
     pub zona: Zona,
     pub desplazamiento_bus: u64,
     cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize, Option<crate::cupo::Cargo>)>>,
 }
 
-#[cfg(target_arch = "aarch64")]
 impl PermisoDma {
     pub fn nuevo(zona: Zona, desplazamiento_bus: u64) -> Self {
         Self { zona, desplazamiento_bus, cuarentena: CerrojoIrq::new(alloc::vec::Vec::new()) }
@@ -430,7 +428,6 @@ impl PermisoDma {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 pub struct Memoria {
     paginas: alloc::vec::Vec<u64>,
     /// Si es memoria DMA (C46): la dirección de bus de su primera página. Las páginas son seguidas.
@@ -441,7 +438,6 @@ pub struct Memoria {
     cargo: Option<crate::cupo::Cargo>,
 }
 
-#[cfg(target_arch = "aarch64")]
 impl Memoria {
     /// Lo que mide, en bytes (páginas enteras).
     pub fn tamano(&self) -> u64 {
@@ -484,12 +480,7 @@ impl Memoria {
         // Recién sacadas y seguidas: a cero, y fuera de la caché, para que no quede nada sucio que el aparato no vea
         // o que pise lo que escriba él.
         unsafe { core::ptr::write_bytes(k as *mut u8, 0, n * PAGINA as usize) };
-        let mut a = k;
-        while a < k + n * PAGINA as usize {
-            unsafe { core::arch::asm!("dc civac, {}", in(reg) a) };
-            a += 64;
-        }
-        unsafe { core::arch::asm!("dsb sy") };
+        limpiar_cache(k, n * PAGINA as usize);
         for i in 0..n as u64 {
             paginas.push(base + i * PAGINA);
         }
@@ -554,7 +545,6 @@ impl Memoria {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 impl Drop for Memoria {
     fn drop(&mut self) {
         if let Some(permiso) = self.permiso.take() {

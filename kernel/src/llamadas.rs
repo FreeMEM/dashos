@@ -1,7 +1,8 @@
 //! Llamadas al sistema desde EL0. Provisionales: en S11 se decidió que los programas no llamarán al kernel a mano
 //! sino por una biblioteca; el número y el orden de los argumentos pueden cambiar.
 //!
-//! Número en x8, argumentos en x0..x5, resultado en x0 (y x1). Un error es un valor negativo.
+//! Número en x8, argumentos en x0..x4, resultado en x0 (y x1, x2). Un error es un valor negativo. En x86-64 (X4),
+//! número en rax, argumentos en rdi, rsi, rdx, r10 y r8, y resultado en rax (y rdx, r8): `Marco::llamada`.
 //!
 //! | n | llamada |
 //! |---|---|
@@ -111,8 +112,8 @@ pub fn atender(marco: &mut Marco) {
     // Las pilas de los hilos muertos de este núcleo se liberan también aquí, no solo desde el hilo ocioso, que en un
     // núcleo siempre ocupado no corre nunca.
     planificador::recoger();
-    let a = marco.x();
-    let r = match a[8] {
+    let (numero, a) = marco.llamada();
+    let r = match numero {
         1 => escribir_consola(a[0], a[1]),
         2 => {
             if a[0] != 0 || SALIDAS_VISIBLES.load(core::sync::atomic::Ordering::Relaxed) {

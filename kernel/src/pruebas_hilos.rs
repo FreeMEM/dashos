@@ -24,10 +24,18 @@ static CONTADORES: [core::sync::atomic::AtomicU64; 3] =
     [core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0), core::sync::atomic::AtomicU64::new(0)];
 static TERMINADO: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
 
+static PARAR: core::sync::atomic::AtomicBool = core::sync::atomic::AtomicBool::new(false);
+
 extern "C" fn contar(i: usize) {
-    loop {
+    while !PARAR.load(core::sync::atomic::Ordering::Relaxed) {
         CONTADORES[i].fetch_add(1, core::sync::atomic::Ordering::Relaxed);
     }
+}
+
+/// Para los hilos de C10, que si no ocupan el núcleo 1 para siempre (x86, antes de las pruebas de procesos de X4).
+#[cfg(target_arch = "x86_64")]
+pub fn parar_contadores() {
+    PARAR.store(true, core::sync::atomic::Ordering::Relaxed);
 }
 
 extern "C" fn acabar(_: usize) {

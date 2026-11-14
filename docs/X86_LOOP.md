@@ -47,25 +47,23 @@ Dos líneas a la vez (decisión 4 de S21):
   su temporizador, IOAPIC, arranque de los demás núcleos (INIT-SIPI), avisos entre núcleos. El planificador y los
   hilos de `base` funcionando, con las pilas de los hilos en el GB 256 (`mapa::pila_nueva`, que en x86 necesita
   avisar a los demás núcleos para vaciar la TLB). Una GDT y una TSS por núcleo.
-- [~] X4 **Procesos.** Anillo 3, `syscall`/`sysret` (`swapgs`, `clac` al entrar), `espacio` de x86 (la mitad baja
+- [x] X4 **Procesos.** Anillo 3, `syscall`/`sysret` (`swapgs`, `clac` al entrar), `espacio` de x86 (la mitad baja
   de cada proceso, con PCID en vez de ASID), cambio de contexto, cargador ELF x86-64, la biblioteca
   `usuario/` para `x86_64` (entrada al kernel). `make -C kernel prueba-x86` con las pruebas de `pruebas.rs` que no
   tocan hardware de la Pi.
-  Lo que dejó X3 para aquí:
-  - `objetos_x86.rs` es un sustituto con lo que nombra el planificador (`Proceso`, `Control`, `Fin`): se quita al
-    compilar `objetos.rs` en x86. Con él llegan `cupo`, `temporizadores` y el repartidor (`interrupciones.rs`), que hoy
-    habla con el GIC y el ITS: hay que separar lo de la arquitectura (en x86, IOAPIC y luego MSI).
-  - Sin repartidor, en x86 los hilos muertos los suelta el hilo ocioso de cualquier núcleo (`recoger_global` en
-    `ocioso`, con `cfg`). Un núcleo siempre ocupado no recoge; con el repartidor vuelve a ser como en ARM.
-  - El planificador tiene huecos con `cfg` para lo de EL0: la FPU (`EstadoFp` está vacío en x86: XSAVE), el TLS
-    (`tpidr`: en x86, la base de FS), el orden de bytes (no hay), `mitad_baja_vacia` (con `espacio`) y
-    `bajar_a_el0`/`crear_proceso`. Falta poner RSP0 de la TSS del núcleo con la pila del hilo en cada cambio.
-  - GS apunta a la zona de cada núcleo (`nucleos::numero` lee `gs:[0]`): al entrar desde el anillo 3, `swapgs`, con
-    IA32_KERNEL_GS_BASE.
-  - `nucleos::vaciar_tlb_otros` vacía la TLB entera de los demás (globales incluidas). Para los espacios de los
-    procesos convendrá algo más fino (por PCID y dirección).
 - [ ] X5 **PCIe y controladores estándar.** MCFG de ACPI, MSI y MSI-X en x86; los servicios `xhci`, `nvme` y
   `virtio_sonido` funcionando en `q35`.
+  Lo que dejó X4 para aquí:
+  - Las interrupciones de los procesos en x86 son las GSI del IOAPIC (número = GSI + 32, al núcleo 0, en
+    `interrupciones.rs`, módulo `arq`). Las MSI van como las LPI de ARM: hoy `arq::LPIS` es 0 en x86.
+  - La imagen normal de x86 no lanza `inicio` (`inicio.rs` sigue siendo solo de ARM): hace falta el paquete de
+    arranque con los ELF de x86 y las llaves de los aparatos de ACPI y PCIe. Sin él, ningún servicio corre en x86.
+  - `registros_proyectar` en x86 acepta lo que esté fuera de la RAM (sin caché); el permiso DMA no lo da nadie aún
+    (sin IOMMU, en un PC un aparato llega a toda la memoria).
+  - El camino con PCID no está probado: ni QEMU TCG ni el KVM de esta máquina lo dan. Con PCID, cada CR3 lleva el suyo
+    y uno soltado se vacía de la TLB la próxima vez que se carga (`espacio.rs`).
+  - Quitar una proyección de un proceso vivo vacía la TLB entera de los demás núcleos (`vaciar_tlb_otros`). Con
+    muchos núcleos o muchas `memoria_quitar` convendrá algo más fino (INVPCID, o solo los núcleos donde corre).
 - [ ] X6 **Pantalla.** GOP hasta el compositor y el kit, como en `virt` (U4): el escritorio en QEMU x86.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
@@ -189,3 +187,56 @@ No comprobado ni hecho: un PC de verdad (MTRR de los demás núcleos, firmware s
 arrancan 4); el PM timer y CPUID como referencia (sin HPET); x2APIC con ID por encima de 255 (el IOAPIC no los
 alcanza sin remapeo de interrupciones); las NMI de la MADT (LINT1 va como NMI en todos); apagar o reiniciar núcleos.
 Lo que queda para X4 está apuntado en su tarea.
+
+
+### 2026-11-14 — X4: procesos en x86-64
+
+Hecho:
+
+- `objetos.rs`, `cupo`, `procesos`, `elf`, `llamadas`, `registro`, `temporizadores`, `azar`, `serie` e
+  `interrupciones` son comunes. Fuera `objetos_x86.rs` y `serie_x86.rs`. En `interrupciones.rs`, lo del controlador va
+  en un módulo `arq` por arquitectura: el GIC y el ITS en ARM, el IOAPIC en x86 (número = GSI + 32, al núcleo 0, por su
+  vector de aparatos). El repartidor corre también en x86, y con él la recogida de hilos muertos y los temporizadores
+  de los procesos, como en ARM. `Memoria` y `PermisoDma` (`base/memoria.rs`) también son comunes.
+- Entrada al kernel por `syscall` (`vectores.s`): `swapgs`, la pila del kernel del hilo desde `gs:[16]`, un marco como
+  el de una interrupción y `clac`. Vuelta por `sysret`, tras comprobar RIP canónica y RFLAGS sin IOPL. Las interrupciones
+  y fallos desde el anillo 3 hacen `swapgs` y `clac` en la entrada común. RSP0 de la TSS y `gs:[16]` se ponen en cada
+  cambio a un hilo de proceso. Bajada al anillo 3 con `iretq` (`entrar_anillo3_x86`).
+- Misma ABI que en ARM salvo los registros: número en `rax`, argumentos en `rdi`, `rsi`, `rdx`, `r10`, `r8`,
+  resultados en `rax`, `rdx`, `r8` (`Marco::llamada` y `poner_x0..2`; `llamadas.rs` ya no lee `x8` directamente). Al
+  arrancar, `rdi` lleva la frecuencia del TSC. Documentado en `docs/referencia/kernel.md`, sección x86-64.
+- `base/x86_64/espacio.rs`: la mitad baja es PML4[0] (512 GB, como en ARM) y el PML4 lleva la entrada 511 del kernel.
+  PCID de 12 bits si lo hay, con un mapa de PCID "sucios" por núcleo: uno soltado se vacía de la TLB la próxima vez que
+  se carga, sin avisos. Quitar una proyección avisa a los demás núcleos. Dentro del kernel, la mitad baja vacía (PCID
+  0) además de SMAP. Copias con `rep movsb` entre `stac` y `clac` (`usuario.rs`), con recuperación del fallo.
+- Un cerrojo que espera atiende los vaciados de TLB pendientes: así `vaciar_tlb_otros` se puede llamar con un cerrojo
+  tomado.
+- FPU por hilo con XSAVE (FXSAVE si no hay; x87, SSE, AVX y AVX-512 si cabe en 4 KB), perezosa con CR0.TS como C28.
+  TLS: bases de FS y GS por hilo, con FSGSBASE encendido. `rdtsc` sí, `rdpmc` no.
+- El planificador común: `bajar_a_el0`, `crear_proceso`, `fp_atrapado` y `fp_cambios` en las dos arquitecturas.
+  Arreglo común: un proceso que acaba se suelta antes de apuntar su fin y despertar a quien lo espera (si no,
+  `grupos` veía su grupo aún sin vaciar; en x86, con el despertar rápido, fallaba).
+- `usuario/` compila para `x86_64-unknown-none` (`make -C kernel usuario-x86`): `llamada` con `syscall`, `_start` de
+  ensamblador, `contador`/`frecuencia`, y `fpu_comun`, `tls` y `trampas` con su versión de x86. El PIE de C29 en
+  `usuario/asm/pie_x86.s`. Sin RELRO y con la GOT en `.data`, para que el cargador no vea dos segmentos en una página.
+- Pruebas en `pruebas_procesos_x86.rs` y los programas en ensamblador en `usuario_x86.s`. Antes de ellas se paran los
+  tres hilos que C10 deja ocupando el núcleo 1 (con ellos, `tiempo` fallaba según dónde cayera).
+
+Comprobado: `make -C kernel prueba-x86` da BIEN (varias veces seguidas, q35, `-cpu max`, 4 núcleos). Pasan, como en
+ARM: C11, C12 y C13 (en ensamblador), C18 (100 procesos sin perder páginas), C28 (FPU por hilo, también MXCSR y la
+palabra de control del x87), C29 (PIE), C32 (tenis, repartos, PCID distintos y reutilizados, TLS y trampas), C43 con
+el lanzador (hola, padre, malo, llaves, tiempo y grupos, cada grupo a cero) y C51 (muchos). Y las de X4: despertar un
+proceso desde otro núcleo (unos 200 µs en TCG), `syscall` conserva los registros, un proceso no lee la memoria del
+kernel ni la de otro proceso, y `wrmsr`, `rdpmc`, `hlt` y saltar al kernel lo matan. Con KVM (`-enable-kvm -cpu host`,
+AMD) también, salvo C28, que se queda en 3 cambios de dueño porque los programas acaban en 4 tics (la prueba cuenta
+cambios, no fallos: los dos salen con 28). KVM encontró un fallo: AMD no le pone RPL 3 a SS en `sysret`; ahora va en
+STAR. `make -C kernel arranque-x86`, `make -C kernel prueba` y `make -C kernel arranque-virt` dan BIEN.
+
+No pasan en x86, porque son de aparatos de la Pi: C20 (serie), C21 (SD), C49 (USB), C50 (buzón, compositor y
+gráficos), C46 (DMA con la ventana del árbol), C34 y C38 de ARM (tienen las suyas de X2). Tampoco las de big-endian
+(hola-be, fpu_b en big-endian): x86 no lo tiene.
+
+No comprobado: el camino con PCID (ni QEMU TCG ni este KVM lo dan); una CPU sin SMAP, FSGSBASE o XSAVE (el código lo
+mira por CPUID, pero solo se probó con `-cpu max` y el anfitrión); interrupciones de aparatos entregadas a un proceso
+por el IOAPIC (hay código, sin prueba: llega con X5); la imagen normal de x86 con `inicio` (no lo lanza). Lo que queda
+para X5 está apuntado en su tarea.

@@ -2,6 +2,9 @@
 //!
 //! Las llamadas al sistema son las provisionales de `kernel/src/llamadas.rs`. En S11 se decidió que los programas
 //! llamarán al kernel a través de una biblioteca: esta es su primera forma.
+//!
+//! Compila para AArch64 (`svc #0`) y, desde X4 (S21), para x86-64 (`syscall`, destino `x86_64-unknown-none`): las
+//! mismas llamadas con los mismos números y argumentos; solo cambian los registros (`docs/referencia/kernel.md`).
 
 #![no_std]
 
@@ -14,6 +17,7 @@ pub mod hid;
 pub mod monton;
 
 /// Llamada al sistema en crudo: número y cinco argumentos; devuelve x0 y x1. Para pruebas y para la biblioteca.
+#[cfg(target_arch = "aarch64")]
 pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
     let (r0, r1);
     unsafe {
@@ -22,6 +26,23 @@ pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
             inlateout("x0") a[0] => r0,
             inlateout("x1") a[1] => r1,
             in("x2") a[2], in("x3") a[3], in("x4") a[4],
+            options(nostack));
+    }
+    (r0, r1)
+}
+
+/// x86-64: el número en rax, los argumentos en rdi, rsi, rdx, r10 y r8; el resultado en rax y rdx (y r8, la marca de
+/// `canal_leer`). `syscall` pisa rcx y r11; el kernel deja todo lo demás como estaba.
+#[cfg(target_arch = "x86_64")]
+pub fn llamada(n: u64, a: [u64; 5]) -> (u64, u64) {
+    let (r0, r1);
+    unsafe {
+        asm!("syscall",
+            inlateout("rax") n => r0,
+            in("rdi") a[0], in("rsi") a[1],
+            inlateout("rdx") a[2] => r1,
+            in("r10") a[3], in("r8") a[4],
+            out("rcx") _, out("r11") _,
             options(nostack));
     }
     (r0, r1)
@@ -141,10 +162,41 @@ pub fn dormir_us(us: u64) {
 
 /// Microsegundos desde que arrancó la máquina, con el contador de la CPU.
 pub fn ahora_us() -> u64 {
-    let (t, f): (u64, u64);
-    unsafe { asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
-    (t as u128 * 1_000_000 / f.max(1) as u128) as u64
+    (contador() as u128 * 1_000_000 / frecuencia().max(1) as u128) as u64
 }
+
+/// El contador de la CPU: el virtual en ARM (CNTVCT_EL0), el TSC en x86-64.
+#[cfg(target_arch = "aarch64")]
+pub fn contador() -> u64 {
+    let t: u64;
+    unsafe { asm!("isb", "mrs {}, cntvct_el0", out(reg) t) };
+    t
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn contador() -> u64 {
+    let (bajo, alto): (u32, u32);
+    unsafe { asm!("lfence", "rdtsc", out("eax") bajo, out("edx") alto, options(nostack, nomem)) };
+    (alto as u64) << 32 | bajo as u64
+}
+
+/// Cuentas por segundo de `contador`: CNTFRQ_EL0 en ARM; en x86-64, la que dejó el kernel en rdi al arrancar el
+/// programa (`programa!`).
+#[cfg(target_arch = "aarch64")]
+pub fn frecuencia() -> u64 {
+    let f: u64;
+    unsafe { asm!("mrs {}, cntfrq_el0", out(reg) f) };
+    f
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn frecuencia() -> u64 {
+    FRECUENCIA.load(core::sync::atomic::Ordering::Relaxed)
+}
+
+/// x86-64: la frecuencia del TSC, que el kernel da en rdi al arrancar. La guarda `_start` (`programa!`).
+#[cfg(target_arch = "x86_64")]
+pub static FRECUENCIA: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 
 /// Interrupción atendida: el kernel la vuelve a habilitar.
 pub fn interrupcion_terminar(llave: u32) -> i64 {
@@ -188,6 +240,7 @@ pub fn proceso_esperar(proceso: u32) -> (i64, u64) {
 }
 
 /// Como `canal_leer`, y además la marca de la llave por la que se escribió el mensaje (C41): (bytes, llaves, marca).
+#[cfg(target_arch = "aarch64")]
 pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i64, usize, u64) {
     let (n, k, m): (u64, u64, u64);
     unsafe {
@@ -197,6 +250,23 @@ pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i6
             inlateout("x1") bufer.as_mut_ptr() as u64 => k,
             inlateout("x2") bufer.len() as u64 => m,
             in("x3") llaves.as_mut_ptr() as u64, in("x4") llaves.len() as u64,
+            options(nostack));
+    }
+    (n as i64, k as usize, m)
+}
+
+#[cfg(target_arch = "x86_64")]
+pub fn canal_leer_marca(llave: u32, bufer: &mut [u8], llaves: &mut [u32]) -> (i64, usize, u64) {
+    let (n, k, m): (u64, u64, u64);
+    unsafe {
+        core::arch::asm!("syscall",
+            inlateout("rax") 5u64 => n,
+            in("rdi") llave as u64,
+            in("rsi") bufer.as_mut_ptr() as u64,
+            inlateout("rdx") bufer.len() as u64 => k,
+            in("r10") llaves.as_mut_ptr() as u64,
+            inlateout("r8") llaves.len() as u64 => m,
+            out("rcx") _, out("r11") _,
             options(nostack));
     }
     (n as i64, k as usize, m)
@@ -287,12 +357,47 @@ macro_rules! println {
 }
 
 /// Punto de entrada: cada programa define `fn principal() -> u64`.
+///
+/// En x86-64 `_start` es de ensamblador: el kernel deja la pila alineada a 16 (como pide el System V para la entrada de
+/// un proceso), y una función de Rust la espera a 16 más 8, tras un `call`. De paso guarda la frecuencia del contador,
+/// que llega en rdi.
+#[cfg(target_arch = "aarch64")]
 #[macro_export]
 macro_rules! programa {
     ($principal:ident) => {
         #[unsafe(no_mangle)]
         #[unsafe(link_section = ".text._start")]
         pub extern "C" fn _start() -> ! {
+            $crate::salir($principal())
+        }
+
+        #[panic_handler]
+        fn panico(info: &core::panic::PanicInfo) -> ! {
+            $crate::println!("  pánico en un programa: {}", info);
+            $crate::salir(101)
+        }
+    };
+}
+
+#[cfg(target_arch = "x86_64")]
+#[macro_export]
+macro_rules! programa {
+    ($principal:ident) => {
+        #[unsafe(naked)]
+        #[unsafe(no_mangle)]
+        #[unsafe(link_section = ".text._start")]
+        pub extern "C" fn _start() -> ! {
+            core::arch::naked_asm!(
+                "mov [rip + {f}], rdi",
+                "xor ebp, ebp",
+                "call {inicio}",
+                "ud2",
+                f = sym $crate::FRECUENCIA,
+                inicio = sym __dashos_inicio,
+            )
+        }
+
+        extern "C" fn __dashos_inicio() -> ! {
             $crate::salir($principal())
         }
 

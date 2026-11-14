@@ -69,8 +69,6 @@ pub fn interrupcion(intid: u32) -> bool {
         return false;
     }
     programar(PERIODO.load(Ordering::Relaxed));
-    // Los temporizadores de los procesos (C49) llegan a x86 con los objetos (X4).
-    #[cfg(target_arch = "aarch64")]
     if crate::temporizadores::tic() {
         crate::interrupciones::despertar_repartidor();
     }

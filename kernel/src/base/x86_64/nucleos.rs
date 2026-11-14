@@ -5,8 +5,8 @@
 //! la TLB entre procesadores) y la especificación de ACPI (la MADT da los núcleos).
 //!
 //! El número de núcleo (0 el que arranca, 1 a 3 los demás, por el orden de la MADT) va en una zona de cada núcleo a la
-//! que apunta la base de GS (IA32_GS_BASE): `numero` es una lectura. Los procesos (X4) tendrán su propia base de GS, y
-//! el kernel recuperará la suya con `swapgs` al entrar.
+//! que apunta la base de GS (IA32_GS_BASE): `numero` es una lectura. Los procesos (X4) tienen su propia base de GS:
+//! al entrar desde el anillo 3, `swapgs` pone la del kernel y deja la suya en IA32_KERNEL_GS_BASE.
 
 use super::{apic, cpu, excepciones, mapa, mmu, tiempo};
 use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -14,13 +14,19 @@ use core::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 pub const MAX_NUCLEOS: usize = 4;
 const MSR_GS_BASE: u32 = 0xc000_0101;
 
-/// Lo de cada núcleo al que apunta GS. `numero` en el desplazamiento 0.
+/// Lo de cada núcleo al que apunta GS. Los desplazamientos los usa `vectores.s` (la entrada por `syscall`).
 #[repr(C)]
 struct PorNucleo {
+    /// gs:[0]
     numero: u64,
+    /// gs:[8]: la pila del proceso mientras se pasa a la del kernel al entrar por `syscall` (X4).
+    rsp_usuario: u64,
+    /// gs:[16]: el tope de la pila del kernel del hilo que corre, como RSP0 de la TSS (X4).
+    pila_kernel: u64,
 }
 
-static mut POR_NUCLEO: [PorNucleo; MAX_NUCLEOS] = [const { PorNucleo { numero: 0 } }; MAX_NUCLEOS];
+static mut POR_NUCLEO: [PorNucleo; MAX_NUCLEOS] =
+    [const { PorNucleo { numero: 0, rsp_usuario: 0, pila_kernel: 0 } }; MAX_NUCLEOS];
 
 /// Los ID de APIC de cada núcleo y cuáles están en marcha (un bit por núcleo).
 static APIC_IDS: [AtomicU32; MAX_NUCLEOS] = [const { AtomicU32::new(0) }; MAX_NUCLEOS];
@@ -40,6 +46,14 @@ fn poner_gs(n: usize) {
         (*p).numero = n as u64;
         cpu::escribir_msr(MSR_GS_BASE, p as u64);
     }
+}
+
+/// La pila del kernel del hilo que va a correr en este núcleo (X4): ahí llegan sus interrupciones desde el anillo 3
+/// (RSP0 de la TSS) y sus llamadas (`syscall`). En cada cambio a un hilo de proceso, con las interrupciones cerradas.
+pub(super) fn poner_pila_kernel(tope: u64) {
+    let n = numero() as usize % MAX_NUCLEOS;
+    unsafe { (*(&raw mut POR_NUCLEO[n])).pila_kernel = tope };
+    excepciones::poner_rsp0(n, tope);
 }
 
 /// El núcleo 0, al empezar: su número, antes que nada que lo pregunte.
@@ -103,11 +117,13 @@ pub(super) fn atender_tlb() {
 }
 
 /// Vacía la TLB de los demás núcleos en marcha y espera a que lo hayan hecho (como `tlbi ... is` en ARM). Para quitar
-/// una entrada del mapa del kernel: quien la quita la borra antes en las tablas y en su TLB (`invlpg`).
+/// una entrada del mapa del kernel (quien la quita la borra antes en las tablas y en su TLB, con `invlpg`) o de un
+/// espacio de proceso vivo (`espacio.rs`, X4).
 ///
-/// Mientras espera atiende lo que le pidan los demás: así dos núcleos que se esperan a la vez no se bloquean. No se
-/// llama con un cerrojo tomado (otro núcleo podría estar esperándolo con las interrupciones cerradas). Si un núcleo no
-/// contesta en 100 ms (parado tras un fallo), se avisa y se sigue.
+/// Mientras espera atiende lo que le pidan los demás: así dos núcleos que se esperan a la vez no se bloquean. Se puede
+/// llamar con un cerrojo tomado: quien espera un cerrojo con las interrupciones cerradas también atiende (X4,
+/// `cerrojo.rs`). Si un núcleo no contesta en 100 ms (parado tras un fallo, o mucho rato con las interrupciones
+/// cerradas sin esperar ningún cerrojo), se avisa y se sigue.
 pub(super) fn vaciar_tlb_otros() {
     let yo = numero() as usize % MAX_NUCLEOS;
     let otros = EN_MARCHA.load(Ordering::Acquire) & !(1 << yo);

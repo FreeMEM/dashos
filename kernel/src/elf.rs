@@ -1,7 +1,7 @@
 //! Cargador de ELF para los programas de usuario (C19).
 //!
 //! ELF de 64 bits para AArch64, little-endian (lo nativo de DashOS) o big-endian (la caja Amiga); el proceso corre
-//! en el orden de su ELF (C30). Cada segmento cargable va a páginas nuevas del proceso, con permisos según
+//! en el orden de su ELF (C30). En x86-64 (X4), ELF de x86-64, solo little-endian. Cada segmento cargable va a páginas nuevas del proceso, con permisos según
 //! sus banderas. Dos clases:
 //!
 //! - `ET_EXEC`: enlazado en direcciones fijas, por debajo de 2 GB.
@@ -40,6 +40,12 @@ const PT_LOAD: u32 = 1;
 const PT_INTERP: u32 = 3;
 const PT_GNU_STACK: u32 = 0x6474_e551;
 const ET_EXEC: u16 = 2;
+const EM_X86_64: u16 = 62;
+/// `e_machine` de los programas de esta arquitectura: AArch64 (183) o x86-64 (62).
+#[cfg(target_arch = "aarch64")]
+const MAQUINA: u16 = 183;
+#[cfg(target_arch = "x86_64")]
+const MAQUINA: u16 = EM_X86_64;
 const ET_DYN: u16 = 3;
 
 /// Zonas al azar de `ET_DYN` (C29): la imagen entre 128 y 256 GB, la pila entre 256 y 384 GB. El montón de Dash empieza
@@ -105,14 +111,15 @@ pub fn cargar(e: &mut Espacio, d: &[u8]) -> Result<Cargado, Error> {
     if d.len() < 64 || &d[0..4] != b"\x7fELF" {
         return Err(Error::NoEsElf);
     }
-    // Clase 64 bits, ejecutable o PIE, AArch64, en cualquiera de los dos órdenes de bytes.
-    if d[4] != 2 || (d[5] != 1 && d[5] != 2) {
+    // Clase 64 bits, ejecutable o PIE, AArch64, en cualquiera de los dos órdenes de bytes; en x86-64 (X4), solo
+    // little-endian.
+    if d[4] != 2 || (d[5] != 1 && d[5] != 2) || (MAQUINA == EM_X86_64 && d[5] != 1) {
         return Err(Error::NoEsNuestro);
     }
     let orden = Orden(d[5] == 2);
     let (u16_, u32_, u64_) = (|d, o| orden.u16_(d, o), |d, o| orden.u32_(d, o), |d, o| orden.u64_(d, o));
     let tipo = u16_(d, 16);
-    if (tipo != ET_EXEC && tipo != ET_DYN) || u16_(d, 18) != 183 {
+    if (tipo != ET_EXEC && tipo != ET_DYN) || u16_(d, 18) != MAQUINA {
         return Err(Error::NoEsNuestro);
     }
     let pie = tipo == ET_DYN;

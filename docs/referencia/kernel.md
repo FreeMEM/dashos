@@ -367,6 +367,47 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
+## x86-64 (S21, X4)
+
+En x86-64 (rama `x86`, `make -C kernel prueba-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
+mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
+mismos límites. Cambian los registros y lo que es de la CPU:
+
+- **Llamadas.** Se entra con `syscall`. El número va en `rax` y los argumentos en `rdi`, `rsi`, `rdx`, `r10` y `r8`
+  (los de ARM `x0` a `x4`, en ese orden; `r10` en vez de `rcx`, que `syscall` usa para la vuelta). El resultado vuelve
+  en `rax` (`x0` en ARM) y, en las llamadas que dan más, en `rdx` (`x1`) y `r8` (`x2`, la marca de `canal_leer`).
+  `syscall` pisa `rcx` y `r11`; todos los demás registros vuelven como estaban. La llamada corre con las interrupciones
+  cerradas, como en ARM, y vuelve con `sysret`.
+- **Ejecutable.** ELF64 de x86-64 (`e_machine` 62), solo little-endian: x86 no tiene big-endian. Lo demás, igual:
+  `ET_EXEC` o `ET_DYN`, segmentos, pila y reglas de rechazo. Un PIE aplica él mismo sus `R_X86_64_RELATIVE`.
+- **Al arrancar.** `rsp` apunta al tope de la pila (alineado a 16, como pide el System V al entrar en un proceso) y
+  `rip` a la entrada. `rdi` lleva la frecuencia del contador en Hz (lo que en ARM da `CNTFRQ_EL0`). Los demás
+  registros valen cero y RFLAGS 0x202 (interrupciones abiertas).
+- **Espacio.** La mitad baja es PML4[0], los mismos 512 GB. En vez de ASID, PCID de 12 bits si la CPU lo tiene: como
+  mucho 4095 procesos vivos a la vez (el 0 es del kernel). Sin PCID, cada cambio de proceso vacía la TLB de usuario.
+- **FPU y SIMD.** Cada hilo tiene los suyos: x87, SSE y AVX (y AVX-512 si la CPU lo tiene y cabe en 4 KB), guardados
+  con XSAVE (FXSAVE si no hay). La primera vez: registros a cero, MXCSR 0x1F80 y control del x87 0x37F (redondeo al
+  más cercano, sin excepciones). Se guardan solo cuando otro hilo del mismo núcleo usa la FPU (CR0.TS, como C28).
+- **TLS.** Las bases de FS y GS son de cada hilo, empiezan a 0 y el kernel las guarda y repone en cada cambio. El
+  proceso las lee y las pone con `rdfsbase`, `wrfsbase`, `rdgsbase` y `wrgsbase` (FSGSBASE). En una CPU sin FSGSBASE
+  esas instrucciones terminan el proceso, y no hay otra forma de ponerlas.
+- **Lo que puede tocar.** `rdtsc` sí (como el contador virtual en ARM). `rdpmc`, `wrmsr`, `rdmsr`, `hlt`, `cli`, la E/S
+  por puertos y cualquier otra instrucción privilegiada terminan el proceso, como leer, escribir o ejecutar la mitad
+  alta. Un fallo de la FPU (#MF, #XM) también. El kernel escribe en la consola el vector, `rip`, CR2 y el código de
+  error.
+- **Copias.** El kernel lee y escribe la memoria del proceso con `rep movsb` entre `stac` y `clac` (SMAP), con el espacio
+  del proceso puesto solo durante la copia. Con CR0.WP, no escribe donde el proceso no puede escribir. Fuera de la
+  copia, la mitad baja del kernel está vacía, como en ARM.
+- **Interrupciones de aparatos.** El número de una interrupción es su GSI del IOAPIC más 32 (de la 32 a la 223); llega
+  al núcleo 0. Aún no hay MSI (X5). El mensaje es el mismo: 4 bytes con el número, en little-endian.
+- **Registros y memoria del firmware.** `registros_proyectar` solo proyecta lo que está fuera de la RAM, sin caché.
+  La memoria del firmware (la pantalla del GOP), fuera de la RAM o en una reserva, como memoria normal: la caché la
+  deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU.
+
+La biblioteca `usuario/` compila para `x86_64-unknown-none` (sin SSE en el código de Rust, como el kernel; la FPU se
+usa con ensamblador) con `-C relocation-model=static -C code-model=small`, y su `_start` de ensamblador guarda la
+frecuencia del contador. Los programas que tocan aparatos de la Pi no se compilan para x86.
+
 ## Limitaciones conocidas
 
 - Si el montón del kernel se queda sin memoria, el kernel cae. Un proceso en un grupo con cupo no puede llevarlo

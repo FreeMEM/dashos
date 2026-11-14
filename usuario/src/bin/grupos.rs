@@ -7,16 +7,8 @@
 use dashos::{canal_crear, canal_escribir, grupo_crear, grupo_matar, grupo_uso, println, proceso_crear_en, proceso_esperar};
 
 fn esperar_ms(ms: u64) {
-    let (t, f): (u64, u64);
-    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
-    let fin = t + f * ms / 1000;
-    loop {
-        let a: u64;
-        unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) a) };
-        if a >= fin {
-            return;
-        }
-    }
+    let fin = dashos::contador() + dashos::frecuencia() * ms / 1000;
+    while dashos::contador() < fin {}
 }
 
 dashos::programa!(principal);

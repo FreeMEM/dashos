@@ -87,6 +87,17 @@ pub fn isa(irq: u8) -> Linea {
     }
 }
 
+/// La línea de la GSI `gsi` (X4, las interrupciones de los procesos): si la MADT la da como destino de una ISA, con lo
+/// que diga de ella; si no, las 16 primeras como ISA (por flanco, activa en alto) y las demás como PCI (por nivel,
+/// activa en bajo).
+pub fn linea_de_gsi(gsi: u32) -> Linea {
+    let e = ESTADO.tomar();
+    match e.cambios.iter().find(|c| c.gsi == gsi) {
+        Some(c) => Linea { gsi, nivel: (c.banderas >> 2) & 3 == 3, activa_baja: c.banderas & 3 == 3 },
+        None => Linea { gsi, nivel: gsi >= 16, activa_baja: gsi >= 16 },
+    }
+}
+
 /// Lleva la línea `l` al vector `vector` (de aparatos, `apic::PRIMER_VECTOR_APARATO` a `ULTIMO_VECTOR_APARATO`) del
 /// núcleo de APIC `destino`, y la desenmascara. Falso si el vector no es de aparatos o ningún IOAPIC lleva esa GSI.
 pub fn dirigir(l: Linea, vector: u8, destino: u32) -> bool {

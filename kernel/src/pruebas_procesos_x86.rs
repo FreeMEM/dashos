@@ -1,0 +1,524 @@
+//! Las pruebas de procesos en x86-64 (S21, X4): las de `pruebas.rs` de ARM que no tocan hardware de la Pi, con los
+//! programas de usuario compilados para x86-64 (`usuario/`, `make usuario-x86`) y los de ensamblador de
+//! `usuario_x86.s`. Mismos números de prueba y mismos textos que en ARM donde la prueba es la misma; las propias de x86
+//! dicen "X4".
+//!
+//! No están las de aparatos de la Pi (serie, SD, USB, buzón, compositor, gráficos, DMA con su ventana del árbol) ni la
+//! de la caja big-endian (hola-be, fpu_b en big-endian): x86 no tiene big-endian.
+
+#![allow(dead_code)]
+
+core::arch::global_asm!(include_str!("usuario_x86.s"));
+
+use crate::{cerrojo, espacio, kprintln, llamadas, memoria, monton, objetos, planificador, reloj};
+use core::sync::atomic::Ordering;
+
+/// X4: despertar un proceso bloqueado en `canal_leer` desde otro núcleo: el kernel escribe en el núcleo 0 y un proceso
+/// de cada uno de los núcleos 1 a 3 contesta (`eco`). Con el aviso entre núcleos, las idas y vueltas tienen que tardar
+/// mucho menos que un tic.
+fn prueba_despertar() {
+    // Sin el aviso, cada vuelta esperaría al tic del otro núcleo: unos 5 ms de media. Se mira la media y no la peor,
+    // que en QEMU depende también de cómo reparte el anfitrión sus hilos.
+    let peor_media = (1..4).map(prueba_despertar_en).max().unwrap_or(u64::MAX);
+    kprintln!("X4: despertar un proceso bloqueado desde otro núcleo {}", bien(peor_media < 1_000));
+}
+
+/// La media de las idas y vueltas en µs, o `u64::MAX` si el proceso no acabó bien.
+fn prueba_despertar_en(nucleo: usize) -> u64 {
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let (c, lado) = extremo(&mio);
+    let eco = crear_proceso(programa(unsafe { &eco_inicio }, unsafe { &eco_fin }), "", nucleo, Some(suyo), None, false);
+    esperar_tics(5);
+    let (mut peor, mut total) = (0u64, 0u64);
+    for i in 0..20u8 {
+        let t0 = reloj::ahora();
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![i], llaves: alloc::vec::Vec::new(), marca: 0 });
+        let mut llego = false;
+        while reloj::ahora() - t0 < reloj::frecuencia() / 10 {
+            if c.intentar_leer(lado).is_some() {
+                llego = true;
+                break;
+            }
+            core::hint::spin_loop();
+        }
+        let us = if llego { (reloj::ahora() - t0) * 1_000_000 / reloj::frecuencia() } else { 100_000 };
+        peor = peor.max(us);
+        total += us;
+    }
+    esperar_que(100, || eco.estado.tomar().fin.is_some());
+    kprintln!("  20 idas y vueltas con un proceso del núcleo {}: media {} µs, la peor {} µs", nucleo, total / 20, peor);
+    if eco.estado.tomar().fin == Some(objetos::Fin::Salida(0)) { total / 20 } else { u64::MAX }
+}
+
+pub fn ejecutar() {
+    // Los tres hilos que C10 dejó ocupando el núcleo 1 para siempre: fuera. Con ellos, un proceso de ese núcleo tarda
+    // hasta un par de tics en despertar, y las pruebas con plazos de C49 (`tiempo`) fallan según dónde caigan.
+    crate::pruebas_hilos::parar_contadores();
+    prueba_despertar();
+    prueba_procesos();
+    prueba_proteccion();
+    prueba_recoger();
+    prueba_fpu();
+    prueba_pie();
+    prueba_tenis();
+    prueba_repartos();
+    prueba_asid();
+    prueba_anillo3();
+    prueba_lanzador();
+    prueba_reparto();
+}
+
+fn bien(b: bool) -> &'static str {
+    if b { "bien" } else { "MAL" }
+}
+
+unsafe extern "C" {
+    static usuario_inicio: u8;
+    static usuario_fin: u8;
+    static usuario_malo_inicio: u8;
+    static usuario_malo_fin: u8;
+    static espia_inicio: u8;
+    static espia_fin: u8;
+    static servidor_inicio: u8;
+    static servidor_fin: u8;
+    static cliente_inicio: u8;
+    static cliente_fin: u8;
+    static productor_inicio: u8;
+    static productor_fin: u8;
+    static consumidor_inicio: u8;
+    static consumidor_fin: u8;
+    static usuario_nada_inicio: u8;
+    static usuario_nada_fin: u8;
+    static conserva_inicio: u8;
+    static conserva_fin: u8;
+    static eco_inicio: u8;
+    static eco_fin: u8;
+}
+
+const VA_CODIGO: u64 = 0x40_0000;
+const VA_DATOS: u64 = 0x50_0000;
+const VA_EXTRA: u64 = 0x60_0000;
+const VA_PILA: u64 = 0x7f_f000;
+
+extern "C" fn arrancar_proceso(p: usize) {
+    let p = unsafe { &*(p as *const objetos::Proceso) };
+    unsafe { planificador::bajar_a_el0(p.ttbr0, VA_CODIGO, VA_PILA + memoria::PAGINA) };
+}
+
+fn programa(ini: &u8, fin: &u8) -> &'static [u8] {
+    let (i, f) = (ini as *const u8, fin as *const u8);
+    unsafe { core::slice::from_raw_parts(i, f as usize - i as usize) }
+}
+
+/// Un proceso con `codigo` en 0x400000, `mensaje` (longitud y texto) en 0x500000, una página de pila y, si se da,
+/// `extra` en 0x600000. `llave` será su llave 1.
+fn crear_proceso(codigo: &[u8], mensaje: &str, nucleo: usize, llave: Option<objetos::Llave>, extra: Option<&[u8]>, avisar: bool) -> alloc::sync::Arc<objetos::Control> {
+    use espacio::{Espacio, Permiso};
+    let mut e = Espacio::nuevo(crate::cupo::Cupo::raiz()).expect("prueba: sin espacio");
+    e.pagina_nueva(VA_CODIGO, Permiso::Codigo, codigo, 0).expect("prueba: sin memoria");
+    let mut datos = alloc::vec![mensaje.len() as u8];
+    datos.extend_from_slice(mensaje.as_bytes());
+    e.pagina_nueva(VA_DATOS, Permiso::Datos, &datos, 0).expect("prueba: sin memoria");
+    e.pagina_nueva(VA_PILA, Permiso::Datos, &[], 0).expect("prueba: sin memoria");
+    if let Some(x) = extra {
+        e.pagina_nueva(VA_EXTRA, Permiso::Datos, x, 0).expect("prueba: sin memoria");
+    }
+    let mut tabla = objetos::TablaLlaves::default();
+    if let Some(l) = llave {
+        let _ = tabla.instalar(l); // será la llave 1
+    }
+    if avisar {
+        kprintln!("  proceso con PCID {} en el núcleo {}", e.asid(), nucleo);
+    }
+    let control: alloc::sync::Arc<objetos::Control> = Default::default();
+    let p = alloc::sync::Arc::new(objetos::Proceso {
+        ttbr0: e.ttbr0(),
+        big_endian: false,
+        espacio: cerrojo::Cerrojo::new(e),
+        llaves: cerrojo::Cerrojo::new(tabla),
+        cupo: crate::cupo::Cupo::raiz(),
+        _cargo: crate::cupo::Cupo::raiz().cobrar(0).expect("el grupo raíz no tiene límite"),
+        control: control.clone(),
+    });
+    let ptr = alloc::sync::Arc::into_raw(p) as usize;
+    unsafe { planificador::crear_en(arrancar_proceso, ptr, nucleo, ptr) };
+    control
+}
+
+fn esperar_tics(n: u64) {
+    let inicio = reloj::tics();
+    while reloj::tics() < inicio + n {
+        reloj::esperar_interrupcion();
+    }
+}
+
+/// Espera a que se cumpla `f`, como mucho `tics` tics.
+fn esperar_que(tics: u64, f: impl Fn() -> bool) -> bool {
+    let inicio = reloj::tics();
+    while !f() {
+        if reloj::tics() >= inicio + tics {
+            return false;
+        }
+        reloj::esperar_interrupcion();
+    }
+    true
+}
+
+/// El extremo de canal que hay detrás de una llave.
+fn extremo(l: &objetos::Llave) -> (alloc::sync::Arc<objetos::Canal>, usize) {
+    match &l.objeto {
+        objetos::Objeto::Extremo(p) => (p.canal().clone(), p.lado()),
+        _ => panic!("prueba: no es un extremo de canal"),
+    }
+}
+
+/// C11 a C13 en x86: procesos en el anillo 3 que escriben por la consola y salen; un servidor y un cliente unidos por
+/// un canal; memoria compartida entre dos procesos, en direcciones distintas de cada uno.
+fn prueba_procesos() {
+    let hola = programa(unsafe { &usuario_inicio }, unsafe { &usuario_fin });
+    let a = crear_proceso(hola, "  hola desde el anillo 3, proceso A\n", 2, None, None, true);
+    let b = crear_proceso(hola, "  hola desde el anillo 3, proceso B\n", 3, None, None, true);
+    let acabados = esperar_que(100, || [&a, &b].iter().all(|c| c.estado.tomar().fin.is_some()));
+    let fines = [a.estado.tomar().fin, b.estado.tomar().fin];
+    kprintln!("C11: procesos lanzados {}", bien(acabados && fines.iter().all(|f| *f == Some(objetos::Fin::Salida(42)))));
+
+    let (x, y) = objetos::Canal::nuevo();
+    let s = crear_proceso(programa(unsafe { &servidor_inicio }, unsafe { &servidor_fin }), "  pong: respuesta del servidor\n", 2, Some(x), None, false);
+    let c = crear_proceso(programa(unsafe { &cliente_inicio }, unsafe { &cliente_fin }), "  ping: mensaje del cliente con una llave\n", 3, Some(y), None, false);
+    esperar_que(100, || [&s, &c].iter().all(|c| c.estado.tomar().fin.is_some()));
+    let bienes = s.estado.tomar().fin == Some(objetos::Fin::Salida(0)) && c.estado.tomar().fin == Some(objetos::Fin::Salida(7));
+    kprintln!("C12: canales lanzados {}", bien(bienes));
+
+    let (x, y) = objetos::Canal::nuevo();
+    let p = crear_proceso(programa(unsafe { &productor_inicio }, unsafe { &productor_fin }), "  memoria compartida: escrito por el productor\n", 2, Some(x), None, false);
+    let c = crear_proceso(programa(unsafe { &consumidor_inicio }, unsafe { &consumidor_fin }), "  memoria compartida: cambiado por el consumidor\n", 3, Some(y), None, false);
+    esperar_que(100, || [&p, &c].iter().all(|c| c.estado.tomar().fin.is_some()));
+    let bienes = p.estado.tomar().fin == Some(objetos::Fin::Salida(3)) && c.estado.tomar().fin == Some(objetos::Fin::Salida(4));
+    kprintln!("C13: memoria compartida lanzada {}", bien(bienes));
+
+    // Los registros que no son del resultado ni los pisa `syscall` vuelven como estaban.
+    let r = crear_proceso(programa(unsafe { &conserva_inicio }, unsafe { &conserva_fin }), "", 1, None, None, false);
+    esperar_que(100, || r.estado.tomar().fin.is_some());
+    let fin = r.estado.tomar().fin;
+    kprintln!("X4: syscall y sysret conservan los registros {}", bien(fin == Some(objetos::Fin::Salida(44))));
+}
+
+/// X4: protección. Un proceso que lee la memoria del kernel muere por un fallo de página; uno que lee donde otro tiene
+/// su memoria, también (en su espacio no hay nada). Mientras, el otro sigue vivo y su página intacta.
+fn prueba_proteccion() {
+    let malo = crear_proceso(programa(unsafe { &usuario_malo_inicio }, unsafe { &usuario_malo_fin }), "", 1, None, None, false);
+    // El que tiene memoria en 0x600000: el servidor, que espera en su llave 1 sin hacer nada más.
+    let (mio, suyo) = objetos::Canal::nuevo();
+    let servidor = programa(unsafe { &servidor_inicio }, unsafe { &servidor_fin });
+    let duenio = crear_proceso(servidor, "", 2, Some(suyo), Some(b"secreto del otro proceso"), false);
+    esperar_tics(5);
+    let espia = crear_proceso(programa(unsafe { &espia_inicio }, unsafe { &espia_fin }), "", 3, None, None, false);
+    esperar_que(100, || [&malo, &espia].iter().all(|c| c.estado.tomar().fin.is_some()));
+    let (fm, fe) = (malo.estado.tomar().fin, espia.estado.tomar().fin);
+    let vivo = duenio.estado.tomar().fin.is_none();
+    // El dueño esperaba un mensaje: lo escribe y sale (sin llave para contestar).
+    let (c, lado) = extremo(&mio);
+    let _ = c.escribir(lado, objetos::Mensaje { datos: b"  el otro proceso sigue entero\n".to_vec(), llaves: alloc::vec::Vec::new(), marca: 0 });
+    esperar_que(100, || duenio.estado.tomar().fin.is_some());
+    drop(mio);
+    kprintln!("  leer el kernel: {:?}; leer la memoria de otro: {:?}; el otro seguía vivo: {}", fm, fe, if vivo { "sí" } else { "no" });
+    kprintln!(
+        "X4: un proceso no lee la memoria del kernel ni la de otro proceso {}",
+        bien(fm == Some(objetos::Fin::Fallo) && fe == Some(objetos::Fin::Fallo) && vivo)
+    );
+}
+
+/// C18: crear y terminar procesos muchas veces sin que se pierda memoria.
+fn prueba_recoger() {
+    let nada = programa(unsafe { &usuario_nada_inicio }, unsafe { &usuario_nada_fin });
+    let tanda = |n: usize| {
+        for i in 0..n {
+            crear_proceso(nada, "", 1 + i % 3, None, None, false);
+        }
+        esperar_tics(30);
+    };
+    llamadas::SALIDAS_VISIBLES.store(false, Ordering::Relaxed);
+    tanda(60); // calentar: el montón se queda páginas para sus clases de tamaño
+    let libres = || memoria::paginas().libres() + monton::paginas_pequenas();
+    let antes = libres();
+    tanda(50);
+    let medio = libres();
+    tanda(50);
+    let despues = libres();
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    kprintln!("  dos tandas de 50 procesos: páginas libres {}, {} y {}", antes, medio, despues);
+    let perdidas = antes.saturating_sub(despues);
+    kprintln!("C18: recogida {} ({} páginas de diferencia en 100 procesos)", bien(perdidas <= 4), perdidas);
+}
+
+macro_rules! programa_x86 {
+    ($nombre:literal) => {
+        include_bytes!(concat!("../../usuario/target/x86_64-unknown-none/release/", $nombre))
+    };
+}
+
+static HOLA: &[u8] = programa_x86!("hola");
+static FPU_A: &[u8] = programa_x86!("fpu_a");
+static FPU_B: &[u8] = programa_x86!("fpu_b");
+static PIE: &[u8] = include_bytes!("../../usuario/target/pie_x86");
+static MALO: &[u8] = programa_x86!("malo");
+static TENIS: &[u8] = programa_x86!("tenis");
+static REPARTOS: &[u8] = programa_x86!("repartos");
+static TLS: &[u8] = programa_x86!("tls");
+static TRAMPAS: &[u8] = programa_x86!("trampas");
+static PADRE: &[u8] = programa_x86!("padre");
+static HIJO: &[u8] = programa_x86!("hijo");
+static LLAVES: &[u8] = programa_x86!("llaves");
+static TIEMPO: &[u8] = programa_x86!("tiempo");
+static GRUPOS: &[u8] = programa_x86!("grupos");
+static LANZADOR: &[u8] = programa_x86!("lanzador");
+static MUCHOS: &[u8] = programa_x86!("muchos");
+
+static PIE_ULTIMO: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
+
+fn lanzar_elf(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize) -> bool {
+    lanzar_elf_en(binario, llaves, nucleo, crate::cupo::Cupo::raiz()).is_some()
+}
+
+fn lanzar_elf_en(binario: &[u8], llaves: alloc::vec::Vec<objetos::Llave>, nucleo: usize, cupo: alloc::sync::Arc<crate::cupo::Cupo>) -> Option<alloc::sync::Arc<objetos::Control>> {
+    match crate::procesos::lanzar(binario, llaves, Some(nucleo), cupo) {
+        Ok((control, cargado)) => {
+            if cargado.base != 0 {
+                kprintln!("  PIE de {} bytes cargado en {:#x}, pila de {} KB en {:#x}", binario.len(), cargado.base, cargado.tamano_pila / 1024, cargado.pila);
+                PIE_ULTIMO.store(cargado.base, Ordering::Relaxed);
+            } else {
+                kprintln!("  ELF de {} bytes cargado, entrada {:#x}, pila de {} KB", binario.len(), cargado.entrada, cargado.tamano_pila / 1024);
+            }
+            Some(control)
+        }
+        Err((e, _)) => {
+            kprintln!("  no se pudo lanzar el ELF: {:?}", e);
+            None
+        }
+    }
+}
+
+/// C28: registros de la FPU y SIMD por hilo (XSAVE): dos procesos en el mismo núcleo llenan los xmm y ponen MXCSR y la
+/// palabra de control del x87 distintos, y comprueban que el otro no se los pisa (`usuario/src/fpu_comun.rs`).
+fn prueba_fpu() {
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let cambios = planificador::fp_cambios();
+    if !lanzar_elf(FPU_A, alloc::vec::Vec::new(), 2) || !lanzar_elf(FPU_B, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 1000 {
+        reloj::esperar_interrupcion();
+    }
+    let n = planificador::fp_cambios() - cambios;
+    kprintln!("  la FPU cambió de dueño {} veces en {} tics", n, reloj::tics() - inicio);
+    kprintln!("C28: FPU por hilo {}", if n >= 4 { "bien" } else { "MAL (pocos cambios: los procesos no se turnaron)" });
+}
+
+/// C29: un PIE (`usuario/asm/pie_x86.s`) cargado dos veces, cada una en una base al azar por encima de 4 GB.
+fn prueba_pie() {
+    let mut bases = [0u64; 2];
+    for b in bases.iter_mut() {
+        let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+        if !lanzar_elf(PIE, alloc::vec::Vec::new(), 2) {
+            return;
+        }
+        *b = PIE_ULTIMO.load(Ordering::Relaxed);
+        let inicio = reloj::tics();
+        while llamadas::SALIDAS.load(Ordering::Relaxed) == salidas && reloj::tics() < inicio + 1500 {
+            reloj::esperar_interrupcion();
+        }
+    }
+    let altas = bases.iter().all(|&b| b >= 1 << 32 && b % 0x10000 == 0);
+    kprintln!("  dos cargas: bases distintas {}, por encima de 4 GB {}", if bases[0] != bases[1] { "sí" } else { "no" }, if altas { "sí" } else { "no" });
+    kprintln!("C29: cargador de PIE {}", bien(bases[0] != bases[1] && altas));
+}
+
+/// C32: dos procesos en los núcleos 2 y 3 mandan y leen 20 000 veces por los dos extremos del mismo canal.
+fn prueba_tenis() {
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let (a, b) = objetos::Canal::nuevo();
+    if !lanzar_elf(TENIS, alloc::vec![a], 2) || !lanzar_elf(TENIS, alloc::vec![b], 3) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 1500 {
+        reloj::esperar_interrupcion();
+    }
+    let bienes = llamadas::SALIDAS.load(Ordering::Relaxed) >= salidas + 2;
+    kprintln!("C32: los dos extremos de un canal a la vez, en dos núcleos: {}", if bienes { "bien" } else { "MAL (colgados)" });
+}
+
+/// C32: seis procesos en los núcleos 1 a 3 crean y cierran objetos de memoria a la vez; las páginas libres vuelven.
+fn prueba_repartos() {
+    // Que acabe de soltarse lo de las pruebas de antes (los hilos muertos se recogen aparte): si no, la cuenta de
+    // páginas libres sube durante esta y no cuadra.
+    esperar_tics(20);
+    llamadas::SALIDAS_VISIBLES.store(false, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+    let mut lanzados = 0;
+    for n in [1, 2, 3, 1, 2, 3] {
+        lanzados += lanzar_elf(REPARTOS, alloc::vec::Vec::new(), n) as u64;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + lanzados && reloj::tics() < inicio + 1500 {
+        reloj::esperar_interrupcion();
+    }
+    esperar_tics(20);
+    let acabados = llamadas::SALIDAS.load(Ordering::Relaxed) - salidas;
+    let despues = memoria::paginas().libres() + monton::paginas_pequenas();
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    kprintln!("  {} de 6 procesos acabados; páginas libres antes {}, después {}", acabados, libres, despues);
+    kprintln!("C32: reparto de páginas desde varios núcleos {}", bien(acabados == 6 && despues == libres));
+}
+
+/// C32 en x86: 1000 espacios vivos a la vez tienen PCID distintos (de 12 bits) y ninguno es el 0, el del kernel; al
+/// soltarlos, sus PCID vuelven a darse.
+fn prueba_asid() {
+    let mut vivos: alloc::vec::Vec<espacio::Espacio> = (0..1000).filter_map(|_| espacio::Espacio::nuevo(crate::cupo::Cupo::raiz())).collect();
+    let mut pcids: alloc::vec::Vec<u64> = vivos.iter().map(|e| e.asid()).collect();
+    pcids.sort_unstable();
+    pcids.dedup();
+    let distintos = pcids.len() == 1000 && pcids[0] != 0 && *pcids.last().unwrap() < 1 << 12;
+    let menor = pcids.first().copied().unwrap_or(0);
+    vivos.clear();
+    let Some(otra) = espacio::Espacio::nuevo(crate::cupo::Cupo::raiz()) else { return };
+    let reusa = otra.asid() <= menor;
+    kprintln!("  PCID: menor {}, mayor {}, el siguiente {}; PCID en la CPU: {}", menor, pcids.last().copied().unwrap_or(0), otra.asid(),
+        if crate::cpu::hay_pcid() { "sí" } else { "no" });
+    drop(otra);
+    kprintln!("C32: PCID de 12 bits sin repetirse {}, y se vuelven a dar {}", bien(distintos), bien(reusa));
+}
+
+/// C32 en x86: lo que el anillo 3 puede tocar. Dos copias de `tls` en el mismo núcleo no se ven ni se cambian las bases
+/// de FS y GS; y `trampas` muere al escribir un MSR, leer un contador de rendimiento, ejecutar el código del kernel o
+/// parar la CPU.
+fn prueba_anillo3() {
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    if !lanzar_elf(TLS, alloc::vec::Vec::new(), 2) || !lanzar_elf(TLS, alloc::vec::Vec::new(), 2) {
+        return;
+    }
+    let inicio = reloj::tics();
+    while llamadas::SALIDAS.load(Ordering::Relaxed) < salidas + 2 && reloj::tics() < inicio + 300 {
+        reloj::esperar_interrupcion();
+    }
+    let salidas = llamadas::SALIDAS.load(Ordering::Relaxed);
+    for n in 1..=4u8 {
+        let (a, b) = objetos::Canal::nuevo();
+        let (c, lado) = extremo(&a);
+        let _ = c.escribir(lado, objetos::Mensaje { datos: alloc::vec![n], llaves: alloc::vec::Vec::new(), marca: 0 });
+        lanzar_elf(TRAMPAS, alloc::vec![b], 2);
+        esperar_tics(20);
+    }
+    let vivas = llamadas::SALIDAS.load(Ordering::Relaxed) - salidas;
+    kprintln!("C32: registros del anillo 3 {}", if vivas == 0 { "bien" } else { "MAL (alguna trampa salió viva)" });
+}
+
+/// C43: las pruebas que son programas sueltos las lanza un proceso (`lanzador`), cada una en su grupo.
+fn prueba_lanzador() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let mut cadena = alloc::vec![raiz.clone()];
+    let mut limite = 1u64 << 20;
+    while let Some(h) = cadena.last().unwrap().hijo(limite) {
+        cadena.push(h);
+        limite -= crate::cupo::COSTE_GRUPO;
+    }
+    let niveles = cadena.len() - 1;
+    drop(cadena);
+    kprintln!("  subgrupos uno dentro de otro: {} niveles como mucho", niveles);
+    const NADA: u32 = 0;
+    const HIJO_N: u32 = 7;
+    let pruebas: [(&str, u32, u32, &[u8]); 7] = [
+        ("hola", 5, NADA, HOLA),
+        ("padre", 39, HIJO_N, PADRE),
+        ("malo", 31, NADA, MALO),
+        ("llaves", 41, NADA, LLAVES),
+        ("tiempo", 49, NADA, TIEMPO),
+        ("grupos", 42, HIJO_N, GRUPOS),
+        ("hijo", u32::MAX, NADA, HIJO),
+    ];
+    let mut paquete = alloc::vec::Vec::new();
+    paquete.extend_from_slice(&(pruebas.len() as u32).to_le_bytes());
+    for (nombre, codigo, ayudante, elf) in pruebas {
+        paquete.extend_from_slice(&codigo.to_le_bytes());
+        paquete.extend_from_slice(&(elf.len() as u32).to_le_bytes());
+        paquete.extend_from_slice(&ayudante.to_le_bytes());
+        paquete.extend_from_slice(&0u32.to_le_bytes());
+        let mut n = [0u8; 16];
+        n[..nombre.len()].copy_from_slice(nombre.as_bytes());
+        paquete.extend_from_slice(&n);
+    }
+    for (_, _, _, elf) in pruebas {
+        while paquete.len() % 8 != 0 {
+            paquete.push(0);
+        }
+        paquete.extend_from_slice(elf);
+    }
+    llamadas::SALIDAS_VISIBLES.store(true, Ordering::Relaxed);
+    let libres = memoria::paginas().libres() + monton::paginas_pequenas();
+    let Some(m) = memoria::Memoria::nueva(paquete.len(), &raiz) else { return };
+    m.escribir(0, &paquete);
+    let m = objetos::Llave::nueva(objetos::Objeto::Memoria(alloc::sync::Arc::new(m)), objetos::LEER);
+    let Some(grupo) = raiz.hijo(256 << 20) else { return };
+    let Some(control) = lanzar_elf_en(LANZADOR, alloc::vec![m], 2, grupo.clone()) else { return };
+    let inicio = reloj::tics();
+    while control.estado.tomar().fin.is_none() && reloj::tics() < inicio + 8000 {
+        reloj::esperar_interrupcion();
+    }
+    let fin = control.estado.tomar().fin;
+    drop(control);
+    let espera = reloj::tics();
+    let mut despues = 0;
+    while reloj::tics() < espera + 300 {
+        esperar_tics(5);
+        despues = memoria::paginas().libres() + monton::paginas_pequenas();
+        if despues >= libres {
+            break;
+        }
+    }
+    let usado = grupo.uso().1;
+    kprintln!("  lanzador acabó: {:?}; usado en su grupo al final: {} bytes; páginas libres antes {}, después {}", fin, usado, libres, despues);
+    let bienes = fin == Some(objetos::Fin::Salida(43)) && usado == 0 && despues >= libres && niveles == crate::cupo::MAX_PROFUNDIDAD as usize - 1;
+    kprintln!("C43: pruebas de usuario lanzadas por un proceso {}", bien(bienes));
+}
+
+/// C51: los temporizadores se reparten por grupos de primer nivel: uno de 100 ms de otro grupo llega a tiempo aunque un
+/// proceso (`muchos`) tenga 900 periódicos de un tic en el suyo.
+fn prueba_reparto() {
+    let raiz = crate::cupo::Cupo::raiz();
+    let Some(servicio) = raiz.hijo(32 << 20) else { return };
+    let (Some(g1), Some(hermano), Some(otro)) = (servicio.hijo(16 << 20), servicio.hijo(1 << 20), raiz.hijo(1 << 20)) else { return };
+    let Some(c) = lanzar_elf_en(MUCHOS, alloc::vec::Vec::new(), 1, g1) else { return };
+    esperar_tics(100);
+    let mut llegados = [None, None];
+    let mut vivos = alloc::vec::Vec::new();
+    let mut lados = alloc::vec::Vec::new();
+    let inicio = reloj::ahora();
+    for g in [&otro, &hermano] {
+        let (mio, suyo) = objetos::Canal::nuevo();
+        let objetos::Objeto::Extremo(p) = suyo.objeto.clone() else { return };
+        vivos.push(crate::temporizadores::Temporizador::nuevo(p.canal().clone(), p.lado(), &[], 0, 100_000, 0, g));
+        lados.push((extremo(&mio), mio, suyo));
+    }
+    while llegados.iter().any(|l| l.is_none()) && reloj::ahora() - inicio < reloj::frecuencia() * 3 {
+        esperar_tics(1);
+        for (k, ((cm, lm), _, _)) in lados.iter().enumerate() {
+            if llegados[k].is_none() && cm.intentar_leer(*lm).is_some() {
+                llegados[k] = Some((reloj::ahora() - inicio) * 1000 / reloj::frecuencia());
+            }
+        }
+    }
+    planificador::matar_proceso(&c);
+    let fin = reloj::tics();
+    while c.estado.tomar().fin.is_none() && reloj::tics() < fin + 300 {
+        esperar_tics(1);
+    }
+    drop((vivos, lados));
+    esperar_tics(10);
+    let bienes = llegados.iter().all(|l| l.is_some_and(|ms| ms < 150));
+    kprintln!("  uno de 100 ms de otro servicio llegó a los {:?} ms, y otro del mismo servicio, a los {:?} ms", llegados[0], llegados[1]);
+    kprintln!("C51: temporizadores repartidos por grupos {}", bien(bienes));
+}

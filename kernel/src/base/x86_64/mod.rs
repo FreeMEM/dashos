@@ -10,7 +10,9 @@
 //!   (`apic.rs`, `ioapic.rs`), los demás núcleos (`nucleos.rs`, `trampolin.s`) y el cambio de contexto
 //!   (`contexto.s`). El planificador es el de ARM (`../planificador.rs`).
 //!
-//! Los espacios de los procesos (`espacio`) llegan en X4.
+//! - X4: los procesos. Los espacios (`espacio.rs`, con PCID), las copias de su memoria (`usuario.rs`), la entrada por
+//!   `syscall` y la bajada al anillo 3 (`vectores.s`, `excepciones.rs`), la FPU (XSAVE) y el TLS (base de FS) por hilo
+//!   (`cpu.rs`, `planificador.rs`).
 
 pub mod acpi;
 pub mod apic;
@@ -18,6 +20,7 @@ pub mod arranque;
 #[path = "../cerrojo.rs"]
 pub mod cerrojo;
 pub mod cpu;
+pub mod espacio;
 pub mod excepciones;
 pub mod ioapic;
 pub mod mapa;
@@ -31,6 +34,7 @@ pub mod nucleos;
 pub mod planificador;
 pub mod serie;
 pub mod tiempo;
+pub mod usuario;
 
 core::arch::global_asm!(include_str!("arranque.s"));
 core::arch::global_asm!(include_str!("contexto.s"));

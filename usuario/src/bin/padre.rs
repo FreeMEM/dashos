@@ -23,16 +23,8 @@ fn hijo(tamano: usize, orden: &[u8]) -> (i64, u32) {
 }
 
 fn esperar_ms(ms: u64) {
-    let (t, f): (u64, u64);
-    unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", "mrs {}, cntfrq_el0", out(reg) t, out(reg) f) };
-    let fin = t + f * ms / 1000;
-    loop {
-        let a: u64;
-        unsafe { core::arch::asm!("isb", "mrs {}, cntvct_el0", out(reg) a) };
-        if a >= fin {
-            return;
-        }
-    }
+    let fin = dashos::contador() + dashos::frecuencia() * ms / 1000;
+    while dashos::contador() < fin {}
 }
 
 fn principal() -> u64 {

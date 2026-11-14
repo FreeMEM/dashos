@@ -38,6 +38,10 @@ impl<T> Cerrojo<T> {
             .is_err()
         {
             while self.tomado.load(Ordering::Relaxed) {
+                // x86 (X4): quien tiene el cerrojo puede estar esperando a que este núcleo vacíe su TLB
+                // (`nucleos::vaciar_tlb_otros`), y aquí las interrupciones están cerradas: se atiende mientras.
+                #[cfg(target_arch = "x86_64")]
+                super::nucleos::atender_tlb();
                 core::hint::spin_loop();
             }
         }

@@ -3,11 +3,11 @@
 //! `kmain` solo pone el sistema en marcha. Las pruebas del arranque (C2 a C36) están en `pruebas.rs` y solo entran
 //! en la imagen con la opción `pruebas` (`make prueba`); la imagen normal (`make`) no las lleva (C36, S16 fase 2).
 //!
-//! En x86-64 (S21) entran un `kmain` propio, `base/x86_64/` (con el repartidor de páginas, el montón, los cerrojos y
-//! el planificador de `base`, que son comunes), `reloj.rs`, `serie_x86.rs` y `objetos_x86.rs` (lo que el planificador
-//! nombra de los procesos): lo demás es de ARM y va detrás de `#[cfg(target_arch = "aarch64")]` hasta que X4 lo lleve
-//! a las dos arquitecturas. Las pruebas de x86 están en `pruebas_x86.rs`; las del planificador, comunes, en
-//! `pruebas_hilos.rs`.
+//! En x86-64 (S21) entran un `kmain` propio y `base/x86_64/` (con el repartidor de páginas, el montón, los cerrojos y
+//! el planificador de `base`, que son comunes). Desde X4 también son comunes los procesos, las llaves, los canales, los
+//! cupos, el cargador de ELF, las llamadas, el registro y la consola. Lo que sigue siendo solo de ARM (GIC, ITS, árbol
+//! de dispositivos, PCIe de la Pi, `inicio`) va detrás de `#[cfg(target_arch = "aarch64")]`. Las pruebas de x86 están
+//! en `pruebas_x86.rs`; las del planificador, comunes, en `pruebas_hilos.rs`.
 
 #![no_std]
 #![no_main]
@@ -29,13 +29,7 @@ pub use base::{cerrojo, espacio, excepciones, mapa, memoria, mmio, mmu, monton, 
 #[path = "base/x86_64/mod.rs"]
 mod base;
 #[cfg(target_arch = "x86_64")]
-pub use base::{cerrojo, cpu, excepciones, mapa, memoria, mmu, monton, nucleos, planificador};
-#[cfg(target_arch = "x86_64")]
-#[path = "serie_x86.rs"]
-mod serie;
-#[cfg(target_arch = "x86_64")]
-#[path = "objetos_x86.rs"]
-mod objetos;
+pub use base::{cerrojo, cpu, espacio, excepciones, mapa, memoria, mmu, monton, nucleos, planificador};
 #[cfg(feature = "pruebas")]
 mod pruebas_hilos;
 mod reloj;
@@ -43,37 +37,32 @@ mod reloj;
 #[allow(unsafe_code)]
 #[path = "pruebas_x86.rs"]
 mod pruebas;
+#[cfg(all(target_arch = "x86_64", feature = "pruebas"))]
+#[allow(unsafe_code)]
+mod pruebas_procesos_x86;
+
+// Comunes a las dos arquitecturas (en x86-64 desde X4).
+mod azar;
+mod cupo;
+mod elf;
+mod interrupciones;
+mod llamadas;
+mod objetos;
+mod procesos;
+mod registro;
+mod serie;
+mod temporizadores;
 
 #[cfg(target_arch = "aarch64")]
-mod azar;
-#[cfg(target_arch = "aarch64")]
-mod cupo;
-#[cfg(target_arch = "aarch64")]
 mod dtb;
-#[cfg(target_arch = "aarch64")]
-mod elf;
 #[cfg(target_arch = "aarch64")]
 mod gic;
 #[cfg(all(target_arch = "aarch64", not(feature = "pruebas")))]
 mod inicio;
 #[cfg(target_arch = "aarch64")]
-mod interrupciones;
-#[cfg(target_arch = "aarch64")]
 mod its;
 #[cfg(target_arch = "aarch64")]
-mod llamadas;
-#[cfg(target_arch = "aarch64")]
-mod objetos;
-#[cfg(target_arch = "aarch64")]
 mod pcie;
-#[cfg(target_arch = "aarch64")]
-mod procesos;
-#[cfg(target_arch = "aarch64")]
-mod registro;
-#[cfg(target_arch = "aarch64")]
-mod serie;
-#[cfg(target_arch = "aarch64")]
-mod temporizadores;
 // Las pruebas tocan el hardware a mano; no van en la imagen normal.
 #[cfg(all(target_arch = "aarch64", feature = "pruebas"))]
 #[allow(unsafe_code)]
@@ -153,7 +142,7 @@ fn panico(info: &PanicInfo) -> ! {
 /// x86-64: lo llama `base` (arranque.s → `kmain_x86` → `kmain`) en el núcleo 0, ya en la mitad alta con las tablas
 /// del arranque. X1: dice lo que dejó el cargador. X2: GDT, TSS e IDT, la memoria física desde el mapa de UEFI, las
 /// defensas, las tablas de páginas propias y el montón. X3: ACPI, el reloj, los APIC, el planificador y los demás
-/// núcleos. Los procesos llegan en X4.
+/// núcleos. X4: el repartidor de interrupciones y los procesos.
 #[cfg(target_arch = "x86_64")]
 pub fn kmain() -> ! {
     use base::{acpi, apic, arranque, ioapic, tiempo};
@@ -195,7 +184,10 @@ pub fn kmain() -> ! {
     );
     let libres_al_empezar = memoria::paginas().libres();
     let f = cpu::encender_defensas();
-    kprintln!("CPU: NX {}, SMEP {}, SMAP {}, UMIP {}, páginas globales {}", si(f.nx), si(f.smep), si(f.smap), si(f.umip), si(f.pge));
+    kprintln!(
+        "CPU: NX {}, SMEP {}, SMAP {}, UMIP {}, páginas globales {}; PCID {} (en uso {}), FSGSBASE {}, XSAVE {}",
+        si(f.nx), si(f.smep), si(f.smap), si(f.umip), si(f.pge), si(f.pcid), si(cpu::hay_pcid()), si(f.fsgsbase), si(f.xsave)
+    );
     mapa::construir();
     mapa::activar();
     let (cr0, cr3, cr4, efer) = mmu::estado();
@@ -232,6 +224,7 @@ pub fn kmain() -> ! {
     reloj::iniciar(100);
     reloj::habilitar_irq();
     let n = nucleos::despertar(&a);
+    interrupciones::iniciar();
 
     #[cfg(feature = "pruebas")]
     pruebas::ejecutar(&a, n);

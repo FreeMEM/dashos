@@ -9,6 +9,10 @@
 //!
 //! Cada núcleo tiene su GDT y su TSS (X3), con sus pilas IST; la IDT es la misma para todos. Las entradas de 32 a 255
 //! son las interrupciones (`apic::interrupcion`).
+//!
+//! X4, los procesos: las llamadas entran por `syscall` (`entrada_llamada_x86` en vectores.s, `llamada_x86` aquí) y
+//! vuelven por `sysret`; las interrupciones y los fallos desde el anillo 3, por la IDT y `iretq`. Las dos entradas
+//! hacen `swapgs` y `clac`. Un fallo del proceso lo termina a él; #NM le da la FPU (`planificador::fp_atrapado`).
 
 use super::serie::Serie;
 use core::fmt::Write;
@@ -24,7 +28,8 @@ pub const DATOS_USUARIO: u16 = 0x20 | 3;
 pub const CODIGO_USUARIO: u16 = 0x28 | 3;
 const TSS_SELECTOR: u16 = 0x30;
 
-/// Pila de cada vector con pila propia (IST): 1 fallo doble, 2 NMI, 3 comprobación de máquina.
+/// Pila de cada vector con pila propia (IST): 1 fallo doble, 2 NMI, 3 comprobación de máquina. Las tres llegan
+/// también entre `swapgs` y `sysret`, con la pila del proceso: por eso tienen la suya, y no miran GS.
 const IST_DF: u8 = 1;
 const IST_NMI: u8 = 2;
 const IST_MC: u8 = 3;
@@ -33,7 +38,7 @@ const IST_MC: u8 = 3;
 #[repr(C, packed(4))]
 struct Tss {
     _r0: u32,
-    /// Pila del kernel al entrar desde el anillo 3 (RSP0). X4 la pone por hilo.
+    /// Pila del kernel al entrar desde el anillo 3 (RSP0): la del hilo que corre (`nucleos::poner_pila_kernel`, X4).
     rsp: [u64; 3],
     _r1: u64,
     ist: [u64; 7],
@@ -106,6 +111,37 @@ pub fn iniciar() {
         }
     }
     cargar_idt();
+    iniciar_llamadas();
+}
+
+const MSR_STAR: u32 = 0xc000_0081;
+const MSR_LSTAR: u32 = 0xc000_0082;
+const MSR_SFMASK: u32 = 0xc000_0084;
+const EFER_SCE: u64 = 1;
+/// Lo que `syscall` apaga en RFLAGS al entrar: TF, IF, DF, IOPL, NT, RF y AC. Sin AC, SMAP sigue en pie aunque el
+/// proceso lo encendiera; sin IF, la llamada corre con las interrupciones cerradas, como en ARM.
+const SFMASK: u64 = 0x100 | 0x200 | 0x400 | 0x3000 | 0x4000 | 0x1_0000 | 0x4_0000;
+
+/// `syscall` y `sysret` en este núcleo (X4): la entrada (`entrada_llamada_x86`, en vectores.s) y los segmentos.
+fn iniciar_llamadas() {
+    unsafe extern "C" {
+        fn entrada_llamada_x86();
+    }
+    use super::cpu::{escribir_msr, leer_msr, EFER};
+    escribir_msr(EFER, leer_msr(EFER) | EFER_SCE);
+    // La base de usuario con RPL 3 ya en STAR: Intel le pone RPL 3 a SS al volver con `sysret`, pero AMD no, y el SS
+    // de RPL 0 del anillo 3 daba #GP en el siguiente `iretq` desde una interrupción (visto con KVM en AMD).
+    escribir_msr(MSR_STAR, ((BASE_USUARIO | 3) as u64) << 48 | (CODIGO_KERNEL as u64) << 32);
+    escribir_msr(MSR_LSTAR, entrada_llamada_x86 as *const () as u64);
+    escribir_msr(MSR_SFMASK, SFMASK);
+}
+
+/// La pila a la que entra el núcleo `n` desde el anillo 3 (RSP0 de su TSS).
+pub(super) fn poner_rsp0(n: usize, tope: u64) {
+    unsafe {
+        let tss = &raw mut TSS[n];
+        (*tss).rsp[0] = tope;
+    }
 }
 
 /// Las pilas IST del núcleo `n` (fallo doble, NMI y comprobación de máquina) en su TSS, y su TSS en su GDT. Antes de
@@ -130,6 +166,7 @@ pub(super) fn preparar_nucleo(n: usize, ist: [u64; 3]) {
 pub(super) fn iniciar_nucleo(n: usize) {
     cargar_gdt(n);
     cargar_idt();
+    iniciar_llamadas();
 }
 
 fn cargar_idt() {
@@ -204,6 +241,59 @@ pub struct Marco {
     pub(in crate::base) rflags: u64,
     pub(in crate::base) rsp: u64,
     pub(in crate::base) ss: u64,
+}
+
+/// Fuera de `base` solo se leen los argumentos de una llamada y se escriben sus resultados: cambiar RIP, CS o RFLAGS
+/// haría volver a donde se quisiera, también al anillo 0.
+impl Marco {
+    /// Una llamada al sistema (`syscall`): el número (rax) y los argumentos (rdi, rsi, rdx, r10 y r8). Como en Linux,
+    /// r10 en vez de rcx, que `syscall` usa para la vuelta.
+    pub fn llamada(&self) -> (u64, [u64; 5]) {
+        (self.rax, [self.rdi, self.rsi, self.rdx, self.r10, self.r8])
+    }
+
+    /// El resultado de una llamada: rax (x0 en ARM) y, si hace falta, rdx (x1) y r8 (x2).
+    pub fn poner_x0(&mut self, v: u64) {
+        self.rax = v;
+    }
+
+    pub fn poner_x1(&mut self, v: u64) {
+        self.rdx = v;
+    }
+
+    pub fn poner_x2(&mut self, v: u64) {
+        self.r8 = v;
+    }
+}
+
+/// RFLAGS que un proceso puede tener: CF, PF, AF, ZF, SF, TF, DF, OF, AC e ID. Al volver se pone además IF (y el bit
+/// 1, siempre a 1). Nunca IOPL, NT, RF ni VM.
+const RFLAGS_USUARIO: u64 = 0x1 | 0x4 | 0x10 | 0x40 | 0x80 | 0x100 | 0x400 | 0x800 | 0x4_0000 | 0x20_0000;
+/// Donde empiezan las direcciones no canónicas: `sysret` con RIP aquí fallaría en el anillo 0 con la pila del proceso.
+const NO_CANONICA: u64 = 1 << 47;
+
+/// Desde `entrada_llamada_x86`, con el marco hecho como el de una interrupción, en la pila del kernel del hilo. Vuelve
+/// con `sysret`.
+#[unsafe(no_mangle)]
+extern "C" fn llamada_x86(m: &mut Marco) {
+    // PAN por software, como en ARM (C34): dentro del kernel la mitad baja está vacía; SMAP, además, si lo hay.
+    super::espacio::activar_vacio();
+    crate::llamadas::atender(m);
+    volver_al_anillo3(m);
+}
+
+/// Lo último antes de volver a un proceso, por `iretq` o por `sysret`: si lo han matado, muere aquí (C39); RFLAGS
+/// razonables; y el espacio del hilo que vuelve, que puede no ser el que entró si hubo cambio de hilo por el camino.
+fn volver_al_anillo3(m: &mut Marco) {
+    if crate::planificador::debe_morir() {
+        crate::planificador::terminar_actual(crate::objetos::Fin::Matado);
+    }
+    m.rflags = (m.rflags & RFLAGS_USUARIO) | 0x202;
+    if m.rip >= NO_CANONICA {
+        crate::kprintln!("Proceso: vuelta a una dirección no canónica ({:#x}); se termina", m.rip);
+        crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
+    }
+    super::espacio::activar(crate::planificador::ttbr0_actual());
 }
 
 const NOMBRES: [&str; 32] = [
@@ -310,6 +400,18 @@ fn apuntar_sonda(m: &Marco, cr2: u64) {
 
 #[unsafe(no_mangle)]
 extern "C" fn excepcion_x86(m: &mut Marco) {
+    let del_kernel = m.cs & 3 == 0;
+    if !del_kernel {
+        // Desde un proceso (X4): la mitad baja vacía mientras se está en el kernel, como en las llamadas.
+        super::espacio::activar_vacio();
+    }
+    tratar(m, del_kernel);
+    if !del_kernel {
+        volver_al_anillo3(m);
+    }
+}
+
+fn tratar(m: &mut Marco, del_kernel: bool) {
     // De 32 en adelante, interrupciones: al APIC (el reloj, los avisos entre núcleos, los aparatos).
     if m.vector >= 32 {
         super::apic::interrupcion(m.vector as u8);
@@ -317,7 +419,39 @@ extern "C" fn excepcion_x86(m: &mut Marco) {
     }
     // CR2: la dirección del fallo de página; en un fallo doble, la del fallo de página que lo causó, si lo hubo.
     let cr2 = if matches!(m.vector, 8 | 14) { super::cpu::cr2() } else { 0 };
-    let del_kernel = m.cs & 3 == 0;
+
+    if !del_kernel {
+        match m.vector {
+            // Una NMI no es del proceso: se avisa y se sigue.
+            2 => {
+                let _ = writeln!(Serie, "NMI en el anillo 3 ({:#x}); se sigue", m.rip);
+                return;
+            }
+            // La FPU atrapada (CR0.TS): el hilo la usa por primera vez desde que otro la tuvo. Se le da con sus
+            // registros y se repite la instrucción (C28).
+            7 => {
+                crate::planificador::fp_atrapado();
+                return;
+            }
+            // Cualquier otro fallo de un proceso lo termina a él, no al sistema.
+            v => {
+                let nombre = NOMBRES.get(v as usize).copied().unwrap_or("?");
+                crate::kprintln!(
+                    "Proceso: excepción {} ({}) en {:#x} (CR2 {:#x}, código {:#x}); se termina",
+                    v, nombre, m.rip, cr2, m.codigo
+                );
+                crate::planificador::terminar_actual(crate::objetos::Fin::Fallo);
+            }
+        }
+    }
+
+    // Fallo al copiar desde o hacia la memoria de un proceso (C31): la copia devuelve error, el kernel sigue.
+    if matches!(m.vector, 13 | 14) {
+        if let Some(vuelta) = super::usuario::fallo_de_copia(m.rip) {
+            m.rip = vuelta;
+            return;
+        }
+    }
 
     // Las sondas de las pruebas: el fallo vuelve como error.
     if del_kernel && matches!(m.vector, 13 | 14) {

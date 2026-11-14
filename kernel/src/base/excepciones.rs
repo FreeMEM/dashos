@@ -18,9 +18,9 @@ pub struct Marco {
 }
 
 impl Marco {
-    /// x0 a x30 tal como los dejó el proceso.
-    pub fn x(&self) -> [u64; 31] {
-        self.x
+    /// Una llamada al sistema (`svc`): el número (x8) y los argumentos (x0 a x4).
+    pub fn llamada(&self) -> (u64, [u64; 5]) {
+        (self.x[8], [self.x[0], self.x[1], self.x[2], self.x[3], self.x[4]])
     }
 
     /// El resultado de una llamada al sistema: x0 y, si hace falta, x1.

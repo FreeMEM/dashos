@@ -12,6 +12,9 @@
 //!
 //! Las LPI (U6h, las MSI que pasan por el ITS del GICv3) se enmascaran aquí, sin tocar el GIC: enmascararlas allí
 //! pide órdenes al ITS. Son mensajes, sin nivel: una que llega enmascarada se apunta y se avisa al terminar.
+//!
+//! En x86-64 (X4) el controlador es el IOAPIC (`arq`, abajo): el número de una interrupción es su GSI más 32, y llega
+//! al núcleo 0 por el vector de aparatos que le toca (`apic.rs`). Las MSI llegan con X5.
 
 use crate::cerrojo::Cerrojo;
 use crate::objetos::{Canal, Mensaje, Revocable};
@@ -21,10 +24,78 @@ use alloc::vec::Vec;
 use core::sync::atomic::{AtomicU64, Ordering};
 
 /// Interrupciones que se pueden dar a un proceso: las de aparatos (SPI), de la 32 a la 255, y las primeras `LPIS` LPI
-/// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256.
+/// (desde la 8192), que en los mapas de bits van detrás, desde el bit 256. En x86, las GSI de los IOAPIC que caben
+/// en los vectores de aparatos, y aún sin LPI (MSI).
 pub const PRIMERA: u32 = 32;
-pub const ULTIMA: u32 = 255;
-pub const LPIS: u32 = 64;
+pub const ULTIMA: u32 = arq::ULTIMA;
+pub const LPIS: u32 = arq::LPIS;
+
+/// Lo que cambia con el controlador de interrupciones: el GIC (y su ITS) en ARM.
+#[cfg(target_arch = "aarch64")]
+mod arq {
+    pub const ULTIMA: u32 = 255;
+    pub const LPIS: u32 = 64;
+
+    /// Dirigida al núcleo 0, y habilitada.
+    pub fn dirigir_y_habilitar(intid: u32) {
+        crate::gic::dirigir(intid, 0);
+        habilitar(intid);
+    }
+
+    pub fn habilitar(intid: u32) {
+        crate::gic::habilitar(intid, 0xa0);
+    }
+
+    pub fn deshabilitar(intid: u32) {
+        crate::gic::deshabilitar(intid);
+    }
+
+    pub fn lpi_encender(intid: u32, si: bool) {
+        crate::its::encender(intid, si);
+    }
+}
+
+/// x86-64 (X4): los IOAPIC. La interrupción `intid` es la GSI `intid - 32`, y va al vector de aparatos
+/// `apic::PRIMER_VECTOR_APARATO + intid - 32` del núcleo 0.
+#[cfg(target_arch = "x86_64")]
+mod arq {
+    use crate::base::{apic, ioapic};
+
+    pub const ULTIMA: u32 = super::PRIMERA + (apic::ULTIMO_VECTOR_APARATO - apic::PRIMER_VECTOR_APARATO) as u32;
+    pub const LPIS: u32 = 0;
+
+    fn vector(intid: u32) -> u8 {
+        apic::PRIMER_VECTOR_APARATO + (intid - super::PRIMERA) as u8
+    }
+
+    /// El número de la interrupción que llega por el vector de aparatos `v`.
+    pub fn de_vector(v: u8) -> u32 {
+        super::PRIMERA + (v - apic::PRIMER_VECTOR_APARATO) as u32
+    }
+
+    /// Al núcleo 0, y desenmascarada. Si ningún IOAPIC lleva esa GSI, no llegará nunca.
+    pub fn dirigir_y_habilitar(intid: u32) {
+        if let Some(destino) = crate::nucleos::apic_de(0) {
+            ioapic::dirigir(ioapic::linea_de_gsi(intid - super::PRIMERA), vector(intid), destino);
+        }
+    }
+
+    pub fn habilitar(intid: u32) {
+        dirigir_y_habilitar(intid);
+    }
+
+    pub fn deshabilitar(intid: u32) {
+        ioapic::enmascarar(intid - super::PRIMERA);
+    }
+
+    pub fn lpi_encender(_intid: u32, _si: bool) {}
+}
+
+/// Desde la interrupción de un vector de aparatos sin manejador del kernel (`apic.rs`). Como `atender`.
+#[cfg(target_arch = "x86_64")]
+pub fn atender_vector(v: u8) -> bool {
+    atender(arq::de_vector(v))
+}
 const PRIMERA_LPI: u32 = 8192;
 const PALABRAS: usize = 5;
 
@@ -81,11 +152,10 @@ impl Interrupcion {
             // Dirigida al núcleo 0 por la colección 0 (its.rs); se enciende en su tabla de configuración.
             let m = 1u64 << (self.intid - PRIMERA_LPI);
             LPI_ENMASCARADAS.fetch_and(!m, Ordering::SeqCst);
-            crate::its::encender(self.intid, true);
+            arq::lpi_encender(self.intid, true);
             return;
         }
-        crate::gic::dirigir(self.intid, 0);
-        crate::gic::habilitar(self.intid, 0xa0);
+        arq::dirigir_y_habilitar(self.intid);
     }
 
     /// El controlador ya atendió el aparato: se vuelve a habilitar.
@@ -112,7 +182,7 @@ impl Interrupcion {
             }
             return;
         }
-        crate::gic::habilitar(self.intid, 0xa0);
+        arq::habilitar(self.intid);
     }
 }
 
@@ -131,9 +201,9 @@ impl Interrupcion {
 impl Drop for Interrupcion {
     fn drop(&mut self) {
         if es_lpi(self.intid) {
-            crate::its::encender(self.intid, false);
+            arq::lpi_encender(self.intid, false);
         } else {
-            crate::gic::deshabilitar(self.intid);
+            arq::deshabilitar(self.intid);
         }
         let (w, b) = bit(self.intid);
         ASOCIADAS[w].fetch_and(!b, Ordering::SeqCst);
@@ -163,7 +233,7 @@ pub fn atender(intid: u32) -> bool {
             return true;
         }
     } else {
-        crate::gic::deshabilitar(intid);
+        arq::deshabilitar(intid);
     }
     PENDIENTES[w].fetch_or(b, Ordering::SeqCst);
     REPARTIDOR.tomar().despertar_todos();

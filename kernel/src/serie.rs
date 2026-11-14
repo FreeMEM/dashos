@@ -1,23 +1,36 @@
-//! Puerto serie PL011 (UART0) de la Pi 4.
+//! Puerto serie PL011 (UART0) de la Pi 4; en x86-64 (X4), COM1 (`base/x86_64/serie.rs`). Lo de encima (el registro,
+//! la marca de las líneas de los programas, `kprint!`) es lo mismo en las dos.
 
+#[cfg(target_arch = "aarch64")]
 use crate::mmio::RegLe32;
 use core::fmt;
+#[cfg(target_arch = "aarch64")]
 use core::sync::atomic::{AtomicBool, Ordering};
 
 /// Dirección del PL011 con los periféricos en modo bajo. En C4 se leerá del árbol de dispositivos.
+#[cfg(target_arch = "aarch64")]
 const BASE: usize = crate::mmu::virt(crate::placa::SERIE);
 
+#[cfg(target_arch = "aarch64")]
 const DR: RegLe32 = RegLe32::new(BASE + 0x00);
+#[cfg(target_arch = "aarch64")]
 const FR: RegLe32 = RegLe32::new(BASE + 0x18);
+#[cfg(target_arch = "aarch64")]
 const IBRD: RegLe32 = RegLe32::new(BASE + 0x24);
+#[cfg(target_arch = "aarch64")]
 const FBRD: RegLe32 = RegLe32::new(BASE + 0x28);
+#[cfg(target_arch = "aarch64")]
 const LCRH: RegLe32 = RegLe32::new(BASE + 0x2C);
+#[cfg(target_arch = "aarch64")]
 const CR: RegLe32 = RegLe32::new(BASE + 0x30);
+#[cfg(target_arch = "aarch64")]
 const ICR: RegLe32 = RegLe32::new(BASE + 0x44);
 
+#[cfg(target_arch = "aarch64")]
 const FR_TXFF: u32 = 1 << 5;
 
 /// 115200 baudios con el reloj de 48 MHz que pone el firmware de la Pi 4.
+#[cfg(target_arch = "aarch64")]
 pub fn iniciar() {
     CR.escribir(0);
     ICR.escribir(0x7ff);
@@ -34,6 +47,7 @@ pub fn iniciar() {
 /// El plazo es para la consola, no para cada byte: tras agotarlo una vez, la consola se da por muerta y los bytes se
 /// tiran sin esperar hasta que vuelva a tener hueco. Si no, un texto largo esperaba el plazo en cada byte, minutos con
 /// las IRQ enmascaradas (auditoría de cierre de la fase 1, N2).
+#[cfg(target_arch = "aarch64")]
 pub fn escribir_byte(b: u8) {
     if MUERTA.load(Ordering::Relaxed) {
         if FR.leer() & FR_TXFF != 0 {
@@ -52,7 +66,14 @@ pub fn escribir_byte(b: u8) {
     DR.escribir(b as u32);
 }
 
+#[cfg(target_arch = "aarch64")]
 static MUERTA: AtomicBool = AtomicBool::new(false);
+
+/// x86-64: a COM1, que espera hueco un rato y si no, pierde el byte.
+#[cfg(target_arch = "x86_64")]
+pub fn escribir_byte(b: u8) {
+    crate::base::serie::byte(b);
+}
 
 pub struct Serie;
 
