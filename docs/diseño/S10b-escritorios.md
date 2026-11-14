@@ -511,7 +511,7 @@ Decidido por el usuario el 2026-11-08: todas como se recomienda ("vale a todo").
 - Con S6: poderes por aplicación y panel para quitarlos; la marca del canal; ventanas del sistema dibujadas por el
   compositor.
 - Con S7: la caja Linux solo reenvía ventanas normales.
-- Con S8: un escritorio y un tema son paquetes; Hangar los puede vender.
+- Con S8: un escritorio y un tema son paquetes; Hangar los puede ofrecer.
 - Con S9: el compositor habla Wayland sobre canales; los planos del HVS y la GPU son suyos.
 - Con S10: lo amplía. Cambian el bloqueo (campo del compositor), Workbench (programa aparte), los módulos
   (procesos) y el estado (en servicios). Se mantienen las pantallas, la mezcla de mosaico y flotantes, Prefs y el

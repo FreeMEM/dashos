@@ -159,7 +159,7 @@ lo que queda decidido. El detalle está en el documento de cada tarea, en `docs/
 - (S7) ¿Caja Linux solo desde 4 GB de RAM? **sí.**
 - (S8) ¿Nombre de la orden de paquetes? **`Paq`.**
 - (S8) ¿Sistema base como imagen firmada y paquetes por encima, como Silverblue? **sí.**
-- (S8) ¿Hangar como tienda encima de `Paq`, con una arquitectura de DashOS en su catálogo? **sí (se decide en el proyecto Hangar).**
+- (S8) ¿Hangar como catálogo encima de `Paq`, con una arquitectura de DashOS en su catálogo? **sí (se decide en el proyecto Hangar).**
 - (S9) ¿Gráficos por fases: pantalla del firmware, controlador propio del HVS y HDMI, y la GPU al final? **sí.**
 - (S9) ¿Wayland como protocolo propio del compositor, sobre canales de DashOS? **sí.**
 - (S10) ¿Escritorios virtuales como "pantallas" del Amiga, con el gesto de arrastrar? **sí.**
@@ -372,6 +372,5 @@ resumido, en `docs/diseño/RESUMEN.md`.
 - **RAD: y las imágenes del Amiga (S20, `docs/diseño/S20-rad-adf-hdf.md`):** RAD: como disco DashFS en memoria
   reservada, un volumen cifrado por usuario, que aguanta caídas y el reinicio en caliente propio, con copia opcional a
   la tarjeta; ADF y HDF montables como volúmenes, con copia al escribir (guardar o tirar los cambios al desmontar).
-- **El negocio va en el marketplace de Dash** (Hangar, S8): DashOS es una arquitectura más de su catálogo, y los
-  programas de pago de DashOS se venden ahí.
+- **El catálogo de programas es Hangar** (S8): DashOS es una arquitectura más de su catálogo.
 
