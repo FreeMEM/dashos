@@ -118,6 +118,13 @@ Rama `trasfondo` (worktree `.worktrees/trasfondo`), desde 486d053.
   cuánto lo espera `guardian` y qué alarga ahora ese tramo (las preguntas primero, los clics de refoco, las ventanas de
   la caja), o que `guardian` espere a que el centro diga "cerrado".
 
+### El tramo del centro, medido (ESTADO_GUION, vuelta 3 con revision)
+
+El guion empieza el centro a los 135 s del arranque y llega a "Apariencia: oscuro" a los 159 s; los pasos de los fondos
+(15 a 20) esperan hasta 30 s cada uno y "Acerca de" llega a los 327 s. `guardian` esperaba al centro como mucho 60 s
+(hasta los ~195 s) y bloqueaba: el tramo entero no cabe. Decisión del coordinador: `guardian` espera el evento de
+cierre del centro con un tope de 300 s (solo en su guion de prueba).
+
 ## Medido
 
 - **Lo que gasta el panel en reposo**, con la llamada 52 sobre el grupo del fondo (lo apunta el propio fondo cada
