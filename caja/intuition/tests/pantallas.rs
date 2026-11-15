@@ -6,9 +6,10 @@
 mod comun;
 
 use caja_exec::estructuras::task;
-use caja_exec::{Config, Exec, MemoriaVec};
+use caja_exec::{Config, Exec, Memoria, MemoriaVec};
 use caja_intuition::estructuras::{drawinfo as dri, screen, wa, window as win};
 use caja_intuition::modos::{id, workbench};
+use caja_intuition::lienzo::Rect;
 use caja_intuition::{CajaGrafica, CompositorDePrueba, Numeros};
 use comun::*;
 
@@ -190,6 +191,111 @@ fn mapa_del_programa() {
     let s2 = i(&mut c, "OpenScreen", &[], &[nueva]);
     assert_eq!(l32(&c, s2 + screen::RASTPORT + 4), bm);
     assert_eq!(i(&mut c, "CloseScreen", &[], &[s2]), 1);
+    let av = c.1.tomar_avisos();
+    assert!(av.is_empty(), "{:?}", av);
+}
+
+fn ultimo_dano(c: &Caja, sup: u32) -> (usize, Rect) {
+    let d = &c.1.comp.ventana(sup).danos;
+    (d.len(), *d.last().unwrap_or(&Rect::nuevo(0, 0, -1, -1)))
+}
+
+fn cgx(c: &mut Caja, nombre: &str, d: &[u32], a: &[u32]) -> u32 {
+    let n = c.1.numero_cgx(nombre).expect("función de cybergraphics");
+    let mut r = regs(d, a);
+    c.1.llamar(&mut c.0, n, &mut r);
+    r.d[0]
+}
+
+/// El mapa del programa se presenta solo donde cambia: lo que pinta graphics, lo que borra `BltClear` en sus planos y,
+/// lo que el programa escribe a mano (sin llamadas), en cuanto se ve en un sondeo; desde entonces, en cada presentación,
+/// hasta que deja de hacerlo.
+#[test]
+fn mapa_del_programa_solo_lo_que_cambia() {
+    let mut c = caja_fhd();
+    let (bm, rpm) = planar(&mut c, 4, 320, 200);
+    let s = abrir(&mut c, &[(0x8000_0032, id(1, 0)), (0x8000_002E, bm), (0x8000_0023, 320), (0x8000_0024, 200)]);
+    let sup = c.1.superficie_de_pantalla(s).unwrap();
+    let cm = l32(&c, s + screen::VIEWPORT + 4);
+    // La primera vez, entero; sin cambios, nada.
+    c.1.presentar(&c.0);
+    let (n, d) = ultimo_dano(&c, sup);
+    assert_eq!(d, Rect::nuevo(0, 0, 319, 199));
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup).0, n, "nada que presentar");
+    // graphics: solo lo pintado.
+    pen(&mut c, rpm, 5);
+    rect(&mut c, rpm, 10, 10, 20, 20);
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 1, Rect::nuevo(10, 10, 20, 20)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(15, 15) & 0x00FF_FFFF, color(&mut c, cm, 5));
+    // BltClear en sus planos: esas filas.
+    let bpr = l16(&c, bm) as u32;
+    let plano0 = l32(&c, bm + 8);
+    g(&mut c, "BltClear", &[2 * bpr, 0], &[0, plano0 + 12 * bpr]);
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 2, Rect::nuevo(0, 12, 319, 13)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(15, 12) & 0x00FF_FFFF, color(&mut c, cm, 4), "sin el plano 0, la 4");
+    // A mano, sin llamadas: no se ve hasta el sondeo...
+    c.0.mem.leer_mut(plano0 + 100 * bpr, 1).unwrap()[0] = 0xFF;
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup).0, n + 2);
+    assert_eq!(c.1.escrituras_directas(s), Some((0, false)));
+    c.1.poner_hora(1, 0);
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 3, Rect::nuevo(0, 100, 319, 100)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(3, 100) & 0x00FF_FFFF, color(&mut c, cm, 1));
+    assert_eq!(c.1.escrituras_directas(s), Some((1, true)));
+    // ... y desde entonces, en cada presentación (solo sus filas).
+    c.0.mem.leer_mut(plano0 + 150 * bpr + 2, 1).unwrap()[0] = 0x80;
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 4, Rect::nuevo(0, 150, 319, 150)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(16, 150) & 0x00FF_FFFF, color(&mut c, cm, 1));
+    // Sin más, deja de mirar en cada presentación (y no presenta nada).
+    for _ in 0..20 {
+        c.1.presentar(&c.0);
+    }
+    assert_eq!(c.1.escrituras_directas(s), Some((2, false)));
+    assert_eq!(ultimo_dano(&c, sup).0, n + 4);
+    assert_eq!(i(&mut c, "CloseScreen", &[], &[s]), 1);
+    let av = c.1.tomar_avisos();
+    assert!(av.is_empty(), "{:?}", av);
+}
+
+/// Un mapa de color verdadero del programa: lo que escribe cybergraphics, y lo que escribe el programa tras
+/// `LockBitMap` (al soltarlo: lo que dice `UBMI_UPDATERECTS`).
+#[test]
+fn mapa_del_programa_de_color_verdadero() {
+    let mut c = caja_fhd();
+    let (bm, rpm) = nativo(&mut c, 160, 100);
+    let s = abrir(&mut c, &[(0x8000_0032, id(1, 0)), (0x8000_002E, bm), (0x8000_0023, 160), (0x8000_0024, 100)]);
+    assert_ne!(s, 0, "{:?}", c.1.avisos());
+    let sup = c.1.superficie_de_pantalla(s).unwrap();
+    c.1.presentar(&c.0);
+    let n = ultimo_dano(&c, sup).0;
+    // FillPixelArray(rp, x, y, w, h, argb)(a1/d0/d1/d2/d3/d4).
+    cgx(&mut c, "FillPixelArray", &[30, 40, 5, 6, 0x00_12_34_56], &[0, rpm]);
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 1, Rect::nuevo(30, 40, 34, 45)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(32, 42) & 0x00FF_FFFF, 0x123456);
+    // LockBitMap, a mano, y UnLockBitMapTagList con UBMI_UPDATERECTS.
+    let base = cgx(&mut c, "LockBitMapTagList", &[], &[bm, 0]);
+    assert_ne!(base, 0);
+    let bpr = cgx(&mut c, "GetCyberMapAttr", &[0x8000_0001], &[bm]);
+    e32(&mut c, base + 70 * bpr + 4 * 80, 0x00AB_CDEF);
+    let rl = reservar(&mut c, 16);
+    e32(&mut c, rl, 1);
+    e32(&mut c, rl + 4, 0);
+    for (k, v) in [80u16, 70, 80, 70].iter().enumerate() {
+        e16(&mut c, rl + 8 + 2 * k as u32, *v);
+    }
+    let t = etiquetas(&mut c, &[(0x8500_1001, rl)]);
+    cgx(&mut c, "UnLockBitMapTagList", &[], &[base, t]);
+    c.1.presentar(&c.0);
+    assert_eq!(ultimo_dano(&c, sup), (n + 2, Rect::nuevo(80, 70, 80, 70)));
+    assert_eq!(c.1.comp.ventana(sup).pixel(80, 70) & 0x00FF_FFFF, 0xABCDEF);
+    assert_eq!(c.1.escrituras_directas(s), Some((0, false)));
+    assert_eq!(i(&mut c, "CloseScreen", &[], &[s]), 1);
     let av = c.1.tomar_avisos();
     assert!(av.is_empty(), "{:?}", av);
 }

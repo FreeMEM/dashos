@@ -19,6 +19,8 @@ pub struct Rect {
 }
 
 impl Rect {
+    /// El rectángulo vacío (lo neutro de `union`).
+    pub const VACIO: Rect = Rect { x0: 0, y0: 0, x1: -1, y1: -1 };
     pub const fn nuevo(x0: i32, y0: i32, x1: i32, y1: i32) -> Rect {
         Rect { x0, y0, x1, y1 }
     }

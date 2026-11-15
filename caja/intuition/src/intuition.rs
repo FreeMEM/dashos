@@ -46,10 +46,8 @@ pub(crate) struct Pantalla {
     pub aviso: Option<(u32, u8)>,
     /// Su superficie del compositor (0: ninguna), para que se vea lo que se pinta en su mapa.
     pub superficie: Superficie,
-    /// El mapa del programa (`SA_BitMap`), si lo dio (0: el suyo, un lienzo); y cuántas veces se ha mirado para
-    /// presentarlo (se presenta entero cada pocas).
+    /// El mapa del programa (`SA_BitMap`), si lo dio (0: el suyo, un lienzo).
     pub mapa_programa: u32,
-    pub vueltas: u32,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -228,7 +226,6 @@ impl<C: Compositor> CajaGrafica<C> {
             aviso: None,
             superficie: 0,
             mapa_programa: 0,
-            vueltas: 0,
         };
         self.bordes_pantalla(ex)?;
         Ok(())

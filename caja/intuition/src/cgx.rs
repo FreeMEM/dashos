@@ -672,9 +672,7 @@ impl<C: Compositor> CajaGrafica<C> {
                         .collect(),
                 };
                 c.escribir_fila(&mut ex.mem, mx, my, &fila);
-                if let Some(l) = d.lienzo.and_then(|b| self.gfx.lienzos.get_mut(&b)) {
-                    l.danar(Rect::nuevo(mx, my, mx + fila.len() as i32 - 1, my));
-                }
+                self.tocar(d.bm, Rect::nuevo(mx, my, mx + fila.len() as i32 - 1, my));
                 fila.len() as u32
             }
             Mapa::Planar(p) => {
@@ -687,6 +685,9 @@ impl<C: Compositor> CajaGrafica<C> {
                 };
                 for (k, &q) in plumas.iter().enumerate() {
                     p.escribir(&mut ex.mem, mx + k as i32, my, q, 0xFF);
+                }
+                if !plumas.is_empty() {
+                    self.tocar(d.bm, Rect::nuevo(mx, my, mx + plumas.len() as i32 - 1, my));
                 }
                 plumas.len() as u32
             }
@@ -1002,6 +1003,9 @@ impl<C: Compositor> CajaGrafica<C> {
                 solo.escribir(&mut ex.mem, i, j, es as u8, 1);
             }
         }
+        if an > 0 && al > 0 {
+            self.tocar(mapa, Rect::nuevo(0, 0, an - 1, al - 1));
+        }
         Ok(1)
     }
 
@@ -1064,12 +1068,11 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(asa)
     }
 
-    /// Lo que el programa pudo escribir directamente en un lienzo cogido (`r`, en coordenadas del mapa): cambiado, para
-    /// que el compositor lo presente. En un chunky no hay nada que hacer.
+    /// Lo que el programa pudo escribir directamente en un mapa cogido (`r`, en coordenadas del mapa): cambiado, para
+    /// que se presente (en un lienzo, o en el mapa de un programa que es el de una pantalla; en un chunky suelto no hay
+    /// nada que hacer).
     fn marcar_lienzo(&mut self, c: &Cerrojo, r: Rect) {
-        if let Some(l) = self.gfx.lienzos.get_mut(&c.bm) {
-            l.danar(r);
-        }
+        self.tocar(c.bm, r);
     }
 
     /// `UnLockBitMap` y `UnLockBitMapTagList` (con `tags`): lo suelta. En un lienzo, lo que dice `UBMI_UPDATERECTS` (o, si

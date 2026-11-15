@@ -5,8 +5,8 @@
 //! - su `DrawInfo`, con su profundidad y las plumas de `SA_Pens` (o las del Workbench);
 //! - su `BitMap`: un lienzo en la memoria del 68k en el formato del modo (LUT8 en los de 8 bits, con su paleta), o el
 //!   del programa (`SA_BitMap`, o `CUSTOMBITMAP` en la `NewScreen`);
-//! - una superficie del compositor de su tamaño, sin borde: lo que se pinta en su mapa se ve (el lienzo, con lo que ha
-//!   cambiado; el mapa del programa, entero cada pocos cuadros, porque se puede escribir sin que lo sepamos).
+//! - una superficie del compositor de su tamaño, sin borde: lo que se pinta en su mapa se ve, solo lo que ha cambiado
+//!   (en el lienzo, lo apunta la vista; en el mapa del programa, `vigia.rs`).
 //!
 //! Sus ventanas son ventanas del compositor como las del Workbench, con la paleta y las plumas de su pantalla. Va
 //! delante en la lista de `IntuitionBase`. Con `SA_PubName` es pública: `LockPubScreen` la encuentra por su nombre
@@ -63,8 +63,6 @@ mod sa {
 
 /// `PubScreenStatus`: el único estado que hay.
 const PSNF_PRIVATE: u32 = 1;
-/// Cada cuántas presentaciones se manda entero el mapa de un programa (`SA_BitMap`): no se sabe qué cambió.
-const VUELTAS_MAPA_PROGRAMA: u32 = 5;
 
 /// Lo que pide `OpenScreenTagList`.
 #[derive(Default)]
@@ -348,9 +346,11 @@ impl<C: Compositor> CajaGrafica<C> {
                 aviso,
                 superficie,
                 mapa_programa: q.mapa,
-                vueltas: 0,
             },
         );
+        if q.mapa != 0 {
+            self.gfx.vigilados.entry(q.mapa).or_insert_with(crate::vigia::Vigilado::nuevo);
+        }
         Ok(Some(s))
     }
 
@@ -419,6 +419,9 @@ impl<C: Compositor> CajaGrafica<C> {
         if ex.l32(base + ib::ACTIVESCREEN)? == s {
             ex.e32(base + ib::ACTIVESCREEN, ex.l32(base + ib::FIRSTSCREEN)?)?;
         }
+        if p.mapa_programa != 0 && !self.intui.pantallas.values().any(|o| o.mapa_programa == p.mapa_programa) {
+            self.gfx.vigilados.remove(&p.mapa_programa);
+        }
         let bm = s + sc::BITMAP;
         self.soltar_lienzo(ex, bm);
         self.free_color_map(ex, p.cm)?;
@@ -454,51 +457,25 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     /// Presenta al compositor lo que ha cambiado en el mapa de cada pantalla propia (el lienzo, con su daño; el mapa
-    /// del programa, entero cada `VUELTAS_MAPA_PROGRAMA`).
+    /// del programa, con lo apuntado y lo que se vea en sus filas: `vigia.rs`).
     pub(crate) fn presentar_pantallas<M: Memoria>(&mut self, ex: &Exec<M>) {
-        let todas: Vec<(u32, Superficie, u32, u32, u32)> = self
+        let todas: Vec<(u32, Superficie, u32, u32, u32, u32)> = self
             .intui
             .pantallas
             .values()
             .filter(|p| p.superficie != 0)
-            .map(|p| (p.dir, p.superficie, p.mapa_programa, p.ancho, p.alto))
+            .map(|p| (p.dir, p.superficie, p.mapa_programa, p.ancho, p.alto, p.cm))
             .collect();
-        for (s, sup, programa, an, al) in todas {
-            if programa == 0 {
-                let Some(l) = self.gfx.lienzos.get_mut(&(s + sc::BITMAP)) else { continue };
-                let (lan, lal) = (l.ancho(), l.alto());
-                if let Some((d, pix, textos)) = l.presentar(&ex.mem) {
-                    self.comp.presentar(sup, pix, lan, lal, d, textos);
-                }
+        for (s, sup, programa, an, al, cm) in todas {
+            if programa != 0 {
+                self.presentar_mapa_programa(ex, programa, sup, an, al, cm);
                 continue;
             }
-            let Some(p) = self.intui.pantallas.get_mut(&s) else { continue };
-            p.vueltas += 1;
-            if p.vueltas % VUELTAS_MAPA_PROGRAMA != 1 {
-                continue;
+            let Some(l) = self.gfx.lienzos.get_mut(&(s + sc::BITMAP)) else { continue };
+            let (lan, lal) = (l.ancho(), l.alto());
+            if let Some((d, pix, textos)) = l.presentar(&ex.mem) {
+                self.comp.presentar(sup, pix, lan, lal, d, textos);
             }
-            let cm = p.cm;
-            let Ok(mapa) = self.mapa(ex, programa) else { continue };
-            let de_color = self.de_color(programa, mapa);
-            let r = crate::lienzo::Rect::de_tamano(an, al);
-            let mut pix = Vec::new();
-            if pix.try_reserve_exact(an as usize * al as usize).is_err() {
-                continue;
-            }
-            for y in 0..al as i32 {
-                for x in 0..an as i32 {
-                    let v = match mapa {
-                        crate::graphics::Mapa::Planar(pl) if pl.rect().contiene(x, y) => pl.leer(&ex.mem, x, y) as u32,
-                        crate::graphics::Mapa::Chunky(c) if c.rect().contiene(x, y) => c.leer(&ex.mem, x, y),
-                        crate::graphics::Mapa::Nativo => {
-                            self.gfx.lienzos.get(&programa).map_or(0, |l| l.crudo_en(&ex.mem, x, y))
-                        }
-                        _ => 0,
-                    };
-                    pix.push(if de_color { v } else { self.color(cm, v as u8) } | 0xFF00_0000);
-                }
-            }
-            self.comp.presentar(sup, &pix, an, al, r, &[]);
         }
     }
 

@@ -104,9 +104,24 @@ pub(crate) struct Pintor<'a, M: Memoria> {
     /// es la esquina de dentro de los bordes. Las coordenadas del pintor (y `clip`) son las del `RastPort`.
     pub dx: i32,
     pub dy: i32,
+    /// Si el mapa es el de un programa que es el de una pantalla (`vigia.rs`): dónde se apunta lo que se escribe (en
+    /// coordenadas del mapa). En los lienzos lo apunta la vista.
+    pub vigia: Option<&'a mut Rect>,
 }
 
-impl<M: Memoria> Pintor<'_, M> {
+/// Mete `(x, y)` en `r`.
+fn apuntar(r: &mut Rect, x: i32, y: i32) {
+    if r.vacio() {
+        *r = Rect::nuevo(x, y, x, y);
+    } else {
+        r.x0 = r.x0.min(x);
+        r.y0 = r.y0.min(y);
+        r.x1 = r.x1.max(x);
+        r.y1 = r.y1.max(y);
+    }
+}
+
+impl<'a, M: Memoria> Pintor<'a, M> {
     /// Si sus valores crudos son colores ARGB (y no plumas: los planares y los de 8 bits, LUT8).
     pub fn es_nativa(&self) -> bool {
         match &self.sup {
@@ -182,6 +197,9 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
+        if let Some(r) = self.vigia.as_deref_mut() {
+            apuntar(r, x, y);
+        }
         match &mut self.sup {
             Sup::Nativa(l) => l.poner_crudo(x, y, v),
             Sup::Planar(mem, p) => p.escribir(&mut **mem, x, y, v as u8, mascara),
@@ -202,6 +220,9 @@ impl<M: Memoria> Pintor<'_, M> {
         }
         let (x, y) = (x + self.dx, y + self.dy);
         let mascara = self.mascara;
+        if let Some(r) = self.vigia.as_deref_mut() {
+            apuntar(r, x, y);
+        }
         match &mut self.sup {
             Sup::Nativa(l) => {
                 let v = l.pixel_crudo(x, y);
@@ -292,12 +313,22 @@ impl<M: Memoria> Pintor<'_, M> {
                 return;
             }
         }
+        let vigia = self.apuntar_rect(r);
         for y in r.y0..=r.y1 {
             let fila = if patron.is_empty() { 0xFFFF } else { patron[y as usize % patron.len()] };
             for x in r.x0..=r.x1 {
                 self.punto(x, y, fila & (0x8000 >> (x & 15)) != 0);
             }
         }
+        self.vigia = vigia;
+    }
+
+    /// Apunta de una vez `r` (en coordenadas del `RastPort`) en el vigía, si lo hay, y lo quita mientras se pinta (para
+    /// no apuntar punto a punto): se devuelve para volver a ponerlo.
+    fn apuntar_rect(&mut self, r: Rect) -> Option<&'a mut Rect> {
+        let v = self.vigia.take()?;
+        *v = v.union(&Rect::nuevo(r.x0 + self.dx, r.y0 + self.dy, r.x1 + self.dx, r.y1 + self.dy));
+        Some(v)
     }
 
     /// Una plantilla de un bit de `ancho` x `alto` en `(x, y)`: `bit(col, fila)` dice si el punto es del dibujo.
@@ -306,11 +337,13 @@ impl<M: Memoria> Pintor<'_, M> {
         if r.vacio() {
             return;
         }
+        let vigia = self.apuntar_rect(r);
         for py in r.y0..=r.y1 {
             for px in r.x0..=r.x1 {
                 self.punto(px, py, bit((px - x) as u32, (py - y) as u32));
             }
         }
+        self.vigia = vigia;
     }
 }
 

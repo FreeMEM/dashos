@@ -57,6 +57,7 @@ mod menus;
 mod pantallas;
 mod requester;
 mod tema;
+mod vigia;
 
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;

@@ -57,6 +57,8 @@ pub(crate) struct Estado {
     pub chunkies: Tabla<Chunky>,
     /// Lo reservado por `AllocBitMap`: `BitMap` → bloques (dirección, largo), la estructura incluida.
     pub reservados: Tabla<Vec<(u32, u32)>>,
+    /// Los mapas de programas que son el de una pantalla (`SA_BitMap`): lo que ha cambiado (`vigia.rs`).
+    pub vigilados: Tabla<crate::vigia::Vigilado>,
 }
 
 /// Lo que se lee de un `RastPort`.
@@ -353,7 +355,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 if let Some(c) = capa {
                     clip = clip.interseccion(&c);
                 }
-                Ok(Pintor { sup: Sup::Nativa(l), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
+                Ok(Pintor { sup: Sup::Nativa(l), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0, vigia: None })
             }
             Mapa::Planar(p) => {
                 let mut clip = p.rect();
@@ -362,7 +364,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 let a = Tinta { pen: fg, argb: 0 };
                 let b = Tinta { pen: bg, argb: 0 };
-                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
+                let vigia = self.gfx.vigilados.get_mut(&bm).map(|v| &mut v.dano);
+                Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0, vigia })
             }
             Mapa::Chunky(c) => {
                 let mut clip = c.rect();
@@ -371,7 +374,8 @@ impl<C: Compositor> CajaGrafica<C> {
                 }
                 let a = Tinta { pen: fg, argb: self.color(c.cm, fg) };
                 let b = Tinta { pen: bg, argb: self.color(c.cm, bg) };
-                Ok(Pintor { sup: Sup::Chunky(&mut ex.mem, c), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
+                let vigia = self.gfx.vigilados.get_mut(&bm).map(|v| &mut v.dano);
+                Ok(Pintor { sup: Sup::Chunky(&mut ex.mem, c), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0, vigia })
             }
         }
     }
@@ -886,7 +890,9 @@ impl<C: Compositor> CajaGrafica<C> {
         if largo == 0 {
             return Ok(());
         }
-        ex.cero(d, largo)
+        ex.cero(d, largo)?;
+        self.tocar_memoria(ex, d, largo);
+        Ok(())
     }
 
     /// `WriteChunkyPixels`: una pluma por byte, fila a fila, sin modo de dibujo.
