@@ -123,7 +123,7 @@ esto" al dominio; si no hay, por CPU.
 ## Lo que no entra
 
 - La Raspberry Pi y las placas ARM con controlador propio: siguen como en S9 y S33.
-- PC de menos de 8 GB: sin dominio (pantalla del firmware y CPU), o con un dominio solo para la integrada.
+- PC de menos de 4 GB: sin dominio (pantalla del firmware y CPU).
 - Un controlador nativo de Intel sigue siendo posible más adelante; con este diseño ya no hace falta.
 
 ## Lo que cuesta
@@ -150,8 +150,26 @@ programas nativos), X17.
 2. ¿Dos dominios (pantalla y cómputo) donde hay dos gráficas? Recomendado: sí.
 3. ¿Monitor a la integrada (más seguro, una copia) o a la dedicada (sin copia, pero el dominio de cómputo ve la
    pantalla)? Recomendado: a la integrada, y medir la copia.
-4. En un PC con una sola gráfica, ¿el dominio va siempre encendido para pintar el escritorio (un Linux mínimo, unos
-   cientos de MB)? Recomendado: sí desde 8 GB; con menos, pantalla del firmware y CPU.
+4. Memoria del dominio. **Decidido (usuario, 2026-11-15):** con 4 GB o más, dominio encendido y escritorio
+   acelerado; con menos de 4 GB, sin dominio (pantalla del firmware y CPU, que cumple la meta de menos de 128 MB en
+   reposo); siempre se puede apagar en Prefs. Lo que gasta (estimado, sin medir): Linux mínimo 60 a 100 MB;
+   controlador de Intel o AMD y el servidor, 100 a 200 MB; el de Nvidia, 300 a 500 MB. Una sola gráfica Intel o AMD:
+   200 a 300 MB. pegaso con dos dominios: 600 a 800 MB. Con globo de memoria, lo que no use vuelve a DashOS.
+
+## En AArch64
+
+- **Placas con controlador propio (Pi 3, 4 y 5)**: sin dominio. DashOS lleva la pantalla, la GPU y el decodificador
+  (S9, S33) y la caja Linux es su cliente por virtio-gpu. Nada de Linux encendido para pintar.
+- **Placas y portátiles ARM sin controlador propio** (Mali, Adreno, PowerVR; Snapdragon; los THEA con Allwinner): el
+  mismo dominio de gráficos, con los controladores de Linux (panfrost y panthor, freedreno y turnip, lima) y contexto
+  nativo. Requisitos: virtualización (EL2, ya usada por la caja Linux) y el IOMMU de ARM (SMMU). Dos diferencias con
+  el PC: las GPU de ARM no son tarjetas PCIe sino aparatos del árbol de dispositivos, atados a relojes, energía y
+  al controlador de pantalla del chip, así que pasarlos a una máquina virtual es más trabajo por cada chip; y muchas
+  placas baratas no tienen SMMU, con lo que el pase no es seguro. Ahí queda la pantalla del firmware y CPU.
+- **Mac con Apple Silicon**: el controlador de Asahi (agx y su Mesa) en el dominio. Baja prioridad, como los Mac.
+- **Gráficas PCIe en ARM** (una Pi 5 con ranura, estaciones Ampere): igual que en PC. Nvidia tiene controlador para
+  ARM64; CUDA, igual que en PC.
+- La regla de memoria es la misma: dominio desde 4 GB, y nunca en las placas con controlador propio.
 
 ## Cómo encaja
 
