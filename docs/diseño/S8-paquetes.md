@@ -140,6 +140,19 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
   Hangar" (S8, S6, S29), identidad solo por nombre (S6b), Installer "dentro de la caja" (S8). La clave de `SYS:` no
   está en la lista de `Paq`: falta decirlo en S6 y S14.
 
+## Del formato de paquetes 2 (2026-11-15): claves raíz y resolutor
+
+- **Claves raíz**: cada repositorio tiene dos raíces fuera de línea que solo firman `<url>/keys` (y `keys.sig`, una
+  línea por raíz, etiqueta `PKG-KEYS-2`). `keys` dice qué claves de índice y de respuestas valen (varias al rotar),
+  cuáles están anuladas (`Revoked`: lo firmado con ellas deja de valer) y, si hace falta, una raíz nueva firmada por
+  una conocida; con `Serial` que solo crece y `Expires` largo. `Paq` trae de fábrica solo las públicas de las raíces
+  y mira `keys` al empezar, al caducar y cuando ve una firma de una clave que no conoce. Para el repositorio de
+  DashOS, sus dos raíces son de DashOS; la clave que firma la imagen de `SYS:` sigue fuera de la lista de `Paq` (S6).
+- **Resolutor**: al instalar no rompe lo instalado (falla diciendo qué rompería o con qué choca); en "actualizar
+  todo", lo que rompería a otro se queda donde está y se dice por qué. `Paq` usa `pkg2::plan::comprobar` (todo plan
+  pasa por él antes de aplicarse) y `pkg2::resolutor::resolver`, en Rust `no_std`, que el código común abierto
+  (MPL-2.0) traerá con sus vectores.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
