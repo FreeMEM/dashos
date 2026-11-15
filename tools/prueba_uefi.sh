@@ -1331,7 +1331,18 @@ while time.time() - inicio < total:
                     mandar(*["mouse_move 30 0"] * 10, pausa=0.05)
                     time.sleep(0.3)
                     mandar("mouse_button 0")
+                    # Dónde acabó de verdad (lo dice el compositor al soltar): si empezó a arrastrar tarde, se movió
+                    # menos de 300, y suponer 300 dejaba el arrastre siguiente encima de la segunda ventana ("aquí no").
                     ex_mov[2] = (300, 0)
+                    fin_mov = time.time() + 5
+                    while time.time() < fin_mov:
+                        texto = open(serie, errors="replace").read()
+                        m = re.findall(r"\[compositor\] arrastre: [^\n]*; acaba en \((-?\d+), (-?\d+)\)", texto)
+                        t2 = re.findall(r"\[compositor\] ventana de explorador en \((\d+), (\d+)\)", texto)
+                        if m and len(t2) >= 2:
+                            ex_mov[2] = (int(m[-1][0]) - int(t2[1][0]), int(m[-1][1]) - int(t2[1][1]))
+                            break
+                        time.sleep(0.2)
             elif ex == 36:
                 # Arrastrar datos.bin de la segunda ventana a la carpeta de la primera (Privado), por la parte que se ve.
                 desde = en_ex(2, "datos.bin")
@@ -1343,6 +1354,11 @@ while time.time() - inicio < total:
                     time.sleep(0.3)
                     x, y = desde
                     hx, hy = o1[0] + 290, o1[1] + 330
+                    # Lejos del borde de la segunda ventana (su sombra y el borde de redimensionar se llevan el soltar):
+                    # a 30 px de ella como poco, sin salir de la zona de ficheros de la primera (desde +240).
+                    o2 = origen_ex(2)
+                    if o2 and hx > o2[0] - 30:
+                        hx = max(o1[0] + 240, o2[0] - 30)
                     pasos = []
                     while (x, y) != (hx, hy):
                         dx = max(-25, min(25, hx - x))

@@ -1166,7 +1166,12 @@ fn principal() -> u64 {
             (false, Some((desde, cuadros))) => {
                 let ms = (t0 - desde) / 1000;
                 let n = cuadros_total - cuadros;
-                println!("  [compositor] arrastre: {} cuadros en {} ms ({} por segundo)", n, ms, if ms > 0 { n * 1000 / ms } else { 0 });
+                // Y dónde acabó la ventana, si fue un arrastre (no una redimensión): la prueba lo lee en vez de suponerlo.
+                let acaba = match escena.tomar_ultimo_arrastre() {
+                    Some((x, y)) => alloc::format!("; acaba en ({}, {})", x, y),
+                    None => alloc::string::String::new(),
+                };
+                println!("  [compositor] arrastre: {} cuadros en {} ms ({} por segundo){}", n, ms, if ms > 0 { n * 1000 / ms } else { 0 }, acaba);
                 arrastre = None;
             }
             _ => {}

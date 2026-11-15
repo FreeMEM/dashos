@@ -649,6 +649,8 @@ pub struct Escena<M: Memorias> {
     /// La ventana que se arrastra con Super y el botón izquierdo, dónde se cogió (respecto a su esquina) y en qué
     /// salida estaba.
     arrastre: Option<((Cliente, u32), i32, i32, usize)>,
+    /// Dónde acabó la última ventana arrastrada (su esquina), para que la prueba no tenga que suponerlo.
+    ultimo_arrastre: Option<(i32, i32)>,
     /// H9: las dos selecciones del portapapeles (la de siempre y la primaria) y lo que hay que mandar a las fuentes
     /// (quien atiende lo escribe con `portapapeles::escribir_aviso`).
     selecciones: [Option<alloc::rc::Rc<portapapeles::Seleccion>>; 2],
@@ -856,6 +858,7 @@ impl<M: Memorias> Escena<M> {
             areas: Vec::new(),
             movidas: Vec::new(),
             arrastre: None,
+            ultimo_arrastre: None,
             selecciones: [None, None],
             avisos_portapapeles: Vec::new(),
             pintor: None,
@@ -3197,6 +3200,11 @@ impl<M: Memorias> Escena<M> {
         self.subir_emergentes(ventana);
     }
 
+    /// Dónde acabó la última ventana arrastrada (su esquina, en la pantalla), una vez.
+    pub fn tomar_ultimo_arrastre(&mut self) -> Option<(i32, i32)> {
+        self.ultimo_arrastre.take()
+    }
+
     /// H9: si se está arrastrando una ventana (para medir los cuadros mientras tanto).
     pub fn arrastrando(&self) -> bool {
         self.arrastre.is_some() || self.redimension.is_some()
@@ -3263,6 +3271,7 @@ impl<M: Memorias> Escena<M> {
             if botones & 1 == 0 {
                 self.arrastre = None;
                 if let Some(r) = self.clientes.get(&c).and_then(|cli| rect_de(cli, sup)) {
+                    self.ultimo_arrastre = Some((r.x, r.y));
                     let i = self.salida_de(r);
                     if i != desde {
                         self.movidas.push((c, i, r.x, r.y));

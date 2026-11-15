@@ -2042,3 +2042,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   picture.datatype pide cybergraphics.library: es lo siguiente. make prueba bien; arranque-virt con el fallo suelto del
   explorador ("suelta en la ventana 1"), que no pasa por este cambio (dtprueba solo corre con el AmigaOS del usuario).
   Ese fallo suelto sale ya en una de cada dos o tres vueltas: hay que arreglarlo (paso aparte, antes de que tape otros).
+- **Fallo suelto del explorador arreglado** ("suelta en la ventana 1: mueve a Home/Privado"): el guion soltaba
+  datos.bin a 10 px del borde de la segunda ventana cuando esta acababa en x=340 (otras veces en 372), y su borde se
+  llevaba el soltar ("suelta en la ventana 2: aquí no"). Ahora el compositor dice dónde acaba una ventana arrastrada
+  ("arrastre: …; acaba en (x, y)", `Escena::tomar_ultimo_arrastre`, con prueba en wayland) y el guion suelta a 30 px
+  de ella como poco. cargo test de wayland bien; make prueba bien; cuatro vueltas de arranque-virt seguidas, todas bien.
+  Pendiente (2026-11-15 noche, límite de uso): agente de cybergraphics en `.worktrees/caja-amiga-cgx` sin acabar.

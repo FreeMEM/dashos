@@ -179,6 +179,9 @@ fn barra_de_dashos() {
     escena.raton(0, 0, 0);
     assert!(!escena.arrastrando());
     assert_eq!(sitio(&escena, 1), (90, 110));
+    // Dónde acabó (la esquina de su superficie, como la da `sitio`), una sola vez: lo lee la prueba en vez de suponerlo.
+    assert_eq!(escena.tomar_ultimo_arrastre(), Some((90, 110)));
+    assert_eq!(escena.tomar_ultimo_arrastre(), None);
     // El botón de cerrar: arriba a la derecha de la barra.
     let b = decoracion::barra_de(&escena.clientes[&1], 7).unwrap();
     ir(&mut escena, b.x + b.w - MARGEN_BOTON - LADO_BOTON / 2, b.y + ALTO_BARRA / 2);
