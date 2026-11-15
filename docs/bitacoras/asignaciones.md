@@ -135,3 +135,19 @@ La capa de paquetes (`Paquetes:*/C`…) no está: espera a S8, que dirá qué pa
 3. **`RAM:` en disco** hasta que haya un volumen en memoria (arriba).
 
 ## Bitácora
+
+### Paso 2: la biblioteca (`dashos::asignaciones`)
+
+`usuario/src/asignaciones.rs`: la tabla (`Tabla`, texto de hasta 1 KB, sin montón: la usa también `sesiones`),
+resolver (`Tabla::resolver` da los sitios en orden), cambiar (`Tabla::asignar`: poner, añadir detrás, delante, quitar),
+heredar (`Tabla::heredar`: volúmenes del hijo, asignaciones del padre), las de la sesión (`de_sesion`, con perfil
+encerrado), y sobre el servicio de archivos (rasgo `Fs`): `abrir`, `mirar`, `crear`, `guardar` y `listar` (unión de
+capas). Con `sesiones`: `pedir_tabla` y `asignar_en_sesiones` (órdenes 30 y 31, aún sin servidor en este paso). Lo de
+antes (`NOMBRES`, raíces numeradas) sigue igual.
+
+Pruebas en el PC (`rustc --test src/asignaciones.rs`, en `make prueba`), 11, con un servicio falso: resolver en capas,
+rutas hostiles (`:` de más, `/` delante, `..`, `.`, partes vacías, bytes de control, nombres y caminos larguísimos),
+bucles (en la tabla que llega, al asignar y a 8 niveles), capas que faltan o desaparecen (la raíz se va), asignar que
+no tapa volúmenes ni `PROGDIR` ni pone raíces, tablas mal formadas, heredar, encerrado, crear en la primera capa que
+deja (y no en `SYS:`), listar sin repetidos, y un programa encerrado con una tabla falsa que no llega a nada.
+`make prueba` bien; `make arranque-virt` bien (sin el fallo suelto del explorador esta vez).

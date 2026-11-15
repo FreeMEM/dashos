@@ -26,6 +26,9 @@ pub mod protocolo {
 #[cfg(feature = "monton")]
 pub mod monton;
 pub mod prestados;
+/// Volúmenes y asignaciones con nombre (S4b): la tabla de cada proceso y cómo se resuelve (sin dependencias: se prueba
+/// en el PC).
+pub mod asignaciones;
 pub mod hilos;
 pub mod red_cliente;
 /// S29: el cortafuegos de la caja Linux en el servicio de red (sin dependencias: se prueba en el PC).
