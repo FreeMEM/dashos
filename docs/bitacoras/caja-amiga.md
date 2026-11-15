@@ -2214,3 +2214,94 @@ modo con el ID `0x29000` del chipset y `LockBitMap` que copia. Por orden: 3 (dó
   superficie propia en el compositor (lo que se pinta en su mapa no se ve; sus ventanas sí).
 - Los de 8 bits son planares de 8 planos (no LUT8 chunky): `ISCYBERGFX` 0 en su mapa, aunque su modo sí es de la caja.
 - El logo de Tachyon (arriba). `DoCDrawMethodTagList`, los pedidores de modos y lo demás que nadie pide, como antes.
+
+## 2026-11-15 (3): lo pendiente de cybergraphics (misma rama, tras unir a `revision` hasta 9c3a0d8)
+
+Lo que quedaba de la tanda anterior, con el mismo criterio: como debe funcionar.
+
+### El logo de Tachyon: faltaba `T:`
+
+- Una traza temporal (ya quitada) de las llamadas nativas de las tareas de Tachyon mientras pinta su página: el logo es
+  un PNG en un `data:` que Tachyon escribe en `T:dashweb_img0` para decodificarlo (`base64_to_file`), y
+  `Open("T:dashweb_img0", MODE_NEWFILE)` daba 0: **la caja no asignaba `T:` ni `ENV:`** (en un Amiga, en `RAM:`). No era
+  una instrucción mal traducida, ni una función que faltara o devolviera otra cosa, ni la memoria.
+- Ahora `T:` y `ENV:` van a `Caja:T` y `Caja:Env` (el cajón de escribir de la caja), creando el cajón si falta (dos:
+  `asignar_creando`, con su prueba; un nombre malo no crea nada). El árbol esperado del disco lleva los dos cajones.
+  `RAM:` sigue sin existir en la caja: `T:` no se vacía al arrancar (Tachyon borra lo suyo).
+
+### Paso 3: las ventanas y el Workbench, en la memoria del 68k
+
+- **El lienzo** (`lienzo.rs`) guarda ahora sus píxeles como un chunky en la memoria del 68k (en el formato del modo de su
+  pantalla); la pantalla de Workbench, al pintarla por primera vez (no gasta si nadie la pinta). Se pinta con una
+  `Vista` (el lienzo y un préstamo de la memoria a la vez: `trozo_mut` de `Memoria`), detrás del rasgo `Pinta`, que es lo
+  que reciben ahora el tema, los marcos, los menús, GadTools y BOOPSI. Sin `unsafe` nuevo: las funciones de pintar que no
+  tenían `ex` lo reciben (`dibujar_marco`, `refresh_window_frame`, `presentar`, `fondo_en`...).
+- **Al presentar**, lo cambiado se pasa de la memoria del 68k a una copia en ARGB que lee el compositor (no cambia su
+  interfaz); en los de 8 bits, por la paleta.
+- **`LockBitMap` de una ventana o de la pantalla** da ya la dirección de sus píxeles, sin copia; `UnLockBitMap` apunta
+  como cambiado lo que dice `UBMI_UPDATERECTS` (o el mapa entero) para que el compositor lo presente.
+- **Medido** (en el equipo, x86 `--release`; `tests/medida_ventana.rs`, temporal, en una ventana de 600 x 400):
+
+| Qué | Antes (lienzo en el montón de Rust) | Después (en la memoria del 68k) |
+|---|---|---|
+| 20 vueltas de `RectFill` + 30 `Text` + presentar | 37,9 ms | 61,2 ms al principio; 23,0 ms con los rellenos fila a fila y las filas de 32 bits sin conversión punto a punto |
+| 20 `RefreshWindowFrame` + presentar | 1,9 ms | 9,8 ms al principio; 1,8 ms con lo mismo |
+
+  En la caja (QEMU, `make arranque-virt`): `boopsi.exe` 143 ms antes y después, `texto_gcc` 261 → 251 ms, cgx.exe igual;
+  `LockBitMap` de 640 x 480, 0 ms (menos de un tic). Memoria: cada ventana gasta su mapa en la memoria del 68k y su copia
+  en ARGB en el montón de Rust (el doble que antes); la de Workbench, solo si se pinta.
+
+### Paso 2: 8 bits como en una tarjeta (LUT8)
+
+- `Formato::Lut8` (`PIXFMT_LUT8`, `RGBFB_CLUT`): una pluma por byte. `AllocBitMap` con `BMF_SPECIALFMT` LUT8,
+  `p96AllocBitMap` con CLUT y los amigos de un mapa LUT8 son chunky de 8 bits (sin formato, hasta 8 planos siguen siendo
+  planares, como los del chipset).
+- graphics escribe plumas exactas (también dos plumas del mismo color), COMPLEMENT invierte los bits de la máscara, las
+  copias pasan por la paleta. cybergraphics y Picasso96 convierten: los colores, a la pluma más cercana; las plumas, a su
+  color.
+- **Los modos RTG de 8 bits** son LUT8: el mapa de la pantalla es chunky de 8 bits y sus ventanas son lienzos de plumas
+  que se presentan con la paleta de su pantalla: `SetRGB32` cambia lo que se ve sin repintar, como una tarjeta de 256
+  colores (`tests/lut8.rs`).
+
+### Paso 1: pantallas propias completas
+
+- **Paleta y plumas**: `SA_Colors` (`ColorSpec`), `SA_Colors32` (como `LoadRGB32`), `SA_Pens` (las de la `DrawInfo`),
+  `SA_FullPalette` (la paleta de partida ya es entera); se leen antes de reservar nada (lo que no se puede leer es un
+  fallo, sin dejar nada a medias). Sus ventanas toman la paleta y las plumas de su pantalla: el marco, GadTools, los
+  menús, los requesters, BOOPSI (la `GadgetInfo` lleva su pantalla y su `DrawInfo`) y ReAction (`WA_CustomScreen` en
+  `window.class`).
+- **`SA_LikeWorkbench`**: sin `SA_DisplayID`, el modo y el tamaño del Workbench.
+- **Públicas** (`SA_PubName`): nacen en modo privado, como en 3.x; `PubScreenStatus(s, 0)` las abre y `PSNF_PRIVATE` las
+  cierra (no con visitantes: ventanas de otros programas o `LockPubScreen` sin soltar); `LockPubScreen` las encuentra
+  por su nombre (sin distinguir mayúsculas), `UnlockPubScreen` resta un visitante y con el último manda la señal de
+  `SA_PubSig` a `SA_PubTask` (o a la que la abrió); `WA_PubScreenName` abre la ventana en ella; un nombre repetido da
+  `OSERR_PUBNOTUNIQUE`; `CloseScreen` con visitantes, FALSE.
+- **`SA_BitMap`** (y `CUSTOMBITMAP` en la `NewScreen`): el `RastPort` de la pantalla pinta en el mapa del programa
+  (copiado en el `BitMap` de la `Screen`, como hace intuition).
+- **Se ve**: cada pantalla propia tiene una superficie del compositor de su tamaño, sin borde, que presenta su mapa: el
+  lienzo con lo que ha cambiado; el mapa del programa, entero cada 5 presentaciones (se puede escribir sin que lo
+  sepamos).
+- Pruebas: `tests/pantallas.rs` (paleta y plumas con una ventana, como el Workbench, públicas con señal, lo que se ve,
+  mapa del programa, hostil).
+
+### Comprobado
+
+- `cargo test` de intuition, dos y pegamento; `make prueba` y `make arranque-virt` en verde tras cada paso.
+- Con el AmigaOS del usuario y Tachyon (`MEMORIA=3G`, `TIEMPO_VIRT=480`): falla solo la línea del disco NVMe de 16384
+  sectores, como siempre. Tachyon acaba con 0, 0 avisos, 0 bloques sin soltar, en 6302 ms (antes, 6239 a 6356 ms);
+  41180 llamadas nativas (antes 39129: ahora escribe y lee el logo).
+- Captura a 1920 x 1080 (local, sin publicar): **el logo de Tachyon se ve**, en color real.
+- La caja lo dice al arrancar: "temporales: T: Caja:T, ENV: Caja:Env".
+
+### Pendiente
+
+- El mapa de una pantalla con `SA_BitMap` se presenta entero cada 5 vueltas: no hay forma de saber cuándo lo escribe el
+  programa sin pasar por graphics.
+- Las superficies de las pantallas propias no siguen el orden de `ScreenToFront`/`ScreenToBack` respecto a otras
+  pantallas: van donde las pone el compositor.
+- Sin `LockPubScreenList`/`UnlockPubScreenList`, `NextPubScreen` ni `SetDefaultPubScreen`.
+- `SA_Colors` solo cambia la paleta; los modos de 15/16/24/32 bits no tienen plumas que reservar (como en una tarjeta).
+- Cada ventana gasta el doble de memoria (mapa en el 68k y copia en ARGB): si pesa, presentar directamente desde el
+  chunky cuando el formato ya es ARGB.
+- Tachyon intenta crear "Tachyon.cookies" junto al programa (volumen de solo lectura) y la guardia lo niega; es cosa
+  de Tachyon (debería ir a `ENVARC:` o `PROGDIR:` escribible), no de la caja.
