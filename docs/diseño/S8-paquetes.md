@@ -41,8 +41,9 @@ actualiza, desinstala y ejecuta. Los programas se bajan de su sitio original.
    partir de paquetes, se firma entera, y llega como una instantánea nueva de `SYS:` (S5). Se aplica al reiniciar. Si
    el arranque falla, se vuelve a la anterior (S14).
 2. **Lo demás son paquetes**, en `Paquetes:` (de todo el sistema) o en `Home:` (de un usuario). Cada instalación,
-   actualización o desinstalación es una transacción: se hace en una instantánea nueva de `Paquetes:`, y solo si todo
-   sale bien se cambia a ella. Si algo falla, no ha pasado nada.
+   actualización o desinstalación es una transacción: se escribe una generación nueva y solo si todo sale bien se
+   cambia a ella (ver "Generaciones"; antes se pensó como una instantánea nueva de `Paquetes:`). Si algo falla, no
+   ha pasado nada.
 
 Para el usuario hay una sola orden, como en pacman, que pone al día las dos cosas.
 
@@ -211,8 +212,8 @@ falten y cambiar de tabla de golpe. Volver atrás es usar la tabla anterior.
 - **Un programa abierto sigue con su versión** hasta que se cierra: su vista no cambia en marcha.
 - **Con `SYS:`** no cambia nada: la base sigue siendo una imagen firmada con dos ranuras (S14). Una generación apunta
   la versión de `SYS:` con la que se hizo, para que al arrancar con la ranura anterior se use la tabla que le toca.
-- **No cambia el formato de paquetes** ni Hangar. Sustituye a "una instantánea nueva de `Paquetes:` por transacción"
-  (punto 2 de arriba): la transacción es ahora el cambio de tabla. Las instantáneas (S5) siguen para los datos.
+- **No cambia el formato de paquetes** ni Hangar. Sustituye a la idea anterior de "una instantánea nueva de `Paquetes:` por transacción"
+  (punto 2 de arriba, ya cambiado): la transacción es ahora el cambio de tabla. Las instantáneas (S5) siguen para los datos.
 
 **Lo que no se toma de NixOS**: su lenguaje, las huellas en las rutas y montar el sistema entero a base de enlaces.
 
