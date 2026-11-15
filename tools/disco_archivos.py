@@ -109,6 +109,15 @@ if sys.argv[1] == "--comprobar":
         "Escrito/ cajón",
         "Escrito/hola.txt 19 bits=0x4 : Saludo de DashOS, ñandú",
         "Estado/ cajón",
+        # Paso 2 de las asignaciones: el `RAM:` de cada cuenta (provisional, en el disco), con su `T:` y su `ENV:`; lo
+        # que crea `cambio` en `T:` lo borra.
+        "Estado/RAM/ cajón",
+        "Estado/RAM/Ana/ cajón",
+        "Estado/RAM/Ana/Env/ cajón",
+        "Estado/RAM/Ana/T/ cajón",
+        "Estado/RAM/Carla/ cajón",
+        "Estado/RAM/Carla/Env/ cajón",
+        "Estado/RAM/Carla/T/ cajón",
         "Estado/Servicios/ cajón",
         f"{CAJA}/ cajón",
         f"{CAJA}/C/ cajón",
@@ -147,6 +156,8 @@ if sys.argv[1] == "--comprobar":
         f"Programas/hola {os.path.getsize(HOLA)}",
         f"Programas/panel {os.path.getsize(CAMBIO)}",
         f"Programas/pide {os.path.getsize(PIDE)}",
+        # `Work:` (provisional, un cajón del disco).
+        "Work/ cajón",
     ]
     hola = subprocess.run([ver, disco, desde, "Escrito/hola.txt"], check=True, capture_output=True).stdout
     grande = subprocess.run([ver, disco, desde, "C/grande.txt"], check=True, capture_output=True).stdout
@@ -270,6 +281,13 @@ with tempfile.TemporaryDirectory() as t:
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)
+    # Paso 2 de las asignaciones: `RAM:` de cada cuenta (`Estado/RAM/<cuenta>`, solo suyo, con `T` y `Env`: sus `T:` y
+    # `ENV:`) y `Work:` (el cajón `Work`), provisionales: no hay aún disco en memoria ni un segundo disco.
+    for cuenta in ("Ana", "Carla"):
+        for sub in ("T", "Env"):
+            os.makedirs(os.path.join(raiz, "Estado", "RAM", cuenta, sub))
+        os.chmod(os.path.join(raiz, "Estado", "RAM", cuenta), 0o700)
+    os.makedirs(os.path.join(raiz, "Work"))
     # S28: el cajón de la caja Amiga (de Ana, como todo; solo suyo).
     caja = os.path.join(raiz, *CAJA.split("/"))
     for sub, nombre, datos in [("C", "saludo", open(SALUDO, "rb").read()), ("C", "saludo.info", CAJA_ICONO),
@@ -400,6 +418,7 @@ with tempfile.TemporaryDirectory() as t:
     subprocess.run([duenos, fs, "0", "1000:1000"], check=True)
     subprocess.run([duenos, fs, "0", "1:1", "camino=Estado/Servicios/sesiones"], check=True)
     subprocess.run([duenos, fs, "0", "1001:1001", "camino=DeCarla"], check=True)
+    subprocess.run([duenos, fs, "0", "1001:1001", "camino=Estado/RAM/Carla"], check=True)
     # A10: un daño que la comprobación encuentra y la reparación arregla (los enlaces de LEEME.txt, 7 en vez de 1).
     # El servicio de archivos repara al arrancar; al final, la comprobación desde Linux tiene que salir limpia.
     estropear = os.path.join(os.path.dirname(duenos), "estropear")

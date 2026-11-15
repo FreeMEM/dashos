@@ -28,6 +28,7 @@
 #![no_std]
 #![no_main]
 
+use dashos::asignaciones::{self as asig, Cambio, Tabla};
 use dashos::println;
 use dashos::protocolo::sesiones::*;
 
@@ -58,10 +59,11 @@ const PROPIO: u32 = 7;
 /// Llave 8: una copia sin marca del canal de archivos (U2): las altas de lo que lanza, con sus raíces, y su llave
 /// marcada con su número.
 const ARCHIVOS_ALTAS: u32 = 8;
-/// Las raíces con que nace lo que lanza: la 0, el cajón de donde salió (`PROGDIR:`); la 1, el disco para leer
-/// (`SYS:`, `Programas:`); la 2, el volumen de su usuario (`Home:`), si tiene cuenta.
-const RAIZ_SYS: u8 = 1;
-const RAIZ_HOME: u8 = 2;
+/// Las raíces con que nace lo que lanza (`RAIZ_*` del protocolo): la 0, el cajón de donde salió (`PROGDIR:`); la 1, el
+/// disco para leer (`SYS:`, `Programas:`); si tiene cuenta, la 2, su volumen (`Home:`), la 3, su `RAM:` y la 4, `Work:`.
+/// Los programas del escritorio que se ceden a sí mismos esas mismas raíces (S6b): su tabla de nombres lleva también
+/// los volúmenes.
+const CEDEN_RAICES: &[&str] = &["workbench", "explorador"];
 /// Lo que reparte, con la llave sin marca de cada uno: servicios (canales) y permisos del kernel, como el de la clase de
 /// plazo (U4). A un canal se le dice quién es el nuevo cliente (su entrada de directorio); a un permiso, no.
 /// U6: el sonido, con la llave sin marca que da `inicio` (`CANAL_SISTEMA`), no con un número fijo (`SIN_NUMERO`).
@@ -395,7 +397,7 @@ fn nombre16(n: &[u8]) -> [u8; 16] {
 /// El alta en archivos (orden 100, sin marca) de lo que lanza: su usuario y su grupo, sin derechos, la raíz 0 en el
 /// cajón de donde sale y sus otras raíces: el disco para leer y, si tiene cuenta, su volumen para leer y escribir.
 fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>) {
-    let mut m = [0u8; 160];
+    let mut m = [0u8; 232];
     let dir = &dir[..dir.len().min(64)];
     m[0..4].copy_from_slice(&dashos::protocolo::archivos::ALTA.to_le_bytes());
     m[8..16].copy_from_slice(&pid.to_le_bytes());
@@ -413,9 +415,47 @@ fn alta_archivos(pid: u64, uid: u32, gid: u32, dir: &[u8], cuenta: Option<&[u8]>
     };
     raiz(RAIZ_SYS, 4, b"", b"");
     if let Some(c) = cuenta {
-        raiz(RAIZ_HOME, 6, &c[..c.len().min(16)], b"");
+        let c = &c[..c.len().min(16)];
+        raiz(RAIZ_HOME, 6, c, b"");
+        // Paso 2 de las asignaciones: su `RAM:` y `Work:` (provisionales, cajones del disco; si no están, archivos no
+        // da esa raíz y los nombres que pasan por ella no resuelven).
+        let mut ram = [0u8; 32];
+        let l = CAMINO_RAM.len();
+        ram[..l].copy_from_slice(CAMINO_RAM.as_bytes());
+        ram[l..l + c.len()].copy_from_slice(c);
+        raiz(RAIZ_RAM, 6, b"", &ram[..l + c.len()]);
+        raiz(RAIZ_WORK, 6, b"", CAMINO_WORK.as_bytes());
     }
     dashos::canal_escribir(ARCHIVOS_ALTAS, &m[..o], &[]);
+}
+
+/// Las asignaciones con que empieza un proceso del usuario `uid` que no las hereda de nadie: las de la sesión (S4b) si
+/// es una persona con cuenta; si no, ninguna.
+fn asignaciones_de(uid: u32) -> Tabla {
+    let mut t = Tabla::vacia();
+    if uid >= PRIMERA_PERSONA && CUENTAS.iter().any(|c| c.0 == uid) {
+        let _ = asig::de_sesion(&mut t, false);
+    }
+    t
+}
+
+/// La tabla de nombres entera de `f`: sus volúmenes (según las raíces que tiene: lo lanzado por `sesiones` y los
+/// programas del escritorio que se las ceden), su `PROGDIR:` si salió del disco, y sus asignaciones.
+fn tabla_de(f: &Ficha, asignaciones: &Tabla) -> Tabla {
+    let mut propia = Tabla::vacia();
+    let lanzado = f.marca >= PRIMER_PID_PROPIO;
+    if lanzado || es(f, CEDEN_RAICES) {
+        let _ = propia.poner_volumen(b"SYS", RAIZ_SYS, b"");
+        if CUENTAS.iter().any(|c| c.0 == f.uid) {
+            let _ = propia.poner_volumen(b"Home", RAIZ_HOME, b"");
+            let _ = propia.poner_volumen(b"RAM", RAIZ_RAM, b"");
+            let _ = propia.poner_volumen(b"Work", RAIZ_WORK, b"");
+        }
+    }
+    if lanzado {
+        let _ = propia.poner_progdir(RAIZ_PROGDIR);
+    }
+    Tabla::heredar(asignaciones, &propia)
 }
 
 /// A15: lo más que se espera al comprobador: hasta 10 s a que otro suelte el disco y el recorrido. Pasado, quien
@@ -850,6 +890,9 @@ fn hilo_memoria(lectura: u64) -> u64 {
 
 fn principal() -> u64 {
     let mut fichas: [Option<Ficha>; MAX] = [None; MAX];
+    // Paso 2 de las asignaciones: las de cada ficha (en su mismo hueco), sin volúmenes ni `PROGDIR` (esos salen de sus
+    // raíces, `tabla_de`). Lo que lance un programa las hereda.
+    let mut asignaciones: [Tabla; MAX] = [const { Tabla::vacia() }; MAX];
     // Las llaves de servicios repartidas: a quién (marca), de qué servicio y su revocador.
     let mut dadas: [Option<(u64, usize, u32)>; MAX_DADAS] = [None; MAX_DADAS];
     // U4: lo que el usuario concedió (programa y servicio), las preguntas a `guardian` sin contestar (número, llave de
@@ -983,6 +1026,7 @@ fn principal() -> u64 {
                         println!("  [sesiones] vuelve {}, con su grupo nuevo", nombre(&f.nombre));
                     }
                     fichas[i] = Some(f);
+                    asignaciones[i] = asignaciones_de(f.uid);
                     usadas = 1;
                     // S3: la caja Amiga nace con el tope de serie; aquí, el de su ajuste.
                     if nombre(&f.nombre) == "caja-amiga" {
@@ -1162,6 +1206,8 @@ fn principal() -> u64 {
                     let barra = yo.is_some_and(|f| es(&f, LANZADORES)) && como == 0 && activa != 0 && lanzables::de_programas(camino);
                     let guardian = barra || (yo.is_some_and(|f| es(&f, GUARDIANES)) && (como == 0 || abiertas.contains(&como)));
                     let pide = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    // Paso 2 de las asignaciones: de quién hereda las suyas (del que lo lanza si es del mismo usuario).
+                    let padre = fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca));
                     let como = if barra { activa } else { como };
                     let yo = if como == 0 { yo } else { yo.map(|f| Ficha { uid: como, gid: como, ..f }) };
                     let (estado, pid) = match (&archivos, guardian, fichas.iter().position(|x| x.is_none())) {
@@ -1241,6 +1287,12 @@ fn principal() -> u64 {
                                     let mut progdir = [0u8; 24];
                                     progdir[..dir.len().min(24)].copy_from_slice(&dir[..dir.len().min(24)]);
                                     fichas[hueco] = Some(Ficha { marca: pid, uid, gid, nombre: n16, grupo: g as u32, progdir });
+                                    // Sus asignaciones: las del que lo lanza, si es de su usuario (con lo que cambiara);
+                                    // si no (`guardian` lanza como Ana), las de la sesión.
+                                    asignaciones[hueco] = match padre.and_then(|p| fichas[p].map(|f| (p, f))) {
+                                        Some((p, f)) if f.uid == uid => asignaciones[p].clone(),
+                                        _ => asignaciones_de(uid),
+                                    };
                                     dashos::cerrar(p as u32);
                                     (BIEN, pid)
                                 }
@@ -1283,6 +1335,44 @@ fn principal() -> u64 {
                     }
                     r[0..4].copy_from_slice(&(van as u32).to_le_bytes());
                     dashos::canal_escribir(respuesta, &r[..4 + ENTRADA_NOMBRE * van], &[]);
+                }
+                ASIGNACIONES => {
+                    // Su tabla de nombres, por páginas. Sin ficha, vacía.
+                    let t = match fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca)) {
+                        Some(i) => tabla_de(&fichas[i].unwrap(), &asignaciones[i]),
+                        None => Tabla::vacia(),
+                    };
+                    let texto = t.texto();
+                    let desde = (u32_en(4) as usize).min(texto.len());
+                    let aqui = (texto.len() - desde).min(POR_PAGINA_ASIGNACIONES);
+                    let mut r = [0u8; 8 + POR_PAGINA_ASIGNACIONES];
+                    r[0..4].copy_from_slice(&(texto.len() as u32).to_le_bytes());
+                    r[4..8].copy_from_slice(&(aqui as u32).to_le_bytes());
+                    r[8..8 + aqui].copy_from_slice(&texto[desde..desde + aqui]);
+                    dashos::canal_escribir(respuesta, &r[..8 + aqui], &[]);
+                }
+                ASIGNAR => {
+                    // Cambiar una de las suyas: sobre su tabla entera (para no tapar sus volúmenes ni dejar un bucle con
+                    // ellos); se guarda lo que no son volúmenes.
+                    let l = u32_en(8) as usize;
+                    let estado = match (fichas.iter().position(|x| x.is_some_and(|x| x.marca == marca)), Cambio::desde(u32_en(4)), m.get(12..12usize.saturating_add(l))) {
+                        (Some(i), Some(cambio), Some(texto)) => {
+                            let mut t = tabla_de(&fichas[i].unwrap(), &asignaciones[i]);
+                            match t.asignar(cambio, texto) {
+                                Ok(()) => {
+                                    asignaciones[i] = Tabla::heredar(&t, &Tabla::vacia());
+                                    BIEN
+                                }
+                                Err(e) => e.estado(),
+                            }
+                        }
+                        (None, ..) => PROTEGIDO,
+                        _ => asig::Error::MalFormado.estado(),
+                    };
+                    let quien = yo.map(|f| f.nombre).unwrap_or([b'?'; 16]);
+                    let texto = m.get(12..12usize.saturating_add(l).min(m.len())).unwrap_or(b"");
+                    println!("  [sesiones] {} asigna \"{}\" ({}): {}", nombre(&quien), core::str::from_utf8(&texto[..texto.len().min(60)]).unwrap_or("?"), u32_en(4), estado);
+                    dashos::canal_escribir(respuesta, &estado.to_le_bytes(), &[]);
                 }
                 REGISTRO => {
                     // Solo `guardian` y el centro de control leen el registro (U6, S10c).

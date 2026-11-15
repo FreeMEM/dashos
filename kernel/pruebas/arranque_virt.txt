@@ -48,7 +48,7 @@ DashOS en marcha con 4 núcleos.
 ~│   [archivos] comprobado al arrancar: 1 problemas; reparado, quedan 0
 # A7: la memoria de la caché de páginas, creada al arrancar (24 MB).
 ~│   [archivos] caché de páginas: 48 trozos de 512 KB creados
-~│   [ficheros] raíz (7 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/
+~│   [ficheros] raíz (8 entradas, fin bien): C/ DeCarla/ Estado/ Imagenes/ LEEME.txt Prefs/ Programas/ Work/
 ~│   [ficheros] LEEME.txt (19 bytes): "DashOS lee RedoxFS"
 # A3 (docs/REVISION_LOOP.md): buscar, leer y cerrar en un viaje.
 ~│   [ficheros] A3 leer por nombre: bien
@@ -462,6 +462,8 @@ DashOS en marcha con 4 núcleos.
 ~│   [selector] ventana de elegir carpeta en pantalla
 ~│   [selector] el usuario elige la carpeta C/Privado: se cede para leer y escribir: 0 (hueco 3)
 ~│   [hostil] selector: bien
+~│   [hostil] asignaciones: bien
+~│   [cambio] Ana: asignaciones por nombre: bien
 ~│   [hostil] disco NVMe sin tramo: abrir -6, leer el sector 0 -1: bien
 # U6: el registro de seguridad apunta lo que se niega; solo lo lee `guardian`.
 # U2: lanzar un programa del disco (solo `guardian`; el hostil no puede).

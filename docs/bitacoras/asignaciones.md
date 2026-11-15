@@ -151,3 +151,33 @@ bucles (en la tabla que llega, al asignar y a 8 niveles), capas que faltan o des
 no tapa volúmenes ni `PROGDIR` ni pone raíces, tablas mal formadas, heredar, encerrado, crear en la primera capa que
 deja (y no en `SYS:`), listar sin repetidos, y un programa encerrado con una tabla falsa que no llega a nada.
 `make prueba` bien; `make arranque-virt` bien (sin el fallo suelto del explorador esta vez).
+
+### Paso 3: `sesiones` monta el espacio de nombres y lo heredan los hijos
+
+- `sesiones` guarda las asignaciones de cada ficha (`[Tabla; 64]`, en la pila: 512 KB para `sesiones` en `build.rs`).
+  Un alta de `inicio` de una persona con cuenta nace con las de la sesión (`de_sesion`); lo que lanza `LANZAR` hereda
+  las del que lo lanza si es de su usuario, o las de la sesión si no (`guardian` lanza como Ana).
+- `ASIGNACIONES` (30) da la tabla entera por páginas: volúmenes según sus raíces (lo lanzado por `sesiones` y el
+  Workbench y el explorador, que se ceden las mismas), `PROGDIR:` si salió del disco, y sus asignaciones.
+  `ASIGNAR` (31) cambia la tabla entera y guarda lo que no son volúmenes; queda en el registro de la consola.
+- Lo que lanza nace con dos raíces más: 3 `Estado/RAM/<cuenta>` (`RAM:`) y 4 `Work` (`Work:`), las dos de leer y
+  escribir (`RAIZ_*` y `CAMINO_*` en el protocolo).
+- Disco de pruebas: `Estado/RAM/Ana` y `Estado/RAM/Carla` (0700, cada una de su dueña, con `T` y `Env`) y `Work`.
+
+Pruebas en QEMU (`make arranque-virt`):
+
+- `cambio`, lanzado por `guardian` como Ana: tabla con `SYS: Home: RAM: Work:` y `PROGDIR:`; `C:grande.txt` se lee de
+  `SYS:C` (capa 1); crear en `C:` sin `Home:C` da -12 (no escribe en `SYS:`); con `Home:C` hecho, crea ahí (capa 0);
+  listar `C:` une las dos capas sin repetir; `T:cambio.tmp` va a `RAM:T` (y se borra); `ASIGNAR Trabajo=Home:C` vale y
+  la tabla nueva la trae; `SYS=Home:` -12, `Casa=@2` -1, un bucle -30.
+- `hostil` (Carla, lanzado por `inicio` solo con su cajón): su tabla trae asignaciones y ningún volumen, y por ella no
+  llega a nada; con una tabla escrita a mano (`SYS=@9`, `Home=@15`) tampoco; `ASIGNAR` rechaza tapar volúmenes (también
+  uno que no tiene, `Work`), `PROGDIR`, raíces (`@1`, `@2/Libs`), caminos que suben o empiezan por `/`, `:` de más,
+  nombres de 31 bytes, bucles (también uno consigo mismo al añadir), un cambio que no existe y largos que no caben en
+  el mensaje; y `sesiones` sigue contestando.
+
+Cambio en lo esperado: la línea de `ficheros` con la raíz del disco cuenta 8 entradas (con `Work/`).
+
+`make prueba` bien; `make arranque-virt` bien (la primera vuelta falló por esa línea de `ficheros` y por dos líneas de
+`Estado/RAM/Carla` que faltaban en lo esperado del disco; arreglado, la comprobación del disco repetida sobre el mismo
+disco, bien); `make arranque-virt-2` y `make arranque-virt-linux` bien.
