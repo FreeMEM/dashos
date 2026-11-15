@@ -2022,3 +2022,6 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      que falta o sobra, y guardar el `.catalog` (y el `.ct` de texto, como FlexCat). Mientras no haya backend ARM de
      Dash, corre en la caja Amiga (y vale también para AmigaOS); en nativo, cuando lo haya. Encargárselo a la sesión
      de Dash, o hacerlo aquí con su compilador.
+  5. **Códecs de sonido y vídeo** (S33, borrador; pedido del usuario 2026-11-15, también x86-64 con AMD, Nvidia e
+     Intel): DataTypes como en el Amiga; primero sonido libre (Opus, Vorbis, FLAC, MP3, WAV, AIFF, 8SVX, MOD), luego AV1
+     y VP9 por CPU, luego decodificador de la Pi y, en x86, la gráfica para la caja Linux. Abiertos en S33.
