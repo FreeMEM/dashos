@@ -714,6 +714,13 @@ DashOS en marcha con 4 núcleos.
 ~│   [caja-amiga] ils: un flujo propio leido por su funcion: carga
 ~│   [caja-amiga] ils: -1, de mas, basura, sin funcion y vacio dan 0: bien
 ~│   [caja-amiga] ils.exe acabó con 0,
+# cybergraphics.library y Picasso96API.library nativas: píxeles, LockBitMap, RenderInfo y lo hostil (cgx.c).
+~│   [caja-amiga] cgx: un mapa de 32 bits de cybergraphics (ARGB32): bien
+~│   [caja-amiga] cgx: pixeles, LockBitMap y Picasso96 (RenderInfo, p96LockBitMap): bien
+~│   [caja-amiga] cgx: formatos (RGB16 de dos bytes, RGB24 de ancho impar con relleno): bien
+~│   [caja-amiga] cgx: modos RTG (Workbench de la caja, pantalla propia de 16 bits): bien
+~│   [caja-amiga] cgx: fuera, negativo, enorme, formato raro y planar: bien
+~│   [caja-amiga] cgx.exe acabó con 0,
 ~│   [caja-amiga] gadtools: atributos (nivel 60, ciclo 2, casilla 1), entero 42, ItemAddress y UserData del menu 2: bien
 ~│   [caja-amiga] gadtools: ventana abierta y dibujada (12 gadgets); espera clics
 ~│   [caja-amiga] gadtools.exe acabó con

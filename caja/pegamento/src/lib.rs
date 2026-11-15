@@ -399,6 +399,7 @@ pub unsafe extern "C" fn caja_rust_arrancar(
     di(&format!("mathieeesingbas.library nativa (Rust): ${:x}", mates_base));
     let (capas, teclas) = gr.capas_bases();
     di(&format!("layers.library y keymap.library nativas (Rust): ${:x} y ${:x}", capas, teclas));
+    di(&format!("cybergraphics.library y Picasso96API.library nativas (Rust): ${:x} y ${:x}", gr.cgx_base(), gr.p96_base()));
     di(&format!(
         "{}; compositor: {}, Workbench de {}x{}",
         vol,
@@ -1150,6 +1151,10 @@ fn recoger_avisos(c: &mut Caja) {
                 "layers.library"
             } else if caja_intuition::KEYMAP.contains(&a.funcion) {
                 "keymap.library"
+            } else if caja_intuition::cgx::FUNCIONES.contains(&a.funcion) {
+                "cybergraphics.library"
+            } else if caja_intuition::p96::FUNCIONES.contains(&a.funcion) {
+                "Picasso96API.library"
             } else {
                 "gadtools.library"
             };

@@ -24,7 +24,7 @@ use crate::marco::{GADGET_TAMANO, Gadget, Geometria};
 use crate::teclado::Calificadores;
 use crate::{CajaGrafica, Compositor, Fallo, Superficie, Tabla, fuente, lvo};
 
-/// La pantalla de Workbench.
+/// Una pantalla: la de Workbench o una propia de un programa (`pantallas.rs`).
 #[derive(Default)]
 pub(crate) struct Pantalla {
     pub dir: u32,
@@ -34,6 +34,11 @@ pub(crate) struct Pantalla {
     pub drawinfo: u32,
     pub bloqueos: u32,
     pub plumas: [u16; dri::NUMDRIPENS],
+    /// Su `ModeID` (uno de la caja: `modos.rs`).
+    pub modo: u32,
+    /// La tarea que la abrió (0: la de Workbench) y lo reservado para ella (dirección, largo), para soltarlo.
+    pub tarea: u32,
+    pub bloques: Vec<(u32, u32)>,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -44,6 +49,8 @@ pub(crate) struct Ventana {
     pub cliprect: u32,
     pub dano: u32,
     pub bm: u32,
+    /// Su pantalla (la de Workbench o una propia).
+    pub pantalla: u32,
     pub superficie: Superficie,
     /// El `UserPort` que creó intuition (0 si es del programa o no hay).
     pub puerto_creado: u32,
@@ -75,6 +82,8 @@ pub(crate) struct Ventana {
 pub(crate) struct Estado {
     pub base: u32,
     pub wb: Pantalla,
+    /// Las pantallas propias de los programas (`OpenScreenTagList` con un modo de la caja).
+    pub pantallas: Tabla<Pantalla>,
     pub ventanas: Tabla<Ventana>,
     pub por_superficie: BTreeMap<Superficie, u32>,
     pub cerradas: Vec<Ventana>,
@@ -192,7 +201,18 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e16(di + dri::DRI_RESOLUTION, 44)?;
         ex.e16(di + dri::DRI_RESOLUTION + 2, 44)?;
         ex.e32(di + dri::DRI_FLAGS, dri::DRIF_NEWLOOK)?;
-        self.intui.wb = Pantalla { dir: s, ancho: an, alto: al, cm, drawinfo: di, bloqueos: 0, plumas: PLUMAS_WB };
+        self.intui.wb = Pantalla {
+            dir: s,
+            ancho: an,
+            alto: al,
+            cm,
+            drawinfo: di,
+            bloqueos: 0,
+            plumas: PLUMAS_WB,
+            modo: crate::modos::workbench(),
+            tarea: 0,
+            bloques: Vec::new(),
+        };
         self.bordes_pantalla(ex)?;
         Ok(())
     }
@@ -267,12 +287,9 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(1)
     }
 
-    /// `GetScreenDrawInfo` (la del Workbench; no hay que soltarla).
+    /// `GetScreenDrawInfo` (la de la pantalla; es suya, no hay que soltarla).
     pub fn get_screen_draw_info(&mut self, s: u32) -> Result<u32, Fallo> {
-        if s != self.intui.wb.dir {
-            return Err(Fallo::PantallaDesconocida { dir: s });
-        }
-        Ok(self.intui.wb.drawinfo)
+        self.pantalla(s).map(|p| p.drawinfo).ok_or(Fallo::PantallaDesconocida { dir: s })
     }
 
     // --- Abrir ventanas ---
@@ -399,11 +416,10 @@ impl<C: Compositor> CajaGrafica<C> {
             }
         }
         self.leer_etiquetas(ex, lista, &mut p)?;
-        // La pantalla: solo hay Workbench.
-        let wb = self.intui.wb.dir;
+        // La pantalla: la de Workbench o una propia.
         if let Some(s) = p.pantalla
             && s != 0
-            && s != wb
+            && self.pantalla(s).is_none()
         {
             return Err(Fallo::PantallaDesconocida { dir: s });
         }
@@ -417,8 +433,12 @@ impl<C: Compositor> CajaGrafica<C> {
     }
 
     fn abrir<M: Memoria>(&mut self, ex: &mut Exec<M>, mut p: Peticion) -> Result<u32, Fallo> {
-        let wb = self.intui.wb.dir;
-        let (san, sal) = (self.intui.wb.ancho as i32, self.intui.wb.alto as i32);
+        let wb = p.pantalla.filter(|&s| s != 0 && self.pantalla(s).is_some()).unwrap_or(self.intui.wb.dir);
+        let (san, sal, cm_pantalla, plumas_pantalla, formato) = {
+            let pa = self.pantalla(wb).unwrap_or(&self.intui.wb);
+            let f = crate::modos::formato_de_id(pa.modo).unwrap_or(crate::chunky::Formato::Argb32);
+            (pa.ancho as i32, pa.alto as i32, pa.cm, pa.plumas, f)
+        };
         p.flags &= wflg::DEL_PROGRAMA;
         let tiene_barra = p.titulo != 0 || p.flags & (wflg::DRAGBAR | wflg::CLOSEGADGET | wflg::DEPTHGADGET) != 0;
         // S26: el aspecto que le toca (por el programa que la abre).
@@ -510,8 +530,12 @@ impl<C: Compositor> CajaGrafica<C> {
         } else {
             0
         };
-        let cm = self.intui.wb.cm;
+        let cm = cm_pantalla;
         self.nuevo_nativo(ex, bm, an as u32, al as u32, cm)?;
+        // Un programa la ve en el formato del modo de su pantalla (`LockBitMap`, cybergraphics).
+        if let Some(l) = self.gfx.lienzos.get_mut(&bm) {
+            l.formato = formato;
+        }
         // S26: con el aspecto de DashOS, dentro es de la superficie del tema (la paleta de la pantalla no se toca: un
         // programa que borra con la pluma 0 pinta el gris de siempre).
         let fondo = match crate::tema::Elegido::de(aspecto).como().fondo_ventana() {
@@ -554,7 +578,7 @@ impl<C: Compositor> CajaGrafica<C> {
         ex.e32(capa + layer::CLIPRECT, cliprect)?;
         ex.e32(capa + layer::DAMAGELIST, dano)?;
         self.poner_capa(ex, capa, an, al, gzz)?;
-        let plumas = self.intui.wb.plumas;
+        let plumas = plumas_pantalla;
         let detalle = if p.detalle == 0xFF { plumas[dri::DETAILPEN] as u8 } else { p.detalle };
         let bloque = if p.bloque == 0xFF { plumas[dri::BLOCKPEN] as u8 } else { p.bloque };
         ex.e16(w + win::LEFTEDGE, p.izq as u16)?;
@@ -616,6 +640,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 cliprect,
                 dano,
                 bm,
+                pantalla: wb,
                 superficie: 0,
                 puerto_creado: puerto,
                 respuesta,
@@ -786,8 +811,8 @@ impl<C: Compositor> CajaGrafica<C> {
             ex.delete_msg_port(puerto)?;
         }
         ex.e32(w + win::USERPORT, 0)?;
-        // Fuera de la lista de la pantalla.
-        let wb = self.intui.wb.dir;
+        // Fuera de la lista de su pantalla.
+        let wb = self.intui.ventanas[&w].pantalla;
         let mut ant = wb + sc::FIRSTWINDOW;
         for _ in 0..4096 {
             let x = ex.l32(ant)?;
@@ -850,7 +875,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// Deshace una ventana a medio abrir.
     fn soltar_ventana<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32) -> Result<(), Fallo> {
-        let wb = self.intui.wb.dir;
+        let wb = self.intui.ventanas.get(&w).map_or(self.intui.wb.dir, |v| v.pantalla);
         ex.e32(wb + sc::FIRSTWINDOW, ex.l32(w + win::NEXTWINDOW)?)?;
         let Some(v) = self.intui.ventanas.remove(&w) else { return Ok(()) };
         if v.puerto_creado != 0 {
@@ -925,6 +950,8 @@ impl<C: Compositor> CajaGrafica<C> {
         self.regiones_tarea_muerta(t);
         self.capas_tarea_muerta(ex, t);
         self.boopsi_tarea_muerta(ex, t);
+        self.cgx_tarea_muerta(ex, t);
+        self.pantallas_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {
@@ -1150,8 +1177,7 @@ impl<C: Compositor> CajaGrafica<C> {
 
     /// `ViewPortAddress`.
     pub fn view_port_address(&mut self, w: u32) -> Result<u32, Fallo> {
-        self.ventana(w)?;
-        Ok(self.intui.wb.dir + sc::VIEWPORT)
+        Ok(self.ventana(w)?.pantalla + sc::VIEWPORT)
     }
 
     /// `CurrentTime`.

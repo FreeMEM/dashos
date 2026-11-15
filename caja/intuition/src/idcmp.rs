@@ -190,12 +190,12 @@ impl<C: Compositor> CajaGrafica<C> {
         let v = self.ventana(w)?;
         let [bi, ba, _, _] = v.geometria.bordes;
         let arrastrando = v.pulsado.is_some();
+        let s = v.pantalla;
         ex.e16(w + win::MOUSEX, x as u16)?;
         ex.e16(w + win::MOUSEY, y as u16)?;
         ex.e16(w + win::GZZMOUSEX, x.saturating_sub(bi) as u16)?;
         ex.e16(w + win::GZZMOUSEY, y.saturating_sub(ba) as u16)?;
         let (wx, wy) = (ex.l16(w + win::LEFTEDGE)? as i16 as i32, ex.l16(w + win::TOPEDGE)? as i16 as i32);
-        let s = self.intui.wb.dir;
         ex.e16(s + sc::MOUSEX, x.saturating_add(wx) as u16)?;
         ex.e16(s + sc::MOUSEY, y.saturating_add(wy) as u16)?;
         ex.e16(self.intui.base + ib::MOUSEX, x.saturating_add(wx) as u16)?;

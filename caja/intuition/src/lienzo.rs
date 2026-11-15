@@ -65,6 +65,9 @@ pub struct Lienzo {
     fondo: u32,
     /// El `ColorMap` cuyas plumas se usan al dibujar con `SetAPen` (0: el del Workbench).
     pub paleta: u32,
+    /// El formato en que lo ve un programa (cybergraphics, Picasso96, `LockBitMap`): el del modo de su pantalla. Sus
+    /// píxeles se guardan siempre en ARGB (lo que pinta el compositor); al cogerlo se pasan a este formato y de vuelta.
+    pub formato: crate::chunky::Formato,
     dano: Option<Rect>,
     /// Si se apuntan los textos de nuestras bibliotecas para la letra de DashOS (`nitido.rs`): solo en las ventanas
     /// "como DashOS".
@@ -75,7 +78,17 @@ pub struct Lienzo {
 impl Lienzo {
     /// Un lienzo de `ancho` x `alto` del color `fondo`. Los tamaños se tienen que haber comprobado antes.
     pub fn nuevo(ancho: u32, alto: u32, fondo: u32, paleta: u32) -> Lienzo {
-        Lienzo { ancho, alto, pix: Vec::new(), fondo: fondo | 0xFF00_0000, paleta, dano: None, nitido: false, textos: Vec::new() }
+        Lienzo {
+            ancho,
+            alto,
+            pix: Vec::new(),
+            fondo: fondo | 0xFF00_0000,
+            paleta,
+            formato: crate::chunky::Formato::Argb32,
+            dano: None,
+            nitido: false,
+            textos: Vec::new(),
+        }
     }
     pub fn ancho(&self) -> u32 {
         self.ancho
@@ -128,6 +141,27 @@ impl Lienzo {
             Some(d) => d.union(&p),
             None => p,
         });
+    }
+    /// Pone seguidos los píxeles `v` (opacos) desde `(x, y)` hacia la derecha, recortados al lienzo, y apunta lo tocado
+    /// como cambiado de una vez (cybergraphics: una fila de `WritePixelArray`, la vuelta de `UnLockBitMap`). Devuelve
+    /// cuántos ha puesto.
+    pub fn escribir_fila(&mut self, x: i32, y: i32, v: &[u32]) -> u32 {
+        if y < 0 || y as u32 >= self.alto || v.is_empty() {
+            return 0;
+        }
+        let desde = x.max(0) as i64;
+        let hasta = (x as i64 + v.len() as i64).min(self.ancho as i64);
+        if hasta <= desde || !self.asegurar() {
+            return 0;
+        }
+        let i = y as usize * self.ancho as usize;
+        let o = (desde - x as i64) as usize;
+        let n = (hasta - desde) as usize;
+        for (d, s) in self.pix[i + desde as usize..i + desde as usize + n].iter_mut().zip(&v[o..o + n]) {
+            *d = *s | 0xFF00_0000;
+        }
+        self.danar(Rect::nuevo(desde as i32, y, hasta as i32 - 1, y));
+        n as u32
     }
     /// Todos los píxeles, fila a fila.
     pub fn pixeles(&mut self) -> &[u32] {

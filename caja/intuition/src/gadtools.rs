@@ -429,7 +429,7 @@ impl<C: Compositor> CajaGrafica<C> {
             GT_GETGADGETATTRSA => self.gt_get_attrs(ex, a[0], a[3]),
             GETVISUALINFOA => {
                 let s = a[0];
-                if s != self.intui.wb.dir {
+                if self.pantalla(s).is_none() {
                     return Err(Fallo::PantallaDesconocida { dir: s });
                 }
                 let vi = ex.alloc_mem(8, memf::PUBLIC | memf::CLEAR)?;

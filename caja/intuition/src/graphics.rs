@@ -16,6 +16,7 @@ use caja_exec::{Exec, Memoria};
 use crate::acceso::{Acceso, puntero};
 use crate::dibujo::{PLANO_UNOS, Pintor, Planar, Sup, Tinta, mas_cercano};
 use crate::estructuras::{bitmap, colormap, drmd, gfxbase, rastport as rp_, textattr, textfont as tf, viewport};
+use crate::chunky::{Chunky, Formato};
 use crate::lienzo::{self, Lienzo, Rect};
 use crate::{CajaGrafica, Compositor, Fallo, Tabla, fuente, lvo};
 
@@ -36,6 +37,8 @@ pub(crate) struct Estado {
     pub capas: Tabla<Rect>,
     /// Las capas cuyo (0, 0) no es el del mapa: la interior de una ventana `WFLG_GIMMEZEROZERO`.
     pub origenes: Tabla<(i32, i32)>,
+    /// Los mapas de color verdadero en la memoria del 68k (`chunky.rs`): `BitMap` → dónde y cómo.
+    pub chunkies: Tabla<Chunky>,
     /// Lo reservado por `AllocBitMap`: `BitMap` → bloques (dirección, largo), la estructura incluida.
     pub reservados: Tabla<Vec<(u32, u32)>>,
 }
@@ -63,8 +66,18 @@ pub(crate) struct InfoRp {
 /// Un mapa ya comprobado.
 #[derive(Clone, Copy, Debug)]
 pub(crate) enum Mapa {
+    /// Un lienzo (una ventana, la pantalla): ARGB fuera de la memoria del 68k.
     Nativo,
     Planar(Planar),
+    /// Color verdadero en la memoria del 68k, en su formato.
+    Chunky(Chunky),
+}
+
+impl Mapa {
+    /// Si sus valores crudos son colores ARGB (lienzos y chunky) y no plumas (planares).
+    pub(crate) fn de_color(&self) -> bool {
+        !matches!(self, Mapa::Planar(_))
+    }
 }
 
 /// Una fuente leída de su `struct TextFont`.
@@ -195,6 +208,9 @@ impl<C: Compositor> CajaGrafica<C> {
         if self.gfx.lienzos.contains_key(&bm) {
             return Ok(Mapa::Nativo);
         }
+        if let Some(c) = self.gfx.chunkies.get(&bm) {
+            return Ok(Mapa::Chunky(*c));
+        }
         ex.tramo(bm, bitmap::TAMANO).map_err(|_| Fallo::BitMapMalo { dir: bm })?;
         let bpr = ex.l16(bm + bitmap::BYTESPERROW)? as u32;
         let filas = ex.l16(bm + bitmap::ROWS)? as u32;
@@ -226,6 +242,11 @@ impl<C: Compositor> CajaGrafica<C> {
             ex.tramo(p, largo).map_err(|_| Fallo::BitMapMalo { dir: bm })?;
         }
         Ok(Mapa::Planar(Planar { planos, prof, bpr, filas, ancho: fila * 8 }))
+    }
+
+    /// El `ColorMap` de las plumas de un mapa de color (0: el del Workbench).
+    pub(crate) fn cm_de(&self, bm: u32) -> u32 {
+        self.gfx.lienzos.get(&bm).map(|l| l.paleta).or_else(|| self.gfx.chunkies.get(&bm).map(|c| c.cm)).unwrap_or(0)
     }
 
     /// El recorte de un `RastPort`: su capa, si es de una ventana.
@@ -312,6 +333,15 @@ impl<C: Compositor> CajaGrafica<C> {
                 let a = Tinta { pen: fg, argb: 0 };
                 let b = Tinta { pen: bg, argb: 0 };
                 Ok(Pintor { sup: Sup::Planar(&mut ex.mem, p), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
+            }
+            Mapa::Chunky(c) => {
+                let mut clip = c.rect();
+                if let Some(k) = capa {
+                    clip = clip.interseccion(&k);
+                }
+                let a = Tinta { pen: fg, argb: self.color(c.cm, fg) };
+                let b = Tinta { pen: bg, argb: self.color(c.cm, bg) };
+                Ok(Pintor { sup: Sup::Chunky(&mut ex.mem, c), clip, region: None, a, b, modo, mascara, dx: 0, dy: 0 })
             }
         }
     }
@@ -456,10 +486,7 @@ impl<C: Compositor> CajaGrafica<C> {
     pub fn read_pixel<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, x: i32, y: i32) -> Result<i32, Fallo> {
         let i = self.leer_rp(ex, rp)?;
         let mapa = self.mapa(ex, i.bm)?;
-        let mut clip = match mapa {
-            Mapa::Nativo => self.gfx.lienzos[&i.bm].rect(),
-            Mapa::Planar(p) => p.rect(),
-        };
+        let mut clip = self.limites(i.bm, mapa);
         if let Some(c) = self.recorte_capa(i.capa) {
             clip = clip.interseccion(&c);
         }
@@ -474,13 +501,14 @@ impl<C: Compositor> CajaGrafica<C> {
                 mas_cercano(self.paleta(l.paleta), l.pixel(x, y)) as i32
             }
             Mapa::Planar(p) => p.leer(&ex.mem, x, y) as i32,
+            Mapa::Chunky(c) => mas_cercano(self.paleta(c.cm), c.leer(&ex.mem, x, y)) as i32,
         })
     }
 
     /// `SetRast`: todo el mapa (o la capa) de una pluma, sin modo de dibujo.
     pub fn set_rast<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, pen: u32) -> Result<(), Fallo> {
         let i = self.leer_rp(ex, rp)?;
-        let cm = self.gfx.lienzos.get(&i.bm).map(|l| l.paleta).unwrap_or(0);
+        let cm = self.cm_de(i.bm);
         let t = Tinta { pen: pen as u8, argb: self.color(cm, pen as u8) };
         let mut p = self.pintor(ex, &i)?;
         let r = p.clip;
@@ -577,6 +605,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 v.push(match mapa {
                     Mapa::Nativo => self.gfx.lienzos.get(&bm).map(|l| l.pixel(x, y)).unwrap_or(0),
                     Mapa::Planar(p) => p.leer(&ex.mem, x, y) as u32,
+                    Mapa::Chunky(c) => c.leer(&ex.mem, x, y),
                 });
             }
         }
@@ -587,6 +616,7 @@ impl<C: Compositor> CajaGrafica<C> {
         match mapa {
             Mapa::Nativo => self.gfx.lienzos.get(&bm).map(|l| l.rect()).unwrap_or(Rect::nuevo(0, 0, -1, -1)),
             Mapa::Planar(p) => p.rect(),
+            Mapa::Chunky(c) => c.rect(),
         }
     }
 
@@ -649,27 +679,27 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             None => None,
         };
-        let cm_o = self.gfx.lienzos.get(&origen).map(|l| l.paleta).unwrap_or(0);
-        let cm_d = self.gfx.lienzos.get(&destino).map(|l| l.paleta).unwrap_or(0);
+        let cm_o = self.cm_de(origen);
+        let cm_d = self.cm_de(destino);
         // Traducir al tipo del destino.
-        let datos: Vec<u32> = match (mo, md) {
-            (Mapa::Planar(_), Mapa::Nativo) => datos.iter().map(|&v| self.color(cm_d, v as u8)).collect(),
-            (Mapa::Nativo, Mapa::Planar(_)) => {
+        let datos: Vec<u32> = match (mo.de_color(), md.de_color()) {
+            (false, true) => datos.iter().map(|&v| self.color(cm_d, v as u8)).collect(),
+            (true, false) => {
                 let pal = self.paleta(cm_o);
                 datos.iter().map(|&v| mas_cercano(pal, v) as u32).collect()
             }
             _ => datos,
         };
         let planos = match md {
-            Mapa::Nativo => 8,
             Mapa::Planar(p) => p.prof as u32,
+            _ => 8,
         };
         let mut p = self.pintor_mapa(ex, destino, md, capa, 0, 0, drmd::JAM2, mascara)?;
         if let Some(r) = region {
             p.recortar_con(r);
         }
         let an = ro.ancho() as usize;
-        let nativo = matches!(md, Mapa::Nativo);
+        let nativo = md.de_color();
         for y in ro.y0..=ro.y1 {
             for x in ro.x0..=ro.x1 {
                 let b = datos[(y - ro.y0) as usize * an + (x - ro.x0) as usize];
@@ -848,7 +878,7 @@ impl<C: Compositor> CajaGrafica<C> {
             let d = u32::try_from(d).map_err(|_| caja_exec::Fallo::FueraDeMemoria { dir: tabla, largo: 0 })?;
             filas.push(ex.bytes(d, an)?);
         }
-        let cm = self.gfx.lienzos.get(&i.bm).map(|l| l.paleta).unwrap_or(0);
+        let cm = self.cm_de(i.bm);
         let colores: Vec<u32> = (0..=255u8).map(|p| self.color(cm, p)).collect();
         let mut p = self.pintor(ex, &i)?;
         p.mascara = 0xFF;
@@ -946,8 +976,14 @@ impl<C: Compositor> CajaGrafica<C> {
         tag: u32,
         id: u32,
     ) -> Result<u32, Fallo> {
-        let (an, al) = self.comp.tamano_escritorio();
+        // Un modo de la caja (RTG) con lo suyo; cualquier otro ID, lo de la pantalla de la caja de 8 bits por color
+        // (como antes: no hay chipset, pero un programa que pregunta por el suyo no se queda sin respuesta).
+        let esc = self.comp.tamano_escritorio();
+        let rtg = crate::modos::modo(id, esc);
+        let (an, al) = rtg.map_or(esc, |m| (m.ancho, m.alto));
         let (an, al) = (an.min(0x7FFF) as u16, al.min(0x7FFF) as u16);
+        let (prof, bits) = rtg.map_or((8, (8, 8, 8)), |m| (m.prof, m.bits()));
+        let nombre = rtg.map_or(alloc::string::String::from("DashOS"), |m| m.nombre());
         let mut v: alloc::vec::Vec<u8> = match tag {
             0x8000_0000 => alloc::vec![0; 56],
             0x8000_1000 => alloc::vec![0; 88],
@@ -968,7 +1004,8 @@ impl<C: Compositor> CajaGrafica<C> {
         };
         match tag {
             0x8000_0000 => {
-                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200); // DIPF_IS_WB | DIPF_IS_DRAGGABLE
+                // DIPF_IS_WB | DIPF_IS_DRAGGABLE, y DIPF_IS_FOREIGN en los de la caja (no son del chipset).
+                pon32(&mut v, 18, 0x0000_0100 | 0x0000_0200 | if rtg.is_some() { 0x8000_0000 } else { 0 });
                 pon16(&mut v, 22, 22);
                 pon16(&mut v, 24, 22);
                 pon16(&mut v, 26, 35);
@@ -976,12 +1013,12 @@ impl<C: Compositor> CajaGrafica<C> {
                 pon16(&mut v, 30, 4096);
                 pon16(&mut v, 32, 22);
                 pon16(&mut v, 34, 22);
-                v[40] = 8;
-                v[41] = 8;
-                v[42] = 8;
+                v[40] = bits.0;
+                v[41] = bits.1;
+                v[42] = bits.2;
             }
             0x8000_1000 => {
-                pon16(&mut v, 16, 8);
+                pon16(&mut v, 16, prof as u16);
                 pon16(&mut v, 18, 16);
                 pon16(&mut v, 20, 16);
                 pon16(&mut v, 22, 16368);
@@ -1000,7 +1037,7 @@ impl<C: Compositor> CajaGrafica<C> {
                 pon32(&mut v, 84, id);
             }
             _ => {
-                let nombre = b"DashOS";
+                let nombre = &nombre.as_bytes()[..nombre.len().min(31)];
                 v[16..16 + nombre.len()].copy_from_slice(nombre);
             }
         }
@@ -1013,6 +1050,65 @@ impl<C: Compositor> CajaGrafica<C> {
             ex.e8(buf + i as u32, *b)?;
         }
         Ok(k as u32)
+    }
+
+    /// `FindDisplayInfo`: el asa de un modo de la caja (el propio `ModeID`), o 0 si no está (los del chipset no).
+    pub fn find_display_info(&self, id: u32) -> u32 {
+        if crate::modos::modo(id, self.comp.tamano_escritorio()).is_some() { id } else { 0 }
+    }
+
+    /// `NextDisplayInfo`: el modo de la caja que va detrás de `id` (`INVALID_ID`: el primero), o `INVALID_ID` al acabar.
+    pub fn next_display_info(&self, id: u32) -> u32 {
+        let modos = crate::modos::modos(self.comp.tamano_escritorio());
+        let i = if id == crate::modos::INVALID_ID { 0 } else { modos.iter().position(|m| m.id > id).unwrap_or(modos.len()) };
+        modos.get(i).map_or(crate::modos::INVALID_ID, |m| m.id)
+    }
+
+    /// `ModeNotAvailable`: 0 para un modo de la caja; `DI_AVAIL_NOMONITOR` para cualquier otro (no hay chipset).
+    pub fn mode_not_available(&self, id: u32) -> u32 {
+        if self.find_display_info(id) != 0 { 0 } else { 2 }
+    }
+
+    /// `BestModeIDA` de graphics, sobre los modos de la caja: `BIDTAG_Depth`, el tamaño (`Desired`, si no `Nominal`,
+    /// si no el de `BIDTAG_SourceID` o el del `ViewPort`), `BIDTAG_MonitorID` (otro que el de la caja: ninguno) y los bits
+    /// por color pedidos; las `DIPF_*` que tiene que tener o no (los de la caja son `IS_WB`, `IS_DRAGGABLE` e `IS_FOREIGN`).
+    pub fn best_mode_id_a<M: Memoria>(&mut self, ex: &mut Exec<M>, tags: u32) -> Result<u32, Fallo> {
+        let esc = self.comp.tamano_escritorio();
+        let (mut prof, mut an, mut al, mut des) = (1u32, None, None, (None, None));
+        let (mut tiene, mut no_tiene, mut monitor) = (0u32, 0u32, None);
+        let mut bits = (0u8, 0u8, 0u8);
+        let mut fuente = None;
+        for (t, v) in crate::gadtools::leer_etiquetas(ex, tags)? {
+            match t {
+                0x8000_0001 => tiene = v,
+                0x8000_0002 => no_tiene = v,
+                0x8000_0003 if v != 0 => fuente = fuente.or(Some(self.modo_de_vp(v))),
+                0x8000_0004 => an = Some(v & 0xFFFF),
+                0x8000_0005 => al = Some(v & 0xFFFF),
+                0x8000_0006 => des.0 = Some(v & 0xFFFF),
+                0x8000_0007 => des.1 = Some(v & 0xFFFF),
+                0x8000_0008 => prof = v,
+                0x8000_0009 => monitor = Some(v),
+                0x8000_000A => fuente = Some(v),
+                0x8000_000B => bits.0 = v as u8,
+                0x8000_000C => bits.2 = v as u8,
+                0x8000_000D => bits.1 = v as u8,
+                _ => {}
+            }
+        }
+        let propias = 0x0000_0100 | 0x0000_0200 | 0x8000_0000;
+        if tiene & !propias != 0 || no_tiene & propias != 0 {
+            return Ok(crate::modos::INVALID_ID);
+        }
+        if monitor.is_some_and(|m| m & crate::modos::MASCARA_MONITOR != crate::modos::MONITOR) {
+            return Ok(crate::modos::INVALID_ID);
+        }
+        let de_fuente = fuente.and_then(|f| crate::modos::modo(f, esc));
+        let tam = (des.0.or(an).or(de_fuente.map(|m| m.ancho)), des.1.or(al).or(de_fuente.map(|m| m.alto)));
+        Ok(crate::modos::mejor(esc, prof, tam, |m| {
+            let b = m.bits();
+            b.0 >= bits.0 && b.1 >= bits.1 && b.2 >= bits.2
+        }))
     }
 
     /// `WeighTAMatch(reqTextAttr, targetTextAttr, targetTags)`: de 0 (nada que ver) a 32767 (`MAXFONTMATCHWEIGHT`, la
@@ -1216,8 +1312,17 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(())
     }
 
-    /// `AllocBitMap`: nativo de 32 bits si pide más de 8 planos o su amigo es nativo; si no, planar en memoria
-    /// chip (entrelazado con `BMF_INTERLEAVED`), como el del chipset.
+    /// El formato de color verdadero de un mapa (un lienzo o uno chunky), o `None` si es planar o no es de la caja.
+    pub(crate) fn formato_de(&self, bm: u32) -> Option<Formato> {
+        if let Some(l) = self.gfx.lienzos.get(&bm) {
+            return Some(l.formato);
+        }
+        self.gfx.chunkies.get(&bm).map(|c| c.fmt)
+    }
+
+    /// `AllocBitMap`: de color verdadero (chunky, en la memoria del 68k: `chunky.rs`) si pide más de 8 planos, si su
+    /// amigo es de color verdadero o si pide un formato de cybergraphics (`BMF_SPECIALFMT` y no `PIXFMT_LUT8`); si no,
+    /// planar en memoria chip (entrelazado con `BMF_INTERLEAVED`), como el del chipset.
     pub fn alloc_bit_map<M: Memoria>(
         &mut self,
         ex: &mut Exec<M>,
@@ -1228,24 +1333,22 @@ impl<C: Compositor> CajaGrafica<C> {
         amigo: u32,
     ) -> Result<u32, Fallo> {
         let (an, al) = (ancho as i32, alto as i32);
-        let nativo = prof > 8 || (amigo != 0 && self.gfx.lienzos.contains_key(&amigo));
+        // El formato: el que pide con `BMF_SPECIALFMT` (los 8 bits de arriba), si no el de su amigo, si no el de serie de
+        // su profundidad (más de 8 planos). `PIXFMT_LUT8` es planar; un `PIXFMT_*` que no existe, un fallo.
+        let especial = flags & crate::cgx::constantes::BMF_SPECIALFMT != 0 && flags >> 24 != crate::cgx::constantes::PIXFMT_LUT8;
+        let pedido = if especial {
+            Some(Formato::de_pixfmt(flags >> 24).ok_or(Fallo::Sospechoso { dir: flags })?)
+        } else {
+            None
+        };
+        let del_amigo = if amigo != 0 { self.formato_de(amigo) } else { None };
         if !lienzo::tamano_valido(an as i64, al as i64) || prof == 0 || prof > 32 || an > 0xFFFF {
             return Err(Fallo::TamanoMalo { ancho: an, alto: al });
         }
-        let bm = ex.reservar(bitmap::TAMANO, memf::CLEAR)?;
-        if nativo {
-            let cm = self.gfx.lienzos.get(&amigo).map(|l| l.paleta).unwrap_or(0);
-            self.nuevo_nativo(ex, bm, ancho, alto, cm)?;
-            // Sus píxeles, ya: si el montón de la caja no da para ellos, AllocBitMap da 0 como en el Amiga sin memoria
-            // (sin aviso: no es un error del programa), en vez de un mapa en el que no se puede pintar.
-            if !self.gfx.lienzos.get_mut(&bm).is_some_and(|l| l.con_pixeles()) {
-                self.gfx.lienzos.remove(&bm);
-                ex.soltar(bm, bitmap::TAMANO)?;
-                return Ok(0);
-            }
-            self.gfx.reservados.insert(bm, vec![(bm, bitmap::TAMANO)]);
-            return Ok(bm);
+        if let Some(fmt) = pedido.or(del_amigo).or((prof > 8).then(|| Formato::de_profundidad(prof))) {
+            return self.alloc_chunky(ex, ancho, alto, fmt, self.cm_de(amigo), flags);
         }
+        let bm = ex.reservar(bitmap::TAMANO, memf::CLEAR)?;
         let fila = ancho.div_ceil(16) * 2;
         let plano = fila as u64 * alto as u64;
         let mut bloques = vec![(bm, bitmap::TAMANO)];
@@ -1298,6 +1401,75 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(bm)
     }
 
+    /// Un mapa chunky de `ancho` x `alto` en `fmt`: su `struct BitMap` (8 planos a cero, como los lienzos: un programa
+    /// que escriba en los planos da en la página 0 y el Enforcer lo apunta) y sus píxeles en la memoria del 68k
+    /// (memoria del sistema, con el tope y el aviso de memoria baja de exec), del color de la pluma 0. Sin memoria, 0 sin aviso (como el
+    /// Amiga sin memoria).
+    pub(crate) fn alloc_chunky<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        ancho: u32,
+        alto: u32,
+        fmt: Formato,
+        cm: u32,
+        _flags: u32,
+    ) -> Result<u32, Fallo> {
+        let bm = ex.reservar(bitmap::TAMANO, memf::CLEAR)?;
+        match self.chunky_en(ex, bm, ancho, alto, fmt, cm) {
+            Ok(Some(pixeles)) => {
+                self.gfx.reservados.insert(bm, vec![(bm, bitmap::TAMANO), pixeles]);
+                Ok(bm)
+            }
+            otro => {
+                ex.soltar(bm, bitmap::TAMANO)?;
+                otro.map(|_| 0)
+            }
+        }
+    }
+
+    /// Hace chunky el `struct BitMap` de `bm` (que ya existe: el de `AllocBitMap` o el de una pantalla): sus píxeles en
+    /// la memoria del 68k, del color de la pluma 0. Devuelve el bloque de los píxeles (para soltarlo), o `None` sin
+    /// memoria.
+    pub(crate) fn chunky_en<M: Memoria>(
+        &mut self,
+        ex: &mut Exec<M>,
+        bm: u32,
+        ancho: u32,
+        alto: u32,
+        fmt: Formato,
+        cm: u32,
+    ) -> Result<Option<(u32, u32)>, Fallo> {
+        let Some(bpr) = Chunky::bpr_de(ancho, fmt) else { return Err(Fallo::TamanoMalo { ancho: ancho as i32, alto: alto as i32 }) };
+        let Some(largo) = bpr.checked_mul(alto).filter(|&l| l <= u32::MAX / 2) else {
+            return Err(Fallo::TamanoMalo { ancho: ancho as i32, alto: alto as i32 });
+        };
+        let base = ex.alloc_mem(largo, memf::PUBLIC | memf::CLEAR)?;
+        if base == 0 {
+            return Ok(None);
+        }
+        ex.cambiar_dueno(base, 0);
+        // Borrado es la pluma 0 en todas partes (como un planar a cero): su color.
+        let fondo = self.color(cm, 0) & 0x00FF_FFFF;
+        if fondo != 0 {
+            let mut p = [0u8; 4];
+            fmt.escribir(fondo, &mut p);
+            let bpp = fmt.bpp() as usize;
+            if let Ok(m) = ex.mem.leer_mut(base, largo) {
+                for fila in m.chunks_exact_mut(bpr as usize) {
+                    for o in fila[..ancho as usize * bpp].chunks_exact_mut(bpp) {
+                        o.copy_from_slice(&p[..bpp]);
+                    }
+                }
+            }
+        }
+        ex.cero(bm, bitmap::TAMANO)?;
+        ex.e16(bm + bitmap::BYTESPERROW, bpr.min(0xFFFF) as u16)?;
+        ex.e16(bm + bitmap::ROWS, alto as u16)?;
+        ex.e8(bm + bitmap::DEPTH, 8)?;
+        self.gfx.chunkies.insert(bm, Chunky { base, bpr, ancho, alto, fmt, cm });
+        Ok(Some((base, largo)))
+    }
+
     /// `FreeBitMap`. Con 0 no hace nada; uno que no salió de `AllocBitMap` da un aviso.
     pub fn free_bit_map<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32) -> Result<(), Fallo> {
         if bm == 0 {
@@ -1305,6 +1477,8 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let Some(bloques) = self.gfx.reservados.remove(&bm) else { return Err(Fallo::NoReservado { dir: bm }) };
         self.gfx.lienzos.remove(&bm);
+        self.gfx.chunkies.remove(&bm);
+        self.cgx_mapa_soltado(ex, bm);
         for (d, l) in bloques {
             ex.soltar(d, l)?;
         }
@@ -1317,8 +1491,12 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match (mapa, attr) {
             (Mapa::Nativo, bitmap::BMA_WIDTH) => self.gfx.lienzos[&bm].ancho(),
             (Mapa::Nativo, bitmap::BMA_HEIGHT) => self.gfx.lienzos[&bm].alto(),
-            (Mapa::Nativo, bitmap::BMA_DEPTH) => 32,
+            (Mapa::Nativo, bitmap::BMA_DEPTH) => self.gfx.lienzos[&bm].formato.profundidad(),
             (Mapa::Nativo, bitmap::BMA_FLAGS) => bitmap::BMF_DISPLAYABLE,
+            (Mapa::Chunky(c), bitmap::BMA_WIDTH) => c.ancho,
+            (Mapa::Chunky(c), bitmap::BMA_HEIGHT) => c.alto,
+            (Mapa::Chunky(c), bitmap::BMA_DEPTH) => c.fmt.profundidad(),
+            (Mapa::Chunky(_), bitmap::BMA_FLAGS) => bitmap::BMF_DISPLAYABLE,
             (Mapa::Planar(p), bitmap::BMA_WIDTH) => p.ancho,
             (Mapa::Planar(_), bitmap::BMA_HEIGHT) => ex.l16(bm + bitmap::ROWS)? as u32,
             (Mapa::Planar(_), bitmap::BMA_DEPTH) => ex.l8(bm + bitmap::DEPTH)? as u32,

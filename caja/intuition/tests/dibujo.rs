@@ -125,9 +125,8 @@ fn rectangulos_recortados() {
     let (bm, rp) = nativo(&mut c, 8, 8);
     pen(&mut c, rp, 2);
     rect(&mut c, rp, 6, 6, 100, 100);
-    let l = c.1.lienzo(bm).unwrap();
-    assert_eq!(l.pixel(7, 7), 0xFFFF_FFFF);
-    assert_eq!(l.pixel(5, 5), 0xFFAA_AAAA);
+    assert_eq!(c.1.pixel_de(&c.0, bm, 7, 7), Some(0xFFFF_FFFF));
+    assert_eq!(c.1.pixel_de(&c.0, bm, 5, 5), Some(0xFFAA_AAAA));
 }
 
 #[test]
@@ -199,21 +198,20 @@ fn complement_en_nativo_y_esquinas_de_una_polilinea() {
     let mut c = caja();
     let (bm, rp) = nativo(&mut c, 16, 16);
     g(&mut c, "SetRast", &[0], &[0, rp]);
-    let antes = c.1.lienzo(bm).unwrap().pixel(4, 4);
+    let antes = c.1.pixel_de(&c.0, bm, 4, 4).unwrap();
     g(&mut c, "SetDrMd", &[drmd::COMPLEMENT as u32], &[0, rp]);
     rect(&mut c, rp, 2, 2, 6, 6);
-    assert_eq!(c.1.lienzo(bm).unwrap().pixel(4, 4), antes ^ 0x00FF_FFFF);
+    assert_eq!(c.1.pixel_de(&c.0, bm, 4, 4).unwrap(), antes ^ 0x00FF_FFFF);
     rect(&mut c, rp, 2, 2, 6, 6);
-    assert_eq!(c.1.lienzo(bm).unwrap().pixel(4, 4), antes);
+    assert_eq!(c.1.pixel_de(&c.0, bm, 4, 4).unwrap(), antes);
     // Un cuadrado con Draw encadenados en COMPLEMENT: las esquinas de en medio no se invierten dos veces (la de
     // cierre, que es la del Move, sí: provisional, a comprobar con el oráculo).
     mover(&mut c, rp, 1, 1);
     for (x, y) in [(10, 1), (10, 10), (1, 10), (1, 1)] {
         draw(&mut c, rp, x, y);
     }
-    let l = c.1.lienzo(bm).unwrap();
     for (x, y) in [(10, 1), (10, 10), (1, 10), (5, 1), (10, 5)] {
-        assert_eq!(l.pixel(x, y), antes ^ 0x00FF_FFFF, "({x},{y})");
+        assert_eq!(c.1.pixel_de(&c.0, bm, x, y).unwrap(), antes ^ 0x00FF_FFFF, "({x},{y})");
     }
 }
 
@@ -319,7 +317,7 @@ fn paletas() {
     let (bm, rp) = nativo(&mut c, 4, 4);
     pen(&mut c, rp, 6);
     g(&mut c, "WritePixel", &[0, 0], &[0, rp]);
-    assert_eq!(c.1.lienzo(bm).unwrap().pixel(0, 0), 0xFF12_3456);
+    assert_eq!(c.1.pixel_de(&c.0, bm, 0, 0), Some(0xFF12_3456));
     // LoadRGB4 y LoadRGB32.
     let tabla = reservar(&mut c, 4);
     e16(&mut c, tabla, 0x123);
@@ -363,10 +361,10 @@ fn copias_de_bloques() {
     rect(&mut c, rpp, 4, 0, 7, 3);
     let (bn, rpn) = nativo(&mut c, 16, 8);
     assert_eq!(g(&mut c, "BltBitMap", &[0, 0, 2, 2, 8, 4, 0xC0, 0xFF], &[bp, bn]), 8);
-    let l = c.1.lienzo(bn).unwrap();
-    assert_eq!(l.pixel(2, 2), 0xFF66_88BB);
-    assert_eq!(l.pixel(6, 2), 0xFFFF_FFFF);
-    assert_eq!(l.pixel(10, 2), 0xFFAA_AAAA);
+    let px = |c: &Caja, x, y| c.1.pixel_de(&c.0, bn, x, y).unwrap();
+    assert_eq!(px(&c, 2, 2), 0xFF66_88BB);
+    assert_eq!(px(&c, 6, 2), 0xFFFF_FFFF);
+    assert_eq!(px(&c, 10, 2), 0xFFAA_AAAA);
     // De nativo a planar: el color más parecido.
     let (bp2, rpp2) = planar(&mut c, 2, 16, 8);
     g(&mut c, "BltBitMap", &[2, 2, 0, 0, 8, 4, 0xC0, 0xFF], &[bn, bp2]);
@@ -434,14 +432,14 @@ fn mapas_de_alloc_bit_map() {
     g(&mut c, "FreeBitMap", &[], &[bm]);
     // Nativo, por profundidad o por amigo.
     let n = g(&mut c, "AllocBitMap", &[50, 40, 24, 0], &[0]);
-    assert!(c.1.lienzo(n).is_some());
-    assert_eq!(g(&mut c, "GetBitMapAttr", &[0, bitmap::BMA_DEPTH], &[n]), 32);
+    assert!(c.1.pixel_de(&c.0, n, 0, 0).is_some());
+    assert_eq!(g(&mut c, "GetBitMapAttr", &[0, bitmap::BMA_DEPTH], &[n]), 24, "RGB24, su formato de serie");
     assert_eq!(g(&mut c, "GetBitMapAttr", &[0, bitmap::BMA_HEIGHT], &[n]), 40);
     let amigo = g(&mut c, "AllocBitMap", &[10, 10, 4, 0], &[n]);
-    assert!(c.1.lienzo(amigo).is_some());
+    assert!(c.1.pixel_de(&c.0, amigo, 0, 0).is_some());
     g(&mut c, "FreeBitMap", &[], &[amigo]);
     g(&mut c, "FreeBitMap", &[], &[n]);
-    assert!(c.1.lienzo(n).is_none());
+    assert!(c.1.pixel_de(&c.0, n, 0, 0).is_none());
     assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
 }
 
@@ -563,8 +561,8 @@ fn copia_con_plantilla() {
     pen(&mut c, rpn, 2);
     rect(&mut c, rpn, 0, 0, 15, 1);
     g(&mut c, "BltMaskBitMapRastPort", &[0, 0, 0, 0, 16, 2, 0xE0], &[bp, rpn, pl]);
-    let l = c.1.lienzo(bn).unwrap();
-    assert_eq!((l.pixel(0, 0), l.pixel(4, 0), l.pixel(4, 1)), (0xFF00_0000, 0xFFFF_FFFF, 0xFF00_0000));
+    let px = |c: &Caja, x, y| c.1.pixel_de(&c.0, bn, x, y).unwrap();
+    assert_eq!((px(&c, 0, 0), px(&c, 4, 0), px(&c, 4, 1)), (0xFF00_0000, 0xFFFF_FFFF, 0xFF00_0000));
     assert!(c.1.avisos().is_empty(), "{:?}", c.1.avisos());
     // Hostil: plantilla nula o fuera: un aviso y nada pintado; tamaños enormes y negativos, recortados o nada.
     let (_, rpv) = planar(&mut c, 1, 16, 2);

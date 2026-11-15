@@ -26,6 +26,7 @@ prog_\nombre\()_fin:
         programa procesos, "pruebas68k/procesos.exe"
         programa ils, "pruebas68k/ils.exe"
         programa dtprueba, "pruebas68k/dtprueba.exe"
+        programa cgx, "pruebas68k/cgx.exe"
 // S28: los virus de laboratorio (pruebas68k/malware/).
         programa mal_arranque, "pruebas68k/malware/arranque.exe"
         programa mal_enlace, "pruebas68k/malware/enlace.exe"
