@@ -348,6 +348,10 @@ impl<C: Compositor> CajaGrafica<C> {
                 superficie,
                 mapa_programa: q.mapa,
                 activa: 0,
+                orden: {
+                    self.intui.orden += 1;
+                    self.intui.orden
+                },
             },
         );
         if q.mapa != 0 {
@@ -401,6 +405,9 @@ impl<C: Compositor> CajaGrafica<C> {
             return Ok(0);
         }
         let p = self.intui.pantallas.remove(&s).unwrap();
+        if self.intui.pub_defecto == s {
+            self.intui.pub_defecto = 0;
+        }
         if p.superficie != 0 {
             self.comp.cerrar_ventana(p.superficie);
         }

@@ -50,6 +50,8 @@ pub(crate) struct Pantalla {
     pub mapa_programa: u32,
     /// Su última ventana activa (0: ninguna): la que recibe el teclado cuando el compositor da el foco a la pantalla.
     pub activa: u32,
+    /// Cuándo se abrió (en el orden de las pantallas): la lista de las públicas va en ese orden.
+    pub orden: u64,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -104,6 +106,11 @@ pub(crate) struct Estado {
     pub ceros: u32,
     pub orden: u64,
     pub glifos: Vec<[u8; 8]>,
+    /// La pantalla pública de serie (`SetDefaultPubScreen`; 0: el Workbench), los modos de `SetPubScreenModes` y la foto
+    /// de la lista de las públicas que tienen los programas (`publicas.rs`).
+    pub pub_defecto: u32,
+    pub modos_pub: u32,
+    pub lista_pub: Option<crate::publicas::ListaPub>,
 }
 
 /// Lo que pide `OpenWindow` u `OpenWindowTagList`.
@@ -229,6 +236,7 @@ impl<C: Compositor> CajaGrafica<C> {
             superficie: 0,
             mapa_programa: 0,
             activa: 0,
+            orden: 0,
         };
         self.bordes_pantalla(ex)?;
         Ok(())
@@ -288,10 +296,11 @@ impl<C: Compositor> CajaGrafica<C> {
         self.nombre_a_pantalla(ex, nombre, false)
     }
 
-    /// La pantalla pública de un nombre (0: el Workbench); con `privadas`, también las que están en modo privado.
+    /// La pantalla pública de un nombre (0: la de serie, `SetDefaultPubScreen`; el Workbench si no hay otra); con
+    /// `privadas`, también las que están en modo privado.
     fn nombre_a_pantalla<M: Memoria>(&self, ex: &Exec<M>, nombre: u32, privadas: bool) -> Result<u32, Fallo> {
         if nombre == 0 {
-            return Ok(self.intui.wb.dir);
+            return Ok(self.pub_por_defecto());
         }
         let n = ex.cadena(nombre)?;
         let wb = core::iter::once(&self.intui.wb);
@@ -468,7 +477,22 @@ impl<C: Compositor> CajaGrafica<C> {
                 s => p.pantalla = Some(s),
             }
         }
-        self.abrir(ex, p)
+        // SHANGHAI: la que iba al Workbench sin pedirlo, a la pantalla pública de serie.
+        if p.pantalla.is_none() && p.nombre_pub.is_none() && self.intui.modos_pub & crate::publicas::SHANGHAI != 0 {
+            let d = self.pub_por_defecto();
+            if d != self.intui.wb.dir {
+                p.pantalla = Some(d);
+            }
+        }
+        // POPPUBSCREEN: una pantalla pública pasa delante al abrirse en ella una ventana.
+        let delante = p
+            .pantalla
+            .filter(|&s| self.intui.modos_pub & crate::publicas::POPPUBSCREEN != 0 && self.pantalla(s).is_some_and(|x| x.nombre.is_some()));
+        let w = self.abrir(ex, p)?;
+        if let Some(s) = delante {
+            self.screen_depth(ex, s, true)?;
+        }
+        Ok(w)
     }
 
     fn abrir<M: Memoria>(&mut self, ex: &mut Exec<M>, mut p: Peticion) -> Result<u32, Fallo> {
@@ -1000,6 +1024,7 @@ impl<C: Compositor> CajaGrafica<C> {
         self.boopsi_tarea_muerta(ex, t);
         self.cgx_tarea_muerta(ex, t);
         self.pantallas_tarea_muerta(ex, t);
+        self.lista_pub_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {

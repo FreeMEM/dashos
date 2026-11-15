@@ -61,7 +61,9 @@ filas!(I;
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
     INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
-    PUBSCREENSTATUS = "PubScreenStatus", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
+    PUBSCREENSTATUS = "PubScreenStatus", LOCKPUBSCREENLIST = "LockPubScreenList",
+    UNLOCKPUBSCREENLIST = "UnlockPubScreenList", NEXTPUBSCREEN = "NextPubScreen", SETDEFAULTPUBSCREEN = "SetDefaultPubScreen",
+    SETPUBSCREENMODES = "SetPubScreenModes", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -489,12 +491,15 @@ impl<C: Compositor> CajaGrafica<C> {
             CLOSESCREEN => self.close_screen(ex, a[0]),
             // PubScreenStatus(screen, flags)(a0/d0).
             PUBSCREENSTATUS => self.pub_screen_status(a[0], d[0] & 0xFFFF),
-            GETDEFAULTPUBSCREEN => {
-                if a[0] != 0 {
-                    ex.escribir_bytes(a[0], b"Workbench\0")?;
-                }
-                Ok(0)
-            }
+            // La lista de pantallas públicas y la de serie (`publicas.rs`): LockPubScreenList(), UnlockPubScreenList(),
+            // NextPubScreen(screen, namebuff)(a0/a1), SetDefaultPubScreen(name)(a0), GetDefaultPubScreen(namebuff)(a0),
+            // SetPubScreenModes(modes)(d0).
+            LOCKPUBSCREENLIST => self.lock_pub_screen_list(ex),
+            UNLOCKPUBSCREENLIST => hecho(self.unlock_pub_screen_list(ex)),
+            NEXTPUBSCREEN => self.next_pub_screen(ex, a[0], a[1]),
+            SETDEFAULTPUBSCREEN => hecho(self.set_default_pub_screen(ex, a[0])),
+            GETDEFAULTPUBSCREEN => self.get_default_pub_screen(ex, a[0]),
+            SETPUBSCREENMODES => Ok(self.set_pub_screen_modes(d[0] & 0xFFFF)),
             // DoubleClick(sSecs, sMicros, cSecs, cMicros)(d0-d3): si caben en el doble clic de DashOS (500 ms, el de
             // MUI y Workbench de serie). Al revés, o con microsegundos imposibles, no.
             DOUBLECLICK => {

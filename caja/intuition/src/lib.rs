@@ -56,6 +56,7 @@ mod intuition;
 mod marco;
 mod menus;
 mod pantallas;
+mod publicas;
 mod requester;
 mod tema;
 mod vigia;
