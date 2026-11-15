@@ -2096,3 +2096,13 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   v7, solo para la caja Amiga y sus propias ventanas, con prueba hostil (revisado). Conflicto al fusionar en
   wayland/src/escena.rs resuelto conservando `tomar_ultimo_arrastre` y `bajar`. Tanda completa sobre 7d754fa (tras el
   reinicio de shiva): todo rc=0.
+- **Ventanas de Dash en DashOS unidas a revision** (e27ca49, rama `dash-ventanas` de la sesión de Dash; bitácora
+  `docs/bitacoras/dash-ventanas.md`): crate `kit-c` (los controles de DashOS con ABI de C para el runtime de Dash) y un
+  programa Dash con ventana, catálogo y botón en la prueba (`[dash-ventana] abierta`, `pulsado`, `guardar`). Dash
+  necesario: main de FreeMEMLang desde 5aff093 (antes, `path_free_kb` dejaba fuera las funciones de ficheros en
+  DashOS). Tanda sobre e27ca49: todo rc=0 salvo av por eso; repetido con el Dash arreglado, bien.
+  Pendientes de DashOS que dejó la sesión de Dash: (1) `sesiones` no da la llave del selector a lo que lanza; (2) el
+  selector solo devuelve la asa (ni nombre elegido ni campo de nombre para guardar); (3) `archivos` sin orden para
+  cambiar la fecha (`file_set_date`); (5) que `sesiones` e `inicio` digan qué es cada llave que dan, en vez de que el
+  runtime lo adivine por cuántas recibe. El (4), que el runtime de Dash use las asignaciones, es de la sesión de Dash.
+  Los menús de Dash esperan decisión del usuario: no tocarlos.
