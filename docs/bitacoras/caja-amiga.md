@@ -2149,3 +2149,68 @@ modo con el ID `0x29000` del chipset y `LockBitMap` que copia. Por orden: 3 (dó
   `CloseScreen` la suelta si no le quedan ventanas (si no, FALSE, como en 3.x); si su tarea acaba sin cerrarla, se
   cierra. Sin modo de la caja (uno del chipset o ninguno), la de Workbench, como antes. Un ID del monitor de la caja
   que no está: 0 y `OSERR_UNKNOWNMODE` en `SA_ErrorCode`.
+
+### Pruebas de cargo nuevas
+
+- `tests/formatos.rs`: ida y vuelta por cybergraphics (RGB, RGBA, ARGB) y por Picasso96 (los 12 `RGBFB_*` de color
+  verdadero) en mapas de los 13 formatos, contra un modelo de bits por canal escrito en la prueba (no con las funciones
+  de la biblioteca: comprobado que falla si se estropea un formato); los bytes de un rojo con alfa en cada formato
+  leídos por `LockBitMap` (lo de `cybergraphics.h`) y `RECTFMT_RAW`; `BltBitMap` entre los 169 pares; hostil
+  (`PIXFMT_*` que no existen, `RGBFormat` que no existe o YUV, 24 bits de ancho impar con su relleno intacto, filas que
+  no se salen).
+- `tests/modos.rs`: la base de datos (los 30 modos de un escritorio de 1920 x 1080, sus datos, los del chipset fuera),
+  elegir modo (profundidad, tamaño, bits por color, monitor, `SourceID`, `ViewPort`, `DIPF_*`, cybergraphics y
+  Picasso96), una pantalla propia de 16 bits con su ventana (`CloseScreen` con ella abierta dice que no; cerrada, todo
+  suelto), una de 8 bits, una con su tamaño y otra por `NewScreen` y su extensión, el fin de tarea, y lo hostil (IDs
+  del chipset, IDs de la caja que no están con `OSERR_UNKNOWNMODE`, `NewScreen` fuera de la memoria).
+- `tests/cgx.rs` al día: `acceso_directo` (sin copia: la dirección es la de `CYBRMATTR_DISPADR`, lo escrito se ve antes
+  de soltar) y `acceso_directo_a_un_lienzo` (la copia, con `UBMI_UPDATERECTS`). `tests/dibujo.rs`: `pixel_de` en vez del
+  lienzo para los mapas de `AllocBitMap`.
+- `cgx.c` (68k) dice además "formatos (RGB16 de dos bytes, RGB24 de ancho impar con relleno)" y "modos RTG (Workbench
+  de la caja, pantalla propia de 16 bits)".
+- Un fallo que salió en `arranque-virt`: `GetVisualInfoA` de gadtools solo aceptaba el Workbench; un programa de Dash
+  abría su pantalla con el modo del Workbench (ahora una pantalla propia) y sus gadgets fallaban. Ahora acepta las
+  propias. `caja/Makefile`: `programas.o` no dependía de `ils.exe`, `dtprueba.exe` ni `cgx.exe` (un `cgx.exe` nuevo no
+  entraba en la imagen).
+
+### Medidas
+
+| Qué | Antes | Después |
+|---|---|---|
+| `LockBitMap` + `UnLockBitMap` de 640 x 480 (caja, cgx.exe, 10 veces) | 40-60 ms | 0 ms (menos de un tic de 20 ms) |
+| `WritePixelArray` de 640 x 480 RGB (caja, 10 veces) | 20 ms | 20 ms |
+| Lo mismo en el equipo (x86, `--release`, 10 veces) | 4,2 ms (lienzo) | 4,3 ms (chunky; 9,8 ms antes de escribir las filas de 24 y 32 bits sin convertir punto a punto) |
+| `RectFill` de 640 x 480 en el equipo (10 veces) | 14,7 ms (lienzo) | 11,8 ms (chunky) |
+| `BltBitMap` de 640 x 480 a un lienzo, en el equipo (10 veces) | 19,6 ms (de lienzo) | 22,0 ms (de chunky, convirtiendo) |
+| Tachyon (programa del usuario, prueba de 6 s) | 6239-6269 ms | 6268 ms |
+
+### Con el AmigaOS del usuario (`sys32mui`, `MEMORIA=3G`, Tachyon y sus iconos)
+
+- `make arranque-virt` con él: solo la línea esperada del disco. dtprueba abre la ILBM sin pedir cybergraphics;
+  Tachyon acaba con 0, 0 avisos, 0 bloques sin soltar.
+- Captura (`capturas-agente/caja-tachyon-rtg-fhd.png`, solo en el equipo, no se publica): igual que la de la tanda
+  anterior: la página, los iconos de la barra en color (por picture.datatype) y el logo vacío. La página de Tachyon se
+  pinta ahora en un mapa chunky (su mapa fuera de pantalla es amigo de la ventana) y se copia a la ventana.
+- **El logo**: es un PNG en un `data:` de la página de inicio (`LOGO_INICIO` en `src/dashweb.dash` de Tachyon), que
+  Tachyon decodifica él solo. La traza de la tanda anterior no vio ninguna llamada de cybergraphics ni de Picasso96 para
+  él (solo mezclas de 1 x 1) y ya salía vacío antes de que hubiera cybergraphics: no llega a pintarse, y no es cosa de
+  RTG. Sin averiguar más; queda apuntado.
+
+### Pruebas de la tanda
+
+- `cargo test` de exec, intuition, dos, utility y timer antes de cada commit: bien. `make prueba`: bien las tres veces.
+  `make arranque-virt` sin el AmigaOS del usuario: en cada commit, todo bien en una vuelta; en las de en medio salieron
+  los dos fallos sueltos conocidos del explorador ("suelta en la ventana 1", "no abre Sistema/DeCarla: -12") y el de
+  `GetVisualInfoA` (arreglado).
+
+### Lo que queda
+
+- Los lienzos de las ventanas y del Workbench siguen fuera de la memoria del 68k: su `LockBitMap` copia (ida y vuelta
+  en el formato de su pantalla). Dejarlos en la memoria del 68k pide que todo lo que pinta intuition (marcos, tema,
+  texto nítido de DashOS, menús, gadgets) pase por la memoria del 68k, o `unsafe` fuera de `kernel/src/base/`.
+- Las pantallas propias: sus ventanas se pintan con las plumas y los colores del Workbench (la paleta de la pantalla
+  empieza siendo la suya; cambiarla no cambia el marco de intuition). `SA_Colors`, `SA_Pens`, `SA_PubName` (pantallas
+  públicas propias), `SA_BitMap` (mapa del programa) y `SA_LikeWorkbench` no se miran. Una pantalla propia no tiene
+  superficie propia en el compositor (lo que se pinta en su mapa no se ve; sus ventanas sí).
+- Los de 8 bits son planares de 8 planos (no LUT8 chunky): `ISCYBERGFX` 0 en su mapa, aunque su modo sí es de la caja.
+- El logo de Tachyon (arriba). `DoCDrawMethodTagList`, los pedidores de modos y lo demás que nadie pide, como antes.

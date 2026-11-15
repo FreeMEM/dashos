@@ -4,24 +4,19 @@
 //! Escrita desde el autodoc público (`cybergraphics.doc`), `cybergraphics.fd` y `cybergraphx/cybergraphics.h` del
 //! SDK. No se ha leído código de CyberGraphX, Picasso96, AROS, UAE ni Amiberry.
 //!
-//! Cómo encaja (diseño en `docs/bitacoras/caja-amiga.md`, 2026-11-15):
-//! - **Los mapas de cybergraphics son los nativos de la caja** (`Lienzo`): ARGB de 32 bits, opacos, fuera de la
-//!   memoria del 68k. Son los de las ventanas, la pantalla y `AllocBitMap` de más de 8 planos, con amigo nativo o
-//!   con `BMF_SPECIALFMT` y un formato que no sea `PIXFMT_LUT8`. Para cybergraphics siempre son `PIXFMT_ARGB32`, 4
-//!   bytes por píxel y 32 bits de profundidad, pida el programa el formato que pida (RGB16, RGB24...): el autodoc
-//!   obliga a mirar el formato antes de tocar los píxeles. Los planares (los del programa, `AllocBitMap` de hasta 8
-//!   planos) no son de cybergraphics (`CYBRMATTR_ISCYBERGFX` da 0), pero las funciones de píxeles también pintan en
-//!   ellos: el color se lleva a la pluma más cercana de la paleta del Workbench.
-//! - **Un solo modo de pantalla**: el de la caja (`MODO_CAJA`, el que da `GetVPModeID`), del tamaño del escritorio y
-//!   en ARGB32. `IsCyberModeID` dice que sí a ese y a ningún otro; `BestCModeIDTagList` lo da siempre que la
-//!   profundidad quepa (hasta 32).
-//! - **`LockBitMapTagList`** da acceso directo a los píxeles: como no están en la memoria del 68k, se copian a un
-//!   búfer suyo (big-endian, A R G B) y, al soltarlo (`UnLockBitMap`), se copian de vuelta al lienzo, que se manda
-//!   al compositor como cualquier dibujo. Lo que el programa pinte con otras funciones mientras lo tiene cogido se
-//!   pierde al soltarlo (el autodoc lo prohíbe). Un mapa lo coge una sola tarea; la misma puede cogerlo otra vez
-//!   (cuenta), otra recibe 0. Lo que se queda cogido se suelta al acabar la tarea o al soltar el mapa.
+//! Cómo encaja (diseño en `docs/bitacoras/caja-amiga.md`, 2026-11-15 y 2026-11-15 (2)):
+//! - **Los mapas de color verdadero de los programas son chunky** (`chunky.rs`): sus píxeles en la memoria del 68k, en
+//!   el formato que pidieron (`BMF_SPECIALFMT`), el de su amigo o el de serie de su profundidad. `LockBitMapTagList` da
+//!   su dirección de verdad, sin copiar. Los lienzos (ventanas y pantalla de Workbench: superficies del compositor, en
+//!   ARGB fuera de la memoria del 68k) también son de cybergraphics: se ven en el formato del modo de su pantalla, y al
+//!   cogerlos se copian a un búfer en ese formato y vuelven al soltarlos.
+//! - Los planares (los del programa, `AllocBitMap` de hasta 8 planos) no son de cybergraphics (`CYBRMATTR_ISCYBERGFX`
+//!   da 0), pero las funciones de píxeles también pintan en ellos: el color se lleva a la pluma más cercana de la paleta
+//!   del Workbench.
+//! - **Los modos** son los de la caja (`modos.rs`): varios tamaños y 8, 15, 16, 24 y 32 bits, en un monitor propio.
 //! - Las funciones de píxeles recortan como el resto de graphics: al mapa, a la capa de la ventana y a su región de
-//!   recorte. Los tamaños son UWORD (como dice el autodoc); las coordenadas de destino, WORD con signo.
+//!   recorte. Los tamaños son UWORD (como dice el autodoc); las coordenadas de destino, WORD con signo. Convierten desde
+//!   y hacia cualquier formato del programa (`RECTFMT_*`, `RGBFB_*` de Picasso96), con el alfa de los de 32 bits.
 
 use alloc::collections::BTreeMap;
 use alloc::vec;
