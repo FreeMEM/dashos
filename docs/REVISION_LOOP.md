@@ -2125,3 +2125,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      memoria disperso dentro de `archivos` (páginas que se piden al escribir y se devuelven con TRIM, que DashFS ya
      manda), cobrado al grupo de la sesión, con tope; se destruye al salir de la sesión. Sobre él, `ENV:` (copiado de
      `ENVARC:` al entrar) y `T:`. En marcha (rama `ram-volumen`).
+  9. **Dominios de controladores con Linux** (S35, decidido 2026-11-15): aparatos servidos a DashOS por virtio; primero
+     medir un Linux mínimo (tope de memoria dinámico, objetivo 48 MB para red), luego prestar USB y recibir red, las seis
+     capas de seguridad, IOMMU y PCI, y las gráficas (S34). En S7: CachyOS en la caja en PC. En S8: propuesta de
+     generaciones al estilo NixOS, por decidir.

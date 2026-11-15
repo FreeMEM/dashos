@@ -143,6 +143,17 @@ abajo):
   256 MB con 2 GB, 512 con 4 GB, 1 GB con 8 GB o más). Falta el perfil de terminal (imagen sin escritorio, DAX en las
   carpetas compartidas) y que el perfil, no solo la memoria, decida qué arranca.
 
+## Decidido el 2026-11-15: qué distribución lleva la caja
+
+- **En PC (x86-64): Arch con los repositorios de CachyOS de serie** (pedido del usuario), del nivel que admita el
+  procesador (x86-64-v3, v4 o znver4): paquetes compilados para procesadores modernos. Cuesta poco: CachyOS es Arch con
+  repositorios añadidos, y la caja ya instala con `pacman`.
+- **El kernel sigue siendo el nuestro** (mínimo, hecho para correr como máquina virtual): el kernel afinado de CachyOS
+  y su planificador no se usan, porque quien reparte el procesador de verdad es DashOS.
+- **En ARM: Arch Linux ARM**, como hasta ahora. CachyOS no tiene versión para ARM (mirado el 2026-11-15 en artículos y
+  en su foro, no en sus anuncios oficiales).
+- **La distribución se puede elegir**: la caja es una máquina virtual con su disco; no se ata a una sola.
+
 ## Lo que queda abierto
 
 1. ¿Este orden: biblioteca POSIX nativa, después caja Linux en máquina virtual, y la capa de llamadas solo si hace

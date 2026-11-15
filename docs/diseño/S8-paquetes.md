@@ -175,6 +175,15 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
 - **Cuándo lee `Paq` el fichero `keys`**: al empezar si no lo tiene, al caducar (con reloj), y cuando ve una firma de
   una clave que no conoce; con `keys` leído, solo valen sus claves no anuladas.
 
+## Propuesta por decidir: generaciones, como en NixOS (2026-11-15)
+
+Viene de S35 ("Lo que se toma de NixOS"). Cada versión de un paquete en su propio cajón
+(`Paquetes:<nombre>-<versión>`), sin pisar la anterior; una generación es la tabla de qué cajones entran en `C:`,
+`LIBS:` y las demás asignaciones (S4b). Instalar o actualizar: escribir cajones nuevos y cambiar la tabla de golpe.
+Volver atrás: la tabla anterior. Limpieza: los cajones que ninguna generación usa. Dos programas pueden usar versiones
+distintas de una biblioteca, porque cada proceso tiene su vista de los nombres. Complementa a las instantáneas (S5) y
+al comprobador de planes; no cambia el formato de paquetes. Pendiente del usuario.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
