@@ -61,6 +61,39 @@ Una app del escritorio (y su versión de órdenes) que hace lo mismo que el inst
    paquetes), encoger con el disco casi lleno, encoger por debajo de lo usado, una partición más pequeña que lo que
    dice la cabecera.
 
+## Controladores: qué va de serie y qué se baja (decidido el 2026-11-15)
+
+**De serie, sin red, en el USB de instalación y luego instalados:**
+
+- **Los controladores propios de DashOS**, dentro de `SYS:`: NVMe, USB (xHCI, teclado, ratón, almacenamiento), SATA
+  (AHCI), sonido HDA, las redes que tengamos y la pantalla del firmware (GOP en PC, la de la VideoCore en la Pi).
+- **El dominio de controladores con Linux** (la zona GPL, S30 y S33): un Linux mínimo, solo con controladores, que
+  posee los aparatos que DashOS aún no sabe llevar y se los sirve por un canal. Lleva los libres más comunes:
+  - red con cable: Intel (e1000e, igb, igc) y Realtek (r8169, r8152);
+  - Wi-Fi: Intel (iwlwifi), MediaTek (mt76), Realtek (rtw88, rtw89) y Atheros (ath9k, ath10k, ath11k);
+  - gráficas: Intel (i915, xe), AMD (amdgpu) y NVIDIA (nouveau o nova);
+  - Bluetooth de los mismos fabricantes.
+  Va en su propia imagen, con su código fuente disponible (GPL), separada de DashOS (MPL): habla con DashOS por un
+  canal, no se enlaza con él.
+- **El firmware** que piden esos aparatos (Wi-Fi, gráficas) sale de `linux-firmware`, que se puede redistribuir. El
+  instalador mira qué hay en la máquina (identificadores PCI y USB) y copia solo el que hace falta.
+
+**El huevo y la gallina de la red**: si DashOS no tiene controlador de la tarjeta de red, el dominio de Linux casi
+seguro sí, así que hay red desde el primer arranque y con ella se baja lo demás. Si ni así: un controlador propio y
+pequeño para compartir internet desde el móvil por USB (CDC-NCM y RNDIS) y para los adaptadores de red USB más comunes;
+y paquetes de controladores en el propio USB de instalación.
+
+**Lo que se baja después, con red:**
+
+- **Lo grande o con licencia propia**: el controlador oficial de NVIDIA con CUDA, dentro de la caja Linux, con su
+  gestor de paquetes (como en Arch).
+- **Actualizaciones y controladores nuevos** como paquetes de `Paq` (S8): cada paquete de controlador dice para qué
+  aparatos sirve (identificador PCI o USB), y el instalador y `Paq` proponen solos los que tocan a la máquina, como los
+  "controladores adicionales" de Ubuntu. Un controlador propio de DashOS sustituye al del dominio cuando exista.
+
+**Requisito**: el dominio de controladores y pasar aparatos a la caja Linux necesitan IOMMU (VT-d, AMD-Vi), que
+DashOS x86 aún no lleva. Sin IOMMU, un aparato servido así alcanza toda la memoria: no se hace.
+
 ## Lo que queda abierto
 
 1. ¿Primera versión solo con hueco libre o disco entero (recomendado), o también encoger particiones ajenas?
