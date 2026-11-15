@@ -676,6 +676,7 @@ extern const uint8_t prog_glotona[], prog_glotona_fin[];
 extern const uint8_t prog_memh[], prog_memh_fin[];
 extern const uint8_t prog_procesos[], prog_procesos_fin[];
 extern const uint8_t prog_ils[], prog_ils_fin[];
+extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1451,6 +1452,13 @@ int caja_main(void)
                 if (h >= 0) sc(SC_HILO_UNIR, h, 0, 0, 0, 0);
                 di("AddDataTypes REFRESH acabó con %d (vector %d), %d llamadas nativas, en %u ms, %u avisos, %u bloques pasan al sistema\n",
                    (int)d0, v, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), tarea_pasadas);
+                sistema = caja_bloques(0);
+                /* Y que datatypes tenga los tipos: una ILBM del AmigaOS del usuario por NewDTObject (dtprueba.c). No
+                   cuenta como fallo: depende del AmigaOS del usuario. */
+                v = ejecuta_hunk("dtprueba", prog_dtprueba, (size_t)(prog_dtprueba_fin - prog_dtprueba), execbase, &d0,
+                                 &llamadas, &sobras);
+                di("dtprueba.exe acabó con %d (vector %d), %d llamadas nativas, %u avisos, %u bloques sin soltar\n",
+                   (int)d0, v, llamadas, caja_avisos(), sobras);
                 sistema = caja_bloques(0);
             } else {
                 di("AddDataTypes: no está (sin el AmigaOS del usuario): datatypes sin tipos\n");

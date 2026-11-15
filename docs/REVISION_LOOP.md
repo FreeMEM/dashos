@@ -2037,3 +2037,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      cara con categorías y buscador sobre las Prefs del Amiga (`SYS:Prefs`, `ENVARC:`, `ENV:` vigilado). Faltan las
      categorías de Red, Sonido, Teclado, Idioma, Fecha y hora y Usuarios, el buscador por ajuste y guardar en
      `ENVARC:` (tras el paso 2).
+- **datatypes con tipos registrados** (este commit): prueba 68k `pruebas68k/dtprueba.c`, que solo corre si se lanzó
+  AddDataTypes (AmigaOS del usuario): "una ILBM abre por datatypes (ILBM), de 12 x 11", sin avisos. Al abrirla,
+  picture.datatype pide cybergraphics.library: es lo siguiente. make prueba bien; arranque-virt con el fallo suelto del
+  explorador ("suelta en la ventana 1"), que no pasa por este cambio (dtprueba solo corre con el AmigaOS del usuario).
+  Ese fallo suelto sale ya en una de cada dos o tres vueltas: hay que arreglarlo (paso aparte, antes de que tape otros).
