@@ -2058,3 +2058,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   Presets, Rexx, S, Storage, System, Tools con Commodities, Utilities, WBStartup) y las asignaciones que faltaban
   (`CLASSES:`/`MUI:`, `REXX:`, `L:`, `KEYMAPS:`, `HELP:`, `PRINTERS:`). Lo siguiente es el paso 2, el código:
   asignaciones con nombre en el lado nativo y la imagen con esa forma.
+  7. **Commodities y Exchange** (S10, decidido 2026-11-15): sin acceso a toda la entrada; cada commodity pide al
+     compositor lo concreto (una tecla, inactividad, un comportamiento) con su permiso; Exchange como herramienta y
+     como categoría de Ajustes; las clásicas nativas (Blanker, ClickToFront, AutoPoint, FKey, NoCapsLock); y
+     `commodities.library` en la caja Amiga, limitada a sus ventanas.

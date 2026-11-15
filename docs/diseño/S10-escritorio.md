@@ -95,6 +95,30 @@ Arriba de cada pantalla, como en el Amiga, y con lo de DMS a la derecha:
 - **Commodities**, como en el Amiga: atajos de teclado globales y utilidades de fondo, que se ven y se paran desde
   `Exchange`.
 
+### Commodities y Exchange (decidido el 2026-11-15)
+
+En el Amiga, una commodity se engancha a toda la entrada del sistema. En DashOS eso sería un registrador de teclas,
+justo lo que S6b impide. Así que:
+
+- **Nadie recibe toda la entrada.** Una commodity pide al compositor lo concreto, y el compositor filtra y le pasa
+  solo lo suyo:
+  - una combinación de teclas ("Ctrl+Alt+E");
+  - inactividad ("cinco minutos sin tocarse": salvapantallas, bloqueo);
+  - un comportamiento del propio compositor que activa o desactiva (activar la ventana bajo el ratón, traer al
+    frente con un clic, ocultar el puntero al teclear);
+  - avisos de qué ventana se activa, sin su contenido.
+  Cada cosa es un permiso de la commodity (S6b, "atajos" y "fondo"), que se concede y se ve en Ajustes.
+- **Exchange** (`SYS:Tools/Commodities/Exchange`, y una categoría de Ajustes, S27): la lista de commodities en
+  marcha, con activar, desactivar, enseñar su ventana y quitar; las teclas que tiene cada una; y aviso si dos piden la
+  misma combinación (la primera se la queda, la segunda se entera y lo dice).
+- **Las clásicas, nativas**, en `SYS:Tools/Commodities`: Blanker (salvapantallas), ClickToFront, AutoPoint, FKey
+  (teclas que lanzan programas o guiones), NoCapsLock, y las de portapapeles cuando el compositor copie entre
+  programas. Arrancan solas si están en `WBStartup` del usuario, como en el Amiga.
+- **En la caja Amiga**, `commodities.library` para los programas 68k de siempre (Exchange, Yak, MCP, los
+  salvapantallas): funcionan, pero solo ven la entrada de las ventanas de la caja, no la de todo DashOS. Si una pide
+  una tecla global, la caja se la pide al compositor como una commodity nativa más, con el mismo permiso.
+- **Por ARexx** (el puerto del escritorio, S10b): activar, desactivar y quitar commodities desde un guion.
+
 ### ARexx en el escritorio
 
 El escritorio tiene su puerto ARexx, como Workbench desde AmigaOS 3.5: abrir cajones, mover ventanas, cambiar de
