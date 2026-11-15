@@ -38,15 +38,31 @@ el decodificador de la máquina si lo hay y sabe ese formato; si no, la CPU.
 | PC con AMD | VCN: H.264, HEVC, VP9, AV1 (según generación) | Documentación parcial y firmware cerrado: muy grande en nativo |
 | PC con Nvidia | NVDEC: H.264, HEVC, VP9, AV1 | Sin documentación pública del decodificador; firmware cerrado (GSP): no en nativo |
 
-En x86-64 lo realista es por fases:
+### Decidido el 2026-11-15: la gráfica, compartida a través de DashOS
 
-1. **CPU** para todo lo libre: un PC moderno lo decodifica sin esfuerzo.
-2. **La gráfica entera para la caja Linux** (pasarla por el hipervisor, con su IOMMU, como VFIO): Linux usa sus
-   propios controladores (i915/xe, amdgpu, nouveau o el de Nvidia) y VA-API o NVDEC, y DashOS recibe los cuadros
-   como superficies de su compositor. Sirve para AMD y Nvidia sin escribir sus controladores.
-3. **Controlador propio de Intel** (la documentación es pública) si hace falta vídeo acelerado en nativo.
+La idea es la de WSL2: la gráfica la tiene quien tiene su controlador, y la caja Linux la usa por un puente, sin
+poseerla. En WSL2, un controlador paravirtual de Linux (`dxgkrnl`) manda cada orden por el hipervisor al controlador
+real de Windows, y el vídeo va por VA-API encima. El equivalente abierto es virtio-gpu (virgl para OpenGL, Venus para
+Vulkan, contexto nativo como en ChromeOS) y virtio-video para decodificar. El puente no ahorra el controlador: solo
+lo comparte. Así queda en cada máquina:
 
-Sala limpia: los controladores de Linux se pueden usar dentro de la caja Linux, pero no se copian a DashOS.
+- **Raspberry Pi**: DashOS tiene sus controladores de pantalla, GPU y decodificador (S9, S21). La caja Linux pinta y
+  decodifica a través de DashOS por virtio-gpu y virtio-video: manda el vídeo comprimido y DashOS lo decodifica.
+- **PC: DashOS se queda siempre la gráfica integrada** (Intel, o la de un procesador AMD con gráfica) para el
+  compositor.
+  - Con dos gráficas, la dedicada se pasa a la caja Linux, que usa sus controladores y VA-API o NVDEC, y DashOS
+    recibe los cuadros como superficies.
+  - Con una sola Intel moderna (Xe, de Alder Lake en adelante), SR-IOV: DashOS la función física, Linux una virtual.
+  - Con una sola AMD o Nvidia, no se pasa: su controlador de Linux corre como proceso aislado en la zona GPL (S30,
+    regla 7) y hace de controlador para DashOS (un dominio de controladores, como en Qubes o Genode). DashOS pinta en
+    memoria y le pide mostrar y decodificar por un canal. Si cae, no tumba el sistema.
+  - Intel, AMD y Nvidia tienen que llegar por la zona GPL (decisión del usuario en S30), empezando por la Intel
+    integrada, la más documentada. Controlador propio y nativo, solo de Intel y si hace falta.
+- **Requisito previo en PC: IOMMU** (VT-d, AMD-Vi). Sin él, un aparato pasado a la caja Linux alcanza toda la memoria.
+  DashOS x86 aún no lo tiene (límite apuntado en `docs/referencia/kernel.md` de la rama `x86`).
+- **Por CPU, siempre**: lo libre (AV1, VP9) cabe en cualquier PC moderno, también en 4K.
+
+Sala limpia: los controladores de Linux corren dentro de la caja Linux o de la zona GPL, nunca copiados a DashOS.
 
 ## Cómo se ve en el escritorio
 
@@ -57,7 +73,8 @@ en PC), sin pasar por la CPU cuando el decodificador los deja en memoria de la g
 
 1. Sonido libre como DataTypes (sin vídeo): Opus, Vorbis, FLAC, MP3, WAV, AIFF, 8SVX, MOD.
 2. AV1 y VP9 por CPU, con animation.datatype para la caja Amiga.
-3. Decodificador de la Pi (S21, H5) y, en x86, pasar la gráfica a la caja Linux.
+3. Decodificador de la Pi (S21, H5) con el puente virtio-gpu y virtio-video para la caja Linux; en x86, IOMMU y
+   luego la gráfica según la máquina (arriba).
 4. Códecs extra como paquete (decisión del usuario).
 5. Controlador propio de Intel, si hace falta.
 
@@ -65,8 +82,6 @@ en PC), sin pasar por la CPU cuando el decodificador los deja en memoria de la g
 
 1. ¿Códecs extra (H.264, HEVC, AAC por software) como paquete de Hangar? Decisión legal del usuario.
 2. VP9 y Opus: C con licencia BSD o Rust.
-3. En x86, ¿pasar la gráfica entera a la caja Linux deja a DashOS sin gráfica? Hace falta una segunda (la integrada
-   para DashOS, la dedicada para Linux) o compartir por SR-IOV (Intel reciente). Con la rama `x86`.
 
 ## Cómo encaja
 
