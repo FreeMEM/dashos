@@ -2054,3 +2054,7 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   af63580, los parches 0001-0014 como commits y el 0015; src/ e include/ idénticos a los de revision. Los cambios sin
   commit del third_party/Emu68 de main son exactamente 0001+0002 (copia en ~/recuperar): se quedan hasta que main use
   la rama del fork.
+- **Paso 1 hecho (en papel): el árbol de `SYS:` completo en S4b** (C, Classes, Devs, Fonts, L, Libs, Locale, Prefs con
+  Presets, Rexx, S, Storage, System, Tools con Commodities, Utilities, WBStartup) y las asignaciones que faltaban
+  (`CLASSES:`/`MUI:`, `REXX:`, `L:`, `KEYMAPS:`, `HELP:`, `PRINTERS:`). Lo siguiente es el paso 2, el código:
+  asignaciones con nombre en el lado nativo y la imagen con esa forma.

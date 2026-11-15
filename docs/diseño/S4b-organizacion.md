@@ -138,6 +138,50 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
   usuario puede tener sus programas en su capa (S8).
 - El gestor de arranque monta el espacio de nombres de cada sesión con las capas de ese usuario (S14).
 
+## El árbol de `SYS:`, completo (2026-11-15)
+
+Lo que tenía el AmigaOS, cajón a cajón, y lo que es en DashOS. Los programas 68k de la caja ven el mismo árbol.
+
+```
+SYS:
+  C/            órdenes del Shell (List, Copy, Assign, Info, Version, Wait, Execute…, nativas)
+  Classes/      clases BOOPSI y MUI/ReAction: DataTypes/ (clases de los tipos), Gadgets/, Images/, MUI/
+  Devs/         DataTypes/ (descriptores), DOSDrivers/ (listas de montaje), Keymaps/, Monitors/, Printers/,
+                y los .device que la caja enseña a los 68k
+  Fonts/        fuentes (las del Amiga y las nativas: TrueType/OpenType)
+  L/            manejadores de sistema de archivos y la consola (lo que eran FileSystem y CON-Handler)
+  Libs/         bibliotecas (nativas de DashOS y las de la caja para los 68k)
+  Locale/       Catalogs/<idioma>/, Languages/, Countries/, Help/
+  Prefs/        los editores de preferencias (S27), Env-Archive/ (valores de fábrica, Sys/ y los demás),
+                Presets/ (preajustes de fábrica con su icono)
+  Rexx/         guiones ARexx del sistema (es `REXX:`)
+  S/            Startup-Sequence (de la máquina, S14), Shell-Startup, User-Startup de fábrica (vacío)
+  Storage/      lo que no se usa pero se guarda: DOSDrivers/, Keymaps/, Monitors/, Printers/ (se activan
+                arrastrándolos a su cajón de Devs/, como en el Amiga)
+  System/       programas del sistema: Shell, Format, DiskCopy, Instalar (S32), Discos (S32), Monitor del
+                sistema, Usuarios
+  Tools/        herramientas: Calculadora, Reloj, Capturas, IconEdit, KeyShow, Lens, Commodities/ (Exchange,
+                Blanker, ClickToFront, AutoPoint…)
+  Utilities/    utilidades: MultiView (todo lo que entienda DataTypes), Editor de texto, Visor de imágenes,
+                Reproductor, Editor de catálogos (en Dash), Más/Menos
+  WBStartup/    vacío: lo de cada usuario va en su Home:WBStartup
+  Disk.info     el icono del volumen
+```
+
+Asignaciones que faltaban en la tabla de capas:
+
+| Asignación | Capa del usuario | Capa de paquetes | Capa del sistema |
+|---|---|---|---|
+| `CLASSES:` (y `MUI:`) | `Home:Classes` | `Paquetes:*/Classes` | `SYS:Classes` |
+| `REXX:` | `Home:Rexx` | `Paquetes:*/Rexx` | `SYS:Rexx` |
+| `L:` | — | — | `SYS:L` (solo el sistema: manejadores de sistemas de archivos) |
+| `KEYMAPS:` | — | `Paquetes:*/Devs/Keymaps` | `SYS:Devs/Keymaps` |
+| `HELP:` | — | `Paquetes:*/Locale/Help` | `SYS:Locale/Help` |
+| `PRINTERS:` | — | `Paquetes:*/Devs/Printers` | `SYS:Devs/Printers` |
+
+Los iconos de los volúmenes y de las unidades (`Disk.info` en la raíz de cada uno, y los de los discos que se
+enchufan) los pone el sistema de archivos si el volumen no trae el suyo. Los cajones del árbol llevan su `.info`.
+
 ## Cada usuario, su mundo (2026-11-15)
 
 Lo junta todo, de S4b, S6b, S8, S10 y S14. Cada usuario tiene **un volumen cifrado propio**, que se abre con su
