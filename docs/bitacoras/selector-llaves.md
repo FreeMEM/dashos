@@ -119,4 +119,11 @@ en la 2 y el selector en la 4 con los dos lanzadores). Para dejar de adivinar:
 
 ## Bitácora
 
-- 2026-11-15: hecho todo lo de arriba. Resultados de las pruebas, al final de este fichero.
+- 2026-11-15: hecho todo lo de arriba (commits e5f8a1b y b84b7c5). Sobre b84b7c5: `make prueba`, `make arranque-virt`
+  (con el reinicio, el disco y la prueba de Dash con ventana, sin tocar), `make arranque-virt-2` y
+  `make arranque-virt-linux`, todo bien, una vuelta cada uno (`arranque-virt`, dos: la primera antes de los últimos
+  retoques de kit-c y de la carpeta antigua). No medido: rendimiento (un programa nuevo paga una llamada al leer su
+  tabla; lanzar, 16 bytes más por llave).
+- No comprobado: la carpeta nueva (orden 3) y la antigua desde un programa de `sesiones` (el hueco distinto del 3); el
+  selector relanzado por `inicio` con programas de `sesiones` vivos; un programa de Dash lanzado desde el disco (no
+  hay ninguno en la imagen); el filtro de asignaciones de la rama `asignaciones` no se ha tocado. En la Pi, nada.
