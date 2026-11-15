@@ -160,6 +160,12 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
   plan es instalar esa entrada (puede bajar de versión, solo si se pide). `Paq` guarda en caché el último paquete
   instalado de cada uno, para volver sin red. En DashOS, además, las instantáneas (S5).
 
+- **Espacio antes de empezar**: con `Size` (la bajada) e `Installed-Size` (lo descomprimido), `Paq` suma por volumen
+  bajada + descomprimido + copias de lo que pisa, y no empieza si no cabe.
+- **La base protegida**: cada `.pkg` de la base acaba en `Sum:` (los 16 primeros del SHA-256 del texto anterior); si
+  no cuadra, el paquete queda "en duda" y se rehace desde la copia de la base o se ofrece reinstalar. Antes de cada
+  transacción, copia de la base entera. En DashOS, además, la instantánea (S5).
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
