@@ -2025,3 +2025,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   5. **Códecs de sonido y vídeo** (S33, borrador; pedido del usuario 2026-11-15, también x86-64 con AMD, Nvidia e
      Intel): DataTypes como en el Amiga; primero sonido libre (Opus, Vorbis, FLAC, MP3, WAV, AIFF, 8SVX, MOD), luego AV1
      y VP9 por CPU, luego decodificador de la Pi y, en x86, la gráfica para la caja Linux. Abiertos en S33.
+- **InternalLoadSeg con flujo propio** (este commit; la parte del fichero de dos fue en c7d55e5): la caja llama a la
+  función de leer 68k del programa (`funcarray[0]`, como `Read`) hasta acabar y carga lo leído como LoadSeg
+  (`internal_load_seg_68k` en pegamento; `Dos::apuntar_segmentos` para que UnLoadSeg lo acepte). Prueba 68k nueva
+  `pruebas68k/ils.c` (8b3d en caja.c): carga un ejecutable desde memoria y lo hostil (-1, de más, basura, sin función,
+  vacío) da 0. Con el AmigaOS del usuario, AddDataTypes REFRESH acaba sin avisos de funciones que falten (18 bloques al
+  sistema). make prueba bien; arranque-virt bien (el fallo suelto del explorador salió dos veces, y en la comparación
+  a la vez salió SIN el cambio y no con él: suelto). Sin comprobar todavía: que datatypes tenga los tipos registrados
+  (siguiente: una prueba que abra un ILBM por NewDTObject).

@@ -675,6 +675,7 @@ extern const uint8_t prog_capa[], prog_capa_fin[];
 extern const uint8_t prog_glotona[], prog_glotona_fin[];
 extern const uint8_t prog_memh[], prog_memh_fin[];
 extern const uint8_t prog_procesos[], prog_procesos_fin[];
+extern const uint8_t prog_ils[], prog_ils_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1486,6 +1487,16 @@ int caja_main(void)
         } else {
             di("memh.exe: sin la prueba del aviso de memoria baja (no hay a quién pedirlo)\n");
         }
+
+        /* 8b3d. InternalLoadSeg con un flujo propio (ils.c), como AddDataTypes con el código de un descriptor: lo lee
+           la función de leer 68k del programa, y lo hostil (-1, de más, basura, sin función, vacío) da 0. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("ils", prog_ils, (size_t)(prog_ils_fin - prog_ils), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        di("ils.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 
         /* 8b4. Programas de AmigaOS del usuario (SYS:C/Prefs/programas-amiga, con DASHOS_PROGRAMAS_AMIGA): las demos de
            MUI, Tachyon... Para ver hasta dónde llegan y qué les falta (el registro de lo que falta, faltan.rs): a los 6 s

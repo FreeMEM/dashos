@@ -1342,6 +1342,79 @@ fn dormir(tics: u32, a7: u32) -> bool {
     }
 }
 
+/// `InternalLoadSeg(fh, table, funcarray, stack)(d0/a0/a1/a2)` con un flujo que no es de dos: llama a
+/// `funcarray[0]` (la de leer, como `Read`: D1 = fh, D2 = búfer, D3 = largo, A6 = DOSBase) hasta que da 0 o -1, y
+/// carga lo leído como LoadSeg. `allocfunc` y `freefunc` no se llaman: los segmentos los reserva exec, y los suelta
+/// UnLoadSeg o InternalUnLoadSeg. Devuelve la lista de segmentos (BPTR) o 0.
+fn internal_load_seg_68k(r: &Registros) -> u32 {
+    const TROZO: u32 = 64 << 10;
+    const MAX: usize = 16 << 20;
+    let Some(c) = caja() else { return 0 };
+    let leer = c.ex.mem.leer32(r.a[1]).unwrap_or(0);
+    let (dos_base, fh) = (c.dos_base, r.d[0]);
+    if r.a[1] == 0 || leer == 0 || leer & 1 != 0 {
+        di("InternalLoadSeg: sin función de leer: 0");
+        return 0;
+    }
+    let buf = c.ex.alloc_mem(TROZO, memf::PUBLIC).unwrap_or(0);
+    if buf == 0 {
+        return 0;
+    }
+    let mut datos = Vec::new();
+    let mut bien = true;
+    for _ in 0..(MAX as u32 / TROZO + 2) {
+        let mut regs = Registros::default();
+        regs.d[1] = fh;
+        regs.d[2] = buf;
+        regs.d[3] = TROZO;
+        regs.a[6] = dos_base;
+        regs.a[7] = r.a[7];
+        // (Sin referencias de `caja()` a partir de aquí: ver `ejecutar_68k`.)
+        let hecho = ejecutar_68k(leer, &regs, false);
+        let Some(c) = caja() else { return 0 };
+        let n = match hecho {
+            Ok(rr) => rr.d[0] as i32,
+            Err(_) => {
+                bien = false;
+                break;
+            }
+        };
+        if n <= 0 || n as u32 > TROZO {
+            bien = n == 0;
+            break;
+        }
+        match c.ex.mem.leer(buf, n as u32) {
+            Ok(b) => datos.extend_from_slice(b),
+            Err(_) => {
+                bien = false;
+                break;
+            }
+        }
+        if datos.len() > MAX {
+            bien = false;
+            break;
+        }
+    }
+    let Some(c) = caja() else { return 0 };
+    let _ = c.ex.free_mem(buf, TROZO);
+    if !bien || datos.is_empty() {
+        di(&format!("InternalLoadSeg: el flujo no se pudo leer entero ({} bytes): 0", datos.len()));
+        return 0;
+    }
+    let t = c.ex.tarea_actual();
+    let mut cd = CajaDos { ex: &mut c.ex, consola: &mut c.consola, sistema: false };
+    match caja_dos::Caja::cargar_segmentos(&mut cd, &datos) {
+        Ok(seg) if seg != 0 => {
+            c.dos.apuntar_segmentos(seg, t);
+            seg
+        }
+        _ => {
+            di(&format!("InternalLoadSeg: {} bytes que no cargan como ejecutable: 0", datos.len()));
+            0
+        }
+    }
+}
+
 /// El puente de BOOPSI (`caja_intuition::boopsi`): las bibliotecas de la caja y el 68k anidado, con la pila de la
 /// llamada nativa en curso (`a7`). Cada `partes()` pide la referencia otra vez: BOOPSI no la guarda a través de
 /// `ejecutar_68k` (lo asegura el comprobador de préstamos: las dos cosas piden `&mut` al puente).
@@ -1496,6 +1569,17 @@ fn llamada(n: u16, r: &mut Registros) -> i32 {
             return C_SEGUIR;
         }
         multitarea::quitar_tarea(c, v, false);
+        recoger_avisos(c);
+        return C_SEGUIR;
+    }
+    if n == N_DOS + caja_dos::lvo::INTERNAL_LOAD_SEG
+        && c.ex.ajena(n).map(|(l, _)| l) == Some(c.dos_base)
+        && !c.dos.es_fichero(r.d[0])
+    {
+        // InternalLoadSeg con un flujo propio (AddDataTypes con el código de un descriptor): se lee llamando a la
+        // función de leer 68k que da el programa. Con un fichero de dos, lo hace dos (más abajo).
+        r.d[0] = internal_load_seg_68k(r);
+        let Some(c) = caja() else { return C_RECHAZADA };
         recoger_avisos(c);
         return C_SEGUIR;
     }
