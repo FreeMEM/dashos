@@ -2048,3 +2048,9 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
   ("arrastre: …; acaba en (x, y)", `Escena::tomar_ultimo_arrastre`, con prueba en wayland) y el guion suelta a 30 px
   de ella como poco. cargo test de wayland bien; make prueba bien; cuatro vueltas de arranque-virt seguidas, todas bien.
   Pendiente (2026-11-15 noche, límite de uso): agente de cybergraphics en `.worktrees/caja-amiga-cgx` sin acabar.
+- **Emu68: parche 0015** (`7c457be` de upstream, "invalidate entries in LRU if removed during validation", 3 líneas):
+  aplicado a mano en revision, fusion-fondo, prueba1 y prueba3; make prueba y arranque-virt bien. Falta aplicarlo en
+  caja-amiga-cgx al unir. La rama `dashos` de github.com/FreeMEM/Emu68 (3419b41, con el sí del usuario) lleva la base
+  af63580, los parches 0001-0014 como commits y el 0015; src/ e include/ idénticos a los de revision. Los cambios sin
+  commit del third_party/Emu68 de main son exactamente 0001+0002 (copia en ~/recuperar): se quedan hasta que main use
+  la rama del fork.
