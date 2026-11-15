@@ -138,6 +138,47 @@ gestor de paquetes las crea y las quita al desinstalar (S8).
   usuario puede tener sus programas en su capa (S8).
 - El gestor de arranque monta el espacio de nombres de cada sesión con las capas de ese usuario (S14).
 
+## Cada usuario, su mundo (2026-11-15)
+
+Lo junta todo, de S4b, S6b, S8, S10 y S14. Cada usuario tiene **un volumen cifrado propio**, que se abre con su
+contraseña y se ve como `Home:` (S6b). Al entrar, `sesiones` monta su espacio de nombres: las asignaciones del sistema
+con su capa encima. Así cada uno tiene sus programas, sus ajustes y su escritorio sin que los demás lo vean ni lo
+noten, y sin que ningún programa tenga que saber de usuarios.
+
+```
+Home:                       (Usuarios:<nombre>, cifrado, solo suyo)
+  Prefs/Env-Archive/         sus ajustes guardados: la capa de usuario de ENVARC: (los de fábrica, en SYS:)
+    Sys/                     los del sistema que él cambia: idioma, país, teclado, pantalla, fuentes, puntero
+    Escritorio/              tema, fondo, colores, barra, panel rápido, espacios de trabajo, atajos
+  C/  Libs/  Fonts/  S/      su capa de C:, LIBS:, FONTS: y S: (lo que instala él, sin administrador)
+  S/User-Startup             lo que se hace al entrar en su sesión (asignaciones, órdenes), como en el Amiga
+  WBStartup/                 lo que se lanza al entrar en su escritorio, como en el Workbench
+  Paquetes/                  lo que instala él con Paq (su capa de paquetes; los de todos, en Paquetes:)
+  Escritorio/                lo que deja en el escritorio: iconos sueltos, accesos, papelera
+  Documentos/ Imágenes/ Música/ Descargas/   cajones de siempre, con su icono (nombres según su idioma)
+  Amiga/                     lo que la caja Amiga guarda de él (su ENVARC: de 68k, sus Prefs del Amiga)
+  Linux/                     el /home de la caja Linux
+```
+
+- **Arranque de la máquina y arranque de la sesión, separados.** `SYS:S/Startup-Sequence` es de la máquina y lo
+  hace el sistema antes de que entre nadie (S14). `Home:S/User-Startup` y `Home:WBStartup` son de cada usuario y se
+  hacen al entrar en su sesión.
+- **Ajustes**: `ENV:` (en uso) es de la sesión, en su `RAM:`; se copia de `ENVARC:` al entrar. Lo que cambia un
+  usuario va a su capa; "volver a fábrica" es borrar su capa. Lo que es de la máquina (hora, red, actualizaciones)
+  no está en `Home:`: va en `Estado:` y cambiarlo es acción de administrador (S6b).
+- **Programas**: los de todos, en `Paquetes:` (los instala un administrador); los de cada uno, en su `Home:Paquetes`,
+  sin administrador. Un programa instalado por un usuario no existe para los demás.
+- **`Work:` y los discos de datos** son compartidos, con dueño, grupo y permisos por fichero (S6b). Quien quiera algo
+  solo suyo lo pone en `Home:`.
+- **`RAM:` y `T:`**, una por sesión: lo de un usuario no lo ve otro, ni con cambio rápido de usuario (U6).
+- **Cupos**: cada sesión es un grupo de recursos con su tope de memoria (cupos como topes); el espacio de disco de
+  cada `Home:`, con el tope del volumen (FS10, `quota`, aún sin aplicar).
+- **Invitado**: una sesión sin volumen propio, con `Home:` en `RAM:`, que se borra al salir. Por decidir.
+
+Hecho hoy: entrada, bloqueo, cambio rápido de usuario y un volumen por usuario (U2, U6). Falta: crear y borrar
+cuentas (hoy fijas en el código), el árbol de `Home:` de arriba, las asignaciones con nombre en lo nativo (paso 2 de
+la bitácora), `User-Startup` y `WBStartup` por usuario, y el tope de disco.
+
 ## Lo que queda abierto
 
 1. ¿Nombre del volumen de paquetes? Propuestas: `Paquetes:`, `Programas:` o `Apps:`.
