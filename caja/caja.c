@@ -1429,14 +1429,14 @@ int caja_main(void)
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
         sistema = caja_bloques(0);
 
-        /* 8b3a. Los tipos de datatypes: con el AmigaOS del usuario (su C:AddDataTypes), `AddDataTypes REFRESH QUIET`,
+        /* 8b3a. Los tipos de datatypes: con el AmigaOS del usuario (su AmigaOS:C/AddDataTypes; su C: no se asigna), `AddDataTypes REFRESH QUIET`,
            como su Startup-Sequence. Recorre DEVS:DataTypes con MatchFirst y deja los tipos a datatypes: lo que no
            suelta pasa al sistema (si se soltara, datatypes se quedaría con memoria libre). A los 20 s, el vigilante lo
            corta. Sin él, lo dice y sigue. No cuenta como fallo: DashOS no trae AddDataTypes. */
         {
             const uint8_t *adt = 0;
             uint32_t adt_largo = 0;
-            if (caja_fichero_de_dos("C:AddDataTypes", &adt, &adt_largo)) {
+            if (caja_fichero_de_dos("AmigaOS:C/AddDataTypes", &adt, &adt_largo)) {
                 ctrl_c_corriendo = 1;
                 long h = sc(SC_HILO_CREAR, (long)manda_ctrl_c, (long)(pila_vigia + PILA_VIGIA_LEN), 20000L * 1000, 0, 0);
                 tarea_args = "REFRESH QUIET\n";

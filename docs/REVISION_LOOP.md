@@ -1987,3 +1987,11 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
 - Decisiones del usuario (2026-11-15) sobre lo abierto del formato de paquetes, escritas en S4, S8 y S6b: perfil de
   la caja (lo dice ella), vocabulario aarch64 (ARMv8.0, 16 KB, `hypervisor` y memoria), instaladores con capa de
   captura, firma de fichero opcional con sus reglas.
+- **MatchFirst y AddDataTypes al arrancar, en revision** (5c29dd2 y este commit). Tanda completa sobre f9878b8: todo
+  rc=0 salvo av, por "[panel] delante:" (el panel rápido no salió delante a tiempo); repetido, bien: fallo suelto
+  nuevo, a vigilar. Con el AmigaOS del usuario (`DASHOS_AMIGAOS=~/.cache/dash-emu/sys32mui MEMORIA=3G`), su `C:` no
+  se asigna: AddDataTypes se lee de `AmigaOS:C/AddDataTypes`. Corre: `REFRESH QUIET` acaba con 0 en 68 ms, 1155
+  llamadas nativas, 17 bloques pasan al sistema; le falta `InternalLoadSeg` (dos, LVO -756), que usa para el código
+  de reconocimiento de algunos descriptores (lo lee de memoria con funciones de lectura 68k propias). Sin comprobar
+  si quedan tipos registrados (hace falta un NewDTObject de un ILBM). Lo siguiente: `InternalLoadSeg` (llamar a las
+  funciones 68k que pasa) y una prueba que abra un ILBM por datatypes.
