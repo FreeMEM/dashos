@@ -68,6 +68,83 @@ aparatos llegan en el orden en que el servicio las pide, y cada aparato con DMA 
 con la restricción "una vez" (S4): el servicio no puede pasárselas a otro programa. Un servicio al que le falta algún aparato no se lanza: el kernel lo dice al arrancar
 ("inicio: gpu no se lanza: falta ..."). Es lo que pasa con la GPU en QEMU.
 
+### La tabla de llaves: qué es cada llave
+
+Quien lanza un programa dice qué es cada llave que le da: `inicio` y `sesiones` lanzan con `proceso_crear` y los
+nombres de las llaves (llamada 12 con `CON_NOMBRES`), el kernel los guarda y el programa los lee con la llamada 56
+(`dashos::llaves::Tabla::leer`, `buscar`; en C, `dash_llave` de kit-c). Un programa no cuenta sus llaves ni supone
+quién lo lanzó: busca "ventanas" o "selector" por su nombre. Un nombre mide 16 bytes, relleno con ceros; el primero
+es el de la llave 1. Los números de siempre no cambian: los programas que usan un número fijo siguen igual.
+
+| Quién lanza | Llave | Nombre |
+|---|---|---|
+| `inicio` | Un aparato | El del aparato en el paquete de arranque ("plazo", "dma-xhci0", "registro"...) |
+| `inicio` | Un canal, para quien lo sirve y para sus clientes | El del canal en `PROGRAMAS` ("ventanas", "archivos", "sesiones", "selector", "sonido"...) |
+| `inicio` | La copia para escribirse a sí mismo, de quien sirve un canal | "yo:" y el canal ("yo:ventanas") |
+| `inicio` | La copia sin marca del canal de archivos que recibe `sesiones` | "archivos.altas" |
+| `sesiones` | 1, su canal con `sesiones` | "sesiones" |
+| `sesiones` | 2, archivos | "archivos" |
+| `sesiones` | 3, el compositor | "ventanas" |
+| `sesiones` | 4, el selector de ficheros (solo los programas de la persona del selector) | "selector" |
+
+Lo que lanza un programa por su cuenta con `proceso_crear` sin nombres nace sin tabla. El programa no puede cambiar
+la suya; lo que diga de sus llaves solo lo cree él.
+
+## Selector de ficheros (U5)
+
+`usuario/src/bin/selector.rs`, protocolo en `usuario/src/protocolo/selector.rs`. La ventana de "Abrir" y "Guardar
+como": el programa pide, el usuario elige en una ventana que es del selector (el programa no la ve ni la maneja), y el
+programa recibe solo lo elegido. Es el camino por el que un programa encerrado llega a un fichero del usuario (S6b).
+Corre como una persona (en la prueba, Ana) y enseña lo suyo desde `C`.
+
+**Quién lo tiene.** Los programas que lanza `inicio` con el canal "selector", y los que lanza `sesiones` como la
+persona del selector (llave "selector" de su tabla). Los de otra persona y los del sistema, no (hasta que haya un
+selector por sesión). El selector solo atiende a quien le presentan `inicio` o `sesiones` (sin marca: 8 bytes de
+marca y 16 de nombre; con el nombre vacío, que se fue): a otro, `SIN_DERECHO`. El nombre que enseña en su ventana
+("quién pide") es ese, no lo que diga el programa.
+
+**Petición** (un mensaje con una llave: por dónde contestar):
+
+| Bytes | Qué |
+|---|---|
+| 0..4 | "SEL2" |
+| 4..8 | Orden (u32): 1 abrir, 2 guardar, 3 carpeta, 4 cancelar (sin llave ni respuesta), 5 consulta |
+| 8..10 | Largo del nombre propuesto (u16; solo al guardar) |
+| 10..12 | Largo del patrón (u16) |
+| 12..16 | Ceros |
+| 16.. | El nombre propuesto y, detrás, el patrón (UTF-8) |
+
+**Respuesta**: estado (i32), asa (u32), banderas (u32), largo del nombre (u32) y el nombre elegido (UTF-8).
+
+| Orden | Qué elige el usuario | Qué llega |
+|---|---|---|
+| abrir | Un fichero | Su asa, solo para leer (con ella no se escribe, recorta ni cambia nada, aunque el fichero sea del mismo usuario), y su nombre |
+| guardar | Un cajón y un nombre (en el campo va el propuesto) | La asa del fichero, para leer y escribir, y su nombre. Si no existía, nace vacío. Si existía, el selector pregunta ("ya existe. ¿Sustituir?", con el botón "Sustituir"; Intro no sustituye) y llega como estaba, con la bandera 1 (`EXISTIA`): quien guarda lo deja del tamaño de lo que escribe (`TAMANO`) |
+| carpeta | Un cajón | El hueco de raíz (de 15 a 8, el primero libre) en que queda cedido, para leer y escribir, y su nombre |
+| consulta | Nada (sin ventana) | `BIEN` y el nombre con que el selector conoce a quien pide |
+
+- **Solo el nombre, nunca el camino.** El programa sabe cómo se llama lo elegido (para su título, o para saber el
+  formato por la extensión: es parte de lo que el usuario le entrega), pero no en qué cajón está ni cómo se llaman
+  los cajones del usuario. Decisión tomada con S6b ("qué gana quien explota una aplicación": su cajón y los ficheros
+  que el usuario le cedió, no el resto de `Home:`); pendiente de que el usuario la confirme.
+- **Un nombre es uno solo**: sin '/', ':' ni '|', sin letras de control, ni "." ni "..", y de 107 bytes como mucho.
+  Vale para lo que teclea el usuario (el selector lo dice bajo el campo y no guarda) y para lo que propone el
+  programa (si no vale, el campo empieza vacío). El selector crea y busca por la asa del cajón y ese nombre: no hay
+  camino de texto que se pueda torcer.
+- **El patrón** solo decide qué ficheros se enseñan (los cajones, siempre): alternativas separadas por ';', con '*'
+  (o "#?") y '?', sin distinguir mayúsculas ("*.txt;*.md"). No es una barrera. Como mucho 64 bytes; si no, se
+  enseña todo.
+- **Estados**: 0 bien; -1 mal formada; -12 el selector no conoce a quien pide; -100 cancelado (el usuario canceló,
+  pasó un minuto sin que pulsara nada, o quien pidió mandó "cancelar" o se fue); -101 ocupado. Los demás negativos
+  son los del servicio de archivos al ceder.
+- **Una petición por programa**, y cuatro esperando como mucho: las demás, ocupado en el acto. Las ventanas salen de
+  una en una, por orden. Quien pidió puede retirar su petición ("cancelar"); si acaba, `sesiones` lo dice y su
+  ventana se cierra.
+
+Las peticiones de antes siguen valiendo: el texto "abrir" (o cualquier otro) y "carpeta", con respuesta de 4 bytes
+(la asa, o el hueco 3; 0 si no). Sin nombre ni patrón, y un minuto desde que sale la ventana. "raiz" (ceder `C`
+entero para leer) es solo para la prueba del `hostil` de `inicio`: a otro, 0.
+
 ## Buzón de la VideoCore (C50)
 
 `usuario/src/bin/buzon.rs`. Llaves: 1 su permiso DMA, 2 los registros del buzón (la página entera; el buzón está en
@@ -393,7 +470,7 @@ de respuesta:
 | 3 entrar, 4 salir, 5 volver | `guardian` | Abre o cierra el volumen cifrado del usuario, o comprueba su contraseña sin tocarlo. Entrar o volver con la buena pone su sesión delante; entrar en una ya abierta es volver (U6). Salir con programas suyos vivos, -13. Tras una contraseña mala, tarda 300 ms |
 | 6 servicio, 7 dejar | cualquiera | La llave de un servicio o de un permiso (`eco`, `plazo`), marcada, revocable y de un solo viaje; o renunciar a ella. Sin permiso, se pregunta a `guardian`; desde una sesión de detrás, -2 sin preguntar (U6). S28: de la caja Amiga, también un permiso **sin llave** (`ejec:`, `icono:`, `guion:` o `disco:` y el programa 68k, con el programa entero y el fichero de detalle): se concede o se pregunta igual, sin llave; contesta el estado y cómo se decidió (`usuario/src/preguntas_ficheros.rs`). Una pregunta a la vez por programa |
 | 8 registro | `guardian` | El registro de seguridad, por páginas |
-| 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos y sus raíces. La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
+| 9 lanzar | `guardian`; la barra y el Workbench (S10) | Un programa del disco, como quien pide o como un usuario que entró; nace con su canal con `sesiones`, su llave de archivos, la del compositor, la del selector de ficheros si es de la persona del selector, sus raíces y su tabla de llaves (ver "La tabla de llaves"). La barra y el Workbench solo lanzan de `Programas/` (un nombre, sin cajones), siempre como la persona que está delante; sin nadie delante, -2 |
 | 10 nombres | cualquiera | Su tabla de nombres (`SYS:`, `Programas:`, `Home:`, `PROGDIR:`), con la raíz de cada uno |
 | 30 asignaciones | cualquiera | Su tabla de nombres entera (paso 2, `bitacoras/asignaciones.md`), por páginas de 248 bytes desde el byte que diga (u32): cuánto mide (u32), cuántos van (u32) y el texto, que lee `dashos::asignaciones::Tabla`. Volúmenes según sus raíces (lo que lanza `sesiones`, y el Workbench y el explorador, que se ceden las mismas): `SYS:` 1, y con cuenta `Home:` 2, `RAM:` 3 y `Work:` 4; `PROGDIR:` 0 si salió del disco; y sus asignaciones: las de la sesión (S4b) o las heredadas del que lo lanzó si es de su mismo usuario |
 | 31 asignar | cualquiera | Cambia una de sus asignaciones (u32 cambio: 0 poner, 1 añadir detrás, 2 delante, 3 quitar; u32 largo; "Nombre=capa,capa"). Solo capas con nombre: ni raíces (`@n`), ni el nombre de un volumen o `PROGDIR`, ni caminos que suben, ni bucles (-30). Lo que lance después lo hereda. Contesta un i32 |

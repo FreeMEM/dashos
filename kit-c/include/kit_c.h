@@ -9,8 +9,13 @@
 
 #include <stdint.h>
 
-/* La llave del canal "ventanas" con el compositor. De serie, la 3 si existe (lo que lanza sesiones: 1 su canal,
-   2 archivos, 3 ventanas) y si no la 1 (lo que lanza inicio con "ventanas" y "archivos") */
+/* La tabla de llaves: quien lanza el programa (inicio o sesiones) dice qué es cada llave con que nace. dash_llave da
+   el número de la que se llama así ("ventanas", "archivos", "sesiones", "selector"...), o 0 si no la tiene. Sin
+   kit-c es la llamada 56 del kernel (docs/referencia/kernel.md). */
+int32_t dash_llave(const char *nombre);
+
+/* La llave del canal "ventanas" con el compositor para un programa sin tabla de llaves. Con tabla manda
+   dash_llave("ventanas"), se diga aquí lo que se diga: ya no hace falta llamarla. */
 void dash_ui_usar_llave(int32_t llave);
 
 int32_t dash_ui_app_begin(const char *titulo, const char *base);   /* 0 sin compositor */
