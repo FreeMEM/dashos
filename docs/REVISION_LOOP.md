@@ -2017,3 +2017,8 @@ ventanas de Linux), no la de intuition pintada. "Original" sigue igual. Rama `am
      ahí; una herramienta que saque los textos de un programa a un catálogo (Dash ya tiene `tools/catalogo.py`); y en
      la caja, `locale.library` dando los catálogos en Latin-1 a los programas 68k. Primer idioma además del castellano:
      inglés.
+     **Y un editor de catálogos en `SYS:Utilities`, escrito en Dash** (pedido del usuario): crear un catálogo nuevo
+     desde los textos de un programa (su `.cd`), traducirlo cadena a cadena viendo el original al lado, avisar de lo
+     que falta o sobra, y guardar el `.catalog` (y el `.ct` de texto, como FlexCat). Mientras no haya backend ARM de
+     Dash, corre en la caja Amiga (y vale también para AmigaOS); en nativo, cuando lo haya. Encargárselo a la sesión
+     de Dash, o hacerlo aquí con su compilador.
