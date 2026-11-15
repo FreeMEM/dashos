@@ -2305,3 +2305,80 @@ Lo que quedaba de la tanda anterior, con el mismo criterio: como debe funcionar.
   chunky cuando el formato ya es ARGB.
 - Tachyon intenta crear "Tachyon.cookies" junto al programa (volumen de solo lectura) y la guardia lo niega; es cosa
   de Tachyon (debería ir a `ENVARC:` o `PROGDIR:` escribible), no de la caja.
+
+## 2026-11-15 (4): lo que quedaba de las pantallas propias
+
+Lo que el coordinador pidió cerrar tras la tanda anterior, en la misma rama.
+
+### El mapa del programa (`SA_BitMap`): solo lo que cambia
+
+- Fuera el "entero cada 5 presentaciones". Lo que escriben graphics (el `Pintor`), cybergraphics (`poner_trozo`,
+  `ExtractColor`) y Picasso96 en el mapa de un programa que es el de una pantalla se apunta al escribirlo; `BltClear`
+  sobre su memoria, las filas que toca; `UnLockBitMap`, lo que dice `UBMI_UPDATERECTS` (o el mapa entero), como en las
+  ventanas (`vigia.rs`).
+- Lo que el programa escribe a mano en sus planos o sus píxeles, sin cerrojo ni llamadas (lo de una tarjeta de verdad):
+  cada fila guarda la huella de lo presentado y cada 0,5 s se miran todas. Una fila distinta que nadie apuntó es una
+  escritura directa: desde entonces se mira en cada presentación (y solo se presentan las filas distintas), hasta 20
+  sondeos seguidos sin ninguna. Se presenta desde una copia en ARGB del mapa (la que lee el compositor).
+- Medido (en el equipo, x86 `--release`, prueba temporal):
+
+| Qué | Tiempo |
+|---|---|
+| Sondeo sin cambios, planar 640 x 480 x 8 | 0,035 ms |
+| Sondeo sin cambios, ARGB32 640 x 480 | 0,16 ms |
+| Sondeo sin cambios, ARGB32 1280 x 720 | 0,53 ms |
+| Presentación en modo directo (una fila cambiada) | lo mismo que el sondeo |
+| `RectFill` 600 x 400 en un planar de 8 planos, sin vigía / con vigía | 2,7 / 3,2 ms punto a punto; 2,7 / 2,7 ms apuntando el rectángulo de una vez |
+
+  En la caja (QEMU) no se ha medido: ningún programa de las pruebas escribe así en una pantalla.
+
+### El orden y el sitio de las pantallas
+
+- **Las ventanas de una pantalla propia van dentro de ella**: en el compositor, `wl_subsurface` de la superficie de la
+  pantalla, en sus coordenadas. Se mueven con ella al arrastrarla y van siempre delante de ella. Antes iban sueltas, en
+  cascada, como las del Workbench. `WindowToFront`, `WindowToBack` y el gadget de profundidad las ordenan entre sus
+  hermanas (`place_above`, `place_below`); arrastrarlas y cambiarles el tamaño lo hace la caja con el ratón (las
+  subsuperficies no tienen `xdg_toplevel.move`), y `MoveWindow` las coloca. El teclado va a la pantalla (el compositor da
+  el foco a las ventanas de primer nivel) e intuition lo pasa a su ventana activa, que se activa al pulsarla, como en el
+  Amiga.
+- **`ScreenToFront`, `ScreenToBack`, `ScreenDepth`**: la superficie de la pantalla delante o detrás de todas (con sus
+  ventanas) y la lista de `IntuitionBase` en el mismo orden. El Workbench (el escritorio) delante pone las propias detrás
+  de todo, en su orden; detrás, delante de todo. Para eso el compositor tiene una petición nueva,
+  `dashos_tema_v1.apilar` (versión 7): solo de la caja Amiga y de una ventana suya de primer nivel, sin tocar el teclado.
+- **El arrastre**: pulsar en la barra de una pantalla (las de `SHOWTITLE`, la franja de `BarHeight`) la arrastra
+  (`xdg_toplevel.move`, con sus ventanas dentro); pulsar fuera de sus ventanas deja ninguna activa.
+- **`MoveScreen` y `ScreenPosition`**: apuntan el sitio (`LeftEdge`, `TopEdge`) y lo piden al compositor. El de DashOS
+  no deja que un programa coloque sus ventanas de primer nivel (`mover` no hace nada en él, como con `MoveWindow` en el
+  Workbench).
+- Una lista de pantallas que el programa estropea (en círculo, con algo que no es una pantalla) no cuelga: se rehace con
+  las que hay.
+
+### La lista de pantallas públicas
+
+- `LockPubScreenList` da una foto (`struct List` de `PubScreenNode`: nombre, pantalla, `PSNF_PRIVATE`, tamaño,
+  visitantes y la señal), el Workbench primero y luego las propias en el orden en que se abrieron; no cambia mientras
+  alguien la tenga y se suelta con el último `UnlockPubScreenList` o al acabar la tarea que la tenía (`publicas.rs`).
+- `NextPubScreen`: la siguiente pública abierta, dando la vuelta (las privadas no cuentan). Los nombres, como mucho de
+  139 letras (`MAXPUBSCREENNAME`).
+- `SetDefaultPubScreen` y `GetDefaultPubScreen`: la de serie, la que da `LockPubScreen(NULL)`; en modo privado o cerrada,
+  el Workbench.
+- `SetPubScreenModes`: `SHANGHAI` (las ventanas que iban al Workbench sin pedirlo van a la de serie) y `POPPUBSCREEN`
+  (una pública pasa delante al abrirse en ella una ventana); devuelve los de antes.
+
+### Pruebas
+
+- `tests/pantallas.rs` (el mapa del programa: lo pintado, `BltClear`, lo escrito a mano antes y después del sondeo, la
+  vuelta al modo normal; uno de color verdadero con `FillPixelArray` y `UBMI_UPDATERECTS`), `tests/apilado.rs` (5) y
+  `tests/publicas.rs` (5), con sus hostiles; `apilar_de_la_caja_amiga` en el compositor.
+- `cgx.c` abre una ventana en su pantalla de 16 bits ("ventana Amiga en su pantalla (200x100 en 20, 30): cgx") y la pone
+  detrás y delante. La de `test_gadtools` (Dash, que abre una pantalla clonando el Workbench) va ahora dentro de ella:
+  cambiada la línea esperada de `arranque_virt.txt`.
+
+- Con el AmigaOS del usuario y Tachyon (`MEMORIA=3G`, `TIEMPO_VIRT=480`): solo falla la línea del disco NVMe, como
+  siempre; Tachyon acaba con 0, 0 avisos, en 6299 ms (antes, 6302).
+
+### Lo que no se ha comprobado
+
+- A mano, en pantalla: arrastrar una pantalla o una ventana dentro de ella, y el cambio de tamaño (en las pruebas, con
+  el compositor de mentira; en QEMU, que la ventana se abre dentro sin errores de protocolo).
+- La escritura directa en el mapa de una pantalla, en QEMU.
