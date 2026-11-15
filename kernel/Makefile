@@ -30,13 +30,26 @@ $(IMAGEN): usuario FORCE
 	cargo build $(CARGO_PERFIL)
 	$(OBJCOPY) -O binary $(ELF) $(IMAGEN)
 
-usuario: FORCE
+usuario: kit-c FORCE
 	cd ../usuario && cargo build --release --features archivos,ventanas,sonido,imagenes,red,caja
 	cd ../usuario && cargo build --release --target aarch64_be-unknown-none-softfloat --bin hola --bin fpu_b
 	$(BOOTLIN)/aarch64_be-linux-as -EL -o $(PIE).o ../usuario/asm/pie.s
 	$(BOOTLIN)/aarch64_be-linux-ld -EL -pie --no-dynamic-linker -z noexecstack -z stack-size=32768 -o $(PIE) $(PIE).o
 	@# H4: la caja Amiga (caja/), con el JIT de Emu68: solo si está el clon de third_party/Emu68 (toolchains/LEEME.md).
 	if [ -d ../third_party/Emu68/src ]; then $(MAKE) -C ../caja; else echo "Sin third_party/Emu68: la caja Amiga no se compila"; fi
+
+# Las ventanas de los programas de Dash (kit-c/): ../build/libkit_c.a, el kit con ABI de C que enlaza `./dash --dashos`
+# cuando el programa usa mui_* (docs/bitacoras/dash-ventanas.md). Con el memcpy de la biblioteca dashos débil: manda el
+# del runtime de Dash. Y su prueba, un programa de Dash con ventana (kit-c/pruebas/ventana.dash, en la imagen como
+# `dash-ventana`, y su catálogo, en el disco de la prueba), si está Dash en DASH_DIR; si no, la imagen va sin ella.
+KIT_C := ../build/libkit_c.a
+DASH_DIR ?= $(HOME)/Projects/FreeMEMLang
+kit-c: FORCE
+	cd ../kit-c && cargo build --release
+	mkdir -p ../build
+	llvm-objcopy --weaken-symbol=memcpy ../kit-c/target/aarch64-unknown-none/release/libkit_c.a $(KIT_C)
+	rm -f ../build/dash-ventana ../build/DashVentana.catalog
+	if [ -x $(DASH_DIR)/dash ]; then DASHOS_DIR=$(abspath ..) $(DASH_DIR)/dash --dashos ../kit-c/pruebas/ventana.dash -o ../build/dash-ventana && python3 $(DASH_DIR)/tools/catalogo.py catalog ../kit-c/pruebas/ventana_es.ct --utf8 -o ../build/DashVentana.catalog || { echo "El Dash de $(DASH_DIR) no compila la prueba de kit-c: la imagen va sin ella"; rm -f ../build/dash-ventana; }; else echo "Sin Dash en $(DASH_DIR): la prueba de kit-c no se compila"; fi
 
 $(PRUEBAS): usuario FORCE
 	cargo build $(CARGO_PERFIL) --features pruebas
@@ -106,10 +119,10 @@ RED_QEMU := -netdev user,id=red0,guestfwd=tcp:10.0.2.100:7-cmd:$(abspath ../tool
 # pruebas/arranque_virt_reinicio.txt; decisión del usuario del 2026-11-13).
 arranque-virt: virt $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(VIRT)) cargo build --release
-	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
+	rm -f target/explorador*.ppm target/captura.ppm target/amiga.ppm target/dash.ppm target/dash-nativo.ppm target/dash-nativo-pregunta.ppm target/gadtools.ppm target/gadtools-menu.ppm target/gadtools-dash.ppm target/requester.ppm target/reaction.ppm target/reaction.orig.ppm target/sonido.wav $(RED)/qemu.sock $(RED)/pc.sock target/u6.ana.ppm target/u6.carla.ppm
 	mkdir -p $(RED)
 	python3 -I ../tools/red_basura.py $(RED) $(RED_MAC) 300 & BASURA=$$!; \
-	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
+	GUARDAR=$(abspath target/salida_virt.txt) CAPTURA=$(abspath target/captura.ppm) CAPTURA_AMIGA=$(abspath target/amiga.ppm) CAPTURA_DASH=$(abspath target/dash.ppm) CAPTURA_DASHOS=$(abspath target/dash-nativo.ppm) CAPTURA_GT=$(abspath target/gadtools.ppm) CAPTURA_GT_MENU=$(abspath target/gadtools-menu.ppm) CAPTURA_GT_DASH=$(abspath target/gadtools-dash.ppm) CAPTURA_REQ=$(abspath target/requester.ppm) CAPTURA_RA=$(abspath target/reaction) CAPTURA_EXPLORADOR=$(abspath target/explorador) CAPTURA_U6=$(abspath target/u6) CAPTURA_MONITOR=$(abspath target/monitor) REINICIO=$(abspath pruebas/arranque_virt_reinicio.txt) TECLAS=1 MAQUINA=highmem=off QEMU_EXTRA="-device ramfb -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0 $(RED_QEMU)" ../tools/prueba_uefi.sh ../uefi/target/aarch64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_virt.txt $(or $(TIEMPO_VIRT),600); \
 	R=$$?; kill $$BASURA 2>/dev/null; exit $$R
 	python3 ../tools/disco_archivos.py --comprobar $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura.ppm

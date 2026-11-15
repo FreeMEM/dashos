@@ -103,6 +103,33 @@ DashOS en marcha con 4 núcleos.
 # El desplegable de Ajustes: un clic lo abre (el menú, dentro de la ventana) y otro, en la segunda opción, la elige.
 ~│   [ajustes] menú abierto; la segunda opción en (
 ~│   [ajustes] el desplegable dice: Destello
+# Las ventanas de Dash en DashOS (kit-c): un programa de Dash con mui_* (`kit-c/pruebas/ventana.dash`, compilado con
+# `./dash --dashos` al hacer la imagen; sin Dash no está y estas líneas faltan) abre su ventana con el kit (Material 3),
+# y el guion pulsa su botón "Añadir": añade una línea a la lista y cambia el texto. Su título y su primera línea, del
+# catálogo en castellano de su cajón (Estado/Servicios/dash-ventana/Locale/Catalogs/español/), por el servicio de
+# archivos.
+~│ [dash-ventana] idioma del catálogo: español
+~│ [dash-ventana] abierta
+~│   [dash-ui] ventana "Dash en DashOS" en pantalla (
+~│ [dash-ventana] pulsado: Pulsado 1 veces; líneas: 2
+# La pregunta de mui_request, un diálogo de Material 3: el guion pulsa "Guardar".
+~│   [dash-ui] ventana "Guardar" en pantalla (
+~│ [dash-ventana] guardar: 1
+# Los ficheros de Dash (file_*, dir_*) por el servicio de archivos, en su cajón: escribe la lista, hace un cajón, la
+# mueve ahí, lo lista, la lee (por líneas y entera) y lo borra todo.
+~│ [dash-ventana] lista.txt: escrito true, 25 bytes
+~│ [dash-ventana] Listas: creado true, movido true; 1 entrada: lista.txt, 25 bytes
+~│ [dash-ventana] leída: primera línea true, entera true
+~│ [dash-ventana] borrado: true true; queda: false
+# El selector de ficheros de DashOS (file_open_dialog, dialog_file_at): el guion elige C/Privado/nota.txt para leer y
+# la carpeta C para guardar; el programa lee lo elegido y guarda, lee y borra en la carpeta.
+~│   [selector] ventana de abrir en pantalla, para dash-ventana
+~│   [selector] el usuario elige C/Privado/nota.txt con doble clic: se cede solo para leer: 0
+~│ [dash-ventana] elegido: Elegido:, 18 bytes: privado de prueba
+~│   [selector] ventana de elegir carpeta en pantalla, para dash-ventana
+~│   [selector] el usuario elige la carpeta C: se cede para leer y escribir: 0 (hueco 3)
+~│ [dash-ventana] guardada en Carpeta:dash-lista.txt: true, leída igual true, borrada true
+~│ [dash-ventana] fin
 # W8: el cursor entra en una ventana; el clic le da el teclado y le llega la "a".
 ~│   [ventana] ratón dentro
 ~│   [ventana] tecla 30 recibida

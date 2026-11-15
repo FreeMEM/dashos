@@ -1,0 +1,11 @@
+[build]
+# Lo nativo de DashOS (C30), con la FPU: el programa de Dash que lo enlaza ya la usa (-march=armv8-a).
+target = "aarch64-unknown-none"
+
+[unstable]
+build-std = ["core", "alloc", "compiler_builtins"]
+build-std-features = ["compiler-builtins-mem"]
+
+[target.aarch64-unknown-none]
+# Código independiente de la posición: el programa de Dash se enlaza fijo en 0x400000 o como PIE (--pie).
+rustflags = ["-C", "relocation-model=pic"]

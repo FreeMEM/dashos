@@ -7,6 +7,11 @@ fn main() {
     println!("cargo:rerun-if-changed=enlace.ld");
     println!("cargo:rerun-if-changed=enlace_virt.ld");
     comprimir_programas(&dir);
+    // La prueba de kit-c va en la imagen solo si se pudo compilar (hace falta Dash: `make kit-c`).
+    println!("cargo::rustc-check-cfg=cfg(dash_ventana)");
+    if std::path::Path::new(&format!("{}/../build/dash-ventana", dir)).exists() {
+        println!("cargo:rustc-cfg=dash_ventana");
+    }
 }
 
 /// Los programas que nombra `src/inicio.rs` con `programa!("...")`, comprimidos con LZ4 en OUT_DIR (`nombre.lz4`): el
@@ -22,7 +27,14 @@ fn comprimir_programas(dir: &str) {
     nombres.dedup();
     for nombre in nombres {
         // H4: la caja Amiga es un programa de C aparte (`caja/`), no de `usuario/`.
-        let ruta = if nombre == "caja-amiga" { format!("{}/../caja/build/{}", dir, nombre) } else { format!("{}/{}", usuario, nombre) };
+        // La prueba de kit-c, un programa de Dash (`make kit-c`): en `build/`.
+        let ruta = if nombre == "caja-amiga" {
+            format!("{}/../caja/build/{}", dir, nombre)
+        } else if nombre == "dash-ventana" {
+            format!("{}/../build/{}", dir, nombre)
+        } else {
+            format!("{}/{}", usuario, nombre)
+        };
         println!("cargo:rerun-if-changed={}", ruta);
         let Ok(datos) = std::fs::read(&ruta) else { continue };
         let mut h: u64 = 0xcbf2_9ce4_8422_2325;

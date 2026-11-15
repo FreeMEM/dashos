@@ -96,6 +96,10 @@ def sys_esperado():
 
 
 DISQUETE = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "kernel", "pruebas", "disquete.adf.gz")
+# kit-c: el catálogo (UTF-8) de la prueba de las ventanas de Dash, si lo dejó `make kit-c` (hace falta Dash).
+CATALOGO_DASH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "build", "DashVentana.catalog")
+# Su cajón: la raíz de su ficha en `inicio` (su LOCALE: es `Locale/` dentro).
+DASH_VENTANA = "Estado/Servicios/dash-ventana"
 
 if sys.argv[1] == "--comprobar":
     disco, ver = sys.argv[2], sys.argv[3]
@@ -173,6 +177,11 @@ if sys.argv[1] == "--comprobar":
         # El fichero que el virus de guiones crea, intenta renombrar a User-Startup y borra.
         f"{PAPELERA}/inocente 21",
         f"{PAPELERA}/{LARGO} 3",
+        # kit-c: el catálogo de la prueba de las ventanas de Dash, si se compiló (`make kit-c`, con Dash), en su cajón.
+        *([] if not os.path.exists(CATALOGO_DASH) else [
+            f"{DASH_VENTANA}/ cajón", f"{DASH_VENTANA}/Locale/ cajón", f"{DASH_VENTANA}/Locale/Catalogs/ cajón",
+            f"{DASH_VENTANA}/Locale/Catalogs/español/ cajón",
+            f"{DASH_VENTANA}/Locale/Catalogs/español/DashVentana.catalog {os.path.getsize(CATALOGO_DASH)}"]),
         "Estado/Servicios/sesiones/ cajón",
         # U4: lo que el usuario (`guardian`, en la prueba) concedió y luego retiró: el fichero queda vacío.
         "Estado/Servicios/sesiones/permisos 0",
@@ -314,6 +323,11 @@ with tempfile.TemporaryDirectory() as t:
     with open(os.path.join(raiz, "Prefs", "fuente"), "w") as f:
         f.write("Topaz 8\n")
     os.makedirs(os.path.join(raiz, "Programas"))
+    if os.path.exists(CATALOGO_DASH):
+        cat = os.path.join(raiz, *DASH_VENTANA.split("/"), "Locale", "Catalogs", "español")
+        os.makedirs(cat)
+        with open(os.path.join(cat, "DashVentana.catalog"), "wb") as f:
+            f.write(open(CATALOGO_DASH, "rb").read())
     # U6: el cajón de `sesiones` (S6b: `Estado:Servicios/<nombre>`), suyo (usuario 1) y de nadie más.
     os.makedirs(os.path.join(raiz, "Estado", "Servicios", "sesiones"))
     os.chmod(os.path.join(raiz, "Estado", "Servicios", "sesiones"), 0o700)

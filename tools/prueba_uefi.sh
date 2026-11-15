@@ -133,6 +133,12 @@ amiga = 0
 amiga_desde = 0
 v_amiga = None
 dash_amiga = 0
+dash_nativo = 0
+dash_desde = 0
+dash_intentos = 0
+dash_entradas = 0
+dash_fila_n = 2
+dash_subidas = 0
 gt_amiga = 0
 gt_dash = 0
 ra_capturas = 0
@@ -203,6 +209,113 @@ while time.time() - inicio < total:
         bloqueo_caja = max(texto.rfind("[guardian] sesión bloqueada"), texto.rfind("pantalla de bloqueo pintada"),
                            texto.rfind("pantalla de entrada pintada"))
         libre_caja = libre_caja and bloqueo_caja <= max(texto.rfind("[guardian] desbloqueado"), texto.rfind("[guardian] entra "))
+        # Las ventanas de Dash en DashOS (kit-c): el programa de Dash `dash-ventana` (`kit-c/pruebas/ventana.dash`) dice
+        # cuándo está en pantalla y dónde están sus botones, y el compositor dónde está la ventana. Con CAPTURA_DASHOS=
+        # fichero.ppm, la pantalla así (tras un clic en su margen, que la trae delante); luego un clic en su botón
+        # "Añadir" (1). El programa pregunta si guardar (mui_request): con la captura (fichero-pregunta.ppm), un clic en
+        # "Guardar" (2); guarda en su cajón y pide al selector un fichero: doble clic en Privado y en nota.txt (3 y 4); y
+        # una carpeta: "Elegir esta carpeta", C (5). Luego acaba (6). Cuando `guardian` acabó su prueba (sus bloqueos se
+        # llevarían los clics y las teclas), tras el selector del hostil y el desplegable de Ajustes, sin el centro de
+        # control, sin preguntas ni bloqueo. Al principio de la vuelta: mientras dura, los pasos de abajo esperan (con
+        # "continue"), y cada paso, como mucho 30 s.
+        import re
+        centro_fuera = "[guardian] el centro de control abrirá" not in texto or "[centro] cerrado" in texto
+        # Si el clic no llegó (una pregunta de `guardian` salió encima mientras), otra vez, hasta tres.
+        if dash_nativo == 1 and "[dash-ventana] pulsado" not in texto and time.time() - dash_desde > 8 \
+                and dash_intentos < 3:
+            dash_nativo = 0
+        # Tampoco con la ventana Amiga de H5 esperando su clic: delante, la de Dash la taparía.
+        amiga_fuera = amiga >= 2 or "[caja-amiga] ventana Amiga en pantalla" not in texto
+        if dash_nativo == 0 and menu == 2 and centro_fuera and amiga_fuera and libre_caja and \
+                "[guardian] prueba acabada" in texto and "[hostil] selector:" in texto and \
+                selector not in (1, 2, 4, 5, 17, 18):
+            d = re.search(r'\[dash-ui\] ventana "Dash (?:en|on) DashOS" en pantalla \((\d+)x\d+\).*?"Añadir" en \((\d+), (\d+)\)', texto)
+            v = re.search(r"\[compositor\] ventana de dash-ventana en \((\d+), (\d+)\)", texto)
+            if d and v:
+                dash_nativo, dash_desde, dash_intentos = 1, time.time(), dash_intentos + 1
+                vx, vy = int(v.group(1)), int(v.group(2))
+                # Delante primero: un clic en su margen de arriba a la derecha (sale detrás de Ajustes y de otras).
+                ir_a(vx + int(d.group(1)) - 12, vy + 10)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                time.sleep(0.5)
+                if os.environ.get("CAPTURA_DASHOS"):
+                    ir_a(790, 590)
+                    time.sleep(0.5)
+                    mandar("screendump " + os.environ["CAPTURA_DASHOS"])
+                    time.sleep(0.5)
+                ir_a(vx + int(d.group(2)), vy + int(d.group(3)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+                continue
+        if dash_nativo in (1, 2, 3, 31, 4, 5) and time.time() - dash_desde > 30:
+            dash_nativo = 9                      # (no siguió: faltarán sus líneas)
+        if dash_nativo == 1 and "[dash-ventana] pulsado" in texto:
+            # La pregunta: su ventana es la última de dash-ventana que pone el compositor.
+            dp = re.search(r'\[dash-ui\] ventana "Guardar" en pantalla \(\d+x\d+\); "Guardar" en \((\d+), (\d+)\)', texto)
+            vs = re.findall(r"\[compositor\] ventana de dash-ventana en \((\d+), (\d+)\)", texto)
+            if dp and len(vs) >= 2:
+                time.sleep(0.5)
+                if os.environ.get("CAPTURA_DASHOS"):
+                    mandar("screendump " + os.environ["CAPTURA_DASHOS"].replace(".ppm", "-pregunta.ppm"))
+                    time.sleep(0.5)
+                ir_a(int(vs[-1][0]) + int(dp.group(1)), int(vs[-1][1]) + int(dp.group(2)))
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.1)
+                ir_a(790, 590)
+                dash_nativo, dash_desde = 2, time.time()
+            time.sleep(0.25)
+            continue
+        # El selector, para dash-ventana: dónde está (el compositor) y su lista (él). Doble clic en la fila de Privado y,
+        # dentro, en la 2 (nota.txt; la primera es "../"). Las filas miden 56. Privado es la tercera (tras Fondos y
+        # Prefs) si en C no hay más cajones: si entra en otro, Retroceso y la fila siguiente.
+        def dash_fila(fila):
+            vs = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            ls = re.findall(r"\[selector\] lista en \((\d+), (\d+)\)", texto)
+            if not vs or not ls:
+                return False
+            ir_a(int(vs[-1][0]) + int(ls[-1][0]) + 60, int(vs[-1][1]) + int(ls[-1][1]) + 28 + 56 * fila)
+            time.sleep(0.3)
+            mandar("mouse_button 1", "mouse_button 0", "mouse_button 1", "mouse_button 0", pausa=0.08)
+            ir_a(790, 590)
+            return True
+        if dash_nativo == 2 and "[selector] ventana de abrir en pantalla, para dash-ventana" in texto:
+            time.sleep(0.8)
+            dash_entradas, dash_fila_n = texto.count("[selector] entra en C/"), 2
+            if dash_fila(dash_fila_n):
+                dash_nativo, dash_desde = 3, time.time()
+            continue
+        if dash_nativo == 3 and texto.count("[selector] entra en C/") > dash_entradas:
+            time.sleep(0.8)
+            if re.findall(r"\[selector\] entra en (C/[^,]+),", texto)[-1] == "C/Privado":
+                if dash_fila(1):
+                    dash_nativo, dash_desde = 4, time.time()
+            elif dash_fila_n < 8:
+                dash_subidas = texto.count("[selector] sube a C,")
+                mandar("sendkey backspace")
+                dash_nativo = 31
+            continue
+        if dash_nativo == 31 and texto.count("[selector] sube a C,") > dash_subidas:
+            time.sleep(0.8)
+            dash_entradas, dash_fila_n = texto.count("[selector] entra en C/"), dash_fila_n + 1
+            if dash_fila(dash_fila_n):
+                dash_nativo = 3
+            continue
+        if dash_nativo == 4 and "[selector] ventana de elegir carpeta en pantalla, para dash-ventana" in texto:
+            time.sleep(0.8)
+            vs = re.findall(r"\[compositor\] ventana de selector en \((\d+), (\d+)\)", texto)
+            bs = re.findall(r"\[selector\] botón Elegir en \((\d+), (\d+)\)", texto)
+            if vs and bs:
+                ir_a(int(vs[-1][0]) + int(bs[-1][0]), int(vs[-1][1]) + int(bs[-1][1]))
+                time.sleep(0.3)
+                mandar("mouse_button 1", "mouse_button 0", pausa=0.08)
+                ir_a(790, 590)
+                dash_nativo, dash_desde = 5, time.time()
+            continue
+        if dash_nativo == 5 and "[dash-ventana] fin" in texto:
+            dash_nativo = 6
+        if dash_nativo in (2, 3, 31, 4, 5):
+            # (El programa acaba y su ventana se va: hasta entonces, nada más: taparía lo que se pulse.)
+            time.sleep(0.25)
+            continue
         # La ventana de GadTools (`caja/pruebas68k/gadtools.c`), tras la de Dash: cuando se ve entera (una captura
         # comprueba que sus cuatro esquinas y un sitio vacío de dentro son de los colores del Workbench: si otra ventana
         # del arranque la tapa, los clics irían a esa; se mira otra vez en la vuelta siguiente), la captura
