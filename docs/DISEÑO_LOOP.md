@@ -60,7 +60,7 @@ La tarea S0 fija cuáles de estos son objetivos, con qué número y cómo se mid
    este fichero. Cuando el usuario decide, se pasa a `PLAN.md` y se quita de la lista.
 7. **Sala limpia.** Este bucle puede leer documentación pública de AmigaOS, MorphOS y AROS. No lee código de AROS ni
    desensamblados del Kickstart: esos los usan solo las sesiones de análisis (`AGENTS.md`, regla 1).
-8. **Hangar.** Hangar es privado (`~/Proyectos/hangar`, plan en `servicio/docs/PLAN.md`). El bucle puede leerlo
+8. **Hangar.** Hangar es otro proyecto, con su repositorio. El bucle puede leerlo
    para diseñar cómo encaja con DashOS. No copia nada de Hangar en este repositorio: solo describe la integración.
 9. **Sin código del sistema.** Este bucle no escribe el kernel. Sí puede hacer pruebas pequeñas para comprobar un
    dato, en `docs/diseño/pruebas/` o en el scratchpad.
