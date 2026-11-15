@@ -441,3 +441,10 @@ estabilidad y velocidad, por ese orden.
 - **Caja PowerPC en x86: aplazada.** Sin tercer JIT.
 - **Dash para x86-64, por la vía de C** (sesiones de Dash).
 
+- **Caja Linux en dos perfiles** (usuario, 2026-11-15; cambia "caja Linux solo desde 4 GB" de S7): la **caja completa**
+  (escritorio, navegador, ofimática), desde 4 GB; la **caja de terminal** (Claude Code, herramientas, compilar), sin
+  escritorio, desde 2 GB, con globo de memoria (virtio-balloon), memoria comprimida (S3) y carpetas compartidas con
+  DAX. Con 1 GB o menos (Pi 3, THEA), sin caja Linux.
+- **Claude Code en DashOS** (usuario, 2026-11-15): a corto plazo, en la caja Linux (terminal y escritorio), con su
+  ventana en el escritorio de DashOS y carpetas compartidas. A largo plazo, la terminal nativa: capa POSIX (S11) y
+  Node.js portado encima. El escritorio nativo (Electron/Chromium), no.
