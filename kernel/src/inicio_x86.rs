@@ -7,8 +7,9 @@
 //! La consola es un proceso, como en ARM: recibe el registro y los puertos de COM1 (una llave de puertos, que se usa con
 //! `puertos_permitir` y queda en el mapa de E/S de la TSS).
 //!
-//! Sin IOMMU: el permiso DMA da memoria de la zona baja (por debajo de 4 GB), pero un aparato con el bus master
-//! encendido llega a toda la memoria física (`docs/referencia/kernel.md`, limitaciones).
+//! El permiso DMA da memoria de la zona baja (por debajo de 4 GB). Sin IOMMU, un aparato con el bus master encendido
+//! llega a toda la memoria física (`docs/referencia/kernel.md`, limitaciones). Con IOMMU (X5b), el permiso lleva el
+//! dominio del aparato y solo alcanza la memoria DMA pedida con él (`iommu.rs`).
 
 use crate::objetos::{Llave, Objeto, LEER};
 use crate::pci::Funcion;
@@ -133,7 +134,7 @@ fn pantalla_del_gop() -> Option<(Objeto, Objeto)> {
 }
 
 /// Arma las llaves de arranque y lanza `inicio`. Falso si no se pudo.
-pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
+pub fn lanzar(_a: &crate::base::acpi::Acpi, funciones: &[Funcion]) -> bool {
     let mut llaves: Vec<Llave> = Vec::new();
     let mut manifiesto: Vec<([u8; 16], u32, u32)> = Vec::new();
     // La llave 1 es el paquete; las de los aparatos empiezan en la 2.
@@ -151,14 +152,29 @@ pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
         apuntar(&mut llaves, "pantalla", FIRMWARE, Llave::nueva(pantalla, DERECHOS));
         apuntar(&mut llaves, "pantalla-info", DATOS, Llave::nueva(info, LEER | crate::objetos::TRANSFERIR));
     }
-    let funciones = crate::pci::enumerar(a);
-    kprintln!("PCIe: {} tramos de ECAM en la MCFG, {} funciones", a.ecam.len(), funciones.len());
     for (nombre, quien, bar, cfg, dma) in APARATOS {
         let Some(f) = funciones.iter().find(|f| match quien {
             Quien::Clase(c) => f.clase == *c,
             Quien::Id(fab, ap) => f.id == (*ap as u32) << 16 | *fab as u32,
         }) else {
             continue;
+        };
+        // Con IOMMU (X5b), su dominio: la memoria DMA que pida con su permiso es lo único que alcanza.
+        let permiso = match crate::iommu::dominio_para(f) {
+            Ok(Some(d)) => {
+                kprintln!("{}: DMA por la IOMMU, en su dominio ({})", nombre, d.id());
+                memoria::PermisoDma::con_dominio(memoria::Zona::Dma1G, d)
+            }
+            Ok(None) => {
+                if crate::iommu::activa() {
+                    kprintln!("{}: ninguna IOMMU lo lleva; su DMA no se limita", nombre);
+                }
+                memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)
+            }
+            Err(()) => {
+                kprintln!("{}: la IOMMU no le puede dar dominio; no se usa", nombre);
+                continue;
+            }
         };
         let Some((fisica, tamano, irq)) = preparar(f, *bar, nombre) else { continue };
         apuntar(&mut llaves, nombre, REGISTROS, Llave::nueva(Objeto::Registros { fisica, tamano }, DERECHOS));
@@ -168,7 +184,7 @@ pub fn lanzar(a: &crate::base::acpi::Acpi) -> bool {
         if let Some(irq) = irq.and_then(interrupciones::Interrupcion::nueva) {
             apuntar(&mut llaves, nombre, INTERRUPCION, Llave::nueva(Objeto::Interrupcion(irq), DERECHOS));
         }
-        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(memoria::PermisoDma::nuevo(memoria::Zona::Dma1G, 0)));
+        let permiso = Objeto::PermisoDma(alloc::sync::Arc::new(permiso));
         apuntar(&mut llaves, dma, PERMISO_DMA, Llave::nueva(permiso, DERECHOS));
     }
     // Un servicio al que le falta algún aparato no se lanza.

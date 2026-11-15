@@ -8,7 +8,8 @@
 //! - 0x20 a 0x2F: los dos 8259, apagados; si alguno da una espuria, se ignora.
 //! - 0x30 a 0xEF: aparatos. Las del kernel ponen su función con `manejar`; las de los procesos van al repartidor
 //!   (`interrupciones.rs`, X4): de 0x30 a 0xAF, las GSI de los IOAPIC (la GSI más 0x30); de 0xB0 a 0xEF, las MSI (X5).
-//! - 0xF0 el reloj, 0xF1 replanificar (C17), 0xF2 vaciar la TLB (`nucleos::vaciar_tlb_otros`), 0xFF la espuria.
+//! - 0xF0 el reloj, 0xF1 replanificar (C17), 0xF2 vaciar la TLB (`nucleos::vaciar_tlb_otros`), 0xF3 los fallos de
+//!   DMA de las IOMMU (X5b, `iommu.rs`), 0xFF la espuria.
 
 use super::cpu;
 use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
@@ -16,6 +17,8 @@ use core::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 pub const VECTOR_RELOJ: u8 = 0xf0;
 pub const VECTOR_PLANIFICAR: u8 = 0xf1;
 pub const VECTOR_TLB: u8 = 0xf2;
+/// Los fallos de DMA de las IOMMU (X5b).
+pub const VECTOR_IOMMU: u8 = 0xf3;
 pub const VECTOR_ESPURIA: u8 = 0xff;
 /// Los vectores que se pueden dar a los aparatos.
 pub const PRIMER_VECTOR_APARATO: u8 = 0x30;
@@ -258,6 +261,10 @@ pub(super) fn interrupcion(vector: u8) {
         }
         VECTOR_TLB => {
             super::nucleos::atender_tlb();
+            eoi();
+        }
+        VECTOR_IOMMU => {
+            super::iommu::atender();
             eoi();
         }
         _ => {

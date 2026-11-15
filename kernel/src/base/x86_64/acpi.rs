@@ -1,10 +1,13 @@
 //! Las tablas de ACPI que necesita el kernel en x86-64 (S30, X3): la MADT (núcleos, APIC local, IOAPIC y cambios de
 //! las interrupciones ISA), la del HPET y la FADT (el temporizador de gestión de energía, por si no hay HPET). Desde
-//! X5, la MCFG: dónde está el espacio de configuración del PCIe (ECAM).
+//! X5, la MCFG: dónde está el espacio de configuración del PCIe (ECAM). Desde X5b, las tablas de las IOMMU: la DMAR
+//! (VT-d de Intel) y la IVRS (AMD-Vi).
 //!
 //! Escrito con la especificación de ACPI 6.5: 5.2.5 (RSDP), 5.2.6 (cabecera), 5.2.7 y 5.2.8 (RSDT y XSDT), 5.2.9
 //! (FADT), 5.2.12 (MADT); con la del HPET de Intel (IA-PC HPET 1.0a, 3.2.4); y con la del firmware de PCI (PCI Firmware
-//! Specification 3.2, 4.1.2, la tabla MCFG). Cada tabla se comprueba (firma, largo
+//! Specification 3.2, 4.1.2, la tabla MCFG); la DMAR con la de VT-d de Intel ("Intel Virtualization Technology for
+//! Directed I/O Architecture Specification", capítulo 8) y la IVRS con la de AMD (n.º 48882, "AMD I/O Virtualization
+//! Technology (IOMMU) Specification", 5.2). Cada tabla se comprueba (firma, largo
 //! y suma) antes de leerla, y solo se lee lo que se ve por el mapa lineal (`mapa::se_ve`): una dirección mala del
 //! firmware da una tabla de menos, no un fallo.
 
@@ -38,6 +41,49 @@ pub struct Ecam {
     pub bus_fin: u8,
 }
 
+/// Un ámbito de aparatos de la DMAR (VT-d, 8.3.1): de qué tipo es (1 un aparato del PCI, 2 un puente con todo lo que
+/// cuelga de él, 3 un IOAPIC, 4 un HPET, 5 un aparato del espacio de nombres de ACPI), el bus donde empieza y el camino
+/// (aparato, función) por los puentes hasta él. El último paso del camino es el aparato.
+#[derive(Clone, Debug)]
+pub struct Ambito {
+    pub tipo: u8,
+    pub bus: u8,
+    pub camino: Vec<(u8, u8)>,
+}
+
+/// Una IOMMU de las tablas de ACPI (X5b).
+#[derive(Clone, Debug)]
+pub enum Iommu {
+    /// VT-d: una unidad de remapeo (DRHD, 8.3). Con `todos` (INCLUDE_PCI_ALL) lleva los aparatos de su segmento que no
+    /// lleve otra unidad; si no, solo los de sus ámbitos.
+    Intel { base: u64, segmento: u16, todos: bool, ambitos: Vec<Ambito> },
+    /// AMD-Vi: un bloque IVHD (5.2.2). `propio` es el número del PCI (bus, aparato y función) de la IOMMU misma: su MSI
+    /// está en su configuración. `rangos` son los aparatos que lleva (primero y último, en el formato de 16 bits de
+    /// bus, aparato y función); `todos`, si los lleva todos.
+    Amd { base: u64, segmento: u16, propio: u16, todos: bool, rangos: Vec<(u16, u16)> },
+}
+
+/// Para quién es una reserva de memoria de DMA.
+#[derive(Clone, Debug)]
+pub enum ParaQuien {
+    /// Los aparatos de unos ámbitos de la DMAR.
+    Ambitos(Vec<Ambito>),
+    /// Los aparatos de un rango de números del PCI (la IVRS).
+    Rango(u16, u16),
+    /// Todos.
+    Todos,
+}
+
+/// Memoria que algún aparato usa por DMA por su cuenta, sin que se lo pida el sistema (la pantalla de una gráfica
+/// integrada, el USB del firmware): las RMRR de la DMAR (VT-d, 8.4) y los IVMD de la IVRS con proyección 1:1 (AMD, 5.2.3).
+/// Hay que dejarla proyectada 1:1 en el dominio de esos aparatos. De `inicio` a `fin` (sin incluir).
+#[derive(Clone, Debug)]
+pub struct ReservaDma {
+    pub inicio: u64,
+    pub fin: u64,
+    pub para: ParaQuien,
+}
+
 /// Lo que el kernel saca de ACPI.
 #[derive(Clone, Debug, Default)]
 pub struct Acpi {
@@ -55,6 +101,9 @@ pub struct Acpi {
     pub pm_timer: Option<(u16, bool)>,
     /// Los tramos de ECAM del PCIe (MCFG, X5).
     pub ecam: Vec<Ecam>,
+    /// Las IOMMU (DMAR o IVRS, X5b), y la memoria que algunos aparatos usan por DMA por su cuenta.
+    pub iommus: Vec<Iommu>,
+    pub reservas_dma: Vec<ReservaDma>,
 }
 
 fn leer<T: Copy>(fisica: u64) -> T {
@@ -181,5 +230,146 @@ pub fn leer_tablas() -> Option<Acpi> {
             p += 16;
         }
     }
+    if let Some(&(_, d, l)) = tablas.iter().find(|t| &t.0 == b"DMAR") {
+        leer_dmar(d, d + l as u64, &mut a);
+    } else if let Some(&(_, d, l)) = tablas.iter().find(|t| &t.0 == b"IVRS") {
+        leer_ivrs(d, d + l as u64, &mut a);
+    }
     Some(a)
+}
+
+/// Los ámbitos de aparatos de `p` a `fin` (VT-d, 8.3.1): tipo (u8), largo (u8), 2 reservados, número de
+/// enumeración (u8), bus (u8) y el camino, de dos bytes por paso.
+fn ambitos(mut p: u64, fin: u64) -> Vec<Ambito> {
+    let mut v = Vec::new();
+    while p + 6 <= fin {
+        let (tipo, l) = (leer::<u8>(p), leer::<u8>(p + 1) as u64);
+        if l < 6 || p + l > fin {
+            break;
+        }
+        let camino = (0..(l - 6) / 2).map(|k| (leer::<u8>(p + 6 + 2 * k), leer::<u8>(p + 7 + 2 * k))).collect();
+        v.push(Ambito { tipo, bus: leer(p + 5), camino });
+        p += l;
+    }
+    v
+}
+
+/// La DMAR (VT-d, 8.1): tras la cabecera, el ancho de las direcciones (u8), banderas (u8) y 10 reservados; desde el
+/// byte 48, estructuras con tipo (u16) y largo (u16). Tipo 0, una unidad (DRHD, 8.3): banderas (u8, bit 0
+/// INCLUDE_PCI_ALL), tamaño (u8), segmento (u16), base de sus registros (u64) y ámbitos desde el byte 16. Tipo 1, una
+/// reserva (RMRR, 8.4): 2 reservados, segmento (u16), base (u64), límite (u64, el último byte) y ámbitos desde el 24.
+fn leer_dmar(d: u64, fin: u64, a: &mut Acpi) {
+    let mut p = d + 48;
+    while p + 4 <= fin {
+        let (tipo, l) = (leer::<u16>(p), leer::<u16>(p + 2) as u64);
+        if l < 4 || p + l > fin {
+            break;
+        }
+        match tipo {
+            0 if l >= 16 => {
+                let base: u64 = leer(p + 8);
+                if base != 0 {
+                    a.iommus.push(Iommu::Intel { base, segmento: leer(p + 6), todos: leer::<u8>(p + 4) & 1 != 0, ambitos: ambitos(p + 16, p + l) });
+                }
+            }
+            1 if l >= 24 => {
+                let (inicio, limite): (u64, u64) = (leer(p + 8), leer(p + 16));
+                if leer::<u16>(p + 6) == 0 && limite >= inicio {
+                    a.reservas_dma.push(ReservaDma { inicio, fin: limite.saturating_add(1), para: ParaQuien::Ambitos(ambitos(p + 24, p + l)) });
+                }
+            }
+            _ => {}
+        }
+        p += l;
+    }
+}
+
+/// La IVRS (AMD, 5.2): tras la cabecera, IVinfo (u32) y 8 reservados; desde el byte 48, bloques con tipo (u8),
+/// banderas (u8) y largo (u16). Los IVHD (5.2.2) son los tipos 0x10, 0x11 y 0x40: número del PCI de la IOMMU (u16, byte
+/// 4), dónde está su capacidad (u16), base de sus registros (u64, byte 8), segmento (u16, byte 16) y sus entradas de
+/// aparatos desde el byte 24 (tipo 0x10) o 40 (0x11 y 0x40). La misma IOMMU puede salir en varios tipos: se toma uno
+/// por base, el 0x11 si está (el que este kernel entiende entero), si no el 0x10 y si no el 0x40. Los IVMD (5.2.3) son
+/// los tipos 0x20 (para todos), 0x21 (un aparato) y 0x22 (un rango): número del aparato (u16, byte 4), dato auxiliar
+/// (u16, el último del rango), 8 reservados, inicio (u64, byte 16) y largo (u64, byte 24); banderas: bit 0 proyección
+/// 1:1, bits 1 y 2 leer y escribir, bit 3 rango de exclusión (sin traducir: se trata como 1:1).
+fn leer_ivrs(d: u64, fin: u64, a: &mut Acpi) {
+    let mut bloques: Vec<(u8, u64, u64, u64)> = Vec::new();
+    let mut p = d + 48;
+    while p + 4 <= fin {
+        let (tipo, banderas, l) = (leer::<u8>(p), leer::<u8>(p + 1), leer::<u16>(p + 2) as u64);
+        if l < 4 || p + l > fin {
+            break;
+        }
+        match tipo {
+            0x10 | 0x11 | 0x40 if l >= 24 => {
+                let base: u64 = leer(p + 8);
+                let rango = |t: u8| match t {
+                    0x11 => 0,
+                    0x10 => 1,
+                    _ => 2,
+                };
+                match bloques.iter_mut().find(|b| b.1 == base) {
+                    Some(b) if rango(tipo) < rango(b.0) => *b = (tipo, base, p, l),
+                    Some(_) => {}
+                    None if base != 0 => bloques.push((tipo, base, p, l)),
+                    None => {}
+                }
+            }
+            0x20..=0x22 if l >= 32 && banderas & 0b1001 != 0 => {
+                let (inicio, largo): (u64, u64) = (leer(p + 16), leer(p + 24));
+                let para = match tipo {
+                    0x20 => ParaQuien::Todos,
+                    0x21 => ParaQuien::Rango(leer(p + 4), leer(p + 4)),
+                    _ => ParaQuien::Rango(leer(p + 4), leer(p + 6)),
+                };
+                if largo != 0 {
+                    a.reservas_dma.push(ReservaDma { inicio, fin: inicio.saturating_add(largo), para });
+                }
+            }
+            _ => {}
+        }
+        p += l;
+    }
+    for (tipo, base, p, l) in bloques {
+        let desde = if tipo == 0x10 { 24 } else { 40 };
+        if l < desde {
+            continue;
+        }
+        let (todos, rangos) = entradas_ivhd(p + desde, p + l);
+        a.iommus.push(Iommu::Amd { base, segmento: leer(p + 16), propio: leer(p + 4), todos, rangos });
+    }
+}
+
+/// Las entradas de aparatos de un IVHD (AMD, 5.2.2.2): de 4 bytes los tipos 0 a 63, de 8 los 64 a 127 y de largo
+/// variable los demás. Tipo (u8), número del aparato (u16) y su ajuste (u8). 1: todos; 2: uno; 3 y 4: principio y fin
+/// de un rango; 66 y 67: uno o el principio de un rango con otro número de alias (se toma el suyo); 70 y 71: uno o el
+/// principio de un rango, con ajustes de más; 72: un IOAPIC o un HPET (no hacen DMA); 240: un aparato de ACPI por su
+/// HID (22 bytes más el largo de su UID, en el byte 21).
+fn entradas_ivhd(mut p: u64, fin: u64) -> (bool, Vec<(u16, u16)>) {
+    let (mut todos, mut rangos, mut desde) = (false, Vec::new(), None);
+    while p + 4 <= fin {
+        let tipo = leer::<u8>(p);
+        let id = leer::<u16>(p + 1);
+        let largo = match tipo {
+            0..=63 => 4,
+            64..=127 => 8,
+            240 if p + 22 <= fin => 22 + leer::<u8>(p + 21) as u64,
+            _ => break,
+        };
+        match tipo {
+            1 => todos = true,
+            2 | 66 | 70 | 240 => rangos.push((id, id)),
+            3 | 67 | 71 => desde = Some(id),
+            4 => {
+                if let Some(d) = desde.take() {
+                    if id >= d {
+                        rangos.push((d, id));
+                    }
+                }
+            }
+            _ => {}
+        }
+        p += largo;
+    }
+    (todos, rangos)
 }

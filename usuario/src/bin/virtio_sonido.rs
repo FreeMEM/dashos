@@ -279,16 +279,18 @@ fn principal() -> u64 {
     while reg8(b.comun + C_ESTADO) != 0 && dashos::ahora_us() < fin {}
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO);
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR);
-    // Solo VIRTIO_F_VERSION_1 (el bit 32), que es obligatoria en PCI moderno.
+    // VIRTIO_F_VERSION_1 (el bit 32), que es obligatoria en PCI moderno, y VIRTIO_F_ACCESS_PLATFORM (el 33, virtio 1.2,
+    // 6) si la ofrece: el aparato va detrás de una IOMMU (X5b) y sus direcciones son las de bus que da `memoria_dma`.
     poner_reg32(b.comun + C_FUNC_ELEGIR, 1);
-    if reg32(b.comun + C_FUNC) & 1 == 0 {
+    let altas = reg32(b.comun + C_FUNC);
+    if altas & 1 == 0 {
         println!("  [virtio-sonido] sin la versión 1");
         return 3;
     }
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 0);
     poner_reg32(b.comun + C_PROPIAS, 0);
     poner_reg32(b.comun + C_PROPIAS_ELEGIR, 1);
-    poner_reg32(b.comun + C_PROPIAS, 1);
+    poner_reg32(b.comun + C_PROPIAS, 1 | (altas & 2));
     poner_reg8(b.comun + C_ESTADO, S_ENTERADO | S_CONDUCTOR | S_FUNC_OK);
     if reg8(b.comun + C_ESTADO) & S_FUNC_OK == 0 {
         println!("  [virtio-sonido] no acepta las funciones");

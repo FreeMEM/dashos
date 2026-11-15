@@ -556,7 +556,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S30, X4 a X6)
+## x86-64 (S30, X4 a X6 y X5b)
 
 En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
@@ -619,9 +619,18 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   La memoria del firmware (la pantalla del GOP), fuera de la RAM o en una reserva, como memoria normal: la caché la
   deciden los MTRR del firmware. La memoria DMA va con caché: en un PC el DMA ve la caché de la CPU. Las BAR pueden
   estar por encima de 4 GB (en QEMU `q35`, en 768 GB).
-- **Sin IOMMU** (X5). El permiso DMA da memoria por debajo de 4 GB, pero un aparato con el bus master encendido
-  alcanza toda la memoria física: un controlador de un aparato del PCIe puede leer y escribir cualquier cosa por DMA.
-  En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).
+- **IOMMU** (X5b). Si el firmware da la DMAR (VT-d de Intel) o la IVRS (AMD-Vi), el kernel enciende la IOMMU al
+  arrancar con todos los aparatos bloqueados, y cada aparato con permiso DMA tiene su dominio: el aparato solo alcanza
+  la memoria DMA pedida con su permiso (`memoria_dma`), y la que el firmware reserve para él (RMRR o IVMD). La
+  dirección de bus sigue siendo la física, así que el controlador no cambia. Lo que se suelta va a la cuarentena y
+  sigue al alcance del aparato; con `dma_liberar` sale de su dominio antes de volver al sistema. Un DMA fuera de eso
+  falla: el aparato no lee nada o no escribe, el kernel lo cuenta y escribe en la consola el aparato, la dirección y el
+  motivo, y sigue. El controlador no recibe aviso (lo que haga el aparato con el error depende de él: el NVMe de QEMU
+  contesta como si nada). Un aparato de virtio debe aceptar `VIRTIO_F_ACCESS_PLATFORM` (bit 33) si lo ofrece.
+  Las MSI no pasan por la IOMMU (sin remapeo de interrupciones).
+- **Sin IOMMU** (X5): sin DMAR ni IVRS, el permiso DMA da memoria por debajo de 4 GB, pero un aparato con el bus
+  master encendido alcanza toda la memoria física: un controlador de un aparato del PCIe puede leer y escribir
+  cualquier cosa por DMA. En ARM (`virt`) pasa lo mismo sin SMMU; en la Pi, el PCIe se limita al primer GB (C51).
 
 La biblioteca `usuario/` compila para `x86_64-unknown-none` (sin SSE en el código de Rust, como el kernel; la FPU se
 usa con ensamblador) con `-C relocation-model=static -C code-model=small` y su propio guion de enlace

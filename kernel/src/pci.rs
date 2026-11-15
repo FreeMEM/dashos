@@ -4,7 +4,8 @@
 //! y la de PCI 3.0 (6.1, la cabecera de configuración de tipo 0; 6.2.5, las BAR y cómo medirlas escribiendo unos;
 //! 6.7, la lista de capacidades; 6.8.1, MSI; 6.8.2, MSI-X). En ARM, lo mismo para el árbol de dispositivos está en
 //! `inicio.rs` (U6); aquí se recorren todos los buses de la MCFG, no solo el 0, y cada función de los aparatos de
-//! varias funciones. Sin IOMMU: un aparato con el bus master encendido llega a toda la memoria física.
+//! varias funciones. Sin IOMMU, un aparato con el bus master encendido llega a toda la memoria física; con ella (X5b,
+//! `iommu.rs`), solo a la memoria DMA de su permiso.
 
 use crate::base::acpi::Acpi;
 use crate::mmio::Ventana;

@@ -1,0 +1,6 @@
+# X5b (`make -C kernel prueba-x86 IOMMU=intel` o `IOMMU=amd`): la IOMMU encendida al arrancar, y la prueba con el NVMe
+# de QEMU: escribe en su ventana, y fuera de ella (una ventana ya soltada, una página del kernel) se bloquea y se avisa.
+~traducción encendida
+~X5b: el NVMe escribe por DMA en su ventana bien
+~X5b: DMA fuera de la ventana bloqueado y avisado por la interrupción de la IOMMU bien
+~X5b: sin fallos de DMA al arrancar bien

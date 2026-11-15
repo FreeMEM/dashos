@@ -16,6 +16,9 @@
 //!
 //! - X5: los registros de los aparatos que toca el kernel (`mmio.rs`, en el GB de aparatos de `mapa.rs`) y la MCFG de
 //!   ACPI (`acpi.rs`). El PCIe y las MSI van fuera de `base` (`pci.rs`, `interrupciones.rs`).
+//!
+//! - X5b: las IOMMU (`iommu.rs`: VT-d y AMD-Vi), con sus tablas de ACPI (DMAR e IVRS, `acpi.rs`). Qué aparato va a qué
+//!   unidad y a qué dominio lo decide `crate::iommu`.
 
 pub mod acpi;
 pub mod apic;
@@ -26,6 +29,7 @@ pub mod cpu;
 pub mod espacio;
 pub mod excepciones;
 pub mod ioapic;
+pub mod iommu;
 pub mod mapa;
 pub mod mmio;
 #[path = "../memoria.rs"]

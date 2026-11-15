@@ -24,7 +24,7 @@ pub fn ejecutar_x2(libres_al_empezar: usize) {
 }
 
 /// Las de X3, las de los procesos (X4, `pruebas_procesos_x86.rs`) y al final el desborde de X2, que para el núcleo 0.
-pub fn ejecutar(a: &Acpi, n: u32) {
+pub fn ejecutar(a: &Acpi, n: u32, funciones: &[crate::pci::Funcion]) {
     prueba_acpi(a);
     prueba_tsc();
     prueba_temporizador(n);
@@ -37,6 +37,7 @@ pub fn ejecutar(a: &Acpi, n: u32) {
     prueba_tlb();
     crate::pruebas_hilos::prueba_plazo();
     prueba_recogida();
+    prueba_iommu(funciones);
     crate::pruebas_procesos_x86::ejecutar();
     prueba_desborde();
 }
@@ -582,4 +583,126 @@ fn prueba_recogida() {
     kprintln!("  dos tandas de 50 hilos: páginas libres {}, {} y {}", antes, medio, despues);
     let perdidas = antes.saturating_sub(despues);
     kprintln!("X3: recogida de hilos {} ({} páginas de diferencia en 100 hilos)", bien(perdidas <= 4), perdidas);
+}
+
+// --- X5b ---
+
+/// La IOMMU (X5b), con el NVMe de QEMU (`make -C kernel prueba-x86 IOMMU=intel` o `IOMMU=amd`, que le añaden uno). El
+/// kernel hace de controlador: pone las colas de administración en la memoria DMA de un permiso con el dominio del
+/// NVMe y le pide "Identify" (NVMe 2.0, 5.17) a distintos sitios. Escribir en la ventana tiene que ir; en una página
+/// que ya salió de la ventana (soltada y liberada de la cuarentena) y en una página del kernel, tiene que fallar, sin
+/// tocar la página, y la IOMMU tiene que avisar del fallo por su interrupción, con el aparato y la dirección. El NVMe de
+/// QEMU contesta con estado 0 aunque su DMA haya fallado: el estado no se mira. Sin IOMMU (la prueba de siempre), no se
+/// hace.
+fn prueba_iommu(funciones: &[crate::pci::Funcion]) {
+    use crate::base::iommu as hw;
+    use crate::memoria::{Memoria, PermisoDma};
+    if !crate::iommu::activa() {
+        kprintln!("X5b: sin IOMMU; no se prueba");
+        return;
+    }
+    let Some(f) = funciones.iter().find(|f| f.clase == 0x01_0802) else {
+        kprintln!("X5b: sin NVMe para probar la IOMMU");
+        return;
+    };
+    // Nada ha hecho DMA fuera de sitio desde que se encendió la IOMMU (el firmware no dejó nada en marcha).
+    kprintln!("X5b: sin fallos de DMA al arrancar {}", bien(hw::fallos() == 0));
+    let n = crate::iommu::numero(f);
+    let Ok(Some(d)) = crate::iommu::dominio_para(f) else {
+        kprintln!("X5b: dominio del NVMe MAL");
+        return;
+    };
+    let permiso = alloc::sync::Arc::new(PermisoDma::con_dominio(Zona::Dma1G, d));
+    let raiz = crate::cupo::Cupo::raiz();
+    // Página 0, la cola de órdenes; 1, la de respuestas; 2, los datos. Y otra ventana de una página, que se suelta.
+    let (Some(m), Some(m2)) = (Memoria::nueva_dma(3 * 4096, &permiso, &raiz), Memoria::nueva_dma(4096, &permiso, &raiz)) else {
+        kprintln!("X5b: memoria DMA con dominio MAL");
+        return;
+    };
+    let (bus, bus2) = (m.bus().unwrap_or(0), m2.bus().unwrap_or(0));
+    // Una página del kernel, fuera de toda ventana, con un dibujo que no debe cambiar.
+    let Some(fuera) = crate::memoria::paginas_fijas(1, 1) else { return };
+    crate::memoria::escribir_fisica(fuera, &[0x5a; 4096]);
+    let intacta = || (0..4096).all(|i| unsafe { core::ptr::read_volatile((mmu::virt(fuera as usize) + i) as *const u8) } == 0x5a);
+    let Some((bar, tam)) = f.bar(0) else {
+        kprintln!("X5b: el NVMe sin BAR 0 MAL");
+        return;
+    };
+    let Some(r) = crate::mmio::Ventana::nueva(bar, tam.min(0x4000)) else { return };
+    f.encender(false);
+    // El controlador (NVMe 2.0, 3.5.1): apagado, colas de administración de 8 entradas, encendido.
+    let cap = r.leer32(0) as u64 | (r.leer32(4) as u64) << 32;
+    let paso = 4usize << ((cap >> 32) & 0xf);
+    r.escribir32(0x14, 0);
+    esperar_que(100, || r.leer32(0x1c) & 1 == 0);
+    r.escribir32(0x24, 7 << 16 | 7);
+    r.escribir32(0x28, bus as u32);
+    r.escribir32(0x2c, (bus >> 32) as u32);
+    r.escribir32(0x30, (bus + 4096) as u32);
+    r.escribir32(0x34, ((bus + 4096) >> 32) as u32);
+    r.escribir32(0x14, 4 << 20 | 6 << 16 | 1);
+    if !esperar_que(100, || r.leer32(0x1c) & 1 == 1) {
+        kprintln!("X5b: el NVMe no se pone en marcha (CSTS {:#x}) MAL", r.leer32(0x1c));
+        return;
+    }
+    // Una orden "Identify" del controlador (CNS 1) que escribe 4 KB en `destino`: su estado, o None si no contesta.
+    let identificar = |i: u32, destino: u64| -> Option<u16> {
+        let mut c = [0u8; 64];
+        c[0] = 0x06;
+        c[2..4].copy_from_slice(&(i as u16).to_le_bytes());
+        c[24..32].copy_from_slice(&destino.to_le_bytes());
+        c[40..44].copy_from_slice(&1u32.to_le_bytes());
+        m.escribir(i as usize * 64, &c);
+        core::sync::atomic::fence(Ordering::SeqCst);
+        r.escribir32(0x1000, i + 1);
+        let respuesta = || {
+            let mut b = [0u8; 4];
+            m.leer(4096 + i as usize * 16 + 12, &mut b);
+            u32::from_le_bytes(b)
+        };
+        if !esperar_que(100, || respuesta() & 1 << 16 != 0) {
+            return None;
+        }
+        r.escribir32(0x1000 + paso, i + 1);
+        Some((respuesta() >> 17) as u16)
+    };
+    // Un fallo del NVMe en `dir`. La AMD-Vi de QEMU 11.1 no pone la dirección en sus eventos (la deja a 0): con ella
+    // basta un fallo del NVMe llegado tras la orden.
+    let hay_fallo = |dir: u64, desde: u64| {
+        hw::fallos() > desde && hw::fallos_recientes().iter().any(|x| x.origen == n && (x.direccion == dir || (x.tipo == hw::Tipo::Amd && x.direccion == 0)))
+    };
+    let fallos_antes = hw::fallos();
+    // 1. En la ventana: el NVMe escribe sus datos (el fabricante en los bytes 0 y 1, el modelo desde el 24).
+    let e1 = identificar(0, bus + 8192);
+    let mut datos = [0u8; 64];
+    m.leer(8192, &mut datos);
+    let modelo = core::str::from_utf8(&datos[24..40]).unwrap_or("?");
+    let dentro = e1 == Some(0) && u16::from_le_bytes([datos[0], datos[1]]) != 0 && hw::fallos() == fallos_antes;
+    kprintln!("  identificar en la ventana ({:#x}): estado {:?}, fabricante {:#x}, modelo {:?}", bus + 8192, e1, u16::from_le_bytes([datos[0], datos[1]]), modelo.trim());
+    // 2. En la segunda ventana, y después fuera de ella: se suelta y su cuarentena se libera (sale del dominio).
+    let e2 = identificar(1, bus2);
+    drop(m2);
+    let liberadas = permiso.liberar_cuarentena();
+    let antes3 = hw::fallos();
+    let e3 = identificar(2, bus2);
+    let por_irq3 = esperar_que(100, || hay_fallo(bus2, antes3));
+    kprintln!("  la segunda ventana ({:#x}): estado {:?}; soltada ({} páginas) y otra vez: estado {:?}, fallo avisado {}", bus2, e2, liberadas, e3, por_irq3);
+    // 3. En una página del kernel.
+    let antes4 = hw::fallos();
+    let e4 = identificar(3, fuera);
+    let por_irq4 = esperar_que(100, || hay_fallo(fuera, antes4));
+    let sin_tocar = intacta();
+    kprintln!("  en una página del kernel ({:#x}): estado {:?}, fallo avisado {}, la página {}", fuera, e4, por_irq4, if sin_tocar { "intacta" } else { "CAMBIADA" });
+    let escritura = hw::fallos_recientes().iter().filter(|x| x.origen == n && x.direccion == fuera).all(|x| x.escritura || x.tipo == hw::Tipo::Amd);
+    // El controlador, apagado; la ventana, a la cuarentena y de vuelta.
+    r.escribir32(0x14, 0);
+    esperar_que(100, || r.leer32(0x1c) & 1 == 0);
+    drop(m);
+    permiso.liberar_cuarentena();
+    let todos_suyos = hw::fallos_recientes().iter().all(|x| x.origen == n);
+    kprintln!("X5b: el NVMe escribe por DMA en su ventana {}", bien(dentro && e2 == Some(0)));
+    kprintln!(
+        "X5b: DMA fuera de la ventana bloqueado y avisado por la interrupción de la IOMMU {}",
+        bien(liberadas == 1 && e3.is_some() && por_irq3 && e4.is_some() && por_irq4 && sin_tocar && escritura && todos_suyos)
+    );
 }

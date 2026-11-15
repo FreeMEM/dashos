@@ -436,20 +436,73 @@ impl Paginas {
 /// (segunda vuelta de la auditoría, M7): un controlador que pide y suelta sin parar agota su cupo, no la memoria del
 /// sistema. Si el permiso se suelta del todo, su cuarentena no vuelve nunca: nadie podría ya decir que el aparato
 /// está parado.
+///
+/// En x86-64 con IOMMU (X5b), el permiso lleva el dominio de su aparato: la memoria DMA hecha con él se proyecta en
+/// ese dominio (dirección de bus = física) y es lo único que el aparato alcanza, además de lo que el firmware reserve
+/// para él. La de la cuarentena sigue proyectada (el aparato puede seguir escribiendo en ella); sale del dominio,
+/// con la IOTLB invalidada, antes de volver al repartidor.
 pub struct PermisoDma {
     pub zona: Zona,
     pub desplazamiento_bus: u64,
+    #[cfg(target_arch = "x86_64")]
+    dominio: Option<super::iommu::Dominio>,
     cuarentena: CerrojoIrq<alloc::vec::Vec<(u64, usize, Option<crate::cupo::Cargo>)>>,
 }
 
 impl PermisoDma {
     pub fn nuevo(zona: Zona, desplazamiento_bus: u64) -> Self {
-        Self { zona, desplazamiento_bus, cuarentena: CerrojoIrq::new(alloc::vec::Vec::new()) }
+        Self {
+            zona,
+            desplazamiento_bus,
+            #[cfg(target_arch = "x86_64")]
+            dominio: None,
+            cuarentena: CerrojoIrq::new(alloc::vec::Vec::new()),
+        }
+    }
+
+    /// x86-64 (X5b): un permiso cuya memoria va al dominio `dominio` de la IOMMU, con la dirección de bus igual a la
+    /// física.
+    #[cfg(target_arch = "x86_64")]
+    pub fn con_dominio(zona: Zona, dominio: super::iommu::Dominio) -> Self {
+        Self { dominio: Some(dominio), ..Self::nuevo(zona, 0) }
+    }
+
+    /// El dominio de la IOMMU de su aparato, si lo tiene.
+    #[cfg(target_arch = "x86_64")]
+    pub fn dominio(&self) -> Option<super::iommu::Dominio> {
+        self.dominio
+    }
+
+    /// Proyecta `n` páginas desde la física `base` en el dominio de su aparato, si lo tiene. Falso si no se pudo (y
+    /// entonces no queda nada proyectado).
+    fn proyectar_en_dominio(&self, base: u64, n: usize) -> bool {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(d) = self.dominio {
+            if !d.proyectar(base + self.desplazamiento_bus, base, n, true) {
+                d.quitar(base + self.desplazamiento_bus, n);
+                return false;
+            }
+        }
+        let _ = (base, n);
+        true
+    }
+
+    /// Quita `n` páginas desde la física `base` del dominio de su aparato: al volver, el aparato ya no las alcanza.
+    fn quitar_de_dominio(&self, base: u64, n: usize) {
+        #[cfg(target_arch = "x86_64")]
+        if let Some(d) = self.dominio {
+            d.quitar(base + self.desplazamiento_bus, n);
+        }
+        let _ = (base, n);
     }
 
     /// Devuelve al repartidor la memoria en cuarentena. Cuántas páginas.
     pub fn liberar_cuarentena(&self) -> usize {
         let tramos = core::mem::take(&mut *self.cuarentena.tomar());
+        // Primero fuera del dominio del aparato (X5b): ya no la alcanza cuando vuelve al repartidor.
+        for (base, k, _) in &tramos {
+            self.quitar_de_dominio(*base, *k);
+        }
         let mut n = 0;
         {
             let mut p = paginas();
@@ -585,6 +638,15 @@ impl Memoria {
         // o que pise lo que escriba él.
         unsafe { core::ptr::write_bytes(k as *mut u8, 0, n * PAGINA as usize) };
         limpiar_cache(k, n * PAGINA as usize);
+        // Con IOMMU (X5b), al dominio de su aparato: sin eso, el aparato no la alcanza.
+        if !permiso.proyectar_en_dominio(base, n) {
+            let mut p = self::paginas();
+            for i in 0..n as u64 {
+                // Recién sacadas y sin proyectar en ningún sitio.
+                unsafe { p.liberar(base + i * PAGINA, 1) };
+            }
+            return None;
+        }
         for i in 0..n as u64 {
             paginas.push(core::sync::atomic::AtomicU64::new(base + i * PAGINA));
         }

@@ -8,6 +8,7 @@
 # make arranque-x86  el kernel de x86-64 dentro del programa de UEFI (BOOTX64.EFI), arrancado por OVMF en QEMU q35,
 #              con los servicios de X5 (xHCI con teclado y ratón, NVMe con su disco, virtio-sound) y el compositor (X6)
 # make prueba-x86  lo mismo con las pruebas del arranque de x86 (pruebas_x86.rs) y los programas de usuario de x86
+#              Las dos, con IOMMU=intel (VT-d) o IOMMU=amd (AMD-Vi): con esa IOMMU en QEMU (X5b)
 # make arranque-virt-2  lo mismo con dos monitores (virtio-gpu con dos cabezas)
 # make arranque-virt-vm  la caja Linux (H9): la imagen de virt en QEMU con virtualization=on (EL2)
 # make arranque-virt-linux  lo mismo, y la caja arranca Linux hasta busybox (LINUX=Image, INITRD=cpio.gz, fuera de git)
@@ -444,6 +445,20 @@ SERVICIOS_X86 := inicio consola compositor xhci nvme disco archivos ficheros son
 usuario-x86-servicios: FORCE
 	cd ../usuario && cargo build --release --target x86_64-unknown-none --features $(FUNCIONES_X86) $(addprefix --bin ,$(SERVICIOS_X86))
 
+# X5b: IOMMU=intel pone en QEMU la VT-d (`-device intel-iommu`) e IOMMU=amd la AMD-Vi (`-device amd-iommu,dma-remap=on`:
+# sin dma-remap, la AMD-Vi de QEMU deja pasar sin traducir el DMA de los aparatos que emula). Con IOMMU, virtio-sound va
+# con iommu_platform=on: si no, QEMU le deja hacer DMA saltándose la IOMMU. Los esperados son los de siempre más los de
+# la IOMMU (`pruebas/*_iommu.txt`, todos con "~") y la línea de su unidad. En arranque-x86, además, ni un fallo de DMA;
+# en prueba-x86 lo mira la prueba de X5b (solo los suyos).
+IOMMU_QEMU := $(if $(filter intel,$(IOMMU)),-device intel-iommu,$(if $(filter amd,$(IOMMU)),-device amd-iommu$(coma)dma-remap=on))
+ifneq ($(IOMMU),)
+ifeq ($(IOMMU_QEMU),)
+$(error IOMMU tiene que ser intel o amd)
+endif
+endif
+VSONIDO_IOMMU := $(if $(IOMMU),$(coma)iommu_platform=on)
+esperados_x86 = $(if $(IOMMU),{ cat $(1) $(2); echo "~IOMMU: $(if $(filter intel,$(IOMMU)),VT-d,AMD-Vi) en"; } > $(3),cp $(1) $(3))
+
 # PCID=1 enciende PCID en el kernel de x86 (opción `pcid`); sin él, apagado (decisión del usuario del 2026-11-15).
 x86: usuario-x86-servicios FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none $(if $(PCID),--features pcid)
@@ -455,7 +470,9 @@ x86: usuario-x86-servicios FORCE
 arranque-x86: x86 $(DISCO_NVME)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86)) cargo build --release --target x86_64-unknown-uefi
 	rm -f target/sonido-x86.wav target/captura-x86.ppm
-	GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="-device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/arranque_x86.txt 90
+	$(call esperados_x86,pruebas/arranque_x86.txt,pruebas/arranque_x86_iommu.txt,target/esperados_arranque_x86.txt)
+	GUARDAR=$(abspath target/salida_x86.txt) CAPTURA=$(abspath target/captura-x86.ppm) ARQ=x86_64 TECLAS=simple QEMU_EXTRA="$(IOMMU_QEMU) -device qemu-xhci,id=xhci -device usb-hub,bus=xhci.0,port=1 -device usb-kbd,bus=xhci.0,port=1.1 -device usb-mouse,bus=xhci.0,port=2 -drive file=$(abspath $(DISCO_NVME)),if=none,id=nv,format=raw,discard=unmap -device nvme,serial=dashos,drive=nv -audiodev wav,id=snd0,path=$(abspath target/sonido-x86.wav),out.frequency=48000 -device virtio-sound-pci,audiodev=snd0$(VSONIDO_IOMMU)" ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_arranque_x86.txt 90
+	@if grep -q "fallo de DMA" target/salida_x86.txt; then echo "MAL: fallos de DMA en el arranque"; grep "fallo de DMA" target/salida_x86.txt | head; exit 1; fi
 	python3 ../tools/disco_archivos.py --comprobar-basico $(DISCO_NVME) $(VER)
 	python3 ../tools/captura_ventanas.py target/captura-x86.ppm target/salida_x86.txt --sin-barra
 	python3 ../tools/sonido_wav.py target/sonido-x86.wav
@@ -477,7 +494,8 @@ prueba-x86: usuario-x86 FORCE
 	cargo build $(CARGO_PERFIL) --target x86_64-unknown-none --features pruebas$(if $(PCID),$(coma)pcid)
 	$(OBJCOPY_X86) --strip-debug $(ELF_X86) $(NUCLEO_X86_PRUEBAS)
 	cd ../uefi && DASHOS_NUCLEO=$(abspath $(NUCLEO_X86_PRUEBAS)) cargo build --release --target x86_64-unknown-uefi
-	GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi pruebas/esperado_x86.txt 150
+	$(call esperados_x86,pruebas/esperado_x86.txt,pruebas/esperado_x86_iommu.txt,target/esperados_x86.txt)
+	GUARDAR=$(abspath target/salida_x86_pruebas.txt) ARQ=x86_64 $(if $(IOMMU),QEMU_EXTRA="$(IOMMU_QEMU) -device nvme$(coma)serial=prueba") ../tools/prueba_uefi.sh ../uefi/target/x86_64-unknown-uefi/release/dashos-uefi.efi target/esperados_x86.txt 150
 
 clean:
 	cargo clean

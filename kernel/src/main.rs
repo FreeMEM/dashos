@@ -63,6 +63,8 @@ mod temporizadores;
 mod inicio_x86;
 #[cfg(target_arch = "x86_64")]
 mod pci;
+#[cfg(target_arch = "x86_64")]
+mod iommu;
 
 // Solo ARM: los aparatos de las placas, el árbol de dispositivos y las máquinas virtuales (el hipervisor es de EL2).
 #[cfg(target_arch = "aarch64")]
@@ -231,7 +233,7 @@ fn panico(info: &PanicInfo) -> ! {
 /// del arranque. X1: dice lo que dejó el cargador. X2: GDT, TSS e IDT, la memoria física desde el mapa de UEFI, las
 /// defensas, las tablas de páginas propias y el montón. X3: ACPI, el reloj, los APIC, el planificador y los demás
 /// núcleos. X4: el repartidor de interrupciones y los procesos. X5: el
-/// PCIe y `inicio` con los servicios.
+/// PCIe y `inicio` con los servicios. X5b: las IOMMU.
 #[cfg(target_arch = "x86_64")]
 pub fn kmain() -> ! {
     use base::{acpi, apic, arranque, ioapic, tiempo};
@@ -314,14 +316,18 @@ pub fn kmain() -> ! {
     reloj::habilitar_irq();
     let n = nucleos::despertar(&a);
     interrupciones::iniciar();
+    // El PCIe (X5) y las IOMMU (X5b): todos los aparatos bloqueados para el DMA hasta que `inicio` les dé su permiso.
+    let funciones = pci::enumerar(&a);
+    kprintln!("PCIe: {} tramos de ECAM en la MCFG, {} funciones", a.ecam.len(), funciones.len());
+    iommu::iniciar(&a, &funciones);
 
     #[cfg(feature = "pruebas")]
-    pruebas::ejecutar(&a, n);
+    pruebas::ejecutar(&a, n, &funciones);
 
     kprintln!("DashOS en marcha (x86-64) con {} núcleos.", n + 1);
     // La imagen normal pasa el sistema al programa de inicio (X5), como en ARM. La consola es un proceso (X6).
     #[cfg(not(feature = "pruebas"))]
-    if !inicio_x86::lanzar(&a) {
+    if !inicio_x86::lanzar(&a, &funciones) {
         kprintln!("sin programa de inicio: el sistema se queda parado");
     }
     planificador::ocioso()
