@@ -153,6 +153,13 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
   pasa por él antes de aplicarse) y `pkg2::resolutor::resolver`, en Rust `no_std`, que el código común abierto
   (MPL-2.0) traerá con sus vectores.
 
+- **Dependencias declaradas o adivinadas** (`Declared: no` en la entrada): las que no escribió el autor (salen de un
+  readme de Aminet o las adivinó el repositorio) se enseñan y avisan, pero no bloquean ni cuentan en el comprobador de
+  planes. Hoy todo lo de `aminet` es `Declared: no`; lo de `main`, declarado.
+- **Volver a una versión anterior**: una respuesta firmada da las anteriores que aún se pueden bajar (hasta diez); el
+  plan es instalar esa entrada (puede bajar de versión, solo si se pide). `Paq` guarda en caché el último paquete
+  instalado de cada uno, para volver sin red. En DashOS, además, las instantáneas (S5).
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
