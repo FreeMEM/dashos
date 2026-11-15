@@ -69,6 +69,12 @@ Dos líneas a la vez (decisión 4 de S30):
   (capa de puertos en RelevoJIT: memoria, `memcpy`, matemáticas), su memoria de código sobre objetos de memoria de
   DashOS (doble proyección RW y RX), y un programa que ejecuta los programas de `jit-host/pruebas68k` con el
   intérprete y con el JIT, con la misma salida que en Linux. El cargador avisa con `relevo_invalidate`.
+- [ ] X5b **IOMMU** (VT-d de Intel y AMD-Vi): tablas DMAR e IVRS de ACPI, un dominio por aparato, el DMA de cada
+  servicio limitado a sus ventanas, y el aviso de fallos de DMA. Requisito para pasar aparatos a la caja Linux y
+  para el dominio de controladores de la zona GPL (S32 y S33 de `revision`). En QEMU: `-device intel-iommu` y
+  `-device amd-iommu`. Prioridad de la línea A.
+- [ ] X5c **Aparatos de un PC de verdad**: AHCI (SATA), HDA (sonido), y la red de cada placa o, mientras, la del
+  dominio de controladores de la zona GPL; y compartir internet del móvil por USB (CDC-NCM y RNDIS).
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
