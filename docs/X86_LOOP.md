@@ -428,3 +428,20 @@ apagar por ACPI; máquinas virtuales en x86; `sesiones` y el resto del escritori
 dan BIEN en la sesión del coordinador. Siguiente en la línea B: la reescritura de RelevoJIT en Rust
 (`~/Projects/RelevoJIT/docs/REESCRITURA.md`, RR0 y RR1), cuando la ventana de 5 horas baje del 80 %.
 
+
+### 2026-11-15 10:5x — Cierre del bucle (uso semanal al 78 %)
+
+Resumen de la tanda del 14 y 15 de noviembre:
+
+- Línea A (DashOS en x86-64): X1 a X6 hechas (arranque UEFI, memoria, núcleos, procesos, PCIe con xHCI, NVMe y
+  virtio-sound, escritorio en QEMU `q35`). `revision` fusionada en `x86` (f9878b8) y comprobada. Rama subida.
+  X7a a medias (commit WIP en `x86` y rama `puertos` de RelevoJIT). Pendientes: X5b (IOMMU, la primera), X5c, X7, X8
+  y X9 (pegaso y shiva).
+- Línea B (RelevoJIT): intérprete 68000 a 68040 con FPU y JIT x86-64 (R0 a R7), revisión (`REVISION.md`, V1 hecha),
+  y reescritura en Rust: RR0 a RR3 hechas, `main` ya es la versión en Rust (a0c3c65). JIT en Rust: aritmética
+  ~6000 MIPS, copia ~1650-1750, saltos ~3100. Pendiente: RR4 (retirar `c/`), V2 a V9.
+- Decisiones del usuario: nombre público futuro UsirOS (DashOS mientras tanto), MMU y 68060 dentro, RelevoJIT en
+  Rust y como motor único a largo plazo, interfaz de motor en la caja, fork `FreeMEM/Emu68` (rama `dashos`).
+
+Se retoma tras la renovación semanal (lunes 2026-11-16 por la noche), con un solo agente a la vez: X5b (IOMMU) o
+RR4, y la interfaz de motor de la caja.
