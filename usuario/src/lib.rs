@@ -325,8 +325,23 @@ pub mod maquina {
     pub const WFI: i64 = 4;
     pub const INTERRUMPIDO: i64 = 5;
     pub const FALLO: i64 = 6;
-    /// Un registro del sistema atrapado: en `direccion`, su codificación; `x1` = 1 si lee.
+    /// Un registro del sistema atrapado: en `direccion`, su codificación; `x1` = 1 si lee. En x86 (X10), RDMSR o WRMSR:
+    /// `direccion` es la MSR y el valor, edx:eax.
     pub const REGISTRO: i64 = 7;
+    /// Solo x86 (X10): IN u OUT. `direccion` es el puerto, `tamano` 1, 2 o 4, `x1` = 1 si es IN (el `valor` de la
+    /// siguiente vuelta va a al, ax o eax); en OUT, `valor`.
+    pub const PUERTO: i64 = 8;
+
+    /// x86 (X10), en `Interrupciones::lr`: el vector (bits 7:0) se entrega en cuanto el invitado pueda; el kernel deja
+    /// a 0 el hueco al entregarlo.
+    pub const HUECO_PENDIENTE: u64 = 1 << 8;
+    /// x86, en `Interrupciones::temporizador`, de vuelta: se entregó la interrupción del temporizador (el plazo del TSC
+    /// del invitado). El servicio pone el bit 0 (encendido) y el vector en los bits 15:8.
+    pub const TEMPORIZADOR_ENTREGADO: u64 = 1 << 18;
+    /// x86: los modos en que empieza una vCPU con `maquina_reiniciar_modo`: protegido de 32 bits plano (el de
+    /// `maquina_crear`) o real (como tras una SIPI: CS = entrada / 16).
+    pub const MODO_PROTEGIDO: u64 = 0;
+    pub const MODO_REAL: u64 = 1;
 
     /// El informe de una salida: motivo, PC, dirección física del invitado, valor, tamaño (o número del HVC), ESR,
     /// x1 y x2 (en un HVC), las cuentas del contador que pasó fuera del kernel, x3 (en un HVC), el plazo del
@@ -383,7 +398,8 @@ pub mod maquina {
         pub lr: [u64; LRS],
     }
 
-    /// x0..x30, PC y PSTATE de una vCPU.
+    /// x0..x30, PC y PSTATE de una vCPU. En x86 (X10), el mismo tamaño: rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8 a
+    /// r15, rip, rflags, cr0, cr2, cr3, cr4 y EFER (de cr0 en adelante solo se leen) y el resto a 0.
     pub const REGISTROS: usize = 33;
 
     /// Lo que necesita el servicio de la caja Linux además de la RAM de su invitado: las tablas de la etapa 2, su
@@ -475,6 +491,11 @@ pub fn maquina_vcpu(llave: u32, numero: u64, entrada: u64, x0: u64) -> i64 {
 /// La vCPU parada `llave`, como recién encendida (PSCI CPU_ON): en `entrada`, con `x0`, la MMU apagada y lo demás a 0.
 pub fn maquina_reiniciar(llave: u32, entrada: u64, x0: u64) -> i64 {
     llamada(48, [llave as u64, 5, entrada, x0, 0]).0 as i64
+}
+
+/// x86 (X10): como `maquina_reiniciar`, en el modo `modo` (`maquina::MODO_PROTEGIDO` o `maquina::MODO_REAL`).
+pub fn maquina_reiniciar_modo(llave: u32, entrada: u64, x0: u64, modo: u64) -> i64 {
+    llamada(48, [llave as u64, 5, entrada, x0, modo]).0 as i64
 }
 
 /// Saca a la vCPU `llave` de su invitado en cuanto pueda (corra en otro núcleo o duerma en un WFI); si no corre, la

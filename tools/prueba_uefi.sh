@@ -7,6 +7,7 @@
 # arranca solo. Mismo formato de esperados que prueba_qemu.sh: líneas en orden, "~" en cualquier sitio, "#" ignoradas.
 #
 # Con ARQ=x86_64 (S30, X1), en QEMU q35 con OVMF, como EFI/BOOT/BOOTX64.EFI, con una copia de las variables de OVMF.
+# Con ACCEL_X86=kvm y CPU_X86=host (X10), con KVM en vez de TCG.
 set -u
 EFI=$1
 ESPERADOS=$2
@@ -29,7 +30,8 @@ if [ "$ARQ" = x86_64 ]; then
     OVMF=${OVMF:-/usr/share/edk2/x64/OVMF_CODE.4m.fd}
     VARS=$SALIDA.vars
     cp "${OVMF_VARS:-/usr/share/edk2/x64/OVMF_VARS.4m.fd}" "$VARS"
-    timeout "$SEGUNDOS" qemu-system-x86_64 -monitor unix:"$MONITOR",server,nowait -M q35${MAQUINA:+,$MAQUINA} -cpu max -smp 4 -m 2G \
+    # X10: con ACCEL_X86=kvm, KVM (y CPU_X86=host): así se prueba el hipervisor de verdad (AMD-V o VT-x anidados).
+    timeout "$SEGUNDOS" qemu-system-x86_64 -monitor unix:"$MONITOR",server,nowait -M q35${MAQUINA:+,$MAQUINA} ${ACCEL_X86:+-accel $ACCEL_X86} -cpu ${CPU_X86:-max} -smp 4 -m 2G \
         -drive if=pflash,format=raw,readonly=on,file="$OVMF" -drive if=pflash,format=raw,file="$VARS" \
         -drive file=fat:rw:"$DISCO",format=raw,if=virtio \
         -display none -serial file:"$SALIDA" -net none ${QEMU_EXTRA:-} >/dev/null 2>&1 &

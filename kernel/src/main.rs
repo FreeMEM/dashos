@@ -81,6 +81,10 @@ mod inicio;
 mod its;
 #[cfg(target_arch = "aarch64")]
 mod maquinas;
+// X10: las máquinas virtuales de x86 (AMD-V o VT-x), con la misma interfaz.
+#[cfg(target_arch = "x86_64")]
+#[path = "maquinas_x86.rs"]
+mod maquinas;
 #[cfg(all(target_arch = "aarch64", feature = "diagnostico"))]
 mod pantalla;
 #[cfg(target_arch = "aarch64")]
@@ -314,6 +318,8 @@ pub fn kmain() -> ! {
     planificador::iniciar_nucleo();
     reloj::iniciar(100);
     reloj::habilitar_irq();
+    // X10: AMD-V o VT-x. Cada núcleo lo enciende la primera vez que corre una vCPU.
+    kprintln!("Hipervisor: {}", base::hiper::iniciar());
     let n = nucleos::despertar(&a);
     interrupciones::iniciar();
     // El PCIe (X5) y las IOMMU (X5b): todos los aparatos bloqueados para el DMA hasta que `inicio` les dé su permiso.

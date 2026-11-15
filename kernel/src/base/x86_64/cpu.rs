@@ -147,6 +147,8 @@ pub fn funciones() -> Funciones {
 static NX: AtomicBool = AtomicBool::new(false);
 static PCID: AtomicBool = AtomicBool::new(false);
 static XSAVE: AtomicBool = AtomicBool::new(false);
+/// XCR0 del kernel: lo que guarda de cada hilo (X10: también de cada vCPU).
+static XCR0: core::sync::atomic::AtomicU64 = core::sync::atomic::AtomicU64::new(0);
 /// SMAP encendido: las copias de usuario (`copia.s`) y las entradas desde el anillo 3 (`vectores.s`) usan entonces
 /// `stac` y `clac`, que sin SMAP no existen.
 #[unsafe(no_mangle)]
@@ -239,10 +241,16 @@ fn poner_xcr0() {
         xcr0 &= XCR0_BASICO;
         xsetbv(xcr0);
     }
+    XCR0.store(xcr0, Ordering::Relaxed);
     XSAVE.store(true, Ordering::Relaxed);
 }
 
-fn xsetbv(v: u64) {
+/// XCR0 del kernel, o 0 sin XSAVE (X10: lo más que puede pedir un invitado, y lo que se repone al salir de él).
+pub fn xcr0_kernel() -> u64 {
+    if XSAVE.load(Ordering::Relaxed) { XCR0.load(Ordering::Relaxed) } else { 0 }
+}
+
+pub(super) fn xsetbv(v: u64) {
     unsafe { asm!("xsetbv", in("ecx") 0, in("eax") v as u32, in("edx") (v >> 32) as u32, options(nostack, preserves_flags)) };
 }
 

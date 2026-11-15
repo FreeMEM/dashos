@@ -43,6 +43,8 @@
 //! | 46 | maquina_correr(máquina, informe, valor, interrupciones) -> motivo: entra en el invitado hasta que sale |
 //! | 47 | maquina_memoria(máquina, memoria, dirección física del invitado): más RAM para el invitado |
 //! | 48 | maquina_estado(máquina, operación, argumento, a, b): registros, aborto, GICV, otra vCPU, reiniciarla, patearla, parar |
+//!
+//! En x86 (X10) las llamadas de máquinas son las mismas, con AMD-V o VT-x (`maquinas_x86.rs`).
 //! | 51 | apagar(permiso, modo): 0 apaga la máquina, 1 la reinicia; no vuelve si se pudo |
 //! | 56 | puertos_permitir(llave de puertos): en x86, el proceso puede usar esos puertos de E/S (X6; antes de fusionar `revision` era la 29) |
 //!
@@ -195,18 +197,11 @@ pub fn atender(marco: &mut Marco) {
         42 => esperar(a[0], a[1], a[2]),
         43 => despertar(a[0], a[1]),
         44 => proceso_salir(a[0]),
-        // La caja Linux (H9): máquinas virtuales.
-        #[cfg(target_arch = "aarch64")]
+        // La caja Linux (H9): máquinas virtuales. En x86 (X10), con AMD-V o VT-x y la misma interfaz.
         45 => maquina_crear(a[0] as u32, a[1] as u32, a[2], a[3], a[4]),
-        #[cfg(target_arch = "aarch64")]
         46 => maquina_correr(a[0] as u32, a[1], a[2], a[3]),
-        #[cfg(target_arch = "aarch64")]
         47 => maquina_memoria(a[0] as u32, a[1] as u32, a[2]),
-        #[cfg(target_arch = "aarch64")]
         48 => maquina_estado(a[0] as u32, a[1], a[2], a[3], a[4]),
-        // x86-64: sin hipervisor todavía (sería VT-x o AMD-V): no hay máquinas virtuales.
-        #[cfg(target_arch = "x86_64")]
-        45..=48 | 55 => E_NO_HAY,
         // H4 (S3): la página 0 de la caja Amiga, con su permiso en a[0] y el objeto de memoria (una página) en a[1].
         49 => pagina_cero(a[0] as u32, a[1] as u32),
         50 => memoria_vista(a[0], a[1], a[2], a[3]),
@@ -220,7 +215,6 @@ pub fn atender(marco: &mut Marco) {
         54 => grupo_tope(a[0] as u32, a[1]),
         // Aviso a las cajas: el globo de una máquina (a[0] una vCPU con escribir; a[1] 0 soltar, 1 reponer; a[2] tabla
         // de direcciones del invitado en u64; a[3] cuántas, hasta 256).
-        #[cfg(target_arch = "aarch64")]
         55 => maquina_globo(a[0] as u32, a[1], a[2], a[3]),
         // M2b (docs/MULTITAREA_LOOP.md): dormir a[0] microsegundos (como mucho una hora), sin canal ni temporizador.
         30 => {
@@ -1334,7 +1328,6 @@ fn proceso_salir(codigo: u64) -> u64 {
 /// revocable) como su RAM, que el invitado ve desde `ipa`; empieza en `entrada`, en EL1, con la MMU apagada y `x0` en
 /// su x0 (el árbol de dispositivos de un kernel de Linux). Lo que
 /// cuestan su vCPU y sus tablas se cobra al grupo. Sin hipervisor, `E_NO_HAY`.
-#[cfg(target_arch = "aarch64")]
 fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let (permiso, memoria) = {
@@ -1379,7 +1372,6 @@ fn maquina_crear(hp: u32, hm: u32, ipa: u64, entrada: u64, x0: u64) -> u64 {
 /// little-endian, `maquinas::PALABRAS`). `valor` contesta a una lectura de aparato pendiente. `irq`, si no es 0, es el
 /// bloque de interrupciones (`maquinas::IRQ_PALABRAS` u64): se lee antes de entrar y se escribe al volver. Devuelve el
 /// motivo.
-#[cfg(target_arch = "aarch64")]
 fn maquina_correr(h: u32, informe: u64, valor: u64, irq: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
@@ -1433,10 +1425,10 @@ fn maquina_correr(h: u32, informe: u64, valor: u64, irq: u64) -> u64 {
 ///     GIC virtual);
 ///   4 otra vCPU de la misma máquina: la número `arg` (su Aff0 en el MPIDR, menos de 8 y sin otra con ese número), que
 ///     empieza en `a` con x0 = `b`; devuelve su llave (`E_ARGUMENTO` si el número no vale o ya está);
-///   5 reiniciarla, parada, como recién encendida en `arg` con x0 = `a` (PSCI CPU_ON);
+///   5 reiniciarla, parada, como recién encendida en `arg` con x0 = `a` (PSCI CPU_ON); en x86, en el modo `b` (0
+///     protegido de 32 bits, 1 real: una SIPI);
 ///   6 patearla: que salga de su invitado en cuanto pueda (desde otro hilo; si no corre, la próxima vez no entra);
 ///   7 parar la máquina entera: todas sus vCPU salen y ya no entran (`E_CERRADO`).
-#[cfg(target_arch = "aarch64")]
 fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let Some(l) = proc_.llaves.tomar().ver(h) else { return E_LLAVE };
@@ -1495,7 +1487,14 @@ fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
                 Err(_) => E_LIMITE,
             }
         }
+        #[cfg(target_arch = "aarch64")]
         5 => match m.reiniciar(arg, a) {
+            Ok(()) => 0,
+            Err(e) => error(e),
+        },
+        // x86 (X10): `b` es el modo en que empieza (0 protegido de 32 bits, 1 real, como tras una SIPI).
+        #[cfg(target_arch = "x86_64")]
+        5 => match m.reiniciar(arg, a, b) {
             Ok(()) => 0,
             Err(e) => error(e),
         },
@@ -1513,7 +1512,6 @@ fn maquina_estado(h: u32, op: u64, arg: u64, a: u64, b: u64) -> u64 {
 
 /// Más RAM para el invitado de la máquina `h` (escribir): el objeto de memoria `hm` (leer y escribir; ni DMA ni
 /// revocable), visto desde `ipa`, sin pisar lo que ya ve. Para un invitado de más de 16 MB, el tope de `memoria_crear`.
-#[cfg(target_arch = "aarch64")]
 fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     let (l, memoria) = {
@@ -1546,7 +1544,6 @@ fn maquina_memoria(h: u32, hm: u32, ipa: u64) -> u64 {
 /// (`op` 0) o repone (1) las páginas del invitado cuyas direcciones (u64, alineadas a 4 KB) están en la tabla `tabla`
 /// (`n`, de 1 a 256). Solo memoria que tiene nadie más que la máquina y quien llama (ver `hiper::Espacio::globo`): las
 /// páginas de otra se saltan. Devuelve cuántas se hicieron.
-#[cfg(target_arch = "aarch64")]
 fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
     let Some(proc_) = objetos::proceso_actual() else { return E_ARGUMENTO };
     if n == 0 || n > crate::base::hiper::MAX_GLOBO as u64 {
@@ -1584,7 +1581,6 @@ fn maquina_globo(h: u32, op: u64, tabla: u64, n: u64) -> u64 {
     }
 }
 
-#[cfg(target_arch = "aarch64")]
 fn error_hiper(e: crate::base::hiper::Error) -> u64 {
     match e {
         crate::base::hiper::Error::NoHay => E_NO_HAY,

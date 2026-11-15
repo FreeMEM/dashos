@@ -401,7 +401,8 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
   - La llave de proceso no mantiene viva la memoria del proceso: se libera cuando acaba.
 
 - **45 a 48, máquinas virtuales** (caja Linux, H9; `kernel/src/maquinas.rs`, `base/hiper.rs`). Solo si el kernel
-  arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. El kernel deja en EL2 un
+  arrancó en EL2 (en QEMU, `virtualization=on`); si no, `maquina_crear` da `E_NO_HAY`. En x86 (X10), con AMD-V o VT-x:
+  lo que cambia está en la sección "x86-64". El kernel deja en EL2 un
   trozo pequeño que cambia de mundo, y sigue en EL1.
   - Cada llave de máquina es una vCPU. Las de una máquina comparten su memoria, la etapa 2 y el VMID; cada una tiene
     su MPIDR, sus registros, su GIC virtual (LR, VMCR, APR), su temporizador virtual y su FPU, y se corre desde un
@@ -467,7 +468,7 @@ llamada devuelve `E_ARGUMENTO` y el kernel sigue.
 | −7 | `E_MEMORIA` | No queda memoria para procesos |
 | −8 | `E_LIMITE` | Un límite: tabla de llaves llena, cola del canal llena o demasiadas proyecciones |
 | −9 | `E_PLAZO` | Venció el plazo de `canal_leer_plazo` sin mensaje (K7). `canal_leer` ya no dice `E_CERRADO` por falta de memoria: `E_MEMORIA` |
-| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2 (`maquina_crear`, `maquina_correr`) |
+| −10 | `E_NO_HAY` | Sin hipervisor: el kernel no arrancó en EL2, o en x86 no hay AMD-V con NPT ni VT-x con EPT (`maquina_crear`, `maquina_correr`) |
 
 ### Topes de trabajo
 
@@ -556,7 +557,7 @@ Los programas Dash para DashOS se compilan con `./dash --dashos` en la rama `aar
 - Saltar a una dirección del kernel termina el proceso.
 - Las FIQ van enmascaradas. Un SError mientras corre el proceso lo termina.
 
-## x86-64 (S30, X4 a X6 y X5b)
+## x86-64 (S30, X4 a X6, X5b y X10)
 
 En x86-64 (rama `x86`, `make -C kernel prueba-x86` y `make -C kernel arranque-x86`) un programa ve lo mismo que en ARM: las mismas llamadas con los
 mismos números, argumentos, resultados y errores, las mismas llaves y objetos, el mismo mapa de direcciones y los
@@ -576,13 +577,70 @@ mismos límites. Cambian los registros y lo que es de la CPU:
   la entrada no tiene que estar alineada; el hilo empieza con `rdi` = argumento, la base de FS = TLS y `rsp` = pila
   menos 8 (como tras un `call`: la entrada puede ser una función de C); y cuesta 24 KB al grupo, no 20 (su zona de
   XSAVE). La prueba es la misma (`hilos`, C52 en `make -C kernel prueba-x86`).
-- **Lo que no hay todavía en x86.** Máquinas virtuales: las llamadas 45 a 48 y la 55 dan `E_NO_HAY` (no hay
-  hipervisor: sería VT-x o AMD-V), y no existe el permiso de máquinas. `apagar` (51) reinicia (puerto 0xCF9 y, si no,
+- **Lo que no hay todavía en x86.** El globo de las máquinas virtuales (55) da `E_NO_HAY`, y las llaves de arranque
+  no traen el permiso de máquinas (`inicio_x86.rs` no lanza la caja Linux). `apagar` (51) reinicia (puerto 0xCF9 y, si no,
   el controlador del teclado), pero no apaga: da `E_NO_HAY` (haría falta leer `\_S5` del AML de ACPI). `hora` (39) da
   0: no se lee el reloj del PC. `azar` (34) dice siempre que no es de calidad: no hay semilla del firmware (falta
   RDRAND o RDSEED). No hay orden de bytes por proceso: todo es little-endian. Las llaves de arranque no traen los
   permisos de página 0, de apagar ni del aviso de memoria (`inicio_x86.rs` no lanza `sesiones` ni la caja Amiga);
   las llamadas 49, 53 y 54 sí están.
+- **Máquinas virtuales** (X10; `kernel/src/maquinas_x86.rs`, `base/x86_64/hiper.rs`). Las llamadas 45 a 48, con los
+  mismos números, llaves, informe (13 u64) y bloque de interrupciones (10 u64) que en ARM, con AMD-V (SVM) y NPT o con
+  VT-x y EPT (con invitado sin restricciones). Sin ninguno de los dos, `maquina_crear` da `E_NO_HAY`. El kernel dice
+  cuál hay al arrancar ("Hipervisor: ..."). Lo que cambia:
+  - **La vCPU empieza** en modo protegido de 32 bits plano, como pide el protocolo de 32 bits de Linux: CS 0x10 y los
+    de datos 0x18, de base 0 y límite 4 GB; sin paginación; CR0 = 0x31 (PE, ET, NE); EFER, CR3, CR4 a 0; RFLAGS 0x2
+    (interrupciones cerradas); GDTR e IDTR de base 0 y límite 0xFFFF (el invitado pone las suyas); rip = `x3` y
+    **rsi = `x4`** (el "x0" de ARM). XCR0 = 1 y la FPU como al encender. Cada vCPU tiene su ID de APIC (su número, de
+    0 a 7) en CPUID.
+  - **La memoria** del invitado, hasta 512 GB de direcciones físicas (en ARM, 4 GB). Sin cambios de caché que hacer:
+    x86 es coherente.
+  - **Motivos.** 1 HVC es VMMCALL (AMD) o VMCALL (Intel): valor = rax, x1, x2 y x3 = rbx, rcx y rdx, tamaño 0. 2 y 3,
+    lectura o escritura en una dirección que no es su memoria: el kernel decodifica la instrucción (la lee de la
+    memoria del invitado recorriendo sus tablas de páginas, o la da la CPU en AMD con su ayuda): MOV entre registro y
+    memoria, MOV de un inmediato, MOV con dirección absoluta (A0 a A3), MOVZX y MOVSX; de 1, 2, 4 u 8 bytes, con
+    prefijos y REX, también a AH, CH, DH y BH. Otra instrucción es un fallo (6). La respuesta a una lectura se escribe
+    como lo haría la CPU (4 bytes: el resto del registro a cero; 1 o 2: el resto como estaba). 4 es HLT. 5, una
+    interrupción del anfitrión o una patada. 6, triple fallo, estado no válido, un fallo de NPT/EPT que no es de un
+    acceso a un aparato (ejecutar ahí, una tabla del invitado fuera de su memoria), INS/OUTS o una instrucción que no
+    se sabe decodificar: la máquina queda muerta, como en ARM. 7, REGISTRO, es RDMSR o WRMSR de una MSR que no
+    resuelve el kernel: dirección = la MSR, x1 = 1 si lee (el `x2` de la siguiente llamada va a edx:eax), valor =
+    edx:eax si escribe. **8, PUERTO** (nuevo, solo x86): IN u OUT; dirección = el puerto, tamaño 1, 2 o 4, x1 = 1 si
+    es IN (el `x2` de la siguiente llamada va a al, ax o eax) y valor si es OUT. En todos menos 2, 3 y 6, el RIP ya
+    está en la siguiente instrucción; en 2 y 3 también, tras decodificar. La palabra 5 del informe (el ESR en ARM) es
+    el código de salida de la CPU (el de AMD o la razón de Intel), para depurar.
+  - **Lo que resuelve el kernel sin salir:** CPUID (el de la CPU sin VMX, SVM, MONITOR, x2APIC, PKU, los contadores,
+    RDTSCP ni RDPID, y con el bit de hipervisor, el plazo del TSC y la hoja 0x4000_0000 = "DashOSDashOS"); EFER, PAT y
+    IA32_TSC_DEADLINE; las MSR que cambian de mundo con el invitado (bases de FS y GS, KernelGsBase, STAR, LSTAR,
+    CSTAR, SFMASK, SYSENTER) sin salir; leer el TSC (el del anfitrión, sin desplazamiento); XSETBV (lo que cabe en lo
+    que guarda el kernel: x87, SSE, AVX y AVX-512); en VT-x, CR0, CR4 y CR8 (el invitado ve sus valores). Las
+    instrucciones de virtualización, MONITOR y MWAIT dan #UD al invitado; RDPMC, #GP; #AC se le devuelve.
+  - **El bloque de interrupciones.** [0] = 8 (los huecos que usa el servicio; lo pone el kernel). [1], el
+    temporizador del invitado, que lleva el kernel como el virtual de ARM: bit 0 encendido y [15:8] su vector (lo pone
+    el servicio, que emula la LVT del APIC), bit 17 `ESPERAR_WFI` (igual que en ARM, con HLT), y el kernel pone el
+    bit 18 (`TEMPORIZADOR_ENTREGADO`) si lo entregó en esa llamada. El plazo es el que escribe el invitado en
+    IA32_TSC_DEADLINE (en cuentas del TSC, las del contador del anfitrión; la palabra 10 del informe); al vencer, el
+    kernel adelanta el tic del núcleo para sacar al invitado a tiempo, lo entrega y lo pone a 0. Desde [2], 8 huecos:
+    el vector (bits 7:0, de 16 en adelante) y el bit 8 si está pendiente. El kernel entrega el mayor de los pendientes
+    (y del temporizador) en cuanto el invitado lo acepta (IF a 1, sin el bloqueo de STI) y deja ese hueco a 0; uno a
+    la vez (el siguiente, en otra salida: el EOI del invitado al APIC es una escritura que sale). El APIC local, el
+    IOAPIC y el PIC los emula el servicio. Un HLT con algo que entregar y las interrupciones abiertas no sale: se
+    entrega. Señales (palabra 11), bit 0: hay algo pendiente que entregar.
+  - **`maquina_estado`.** 0 y 1, los registros: 33 u64 como en ARM, pero rax, rcx, rdx, rbx, rsp, rbp, rsi, rdi, r8 a
+    r15, rip, rflags, cr0, cr2, cr3, cr4 y EFER (y 10 a cero). Al escribir, solo los 16 generales, rip y rflags (sin
+    VM ni bits reservados; el bit 1 a 1). 2, "no hay nada ahí", en lugar del último acceso: una lectura de un aparato
+    o de un puerto da todo unos y una escritura se pierde (como en un PC); en una MSR, #GP en esa instrucción. 3 (la
+    GICV) da `E_NO_HAY`. 4, otra vCPU (su ID de APIC). 5, reiniciarla, con un argumento más: `x4` es el modo, 0
+    protegido de 32 bits (como al crearla) o 1 real, como tras una SIPI (CS = `x2` / 16, IP = `x2` % 16; para la SIPI
+    del vector V, `x2` = V × 4096). 6 y 7, igual.
+  - **Para pasar aparatos (X11)**: la dirección física del invitado de cada página será la misma que vea el aparato, y
+    el kernel ya sabe dar cada par (física del invitado, física de verdad) para el dominio de la IOMMU
+    (`hiper::Espacio::por_cada_pagina`).
+  - **Lo que falta.** El globo (55: `E_NO_HAY`). APIC virtual por hardware (AVIC, APICv) e interrupciones entregadas
+    sin salir (posted interrupts). PAE de 32 bits sin modo largo en VT-x (los PDPTE no se cargan). INS y OUTS. Los
+    registros de depuración no se cambian de mundo (DR0 a DR3 y DR6 los ve el invitado siguiente; DR7 sí es de cada
+    uno). En AMD, CR4 no se vigila (un invitado puede encender PKE o CET, aunque CPUID no los da). Un triple fallo mata
+    la máquina en vez de reiniciarla.
 - **Espacio.** La mitad baja es PML4[0], los mismos 512 GB. En vez de ASID, PCID de 12 bits; cada espacio tiene el
   suyo (como mucho 4095 procesos vivos a la vez; el 0 es del kernel), pero **PCID va apagado de serie** (decisión del
   usuario del 2026-11-15: ese camino no se ha probado en ninguna CPU): cada cambio de proceso vacía la TLB de

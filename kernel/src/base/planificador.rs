@@ -174,8 +174,8 @@ pub(crate) struct EstadoFp([u8; super::cpu::TAMANO_FP]);
 #[cfg(target_arch = "x86_64")]
 impl EstadoFp {
     /// La primera vez, el estado inicial (`cpu::fp_inicial`). Sin pasar por la pila del kernel, que es pequeña. `None`
-    /// sin memoria (S1).
-    fn nuevo() -> Option<Box<Self>> {
+    /// sin memoria (S1). También la de una vCPU (X10).
+    pub(crate) fn nuevo() -> Option<Box<Self>> {
         // SAFETY: es un vector de bytes: todo ceros vale.
         let mut e: Box<Self> = unsafe { Box::<Self>::try_new_zeroed().ok()?.assume_init() };
         super::cpu::fp_inicial(&mut e.0);

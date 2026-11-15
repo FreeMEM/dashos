@@ -26,7 +26,7 @@ pub const DATOS_KERNEL: u16 = 0x10;
 pub const BASE_USUARIO: u16 = 0x18;
 pub const DATOS_USUARIO: u16 = 0x20 | 3;
 pub const CODIGO_USUARIO: u16 = 0x28 | 3;
-const TSS_SELECTOR: u16 = 0x30;
+pub(super) const TSS_SELECTOR: u16 = 0x30;
 
 /// Pila de cada vector con pila propia (IST): 1 fallo doble, 2 NMI, 3 comprobación de máquina. Las tres llegan
 /// también entre `swapgs` y `sysret`, con la pila del proceso: por eso tienen la suya, y no miran GS.
@@ -264,6 +264,28 @@ fn cargar_gdt(n: usize) {
             tss = in(reg) TSS_SELECTOR,
             t = out(reg) _,
         );
+    }
+}
+
+/// X10: las bases de la GDT, la IDT y la TSS de este núcleo, para el estado del anfitrión de VT-x (lo que la CPU repone
+/// al salir del invitado).
+pub(super) fn bases_de_este_nucleo() -> (u64, u64, u64) {
+    let n = super::nucleos::numero() as usize % MAX_NUCLEOS;
+    // SAFETY: solo las direcciones.
+    unsafe { (&raw const GDT[n] as u64, &raw const IDT as u64, &raw const TSS[n] as u64) }
+}
+
+/// X10: tras salir de un invitado de VT-x, la CPU deja la GDT con límite 0xFFFF y la TSS con límite 0x67 (SDM, vol. 3C,
+/// 28.5.2): sin el mapa de puertos (todos prohibidos para el anillo 3) y con la GDT alcanzando memoria que no es
+/// suya. Se vuelven a cargar las dos: la GDT de este núcleo y su TSS (con el bit de ocupada a 0, que `ltr` exige).
+pub(super) fn restaurar_tras_vmx() {
+    let n = super::nucleos::numero() as usize % MAX_NUCLEOS;
+    unsafe {
+        let gdt = &raw mut GDT[n];
+        let d = Descriptor { limite: (core::mem::size_of::<[u64; 8]>() - 1) as u16, base: gdt as u64 };
+        // El tipo de la TSS pasa de 0xB (ocupada) a 0x9 (disponible): bit 41.
+        (*gdt)[6] &= !(1 << 41);
+        core::arch::asm!("lgdt [{d}]", "ltr {tss:x}", d = in(reg) &d, tss = in(reg) TSS_SELECTOR, options(nostack));
     }
 }
 

@@ -70,8 +70,8 @@ pub enum Objeto {
     /// Permiso para crear máquinas virtuales (caja Linux, H9): con escribir, la llamada 45. Solo lo da el kernel, a
     /// `inicio`, que lo da al servicio `caja-linux`.
     PermisoMaquina,
-    /// Una máquina virtual (H9): con escribir se corre (llamada 46). Se para y se suelta al cerrar su última llave.
-    #[cfg(target_arch = "aarch64")]
+    /// Una máquina virtual (H9; en x86, X10): con escribir se corre (llamada 46). Se para y se suelta al cerrar su última
+    /// llave.
     Maquina(Arc<crate::maquinas::Maquina>),
     /// Una llave revocable (C41): apunta al objeto a través de un intermediario que se puede vaciar.
     Revocable(Arc<Revocable>),

@@ -44,6 +44,13 @@ fn nucleo() -> usize {
     crate::nucleos::numero() as usize % NUCLEOS
 }
 
+/// Cuándo toca la próxima interrupción del temporizador de este núcleo (en cuentas del contador). X10: si el
+/// temporizador de un invitado vence antes, se adelanta para que lo saque a tiempo.
+#[cfg(target_arch = "x86_64")]
+pub fn proximo() -> u64 {
+    PLAZO[nucleo()].load(Ordering::Relaxed)
+}
+
 /// El mayor retraso (en cuentas) con que llegó la interrupción del temporizador del núcleo `n` desde la última vez que
 /// se preguntó, y vuelta a empezar.
 #[cfg(target_arch = "x86_64")]

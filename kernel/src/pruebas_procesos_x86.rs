@@ -69,6 +69,7 @@ pub fn ejecutar() {
     prueba_lanzador();
     prueba_reparto();
     prueba_hilos_usuario();
+    prueba_maquinas();
 }
 
 fn bien(b: bool) -> &'static str {
@@ -698,4 +699,23 @@ fn prueba_hilos_usuario() {
         && fin_v == Some(Fin::Matado)
         && usado_p + usado_f + usado_s + usado_v == 0;
     kprintln!("C52: hilos de usuario {}", if bien { "bien" } else { "MAL" });
+}
+
+/// X10: el hipervisor de x86 (AMD-V o VT-x), con el programa `maquina` y su invitado mínimo: cada salida (puertos,
+/// aparatos, CPUID, hipercall, MSR, interrupción, temporizador, modo largo, otra vCPU en modo real) la comprueba el
+/// programa, que sale con 10 si todo cuadra (11 si no hay hipervisor).
+static MAQUINA: &[u8] = programa_x86!("maquina");
+
+fn prueba_maquinas() {
+    use objetos::Fin;
+    let permiso = objetos::Llave::nueva(objetos::Objeto::PermisoMaquina, objetos::TODOS);
+    let hay = crate::base::hiper::hay();
+    let fin = lanzar_elf_en(MAQUINA, alloc::vec![permiso], 2, crate::cupo::Cupo::raiz()).and_then(|c| esperar_fin(&c, 6000));
+    let esperado = if hay { Fin::Salida(10) } else { Fin::Salida(11) };
+    kprintln!(
+        "X10: máquinas virtuales {} ({}; {:?})",
+        bien(fin == Some(esperado)),
+        crate::base::hiper::descripcion(),
+        fin
+    );
 }

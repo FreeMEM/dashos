@@ -99,6 +99,13 @@ pub fn avisar(n: usize) {
     }
 }
 
+/// Saca del invitado a la vCPU que corre en el núcleo `n` (X10): la interrupción hace salir a la máquina virtual.
+pub fn avisar_vcpu(n: usize) {
+    if let Some(id) = apic_de(n) {
+        apic::ipi(id, apic::VECTOR_VCPU);
+    }
+}
+
 // --- La TLB en todos los núcleos ---
 
 /// Generación de los vaciados pedidos, y la última que ha hecho cada núcleo.

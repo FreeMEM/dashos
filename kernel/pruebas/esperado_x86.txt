@@ -94,6 +94,14 @@ C51: temporizadores repartidos por grupos bien
 [hilos] hilos sin fin:
 [hilos] el cupo del grupo corta los hilos, y unirse devuelve lo cobrado
 C52: hilos de usuario bien
+# X10: el hipervisor de x86 (AMD-V con NPT o VT-x con EPT) con un invitado mínimo (`usuario/src/bin/maquina.rs`).
+~Hipervisor: 
+[maquina] puertos (IN y OUT de 1, 2 y 4 bytes) y aparatos (MOV, MOVZX, AH, 16 bits, sin contestar): bien
+[maquina] CPUID (hipervisor, sin VMX ni SVM, DashOSDashOS), hipercall y MSR: bien
+[maquina] interrupción entregada a un HLT y temporizador del invitado (plazo del TSC): bien
+[maquina] modo largo (tablas del invitado, dirección alta, 8 bytes, REX): bien
+[maquina] segunda vCPU en modo real (como tras una SIPI) y parar la máquina: bien
+X10: máquinas virtuales bien
 X2: desborde de la pila del arranque
 Excepción 8 (fallo doble (#DF)) en el kernel
 en la pila de emergencia (IST 1)

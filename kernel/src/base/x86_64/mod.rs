@@ -19,6 +19,9 @@
 //!
 //! - X5b: las IOMMU (`iommu.rs`: VT-d y AMD-Vi), con sus tablas de ACPI (DMAR e IVRS, `acpi.rs`). Qué aparato va a qué
 //!   unidad y a qué dominio lo decide `crate::iommu`.
+//!
+//! - X10: el hipervisor (`hiper.rs`, `hiper.s`): AMD-V con NPT o VT-x con EPT. Qué se hace con cada salida lo decide
+//!   `crate::maquinas` (`maquinas_x86.rs`).
 
 pub mod acpi;
 pub mod apic;
@@ -28,6 +31,7 @@ pub mod cerrojo;
 pub mod cpu;
 pub mod espacio;
 pub mod excepciones;
+pub mod hiper;
 pub mod ioapic;
 pub mod iommu;
 pub mod mapa;
