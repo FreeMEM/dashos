@@ -127,6 +127,19 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
 - lo suelto tiene identidad propia (no la del repositorio): aunque se llame igual, no hereda lo concedido (S6b);
 - sin firma válida es un "suelto" de S6b: se instala solo si el usuario lo confirma, y pregunta todo.
 
+## Decidido el 2026-11-15 (2): el reparto con Hangar
+
+- **Instala `Paq`.** Resuelve, baja, verifica y guarda la base; el cliente de Hangar en DashOS es la cara: enseña y
+  pide. El cliente 68k dentro de la caja Amiga instala por su cuenta en `Work:` de la caja, fuera de `Paq`.
+- **Dónde escribe `Paq`**: `Paquetes:` para lo de todos y `Home:` para lo del usuario. En DashOS un `drawer` nunca va
+  a `Work:`. (S6b:185 le daba solo `Paquetes:`: falta su fila para la instalación de usuario.)
+- **El código común del formato** (`pkg2`: versiones, requisitos, manifiesto, índice, firmas, resolutor), con la
+  especificación y sus vectores, sale a un repositorio abierto con MPL-2.0; lo usan `Paq`, los clientes y el
+  servicio. Los clientes de Hangar son GPL y abiertos; el servicio web es privado.
+- Por limpiar en estos diseños (texto de antes del 15/11): "paquetes firmados" (S8, S6, S29, RESUMEN), "la clave de
+  Hangar" (S8, S6, S29), identidad solo por nombre (S6b), Installer "dentro de la caja" (S8). La clave de `SYS:` no
+  está en la lista de `Paq`: falta decirlo en S6 y S14.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
