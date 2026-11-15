@@ -129,6 +129,27 @@ impl Lienzo {
             None => p,
         });
     }
+    /// Pone seguidos los píxeles `v` (opacos) desde `(x, y)` hacia la derecha, recortados al lienzo, y apunta lo tocado
+    /// como cambiado de una vez (cybergraphics: una fila de `WritePixelArray`, la vuelta de `UnLockBitMap`). Devuelve
+    /// cuántos ha puesto.
+    pub fn escribir_fila(&mut self, x: i32, y: i32, v: &[u32]) -> u32 {
+        if y < 0 || y as u32 >= self.alto || v.is_empty() {
+            return 0;
+        }
+        let desde = x.max(0) as i64;
+        let hasta = (x as i64 + v.len() as i64).min(self.ancho as i64);
+        if hasta <= desde || !self.asegurar() {
+            return 0;
+        }
+        let i = y as usize * self.ancho as usize;
+        let o = (desde - x as i64) as usize;
+        let n = (hasta - desde) as usize;
+        for (d, s) in self.pix[i + desde as usize..i + desde as usize + n].iter_mut().zip(&v[o..o + n]) {
+            *d = *s | 0xFF00_0000;
+        }
+        self.danar(Rect::nuevo(desde as i32, y, hasta as i32 - 1, y));
+        n as u32
+    }
     /// Todos los píxeles, fila a fila.
     pub fn pixeles(&mut self) -> &[u32] {
         let _ = self.asegurar();

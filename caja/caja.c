@@ -677,6 +677,7 @@ extern const uint8_t prog_memh[], prog_memh_fin[];
 extern const uint8_t prog_procesos[], prog_procesos_fin[];
 extern const uint8_t prog_ils[], prog_ils_fin[];
 extern const uint8_t prog_dtprueba[], prog_dtprueba_fin[];
+extern const uint8_t prog_cgx[], prog_cgx_fin[];
 extern const uint8_t prog_dash_test_reaction[], prog_dash_test_reaction_fin[];
 extern const uint8_t prog_dash_test_doc_reaction[], prog_dash_test_doc_reaction_fin[];
 extern const uint8_t prog_dash_ctrl_c[], prog_dash_ctrl_c_fin[];
@@ -1503,6 +1504,16 @@ int caja_main(void)
         t1 = ahora_us();
         bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
         di("ils.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
+           (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
+        if (!bien) { M68K_PrintContext(&m68k); fallos++; }
+
+        /* 8b3e. cybergraphics.library y Picasso96API.library nativas (cgx.c): píxeles, LockBitMap, RenderInfo y lo
+           hostil (los avisos que da no cuentan como fallo); un mapa cogido que se suelta sin soltar su cerrojo. */
+        t0 = ahora_us();
+        v = ejecuta_hunk("cgx", prog_cgx, (size_t)(prog_cgx_fin - prog_cgx), execbase, &d0, &llamadas, &sobras);
+        t1 = ahora_us();
+        bien = v == -1 && d0 == 0 && sobras == 0 && caja_bloques(0) == sistema;
+        di("cgx.exe acabó con %d, %d llamadas nativas, en %u ms, %u avisos, %u bloques sin soltar: %s\n",
            (int)d0, llamadas, (uint32_t)((t1 - t0) / 1000), caja_avisos(), sobras, bien ? "bien" : "MAL");
         if (!bien) { M68K_PrintContext(&m68k); fallos++; }
 

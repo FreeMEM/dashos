@@ -925,6 +925,7 @@ impl<C: Compositor> CajaGrafica<C> {
         self.regiones_tarea_muerta(t);
         self.capas_tarea_muerta(ex, t);
         self.boopsi_tarea_muerta(ex, t);
+        self.cgx_tarea_muerta(ex, t);
         // Lo que esa tarea tenía sin contestar ya no volverá.
         let cerradas = core::mem::take(&mut self.intui.cerradas);
         for v in cerradas {

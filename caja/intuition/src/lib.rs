@@ -28,12 +28,14 @@ extern crate alloc;
 extern crate std;
 
 pub mod boopsi;
+pub mod cgx;
 pub mod compositor;
 pub mod escala;
 pub mod estructuras;
 pub mod lienzo;
 pub mod lvo;
 pub mod nitido;
+pub mod p96;
 pub mod regiones;
 pub mod teclado;
 
@@ -125,11 +127,15 @@ pub struct Numeros {
     /// layers.library y keymap.library (`capas.rs`).
     pub layers: u16,
     pub keymap: u16,
+    /// cybergraphics.library (`cgx.rs`).
+    pub cybergraphics: u16,
+    /// Picasso96API.library (`p96.rs`).
+    pub p96: u16,
 }
 
 impl Default for Numeros {
     fn default() -> Numeros {
-        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00, boopsi: 0x0B00, layers: 0x0C00, keymap: 0x0C40 }
+        Numeros { graphics: 0x0400, intuition: 0x0600, gadtools: 0x0A00, boopsi: 0x0B00, layers: 0x0C00, keymap: 0x0C40, cybergraphics: 0x0E00, p96: 0x0E40 }
     }
 }
 
@@ -150,6 +156,8 @@ pub struct CajaGrafica<C: Compositor> {
     menus: menus::Estado,
     boopsi: boopsi::Estado,
     reg: regiones::Estado,
+    cgx: cgx::Estado,
+    p96: p96::Estado,
     /// La versión del tema de DashOS con la que se pintaron las ventanas (`Compositor::version_tema`): si cambia, se
     /// repintan (tema.rs).
     version_tema: u32,
@@ -173,6 +181,8 @@ impl<C: Compositor> CajaGrafica<C> {
             menus: menus::Estado::default(),
             boopsi: boopsi::Estado::default(),
             reg: regiones::Estado::default(),
+            cgx: cgx::Estado::default(),
+            p96: p96::Estado::default(),
             version_tema: 0,
             requesters: Vec::new(),
             requester_titulos: Vec::new(),
@@ -183,6 +193,8 @@ impl<C: Compositor> CajaGrafica<C> {
         c.instalar_gadtools(ex)?;
         c.instalar_capas(ex)?;
         c.instalar_boopsi(ex)?;
+        c.instalar_cgx(ex)?;
+        c.instalar_p96(ex)?;
         Ok(c)
     }
 

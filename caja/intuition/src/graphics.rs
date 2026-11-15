@@ -1216,7 +1216,8 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(())
     }
 
-    /// `AllocBitMap`: nativo de 32 bits si pide más de 8 planos o su amigo es nativo; si no, planar en memoria
+    /// `AllocBitMap`: nativo de 32 bits si pide más de 8 planos, su amigo es nativo o pide un formato de color verdadero
+    /// de cybergraphics (`BMF_SPECIALFMT`); si no, planar en memoria
     /// chip (entrelazado con `BMF_INTERLEAVED`), como el del chipset.
     pub fn alloc_bit_map<M: Memoria>(
         &mut self,
@@ -1228,7 +1229,9 @@ impl<C: Compositor> CajaGrafica<C> {
         amigo: u32,
     ) -> Result<u32, Fallo> {
         let (an, al) = (ancho as i32, alto as i32);
-        let nativo = prof > 8 || (amigo != 0 && self.gfx.lienzos.contains_key(&amigo));
+        // cybergraphics: con `BMF_SPECIALFMT` y un formato de color verdadero (los 8 bits de arriba), también nativo.
+        let especial = flags & crate::cgx::constantes::BMF_SPECIALFMT != 0 && flags >> 24 != crate::cgx::constantes::PIXFMT_LUT8;
+        let nativo = prof > 8 || especial || (amigo != 0 && self.gfx.lienzos.contains_key(&amigo));
         if !lienzo::tamano_valido(an as i64, al as i64) || prof == 0 || prof > 32 || an > 0xFFFF {
             return Err(Fallo::TamanoMalo { ancho: an, alto: al });
         }
@@ -1305,6 +1308,7 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let Some(bloques) = self.gfx.reservados.remove(&bm) else { return Err(Fallo::NoReservado { dir: bm }) };
         self.gfx.lienzos.remove(&bm);
+        self.cgx_mapa_soltado(ex, bm);
         for (d, l) in bloques {
             ex.soltar(d, l)?;
         }
