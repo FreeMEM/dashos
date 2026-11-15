@@ -88,6 +88,21 @@ Dos líneas a la vez (decisión 4 de S30):
   EPT, AMD-V con NPT); X11 pasar un aparato PCIe a una máquina virtual; X12 el dominio de gráficos; X13 canal y
   memoria compartida sin copia; X14 Mesa en DashOS (Venus y contexto nativo); X15 el compositor sobre el dominio;
   X16 CUDA en la caja por reenvío de la interfaz de Nvidia, y el dominio de cómputo; X17 vídeo por hardware. Detrás de X5b.
+  - [~] X10 **Hipervisor de x86**: AMD-V con NPT hecho y probado (TCG y KVM en shiva); VT-x con EPT escrito y sin
+    probar (en pegaso, `freemem` no puede abrir `/dev/kvm`). Lo que queda abierto:
+    - Probar VT-x en pegaso (ver la bitácora: hace falta acceso a `/dev/kvm`).
+    - El globo (llamada 55) en x86: da `E_NO_HAY`. Hará falta que las vCPU de otros núcleos salgan y tomen un ASID o
+      VPID nuevo antes de devolver las páginas (el contador `generacion` del espacio ya está).
+    - Sin APIC virtual por hardware (AVIC, APICv) ni interrupciones entregadas sin salir (posted interrupts): el APIC
+      lo emula el servicio y cada EOI sale. Para el dominio de gráficos (S34) hará falta.
+    - VT-x: PAE de 32 bits sin modo largo (los PDPTE no se cargan en el VMCS); el VMCS se limpia (VMCLEAR) tras cada
+      llamada, así que cada `maquina_correr` hace VMLAUNCH (más lento que VMRESUME). AMD: CR4 no se vigila.
+    - INS y OUTS, y las instrucciones sobre aparatos que no son MOV, MOVZX o MOVSX: la máquina muere.
+    - DR0 a DR3 y DR6 no cambian de mundo. Un triple fallo mata la máquina en vez de reiniciarla.
+    - `inicio_x86.rs` no da el permiso de máquinas ni lanza la caja Linux; el servicio `caja-linux` es de ARM (su
+      emulación del GIC, el PSCI y el arranque de Linux para arm64). Hará falta su parte de x86 (APIC, IOAPIC, PIC,
+      el protocolo de arranque de Linux de x86).
+    - Arrancar un Linux en una VM de x86: después (no era parte de X10).
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).
@@ -507,3 +522,62 @@ eventos por orden (se escriben una vez).
 No comprobado: una máquina de verdad (pegaso con VT-d, shiva con AMD-Vi); RMRR e IVMD (QEMU no los da); varias
 unidades; aparatos detrás de puentes; KVM. Lo que queda abierto está en la tarea X5b (remapeo de interrupciones,
 alias, grupos, modo escalable).
+
+
+### 2026-11-15 — X10: hipervisor de x86 (AMD-V con NPT y VT-x con EPT)
+
+Hecho (sala limpia: el AMD64 APM vol. 2, cap. 15 y apéndice C, y el Intel SDM vol. 3C, caps. 24 a 29 y apéndice B;
+ni KVM, ni Xen, ni QEMU):
+
+- `base/x86_64/hiper.rs` y `hiper.s`, lo de la CPU, con la misma forma que `base/hiper.rs` de ARM: un `Espacio` (tablas
+  NPT o EPT de 4 niveles sobre objetos de memoria, hasta 512 GB del invitado) y `Vcpu` (el VMCB o el VMCS, los
+  registros, la FPU con XSAVE y el XCR0 del invitado). Al arrancar se mira qué hay (AMD-V con NPT; VT-x con EPT,
+  invitado sin restricciones y las MSR "TRUE"; VPID si hay INVVPID) y se escribe en la consola; cada núcleo lo enciende
+  la primera vez que corre una vCPU (EFER.SVME y la zona del anfitrión; CR4.VMXE y VMXON).
+- AMD: VMSAVE/VMLOAD del anfitrión y del invitado alrededor de VMRUN, con GIF a 0 y el IF del anfitrión a 1 durante
+  VMRUN (V_INTR_MASKING: una interrupción física saca al invitado). Interrupciones al invitado por V_IRQ (la CPU la da
+  en cuanto puede, sin salir). Intel: el VMCS solo está cargado mientras se corre (VMCLEAR al volver: el hilo puede
+  cambiar de núcleo), el estado del anfitrión escrito en cada llamada, las MSR de `syscall` cambiadas a mano, y la GDT
+  y la TSS cargadas otra vez tras salir (VT-x deja la TSS con límite 0x67, sin mapa de puertos). Interrupciones por la
+  información de entrada y la salida por ventana de interrupciones. En los dos, lo que la CPU estaba entregando al
+  salir se reinyecta.
+- La TLB: ASID (AMD) o VPID (Intel) por núcleo, uno nuevo al cambiar de núcleo o de generación; al acabarse, generación
+  nueva y todo fuera. En Intel, cada VPID nuevo hace INVEPT de su EPT.
+- El kernel resuelve sin salir CPUID (sin lo que no se virtualiza, con el bit de hipervisor y "DashOSDashOS"), EFER,
+  PAT, IA32_TSC_DEADLINE, XSETBV, CR0/CR4/CR8 en Intel; las MSR que cambian de mundo pasan sin salir.
+- `kernel/src/maquinas_x86.rs`: la misma interfaz que `maquinas.rs` (llamadas 45 a 48, mismos informes y bloques), con
+  lo que cambia documentado en `docs/referencia/kernel.md` (sección x86-64): HVC = VMMCALL/VMCALL, LECTURA y ESCRITURA
+  con la instrucción decodificada por el kernel (leída de la memoria del invitado recorriendo sus tablas: sin
+  paginación, 32 bits, PAE y 4 niveles; o de la CPU en AMD con ayuda), motivo nuevo 8 (PUERTO), REGISTRO = MSR, WFI =
+  HLT, el temporizador del invitado (el plazo del TSC) llevado por el kernel como el virtual de ARM (adelanta el tic
+  del núcleo para sacar al invitado a tiempo), y huecos de interrupciones en vez de registros de lista. `maquina_estado`
+  5 lleva el modo (protegido de 32 bits o real, para las SIPI). `llamadas.rs` ya no separa las llamadas de máquinas
+  por arquitectura.
+- Para X11: `Espacio::por_cada_pagina` da cada página como (física del invitado, física), para proyectarla en el
+  dominio de la IOMMU del aparato con la misma dirección.
+- Makefile: `ACCEL=kvm` (con `-accel kvm -cpu host`) en `prueba-x86` y `arranque-x86`; `tools/prueba_uefi.sh` con
+  `ACCEL_X86` y `CPU_X86`.
+- Prueba (`usuario/src/bin/maquina.rs`, lanzado por `prueba_maquinas` en `pruebas_procesos_x86.rs`): un invitado
+  propio que empieza en modo protegido y comprueba cada salida desde el anfitrión: OUT de 1, 2 y 4 bytes e IN; accesos
+  a aparatos (MOV de inmediato, MOV a registro, con dirección absoluta, MOVZX, a AH, de 16 bits, y uno que no contesta
+  nadie con `maquina_aborto`); CPUID; la hipercall con su resultado puesto con `maquina_poner_registros`; WRMSR y RDMSR
+  que van al servicio y EFER del kernel; GDT e IDT propias, una interrupción entregada a un HLT; el temporizador (el
+  plazo del TSC, esperado en el kernel con `ESPERAR_WFI`); paso a modo largo (accesos de 8 bytes con REX por una
+  dirección alta de sus tablas); y una segunda vCPU en modo real; luego parar la máquina.
+
+Comprobado: `make -C kernel prueba-x86` BIEN (QEMU 11.1.3, TCG `-cpu max`: AMD-V con NPT, sin NRIPS ni ayuda para
+decodificar: se usa el recorrido de tablas), también con `IOMMU=intel` y `IOMMU=amd`. `make -C kernel prueba-x86
+ACCEL=kvm` en shiva (Ryzen 9 9955HX, `kvm_amd nested=1`): X10 bien con AMD-V anidado de verdad; falla solo C28, como ya
+fallaba con KVM antes (bitácora de X4: los programas acaban en 4 tics). `make -C kernel arranque-x86` BIEN, con
+`IOMMU=intel` y `IOMMU=amd`. ARM: `make -C kernel prueba`, `make -C kernel arranque-virt` y `make -C kernel arranque-virt-vm` (el hipervisor de
+ARM, por las llamadas de máquinas, que ahora son comunes) BIEN.
+
+No comprobado: **VT-x**. pegaso (i5-8500, `kvm_intel nested=Y`, QEMU 10.2.1) tiene la imagen y el guion en
+`~/dashos-pruebas-x10/`, pero `freemem` no puede abrir `/dev/kvm` allí (no está en el grupo `kvm`; el ACL de la consola
+es de `gdm-greeter`) y `sudo` pide contraseña: no se tocó su configuración. Para probarlo, con acceso a `/dev/kvm`:
+`cd ~/dashos-pruebas-x10 && ARQ=x86_64 ACCEL_X86=kvm CPU_X86=host OVMF=/usr/share/OVMF/OVMF_CODE_4M.fd
+OVMF_VARS=/usr/share/OVMF/OVMF_VARS_4M.fd ./prueba_uefi.sh dashos-uefi.efi esperados_x86.txt 150` (C28 fallará con
+KVM, como en shiva). Tampoco: una máquina de verdad sin anidar; la ayuda para decodificar de AMD (ni TCG ni este KVM la
+dan); varias vCPU corriendo a la vez en núcleos distintos (la prueba corre una y luego la otra); el globo. Lo que queda
+está en la tarea X10.
+
