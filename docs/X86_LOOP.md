@@ -78,7 +78,7 @@ Dos líneas a la vez (decisión 4 de S30):
 - [ ] X10 a X17 **La gráfica compartida** (`docs/diseño/S34-grafica-compartida.md`): X10 hipervisor de x86 (VT-x con
   EPT, AMD-V con NPT); X11 pasar un aparato PCIe a una máquina virtual; X12 el dominio de gráficos; X13 canal y
   memoria compartida sin copia; X14 Mesa en DashOS (Venus y contexto nativo); X15 el compositor sobre el dominio;
-  X16 la caja Linux como contenedor del dominio, con CUDA; X17 vídeo por hardware. Detrás de X5b.
+  X16 CUDA en la caja por reenvío de la interfaz de Nvidia, y el dominio de cómputo; X17 vídeo por hardware. Detrás de X5b.
 - [ ] X7 **Caja Amiga en x86** con el intérprete de RelevoJIT (necesita R3 y la caja Amiga en `main`).
 - [ ] X8 **La caja con el JIT** de RelevoJIT (necesita R6).
 - [ ] X9 **Un PC de verdad**, arrancando desde USB (necesita la máquina; decisión 5 de S30).

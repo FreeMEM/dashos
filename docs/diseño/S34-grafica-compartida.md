@@ -71,20 +71,37 @@ Para que el puente no cueste:
   interrupciones entregadas sin salir (posted interrupts), páginas grandes, núcleos fijos para el dominio.
 - **Sincronía y latencia**: VRR, y los tiempos de presentación del compositor llegan hasta el dominio.
 
-### CUDA y la caja Linux
+### CUDA y la caja Linux (corregido el 2026-11-15 tras la objeción de geosian-7d)
 
-CUDA, NVENC y las bibliotecas de Nvidia necesitan estar en el **mismo kernel** que su controlador. Reenviar CUDA se
-puede, pero es lento de hacer y nunca completo. Para tener CUDA a velocidad nativa:
+La primera versión proponía la caja Linux del usuario como contenedor dentro del dominio. **Se retira como opción de
+serie**: el dominio presenta la pantalla de DashOS, y por él pasan los búferes del compositor y de todos los
+programas, también las contraseñas que pinta `guardian`. Con el software sin vetar del usuario en el mismo kernel,
+escapar del contenedor daría la pantalla entera y el DMA de las gráficas. Además obligaría a rehacer lo ya hecho en
+la caja como máquina virtual (globo de memoria, cupos, cortafuegos, partición propia, puente Wayland, S28 y S29) y a
+tener dos cajas distintas, la de la Pi y la del PC.
 
-- **La caja Linux del usuario corre como contenedor dentro del Linux del dominio de gráficos** (un solo kernel de
-  Linux en la máquina), con acceso directo a la gráfica, como hace `nvidia-container-toolkit`. Ollama, PyTorch, Steam
-  o Blender ven la RTX tal cual, sin puente. Sus ventanas salen por Wayland al compositor de DashOS, como ahora.
-- La parte del dominio que sirve a DashOS queda fuera del contenedor, y el usuario de la caja no puede tocarla. Si la
-  caja del usuario se rompe o se reinicia, el dominio sigue.
-- Coste: caja y controlador comparten kernel. Un fallo del kernel de Linux tumba las dos cosas (no a DashOS).
-  Alternativa más aislada y más lenta: la caja en su propia máquina virtual, como cliente por Venus, sin CUDA nativo.
-  Se recomienda el contenedor; la caja aparte queda como opción para quien quiera aislamiento.
+Lo que queda:
+
+- **La caja Linux sigue siendo una máquina virtual aparte**, en PC y en la Pi, aislada como hoy. Es un cliente más
+  del dominio: Vulkan y OpenGL por contexto nativo o Venus, vídeo por el dominio.
+- **CUDA nativo sin compartir kernel: reenviar la interfaz del controlador de Nvidia.** Las bibliotecas de CUDA
+  corren en la caja; sus llamadas al controlador (`/dev/nvidia*`, `ioctl` y memoria proyectada) cruzan al dominio
+  por un intermediario que solo deja pasar una lista de órdenes conocidas. Es lo que hace WSL2 con su gráfica
+  paravirtual (CUDA casi a velocidad nativa) y lo que hace gVisor con `nvproxy` para contenedores. Los módulos del
+  kernel de Nvidia son abiertos (MIT y GPL) y definen esa interfaz. Cuesta: hay que seguir cada versión del
+  controlador. Es la meta.
+- **Dos dominios por confianza, donde hay dos gráficas** (pegaso, shiva): el **dominio de pantalla** lleva la
+  integrada, el monitor, el compositor y las ventanas delicadas; el **dominio de cómputo** lleva la dedicada y sirve
+  a la caja (CUDA) y a los programas de DashOS que la pidan (Venus). Si el de cómputo cae en manos de la caja, ve
+  solo los búferes de los programas que eligieron esa gráfica, no la pantalla. Lo pintado en la dedicada llega al
+  monitor con una copia entre gráficas, como en un portátil (pocos milisegundos; se medirá).
+- **Mientras tanto** (antes del reenvío): la RTX entera a una máquina virtual de CUDA cuando se usa, como decía S33,
+  y el escritorio en la integrada por el dominio de pantalla.
+- **Para quien lo pida a sabiendas**: la caja dentro del dominio de cómputo (nunca en el de pantalla), con aviso.
 - CUDA en programas nativos de DashOS: no. Lo nativo calcula con Vulkan.
+
+**Medir antes de decidir**: el coste real de Venus y del contexto nativo frente al nativo, y el de la copia entre
+gráficas, en pegaso.
 
 ### Vídeo
 
@@ -120,7 +137,7 @@ esto" al dominio; si no hay, por CPU.
 | Canal y memoria compartida sin copia entre procesos de DashOS y el dominio (X13) | kernel y monitor | Medio |
 | Mesa en DashOS con Venus y contexto nativo sobre ese canal (X14) | usuario | Grande (pide la capa POSIX) |
 | Compositor: presentar por el dominio, varias gráficas, pantalla completa directa, caída y vuelta (X15) | compositor | Grande |
-| La caja Linux como contenedor del dominio, con CUDA (X16) | caja Linux | Medio |
+| CUDA en la caja por reenvío de la interfaz de Nvidia, y el dominio de cómputo (X16) | zona GPL y caja Linux | Grande |
 | Vídeo por hardware (X17) | dominio y DataTypes | Medio |
 
 Orden: X5b, X10, X11, X12 con una prueba de CUDA en la caja (X16), X13, X15 (el escritorio acelerado), X14 (los
@@ -128,9 +145,13 @@ programas nativos), X17.
 
 ## Para decidir el usuario
 
-1. ¿La caja Linux como contenedor dentro del dominio de gráficos (CUDA nativo, un solo Linux)? Recomendado: sí.
-2. ¿El dominio lleva todas las gráficas del PC, también la integrada? Recomendado: sí; así no hay dos caminos.
-3. ¿Dónde se enchufa el monitor en pegaso? Recomendado: a la RTX, para presentar sin copia lo que más pesa.
+1. ¿CUDA por reenvío de la interfaz de Nvidia, con la caja Linux como máquina virtual aparte? Recomendado: sí. La
+   caja dentro del dominio queda solo como opción con aviso.
+2. ¿Dos dominios (pantalla y cómputo) donde hay dos gráficas? Recomendado: sí.
+3. ¿Monitor a la integrada (más seguro, una copia) o a la dedicada (sin copia, pero el dominio de cómputo ve la
+   pantalla)? Recomendado: a la integrada, y medir la copia.
+4. En un PC con una sola gráfica, ¿el dominio va siempre encendido para pintar el escritorio (un Linux mínimo, unos
+   cientos de MB)? Recomendado: sí desde 8 GB; con menos, pantalla del firmware y CPU.
 
 ## Cómo encaja
 
