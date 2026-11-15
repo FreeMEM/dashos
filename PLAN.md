@@ -448,3 +448,9 @@ estabilidad y velocidad, por ese orden.
 - **Claude Code en DashOS** (usuario, 2026-11-15): a corto plazo, en la caja Linux (terminal y escritorio), con su
   ventana en el escritorio de DashOS y carpetas compartidas. A largo plazo, la terminal nativa: capa POSIX (S11) y
   Node.js portado encima. El escritorio nativo (Electron/Chromium), no.
+- **La gráfica compartida en PC** (usuario, 2026-11-15; `docs/diseño/S34-grafica-compartida.md`, sustituye la sección
+  de gráficas en PC de S33): un dominio de gráficos (máquina virtual con Linux mínimo y los controladores del
+  fabricante) lleva las gráficas; DashOS y la caja Linux son clientes. La caja Linux sigue como máquina virtual
+  aparte; CUDA, por reenvío de la interfaz de Nvidia. Con dos gráficas, dos dominios: pantalla (integrada, con el
+  monitor) y cómputo (dedicada). Dominio desde 4 GB y apagable. En la Pi, sin dominio.
+

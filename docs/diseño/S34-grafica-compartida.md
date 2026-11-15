@@ -143,7 +143,9 @@ esto" al dominio; si no hay, por CPU.
 Orden: X5b, X10, X11, X12 con una prueba de CUDA en la caja (X16), X13, X15 (el escritorio acelerado), X14 (los
 programas nativos), X17.
 
-## Para decidir el usuario
+## Decisiones del usuario (2026-11-15)
+
+Las tres primeras, como se recomendaba: sí, sí, y el monitor a la integrada (midiendo la copia).
 
 1. ¿CUDA por reenvío de la interfaz de Nvidia, con la caja Linux como máquina virtual aparte? Recomendado: sí. La
    caja dentro del dominio queda solo como opción con aviso.
