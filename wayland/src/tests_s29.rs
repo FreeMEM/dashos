@@ -41,7 +41,7 @@ fn globales() -> [Global; 6] {
         Global { nombre: 3, interfaz: &tablas::XDG_WM_BASE, version: 6 },
         Global { nombre: 4, interfaz: &tablas::WL_SEAT, version: 7 },
         Global { nombre: 5, interfaz: &tablas::WL_DATA_DEVICE_MANAGER, version: 3 },
-        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 6 },
+        Global { nombre: 6, interfaz: &tablas::DASHOS_TEMA_V1, version: 7 },
     ]
 }
 
@@ -230,6 +230,43 @@ fn marca_de_la_caja_amiga() {
     assert_eq!(marca::titulo_con(marca::PREFIJO_AMIGA, ""), "");
     escena.adios(amiga);
     assert!(escena.de_caja_amiga.is_empty());
+}
+
+/// La caja Amiga pone sus ventanas delante o detrás (`dashos_tema_v1.apilar`, versión 7: `ScreenToFront` y
+/// `ScreenToBack`), sin tocar el teclado. Un programa que no es de la caja Amiga, o una superficie que no es suya: nada.
+#[test]
+fn apilar_de_la_caja_amiga() {
+    let mut escena = escena_800();
+    let (amiga, otro): (Cliente, Cliente) = (5, 9);
+    escena.de_caja_amiga.push(amiga);
+    let (mut a, mut b) = (Conexion::new(), Conexion::new());
+    abrir(&mut escena, &mut a, amiga, 200, 120, "pantalla");
+    abrir(&mut escena, &mut b, otro, 200, 120, "nativo");
+    escena.colocar(amiga, 7, 100, 100);
+    escena.colocar(otro, 7, 150, 150);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    let apilar = |sup: u32, fondo: u32| {
+        let mut e = Escritor::new();
+        e.empezar(2, wl_registry::req::BIND).uint(6).texto(Some("dashos_tema_v1")).uint(7).uint(60).fin();
+        e.empezar(60, dashos_tema_v1::req::APILAR).uint(sup).uint(fondo).fin();
+        e
+    };
+    // Delante, y otra vez detrás.
+    mandar(&mut escena, &mut a, amiga, &apilar(7, 0));
+    assert_eq!(escena.orden, vec![(otro, 7), (amiga, 7)]);
+    let mut e = Escritor::new();
+    e.empezar(60, dashos_tema_v1::req::APILAR).uint(7).uint(1).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    // De una superficie que no existe: nada.
+    let mut e = Escritor::new();
+    e.empezar(60, dashos_tema_v1::req::APILAR).uint(999).uint(0).fin();
+    mandar(&mut escena, &mut a, amiga, &e);
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    // Un programa nativo no se sube (ni baja) así.
+    mandar(&mut escena, &mut b, otro, &apilar(7, 1));
+    assert_eq!(escena.orden, vec![(amiga, 7), (otro, 7)]);
+    escena.adios(amiga);
 }
 
 /// La pestaña que pone el compositor (`poner_pestanas`): se usa la suya, sus esquinas transparentes dejan ver la
