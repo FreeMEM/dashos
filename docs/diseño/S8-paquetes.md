@@ -166,6 +166,15 @@ La firma del fichero (`PKG-FILE-2`) es opcional y sirve para lo suelto (un USB, 
   no cuadra, el paquete queda "en duda" y se rehace desde la copia de la base o se ofrece reinstalar. Antes de cada
   transacción, copia de la base entera. En DashOS, además, la instantánea (S5).
 
+- **Repositorio estático**: una carpeta servida tal cual (`index.gz`, `index.gz.sig`, `keys` y los paquetes), sin
+  respuestas firmadas; vale para un gestor que lee el índice entero, como `Paq`. El repositorio de DashOS puede ser
+  así, y cualquiera puede montar el suyo (la herramienta de referencia lo genera: solo `Format: 2`, la versión más alta
+  de cada nombre, caducidad a 30 días).
+- **Un fichero cambiado en su sitio** (mismo nombre y versión, otra huella: Aminet, un adjunto de GitHub resubido)
+  entra con el `Release` siguiente: `Paq` lo ve como actualización, nunca como el mismo paquete.
+- **Cuándo lee `Paq` el fichero `keys`**: al empezar si no lo tiene, al caducar (con reloj), y cuando ve una firma de
+  una clave que no conoce; con `keys` leído, solo valen sus claves no anuladas.
+
 ## Lo que queda abierto
 
 1. ¿Nombre de la orden: `Paq`, u otro?
