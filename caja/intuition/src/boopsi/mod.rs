@@ -990,8 +990,10 @@ pub(crate) fn con_ginfo<P: Puente, T>(p: &mut P, w: u32, f: impl FnOnce(&mut P, 
         let Some(v) = gr.intui.ventanas.get(&w) else { return f(p, 0) };
         let (rp, capa) = (v.rp, v.capa);
         let (an, al) = (v.geometria.ancho, v.geometria.alto);
+        // Su pantalla y la DrawInfo de ella (la de Workbench o una propia).
+        let (pantalla, drinfo) = { let pa = gr.pantalla_de(w); (pa.dir, pa.drawinfo) };
         let gi = ex.reservar(ginfo::TAMANO + 2, memf::CLEAR)?;
-        ex.e32(gi + ginfo::SCREEN, gr.intui.wb.dir)?;
+        ex.e32(gi + ginfo::SCREEN, pantalla)?;
         ex.e32(gi + ginfo::WINDOW, w)?;
         ex.e32(gi + ginfo::RASTPORT, rp)?;
         ex.e32(gi + ginfo::LAYER, capa)?;
@@ -1001,7 +1003,7 @@ pub(crate) fn con_ginfo<P: Puente, T>(p: &mut P, w: u32, f: impl FnOnce(&mut P, 
         let bp = ex.l8(w + crate::estructuras::window::BLOCKPEN).unwrap_or(1);
         ex.e8(gi + ginfo::PENS, dp)?;
         ex.e8(gi + ginfo::PENS + 1, bp)?;
-        ex.e32(gi + ginfo::DRINFO, gr.intui.wb.drawinfo)?;
+        ex.e32(gi + ginfo::DRINFO, drinfo)?;
         gi
     };
     let r = f(p, gi);

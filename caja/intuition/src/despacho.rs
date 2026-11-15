@@ -60,7 +60,7 @@ filas!(I;
     ITEMADDRESS = "ItemAddress", ONMENU = "OnMenu", OFFMENU = "OffMenu", OPENSCREENTAGLIST = "OpenScreenTagList",
     OPENSCREEN = "OpenScreen", CLOSESCREEN = "CloseScreen", GETDEFAULTPUBSCREEN = "GetDefaultPubScreen",
     INTUITEXTLENGTH = "IntuiTextLength", EASYREQUESTARGS = "EasyRequestArgs",
-    LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
+    PUBSCREENSTATUS = "PubScreenStatus", LOCKIBASE = "LockIBase", UNLOCKIBASE = "UnlockIBase", REPORTMOUSE = "ReportMouse", DOUBLECLICK = "DoubleClick",
 );
 
 /// Las funciones que devuelven -1 al fallar.
@@ -480,6 +480,8 @@ impl<C: Compositor> CajaGrafica<C> {
             OPENSCREEN => self.open_screen(ex, a[0], 0),
             OPENSCREENTAGLIST => self.open_screen(ex, a[0], a[1]),
             CLOSESCREEN => self.close_screen(ex, a[0]),
+            // PubScreenStatus(screen, flags)(a0/d0).
+            PUBSCREENSTATUS => self.pub_screen_status(a[0], d[0] & 0xFFFF),
             GETDEFAULTPUBSCREEN => {
                 if a[0] != 0 {
                     ex.escribir_bytes(a[0], b"Workbench\0")?;

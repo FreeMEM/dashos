@@ -475,7 +475,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let (w, tira, msel, isel) = (a.w, a.tira, a.menu, a.item);
         let Some(v) = self.intui.ventanas.get(&w) else { return };
         let (bm, alto_barra) = (v.bm, v.geometria.bordes[1].max(fuente::ALTO as i32 + 3));
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let mut titulos = Vec::new();
         let mut elems = Vec::new();

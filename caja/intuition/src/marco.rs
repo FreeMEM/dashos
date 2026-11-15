@@ -117,8 +117,8 @@ impl<C: Compositor> CajaGrafica<C> {
         let activa = v.activa;
         let titulo: Vec<u8> = v.titulo.clone();
         let bm = v.bm;
-        let pen = |i: usize| self.intui.wb.plumas[i] as u8;
-        let cm = self.intui.wb.cm;
+        let (plumas, cm) = { let pa = self.pantalla_de(w); (pa.plumas, pa.cm) };
+        let pen = |i: usize| plumas[i] as u8;
         let col = |i: usize| self.color(cm, pen(i));
         let (claro, oscuro) = (col(dri::SHINEPEN), col(dri::SHADOWPEN));
         let relleno = if activa { col(dri::FILLPEN) } else { col(dri::BACKGROUNDPEN) };

@@ -130,7 +130,7 @@ impl<C: Compositor> CajaGrafica<C> {
             }
             let nuevo = match self.tema_de(w).como().fondo_ventana() {
                 Some(f) => f | 0xFF00_0000,
-                None => self.color(self.intui.wb.cm, 0) | 0xFF00_0000,
+                None => self.color(self.pantalla_de(w).cm, 0) | 0xFF00_0000,
             };
             if nuevo != viejo {
                 if let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) {

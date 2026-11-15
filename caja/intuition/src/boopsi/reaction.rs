@@ -730,10 +730,15 @@ fn abrir_ventana<P: Puente>(p: &mut P, obj: u32) -> R<u32> {
     let (tags, layout, posicion, menu) = (x.tags.clone(), x.layout, x.posicion, x.menu);
     let layout = if p.partes().1.es_objeto(layout) { layout } else { 0 };
     let (min_an, min_al) = if layout != 0 { dominio(p, layout, 0)? } else { (0, 0) };
+    // Su pantalla: la de WA_CustomScreen (una propia que exista), o la de Workbench.
+    let pantalla = {
+        let gr = p.partes().1;
+        buscar(&tags, wa::CUSTOMSCREEN).filter(|&s| gr.pantalla(s).is_some()).unwrap_or(gr.intui.wb.dir)
+    };
     // Los bordes que tendrá (los de la pantalla: con la barra de DashOS, 9 arriba y nada más).
     let (bi, ba, bd, bb) = {
-        let (ex, gr) = p.partes();
-        let s = gr.intui.wb.dir;
+        let (ex, _) = p.partes();
+        let s = pantalla;
         let l = ex.l8(s + crate::estructuras::screen::WBORLEFT).unwrap_or(4) as i32;
         let tp = ex.l8(s + crate::estructuras::screen::WBORTOP).unwrap_or(2) as i32 + crate::fuente::ALTO as i32 + 1;
         let r = ex.l8(s + crate::estructuras::screen::WBORRIGHT).unwrap_or(4) as i32;
@@ -742,8 +747,8 @@ fn abrir_ventana<P: Puente>(p: &mut P, obj: u32) -> R<u32> {
         (l, tp, if tamano { r.max(r) } else { r }, if tamano { b.max(b) } else { b })
     };
     let (sw, sh) = {
-        let (ex, gr) = p.partes();
-        let s = gr.intui.wb.dir;
+        let (ex, _) = p.partes();
+        let s = pantalla;
         (
             ex.l16(s + crate::estructuras::screen::WIDTH).unwrap_or(640) as i16 as i32,
             ex.l16(s + crate::estructuras::screen::HEIGHT).unwrap_or(480) as i16 as i32,
@@ -1133,7 +1138,9 @@ pub(crate) fn dominio<P: Puente>(p: &mut P, o: u32, gi: u32) -> R<(i32, i32)> {
         let (ex, gr) = p.partes();
         !gr.es_gadget_boopsi(ex, o)
     };
-    let di = p.partes().1.intui.wb.drawinfo;
+    // La DrawInfo de la pantalla de la ventana (la de la GadgetInfo), o la del Workbench.
+    let di = if gi != 0 { l32(p, gi + ginfo::DRINFO).unwrap_or(0) } else { 0 };
+    let di = if di != 0 { di } else { p.partes().1.intui.wb.drawinfo };
     let r = if es_imagen {
         con_mensaje(p, &[im::DOMAINFRAME, di, 0, gm::GDOMAIN_MINIMUM, 0, 0, 0], |p, m| {
             a_objeto(p, o, m)?;
@@ -1407,7 +1414,9 @@ fn pintar_layout<P: Puente>(p: &mut P, obj: u32, gi: u32, rp: u32, modo: u32) ->
             }
         }
     }
-    let di = p.partes().1.intui.wb.drawinfo;
+    // La DrawInfo de la pantalla de la ventana (la de la GadgetInfo), o la del Workbench.
+    let di = if gi != 0 { l32(p, gi + ginfo::DRINFO).unwrap_or(0) } else { 0 };
+    let di = if di != 0 { di } else { p.partes().1.intui.wb.drawinfo };
     for h in hijos {
         if !p.partes().1.es_objeto(h.o) {
             continue;

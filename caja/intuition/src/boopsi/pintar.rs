@@ -26,7 +26,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// Pinta un control en el rectángulo `r` de la ventana `w` con su tema. Devuelve lo que tocó.
     pub(crate) fn pintar_control<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect, c: &Control) -> Rect {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return Rect::nuevo(0, 0, -1, -1) };
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
         let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return Rect::nuevo(0, 0, -1, -1) };
@@ -67,7 +67,7 @@ impl<C: Compositor> CajaGrafica<C> {
         if r.x1 - r.x0 < 2 || r.y1 - r.y0 < 2 {
             return;
         }
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };
         let l = &mut l;
@@ -83,7 +83,7 @@ impl<C: Compositor> CajaGrafica<C> {
     /// Una raya separadora (horizontal si es más ancha que alta).
     pub(crate) fn raya_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, r: Rect) {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let material = matches!(self.tema_de(w), Elegido::Material(_));
         let linea = match self.tema_de(w) {
             Elegido::Material(m) => m.t.variante_contorno,
@@ -112,7 +112,7 @@ impl<C: Compositor> CajaGrafica<C> {
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn texto_en<M: Memoria>(&mut self, ex: &mut Exec<M>, w: u32, x: i32, y: i32, s: &[u8], hasta: i32, alinea: Alinea, estilo: Estilo) {
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
-        let p = self.plumas(ex);
+        let p = self.plumas(ex, w);
         let tinta = match self.tema_de(w) {
             Elegido::Material(m) => m.t.sobre_superficie,
             _ => p.texto,

@@ -215,7 +215,7 @@ impl<C: Compositor> CajaGrafica<C> {
             };
             vistas.push((g, *r));
         }
-        let plumas = self.plumas(ex);
+        let plumas = self.plumas(ex, w);
         let tema = self.tema_de(w);
         let glifos = &self.intui.glifos;
         let Some(mut l) = crate::graphics::vista(&mut self.gfx.lienzos, ex, bm) else { return };

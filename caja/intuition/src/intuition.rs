@@ -39,6 +39,17 @@ pub(crate) struct Pantalla {
     /// La tarea que la abrió (0: la de Workbench) y lo reservado para ella (dirección, largo), para soltarlo.
     pub tarea: u32,
     pub bloques: Vec<(u32, u32)>,
+    /// Pública (`SA_PubName`): su nombre, si está en modo privado (`PubScreenStatus`) y a quién avisar cuando se va el
+    /// último visitante (`SA_PubSig`, `SA_PubTask`: tarea y número de señal).
+    pub nombre: Option<Vec<u8>>,
+    pub privada: bool,
+    pub aviso: Option<(u32, u8)>,
+    /// Su superficie del compositor (0: ninguna), para que se vea lo que se pinta en su mapa.
+    pub superficie: Superficie,
+    /// El mapa del programa (`SA_BitMap`), si lo dio (0: el suyo, un lienzo); y cuántas veces se ha mirado para
+    /// presentarlo (se presenta entero cada pocas).
+    pub mapa_programa: u32,
+    pub vueltas: u32,
 }
 
 /// Lo que intuition sabe de una ventana fuera de la memoria del 68k.
@@ -212,6 +223,12 @@ impl<C: Compositor> CajaGrafica<C> {
             modo: crate::modos::workbench(),
             tarea: 0,
             bloques: Vec::new(),
+            nombre: Some(b"Workbench".to_vec()),
+            privada: false,
+            aviso: None,
+            superficie: 0,
+            mapa_programa: 0,
+            vueltas: 0,
         };
         self.bordes_pantalla(ex)?;
         Ok(())
@@ -237,30 +254,51 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Pantallas ---
 
-    /// `LockPubScreen`: el Workbench con el nombre 0 o "Workbench"; 0 con otro nombre.
+    /// `LockPubScreen`: la pantalla pública de ese nombre (sin distinguir mayúsculas; 0, la de serie: el Workbench) que no
+    /// esté en modo privado; 0 si no hay. Le suma un visitante.
     pub fn lock_pub_screen<M: Memoria>(&mut self, ex: &mut Exec<M>, nombre: u32) -> Result<u32, Fallo> {
-        if nombre != 0 && !ex.cadena(nombre)?.eq_ignore_ascii_case(b"Workbench") {
+        let s = self.lock_nombre(ex, nombre)?;
+        if s == 0 {
             return Ok(0);
         }
-        self.intui.wb.bloqueos += 1;
-        Ok(self.intui.wb.dir)
+        if let Some(p) = self.pantalla_mut(s) {
+            p.bloqueos += 1;
+        }
+        Ok(s)
     }
 
-    /// `UnlockPubScreen`.
+    /// `UnlockPubScreen` (por la pantalla o por su nombre): un visitante menos; con el último, la señal de `SA_PubSig`.
     pub fn unlock_pub_screen<M: Memoria>(&mut self, ex: &mut Exec<M>, nombre: u32, s: u32) -> Result<(), Fallo> {
-        let s = if s != 0 { s } else { self.lock_nombre(ex, nombre)? };
-        if s != self.intui.wb.dir {
-            return Err(Fallo::PantallaDesconocida { dir: s });
-        }
-        if self.intui.wb.bloqueos == 0 {
+        let s = if s != 0 { s } else { self.nombre_a_pantalla(ex, nombre, true)? };
+        let Some(p) = self.pantalla_mut(s) else { return Err(Fallo::PantallaDesconocida { dir: s }) };
+        if p.bloqueos == 0 {
             return Err(Fallo::DesbloqueoDeMas { dir: s });
         }
-        self.intui.wb.bloqueos -= 1;
+        p.bloqueos -= 1;
+        if p.bloqueos == 0
+            && let Some((t, bit)) = p.aviso
+        {
+            let _ = ex.signal(t, 1 << bit);
+        }
         Ok(())
     }
 
-    fn lock_nombre<M: Memoria>(&self, ex: &Exec<M>, nombre: u32) -> Result<u32, Fallo> {
-        if nombre == 0 || ex.cadena(nombre)?.eq_ignore_ascii_case(b"Workbench") { Ok(self.intui.wb.dir) } else { Ok(0) }
+    /// La pantalla pública de un nombre (0: el Workbench), si no está en modo privado.
+    pub(crate) fn lock_nombre<M: Memoria>(&self, ex: &Exec<M>, nombre: u32) -> Result<u32, Fallo> {
+        self.nombre_a_pantalla(ex, nombre, false)
+    }
+
+    /// La pantalla pública de un nombre (0: el Workbench); con `privadas`, también las que están en modo privado.
+    fn nombre_a_pantalla<M: Memoria>(&self, ex: &Exec<M>, nombre: u32, privadas: bool) -> Result<u32, Fallo> {
+        if nombre == 0 {
+            return Ok(self.intui.wb.dir);
+        }
+        let n = ex.cadena(nombre)?;
+        let wb = core::iter::once(&self.intui.wb);
+        Ok(wb
+            .chain(self.intui.pantallas.values())
+            .find(|p| p.nombre.as_ref().is_some_and(|x| x.eq_ignore_ascii_case(&n)) && (privadas || !p.privada))
+            .map_or(0, |p| p.dir))
     }
 
     /// Cuántas veces está bloqueado el Workbench.
@@ -423,11 +461,12 @@ impl<C: Compositor> CajaGrafica<C> {
         {
             return Err(Fallo::PantallaDesconocida { dir: s });
         }
-        if let Some(nombre) = p.nombre_pub
-            && self.lock_nombre(ex, nombre)? == 0
-            && !p.respaldo
-        {
-            return Err(Fallo::PantallaDesconocida { dir: nombre });
+        if let Some(nombre) = p.nombre_pub {
+            match self.lock_nombre(ex, nombre)? {
+                0 if !p.respaldo => return Err(Fallo::PantallaDesconocida { dir: nombre }),
+                0 => {}
+                s => p.pantalla = Some(s),
+            }
         }
         self.abrir(ex, p)
     }
@@ -786,6 +825,7 @@ impl<C: Compositor> CajaGrafica<C> {
         for w in ws {
             self.presentar_ventana(ex, w);
         }
+        self.presentar_pantallas(ex);
     }
 
     // --- Cerrar ---

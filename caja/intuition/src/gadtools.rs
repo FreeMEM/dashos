@@ -912,8 +912,9 @@ impl<C: Compositor> CajaGrafica<C> {
         let Some(r) = Self::caja_en(ex, w, g) else { return };
         let Some(bm) = self.intui.ventanas.get(&w).map(|v| v.bm) else { return };
         let desactivado = ex.l16(g.wrapping_add(gadget::FLAGS)).unwrap_or(0) & gadget::GFLG_DISABLED != 0;
-        let plumas = self.plumas(ex);
-        let paleta: Vec<u32> = (0..s.colores.min(256)).map(|i| self.color(self.intui.wb.cm, (i + s.desplaz) as u8)).collect();
+        let plumas = self.plumas(ex, w);
+        let cm = self.pantalla_de(w).cm;
+        let paleta: Vec<u32> = (0..s.colores.min(256)).map(|i| self.color(cm, (i + s.desplaz) as u8)).collect();
         let elementos = if s.tipo == kind::LISTVIEW { Self::elementos(ex, s.lista) } else { Vec::new() };
         let (cadena, cursor) = if s.info != 0 {
             let buf = ex.l32(s.info.wrapping_add(stringinfo::BUFFER)).unwrap_or(0);
@@ -970,19 +971,20 @@ impl<C: Compositor> CajaGrafica<C> {
         l.danar(dano.interseccion(&l.rect()));
     }
 
-    /// Los colores del tema: los de las plumas de la `DrawInfo` del Workbench (la de la memoria del 68k, la que ve el
-    /// programa), con las de intuition si no se puede leer.
-    pub(crate) fn plumas<M: Memoria>(&self, ex: &Exec<M>) -> Plumas {
-        let di = self.intui.wb.drawinfo;
+    /// Los colores del tema para la ventana `w`: los de las plumas de la `DrawInfo` de su pantalla (la de la memoria del
+    /// 68k, la que ve el programa) con la paleta de su pantalla, con las de intuition si no se puede leer.
+    pub(crate) fn plumas<M: Memoria>(&self, ex: &Exec<M>, w: u32) -> Plumas {
+        let pa = self.pantalla_de(w);
+        let (di, cm, propias) = (pa.drawinfo, pa.cm, pa.plumas);
         let tabla = ex.l32(di.wrapping_add(dri::DRI_PENS)).unwrap_or(0);
         let n = ex.l16(di.wrapping_add(dri::DRI_NUMPENS)).unwrap_or(0) as usize;
         let pen = |i: usize| -> u32 {
             let p = if i < n && tabla != 0 {
-                ex.l16(tabla.wrapping_add(2 * i as u32)).unwrap_or(self.intui.wb.plumas[i])
+                ex.l16(tabla.wrapping_add(2 * i as u32)).unwrap_or(propias[i])
             } else {
-                self.intui.wb.plumas[i]
+                propias[i]
             };
-            self.color(self.intui.wb.cm, p as u8)
+            self.color(cm, p as u8)
         };
         Plumas {
             detalle: pen(dri::DETAILPEN),
