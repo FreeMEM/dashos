@@ -1961,3 +1961,130 @@ enseña imágenes.
 - `cargo test` de dos bien; `make prueba` bien; `make arranque-virt` bien salvo el fallo suelto conocido "suelta en la
   ventana 1" del explorador. SIN PROBAR con el AmigaOS del usuario (`DASHOS_AMIGAOS=~/.cache/dash-emu/sys32mui
   MEMORIA=3G make arranque-virt`): si registra los tipos y si Tachyon carga imágenes.
+
+## 2026-11-15: cybergraphics.library y Picasso96API.library nativas (rama `caja-amiga-cgx`, desde `revision` ef7ab8c)
+
+Con el AmigaOS 3.2 del usuario, `picture.datatype` y muimaster abrían `cybergraphics.library` y no estaba; Tachyon
+abre además `Picasso96API.library`. Escritas desde el autodoc público de cybergraphics (`cybergraphics.doc`, el `.fd`
+y `cybergraphx/cybergraphics.h` del SDK de `/opt/amiga`), el autodoc de Picasso96API y las constantes, estructuras y
+desplazamientos de su interfaz (la traducción a Pascal de sus includes en Free Pascal; no hay includes de Picasso96 en
+el equipo). No se ha leído código de CyberGraphX, Picasso96, AROS, UAE ni Amiberry.
+
+### Diseño
+
+- **Los mapas de cybergraphics son los nativos de la caja** (`Lienzo`): ARGB de 32 bits, opacos, en el montón de Rust,
+  fuera de la memoria del 68k. Ya lo eran los de las ventanas, la pantalla y `AllocBitMap` de más de 8 planos o con
+  amigo nativo; ahora también `AllocBitMap` con `BMF_SPECIALFMT` y un formato que no sea `PIXFMT_LUT8` (y
+  `p96AllocBitMap` con un formato de color verdadero). Para cybergraphics siempre son `PIXFMT_ARGB32`, 4 bytes por
+  píxel, 32 bits de profundidad (`GetBitMapAttr` ya decía 32), **pida el programa el formato que pida** (RGB15, RGB16,
+  RGB24...): el autodoc obliga a mirar `LBMI_PIXFMT` antes de tocar los píxeles. Para Picasso96, `RGBFB_A8R8G8B8`.
+  `AllocBitMap` con `BMF_DISPLAYABLE` y profundidad > 8 ya daba uno así.
+- **Los planares** (los del programa, `AllocBitMap` de hasta 8 planos sin amigo nativo) no son de cybergraphics
+  (`CYBRMATTR_ISCYBERGFX` 0, `LockBitMap` 0), pero las funciones de píxeles también pintan en ellos: el color va a la
+  pluma más cercana de la paleta del Workbench (con caché por color); `RECTFMT_LUT8` y `FillPixelArray` (el azul es la
+  pluma, dice el autodoc), tal cual.
+- **Un solo modo de pantalla**: el de la caja (`MODO_CAJA`, `0x29000`, el que ya daba `GetVPModeID`), del tamaño del
+  escritorio, en ARGB32. `IsCyberModeID` dice que sí solo a ese; `BestCModeIDTagList` y `p96BestModeIDTagList` lo dan si
+  la profundidad cabe (y, en Picasso96, si los formatos permitidos incluyen A8R8G8B8); si no, `INVALID_ID`.
+  `AllocCModeListTagList` da una lista con ese nodo (los filtros de tamaño solo si se dan: el escritorio puede pasar del
+  máximo de serie, 1600 x 1200).
+- **Con el compositor**: nada nuevo. Lo que se pinta en un lienzo apunta su daño y la caja lo manda como cualquier
+  dibujo de graphics; las funciones de píxeles recortan como graphics (al mapa, a la capa de la ventana y a su región de
+  recorte), en las coordenadas del `RastPort`.
+- **`LockBitMapTagList`** (acceso directo): los píxeles no están en la memoria del 68k, así que se copian a un búfer suyo
+  en ella (memoria del sistema), en big-endian A R G B, y la dirección del búfer es a la vez `LBMI_BASEADDRESS` y el asa.
+  `UnLockBitMap` copia todo de vuelta al lienzo (la memoria es "lineal", así que el programa puede escribir fuera de los
+  `UBMI_UPDATERECTS`) y suelta el búfer; con `UBMI_REALLYUNLOCK` a FALSE copia esos rectángulos (o todo) y sigue cogido.
+  Lo que se pinte con otras funciones mientras está cogido se pierde al soltarlo (el autodoc lo prohíbe). Un mapa lo
+  coge una tarea (la misma puede volver a cogerlo: cuenta); otra recibe 0, porque no puede esperar. `FreeBitMap` de un
+  mapa cogido suelta el búfer sin copiar; al acabar la tarea, se copia y se suelta. `p96LockBitMap` es el mismo cerrojo
+  con su `RenderInfo` (filas de 32 KB como mucho: `BytesPerRow` es WORD).
+- Los tamaños son UWORD, como dice el autodoc (los programas pasan basura en la palabra de arriba: muimaster lo hace);
+  las coordenadas de destino, WORD con signo. Lo que cae fuera no se lee del origen: un rectángulo de 65535 x 65535 sobre
+  un mapa de 16 x 16 lee 16 filas.
+- **Alfa**: la caja no lleva (los lienzos son opacos). `ReadRGBPixel` y `ReadPixelArray` dan alfa 0 (lo que dice el
+  autodoc de las tarjetas sin alfa); al escribir, el alfa se ignora. `RECTFMT_RAW` (5, de V43; lo usa la biblioteca de
+  Dash) es el formato del propio mapa: ARGB en los nativos, una pluma por byte en los planares.
+
+### Hecho
+
+- **cybergraphics.library 41** (`caja/intuition/src/cgx.rs`, números nativos desde `0x0E00`): `IsCyberModeID`,
+  `BestCModeIDTagList`, `GetCyberIDAttr`, `AllocCModeListTagList`/`FreeCModeList`, `GetCyberMapAttr`,
+  `WritePixelArray` (RGB, RGBA, ARGB, LUT8, GREY8 y RAW), `WriteLUTPixelArray` (`CTABFMT_XRGB8`), `ReadPixelArray`,
+  `ScalePixelArray` (al más cercano), `FillPixelArray`, `InvertPixelArray`, `MovePixelArray` (con `ClipBlit`),
+  `WriteRGBPixel`, `ReadRGBPixel`, `ExtractColor`, `LockBitMapTagList`, `UnLockBitMap`, `UnLockBitMapTagList`,
+  `CVideoCtrlTagList` (nada que hacer). `CModeRequestTagList` y `DoCDrawMethodTagList` fallan limpias (0, apuntadas en
+  lo que falta). Detrás de la tabla, 8 entradas de reserva (`cgfx (LVO -204)`...): una llamada de una versión que no
+  tenemos cae en lo que falta en vez de fuera de la tabla.
+- **Picasso96API.library 2** (`p96.rs`, desde `0x0E40`): `p96AllocBitMap`, `p96FreeBitMap`, `p96GetBitMapAttr`,
+  `p96LockBitMap`/`p96UnlockBitMap`, `p96BestModeIDTagList`, `p96GetModeIDAttr`, `p96WritePixelArray` y
+  `p96ReadPixelArray` (con `RenderInfo`, en todos los formatos RGB de 15, 16, 24 y 32 bits y CLUT), `p96WritePixel`,
+  `p96ReadPixel`, `p96RectFill`, `p96EncodeColor`. Lo demás (pantallas propias, PIP, pedidor y listas de modos, datos
+  de las placas, `p96Write/ReadTrueColorData`), aviso de que falta y 0. Nombre exacto `Picasso96API.library` (exec
+  busca por nombre distinguiendo mayúsculas, como AmigaOS).
+- **graphics**: `ReadPixelLine8`, `WritePixelLine8`, `ReadPixelArray8` y `WritePixelArray8` (las pidió
+  picture.datatype 300 veces con los iconos de Tachyon), sobre lo mismo; `AllocBitMap` con `BMF_SPECIALFMT`;
+  `GetVPModeID` da `MODO_CAJA`. `Lienzo::escribir_fila`: una fila de una vez, con un solo apunte de daño.
+- **Quién usa qué** (traza temporal en `pegamento`, ya quitada, con el AmigaOS del usuario y Tachyon):
+  - picture.datatype: `GetCyberMapAttr` (`ISCYBERGFX`, `DEPTH`), `BestCModeIDTagList`, `WritePixelArray` y
+    `ReadPixelLine8` de graphics. En dtprueba (sin pantalla) solo mira `ISCYBERGFX`.
+  - muimaster: `FillPixelArray` (fondos; más de 256 llamadas), y `ReadPixelArray` + `WritePixelArray` en ARGB de
+    16 x 16 (mezcla ella el alfa de sus imágenes). Pasa basura en la palabra alta de los UWORD.
+  - Tachyon (biblioteca de Dash): `p96ReadPixelArray` + `p96WritePixelArray` de 1 x 1 en R8G8B8 (sus mezclas), y
+    `p96GetBitMapAttr`. Ni `LockBitMap` ni `ScalePixelArray`.
+- **Prueba 68k** `caja/pruebas68k/cgx.c` (8b3e en caja.c, con sus líneas en `arranque_virt.txt`): un mapa de 32 bits de
+  cybergraphics, píxeles, `LockBitMapTags`, Picasso96 con `RenderInfo` y `p96LockBitMap`, lo hostil (fuera, negativo,
+  enorme, formato 99, planar) y un mapa que se suelta cogido; mide.
+- **Pruebas de cargo** `caja/intuition/tests/cgx.rs` (9): modos y listas; atributos (nativo, planar, nulo, fuera,
+  `BMF_SPECIALFMT`, amigo); escribir y leer en todos los formatos; planares (pluma más cercana, LUT8, el azul,
+  `ExtractColor`); hostil (negativos, todo fuera, 65535 x 65535, tamaño 0, formatos raros, nulos, origen fuera de la
+  memoria, 2000 llamadas al azar); recorte a una capa y a su región; acceso directo (campos, copia de vuelta, cerrojo
+  doble, `UBMI_REALLYUNLOCK`/`UBMI_UPDATERECTS`, planar, nulo, etiqueta fuera, soltar de más, `RectList` en círculo,
+  `FreeBitMap` cogido, fin de tarea cogido); Picasso96 (formatos, `RenderInfo`, cerrojo, modo, hostil); las de 8 bits
+  de graphics.
+
+### Con el AmigaOS del usuario (`sys32mui`, `MEMORIA=3G`, Tachyon y sus iconos; capturas solo en el equipo)
+
+- dtprueba ya no pide cybergraphics ("falta: cybergraphics.library OpenLibrary" ya no sale; muimaster tampoco).
+- **Tachyon** (captura `capturas-agente/caja-tachyon-cgx-fhd.png`, mirada a mano, no se publica): los iconos de la barra
+  (atrás, adelante, recargar, inicio, estrella, historial) ya salen, en color, por picture.datatype; antes eran
+  cuadrados vacíos. El logo de la página de inicio sigue siendo un rectángulo vacío: no sale ningún aviso ni nada que
+  falte de RTG mientras tanto; sin averiguar de dónde lo saca (no parece cosa de cybergraphics).
+- 0 avisos en Tachyon; Picasso96API abre (antes faltaba).
+- MUI sola (una demo con imágenes) no la he probado aparte: lo de MUI que se ve es lo de dentro de Tachyon.
+
+### Medidas
+
+- Una llamada de un punto (`WritePixelArray` de 1 x 1, lo que hace Tachyon por cada mezcla) armaba la paleta entera
+  (256 colores) aunque no hiciera falta: en el equipo (x86, `--release`), 100.000 llamadas pasan de 35,7 ms a 5,9 ms
+  (de 357 a 59 ns cada una). Ahora solo se arma con plumas o en un planar.
+- En el equipo: 10 `WritePixelArray` de 640 x 480 en RGB, 4,2 ms; 10 `LockBitMap` + `UnLockBitMap` de 640 x 480, 1 ms.
+- En la caja (QEMU `virt`, cgx.exe, reloj de `DateStamp`: de 20 en 20 ms, así que es grueso): 10 `WritePixelArray` de
+  640 x 480 en RGB, 20 ms; 10 cerrojos de 640 x 480 (copia de ida y vuelta de 1,2 MB), 40-60 ms.
+- Tachyon: 6239 ms antes y 6269 ms después en la prueba (6 s de ventana más carga): sin cambio fuera del ruido.
+
+### Pruebas de la tanda
+
+- `cargo test` de exec, intuition, dos, utility y timer: bien. `make prueba`: bien. `make arranque-virt` (sin el
+  AmigaOS del usuario): todo BIEN a la primera. Con el AmigaOS del usuario, solo falla la línea esperada del disco
+  (`[nvme] disco de 16384 sectores`), como siempre.
+- Un desliz: para parar QEMU usé una vez `pkill -0 -f` con patrón (la señal 0 no hace nada, solo mira); lo demás, por
+  PID.
+
+### Decisiones para el usuario
+
+- **Un solo formato** (ARGB32) para todos los mapas de color verdadero, aunque el programa pida RGB16 o RGB24
+  (`BMF_SPECIALFMT`, `p96AllocBitMap`): honrado con lo que dicen los atributos, pero gasta el doble en un mapa de 16 bits.
+- **Un solo modo de pantalla**, el de la caja, y `MODO_CAJA` sigue siendo `0x29000` (un ID de PAL alta resolución del
+  chipset): un programa que mire el monitor del ID para saber si es RTG se puede confundir. Cambiarlo a un ID propio
+  tocaría `GetVPModeID`, `GetDisplayInfoData` y las pantallas.
+- **`LockBitMap` copia** (ida y vuelta) en vez de dar los píxeles: lo correcto mientras los lienzos vivan fuera de la
+  memoria del 68k; lo rápido sería poner los lienzos nativos en la memoria del 68k (cambio grande en `Lienzo`).
+- **Alfa 0** al leer y alfa ignorado al escribir (la caja no lleva alfa en los lienzos).
+
+### Lo que queda
+
+- `DoCDrawMethodTagList` (llamaría a un gancho 68k con el mapa cogido: anidada), `CModeRequestTagList` y
+  `p96RequestModeIDTagList` (pedidor de modos), `p96OpenScreenTagList`, las listas de modos de Picasso96,
+  `p96Write/ReadTrueColorData`, y las de CyberGraphX V43+ (`WritePixelArrayAlpha`...): nadie las ha pedido.
+- El logo de Tachyon. Una demo de MUI con imágenes, aparte. El oráculo (FS-UAE con RTG) no lo he ejecutado.
