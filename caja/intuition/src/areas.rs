@@ -248,7 +248,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let contorno = info.flags & rp_::AREAOUTLINE != 0;
         let aol = ex.l8(rp + rp_::AOLPEN)?;
         let patron = self.patron_area(ex, &info)?;
-        let cm = self.gfx.lienzos.get(&info.bm).map(|l| l.paleta).unwrap_or(0);
+        let cm = self.cm_de(info.bm);
         let tinta_contorno = Tinta { pen: aol, argb: self.color(cm, aol) };
         let mut p = self.pintor(ex, &info)?;
         // Las filas que pueden tener algo: las de las figuras, dentro del recorte.

@@ -2088,3 +2088,35 @@ el equipo). No se ha leído código de CyberGraphX, Picasso96, AROS, UAE ni Amib
   `p96RequestModeIDTagList` (pedidor de modos), `p96OpenScreenTagList`, las listas de modos de Picasso96,
   `p96Write/ReadTrueColorData`, y las de CyberGraphX V43+ (`WritePixelArrayAlpha`...): nadie las ha pedido.
 - El logo de Tachyon. Una demo de MUI con imágenes, aparte. El oráculo (FS-UAE con RTG) no lo he ejecutado.
+
+## 2026-11-15 (2): formatos de verdad, LockBitMap sin copia y modos RTG (misma rama)
+
+El usuario no quiere dejar las tres decisiones de la tanda anterior como estaban: un solo formato (ARGB32), un solo
+modo con el ID `0x29000` del chipset y `LockBitMap` que copia. Por orden: 3 (dónde viven los píxeles), 1 y 2.
+
+### Paso 3 y paso 1: los mapas RTG en la memoria del 68k, cada uno en su formato
+
+- **Mapas chunky** (`caja/intuition/src/chunky.rs`, `Mapa::Chunky` en graphics, `Sup::Chunky` en el pintor): los de
+  `AllocBitMap` de color verdadero (más de 8 planos, `BMF_SPECIALFMT` con un `PIXFMT_*` que no sea LUT8, o un amigo de
+  color verdadero) y los de `p96AllocBitMap` con un `RGBFormat` de color verdadero guardan sus píxeles en la memoria
+  del 68k (`AllocMem` de exec: memoria del sistema, con su tope, el cupo y el aviso de memoria baja), en el formato
+  pedido: los 13 de `cybergraphics.h` (RGB15, BGR15, RGB15PC, BGR15PC, RGB16, BGR16, RGB16PC, BGR16PC, RGB24, BGR24,
+  ARGB32, BGRA32, RGBA32). Sin formato, el de su amigo; sin amigo, el de serie de su profundidad (hasta 15, RGB15; 16,
+  RGB16; hasta 24, RGB24; más, ARGB32). Filas alineadas a 4 bytes (los de 24 bits de ancho impar llevan relleno, que
+  nada toca). Nacen del color de la pluma 0 (como un planar a cero). Un `PIXFMT_*` que no existe con
+  `BMF_SPECIALFMT`: 0 y un aviso. A8B8G8R8 de Picasso96 (sin `PIXFMT_*`) se guarda en ARGB32.
+- graphics entero pinta en ellos (rectángulos, líneas, texto, copias, áreas): el valor crudo es un color ARGB, como en
+  los lienzos, y se pasa al formato al escribir. `BltBitMap` entre formatos convierte (queda lo que guarda el más
+  pequeño).
+- **`LockBitMapTagList` de un chunky da la dirección de sus píxeles, sin copiar** (el asa es esa dirección; la misma
+  que `CYBRMATTR_DISPADR` y `P96BMA_MEMORY`), con su `LBMI_BYTESPERROW`, `LBMI_PIXFMT` y `LBMI_BYTESPERPIX` de verdad.
+  Lo que el programa escribe está en el mapa al momento. `p96LockBitMap` igual, con su `RenderInfo`.
+- **El alfa**: los formatos de 32 bits lo guardan. `WritePixelArray` con `RECTFMT_ARGB`/`RGBA` (y los de Picasso96 con
+  alfa) lo escriben; `ReadPixelArray` y `ReadRGBPixel` lo devuelven. Los lienzos siguen sin alfa (0 al leer).
+- **Los lienzos** (ventanas y pantalla de Workbench: superficies del compositor, en el montón de Rust) siguen ahí: llevan
+  el texto nítido de DashOS, los marcos y el tema, que se pintan con el lienzo, y sin `unsafe` (fuera de
+  `kernel/src/base/`) no se pueden dejar en la memoria del 68k. Ahora llevan el formato en que los ve un programa
+  (`Lienzo::formato`, el del modo de su pantalla); `LockBitMap` de uno de ellos sigue copiando, en ese formato, y la
+  vuelta marca el daño (los `UBMI_UPDATERECTS`, o todo) para el compositor.
+- Las funciones de pixel array convierten desde y hacia cualquier formato del programa: `RECTFMT_RGB`, `RGBA`, `ARGB`,
+  `LUT8`, `GREY8`, `RAW` (el del mapa, byte a byte) y los `RGBFB_*` de Picasso96.

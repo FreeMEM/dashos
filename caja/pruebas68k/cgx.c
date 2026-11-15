@@ -163,6 +163,32 @@ LONG inicio(void)
     }
     if (!fallo) di("  [caja-amiga] cgx: pixeles, LockBitMap y Picasso96 (RenderInfo, p96LockBitMap): bien\n", 0, 0, 0);
 
+    /* 4b. Formatos de verdad: un mapa RGB16 guarda dos bytes por punto (el rojo puro, $F800) y uno RGB24 de 7 de ancho
+       lleva filas de 24 bytes (21 y 3 de relleno); LockBitMap da su memoria de verdad (la de CYBRMATTR_DISPADR). */
+    if (!fallo) {
+        struct BitMap *m16 = AllocBitMap(32, 4, 16, BMF_SPECIALFMT | SHIFT_PIXFMT(PIXFMT_RGB16), 0);
+        struct BitMap *m24 = AllocBitMap(7, 3, 24, BMF_SPECIALFMT | SHIFT_PIXFMT(PIXFMT_RGB24), 0);
+        if (!m16 || !m24 || GetCyberMapAttr(m16, CYBRMATTR_PIXFMT) != PIXFMT_RGB16 || GetCyberMapAttr(m16, CYBRMATTR_BPPIX) != 2
+            || GetCyberMapAttr(m24, CYBRMATTR_XMOD) != 24 || GetBitMapAttr(m16, BMA_DEPTH) != 16)
+            fallo = 6;
+        if (!fallo) {
+            struct RastPort r16;
+            static UBYTE rojo[] = { 0xFF, 0x00, 0x00 };
+            ULONG base = 0;
+            InitRastPort(&r16);
+            r16.BitMap = m16;
+            WritePixelArray(rojo, 0, 0, 3, &r16, 0, 0, 1, 1, RECTFMT_RGB);
+            APTR h = LockBitMapTags(m16, LBMI_BASEADDRESS, (ULONG)&base, TAG_DONE);
+            if (!h || base != GetCyberMapAttr(m16, CYBRMATTR_DISPADR) || *(UWORD *)base != 0xF800
+                || (ReadRGBPixel(&r16, 0, 0) & 0xFFFFFF) != 0xFF0000)
+                fallo = 6;
+            if (h) UnLockBitMap(h);
+        }
+        if (m16) FreeBitMap(m16);
+        if (m24) FreeBitMap(m24);
+    }
+    if (!fallo) di("  [caja-amiga] cgx: formatos (RGB16 de dos bytes, RGB24 de ancho impar con relleno): bien\n", 0, 0, 0);
+
     /* 5. Lo hostil: fuera, negativo, enorme, un formato que no existe, un mapa planar. */
     if (!fallo) {
         if (WritePixelArray(pix, 0, 0, 3, &rp, AN + 5, 0, 10, 10, RECTFMT_RGB) != 0) fallo = 5;

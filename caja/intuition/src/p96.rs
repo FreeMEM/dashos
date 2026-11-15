@@ -12,7 +12,7 @@ use alloc::vec::Vec;
 use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
-use crate::cgx::constantes::{BMF_SPECIALFMT, P96, PIXFMT_ARGB32, RECTFMT_ARGB};
+use crate::cgx::constantes::{BMF_SPECIALFMT, P96, RECTFMT_ARGB};
 use crate::cgx::{INVALID_ID, MODO_CAJA, codificar_p96};
 use crate::graphics::Mapa;
 use crate::{CajaGrafica, Compositor, Fallo};
@@ -136,12 +136,14 @@ impl<C: Compositor> CajaGrafica<C> {
         let (d, a) = (r.d, r.a);
         Ok(match FUNCIONES[f] {
             "p96AllocBitMap" => {
-                // Un formato de color verdadero pide un mapa nativo, como `BMF_SPECIALFMT` en cybergraphics.
+                // Un formato de color verdadero pide un mapa en ese formato, como `BMF_SPECIALFMT` en cybergraphics
+                // (A8B8G8R8, que no tiene `PIXFMT_*`, va en A8R8G8B8). CLUT o ninguno: lo de siempre (por la
+                // profundidad o el amigo).
                 let rgbf = d[7];
-                let flags = if (RGBFB_R8G8B8..=RGBFB_B5G5R5PC).contains(&rgbf) {
-                    d[3] | BMF_SPECIALFMT | (PIXFMT_ARGB32 << 24)
-                } else {
-                    d[3] & !BMF_SPECIALFMT
+                let fmt = if rgbf == 7 { Some(crate::chunky::Formato::Argb32) } else { crate::chunky::Formato::de_rgbfb(rgbf) };
+                let flags = match fmt {
+                    Some(f) => (d[3] & 0x00FF_FFFF) | BMF_SPECIALFMT | (f.pixfmt() << 24),
+                    None => d[3] & 0x00FF_FF7F,
                 };
                 self.alloc_bit_map(ex, d[0], d[1], d[2], flags, a[0])?
             }
@@ -229,18 +231,32 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match self.mapa(ex, bm)? {
             Mapa::Nativo => {
                 let l = &self.gfx.lienzos[&bm];
+                let f = l.formato;
                 match attr {
                     P96BMA_WIDTH => l.ancho(),
                     P96BMA_HEIGHT => l.alto(),
-                    P96BMA_DEPTH | P96BMA_BITSPERPIXEL => 32,
-                    P96BMA_BYTESPERROW => l.ancho() * 4,
-                    P96BMA_BYTESPERPIXEL => 4,
-                    P96BMA_RGBFORMAT => RGBFB_A8R8G8B8,
+                    P96BMA_DEPTH => f.bpp() * 8,
+                    P96BMA_BITSPERPIXEL => f.profundidad().min(24),
+                    P96BMA_BYTESPERROW => crate::chunky::Chunky::bpr_de(l.ancho(), f).unwrap_or(0),
+                    P96BMA_BYTESPERPIXEL => f.bpp(),
+                    P96BMA_RGBFORMAT => f.rgbfb().unwrap_or(RGBFB_NONE),
                     P96BMA_ISP96 => 1,
                     // La memoria (solo con el mapa cogido, y nunca la del lienzo: no está en la del 68k), la placa...
                     _ => 0,
                 }
             }
+            Mapa::Chunky(c) => match attr {
+                P96BMA_WIDTH => c.ancho,
+                P96BMA_HEIGHT => c.alto,
+                P96BMA_DEPTH => c.fmt.bpp() * 8,
+                P96BMA_BITSPERPIXEL => c.fmt.profundidad().min(24),
+                P96BMA_MEMORY => c.base,
+                P96BMA_BYTESPERROW => c.bpr,
+                P96BMA_BYTESPERPIXEL => c.fmt.bpp(),
+                P96BMA_RGBFORMAT => c.fmt.rgbfb().unwrap_or(RGBFB_NONE),
+                P96BMA_ISP96 => 1,
+                _ => 0,
+            },
             Mapa::Planar(p) => match attr {
                 P96BMA_WIDTH => p.ancho,
                 P96BMA_HEIGHT => ex.l16(bm + crate::estructuras::bitmap::ROWS)? as u32,
@@ -258,16 +274,21 @@ impl<C: Compositor> CajaGrafica<C> {
         if buf != 0 && largo >= RI_TAMANO {
             ex.tramo(buf, RI_TAMANO)?;
         }
-        if self.gfx.lienzos.get(&bm).is_some_and(|l| l.ancho() * 4 > 0x7FFF) {
+        let asa = self.lock_bit_map(ex, bm, 0)?;
+        if asa == 0 {
             return Ok(0);
         }
-        let asa = self.lock_bit_map(ex, bm, 0)?;
-        if asa != 0 && buf != 0 && largo >= RI_TAMANO {
-            let an = self.cgx.cerrojos[&asa].ancho;
+        let c = self.cgx.cerrojos[&asa];
+        if c.bpr > 0x7FFF {
+            // `BytesPerRow` del `RenderInfo` es un WORD.
+            self.unlock_bit_map(ex, asa, 0)?;
+            return Ok(0);
+        }
+        if buf != 0 && largo >= RI_TAMANO {
             ex.e32(buf + RI_MEMORY, asa)?;
-            ex.e16(buf + RI_BYTESPERROW, (an * 4) as u16)?;
+            ex.e16(buf + RI_BYTESPERROW, c.bpr as u16)?;
             ex.e16(buf + RI_BYTESPERROW + 2, 0)?;
-            ex.e32(buf + RI_RGBFORMAT, RGBFB_A8R8G8B8)?;
+            ex.e32(buf + RI_RGBFORMAT, c.fmt.rgbfb().unwrap_or(RGBFB_NONE))?;
         }
         Ok(asa)
     }

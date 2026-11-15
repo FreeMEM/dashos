@@ -31,6 +31,7 @@ use caja_exec::estructuras::memf;
 use caja_exec::{Exec, Memoria, Registros};
 
 use crate::acceso::{Acceso, palabra};
+use crate::chunky::Formato;
 use crate::dibujo::{Planar, mas_cercano};
 use crate::graphics::Mapa;
 use crate::lienzo::Rect;
@@ -169,7 +170,10 @@ const MAX_RECTS: u32 = 16384;
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct Cerrojo {
     pub bm: u32,
+    /// El largo del búfer de la copia (un lienzo); 0 en un chunky (sin copia).
     pub largo: u32,
+    pub bpr: u32,
+    pub fmt: Formato,
     pub ancho: u32,
     pub alto: u32,
     pub tarea: u32,
@@ -202,8 +206,9 @@ struct Destino {
 }
 
 impl Destino {
+    /// Si sus valores son colores (un lienzo o un chunky) y no plumas.
     fn nativo(&self) -> bool {
-        matches!(self.mapa, Mapa::Nativo)
+        self.mapa.de_color()
     }
 
     /// Los trozos de la fila `y` entre `xa` y `xb` (incluidos) que se pueden pintar.
@@ -232,90 +237,72 @@ enum Valores {
     Plumas(Vec<u8>),
 }
 
-/// Los bytes por píxel de un formato (los de cybergraphics, `RECTFMT_*`, o los de Picasso96, `P96 + RGBFB_*`).
+/// Los formatos de los mapas chunky (`chunky::Formato`) van detrás de todo, para `RECTFMT_RAW`: `MAPA + PIXFMT_*`.
+pub(crate) const MAPA: u32 = 0x200;
+
+/// `RGBFB_A8B8G8R8`: de Picasso96, sin `PIXFMT_*` (no se guarda ningún mapa así; se lee y se escribe).
+const RGBFB_A8B8G8R8: u32 = 7;
+
+/// El formato de mapa que hay detrás de un código de Picasso96 (`P96 + RGBFB_*`) o de mapa (`MAPA + PIXFMT_*`).
+fn formato_de_codigo(fmt: u32) -> Option<Formato> {
+    if fmt >= MAPA {
+        Formato::de_pixfmt(fmt - MAPA)
+    } else if fmt >= P96 {
+        Formato::de_rgbfb(fmt - P96)
+    } else {
+        None
+    }
+}
+
+/// Los bytes por píxel de un formato (los de cybergraphics, `RECTFMT_*`; los de Picasso96, `P96 + RGBFB_*`; los de
+/// los mapas, `MAPA + PIXFMT_*`).
 pub(crate) fn bytes_por_pixel(fmt: u32) -> Option<u32> {
     match fmt {
         RECTFMT_RGB => Some(3),
         RECTFMT_RGBA | RECTFMT_ARGB => Some(4),
         RECTFMT_LUT8 | RECTFMT_GREY8 => Some(1),
-        _ if fmt >= P96 => match fmt - P96 {
-            1 => Some(1),
-            2 | 3 => Some(3),
-            6..=9 => Some(4),
-            4 | 5 | 10..=13 => Some(2),
-            _ => None,
-        },
-        _ => None,
+        _ if fmt == P96 + 1 => Some(1),
+        _ if fmt == P96 + RGBFB_A8B8G8R8 => Some(4),
+        _ => formato_de_codigo(fmt).map(Formato::bpp),
     }
 }
 
-fn de5(v: u32) -> u32 {
-    (v << 3) | (v >> 2)
-}
-fn de6(v: u32) -> u32 {
-    (v << 2) | (v >> 4)
-}
-
-/// Un píxel de un formato de color verdadero a RGB (alfa 0).
-fn a_rgb(fmt: u32, p: &[u8]) -> u32 {
-    let rgb = |r: u8, g: u8, b: u8| u32::from_be_bytes([0, r, g, b]);
-    let be = || u16::from_be_bytes([p[0], p[1]]) as u32;
-    let le = || u16::from_le_bytes([p[0], p[1]]) as u32;
-    let r565 = |v: u32| (de5(v >> 11) << 16) | (de6((v >> 5) & 63) << 8) | de5(v & 31);
-    let r555 = |v: u32| (de5((v >> 10) & 31) << 16) | (de5((v >> 5) & 31) << 8) | de5(v & 31);
-    let b565 = |v: u32| (de5(v & 31) << 16) | (de6((v >> 5) & 63) << 8) | de5(v >> 11);
-    let b555 = |v: u32| (de5(v & 31) << 16) | (de5((v >> 5) & 31) << 8) | de5((v >> 10) & 31);
+/// Un píxel de un formato de color verdadero a ARGB: el alfa, el que lleve (0 si no lleva).
+fn a_argb(fmt: u32, p: &[u8]) -> u32 {
+    let c = |a: u8, r: u8, g: u8, b: u8| u32::from_be_bytes([a, r, g, b]);
     match fmt {
-        RECTFMT_RGB | RECTFMT_RGBA => rgb(p[0], p[1], p[2]),
-        RECTFMT_ARGB => rgb(p[1], p[2], p[3]),
-        RECTFMT_GREY8 => rgb(p[0], p[0], p[0]),
-        _ => match fmt.wrapping_sub(P96) {
-            2 | 8 => rgb(p[0], p[1], p[2]),
-            3 | 9 => rgb(p[2], p[1], p[0]),
-            6 => rgb(p[1], p[2], p[3]),
-            7 => rgb(p[3], p[2], p[1]),
-            10 => r565(be()),
-            4 => r565(le()),
-            11 => r555(be()),
-            5 => r555(le()),
-            12 => b565(le()),
-            13 => b555(le()),
-            _ => 0,
-        },
+        RECTFMT_RGB => c(0, p[0], p[1], p[2]),
+        RECTFMT_RGBA => c(p[3], p[0], p[1], p[2]),
+        RECTFMT_ARGB => c(p[0], p[1], p[2], p[3]),
+        RECTFMT_GREY8 => c(0, p[0], p[0], p[0]),
+        _ if fmt == P96 + RGBFB_A8B8G8R8 => c(p[0], p[3], p[2], p[1]),
+        _ => formato_de_codigo(fmt).map_or(0, |f| f.leer(p)),
     }
 }
 
-/// Un color RGB a un píxel de un formato de color verdadero (el alfa, 0).
-fn de_rgb(fmt: u32, c: u32, o: &mut Vec<u8>) {
-    let [_, r, g, b] = c.to_be_bytes();
-    let (r5, g5, g6, b5) = ((r >> 3) as u16, (g >> 3) as u16, (g >> 2) as u16, (b >> 3) as u16);
+/// Un color ARGB a un píxel de un formato de color verdadero (con su alfa, si lo lleva).
+fn de_argb(fmt: u32, argb: u32, o: &mut Vec<u8>) {
+    let [a, r, g, b] = argb.to_be_bytes();
     match fmt {
         RECTFMT_RGB => o.extend_from_slice(&[r, g, b]),
-        RECTFMT_RGBA => o.extend_from_slice(&[r, g, b, 0]),
-        RECTFMT_ARGB => o.extend_from_slice(&[0, r, g, b]),
+        RECTFMT_RGBA => o.extend_from_slice(&[r, g, b, a]),
+        RECTFMT_ARGB => o.extend_from_slice(&[a, r, g, b]),
         RECTFMT_GREY8 => o.push(((r as u32 * 77 + g as u32 * 150 + b as u32 * 29) >> 8) as u8),
-        _ => match fmt.wrapping_sub(P96) {
-            2 => o.extend_from_slice(&[r, g, b]),
-            3 => o.extend_from_slice(&[b, g, r]),
-            6 => o.extend_from_slice(&[0, r, g, b]),
-            7 => o.extend_from_slice(&[0, b, g, r]),
-            8 => o.extend_from_slice(&[r, g, b, 0]),
-            9 => o.extend_from_slice(&[b, g, r, 0]),
-            10 => o.extend_from_slice(&(r5 << 11 | g6 << 5 | b5).to_be_bytes()),
-            4 => o.extend_from_slice(&(r5 << 11 | g6 << 5 | b5).to_le_bytes()),
-            11 => o.extend_from_slice(&(r5 << 10 | g5 << 5 | b5).to_be_bytes()),
-            5 => o.extend_from_slice(&(r5 << 10 | g5 << 5 | b5).to_le_bytes()),
-            12 => o.extend_from_slice(&(b5 << 11 | g6 << 5 | r5).to_le_bytes()),
-            13 => o.extend_from_slice(&(b5 << 10 | g5 << 5 | r5).to_le_bytes()),
-            _ => {}
-        },
+        _ if fmt == P96 + RGBFB_A8B8G8R8 => o.extend_from_slice(&[a, b, g, r]),
+        _ => {
+            if let Some(f) = formato_de_codigo(fmt) {
+                let mut t = [0u8; 4];
+                f.escribir(argb, &mut t);
+                o.extend_from_slice(&t[..f.bpp() as usize]);
+            }
+        }
     }
 }
 
 /// `p96EncodeColor`: un color ARGB en un formato de Picasso96 (los bytes del píxel, alineados a la derecha).
 pub(crate) fn codificar_p96(rgbf: u32, argb: u32) -> u32 {
     let mut o = Vec::new();
-    de_rgb(P96 + rgbf, argb & 0x00FF_FFFF, &mut o);
+    de_argb(P96 + rgbf, argb, &mut o);
     o.iter().fold(0, |v, &b| (v << 8) | b as u32)
 }
 
@@ -330,7 +317,7 @@ fn convertir(fmt: u32, b: &[u8]) -> Valores {
         return Valores::Plumas(b.to_vec());
     }
     let bpp = bytes_por_pixel(fmt).unwrap_or(1) as usize;
-    Valores::Argb(b.chunks_exact(bpp).map(|p| a_rgb(fmt, p)).collect())
+    Valores::Argb(b.chunks_exact(bpp).map(|p| a_argb(fmt, p)).collect())
 }
 
 /// Una dirección `base + fila * modulo + col * bpp` del 68k, o un fallo si se sale de 32 bits.
@@ -575,13 +562,14 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(match mapa {
             Mapa::Nativo => {
                 let l = &self.gfx.lienzos[&bm];
+                let f = l.formato;
                 match attr {
-                    CYBRMATTR_XMOD => l.ancho() * 4,
-                    CYBRMATTR_BPPIX => 4,
-                    CYBRMATTR_PIXFMT => PIXFMT_ARGB32,
+                    CYBRMATTR_XMOD => crate::chunky::Chunky::bpr_de(l.ancho(), f).unwrap_or(0),
+                    CYBRMATTR_BPPIX => f.bpp(),
+                    CYBRMATTR_PIXFMT => f.pixfmt(),
                     CYBRMATTR_WIDTH => l.ancho(),
                     CYBRMATTR_HEIGHT => l.alto(),
-                    CYBRMATTR_DEPTH => 32,
+                    CYBRMATTR_DEPTH => f.profundidad(),
                     CYBRMATTR_ISCYBERGFX | CYBRMATTR_ISLINEARMEM => u32::MAX,
                     // Privada: los píxeles no están en la memoria del 68k.
                     CYBRMATTR_DISPADR => 0,
@@ -596,6 +584,17 @@ impl<C: Compositor> CajaGrafica<C> {
                 CYBRMATTR_BPPIX | CYBRMATTR_PIXFMT | CYBRMATTR_ISCYBERGFX | CYBRMATTR_ISLINEARMEM | CYBRMATTR_DISPADR => 0,
                 _ => u32::MAX,
             },
+            Mapa::Chunky(c) => match attr {
+                CYBRMATTR_XMOD => c.bpr,
+                CYBRMATTR_BPPIX => c.fmt.bpp(),
+                CYBRMATTR_PIXFMT => c.fmt.pixfmt(),
+                CYBRMATTR_WIDTH => c.ancho,
+                CYBRMATTR_HEIGHT => c.alto,
+                CYBRMATTR_DEPTH => c.fmt.profundidad(),
+                CYBRMATTR_ISCYBERGFX | CYBRMATTR_ISLINEARMEM => u32::MAX,
+                CYBRMATTR_DISPADR => c.base,
+                _ => u32::MAX,
+            },
         })
     }
 
@@ -606,6 +605,7 @@ impl<C: Compositor> CajaGrafica<C> {
         let r_mapa = match mapa {
             Mapa::Nativo => self.gfx.lienzos[&i.bm].rect(),
             Mapa::Planar(p) => p.rect(),
+            Mapa::Chunky(c) => c.rect(),
         };
         let mut clip = r_mapa;
         if let Some(c) = self.recorte_capa(i.capa) {
@@ -619,11 +619,8 @@ impl<C: Compositor> CajaGrafica<C> {
             let caja = r.iter().fold(Rect::nuevo(0, 0, -1, -1), |u, q| u.union(q));
             clip = clip.interseccion(&caja);
         }
-        let cm = match mapa {
-            Mapa::Nativo => self.gfx.lienzos[&i.bm].paleta,
-            Mapa::Planar(_) => 0,
-        };
-        let paleta = if con_paleta || !matches!(mapa, Mapa::Nativo) {
+        let cm = self.cm_de(i.bm);
+        let paleta = if con_paleta || !mapa.de_color() {
             (0..=255u8).map(|p| self.color(cm, p)).collect()
         } else {
             Vec::new()
@@ -649,6 +646,14 @@ impl<C: Compositor> CajaGrafica<C> {
                     Valores::Plumas(p) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
                 };
                 self.gfx.lienzos.get_mut(&d.bm).map_or(0, |l| l.escribir_fila(mx, my, &fila))
+            }
+            Mapa::Chunky(c) => {
+                let fila: Vec<u32> = match v {
+                    Valores::Argb(c) => c,
+                    Valores::Plumas(p) => p.iter().map(|&q| d.paleta[q as usize]).collect(),
+                };
+                c.escribir_fila(&mut ex.mem, mx, my, &fila);
+                fila.len() as u32
             }
             Mapa::Planar(p) => {
                 let plumas: Vec<u8> = match v {
@@ -684,7 +689,13 @@ impl<C: Compositor> CajaGrafica<C> {
         lut: Option<&[u32]>,
     ) -> Result<u32, Fallo> {
         let d = self.destino(ex, rp, es_de_plumas(fmt) && lut.is_none())?;
-        let fmt = if fmt == RECTFMT_RAW { if d.nativo() { RECTFMT_ARGB } else { RECTFMT_LUT8 } } else { fmt };
+        // RECTFMT_RAW: el formato del propio mapa.
+        let fmt = match (fmt, d.mapa) {
+            (RECTFMT_RAW, Mapa::Chunky(c)) => MAPA + c.fmt.pixfmt(),
+            (RECTFMT_RAW, Mapa::Nativo) => RECTFMT_ARGB,
+            (RECTFMT_RAW, Mapa::Planar(_)) => RECTFMT_LUT8,
+            _ => fmt,
+        };
         let bpp = bytes_por_pixel(fmt).ok_or(Fallo::Sospechoso { dir: fmt })?;
         if an == 0 || al == 0 {
             return Ok(0);
@@ -851,16 +862,22 @@ impl<C: Compositor> CajaGrafica<C> {
         match d.mapa {
             Mapa::Nativo => self.gfx.lienzos.get(&d.bm).map_or(0, |l| l.pixel(mx, my)),
             Mapa::Planar(p) => p.leer(&ex.mem, mx, my) as u32,
+            Mapa::Chunky(c) => c.leer(&ex.mem, mx, my),
         }
     }
 
-    /// El color de un punto (RGB, alfa 0: la caja no lleva alfa), o `None` fuera del mapa.
+    /// El color de un punto, o `None` fuera del mapa. El alfa, el que guarde un chunky de 32 bits; 0 en los demás (los
+    /// lienzos no llevan alfa).
     fn color_de<M: Memoria>(&self, ex: &Exec<M>, d: &Destino, x: i32, y: i32) -> Option<u32> {
         if !d.lim.contiene(x, y) {
             return None;
         }
         let c = self.crudo(ex, d, x, y);
-        Some(if d.nativo() { c } else { d.paleta[c as usize & 0xFF] } & 0x00FF_FFFF)
+        Some(match d.mapa {
+            Mapa::Chunky(_) => c,
+            Mapa::Nativo => c & 0x00FF_FFFF,
+            Mapa::Planar(_) => d.paleta[c as usize & 0xFF] & 0x00FF_FFFF,
+        })
     }
 
     pub(crate) fn read_rgb_pixel<M: Memoria>(&mut self, ex: &mut Exec<M>, rp: u32, x: i32, y: i32) -> Result<u32, Fallo> {
@@ -881,8 +898,8 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(0)
     }
 
-    /// `ReadPixelArray`: del `RastPort` a un rectángulo de la memoria del 68k (RGB, RGBA o ARGB; el alfa, 0). Lo que
-    /// cae fuera del mapa no se toca.
+    /// `ReadPixelArray`: del `RastPort` a un rectángulo de la memoria del 68k (RGB, RGBA o ARGB; el alfa, el que guarde
+    /// el mapa). Lo que cae fuera del mapa no se toca.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn read_pixel_array<M: Memoria>(
         &mut self,
@@ -923,7 +940,7 @@ impl<C: Compositor> CajaGrafica<C> {
                     let c = self.crudo(ex, &d, px, py);
                     b.push(if d.nativo() { mas_cercano(&d.paleta, c) } else { c as u8 });
                 } else {
-                    de_rgb(fmt, self.color_de(ex, &d, px, py).unwrap_or(0), &mut b);
+                    de_argb(fmt, self.color_de(ex, &d, px, py).unwrap_or(0), &mut b);
                 }
             }
             let dir = direccion(dst, (dys + py - y) as u32, modulo as u32, (dxs + r.x0 - x) as u32, bpp)?;
@@ -965,13 +982,16 @@ impl<C: Compositor> CajaGrafica<C> {
 
     // --- Acceso directo ---
 
-    /// `LockBitMapTagList`: copia los píxeles a un búfer de la memoria del 68k (A R G B) y da su asa (la dirección
-    /// del búfer). 0 si el mapa no es de cybergraphics, si lo tiene otra tarea o si no hay memoria.
+    /// `LockBitMapTagList`. Un mapa chunky ya está en la memoria del 68k: su dirección de verdad, sin copiar (el asa es
+    /// esa dirección). Un lienzo (una ventana, la pantalla: superficies del compositor, fuera de la memoria del 68k) se
+    /// copia a un búfer en su formato y vuelve al soltarlo (el asa es el búfer). 0 si el mapa es planar, si lo tiene
+    /// otra tarea o si no hay memoria para la copia.
     pub(crate) fn lock_bit_map<M: Memoria>(&mut self, ex: &mut Exec<M>, bm: u32, tags: u32) -> Result<u32, Fallo> {
         if bm == 0 {
             return Err(Fallo::BitMapMalo { dir: 0 });
         }
-        if !self.gfx.lienzos.contains_key(&bm) {
+        let chunky = self.gfx.chunkies.get(&bm).copied();
+        if !self.gfx.lienzos.contains_key(&bm) && chunky.is_none() {
             return Ok(0);
         }
         let lista = crate::gadtools::leer_etiquetas(ex, tags)?;
@@ -982,16 +1002,23 @@ impl<C: Compositor> CajaGrafica<C> {
         }
         let tarea = ex.tarea_actual();
         let ya = self.cgx.cerrojos.iter().find(|(_, c)| c.bm == bm).map(|(h, c)| (*h, *c));
-        let (asa, c) = match ya {
-            Some((h, c)) if c.tarea == tarea => {
+        let (asa, c) = match (ya, chunky) {
+            (Some((h, c)), _) if c.tarea == tarea => {
                 self.cgx.cerrojos.get_mut(&h).unwrap().veces += 1;
                 (h, c)
             }
-            Some(_) => return Ok(0),
-            None => {
+            (Some(_), _) => return Ok(0),
+            (None, Some(k)) => {
+                let c = Cerrojo { bm, largo: 0, ancho: k.ancho, alto: k.alto, bpr: k.bpr, fmt: k.fmt, tarea, veces: 1 };
+                self.cgx.cerrojos.insert(k.base, c);
+                (k.base, c)
+            }
+            (None, None) => {
+                let fmt = self.formato_de(bm).unwrap_or(Formato::Argb32);
                 let l = self.gfx.lienzos.get_mut(&bm).unwrap();
                 let (an, al) = (l.ancho(), l.alto());
-                let Some(largo) = an.checked_mul(al).and_then(|n| n.checked_mul(4)) else { return Ok(0) };
+                let Some(bpr) = crate::chunky::Chunky::bpr_de(an, fmt) else { return Ok(0) };
+                let Some(largo) = bpr.checked_mul(al) else { return Ok(0) };
                 if !l.con_pixeles() {
                     return Ok(0);
                 }
@@ -1002,8 +1029,10 @@ impl<C: Compositor> CajaGrafica<C> {
                 let pix = self.gfx.lienzos.get_mut(&bm).unwrap().pixeles();
                 match ex.mem.leer_mut(buf, largo) {
                     Ok(dst) => {
-                        for (o, p) in dst.chunks_exact_mut(4).zip(pix) {
-                            o.copy_from_slice(&p.to_be_bytes());
+                        for (fila, origen) in dst.chunks_exact_mut(bpr as usize).zip(pix.chunks_exact(an as usize)) {
+                            for (o, p) in fila.chunks_exact_mut(fmt.bpp() as usize).zip(origen) {
+                                fmt.escribir(*p, o);
+                            }
                         }
                     }
                     Err(e) => {
@@ -1011,7 +1040,7 @@ impl<C: Compositor> CajaGrafica<C> {
                         return Err(e.into());
                     }
                 }
-                let c = Cerrojo { bm, largo, ancho: an, alto: al, tarea, veces: 1 };
+                let c = Cerrojo { bm, largo, ancho: an, alto: al, bpr, fmt, tarea, veces: 1 };
                 self.cgx.cerrojos.insert(buf, c);
                 (buf, c)
             }
@@ -1020,10 +1049,10 @@ impl<C: Compositor> CajaGrafica<C> {
             let v = match t {
                 LBMI_WIDTH => c.ancho,
                 LBMI_HEIGHT => c.alto,
-                LBMI_DEPTH => 32,
-                LBMI_PIXFMT => PIXFMT_ARGB32,
-                LBMI_BYTESPERPIX => 4,
-                LBMI_BYTESPERROW => c.ancho * 4,
+                LBMI_DEPTH => c.fmt.profundidad(),
+                LBMI_PIXFMT => c.fmt.pixfmt(),
+                LBMI_BYTESPERPIX => c.fmt.bpp(),
+                LBMI_BYTESPERROW => c.bpr,
                 LBMI_BASEADDRESS => asa,
                 _ => continue,
             };
@@ -1032,8 +1061,11 @@ impl<C: Compositor> CajaGrafica<C> {
         Ok(asa)
     }
 
-    /// Copia al lienzo lo del búfer de un cerrojo, en `r` (coordenadas del mapa).
+    /// Copia al lienzo lo del búfer de un cerrojo, en `r` (coordenadas del mapa). Los de un chunky no copian nada.
     fn volver_al_lienzo<M: Memoria>(&mut self, ex: &Exec<M>, c: &Cerrojo, asa: u32, r: Rect) {
+        if c.largo == 0 {
+            return;
+        }
         let r = r.interseccion(&Rect::de_tamano(c.ancho, c.alto));
         if r.vacio() {
             return;
@@ -1043,12 +1075,13 @@ impl<C: Compositor> CajaGrafica<C> {
             // El mapa cambió de tamaño (una ventana): lo cogido ya no vale.
             return;
         }
+        let bpp = c.fmt.bpp();
         let mut fila = Vec::with_capacity(r.ancho() as usize);
         for y in r.y0..=r.y1 {
-            let d = asa + (y as u32 * c.ancho + r.x0 as u32) * 4;
-            let Ok(b) = ex.mem.leer(d, r.ancho() * 4) else { return };
+            let d = asa + y as u32 * c.bpr + r.x0 as u32 * bpp;
+            let Ok(b) = ex.mem.leer(d, r.ancho() * bpp) else { return };
             fila.clear();
-            fila.extend(b.chunks_exact(4).map(|p| u32::from_be_bytes([p[0], p[1], p[2], p[3]])));
+            fila.extend(b.chunks_exact(bpp as usize).map(|p| c.fmt.leer(p)));
             l.escribir_fila(r.x0, y, &fila);
         }
     }
@@ -1089,7 +1122,7 @@ impl<C: Compositor> CajaGrafica<C> {
         // puede haber escrito fuera de los rectángulos que dice.
         self.volver_al_lienzo(ex, &c, asa, Rect::de_tamano(c.ancho, c.alto));
         self.cgx.cerrojos.remove(&asa);
-        ex.soltar(asa, c.largo)
+        if c.largo != 0 { ex.soltar(asa, c.largo) } else { Ok(()) }
     }
 
     /// Lo cogido de un mapa que se suelta (`FreeBitMap`): sin copiar nada.
@@ -1098,7 +1131,9 @@ impl<C: Compositor> CajaGrafica<C> {
             self.cgx.cerrojos.iter().filter(|(_, c)| c.bm == bm).map(|(a, c)| (*a, c.largo)).collect();
         for (a, l) in asas {
             self.cgx.cerrojos.remove(&a);
-            let _ = ex.soltar(a, l);
+            if l != 0 {
+                let _ = ex.soltar(a, l);
+            }
         }
     }
 
@@ -1109,7 +1144,9 @@ impl<C: Compositor> CajaGrafica<C> {
         for (a, c) in asas {
             self.volver_al_lienzo(ex, &c, a, Rect::de_tamano(c.ancho, c.alto));
             self.cgx.cerrojos.remove(&a);
-            let _ = ex.soltar(a, c.largo);
+            if c.largo != 0 {
+                let _ = ex.soltar(a, c.largo);
+            }
         }
         self.cgx.listas.retain(|_, (_, tarea)| *tarea != t);
     }

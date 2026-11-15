@@ -77,6 +77,8 @@ impl Planar {
 pub(crate) enum Sup<'a, M: Memoria> {
     Nativa(&'a mut Lienzo),
     Planar(&'a mut M, Planar),
+    /// Color verdadero en la memoria del 68k (`chunky.rs`).
+    Chunky(&'a mut M, crate::chunky::Chunky),
 }
 
 /// Una pluma y su color en el mapa (el color solo cuenta en los nativos).
@@ -106,7 +108,7 @@ pub(crate) struct Pintor<'a, M: Memoria> {
 
 impl<M: Memoria> Pintor<'_, M> {
     pub fn es_nativa(&self) -> bool {
-        matches!(self.sup, Sup::Nativa(_))
+        !matches!(self.sup, Sup::Planar(..))
     }
 
     /// Los límites del mapa (sin el recorte de la capa), en coordenadas del `RastPort`.
@@ -114,6 +116,7 @@ impl<M: Memoria> Pintor<'_, M> {
         let r = match &self.sup {
             Sup::Nativa(l) => l.rect(),
             Sup::Planar(_, p) => p.rect(),
+            Sup::Chunky(_, c) => c.rect(),
         };
         Rect::nuevo(r.x0 - self.dx, r.y0 - self.dy, r.x1 - self.dx, r.y1 - self.dy)
     }
@@ -140,6 +143,7 @@ impl<M: Memoria> Pintor<'_, M> {
         match &self.sup {
             Sup::Nativa(l) => l.pixel(x, y),
             Sup::Planar(mem, p) => p.leer(&**mem, x, y) as u32,
+            Sup::Chunky(mem, c) => c.leer(&**mem, x, y),
         }
     }
 
@@ -176,6 +180,7 @@ impl<M: Memoria> Pintor<'_, M> {
         match &mut self.sup {
             Sup::Nativa(l) => l.poner(x, y, v),
             Sup::Planar(mem, p) => p.escribir(&mut **mem, x, y, v as u8, mascara),
+            Sup::Chunky(mem, c) => c.escribir(&mut **mem, x, y, v),
         }
     }
 
@@ -200,6 +205,10 @@ impl<M: Memoria> Pintor<'_, M> {
             Sup::Planar(mem, p) => {
                 let v = p.leer(&**mem, x, y);
                 p.escribir(&mut **mem, x, y, v ^ mascara, mascara);
+            }
+            Sup::Chunky(mem, c) => {
+                let v = c.leer(&**mem, x, y);
+                c.escribir(&mut **mem, x, y, v ^ 0x00FF_FFFF);
             }
         }
     }

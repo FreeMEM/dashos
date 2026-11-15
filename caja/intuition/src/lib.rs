@@ -29,6 +29,7 @@ extern crate std;
 
 pub mod boopsi;
 pub mod cgx;
+pub mod chunky;
 pub mod compositor;
 pub mod escala;
 pub mod estructuras;
@@ -253,6 +254,16 @@ impl<C: Compositor> CajaGrafica<C> {
     /// El lienzo nativo de un `BitMap`, si lo es (para las pruebas y para el compositor).
     pub fn lienzo(&self, bm: u32) -> Option<&Lienzo> {
         self.gfx.lienzos.get(&bm)
+    }
+
+    /// El color de un punto de un mapa de color (un lienzo o un chunky), opaco como lo pinta el compositor; `None` si es
+    /// planar, no existe o el punto cae fuera (para las pruebas).
+    pub fn pixel_de<M: Memoria>(&self, ex: &Exec<M>, bm: u32, x: i32, y: i32) -> Option<u32> {
+        if let Some(l) = self.gfx.lienzos.get(&bm) {
+            return l.rect().contiene(x, y).then(|| l.pixel(x, y));
+        }
+        let c = self.gfx.chunkies.get(&bm)?;
+        c.rect().contiene(x, y).then(|| c.leer(&ex.mem, x, y) | 0xFF00_0000)
     }
 
     /// Las ventanas abiertas (`struct Window`), en el orden en que se abrieron.

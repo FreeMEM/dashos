@@ -65,6 +65,9 @@ pub struct Lienzo {
     fondo: u32,
     /// El `ColorMap` cuyas plumas se usan al dibujar con `SetAPen` (0: el del Workbench).
     pub paleta: u32,
+    /// El formato en que lo ve un programa (cybergraphics, Picasso96, `LockBitMap`): el del modo de su pantalla. Sus
+    /// píxeles se guardan siempre en ARGB (lo que pinta el compositor); al cogerlo se pasan a este formato y de vuelta.
+    pub formato: crate::chunky::Formato,
     dano: Option<Rect>,
     /// Si se apuntan los textos de nuestras bibliotecas para la letra de DashOS (`nitido.rs`): solo en las ventanas
     /// "como DashOS".
@@ -75,7 +78,17 @@ pub struct Lienzo {
 impl Lienzo {
     /// Un lienzo de `ancho` x `alto` del color `fondo`. Los tamaños se tienen que haber comprobado antes.
     pub fn nuevo(ancho: u32, alto: u32, fondo: u32, paleta: u32) -> Lienzo {
-        Lienzo { ancho, alto, pix: Vec::new(), fondo: fondo | 0xFF00_0000, paleta, dano: None, nitido: false, textos: Vec::new() }
+        Lienzo {
+            ancho,
+            alto,
+            pix: Vec::new(),
+            fondo: fondo | 0xFF00_0000,
+            paleta,
+            formato: crate::chunky::Formato::Argb32,
+            dano: None,
+            nitido: false,
+            textos: Vec::new(),
+        }
     }
     pub fn ancho(&self) -> u32 {
         self.ancho
