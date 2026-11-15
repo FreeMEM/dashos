@@ -119,10 +119,13 @@ if sys.argv[1] == "--comprobar":
         f"{CAJA}/C/viejo 32",
         f"{CAJA}/Discos/ cajón",
         f"{CAJA}/Discos/disco.adf {len(CAJA_ADF)}",
+        # T: y ENV: de la caja (los crea al arrancar si faltan).
+        f"{CAJA}/Env/ cajón",
         f"{CAJA}/Libs/ cajón",
         *[f"{CAJA}/Libs/{n} {len(d)}" for n, d in sorted(CAJA_LIBS)],
         f"{CAJA}/S/ cajón",
         f"{CAJA}/S/Startup-Sequence {len(CAJA_GUION)}",
+        f"{CAJA}/T/ cajón",
         f"{PAPELERA}/ cajón",
         f"{PAPELERA}/basura.txt 1",
         f"{PAPELERA}/basura.txt.1 2",

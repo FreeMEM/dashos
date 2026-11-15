@@ -157,6 +157,26 @@ impl<F: SistemaArchivos> Dos<F> {
         })
     }
 
+    /// `Assign nombre: ruta`, creando antes el cajón si no existe (como el `T:` de `RAM:` de un Amiga).
+    pub fn asignar_creando<C: Caja>(&mut self, c: &mut C, nombre: &str, ruta: &str) -> Result<(), u32> {
+        if self.asignar(c, nombre, ruta).is_ok() {
+            return Ok(());
+        }
+        // Un nombre que no vale no crea nada.
+        let n = nombres::a_latin1(nombre).ok_or(ERROR_INVALID_COMPONENT_NAME)?;
+        Self::nombre_de_asignacion(&n).map_err(|e| match e {
+            E::Io(x) => x,
+            E::Mal(f) => f.codigo(),
+        })?;
+        let r = nombres::a_latin1(ruta).ok_or(ERROR_INVALID_COMPONENT_NAME)?;
+        let creado = self.crear_cajon(c, &r).map(|l| self.soltar_cerrojo(c, l));
+        creado.map_err(|e| match e {
+            E::Io(x) => x,
+            E::Mal(f) => f.codigo(),
+        })?;
+        self.asignar(c, nombre, ruta)
+    }
+
     /// `Assign nombre: ruta PATH`.
     pub fn asignar_ruta<C: Caja>(&mut self, c: &mut C, nombre: &str, ruta: &str) -> Result<(), u32> {
         let n = nombres::a_latin1(nombre).ok_or(ERROR_INVALID_COMPONENT_NAME)?;
